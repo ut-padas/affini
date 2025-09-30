@@ -4,6 +4,7 @@ import numpy as np
 from adaptive_clustering import adaptive_cluster_algorithm, flatten_cluster_centers_with_gradient
 from nn_inference import NN_Inference
 from scipy.stats import qmc
+import time
 
 
 class NearODESurrogate:
@@ -45,9 +46,12 @@ class NearODESurrogate:
         check_guarantee_N_times: int = 0,
         L_global = None, # number of times we check all starting points if they are within
             # computational guarantee and recluster the ones that are not
-        alpha = 1
+        alpha = 1,
+        disp_time = True,
 
     ):
+        
+        start_time = time.perf_counter()
         
         ### CHECK INPUTS
         # features and gradients should have the same shape
@@ -114,6 +118,10 @@ class NearODESurrogate:
                 bad_features = self._test_guarantee(features, atol, L_global, alpha)
                 self.add_sources(features[bad_features])
 
+        end_time = time.perf_counter()
+        if disp_time == True:
+            print(f'Time to train: {end_time-start_time:.2f} seconds')
+
         return 0
 
 
@@ -152,8 +160,12 @@ class NearODESurrogate:
         check_guarantee_N_times: int = 0,
         L = None, # number of times we check all starting points if they are within
             # computational guarantee and recluster the ones that are not
+        alpha = 1,
+        disp_time = True, # display time
 
     ):
+        
+        start_time = time.perf_counter()
         
         # do sampling
         if domain.ndim > 2:
@@ -193,8 +205,11 @@ class NearODESurrogate:
         
         # plug this into above function
         self.train_model_from_data(features, labels, gradients, do_clustering,
-                oracle, N_init_clusters, ss, atol, rtol, check_guarantee_N_times, L)
+                oracle, N_init_clusters, ss, atol, rtol, check_guarantee_N_times, L, alpha, False)
 
+        end_time = time.perf_counter()
+        if disp_time == True:
+            print(f'Time to train: {end_time-start_time:.2f} seconds')
 
     
     ###

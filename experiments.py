@@ -2,8 +2,23 @@ from matplotlib.colors import BoundaryNorm, ListedColormap
 import numpy as np
 import matplotlib.pyplot as plt
 from nearode import NearODESurrogate
+from scipy.stats import qmc
 
 scale = -10
+
+
+
+# One dimensional example (from Kriging paper)
+def kriging_1D(x): 
+    return np.exp(-x) + np.sin(5*x) + np.cos(5*x) + 0.2*x
+
+def grad_kriging_1D(x):
+    return -np.exp(-x) + 5*np.cos(5*x) - 5*np.sin(5*x) + 0.2
+
+def kriging_combined(x):
+    return kriging_1D(x), grad_kriging_1D(x)
+
+
 
 # Six-Hump Camelback function
 def SHCF(x: np.ndarray):
@@ -30,11 +45,8 @@ def hessian_SHCF(x: np.ndarray):
             [1, -8 + 48*x[1]**2]
         ])
 
-
 def SHCF_combined(x: np.ndarray):
     return SHCF(x), grad_SHCF(x)
-
-
 
 def check_matrix_2norm(A, domain):
     # A is a function of input x, which is a 2-vector
@@ -63,27 +75,43 @@ def check_matrix_2norm(A, domain):
     return max_val
 
 
-## KRIGING PAPER
 
-# One dimensional example (4.1)
-def kriging_1D(x): 
-    return np.exp(-x) + np.sin(5*x) + np.cos(5*x) + 0.2*x
-
-def grad_kriging_1D(x):
-    return -np.exp(-x) + 5*np.cos(5*x) - 5*np.sin(5*x) + 0.2
-
-def kriging_combined(x):
-    return kriging_1D(x), grad_kriging_1D(x)
-
-
-
-# Two dimensional example (4.2) is the same as the six-hump camelback function
-
-
-# Eight dimensional borehole function (4.3)
+# Eight dimensional borehole function (from Kriging paper)
 def hyperbole(x):
-    return -69
+    r_w = x[0]
+    r   = x[1]
+    T_u = x[2]
+    H_u = x[3]
+    T_l = x[4]
+    H_l = x[5]
+    L   = x[6]
+    K_w = x[7]
 
+    return 5 * T_u * (H_u - H_l) / (np.log(r / r_w) * (1.5 + ((2 * L * T_u) / (np.log(r / r_w) * r_w**2 * K_w))) + (T_u / T_l))
+
+
+
+
+# Arbitrary dimension Dixon-Price function
+def dixon_price(x):
+    n = len(x)
+    total = (x[0] - 1) ** 2
+    for j in range(1,n):
+        total += (j+1) * (2 * x[j]**2 - x[j-1]) ** 2
+    return total
+
+def grad_dixon_price(x):
+    n = len(x)
+    g = np.zeros(n)
+    g[0] = 2 * (x[0] - 1) - 4 * (2 * x[1] ** 2 - x[0])
+    g[-1] = 2 * n * (2 * x[-1] ** 2 - x[-2]) * (4 * x[-1])
+    for j in range(1,n-1):
+        g[j] = 2 * (j+1) * (2 * x[j] ** 2 - x[j-1]) * (4 * x[j]) \
+                    - 2 * (j+2) * (2 * x[j+1] ** 2 - x[j])
+    return g
+
+def dixon_price_combined(x):
+    return dixon_price(x), grad_dixon_price(x)
 
 
 
@@ -114,7 +142,9 @@ def test_1D():
 
 
 
-def test_2D(atol=0.01, rtol=0.01, N_init = 50000, L = 500, domain=np.array([[-3,3],[-2,2]])):
+def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]])):
+
+    L = check_matrix_2norm(hessian_SHCF, domain)
 
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
@@ -266,8 +296,45 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, L = 500, domain=np.array([[-3,
     plt.show()
 
 
+
+
+def test_nd(domain, atol=0.01, N_init = 1000000):
+
+    interpolant = NearODESurrogate()
+    interpolant.train_model_from_sampling(
+            dixon_price_combined, domain, N_init, 'LHS', True,
+            N_init_clusters=30, atol = atol, rtol = None,
+            check_guarantee_N_times=0, disp_time = True)
+    
+    # evaluate exact
+    # pick some evaluation points using LHS
+    N_eval = 10000
+    l = domain[:,0]
+    r = domain[:,1]
+    sampler = qmc.LatinHypercube(d=len(domain))
+    pts = sampler.random(n=N_eval)
+    pts = qmc.scale(pts, l, r)
+
+    exact = np.zeros(len(pts))
+    for j in range(len(exact)):
+        exact[j] = dixon_price(pts[j])
+    interp, _ = interpolant.evaluate(pts, k=1, disp_time=True)
+
+    abs_error = np.abs(exact - interp)
+    print(f'Number of sources: {interpolant.N_sources}')
+    print(f'Max abs. error: {abs_error.max()}')
+    print(f'Avg abs. error: {abs_error.mean()}')
+
+
+
 if __name__ == '__main__':
-    domain = np.array([[-2, 2], [-2, 2]])
-    L = check_matrix_2norm(hessian_SHCF, domain)
-    test_2D(atol=0.05, rtol=None, N_init = 100000, domain=domain, L = L)
+    
+    # 2D test
+    # domain = np.array([[-2, 2], [-2, 2]])
+    # test_2D(atol=0.05, rtol=None, N_init = 100000, domain=domain)
+    
+    # Dixon-Price test, d=5
+    d = 4
+    domain = np.column_stack((np.zeros(d), np.ones(d)))
+    test_nd(domain)
     
