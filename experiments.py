@@ -8,15 +8,16 @@ scale = -10
 
 
 
-# One dimensional example (from Kriging paper)
-def kriging_1D(x): 
-    return np.exp(-x) + np.sin(5*x) + np.cos(5*x) + 0.2*x
+# One dimensional example
+# x \in [0,10]
+def one_d_example(x): 
+    return np.sin(2*np.pi*x) / np.exp(x)
 
-def grad_kriging_1D(x):
-    return -np.exp(-x) + 5*np.cos(5*x) - 5*np.sin(5*x) + 0.2
+def grad_one_d_example(x):
+    return (2*np.pi*np.cos(2*np.pi*x) - np.sin(2*np.pi*x)) / np.exp(x)
 
-def kriging_combined(x):
-    return kriging_1D(x), grad_kriging_1D(x)
+def one_d_combined(x):
+    return one_d_example(x), grad_one_d_example(x)
 
 
 
@@ -77,7 +78,8 @@ def check_matrix_2norm(A, domain):
 
 
 # Eight dimensional borehole function (from Kriging paper)
-def hyperbole(x):
+# Code produced via Mathematica
+def borehole(x):
     r_w = x[0]
     r   = x[1]
     T_u = x[2]
@@ -87,7 +89,61 @@ def hyperbole(x):
     L   = x[6]
     K_w = x[7]
 
-    return 5 * T_u * (H_u - H_l) / (np.log(r / r_w) * (1.5 + ((2 * L * T_u) / (np.log(r / r_w) * r_w**2 * K_w))) + (T_u / T_l))
+    return 5*(-1*H_l+H_u)*T_u*np.power((np.power(T_l,-1)*T_u+np.log(np.power(r_w,-1)*r)*(1.5+2*L*\
+    np.power(K_w,-1)*np.power(r_w,-2)*T_u*np.power(np.log(np.power(r_w,-1)*r),-1))),-1)
+
+def grad_borehole(x):
+    x1 = x[0]
+    x2 = x[1]
+    x3 = x[2]
+    x4 = x[3]
+    x5 = x[4]
+    x6 = x[5]
+    x7 = x[6]
+    x8 = x[7]
+
+    g = np.zeros(8)
+
+    g[0] = -5*x3*(x4+-1*x6)*(-1*np.power(x1,-1)*(1.5+2*np.power(x1,-2)*np.power(x8,-1)*x3*x7*\
+    np.power(np.log(np.power(x1,-1)*x2),-1))+np.log(np.power(x1,-1)*x2)*(-4*np.power(x1,-\
+    3)*np.power(x8,-1)*x3*x7*np.power(np.log(np.power(x1,-1)*x2),-1)+2*np.power(x1,-3)*np.power(\
+    x8,-1)*x3*x7*np.power(np.log(np.power(x1,-1)*x2),-2)))*np.power((np.power(x5,-1)*x3+\
+    np.log(np.power(x1,-1)*x2)*(1.5+2*np.power(x1,-2)*np.power(x8,-1)*x3*x7*np.power(np.\
+    log(np.power(x1,-1)*x2),-1))),-2)
+
+    g[1] = -5*x3*(x4+-1*x6)*(-2*np.power(x1,-2)*np.power(x2,-1)*np.power(x8,-1)*x3*x7*np.power(np.\
+    log(np.power(x1,-1)*x2),-1)+np.power(x2,-1)*(1.5+2*np.power(x1,-2)*np.power(x8,-1)*x3*x7*\
+    np.power(np.log(np.power(x1,-1)*x2),-1)))*np.power((np.power(x5,-1)*x3+np.log(np.power(x1,-\
+    1)*x2)*(1.5+2*np.power(x1,-2)*np.power(x8,-1)*x3*x7*np.power(np.log(pow(x1,-1)*x2),\
+    -1))),-2)
+
+    g[2] = (5*(x4+-1*x6)*np.power((np.power(x5,-1)*x3+np.log(np.power(x1,-1)*x2)*(1.5+2*np.power(\
+    x1,-2)*np.power(x8,-1)*x3*x7*np.power(np.log(np.power(x1,-1)*x2),-1))),-1)+-5*x3*(\
+    x4+-1*x6)*(np.power(x5,-1)+2*np.power(x1,-2)*np.power(x8,-1)*x7)*np.power((np.power(x5,-1)*x3+\
+    np.log(np.power(x1,-1)*x2)*(1.5+2*np.power(x1,-2)*np.power(x8,-1)*x3*x7*np.power(np.\
+    log(np.power(x1,-1)*x2),-1))),-2))
+
+    g[3] = 5*x3*np.power((np.power(x5,-1)*x3+np.log(np.power(x1,-1)*x2)*(1.5+2*np.power(x1,-2)*\
+    np.power(x8,-1)*x3*x7*np.power(np.log(pow(x1,-1)*x2),-1))),-1)
+
+    g[4] = 5*np.power(x3,2)*np.power(x5,-2)*(x4+-1*x6)*np.power((np.power(x5,-1)*x3+np.log(np.power(x1,-\
+    1)*x2)*(1.5+2*np.power(x1,-2)*np.power(x8,-1)*x3*x7*np.power(np.log(pow(x1,-1)*x2),-1))),-2)
+
+    g[5] = -5*x3*np.power((np.power(x5,-1)*x3+np.log(np.power(x1,-1)*x2)*(1.5+2*np.power(x1,-2)*\
+    np.power(x8,-1)*x3*x7*np.power(np.log(np.power(x1,-1)*x2),-1))),-1)
+
+    g[6] = -10*np.power(x1,-2)*np.power(x3,2)*np.power(x8,-1)*(x4+-1*x6)*np.power((np.power(x5,-1)*x3+\
+    np.log(np.power(x1,-1)*x2)*(1.5+2*np.power(x1,-2)*np.power(x8,-1)*x3*x7*np.power(np.\
+    log(np.power(x1,-1)*x2),-1))),-2)
+
+    g[7] = 10*np.power(x1,-2)*np.power(x3,2)*np.power(x8,-2)*(x4+-1*x6)*x7*np.power((np.power(x5,-1)*x3+\
+    np.log(np.power(x1,-1)*x2)*(1.5+2*np.power(x1,-2)*np.power(x8,-1)*x3*x7*np.power(np.\
+    log(np.power(x1,-1)*x2),-1))),-2)
+
+    return g
+
+def borehole_combined(x):
+    return borehole(x), grad_borehole(x)
 
 
 
@@ -115,30 +171,43 @@ def dixon_price_combined(x):
 
 
 
+
+
+
 # test these functions
-def test_1D():
+def test_1D(N_init = 2000, atol=0.01):
 
-    n = 500
-    domain = np.array([0, 6])
+    N = 4000
+    domain = np.array([0, 10])
     interpolant = NearODESurrogate()
-    interpolant.train_model_from_sampling(kriging_combined, n, 500, 'uniform', True)
+    interpolant.train_model_from_sampling(one_d_combined, domain, N_init, 'uniform', True,
+                                          N_init_clusters=20, atol=atol, alpha=100000)
 
-    xx = np.linspace(domain[0], domain[1], n)
-    yy_interpolant = interpolant.evaluate(xx.reshape((n, 1)), k=1, disp_time=True)
-    yy_exact = kriging_1D(xx)
+    xx = np.linspace(domain[0], domain[1], N)
+    yy_interpolant, bad_points = interpolant.evaluate(xx.reshape((N, 1)), k=1, disp_time=True)
+    yy_exact = one_d_example(xx)
     error = np.abs(yy_interpolant - yy_exact)
+    rmse = np.sqrt(np.sum(error ** 2) / len(error))
+    sources = interpolant.get_sources()
 
     plt.plot(xx, yy_exact, '-k', label='Exact')
-    plt.plot(xx, yy_interpolant, '--b', label=f'Predicted ($N_s = {interpolant.N_sources}$)')
+    plt.plot(xx, yy_interpolant, '--m', label=f'Interpolant')
+    plt.scatter(sources, one_d_example(sources), c='orange', marker='x', label=f'Sources ($N_s = {len(sources)}$)')
+    plt.scatter(xx[bad_points], one_d_example(xx[bad_points]), marker='o', label=f'Unguaranteed Points ($N = {bad_points.sum()}$)')
     plt.legend()
     plt.xlabel('$x$')
-    plt.show()
-
+    
+    plt.figure()
     plt.plot(xx, error, '--r', label='Log Error')
+    plt.plot(xx, np.full_like(xx, atol), '--k')
+    plt.scatter(xx[bad_points], error[bad_points], marker='o', label=f'Unguaranteed Points ($N = {bad_points.sum()}$)')
     plt.yscale('log')
     plt.legend()
     plt.xlabel('$x$')
     plt.show()
+
+    print(f'Max l-infty error: {error.max()}')
+    print(f'Root mean squared error: {rmse}')
 
 
 
@@ -149,7 +218,7 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
             SHCF_combined, domain, N_init, 'LHS', True,
-            N_init_clusters=30, atol = atol, rtol = rtol,
+            N_init_clusters=100, atol = atol, rtol = rtol,
             check_guarantee_N_times=0, L=L)
     sources = interpolant.get_sources()
 
@@ -159,7 +228,7 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
     pts = np.column_stack((xv.flatten(), yv.flatten()))
 
     zz_exact = SHCF(pts)
-    zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, disp_time=True, L=L, recluster=False, alpha=2)
+    zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, disp_time=True, L=L, recluster=True, alpha=1)
     abs_error = np.abs(zz_exact - zz_interpolant)
 
     # sort the points outside of guarantee between those inside the error and those not
@@ -218,54 +287,61 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
     # plt.show()
     # rel_error = abs_error / np.abs(zz_exact)
 
-    # # Plot of relative errors
-    # plt.figure()
-    # plt.pcolormesh(xv, yv, rel_error, cmap='viridis')
-    # plt.title('Relative Errors')
-    # plt.colorbar()
-    # plt.scatter(sources[:,0], sources[:,1], c='red', marker='o', s=2)
-    # plt.xlabel('$x_1$')
-    # plt.ylabel('$x_2$')
-    # plt.show()
+    # Plot of relative errors
+    if 0:
+        rel_error = abs_error / zz_exact
+        plt.figure()
+        plt.pcolormesh(xv, yv, rel_error, cmap='viridis')
+        plt.title('Relative Errors')
+        plt.colorbar()
+        plt.scatter(sources[:,0], sources[:,1], c='red', marker='o', s=2)
+        plt.xlabel('$x_1$')
+        plt.ylabel('$x_2$')
+        plt.show()
 
-    # # Plot of relative vs absolute errors
-    # plt.figure()
-    # plt.scatter(rel_error, np.log10(abs_error), c='black', marker='x', s=2)
-    # plt.title('Relative vs. log Absolute Errors')
-    # plt.xlabel('Rel err.')
-    # plt.ylabel('log Abs err.')
-    # plt.show()
+        # Plot of relative vs absolute errors
+        plt.figure()
+        plt.scatter(rel_error, np.log10(abs_error), c='black', marker='x', s=2)
+        plt.title('Relative vs. log Absolute Errors')
+        plt.xlabel('Rel err.')
+        plt.ylabel('log Abs err.')
+        plt.show()
 
 
 
 
     # CHECK ACCURACY AFTER ONE RECLUSTERING
-    # for j in range(1):
-    #     zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, disp_time=True, L=L, recluster=False)
-    #     sources = interpolant.get_sources()
-    #     zz_exact = zz_exact.flatten()
-    #     abs_error = np.abs(zz_exact - zz_interpolant)
-    #     # sort the bad points (outside of guarantee) between those inside the error and those not
-    #     no_g_good_err = pts[bad_pts_inds & (abs_error <= tol)] # points outside guarantee, but have good error
-    #     no_g_bad_err = pts[bad_pts_inds & (abs_error > tol)] # points outside guarantee and have bad error
-    #     # sort the good points as well
-    #     yes_g_good_err = pts[np.logical_not(bad_pts_inds) & (abs_error <= tol)]
-    #     yes_g_bad_err = pts[np.logical_not(bad_pts_inds) & (abs_error > tol)]
-    #     zz_exact = zz_exact.reshape((len(xv),len(yv)))
-    #     abs_error = abs_error.reshape((len(xv),len(yv)))
-    #     zz_interpolant = zz_interpolant.reshape((len(xv),len(yv)))
-    #     # Plot of absolute errors
-    #     plt.figure()
-    #     plt.title('Absolute Errors')
-    #     plt.scatter(yes_g_good_err[:,0], yes_g_good_err[:,1], c='green', marker='o', s=2, label=f'Pts. outside theoretical guarantee with good error (N={len(yes_g_good_err)})')
-    #     plt.scatter(yes_g_bad_err[:,0], yes_g_bad_err[:,1], c='red', marker='o', s=2, label=f'Pts. outside theoretical guarantee with bad error (N={len(yes_g_bad_err)})')
-    #     plt.scatter(no_g_good_err[:,0], no_g_good_err[:,1], c='yellow', marker='o', s=2, label=f'Pts. outside theoretical guarantee with good error (N={len(no_g_good_err)})')
-    #     plt.scatter(no_g_bad_err[:,0], no_g_bad_err[:,1], c='orange', marker='o', s=2, label=f'Pts. outside theoretical guarantee with bad error (N={len(no_g_bad_err)})')
-    #     plt.scatter(sources[:,0], sources[:,1], c='blue', marker='o', s=2, label=f'Sources (N={interpolant.N_sources})')
-    #     plt.xlabel('$x_1$')
-    #     plt.ylabel('$x_2$')
-    #     plt.legend(loc='upper right')
-    #     plt.show()
+    for j in range(0):
+        zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, disp_time=True, L=L, recluster=True)
+        sources = interpolant.get_sources()
+        zz_exact = zz_exact.flatten()
+        abs_error = np.abs(zz_exact - zz_interpolant)
+        # sort the points outside of guarantee between those inside the error and those not
+        no_g_good_err = bad_pts_inds & (abs_error <= atol) # points outside guarantee, but have good error; 1
+        no_g_bad_err = bad_pts_inds & (abs_error > atol) # points outside guarantee and have bad error; 2
+        # sort the points inside of guarantee as well
+        yes_g_good_err = np.logical_not(bad_pts_inds) & (abs_error <= atol) # 3
+        yes_g_bad_err = np.logical_not(bad_pts_inds) & (abs_error > atol) # 4
+        sorted_grid = 0 * no_g_good_err + 1 * no_g_bad_err + 2 * yes_g_good_err + 3 * yes_g_bad_err
+        
+        zz_exact = zz_exact.reshape((len(xv),len(yv)))
+        abs_error_reshaped = abs_error.reshape((len(xv),len(yv)))
+        zz_interpolant = zz_interpolant.reshape((len(xv),len(yv)))
+        sorted_grid = sorted_grid.reshape((len(xv),len(yv)))
+
+        # Plot of absolute errors
+        plt.figure()
+        plt.title(f'Iteration {j}')
+        plt.scatter(pts[yes_g_good_err][:,0], pts[yes_g_good_err][:,1], c='green', marker='o', s=2, label=f'Pts. inside theoretical guarantee with good error (N={np.sum(yes_g_good_err)})')
+        plt.scatter(pts[yes_g_bad_err][:,0], pts[yes_g_bad_err][:,1], c='red', marker='o', s=2, label=f'Pts. inside theoretical guarantee with bad error (N={np.sum(yes_g_bad_err)})')
+        plt.scatter(pts[no_g_good_err][:,0], pts[no_g_good_err][:,1], c='yellow', marker='o', s=2, label=f'Pts. outside theoretical guarantee with good error (N={np.sum(no_g_good_err)})')
+        plt.scatter(pts[no_g_bad_err][:,0], pts[no_g_bad_err][:,1], c='orange', marker='o', s=2, label=f'Pts. outside theoretical guarantee with bad error (N={np.sum(no_g_bad_err)})')
+        plt.pcolormesh(xv, yv, sorted_grid, cmap=cmap, norm=norm)
+        plt.scatter(sources[:,0], sources[:,1], c='blue', marker='o', s=2, label=f'Sources (N={len(sources)})')
+        plt.xlabel('$x_1$')
+        plt.ylabel('$x_2$')
+        plt.legend(loc='upper right')
+        plt.show()
 
 
     # display stats about errors
@@ -294,6 +370,46 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
     plt.plot(lambdagrid, eta, '--', label='Interpolant')
     plt.xlim((-0.1,1.1))
     plt.show()
+
+
+
+def test_8D(atol=0.2, rtol=0.01, N_init = 10000):
+
+    domain = np.array([
+        [0.05, 0.15],
+        [100, 50000],
+        [63070, 115600],
+        [990, 1110],
+        [63.1, 116],
+        [700, 820],
+        [1120, 1680],
+        [9855, 12045]
+    ])
+
+    interpolant = NearODESurrogate()
+    interpolant.train_model_from_sampling(
+            borehole_combined, domain, N_init, 'LHS', True,
+            N_init_clusters=30, atol = atol, rtol = rtol,
+            check_guarantee_N_times=0, disp_time = True)
+    
+    # evaluate exact
+    # pick some evaluation points using LHS
+    N_eval = 10000
+    l = domain[:,0]
+    r = domain[:,1]
+    sampler = qmc.LatinHypercube(d=len(domain))
+    pts = sampler.random(n=N_eval)
+    pts = qmc.scale(pts, l, r)
+
+    exact = np.zeros(len(pts))
+    for j in range(len(exact)):
+        exact[j] = borehole(pts[j])
+    interp, _ = interpolant.evaluate(pts, k=1, disp_time=True)
+
+    abs_error = np.abs(exact - interp)
+    print(f'Number of sources: {interpolant.N_sources}')
+    print(f'Max abs. error: {abs_error.max()}')
+    print(f'Avg abs. error: {abs_error.mean()}')
 
 
 
@@ -329,12 +445,24 @@ def test_nd(domain, atol=0.01, N_init = 1000000):
 
 if __name__ == '__main__':
     
+    d = 2
+
+    # 1D test
+    if d == 1:
+        test_1D(atol=1e-3)
+
     # 2D test
-    # domain = np.array([[-2, 2], [-2, 2]])
-    # test_2D(atol=0.05, rtol=None, N_init = 100000, domain=domain)
+    elif d == 2:
+        domain = np.array([[-2, 2], [-2, 2]])
+        test_2D(atol=0.05, rtol=None, N_init = 100000, domain=domain)
     
-    # Dixon-Price test, d=5
-    d = 4
-    domain = np.column_stack((np.zeros(d), np.ones(d)))
-    test_nd(domain)
+    # Hyperbole function (d=8)
+    elif d == 8:
+        test_8D(N_init=100000000)
+
+    # Dixon-Price test
+    else:
+        domain = np.column_stack((np.zeros(d), np.ones(d)))
+        test_nd(domain, N_init = 5000, atol=0.005)
+
     

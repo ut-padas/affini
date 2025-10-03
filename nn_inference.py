@@ -81,6 +81,9 @@ class NN_Inference:
             local_tols = np.minimum(self.dims[I[:,0]] ** 2, 2 * tol / (alpha * self.hessians[I[:,0]]))
             global_tol = 2 * tol / L_global
             good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
+        elif (type(tol) != NoneType and k==1):
+            local_tols = np.minimum(self.dims[I[:,0]] ** 2, 2 * tol / (alpha * self.hessians[I[:,0]]))
+            good_points = (D[:,0] < local_tols)
         else:
             good_points = np.full(len(D), True)
         

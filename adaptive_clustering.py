@@ -1,7 +1,7 @@
 
 from types import NoneType
 import numpy as np
-import sklearn.cluster
+from sklearn.cluster import KMeans, DBSCAN
 from collections.abc import Callable
 
 
@@ -51,7 +51,7 @@ def adaptive_cluster_algorithm(
 
     k = 0 # counting number of clusters as we go
 
-    kmeans = sklearn.cluster.KMeans(n_clusters=N_init_clusters)
+    kmeans = KMeans(n_clusters=N_init_clusters)
     labels = kmeans.fit_predict(training_data_normalized)
     centroids_normalized = kmeans.cluster_centers_
     centroids = centroids_normalized * std + mean
@@ -172,7 +172,7 @@ def _adaptive_cluster_algorithm_helper(
     params_normalized = (params - mean) / std
 
     N = 2  # split in half
-    kmeans = sklearn.cluster.KMeans(n_clusters=N)
+    kmeans = KMeans(n_clusters=N)
     labels = kmeans.fit_predict(params_normalized)
     centroids_normalized = kmeans.cluster_centers_
     centroids = centroids_normalized * std + mean
