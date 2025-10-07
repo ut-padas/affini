@@ -37,9 +37,9 @@ class NearODESurrogate:
         do_clustering = True,
         oracle = None,
         N_init_clusters = 10, # initial number of clusters
-        ss = 10,
         atol = 0.01,
         rtol = None,
+        min_ppc: int = 1,
 
         # other
         # i.e. should we add a transform into log space? or leave that up to user?
@@ -92,7 +92,7 @@ class NearODESurrogate:
 
             # call clustering algorithm
             k, cluster_tree = adaptive_cluster_algorithm(features, oracle, atol, rtol, \
-                    N_init_clusters, ss, True, [], labels, gradients)
+                    N_init_clusters, min_ppc, True, [], labels)
             new_features, new_labels, new_gradients, new_hessians, new_dims = \
                     flatten_cluster_centers_with_gradient(k, nf, cluster_tree)
         
@@ -150,10 +150,9 @@ class NearODESurrogate:
         # clustering parameters
         do_clustering = True,
         N_init_clusters = 10, # initial number of clusters
-        ss = 10, # sample size for each cluster
         atol = 0.01, # absolute error tolerance
         rtol = None, # relative error tolerance
-        fmax = None, # function max to use in relative error computation
+        min_ppc: int = 1, # minimum number of clusters
 
         # other
         # i.e. should we add a transform into log space? or leave that up to user?
@@ -204,8 +203,8 @@ class NearODESurrogate:
             labels[jj], gradients[jj] = oracle(feature)
         
         # plug this into above function
-        self.train_model_from_data(features, labels, gradients, do_clustering,
-                oracle, N_init_clusters, ss, atol, rtol, check_guarantee_N_times, L, alpha, False)
+        self.train_model_from_data(features, labels, gradients, do_clustering, oracle,
+                N_init_clusters, atol, rtol, min_ppc, check_guarantee_N_times, L, alpha, False)
 
         end_time = time.perf_counter()
         if disp_time == True:

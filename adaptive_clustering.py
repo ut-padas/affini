@@ -1,7 +1,7 @@
 
 from types import NoneType
 import numpy as np
-from sklearn.cluster import KMeans, DBSCAN
+from sklearn.cluster import KMeans
 from collections.abc import Callable
 
 
@@ -37,11 +37,10 @@ def adaptive_cluster_algorithm(
     atol: float = None,
     rtol: float = None,
     N_init_clusters: int = 10, # number of initial clusters to split into
-    ss: int = 40, # sample size used to compute statistics in each cluster
+    min_ppc: int = 1, # minimum number of points used in a cluster (to measure error)
     use_gradient: bool = False,
     unpack_log = [],
     ode_solves: np.ndarray = None, # if this is not none, uses these as solves. Otherwise runs eval_function every time
-    gradients: np.ndarray = None, # save with these for gradients
     ):
 
     # normalize the training data
@@ -65,14 +64,6 @@ def adaptive_cluster_algorithm(
             ode_solves_in_cluster = None
         else:
             ode_solves_in_cluster = ode_solves[labels==j]
-        if type(gradients) == NoneType:
-            gradients_in_cluster = None
-        else:
-            gradients_in_cluster = gradients[labels==j]
-
-        ss_new = ss
-        if len(params_in_cluster) < ss:
-            ss_new = len(params_in_cluster)
         
         centroid_params = centroids[j]
         if use_gradient == True:
@@ -94,10 +85,8 @@ def adaptive_cluster_algorithm(
         if type(ode_solves_in_cluster) == NoneType:
 
             # ODE solves not defined. We need to loop through and solve
-            distances_from_cluster = np.linalg.norm(centroid_params - params_in_cluster, axis=1)
-            largest_row_indices = np.argpartition(distances_from_cluster, -ss_new)[-ss_new:]
-            qivec = np.empty(shape=ss_new)
-            for i, row in enumerate(params_in_cluster[largest_row_indices]):
+            qivec = np.empty(shape=len(params_in_cluster))
+            for i, row in enumerate(params_in_cluster):
                 # compute true value (save in qi)
                 if use_gradient == False:
                     qivec[i] = eval_function(row)
@@ -116,10 +105,7 @@ def adaptive_cluster_algorithm(
         elif use_gradient == True:
             # make sure we compute in euclidean, non-log scaled distance
             # use unpack_log to know which variables to do
-            if type(ode_solves_in_cluster) == NoneType:
-                params_nonlog = np.copy(params_in_cluster[largest_row_indices])
-            else:
-                params_nonlog = np.copy(params_in_cluster)
+            params_nonlog = np.copy(params_in_cluster)
             centroid_nonlog = np.copy(centroid_params)
             if len(unpack_log) > 0:
                 for l, val in enumerate(unpack_log):
@@ -130,9 +116,8 @@ def adaptive_cluster_algorithm(
             dvec = np.abs(qivec - (qc + np.sum(dqdpc * distance, axis=1)))
 
         abs_error = np.max(dvec)
-        rel_error = np.max(dvec / np.abs(qivec))
 
-        if (rtol is not None and rel_error < rtol) or (atol is not None and abs_error < atol):
+        if (rtol is not None and abs_error < np.min(np.abs(qivec)) * rtol) or (atol is not None and abs_error < atol):
             # Tolerance is good; save values in cluster column
             dim = np.max(np.linalg.norm(distance, axis=1))
             hessian = 2 / (dim**2) * np.max(dvec)
@@ -142,8 +127,8 @@ def adaptive_cluster_algorithm(
             # Split cluster in half (recursive step)
             k, cluster_structure[j] = _adaptive_cluster_algorithm_helper(
                     params_in_cluster, centroid_params, eval_function,
-                    atol, rtol, ss, use_gradient, unpack_log,
-                    ode_solves_in_cluster, gradients_in_cluster, k)
+                    atol, rtol, min_ppc, use_gradient, unpack_log,
+                    ode_solves_in_cluster, k)
 
     return k, cluster_structure
 
@@ -155,11 +140,10 @@ def _adaptive_cluster_algorithm_helper(
     eval_function: Callable,
     atol = None,
     rtol = None,
-    ss: int = 40, # sample size used to compute statistics in each cluster
+    min_ppc: int = 1,
     use_gradient: bool = False,
     unpack_log = [],
     ode_solves: np.ndarray = None,
-    gradients: np.ndarray = None, # save with these for gradients
     k: int = 0, # current cluster index (for recursive purposes)
 ):
 
@@ -183,15 +167,6 @@ def _adaptive_cluster_algorithm_helper(
         ode_solves_in_cluster_0 = None
     else:
         ode_solves_in_cluster_0 = ode_solves[labels==0]
-    if type(gradients) == NoneType:
-        gradients_in_cluster_0 = None
-    else:
-        gradients_in_cluster_0 = gradients[labels==0]
-
-    ss_new = ss
-    if len(params_in_cluster_0) < ss:
-        # Cluster error is not converging in this case. This is an issue maybe
-        ss_new = len(params_in_cluster_0)
 
     centroid_params = centroids[0]
     if use_gradient == True:
@@ -200,15 +175,44 @@ def _adaptive_cluster_algorithm_helper(
         qc = eval_function(centroid_params)
         dqdpc = None
 
+    # Add extra points to the cluster (randomly sampled) until we get to the minimum ppc
+    # At the moment, this implementation is really bad and will be slow. Redo how we sample (for loop).
+    # We require more than one point in the cluster (this number can change).
+    if len(params_in_cluster_0) <= min_ppc and len(params_in_cluster_0) > 1:
+
+        num_points_to_sample = min_ppc - len(params_in_cluster_0)
+        # take random convex combinations
+        lambdas = np.random.uniform(0, 1, num_points_to_sample)
+        indices = np.random.randint(0, len(params_in_cluster_0), (2, num_points_to_sample))
+        # deal with columns where the indices are the same
+        resample = (indices[1] - indices[0]) == 0
+        all_inds = np.arange(len(params_in_cluster_0))
+        for j, val in enumerate(resample):
+            if j == True:
+                indices[:,j] = np.random.choice(all_inds, 2, replace=False)
+        # construct convex combinations
+        new_params_in_cluster_0 = np.multiply(params_in_cluster_0[indices[0]], lambdas[:, np.newaxis]) + \
+                np.multiply(params_in_cluster_0[indices[1]], (1 - lambdas)[:, np.newaxis])
+
+        # do ode solves for these new points
+        new_qivec = np.zeros(shape=len(new_params_in_cluster_0))
+        for i, row in enumerate(new_params_in_cluster_0):
+            # compute true value (save in qi)
+            if use_gradient == False:
+                new_qivec[i] = eval_function(row)
+            elif use_gradient == True:
+                new_qivec[i], _ = eval_function(row)
+
+    else:
+        new_qivec = []
+
 
     # Compute error by taking largest distances away and averaging errors
     if type(ode_solves_in_cluster_0) == NoneType:
 
         # ODE solves not defined. We need to loop through and solve
-        distances_from_cluster = np.linalg.norm(centroid_params - params_in_cluster_0, axis=1)
-        largest_row_indices = np.argpartition(distances_from_cluster, -ss_new)[-ss_new:]
-        qivec = np.empty(shape=ss_new)
-        for i, row in enumerate(params_in_cluster_0[largest_row_indices]):
+        qivec = np.empty(shape=len(params_in_cluster_0))
+        for i, row in enumerate(params_in_cluster_0):
             # compute true value (save in qi)
             if use_gradient == False:
                 qivec[i] = eval_function(row)
@@ -221,16 +225,19 @@ def _adaptive_cluster_algorithm_helper(
         # Also avoid the sample size and use every single point (we get away with it for free)
         qivec = ode_solves_in_cluster_0
 
+    # put old points and new points together into a single list
+    if len(new_qivec) > 0:
+        params_in_cluster_0 = np.row_stack((params_in_cluster_0, new_params_in_cluster_0))
+        qivec = np.append(qivec, new_qivec)
+        ode_solves_in_cluster_0 = qivec
+
     # using true value, compute error from qc
     if use_gradient == False:
         dvec = np.abs(qc-qivec) # no gradient (0th order)
     elif use_gradient == True:
         # make sure we compute in euclidean, non-log scaled distance
         # use unpack_log to know which variables to do
-        if type(ode_solves_in_cluster_0) == NoneType:
-            params_nonlog = np.copy(params_in_cluster_0[largest_row_indices])
-        else:
-            params_nonlog = np.copy(params_in_cluster_0)
+        params_nonlog = np.copy(params_in_cluster_0)
         centroid_nonlog = np.copy(centroid_params)
         if len(unpack_log) > 0:
             for l, val in enumerate(unpack_log):
@@ -241,15 +248,13 @@ def _adaptive_cluster_algorithm_helper(
         dvec = np.abs(qivec - (qc + np.sum(dqdpc * distance, axis=1)))
 
     abs_error = np.max(dvec)
-    rel_error = np.max(dvec / np.abs(qivec))
 
-    if len(params_in_cluster_0) == 1:
-        # ISSUE: if there are no points other than the centroid, then dim=0.
-        left = Cluster(k, centroid_params, qc, dqdpc, 1, 0)
-        k += 1
-    elif (rtol is not None and rel_error < rtol) or (atol is not None and abs_error < atol):
+    dim = np.max(np.linalg.norm(distance, axis=1))
+    if dim == 0:
+        # Dead branch of the tree. Not enough points to compute error
+        left = None
+    elif (rtol is not None and abs_error < np.min(np.abs(qivec)) * rtol) or (atol is not None and abs_error < atol):
         # Error good
-        dim = np.max(np.linalg.norm(distance, axis=1))
         hessian = 2 / (dim**2) * np.max(dvec)
         left = Cluster(k, centroid_params, qc, dqdpc, hessian, dim)
         k += 1
@@ -257,8 +262,9 @@ def _adaptive_cluster_algorithm_helper(
         # Error too large; split cluster in half (recursive step)
         k, left = _adaptive_cluster_algorithm_helper(
                 params_in_cluster_0, centroid_params, eval_function,
-                atol, rtol, ss, use_gradient, unpack_log,
-                ode_solves_in_cluster_0, gradients_in_cluster_0, k)
+                atol, rtol, min_ppc, use_gradient, unpack_log,
+                ode_solves_in_cluster_0, k)
+
 
 
     # Second cluster (N=1)
@@ -267,15 +273,6 @@ def _adaptive_cluster_algorithm_helper(
         ode_solves_in_cluster_1 = None
     else:
         ode_solves_in_cluster_1 = ode_solves[labels==1]
-    if type(gradients) == NoneType:
-        gradients_in_cluster_1 = None
-    else:
-        gradients_in_cluster_1 = gradients[labels==1]
-
-    ss_new = ss
-    if len(params_in_cluster_1) < ss:
-        # Cluster error is not converging in this case. This is a big issue
-        ss_new = len(params_in_cluster_1)
     
     centroid_params = centroids[1]
     if use_gradient == False:
@@ -284,18 +281,44 @@ def _adaptive_cluster_algorithm_helper(
     elif use_gradient == True:
         qc, dqdpc = eval_function(centroid_params)
 
-    # Compute error by taking largest distances away and averaging errors
-    # can make this block wayyyy faster using either faiss or matrices
+
+    # Add extra points to the cluster (randomly sampled) until we get to the minimum ppc
+    # At the moment, this implementation is really bad and will be slow. Redo how we sample (for loop).
+    if len(params_in_cluster_1) <= min_ppc and len(params_in_cluster_1) > 1:
+
+        num_points_to_sample = min_ppc - len(params_in_cluster_1)
+        # take random convex combinations
+        lambdas = np.random.uniform(0, 1, num_points_to_sample)
+        indices = np.random.randint(0, len(params_in_cluster_1), (2, num_points_to_sample))
+        # deal with columns where the indices are the same
+        resample = (indices[1] - indices[0]) == 0
+        all_inds = np.arange(len(params_in_cluster_1))
+        for j, val in enumerate(resample):
+            if j == True:
+                indices[:,j] = np.random.choice(all_inds, 2, replace=False)
+        # construct convex combinations
+        new_params_in_cluster_1 = np.multiply(params_in_cluster_1[indices[0]], lambdas[:, np.newaxis]) + \
+                np.multiply(params_in_cluster_1[indices[1]], (1 - lambdas)[:, np.newaxis])
+
+        # do ode solves for these new points
+        new_qivec = np.empty(shape=len(new_params_in_cluster_1))
+        for i, row in enumerate(new_params_in_cluster_1):
+            # compute true value (save in qi)
+            if use_gradient == False:
+                new_qivec[i] = eval_function(row)
+            elif use_gradient == True:
+                new_qivec[i], _ = eval_function(row)
+        
+    else:
+        new_qivec = []
 
 
     # Compute error by taking largest distances away and averaging errors
     if type(ode_solves_in_cluster_1) == NoneType:
 
         # ODE solves not defined. We need to loop through and solve
-        distances_from_cluster = np.linalg.norm(centroid_params - params_in_cluster_1, axis=1)
-        largest_row_indices = np.argpartition(distances_from_cluster, -ss_new)[-ss_new:]
-        qivec = np.empty(shape=ss_new)
-        for i, row in enumerate(params_in_cluster_1[largest_row_indices]):
+        qivec = np.empty(shape=len(params_in_cluster_1))
+        for i, row in enumerate(params_in_cluster_1):
             # compute true value (save in qi)
             if use_gradient == False:
                 qivec[i] = eval_function(row)
@@ -308,16 +331,20 @@ def _adaptive_cluster_algorithm_helper(
         # Also avoid the sample size and use every single point (we get away with it for free)
         qivec = ode_solves_in_cluster_1
 
+    # put old points and new points together into a single list
+    if len(new_qivec) > 0:
+        params_in_cluster_1 = np.row_stack((params_in_cluster_1, new_params_in_cluster_1))
+        qivec = np.append(qivec, new_qivec)
+        ode_solves_in_cluster_1 = qivec
+    
+
     # using true value, compute error from qc
     if use_gradient == False:
         dvec = np.abs(qc-qivec) # no gradient (0th order)
     elif use_gradient == True:
         # make sure we compute in euclidean, non-log scaled distance
         # use unpack_log to know which variables to do
-        if type(ode_solves_in_cluster_1) == NoneType:
-            params_nonlog = np.copy(params_in_cluster_1[largest_row_indices])
-        else:
-            params_nonlog = np.copy(params_in_cluster_1)
+        params_nonlog = np.copy(params_in_cluster_1)
         centroid_nonlog = np.copy(centroid_params)
         if len(unpack_log) > 0:
             for l, val in enumerate(unpack_log):
@@ -328,14 +355,12 @@ def _adaptive_cluster_algorithm_helper(
         dvec = np.abs(qivec - (qc + np.sum(dqdpc * distance, axis=1)))
 
     abs_error = np.max(dvec)
-    rel_error = np.max(dvec / np.abs(qivec))
 
-    if len(params_in_cluster_1) == 1:
-        # ISSUE: if there are no points other than the centroid, then dim=0.
-        right = Cluster(k, centroid_params, qc, dqdpc, 1, 0)
-        k += 1
-    elif (rtol is not None and rel_error < rtol) or (atol is not None and abs_error < atol):
-        dim = np.max(np.linalg.norm(distance, axis=1))
+    dim = np.max(np.linalg.norm(distance, axis=1))
+    if dim == 0:
+        # Dead branch of the tree. Not enough variance of points to compute error (or a single point).
+        right = None
+    elif (rtol is not None and abs_error < np.min(np.abs(qivec)) * rtol) or (atol is not None and abs_error < atol):
         hessian = 2 / (dim**2) * np.max(dvec)
         right = Cluster(k, centroid_params, qc, dqdpc, hessian, dim)
         k += 1
@@ -343,8 +368,8 @@ def _adaptive_cluster_algorithm_helper(
         # Error too large; split cluster in half (recursive step)
         k, right = _adaptive_cluster_algorithm_helper(
                 params_in_cluster_1, centroid_params, eval_function,
-                atol, rtol, ss, use_gradient, unpack_log,
-                ode_solves_in_cluster_1, gradients_in_cluster_1, k)
+                atol, rtol, min_ppc, use_gradient, unpack_log,
+                ode_solves_in_cluster_1, k)
 
     return k, ClusterTree(prev_centroid, left, right)
 

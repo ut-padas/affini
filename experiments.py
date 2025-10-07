@@ -211,14 +211,14 @@ def test_1D(N_init = 2000, atol=0.01):
 
 
 
-def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]])):
+def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]]), min_ppc=100):
 
     L = check_matrix_2norm(hessian_SHCF, domain)
 
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
-            SHCF_combined, domain, N_init, 'LHS', True,
-            N_init_clusters=100, atol = atol, rtol = rtol,
+            SHCF_combined, domain, N_init, 'LHS', True, N_init_clusters = 100,
+            min_ppc = min_ppc, atol = atol, rtol = rtol,
             check_guarantee_N_times=0, L=L)
     sources = interpolant.get_sources()
 
@@ -228,8 +228,9 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
     pts = np.column_stack((xv.flatten(), yv.flatten()))
 
     zz_exact = SHCF(pts)
-    zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, disp_time=True, L=L, recluster=True, alpha=1)
+    zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, disp_time=True, L=L, recluster=False, alpha=1)
     abs_error = np.abs(zz_exact - zz_interpolant)
+    rel_error = abs_error / np.abs(zz_exact)
 
     # sort the points outside of guarantee between those inside the error and those not
     no_g_good_err = bad_pts_inds & (abs_error <= atol) # points outside guarantee, but have good error; 1
@@ -414,17 +415,17 @@ def test_8D(atol=0.2, rtol=0.01, N_init = 10000):
 
 
 
-def test_nd(domain, atol=0.01, N_init = 1000000):
+def test_nd(domain, atol=0.01, rtol=0.01, N_init = 1000000, min_ppc = 50):
 
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
             dixon_price_combined, domain, N_init, 'LHS', True,
-            N_init_clusters=30, atol = atol, rtol = None,
+            N_init_clusters=100, atol = atol, rtol = rtol, min_ppc = min_ppc,
             check_guarantee_N_times=0, disp_time = True)
     
     # evaluate exact
     # pick some evaluation points using LHS
-    N_eval = 10000
+    N_eval = 1000
     l = domain[:,0]
     r = domain[:,1]
     sampler = qmc.LatinHypercube(d=len(domain))
@@ -454,15 +455,15 @@ if __name__ == '__main__':
     # 2D test
     elif d == 2:
         domain = np.array([[-2, 2], [-2, 2]])
-        test_2D(atol=0.05, rtol=None, N_init = 100000, domain=domain)
+        test_2D(atol=0.05, rtol=None, N_init = 100000, domain=domain, min_ppc=40)
     
-    # Hyperbole function (d=8)
+    # Borehole function (d=8)
     elif d == 8:
-        test_8D(N_init=100000000)
+        test_8D(N_init=1000000, atol=1, rtol=0.1)
 
     # Dixon-Price test
     else:
         domain = np.column_stack((np.zeros(d), np.ones(d)))
-        test_nd(domain, N_init = 5000, atol=0.005)
+        test_nd(domain, N_init = 1000000, atol=0.05, rtol=0.01, min_ppc=100)
 
     
