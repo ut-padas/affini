@@ -1,5 +1,4 @@
 import time
-from types import NoneType
 import numpy as np
 import faiss
 
@@ -26,7 +25,7 @@ class NN_Inference:
         self._mf, self._nf = features.shape
         self._ml           = len(labels)
 
-        if type(gradients) != NoneType:
+        if gradients is not None:
             self._mg, self._ng = gradients.shape
             if self._nf != self._ng:
                 raise ValueError('Number of features does not match length of each gradient vector')
@@ -56,7 +55,8 @@ class NN_Inference:
         unwrap_log=[],
         disp_time=False,
         L_global = None, # if both L and tol are defined, use this to check if distance to nearest
-        tol = None, # neighbors are within computational guarantee.
+        atol = None, # neighbors are within computational guarantee.
+        rtol = None,
         alpha = 1, # extra fudge factor for the hessian approximations
     ):
 
@@ -74,27 +74,32 @@ class NN_Inference:
                 if val == True:
                     targets_unlog[:,j] = 10 ** targets_unlog[:,j]
                     features_unlog[:,j] = 10 ** features_unlog[:,j]
-
-        # check for points that are outside the theoretical guarantee
-        if (type(tol) != NoneType and type(L_global) != NoneType and k==1):
-            # FAISS distances are squared, so do not consider square root on rhs
-            local_tols = np.minimum(self.dims[I[:,0]] ** 2, 2 * tol / (alpha * self.hessians[I[:,0]]))
-            global_tol = 2 * tol / L_global
-            good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
-        elif (type(tol) != NoneType and k==1):
-            local_tols = np.minimum(self.dims[I[:,0]] ** 2, 2 * tol / (alpha * self.hessians[I[:,0]]))
-            good_points = (D[:,0] < local_tols)
-        else:
-            good_points = np.full(len(D), True)
         
         predictions = np.zeros(len(targets))
         for j in range(k):
-            if type(self.gradients) == NoneType:
+            if self.gradients is None:
                 # gradient not specified; use only nearest neighbor
                 predictions += self.labels[I[:,j]]
             else:
                 distance_vecs = targets_unlog - features_unlog[I[:,j]]
                 predictions += self.labels[I[:,j]] + np.sum(self.gradients[I[:,j]] * distance_vecs, axis=1)
+
+        # check for points that are outside the theoretical guarantee
+        if (atol is not None and rtol is not None and k==1):
+            local_atols = np.minimum(self.dims[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
+            local_rtols = np.minimum(self.dims[I[:,0]] ** 2, 2 * rtol * predictions / (alpha * self.hessians[I[:,0]]))
+            good_points = (D[:,0] < np.maximum(local_atols, local_rtols))
+        elif (atol is not None and L_global is not None and k==1):
+            # FAISS distances are squared, so do not consider square root on rhs
+            local_tols = np.minimum(self.dims[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
+            global_tol = 2 * atol / L_global
+            good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
+        elif (atol is not None and k==1):
+            local_tols = np.minimum(self.dims[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
+            good_points = (D[:,0] < local_tols)
+        else:
+            good_points = np.full(len(D), True)
+
 
         if disp_time == True:
             end_time = time.perf_counter()

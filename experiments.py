@@ -4,9 +4,6 @@ import matplotlib.pyplot as plt
 from nearode import NearODESurrogate
 from scipy.stats import qmc
 
-scale = -10
-
-
 
 # One dimensional example
 # x \in [0,10]
@@ -23,6 +20,7 @@ def one_d_combined(x):
 
 # Six-Hump Camelback function
 def SHCF(x: np.ndarray):
+    scale = 10
     if x.ndim == 1:
         return (4 - 2.1*x[0]**2 + x[0]**4/3)*x[0]**2 + x[0]*x[1] + (-4 + 4*x[1]**2)*x[1]**2 + scale
     elif x.ndim == 2:
@@ -231,13 +229,18 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
     zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, disp_time=True, L=L, recluster=False, alpha=1)
     abs_error = np.abs(zz_exact - zz_interpolant)
     rel_error = abs_error / np.abs(zz_exact)
+    good_abs_error = abs_error <= atol
+    good_rel_error = rel_error <= rtol
+    good_overall_error = np.logical_or(good_abs_error, good_rel_error)
+    bad_overall_error = np.logical_not(good_overall_error)
+    good_pts_inds = np.logical_not(bad_pts_inds)
 
     # sort the points outside of guarantee between those inside the error and those not
-    no_g_good_err = bad_pts_inds & (abs_error <= atol) # points outside guarantee, but have good error; 1
-    no_g_bad_err = bad_pts_inds & (abs_error > atol) # points outside guarantee and have bad error; 2
+    no_g_good_err = bad_pts_inds & good_overall_error # 1 (yellow)
+    no_g_bad_err = bad_pts_inds & bad_overall_error # 2 (orange)
     # sort the points inside of guarantee as well
-    yes_g_good_err = np.logical_not(bad_pts_inds) & (abs_error <= atol) # 3
-    yes_g_bad_err = np.logical_not(bad_pts_inds) & (abs_error > atol) # 4
+    yes_g_good_err = good_pts_inds & good_overall_error # 3 (green)
+    yes_g_bad_err = good_pts_inds & bad_overall_error # 4 (red)
     sorted_grid = 0 * no_g_good_err + 1 * no_g_bad_err + 2 * yes_g_good_err + 3 * yes_g_bad_err
 
     zz_exact = zz_exact.reshape((len(xv),len(yv)))
@@ -314,15 +317,21 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
     # CHECK ACCURACY AFTER ONE RECLUSTERING
     for j in range(0):
         zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, disp_time=True, L=L, recluster=True)
+        good_pts_inds = np.logical_not(bad_pts_inds)
         sources = interpolant.get_sources()
         zz_exact = zz_exact.flatten()
         abs_error = np.abs(zz_exact - zz_interpolant)
+        rel_error = abs_error / np.abs(zz_exact)
+        good_abs_error = abs_error <= atol
+        good_rel_error = rel_error <= rtol
+        good_overall_error = np.logical_or(good_abs_error, good_rel_error)
+        bad_overall_error = np.logical_not(good_overall_error)
         # sort the points outside of guarantee between those inside the error and those not
-        no_g_good_err = bad_pts_inds & (abs_error <= atol) # points outside guarantee, but have good error; 1
-        no_g_bad_err = bad_pts_inds & (abs_error > atol) # points outside guarantee and have bad error; 2
+        no_g_good_err = bad_pts_inds & good_overall_error # points outside guarantee, but have good error; 1
+        no_g_bad_err = bad_pts_inds & bad_overall_error # points outside guarantee and have bad error; 2
         # sort the points inside of guarantee as well
-        yes_g_good_err = np.logical_not(bad_pts_inds) & (abs_error <= atol) # 3
-        yes_g_bad_err = np.logical_not(bad_pts_inds) & (abs_error > atol) # 4
+        yes_g_good_err = good_pts_inds & good_overall_error # 3
+        yes_g_bad_err = good_pts_inds & bad_overall_error # 4
         sorted_grid = 0 * no_g_good_err + 1 * no_g_bad_err + 2 * yes_g_good_err + 3 * yes_g_bad_err
         
         zz_exact = zz_exact.reshape((len(xv),len(yv)))
@@ -348,7 +357,9 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
     # display stats about errors
     print(f'# of red points: {np.sum(yes_g_bad_err)}')
     red_abs_errs = abs_error[yes_g_bad_err]
+    red_rel_errs = rel_error[yes_g_bad_err]
     print(f'max abs error in red points: {np.max(red_abs_errs)}')
+    print(f'max rel error in red points: {np.max(red_rel_errs)}')
 
 
     # Why are there STILL points that don't achieve error?
@@ -453,17 +464,17 @@ if __name__ == '__main__':
         test_1D(atol=1e-3)
 
     # 2D test
-    elif d == 2:
-        domain = np.array([[-2, 2], [-2, 2]])
-        test_2D(atol=0.05, rtol=None, N_init = 100000, domain=domain, min_ppc=40)
+    elif d == 2 and 1:
+        domain = np.array([[-3, 3], [-2, 2]])
+        test_2D(atol=0.05, rtol=0.01, N_init = 100000, domain=domain, min_ppc=40)
     
     # Borehole function (d=8)
     elif d == 8:
-        test_8D(N_init=1000000, atol=1, rtol=0.1)
+        test_8D(N_init=100000, atol=20, rtol=0.01)
 
     # Dixon-Price test
     else:
         domain = np.column_stack((np.zeros(d), np.ones(d)))
-        test_nd(domain, N_init = 1000000, atol=0.05, rtol=0.01, min_ppc=100)
+        test_nd(domain, N_init = 1000000, atol=0.05, rtol=0.01, min_ppc=50)
 
     

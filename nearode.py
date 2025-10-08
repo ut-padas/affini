@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from types import NoneType
 import numpy as np
 from adaptive_clustering import adaptive_cluster_algorithm, flatten_cluster_centers_with_gradient
 from nn_inference import NN_Inference
@@ -113,7 +112,7 @@ class NearODESurrogate:
 
 
         # Computational guarantee: check distance to all training points
-        if do_clustering == True and type(L_global) != NoneType and check_guarantee_N_times > 0:
+        if do_clustering == True and L_global is not None and check_guarantee_N_times > 0:
             for j in range(check_guarantee_N_times):
                 bad_features = self._test_guarantee(features, atol, L_global, alpha)
                 self.add_sources(features[bad_features])
@@ -227,9 +226,11 @@ class NearODESurrogate:
 
         if self._model_trained == True:
             if targets.ndim == 1:
-                predictions, unguaranteed_points = self.KNN_search.predict(targets.reshape(len(targets), 1), k, disp_time=disp_time, L_global=L, tol=self.err_tol, alpha=alpha)
+                predictions, unguaranteed_points = self.KNN_search.predict(targets.reshape(len(targets), 1),
+                        k, disp_time=disp_time, L_global=L, atol=self.atol, rtol=self.rtol, alpha=alpha)
             else:
-                predictions, unguaranteed_points = self.KNN_search.predict(targets, k, disp_time=disp_time, L_global=L, tol=self.atol, alpha=alpha)
+                predictions, unguaranteed_points = self.KNN_search.predict(targets, k,
+                        disp_time=disp_time, L_global=L, atol=self.atol, rtol=self.rtol, alpha=alpha)
 
             if np.sum(unguaranteed_points) > 3 * self.N_sources:
                 print('WARNING: too many points (3 * N_clusters) are outside of guarantee. Need more clusters.')

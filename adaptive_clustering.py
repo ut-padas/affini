@@ -1,8 +1,7 @@
 
-from types import NoneType
 import numpy as np
-from sklearn.cluster import KMeans
 from collections.abc import Callable
+from sklearn.cluster import KMeans
 
 
 # bi-tree structures that we use in the recursive algorithm implemented below
@@ -50,17 +49,19 @@ def adaptive_cluster_algorithm(
 
     k = 0 # counting number of clusters as we go
 
-    kmeans = KMeans(n_clusters=N_init_clusters)
-    labels = kmeans.fit_predict(training_data_normalized)
-    centroids_normalized = kmeans.cluster_centers_
+    # Call clustering library
+    km = KMeans(n_clusters=N_init_clusters)
+    labels = km.fit_predict(training_data_normalized)
+    centroids_normalized = km.cluster_centers_
     centroids = centroids_normalized * std + mean
+
     cluster_structure = np.empty(shape=N_init_clusters, dtype=object)
 
     for j in range(N_init_clusters):
 
         # Compute error inside each cluster
         params_in_cluster = training_data[labels==j]
-        if type(ode_solves) == NoneType:
+        if ode_solves is None:
             ode_solves_in_cluster = None
         else:
             ode_solves_in_cluster = ode_solves[labels==j]
@@ -82,7 +83,7 @@ def adaptive_cluster_algorithm(
         # error = np.max(dvec) / qc
 
         # Compute error by taking largest distances away and averaging errors
-        if type(ode_solves_in_cluster) == NoneType:
+        if ode_solves_in_cluster is None:
 
             # ODE solves not defined. We need to loop through and solve
             qivec = np.empty(shape=len(params_in_cluster))
@@ -156,14 +157,14 @@ def _adaptive_cluster_algorithm_helper(
     params_normalized = (params - mean) / std
 
     N = 2  # split in half
-    kmeans = KMeans(n_clusters=N)
-    labels = kmeans.fit_predict(params_normalized)
-    centroids_normalized = kmeans.cluster_centers_
+    km = KMeans(n_clusters=N)
+    labels = km.fit_predict(params_normalized)
+    centroids_normalized = km.cluster_centers_
     centroids = centroids_normalized * std + mean
 
     # First cluster (N=0)
     params_in_cluster_0 = params[labels==0]
-    if type(ode_solves) == NoneType:
+    if ode_solves is None:
         ode_solves_in_cluster_0 = None
     else:
         ode_solves_in_cluster_0 = ode_solves[labels==0]
@@ -208,7 +209,7 @@ def _adaptive_cluster_algorithm_helper(
 
 
     # Compute error by taking largest distances away and averaging errors
-    if type(ode_solves_in_cluster_0) == NoneType:
+    if ode_solves_in_cluster_0 is None:
 
         # ODE solves not defined. We need to loop through and solve
         qivec = np.empty(shape=len(params_in_cluster_0))
@@ -269,7 +270,7 @@ def _adaptive_cluster_algorithm_helper(
 
     # Second cluster (N=1)
     params_in_cluster_1 = params[labels==1]
-    if type(ode_solves) == NoneType:
+    if ode_solves is None:
         ode_solves_in_cluster_1 = None
     else:
         ode_solves_in_cluster_1 = ode_solves[labels==1]
@@ -314,7 +315,7 @@ def _adaptive_cluster_algorithm_helper(
 
 
     # Compute error by taking largest distances away and averaging errors
-    if type(ode_solves_in_cluster_1) == NoneType:
+    if ode_solves_in_cluster_1 is None:
 
         # ODE solves not defined. We need to loop through and solve
         qivec = np.empty(shape=len(params_in_cluster_1))
