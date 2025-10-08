@@ -2,6 +2,7 @@
 import numpy as np
 from collections.abc import Callable
 from sklearn.cluster import KMeans
+from kmedoids import KMedoids
 
 
 # bi-tree structures that we use in the recursive algorithm implemented below
@@ -50,7 +51,10 @@ def adaptive_cluster_algorithm(
     k = 0 # counting number of clusters as we go
 
     # Call clustering library
-    km = KMeans(n_clusters=N_init_clusters)
+    if len(training_data_normalized) > 0: # TODO: talk about which clustering algorithm to use
+        km = KMeans(n_clusters=N_init_clusters)
+    else:
+        km = KMedoids(n_clusters=N_init_clusters, metric='euclidean')
     labels = km.fit_predict(training_data_normalized)
     centroids_normalized = km.cluster_centers_
     centroids = centroids_normalized * std + mean
@@ -157,7 +161,10 @@ def _adaptive_cluster_algorithm_helper(
     params_normalized = (params - mean) / std
 
     N = 2  # split in half
-    km = KMeans(n_clusters=N)
+    if len(params_normalized) > 0: # TODO: talk about which clustering algorithm to use
+        km = KMeans(n_clusters=N)
+    else:
+        km = KMedoids(n_clusters=N, metric='euclidean')
     labels = km.fit_predict(params_normalized)
     centroids_normalized = km.cluster_centers_
     centroids = centroids_normalized * std + mean
@@ -228,7 +235,7 @@ def _adaptive_cluster_algorithm_helper(
 
     # put old points and new points together into a single list
     if len(new_qivec) > 0:
-        params_in_cluster_0 = np.row_stack((params_in_cluster_0, new_params_in_cluster_0))
+        params_in_cluster_0 = np.vstack((params_in_cluster_0, new_params_in_cluster_0))
         qivec = np.append(qivec, new_qivec)
         ode_solves_in_cluster_0 = qivec
 
@@ -334,7 +341,7 @@ def _adaptive_cluster_algorithm_helper(
 
     # put old points and new points together into a single list
     if len(new_qivec) > 0:
-        params_in_cluster_1 = np.row_stack((params_in_cluster_1, new_params_in_cluster_1))
+        params_in_cluster_1 = np.vstack((params_in_cluster_1, new_params_in_cluster_1))
         qivec = np.append(qivec, new_qivec)
         ode_solves_in_cluster_1 = qivec
     

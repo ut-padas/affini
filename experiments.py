@@ -466,7 +466,7 @@ if __name__ == '__main__':
     # 2D test
     elif d == 2 and 1:
         domain = np.array([[-3, 3], [-2, 2]])
-        test_2D(atol=0.05, rtol=0.01, N_init = 100000, domain=domain, min_ppc=40)
+        test_2D(atol=0.05, rtol=0.01, N_init = 1000000, domain=domain, min_ppc=40)
     
     # Borehole function (d=8)
     elif d == 8:
