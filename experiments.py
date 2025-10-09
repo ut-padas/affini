@@ -484,7 +484,7 @@ def convergence_test_2D(tolmat, N_init, domain, min_ppc=40):
 
 
 
-def test_8D(atol=0.2, rtol=0.01, N_init = 10000):
+def test_8D(atol=0.2, rtol=0.01, N_init = 10000, min_ppc = 40):
 
     domain = np.array([
         [0.05, 0.15],
@@ -500,12 +500,12 @@ def test_8D(atol=0.2, rtol=0.01, N_init = 10000):
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
             borehole_combined, domain, N_init, 'LHS', True,
-            N_init_clusters=30, atol = atol, rtol = rtol,
-            check_guarantee_N_times=0, disp_time = True)
+            N_init_clusters=30, atol = atol, rtol = rtol, min_ppc = min_ppc,
+            check_guarantee_N_times=0, disp_time = True, seed = 1234)
     
     # evaluate exact
     # pick some evaluation points using LHS
-    N_eval = 10000
+    N_eval = 100000
     l = domain[:,0]
     r = domain[:,1]
     sampler = qmc.LatinHypercube(d=len(domain))
@@ -515,14 +515,56 @@ def test_8D(atol=0.2, rtol=0.01, N_init = 10000):
     exact = np.zeros(len(pts))
     for j in range(len(exact)):
         exact[j] = borehole(pts[j])
-    interp, _ = interpolant.evaluate(pts, k=1, disp_time=True)
+    interp, bad_pts = interpolant.evaluate(pts, k=1, disp_time=True)
 
+    
     abs_error = np.abs(exact - interp)
-    print(f'Number of sources: {interpolant.N_sources}')
-    print(f'Max abs. error: {abs_error.max()}')
-    print(f'Avg abs. error: {abs_error.mean()}')
+    rel_error = abs_error / np.abs(exact)
+    good_abs_error = abs_error <= atol
+    good_rel_error = rel_error <= rtol
+    good_overall_error = np.logical_or(good_abs_error, good_rel_error)
+    bad_overall_error = np.logical_not(good_overall_error)
+    good_pts_inds = np.logical_not(bad_pts)
+
+    # sort the points outside of guarantee between those inside the error and those not
+    no_g_good_err = bad_pts & good_overall_error # 1 (yellow)
+    no_g_bad_err = bad_pts & bad_overall_error # 2 (orange)
+    # sort the points inside of guarantee as well
+    yes_g_good_err = good_pts_inds & good_overall_error # 3 (green)
+    yes_g_bad_err = good_pts_inds & bad_overall_error # 4 (red)
 
 
+
+    # display stats about errors
+    red_abs_errs = abs_error[yes_g_bad_err]
+    red_rel_errs = rel_error[yes_g_bad_err]
+    datavec = np.array([
+        N_init,
+        atol,
+        rtol,
+        interpolant.N_sources,
+        (np.sum(no_g_good_err)+np.sum(no_g_bad_err)) / len(pts),
+        np.sum(yes_g_good_err) / len(pts), 
+        np.sum(yes_g_bad_err) / len(pts),
+        np.max(red_abs_errs),
+        np.median(red_abs_errs),
+        np.sqrt(np.sum(red_abs_errs)/len(red_abs_errs)),
+        np.max(red_rel_errs),
+        np.median(red_rel_errs),
+        np.sqrt(np.sum(red_rel_errs)/len(red_rel_errs))
+    ])
+
+    return datavec
+
+
+def convergence_test_8D(tolmat, N_init, min_ppc=40):
+    datamat = np.empty((len(tolmat), 13))
+    for j, tols in enumerate(tolmat):
+        datamat[j] = test_8D(atol=tols[0], rtol=tols[1], N_init = N_init, min_ppc=min_ppc)
+    
+    print('\n')
+    print(generate_latex_table(datamat))
+    print('\n')
 
 
 def test_nd(domain, atol=0.01, rtol=0.01, N_init = 1000000, min_ppc = 50):
@@ -535,7 +577,7 @@ def test_nd(domain, atol=0.01, rtol=0.01, N_init = 1000000, min_ppc = 50):
     
     # evaluate exact
     # pick some evaluation points using LHS
-    N_eval = 1000
+    N_eval = 100000
     l = domain[:,0]
     r = domain[:,1]
     sampler = qmc.LatinHypercube(d=len(domain))
@@ -545,38 +587,72 @@ def test_nd(domain, atol=0.01, rtol=0.01, N_init = 1000000, min_ppc = 50):
     exact = np.zeros(len(pts))
     for j in range(len(exact)):
         exact[j] = dixon_price(pts[j])
-    interp, _ = interpolant.evaluate(pts, k=1, disp_time=True)
+    interp, bad_pts = interpolant.evaluate(pts, k=1, disp_time=True)
 
     abs_error = np.abs(exact - interp)
-    print(f'Number of sources: {interpolant.N_sources}')
-    print(f'Max abs. error: {abs_error.max()}')
-    print(f'Avg abs. error: {abs_error.mean()}')
+    rel_error = abs_error / np.abs(exact)
+    good_abs_error = abs_error <= atol
+    good_rel_error = rel_error <= rtol
+    good_overall_error = np.logical_or(good_abs_error, good_rel_error)
+    bad_overall_error = np.logical_not(good_overall_error)
+    good_pts_inds = np.logical_not(bad_pts)
+
+    # sort the points outside of guarantee between those inside the error and those not
+    no_g_good_err = bad_pts & good_overall_error # 1 (yellow)
+    no_g_bad_err = bad_pts & bad_overall_error # 2 (orange)
+    # sort the points inside of guarantee as well
+    yes_g_good_err = good_pts_inds & good_overall_error # 3 (green)
+    yes_g_bad_err = good_pts_inds & bad_overall_error # 4 (red)
+
+
+
+    # display stats about errors
+    red_abs_errs = abs_error[yes_g_bad_err]
+    red_rel_errs = rel_error[yes_g_bad_err]
+    datavec = np.array([
+        N_init,
+        atol,
+        rtol,
+        interpolant.N_sources,
+        (np.sum(no_g_good_err)+np.sum(no_g_bad_err)) / len(pts),
+        np.sum(yes_g_good_err) / len(pts), 
+        np.sum(yes_g_bad_err) / len(pts),
+        np.max(red_abs_errs),
+        np.median(red_abs_errs),
+        np.sqrt(np.sum(red_abs_errs)/len(red_abs_errs)),
+        np.max(red_rel_errs),
+        np.median(red_rel_errs),
+        np.sqrt(np.sum(red_rel_errs)/len(red_rel_errs))
+    ])
+
+    return datavec
 
 
 
 if __name__ == '__main__':
     
-    d = 2
+    d = 8
+    tolmat = np.array([
+        [0.1, 0.02],
+        [0.05, 0.01],
+        [0.025, 0.005],
+        [0.01, 0.002],
+        [0.005, 0.001]
+    ])
 
     # 1D test
     if d == 1 and 0:
         test_1D(atol=1e-3)
 
     # 2D test
-    elif d == 2 and 1:
+    elif d == 2 and 0:
         domain = np.array([[-3, 3], [-2, 2]])
-        tolmat = np.array([
-            [0.1, 0.02],
-            [0.05, 0.01],
-            [0.025, 0.005],
-            [0.01, 0.002],
-            [0.005, 0.001]
-        ])
         convergence_test_2D(tolmat, 400000, domain)
     
     # Borehole function (d=8)
-    elif d == 8 and 0:
-        test_8D(N_init=1000000, atol=5, rtol=0.01)
+    elif d == 8 and 1:
+        # test_8D(N_init=1000000, atol=5, rtol=0.01)
+        convergence_test_8D(tolmat, N_init=1000000)
 
     # Dixon-Price test
     elif 0:
