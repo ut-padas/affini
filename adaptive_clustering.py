@@ -41,6 +41,7 @@ def adaptive_cluster_algorithm(
     use_gradient: bool = False,
     unpack_log = [],
     ode_solves: np.ndarray = None, # if this is not none, uses these as solves. Otherwise runs eval_function every time
+    seed = None, # seed used for kmeans rng
     ):
 
     # normalize the training data
@@ -52,9 +53,9 @@ def adaptive_cluster_algorithm(
 
     # Call clustering library
     if len(training_data_normalized) > 0: # TODO: talk about which clustering algorithm to use
-        km = KMeans(n_clusters=N_init_clusters)
+        km = KMeans(n_clusters=N_init_clusters, random_state=seed)
     else:
-        km = KMedoids(n_clusters=N_init_clusters, metric='euclidean')
+        km = KMedoids(n_clusters=N_init_clusters, metric='euclidean', random_state=seed)
     labels = km.fit_predict(training_data_normalized)
     centroids_normalized = km.cluster_centers_
     centroids = centroids_normalized * std + mean
@@ -133,7 +134,7 @@ def adaptive_cluster_algorithm(
             k, cluster_structure[j] = _adaptive_cluster_algorithm_helper(
                     params_in_cluster, centroid_params, eval_function,
                     atol, rtol, min_ppc, use_gradient, unpack_log,
-                    ode_solves_in_cluster, k)
+                    ode_solves_in_cluster, k, seed)
 
     return k, cluster_structure
 
@@ -150,6 +151,7 @@ def _adaptive_cluster_algorithm_helper(
     unpack_log = [],
     ode_solves: np.ndarray = None,
     k: int = 0, # current cluster index (for recursive purposes)
+    seed = None,
 ):
 
     # normalize for clustering
@@ -162,9 +164,9 @@ def _adaptive_cluster_algorithm_helper(
 
     N = 2  # split in half
     if len(params_normalized) > 0: # TODO: talk about which clustering algorithm to use
-        km = KMeans(n_clusters=N)
+        km = KMeans(n_clusters=N, random_state=seed)
     else:
-        km = KMedoids(n_clusters=N, metric='euclidean')
+        km = KMedoids(n_clusters=N, metric='euclidean', random_state=seed)
     labels = km.fit_predict(params_normalized)
     centroids_normalized = km.cluster_centers_
     centroids = centroids_normalized * std + mean
@@ -271,7 +273,7 @@ def _adaptive_cluster_algorithm_helper(
         k, left = _adaptive_cluster_algorithm_helper(
                 params_in_cluster_0, centroid_params, eval_function,
                 atol, rtol, min_ppc, use_gradient, unpack_log,
-                ode_solves_in_cluster_0, k)
+                ode_solves_in_cluster_0, k, seed)
 
 
 
@@ -377,7 +379,7 @@ def _adaptive_cluster_algorithm_helper(
         k, right = _adaptive_cluster_algorithm_helper(
                 params_in_cluster_1, centroid_params, eval_function,
                 atol, rtol, min_ppc, use_gradient, unpack_log,
-                ode_solves_in_cluster_1, k)
+                ode_solves_in_cluster_1, k, seed)
 
     return k, ClusterTree(prev_centroid, left, right)
 

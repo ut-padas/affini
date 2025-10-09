@@ -47,6 +47,7 @@ class NearODESurrogate:
             # computational guarantee and recluster the ones that are not
         alpha = 1,
         disp_time = True,
+        seed = None,
 
     ):
         
@@ -91,7 +92,7 @@ class NearODESurrogate:
 
             # call clustering algorithm
             k, cluster_tree = adaptive_cluster_algorithm(features, oracle, atol, rtol, \
-                    N_init_clusters, min_ppc, True, [], labels)
+                    N_init_clusters, min_ppc, True, [], labels, seed)
             new_features, new_labels, new_gradients, new_hessians, new_dims = \
                     flatten_cluster_centers_with_gradient(k, nf, cluster_tree)
         
@@ -160,6 +161,7 @@ class NearODESurrogate:
             # computational guarantee and recluster the ones that are not
         alpha = 1,
         disp_time = True, # display time
+        seed = None,
 
     ):
         
@@ -191,7 +193,7 @@ class NearODESurrogate:
         if distribution == 'uniform':
             features = np.random.uniform(l, r, (N, p))
         elif distribution == 'LHS':
-            sampler = qmc.LatinHypercube(d=p)
+            sampler = qmc.LatinHypercube(d=p, seed=seed)
             features = sampler.random(n=N)
             features = qmc.scale(features, l, r)
 
@@ -203,7 +205,7 @@ class NearODESurrogate:
         
         # plug this into above function
         self.train_model_from_data(features, labels, gradients, do_clustering, oracle,
-                N_init_clusters, atol, rtol, min_ppc, check_guarantee_N_times, L, alpha, False)
+                N_init_clusters, atol, rtol, min_ppc, check_guarantee_N_times, L, alpha, False, seed)
 
         end_time = time.perf_counter()
         if disp_time == True:

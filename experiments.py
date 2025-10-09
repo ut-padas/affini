@@ -168,6 +168,62 @@ def dixon_price_combined(x):
     return dixon_price(x), grad_dixon_price(x)
 
 
+def generate_latex_table(data):
+
+    colstring = '|c|c|c||c|c|c|c||c|c|c|c|c|c|'
+    headers = ['$N_{init}$', 'atol', 'rtol',
+        '$N_{sources}$', '$p_{out}$', '$p_{in,good}$', '$p_{in,bad}$',
+        '$E_{max,abs}$', '$E_{med,abs}$', '$RMSE_{abs}$', '$E_{max,rel}$', '$E_{med,rel}$', '$RMSE_{rel}$']
+    headerstring = ''
+    for j, header in enumerate(headers):
+        headerstring += header
+        if j < len(headers) - 1:
+            headerstring += ' & '
+        else:
+            headerstring += '\\\\'
+
+    tablestr = f"""\
+\\begin{{table}}[]
+    \\centering
+    \\begin{{tabular}}{{{colstring}}}
+        \\hline
+        {headerstring}
+        \\hline\\hline
+"""
+    for row in data:
+        rowstr = '\t\t'
+        for j, entry in enumerate(row):
+            if j == 0 or j == 3:
+                rowstr += str(int(entry))
+            elif j == 1:
+                rowstr += str(entry)
+            elif j == 2:
+                rowstr += str(100.0 * entry) + '\\%'
+            elif j >= 4 and j <= 6:
+                rowstr += str(round(100 * entry, 2)) + '\\%'
+            elif j >= 7 and j <= 9:
+                rowstr += str(round(entry, 4))
+            elif j >= 10 and j <= 12:
+                rowstr += str(round(100 * entry, 4)) + '\\%'
+
+            if j < len(row) - 1:
+                rowstr += ' & '
+            else:
+                rowstr += ' \\\\\n'
+        tablestr += rowstr
+
+    tablestr += \
+f"""\
+        \\hline
+    \\end{{tabular}}
+    \\caption{{This is a caption!}}
+    \\label{{tab:new_tab}}
+\\end{{table}}\
+"""
+
+    print(tablestr)
+
+
 
 
 
@@ -217,7 +273,7 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
     interpolant.train_model_from_sampling(
             SHCF_combined, domain, N_init, 'LHS', True, N_init_clusters = 100,
             min_ppc = min_ppc, atol = atol, rtol = rtol,
-            check_guarantee_N_times=0, L=L)
+            check_guarantee_N_times=0, L=L, seed=1234)
     sources = interpolant.get_sources()
 
     x = np.linspace(domain[0,0], domain[0,1], 300)
@@ -355,11 +411,40 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
 
 
     # display stats about errors
-    print(f'# of red points: {np.sum(yes_g_bad_err)}')
+    print(f'Number of sources: {interpolant.N_sources}')
+    print(f'# of points outside of trust region: {np.sum(no_g_good_err)+np.sum(no_g_bad_err)}')
+    print(f'As a percentage: {(np.sum(no_g_good_err)+np.sum(no_g_bad_err)) / len(pts)}')
+    print(f'# of success points (inside trust region and good error): {np.sum(yes_g_good_err)}')
+    print(f'As a percentage: {np.sum(yes_g_good_err) / len(pts)}')
+    print(f'# of failure points (inside trust region but bad error): {np.sum(yes_g_bad_err)}')
+    print(f'As a percentage: {np.sum(yes_g_bad_err) / len(pts)}')
+    print('\nFor such failure points:')
     red_abs_errs = abs_error[yes_g_bad_err]
     red_rel_errs = rel_error[yes_g_bad_err]
     print(f'max abs error in red points: {np.max(red_abs_errs)}')
     print(f'max rel error in red points: {np.max(red_rel_errs)}')
+    datavec = np.array([
+        N_init,
+        atol,
+        rtol,
+        interpolant.N_sources,
+        (np.sum(no_g_good_err)+np.sum(no_g_bad_err)) / len(pts),
+        np.sum(yes_g_good_err) / len(pts), 
+        np.sum(yes_g_bad_err) / len(pts),
+        np.max(red_abs_errs),
+        np.median(red_abs_errs),
+        np.sqrt(np.sum(red_abs_errs)/len(red_abs_errs)),
+        np.max(red_rel_errs),
+        np.median(red_rel_errs),
+        np.sqrt(np.sum(red_rel_errs)/len(red_rel_errs))
+    ])
+
+    plt.figure()
+    plt.scatter(red_rel_errs, red_abs_errs, c='black', marker='x', s=3)
+    plt.title('Relative vs. Absolute Errors')
+    plt.xlabel('Rel err.')
+    plt.ylabel('Abs err.')
+
 
 
     # Why are there STILL points that don't achieve error?
@@ -381,7 +466,21 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
     plt.plot(lambdagrid, f, '-', label='Exact')
     plt.plot(lambdagrid, eta, '--', label='Interpolant')
     plt.xlim((-0.1,1.1))
-    plt.show()
+    # plt.show()
+
+
+    return datavec
+
+
+def convergence_test_2D(tolmat, N_init, domain, min_ppc=40):
+    datamat = np.empty((len(tolmat), 13))
+    for j, tols in enumerate(tolmat):
+        datamat[j] = test_2D(atol=tols[0], rtol=tols[1], N_init = N_init, domain=domain, min_ppc=min_ppc)
+    
+    print('\n')
+    print(generate_latex_table(datamat))
+    print('\n')
+
 
 
 
@@ -460,21 +559,29 @@ if __name__ == '__main__':
     d = 2
 
     # 1D test
-    if d == 1:
+    if d == 1 and 0:
         test_1D(atol=1e-3)
 
     # 2D test
     elif d == 2 and 1:
         domain = np.array([[-3, 3], [-2, 2]])
-        test_2D(atol=0.05, rtol=0.01, N_init = 1000000, domain=domain, min_ppc=40)
+        tolmat = np.array([
+            [0.1, 0.02],
+            [0.05, 0.01],
+            [0.025, 0.005],
+            [0.01, 0.002],
+            [0.005, 0.001]
+        ])
+        convergence_test_2D(tolmat, 400000, domain)
     
     # Borehole function (d=8)
-    elif d == 8:
-        test_8D(N_init=100000, atol=20, rtol=0.01)
+    elif d == 8 and 0:
+        test_8D(N_init=1000000, atol=5, rtol=0.01)
 
     # Dixon-Price test
-    else:
+    elif 0:
         domain = np.column_stack((np.zeros(d), np.ones(d)))
         test_nd(domain, N_init = 1000000, atol=0.05, rtol=0.01, min_ppc=50)
+
 
     
