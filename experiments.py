@@ -170,10 +170,10 @@ def dixon_price_combined(x):
 
 def generate_latex_table(data):
 
-    colstring = '|c|c|c||c|c|c|c||c|c|c|c|c|c|'
+    colstring = '|c|c|c||c|c|c|c||c|c|c|c|'
     headers = ['$N_{init}$', 'atol', 'rtol',
         '$N_{sources}$', '$p_{out}$', '$p_{in,good}$', '$p_{in,bad}$',
-        '$E_{max,abs}$', '$E_{med,abs}$', '$RMSE_{abs}$', '$E_{max,rel}$', '$E_{med,rel}$', '$RMSE_{rel}$']
+        '$\\|e\\|_\\infty$', '$e_{med}$', '$\\|e\\|_\\infty / \\|f\\|_\\infty$', '$\\|e\\|_2 / \\|f\\|_2$']
     headerstring = ''
     for j, header in enumerate(headers):
         headerstring += header
@@ -183,7 +183,7 @@ def generate_latex_table(data):
             headerstring += '\\\\'
 
     tablestr = f"""\
-\\begin{{table}}[]
+\\begin{{table}}[h!]
     \\centering
     \\begin{{tabular}}{{{colstring}}}
         \\hline
@@ -201,10 +201,8 @@ def generate_latex_table(data):
                 rowstr += str(100.0 * entry) + '\\%'
             elif j >= 4 and j <= 6:
                 rowstr += str(round(100 * entry, 2)) + '\\%'
-            elif j >= 7 and j <= 9:
+            elif j >= 7:
                 rowstr += str(round(entry, 4))
-            elif j >= 10 and j <= 12:
-                rowstr += str(round(100 * entry, 4)) + '\\%'
 
             if j < len(row) - 1:
                 rowstr += ' & '
@@ -347,26 +345,14 @@ def test_2D(atol=0.01, rtol=0.01, N_init = 50000, domain=np.array([[-3,3],[-2,2]
     # plt.show()
     # rel_error = abs_error / np.abs(zz_exact)
 
-    # Plot of relative errors
+    # Plot of relative vs absolute errors
     if 0:
-        rel_error = abs_error / zz_exact
-        plt.figure()
-        plt.pcolormesh(xv, yv, rel_error, cmap='viridis')
-        plt.title('Relative Errors')
-        plt.colorbar()
-        plt.scatter(sources[:,0], sources[:,1], c='red', marker='o', s=2)
-        plt.xlabel('$x_1$')
-        plt.ylabel('$x_2$')
-        plt.show()
-
-        # Plot of relative vs absolute errors
         plt.figure()
         plt.scatter(rel_error, np.log10(abs_error), c='black', marker='x', s=2)
         plt.title('Relative vs. log Absolute Errors')
         plt.xlabel('Rel err.')
         plt.ylabel('log Abs err.')
         plt.show()
-
 
 
 
@@ -567,6 +553,8 @@ def convergence_test_8D(tolmat, N_init, min_ppc=40):
     print('\n')
 
 
+
+
 def test_nd(domain, atol=0.01, rtol=0.01, N_init = 1000000, min_ppc = 50):
 
     interpolant = NearODESurrogate()
@@ -588,6 +576,7 @@ def test_nd(domain, atol=0.01, rtol=0.01, N_init = 1000000, min_ppc = 50):
     for j in range(len(exact)):
         exact[j] = dixon_price(pts[j])
     interp, bad_pts = interpolant.evaluate(pts, k=1, disp_time=True)
+    interp = interp.flatten()
 
     abs_error = np.abs(exact - interp)
     rel_error = abs_error / np.abs(exact)
@@ -604,34 +593,66 @@ def test_nd(domain, atol=0.01, rtol=0.01, N_init = 1000000, min_ppc = 50):
     yes_g_good_err = good_pts_inds & good_overall_error # 3 (green)
     yes_g_bad_err = good_pts_inds & bad_overall_error # 4 (red)
 
-
-
     # display stats about errors
     red_abs_errs = abs_error[yes_g_bad_err]
     red_rel_errs = rel_error[yes_g_bad_err]
-    datavec = np.array([
-        N_init,
-        atol,
-        rtol,
-        interpolant.N_sources,
-        (np.sum(no_g_good_err)+np.sum(no_g_bad_err)) / len(pts),
-        np.sum(yes_g_good_err) / len(pts), 
-        np.sum(yes_g_bad_err) / len(pts),
-        np.max(red_abs_errs),
-        np.median(red_abs_errs),
-        np.sqrt(np.sum(red_abs_errs)/len(red_abs_errs)),
-        np.max(red_rel_errs),
-        np.median(red_rel_errs),
-        np.sqrt(np.sum(red_rel_errs)/len(red_rel_errs))
-    ])
+    red_true_vals = interp[yes_g_bad_err]
+    if len(red_abs_errs > 0):
+        datavec = np.array([
+            # section 1: initial values
+            N_init,
+            atol,
+            rtol,
+            # section 2: point results
+            interpolant.N_sources,
+            (np.sum(no_g_good_err)+np.sum(no_g_bad_err)) / len(pts),
+            np.sum(yes_g_good_err) / len(pts), 
+            np.sum(yes_g_bad_err) / len(pts),
+            # section 3: errors for failure points
+            np.max(red_abs_errs), # max abs error
+            np.median(red_abs_errs), # median abs error
+            np.linalg.norm(red_abs_errs, np.inf) / np.linalg.norm(red_true_vals, np.inf), # l-inf rel error
+            np.linalg.norm(red_abs_errs, 2) / np.linalg.norm(red_true_vals, 2), # l2 rel error
+        ])
+    else:
+        datavec = np.array([
+            N_init,
+            atol,
+            rtol,
+            interpolant.N_sources,
+            (np.sum(no_g_good_err)+np.sum(no_g_bad_err)) / len(pts),
+            np.sum(yes_g_good_err) / len(pts), 
+            np.sum(yes_g_bad_err) / len(pts),
+            0,
+            0,
+            0,
+            0,
+        ])
 
     return datavec
+
+
+def convergence_test_nd(tolmat, d, N_init, min_ppc=100):
+    
+    domain = np.column_stack((np.zeros(d), np.ones(d)))
+    datamat = np.empty((len(tolmat), 11))
+    for j, tols in enumerate(tolmat):
+        datamat[j] = test_nd(domain, atol=tols[0], rtol=tols[1], N_init = N_init, min_ppc=min_ppc)
+    
+    print('\n')
+    print(generate_latex_table(datamat))
+    print('\n')
+
+
+
+
+
+
 
 
 
 if __name__ == '__main__':
     
-    d = 8
     tolmat = np.array([
         [0.1, 0.02],
         [0.05, 0.01],
@@ -641,23 +662,25 @@ if __name__ == '__main__':
     ])
 
     # 1D test
-    if d == 1 and 0:
+    if 0:
         test_1D(atol=1e-3)
 
     # 2D test
-    elif d == 2 and 0:
+    elif 0:
         domain = np.array([[-3, 3], [-2, 2]])
         convergence_test_2D(tolmat, 400000, domain)
     
     # Borehole function (d=8)
-    elif d == 8 and 1:
+    elif 0:
         # test_8D(N_init=1000000, atol=5, rtol=0.01)
         convergence_test_8D(tolmat, N_init=1000000)
 
     # Dixon-Price test
-    elif 0:
-        domain = np.column_stack((np.zeros(d), np.ones(d)))
-        test_nd(domain, N_init = 1000000, atol=0.05, rtol=0.01, min_ppc=50)
+    elif 1:
+        # domain = np.column_stack((np.zeros(d), np.ones(d)))
+        # test_nd(domain, N_init = 1000000, atol=0.05, rtol=0.01, min_ppc=50)
+        d = 2
+        convergence_test_nd(tolmat, d=d, N_init = 1000000)
 
 
     

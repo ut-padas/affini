@@ -22,18 +22,11 @@ class NN_Inference:
         # --- INPUT ERROR CHECKING ---
 
         # check that length of vectors is correct
-        self._mf, self._nf = features.shape
-        self._ml           = len(labels)
-
-        if gradients is not None:
-            self._mg, self._ng = gradients.shape
-            if self._nf != self._ng:
-                raise ValueError('Number of features does not match length of each gradient vector')
-            if self._mf != self._mg:
-                raise ValueError('Features and gradients has a mismatching size of points')
-        if self._mf != self._ml:
-            raise ValueError('Features and labels has a mismatching size of points')
-        
+        p1, n1 = features.shape
+        p2, m1 = labels.shape
+        p3, n2, m2 = gradients.shape
+    
+        # TODO do some checking
 
         # save data
         self.features = features
@@ -41,9 +34,12 @@ class NN_Inference:
         self.gradients = gradients
         self.hessians = hessians
         self.dims = dims
+        self.P = p3
+        self.N = n2
+        self.M = m2
 
         # build FAISS index
-        self._faiss_index = faiss.IndexFlatL2(self._nf)
+        self._faiss_index = faiss.IndexFlatL2(self.N)
         self._faiss_index.add(features)
 
 
@@ -75,22 +71,22 @@ class NN_Inference:
                     targets_unlog[:,j] = 10 ** targets_unlog[:,j]
                     features_unlog[:,j] = 10 ** features_unlog[:,j]
         
-        predictions = np.zeros(len(targets))
+        predictions = np.zeros((len(targets),self.M)) # this should be a matrix
         for j in range(k):
             if self.gradients is None:
                 # gradient not specified; use only nearest neighbor
                 predictions += self.labels[I[:,j]]
             else:
                 distance_vecs = targets_unlog - features_unlog[I[:,j]]
-                predictions += self.labels[I[:,j]] + np.sum(self.gradients[I[:,j]] * distance_vecs, axis=1)
+                predictions += self.labels[I[:,j]] + np.einsum('ijk,ij->ik', self.gradients[I[:,j]], distance_vecs)
 
         # check for points that are outside the theoretical guarantee
+        # FAISS distances are squared, so do not consider square root on rhs
         if (atol is not None and rtol is not None and k==1):
             local_atols = np.minimum(self.dims[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
-            local_rtols = np.minimum(self.dims[I[:,0]] ** 2, 2 * rtol * predictions / (alpha * self.hessians[I[:,0]]))
+            local_rtols = np.minimum(self.dims[I[:,0]] ** 2, 2 * rtol * np.linalg.norm(predictions, 2, axis=1) / (alpha * self.hessians[I[:,0]]))
             good_points = (D[:,0] < np.maximum(local_atols, local_rtols))
         elif (atol is not None and L_global is not None and k==1):
-            # FAISS distances are squared, so do not consider square root on rhs
             local_tols = np.minimum(self.dims[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
             global_tol = 2 * atol / L_global
             good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
@@ -111,9 +107,9 @@ class NN_Inference:
 
 
     def add_extra_features(self, new_features, new_labels, new_gradients, new_hessians, new_dims):
-        self.features = np.row_stack((self.features, new_features))
+        self.features = np.vstack((self.features, new_features))
         self.labels = np.append(self.labels, new_labels)
-        self.gradients = np.row_stack((self.gradients, new_gradients))
+        self.gradients = np.vstack((self.gradients, new_gradients))
         self.hessians = np.append(self.hessians, new_hessians)
         self.dims = np.append(self.dims, new_dims)
         self._faiss_index.add(new_features)

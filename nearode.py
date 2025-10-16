@@ -94,7 +94,7 @@ class NearODESurrogate:
             k, cluster_tree = adaptive_cluster_algorithm(features, oracle, atol, rtol, \
                     N_init_clusters, min_ppc, True, [], labels, seed)
             new_features, new_labels, new_gradients, new_hessians, new_dims = \
-                    flatten_cluster_centers_with_gradient(k, nf, cluster_tree)
+                    flatten_cluster_centers_with_gradient(k, nf, 1, cluster_tree)
         
 
         else:
