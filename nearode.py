@@ -53,31 +53,22 @@ class NearODESurrogate:
         
         start_time = time.perf_counter()
         
-        ### CHECK INPUTS
-        # features and gradients should have the same shape
-        # labels should have same length
-        if features.ndim != 2:
-            # throw error for wrong number of dimensions
-            return -1
-        if gradients.ndim != 2:
-            # throw error for wrong number of dimensions
-            return -1
-        if features.shape != gradients.shape:
-            # throw error for shapes not matching
-            return -1
-        mf, nf = features.shape
-        if labels.ndim != 1:
-            # throw error for wrong number of dimensions
-            return -1
-        if mf != len(labels):
-            # throw error for number of outputs not matching number of inputs
-            return -1
+        # TODO: check inputs
+        pf, n = features.shape
+        pl, m = labels.shape
+        pg, mg, ng = gradients.shape
+        if pf != pg or pl != pg:
+            print('Length of inputs does not match')
+        if n != ng:
+            print('Length of input dimension does not match gradients')
+        if m != mg:
+            print('Length of output dimension does not match gradients')
         
         self.atol = atol
         self.rtol = rtol
         self.oracle = oracle
-        self.nf = nf
-        self.mf = mf
+        self.n = n
+        self.m = m
 
 
         # Cluster if user selects the option
@@ -92,9 +83,10 @@ class NearODESurrogate:
 
             # call clustering algorithm
             k, cluster_tree = adaptive_cluster_algorithm(features, oracle, atol, rtol, \
-                    N_init_clusters, min_ppc, True, [], labels, seed)
+                    N_init_clusters, min_ppc, True, labels, seed)
+            
             new_features, new_labels, new_gradients, new_hessians, new_dims = \
-                    flatten_cluster_centers_with_gradient(k, nf, 1, cluster_tree)
+                    flatten_cluster_centers_with_gradient(k, n, m, cluster_tree)
         
 
         else:
@@ -144,6 +136,7 @@ class NearODESurrogate:
         # sampling parameters (TBD)
         # need to define domain, # of parameters, sampling distribution, etc.
         domain: np.ndarray,
+        m: int, # output dimension (input dimension specified by domain)
         N: int, # number of samples
         distribution = 'uniform', # type of distribution to sample from (either uniform or LHS for now)
 
@@ -172,12 +165,12 @@ class NearODESurrogate:
             # throw error since domain is not a matrix
             return -1
         if domain.ndim == 1:
-            p = 1
+            n = 1
             q = len(domain)
             l = domain[0]
             r = domain[1]
         else:
-            p, q = domain.shape
+            n, q = domain.shape
             l = domain[:,0]
             r = domain[:,1]
         if q != 2:
@@ -191,15 +184,15 @@ class NearODESurrogate:
             return -1
         
         if distribution == 'uniform':
-            features = np.random.uniform(l, r, (N, p))
+            features = np.random.uniform(l, r, (N, n))
         elif distribution == 'LHS':
-            sampler = qmc.LatinHypercube(d=p, seed=seed)
+            sampler = qmc.LatinHypercube(d=n, seed=seed)
             features = sampler.random(n=N)
             features = qmc.scale(features, l, r)
 
         # do solves (maybe this isn't necessary but it's certainly easier)
-        labels = np.empty(len(features))
-        gradients = np.empty_like(features)
+        labels = np.empty((len(features),m))
+        gradients = np.empty((len(features),m,n))
         for jj, feature in enumerate(features):
             labels[jj], gradients[jj] = oracle(feature)
         
@@ -261,7 +254,7 @@ class NearODESurrogate:
 
     def _test_guarantee(self, targets, tol, L_global, alpha):
         D, I = self.KNN_search._faiss_index.search(targets, 1)
-        local_tols = np.minimum(self.KNN_search.dims[I[:,0]] ** 2, 2 * tol / (alpha * self.KNN_search.hessians[I[:,0]]))
+        local_tols = np.minimum(self.KNN_search.trust_radii[I[:,0]] ** 2, 2 * tol / (alpha * self.KNN_search.hessians[I[:,0]]))
         global_tol = 2 * tol / L_global
         good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
         return np.logical_not(good_points)

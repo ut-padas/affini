@@ -16,7 +16,7 @@ class NN_Inference:
         labels: np.ndarray,
         gradients: np.ndarray = None,
         hessians: np.ndarray = None,
-        dims: np.ndarray = None
+        trust_radii: np.ndarray = None
         ):
         
         # --- INPUT ERROR CHECKING ---
@@ -24,7 +24,7 @@ class NN_Inference:
         # check that length of vectors is correct
         p1, n1 = features.shape
         p2, m1 = labels.shape
-        p3, n2, m2 = gradients.shape
+        p3, m2, n2 = gradients.shape
     
         # TODO do some checking
 
@@ -33,10 +33,10 @@ class NN_Inference:
         self.labels = labels
         self.gradients = gradients
         self.hessians = hessians
-        self.dims = dims
+        self.trust_radii = trust_radii
         self.P = p3
-        self.N = n2
         self.M = m2
+        self.N = n2
 
         # build FAISS index
         self._faiss_index = faiss.IndexFlatL2(self.N)
@@ -78,20 +78,20 @@ class NN_Inference:
                 predictions += self.labels[I[:,j]]
             else:
                 distance_vecs = targets_unlog - features_unlog[I[:,j]]
-                predictions += self.labels[I[:,j]] + np.einsum('ijk,ij->ik', self.gradients[I[:,j]], distance_vecs)
+                predictions += self.labels[I[:,j]] + np.einsum('ijk,ik->ij', self.gradients[I[:,j]], distance_vecs)
 
         # check for points that are outside the theoretical guarantee
         # FAISS distances are squared, so do not consider square root on rhs
         if (atol is not None and rtol is not None and k==1):
-            local_atols = np.minimum(self.dims[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
-            local_rtols = np.minimum(self.dims[I[:,0]] ** 2, 2 * rtol * np.linalg.norm(predictions, 2, axis=1) / (alpha * self.hessians[I[:,0]]))
+            local_atols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
+            local_rtols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * rtol * np.linalg.norm(predictions, 2, axis=1) / (alpha * self.hessians[I[:,0]]))
             good_points = (D[:,0] < np.maximum(local_atols, local_rtols))
         elif (atol is not None and L_global is not None and k==1):
-            local_tols = np.minimum(self.dims[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
+            local_tols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
             global_tol = 2 * atol / L_global
             good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
         elif (atol is not None and k==1):
-            local_tols = np.minimum(self.dims[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
+            local_tols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
             good_points = (D[:,0] < local_tols)
         else:
             good_points = np.full(len(D), True)
@@ -111,6 +111,6 @@ class NN_Inference:
         self.labels = np.append(self.labels, new_labels)
         self.gradients = np.vstack((self.gradients, new_gradients))
         self.hessians = np.append(self.hessians, new_hessians)
-        self.dims = np.append(self.dims, new_dims)
+        self.trust_radii = np.append(self.trust_radii, new_dims)
         self._faiss_index.add(new_features)
     

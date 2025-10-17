@@ -16,13 +16,13 @@ class ClusterTree:
 
 class Cluster:
 
-    def __init__(self, index, params, QoI_value, gradient, hessian, dim):
-        self.index = index
-        self.params = params
-        self.QoI_value = QoI_value
-        self.gradient = gradient
-        self.hessian = hessian
-        self.dim = dim
+    def __init__(self, index, params, QoI_value, gradient, hessian, radius):
+        self.index = index # leaf index
+        self.params = params # centroids of the cluster
+        self.QoI_value = QoI_value # output value 
+        self.gradient = gradient # gradient value
+        self.hessian = hessian # hessian
+        self.radius = radius # trust radius TODO: change name
 
     def __str__(self):
         return f'k={self.index}\tn_h={10**self.params[0]:.3f}\tT={10**self.params[1]:.3f}\tG0={self.params[2]:.6f}'
@@ -40,15 +40,27 @@ def adaptive_cluster_algorithm(
     rtol: float = None,
     N_init_clusters: int = 10, # number of initial clusters to split into
     min_ppc: int = 1, # minimum number of points used in a cluster (to measure error)
-    use_gradient: bool = False,
-    unpack_log = [],
+    use_gradient: bool = False, #TODO: make sure this runs (todo for a masters student)
     function_vals: np.ndarray = None, # if this is not none, uses these as solves. Otherwise runs eval_function every time
     seed = None, # seed used for kmeans rng
     ):
 
-    # check dimensions of function vals
+    # check dimensions of training data; add another if necessary
+    if training_data.ndim == 1:
+        training_data = np.expand_dims(training_data, axis=1)
+    
+    # also check dimensions of function vals
+    # do solves if necessary. TODO: specify dimension of output of eval_function
+    if function_vals is None:
+        function_vals = np.zeros(len(training_data))
+        if use_gradient == False:
+            for j, row in enumerate(training_data):
+                function_vals[j] = eval_function(row)
+        else:
+            for j, row in enumerate(training_data):
+                function_vals[j], _ = eval_function(row)
     if function_vals.ndim == 1:
-        function_vals = function_vals.reshape(len(function_vals),1)
+        function_vals = np.expand_dims(function_vals, axis=1)
 
     # normalize the training data
     mean = training_data.mean(axis=0)
@@ -72,16 +84,14 @@ def adaptive_cluster_algorithm(
 
         # Compute error inside each cluster
         params_in_cluster = training_data[labels==j]
-        if function_vals is None:
-            function_vals_in_cluster = None
-        else:
-            function_vals_in_cluster = function_vals[labels==j]
+        fvals_cluster = function_vals[labels==j]
             
         # Compute exact value and gradient at cluster centroid
         # NOTE: if using KMedoids, we don't have to do a solve. Just pull the value
         centroid_params = centroids[j]
         if use_gradient == True:
             fval_c, grad_c = eval_function(centroid_params)
+            # TODO: make this solve vectorized in one go (for scaling)
             if np.isscalar(grad_c):
                 grad_c = np.array([grad_c])
             if grad_c.ndim == 1:
@@ -91,68 +101,28 @@ def adaptive_cluster_algorithm(
             grad_c = None
         if np.isscalar(fval_c):
             fval_c = np.array([fval_c])
-        
-
-        # Compute error via max_{j=1,...,ss}(q_c - q_j) / q_c
-        # param_sample = params_in_cluster.sample(ss_new)
-        # dvec = np.empty(shape=ss_new)
-        # for i, row in param_sample.reset_index(drop=True).iterrows():
-        #     qi = self._solve_nelson_network(row.to_numpy(), x0, QoI, time)
-        #     dvec[i] = np.abs(qc-qi)
-        # error = np.max(dvec) / qc
 
         # Compute error by taking largest distances away and averaging errors
-        if function_vals_in_cluster is None:
-
-            # ODE solves not defined. We need to loop through and solve
-            fval_vec = np.empty(shape=(len(params_in_cluster),len(fval_c)))
-            for i, row in enumerate(params_in_cluster):
-                # compute true value (save in qi)
-                if use_gradient == False:
-                    f = eval_function(row)
-                elif use_gradient == True:
-                    f, _ = eval_function(row)
-                if np.isscalar(f):
-                    fval_vec[i] = np.array([f])
-                else:
-                    fval_vec[i] = f
-
-        else:
-
-            # ODE solves are defined. No need to loop through
-            # Also avoid the sample size and use every single point (we get away with it for free)
-            fval_vec = function_vals_in_cluster
-
-        # using true value, compute error from qc
         if use_gradient == False:
-            evec = np.linalg.norm(fval_c-fval_vec, 2, axis=1) # TODO: what norm to use?
+            evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
         elif use_gradient == True:
-            # make sure we compute in euclidean, non-log scaled distance
-            # use unpack_log to know which variables to do
-            params_nonlog = np.copy(params_in_cluster)
-            centroid_nonlog = np.copy(centroid_params)
-            if len(unpack_log) > 0:
-                for l, val in enumerate(unpack_log):
-                    if val == True:
-                        params_nonlog[:,l] = 10 ** params_nonlog[:,l]
-                        centroid_nonlog[l] = 10 ** centroid_nonlog[l]
-            distance = params_nonlog - centroid_nonlog
-            evec = np.linalg.norm(fval_vec - (fval_c + np.matmul(distance, grad_c)), 2, axis=1) # TODO: what norm to use?
+            # make sure we compute in euclidean distance
+            distance = params_in_cluster - centroid_params
+            evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
 
         abs_error = np.max(evec)
 
-        if (rtol is not None and abs_error < np.min(np.linalg.norm(fval_vec, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
+        if (rtol is not None and abs_error < np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
             # Tolerance is good; save values in cluster column
-            dim = np.max(np.linalg.norm(distance, axis=1))
-            hessian = 2 / (dim**2) * np.max(evec)
-            cluster_structure[j] = Cluster(k, centroid_params, fval_c, grad_c, hessian, dim)
+            radius = np.max(np.linalg.norm(distance, axis=1))
+            hessian = 2 / (radius**2) * np.max(evec)
+            cluster_structure[j] = Cluster(k, centroid_params, fval_c, grad_c, hessian, radius)
             k += 1
         else:
             # Split cluster in half (recursive step)
             k, cluster_structure[j] = _adaptive_cluster_algorithm_helper(
                     params_in_cluster, centroid_params, eval_function,
-                    atol, rtol, min_ppc, use_gradient, unpack_log,
-                    function_vals_in_cluster, k, seed)
+                    atol, rtol, min_ppc, use_gradient, fvals_cluster, k, seed)
 
     return k, cluster_structure
 
@@ -166,7 +136,6 @@ def _adaptive_cluster_algorithm_helper(
     rtol = None,
     min_ppc: int = 1,
     use_gradient: bool = False,
-    unpack_log = [],
     function_vals: np.ndarray = None,
     k: int = 0, # current cluster index (for recursive purposes)
     seed = None,
@@ -191,10 +160,7 @@ def _adaptive_cluster_algorithm_helper(
 
     # First cluster (N=0)
     params_in_cluster_0 = params[labels==0]
-    if function_vals is None:
-        function_vals_in_cluster_0 = None
-    else:
-        function_vals_in_cluster_0 = function_vals[labels==0]
+    fvals_cluster = function_vals[labels==0]
 
     centroid_params = centroids[0]
     if use_gradient == True:
@@ -245,77 +211,43 @@ def _adaptive_cluster_algorithm_helper(
         new_fval_vec = []
 
 
-    # Compute error by taking largest distances away and averaging errors
-    if function_vals_in_cluster_0 is None:
-
-        # ODE solves not defined. We need to loop through and solve
-        fval_vec = np.empty(shape=(len(params_in_cluster_0),len(fval_c)))
-        for i, row in enumerate(params_in_cluster_0):
-            # compute true value (save in qi)
-            if use_gradient == False:
-                f = eval_function(row)
-            elif use_gradient == True:
-                f, _ = eval_function(row)
-            if np.isscalar(f):
-                fval_vec[i] = np.array([f])
-            else:
-                fval_vec[i] = f
-
-    else:
-
-        # ODE solves are defined. No need to loop through
-        # Also avoid the sample size and use every single point (we get away with it for free)
-        fval_vec = function_vals_in_cluster_0
-
     # put old points and new points together into a single list
     if len(new_fval_vec) > 0:
         params_in_cluster_0 = np.vstack((params_in_cluster_0, new_params_in_cluster_0))
-        fval_vec = np.vstack((fval_vec, new_fval_vec))
-        function_vals_in_cluster_0 = fval_vec
+        fvals_cluster = np.vstack((fvals_cluster, new_fval_vec))
 
     # using true value, compute error from qc
     if use_gradient == False:
-        evec = np.linalg.norm(fval_c-fval_vec, 2, axis=1) # TODO: what norm to use?
+        evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
     elif use_gradient == True:
         # make sure we compute in euclidean, non-log scaled distance
-        # use unpack_log to know which variables to do
-        params_nonlog = np.copy(params_in_cluster_0)
-        centroid_nonlog = np.copy(centroid_params)
-        if len(unpack_log) > 0:
-            for l, val in enumerate(unpack_log):
-                if val == True:
-                    params_nonlog[:,l] = 10 ** params_nonlog[:,l]
-                    centroid_nonlog[l] = 10 ** centroid_nonlog[l]
-        distance = params_nonlog - centroid_nonlog
-        evec = np.linalg.norm(fval_vec - (fval_c + np.matmul(distance, grad_c)), 2, axis=1) # TODO: what norm to use?
+        distance = params_in_cluster_0 - centroid_params
+        evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
         
 
     abs_error = np.max(evec)
 
-    dim = np.max(np.linalg.norm(distance, axis=1))
-    if dim == 0:
+    radius = np.max(np.linalg.norm(distance, axis=1))
+    if radius == 0:
         # Dead branch of the tree. Not enough points to compute error
         left = None
-    elif (rtol is not None and abs_error < np.min(np.abs(fval_vec)) * rtol) or (atol is not None and abs_error < atol):
+    elif (rtol is not None and abs_error < np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
         # Error good
-        hessian = 2 / (dim**2) * np.max(evec)
-        left = Cluster(k, centroid_params, fval_c, grad_c, hessian, dim)
+        hessian = 2 / (radius**2) * np.max(evec)
+        left = Cluster(k, centroid_params, fval_c, grad_c, hessian, radius)
         k += 1
     else:
         # Error too large; split cluster in half (recursive step)
         k, left = _adaptive_cluster_algorithm_helper(
                 params_in_cluster_0, centroid_params, eval_function,
-                atol, rtol, min_ppc, use_gradient, unpack_log,
-                function_vals_in_cluster_0, k, seed)
+                atol, rtol, min_ppc, use_gradient,
+                fvals_cluster, k, seed)
 
 
 
     # Second cluster (N=1)
     params_in_cluster_1 = params[labels==1]
-    if function_vals is None:
-        function_vals_in_cluster_1 = None
-    else:
-        function_vals_in_cluster_1 = function_vals[labels==1]
+    fvals_cluster = function_vals[labels==1]
     
     centroid_params = centroids[1]
     if use_gradient == True:
@@ -367,77 +299,45 @@ def _adaptive_cluster_algorithm_helper(
         new_fval_vec = []
 
 
-    # Compute error by taking largest distances away and averaging errors
-    if function_vals_in_cluster_1 is None:
-
-        # ODE solves not defined. We need to loop through and solve
-        fval_vec = np.empty(shape=(len(params_in_cluster_1),len(fval_c)))
-        for i, row in enumerate(params_in_cluster_1):
-            # compute true value (save in qi)
-            if use_gradient == False:
-                f = eval_function(row)
-            elif use_gradient == True:
-                f, _ = eval_function(row)
-            if np.isscalar(f):
-                fval_vec[i] = np.array([f])
-            else:
-                fval_vec[i] = f
-
-    else:
-
-        # ODE solves are defined. No need to loop through
-        # Also avoid the sample size and use every single point (we get away with it for free)
-        fval_vec = function_vals_in_cluster_1
-
     # put old points and new points together into a single list
     if len(new_fval_vec) > 0:
         params_in_cluster_1 = np.vstack((params_in_cluster_1, new_params_in_cluster_1))
-        fval_vec = np.vstack((fval_vec, new_fval_vec))
-        function_vals_in_cluster_1 = fval_vec
+        fvals_cluster = np.vstack((fvals_cluster, new_fval_vec))
     
 
     # using true value, compute error from qc
     if use_gradient == False:
-        evec = np.linalg.norm(fval_c-fval_vec, 2, axis=1) # TODO: what norm to use?
+        evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
     elif use_gradient == True:
         # make sure we compute in euclidean, non-log scaled distance
-        # use unpack_log to know which variables to do
-        params_nonlog = np.copy(params_in_cluster_1)
-        centroid_nonlog = np.copy(centroid_params)
-        if len(unpack_log) > 0:
-            for l, val in enumerate(unpack_log):
-                if val == True:
-                    params_nonlog[:,l] = 10 ** params_nonlog[:,l]
-                    centroid_nonlog[l] = 10 ** centroid_nonlog[l]
-        distance = params_nonlog - centroid_nonlog
-        evec = np.linalg.norm(fval_vec - (fval_c + np.matmul(distance, grad_c)), 2, axis=1) # TODO: what norm to use?
+        distance = params_in_cluster_1 - centroid_params
+        evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
 
 
     abs_error = np.max(evec)
 
-    dim = np.max(np.linalg.norm(distance, axis=1))
-    if dim == 0:
+    radius = np.max(np.linalg.norm(distance, axis=1))
+    if radius == 0:
         # Dead branch of the tree. Not enough variance of points to compute error (or a single point).
         right = None
-    elif (rtol is not None and abs_error < np.min(np.abs(fval_vec)) * rtol) or (atol is not None and abs_error < atol):
-        hessian = 2 / (dim**2) * np.max(evec)
-        right = Cluster(k, centroid_params, fval_c, grad_c, hessian, dim)
+    elif (rtol is not None and abs_error <= np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
+        hessian = 2 / (radius**2) * np.max(evec)
+        right = Cluster(k, centroid_params, fval_c, grad_c, hessian, radius)
         k += 1
     else:
         # Error too large; split cluster in half (recursive step)
         k, right = _adaptive_cluster_algorithm_helper(
                 params_in_cluster_1, centroid_params, eval_function,
-                atol, rtol, min_ppc, use_gradient, unpack_log,
-                function_vals_in_cluster_1, k, seed)
+                atol, rtol, min_ppc, use_gradient, fvals_cluster, k, seed)
 
     return k, ClusterTree(prev_centroid, left, right)
 
 
 
-def flatten_cluster_centers_with_gradient(nc, n_p, m, tree):
-    centroids = np.zeros(shape=(nc, n_p))
+def flatten_cluster_centers_with_gradient(nc, n, m, tree):
+    centroids = np.zeros(shape=(nc, n))
     QoI_values = np.zeros(shape=(nc, m))
-    gradients = np.zeros(shape=(nc, n_p, m))
+    gradients = np.zeros(shape=(nc, m, n))
     hessians = np.zeros(shape=nc)
     dims = np.zeros(shape=nc)
 
@@ -445,16 +345,10 @@ def flatten_cluster_centers_with_gradient(nc, n_p, m, tree):
     for val in tree:
         if type(val) == Cluster:
             centroids[k] = val.params
-            if val.QoI_value.ndim == 1:
-                QoI_values[k] = np.expand_dims(val.QoI_value, axis=1)
-            else:
-                QoI_values[k] = val.QoI_value
-            if val.gradient.ndim == 1:
-                gradients[k] = np.expand_dims(val.gradient, axis=1)
-            else:
-                gradients[k] = val.gradient
+            QoI_values[k] = val.QoI_value
+            gradients[k] = val.gradient
             hessians[k] = val.hessian
-            dims[k] = val.dim
+            dims[k] = val.radius
             k += 1
         elif type(val) == ClusterTree:
             k = _flatten_cluster_centers_with_gradient_helper(val.left, k, centroids, QoI_values, gradients, hessians, dims)
@@ -466,16 +360,10 @@ def flatten_cluster_centers_with_gradient(nc, n_p, m, tree):
 def _flatten_cluster_centers_with_gradient_helper(tree, k, centroids, QoI_values, gradients, hessians, dims):
     if type(tree) == Cluster:
         centroids[k] = tree.params
-        if tree.QoI_value.ndim == 1:
-            QoI_values[k] = np.expand_dims(tree.QoI_value, axis=1)
-        else:
-            QoI_values[k] = tree.QoI_value
-        if tree.gradient.ndim == 1:
-            gradients[k] = np.expand_dims(tree.gradient, axis=1)
-        else:
-            gradients[k] = tree.gradient
+        QoI_values[k] = tree.QoI_value
+        gradients[k] = tree.gradient
         hessians[k] = tree.hessian
-        dims[k] = tree.dim
+        dims[k] = tree.radius
         k += 1
     elif type(tree) == ClusterTree:
         k = _flatten_cluster_centers_with_gradient_helper(tree.left, k, centroids, QoI_values, gradients, hessians, dims)
@@ -485,8 +373,8 @@ def _flatten_cluster_centers_with_gradient_helper(tree, k, centroids, QoI_values
 
 
 
-def flatten_cluster_centers(nc, n_p, m, tree):
-    centroids = np.zeros(shape=(nc, n_p))
+def flatten_cluster_centers(nc, n, m, tree):
+    centroids = np.zeros(shape=(nc, n))
     QoI_values = np.zeros(shape=(nc, m))
     k = 0
     for val in tree:
