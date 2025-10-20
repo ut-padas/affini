@@ -22,7 +22,7 @@ class Cluster:
         self.QoI_value = QoI_value # output value 
         self.gradient = gradient # gradient value
         self.hessian = hessian # hessian
-        self.radius = radius # trust radius TODO: change name
+        self.radius = radius # trust radius
 
     def __str__(self):
         return f'k={self.index}\tn_h={10**self.params[0]:.3f}\tT={10**self.params[1]:.3f}\tG0={self.params[2]:.6f}'
@@ -121,33 +121,39 @@ def adaptive_cluster_algorithm(
         else:
             # Split cluster in half (recursive step)
             k, cluster_structure[j] = _adaptive_cluster_algorithm_helper(
-                    params_in_cluster, centroid_params, eval_function,
-                    atol, rtol, min_ppc, use_gradient, fvals_cluster, k, seed)
+                    params_in_cluster, fvals_cluster, centroid_params, eval_function,
+                    atol, rtol, min_ppc, use_gradient, k, seed)
 
     return k, cluster_structure
 
 
 
 def _adaptive_cluster_algorithm_helper(
-    params: np.ndarray,
+    training_data: np.ndarray,
+    function_vals: np.ndarray,
     prev_centroid: np.ndarray,
     eval_function: Callable,
     atol = None,
     rtol = None,
     min_ppc: int = 1,
     use_gradient: bool = False,
-    function_vals: np.ndarray = None,
     k: int = 0, # current cluster index (for recursive purposes)
     seed = None,
 ):
+    
+    # record dimensions of matrices
+    p1, n = training_data.shape
+    p2, m = function_vals.shape
+    if p1 != p2:
+        raise Exception('Length of training data and function vals does not match')
 
     # normalize for clustering
-    mean = params.mean(axis=0)
-    std = params.std(axis=0)
+    mean = training_data.mean(axis=0)
+    std = training_data.std(axis=0)
     # quick fix to the issue if std is 0 in one column
     if (std == 0).any():
         std += (std == 0) * 1
-    params_normalized = (params - mean) / std
+    params_normalized = (training_data - mean) / std
 
     N = 2  # split in half
     if len(params_normalized) > 0: # TODO: talk about which clustering algorithm to use
@@ -159,7 +165,7 @@ def _adaptive_cluster_algorithm_helper(
     centroids = centroids_normalized * std + mean
 
     # First cluster (N=0)
-    params_in_cluster_0 = params[labels==0]
+    pts_cluster = training_data[labels==0]
     fvals_cluster = function_vals[labels==0]
 
     centroid_params = centroids[0]
@@ -178,42 +184,17 @@ def _adaptive_cluster_algorithm_helper(
     # Add extra points to the cluster (randomly sampled) until we get to the minimum ppc
     # At the moment, this implementation is really bad and will be slow. Redo how we sample (for loop).
     # We require more than one point in the cluster (this number can change).
-    if len(params_in_cluster_0) <= min_ppc and len(params_in_cluster_0) > 1:
-
-        num_points_to_sample = min_ppc - len(params_in_cluster_0)
-        # take random convex combinations
-        lambdas = np.random.uniform(0, 1, num_points_to_sample)
-        indices = np.random.randint(0, len(params_in_cluster_0), (2, num_points_to_sample))
-        # deal with columns where the indices are the same
-        resample = (indices[1] - indices[0]) == 0
-        all_inds = np.arange(len(params_in_cluster_0))
-        for j, val in enumerate(resample):
-            if j == True:
-                indices[:,j] = np.random.choice(all_inds, 2, replace=False)
-        # construct convex combinations
-        new_params_in_cluster_0 = np.multiply(params_in_cluster_0[indices[0]], lambdas[:, np.newaxis]) + \
-                np.multiply(params_in_cluster_0[indices[1]], (1 - lambdas)[:, np.newaxis])
-
-        # do ode solves for these new points
-        new_fval_vec = np.zeros(shape=(len(new_params_in_cluster_0),function_vals.shape[1]))
-        for i, row in enumerate(new_params_in_cluster_0):
-            # compute true value (save in qi)
-            if use_gradient == False:
-                f = eval_function(row)
-            elif use_gradient == True:
-                f, _ = eval_function(row)
-            if np.isscalar(f):
-                new_fval_vec[i] = np.array([f])
-            else:
-                new_fval_vec[i] = f
-
+    if len(pts_cluster) <= min_ppc and len(pts_cluster) > 1:
+        new_pts_cluster, new_fval_vec = \
+            _generate_extra_points(pts_cluster, fvals_cluster, eval_function, min_ppc)
     else:
-        new_fval_vec = []
+        new_pts_cluster = np.zeros(shape=(0,n))
+        new_fval_vec = np.zeros(shape=(0,m))
 
 
     # put old points and new points together into a single list
     if len(new_fval_vec) > 0:
-        params_in_cluster_0 = np.vstack((params_in_cluster_0, new_params_in_cluster_0))
+        pts_cluster = np.vstack((pts_cluster, new_pts_cluster))
         fvals_cluster = np.vstack((fvals_cluster, new_fval_vec))
 
     # using true value, compute error from qc
@@ -221,7 +202,7 @@ def _adaptive_cluster_algorithm_helper(
         evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
     elif use_gradient == True:
         # make sure we compute in euclidean, non-log scaled distance
-        distance = params_in_cluster_0 - centroid_params
+        distance = pts_cluster - centroid_params
         evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
         
 
@@ -239,14 +220,13 @@ def _adaptive_cluster_algorithm_helper(
     else:
         # Error too large; split cluster in half (recursive step)
         k, left = _adaptive_cluster_algorithm_helper(
-                params_in_cluster_0, centroid_params, eval_function,
-                atol, rtol, min_ppc, use_gradient,
-                fvals_cluster, k, seed)
+                pts_cluster, fvals_cluster, centroid_params, eval_function,
+                atol, rtol, min_ppc, use_gradient, k, seed)
 
 
 
     # Second cluster (N=1)
-    params_in_cluster_1 = params[labels==1]
+    pts_cluster = training_data[labels==1]
     fvals_cluster = function_vals[labels==1]
     
     centroid_params = centroids[1]
@@ -264,44 +244,17 @@ def _adaptive_cluster_algorithm_helper(
 
 
     # Add extra points to the cluster (randomly sampled) until we get to the minimum ppc
-    # At the moment, this implementation is really bad and will be slow. Redo how we sample (for loop).
-    if len(params_in_cluster_1) <= min_ppc and len(params_in_cluster_1) > 1:
-
-        num_points_to_sample = min_ppc - len(params_in_cluster_1)
-        # take random convex combinations
-        lambdas = np.random.uniform(0, 1, num_points_to_sample)
-        indices = np.random.randint(0, len(params_in_cluster_1), (2, num_points_to_sample))
-        # deal with columns where the indices are the same
-        resample = (indices[1] - indices[0]) == 0
-        all_inds = np.arange(len(params_in_cluster_1))
-        for j, val in enumerate(resample):
-            if j == True:
-                indices[:,j] = np.random.choice(all_inds, 2, replace=False)
-        # construct convex combinations
-        new_params_in_cluster_1 = np.multiply(params_in_cluster_1[indices[0]], lambdas[:, np.newaxis]) + \
-                np.multiply(params_in_cluster_1[indices[1]], (1 - lambdas)[:, np.newaxis])
-
-        # do ode solves for these new points
-        new_fval_vec = np.zeros(shape=(len(new_params_in_cluster_1),function_vals.shape[1]))
-        for i, row in enumerate(new_params_in_cluster_1):
-            # compute true value (save in qi)
-            if use_gradient == False:
-                f = eval_function(row)
-            elif use_gradient == True:
-                f, _ = eval_function(row)
-            if np.isscalar(f):
-                new_fval_vec[i] = np.array([f])
-            else:
-                new_fval_vec[i] = f
-            
-        
+    if len(pts_cluster) <= min_ppc and len(pts_cluster) > 1:
+        new_pts_cluster, new_fval_vec = \
+            _generate_extra_points(pts_cluster, fvals_cluster, eval_function, min_ppc)
     else:
+        new_pts_cluster = []
         new_fval_vec = []
 
 
     # put old points and new points together into a single list
     if len(new_fval_vec) > 0:
-        params_in_cluster_1 = np.vstack((params_in_cluster_1, new_params_in_cluster_1))
+        pts_cluster = np.vstack((pts_cluster, new_pts_cluster))
         fvals_cluster = np.vstack((fvals_cluster, new_fval_vec))
     
 
@@ -310,7 +263,7 @@ def _adaptive_cluster_algorithm_helper(
         evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
     elif use_gradient == True:
         # make sure we compute in euclidean, non-log scaled distance
-        distance = params_in_cluster_1 - centroid_params
+        distance = pts_cluster - centroid_params
         evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
 
 
@@ -327,10 +280,41 @@ def _adaptive_cluster_algorithm_helper(
     else:
         # Error too large; split cluster in half (recursive step)
         k, right = _adaptive_cluster_algorithm_helper(
-                params_in_cluster_1, centroid_params, eval_function,
-                atol, rtol, min_ppc, use_gradient, fvals_cluster, k, seed)
+                pts_cluster, fvals_cluster, centroid_params, eval_function,
+                atol, rtol, min_ppc, use_gradient, k, seed)
 
     return k, ClusterTree(prev_centroid, left, right)
+
+
+
+def _generate_extra_points(pts_cluster, fvals_cluster, oracle, min_ppc):
+
+    n_pts_sample = min_ppc - len(pts_cluster)
+
+    # take random convex combinations
+    lambdas = np.random.uniform(0, 1, n_pts_sample)
+    indices = np.random.randint(0, len(pts_cluster), (2, n_pts_sample))
+
+    # deal with columns where the indices are the same
+    # probably a much better way to do this...
+    resample = (indices[1] - indices[0]) == 0
+    all_inds = np.arange(len(pts_cluster))
+    for j, val in enumerate(resample):
+        if j == True:
+            indices[:,j] = np.random.choice(all_inds, 2, replace=False)
+
+    # construct convex combinations
+    new_pts_cluster = np.multiply(pts_cluster[indices[0]], lambdas[:, np.newaxis]) + \
+            np.multiply(pts_cluster[indices[1]], (1 - lambdas)[:, np.newaxis])
+
+    # do ode solves for these new points
+    new_fvals_cluster = np.zeros(shape=(n_pts_sample, fvals_cluster.shape[1]))
+    for i, row in enumerate(new_pts_cluster):
+        # compute true value (save in qi)
+        new_fvals_cluster[i], _ = oracle(row)
+
+    return new_pts_cluster, new_fvals_cluster
+
 
 
 

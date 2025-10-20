@@ -212,7 +212,10 @@ def generate_latex_table(data):
             elif j >= 4 and j <= 6:
                 rowstr += str(round(100 * entry, 2)) + '\\%'
             elif j >= 7:
-                rowstr += str(round(entry, 4))
+                if entry > 0:
+                    rowstr += str(round(entry, 4))
+                else:
+                    rowstr += '-'
 
             if j < len(row) - 1:
                 rowstr += ' & '
@@ -751,7 +754,7 @@ if __name__ == '__main__':
         test_1D(atol=1e-3)
 
     # 2D test
-    elif 1:
+    elif 0:
         domain = np.array([[-3, 3], [-2, 2]])
         convergence_test_2D(tolmat, 400000, domain)
     
@@ -761,7 +764,7 @@ if __name__ == '__main__':
         convergence_test_8D(tolmat, N_init=1000000)
 
     # Dixon-Price test
-    elif 0:
+    elif 1:
         # domain = np.column_stack((np.zeros(d), np.ones(d)))
         # test_nd(domain, N_init = 1000000, atol=0.05, rtol=0.01, min_ppc=50)
         d = 2
