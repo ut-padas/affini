@@ -62,6 +62,11 @@ def adaptive_cluster_algorithm(
     if function_vals.ndim == 1:
         function_vals = np.expand_dims(function_vals, axis=1)
 
+    p1, n = training_data.shape
+    p2, m = function_vals.shape
+    if p1 != p2:
+        raise Exception('Error: length of training data and function values lists do not match')
+
     # normalize the training data
     mean = training_data.mean(axis=0)
     std = training_data.std(axis=0)
@@ -101,6 +106,10 @@ def adaptive_cluster_algorithm(
             grad_c = None
         if np.isscalar(fval_c):
             fval_c = np.array([fval_c])
+
+        # check size of gradient to see if it is appropriate
+        if grad_c.shape != (m,n):
+            raise Exception('Error: gradient function does return shape m*n')
 
         # Compute error by taking largest distances away and averaging errors
         if use_gradient == False:

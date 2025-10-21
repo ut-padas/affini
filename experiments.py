@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from nearode import NearODESurrogate
 from scipy.stats import qmc
+from scipy.integrate import solve_ivp
 
 
 # One dimensional example
@@ -176,6 +177,107 @@ def grad_affine():
 
 def affine_combined(x):
     return affine(x), grad_affine()
+
+
+# quadratic vector function (Lorenz 96), arbitrary dimensions
+def L96(x,p):
+    """Lorenz 96 model with constant forcing"""
+    return (np.roll(x, -1) - np.roll(x, 2)) * np.roll(x, 1) - x + p[0]
+
+# Thank you ChatGPT for this
+def dx_L96(x,p):
+    """
+    Compute the Jacobian matrix of the Lorenz-96 system at state x.
+    
+    Parameters
+    ----------
+    x : array_like, shape (N,)
+        State vector [x1, x2, ..., xN].
+    
+    Returns
+    -------
+    J : ndarray, shape (N, N)
+        Jacobian matrix evaluated at x.
+    """
+    x = np.asarray(x)
+    N = x.size
+    J = np.zeros((N, N))
+    
+    # Cyclic indices
+    im2 = np.arange(N) - 2
+    im1 = np.arange(N) - 1
+    ip1 = np.arange(N) + 1
+    
+    # Wrap around modulo N
+    im2 %= N
+    im1 %= N
+    ip1 %= N
+    
+    # Fill nonzero entries
+    J[np.arange(N), im2] = -x[im1]              # ∂f_i / ∂x_{i-2}
+    J[np.arange(N), im1] = x[ip1] - x[im2]      # ∂f_i / ∂x_{i-1}
+    J[np.arange(N), np.arange(N)] = -1          # ∂f_i / ∂x_i
+    J[np.arange(N), ip1] = x[im1]               # ∂f_i / ∂x_{i+1}
+    
+    return J
+
+def dp_L96(x,p):
+    return np.ones(shape=len(x))
+
+
+# solving ODEs!
+def sensitivities_solver(f, J, DfDp, x0, p, tf):
+    # x0 is the input
+    # tf is the final time
+
+    # number of parameters
+    Np = len(p)
+    n = len(x0)
+
+    new_ic = np.zeros(len(x0) * (1 + Np + n))
+    new_ic[:n] = x0
+    new_ic[2*n:2*n+n**2] = np.eye(n).flatten()
+
+    def new_rhs(x, f, DfDx, DfDp):
+        rhsvec = np.zeros_like(x)
+        rhsvec[:n] = f(x[:n],p)
+
+        for j in range(1,n+2):
+            if j == 1:
+                rhsvec[n:2*n] = DfDx(x[:n],p) @ x[n:2*n] + DfDp(x[:n],p)
+            else:
+                rhsvec[j*n:(j+1)*n] = DfDx(x[:n],p) @ x[j*n:(j+1)*n]
+        return rhsvec
+    
+    sol = solve_ivp(lambda t,x: new_rhs(x,f,J,DfDp), [0,tf], new_ic, max_step=0.05)
+
+    return sol
+
+def L96_combined(x):
+    return L96(x), dx_L96(x)
+
+def solve_L96_ode(x0, p, tf):
+    sol = solve_ivp(lambda t,x: L96(x,p), [0,tf], x0, max_step=0.05)
+    xf = sol.y[:,-1]
+    return xf
+
+def solve_L96_ode_with_sensitivities(x0, p, tf):
+    sol = sensitivities_solver(L96, dx_L96, dp_L96, x0, p, tf)
+    xf = sol.y[:,-1]
+    n = len(x0)
+    return xf[:n], np.reshape(xf[n:], shape=(n+1,n)).T
+
+# this is the version we supply to the nearest neighbors algorithm
+# input is a length (N+1) vector, where the first entry is the value F (forcing)
+# output is a length N vector (the solve at a time tf) and the gradient (size N*(N+1))
+def solve_L96_ode_map(input, tf):
+    p = np.array([input[0]])
+    x0 = input[1:]
+    return solve_L96_ode_with_sensitivities(x0, p, tf)
+
+
+
+
 
 
 def generate_latex_table(data):
@@ -475,7 +577,6 @@ def convergence_test_2D(tolmat, N_init, domain, min_ppc=40):
 
 
 def test_8D(atol=0.2, rtol=0.01, N_init = 10000, min_ppc = 40):
-
     domain = np.array([
         [0.05, 0.15],
         [100, 50000],
@@ -486,177 +587,43 @@ def test_8D(atol=0.2, rtol=0.01, N_init = 10000, min_ppc = 40):
         [1120, 1680],
         [9855, 12045]
     ])
-
-    interpolant = NearODESurrogate()
-    interpolant.train_model_from_sampling(
-            borehole_combined, domain, 1, N_init, 'LHS', True,
-            N_init_clusters=30, atol = atol, rtol = rtol, min_ppc = min_ppc,
-            check_guarantee_N_times=0, disp_time = True, seed = 1234)
-    
-    # evaluate exact
-    # pick some evaluation points using LHS
-    N_eval = 100000
-    l = domain[:,0]
-    r = domain[:,1]
-    sampler = qmc.LatinHypercube(d=len(domain))
-    pts = sampler.random(n=N_eval)
-    pts = qmc.scale(pts, l, r)
-
-    exact = np.zeros(len(pts))
-    for j in range(len(exact)):
-        exact[j] = borehole(pts[j])
-    interp, bad_pts = interpolant.evaluate(pts, k=1, disp_time=True)
-
-    
-    abs_error = np.abs(exact - interp)
-    rel_error = abs_error / np.abs(exact)
-    good_abs_error = abs_error <= atol
-    good_rel_error = rel_error <= rtol
-    good_overall_error = np.logical_or(good_abs_error, good_rel_error)
-    bad_overall_error = np.logical_not(good_overall_error)
-    good_pts_inds = np.logical_not(bad_pts)
-
-    # sort the points outside of guarantee between those inside the error and those not
-    no_g_good_err = bad_pts & good_overall_error # 1 (yellow)
-    no_g_bad_err = bad_pts & bad_overall_error # 2 (orange)
-    # sort the points inside of guarantee as well
-    yes_g_good_err = good_pts_inds & good_overall_error # 3 (green)
-    yes_g_bad_err = good_pts_inds & bad_overall_error # 4 (red)
-
-
-
-    # display stats about errors
-    red_abs_errs = abs_error[yes_g_bad_err]
-    red_rel_errs = rel_error[yes_g_bad_err]
-    datavec = np.array([
-        N_init,
-        atol,
-        rtol,
-        interpolant.N_sources,
-        (np.sum(no_g_good_err)+np.sum(no_g_bad_err)) / len(pts),
-        np.sum(yes_g_good_err) / len(pts), 
-        np.sum(yes_g_bad_err) / len(pts),
-        np.max(red_abs_errs),
-        np.median(red_abs_errs),
-        np.sqrt(np.sum(red_abs_errs)/len(red_abs_errs)),
-        np.max(red_rel_errs),
-        np.median(red_rel_errs),
-        np.sqrt(np.sum(red_rel_errs)/len(red_rel_errs))
-    ])
-
-    return datavec
+    test_a_function(borehole, borehole_combined, 8, 1, domain, atol, rtol, N_init, min_ppc)
 
 
 def convergence_test_8D(tolmat, N_init, min_ppc=40):
-    datamat = np.empty((len(tolmat), 13))
-    for j, tols in enumerate(tolmat):
-        datamat[j] = test_8D(atol=tols[0], rtol=tols[1], N_init = N_init, min_ppc=min_ppc)
-    
-    print('\n')
-    print(generate_latex_table(datamat))
-    print('\n')
+    convergence_test_a_function(test_8D, tolmat, N_init, min_ppc)
 
 
 
 
-def test_nd(domain, atol=0.01, rtol=0.01, N_init = 1000000, min_ppc = 50):
-
-    interpolant = NearODESurrogate()
-    interpolant.train_model_from_sampling(
-            dixon_price_combined, domain, 1, N_init, 'LHS', True,
-            N_init_clusters=100, atol = atol, rtol = rtol, min_ppc = min_ppc,
-            check_guarantee_N_times=0, disp_time = True)
-    
-    # evaluate exact
-    # pick some evaluation points using LHS
-    N_eval = 100000
-    l = domain[:,0]
-    r = domain[:,1]
-    sampler = qmc.LatinHypercube(d=len(domain))
-    pts = sampler.random(n=N_eval)
-    pts = qmc.scale(pts, l, r)
-
-    exact = np.zeros((len(pts),1))
-    for j in range(len(exact)):
-        exact[j] = dixon_price(pts[j])
-    interp, bad_pts = interpolant.evaluate(pts, k=1, disp_time=True)
-
-    abs_error = np.linalg.norm(exact - interp, 2, axis=1)
-    rel_error = abs_error / np.linalg.norm(exact, 2, axis=1)
-    good_abs_error = abs_error <= atol
-    good_rel_error = rel_error <= rtol
-    good_overall_error = np.logical_or(good_abs_error, good_rel_error)
-    bad_overall_error = np.logical_not(good_overall_error)
-    good_pts_inds = np.logical_not(bad_pts)
-
-    # sort the points outside of guarantee between those inside the error and those not
-    no_g_good_err = bad_pts & good_overall_error # 1 (yellow)
-    no_g_bad_err = bad_pts & bad_overall_error # 2 (orange)
-    # sort the points inside of guarantee as well
-    yes_g_good_err = good_pts_inds & good_overall_error # 3 (green)
-    yes_g_bad_err = good_pts_inds & bad_overall_error # 4 (red)
-
-    # display stats about errors
-    red_abs_errs = abs_error[yes_g_bad_err]
-    red_rel_errs = rel_error[yes_g_bad_err]
-    red_true_vals = interp[yes_g_bad_err]
-    if len(red_abs_errs > 0):
-        datavec = np.array([
-            # section 1: initial values
-            N_init,
-            atol,
-            rtol,
-            # section 2: point results
-            interpolant.N_sources,
-            (np.sum(no_g_good_err) + np.sum(no_g_bad_err)) / len(pts),
-            np.sum(yes_g_good_err) / len(pts), 
-            np.sum(yes_g_bad_err) / len(pts),
-            # section 3: errors for failure points
-            np.max(red_abs_errs), # max abs error
-            np.median(red_abs_errs), # median abs error
-            np.linalg.norm(red_abs_errs, np.inf) / np.linalg.norm(red_true_vals, np.inf), # l-inf rel error
-            np.linalg.norm(red_abs_errs, 2) / np.linalg.norm(red_true_vals, 2), # l2 rel error
-        ])
-    else:
-        datavec = np.array([
-            N_init,
-            atol,
-            rtol,
-            interpolant.N_sources,
-            (np.sum(no_g_good_err) + np.sum(no_g_bad_err)) / len(pts),
-            np.sum(yes_g_good_err) / len(pts), 
-            np.sum(yes_g_bad_err) / len(pts),
-            0,
-            0,
-            0,
-            0,
-        ])
-
-    return datavec
-
-
-def convergence_test_nd(tolmat, d, N_init, min_ppc=100):
+def test_nd(d, atol=0.01, rtol=0.01, N_init = 1000000, min_ppc = 50):
     
     domain = np.column_stack((np.zeros(d), np.ones(d)))
-    datamat = np.empty((len(tolmat), 11))
-    for j, tols in enumerate(tolmat):
-        datamat[j] = test_nd(domain, atol=tols[0], rtol=tols[1], N_init = N_init, min_ppc=min_ppc)
-    
-    print('\n')
-    print(generate_latex_table(datamat))
-    print('\n')
+    return test_a_function(dixon_price, dixon_price_combined, d, 1, domain, atol, rtol, N_init, min_ppc)
+
+def convergence_test_nd(tolmat, d, N_init, min_ppc=100):
+    convergence_test_a_function( \
+        lambda arg1,arg2,arg3,arg4: test_nd(d,arg1,arg2,arg3,arg4), tolmat, N_init, min_ppc)
 
 
 
 def test_affine(atol=0.01, rtol=0.01, N_init = 10000, min_ppc = 50):
     domain = np.column_stack((np.zeros(20), np.ones(20)))
+    n = 20
+    m = 10
+    return test_a_function(affine, affine_combined, n, m, domain, atol, rtol, N_init, min_ppc)
+
+def convergence_test_affine(tolmat, N_init, min_ppc=100):
+    convergence_test_a_function(test_affine, tolmat, N_init, min_ppc)
+
+
+def test_a_function(f, f_combined, n, m, domain, atol=0.01, rtol=0.01, N_init=10000, min_ppc=50):
+
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
-            affine_combined, domain, 10, N_init, 'LHS', True,
-            N_init_clusters=2, atol = atol, rtol = rtol, min_ppc = min_ppc,
+            f_combined, domain, n, N_init, 'LHS', True,
+            N_init_clusters=100, atol = atol, rtol = rtol, min_ppc = min_ppc,
             check_guarantee_N_times=0, disp_time = True)
-    
-    print(interpolant.KNN_search.hessians)
     
     # evaluate exact
     # pick some evaluation points using LHS
@@ -667,9 +634,9 @@ def test_affine(atol=0.01, rtol=0.01, N_init = 10000, min_ppc = 50):
     pts = sampler.random(n=N_eval)
     pts = qmc.scale(pts, l, r)
 
-    exact = np.zeros((len(pts),10))
+    exact = np.zeros((len(pts),m))
     for j in range(len(exact)):
-        exact[j] = affine(pts[j])
+        exact[j] = f(pts[j])
     interp, bad_pts = interpolant.evaluate(pts, k=1, disp_time=True)
 
     abs_error = np.linalg.norm(exact - interp, 2, axis=1)
@@ -726,15 +693,23 @@ def test_affine(atol=0.01, rtol=0.01, N_init = 10000, min_ppc = 50):
     return datavec
 
 
-def convergence_test_affine(tolmat, N_init, min_ppc=100):
-
+def convergence_test_a_function(test_function, tolmat, N_init, min_ppc=100):
     datamat = np.empty((len(tolmat), 11))
     for j, tols in enumerate(tolmat):
-        datamat[j] = test_affine(atol=tols[0], rtol=tols[1], N_init = N_init, min_ppc=min_ppc)
+        datamat[j] = test_function(atol=tols[0], rtol=tols[1], N_init = N_init, min_ppc=min_ppc)
     
     print('\n')
     print(generate_latex_table(datamat))
     print('\n')
+
+
+def test_quadratic(atol=0.01, rtol=0.01, N_init = 10000, min_ppc = 50):
+    n = 5
+    domain = np.column_stack((0.5*np.ones(n), 1.5*np.ones(n)))
+    return test_a_function(L96, L96_combined, n, n, domain, atol, rtol, N_init, min_ppc)
+
+def convergence_test_quadratic(tolmat, N_init, min_ppc=100):
+    convergence_test_a_function(test_quadratic, tolmat, N_init, min_ppc)
 
 
 
@@ -764,14 +739,52 @@ if __name__ == '__main__':
         convergence_test_8D(tolmat, N_init=1000000)
 
     # Dixon-Price test
-    elif 1:
+    elif 0:
         # domain = np.column_stack((np.zeros(d), np.ones(d)))
-        # test_nd(domain, N_init = 1000000, atol=0.05, rtol=0.01, min_ppc=50)
-        d = 2
-        convergence_test_nd(tolmat, d=d, N_init = 1000000)
+        # test_nd(domain, N_init = 10000, atol=0.05, rtol=0.01, min_ppc=50)
+        d = 4
+        convergence_test_nd(tolmat, d=d, N_init = 100000)
 
-    # Affine function (R^n to R^m, where n=2 and m=3)
+    # Affine function (R^n to R^m)
     elif 0:
         convergence_test_affine(tolmat, N_init=10000)
+
+    # Quadratic function (Lorenz 96)
+    elif 0:
+        convergence_test_quadratic(tolmat, N_init=100000)
+
+    elif 1:
+        
+        # normal solve
+        N = 5
+        F = 8
+        x0 = F * np.ones(N)
+        p = F * np.ones(1)
+        tf = 1
+        x0[0] += 0.01
+
+        # solve with sensitivities
+        inputvec = np.concatenate((p,x0))
+        outputvec, grad_output = solve_L96_ode_map(inputvec, tf)
+        print(inputvec)
+        print(outputvec)
+        print(grad_output)
+
+        # plot
+        # fig1 = plt.figure()
+        # ax = fig1.add_subplot(projection="3d")
+        # ax.plot(x2[0,:], x2[1,:], x2[2,:])
+        # ax.set_xlabel("$x_1$")
+        # ax.set_ylabel("$x_2$")
+        # ax.set_zlabel("$x_3$")
+
+        # fig2 = plt.figure()
+        # ax = fig2.add_subplot(projection="3d")
+        # ax.plot(x3[0,:], x3[1,:], x3[2,:])
+        # ax.set_xlabel("$x_1$")
+        # ax.set_ylabel("$x_2$")
+        # ax.set_zlabel("$x_3$")
+
+        # plt.show()
 
     
