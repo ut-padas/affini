@@ -1,58 +1,67 @@
+from typing import Callable
 
 import numpy as np
-from collections.abc import Callable
 from sklearn.cluster import KMeans
-from kmedoids import KMedoids
 
 
 # bi-tree structures that we use in the recursive algorithm implemented below
 class ClusterTree:
-
     def __init__(self, params, left, right):
         self.left = left
         self.right = right
         self.params = params
-    
+
 
 class Cluster:
-
     def __init__(self, index, params, QoI_value, gradient, hessian, radius):
-        self.index = index # leaf index
-        self.params = params # centroids of the cluster
-        self.QoI_value = QoI_value # output value 
-        self.gradient = gradient # gradient value
-        self.hessian = hessian # hessian
-        self.radius = radius # trust radius
+        self.index = index  # leaf index
+        self.params = params  # centroids of the cluster
+        self.QoI_value = QoI_value  # output value
+        self.gradient = gradient  # gradient value
+        self.hessian = hessian  # hessian
+        self.radius = radius  # trust radius
 
     def __str__(self):
-        return f'k={self.index}\tn_h={10**self.params[0]:.3f}\tT={10**self.params[1]:.3f}\tG0={self.params[2]:.6f}'
-
+        return f"k={self.index}\tn_h={10 ** self.params[0]:.3f}\tT={10 ** self.params[1]:.3f}\tG0={self.params[2]:.6f}"
 
 
 def adaptive_cluster_algorithm(
-    training_data: np.ndarray, # each row contains a set of parameters used to cluster
-    eval_function: Callable, # callable function; takes numpy array to numpy array
-        # if use gradient is true, eval_function should return both value and gradient.
-        # otherwise eval_function only returns value
-        # modify so that if this takes a vector to a vector and a matrix (R^n to R^m),
-        # it still works
-    atol: float = None,
-    rtol: float = None,
-    N_init_clusters: int = 10, # number of initial clusters to split into
-    min_ppc: int = 1, # minimum number of points used in a cluster (to measure error)
-    use_gradient: bool = False, #TODO: make sure this runs (todo for a masters student)
-    function_vals: np.ndarray = None, # if this is not none, uses these as solves. Otherwise runs eval_function every time
-    seed = None, # seed used for kmeans rng
-    ):
-
+    training_data: np.ndarray,  # each row contains a set of parameters used to cluster
+    eval_function: Callable,  # callable function; takes numpy array to numpy array
+    # if use gradient is true, eval_function should return both value and gradient.
+    # otherwise eval_function only returns value
+    # modify so that if this takes a vector to a vector and a matrix (R^n to R^m),
+    # it still works
+    atol: float | None = None,
+    rtol: float | None = None,
+    N_init_clusters: int = 10,  # number of initial clusters to split into
+    min_ppc: int = 1,  # minimum number of points used in a cluster (to measure error)
+    use_gradient: bool = False,  # TODO: make sure this runs (todo for a masters student)
+    function_vals: (
+        np.ndarray | None
+    ) = None,  # if this is not none, uses these as solves. Otherwise runs eval_function every time
+    seed=None,  # seed used for kmeans rng
+):
     # check dimensions of training data; add another if necessary
     if training_data.ndim == 1:
         training_data = np.expand_dims(training_data, axis=1)
-    
+
     # also check dimensions of function vals
     # do solves if necessary. TODO: specify dimension of output of eval_function
     if function_vals is None:
-        function_vals = np.zeros(len(training_data))
+        # First, evaluate function once to determine output dimension
+        if use_gradient == False:
+            sample_output = eval_function(training_data[0])
+        else:
+            sample_output, _ = eval_function(training_data[0])
+
+        # Ensure sample_output is array and get its shape
+        sample_output = np.atleast_1d(sample_output)
+        output_dim = len(sample_output)
+
+        # Initialize function_vals with proper shape
+        function_vals = np.zeros((len(training_data), output_dim))
+
         if use_gradient == False:
             for j, row in enumerate(training_data):
                 function_vals[j] = eval_function(row)
@@ -65,20 +74,26 @@ def adaptive_cluster_algorithm(
     p1, n = training_data.shape
     p2, m = function_vals.shape
     if p1 != p2:
-        raise Exception('Error: length of training data and function values lists do not match')
+        raise Exception(
+            "Error: length of training data and function values lists do not match"
+        )
 
     # normalize the training data
     mean = training_data.mean(axis=0)
     std = training_data.std(axis=0)
     training_data_normalized = (training_data - mean) / std
 
-    k = 0 # counting number of clusters as we go
+    k = 0  # counting number of clusters as we go
 
     # Call clustering library
-    if len(training_data_normalized) > 0: # TODO: talk about which clustering algorithm to use
+    if (
+        len(training_data_normalized) > 0
+    ):  # TODO: talk about which clustering algorithm to use
         km = KMeans(n_clusters=N_init_clusters, random_state=seed)
     else:
-        km = KMedoids(n_clusters=N_init_clusters, metric='euclidean', random_state=seed)
+        raise NotImplementedError("KMedoids not implemented in this version")
+        # km = KMedoids(n_clusters=N_init_clusters, metric="euclidean", random_state=seed)
+
     labels = km.fit_predict(training_data_normalized)
     centroids_normalized = km.cluster_centers_
     centroids = centroids_normalized * std + mean
@@ -86,11 +101,10 @@ def adaptive_cluster_algorithm(
     cluster_structure = np.empty(shape=N_init_clusters, dtype=object)
 
     for j in range(N_init_clusters):
-
         # Compute error inside each cluster
-        params_in_cluster = training_data[labels==j]
-        fvals_cluster = function_vals[labels==j]
-            
+        params_in_cluster = training_data[labels == j]
+        fvals_cluster = function_vals[labels == j]
+
         # Compute exact value and gradient at cluster centroid
         # NOTE: if using KMedoids, we don't have to do a solve. Just pull the value
         centroid_params = centroids[j]
@@ -108,33 +122,52 @@ def adaptive_cluster_algorithm(
             fval_c = np.array([fval_c])
 
         # check size of gradient to see if it is appropriate
-        if grad_c.shape != (m,n):
-            raise Exception('Error: gradient function does return shape m*n')
+        if grad_c is not None and grad_c.shape != (m, n):
+            raise Exception(
+                f"Error: gradient function does return shape {grad_c.shape}, expected ({m},{n})"
+            )
 
         # Compute error by taking largest distances away and averaging errors
         if use_gradient == False:
-            evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
-        elif use_gradient == True:
+            evec = np.linalg.norm(
+                fval_c - fvals_cluster, 2, axis=1
+            )  # TODO: what norm to use?
+        elif use_gradient == True and grad_c is not None:
             # make sure we compute in euclidean distance
             distance = params_in_cluster - centroid_params
-            evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
+            evec = np.linalg.norm(
+                fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1
+            )  # TODO: what norm to use?
 
         abs_error = np.max(evec)
 
-        if (rtol is not None and abs_error < np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
+        if (
+            rtol is not None
+            and abs_error < np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol
+        ) or (atol is not None and abs_error < atol):
             # Tolerance is good; save values in cluster column
             radius = np.max(np.linalg.norm(distance, axis=1))
             hessian = 2 / (radius**2) * np.max(evec)
-            cluster_structure[j] = Cluster(k, centroid_params, fval_c, grad_c, hessian, radius)
+            cluster_structure[j] = Cluster(
+                k, centroid_params, fval_c, grad_c, hessian, radius
+            )
             k += 1
         else:
             # Split cluster in half (recursive step)
             k, cluster_structure[j] = _adaptive_cluster_algorithm_helper(
-                    params_in_cluster, fvals_cluster, centroid_params, eval_function,
-                    atol, rtol, min_ppc, use_gradient, k, seed)
+                params_in_cluster,
+                fvals_cluster,
+                centroid_params,
+                eval_function,
+                atol,
+                rtol,
+                min_ppc,
+                use_gradient,
+                k,
+                seed,
+            )
 
     return k, cluster_structure
-
 
 
 def _adaptive_cluster_algorithm_helper(
@@ -142,19 +175,18 @@ def _adaptive_cluster_algorithm_helper(
     function_vals: np.ndarray,
     prev_centroid: np.ndarray,
     eval_function: Callable,
-    atol = None,
-    rtol = None,
+    atol=None,
+    rtol=None,
     min_ppc: int = 1,
     use_gradient: bool = False,
-    k: int = 0, # current cluster index (for recursive purposes)
-    seed = None,
+    k: int = 0,  # current cluster index (for recursive purposes)
+    seed=None,
 ):
-    
     # record dimensions of matrices
     p1, n = training_data.shape
     p2, m = function_vals.shape
     if p1 != p2:
-        raise Exception('Length of training data and function vals does not match')
+        raise Exception("Length of training data and function vals does not match")
 
     # normalize for clustering
     mean = training_data.mean(axis=0)
@@ -165,17 +197,18 @@ def _adaptive_cluster_algorithm_helper(
     params_normalized = (training_data - mean) / std
 
     N = 2  # split in half
-    if len(params_normalized) > 0: # TODO: talk about which clustering algorithm to use
+    if len(params_normalized) > 0:  # TODO: talk about which clustering algorithm to use
         km = KMeans(n_clusters=N, random_state=seed)
     else:
-        km = KMedoids(n_clusters=N, metric='euclidean', random_state=seed)
+        raise NotImplementedError("KMedoids not implemented in this version")
+        # km = KMedoids(n_clusters=N, metric="euclidean", random_state=seed)
     labels = km.fit_predict(params_normalized)
     centroids_normalized = km.cluster_centers_
     centroids = centroids_normalized * std + mean
 
     # First cluster (N=0)
-    pts_cluster = training_data[labels==0]
-    fvals_cluster = function_vals[labels==0]
+    pts_cluster = training_data[labels == 0]
+    fvals_cluster = function_vals[labels == 0]
 
     centroid_params = centroids[0]
     if use_gradient == True:
@@ -194,12 +227,12 @@ def _adaptive_cluster_algorithm_helper(
     # At the moment, this implementation is really bad and will be slow. Redo how we sample (for loop).
     # We require more than one point in the cluster (this number can change).
     if len(pts_cluster) <= min_ppc and len(pts_cluster) > 1:
-        new_pts_cluster, new_fval_vec = \
-            _generate_extra_points(pts_cluster, fvals_cluster, eval_function, min_ppc)
+        new_pts_cluster, new_fval_vec = _generate_extra_points(
+            pts_cluster, fvals_cluster, eval_function, min_ppc
+        )
     else:
-        new_pts_cluster = np.zeros(shape=(0,n))
-        new_fval_vec = np.zeros(shape=(0,m))
-
+        new_pts_cluster = np.zeros(shape=(0, n))
+        new_fval_vec = np.zeros(shape=(0, m))
 
     # put old points and new points together into a single list
     if len(new_fval_vec) > 0:
@@ -208,12 +241,15 @@ def _adaptive_cluster_algorithm_helper(
 
     # using true value, compute error from qc
     if use_gradient == False:
-        evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
-    elif use_gradient == True:
+        evec = np.linalg.norm(
+            fval_c - fvals_cluster, 2, axis=1
+        )  # TODO: what norm to use?
+    elif use_gradient == True and grad_c is not None:
         # make sure we compute in euclidean, non-log scaled distance
         distance = pts_cluster - centroid_params
-        evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
-        
+        evec = np.linalg.norm(
+            fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1
+        )  # TODO: what norm to use?
 
     abs_error = np.max(evec)
 
@@ -221,7 +257,10 @@ def _adaptive_cluster_algorithm_helper(
     if radius == 0:
         # Dead branch of the tree. Not enough points to compute error
         left = None
-    elif (rtol is not None and abs_error < np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
+    elif (
+        rtol is not None
+        and abs_error < np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol
+    ) or (atol is not None and abs_error < atol):
         # Error good
         hessian = 2 / (radius**2) * np.max(evec)
         left = Cluster(k, centroid_params, fval_c, grad_c, hessian, radius)
@@ -229,15 +268,22 @@ def _adaptive_cluster_algorithm_helper(
     else:
         # Error too large; split cluster in half (recursive step)
         k, left = _adaptive_cluster_algorithm_helper(
-                pts_cluster, fvals_cluster, centroid_params, eval_function,
-                atol, rtol, min_ppc, use_gradient, k, seed)
-
-
+            pts_cluster,
+            fvals_cluster,
+            centroid_params,
+            eval_function,
+            atol,
+            rtol,
+            min_ppc,
+            use_gradient,
+            k,
+            seed,
+        )
 
     # Second cluster (N=1)
-    pts_cluster = training_data[labels==1]
-    fvals_cluster = function_vals[labels==1]
-    
+    pts_cluster = training_data[labels == 1]
+    fvals_cluster = function_vals[labels == 1]
+
     centroid_params = centroids[1]
     if use_gradient == True:
         fval_c, grad_c = eval_function(centroid_params)
@@ -251,30 +297,31 @@ def _adaptive_cluster_algorithm_helper(
     if np.isscalar(fval_c):
         fval_c = np.array([fval_c])
 
-
     # Add extra points to the cluster (randomly sampled) until we get to the minimum ppc
     if len(pts_cluster) <= min_ppc and len(pts_cluster) > 1:
-        new_pts_cluster, new_fval_vec = \
-            _generate_extra_points(pts_cluster, fvals_cluster, eval_function, min_ppc)
+        new_pts_cluster, new_fval_vec = _generate_extra_points(
+            pts_cluster, fvals_cluster, eval_function, min_ppc
+        )
     else:
         new_pts_cluster = []
         new_fval_vec = []
-
 
     # put old points and new points together into a single list
     if len(new_fval_vec) > 0:
         pts_cluster = np.vstack((pts_cluster, new_pts_cluster))
         fvals_cluster = np.vstack((fvals_cluster, new_fval_vec))
-    
 
     # using true value, compute error from qc
     if use_gradient == False:
-        evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
-    elif use_gradient == True:
+        evec = np.linalg.norm(
+            fval_c - fvals_cluster, 2, axis=1
+        )  # TODO: what norm to use?
+    elif use_gradient == True and grad_c is not None:
         # make sure we compute in euclidean, non-log scaled distance
         distance = pts_cluster - centroid_params
-        evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
-
+        evec = np.linalg.norm(
+            fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1
+        )  # TODO: what norm to use?
 
     abs_error = np.max(evec)
 
@@ -282,22 +329,32 @@ def _adaptive_cluster_algorithm_helper(
     if radius == 0:
         # Dead branch of the tree. Not enough variance of points to compute error (or a single point).
         right = None
-    elif (rtol is not None and abs_error <= np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
+    elif (
+        rtol is not None
+        and abs_error <= np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol
+    ) or (atol is not None and abs_error < atol):
         hessian = 2 / (radius**2) * np.max(evec)
         right = Cluster(k, centroid_params, fval_c, grad_c, hessian, radius)
         k += 1
     else:
         # Error too large; split cluster in half (recursive step)
         k, right = _adaptive_cluster_algorithm_helper(
-                pts_cluster, fvals_cluster, centroid_params, eval_function,
-                atol, rtol, min_ppc, use_gradient, k, seed)
+            pts_cluster,
+            fvals_cluster,
+            centroid_params,
+            eval_function,
+            atol,
+            rtol,
+            min_ppc,
+            use_gradient,
+            k,
+            seed,
+        )
 
     return k, ClusterTree(prev_centroid, left, right)
 
 
-
 def _generate_extra_points(pts_cluster, fvals_cluster, oracle, min_ppc):
-
     n_pts_sample = min_ppc - len(pts_cluster)
 
     # take random convex combinations
@@ -310,11 +367,12 @@ def _generate_extra_points(pts_cluster, fvals_cluster, oracle, min_ppc):
     all_inds = np.arange(len(pts_cluster))
     for j, val in enumerate(resample):
         if j == True:
-            indices[:,j] = np.random.choice(all_inds, 2, replace=False)
+            indices[:, j] = np.random.choice(all_inds, 2, replace=False)
 
     # construct convex combinations
-    new_pts_cluster = np.multiply(pts_cluster[indices[0]], lambdas[:, np.newaxis]) + \
-            np.multiply(pts_cluster[indices[1]], (1 - lambdas)[:, np.newaxis])
+    new_pts_cluster = np.multiply(
+        pts_cluster[indices[0]], lambdas[:, np.newaxis]
+    ) + np.multiply(pts_cluster[indices[1]], (1 - lambdas)[:, np.newaxis])
 
     # do ode solves for these new points
     new_fvals_cluster = np.zeros(shape=(n_pts_sample, fvals_cluster.shape[1]))
@@ -323,8 +381,6 @@ def _generate_extra_points(pts_cluster, fvals_cluster, oracle, min_ppc):
         new_fvals_cluster[i], _ = oracle(row)
 
     return new_pts_cluster, new_fvals_cluster
-
-
 
 
 def flatten_cluster_centers_with_gradient(nc, n, m, tree):
@@ -344,13 +400,18 @@ def flatten_cluster_centers_with_gradient(nc, n, m, tree):
             dims[k] = val.radius
             k += 1
         elif type(val) == ClusterTree:
-            k = _flatten_cluster_centers_with_gradient_helper(val.left, k, centroids, QoI_values, gradients, hessians, dims)
-            k = _flatten_cluster_centers_with_gradient_helper(val.right, k, centroids, QoI_values, gradients, hessians, dims)
+            k = _flatten_cluster_centers_with_gradient_helper(
+                val.left, k, centroids, QoI_values, gradients, hessians, dims
+            )
+            k = _flatten_cluster_centers_with_gradient_helper(
+                val.right, k, centroids, QoI_values, gradients, hessians, dims
+            )
     return centroids, QoI_values, gradients, hessians, dims
 
 
-
-def _flatten_cluster_centers_with_gradient_helper(tree, k, centroids, QoI_values, gradients, hessians, dims):
+def _flatten_cluster_centers_with_gradient_helper(
+    tree, k, centroids, QoI_values, gradients, hessians, dims
+):
     if type(tree) == Cluster:
         centroids[k] = tree.params
         QoI_values[k] = tree.QoI_value
@@ -359,11 +420,13 @@ def _flatten_cluster_centers_with_gradient_helper(tree, k, centroids, QoI_values
         dims[k] = tree.radius
         k += 1
     elif type(tree) == ClusterTree:
-        k = _flatten_cluster_centers_with_gradient_helper(tree.left, k, centroids, QoI_values, gradients, hessians, dims)
-        k = _flatten_cluster_centers_with_gradient_helper(tree.right, k, centroids, QoI_values, gradients, hessians, dims)
+        k = _flatten_cluster_centers_with_gradient_helper(
+            tree.left, k, centroids, QoI_values, gradients, hessians, dims
+        )
+        k = _flatten_cluster_centers_with_gradient_helper(
+            tree.right, k, centroids, QoI_values, gradients, hessians, dims
+        )
     return k
-
-
 
 
 def flatten_cluster_centers(nc, n, m, tree):
@@ -381,7 +444,6 @@ def flatten_cluster_centers(nc, n, m, tree):
     return centroids, QoI_values
 
 
-
 def _flatten_cluster_centers_helper(tree, k, centroids, QoI_values):
     if type(tree) == Cluster:
         centroids[k] = tree.params
@@ -392,3 +454,49 @@ def _flatten_cluster_centers_helper(tree, k, centroids, QoI_values):
         k = _flatten_cluster_centers_helper(tree.right, k, centroids, QoI_values)
     return k
 
+
+if __name__ == "__main__":
+    import cProfile
+    import time
+
+    def sample_function(x):
+        """
+        f(x) = [x1^2 + x2^2, x1 - x2 + x3]
+        Jacobian/Gradient:
+        [[2*x1, 2*x2, 0],
+         [1,    -1,  1]]
+        """
+        x1, x2, x3 = x
+        value = np.array([x1**2 + x2**2, x1 - x2 + x3])
+        gradient = np.array([[2 * x1, 2 * x2, 0], [1, -1, 1]])
+        return value, gradient
+
+    # Generate sample data
+    seed = 0
+    np.random.seed(seed)
+    N_samples = 100_000
+    X_samples = np.random.uniform(-10, 10, size=(N_samples, 3))
+    print(f"Generated {N_samples} sample data points.")
+
+    cprofile = cProfile.Profile()
+    cprofile.enable()
+
+    # Run adaptive clustering
+    tic = time.perf_counter()
+    total_clusters, clusters = adaptive_cluster_algorithm(
+        X_samples,
+        sample_function,
+        atol=1.0,
+        rtol=0.01,
+        N_init_clusters=5,
+        min_ppc=5,
+        use_gradient=True,
+        seed=seed,
+    )
+    toc = time.perf_counter()
+    print(f"Total clusters formed: {total_clusters}")
+    print(f"Time taken: {toc - tic:.4f} seconds")
+
+    cprofile.disable()
+    # cprofile.print_stats(sort="time")
+    cprofile.dump_stats("adaptive_clustering_v1_profile.prof")
