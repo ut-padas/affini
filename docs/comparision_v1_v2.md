@@ -1,5 +1,5 @@
-# 2D Test: n = 4000
-## Old
+# 2D (SHCF) Test: n = 4000
+## Version 1
 ```latex
 \begin{table}[h!]
     \centering
@@ -19,7 +19,7 @@
 \end{table}
 ```
 
-## New
+## Version 2 (Accelerated)
 ```latex
 \begin{table}[h!]
     \centering
@@ -41,8 +41,8 @@
 
 
 
-# 2D Test: n = 400,000
-## Old (Time: 1m 29s)
+# 2D (SHCF) Test: n = 400,000
+## Version 1 (Time: 1m 29s)
 ```sh
 CUML available: True
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
@@ -86,7 +86,7 @@ Time elapsed for predictions: 0.5439730540383607 seconds
 ```
 
 
-## New (Time: 52s)
+## Version 2 (Accelerated) (Time: 52s)
 ```sh
 CUML available: True
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
@@ -125,8 +125,8 @@ Time elapsed for predictions: 0.516799102013465 seconds
 \end{table}
 ```
 
-# 2D Test: n = 800,000
-## Old (Time: 2m 4s)
+# 2D (SHCF) Test: n = 800,000
+## Version 1 (Time: 2m 4s)
 ```sh
 CUML available: True
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
@@ -165,7 +165,7 @@ Time elapsed for predictions: 0.6009737669955939 seconds
 \end{table}
 ```
 
-## New (Time: 1m 12s)
+## Version 2 (Accelerated) (Time: 1m 12s)
 ```sh
 CUML available: True
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
@@ -205,8 +205,8 @@ Time elapsed for predictions: 0.6038463549921289 seconds
 ```
 
 
-# 2D Test: n = 3,200,000
-## Old (Time: 4m 34s)
+# 2D (SHCF) Test: n = 3,200,000
+## Version 1 (Time: 4m 34s)
 ```sh
 CUML available: True
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
@@ -245,7 +245,7 @@ Time elapsed for predictions: 0.7478364929556847 seconds
 \end{table}
 ```
 
-## New (Time: 2m 36s)
+## Version 2 (Accelerated) (Time: 2m 36s)
 ```sh
 CUML available: True
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
