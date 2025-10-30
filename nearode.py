@@ -104,6 +104,10 @@ class NearODESurrogate:
         self.N_sources = k
 
 
+        # Check the norms of the gradients and hessians
+        self.KNN_search.show_source_information()
+
+
         # Computational guarantee: check distance to all training points
         if do_clustering == True and L_global is not None and check_guarantee_N_times > 0:
             for j in range(check_guarantee_N_times):
@@ -195,6 +199,7 @@ class NearODESurrogate:
         gradients = np.empty((len(features),m,n))
         for jj, feature in enumerate(features):
             labels[jj], gradients[jj] = oracle(feature)
+        print('Initial solves complete.')
         
         # plug this into above function
         self.train_model_from_data(features, labels, gradients, do_clustering, oracle,

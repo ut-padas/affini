@@ -1,6 +1,7 @@
 import time
 import numpy as np
 import faiss
+import matplotlib.pyplot as plt
 
 # TODO eventually make labels multi-d. This would make labels a matrix and gradients a rank-3 tensor.
 
@@ -113,4 +114,22 @@ class NN_Inference:
         self.hessians = np.append(self.hessians, new_hessians)
         self.trust_radii = np.append(self.trust_radii, new_dims)
         self._faiss_index.add(new_features)
+
+
+    def show_source_information(self):
+        # each should be length N_sources
+        grad_norms = np.linalg.norm(self.gradients, axis=(1,2))
+        hessian_norms = np.abs(self.hessians)
+
+        # gradient norms plot
+        fig1, ax1 = plt.subplots()
+        ax1.hist(grad_norms)
+        ax1.set_title(f'Histogram of Gradient Norms ($N_{{sources}} = {len(grad_norms)}$)')
+        
+        # hessian norms plot
+        fig2, ax2 = plt.subplots()
+        ax2.hist(hessian_norms)
+        ax2.set_title(f'Histogram of Hessian Norms ($N_{{sources}} = {len(hessian_norms)}$)')
+
+        plt.show()
     
