@@ -708,8 +708,8 @@ if __name__ == "__main__":
     print(f"Time taken: {toc - tic:.4f} seconds")
     if N_samples <= 10_000:
         # Plot only for small datasets
-        plot_clusters(clusters, fname="adaptive_clusters_v3.png")
+        plot_clusters(clusters, fname="adaptive_clusters_accelerated.png")
 
     cprofile.disable()
-    cprofile.dump_stats("adaptive_clustering_v3_profile.prof")
+    cprofile.dump_stats("adaptive_clustering_accelerated_profile.prof")
     # cprofile.print_stats(sort="time")
