@@ -11,9 +11,9 @@ help:
 	@echo "  load-modules - Load required modules if running on TACC Vista"
 
 benchmarks: load-modules
-	uv run python -m research.benchmark_kmeans_cpu_vs_gpu
-	uv run python -m research.benchmark_kmeans_vs_minibatch
-	uv run python -m research.compare_two_means_vs_kmeans
+	uv run python -m research.benchmark_kmeans_gpu_vs_cpu
+	uv run python -m research.benchmark_minibatch_vs_kmeans
+	uv run python -m research.benchmark_two_means_vs_kmeans
 
 dev:
 	uv sync --all-groups
