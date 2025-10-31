@@ -214,3 +214,6 @@ figures/
 
 # Profiling data
 *.prof
+
+# TACC Files
+tacc-files/
