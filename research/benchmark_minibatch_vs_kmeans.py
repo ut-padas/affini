@@ -14,7 +14,7 @@ from sklearn.cluster import MiniBatchKMeans as skMBKMeans
 from sklearn.metrics import adjusted_rand_score
 from tqdm import tqdm
 
-from research.benchmark_kmeans_cpu_vs_gpu import (
+from research.benchmark_kmeans_gpu_vs_cpu import (
     REPEATS,
     SEED,
     K,
@@ -29,7 +29,7 @@ SIZES = np.unique((np.logspace(3, 6, num=15)).astype(int)).tolist()
 CWD = Path(__file__).parent.parent.resolve()
 FIGURES = Path(CWD) / "figures"
 FIGURES.mkdir(parents=True, exist_ok=True)
-OUT_CSV = FIGURES / "kmeans_vs_minibatch_results.csv"
+OUT_CSV = FIGURES / "minibatch_vs_kmeans_results.csv"
 
 
 def _make_minibatch_kmeans(n_samples: int) -> skMBKMeans:
@@ -126,30 +126,30 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     sklearn_times = df["sklearn_time_mean"].tolist()
     minibatch_times = df["minibatch_time_mean"].tolist()
 
-    # Plot sklearn KMeans with circle marker and normal color
-    (line,) = plt.plot(sizes, sklearn_times, marker="o", label="sklearn KMeans")
+    # Plot MinibatchKmeans with circle marker and normal color
+    (line,) = plt.plot(sizes, minibatch_times, marker="o", label="MinibatchKMeans")
     color = line.get_color()
 
-    # Plot MiniBatchKMeans with square marker, same color, smaller alpha, and dashed line
+    # Plot KMeans with square marker, same color, smaller alpha, and dashed line
     plt.plot(
         sizes,
-        minibatch_times,
+        sklearn_times,
         marker="s",
         linestyle="--",
         alpha=second_line_alpha,
         color=color,
-        label="MiniBatchKMeans",
+        label="KMeans",
     )
 
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Number of points (N)")
     plt.ylabel("Wall time (seconds)")
-    plt.title(f"KMeans vs MiniBatchKMeans runtime (D={D}, K={K}, repeats={REPEATS})")
+    plt.title(f"MiniBatchKMeans vs KMeans runtime (D={D}, K={K}, repeats={REPEATS})")
     plt.grid(True, which="both", ls=":", alpha=grid_alpha)
     plt.legend()
     plt.tight_layout()
-    fname = figures_dir / "kmeans_vs_minibatch_runtime.png"
+    fname = figures_dir / "minibatch_vs_kmeans_runtime.png"
     plt.savefig(fname, dpi=150)
     plt.close()
 
@@ -162,24 +162,26 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     ax1.set_xlabel("Number of points (N)")
     ax1.set_ylabel("SSE (sum of squared errors)")
 
-    # Plot sklearn KMeans with circle marker and normal color
-    (line,) = ax1.plot(sizes, df["sklearn_sse_mean"], marker="o", label="SSE (KMeans)")
+    # Plot MiniBatchKMeans with circle marker and normal color
+    (line,) = ax1.plot(
+        sizes, df["minibatch_sse_mean"], marker="o", label="SSE (MiniBatchKMeans)"
+    )
     color = line.get_color()
 
-    # Plot MiniBatchKMeans with square marker, same color, smaller alpha, and dashed line
+    # Plot KMeans with square marker, same color, smaller alpha, and dashed line
     ax1.plot(
         sizes,
-        df["minibatch_sse_mean"],
+        df["sklearn_sse_mean"],
         marker="s",
         linestyle="--",
         alpha=second_line_alpha,
         color=color,
-        label="SSE (MiniBatchKMeans)",
+        label="SSE (KMeans)",
     )
 
     ax1.legend(loc="best")
     ax1.set_title(
-        f"KMeans vs MiniBatchKMeans SSE vs N (D={D}, K={K}, repeats={REPEATS})"
+        f"MiniBatchKMeans vs KMeans SSE vs N (D={D}, K={K}, repeats={REPEATS})"
     )
     ax1.grid(True, which="both", ls=":", alpha=grid_alpha)
 
@@ -189,29 +191,31 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     ax2.set_ylabel("ARI (Adjusted Rand Index)")
     ax2.set_ylim(0, 1)  # since ARI ranges from 0 to 1
 
-    # Plot sklearn KMeans with circle marker and normal color
-    (line,) = ax2.plot(sizes, df["sklearn_ari_mean"], marker="o", label="ARI (KMeans)")
+    # Plot MiniBatchKMeans with circle marker and normal color
+    (line,) = ax2.plot(
+        sizes, df["minibatch_ari_mean"], marker="o", label="ARI (MiniBatchKMeans)"
+    )
     color = line.get_color()
 
-    # Plot MiniBatchKMeans with square marker, same color, smaller alpha, and dashed line
+    # Plot KMeans with square marker, same color, smaller alpha, and dashed line
     ax2.plot(
         sizes,
-        df["minibatch_ari_mean"],
+        df["sklearn_ari_mean"],
         marker="s",
         linestyle="--",
         alpha=second_line_alpha,
         color=color,
-        label="ARI (MiniBatchKMeans)",
+        label="ARI (KMeans)",
     )
 
     ax2.legend(loc="best")
     ax2.set_title(
-        f"KMeans vs MiniBatchKMeans ARI vs N (D={D}, K={K}, repeats={REPEATS})"
+        f"MiniBatchKMeans vs KMeans ARI vs N (D={D}, K={K}, repeats={REPEATS})"
     )
     ax2.grid(True, which="both", ls=":", alpha=grid_alpha)
 
     plt.tight_layout()
-    fname = figures_dir / "kmeans_vs_minibatch_sse_ari.png"
+    fname = figures_dir / "minibatch_vs_kmeans_sse_ari.png"
     plt.savefig(fname, dpi=150)
     plt.close()
 
@@ -220,7 +224,7 @@ if __name__ == "__main__":
     if OUT_CSV.exists():
         print(f"Output files: {OUT_CSV} already exist; skipping benchmark.")
     else:
-        print("Running KMeans vs MiniBatchKMeans benchmark...")
+        print("Running MiniBatchKMeans vs KMeans benchmark...")
         df_results = _bench_sizes(SIZES)
 
         # Save results to CSV

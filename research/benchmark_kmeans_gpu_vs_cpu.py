@@ -35,7 +35,7 @@ SIZES = np.unique((np.logspace(3, 6, num=15)).astype(int)).tolist()
 CWD = Path(__file__).parent.parent.resolve()
 FIGURES = Path(CWD) / "figures"
 FIGURES.mkdir(parents=True, exist_ok=True)
-OUT_CSV = FIGURES / "kmeans_cpu_vs_gpu_results.csv"
+OUT_CSV = FIGURES / "kmeans_gpu_vs_cpu_results.csv"
 
 
 def _make_sklearn_kmeans() -> skKMeans:
@@ -197,31 +197,25 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     cpu_times = df["cpu_time_mean"].tolist()
     gpu_times = df["gpu_time_mean"].tolist()
 
-    # Plot CPU with circle marker and normal color
-    (line,) = plt.plot(sizes, cpu_times, marker="o", label="sklearn KMeans (CPU)")
-    color = line.get_color()
-
-    # Plot GPU with square marker, same color, smaller alpha, and dashed line
+    # Plot GPU with circle marker and normal color (main algorithm)
     if not df["gpu_time_mean"].isna().all():
-        plt.plot(
-            sizes,
-            gpu_times,
-            marker="s",
-            linestyle="--",
-            alpha=second_line_alpha,
-            color=color,
-            label="cuML KMeans (GPU)",
-        )
+        (line,) = plt.plot(sizes, gpu_times, marker="o", label="cuML KMeans (GPU)")
+        color = line.get_color()
     else:
-        plt.plot(
-            [],
-            [],
-            linestyle="--",
-            alpha=second_line_alpha,
-            color=color,
-            label="cuML KMeans (GPU) [unavailable]",
-        )
+        # If GPU unavailable
+        (line,) = plt.plot([], [], marker="o", label="cuML KMeans (GPU) [unavailable]")
+        color = line.get_color()
 
+    # Plot CPU with square marker, same color, smaller alpha, and dashed line
+    plt.plot(
+        sizes,
+        cpu_times,
+        marker="s",
+        linestyle="--",
+        color=color,
+        alpha=second_line_alpha,
+        label="sklearn KMeans (CPU)",
+    )
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Number of points (N)")
@@ -230,7 +224,7 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     plt.grid(True, which="both", ls=":", alpha=grid_alpha)
     plt.legend()
     plt.tight_layout()
-    fname = figures_dir / "kmeans_cpu_vs_gpu_runtime.png"
+    fname = figures_dir / "kmeans_gpu_vs_cpu_runtime.png"
     plt.savefig(fname, dpi=150)
     plt.close()
 
@@ -243,31 +237,25 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     ax1.set_xlabel("Number of points (N)")
     ax1.set_ylabel("SSE (sum of squared errors)")
 
-    # Plot CPU with circle marker and normal color
-    (line,) = ax1.plot(sizes, df["cpu_sse_mean"], marker="o", label="SSE (CPU)")
-    color = line.get_color()
-
-    # Plot GPU with square marker, same color, smaller alpha, and dashed line
+    # Plot GPU with circle marker and normal color (main algorithm)
     if not df["gpu_sse_mean"].isna().all():
-        ax1.plot(
-            sizes,
-            df["gpu_sse_mean"],
-            marker="s",
-            linestyle="--",
-            alpha=second_line_alpha,
-            color=color,
-            label="SSE (GPU)",
-        )
+        (line,) = ax1.plot(sizes, df["gpu_sse_mean"], marker="o", label="SSE (GPU)")
+        color = line.get_color()
     else:
-        ax1.plot(
-            [],
-            [],
-            marker="s",
-            linestyle="--",
-            alpha=second_line_alpha,
-            color=color,
-            label="SSE (GPU) [unavailable]",
-        )
+        # If GPU unavailable
+        (line,) = ax1.plot([], [], marker="o", label="SSE (GPU) [unavailable]")
+        color = line.get_color()
+
+    # Plot CPU with square marker, same color, smaller alpha, and dashed line
+    ax1.plot(
+        sizes,
+        df["cpu_sse_mean"],
+        marker="s",
+        linestyle="--",
+        alpha=second_line_alpha,
+        color=color,
+        label="SSE (CPU)",
+    )
 
     ax1.legend(loc="best")
     ax1.set_title(f"KMeans SSE vs N (D={D}, K={K}, repeats={REPEATS})")
@@ -279,38 +267,31 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     ax2.set_ylabel("ARI (Adjusted Rand Index)")
     ax2.set_ylim(0, 1)  # since ARI ranges from 0 to 1
 
-    # Plot CPU with circle marker and normal color
-    (line,) = ax2.plot(sizes, df["cpu_ari_mean"], marker="o", label="ARI (CPU)")
-    color = line.get_color()
-
-    # Plot GPU with square marker, same color, smaller alpha, and dashed line
+    # Plot GPU with circle marker and normal color (main algorithm)
     if not df["gpu_ari_mean"].isna().all():
-        ax2.plot(
-            sizes,
-            df["gpu_ari_mean"],
-            marker="s",
-            linestyle="--",
-            alpha=second_line_alpha,
-            color=color,
-            label="ARI (GPU)",
-        )
+        (line,) = ax2.plot(sizes, df["gpu_ari_mean"], marker="o", label="ARI (GPU)")
+        color = line.get_color()
     else:
-        ax2.plot(
-            [],
-            [],
-            marker="s",
-            linestyle="--",
-            alpha=second_line_alpha,
-            color=color,
-            label="ARI (GPU) [unavailable]",
-        )
+        # If GPU unavailable
+        (line,) = ax2.plot([], [], marker="o", label="ARI (GPU) [unavailable]")
+        color = line.get_color()
+    # Plot CPU with square marker, same color, smaller alpha, and dashed line
+    ax2.plot(
+        sizes,
+        df["cpu_ari_mean"],
+        marker="s",
+        linestyle="--",
+        alpha=second_line_alpha,
+        color=color,
+        label="ARI (CPU)",
+    )
 
     ax2.legend(loc="best")
     ax2.set_title(f"KMeans ARI vs N (D={D}, K={K}, repeats={REPEATS})")
     ax2.grid(True, which="both", ls=":", alpha=grid_alpha)
 
     plt.tight_layout()
-    fname = figures_dir / "kmeans_cpu_vs_gpu_sse_ari.png"
+    fname = figures_dir / "kmeans_gpu_vs_cpu_sse_ari.png"
     plt.savefig(fname, dpi=150)
     plt.close()
 
@@ -321,7 +302,7 @@ if __name__ == "__main__":
     if OUT_CSV.exists():
         print(f"Output files : {OUT_CSV} already exist; skipping benchmark.")
     else:
-        print("Running KMeans CPU vs GPU benchmark...")
+        print("Running KMeans GPU vs CPU benchmark...")
         df_results = _bench_sizes(SIZES)
 
         # Save results to CSV

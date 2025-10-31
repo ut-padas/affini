@@ -14,7 +14,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score
 from tqdm import tqdm
 
-from research.benchmark_kmeans_cpu_vs_gpu import REPEATS, SEED, _gen_data, _sse_original
+from research.benchmark_kmeans_gpu_vs_cpu import REPEATS, SEED, _gen_data, _sse_original
 from src.two_means import two_means_pca_threshold
 
 DK_PAIRS = [(5, 2), (25, 2), (125, 2)]  # (smallD, medD, largeD) with K=2
