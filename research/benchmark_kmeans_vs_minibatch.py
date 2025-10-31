@@ -118,20 +118,35 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     figures_dir.parent.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(8, 5))
 
+    second_line_alpha = 0.5
+    grid_alpha = 0.4
+
     # Plot runtime vs N
     sizes = df["n_samples"].tolist()
     sklearn_times = df["sklearn_time_mean"].tolist()
     minibatch_times = df["minibatch_time_mean"].tolist()
 
-    plt.plot(sizes, sklearn_times, marker="o", label="sklearn KMeans")
-    plt.plot(sizes, minibatch_times, marker="s", label="MiniBatchKMeans")
+    # Plot sklearn KMeans with circle marker and normal color
+    (line,) = plt.plot(sizes, sklearn_times, marker="o", label="sklearn KMeans")
+    color = line.get_color()
+
+    # Plot MiniBatchKMeans with square marker, same color, smaller alpha, and dashed line
+    plt.plot(
+        sizes,
+        minibatch_times,
+        marker="s",
+        linestyle="--",
+        alpha=second_line_alpha,
+        color=color,
+        label="MiniBatchKMeans",
+    )
 
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Number of points (N)")
     plt.ylabel("Wall time (seconds)")
     plt.title(f"KMeans vs MiniBatchKMeans runtime (D={D}, K={K}, repeats={REPEATS})")
-    plt.grid(True, which="both", ls=":", alpha=0.6)
+    plt.grid(True, which="both", ls=":", alpha=grid_alpha)
     plt.legend()
     plt.tight_layout()
     fname = figures_dir / "kmeans_vs_minibatch_runtime.png"
@@ -146,18 +161,19 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     ax1.set_yscale("log")
     ax1.set_xlabel("Number of points (N)")
     ax1.set_ylabel("SSE (sum of squared errors)")
-    ax1.plot(
-        sizes,
-        df["sklearn_sse_mean"],
-        marker="o",
-        color="blue",
-        label="SSE (KMeans)",
-    )
+
+    # Plot sklearn KMeans with circle marker and normal color
+    (line,) = ax1.plot(sizes, df["sklearn_sse_mean"], marker="o", label="SSE (KMeans)")
+    color = line.get_color()
+
+    # Plot MiniBatchKMeans with square marker, same color, smaller alpha, and dashed line
     ax1.plot(
         sizes,
         df["minibatch_sse_mean"],
         marker="s",
-        color="cyan",
+        linestyle="--",
+        alpha=second_line_alpha,
+        color=color,
         label="SSE (MiniBatchKMeans)",
     )
 
@@ -165,25 +181,26 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     ax1.set_title(
         f"KMeans vs MiniBatchKMeans SSE vs N (D={D}, K={K}, repeats={REPEATS})"
     )
-    ax1.grid(True, which="both", ls=":", alpha=0.6)
+    ax1.grid(True, which="both", ls=":", alpha=grid_alpha)
 
     # ARI subplot
     ax2.set_xscale("log")
     ax2.set_xlabel("Number of points (N)")
     ax2.set_ylabel("ARI (Adjusted Rand Index)")
     ax2.set_ylim(0, 1)  # since ARI ranges from 0 to 1
-    ax2.plot(
-        sizes,
-        df["sklearn_ari_mean"],
-        marker="o",
-        color="red",
-        label="ARI (KMeans)",
-    )
+
+    # Plot sklearn KMeans with circle marker and normal color
+    (line,) = ax2.plot(sizes, df["sklearn_ari_mean"], marker="o", label="ARI (KMeans)")
+    color = line.get_color()
+
+    # Plot MiniBatchKMeans with square marker, same color, smaller alpha, and dashed line
     ax2.plot(
         sizes,
         df["minibatch_ari_mean"],
         marker="s",
-        color="orange",
+        linestyle="--",
+        alpha=second_line_alpha,
+        color=color,
         label="ARI (MiniBatchKMeans)",
     )
 
@@ -191,7 +208,7 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     ax2.set_title(
         f"KMeans vs MiniBatchKMeans ARI vs N (D={D}, K={K}, repeats={REPEATS})"
     )
-    ax2.grid(True, which="both", ls=":", alpha=0.6)
+    ax2.grid(True, which="both", ls=":", alpha=grid_alpha)
 
     plt.tight_layout()
     fname = figures_dir / "kmeans_vs_minibatch_sse_ari.png"

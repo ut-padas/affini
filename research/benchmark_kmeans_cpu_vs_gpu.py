@@ -190,22 +190,44 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     # Plot runtime vs N
     plt.figure(figsize=(8, 5))
 
+    second_line_alpha = 0.5
+    grid_alpha = 0.4
+
     sizes = df["n_samples"].tolist()
     cpu_times = df["cpu_time_mean"].tolist()
     gpu_times = df["gpu_time_mean"].tolist()
 
-    plt.plot(sizes, cpu_times, marker="o", label="sklearn KMeans (CPU)")
+    # Plot CPU with circle marker and normal color
+    (line,) = plt.plot(sizes, cpu_times, marker="o", label="sklearn KMeans (CPU)")
+    color = line.get_color()
+
+    # Plot GPU with square marker, same color, smaller alpha, and dashed line
     if not df["gpu_time_mean"].isna().all():
-        plt.plot(sizes, gpu_times, marker="s", label="cuML KMeans (GPU)")
+        plt.plot(
+            sizes,
+            gpu_times,
+            marker="s",
+            linestyle="--",
+            alpha=second_line_alpha,
+            color=color,
+            label="cuML KMeans (GPU)",
+        )
     else:
-        plt.plot([], [], label="cuML KMeans (GPU) [unavailable]")
+        plt.plot(
+            [],
+            [],
+            linestyle="--",
+            alpha=second_line_alpha,
+            color=color,
+            label="cuML KMeans (GPU) [unavailable]",
+        )
 
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Number of points (N)")
     plt.ylabel("Wall time (seconds)")
     plt.title(f"KMeans runtime vs N (D={D}, K={K}, repeats={REPEATS})")
-    plt.grid(True, which="both", ls=":", alpha=0.6)
+    plt.grid(True, which="both", ls=":", alpha=grid_alpha)
     plt.legend()
     plt.tight_layout()
     fname = figures_dir / "kmeans_cpu_vs_gpu_runtime.png"
@@ -220,54 +242,72 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     ax1.set_yscale("log")
     ax1.set_xlabel("Number of points (N)")
     ax1.set_ylabel("SSE (sum of squared errors)")
-    ax1.plot(
-        sizes,
-        df["cpu_sse_mean"],
-        marker="o",
-        color="blue",
-        label="SSE (CPU)",
-    )
+
+    # Plot CPU with circle marker and normal color
+    (line,) = ax1.plot(sizes, df["cpu_sse_mean"], marker="o", label="SSE (CPU)")
+    color = line.get_color()
+
+    # Plot GPU with square marker, same color, smaller alpha, and dashed line
     if not df["gpu_sse_mean"].isna().all():
         ax1.plot(
             sizes,
             df["gpu_sse_mean"],
             marker="s",
-            color="cyan",
+            linestyle="--",
+            alpha=second_line_alpha,
+            color=color,
             label="SSE (GPU)",
         )
     else:
-        ax1.plot([], [], label="SSE (GPU) [unavailable]", color="cyan")
+        ax1.plot(
+            [],
+            [],
+            marker="s",
+            linestyle="--",
+            alpha=second_line_alpha,
+            color=color,
+            label="SSE (GPU) [unavailable]",
+        )
 
     ax1.legend(loc="best")
     ax1.set_title(f"KMeans SSE vs N (D={D}, K={K}, repeats={REPEATS})")
-    ax1.grid(True, which="both", ls=":", alpha=0.6)
+    ax1.grid(True, which="both", ls=":", alpha=grid_alpha)
 
     # ARI subplot
     ax2.set_xscale("log")
     ax2.set_xlabel("Number of points (N)")
     ax2.set_ylabel("ARI (Adjusted Rand Index)")
     ax2.set_ylim(0, 1)  # since ARI ranges from 0 to 1
-    ax2.plot(
-        sizes,
-        df["cpu_ari_mean"],
-        marker="o",
-        color="red",
-        label="ARI (CPU)",
-    )
+
+    # Plot CPU with circle marker and normal color
+    (line,) = ax2.plot(sizes, df["cpu_ari_mean"], marker="o", label="ARI (CPU)")
+    color = line.get_color()
+
+    # Plot GPU with square marker, same color, smaller alpha, and dashed line
     if not df["gpu_ari_mean"].isna().all():
         ax2.plot(
             sizes,
             df["gpu_ari_mean"],
             marker="s",
-            color="orange",
+            linestyle="--",
+            alpha=second_line_alpha,
+            color=color,
             label="ARI (GPU)",
         )
     else:
-        ax2.plot([], [], label="ARI (GPU) [unavailable]", color="orange")
+        ax2.plot(
+            [],
+            [],
+            marker="s",
+            linestyle="--",
+            alpha=second_line_alpha,
+            color=color,
+            label="ARI (GPU) [unavailable]",
+        )
 
     ax2.legend(loc="best")
     ax2.set_title(f"KMeans ARI vs N (D={D}, K={K}, repeats={REPEATS})")
-    ax2.grid(True, which="both", ls=":", alpha=0.6)
+    ax2.grid(True, which="both", ls=":", alpha=grid_alpha)
 
     plt.tight_layout()
     fname = figures_dir / "kmeans_cpu_vs_gpu_sse_ari.png"
