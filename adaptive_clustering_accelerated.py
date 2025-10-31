@@ -79,7 +79,7 @@ class AdaptiveClusterer:
         mini_batch_len_threshold: int = 50_000,
         # Fast k=2 split settings
         use_fast_two_means: bool = True,
-        fast_two_means_len_threshold: int = 512,  # TODO: Make this a function of dimension
+        fast_two_means_len_threshold: int | str = "auto",
     ):
         """
         Initialize the adaptive clusterer.
@@ -95,7 +95,7 @@ class AdaptiveClusterer:
             gpu_len_threshold: Minimum data length to use GPU clustering. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_cpu_vs_gpu.py
             mini_batch_len_threshold: Minimum data length to use MiniBatchKMeans. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_vs_minibatch.py
             use_fast_two_means: Whether to use fast 2-means splitting.
-            fast_two_means_len_threshold: Maximum data length for fast 2-means splitting. The value for this was decided based on empirical benchmarks from: research/compare_two_means_vs_kmeans.py
+            fast_two_means_len_threshold: Maximum data length for fast 2-means splitting. If "auto", then, based on the dimensionality, the model uses thresholds tuned on TACC-Vista system.
         """
         self.atol = atol
         self.rtol = rtol
@@ -108,9 +108,32 @@ class AdaptiveClusterer:
         self.gpu_len_threshold = gpu_len_threshold
         self.mini_batch_len_threshold = mini_batch_len_threshold
         self.use_fast_two_means = use_fast_two_means
-        self.fast_two_means_len_threshold = fast_two_means_len_threshold
+
+        if not (
+            isinstance(fast_two_means_len_threshold, int)
+            or (
+                isinstance(fast_two_means_len_threshold, str)
+                and fast_two_means_len_threshold == "auto"
+            )
+        ):
+            raise ValueError(
+                "fast_two_means_len_threshold must be 'auto' or an integer."
+            )
+        self.ftm_len_threshold_property = fast_two_means_len_threshold
 
         self._cluster_id = 0
+
+    def _get_fast_two_means_len_threshold(self, dim: int) -> int:
+        """Determine fast two-means length threshold based on dimensionality, as per tuned values."""
+        if isinstance(self.ftm_len_threshold_property, int):
+            return self.ftm_len_threshold_property
+
+        if dim < 10:
+            return 8_192
+        elif dim < 50:
+            return 1_024
+        else:
+            return 512
 
     def fit(self, X: np.ndarray, f: Callable, f_vals=None) -> list[TreeNode]:
         """
@@ -128,6 +151,13 @@ class AdaptiveClusterer:
         X = X.astype(NP_DTYPE)
         X = self._ensure_2d(X)
         F = self._get_function_values(X, f, f_vals)
+
+        # Get dimensionality and set fast two-means threshold
+        dim = X.shape[1]
+        self.fast_two_means_len_threshold = self._get_fast_two_means_len_threshold(dim)
+        print(
+            f"Using fast two-means length threshold: {self.fast_two_means_len_threshold} for dimension: {dim}"
+        )
 
         # Initial clustering
         labels, centroids = self._initial_cluster(X)
@@ -355,11 +385,7 @@ class AdaptiveClusterer:
         X_norm, mean, std = self._normalize_data(X)
 
         # For small clusters, use a rigorous fast 2-means: PCA projection + exact threshold scan
-        if (
-            self.use_fast_two_means
-            and n >= 2
-            and n <= self.fast_two_means_len_threshold
-        ):
+        if self.use_fast_two_means and n <= self.fast_two_means_len_threshold:
             labels, centroids = two_means_pca_threshold(X_norm, mean, std)
             NUM_CLUSTERED_BY_TWO_MEANS += 1
             return labels, centroids
