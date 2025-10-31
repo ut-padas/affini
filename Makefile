@@ -35,7 +35,7 @@ load-modules:
 	@if hostname | grep -q "vista.tacc.utexas.edu"; then \
 		echo "Detected TACC Vista system. Loading required modules..."; \
 		if command -v module >/dev/null 2>&1; then \
-			module load gcc cuda \
+			module load gcc cuda; \
 			echo "Modules loaded: gcc, cuda"; \
 		else \
 			echo "Warning: Module system not available. Skipping module loading."; \
