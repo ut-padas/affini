@@ -1,5 +1,7 @@
 """
 Fast PCA-based 2-means clustering using optimal 1D projections.
+References:
+- ./docs/Two-Means PCA.pdf
 """
 
 import numpy as np
@@ -58,6 +60,9 @@ def two_means_pca_threshold(
     Returns:
         labels: Cluster labels of shape (n,), values in {0, 1}
         centroids: Centroids of shape (2, d) in original (unnormalized) space.
+
+    References:
+    - ./docs/Two-Means PCA.pdf
     """
     Z = X_norm  # already zero-mean per dimension
     n, d = Z.shape
