@@ -169,6 +169,50 @@ Time elapsed for predictions: 0.46388948400272056 seconds
 \end{table}
 ```
 
+## Version 4 (Time: 22.6s)
+```sh
+CUML available: True
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 1.21 seconds
+Time elapsed for predictions: 0.0443276499863714 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 1.54 seconds
+Time elapsed for predictions: 0.07355414796620607 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 2.35 seconds
+Time elapsed for predictions: 0.12917017401196063 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 4.59 seconds
+Time elapsed for predictions: 0.26404133497271687 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 7.92 seconds
+Time elapsed for predictions: 0.45727067603729665 seconds
+```
+
+```latex
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                400000 & 0.1 & 2.0\% & 2494 & 1.2\% & 98.77\% & 0.02\% & 1.197 & 0.5109 & 0.7374 & 0.0247 & 0.0211 & 0.1461 \\
+                400000 & 0.05 & 1.0\% & 4376 & 1.52\% & 98.31\% & 0.17\% & 1.1672 & 0.2563 & 0.6258 & 0.0202 & 0.0114 & 0.1099 \\
+                400000 & 0.025 & 0.5\% & 7976 & 1.79\% & 97.98\% & 0.23\% & 0.7179 & 0.1526 & 0.4505 & 0.0108 & 0.0056 & 0.0768 \\
+                400000 & 0.01 & 0.2\% & 16646 & 3.65\% & 95.75\% & 0.59\% & 0.7179 & 0.0528 & 0.2857 & 0.0061 & 0.0024 & 0.0502 \\
+                400000 & 0.005 & 0.1\% & 29228 & 6.35\% & 92.74\% & 0.91\% & 0.3161 & 0.0291 & 0.2142 & 0.0055 & 0.0012 & 0.0364 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+```
+
 # 2D (SHCF) Test: n = 800,000
 ## Version 1 (Time: 2m 4s)
 ```sh
@@ -292,6 +336,50 @@ Time elapsed for predictions: 0.5548449970083311 seconds
 \end{table}
 ```
 
+## Version 4 (Time: 28.1s)
+```sh
+CUML available: True
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 1.90 seconds
+Time elapsed for predictions: 0.048375364975072443 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 2.31 seconds
+Time elapsed for predictions: 0.0825596550712362 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 3.23 seconds
+Time elapsed for predictions: 0.1471255380893126 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 5.85 seconds
+Time elapsed for predictions: 0.30898429302033037 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 9.91 seconds
+Time elapsed for predictions: 0.5475936199072748 seconds
+```
+
+```latex
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                800000 & 0.1 & 2.0\% & 2764 & 0.76\% & 99.2\% & 0.04\% & 1.2736 & 0.3501 & 0.6327 & 0.0293 & 0.0213 & 0.1492 \\
+                800000 & 0.05 & 1.0\% & 4983 & 0.93\% & 98.96\% & 0.11\% & 1.0773 & 0.1982 & 0.5766 & 0.022 & 0.0115 & 0.1097 \\
+                800000 & 0.025 & 0.5\% & 9158 & 1.04\% & 98.78\% & 0.18\% & 0.8072 & 0.1479 & 0.454 & 0.0108 & 0.0059 & 0.0788 \\
+                800000 & 0.01 & 0.2\% & 19665 & 1.75\% & 97.83\% & 0.42\% & 0.3397 & 0.0536 & 0.2847 & 0.0055 & 0.0023 & 0.051 \\
+                800000 & 0.005 & 0.1\% & 35090 & 3.14\% & 96.21\% & 0.64\% & 0.2538 & 0.0272 & 0.2041 & 0.0036 & 0.0012 & 0.0361 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+```
+
 # 2D (SHCF) Test: n = 3,200,000
 ## Version 1 (Time: 4m 34s)
 ```sh
@@ -408,6 +496,95 @@ Time elapsed for predictions: 0.6693715450237505 seconds
                 3200000 & 0.025 & 0.5\% & 10203 & 0.8\% & 98.88\% & 0.33\% & 1.5027 & 0.1659 & 0.5257 & 0.0207 & 0.006 & 0.0835 \\
                 3200000 & 0.01 & 0.2\% & 23160 & 0.69\% & 98.87\% & 0.43\% & 0.6215 & 0.077 & 0.3219 & 0.0074 & 0.0025 & 0.0518 \\
                 3200000 & 0.005 & 0.1\% & 42356 & 0.86\% & 98.48\% & 0.66\% & 0.2907 & 0.0392 & 0.2336 & 0.0047 & 0.0012 & 0.0373 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+```
+
+## Version 4 (Time: 55s)
+```sh
+CUML available: True
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 6.36 seconds
+Time elapsed for predictions: 0.05083717405796051 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 7.02 seconds
+Time elapsed for predictions: 0.09027685201726854 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 8.40 seconds
+Time elapsed for predictions: 0.16340424900408834 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 11.57 seconds
+Time elapsed for predictions: 0.36357142601627856 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 16.48 seconds
+Time elapsed for predictions: 0.659658906981349 seconds
+```
+
+```latex
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                3200000 & 0.1 & 2.0\% & 2950 & 1.26\% & 98.6\% & 0.14\% & 2.0113 & 0.4159 & 0.7483 & 0.0445 & 0.0239 & 0.1584 \\
+                3200000 & 0.05 & 1.0\% & 5504 & 0.92\% & 98.84\% & 0.23\% & 1.9776 & 0.3805 & 0.6881 & 0.0288 & 0.0117 & 0.1147 \\
+                3200000 & 0.025 & 0.5\% & 10203 & 0.8\% & 98.88\% & 0.33\% & 1.5027 & 0.1659 & 0.5257 & 0.0207 & 0.006 & 0.0835 \\
+                3200000 & 0.01 & 0.2\% & 23160 & 0.69\% & 98.87\% & 0.43\% & 0.6215 & 0.077 & 0.3219 & 0.0074 & 0.0025 & 0.0518 \\
+                3200000 & 0.005 & 0.1\% & 42356 & 0.86\% & 98.49\% & 0.66\% & 0.2907 & 0.0392 & 0.2336 & 0.0047 & 0.0012 & 0.0373 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+```
+
+# 2D (SHCF) Test: n = 10,000,000
+## Version 4 (Time: 2m 6s)
+```sh
+CUML available: True
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 17.77 seconds
+Time elapsed for predictions: 0.05962190602440387 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 19.77 seconds
+Time elapsed for predictions: 0.10613429907243699 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 22.28 seconds
+Time elapsed for predictions: 0.19364040298387408 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 27.45 seconds
+Time elapsed for predictions: 0.43672783696092665 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold: 8192 for dimension: 2
+Time to train: 33.58 seconds
+Time elapsed for predictions: 0.8147547509288415 seconds
+```
+
+```latex
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                10000000 & 0.1 & 2.0\% & 3446 & 0.84\% & 99.05\% & 0.12\% & 2.5486 & 1.2264 & 1.0376 & 0.0336 & 0.0231 & 0.1548 \\
+                10000000 & 0.05 & 1.0\% & 6501 & 0.75\% & 99.13\% & 0.12\% & 1.716 & 0.4904 & 0.7108 & 0.0176 & 0.0107 & 0.1073 \\
+                10000000 & 0.025 & 0.5\% & 12152 & 0.59\% & 99.18\% & 0.24\% & 1.1398 & 0.2817 & 0.5567 & 0.0239 & 0.0063 & 0.0847 \\
+                10000000 & 0.01 & 0.2\% & 27839 & 0.47\% & 99.27\% & 0.26\% & 0.4302 & 0.0935 & 0.3323 & 0.007 & 0.0024 & 0.0511 \\
+                10000000 & 0.005 & 0.1\% & 52070 & 0.46\% & 99.16\% & 0.38\% & 0.2096 & 0.053 & 0.2421 & 0.0035 & 0.0012 & 0.0366 \\
         \hline
     \end{tabular}
     \caption{This is a caption!}
