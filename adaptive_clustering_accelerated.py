@@ -712,7 +712,7 @@ if __name__ == "__main__":
     # Generate sample data
     seed = 0
     np.random.seed(seed)
-    N_samples = 40_000
+    N_samples = 80_000
     X_samples = np.random.uniform(-10, 10, size=(N_samples, 3))
     print(f"Generated {N_samples} sample data points.")
 
@@ -745,7 +745,7 @@ if __name__ == "__main__":
     print(f"Clusters by TwoMeans: {NUM_CLUSTERED_BY_TWO_MEANS}")
     print(f"Total clustering calls: {total}")
     print(f"Time taken: {toc - tic:.4f} seconds")
-    if N_samples <= 10_000:
+    if N_samples <= 5_000:
         # Plot only for small datasets
         plot_clusters(clusters, fname=f"{FILE_NAME}_clusters.png")
 

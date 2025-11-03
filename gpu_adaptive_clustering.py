@@ -828,34 +828,6 @@ def flatten_cluster_centers_with_gradient(nc: int, n: int, m: int, tree):
     return centroids, QoI_values, gradients, hessians, dims
 
 
-def plot_clusters(trees: list[TreeNode], fname: str = "adaptive_clusters.png"):
-    """Plot 2D clusters from the tree nodes."""
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Circle
-
-    plt.figure(figsize=(8, 8))
-    for tree in trees:
-        leaves = tree.leaves()
-        for cluster in leaves:
-            x, y = float(cluster.centroid[0]), float(cluster.centroid[1])
-            circle = Circle(
-                (x, y),
-                cluster.radius,
-                color=np.random.rand(3),
-                alpha=0.3,
-                label=f"Cluster {cluster.index}",
-            )
-            plt.gca().add_artist(circle)
-            plt.plot(x, y, "o", color="black", markersize=5)
-
-    plt.xlabel("X1")
-    plt.ylabel("X2")
-    plt.title("Adaptive Clustering Visualization")
-    plt.axis("equal")
-    plt.grid(True)
-    plt.savefig(fname)
-
-
 if __name__ == "__main__":
     import cProfile
     import time
@@ -882,7 +854,7 @@ if __name__ == "__main__":
     # Generate sample data
     seed = 0
     np.random.seed(seed)
-    N_samples = 10_000
+    N_samples = 80_000
     X_samples = np.random.uniform(-10, 10, size=(N_samples, 3))
     print(f"Generated {N_samples} sample data points.")
 
@@ -915,9 +887,6 @@ if __name__ == "__main__":
     print(f"Clusters by TwoMeans: {NUM_CLUSTERED_BY_TWO_MEANS}")
     print(f"Total clustering calls: {total}")
     print(f"Time taken: {toc - tic:.4f} seconds")
-    if N_samples <= 10_000:
-        # Plot only for small datasets
-        plot_clusters(clusters, fname=f"{FILE_NAME}_clusters.png")
 
     cprofile.disable()
     cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
