@@ -229,11 +229,6 @@ if __name__ == "__main__":
         for D, K in DK_PAIRS:
             print(f"Processing D={D}, K={K}...")
 
-            # Warm up JIT
-            Xw = np.random.randn(50, D).astype(np.float64)
-            Xnw, meanw, stdw = _normalize(Xw)
-            two_means_pca_threshold(Xnw, meanw, stdw)
-
             df_results = _bench_sizes(SIZES, D, K)
             all_results.append(df_results)
 
