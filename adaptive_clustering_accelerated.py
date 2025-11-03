@@ -169,7 +169,7 @@ class AdaptiveClusterer:
         dim = X.shape[1]
         self.fast_two_means_len_threshold = self._get_fast_two_means_len_threshold(dim)
         print(
-            f"Using fast two-means length threshold: {self.fast_two_means_len_threshold} for dimension: {dim}"
+            f"Using fast two-means length threshold (dim={dim}): {self.fast_two_means_len_threshold}"
         )
 
         # Initial clustering
