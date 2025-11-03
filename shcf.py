@@ -173,7 +173,7 @@ def test_2D(
 ):
     L = check_matrix_2norm(hessian_SHCF, domain)
 
-    interpolant = NearODESurrogate(use_accelerated_clustering=True)
+    interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
         SHCF_combined,
         domain,
