@@ -26,22 +26,21 @@ def find_optimal_split_1d(s_sorted: np.ndarray) -> int:
     total_sum = pref_sum[-1]
     total_sq = pref_sq[-1]
 
-    best_k = 1
-    best_sse = np.inf
-    # Scan all split points 1..n-1
-    for k in range(1, len(s_sorted)):
-        left_sum = pref_sum[k - 1]
-        right_sum = total_sum - left_sum
-        left_sq = pref_sq[k - 1]
-        right_sq = total_sq - left_sq
+    # Vectorized computation of all SSE values
+    n = len(s_sorted)
+    k_vals = np.arange(1, n)
 
-        sse_left = left_sq - (left_sum**2) / k
-        rn = len(s_sorted) - k
-        sse_right = right_sq - (right_sum**2) / rn
-        sse = sse_left + sse_right
-        if sse < best_sse:
-            best_sse = sse
-            best_k = k
+    left_sum = pref_sum[:-1]
+    right_sum = total_sum - left_sum
+    left_sq = pref_sq[:-1]
+    right_sq = total_sq - left_sq
+
+    sse_left = left_sq - (left_sum * left_sum) / k_vals
+    rn = n - k_vals
+    sse_right = right_sq - (right_sum * right_sum) / rn
+    sse = sse_left + sse_right
+
+    best_k = int(np.argmin(sse) + 1)  # +1 because k_vals starts at 1
 
     return best_k
 
@@ -72,11 +71,14 @@ def two_means_pca_threshold(
         centroids = np.array([Z.mean(axis=0), Z.mean(axis=0)]) * std + mean
         return labels, centroids
 
-    # Top principal direction via SVD on Z (n x d), d is small in this project
+    # Top principal direction via covariance matrix (faster for small d)
+    # For small d (typical in this project), computing Z^T @ Z is faster than full SVD
     # u shape (d,)
     try:
-        _, _, Vt = np.linalg.svd(Z, full_matrices=False)
-        u = Vt[0]
+        # Compute covariance matrix: Z^T @ Z / (n-1), but we only need eigenvector
+        cov = Z.T @ Z  # (d, d) - much smaller than (n, n) for n >> d
+        _, eigvecs = np.linalg.eigh(cov)  # eigh is faster for symmetric matrices
+        u = eigvecs[:, -1]  # Last column = eigenvector with largest eigenvalue
     except np.linalg.LinAlgError:
         # Fallback: use the direction of max variance coordinate
         var = Z.var(axis=0)
@@ -100,13 +102,16 @@ def two_means_pca_threshold(
     labels = np.empty(n, dtype=np.int64)
     labels[order] = labels_sorted
 
-    # Compute centroids in normalized space and map back
-    # Need to compute centroids from the original 2D data, not the 1D projections
-    cluster_0_points = Z_sorted[:best_k]  # first best_k points
-    cluster_1_points = Z_sorted[best_k:]  # remaining points
+    # Compute centroids efficiently using prefix sums in multidimensional space
+    # Already have sorted data: Z_sorted
+    # For cluster 0 (first best_k points): sum and divide by best_k
+    # For cluster 1 (remaining points): use (total_sum - c0_sum) / (n - best_k)
+    total_Z_sum = np.sum(Z, axis=0)  # Sum across all points (d,)
+    c0_sum = np.sum(Z_sorted[:best_k], axis=0)  # Sum of first best_k points
+    c1_sum = total_Z_sum - c0_sum
 
-    c0_norm = np.mean(cluster_0_points, axis=0)
-    c1_norm = np.mean(cluster_1_points, axis=0)
+    c0_norm = c0_sum / best_k
+    c1_norm = c1_sum / (n - best_k)
     centroids_norm = np.vstack([c0_norm, c1_norm])
     centroids = centroids_norm * std + mean
 
