@@ -16,14 +16,6 @@ import numpy as np
 from src.two_means import find_optimal_split_1d
 
 
-def _ensure_zero_mean_columns(Z: np.ndarray) -> np.ndarray:
-    """Ensure each feature/column of Z has zero mean; return a copy if needed."""
-    col_means = Z.mean(axis=0)
-    if np.allclose(col_means, 0.0):
-        return Z
-    return Z - col_means
-
-
 def _median_threshold(labels_proj: np.ndarray) -> tuple[np.ndarray, float]:
     """Return labels from a median threshold on a 1D array.
 
@@ -108,9 +100,6 @@ def two_means_random_qr_threshold(
         labels = np.zeros(n, dtype=np.int64)
         centroids = np.array([Z.mean(axis=0), Z.mean(axis=0)]) * std + mean
         return labels, centroids
-
-    # Ensure zero-mean per feature if not already
-    Z = _ensure_zero_mean_columns(Z)
 
     rng = np.random.default_rng(random_state)
     ell = 1 + max(int(oversampling), 0)
