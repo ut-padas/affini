@@ -135,22 +135,21 @@ class AdaptiveClusterer:
         else:
             return 512
 
-    def fit(self, X: np.ndarray, f: Callable, f_vals=None) -> list[TreeNode]:
+    def fit(self, X: np.ndarray, f: Callable) -> list[TreeNode]:
         """
         Main clustering algorithm.
 
         Args:
             X: Input data points.
             f: Function to evaluate.
-            f_vals: Precomputed function values (optional).
 
         Returns:
             List of tree nodes representing the clustered data.
         """
         # Prepare data
         X = X.astype(NP_DTYPE)
-        X = self._ensure_2d(X)
-        F = self._get_function_values(X, f, f_vals)
+        X = np.atleast_2d(X)
+        F = self._get_function_values(X, f)
 
         # Get dimensionality and set fast two-means threshold
         dim = X.shape[1]
@@ -190,30 +189,14 @@ class AdaptiveClusterer:
 
         return trees
 
-    def _ensure_2d(self, X: np.ndarray) -> np.ndarray:
-        """Ensure input is 2D array."""
-        return np.atleast_2d(X).T if X.ndim == 1 else X
+    def _get_function_values(self, X: np.ndarray, f: Callable) -> np.ndarray:
+        """Compute function values."""
 
-    def _get_function_values(
-        self, X: np.ndarray, f: Callable, f_vals: Optional[np.ndarray]
-    ) -> np.ndarray:
-        """Get or compute function values."""
-        if f_vals is not None:
-            F = self._ensure_2d(f_vals)
-            assert len(X) == len(F), "Data and function values length mismatch"
-            return np.array(F, dtype=NP_DTYPE)
-
-        # TODO
-        F = []
         if self.use_gradient:
-            for x in X:
-                val, _ = f(x)
-                F.append(val)
+            val, _ = f(X)
         else:
-            for x in X:
-                val = f(x)
-                F.append(val)
-        return self._ensure_2d(np.array(F))
+            val = f(X)
+        return np.array(val, dtype=NP_DTYPE)
 
     def _normalize_data(
         self, X: np.ndarray
@@ -280,15 +263,17 @@ class AdaptiveClusterer:
         """Compute maximum approximation error in cluster."""
         # Evaluate function at centroid and compute the errors
         if self.use_gradient:
-            f_c, grad_f = f(centroid)
-            f_c, grad_f = np.atleast_1d(f_c), np.atleast_2d(grad_f)
+            f_c, grad_f = f(np.atleast_2d(centroid))
+
+            # Squeeze grad_f if needed
+            grad_f = grad_f.squeeze(0)
 
             # Taylor model error
             dx = X - centroid
             f_taylor = f_c + (dx @ grad_f.T)
             errors = np.linalg.norm(F - f_taylor, axis=1)
         else:
-            f_c = np.atleast_1d(f(centroid))
+            f_c = f(np.atleast_2d(centroid))
             errors = np.linalg.norm(F - f_c, axis=1)
 
         return float(np.max(errors))
@@ -317,10 +302,9 @@ class AdaptiveClusterer:
         """Create cluster with computed parameters."""
         # Evaluate function at centroid
         if self.use_gradient:
-            f_c, grad_f = f(centroid)
-            f_c, grad_f = np.atleast_1d(f_c), np.atleast_2d(grad_f)
+            f_c, grad_f = f(np.atleast_2d(centroid))
         else:
-            f_c = np.atleast_1d(f(centroid))
+            f_c = f(np.atleast_2d(centroid))
             grad_f = None
 
         # Compute radius and hessian proxy
@@ -497,7 +481,7 @@ class AdaptiveClusterer:
         # vectorized convex combination to generate new points
         new_X = lambdas[:, None] * sub_X[idx0] + (1.0 - lambdas)[:, None] * sub_X[idx1]
 
-        return new_X, self._get_function_values(new_X, f, None)
+        return new_X, self._get_function_values(new_X, f)
 
 
 def adaptive_cluster_algorithm(
@@ -508,7 +492,6 @@ def adaptive_cluster_algorithm(
     N_init_clusters=10,
     min_ppc=1,
     use_gradient=False,
-    f_vals=None,
     seed=0,
 ) -> tuple[int, list[TreeNode]]:
     """API compatible adaptive clustering function."""
@@ -520,7 +503,7 @@ def adaptive_cluster_algorithm(
         use_gradient=use_gradient,
         seed=seed,
     )
-    trees = clusterer.fit(X_train, f, f_vals)
+    trees = clusterer.fit(X_train, f)
     total_clusters = sum(len(tree.leaves()) for tree in trees)
     return total_clusters, trees
 
@@ -658,17 +641,21 @@ if __name__ == "__main__":
     import cProfile
     import time
 
-    def sample_function(x):
+    def sample_function(Xb) -> tuple[np.ndarray, np.ndarray]:
         """
         f(x) = [x1^2 + x2^2, x1 - x2 + x3]
         Jacobian/Gradient:
         [[2*x1, 2*x2, 0],
          [1,    -1,  1]]
         """
-        x1, x2, x3 = x
-        value = np.array([x1**2 + x2**2, x1 - x2 + x3])
-        gradient = np.array([[2 * x1, 2 * x2, 0], [1, -1, 1]])
-        return value, gradient
+        x1, x2, x3 = Xb[:, 0], Xb[:, 1], Xb[:, 2]
+        val0 = x1**2 + x2**2
+        val1 = x1 - x2 + x3
+        values = np.stack([val0, val1], axis=1)
+        g0 = np.stack([2 * x1, 2 * x2, np.zeros_like(x1)], axis=1)
+        g1 = np.stack([np.ones_like(x1), -np.ones_like(x1), np.ones_like(x1)], axis=1)
+        grads = np.stack([g0, g1], axis=1)  # (B, 2, 3)
+        return values, grads
 
     # Generate sample data
     seed = 0
