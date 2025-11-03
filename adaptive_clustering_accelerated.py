@@ -62,7 +62,16 @@ class TreeNode:
 
 
 class AdaptiveClusterer:
-    """Adaptive clustering with binary tree splitting."""
+    """
+    Adaptive clustering with binary tree splitting.
+
+    Shape Conventions:
+        - x.shape: (n, d) where n=number of points, d=input dimensions
+        - f.shape: (n, fd) where fd=output dimensions (function values)
+        - grad.shape: (n, fd, d) where gradients are Jacobian matrices
+
+    Note: If fd=1 (scalar function), f.shape=(n, 1) and grad.shape=(n, 1, d)
+    """
 
     def __init__(
         self,
@@ -140,15 +149,20 @@ class AdaptiveClusterer:
         Main clustering algorithm.
 
         Args:
-            X: Input data points.
-            f: Function to evaluate.
+            X: Input data points with shape (n, d) where n=number of points, d=input dimensions.
+            f: Function to evaluate. Should return values with shape (n, fd) where fd=output dimensions.
+               If use_gradient=True, should return tuple (values, gradients) where gradients have shape (n, fd, d).
 
         Returns:
             List of tree nodes representing the clustered data.
         """
-        # Prepare data
+        # Prepare data - ensure proper shape without forcing 2D
         X = X.astype(NP_DTYPE)
-        X = np.atleast_2d(X)
+        if X.ndim != 2:
+            raise ValueError(
+                f"X must be 2D array with shape (n, d), got shape {X.shape}"
+            )
+
         F = self._get_function_values(X, f)
 
         # Get dimensionality and set fast two-means threshold
@@ -190,8 +204,16 @@ class AdaptiveClusterer:
         return trees
 
     def _get_function_values(self, X: np.ndarray, f: Callable) -> np.ndarray:
-        """Compute function values."""
+        """
+        Compute function values.
 
+        Args:
+            X: Input points with shape (n, d)
+            f: Function that returns values with shape (n, fd) or tuple (values, gradients)
+
+        Returns:
+            Function values with shape (n, fd)
+        """
         if self.use_gradient:
             val, _ = f(X)
         else:
@@ -260,20 +282,31 @@ class AdaptiveClusterer:
     def _compute_max_error(
         self, X: np.ndarray, F: np.ndarray, centroid: np.ndarray, f: Callable
     ) -> float:
-        """Compute maximum approximation error in cluster."""
+        """
+        Compute maximum approximation error in cluster.
+
+        Args:
+            X: Points in cluster with shape (n, d)
+            F: Function values with shape (n, fd)
+            centroid: Cluster centroid with shape (d,)
+            f: Function that returns values with shape (n, fd) or tuple (values, gradients)
+        """
         # Evaluate function at centroid and compute the errors
         if self.use_gradient:
-            f_c, grad_f = f(np.atleast_2d(centroid))
+            f_c, grad_f = f(np.atleast_2d(centroid))  # Ensure centroid is (1, d)
 
-            # Squeeze grad_f if needed
+            # Squeeze to get single values: f_c shape (fd,), grad_f shape (fd, d)
+            f_c = f_c.squeeze(0)
             grad_f = grad_f.squeeze(0)
 
             # Taylor model error
-            dx = X - centroid
-            f_taylor = f_c + (dx @ grad_f.T)
+            dx = X - centroid  # Shape (n, d)
+            f_taylor = f_c + (dx @ grad_f.T)  # Shape (n, fd)
             errors = np.linalg.norm(F - f_taylor, axis=1)
         else:
-            f_c = f(np.atleast_2d(centroid))
+            f_c = f(np.atleast_2d(centroid))[
+                0
+            ]  # Ensure centroid is (1, d), extract single value
             errors = np.linalg.norm(F - f_c, axis=1)
 
         return float(np.max(errors))
@@ -299,12 +332,20 @@ class AdaptiveClusterer:
     def _create_cluster(
         self, X: np.ndarray, F: np.ndarray, centroid: np.ndarray, f: Callable
     ) -> Cluster:
-        """Create cluster with computed parameters."""
+        """
+        Create cluster with computed parameters.
+
+        Args:
+            X: Points in cluster with shape (n, d)
+            F: Function values with shape (n, fd)
+            centroid: Cluster centroid with shape (d,)
+            f: Function that returns values with shape (n, fd) or tuple (values, gradients)
+        """
         # Evaluate function at centroid
         if self.use_gradient:
-            f_c, grad_f = f(np.atleast_2d(centroid))
+            f_c, grad_f = f(np.atleast_2d(centroid))  # Ensure centroid is (1, d)
         else:
-            f_c = f(np.atleast_2d(centroid))
+            f_c = f(np.atleast_2d(centroid))  # Ensure centroid is (1, d)
             grad_f = None
 
         # Compute radius and hessian proxy
@@ -512,10 +553,18 @@ def flatten_cluster_centers_with_gradient(nc: int, n: int, m: int, tree):
     """
     Flatten leaf cluster data into contiguous NumPy arrays.
 
+    Shape Convention:
+        Following the convention x.shape=(n_pts, d), f.shape=(n_pts, fd), grad.shape=(n_pts, fd, d):
+        - centroids: (nc, n) where nc=number of clusters, n=input dimensions
+        - QoI_values: (nc, m) where m=output dimensions
+        - gradients: (nc, m, n) where gradients are Jacobian matrices
+        - hessians: (nc,) scalar Hessian proxies per cluster
+        - dims: (nc,) cluster radii (name kept for API compatibility)
+
     Args:
         nc: Expected number of leaf clusters (rows in outputs).
-        n: Parameter dimension (centroid length).
-        m: QoI/output dimension (value length).
+        n: Input dimension (centroid length).
+        m: Output dimension (value length).
         tree: A TreeNode or an iterable of TreeNode roots.
 
     Returns:
@@ -558,13 +607,13 @@ def flatten_cluster_centers_with_gradient(nc: int, n: int, m: int, tree):
 
         if cl is not None:
             # Centroid
-            c = np.asarray(cl.centroid, dtype=np.float64).reshape(-1)
+            c = np.asarray(cl.centroid, dtype=np.float64).flatten()
             if c.size != n:
                 raise ValueError(f"Centroid size {c.size} != n={n}")
             centroids[k] = c
 
             # QoI/value
-            v = np.asarray(cl.value, dtype=np.float64).reshape(-1)
+            v = np.asarray(cl.value, dtype=np.float64).flatten()
             if v.size != m:
                 raise ValueError(f"Value size {v.size} != m={m}")
             QoI_values[k] = v
