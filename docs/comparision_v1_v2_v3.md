@@ -548,6 +548,8 @@ Time elapsed for predictions: 0.659658906981349 seconds
 ```
 
 # 2D (SHCF) Test: n = 10,000,000
+## Version 1 (Time: 12m 32s)
+
 ## Version 3 (Time: 4m 56s)
 ```sh
 CUML available: True
