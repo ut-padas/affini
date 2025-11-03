@@ -240,11 +240,18 @@ class AdaptiveClusterer:
                 ]
 
                 # Batch split
+                split_results_small = self._batch_split_small_nodes(small_nodes) if small_nodes else []
+                split_results_large = self._batch_split_large_nodes(large_nodes) if large_nodes else []
+
+                # Interleave results in the order of nodes_to_split
+                small_iter = iter(split_results_small)
+                large_iter = iter(split_results_large)
                 split_results = []
-                if small_nodes:
-                    split_results.extend(self._batch_split_small_nodes(small_nodes))
-                if large_nodes:
-                    split_results.extend(self._batch_split_large_nodes(large_nodes))
+                for node in nodes_to_split:
+                    if node.X.shape[0] <= self.fast_two_means_len_threshold:
+                        split_results.append(next(small_iter))
+                    else:
+                        split_results.append(next(large_iter))
 
                 # Create children
                 for node, (labels, centroids) in zip(nodes_to_split, split_results):
