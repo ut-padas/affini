@@ -7,20 +7,28 @@ import time
 import faiss
 import numpy as np
 
-# TODO eventually make labels multi-d. This would make labels a matrix and gradients a rank-3 tensor.
-
 
 class NN_Inference:
-    """FAISS-backed kNN inference with optional Taylor gradient boosting.
+    """
+    FAISS-backed kNN inference with optional Taylor gradient boosting.
 
-    This class stores feature vectors (sources), their labels (targets), and
+    Shape Conventions:
+        - X.shape: (n_pts, d) where n_pts=number of source points, d=input dimension
+        - f_vals.shape: (n_pts, fd) where fd=function output dimension
+        - gradients.shape: (n_pts, fd, d) where gradients are Jacobian matrices
+        - hessians.shape: (n_pts,) scalar Hessian proxies per source
+        - trust_radii.shape: (n_pts,) trust radii per source
+
+    Note: If fd=1 (scalar function), f_vals.shape=(n_pts, 1) and gradients.shape=(n_pts, 1, d)
+
+    This class stores X (source points), their f_vals (function values), and
     optionally Jacobians (per-source gradients) along with per-source Hessian
     proxies and trust radii. It builds a FAISS IndexFlatL2 to enable fast
     nearest-neighbor queries, and exposes `predict` to compute surrogate
     outputs.
 
     Prediction modes:
-      * No gradients provided  -> neighbor label averaging
+      * No gradients provided  -> neighbor f_vals averaging
       * Gradients provided     -> local linear model:
            f(x) ≈ f(x_i) + J_i (x - x_i)  (optionally averaged across k NNs)
 
@@ -30,21 +38,21 @@ class NN_Inference:
         Lipschitz fallback); returns a boolean mask of "outside guarantee".
 
     Attributes:
-      features (np.ndarray): Source feature matrix (P, n).
-      labels (np.ndarray): Source labels (P, m).
-      gradients (np.ndarray | None): Per-source Jacobians (P, m, n) or None.
-      hessians (np.ndarray | None): Per-source scalar Hessian proxies (P,) or None.
-      trust_radii (np.ndarray | None): Per-source trust radii (P,) or None.
+      X (np.ndarray): Source point matrix (n_pts, d).
+      f_vals (np.ndarray): Source function values (n_pts, fd).
+      gradients (np.ndarray | None): Per-source Jacobians (n_pts, fd, d) or None.
+      hessians (np.ndarray | None): Per-source scalar Hessian proxies (n_pts,) or None.
+      trust_radii (np.ndarray | None): Per-source trust radii (n_pts,) or None.
       P (int): Number of source points.
-      M (int): Output dimension.
+      M (int): Function output dimension.
       N (int): Input dimension.
-      _faiss_index (faiss.Index): Flat L2 index over features (dimension N).
+      _faiss_index (faiss.Index): Flat L2 index over X (dimension N).
     """
 
     def __init__(
         self,
-        features: np.ndarray,
-        labels: np.ndarray,
+        X: np.ndarray,
+        f_vals: np.ndarray,
         gradients: np.ndarray | None = None,
         hessians: np.ndarray | None = None,
         trust_radii: np.ndarray | None = None,
@@ -52,46 +60,60 @@ class NN_Inference:
         """Initialize the inference object and build the FAISS index.
 
         Args:
-          features: Array of input points used as cluster centroids with shape (P, n).
-          labels: Labels at sources, shape (P, m).
-          gradients: Optional Jacobians at sources, shape (P, m, n).
-          hessians: Optional scalar Hessian proxies per source, shape (P,).
+          X: Array of input points used as cluster centroids with shape (n_pts, d).
+          f_vals: Function values at sources, shape (n_pts, fd).
+          gradients: Optional Jacobians at sources, shape (n_pts, fd, d).
+          hessians: Optional scalar Hessian proxies per source, shape (n_pts,).
           trust_radii: Optional trust radii per source (squared-distance space
-            comparisons are used), shape (P,).
+            comparisons are used), shape (n_pts,).
 
         Notes:
-          * This constructor assumes `gradients` is provided and shaped as
-            (P, m, n) when used; minimal checks are left as-is to preserve
-            original logic.
+          * Shape validation is performed once here to ensure consistency
           * FAISS distances are squared L2 norms; see comments in `predict`.
         """
-        pf, n = features.shape
-        pl, m = labels.shape
-        if pf != pl:
-            raise ValueError("Number of features and labels must match (P).")
+        # Validate shapes once
+        if X.ndim != 2:
+            raise ValueError(
+                f"X must be 2D array with shape (n_pts, d), got shape {X.shape}"
+            )
+        if f_vals.ndim != 2:
+            raise ValueError(
+                f"f_vals must be 2D array with shape (n_pts, fd), got shape {f_vals.shape}"
+            )
+
+        n_pts, d = X.shape
+        n_f_vals, fd = f_vals.shape
+        if n_pts != n_f_vals:
+            raise ValueError(
+                f"Number of X ({n_pts}) and f_vals ({n_f_vals}) must match."
+            )
 
         if gradients is not None:
-            pg, mg, ng = gradients.shape
-            if pf != pg or m != mg or n != ng:
+            if gradients.ndim != 3:
                 raise ValueError(
-                    "Gradient shape must be (P, m, n) and match features/labels."
+                    f"gradients must be 3D array with shape (n, fd, d), got shape {gradients.shape}"
+                )
+            n_grad, fd_grad, d_grad = gradients.shape
+            if n_pts != n_grad or fd != fd_grad or d != d_grad:
+                raise ValueError(
+                    f"Gradient shape {gradients.shape} must match (n_pts, fd, d) = ({n_pts}, {fd}, {d})"
                 )
 
         # Save data as provided (no copies unless necessary downstream)
-        self.features = features
-        self.labels = labels
+        self.X = X
+        self.f_vals = f_vals
         self.gradients = gradients
         self.hessians = hessians
         self.trust_radii = trust_radii
-        self.P = pf  # number of training points
-        self.M = m  # output dimension (m)
-        self.N = n  # input dimension (n)
+        self.P = n_pts  # number of training points
+        self.M = fd  # function output dimension (fd)
+        self.N = d  # input dimension (d)
 
-        # Build a flat L2 FAISS index over feature vectors.
+        # Build a flat L2 FAISS index over X vectors.
         # Note: IndexFlatL2 expects float32 arrays; the original code relies on
         # faiss accepting the dtype in use. We preserve that behavior here.
         self._faiss_index = faiss.IndexFlatL2(self.N)
-        self._faiss_index.add(features)  # type: ignore
+        self._faiss_index.add(X)  # type: ignore
 
     def predict(
         self,
@@ -112,7 +134,7 @@ class NN_Inference:
         then average across k neighbors. Otherwise, average neighbor labels.
 
         Args:
-          targets: Query matrix of shape (Q, N).
+          targets: Query matrix of shape (n_query, d).
           k: Number of nearest neighbors to use.
           unwrap_log: TODO
           disp_time: If True, print elapsed prediction time.
@@ -123,8 +145,8 @@ class NN_Inference:
 
         Returns:
           tuple[np.ndarray, np.ndarray]:
-            - predictions: Array of shape (Q, M) with averaged surrogate outputs.
-            - outside_mask: Boolean array (Q,) where True marks points deemed
+            - predictions: Array of shape (n_query, fd) with averaged surrogate outputs.
+            - outside_mask: Boolean array (n_query,) where True marks points deemed
               *outside* the theoretical guarantee.
                 * If no tolerance is provided or k != 1, this mask is all False
                   (i.e., no guarantee screening).
@@ -135,41 +157,39 @@ class NN_Inference:
             space. Do not apply square roots on the right-hand side.
           * Local linear mode uses JVP via np.einsum('ijk,ik->ij', J, dx),
             with shapes:
-              J:  (Q, M, N)  (neighbor Jacobians gathered for each query)
-              dx: (Q, N)     (offset vectors x* - x_i)
-              out: (Q, M)
+              J:  (n_query, fd, d)  (neighbor Jacobians gathered for each query)
+              dx: (n_query, d)     (offset vectors x* - x_i)
+              out: (n_query, fd)
         """
         start_time = time.perf_counter()
-
-        # TODO check if the length of each feature vector matches the length of training vectors
 
         # k-NN search via FAISS; D are squared L2 distances, I are indices.
         D, I = self._faiss_index.search(targets, k)  # type: ignore
 
-        # Optional “unlog” of selected dimensions prior to computing offsets.
+        # Optional "unlog" of selected dimensions prior to computing offsets.
         # (Distances from FAISS remain unchanged; only offsets for Taylor are
         # affected. Preserve original copy semantics.)
-        features_unlog = self.features.copy()
+        X_unlog = self.X.copy()
         targets_unlog = targets.copy()
         if len(unwrap_log) > 0:
             for j, val in enumerate(unwrap_log):
                 if val:
                     targets_unlog[:, j] = 10 ** targets_unlog[:, j]
-                    features_unlog[:, j] = 10 ** features_unlog[:, j]
+                    X_unlog[:, j] = 10 ** X_unlog[:, j]
 
         # Allocate predictions; accumulate over k neighbors, average at return.
         predictions = np.zeros((len(targets), self.M))
         for j in range(k):
             if self.gradients is None:
-                # No gradients: neighbor label averaging (accumulate).
-                predictions += self.labels[I[:, j]]
+                # No gradients: neighbor f_vals averaging (accumulate).
+                predictions += self.f_vals[I[:, j]]
             else:
                 # Local linear correction:
-                # distance_vecs = (x* - x_i) in the “unlogged” space (if used).
-                distance_vecs = targets_unlog - features_unlog[I[:, j]]
+                # distance_vecs = (x* - x_i) in the "unlogged" space (if used).
+                distance_vecs = targets_unlog - X_unlog[I[:, j]]
 
                 # Batched JVP: for each query q, (M×N) @ (N,) -> (M,)
-                predictions += self.labels[I[:, j]] + np.einsum(
+                predictions += self.f_vals[I[:, j]] + np.einsum(
                     "ijk,ik->ij", self.gradients[I[:, j]], distance_vecs
                 )
 
@@ -225,29 +245,29 @@ class NN_Inference:
         # Bad points are all False when tol is not specified.
         return predictions / k, np.logical_not(good_points)
 
-    def add_extra_features(
-        self, new_features, new_labels, new_gradients, new_hessians, new_dims
+    def add_extra_sources(
+        self, new_X, new_f_vals, new_gradients, new_hessians, new_dims
     ):
         """Append newly created sources to the index and internal arrays.
 
         Args:
-          new_features: New source features, shape (R, N).
-          new_labels: New labels, shape (R, M) or compatible with append.
-          new_gradients: New Jacobians, shape (R, M, N).
-          new_hessians: New Hessian proxies, shape (R,) or compatible.
-          new_dims: New trust radii (or related dims), shape (R,) or compatible.
+          new_X: New source points, shape (r, d).
+          new_f_vals: New function values, shape (r, fd) or compatible with append.
+          new_gradients: New Jacobians, shape (r, fd, d).
+          new_hessians: New Hessian proxies, shape (r,) or compatible.
+          new_dims: New trust radii (or related dims), shape (r,) or compatible.
 
         Notes:
           * This method preserves original array update semantics (append/vstack).
           * The FAISS index is incrementally updated by calling `.add` on the
-            new features.
+            new X points.
         """
-        self.features = np.vstack((self.features, new_features))
-        self.labels = np.append(self.labels, new_labels)
+        self.X = np.vstack((self.X, new_X))
+        self.f_vals = np.append(self.f_vals, new_f_vals)
         if self.gradients is not None:
             self.gradients = np.vstack((self.gradients, new_gradients))
         if self.hessians is not None:
             self.hessians = np.append(self.hessians, new_hessians)
         if self.trust_radii is not None:
             self.trust_radii = np.append(self.trust_radii, new_dims)
-        self._faiss_index.add(new_features)  # type: ignore
+        self._faiss_index.add(new_X)  # type: ignore
