@@ -633,6 +633,9 @@ def plot_clusters(trees: list[TreeNode], fname: str = "adaptive_clusters.png"):
 if __name__ == "__main__":
     import cProfile
     import time
+    from pathlib import Path
+
+    FILE_NAME = Path(__file__).resolve().stem
 
     def sample_function(Xb) -> tuple[cp.ndarray, cp.ndarray]:
         """
@@ -689,8 +692,8 @@ if __name__ == "__main__":
     print(f"Time taken: {toc - tic:.4f} seconds")
     if N_samples <= 10_000:
         # Plot only for small datasets
-        plot_clusters(clusters, fname="adaptive_clusters_accelerated.png")
+        plot_clusters(clusters, fname=f"{FILE_NAME}_clusters.png")
 
     cprofile.disable()
-    cprofile.dump_stats("adaptive_clustering_accelerated_profile.prof")
+    cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
     # cprofile.print_stats(sort="time")
