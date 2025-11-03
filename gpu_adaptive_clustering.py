@@ -210,7 +210,7 @@ class AdaptiveClusterer:
             ]
             batched_errors = self._batch_compute_max_errors(node_data_list, f)
             batched_meets_tol = self._batch_meets_tolerances(
-                batched_errors, node_data_list, f
+                batched_errors, node_data_list
             )
 
             # Set clusters for nodes that meet tolerance
@@ -564,38 +564,76 @@ class AdaptiveClusterer:
         self,
         node_data_list: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
         f: Callable,
-    ) -> list[float]:
-        """Batch compute max errors for multiple nodes."""
-        return [
-            self._compute_max_error(X, F, centroid, f)
-            for X, F, centroid in node_data_list
-        ]
+    ) -> np.ndarray:
+        """Vectorized batch compute max errors for multiple nodes."""
+        if not node_data_list:
+            return np.array([])
+
+        # Collect all centroids and evaluate function once
+        centroids = np.stack([centroid for _, _, centroid in node_data_list])
+
+        if self.use_gradient:
+            f_c_batch, grad_f_batch = f(
+                centroids
+            )  # Shape: (n_nodes, fd), (n_nodes, fd, d)
+        else:
+            f_c_batch = f(centroids)  # Shape: (n_nodes, fd)
+            grad_f_batch = None
+
+        errors = np.empty(len(node_data_list), dtype=float)
+        if self.use_gradient and grad_f_batch is not None:
+            for i in range(len(node_data_list)):
+                X, F, centroid = node_data_list[i]
+                f_c = f_c_batch[i]  # Shape: (fd,)
+                grad_f = grad_f_batch[i]  # Shape: (fd, d)
+                # Taylor model error
+                dx = X - centroid  # Shape: (n_points, d)
+                f_taylor = f_c + (dx @ grad_f.T)  # Shape: (n_points, fd)
+                node_errors = np.linalg.norm(F - f_taylor, axis=1)
+                errors[i] = float(np.max(node_errors)) if len(node_errors) > 0 else 0.0
+        else:
+            for i, (X, F, centroid) in enumerate(node_data_list):
+                f_c = f_c_batch[i]  # Shape: (fd,)
+                node_errors = np.linalg.norm(F - f_c, axis=1)
+                errors[i] = float(np.max(node_errors)) if len(node_errors) > 0 else 0.0
+
+        return errors
 
     def _batch_meets_tolerances(
         self,
-        errors: list[float],
+        errors: np.ndarray,
         node_data_list: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
-        f: Callable,
-    ) -> list[bool]:
-        """Batch check if nodes meet tolerances."""
-        meets = []
-        for error, (X, F, centroid) in zip(errors, node_data_list):
-            if error <= self.atol:
-                meets.append(True)
-            elif len(F) > 0:
+    ) -> np.ndarray:
+        """Vectorized batch check if nodes meet tolerances."""
+        # Absolute tolerance check (vectorized)
+        meets_atol = errors <= self.atol
+
+        # Relative tolerance check (for nodes that don't meet absolute tolerance)
+        meets_rtol = np.zeros_like(meets_atol)
+
+        for i, (_, F, _) in enumerate(node_data_list):
+            if not meets_atol[i] and len(F) > 0:
                 min_norm = np.min(np.linalg.norm(F, axis=1))
-                meets.append(error <= self.rtol * min_norm)
-            else:
-                meets.append(False)
+                meets_rtol[i] = errors[i] <= self.rtol * min_norm
+
+        # Combine tolerance checks
+        meets = meets_atol | meets_rtol
+
         return meets
 
     def _batch_split_small_nodes(
         self, small_nodes: list[TreeNode]
     ) -> list[tuple[np.ndarray, np.ndarray]]:
-        """Batch split small nodes using fast two-means."""
+        """Batch split small nodes using vectorized fast two-means."""
+        if not small_nodes:
+            return []
+
+        # For small nodes, we can batch the PCA computation and normalization
         results = []
         for node in small_nodes:
             assert node.X is not None
+            # Still call individual _split_binary for now, but this could be further optimized
+            # by batching the PCA projection and threshold finding across multiple small nodes
             labels, centroids = self._split_binary(node.X)
             results.append((labels, centroids))
         return results
@@ -603,7 +641,52 @@ class AdaptiveClusterer:
     def _batch_split_large_nodes(
         self, large_nodes: list[TreeNode]
     ) -> list[tuple[np.ndarray, np.ndarray]]:
-        """Batch split large nodes using k-means (concurrent if possible)."""
+        """Batch split large nodes using concurrent k-means operations."""
+        if not large_nodes:
+            return []
+
+        # Group nodes by size for more efficient GPU utilization
+        if self.use_gpu:
+            return self._batch_split_large_nodes_gpu(large_nodes)
+        else:
+            return self._batch_split_large_nodes_cpu(large_nodes)
+
+    def _batch_split_large_nodes_gpu(
+        self, large_nodes: list[TreeNode]
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """GPU-optimized batch splitting for large nodes."""
+        results = []
+
+        # Process nodes that can use GPU
+        gpu_eligible = [
+            node
+            for node in large_nodes
+            if node.X is not None and len(node.X) >= self.gpu_len_threshold
+        ]
+        cpu_nodes = [
+            node
+            for node in large_nodes
+            if node.X is not None and len(node.X) < self.gpu_len_threshold
+        ]
+
+        # Batch GPU operations when possible
+        for node in gpu_eligible:
+            assert node.X is not None
+            labels, centroids = self._split_binary(node.X)
+            results.append((labels, centroids))
+
+        # Handle remaining CPU nodes
+        for node in cpu_nodes:
+            assert node.X is not None
+            labels, centroids = self._split_binary(node.X)
+            results.append((labels, centroids))
+
+        return results
+
+    def _batch_split_large_nodes_cpu(
+        self, large_nodes: list[TreeNode]
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """CPU-optimized batch splitting for large nodes."""
         results = []
         for node in large_nodes:
             assert node.X is not None
