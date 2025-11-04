@@ -712,7 +712,7 @@ if __name__ == "__main__":
     # Generate sample data
     seed = 0
     np.random.seed(seed)
-    N_samples = 80_000
+    N_samples = 200_000
     X_samples = np.random.uniform(-10, 10, size=(N_samples, 3))
     print(f"Generated {N_samples} sample data points.")
 
