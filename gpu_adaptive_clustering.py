@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 import numpy as np
-from sklearn.cluster import KMeans, MiniBatchKMeans
+from sklearn.cluster import KMeans
 
 from src.two_means import two_means_pca_threshold
 
@@ -25,7 +25,6 @@ print(f"CUML available: {_HAS_GPU}")
 # Global counters for clustering method usage
 NUM_CLUSTERED_BY_CUML = 0
 NUM_CLUSTERED_BY_SKLEARN = 0
-NUM_CLUSTERED_BY_MINIBATCH = 0
 NUM_CLUSTERED_BY_TWO_MEANS = 0
 
 
@@ -89,10 +88,6 @@ class AdaptiveClusterer:
         # Keyword arguments
         use_gpu: bool = True,
         gpu_len_threshold: int = 10_000,
-        mini_batch_len_threshold: int = 50_000,
-        # Fast k=2 split settings
-        use_fast_two_means: bool = True,
-        fast_two_means_len_threshold: int | str = "auto",
     ):
         """
         Initialize the adaptive clusterer.
@@ -106,9 +101,6 @@ class AdaptiveClusterer:
             seed: Random seed for reproducibility.
             use_gpu: Whether to use GPU acceleration if available.
             gpu_len_threshold: Minimum data length to use GPU clustering. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_cpu_vs_gpu.py
-            mini_batch_len_threshold: Minimum data length to use MiniBatchKMeans. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_vs_minibatch.py
-            use_fast_two_means: Whether to use fast 2-means splitting.
-            fast_two_means_len_threshold: Maximum data length for fast 2-means splitting. If "auto", then, based on the dimensionality, the model uses thresholds tuned on TACC-Vista system.
         """
         self.atol = atol
         self.rtol = rtol
@@ -119,34 +111,8 @@ class AdaptiveClusterer:
 
         self.use_gpu = use_gpu and _HAS_GPU
         self.gpu_len_threshold = gpu_len_threshold
-        self.mini_batch_len_threshold = mini_batch_len_threshold
-        self.use_fast_two_means = use_fast_two_means
-
-        if not (
-            isinstance(fast_two_means_len_threshold, int)
-            or (
-                isinstance(fast_two_means_len_threshold, str)
-                and fast_two_means_len_threshold == "auto"
-            )
-        ):
-            raise ValueError(
-                "fast_two_means_len_threshold must be 'auto' or an integer."
-            )
-        self.ftm_len_threshold_property = fast_two_means_len_threshold
 
         self._cluster_id = 0
-
-    def _get_fast_two_means_len_threshold(self, dim: int) -> int:
-        """Determine fast two-means length threshold based on dimensionality, as per tuned values."""
-        if isinstance(self.ftm_len_threshold_property, int):
-            return self.ftm_len_threshold_property
-
-        if dim < 10:
-            return 8_192
-        elif dim < 50:
-            return 1_024
-        else:
-            return 512
 
     def fit(self, X: np.ndarray, f: Callable) -> list[TreeNode]:
         """
@@ -168,13 +134,6 @@ class AdaptiveClusterer:
             )
 
         F = self._get_function_values(X, f)
-
-        # Get dimensionality and set fast two-means threshold
-        dim = X.shape[1]
-        self.fast_two_means_len_threshold = self._get_fast_two_means_len_threshold(dim)
-        print(
-            f"Using fast two-means length threshold (dim={dim}): {self.fast_two_means_len_threshold}"
-        )
 
         # Initial clustering
         labels, centroids = self._initial_cluster(X)
@@ -231,24 +190,28 @@ class AdaptiveClusterer:
                 small_nodes = [
                     node
                     for node in nodes_to_split
-                    if node.X.shape[0] <= self.fast_two_means_len_threshold
+                    if node.X.shape[0] <= self.gpu_len_threshold
                 ]
                 large_nodes = [
                     node
                     for node in nodes_to_split
-                    if node.X.shape[0] > self.fast_two_means_len_threshold
+                    if node.X.shape[0] > self.gpu_len_threshold
                 ]
 
                 # Batch split
-                split_results_small = self._batch_split_small_nodes(small_nodes) if small_nodes else []
-                split_results_large = self._batch_split_large_nodes(large_nodes) if large_nodes else []
+                split_results_small = (
+                    self._batch_split_small_nodes(small_nodes) if small_nodes else []
+                )
+                split_results_large = (
+                    self._batch_split_large_nodes(large_nodes) if large_nodes else []
+                )
 
                 # Interleave results in the order of nodes_to_split
                 small_iter = iter(split_results_small)
                 large_iter = iter(split_results_large)
                 split_results = []
                 for node in nodes_to_split:
-                    if node.X.shape[0] <= self.fast_two_means_len_threshold:
+                    if node.X.shape[0] <= self.gpu_len_threshold:
                         split_results.append(next(small_iter))
                     else:
                         split_results.append(next(large_iter))
@@ -361,10 +324,9 @@ class AdaptiveClusterer:
 
     def _initial_cluster(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Perform initial clustering."""
-        global NUM_CLUSTERED_BY_CUML, NUM_CLUSTERED_BY_SKLEARN, NUM_CLUSTERED_BY_MINIBATCH
+        global NUM_CLUSTERED_BY_CUML, NUM_CLUSTERED_BY_SKLEARN
 
         X_norm, mean, std = self._normalize_data(X)
-
         n = len(X)
         if self.use_gpu and n >= self.gpu_len_threshold:
             Xg = cp.asarray(X_norm, dtype=CP_DTYPE)
@@ -374,28 +336,8 @@ class AdaptiveClusterer:
             NUM_CLUSTERED_BY_CUML += 1
             return labels, centroids
 
-        if n >= self.mini_batch_len_threshold:
-            # Calculate batch size based on n
-            batch = int(min(8192, max(256, np.sqrt(n))))
-            km = MiniBatchKMeans(
-                n_clusters=self.n_clusters,
-                random_state=self.seed,
-                n_init=1,
-                # max_iter=50,
-                batch_size=batch,
-                init="k-means++",
-            )
-            NUM_CLUSTERED_BY_MINIBATCH += 1
-        else:
-            km = KMeans(
-                n_clusters=self.n_clusters,
-                random_state=self.seed,
-                n_init=1,
-                # max_iter=50,
-                # algorithm="elkan",
-                init="k-means++",
-            )
-            NUM_CLUSTERED_BY_SKLEARN += 1
+        km = KMeans(n_clusters=self.n_clusters, random_state=self.seed)
+        NUM_CLUSTERED_BY_SKLEARN += 1
 
         labels = km.fit_predict(X_norm)
         centroids = km.cluster_centers_ * std + mean
@@ -496,13 +438,13 @@ class AdaptiveClusterer:
         Returns:
             Cluster labels and centroids.
         """
-        global NUM_CLUSTERED_BY_CUML, NUM_CLUSTERED_BY_SKLEARN, NUM_CLUSTERED_BY_MINIBATCH, NUM_CLUSTERED_BY_TWO_MEANS
+        global NUM_CLUSTERED_BY_CUML, NUM_CLUSTERED_BY_SKLEARN, NUM_CLUSTERED_BY_TWO_MEANS
 
         n = len(X)
         X_norm, mean, std = self._normalize_data(X)
 
         # For small clusters, use a rigorous fast 2-means: PCA projection + exact threshold scan
-        if self.use_fast_two_means and n <= self.fast_two_means_len_threshold:
+        if n < self.gpu_len_threshold:
             labels, centroids = two_means_pca_threshold(X_norm, mean, std)
             NUM_CLUSTERED_BY_TWO_MEANS += 1
             return labels, centroids
@@ -515,26 +457,8 @@ class AdaptiveClusterer:
             NUM_CLUSTERED_BY_CUML += 1
             return labels, centroids
 
-        if n >= self.mini_batch_len_threshold:
-            batch = int(min(8192, max(256, np.sqrt(n))))
-            km = MiniBatchKMeans(
-                n_clusters=2,
-                random_state=self.seed,
-                n_init=1,
-                # max_iter=50,
-                batch_size=batch,
-            )
-            NUM_CLUSTERED_BY_MINIBATCH += 1
-        else:
-            km = KMeans(
-                n_clusters=2,
-                random_state=self.seed,
-                n_init=1,
-                # max_iter=50,
-                # algorithm="elkan",
-            )
-            NUM_CLUSTERED_BY_SKLEARN += 1
-
+        km = KMeans(n_clusters=2, random_state=self.seed, n_init=1)
+        NUM_CLUSTERED_BY_SKLEARN += 1
         labels = km.fit_predict(X_norm)
         centroids = km.cluster_centers_ * std + mean
         return labels, centroids
@@ -663,31 +587,11 @@ class AdaptiveClusterer:
     ) -> list[tuple[np.ndarray, np.ndarray]]:
         """GPU-optimized batch splitting for large nodes."""
         results = []
-
-        # Process nodes that can use GPU
-        gpu_eligible = [
-            node
-            for node in large_nodes
-            if node.X is not None and len(node.X) >= self.gpu_len_threshold
-        ]
-        cpu_nodes = [
-            node
-            for node in large_nodes
-            if node.X is not None and len(node.X) < self.gpu_len_threshold
-        ]
-
-        # Batch GPU operations when possible
-        for node in gpu_eligible:
+        # Process each large node individually on GPU
+        for node in large_nodes:
             assert node.X is not None
             labels, centroids = self._split_binary(node.X)
             results.append((labels, centroids))
-
-        # Handle remaining CPU nodes
-        for node in cpu_nodes:
-            assert node.X is not None
-            labels, centroids = self._split_binary(node.X)
-            results.append((labels, centroids))
-
         return results
 
     def _batch_split_large_nodes_cpu(
@@ -883,14 +787,10 @@ if __name__ == "__main__":
     toc = time.perf_counter()
     print(f"Total clusters formed: {total_clusters}")
     total = (
-        NUM_CLUSTERED_BY_CUML
-        + NUM_CLUSTERED_BY_SKLEARN
-        + NUM_CLUSTERED_BY_MINIBATCH
-        + NUM_CLUSTERED_BY_TWO_MEANS
+        NUM_CLUSTERED_BY_CUML + NUM_CLUSTERED_BY_SKLEARN + NUM_CLUSTERED_BY_TWO_MEANS
     )
     print(f"Clusters by CUML: {NUM_CLUSTERED_BY_CUML}")
     print(f"Clusters by SKLearn KMeans: {NUM_CLUSTERED_BY_SKLEARN}")
-    print(f"Clusters by SKLearn MiniBatchKMeans: {NUM_CLUSTERED_BY_MINIBATCH}")
     print(f"Clusters by TwoMeans: {NUM_CLUSTERED_BY_TWO_MEANS}")
     print(f"Total clustering calls: {total}")
     print(f"Time taken: {toc - tic:.4f} seconds")
