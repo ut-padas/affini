@@ -7,7 +7,7 @@ import cupy as cp
 from scipy.stats import qmc
 
 from src.gpu_adaptive_clustering import adaptive_clustering_gpu
-from src.gpu_nn_inference import GPU_NN_Inference
+from src.nn_inference import GPU_NN_Inference
 
 
 class GPU_NearODESurrogate:
@@ -111,11 +111,11 @@ class GPU_NearODESurrogate:
         # --- Build FAISS-backed nearest-neighbor inference object ---
         # Convert CuPy arrays to NumPy for FAISS compatibility
         self.KNN_search = GPU_NN_Inference(
-            X=new_X.get() if new_X is not None else None,
-            f_vals=new_f_vals.get() if new_f_vals is not None else None,
-            gradients=new_gradients.get() if new_gradients is not None else None,
-            hessians=new_hessians.get() if new_hessians is not None else None,
-            trust_radii=new_radii.get() if new_radii is not None else None,
+            X=cp.asnumpy(new_X),
+            f_vals=cp.asnumpy(new_f_vals),
+            gradients=cp.asnumpy(new_gradients),
+            hessians=cp.asnumpy(new_hessians) if new_hessians is not None else None,
+            trust_radii=cp.asnumpy(new_radii) if new_radii is not None else None,
         )
         self._model_trained = True
         self.N_sources = k

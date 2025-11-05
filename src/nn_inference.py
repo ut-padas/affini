@@ -4,10 +4,10 @@ Nearest-neighbor inference with optional first-order (Taylor) correction.
 
 import time
 
-import cupy as cp
 import faiss
+import numpy as np
 
-CP_DTYPE = cp.float64
+NP_DTYPE = np.float64
 
 
 class GPU_NN_Inference:
@@ -40,11 +40,11 @@ class GPU_NN_Inference:
         Lipschitz fallback); returns a boolean mask of "outside guarantee".
 
     Attributes:
-      X (cp.ndarray): Source point matrix (N, D).
-      f_vals (cp.ndarray): Source function values (N, FD).
-      gradients (cp.ndarray | None): Per-source Jacobians (N, FD, D) or None.
-      hessians (cp.ndarray | None): Per-source scalar Hessian proxies (N,) or None.
-      trust_radii (cp.ndarray | None): Per-source trust radii (N,) or None.
+      X (np.ndarray): Source point matrix (N, D).
+      f_vals (np.ndarray): Source function values (N, FD).
+      gradients (np.ndarray | None): Per-source Jacobians (N, FD, D) or None.
+      hessians (np.ndarray | None): Per-source scalar Hessian proxies (N,) or None.
+      trust_radii (np.ndarray | None): Per-source trust radii (N,) or None.
       P (int): Number of source points.
       M (int): Function output dimension.
       N (int): Input dimension.
@@ -53,11 +53,11 @@ class GPU_NN_Inference:
 
     def __init__(
         self,
-        X: cp.ndarray,
-        f_vals: cp.ndarray,
-        gradients: cp.ndarray | None = None,
-        hessians: cp.ndarray | None = None,
-        trust_radii: cp.ndarray | None = None,
+        X: np.ndarray,
+        f_vals: np.ndarray,
+        gradients: np.ndarray | None = None,
+        hessians: np.ndarray | None = None,
+        trust_radii: np.ndarray | None = None,
     ):
         """
         Initialize the inference object and build the FAISS index.
@@ -96,10 +96,10 @@ class GPU_NN_Inference:
                 )
 
         self.X = X
-        self.f_vals = f_vals
-        self.gradients = gradients
-        self.hessians = hessians
-        self.trust_radii = trust_radii
+        self.f_vals = np.asarray(f_vals)
+        self.gradients = np.asarray(gradients) if gradients is not None else None
+        self.hessians = np.asarray(hessians) if hessians is not None else None
+        self.trust_radii = np.asarray(trust_radii) if trust_radii is not None else None
 
         self.N_PTS, self.D = X.shape
         self.FD = f_vals.shape[1]
@@ -109,7 +109,7 @@ class GPU_NN_Inference:
 
     def predict(
         self,
-        targets: cp.ndarray,
+        targets: np.ndarray,
         k: int,
         unwrap_log: list = [],
         L_global: float | None = None,
@@ -160,7 +160,7 @@ class GPU_NN_Inference:
                     X_unlog[:, j] = 10 ** X_unlog[:, j]
 
         # Allocate predictions; accumulate over k neighbors, average at return.
-        predictions = cp.zeros((len(targets), self.FD), dtype=CP_DTYPE)
+        predictions = np.zeros((len(targets), self.FD), dtype=NP_DTYPE)
         for j in range(k):
             if self.gradients is None:
                 # No gradients: neighbor f_vals averaging (accumulate).
@@ -171,7 +171,7 @@ class GPU_NN_Inference:
                 distance_vecs = targets_unlog - X_unlog[indices[:, j]]
 
                 # Batched JVP: for each query q, (M×N) @ (N,) -> (M,)
-                predictions += self.f_vals[indices[:, j]] + cp.einsum(
+                predictions += self.f_vals[indices[:, j]] + np.einsum(
                     "ijk,ik->ij", self.gradients[indices[:, j]], distance_vecs
                 )
 
@@ -183,56 +183,56 @@ class GPU_NN_Inference:
         else:
             if atol is not None and rtol is not None and k == 1:
                 # Combine absolute and relative tolerances; pick the looser (max).
-                local_atols = cp.minimum(
+                local_atols = np.minimum(
                     self.trust_radii[indices[:, 0]] ** 2,
                     2 * atol / (alpha * self.hessians[indices[:, 0]]),
                 )
-                local_rtols = cp.minimum(
+                local_rtols = np.minimum(
                     self.trust_radii[indices[:, 0]] ** 2,
                     2
                     * rtol
-                    * cp.linalg.norm(predictions, 2, axis=1)
+                    * np.linalg.norm(predictions, 2, axis=1)
                     / (alpha * self.hessians[indices[:, 0]]),
                 )
-                good_points = distances[:, 0] < cp.maximum(local_atols, local_rtols)
+                good_points = distances[:, 0] < np.maximum(local_atols, local_rtols)
             elif atol is not None and L_global is not None and k == 1:
                 # Absolute tolerance with global Lipschitz fallback.
-                local_tols = cp.minimum(
+                local_tols = np.minimum(
                     self.trust_radii[indices[:, 0]] ** 2,
                     2 * atol / (alpha * self.hessians[indices[:, 0]]),
                 )
                 global_tol = 2 * atol / L_global
-                good_points = cp.logical_or(
+                good_points = np.logical_or(
                     (distances[:, 0] < local_tols),
-                    cp.logical_and(
+                    np.logical_and(
                         local_tols < distances[:, 0], distances[:, 0] < global_tol
                     ),
                 )
             elif atol is not None and k == 1:
                 # Absolute tolerance only (no rtol, no global Lipschitz).
-                local_tols = cp.minimum(
+                local_tols = np.minimum(
                     self.trust_radii[indices[:, 0]] ** 2,
                     2 * atol / (alpha * self.hessians[indices[:, 0]]),
                 )
                 good_points = distances[:, 0] < local_tols
             else:
                 # No guarantee screening (k != 1 or no tolerance): mark all as good.
-                good_points = cp.full(len(distances), True)
+                good_points = np.full(len(distances), True)
 
         end_time = time.perf_counter()
         print(f"Time elapsed for predictions: {end_time - start_time} seconds")
 
         # Average over neighbors and return outside-of-guarantee mask.
         # Bad points are all False when tol is not specified.
-        return predictions / k, cp.logical_not(good_points)
+        return predictions / k, np.logical_not(good_points)
 
     def add_extra_sources(
         self,
-        new_X: cp.ndarray,
-        new_f_vals: cp.ndarray,
-        new_gradients: cp.ndarray | None,
-        new_hessians: cp.ndarray | None,
-        new_radii: cp.ndarray | None,
+        new_X: np.ndarray,
+        new_f_vals: np.ndarray,
+        new_gradients: np.ndarray | None,
+        new_hessians: np.ndarray | None,
+        new_radii: np.ndarray | None,
     ):
         """Append newly created sources to the index and internal arrays.
 
@@ -248,12 +248,12 @@ class GPU_NN_Inference:
           * The FAISS index is incrementally updated by calling `.add` on the
             new X points.
         """
-        self.X = cp.vstack((self.X, new_X))
-        self.f_vals = cp.append(self.f_vals, new_f_vals)
+        self.X = np.vstack((self.X, new_X))
+        self.f_vals = np.append(self.f_vals, new_f_vals)
         if self.gradients is not None:
-            self.gradients = cp.vstack((self.gradients, new_gradients))
+            self.gradients = np.vstack((self.gradients, new_gradients))  # type: ignore
         if self.hessians is not None:
-            self.hessians = cp.append(self.hessians, new_hessians)
+            self.hessians = np.append(self.hessians, new_hessians)  # type: ignore
         if self.trust_radii is not None:
-            self.trust_radii = cp.append(self.trust_radii, new_radii)
+            self.trust_radii = np.append(self.trust_radii, new_radii)  # type: ignore
         self._faiss_index.add(new_X)  # type: ignore
