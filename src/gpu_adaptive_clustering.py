@@ -6,7 +6,6 @@ from typing import Callable
 
 import cupy as cp
 from cuml.cluster import KMeans as cuKMeans
-from tqdm import tqdm
 
 try:
     _HAS_GPU = cp.is_available()
@@ -276,7 +275,6 @@ def refine_adaptive_clusters(
 
     # BFS by levels
     while queue:
-        print(f"Level {n_level}: {len(queue)} clusters to process.")
         level = queue
         queue = []
 
@@ -286,7 +284,7 @@ def refine_adaptive_clusters(
         children_left: list[cp.ndarray] = []
         children_right: list[cp.ndarray] = []
 
-        for i, X_cluster in enumerate(tqdm(level, desc="Processing clusters")):
+        for i, X_cluster in enumerate(level):
             stream = streams[i % num_streams]
             with stream:
                 cluster_size = X_cluster.shape[0]
@@ -378,17 +376,10 @@ def adaptive_clustering_gpu(
     """
     X = cp.asarray(X, dtype=CP_DTYPE)
 
-    print("Starting Adaptive Clustering on GPU...")
-    start_time = time.perf_counter()
-
-    init_clustering_time = time.perf_counter()
     km = cuKMeans(n_clusters=n_init_clusters, random_state=seed)
     labels = km.fit_predict(X)
-    time_delta = time.perf_counter() - init_clustering_time
-    print(f"\t - Initial KMeans Clustering Time: {time_delta:0.4f} s.")
 
     # Run adaptive two-means refinement
-    refinement_start_time = time.perf_counter()
     clusters = refine_adaptive_clusters(
         X=X,
         labels=labels,
@@ -401,11 +392,6 @@ def adaptive_clustering_gpu(
         num_streams=num_streams,
         seed=seed,
     )
-    time_delta = time.perf_counter() - refinement_start_time
-    print(f"\t - Adaptive Two-Means Refinement Time: {time_delta:0.4f} s.")
-
-    total_time = time.perf_counter() - start_time
-    print(f"- Total Adaptive Clustering Time: {total_time:0.4f} s.")
 
     if return_numpy:
         for i, c in enumerate(clusters):
@@ -493,9 +479,7 @@ if __name__ == "__main__":
 
     counter = 0
     # test the centroids and their errors
-    for i, c in tqdm(
-        enumerate(clusters), total=len(clusters), desc="Verifying clusters"
-    ):
+    for i, c in enumerate(clusters):
         centroid, F_c, J_c, radius, h_proxy = (
             c.centroid,
             c.F_centroid,
