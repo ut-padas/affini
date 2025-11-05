@@ -181,13 +181,15 @@ class NearODESurrogate:
         elif distribution == "LHS":
             sampler = qmc.LatinHypercube(d=n, rng=seed)
             X = sampler.random(n=N)
+            l, r = cp.asnumpy(l), cp.asnumpy(r)
             X = qmc.scale(X, l, r)
-            X = np.asarray(X)
 
-        f_vals, gradients = oracle(X)
+        # Ensure X is a CuPy array for oracle functions that expect CuPy
+        f_vals, gradients = oracle(cp.asarray(X))
 
         f_vals = cp.asnumpy(f_vals)
         gradients = cp.asnumpy(gradients)
+        X = cp.asnumpy(X)  # Convert back to NumPy for FAISS compatibility
 
         # --- Delegate to the array-based trainer (preserving original args order) ---
         self.train_model_from_data(
@@ -227,18 +229,34 @@ class NearODESurrogate:
                 f"targets must be 2D array with shape (n_query, d), got shape {targets.shape}"
             )
 
+        # Convert CuPy targets to NumPy for FAISS compatibility
+        if hasattr(targets, "device"):  # It's a CuPy array
+            targets_np = cp.asnumpy(targets)
+        else:
+            targets_np = targets
+
+        # Convert CuPy scalars to Python scalars for compatibility
+        L_global = float(L) if L is not None else L
+        atol = float(self.atol)
+        rtol = float(self.rtol) if self.rtol is not None else self.rtol
+        alpha = float(alpha)
+
         predictions, unguaranteed_points = self.KNN_search.predict(
-            targets=targets,
+            targets=targets_np,
             k=k,
-            L_global=L,
-            atol=self.atol,
-            rtol=self.rtol,
+            L_global=L_global,
+            atol=atol,
+            rtol=rtol,
             alpha=alpha,
         )
 
-        # Convert results back to CuPy arrays
-        predictions = np.asarray(predictions)
-        unguaranteed_points = np.asarray(unguaranteed_points)
+        # Convert results back to CuPy arrays if original targets were CuPy
+        if hasattr(targets, "device"):
+            predictions = cp.asarray(predictions)
+            unguaranteed_points = cp.asarray(unguaranteed_points)
+        else:
+            predictions = np.asarray(predictions)
+            unguaranteed_points = np.asarray(unguaranteed_points)
 
         # Heuristic warning for under-resolved surrogate coverage.
         if np.sum(unguaranteed_points) > 3 * self.N_sources:

@@ -262,19 +262,27 @@ def test_2D(
     red_rel_errs = rel_error[yes_g_bad_err]
     datavec = cp.array(
         [
-            N_init,
-            atol,
-            rtol,
-            interpolant.N_sources,
-            (cp.sum(no_g_good_err) + cp.sum(no_g_bad_err)) / len(pts),
-            cp.sum(yes_g_good_err) / len(pts),
-            cp.sum(yes_g_bad_err) / len(pts),
-            cp.max(red_abs_errs),
-            cp.median(red_abs_errs),
-            cp.sqrt(cp.sum(red_abs_errs) / len(red_abs_errs)),
-            cp.max(red_rel_errs),
-            cp.median(red_rel_errs),
-            cp.sqrt(cp.sum(red_rel_errs) / len(red_rel_errs)),
+            float(N_init),
+            float(atol),
+            float(rtol),
+            float(interpolant.N_sources),
+            float((cp.sum(no_g_good_err) + cp.sum(no_g_bad_err)) / len(pts)),
+            float(cp.sum(yes_g_good_err) / len(pts)),
+            float(cp.sum(yes_g_bad_err) / len(pts)),
+            float(cp.max(red_abs_errs)) if len(red_abs_errs) > 0 else 0.0,
+            float(cp.median(red_abs_errs)) if len(red_abs_errs) > 0 else 0.0,
+            (
+                float(cp.sqrt(cp.sum(red_abs_errs**2) / len(red_abs_errs)))
+                if len(red_abs_errs) > 0
+                else 0.0
+            ),
+            float(cp.max(red_rel_errs)) if len(red_rel_errs) > 0 else 0.0,
+            float(cp.median(red_rel_errs)) if len(red_rel_errs) > 0 else 0.0,
+            (
+                float(cp.sqrt(cp.sum(red_rel_errs**2) / len(red_rel_errs)))
+                if len(red_rel_errs) > 0
+                else 0.0
+            ),
         ]
     )
 
