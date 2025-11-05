@@ -89,9 +89,15 @@ class GPU_NearODESurrogate:
             )
             new_X = cp.vstack([cluster.centroid for cluster in clusters])
             new_f_vals = cp.vstack([cluster.F_centroid for cluster in clusters])
-            new_gradients = cp.stack([cluster.J_centroid for cluster in clusters])
-            new_hessians = cp.stack([cluster.hessian_proxy for cluster in clusters])
+            new_gradients = cp.stack(
+                [cluster.J_centroid for cluster in clusters]
+            ).squeeze(axis=1)
+
+            # Handle hessian_proxy - convert float scalars to array
+            new_hessians = cp.array([cluster.hessian_proxy for cluster in clusters])
+
             new_radii = cp.array([cluster.radius for cluster in clusters])
+            k = len(clusters)
 
         else:
             # Use raw data as sources (no clustering).
@@ -103,12 +109,13 @@ class GPU_NearODESurrogate:
             k = len(X)
 
         # --- Build FAISS-backed nearest-neighbor inference object ---
+        # Convert CuPy arrays to NumPy for FAISS compatibility
         self.KNN_search = GPU_NN_Inference(
-            X=new_X,
-            f_vals=new_f_vals,
-            gradients=new_gradients,
-            hessians=new_hessians,
-            trust_radii=new_radii,
+            X=new_X.get() if new_X is not None else None,
+            f_vals=new_f_vals.get() if new_f_vals is not None else None,
+            gradients=new_gradients.get() if new_gradients is not None else None,
+            hessians=new_hessians.get() if new_hessians is not None else None,
+            trust_radii=new_radii.get() if new_radii is not None else None,
         )
         self._model_trained = True
         self.N_sources = k
@@ -173,7 +180,8 @@ class GPU_NearODESurrogate:
         elif distribution == "LHS":
             sampler = qmc.LatinHypercube(d=n, rng=seed)
             X = sampler.random(n=N)
-            X = qmc.scale(X, l, r)
+            X = qmc.scale(X, cp.asnumpy(l), cp.asnumpy(r))
+            X = cp.asarray(X)
 
         f_vals, gradients = oracle(X)
         # --- Delegate to the array-based trainer (preserving original args order) ---
@@ -215,13 +223,17 @@ class GPU_NearODESurrogate:
             )
 
         predictions, unguaranteed_points = self.KNN_search.predict(
-            targets=targets,
+            targets=targets.get(),
             k=k,
             L_global=L,
             atol=self.atol,
             rtol=self.rtol,
             alpha=alpha,
         )
+
+        # Convert results back to CuPy arrays
+        predictions = cp.asarray(predictions)
+        unguaranteed_points = cp.asarray(unguaranteed_points)
 
         # Heuristic warning for under-resolved surrogate coverage.
         if cp.sum(unguaranteed_points) > 3 * self.N_sources:
@@ -236,7 +248,7 @@ class GPU_NearODESurrogate:
         return predictions, unguaranteed_points
 
     def get_sources(self) -> cp.ndarray:
-        return self.KNN_search.X
+        return cp.asarray(self.KNN_search.X)
 
     def add_sources(self, X: cp.ndarray) -> None:
         if not callable(self.oracle):
@@ -253,12 +265,21 @@ class GPU_NearODESurrogate:
         )
         new_X = cp.vstack([cluster.centroid for cluster in clusters])
         new_f_vals = cp.vstack([cluster.F_centroid for cluster in clusters])
-        new_gradients = cp.stack([cluster.J_centroid for cluster in clusters])
-        new_hessians = cp.stack([cluster.hessian_proxy for cluster in clusters])
+        new_gradients = cp.stack([cluster.J_centroid for cluster in clusters]).squeeze(
+            axis=1
+        )
+
+        # Handle hessian_proxy - convert float scalars to array
+        new_hessians = cp.array([cluster.hessian_proxy for cluster in clusters])
+
         new_dims = cp.array([cluster.radius for cluster in clusters])
 
         self.KNN_search.add_extra_sources(
-            new_X, new_f_vals, new_gradients, new_hessians, new_dims
+            new_X.get(),
+            new_f_vals.get(),
+            new_gradients.get(),
+            new_hessians.get(),
+            new_dims.get(),
         )
         self.N_sources += len(new_X)
 
@@ -270,10 +291,11 @@ class GPU_NearODESurrogate:
                 "Hessian proxies and trust radii are required for guarantee checks."
             )
 
-        D, I = self.KNN_search._faiss_index.search(targets, 1)  # type: ignore
+        D, I = self.KNN_search._faiss_index.search(targets.get(), 1)  # type: ignore
+        D, I = cp.asarray(D), cp.asarray(I)  # Convert back to CuPy
         local_tols = cp.minimum(
-            self.KNN_search.trust_radii[I[:, 0]] ** 2,
-            2 * tol / (alpha * self.KNN_search.hessians[I[:, 0]]),
+            cp.asarray(self.KNN_search.trust_radii)[I[:, 0]] ** 2,
+            2 * tol / (alpha * cp.asarray(self.KNN_search.hessians)[I[:, 0]]),
         )
         global_tol = 2 * tol / L_global
         good_points = cp.logical_or(
