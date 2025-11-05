@@ -594,29 +594,29 @@ Time elapsed for predictions: 0.8112662389175966 seconds
 \end{table}
 ```
 
-## Version 4 (Time: 2m 6s)
+## Version 4 (Time: 1m 44s)
 ```sh
 CUML available: True
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Using fast two-means length threshold: 8192 for dimension: 2
-Time to train: 17.77 seconds
-Time elapsed for predictions: 0.05962190602440387 seconds
+Using fast two-means length threshold (dim=2): 8192
+Time to train: 16.03 seconds
+Time elapsed for predictions: 0.034881183062680066 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Using fast two-means length threshold: 8192 for dimension: 2
-Time to train: 19.77 seconds
-Time elapsed for predictions: 0.10613429907243699 seconds
+Using fast two-means length threshold (dim=2): 8192
+Time to train: 16.66 seconds
+Time elapsed for predictions: 0.061885106028057635 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Using fast two-means length threshold: 8192 for dimension: 2
-Time to train: 22.28 seconds
-Time elapsed for predictions: 0.19364040298387408 seconds
+Using fast two-means length threshold (dim=2): 8192
+Time to train: 18.90 seconds
+Time elapsed for predictions: 0.11492149892728776 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Using fast two-means length threshold: 8192 for dimension: 2
-Time to train: 27.45 seconds
-Time elapsed for predictions: 0.43672783696092665 seconds
+Using fast two-means length threshold (dim=2): 8192
+Time to train: 22.57 seconds
+Time elapsed for predictions: 0.26930444000754505 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Using fast two-means length threshold: 8192 for dimension: 2
-Time to train: 33.58 seconds
-Time elapsed for predictions: 0.8147547509288415 seconds
+Using fast two-means length threshold (dim=2): 8192
+Time to train: 26.47 seconds
+Time elapsed for predictions: 0.5075021359371021 seconds
 ```
 
 ```latex
@@ -626,11 +626,11 @@ Time elapsed for predictions: 0.8147547509288415 seconds
         \hline
         $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
         \hline\hline
-                10000000 & 0.1 & 2.0\% & 3446 & 0.84\% & 99.05\% & 0.12\% & 2.5486 & 1.2264 & 1.0376 & 0.0336 & 0.0231 & 0.1548 \\
-                10000000 & 0.05 & 1.0\% & 6501 & 0.75\% & 99.13\% & 0.12\% & 1.716 & 0.4904 & 0.7108 & 0.0176 & 0.0107 & 0.1073 \\
-                10000000 & 0.025 & 0.5\% & 12152 & 0.59\% & 99.18\% & 0.24\% & 1.1398 & 0.2817 & 0.5567 & 0.0239 & 0.0063 & 0.0847 \\
-                10000000 & 0.01 & 0.2\% & 27839 & 0.47\% & 99.27\% & 0.26\% & 0.4302 & 0.0935 & 0.3323 & 0.007 & 0.0024 & 0.0511 \\
-                10000000 & 0.005 & 0.1\% & 52070 & 0.46\% & 99.16\% & 0.38\% & 0.2096 & 0.053 & 0.2421 & 0.0035 & 0.0012 & 0.0366 \\
+                10000000 & 0.1 & 2.0\% & 1854 & 1.23\% & 98.76\% & 0.01\% & 0.278 & 0.2385 & 0.4921 & 0.0228 & 0.0222 & 0.1477 \\
+                10000000 & 0.05 & 1.0\% & 3617 & 1.22\% & 98.77\% & 0.01\% & 0.1363 & 0.1351 & 0.367 & 0.0128 & 0.0109 & 0.1067 \\
+                10000000 & 0.025 & 0.5\% & 6964 & 1.12\% & 98.88\% & 0.0\% & 0.0883 & 0.0879 & 0.2965 & 0.0057 & 0.0057 & 0.0755 \\
+                10000000 & 0.01 & 0.2\% & 16788 & 1.1\% & 98.9\% & 0.0\% & 0.0286 & 0.0252 & 0.1588 & 0.0024 & 0.0022 & 0.0473 \\
+                10000000 & 0.005 & 0.1\% & 31869 & 1.29\% & 98.7\% & 0.01\% & 0.1174 & 0.0586 & 0.2439 & 0.0013 & 0.0011 & 0.0331 \\
         \hline
     \end{tabular}
     \caption{This is a caption!}
