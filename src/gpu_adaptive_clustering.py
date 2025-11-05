@@ -6,6 +6,12 @@ import cupy as cp
 from cuml.cluster import KMeans as cuKMeans
 from tqdm import tqdm
 
+try:
+    _HAS_GPU = cp.is_available()
+except Exception as e:
+    print("You do not have a working CuPy installation/GPU setup.")
+    raise e
+
 # --------------------------- Config ---------------------------------
 props = cp.cuda.runtime.getDeviceProperties(0)
 num_sms = props["multiProcessorCount"]
