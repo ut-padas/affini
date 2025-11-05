@@ -1,6 +1,9 @@
 import cupy as cp
+from rmm.allocators.cupy import rmm_cupy_allocator
 
 from src.nearode import NearODESurrogate
+
+cp.cuda.set_allocator(rmm_cupy_allocator)
 
 
 # Six-Hump Camelback function
