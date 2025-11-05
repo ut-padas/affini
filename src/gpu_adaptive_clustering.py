@@ -1,3 +1,5 @@
+"""GPU-based Adaptive Two-Means Clustering for Function Approximation."""
+
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -226,18 +228,17 @@ class Cluster:
     mean_error: float
 
 
-# --------------------------- BFS Adaptive 2-means --------------------
-def adaptive_two_means_gpu(
+def refine_adaptive_clusters(
     X: cp.ndarray,
     labels: cp.ndarray,
     f: Callable[[cp.ndarray], tuple[cp.ndarray, cp.ndarray]],
     abs_tol: float,
     rel_tol: float,
     min_pts_per_cluster: int,
-    *,
-    ell: int = ELL,
-    power_iters: int = POWER_ITERS,
-    num_streams: int = NUM_STREAMS,
+    ell: int,
+    power_iters: int,
+    num_streams: int,
+    seed: int,
 ) -> list[Cluster]:
     """
     Adaptive two-means clustering with GPU streaming.
@@ -253,12 +254,13 @@ def adaptive_two_means_gpu(
         ell: sketch size for randomized-QR
         power_iters: number of power iterations for randomized-QR
         num_streams: number of CUDA streams to use
+        seed: random seed for reproducibility
 
     Returns:
         final_clusters: list of Cluster objects representing final clusters
     """
 
-    rng = cp.random.default_rng(SEED)
+    rng = cp.random.default_rng(seed)
     assert rng is not None, "Something went wrong with RNG initialization."
 
     # Initialize queue with point arrays from initial KMeans
@@ -342,6 +344,67 @@ def adaptive_two_means_gpu(
     return final_clusters
 
 
+def adaptive_clustering_gpu(
+    X: cp.ndarray,
+    f: Callable[[cp.ndarray], tuple[cp.ndarray, cp.ndarray]],
+    n_init_clusters: int,
+    min_pts_per_cluster: int,
+    abs_tol: float,
+    rel_tol: float,
+    *,
+    ell: int = ELL,
+    power_iters: int = POWER_ITERS,
+    num_streams: int = NUM_STREAMS,
+    seed: int = SEED,
+) -> list[Cluster]:
+    """
+    GPU-accelerated adaptive clustering using two-means refinement.
+
+    Args:
+        X: (n, d) input data matrix.
+        labels: (n,) initial cluster labels.
+        f: Function returning (F, J) at X.
+        abs_tol, rel_tol: Tolerances for cluster violation detection.
+        min_pts_per_cluster: Minimum points per cluster before splitting.
+        ell: Sketch size for randomized-QR.
+        power_iters: Number of power iterations for randomized-QR.
+        num_streams: Number of CUDA streams to use.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        List of final clusters with centroids, function values, Jacobians, etc.
+    """
+    print("Starting Adaptive Clustering on GPU...")
+    start_time = time.perf_counter()
+
+    init_clustering_time = time.perf_counter()
+    km = cuKMeans(n_clusters=n_init_clusters, random_state=seed)
+    labels = km.fit_predict(X)
+    time_delta = time.perf_counter() - init_clustering_time
+    print(f"\t - Initial KMeans Clustering Time: {time_delta:0.4f} s.")
+
+    # Run adaptive two-means refinement
+    refinement_start_time = time.perf_counter()
+    clusters = refine_adaptive_clusters(
+        X=X,
+        labels=labels,
+        f=f,
+        abs_tol=abs_tol,
+        rel_tol=rel_tol,
+        min_pts_per_cluster=min_pts_per_cluster,
+        ell=ell,
+        power_iters=power_iters,
+        num_streams=num_streams,
+        seed=seed,
+    )
+    time_delta = time.perf_counter() - refinement_start_time
+    print(f"\t - Adaptive Two-Means Refinement Time: {time_delta:0.4f} s.")
+
+    total_time = time.perf_counter() - start_time
+    print(f"- Total Adaptive Clustering Time: {total_time:0.4f} s.")
+    return clusters
+
+
 # --------------------------- Sample function f -----------------------
 def sample_function(X: cp.ndarray) -> tuple[cp.ndarray, cp.ndarray]:
     """
@@ -367,7 +430,7 @@ def sample_function(X: cp.ndarray) -> tuple[cp.ndarray, cp.ndarray]:
     return F, J
 
 
-# --------------------------- Driver ---------------------------------
+# --------------------------- MAIN -----------------------------------
 def main(
     N_SAMPLES: int,
     D: int,
@@ -382,29 +445,15 @@ def main(
     X = rng.random((N_SAMPLES, D), dtype=CP_DTYPE)
 
     print(f"Running on GPU. N_SAMPLES={N_SAMPLES:,}")
-    print(f"Initial KMeans with {N_INIT_CLUSTERS} clusters...")
-    tic = time.perf_counter()
-    km = cuKMeans(n_clusters=N_INIT_CLUSTERS, random_state=SEED)
-    labels = km.fit_predict(X)
-    toc = time.perf_counter()
-    print(f"KMeans completed in {toc - tic:0.4f} s.")
-
-    # Run adaptive two-means with streaming
-    tic = time.perf_counter()
-    clusters = adaptive_two_means_gpu(
-        X,
-        labels,
-        sample_function,
+    clusters = adaptive_clustering_gpu(
+        X=X,
+        f=sample_function,
+        n_init_clusters=N_INIT_CLUSTERS,
+        min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
         abs_tol=ABS_TOL,
         rel_tol=REL_TOL,
-        min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
-        ell=ELL,
-        power_iters=POWER_ITERS,
-        num_streams=NUM_STREAMS,
     )
-    toc = time.perf_counter()
-    print(f"Adaptive refinement finished in {toc - tic:0.4f} s.")
-    print(f"Total clusters formed: {len(clusters)}")
+    print(f"Total final clusters formed: {len(clusters)}")
     return clusters
 
 
