@@ -20,13 +20,11 @@ def find_optimal_split_1d(s_sorted: np.ndarray) -> int:
         best_k: Index to split at (first best_k points in cluster 0, rest in cluster 1)
     """
     # Prefix sums for exact SSE scan in 1D projected space
-    # SSE(S) = sum(x^2) - sum(x)^2 / |S| for 1D projections
     pref_sum = np.cumsum(s_sorted)  # (n,) - sum of 1D projections
     pref_sq = np.cumsum(s_sorted**2)  # (n,) - sum of squared 1D projections
     total_sum = pref_sum[-1]
     total_sq = pref_sq[-1]
 
-    # Vectorized computation of all SSE values
     n = len(s_sorted)
     k_vals = np.arange(1, n)
 
@@ -71,11 +69,8 @@ def two_means_pca_threshold(
         centroids = np.array([Z.mean(axis=0), Z.mean(axis=0)]) * std + mean
         return labels, centroids
 
-    # Top principal direction via covariance matrix (faster for small d)
-    # For small d (typical in this project), computing Z^T @ Z is faster than full SVD
-    # u shape (d,)
+    # Top principal direction via covariance matrix
     try:
-        # Compute covariance matrix: Z^T @ Z / (n-1), but we only need eigenvector
         cov = Z.T @ Z  # (d, d) - much smaller than (n, n) for n >> d
         _, eigvecs = np.linalg.eigh(cov)  # eigh is faster for symmetric matrices
         u = eigvecs[:, -1]  # Last column = eigenvector with largest eigenvalue
@@ -103,9 +98,6 @@ def two_means_pca_threshold(
     labels[order] = labels_sorted
 
     # Compute centroids efficiently using prefix sums in multidimensional space
-    # Already have sorted data: Z_sorted
-    # For cluster 0 (first best_k points): sum and divide by best_k
-    # For cluster 1 (remaining points): use (total_sum - c0_sum) / (n - best_k)
     total_Z_sum = np.sum(Z, axis=0)  # Sum across all points (d,)
     c0_sum = np.sum(Z_sorted[:best_k], axis=0)  # Sum of first best_k points
     c1_sum = total_Z_sum - c0_sum
