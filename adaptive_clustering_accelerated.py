@@ -6,6 +6,7 @@ from typing import Callable, Optional
 
 import numpy as np
 from sklearn.cluster import KMeans, MiniBatchKMeans
+from tqdm import tqdm
 
 from src.two_means import two_means_pca_threshold
 
@@ -555,7 +556,7 @@ def flatten_cluster_centers_with_gradient(nc: int, n: int, m: int, tree):
         - QoI_values: (nc, m) where m=output dimensions
         - gradients: (nc, m, n) where gradients are Jacobian matrices
         - hessians: (nc,) scalar Hessian proxies per cluster
-        - dims: (nc,) cluster radii (name kept for API compatibility)
+        - radius: (nc,) cluster radii
 
     Args:
         nc: Expected number of leaf clusters (rows in outputs).
@@ -568,7 +569,7 @@ def flatten_cluster_centers_with_gradient(nc: int, n: int, m: int, tree):
         QoI_values: (nc, m) float64
         gradients: (nc, m, n) float64 (zeros if gradient is None)
         hessians: (nc,) float64
-        dims: (nc,) float64 (cluster radius; kept name for API compatibility)
+        radius: (nc,) float64 (cluster radius; kept name for API compatibility)
 
     Notes:
         - Traversal is iterative (stack-based) to avoid recursion overhead and
@@ -581,7 +582,7 @@ def flatten_cluster_centers_with_gradient(nc: int, n: int, m: int, tree):
     QoI_values = np.empty((nc, m), dtype=np.float64)
     gradients = np.empty((nc, m, n), dtype=np.float64)
     hessians = np.empty((nc,), dtype=np.float64)
-    dims = np.empty((nc,), dtype=np.float64)
+    radii = np.empty((nc,), dtype=np.float64)
 
     # Initialize stack of nodes (supports a single TreeNode or an iterable of roots).
     stack = []
@@ -635,7 +636,7 @@ def flatten_cluster_centers_with_gradient(nc: int, n: int, m: int, tree):
 
             # Scalars
             hessians[k] = float(cl.hessian)
-            dims[k] = float(cl.radius)
+            radii[k] = float(cl.radius)
 
             k += 1
             if k > nc:
@@ -651,7 +652,7 @@ def flatten_cluster_centers_with_gradient(nc: int, n: int, m: int, tree):
         # Be strict to avoid returning partially filled arrays with undefined rows.
         raise ValueError(f"Expected nc={nc} leaves, found {k}")
 
-    return centroids, QoI_values, gradients, hessians, dims
+    return centroids, QoI_values, gradients, hessians, radii
 
 
 def plot_clusters(trees: list[TreeNode], fname: str = "adaptive_clusters.png"):
@@ -708,9 +709,11 @@ if __name__ == "__main__":
     # Generate sample data
     seed = 0
     np.random.seed(seed)
-    N_samples = 200_000
+    N_samples = 80_000
+    ABS_TOL = 1.0
+    REL_TOL = 0.01
     X_samples = np.random.uniform(-10, 10, size=(N_samples, 3))
-    print(f"Generated {N_samples} sample data points.")
+    print(f"Generated {N_samples:,} sample data points.")
 
     cprofile = cProfile.Profile()
     cprofile.enable()
@@ -720,8 +723,8 @@ if __name__ == "__main__":
     total_clusters, clusters = adaptive_cluster_algorithm(
         X_samples,
         sample_function,
-        atol=1.0,
-        rtol=0.01,
+        atol=ABS_TOL,
+        rtol=REL_TOL,
         N_init_clusters=5,
         min_ppc=5,
         use_gradient=True,
@@ -741,10 +744,40 @@ if __name__ == "__main__":
     print(f"Clusters by TwoMeans: {NUM_CLUSTERED_BY_TWO_MEANS}")
     print(f"Total clustering calls: {total}")
     print(f"Time taken: {toc - tic:.4f} seconds")
-    if N_samples <= 5_000:
+    if N_samples <= 10_000:
         # Plot only for small datasets
         plot_clusters(clusters, fname=f"{FILE_NAME}_clusters.png")
 
     cprofile.disable()
     cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
-    # cprofile.print_stats(sort="time")
+    # cprofile.print_stats(sort="time"
+
+    flattened_clusters = [cluster for tree in clusters for cluster in tree.leaves()]
+
+    n_test = 10_000
+
+    counter = 0
+    # test the centroids and their errors
+    for i, c in tqdm(enumerate(flattened_clusters), desc="Testing clusters"):
+        centroid, F_c = c.centroid, c.value
+        J_c = c.gradient
+        radius = c.radius
+        d = centroid.shape[0]
+        # Pick random points in the cluster ball to test error
+        u = np.random.standard_normal(size=(n_test, d))
+        u /= np.linalg.norm(u, axis=1)[:, None]
+        test_pts = centroid + radius * np.random.random(size=(n_test, 1)) * u
+        F_test, _ = sample_function(test_pts)
+
+        # Calculate max_error
+        dx = test_pts - centroid
+        assert J_c is not None, "Gradient must be available for error test."
+        J_c_squeezed = np.squeeze(J_c)
+        F_taylor = F_c + dx @ J_c_squeezed.T
+        errors = np.linalg.norm(F_test - F_taylor, axis=1)
+        max_error = float(np.max(errors))
+
+        if max_error > max(ABS_TOL, REL_TOL * np.linalg.norm(F_c)):
+            counter += 1
+
+    print(f"Clusters failed error test: {counter} out of {len(flattened_clusters)}")
