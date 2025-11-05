@@ -356,6 +356,7 @@ def adaptive_clustering_gpu(
     power_iters: int = POWER_ITERS,
     num_streams: int = NUM_STREAMS,
     seed: int = SEED,
+    return_numpy: bool = True,
 ) -> list[Cluster]:
     """
     GPU-accelerated adaptive clustering using two-means refinement.
@@ -370,10 +371,13 @@ def adaptive_clustering_gpu(
         power_iters: Number of power iterations for randomized-QR.
         num_streams: Number of CUDA streams to use.
         seed: Random seed for reproducibility.
+        return_numpy: If True, return NumPy arrays instead of CuPy arrays.
 
     Returns:
         List of final clusters with centroids, function values, Jacobians, etc.
     """
+    X = cp.asarray(X, dtype=CP_DTYPE)
+
     print("Starting Adaptive Clustering on GPU...")
     start_time = time.perf_counter()
 
@@ -402,6 +406,20 @@ def adaptive_clustering_gpu(
 
     total_time = time.perf_counter() - start_time
     print(f"- Total Adaptive Clustering Time: {total_time:0.4f} s.")
+
+    if return_numpy:
+        for i, c in enumerate(clusters):
+            clusters[i] = Cluster(
+                centroid=cp.asnumpy(c.centroid),
+                F_centroid=cp.asnumpy(c.F_centroid),
+                J_centroid=cp.asnumpy(c.J_centroid),
+                radius=c.radius,
+                hessian_proxy=c.hessian_proxy,
+                cluster_size=c.cluster_size,
+                max_error=c.max_error,
+                mean_error=c.mean_error,
+            )
+
     return clusters
 
 

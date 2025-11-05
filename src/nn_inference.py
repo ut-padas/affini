@@ -10,7 +10,7 @@ import numpy as np
 NP_DTYPE = np.float64
 
 
-class GPU_NN_Inference:
+class NN_Inference:
     """
     FAISS-backed kNN inference with optional Taylor gradient boosting.
 

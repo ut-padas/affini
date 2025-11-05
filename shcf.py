@@ -1,6 +1,6 @@
 import cupy as cp
 
-from src.gpu_nearode import GPU_NearODESurrogate
+from src.nearode import NearODESurrogate
 
 
 # Six-Hump Camelback function
@@ -173,7 +173,7 @@ def test_2D(
 ):
     L = check_matrix_2norm(hessian_SHCF, domain)
 
-    interpolant = GPU_NearODESurrogate()
+    interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
         SHCF_combined,
         domain,
