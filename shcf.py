@@ -1,10 +1,10 @@
-import cupy as cp
+import numpy as np
 
-from src.nearode import NearODESurrogate
+from nearode import NearODESurrogate
 
 
 # Six-Hump Camelback function
-def SHCF(x: cp.ndarray):
+def SHCF(x: np.ndarray):
     """
     Vectorized Six-Hump Camelback function.
 
@@ -22,10 +22,10 @@ def SHCF(x: cp.ndarray):
         + scale
     )
 
-    return result[:, cp.newaxis]  # Shape (n, 1)
+    return np.atleast_2d(result).T  # Ensure shape is (n, 1)
 
 
-def grad_SHCF(x: cp.ndarray):
+def grad_SHCF(x: np.ndarray):
     """
     Vectorized gradient of Six-Hump Camelback function.
 
@@ -40,13 +40,13 @@ def grad_SHCF(x: cp.ndarray):
     Dyf = x1 - 8 * x2 + 16 * x2**3
 
     # Stack gradients: shape (n, 2)
-    grads = cp.stack([Dxf, Dyf], axis=1)
+    grads = np.stack([Dxf, Dyf], axis=1)
 
     # Add new axis to get shape (n, 1, 2) to follow convention: (n, fd, d) where fd=1, d=2
-    return grads[:, cp.newaxis, :]
+    return grads[:, np.newaxis, :]
 
 
-def hessian_SHCF(x: cp.ndarray):
+def hessian_SHCF(x: np.ndarray):
     """
     Vectorized hessian of Six-Hump Camelback function.
 
@@ -58,18 +58,18 @@ def hessian_SHCF(x: cp.ndarray):
 
     # Compute hessian components for each point
     h11 = 8 - 25.2 * x1**2 + 10 * x1**4
-    h12 = cp.ones_like(x1)  # Off-diagonal element
+    h12 = np.ones_like(x1)  # Off-diagonal element
     h22 = -8 + 48 * x2**2
 
     # Stack into hessian matrices: shape (n, 2, 2)
-    hessians = cp.stack(
-        [cp.stack([h11, h12], axis=1), cp.stack([h12, h22], axis=1)], axis=1
+    hessians = np.stack(
+        [np.stack([h11, h12], axis=1), np.stack([h12, h22], axis=1)], axis=1
     )
 
     return hessians
 
 
-def SHCF_combined(x: cp.ndarray):
+def SHCF_combined(x: np.ndarray):
     """
     Combined function returning both function value and gradient.
 
@@ -84,19 +84,19 @@ def SHCF_combined(x: cp.ndarray):
 
 def check_matrix_2norm(A, domain):
     # A is a function of input x, which expects x with shape (n, 2)
-    x = cp.linspace(domain[0, 0], domain[0, 1], 300)
-    y = cp.linspace(domain[1, 0], domain[1, 1], 300)
-    xv, yv = cp.meshgrid(x, y)
-    pts = cp.column_stack((xv.flatten(), yv.flatten()))
+    x = np.linspace(domain[0, 0], domain[0, 1], 300)
+    y = np.linspace(domain[1, 0], domain[1, 1], 300)
+    xv, yv = np.meshgrid(x, y)
+    pts = np.column_stack((xv.flatten(), yv.flatten()))
 
     # Vectorized computation: A returns (n, 2, 2), compute 2-norm for each matrix
     hess_matrices = A(pts)  # Shape: (n, 2, 2)
-    norms = cp.linalg.norm(
+    norms = np.linalg.norm(
         hess_matrices, ord=2, axis=(1, 2)
     )  # 2-norm of each (2, 2) matrix
     norms = norms.reshape((len(xv), len(yv)))
 
-    max_ind = cp.unravel_index(norms.argmax(), norms.shape)
+    max_ind = np.unravel_index(norms.argmax(), norms.shape)
     max_val = norms.max()
     print(f"Max achieved at ({xv[max_ind]}, {yv[max_ind]}), value = {max_val}")
 
@@ -169,7 +169,7 @@ def generate_latex_table(data):
 
 
 def test_2D(
-    atol=0.01, rtol=0.01, N_init=50000, domain=cp.array([[-3, 3], [-2, 2]]), min_ppc=100
+    atol=0.01, rtol=0.01, N_init=50000, domain=np.array([[-3, 3], [-2, 2]]), min_ppc=100
 ):
     L = check_matrix_2norm(hessian_SHCF, domain)
 
@@ -191,20 +191,22 @@ def test_2D(
     )
     sources = interpolant.get_sources()
 
-    x = cp.linspace(domain[0, 0], domain[0, 1], 300)
-    y = cp.linspace(domain[1, 0], domain[1, 1], 300)
-    xv, yv = cp.meshgrid(x, y)
-    pts = cp.column_stack((xv.flatten(), yv.flatten()))
+    x = np.linspace(domain[0, 0], domain[0, 1], 300)
+    y = np.linspace(domain[1, 0], domain[1, 1], 300)
+    xv, yv = np.meshgrid(x, y)
+    pts = np.column_stack((xv.flatten(), yv.flatten()))
 
     zz_exact = SHCF(pts)  # Already has shape (n, 1)
-    zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, L=L, recluster=False)
-    abs_error = cp.linalg.norm(zz_exact - zz_interpolant, 2, axis=1)
-    rel_error = abs_error / cp.linalg.norm(zz_exact, 2, axis=1)
+    zz_interpolant, bad_pts_inds = interpolant.evaluate(
+        pts, k=1, disp_time=True, L=L, recluster=False, alpha=1
+    )
+    abs_error = np.linalg.norm(zz_exact - zz_interpolant, 2, axis=1)
+    rel_error = abs_error / np.linalg.norm(zz_exact, 2, axis=1)
     good_abs_error = abs_error <= atol
     good_rel_error = rel_error <= rtol
-    good_overall_error = cp.logical_or(good_abs_error, good_rel_error)
-    bad_overall_error = cp.logical_not(good_overall_error)
-    good_pts_inds = cp.logical_not(bad_pts_inds)
+    good_overall_error = np.logical_or(good_abs_error, good_rel_error)
+    bad_overall_error = np.logical_not(good_overall_error)
+    good_pts_inds = np.logical_not(bad_pts_inds)
 
     # sort the points outside of guarantee between those inside the error and those not
     no_g_good_err = bad_pts_inds & good_overall_error  # 1 (yellow)
@@ -224,17 +226,17 @@ def test_2D(
     # CHECK ACCURACY AFTER ONE RECLUSTERING
     for j in range(0):
         zz_interpolant, bad_pts_inds = interpolant.evaluate(
-            pts, k=1, L=L, recluster=True
+            pts, k=1, disp_time=True, L=L, recluster=True
         )
-        good_pts_inds = cp.logical_not(bad_pts_inds)
+        good_pts_inds = np.logical_not(bad_pts_inds)
         sources = interpolant.get_sources()
         zz_exact = zz_exact.flatten()
-        abs_error = cp.abs(zz_exact - zz_interpolant)
-        rel_error = abs_error / cp.abs(zz_exact)
+        abs_error = np.abs(zz_exact - zz_interpolant)
+        rel_error = abs_error / np.abs(zz_exact)
         good_abs_error = abs_error <= atol
         good_rel_error = rel_error <= rtol
-        good_overall_error = cp.logical_or(good_abs_error, good_rel_error)
-        bad_overall_error = cp.logical_not(good_overall_error)
+        good_overall_error = np.logical_or(good_abs_error, good_rel_error)
+        bad_overall_error = np.logical_not(good_overall_error)
         # sort the points outside of guarantee between those inside the error and those not
         no_g_good_err = (
             bad_pts_inds & good_overall_error
@@ -260,29 +262,21 @@ def test_2D(
     # display stats about errors
     red_abs_errs = abs_error[yes_g_bad_err]
     red_rel_errs = rel_error[yes_g_bad_err]
-    datavec = cp.array(
+    datavec = np.array(
         [
-            float(N_init),
-            float(atol),
-            float(rtol),
-            float(interpolant.N_sources),
-            float((cp.sum(no_g_good_err) + cp.sum(no_g_bad_err)) / len(pts)),
-            float(cp.sum(yes_g_good_err) / len(pts)),
-            float(cp.sum(yes_g_bad_err) / len(pts)),
-            float(cp.max(red_abs_errs)) if len(red_abs_errs) > 0 else 0.0,
-            float(cp.median(red_abs_errs)) if len(red_abs_errs) > 0 else 0.0,
-            (
-                float(cp.sqrt(cp.sum(red_abs_errs**2) / len(red_abs_errs)))
-                if len(red_abs_errs) > 0
-                else 0.0
-            ),
-            float(cp.max(red_rel_errs)) if len(red_rel_errs) > 0 else 0.0,
-            float(cp.median(red_rel_errs)) if len(red_rel_errs) > 0 else 0.0,
-            (
-                float(cp.sqrt(cp.sum(red_rel_errs**2) / len(red_rel_errs)))
-                if len(red_rel_errs) > 0
-                else 0.0
-            ),
+            N_init,
+            atol,
+            rtol,
+            interpolant.N_sources,
+            (np.sum(no_g_good_err) + np.sum(no_g_bad_err)) / len(pts),
+            np.sum(yes_g_good_err) / len(pts),
+            np.sum(yes_g_bad_err) / len(pts),
+            np.max(red_abs_errs),
+            np.median(red_abs_errs),
+            np.sqrt(np.sum(red_abs_errs) / len(red_abs_errs)),
+            np.max(red_rel_errs),
+            np.median(red_rel_errs),
+            np.sqrt(np.sum(red_rel_errs) / len(red_rel_errs)),
         ]
     )
 
@@ -290,7 +284,7 @@ def test_2D(
 
 
 def convergence_test_2D(tolmat, N_init, domain, min_ppc=40):
-    datamat = cp.empty((len(tolmat), 13))
+    datamat = np.empty((len(tolmat), 13))
     for j, tols in enumerate(tolmat):
         datamat[j] = test_2D(
             atol=tols[0], rtol=tols[1], N_init=N_init, domain=domain, min_ppc=min_ppc
@@ -302,9 +296,9 @@ def convergence_test_2D(tolmat, N_init, domain, min_ppc=40):
 
 
 if __name__ == "__main__":
-    tolmat = cp.array(
+    tolmat = np.array(
         [[0.1, 0.02], [0.05, 0.01], [0.025, 0.005], [0.01, 0.002], [0.005, 0.001]]
     )
 
-    domain = cp.array([[-3, 3], [-2, 2]])
+    domain = np.array([[-3, 3], [-2, 2]])
     convergence_test_2D(tolmat, 4_000, domain)
