@@ -44,7 +44,8 @@ def find_optimal_split_1d(s_sorted: np.ndarray) -> int:
 
 
 def two_means_pca_threshold(
-    X_norm: np.ndarray, mean: np.ndarray, std: np.ndarray
+    X_norm: np.ndarray,
+    mean: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     A fast, PCA-based k=2 clustering method that finds an optimal split using 1D projections.
@@ -52,7 +53,6 @@ def two_means_pca_threshold(
     Args:
         X_norm: Normalized data of shape (n, d), zero-mean per dimension
         mean: Mean used for normalization, shape (d,)
-        std: Stddev used for normalization, shape (d,)
 
     Returns:
         labels: Cluster labels of shape (n,), values in {0, 1}
@@ -66,7 +66,7 @@ def two_means_pca_threshold(
     if n < 2:
         # Degenerate; fallback to trivial assignment
         labels = np.zeros(n, dtype=np.int64)
-        centroids = np.array([Z.mean(axis=0), Z.mean(axis=0)]) * std + mean
+        centroids = np.array([Z.mean(axis=0), Z.mean(axis=0)]) + mean
         return labels, centroids
 
     # Top principal direction via covariance matrix
@@ -105,17 +105,13 @@ def two_means_pca_threshold(
     c0_norm = c0_sum / best_k
     c1_norm = c1_sum / (n - best_k)
     centroids_norm = np.vstack([c0_norm, c1_norm])
-    centroids = centroids_norm * std + mean
+    centroids = centroids_norm + mean
 
     return labels, centroids
 
 
-def numba_warmup():
+def numba_two_means_warmup():
     # Warm up Numba compilation
     dummy_data = np.random.randn(10, 5)
     dummy_mean = np.zeros(5)
-    dummy_std = np.ones(5)
-    two_means_pca_threshold(dummy_data, dummy_mean, dummy_std)
-
-
-numba_warmup()
+    two_means_pca_threshold(dummy_data, dummy_mean)
