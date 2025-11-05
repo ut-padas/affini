@@ -13,8 +13,8 @@ help:
 benchmarks: load-modules
 	uv run python -m research.benchmark_kmeans_gpu_vs_cpu
 	uv run python -m research.benchmark_minibatch_vs_kmeans
-	uv run python -m research.benchmark_two_means_vs_kmeans
 	uv run python -m research.benchmark_two_means_qr_vs_kmeans
+	uv run python -m research.benchmark_two_means_vs_kmeans
 
 dev:
 	uv sync --all-groups
