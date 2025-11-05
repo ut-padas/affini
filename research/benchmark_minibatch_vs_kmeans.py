@@ -189,7 +189,6 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     ax2.set_xscale("log")
     ax2.set_xlabel("Number of points (N)")
     ax2.set_ylabel("ARI (Adjusted Rand Index)")
-    ax2.set_ylim(0, 1)  # since ARI ranges from 0 to 1
 
     # Plot MiniBatchKMeans with circle marker and normal color
     (line,) = ax2.plot(
@@ -220,16 +219,21 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     plt.close()
 
 
-if __name__ == "__main__":
+def main():
     if OUT_CSV.exists():
         print(f"Output files: {OUT_CSV} already exist; skipping benchmark.")
-    else:
-        print("Running MiniBatchKMeans vs KMeans benchmark...")
-        df_results = _bench_sizes(SIZES)
+        return
 
-        # Save results to CSV
-        df_results.to_csv(OUT_CSV, index=False)
-        print(f"Results saved to {OUT_CSV}")
+    print("Running MiniBatchKMeans vs KMeans benchmark...")
+    df_results = _bench_sizes(SIZES)
 
-        # Create plot
-        _plot(df_results, FIGURES)
+    # Save results to CSV
+    df_results.to_csv(OUT_CSV, index=False)
+    print(f"Results saved to {OUT_CSV}")
+
+    # Create plot
+    _plot(df_results, FIGURES)
+
+
+if __name__ == "__main__":
+    main()

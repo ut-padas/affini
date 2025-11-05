@@ -220,9 +220,7 @@ class AdaptiveClusterer:
             val = f(X)
         return np.array(val, dtype=NP_DTYPE)
 
-    def _normalize_data(
-        self, X: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _normalize_data(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Z-score normalize the given data.
 
@@ -230,25 +228,23 @@ class AdaptiveClusterer:
             X: Data to normalize.
 
         Returns:
-            Normalized data, mean, and std deviation.
+            Normalized data and mean.
         """
         mean = X.mean(axis=0)
-        std = X.std(axis=0)
-        std = np.where(std == 0, 1, std)  # Prevent division by zero
-        return (X - mean) / std, mean, std
+        return (X - mean), mean
 
     def _initial_cluster(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Perform initial clustering."""
         global NUM_CLUSTERED_BY_CUML, NUM_CLUSTERED_BY_SKLEARN, NUM_CLUSTERED_BY_MINIBATCH
 
-        X_norm, mean, std = self._normalize_data(X)
+        X_norm, mean = self._normalize_data(X)
 
         n = len(X)
         if self.use_gpu and n >= self.gpu_len_threshold:
             Xg = cp.asarray(X_norm, dtype=CP_DTYPE)
             km = cuKMeans(n_clusters=self.n_clusters, random_state=self.seed)
             labels = km.fit_predict(Xg).get()
-            centroids = cp.asnumpy(km.cluster_centers_) * std + mean
+            centroids = cp.asnumpy(km.cluster_centers_) + mean
             NUM_CLUSTERED_BY_CUML += 1
             return labels, centroids
 
@@ -276,7 +272,7 @@ class AdaptiveClusterer:
             NUM_CLUSTERED_BY_SKLEARN += 1
 
         labels = km.fit_predict(X_norm)
-        centroids = km.cluster_centers_ * std + mean
+        centroids = km.cluster_centers_ + mean
         return labels, centroids
 
     def _compute_max_error(
@@ -407,11 +403,11 @@ class AdaptiveClusterer:
         global NUM_CLUSTERED_BY_CUML, NUM_CLUSTERED_BY_SKLEARN, NUM_CLUSTERED_BY_MINIBATCH, NUM_CLUSTERED_BY_TWO_MEANS
 
         n = len(X)
-        X_norm, mean, std = self._normalize_data(X)
+        X_norm, mean = self._normalize_data(X)
 
         # For small clusters, use a rigorous fast 2-means: PCA projection + exact threshold scan
         if self.use_fast_two_means and n <= self.fast_two_means_len_threshold:
-            labels, centroids = two_means_pca_threshold(X_norm, mean, std)
+            labels, centroids = two_means_pca_threshold(X_norm, mean)
             NUM_CLUSTERED_BY_TWO_MEANS += 1
             return labels, centroids
 
@@ -419,7 +415,7 @@ class AdaptiveClusterer:
             Xg = cp.asarray(X_norm, dtype=CP_DTYPE)
             km = cuKMeans(n_clusters=2, random_state=self.seed)
             labels = km.fit_predict(Xg).get()
-            centroids = cp.asnumpy(km.cluster_centers_) * std + mean
+            centroids = cp.asnumpy(km.cluster_centers_) + mean
             NUM_CLUSTERED_BY_CUML += 1
             return labels, centroids
 
@@ -444,7 +440,7 @@ class AdaptiveClusterer:
             NUM_CLUSTERED_BY_SKLEARN += 1
 
         labels = km.fit_predict(X_norm)
-        centroids = km.cluster_centers_ * std + mean
+        centroids = km.cluster_centers_ + mean
         return labels, centroids
 
     def _process_subcluster(
