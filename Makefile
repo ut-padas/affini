@@ -33,7 +33,7 @@ lint:
 	uv run --group lint ruff check .
 
 test: load-modules
-	uv run pytest
+	uv run --group test pytest
 
 load-modules:
 	@echo "Checking if running on TACC Vista..."

@@ -33,6 +33,14 @@ ignore = ["E501"]  # Line too long (handled by formatter)
 "test/*.py" = ["N806"]  # Allow mathematical variable names in tests (N, A, JA, minPts)
 "*.pyi" = ["N803"]  # Allow non-standard naming in type stubs
 
+[tool.pytest.ini_options]
+addopts = [
+    "--cov=src",
+    "--cov-report=html",
+    "--cov-report=term-missing",
+]
+testpaths = ["tests"]
+
 [dependency-groups]
 gpu = [
     "cuml-cu12>=25.10.0",
