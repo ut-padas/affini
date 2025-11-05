@@ -2,13 +2,14 @@
 
 help:
 	@echo "Available commands:"
-	@echo "  benchmarks  - Run all the benchmarking scripts"
-	@echo "  dev         - Install all development packages"
-	@echo "  install-cpu - Install packages relevant for runtime only"
-	@echo "  install-gpu - Install GPU-specific packages"
-	@echo "  format      - Format code with ruff (Ref: https://ruff.rs/)"
-	@echo "  lint        - Run linting with ruff (Ref: https://ruff.rs/)"
+	@echo "  benchmarks   - Run all the benchmarking scripts"
+	@echo "  dev          - Install all development packages"
+	@echo "  install-cpu  - Install packages relevant for runtime only"
+	@echo "  install-gpu  - Install GPU-specific packages"
+	@echo "  format       - Format code with ruff (Ref: https://ruff.rs/)"
+	@echo "  lint         - Run linting with ruff (Ref: https://ruff.rs/)"
 	@echo "  load-modules - Load required modules if running on TACC Vista"
+	@echo "  test         - Run pytest tests"
 
 benchmarks: load-modules
 	uv run python -m research.benchmark_kmeans_gpu_vs_cpu
@@ -30,6 +31,9 @@ format:
 
 lint:
 	uv run --group lint ruff check .
+
+test: load-modules
+	uv run pytest
 
 load-modules:
 	@echo "Checking if running on TACC Vista..."
