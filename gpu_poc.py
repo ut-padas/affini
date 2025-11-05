@@ -12,14 +12,14 @@ num_sms = props["multiProcessorCount"]
 
 SEED = 0
 CP_DTYPE = cp.float64
-N_SAMPLES = 1_000_000
+N_SAMPLES = 10_000_000
 D = 3  # input dim
 FD = 2  # output dim
 N_INIT_CLUSTERS = 5
-ABS_TOL = 0.05
+ABS_TOL = 0.01
 REL_TOL = 0.01
-MIN_PTS_PER_CLUSTER = 5
-NUM_STREAMS = num_sms  # or 2 * num_sms
+MIN_PTS_PER_CLUSTER = 100
+NUM_STREAMS = 2 * num_sms
 ELL = 8  # randomized-QR sketch size
 POWER_ITERS = 1  # randomized-QR power iterations
 
@@ -119,7 +119,7 @@ def taylor_errors(
     """
     dx = X - centroid  # (n, D)
     # f_taylor = F_c + J_c @ dx^T per point  -> (n, FD)
-    f_taylor = F_c + cp.einsum("ij,kj->ki", J_c, dx)
+    f_taylor = F_c + cp.einsum("ijk,nk->nj", J_c, dx)
     err = cp.linalg.norm(F - f_taylor, axis=1)
     return err
 
@@ -129,15 +129,17 @@ def cluster_violation(
     f: Callable[[cp.ndarray], tuple[cp.ndarray, cp.ndarray]],
     abs_tol: float,
     rel_tol: float,
-) -> tuple[bool, float, float, cp.ndarray, cp.ndarray, cp.ndarray]:
+) -> tuple[bool, float, float, float, cp.ndarray, cp.ndarray, cp.ndarray]:
     """
     Returns:
       violated (bool),
       max_error (scalar),
+      mean_error (scalar),
       radius (scalar),
       centroid (1, D), F_c (1, FD), J_c (1, FD, D)
     """
-    if X_cluster.shape[0] == 0:
+    cluster_size = X_cluster.shape[0]
+    if cluster_size == 0:
         raise ValueError("Empty cluster encountered.")
 
     centroid = get_centroid(X_cluster)[None, :]  # (1, D)
@@ -153,11 +155,12 @@ def cluster_violation(
 
     radius = (
         float(cp.max(cp.linalg.norm(X_cluster - centroid, axis=1)))
-        if X_cluster.shape[0] > 0
+        if cluster_size > 0
         else 0.0
     )
-    max_error = float(err.max()) if X_cluster.shape[0] > 0 else 0.0
-    return violated, max_error, radius, centroid, F_c, J_c
+    max_error = float(err.max()) if cluster_size > 0 else 0.0
+    mean_error = float(err.mean()) if cluster_size > 0 else 0.0
+    return violated, max_error, mean_error, radius, centroid, F_c, J_c
 
 
 def generate_extra_points(
@@ -191,6 +194,9 @@ class Cluster:
     J_centroid: cp.ndarray  # (1, FD, D)
     radius: float
     hessian_proxy: float
+    cluster_size: int
+    max_error: float
+    mean_error: float
 
 
 # --------------------------- BFS Adaptive 2-means --------------------
@@ -219,10 +225,11 @@ def adaptive_two_means_gpu(
             queue.append(X[idx])  # Store the actual points
 
     final_clusters: list[Cluster] = []
+    n_level = 0
 
     # BFS by levels
     while queue:
-        print(f"Queue size: {len(queue)}")
+        print(f"Level {n_level}: {len(queue)} clusters to process.")
         level = queue
         queue = []
 
@@ -235,23 +242,35 @@ def adaptive_two_means_gpu(
         for i, X_cluster in enumerate(tqdm(level, desc="Processing clusters")):
             stream = streams[i % num_streams]
             with stream:
+                cluster_size = X_cluster.shape[0]
                 # If too small, augment with convex combos for evaluation/split
                 aux_X = None
-                if X_cluster.shape[0] < min_pts_per_cluster:
+                if cluster_size < min_pts_per_cluster:
                     new_X = generate_extra_points(X_cluster, min_pts_per_cluster, rng)
                     aux_X = cp.concatenate([X_cluster, new_X], axis=0)
                 work_X = X_cluster if aux_X is None else aux_X
 
                 # Test violation amongst the working set
-                violated, max_err, radius, centroid, F_c, J_c = cluster_violation(
-                    work_X, f, abs_tol, rel_tol
+                violated, max_err, mean_err, radius, centroid, F_c, J_c = (
+                    cluster_violation(work_X, f, abs_tol, rel_tol)
                 )
 
                 if not violated:
                     # hessian proxy (scalar)
                     h_proxy = 2.0 * max_err / (radius**2) if radius > 0 else 0.0
                     # Store final cluster (based on work_X, which may include synthetic points)
-                    final_clusters.append(Cluster(centroid, F_c, J_c, radius, h_proxy))
+                    final_clusters.append(
+                        Cluster(
+                            centroid=centroid,
+                            F_centroid=F_c,
+                            J_centroid=J_c,
+                            radius=radius,
+                            hessian_proxy=h_proxy,
+                            cluster_size=cluster_size,
+                            max_error=max_err,
+                            mean_error=mean_err,
+                        )
+                    )
                 else:
                     # Split using randomized-QR direction computed on work_X
                     q = randomized_qr_gpu(work_X, rng, ell, power_iters)
@@ -273,11 +292,13 @@ def adaptive_two_means_gpu(
             queue.append(L)
             queue.append(R)
 
+        n_level += 1
+
     return final_clusters
 
 
 # --------------------------- Driver ---------------------------------
-def main():
+def main() -> list[Cluster]:
     assert cp.is_available(), "GPU not available."
     rng = cp.random.default_rng(SEED)
     assert rng is not None, "Something went wrong with RNG initialization."
@@ -308,17 +329,13 @@ def main():
     print(f"Adaptive refinement finished in {toc - tic:0.4f} s.")
     print(f"Total clusters formed: {len(clusters)}")
 
-    CLUSTERS = [
-        [g.centroid, g.F_centroid, g.J_centroid, g.radius, g.hessian_proxy]
-        for g in clusters
-    ]
     #     for g in good
     # ]
     # for g in GOOD_CLUSTERS:
     #     print(f"Centroid: {g[0]}, Radius: {g[3]:0.4e}, Hessian proxy: {g[4]:0.4e}")
     #     print(f"  F_centroid: {g[1]}")
     #     print(f"  J_centroid: {g[2]}")
-    return CLUSTERS
+    return clusters
 
 
 if __name__ == "__main__":
@@ -330,24 +347,31 @@ if __name__ == "__main__":
 
     counter = 0
     # test the centroids and their errors
-    for i, c in enumerate(clusters):
-        centroid, F_c, J_c, radius, h_proxy = c
+    for i, c in tqdm(
+        enumerate(clusters), total=len(clusters), desc="Verifying clusters"
+    ):
+        centroid, F_c, J_c, radius, h_proxy = (
+            c.centroid,
+            c.F_centroid,
+            c.J_centroid,
+            c.radius,
+            c.hessian_proxy,
+        )
 
         # Pick random points in the cluster ball to test error
         u = rng.standard_normal(size=(n_test, D), dtype=CP_DTYPE)
         u = u / cp.linalg.norm(u, axis=1, keepdims=True)
-        test_pts = (
-            centroid[None, :] + radius * rng.random((n_test, 1), dtype=CP_DTYPE) * u
-        )
+        test_pts = centroid[0] + radius * rng.random((n_test, 1), dtype=CP_DTYPE) * u
         F_test, _ = sample_function(test_pts)
         err = taylor_errors(test_pts, F_test, centroid, F_c, J_c)
         max_err = float(err.max())
         if max_err > max(ABS_TOL, REL_TOL * cp.linalg.norm(F_c)):
-            print(
-                f"  WARNING: Max error on test points = {max_err:0.4e} exceeds tolerance!"
-            )
             counter += 1
 
+    perct_violate = 100.0 * counter / len(clusters)
     print(
-        f"Total clusters violating tolerance on test points: {counter} out of {len(clusters)}"
+        f"Total clusters violating tolerance on test points: ({counter} / {len(clusters)}) = {perct_violate:0.2f}%"
     )
+
+    avg_cluster_size = sum([c.cluster_size for c in clusters]) / len(clusters)
+    print(f"Average cluster size: {avg_cluster_size:0.2f} points per cluster")
