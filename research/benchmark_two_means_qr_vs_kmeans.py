@@ -122,7 +122,9 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
         kmeans_times = df_d["kmeans_time_mean"].tolist()
 
         # Plot two-means with circle marker and normal color
-        (line,) = plt.plot(sizes, two_means_times, marker="o", label=f"Two-means D={D}")
+        (line,) = plt.plot(
+            sizes, two_means_times, marker="o", label=f"Two-means (QR) D={D}"
+        )
         color = line.get_color()
 
         # Plot k-means with square marker, same color, smaller alpha, and dashed line
@@ -140,7 +142,7 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     plt.yscale("log")
     plt.xlabel("Number of points (N)")
     plt.ylabel("Wall time (seconds)")
-    plt.title(f"Two-means vs KMeans runtime (repeats={REPEATS})")
+    plt.title(f"Two-means (QR) vs KMeans runtime (repeats={REPEATS})")
     plt.grid(True, which="both", ls=":", alpha=grid_alpha)
     plt.legend()
     plt.tight_layout()
