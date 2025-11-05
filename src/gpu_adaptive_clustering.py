@@ -12,48 +12,29 @@ num_sms = props["multiProcessorCount"]
 
 SEED = 0
 CP_DTYPE = cp.float64
-N_SAMPLES = 10_000_000
-D = 3  # input dim
-FD = 2  # output dim
-N_INIT_CLUSTERS = 5
-ABS_TOL = 0.01
-REL_TOL = 0.01
-MIN_PTS_PER_CLUSTER = 100
 NUM_STREAMS = 2 * num_sms
 ELL = 8  # randomized-QR sketch size
 POWER_ITERS = 1  # randomized-QR power iterations
-
-
-# --------------------------- Sample function f -----------------------
-def sample_function(X: cp.ndarray) -> tuple[cp.ndarray, cp.ndarray]:
-    """
-    X: (n, D)
-    Returns:
-      F: (n, FD)
-      J: (n, FD, D)
-    Example: f(x) = [x1^2 + x2^2, x1 - x2 + x3]
-    """
-    x1, x2, x3 = X[:, 0], X[:, 1], X[:, 2]
-    f1 = x1**2 + x2**2
-    f2 = x1 - x2 + x3
-    F = cp.stack([f1, f2], axis=1)
-
-    g1 = cp.stack([2 * x1, 2 * x2, cp.zeros_like(x1)], axis=1)
-    g2 = cp.stack([cp.ones_like(x1), -cp.ones_like(x1), cp.ones_like(x1)], axis=1)
-    J = cp.stack([g1, g2], axis=1)  # (n, FD, D)
-    return F, J
 
 
 # --------------------------- Utilities ------------------------------
 def randomized_qr_gpu(
     X: cp.ndarray,
     rng: cp.random.Generator,
-    ell: int = 8,
-    power_iterations: int = 1,
+    ell: int = ELL,
+    power_iterations: int = POWER_ITERS,
 ) -> cp.ndarray:
     """
-    Return leading direction q (D,) using randomized range finder on centered data.
-    X: (n, D)
+    Randomized-QR to compute approximate leading left singular vector of X.
+
+    Args:
+        X: (n, D) data matrix
+        rng: cupy random generator
+        ell: sketch size
+        power_iterations: number of power iterations
+
+    Returns:
+        q: (D,) approximate leading left singular vector
     """
     XT = X.T
     _, N = XT.shape
@@ -78,10 +59,15 @@ def median_cut_projection(
     X: cp.ndarray, q: cp.ndarray
 ) -> tuple[cp.ndarray, cp.ndarray]:
     """
-    Project X on q, split by median. Returns boolean masks (left, right).
-    Ensures both sides non-empty by moving one point if needed.
+    Project points onto q and split at median.
 
-    X: (n, D), q: (D,)
+    Args:
+        X: (n, D) data matrix
+        q: (D,) projection direction
+
+    Returns:
+        left_mask: (n,) boolean mask for left cluster
+        right_mask: (n,) boolean mask for right cluster
     """
     s = X @ q  # (n,)
     med = cp.median(s)
@@ -106,6 +92,15 @@ def median_cut_projection(
 
 
 def get_centroid(X: cp.ndarray) -> cp.ndarray:
+    """
+    Given points belonging to a cluster, compute centroid.
+
+    Args:
+        X: (n, D) data matrix
+
+    Returns:
+        centroid: (D,) centroid of the cluster
+    """
     return X.mean(axis=0)
 
 
@@ -113,12 +108,19 @@ def taylor_errors(
     X: cp.ndarray, F: cp.ndarray, centroid: cp.ndarray, F_c: cp.ndarray, J_c: cp.ndarray
 ) -> cp.ndarray:
     """
-    X: (n, D), F: (n, FD),
-    centroid: (1, D), F_c: (1, FD), J_c: (1, FD, D)
-    returns per-point error norms: (n,)
+    Compute per-point Taylor approximation errors, given cluster centroid info.
+
+    Args:
+        X: (n, D) data matrix
+        F: (n, FD) function values at X
+        centroid: (1, D) cluster centroid
+        F_c: (1, FD) function value at centroid
+        J_c: (1, FD, D) Jacobian at centroid
+
+    Returns:
+        err: (n,) per-point error norms
     """
     dx = X - centroid  # (n, D)
-    # f_taylor = F_c + J_c @ dx^T per point  -> (n, FD)
     f_taylor = F_c + cp.einsum("ijk,nk->nj", J_c, dx)
     err = cp.linalg.norm(F - f_taylor, axis=1)
     return err
@@ -131,12 +133,22 @@ def cluster_violation(
     rel_tol: float,
 ) -> tuple[bool, float, float, float, cp.ndarray, cp.ndarray, cp.ndarray]:
     """
+    Check if cluster violates Taylor approximation error bounds.
+
+    Args:
+        X_cluster: (n, D) data matrix
+        f: function that returns (F, J) at X
+        abs_tol: absolute tolerance
+        rel_tol: relative tolerance
+
     Returns:
-      violated (bool),
-      max_error (scalar),
-      mean_error (scalar),
-      radius (scalar),
-      centroid (1, D), F_c (1, FD), J_c (1, FD, D)
+        violated: whether cluster violates tolerances
+        max_error: maximum error in cluster
+        mean_error: mean error in cluster
+        radius: cluster radius
+        centroid: (1, D) cluster centroid
+        F_c: (1, FD) function value at centroid
+        J_c: (1, FD, D) Jacobian at centroid
     """
     cluster_size = X_cluster.shape[0]
     if cluster_size == 0:
@@ -169,8 +181,15 @@ def generate_extra_points(
     rng: cp.random.Generator,
 ) -> cp.ndarray:
     """
-    Convex combos to reach min_points (>=2 required in sub_X).
-    Returns new_X (m, D) where m is number of extra points generated.
+    Given a cluster with too few points, generate extra points via convex combinations.
+
+    Args:
+        X: (Q, D) data matrix for the cluster
+        min_points_per_cluster: minimum desired points per cluster
+        rng: cupy random generator
+
+    Returns:
+        new_X: (n_extra, D) generated extra points
     """
     Q = X.shape[0]
     if Q < 2:
@@ -189,6 +208,8 @@ def generate_extra_points(
 
 @dataclass
 class Cluster:
+    """Data class to hold cluster information."""
+
     centroid: cp.ndarray  # (1, D)
     F_centroid: cp.ndarray  # (1, FD)
     J_centroid: cp.ndarray  # (1, FD, D)
@@ -204,14 +225,32 @@ def adaptive_two_means_gpu(
     X: cp.ndarray,
     labels: cp.ndarray,
     f: Callable[[cp.ndarray], tuple[cp.ndarray, cp.ndarray]],
+    abs_tol: float,
+    rel_tol: float,
+    min_pts_per_cluster: int,
     *,
-    abs_tol: float = ABS_TOL,
-    rel_tol: float = REL_TOL,
-    min_pts_per_cluster: int = MIN_PTS_PER_CLUSTER,
     ell: int = ELL,
     power_iters: int = POWER_ITERS,
     num_streams: int = NUM_STREAMS,
 ) -> list[Cluster]:
+    """
+    Adaptive two-means clustering with GPU streaming.
+
+    Args:
+        X: (N, D) data matrix
+        labels: (N,) initial cluster labels from a clustering algorithm
+        f: function that returns (F, J) at X.
+            Note: f(X) should return F: (N, FD), J: (N, FD, D) given X: (N, D)
+        abs_tol: absolute tolerance for Taylor error
+        rel_tol: relative tolerance for Taylor error
+        min_pts_per_cluster: minimum points per cluster for evaluation
+        ell: sketch size for randomized-QR
+        power_iters: number of power iterations for randomized-QR
+        num_streams: number of CUDA streams to use
+
+    Returns:
+        final_clusters: list of Cluster objects representing final clusters
+    """
 
     rng = cp.random.default_rng(SEED)
     assert rng is not None, "Something went wrong with RNG initialization."
@@ -297,8 +336,40 @@ def adaptive_two_means_gpu(
     return final_clusters
 
 
+# --------------------------- Sample function f -----------------------
+def sample_function(X: cp.ndarray) -> tuple[cp.ndarray, cp.ndarray]:
+    """
+    A sample function f that returns F and J at given X.
+    f(X) = [x1^2 + x2^2, x1 - x2 + x3]
+    grad(X) = [[2*x1, 2*x2, 0],
+               [1, -1, 1]]
+
+    Args:
+        X: (n, 3) data matrix
+    Returns:
+        F: (n, 2) function values at X
+        J: (n, 2, 3) Jacobian at X
+    """
+    x1, x2, x3 = X[:, 0], X[:, 1], X[:, 2]
+    f1 = x1**2 + x2**2
+    f2 = x1 - x2 + x3
+    F = cp.stack([f1, f2], axis=1)
+
+    g1 = cp.stack([2 * x1, 2 * x2, cp.zeros_like(x1)], axis=1)
+    g2 = cp.stack([cp.ones_like(x1), -cp.ones_like(x1), cp.ones_like(x1)], axis=1)
+    J = cp.stack([g1, g2], axis=1)  # (n, FD, D)
+    return F, J
+
+
 # --------------------------- Driver ---------------------------------
-def main() -> list[Cluster]:
+def main(
+    N_SAMPLES: int,
+    D: int,
+    N_INIT_CLUSTERS: int,
+    MIN_PTS_PER_CLUSTER: int,
+    ABS_TOL: float,
+    REL_TOL: float,
+) -> list[Cluster]:
     assert cp.is_available(), "GPU not available."
     rng = cp.random.default_rng(SEED)
     assert rng is not None, "Something went wrong with RNG initialization."
@@ -328,18 +399,20 @@ def main() -> list[Cluster]:
     toc = time.perf_counter()
     print(f"Adaptive refinement finished in {toc - tic:0.4f} s.")
     print(f"Total clusters formed: {len(clusters)}")
-
-    #     for g in good
-    # ]
-    # for g in GOOD_CLUSTERS:
-    #     print(f"Centroid: {g[0]}, Radius: {g[3]:0.4e}, Hessian proxy: {g[4]:0.4e}")
-    #     print(f"  F_centroid: {g[1]}")
-    #     print(f"  J_centroid: {g[2]}")
     return clusters
 
 
 if __name__ == "__main__":
-    clusters = main()
+    N_SAMPLES = 1_000_000
+    D = 3
+    N_INIT_CLUSTERS = 100
+    MIN_PTS_PER_CLUSTER = 50
+    ABS_TOL = 1e-2
+    REL_TOL = 1e-2
+
+    clusters = main(
+        N_SAMPLES, D, N_INIT_CLUSTERS, MIN_PTS_PER_CLUSTER, ABS_TOL, REL_TOL
+    )
     rng = cp.random.default_rng(SEED)
     assert rng is not None, "Something went wrong with RNG initialization."
 
