@@ -1,72 +1,15 @@
+import warnings
+
 import numpy as np
 
 from nearode import NearODESurrogate
-
-
-# Six-Hump Camelback function
-def SHCF(x: np.ndarray):
-    """
-    Vectorized Six-Hump Camelback function.
-
-    Shape Convention:
-        x.shape: (n, 2) where n=number of points, input is 2D
-        Returns: (n, 1) function values
-    """
-    scale = 10
-    x1, x2 = x[:, 0], x[:, 1]
-
-    result = (
-        (4 - 2.1 * x1**2 + x1**4 / 3) * x1**2
-        + x1 * x2
-        + (-4 + 4 * x2**2) * x2**2
-        + scale
-    )
-
-    return np.atleast_2d(result).T  # Ensure shape is (n, 1)
-
-
-def grad_SHCF(x: np.ndarray):
-    """
-    Vectorized gradient of Six-Hump Camelback function.
-
-    Shape Convention:
-        x.shape: (n, 2) where n=number of points, input is 2D
-        Returns: (n, 1, 2) gradients where each gradient is shape (1, 2)
-    """
-    x1, x2 = x[:, 0], x[:, 1]
-
-    # Compute gradient components
-    Dxf = 8 * x1 - 8.4 * x1**3 + 2 * x1**5 + x2
-    Dyf = x1 - 8 * x2 + 16 * x2**3
-
-    # Stack gradients: shape (n, 2)
-    grads = np.stack([Dxf, Dyf], axis=1)
-
-    # Add new axis to get shape (n, 1, 2) to follow convention: (n, fd, d) where fd=1, d=2
-    return grads[:, np.newaxis, :]
-
-
-def hessian_SHCF(x: np.ndarray):
-    """
-    Vectorized hessian of Six-Hump Camelback function.
-
-    Shape Convention:
-        x.shape: (n, 2) where n=number of points, input is 2D
-        Returns: (n, 2, 2) Hessian matrices
-    """
-    x1, x2 = x[:, 0], x[:, 1]
-
-    # Compute hessian components for each point
-    h11 = 8 - 25.2 * x1**2 + 10 * x1**4
-    h12 = np.ones_like(x1)  # Off-diagonal element
-    h22 = -8 + 48 * x2**2
-
-    # Stack into hessian matrices: shape (n, 2, 2)
-    hessians = np.stack(
-        [np.stack([h11, h12], axis=1), np.stack([h12, h22], axis=1)], axis=1
-    )
-
-    return hessians
+from src.shcf import (
+    _HAS_GPU,
+    SHCF_cupy,
+    SHCF_numpy,
+    grad_SHCF_numpy,
+    hessian_SHCF_numpy,
+)
 
 
 def check_matrix_2norm(A, domain):
@@ -158,12 +101,15 @@ def generate_latex_table(data):
 def test_2D(
     atol=0.01, rtol=0.01, N_init=50000, domain=np.array([[-3, 3], [-2, 2]]), min_ppc=100
 ):
-    L = check_matrix_2norm(hessian_SHCF, domain)
+    L = check_matrix_2norm(hessian_SHCF_numpy, domain)
+
+    cupy_f = SHCF_cupy if _HAS_GPU else None
 
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
-        f=SHCF,
-        grad_f=grad_SHCF,
+        f=SHCF_numpy,
+        grad_f=grad_SHCF_numpy,
+        cupy_f=cupy_f,
         domain=domain,
         N=N_init,
         distribution="LHS",
@@ -182,7 +128,7 @@ def test_2D(
     xv, yv = np.meshgrid(x, y)
     pts = np.column_stack((xv.flatten(), yv.flatten()))
 
-    zz_exact = SHCF(pts)  # Already has shape (n, 1)
+    zz_exact = SHCF_numpy(pts)  # Already has shape (n, 1)
     zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, L=L, recluster=False)
     abs_error = np.linalg.norm(zz_exact - zz_interpolant, 2, axis=1)
     rel_error = abs_error / np.linalg.norm(zz_exact, 2, axis=1)

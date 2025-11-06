@@ -27,6 +27,7 @@ class NearODESurrogate:
         do_clustering: bool = True,
         f: Callable | None = None,
         grad_f: Callable | None = None,
+        cupy_f: Callable | None = None,
         N_init_clusters: int = 10,
         atol: float = 0.01,
         rtol: float | None = None,
@@ -43,6 +44,7 @@ class NearODESurrogate:
         self.rtol = rtol if rtol is not None else 0.001
         self.f = f
         self.grad_f = grad_f
+        self.cupy_f = cupy_f
         self.seed = seed if seed is not None else 0
 
         # --- Optional adaptive clustering ---
@@ -54,6 +56,7 @@ class NearODESurrogate:
                 X_train=X,
                 f=self.f,
                 grad_f=self.grad_f,
+                cupy_f=cupy_f,
                 atol=self.atol,
                 rtol=self.rtol,
                 N_init_clusters=N_init_clusters,
@@ -140,6 +143,7 @@ class NearODESurrogate:
         self,
         f: Callable,
         grad_f: Callable | None,
+        cupy_f: Callable | None,
         domain: np.ndarray,
         N: int,
         distribution: str = "uniform",
@@ -187,6 +191,7 @@ class NearODESurrogate:
             do_clustering=True,
             f=f,
             grad_f=grad_f,
+            cupy_f=cupy_f,
             N_init_clusters=N_init_clusters,
             atol=atol,
             rtol=rtol,
@@ -247,6 +252,7 @@ class NearODESurrogate:
             X_train=X,
             f=self.f,
             grad_f=self.grad_f,
+            cupy_f=self.cupy_f,
             atol=self.atol,
             rtol=self.rtol,
             N_init_clusters=2,

@@ -84,7 +84,6 @@ class AdaptiveClusterer:
         # Keyword arguments
         use_gpu: bool = True,
         gpu_len_threshold: int = 10_000,
-        fast_two_means_len_threshold: int | str = "auto",
     ):
         """
         Initialize the adaptive clusterer.
@@ -97,7 +96,6 @@ class AdaptiveClusterer:
             seed: Random seed for reproducibility.
             use_gpu: Whether to use GPU acceleration if available.
             gpu_len_threshold: Minimum data length to use GPU clustering. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_cpu_vs_gpu.py
-            fast_two_means_len_threshold: Maximum data length for fast 2-means splitting. If "auto", then, based on the dimensionality, the model uses thresholds tuned on TACC-Vista system.
         """
         self.atol = atol
         self.rtol = rtol
@@ -108,37 +106,14 @@ class AdaptiveClusterer:
         self.use_gpu = use_gpu and _HAS_GPU
         self.gpu_len_threshold = gpu_len_threshold
 
-        if not (
-            isinstance(fast_two_means_len_threshold, int)
-            or (
-                isinstance(fast_two_means_len_threshold, str)
-                and fast_two_means_len_threshold == "auto"
-            )
-        ):
-            raise ValueError(
-                "fast_two_means_len_threshold must be 'auto' or an integer."
-            )
-        self.ftm_len_threshold_property = fast_two_means_len_threshold
-
         self._cluster_id = 0
-
-    def _get_fast_two_means_len_threshold(self, dim: int) -> int:
-        """Determine fast two-means length threshold based on dimensionality, as per tuned values."""
-        if isinstance(self.ftm_len_threshold_property, int):
-            return self.ftm_len_threshold_property
-
-        if dim < 10:
-            return 8_192
-        elif dim < 50:
-            return 1_024
-        else:
-            return 512
 
     def fit(
         self,
         X: np.ndarray,
         f: Callable,
         grad_f: Callable | None,
+        cupy_f: Callable | None,
     ) -> list[TreeNode]:
         """
         Main clustering algorithm.
@@ -158,17 +133,10 @@ class AdaptiveClusterer:
                 f"X must be 2D array with shape (n, d), got shape {X.shape}"
             )
 
-        # Get dimensionality and set fast two-means threshold
-        dim = X.shape[1]
-        self.fast_two_means_len_threshold = self._get_fast_two_means_len_threshold(dim)
-        print(
-            f"Using fast two-means length threshold (dim={dim}): {self.fast_two_means_len_threshold}"
-        )
-
         # Initial clustering
         labels, centroids = self._initial_cluster(X)
 
-        F = self._get_function_values(X, f)
+        F = self._get_function_values(X, f, cupy_f)
 
         # Process each initial cluster
         trees = []
@@ -192,13 +160,15 @@ class AdaptiveClusterer:
                 )
             else:
                 # Split recursively
-                tree = self._split_recursive(cluster_X, cluster_F, f, grad_f)
+                tree = self._split_recursive(cluster_X, cluster_F, f, grad_f, cupy_f)
                 if tree:
                     trees.append(tree)
 
         return trees
 
-    def _get_function_values(self, X: np.ndarray, f: Callable) -> np.ndarray:
+    def _get_function_values(
+        self, X: np.ndarray, f: Callable, cupy_f: Callable | None
+    ) -> np.ndarray:
         """
         Compute function values.
 
@@ -209,9 +179,13 @@ class AdaptiveClusterer:
         Returns:
             Function values with shape (n, fd)
         """
-
-        val = f(X)
-        return np.array(val, dtype=NP_DTYPE)
+        if self.use_gpu and cupy_f is not None and len(X) >= self.gpu_len_threshold:
+            Xg = cp.asarray(X, dtype=CP_DTYPE)
+            val = cupy_f(Xg)
+            return cp.asnumpy(val).astype(NP_DTYPE)
+        else:
+            val = f(X)
+            return np.array(val, dtype=NP_DTYPE)
 
     def _normalize_data(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -351,7 +325,12 @@ class AdaptiveClusterer:
         return cluster
 
     def _split_recursive(
-        self, X: np.ndarray, F: np.ndarray, f: Callable, grad_f: Callable | None
+        self,
+        X: np.ndarray,
+        F: np.ndarray,
+        f: Callable,
+        grad_f: Callable | None,
+        cupy_f: Callable | None,
     ) -> Optional[TreeNode]:
         """
         Recursively split cluster until tolerance is met.
@@ -372,8 +351,12 @@ class AdaptiveClusterer:
         labels, centroids = self._split_binary(X)
 
         # Process each subcluster
-        left_tree = self._process_subcluster(X, F, labels, 0, centroids[0], f, grad_f)
-        right_tree = self._process_subcluster(X, F, labels, 1, centroids[1], f, grad_f)
+        left_tree = self._process_subcluster(
+            X, F, labels, 0, centroids[0], f, grad_f, cupy_f
+        )
+        right_tree = self._process_subcluster(
+            X, F, labels, 1, centroids[1], f, grad_f, cupy_f
+        )
 
         if left_tree is None and right_tree is None:
             return None
@@ -396,25 +379,24 @@ class AdaptiveClusterer:
         X_norm, mean = self._normalize_data(X)
 
         # For small clusters, use a rigorous fast 2-means: PCA projection + exact threshold scan
-        if n <= self.fast_two_means_len_threshold:
+        if n < self.gpu_len_threshold:
             labels, centroids = two_means_pca_threshold(X_norm, mean)
             NUM_CLUSTERED_BY_TWO_MEANS += 1
             return labels, centroids
-
-        if self.use_gpu and n >= self.gpu_len_threshold:
+        elif self.use_gpu and n >= self.gpu_len_threshold:
             Xg = cp.asarray(X_norm, dtype=CP_DTYPE)
             km = cuKMeans(n_clusters=2, random_state=self.seed)
             labels = km.fit_predict(Xg).get()
             centroids = cp.asnumpy(km.cluster_centers_) + mean
             NUM_CLUSTERED_BY_CUML += 1
             return labels, centroids
+        else:
+            km = KMeans(n_clusters=2, random_state=self.seed, n_init=1)
+            NUM_CLUSTERED_BY_SKLEARN += 1
 
-        km = KMeans(n_clusters=2, random_state=self.seed, n_init=1)
-        NUM_CLUSTERED_BY_SKLEARN += 1
-
-        labels = km.fit_predict(X_norm)
-        centroids = km.cluster_centers_ + mean
-        return labels, centroids
+            labels = km.fit_predict(X_norm)
+            centroids = km.cluster_centers_ + mean
+            return labels, centroids
 
     def _process_subcluster(
         self,
@@ -425,6 +407,7 @@ class AdaptiveClusterer:
         centroid: np.ndarray,
         f: Callable,
         grad_f: Callable | None,
+        cupy_f: Callable | None,
     ) -> Optional[TreeNode]:
         """
         Process a single subcluster, which involves first adding extra points if needed,
@@ -449,7 +432,7 @@ class AdaptiveClusterer:
 
         # Add extra points if needed
         if len(sub_X) <= self.min_points:
-            extra_X, extra_F = self._generate_extra_points(sub_X, f)
+            extra_X, extra_F = self._generate_extra_points(sub_X, f, cupy_f)
             if len(extra_X) > 0:
                 sub_X = np.vstack([sub_X, extra_X])
                 sub_F = np.vstack([sub_F, extra_F])
@@ -467,10 +450,10 @@ class AdaptiveClusterer:
                 cluster=self._create_cluster(sub_X, sub_F, centroid, f, grad_f)
             )
         else:
-            return self._split_recursive(sub_X, sub_F, f, grad_f)
+            return self._split_recursive(sub_X, sub_F, f, grad_f, cupy_f)
 
     def _generate_extra_points(
-        self, sub_X: np.ndarray, f: Callable
+        self, sub_X: np.ndarray, f: Callable, cupy_f: Callable | None
     ) -> tuple[np.ndarray, np.ndarray]:
         """Generate extra points via convex combinations."""
         Q = len(sub_X)
@@ -495,13 +478,14 @@ class AdaptiveClusterer:
         # vectorized convex combination to generate new points
         new_X = lambdas[:, None] * sub_X[idx0] + (1.0 - lambdas)[:, None] * sub_X[idx1]
 
-        return new_X, self._get_function_values(new_X, f)
+        return new_X, self._get_function_values(new_X, f, cupy_f)
 
 
 def adaptive_cluster_algorithm(
     X_train: np.ndarray,
     f: Callable,
     grad_f: Callable | None,
+    cupy_f: Callable | None,
     atol=0.01,
     rtol=0.01,
     N_init_clusters=10,
@@ -516,7 +500,7 @@ def adaptive_cluster_algorithm(
         min_points=min_ppc,
         seed=seed,
     )
-    trees = clusterer.fit(X=X_train, f=f, grad_f=grad_f)
+    trees = clusterer.fit(X=X_train, f=f, grad_f=grad_f, cupy_f=cupy_f)
 
     # Flatten each leaf of the tree into a list of clusters
     return [leaf for tree in trees for leaf in tree.leaves()]
@@ -575,10 +559,20 @@ if __name__ == "__main__":
         [[2*x1, 2*x2, 0],
          [1,    -1,  1]]
         """
-        x1, x2, x3 = X[:, 0], X[:, 1], X[:, 2]
+        x1, x2, _ = X[:, 0], X[:, 1], X[:, 2]
         g0 = np.stack([2 * x1, 2 * x2, np.zeros_like(x1)], axis=1)
         g1 = np.stack([np.ones_like(x1), -np.ones_like(x1), np.ones_like(x1)], axis=1)
         return np.stack([g0, g1], axis=1)  # (B, 2, 3)
+
+    def sample_cupy_function(X) -> cp.ndarray:
+        """
+        f(x) = [x1^2 + x2^2, x1 - x2 + x3] using CuPy
+        """
+        x1, x2, x3 = X[:, 0], X[:, 1], X[:, 2]
+        val0 = x1**2 + x2**2
+        val1 = x1 - x2 + x3
+        values = cp.stack([val0, val1], axis=1)
+        return values
 
     # Generate sample data
     seed = 0
@@ -598,6 +592,7 @@ if __name__ == "__main__":
         X_train=X_samples,
         f=sample_function,
         grad_f=sample_gradient,
+        cupy_f=sample_cupy_function,
         atol=ABS_TOL,
         rtol=REL_TOL,
         N_init_clusters=5,
