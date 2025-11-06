@@ -1,9 +1,6 @@
 import cupy as cp
-from rmm.allocators.cupy import rmm_cupy_allocator
 
 from src.nearode import NearODESurrogate
-
-cp.cuda.set_allocator(rmm_cupy_allocator)
 
 
 # Six-Hump Camelback function
@@ -82,7 +79,29 @@ def SHCF_combined(x: cp.ndarray):
             - values: (n, 1) function values
             - gradients: (n, 1, 2) gradients
     """
-    return SHCF(x), grad_SHCF(x)
+    scale = 10
+    x1, x2 = x[:, 0], x[:, 1]
+
+    # Compute intermediate values once
+    x1_sq = x1 * x1
+    x2_sq = x2 * x2
+    x1_4th = x1_sq * x1_sq
+
+    # Function value
+    result = (
+        (4 - 2.1 * x1_sq + x1_4th / 3) * x1_sq
+        + x1 * x2
+        + (-4 + 4 * x2_sq) * x2_sq
+        + scale
+    )
+
+    # Gradient (reuse computed values)
+    Dxf = 8 * x1 - 8.4 * x1_sq * x1 + 2 * x1_4th * x1 + x2
+    Dyf = x1 - 8 * x2 + 16 * x2_sq * x2
+
+    grads = cp.stack([Dxf, Dyf], axis=1)
+
+    return result[:, cp.newaxis], grads[:, cp.newaxis, :]
 
 
 def check_matrix_2norm(A, domain):
@@ -185,7 +204,7 @@ def test_2D(
         N_init,
         "LHS",
         True,
-        N_init_clusters=100,
+        N_init_clusters=25,  # REDUCED from 100 to 25 for faster computation
         min_ppc=min_ppc,
         atol=atol,
         rtol=rtol,
