@@ -69,19 +69,6 @@ def hessian_SHCF(x: np.ndarray):
     return hessians
 
 
-def SHCF_combined(x: np.ndarray):
-    """
-    Combined function returning both function value and gradient.
-
-    Shape Convention:
-        x.shape: (n, 2) where n=number of points, input is 2D
-        Returns:
-            - values: (n, 1) function values
-            - gradients: (n, 1, 2) gradients
-    """
-    return SHCF(x), grad_SHCF(x)
-
-
 def check_matrix_2norm(A, domain):
     # A is a function of input x, which expects x with shape (n, 2)
     x = np.linspace(domain[0, 0], domain[0, 1], 300)
@@ -175,12 +162,11 @@ def test_2D(
 
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
-        SHCF_combined,
-        domain,
-        1,
-        N_init,
-        "LHS",
-        True,
+        f=SHCF,
+        grad_f=grad_SHCF,
+        domain=domain,
+        N=N_init,
+        distribution="LHS",
         N_init_clusters=100,
         min_ppc=min_ppc,
         atol=atol,
@@ -197,9 +183,7 @@ def test_2D(
     pts = np.column_stack((xv.flatten(), yv.flatten()))
 
     zz_exact = SHCF(pts)  # Already has shape (n, 1)
-    zz_interpolant, bad_pts_inds = interpolant.evaluate(
-        pts, k=1, disp_time=True, L=L, recluster=False, alpha=1
-    )
+    zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, L=L, recluster=False)
     abs_error = np.linalg.norm(zz_exact - zz_interpolant, 2, axis=1)
     rel_error = abs_error / np.linalg.norm(zz_exact, 2, axis=1)
     good_abs_error = abs_error <= atol
@@ -226,7 +210,7 @@ def test_2D(
     # CHECK ACCURACY AFTER ONE RECLUSTERING
     for j in range(0):
         zz_interpolant, bad_pts_inds = interpolant.evaluate(
-            pts, k=1, disp_time=True, L=L, recluster=True
+            pts, k=1, L=L, recluster=True
         )
         good_pts_inds = np.logical_not(bad_pts_inds)
         sources = interpolant.get_sources()
@@ -308,7 +292,7 @@ if __name__ == "__main__":
     )
 
     domain = np.array([[-3, 3], [-2, 2]])
-    convergence_test_2D(tolmat, 100_000_000, domain)
+    convergence_test_2D(tolmat, 10_000, domain)
 
     cprofile.disable()
     cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
