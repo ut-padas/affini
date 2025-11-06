@@ -1,0 +1,506 @@
+"""Adaptive clustering with binary tree structure."""
+
+import warnings
+from dataclasses import dataclass
+from typing import Callable, Optional
+
+import numpy as np
+from sklearn.cluster import KMeans
+from tqdm import tqdm
+
+from src.two_means import two_means_pca_threshold
+
+try:
+    import cupy as cp
+    from cuml.cluster import KMeans as cuKMeans
+
+    _HAS_GPU = cp.is_available()
+except Exception:
+    _HAS_GPU = False
+    warnings.warn("CuPy or cuML not available; GPU acceleration will be disabled.")
+
+CP_DTYPE = cp.float64 if _HAS_GPU else None
+NP_DTYPE = np.float64
+print(f"CUML available: {_HAS_GPU}")
+
+# Global counters for clustering method usage
+NUM_CLUSTERED_BY_CUML = 0
+NUM_CLUSTERED_BY_SKLEARN = 0
+NUM_CLUSTERED_BY_TWO_MEANS = 0
+
+
+@dataclass
+class Cluster:
+    """Data class to hold cluster information."""
+
+    centroid: np.ndarray  # (1, D)
+    F_centroid: np.ndarray  # (1, FD)
+    J_centroid: Optional[np.ndarray]  # (1, FD, D)
+    radius: float
+    hessian_proxy: float
+    cluster_size: int
+    max_error: float
+    mean_error: float
+
+
+@dataclass
+class AdaptiveClusterer:
+    """
+    Adaptive clustering.
+
+    Shape Conventions:
+        - x.shape: (n, d) where n=number of points, d=input dimensions
+        - f.shape: (n, fd) where fd=output dimensions (function values)
+        - grad.shape: (n, fd, d) where gradients are Jacobian matrices
+
+    Note: If fd=1 (scalar function), f.shape=(n, 1) and grad.shape=(n, 1, d)
+    """
+
+    def __init__(
+        self,
+        atol: float = 0.01,
+        rtol: float = 0.01,
+        n_clusters: int = 10,
+        min_points: int = 1,
+        seed: int = 0,
+        *,
+        # Keyword arguments
+        use_gpu: bool = True,
+        gpu_len_threshold: int = 10_000,
+    ):
+        """
+        Initialize the adaptive clusterer.
+
+        Args:
+            atol: Absolute tolerance for cluster acceptance.
+            rtol: Relative tolerance for cluster acceptance.
+            n_clusters: Number of initial clusters.
+            min_points: Minimum points per cluster.
+            seed: Random seed for reproducibility.
+            use_gpu: Whether to use GPU acceleration if available.
+            gpu_len_threshold: Minimum data length to use GPU clustering. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_cpu_vs_gpu.py
+        """
+        self.abs_tol = atol
+        self.rel_tol = rtol
+        self.n_clusters = n_clusters
+        self.min_points = min_points
+        self.seed = seed
+
+        self.use_gpu = use_gpu and _HAS_GPU
+        self.gpu_len_threshold = gpu_len_threshold
+
+        self._cluster_id = 0
+
+    def _get_function_values(
+        self, X: np.ndarray, f: Callable, cupy_f: Callable | None
+    ) -> np.ndarray:
+        """
+        Compute function values.
+
+        Args:
+            X: Input points with shape (n, d)
+            f: Function that returns values with shape (n, fd).
+
+        Returns:
+            Function values with shape (n, fd)
+        """
+        if self.use_gpu and cupy_f is not None and len(X) >= self.gpu_len_threshold:
+            print("Using CuPy for function evaluation.")
+            Xg = cp.asarray(X, dtype=CP_DTYPE)
+            val = cupy_f(Xg)
+            return cp.asnumpy(val).astype(NP_DTYPE)
+        else:
+            val = f(X)
+            return np.array(val, dtype=NP_DTYPE)
+
+    def _normalize_data(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Z-score normalize the given data.
+
+        Args:
+            X: Data to normalize.
+
+        Returns:
+            Normalized data and mean.
+        """
+        mean = X.mean(axis=0)
+        return (X - mean), mean
+
+    def _initial_cluster(self, X: np.ndarray) -> np.ndarray:
+        """Perform initial clustering."""
+        global NUM_CLUSTERED_BY_CUML, NUM_CLUSTERED_BY_SKLEARN
+
+        X_norm, mean = self._normalize_data(X)
+
+        n = len(X)
+        if self.use_gpu and n >= self.gpu_len_threshold:
+            Xg = cp.asarray(X_norm, dtype=CP_DTYPE)
+            km = cuKMeans(n_clusters=self.n_clusters, random_state=self.seed)
+            labels = km.fit_predict(Xg).get()
+            NUM_CLUSTERED_BY_CUML += 1
+            return labels
+
+        km = KMeans(n_clusters=self.n_clusters, random_state=self.seed, n_init=1)
+        NUM_CLUSTERED_BY_SKLEARN += 1
+
+        labels = km.fit_predict(X_norm)
+        return labels
+
+    def _generate_extra_points(
+        self,
+        X_cluster: np.ndarray,
+        cluster_size: int,
+    ) -> np.ndarray:
+        n_extra = max(1, self.min_points - cluster_size + 1)
+        lambdas = np.random.random(size=n_extra)
+
+        idx0 = np.random.randint(0, cluster_size, size=n_extra)
+        offsets = np.random.randint(1, cluster_size, size=n_extra)
+        idx1 = (idx0 + offsets) % cluster_size
+        new_X = (
+            lambdas[:, None] * X_cluster[idx0]
+            + (1 - lambdas)[:, None] * X_cluster[idx1]
+        )
+        return new_X
+
+    def _get_centroid(self, X: np.ndarray) -> np.ndarray:
+        """Compute centroid of given points of a cluster."""
+        return X.mean(axis=0)
+
+    def _cluster_violation(
+        self,
+        X_cluster: np.ndarray,
+        f: Callable,
+        grad_f: Callable | None,
+        cupy_f: Callable | None,
+    ) -> tuple[bool, float, float, float, np.ndarray, np.ndarray, np.ndarray | None]:
+        """
+        Check if cluster violates Taylor approximation error bounds.
+
+        Returns:
+            violated: whether cluster violates tolerances
+            max_error: maximum error in cluster
+            mean_error: mean error in cluster
+            radius: cluster radius
+            centroid: (1, D) cluster centroid
+            F_c: (1, FD) function value at centroid
+            J_c: (1, FD, D) Jacobian at centroid
+        """
+        cluster_size = X_cluster.shape[0]
+        if cluster_size == 0:
+            raise ValueError("Empty cluster encountered.")
+
+        c = self._get_centroid(X_cluster)[None, :]  # (1, D)
+        F_cluster = self._get_function_values(X_cluster, f, cupy_f)
+        F_c = f(c)  # (1, FD)
+        J_c = grad_f(c) if grad_f is not None else None  # (1, FD, D)
+
+        dx = X_cluster - c  # (n, D)
+        if J_c is not None:
+            F_taylor = F_c + np.einsum("ijk,nk->nj", J_c, dx)  # (n, FD)
+        else:
+            F_taylor = F_c  # (1, FD) broadcasted to (n, FD)
+
+        err = np.linalg.norm(F_cluster - F_taylor, axis=1)  # (n,)
+
+        # Tolerance per point
+        thr = np.maximum(self.abs_tol, self.rel_tol * np.linalg.norm(F_cluster, axis=1))
+        violated_mask = err > thr
+        violated = bool(violated_mask.any())
+
+        radius = (
+            float(np.max(np.linalg.norm(X_cluster - c, axis=1)))
+            if cluster_size > 0
+            else 0.0
+        )
+        max_error = float(err.max()) if cluster_size > 0 else 0.0
+        mean_error = float(err.mean()) if cluster_size > 0 else 0.0
+        return violated, max_error, mean_error, radius, c, F_c, J_c
+
+    def fit(
+        self,
+        X: np.ndarray,
+        f: Callable,
+        grad_f: Callable | None,
+        cupy_f: Callable | None,
+    ) -> list[Cluster]:
+        """
+        Main clustering algorithm.
+
+        Args:
+            X: Input data points with shape (n, d) where n=number of points, d=input dimensions.
+            f: Function to evaluate. Should return values with shape (n, fd) where fd=output dimensions.
+            grad_f: Optional function to compute gradients. Should return gradients with shape (n, fd, d).
+
+        Returns:
+            List of tree nodes representing the clustered data.
+        """
+        global NUM_CLUSTERED_BY_TWO_MEANS, NUM_CLUSTERED_BY_CUML, NUM_CLUSTERED_BY_SKLEARN
+        # Prepare data - ensure proper shape without forcing 2D
+        X = X.astype(NP_DTYPE)
+        if X.ndim != 2:
+            raise ValueError(
+                f"X must be 2D array with shape (n, d), got shape {X.shape}"
+            )
+
+        # Initial clustering
+        labels = self._initial_cluster(X)
+
+        # Initialize queue with point arrays from initial clusters
+        cluster_ids = np.unique(labels)
+        queue: list[np.ndarray] = []
+        for cid in cluster_ids:
+            pts_in_cluster = X[labels == cid]
+            queue.append(pts_in_cluster)
+
+        final_clusters: list[Cluster] = []
+        n_level = 0
+
+        # BFS by levels
+        while queue:
+            print(f"Processing level {n_level}, queue size: {len(queue)}")
+            level = queue
+            queue = []
+
+            children_left: list[np.ndarray] = []
+            children_right: list[np.ndarray] = []
+
+            for X_cluster in level:
+                cluster_size = len(X_cluster)
+                if cluster_size <= 1:
+                    final_clusters.append(
+                        Cluster(
+                            centroid=np.squeeze(X_cluster[0]),
+                            F_centroid=f(X_cluster[0:1]),
+                            J_centroid=(
+                                grad_f(X_cluster[0:1]) if grad_f is not None else None
+                            ),
+                            radius=0.0,
+                            hessian_proxy=0.0,
+                            cluster_size=1,
+                            max_error=0.0,
+                            mean_error=0.0,
+                        )
+                    )
+                    continue
+
+                if cluster_size < self.min_points:
+                    # Generate extra points
+                    new_X = self._generate_extra_points(X_cluster, cluster_size)
+                    X_cluster = np.vstack([X_cluster, new_X])
+                    cluster_size = len(X_cluster)
+
+                violated, max_error, mean_error, radius, c, F_c, J_c = (
+                    self._cluster_violation(X_cluster, f, grad_f, cupy_f)
+                )
+
+                if not violated:
+                    h_proxy = 2.0 * max_error / (radius**2) if radius > 0 else 0.0
+                    final_clusters.append(
+                        Cluster(
+                            centroid=np.squeeze(c),
+                            F_centroid=F_c,
+                            J_centroid=J_c,
+                            radius=radius,
+                            hessian_proxy=h_proxy,
+                            cluster_size=cluster_size,
+                            max_error=max_error,
+                            mean_error=mean_error,
+                        )
+                    )
+                else:
+                    # Split based on cluster size via TwoMeans or CuML KMeans
+                    if cluster_size < self.gpu_len_threshold:
+                        X_norm, mu = self._normalize_data(X_cluster)
+                        labels, _ = two_means_pca_threshold(X_norm, mean=mu)
+                        NUM_CLUSTERED_BY_TWO_MEANS += 1
+
+                        left = X_cluster[labels == 0]
+                        right = X_cluster[labels == 1]
+                    elif self.use_gpu and cluster_size >= self.gpu_len_threshold:
+                        Xg = cp.asarray(X_cluster, dtype=CP_DTYPE)
+                        km = cuKMeans(n_clusters=2, random_state=self.seed)
+                        labels = km.fit_predict(Xg).get()
+                        NUM_CLUSTERED_BY_CUML += 1
+
+                        left = X_cluster[labels == 0]
+                        right = X_cluster[labels == 1]
+                    else:
+                        X_norm, mu = self._normalize_data(X_cluster)
+                        km = KMeans(n_clusters=2, random_state=self.seed, n_init=1)
+                        labels = km.fit_predict(X_norm)
+                        NUM_CLUSTERED_BY_SKLEARN += 1
+
+                        left = X_cluster[labels == 0]
+                        right = X_cluster[labels == 1]
+
+                    children_left.append(left)
+                    children_right.append(right)
+
+            queue.extend(children_left)
+            queue.extend(children_right)
+            n_level += 1
+        return final_clusters
+
+
+def adaptive_cluster_algorithm(
+    X_train: np.ndarray,
+    f: Callable,
+    grad_f: Callable | None,
+    cupy_f: Callable | None,
+    atol=0.01,
+    rtol=0.01,
+    N_init_clusters=10,
+    min_ppc=1,
+    seed=0,
+) -> list[Cluster]:
+    """Run the adaptive clustering algorithm and return the list of clusters."""
+    clusterer = AdaptiveClusterer(
+        atol=atol,
+        rtol=rtol,
+        n_clusters=N_init_clusters,
+        min_points=min_ppc,
+        seed=seed,
+    )
+    clusters = clusterer.fit(X=X_train, f=f, grad_f=grad_f, cupy_f=cupy_f)
+    return clusters
+
+
+def plot_clusters(clusters: list[Cluster], fname: str = "adaptive_clusters.png"):
+    """Plot 2D clusters from the tree nodes."""
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Circle
+
+    plt.figure(figsize=(8, 8))
+    ax = plt.gca()
+    for cluster in clusters:
+        centroid = cluster.centroid
+        radius = cluster.radius
+        circle = Circle(
+            (centroid[0], centroid[1]),
+            radius,
+            color="blue",
+            fill=False,
+            alpha=0.5,
+        )
+        ax.add_patch(circle)
+        plt.plot(centroid[0], centroid[1], "ro")  # plot centroid
+
+    plt.xlabel("X1")
+    plt.ylabel("X2")
+    plt.title("Adaptive Clusters")
+    plt.axis("equal")
+    plt.grid(True)
+    plt.savefig(fname)
+    plt.close()
+
+
+if __name__ == "__main__":
+    import cProfile
+    import time
+    from pathlib import Path
+
+    FILE_NAME = Path(__file__).resolve().stem
+
+    def sample_function(X) -> np.ndarray:
+        """
+        f(x) = [x1^2 + x2^2, x1 - x2 + x3]
+        """
+        x1, x2, x3 = X[:, 0], X[:, 1], X[:, 2]
+        val0 = x1**2 + x2**2
+        val1 = x1 - x2 + x3
+        values = np.stack([val0, val1], axis=1)
+        return values
+
+    def sample_gradient(X) -> np.ndarray:
+        """
+        Gradient of sample_function.
+        Jacobian/Gradient:
+        [[2*x1, 2*x2, 0],
+         [1,    -1,  1]]
+        """
+        x1, x2, _ = X[:, 0], X[:, 1], X[:, 2]
+        g0 = np.stack([2 * x1, 2 * x2, np.zeros_like(x1)], axis=1)
+        g1 = np.stack([np.ones_like(x1), -np.ones_like(x1), np.ones_like(x1)], axis=1)
+        return np.stack([g0, g1], axis=1)  # (B, 2, 3)
+
+    def sample_cupy_function(X) -> cp.ndarray:
+        """
+        f(x) = [x1^2 + x2^2, x1 - x2 + x3] using CuPy
+        """
+        x1, x2, x3 = X[:, 0], X[:, 1], X[:, 2]
+        val0 = x1**2 + x2**2
+        val1 = x1 - x2 + x3
+        values = cp.stack([val0, val1], axis=1)
+        return values
+
+    # Generate sample data
+    seed = 0
+    np.random.seed(seed)
+    N_samples = 10_000_000
+    ABS_TOL = 1.0
+    REL_TOL = 0.01
+    X_samples = np.random.uniform(-10, 10, size=(N_samples, 3))
+    print(f"Generated {N_samples:,} sample data points.")
+
+    cprofile = cProfile.Profile()
+    cprofile.enable()
+
+    # Run adaptive clustering
+    tic = time.perf_counter()
+    clusters = adaptive_cluster_algorithm(
+        X_train=X_samples,
+        f=sample_function,
+        grad_f=sample_gradient,
+        cupy_f=sample_cupy_function,
+        atol=ABS_TOL,
+        rtol=REL_TOL,
+        N_init_clusters=5,
+        min_ppc=5,
+        seed=seed,
+    )
+    toc = time.perf_counter()
+    print(f"Total clusters formed: {len(clusters)}")
+    total = (
+        NUM_CLUSTERED_BY_CUML + NUM_CLUSTERED_BY_SKLEARN + NUM_CLUSTERED_BY_TWO_MEANS
+    )
+    print(f"Clusters by CUML: {NUM_CLUSTERED_BY_CUML}")
+    print(f"Clusters by SKLearn KMeans: {NUM_CLUSTERED_BY_SKLEARN}")
+    print(f"Clusters by TwoMeans: {NUM_CLUSTERED_BY_TWO_MEANS}")
+    print(f"Total clustering calls: {total}")
+    print(f"Time taken: {toc - tic:.4f} seconds")
+    if N_samples <= 10_000:
+        # Plot only for small datasets
+        plot_clusters(clusters, fname=f"{FILE_NAME}_clusters.png")
+
+    cprofile.disable()
+    cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
+    # cprofile.print_stats(sort="time"
+
+    n_test = 10_000
+
+    counter = 0
+    # test the centroids and their errors
+    for i, c in tqdm(enumerate(clusters), desc="Testing clusters", total=len(clusters)):
+        centroid, F_c = c.centroid, c.F_centroid
+        J_c = c.J_centroid
+        radius = c.radius
+        d = centroid.shape[0]
+        # Pick random points in the cluster ball to test error
+        u = np.random.standard_normal(size=(n_test, d))
+        u /= np.linalg.norm(u, axis=1)[:, None]
+        test_pts = centroid + radius * np.random.random(size=(n_test, 1)) * u
+        F_test = sample_function(test_pts)
+
+        # Calculate max_error
+        dx = test_pts - centroid
+        assert J_c is not None, "Gradient must be available for error test."
+        J_c_squeezed = np.squeeze(J_c)
+        F_taylor = F_c + dx @ J_c_squeezed.T
+        errors = np.linalg.norm(F_test - F_taylor, axis=1)
+        max_error = float(np.max(errors))
+
+        if max_error > max(ABS_TOL, REL_TOL * np.linalg.norm(F_c)):
+            counter += 1
+
+    print(f"Clusters failed error test: {counter} out of {len(clusters)}")
