@@ -138,7 +138,6 @@ class NearODESurrogate:
         self,
         oracle: Callable,
         domain: np.ndarray,
-        m: int,
         N: int,
         distribution: str = "uniform",
         do_clustering: bool = True,
@@ -151,8 +150,6 @@ class NearODESurrogate:
         alpha: float = 1,
         seed: int | None = None,
     ) -> None:
-        start_time = time.perf_counter()
-
         # --- Validate/parse domain into (n, [l, r]) ---
         if domain.ndim > 2:
             raise ValueError("domain must be 1D or 2D array")
@@ -207,9 +204,6 @@ class NearODESurrogate:
             alpha=alpha,
             seed=seed,
         )
-
-        end_time = time.perf_counter()
-        print(f"Time to train: {end_time - start_time:.2f} seconds")
 
     def evaluate(
         self,
