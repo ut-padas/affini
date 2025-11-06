@@ -637,3 +637,65 @@ Time elapsed for predictions: 0.5075021359371021 seconds
     \label{tab:new_tab}
 \end{table}
 ```
+
+## Version 5 (Complete CuPy) (Time: > 10m)
+```sh
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 22.45 seconds
+Time elapsed for predictions: 0.052507823965646744 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 41.23 seconds
+Time elapsed for predictions: 0.10020934598732728 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 75.12 seconds
+Time elapsed for predictions: 0.18563478999856734 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 180.45 seconds
+...
+```
+
+# 2D (SHCF) Test: n = 100,000,000
+## Version 4 (Time: )
+```sh
+c608-052[gh](572)$ time uv run python shcf.py 
+CUML available: True
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold (dim=2): 8192
+Time to train: 122.77 seconds
+Time elapsed for predictions: 0.04202492709737271 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold (dim=2): 8192
+Time to train: 137.37 seconds
+Time elapsed for predictions: 0.06527890788856894 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold (dim=2): 8192
+Time to train: 149.81 seconds
+Time elapsed for predictions: 0.11941940395627171 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold (dim=2): 8192
+Time to train: 178.95 seconds
+Time elapsed for predictions: 0.28549521300010383 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Using fast two-means length threshold (dim=2): 8192
+...
+```
+
+
+## Version 5 (Complete CuPy) (Time: ~ 900 s)
+```sh
+c608-061[gh](563)$ time uv run python shcf_gpu.py 
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 63.23 seconds
+Time elapsed for predictions: 0.03880970098543912 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 71.18 seconds
+Time elapsed for predictions: 0.07292249298188835 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 111.79 seconds
+Time elapsed for predictions: 0.13878466200549155 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 231.24 seconds
+Time elapsed for predictions: 0.33695570891723037 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+...
+```
