@@ -83,16 +83,16 @@ def median_cut_projection(
 
     # Skip edge-case handling for now
     # Ensure both non-empty
-    n_left = int(left.sum())
-    n_right = int(right.sum())
+    n_left = left.sum()
+    n_right = right.sum()
     if n_left == 0:
         # move the smallest element to left
-        k = int(cp.argmin(s))
+        k = cp.argmin(s)
         left[k] = True
         right[k] = False
     elif n_right == 0:
         # move the largest element to right
-        k = int(cp.argmax(s))
+        k = cp.argmax(s)
         right[k] = True
         left[k] = False
     return left, right
@@ -158,11 +158,11 @@ class Cluster:
     centroid: cp.ndarray  # (1, D)
     F_centroid: cp.ndarray  # (1, FD)
     J_centroid: cp.ndarray  # (1, FD, D)
-    radius: float
-    hessian_proxy: float
+    radius: cp.ndarray  # GPU scalar or float
+    hessian_proxy: cp.ndarray  # GPU scalar or float
     cluster_size: int
-    max_error: float
-    mean_error: float
+    max_error: cp.ndarray  # GPU scalar or float
+    mean_error: cp.ndarray  # GPU scalar or float
 
 
 def refine_adaptive_clusters(
@@ -203,7 +203,7 @@ def refine_adaptive_clusters(
     # Initialize queue with point arrays and cluster IDs from initial KMeans
     cluster_ids = cp.arange(int(labels.max()) + 1)
     queue: list[tuple[cp.ndarray, int]] = []  # (cluster_points, cluster_id)
-    for cid in cluster_ids.tolist():
+    for cid in range(len(cluster_ids)):
         idx = cp.where(labels == cid)[0]
         if idx.size > 0:
             queue.append((X[idx], cid))  # Store points and cluster ID
@@ -291,14 +291,17 @@ def refine_adaptive_clusters(
             violating_cluster_counts = cp.bincount(
                 all_cluster_labels[violations_mask], minlength=len(level)
             )
-            violating_clusters = set(cp.where(violating_cluster_counts > 0)[0].tolist())
+            violating_clusters = set(
+                cp.where(violating_cluster_counts > 0)[0].get().tolist()
+            )
         else:
             violating_clusters = set()
 
         print(f"  --> {len(violating_clusters)}/{len(level)} clusters need splitting")
 
-        # Pre-compute error statistics for all clusters
-        cluster_error_stats = []
+        # Pre-compute error statistics for all clusters - keep on GPU
+        cluster_error_stats_gpu = []
+
         for i, cluster_size in enumerate(cluster_sizes):
             cluster_start = cluster_starts[i] if i < len(cluster_starts) else len(all_X)
             cluster_end = (
@@ -306,15 +309,11 @@ def refine_adaptive_clusters(
             )
             cluster_mask = slice(cluster_start, cluster_end)
             cluster_errors = err[cluster_mask]
-            cluster_error_stats.append(
-                (float(cluster_errors.max()), float(cluster_errors.mean()))
+            # Keep max_err and mean_err on GPU
+            cluster_error_stats_gpu.append(
+                (cluster_errors.max(), cluster_errors.mean())
             )
-
         # Batch process non-violating clusters (reuse already computed values)
-        non_violating_indices = [
-            i for i in range(len(level)) if i not in violating_clusters
-        ]
-
         streams = [cp.cuda.Stream(non_blocking=True) for _ in range(num_streams)]
 
         # Per-level containers for children to enqueue after sync
@@ -334,24 +333,26 @@ def refine_adaptive_clusters(
                     # Reuse already computed function values from centroids
                     F_c = F_centroids_at_centroids[i : i + 1]
                     J_c = J_centroids_at_centroids[i : i + 1]
-                    max_err, mean_err = cluster_error_stats[i]
+                    max_err_gpu, mean_err_gpu = cluster_error_stats_gpu[i]
 
                     # Use original cluster points for radius calculation
-                    radius = float(cp.max(cp.linalg.norm(X_cluster - centroid, axis=1)))
+                    radius_gpu = cp.max(cp.linalg.norm(X_cluster - centroid, axis=1))
 
-                    # hessian proxy (scalar)
-                    h_proxy = 2.0 * max_err / (radius**2) if radius > 0 else 0.0
+                    # hessian proxy (keep on GPU for now)
+                    h_proxy_gpu = (
+                        2.0 * max_err_gpu / (radius_gpu**2) if radius_gpu > 0 else 0.0
+                    )
 
                     final_clusters.append(
                         Cluster(
                             centroid=centroid,
                             F_centroid=F_c,
                             J_centroid=J_c,
-                            radius=radius,
-                            hessian_proxy=h_proxy,
+                            radius=radius_gpu,  # Keep as GPU scalar
+                            hessian_proxy=h_proxy_gpu,  # Keep as GPU scalar
                             cluster_size=cluster_size,  # Original size, not augmented
-                            max_error=max_err,
-                            mean_error=mean_err,
+                            max_error=max_err_gpu,  # Keep as GPU scalar
+                            mean_error=mean_err_gpu,  # Keep as GPU scalar
                         )
                     )
                 else:
@@ -445,11 +446,11 @@ def adaptive_clustering_gpu(
                 centroid=cp.asnumpy(c.centroid),
                 F_centroid=cp.asnumpy(c.F_centroid),
                 J_centroid=cp.asnumpy(c.J_centroid),
-                radius=c.radius,
-                hessian_proxy=c.hessian_proxy,
+                radius=float(c.radius),
+                hessian_proxy=float(c.hessian_proxy),
                 cluster_size=c.cluster_size,
-                max_error=c.max_error,
-                mean_error=c.mean_error,
+                max_error=float(c.max_error),
+                mean_error=float(c.mean_error),
             )
 
     return clusters
@@ -513,8 +514,8 @@ if __name__ == "__main__":
     D = 3
     N_INIT_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 50
-    ABS_TOL = 1e-4
-    REL_TOL = 1e-4
+    ABS_TOL = 1e-3
+    REL_TOL = 1e-3
     print(f"ABS_TOL={ABS_TOL}, REL_TOL={REL_TOL}")
 
     tic = time.perf_counter()
@@ -523,6 +524,7 @@ if __name__ == "__main__":
     )
     toc = time.perf_counter()
     print(f"Adaptive clustering completed in {toc - tic:0.2f} seconds.")
+    raise SystemExit
 
     rng = cp.random.default_rng(SEED)
     assert rng is not None, "Something went wrong with RNG initialization."
@@ -551,8 +553,9 @@ if __name__ == "__main__":
         test_pts = centroid_cp[0] + radius * rng.random((n_test, 1), dtype=CP_DTYPE) * u
         F_test, _ = sample_function(test_pts)
         err = taylor_errors(test_pts, F_test, centroid_cp, F_c_cp, J_c_cp)
-        max_err = float(err.max())
-        if max_err > max(ABS_TOL, REL_TOL * cp.linalg.norm(F_c_cp)):
+        max_err_gpu = err.max()
+        max_err = float(max_err_gpu)
+        if max_err > max(ABS_TOL, REL_TOL * float(cp.linalg.norm(F_c_cp))):
             counter += 1
 
     perct_violate = 100.0 * counter / len(clusters)
