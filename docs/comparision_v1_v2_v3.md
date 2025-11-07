@@ -213,12 +213,58 @@ Time elapsed for predictions: 0.45727067603729665 seconds
 \end{table}
 ```
 
+## Version 6 (Hybrid) (Time: 19.1s)
+```sh
+c608-081[gh](720)$ time uv run python shcf_test.py 
+CUML available: True
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 1.56 seconds
+Time elapsed for predictions: 0.03387067397125065 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 1.04 seconds
+Time elapsed for predictions: 0.05754775297828019 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 1.63 seconds
+Time elapsed for predictions: 0.1025037569925189 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 3.31 seconds
+Time elapsed for predictions: 0.21758841490373015 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 5.79 seconds
+Time elapsed for predictions: 0.38225826108828187 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                400000 & 0.1 & 2.0\% & 1813 & 1.86\% & 98.14\% & 0.0\% & 1.5447 & 0.2907 & 0.7702 & 0.0242 & 0.0215 & 0.1478 \\
+                400000 & 0.05 & 1.0\% & 3289 & 2.45\% & 97.55\% & 0.0\% & 0.1458 & 0.1153 & 0.354 & 0.0109 & 0.0108 & 0.1032 \\
+                400000 & 0.025 & 0.5\% & 6134 & 3.33\% & 96.64\% & 0.02\% & 0.6651 & 0.0822 & 0.3854 & 0.007 & 0.0053 & 0.0753 \\
+                400000 & 0.01 & 0.2\% & 13399 & 6.08\% & 93.9\% & 0.03\% & 0.2111 & 0.0555 & 0.2629 & 0.0023 & 0.0021 & 0.0464 \\
+                400000 & 0.005 & 0.1\% & 23843 & 10.03\% & 89.84\% & 0.14\% & 0.1554 & 0.0267 & 0.1979 & 0.0015 & 0.0011 & 0.0337 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    0m19.079s
+user    0m15.459s
+sys     0m0.639s
+```
+
 # 2D (SHCF) Test: n = 800,000
 ## Version 1 (Time: 2m 4s)
 ```sh
 CUML available: True
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-^[      Time to train: 12.82 seconds
+Time to train: 12.82 seconds
 Time elapsed for predictions: 0.04918995400657877 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
 Time to train: 14.75 seconds
@@ -378,6 +424,97 @@ Time elapsed for predictions: 0.5475936199072748 seconds
     \caption{This is a caption!}
     \label{tab:new_tab}
 \end{table}
+```
+
+## Version 5 (Complete CuPy) (Time: 4m 16s)
+```sh
+c608-081[gh](730)$ time uv run python shcf_gpu.py 
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 7.36 seconds
+Time elapsed for predictions: 0.035443756030872464 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 14.09 seconds
+Time elapsed for predictions: 0.06604527402669191 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 27.05 seconds
+Time elapsed for predictions: 0.12081580818630755 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 67.51 seconds
+Time elapsed for predictions: 0.2686100220307708 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 135.58 seconds
+Time elapsed for predictions: 0.4951401411090046 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                800000 & 0.1 & 2.0\% & 1904 & 2.4\% & 97.55\% & 0.05\% & 0.6587 & 0.256 & 0.2888 & 0.0266 & 0.0221 & 0.0223 \\
+                800000 & 0.05 & 1.0\% & 3787 & 2.22\% & 97.76\% & 0.02\% & 1.1899 & 0.2362 & 0.5494 & 0.0171 & 0.0105 & 0.0121 \\
+                800000 & 0.025 & 0.5\% & 7259 & 2.46\% & 97.5\% & 0.03\% & 0.3977 & 0.0922 & 0.124 & 0.0088 & 0.0055 & 0.0061 \\
+                800000 & 0.01 & 0.2\% & 16636 & 3.66\% & 96.31\% & 0.04\% & 0.3019 & 0.0772 & 0.137 & 0.004 & 0.0022 & 0.0024 \\
+                800000 & 0.005 & 0.1\% & 30976 & 5.27\% & 94.67\% & 0.06\% & 0.1821 & 0.0263 & 0.0582 & 0.0016 & 0.0011 & 0.0011 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    4m16.943s
+user    3m55.389s
+sys     0m19.490s
+```
+
+## Version 6 (Hybrid) (Time: 24.1s)
+```sh
+c608-081[gh](722)$ time uv run python shcf_test.py 
+CUML available: True
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 2.16 seconds
+Time elapsed for predictions: 0.034446988021954894 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 1.57 seconds
+Time elapsed for predictions: 0.06019938411191106 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 2.17 seconds
+Time elapsed for predictions: 0.1074980259872973 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 3.90 seconds
+Time elapsed for predictions: 0.23716642195358872 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 6.70 seconds
+Time elapsed for predictions: 0.4251497979275882 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                800000 & 0.1 & 2.0\% & 1844 & 1.59\% & 98.41\% & 0.0\% & 0.5189 & 0.5189 & 0.7203 & 0.02 & 0.02 & 0.1416 \\
+                800000 & 0.05 & 1.0\% & 3504 & 1.75\% & 98.25\% & 0.0\% & 0.1072 & 0.1072 & 0.3275 & 0.0101 & 0.0101 & 0.1007 \\
+                800000 & 0.025 & 0.5\% & 6437 & 2.24\% & 97.75\% & 0.02\% & 0.3978 & 0.1089 & 0.4171 & 0.0061 & 0.0052 & 0.0736 \\
+                800000 & 0.01 & 0.2\% & 14631 & 3.35\% & 96.64\% & 0.01\% & 0.1547 & 0.0451 & 0.2511 & 0.0027 & 0.0021 & 0.0472 \\
+                800000 & 0.005 & 0.1\% & 26564 & 5.85\% & 94.11\% & 0.04\% & 0.0943 & 0.0191 & 0.1737 & 0.0016 & 0.0011 & 0.0333 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    0m24.165s
+user    0m18.655s
+sys     0m0.654s
 ```
 
 # 2D (SHCF) Test: n = 3,200,000
@@ -592,30 +729,25 @@ user    4m27.910s
 sys     0m19.947s
 ```
 
-## Version 6 (Hybrid CuPy + Numpy + Numba) (Time: 49s)
+## Version 6 (Hybrid) (Time: 42s)
 ```sh
-c608-141[gh](583)$ time uv run python shcf_test.py 
+c608-081[gh](724)$ time uv run python shcf_test.py 
 CUML available: True
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Using GPU for function evaluation.
-Time to train: 6.68 seconds
-Time elapsed for predictions: 0.03489174181595445 seconds
+Time to train: 5.41 seconds
+Time elapsed for predictions: 0.03443178907036781 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Using GPU for function evaluation.
-Time to train: 5.63 seconds
-Time elapsed for predictions: 0.06201182911172509 seconds
+Time to train: 5.09 seconds
+Time elapsed for predictions: 0.061198575887829065 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Using GPU for function evaluation.
-Time to train: 7.00 seconds
-Time elapsed for predictions: 0.11392427701503038 seconds
+Time to train: 6.07 seconds
+Time elapsed for predictions: 0.11253018118441105 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Using GPU for function evaluation.
-Time to train: 10.11 seconds
-Time elapsed for predictions: 0.26153256092220545 seconds
+Time to train: 8.14 seconds
+Time elapsed for predictions: 0.25834278482943773 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Using GPU for function evaluation.
-Time to train: 14.83 seconds
-Time elapsed for predictions: 0.4859354440122843 seconds
+Time to train: 11.17 seconds
+Time elapsed for predictions: 0.48002614779397845 seconds
 
 
 \begin{table}[h!]
@@ -638,10 +770,11 @@ None
 
 
 
-real    0m49.330s
-user    0m46.656s
-sys     0m1.000s
+real    0m42.359s
+user    0m38.501s
+sys     0m1.111s
 ```
+
 
 
 # 2D (SHCF) Test: n = 10,000,000
@@ -780,6 +913,51 @@ user    4m40.216s
 sys     0m24.486s
 ```
 
+## Version 6 (Hybrid) (Time: 1m 38s)
+```sh
+c608-081[gh](726)$ time uv run python shcf_test.py 
+CUML available: True
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 13.81 seconds
+Time elapsed for predictions: 0.03458791598677635 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 14.49 seconds
+Time elapsed for predictions: 0.06279053306207061 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 16.67 seconds
+Time elapsed for predictions: 0.11642161104828119 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 20.21 seconds
+Time elapsed for predictions: 0.2712896061129868 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 24.13 seconds
+Time elapsed for predictions: 0.5105098360218108 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                10000000 & 0.1 & 2.0\% & 1859 & 1.23\% & 98.75\% & 0.01\% & 0.278 & 0.2385 & 0.4921 & 0.0228 & 0.0222 & 0.1477 \\
+                10000000 & 0.05 & 1.0\% & 3626 & 1.23\% & 98.76\% & 0.01\% & 0.1363 & 0.1351 & 0.367 & 0.0128 & 0.0109 & 0.1067 \\
+                10000000 & 0.025 & 0.5\% & 6974 & 1.14\% & 98.86\% & 0.0\% & 0.0883 & 0.0879 & 0.2965 & 0.0057 & 0.0057 & 0.0755 \\
+                10000000 & 0.01 & 0.2\% & 16820 & 1.09\% & 98.91\% & 0.0\% & 0.0219 & 0.0219 & 0.148 & 0.002 & 0.002 & 0.045 \\
+                10000000 & 0.005 & 0.1\% & 31900 & 1.27\% & 98.71\% & 0.01\% & 0.1174 & 0.0581 & 0.2445 & 0.0014 & 0.0011 & 0.0336 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    1m38.019s
+user    1m33.432s
+sys     0m2.566s
+```
 
 
 # 2D (SHCF) Test: n = 100,000,000
@@ -880,7 +1058,49 @@ user    6m54.928s
 sys     0m44.626s
 ```
 
-# 2D (SHCF) Test: n = 1,000,000,000
-## Version 5 (Complete CuPy) (Time: 
+## Version 6 (Hybrid) (Time: 11m 35s)
 ```sh
+c608-081[gh](728)$ time uv run python shcf_test.py 
+CUML available: True
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 97.17 seconds
+Time elapsed for predictions: 0.035746979992836714 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 110.23 seconds
+Time elapsed for predictions: 0.06597985606640577 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 122.70 seconds
+Time elapsed for predictions: 0.12054600194096565 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 145.45 seconds
+Time elapsed for predictions: 0.28884219587780535 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 162.40 seconds
+Time elapsed for predictions: 0.5482421130873263 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                100000000 & 0.1 & 2.0\% & 1924 & 1.4\% & 98.59\% & 0.01\% & 1.9581 & 0.2246 & 0.7155 & 0.0206 & 0.0202 & 0.1423 \\
+                100000000 & 0.05 & 1.0\% & 3815 & 1.26\% & 98.74\% & 0.0\% & 0.1414 & 0.1345 & 0.3692 & 0.011 & 0.0106 & 0.1035 \\
+                100000000 & 0.025 & 0.5\% & 7271 & 1.12\% & 98.87\% & 0.01\% & 0.5457 & 0.0663 & 0.3997 & 0.0055 & 0.0053 & 0.0727 \\
+                100000000 & 0.01 & 0.2\% & 17915 & 0.93\% & 99.06\% & 0.01\% & 0.1303 & 0.0584 & 0.2695 & 0.0025 & 0.0022 & 0.0473 \\
+                100000000 & 0.005 & 0.1\% & 34299 & 0.89\% & 99.1\% & 0.01\% & 0.1442 & 0.0126 & 0.2089 & 0.0013 & 0.0011 & 0.0337 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    11m35.685s
+user    11m4.493s
+sys     0m29.064s
 ```
+
