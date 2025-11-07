@@ -213,6 +213,51 @@ Time elapsed for predictions: 0.45727067603729665 seconds
 \end{table}
 ```
 
+## Version 5 (Complete CuPy) (Time: 4m 24s)
+```sh
+c608-081[gh](732)$ time uv run python shcf_gpu.py 
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 7.56 seconds
+Time elapsed for predictions: 0.03634042199701071 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 14.09 seconds
+Time elapsed for predictions: 0.062202931847423315 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 28.56 seconds
+Time elapsed for predictions: 0.11463687405921519 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 70.26 seconds
+Time elapsed for predictions: 0.24824676918797195 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 137.64 seconds
+Time elapsed for predictions: 0.45381303201429546 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                400000 & 0.1 & 2.0\% & 1913 & 2.86\% & 97.11\% & 0.03\% & 1.4807 & 0.5176 & 0.7574 & 0.0275 & 0.0221 & 0.0222 \\
+                400000 & 0.05 & 1.0\% & 3560 & 2.59\% & 97.37\% & 0.03\% & 0.9197 & 0.1717 & 0.3663 & 0.0177 & 0.011 & 0.0116 \\
+                400000 & 0.025 & 0.5\% & 6843 & 3.51\% & 96.45\% & 0.03\% & 0.6079 & 0.1206 & 0.2796 & 0.0077 & 0.0054 & 0.0056 \\
+                400000 & 0.01 & 0.2\% & 15294 & 5.31\% & 94.61\% & 0.08\% & 0.2896 & 0.0505 & 0.0865 & 0.0033 & 0.0022 & 0.0023 \\
+                400000 & 0.005 & 0.1\% & 28341 & 8.04\% & 91.79\% & 0.17\% & 0.1957 & 0.0341 & 0.0604 & 0.0023 & 0.0011 & 0.0012 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    4m24.873s
+user    4m2.482s
+sys     0m18.642s
+```
+
 ## Version 6 (Hybrid) (Time: 19.1s)
 ```sh
 c608-081[gh](720)$ time uv run python shcf_test.py 
