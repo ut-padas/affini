@@ -87,6 +87,7 @@ class NearODESurrogate:
                 abs_tol=atol,
                 rel_tol=rtol if rtol is not None else 0.0,
                 seed=seed if seed is not None else 0,
+                return_numpy=True,
             )
             new_X = np.vstack([cluster.centroid for cluster in clusters])
             new_f_vals = np.vstack([cluster.F_centroid for cluster in clusters])
@@ -279,6 +280,7 @@ class NearODESurrogate:
             abs_tol=self.atol,
             rel_tol=self.rtol if self.rtol is not None else 0.0001,
             seed=0,
+            return_numpy=True,
         )
         new_X = np.vstack([cluster.centroid for cluster in clusters])
         new_f_vals = np.vstack([cluster.F_centroid for cluster in clusters])

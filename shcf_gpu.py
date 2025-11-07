@@ -198,13 +198,12 @@ def test_2D(
 
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
-        SHCF_combined,
-        domain,
-        1,
-        N_init,
-        "LHS",
-        True,
-        N_init_clusters=25,  # REDUCED from 100 to 25 for faster computation
+        oracle=SHCF_combined,
+        domain=domain,
+        N=N_init,
+        distribution="LHS",
+        do_clustering=True,
+        N_init_clusters=100,
         min_ppc=min_ppc,
         atol=atol,
         rtol=rtol,
