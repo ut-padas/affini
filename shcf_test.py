@@ -226,19 +226,19 @@ def convergence_test_2D(tolmat, N_init, domain, min_ppc=40):
 
 
 if __name__ == "__main__":
-    import cProfile
+    # import cProfile
     from pathlib import Path
 
-    FILE_NAME = Path(__file__).resolve().stem
-    cprofile = cProfile.Profile()
-    cprofile.enable()
+    # FILE_NAME = Path(__file__).resolve().stem
+    # cprofile = cProfile.Profile()
+    # cprofile.enable()
 
     tolmat = np.array(
-        [[0.1, 0.02]],  # [0.05, 0.01], [0.025, 0.005], [0.01, 0.002], [0.005, 0.001]],
+        [[0.1, 0.02], [0.05, 0.01], [0.025, 0.005], [0.01, 0.002], [0.005, 0.001]],
     )
 
     domain = np.array([[-3, 3], [-2, 2]])
     convergence_test_2D(tolmat, 10_000, domain)
 
-    cprofile.disable()
-    cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
+    # cprofile.disable()
+    # cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
