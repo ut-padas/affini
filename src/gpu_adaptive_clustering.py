@@ -82,42 +82,20 @@ def median_cut_projection(
     right = s > med
 
     # Skip edge-case handling for now
-    # Ensure both non-empty
-    n_left = left.sum()
-    n_right = right.sum()
-    if n_left == 0:
-        # move the smallest element to left
-        k = cp.argmin(s)
-        left[k] = True
-        right[k] = False
-    elif n_right == 0:
-        # move the largest element to right
-        k = cp.argmax(s)
-        right[k] = True
-        left[k] = False
+    # # Ensure both non-empty
+    # n_left = left.sum()
+    # n_right = right.sum()
+    # if n_left == 0:
+    #     # move the smallest element to left
+    #     k = cp.argmin(s)
+    #     left[k] = True
+    #     right[k] = False
+    # elif n_right == 0:
+    #     # move the largest element to right
+    #     k = cp.argmax(s)
+    #     right[k] = True
+    #     left[k] = False
     return left, right
-
-
-def taylor_errors(
-    X: cp.ndarray, F: cp.ndarray, centroid: cp.ndarray, F_c: cp.ndarray, J_c: cp.ndarray
-) -> cp.ndarray:
-    """
-    Compute per-point Taylor approximation errors, given cluster centroid info.
-
-    Args:
-        X: (n, D) data matrix
-        F: (n, FD) function values at X
-        centroid: (1, D) cluster centroid
-        F_c: (1, FD) function value at centroid
-        J_c: (1, FD, D) Jacobian at centroid
-
-    Returns:
-        err: (n,) per-point error norms
-    """
-    dx = X - centroid  # (n, D)
-    f_taylor = F_c + cp.einsum("ijk,nk->nj", J_c, dx)
-    err = cp.linalg.norm(F - f_taylor, axis=1)
-    return err
 
 
 def generate_extra_points(
@@ -158,11 +136,11 @@ class Cluster:
     centroid: cp.ndarray  # (1, D)
     F_centroid: cp.ndarray  # (1, FD)
     J_centroid: cp.ndarray  # (1, FD, D)
-    radius: cp.ndarray  # GPU scalar or float
-    hessian_proxy: cp.ndarray  # GPU scalar or float
+    radius: cp.ndarray | float  # GPU scalar or float
+    hessian_proxy: cp.ndarray | float  # GPU scalar or float
     cluster_size: int
-    max_error: cp.ndarray  # GPU scalar or float
-    mean_error: cp.ndarray  # GPU scalar or float
+    max_error: cp.ndarray | float  # GPU scalar or float
+    mean_error: cp.ndarray | float  # GPU scalar or float
 
 
 def refine_adaptive_clusters(
@@ -202,11 +180,11 @@ def refine_adaptive_clusters(
 
     # Initialize queue with point arrays and cluster IDs from initial KMeans
     cluster_ids = cp.arange(int(labels.max()) + 1)
-    queue: list[tuple[cp.ndarray, int]] = []  # (cluster_points, cluster_id)
+    queue: list[cp.ndarray] = []  # (cluster_points,)
     for cid in range(len(cluster_ids)):
         idx = cp.where(labels == cid)[0]
         if idx.size > 0:
-            queue.append((X[idx], cid))  # Store points and cluster ID
+            queue.append(X[idx])  # Store points
 
     final_clusters: list[Cluster] = []
     n_level = 0
@@ -228,31 +206,29 @@ def refine_adaptive_clusters(
         if not level:
             break
 
-        # Pre-process clusters: augment small ones with extra points for violation testing
-        cluster_points_list = []
-        original_cluster_points = []
+        # Pre-process clusters
+        cluster_points = []
         cluster_sizes = []
 
-        for cluster_points, cluster_id in level:
-            original_cluster_points.append(cluster_points)
+        for cluster_points in level:
             cluster_size = cluster_points.shape[0]
 
-            # Augment small clusters for violation testing (like original version)
+            # Update cluster points by generating extra points if needed
             if cluster_size < min_pts_per_cluster:
                 new_X = generate_extra_points(cluster_points, min_pts_per_cluster, rng)
                 work_X = cp.concatenate([cluster_points, new_X], axis=0)
-                cluster_points_list.append(work_X)
+                cluster_points.append(work_X)
             else:
-                cluster_points_list.append(cluster_points)
+                cluster_points.append(cluster_points)
 
-            cluster_sizes.append(cluster_points_list[-1].shape[0])
+            cluster_sizes.append(cluster_points[-1].shape[0])
 
         cluster_starts = cp.concatenate(
             [cp.array([0]), cp.cumsum(cp.array(cluster_sizes[:-1]))]
         )
 
         # Combine all clusters for batch processing
-        all_X = cp.concatenate(cluster_points_list, axis=0)
+        all_X = cp.concatenate(cluster_points, axis=0)
 
         # Create cluster labels using repeat instead of loops
         all_cluster_labels = cp.repeat(
@@ -260,7 +236,7 @@ def refine_adaptive_clusters(
         )
 
         # Compute centroids vectorized (from augmented data)
-        centroids = cp.stack([pts.mean(axis=0) for pts in cluster_points_list])
+        centroids = cp.stack([pts.mean(axis=0) for pts in cluster_points])
 
         # Optimized batch violation detection
         # Step 1: Compute function values at centroids
@@ -279,7 +255,7 @@ def refine_adaptive_clusters(
         # Vectorized Taylor approximation for all points at once
         dx = all_X - expanded_centroids  # (total_points, D)
         F_taylor = expanded_F_centroids + cp.einsum(
-            "nij,nj->ni", expanded_J_centroids, dx
+            "ijk,ik->ij", expanded_J_centroids, dx
         )
         err = cp.linalg.norm(F_true - F_taylor, axis=1)  # (total_points,)
         thr = cp.maximum(abs_tol, rel_tol * cp.linalg.norm(F_true, axis=1))
@@ -299,9 +275,8 @@ def refine_adaptive_clusters(
 
         # print(f"  --> {len(violating_clusters)}/{len(level)} clusters need splitting")
 
-        # Pre-compute error statistics for all clusters - keep on GPU
-        cluster_error_stats_gpu = []
-
+        # Pre-compute error statistics for all clusters
+        cluster_error_stats = []
         for i, cluster_size in enumerate(cluster_sizes):
             cluster_start = cluster_starts[i] if i < len(cluster_starts) else len(all_X)
             cluster_end = (
@@ -309,36 +284,36 @@ def refine_adaptive_clusters(
             )
             cluster_mask = slice(cluster_start, cluster_end)
             cluster_errors = err[cluster_mask]
-            # Keep max_err and mean_err on GPU
-            cluster_error_stats_gpu.append(
-                (cluster_errors.max(), cluster_errors.mean())
-            )
+            cluster_error_stats.append((cluster_errors.max(), cluster_errors.mean()))
+
         # Batch process non-violating clusters (reuse already computed values)
         streams = [cp.cuda.Stream(non_blocking=True) for _ in range(num_streams)]
 
         # Per-level containers for children to enqueue after sync
-        children_left: list[tuple[cp.ndarray, int]] = []
-        children_right: list[tuple[cp.ndarray, int]] = []
+        children_left: list[cp.ndarray] = []
+        children_right: list[cp.ndarray] = []
 
-        for i, (X_cluster, cluster_id) in enumerate(level):
+        for i, X_cluster in enumerate(level):
             stream = streams[i % num_streams]
             with stream:
                 cluster_size = X_cluster.shape[0]  # Original cluster size
 
                 if i not in violating_clusters:
                     # No violations - create final cluster using precomputed batch values
-                    # Use centroid from augmented data but original cluster size
-                    centroid = centroids[i : i + 1]  # (1, D)
 
-                    # Reuse already computed function values from centroids
+                    # Use centroid, size, function values from augmented data
+                    centroid = centroids[i : i + 1]  # (1, D)
+                    augmented_X = cluster_points[i]
+                    augmented_cluster_size = augmented_X.shape[0]
+
                     F_c = F_centroids_at_centroids[i : i + 1]
                     J_c = J_centroids_at_centroids[i : i + 1]
-                    max_err_gpu, mean_err_gpu = cluster_error_stats_gpu[i]
+                    max_err_gpu, mean_err_gpu = cluster_error_stats[i]
 
-                    # Use original cluster points for radius calculation
-                    radius_gpu = cp.max(cp.linalg.norm(X_cluster - centroid, axis=1))
+                    # Compute cluster radius
+                    radius_gpu = cp.max(cp.linalg.norm(augmented_X - centroid, axis=1))
 
-                    # hessian proxy (keep on GPU for now)
+                    # hessian proxy
                     h_proxy_gpu = (
                         2.0 * max_err_gpu / (radius_gpu**2) if radius_gpu > 0 else 0.0
                     )
@@ -348,17 +323,17 @@ def refine_adaptive_clusters(
                             centroid=centroid,
                             F_centroid=F_c,
                             J_centroid=J_c,
-                            radius=radius_gpu,  # Keep as GPU scalar
-                            hessian_proxy=h_proxy_gpu,  # Keep as GPU scalar
-                            cluster_size=cluster_size,  # Original size, not augmented
-                            max_error=max_err_gpu,  # Keep as GPU scalar
-                            mean_error=mean_err_gpu,  # Keep as GPU scalar
+                            radius=radius_gpu,
+                            hessian_proxy=h_proxy_gpu,
+                            cluster_size=augmented_cluster_size,
+                            max_error=max_err_gpu,
+                            mean_error=mean_err_gpu,
                         )
                     )
                 else:
                     # Cluster has violations - split it using augmented data
                     # Use the already-computed augmented cluster data
-                    work_X = cluster_points_list[i]
+                    work_X = cluster_points[i]
 
                     # Split using randomized-QR direction computed on work_X
                     q = randomized_qr_gpu(work_X, rng, ell, power_iters)
@@ -368,12 +343,9 @@ def refine_adaptive_clusters(
                     left_points = work_X[left_mask]
                     right_points = work_X[right_mask]
 
-                    # Generate new cluster IDs for children
-                    left_id = cluster_id * 2
-                    right_id = cluster_id * 2 + 1
-
-                    children_left.append((left_points, left_id))
-                    children_right.append((right_points, right_id))
+                    # Enqueue children for next level processing
+                    children_left.append(left_points)
+                    children_right.append(right_points)
 
         # Synchronize all GPU work for this level before pushing children
         for s in streams:
@@ -526,6 +498,31 @@ if __name__ == "__main__":
     toc = time.perf_counter()
     print(f"Adaptive clustering completed in {toc - tic:0.2f} seconds.")
     raise SystemExit
+
+    def taylor_errors(
+        X: cp.ndarray,
+        F: cp.ndarray,
+        centroid: cp.ndarray,
+        F_c: cp.ndarray,
+        J_c: cp.ndarray,
+    ) -> cp.ndarray:
+        """
+        Compute per-point Taylor approximation errors, given cluster centroid info.
+
+        Args:
+            X: (n, D) data matrix
+            F: (n, FD) function values at X
+            centroid: (1, D) cluster centroid
+            F_c: (1, FD) function value at centroid
+            J_c: (1, FD, D) Jacobian at centroid
+
+        Returns:
+            err: (n,) per-point error norms
+        """
+        dx = X - centroid  # (n, D)
+        f_taylor = F_c + cp.einsum("ijk,nk->nj", J_c, dx)
+        err = cp.linalg.norm(F - f_taylor, axis=1)
+        return err
 
     rng = cp.random.default_rng(SEED)
     assert rng is not None, "Something went wrong with RNG initialization."
