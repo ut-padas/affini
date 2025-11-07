@@ -547,29 +547,24 @@ Time elapsed for predictions: 0.659658906981349 seconds
 \end{table}
 ```
 
-## Version 5 (Complete CuPy) (Time: 11m 36s)
+## Version 5 (Complete CuPy) (Time: 4m 52s)
 ```sh
-c608-052[gh](576)$ time uv run python shcf_gpu.py 
+c608-082[gh](697)$ time uv run python shcf_gpu.py 
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 22.16 seconds
-Time to train: 22.46 seconds
-Time elapsed for predictions: 0.03969032294116914 seconds
+Time to train: 8.86 seconds
+Time elapsed for predictions: 0.038804734824225307 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 40.99 seconds
-Time to train: 41.22 seconds
-Time elapsed for predictions: 0.0702918249880895 seconds
+Time to train: 16.75 seconds
+Time elapsed for predictions: 0.06870165793225169 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 79.68 seconds
-Time to train: 79.92 seconds
-Time elapsed for predictions: 0.13060466200113297 seconds
+Time to train: 32.32 seconds
+Time elapsed for predictions: 0.1280414902139455 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 185.91 seconds
-Time to train: 186.16 seconds
-Time elapsed for predictions: 0.29756322188768536 seconds
+Time to train: 75.74 seconds
+Time elapsed for predictions: 0.29357613902539015 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 358.93 seconds
-Time to train: 359.19 seconds
-Time elapsed for predictions: 0.5606156709836796 seconds
+Time to train: 150.06 seconds
+Time elapsed for predictions: 0.5560964839532971 seconds
 
 
 \begin{table}[h!]
@@ -578,11 +573,11 @@ Time elapsed for predictions: 0.5606156709836796 seconds
         \hline
         $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
         \hline\hline
-                3200000 & 0.1 & 2.0\% & 2085 & 1.55\% & 98.44\% & 0.01\% & 0.994 & 0.4679 & 0.5905 & 0.0264 & 0.0214 & 0.0218 \\
-                3200000 & 0.05 & 1.0\% & 4048 & 1.65\% & 98.32\% & 0.03\% & 0.5986 & 0.1898 & 0.2597 & 0.0201 & 0.013 & 0.0138 \\
-                3200000 & 0.025 & 0.5\% & 7942 & 1.74\% & 98.24\% & 0.01\% & 0.4448 & 0.1683 & 0.2275 & 0.0083 & 0.0052 & 0.0057 \\
-                3200000 & 0.01 & 0.2\% & 18560 & 2.1\% & 97.88\% & 0.02\% & 0.3216 & 0.0663 & 0.1695 & 0.0029 & 0.0021 & 0.0023 \\
-                3200000 & 0.005 & 0.1\% & 35349 & 2.62\% & 97.35\% & 0.03\% & 0.1246 & 0.0275 & 0.0454 & 0.0017 & 0.0011 & 0.0012 \\
+                3200000 & 0.1 & 2.0\% & 2029 & 1.66\% & 98.33\% & 0.01\% & 0.493 & 0.2192 & 0.308 & 0.0222 & 0.0207 & 0.0211 \\
+                3200000 & 0.05 & 1.0\% & 3971 & 1.66\% & 98.33\% & 0.01\% & 0.9441 & 0.2704 & 0.5688 & 0.0141 & 0.0111 & 0.0122 \\
+                3200000 & 0.025 & 0.5\% & 7773 & 1.67\% & 98.3\% & 0.03\% & 0.8254 & 0.1464 & 0.4155 & 0.0074 & 0.0055 & 0.0057 \\
+                3200000 & 0.01 & 0.2\% & 18423 & 2.0\% & 97.98\% & 0.02\% & 0.2533 & 0.0542 & 0.0989 & 0.0035 & 0.0021 & 0.0023 \\
+                3200000 & 0.005 & 0.1\% & 35561 & 2.46\% & 97.5\% & 0.03\% & 0.1276 & 0.0172 & 0.0526 & 0.0015 & 0.0011 & 0.0011 \\
         \hline
     \end{tabular}
     \caption{This is a caption!}
@@ -592,9 +587,9 @@ None
 
 
 
-real    11m36.385s
-user    11m6.887s
-sys     0m24.146s
+real    4m52.092s
+user    4m27.910s
+sys     0m19.947s
 ```
 
 ## Version 6 (Hybrid CuPy + Numpy + Numba) (Time: 49s)
@@ -740,25 +735,52 @@ Time elapsed for predictions: 0.5075021359371021 seconds
 \end{table}
 ```
 
-## Version 5 (Complete CuPy) (Time: > 10m)
+## Version 5 (Complete CuPy) (Time: 5m 8s)
 ```sh
+c608-081[gh](711)$ time uv run python shcf_gpu.py 
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 22.45 seconds
-Time elapsed for predictions: 0.052507823965646744 seconds
+Time to train: 10.16 seconds
+Time elapsed for predictions: 0.03906202712096274 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 41.23 seconds
-Time elapsed for predictions: 0.10020934598732728 seconds
+Time to train: 17.83 seconds
+Time elapsed for predictions: 0.07139645400457084 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 75.12 seconds
-Time elapsed for predictions: 0.18563478999856734 seconds
+Time to train: 33.89 seconds
+Time elapsed for predictions: 0.13308478496037424 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 180.45 seconds
-...
+Time to train: 81.74 seconds
+Time elapsed for predictions: 0.31831784290261567 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+Time to train: 153.80 seconds
+Time elapsed for predictions: 0.6089395999442786 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                10000000 & 0.1 & 2.0\% & 2115 & 1.53\% & 98.44\% & 0.03\% & 1.2802 & 0.3391 & 0.5716 & 0.0382 & 0.0226 & 0.0257 \\
+                10000000 & 0.05 & 1.0\% & 4110 & 1.54\% & 98.44\% & 0.02\% & 0.5795 & 0.1454 & 0.2526 & 0.0148 & 0.0112 & 0.0118 \\
+                10000000 & 0.025 & 0.5\% & 8080 & 1.51\% & 98.48\% & 0.01\% & 0.2723 & 0.1051 & 0.1278 & 0.0059 & 0.0056 & 0.0056 \\
+                10000000 & 0.01 & 0.2\% & 19683 & 1.51\% & 98.48\% & 0.01\% & 0.4269 & 0.1231 & 0.2347 & 0.0036 & 0.0023 & 0.0025 \\
+                10000000 & 0.005 & 0.1\% & 38127 & 1.73\% & 98.25\% & 0.02\% & 0.087 & 0.0222 & 0.037 & 0.0015 & 0.0011 & 0.0012 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    5m8.762s
+user    4m40.216s
+sys     0m24.486s
 ```
 
-## Version 6 (Hybrid CuPy + Numpy + Numba) (Time: 1m 13s)
-```sh
-```
+
 
 # 2D (SHCF) Test: n = 100,000,000
 ## Version 4 (Time: 13m 31s)
@@ -813,21 +835,52 @@ sys     0m32.616s
 ```
 
 
-## Version 5 (Complete CuPy) (Time: ~ 900 s)
+## Version 5 (Complete CuPy) (Time: 7m 42s)
 ```sh
-c608-061[gh](563)$ time uv run python shcf_gpu.py 
+c608-081[gh](713)$ time uv run python shcf_gpu.py 
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 63.23 seconds
-Time elapsed for predictions: 0.03880970098543912 seconds
+Time to train: 24.48 seconds
+Time elapsed for predictions: 0.04039616486988962 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 71.18 seconds
-Time elapsed for predictions: 0.07292249298188835 seconds
+Time to train: 34.09 seconds
+Time elapsed for predictions: 0.07363599492236972 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 111.79 seconds
-Time elapsed for predictions: 0.13878466200549155 seconds
+Time to train: 52.58 seconds
+Time elapsed for predictions: 0.1402705041691661 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-Time to train: 231.24 seconds
-Time elapsed for predictions: 0.33695570891723037 seconds
+Time to train: 104.03 seconds
+Time elapsed for predictions: 0.3382324599660933 seconds
 Max achieved at (-3.0, -2.0), value = 591.2024557808674
-...
+Time to train: 186.74 seconds
+Time elapsed for predictions: 0.6615750398486853 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                100000000 & 0.1 & 2.0\% & 2156 & 1.4\% & 98.57\% & 0.04\% & 0.7473 & 0.2623 & 0.3076 & 0.0343 & 0.0235 & 0.0247 \\
+                100000000 & 0.05 & 1.0\% & 4255 & 1.29\% & 98.7\% & 0.01\% & 0.7131 & 0.5568 & 0.4962 & 0.0133 & 0.0115 & 0.0118 \\
+                100000000 & 0.025 & 0.5\% & 8491 & 1.16\% & 98.83\% & 0.0\% & 0.0892 & 0.0684 & 0.0753 & 0.0056 & 0.0051 & 0.0053 \\
+                100000000 & 0.01 & 0.2\% & 20942 & 1.13\% & 98.86\% & 0.01\% & 0.2386 & 0.0545 & 0.1143 & 0.0024 & 0.0021 & 0.0022 \\
+                100000000 & 0.005 & 0.1\% & 41315 & 1.19\% & 98.8\% & 0.01\% & 0.124 & 0.0146 & 0.0606 & 0.0013 & 0.0011 & 0.0011 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    7m42.043s
+user    6m54.928s
+sys     0m44.626s
+```
+
+# 2D (SHCF) Test: n = 1,000,000,000
+## Version 5 (Complete CuPy) (Time: 
+```sh
 ```
