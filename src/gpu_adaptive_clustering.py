@@ -272,9 +272,19 @@ def refine_adaptive_clusters(
 
     final_clusters: list[Cluster] = []
     n_level = 0
+    level_start_time = time.perf_counter()
 
     # BFS by levels
     while queue:
+        if n_level > 0:
+            level_time = time.perf_counter() - level_start_time
+            print(
+                f"Refinement level {n_level}, clusters to process: {len(queue)} (prev level took {level_time:.2f}s)"
+            )
+        else:
+            print(f"Refinement level {n_level}, clusters to process: {len(queue)}")
+
+        level_start_time = time.perf_counter()
         level = queue
         queue = []
 
@@ -456,6 +466,7 @@ def main(
         min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
         abs_tol=ABS_TOL,
         rel_tol=REL_TOL,
+        return_numpy=False,
     )
     print(f"Total final clusters formed: {len(clusters)}")
     return clusters
@@ -466,12 +477,16 @@ if __name__ == "__main__":
     D = 3
     N_INIT_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 50
-    ABS_TOL = 1e-2
-    REL_TOL = 1e-2
+    ABS_TOL = 1e-3
+    REL_TOL = 1e-3
+    print(f"ABS_TOL={ABS_TOL}, REL_TOL={REL_TOL}")
 
+    tic = time.perf_counter()
     clusters = main(
         N_SAMPLES, D, N_INIT_CLUSTERS, MIN_PTS_PER_CLUSTER, ABS_TOL, REL_TOL
     )
+    toc = time.perf_counter()
+    print(f"Adaptive clustering completed in {toc - tic:0.2f} seconds.")
     rng = cp.random.default_rng(SEED)
     assert rng is not None, "Something went wrong with RNG initialization."
 
