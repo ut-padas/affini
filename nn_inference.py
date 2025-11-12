@@ -2,6 +2,7 @@ import time
 import numpy as np
 import faiss
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # TODO eventually make labels multi-d. This would make labels a matrix and gradients a rank-3 tensor.
 
@@ -17,7 +18,10 @@ class NN_Inference:
         labels: np.ndarray,
         gradients: np.ndarray = None,
         hessians: np.ndarray = None,
-        trust_radii: np.ndarray = None
+        trust_radii: np.ndarray = None,
+        n_pts_per_cluster: np.ndarray = None,
+        hessian_vars: np.ndarray = None,
+        tree_levels: np.ndarray = None
         ):
         
         # --- INPUT ERROR CHECKING ---
@@ -25,7 +29,8 @@ class NN_Inference:
         # check that length of vectors is correct
         p1, n1 = features.shape
         p2, m1 = labels.shape
-        p3, m2, n2 = gradients.shape
+        if gradients is not None:
+            p3, m2, n2 = gradients.shape
     
         # TODO do some checking
 
@@ -35,9 +40,12 @@ class NN_Inference:
         self.gradients = gradients
         self.hessians = hessians
         self.trust_radii = trust_radii
-        self.P = p3
-        self.M = m2
-        self.N = n2
+        self.n_pts_per_cluster = n_pts_per_cluster
+        self.hessian_vars = hessian_vars
+        self.tree_levels = tree_levels
+        self.P = p1
+        self.M = m1
+        self.N = n1
 
         # build FAISS index
         self._faiss_index = faiss.IndexFlatL2(self.N)
@@ -49,7 +57,6 @@ class NN_Inference:
     def predict(self,
         targets: np.ndarray,
         k: int,
-        unwrap_log=[],
         disp_time=False,
         L_global = None, # if both L and tol are defined, use this to check if distance to nearest
         atol = None, # neighbors are within computational guarantee.
@@ -61,16 +68,7 @@ class NN_Inference:
         # TODO check if the length of each feature vector matches the length of training vectors
 
         # use FAISS to do k-nearest neighbors search
-        D, I = self._faiss_index.search(targets, k)
-        
-        # if necessary we deal with distances by unwrapping log
-        features_unlog = self.features.copy()
-        targets_unlog = targets.copy()
-        if len(unwrap_log) > 0:
-            for j, val in enumerate(unwrap_log):
-                if val == True:
-                    targets_unlog[:,j] = 10 ** targets_unlog[:,j]
-                    features_unlog[:,j] = 10 ** features_unlog[:,j]
+        D, I = self._faiss_index.search(targets, k)  # noqa: E741
         
         predictions = np.zeros((len(targets),self.M)) # this should be a matrix
         for j in range(k):
@@ -78,33 +76,54 @@ class NN_Inference:
                 # gradient not specified; use only nearest neighbor
                 predictions += self.labels[I[:,j]]
             else:
-                distance_vecs = targets_unlog - features_unlog[I[:,j]]
+                distance_vecs = targets - self.features[I[:,j]]
                 predictions += self.labels[I[:,j]] + np.einsum('ijk,ik->ij', self.gradients[I[:,j]], distance_vecs)
 
         # check for points that are outside the theoretical guarantee
         # FAISS distances are squared, so do not consider square root on rhs
-        if (atol is not None and rtol is not None and k==1):
-            local_atols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
-            local_rtols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * rtol * np.linalg.norm(predictions, 2, axis=1) / (alpha * self.hessians[I[:,0]]))
-            good_points = (D[:,0] < np.maximum(local_atols, local_rtols))
-        elif (atol is not None and L_global is not None and k==1):
-            local_tols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
-            global_tol = 2 * atol / L_global
-            good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
-        elif (atol is not None and k==1):
-            local_tols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
-            good_points = (D[:,0] < local_tols)
+        has_gradients = np.max(np.abs(self.gradients)) > 0
+        if has_gradients:
+            if (atol is not None and rtol is not None and k==1):
+                local_atols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
+                local_rtols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * rtol * np.linalg.norm(predictions, 2, axis=1) / (alpha * self.hessians[I[:,0]]))
+                good_points = (D[:,0] < np.maximum(local_atols, local_rtols))
+            elif (atol is not None and L_global is not None and k==1):
+                local_tols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
+                global_tol = 2 * atol / L_global
+                good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
+            elif (atol is not None and k==1):
+                local_tols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
+                good_points = (D[:,0] < local_tols)
+            else:
+                good_points = np.full(len(D), True)
         else:
-            good_points = np.full(len(D), True)
+            if (atol is not None and rtol is not None and k==1):
+                local_atols = np.minimum(self.trust_radii[I[:,0]] ** 2, (atol ** 2) / ((alpha * self.hessians[I[:,0]]) ** 2))
+                local_rtols = np.minimum(self.trust_radii[I[:,0]] ** 2, ((rtol * np.linalg.norm(predictions, 2, axis=1)) ** 2) / ((alpha * self.hessians[I[:,0]]) ** 2))
+                good_points = (D[:,0] < np.maximum(local_atols, local_rtols))
+            elif (atol is not None and L_global is not None and k==1):
+                local_atols = np.minimum(self.trust_radii[I[:,0]] ** 2, (atol ** 2) / ((alpha * self.hessians[I[:,0]]) ** 2))
+                global_tol = atol ** 2 / L_global ** 2
+                good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
+            elif (atol is not None and k==1):
+                local_atols = np.minimum(self.trust_radii[I[:,0]] ** 2, (atol ** 2) / ((alpha * self.hessians[I[:,0]]) ** 2))
+                good_points = (D[:,0] < local_tols)
+            else:
+                good_points = np.full(len(D), True)
 
 
-        if disp_time == True:
+        if disp_time:
             end_time = time.perf_counter()
             print(f'Time elapsed for predictions: {end_time-start_time} seconds')
 
         # return average
         return predictions / k, np.logical_not(good_points)
         # bad points is all False when tol is not specified
+
+
+    def find_nearest_sources(self, targets):
+        _, Ind = self._faiss_index.search(targets, 1)
+        return Ind[:,0]
 
 
     def add_extra_features(self, new_features, new_labels, new_gradients, new_hessians, new_dims):
@@ -132,4 +151,21 @@ class NN_Inference:
         ax2.set_title(f'Histogram of Hessian Norms ($N_{{sources}} = {len(hessian_norms)}$)')
 
         plt.show()
-    
+
+
+
+    def save_all_data(self):
+        # Returns cluster statistics (every data point except x, y, dy/dx)
+        all_data = np.empty(shape=(len(self.features), 5))
+        all_data[:,0] = self.hessians
+        all_data[:,1] = self.hessian_vars
+        all_data[:,2] = self.trust_radii
+        all_data[:,3] = self.n_pts_per_cluster
+        all_data[:,4] = self.tree_levels
+        col_headers = ['Lipschitz Constants',
+                  'Lipschitz Constant Variance',
+                  'Trust Radius',
+                  '# Pts per Cluster',
+                  'Tree Level']
+        return pd.DataFrame(all_data, columns=col_headers)
+

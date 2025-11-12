@@ -16,13 +16,16 @@ class ClusterTree:
 
 class Cluster:
 
-    def __init__(self, index, params, QoI_value, gradient, hessian, radius):
+    def __init__(self, index, params, QoI_value, gradient, lipschitz, radius, n_pts, lipschitz_var):
         self.index = index # leaf index
         self.params = params # centroids of the cluster
-        self.QoI_value = QoI_value # output value 
+        self.QoI_value = QoI_value # output value
         self.gradient = gradient # gradient value
-        self.hessian = hessian # hessian
+        self.lipschitz = lipschitz # hessian
         self.radius = radius # trust radius
+        self.n_pts = n_pts # number of points that generate the cluster
+        self.lipschitz_var = lipschitz_var # variance of Lipschitz constant (the one we use is the max)
+
 
     def __str__(self):
         return f'k={self.index}\tn_h={10**self.params[0]:.3f}\tT={10**self.params[1]:.3f}\tG0={self.params[2]:.6f}'
@@ -53,7 +56,7 @@ def adaptive_cluster_algorithm(
     # do solves if necessary. TODO: specify dimension of output of eval_function
     if function_vals is None:
         function_vals = np.zeros(len(training_data))
-        if use_gradient == False:
+        if not use_gradient:
             for j, row in enumerate(training_data):
                 function_vals[j] = eval_function(row)
         else:
@@ -94,7 +97,7 @@ def adaptive_cluster_algorithm(
         # Compute exact value and gradient at cluster centroid
         # NOTE: if using KMedoids, we don't have to do a solve. Just pull the value
         centroid_params = centroids[j]
-        if use_gradient == True:
+        if use_gradient:
             fval_c, grad_c = eval_function(centroid_params)
             # TODO: make this solve vectorized in one go (for scaling)
             if np.isscalar(grad_c):
@@ -108,15 +111,15 @@ def adaptive_cluster_algorithm(
             fval_c = np.array([fval_c])
 
         # check size of gradient to see if it is appropriate
-        if grad_c.shape != (m,n):
+        if use_gradient and grad_c.shape != (m,n):
             raise Exception('Error: gradient function does return shape m*n')
 
         # Compute error by taking largest distances away and averaging errors
-        if use_gradient == False:
+        distance = params_in_cluster - centroid_params
+        if not use_gradient:
             evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
-        elif use_gradient == True:
+        elif use_gradient:
             # make sure we compute in euclidean distance
-            distance = params_in_cluster - centroid_params
             evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
 
         abs_error = np.max(evec)
@@ -124,8 +127,13 @@ def adaptive_cluster_algorithm(
         if (rtol is not None and abs_error < np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
             # Tolerance is good; save values in cluster column
             radius = np.max(np.linalg.norm(distance, axis=1))
-            hessian = 2 / (radius**2) * np.max(evec)
-            cluster_structure[j] = Cluster(k, centroid_params, fval_c, grad_c, hessian, radius)
+            if use_gradient:
+                lipschitz_constants = 2 / (radius**2) * evec
+            else:
+                lipschitz_constants = evec / radius
+            lipschitz = np.max(lipschitz_constants)
+            lipschitz_var = np.var(lipschitz_constants)
+            cluster_structure[j] = Cluster(k, centroid_params, fval_c, grad_c, lipschitz, radius, len(evec), lipschitz_var)
             k += 1
         else:
             # Split cluster in half (recursive step)
@@ -178,7 +186,7 @@ def _adaptive_cluster_algorithm_helper(
     fvals_cluster = function_vals[labels==0]
 
     centroid_params = centroids[0]
-    if use_gradient == True:
+    if use_gradient:
         fval_c, grad_c = eval_function(centroid_params)
         if np.isscalar(grad_c):
             grad_c = np.array([grad_c])
@@ -195,7 +203,7 @@ def _adaptive_cluster_algorithm_helper(
     # We require more than one point in the cluster (this number can change).
     if len(pts_cluster) <= min_ppc and len(pts_cluster) > 1:
         new_pts_cluster, new_fval_vec = \
-            _generate_extra_points(pts_cluster, fvals_cluster, eval_function, min_ppc)
+            _generate_extra_points(pts_cluster, fvals_cluster, eval_function, min_ppc, use_gradient)
     else:
         new_pts_cluster = np.zeros(shape=(0,n))
         new_fval_vec = np.zeros(shape=(0,m))
@@ -207,24 +215,28 @@ def _adaptive_cluster_algorithm_helper(
         fvals_cluster = np.vstack((fvals_cluster, new_fval_vec))
 
     # using true value, compute error from qc
-    if use_gradient == False:
+    distance = pts_cluster - centroid_params
+    if not use_gradient:
         evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
-    elif use_gradient == True:
+    elif use_gradient:
         # make sure we compute in euclidean, non-log scaled distance
-        distance = pts_cluster - centroid_params
         evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
         
-
     abs_error = np.max(evec)
-
     radius = np.max(np.linalg.norm(distance, axis=1))
+
     if radius == 0:
         # Dead branch of the tree. Not enough points to compute error
         left = None
     elif (rtol is not None and abs_error < np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
         # Error good
-        hessian = 2 / (radius**2) * np.max(evec)
-        left = Cluster(k, centroid_params, fval_c, grad_c, hessian, radius)
+        if use_gradient:
+            lipschitz_constants = 2 / (radius**2) * evec
+        else:
+            lipschitz_constants = evec / radius
+        lipschitz = np.max(lipschitz_constants)
+        lipschitz_var = np.var(lipschitz_constants)
+        left = Cluster(k, centroid_params, fval_c, grad_c, lipschitz, radius, len(evec), lipschitz_var)
         k += 1
     else:
         # Error too large; split cluster in half (recursive step)
@@ -239,7 +251,7 @@ def _adaptive_cluster_algorithm_helper(
     fvals_cluster = function_vals[labels==1]
     
     centroid_params = centroids[1]
-    if use_gradient == True:
+    if use_gradient:
         fval_c, grad_c = eval_function(centroid_params)
         if np.isscalar(grad_c):
             grad_c = np.array([grad_c])
@@ -255,7 +267,7 @@ def _adaptive_cluster_algorithm_helper(
     # Add extra points to the cluster (randomly sampled) until we get to the minimum ppc
     if len(pts_cluster) <= min_ppc and len(pts_cluster) > 1:
         new_pts_cluster, new_fval_vec = \
-            _generate_extra_points(pts_cluster, fvals_cluster, eval_function, min_ppc)
+            _generate_extra_points(pts_cluster, fvals_cluster, eval_function, min_ppc, use_gradient)
     else:
         new_pts_cluster = []
         new_fval_vec = []
@@ -268,23 +280,27 @@ def _adaptive_cluster_algorithm_helper(
     
 
     # using true value, compute error from qc
-    if use_gradient == False:
+    distance = pts_cluster - centroid_params
+    if not use_gradient:
         evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
-    elif use_gradient == True:
+    elif use_gradient:
         # make sure we compute in euclidean, non-log scaled distance
-        distance = pts_cluster - centroid_params
         evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
 
-
     abs_error = np.max(evec)
-
     radius = np.max(np.linalg.norm(distance, axis=1))
+
     if radius == 0:
         # Dead branch of the tree. Not enough variance of points to compute error (or a single point).
         right = None
     elif (rtol is not None and abs_error <= np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
-        hessian = 2 / (radius**2) * np.max(evec)
-        right = Cluster(k, centroid_params, fval_c, grad_c, hessian, radius)
+        if use_gradient:
+            lipschitz_constants = 2 / (radius**2) * evec
+        else:
+            lipschitz_constants = evec / radius
+        lipschitz = np.max(lipschitz_constants)
+        lipschitz_var = np.var(lipschitz_constants)
+        right = Cluster(k, centroid_params, fval_c, grad_c, lipschitz, radius, len(evec), lipschitz_var)
         k += 1
     else:
         # Error too large; split cluster in half (recursive step)
@@ -296,7 +312,7 @@ def _adaptive_cluster_algorithm_helper(
 
 
 
-def _generate_extra_points(pts_cluster, fvals_cluster, oracle, min_ppc):
+def _generate_extra_points(pts_cluster, fvals_cluster, oracle, min_ppc, use_gradient):
 
     n_pts_sample = min_ppc - len(pts_cluster)
 
@@ -309,7 +325,7 @@ def _generate_extra_points(pts_cluster, fvals_cluster, oracle, min_ppc):
     resample = (indices[1] - indices[0]) == 0
     all_inds = np.arange(len(pts_cluster))
     for j, val in enumerate(resample):
-        if j == True:
+        if j:
             indices[:,j] = np.random.choice(all_inds, 2, replace=False)
 
     # construct convex combinations
@@ -320,7 +336,10 @@ def _generate_extra_points(pts_cluster, fvals_cluster, oracle, min_ppc):
     new_fvals_cluster = np.zeros(shape=(n_pts_sample, fvals_cluster.shape[1]))
     for i, row in enumerate(new_pts_cluster):
         # compute true value (save in qi)
-        new_fvals_cluster[i], _ = oracle(row)
+        if use_gradient:
+            new_fvals_cluster[i], _ = oracle(row)
+        else:
+            new_fvals_cluster[i] = oracle(row)
 
     return new_pts_cluster, new_fvals_cluster
 
@@ -331,36 +350,72 @@ def flatten_cluster_centers_with_gradient(nc, n, m, tree):
     centroids = np.zeros(shape=(nc, n))
     QoI_values = np.zeros(shape=(nc, m))
     gradients = np.zeros(shape=(nc, m, n))
-    hessians = np.zeros(shape=nc)
-    dims = np.zeros(shape=nc)
+    lipschitzes = np.zeros(shape=nc)
+    radii = np.zeros(shape=nc)
+    n_pts = np.zeros(shape=nc)
+    lipschitz_vars = np.zeros(shape=nc)
+    tree_levels = np.zeros(shape=nc)
 
     k = 0
+    lev = 0
     for val in tree:
-        if type(val) == Cluster:
+        if type(val) is Cluster:
             centroids[k] = val.params
             QoI_values[k] = val.QoI_value
-            gradients[k] = val.gradient
-            hessians[k] = val.hessian
-            dims[k] = val.radius
+            if val.gradient is None:
+                gradients[k] = np.zeros((m,n))
+            else:
+                gradients[k] = val.gradient
+            lipschitzes[k] = val.lipschitz
+            lipschitz_vars[k] = val.lipschitz_var
+            radii[k] = val.radius
+            n_pts[k] = val.n_pts
+            tree_levels[k] = lev
             k += 1
-        elif type(val) == ClusterTree:
-            k = _flatten_cluster_centers_with_gradient_helper(val.left, k, centroids, QoI_values, gradients, hessians, dims)
-            k = _flatten_cluster_centers_with_gradient_helper(val.right, k, centroids, QoI_values, gradients, hessians, dims)
-    return centroids, QoI_values, gradients, hessians, dims
+        elif type(val) is ClusterTree:
+            k = _flatten_cluster_centers_with_gradient_helper(
+                val.left, k, lev+1, centroids, QoI_values, gradients,
+                lipschitzes, radii, n_pts, lipschitz_vars, tree_levels)
+            k = _flatten_cluster_centers_with_gradient_helper(
+                val.right, k, lev+1, centroids, QoI_values, gradients,
+                lipschitzes, radii, n_pts, lipschitz_vars, tree_levels)
+    return centroids, QoI_values, gradients, lipschitzes, radii, n_pts, lipschitz_vars, tree_levels
 
 
 
-def _flatten_cluster_centers_with_gradient_helper(tree, k, centroids, QoI_values, gradients, hessians, dims):
-    if type(tree) == Cluster:
+def _flatten_cluster_centers_with_gradient_helper(
+        tree,
+        k,
+        lev,
+        centroids,
+        QoI_values,
+        gradients,
+        lipschitzes,
+        radii,
+        n_pts,
+        lipschitz_vars,
+        tree_levels
+    ):
+    if type(tree) is Cluster:
         centroids[k] = tree.params
         QoI_values[k] = tree.QoI_value
-        gradients[k] = tree.gradient
-        hessians[k] = tree.hessian
-        dims[k] = tree.radius
+        if tree.gradient is None:
+            gradients[k] = np.zeros((len(QoI_values[k]), len(centroids[k])))
+        else:
+            gradients[k] = tree.gradient
+        lipschitzes[k] = tree.lipschitz
+        lipschitz_vars[k] = tree.lipschitz_var
+        radii[k] = tree.radius
+        n_pts[k] = tree.n_pts
+        tree_levels[k] = lev
         k += 1
-    elif type(tree) == ClusterTree:
-        k = _flatten_cluster_centers_with_gradient_helper(tree.left, k, centroids, QoI_values, gradients, hessians, dims)
-        k = _flatten_cluster_centers_with_gradient_helper(tree.right, k, centroids, QoI_values, gradients, hessians, dims)
+    elif type(tree) is ClusterTree:
+        k = _flatten_cluster_centers_with_gradient_helper(
+            tree.left, k, lev+1, centroids, QoI_values, gradients,
+            lipschitzes, radii, n_pts, lipschitz_vars, tree_levels)
+        k = _flatten_cluster_centers_with_gradient_helper(
+            tree.right, k, lev+1, centroids, QoI_values, gradients,
+            lipschitzes, radii, n_pts, lipschitz_vars, tree_levels)
     return k
 
 
@@ -371,11 +426,11 @@ def flatten_cluster_centers(nc, n, m, tree):
     QoI_values = np.zeros(shape=(nc, m))
     k = 0
     for val in tree:
-        if type(val) == Cluster:
+        if type(val) is Cluster:
             centroids[k] = val.params
             QoI_values[k] = val.QoI_value
             k += 1
-        elif type(val) == ClusterTree:
+        elif type(val) is ClusterTree:
             k = _flatten_cluster_centers_helper(val.left, k, centroids, QoI_values)
             k = _flatten_cluster_centers_helper(val.right, k, centroids, QoI_values)
     return centroids, QoI_values
@@ -383,11 +438,11 @@ def flatten_cluster_centers(nc, n, m, tree):
 
 
 def _flatten_cluster_centers_helper(tree, k, centroids, QoI_values):
-    if type(tree) == Cluster:
+    if type(tree) is Cluster:
         centroids[k] = tree.params
         QoI_values[k] = tree.QoI_value
         k += 1
-    elif type(tree) == ClusterTree:
+    elif type(tree) is ClusterTree:
         k = _flatten_cluster_centers_helper(tree.left, k, centroids, QoI_values)
         k = _flatten_cluster_centers_helper(tree.right, k, centroids, QoI_values)
     return k

@@ -1,7 +1,7 @@
 from matplotlib.colors import BoundaryNorm, ListedColormap
 import numpy as np
 import matplotlib.pyplot as plt
-from nearode import NearODESurrogate
+from nearode import NearODESurrogate, load_surrogate, save_surrogate
 from scipy.stats import qmc
 from scipy.integrate import solve_ivp
 
@@ -18,6 +18,13 @@ def one_d_combined(x):
     return one_d_example(x), grad_one_d_example(x)
 
 
+def f_counter(func):
+    def helper(*args, **kwargs):
+        helper.calls += 1
+        return func(*args, **kwargs)
+    helper.calls = 0
+    return helper
+
 
 # Six-Hump Camelback function
 def SHCF(x: np.ndarray):
@@ -28,6 +35,7 @@ def SHCF(x: np.ndarray):
         return (4 - 2.1*x[:,0]**2 + x[:,0]**4/3)*x[:,0]**2 + x[:,0]*x[:,1] + (-4 + 4*x[:,1]**2)*x[:,1]**2 + scale
 
 def grad_SHCF(x: np.ndarray):
+
     if x.ndim == 1:
         g = np.array([
             8*x[0] - 8.4 * x[0]**3 + 2*x[0]**5 + x[1],
@@ -47,6 +55,7 @@ def hessian_SHCF(x: np.ndarray):
             [1, -8 + 48*x[1]**2]
         ])
 
+@f_counter
 def SHCF_combined(x: np.ndarray):
     return SHCF(x), grad_SHCF(x)
 
@@ -270,6 +279,18 @@ def solve_L96_ode_return_all(input, F, tf):
     sol = solve_ivp(lambda t,x: L96(x,p), [0,tf], x0, max_step=0.1, atol=1e-6, rtol=1e-4)
     return sol
 
+def test_and_plot_L96_ode_solve(input, F, tf):
+    sol = solve_L96_ode_return_all(input, F, tf)
+    x = sol.y
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    ax.plot(x[0,:], x[1,:], x[2,:])
+    ax.set_title(f'Lorenz 96 ODE plot (first 3 variables), d={len(input)}, tf={tf}, F={F}')
+    ax.set_xlabel('$x_1$')
+    ax.set_ylabel('$x_2$')
+    ax.set_zlabel('$x_3$')
+    plt.show()
+
 # this is the version we supply to the nearest neighbors algorithm
 # input is a length (N+1) vector, where the first entry is the value F (forcing)
 # output is a length N vector (the solve at a time tf) and the gradient (size N*(N+1))
@@ -282,15 +303,25 @@ def solve_L96_ode_with_sensitivities(input, F, tf):
     return xf[:n], np.reshape(xf[2*n:], shape=(n,n)).T
 
 
+def SVD_analysis(points):
+    # assume points is a p*n matrix (each column corresponds to a point)
+    # first, normalize data
+    mean = np.mean(points, axis=0)
+    std = np.std(points, axis=0)
+    points_normalized = (points - mean) / std
+
+    # compute SVD
+    return np.linalg.svd(points_normalized, compute_uv=False)
 
 
 
 def generate_latex_table(data):
 
-    colstring = '|c|c|c||c|c|c|c||c|c|c|c|'
+    colstring = '|c|c|c||c|c|c|c||c|c|c|c||c|c|c|'
     headers = ['$N_{init}$', 'atol', 'rtol',
         '$N_{sources}$', '$p_{out}$', '$p_{in,good}$', '$p_{in,bad}$',
-        '$\\|e\\|_\\infty$', '$e_{med}$', '$\\|e\\|_\\infty / \\|f\\|_\\infty$', '$\\|e\\|_2 / \\|f\\|_2$']
+        '$\\|e\\|_\\infty$', '$e_{med}$', '$\\|e\\|_\\infty / \\|f\\|_\\infty$', '$\\|e\\|_2 / \\|f\\|_2$',
+        '$e_{med}$', '$\\|e\\|_\\infty / \\|f\\|_\\infty$', '$\\|e\\|_2 / \\|f\\|_2$']
     headerstring = ''
     for j, header in enumerate(headers):
         headerstring += header
@@ -331,12 +362,12 @@ def generate_latex_table(data):
         tablestr += rowstr
 
     tablestr += \
-f"""\
+"""\
         \\hline
-    \\end{{tabular}}
-    \\caption{{This is a caption!}}
-    \\label{{tab:new_tab}}
-\\end{{table}}\
+    \\end{tabular}
+    \\caption{This is a caption!}
+    \\label{tab:new_tab}
+\\end{table}\
 """
 
     print(tablestr)
@@ -366,7 +397,7 @@ def test_1D(N_init = 2000, atol=0.01):
     fig, ax = plt.subplots(1,2)
 
     ax[0].plot(xx, yy_exact, '-k', label='Exact')
-    ax[0].plot(xx, yy_interpolant, '--m', label=f'Interpolant')
+    ax[0].plot(xx, yy_interpolant, '--m', label='Interpolant')
     ax[0].scatter(sources, one_d_example(sources), c='blue', marker='x', label=f'Sources ($N_s = {len(sources)}$)')
     ax[0].scatter(xx[bad_points], one_d_example(xx[bad_points]),
                 marker='o', label=f'Unguaranteed Points ($N = {bad_points.sum()}$)', c='orange')
@@ -392,11 +423,14 @@ def test_2D(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init = 500
     L = check_matrix_2norm(hessian_SHCF, domain)
 
     interpolant = NearODESurrogate()
+    SHCF_combined.calls = 0
     interpolant.train_model_from_sampling(
-            SHCF_combined, domain, 1, N_init, 'LHS', True, N_init_clusters = 100,
+            SHCF, domain, 1, N_init, 'LHS', True, N_init_clusters = 100,
             min_ppc = min_ppc, atol = atol, rtol = rtol,
-            check_guarantee_N_times=0, L=L, seed=1234)
+            check_guarantee_N_times=0, L=L, seed=1234,
+            use_gradient = False)
     sources = interpolant.get_sources()
+    print(f'Total number of function evals for training: {SHCF_combined.calls - N_init}')
 
     x = np.linspace(domain[0,0], domain[0,1], 300)
     y = np.linspace(domain[1,0], domain[1,1], 300)
@@ -540,6 +574,10 @@ def test_2D(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init = 500
             np.median(red_abs_errs), # median abs error
             np.linalg.norm(red_abs_errs, np.inf) / np.linalg.norm(red_true_vals, np.inf), # l-inf rel error
             np.linalg.norm(red_abs_errs, 2) / np.linalg.norm(red_true_vals, 2), # l2 rel error
+            # section 4: overall errors
+            np.median(abs_error), # median abs error
+            np.linalg.norm(abs_error, np.inf) / np.linalg.norm(zz_exact, np.inf), # l-inf rel error
+            np.linalg.norm(abs_error, 2) / np.linalg.norm(zz_exact, 2) # l2 rel error
         ])
     else:
         datavec = np.array([
@@ -556,11 +594,12 @@ def test_2D(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init = 500
             0,
         ])
 
-    plt.figure()
-    plt.scatter(red_rel_errs, red_abs_errs, c='black', marker='x', s=3)
-    plt.title('Relative vs. Absolute Errors')
-    plt.xlabel('Rel err.')
-    plt.ylabel('Abs err.')
+    if 0:
+        plt.figure()
+        plt.scatter(red_rel_errs, red_abs_errs, c='black', marker='x', s=3)
+        plt.title('Relative vs. Absolute Errors')
+        plt.xlabel('Rel err.')
+        plt.ylabel('Abs err.')
 
 
 
@@ -570,7 +609,7 @@ def test_2D(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init = 500
     if 0:
         bad_ind = np.unravel_index(abs_error_reshaped.argmax(), abs_error_reshaped.shape)
         bad_pt = np.array([xv[bad_ind], yv[bad_ind]])
-        D, I = interpolant.KNN_search._faiss_index.search(bad_pt.reshape(1,2), 1)
+        D, I = interpolant.KNN_search._faiss_index.search(bad_pt.reshape(1,2), 1)  # noqa: E741
         bad_nn = interpolant.KNN_search.features[I.flatten()].flatten()
         print(f'Nearest neighbor: {bad_nn}')
         print(f'Point with large error: {bad_pt}')
@@ -585,7 +624,29 @@ def test_2D(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init = 500
         plt.plot(lambdagrid, eta, '--', label='Interpolant')
         plt.xlim((-0.1,1.1))
 
-    # plt.show()
+
+    # SVD of clusters
+    # Take all initial data and find nearest neighbor
+    # For each cluster, put points into matrix, compute SVD
+    # first, sort data
+    if 0:
+        grid = np.random.uniform(domain[:,0], domain[:,1], (N_init*10, 2))
+        near_source_inds = interpolant.KNN_search.find_nearest_sources(grid)
+        S_ratio = np.zeros(interpolant.N_sources)
+        for j in range(interpolant.N_sources):
+            points_in_cluster_j = grid[near_source_inds == j]
+            if len(points_in_cluster_j) > 2:
+                S = SVD_analysis(points_in_cluster_j)
+                S_ratio[j] = S[0] / S[1]
+                if S_ratio[j] > 1e6:
+                    print(points_in_cluster_j)
+            else:
+                S_ratio[j] = -1
+        plt.figure()
+        plt.hist(S_ratio)
+        plt.title('$\\sigma_1 / \\sigma_2$ (SVD of Clusters)')
+        plt.show()
+
 
     return datavec
 
@@ -641,22 +702,23 @@ def convergence_test_affine(tolmat, N_init, min_ppc=100):
 def test_a_function(f, f_combined, m, domain, atol=0.01, rtol=0.01, N_init=10000, min_ppc=50):
 
     interpolant = NearODESurrogate()
-    # interpolant.train_model_from_sampling(
-    #         f_combined, domain, m, N_init, 'LHS', True,
-    #         N_init_clusters=100, atol = atol, rtol = rtol, min_ppc = min_ppc,
-    #         check_guarantee_N_times=0, disp_time = True)
-    features = np.load('data/input_dt4.npy')
-    labels = np.load('data/output_dt4.npy')
-    gradients = np.load('data/gradients_dt4.npy')
-    interpolant.train_model_from_data(features, labels, gradients, True, f_combined,
-        N_init_clusters=100, atol=atol, rtol=rtol, min_ppc=min_ppc,
-        check_guarantee_N_times=0, disp_time=True)
+    interpolant.train_model_from_sampling(
+            f_combined, domain, m, N_init, 'LHS', True,
+            N_init_clusters=100, atol = atol, rtol = rtol, min_ppc = min_ppc,
+            check_guarantee_N_times=0, disp_time = True, use_gradient=False)
+    print(f'Total number of function evals for training: {f_counter.calls}')
+    # features = np.load('data/input_dt4.npy')
+    # labels = np.load('data/output_dt4.npy')
+    # gradients = np.load('data/gradients_dt4.npy')
+    # interpolant.train_model_from_data(features, labels, gradients, True, True, f_combined,
+    #     N_init_clusters=100, atol=atol, rtol=rtol, min_ppc=min_ppc,
+    #     check_guarantee_N_times=0, disp_time=True)
 
     
     # evaluate exact
     # pick some evaluation points using LHS
     N_eval = 10000
-    l = domain[:,0]
+    l = domain[:,0]  # noqa: E741
     r = domain[:,1]
     sampler = qmc.LatinHypercube(d=len(domain))
     pts = sampler.random(n=N_eval)
@@ -684,8 +746,7 @@ def test_a_function(f, f_combined, m, domain, atol=0.01, rtol=0.01, N_init=10000
 
     # display stats about errors
     red_abs_errs = abs_error[yes_g_bad_err]
-    red_rel_errs = rel_error[yes_g_bad_err]
-    red_true_vals = interp[yes_g_bad_err]
+    red_true_vals = exact[yes_g_bad_err]
     if len(red_abs_errs > 0):
         datavec = np.array([
             # section 1: initial values
@@ -702,6 +763,10 @@ def test_a_function(f, f_combined, m, domain, atol=0.01, rtol=0.01, N_init=10000
             np.median(red_abs_errs), # median abs error
             np.linalg.norm(red_abs_errs, np.inf) / np.linalg.norm(red_true_vals, np.inf), # l-inf rel error
             np.linalg.norm(red_abs_errs, 2) / np.linalg.norm(red_true_vals, 2), # l2 rel error
+            # section 4: overall errors
+            np.median(abs_error), # median abs error
+            np.linalg.norm(abs_error, np.inf) / np.linalg.norm(exact, np.inf), # l-inf rel error
+            np.linalg.norm(abs_error, 2) / np.linalg.norm(exact, 2) # l2 rel error
         ])
     else:
         datavec = np.array([
@@ -722,7 +787,7 @@ def test_a_function(f, f_combined, m, domain, atol=0.01, rtol=0.01, N_init=10000
 
 
 def convergence_test_a_function(test_function, tolmat, N_init, min_ppc=100):
-    datamat = np.empty((len(tolmat), 11))
+    datamat = np.empty((len(tolmat), 14))
     for j, tols in enumerate(tolmat):
         datamat[j] = test_function(tols[0], tols[1], N_init, min_ppc)
     
@@ -750,6 +815,58 @@ def test_lorenz(n, tf, atol=0.01, rtol=0.01, N_init=100000, min_ppc=50):
 
 def convergence_test_lorenz(n, tf, tolmat, N_init, min_ppc=100):
     convergence_test_a_function(lambda y1,y2,y3,y4: test_lorenz(n,tf,y1,y2,y3,y4), tolmat, N_init, min_ppc)
+
+
+def train_lorenz_surrogate(N_init, d, atol, F, dt):
+
+    interpolant = NearODESurrogate()
+    domain = np.column_stack((-5*np.ones(d), 5*np.ones(d)))
+
+    # train surrogate model
+    interpolant.train_model_from_sampling(
+            lambda x: solve_L96_ode_with_sensitivities(x,F,dt),
+            domain, d, N_init, 'LHS', True, N_init_clusters = 100,
+            min_ppc = 100, atol = atol, seed=1234,
+            use_gradient = True)
+    
+    return interpolant
+
+
+def lorenz_time_stepping_test(interpolant: NearODESurrogate, d, F, dt, x0, tf):
+
+    # Exact ODE solution
+    tvec = np.arange(0, tf+1e-6, dt)
+    p = np.array([F])
+    sol = solve_ivp(lambda t,x: L96(x,p), [0,tf], x0, max_step=0.1, atol=1e-6, rtol=1e-4, t_eval=tvec)
+    x_exact = sol.y
+
+    # Surrogate ODE solution
+    x_surrogate = np.zeros_like(x_exact)
+    in_trust_region = np.zeros(len(tvec))
+    x_surrogate[:,0] = x0
+    
+    for j in range(len(tvec)-1):
+        eval, trust = interpolant.evaluate(np.expand_dims(x_surrogate[:,j], axis=1).T)
+        x_surrogate[:,j+1] = eval.flatten()
+        in_trust_region[j+1] = trust[0]
+    
+    # Compare solutions
+    print(x_exact)
+    print(x_surrogate)
+    print(in_trust_region)
+
+    # Plot on top of each other
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    ax.plot(x_exact[0,:], x_exact[1,:], x_exact[2,:], label='Exact Solution')
+    ax.plot(x_surrogate[0,:], x_surrogate[1,:], x_surrogate[2,:], label='Surrogate Solution')
+    plt.legend()
+    ax.set(xlabel='$x_1$', ylabel='$x_2$', zlabel='$x_3$',
+           title=f'Lorenz 96 ODE predicted via surrogate, dt={dt}, tf={tf}, F={F}, d={d}')
+    plt.show()
+
+
+
 
 
 
@@ -793,7 +910,7 @@ if __name__ == '__main__':
         convergence_test_quadratic(tolmat, N_init=100000)
 
     # Lorenz 96 ODE solve
-    elif 1:
+    elif 0:
         dt = 0.05
         steps = 4
         tolmat = np.array([
@@ -836,7 +953,7 @@ if __name__ == '__main__':
         m = 5
         N = 100000
         F = 0
-        l = np.ones(5) * 5
+        l = np.ones(5) * 5  # noqa: E741
         r = np.ones(5) * 10
 
         # draw parameters
@@ -854,5 +971,50 @@ if __name__ == '__main__':
         np.save('data/output_dt4.npy', labels)
         np.save('data/gradients_dt4.npy', gradients)
 
+    elif 1:
+        d = 4
+        N_init = 100000
+        atol = 0.01
+        F = 1
+        dt = 0.1
+        tf = 50
+        x0 = 0.9 * np.ones(4)
+        # x0[0] += 0.01
+        interpolant = train_lorenz_surrogate(N_init, d, atol, F, dt)
+        save_surrogate(f'new_folder/lorenz_surrogate_dt_{dt}_atol_{atol}_F_{F}.pkl', interpolant)
+        # interpolant: NearODESurrogate = load_surrogate('new_folder/surrogate.pkl')
+        # lorenz_time_stepping_test(interpolant, d, F, dt, x0, tf)
 
-    
+    elif 0:
+        interpolant: NearODESurrogate = load_surrogate('new_folder/surrogate_dt_0.2_atol_0.1.pkl')
+        KNN = interpolant.KNN_search
+
+        hessian_order = np.argsort(KNN.hessians)
+
+        plt.figure()
+        plt.hist(KNN.trust_radii)
+        plt.title('Trust radii size')
+
+        plt.figure()
+        plt.hist(KNN.n_pts_per_cluster)
+        plt.title('N pts per cluster')
+
+        fig, ax = plt.subplots()
+        plt.hist(KNN.hessians, bins=np.arange(0,1.6,0.05))
+        plt.title('Lipschitz constant magnitudes')
+        plt.text(0.95, 0.95,
+                 f'Outliers:\n{KNN.hessians[hessian_order[-1]]}\n\
+                 {KNN.hessians[hessian_order[-2]]}\n\
+                 {KNN.hessians[hessian_order[-3]]}\n\
+                 {KNN.hessians[hessian_order[-4]]}\n',
+                 ha='right', va='top', transform = ax.transAxes)
+
+        plt.figure()
+        plt.hist(KNN.tree_levels, bins=np.arange(25))
+        plt.title('Tree Levels')
+
+        plt.show()
+
+
+
+

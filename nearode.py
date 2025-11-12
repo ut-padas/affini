@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import pickle
 import numpy as np
 from adaptive_clustering import adaptive_cluster_algorithm, flatten_cluster_centers_with_gradient
 from nn_inference import NN_Inference
@@ -34,6 +35,7 @@ class NearODESurrogate:
 
         # clustering parameters
         do_clustering = True,
+        use_gradient = True,
         oracle = None,
         N_init_clusters = 10, # initial number of clusters
         atol = 0.01,
@@ -54,16 +56,20 @@ class NearODESurrogate:
         start_time = time.perf_counter()
         
         # TODO: check inputs
-        pf, n = features.shape
-        pl, m = labels.shape
-        pg, mg, ng = gradients.shape
-        if pf != pg or pl != pg:
-            print('Length of inputs does not match')
-        if n != ng:
-            print('Length of input dimension does not match gradients')
-        if m != mg:
-            print('Length of output dimension does not match gradients')
-        
+        if gradients is not None:
+            pf, n = features.shape
+            pl, m = labels.shape
+            pg, mg, ng = gradients.shape
+            if pf != pg or pl != pg:
+                print('Length of inputs does not match')
+            if n != ng:
+                print('Length of input dimension does not match gradients')
+            if m != mg:
+                print('Length of output dimension does not match gradients')
+        else:
+            pf, n = features.shape
+            pl, m = labels.shape
+            
         self.atol = atol
         self.rtol = rtol
         self.oracle = oracle
@@ -74,7 +80,7 @@ class NearODESurrogate:
         # Cluster if user selects the option
         # If do_clustering is True, the user must provide an "oracle" function that returns
         # both the function value and its gradient as a tuple.
-        if do_clustering == True:
+        if do_clustering:
 
             # make sure oracle is defined
             if not callable(oracle):
@@ -83,10 +89,12 @@ class NearODESurrogate:
 
             # call clustering algorithm
             k, cluster_tree = adaptive_cluster_algorithm(features, oracle, atol, rtol, \
-                    N_init_clusters, min_ppc, True, labels, seed)
+                    N_init_clusters, min_ppc, use_gradient, labels, seed)
             
-            new_features, new_labels, new_gradients, new_hessians, new_dims = \
+            new_features, new_labels, new_gradients, new_hessians, radii, n_pts, hessian_vars, tree_levels = \
                     flatten_cluster_centers_with_gradient(k, n, m, cluster_tree)
+            
+            
         
 
         else:
@@ -94,28 +102,31 @@ class NearODESurrogate:
             new_labels = labels
             new_gradients = gradients
             new_hessians = None
-            new_dims = None
+            radii = None
+            n_pts = np.ones(len(new_features))
+            hessian_vars = None
+            tree_levels = np.zeros(len(new_features))
             k = len(features)
 
 
         # Put these into FAISS
-        self.KNN_search = NN_Inference(new_features, new_labels, new_gradients, new_hessians, new_dims)
+        self.KNN_search = NN_Inference(new_features, new_labels, new_gradients, new_hessians, radii, n_pts, hessian_vars, tree_levels)
         self._model_trained = True
         self.N_sources = k
 
 
         # Check the norms of the gradients and hessians
-        self.KNN_search.show_source_information()
+        # self.KNN_search.show_source_information()
 
 
         # Computational guarantee: check distance to all training points
-        if do_clustering == True and L_global is not None and check_guarantee_N_times > 0:
+        if do_clustering and L_global is not None and check_guarantee_N_times > 0:
             for j in range(check_guarantee_N_times):
                 bad_features = self._test_guarantee(features, atol, L_global, alpha)
                 self.add_sources(features[bad_features])
 
         end_time = time.perf_counter()
-        if disp_time == True:
+        if disp_time:
             print(f'Time to train: {end_time-start_time:.2f} seconds')
 
         return 0
@@ -146,6 +157,7 @@ class NearODESurrogate:
 
         # clustering parameters
         do_clustering = True,
+        use_gradient = True,
         N_init_clusters = 10, # initial number of clusters
         atol = 0.01, # absolute error tolerance
         rtol = None, # relative error tolerance
@@ -171,11 +183,11 @@ class NearODESurrogate:
         if domain.ndim == 1:
             n = 1
             q = len(domain)
-            l = domain[0]
+            l = domain[0]  # noqa: E741
             r = domain[1]
         else:
             n, q = domain.shape
-            l = domain[:,0]
+            l = domain[:,0]  # noqa: E741
             r = domain[:,1]
         if q != 2:
             # throw error because this dimension should be a range
@@ -196,17 +208,23 @@ class NearODESurrogate:
 
         # do solves (maybe this isn't necessary but it's certainly easier)
         labels = np.empty((len(features),m))
-        gradients = np.empty((len(features),m,n))
+        if use_gradient:
+            gradients = np.empty((len(features),m,n))
+        else:
+            gradients = None
         for jj, feature in enumerate(features):
-            labels[jj], gradients[jj] = oracle(feature)
+            if use_gradient:
+                labels[jj], gradients[jj] = oracle(feature)
+            else:
+                labels[jj] = oracle(feature)
         print('Initial solves complete.')
         
         # plug this into above function
-        self.train_model_from_data(features, labels, gradients, do_clustering, oracle,
+        self.train_model_from_data(features, labels, gradients, do_clustering, use_gradient, oracle,
                 N_init_clusters, atol, rtol, min_ppc, check_guarantee_N_times, L, alpha, False, seed)
 
         end_time = time.perf_counter()
-        if disp_time == True:
+        if disp_time:
             print(f'Time to train: {end_time-start_time:.2f} seconds')
 
     
@@ -224,7 +242,7 @@ class NearODESurrogate:
         alpha=1, # fudge factor for the Hessian approximations
     ):
 
-        if self._model_trained == True:
+        if self._model_trained:
             if targets.ndim == 1:
                 predictions, unguaranteed_points = self.KNN_search.predict(targets.reshape(len(targets), 1),
                         k, disp_time=disp_time, L_global=L, atol=self.atol, rtol=self.rtol, alpha=alpha)
@@ -235,7 +253,7 @@ class NearODESurrogate:
             if np.sum(unguaranteed_points) > 3 * self.N_sources:
                 print('WARNING: too many points (3 * N_clusters) are outside of guarantee. Need more clusters.')
 
-            if recluster == True:
+            if recluster:
                 self.add_sources(targets[unguaranteed_points])
             
             return predictions, unguaranteed_points
@@ -257,9 +275,45 @@ class NearODESurrogate:
         self.N_sources += len(new_features)
 
 
+    # Override this method so we save and load everything but the oracle field when we pickle
+    def __getstate__(self):
+        state = {
+            '_model_trained':   self._model_trained,
+            'atol':             self.atol,
+            'rtol':             self.rtol,
+            'n':                self.n,
+            'm':                self.m,
+            'KNN_search':       self.KNN_search,
+            'N_sources':        self.N_sources
+        }
+        return state
+    
+    def __setstate__(self, state):
+        self._model_trained = state['_model_trained']
+        self.atol           = state['atol']
+        self.rtol           = state['rtol']
+        self.n              = state['n']
+        self.m              = state['m']
+        self.KNN_search     = state['KNN_search']
+        self.N_sources      = state['N_sources']
+        self.oracle         = None
+    
+
+
     def _test_guarantee(self, targets, tol, L_global, alpha):
-        D, I = self.KNN_search._faiss_index.search(targets, 1)
+        D, I = self.KNN_search._faiss_index.search(targets, 1)  # noqa: E741
         local_tols = np.minimum(self.KNN_search.trust_radii[I[:,0]] ** 2, 2 * tol / (alpha * self.KNN_search.hessians[I[:,0]]))
         global_tol = 2 * tol / L_global
         good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
         return np.logical_not(good_points)
+    
+
+
+
+def save_surrogate(filename, surrogate):
+    with open(filename, 'wb') as file:
+        pickle.dump(surrogate, file, pickle.HIGHEST_PROTOCOL)
+
+def load_surrogate(filename):
+    with open(filename, 'rb') as file:
+        return pickle.load(file)
