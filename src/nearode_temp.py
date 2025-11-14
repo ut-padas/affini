@@ -8,7 +8,7 @@ import numpy as np
 from scipy.stats import qmc
 
 from src.gpu_adaptive_clustering import adaptive_clustering_gpu
-from src.nn_inference_temp import NN_Inference
+from src.nn_inference import NN_Inference
 
 
 class NearODESurrogate:
