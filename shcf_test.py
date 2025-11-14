@@ -1,5 +1,3 @@
-import warnings
-
 import numpy as np
 
 from nearode import NearODESurrogate
@@ -234,7 +232,13 @@ if __name__ == "__main__":
     # cprofile.enable()
 
     tolmat = np.array(
-        [[0.1, 0.02], [0.05, 0.01], [0.025, 0.005], [0.01, 0.002], [0.005, 0.001]],
+        [
+            [0.1, 0.02],
+            [0.05, 0.01],
+            [0.025, 0.005],
+            [0.01, 0.002],
+            [0.005, 0.001],
+        ],
     )
 
     domain = np.array([[-3, 3], [-2, 2]])
