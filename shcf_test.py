@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.nearode import NearODESurrogate
+from src.nearode import ClusteringBackend, NearODESurrogate
 from src.shcf import (
     _HAS_GPU,
     SHCF_cupy,
@@ -108,6 +108,8 @@ def test_2D(
         f=SHCF_numpy,
         grad_f=grad_SHCF_numpy,
         cupy_f=cupy_f,
+        cupy_grad_f=None,
+        clustering_backend=ClusteringBackend.NUMPY_CUPY_HYBRID,
         domain=domain,
         N=N_init,
         distribution="LHS",
@@ -127,7 +129,13 @@ def test_2D(
     pts = np.column_stack((xv.flatten(), yv.flatten()))
 
     zz_exact = SHCF_numpy(pts)  # Already has shape (n, 1)
-    zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, L=L, recluster=False)
+    zz_interpolant, bad_pts_inds = interpolant.evaluate(
+        pts,
+        k=1,
+        L=L,
+        recluster=False,
+        clustering_backend=ClusteringBackend.NUMPY_CUPY_HYBRID,
+    )
     abs_error = np.linalg.norm(zz_exact - zz_interpolant, 2, axis=1)
     rel_error = abs_error / np.linalg.norm(zz_exact, 2, axis=1)
     good_abs_error = abs_error <= atol
@@ -154,7 +162,11 @@ def test_2D(
     # CHECK ACCURACY AFTER ONE RECLUSTERING
     for j in range(0):
         zz_interpolant, bad_pts_inds = interpolant.evaluate(
-            pts, k=1, L=L, recluster=True
+            pts,
+            k=1,
+            L=L,
+            recluster=True,
+            clustering_backend=ClusteringBackend.NUMPY_CUPY_HYBRID,
         )
         good_pts_inds = np.logical_not(bad_pts_inds)
         sources = interpolant.get_sources()

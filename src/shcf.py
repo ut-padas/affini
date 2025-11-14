@@ -119,3 +119,26 @@ def grad_SHCF_cupy(x: cp.ndarray):
 
     # Add new axis to get shape (n, 1, 2) to follow convention: (n, fd, d) where fd=1, d=2
     return grads[:, cp.newaxis, :]
+
+
+def hessian_SHCF_cupy(x: cp.ndarray):
+    """
+    Vectorized hessian of Six-Hump Camelback function using CuPy.
+
+    Shape Convention:
+        x.shape: (n, 2) where n=number of points, input is 2D
+        Returns: (n, 2, 2) Hessian matrices
+    """
+    x1, x2 = x[:, 0], x[:, 1]
+
+    # Compute hessian components for each point
+    h11 = 8 - 25.2 * x1**2 + 10 * x1**4
+    h12 = cp.ones_like(x1)  # Off-diagonal element
+    h22 = -8 + 48 * x2**2
+
+    # Stack into hessian matrices: shape (n, 2, 2)
+    hessians = cp.stack(
+        [cp.stack([h11, h12], axis=1), cp.stack([h12, h22], axis=1)], axis=1
+    )
+
+    return hessians

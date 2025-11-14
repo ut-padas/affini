@@ -1,107 +1,7 @@
 import cupy as cp
 
-from src.nearode_temp import NearODESurrogate
-
-
-# Six-Hump Camelback function
-def SHCF(x: cp.ndarray):
-    """
-    Vectorized Six-Hump Camelback function.
-
-    Shape Convention:
-        x.shape: (n, 2) where n=number of points, input is 2D
-        Returns: (n, 1) function values
-    """
-    scale = 10
-    x1, x2 = x[:, 0], x[:, 1]
-
-    result = (
-        (4 - 2.1 * x1**2 + x1**4 / 3) * x1**2
-        + x1 * x2
-        + (-4 + 4 * x2**2) * x2**2
-        + scale
-    )
-
-    return result[:, cp.newaxis]  # Shape (n, 1)
-
-
-def grad_SHCF(x: cp.ndarray):
-    """
-    Vectorized gradient of Six-Hump Camelback function.
-
-    Shape Convention:
-        x.shape: (n, 2) where n=number of points, input is 2D
-        Returns: (n, 1, 2) gradients where each gradient is shape (1, 2)
-    """
-    x1, x2 = x[:, 0], x[:, 1]
-
-    # Compute gradient components
-    Dxf = 8 * x1 - 8.4 * x1**3 + 2 * x1**5 + x2
-    Dyf = x1 - 8 * x2 + 16 * x2**3
-
-    # Stack gradients: shape (n, 2)
-    grads = cp.stack([Dxf, Dyf], axis=1)
-
-    # Add new axis to get shape (n, 1, 2) to follow convention: (n, fd, d) where fd=1, d=2
-    return grads[:, cp.newaxis, :]
-
-
-def hessian_SHCF(x: cp.ndarray):
-    """
-    Vectorized hessian of Six-Hump Camelback function.
-
-    Shape Convention:
-        x.shape: (n, 2) where n=number of points, input is 2D
-        Returns: (n, 2, 2) Hessian matrices
-    """
-    x1, x2 = x[:, 0], x[:, 1]
-
-    # Compute hessian components for each point
-    h11 = 8 - 25.2 * x1**2 + 10 * x1**4
-    h12 = cp.ones_like(x1)  # Off-diagonal element
-    h22 = -8 + 48 * x2**2
-
-    # Stack into hessian matrices: shape (n, 2, 2)
-    hessians = cp.stack(
-        [cp.stack([h11, h12], axis=1), cp.stack([h12, h22], axis=1)], axis=1
-    )
-
-    return hessians
-
-
-def SHCF_combined(x: cp.ndarray):
-    """
-    Combined function returning both function value and gradient.
-
-    Shape Convention:
-        x.shape: (n, 2) where n=number of points, input is 2D
-        Returns:
-            - values: (n, 1) function values
-            - gradients: (n, 1, 2) gradients
-    """
-    scale = 10
-    x1, x2 = x[:, 0], x[:, 1]
-
-    # Compute intermediate values once
-    x1_sq = x1 * x1
-    x2_sq = x2 * x2
-    x1_4th = x1_sq * x1_sq
-
-    # Function value
-    result = (
-        (4 - 2.1 * x1_sq + x1_4th / 3) * x1_sq
-        + x1 * x2
-        + (-4 + 4 * x2_sq) * x2_sq
-        + scale
-    )
-
-    # Gradient (reuse computed values)
-    Dxf = 8 * x1 - 8.4 * x1_sq * x1 + 2 * x1_4th * x1 + x2
-    Dyf = x1 - 8 * x2 + 16 * x2_sq * x2
-
-    grads = cp.stack([Dxf, Dyf], axis=1)
-
-    return result[:, cp.newaxis], grads[:, cp.newaxis, :]
+from src.nearode import ClusteringBackend, NearODESurrogate
+from src.shcf import SHCF_cupy, grad_SHCF_cupy, hessian_SHCF_cupy
 
 
 def check_matrix_2norm(A, domain):
@@ -194,22 +94,25 @@ def generate_latex_table(data):
 def test_2D(
     atol=0.01, rtol=0.01, N_init=50000, domain=cp.array([[-3, 3], [-2, 2]]), min_ppc=100
 ):
-    L = check_matrix_2norm(hessian_SHCF, domain)
+    L = check_matrix_2norm(hessian_SHCF_cupy, domain)
 
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
-        oracle=SHCF_combined,
+        f=SHCF_cupy,
+        grad_f=grad_SHCF_cupy,
+        cupy_f=SHCF_cupy,
+        cupy_grad_f=grad_SHCF_cupy,
         domain=domain,
         N=N_init,
         distribution="LHS",
-        do_clustering=True,
-        N_init_clusters=100,
-        min_ppc=min_ppc,
+        num_initial_clusters=100,
+        min_pts_per_cluster=min_ppc,
         atol=atol,
         rtol=rtol,
         check_guarantee_N_times=0,
         L=L,
         seed=1234,
+        clustering_backend=ClusteringBackend.COMPLETE_CUPY,
     )
     sources = interpolant.get_sources()
 
@@ -218,8 +121,14 @@ def test_2D(
     xv, yv = cp.meshgrid(x, y)
     pts = cp.column_stack((xv.flatten(), yv.flatten()))
 
-    zz_exact = SHCF(pts)  # Already has shape (n, 1)
-    zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, L=L, recluster=False)
+    zz_exact = SHCF_cupy(pts)  # Already has shape (n, 1)
+    zz_interpolant, bad_pts_inds = interpolant.evaluate(
+        pts,
+        k=1,
+        L=L,
+        recluster=False,
+        clustering_backend=ClusteringBackend.COMPLETE_CUPY,
+    )
     abs_error = cp.linalg.norm(zz_exact - zz_interpolant, 2, axis=1)
     rel_error = abs_error / cp.linalg.norm(zz_exact, 2, axis=1)
     good_abs_error = abs_error <= atol
@@ -246,7 +155,11 @@ def test_2D(
     # CHECK ACCURACY AFTER ONE RECLUSTERING
     for j in range(0):
         zz_interpolant, bad_pts_inds = interpolant.evaluate(
-            pts, k=1, L=L, recluster=True
+            pts,
+            k=1,
+            L=L,
+            recluster=True,
+            clustering_backend=ClusteringBackend.COMPLETE_CUPY,
         )
         good_pts_inds = cp.logical_not(bad_pts_inds)
         sources = interpolant.get_sources()
@@ -332,7 +245,13 @@ if __name__ == "__main__":
     # cprofile.enable()
 
     tolmat = cp.array(
-        [[0.1, 0.02], [0.05, 0.01], [0.025, 0.005], [0.01, 0.002], [0.005, 0.001]]
+        [
+            [0.1, 0.02],
+            [0.05, 0.01],
+            [0.025, 0.005],
+            [0.01, 0.002],
+            [0.005, 0.001],
+        ]
     )
 
     domain = cp.array([[-3, 3], [-2, 2]])
