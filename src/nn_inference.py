@@ -145,6 +145,16 @@ class NN_Inference:
         """
         start_time = time.perf_counter()
 
+        # Ensure scalar tolerance values are Python/NumPy compatible
+        if atol is not None and hasattr(atol, "device"):  # CuPy scalar
+            atol = float(atol)
+        if rtol is not None and hasattr(rtol, "device"):
+            rtol = float(rtol)
+        if L_global is not None and hasattr(L_global, "device"):
+            L_global = float(L_global)
+        if hasattr(alpha, "device"):
+            alpha = float(alpha)
+
         # k-NN search via FAISS
         distances, indices = self._faiss_index.search(targets, k)  # type: ignore
 

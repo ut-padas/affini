@@ -13,6 +13,13 @@ from src.adaptive_clustering import adaptive_cluster_algorithm
 from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
 from src.nn_inference import NN_Inference
 
+try:
+    import cupy as cp
+
+    _HAS_GPU = cp.is_available()
+except ImportError:
+    _HAS_GPU = False
+
 
 class ClusteringBackend(Enum):
     COMPLETE_CUPY = "complete_cupy"
@@ -220,7 +227,13 @@ class NearODESurrogate:
         elif distribution == "LHS":
             sampler = qmc.LatinHypercube(d=n, rng=seed)
             X = sampler.random(n=N)
-            X = qmc.scale(X, l, r)
+            if _HAS_GPU:
+                l_np = cp.asnumpy(l) if hasattr(l, "device") else l
+                r_np = cp.asnumpy(r) if hasattr(r, "device") else r
+                X = qmc.scale(X, l_np, r_np)
+                X = cp.asarray(X)
+            else:
+                X = qmc.scale(X, l, r)
 
         # --- Delegate to the array-based trainer (preserving original args order) ---
         self.train_model_from_data(
@@ -257,6 +270,13 @@ class NearODESurrogate:
                 "Model must be trained before calling evaluate(). Run train_model_from_data() or train_model_from_sampling() first."
             )
 
+        # Handle CuPy arrays by converting to NumPy
+        is_cupy_input = _HAS_GPU and hasattr(
+            targets, "device"
+        )  # Check if it's a CuPy array
+        if is_cupy_input:
+            targets = cp.asnumpy(targets)
+
         if targets.ndim != 2:
             raise ValueError(
                 f"targets must be 2D array with shape (n_query, d), got shape {targets.shape}"
@@ -271,8 +291,19 @@ class NearODESurrogate:
             alpha=alpha,
         )
 
+        # Convert back to CuPy if input was CuPy
+        if is_cupy_input:
+            predictions = cp.asarray(predictions)
+            unguaranteed_points = cp.asarray(unguaranteed_points)
+
         # Heuristic warning for under-resolved surrogate coverage.
-        if np.sum(unguaranteed_points) > 3 * self.N_sources:
+        # Use appropriate sum function based on array type
+        if is_cupy_input:
+            sum_unguaranteed = cp.sum(unguaranteed_points)
+        else:
+            sum_unguaranteed = np.sum(unguaranteed_points)
+
+        if sum_unguaranteed > 3 * self.N_sources:
             print(
                 "WARNING: too many points (3 * N_clusters) are outside of guarantee. Need more clusters."
             )

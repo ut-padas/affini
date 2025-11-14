@@ -225,16 +225,16 @@ def refine_adaptive_clusters(
         cluster_points = []
         cluster_sizes = []
 
-        for cluster_points in level:
-            cluster_size = cluster_points.shape[0]
+        for cluster_pts in level:
+            cluster_size = cluster_pts.shape[0]
 
             # Update cluster points by generating extra points if needed
             if cluster_size < min_pts_per_cluster:
-                new_X = generate_extra_points(cluster_points, min_pts_per_cluster, rng)
-                work_X = cp.concatenate([cluster_points, new_X], axis=0)
+                new_X = generate_extra_points(cluster_pts, min_pts_per_cluster, rng)
+                work_X = cp.concatenate([cluster_pts, new_X], axis=0)
                 cluster_points.append(work_X)
             else:
-                cluster_points.append(cluster_points)
+                cluster_points.append(cluster_pts)
 
             cluster_sizes.append(cluster_points[-1].shape[0])
 
@@ -510,6 +510,7 @@ def main(
         abs_tol=ABS_TOL,
         rel_tol=REL_TOL,
         return_numpy=False,
+        debug=True,
     )
     print(f"Total final clusters formed: {len(clusters)}")
     return clusters
@@ -520,8 +521,8 @@ if __name__ == "__main__":
     D = 3
     N_INIT_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 50
-    ABS_TOL = 1e-3
-    REL_TOL = 1e-3
+    ABS_TOL = 1e-2
+    REL_TOL = 1e-2
     print(f"{ABS_TOL=}, {REL_TOL=}")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
 
