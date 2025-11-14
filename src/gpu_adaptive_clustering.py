@@ -203,6 +203,8 @@ def refine_adaptive_clusters(
 
     final_clusters: list[Cluster] = []
     n_level = 0
+
+    start_time = time.perf_counter()
     level_start_time = time.perf_counter()
 
     # BFS by levels
@@ -377,6 +379,8 @@ def refine_adaptive_clusters(
 
         n_level += 1
 
+    delta = time.perf_counter() - start_time
+    print(f"Clustering Completed. Total levels: {n_level}, time taken: {delta:.2f}s")
     return final_clusters
 
 
