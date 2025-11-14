@@ -74,57 +74,11 @@ def median_cut_projection(
         left_mask: (n,) boolean mask for left cluster
         right_mask: (n,) boolean mask for right cluster
     """
-    s = X @ q  # (n,)
+    s = X @ q
     med = cp.median(s)
     left = s <= med
     right = s > med
-
-    # Skip edge-case handling for now
-    # # Ensure both non-empty
-    # n_left = left.sum()
-    # n_right = right.sum()
-    # if n_left == 0:
-    #     # move the smallest element to left
-    #     k = cp.argmin(s)
-    #     left[k] = True
-    #     right[k] = False
-    # elif n_right == 0:
-    #     # move the largest element to right
-    #     k = cp.argmax(s)
-    #     right[k] = True
-    #     left[k] = False
     return left, right
-
-
-def generate_extra_points(
-    X: cp.ndarray,
-    min_points_per_cluster: int,
-    rng: cp.random.Generator,
-) -> cp.ndarray:
-    """
-    Given a cluster with too few points, generate extra points via convex combinations.
-
-    Args:
-        X: (Q, D) data matrix for the cluster
-        min_points_per_cluster: minimum desired points per cluster
-        rng: cupy random generator
-
-    Returns:
-        new_X: (n_extra, D) generated extra points
-    """
-    Q = X.shape[0]
-    if Q < 2:
-        raise ValueError("At least two points required to generate extra points.")
-
-    n_extra = max(1, min_points_per_cluster - Q + 1)
-    lambdas = rng.random(n_extra, dtype=X.dtype)
-
-    idx0 = rng.integers(0, Q, size=n_extra)
-    offs = rng.integers(1, Q, size=n_extra)
-    idx1 = (idx0 + offs) % Q
-
-    new_X = lambdas[:, None] * X[idx0] + (1.0 - lambdas)[:, None] * X[idx1]
-    return new_X
 
 
 @dataclass
@@ -563,14 +517,14 @@ def main(
 
 
 if __name__ == "__main__":
-    N_SAMPLES = 100_000
-    D = 3
+    N_SAMPLES = 1_000_000  # Match BFS version
     N_INIT_CLUSTERS = 100
-    MIN_PTS_PER_CLUSTER = 50
-    ABS_TOL = 1e-3
-    REL_TOL = 1e-3
+    MIN_PTS_PER_CLUSTER = 5  # Match BFS version
+    ABS_TOL = 0.01  # Match BFS version
+    REL_TOL = 0.01  # Match BFS version
     print(f"{ABS_TOL=}, {REL_TOL=}")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
+    D = 3
 
     tic = time.perf_counter()
     clusters = main(

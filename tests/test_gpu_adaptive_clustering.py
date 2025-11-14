@@ -4,7 +4,6 @@ import pytest
 from src.gpu_adaptive_clustering import (
     CP_DTYPE,
     SEED,
-    generate_extra_points,
     median_cut_projection,
     randomized_qr_gpu,
 )
@@ -97,69 +96,6 @@ class TestMedianCutProjection:
 
         assert cp.all(projections[left] <= median_val)
         assert cp.all(projections[right] > median_val)
-
-
-class TestGenerateExtraPoints:
-    """Test cases for generate_extra_points function."""
-
-    def test_convex_combination_property(self):
-        """Test that generated points are convex combinations of original points."""
-        cp.random.seed(SEED)
-        rng = cp.random.default_rng(SEED)
-
-        # Original points
-        X = cp.array(
-            [
-                [0.0, 0.0],
-                [2.0, 0.0],
-                [1.0, 2.0],
-                [0.0, 1.0],
-            ],
-            dtype=CP_DTYPE,
-        )
-
-        min_points = 10
-        new_X = generate_extra_points(X, min_points, rng)
-
-        # Check that we got the expected number of points
-        expected_extra = max(1, min_points - X.shape[0] + 1)
-        assert (
-            new_X.shape[0] == expected_extra
-        ), f"Expected {expected_extra} points, got {new_X.shape[0]}"
-        assert (
-            new_X.shape[1] == X.shape[1]
-        ), f"Expected dimension {X.shape[1]}, got {new_X.shape[1]}"
-
-        # Each generated point should be inside the convex hull of original points
-        # For convex combination λ*p1 + (1-λ)*p2, point should be on line segment
-        Q = X.shape[0]
-        for i in range(new_X.shape[0]):
-            point = new_X[i]
-
-            # Find the closest pair of original points
-            min_dist = float("inf")
-
-            for j in range(Q):
-                for k in range(Q):
-                    if j != k:
-                        # Check if point lies on line segment between X[j] and X[k]
-                        p1, p2 = X[j], X[k]
-
-                        # Project point onto line segment
-                        v = p2 - p1
-                        if cp.linalg.norm(v) > 1e-10:
-                            t = cp.dot(point - p1, v) / cp.dot(v, v)
-                            t = cp.clip(t, 0, 1)
-                            proj = p1 + t * v
-                            dist = cp.linalg.norm(point - proj)
-
-                            if dist < min_dist:
-                                min_dist = dist
-
-            # The point should be very close to some line segment
-            assert (
-                min_dist < 1e-8
-            ), f"Point {point} not on any line segment, min_dist={min_dist}"
 
 
 if __name__ == "__main__":

@@ -67,6 +67,7 @@ class AdaptiveClusterer:
         # Keyword arguments
         use_gpu: bool = True,
         gpu_len_threshold: int = 10_000,
+        should_generate_extra_points: bool = True,
     ):
         """
         Initialize the adaptive clusterer.
@@ -79,6 +80,7 @@ class AdaptiveClusterer:
             seed: Random seed for reproducibility.
             use_gpu: Whether to use GPU acceleration if available.
             gpu_len_threshold: Minimum data length to use GPU clustering. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_cpu_vs_gpu.py
+            should_generate_extra_points: Whether to generate extra points for small clusters.
         """
         self.abs_tol = atol
         self.rel_tol = rtol
@@ -88,6 +90,8 @@ class AdaptiveClusterer:
 
         self.use_gpu = use_gpu and _HAS_GPU
         self.gpu_len_threshold = gpu_len_threshold
+        self.should_generate_extra_points = should_generate_extra_points
+        print(f"Should generate extra points: {self.should_generate_extra_points}")
 
         self._cluster_id = 0
 
@@ -105,7 +109,7 @@ class AdaptiveClusterer:
             Function values with shape (n, fd)
         """
         if self.use_gpu and cupy_f is not None and len(X) >= self.gpu_len_threshold:
-            print("Using CuPy for function evaluation.")
+            # print("Using CuPy for function evaluation.")
             Xg = cp.asarray(X, dtype=CP_DTYPE)
             val = cupy_f(Xg)
             return cp.asnumpy(val).astype(NP_DTYPE)
@@ -190,18 +194,18 @@ class AdaptiveClusterer:
         if cluster_size == 0:
             raise ValueError("Empty cluster encountered.")
 
-        c = self._get_centroid(X_cluster)[None, :]  # (1, D)
+        c = self._get_centroid(X_cluster)[None, :]
         F_cluster = self._get_function_values(X_cluster, f, cupy_f)
-        F_c = f(c)  # (1, FD)
-        J_c = grad_f(c) if grad_f is not None else None  # (1, FD, D)
+        F_c = f(c)
+        J_c = grad_f(c) if grad_f is not None else None
 
-        dx = X_cluster - c  # (n, D)
+        dx = X_cluster - c
         if J_c is not None:
-            F_taylor = F_c + np.einsum("ijk,nk->nj", J_c, dx)  # (n, FD)
+            F_taylor = F_c + np.einsum("ijk,nk->nj", J_c, dx)
         else:
-            F_taylor = F_c  # (1, FD) broadcasted to (n, FD)
+            F_taylor = F_c
 
-        err = np.linalg.norm(F_cluster - F_taylor, axis=1)  # (n,)
+        err = np.linalg.norm(F_cluster - F_taylor, axis=1)
 
         # Tolerance per point
         thr = np.maximum(self.abs_tol, self.rel_tol * np.linalg.norm(F_cluster, axis=1))
@@ -284,17 +288,23 @@ class AdaptiveClusterer:
                     )
                     continue
 
+                force_add = False
                 if cluster_size < self.min_points:
-                    # Generate extra points
-                    new_X = self._generate_extra_points(X_cluster, cluster_size)
-                    X_cluster = np.vstack([X_cluster, new_X])
-                    cluster_size = len(X_cluster)
+                    if self.should_generate_extra_points:
+                        # Generate extra points
+                        new_X = self._generate_extra_points(X_cluster, cluster_size)
+                        X_cluster = np.vstack([X_cluster, new_X])
+                        cluster_size = len(X_cluster)
+                    else:
+                        # Append to final clusters directly
+                        force_add = True
 
                 violated, max_error, mean_error, radius, c, F_c, J_c = (
                     self._cluster_violation(X_cluster, f, grad_f, cupy_f)
                 )
 
-                if not violated:
+                if not violated or force_add:
+                    # Accept cluster
                     h_proxy = 2.0 * max_error / (radius**2) if radius > 0 else 0.0
                     final_clusters.append(
                         Cluster(
@@ -350,17 +360,19 @@ def adaptive_cluster_algorithm(
     cupy_f: Callable | None,
     atol=0.01,
     rtol=0.01,
-    N_init_clusters=10,
-    min_ppc=1,
+    num_initial_clusters=10,
+    min_pts_per_cluster=1,
     seed=0,
+    should_generate_extra_points: bool = True,
 ) -> list[Cluster]:
     """Run the adaptive clustering algorithm and return the list of clusters."""
     clusterer = AdaptiveClusterer(
         atol=atol,
         rtol=rtol,
-        n_clusters=N_init_clusters,
-        min_points=min_ppc,
+        n_clusters=num_initial_clusters,
+        min_points=min_pts_per_cluster,
         seed=seed,
+        should_generate_extra_points=should_generate_extra_points,
     )
     clusters = clusterer.fit(X=X_train, f=f, grad_f=grad_f, cupy_f=cupy_f)
     return clusters
@@ -396,7 +408,7 @@ def plot_clusters(clusters: list[Cluster], fname: str = "adaptive_clusters.png")
 
 
 if __name__ == "__main__":
-    import cProfile
+    # import cProfile
     import time
     from pathlib import Path
 
@@ -437,14 +449,20 @@ if __name__ == "__main__":
     # Generate sample data
     seed = 0
     np.random.seed(seed)
-    N_samples = 10_000_000
-    ABS_TOL = 1.0
+    N_SAMPLES = 1_000_000
+    N_INIT_CLUSTERS = 100
+    MIN_PTS_PER_CLUSTER = 5
+    ABS_TOL = 0.01
     REL_TOL = 0.01
-    X_samples = np.random.uniform(-10, 10, size=(N_samples, 3))
-    print(f"Generated {N_samples:,} sample data points.")
+    print(f"{ABS_TOL=}, {REL_TOL=}")
+    print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
+    D = 3
 
-    cprofile = cProfile.Profile()
-    cprofile.enable()
+    X_samples = np.random.random((N_SAMPLES, D))
+    print(f"Generated {N_SAMPLES:,} sample data points.")
+
+    # cprofile = cProfile.Profile()
+    # cprofile.enable()
 
     # Run adaptive clustering
     tic = time.perf_counter()
@@ -455,9 +473,10 @@ if __name__ == "__main__":
         cupy_f=sample_cupy_function,
         atol=ABS_TOL,
         rtol=REL_TOL,
-        N_init_clusters=5,
-        min_ppc=5,
+        num_initial_clusters=N_INIT_CLUSTERS,
+        min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
         seed=seed,
+        should_generate_extra_points=False,
     )
     toc = time.perf_counter()
     print(f"Total clusters formed: {len(clusters)}")
@@ -469,12 +488,13 @@ if __name__ == "__main__":
     print(f"Clusters by TwoMeans: {NUM_CLUSTERED_BY_TWO_MEANS}")
     print(f"Total clustering calls: {total}")
     print(f"Time taken: {toc - tic:.4f} seconds")
-    if N_samples <= 10_000:
+    raise SystemExit
+    if N_SAMPLES <= 10_000:
         # Plot only for small datasets
         plot_clusters(clusters, fname=f"{FILE_NAME}_clusters.png")
 
-    cprofile.disable()
-    cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
+    # cprofile.disable()
+    # cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
     # cprofile.print_stats(sort="time"
 
     n_test = 10_000
