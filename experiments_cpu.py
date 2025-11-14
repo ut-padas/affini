@@ -2,8 +2,11 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.stats import qmc
+from tqdm import tqdm
 
 from src.nearode import ClusteringBackend, NearODESurrogate
+from src.problems.borehole import borehole, grad_borehole
 from src.problems.oned import grad_one_d_example, one_d_example
 from src.problems.shcf import (
     _HAS_GPU,
@@ -322,7 +325,7 @@ def convergence_test_2D(tolmat, N_init, domain, min_ppc=40):
 
 def convergence_test_a_function(test_function, tolmat, N_init, min_ppc=100):
     datamat = np.empty((len(tolmat), 11))
-    for j, tols in enumerate(tolmat):
+    for j, tols in tqdm(enumerate(tolmat), total=len(tolmat)):
         datamat[j] = test_function(
             atol=tols[0], rtol=tols[1], N_init=N_init, min_ppc=min_ppc
         )
@@ -333,22 +336,23 @@ def convergence_test_a_function(test_function, tolmat, N_init, min_ppc=100):
 
 
 def test_a_function(
-    f, f_combined, n, m, domain, atol=0.01, rtol=0.01, N_init=10000, min_ppc=50
+    f, grad_f, m, domain, atol=0.01, rtol=0.01, N_init=10000, min_ppc=50
 ):
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
-        f_combined,
-        domain,
-        n,
-        N_init,
-        "LHS",
-        True,
+        f=f,
+        grad_f=grad_f,
+        cupy_f=None,
+        cupy_grad_f=None,
+        clustering_backend=ClusteringBackend.NUMPY_CUPY_HYBRID,
+        domain=domain,
+        N=N_init,
+        distribution="LHS",
         num_initial_clusters=100,
         atol=atol,
         rtol=rtol,
         min_pts_per_cluster=min_ppc,
         check_guarantee_N_times=0,
-        disp_time=True,
     )
 
     # evaluate exact
@@ -360,10 +364,10 @@ def test_a_function(
     pts = sampler.random(n=N_eval)
     pts = qmc.scale(pts, l, r)
 
-    exact = np.zeros((len(pts), m))
-    for j in range(len(exact)):
-        exact[j] = f(pts[j])
-    interp, bad_pts = interpolant.evaluate(pts, k=1, disp_time=True)
+    exact = f(pts)
+    interp, bad_pts = interpolant.evaluate(
+        pts, clustering_backend=ClusteringBackend.NUMPY_CUPY_HYBRID
+    )
 
     abs_error = np.linalg.norm(exact - interp, 2, axis=1)
     rel_error = abs_error / np.linalg.norm(exact, 2, axis=1)
@@ -439,7 +443,14 @@ def test_8D(atol=0.2, rtol=0.01, N_init=10000, min_ppc=40):
         ]
     )
     test_a_function(
-        borehole, borehole_combined, 8, 1, domain, atol, rtol, N_init, min_ppc
+        f=borehole,
+        grad_f=grad_borehole,
+        m=8,
+        domain=domain,
+        atol=atol,
+        rtol=rtol,
+        N_init=N_init,
+        min_ppc=min_ppc,
     )
 
 
@@ -456,12 +467,15 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--problem",
+        "-p",
         type=str,
         default="borehole",
         choices=["1d", "2d-shcf", "borehole", "all"],
         help="Choose which problem to run.",
     )
     args = parser.parse_args()
+    problem_name = str(args.problem).lower()
+    print(f"Selected problem: {problem_name}")
 
     tolmat = np.array(
         [
@@ -473,10 +487,13 @@ if __name__ == "__main__":
         ],
     )
 
-    if args.problem in ("1D", "all"):
+    if problem_name in ("1d", "all"):
+        print("Running 1D test...")
         test_1D(atol=1e-3, make_plots=True)
-    if args.problem in ("2D", "all"):
+    if problem_name in ("2d-shcf", "all"):
+        print("Running 2D SHCF convergence test...")
         domain = np.array([[-3, 3], [-2, 2]])
         convergence_test_2D(tolmat, 10_000, domain)
-    if args.problem in ("borehole", "all"):
-        convergence_test_8D(tolmat, N_init=1000000)
+    if problem_name in ("borehole", "all"):
+        print("Running 8D Borehole convergence test...")
+        convergence_test_8D(tolmat, N_init=1000, min_ppc=10)
