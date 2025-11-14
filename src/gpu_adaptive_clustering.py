@@ -279,7 +279,8 @@ def refine_adaptive_clusters(
 
         # Create cluster labels using repeat instead of loops
         all_cluster_labels = cp.repeat(
-            cp.arange(len(level), dtype=cp.int32), cluster_sizes
+            a=cp.arange(len(level), dtype=cp.int32),
+            repeats=cluster_sizes,
         )
 
         # Compute centroids vectorized (from augmented data)
