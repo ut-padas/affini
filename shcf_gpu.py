@@ -1,6 +1,6 @@
 import cupy as cp
 
-from src.nearode import NearODESurrogate
+from src.nearode_temp import NearODESurrogate
 
 
 # Six-Hump Camelback function

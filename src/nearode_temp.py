@@ -1,15 +1,14 @@
-"""
-kNN/Taylor surrogate wrapper for near-ODE emulation.
-"""
+"""kNN/Taylor surrogate wrapper for near-ODE emulation."""
 
 import time
 from typing import Callable
 
+import cupy as cp
 import numpy as np
 from scipy.stats import qmc
 
-from adaptive_clustering_accelerated import adaptive_cluster_algorithm
-from nn_inference import NN_Inference
+from src.gpu_adaptive_clustering import adaptive_clustering_gpu
+from src.nn_inference_temp import NN_Inference
 
 
 class NearODESurrogate:
@@ -22,12 +21,10 @@ class NearODESurrogate:
     def train_model_from_data(
         self,
         X: np.ndarray,
-        f_vals: np.ndarray | None,
-        gradients: np.ndarray | None,
+        f_vals: np.ndarray,
+        gradients: np.ndarray,
         do_clustering: bool = True,
-        f: Callable | None = None,
-        grad_f: Callable | None = None,
-        cupy_f: Callable | None = None,
+        oracle: Callable | None = None,
         N_init_clusters: int = 10,
         atol: float = 0.01,
         rtol: float | None = None,
@@ -39,75 +36,73 @@ class NearODESurrogate:
     ) -> None:
         start_time = time.perf_counter()
 
+        # --- Basic shape checks (consolidated here) ---
+        if X.ndim != 2:
+            raise ValueError(
+                f"X must be 2D array with shape (N, D), got shape {X.shape}"
+            )
+        if f_vals.ndim != 2:
+            raise ValueError(
+                f"f_vals must be 2D array with shape (N, FD), got shape {f_vals.shape}"
+            )
+        if gradients.ndim != 3:
+            raise ValueError(
+                f"gradients must be 3D array with shape (N, FD, D), got shape {gradients.shape}"
+            )
+
+        N, D = X.shape
+        N_F, FD = f_vals.shape
+        N_G, FD_G, D_G = gradients.shape
+
+        if N != N_F or N != N_G:
+            raise ValueError(
+                f"Number of samples in X ({N}), f_vals ({N_F}), and gradients ({N_G}) must match"
+            )
+        if D != D_G:
+            raise ValueError(
+                f"Input dimension in X ({D}) and gradients ({D_G}) must match"
+            )
+        if FD != FD_G:
+            raise ValueError(
+                f"Function output dimension in f_vals ({FD}) and gradients ({FD_G}) must match"
+            )
+
         # Persist tolerances/oracle/dims
         self.atol = atol
-        self.rtol = rtol if rtol is not None else 0.001
-        self.f = f
-        self.grad_f = grad_f
-        self.cupy_f = cupy_f
-        self.seed = seed if seed is not None else 0
+        self.rtol = rtol
+        self.oracle = oracle
+        self.D = D
+        self.FD = FD
 
         # --- Optional adaptive clustering ---
         if do_clustering:
-            if not callable(self.f):
-                raise ValueError("f must be a callable when do_clustering is True")
+            if not callable(oracle):
+                raise ValueError("oracle must be a callable when do_clustering is True")
 
-            clusters = adaptive_cluster_algorithm(
-                X_train=X,
-                f=self.f,
-                grad_f=self.grad_f,
-                cupy_f=cupy_f,
-                atol=self.atol,
-                rtol=self.rtol,
-                N_init_clusters=N_init_clusters,
-                min_ppc=min_ppc,
-                seed=self.seed,
+            clusters = adaptive_clustering_gpu(
+                X=X,
+                f=oracle,
+                n_init_clusters=N_init_clusters,
+                min_pts_per_cluster=min_ppc,
+                abs_tol=atol,
+                rel_tol=rtol if rtol is not None else 0.0,
+                seed=seed if seed is not None else 0,
+                return_numpy=True,
             )
-            new_X = np.array([cluster.centroid for cluster in clusters])
-            new_f_vals = np.array([cluster.value for cluster in clusters])
-            new_gradients = np.array([cluster.gradient for cluster in clusters])
-            new_hessians = np.array([cluster.hessian for cluster in clusters])
+            new_X = np.vstack([cluster.centroid for cluster in clusters])
+            new_f_vals = np.vstack([cluster.F_centroid for cluster in clusters])
+            new_gradients = np.stack(
+                [cluster.J_centroid for cluster in clusters]
+            ).squeeze(axis=1)
+
+            # Handle hessian_proxy - convert float scalars to array
+            new_hessians = np.array([cluster.hessian_proxy for cluster in clusters])
+
             new_radii = np.array([cluster.radius for cluster in clusters])
-            k = len(new_X)
+            k = len(clusters)
 
         else:
             # Use raw data as sources (no clustering).
-            # --- Basic shape checks (consolidated here) ---
-            if f_vals is None or gradients is None:
-                raise ValueError(
-                    "f_vals and gradients cannot be None when do_clustering is False"
-                )
-
-            if X.ndim != 2:
-                raise ValueError(
-                    f"X must be 2D array with shape (N, D), got shape {X.shape}"
-                )
-            if f_vals.ndim != 2:
-                raise ValueError(
-                    f"f_vals must be 2D array with shape (N, FD), got shape {f_vals.shape}"
-                )
-            if gradients.ndim != 3:
-                raise ValueError(
-                    f"gradients must be 3D array with shape (N, FD, D), got shape {gradients.shape}"
-                )
-
-            N, D = X.shape
-            N_F, FD = f_vals.shape
-            N_G, FD_G, D_G = gradients.shape
-
-            if N != N_F or N != N_G:
-                raise ValueError(
-                    f"Number of samples in X ({N}), f_vals ({N_F}), and gradients ({N_G}) must match"
-                )
-            if D != D_G:
-                raise ValueError(
-                    f"Input dimension in X ({D}) and gradients ({D_G}) must match"
-                )
-            if FD != FD_G:
-                raise ValueError(
-                    f"Function output dimension in f_vals ({FD}) and gradients ({FD_G}) must match"
-                )
-
             new_X = X
             new_f_vals = f_vals
             new_gradients = gradients
@@ -116,12 +111,13 @@ class NearODESurrogate:
             k = len(X)
 
         # --- Build FAISS-backed nearest-neighbor inference object ---
+        # Convert CuPy arrays to NumPy for FAISS compatibility
         self.KNN_search = NN_Inference(
             X=new_X,
             f_vals=new_f_vals,
             gradients=new_gradients,
-            hessians=new_hessians,
-            trust_radii=new_radii,
+            hessians=new_hessians if new_hessians is not None else None,
+            trust_radii=new_radii if new_radii is not None else None,
         )
         self._model_trained = True
         self.N_sources = k
@@ -141,12 +137,11 @@ class NearODESurrogate:
 
     def train_model_from_sampling(
         self,
-        f: Callable,
-        grad_f: Callable | None,
-        cupy_f: Callable | None,
+        oracle: Callable,
         domain: np.ndarray,
         N: int,
         distribution: str = "uniform",
+        do_clustering: bool = True,
         N_init_clusters: int = 10,
         atol: float = 0.01,
         rtol: float | None = None,
@@ -176,22 +171,31 @@ class NearODESurrogate:
         if distribution not in distributions:
             raise ValueError(f"distribution must be one of {distributions}")
 
+        rng = np.random.default_rng(seed)
+        assert rng is not None, "Something went wrong with RNG initialization."
+
         if distribution == "uniform":
-            X = np.random.uniform(l, r, (N, n))
+            X = rng.uniform(l, r, (N, n))
         elif distribution == "LHS":
             sampler = qmc.LatinHypercube(d=n, rng=seed)
             X = sampler.random(n=N)
+            l, r = cp.asnumpy(l), cp.asnumpy(r)
             X = qmc.scale(X, l, r)
+
+        # Ensure X is a CuPy array for oracle functions that expect CuPy
+        f_vals, gradients = oracle(cp.asarray(X))
+
+        f_vals = cp.asnumpy(f_vals)
+        gradients = cp.asnumpy(gradients)
+        X = cp.asnumpy(X)  # Convert back to NumPy for FAISS compatibility
 
         # --- Delegate to the array-based trainer (preserving original args order) ---
         self.train_model_from_data(
             X=X,
-            f_vals=None,
-            gradients=None,
-            do_clustering=True,
-            f=f,
-            grad_f=grad_f,
-            cupy_f=cupy_f,
+            f_vals=f_vals,
+            gradients=gradients,
+            do_clustering=do_clustering,
+            oracle=oracle,
             N_init_clusters=N_init_clusters,
             atol=atol,
             rtol=rtol,
@@ -220,14 +224,34 @@ class NearODESurrogate:
                 f"targets must be 2D array with shape (n_query, d), got shape {targets.shape}"
             )
 
+        # Convert CuPy targets to NumPy for FAISS compatibility
+        if hasattr(targets, "device"):  # It's a CuPy array
+            targets_np = cp.asnumpy(targets)
+        else:
+            targets_np = targets
+
+        # Convert CuPy scalars to Python scalars for compatibility
+        L_global = float(L) if L is not None else L
+        atol = float(self.atol)
+        rtol = float(self.rtol) if self.rtol is not None else self.rtol
+        alpha = float(alpha)
+
         predictions, unguaranteed_points = self.KNN_search.predict(
-            targets=targets,
+            targets=targets_np,
             k=k,
-            L_global=L,
-            atol=self.atol,
-            rtol=self.rtol,
+            L_global=L_global,
+            atol=atol,
+            rtol=rtol,
             alpha=alpha,
         )
+
+        # Convert results back to CuPy arrays if original targets were CuPy
+        if hasattr(targets, "device"):
+            predictions = cp.asarray(predictions)
+            unguaranteed_points = cp.asarray(unguaranteed_points)
+        else:
+            predictions = np.asarray(predictions)
+            unguaranteed_points = np.asarray(unguaranteed_points)
 
         # Heuristic warning for under-resolved surrogate coverage.
         if np.sum(unguaranteed_points) > 3 * self.N_sources:
@@ -245,60 +269,52 @@ class NearODESurrogate:
         return np.asarray(self.KNN_search.X)
 
     def add_sources(self, X: np.ndarray) -> None:
-        if not callable(self.f):
+        if not callable(self.oracle):
             raise ValueError("oracle must be a callable to add sources")
 
-        clusters = adaptive_cluster_algorithm(
-            X_train=X,
-            f=self.f,
-            grad_f=self.grad_f,
-            cupy_f=self.cupy_f,
-            atol=self.atol,
-            rtol=self.rtol,
-            N_init_clusters=2,
-            min_ppc=10,
+        clusters = adaptive_clustering_gpu(
+            X=X,
+            f=self.oracle,
+            n_init_clusters=2,
+            min_pts_per_cluster=10,
+            abs_tol=self.atol,
+            rel_tol=self.rtol if self.rtol is not None else 0.0001,
             seed=0,
+            return_numpy=True,
         )
-        new_X = np.array([cluster.centroid for cluster in clusters])
-        new_f_vals = np.array([cluster.value for cluster in clusters])
-        new_gradients = np.array([cluster.gradient for cluster in clusters])
-        new_hessians = np.array([cluster.hessian for cluster in clusters])
-        new_radii = np.array([cluster.radius for cluster in clusters])
-        k = len(new_X)
+        new_X = np.vstack([cluster.centroid for cluster in clusters])
+        new_f_vals = np.vstack([cluster.F_centroid for cluster in clusters])
+        new_gradients = np.stack([cluster.J_centroid for cluster in clusters]).squeeze(
+            axis=1
+        )
+
+        # Handle hessian_proxy - convert float scalars to array
+        new_hessians = np.array([cluster.hessian_proxy for cluster in clusters])
+
+        new_dims = np.array([cluster.radius for cluster in clusters])
 
         self.KNN_search.add_extra_sources(
-            new_X, new_f_vals, new_gradients, new_hessians, new_radii
+            new_X,
+            new_f_vals,
+            new_gradients,
+            new_hessians,
+            new_dims,
         )
         self.N_sources += len(new_X)
 
     def _test_guarantee(
         self, targets: np.ndarray, tol: float, L_global: float, alpha: float
     ) -> np.ndarray:
-        """Return a boolean mask of targets that violate the local/global guarantee.
-
-        This helper queries the nearest neighbor from the FAISS index and checks
-        whether each target lies within either a local trust radius (based on the
-        stored cluster radius and Hessian proxy) or a global Lipschitz-based bound.
-
-        Args:
-          targets: Array of target points with shape (n_query, d).
-          tol: Absolute tolerance used in the bound.
-          L_global: Global Lipschitz constant for the fallback bound.
-          alpha: Multiplicative factor for Hessian-based trust bounds.
-
-        Returns:
-          np.ndarray: Boolean mask of shape (n_query,), True where the target is
-          **outside** the guarantee (i.e., not good).
-        """
         if self.KNN_search.hessians is None or self.KNN_search.trust_radii is None:
             raise RuntimeError(
                 "Hessian proxies and trust radii are required for guarantee checks."
             )
 
-        D, I = self.KNN_search._faiss_index.search(targets, 1)  # type: ignore
+        D, I = self.KNN_search._faiss_index.search(targets.get(), 1)  # type: ignore
+        D, I = np.asarray(D), np.asarray(I)  # Convert back to CuPy
         local_tols = np.minimum(
-            self.KNN_search.trust_radii[I[:, 0]] ** 2,
-            2 * tol / (alpha * self.KNN_search.hessians[I[:, 0]]),
+            np.asarray(self.KNN_search.trust_radii)[I[:, 0]] ** 2,
+            2 * tol / (alpha * np.asarray(self.KNN_search.hessians)[I[:, 0]]),
         )
         global_tol = 2 * tol / L_global
         good_points = np.logical_or(

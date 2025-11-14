@@ -1,6 +1,6 @@
 import numpy as np
 
-from nearode import NearODESurrogate
+from src.nearode import NearODESurrogate
 from src.shcf import (
     _HAS_GPU,
     SHCF_cupy,
