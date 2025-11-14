@@ -357,7 +357,7 @@ def adaptive_cluster_algorithm(
     X_train: np.ndarray,
     f: Callable,
     grad_f: Callable | None,
-    cupy_f: Callable | None,
+    cupy_f: Callable | None = None,
     atol=0.01,
     rtol=0.01,
     num_initial_clusters=10,
