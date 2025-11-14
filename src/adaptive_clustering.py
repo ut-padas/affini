@@ -94,6 +94,7 @@ class AdaptiveClusterer:
         # Keyword arguments
         use_gpu: bool = True,
         gpu_len_threshold: int = 10_000,
+        should_generate_extra_points: bool = True,
     ):
         """
         Initialize the adaptive clusterer.
@@ -106,6 +107,7 @@ class AdaptiveClusterer:
             seed: Random seed for reproducibility.
             use_gpu: Whether to use GPU acceleration if available.
             gpu_len_threshold: Minimum data length to use GPU clustering. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_cpu_vs_gpu.py
+            should_generate_extra_points: Whether to generate extra points for small clusters.
         """
         self.atol = atol
         self.rtol = rtol
@@ -115,6 +117,7 @@ class AdaptiveClusterer:
 
         self.use_gpu = use_gpu and _HAS_GPU
         self.gpu_len_threshold = gpu_len_threshold
+        self.should_generate_extra_points = should_generate_extra_points
 
         self._cluster_id = 0
 
@@ -443,6 +446,12 @@ class AdaptiveClusterer:
 
         # Add extra points if needed
         if len(sub_X) <= self.min_pts_per_cluster:
+            if not self.should_generate_extra_points:
+                # Return the current subcluster as is
+                return TreeNode(
+                    cluster=self._create_cluster(sub_X, sub_F, centroid, f, grad_f)
+                )
+
             extra_X, extra_F = self._generate_extra_points(sub_X, f, cupy_f)
             if len(extra_X) > 0:
                 sub_X = np.vstack([sub_X, extra_X])
@@ -502,6 +511,7 @@ def adaptive_cluster_algorithm(
     num_initial_clusters=10,
     min_pts_per_cluster=1,
     seed=0,
+    should_generate_extra_points: bool = True,
 ) -> list[Cluster]:
     """Run the adaptive clustering algorithm and return the list of clusters."""
     clusterer = AdaptiveClusterer(
@@ -510,6 +520,7 @@ def adaptive_cluster_algorithm(
         num_initial_clusters=num_initial_clusters,
         min_pts_per_cluster=min_pts_per_cluster,
         seed=seed,
+        should_generate_extra_points=should_generate_extra_points,
     )
     trees = clusterer.fit(X=X_train, f=f, grad_f=grad_f, cupy_f=cupy_f)
 
@@ -547,7 +558,7 @@ def plot_clusters(clusters: list[Cluster], fname: str = "adaptive_clusters.png")
 
 
 if __name__ == "__main__":
-    import cProfile
+    # import cProfile
     import time
     from pathlib import Path
 
@@ -588,14 +599,19 @@ if __name__ == "__main__":
     # Generate sample data
     seed = 0
     np.random.seed(seed)
-    N_samples = 8_000
-    ABS_TOL = 1.0
+    N_samples = 1_000_000
+    ABS_TOL = 0.01
     REL_TOL = 0.01
+    N_INIT_CLUSTERS = 100
+    MIN_PTS_PER_CLUSTER = 5
+    print(f"{ABS_TOL=}, {REL_TOL=}")
+    print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
+
     X_samples = np.random.uniform(-10, 10, size=(N_samples, 3))
     print(f"Generated {N_samples:,} sample data points.")
 
-    cprofile = cProfile.Profile()
-    cprofile.enable()
+    # cprofile = cProfile.Profile()
+    # cprofile.enable()
 
     # Run adaptive clustering
     tic = time.perf_counter()
@@ -606,9 +622,10 @@ if __name__ == "__main__":
         cupy_f=sample_cupy_function,
         atol=ABS_TOL,
         rtol=REL_TOL,
-        num_initial_clusters=5,
-        min_pts_per_cluster=5,
+        num_initial_clusters=N_INIT_CLUSTERS,
+        min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
         seed=seed,
+        should_generate_extra_points=False,
     )
     toc = time.perf_counter()
     print(f"Total clusters formed: {len(clusters)}")
@@ -620,12 +637,13 @@ if __name__ == "__main__":
     print(f"Clusters by TwoMeans: {NUM_CLUSTERED_BY_TWO_MEANS}")
     print(f"Total clustering calls: {total}")
     print(f"Time taken: {toc - tic:.4f} seconds")
+    raise SystemExit
     if N_samples <= 10_000:
         # Plot only for small datasets
         plot_clusters(clusters, fname=f"{FILE_NAME}_clusters.png")
 
-    cprofile.disable()
-    cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
+    # cprofile.disable()
+    # cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
     # cprofile.print_stats(sort="time"
 
     n_test = 10_000
