@@ -13,7 +13,6 @@ except Exception as e:
     print("You do not have a working CuPy installation/GPU setup.")
     raise e
 
-# --------------------------- Config ---------------------------------
 props = cp.cuda.runtime.getDeviceProperties(0)
 num_sms = props["multiProcessorCount"]
 
@@ -24,7 +23,6 @@ ELL = 8  # randomized-QR sketch size
 POWER_ITERS = 1  # randomized-QR power iterations
 
 
-# --------------------------- Utilities ------------------------------
 def randomized_qr_gpu(
     X: cp.ndarray,
     rng: cp.random.Generator,
@@ -131,22 +129,35 @@ def generate_extra_points(
 
 @dataclass
 class Cluster:
-    """Data class to hold cluster information."""
+    """
+    Data class to hold cluster information.
 
-    centroid: cp.ndarray  # (1, D)
-    F_centroid: cp.ndarray  # (1, FD)
-    J_centroid: cp.ndarray  # (1, FD, D)
-    radius: cp.ndarray | float  # GPU scalar or float
-    hessian_proxy: cp.ndarray | float  # GPU scalar or float
+    Attributes:
+        centroid: (1, D) cluster centroid
+        F_centroid: (1, FD) function value at centroid
+        J_centroid: (1, FD, D) Jacobian at centroid
+        radius: cluster radius
+        hessian_proxy: hessian proxy value
+        cluster_size: number of points in cluster
+        max_error: maximum Taylor approximation error in cluster
+        mean_error: mean Taylor approximation error in cluster
+    """
+
+    centroid: cp.ndarray
+    F_centroid: cp.ndarray
+    J_centroid: cp.ndarray
+    radius: cp.ndarray | float
+    hessian_proxy: cp.ndarray | float
     cluster_size: int
-    max_error: cp.ndarray | float  # GPU scalar or float
-    mean_error: cp.ndarray | float  # GPU scalar or float
+    max_error: cp.ndarray | float
+    mean_error: cp.ndarray | float
 
 
 def refine_adaptive_clusters(
     X: cp.ndarray,
     labels: cp.ndarray,
-    f: Callable[[cp.ndarray], tuple[cp.ndarray, cp.ndarray]],
+    f: Callable,
+    grad_f: Callable,
     abs_tol: float,
     rel_tol: float,
     min_pts_per_cluster: int,
@@ -154,6 +165,7 @@ def refine_adaptive_clusters(
     power_iters: int,
     num_streams: int,
     seed: int,
+    debug: bool = False,
 ) -> list[Cluster]:
     """
     Adaptive two-means clustering with GPU streaming.
@@ -161,8 +173,10 @@ def refine_adaptive_clusters(
     Args:
         X: (N, D) data matrix
         labels: (N,) initial cluster labels from a clustering algorithm
-        f: function that returns (F, J) at X.
-            Note: f(X) should return F: (N, FD), J: (N, FD, D) given X: (N, D)
+        f: function that returns F at given X.
+            Note: f(X) should return F: (N, FD) given X: (N, D)
+        grad_f: function that returns J at given X.
+            Note: grad_f(X) should return J: (N, FD, D) given X: (N, D)
         abs_tol: absolute tolerance for Taylor error
         rel_tol: relative tolerance for Taylor error
         min_pts_per_cluster: minimum points per cluster for evaluation
@@ -170,6 +184,7 @@ def refine_adaptive_clusters(
         power_iters: number of power iterations for randomized-QR
         num_streams: number of CUDA streams to use
         seed: random seed for reproducibility
+        debug: if True, print debug information
 
     Returns:
         final_clusters: list of Cluster objects representing final clusters
@@ -188,17 +203,17 @@ def refine_adaptive_clusters(
 
     final_clusters: list[Cluster] = []
     n_level = 0
-    # level_start_time = time.perf_counter()
+    level_start_time = time.perf_counter()
 
     # BFS by levels
     while queue:
-        # if n_level > 0:
-        #     level_time = time.perf_counter() - level_start_time
-        #     print(
-        #         f"Level {n_level}: processing {len(queue)} clusters (prev level took {level_time:.2f}s)"
-        #     )
+        if debug and n_level > 0:
+            level_time = time.perf_counter() - level_start_time
+            print(
+                f"Level {n_level}: processing {len(queue)} clusters (prev level took {level_time:.2f}s)"
+            )
 
-        # level_start_time = time.perf_counter()
+        level_start_time = time.perf_counter()
         level = queue
         queue = []
 
@@ -240,10 +255,11 @@ def refine_adaptive_clusters(
 
         # Optimized batch violation detection
         # Step 1: Compute function values at centroids
-        F_centroids_at_centroids, J_centroids_at_centroids = f(centroids)
+        F_centroids_at_centroids = f(centroids)
+        J_centroids_at_centroids = grad_f(centroids)
 
         # Step 2: Compute function values at all points
-        F_true, _ = f(all_X)
+        F_true = f(all_X)
 
         # Step 3: Vectorized Taylor approximation using broadcasting
         # Expand centroids to match point counts
@@ -273,7 +289,10 @@ def refine_adaptive_clusters(
         else:
             violating_clusters = set()
 
-        # print(f"  --> {len(violating_clusters)}/{len(level)} clusters need splitting")
+        if debug:
+            print(
+                f"  --> {len(violating_clusters)}/{len(level)} clusters need splitting"
+            )
 
         # Pre-compute error statistics for all clusters
         cluster_error_stats = []
@@ -361,10 +380,11 @@ def refine_adaptive_clusters(
     return final_clusters
 
 
-def adaptive_clustering_gpu(
+def adaptive_cluster_algorithm_gpu(
     X: cp.ndarray,
-    f: Callable[[cp.ndarray], tuple[cp.ndarray, cp.ndarray]],
-    n_init_clusters: int,
+    f: Callable,
+    grad_f: Callable,
+    num_initial_clusters: int,
     min_pts_per_cluster: int,
     abs_tol: float,
     rel_tol: float,
@@ -374,28 +394,31 @@ def adaptive_clustering_gpu(
     num_streams: int = NUM_STREAMS,
     seed: int = SEED,
     return_numpy: bool = True,
+    debug: bool = False,
 ) -> list[Cluster]:
     """
     GPU-accelerated adaptive clustering using two-means refinement.
 
     Args:
         X: (n, d) input data matrix.
-        labels: (n,) initial cluster labels.
-        f: Function returning (F, J) at X.
-        abs_tol, rel_tol: Tolerances for cluster violation detection.
+        f: Function returning F for given X.
+        grad_f: Function returning J for given X.
+        num_initial_clusters: Number of initial clusters for KMeans.
         min_pts_per_cluster: Minimum points per cluster before splitting.
+        abs_tol, rel_tol: Tolerances for cluster violation detection.
         ell: Sketch size for randomized-QR.
         power_iters: Number of power iterations for randomized-QR.
         num_streams: Number of CUDA streams to use.
         seed: Random seed for reproducibility.
         return_numpy: If True, return NumPy arrays instead of CuPy arrays.
+        debug: If True, print debug information.
 
     Returns:
         List of final clusters with centroids, function values, Jacobians, etc.
     """
     X = cp.asarray(X, dtype=CP_DTYPE)
 
-    km = cuKMeans(n_clusters=n_init_clusters, random_state=seed)
+    km = cuKMeans(n_clusters=num_initial_clusters, random_state=seed)
     labels = km.fit_predict(X)
 
     # Run adaptive two-means refinement
@@ -403,6 +426,7 @@ def adaptive_clustering_gpu(
         X=X,
         labels=labels,
         f=f,
+        grad_f=grad_f,
         abs_tol=abs_tol,
         rel_tol=rel_tol,
         min_pts_per_cluster=min_pts_per_cluster,
@@ -410,6 +434,7 @@ def adaptive_clustering_gpu(
         power_iters=power_iters,
         num_streams=num_streams,
         seed=seed,
+        debug=debug,
     )
 
     if return_numpy:
@@ -428,14 +453,10 @@ def adaptive_clustering_gpu(
     return clusters
 
 
-# --------------------------- Sample function f -----------------------
 def sample_function(X: cp.ndarray) -> tuple[cp.ndarray, cp.ndarray]:
     """
     A sample function f that returns F and J at given X.
     f(X) = [x1^2 + x2^2, x1 - x2 + x3]
-    grad(X) = [[2*x1, 2*x2, 0],
-               [1, -1, 1]]
-
     Args:
         X: (n, 3) data matrix
     Returns:
@@ -446,14 +467,26 @@ def sample_function(X: cp.ndarray) -> tuple[cp.ndarray, cp.ndarray]:
     f1 = x1**2 + x2**2
     f2 = x1 - x2 + x3
     F = cp.stack([f1, f2], axis=1)
+    return F
 
+
+def sample_function_grad(X: cp.ndarray) -> cp.ndarray:
+    """
+    Gradient of the sample function.
+    grad(X) = [[2*x1, 2*x2, 0],
+               [1, -1, 1]]
+    Args:
+        X: (n, 3) data matrix
+    Returns:
+        J: (n, 2, 3) Jacobian at X
+    """
+    x1, x2, _ = X[:, 0], X[:, 1], X[:, 2]
     g1 = cp.stack([2 * x1, 2 * x2, cp.zeros_like(x1)], axis=1)
     g2 = cp.stack([cp.ones_like(x1), -cp.ones_like(x1), cp.ones_like(x1)], axis=1)
-    J = cp.stack([g1, g2], axis=1)  # (n, FD, D)
-    return F, J
+    J = cp.stack([g1, g2], axis=1)
+    return J
 
 
-# --------------------------- MAIN -----------------------------------
 def main(
     N_SAMPLES: int,
     D: int,
@@ -468,10 +501,11 @@ def main(
     X = rng.random((N_SAMPLES, D), dtype=CP_DTYPE)
 
     print(f"Running on GPU. N_SAMPLES={N_SAMPLES:,}")
-    clusters = adaptive_clustering_gpu(
+    clusters = adaptive_cluster_algorithm_gpu(
         X=X,
         f=sample_function,
-        n_init_clusters=N_INIT_CLUSTERS,
+        grad_f=sample_function_grad,
+        num_initial_clusters=N_INIT_CLUSTERS,
         min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
         abs_tol=ABS_TOL,
         rel_tol=REL_TOL,

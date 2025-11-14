@@ -3,13 +3,20 @@ kNN/Taylor surrogate wrapper for near-ODE emulation.
 """
 
 import time
+from enum import Enum
 from typing import Callable
 
 import numpy as np
 from scipy.stats import qmc
 
 from src.adaptive_clustering import adaptive_cluster_algorithm
+from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
 from src.nn_inference import NN_Inference
+
+
+class ClusteringBackend(Enum):
+    COMPLETE_CUPY = "complete_cupy"
+    NUMPY_CUPY_HYBRID = "numpy_cupy_hybrid"
 
 
 class NearODESurrogate:
@@ -24,14 +31,16 @@ class NearODESurrogate:
         X: np.ndarray,
         f_vals: np.ndarray | None,
         gradients: np.ndarray | None,
+        clustering_backend: ClusteringBackend,
         do_clustering: bool = True,
         f: Callable | None = None,
         grad_f: Callable | None = None,
         cupy_f: Callable | None = None,
-        N_init_clusters: int = 10,
+        cupy_grad_f: Callable | None = None,
+        num_initial_clusters: int = 10,
         atol: float = 0.01,
         rtol: float | None = None,
-        min_ppc: int = 1,
+        min_pts_per_cluster: int = 1,
         check_guarantee_N_times: int = 0,
         L_global: float | None = None,
         alpha: float = 1.0,
@@ -45,34 +54,59 @@ class NearODESurrogate:
         self.f = f
         self.grad_f = grad_f
         self.cupy_f = cupy_f
+        self.cupy_grad_f = cupy_grad_f
         self.seed = seed if seed is not None else 0
 
-        # --- Optional adaptive clustering ---
+        # Optional clustering step
         if do_clustering:
-            if not callable(self.f):
-                raise ValueError("f must be a callable when do_clustering is True")
+            if clustering_backend == ClusteringBackend.NUMPY_CUPY_HYBRID:
+                if not callable(self.f):
+                    raise ValueError("f must be a callable")
 
-            clusters = adaptive_cluster_algorithm(
-                X_train=X,
-                f=self.f,
-                grad_f=self.grad_f,
-                cupy_f=cupy_f,
-                atol=self.atol,
-                rtol=self.rtol,
-                N_init_clusters=N_init_clusters,
-                min_ppc=min_ppc,
-                seed=self.seed,
-            )
-            new_X = np.array([cluster.centroid for cluster in clusters])
-            new_f_vals = np.array([cluster.value for cluster in clusters])
-            new_gradients = np.array([cluster.gradient for cluster in clusters])
-            new_hessians = np.array([cluster.hessian for cluster in clusters])
-            new_radii = np.array([cluster.radius for cluster in clusters])
-            k = len(new_X)
+                clusters = adaptive_cluster_algorithm(
+                    X_train=X,
+                    f=self.f,
+                    grad_f=self.grad_f,
+                    cupy_f=cupy_f,
+                    atol=self.atol,
+                    rtol=self.rtol,
+                    num_initial_clusters=num_initial_clusters,
+                    min_pts_per_cluster=min_pts_per_cluster,
+                    seed=self.seed,
+                )
+                new_X = np.array([cluster.centroid for cluster in clusters])
+                new_f_vals = np.array([cluster.F_centroid for cluster in clusters])
+                new_gradients = np.array([cluster.J_centroid for cluster in clusters])
+                new_hessians = np.array([cluster.hessian_proxy for cluster in clusters])
+                new_radii = np.array([cluster.radius for cluster in clusters])
+                k = len(new_X)
+
+            elif clustering_backend == ClusteringBackend.COMPLETE_CUPY:
+                if not callable(self.cupy_f) or not callable(self.cupy_grad_f):
+                    raise ValueError("cupy_f and cupy_grad_f must be callables")
+
+                clusters = adaptive_cluster_algorithm_gpu(
+                    X=X,
+                    f=self.cupy_f,
+                    grad_f=self.cupy_grad_f,
+                    num_initial_clusters=num_initial_clusters,
+                    min_pts_per_cluster=min_pts_per_cluster,
+                    abs_tol=self.atol,
+                    rel_tol=self.rtol,
+                    seed=self.seed,
+                    return_numpy=True,
+                )
+                new_X = np.vstack([cluster.centroid for cluster in clusters])
+                new_f_vals = np.vstack([cluster.F_centroid for cluster in clusters])
+                new_gradients = np.stack(
+                    [cluster.J_centroid for cluster in clusters]
+                ).squeeze(axis=1)
+                new_hessians = np.array([cluster.hessian_proxy for cluster in clusters])
+                new_radii = np.array([cluster.radius for cluster in clusters])
+                k = len(clusters)
 
         else:
-            # Use raw data as sources (no clustering).
-            # --- Basic shape checks (consolidated here) ---
+            # Use raw data as sources (no clustering)
             if f_vals is None or gradients is None:
                 raise ValueError(
                     "f_vals and gradients cannot be None when do_clustering is False"
@@ -115,7 +149,7 @@ class NearODESurrogate:
             new_radii = None
             k = len(X)
 
-        # --- Build FAISS-backed nearest-neighbor inference object ---
+        # Build the kNN/Taylor inference structure
         self.KNN_search = NN_Inference(
             X=new_X,
             f_vals=new_f_vals,
@@ -134,7 +168,7 @@ class NearODESurrogate:
                 bad_X = self._test_guarantee(
                     targets=X, tol=atol, L_global=L_global, alpha=alpha
                 )
-                self.add_sources(X=X[bad_X])
+                self.add_sources(X=X[bad_X], clustering_backend=clustering_backend)
 
         end_time = time.perf_counter()
         print(f"Time to train: {end_time - start_time:.2f} seconds")
@@ -144,13 +178,15 @@ class NearODESurrogate:
         f: Callable,
         grad_f: Callable | None,
         cupy_f: Callable | None,
+        cupy_grad_f: Callable | None,
         domain: np.ndarray,
         N: int,
+        clustering_backend: ClusteringBackend,
         distribution: str = "uniform",
-        N_init_clusters: int = 10,
+        num_initial_clusters: int = 10,
         atol: float = 0.01,
         rtol: float | None = None,
-        min_ppc: int = 1,
+        min_pts_per_cluster: int = 1,
         check_guarantee_N_times: int = 0,
         L: float | None = None,
         alpha: float = 1,
@@ -176,8 +212,11 @@ class NearODESurrogate:
         if distribution not in distributions:
             raise ValueError(f"distribution must be one of {distributions}")
 
+        rng = np.random.default_rng(seed)
+        assert rng is not None, "Something went wrong with RNG initialization."
+
         if distribution == "uniform":
-            X = np.random.uniform(l, r, (N, n))
+            X = rng.uniform(l, r, (N, n))
         elif distribution == "LHS":
             sampler = qmc.LatinHypercube(d=n, rng=seed)
             X = sampler.random(n=N)
@@ -192,10 +231,12 @@ class NearODESurrogate:
             f=f,
             grad_f=grad_f,
             cupy_f=cupy_f,
-            N_init_clusters=N_init_clusters,
+            cupy_grad_f=cupy_grad_f,
+            clustering_backend=clustering_backend,
+            num_initial_clusters=num_initial_clusters,
             atol=atol,
             rtol=rtol,
-            min_ppc=min_ppc,
+            min_pts_per_cluster=min_pts_per_cluster,
             check_guarantee_N_times=check_guarantee_N_times,
             L_global=L,
             alpha=alpha,
@@ -205,6 +246,7 @@ class NearODESurrogate:
     def evaluate(
         self,
         targets: np.ndarray,
+        clustering_backend: ClusteringBackend,
         k: int = 1,
         L: float | None = None,
         recluster: bool = False,
@@ -237,34 +279,58 @@ class NearODESurrogate:
 
         # Optional enrichment: recluster the failing targets and append as sources.
         if recluster:
-            self.add_sources(X=targets[unguaranteed_points])
+            self.add_sources(
+                X=targets[unguaranteed_points], clustering_backend=clustering_backend
+            )
 
         return predictions, unguaranteed_points
 
     def get_sources(self) -> np.ndarray:
         return np.asarray(self.KNN_search.X)
 
-    def add_sources(self, X: np.ndarray) -> None:
-        if not callable(self.f):
-            raise ValueError("oracle must be a callable to add sources")
+    def add_sources(self, X: np.ndarray, clustering_backend: ClusteringBackend) -> None:
+        if clustering_backend == ClusteringBackend.NUMPY_CUPY_HYBRID:
+            if not callable(self.f):
+                raise ValueError("f must be a callable")
 
-        clusters = adaptive_cluster_algorithm(
-            X_train=X,
-            f=self.f,
-            grad_f=self.grad_f,
-            cupy_f=self.cupy_f,
-            atol=self.atol,
-            rtol=self.rtol,
-            N_init_clusters=2,
-            min_ppc=10,
-            seed=0,
-        )
-        new_X = np.array([cluster.centroid for cluster in clusters])
-        new_f_vals = np.array([cluster.value for cluster in clusters])
-        new_gradients = np.array([cluster.gradient for cluster in clusters])
-        new_hessians = np.array([cluster.hessian for cluster in clusters])
-        new_radii = np.array([cluster.radius for cluster in clusters])
-        k = len(new_X)
+            clusters = adaptive_cluster_algorithm(
+                X_train=X,
+                f=self.f,
+                grad_f=self.grad_f,
+                cupy_f=self.cupy_f,
+                atol=self.atol,
+                rtol=self.rtol,
+                num_initial_clusters=2,
+                min_pts_per_cluster=10,
+                seed=0,
+            )
+            new_X = np.array([cluster.centroid for cluster in clusters])
+            new_f_vals = np.array([cluster.F_centroid for cluster in clusters])
+            new_gradients = np.array([cluster.J_centroid for cluster in clusters])
+            new_hessians = np.array([cluster.hessian_proxy for cluster in clusters])
+            new_radii = np.array([cluster.radius for cluster in clusters])
+        elif clustering_backend == ClusteringBackend.COMPLETE_CUPY:
+            if not callable(self.cupy_f) or not callable(self.cupy_grad_f):
+                raise ValueError("cupy_f and cupy_grad_f must be callables")
+
+            clusters = adaptive_cluster_algorithm_gpu(
+                X=X,
+                f=self.cupy_f,
+                grad_f=self.cupy_grad_f,
+                num_initial_clusters=2,
+                min_pts_per_cluster=10,
+                abs_tol=self.atol,
+                rel_tol=self.rtol,
+                seed=0,
+                return_numpy=True,
+            )
+            new_X = np.vstack([cluster.centroid for cluster in clusters])
+            new_f_vals = np.vstack([cluster.F_centroid for cluster in clusters])
+            new_gradients = np.stack(
+                [cluster.J_centroid for cluster in clusters]
+            ).squeeze(axis=1)
+            new_hessians = np.array([cluster.hessian_proxy for cluster in clusters])
+            new_radii = np.array([cluster.radius for cluster in clusters])
 
         self.KNN_search.add_extra_sources(
             new_X, new_f_vals, new_gradients, new_hessians, new_radii

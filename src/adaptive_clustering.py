@@ -31,13 +31,23 @@ NUM_CLUSTERED_BY_TWO_MEANS = 0
 
 @dataclass
 class Cluster:
-    """Leaf cluster with computed surrogate model parameters."""
+    """
+    Leaf cluster to hold cluster information.
+
+    Attributes:
+        index: Unique cluster index.
+        centroid: Centroid of the cluster.
+        F_centroid: Function value at the centroid.
+        J_centroid: Gradient/Jacobian at the centroid.
+        hessian_proxy: Proxy for Hessian norm in the cluster.
+        radius: Radius of the cluster.
+    """
 
     index: int
     centroid: np.ndarray
-    value: np.ndarray
-    gradient: Optional[np.ndarray] = None
-    hessian: float = 0.0
+    F_centroid: np.ndarray
+    J_centroid: Optional[np.ndarray] = None
+    hessian_proxy: float = 0.0
     radius: float = 0.0
 
 
@@ -77,8 +87,8 @@ class AdaptiveClusterer:
         self,
         atol: float = 0.01,
         rtol: float = 0.01,
-        n_clusters: int = 10,
-        min_points: int = 1,
+        num_initial_clusters: int = 10,
+        min_pts_per_cluster: int = 1,
         seed: int = 0,
         *,
         # Keyword arguments
@@ -91,16 +101,16 @@ class AdaptiveClusterer:
         Args:
             atol: Absolute tolerance for cluster acceptance.
             rtol: Relative tolerance for cluster acceptance.
-            n_clusters: Number of initial clusters.
-            min_points: Minimum points per cluster.
+            num_initial_clusters: Number of initial clusters to form.
+            min_pts_per_cluster: Minimum points required per cluster.
             seed: Random seed for reproducibility.
             use_gpu: Whether to use GPU acceleration if available.
             gpu_len_threshold: Minimum data length to use GPU clustering. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_cpu_vs_gpu.py
         """
         self.atol = atol
         self.rtol = rtol
-        self.n_clusters = n_clusters
-        self.min_points = min_points
+        self.num_initial_clusters = num_initial_clusters
+        self.min_pts_per_cluster = min_pts_per_cluster
         self.seed = seed
 
         self.use_gpu = use_gpu and _HAS_GPU
@@ -140,7 +150,7 @@ class AdaptiveClusterer:
 
         # Process each initial cluster
         trees = []
-        for i in range(self.n_clusters):
+        for i in range(self.num_initial_clusters):
             mask = labels == i
             if not np.any(mask):
                 # No points in this cluster
@@ -150,7 +160,6 @@ class AdaptiveClusterer:
 
             # Check if initial cluster meets tolerance
             if self._meets_tolerance(cluster_X, cluster_F, centroids[i], f, grad_f):
-                # Create leaf directly
                 trees.append(
                     TreeNode(
                         cluster=self._create_cluster(
@@ -209,13 +218,15 @@ class AdaptiveClusterer:
         n = len(X)
         if self.use_gpu and n >= self.gpu_len_threshold:
             Xg = cp.asarray(X_norm, dtype=CP_DTYPE)
-            km = cuKMeans(n_clusters=self.n_clusters, random_state=self.seed)
+            km = cuKMeans(n_clusters=self.num_initial_clusters, random_state=self.seed)
             labels = km.fit_predict(Xg).get()
             centroids = cp.asnumpy(km.cluster_centers_) + mean
             NUM_CLUSTERED_BY_CUML += 1
             return labels, centroids
 
-        km = KMeans(n_clusters=self.n_clusters, random_state=self.seed, n_init=1)
+        km = KMeans(
+            n_clusters=self.num_initial_clusters, random_state=self.seed, n_init=1
+        )
         NUM_CLUSTERED_BY_SKLEARN += 1
 
         labels = km.fit_predict(X_norm)
@@ -316,9 +327,9 @@ class AdaptiveClusterer:
         cluster = Cluster(
             index=self._cluster_id,
             centroid=centroid[0],
-            value=f_c,
-            gradient=grad_c,
-            hessian=hessian,
+            F_centroid=f_c,
+            J_centroid=grad_c,
+            hessian_proxy=hessian,
             radius=radius,
         )
         self._cluster_id += 1
@@ -431,7 +442,7 @@ class AdaptiveClusterer:
             return None
 
         # Add extra points if needed
-        if len(sub_X) <= self.min_points:
+        if len(sub_X) <= self.min_pts_per_cluster:
             extra_X, extra_F = self._generate_extra_points(sub_X, f, cupy_f)
             if len(extra_X) > 0:
                 sub_X = np.vstack([sub_X, extra_X])
@@ -462,7 +473,7 @@ class AdaptiveClusterer:
                 "At least two points are required to generate extra points."
             )
 
-        n_extra = self.min_points - len(sub_X) + 1
+        n_extra = self.min_pts_per_cluster - len(sub_X) + 1
 
         rng = np.random.default_rng(self.seed)
         lambdas = rng.random(n_extra)  # in [0,1)
@@ -488,16 +499,16 @@ def adaptive_cluster_algorithm(
     cupy_f: Callable | None,
     atol=0.01,
     rtol=0.01,
-    N_init_clusters=10,
-    min_ppc=1,
+    num_initial_clusters=10,
+    min_pts_per_cluster=1,
     seed=0,
 ) -> list[Cluster]:
     """Run the adaptive clustering algorithm and return the list of clusters."""
     clusterer = AdaptiveClusterer(
         atol=atol,
         rtol=rtol,
-        n_clusters=N_init_clusters,
-        min_points=min_ppc,
+        num_initial_clusters=num_initial_clusters,
+        min_pts_per_cluster=min_pts_per_cluster,
         seed=seed,
     )
     trees = clusterer.fit(X=X_train, f=f, grad_f=grad_f, cupy_f=cupy_f)
@@ -595,8 +606,8 @@ if __name__ == "__main__":
         cupy_f=sample_cupy_function,
         atol=ABS_TOL,
         rtol=REL_TOL,
-        N_init_clusters=5,
-        min_ppc=5,
+        num_initial_clusters=5,
+        min_pts_per_cluster=5,
         seed=seed,
     )
     toc = time.perf_counter()
@@ -622,8 +633,8 @@ if __name__ == "__main__":
     counter = 0
     # test the centroids and their errors
     for i, c in tqdm(enumerate(clusters), desc="Testing clusters", total=len(clusters)):
-        centroid, F_c = c.centroid, c.value
-        J_c = c.gradient
+        centroid, F_c = c.centroid, c.F_centroid
+        J_c = c.J_centroid
         radius = c.radius
         d = centroid.shape[0]
         # Pick random points in the cluster ball to test error
