@@ -380,8 +380,8 @@ def adaptive_cluster_algorithm_gpu(
     grad_f: Callable,
     num_initial_clusters: int,
     min_pts_per_cluster: int,
-    abs_tol: float,
-    rel_tol: float,
+    atol: float,
+    rtol: float,
     *,
     ell: int = ELL,
     power_iters: int = POWER_ITERS,
@@ -400,7 +400,7 @@ def adaptive_cluster_algorithm_gpu(
         grad_f: Function returning J for given X.
         num_initial_clusters: Number of initial clusters for KMeans.
         min_pts_per_cluster: Minimum points per cluster before splitting.
-        abs_tol, rel_tol: Tolerances for cluster violation detection.
+        atol, rtol: Tolerances for cluster violation detection.
         ell: Sketch size for randomized-QR.
         power_iters: Number of power iterations for randomized-QR.
         num_streams: Number of CUDA streams to use.
@@ -425,8 +425,8 @@ def adaptive_cluster_algorithm_gpu(
         labels=labels,
         f=f,
         grad_f=grad_f,
-        abs_tol=abs_tol,
-        rel_tol=rel_tol,
+        abs_tol=atol,
+        rel_tol=rtol,
         min_pts_per_cluster=min_pts_per_cluster,
         ell=ell,
         power_iters=power_iters,
@@ -506,8 +506,8 @@ def main(
         grad_f=sample_function_grad,
         num_initial_clusters=N_INIT_CLUSTERS,
         min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
-        abs_tol=ABS_TOL,
-        rel_tol=REL_TOL,
+        atol=ABS_TOL,
+        rtol=REL_TOL,
         return_numpy=False,
         debug=True,
         should_generate_extra_points=False,
