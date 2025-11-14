@@ -165,6 +165,7 @@ def refine_adaptive_clusters(
     power_iters: int,
     num_streams: int,
     seed: int,
+    should_generate_extra_points: bool = True,
     debug: bool = False,
 ) -> list[Cluster]:
     """
@@ -184,6 +185,8 @@ def refine_adaptive_clusters(
         power_iters: number of power iterations for randomized-QR
         num_streams: number of CUDA streams to use
         seed: random seed for reproducibility
+        generate_extra_points_flag: if True, generate extra points for small clusters;
+            if False, directly finalize clusters with fewer than min_pts_per_cluster points
         debug: if True, print debug information
 
     Returns:
@@ -224,28 +227,70 @@ def refine_adaptive_clusters(
             break
 
         # Pre-process clusters
-        cluster_points = []
+        current_level_clusters = []
         cluster_sizes = []
+
+        # Clusters with too few points when should_generate_extra_points=False
+        small_clusters_to_finalize = []
 
         for cluster_pts in level:
             cluster_size = cluster_pts.shape[0]
 
             # Update cluster points by generating extra points if needed
             if cluster_size < min_pts_per_cluster:
-                new_X = generate_extra_points(cluster_pts, min_pts_per_cluster, rng)
-                work_X = cp.concatenate([cluster_pts, new_X], axis=0)
-                cluster_points.append(work_X)
+                if should_generate_extra_points:
+                    new_X = generate_extra_points(cluster_pts, min_pts_per_cluster, rng)
+                    work_X = cp.concatenate([cluster_pts, new_X], axis=0)
+                    current_level_clusters.append(work_X)
+                else:
+                    # Don't generate extra points, mark for direct finalization
+                    small_clusters_to_finalize.append(cluster_pts)
+                    continue
             else:
-                cluster_points.append(cluster_pts)
+                current_level_clusters.append(cluster_pts)
 
-            cluster_sizes.append(cluster_points[-1].shape[0])
+            cluster_sizes.append(current_level_clusters[-1].shape[0])
+
+        # Process small clusters that should be finalized directly
+        for small_cluster_pts in small_clusters_to_finalize:
+            centroid = small_cluster_pts.mean(axis=0, keepdims=True)
+            F_c = f(centroid)
+            J_c = grad_f(centroid)
+
+            # Compute function values and errors for small cluster
+            F_pts = f(small_cluster_pts)
+            dx = small_cluster_pts - centroid
+            F_taylor = F_c + cp.einsum("ijk,nk->nj", J_c, dx)
+            err = cp.linalg.norm(F_pts - F_taylor, axis=1)
+
+            max_err_gpu = err.max()
+            mean_err_gpu = err.mean()
+            radius_gpu = cp.max(cp.linalg.norm(small_cluster_pts - centroid, axis=1))
+            h_proxy_gpu = 2.0 * max_err_gpu / (radius_gpu**2) if radius_gpu > 0 else 0.0
+
+            final_clusters.append(
+                Cluster(
+                    centroid=centroid,
+                    F_centroid=F_c,
+                    J_centroid=J_c,
+                    radius=radius_gpu,
+                    hessian_proxy=h_proxy_gpu,
+                    cluster_size=small_cluster_pts.shape[0],
+                    max_error=max_err_gpu,
+                    mean_error=mean_err_gpu,
+                )
+            )
+
+        # Skip batch processing if no clusters remain
+        if not current_level_clusters:
+            continue
 
         cluster_starts = cp.concatenate(
             [cp.array([0]), cp.cumsum(cp.array(cluster_sizes[:-1]))]
         )
 
         # Combine all clusters for batch processing
-        all_X = cp.concatenate(cluster_points, axis=0)
+        all_X = cp.concatenate(current_level_clusters, axis=0)
 
         # Create cluster labels using repeat instead of loops
         all_cluster_labels = cp.repeat(
@@ -253,7 +298,7 @@ def refine_adaptive_clusters(
         )
 
         # Compute centroids vectorized (from augmented data)
-        centroids = cp.stack([pts.mean(axis=0) for pts in cluster_points])
+        centroids = cp.stack([pts.mean(axis=0) for pts in current_level_clusters])
 
         # Optimized batch violation detection
         # Step 1: Compute function values at centroids
@@ -324,7 +369,7 @@ def refine_adaptive_clusters(
 
                     # Use centroid, size, function values from augmented data
                     centroid = centroids[i : i + 1]  # (1, D)
-                    augmented_X = cluster_points[i]
+                    augmented_X = current_level_clusters[i]
                     augmented_cluster_size = augmented_X.shape[0]
 
                     F_c = F_centroids_at_centroids[i : i + 1]
@@ -354,7 +399,7 @@ def refine_adaptive_clusters(
                 else:
                     # Cluster has violations - split it using augmented data
                     # Use the already-computed augmented cluster data
-                    work_X = cluster_points[i]
+                    work_X = current_level_clusters[i]
 
                     # Split using randomized-QR direction computed on work_X
                     q = randomized_qr_gpu(work_X, rng, ell, power_iters)
@@ -397,6 +442,7 @@ def adaptive_cluster_algorithm_gpu(
     power_iters: int = POWER_ITERS,
     num_streams: int = NUM_STREAMS,
     seed: int = SEED,
+    should_generate_extra_points: bool = True,
     return_numpy: bool = True,
     debug: bool = False,
 ) -> list[Cluster]:
@@ -414,6 +460,8 @@ def adaptive_cluster_algorithm_gpu(
         power_iters: Number of power iterations for randomized-QR.
         num_streams: Number of CUDA streams to use.
         seed: Random seed for reproducibility.
+        should_generate_extra_points: If True, generate extra points for small clusters;
+            if False, directly finalize clusters with fewer than min_pts_per_cluster points.
         return_numpy: If True, return NumPy arrays instead of CuPy arrays.
         debug: If True, print debug information.
 
@@ -438,6 +486,7 @@ def adaptive_cluster_algorithm_gpu(
         power_iters=power_iters,
         num_streams=num_streams,
         seed=seed,
+        should_generate_extra_points=should_generate_extra_points,
         debug=debug,
     )
 
