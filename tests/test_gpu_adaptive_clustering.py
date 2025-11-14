@@ -5,10 +5,8 @@ from src.gpu_adaptive_clustering import (
     CP_DTYPE,
     SEED,
     generate_extra_points,
-    get_centroid,
     median_cut_projection,
     randomized_qr_gpu,
-    taylor_errors,
 )
 
 
@@ -99,82 +97,6 @@ class TestMedianCutProjection:
 
         assert cp.all(projections[left] <= median_val)
         assert cp.all(projections[right] > median_val)
-
-
-class TestGetCentroid:
-    """Test cases for get_centroid function."""
-
-    def test_centroid_single_point(self):
-        """Test centroid of single point."""
-        X = cp.array([[1.0, 2.0, 3.0]], dtype=CP_DTYPE)
-        centroid = get_centroid(X)
-
-        cp.testing.assert_array_equal(centroid, X[0])
-
-    def test_centroid_symmetric_points(self):
-        """Test centroid of symmetric points."""
-        # Points symmetric around origin
-        X = cp.array(
-            [
-                [+1.0, +2.0],
-                [-1.0, -2.0],
-                [+2.0, -1.0],
-                [-2.0, +1.0],
-            ],
-            dtype=CP_DTYPE,
-        )
-
-        centroid = get_centroid(X)
-        expected = cp.array([0.0, 0.0], dtype=CP_DTYPE)
-
-        cp.testing.assert_allclose(centroid, expected)
-
-    def test_centroid_known_points(self):
-        """Test centroid of known points."""
-        X = cp.array(
-            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
-            dtype=CP_DTYPE,
-        )
-
-        centroid = get_centroid(X)
-        expected = cp.array([0.75, 0.75, 0.75], dtype=CP_DTYPE)
-
-        cp.testing.assert_allclose(centroid, expected)
-
-
-class TestTaylorErrors:
-    """Test cases for taylor_errors function."""
-
-    def test_taylor_errors_vs_loop_implementation(self):
-        """Test that einsum implementation matches explicit loop implementation."""
-        cp.random.seed(SEED)
-
-        # Set up test data
-        n, d, fd = 50, 4, 3
-        rng = cp.random.default_rng(SEED)
-        assert rng is not None, "RNG initialization failed."
-
-        X = rng.standard_normal((n, d), dtype=CP_DTYPE)
-        F = rng.standard_normal((n, fd), dtype=CP_DTYPE)
-        centroid = rng.standard_normal((1, d), dtype=CP_DTYPE)
-        F_c = rng.standard_normal((1, fd), dtype=CP_DTYPE)
-        J_c = rng.standard_normal((1, fd, d), dtype=CP_DTYPE)
-
-        # Einsum implementation (original)
-        err_einsum = taylor_errors(X, F, centroid, F_c, J_c)
-
-        # Loop implementation for comparison
-        dx = X - centroid  # (n, d)
-        f_taylor_loop = cp.zeros((n, fd), dtype=CP_DTYPE)
-
-        for i in range(n):
-            # For each point i, compute F_c + J_c @ dx[i]
-            f_taylor_loop[i] = F_c[0] + J_c[0] @ dx[i]
-
-        err_loop = cp.linalg.norm(F - f_taylor_loop, axis=1)
-
-        # Compare results
-        cp.testing.assert_allclose(err_einsum, err_loop)
 
 
 class TestGenerateExtraPoints:
