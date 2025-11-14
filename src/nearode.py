@@ -10,14 +10,15 @@ import numpy as np
 from scipy.stats import qmc
 
 from src.adaptive_clustering import adaptive_cluster_algorithm
-from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
 from src.nn_inference import NN_Inference
 
 try:
     import cupy as cp
 
+    from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
+
     _HAS_GPU = cp.is_available()
-except ImportError:
+except Exception:
     _HAS_GPU = False
 
 

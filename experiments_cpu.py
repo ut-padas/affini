@@ -1,7 +1,11 @@
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 
 from src.nearode import ClusteringBackend, NearODESurrogate
-from src.shcf import (
+from src.problems.oned import grad_one_d_example, one_d_example
+from src.problems.shcf import (
     _HAS_GPU,
     SHCF_cupy,
     SHCF_numpy,
@@ -9,8 +13,80 @@ from src.shcf import (
     hessian_SHCF_numpy,
 )
 
+CWD = Path.cwd()
+FIGURES_DIR = CWD / "figures" / "experiments"
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
-def check_matrix_2norm(A, domain):
+
+def test_1D(N_init=2000, atol=0.01, make_plots=False):
+    N = 4000
+    domain = np.array([0, 10])
+    interpolant = NearODESurrogate()
+    interpolant.train_model_from_sampling(
+        f=one_d_example,
+        grad_f=grad_one_d_example,
+        cupy_f=None,
+        cupy_grad_f=None,
+        clustering_backend=ClusteringBackend.NUMPY_CUPY_HYBRID,
+        domain=domain,
+        N=N_init,
+        distribution="uniform",
+        num_initial_clusters=20,
+        atol=atol,
+        alpha=100000,
+    )
+
+    xx = np.linspace(domain[0], domain[1], N)
+    xx = np.atleast_2d(xx).T
+    yy_interpolant, bad_points = interpolant.evaluate(
+        targets=xx.reshape((N, 1)),
+        k=1,
+        clustering_backend=ClusteringBackend.NUMPY_CUPY_HYBRID,
+    )
+    yy_exact = one_d_example(xx)
+    error = np.abs(yy_interpolant - yy_exact)
+    rmse = np.sqrt(np.sum(error**2) / len(error))
+    sources = interpolant.get_sources()
+
+    if make_plots:
+        plt.figure()
+        plt.plot(xx, yy_exact, "-k", label="Exact")
+        plt.plot(xx, yy_interpolant, "--m", label=f"Interpolant")
+        plt.scatter(
+            sources,
+            one_d_example(sources),
+            c="orange",
+            marker="x",
+            label=f"Sources ($N_s = {len(sources)}$)",
+        )
+        plt.scatter(
+            xx[bad_points],
+            one_d_example(xx[bad_points]),
+            marker="o",
+            label=f"Unguaranteed Points ($N = {bad_points.sum()}$)",
+        )
+        plt.legend()
+        plt.xlabel("$x$")
+
+        plt.figure()
+        plt.plot(xx, error, "--r", label="Log Error")
+        plt.plot(xx, np.full_like(xx, atol), "--k")
+        plt.scatter(
+            xx[bad_points],
+            error[bad_points],
+            marker="o",
+            label=f"Unguaranteed Points ($N = {bad_points.sum()}$)",
+        )
+        plt.yscale("log")
+        plt.legend()
+        plt.xlabel("$x$")
+        plt.savefig(FIGURES_DIR / "1D_example_error.png", dpi=400)
+
+    print(f"Max l-infty error: {error.max()}")
+    print(f"Root mean squared error: {rmse}")
+
+
+def check_matrix_2norm(A, domain, make_plots=False):
     # A is a function of input x, which expects x with shape (n, 2)
     x = np.linspace(domain[0, 0], domain[0, 1], 300)
     y = np.linspace(domain[1, 0], domain[1, 1], 300)
@@ -23,6 +99,15 @@ def check_matrix_2norm(A, domain):
         hess_matrices, ord=2, axis=(1, 2)
     )  # 2-norm of each (2, 2) matrix
     norms = norms.reshape((len(xv), len(yv)))
+
+    if make_plots:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+        ax.plot_surface(xv, yv, norms, cmap="viridis")
+        ax.set_title("Hessian of SHCF: 2-norms")
+        ax.set_xlabel("$x_1$")
+        ax.set_ylabel("$x_2$")
+        plt.savefig(FIGURES_DIR / "SHCF_hessian_2norms.png", dpi=400)
 
     max_ind = np.unravel_index(norms.argmax(), norms.shape)
     max_val = norms.max()
@@ -99,7 +184,7 @@ def generate_latex_table(data):
 def test_2D(
     atol=0.01, rtol=0.01, N_init=50000, domain=np.array([[-3, 3], [-2, 2]]), min_ppc=100
 ):
-    L = check_matrix_2norm(hessian_SHCF_numpy, domain)
+    L = check_matrix_2norm(hessian_SHCF_numpy, domain, make_plots=True)
 
     cupy_f = SHCF_cupy if _HAS_GPU else None
 
@@ -235,13 +320,148 @@ def convergence_test_2D(tolmat, N_init, domain, min_ppc=40):
     print("\n")
 
 
-if __name__ == "__main__":
-    # import cProfile
-    from pathlib import Path
+def convergence_test_a_function(test_function, tolmat, N_init, min_ppc=100):
+    datamat = np.empty((len(tolmat), 11))
+    for j, tols in enumerate(tolmat):
+        datamat[j] = test_function(
+            atol=tols[0], rtol=tols[1], N_init=N_init, min_ppc=min_ppc
+        )
 
-    # FILE_NAME = Path(__file__).resolve().stem
-    # cprofile = cProfile.Profile()
-    # cprofile.enable()
+    print("\n")
+    print(generate_latex_table(datamat))
+    print("\n")
+
+
+def test_a_function(
+    f, f_combined, n, m, domain, atol=0.01, rtol=0.01, N_init=10000, min_ppc=50
+):
+    interpolant = NearODESurrogate()
+    interpolant.train_model_from_sampling(
+        f_combined,
+        domain,
+        n,
+        N_init,
+        "LHS",
+        True,
+        num_initial_clusters=100,
+        atol=atol,
+        rtol=rtol,
+        min_pts_per_cluster=min_ppc,
+        check_guarantee_N_times=0,
+        disp_time=True,
+    )
+
+    # evaluate exact
+    # pick some evaluation points using LHS
+    N_eval = 10000
+    l = domain[:, 0]
+    r = domain[:, 1]
+    sampler = qmc.LatinHypercube(d=len(domain))
+    pts = sampler.random(n=N_eval)
+    pts = qmc.scale(pts, l, r)
+
+    exact = np.zeros((len(pts), m))
+    for j in range(len(exact)):
+        exact[j] = f(pts[j])
+    interp, bad_pts = interpolant.evaluate(pts, k=1, disp_time=True)
+
+    abs_error = np.linalg.norm(exact - interp, 2, axis=1)
+    rel_error = abs_error / np.linalg.norm(exact, 2, axis=1)
+    good_abs_error = abs_error <= atol
+    good_rel_error = rel_error <= rtol
+    good_overall_error = np.logical_or(good_abs_error, good_rel_error)
+    bad_overall_error = np.logical_not(good_overall_error)
+    good_pts_inds = np.logical_not(bad_pts)
+
+    # sort the points outside of guarantee between those inside the error and those not
+    no_g_good_err = bad_pts & good_overall_error  # 1 (yellow)
+    no_g_bad_err = bad_pts & bad_overall_error  # 2 (orange)
+    # sort the points inside of guarantee as well
+    yes_g_good_err = good_pts_inds & good_overall_error  # 3 (green)
+    yes_g_bad_err = good_pts_inds & bad_overall_error  # 4 (red)
+
+    # display stats about errors
+    red_abs_errs = abs_error[yes_g_bad_err]
+    red_rel_errs = rel_error[yes_g_bad_err]
+    red_true_vals = interp[yes_g_bad_err]
+    if len(red_abs_errs > 0):
+        datavec = np.array(
+            [
+                # section 1: initial values
+                N_init,
+                atol,
+                rtol,
+                # section 2: point results
+                interpolant.N_sources,
+                (np.sum(no_g_good_err) + np.sum(no_g_bad_err)) / len(pts),
+                np.sum(yes_g_good_err) / len(pts),
+                np.sum(yes_g_bad_err) / len(pts),
+                # section 3: errors for failure points
+                np.max(red_abs_errs),  # max abs error
+                np.median(red_abs_errs),  # median abs error
+                np.linalg.norm(red_abs_errs, np.inf)
+                / np.linalg.norm(red_true_vals, np.inf),  # l-inf rel error
+                np.linalg.norm(red_abs_errs, 2)
+                / np.linalg.norm(red_true_vals, 2),  # l2 rel error
+            ]
+        )
+    else:
+        datavec = np.array(
+            [
+                N_init,
+                atol,
+                rtol,
+                interpolant.N_sources,
+                (np.sum(no_g_good_err) + np.sum(no_g_bad_err)) / len(pts),
+                np.sum(yes_g_good_err) / len(pts),
+                np.sum(yes_g_bad_err) / len(pts),
+                0,
+                0,
+                0,
+                0,
+            ]
+        )
+
+    return datavec
+
+
+def test_8D(atol=0.2, rtol=0.01, N_init=10000, min_ppc=40):
+    domain = np.array(
+        [
+            [0.05, 0.15],
+            [100, 50000],
+            [63070, 115600],
+            [990, 1110],
+            [63.1, 116],
+            [700, 820],
+            [1120, 1680],
+            [9855, 12045],
+        ]
+    )
+    test_a_function(
+        borehole, borehole_combined, 8, 1, domain, atol, rtol, N_init, min_ppc
+    )
+
+
+def convergence_test_8D(tolmat, N_init, min_ppc=40):
+    convergence_test_a_function(test_8D, tolmat, N_init, min_ppc)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Run convergence tests for NearODE surrogate.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--problem",
+        type=str,
+        default="borehole",
+        choices=["1d", "2d-shcf", "borehole", "all"],
+        help="Choose which problem to run.",
+    )
+    args = parser.parse_args()
 
     tolmat = np.array(
         [
@@ -253,8 +473,10 @@ if __name__ == "__main__":
         ],
     )
 
-    domain = np.array([[-3, 3], [-2, 2]])
-    convergence_test_2D(tolmat, 10_000, domain)
-
-    # cprofile.disable()
-    # cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
+    if args.problem in ("1D", "all"):
+        test_1D(atol=1e-3, make_plots=True)
+    if args.problem in ("2D", "all"):
+        domain = np.array([[-3, 3], [-2, 2]])
+        convergence_test_2D(tolmat, 10_000, domain)
+    if args.problem in ("borehole", "all"):
+        convergence_test_8D(tolmat, N_init=1000000)

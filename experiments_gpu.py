@@ -1,7 +1,7 @@
 import cupy as cp
 
 from src.nearode import ClusteringBackend, NearODESurrogate
-from src.shcf import SHCF_cupy, grad_SHCF_cupy, hessian_SHCF_cupy
+from src.problems.shcf import SHCF_cupy, grad_SHCF_cupy, hessian_SHCF_cupy
 
 
 def check_matrix_2norm(A, domain):
