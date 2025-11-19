@@ -3,59 +3,63 @@ import time
 import cupy as cp
 from cuml.cluster import KMeans as cuKMeans
 
-# --- 1. Configuration & Constants ---
+# --- 1. Configuration ---
 cp.random.seed(0)
 rng = cp.random.default_rng(0)
 
-# Precision settings (Float32 is preferred for GPU)
+# Precision & Constants
 DTYPE = cp.float32
 ATOL = 1e-3
 RTOL = 1e-3
 
-N_SAMPLES = 1_000_000
-# Algorithm hyperparams
-N_INIT_CLUSTERS = 100
+# User Params
+N_SAMPLES = 10_000_000
 MIN_PTS_PER_CLUSTER = 100
-ELL = 8  # Sketch size
-POWER_ITERS = 1  # Power iterations
-MAX_DEPTH = 500  # Max levels of recursion
-N_STREAMS = 16  # Number of concurrent CUDA streams
+N_INIT_CLUSTERS = 10
+ELL = 8
+POWER_ITERS = 1
+MAX_DEPTH = 500
+MAX_CLUSTERS_EST = 100_000_000  # Estimate for metadata buffer size
+
+# --- 2. Low-Level GPU Utilities ---
 
 
-# --- 2. Math Kernels (Vectorized & In-Place) ---
-def sample_function(X: cp.ndarray, out: cp.ndarray | None = None) -> cp.ndarray:
-    """f(X) = [x1^2 + x2^2, x1 - x2 + x3]"""
+def gpu_repeat_indices(counts: cp.ndarray) -> cp.ndarray:
+    """
+    Generates an index array [0,0, 1,1,1, ...] based on counts.
+    Uses searchsorted to handle 0-size clusters correctly.
+    """
+    total_size = int(cp.sum(counts))
+    if total_size == 0:
+        return cp.array([], dtype=cp.int32)
+
+    # Prefix sum gives the upper boundaries of each segment
+    offsets = cp.cumsum(counts)
+
+    # Search where each index falls in the bins
+    indices = cp.searchsorted(offsets, cp.arange(total_size), side="right")
+
+    return indices.astype(cp.int32)
+
+
+def sample_function(X, out=None):
     n = X.shape[0]
     if out is None:
         out = cp.empty((n, 2), dtype=DTYPE)
-
-    # Access columns directly
-    x0 = X[:, 0]
-    x1 = X[:, 1]
-    x2 = X[:, 2]
-
-    # f1 = x1^2 + x2^2
+    x0, x1, x2 = X[:, 0], X[:, 1], X[:, 2]
     cp.square(x0, out=out[:, 0])
     out[:, 0] += cp.square(x1)
-
-    # f2 = x1 - x2 + x3
     cp.subtract(x0, x1, out=out[:, 1])
     out[:, 1] += x2
     return out
 
 
-def sample_function_grad(X: cp.ndarray, out: cp.ndarray | None = None) -> cp.ndarray:
-    """Returns J: (n, 2, 3)"""
+def sample_function_grad(X, out=None):
     n = X.shape[0]
     if out is None:
         out = cp.empty((n, 2, 3), dtype=DTYPE)
-
-    # J[:, 0, 0] = 2*x1
     cp.multiply(X[:, 0], 2, out=out[:, 0, 0])
-    # J[:, 0, 1] = 2*x2
     cp.multiply(X[:, 1], 2, out=out[:, 0, 1])
-
-    # Constants
     out[:, 0, 2] = 0.0
     out[:, 1, 0] = 1.0
     out[:, 1, 1] = -1.0
@@ -63,325 +67,277 @@ def sample_function_grad(X: cp.ndarray, out: cp.ndarray | None = None) -> cp.nda
     return out
 
 
-def randomized_qr(
-    X: cp.ndarray, rng, ell=ELL, power_iterations=POWER_ITERS
-) -> cp.ndarray:
+# --- 3. Vectorized Core Kernels ---
+
+
+def vectorized_power_iteration(X_ragged, starts, counts, n_clusters):
     """
-    Randomized QR.
-    [GPU Note]: This function is per-cluster.
+    Computes the leading eigenvector for N clusters simultaneously using reduction.
     """
-    n, d = X.shape
-    X_mean = cp.mean(X, axis=0, keepdims=True)
-    X0 = X - X_mean
+    # 1. Compute Means
+    X_sums = cp.add.reduceat(X_ragged, starts)
+    # Safety against 0-count clusters to avoid NaN
+    safe_counts = cp.maximum(counts[:, None], 1)
+    means = X_sums / safe_counts
 
-    # Generate random matrix
-    omega = rng.standard_normal((n, ell), dtype=DTYPE)
+    # 2. Initialize Random Vectors (K, D)
+    V = rng.standard_normal((n_clusters, X_ragged.shape[1]), dtype=DTYPE)
+    V /= cp.linalg.norm(V, axis=1, keepdims=True)
 
-    Y = X0.T @ omega
-    Q, _ = cp.linalg.qr(Y)
+    # 3. Broadcast Indices
+    cluster_ids = gpu_repeat_indices(counts)
 
-    for _ in range(power_iterations):
-        temp = X0 @ Q
-        Y = X0.T @ temp
-        Q, _ = cp.linalg.qr(Y)
+    # 4. Power Loop
+    for _ in range(POWER_ITERS):
+        # Broadcast Mean and V to every point
+        means_expanded = means[cluster_ids]
+        V_expanded = V[cluster_ids]
 
-    q = Q[:, 0]
-    q /= cp.linalg.norm(q)
-    return q
+        # Center X implicitly
+        X_centered = X_ragged - means_expanded
+
+        # Dot product per point: s = X_c . V
+        scores = cp.einsum("ij,ij->i", X_centered, V_expanded)
+
+        # Scale vectors: T = X_c * s
+        scaled = X_centered * scores[:, None]
+
+        # Reduce back to clusters: V_new = sum(T)
+        V_next = cp.add.reduceat(scaled, starts)
+
+        # Normalize Safe (Avoid division by zero)
+        norms = cp.linalg.norm(V_next, axis=1, keepdims=True)
+        safe_norms = cp.maximum(norms, 1e-9)
+        V = V_next / safe_norms
+
+    return V
 
 
-def median_cut_projection(X: cp.ndarray, q: cp.ndarray):
-    s = X @ q
-    med = cp.median(s)
-    left_mask = s <= med
-    right_mask = s > med
-    return left_mask, right_mask
-
-
-# --- 3. Helper: Vectorized Augmentation & Validation ---
-def augment_and_validate_level(X_level, counts_level):
+def vectorized_split(X_ragged, starts, counts, V_dirs, n_clusters):
     """
-    Processes an entire 'level' (batch of clusters) at once.
+    Splits all clusters simultaneously by projecting, sorting, and slicing.
     """
-    n_clusters = len(counts_level)
+    # 1. Project all points: s = X . V
+    cluster_ids = gpu_repeat_indices(counts)
+    V_expanded = V_dirs[cluster_ids]
+    projections = cp.einsum("ij,ij->i", X_ragged, V_expanded)
 
-    # --- A. Augmentation (Vectorized) ---
-    new_counts = cp.maximum(counts_level, MIN_PTS_PER_CLUSTER)
+    # 2. Global Sort (Robust Replacement for Lexsort)
+    # We need to sort by (ClusterID, Projection).
+    # Using a 2-step argsort avoids tuple errors and type-casting precision loss.
 
-    # FIX: Move new_counts to Host (CPU) for use in cp.repeat
-    new_counts_host = cp.asnumpy(new_counts)
-    repeats_list = new_counts_host.tolist()
+    # Step A: Sort by Secondary Key (Projection)
+    perm_sec = cp.argsort(projections)
 
-    # Explicit cast to python int for shape argument
-    n_total_new = int(new_counts_host.sum())
+    # Step B: Sort by Primary Key (Cluster ID) - MUST BE STABLE
+    # We apply the secondary permutation to the primary keys first
+    cluster_ids_permuted = cluster_ids[perm_sec]
 
-    # Allocating the main buffer for this level
-    X_aug = cp.empty((n_total_new, X_level.shape[1]), dtype=DTYPE)
+    # CuPy's argsort (Radix sort) is stable for integers
+    perm_pri = cp.argsort(cluster_ids_permuted)
 
-    # 1. Indices Setup
-    orig_starts = cp.r_[0, cp.cumsum(counts_level)[:-1]]
-    new_starts = cp.r_[0, cp.cumsum(new_counts)[:-1]]
+    # Step C: Combine permutations
+    sorted_perm = perm_sec[perm_pri]
 
-    # 2. Create "Relative Index" Mask for synthetic slots
-    change_points = cp.cumsum(new_counts)[:-1]
-    ones = cp.ones(n_total_new, dtype=int)
-    ones[change_points] = 1 - new_counts[:-1]
-    rel_indices = cp.cumsum(ones) - 1
+    # Reorder data based on this sort
+    X_sorted = X_ragged[sorted_perm]
 
-    # If relative_index >= original_count, it's a synthetic slot
-    counts_expanded = cp.repeat(counts_level, repeats_list)
-    mask_synthetic = rel_indices >= counts_expanded
+    # 3. Counts Logic
+    counts_left = counts // 2
+    counts_right = counts - counts_left
 
-    # 3. Copy Real Data (Bulk Copy)
-    X_aug[~mask_synthetic] = X_level
-
-    # 4. Generate Synthetic Data
-    n_synth = int(cp.sum(mask_synthetic))
-
-    if n_synth > 0:
-        # Map synthetic slots back to their cluster properties
-        synth_counts = counts_expanded[mask_synthetic]
-        orig_starts_expanded = cp.repeat(orig_starts, repeats_list)
-        synth_orig_starts = orig_starts_expanded[mask_synthetic]
-
-        # Vectorized Sampling
-        rand0 = cp.random.rand(n_synth).astype(DTYPE)
-        idx0 = (rand0 * synth_counts).astype(int)
-
-        rand1 = cp.random.rand(n_synth).astype(DTYPE)
-        offset = (rand1 * (synth_counts - 1)).astype(int) + 1
-        idx1 = (idx0 + offset) % synth_counts
-
-        p0 = X_level[synth_orig_starts + idx0]
-        p1 = X_level[synth_orig_starts + idx1]
-
-        lambdas = cp.random.random((n_synth, 1)).astype(DTYPE)
-
-        # In-place write
-        target = X_aug[mask_synthetic]
-        cp.multiply(1 - lambdas, p0, out=target)
-        target += lambdas * p1
-        X_aug[mask_synthetic] = target
-
-    # --- B. Validation (Vectorized) ---
-
-    # 1. Centroids
-    X_sums = cp.add.reduceat(X_aug, new_starts)
-    X_centroids = X_sums / new_counts[:, None]
-
-    # 2. F and J (Computed on K centroids, not N points)
-    F_centroids = sample_function(X_centroids)
-    J_centroids = sample_function_grad(X_centroids)
-
-    # 3. Broadcast to N points
-    cluster_indices_map = cp.repeat(cp.arange(n_clusters), repeats_list)
-
-    F_expanded = F_centroids[cluster_indices_map]
-    J_expanded = J_centroids[cluster_indices_map]
-    centroids_expanded = X_centroids[cluster_indices_map]
-
-    # 4. Taylor Check
-    dx = X_aug - centroids_expanded
-    delta = cp.einsum("ijk,ik->ij", J_expanded, dx)
-    F_taylor = F_expanded + delta
-
-    F_true = sample_function(X_aug)
-    err = cp.linalg.norm(F_true - F_taylor, axis=1)
-
-    # Threshold check
-    norm_F = cp.linalg.norm(F_true, axis=1)
-    thr = cp.maximum(ATOL, RTOL * norm_F)
-    point_violations = err > thr
-
-    # 5. Cluster Violations (Reduce bitwise OR)
-    # FIX: Using add.reduceat (Sum). If sum > 0, at least one violation exists.
-    # This works reliably on all CuPy versions that support reduceat.
-    cluster_violations_count = cp.add.reduceat(
-        point_violations.astype(cp.int32), new_starts
-    )
-    cluster_violations_mask = cluster_violations_count > 0
-
-    return X_aug, new_counts, new_starts, cluster_violations_mask, X_centroids
+    return X_sorted, counts_left, counts_right
 
 
-# --- 4. Main Adaptive Loop (BFS) ---
-def run_adaptive_clustering(X_init):
-    # Initial Clustering
-    print("--- Initializing ---")
+# --- 4. Main Pipeline (No Host Loops) ---
+
+
+def run_fully_gpu_clustering(X_raw):
+    print(f"--- Starting GPU Clustering on {X_raw.shape} ---")
+    t_start = time.time()
+
+    # 1. Initial Setup
     km = cuKMeans(n_clusters=N_INIT_CLUSTERS, random_state=0)
-    labels = km.fit_predict(X_init)
-    sorted_idxs = cp.argsort(labels)
-    X_current = X_init[sorted_idxs].astype(DTYPE)
-    unique_labels, counts_current = cp.unique(labels[sorted_idxs], return_counts=True)
+    labels = km.fit_predict(X_raw)
 
-    # Stream Pool for Parallel Processing
-    streams = [cp.cuda.Stream() for _ in range(N_STREAMS)]
+    # Sort data by label
+    sort_order = cp.argsort(labels)
+    X_curr = X_raw[sort_order]
 
-    # Tracking
-    final_clusters = []
+    unique_labels, counts = cp.unique(labels[sort_order], return_counts=True)
+    starts = cp.r_[0, cp.cumsum(counts)[:-1]]
+
+    # 2. Storage (Pre-allocated GPU Buffers)
+    X_store = cp.empty_like(X_raw)
+    store_offset = 0
+
+    # Metadata Buffers (Pre-allocated)
+    meta_centroids = cp.empty((MAX_CLUSTERS_EST, 3), dtype=DTYPE)
+    meta_sizes = cp.empty(MAX_CLUSTERS_EST, dtype=cp.int32)
+    meta_depths = cp.empty(MAX_CLUSTERS_EST, dtype=cp.int32)
+    meta_offset = 0
+
     level = 0
 
-    # BFS Queue implicitly managed by X_current / counts_current
-    while len(counts_current) > 0 and level < MAX_DEPTH:
-        print(f"\n--- Level {level} ---")
-        print(
-            f"Processing {len(counts_current)} clusters ({cp.sum(counts_current)} pts)"
-        )
+    while len(counts) > 0 and level < MAX_DEPTH:
+        n_clusters = len(counts)
+        print(f"L{level}: {n_clusters} clusters, {int(cp.sum(counts))} pts. ", end="")
 
-        t0 = time.time()
+        # --- A. Augment ---
+        new_counts = cp.maximum(counts, MIN_PTS_PER_CLUSTER)
+        total_augmented = int(cp.sum(new_counts))
 
-        # 1. Augment & Validate
-        X_aug, counts_aug, starts_aug, violations_mask, centroids = (
-            augment_and_validate_level(X_current, counts_current)
-        )
+        # Use previous buffer if sizes match, else realloc
+        # For simplicity, we realloc here. In prod, use a memory pool or ping-pong buffer.
+        X_aug = cp.empty((total_augmented, X_curr.shape[1]), dtype=DTYPE)
 
-        # 2. Process Results
-        cluster_idxs = cp.arange(len(counts_current))
-        good_idxs = cluster_idxs[~violations_mask]
-        bad_idxs = cluster_idxs[violations_mask]
+        aug_cluster_ids = gpu_repeat_indices(new_counts)
+        aug_starts = cp.r_[0, cp.cumsum(new_counts)[:-1]]
 
-        n_good = int(len(good_idxs))
-        n_bad = int(len(bad_idxs))
+        # Mask for Real vs Synthetic
+        ramp = cp.arange(total_augmented, dtype=cp.int32) - aug_starts[aug_cluster_ids]
+        real_counts_expanded = counts[aug_cluster_ids]
+        mask_real = ramp < real_counts_expanded
 
-        print(f"  > Converged: {n_good}")
-        print(f"  > Violating: {n_bad}")
+        # Fill Real
+        X_aug[mask_real] = X_curr
 
-        # 3. Store Converged Clusters
-        if n_good > 0:
-            good_idxs_host = cp.asnumpy(good_idxs)
-            starts_aug_host = cp.asnumpy(starts_aug)
-            counts_aug_host = cp.asnumpy(counts_aug)
+        # Fill Synthetic
+        mask_synth = ~mask_real
+        n_synth = int(cp.sum(mask_synth))
 
-            for i, idx in enumerate(good_idxs_host):
-                start = starts_aug_host[idx]
-                end = start + counts_aug_host[idx]
-                final_clusters.append(
-                    {
-                        "centroid": centroids[idx],
-                        "data": X_aug[start:end],
-                        "depth": level,
-                        "converged": True,
-                    }
+        if n_synth > 0:
+            synth_cluster_ids = aug_cluster_ids[mask_synth]
+
+            curr_starts_expanded = starts[synth_cluster_ids]
+            curr_counts_expanded = counts[synth_cluster_ids]
+
+            rand0 = cp.random.rand(n_synth, dtype=DTYPE)
+            idx0 = (rand0 * curr_counts_expanded).astype(cp.int32)
+
+            rand1 = cp.random.rand(n_synth, dtype=DTYPE)
+            offset = (rand1 * (curr_counts_expanded - 1)).astype(cp.int32) + 1
+            idx1 = (idx0 + offset) % curr_counts_expanded
+
+            p0 = X_curr[curr_starts_expanded + idx0]
+            p1 = X_curr[curr_starts_expanded + idx1]
+
+            lam = cp.random.rand(n_synth, 1, dtype=DTYPE)
+
+            # In-place Write
+            view = X_aug[mask_synth]
+            cp.multiply(p0, (1.0 - lam), out=view)
+            view += p1 * lam
+            X_aug[mask_synth] = view
+
+        # --- B. Validate ---
+        X_sums = cp.add.reduceat(X_aug, aug_starts)
+        centroids = X_sums / new_counts[:, None]
+
+        F_c = sample_function(centroids)
+        J_c = sample_function_grad(centroids)
+
+        F_exp = F_c[aug_cluster_ids]
+        J_exp = J_c[aug_cluster_ids]
+        C_exp = centroids[aug_cluster_ids]
+
+        dx = X_aug - C_exp
+        delta = cp.einsum("ijk,ik->ij", J_exp, dx)
+        F_est = F_exp + delta
+        F_true = sample_function(X_aug)
+
+        err = cp.linalg.norm(F_true - F_est, axis=1)
+        thr = cp.maximum(ATOL, RTOL * cp.linalg.norm(F_true, axis=1))
+
+        # Violations Reduction
+        is_bad_point = (err > thr).astype(cp.int32)
+        bad_counts = cp.add.reduceat(is_bad_point, aug_starts)
+
+        mask_violating_clusters = bad_counts > 0
+        mask_converged_clusters = ~mask_violating_clusters
+
+        n_bad = int(cp.sum(mask_violating_clusters))
+        print(f"Bad: {n_bad}")
+
+        # --- C. Store Converged ---
+        n_conv_clusters = int(cp.sum(mask_converged_clusters))
+        if n_conv_clusters > 0:
+            # 1. Save Metadata
+            conv_centroids = centroids[mask_converged_clusters]
+            conv_sizes = new_counts[mask_converged_clusters]
+
+            if meta_offset + n_conv_clusters <= MAX_CLUSTERS_EST:
+                meta_centroids[meta_offset : meta_offset + n_conv_clusters] = (
+                    conv_centroids
                 )
+                meta_sizes[meta_offset : meta_offset + n_conv_clusters] = conv_sizes
+                meta_depths[meta_offset : meta_offset + n_conv_clusters] = level
+                meta_offset += n_conv_clusters
 
-        # 4. Prepare Next Level (Splitting)
+            # 2. Save Points
+            point_mask_conv = mask_converged_clusters[aug_cluster_ids]
+            pts_to_save = X_aug[point_mask_conv]
+            n_save = pts_to_save.shape[0]
+
+            if store_offset + n_save <= X_store.shape[0]:
+                X_store[store_offset : store_offset + n_save] = pts_to_save
+                store_offset += n_save
+
         if n_bad == 0:
-            counts_current = cp.array([])
             break
 
-        next_level_data_parts = []
-        next_level_counts = []
+        # --- D. Split Violating ---
+        # Filter to keep only bad clusters for the next round
+        point_mask_bad = mask_violating_clusters[aug_cluster_ids]
+        X_bad = X_aug[point_mask_bad]
 
-        bad_idxs_host = cp.asnumpy(bad_idxs)
-        starts_aug_host = cp.asnumpy(starts_aug)
-        counts_aug_host = cp.asnumpy(counts_aug)
+        bad_counts = new_counts[mask_violating_clusters]
+        bad_starts = cp.r_[0, cp.cumsum(bad_counts)[:-1]]
 
-        # --- STREAM OPTIMIZATION START ---
-        # Strategy: Submit all math kernels (QR + Projection) to streams first.
-        # This fills the GPU queue. Then iterate and retrieve results (which might block CPU).
+        # Power Iteration
+        V_dirs = vectorized_power_iteration(X_bad, bad_starts, bad_counts, n_bad)
 
-        pending_splits = []
+        # Split
+        X_split, counts_L, counts_R = vectorized_split(
+            X_bad, bad_starts, bad_counts, V_dirs, n_bad
+        )
 
-        # Phase 1: Submit Async Work
-        for i, idx in enumerate(bad_idxs_host):
-            stream = streams[i % N_STREAMS]
-            start = starts_aug_host[idx]
-            end = start + counts_aug_host[idx]
+        # Interleave Counts
+        next_counts = cp.empty(2 * n_bad, dtype=cp.int32)
+        next_counts[0::2] = counts_L
+        next_counts[1::2] = counts_R
 
-            with stream:
-                work_X = X_aug[start:end]
-                # Randomized QR (Math heavy)
-                q = randomized_qr(work_X, rng)
-                # Median Cut (Math heavy)
-                left_mask, right_mask = median_cut_projection(work_X, q)
-
-                # Store the futures (GPU arrays) and the stream handle
-                pending_splits.append((work_X, left_mask, right_mask, stream))
-
-        # Phase 2: Collect Results (Syncs happen here)
-        for work_X, left_mask, right_mask, stream in pending_splits:
-            # We generally don't need explicit stream.synchronize() here because
-            # the cp.sum call below on the *result array* will implicitly wait
-            # for the computation producing that array to finish.
-
-            # Explicitly synchronizing the stream ensures we catch errors cleanly
-            # but implicit sync is faster. We rely on implicit sync.
-
-            n_left = int(cp.sum(left_mask))
-            if n_left > 0:
-                # Slicing [mask] triggers a sync to count elements
-                next_level_data_parts.append(work_X[left_mask])
-                next_level_counts.append(n_left)
-
-            n_right = int(cp.sum(right_mask))
-            if n_right > 0:
-                next_level_data_parts.append(work_X[right_mask])
-                next_level_counts.append(n_right)
-
-        # --- STREAM OPTIMIZATION END ---
-
-        # 5. Assemble Next Level Data
-        if len(next_level_data_parts) > 0:
-            X_current = cp.concatenate(next_level_data_parts)
-            counts_current = cp.array(next_level_counts)
+        # Setup for next level
+        mask_nonzero = next_counts > 0
+        if not cp.all(mask_nonzero):
+            counts = next_counts[mask_nonzero]
+            # X_split is already contiguous/compacted by the sort
+            X_curr = X_split
         else:
-            X_current = cp.array([])
-            counts_current = cp.array([])
+            counts = next_counts
+            X_curr = X_split
 
-        print(f"  > Time: {time.time() - t0:.4f}s")
+        starts = cp.r_[0, cp.cumsum(counts)[:-1]]
         level += 1
 
-    # --- Rescuing Leftovers (Max Depth Reached) ---
-    if len(counts_current) > 0:
-        print(f"\n[Warning] Max depth ({MAX_DEPTH}) reached.")
-        print(f"Storing {len(counts_current)} non-converged clusters as-is.")
+    total_time = time.time() - t_start
+    print(f"\n--- Finished in {total_time:.4f}s ---")
+    print(
+        f"Stored {store_offset} converged points. Metadata for {meta_offset} clusters."
+    )
 
-        starts_current = cp.r_[0, cp.cumsum(counts_current)[:-1]]
-        X_sums = cp.add.reduceat(X_current, starts_current)
-        centroids = X_sums / counts_current[:, None]
-
-        counts_current_host = cp.asnumpy(counts_current)
-        starts_current_host = cp.asnumpy(starts_current)
-
-        for i in range(len(counts_current)):
-            start = starts_current_host[i]
-            end = start + counts_current_host[i]
-            final_clusters.append(
-                {
-                    "centroid": centroids[i],
-                    "data": X_current[start:end],
-                    "depth": level,
-                    "converged": False,
-                }
-            )
-
-    return final_clusters
+    return X_store[:store_offset], (
+        meta_centroids[:meta_offset],
+        meta_sizes[:meta_offset],
+        meta_depths[:meta_offset],
+    )
 
 
 # --- 5. Execution ---
+
 if __name__ == "__main__":
-    # Generate synthetic data
-    X_raw = cp.random.rand(N_SAMPLES, 3).astype(DTYPE)
-    print(f"Generated raw data: {X_raw.shape}")
+    print(f"Generating {N_SAMPLES} points on GPU...")
+    X_raw = cp.random.rand(N_SAMPLES, 3, dtype=DTYPE)
+    final_pts, meta = run_fully_gpu_clustering(X_raw)
 
-    results = run_adaptive_clustering(X_raw)
-
-    print("\n=== Final Results ===")
-    print(f"Total Clusters: {len(results)}")
-
-    if len(results) > 0:
-        total_points = sum([len(c["data"]) for c in results])
-        print(f"Total Points (Augmented): {total_points}")
-
-        # Count converged vs not
-        n_converged = sum(1 for c in results if c.get("converged", False))
-        print(f"Converged Clusters: {n_converged}")
-        print(f"Non-Converged (Max Depth): {len(results) - n_converged}")
-
-        # Check one result
-        c0 = results[0]
-        print(
-            f"Example Cluster 0: Depth {c0['depth']}, Size {len(c0['data'])}, Converged: {c0.get('converged')}"
-        )
-    else:
-        print("No clusters produced.")
+    print(f"Final Cluster Count: {len(meta[0])}")
