@@ -4,10 +4,6 @@ from typing import Callable
 import cupy as cp
 from cuml.cluster import KMeans as cuKMeans
 
-# Configuration
-cp.random.seed(0)
-rng = cp.random.default_rng(0)
-
 # Precision
 DTYPE = cp.float64
 
@@ -22,6 +18,11 @@ def repeat_cluster_indices(cluster_sizes: cp.ndarray) -> cp.ndarray:
 
     Returns:
         cp.ndarray: Array of cluster indices, shape (total_points,).
+
+    Example:
+    >>> cluster_sizes = cp.array([3, 1, 4, 2])
+    >>> repeat_cluster_indices(cluster_sizes)
+    >>> cp.array([0, 0, 0, 1, 2, 2, 2, 2, 3, 3])
     """
     total_points = int(cp.sum(cluster_sizes))
     if total_points == 0:
@@ -44,6 +45,8 @@ def compute_leading_eigenvectors(
     cluster_sizes: cp.ndarray,
     num_clusters: int,
     power_iters: int,
+    rng: cp.random.Generator,
+    epsilon: float = 1e-9,
 ) -> cp.ndarray:
     """Compute leading eigenvectors for multiple clusters using power iteration.
 
@@ -52,19 +55,19 @@ def compute_leading_eigenvectors(
         cluster_starts (cp.ndarray): Start indices for each cluster in points.
         cluster_sizes (cp.ndarray): Number of points in each cluster.
         num_clusters (int): Number of clusters.
+        power_iters (int): Number of power iteration steps.
+        epsilon (float): Small value to avoid division by zero.
 
     Returns:
         cp.ndarray: Leading eigenvectors, shape (num_clusters, d).
     """
     # Compute cluster means
     point_sums = cp.add.reduceat(points, cluster_starts)
-    safe_cluster_sizes = cp.maximum(cluster_sizes[:, None], 1)
-    cluster_means = point_sums / safe_cluster_sizes
+    cluster_sizes = cp.maximum(cluster_sizes[:, None], 1)
+    centroids = point_sums / cluster_sizes
 
     # Initialize random eigenvectors
-    eigenvectors = rng.standard_normal(  # type: ignore
-        (num_clusters, points.shape[1]), dtype=DTYPE
-    )
+    eigenvectors = rng.standard_normal((num_clusters, points.shape[1]), dtype=DTYPE)
     eigenvectors /= cp.linalg.norm(eigenvectors, axis=1, keepdims=True)
 
     # Broadcast cluster indices
@@ -72,15 +75,15 @@ def compute_leading_eigenvectors(
 
     # Power iteration loop
     for _ in range(power_iters):
-        # Broadcast mean and eigenvector to every point
-        means_broadcasted = cluster_means[cluster_indices]
-        eigenvectors_broadcasted = eigenvectors[cluster_indices]
+        # Expand centroids and eigenvectors
+        centroids_expanded = centroids[cluster_indices]
+        eigenvectors_expanded = eigenvectors[cluster_indices]
 
-        # Center points implicitly
-        centered_points = points - means_broadcasted
+        # Center points by centroids
+        centered_points = points - centroids_expanded
 
         # Project onto eigenvectors
-        projections = cp.einsum("ij,ij->i", centered_points, eigenvectors_broadcasted)
+        projections = cp.einsum("ij,ij->i", centered_points, eigenvectors_expanded)
 
         # Scale vectors
         scaled_vectors = centered_points * projections[:, None]
@@ -90,7 +93,7 @@ def compute_leading_eigenvectors(
 
         # Normalize safely
         eigenvector_norms = cp.linalg.norm(next_eigenvectors, axis=1, keepdims=True)
-        safe_norms = cp.maximum(eigenvector_norms, 1e-9)
+        safe_norms = cp.maximum(eigenvector_norms, epsilon)
         eigenvectors = next_eigenvectors / safe_norms
 
     return eigenvectors
@@ -113,24 +116,42 @@ def split_clusters_along_eigenvectors(
     """
     # Project all points onto directions
     cluster_indices = repeat_cluster_indices(cluster_sizes)
-    directions_broadcasted = directions[cluster_indices]
-    projection_scores = cp.einsum("ij,ij->i", points, directions_broadcasted)
+    directions_expanded = directions[cluster_indices]
+    projection_scores = cp.einsum("ij,ij->i", points, directions_expanded)
 
-    # Global sort by (cluster_id, projection)
-    # Two-step argsort
-    secondary_sort_permutation = cp.argsort(projection_scores)
-    permuted_cluster_ids = cluster_indices[secondary_sort_permutation]
-    primary_sort_permutation = cp.argsort(permuted_cluster_ids)
-    final_sort_permutation = secondary_sort_permutation[primary_sort_permutation]
+    # Perform Lexicographical Sort: (Cluster Id, Projection Score)
+    # Goal: Group points by Cluster ID, and order them by Score within the cluster.
 
-    # Reorder points
-    sorted_points = points[final_sort_permutation]
+    # Strategy: "Radix Sort" logic — sort by the secondary key first.
+    # 1. Sort by the "Least Significant Key" (Projection Score).
+    # This gives us indices that would sort the ENTIRE array purely by projection value,
+    # ignoring which cluster the points belong to.
+    indices_sorted_by_score = cp.argsort(projection_scores)
 
-    # Split sizes
-    left_cluster_sizes = cluster_sizes // 2
-    right_cluster_sizes = cluster_sizes - left_cluster_sizes
+    # 2. Apply this ordering to the "Most Significant Key" (Cluster ID).
+    # We reorder the cluster IDs using the score-sorted indices.
+    # Crucially: In this new array, identical cluster IDs are NOT contiguous yet,
+    # but if you look at all occurrences of Cluster 'K', they are ordered by score.
+    cluster_ids_ordered_by_score = cluster_indices[indices_sorted_by_score]
 
-    return sorted_points, left_cluster_sizes, right_cluster_sizes
+    # 3. Sort by the "Most Significant Key" (Cluster ID).
+    # We now sort the reordered IDs. Because argsort is stable, it groups all
+    # identical cluster IDs together while PRESERVING the relative order
+    # established in Step 1 (the score order).
+    indices_grouping_clusters = cp.argsort(cluster_ids_ordered_by_score)
+
+    # 4. Compose the two permutations to get the final global mapping.
+    # This maps the original input order -> grouped by cluster -> sorted by score.
+    final_lexicographical_order = indices_sorted_by_score[indices_grouping_clusters]
+
+    # Apply final permutation to points
+    sorted_points = points[final_lexicographical_order]
+
+    # Calculate split points (Median Split)
+    count_left_children = cluster_sizes // 2
+    count_right_children = cluster_sizes - count_left_children
+
+    return sorted_points, count_left_children, count_right_children
 
 
 def adaptive_cluster_algorithm_gpu(
@@ -145,6 +166,7 @@ def adaptive_cluster_algorithm_gpu(
     max_clusters_est: int = 100_000_000,
     power_iters: int = 4,
     debug: bool = False,
+    seed: int = 0,
 ) -> tuple:
     """Run fully GPU-based adaptive clustering.
 
@@ -154,6 +176,10 @@ def adaptive_cluster_algorithm_gpu(
     Returns:
         tuple: (converged_points, metadata) where metadata is (centroids, sizes, depths).
     """
+    cp.random.seed(seed)
+    rng = cp.random.default_rng(seed)
+    assert rng is not None, "RNG initialization failed."
+
     print(f"--- Starting GPU Clustering on {X_train.shape} ---")
     start_time = time.time()
 
@@ -318,6 +344,7 @@ def adaptive_cluster_algorithm_gpu(
             cluster_sizes=violating_cluster_sizes,
             num_clusters=num_violating_clusters,
             power_iters=power_iters,
+            rng=rng,
         )
 
         # Split along eigenvectors
@@ -393,6 +420,10 @@ def sample_function_grad(X: cp.ndarray) -> cp.ndarray:
 
 
 if __name__ == "__main__":
+    # Configuration
+    cp.random.seed(0)
+    rng = cp.random.default_rng(0)
+
     N_SAMPLES = 10_000
     N_INIT_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 100
