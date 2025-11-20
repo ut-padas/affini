@@ -121,30 +121,11 @@ def split_clusters_along_eigenvectors(
 
     # Perform Lexicographical Sort: (Cluster Id, Projection Score)
     # Goal: Group points by Cluster ID, and order them by Score within the cluster.
-
     # Strategy: "Radix Sort" logic — sort by the secondary key first.
-    # 1. Sort by the "Least Significant Key" (Projection Score).
-    # This gives us indices that would sort the ENTIRE array purely by projection value,
-    # ignoring which cluster the points belong to.
     indices_sorted_by_score = cp.argsort(projection_scores)
-
-    # 2. Apply this ordering to the "Most Significant Key" (Cluster ID).
-    # We reorder the cluster IDs using the score-sorted indices.
-    # Crucially: In this new array, identical cluster IDs are NOT contiguous yet,
-    # but if you look at all occurrences of Cluster 'K', they are ordered by score.
     cluster_ids_ordered_by_score = cluster_indices[indices_sorted_by_score]
-
-    # 3. Sort by the "Most Significant Key" (Cluster ID).
-    # We now sort the reordered IDs. Because argsort is stable, it groups all
-    # identical cluster IDs together while PRESERVING the relative order
-    # established in Step 1 (the score order).
     indices_grouping_clusters = cp.argsort(cluster_ids_ordered_by_score)
-
-    # 4. Compose the two permutations to get the final global mapping.
-    # This maps the original input order -> grouped by cluster -> sorted by score.
     final_lexicographical_order = indices_sorted_by_score[indices_grouping_clusters]
-
-    # Apply final permutation to points
     sorted_points = points[final_lexicographical_order]
 
     # Calculate split points (Median Split)
