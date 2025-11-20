@@ -78,8 +78,8 @@ def rosenbrock_grad_cpu(X: np.ndarray) -> np.ndarray:
     return J
 
 
-dims = [3, 100]
-n_sizes = [10_000, 100_000, 1_000_000, 5_000_000, 10_000_000, 20_000_000, 50_000_000]
+dims = [3, 20, 100]
+n_sizes = [1e4, 5e4, 1e5, 5e5, 1e6, 5e6, 1e7, 5e7]
 tols = [1e-1, 1e-2, 1e-3]
 
 N_INIT_CLUSTERS = 1000
@@ -91,8 +91,15 @@ TIMING_DIR.mkdir(exist_ok=True, parents=True)
 
 # Measure time
 for dim in tqdm(dims, desc="Dimensions"):
-    for n_size in tqdm(n_sizes, desc="Sizes", leave=False):
-        for tol in tols:
+    for tol in tqdm(tols, desc="Tolerances", leave=False):
+        for n_size in tqdm(n_sizes, desc="Sizes", leave=False):
+            # Skip for large sizes and small tolerances to avoid long runtimes / CUDA OOM
+            if (n_size > 5e6 and tol < 1e-2) or (dim >= 100 and tol < 1e-2):
+                print(
+                    f"Skipping dim={dim}, n_size={n_size}, tol={tol} due to expected long runtime/CUDA OOM."
+                )
+                continue
+
             # Output json name
             output_json = TIMING_DIR / f"timing_gpu_ac_dim{dim}_n{n_size}_tol{tol}.json"
             if output_json.exists():
@@ -113,6 +120,7 @@ for dim in tqdm(dims, desc="Dimensions"):
                 atol=tol,
                 rtol=tol,
                 debug=True,
+                max_clusters_est=100_000_000 // dim,
             )
             gpu_num_clusters = len(metadata[0])
             gpu_time = time.perf_counter() - start_time
