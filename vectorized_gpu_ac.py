@@ -1,4 +1,5 @@
 import time
+from typing import Callable
 
 import cupy as cp
 from cuml.cluster import KMeans as cuKMeans
@@ -35,53 +36,6 @@ def repeat_cluster_indices(cluster_sizes: cp.ndarray) -> cp.ndarray:
     )
 
     return cluster_indices.astype(cp.int32)
-
-
-def objective_function(points: cp.ndarray, output: cp.ndarray = None) -> cp.ndarray:
-    """Compute objective function values for 3D points.
-
-    The function is f1 = x^2 + y^2, f2 = x - y + z.
-
-    Args:
-        points (cp.ndarray): Input points, shape (n, 3).
-        output (cp.ndarray, optional): Output array, shape (n, 2).
-
-    Returns:
-        cp.ndarray: Objective values, shape (n, 2).
-    """
-    n = points.shape[0]
-    if output is None:
-        output = cp.empty((n, 2), dtype=DTYPE)
-    x, y, z = points[:, 0], points[:, 1], points[:, 2]
-    cp.square(x, out=output[:, 0])
-    output[:, 0] += cp.square(y)
-    cp.subtract(x, y, out=output[:, 1])
-    output[:, 1] += z
-    return output
-
-
-def objective_function_gradient(
-    points: cp.ndarray, output: cp.ndarray = None
-) -> cp.ndarray:
-    """Compute gradient of objective function for 3D points.
-
-    Args:
-        points (cp.ndarray): Input points, shape (n, 3).
-        output (cp.ndarray, optional): Output array, shape (n, 2, 3).
-
-    Returns:
-        cp.ndarray: Gradients, shape (n, 2, 3).
-    """
-    n = points.shape[0]
-    if output is None:
-        output = cp.empty((n, 2, 3), dtype=DTYPE)
-    cp.multiply(points[:, 0], 2, out=output[:, 0, 0])
-    cp.multiply(points[:, 1], 2, out=output[:, 0, 1])
-    output[:, 0, 2] = 0.0
-    output[:, 1, 0] = 1.0
-    output[:, 1, 1] = -1.0
-    output[:, 1, 2] = 1.0
-    return output
 
 
 def compute_leading_eigenvectors(
@@ -163,7 +117,7 @@ def split_clusters_along_eigenvectors(
     projection_scores = cp.einsum("ij,ij->i", points, directions_broadcasted)
 
     # Global sort by (cluster_id, projection)
-    # Two-step argsort to avoid tuple issues
+    # Two-step argsort
     secondary_sort_permutation = cp.argsort(projection_scores)
     permuted_cluster_ids = cluster_indices[secondary_sort_permutation]
     primary_sort_permutation = cp.argsort(permuted_cluster_ids)
@@ -179,8 +133,10 @@ def split_clusters_along_eigenvectors(
     return sorted_points, left_cluster_sizes, right_cluster_sizes
 
 
-def run_adaptive_clustering(
-    data_points: cp.ndarray,
+def adaptive_cluster_algorithm_gpu(
+    X_train: cp.ndarray,
+    f: Callable,
+    grad: Callable,
     num_initial_clusters: int,
     min_pts_per_cluster: int,
     atol: float,
@@ -198,16 +154,16 @@ def run_adaptive_clustering(
     Returns:
         tuple: (converged_points, metadata) where metadata is (centroids, sizes, depths).
     """
-    print(f"--- Starting GPU Clustering on {data_points.shape} ---")
+    print(f"--- Starting GPU Clustering on {X_train.shape} ---")
     start_time = time.time()
 
     # Initial clustering
     kmeans = cuKMeans(n_clusters=num_initial_clusters, random_state=0)
-    initial_labels = kmeans.fit_predict(data_points)
+    initial_labels = kmeans.fit_predict(X_train)
 
     # Sort data by label
     sort_indices = cp.argsort(initial_labels)
-    current_points = data_points[sort_indices]
+    current_points = X_train[sort_indices]
 
     unique_cluster_labels, initial_cluster_sizes = cp.unique(  # type: ignore
         initial_labels[sort_indices], return_counts=True
@@ -215,7 +171,7 @@ def run_adaptive_clustering(
     initial_cluster_starts = cp.r_[0, cp.cumsum(initial_cluster_sizes)[:-1]]
 
     # Storage buffers
-    converged_points_store = cp.empty_like(data_points)
+    converged_points_store = cp.empty_like(X_train)
     store_index = 0
 
     # Metadata buffers
@@ -288,26 +244,22 @@ def run_adaptive_clustering(
         point_sums = cp.add.reduceat(augmented_points, augmented_starts)
         cluster_centroids_local = point_sums / augmented_sizes[:, None]
 
-        objective_at_centroids = objective_function(cluster_centroids_local)
-        gradient_at_centroids = objective_function_gradient(cluster_centroids_local)
+        F_at_centroids = f(cluster_centroids_local)
+        J_at_centroids = grad(cluster_centroids_local)
 
-        objective_expanded = objective_at_centroids[augmented_cluster_ids]
-        gradient_expanded = gradient_at_centroids[augmented_cluster_ids]
+        F_expanded = F_at_centroids[augmented_cluster_ids]
+        J_expanded = J_at_centroids[augmented_cluster_ids]
         centroids_expanded = cluster_centroids_local[augmented_cluster_ids]
 
         deviation_from_centroid = augmented_points - centroids_expanded
         linear_approximation = cp.einsum(
-            "ijk,ik->ij", gradient_expanded, deviation_from_centroid
+            "ijk,ik->ij", J_expanded, deviation_from_centroid
         )
-        estimated_objective = objective_expanded + linear_approximation
-        true_objective = objective_function(augmented_points)
+        F_taylor = F_expanded + linear_approximation
+        F_true = f(augmented_points)
 
-        approximation_error = cp.linalg.norm(
-            true_objective - estimated_objective, axis=1
-        )
-        error_threshold = cp.maximum(
-            atol, rtol * cp.linalg.norm(true_objective, axis=1)
-        )
+        approximation_error = cp.linalg.norm(F_true - F_taylor, axis=1)
+        error_threshold = cp.maximum(atol, rtol * cp.linalg.norm(F_true, axis=1))
 
         is_violating_point = (approximation_error > error_threshold).astype(cp.int32)
         violating_counts_per_cluster = cp.add.reduceat(
@@ -406,7 +358,40 @@ def run_adaptive_clustering(
     )
 
 
-# Execution
+def sample_function(X: cp.ndarray) -> tuple[cp.ndarray, cp.ndarray]:
+    """
+    A sample function f that returns F and J at given X.
+    f(X) = [x1^2 + x2^2, x1 - x2 + x3]
+    Args:
+        X: (n, 3) data matrix
+    Returns:
+        F: (n, 2) function values at X
+        J: (n, 2, 3) Jacobian at X
+    """
+    x1, x2, x3 = X[:, 0], X[:, 1], X[:, 2]
+    f1 = x1**2 + x2**2
+    f2 = x1 - x2 + x3
+    F = cp.stack([f1, f2], axis=1)
+    return F
+
+
+def sample_function_grad(X: cp.ndarray) -> cp.ndarray:
+    """
+    Gradient of the sample function.
+    grad(X) = [[2*x1, 2*x2, 0],
+               [1, -1, 1]]
+    Args:
+        X: (n, 3) data matrix
+    Returns:
+        J: (n, 2, 3) Jacobian at X
+    """
+    x1, x2, _ = X[:, 0], X[:, 1], X[:, 2]
+    g1 = cp.stack([2 * x1, 2 * x2, cp.zeros_like(x1)], axis=1)
+    g2 = cp.stack([cp.ones_like(x1), -cp.ones_like(x1), cp.ones_like(x1)], axis=1)
+    J = cp.stack([g1, g2], axis=1)
+    return J
+
+
 if __name__ == "__main__":
     N_SAMPLES = 10_000
     N_INIT_CLUSTERS = 100
@@ -421,9 +406,11 @@ if __name__ == "__main__":
     print(f"Generating {N_SAMPLES:,} points on GPU...")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
     print(f"{ATOL=}, {RTOL=}")
-    data_points = cp.random.rand(N_SAMPLES, 3, dtype=DTYPE)
-    converged_points, metadata = run_adaptive_clustering(
-        data_points=data_points,
+    X_train = cp.random.rand(N_SAMPLES, 3, dtype=DTYPE)
+    converged_points, metadata = adaptive_cluster_algorithm_gpu(
+        X_train=X_train,
+        f=sample_function,
+        grad=sample_function_grad,
         num_initial_clusters=N_INIT_CLUSTERS,
         min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
         atol=ATOL,

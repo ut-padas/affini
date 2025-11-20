@@ -556,9 +556,9 @@ if __name__ == "__main__":
     N_SAMPLES = 10_000
     N_INIT_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 100
-    ABS_TOL = 0.01
-    REL_TOL = 0.01
-    print(f"{ABS_TOL=}, {REL_TOL=}")
+    ATOL = 0.01
+    RTOL = 0.01
+    print(f"{ATOL=}, {RTOL=}")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
     D = 3
 
@@ -568,8 +568,8 @@ if __name__ == "__main__":
         D,
         N_INIT_CLUSTERS,
         MIN_PTS_PER_CLUSTER,
-        ABS_TOL,
-        REL_TOL,
+        ATOL,
+        RTOL,
         should_generate_extra_points=True,
     )
     toc = time.perf_counter()
@@ -630,7 +630,7 @@ if __name__ == "__main__":
         err = taylor_errors(test_pts, F_test, centroid_cp, F_c_cp, J_c_cp)
         max_err_gpu = err.max()
         max_err = float(max_err_gpu)
-        if max_err > max(ABS_TOL, REL_TOL * float(cp.linalg.norm(F_c_cp))):
+        if max_err > max(ATOL, RTOL * float(cp.linalg.norm(F_c_cp))):
             counter += 1
 
     perct_violate = 100.0 * counter / len(clusters)
