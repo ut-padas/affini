@@ -141,6 +141,7 @@ for dim in tqdm(dims, desc="Dimensions"):
                 seed=0,
                 should_generate_extra_points=True,
                 debug=True,
+                two_means_split_method="median",
             )
             cpu_num_clusters = len(clusters)
             cpu_time = time.perf_counter() - start_time

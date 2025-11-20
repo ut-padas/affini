@@ -68,6 +68,7 @@ class AdaptiveClusterer:
         use_gpu: bool = True,
         gpu_len_threshold: int = 10_000,
         should_generate_extra_points: bool = True,
+        two_means_split_method: str = "optimal",
     ):
         """
         Initialize the adaptive clusterer.
@@ -81,9 +82,10 @@ class AdaptiveClusterer:
             use_gpu: Whether to use GPU acceleration if available.
             gpu_len_threshold: Minimum data length to use GPU clustering. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_cpu_vs_gpu.py
             should_generate_extra_points: Whether to generate extra points for small clusters.
+            two_means_split_method: Method for splitting in TwoMeans ('optimal' or 'median').
         """
-        self.abs_tol = atol
-        self.rel_tol = rtol
+        self.atol = atol
+        self.rtol = rtol
         self.num_initial_clusters = num_initial_clusters
         self.min_points = min_points
         self.seed = seed
@@ -92,6 +94,7 @@ class AdaptiveClusterer:
         self.gpu_len_threshold = gpu_len_threshold
         self.should_generate_extra_points = should_generate_extra_points
         print(f"Should generate extra points: {self.should_generate_extra_points}")
+        self.two_means_split_method = two_means_split_method
 
         self._cluster_id = 0
 
@@ -209,7 +212,7 @@ class AdaptiveClusterer:
         err = np.linalg.norm(F_cluster - F_taylor, axis=1)
 
         # Tolerance per point
-        thr = np.maximum(self.abs_tol, self.rel_tol * np.linalg.norm(F_cluster, axis=1))
+        thr = np.maximum(self.atol, self.rtol * np.linalg.norm(F_cluster, axis=1))
         violated_mask = err > thr
         violated = bool(violated_mask.any())
 
@@ -325,7 +328,11 @@ class AdaptiveClusterer:
                     # Split based on cluster size via TwoMeans or CuML KMeans
                     if cluster_size < self.gpu_len_threshold:
                         X_norm, mu = self._normalize_data(X_cluster)
-                        labels, _ = two_means_pca_threshold(X_norm, mean=mu)
+                        labels, _ = two_means_pca_threshold(
+                            X_norm,
+                            mean=mu,
+                            split_method=self.two_means_split_method,
+                        )
                         NUM_CLUSTERED_BY_TWO_MEANS += 1
 
                         left = X_cluster[labels == 0]
@@ -368,6 +375,7 @@ def adaptive_cluster_algorithm(
     seed=0,
     should_generate_extra_points: bool = True,
     debug: bool = False,
+    two_means_split_method: str = "optimal",
 ) -> list[Cluster]:
     """Run the adaptive clustering algorithm and return the list of clusters."""
     clusterer = AdaptiveClusterer(
@@ -377,6 +385,7 @@ def adaptive_cluster_algorithm(
         min_points=min_pts_per_cluster,
         seed=seed,
         should_generate_extra_points=should_generate_extra_points,
+        two_means_split_method=two_means_split_method,
     )
     clusters = clusterer.fit(X=X_train, f=f, grad_f=grad_f, cupy_f=cupy_f, debug=debug)
     return clusters

@@ -46,20 +46,21 @@ def find_optimal_split_1d(s_sorted: np.ndarray) -> int:
 def two_means_pca_threshold(
     X_norm: np.ndarray,
     mean: np.ndarray,
+    split_method: str,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    A fast, PCA-based k=2 clustering method that finds an optimal split using 1D projections.
+    A fast, PCA-based k=2 clustering method that finds a split using 1D projections.
 
     Args:
         X_norm: Normalized data of shape (n, d), zero-mean per dimension
         mean: Mean used for normalization, shape (d,)
+        split_method: Strategy for splitting the projected data.
+                      'optimal' - Minimizes SSE (original behavior).
+                      'median'  - Splits at the exact middle index (forces balanced tree).
 
     Returns:
         labels: Cluster labels of shape (n,), values in {0, 1}
         centroids: Centroids of shape (2, d) in original (unnormalized) space.
-
-    References:
-    - ./docs/Two-Means PCA.pdf
     """
     Z = X_norm  # already zero-mean per dimension
     n, d = Z.shape
@@ -87,8 +88,18 @@ def two_means_pca_threshold(
     s_sorted = s[order]  # sorted 1D projections
     Z_sorted = Z[order]  # sorted original data (for centroid calculation later)
 
-    # Find optimal split point in 1D projected space
-    best_k = find_optimal_split_1d(s_sorted)
+    # --- Determine Split Point ---
+    if split_method == "optimal":
+        best_k = find_optimal_split_1d(s_sorted)
+    elif split_method == "median":
+        best_k = n // 2
+        # Edge case: if n is odd, n//2 is fine. If n=2, index 1.
+        # Ensure we don't split at 0 or n (though n < 2 handled above)
+        best_k = max(1, min(n - 1, best_k))
+    else:
+        raise ValueError(
+            f"Unknown split_method: {split_method}. Use 'optimal' or 'median'."
+        )
 
     # Assign labels according to best threshold (first best_k sorted points -> cluster 0)
     labels_sorted = np.zeros(n, dtype=np.int64)
@@ -114,4 +125,6 @@ def numba_two_means_warmup():
     # Warm up Numba compilation
     dummy_data = np.random.randn(10, 5)
     dummy_mean = np.zeros(5)
-    two_means_pca_threshold(dummy_data, dummy_mean)
+    # Warm up both paths
+    two_means_pca_threshold(dummy_data, dummy_mean, split_method="optimal")
+    two_means_pca_threshold(dummy_data, dummy_mean, split_method="median")
