@@ -175,7 +175,7 @@ def adaptive_cluster_algorithm_gpu(
     store_index = 0
 
     # Metadata buffers
-    cluster_centroids = cp.empty((max_clusters_est, 3), dtype=DTYPE)
+    cluster_centroids = cp.empty((max_clusters_est, X_train.shape[1]), dtype=DTYPE)
     cluster_sizes = cp.empty(max_clusters_est, dtype=cp.int32)
     cluster_depths = cp.empty(max_clusters_est, dtype=cp.int32)
     metadata_index = 0

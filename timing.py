@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 
 import cupy as cp
+import numpy as np
 from tqdm import tqdm
 
 from src.adaptive_clustering import adaptive_cluster_algorithm
@@ -25,6 +26,13 @@ def rosenbrock(X: cp.ndarray) -> cp.ndarray:
     return F
 
 
+def rosenbrock_cpu(X: np.ndarray) -> np.ndarray:
+    x_i = X[:, :-1]
+    x_next = X[:, 1:]
+    F = np.sum(100 * (x_next - x_i**2) ** 2 + (1 - x_i) ** 2, axis=1, keepdims=True)
+    return F
+
+
 def rosenbrock_grad(X: cp.ndarray) -> cp.ndarray:
     """
     Computes the gradient of the Rosenbrock function for given input points.
@@ -38,19 +46,39 @@ def rosenbrock_grad(X: cp.ndarray) -> cp.ndarray:
     n_samples, n_dims = X.shape
     J = cp.zeros((n_samples, 1, n_dims), dtype=X.dtype)
 
-    # Term from (1 - x_i)^2 for all i
-    J[:, 0, :] += 2 * (X - 1)
+    # The term (1 - x_i)^2 only exists for i = 0 to d-2
+    J[:, 0, :-1] += 2 * (X[:, :-1] - 1)
 
-    # Term from 100*(x_{i+1} - x_i^2)^2 for i < 99
+    # Term from 100*(x_{i+1} - x_i^2)^2 for i < d-1 (derivative w.r.t x_i)
+    # This affects 0 to d-2
     J[:, 0, :-1] -= 400 * X[:, :-1] * (X[:, 1:] - X[:, :-1] ** 2)
 
-    # Term from 100*(x_i - x_{i-1}^2)^2 for i > 0
+    # Term from 100*(x_i - x_{i-1}^2)^2 for i > 0 (derivative w.r.t x_{i+1})
+    # This affects 1 to d-1
     J[:, 0, 1:] += 200 * (X[:, 1:] - X[:, :-1] ** 2)
 
     return J
 
 
-dims = [100]
+def rosenbrock_grad_cpu(X: np.ndarray) -> np.ndarray:
+    n_samples, n_dims = X.shape
+    J = np.zeros((n_samples, 1, n_dims), dtype=X.dtype)
+
+    # The term (1 - x_i)^2 only exists for i = 0 to d-2
+    J[:, 0, :-1] += 2 * (X[:, :-1] - 1)
+
+    # Term from 100*(x_{i+1} - x_i^2)^2 for i < d-1 (derivative w.r.t x_i)
+    # This affects 0 to d-2
+    J[:, 0, :-1] -= 400 * X[:, :-1] * (X[:, 1:] - X[:, :-1] ** 2)
+
+    # Term from 100*(x_i - x_{i-1}^2)^2 for i > 0 (derivative w.r.t x_{i+1})
+    # This affects 1 to d-1
+    J[:, 0, 1:] += 200 * (X[:, 1:] - X[:, :-1] ** 2)
+
+    return J
+
+
+dims = [3, 100]
 n_sizes = [10_000, 100_000, 1_000_000, 5_000_000, 10_000_000, 20_000_000, 50_000_000]
 tols = [1e-1, 1e-2, 1e-3]
 
@@ -94,8 +122,8 @@ for dim in tqdm(dims, desc="Dimensions"):
             start_time = time.perf_counter()
             clusters = adaptive_cluster_algorithm(
                 X_train=X_train_cpu,
-                f=rosenbrock,
-                grad_f=rosenbrock_grad,
+                f=rosenbrock_cpu,
+                grad_f=rosenbrock_grad_cpu,
                 cupy_f=rosenbrock,
                 atol=tol,
                 rtol=tol,
