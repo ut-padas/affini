@@ -93,6 +93,7 @@ TIMING_DIR.mkdir(exist_ok=True, parents=True)
 for dim in tqdm(dims, desc="Dimensions"):
     for tol in tqdm(tols, desc="Tolerances", leave=False):
         for n_size in tqdm(n_sizes, desc="Sizes", leave=False):
+            n_size = int(n_size)
             # Skip for large sizes and small tolerances to avoid long runtimes / CUDA OOM
             if (n_size > 5e6 and tol < 1e-2) or (dim >= 100 and tol < 1e-2):
                 print(
