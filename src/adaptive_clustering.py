@@ -19,7 +19,7 @@ except Exception:
     _HAS_GPU = False
     warnings.warn("CuPy or cuML not available; GPU acceleration will be disabled.")
 
-CP_DTYPE = cp.float64 if _HAS_GPU else None
+CP_DTYPE = cp.float64 if _HAS_GPU else None  # type: ignore
 NP_DTYPE = np.float64
 print(f"CUML available: {_HAS_GPU}")
 
@@ -60,7 +60,7 @@ class AdaptiveClusterer:
         self,
         atol: float = 0.01,
         rtol: float = 0.01,
-        n_clusters: int = 10,
+        num_initial_clusters: int = 10,
         min_points: int = 1,
         seed: int = 0,
         *,
@@ -75,7 +75,7 @@ class AdaptiveClusterer:
         Args:
             atol: Absolute tolerance for cluster acceptance.
             rtol: Relative tolerance for cluster acceptance.
-            n_clusters: Number of initial clusters.
+            num_initial_clusters: Number of initial clusters.
             min_points: Minimum points per cluster.
             seed: Random seed for reproducibility.
             use_gpu: Whether to use GPU acceleration if available.
@@ -84,7 +84,7 @@ class AdaptiveClusterer:
         """
         self.abs_tol = atol
         self.rel_tol = rtol
-        self.n_clusters = n_clusters
+        self.num_initial_clusters = num_initial_clusters
         self.min_points = min_points
         self.seed = seed
 
@@ -110,9 +110,9 @@ class AdaptiveClusterer:
         """
         if self.use_gpu and cupy_f is not None and len(X) >= self.gpu_len_threshold:
             # print("Using CuPy for function evaluation.")
-            Xg = cp.asarray(X, dtype=CP_DTYPE)
+            Xg = cp.asarray(X, dtype=CP_DTYPE)  # type: ignore
             val = cupy_f(Xg)
-            return cp.asnumpy(val).astype(NP_DTYPE)
+            return cp.asnumpy(val).astype(NP_DTYPE)  # type: ignore
         else:
             val = f(X)
             return np.array(val, dtype=NP_DTYPE)
@@ -138,13 +138,15 @@ class AdaptiveClusterer:
 
         n = len(X)
         if self.use_gpu and n >= self.gpu_len_threshold:
-            Xg = cp.asarray(X_norm, dtype=CP_DTYPE)
-            km = cuKMeans(n_clusters=self.n_clusters, random_state=self.seed)
+            Xg = cp.asarray(X_norm, dtype=CP_DTYPE)  # type: ignore
+            km = cuKMeans(n_clusters=self.num_initial_clusters, random_state=self.seed)  # type: ignore
             labels = km.fit_predict(Xg).get()
             NUM_CLUSTERED_BY_CUML += 1
             return labels
 
-        km = KMeans(n_clusters=self.n_clusters, random_state=self.seed, n_init=1)
+        km = KMeans(
+            n_clusters=self.num_initial_clusters, random_state=self.seed, n_init=1
+        )
         NUM_CLUSTERED_BY_SKLEARN += 1
 
         labels = km.fit_predict(X_norm)
@@ -328,8 +330,8 @@ class AdaptiveClusterer:
                         left = X_cluster[labels == 0]
                         right = X_cluster[labels == 1]
                     elif self.use_gpu and cluster_size >= self.gpu_len_threshold:
-                        Xg = cp.asarray(X_cluster, dtype=CP_DTYPE)
-                        km = cuKMeans(n_clusters=2, random_state=self.seed)
+                        Xg = cp.asarray(X_cluster, dtype=CP_DTYPE)  # type: ignore
+                        km = cuKMeans(n_clusters=2, random_state=self.seed)  # type: ignore
                         labels = km.fit_predict(Xg).get()
                         NUM_CLUSTERED_BY_CUML += 1
 
@@ -369,7 +371,7 @@ def adaptive_cluster_algorithm(
     clusterer = AdaptiveClusterer(
         atol=atol,
         rtol=rtol,
-        n_clusters=num_initial_clusters,
+        num_initial_clusters=num_initial_clusters,
         min_points=min_pts_per_cluster,
         seed=seed,
         should_generate_extra_points=should_generate_extra_points,
@@ -436,14 +438,14 @@ if __name__ == "__main__":
         g1 = np.stack([np.ones_like(x1), -np.ones_like(x1), np.ones_like(x1)], axis=1)
         return np.stack([g0, g1], axis=1)  # (B, 2, 3)
 
-    def sample_cupy_function(X) -> cp.ndarray:
+    def sample_cupy_function(X) -> cp.ndarray:  # type: ignore
         """
         f(x) = [x1^2 + x2^2, x1 - x2 + x3] using CuPy
         """
         x1, x2, x3 = X[:, 0], X[:, 1], X[:, 2]
         val0 = x1**2 + x2**2
         val1 = x1 - x2 + x3
-        values = cp.stack([val0, val1], axis=1)
+        values = cp.stack([val0, val1], axis=1)  # type: ignore
         return values
 
     # Generate sample data

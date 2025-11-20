@@ -7,19 +7,8 @@ from cuml.cluster import KMeans as cuKMeans
 cp.random.seed(0)
 rng = cp.random.default_rng(0)
 
-# Precision & Constants
+# Precision
 DTYPE = cp.float64
-ATOL = 1e-5
-RTOL = 1e-5
-
-# User Params
-N_SAMPLES = 10_000_000
-MIN_PTS_PER_CLUSTER = 100
-N_INIT_CLUSTERS = 100
-ELL = 8
-POWER_ITERS = 4
-MAX_DEPTH = 500
-MAX_CLUSTERS_EST = 100_000_000  # Estimate for metadata buffer size
 
 
 def repeat_cluster_indices(cluster_sizes: cp.ndarray) -> cp.ndarray:
@@ -100,6 +89,7 @@ def compute_leading_eigenvectors(
     cluster_starts: cp.ndarray,
     cluster_sizes: cp.ndarray,
     num_clusters: int,
+    power_iters: int,
 ) -> cp.ndarray:
     """Compute leading eigenvectors for multiple clusters using power iteration.
 
@@ -127,7 +117,7 @@ def compute_leading_eigenvectors(
     cluster_indices = repeat_cluster_indices(cluster_sizes)
 
     # Power iteration loop
-    for _ in range(POWER_ITERS):
+    for _ in range(power_iters):
         # Broadcast mean and eigenvector to every point
         means_broadcasted = cluster_means[cluster_indices]
         eigenvectors_broadcasted = eigenvectors[cluster_indices]
@@ -189,7 +179,17 @@ def split_clusters_along_eigenvectors(
     return sorted_points, left_cluster_sizes, right_cluster_sizes
 
 
-def run_adaptive_clustering(data_points: cp.ndarray):
+def run_adaptive_clustering(
+    data_points: cp.ndarray,
+    num_initial_clusters: int,
+    min_pts_per_cluster: int,
+    atol: float,
+    rtol: float,
+    max_depth: int = 500,
+    max_clusters_est: int = 100_000_000,
+    power_iters: int = 4,
+    debug: bool = False,
+) -> tuple:
     """Run fully GPU-based adaptive clustering.
 
     Args:
@@ -202,7 +202,7 @@ def run_adaptive_clustering(data_points: cp.ndarray):
     start_time = time.time()
 
     # Initial clustering
-    kmeans = cuKMeans(n_clusters=N_INIT_CLUSTERS, random_state=0)
+    kmeans = cuKMeans(n_clusters=num_initial_clusters, random_state=0)
     initial_labels = kmeans.fit_predict(data_points)
 
     # Sort data by label
@@ -219,22 +219,22 @@ def run_adaptive_clustering(data_points: cp.ndarray):
     store_index = 0
 
     # Metadata buffers
-    cluster_centroids = cp.empty((MAX_CLUSTERS_EST, 3), dtype=DTYPE)
-    cluster_sizes = cp.empty(MAX_CLUSTERS_EST, dtype=cp.int32)
-    cluster_depths = cp.empty(MAX_CLUSTERS_EST, dtype=cp.int32)
+    cluster_centroids = cp.empty((max_clusters_est, 3), dtype=DTYPE)
+    cluster_sizes = cp.empty(max_clusters_est, dtype=cp.int32)
+    cluster_depths = cp.empty(max_clusters_est, dtype=cp.int32)
     metadata_index = 0
 
     current_depth = 0
-
-    while len(initial_cluster_sizes) > 0 and current_depth < MAX_DEPTH:
+    while len(initial_cluster_sizes) > 0 and current_depth < max_depth:
         num_clusters = len(initial_cluster_sizes)
-        print(
-            f"L{current_depth}: {num_clusters} clusters, {int(cp.sum(initial_cluster_sizes))} pts. ",
-            end="",
-        )
+        if debug:
+            print(
+                f"L{current_depth}: {num_clusters} clusters, {int(cp.sum(initial_cluster_sizes))} pts. ",
+                end="",
+            )
 
         # Augment clusters
-        augmented_sizes = cp.maximum(initial_cluster_sizes, MIN_PTS_PER_CLUSTER)
+        augmented_sizes = cp.maximum(initial_cluster_sizes, min_pts_per_cluster)
         total_augmented_points = int(cp.sum(augmented_sizes))
 
         augmented_points = cp.empty(
@@ -306,7 +306,7 @@ def run_adaptive_clustering(data_points: cp.ndarray):
             true_objective - estimated_objective, axis=1
         )
         error_threshold = cp.maximum(
-            ATOL, RTOL * cp.linalg.norm(true_objective, axis=1)
+            atol, rtol * cp.linalg.norm(true_objective, axis=1)
         )
 
         is_violating_point = (approximation_error > error_threshold).astype(cp.int32)
@@ -318,7 +318,8 @@ def run_adaptive_clustering(data_points: cp.ndarray):
         is_converged = ~has_violating_points
 
         num_violating_clusters = int(cp.sum(has_violating_points))
-        print(f"Bad: {num_violating_clusters}")
+        if debug:
+            print(f"Bad: {num_violating_clusters}")
 
         # Store converged clusters
         num_converged_clusters = int(cp.sum(is_converged))
@@ -326,7 +327,7 @@ def run_adaptive_clustering(data_points: cp.ndarray):
             converged_centroids = cluster_centroids_local[is_converged]
             converged_sizes = augmented_sizes[is_converged]
 
-            if metadata_index + num_converged_clusters <= MAX_CLUSTERS_EST:
+            if metadata_index + num_converged_clusters <= max_clusters_est:
                 cluster_centroids[
                     metadata_index : metadata_index + num_converged_clusters
                 ] = converged_centroids
@@ -360,17 +361,18 @@ def run_adaptive_clustering(data_points: cp.ndarray):
 
         # Compute eigenvectors
         eigenvector_directions = compute_leading_eigenvectors(
-            violating_points,
-            violating_cluster_starts,
-            violating_cluster_sizes,
-            num_violating_clusters,
+            points=violating_points,
+            cluster_starts=violating_cluster_starts,
+            cluster_sizes=violating_cluster_sizes,
+            num_clusters=num_violating_clusters,
+            power_iters=power_iters,
         )
 
         # Split along eigenvectors
         split_points, left_sizes, right_sizes = split_clusters_along_eigenvectors(
-            violating_points,
-            violating_cluster_sizes,
-            eigenvector_directions,
+            points=violating_points,
+            cluster_sizes=violating_cluster_sizes,
+            directions=eigenvector_directions,
         )
 
         # Interleave sizes
@@ -390,11 +392,12 @@ def run_adaptive_clustering(data_points: cp.ndarray):
         initial_cluster_starts = cp.r_[0, cp.cumsum(initial_cluster_sizes)[:-1]]
         current_depth += 1
 
-    elapsed_time = time.time() - start_time
-    print(f"\n--- Finished in {elapsed_time:.4f}s ---")
-    print(
-        f"Stored {store_index} converged points. Metadata for {metadata_index} clusters."
-    )
+    if debug:
+        elapsed_time = time.time() - start_time
+        print(f"\n--- Finished in {elapsed_time:.4f}s ---")
+        print(
+            f"Stored {store_index} converged points. Metadata for {metadata_index} clusters."
+        )
 
     return converged_points_store[:store_index], (
         cluster_centroids[:metadata_index],
@@ -405,9 +408,30 @@ def run_adaptive_clustering(data_points: cp.ndarray):
 
 # Execution
 if __name__ == "__main__":
+    N_SAMPLES = 10_000
+    N_INIT_CLUSTERS = 100
+    MIN_PTS_PER_CLUSTER = 100
+    ATOL = 0.01
+    RTOL = 0.01
+
+    MAX_DEPTH = 50
+    MAX_CLUSTERS_EST = 100_000_000
+    POWER_ITERS = 4
+
     print(f"Generating {N_SAMPLES:,} points on GPU...")
+    print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
     print(f"{ATOL=}, {RTOL=}")
     data_points = cp.random.rand(N_SAMPLES, 3, dtype=DTYPE)
-    converged_points, metadata = run_adaptive_clustering(data_points)
+    converged_points, metadata = run_adaptive_clustering(
+        data_points=data_points,
+        num_initial_clusters=N_INIT_CLUSTERS,
+        min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
+        atol=ATOL,
+        rtol=RTOL,
+        max_depth=MAX_DEPTH,
+        max_clusters_est=MAX_CLUSTERS_EST,
+        power_iters=POWER_ITERS,
+        debug=True,
+    )
 
     print(f"Final Cluster Count: {len(metadata[0])}")
