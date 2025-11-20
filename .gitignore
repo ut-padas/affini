@@ -220,3 +220,4 @@ tacc-files/
 
 # Profiling files
 profiles/
+timing_results/
