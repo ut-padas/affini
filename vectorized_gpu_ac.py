@@ -154,19 +154,15 @@ def compute_leading_eigenvectors(
 
 def split_clusters_along_eigenvectors(
     points: cp.ndarray,
-    cluster_starts: cp.ndarray,
     cluster_sizes: cp.ndarray,
     directions: cp.ndarray,
-    num_clusters: int,
 ):
     """Split clusters by projecting along eigenvectors and sorting.
 
     Args:
         points (cp.ndarray): Flattened points for all clusters.
-        cluster_starts (cp.ndarray): Start indices for each cluster.
         cluster_sizes (cp.ndarray): Number of points in each cluster.
         directions (cp.ndarray): Eigenvectors for splitting, shape (num_clusters, d).
-        num_clusters (int): Number of clusters.
 
     Returns:
         tuple: (sorted_points, left_sizes, right_sizes)
@@ -373,10 +369,8 @@ def run_adaptive_clustering(data_points: cp.ndarray):
         # Split along eigenvectors
         split_points, left_sizes, right_sizes = split_clusters_along_eigenvectors(
             violating_points,
-            violating_cluster_starts,
             violating_cluster_sizes,
             eigenvector_directions,
-            num_violating_clusters,
         )
 
         # Interleave sizes
