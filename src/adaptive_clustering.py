@@ -109,7 +109,6 @@ class AdaptiveClusterer:
             Function values with shape (n, fd)
         """
         if self.use_gpu and cupy_f is not None and len(X) >= self.gpu_len_threshold:
-            # print("Using CuPy for function evaluation.")
             Xg = cp.asarray(X, dtype=CP_DTYPE)  # type: ignore
             val = cupy_f(Xg)
             return cp.asnumpy(val).astype(NP_DTYPE)  # type: ignore
@@ -229,6 +228,7 @@ class AdaptiveClusterer:
         f: Callable,
         grad_f: Callable | None,
         cupy_f: Callable | None,
+        debug: bool = False,
     ) -> list[Cluster]:
         """
         Main clustering algorithm.
@@ -264,7 +264,8 @@ class AdaptiveClusterer:
 
         # BFS by levels
         while queue:
-            print(f"Processing level {n_level}, queue size: {len(queue)}")
+            if debug:
+                print(f"Processing level {n_level}, queue size: {len(queue)}")
             level = queue
             queue = []
 
@@ -366,6 +367,7 @@ def adaptive_cluster_algorithm(
     min_pts_per_cluster=1,
     seed=0,
     should_generate_extra_points: bool = True,
+    debug: bool = False,
 ) -> list[Cluster]:
     """Run the adaptive clustering algorithm and return the list of clusters."""
     clusterer = AdaptiveClusterer(
@@ -376,7 +378,7 @@ def adaptive_cluster_algorithm(
         seed=seed,
         should_generate_extra_points=should_generate_extra_points,
     )
-    clusters = clusterer.fit(X=X_train, f=f, grad_f=grad_f, cupy_f=cupy_f)
+    clusters = clusterer.fit(X=X_train, f=f, grad_f=grad_f, cupy_f=cupy_f, debug=debug)
     return clusters
 
 
