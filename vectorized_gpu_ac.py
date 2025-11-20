@@ -8,14 +8,14 @@ cp.random.seed(0)
 rng = cp.random.default_rng(0)
 
 # Precision & Constants
-DTYPE = cp.float32
+DTYPE = cp.float64
 ATOL = 1e-5
 RTOL = 1e-5
 
 # User Params
-N_SAMPLES = 1_000_000
+N_SAMPLES = 10_000_000
 MIN_PTS_PER_CLUSTER = 100
-N_INIT_CLUSTERS = 10
+N_INIT_CLUSTERS = 100
 ELL = 8
 POWER_ITERS = 4
 MAX_DEPTH = 500
@@ -118,7 +118,9 @@ def compute_leading_eigenvectors(
     cluster_means = point_sums / safe_cluster_sizes
 
     # Initialize random eigenvectors
-    eigenvectors = rng.standard_normal((num_clusters, points.shape[1]), dtype=DTYPE)
+    eigenvectors = rng.standard_normal(  # type: ignore
+        (num_clusters, points.shape[1]), dtype=DTYPE
+    )
     eigenvectors /= cp.linalg.norm(eigenvectors, axis=1, keepdims=True)
 
     # Broadcast cluster indices
@@ -211,7 +213,7 @@ def run_adaptive_clustering(data_points: cp.ndarray):
     sort_indices = cp.argsort(initial_labels)
     current_points = data_points[sort_indices]
 
-    unique_cluster_labels, initial_cluster_sizes = cp.unique(
+    unique_cluster_labels, initial_cluster_sizes = cp.unique(  # type: ignore
         initial_labels[sort_indices], return_counts=True
     )
     initial_cluster_starts = cp.r_[0, cp.cumsum(initial_cluster_sizes)[:-1]]
@@ -409,7 +411,8 @@ def run_adaptive_clustering(data_points: cp.ndarray):
 
 # Execution
 if __name__ == "__main__":
-    print(f"Generating {N_SAMPLES} points on GPU...")
+    print(f"Generating {N_SAMPLES:,} points on GPU...")
+    print(f"{ATOL=}, {RTOL=}")
     data_points = cp.random.rand(N_SAMPLES, 3, dtype=DTYPE)
     converged_points, metadata = run_adaptive_clustering(data_points)
 
