@@ -5,10 +5,8 @@ References:
 """
 
 import numpy as np
-from numba import njit
 
 
-@njit
 def find_optimal_split_1d(s_sorted: np.ndarray) -> int:
     """
     Find optimal split point in sorted 1D projections to minimize within-cluster SSE.
@@ -46,7 +44,7 @@ def find_optimal_split_1d(s_sorted: np.ndarray) -> int:
 def two_means_pca_threshold(
     X_norm: np.ndarray,
     mean: np.ndarray,
-    split_method: str,
+    split_method: str = "optimal",
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     A fast, PCA-based k=2 clustering method that finds a split using 1D projections.
@@ -119,12 +117,3 @@ def two_means_pca_threshold(
     centroids = centroids_norm + mean
 
     return labels, centroids
-
-
-def numba_two_means_warmup():
-    # Warm up Numba compilation
-    dummy_data = np.random.randn(10, 5)
-    dummy_mean = np.zeros(5)
-    # Warm up both paths
-    two_means_pca_threshold(dummy_data, dummy_mean, split_method="optimal")
-    two_means_pca_threshold(dummy_data, dummy_mean, split_method="median")

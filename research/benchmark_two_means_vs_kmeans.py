@@ -15,7 +15,7 @@ from sklearn.metrics import adjusted_rand_score
 from tqdm import tqdm
 
 from research.benchmark_kmeans_gpu_vs_cpu import REPEATS, SEED, _gen_data, _sse_original
-from src.two_means import numba_two_means_warmup, two_means_pca_threshold
+from src.two_means import two_means_pca_threshold
 
 DK_PAIRS = [(5, 2), (25, 2), (125, 2)]  # (smallD, medD, largeD) with K=2
 SIZES = np.unique((np.logspace(1, 6, num=20)).astype(int)).tolist()
@@ -221,7 +221,6 @@ def main():
         return
 
     print("Running Two-means vs KMeans benchmark for all dimensions...")
-    numba_two_means_warmup()
 
     all_results = []
 

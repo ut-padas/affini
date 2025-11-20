@@ -15,7 +15,6 @@ from sklearn.metrics import adjusted_rand_score
 from tqdm import tqdm
 
 from research.benchmark_kmeans_gpu_vs_cpu import REPEATS, SEED, _gen_data, _sse_original
-from src.two_means import numba_two_means_warmup
 from src.two_means_random_qr import two_means_random_qr_threshold
 
 DK_PAIRS = [(5, 2), (25, 2), (125, 2)]  # (smallD, medD, largeD) with K=2
@@ -222,7 +221,6 @@ def main():
     if OUT_CSV.exists():
         print(f"Output file {OUT_CSV} already exists; skipping benchmark.")
         return
-    numba_two_means_warmup()
     print("Running Two-means (QR) vs KMeans benchmark for all dimensions...")
 
     all_results = []
