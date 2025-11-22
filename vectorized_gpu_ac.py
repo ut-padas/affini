@@ -2,6 +2,7 @@ import time
 from typing import Callable
 
 import cupy as cp
+import cupyx
 from cuml.cluster import KMeans as cuKMeans
 
 
@@ -151,11 +152,13 @@ def adaptive_cluster_algorithm_gpu(
     X_train: cp.ndarray,
     f: Callable,
     grad: Callable,
+    *,
+    DATA_DIM: int,
+    F_DIM: int,
     NUM_INITIAL_CLUSTERS: int,
     MIN_PTS_PER_CLUSTER: int,
     ATOL: float,
     RTOL: float,
-    *,
     MAX_DEPTH: int = 500,
     MAX_CLUSTERS_EST: int = 100_000,
     POWER_ITERS: int = 4,
@@ -170,6 +173,8 @@ def adaptive_cluster_algorithm_gpu(
         X_train (cp.ndarray): Training data, shape (N, D), with N points of D dimensions.
         f (Callable): Function to evaluate at cluster centroids. Should return (N, FD), when called with (N, D). Here, FD is the function output dimension.
         grad (Callable): Gradient of the function f. Should return (N, FD, D), when called with (N, D).
+        DATA_DIM (int): Dimension of the input data D.
+        F_DIM (int): Dimension of the function output FD.
         NUM_INITIAL_CLUSTERS (int): Number of initial clusters.
         MIN_PTS_PER_CLUSTER (int): Minimum points per cluster during augmentation.
         ATOL (float): Absolute tolerance for convergence.
@@ -183,7 +188,16 @@ def adaptive_cluster_algorithm_gpu(
         DTYPE (cp.dtype): Data type for computations.
 
     Returns:
-        tuple: (converged_points, metadata) where metadata is (centroids, sizes, depths).
+        tuple:
+            - cp.ndarray: Cluster centroids, shape (M, D).
+            - cp.ndarray: Function values at centroids, shape (M, FD).
+            - cp.ndarray: Jacobians at centroids, shape (M, FD, D).
+            - cp.ndarray: Hessian proxies (2 * max_error / radius^2), shape (M,).
+            - cp.ndarray: Radii of clusters, shape (M,).
+            - cp.ndarray: Max errors per cluster, shape (M,).
+            - cp.ndarray: Mean errors per cluster, shape (M,).
+            - cp.ndarray: Sizes of clusters, shape (M,).
+            - cp.ndarray: Depths of clusters, shape (M,).
     """
     cp.random.seed(SEED)
     rng = cp.random.default_rng(SEED)
@@ -191,9 +205,6 @@ def adaptive_cluster_algorithm_gpu(
 
     print(f"--- Starting GPU Clustering on {X_train.shape} ---")
     start_time = time.time()
-
-    # Get Dimension of Data
-    DATA_DIM = X_train.shape[1]
 
     # Initial clustering
     kmeans = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=0)
@@ -207,13 +218,15 @@ def adaptive_cluster_algorithm_gpu(
     init_cluster_starts = cp.r_[0, cp.cumsum(init_cluster_sizes)[:-1]]
 
     # Storage buffers
-    final_converged_points_store = cp.empty_like(X_train)
-    store_index = 0
-
-    # Metadata buffers
     final_cluster_centroids = cp.empty((MAX_CLUSTERS_EST, DATA_DIM), dtype=DTYPE)
+    final_cluster_F = cp.empty((MAX_CLUSTERS_EST, F_DIM), dtype=DTYPE)
+    final_cluster_J = cp.empty((MAX_CLUSTERS_EST, F_DIM, DATA_DIM), dtype=DTYPE)
+    final_cluster_max_errors = cp.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
+    final_cluster_mean_errors = cp.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
+    final_cluster_radii = cp.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
     final_cluster_sizes = cp.empty(MAX_CLUSTERS_EST, dtype=cp.int32)
     final_cluster_depths = cp.empty(MAX_CLUSTERS_EST, dtype=cp.int32)
+
     metadata_index = 0
 
     # Breadth-First Clustering Loop
@@ -284,6 +297,7 @@ def adaptive_cluster_algorithm_gpu(
         point_sums = cp.add.reduceat(augmented_points, augmented_starts)
         cluster_centroids = point_sums / augmented_sizes[:, None]
 
+        # Evaluate function and gradient at centroids
         F_at_centroids = f(cluster_centroids)
         J_at_centroids = grad(cluster_centroids)
 
@@ -291,6 +305,7 @@ def adaptive_cluster_algorithm_gpu(
         J_expanded = J_at_centroids[augmented_cluster_ids]
         centroids_expanded = cluster_centroids[augmented_cluster_ids]
 
+        # Linear approximation: F_taylor = F(c) + J(c) * (x - c)
         deviation_from_centroid = augmented_points - centroids_expanded
         linear_approximation = cp.einsum(
             "ijk,ik->ij", J_expanded, deviation_from_centroid
@@ -298,9 +313,22 @@ def adaptive_cluster_algorithm_gpu(
         F_taylor = F_expanded + linear_approximation
         F_true = f(augmented_points)
 
+        # Compute radii of clusters
+        dist_from_centroid = cp.linalg.norm(deviation_from_centroid, axis=1)
+        cluster_radii = cp.zeros(len(augmented_sizes), dtype=DTYPE)
+        cupyx.scatter_max(cluster_radii, augmented_cluster_ids, dist_from_centroid)
+
         # Compute the error threshold for each point
         approximation_error = cp.linalg.norm(F_true - F_taylor, axis=1)
         error_threshold = cp.maximum(ATOL, RTOL * cp.linalg.norm(F_true, axis=1))
+
+        # Compute the max and mean errors per cluster
+        cluster_sum_errors = cp.add.reduceat(approximation_error, augmented_starts)
+        cluster_max_errors = cp.zeros(len(augmented_sizes), dtype=DTYPE)
+        cupyx.scatter_max(
+            cluster_max_errors, augmented_cluster_ids, approximation_error
+        )
+        cluster_mean_errors = cluster_sum_errors / augmented_sizes
 
         # Identify violating clusters by counting points exceeding error threshold per
         # cluster
@@ -319,40 +347,40 @@ def adaptive_cluster_algorithm_gpu(
         num_converged_clusters = int(cp.sum(is_converged))
         if num_converged_clusters > 0:
             converged_centroids = cluster_centroids[is_converged]
+            converged_F = F_at_centroids[is_converged]
+            converged_J = J_at_centroids[is_converged]
+            converged_max_errors = cluster_max_errors[is_converged]
+            converged_mean_errors = cluster_mean_errors[is_converged]
+            converged_radii = cluster_radii[is_converged]
             converged_sizes = augmented_sizes[is_converged]
 
             # Calculate the potential new indices for both metadata and points
             next_meta_idx = metadata_index + num_converged_clusters
 
-            points_in_converged_clusters = is_converged[augmented_cluster_ids]
-            points_to_store = augmented_points[points_in_converged_clusters]
-            num_points_to_store = points_to_store.shape[0]
-            next_store_idx = store_index + num_points_to_store
-
             # Store the converged cluster data if within bounds
-            if (next_meta_idx <= MAX_CLUSTERS_EST) and (
-                next_store_idx <= final_converged_points_store.shape[0]
-            ):
+            if next_meta_idx <= MAX_CLUSTERS_EST:
                 # Store Metadata
                 final_cluster_centroids[metadata_index:next_meta_idx] = (
                     converged_centroids
                 )
+                final_cluster_F[metadata_index:next_meta_idx] = converged_F
+                final_cluster_J[metadata_index:next_meta_idx] = converged_J
+
+                final_cluster_max_errors[metadata_index:next_meta_idx] = (
+                    converged_max_errors
+                )
+                final_cluster_mean_errors[metadata_index:next_meta_idx] = (
+                    converged_mean_errors
+                )
+                final_cluster_radii[metadata_index:next_meta_idx] = converged_radii
+
                 final_cluster_sizes[metadata_index:next_meta_idx] = converged_sizes
                 final_cluster_depths[metadata_index:next_meta_idx] = current_depth
                 metadata_index = next_meta_idx  # Update the index
 
-                # Store Points
-                final_converged_points_store[store_index:next_store_idx] = (
-                    points_to_store
-                )
-                store_index = next_store_idx  # Update the index
-
             else:
-                raise MemoryError(
-                    f"Storage overflow. \n"
-                    f"Clusters: {next_meta_idx}/{MAX_CLUSTERS_EST} \n"
-                    f"Points: {next_store_idx}/{final_converged_points_store.shape[0]}"
-                )
+                msg = f"Storage overflow. Clusters: {next_meta_idx}/{MAX_CLUSTERS_EST}. Increase MAX_CLUSTERS_EST."
+                raise MemoryError(msg)
 
         # Termination condition
         if num_violating_clusters == 0:
@@ -409,15 +437,28 @@ def adaptive_cluster_algorithm_gpu(
         msg = f"\n--- Finished in {elapsed_time:.4f}s ---\n"
         msg += f"\t> Final Cluster Count: {metadata_index}\n"
         print(f"\n--- Finished in {elapsed_time:.4f}s ---")
-        print(
-            f"Stored {store_index} converged points. Metadata for {metadata_index} clusters."
-        )
 
-    # Slice final storage buffers to actual sizes and return
-    return final_converged_points_store[:store_index], (
-        final_cluster_centroids[:metadata_index],
-        final_cluster_sizes[:metadata_index],
-        final_cluster_depths[:metadata_index],
+    # Slice metadata to actual size
+    _centroids = final_cluster_centroids[:metadata_index]
+    _F = final_cluster_F[:metadata_index]
+    _J = final_cluster_J[:metadata_index]
+    _max_errors = final_cluster_max_errors[:metadata_index]
+    _mean_errors = final_cluster_mean_errors[:metadata_index]
+    _radii = final_cluster_radii[:metadata_index]
+    _sizes = final_cluster_sizes[:metadata_index]
+    _depths = final_cluster_depths[:metadata_index]
+
+    _hessian_proxies = cp.where(_radii > 0, 2.0 * _max_errors / (_radii**2), 0.0)
+    return (
+        _centroids,
+        _F,
+        _J,
+        _hessian_proxies,
+        _radii,
+        _max_errors,
+        _mean_errors,
+        _sizes,
+        _depths,
     )
 
 
@@ -475,10 +516,12 @@ if __name__ == "__main__":
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
     print(f"{ATOL=}, {RTOL=}")
     X_train = cp.random.rand(N_SAMPLES, 3, dtype=DTYPE)
-    converged_points, metadata = adaptive_cluster_algorithm_gpu(
+    result = adaptive_cluster_algorithm_gpu(
         X_train=X_train,
         f=sample_function,
         grad=sample_function_grad,
+        DATA_DIM=3,
+        F_DIM=2,
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ATOL=ATOL,
@@ -490,4 +533,4 @@ if __name__ == "__main__":
         DTYPE=DTYPE,
     )
 
-    print(f"Final Cluster Count: {len(metadata[0])}")
+    print(f"Final Cluster Count: {len(result[0])}")
