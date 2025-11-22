@@ -1,490 +1,465 @@
-"""GPU-based Adaptive Two-Means Clustering for Function Approximation."""
-
 import time
-from dataclasses import dataclass
 from typing import Callable
 
 import cupy as cp
+import cupyx
 from cuml.cluster import KMeans as cuKMeans
 
-try:
-    _ = cp.is_available()
-except Exception as e:
-    print("You do not have a working CuPy installation/GPU setup.")
-    raise e
 
-props = cp.cuda.runtime.getDeviceProperties(0)
-num_sms = props["multiProcessorCount"]
+def repeat_cluster_indices(cluster_sizes: cp.ndarray) -> cp.ndarray:
+    """
+    Generate an array of cluster indices repeated according to cluster sizes.
+    Uses searchsorted to handle zero-size clusters correctly.
 
-SEED = 0
-CP_DTYPE = cp.float64
-NUM_STREAMS = num_sms
-ELL = 8  # randomized-QR sketch size
-POWER_ITERS = 1  # randomized-QR power iterations
+    Args:
+        cluster_sizes (cp.ndarray): Number of points in each cluster.
+
+    Returns:
+        cp.ndarray: Array of cluster indices, shape (total_points,).
+
+    Example:
+    >>> cluster_sizes = cp.array([3, 1, 4, 2, 0, 2])
+    >>> repeat_cluster_indices(cluster_sizes)
+    >>> cp.array([0, 0, 0, 1, 2, 2, 2, 2, 3, 3, 5, 5])
+    """
+    total_points = int(cp.sum(cluster_sizes))
+    if total_points == 0:
+        return cp.array([], dtype=cp.int32)
+
+    # Prefix sum gives the upper boundaries of each segment
+    cumulative_offsets = cp.cumsum(cluster_sizes)
+
+    # Search where each index falls in the bins
+    cluster_indices = cp.searchsorted(
+        cumulative_offsets, cp.arange(total_points), side="right"
+    )
+
+    return cluster_indices.astype(cp.int32)
 
 
-def randomized_qr_gpu(
-    X: cp.ndarray,
+def compute_leading_eigenvectors(
+    points: cp.ndarray,
+    cluster_starts: cp.ndarray,
+    cluster_sizes: cp.ndarray,
+    num_clusters: int,
     rng: cp.random.Generator,
-    ell: int = ELL,
-    power_iterations: int = POWER_ITERS,
+    POWER_ITERS: int,
+    EPS: float = 1e-9,
+    DTYPE=cp.float64,
 ) -> cp.ndarray:
     """
-    Randomized-QR to compute approximate leading left singular vector of X.
+    Compute leading eigenvectors for multiple clusters using power iteration.
 
     Args:
-        X: (n, D) data matrix
-        rng: cupy random generator
-        ell: sketch size
-        power_iterations: number of power iterations
+        points (cp.ndarray): Flattened points for all clusters.
+        cluster_starts (cp.ndarray): Start indices for each cluster in points.
+        cluster_sizes (cp.ndarray): Number of points in each cluster.
+        num_clusters (int): Number of clusters.
+        rng (cp.random.Generator): Random number generator for initialization.
+        POWER_ITERS (int): Number of power iteration steps.
+        EPS (float): Small value to avoid division by zero.
+        DTYPE (cp.dtype): Data type for computations.
 
     Returns:
-        q: (D,) approximate leading left singular vector
+        cp.ndarray: Leading eigenvectors, shape (num_clusters, D).
     """
-    XT = X.T
-    _, N = XT.shape
-    omega = rng.standard_normal((N, ell), dtype=X.dtype)  # (n, ell)
+    # Compute cluster means
+    point_sums = cp.add.reduceat(points, cluster_starts)
+    cluster_sizes = cp.maximum(cluster_sizes[:, None], 1)
+    centroids = point_sums / cluster_sizes
 
-    X0 = XT - cp.mean(XT, axis=1, keepdims=True)  # (D,n)
+    # Initialize random eigenvectors
+    eigenvectors = rng.standard_normal((num_clusters, points.shape[1]), dtype=DTYPE)
+    eigenvectors /= cp.linalg.norm(eigenvectors, axis=1, keepdims=True)
 
-    Y = X0 @ omega  # (D, ell)
-    Q, _ = cp.linalg.qr(Y)  # (D, ell)
-    for _ in range(power_iterations):
-        Y = X0 @ (X0.T @ Q)  # (D, ell)
-        Q, _ = cp.linalg.qr(Y)
+    # Broadcast cluster indices
+    cluster_indices = repeat_cluster_indices(cluster_sizes)
 
-    q = Q[:, 0]  # (D,)
+    # Power iteration loop
+    for _ in range(POWER_ITERS):
+        # Expand centroids and eigenvectors
+        centroids_expanded = centroids[cluster_indices]
+        eigenvectors_expanded = eigenvectors[cluster_indices]
 
-    # Normalize
-    q /= cp.linalg.norm(q)
-    return q
+        # Center points by centroids
+        # TODO: This is failing when points ~ 100K X 20 DIM X 64bits ~ 9.8GB on Vista
+        # where the GPU has ~ 100GB memory. Need to debug further, since this should fit.
+        centered_points = points - centroids_expanded
+
+        # Project onto eigenvectors - einsum for batch dot product
+        projections = cp.einsum("ij,ij->i", centered_points, eigenvectors_expanded)
+
+        # Scale vectors - broadcasting projections
+        scaled_vectors = centered_points * projections[:, None]
+
+        # Reduce back to clusters
+        next_eigenvectors = cp.add.reduceat(scaled_vectors, cluster_starts)
+
+        # Normalize safely to avoid division by zero
+        eigenvector_norms = cp.linalg.norm(next_eigenvectors, axis=1, keepdims=True)
+        safe_norms = cp.maximum(eigenvector_norms, EPS)
+        eigenvectors = next_eigenvectors / safe_norms
+
+    return eigenvectors
 
 
-def median_cut_projection(
-    X: cp.ndarray, q: cp.ndarray
-) -> tuple[cp.ndarray, cp.ndarray]:
-    """
-    Project points onto q and split at median.
+def split_clusters_along_eigenvectors(
+    points: cp.ndarray,
+    cluster_sizes: cp.ndarray,
+    directions: cp.ndarray,
+    SPLIT_METHOD: str = "median",
+):
+    """Split clusters by projecting along eigenvectors and sorting.
 
     Args:
-        X: (n, D) data matrix
-        q: (D,) projection direction
+        points (cp.ndarray): Flattened points for all clusters.
+        cluster_sizes (cp.ndarray): Number of points in each cluster.
+        directions (cp.ndarray): Eigenvectors for splitting, shape (num_clusters, d).
+        SPLIT_METHOD (str): Method for splitting ('median', 'optimal'). Currently only 'median' is implemented.
 
     Returns:
-        left_mask: (n,) boolean mask for left cluster
-        right_mask: (n,) boolean mask for right cluster
+        tuple: (sorted_points, left_sizes, right_sizes)
     """
-    s = X @ q
-    med = cp.median(s)
-    left = s <= med
-    right = s > med
-    return left, right
+    # Project all points onto directions
+    cluster_indices = repeat_cluster_indices(cluster_sizes)
+    directions_expanded = directions[cluster_indices]
+    projection_scores = cp.einsum("ij,ij->i", points, directions_expanded)
 
+    # Perform Lexicographical Sort: (Cluster Id, Projection Score)
+    # Goal: Group points by Cluster ID, and order them by Score within the cluster.
+    # Strategy: "Radix Sort" logic — sort by the secondary key first, then by the
+    # primary key.
+    indices_sorted_by_score = cp.argsort(projection_scores)
+    cluster_ids_ordered_by_score = cluster_indices[indices_sorted_by_score]
+    indices_grouping_clusters = cp.argsort(cluster_ids_ordered_by_score)
+    final_lexicographical_order = indices_sorted_by_score[indices_grouping_clusters]
+    sorted_points = points[final_lexicographical_order]
 
-def generate_extra_points(
-    X: cp.ndarray,
-    min_points_per_cluster: int,
-    rng: cp.random.Generator,
-) -> cp.ndarray:
-    """
-    Given a cluster with too few points, generate extra points via convex combinations.
+    if SPLIT_METHOD == "median":
+        # Calculate split points (Median Split)
+        count_left_children = cluster_sizes // 2
+        count_right_children = cluster_sizes - count_left_children
+    elif SPLIT_METHOD == "optimal":
+        raise NotImplementedError("Optimal split method is not implemented yet.")
+    else:
+        msg = f"Unknown split method: {SPLIT_METHOD}. Supported: 'median', 'optimal'."
+        raise ValueError(msg)
 
-    Args:
-        X: (Q, D) data matrix for the cluster
-        min_points_per_cluster: minimum desired points per cluster
-        rng: cupy random generator
-
-    Returns:
-        new_X: (n_extra, D) generated extra points
-    """
-    Q = X.shape[0]
-    if Q < 2:
-        raise ValueError("At least two points required to generate extra points.")
-
-    n_extra = max(1, min_points_per_cluster - Q + 1)
-    lambdas = rng.random(n_extra, dtype=X.dtype)
-
-    idx0 = rng.integers(0, Q, size=n_extra)
-    offs = rng.integers(1, Q, size=n_extra)
-    idx1 = (idx0 + offs) % Q
-
-    new_X = lambdas[:, None] * X[idx0] + (1.0 - lambdas)[:, None] * X[idx1]
-    return new_X
-
-
-@dataclass
-class Cluster:
-    """
-    Data class to hold cluster information.
-
-    Attributes:
-        centroid: (1, D) cluster centroid
-        F_centroid: (1, FD) function value at centroid
-        J_centroid: (1, FD, D) Jacobian at centroid
-        radius: cluster radius
-        hessian_proxy: hessian proxy value
-        cluster_size: number of points in cluster
-        max_error: maximum Taylor approximation error in cluster
-        mean_error: mean Taylor approximation error in cluster
-    """
-
-    centroid: cp.ndarray
-    F_centroid: cp.ndarray
-    J_centroid: cp.ndarray
-    radius: cp.ndarray | float
-    hessian_proxy: cp.ndarray | float
-    cluster_size: int
-    max_error: cp.ndarray | float
-    mean_error: cp.ndarray | float
-
-
-def refine_adaptive_clusters(
-    X: cp.ndarray,
-    labels: cp.ndarray,
-    f: Callable,
-    grad_f: Callable,
-    atol: float,
-    rtol: float,
-    min_pts_per_cluster: int,
-    ell: int,
-    power_iters: int,
-    num_streams: int,
-    seed: int,
-    should_generate_extra_points: bool = True,
-    debug: bool = False,
-) -> list[Cluster]:
-    """
-    Adaptive two-means clustering with GPU streaming.
-
-    Args:
-        X: (N, D) data matrix
-        labels: (N,) initial cluster labels from a clustering algorithm
-        f: function that returns F at given X.
-            Note: f(X) should return F: (N, FD) given X: (N, D)
-        grad_f: function that returns J at given X.
-            Note: grad_f(X) should return J: (N, FD, D) given X: (N, D)
-        atol: absolute tolerance for Taylor error
-        rtol: relative tolerance for Taylor error
-        min_pts_per_cluster: minimum points per cluster for evaluation
-        ell: sketch size for randomized-QR
-        power_iters: number of power iterations for randomized-QR
-        num_streams: number of CUDA streams to use
-        seed: random seed for reproducibility
-        generate_extra_points_flag: if True, generate extra points for small clusters;
-            if False, directly finalize clusters with fewer than min_pts_per_cluster points
-        debug: if True, print debug information
-
-    Returns:
-        final_clusters: list of Cluster objects representing final clusters
-    """
-
-    rng = cp.random.default_rng(seed)
-    assert rng is not None, "Something went wrong with RNG initialization."
-
-    # Initialize queue with point arrays and cluster IDs from initial KMeans
-    cluster_ids = cp.arange(int(labels.max()) + 1)
-    queue: list[cp.ndarray] = []  # (cluster_points,)
-    for cid in range(len(cluster_ids)):
-        idx = cp.where(labels == cid)[0]
-        if idx.size > 0:
-            queue.append(X[idx])  # Store points
-
-    final_clusters: list[Cluster] = []
-    n_level = 0
-
-    start_time = time.perf_counter()
-    level_start_time = time.perf_counter()
-
-    # BFS by levels
-    while queue:
-        if debug and n_level > 0:
-            level_time = time.perf_counter() - level_start_time
-            print(
-                f"Level {n_level}: processing {len(queue)} clusters (prev level took {level_time:.2f}s)"
-            )
-
-        level_start_time = time.perf_counter()
-        level = queue
-        queue = []
-
-        # Batch violation detection for entire level
-        if not level:
-            break
-
-        # Pre-process clusters
-        current_level_clusters = []
-        cluster_sizes = []
-
-        # Clusters with too few points when should_generate_extra_points=False
-        small_clusters_to_finalize = []
-
-        for cluster_pts in level:
-            cluster_size = cluster_pts.shape[0]
-
-            # Update cluster points by generating extra points if needed
-            if cluster_size < min_pts_per_cluster:
-                if should_generate_extra_points:
-                    new_X = generate_extra_points(cluster_pts, min_pts_per_cluster, rng)
-                    work_X = cp.concatenate([cluster_pts, new_X], axis=0)
-                    current_level_clusters.append(work_X)
-                else:
-                    # Don't generate extra points, mark for direct finalization
-                    small_clusters_to_finalize.append(cluster_pts)
-                    continue
-            else:
-                current_level_clusters.append(cluster_pts)
-
-            cluster_sizes.append(current_level_clusters[-1].shape[0])
-
-        # Process small clusters that should be finalized directly
-        for small_cluster_pts in small_clusters_to_finalize:
-            centroid = small_cluster_pts.mean(axis=0, keepdims=True)
-            F_c = f(centroid)
-            J_c = grad_f(centroid)
-
-            # Compute function values and errors for small cluster
-            F_pts = f(small_cluster_pts)
-            dx = small_cluster_pts - centroid
-            F_taylor = F_c + cp.einsum("ijk,nk->nj", J_c, dx)
-            err = cp.linalg.norm(F_pts - F_taylor, axis=1)
-
-            max_err_gpu = err.max()
-            mean_err_gpu = err.mean()
-            radius_gpu = cp.max(cp.linalg.norm(small_cluster_pts - centroid, axis=1))
-            h_proxy_gpu = 2.0 * max_err_gpu / (radius_gpu**2) if radius_gpu > 0 else 0.0
-
-            final_clusters.append(
-                Cluster(
-                    centroid=centroid,
-                    F_centroid=F_c,
-                    J_centroid=J_c,
-                    radius=radius_gpu,
-                    hessian_proxy=h_proxy_gpu,
-                    cluster_size=small_cluster_pts.shape[0],
-                    max_error=max_err_gpu,
-                    mean_error=mean_err_gpu,
-                )
-            )
-
-        # Skip batch processing if no clusters remain
-        if not current_level_clusters:
-            continue
-
-        cluster_starts = cp.concatenate(
-            [cp.array([0]), cp.cumsum(cp.array(cluster_sizes[:-1]))]
-        )
-
-        # Combine all clusters for batch processing
-        all_X = cp.concatenate(current_level_clusters, axis=0)
-
-        # Create cluster labels using repeat instead of loops
-        all_cluster_labels = cp.repeat(
-            a=cp.arange(len(level), dtype=cp.int32),
-            repeats=cluster_sizes,
-        )
-
-        # Compute centroids vectorized (from augmented data)
-        centroids = cp.stack([pts.mean(axis=0) for pts in current_level_clusters])
-
-        # Optimized batch violation detection
-        # Step 1: Compute function values at centroids
-        F_centroids_at_centroids = f(centroids)
-        J_centroids_at_centroids = grad_f(centroids)
-
-        # Step 2: Compute function values at all points
-        F_true = f(all_X)
-
-        # Step 3: Vectorized Taylor approximation using broadcasting
-        # Expand centroids to match point counts
-        centroid_indices = cp.repeat(cp.arange(len(level)), cluster_sizes)
-        expanded_centroids = centroids[centroid_indices]  # (total_points, D)
-        expanded_F_centroids = F_centroids_at_centroids[centroid_indices]
-        expanded_J_centroids = J_centroids_at_centroids[centroid_indices]
-
-        # Vectorized Taylor approximation for all points at once
-        dx = all_X - expanded_centroids  # (total_points, D)
-        F_taylor = expanded_F_centroids + cp.einsum(
-            "ijk,ik->ij", expanded_J_centroids, dx
-        )
-        err = cp.linalg.norm(F_true - F_taylor, axis=1)  # (total_points,)
-        thr = cp.maximum(atol, rtol * cp.linalg.norm(F_true, axis=1))
-        violations_mask = err > thr
-
-        # Vectorized identification of violating clusters
-        # Use bincount to find clusters with any violations
-        if violations_mask.any():
-            violating_cluster_counts = cp.bincount(
-                all_cluster_labels[violations_mask], minlength=len(level)
-            )
-            violating_clusters = set(
-                cp.where(violating_cluster_counts > 0)[0].get().tolist()
-            )
-        else:
-            violating_clusters = set()
-
-        if debug:
-            print(
-                f"  --> {len(violating_clusters)}/{len(level)} clusters need splitting"
-            )
-
-        # Pre-compute error statistics for all clusters
-        cluster_error_stats = []
-        for i, cluster_size in enumerate(cluster_sizes):
-            cluster_start = cluster_starts[i] if i < len(cluster_starts) else len(all_X)
-            cluster_end = (
-                cluster_starts[i + 1] if i + 1 < len(cluster_starts) else len(all_X)
-            )
-            cluster_mask = slice(cluster_start, cluster_end)
-            cluster_errors = err[cluster_mask]
-            cluster_error_stats.append((cluster_errors.max(), cluster_errors.mean()))
-
-        # Batch process non-violating clusters (reuse already computed values)
-        streams = [cp.cuda.Stream(non_blocking=True) for _ in range(num_streams)]
-
-        # Per-level containers for children to enqueue after sync
-        children_left: list[cp.ndarray] = []
-        children_right: list[cp.ndarray] = []
-
-        for i, X_cluster in enumerate(level):
-            stream = streams[i % num_streams]
-            with stream:
-                cluster_size = X_cluster.shape[0]  # Original cluster size
-
-                if i not in violating_clusters:
-                    # No violations - create final cluster using precomputed batch values
-
-                    # Use centroid, size, function values from augmented data
-                    centroid = centroids[i : i + 1]  # (1, D)
-                    augmented_X = current_level_clusters[i]
-                    augmented_cluster_size = augmented_X.shape[0]
-
-                    F_c = F_centroids_at_centroids[i : i + 1]
-                    J_c = J_centroids_at_centroids[i : i + 1]
-                    max_err_gpu, mean_err_gpu = cluster_error_stats[i]
-
-                    # Compute cluster radius
-                    radius_gpu = cp.max(cp.linalg.norm(augmented_X - centroid, axis=1))
-
-                    # hessian proxy
-                    h_proxy_gpu = (
-                        2.0 * max_err_gpu / (radius_gpu**2) if radius_gpu > 0 else 0.0
-                    )
-
-                    final_clusters.append(
-                        Cluster(
-                            centroid=centroid,
-                            F_centroid=F_c,
-                            J_centroid=J_c,
-                            radius=radius_gpu,
-                            hessian_proxy=h_proxy_gpu,
-                            cluster_size=augmented_cluster_size,
-                            max_error=max_err_gpu,
-                            mean_error=mean_err_gpu,
-                        )
-                    )
-                else:
-                    # Cluster has violations - split it using augmented data
-                    # Use the already-computed augmented cluster data
-                    work_X = current_level_clusters[i]
-
-                    # Split using randomized-QR direction computed on work_X
-                    q = randomized_qr_gpu(work_X, rng, ell, power_iters)
-                    left_mask, right_mask = median_cut_projection(work_X, q)
-
-                    # Enqueue children for next level processing
-                    children_left.append(work_X[left_mask])
-                    children_right.append(work_X[right_mask])
-
-        # Synchronize streams
-        for s in streams:
-            s.synchronize()
-
-        # Enqueue children for next level
-        queue.extend(children_left)
-        queue.extend(children_right)
-        n_level += 1
-
-    delta = time.perf_counter() - start_time
-    print(f"Clustering Completed. Total levels: {n_level}, time taken: {delta:.2f}s")
-    return final_clusters
+    return sorted_points, count_left_children, count_right_children
 
 
 def adaptive_cluster_algorithm_gpu(
     X_train: cp.ndarray,
     f: Callable,
-    grad_f: Callable,
-    num_initial_clusters: int,
-    min_pts_per_cluster: int,
-    atol: float,
-    rtol: float,
+    grad: Callable,
     *,
-    ell: int = ELL,
-    power_iters: int = POWER_ITERS,
-    num_streams: int = NUM_STREAMS,
-    seed: int = SEED,
-    should_generate_extra_points: bool = True,
-    return_numpy: bool = True,
-    debug: bool = False,
-) -> list[Cluster]:
-    """
-    GPU-accelerated adaptive clustering using two-means refinement.
+    DATA_DIM: int,
+    F_DIM: int,
+    NUM_INITIAL_CLUSTERS: int,
+    MIN_PTS_PER_CLUSTER: int,
+    ATOL: float,
+    RTOL: float,
+    MAX_DEPTH: int = 500,
+    MAX_CLUSTERS_EST: int = 100_000,
+    POWER_ITERS: int = 4,
+    SPLIT_METHOD: str = "median",
+    DEBUG: bool = False,
+    SEED: int = 0,
+    DTYPE=cp.float64,
+) -> tuple:
+    """Run fully GPU-based adaptive clustering.
 
     Args:
-        X: (n, d) input data matrix.
-        f: Function returning F for given X.
-        grad_f: Function returning J for given X.
-        num_initial_clusters: Number of initial clusters for KMeans.
-        min_pts_per_cluster: Minimum points per cluster before splitting.
-        atol, rtol: Tolerances for cluster violation detection.
-        ell: Sketch size for randomized-QR.
-        power_iters: Number of power iterations for randomized-QR.
-        num_streams: Number of CUDA streams to use.
-        seed: Random seed for reproducibility.
-        should_generate_extra_points: If True, generate extra points for small clusters;
-            if False, directly finalize clusters with fewer than min_pts_per_cluster points.
-        return_numpy: If True, return NumPy arrays instead of CuPy arrays.
-        debug: If True, print debug information.
+        X_train (cp.ndarray): Training data, shape (N, D), with N points of D dimensions.
+        f (Callable): Function to evaluate at cluster centroids. Should return (N, FD), when called with (N, D). Here, FD is the function output dimension.
+        grad (Callable): Gradient of the function f. Should return (N, FD, D), when called with (N, D).
+        DATA_DIM (int): Dimension of the input data D.
+        F_DIM (int): Dimension of the function output FD.
+        NUM_INITIAL_CLUSTERS (int): Number of initial clusters.
+        MIN_PTS_PER_CLUSTER (int): Minimum points per cluster during augmentation.
+        ATOL (float): Absolute tolerance for convergence.
+        RTOL (float): Relative tolerance for convergence.
+        MAX_DEPTH (int): Maximum depth for BFS splitting.
+        MAX_CLUSTERS_EST (int): Estimated maximum number of clusters for pre-allocation.
+        POWER_ITERS (int): Number of power iterations for eigenvector computation.
+        SPLIT_METHOD (str): Method for splitting clusters ('median', 'optimal').
+        DEBUG (bool): Whether to print debug information.
+        SEED (int): Random seed for reproducibility.
+        DTYPE (cp.dtype): Data type for computations.
 
     Returns:
-        List of final clusters with centroids, function values, Jacobians, etc.
+        tuple:
+            - cp.ndarray: Cluster centroids, shape (M, D).
+            - cp.ndarray: Function values at centroids, shape (M, FD).
+            - cp.ndarray: Jacobians at centroids, shape (M, FD, D).
+            - cp.ndarray: Hessian proxies (2 * max_error / radius^2), shape (M,).
+            - cp.ndarray: Radii of clusters, shape (M,).
+            - cp.ndarray: Max errors per cluster, shape (M,).
+            - cp.ndarray: Mean errors per cluster, shape (M,).
+            - cp.ndarray: Sizes of clusters, shape (M,).
+            - cp.ndarray: Depths of clusters, shape (M,).
     """
-    X_train = cp.asarray(X_train, dtype=CP_DTYPE)
+    cp.random.seed(SEED)
+    rng = cp.random.default_rng(SEED)
+    assert rng is not None, "RNG initialization failed."
 
-    km = cuKMeans(n_clusters=num_initial_clusters, random_state=seed)
-    labels = km.fit_predict(X_train)
+    print(f"--- Starting GPU Clustering on {X_train.shape} ---")
+    start_time = time.time()
 
-    # Run adaptive two-means refinement
-    print(f"Should generate extra points: {should_generate_extra_points}")
-    clusters = refine_adaptive_clusters(
-        X=X_train,
-        labels=labels,
-        f=f,
-        grad_f=grad_f,
-        atol=atol,
-        rtol=rtol,
-        min_pts_per_cluster=min_pts_per_cluster,
-        ell=ell,
-        power_iters=power_iters,
-        num_streams=num_streams,
-        seed=seed,
-        should_generate_extra_points=should_generate_extra_points,
-        debug=debug,
+    # Initial clustering
+    kmeans = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=0)
+    init_labels = kmeans.fit_predict(X_train)
+
+    # Sort data by label
+    sort_indices = cp.argsort(init_labels)
+    current_points = X_train[sort_indices]
+
+    _, init_cluster_sizes = cp.unique(init_labels[sort_indices], return_counts=True)  # type: ignore
+    init_cluster_starts = cp.r_[0, cp.cumsum(init_cluster_sizes)[:-1]]
+
+    # Storage buffers
+    final_cluster_centroids = cp.empty((MAX_CLUSTERS_EST, DATA_DIM), dtype=DTYPE)
+    final_cluster_F = cp.empty((MAX_CLUSTERS_EST, F_DIM), dtype=DTYPE)
+    final_cluster_J = cp.empty((MAX_CLUSTERS_EST, F_DIM, DATA_DIM), dtype=DTYPE)
+    final_cluster_max_errors = cp.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
+    final_cluster_mean_errors = cp.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
+    final_cluster_radii = cp.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
+    final_cluster_sizes = cp.empty(MAX_CLUSTERS_EST, dtype=cp.int32)
+    final_cluster_depths = cp.empty(MAX_CLUSTERS_EST, dtype=cp.int32)
+
+    metadata_index = 0
+
+    # Breadth-First Clustering Loop
+    current_depth = 0
+    while len(init_cluster_sizes) > 0 and current_depth < MAX_DEPTH:
+        num_clusters = len(init_cluster_sizes)
+        if DEBUG:
+            msg = f"L{current_depth}: {num_clusters} clusters, {int(cp.sum(init_cluster_sizes))} pts. "
+            print(msg, end="")
+
+        # Augment clusters with synthetic points
+        # Compute expected per-cluster sizes to meet minimum points requirement
+        augmented_sizes = cp.maximum(init_cluster_sizes, MIN_PTS_PER_CLUSTER)
+        total_augmented_points = int(cp.sum(augmented_sizes))
+
+        augmented_points = cp.empty((total_augmented_points, DATA_DIM), dtype=DTYPE)
+
+        augmented_cluster_ids = repeat_cluster_indices(augmented_sizes)
+        augmented_starts = cp.r_[0, cp.cumsum(augmented_sizes)[:-1]]
+
+        # Mask for real vs synthetic points
+        point_indices_in_cluster = (
+            cp.arange(total_augmented_points, dtype=cp.int32)
+            - augmented_starts[augmented_cluster_ids]
+        )
+        real_sizes_expanded = init_cluster_sizes[augmented_cluster_ids]
+        is_real_point = point_indices_in_cluster < real_sizes_expanded
+
+        # Fill real points
+        augmented_points[is_real_point] = current_points
+
+        # Identify synthetic points
+        is_synthetic_point = ~is_real_point
+        num_synthetic_points = int(cp.sum(is_synthetic_point))
+
+        # Fill synthetic points if required
+        if num_synthetic_points > 0:
+            synthetic_cluster_ids = augmented_cluster_ids[is_synthetic_point]
+
+            current_starts_expanded = init_cluster_starts[synthetic_cluster_ids]
+            current_sizes_expanded = init_cluster_sizes[synthetic_cluster_ids]
+
+            random_indices_0 = cp.random.rand(num_synthetic_points, dtype=DTYPE)
+            point_index_0 = (random_indices_0 * current_sizes_expanded).astype(cp.int32)
+
+            random_indices_1 = cp.random.rand(num_synthetic_points, dtype=DTYPE)
+            offset = (random_indices_1 * (current_sizes_expanded - 1)).astype(
+                cp.int32
+            ) + 1
+            point_index_1 = (point_index_0 + offset) % current_sizes_expanded
+
+            point_0 = current_points[current_starts_expanded + point_index_0]
+            point_1 = current_points[current_starts_expanded + point_index_1]
+
+            interpolation_factor = cp.random.rand(num_synthetic_points, 1, dtype=DTYPE)
+
+            # Create view to avoid extra allocation
+            synthetic_view = augmented_points[is_synthetic_point]
+
+            # Compute synthetic points
+            cp.multiply(point_0, (1.0 - interpolation_factor), out=synthetic_view)
+            synthetic_view += point_1 * interpolation_factor
+
+            # Fill synthetic points
+            augmented_points[is_synthetic_point] = synthetic_view
+
+        # Validate clusters with Linear Approximation (Taylor Expansion)
+        point_sums = cp.add.reduceat(augmented_points, augmented_starts)
+        cluster_centroids = point_sums / augmented_sizes[:, None]
+
+        # Evaluate function and gradient at centroids
+        F_at_centroids = f(cluster_centroids)
+        J_at_centroids = grad(cluster_centroids)
+
+        F_expanded = F_at_centroids[augmented_cluster_ids]
+        J_expanded = J_at_centroids[augmented_cluster_ids]
+        centroids_expanded = cluster_centroids[augmented_cluster_ids]
+
+        # Linear approximation: F_taylor = F(c) + J(c) * (x - c)
+        deviation_from_centroid = augmented_points - centroids_expanded
+        linear_approximation = cp.einsum(
+            "ijk,ik->ij", J_expanded, deviation_from_centroid
+        )
+        F_taylor = F_expanded + linear_approximation
+        F_true = f(augmented_points)
+
+        # Compute radii of clusters
+        dist_from_centroid = cp.linalg.norm(deviation_from_centroid, axis=1)
+        cluster_radii = cp.zeros(len(augmented_sizes), dtype=DTYPE)
+        cupyx.scatter_max(cluster_radii, augmented_cluster_ids, dist_from_centroid)
+
+        # Compute the error threshold for each point
+        approximation_error = cp.linalg.norm(F_true - F_taylor, axis=1)
+        error_threshold = cp.maximum(ATOL, RTOL * cp.linalg.norm(F_true, axis=1))
+
+        # Compute the max and mean errors per cluster
+        cluster_sum_errors = cp.add.reduceat(approximation_error, augmented_starts)
+        cluster_max_errors = cp.zeros(len(augmented_sizes), dtype=DTYPE)
+        cupyx.scatter_max(
+            cluster_max_errors, augmented_cluster_ids, approximation_error
+        )
+        cluster_mean_errors = cluster_sum_errors / augmented_sizes
+
+        # Identify violating clusters by counting points exceeding error threshold per
+        # cluster
+        is_violating_point = (approximation_error > error_threshold).astype(cp.int32)
+        violating_counts_per_cluster = cp.add.reduceat(
+            is_violating_point, augmented_starts
+        )
+        has_violating_points = violating_counts_per_cluster > 0
+        is_converged = ~has_violating_points
+
+        num_violating_clusters = int(cp.sum(has_violating_points))
+        if DEBUG:
+            print(f"Bad: {num_violating_clusters}")
+
+        # Store converged clusters
+        num_converged_clusters = int(cp.sum(is_converged))
+        if num_converged_clusters > 0:
+            converged_centroids = cluster_centroids[is_converged]
+            converged_F = F_at_centroids[is_converged]
+            converged_J = J_at_centroids[is_converged]
+            converged_max_errors = cluster_max_errors[is_converged]
+            converged_mean_errors = cluster_mean_errors[is_converged]
+            converged_radii = cluster_radii[is_converged]
+            converged_sizes = augmented_sizes[is_converged]
+
+            # Calculate the potential new indices for both metadata and points
+            next_meta_idx = metadata_index + num_converged_clusters
+
+            # Store the converged cluster data if within bounds
+            if next_meta_idx <= MAX_CLUSTERS_EST:
+                # Store Metadata
+                final_cluster_centroids[metadata_index:next_meta_idx] = (
+                    converged_centroids
+                )
+                final_cluster_F[metadata_index:next_meta_idx] = converged_F
+                final_cluster_J[metadata_index:next_meta_idx] = converged_J
+
+                final_cluster_max_errors[metadata_index:next_meta_idx] = (
+                    converged_max_errors
+                )
+                final_cluster_mean_errors[metadata_index:next_meta_idx] = (
+                    converged_mean_errors
+                )
+                final_cluster_radii[metadata_index:next_meta_idx] = converged_radii
+
+                final_cluster_sizes[metadata_index:next_meta_idx] = converged_sizes
+                final_cluster_depths[metadata_index:next_meta_idx] = current_depth
+                metadata_index = next_meta_idx  # Update the index
+
+            else:
+                msg = f"Storage overflow. Clusters: {next_meta_idx}/{MAX_CLUSTERS_EST}. Increase MAX_CLUSTERS_EST."
+                raise MemoryError(msg)
+
+        # Termination condition
+        if num_violating_clusters == 0:
+            break
+
+        # Split violating clusters
+        points_in_violating_clusters = has_violating_points[augmented_cluster_ids]
+        violating_points = augmented_points[points_in_violating_clusters]
+
+        violating_cluster_sizes = augmented_sizes[has_violating_points]
+        violating_cluster_starts = cp.r_[0, cp.cumsum(violating_cluster_sizes)[:-1]]
+
+        # Compute eigenvectors
+        eigenvector_directions = compute_leading_eigenvectors(
+            points=violating_points,
+            cluster_starts=violating_cluster_starts,
+            cluster_sizes=violating_cluster_sizes,
+            num_clusters=num_violating_clusters,
+            POWER_ITERS=POWER_ITERS,
+            rng=rng,
+            DTYPE=DTYPE,
+        )
+
+        # Split along eigenvectors
+        split_points, left_sizes, right_sizes = split_clusters_along_eigenvectors(
+            points=violating_points,
+            cluster_sizes=violating_cluster_sizes,
+            directions=eigenvector_directions,
+            SPLIT_METHOD=SPLIT_METHOD,
+        )
+
+        # Interleave left and right sizes: [L0, R0, L1, R1, ...]
+        next_cluster_sizes = cp.empty(2 * num_violating_clusters, dtype=cp.int32)
+        next_cluster_sizes[0::2] = left_sizes
+        next_cluster_sizes[1::2] = right_sizes
+
+        # Filter non-empty clusters
+        has_points = next_cluster_sizes > 0
+        if not cp.all(has_points):
+            # Some clusters are empty, filter them out
+            init_cluster_sizes = next_cluster_sizes[has_points]
+            current_points = split_points
+        else:
+            # All clusters have points
+            init_cluster_sizes = next_cluster_sizes
+            current_points = split_points
+
+        # Prepare for next iteration of BFS
+        init_cluster_starts = cp.r_[0, cp.cumsum(init_cluster_sizes)[:-1]]
+        current_depth += 1
+
+    if DEBUG:
+        elapsed_time = time.time() - start_time
+        msg = f"\n--- Finished in {elapsed_time:.4f}s ---\n"
+        msg += f"\t> Final Cluster Count: {metadata_index}\n"
+        print(f"\n--- Finished in {elapsed_time:.4f}s ---")
+
+    # Slice metadata to actual size
+    _centroids = final_cluster_centroids[:metadata_index]
+    _F = final_cluster_F[:metadata_index]
+    _J = final_cluster_J[:metadata_index]
+    _max_errors = final_cluster_max_errors[:metadata_index]
+    _mean_errors = final_cluster_mean_errors[:metadata_index]
+    _radii = final_cluster_radii[:metadata_index]
+    _sizes = final_cluster_sizes[:metadata_index]
+    _depths = final_cluster_depths[:metadata_index]
+
+    _hessian_proxies = cp.where(_radii > 0, 2.0 * _max_errors / (_radii**2), 0.0)
+    return (
+        _centroids,
+        _F,
+        _J,
+        _hessian_proxies,
+        _radii,
+        _max_errors,
+        _mean_errors,
+        _sizes,
+        _depths,
     )
-
-    if return_numpy:
-        for i, c in enumerate(clusters):
-            clusters[i] = Cluster(
-                centroid=cp.asnumpy(c.centroid),
-                F_centroid=cp.asnumpy(c.F_centroid),
-                J_centroid=cp.asnumpy(c.J_centroid),
-                radius=float(c.radius),
-                hessian_proxy=float(c.hessian_proxy),
-                cluster_size=c.cluster_size,
-                max_error=float(c.max_error),
-                mean_error=float(c.mean_error),
-            )
-
-    return clusters
 
 
 def sample_function(X: cp.ndarray) -> tuple[cp.ndarray, cp.ndarray]:
@@ -521,122 +496,41 @@ def sample_function_grad(X: cp.ndarray) -> cp.ndarray:
     return J
 
 
-def main(
-    N_SAMPLES: int,
-    D: int,
-    N_INIT_CLUSTERS: int,
-    MIN_PTS_PER_CLUSTER: int,
-    ABS_TOL: float,
-    REL_TOL: float,
-    should_generate_extra_points: bool = True,
-) -> list[Cluster]:
-    assert cp.is_available(), "GPU not available."
-    rng = cp.random.default_rng(SEED)
-    assert rng is not None, "Something went wrong with RNG initialization."
-    X = rng.random((N_SAMPLES, D), dtype=CP_DTYPE)
-
-    print(f"Running on GPU. N_SAMPLES={N_SAMPLES:,}")
-    clusters = adaptive_cluster_algorithm_gpu(
-        X_train=X,
-        f=sample_function,
-        grad_f=sample_function_grad,
-        num_initial_clusters=N_INIT_CLUSTERS,
-        min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
-        atol=ABS_TOL,
-        rtol=REL_TOL,
-        return_numpy=False,
-        debug=True,
-        should_generate_extra_points=should_generate_extra_points,
-    )
-    print(f"Total final clusters formed: {len(clusters)}")
-    return clusters
-
-
 if __name__ == "__main__":
+    # Configuration
+    cp.random.seed(0)
+    rng = cp.random.default_rng(0)
+
     N_SAMPLES = 10_000
     N_INIT_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 100
     ATOL = 0.01
     RTOL = 0.01
-    print(f"{ATOL=}, {RTOL=}")
+
+    MAX_DEPTH = 50
+    MAX_CLUSTERS_EST = 100_000_000
+    POWER_ITERS = 4
+    DTYPE = cp.float64
+
+    print(f"Generating {N_SAMPLES:,} points on GPU...")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
-    D = 3
-
-    tic = time.perf_counter()
-    clusters = main(
-        N_SAMPLES,
-        D,
-        N_INIT_CLUSTERS,
-        MIN_PTS_PER_CLUSTER,
-        ATOL,
-        RTOL,
-        should_generate_extra_points=True,
-    )
-    toc = time.perf_counter()
-    print(f"Adaptive clustering completed in {toc - tic:0.2f} seconds.")
-    raise SystemExit
-
-    def taylor_errors(
-        X: cp.ndarray,
-        F: cp.ndarray,
-        centroid: cp.ndarray,
-        F_c: cp.ndarray,
-        J_c: cp.ndarray,
-    ) -> cp.ndarray:
-        """
-        Compute per-point Taylor approximation errors, given cluster centroid info.
-
-        Args:
-            X: (n, D) data matrix
-            F: (n, FD) function values at X
-            centroid: (1, D) cluster centroid
-            F_c: (1, FD) function value at centroid
-            J_c: (1, FD, D) Jacobian at centroid
-
-        Returns:
-            err: (n,) per-point error norms
-        """
-        dx = X - centroid  # (n, D)
-        f_taylor = F_c + cp.einsum("ijk,nk->nj", J_c, dx)
-        err = cp.linalg.norm(F - f_taylor, axis=1)
-        return err
-
-    rng = cp.random.default_rng(SEED)
-    assert rng is not None, "Something went wrong with RNG initialization."
-
-    n_test = 100_000
-
-    counter = 0
-    # test the centroids and their errors
-    for i, c in enumerate(clusters):
-        centroid, F_c, J_c, radius, h_proxy = (
-            c.centroid,
-            c.F_centroid,
-            c.J_centroid,
-            c.radius,
-            c.hessian_proxy,
-        )
-
-        # Convert numpy arrays back to cupy for computation
-        centroid_cp = cp.asarray(centroid, dtype=CP_DTYPE)
-        F_c_cp = cp.asarray(F_c, dtype=CP_DTYPE)
-        J_c_cp = cp.asarray(J_c, dtype=CP_DTYPE)
-
-        # Pick random points in the cluster ball to test error
-        u = rng.standard_normal(size=(n_test, D), dtype=CP_DTYPE)
-        u = u / cp.linalg.norm(u, axis=1, keepdims=True)
-        test_pts = centroid_cp[0] + radius * rng.random((n_test, 1), dtype=CP_DTYPE) * u
-        F_test, _ = sample_function(test_pts)
-        err = taylor_errors(test_pts, F_test, centroid_cp, F_c_cp, J_c_cp)
-        max_err_gpu = err.max()
-        max_err = float(max_err_gpu)
-        if max_err > max(ATOL, RTOL * float(cp.linalg.norm(F_c_cp))):
-            counter += 1
-
-    perct_violate = 100.0 * counter / len(clusters)
-    print(
-        f"Total clusters violating tolerance on test points: ({counter} / {len(clusters)}) = {perct_violate:0.2f}%"
+    print(f"{ATOL=}, {RTOL=}")
+    X_train = cp.random.rand(N_SAMPLES, 3, dtype=DTYPE)
+    result = adaptive_cluster_algorithm_gpu(
+        X_train=X_train,
+        f=sample_function,
+        grad=sample_function_grad,
+        DATA_DIM=3,
+        F_DIM=2,
+        NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        ATOL=ATOL,
+        RTOL=RTOL,
+        MAX_DEPTH=MAX_DEPTH,
+        MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+        POWER_ITERS=POWER_ITERS,
+        DEBUG=True,
+        DTYPE=DTYPE,
     )
 
-    avg_cluster_size = sum([c.cluster_size for c in clusters]) / len(clusters)
-    print(f"Average cluster size: {avg_cluster_size:0.2f} points per cluster")
+    print(f"Final Cluster Count: {len(result[0])}")

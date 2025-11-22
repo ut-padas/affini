@@ -30,8 +30,10 @@ class ClusteringBackend(Enum):
 class NearODESurrogate:
     """kNN/Taylor surrogate wrapper for near-ODE emulation on GPU."""
 
-    def __init__(self) -> None:
+    def __init__(self, data_dim: int, f_dim: int) -> None:
         """Initialize an empty surrogate; call a train_* method before evaluate()."""
+        self.data_dim = data_dim
+        self.f_dim = f_dim
         self._model_trained = False
 
     def train_model_from_data(
@@ -87,31 +89,30 @@ class NearODESurrogate:
                 new_gradients = np.array([cluster.J_centroid for cluster in clusters])
                 new_hessians = np.array([cluster.hessian_proxy for cluster in clusters])
                 new_radii = np.array([cluster.radius for cluster in clusters])
-                k = len(new_X)
+                num_clusters = len(new_X)
 
             elif clustering_backend == ClusteringBackend.COMPLETE_CUPY:
                 if not callable(self.cupy_f) or not callable(self.cupy_grad_f):
                     raise ValueError("cupy_f and cupy_grad_f must be callables")
 
-                clusters = adaptive_cluster_algorithm_gpu(
-                    X=X,
+                result = adaptive_cluster_algorithm_gpu(  # type: ignore
+                    X_train=cp.asarray(X),  # type: ignore
                     f=self.cupy_f,
-                    grad_f=self.cupy_grad_f,
-                    num_initial_clusters=num_initial_clusters,
-                    min_pts_per_cluster=min_pts_per_cluster,
-                    abs_tol=self.atol,
-                    rel_tol=self.rtol,
-                    seed=self.seed,
-                    return_numpy=True,
+                    grad=self.cupy_grad_f,
+                    DATA_DIM=self.data_dim,
+                    F_DIM=self.f_dim,
+                    NUM_INITIAL_CLUSTERS=num_initial_clusters,
+                    MIN_PTS_PER_CLUSTER=min_pts_per_cluster,
+                    ATOL=self.atol,
+                    RTOL=self.rtol,
+                    SEED=self.seed,
                 )
-                new_X = np.vstack([cluster.centroid for cluster in clusters])
-                new_f_vals = np.vstack([cluster.F_centroid for cluster in clusters])
-                new_gradients = np.stack(
-                    [cluster.J_centroid for cluster in clusters]
-                ).squeeze(axis=1)
-                new_hessians = np.array([cluster.hessian_proxy for cluster in clusters])
-                new_radii = np.array([cluster.radius for cluster in clusters])
-                k = len(clusters)
+                new_X = result[0]
+                new_f_vals = result[1]
+                new_gradients = result[2]
+                new_hessians = result[3]
+                new_radii = result[4]
+                num_clusters = len(new_X)
 
         else:
             # Use raw data as sources (no clustering)
@@ -155,7 +156,7 @@ class NearODESurrogate:
             new_gradients = gradients
             new_hessians = None
             new_radii = None
-            k = len(X)
+            num_clusters = len(X)
 
         # Build the kNN/Taylor inference structure
         self.KNN_search = NN_Inference(
@@ -166,7 +167,7 @@ class NearODESurrogate:
             trust_radii=new_radii,
         )
         self._model_trained = True
-        self.N_sources = k
+        self.N_sources = num_clusters
 
         # --- Optional: heuristic guarantee ---
         # When clustering and a global L are provided, we can repeatedly check
@@ -229,12 +230,14 @@ class NearODESurrogate:
             sampler = qmc.LatinHypercube(d=n, rng=seed)
             X = sampler.random(n=N)
             if _HAS_GPU:
-                l_np = cp.asnumpy(l) if hasattr(l, "device") else l
-                r_np = cp.asnumpy(r) if hasattr(r, "device") else r
+                l_np = cp.asnumpy(l) if hasattr(l, "device") else l  # type: ignore
+                r_np = cp.asnumpy(r) if hasattr(r, "device") else r  # type: ignore
                 X = qmc.scale(X, l_np, r_np)
-                X = cp.asarray(X)
+                X = cp.asarray(X)  # type: ignore
             else:
                 X = qmc.scale(X, l, r)
+        else:
+            raise ValueError(f"Unsupported distribution: {distribution}")
 
         # --- Delegate to the array-based trainer (preserving original args order) ---
         self.train_model_from_data(
@@ -272,11 +275,9 @@ class NearODESurrogate:
             )
 
         # Handle CuPy arrays by converting to NumPy
-        is_cupy_input = _HAS_GPU and hasattr(
-            targets, "device"
-        )  # Check if it's a CuPy array
+        is_cupy_input = _HAS_GPU and hasattr(targets, "device")
         if is_cupy_input:
-            targets = cp.asnumpy(targets)
+            targets = cp.asnumpy(targets)  # type: ignore
 
         if targets.ndim != 2:
             raise ValueError(
@@ -294,13 +295,13 @@ class NearODESurrogate:
 
         # Convert back to CuPy if input was CuPy
         if is_cupy_input:
-            predictions = cp.asarray(predictions)
-            unguaranteed_points = cp.asarray(unguaranteed_points)
+            predictions = cp.asarray(predictions)  # type: ignore
+            unguaranteed_points = cp.asarray(unguaranteed_points)  # type: ignore
 
         # Heuristic warning for under-resolved surrogate coverage.
         # Use appropriate sum function based on array type
         if is_cupy_input:
-            sum_unguaranteed = cp.sum(unguaranteed_points)
+            sum_unguaranteed = cp.sum(unguaranteed_points)  # type: ignore
         else:
             sum_unguaranteed = np.sum(unguaranteed_points)
 
@@ -341,33 +342,35 @@ class NearODESurrogate:
             new_gradients = np.array([cluster.J_centroid for cluster in clusters])
             new_hessians = np.array([cluster.hessian_proxy for cluster in clusters])
             new_radii = np.array([cluster.radius for cluster in clusters])
+            num_clusters = len(new_X)
+
         elif clustering_backend == ClusteringBackend.COMPLETE_CUPY:
             if not callable(self.cupy_f) or not callable(self.cupy_grad_f):
                 raise ValueError("cupy_f and cupy_grad_f must be callables")
 
-            clusters = adaptive_cluster_algorithm_gpu(
-                X=X,
+            result = adaptive_cluster_algorithm_gpu(  # type: ignore
+                X_train=cp.asarray(X),  # type: ignore
                 f=self.cupy_f,
-                grad_f=self.cupy_grad_f,
-                num_initial_clusters=2,
-                min_pts_per_cluster=10,
-                abs_tol=self.atol,
-                rel_tol=self.rtol,
-                seed=0,
-                return_numpy=True,
+                grad=self.cupy_grad_f,
+                DATA_DIM=self.data_dim,
+                F_DIM=self.f_dim,
+                NUM_INITIAL_CLUSTERS=2,
+                MIN_PTS_PER_CLUSTER=10,
+                ATOL=self.atol,
+                RTOL=self.rtol,
+                SEED=self.seed,
             )
-            new_X = np.vstack([cluster.centroid for cluster in clusters])
-            new_f_vals = np.vstack([cluster.F_centroid for cluster in clusters])
-            new_gradients = np.stack(
-                [cluster.J_centroid for cluster in clusters]
-            ).squeeze(axis=1)
-            new_hessians = np.array([cluster.hessian_proxy for cluster in clusters])
-            new_radii = np.array([cluster.radius for cluster in clusters])
+            new_X = result[0]
+            new_f_vals = result[1]
+            new_gradients = result[2]
+            new_hessians = result[3]
+            new_radii = result[4]
+            num_clusters = len(new_X)
 
         self.KNN_search.add_extra_sources(
             new_X, new_f_vals, new_gradients, new_hessians, new_radii
         )
-        self.N_sources += len(new_X)
+        self.N_sources += num_clusters
 
     def _test_guarantee(
         self, targets: np.ndarray, tol: float, L_global: float, alpha: float

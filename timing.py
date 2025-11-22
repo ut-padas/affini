@@ -7,7 +7,7 @@ import numpy as np
 from tqdm import tqdm
 
 from src.adaptive_clustering import adaptive_cluster_algorithm
-from vectorized_gpu_ac import adaptive_cluster_algorithm_gpu
+from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
 
 
 def rosenbrock(X: cp.ndarray) -> cp.ndarray:
@@ -116,6 +116,8 @@ for dim in tqdm(dims, desc="Dimensions"):
                 X_train=X_train,
                 f=rosenbrock,
                 grad=rosenbrock_grad,
+                DATA_DIM=dim,
+                F_DIM=1,
                 NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
                 MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
                 ATOL=tol,

@@ -24,7 +24,7 @@ FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 def test_1D(N_init=2000, atol=0.01, make_plots=False):
     N = 4000
     domain = np.array([0, 10])
-    interpolant = NearODESurrogate()
+    interpolant = NearODESurrogate(data_dim=1, f_dim=1)
     interpolant.train_model_from_sampling(
         f=one_d_example,
         grad_f=grad_one_d_example,
@@ -191,7 +191,7 @@ def test_2D(
 
     cupy_f = SHCF_cupy if _HAS_GPU else None
 
-    interpolant = NearODESurrogate()
+    interpolant = NearODESurrogate(data_dim=2, f_dim=1)
     interpolant.train_model_from_sampling(
         f=SHCF_numpy,
         grad_f=grad_SHCF_numpy,
@@ -338,7 +338,7 @@ def convergence_test_a_function(test_function, tolmat, N_init, min_ppc=100):
 def test_a_function(
     f, grad_f, m, domain, atol=0.01, rtol=0.01, N_init=10000, min_ppc=50
 ):
-    interpolant = NearODESurrogate()
+    interpolant = NearODESurrogate(data_dim=m, f_dim=1)
     interpolant.train_model_from_sampling(
         f=f,
         grad_f=grad_f,

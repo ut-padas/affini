@@ -96,7 +96,7 @@ def test_2D(
 ):
     L = check_matrix_2norm(hessian_SHCF_cupy, domain)
 
-    interpolant = NearODESurrogate()
+    interpolant = NearODESurrogate(data_dim=2, f_dim=1)
     interpolant.train_model_from_sampling(
         f=SHCF_cupy,
         grad_f=grad_SHCF_cupy,
