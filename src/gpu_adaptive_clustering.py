@@ -4,12 +4,28 @@ from typing import Callable
 
 import cupy as cp
 import numpy as np
+import pynvml
 from cuml.cluster import KMeans as cuKMeans
 from cupy import cumsum, einsum, empty, float64, int32, maximum
 from cupy.linalg import norm
 from cupyx import scatter_max
 
 logger = logging.getLogger(__name__)
+
+
+def log_mem_stats(tag: str = ""):
+    """Log current GPU memory usage."""
+    try:
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        used_gb = int(info.used) / 1e9
+        total_gb = int(info.total) / 1e9
+        msg = f"[MEM] {tag:<20} | VRAM: {used_gb:6.2f} / {total_gb:6.2f} GB"
+        logger.debug(msg)
+        pynvml.nvmlShutdown()
+    except Exception:
+        pass
 
 
 def get_cluster_starts(cluster_sizes: cp.ndarray) -> cp.ndarray:
@@ -187,6 +203,7 @@ def adaptive_cluster_algorithm_gpu(
     SEED: int = 0,
     DTYPE=float64,
     BATCH_SIZE: int = 10_000_000,
+    LOG_MEM_STATS: bool = False,
 ) -> tuple:
     """Run fully GPU-based adaptive clustering.
 
@@ -206,6 +223,7 @@ def adaptive_cluster_algorithm_gpu(
         SEED (int): Random seed for reproducibility.
         DTYPE (cp.dtype): Data type for computations.
         BATCH_SIZE (int): Max points to process per batch loop to prevent OOM.
+        LOG_MEM_STATS (bool): Whether to log GPU memory statistics.
 
     Returns:
         tuple:
@@ -228,6 +246,8 @@ def adaptive_cluster_algorithm_gpu(
 
     start_time = time.perf_counter()
     logger.info(f"Starting GPU Clustering on {X_train.shape}")
+    if LOG_MEM_STATS:
+        log_mem_stats("Init")
 
     # Initial clustering
     start_time_init = time.perf_counter()
@@ -235,6 +255,8 @@ def adaptive_cluster_algorithm_gpu(
     init_labels = kmeans.fit_predict(X_train)
     elapsed_init = time.perf_counter() - start_time_init
     logger.info(f"Initial KMeans done in {elapsed_init:.4f}s")
+    if LOG_MEM_STATS:
+        log_mem_stats("After KMeans")
 
     # Sort data by label
     sort_idxs = cp.argsort(init_labels)
@@ -253,6 +275,8 @@ def adaptive_cluster_algorithm_gpu(
     final_cluster_radii = empty(MAX_CLUSTERS_EST, dtype=DTYPE)
     final_cluster_sizes = empty(MAX_CLUSTERS_EST, dtype=int32)
     final_cluster_depths = empty(MAX_CLUSTERS_EST, dtype=int32)
+    if LOG_MEM_STATS:
+        log_mem_stats("Buffers allocated")
 
     # Breadth-First Clustering Loop
     current_depth = 0
@@ -262,6 +286,8 @@ def adaptive_cluster_algorithm_gpu(
 
         msg = f"L{current_depth}: {num_clusters} clusters, {total_pts_level} pts."
         logger.debug(msg)
+        if LOG_MEM_STATS:
+            log_mem_stats(f"Level {current_depth} start")
 
         # Augment clusters with synthetic points
         # Compute expected per-cluster sizes to meet minimum points requirement
@@ -363,6 +389,8 @@ def adaptive_cluster_algorithm_gpu(
             F_expanded = F_at_centroids[aug_ids]
             J_expanded = J_at_centroids[aug_ids]
             centroids_expanded = cluster_centroids[aug_ids]
+            if LOG_MEM_STATS:
+                log_mem_stats(f"L{current_depth} B{b} f/grad")
 
             # Linear approximation: F_taylor = F(c) + J(c) * (x - c)
             dx_centroid = aug_pts - centroids_expanded
@@ -468,8 +496,12 @@ def adaptive_cluster_algorithm_gpu(
             del F_expanded, J_expanded, centroids_expanded
             del dx_centroid, linear_approximation, F_taylor, F_true
             mempool.free_all_blocks()
+            if LOG_MEM_STATS:
+                log_mem_stats(f"L{current_depth} B{b} cleanup")
 
         logger.debug(f"Bad: {total_bad_clusters_level}")
+        if LOG_MEM_STATS:
+            log_mem_stats(f"Level {current_depth} end")
 
         # Termination condition
         if total_bad_clusters_level == 0:
@@ -496,6 +528,8 @@ def adaptive_cluster_algorithm_gpu(
     elapsed_time = time.perf_counter() - start_time
     logger.info(f"Finished in {elapsed_time:.4f}s")
     logger.info(f"Final Cluster Count: {final_idx}")
+    if LOG_MEM_STATS:
+        log_mem_stats("Finished")
 
     # Slice metadata to actual size
     _centroids = final_cluster_centroids[:final_idx]
@@ -536,7 +570,7 @@ if __name__ == "__main__":
     MIN_PTS_PER_CLUSTER = 100
     ATOL = 1e-2
     RTOL = 1e-2
-    DATA_DIM = 3
+    DATA_DIM = 20
     F_DIM = 1
 
     MAX_DEPTH = 50
@@ -564,6 +598,7 @@ if __name__ == "__main__":
         POWER_ITERS=POWER_ITERS,
         DTYPE=DTYPE,
         BATCH_SIZE=BATCH_SIZE,
+        LOG_MEM_STATS=False,
     )
 
     print(f"Final Cluster Count: {len(result[0])}")
