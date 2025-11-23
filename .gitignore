@@ -222,5 +222,5 @@ figures/
 tacc-files/
 
 # Profiling files
-profiles/
-timing_results/
+profiles*/
+timing_results*/
