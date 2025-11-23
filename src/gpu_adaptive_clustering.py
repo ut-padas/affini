@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Callable
 
@@ -7,6 +8,8 @@ from cuml.cluster import KMeans as cuKMeans
 from cupy import cumsum, einsum, empty, float64, int32, maximum
 from cupy.linalg import norm
 from cupyx import scatter_max
+
+logger = logging.getLogger(__name__)
 
 
 def get_cluster_starts(cluster_sizes: cp.ndarray) -> cp.ndarray:
@@ -181,7 +184,6 @@ def adaptive_cluster_algorithm_gpu(
     MAX_DEPTH: int = 500,
     MAX_CLUSTERS_EST: int = 100_000,
     POWER_ITERS: int = 3,
-    DEBUG: bool = False,
     SEED: int = 0,
     DTYPE=float64,
     BATCH_SIZE: int = 10_000_000,
@@ -201,7 +203,6 @@ def adaptive_cluster_algorithm_gpu(
         MAX_DEPTH (int): Maximum depth for BFS splitting.
         MAX_CLUSTERS_EST (int): Estimated maximum number of clusters for pre-allocation.
         POWER_ITERS (int): Number of power iterations for eigenvector computation.
-        DEBUG (bool): Whether to print debug information.
         SEED (int): Random seed for reproducibility.
         DTYPE (cp.dtype): Data type for computations.
         BATCH_SIZE (int): Max points to process per batch loop to prevent OOM.
@@ -226,15 +227,14 @@ def adaptive_cluster_algorithm_gpu(
     mempool = cp.get_default_memory_pool()
 
     start_time = time.perf_counter()
-    print(f"--- Starting GPU Clustering on {X_train.shape} ---")
+    logger.info(f"Starting GPU Clustering on {X_train.shape}")
 
     # Initial clustering
     start_time_init = time.perf_counter()
     kmeans = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=0)
     init_labels = kmeans.fit_predict(X_train)
-    if DEBUG:
-        elapsed_init = time.perf_counter() - start_time_init
-        print(f"--- Initial KMeans done in {elapsed_init:.4f}s ---")
+    elapsed_init = time.perf_counter() - start_time_init
+    logger.info(f"Initial KMeans done in {elapsed_init:.4f}s")
 
     # Sort data by label
     sort_idxs = cp.argsort(init_labels)
@@ -260,9 +260,8 @@ def adaptive_cluster_algorithm_gpu(
         num_clusters = len(CLUSTER_SIZES)
         total_pts_level = int(cp.sum(CLUSTER_SIZES))
 
-        if DEBUG:
-            msg = f"L{current_depth}: {num_clusters} clusters, {total_pts_level} pts. "
-            print(msg, end="")
+        msg = f"L{current_depth}: {num_clusters} clusters, {total_pts_level} pts."
+        logger.info(msg)
 
         # Augment clusters with synthetic points
         # Compute expected per-cluster sizes to meet minimum points requirement
@@ -470,8 +469,7 @@ def adaptive_cluster_algorithm_gpu(
             del dx_centroid, linear_approximation, F_taylor, F_true
             mempool.free_all_blocks()
 
-        if DEBUG:
-            print(f"Bad: {total_bad_clusters_level}")
+        logger.info(f"Bad: {total_bad_clusters_level}")
 
         # Termination condition
         if total_bad_clusters_level == 0:
@@ -495,11 +493,9 @@ def adaptive_cluster_algorithm_gpu(
 
         current_depth += 1
 
-    if DEBUG:
-        elapsed_time = time.perf_counter() - start_time
-        msg = f"\n--- Finished in {elapsed_time:.4f}s ---\n"
-        msg += f"\t> Final Cluster Count: {final_idx}\n"
-        print(f"\n--- Finished in {elapsed_time:.4f}s ---")
+    elapsed_time = time.perf_counter() - start_time
+    logger.info(f"Finished in {elapsed_time:.4f}s")
+    logger.info(f"Final Cluster Count: {final_idx}")
 
     # Slice metadata to actual size
     _centroids = final_cluster_centroids[:final_idx]
@@ -526,7 +522,10 @@ def adaptive_cluster_algorithm_gpu(
 
 
 if __name__ == "__main__":
+    from src.logging_config import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
+
+    setup_logging()
 
     # Configuration
     cp.random.seed(0)
@@ -535,8 +534,10 @@ if __name__ == "__main__":
     N_SAMPLES = 100_000
     N_INIT_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 100
-    ATOL = 1e-6
-    RTOL = 1e-6
+    ATOL = 1e-2
+    RTOL = 1e-2
+    DATA_DIM = 3
+    F_DIM = 1
 
     MAX_DEPTH = 50
     MAX_CLUSTERS_EST = 100_000_000
@@ -547,13 +548,13 @@ if __name__ == "__main__":
     print(f"Generating {N_SAMPLES:,} points on GPU...")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
     print(f"{ATOL=}, {RTOL=}")
-    X_train = cp.random.rand(N_SAMPLES, 3, dtype=DTYPE)
+    X_train = cp.random.rand(N_SAMPLES, DATA_DIM, dtype=DTYPE)
     result = adaptive_cluster_algorithm_gpu(
         X_train=X_train,
         f=rosenbrock,
         grad=rosenbrock_grad,
-        DATA_DIM=3,
-        F_DIM=2,
+        DATA_DIM=DATA_DIM,
+        F_DIM=F_DIM,
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ATOL=ATOL,
@@ -561,7 +562,6 @@ if __name__ == "__main__":
         MAX_DEPTH=MAX_DEPTH,
         MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
         POWER_ITERS=POWER_ITERS,
-        DEBUG=True,
         DTYPE=DTYPE,
         BATCH_SIZE=BATCH_SIZE,
     )
