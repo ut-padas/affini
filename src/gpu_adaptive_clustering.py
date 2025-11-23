@@ -1,3 +1,4 @@
+import gc
 import logging
 import time
 from typing import Callable
@@ -8,7 +9,7 @@ import psutil
 import pynvml
 import rmm
 from cuml.cluster import KMeans as cuKMeans
-from cupy import cumsum, einsum, empty, float64, int32, maximum
+from cupy import cumsum, einsum, float64, int32, maximum
 from cupy.cuda import set_allocator
 from cupy.linalg import norm
 from cupyx import scatter_max
@@ -285,6 +286,7 @@ def adaptive_cluster_algorithm_gpu(
     BATCH_SIZE: int | None = None,
     LOG_MEM_STATS: bool = False,
     MOVE_INTERMEDIATE_TO_HOST: bool = False,
+    STORE_FINAL_ARRAYS_ON_HOST: bool = False,
     MANAGED_MEMORY: bool = False,
 ) -> tuple:
     """Run fully GPU-based adaptive clustering.
@@ -307,6 +309,7 @@ def adaptive_cluster_algorithm_gpu(
         BATCH_SIZE (int): Max points to process per batch loop to prevent OOM. If None, it will be computed adaptively, based on the available free GPU memory, DATA_DIM, F_DIM, and DTYPE.
         LOG_MEM_STATS (bool): Whether to log GPU memory statistics.
         MOVE_INTERMEDIATE_TO_HOST (bool): Whether to move intermediate results to host memory to save GPU memory. This can help prevent OOM errors at the cost of performance.
+        STORE_FINAL_ARRAYS_ON_HOST (bool): Whether to store the final output arrays on host memory instead of GPU memory. This can help prevent OOM errors when the final arrays are large.
         MANAGED_MEMORY (bool): Whether to use RMM managed memory, i.e., unified memory.
             Note that setting this to True **will** impact performance. Recommended to keep False unless you are working with very large datasets that exceeds the GPU VRAM.
 
@@ -359,17 +362,29 @@ def adaptive_cluster_algorithm_gpu(
 
     _, CLUSTER_SIZES = cp.unique(init_labels[sort_idxs], return_counts=True)  # type: ignore
     CLUSTER_STARTS = get_cluster_starts(CLUSTER_SIZES)
+    del init_labels, sort_idxs, X_train
 
     # Storage buffers
     final_idx = 0
-    final_cluster_centroids = empty((MAX_CLUSTERS_EST, DATA_DIM), dtype=DTYPE)
-    final_cluster_F = empty((MAX_CLUSTERS_EST, F_DIM), dtype=DTYPE)
-    final_cluster_J = empty((MAX_CLUSTERS_EST, F_DIM, DATA_DIM), dtype=DTYPE)
-    final_cluster_max_err = empty(MAX_CLUSTERS_EST, dtype=DTYPE)
-    final_cluster_mean_err = empty(MAX_CLUSTERS_EST, dtype=DTYPE)
-    final_cluster_radii = empty(MAX_CLUSTERS_EST, dtype=DTYPE)
-    final_cluster_sizes = empty(MAX_CLUSTERS_EST, dtype=int32)
-    final_cluster_depths = empty(MAX_CLUSTERS_EST, dtype=int32)
+    if STORE_FINAL_ARRAYS_ON_HOST:
+        final_cluster_centroids = np.empty((MAX_CLUSTERS_EST, DATA_DIM), dtype=DTYPE)
+        final_cluster_F = np.empty((MAX_CLUSTERS_EST, F_DIM), dtype=DTYPE)
+        final_cluster_J = np.empty((MAX_CLUSTERS_EST, F_DIM, DATA_DIM), dtype=DTYPE)
+        final_cluster_max_err = np.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
+        final_cluster_mean_err = np.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
+        final_cluster_radii = np.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
+        final_cluster_sizes = np.empty(MAX_CLUSTERS_EST, dtype=int32)
+        final_cluster_depths = np.empty(MAX_CLUSTERS_EST, dtype=int32)
+    else:
+        final_cluster_centroids = cp.empty((MAX_CLUSTERS_EST, DATA_DIM), dtype=DTYPE)
+        final_cluster_F = cp.empty((MAX_CLUSTERS_EST, F_DIM), dtype=DTYPE)
+        final_cluster_J = cp.empty((MAX_CLUSTERS_EST, F_DIM, DATA_DIM), dtype=DTYPE)
+        final_cluster_max_err = cp.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
+        final_cluster_mean_err = cp.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
+        final_cluster_radii = cp.empty(MAX_CLUSTERS_EST, dtype=DTYPE)
+        final_cluster_sizes = cp.empty(MAX_CLUSTERS_EST, dtype=int32)
+        final_cluster_depths = cp.empty(MAX_CLUSTERS_EST, dtype=int32)
+
     if LOG_MEM_STATS:
         log_mem_stats("Buffers allocated")
 
@@ -423,19 +438,19 @@ def adaptive_cluster_algorithm_gpu(
 
             # Slice clusters for this batch
             sizes = CLUSTER_SIZES[start_cluster_idx:end_cluster_idx]
-            starts = CLUSTER_STARTS[start_cluster_idx:end_cluster_idx]
+            starts_local = CLUSTER_STARTS[start_cluster_idx:end_cluster_idx]
 
             # Map global point indices to local batch
-            slice_start = int(starts[0])
-            slice_end = int(starts[-1] + sizes[-1])
+            slice_start = int(starts_local[0])
+            slice_end = int(starts_local[-1] + sizes[-1])
             pts = CLUSTER_PTS[slice_start:slice_end]
-            starts_local = starts - slice_start
+            cp.subtract(starts_local, slice_start, out=starts_local)
 
             # Augment clusters in this batch
             aug_sizes = level_augmented_sizes[start_cluster_idx:end_cluster_idx]
             aug_total = int(cp.sum(aug_sizes))
 
-            aug_pts = empty((aug_total, DATA_DIM), dtype=DTYPE)
+            aug_pts = cp.empty((aug_total, DATA_DIM), dtype=DTYPE)
             aug_ids = repeat_cluster_indices(aug_sizes)
             aug_starts = get_cluster_starts(aug_sizes)
 
@@ -455,9 +470,10 @@ def adaptive_cluster_algorithm_gpu(
                 synth_cluster_ids = aug_ids[is_synth_pt]
                 _starts_expanded = starts_local[synth_cluster_ids]
                 _sizes_expanded = sizes[synth_cluster_ids]
+                del synth_cluster_ids, sizes, starts_local
 
-                random_indices_0 = cp.random.rand(num_synth_pts, dtype=DTYPE)
-                pt_idx_0 = (random_indices_0 * _sizes_expanded).astype(int32)
+                random_idxs_0 = cp.random.rand(num_synth_pts, dtype=DTYPE)
+                pt_idx_0 = (random_idxs_0 * _sizes_expanded).astype(int32)
 
                 random_idxs_1 = cp.random.rand(num_synth_pts, dtype=DTYPE)
                 offset = (random_idxs_1 * (_sizes_expanded - 1)).astype(int32) + 1
@@ -465,18 +481,28 @@ def adaptive_cluster_algorithm_gpu(
 
                 pt_0 = pts[_starts_expanded + pt_idx_0]
                 pt_1 = pts[_starts_expanded + pt_idx_1]
+                del (
+                    _starts_expanded,
+                    _sizes_expanded,
+                    offset,
+                    random_idxs_1,
+                    random_idxs_0,
+                )
 
                 interpolation_factor = cp.random.rand(num_synth_pts, 1, dtype=DTYPE)
 
-                # Use views to avoid extra allocations
-                view = aug_pts[is_synth_pt]
+                temp = aug_pts[is_synth_pt]
 
                 # Compute synthetic points
-                cp.multiply(pt_0, (1.0 - interpolation_factor), out=view)
-                view += pt_1 * interpolation_factor
+                # view = pt_0 * (1 - interpolation_factor) + pt_1 * interpolation_factor
+                cp.multiply(pt_0, (1.0 - interpolation_factor), out=temp)
+                cp.multiply(pt_1, interpolation_factor, out=pt_1)
+                cp.add(temp, pt_1, out=temp)
+
                 # Fill synthetic points
-                aug_pts[is_synth_pt] = view
-            del pts
+                aug_pts[is_synth_pt] = temp
+                del pt_0, pt_1, interpolation_factor, temp
+            del pts, is_real_pt, is_synth_pt, pt_idxs_in_cluster
 
             # Validate clusters with Linear Approximation (Taylor Expansion)
             # Compute the centroids of augmented clusters
@@ -555,13 +581,35 @@ def adaptive_cluster_algorithm_gpu(
 
                 # Store data if within bounds
                 if next_idx <= MAX_CLUSTERS_EST:
-                    final_cluster_centroids[final_idx:next_idx] = converged_centroids
-                    final_cluster_F[final_idx:next_idx] = converged_F
-                    final_cluster_J[final_idx:next_idx] = converged_J
-                    final_cluster_max_err[final_idx:next_idx] = converged_max_err
-                    final_cluster_mean_err[final_idx:next_idx] = converged_mean_err
-                    final_cluster_radii[final_idx:next_idx] = converged_radii
-                    final_cluster_sizes[final_idx:next_idx] = converged_sizes
+                    if STORE_FINAL_ARRAYS_ON_HOST:
+                        final_cluster_centroids[final_idx:next_idx] = cp.asnumpy(
+                            converged_centroids
+                        )
+                        final_cluster_F[final_idx:next_idx] = cp.asnumpy(converged_F)
+                        final_cluster_J[final_idx:next_idx] = cp.asnumpy(converged_J)
+                        final_cluster_max_err[final_idx:next_idx] = cp.asnumpy(
+                            converged_max_err
+                        )
+                        final_cluster_mean_err[final_idx:next_idx] = cp.asnumpy(
+                            converged_mean_err
+                        )
+                        final_cluster_radii[final_idx:next_idx] = cp.asnumpy(
+                            converged_radii
+                        )
+                        final_cluster_sizes[final_idx:next_idx] = cp.asnumpy(
+                            converged_sizes
+                        )
+                    else:
+                        final_cluster_centroids[final_idx:next_idx] = (
+                            converged_centroids
+                        )
+                        final_cluster_F[final_idx:next_idx] = converged_F
+                        final_cluster_J[final_idx:next_idx] = converged_J
+                        final_cluster_max_err[final_idx:next_idx] = converged_max_err
+                        final_cluster_mean_err[final_idx:next_idx] = converged_mean_err
+                        final_cluster_radii[final_idx:next_idx] = converged_radii
+                        final_cluster_sizes[final_idx:next_idx] = converged_sizes
+
                     final_cluster_depths[final_idx:next_idx] = current_depth
                     final_idx = next_idx
                 else:
@@ -596,7 +644,7 @@ def adaptive_cluster_algorithm_gpu(
                 )
 
                 # Interleave left and right sizes: [L0, R0, L1, R1, ...]
-                next_cluster_sizes = empty(2 * num_violating_clusters, dtype=int32)
+                next_cluster_sizes = cp.empty(2 * num_violating_clusters, dtype=int32)
                 next_cluster_sizes[0::2] = left_sizes
                 next_cluster_sizes[1::2] = right_sizes
 
@@ -637,6 +685,7 @@ def adaptive_cluster_algorithm_gpu(
             break
 
         # Prepare for next iteration of BFS
+        mempool.free_all_blocks()
         if not MOVE_INTERMEDIATE_TO_HOST:
             CLUSTER_PTS = cp.concatenate(next_level_pts_list)
 
@@ -663,8 +712,11 @@ def adaptive_cluster_algorithm_gpu(
             for chunk_host in next_level_pts_list:
                 chunk_len = chunk_host.shape[0]
                 # Copy host chunk to specific slice of GPU array
-                CLUSTER_PTS[offset : offset + chunk_len] = cp.asarray(chunk_host)
+                chunk_gpu = cp.asarray(chunk_host)
+                CLUSTER_PTS[offset : offset + chunk_len] = chunk_gpu
                 offset += chunk_len
+
+                del chunk_gpu, chunk_host
 
             # Clear CPU RAM
             del next_level_pts_list
@@ -684,6 +736,10 @@ def adaptive_cluster_algorithm_gpu(
             del next_sizes_all
             CLUSTER_STARTS = get_cluster_starts(CLUSTER_SIZES)
 
+        if LOG_MEM_STATS:
+            log_mem_stats(f"Level {current_depth} Data Prepared")
+
+        gc.collect()
         mempool.free_all_blocks()
         current_depth += 1
         elapsed_level = time.perf_counter() - start_level_time
@@ -705,7 +761,11 @@ def adaptive_cluster_algorithm_gpu(
     _sizes = final_cluster_sizes[:final_idx]
     _depths = final_cluster_depths[:final_idx]
 
-    _hessian_proxies = cp.where(_radii > 0, 2.0 * _max_err / (_radii**2), 0.0)
+    if STORE_FINAL_ARRAYS_ON_HOST:
+        _hessian_proxies = np.where(_radii > 0, 2.0 * _max_err / (_radii**2), 0.0)
+    else:
+        _hessian_proxies = cp.where(_radii > 0, 2.0 * _max_err / (_radii**2), 0.0)
+
     return (
         _centroids,
         _F,
@@ -732,9 +792,8 @@ if __name__ == "__main__":
     N_SAMPLES = 100_000
     N_INIT_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 100
-    ATOL = 1e-4
-    RTOL = 1e-4
-    DATA_DIM = 6
+    ATOL = RTOL = 1e-2
+    DATA_DIM = 100
     F_DIM = 1
 
     MAX_DEPTH = 50
