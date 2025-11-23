@@ -3,88 +3,24 @@ import time
 from pathlib import Path
 
 import cupy as cp
-import numpy as np
 from tqdm import tqdm
 
 from src.adaptive_clustering import adaptive_cluster_algorithm
 from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
-
-
-def rosenbrock(X: cp.ndarray) -> cp.ndarray:
-    """
-    Computes the Rosenbrock function for given input points.
-
-    Args:
-        X: (n, d) data matrix
-
-    Returns:
-        F: (n, 1) function values at X
-    """
-    x_i = X[:, :-1]
-    x_next = X[:, 1:]
-    F = cp.sum(100 * (x_next - x_i**2) ** 2 + (1 - x_i) ** 2, axis=1, keepdims=True)
-    return F
-
-
-def rosenbrock_cpu(X: np.ndarray) -> np.ndarray:
-    x_i = X[:, :-1]
-    x_next = X[:, 1:]
-    F = np.sum(100 * (x_next - x_i**2) ** 2 + (1 - x_i) ** 2, axis=1, keepdims=True)
-    return F
-
-
-def rosenbrock_grad(X: cp.ndarray) -> cp.ndarray:
-    """
-    Computes the gradient of the Rosenbrock function for given input points.
-
-    Args:
-        X: (n, d) data matrix
-
-    Returns:
-        J: (n, 1, d) Jacobian at X
-    """
-    n_samples, n_dims = X.shape
-    J = cp.zeros((n_samples, 1, n_dims), dtype=X.dtype)
-
-    # The term (1 - x_i)^2 only exists for i = 0 to d-2
-    J[:, 0, :-1] += 2 * (X[:, :-1] - 1)
-
-    # Term from 100*(x_{i+1} - x_i^2)^2 for i < d-1 (derivative w.r.t x_i)
-    # This affects 0 to d-2
-    J[:, 0, :-1] -= 400 * X[:, :-1] * (X[:, 1:] - X[:, :-1] ** 2)
-
-    # Term from 100*(x_i - x_{i-1}^2)^2 for i > 0 (derivative w.r.t x_{i+1})
-    # This affects 1 to d-1
-    J[:, 0, 1:] += 200 * (X[:, 1:] - X[:, :-1] ** 2)
-
-    return J
-
-
-def rosenbrock_grad_cpu(X: np.ndarray) -> np.ndarray:
-    n_samples, n_dims = X.shape
-    J = np.zeros((n_samples, 1, n_dims), dtype=X.dtype)
-
-    # The term (1 - x_i)^2 only exists for i = 0 to d-2
-    J[:, 0, :-1] += 2 * (X[:, :-1] - 1)
-
-    # Term from 100*(x_{i+1} - x_i^2)^2 for i < d-1 (derivative w.r.t x_i)
-    # This affects 0 to d-2
-    J[:, 0, :-1] -= 400 * X[:, :-1] * (X[:, 1:] - X[:, :-1] ** 2)
-
-    # Term from 100*(x_i - x_{i-1}^2)^2 for i > 0 (derivative w.r.t x_{i+1})
-    # This affects 1 to d-1
-    J[:, 0, 1:] += 200 * (X[:, 1:] - X[:, :-1] ** 2)
-
-    return J
-
+from src.problems.rosenbrock import (
+    rosenbrock_cupy,
+    rosenbrock_grad_cupy,
+    rosenbrock_grad_numpy,
+    rosenbrock_numpy,
+)
 
 if __name__ == "__main__":
     dims = [3, 20]
     n_sizes = [1e4, 5e4, 1e5, 5e5, 1e6, 5e6, 1e7, 5e7]
     tols = [1e-1, 1e-2, 1e-3]
 
-    N_INIT_CLUSTERS = 1000
-    MIN_PTS_PER_CLUSTER = 50
+    N_INIT_CLUSTERS = 100
+    MIN_PTS_PER_CLUSTER = 100
 
     CWD = Path.cwd()
     TIMING_DIR = CWD / "timing_results"
@@ -117,8 +53,8 @@ if __name__ == "__main__":
                 start_time = time.perf_counter()
                 result = adaptive_cluster_algorithm_gpu(
                     X_train=X_train,
-                    f=rosenbrock,
-                    grad=rosenbrock_grad,
+                    f=rosenbrock_cupy,
+                    grad=rosenbrock_grad_cupy,
                     DATA_DIM=dim,
                     F_DIM=1,
                     NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
@@ -127,6 +63,7 @@ if __name__ == "__main__":
                     RTOL=tol,
                     DEBUG=True,
                     MAX_CLUSTERS_EST=100_000_000 // dim,
+                    POWER_ITERS=3,
                 )
                 gpu_num_clusters = len(result[0])
                 gpu_time = time.perf_counter() - start_time
@@ -136,9 +73,9 @@ if __name__ == "__main__":
                 start_time = time.perf_counter()
                 clusters = adaptive_cluster_algorithm(
                     X_train=X_train_cpu,
-                    f=rosenbrock_cpu,
-                    grad_f=rosenbrock_grad_cpu,
-                    cupy_f=rosenbrock,
+                    f=rosenbrock_numpy,
+                    grad_f=rosenbrock_grad_numpy,
+                    cupy_f=rosenbrock_cupy,
                     atol=tol,
                     rtol=tol,
                     num_initial_clusters=N_INIT_CLUSTERS,

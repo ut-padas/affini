@@ -1,19 +1,9 @@
-"""Six-Hump Camelback Function and its Derivatives."""
+"""Six-Hump camelback function and its derivatives."""
 
-import warnings
-
+import cupy as cp
 import numpy as np
 
-try:
-    import cupy as cp
 
-    _HAS_GPU = cp.is_available()
-except Exception:
-    _HAS_GPU = False
-    warnings.warn("CuPy or cuML not available; GPU acceleration will be disabled.")
-
-
-# Six-Hump Camelback function
 def SHCF_numpy(x: np.ndarray):
     """
     Vectorized Six-Hump Camelback function.
