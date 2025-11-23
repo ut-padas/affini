@@ -1,8 +1,6 @@
 """Six-Hump camelback function and its derivatives."""
 
 import array_api_compat
-import cupy as cp
-import numpy as np
 
 
 def six_hump_camelback(X):
