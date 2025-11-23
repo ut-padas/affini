@@ -826,6 +826,7 @@ if __name__ == "__main__":
         BATCH_SIZE=BATCH_SIZE,
         LOG_MEM_STATS=True,
         MOVE_INTERMEDIATE_TO_HOST=True,
+        STORE_FINAL_ARRAYS_ON_HOST=True,
     )
 
     print(f"Final Cluster Count: {len(result[0])}")
