@@ -4,26 +4,37 @@ from typing import Callable
 
 import cupy as cp
 import numpy as np
+import psutil
 import pynvml
+import rmm
 from cuml.cluster import KMeans as cuKMeans
 from cupy import cumsum, einsum, empty, float64, int32, maximum
+from cupy.cuda import set_allocator
 from cupy.linalg import norm
 from cupyx import scatter_max
+from rmm.allocators.cupy import rmm_cupy_allocator
 
 logger = logging.getLogger(__name__)
 
 
 def log_mem_stats(tag: str = ""):
-    """Log current GPU memory usage."""
+    """Log current GPU and system RAM memory usage."""
     try:
+        # Get system RAM usage
+        ram = psutil.virtual_memory()
+        ram_used_gb = ram.used / 1e9
+        ram_total_gb = ram.total / 1e9
+
+        # Get GPU VRAM usage
         pynvml.nvmlInit()
         handle = pynvml.nvmlDeviceGetHandleByIndex(0)
         info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        used_gb = int(info.used) / 1e9
-        total_gb = int(info.total) / 1e9
-        msg = f"[MEM] {tag:<20} | VRAM: {used_gb:6.2f} / {total_gb:6.2f} GB"
-        logger.debug(msg)
+        vram_used_gb = int(info.used) / 1e9
+        vram_total_gb = int(info.total) / 1e9
         pynvml.nvmlShutdown()
+
+        msg = f"[MEM] {tag:<25} | VRAM: {vram_used_gb:6.2f} / {vram_total_gb:6.2f} GB | RAM: {ram_used_gb:6.2f} / {ram_total_gb:6.2f} GB"
+        logger.debug(msg)
     except Exception:
         pass
 
@@ -146,7 +157,9 @@ def compute_leading_eigenvectors(
         eigenvector_norms = norm(next_eigenvectors, axis=1, keepdims=True)
         safe_norms = maximum(eigenvector_norms, EPS)
         eigenvectors = next_eigenvectors / safe_norms
+        del eigenvector_norms, safe_norms, next_eigenvectors
 
+    del centroids, cluster_idxs
     return eigenvectors
 
 
@@ -204,6 +217,7 @@ def adaptive_cluster_algorithm_gpu(
     DTYPE=float64,
     BATCH_SIZE: int = 10_000_000,
     LOG_MEM_STATS: bool = False,
+    MANAGED_MEMORY: bool = False,
 ) -> tuple:
     """Run fully GPU-based adaptive clustering.
 
@@ -224,6 +238,8 @@ def adaptive_cluster_algorithm_gpu(
         DTYPE (cp.dtype): Data type for computations.
         BATCH_SIZE (int): Max points to process per batch loop to prevent OOM.
         LOG_MEM_STATS (bool): Whether to log GPU memory statistics.
+        MANAGED_MEMORY (bool): Whether to use RMM managed memory, i.e., unified memory.
+            Note that setting this to True **will** impact performance. Recommended to keep False unless you are working with very large datasets that exceeds the GPU VRAM.
 
     Returns:
         tuple:
@@ -237,6 +253,16 @@ def adaptive_cluster_algorithm_gpu(
             - cp.ndarray: Sizes of clusters, shape (M,).
             - cp.ndarray: Depths of clusters, shape (M,).
     """
+    # Initialize RMM with Managed Memory
+    rmm.reinitialize(
+        managed_memory=MANAGED_MEMORY,
+        pool_allocator=False,
+        devices=0,
+    )
+
+    # Set the allocator
+    set_allocator(rmm_cupy_allocator)
+
     cp.random.seed(SEED)
     rng = cp.random.default_rng(SEED)
     assert rng is not None, "RNG initialization failed."
@@ -281,6 +307,7 @@ def adaptive_cluster_algorithm_gpu(
     # Breadth-First Clustering Loop
     current_depth = 0
     while len(CLUSTER_SIZES) > 0 and current_depth < MAX_DEPTH:
+        start_level_time = time.perf_counter()
         num_clusters = len(CLUSTER_SIZES)
         total_pts_level = int(cp.sum(CLUSTER_SIZES))
 
@@ -525,6 +552,8 @@ def adaptive_cluster_algorithm_gpu(
             break
 
         current_depth += 1
+        elapsed_level = time.perf_counter() - start_level_time
+        logger.debug(f"Level {current_depth-1} done in {elapsed_level:.4f}s")
 
     elapsed_time = time.perf_counter() - start_time
     logger.info(f"Finished in {elapsed_time:.4f}s")
@@ -569,16 +598,16 @@ if __name__ == "__main__":
     N_SAMPLES = 100_000
     N_INIT_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 100
-    ATOL = 1e-2
-    RTOL = 1e-2
-    DATA_DIM = 50
+    ATOL = 1e-1
+    RTOL = 1e-1
+    DATA_DIM = 2
     F_DIM = 1
 
     MAX_DEPTH = 50
-    MAX_CLUSTERS_EST = 100_000_000 // DATA_DIM
-    POWER_ITERS = 4
+    MAX_CLUSTERS_EST = 100_000_000
+    POWER_ITERS = 2
     DTYPE = float64
-    BATCH_SIZE = 10_000_000 // DATA_DIM * 3
+    BATCH_SIZE = 10_000_000
 
     print(f"Generating {N_SAMPLES:,} points on GPU...")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
