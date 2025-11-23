@@ -526,7 +526,7 @@ def adaptive_cluster_algorithm_gpu(
 
 
 if __name__ == "__main__":
-    from src.problems.rosenbrock import rosenbrock_cupy, rosenbrock_grad_cupy
+    from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     # Configuration
     cp.random.seed(0)
@@ -550,8 +550,8 @@ if __name__ == "__main__":
     X_train = cp.random.rand(N_SAMPLES, 3, dtype=DTYPE)
     result = adaptive_cluster_algorithm_gpu(
         X_train=X_train,
-        f=rosenbrock_cupy,
-        grad=rosenbrock_grad_cupy,
+        f=rosenbrock,
+        grad=rosenbrock_grad,
         DATA_DIM=3,
         F_DIM=2,
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
