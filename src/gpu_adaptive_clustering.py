@@ -525,41 +525,9 @@ def adaptive_cluster_algorithm_gpu(
     )
 
 
-def sample_function(X: cp.ndarray) -> tuple[cp.ndarray, cp.ndarray]:
-    """
-    A sample function f that returns F and J at given X.
-    f(X) = [x1^2 + x2^2, x1 - x2 + x3]
-    Args:
-        X: (n, 3) data matrix
-    Returns:
-        F: (n, 2) function values at X
-        J: (n, 2, 3) Jacobian at X
-    """
-    x1, x2, x3 = X[:, 0], X[:, 1], X[:, 2]
-    f1 = x1**2 + x2**2
-    f2 = x1 - x2 + x3
-    F = cp.stack([f1, f2], axis=1)
-    return F
-
-
-def sample_function_grad(X: cp.ndarray) -> cp.ndarray:
-    """
-    Gradient of the sample function.
-    grad(X) = [[2*x1, 2*x2, 0],
-               [1, -1, 1]]
-    Args:
-        X: (n, 3) data matrix
-    Returns:
-        J: (n, 2, 3) Jacobian at X
-    """
-    x1, x2, _ = X[:, 0], X[:, 1], X[:, 2]
-    g1 = cp.stack([2 * x1, 2 * x2, cp.zeros_like(x1)], axis=1)
-    g2 = cp.stack([cp.ones_like(x1), -cp.ones_like(x1), cp.ones_like(x1)], axis=1)
-    J = cp.stack([g1, g2], axis=1)
-    return J
-
-
 if __name__ == "__main__":
+    from src.problems.rosenbrock import rosenbrock_cupy, rosenbrock_grad_cupy
+
     # Configuration
     cp.random.seed(0)
     rng = cp.random.default_rng(0)
@@ -582,8 +550,8 @@ if __name__ == "__main__":
     X_train = cp.random.rand(N_SAMPLES, 3, dtype=DTYPE)
     result = adaptive_cluster_algorithm_gpu(
         X_train=X_train,
-        f=sample_function,
-        grad=sample_function_grad,
+        f=rosenbrock_cupy,
+        grad=rosenbrock_grad_cupy,
         DATA_DIM=3,
         F_DIM=2,
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
