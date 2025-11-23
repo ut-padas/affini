@@ -81,7 +81,9 @@ def repeat_cluster_indices(cluster_sizes: cp.ndarray) -> cp.ndarray:
     cum_offsets = cumsum(cluster_sizes)
 
     # Search where each index falls in the bins
-    cluster_idxs = cp.searchsorted(cum_offsets, cp.arange(total_pts), side="right")
+    total_points_range = cp.arange(total_pts)
+    cluster_idxs = cp.searchsorted(cum_offsets, total_points_range, side="right")
+    del cum_offsets, total_points_range
     return cluster_idxs.astype(int32)
 
 
@@ -117,7 +119,7 @@ def compute_leading_eigenvectors(
     pt_sums = cp.add.reduceat(pts, cluster_starts)
     cluster_sizes_safe = maximum(cluster_sizes[:, None], 1)
     centroids = pt_sums / cluster_sizes_safe
-    del pt_sums
+    del pt_sums, cluster_sizes_safe
 
     # Initialize random eigenvectors
     eigenvectors = rng.standard_normal((num_clusters, pts.shape[1]), dtype=DTYPE)
@@ -191,6 +193,15 @@ def split_clusters_along_eigenvectors(
     cluster_ids_ordered_by_score = cluster_idxs[idxs_sorted_by_score]
     idxs_grouping_clusters = cp.argsort(cluster_ids_ordered_by_score)
     final_order = idxs_sorted_by_score[idxs_grouping_clusters]
+
+    del (
+        cluster_idxs,
+        directions_expanded,
+        projection_scores,
+        idxs_sorted_by_score,
+        cluster_ids_ordered_by_score,
+        idxs_grouping_clusters,
+    )
     sorted_pts = pts[final_order]
 
     # Calculate split points (Median Split)
@@ -417,34 +428,48 @@ def adaptive_cluster_algorithm_gpu(
 
             F_expanded = F_at_centroids[aug_ids]
             J_expanded = J_at_centroids[aug_ids]
-            centroids_expanded = cluster_centroids[aug_ids]
             if LOG_MEM_STATS:
                 log_mem_stats(f"L{current_depth} B{b}/{num_batches} f/grad")
 
             # Linear approximation: F_taylor = F(c) + J(c) * (x - c)
-            dx_centroid = aug_pts - centroids_expanded
-            linear_approximation = einsum("ijk,ik->ij", J_expanded, dx_centroid)
-            F_taylor = F_expanded + linear_approximation
+            # dx_centroid = aug_pts - centroids_expanded
+            dx_centroid = cluster_centroids[aug_ids]
+            cp.multiply(dx_centroid, -1.0, out=dx_centroid)
+            cp.add(aug_pts, dx_centroid, out=dx_centroid)
+
+            # F_taylor = F_expanded + linear_approximation
+            F_taylor = einsum("ijk,ik->ij", J_expanded, dx_centroid)
+            cp.add(F_expanded, F_taylor, out=F_taylor)
+            del F_expanded, J_expanded
+
+            # Compute true function values
             F_true = f(aug_pts)
 
             # Compute radii of clusters
             dist_from_centroid = norm(dx_centroid, axis=1)
             cluster_radii = cp.zeros(len(aug_sizes), dtype=DTYPE)
             scatter_max(cluster_radii, aug_ids, dist_from_centroid)
+            del dx_centroid, dist_from_centroid
 
             # Compute the error threshold for each point
             approximation_error = norm(F_true - F_taylor, axis=1)
             error_threshold = maximum(ATOL, RTOL * norm(F_true, axis=1))
 
+            # Cleanup
+            del F_taylor, F_true
+
             # Compute the max and mean errors per cluster
-            cluster_sum_errors = cp.add.reduceat(approximation_error, aug_starts)
             cluster_max_errors = cp.zeros(len(aug_sizes), dtype=DTYPE)
             scatter_max(cluster_max_errors, aug_ids, approximation_error)
-            cluster_mean_errors = cluster_sum_errors / aug_sizes
+
+            cluster_mean_errors = cp.add.reduceat(approximation_error, aug_starts)
+            cp.divide(cluster_mean_errors, aug_sizes, out=cluster_mean_errors)
 
             # Identify violating clusters by counting points exceeding error threshold per
             # cluster
             is_violating_pt = (approximation_error > error_threshold).astype(int32)
+            del approximation_error, error_threshold
+
             violating_counts_per_cluster = cp.add.reduceat(is_violating_pt, aug_starts)
             has_violating_pts = violating_counts_per_cluster > 0
             is_converged = ~has_violating_pts
@@ -530,8 +555,6 @@ def adaptive_cluster_algorithm_gpu(
 
             # Explicit Cleanup for Batch
             del aug_pts, cluster_centroids, F_at_centroids, J_at_centroids
-            del F_expanded, J_expanded, centroids_expanded
-            del dx_centroid, linear_approximation, F_taylor, F_true
             mempool.free_all_blocks()
             if LOG_MEM_STATS:
                 log_mem_stats(f"L{current_depth} B{b}/{num_batches} cleanup")
@@ -545,7 +568,6 @@ def adaptive_cluster_algorithm_gpu(
             break
 
         del CLUSTER_PTS, CLUSTER_SIZES, CLUSTER_STARTS, aug_cumsum_host
-        mempool.free_all_blocks()
 
         if LOG_MEM_STATS:
             log_mem_stats(f"Level {current_depth} Freed Old Data")
@@ -601,6 +623,7 @@ def adaptive_cluster_algorithm_gpu(
             del next_sizes_all
             CLUSTER_STARTS = get_cluster_starts(CLUSTER_SIZES)
 
+        mempool.free_all_blocks()
         current_depth += 1
         elapsed_level = time.perf_counter() - start_level_time
         logger.debug(f"Level {current_depth-1} done in {elapsed_level:.4f}s")
@@ -648,9 +671,9 @@ if __name__ == "__main__":
     N_SAMPLES = 100_000
     N_INIT_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 100
-    ATOL = 1e-1
-    RTOL = 1e-1
-    DATA_DIM = 2
+    ATOL = 1e-4
+    RTOL = 1e-4
+    DATA_DIM = 6
     F_DIM = 1
 
     MAX_DEPTH = 50
@@ -682,6 +705,7 @@ if __name__ == "__main__":
         DTYPE=DTYPE,
         BATCH_SIZE=BATCH_SIZE,
         LOG_MEM_STATS=True,
+        MOVE_INTERMEDIATE_TO_HOST=True,
     )
 
     print(f"Final Cluster Count: {len(result[0])}")
