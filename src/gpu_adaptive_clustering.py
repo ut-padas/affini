@@ -46,6 +46,7 @@ def compute_leading_eigenvectors(
     POWER_ITERS: int,
     EPS: float = 1e-9,
     DTYPE=cp.float64,
+    CHUNK_SIZE: int = 1_000_000,
 ) -> cp.ndarray:
     """
     Compute leading eigenvectors for multiple clusters using power iteration.
@@ -59,14 +60,15 @@ def compute_leading_eigenvectors(
         POWER_ITERS (int): Number of power iteration steps.
         EPS (float): Small value to avoid division by zero.
         DTYPE (cp.dtype): Data type for computations.
+        CHUNK_SIZE (int): Number of points to process in each chunk to reduce memory usage.
 
     Returns:
         cp.ndarray: Leading eigenvectors, shape (num_clusters, D).
     """
     # Compute cluster means
     point_sums = cp.add.reduceat(points, cluster_starts)
-    cluster_sizes = cp.maximum(cluster_sizes[:, None], 1)
-    centroids = point_sums / cluster_sizes
+    cluster_sizes_col = cp.maximum(cluster_sizes[:, None], 1)
+    centroids = point_sums / cluster_sizes_col
 
     # Initialize random eigenvectors
     eigenvectors = rng.standard_normal((num_clusters, points.shape[1]), dtype=DTYPE)
@@ -75,25 +77,86 @@ def compute_leading_eigenvectors(
     # Broadcast cluster indices
     cluster_indices = repeat_cluster_indices(cluster_sizes)
 
-    # Power iteration loop
+    n_points = len(points)
+    n_dims = points.shape[1]
+
+    # Power iteration loop with chunked processing to reduce memory usage
     for _ in range(POWER_ITERS):
-        # Expand centroids and eigenvectors
-        centroids_expanded = centroids[cluster_indices]
-        eigenvectors_expanded = eigenvectors[cluster_indices]
+        # Allocate output array for accumulating scaled vectors
+        next_eigenvectors = cp.zeros((num_clusters, n_dims), dtype=DTYPE)
 
-        # Center points by centroids
-        # TODO: This is failing when points ~ 100K X 20 DIM X 64bits ~ 9.8GB on Vista
-        # where the GPU has ~ 100GB memory. Need to debug further, since this should fit.
-        centered_points = points - centroids_expanded
+        # Determine if we need chunking based on data size
+        # For datasets where points * dims * 8 bytes * 5 (temp arrays) > available memory
+        # we process in chunks. Otherwise, use the original fast path.
+        estimated_memory_gb = (n_points * n_dims * 8 * 5) / 1e9
 
-        # Project onto eigenvectors - einsum for batch dot product
-        projections = cp.einsum("ij,ij->i", centered_points, eigenvectors_expanded)
+        if estimated_memory_gb < 10 or n_points <= CHUNK_SIZE:
+            # Fast path: process all at once (original algorithm)
+            centroids_expanded = centroids[cluster_indices]
+            eigenvectors_expanded = eigenvectors[cluster_indices]
 
-        # Scale vectors - broadcasting projections
-        scaled_vectors = centered_points * projections[:, None]
+            # Center points by centroids
+            centered_points = points - centroids_expanded
 
-        # Reduce back to clusters
-        next_eigenvectors = cp.add.reduceat(scaled_vectors, cluster_starts)
+            # Project onto eigenvectors - einsum for batch dot product
+            projections = cp.einsum("ij,ij->i", centered_points, eigenvectors_expanded)
+
+            # Scale vectors - broadcasting projections
+            scaled_vectors = centered_points * projections[:, None]
+
+            # Reduce back to clusters using reduceat
+            next_eigenvectors = cp.add.reduceat(scaled_vectors, cluster_starts)
+
+            # Clean up
+            del centroids_expanded, eigenvectors_expanded, centered_points
+            del projections, scaled_vectors
+
+        else:
+            # Memory-efficient path: process in chunks
+            n_chunks = (n_points + CHUNK_SIZE - 1) // CHUNK_SIZE
+
+            for chunk_idx in range(n_chunks):
+                start_idx = chunk_idx * CHUNK_SIZE
+                end_idx = min((chunk_idx + 1) * CHUNK_SIZE, n_points)
+
+                # Get chunk of data
+                points_chunk = points[start_idx:end_idx]
+                cluster_indices_chunk = cluster_indices[start_idx:end_idx]
+
+                # Expand centroids and eigenvectors for this chunk
+                centroids_chunk = centroids[cluster_indices_chunk]
+                eigenvectors_chunk = eigenvectors[cluster_indices_chunk]
+
+                # Center points by centroids
+                centered_chunk = points_chunk - centroids_chunk
+
+                # Project onto eigenvectors
+                projections_chunk = cp.einsum(
+                    "ij,ij->i", centered_chunk, eigenvectors_chunk
+                )
+
+                # Scale vectors
+                scaled_chunk = centered_chunk * projections_chunk[:, None]
+
+                # Accumulate into clusters using vectorized scatter-add
+                # Flatten and use cp.add.at for efficient accumulation
+                flat_indices = (
+                    cluster_indices_chunk[:, None] * n_dims
+                    + cp.arange(n_dims, dtype=cp.int32)[None, :]
+                ).ravel()
+                cp.add.at(next_eigenvectors.ravel(), flat_indices, scaled_chunk.ravel())
+
+                # Free chunk memory
+                del (
+                    points_chunk,
+                    cluster_indices_chunk,
+                    centroids_chunk,
+                    eigenvectors_chunk,
+                    centered_chunk,
+                    projections_chunk,
+                    scaled_chunk,
+                    flat_indices,
+                )
 
         # Normalize safely to avoid division by zero
         eigenvector_norms = cp.linalg.norm(next_eigenvectors, axis=1, keepdims=True)
