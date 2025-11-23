@@ -87,6 +87,62 @@ def repeat_cluster_indices(cluster_sizes: cp.ndarray) -> cp.ndarray:
     return cluster_idxs.astype(int32)
 
 
+def get_adaptive_batch_size(
+    data_dim: int, f_dim: int, dtype: cp.dtype, safety_factor: float = 0.8
+) -> int:
+    """
+    Calculates the maximum number of points that can fit in remaining VRAM.
+
+    Args:
+        data_dim (int): Dimensionality of input data points.
+        f_dim (int): Dimensionality of function output.
+        dtype (cp.dtype): Data type of the arrays.
+        safety_factor (float): Fraction of free memory to consider usable.
+
+    Returns:
+        int: Maximum batch size that fits in memory.
+    """
+    try:
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        free_mem = int(info.free)
+        pynvml.nvmlShutdown()
+    except Exception:
+        # Fallback if NVML fails
+        return 1_000_000
+
+    # Size of data type in bytes (e.g., 8 for float64)
+    dtype_size = dtype.itemsize  # type: ignore
+
+    # Calculate memory footprint per point during the dense calculation phase
+    # We sum up the dimensions of the largest arrays created during the batch loop
+    # 1. aug_pts: (N, D)
+    # 2. centroids_expanded: (N, D)
+    # 3. dx_centroid: (N, D)
+    # 4. J_expanded: (N, F, D) -> usually the bottleneck
+    # 5. F_expanded, F_taylor, F_true, linear_approx: 4 * (N, F)
+    # 6. Errors: 2 * (N,)
+    # 7. Split buffers (worst case all split): sorted_pts (N, D) + eigenvectors (N, D)
+
+    per_point_scalars = (
+        3 * data_dim  # Pts, Centroids, dx
+        + f_dim * data_dim  # Jacobian (Heavy!)
+        + 4 * f_dim  # Function vals
+        + 2  # Errors
+        + 2 * data_dim  # Sorting/Splitting buffers
+    )
+    bytes_per_point = dtype_size * per_point_scalars
+
+    # Add a tiny constant overhead for indexing arrays (int32)
+    bytes_per_point += 4 * 3  # indices, starts, counts
+
+    usable_mem = free_mem * safety_factor
+
+    max_batch = int(usable_mem // bytes_per_point)
+    return max(1, max_batch)
+
+
 def compute_leading_eigenvectors(
     pts: cp.ndarray,
     cluster_starts: cp.ndarray,
@@ -226,7 +282,7 @@ def adaptive_cluster_algorithm_gpu(
     POWER_ITERS: int = 3,
     SEED: int = 0,
     DTYPE=float64,
-    BATCH_SIZE: int = 10_000_000,
+    BATCH_SIZE: int | None = None,
     LOG_MEM_STATS: bool = False,
     MOVE_INTERMEDIATE_TO_HOST: bool = False,
     MANAGED_MEMORY: bool = False,
@@ -248,7 +304,7 @@ def adaptive_cluster_algorithm_gpu(
         POWER_ITERS (int): Number of power iterations for eigenvector computation.
         SEED (int): Random seed for reproducibility.
         DTYPE (cp.dtype): Data type for computations.
-        BATCH_SIZE (int): Max points to process per batch loop to prevent OOM.
+        BATCH_SIZE (int): Max points to process per batch loop to prevent OOM. If None, it will be computed adaptively, based on the available free GPU memory, DATA_DIM, F_DIM, and DTYPE.
         LOG_MEM_STATS (bool): Whether to log GPU memory statistics.
         MOVE_INTERMEDIATE_TO_HOST (bool): Whether to move intermediate results to host memory to save GPU memory. This can help prevent OOM errors at the cost of performance.
         MANAGED_MEMORY (bool): Whether to use RMM managed memory, i.e., unified memory.
@@ -324,7 +380,12 @@ def adaptive_cluster_algorithm_gpu(
         num_clusters = len(CLUSTER_SIZES)
         total_pts_level = int(cp.sum(CLUSTER_SIZES))
 
-        msg = f"L{current_depth}: {num_clusters} clusters, {total_pts_level} pts."
+        if BATCH_SIZE is None:
+            _BS = get_adaptive_batch_size(DATA_DIM, F_DIM, cp.dtype(DTYPE))
+        else:
+            _BS = BATCH_SIZE
+
+        msg = f"L{current_depth}: {num_clusters} clusters, {total_pts_level} pts. BatchSize: {_BS:,}"
         logger.debug(msg)
         if LOG_MEM_STATS:
             log_mem_stats(f"Level {current_depth} start")
@@ -335,7 +396,7 @@ def adaptive_cluster_algorithm_gpu(
         level_total_aug_pts = int(cp.sum(level_augmented_sizes))
 
         # Calculate number of batches required to process all augmented points
-        num_batches = (level_total_aug_pts + BATCH_SIZE - 1) // BATCH_SIZE
+        num_batches = (level_total_aug_pts + _BS - 1) // _BS
 
         # Precompute cumulative sums as host array for slice indexing
         aug_cumsum_host = cp.asnumpy(cumsum(level_augmented_sizes))
@@ -350,7 +411,7 @@ def adaptive_cluster_algorithm_gpu(
         # Process batches
         for b in range(num_batches):
             # Determine how many augmented points to process in this batch
-            target_aug_count = (b + 1) * BATCH_SIZE
+            target_aug_count = (b + 1) * _BS
 
             # Calculate how many clusters fit in this batch
             end_cluster_idx = int(np.searchsorted(aug_cumsum_host, target_aug_count))
@@ -680,7 +741,7 @@ if __name__ == "__main__":
     MAX_CLUSTERS_EST = 100_000_000
     POWER_ITERS = 2
     DTYPE = float64
-    BATCH_SIZE = 10_000_000
+    BATCH_SIZE = None
 
     print(f"Generating {N_SAMPLES:,} points on GPU...")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
