@@ -390,7 +390,7 @@ def adaptive_cluster_algorithm_gpu(
             J_expanded = J_at_centroids[aug_ids]
             centroids_expanded = cluster_centroids[aug_ids]
             if LOG_MEM_STATS:
-                log_mem_stats(f"L{current_depth} B{b} f/grad")
+                log_mem_stats(f"L{current_depth} B{b}/{num_batches} f/grad")
 
             # Linear approximation: F_taylor = F(c) + J(c) * (x - c)
             dx_centroid = aug_pts - centroids_expanded
@@ -451,6 +451,7 @@ def adaptive_cluster_algorithm_gpu(
                     final_idx = next_idx
                 else:
                     msg = f"Storage overflow. Clusters: {next_idx}/{MAX_CLUSTERS_EST}. Increase MAX_CLUSTERS_EST."
+                    logger.error(msg)
                     raise MemoryError(msg)
 
             # Split violating clusters
@@ -497,7 +498,7 @@ def adaptive_cluster_algorithm_gpu(
             del dx_centroid, linear_approximation, F_taylor, F_true
             mempool.free_all_blocks()
             if LOG_MEM_STATS:
-                log_mem_stats(f"L{current_depth} B{b} cleanup")
+                log_mem_stats(f"L{current_depth} B{b}/{num_batches} cleanup")
 
         logger.debug(f"Bad: {total_bad_clusters_level}")
         if LOG_MEM_STATS:
@@ -559,7 +560,7 @@ if __name__ == "__main__":
     from src.logging_config import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
-    setup_logging()
+    setup_logging(console_level=logging.DEBUG)
 
     # Configuration
     cp.random.seed(0)
@@ -570,18 +571,21 @@ if __name__ == "__main__":
     MIN_PTS_PER_CLUSTER = 100
     ATOL = 1e-2
     RTOL = 1e-2
-    DATA_DIM = 20
+    DATA_DIM = 50
     F_DIM = 1
 
     MAX_DEPTH = 50
-    MAX_CLUSTERS_EST = 100_000_000
+    MAX_CLUSTERS_EST = 100_000_000 // DATA_DIM
     POWER_ITERS = 4
     DTYPE = float64
-    BATCH_SIZE = 10_000_000
+    BATCH_SIZE = 10_000_000 // DATA_DIM * 3
 
     print(f"Generating {N_SAMPLES:,} points on GPU...")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
     print(f"{ATOL=}, {RTOL=}")
+    print(f"{DATA_DIM=}, {F_DIM=}")
+    print(f"{MAX_DEPTH=}, {MAX_CLUSTERS_EST=}, {POWER_ITERS=}")
+    print(f"{DTYPE=}, {BATCH_SIZE=}")
     X_train = cp.random.rand(N_SAMPLES, DATA_DIM, dtype=DTYPE)
     result = adaptive_cluster_algorithm_gpu(
         X_train=X_train,
@@ -598,7 +602,7 @@ if __name__ == "__main__":
         POWER_ITERS=POWER_ITERS,
         DTYPE=DTYPE,
         BATCH_SIZE=BATCH_SIZE,
-        LOG_MEM_STATS=False,
+        LOG_MEM_STATS=True,
     )
 
     print(f"Final Cluster Count: {len(result[0])}")
