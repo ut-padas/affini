@@ -217,6 +217,7 @@ def adaptive_cluster_algorithm_gpu(
     DTYPE=float64,
     BATCH_SIZE: int = 10_000_000,
     LOG_MEM_STATS: bool = False,
+    MOVE_INTERMEDIATE_TO_HOST: bool = False,
     MANAGED_MEMORY: bool = False,
 ) -> tuple:
     """Run fully GPU-based adaptive clustering.
@@ -238,6 +239,7 @@ def adaptive_cluster_algorithm_gpu(
         DTYPE (cp.dtype): Data type for computations.
         BATCH_SIZE (int): Max points to process per batch loop to prevent OOM.
         LOG_MEM_STATS (bool): Whether to log GPU memory statistics.
+        MOVE_INTERMEDIATE_TO_HOST (bool): Whether to move intermediate results to host memory to save GPU memory. This can help prevent OOM errors at the cost of performance.
         MANAGED_MEMORY (bool): Whether to use RMM managed memory, i.e., unified memory.
             Note that setting this to True **will** impact performance. Recommended to keep False unless you are working with very large datasets that exceeds the GPU VRAM.
 
@@ -513,7 +515,14 @@ def adaptive_cluster_algorithm_gpu(
                 next_cluster_sizes[1::2] = right_sizes
 
                 # Accumulate for next level
-                next_level_pts_list.append(split_pts)
+                if not MOVE_INTERMEDIATE_TO_HOST:
+                    next_level_pts_list.append(split_pts)
+                else:
+                    # Move split points to Host RAM (CPU) immediately to free VRAM for
+                    # the next batch computation
+                    next_level_pts_list.append(split_pts.get())
+                    del split_pts
+
                 next_level_sizes_list.append(next_cluster_sizes)
 
             # Move to next batch
@@ -535,8 +544,17 @@ def adaptive_cluster_algorithm_gpu(
         if total_bad_clusters_level == 0:
             break
 
+        del CLUSTER_PTS, CLUSTER_SIZES, CLUSTER_STARTS, aug_cumsum_host
+        mempool.free_all_blocks()
+
+        if LOG_MEM_STATS:
+            log_mem_stats(f"Level {current_depth} Freed Old Data")
+
+        if len(next_level_sizes_list) == 0:
+            break
+
         # Prepare for next iteration of BFS
-        if len(next_level_pts_list) > 0:
+        if not MOVE_INTERMEDIATE_TO_HOST:
             CLUSTER_PTS = cp.concatenate(next_level_pts_list)
 
             # Filter non-empty clusters
@@ -548,8 +566,40 @@ def adaptive_cluster_algorithm_gpu(
                 CLUSTER_SIZES = next_sizes_all
 
             CLUSTER_STARTS = get_cluster_starts(CLUSTER_SIZES)
+
         else:
-            break
+            # Calculate total size needed
+            total_new_pts = sum(chunk.shape[0] for chunk in next_level_pts_list)
+
+            # Allocate the one big contiguous block on GPU
+            # Since next_level_pts_list is on CPU, we have plenty of VRAM now
+            CLUSTER_PTS = cp.empty((total_new_pts, DATA_DIM), dtype=DTYPE)
+
+            # Stream chunks from CPU -> GPU into the allocated block
+            offset = 0
+            for chunk_host in next_level_pts_list:
+                chunk_len = chunk_host.shape[0]
+                # Copy host chunk to specific slice of GPU array
+                CLUSTER_PTS[offset : offset + chunk_len] = cp.asarray(chunk_host)
+                offset += chunk_len
+
+            # Clear CPU RAM
+            del next_level_pts_list
+
+            # Handle Sizes (keep logic similar to before)
+            next_sizes_all = cp.concatenate(next_level_sizes_list)
+            del next_level_sizes_list
+
+            mask_nonzero = next_sizes_all > 0
+            if not cp.all(mask_nonzero):
+                CLUSTER_SIZES = next_sizes_all[mask_nonzero]
+                # Note: If filtering sizes, ensure points align.
+                # (Assuming split logic outputs valid points only for valid sizes)
+            else:
+                CLUSTER_SIZES = next_sizes_all
+
+            del next_sizes_all
+            CLUSTER_STARTS = get_cluster_starts(CLUSTER_SIZES)
 
         current_depth += 1
         elapsed_level = time.perf_counter() - start_level_time
