@@ -107,7 +107,6 @@ def split_clusters_along_eigenvectors(
     points: cp.ndarray,
     cluster_sizes: cp.ndarray,
     directions: cp.ndarray,
-    SPLIT_METHOD: str = "median",
 ):
     """Split clusters by projecting along eigenvectors and sorting.
 
@@ -115,7 +114,6 @@ def split_clusters_along_eigenvectors(
         points (cp.ndarray): Flattened points for all clusters.
         cluster_sizes (cp.ndarray): Number of points in each cluster.
         directions (cp.ndarray): Eigenvectors for splitting, shape (num_clusters, d).
-        SPLIT_METHOD (str): Method for splitting ('median', 'optimal'). Currently only 'median' is implemented.
 
     Returns:
         tuple: (sorted_points, left_sizes, right_sizes)
@@ -135,15 +133,9 @@ def split_clusters_along_eigenvectors(
     final_lexicographical_order = indices_sorted_by_score[indices_grouping_clusters]
     sorted_points = points[final_lexicographical_order]
 
-    if SPLIT_METHOD == "median":
-        # Calculate split points (Median Split)
-        count_left_children = cluster_sizes // 2
-        count_right_children = cluster_sizes - count_left_children
-    elif SPLIT_METHOD == "optimal":
-        raise NotImplementedError("Optimal split method is not implemented yet.")
-    else:
-        msg = f"Unknown split method: {SPLIT_METHOD}. Supported: 'median', 'optimal'."
-        raise ValueError(msg)
+    # Calculate split points (Median Split)
+    count_left_children = cluster_sizes // 2
+    count_right_children = cluster_sizes - count_left_children
 
     return sorted_points, count_left_children, count_right_children
 
@@ -161,8 +153,7 @@ def adaptive_cluster_algorithm_gpu(
     RTOL: float,
     MAX_DEPTH: int = 500,
     MAX_CLUSTERS_EST: int = 100_000,
-    POWER_ITERS: int = 4,
-    SPLIT_METHOD: str = "median",
+    POWER_ITERS: int = 3,
     DEBUG: bool = False,
     SEED: int = 0,
     DTYPE=cp.float64,
@@ -182,7 +173,6 @@ def adaptive_cluster_algorithm_gpu(
         MAX_DEPTH (int): Maximum depth for BFS splitting.
         MAX_CLUSTERS_EST (int): Estimated maximum number of clusters for pre-allocation.
         POWER_ITERS (int): Number of power iterations for eigenvector computation.
-        SPLIT_METHOD (str): Method for splitting clusters ('median', 'optimal').
         DEBUG (bool): Whether to print debug information.
         SEED (int): Random seed for reproducibility.
         DTYPE (cp.dtype): Data type for computations.
@@ -409,7 +399,6 @@ def adaptive_cluster_algorithm_gpu(
             points=violating_points,
             cluster_sizes=violating_cluster_sizes,
             directions=eigenvector_directions,
-            SPLIT_METHOD=SPLIT_METHOD,
         )
 
         # Interleave left and right sizes: [L0, R0, L1, R1, ...]
