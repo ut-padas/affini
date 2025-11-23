@@ -12,8 +12,8 @@ from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
 if __name__ == "__main__":
     setup_logging()
-    dims = [3, 20]
-    n_sizes = [1e4, 5e4, 1e5, 5e5, 1e6, 5e6, 1e7, 5e7]
+    dims = [3, 20, 100]
+    n_sizes = [1e4, 5e4, 1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 5e8]
     tols = [1e-1, 1e-2, 1e-3]
 
     N_INIT_CLUSTERS = 100
@@ -29,12 +29,6 @@ if __name__ == "__main__":
         for tol in tqdm(tols, desc="Tolerances", leave=False):
             for n_size in tqdm(n_sizes, desc="Sizes", leave=False):
                 n_size = int(n_size)
-                # Skip for large sizes and small tolerances to avoid long runtimes / CUDA OOM
-                if (n_size > 5e6 and tol < 1e-2) or (dim >= 100 and tol < 1e-2):
-                    print(
-                        f"Skipping dim={dim}, n_size={n_size}, tol={tol} due to expected long runtime/CUDA OOM."
-                    )
-                    continue
 
                 # Output json name
                 gpu_output_json = SUB_TEMP_DIR / f"gpu_dim{dim}_n{n_size}_tol{tol}.json"
@@ -81,8 +75,24 @@ if __name__ == "__main__":
                     gpu_time = existing_data["gpu_time_seconds"]
                     gpu_num_clusters = existing_data["gpu_num_clusters"]
 
+                # Skip CPU timing for very large sizes or high dimensions with low tolerance
+                dim_l_10 = (dim < 10) and (
+                    (tol in [1e-1, 1e-2] and n_size >= 1e8)
+                    or (tol == 1e-3 and n_size >= 1e7)
+                )
+                dim_g_10_l_50 = (10 <= dim < 50) and (n_size >= 5e5)
+                dim_g_50 = (dim >= 50) and (n_size >= 1e5)
+
+                if dim_l_10 or dim_g_10_l_50 or dim_g_50:
+                    msg = (
+                        f"Skip: CPU timing for dim={dim}, n_size={n_size:2e}, tol={tol}"
+                    )
+                    print(msg)
+                    continue
+
                 cpu_output_json = SUB_TEMP_DIR / f"cpu_dim{dim}_n{n_size}_tol{tol}.json"
                 if not cpu_output_json.exists():
+                    print(f"Timing CPU for dim={dim}, n_size={n_size:2e}, tol={tol}")
                     # Time the CPU adaptive clustering
                     cp.random.seed(0)
                     X_train = cp.random.rand(n_size, dim, dtype=cp.float64)
