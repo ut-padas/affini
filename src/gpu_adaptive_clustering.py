@@ -261,7 +261,7 @@ def adaptive_cluster_algorithm_gpu(
         total_pts_level = int(cp.sum(CLUSTER_SIZES))
 
         msg = f"L{current_depth}: {num_clusters} clusters, {total_pts_level} pts."
-        logger.info(msg)
+        logger.debug(msg)
 
         # Augment clusters with synthetic points
         # Compute expected per-cluster sizes to meet minimum points requirement
@@ -469,7 +469,7 @@ def adaptive_cluster_algorithm_gpu(
             del dx_centroid, linear_approximation, F_taylor, F_true
             mempool.free_all_blocks()
 
-        logger.info(f"Bad: {total_bad_clusters_level}")
+        logger.debug(f"Bad: {total_bad_clusters_level}")
 
         # Termination condition
         if total_bad_clusters_level == 0:
