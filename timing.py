@@ -7,14 +7,11 @@ from tqdm import tqdm
 
 from src.adaptive_clustering import adaptive_cluster_algorithm
 from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
-from src.problems.rosenbrock import (
-    rosenbrock_cupy,
-    rosenbrock_grad_cupy,
-    rosenbrock_grad_numpy,
-    rosenbrock_numpy,
-)
+from src.logging_config import setup_logging
+from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
 if __name__ == "__main__":
+    setup_logging()
     dims = [3, 20]
     n_sizes = [1e4, 5e4, 1e5, 5e5, 1e6, 5e6, 1e7, 5e7]
     tols = [1e-1, 1e-2, 1e-3]
@@ -24,7 +21,8 @@ if __name__ == "__main__":
 
     CWD = Path.cwd()
     TIMING_DIR = CWD / "timing_results"
-    TIMING_DIR.mkdir(exist_ok=True, parents=True)
+    SUB_TEMP_DIR = TIMING_DIR / "individual_runs"
+    SUB_TEMP_DIR.mkdir(exist_ok=True, parents=True)
 
     # Measure time
     for dim in tqdm(dims, desc="Dimensions"):
@@ -39,64 +37,105 @@ if __name__ == "__main__":
                     continue
 
                 # Output json name
-                output_json = (
-                    TIMING_DIR / f"timing_gpu_ac_dim{dim}_n{n_size}_tol{tol}.json"
-                )
-                if output_json.exists():
-                    print(f"Skipping existing file: {output_json}")
-                    continue
+                gpu_output_json = SUB_TEMP_DIR / f"gpu_dim{dim}_n{n_size}_tol{tol}.json"
+                if not gpu_output_json.exists():
+                    # Generate random data
+                    cp.random.seed(0)
+                    X_train = cp.random.rand(n_size, dim, dtype=cp.float64)
 
-                # Generate random data
-                X_train = cp.random.rand(n_size, dim, dtype=cp.float64)
+                    # Time the GPU adaptive clustering
+                    start_time = time.perf_counter()
+                    result = adaptive_cluster_algorithm_gpu(
+                        X_train=X_train,
+                        f=rosenbrock,
+                        grad=rosenbrock_grad,
+                        DATA_DIM=dim,
+                        F_DIM=1,
+                        NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
+                        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                        ATOL=tol,
+                        RTOL=tol,
+                        MAX_CLUSTERS_EST=100_000_000 // dim,
+                        POWER_ITERS=2,
+                        LOG_MEM_STATS=True,
+                    )
+                    gpu_num_clusters = len(result[0])
+                    gpu_time = time.perf_counter() - start_time
 
-                # Time the GPU adaptive clustering
-                start_time = time.perf_counter()
-                result = adaptive_cluster_algorithm_gpu(
-                    X_train=X_train,
-                    f=rosenbrock_cupy,
-                    grad=rosenbrock_grad_cupy,
-                    DATA_DIM=dim,
-                    F_DIM=1,
-                    NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
-                    MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-                    ATOL=tol,
-                    RTOL=tol,
-                    DEBUG=True,
-                    MAX_CLUSTERS_EST=100_000_000 // dim,
-                    POWER_ITERS=3,
-                )
-                gpu_num_clusters = len(result[0])
-                gpu_time = time.perf_counter() - start_time
+                    with open(gpu_output_json, "w", encoding="utf-8") as f:
+                        json.dump(
+                            {
+                                "dimension": dim,
+                                "n_size": n_size,
+                                "tolerance": tol,
+                                "gpu_time_seconds": gpu_time,
+                                "gpu_num_clusters": gpu_num_clusters,
+                            },
+                            f,
+                            indent=4,
+                        )
+                else:
+                    # Read existing file to avoid recomputation
+                    with open(gpu_output_json, "r", encoding="utf-8") as f:
+                        existing_data = json.load(f)
+                    gpu_time = existing_data["gpu_time_seconds"]
+                    gpu_num_clusters = existing_data["gpu_num_clusters"]
 
-                # Time the CPU adaptive clustering
-                X_train_cpu = cp.asnumpy(X_train)
-                start_time = time.perf_counter()
-                clusters = adaptive_cluster_algorithm(
-                    X_train=X_train_cpu,
-                    f=rosenbrock_numpy,
-                    grad_f=rosenbrock_grad_numpy,
-                    cupy_f=rosenbrock_cupy,
-                    atol=tol,
-                    rtol=tol,
-                    num_initial_clusters=N_INIT_CLUSTERS,
-                    min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
-                    seed=0,
-                    should_generate_extra_points=True,
-                    debug=True,
-                    two_means_split_method="median",
-                )
-                cpu_num_clusters = len(clusters)
-                cpu_time = time.perf_counter() - start_time
+                cpu_output_json = SUB_TEMP_DIR / f"cpu_dim{dim}_n{n_size}_tol{tol}.json"
+                if not cpu_output_json.exists():
+                    # Time the CPU adaptive clustering
+                    cp.random.seed(0)
+                    X_train = cp.random.rand(n_size, dim, dtype=cp.float64)
+                    X_train_cpu = cp.asnumpy(X_train)
 
-                # Save results to JSON
-                result = {
-                    "dimension": dim,
-                    "n_size": n_size,
-                    "tolerance": tol,
-                    "gpu_time_seconds": gpu_time,
-                    "gpu_num_clusters": gpu_num_clusters,
-                    "cpu_time_seconds": cpu_time,
-                    "cpu_num_clusters": cpu_num_clusters,
-                }
-                with open(output_json, "w", encoding="utf-8") as f:
-                    json.dump(result, f, indent=4)
+                    start_time = time.perf_counter()
+                    clusters = adaptive_cluster_algorithm(
+                        X_train=X_train_cpu,
+                        f=rosenbrock,
+                        grad_f=rosenbrock_grad,
+                        cupy_f=rosenbrock,
+                        atol=tol,
+                        rtol=tol,
+                        num_initial_clusters=N_INIT_CLUSTERS,
+                        min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
+                        seed=0,
+                        should_generate_extra_points=True,
+                        debug=True,
+                        two_means_split_method="median",
+                    )
+                    cpu_num_clusters = len(clusters)
+                    cpu_time = time.perf_counter() - start_time
+                    with open(cpu_output_json, "w", encoding="utf-8") as f:
+                        json.dump(
+                            {
+                                "dimension": dim,
+                                "n_size": n_size,
+                                "tolerance": tol,
+                                "cpu_time_seconds": cpu_time,
+                                "cpu_num_clusters": cpu_num_clusters,
+                            },
+                            f,
+                            indent=4,
+                        )
+                else:
+                    # Read existing file to avoid recomputation
+                    with open(cpu_output_json, "r", encoding="utf-8") as f:
+                        existing_data = json.load(f)
+                    cpu_time = existing_data["cpu_time_seconds"]
+                    cpu_num_clusters = existing_data["cpu_num_clusters"]
+
+                output_fname = TIMING_DIR / f"summary_dim{dim}_n{n_size}_tol{tol}.json"
+                with open(output_fname, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {
+                            "dimension": dim,
+                            "n_size": n_size,
+                            "tolerance": tol,
+                            "gpu_time_seconds": gpu_time,
+                            "gpu_num_clusters": gpu_num_clusters,
+                            "cpu_time_seconds": cpu_time,
+                            "cpu_num_clusters": cpu_num_clusters,
+                        },
+                        f,
+                        indent=4,
+                    )
