@@ -225,7 +225,7 @@ class NearODESurrogate:
         elif distribution == "LHS":
             sampler = qmc.LatinHypercube(d=n, rng=seed)
             X = sampler.random(n=N)
-            if _HAS_GPU:
+            if cp.is_available():
                 l_np = cp.asnumpy(l) if hasattr(l, "device") else l  # type: ignore
                 r_np = cp.asnumpy(r) if hasattr(r, "device") else r  # type: ignore
                 X = qmc.scale(X, l_np, r_np)
@@ -271,7 +271,7 @@ class NearODESurrogate:
             )
 
         # Handle CuPy arrays by converting to NumPy
-        is_cupy_input = _HAS_GPU and hasattr(targets, "device")
+        is_cupy_input = cp.is_available()
         if is_cupy_input:
             targets = cp.asnumpy(targets)  # type: ignore
 
