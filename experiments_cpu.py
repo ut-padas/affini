@@ -6,14 +6,12 @@ from scipy.stats import qmc
 from tqdm import tqdm
 
 from src.nearode import ClusteringBackend, NearODESurrogate
-from src.problems.borehole import borehole, grad_borehole
-from src.problems.oned import grad_one_d_example, one_d_example
+from src.problems.borehole import borehole, borehole_grad
+from src.problems.oned import one_d_example, one_d_example_grad
 from src.problems.shcf import (
-    _HAS_GPU,
-    SHCF_cupy,
-    SHCF_numpy,
-    grad_SHCF_numpy,
-    hessian_SHCF_numpy,
+    six_hump_camelback,
+    six_hump_camelback_grad,
+    six_hump_camelback_hess,
 )
 
 CWD = Path.cwd()
@@ -27,7 +25,7 @@ def test_1D(N_init=2000, atol=0.01, make_plots=False):
     interpolant = NearODESurrogate(data_dim=1, f_dim=1)
     interpolant.train_model_from_sampling(
         f=one_d_example,
-        grad_f=grad_one_d_example,
+        grad_f=one_d_example_grad,
         cupy_f=None,
         cupy_grad_f=None,
         clustering_backend=ClusteringBackend.NUMPY_CUPY_HYBRID,
@@ -187,15 +185,13 @@ def generate_latex_table(data):
 def test_2D(
     atol=0.01, rtol=0.01, N_init=50000, domain=np.array([[-3, 3], [-2, 2]]), min_ppc=100
 ):
-    L = check_matrix_2norm(hessian_SHCF_numpy, domain, make_plots=True)
-
-    cupy_f = SHCF_cupy if _HAS_GPU else None
+    L = check_matrix_2norm(six_hump_camelback_hess, domain, make_plots=True)
 
     interpolant = NearODESurrogate(data_dim=2, f_dim=1)
     interpolant.train_model_from_sampling(
-        f=SHCF_numpy,
-        grad_f=grad_SHCF_numpy,
-        cupy_f=cupy_f,
+        f=six_hump_camelback,
+        grad_f=six_hump_camelback_grad,
+        cupy_f=six_hump_camelback,
         cupy_grad_f=None,
         clustering_backend=ClusteringBackend.NUMPY_CUPY_HYBRID,
         domain=domain,
@@ -216,7 +212,7 @@ def test_2D(
     xv, yv = np.meshgrid(x, y)
     pts = np.column_stack((xv.flatten(), yv.flatten()))
 
-    zz_exact = SHCF_numpy(pts)  # Already has shape (n, 1)
+    zz_exact = six_hump_camelback(pts)  # Already has shape (n, 1)
     zz_interpolant, bad_pts_inds = interpolant.evaluate(
         pts,
         k=1,
@@ -312,7 +308,7 @@ def test_2D(
 
 
 def convergence_test_2D(tolmat, N_init, domain, min_ppc=40):
-    datamat = np.empty((len(tolmat), 13))
+    datamat = np.empty((len(tolmat), 13), dtype=float)
     for j, tols in enumerate(tolmat):
         datamat[j] = test_2D(
             atol=tols[0], rtol=tols[1], N_init=N_init, domain=domain, min_ppc=min_ppc
@@ -324,7 +320,7 @@ def convergence_test_2D(tolmat, N_init, domain, min_ppc=40):
 
 
 def convergence_test_a_function(test_function, tolmat, N_init, min_ppc=100):
-    datamat = np.empty((len(tolmat), 11))
+    datamat = np.empty((len(tolmat), 11), dtype=float)
     for j, tols in tqdm(enumerate(tolmat), total=len(tolmat)):
         datamat[j] = test_function(
             atol=tols[0], rtol=tols[1], N_init=N_init, min_ppc=min_ppc
@@ -444,7 +440,7 @@ def test_8D(atol=0.2, rtol=0.01, N_init=10000, min_ppc=40):
     )
     test_a_function(
         f=borehole,
-        grad_f=grad_borehole,
+        grad_f=borehole_grad,
         m=8,
         domain=domain,
         atol=atol,
@@ -469,7 +465,7 @@ if __name__ == "__main__":
         "--problem",
         "-p",
         type=str,
-        default="borehole",
+        default="2d-shcf",
         choices=["1d", "2d-shcf", "borehole", "all"],
         help="Choose which problem to run.",
     )
