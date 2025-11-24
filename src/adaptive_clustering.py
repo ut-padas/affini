@@ -6,7 +6,6 @@ from typing import Callable, Optional
 
 import numpy as np
 from sklearn.cluster import KMeans
-from tqdm import tqdm
 
 from src.two_means import two_means_pca_threshold
 
@@ -136,7 +135,7 @@ class AdaptiveClusterer:
         """Perform initial clustering."""
         global NUM_CLUSTERED_BY_CUML, NUM_CLUSTERED_BY_SKLEARN
 
-        X_norm, mean = self._normalize_data(X)
+        X_norm, _ = self._normalize_data(X)
 
         n = len(X)
         if self.use_gpu and n >= self.gpu_len_threshold:
@@ -421,7 +420,6 @@ def plot_clusters(clusters: list[Cluster], fname: str = "adaptive_clusters.png")
 
 
 if __name__ == "__main__":
-    # import cProfile
     import time
     from pathlib import Path
 
@@ -501,39 +499,3 @@ if __name__ == "__main__":
     print(f"Clusters by TwoMeans: {NUM_CLUSTERED_BY_TWO_MEANS}")
     print(f"Total clustering calls: {total}")
     print(f"Time taken: {toc - tic:.4f} seconds")
-    raise SystemExit
-    if N_SAMPLES <= 10_000:
-        # Plot only for small datasets
-        plot_clusters(clusters, fname=f"{FILE_NAME}_clusters.png")
-
-    # cprofile.disable()
-    # cprofile.dump_stats(f"{FILE_NAME}_profile.prof")
-    # cprofile.print_stats(sort="time"
-
-    n_test = 10_000
-
-    counter = 0
-    # test the centroids and their errors
-    for i, c in tqdm(enumerate(clusters), desc="Testing clusters", total=len(clusters)):
-        centroid, F_c = c.centroid, c.F_centroid
-        J_c = c.J_centroid
-        radius = c.radius
-        d = centroid.shape[0]
-        # Pick random points in the cluster ball to test error
-        u = np.random.standard_normal(size=(n_test, d))
-        u /= np.linalg.norm(u, axis=1)[:, None]
-        test_pts = centroid + radius * np.random.random(size=(n_test, 1)) * u
-        F_test = sample_function(test_pts)
-
-        # Calculate max_error
-        dx = test_pts - centroid
-        assert J_c is not None, "Gradient must be available for error test."
-        J_c_squeezed = np.squeeze(J_c)
-        F_taylor = F_c + dx @ J_c_squeezed.T
-        errors = np.linalg.norm(F_test - F_taylor, axis=1)
-        max_error = float(np.max(errors))
-
-        if max_error > max(ABS_TOL, REL_TOL * np.linalg.norm(F_c)):
-            counter += 1
-
-    print(f"Clusters failed error test: {counter} out of {len(clusters)}")
