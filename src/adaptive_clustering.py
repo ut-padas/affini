@@ -1,5 +1,7 @@
 """Adaptive clustering with binary tree structure."""
 
+import logging
+import time
 import warnings
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -20,7 +22,9 @@ except Exception:
 
 CP_DTYPE = cp.float64 if _HAS_GPU else None  # type: ignore
 NP_DTYPE = np.float64
-print(f"CUML available: {_HAS_GPU}")
+
+logger = logging.getLogger(__name__)
+logger.info(f"GPU acceleration available: {_HAS_GPU}")
 
 # Global counters for clustering method usage
 NUM_CLUSTERED_BY_CUML = 0
@@ -92,7 +96,9 @@ class AdaptiveClusterer:
         self.use_gpu = use_gpu and _HAS_GPU
         self.gpu_len_threshold = gpu_len_threshold
         self.should_generate_extra_points = should_generate_extra_points
-        print(f"Should generate extra points: {self.should_generate_extra_points}")
+        logger.info(
+            f"Should generate extra points: {self.should_generate_extra_points}"
+        )
         self.two_means_split_method = two_means_split_method
 
         self._cluster_id = 0
@@ -251,8 +257,14 @@ class AdaptiveClusterer:
                 f"X must be 2D array with shape (n, d), got shape {X.shape}"
             )
 
+        start_time = time.perf_counter()
+        logger.info(f"Starting Adaptive Clustering on {X.shape}")
+
         # Initial clustering
+        tic = time.perf_counter()
         labels = self._initial_cluster(X)
+        toc = time.perf_counter()
+        logger.info(f"Initial clustering done in {toc - tic:.4f}s")
 
         # Initialize queue with point arrays from initial clusters
         cluster_ids = np.unique(labels)
@@ -266,10 +278,13 @@ class AdaptiveClusterer:
 
         # BFS by levels
         while queue:
-            if debug:
-                print(f"Processing level {n_level}, queue size: {len(queue)}")
+            level_start = time.perf_counter()
+            logger.debug(f"Processing level {n_level}, queue size: {len(queue)}")
             level = queue
             queue = []
+
+            children_left: list[np.ndarray] = []
+            children_right: list[np.ndarray] = []
 
             children_left: list[np.ndarray] = []
             children_right: list[np.ndarray] = []
@@ -358,7 +373,13 @@ class AdaptiveClusterer:
 
             queue.extend(children_left)
             queue.extend(children_right)
+            logger.debug(f"Bad Clusters: {len(children_left)}")
+            elapsed_level = time.perf_counter() - level_start
+            logger.debug(f"Level {n_level} done in {elapsed_level:.4f}s")
             n_level += 1
+        elapsed = time.perf_counter() - start_time
+        logger.info(f"Finished in {elapsed:.4f}s")
+        logger.info(f"Final Cluster Count: {len(final_clusters)}")
         return final_clusters
 
 
@@ -490,12 +511,12 @@ if __name__ == "__main__":
         should_generate_extra_points=False,
     )
     toc = time.perf_counter()
-    print(f"Total clusters formed: {len(clusters)}")
+    logger.info(f"Total clusters formed: {len(clusters)}")
     total = (
         NUM_CLUSTERED_BY_CUML + NUM_CLUSTERED_BY_SKLEARN + NUM_CLUSTERED_BY_TWO_MEANS
     )
-    print(f"Clusters by CUML: {NUM_CLUSTERED_BY_CUML}")
-    print(f"Clusters by SKLearn KMeans: {NUM_CLUSTERED_BY_SKLEARN}")
-    print(f"Clusters by TwoMeans: {NUM_CLUSTERED_BY_TWO_MEANS}")
-    print(f"Total clustering calls: {total}")
-    print(f"Time taken: {toc - tic:.4f} seconds")
+    logger.info(f"Clusters by CUML: {NUM_CLUSTERED_BY_CUML}")
+    logger.info(f"Clusters by SKLearn KMeans: {NUM_CLUSTERED_BY_SKLEARN}")
+    logger.info(f"Clusters by TwoMeans: {NUM_CLUSTERED_BY_TWO_MEANS}")
+    logger.info(f"Total clustering calls: {total}")
+    logger.info(f"Time taken: {toc - tic:.4f} seconds")
