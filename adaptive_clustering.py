@@ -43,9 +43,11 @@ def adaptive_cluster_algorithm(
     rtol: float = None,
     N_init_clusters: int = 10, # number of initial clusters to split into
     min_ppc: int = 1, # minimum number of points used in a cluster (to measure error)
-    use_gradient: bool = False, #TODO: make sure this runs (todo for a masters student)
+    use_gradient: bool = False,
     function_vals: np.ndarray = None, # if this is not none, uses these as solves. Otherwise runs eval_function every time
     seed = None, # seed used for kmeans rng
+    num_levels = -1, # specify the number of levels for the algorithm to go in the tree.
+        # If this is -1, then just go forever.  Otherwise only go up to this level in the tree.
     ):
 
     # check dimensions of training data; add another if necessary
@@ -121,12 +123,15 @@ def adaptive_cluster_algorithm(
         elif use_gradient:
             # make sure we compute in euclidean distance
             evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
+        
+        abs_error = np.linalg.norm(evec, 2)
+        rel_error = abs_error / np.linalg.norm(fvals_cluster, 'fro')
+        radius = np.max(np.linalg.norm(distance, axis=1))
 
-        abs_error = np.max(evec)
-
-        if (rtol is not None and abs_error < np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
+        if (rtol is not None and rel_error < rtol) \
+                or (atol is not None and abs_error < atol) \
+                or num_levels == 0:
             # Tolerance is good; save values in cluster column
-            radius = np.max(np.linalg.norm(distance, axis=1))
             if use_gradient:
                 lipschitz_constants = 2 / (radius**2) * evec
             else:
@@ -138,8 +143,8 @@ def adaptive_cluster_algorithm(
         else:
             # Split cluster in half (recursive step)
             k, cluster_structure[j] = _adaptive_cluster_algorithm_helper(
-                    params_in_cluster, fvals_cluster, centroid_params, eval_function,
-                    atol, rtol, min_ppc, use_gradient, k, seed)
+                    params_in_cluster, fvals_cluster, centroid_params, eval_function, N_init_clusters * 2,
+                    atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1)
 
     return k, cluster_structure
 
@@ -150,12 +155,14 @@ def _adaptive_cluster_algorithm_helper(
     function_vals: np.ndarray,
     prev_centroid: np.ndarray,
     eval_function: Callable,
+    total_clusters: float, # required to compute global absolute error
     atol = None,
     rtol = None,
     min_ppc: int = 1,
     use_gradient: bool = False,
     k: int = 0, # current cluster index (for recursive purposes)
     seed = None,
+    num_levels = -1,
 ):
     
     # record dimensions of matrices
@@ -217,18 +224,21 @@ def _adaptive_cluster_algorithm_helper(
     # using true value, compute error from qc
     distance = pts_cluster - centroid_params
     if not use_gradient:
-        evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1) # TODO: what norm to use?
+        evec = np.linalg.norm(fval_c-fvals_cluster, 2, axis=1)
     elif use_gradient:
         # make sure we compute in euclidean, non-log scaled distance
-        evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
+        evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1)
         
-    abs_error = np.max(evec)
+    abs_error = np.linalg.norm(evec, 2)
+    rel_error = abs_error / np.linalg.norm(fvals_cluster, 'fro')
     radius = np.max(np.linalg.norm(distance, axis=1))
 
     if radius == 0:
         # Dead branch of the tree. Not enough points to compute error
         left = None
-    elif (rtol is not None and abs_error < np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
+    elif (rtol is not None and rel_error < rtol) \
+            or (atol is not None and abs_error < (atol / np.sqrt(total_clusters))) \
+            or num_levels == 0:
         # Error good
         if use_gradient:
             lipschitz_constants = 2 / (radius**2) * evec
@@ -241,8 +251,8 @@ def _adaptive_cluster_algorithm_helper(
     else:
         # Error too large; split cluster in half (recursive step)
         k, left = _adaptive_cluster_algorithm_helper(
-                pts_cluster, fvals_cluster, centroid_params, eval_function,
-                atol, rtol, min_ppc, use_gradient, k, seed)
+                pts_cluster, fvals_cluster, centroid_params, eval_function, total_clusters * 2,
+                atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1)
 
 
 
@@ -287,13 +297,16 @@ def _adaptive_cluster_algorithm_helper(
         # make sure we compute in euclidean, non-log scaled distance
         evec = np.linalg.norm(fvals_cluster - (fval_c + np.matmul(distance, grad_c.T)), 2, axis=1) # TODO: what norm to use?
 
-    abs_error = np.max(evec)
+    abs_error = np.linalg.norm(evec, 2)
+    rel_error = abs_error / np.linalg.norm(fvals_cluster, 'fro')
     radius = np.max(np.linalg.norm(distance, axis=1))
 
     if radius == 0:
         # Dead branch of the tree. Not enough variance of points to compute error (or a single point).
         right = None
-    elif (rtol is not None and abs_error <= np.min(np.linalg.norm(fvals_cluster, 2, axis=1)) * rtol) or (atol is not None and abs_error < atol):
+    elif (rtol is not None and rel_error <= rtol) \
+            or (atol is not None and abs_error <= (atol / np.sqrt(total_clusters))) \
+            or num_levels == 0:
         if use_gradient:
             lipschitz_constants = 2 / (radius**2) * evec
         else:
@@ -305,8 +318,8 @@ def _adaptive_cluster_algorithm_helper(
     else:
         # Error too large; split cluster in half (recursive step)
         k, right = _adaptive_cluster_algorithm_helper(
-                pts_cluster, fvals_cluster, centroid_params, eval_function,
-                atol, rtol, min_ppc, use_gradient, k, seed)
+                pts_cluster, fvals_cluster, centroid_params, eval_function, total_clusters * 2,
+                atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1)
 
     return k, ClusterTree(prev_centroid, left, right)
 
