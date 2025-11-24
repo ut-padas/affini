@@ -1,7 +1,7 @@
 import cupy as cp
 
 from src.nearode import ClusteringBackend, NearODESurrogate
-from src.problems.shcf import (
+from src.problems.six_hump_camelback import (
     six_hump_camelback,
     six_hump_camelback_grad,
     six_hump_camelback_hess,

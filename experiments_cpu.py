@@ -8,7 +8,7 @@ from tqdm import tqdm
 from src.nearode import ClusteringBackend, NearODESurrogate
 from src.problems.borehole import borehole, borehole_grad
 from src.problems.oned import one_d_example, one_d_example_grad
-from src.problems.shcf import (
+from src.problems.six_hump_camelback import (
     six_hump_camelback,
     six_hump_camelback_grad,
     six_hump_camelback_hess,
