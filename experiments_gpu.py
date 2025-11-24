@@ -1,7 +1,11 @@
 import cupy as cp
 
 from src.nearode import ClusteringBackend, NearODESurrogate
-from src.problems.shcf import SHCF_cupy, grad_SHCF_cupy, hessian_SHCF_cupy
+from src.problems.shcf import (
+    six_hump_camelback,
+    six_hump_camelback_grad,
+    six_hump_camelback_hess,
+)
 
 
 def check_matrix_2norm(A, domain):
@@ -94,14 +98,14 @@ def generate_latex_table(data):
 def test_2D(
     atol=0.01, rtol=0.01, N_init=50000, domain=cp.array([[-3, 3], [-2, 2]]), min_ppc=100
 ):
-    L = check_matrix_2norm(hessian_SHCF_cupy, domain)
+    L = check_matrix_2norm(six_hump_camelback_hess, domain)
 
     interpolant = NearODESurrogate(data_dim=2, f_dim=1)
     interpolant.train_model_from_sampling(
-        f=SHCF_cupy,
-        grad_f=grad_SHCF_cupy,
-        cupy_f=SHCF_cupy,
-        cupy_grad_f=grad_SHCF_cupy,
+        f=six_hump_camelback,
+        grad_f=six_hump_camelback_grad,
+        cupy_f=six_hump_camelback,
+        cupy_grad_f=six_hump_camelback_grad,
         domain=domain,
         N=N_init,
         distribution="LHS",
@@ -121,7 +125,7 @@ def test_2D(
     xv, yv = cp.meshgrid(x, y)
     pts = cp.column_stack((xv.flatten(), yv.flatten()))
 
-    zz_exact = SHCF_cupy(pts)  # Already has shape (n, 1)
+    zz_exact = six_hump_camelback(pts)  # Already has shape (n, 1)
     zz_interpolant, bad_pts_inds = interpolant.evaluate(
         pts,
         k=1,
