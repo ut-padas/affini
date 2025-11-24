@@ -10,9 +10,7 @@ from scipy.stats import qmc
 
 from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
 
-# -----------------------------------------------------------------------------
-# Data Sampling
-# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
 
 class DataSampler:
@@ -24,6 +22,7 @@ class DataSampler:
         Sample N points uniformly from domain.
         Backend matches domain's backend.
         """
+        logger.debug("Sampling %d points uniformly from domain.", N)
         xp = array_namespace(domain)
         rng = xp.random.default_rng(seed)
 
@@ -46,6 +45,8 @@ class DataSampler:
         Sample N points using Latin Hypercube Sampling.
         Uses Scipy (CPU) internally, then moves to domain's backend.
         """
+        logger.debug("Sampling %d points using Latin Hypercube from domain.", N)
+
         xp = array_namespace(domain)
 
         # Parse domain dimensions
@@ -70,11 +71,6 @@ class DataSampler:
         return X
 
 
-# -----------------------------------------------------------------------------
-# Surrogate Model
-# -----------------------------------------------------------------------------
-
-
 class NearODESurrogate:
     """
     Combined kNN + Taylor Expansion Surrogate.
@@ -92,15 +88,15 @@ class NearODESurrogate:
         self.H_src = None
         self.R_src = None
 
+        # Training metadata
+        self.atol = None
         self.index = None
 
     def train(
         self,
+        X_train,
         f: Callable,
         grad: Callable,
-        domain,
-        N_samples: int,
-        sampler_type: str = "uniform",
         # Clustering params
         num_init_clusters: int = 100,
         min_pts: int = 10,
@@ -115,13 +111,10 @@ class NearODESurrogate:
         2. Run GPU Adaptive Clustering (Forces CuPy).
         3. Store Reference Data (NumPy for FAISS).
         """
-        t0 = time.perf_counter()
+        # Persist atol for evaluate checks
+        self.atol = atol
 
-        # 1. Sample
-        if sampler_type == "LHS":
-            X_train = DataSampler.sample_latin_hypercube(domain, N_samples, seed)
-        else:
-            X_train = DataSampler.sample_uniform(domain, N_samples, seed)
+        t0 = time.perf_counter()
 
         # Ensure X_train is on GPU for the clustering algorithm
         X_train_gpu = cp.asarray(X_train)
@@ -234,15 +227,45 @@ class NearODESurrogate:
         valid_mask = xp.ones(n_q, dtype=bool)
 
         if check_trust_region:
-            # Check strictly against nearest neighbor (k=1)
-            R_nearest = gather(self.R_src, indices[:, 0])  # (N_q,)
+            # We strictly verify the Nearest Neighbor (k=1)
+
+            idx_nearest = indices[:, 0]
             dist_sq_nearest = (
                 xp.asarray(distances_sq[:, 0]) if is_cupy else distances_sq[:, 0]
             )
 
-            # Geometric trust radius check
-            trust_limit = R_nearest**2
-            valid_mask = dist_sq_nearest < trust_limit
+            R_nearest = gather(self.R_src, idx_nearest)  # (N_q,)
+            H_nearest = gather(self.H_src, idx_nearest)  # (N_q,)
+
+            # --- Local Bounds ---
+            # 1. Geometric limit: Cluster radius squared
+            limit_geom_sq = R_nearest**2
+
+            # 2. Hessian limit: r^2 < 2*tol / (alpha * H)
+            # Avoid div by zero
+            hess_denom = alpha * H_nearest
+            # If using cupy, we need to ensure the scalar logic works or use xp.where
+            hess_denom = xp.where(hess_denom == 0, 1e-12, hess_denom)
+            limit_hess_sq = (2.0 * self.atol) / hess_denom  # type: ignore
+
+            local_limit_sq = xp.minimum(limit_geom_sq, limit_hess_sq)
+
+            # --- Global Limit (Fallback) ---
+            if L_global is not None:
+                # Derived from L * r < 2 * tol => r < 2*tol/L
+                # We square it because we are comparing against squared distance
+                global_limit_sq = (2.0 * self.atol / L_global) ** 2  # type: ignore
+
+                # Point is valid if inside Local OR inside Global
+                valid_mask = xp.logical_or(
+                    dist_sq_nearest < local_limit_sq,
+                    xp.logical_and(
+                        local_limit_sq < dist_sq_nearest,
+                        dist_sq_nearest < global_limit_sq,
+                    ),
+                )
+            else:
+                valid_mask = dist_sq_nearest < local_limit_sq
 
         return predictions, valid_mask
 
@@ -264,17 +287,19 @@ if __name__ == "__main__":
     # Using CuPy for GPU acceleration
     domain = cp.array([[-2.0, 2.0], [-1.0, 1.0]])
 
+    # Sample Training Data
+    N_train = 200_000
+    X_train = DataSampler.sample_latin_hypercube(domain, N=N_train, seed=0)
+
     # 2. Initialize Surrogate
     surrogate = NearODESurrogate(data_dim=2, f_dim=1)
 
     # 3. Train
     print("--- Training ---")
     surrogate.train(
+        X_train=X_train,
         f=six_hump_camelback,
         grad=six_hump_camelback_grad,
-        domain=domain,
-        N_samples=100_000,
-        sampler_type="LHS",  # Use Latin Hypercube
         num_init_clusters=50,
         atol=0.1,
         rtol=0.1,
@@ -286,7 +311,7 @@ if __name__ == "__main__":
     # Create random test points on GPU
     X_test = DataSampler.sample_uniform(domain, N=5, seed=123)
 
-    preds, valid = surrogate.evaluate(X_test, k=1)
+    preds, valid = surrogate.evaluate(X_test, k=1, L_global=10.0, alpha=1.0)
 
     # Compare with ground truth
     ground_truth = six_hump_camelback(X_test)
