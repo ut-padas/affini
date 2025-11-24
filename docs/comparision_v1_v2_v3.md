@@ -304,6 +304,72 @@ user    0m15.459s
 sys     0m0.639s
 ```
 
+## Version 7 (CuPy v2) (Time: 12.2s)
+```sh
+CUML available: True
+2025-11-23 18:41:56 - root - INFO - Logging to file: /work/10973/prajwal_prathiksh/vista/github-repos/knnsur/.logs/20251123_184156.log
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:41:56 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (400000, 2)
+2025-11-23 18:41:56 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.1460s
+2025-11-23 18:41:57 - src.gpu_adaptive_clustering - INFO - Finished in 1.3142s
+2025-11-23 18:41:57 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 1784
+Time to train: 1.33 seconds
+Time elapsed for predictions: 0.03434985800413415 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:41:57 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (400000, 2)
+2025-11-23 18:41:57 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.0767s
+2025-11-23 18:41:59 - src.gpu_adaptive_clustering - INFO - Finished in 1.1832s
+2025-11-23 18:41:59 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 3411
+Time to train: 1.19 seconds
+Time elapsed for predictions: 0.05984075099695474 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:41:59 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (400000, 2)
+2025-11-23 18:41:59 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.0769s
+2025-11-23 18:42:00 - src.gpu_adaptive_clustering - INFO - Finished in 1.4404s
+2025-11-23 18:42:00 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 6315
+Time to train: 1.45 seconds
+Time elapsed for predictions: 0.10543355502886698 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:42:00 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (400000, 2)
+2025-11-23 18:42:00 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.0756s
+2025-11-23 18:42:02 - src.gpu_adaptive_clustering - INFO - Finished in 1.8647s
+2025-11-23 18:42:02 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 14586
+Time to train: 1.88 seconds
+Time elapsed for predictions: 0.23576232901541516 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:42:02 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (400000, 2)
+2025-11-23 18:42:02 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.0753s
+2025-11-23 18:42:05 - src.gpu_adaptive_clustering - INFO - Finished in 2.1496s
+2025-11-23 18:42:05 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 27030
+Time to train: 2.16 seconds
+Time elapsed for predictions: 0.4292452320223674 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                400000 & 0.1 & 2.0\% & 1784 & 2.2\% & 97.79\% & 0.01\% & 1.0611 & 0.257 & 0.4209 & 0.0242 & 0.0218 & 0.022 \\
+                400000 & 0.05 & 1.0\% & 3411 & 2.39\% & 97.6\% & 0.01\% & 0.5158 & 0.2617 & 0.335 & 0.0119 & 0.0105 & 0.0107 \\
+                400000 & 0.025 & 0.5\% & 6315 & 3.02\% & 96.95\% & 0.03\% & 0.8072 & 0.0853 & 0.2441 & 0.0071 & 0.0054 & 0.0057 \\
+                400000 & 0.01 & 0.2\% & 14586 & 5.15\% & 94.79\% & 0.06\% & 0.3281 & 0.061 & 0.1175 & 0.0032 & 0.0022 & 0.0023 \\
+                400000 & 0.005 & 0.1\% & 27030 & 7.68\% & 92.15\% & 0.17\% & 0.1661 & 0.0305 & 0.0568 & 0.0015 & 0.0011 & 0.0011 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    0m12.265s
+user    0m6.728s
+sys     0m2.675s
+```
+
 # 2D (SHCF) Test: n = 800,000
 ## Version 1 (Time: 2m 4s)
 ```sh
@@ -560,6 +626,72 @@ None
 real    0m24.165s
 user    0m18.655s
 sys     0m0.654s
+```
+
+## Version 7 (CuPy v2) (Time: 13.3s)
+```sh
+CUML available: True
+2025-11-23 18:43:05 - root - INFO - Logging to file: /work/10973/prajwal_prathiksh/vista/github-repos/knnsur/.logs/20251123_184305.log
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:43:05 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (800000, 2)
+2025-11-23 18:43:06 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.1671s
+2025-11-23 18:43:07 - src.gpu_adaptive_clustering - INFO - Finished in 1.3935s
+2025-11-23 18:43:07 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 1893
+Time to train: 1.41 seconds
+Time elapsed for predictions: 0.036650896014180034 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:43:07 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (800000, 2)
+2025-11-23 18:43:07 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.1074s
+2025-11-23 18:43:08 - src.gpu_adaptive_clustering - INFO - Finished in 1.4162s
+2025-11-23 18:43:08 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 3549
+Time to train: 1.43 seconds
+Time elapsed for predictions: 0.062260730017442256 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:43:09 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (800000, 2)
+2025-11-23 18:43:09 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.1074s
+2025-11-23 18:43:10 - src.gpu_adaptive_clustering - INFO - Finished in 1.4111s
+2025-11-23 18:43:10 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 6755
+Time to train: 1.42 seconds
+Time elapsed for predictions: 0.11229810700751841 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:43:10 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (800000, 2)
+2025-11-23 18:43:10 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.1074s
+2025-11-23 18:43:12 - src.gpu_adaptive_clustering - INFO - Finished in 1.6950s
+2025-11-23 18:43:12 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 15613
+Time to train: 1.71 seconds
+Time elapsed for predictions: 0.251224217005074 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:43:12 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (800000, 2)
+2025-11-23 18:43:12 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.1069s
+2025-11-23 18:43:15 - src.gpu_adaptive_clustering - INFO - Finished in 2.8839s
+2025-11-23 18:43:15 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 29182
+Time to train: 2.89 seconds
+Time elapsed for predictions: 0.46338501694845036 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                800000 & 0.1 & 2.0\% & 1893 & 1.94\% & 98.04\% & 0.01\% & 0.6791 & 0.2501 & 0.3132 & 0.0226 & 0.0214 & 0.0214 \\
+                800000 & 0.05 & 1.0\% & 3549 & 1.89\% & 98.09\% & 0.02\% & 0.5052 & 0.1362 & 0.275 & 0.0124 & 0.0109 & 0.011 \\
+                800000 & 0.025 & 0.5\% & 6755 & 2.3\% & 97.69\% & 0.01\% & 0.3206 & 0.1561 & 0.2181 & 0.0058 & 0.0051 & 0.0054 \\
+                800000 & 0.01 & 0.2\% & 15613 & 3.25\% & 96.71\% & 0.04\% & 0.184 & 0.076 & 0.0983 & 0.0027 & 0.0021 & 0.0022 \\
+                800000 & 0.005 & 0.1\% & 29182 & 4.85\% & 95.08\% & 0.07\% & 0.1608 & 0.0382 & 0.0607 & 0.0019 & 0.0011 & 0.0011 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    0m13.317s
+user    0m7.023s
+sys     0m2.848s
 ```
 
 # 2D (SHCF) Test: n = 3,200,000
@@ -820,7 +952,71 @@ user    0m38.501s
 sys     0m1.111s
 ```
 
+## Version 7 (CuPy v2) (Time: 16.9s)
+```sh
+CUML available: True
+2025-11-23 18:44:38 - root - INFO - Logging to file: /work/10973/prajwal_prathiksh/vista/github-repos/knnsur/.logs/20251123_184438.log
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:44:39 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (3200000, 2)
+2025-11-23 18:44:39 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.6763s
+2025-11-23 18:44:41 - src.gpu_adaptive_clustering - INFO - Finished in 2.1963s
+2025-11-23 18:44:41 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 1973
+Time to train: 2.21 seconds
+Time elapsed for predictions: 0.037045539007522166 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:44:41 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (3200000, 2)
+2025-11-23 18:44:42 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.5556s
+2025-11-23 18:44:43 - src.gpu_adaptive_clustering - INFO - Finished in 2.0126s
+2025-11-23 18:44:43 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 3796
+Time to train: 2.02 seconds
+Time elapsed for predictions: 0.06532641500234604 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:44:43 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (3200000, 2)
+2025-11-23 18:44:44 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.5554s
+2025-11-23 18:44:46 - src.gpu_adaptive_clustering - INFO - Finished in 2.1867s
+2025-11-23 18:44:46 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 7378
+Time to train: 2.20 seconds
+Time elapsed for predictions: 0.12147191900294274 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:44:46 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (3200000, 2)
+2025-11-23 18:44:46 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.5552s
+2025-11-23 18:44:48 - src.gpu_adaptive_clustering - INFO - Finished in 2.4100s
+2025-11-23 18:44:48 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 17392
+Time to train: 2.42 seconds
+Time elapsed for predictions: 0.2780115669593215 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:44:49 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (3200000, 2)
+2025-11-23 18:44:49 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 0.5556s
+2025-11-23 18:44:52 - src.gpu_adaptive_clustering - INFO - Finished in 2.7054s
+2025-11-23 18:44:52 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 33087
+Time to train: 2.72 seconds
+Time elapsed for predictions: 0.5244578699930571 seconds
 
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                3200000 & 0.1 & 2.0\% & 1973 & 1.65\% & 98.34\% & 0.01\% & 0.2893 & 0.2405 & 0.2439 & 0.0241 & 0.0222 & 0.022 \\
+                3200000 & 0.05 & 1.0\% & 3796 & 1.32\% & 98.68\% & 0.0\% & 0.5165 & 0.1624 & 0.2929 & 0.0136 & 0.0114 & 0.0117 \\
+                3200000 & 0.025 & 0.5\% & 7378 & 1.51\% & 98.48\% & 0.0\% & 0.1431 & 0.1178 & 0.1191 & 0.006 & 0.0057 & 0.0056 \\
+                3200000 & 0.01 & 0.2\% & 17392 & 1.81\% & 98.18\% & 0.01\% & 0.1363 & 0.0332 & 0.0646 & 0.0028 & 0.0021 & 0.0022 \\
+                3200000 & 0.005 & 0.1\% & 33087 & 2.25\% & 97.74\% & 0.01\% & 0.1238 & 0.0238 & 0.0558 & 0.0013 & 0.0011 & 0.0011 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    0m16.965s
+user    0m10.955s
+sys     0m3.091s
+```
 
 # 2D (SHCF) Test: n = 10,000,000
 ## Version 1 (Time: 12m 32s)
@@ -1005,6 +1201,72 @@ sys     0m2.566s
 ```
 
 
+## Version 7 (CuPy v2) (Time: 26s)
+```sh
+CUML available: True
+2025-11-23 18:45:23 - root - INFO - Logging to file: /work/10973/prajwal_prathiksh/vista/github-repos/knnsur/.logs/20251123_184523.log
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:45:24 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (10000000, 2)
+2025-11-23 18:45:25 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 1.4437s
+2025-11-23 18:45:27 - src.gpu_adaptive_clustering - INFO - Finished in 3.5899s
+2025-11-23 18:45:27 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 2019
+Time to train: 3.61 seconds
+Time elapsed for predictions: 0.037756700010504574 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:45:28 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (10000000, 2)
+2025-11-23 18:45:29 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 1.2133s
+2025-11-23 18:45:31 - src.gpu_adaptive_clustering - INFO - Finished in 3.3630s
+2025-11-23 18:45:31 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 3888
+Time to train: 3.37 seconds
+Time elapsed for predictions: 0.06671702698804438 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:45:32 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (10000000, 2)
+2025-11-23 18:45:33 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 1.2129s
+2025-11-23 18:45:36 - src.gpu_adaptive_clustering - INFO - Finished in 3.6268s
+2025-11-23 18:45:36 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 7560
+Time to train: 3.64 seconds
+Time elapsed for predictions: 0.12474136298988014 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:45:37 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (10000000, 2)
+2025-11-23 18:45:38 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 1.2192s
+2025-11-23 18:45:41 - src.gpu_adaptive_clustering - INFO - Finished in 3.9125s
+2025-11-23 18:45:41 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 18293
+Time to train: 3.92 seconds
+Time elapsed for predictions: 0.29237179696792737 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:45:42 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (10000000, 2)
+2025-11-23 18:45:43 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 1.2191s
+2025-11-23 18:45:46 - src.gpu_adaptive_clustering - INFO - Finished in 4.1415s
+2025-11-23 18:45:46 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 35528
+Time to train: 4.15 seconds
+Time elapsed for predictions: 0.5616304139839485 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                10000000 & 0.1 & 2.0\% & 2019 & 1.26\% & 98.73\% & 0.01\% & 0.3037 & 0.2562 & 0.2712 & 0.0272 & 0.022 & 0.0228 \\
+                10000000 & 0.05 & 1.0\% & 3888 & 1.19\% & 98.81\% & 0.0\% & 0.3831 & 0.1411 & 0.2249 & 0.0121 & 0.0109 & 0.011 \\
+                10000000 & 0.025 & 0.5\% & 7560 & 1.22\% & 98.77\% & 0.01\% & 0.4029 & 0.0688 & 0.2198 & 0.0064 & 0.006 & 0.0058 \\
+                10000000 & 0.01 & 0.2\% & 18293 & 1.3\% & 98.68\% & 0.01\% & 0.2536 & 0.0412 & 0.1006 & 0.0033 & 0.0023 & 0.0024 \\
+                10000000 & 0.005 & 0.1\% & 35528 & 1.51\% & 98.48\% & 0.01\% & 0.1186 & 0.0424 & 0.0712 & 0.0013 & 0.0011 & 0.0011 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    0m26.705s
+user    0m19.740s
+sys     0m4.116s
+```
+
 # 2D (SHCF) Test: n = 100,000,000
 ## Version 4 (Time: 13m 31s)
 ```sh
@@ -1149,3 +1411,68 @@ user    11m4.493s
 sys     0m29.064s
 ```
 
+## Version 7 (CuPy v2) (Time: 3m 17s)
+```sh
+CUML available: True
+2025-11-23 18:46:45 - root - INFO - Logging to file: /work/10973/prajwal_prathiksh/vista/github-repos/knnsur/.logs/20251123_184645.log
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:46:56 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (100000000, 2)
+2025-11-23 18:47:09 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 13.1544s
+2025-11-23 18:47:20 - src.gpu_adaptive_clustering - INFO - Finished in 24.7790s
+2025-11-23 18:47:20 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 2006
+Time to train: 24.80 seconds
+Time elapsed for predictions: 0.037457214028108865 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:47:31 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (100000000, 2)
+2025-11-23 18:47:44 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 13.0030s
+2025-11-23 18:47:57 - src.gpu_adaptive_clustering - INFO - Finished in 26.2551s
+2025-11-23 18:47:57 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 4030
+Time to train: 26.27 seconds
+Time elapsed for predictions: 0.0699945809901692 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:48:08 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (100000000, 2)
+2025-11-23 18:48:21 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 13.0076s
+2025-11-23 18:48:36 - src.gpu_adaptive_clustering - INFO - Finished in 27.3434s
+2025-11-23 18:48:36 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 7836
+Time to train: 27.35 seconds
+Time elapsed for predictions: 0.12948909000260755 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:48:46 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (100000000, 2)
+2025-11-23 18:48:59 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 13.0052s
+2025-11-23 18:49:16 - src.gpu_adaptive_clustering - INFO - Finished in 29.4774s
+2025-11-23 18:49:16 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 19326
+Time to train: 29.49 seconds
+Time elapsed for predictions: 0.3093927009613253 seconds
+Max achieved at (-3.0, -2.0), value = 591.2024557808674
+2025-11-23 18:49:27 - src.gpu_adaptive_clustering - INFO - Starting GPU Clustering on (100000000, 2)
+2025-11-23 18:49:40 - src.gpu_adaptive_clustering - INFO - Initial KMeans done in 13.0018s
+2025-11-23 18:49:59 - src.gpu_adaptive_clustering - INFO - Finished in 31.8777s
+2025-11-23 18:49:59 - src.gpu_adaptive_clustering - INFO - Final Cluster Count: 38460
+Time to train: 31.89 seconds
+Time elapsed for predictions: 0.6083428340498358 seconds
+
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c||c|c|c|c||c|c|c|c|}
+        \hline
+        $N_{init}$ & atol & rtol & $N_{sources}$ & $p_{out}$ & $p_{in,good}$ & $p_{in,bad}$ & $\|e\|_\infty$ & $e_{med}$ & $\|e\|_\infty / \|f\|_\infty$ & $\|e\|_2 / \|f\|_2$\\
+        \hline\hline
+                100000000 & 0.1 & 2.0\% & 2006 & 1.26\% & 98.73\% & 0.01\% & 0.4166 & 0.3001 & 0.3077 & 0.0256 & 0.0232 & 0.0231 \\
+                100000000 & 0.05 & 1.0\% & 4030 & 1.08\% & 98.92\% & 0.0\% & 0.3638 & 0.1236 & 0.2307 & 0.0109 & 0.0105 & 0.0105 \\
+                100000000 & 0.025 & 0.5\% & 7836 & 1.08\% & 98.92\% & 0.0\% & 0.1281 & 0.0941 & 0.1001 & 0.0065 & 0.006 & 0.006 \\
+                100000000 & 0.01 & 0.2\% & 19326 & 0.91\% & 99.09\% & 0.01\% & 0.1701 & 0.0293 & 0.0751 & 0.0024 & 0.0022 & 0.0022 \\
+                100000000 & 0.005 & 0.1\% & 38460 & 0.87\% & 99.12\% & 0.01\% & 0.0528 & 0.0178 & 0.027 & 0.0013 & 0.001 & 0.0011 \\
+        \hline
+    \end{tabular}
+    \caption{This is a caption!}
+    \label{tab:new_tab}
+\end{table}
+None
+
+
+
+real    3m17.655s
+user    2m59.962s
+sys     0m14.883s
+```
