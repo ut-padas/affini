@@ -13,7 +13,7 @@ from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 if __name__ == "__main__":
     setup_logging()
     dims = [3, 20, 100]
-    n_sizes = [1e4, 5e4, 1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 5e8]
+    n_sizes = [1e4, 5e4, 1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8]
     tols = [1e-1, 1e-2, 1e-3]
 
     N_INIT_CLUSTERS = 100
@@ -27,36 +27,60 @@ if __name__ == "__main__":
     # Measure time
     for dim in tqdm(dims, desc="Dimensions"):
         for tol in tqdm(tols, desc="Tolerances", leave=False):
+            error_in_tol = False
             for n_size in tqdm(n_sizes, desc="Sizes", leave=False):
                 n_size = int(n_size)
 
                 # Output json name
                 gpu_output_json = SUB_TEMP_DIR / f"gpu_dim{dim}_n{n_size}_tol{tol}.json"
-                if not gpu_output_json.exists():
+                error_fname = SUB_TEMP_DIR / f"{gpu_output_json.stem}.error"
+                if error_fname.exists() or error_in_tol:
+                    msg = f"Skip: Previous error for dim={dim}, n_size={n_size}, tol={tol}"
+                    print(msg)
+                    error_in_tol = True
+                    continue
+
+                if gpu_output_json.exists():
+                    # Read existing file to avoid recomputation
+                    with open(gpu_output_json, "r", encoding="utf-8") as f:
+                        existing_data = json.load(f)
+                    gpu_time = existing_data["gpu_time_seconds"]
+                    gpu_num_clusters = existing_data["gpu_num_clusters"]
+                else:
+                    print(f"Timing GPU for dim={dim}, n_size={n_size}, tol={tol}")
                     # Generate random data
                     cp.random.seed(0)
                     X_train = cp.random.rand(n_size, dim, dtype=cp.float64)
 
-                    # Time the GPU adaptive clustering
-                    start_time = time.perf_counter()
-                    result = adaptive_cluster_algorithm_gpu(
-                        X_train=X_train,
-                        f=rosenbrock,
-                        grad=rosenbrock_grad,
-                        DATA_DIM=dim,
-                        F_DIM=1,
-                        NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
-                        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-                        ATOL=tol,
-                        RTOL=tol,
-                        MAX_CLUSTERS_EST=100_000_000 // dim,
-                        POWER_ITERS=2,
-                        LOG_MEM_STATS=True,
-                        MOVE_INTERMEDIATE_TO_HOST=True,
-                        STORE_FINAL_ARRAYS_ON_HOST=True,
-                    )
-                    gpu_num_clusters = len(result[0])
-                    gpu_time = time.perf_counter() - start_time
+                    try:
+                        # Time the GPU adaptive clustering
+                        start_time = time.perf_counter()
+                        result = adaptive_cluster_algorithm_gpu(
+                            X_train=X_train,
+                            f=rosenbrock,
+                            grad=rosenbrock_grad,
+                            DATA_DIM=dim,
+                            F_DIM=1,
+                            NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
+                            MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                            ATOL=tol,
+                            RTOL=tol,
+                            MAX_CLUSTERS_EST=100_000_000,
+                            POWER_ITERS=2,
+                            LOG_MEM_STATS=True,
+                            MOVE_INTERMEDIATE_TO_HOST=True,
+                            STORE_FINAL_ARRAYS_ON_HOST=True,
+                        )
+                        gpu_num_clusters = len(result[0])
+                        gpu_time = time.perf_counter() - start_time
+                    except Exception as e:
+                        msg = f"MemoryError: dim={dim}, n_size={n_size}, tol={tol}"
+                        with open(error_fname, "w", encoding="utf-8") as f:
+                            f.write(msg + "\n")
+                            f.write(str(e) + "\n")
+                        print(msg)
+                        error_in_tol = True
+                        continue
 
                     with open(gpu_output_json, "w", encoding="utf-8") as f:
                         json.dump(
@@ -70,12 +94,6 @@ if __name__ == "__main__":
                             f,
                             indent=4,
                         )
-                else:
-                    # Read existing file to avoid recomputation
-                    with open(gpu_output_json, "r", encoding="utf-8") as f:
-                        existing_data = json.load(f)
-                    gpu_time = existing_data["gpu_time_seconds"]
-                    gpu_num_clusters = existing_data["gpu_num_clusters"]
 
                 # Skip CPU timing for very large sizes or high dimensions with low tolerance
                 dim_l_10 = (dim < 10) and (

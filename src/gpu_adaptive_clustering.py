@@ -668,7 +668,7 @@ def adaptive_cluster_algorithm_gpu(
             if LOG_MEM_STATS:
                 log_mem_stats(f"L{current_depth} B{b}/{num_batches} cleanup")
 
-        logger.debug(f"Bad: {total_bad_clusters_level}")
+        logger.debug(f"Bad Clusters: {total_bad_clusters_level}")
         if LOG_MEM_STATS:
             log_mem_stats(f"Level {current_depth} end")
 
