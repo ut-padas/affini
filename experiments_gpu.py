@@ -241,12 +241,13 @@ def convergence_test_2D(tolmat, N_init, domain, min_ppc=40):
 
 
 if __name__ == "__main__":
-    # import cProfile
     from pathlib import Path
 
+    from src.logging_config import setup_logging
+
+    setup_logging()
+
     FILE_NAME = Path(__file__).resolve().stem
-    # cprofile = cProfile.Profile()
-    # cprofile.enable()
 
     tolmat = cp.array(
         [
@@ -260,6 +261,3 @@ if __name__ == "__main__":
 
     domain = cp.array([[-3, 3], [-2, 2]])
     convergence_test_2D(tolmat, 1_000_000_000, domain)
-
-    # cprofile.disable()
-    # cprofile.dump_stats(f"{FILE_NAME}_profile.prof")

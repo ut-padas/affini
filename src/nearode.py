@@ -6,20 +6,13 @@ import time
 from enum import Enum
 from typing import Callable
 
+import cupy as cp
 import numpy as np
 from scipy.stats import qmc
 
 from src.adaptive_clustering import adaptive_cluster_algorithm
+from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
 from src.nn_inference import NN_Inference
-
-try:
-    import cupy as cp
-
-    from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
-
-    _HAS_GPU = cp.is_available()
-except Exception:
-    _HAS_GPU = False
 
 
 class ClusteringBackend(Enum):
@@ -95,8 +88,8 @@ class NearODESurrogate:
                 if not callable(self.cupy_f) or not callable(self.cupy_grad_f):
                     raise ValueError("cupy_f and cupy_grad_f must be callables")
 
-                result = adaptive_cluster_algorithm_gpu(  # type: ignore
-                    X_train=cp.asarray(X),  # type: ignore
+                result = adaptive_cluster_algorithm_gpu(
+                    X_train=cp.asarray(X),
                     f=self.cupy_f,
                     grad=self.cupy_grad_f,
                     DATA_DIM=self.data_dim,
@@ -106,6 +99,9 @@ class NearODESurrogate:
                     ATOL=self.atol,
                     RTOL=self.rtol,
                     SEED=self.seed,
+                    LOG_MEM_STATS=True,
+                    MOVE_INTERMEDIATE_TO_HOST=True,
+                    STORE_FINAL_ARRAYS_ON_HOST=True,
                 )
                 new_X = result[0]
                 new_f_vals = result[1]
@@ -348,8 +344,8 @@ class NearODESurrogate:
             if not callable(self.cupy_f) or not callable(self.cupy_grad_f):
                 raise ValueError("cupy_f and cupy_grad_f must be callables")
 
-            result = adaptive_cluster_algorithm_gpu(  # type: ignore
-                X_train=cp.asarray(X),  # type: ignore
+            result = adaptive_cluster_algorithm_gpu(
+                X_train=cp.asarray(X),
                 f=self.cupy_f,
                 grad=self.cupy_grad_f,
                 DATA_DIM=self.data_dim,
@@ -359,6 +355,9 @@ class NearODESurrogate:
                 ATOL=self.atol,
                 RTOL=self.rtol,
                 SEED=self.seed,
+                LOG_MEM_STATS=True,
+                MOVE_INTERMEDIATE_TO_HOST=True,
+                STORE_FINAL_ARRAYS_ON_HOST=True,
             )
             new_X = result[0]
             new_f_vals = result[1]
