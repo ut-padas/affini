@@ -352,7 +352,7 @@ def adaptive_cluster_algorithm_gpu(
     kmeans = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=0)
     init_labels = kmeans.fit_predict(X_train)
     elapsed_init = time.perf_counter() - start_time_init
-    logger.info(f"Initial KMeans done in {elapsed_init:.4f}s")
+    logger.info(f"Initial KMeans Time: {elapsed_init:.4f}s")
     if LOG_MEM_STATS:
         log_mem_stats("After KMeans")
 
@@ -740,10 +740,10 @@ def adaptive_cluster_algorithm_gpu(
         mempool.free_all_blocks()
         current_depth += 1
         elapsed_level = time.perf_counter() - start_level_time
-        logger.debug(f"Level {current_depth-1} done in {elapsed_level:.4f}s")
+        logger.debug(f"Level {current_depth-1} Time: {elapsed_level:.4f}s")
 
     elapsed_time = time.perf_counter() - start_time
-    logger.info(f"Finished in {elapsed_time:.4f}s")
+    logger.info(f"Total GPU Adaptive Clustering Time: {elapsed_time:.4f}s")
     logger.info(f"Final Cluster Count: {final_idx}")
     if LOG_MEM_STATS:
         log_mem_stats("Finished")

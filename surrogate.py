@@ -24,6 +24,8 @@ class DataSampler:
         Backend matches domain's backend.
         """
         logger.debug("Sampling %d points uniformly from domain.", N)
+        t0 = time.perf_counter()
+
         xp = array_namespace(domain)
         rng = xp.random.default_rng(seed)
 
@@ -38,6 +40,7 @@ class DataSampler:
 
         # Generate (N, D)
         X = rng.uniform(l, r, (N, n_dim))
+        logger.info(f"Uniform Sampling Time: {time.perf_counter()-t0:.4f}s")
         return xp.astype(X, xp.float64)
 
     @staticmethod
@@ -47,6 +50,7 @@ class DataSampler:
         Uses Scipy (CPU) internally, then moves to domain's backend.
         """
         logger.debug("Sampling %d points using Latin Hypercube from domain.", N)
+        t0 = time.perf_counter()
 
         xp = array_namespace(domain)
 
@@ -69,6 +73,7 @@ class DataSampler:
 
         # Convert to target backend
         X = xp.asarray(sample_scaled, dtype=xp.float64)
+        logger.info(f"LHS Sampling Time: {time.perf_counter()-t0:.4f}s")
         return X
 
 
@@ -188,8 +193,8 @@ class NearODESurrogate:
 
         # 4. Training complete
         self.trained = True
-        msg = f"Training complete. Clusters: {len(self.X_src)}. Time: {time.perf_counter()-t0:.4f}s"
-        logger.info(msg)
+        logger.info(f"Training Time: {time.perf_counter()-t0:.4f}s")
+        logger.info(f"Trained Clusters: {len(self.X_src)}")
 
     def evaluate(
         self,
@@ -220,7 +225,7 @@ class NearODESurrogate:
             raise RuntimeError("Model not trained.")
 
         xp = array_namespace(targets)
-        t_start = time.perf_counter()
+        t0 = time.perf_counter()
 
         # 1. FAISS Search (CPU)
         # Convert targets to NumPy safely for search
@@ -319,8 +324,7 @@ class NearODESurrogate:
             # The return is "outside_mask" (True if NOT valid)
             outside_mask = xp.logical_not(is_valid)
 
-        logger.debug(f"Prediction time: {time.perf_counter() - t_start:.5f}s")
-
+        logger.info(f"Evaluation Time: {time.perf_counter()-t0:.4f}s")
         return predictions, outside_mask
 
 
