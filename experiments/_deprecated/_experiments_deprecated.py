@@ -4,7 +4,7 @@ from matplotlib.colors import BoundaryNorm, ListedColormap
 from scipy.integrate import solve_ivp
 from scipy.stats import qmc
 
-from src.nearode import NearODESurrogate
+from experiments._deprecated.nearode import NearODESurrogate
 
 
 # One dimensional example
