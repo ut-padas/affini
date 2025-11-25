@@ -12,6 +12,7 @@ def setup_logging(
     log_dir: str = ".logs",
     console_output: bool = True,
     file_output: bool = True,
+    suppress_external: bool = True,
 ) -> None:
     """Configure logging for the entire application.
 
@@ -26,6 +27,7 @@ def setup_logging(
         log_dir: Directory where log files will be stored.
         console_output: Whether to log to console.
         file_output: Whether to log to file.
+        suppress_external: Whether to suppress logs from external libraries. Default: True.
 
     Example:
         >>> from src.logging_config import setup_logging
@@ -80,3 +82,20 @@ def setup_logging(
 
         # Log the location of the log file
         root_logger.info(f"Logging to file: {log_filename.absolute()}")
+
+    # Suppress external library logs
+    if suppress_external:
+        external_loggers = [
+            "matplotlib",
+            "PIL",
+            "numba",
+            "cupy",
+            "numpy",
+            "scipy",
+            "sklearn",
+            "torch",
+            "tensorflow",
+            "pandas",
+        ]
+        for lib_name in external_loggers:
+            logging.getLogger(lib_name).setLevel(logging.WARNING)
