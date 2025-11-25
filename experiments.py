@@ -340,7 +340,7 @@ if __name__ == "__main__":
                 min_pts_per_cluster=100,
             ),
             [400_000, 800_000],
-            TestConfig(Type="LHS", N_total_points=100_000),
+            TestConfig(Type="LHS", N_total_points=10_000),
         ),
         (
             BenchmarkProblem(
@@ -356,7 +356,7 @@ if __name__ == "__main__":
                 max_clusters_est=8_000_000,
             ),
             [100_000, 200_000],
-            TestConfig(Type="LHS", N_total_points=100_000),
+            TestConfig(Type="LHS", N_total_points=10_000),
         ),
         (
             BenchmarkProblem(

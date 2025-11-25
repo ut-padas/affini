@@ -190,7 +190,9 @@ class NearODESurrogate:
         # Get distances and indices
         # Line 2: k <- arg min ||x - xi||_2
         # FAISS returns squared L2 distances
+        t_search = time.perf_counter()
         distances_sq, indices = self.index.search(targets_np, k_NEIGHBOURS)  # type: ignore
+        logger.info(f"FAISS Search Time: {time.perf_counter()-t_search:.4f}s")
 
         # Convert back to original backend
         distances_sq = xp.asarray(distances_sq)
