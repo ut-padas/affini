@@ -11,6 +11,7 @@ import pandas as pd
 from array_api_compat import array_namespace
 from tqdm import tqdm
 
+from src.problems.borehole import borehole, borehole_grad
 from src.problems.six_hump_camelback import (
     six_hump_camelback,
     six_hump_camelback_grad,
@@ -30,6 +31,11 @@ RESULTS.mkdir(parents=True, exist_ok=True)
 
 def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None):
     from src.problems.oned import one_d_example, one_d_example_grad, one_d_example_hess
+
+    img_path = FIGURES / f"1D_experiment_ATOL{ATOL}_RTOL{RTOL}.png"
+    if img_path.exists():
+        logger.info(f"1D experiment figure already exists at {img_path}, skipping.")
+        return
 
     domain = np.array([0.0, 10.0])
     Lipschitz_est = get_matrix_2_norm(one_d_example_hess, domain)
@@ -106,7 +112,6 @@ def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None):
     plt.xlabel("$x$")
     plt.ylabel("Absolute Error $|f_{surrogate} - f_{exact}|$")
 
-    img_path = FIGURES / f"1D_experiment_ATOL{ATOL}_RTOL{RTOL}.png"
     plt.savefig(img_path, dpi=400)
     logger.info(f"Saved 1D experiment figure to {img_path}")
 
@@ -155,7 +160,7 @@ class ExperimentResult:
 def estimate_lipschitz_constant(
     problem: BenchmarkProblem,
     N_samples: int = 5000,
-) -> float:
+) -> Optional[float]:
     """
     Estimates Global Lipschitz constant L via max Hessian norm.
     For high dimensions, samples random points instead of a grid.
@@ -163,14 +168,8 @@ def estimate_lipschitz_constant(
     if problem.L_global is not None:
         return problem.L_global
 
-    if problem.hess is None:
-        logger.warning(f"No Hessian provided for {problem.name}, using default L=1.")
-        return 1.0
-
-    if problem.data_dim != 2:
-        msg = f"estimate_lipschitz_constant currently only supports 2D problems, got {problem.data_dim}D."
-        logger.warning(msg)
-        return 1.0
+    if problem.hess is None or problem.data_dim != 2:
+        return None
 
     xp = array_namespace(problem.domain)
     X = DataSampler.sample_latin_hypercube(problem.domain, N_samples)
@@ -277,7 +276,7 @@ if __name__ == "__main__":
     setup_logging(console_level=logging.INFO)
 
     # Run simple 1D experiment
-    # run_1D_experiment()
+    run_1D_experiment()
 
     # Define benchmark problems along with a list of N_train values and a singulat N_pts_per_dim_test
     problems: list[tuple[BenchmarkProblem, list[int], int]] = [
@@ -296,6 +295,33 @@ if __name__ == "__main__":
             ),
             [400_000, 800_000],
             300,
+        ),
+        (
+            BenchmarkProblem(
+                name="Borehole",
+                f=borehole,
+                grad=borehole_grad,
+                hess=None,
+                domain=xp.array(
+                    [
+                        [0.05, 0.15],  # r_w
+                        [100, 50000],  # r
+                        [63070, 115600],  # T_u
+                        [990, 1110],  # H_u
+                        [63.1, 116],  # H_l
+                        [700, 820],  # L
+                        [1120, 1680],  # K_w
+                        [9855, 12045],  # r_e
+                    ]
+                ),
+                data_dim=8,
+                f_dim=1,
+                num_initial_clusters=100,
+                min_pts_per_cluster=50,
+                seed=0,
+            ),
+            [1_000_000],
+            10_000,
         ),
     ]
 
@@ -318,7 +344,17 @@ if __name__ == "__main__":
         print(f"\n--- Running Benchmarks for {prob.name} ---")
 
         LIPSCHITZ_EST = estimate_lipschitz_constant(prob, prob.data_dim * 10_000)
-        print(f"Using Estimated Global Lipschitz Constant L = {LIPSCHITZ_EST:.4f}")
+        if LIPSCHITZ_EST is not None:
+            print(f"Using Estimated Global Lipschitz Constant L = {LIPSCHITZ_EST:.4f}")
+        else:
+            print("No Global Lipschitz Constant estimate available.")
+
+        csv_path = RESULTS / f"benchmark_{prob.name.replace(' ', '_')}.csv"
+        latex_path = RESULTS / f"benchmark_{prob.name.replace(' ', '_')}.tex"
+
+        if csv_path.exists() and latex_path.exists():
+            logger.info(f"Results for {prob.name} already exist, skipping benchmarks.")
+            continue
 
         for N_TRAIN in tqdm(N_TRAIN_values, desc="N_train Values", leave=False):
             for atol, rtol in tqdm(tolerances, desc="Tolerances", leave=False):
@@ -340,7 +376,6 @@ if __name__ == "__main__":
         print(df.to_string(index=False))
 
         # Save to CSV
-        csv_path = RESULTS / f"benchmark_{prob.name.replace(' ', '_')}.csv"
         df.to_csv(csv_path, index=False)
         logger.info(f"Saved benchmark results to {csv_path}")
 
@@ -388,7 +423,6 @@ if __name__ == "__main__":
                 r"$\mathrm{{Train Time (s)}}$",
             ],
         )
-        latex_path = RESULTS / f"benchmark_{prob.name.replace(' ', '_')}.tex"
         with open(latex_path, "w") as f:
             f.write(latex_str)
         logger.info(f"Saved LaTeX table to {latex_path}")
