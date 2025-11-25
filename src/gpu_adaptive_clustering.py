@@ -593,7 +593,7 @@ def adaptive_cluster_algorithm_gpu(
                     final_cluster_depths[final_idx:next_idx] = current_depth
                     final_idx = next_idx
                 else:
-                    msg = f"Storage overflow. Clusters: {next_idx}/{MAX_CLUSTERS_EST:,}. Increase MAX_CLUSTERS_EST."
+                    msg = f"Storage overflow. Clusters: {next_idx:,}/{MAX_CLUSTERS_EST:,}. Increase MAX_CLUSTERS_EST."
                     logger.error(msg)
                     raise MemoryError(msg)
 
