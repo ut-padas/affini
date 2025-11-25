@@ -279,20 +279,24 @@ if __name__ == "__main__":
     # Run simple 1D experiment
     # run_1D_experiment()
 
-    # Define benchmark problems
-    problems = [
-        BenchmarkProblem(
-            name="Six-Hump Camelback",
-            f=six_hump_camelback,
-            grad=six_hump_camelback_grad,
-            hess=six_hump_camelback_hess,
-            domain=xp.array([[-3, 3], [-2, 2]]),
-            data_dim=2,
-            f_dim=1,
-            num_initial_clusters=100,
-            min_pts_per_cluster=100,
-            seed=0,
-        )
+    # Define benchmark problems along with a list of N_train values and a singulat N_pts_per_dim_test
+    problems: list[tuple[BenchmarkProblem, list[int], int]] = [
+        (
+            BenchmarkProblem(
+                name="Six-Hump Camelback",
+                f=six_hump_camelback,
+                grad=six_hump_camelback_grad,
+                hess=six_hump_camelback_hess,
+                domain=xp.array([[-3, 3], [-2, 2]]),
+                data_dim=2,
+                f_dim=1,
+                num_initial_clusters=100,
+                min_pts_per_cluster=100,
+                seed=0,
+            ),
+            [400_000, 800_000],
+            300,
+        ),
     ]
 
     # Define Sweep
@@ -304,29 +308,31 @@ if __name__ == "__main__":
         (0.005, 0.001),
     ]
 
-    N_TRAIN = 400_000
-    N_pts_per_dim_test = 300
-
     # Run Loop
-    for prob in tqdm(problems, desc="Benchmark Problems"):
+    for prob_case in tqdm(problems, desc="Benchmark Problems"):
+        prob = prob_case[0]
+        N_pts_per_dim_test = prob_case[2]
+        N_TRAIN_values = sorted(prob_case[1])
+
         results = []
         print(f"\n--- Running Benchmarks for {prob.name} ---")
 
-        LIPSCHITZ_EST = estimate_lipschitz_constant(
-            prob,
-            N_samples=prob.data_dim * 10_000,
-        )
-        for atol, rtol in tqdm(tolerances, desc="Tolerances", leave=False):
-            print(f"  Running atol={atol}, rtol={rtol}...")
-            result = run_experiment(
-                prob=prob,
-                N_train=N_TRAIN,
-                N_pts_per_dim_test=N_pts_per_dim_test,
-                ATOL=atol,
-                RTOL=rtol,
-                LIPSCHITZ_EST=LIPSCHITZ_EST,
-            )
-            results.append(result)
+        LIPSCHITZ_EST = estimate_lipschitz_constant(prob, prob.data_dim * 10_000)
+        print(f"Using Estimated Global Lipschitz Constant L = {LIPSCHITZ_EST:.4f}")
+
+        for N_TRAIN in tqdm(N_TRAIN_values, desc="N_train Values", leave=False):
+            for atol, rtol in tqdm(tolerances, desc="Tolerances", leave=False):
+                msg = f"Running {prob.name} | N_train={N_TRAIN} | ATOL={atol} | RTOL={rtol}"
+                print(msg)
+                result = run_experiment(
+                    prob=prob,
+                    N_train=N_TRAIN,
+                    N_pts_per_dim_test=N_pts_per_dim_test,
+                    ATOL=atol,
+                    RTOL=rtol,
+                    LIPSCHITZ_EST=LIPSCHITZ_EST,
+                )
+                results.append(result)
 
         # Conver to DataFrame
         df = pd.DataFrame([r.__dict__ for r in results])
@@ -339,11 +345,22 @@ if __name__ == "__main__":
         logger.info(f"Saved benchmark results to {csv_path}")
 
         # Generate LaTeX Table
-        latex_str = df.to_latex(
-            index=False,
-            float_format="%.4e",
-            columns=[
-                "num_initial_clusters",
+        def convert_to_perct_str(x):
+            return rf"{x:.2f}\%" if x is not None else "N/A"
+
+        cols = [
+            "rtol",
+            "perct_unguaranteed",
+            "perct_guaranteed_good",
+            "perct_guaranteed_bad",
+        ]
+        df["rtol"] = df["rtol"] * 100.0  # Convert to percentage
+        for col in cols:
+            df[col] = df[col].apply(convert_to_perct_str)
+
+        _latex_df = df[
+            [
+                "n_train",
                 "atol",
                 "rtol",
                 "n_clusters",
@@ -353,7 +370,11 @@ if __name__ == "__main__":
                 "max_error",
                 "rms_error",
                 "time_train",
-            ],
+            ]
+        ]
+        latex_str = _latex_df.to_latex(
+            index=False,
+            float_format="%.4e",
             header=[
                 r"$N_{{\mathrm{{init}}}}$",
                 r"$\mathrm{{ATOL}}$",
@@ -362,9 +383,9 @@ if __name__ == "__main__":
                 r"$p_{{\mathrm{{ung.}}}} (\%)$",
                 r"$p_{{\mathrm{{g. good}}}} (\%)$",
                 r"$p_{{\mathrm{{g. bad}}}} (\%)$",
-                r"$\\max \mathrm{{Error}}$",
+                r"$\max \mathrm{{Error}}$",
                 r"$\mathrm{{RMSE}}$",
-                r"$\mathrm{{Train\\ Time\\ (s)}}$",
+                r"$\mathrm{{Train Time (s)}}$",
             ],
         )
         latex_path = RESULTS / f"benchmark_{prob.name.replace(' ', '_')}.tex"
