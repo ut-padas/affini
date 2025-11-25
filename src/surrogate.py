@@ -6,6 +6,7 @@ import cupy as cp
 import faiss
 import numpy as np
 from array_api_compat import array_namespace
+from cuml.neighbors import NearestNeighbors as cuMLNearestNeighbors
 
 from src.adaptive_clustering import _HAS_GPU, adaptive_cluster_algorithm
 from src.data_sampler import DataSampler
@@ -19,10 +20,13 @@ class NearODESurrogate:
     Combined kNN + Taylor Expansion Surrogate.
     """
 
-    def __init__(self, data_dim: int, f_dim: int):
+    def __init__(
+        self, data_dim: int, f_dim: int, GPU_N_CLUSTERS_THRESHOLD: int = 10000
+    ):
         self.D = data_dim
         self.F = f_dim
         self.trained = False
+        self.GPU_N_CLUSTERS_THRESHOLD = GPU_N_CLUSTERS_THRESHOLD
 
         # Storage for source points (Reference data)
         # We keep X_src as the reference for indices
@@ -33,8 +37,9 @@ class NearODESurrogate:
         self.R_src = None
         self.N_src = 0
 
-        # FAISS Index
+        # kNN Index (FAISS or cuML) and GPU resources
         self.index = None
+        self.use_gpu_index = False
 
     def train(
         self,
@@ -132,11 +137,34 @@ class NearODESurrogate:
         self.N_src = centroids.shape[0]
 
         # 3. Build Index
-        if xp.__name__ == "array_api_compat.cupy":
-            # Move centroids to CPU for FAISS
-            centroids = xp.asnumpy(centroids)
-        self.index = faiss.IndexFlatL2(self.D)
-        self.index.add(centroids)  # type: ignore
+        n_clusters = centroids.shape[0]
+
+        # Determine whether to use GPU kNN based on cluster count
+        if _HAS_GPU and (n_clusters >= self.GPU_N_CLUSTERS_THRESHOLD):
+            # Use cuML GPU for large cluster counts
+            if xp.__name__ != "array_api_compat.cupy":
+                centroids_gpu = cp.asarray(centroids)
+            else:
+                centroids_gpu = centroids
+
+            self.index = cuMLNearestNeighbors(metric="euclidean", algorithm="brute")
+            self.index.fit(centroids_gpu)
+            self.use_gpu_index = True
+            self.index_type = "cuml_gpu"
+            logger.info(
+                f"Using cuML GPU kNN (clusters: {n_clusters} >= threshold: {self.GPU_N_CLUSTERS_THRESHOLD})"
+            )
+        else:
+            # Use CPU FAISS for small cluster counts or when GPU/cuML unavailable
+            if xp.__name__ == "array_api_compat.cupy":
+                centroids = xp.asnumpy(centroids)
+            self.index = faiss.IndexFlatL2(self.D)
+            self.index.add(centroids)  # type: ignore
+            self.use_gpu_index = False
+            self.index_type = "faiss_cpu"
+            logger.info(
+                f"Using CPU FAISS (clusters: {n_clusters} < threshold: {self.GPU_N_CLUSTERS_THRESHOLD})"
+            )
 
         # 4. Training complete
         self.trained = True
@@ -180,23 +208,42 @@ class NearODESurrogate:
         xp = array_namespace(targets)
         t0 = time.perf_counter()
 
-        # 1. FAISS Search (CPU)
-        # Convert targets to NumPy safely for search
-        if xp.__name__ == "array_api_compat.cupy":
-            targets_np = cp.asnumpy(targets)
-        else:
-            targets_np = np.asarray(targets)
-
-        # Get distances and indices
-        # Line 2: k <- arg min ||x - xi||_2
-        # FAISS returns squared L2 distances
+        # 1. kNN Search (cuML GPU or FAISS CPU)
         t_search = time.perf_counter()
-        distances_sq, indices = self.index.search(targets_np, k_NEIGHBOURS)  # type: ignore
-        logger.info(f"FAISS Search Time: {time.perf_counter()-t_search:.4f}s")
+        assert self.index is not None
 
-        # Convert back to original backend
-        distances_sq = xp.asarray(distances_sq)
-        indices = xp.asarray(indices)
+        if self.use_gpu_index:
+            # cuML GPU search
+            # Convert targets to CuPy for GPU computation
+            if xp.__name__ != "array_api_compat.cupy":
+                targets_gpu = cp.asarray(targets)
+            else:
+                targets_gpu = targets
+
+            # cuML returns (distances, indices) where distances are Euclidean (not squared)
+            distances, indices = self.index.kneighbors(  # type: ignore
+                targets_gpu, n_neighbors=k_NEIGHBOURS
+            )
+
+            logger.info(f"cuML GPU Search Time: {time.perf_counter()-t_search:.4f}s")
+
+            distances = xp.asarray(distances)
+            indices = xp.asarray(indices)
+        else:
+            # FAISS CPU search
+            # Convert targets to NumPy for CPU computation
+            if xp.__name__ == "array_api_compat.cupy":
+                targets_np = cp.asnumpy(targets)
+            else:
+                targets_np = np.asarray(targets)
+
+            # FAISS returns squared L2 distances
+            distances_sq, indices = self.index.search(targets_np, k_NEIGHBOURS)  # type: ignore
+            logger.info(f"FAISS CPU Search Time: {time.perf_counter()-t_search:.4f}s")
+
+            # Convert back to original backend
+            distances = xp.sqrt(xp.asarray(distances_sq))
+            indices = xp.asarray(indices)
 
         # 2. Gather Neighbors
         flat_idx = indices.flatten()
@@ -236,10 +283,7 @@ class NearODESurrogate:
         # The algorithm specifically relies on Nearest Neighbor properties (k=1)
         if (k_NEIGHBOURS == 1) and (ATOL is not None):
             idx_nearest = indices[:, 0]  # (N,)
-            dist_sq_nearest = distances_sq[:, 0]  # (N,)
-
-            # Calculate Euclidean distance ||x - x_k||
-            dist_nearest = xp.sqrt(dist_sq_nearest)
+            dist_nearest = distances[:, 0]  # (N,)
 
             # Gather Metadata for nearest neighbor
             R_k = gather(self.R_src, idx_nearest)  # (N,) Cluster radii r_k
@@ -301,7 +345,7 @@ if __name__ == "__main__":
         six_hump_camelback_grad,
     )
 
-    setup_logging(console_level=logging.INFO)
+    setup_logging(console_level=logging.DEBUG, file_output=False)
 
     if _HAS_GPU:
         xp = cp
@@ -309,15 +353,15 @@ if __name__ == "__main__":
         xp = np
 
     # 1. Setup Domain
-    domain = xp.array([[-2.0, 2.0], [-1.0, 1.0]])
-    xp = array_namespace(domain)
+    domain = np.array([[-2.0, 2.0], [-1.0, 1.0]])
 
     # Sample Training Data
     N_train = 100_000
     X_train = DataSampler.sample_latin_hypercube(domain, N=N_train, seed=0)
+    X_train = xp.asarray(X_train)
 
     # 2. Initialize Surrogate
-    surrogate = NearODESurrogate(data_dim=2, f_dim=1)
+    surrogate = NearODESurrogate(data_dim=2, f_dim=1, GPU_N_CLUSTERS_THRESHOLD=1)
 
     ATOL = 1e-2
     RTOL = 1e-2
@@ -338,6 +382,7 @@ if __name__ == "__main__":
     # 4. Evaluate
     print("\n--- Evaluation ---")
     X_test = DataSampler.sample_uniform(domain, N=500, seed=10)
+    X_test = xp.asarray(X_test)
 
     # Example utilizing the new signature with Guarantee checks
     preds, ungauranteed_mask = surrogate.predict(
