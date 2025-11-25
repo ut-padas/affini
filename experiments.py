@@ -12,6 +12,7 @@ from array_api_compat import array_namespace
 from tqdm import tqdm
 
 from src.problems.borehole import borehole, borehole_grad
+from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess
 from src.problems.six_hump_camelback import (
     six_hump_camelback,
     six_hump_camelback_grad,
@@ -288,6 +289,22 @@ if __name__ == "__main__":
                 hess=six_hump_camelback_hess,
                 domain=xp.array([[-3, 3], [-2, 2]]),
                 data_dim=2,
+                f_dim=1,
+                num_initial_clusters=100,
+                min_pts_per_cluster=100,
+                seed=0,
+            ),
+            [400_000, 800_000],
+            300,
+        ),
+        (
+            BenchmarkProblem(
+                name="Rosenbrock-4D",
+                f=rosenbrock,
+                grad=rosenbrock_grad,
+                hess=rosenbrock_hess,
+                domain=xp.array([[-2, 2], [-1, 3], [-1, 3], [-1, 3]]),
+                data_dim=4,
                 f_dim=1,
                 num_initial_clusters=100,
                 min_pts_per_cluster=100,
