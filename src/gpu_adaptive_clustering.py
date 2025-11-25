@@ -277,7 +277,7 @@ def adaptive_cluster_algorithm_gpu(
     NUM_INITIAL_CLUSTERS: int,
     MIN_PTS_PER_CLUSTER: int,
     ATOL: float,
-    RTOL: float,
+    RTOL: float | None,
     MAX_DEPTH: int = 500,
     MAX_CLUSTERS_EST: int = 100_000,
     POWER_ITERS: int = 3,
@@ -300,7 +300,7 @@ def adaptive_cluster_algorithm_gpu(
         NUM_INITIAL_CLUSTERS (int): Number of initial clusters.
         MIN_PTS_PER_CLUSTER (int): Minimum points per cluster during augmentation.
         ATOL (float): Absolute tolerance for convergence.
-        RTOL (float): Relative tolerance for convergence.
+        RTOL (float): Relative tolerance for convergence. If None, only absolute tolerance is used.
         MAX_DEPTH (int): Maximum depth for BFS splitting.
         MAX_CLUSTERS_EST (int): Estimated maximum number of clusters for pre-allocation.
         POWER_ITERS (int): Number of power iterations for eigenvector computation.
@@ -540,7 +540,10 @@ def adaptive_cluster_algorithm_gpu(
 
             # Compute the error threshold for each point
             approximation_error = norm(F_true - F_taylor, axis=1)
-            error_threshold = maximum(ATOL, RTOL * norm(F_true, axis=1))
+            if RTOL is None:
+                error_threshold = ATOL
+            else:
+                error_threshold = maximum(ATOL, RTOL * norm(F_true, axis=1))
             del F_taylor, F_true
 
             # Compute the max and mean errors per cluster

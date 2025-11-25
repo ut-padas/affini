@@ -61,8 +61,8 @@ class AdaptiveClusterer:
 
     def __init__(
         self,
-        atol: float = 0.01,
-        rtol: float = 0.01,
+        atol: float = 1e-2,
+        rtol: float | None = None,
         num_initial_clusters: int = 10,
         min_points: int = 1,
         seed: int = 0,
@@ -78,7 +78,7 @@ class AdaptiveClusterer:
 
         Args:
             atol: Absolute tolerance for cluster acceptance.
-            rtol: Relative tolerance for cluster acceptance.
+            rtol: Relative tolerance for cluster acceptance. If None, only absolute tolerance is used.
             num_initial_clusters: Number of initial clusters.
             min_points: Minimum points per cluster.
             seed: Random seed for reproducibility.
@@ -217,7 +217,10 @@ class AdaptiveClusterer:
         err = np.linalg.norm(F_cluster - F_taylor, axis=1)
 
         # Tolerance per point
-        thr = np.maximum(self.atol, self.rtol * np.linalg.norm(F_cluster, axis=1))
+        if self.rtol is None:
+            thr = self.atol
+        else:
+            thr = np.maximum(self.atol, self.rtol * np.linalg.norm(F_cluster, axis=1))
         violated_mask = err > thr
         violated = bool(violated_mask.any())
 
@@ -388,8 +391,8 @@ def adaptive_cluster_algorithm(
     f: Callable,
     grad_f: Callable | None,
     cupy_f: Callable | None = None,
-    atol=0.01,
-    rtol=0.01,
+    atol: float = 0.01,
+    rtol: float | None = 0.01,
     num_initial_clusters=10,
     min_pts_per_cluster=1,
     seed=0,
