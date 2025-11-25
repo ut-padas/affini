@@ -26,18 +26,16 @@ FIGURES.mkdir(parents=True, exist_ok=True)
 OUT_CSV = FIGURES / "two_means_vs_kmeans_results.csv"
 
 
-def _normalize(X: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _normalize(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     mean = X.mean(axis=0)
-    std = X.std(axis=0)
-    std = np.where(std == 0, 1.0, std)
-    return (X - mean) / std, mean, std
+    return (X - mean), mean
 
 
 def _time_two_means(X: np.ndarray, y_true: np.ndarray) -> tuple[float, float, float]:
     """Returns (time, SSE, ARI)."""
     t0 = time.perf_counter()
-    Xn, mean, std = _normalize(X)
-    labels, centers = two_means_pca_threshold(Xn, mean, std)
+    Xn, mean = _normalize(X)
+    labels, centers = two_means_pca_threshold(Xn, mean)
     elapsed = time.perf_counter() - t0
 
     sse = _sse_original(X, centers)
@@ -51,10 +49,10 @@ def _time_kmeans(
 ) -> tuple[float, float, float]:
     """Returns (time, SSE, ARI)."""
     t0 = time.perf_counter()
-    Xn, mean, std = _normalize(X)
+    Xn, mean = _normalize(X)
     km = KMeans(n_clusters=K, random_state=SEED)
     labels = km.fit_predict(Xn)
-    centers = km.cluster_centers_ * std + mean
+    centers = km.cluster_centers_ + mean
     elapsed = time.perf_counter() - t0
 
     sse = _sse_original(X, centers)
@@ -207,7 +205,6 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     ax2.set_xscale("log")
     ax2.set_xlabel("Number of points (N)")
     ax2.set_ylabel("ARI (Adjusted Rand Index)")
-    ax2.set_ylim(0, 1)
     ax2.set_title(f"Two-means vs KMeans ARI (repeats={REPEATS})")
     ax2.grid(True, which="both", ls=":", alpha=grid_alpha)
     ax2.legend()
@@ -218,31 +215,31 @@ def _plot(df: pd.DataFrame, figures_dir: Path) -> None:
     plt.close()
 
 
-if __name__ == "__main__":
+def main():
     if OUT_CSV.exists():
         print(f"Output file {OUT_CSV} already exists; skipping benchmark.")
-    else:
-        print("Running Two-means vs KMeans benchmark for all dimensions...")
+        return
 
-        all_results = []
+    print("Running Two-means vs KMeans benchmark for all dimensions...")
 
-        for D, K in DK_PAIRS:
-            print(f"Processing D={D}, K={K}...")
+    all_results = []
 
-            # Warm up JIT
-            Xw = np.random.randn(50, D).astype(np.float64)
-            Xnw, meanw, stdw = _normalize(Xw)
-            two_means_pca_threshold(Xnw, meanw, stdw)
+    for D, K in DK_PAIRS:
+        print(f"Processing D={D}, K={K}...")
 
-            df_results = _bench_sizes(SIZES, D, K)
-            all_results.append(df_results)
+        df_results = _bench_sizes(SIZES, D, K)
+        all_results.append(df_results)
 
-        # Combine all results
-        df_combined = pd.concat(all_results, ignore_index=True)
+    # Combine all results
+    df_combined = pd.concat(all_results, ignore_index=True)
 
-        # Save combined results to CSV
-        df_combined.to_csv(OUT_CSV, index=False)
-        print(f"Combined results saved to {OUT_CSV}")
+    # Save combined results to CSV
+    df_combined.to_csv(OUT_CSV, index=False)
+    print(f"Combined results saved to {OUT_CSV}")
 
-        # Create combined plots
-        _plot(df_combined, FIGURES)
+    # Create combined plots
+    _plot(df_combined, FIGURES)
+
+
+if __name__ == "__main__":
+    main()

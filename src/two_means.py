@@ -5,10 +5,8 @@ References:
 """
 
 import numpy as np
-from numba import njit
 
 
-@njit
 def find_optimal_split_1d(s_sorted: np.ndarray) -> int:
     """
     Find optimal split point in sorted 1D projections to minimize within-cluster SSE.
@@ -20,13 +18,11 @@ def find_optimal_split_1d(s_sorted: np.ndarray) -> int:
         best_k: Index to split at (first best_k points in cluster 0, rest in cluster 1)
     """
     # Prefix sums for exact SSE scan in 1D projected space
-    # SSE(S) = sum(x^2) - sum(x)^2 / |S| for 1D projections
     pref_sum = np.cumsum(s_sorted)  # (n,) - sum of 1D projections
     pref_sq = np.cumsum(s_sorted**2)  # (n,) - sum of squared 1D projections
     total_sum = pref_sum[-1]
     total_sq = pref_sq[-1]
 
-    # Vectorized computation of all SSE values
     n = len(s_sorted)
     k_vals = np.arange(1, n)
 
@@ -46,36 +42,34 @@ def find_optimal_split_1d(s_sorted: np.ndarray) -> int:
 
 
 def two_means_pca_threshold(
-    X_norm: np.ndarray, mean: np.ndarray, std: np.ndarray
+    X_norm: np.ndarray,
+    mean: np.ndarray,
+    split_method: str = "optimal",
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    A fast, PCA-based k=2 clustering method that finds an optimal split using 1D projections.
+    A fast, PCA-based k=2 clustering method that finds a split using 1D projections.
 
     Args:
         X_norm: Normalized data of shape (n, d), zero-mean per dimension
         mean: Mean used for normalization, shape (d,)
-        std: Stddev used for normalization, shape (d,)
+        split_method: Strategy for splitting the projected data.
+                      'optimal' - Minimizes SSE (original behavior).
+                      'median'  - Splits at the exact middle index (forces balanced tree).
 
     Returns:
         labels: Cluster labels of shape (n,), values in {0, 1}
         centroids: Centroids of shape (2, d) in original (unnormalized) space.
-
-    References:
-    - ./docs/Two-Means PCA.pdf
     """
     Z = X_norm  # already zero-mean per dimension
     n, d = Z.shape
     if n < 2:
         # Degenerate; fallback to trivial assignment
         labels = np.zeros(n, dtype=np.int64)
-        centroids = np.array([Z.mean(axis=0), Z.mean(axis=0)]) * std + mean
+        centroids = np.array([Z.mean(axis=0), Z.mean(axis=0)]) + mean
         return labels, centroids
 
-    # Top principal direction via covariance matrix (faster for small d)
-    # For small d (typical in this project), computing Z^T @ Z is faster than full SVD
-    # u shape (d,)
+    # Top principal direction via covariance matrix
     try:
-        # Compute covariance matrix: Z^T @ Z / (n-1), but we only need eigenvector
         cov = Z.T @ Z  # (d, d) - much smaller than (n, n) for n >> d
         _, eigvecs = np.linalg.eigh(cov)  # eigh is faster for symmetric matrices
         u = eigvecs[:, -1]  # Last column = eigenvector with largest eigenvalue
@@ -92,8 +86,18 @@ def two_means_pca_threshold(
     s_sorted = s[order]  # sorted 1D projections
     Z_sorted = Z[order]  # sorted original data (for centroid calculation later)
 
-    # Find optimal split point in 1D projected space
-    best_k = find_optimal_split_1d(s_sorted)
+    # --- Determine Split Point ---
+    if split_method == "optimal":
+        best_k = find_optimal_split_1d(s_sorted)
+    elif split_method == "median":
+        best_k = n // 2
+        # Edge case: if n is odd, n//2 is fine. If n=2, index 1.
+        # Ensure we don't split at 0 or n (though n < 2 handled above)
+        best_k = max(1, min(n - 1, best_k))
+    else:
+        raise ValueError(
+            f"Unknown split_method: {split_method}. Use 'optimal' or 'median'."
+        )
 
     # Assign labels according to best threshold (first best_k sorted points -> cluster 0)
     labels_sorted = np.zeros(n, dtype=np.int64)
@@ -103,9 +107,6 @@ def two_means_pca_threshold(
     labels[order] = labels_sorted
 
     # Compute centroids efficiently using prefix sums in multidimensional space
-    # Already have sorted data: Z_sorted
-    # For cluster 0 (first best_k points): sum and divide by best_k
-    # For cluster 1 (remaining points): use (total_sum - c0_sum) / (n - best_k)
     total_Z_sum = np.sum(Z, axis=0)  # Sum across all points (d,)
     c0_sum = np.sum(Z_sorted[:best_k], axis=0)  # Sum of first best_k points
     c1_sum = total_Z_sum - c0_sum
@@ -113,17 +114,6 @@ def two_means_pca_threshold(
     c0_norm = c0_sum / best_k
     c1_norm = c1_sum / (n - best_k)
     centroids_norm = np.vstack([c0_norm, c1_norm])
-    centroids = centroids_norm * std + mean
+    centroids = centroids_norm + mean
 
     return labels, centroids
-
-
-def numba_warmup():
-    # Warm up Numba compilation
-    dummy_data = np.random.randn(10, 5)
-    dummy_mean = np.zeros(5)
-    dummy_std = np.ones(5)
-    two_means_pca_threshold(dummy_data, dummy_mean, dummy_std)
-
-
-numba_warmup()
