@@ -86,6 +86,7 @@ class NearODESurrogate:
                 SEED=SEED,
                 MOVE_INTERMEDIATE_TO_HOST=True,
                 STORE_FINAL_ARRAYS_ON_HOST=True,
+                LOG_MEM_STATS=True,
             )
         else:
             # Ensure X_train is on CPU for the clustering algorithm
