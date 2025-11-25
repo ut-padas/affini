@@ -243,9 +243,9 @@ class NearODESurrogate:
     def predict(
         self,
         targets,
+        k_NEIGHBOURS: int = 1,
         ATOL: Optional[float] = None,
         RTOL: Optional[float] = None,
-        k_NEIGHBOURS: int = 1,
         L_global: Optional[float] = None,
         ALPHA: float = 1.0,
     ) -> tuple:
@@ -255,9 +255,9 @@ class NearODESurrogate:
 
         Args:
             targets: Input points (N, DATA_DIM)
+            k_NEIGHBOURS: Number of neighbors (k). Note: Algorithm guarantees are defined for k=1.
             ATOL: eps_abs (Absolute error tolerance)
             RTOL: eps_rel (Relative error tolerance)
-            k_NEIGHBOURS: Number of neighbors (k). Note: Algorithm guarantees are defined for k=1.
             L_global: L_g (Global Hessian approximation)
             ALPHA: alpha (Trust factor)
 
@@ -340,11 +340,13 @@ class NearODESurrogate:
 
             # Calculate Terms for tolerance
             # Term 1: sqrt( 2 * eps_abs / (alpha * L_hat_k) )
+            logger.debug("Calculating absolute error term for guarantees.")
             term_abs_local = xp.sqrt((2.0 * ATOL) / denom)
 
             # Term 2: sqrt( 2 * eps_rel * |f_tilde(x)| / (alpha * L_hat_k) )
             term_rel_local = xp.zeros_like(term_abs_local)
             if RTOL is not None:
+                logger.debug("Calculating relative error term for guarantees.")
                 # |f_tilde(x)|: L2 norm of the prediction vector
                 pred_norm = xp.linalg.norm(predictions, ord=2, axis=1)
                 term_rel_local = xp.sqrt((2.0 * RTOL * pred_norm) / denom)
@@ -352,6 +354,7 @@ class NearODESurrogate:
             # Term 3: sqrt( 2 * eps_abs / L_g )
             term_abs_global = xp.zeros_like(term_abs_local)
             if L_global is not None:
+                logger.debug("Calculating global error term for guarantees.")
                 _term = xp.sqrt((2.0 * ATOL) / L_global)
                 term_abs_global = xp.full_like(term_abs_local, _term)
 
@@ -367,6 +370,7 @@ class NearODESurrogate:
 
             # The return is "outside_mask" (True if NOT valid)
             outside_mask = xp.logical_not(is_valid)
+            logger.info(f"Points outside guarantee: {xp.sum(outside_mask)} / {N}")
 
         logger.info(f"Evaluation Time: {time.perf_counter()-t0:.4f}s")
         return predictions, outside_mask

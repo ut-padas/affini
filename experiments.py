@@ -52,7 +52,7 @@ def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None):
     plt.scatter(
         source_centroids,
         one_d_example(source_centroids),
-        c="orange",
+        c="blue",
         marker="x",
         label=f"Sources $(N_{{sources}}={len(source_centroids)})$",
     )
@@ -60,6 +60,7 @@ def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None):
         X_test[outside_mask],
         one_d_example(X_test[outside_mask]),
         marker="o",
+        c="orange",
         label=f"Unguaranteed Points $(N={np.sum(outside_mask)})$",
     )
     plt.legend()
@@ -67,13 +68,22 @@ def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None):
     plt.ylabel("$f(x)$")
 
     plt.subplot(1, 2, 2)
-    plt.semilogy(X_test, error, "--r", label="Absolute Error")
-    plt.axhline(ATOL, color="k", linestyle="--", label="Absolute Tolerance")
+    plt.semilogy(X_test, error, "-k", label="Absolute Error")
+    plt.axhline(ATOL, color="r", linestyle="--", label="Absolute Tolerance")
     plt.scatter(
         X_test[outside_mask],
         error[outside_mask],
         marker="o",
-        label="Unguaranteed Points $(N={})$".format(np.sum(outside_mask)),
+        c="orange",
+        label=f"Unguaranteed Points $(N={np.sum(outside_mask)})$",
+    )
+    above_tol_mask = error > ATOL
+    plt.scatter(
+        X_test[above_tol_mask],
+        error[above_tol_mask],
+        c="r",
+        marker="x",
+        label=f"Points Above ATOL $(N={np.sum(above_tol_mask)})$",
     )
     plt.legend()
     plt.xlabel("$x$")
@@ -90,7 +100,7 @@ def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None):
 if __name__ == "__main__":
     from src.logging_config import setup_logging
 
-    setup_logging(console_level=logging.INFO)
+    setup_logging(console_level=logging.DEBUG)
 
     tolmat = np.array(
         [
