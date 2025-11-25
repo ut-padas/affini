@@ -31,7 +31,9 @@ FIGURES.mkdir(parents=True, exist_ok=True)
 RESULTS.mkdir(parents=True, exist_ok=True)
 
 
-def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None):
+def run_1D_experiment(
+    N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None, MAX_CLUSTERS_EST=100_000
+):
     from src.problems.oned import one_d_example, one_d_example_grad, one_d_example_hess
 
     img_path = FIGURES / f"1D_experiment_ATOL{ATOL}_RTOL{RTOL}.png"
@@ -54,6 +56,7 @@ def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None):
         RTOL=RTOL,
         NUM_INITIAL_CLUSTERS=10,
         MIN_PTS_PER_CLUSTER=1,
+        MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
     )
 
     X_test = DataSampler.sample_grid(domain, num_points_per_dim=N_test)
@@ -132,6 +135,7 @@ class BenchmarkProblem:
     f_dim: int
     num_initial_clusters: int
     min_pts_per_cluster: int
+    max_clusters_est: int = 1_000_000
 
     # Evaluation params
     L_global: Optional[float] = None  # Can be pre-set or computed
@@ -339,6 +343,7 @@ if __name__ == "__main__":
                 f_dim=1,
                 num_initial_clusters=100,
                 min_pts_per_cluster=100,
+                max_clusters_est=2_000_000,
             ),
             [100_000, 200_000],
             TestConfig(Type="LHS", N_total_points=100_000),
