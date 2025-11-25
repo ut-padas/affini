@@ -50,18 +50,17 @@ class DataSampler:
 
         xp = array_namespace(domain)
 
-        # Parse domain dimensions
+        # Convert domain bounds to NumPy for scipy
         if domain.ndim == 1:
             n_dim = 1
             l_np = np.asarray([float(domain[0])])
             r_np = np.asarray([float(domain[1])])
         else:
-            # Convert domain bounds to NumPy for scipy
             l_np = np.asarray(domain[:, 0])
             r_np = np.asarray(domain[:, 1])
             n_dim = len(domain)
 
-        # Generate LHS on CPU
+        # Generate LHS
         sampler = qmc.LatinHypercube(d=n_dim, rng=seed)
         sample = sampler.random(n=N)
 
@@ -101,25 +100,24 @@ class NearODESurrogate:
         grad: Callable,
         *,
         # Clustering params
-        num_init_clusters: int = 100,
-        min_pts: int = 10,
-        atol: float = 1e-2,
-        rtol: float = 1e-2,
-        max_depth: int = 50,
-        max_clusters: int = 1_000_000,
-        seed: int = 0,
+        NUM_INITIAL_CLUSTERS: int = 100,
+        MIN_PTS_PER_CLUSTER: int = 10,
+        ATOL: float = 1e-2,
+        RTOL: float = 1e-2,
+        MAX_DEPTH: int = 50,
+        MAX_CLUSTERS_EST: int = 1_000_000,
+        SEED: int = 0,
     ):
         """
         1. Sample X from domain (NumPy or CuPy).
         2. Run GPU Adaptive Clustering (Forces CuPy).
         3. Store Reference Data (NumPy for FAISS).
         """
+        xp = array_namespace(X_train)
         t0 = time.perf_counter()
 
         # 1. Adaptive Clustering
         if _HAS_GPU:
-            # Ensure X_train is on GPU for the clustering algorithm
-            X_train_gpu = cp.asarray(X_train)
             (
                 centroids,  # (M, D)
                 f_vals,  # (M, F)
@@ -131,18 +129,18 @@ class NearODESurrogate:
                 _,
                 _,  # Ignore debug stats
             ) = adaptive_cluster_algorithm_gpu(
-                X_train=X_train_gpu,
+                X_train=xp.asarray(X_train),
                 f=f,
                 grad=grad,
                 DATA_DIM=self.D,
                 F_DIM=self.F,
-                NUM_INITIAL_CLUSTERS=num_init_clusters,
-                MIN_PTS_PER_CLUSTER=min_pts,
-                ATOL=atol,
-                RTOL=rtol,
-                MAX_DEPTH=max_depth,
-                MAX_CLUSTERS_EST=max_clusters,
-                SEED=seed,
+                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                ATOL=ATOL,
+                RTOL=RTOL,
+                MAX_DEPTH=MAX_DEPTH,
+                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                SEED=SEED,
                 MOVE_INTERMEDIATE_TO_HOST=True,
                 STORE_FINAL_ARRAYS_ON_HOST=True,
             )
@@ -154,11 +152,11 @@ class NearODESurrogate:
                 f=f,
                 grad_f=grad,
                 cupy_f=f,
-                atol=atol,
-                rtol=rtol,
-                num_initial_clusters=num_init_clusters,
-                min_pts_per_cluster=min_pts,
-                seed=seed,
+                atol=ATOL,
+                rtol=RTOL,
+                num_initial_clusters=NUM_INITIAL_CLUSTERS,
+                min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
+                seed=SEED,
                 should_generate_extra_points=True,
             )
             centroids = np.array([c.centroid for c in clusters])
@@ -167,8 +165,14 @@ class NearODESurrogate:
             hess_proxies = np.array([c.hessian_proxy for c in clusters])
             radii = np.array([c.radius for c in clusters])
 
-        # 2. Store Data (Host side for FAISS compatibility, but usable by CuPy via conversion)
-        # Note: centroids coming out of the clustering with STORE_FINAL_ARRAYS_ON_HOST=True are NumPy
+        # Convert to original backend
+        centroids = xp.asarray(centroids)
+        f_vals = xp.asarray(f_vals)
+        grads = xp.asarray(grads)
+        hess_proxies = xp.asarray(hess_proxies)
+        radii = xp.asarray(radii)
+
+        # 2. Store Data
         self.X_src = centroids
         self.f_src = f_vals
         self.J_src = grads
@@ -176,8 +180,11 @@ class NearODESurrogate:
         self.R_src = radii
 
         # 3. Build Index
+        if xp.__name__ == "cupy":
+            # Move centroids to CPU for FAISS
+            centroids = xp.asnumpy(centroids)
         self.index = faiss.IndexFlatL2(self.D)
-        self.index.add(self.X_src.astype(np.float32))  # type: ignore
+        self.index.add(centroids)  # type: ignore
 
         # 4. Training complete
         self.trained = True
@@ -187,145 +194,130 @@ class NearODESurrogate:
     def evaluate(
         self,
         targets,
-        atol: Optional[float] = None,
-        rtol: Optional[float] = None,
-        k: int = 1,
+        ATOL: Optional[float] = None,
+        RTOL: Optional[float] = None,
+        k_NEIGHBOURS: int = 1,
         L_global: Optional[float] = None,
-        alpha: float = 1.0,
+        ALPHA: float = 1.0,
     ) -> tuple:
         """
         Inference: kNN Search -> Taylor Expansion -> Trust Region Check.
+        Matches Algorithm 3: Nearest Neighbors Inference with Local Error Bound.
 
         Args:
-            targets: Input points (M, D)
-            atol: Absolute tolerance for guarantee check (k=1 only)
-            rtol: Relative tolerance for guarantee check (k=1 only)
-            k: Neighbors to average
-            L_global: Global Lipschitz constant (fallback check)
-            alpha: Heuristic safety factor for Hessian bound
+            targets: Input points (N, DATA_DIM)
+            ATOL: eps_abs (Absolute error tolerance)
+            RTOL: eps_rel (Relative error tolerance)
+            k_NEIGHBOURS: Number of neighbors (k). Note: Algorithm guarantees are defined for k=1.
+            L_global: L_g (Global Hessian approximation)
+            ALPHA: alpha (Trust factor)
 
         Returns:
-            predictions: (M, F)
-            outside_mask: (M,) boolean, True if point violates guarantees.
+            predictions: (N, F_DIM) predicted function values (f_tilde)
+            outside_mask: (N,) boolean, True if point violates guarantees.
         """
         if not self.trained:
             raise RuntimeError("Model not trained.")
 
-        t_start = time.perf_counter()
         xp = array_namespace(targets)
-        is_cupy = xp.__name__ == "cupy"
+        t_start = time.perf_counter()
 
         # 1. FAISS Search (CPU)
         # Convert targets to NumPy safely for search
-        if is_cupy:
+        if xp.__name__ == "cupy":
             targets_np = cp.asnumpy(targets)
         else:
             targets_np = np.asarray(targets)
 
         # Get distances and indices
-        # distances_sq are squared Euclidean distances (L2^2)
-        distances_sq, indices = self.index.search(targets_np, k)  # type: ignore
+        # Line 2: k <- arg min ||x - xi||_2
+        # FAISS returns squared L2 distances
+        distances_sq, indices = self.index.search(targets_np, k_NEIGHBOURS)  # type: ignore
+
+        # Convert back to original backend
+        distances_sq = xp.asarray(distances_sq)
+        indices = xp.asarray(indices)
 
         # 2. Gather Neighbors
         flat_idx = indices.flatten()
 
         def gather(src_array, idx):
             gathered = src_array[idx]
-            # If input targets are CuPy, move neighbors to GPU for math
-            if is_cupy:
-                return cp.asarray(gathered)
             return gathered
 
-        X_neighbors = gather(self.X_src, flat_idx)  # (M*k, D)
-        f_neighbors = gather(self.f_src, flat_idx)  # (M*k, F)
-        J_neighbors = gather(self.J_src, flat_idx)  # (M*k, F, D)
+        N = len(targets)
+        X_neighbors = gather(self.X_src, flat_idx)  # (N*k, DATA_DIM)
+        f_neighbors = gather(self.f_src, flat_idx)  # (N*k, F_DIM)
+        J_neighbors = gather(self.J_src, flat_idx)  # (N*k, F_DIM, DATA_DIM)
 
-        n_q = len(targets)
-        X_neighbors = X_neighbors.reshape(n_q, k, self.D)
-        f_neighbors = f_neighbors.reshape(n_q, k, self.F)
-        J_neighbors = J_neighbors.reshape(n_q, k, self.F, self.D)
+        X_neighbors = X_neighbors.reshape(N, k_NEIGHBOURS, self.D)  # (N, k, DATA_DIM)
+        f_neighbors = f_neighbors.reshape(N, k_NEIGHBOURS, self.F)  # (N, k, F_DIM)
+        J_neighbors = J_neighbors.reshape(
+            N, k_NEIGHBOURS, self.F, self.D
+        )  # (N, k, F_DIM, DATA_DIM)
 
-        # 3. Handle Unwrap Log (Linearizing space for Taylor expansion)
-        # We need a copy of targets and X_neighbors to potentially modify them
-        targets_calc = xp.asarray(targets) if not is_cupy else targets
-        X_calc = X_neighbors
+        # 3. Taylor Expansion
+        targets_expanded = targets[:, None, :]  # (N, 1, DATA_DIM)
+        dx = targets_expanded - X_neighbors  # (N, k, DATA_DIM)
 
-        # 4. Taylor Expansion
-        # dx = x* - x_i (in the calculation space, potentially unlogged)
-        targets_expanded = targets_calc[:, None, :]  # (M, 1, D)
-        dx = targets_expanded - X_calc  # (M, k, D)
-
-        # Linear Term: J * dx -> (M, k, F)
-        # Einsum: n=M, k=k, f=F, d=D
+        # Einsum: n=N, k=k, f=F_DIM, d=DATA_DIM
         linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
 
-        predictions_k = f_neighbors + linear_term
-        predictions_sum = xp.sum(predictions_k, axis=1)  # Sum over k
-        predictions = predictions_sum / k
+        predictions_k = f_neighbors + linear_term  # (N, k, F_DIM)
 
-        # 5. Guarantee / Trust Region Checks
-        # Strict checking is generally only mathematically sound for k=1 (nearest neighbor).
-        outside_mask = xp.zeros(n_q, dtype=bool)  # Default: Valid (False = inside)
-        if (atol is not None) and (k == 1):
-            idx_nearest = indices[:, 0]
-            # distances_sq is (M, k), we need nearest
-            dist_sq_nearest = (
-                xp.asarray(distances_sq[:, 0]) if is_cupy else distances_sq[:, 0]
-            )
+        # If k > 1, then average the predictions
+        predictions_sum = xp.sum(predictions_k, axis=1)
+        predictions = predictions_sum / k_NEIGHBOURS  # (N, F_DIM)
+
+        # 4. Guarantee / Trust Region Checks
+        # Initialize outside_mask to all False
+        outside_mask = xp.zeros(N, dtype=bool)
+
+        # The algorithm specifically relies on Nearest Neighbor properties (k=1)
+        if (k_NEIGHBOURS == 1) and (ATOL is not None):
+            idx_nearest = indices[:, 0]  # (N,)
+            dist_sq_nearest = distances_sq[:, 0]  # (N,)
+
+            # Calculate Euclidean distance ||x - x_k||
+            dist_nearest = xp.sqrt(dist_sq_nearest)
 
             # Gather Metadata for nearest neighbor
-            R_nearest = gather(self.R_src, idx_nearest)  # (M,)
-            H_nearest = gather(self.H_src, idx_nearest)  # (M,)
+            R_k = gather(self.R_src, idx_nearest)  # (N,) Cluster radii r_k
+            L_k = gather(self.H_src, idx_nearest)  # (N,) Local Hessians L_hat_k
 
-            # --- Local Bounds ---
-            # 1. Geometric limit: Cluster radius squared (r^2)
-            limit_geom_sq = xp.pow(R_nearest, 2.0)
+            # Denominator: alpha * L_hat_k
+            denom = ALPHA * L_k
+            denom = xp.where(denom == 0, 1e-12, denom)  # Safety for div/0
 
-            # 2. Hessian limit
-            # Bound: r^2 <= 2 * tol / (alpha * H)
-            denom = alpha * H_nearest
-            denom = xp.where(denom == 0, 1e-12, denom)  # Avoid div/0
+            # Calculate Terms for tolerance
+            # Term 1: sqrt( 2 * eps_abs / (alpha * L_hat_k) )
+            term_abs_local = xp.sqrt((2.0 * ATOL) / denom)
 
-            # Absolute Component
-            limit_hess_abs = (2.0 * atol) / denom
-
-            # Relative Component (if rtol provided)
-            if rtol is not None:
-                # Norm of prediction vector (L2 norm along feature dim)
+            # Term 2: sqrt( 2 * eps_rel * |f_tilde(x)| / (alpha * L_hat_k) )
+            term_rel_local = xp.zeros_like(term_abs_local)
+            if RTOL is not None:
+                # |f_tilde(x)|: L2 norm of the prediction vector
                 pred_norm = xp.linalg.norm(predictions, ord=2, axis=1)
-                limit_hess_rel = (2.0 * rtol * pred_norm) / denom
-                # Take looser of abs/rel (Standard float comparison logic)
-                limit_hess_final = xp.maximum(limit_hess_abs, limit_hess_rel)
-            else:
-                limit_hess_final = limit_hess_abs
+                term_rel_local = xp.sqrt((2.0 * RTOL * pred_norm) / denom)
 
-            # Local Limit is strict: min(Geom, Hessian)
-            local_limit_sq = xp.minimum(limit_geom_sq, limit_hess_final)
-
-            # Check Local Validity
-            is_valid_local = dist_sq_nearest < local_limit_sq
-
-            # --- Global Limit (Fallback) ---
+            # Term 3: sqrt( 2 * eps_abs / L_g )
+            term_abs_global = xp.zeros_like(term_abs_local)
             if L_global is not None:
-                # Bound: (L/2) * r^2 <= tol  =>  r^2 <= 2*tol / L
-                # Note: NOT squared. FAISS returns d^2, so we compare against derived r^2.
-                global_limit_sq = (2.0 * atol) / L_global
+                _term = xp.sqrt((2.0 * ATOL) / L_global)
+                term_abs_global = xp.full_like(term_abs_local, _term)
 
-                # Logic: Valid if (Local OK) OR (Between Local and Global)
-                # Effectively: Valid if (d^2 < Local) OR (d^2 < Global)
-                # However, the snippet logic was explicit:
-                # valid = local OR (local < dist < global)
-                # This simplifies to valid = dist < max(local, global) IF local < global.
-                # But strictly following snippet logic:
-                is_valid_global = xp.logical_and(
-                    local_limit_sq < dist_sq_nearest, dist_sq_nearest < global_limit_sq
-                )
-                is_good = xp.logical_or(is_valid_local, is_valid_global)
-            else:
-                is_good = is_valid_local
+            # tol <- max { Term 1, Term 2, Term 3 }
+            tol = xp.maximum(term_abs_local, term_rel_local)
+            tol = xp.maximum(tol, term_abs_global)
 
-            # The return is "outside_mask" (True if BAD)
-            outside_mask = xp.logical_not(is_good)
+            # Check bounds
+            # if ||x - x_k|| <= min { r_k, tol }
+            bound = xp.minimum(R_k, tol)
+
+            is_valid = dist_nearest <= bound
+
+            # The return is "outside_mask" (True if NOT valid)
+            outside_mask = xp.logical_not(is_valid)
 
         logger.debug(f"Prediction time: {time.perf_counter() - t_start:.5f}s")
 
@@ -365,10 +357,10 @@ if __name__ == "__main__":
         X_train=X_train,
         f=six_hump_camelback,
         grad=six_hump_camelback_grad,
-        num_init_clusters=50,
-        atol=ATOL,
-        rtol=RTOL,
-        seed=42,
+        NUM_INITIAL_CLUSTERS=50,
+        ATOL=ATOL,
+        RTOL=RTOL,
+        SEED=42,
     )
 
     # 4. Evaluate
@@ -378,11 +370,11 @@ if __name__ == "__main__":
     # Example utilizing the new signature with Guarantee checks
     preds, outside_mask = surrogate.evaluate(
         X_test,
-        k=1,
-        atol=ATOL,
-        rtol=RTOL,
+        k_NEIGHBOURS=1,
+        ATOL=ATOL,
+        RTOL=RTOL,
         L_global=10.0,
-        alpha=1.0,
+        ALPHA=1.0,
     )
 
     ground_truth = six_hump_camelback(X_test)
