@@ -5,7 +5,6 @@ from typing import Callable, Optional
 
 import cupy as cp
 import numpy as np
-import psutil
 import pynvml
 import rmm
 from cuml.cluster import KMeans as cuKMeans
@@ -15,29 +14,9 @@ from cupy.linalg import norm
 from cupyx import scatter_max
 from rmm.allocators.cupy import rmm_cupy_allocator
 
+from src.logging_config import log_mem_stats
+
 logger = logging.getLogger(__name__)
-
-
-def log_mem_stats(tag: str = ""):
-    """Log current GPU and system RAM memory usage."""
-    try:
-        # Get system RAM usage
-        ram = psutil.virtual_memory()
-        ram_used_gb = ram.used / 1e9
-        ram_total_gb = ram.total / 1e9
-
-        # Get GPU VRAM usage
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        vram_used_gb = int(info.used) / 1e9
-        vram_total_gb = int(info.total) / 1e9
-        pynvml.nvmlShutdown()
-
-        msg = f"[MEM] {tag:<25} | VRAM: {vram_used_gb:6.2f} / {vram_total_gb:6.2f} GB | RAM: {ram_used_gb:6.2f} / {ram_total_gb:6.2f} GB"
-        logger.debug(msg)
-    except Exception:
-        pass
 
 
 def get_cluster_starts(cluster_sizes: cp.ndarray) -> cp.ndarray:

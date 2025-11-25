@@ -2,7 +2,6 @@ import logging
 import time
 
 import numpy as np
-from array_api_compat import array_namespace
 from scipy.stats import qmc
 
 logger = logging.getLogger(__name__)
@@ -20,8 +19,7 @@ class DataSampler:
         logger.debug("Sampling %d points uniformly from domain.", N)
         t0 = time.perf_counter()
 
-        xp = array_namespace(domain)
-        rng = xp.random.default_rng(seed)
+        rng = np.random.default_rng(seed)
 
         # Parse domain
         if domain.ndim == 1:
@@ -35,7 +33,7 @@ class DataSampler:
         # Generate (N, D)
         X = rng.uniform(l, r, (N, n_dim))
         logger.info(f"Uniform Sampling Time: {time.perf_counter()-t0:.4f}s")
-        return xp.astype(X, xp.float64)
+        return np.astype(X, np.float64)
 
     @staticmethod
     def sample_grid(domain, num_points_per_dim: int):
@@ -49,25 +47,23 @@ class DataSampler:
         )
         t0 = time.perf_counter()
 
-        xp = array_namespace(domain)
-
         # Parse domain
         if domain.ndim == 1:
             l, r = domain[0], domain[1]
             n_dim = 1
-            grids = [xp.linspace(l, r, num_points_per_dim)]
+            grids = [np.linspace(l, r, num_points_per_dim)]
         else:
             l = domain[:, 0]
             r = domain[:, 1]
             n_dim = len(domain)
-            grids = [xp.linspace(l[d], r[d], num_points_per_dim) for d in range(n_dim)]
+            grids = [np.linspace(l[d], r[d], num_points_per_dim) for d in range(n_dim)]
 
         # Create meshgrid and reshape to (N, D)
-        mesh = xp.meshgrid(*grids, indexing="ij")
-        X = xp.stack(mesh, axis=-1).reshape(-1, n_dim)
+        mesh = np.meshgrid(*grids, indexing="ij")
+        X = np.stack(mesh, axis=-1).reshape(-1, n_dim)
 
         logger.info(f"Grid Sampling Time: {time.perf_counter()-t0:.4f}s")
-        return xp.astype(X, xp.float64)
+        return np.astype(X, np.float64)
 
     @staticmethod
     def sample_latin_hypercube(domain, N: int, seed: int = 0):
@@ -77,10 +73,6 @@ class DataSampler:
         """
         logger.debug("Sampling %d points using Latin Hypercube from domain.", N)
         t0 = time.perf_counter()
-
-        xp = array_namespace(domain)
-        if xp.__name__ == "array_api_compat.cupy":
-            domain = xp.asnumpy(domain)
 
         # Convert domain bounds to NumPy for scipy
         if domain.ndim == 1:
@@ -100,6 +92,6 @@ class DataSampler:
         sample_scaled = qmc.scale(sample, l_np, r_np)
 
         # Convert to target backend
-        X = xp.asarray(sample_scaled, dtype=xp.float64)
+        X = np.asarray(sample_scaled, dtype=np.float64)
         logger.info(f"LHS Sampling Time: {time.perf_counter()-t0:.4f}s")
         return X

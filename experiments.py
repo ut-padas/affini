@@ -8,9 +8,9 @@ import cupy as cp
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from array_api_compat import array_namespace
 from tqdm import tqdm
 
+from src.logging_config import log_mem_stats
 from src.problems.borehole import borehole, borehole_grad
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess
 from src.problems.six_hump_camelback import (
@@ -172,13 +172,12 @@ def estimate_lipschitz_constant(
     if problem.hess is None or problem.data_dim != 2:
         return None
 
-    xp = array_namespace(problem.domain)
     X = DataSampler.sample_latin_hypercube(problem.domain, N_samples)
     hess_matrices = problem.hess(X)  # (N, 2, 2) for 2D problems
 
-    norms = xp.linalg.norm(hess_matrices, ord=2, axis=(1, 2))
-    max_norm = float(xp.max(norms))
-    max_point = X[xp.argmax(norms // hess_matrices.shape[1])]
+    norms = np.linalg.norm(hess_matrices, ord=2, axis=(1, 2))
+    max_norm = float(np.max(norms))
+    max_point = X[np.argmax(norms // hess_matrices.shape[1])]
 
     logger.info(
         f"[{problem.name}] Estimated max Hessian norm (Global L): {max_norm:4f} at point {max_point}"
@@ -197,8 +196,6 @@ def run_experiment(
     """
     Trains surrogate -> Evaluates -> Computes Guarantee Statistics.
     """
-    xp = array_namespace(prob.domain)
-
     # 1. Train
     surrogate = NearODESurrogate(data_dim=prob.data_dim, f_dim=prob.f_dim)
     X_train = DataSampler.sample_latin_hypercube(prob.domain, N=N_train, seed=prob.seed)
@@ -231,22 +228,22 @@ def run_experiment(
 
     # 3. Compute Errors
     Y_true = prob.f(X_test)  # (N, F_DIM)
-    abs_error = xp.linalg.norm(Y_pred - Y_true, axis=1)
-    rel_error = abs_error / xp.linalg.norm(Y_true, axis=1)
+    abs_error = np.linalg.norm(Y_pred - Y_true, axis=1)
+    rel_error = abs_error / np.linalg.norm(Y_true, axis=1)
 
     # 4. Categorize points
-    guaranteed_mask = xp.logical_not(ungauranteed_mask)
-    is_good_mask = xp.logical_or(abs_error <= ATOL, rel_error <= RTOL)
-    is_bad_mask = xp.logical_not(is_good_mask)
+    guaranteed_mask = np.logical_not(ungauranteed_mask)
+    is_good_mask = np.logical_or(abs_error <= ATOL, rel_error <= RTOL)
+    is_bad_mask = np.logical_not(is_good_mask)
 
-    n_guaranteed_good = xp.sum(guaranteed_mask & is_good_mask)
-    n_guaranteed_bad = xp.sum(guaranteed_mask & is_bad_mask)
-    perct_unguaranteed = 100.0 * float(xp.sum(ungauranteed_mask)) / N_test
+    n_guaranteed_good = np.sum(guaranteed_mask & is_good_mask)
+    n_guaranteed_bad = np.sum(guaranteed_mask & is_bad_mask)
+    perct_unguaranteed = 100.0 * float(np.sum(ungauranteed_mask)) / N_test
     perct_guaranteed_good = 100.0 * float(n_guaranteed_good) / N_test
     perct_guaranteed_bad = 100.0 * float(n_guaranteed_bad) / N_test
 
-    max_err = float(xp.max(abs_error))
-    rms_err = float(xp.sqrt(xp.mean(abs_error**2)))
+    max_err = float(np.max(abs_error))
+    rms_err = float(np.sqrt(np.mean(abs_error**2)))
     N_clusters = surrogate.N_src
 
     return ExperimentResult(
@@ -273,11 +270,7 @@ if __name__ == "__main__":
     from src.logging_config import setup_logging
 
     if _HAS_GPU:
-        # Get default memory pool for explicit cleanup
         mempool = cp.get_default_memory_pool()
-        xp = cp
-    else:
-        xp = np
 
     setup_logging(console_level=logging.INFO)
 
@@ -292,7 +285,7 @@ if __name__ == "__main__":
                 f=six_hump_camelback,
                 grad=six_hump_camelback_grad,
                 hess=six_hump_camelback_hess,
-                domain=xp.array([[-3, 3], [-2, 2]]),
+                domain=np.array([[-3, 3], [-2, 2]]),
                 data_dim=2,
                 f_dim=1,
                 num_initial_clusters=100,
@@ -308,7 +301,7 @@ if __name__ == "__main__":
                 f=rosenbrock,
                 grad=rosenbrock_grad,
                 hess=rosenbrock_hess,
-                domain=xp.array([[-2, 2], [-1, 3], [-1, 3], [-1, 3]]),
+                domain=np.array([[-2, 2], [-1, 3], [-1, 3], [-1, 3]]),
                 data_dim=4,
                 f_dim=1,
                 num_initial_clusters=100,
@@ -324,7 +317,7 @@ if __name__ == "__main__":
                 f=borehole,
                 grad=borehole_grad,
                 hess=None,
-                domain=xp.array(
+                domain=np.array(
                     [
                         [0.05, 0.15],  # r_w
                         [100, 50000],  # r
@@ -381,7 +374,9 @@ if __name__ == "__main__":
         for N_TRAIN in tqdm(N_TRAIN_values, desc="N_train Values", leave=False):
             for atol, rtol in tqdm(tolerances, desc="Tolerances", leave=False):
                 msg = f"Running {prob.name} | N_train={N_TRAIN} | ATOL={atol} | RTOL={rtol}"
-                print(msg)
+                logger.info(msg)
+                log_mem_stats("Before Experiment")
+
                 result = run_experiment(
                     prob=prob,
                     N_train=N_TRAIN,
@@ -395,6 +390,7 @@ if __name__ == "__main__":
                 if _HAS_GPU:
                     # Clear GPU memory between runs
                     mempool.free_all_blocks()  # type: ignore
+                log_mem_stats("After Experiment")
 
         # Conver to DataFrame
         df = pd.DataFrame([r.__dict__ for r in results])

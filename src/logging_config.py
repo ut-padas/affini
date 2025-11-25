@@ -5,6 +5,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import psutil
+import pynvml
+
+logger = logging.getLogger(__name__)
+
 
 def setup_logging(
     console_level: int = logging.INFO,
@@ -99,3 +104,25 @@ def setup_logging(
         ]
         for lib_name in external_loggers:
             logging.getLogger(lib_name).setLevel(logging.WARNING)
+
+
+def log_mem_stats(tag: str = ""):
+    """Log current GPU and system RAM memory usage."""
+    try:
+        # Get system RAM usage
+        ram = psutil.virtual_memory()
+        ram_used_gb = ram.used / 1e9
+        ram_total_gb = ram.total / 1e9
+
+        # Get GPU VRAM usage
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        vram_used_gb = int(info.used) / 1e9
+        vram_total_gb = int(info.total) / 1e9
+        pynvml.nvmlShutdown()
+
+        msg = f"[MEM] {tag:<25} | VRAM: {vram_used_gb:6.2f} / {vram_total_gb:6.2f} GB | RAM: {ram_used_gb:6.2f} / {ram_total_gb:6.2f} GB"
+        logger.debug(msg)
+    except Exception:
+        pass
