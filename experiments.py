@@ -209,10 +209,15 @@ def run_experiment(
     Trains surrogate -> Evaluates -> Computes Guarantee Statistics.
     """
     # 1. Train
-    surrogate = NearODESurrogate(data_dim=prob.data_dim, f_dim=prob.f_dim)
     X_train = DataSampler.sample_latin_hypercube(prob.domain, N=N_train, seed=prob.seed)
+    if _HAS_GPU:
+        xp = cp
+        X_train = xp.asarray(X_train)
+    else:
+        xp = np
 
     t0 = time.perf_counter()
+    surrogate = NearODESurrogate(data_dim=prob.data_dim, f_dim=prob.f_dim)
     surrogate.train(
         X_train=X_train,
         f=prob.f,
@@ -238,8 +243,10 @@ def run_experiment(
     else:
         raise ValueError(f"Unknown TestConfig Type: {test_config.Type}")
 
-    print(f"Evaluating on {X_test.shape[0]} test points...")
     N_test = X_test.shape[0]
+    X_test = xp.asarray(X_test)
+    print(f"Evaluating on {N_test} test points.")
+
     t0 = time.perf_counter()
     Y_pred, ungauranteed_mask = surrogate.predict(
         targets=X_test,
@@ -251,24 +258,26 @@ def run_experiment(
     predict_time = time.perf_counter() - t0
 
     # 3. Compute Errors
+    t0 = time.perf_counter()
     Y_true = prob.f(X_test)  # (N, F_DIM)
-    abs_error = np.linalg.norm(Y_pred - Y_true, axis=1)
-    rel_error = abs_error / np.linalg.norm(Y_true, axis=1)
+    abs_error = xp.linalg.norm(Y_pred - Y_true, axis=1)
+    rel_error = abs_error / xp.linalg.norm(Y_true, axis=1)
 
     # 4. Categorize points
-    guaranteed_mask = np.logical_not(ungauranteed_mask)
-    is_good_mask = np.logical_or(abs_error <= ATOL, rel_error <= RTOL)
-    is_bad_mask = np.logical_not(is_good_mask)
+    guaranteed_mask = xp.logical_not(ungauranteed_mask)
+    is_good_mask = xp.logical_or(abs_error <= ATOL, rel_error <= RTOL)
+    is_bad_mask = xp.logical_not(is_good_mask)
 
-    n_guaranteed_good = np.sum(guaranteed_mask & is_good_mask)
-    n_guaranteed_bad = np.sum(guaranteed_mask & is_bad_mask)
-    perct_unguaranteed = 100.0 * float(np.sum(ungauranteed_mask)) / N_test
+    n_guaranteed_good = xp.sum(guaranteed_mask & is_good_mask)
+    n_guaranteed_bad = xp.sum(guaranteed_mask & is_bad_mask)
+    perct_unguaranteed = 100.0 * float(xp.sum(ungauranteed_mask)) / N_test
     perct_guaranteed_good = 100.0 * float(n_guaranteed_good) / N_test
     perct_guaranteed_bad = 100.0 * float(n_guaranteed_bad) / N_test
 
-    max_err = float(np.max(abs_error))
-    rms_err = float(np.sqrt(np.mean(abs_error**2)))
+    max_err = float(xp.max(abs_error))
+    rms_err = float(xp.sqrt(xp.mean(abs_error**2)))
     N_clusters = surrogate.N_src
+    logger.info("Error Computation Time: {:.4f}s".format(time.perf_counter() - t0))
 
     return ExperimentResult(
         problem_name=prob.name,
