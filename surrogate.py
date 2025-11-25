@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import cupy as cp
 import faiss
@@ -41,6 +41,38 @@ class DataSampler:
         # Generate (N, D)
         X = rng.uniform(l, r, (N, n_dim))
         logger.info(f"Uniform Sampling Time: {time.perf_counter()-t0:.4f}s")
+        return xp.astype(X, xp.float64)
+
+    @staticmethod
+    def sample_grid(domain, num_points_per_dim: int):
+        """
+        Sample points on a grid from domain.
+        Backend matches domain's backend.
+        """
+        logger.debug(
+            "Sampling grid with %d points per dimension from domain.",
+            num_points_per_dim,
+        )
+        t0 = time.perf_counter()
+
+        xp = array_namespace(domain)
+
+        # Parse domain
+        if domain.ndim == 1:
+            l, r = domain[0], domain[1]
+            n_dim = 1
+            grids = [xp.linspace(l, r, num_points_per_dim)]
+        else:
+            l = domain[:, 0]
+            r = domain[:, 1]
+            n_dim = len(domain)
+            grids = [xp.linspace(l[d], r[d], num_points_per_dim) for d in range(n_dim)]
+
+        # Create meshgrid and reshape to (N, D)
+        mesh = xp.meshgrid(*grids, indexing="ij")
+        X = xp.stack(mesh, axis=-1).reshape(-1, n_dim)
+
+        logger.info(f"Grid Sampling Time: {time.perf_counter()-t0:.4f}s")
         return xp.astype(X, xp.float64)
 
     @staticmethod
@@ -106,7 +138,7 @@ class NearODESurrogate:
         *,
         # Clustering params
         NUM_INITIAL_CLUSTERS: int = 100,
-        MIN_PTS_PER_CLUSTER: int = 10,
+        MIN_PTS_PER_CLUSTER: int = 100,
         ATOL: float = 1e-2,
         RTOL: float = 1e-2,
         MAX_DEPTH: int = 50,
@@ -196,7 +228,13 @@ class NearODESurrogate:
         logger.info(f"Training Time: {time.perf_counter()-t0:.4f}s")
         logger.info(f"Trained Clusters: {len(self.X_src)}")
 
-    def evaluate(
+    def get_source_centroids(self) -> Any:
+        """Return the source centroids used in training."""
+        if not self.trained:
+            raise RuntimeError("Model not trained.")
+        return self.X_src
+
+    def predict(
         self,
         targets,
         ATOL: Optional[float] = None,
@@ -339,21 +377,26 @@ if __name__ == "__main__":
         six_hump_camelback_grad,
     )
 
-    setup_logging(console_level=logging.DEBUG)
+    setup_logging(console_level=logging.INFO)
+
+    if _HAS_GPU:
+        xp = cp
+    else:
+        xp = np
 
     # 1. Setup Domain
-    domain = np.array([[-2.0, 2.0], [-1.0, 1.0]])
+    domain = xp.array([[-2.0, 2.0], [-1.0, 1.0]])
     xp = array_namespace(domain)
 
     # Sample Training Data
-    N_train = 200_000
+    N_train = 100_000
     X_train = DataSampler.sample_latin_hypercube(domain, N=N_train, seed=0)
 
     # 2. Initialize Surrogate
     surrogate = NearODESurrogate(data_dim=2, f_dim=1)
 
-    ATOL = 1e-3
-    RTOL = 1e-3
+    ATOL = 1e-2
+    RTOL = 1e-2
 
     # 3. Train
     print("--- Training ---")
@@ -361,7 +404,8 @@ if __name__ == "__main__":
         X_train=X_train,
         f=six_hump_camelback,
         grad=six_hump_camelback_grad,
-        NUM_INITIAL_CLUSTERS=50,
+        NUM_INITIAL_CLUSTERS=100,
+        MIN_PTS_PER_CLUSTER=100,
         ATOL=ATOL,
         RTOL=RTOL,
         SEED=42,
@@ -369,10 +413,10 @@ if __name__ == "__main__":
 
     # 4. Evaluate
     print("\n--- Evaluation ---")
-    X_test = DataSampler.sample_uniform(domain, N=5, seed=123)
+    X_test = DataSampler.sample_uniform(domain, N=500, seed=10)
 
     # Example utilizing the new signature with Guarantee checks
-    preds, outside_mask = surrogate.evaluate(
+    preds, outside_mask = surrogate.predict(
         X_test,
         k_NEIGHBOURS=1,
         ATOL=ATOL,
@@ -384,8 +428,5 @@ if __name__ == "__main__":
     ground_truth = six_hump_camelback(X_test)
     err = xp.abs(preds - ground_truth)
 
-    print(f"Test Points:\n{X_test}")
-    print(f"Predictions:\n{preds}")
-    print(f"Ground Truth:\n{ground_truth}")
     print(f"Outside Guarantee Mask: {outside_mask}")
     print(f"Max Error: {xp.max(err)}")
