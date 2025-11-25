@@ -140,7 +140,7 @@ class NearODESurrogate:
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
         ATOL: float = 1e-2,
-        RTOL: float = 1e-2,
+        RTOL: float | None = None,
         MAX_DEPTH: int = 50,
         MAX_CLUSTERS_EST: int = 1_000_000,
         SEED: int = 0,

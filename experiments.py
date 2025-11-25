@@ -14,7 +14,7 @@ FIGURES = CWD / "figures" / "experiments"
 FIGURES.mkdir(parents=True, exist_ok=True)
 
 
-def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=1e-2):
+def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None):
     from src.problems.oned import one_d_example, one_d_example_grad
 
     domain = np.array([0.0, 10.0])
