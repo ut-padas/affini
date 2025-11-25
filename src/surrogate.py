@@ -131,7 +131,7 @@ class NearODESurrogate:
         self.N_src = centroids.shape[0]
 
         # 3. Build Index
-        if xp.__name__ == "cupy":
+        if xp.__name__ == "array_api_compat.cupy":
             # Move centroids to CPU for FAISS
             centroids = xp.asnumpy(centroids)
         self.index = faiss.IndexFlatL2(self.D)
@@ -181,7 +181,7 @@ class NearODESurrogate:
 
         # 1. FAISS Search (CPU)
         # Convert targets to NumPy safely for search
-        if xp.__name__ == "cupy":
+        if xp.__name__ == "array_api_compat.cupy":
             targets_np = cp.asnumpy(targets)
         else:
             targets_np = np.asarray(targets)

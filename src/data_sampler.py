@@ -79,6 +79,8 @@ class DataSampler:
         t0 = time.perf_counter()
 
         xp = array_namespace(domain)
+        if xp.__name__ == "array_api_compat.cupy":
+            domain = xp.asnumpy(domain)
 
         # Convert domain bounds to NumPy for scipy
         if domain.ndim == 1:
