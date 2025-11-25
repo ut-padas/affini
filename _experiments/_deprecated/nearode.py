@@ -10,7 +10,7 @@ import cupy as cp
 import numpy as np
 from scipy.stats import qmc
 
-from experiments._deprecated.nn_inference import NN_Inference
+from _experiments._deprecated.nn_inference import NN_Inference
 from src.adaptive_clustering import adaptive_cluster_algorithm
 from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
 
