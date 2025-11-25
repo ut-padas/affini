@@ -288,7 +288,7 @@ class NearODESurrogate:
                 print(f"\033[91m{msg}\033[0m")
                 logger.warning(msg)
 
-        logger.info(f"Evaluation Time: {time.perf_counter()-t0:.4f}s")
+        logger.info(f"Prediction Time: {time.perf_counter()-t0:.4f}s")
         return predictions, ungauranteed_mask
 
 
