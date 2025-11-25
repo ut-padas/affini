@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from src.logging_config import log_mem_stats
 from src.problems.borehole import borehole, borehole_grad
+from src.problems.dixon_price import dixon_price, dixon_price_grad
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess
 from src.problems.six_hump_camelback import (
     six_hump_camelback,
@@ -308,7 +309,6 @@ if __name__ == "__main__":
                 f_dim=1,
                 num_initial_clusters=100,
                 min_pts_per_cluster=100,
-                seed=0,
             ),
             [400_000, 800_000],
             TestConfig(Type="Grid", N_points_per_dim=300),
@@ -324,9 +324,23 @@ if __name__ == "__main__":
                 f_dim=1,
                 num_initial_clusters=100,
                 min_pts_per_cluster=100,
-                seed=0,
             ),
             [400_000, 800_000],
+            TestConfig(Type="LHS", N_total_points=100_000),
+        ),
+        (
+            BenchmarkProblem(
+                name="Dixon-Price-4D",
+                f=dixon_price,
+                grad=dixon_price_grad,
+                hess=None,
+                domain=np.array([[-10, 10]] * 4),
+                data_dim=4,
+                f_dim=1,
+                num_initial_clusters=100,
+                min_pts_per_cluster=100,
+            ),
+            [100_000, 200_000],
             TestConfig(Type="LHS", N_total_points=100_000),
         ),
         (
@@ -351,7 +365,6 @@ if __name__ == "__main__":
                 f_dim=1,
                 num_initial_clusters=100,
                 min_pts_per_cluster=50,
-                seed=0,
             ),
             [1_000_000],
             TestConfig(Type="LHS", N_total_points=200_000),

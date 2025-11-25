@@ -1,6 +1,6 @@
 """Borehole function and its gradient implementation."""
 
-import array_api_compat
+from array_api_compat import array_namespace
 
 
 def borehole(X):
@@ -13,7 +13,7 @@ def borehole(X):
     Returns:
         F: (n_samples, 1) function values at X
     """
-    xp = array_api_compat.array_namespace(X)
+    xp = array_namespace(X)
 
     r_w = X[:, 0]  # radius of the borehole (m)
     r = X[:, 1]  # radius of influence (m)
@@ -42,7 +42,7 @@ def borehole_grad(X):
     Returns:
         J: (n_samples, 1, 8) Jacobian at X
     """
-    xp = array_api_compat.array_namespace(X)
+    xp = array_namespace(X)
 
     x1 = X[:, 0]
     x2 = X[:, 1]
