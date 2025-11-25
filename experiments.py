@@ -14,11 +14,11 @@ FIGURES = CWD / "figures" / "experiments"
 FIGURES.mkdir(parents=True, exist_ok=True)
 
 
-def run_1D_experiment(N_train=2000, ATOL=1e-2):
+def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=1e-2):
     from src.problems.oned import one_d_example, one_d_example_grad
 
     domain = np.array([0.0, 10.0])
-    X_train = DataSampler.sample_uniform(domain, N=N_train, seed=0)
+    X_train = DataSampler.sample_latin_hypercube(domain, N=N_train, seed=0)
 
     surrogate = NearODESurrogate(data_dim=1, f_dim=1)
     surrogate.train(
@@ -26,15 +26,17 @@ def run_1D_experiment(N_train=2000, ATOL=1e-2):
         f=one_d_example,
         grad=one_d_example_grad,
         ATOL=ATOL,
-        RTOL=1e99,  # No relative tolerance
+        RTOL=RTOL,
         NUM_INITIAL_CLUSTERS=20,
         MIN_PTS_PER_CLUSTER=1,
     )
 
-    N_test = 4000
     X_test = DataSampler.sample_grid(domain, num_points_per_dim=N_test)
     Y_pred, outside_mask = surrogate.predict(
-        X_test, ATOL=ATOL, RTOL=1e99, k_NEIGHBOURS=1
+        X_test,
+        ATOL=ATOL,
+        RTOL=RTOL,
+        k_NEIGHBOURS=1,
     )
     Y_true = one_d_example(X_test)
 
@@ -52,21 +54,21 @@ def run_1D_experiment(N_train=2000, ATOL=1e-2):
         one_d_example(source_centroids),
         c="orange",
         marker="x",
-        label="Sources $(N_{src}={})$".format(len(source_centroids)),
+        label=f"Sources $(N_{{sources}}={len(source_centroids)})$",
     )
     plt.scatter(
         X_test[outside_mask],
         one_d_example(X_test[outside_mask]),
         marker="o",
-        label="Unguaranteed Points $(N={})$".format(np.sum(outside_mask)),
+        label=f"Unguaranteed Points $(N={np.sum(outside_mask)})$",
     )
     plt.legend()
     plt.xlabel("$x$")
     plt.ylabel("$f(x)$")
 
     plt.subplot(1, 2, 2)
-    plt.semilogy(X_test, error, "-b", label="Absolute Error")
-    plt.axhline(ATOL, color="r", linestyle="--", label="Absolute Tolerance")
+    plt.semilogy(X_test, error, "--r", label="Absolute Error")
+    plt.axhline(ATOL, color="k", linestyle="--", label="Absolute Tolerance")
     plt.scatter(
         X_test[outside_mask],
         error[outside_mask],
@@ -77,7 +79,9 @@ def run_1D_experiment(N_train=2000, ATOL=1e-2):
     plt.xlabel("$x$")
     plt.ylabel("Absolute Error $|f_{surrogate} - f_{exact}|$")
 
-    plt.savefig(FIGURES / "1D_experiment.png", dpi=400)
+    img_path = FIGURES / f"1D_experiment_ATOL{ATOL}_RTOL{RTOL}.png"
+    plt.savefig(img_path, dpi=400)
+    logger.info(f"Saved 1D experiment figure to {img_path}")
 
     print(f"Max Error: {np.max(error):.4e}")
     print(f"RMSE: {rmse:.4e}")
