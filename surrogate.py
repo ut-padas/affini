@@ -195,6 +195,7 @@ class NearODESurrogate:
                 min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
                 seed=SEED,
                 should_generate_extra_points=True,
+                two_means_split_method="median",
             )
             centroids = np.array([c.centroid for c in clusters])
             f_vals = np.array([c.F_centroid for c in clusters])
