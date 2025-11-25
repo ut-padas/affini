@@ -272,7 +272,12 @@ if __name__ == "__main__":
     from src.adaptive_clustering import _HAS_GPU
     from src.logging_config import setup_logging
 
-    xp = cp if _HAS_GPU else np
+    if _HAS_GPU:
+        # Get default memory pool for explicit cleanup
+        mempool = cp.get_default_memory_pool()
+        xp = cp
+    else:
+        xp = np
 
     setup_logging(console_level=logging.INFO)
 
@@ -386,6 +391,10 @@ if __name__ == "__main__":
                     LIPSCHITZ_EST=LIPSCHITZ_EST,
                 )
                 results.append(result)
+
+                if _HAS_GPU:
+                    # Clear GPU memory between runs
+                    mempool.free_all_blocks()  # type: ignore
 
         # Conver to DataFrame
         df = pd.DataFrame([r.__dict__ for r in results])
