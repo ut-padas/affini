@@ -46,7 +46,7 @@ class NearODESurrogate:
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
         ATOL: float = 1e-2,
-        RTOL: float | None = None,
+        RTOL: Optional[float] = None,
         MAX_DEPTH: int = 50,
         MAX_CLUSTERS_EST: int = 1_000_000,
         SEED: int = 0,
@@ -171,7 +171,7 @@ class NearODESurrogate:
 
         Returns:
             predictions: (N, F_DIM) predicted function values (f_tilde)
-            outside_mask: (N,) boolean, True if point violates guarantees.
+            ungauranteed_mask: (N,) boolean, True if point violates guarantees.
         """
         if not self.trained:
             raise RuntimeError("Model not trained.")
@@ -227,8 +227,8 @@ class NearODESurrogate:
         predictions = predictions_sum / k_NEIGHBOURS  # (N, F_DIM)
 
         # 4. Guarantee / Trust Region Checks
-        # Initialize outside_mask to all False
-        outside_mask = xp.zeros(N, dtype=bool)
+        # Initialize ungauranteed_mask to all False
+        ungauranteed_mask = xp.zeros(N, dtype=bool)
 
         # The algorithm specifically relies on Nearest Neighbor properties (k=1)
         if (k_NEIGHBOURS == 1) and (ATOL is not None):
@@ -273,25 +273,22 @@ class NearODESurrogate:
             # Check bounds
             # if ||x - x_k|| <= min { r_k, tol }
             bound = xp.minimum(R_k, tol)
-
             is_valid = dist_nearest <= bound
+            ungauranteed_mask = xp.logical_not(is_valid)
 
-            # The return is "outside_mask" (True if NOT valid)
-            outside_mask = xp.logical_not(is_valid)
-
-            num_outside = xp.sum(outside_mask)
-            logger.info(f"Points outside guarantee region: {num_outside} / {N}")
+            num_ungauranteed = xp.sum(ungauranteed_mask)
+            logger.info(f"Unguaranteed Points: {num_ungauranteed} / {N}")
 
             # Heuristic warning for under-resolved surrogate coverage
-            if num_outside > 3 * self.N_src:
-                msg = "Too many points outside guarantee region Need more clusters! "
-                msg += f"(Outside: {num_outside} > 3 x Sources: {self.N_src})"
+            if num_ungauranteed > 3 * self.N_src:
+                msg = "Too many ungauranteed points. Need more clusters! "
+                msg += f"(Ungauranteed: {num_ungauranteed} > 3 x Sources: {self.N_src})"
                 # Print in red to console
                 print(f"\033[91m{msg}\033[0m")
                 logger.warning(msg)
 
         logger.info(f"Evaluation Time: {time.perf_counter()-t0:.4f}s")
-        return predictions, outside_mask
+        return predictions, ungauranteed_mask
 
 
 if __name__ == "__main__":
@@ -340,7 +337,7 @@ if __name__ == "__main__":
     X_test = DataSampler.sample_uniform(domain, N=500, seed=10)
 
     # Example utilizing the new signature with Guarantee checks
-    preds, outside_mask = surrogate.predict(
+    preds, ungauranteed_mask = surrogate.predict(
         X_test,
         k_NEIGHBOURS=1,
         ATOL=ATOL,
@@ -352,5 +349,5 @@ if __name__ == "__main__":
     ground_truth = six_hump_camelback(X_test)
     err = xp.abs(preds - ground_truth)
 
-    print(f"Outside Guarantee Mask: {outside_mask}")
+    print(f"Unguaranteed Points: {xp.sum(ungauranteed_mask)} / {X_test.shape[0]}")
     print(f"Max Error: {xp.max(err)}")

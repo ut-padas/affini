@@ -1,7 +1,7 @@
 import gc
 import logging
 import time
-from typing import Callable
+from typing import Callable, Optional
 
 import cupy as cp
 import numpy as np
@@ -277,13 +277,13 @@ def adaptive_cluster_algorithm_gpu(
     NUM_INITIAL_CLUSTERS: int,
     MIN_PTS_PER_CLUSTER: int,
     ATOL: float,
-    RTOL: float | None,
+    RTOL: Optional[float] = None,
     MAX_DEPTH: int = 500,
     MAX_CLUSTERS_EST: int = 100_000,
     POWER_ITERS: int = 3,
     SEED: int = 0,
     DTYPE=float64,
-    BATCH_SIZE: int | None = None,
+    BATCH_SIZE: Optional[int] = None,
     LOG_MEM_STATS: bool = False,
     MOVE_INTERMEDIATE_TO_HOST: bool = False,
     STORE_FINAL_ARRAYS_ON_HOST: bool = False,

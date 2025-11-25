@@ -17,7 +17,7 @@ def get_matrix_2_norm(func, domain, num_points_per_dim=300):
         num_points_per_dim: Number of points per dimension for grid sampling.
 
     Returns:
-        Estimated maximum 2-norm of the function over the domain.
+        max_norm/L : Estimated maximum 2-norm of the function over the domain. Proxy for Lipschitz constant.
     """
     xp = array_namespace(domain)
     X = DataSampler.sample_grid(domain, num_points_per_dim=num_points_per_dim)

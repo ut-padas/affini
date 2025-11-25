@@ -62,7 +62,7 @@ class AdaptiveClusterer:
     def __init__(
         self,
         atol: float = 1e-2,
-        rtol: float | None = None,
+        rtol: Optional[float] = None,
         num_initial_clusters: int = 10,
         min_points: int = 1,
         seed: int = 0,
@@ -104,7 +104,7 @@ class AdaptiveClusterer:
         self._cluster_id = 0
 
     def _get_function_values(
-        self, X: np.ndarray, f: Callable, cupy_f: Callable | None
+        self, X: np.ndarray, f: Callable, cupy_f: Optional[Callable]
     ) -> np.ndarray:
         """
         Compute function values.
@@ -184,9 +184,9 @@ class AdaptiveClusterer:
         self,
         X_cluster: np.ndarray,
         f: Callable,
-        grad_f: Callable | None,
-        cupy_f: Callable | None,
-    ) -> tuple[bool, float, float, float, np.ndarray, np.ndarray, np.ndarray | None]:
+        grad_f: Optional[Callable],
+        cupy_f: Optional[Callable],
+    ) -> tuple[bool, float, float, float, np.ndarray, np.ndarray, Optional[np.ndarray]]:
         """
         Check if cluster violates Taylor approximation error bounds.
 
@@ -237,8 +237,8 @@ class AdaptiveClusterer:
         self,
         X: np.ndarray,
         f: Callable,
-        grad_f: Callable | None,
-        cupy_f: Callable | None,
+        grad_f: Optional[Callable],
+        cupy_f: Optional[Callable] = None,
         debug: bool = False,
     ) -> list[Cluster]:
         """
@@ -389,10 +389,10 @@ class AdaptiveClusterer:
 def adaptive_cluster_algorithm(
     X_train: np.ndarray,
     f: Callable,
-    grad_f: Callable | None,
-    cupy_f: Callable | None = None,
+    grad_f: Optional[Callable],
+    cupy_f: Optional[Callable] = None,
     atol: float = 0.01,
-    rtol: float | None = 0.01,
+    rtol: Optional[float] = 0.01,
     num_initial_clusters=10,
     min_pts_per_cluster=1,
     seed=0,
