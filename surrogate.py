@@ -126,6 +126,7 @@ class NearODESurrogate:
         self.J_src = None
         self.H_src = None
         self.R_src = None
+        self.N_src = 0
 
         # FAISS Index
         self.index = None
@@ -222,6 +223,7 @@ class NearODESurrogate:
         self.J_src = grads
         self.H_src = hess_proxies
         self.R_src = radii
+        self.N_src = centroids.shape[0]
 
         # 3. Build Index
         if xp.__name__ == "cupy":
@@ -371,7 +373,17 @@ class NearODESurrogate:
 
             # The return is "outside_mask" (True if NOT valid)
             outside_mask = xp.logical_not(is_valid)
-            logger.info(f"Points outside guarantee: {xp.sum(outside_mask)} / {N}")
+
+            num_outside = xp.sum(outside_mask)
+            logger.info(f"Points outside guarantee region: {num_outside} / {N}")
+
+            # Heuristic warning for under-resolved surrogate coverage
+            if num_outside > 3 * self.N_src:
+                msg = "Too many points outside guarantee region Need more clusters! "
+                msg += f"(Outside: {num_outside} > 3 x Sources: {self.N_src})"
+                # Print in red to console
+                print(f"\033[91m{msg}\033[0m")
+                logger.warning(msg)
 
         logger.info(f"Evaluation Time: {time.perf_counter()-t0:.4f}s")
         return predictions, outside_mask
