@@ -215,6 +215,9 @@ __marimo__/
 # Figures Directory
 figures/
 
+# Results Directory
+results/
+
 # Profiling data
 *.prof
 
