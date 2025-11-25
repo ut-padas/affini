@@ -4,8 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.adaptive_clustering import _HAS_GPU
-from surrogate import DataSampler, NearODESurrogate
+from src.surrogate import DataSampler, NearODESurrogate
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None):
         grad=one_d_example_grad,
         ATOL=ATOL,
         RTOL=RTOL,
-        NUM_INITIAL_CLUSTERS=20,
+        NUM_INITIAL_CLUSTERS=10,
         MIN_PTS_PER_CLUSTER=1,
     )
 
@@ -100,7 +99,7 @@ def run_1D_experiment(N_train=2000, N_test=4000, ATOL=1e-2, RTOL=None):
 if __name__ == "__main__":
     from src.logging_config import setup_logging
 
-    setup_logging(console_level=logging.DEBUG)
+    setup_logging(console_level=logging.INFO)
 
     tolmat = np.array(
         [
