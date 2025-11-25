@@ -202,6 +202,12 @@ class NearODESurrogate:
             hess_proxies = np.array([c.hessian_proxy for c in clusters])
             radii = np.array([c.radius for c in clusters])
 
+            # Make centroids (N, 1) with np.newaxis
+            if self.D == 1:
+                centroids = np.expand_dims(centroids, axis=1)
+                f_vals = np.expand_dims(f_vals, axis=1)
+                grads = np.expand_dims(grads, axis=1)
+
         # Convert to original backend
         centroids = xp.asarray(centroids)
         f_vals = xp.asarray(f_vals)
