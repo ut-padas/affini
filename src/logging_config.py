@@ -108,11 +108,11 @@ def setup_logging(
 
 def log_mem_stats(tag: str = ""):
     """Log current GPU and system RAM memory usage."""
+    # Get system RAM usage
+    ram = psutil.virtual_memory()
+    ram_used_gb = ram.used / 1e9
+    ram_total_gb = ram.total / 1e9
     try:
-        # Get system RAM usage
-        ram = psutil.virtual_memory()
-        ram_used_gb = ram.used / 1e9
-        ram_total_gb = ram.total / 1e9
 
         # Get GPU VRAM usage
         pynvml.nvmlInit()
@@ -123,6 +123,7 @@ def log_mem_stats(tag: str = ""):
         pynvml.nvmlShutdown()
 
         msg = f"[MEM] {tag:<25} | VRAM: {vram_used_gb:6.2f} / {vram_total_gb:6.2f} GB | RAM: {ram_used_gb:6.2f} / {ram_total_gb:6.2f} GB"
-        logger.debug(msg)
     except Exception:
-        pass
+        msg = f"[MEM] {tag:<25} | RAM: {ram_used_gb:6.2f} / {ram_total_gb:6.2f} GB"
+
+    logger.debug(msg)
