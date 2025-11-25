@@ -147,14 +147,14 @@ class ExperimentResult:
     time_predict: float
     max_error: float
     rms_error: float
-    n_guaranteed_good: int
-    n_guaranteed_bad: int
-    n_unguaranteed_good: int
-    n_unguaranteed_bad: int
+    perct_unguaranteed: float
+    perct_guaranteed_good: float
+    perct_guaranteed_bad: float
 
 
 def estimate_lipschitz_constant(
-    problem: BenchmarkProblem, N_samples: int = 1000
+    problem: BenchmarkProblem,
+    N_samples: int = 5000,
 ) -> float:
     """
     Estimates Global Lipschitz constant L via max Hessian norm.
@@ -167,16 +167,21 @@ def estimate_lipschitz_constant(
         logger.warning(f"No Hessian provided for {problem.name}, using default L=1.")
         return 1.0
 
+    if problem.data_dim != 2:
+        msg = f"estimate_lipschitz_constant currently only supports 2D problems, got {problem.data_dim}D."
+        logger.warning(msg)
+        return 1.0
+
     xp = array_namespace(problem.domain)
     X = DataSampler.sample_latin_hypercube(problem.domain, N_samples)
-    vals = problem.hess(X)  # (N, F_DIM, D, D)
+    hess_matrices = problem.hess(X)  # (N, 2, 2) for 2D problems
 
-    norms = xp.linalg.norm(vals, ord=2, axis=(2, 3))  # (N, F_DIM)
+    norms = xp.linalg.norm(hess_matrices, ord=2, axis=(1, 2))
     max_norm = float(xp.max(norms))
-    max_point = X[xp.argmax(norms // vals.shape[1])]
+    max_point = X[xp.argmax(norms // hess_matrices.shape[1])]
 
     logger.info(
-        f"[{problem.name}] Estimated max Hessian norm (Global L): {max_norm} at point {max_point}"
+        f"[{problem.name}] Estimated max Hessian norm (Global L): {max_norm:4f} at point {max_point}"
     )
     return max_norm
 
@@ -184,19 +189,17 @@ def estimate_lipschitz_constant(
 def run_experiment(
     prob: BenchmarkProblem,
     N_train: int,
-    N_test: int,
+    N_pts_per_dim_test: int,
     ATOL: float,
-    RTOL: Optional[float] = None,
+    RTOL: Optional[float],
+    LIPSCHITZ_EST: Optional[float],
 ):
     """
     Trains surrogate -> Evaluates -> Computes Guarantee Statistics.
     """
     xp = array_namespace(prob.domain)
 
-    # 1. Estimate Lipschitz constant
-    Lipschitz_est = estimate_lipschitz_constant(prob)
-
-    # 2. Train
+    # 1. Train
     surrogate = NearODESurrogate(data_dim=prob.data_dim, f_dim=prob.f_dim)
     X_train = DataSampler.sample_latin_hypercube(prob.domain, N=N_train, seed=prob.seed)
 
@@ -213,32 +216,34 @@ def run_experiment(
     )
     train_time = time.perf_counter() - t0
 
-    # 3. Evaluate
-    X_test = DataSampler.sample_uniform(prob.domain, N_test, prob.seed)
+    # 2. Evaluate
+    X_test = DataSampler.sample_grid(prob.domain, num_points_per_dim=N_pts_per_dim_test)
+    N_test = X_test.shape[0]
     t0 = time.perf_counter()
     Y_pred, ungauranteed_mask = surrogate.predict(
         targets=X_test,
         ATOL=ATOL,
         RTOL=RTOL,
-        L_global=Lipschitz_est,
+        L_global=LIPSCHITZ_EST,
         k_NEIGHBOURS=1,
     )
     predict_time = time.perf_counter() - t0
 
-    # 4. Compute Errors
+    # 3. Compute Errors
     Y_true = prob.f(X_test)  # (N, F_DIM)
     abs_error = xp.linalg.norm(Y_pred - Y_true, axis=1)
     rel_error = abs_error / xp.linalg.norm(Y_true, axis=1)
 
-    # 5. Categorize points
+    # 4. Categorize points
     guaranteed_mask = xp.logical_not(ungauranteed_mask)
     is_good_mask = xp.logical_or(abs_error <= ATOL, rel_error <= RTOL)
     is_bad_mask = xp.logical_not(is_good_mask)
 
     n_guaranteed_good = xp.sum(guaranteed_mask & is_good_mask)
     n_guaranteed_bad = xp.sum(guaranteed_mask & is_bad_mask)
-    n_unguaranteed_good = xp.sum(ungauranteed_mask & is_good_mask)
-    n_unguaranteed_bad = xp.sum(ungauranteed_mask & is_bad_mask)
+    perct_unguaranteed = 100.0 * float(xp.sum(ungauranteed_mask)) / N_test
+    perct_guaranteed_good = 100.0 * float(n_guaranteed_good) / N_test
+    perct_guaranteed_bad = 100.0 * float(n_guaranteed_bad) / N_test
 
     max_err = float(xp.max(abs_error))
     rms_err = float(xp.sqrt(xp.mean(abs_error**2)))
@@ -257,10 +262,9 @@ def run_experiment(
         time_predict=predict_time,
         max_error=max_err,
         rms_error=rms_err,
-        n_guaranteed_good=int(n_guaranteed_good),
-        n_guaranteed_bad=int(n_guaranteed_bad),
-        n_unguaranteed_good=int(n_unguaranteed_good),
-        n_unguaranteed_bad=int(n_unguaranteed_bad),
+        perct_unguaranteed=perct_unguaranteed,
+        perct_guaranteed_good=perct_guaranteed_good,
+        perct_guaranteed_bad=perct_guaranteed_bad,
     )
 
 
@@ -273,7 +277,7 @@ if __name__ == "__main__":
     setup_logging(console_level=logging.INFO)
 
     # Run simple 1D experiment
-    run_1D_experiment()
+    # run_1D_experiment()
 
     # Define benchmark problems
     problems = [
@@ -295,24 +299,32 @@ if __name__ == "__main__":
     tolerances = [
         (0.1, 0.02),
         (0.05, 0.01),
+        (0.025, 0.005),
         (0.01, 0.002),
+        (0.005, 0.001),
     ]
 
-    N_TRAIN = 100_000
-    N_TEST = 50_000
+    N_TRAIN = 400_000
+    N_pts_per_dim_test = 300
 
     # Run Loop
     for prob in tqdm(problems, desc="Benchmark Problems"):
         results = []
         print(f"\n--- Running Benchmarks for {prob.name} ---")
+
+        LIPSCHITZ_EST = estimate_lipschitz_constant(
+            prob,
+            N_samples=prob.data_dim * 10_000,
+        )
         for atol, rtol in tqdm(tolerances, desc="Tolerances", leave=False):
             print(f"  Running atol={atol}, rtol={rtol}...")
             result = run_experiment(
                 prob=prob,
                 N_train=N_TRAIN,
-                N_test=N_TEST,
+                N_pts_per_dim_test=N_pts_per_dim_test,
                 ATOL=atol,
                 RTOL=rtol,
+                LIPSCHITZ_EST=LIPSCHITZ_EST,
             )
             results.append(result)
 
@@ -331,32 +343,28 @@ if __name__ == "__main__":
             index=False,
             float_format="%.4e",
             columns=[
-                "n_initial_clusters",
+                "num_initial_clusters",
                 "atol",
                 "rtol",
                 "n_clusters",
-                "n_unguaranteed_bad",
-                "n_unguaranteed_good",
-                "n_guaranteed_bad",
-                "n_guaranteed_good",
+                "perct_unguaranteed",
+                "perct_guaranteed_good",
+                "perct_guaranteed_bad",
                 "max_error",
                 "rms_error",
                 "time_train",
-                "time_predict",
             ],
             header=[
-                r"$N_{\mathrm{init}}$",
-                r"$\mathrm{ATOL}$",
-                r"$\mathrm{RTOL}$",
-                r"$N_{\mathrm{sources}}$",
-                r"$N_{\mathrm{ung. bad}}$",
-                r"$N_{\mathrm{ung. good}}$",
-                r"$N_{\mathrm{g. bad}}$",
-                r"$N_{\mathrm{g. good}}$",
-                r"$\max \mathrm{Error}$",
-                r"$\mathrm{RMSE}$",
-                r"$\mathrm{Train\ Time\ (s)}$",
-                r"$\mathrm{Predict\ Time\ (s)}$",
+                r"$N_{{\mathrm{{init}}}}$",
+                r"$\mathrm{{ATOL}}$",
+                r"$\mathrm{{RTOL}}$",
+                r"$N_{{\mathrm{{sources}}}}$",
+                r"$p_{{\mathrm{{ung.}}}} (\%)$",
+                r"$p_{{\mathrm{{g. good}}}} (\%)$",
+                r"$p_{{\mathrm{{g. bad}}}} (\%)$",
+                r"$\\max \mathrm{{Error}}$",
+                r"$\mathrm{{RMSE}}$",
+                r"$\mathrm{{Train\\ Time\\ (s)}}$",
             ],
         )
         latex_path = RESULTS / f"benchmark_{prob.name.replace(' ', '_')}.tex"
