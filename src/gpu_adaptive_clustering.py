@@ -541,8 +541,6 @@ def adaptive_cluster_algorithm_gpu(
             # Compute the error threshold for each point
             approximation_error = norm(F_true - F_taylor, axis=1)
             error_threshold = maximum(ATOL, RTOL * norm(F_true, axis=1))
-
-            # Cleanup
             del F_taylor, F_true
 
             # Compute the max and mean errors per cluster
@@ -662,7 +660,6 @@ def adaptive_cluster_algorithm_gpu(
             # Move to next batch
             start_cluster_idx = end_cluster_idx
 
-            # Explicit Cleanup for Batch
             del aug_pts, cluster_centroids, F_at_centroids, J_at_centroids
             mempool.free_all_blocks()
             if LOG_MEM_STATS:
