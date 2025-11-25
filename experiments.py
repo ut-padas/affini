@@ -2,7 +2,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
 import cupy as cp
 import matplotlib.pyplot as plt
@@ -158,6 +158,13 @@ class ExperimentResult:
     perct_guaranteed_bad: float
 
 
+@dataclass
+class TestConfig:
+    Type: Literal["LHS", "Grid"]
+    N_points_per_dim: Optional[int] = None  # For Grid
+    N_total_points: Optional[int] = None  # For LHS
+
+
 def estimate_lipschitz_constant(
     problem: BenchmarkProblem,
     N_samples: int = 5000,
@@ -188,7 +195,7 @@ def estimate_lipschitz_constant(
 def run_experiment(
     prob: BenchmarkProblem,
     N_train: int,
-    N_pts_per_dim_test: int,
+    test_config: TestConfig,
     ATOL: float,
     RTOL: Optional[float],
     LIPSCHITZ_EST: Optional[float],
@@ -214,7 +221,18 @@ def run_experiment(
     train_time = time.perf_counter() - t0
 
     # 2. Evaluate
-    X_test = DataSampler.sample_grid(prob.domain, num_points_per_dim=N_pts_per_dim_test)
+    if test_config.Type == "Grid":
+        assert test_config.N_points_per_dim is not None
+        X_test = DataSampler.sample_grid(prob.domain, test_config.N_points_per_dim)
+    elif test_config.Type == "LHS":
+        assert test_config.N_total_points is not None
+        X_test = DataSampler.sample_latin_hypercube(
+            prob.domain, test_config.N_total_points
+        )
+    else:
+        raise ValueError(f"Unknown TestConfig Type: {test_config.Type}")
+
+    print(f"Evaluating on {X_test.shape[0]} test points...")
     N_test = X_test.shape[0]
     t0 = time.perf_counter()
     Y_pred, ungauranteed_mask = surrogate.predict(
@@ -277,8 +295,8 @@ if __name__ == "__main__":
     # Run simple 1D experiment
     run_1D_experiment()
 
-    # Define benchmark problems along with a list of N_train values and a singulat N_pts_per_dim_test
-    problems: list[tuple[BenchmarkProblem, list[int], int]] = [
+    # Define benchmark problems along with a list of N_train values and test config
+    problems: list[tuple[BenchmarkProblem, list[int], TestConfig]] = [
         (
             BenchmarkProblem(
                 name="Six-Hump Camelback",
@@ -293,23 +311,23 @@ if __name__ == "__main__":
                 seed=0,
             ),
             [400_000, 800_000],
-            300,
+            TestConfig(Type="Grid", N_points_per_dim=300),
         ),
         (
             BenchmarkProblem(
-                name="Rosenbrock-4D",
+                name="Rosenbrock-2D",
                 f=rosenbrock,
                 grad=rosenbrock_grad,
                 hess=rosenbrock_hess,
-                domain=np.array([[-2, 2], [-1, 3], [-1, 3], [-1, 3]]),
-                data_dim=4,
+                domain=np.array([[-2, 2], [-1, 3]]),
+                data_dim=2,
                 f_dim=1,
                 num_initial_clusters=100,
                 min_pts_per_cluster=100,
                 seed=0,
             ),
             [400_000, 800_000],
-            300,
+            TestConfig(Type="LHS", N_total_points=100_000),
         ),
         (
             BenchmarkProblem(
@@ -336,7 +354,7 @@ if __name__ == "__main__":
                 seed=0,
             ),
             [1_000_000],
-            10_000,
+            TestConfig(Type="LHS", N_total_points=200_000),
         ),
     ]
 
@@ -352,8 +370,8 @@ if __name__ == "__main__":
     # Run Loop
     for prob_case in tqdm(problems, desc="Benchmark Problems"):
         prob = prob_case[0]
-        N_pts_per_dim_test = prob_case[2]
         N_TRAIN_values = sorted(prob_case[1])
+        test_config = prob_case[2]
 
         results = []
         print(f"\n--- Running Benchmarks for {prob.name} ---")
@@ -380,7 +398,7 @@ if __name__ == "__main__":
                 result = run_experiment(
                     prob=prob,
                     N_train=N_TRAIN,
-                    N_pts_per_dim_test=N_pts_per_dim_test,
+                    test_config=test_config,
                     ATOL=atol,
                     RTOL=rtol,
                     LIPSCHITZ_EST=LIPSCHITZ_EST,
@@ -390,6 +408,7 @@ if __name__ == "__main__":
                 if _HAS_GPU:
                     # Clear GPU memory between runs
                     mempool.free_all_blocks()  # type: ignore
+                    pass
                 log_mem_stats("After Experiment")
 
         # Conver to DataFrame
