@@ -2,23 +2,16 @@
 
 import logging
 import time
-import warnings
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+import cupy as cp
 import numpy as np
+from cuml.cluster import KMeans as cuKMeans
 from sklearn.cluster import KMeans
 
+from src import _HAS_GPU
 from src.two_means import two_means_pca_threshold
-
-try:
-    import cupy as cp
-    from cuml.cluster import KMeans as cuKMeans
-
-    _HAS_GPU = cp.is_available()
-except Exception:
-    _HAS_GPU = False
-    warnings.warn("CuPy or cuML not available; GPU acceleration will be disabled.")
 
 CP_DTYPE = cp.float64 if _HAS_GPU else None  # type: ignore
 NP_DTYPE = np.float64

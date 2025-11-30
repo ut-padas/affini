@@ -8,7 +8,8 @@ import numpy as np
 from array_api_compat import array_namespace
 from cuml.neighbors import NearestNeighbors as cuMLNearestNeighbors
 
-from src.adaptive_clustering import _HAS_GPU, adaptive_cluster_algorithm
+from src import _HAS_GPU
+from src.adaptive_clustering import adaptive_cluster_algorithm
 from src.data_sampler import DataSampler
 from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
 
