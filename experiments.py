@@ -11,6 +11,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from src.logging_config import log_mem_stats
+from src.problems.affine import AFFINE_DATA_DIM, AFFINE_F_DIM, affine, affine_grad
 from src.problems.borehole import borehole, borehole_grad
 from src.problems.dixon_price import dixon_price, dixon_price_grad
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess
@@ -165,9 +166,9 @@ class ExperimentResult:
 
 @dataclass
 class TestConfig:
-    Type: Literal["LHS", "Grid"]
-    N_points_per_dim: Optional[int] = None  # For Grid
-    N_total_points: Optional[int] = None  # For LHS
+    method: Literal["LHS", "Grid"]
+    n_points_per_dim: Optional[int] = None  # For Grid
+    n_total_points: Optional[int] = None  # For LHS
 
 
 def estimate_lipschitz_constant(
@@ -232,16 +233,16 @@ def run_experiment(
     train_time = time.perf_counter() - t0
 
     # 2. Evaluate
-    if test_config.Type == "Grid":
-        assert test_config.N_points_per_dim is not None
-        X_test = DataSampler.sample_grid(prob.domain, test_config.N_points_per_dim)
-    elif test_config.Type == "LHS":
-        assert test_config.N_total_points is not None
+    if test_config.method == "Grid":
+        assert test_config.n_points_per_dim is not None
+        X_test = DataSampler.sample_grid(prob.domain, test_config.n_points_per_dim)
+    elif test_config.method == "LHS":
+        assert test_config.n_total_points is not None
         X_test = DataSampler.sample_latin_hypercube(
-            prob.domain, test_config.N_total_points
+            prob.domain, test_config.n_total_points
         )
     else:
-        raise ValueError(f"Unknown TestConfig Type: {test_config.Type}")
+        raise ValueError(f"Unknown TestConfig Method: {test_config.method}")
 
     N_test = X_test.shape[0]
     X_test = xp.asarray(X_test)
@@ -299,7 +300,7 @@ def run_experiment(
 
 
 if __name__ == "__main__":
-    from src.adaptive_clustering import _HAS_GPU
+    from src import _HAS_GPU
     from src.logging_config import setup_logging
 
     if _HAS_GPU:
@@ -325,7 +326,7 @@ if __name__ == "__main__":
                 min_pts_per_cluster=100,
             ),
             [400_000, 800_000],
-            TestConfig(Type="Grid", N_points_per_dim=300),
+            TestConfig(method="Grid", n_points_per_dim=300),
         ),
         (
             BenchmarkProblem(
@@ -340,7 +341,7 @@ if __name__ == "__main__":
                 min_pts_per_cluster=100,
             ),
             [400_000, 800_000],
-            TestConfig(Type="LHS", N_total_points=10_000),
+            TestConfig(method="LHS", n_total_points=10_000),
         ),
         (
             BenchmarkProblem(
@@ -356,7 +357,7 @@ if __name__ == "__main__":
                 max_clusters_est=64_000_000,
             ),
             [400_000],
-            TestConfig(Type="LHS", N_total_points=10_000),
+            TestConfig(method="LHS", n_total_points=10_000),
         ),
         (
             BenchmarkProblem(
@@ -372,7 +373,23 @@ if __name__ == "__main__":
                 max_clusters_est=16_000_000,
             ),
             [100_000],
-            TestConfig(Type="LHS", N_total_points=10_000),
+            TestConfig(method="LHS", n_total_points=10_000),
+        ),
+        (
+            BenchmarkProblem(
+                name=f"Affine-{AFFINE_DATA_DIM}D",
+                f=affine,
+                grad=affine_grad,
+                hess=None,
+                domain=np.array([[0.0, 1.0]] * AFFINE_DATA_DIM),
+                data_dim=AFFINE_DATA_DIM,
+                f_dim=AFFINE_F_DIM,
+                num_initial_clusters=100,
+                min_pts_per_cluster=100,
+                max_clusters_est=10_000_000,
+            ),
+            [1_000_000],
+            TestConfig(method="LHS", n_total_points=10_000),
         ),
         (
             BenchmarkProblem(
@@ -398,7 +415,7 @@ if __name__ == "__main__":
                 min_pts_per_cluster=50,
             ),
             [1_000_000],
-            TestConfig(Type="LHS", N_total_points=200_000),
+            TestConfig(method="LHS", n_total_points=200_000),
         ),
     ]
 
