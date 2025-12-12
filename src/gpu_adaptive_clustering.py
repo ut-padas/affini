@@ -81,6 +81,17 @@ def get_adaptive_batch_size(
 
     Returns:
         int: Maximum batch size that fits in memory.
+
+    Notes:
+        Memory footprint calculation per point during the dense calculation phase:
+        We sum up the dimensions of the largest arrays created during the batch loop:
+        1. aug_pts: (N, D)
+        2. centroids_expanded: (N, D)
+        3. dx_centroid: (N, D)
+        4. J_expanded: (N, F, D) -> usually the bottleneck
+        5. F_expanded, F_taylor, F_true, linear_approx: 4 * (N, F)
+        6. Errors: 2 * (N,)
+        7. Split buffers (worst case all split): sorted_pts (N, D) + eigenvectors (N, D)
     """
     try:
         pynvml.nvmlInit()
@@ -92,29 +103,9 @@ def get_adaptive_batch_size(
         # Fallback if NVML fails
         return 1_000_000
 
-    # Size of data type in bytes (e.g., 8 for float64)
     dtype_size = dtype.itemsize  # type: ignore
-
-    # Calculate memory footprint per point during the dense calculation phase
-    # We sum up the dimensions of the largest arrays created during the batch loop
-    # 1. aug_pts: (N, D)
-    # 2. centroids_expanded: (N, D)
-    # 3. dx_centroid: (N, D)
-    # 4. J_expanded: (N, F, D) -> usually the bottleneck
-    # 5. F_expanded, F_taylor, F_true, linear_approx: 4 * (N, F)
-    # 6. Errors: 2 * (N,)
-    # 7. Split buffers (worst case all split): sorted_pts (N, D) + eigenvectors (N, D)
-
-    per_point_scalars = (
-        3 * data_dim  # Pts, Centroids, dx
-        + f_dim * data_dim  # Jacobian (Heavy!)
-        + 4 * f_dim  # Function vals
-        + 2  # Errors
-        + 2 * data_dim  # Sorting/Splitting buffers
-    )
+    per_point_scalars = 3 * data_dim + f_dim * data_dim + 4 * f_dim + 2 + 2 * data_dim
     bytes_per_point = dtype_size * per_point_scalars
-
-    # Add a tiny constant overhead for indexing arrays (int32)
     bytes_per_point += 4 * 3  # indices, starts, counts
 
     usable_mem = free_mem * safety_factor
