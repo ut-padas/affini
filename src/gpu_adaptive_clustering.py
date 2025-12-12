@@ -810,8 +810,8 @@ if __name__ == "__main__":
         DTYPE=DTYPE,
         BATCH_SIZE=BATCH_SIZE,
         LOG_MEM_STATS=True,
-        MOVE_INTERMEDIATE_TO_HOST=True,
-        STORE_FINAL_ARRAYS_ON_HOST=True,
+        MOVE_INTERMEDIATE_TO_HOST=False,
+        STORE_FINAL_ARRAYS_ON_HOST=False,
     )
 
     print(f"Final Cluster Count: {len(result[0])}")
