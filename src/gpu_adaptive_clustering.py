@@ -787,7 +787,7 @@ if __name__ == "__main__":
     N_INIT_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 100
     ATOL = RTOL = 1e-2
-    DATA_DIM = 100
+    DATA_DIM = 2
     F_DIM = 1
 
     MAX_DEPTH = 50
