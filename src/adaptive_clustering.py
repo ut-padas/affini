@@ -179,16 +179,23 @@ class AdaptiveClusterer:
         f: Callable,
         grad_f: Optional[Callable],
         cupy_f: Optional[Callable],
-    ) -> tuple[bool, float, float, float, np.ndarray, np.ndarray, Optional[np.ndarray]]:
+        level: int,
+    ) -> tuple[
+        bool,
+        float,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        Optional[np.ndarray],
+    ]:
         """
         Check if cluster violates Taylor approximation error bounds.
 
         Returns:
-            violated: whether cluster violates tolerances
-            max_error: maximum error in cluster
-            mean_error: mean error in cluster
+            acceptable: whether cluster is acceptable
             radius: cluster radius
             centroid: (1, D) cluster centroid
+            error_vec: (n,) error scalar for each point in cluster
             F_c: (1, FD) function value at centroid
             J_c: (1, FD, D) Jacobian at centroid
         """
@@ -207,24 +214,29 @@ class AdaptiveClusterer:
         else:
             F_taylor = F_c
 
-        err = np.linalg.norm(F_cluster - F_taylor, axis=1)
+        error_vec = np.linalg.norm(F_cluster - F_taylor, axis=1)
+        error_vec_norm = np.linalg.norm(error_vec, 2)
 
-        # Tolerance per point
-        if self.rtol is None:
-            thr = self.atol
+        F_cluster_norm = np.linalg.norm(F_cluster, "fro")
+        if F_cluster_norm > 0:
+            local_error_ratio = error_vec_norm / F_cluster_norm
         else:
-            thr = np.maximum(self.atol, self.rtol * np.linalg.norm(F_cluster, axis=1))
-        violated_mask = err > thr
-        violated = bool(violated_mask.any())
+            local_error_ratio = float("inf")
 
-        radius = (
-            float(np.max(np.linalg.norm(X_cluster - c, axis=1)))
-            if cluster_size > 0
-            else 0.0
-        )
-        max_error = float(err.max()) if cluster_size > 0 else 0.0
-        mean_error = float(err.mean()) if cluster_size > 0 else 0.0
-        return violated, max_error, mean_error, radius, c, F_c, J_c
+        radius = float(np.max(np.linalg.norm(dx, axis=1)))
+        N_level = int(self.num_initial_clusters * (2**level))
+
+        # Check if relative error is within tolerance
+        rel_ok = (self.rtol is not None) and (local_error_ratio <= self.rtol)
+
+        # Check if absolute error is within tolerance
+        abs_thr = float(self.atol / np.sqrt(N_level))
+        abs_ok = error_vec_norm <= abs_thr
+
+        # Final acceptance
+        acceptable = bool(rel_ok or abs_ok)
+
+        return acceptable, radius, c, error_vec, F_c, J_c
 
     def fit(
         self,
@@ -315,12 +327,13 @@ class AdaptiveClusterer:
                         # Append to final clusters directly
                         force_add = True
 
-                violated, max_error, mean_error, radius, c, F_c, J_c = (
-                    self._cluster_violation(X_cluster, f, grad_f, cupy_f)
+                acceptable, radius, c, error_vec, F_c, J_c = self._cluster_violation(
+                    X_cluster, f, grad_f, cupy_f, n_level
                 )
 
-                if not violated or force_add:
-                    # Accept cluster
+                if acceptable or force_add:
+                    max_error = float(np.max(error_vec))
+                    mean_error = float(np.mean(error_vec))
                     h_proxy = 2.0 * max_error / (radius**2) if radius > 0 else 0.0
                     final_clusters.append(
                         Cluster(
