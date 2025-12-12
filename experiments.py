@@ -361,6 +361,22 @@ if __name__ == "__main__":
         ),
         (
             BenchmarkProblem(
+                name="Rosenbrock-30D",
+                f=rosenbrock,
+                grad=rosenbrock_grad,
+                hess=rosenbrock_hess,
+                domain=np.array([[-3, 3]] * 30),
+                data_dim=30,
+                f_dim=1,
+                num_initial_clusters=100,
+                min_pts_per_cluster=100,
+                max_clusters_est=64_000_000,
+            ),
+            [400_000],
+            TestConfig(method="LHS", n_total_points=10_000),
+        ),
+        (
+            BenchmarkProblem(
                 name="Dixon-Price-4D",
                 f=dixon_price,
                 grad=dixon_price_grad,
@@ -384,7 +400,7 @@ if __name__ == "__main__":
                 domain=np.array([[0.0, 1.0]] * AFFINE_DATA_DIM),
                 data_dim=AFFINE_DATA_DIM,
                 f_dim=AFFINE_F_DIM,
-                num_initial_clusters=100,
+                num_initial_clusters=10,
                 min_pts_per_cluster=100,
                 max_clusters_est=10_000_000,
             ),
