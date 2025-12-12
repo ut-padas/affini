@@ -126,16 +126,17 @@ def adaptive_cluster_algorithm(
         
         abs_error = np.linalg.norm(evec, 2)
         rel_error = abs_error / np.linalg.norm(fvals_cluster, 'fro')
-        radius = np.max(np.linalg.norm(distance, axis=1))
+        radii = np.linalg.norm(distance, axis=1)
+        radius = np.max(radii)
 
         if (rtol is not None and rel_error < rtol) \
                 or (atol is not None and abs_error < atol) \
                 or num_levels == 0:
             # Tolerance is good; save values in cluster column
             if use_gradient:
-                lipschitz_constants = 2 / (radius**2) * evec
+                lipschitz_constants = 2 / (radii**2) * evec
             else:
-                lipschitz_constants = evec / radius
+                lipschitz_constants = evec / radii
             lipschitz = np.max(lipschitz_constants)
             lipschitz_var = np.var(lipschitz_constants)
             cluster_structure[j] = Cluster(k, centroid_params, fval_c, grad_c, lipschitz, radius, len(evec), lipschitz_var)
@@ -231,7 +232,8 @@ def _adaptive_cluster_algorithm_helper(
         
     abs_error = np.linalg.norm(evec, 2)
     rel_error = abs_error / np.linalg.norm(fvals_cluster, 'fro')
-    radius = np.max(np.linalg.norm(distance, axis=1))
+    radii = np.linalg.norm(distance, axis=1)
+    radius = np.max(radii)
 
     if radius == 0:
         # Dead branch of the tree. Not enough points to compute error
@@ -241,9 +243,9 @@ def _adaptive_cluster_algorithm_helper(
             or num_levels == 0:
         # Error good
         if use_gradient:
-            lipschitz_constants = 2 / (radius**2) * evec
+            lipschitz_constants = 2 / (radii**2) * evec
         else:
-            lipschitz_constants = evec / radius
+            lipschitz_constants = evec / radii
         lipschitz = np.max(lipschitz_constants)
         lipschitz_var = np.var(lipschitz_constants)
         left = Cluster(k, centroid_params, fval_c, grad_c, lipschitz, radius, len(evec), lipschitz_var)
@@ -299,7 +301,8 @@ def _adaptive_cluster_algorithm_helper(
 
     abs_error = np.linalg.norm(evec, 2)
     rel_error = abs_error / np.linalg.norm(fvals_cluster, 'fro')
-    radius = np.max(np.linalg.norm(distance, axis=1))
+    radii = np.linalg.norm(distance, axis=1)
+    radius = np.max(radii)
 
     if radius == 0:
         # Dead branch of the tree. Not enough variance of points to compute error (or a single point).
@@ -308,9 +311,9 @@ def _adaptive_cluster_algorithm_helper(
             or (atol is not None and abs_error <= (atol / np.sqrt(total_clusters))) \
             or num_levels == 0:
         if use_gradient:
-            lipschitz_constants = 2 / (radius**2) * evec
+            lipschitz_constants = 2 / (radii**2) * evec
         else:
-            lipschitz_constants = evec / radius
+            lipschitz_constants = evec / radii
         lipschitz = np.max(lipschitz_constants)
         lipschitz_var = np.var(lipschitz_constants)
         right = Cluster(k, centroid_params, fval_c, grad_c, lipschitz, radius, len(evec), lipschitz_var)

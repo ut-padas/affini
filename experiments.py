@@ -56,7 +56,7 @@ def SHCF(x: np.ndarray):
     if x.ndim == 1:
         return (4 - 2.1*x[0]**2 + x[0]**4/3)*x[0]**2 + x[0]*x[1] + (-4 + 4*x[1]**2)*x[1]**2
     elif x.ndim == 2:
-        return (4 - 2.1*x[:,0]**2 + x[:,0]**4/3)*x[:,0]**2 + x[:,0]*x[:,1] + (-4 + 4*x[:,1]**2)*x[:,1]**2 + scale
+        return (4 - 2.1*x[:,0]**2 + x[:,0]**4/3)*x[:,0]**2 + x[:,0]*x[:,1] + (-4 + 4*x[:,1]**2)*x[:,1]**2
 
 def grad_SHCF(x: np.ndarray):
 
@@ -672,24 +672,16 @@ def convergence_test_affine(tolmat, N_init, min_ppc=100):
 
 def test_a_function(f, f_combined, m, domain, atol=0.01, rtol=0.01, N_init=10000, min_ppc=50, save_surrogates=False):
 
-    if 1:
-        interpolant = NearODESurrogate()
-        interpolant.train_model_from_sampling(
-                f_combined, domain, m, N_init, 'LHS', True,
-                N_init_clusters=100, atol = atol, rtol = rtol, min_ppc = min_ppc,
-                check_guarantee_N_times=0, disp_time = True, use_gradient=True)
-    else:
-        training_data = generate_lorenz_sample_data(domain, 2, 0.25)
-        # TODO: need to do solves and fill in arguments below
-        interpolant = NearODESurrogate()
-        interpolant.train_model_from_data(training_data)
-        
-
+    interpolant = NearODESurrogate()
+    interpolant.train_model_from_sampling(
+            f_combined, domain, m, N_init, 'LHS', True,
+            N_init_clusters=100, atol = atol, rtol = rtol, min_ppc = min_ppc,
+            check_guarantee_N_times=0, disp_time = True, use_gradient=True)
     
     datavec = test_surrogate_error(interpolant, f, m, domain, atol, rtol, N_init)
 
     if save_surrogates:
-        save_surrogate(f'lorenz_surrogates/lorenz_surrogate_dt_0.25_atol_{atol}_rtol_{rtol}_F_2.pkl', interpolant)
+        save_surrogate(f'lorenz_surrogates/lorenz_surrogate_dt_0.15_atol_{atol}_rtol_{rtol}_F_2.pkl', interpolant)
 
     return datavec
 
@@ -752,7 +744,7 @@ def test_surrogate_error(surrogate: NearODESurrogate, f, m, domain, atol, rtol, 
             N_init,
             atol,
             rtol,
-            interpolant.N_sources,
+            surrogate.N_sources,
             (np.sum(no_g_good_err)+np.sum(no_g_bad_err)) / len(pts),
             np.sum(yes_g_good_err) / len(pts), 
             np.sum(yes_g_bad_err) / len(pts),
@@ -793,30 +785,68 @@ def test_lorenz(n, tf, atol=0.01, rtol=0.01, N_init=100000, min_ppc=50, save_sur
     return test_a_function(lambda x: solve_L96_ode(x,F,tf), lambda x: solve_L96_ode_with_sensitivities(x,F,tf),
             n, domain, atol, rtol, N_init, min_ppc, save_surrogates)
 
+
+def test_lorenz_on_manifold(n, tf, atol=0.01, rtol=0.01, min_ppc=50, save_surrogates=False):
+    
+    F = 2
+    domain = np.column_stack((-7*np.ones(n),7*np.ones(n)))
+    training_data = generate_lorenz_sample_data(domain, 2)
+    N_init = len(training_data)
+    solves = np.zeros((len(training_data),n))
+    for j in range(len(training_data)):
+        solves[j] = solve_L96_ode(training_data[j], F, tf)
+    # TODO: need to do solves and fill in arguments below
+    interpolant = NearODESurrogate()
+    interpolant.train_model_from_data(
+        training_data,
+        solves,
+        None,
+        True,
+        True,
+        lambda x: solve_L96_ode_with_sensitivities(x,F,tf),
+        N_init_clusters=100,
+        atol=atol,
+        rtol=rtol,
+        min_ppc=min_ppc,
+        disp_time=True
+    )
+    datavec = test_surrogate_error(interpolant, lambda x: solve_L96_ode(x,F,tf), n, domain, atol, rtol, N_init)
+
+    if save_surrogates:
+        save_surrogate(f'lorenz_surrogates/lorenz_surrogate_manifolds_dt_{tf}_atol_{atol}_rtol_{rtol}_F_{F}.pkl', interpolant)
+
+    return datavec
+
+
 def convergence_test_lorenz(n, tf, tolmat, N_init, min_ppc=100, save_surrogates=False):
-    convergence_test_a_function(lambda y1,y2,y3,y4: test_lorenz(n,tf,y1,y2,y3,y4,save_surrogates), tolmat, N_init, min_ppc, )
+    convergence_test_a_function(lambda y1,y2,y3,y4: test_lorenz(n,tf,y1,y2,y3,y4,save_surrogates), tolmat, N_init, min_ppc)
 
 
-def generate_lorenz_sample_data(domain, F, dt):
+def convergence_test_lorenz_manifolds(n, tf, tolmat, min_ppc=100, save_surrogates=False):
+    convergence_test_a_function(lambda y1,y2,y3,y4: test_lorenz_on_manifold(n,tf,y1,y2,y4,save_surrogates), tolmat, -1, min_ppc)
+
+
+def generate_lorenz_sample_data(domain, F):
     # pick 1000 random points
     n = len(domain)
-    N = 1000
+    N_solves = 1000
     l = domain[:,0]  # noqa: E741
     r = domain[:,1]
     sampler = qmc.LatinHypercube(d=n)
-    features = sampler.random(n=N)
+    features = sampler.random(n=N_solves)
     features = qmc.scale(features, l, r)
 
     # solve ODEs for each of these on uniform time stepping grid (i.e. every 0.2 seconds)
     # take 1000 * 50 = 50000 training points, which lie on "manifolds" of solutions
     dt = 0.2
-    tf = 10
+    tf = 20
+    N_steps = int(tf / dt)
     tvec = np.arange(0, tf+1e-6, dt)
     p = np.array([F])
-    training_data = np.zeros(n, N * (tf / dt))
+    training_data = np.zeros((n, N_solves * N_steps))
     for j, feature in enumerate(features):
-        sol = solve_ivp(lambda t,x: L96(x,p), [0,tf], x0, max_step=0.1, atol=1e-6, rtol=1e-4, t_eval=tvec)
-        training_data[:,j*N:(j+1)*N] = sol.x[:,1:]
+        sol = solve_ivp(lambda t,x: L96(x,p), [0,tf], features[j], max_step=0.1, atol=1e-6, rtol=1e-4, t_eval=tvec)
+        training_data[:,j*N_steps:(j+1)*N_steps] = sol.y[:,1:]
     
     return training_data.T
 
@@ -863,13 +893,13 @@ def lorenz_time_stepping_test(interpolant: NearODESurrogate, d, F, dt, x0, tf):
 
     
     # Compare solutions
-    print(f'Number of evaluations in trust region: {np.sum(in_trust_region)}/{len(in_trust_region)-1}')
     two_error = np.linalg.norm(x_surrogate - x_exact, 2, axis=0)
     fig = plt.figure()
     ax = fig.add_subplot()
     ax.plot(tvec, two_error)
     ax.set(xlabel='$t$', ylabel='$L^2$ distance from exact')
-    ax.scatter(tvec[in_trust_region], two_error[in_trust_region], s=5, label='Evaluations in Trust Region', c='red')
+    ax.scatter(tvec[in_trust_region], two_error[in_trust_region], s=5, label=f'Evaluations in Trust Region {np.sum(in_trust_region)}/{len(in_trust_region)-1}', c='red')
+    ax.legend()
 
     # Plot on top of each other
     fig = plt.figure()
@@ -908,7 +938,7 @@ if __name__ == '__main__':
 
     # Rosenbrock 2D
     elif 0:
-        convergence_test_2d_rosenbrock(tolmat, 400000, 100)
+        convergence_test_2d_rosenbrock(tolmat, 100000, 100)
 
     # Borehole function (d=8)
     elif 0:
@@ -932,7 +962,7 @@ if __name__ == '__main__':
 
     # Lorenz 96 ODE solve
     elif 0:
-        dt = 0.25
+        dt = 0.15
         tolmat = np.array([
             [0.5,  0.1],
             [0.2,  0.05],
@@ -940,7 +970,19 @@ if __name__ == '__main__':
             [0.05, 0.01],
             [0.025,0.005]
         ])
-        convergence_test_lorenz(4, dt, tolmat, 20000, 100, True)
+        convergence_test_lorenz(4, dt, tolmat, 50000, 100, True)
+
+    # Lorenz 96 ODE solves with manifold training data
+    elif 0:
+        dt = 0.5
+        tolmat = np.array([
+            [0.5,  0.1],
+            [0.2,  0.05],
+            [0.1,  0.02],
+            [0.05, 0.01],
+            [0.025,0.005]
+        ])
+        convergence_test_lorenz_manifolds(4, dt, tolmat, 100, True)
 
 
     elif 0:
@@ -997,15 +1039,14 @@ if __name__ == '__main__':
         atol = 0.025
         rtol = 0.005
         F = 2
-        dt = 0.25
+        dt = 0.2
         tf = 50
         # x0 = 0.9 * np.ones(4)
-        # x0[0] += 0.01
         # x0 = np.arange(4)
         x0 = np.random.uniform(-5, 5, 4)
         # interpolant = train_lorenz_surrogate(N_init, d, atol, F, dt)
         # save_surrogate(f'lorenz_surrogates/lorenz_surrogate_dt_{dt}_atol_{atol}_F_{F}.pkl', interpolant)
-        interpolant: NearODESurrogate = load_surrogate(f'lorenz_surrogates/lorenz_surrogate_dt_{dt}_atol_{atol}_rtol_{rtol}_F_{F}.pkl')
+        interpolant: NearODESurrogate = load_surrogate(f'lorenz_surrogates/lorenz_surrogate_manifolds_dt_{dt}_atol_{atol}_rtol_{rtol}_F_{F}.pkl')
         lorenz_time_stepping_test(interpolant, d, F, dt, x0, tf)
 
     elif 0:
@@ -1037,7 +1078,3 @@ if __name__ == '__main__':
         plt.title('Tree Levels')
 
         plt.show()
-
-
-
-
