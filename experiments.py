@@ -340,7 +340,7 @@ if __name__ == "__main__":
                 num_initial_clusters=100,
                 min_pts_per_cluster=100,
             ),
-            [400_000, 800_000],
+            [400_000, 800_000, 3_200_000, 10_000_000, 100_000_000],
             TestConfig(method="LHS", n_total_points=10_000),
         ),
         (
