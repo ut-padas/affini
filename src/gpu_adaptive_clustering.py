@@ -517,31 +517,48 @@ def adaptive_cluster_algorithm_gpu(
             scatter_max(cluster_radii, aug_ids, dist_from_centroid)
             del dx_centroid, dist_from_centroid
 
-            # Compute the error threshold for each point
-            approximation_error = norm(F_true - F_taylor, axis=1)
+            # Compute the error vector
+            error_vec = norm(F_true - F_taylor, axis=1)  # shape (aug_total,)
+
+            # Compute absolute error per cluster: e_abs,k = ||e(x_i)||_2
+            error_sq = cp.multiply(error_vec, error_vec)
+            cluster_abs_err = cp.sqrt(cp.add.reduceat(error_sq, aug_starts))
+            del error_sq
+
+            # Compute Frobenius norm of true function values per cluster
+            F_true_pt_norm = norm(F_true, axis=1)
+            F_true_pt_norm_sq = cp.multiply(F_true_pt_norm, F_true_pt_norm)
+            cluster_frob_norm = cp.sqrt(cp.add.reduceat(F_true_pt_norm_sq, aug_starts))
+            del F_true_pt_norm, F_true_pt_norm_sq, F_true, F_taylor
+
+            # Cluster relative error: e_rel,k = e_abs,k / ||F_cluster||_F
+            cluster_rel_err = cp.where(
+                cluster_frob_norm > 0, cluster_abs_err / cluster_frob_norm, cp.inf
+            )
+
+            N_level = NUM_INITIAL_CLUSTERS * (2**current_depth)
+            abs_thr = ATOL / cp.sqrt(cp.asarray(N_level, dtype=DTYPE))
+
+            abs_ok = cluster_abs_err <= abs_thr
             if RTOL is None:
-                error_threshold = ATOL
+                # No need to check relative error
+                is_converged = abs_ok
             else:
-                error_threshold = maximum(ATOL, RTOL * norm(F_true, axis=1))
-            del F_taylor, F_true
+                rel_ok = cluster_rel_err <= RTOL
+                is_converged = rel_ok | abs_ok
+                del rel_ok
+            del cluster_abs_err, cluster_frob_norm, cluster_rel_err, abs_ok
 
             # Compute the max and mean errors per cluster
             cluster_max_errors = cp.zeros(len(aug_sizes), dtype=DTYPE)
-            scatter_max(cluster_max_errors, aug_ids, approximation_error)
+            scatter_max(cluster_max_errors, aug_ids, error_vec)
 
-            cluster_mean_errors = cp.add.reduceat(approximation_error, aug_starts)
+            cluster_mean_errors = cp.add.reduceat(error_vec, aug_starts)
             cp.divide(cluster_mean_errors, aug_sizes, out=cluster_mean_errors)
-
-            # Identify violating clusters by counting points exceeding error threshold per
-            # cluster
-            is_violating_pt = (approximation_error > error_threshold).astype(int32)
-            del approximation_error, error_threshold
-
-            violating_counts_per_cluster = cp.add.reduceat(is_violating_pt, aug_starts)
-            has_violating_pts = violating_counts_per_cluster > 0
-            is_converged = ~has_violating_pts
+            del error_vec
 
             # Update bad cluster count
+            has_violating_pts = ~is_converged
             num_violating_clusters = int(cp.sum(has_violating_pts))
             total_bad_clusters_level += num_violating_clusters
 
@@ -696,8 +713,6 @@ def adaptive_cluster_algorithm_gpu(
                 offset += chunk_len
 
                 del chunk_gpu, chunk_host
-
-            # Clear CPU RAM
             del next_level_pts_list
 
             # Handle Sizes (keep logic similar to before)
@@ -711,8 +726,8 @@ def adaptive_cluster_algorithm_gpu(
                 # (Assuming split logic outputs valid points only for valid sizes)
             else:
                 CLUSTER_SIZES = next_sizes_all
-
             del next_sizes_all
+
             CLUSTER_STARTS = get_cluster_starts(CLUSTER_SIZES)
 
         if LOG_MEM_STATS:
