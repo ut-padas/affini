@@ -125,7 +125,7 @@ def bound_hessian_SDP(points, f, df):
 
     num_points, dimension = points.shape
 
-    errors = linear_interpolant_errors(points, f, df)
+    errors = linear_interpolant_errors_one_cluster(points, f, df)
 
     # formulate and solve linear optimization problem
     # build constraints and variables
@@ -232,13 +232,12 @@ def plot_ellipse(A, c, r, ax, color, label='', plot_axes=False):
 ##### HELPER FUNCTIONS
 
 
-def linear_interpolant_errors(points, f, df):
+def linear_interpolant_errors_one_cluster(points, centroid, f, df):
 
-    # first get all the f data (for simplicity, do solves in function)
+    # first get all the f data (for simplicity, do solves here)
     f_points = f(points)
 
     # compute centroid and function value (and gradient)
-    centroid = np.mean(points, axis=0)
     f_centroid = f(centroid)
     df_centroid = df(centroid)
     x_diffs = points - centroid
@@ -246,6 +245,79 @@ def linear_interpolant_errors(points, f, df):
     # compute exact errors from linear interpolant
     errors = np.abs(f_points - (f_centroid + (x_diffs @ df_centroid)))
     return errors
+
+
+
+def measure_L2_linear_interpolant_error(domain, centroids, f, df):
+    '''
+    Approximates the L2 error of a linear interpolant of
+    nearest neighbors, defined by the centroids.
+
+    Arguments:
+        - domain: where we sample points to compute the error
+        - centroids: the centers for the Taylor expansions and nearest neighbor sources
+        - f: the underlying function
+        - df: the underlying gradient
+    '''
+
+    # make sure centroids is a matrix of points.
+    # If it a single point we need to turn it into a matrix
+    if centroids.ndim == 1:
+        centroids = centroids[np.newaxis, ...]
+
+    # generate points from uniformly sampled grid
+    N = 1000
+    test_points = generate_random_box_points(N, domain)
+
+    # compute L2 distances squared
+    diff = centroids[:, None, :] - test_points[None, :, :]
+    distances = np.sum(diff**2, axis=-1)
+
+    # take minimum row-wise to determine index of nearest neighbor
+    nn_indices = np.argmin(distances, axis=0)
+
+    # compute error for each local linear interpolant
+    errorsum = 0
+    for i, centroid in enumerate(centroids):
+        errors = linear_interpolant_errors_one_cluster(test_points[nn_indices==i], centroid, f, df)
+        errorsum += np.sum(errors ** 2)
+    
+    # last, use this to approximate L2 error via Monte Carlo
+    error = np.sqrt(errorsum / N)
+    return error
+
+
+
+# Assumes points are centered at ellipse centroid defined by Q
+def metric_adaptive_clustering(points, Q, n_clusters=2):
+
+    # eigenvalue decomposition to compute square root
+    D, U = np.linalg.eigh(Q)
+    B = U * (D ** 0.5) @ U.T 
+    B_inv = U * (D ** -0.5) @ U.T
+
+    # rotate points
+    rotated_points = points @ B
+
+    # cluster in new space
+    km = KMeans(n_clusters=n_clusters)
+    labels = km.fit_predict(rotated_points)
+    centroids = km.cluster_centers_
+
+    # rotate clusters back
+    centroids_original_frame = centroids @ B_inv
+    return centroids_original_frame, labels
+
+
+
+def normal_clustering(points, n_clusters=2):
+
+    km = KMeans(n_clusters=n_clusters)
+    labels = km.fit_predict(points)
+    centroids = km.cluster_centers_
+    return centroids, labels
+
+
 
 
 
@@ -316,7 +388,7 @@ def test_trust_region_via_hessian_sdp(points, atol, f, df):
     x_diffs = points - centroid
     Q = bound_hessian_SDP(x_diffs, f, df)
     dim = len(Q)
-    errors = linear_interpolant_errors(points, f, df)
+    errors = linear_interpolant_errors_one_cluster(points, f, df)
     
     # For comparison, compute old trust radius as well
     L_old = np.max(2 * errors / (np.linalg.norm(x_diffs, axis=1) ** 2))
@@ -369,7 +441,7 @@ def test_clustering_rotating_frame(points, atol, f, df):
     n_pts, dim = points.shape
     centroid = points.mean(axis=0)
     diffs = points - centroid
-    errors = linear_interpolant_errors(points, f, df)
+    errors = linear_interpolant_errors_one_cluster(points, centroid, f, df)
 
     # sort points
     good_error = errors <= atol
@@ -382,9 +454,11 @@ def test_clustering_rotating_frame(points, atol, f, df):
     Q2 = fit_ellipse_PCA(diffs[good_error])
 
     # plot everything
-    fig1, ax1 = plt.subplots()
-    domain = compute_domain_of_plot(points)
-    plot_contours(domain, f, ax1)
+    fig, ax = plt.subplots(1, 2)
+    ax1 = ax[0]
+    ax2 = ax[1]
+    domain_of_plot = compute_domain_of_plot(points)
+    plot_contours(domain_of_plot, f, ax1)
     scatter_points(points[good_error], 'black', ax1)
     scatter_points(points[bad_error], 'gray', ax1)
     plot_ellipse(Q1, centroid, 1, ax1, 'cyan', 'MVEE', plot_axes=True)
@@ -398,8 +472,6 @@ def test_clustering_rotating_frame(points, atol, f, df):
     # go from unit ball to ellipse via (B_inv @ y) + c
     B_inv = U * (D ** -0.5) @ U.T
 
-    fig2, ax2 = plt.subplots()
-    domain = compute_domain_of_plot(points)
     scatter_points(rotated_points[good_error], 'black', ax2)
     scatter_points(rotated_points[bad_error], 'grey', ax2)
     plot_ellipse(np.eye(dim), np.zeros(2), 1, ax2, 'cyan')
@@ -420,17 +492,35 @@ def test_clustering_rotating_frame(points, atol, f, df):
 
     # compare to clustering straight out of the box
     # (kmeans, not QR thing Prajwal is doing, which might turn out different)
-    km2 = KMeans(n_clusters=n_clusters)
-    km2.fit(points)
-    cluster_centroids_2 = km2.cluster_centers_
+    cluster_centroids_2, _ = normal_clustering(points, n_clusters=2)
     scatter_points(cluster_centroids_2, 'magenta', ax1, 'Old')
 
 
-    fig1.legend()
-    fig2.legend()
     ax1.set_title('Metric Adaptive Clustering Test: Rosenbrock')
+    ax1.legend()
     ax2.set_title('Transformed Coordinate Space (SVD)')
+
+
+    # I wrote a function to do all of this nicely (to plug into algorithm). Here is how to use:
+    # Although probably instead of taking Q, it should take U and D so we don't have to decompose each time
+    # centroids_unscaled, _ = metric_adaptive_clustering(diffs, Q2, n_clusters=2)
+    # cluster_centroids_original_frame_2 = centroids_unscaled + centroid
+
+
+    # Last, approximate l2 error over domain (Monte-Carlo)
+    domain = np.column_stack((np.min(points, axis=0), np.max(points, axis=0)))
+    error_one_cluster = measure_L2_linear_interpolant_error(domain, centroid, f, df)
+    error_two_clusters_old = measure_L2_linear_interpolant_error(domain, cluster_centroids_2, f, df)
+    error_two_clusters_new = measure_L2_linear_interpolant_error(domain, cluster_centroids_original_frame, f, df)
+
+    # display results
+    print(f'\nL2 error from one cluster: {error_one_cluster}')
+    print(f'L2 error from two clusters, old scheme: {error_two_clusters_old}')
+    print(f'L2 error from two clusters, new scheme: {error_two_clusters_new}')
     plt.show()
+
+
+
 
 
 
@@ -561,14 +651,14 @@ def goldstein_price(X):
 if __name__ == '__main__':
 
 
-    N = 2000
+    N = 200
     d = 2
     size = 0.1
-    # points = generate_random_ellipse_points(N, d, size)
-    points = generate_random_box_points_randloc(N, d, size)
+    points = generate_random_ellipse_points(N, d, size)
+    # points = generate_random_box_points_randloc(N, d, size)
     # domain = np.array([
-    #     [1.9, 2.1],
-    #     [1.9, 2.1]
+    #     [-0.6, -0.55],
+    #     [-0.2, -0.1]
     # ])
     # points = generate_random_box_points(N, domain)
 
