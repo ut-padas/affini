@@ -1,7 +1,7 @@
 from collections.abc import Callable
 import pickle
 import numpy as np
-from adaptive_clustering import adaptive_cluster_algorithm, flatten_cluster_centers_with_gradient
+from adaptive_clustering_2 import adaptive_cluster_algorithm, flatten_cluster_centers_with_gradient
 from nn_inference import NN_Inference
 from scipy.stats import qmc
 import time
@@ -91,7 +91,7 @@ class NearODESurrogate:
             k, cluster_tree = adaptive_cluster_algorithm(features, oracle, atol, rtol, \
                     N_init_clusters, min_ppc, use_gradient, labels, seed)
             
-            new_features, new_labels, new_gradients, new_hessians, radii, n_pts, hessian_vars, tree_levels = \
+            new_features, new_labels, new_gradients, trust_ellipses, n_pts, tree_levels = \
                     flatten_cluster_centers_with_gradient(k, n, m, cluster_tree)
             
             
@@ -101,23 +101,16 @@ class NearODESurrogate:
             new_features = features
             new_labels = labels
             new_gradients = gradients
-            new_hessians = None
-            radii = None
+            trust_ellipses = None
             n_pts = np.ones(len(new_features))
-            hessian_vars = None
             tree_levels = np.zeros(len(new_features))
             k = len(features)
 
 
         # Put these into FAISS
-        self.KNN_search = NN_Inference(new_features, new_labels, new_gradients, new_hessians, radii, n_pts, hessian_vars, tree_levels)
+        self.KNN_search = NN_Inference(new_features, new_labels, new_gradients, trust_ellipses, n_pts, tree_levels)
         self._model_trained = True
         self.N_sources = k
-
-
-        # Check the norms of the gradients and hessians
-        # self.KNN_search.show_source_information()
-
 
         # Computational guarantee: check distance to all training points
         if do_clustering and L_global is not None and check_guarantee_N_times > 0:
@@ -234,27 +227,26 @@ class NearODESurrogate:
     # Otherwise, targets should be an N*p matrix, where p is the number of parameters.
     def evaluate(self,
         targets: np.ndarray,
-        k=1,
         disp_time=False,
-        L=None, # if defined, will give warning if targets are outside of the guaranteed tolerance
-        recluster=False, # if True, will take points outside of computational guarantee
-            # and put them in cluster algorithm. Then add these to faiss index
-        alpha=1, # fudge factor for the Hessian approximations
     ):
-
         if self._model_trained:
             if targets.ndim == 1:
-                predictions, unguaranteed_points = self.KNN_search.predict(targets.reshape(len(targets), 1),
-                        k, disp_time=disp_time, L_global=L, atol=self.atol, rtol=self.rtol, alpha=alpha)
+                predictions, unguaranteed_points = self.KNN_search.predict(
+                    targets.reshape(len(targets), 1),
+                    self.atol,
+                    self.rtol,
+                    disp_time
+                )
             else:
-                predictions, unguaranteed_points = self.KNN_search.predict(targets, k,
-                        disp_time=disp_time, L_global=L, atol=self.atol, rtol=self.rtol, alpha=alpha)
+                predictions, unguaranteed_points = self.KNN_search.predict(
+                    targets,
+                    self.atol,
+                    self.rtol,
+                    disp_time
+                )
 
             if np.sum(unguaranteed_points) > 3 * self.N_sources:
                 print('WARNING: too many points (3 * N_clusters) are outside of guarantee. Need more clusters.')
-
-            if recluster:
-                self.add_sources(targets[unguaranteed_points])
             
             return predictions, unguaranteed_points
                 

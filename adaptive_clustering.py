@@ -2,7 +2,6 @@
 import numpy as np
 from collections.abc import Callable
 from sklearn.cluster import KMeans
-from kmedoids import KMedoids
 
 
 # bi-tree structures that we use in the recursive algorithm implemented below
@@ -80,10 +79,7 @@ def adaptive_cluster_algorithm(
     k = 0 # counting number of clusters as we go
 
     # Call clustering library
-    if len(training_data_normalized) > 0: # TODO: talk about which clustering algorithm to use
-        km = KMeans(n_clusters=N_init_clusters, random_state=seed)
-    else:
-        km = KMedoids(n_clusters=N_init_clusters, metric='euclidean', random_state=seed)
+    km = KMeans(n_clusters=N_init_clusters, random_state=seed)
     labels = km.fit_predict(training_data_normalized)
     centroids_normalized = km.cluster_centers_
     centroids = centroids_normalized * std + mean
@@ -181,10 +177,7 @@ def _adaptive_cluster_algorithm_helper(
     params_normalized = (training_data - mean) / std
 
     N = 2  # split in half
-    if len(params_normalized) > 0: # TODO: talk about which clustering algorithm to use
-        km = KMeans(n_clusters=N, random_state=seed)
-    else:
-        km = KMedoids(n_clusters=N, metric='euclidean', random_state=seed)
+    km = KMeans(n_clusters=N, random_state=seed)
     labels = km.fit_predict(params_normalized)
     centroids_normalized = km.cluster_centers_
     centroids = centroids_normalized * std + mean

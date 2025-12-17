@@ -416,7 +416,7 @@ def test_1D(N_init = 2000, atol=0.01):
             N_init, 'uniform', True, N_init_clusters=20, atol=atol, alpha=100000)
 
     xx = np.linspace(domain[0], domain[1], N)
-    yy_interpolant, bad_points = interpolant.evaluate(xx.reshape((N, 1)), k=1, disp_time=True)
+    yy_interpolant, bad_points = interpolant.evaluate(xx.reshape((N, 1)), disp_time=True)
     yy_interpolant = yy_interpolant.flatten()
     yy_exact = one_d_example(xx)
     error = np.abs(yy_interpolant - yy_exact)
@@ -467,7 +467,7 @@ def test_2D_SHCF(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init 
     pts = np.column_stack((xv.flatten(), yv.flatten()))
 
     zz_exact = np.expand_dims(SHCF(pts), axis=1)
-    zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, k=1, disp_time=True, L=L, recluster=False, alpha=1)
+    zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, disp_time=True)
     abs_error = np.linalg.norm(zz_exact - zz_interpolant, 2, axis=1)
     rel_error = abs_error / np.linalg.norm(zz_exact, 2, axis=1)
     good_abs_error = abs_error <= atol
@@ -573,7 +573,7 @@ def test_2D_SHCF(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init 
         lambdagrid = np.linspace(0, 1, 1000)
         convexgrid = np.outer(lambdagrid, bad_pt) + np.outer((1-lambdagrid), bad_nn)
         f = SHCF(convexgrid)
-        eta, _ = interpolant.evaluate(convexgrid, k=1, disp_time=False)
+        eta, _ = interpolant.evaluate(convexgrid, disp_time=False)
         plt.figure()
         plt.plot(lambdagrid, f, '-', label='Exact')
         plt.plot(lambdagrid, eta, '--', label='Interpolant')
@@ -650,7 +650,8 @@ def test_2d_rosenbrock(atol=0.01, rtol=0.01, N_init = 100000, min_ppc = 50):
         [-2, 2],
         [-1, 3]
     ])
-    return test_a_function(rosenbrock, rosenbrock_combined, 1, domain, atol, rtol, N_init, min_ppc)
+    return test_a_function(rosenbrock, rosenbrock_combined, 1, domain, atol, rtol, N_init, min_ppc,
+                           save_surrogates=True)
 
 
 def convergence_test_2d_rosenbrock(tolmat, N_init, min_ppc=100):
@@ -681,7 +682,7 @@ def test_a_function(f, f_combined, m, domain, atol=0.01, rtol=0.01, N_init=10000
     datavec = test_surrogate_error(interpolant, f, m, domain, atol, rtol, N_init)
 
     if save_surrogates:
-        save_surrogate(f'lorenz_surrogates/lorenz_surrogate_dt_0.15_atol_{atol}_rtol_{rtol}_F_2.pkl', interpolant)
+        save_surrogate(f'rosenbrock_surrogates/rosenbrock_surrogate_atol_{atol}_rtol_{rtol}.pkl', interpolant)
 
     return datavec
 
@@ -700,7 +701,7 @@ def test_surrogate_error(surrogate: NearODESurrogate, f, m, domain, atol, rtol, 
     exact = np.zeros((len(pts),m))
     for j in range(len(exact)):
         exact[j] = f(pts[j])
-    interp, bad_pts = surrogate.evaluate(pts, k=1, disp_time=True)
+    interp, bad_pts = surrogate.evaluate(pts, disp_time=True)
 
     abs_error = np.linalg.norm(exact - interp, 2, axis=1)
     rel_error = abs_error / np.linalg.norm(exact, 2, axis=1)
@@ -937,7 +938,7 @@ if __name__ == '__main__':
         convergence_test_2D_SHCF(tolmat, 400000, domain)
 
     # Rosenbrock 2D
-    elif 0:
+    elif 1:
         convergence_test_2d_rosenbrock(tolmat, 100000, 100)
 
     # Borehole function (d=8)
@@ -1033,7 +1034,7 @@ if __name__ == '__main__':
         np.save('data/output_dt4.npy', labels)
         np.save('data/gradients_dt4.npy', gradients)
 
-    elif 1:
+    elif 0:
         d = 4
         # N_init = 100000
         atol = 0.025

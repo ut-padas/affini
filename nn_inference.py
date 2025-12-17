@@ -17,10 +17,8 @@ class NN_Inference:
         features: np.ndarray,
         labels: np.ndarray,
         gradients: np.ndarray = None,
-        hessians: np.ndarray = None,
-        trust_radii: np.ndarray = None,
+        trust_ellipses: np.ndarray = None,
         n_pts_per_cluster: np.ndarray = None,
-        hessian_vars: np.ndarray = None,
         tree_levels: np.ndarray = None
         ):
         
@@ -38,10 +36,8 @@ class NN_Inference:
         self.features = features
         self.labels = labels
         self.gradients = gradients
-        self.hessians = hessians
-        self.trust_radii = trust_radii
+        self.trust_ellipses = trust_ellipses
         self.n_pts_per_cluster = n_pts_per_cluster
-        self.hessian_vars = hessian_vars
         self.tree_levels = tree_levels
         self.P = p1
         self.M = m1
@@ -56,68 +52,37 @@ class NN_Inference:
     # uses the average of the k-nearest neighbors (default only uses 1 nearest neighbor)
     def predict(self,
         targets: np.ndarray,
-        k: int,
-        disp_time=False,
-        L_global = None, # if both L and tol are defined, use this to check if distance to nearest
-        atol = None, # neighbors are within computational guarantee.
+        atol, # neighbors are within computational guarantee.
         rtol = None,
-        alpha = 1, # extra fudge factor for the hessian approximations
+        disp_time=False,
     ):
 
         start_time = time.perf_counter()
         # TODO check if the length of each feature vector matches the length of training vectors
 
         # use FAISS to do k-nearest neighbors search
-        D, I = self._faiss_index.search(targets, k)  # noqa: E741
+        D, I = self._faiss_index.search(targets, 1)  # noqa: E741
         
-        predictions = np.zeros((len(targets),self.M)) # this should be a matrix
-        for j in range(k):
-            if self.gradients is None:
-                # gradient not specified; use only nearest neighbor
-                predictions += self.labels[I[:,j]]
-            else:
-                distance_vecs = targets - self.features[I[:,j]]
-                predictions += self.labels[I[:,j]] + np.einsum('ijk,ik->ij', self.gradients[I[:,j]], distance_vecs)
-
-        # check for points that are outside the theoretical guarantee
-        # FAISS distances are squared, so do not consider square root on rhs
-        has_gradients = np.max(np.abs(self.gradients)) > 0
-        if has_gradients:
-            if (atol is not None and rtol is not None and k==1):
-                local_atols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
-                local_rtols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * rtol * np.linalg.norm(predictions, 2, axis=1) / (alpha * self.hessians[I[:,0]]))
-                good_points = (D[:,0] < np.maximum(local_atols, local_rtols))
-            elif (atol is not None and L_global is not None and k==1):
-                local_tols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
-                global_tol = 2 * atol / L_global
-                good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
-            elif (atol is not None and k==1):
-                local_tols = np.minimum(self.trust_radii[I[:,0]] ** 2, 2 * atol / (alpha * self.hessians[I[:,0]]))
-                good_points = (D[:,0] < local_tols)
-            else:
-                good_points = np.full(len(D), True)
+        diffs = targets - self.features[I[:,0]]
+        if self.gradients is None:
+            # gradient not specified; use only nearest neighbor
+            predictions = self.labels[I[:,0]]
         else:
-            if (atol is not None and rtol is not None and k==1):
-                local_atols = np.minimum(self.trust_radii[I[:,0]] ** 2, (atol ** 2) / ((alpha * self.hessians[I[:,0]]) ** 2))
-                local_rtols = np.minimum(self.trust_radii[I[:,0]] ** 2, ((rtol * np.linalg.norm(predictions, 2, axis=1)) ** 2) / ((alpha * self.hessians[I[:,0]]) ** 2))
-                good_points = (D[:,0] < np.maximum(local_atols, local_rtols))
-            elif (atol is not None and L_global is not None and k==1):
-                local_atols = np.minimum(self.trust_radii[I[:,0]] ** 2, (atol ** 2) / ((alpha * self.hessians[I[:,0]]) ** 2))
-                global_tol = atol ** 2 / L_global ** 2
-                good_points = np.logical_or((D[:,0] < local_tols), np.logical_and(local_tols < D[:,0], D[:,0] < global_tol))
-            elif (atol is not None and k==1):
-                local_atols = np.minimum(self.trust_radii[I[:,0]] ** 2, (atol ** 2) / ((alpha * self.hessians[I[:,0]]) ** 2))
-                good_points = (D[:,0] < local_tols)
-            else:
-                good_points = np.full(len(D), True)
+            predictions = self.labels[I[:,0]] + np.einsum('ijk,ik->ij', self.gradients[I[:,0]], diffs)
 
+        trust_distances = np.einsum('ni,nij,nj->n', diffs, self.trust_ellipses[I[:,0]], diffs)
+
+        if rtol is not None:
+            good_points = trust_distances <= np.minimum(1, rtol * np.linalg.norm(predictions, 2, axis=1) / atol)
+        else:
+            good_points = trust_distances <= 1
 
         if disp_time:
             end_time = time.perf_counter()
             print(f'Time elapsed for predictions: {end_time-start_time} seconds')
 
         # return average
-        return predictions / k, np.logical_not(good_points)
+        return predictions, np.logical_not(good_points)
         # bad points is all False when tol is not specified
 
 

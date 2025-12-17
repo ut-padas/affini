@@ -293,6 +293,11 @@ def metric_adaptive_clustering(points, Q, n_clusters=2):
 
     # eigenvalue decomposition to compute square root
     D, U = np.linalg.eigh(Q)
+    D = np.maximum(D, 1e-10)
+    # Q should be psd, so eigenvalues should be positive.
+    # But if points fall approximately in a line, then one singular value is zero.
+    # This causes major problems when computing D ** -0.5.
+    # TODO: how to fix clusters that are approximately lines?
     B = U * (D ** 0.5) @ U.T 
     B_inv = U * (D ** -0.5) @ U.T
 
