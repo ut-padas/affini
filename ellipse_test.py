@@ -120,6 +120,28 @@ def fit_ellipse_SDP(points):
     return X.value
 
 
+# Assume points are normalized to the center of the ellipse
+def fit_ellipse_PCA_scaled(points):
+
+    num_points, dimension = points.shape
+    # points is all the cluster points stacked into rows.
+
+    U, Sigma, _ = np.linalg.svd(points.T)
+    # U contains the directions of the ellipse.
+
+    # Figure out scaling: for each direction j, project onto u_j.
+    # From the collection of projected vectors, the norm of the largest vector
+    # is the length of the axis.
+    D = np.zeros(dimension)
+    for j in range(dimension):
+        scalings = U[:,j] @ (points.T)
+        D[j] = np.linalg.norm(scalings, np.inf)
+
+    return (U * (D ** -2)) @ U.T
+
+
+
+
 # Assume points are normalized
 def bound_hessian_SDP(points, f, df):
 
@@ -456,7 +478,7 @@ def test_clustering_rotating_frame(points, atol, f, df):
     Q1 = fit_ellipse_SDP(diffs[good_error])
 
     # PCA version: uses SVD
-    Q2 = fit_ellipse_PCA(diffs[good_error])
+    Q2 = fit_ellipse_PCA_scaled(diffs[good_error])
 
     # plot everything
     fig, ax = plt.subplots(1, 2)
@@ -467,7 +489,7 @@ def test_clustering_rotating_frame(points, atol, f, df):
     scatter_points(points[good_error], 'black', ax1)
     scatter_points(points[bad_error], 'gray', ax1)
     plot_ellipse(Q1, centroid, 1, ax1, 'cyan', 'MVEE', plot_axes=True)
-    plot_ellipse(Q2, centroid, 0.1, ax1, 'orange', 'PCA')
+    plot_ellipse(Q2, centroid, 1, ax1, 'orange', 'PCA', plot_axes=True)
 
     # rotate coordinate frame
     D, U = np.linalg.eigh(Q2)
@@ -658,8 +680,8 @@ if __name__ == '__main__':
 
     N = 200
     d = 2
-    size = 0.1
-    points = generate_random_ellipse_points(N, d, size)
+    size = 0.05
+    points = generate_random_box_points_randloc(N, d, size)
     # points = generate_random_box_points_randloc(N, d, size)
     # domain = np.array([
     #     [-0.6, -0.55],

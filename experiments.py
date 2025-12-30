@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from nearode import NearODESurrogate, load_surrogate, save_surrogate
 from scipy.stats import qmc
 from scipy.integrate import solve_ivp
+from ellipse_test import plot_contours, scatter_points
 
 
 # One dimensional example
@@ -682,7 +683,7 @@ def test_a_function(f, f_combined, m, domain, atol=0.01, rtol=0.01, N_init=10000
     datavec = test_surrogate_error(interpolant, f, m, domain, atol, rtol, N_init)
 
     if save_surrogates:
-        save_surrogate(f'rosenbrock_surrogates/rosenbrock_surrogate_atol_{atol}_rtol_{rtol}.pkl', interpolant)
+        save_surrogate(f'rosenbrock_surrogates/rosenbrock_surrogate_2_atol_{atol}_rtol_{rtol}.pkl', interpolant)
 
     return datavec
 
@@ -865,6 +866,26 @@ def train_lorenz_surrogate(N_init, d, atol, F, dt):
             use_gradient = True)
     
     return interpolant
+
+
+def visualize_centroids_of_surrogate(surrogate: NearODESurrogate, domain, f):
+
+    fig, ax = plt.subplots()
+
+    # plot the contours of f on the axes
+    plot_contours(domain, f, ax)
+
+    # scatter all points of the surrogate
+    sources = surrogate.get_sources()
+    scatter_points(sources, 'red', ax, 'Source Points')
+
+    # TODO: plot trust regions
+
+    fig.legend()
+    plt.show()
+
+
+
 
 
 def lorenz_time_stepping_test(interpolant: NearODESurrogate, d, F, dt, x0, tf):
@@ -1079,3 +1100,12 @@ if __name__ == '__main__':
         plt.title('Tree Levels')
 
         plt.show()
+
+    elif 0:
+
+        surrogate = load_surrogate('rosenbrock_surrogates/rosenbrock_surrogate_2_atol_0.1_rtol_0.02.pkl')
+        domain = np.array([
+            [-2,2],
+            [-1,3]
+        ])
+        visualize_centroids_of_surrogate(surrogate, domain, rosenbrock)

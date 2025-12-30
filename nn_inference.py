@@ -57,32 +57,66 @@ class NN_Inference:
         disp_time=False,
     ):
 
+        N = len(targets)
+        k = 20
+
         start_time = time.perf_counter()
         # TODO check if the length of each feature vector matches the length of training vectors
 
         # use FAISS to do k-nearest neighbors search
-        D, I = self._faiss_index.search(targets, 1)  # noqa: E741
+        # Find additional nearest neighbors, only use ones which are in trust region.
+        Dist, Ind = self._faiss_index.search(targets, k)
+
+        in_trust_region = np.zeros((N, k))
+        for j in range(k):
+            near_neighbors = self.features[Ind[:,j]]
+            diffs = targets - near_neighbors
+            near_trust_ellipses = self.trust_ellipses[Ind[:,j]]
+            trust_distances = np.einsum('ni,nij,nj->n', diffs, near_trust_ellipses, diffs)
+            if rtol is not None:
+                near_fvals = self.labels[Ind[:,j]]
+                near_gradients = self.gradients[Ind[:,j]]
+                predictions = near_fvals + np.einsum('ijk,ik->ij', near_gradients, diffs)
+                in_trust_region[:,j] = trust_distances <= np.minimum(1, rtol * np.linalg.norm(predictions, 2, axis=1) / atol)
+            else:
+                in_trust_region[:,j] = trust_distances <= 1
         
-        diffs = targets - self.features[I[:,0]]
+        # print(np.sum(np.sum(in_trust_region, axis=1) > 0))
+        # For each point, figure out which (if any) are in trust region.
+        # Create another vector called Ind_close which is the tree traversal nearest neighbor
+        
+        # Zero out every index except for the first (thanks chatgpt)
+        in_trust_region = in_trust_region * (np.cumsum(in_trust_region, axis=1) == 1)
+
+        # Save vector of actual indexes
+        near_ind = np.sum(Ind * in_trust_region, axis=1)
+
+        # what if a point has no nearest neighbors in trust region? Just use nearest neighbor
+        bad_points = near_ind == 0
+        Dist, Ind = self._faiss_index.search(targets[bad_points], 1)
+        near_ind[bad_points] = Ind[:,0]
+        near_ind = near_ind.astype(int)
+
+        # All points have an assigned source now. Do computations
+        near_neighbors = self.features[near_ind]
+        near_fvals = self.labels[near_ind]
+        near_gradients = self.gradients[near_ind]
+        near_trust_ellipses = self.trust_ellipses[near_ind]
+
+        diffs = targets - near_neighbors
         if self.gradients is None:
             # gradient not specified; use only nearest neighbor
-            predictions = self.labels[I[:,0]]
+            predictions = near_fvals
         else:
-            predictions = self.labels[I[:,0]] + np.einsum('ijk,ik->ij', self.gradients[I[:,0]], diffs)
+            predictions = near_fvals + np.einsum('ijk,ik->ij', near_gradients, diffs)
 
-        trust_distances = np.einsum('ni,nij,nj->n', diffs, self.trust_ellipses[I[:,0]], diffs)
-
-        if rtol is not None:
-            good_points = trust_distances <= np.minimum(1, rtol * np.linalg.norm(predictions, 2, axis=1) / atol)
-        else:
-            good_points = trust_distances <= 1
+        trust_distances = np.einsum('ni,nij,nj->n', diffs, near_trust_ellipses, diffs)
 
         if disp_time:
             end_time = time.perf_counter()
             print(f'Time elapsed for predictions: {end_time-start_time} seconds')
 
-        # return average
-        return predictions, np.logical_not(good_points)
+        return predictions, bad_points
         # bad points is all False when tol is not specified
 
 
