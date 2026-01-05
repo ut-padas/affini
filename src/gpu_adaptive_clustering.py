@@ -129,7 +129,7 @@ def compute_leading_eigenvectors(
     Compute leading eigenvectors for multiple clusters using power iteration.
 
     Args:
-        pts (cp.ndarray): Flattened points for all clusters.
+        pts (cp.ndarray): Points for all clusters concatenated, shape (N, D).
         cluster_starts (cp.ndarray): Start indices for each cluster in points.
         cluster_sizes (cp.ndarray): Number of points in each cluster.
         num_clusters (int): Number of clusters.
@@ -200,7 +200,7 @@ def split_clusters_along_eigenvectors(
     """Split clusters by projecting along eigenvectors and sorting.
 
     Args:
-        pts (cp.ndarray): Flattened points for all clusters.
+        pts (cp.ndarray): Points for all clusters concatenated, shape (N, D).
         cluster_sizes (cp.ndarray): Number of points in each cluster.
         directions (cp.ndarray): Eigenvectors for splitting, shape (num_clusters, d).
 
@@ -621,6 +621,11 @@ def adaptive_cluster_algorithm_gpu(
                 pts_in_violating_clusters = has_violating_pts[aug_ids]
                 violating_pts = aug_pts[pts_in_violating_clusters]
 
+                if DIMS_TO_LOG_SCALE is not None:
+                    violating_pts[:, DIMS_TO_LOG_SCALE] = cp.log10(
+                        violating_pts[:, DIMS_TO_LOG_SCALE]
+                    )
+
                 violating_cluster_sizes = aug_sizes[has_violating_pts]
                 violating_cluster_starts = get_cluster_starts(violating_cluster_sizes)
 
@@ -641,6 +646,11 @@ def adaptive_cluster_algorithm_gpu(
                     cluster_sizes=violating_cluster_sizes,
                     directions=eigenvector_directions,
                 )
+
+                if DIMS_TO_LOG_SCALE is not None:
+                    split_pts[:, DIMS_TO_LOG_SCALE] = cp.power(
+                        10.0, split_pts[:, DIMS_TO_LOG_SCALE]
+                    )
 
                 # Interleave left and right sizes: [L0, R0, L1, R1, ...]
                 next_cluster_sizes = cp.empty(2 * num_violating_clusters, dtype=int32)
