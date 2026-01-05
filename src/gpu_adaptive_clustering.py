@@ -248,6 +248,7 @@ def adaptive_cluster_algorithm_gpu(
     MIN_PTS_PER_CLUSTER: int,
     ATOL: float,
     RTOL: Optional[float] = None,
+    DIMS_TO_LOG_SCALE: Optional[list] = None,
     MAX_DEPTH: int = 500,
     MAX_CLUSTERS_EST: int = 100_000,
     POWER_ITERS: int = 3,
@@ -271,6 +272,7 @@ def adaptive_cluster_algorithm_gpu(
         MIN_PTS_PER_CLUSTER (int): Minimum points per cluster during augmentation.
         ATOL (float): Absolute tolerance for convergence.
         RTOL (float): Relative tolerance for convergence. If None, only absolute tolerance is used.
+        DIMS_TO_LOG_SCALE (list): List of data dimensions to transform to log-scale before processing.
         MAX_DEPTH (int): Maximum depth for BFS splitting.
         MAX_CLUSTERS_EST (int): Estimated maximum number of clusters for pre-allocation.
         POWER_ITERS (int): Number of power iterations for eigenvector computation.
@@ -319,6 +321,11 @@ def adaptive_cluster_algorithm_gpu(
 
     # Initial clustering
     start_time_init = time.perf_counter()
+
+    # Convert to log-scale if specified
+    if DIMS_TO_LOG_SCALE is not None:
+        X_train[:, DIMS_TO_LOG_SCALE] = cp.log10(X_train[:, DIMS_TO_LOG_SCALE])
+
     kmeans = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=0)
     init_labels = kmeans.fit_predict(X_train)
     elapsed_init = time.perf_counter() - start_time_init
@@ -328,6 +335,10 @@ def adaptive_cluster_algorithm_gpu(
 
     # Sort data by label
     sort_idxs = cp.argsort(init_labels)
+
+    # Remove log-scale transform
+    if DIMS_TO_LOG_SCALE is not None:
+        X_train[:, DIMS_TO_LOG_SCALE] = cp.power(10.0, X_train[:, DIMS_TO_LOG_SCALE])
     CLUSTER_PTS = X_train[sort_idxs]
 
     _, CLUSTER_SIZES = cp.unique(init_labels[sort_idxs], return_counts=True)  # type: ignore

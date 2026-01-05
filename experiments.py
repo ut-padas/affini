@@ -138,6 +138,10 @@ class BenchmarkProblem:
     min_pts_per_cluster: int
     max_clusters_est: int = 1_000_000
 
+    dims_to_log_scale: Optional[list] = (
+        None  # Data dimensions to transform to log-scale
+    )
+
     # Evaluation params
     L_global: Optional[float] = None  # Can be pre-set or computed
 
@@ -223,6 +227,7 @@ def run_experiment(
         X_train=X_train,
         f=prob.f,
         grad=prob.grad,
+        DIMS_TO_LOG_SCALE=prob.dims_to_log_scale,
         NUM_INITIAL_CLUSTERS=prob.num_initial_clusters,
         MIN_PTS_PER_CLUSTER=prob.min_pts_per_cluster,
         ATOL=ATOL,
@@ -415,20 +420,21 @@ if __name__ == "__main__":
                 hess=None,
                 domain=np.array(
                     [
-                        [0.05, 0.15],  # r_w
-                        [100, 50000],  # r
-                        [63070, 115600],  # T_u
-                        [990, 1110],  # H_u
-                        [63.1, 116],  # H_l
-                        [700, 820],  # L
-                        [1120, 1680],  # K_w
-                        [9855, 12045],  # r_e
+                        [0.05, 0.15],  # r_w [0]
+                        [100, 50000],  # r  [1]
+                        [63070, 115600],  # T_u [2]
+                        [990, 1110],  # H_u [3]
+                        [63.1, 116],  # H_l [4]
+                        [700, 820],  # L [5]
+                        [1120, 1680],  # K_w [6]
+                        [9855, 12045],  # r_e [7]
                     ]
                 ),
                 data_dim=8,
                 f_dim=1,
                 num_initial_clusters=100,
                 min_pts_per_cluster=50,
+                dims_to_log_scale=[1, 2, 3, 4, 5, 6, 7],
             ),
             [1_000_000],
             TestConfig(method="LHS", n_total_points=200_000),

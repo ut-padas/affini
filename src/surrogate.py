@@ -48,6 +48,7 @@ class NearODESurrogate:
         f: Callable,
         grad: Callable,
         *,
+        DIMS_TO_LOG_SCALE: Optional[list] = None,
         # Clustering params
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
@@ -83,6 +84,7 @@ class NearODESurrogate:
                 grad=grad,
                 DATA_DIM=self.D,
                 F_DIM=self.F,
+                DIMS_TO_LOG_SCALE=DIMS_TO_LOG_SCALE,
                 NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
                 MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
                 ATOL=ATOL,
