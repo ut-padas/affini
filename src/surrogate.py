@@ -108,6 +108,7 @@ class NearODESurrogate:
                 rtol=RTOL,
                 num_initial_clusters=NUM_INITIAL_CLUSTERS,
                 min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
+                dims_to_log_scale=DIMS_TO_LOG_SCALE,
                 seed=SEED,
                 should_generate_extra_points=True,
                 two_means_split_method="median",

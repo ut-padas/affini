@@ -61,6 +61,7 @@ class AdaptiveClusterer:
         seed: int = 0,
         *,
         # Keyword arguments
+        dims_to_log_scale: Optional[list[int]] = None,
         use_gpu: bool = True,
         gpu_len_threshold: int = 10_000,
         should_generate_extra_points: bool = True,
@@ -75,6 +76,7 @@ class AdaptiveClusterer:
             num_initial_clusters: Number of initial clusters.
             min_points: Minimum points per cluster.
             seed: Random seed for reproducibility.
+            dims_to_log_scale: List of input dimensions to apply log-scaling.
             use_gpu: Whether to use GPU acceleration if available.
             gpu_len_threshold: Minimum data length to use GPU clustering. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_cpu_vs_gpu.py
             should_generate_extra_points: Whether to generate extra points for small clusters.
@@ -85,7 +87,7 @@ class AdaptiveClusterer:
         self.num_initial_clusters = num_initial_clusters
         self.min_points = min_points
         self.seed = seed
-
+        self.dims_to_log_scale = dims_to_log_scale
         self.use_gpu = use_gpu and _HAS_GPU
         self.gpu_len_threshold = gpu_len_threshold
         self.should_generate_extra_points = should_generate_extra_points
@@ -127,6 +129,10 @@ class AdaptiveClusterer:
         Returns:
             Normalized data and mean.
         """
+        if self.dims_to_log_scale is not None:
+            X[:, self.dims_to_log_scale] = np.log10(
+                X[:, self.dims_to_log_scale] + 1e-10
+            )
         mean = X.mean(axis=0)
         return (X - mean), mean
 
@@ -361,7 +367,8 @@ class AdaptiveClusterer:
                         left = X_cluster[labels == 0]
                         right = X_cluster[labels == 1]
                     elif self.use_gpu and cluster_size >= self.gpu_len_threshold:
-                        Xg = cp.asarray(X_cluster, dtype=CP_DTYPE)  # type: ignore
+                        X_norm, mu = self._normalize_data(X_cluster)
+                        Xg = cp.asarray(X_norm, dtype=CP_DTYPE)  # type: ignore
                         km = cuKMeans(n_clusters=2, random_state=self.seed)  # type: ignore
                         labels = km.fit_predict(Xg).get()
                         NUM_CLUSTERED_BY_CUML += 1
@@ -399,6 +406,7 @@ def adaptive_cluster_algorithm(
     cupy_f: Optional[Callable] = None,
     atol: float = 0.01,
     rtol: Optional[float] = 0.01,
+    dims_to_log_scale: Optional[list[int]] = None,
     num_initial_clusters=10,
     min_pts_per_cluster=1,
     seed=0,
@@ -415,6 +423,7 @@ def adaptive_cluster_algorithm(
         seed=seed,
         should_generate_extra_points=should_generate_extra_points,
         two_means_split_method=two_means_split_method,
+        dims_to_log_scale=dims_to_log_scale,
     )
     clusters = clusterer.fit(X=X_train, f=f, grad_f=grad_f, cupy_f=cupy_f, debug=debug)
     return clusters
