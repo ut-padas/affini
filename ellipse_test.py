@@ -2,6 +2,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cvxpy as cp
 from sklearn.cluster import KMeans
+import time
+import functools
+import scipy.linalg as la
+from numba import jit
 
 
 #### FUNCTIONS TO GENERATE POINTS
@@ -20,6 +24,18 @@ def generate_random_ball(num_points, dimension, radius=1):
     random_radii = np.random.random(num_points) ** (1/dimension)
     # Return the list of random (direction & length) points.
     return radius * (random_directions * random_radii).T
+
+
+
+def timeit(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        end = time.perf_counter()
+        print(f"{func.__name__} took {end - start:.6f} seconds")
+        return result
+    return wrapper
 
 
 def generate_random_ball_boundary(num_points, dimension):
@@ -71,7 +87,7 @@ def generate_random_box_points(num_points, domain):
 ##### ELLIPSE SOLVERS
 
 
-
+@timeit
 def fit_ellipse_PCA(points):
 
     num_points, dimension = points.shape
@@ -98,6 +114,7 @@ def fit_ellipse_PCA(points):
 #         X >= 0.
 # We use the package cvxpy to do this.
 # Assume points are normalized
+@timeit
 def fit_ellipse_SDP(points):
 
     # Each row corresponds to a point of data
@@ -120,7 +137,65 @@ def fit_ellipse_SDP(points):
     return X.value
 
 
+
+# Thanks ChatGPT :D
+@timeit
+# @jit(nopython=False)
+def fit_ellipse_SDP_khachiyan(X, tol=1e-2, max_iter=1000):
+    """
+    Fast MVEE centered at zero using Cholesky-based Khachiyan updates.
+
+    Solves:
+        min_A log det(A^{-1})
+        s.t. x_i^T A x_i <= 1
+
+    Parameters
+    ----------
+    X : ndarray, shape (N, d)
+        Input points (assumed centered)
+    """
+
+    X = np.asarray(X)
+    N, d = X.shape
+
+    # Initialize weights
+    u = np.ones(N) / N
+
+    for i in range(max_iter):
+        # M = X^T diag(u) X
+        M = (X.T * u) @ X
+
+        # Cholesky factorization
+        L = np.linalg.cholesky(M)
+
+        # Solve L y = X^T  → y = L^{-1} X^T
+        # Y = lower_triangular_solve(L, X.T)
+        Y = la.solve_triangular(L, X.T, lower=True)
+
+        # Compute squared norms ||y_i||^2 = x_i^T M^{-1} x_i
+        vals = np.sum(Y**2, axis=0)
+
+        j = np.argmax(vals)
+        max_val = vals[j]
+
+        if max_val - d < tol:
+            break
+
+        step = (max_val - d) / (d * (max_val - 1))
+        u *= (1 - step)
+        u[j] += step
+
+    # Final ellipsoid matrix
+    M = (X.T * u) @ X
+    A = la.inv(M) / d
+    print(f'Khachiyan uses {i+1} iterations')
+    return A
+
+
+
+
 # Assume points are normalized to the center of the ellipse
+@timeit
 def fit_ellipse_PCA_scaled(points):
 
     num_points, dimension = points.shape
@@ -141,13 +216,13 @@ def fit_ellipse_PCA_scaled(points):
 
 
 
-
 # Assume points are normalized
-def bound_hessian_SDP(points, f, df):
+@timeit
+def bound_hessian_SDP(points, errors):
 
     num_points, dimension = points.shape
 
-    errors = linear_interpolant_errors_one_cluster(points, f, df)
+    # Normalize points
 
     # formulate and solve linear optimization problem
     # build constraints and variables
@@ -163,6 +238,37 @@ def bound_hessian_SDP(points, f, df):
     prob.solve()
 
     return Q.value
+
+
+@timeit
+def solve_hessian_least_squares(points, f, df):
+    # assume each row is a point
+    # f takes each row to a value
+    # df takes row to row
+
+    # first get all the f and df/dx data (for simplicity, do solves in function)
+    f_points = np.zeros(len(points))
+    df_points = np.zeros_like(points)
+    for j, point in enumerate(points):
+        f_points[j] = f(point)
+        df_points[j] = df(point)
+
+    # compute centroid and function value
+    centroid = np.mean(points, axis=0)
+    df_centroid = df(centroid)
+    x_diffs = points - centroid
+    df_diffs = df_points - df_centroid
+
+    # solve for Hessian directly using least squares (uses SVD for pseudoinverse)
+    X = x_diffs.T
+    G = df_diffs.T
+    U, Sigma, VT = np.linalg.svd(X, full_matrices=False)
+    Sigma_modified = np.maximum(Sigma, 1e-12)
+    H = G @ (VT.T / Sigma_modified) @ U.T
+    H_sym = 0.5 * (H + H.T)
+
+    return H_sym
+
 
 
 
@@ -191,6 +297,18 @@ def compute_domain_of_plot(points):
     padding = 0.1 * range
     return np.column_stack((minimum - padding, maximum + padding))
 
+
+def get_domain_of_plot(ax):
+
+    x_left, x_right = ax.get_xlim()
+    y_bottom, y_top = ax.get_ylim()
+    x_padding = 0.1 * (x_right - x_left)
+    y_padding = 0.1 * (y_top - y_bottom)
+
+    return np.array([
+        [x_left - x_padding, x_right + x_padding],
+        [y_bottom - y_padding, y_top + y_padding]
+    ])
 
 # only supports 2d of course
 def plot_contours(domain, f, ax):
@@ -345,6 +463,23 @@ def normal_clustering(points, n_clusters=2):
     return centroids, labels
 
 
+@jit(nopython=True)
+def lower_triangular_solve(A: np.ndarray, B: np.ndarray):
+
+    # Sizes of matrices A (lower triangular) and B
+    mA, nA = np.shape(A)
+    mB, nB = np.shape(B)
+
+    # Output
+    X = np.empty((mB, nB))
+
+    # Loop over rows
+    for j in range(mA):
+        X[j,:] = (B[j,:] - (A[j,1:j] @ X[1:j,:])) / A[j,j]
+
+    return X
+
+
 
 
 
@@ -352,46 +487,18 @@ def normal_clustering(points, n_clusters=2):
 ##### FUNCTIONS TO RUN TESTS
 
 
-
 def test_trust_region_via_hessian_lsq(points, f, df, hf):
-    # assume each row is a point
-    # f takes each row to a value
-    # df takes row to row
-
-    # first get all the f and df/dx data (for simplicity, do solves in function)
-    f_points = np.zeros(len(points))
-    df_points = np.zeros_like(points)
-    for j, point in enumerate(points):
-        f_points[j] = f(point)
-        df_points[j] = df(point)
-
-    # compute centroid and function value
-    centroid = np.mean(points, axis=0)
-    df_centroid = df(centroid)
-    x_diffs = points - centroid
-    df_diffs = df_points - df_centroid
-    H_exact = hf(centroid)
-    print(f'Centroid: {centroid}')
-    print('True Hessian at Centroid:')
-    print(H_exact)
-
-    # solve for Hessian directly using least squares (uses SVD for pseudoinverse)
-    X = x_diffs.T
-    G = df_diffs.T
-    U, Sigma, VT = np.linalg.svd(X, full_matrices=False)
-    H = G @ (VT.T / Sigma) @ U.T
-    H_sym = 0.5 * (H + H.T)
+    
+    H = solve_hessian_least_squares(points, f, df)
+    c = points.mean(axis=0)
+    H_exact = hf(c)
 
     print('Approximated Hessian:')
     print(H)
     print('\n')
 
-    print('Enforcing symmetry:')
-    print(H_sym)
-    print('\n')
-
-    print(f'Absolute error ||H-\\hat{{H}}||_2 = {np.linalg.norm(H_sym - H_exact)}')
-    print(f'Relative error: {np.linalg.norm(H_sym - H_exact) / np.linalg.norm(H_exact)}')
+    print(f'Absolute error ||H-\\hat{{H}}||_2 = {np.linalg.norm(H - H_exact)}')
+    print(f'Relative error: {np.linalg.norm(H - H_exact) / np.linalg.norm(H_exact)}')
 
 
 
@@ -476,23 +583,34 @@ def test_clustering_rotating_frame(points, atol, f, df):
 
     # MVEE version: fit ellipse around acceptable points
     Q1 = fit_ellipse_SDP(diffs[good_error])
+    Q1 = fit_ellipse_SDP_khachiyan(diffs[good_error])
+
+    # SDP version (bounds the Hessian)
+    Q2 = bound_hessian_SDP(diffs, errors)
 
     # PCA version: uses SVD
-    Q2 = fit_ellipse_PCA_scaled(diffs[good_error])
+    Q3 = fit_ellipse_PCA_scaled(diffs[good_error])
+
+    # Least squares version
+    Q4 = solve_hessian_least_squares(points, f, df)
 
     # plot everything
-    fig, ax = plt.subplots(1, 2)
-    ax1 = ax[0]
-    ax2 = ax[1]
-    domain_of_plot = compute_domain_of_plot(points)
+    fig1, ax1 = plt.subplots()
+    fig2, ax2 = plt.subplots()
+    # plot_ellipse(Q1, centroid, 1, ax1, 'cyan', 'MVEE', plot_axes=True)
+    plot_ellipse(Q2, centroid, 1, ax1, 'orange', 'SDP (Hessian bound)', plot_axes=True)
+    plot_ellipse(Q3, centroid, 1, ax1, 'cyan', 'PCA', plot_axes=True)
+    plot_ellipse(Q4, centroid, 1, ax1, 'lime', 'Least Squares', plot_axes=True)
+
+    domain_of_plot = get_domain_of_plot(ax1)
     plot_contours(domain_of_plot, f, ax1)
     scatter_points(points[good_error], 'black', ax1)
     scatter_points(points[bad_error], 'gray', ax1)
-    plot_ellipse(Q1, centroid, 1, ax1, 'cyan', 'MVEE', plot_axes=True)
-    plot_ellipse(Q2, centroid, 1, ax1, 'orange', 'PCA', plot_axes=True)
+
+    Q = Q3 # the specific psd matrix used to rotate
 
     # rotate coordinate frame
-    D, U = np.linalg.eigh(Q2)
+    D, U = np.linalg.eigh(Q)
     # go from ellipse to unit ball via y = B @ (x-c)
     B = U * (D ** 0.5) @ U.T 
     rotated_points = diffs @ B
@@ -509,7 +627,7 @@ def test_clustering_rotating_frame(points, atol, f, df):
     km = KMeans(n_clusters=n_clusters)
     km.fit(rotated_points)
     cluster_centroids = km.cluster_centers_
-    scatter_points(cluster_centroids, 'red', ax2)
+    scatter_points(cluster_centroids, 'red', ax2, 'Clusters')
 
 
     # rotate centroids back
@@ -518,14 +636,13 @@ def test_clustering_rotating_frame(points, atol, f, df):
 
 
     # compare to clustering straight out of the box
-    # (kmeans, not QR thing Prajwal is doing, which might turn out different)
     cluster_centroids_2, _ = normal_clustering(points, n_clusters=2)
     scatter_points(cluster_centroids_2, 'magenta', ax1, 'Old')
 
 
     ax1.set_title('Metric Adaptive Clustering Test: Rosenbrock')
     ax1.legend()
-    ax2.set_title('Transformed Coordinate Space (SVD)')
+    ax2.set_title('Transformed Coordinate Space')
 
 
     # I wrote a function to do all of this nicely (to plug into algorithm). Here is how to use:
@@ -658,7 +775,7 @@ def hessian_beale(X):
     x = X[...,0]
     y = X[...,1]
     z = np.zeros(np.append((input_dim, (2,2))))
-    z[...,0,0] = 2*(y-1)**2 + 2*(y**2-1)**2 + 2(y**3-1)**2
+    z[...,0,0] = 2*(y-1)**2 + 2*(y**2-1)**2 + 2*(y**3-1)**2
     z[...,0,1] = 4*x*(y**2-1)*y + 4*y*(x*y**2-x+2.25) + 6*x*(y**3-1)*y**2 + 6*y**2*(x*y**3-x+2.625) + 2*x*(y-1) + 2*(x*y-x+1.5)
     z[...,1,0] = 4*x*(y**2-1)*y + 4*y*(x*y**2-x+2.25) + 6*x*(y**3-1)*y**2 + 6*y**2*(x*y**3-x+2.625) + 2*x*(y-1) + 2*(x*y-x+1.5)
     z[...,1,1] = 18*x**2*y**4 + 8*x**2*y**2 + 2*x**2 + 12*x*y*(x*y**3-x+2.625) + 4*x*(x*y**2-x+2.25)

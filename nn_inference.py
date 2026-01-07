@@ -77,7 +77,7 @@ class NN_Inference:
                 near_fvals = self.labels[Ind[:,j]]
                 near_gradients = self.gradients[Ind[:,j]]
                 predictions = near_fvals + np.einsum('ijk,ik->ij', near_gradients, diffs)
-                in_trust_region[:,j] = trust_distances <= np.minimum(1, rtol * np.linalg.norm(predictions, 2, axis=1) / atol)
+                in_trust_region[:,j] = trust_distances <= np.maximum(1, rtol * np.linalg.norm(predictions, 2, axis=1) / atol)
             else:
                 in_trust_region[:,j] = trust_distances <= 1
         

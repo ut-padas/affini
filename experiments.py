@@ -405,8 +405,6 @@ def generate_latex_table(data):
 
 
 
-
-
 # test these functions
 def test_1D(N_init = 2000, atol=0.01):
 
@@ -452,15 +450,15 @@ def test_2D_SHCF(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init 
 
     L = check_matrix_2norm(hessian_SHCF, domain)
 
-    interpolant = NearODESurrogate()
+    surrogate = NearODESurrogate()
     SHCF_combined.calls = 0
-    interpolant.train_model_from_sampling(
+    surrogate.train_model_from_sampling(
             SHCF_combined, domain, 1, N_init, 'LHS', True, N_init_clusters = 100,
             min_ppc = min_ppc, atol = atol, rtol = rtol,
             check_guarantee_N_times=0, L=L, seed=1234,
             use_gradient = True)
-    sources = interpolant.get_sources()
-    print(f'Total number of function evals for training: {SHCF_combined.calls - N_init}')
+    sources = surrogate.get_sources()
+    # print(f'Total number of function evals for training: {SHCF_combined.calls - N_init}')
 
     x = np.linspace(domain[0,0], domain[0,1], 300)
     y = np.linspace(domain[1,0], domain[1,1], 300)
@@ -468,7 +466,7 @@ def test_2D_SHCF(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init 
     pts = np.column_stack((xv.flatten(), yv.flatten()))
 
     zz_exact = np.expand_dims(SHCF(pts), axis=1)
-    zz_interpolant, bad_pts_inds = interpolant.evaluate(pts, disp_time=True)
+    zz_interpolant, bad_pts_inds = surrogate.evaluate(pts, disp_time=True)
     abs_error = np.linalg.norm(zz_exact - zz_interpolant, 2, axis=1)
     rel_error = abs_error / np.linalg.norm(zz_exact, 2, axis=1)
     good_abs_error = abs_error <= atol
@@ -487,7 +485,7 @@ def test_2D_SHCF(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init 
 
     zz_exact_reshaped = zz_exact.reshape((len(xv),len(yv)))
     abs_error_reshaped = abs_error.reshape((len(xv),len(yv)))
-
+    sorted_grid_reshaped = sorted_grid.reshape((len(xv),len(yv)))
 
     ## PLOTS
 
@@ -510,7 +508,7 @@ def test_2D_SHCF(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init 
     plt.scatter(pts[yes_g_bad_err][:,0], pts[yes_g_bad_err][:,1], c='red', marker='o', s=2, label=f'Pts. inside theoretical guarantee with bad error (N={np.sum(yes_g_bad_err)})')
     plt.scatter(pts[no_g_good_err][:,0], pts[no_g_good_err][:,1], c='yellow', marker='o', s=2, label=f'Pts. outside theoretical guarantee with good error (N={np.sum(no_g_good_err)})')
     plt.scatter(pts[no_g_bad_err][:,0], pts[no_g_bad_err][:,1], c='orange', marker='o', s=2, label=f'Pts. outside theoretical guarantee with bad error (N={np.sum(no_g_bad_err)})')
-    plt.pcolormesh(xv, yv, sorted_grid, cmap=cmap, norm=norm)
+    plt.pcolormesh(xv, yv, sorted_grid_reshaped, cmap=cmap, norm=norm)
     plt.scatter(sources[:,0], sources[:,1], c='blue', marker='o', s=2, label=f'Sources (N={len(sources)})')
     plt.xlabel('$x_1$')
     plt.ylabel('$x_2$')
@@ -528,33 +526,32 @@ def test_2D_SHCF(domain=np.array([[-3,3],[-2,2]]), atol=0.01, rtol=0.01, N_init 
             atol,
             rtol,
             # section 2: point results
-            interpolant.N_sources,
+            surrogate.N_sources,
             (np.sum(no_g_good_err)+np.sum(no_g_bad_err)) / len(pts),
             np.sum(yes_g_good_err) / len(pts), 
             np.sum(yes_g_bad_err) / len(pts),
             # section 3: errors for failure points
             np.linalg.norm(red_abs_errs, 2) / np.linalg.norm(red_fvals, 2), # relative l2 error
             np.linalg.norm(red_abs_errs, np.inf) / np.linalg.norm(red_fvals, np.inf), # relative l-inf error
-            np.linalg.norm(red_abs_errs, 2), # absolute l2 error
             np.linalg.norm(red_abs_errs, np.inf), # absolute l-inf error
             # section 4: overall errors
             np.linalg.norm(abs_error, 2) / np.linalg.norm(zz_exact, 2), # relative l2 error (entire region)
             np.linalg.norm(abs_error, np.inf) / np.linalg.norm(zz_exact, np.inf), # relative l-inf error
-            np.linalg.norm(abs_error, 2) # absolute l2 error
         ])
     else:
         datavec = np.array([
             N_init,
             atol,
             rtol,
-            interpolant.N_sources,
+            surrogate.N_sources,
             (np.sum(no_g_good_err)+np.sum(no_g_bad_err)) / len(pts),
             np.sum(yes_g_good_err) / len(pts), 
             np.sum(yes_g_bad_err) / len(pts),
             0,
             0,
             0,
-            0,
+            np.linalg.norm(abs_error, 2) / np.linalg.norm(zz_exact, 2), # relative l2 error (entire region)
+            np.linalg.norm(abs_error, np.inf) / np.linalg.norm(zz_exact, np.inf), # relative l-inf error
         ])
 
 
@@ -880,6 +877,7 @@ def visualize_centroids_of_surrogate(surrogate: NearODESurrogate, domain, f):
     scatter_points(sources, 'red', ax, 'Source Points')
 
     # TODO: plot trust regions
+    
 
     fig.legend()
     plt.show()
@@ -956,10 +954,10 @@ if __name__ == '__main__':
     # 2D test (SHCF)
     elif 0:
         domain = np.array([[-3, 3], [-2, 2]])
-        convergence_test_2D_SHCF(tolmat, 400000, domain)
+        convergence_test_2D_SHCF(tolmat, 100000, domain, min_ppc=100)
 
     # Rosenbrock 2D
-    elif 1:
+    elif 0:
         convergence_test_2d_rosenbrock(tolmat, 100000, 100)
 
     # Borehole function (d=8)
@@ -1101,7 +1099,9 @@ if __name__ == '__main__':
 
         plt.show()
 
-    elif 0:
+
+    # visualize centroids of surrogate
+    elif 1:
 
         surrogate = load_surrogate('rosenbrock_surrogates/rosenbrock_surrogate_2_atol_0.1_rtol_0.02.pkl')
         domain = np.array([

@@ -126,14 +126,15 @@ def _adaptive_cluster_algorithm_helper(
         # make sure we compute in euclidean, non-log scaled distance
         evec = np.linalg.norm(function_vals - (f_prev_centroid + (distance @ grad_prev_centroid.T)), 2, axis=1)
 
-    abs_error = np.linalg.norm(evec, 2) # TODO: are we using the correct norm?
-    rel_error = abs_error / np.linalg.norm(function_vals, 'fro')
+    # abs_error = np.linalg.norm(evec, 2) # TODO: are we using the correct norm?
+    # rel_error = abs_error / np.linalg.norm(function_vals, 'fro')
     with_good_error = np.logical_or(evec <= atol, evec <= (rtol * f_prev_centroid))
 
     # from this, decide if we should split or not
     # TODO: look at the error criterion.
-    if (rtol is not None and rel_error <= rtol) \
-            or (atol is not None and abs_error <= (atol / np.sqrt(total_clusters))) \
+    # if (rtol is not None and rel_error <= rtol) \
+            # or (atol is not None and abs_error <= (atol / np.sqrt(total_clusters))) \
+    if with_good_error.all() \
             or num_levels == 0:
         
         # Create a cluster. Use ellipse formulation
