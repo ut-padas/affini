@@ -642,19 +642,19 @@ def convergence_test_nd_dixon(tolmat, d, N_init, min_ppc=100):
 
 
 
-def test_2d_rosenbrock(atol=0.01, rtol=0.01, N_init = 100000, min_ppc = 50):
+def test_2d_rosenbrock(atol=0.01, rtol=0.01, N_init = 100000, min_ppc = 50, scf = 0):
 
     domain = np.array([
         [-2, 2],
         [-1, 3]
     ])
     return test_a_function(rosenbrock, rosenbrock_combined, 1, domain, atol, rtol, N_init, min_ppc,
-                           save_surrogates=True)
+                           soft_clustering_factor=scf, save_surrogates=True)
 
 
-def convergence_test_2d_rosenbrock(tolmat, N_init, min_ppc=100):
+def convergence_test_2d_rosenbrock(tolmat, N_init, min_ppc=100, scf=0):
     convergence_test_a_function( \
-        lambda arg1,arg2,arg3,arg4: test_2d_rosenbrock(arg1,arg2,arg3,arg4), tolmat, N_init, min_ppc)
+        lambda arg1,arg2,arg3,arg4: test_2d_rosenbrock(arg1,arg2,arg3,arg4,scf), tolmat, N_init, min_ppc)
 
 
 
@@ -669,13 +669,14 @@ def convergence_test_affine(tolmat, N_init, min_ppc=100):
     convergence_test_a_function(test_affine, tolmat, N_init, min_ppc)
 
 
-def test_a_function(f, f_combined, m, domain, atol=0.01, rtol=0.01, N_init=10000, min_ppc=50, save_surrogates=False):
+def test_a_function(f, f_combined, m, domain, atol=0.01, rtol=0.01, N_init=10000, min_ppc=50, soft_clustering_factor=0, save_surrogates=False):
 
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
             f_combined, domain, m, N_init, 'LHS', True,
             N_init_clusters=100, atol = atol, rtol = rtol, min_ppc = min_ppc,
-            check_guarantee_N_times=0, disp_time = True, use_gradient=True)
+            check_guarantee_N_times=0, disp_time = True, use_gradient=True,
+            soft_clustering_factor=soft_clustering_factor)
     
     datavec = test_surrogate_error(interpolant, f, m, domain, atol, rtol, N_init)
 
@@ -877,7 +878,7 @@ def visualize_centroids_of_surrogate(surrogate: NearODESurrogate, domain, f):
     scatter_points(sources, 'red', ax, 'Source Points')
 
     # TODO: plot trust regions
-    
+
 
     fig.legend()
     plt.show()
@@ -957,8 +958,8 @@ if __name__ == '__main__':
         convergence_test_2D_SHCF(tolmat, 100000, domain, min_ppc=100)
 
     # Rosenbrock 2D
-    elif 0:
-        convergence_test_2d_rosenbrock(tolmat, 100000, 100)
+    elif 1:
+        convergence_test_2d_rosenbrock(tolmat, 100000, 100, 0.0)
 
     # Borehole function (d=8)
     elif 0:
@@ -1101,7 +1102,7 @@ if __name__ == '__main__':
 
 
     # visualize centroids of surrogate
-    elif 1:
+    elif 0:
 
         surrogate = load_surrogate('rosenbrock_surrogates/rosenbrock_surrogate_2_atol_0.1_rtol_0.02.pkl')
         domain = np.array([

@@ -2,7 +2,8 @@
 import numpy as np
 from collections.abc import Callable
 from sklearn.cluster import KMeans
-from ellipse_test import metric_adaptive_clustering, fit_ellipse_PCA, fit_ellipse_PCA_scaled
+from ellipse_test import metric_adaptive_two_means_PCA_clustering, \
+                         fit_ellipse_PCA, fit_ellipse_PCA_scaled
 
 
 # bi-tree structures that we use in the recursive algorithm implemented below
@@ -42,6 +43,7 @@ def adaptive_cluster_algorithm(
     seed = None, # seed used for kmeans rng
     num_levels = -1, # specify the number of levels for the algorithm to go in the tree.
         # If this is -1, then just go forever.  Otherwise only go up to this level in the tree.
+    soft_clustering_factor = 0, # used for clustering "blurring" to attempt to make trust regions better
     ):
 
     # check dimensions of training data; add another if necessary
@@ -85,7 +87,7 @@ def adaptive_cluster_algorithm(
 
         k, cluster_structure[j] = _adaptive_cluster_algorithm_helper(
                 params_in_cluster, fvals_in_cluster, centroid_params, fval_c, grad_c, eval_function,
-                N_init_clusters * 2, atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1)
+                N_init_clusters * 2, atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1, soft_clustering_factor)
 
     return k, cluster_structure
 
@@ -106,6 +108,7 @@ def _adaptive_cluster_algorithm_helper(
     k: int = 0, # current cluster index (for recursive purposes)
     seed = None,
     num_levels = -1,
+    soft_clustering_factor = 0,
 ):
 
     if len(training_data) <= 1:
@@ -157,28 +160,28 @@ def _adaptive_cluster_algorithm_helper(
         Q = np.eye(dim)
     
     # with this psd matrix in hand, do metric adaptive clustering
-    centroids_scaled, labels = metric_adaptive_clustering(distance, Q, n_clusters=2)
+    centroids_scaled, labels = metric_adaptive_two_means_PCA_clustering(distance, Q, soft_clustering_factor)
     centroids = centroids_scaled + prev_centroid
 
     # First cluster (N=0)
-    pts_cluster = training_data[labels==0]
-    fvals_cluster = function_vals[labels==0]
+    pts_cluster = training_data[labels <= 0.5]
+    fvals_cluster = function_vals[labels <= 0.5]
     centroid_params = centroids[0]
     fval_c, grad_c = _compute_oracle_at_point(centroid_params, eval_function, use_gradient)
 
     k, left = _adaptive_cluster_algorithm_helper(
             pts_cluster, fvals_cluster, centroid_params, fval_c, grad_c, eval_function,
-            total_clusters * 2, atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1)
+            total_clusters * 2, atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1, soft_clustering_factor)
 
     # Second cluster (N=1)
-    pts_cluster = training_data[labels==1]
-    fvals_cluster = function_vals[labels==1]
+    pts_cluster = training_data[labels >= 0.5]
+    fvals_cluster = function_vals[labels >= 0.5]
     centroid_params = centroids[1]
     fval_c, grad_c = _compute_oracle_at_point(centroid_params, eval_function, use_gradient)
 
     k, right = _adaptive_cluster_algorithm_helper(
             pts_cluster, fvals_cluster, centroid_params, fval_c, grad_c, eval_function,
-            total_clusters * 2, atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1)
+            total_clusters * 2, atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1, soft_clustering_factor)
 
 
     return k, ClusterTree(prev_centroid, left, right)

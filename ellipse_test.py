@@ -87,7 +87,7 @@ def generate_random_box_points(num_points, domain):
 ##### ELLIPSE SOLVERS
 
 
-@timeit
+# @timeit
 def fit_ellipse_PCA(points):
 
     num_points, dimension = points.shape
@@ -195,7 +195,7 @@ def fit_ellipse_SDP_khachiyan(X, tol=1e-2, max_iter=1000):
 
 
 # Assume points are normalized to the center of the ellipse
-@timeit
+# @timeit
 def fit_ellipse_PCA_scaled(points):
 
     num_points, dimension = points.shape
@@ -452,6 +452,51 @@ def metric_adaptive_clustering(points, Q, n_clusters=2):
     # rotate clusters back
     centroids_original_frame = centroids @ B_inv
     return centroids_original_frame, labels
+
+
+# Includes a "soft factor" which determines what percentage to blur points
+def metric_adaptive_two_means_PCA_clustering(points, Q, soft_factor=0):
+    
+    # eigenvalue decomposition to compute square root
+    D, U = np.linalg.eigh(Q)
+    D = np.maximum(D, 1e-10)
+    # Q should be psd, so eigenvalues should be positive.
+    # But if points fall approximately in a line, then one singular value is zero.
+    # This causes major problems when computing D ** -0.5.
+    # TODO: how to fix clusters that are approximately lines?
+    B = U * (D ** 0.5) @ U.T 
+
+    # rotate points
+    rotated_points = points @ B
+
+    # cluster in new space; use PCA (Ding et.al 2004)
+    U, _, _ = np.linalg.svd(rotated_points.T)
+    u1 = U[0]
+
+    # project points onto v1
+    indvec_continuous = rotated_points @ u1
+
+    # normalize lengths so that values are in [-1,1]
+    max_indvec = np.linalg.norm(indvec_continuous, ord=np.inf)
+
+    indvec_continuous = indvec_continuous / max_indvec
+
+    # determine membership
+    if soft_factor == 0:
+        indvec_discrete = np.astype(indvec_continuous >= 0, int)
+    else:
+        in_first_cluster = indvec_continuous > soft_factor
+        in_second_cluster = indvec_continuous < -soft_factor
+        in_both_clusters = np.logical_and((indvec_continuous >= -soft_factor), (indvec_continuous <= soft_factor))
+        indvec_discrete = 0.0 * in_first_cluster + 0.5 * in_both_clusters + 1.0 * in_second_cluster
+
+    # determine new centroids
+    c0 = np.mean(points[indvec_discrete <= 0.5], axis=0)
+    c1 = np.mean(points[indvec_discrete >= 0.5], axis=0)
+
+    centroids_original_frame = np.array([c0, c1])
+    return centroids_original_frame, indvec_discrete
+
 
 
 

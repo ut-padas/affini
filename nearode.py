@@ -50,6 +50,7 @@ class NearODESurrogate:
         alpha = 1,
         disp_time = True,
         seed = None,
+        soft_clustering_factor = 0,
 
     ):
         
@@ -89,7 +90,8 @@ class NearODESurrogate:
 
             # call clustering algorithm
             k, cluster_tree = adaptive_cluster_algorithm(features, oracle, atol, rtol, \
-                    N_init_clusters, min_ppc, use_gradient, labels, seed)
+                    N_init_clusters, min_ppc, use_gradient, labels, seed,
+                    soft_clustering_factor=soft_clustering_factor)
             
             new_features, new_labels, new_gradients, trust_ellipses, n_pts, tree_levels = \
                     flatten_cluster_centers_with_gradient(k, n, m, cluster_tree)
@@ -164,6 +166,7 @@ class NearODESurrogate:
         alpha = 1,
         disp_time = True, # display time
         seed = None,
+        soft_clustering_factor = 0,
 
     ):
         
@@ -214,7 +217,7 @@ class NearODESurrogate:
         
         # plug this into above function
         self.train_model_from_data(features, labels, gradients, do_clustering, use_gradient, oracle,
-                N_init_clusters, atol, rtol, min_ppc, check_guarantee_N_times, L, alpha, False, seed)
+                N_init_clusters, atol, rtol, min_ppc, check_guarantee_N_times, L, alpha, False, seed, soft_clustering_factor)
 
         end_time = time.perf_counter()
         if disp_time:
