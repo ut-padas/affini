@@ -959,7 +959,7 @@ if __name__ == '__main__':
 
     # Rosenbrock 2D
     elif 1:
-        convergence_test_2d_rosenbrock(tolmat, 100000, 100, 0.0)
+        convergence_test_2d_rosenbrock(tolmat, 100000, 100, scf=0.03)
 
     # Borehole function (d=8)
     elif 0:

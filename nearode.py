@@ -236,15 +236,11 @@ class NearODESurrogate:
             if targets.ndim == 1:
                 predictions, unguaranteed_points = self.KNN_search.predict(
                     targets.reshape(len(targets), 1),
-                    self.atol,
-                    self.rtol,
                     disp_time
                 )
             else:
                 predictions, unguaranteed_points = self.KNN_search.predict(
                     targets,
-                    self.atol,
-                    self.rtol,
                     disp_time
                 )
 

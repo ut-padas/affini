@@ -52,50 +52,32 @@ class NN_Inference:
     # uses the average of the k-nearest neighbors (default only uses 1 nearest neighbor)
     def predict(self,
         targets: np.ndarray,
-        atol, # neighbors are within computational guarantee.
-        rtol = None,
         disp_time=False,
     ):
 
         N = len(targets)
-        k = 20
+        K = 5
 
         start_time = time.perf_counter()
         # TODO check if the length of each feature vector matches the length of training vectors
 
         # use FAISS to do k-nearest neighbors search
         # Find additional nearest neighbors, only use ones which are in trust region.
-        Dist, Ind = self._faiss_index.search(targets, k)
+        _, Ind = self._faiss_index.search(targets, K)
 
-        in_trust_region = np.zeros((N, k))
-        for j in range(k):
+        near_ind = np.full(shape=N, fill_value=-1)
+        for j in reversed(range(K)):
             near_neighbors = self.features[Ind[:,j]]
             diffs = targets - near_neighbors
             near_trust_ellipses = self.trust_ellipses[Ind[:,j]]
             trust_distances = np.einsum('ni,nij,nj->n', diffs, near_trust_ellipses, diffs)
-            if rtol is not None:
-                near_fvals = self.labels[Ind[:,j]]
-                near_gradients = self.gradients[Ind[:,j]]
-                predictions = near_fvals + np.einsum('ijk,ik->ij', near_gradients, diffs)
-                in_trust_region[:,j] = trust_distances <= np.maximum(1, rtol * np.linalg.norm(predictions, 2, axis=1) / atol)
-            else:
-                in_trust_region[:,j] = trust_distances <= 1
-        
-        # print(np.sum(np.sum(in_trust_region, axis=1) > 0))
-        # For each point, figure out which (if any) are in trust region.
-        # Create another vector called Ind_close which is the tree traversal nearest neighbor
-        
-        # Zero out every index except for the first (thanks chatgpt)
-        in_trust_region = in_trust_region * (np.cumsum(in_trust_region, axis=1) == 1)
-
-        # Save vector of actual indexes
-        near_ind = np.sum(Ind * in_trust_region, axis=1)
+            in_trust_region = trust_distances <= 1
+            near_ind[in_trust_region] = Ind[in_trust_region,j]
 
         # what if a point has no nearest neighbors in trust region? Just use nearest neighbor
-        bad_points = near_ind == 0
-        Dist, Ind = self._faiss_index.search(targets[bad_points], 1)
+        bad_points = near_ind == -1
+        _, Ind = self._faiss_index.search(targets[bad_points], 1)
         near_ind[bad_points] = Ind[:,0]
-        near_ind = near_ind.astype(int)
 
         # All points have an assigned source now. Do computations
         near_neighbors = self.features[near_ind]
@@ -110,14 +92,11 @@ class NN_Inference:
         else:
             predictions = near_fvals + np.einsum('ijk,ik->ij', near_gradients, diffs)
 
-        trust_distances = np.einsum('ni,nij,nj->n', diffs, near_trust_ellipses, diffs)
-
         if disp_time:
             end_time = time.perf_counter()
             print(f'Time elapsed for predictions: {end_time-start_time} seconds')
 
         return predictions, bad_points
-        # bad points is all False when tol is not specified
 
 
     def find_nearest_sources(self, targets):
