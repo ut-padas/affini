@@ -2,6 +2,8 @@
 
 from array_api_compat import array_namespace
 
+ROSENBROCK_SCALE = 100.0
+
 
 def rosenbrock(X):
     """
@@ -17,7 +19,9 @@ def rosenbrock(X):
     x_i = X[:, :-1]
     x_next = X[:, 1:]
     F = xp.sum(
-        100.0 * (x_next - x_i**2.0) ** 2.0 + (1.0 - x_i) ** 2.0, axis=1, keepdims=True
+        ROSENBROCK_SCALE * (x_next - x_i**2.0) ** 2.0 + (1.0 - x_i) ** 2.0,
+        axis=1,
+        keepdims=True,
     )
     return F
 
@@ -42,11 +46,11 @@ def rosenbrock_grad(X):
 
     # Term from 100*(x_{i+1} - x_i^2)^2 for i < d-1 (derivative w.r.t x_i)
     # This affects 0 to d-2
-    J[:, 0, :-1] -= 400 * X[:, :-1] * (X[:, 1:] - X[:, :-1] ** 2)
+    J[:, 0, :-1] -= 4 * ROSENBROCK_SCALE * X[:, :-1] * (X[:, 1:] - X[:, :-1] ** 2)
 
     # Term from 100*(x_i - x_{i-1}^2)^2 for i > 0 (derivative w.r.t x_{i+1})
     # This affects 1 to d-1
-    J[:, 0, 1:] += 200 * (X[:, 1:] - X[:, :-1] ** 2)
+    J[:, 0, 1:] += 2 * ROSENBROCK_SCALE * (X[:, 1:] - X[:, :-1] ** 2)
 
     return J
 
@@ -68,10 +72,15 @@ def rosenbrock_hess(X):
 
     for i in range(n_dim):
         if i < n_dim - 1:
-            H[:, i, i] += 1200 * X[:, i] ** 2 - 400 * X[:, i + 1] + 2
-            H[:, i, i + 1] += -400 * X[:, i]
-            H[:, i + 1, i] += -400 * X[:, i]
+            H[:, i, i] += (
+                12 * ROSENBROCK_SCALE * X[:, i] ** 2
+                - 4 * ROSENBROCK_SCALE * X[:, i + 1]
+                + 2
+            )
+            if i > 0:
+                H[:, i, i] += 2 * ROSENBROCK_SCALE
+            H[:, i, i + 1] += -4 * ROSENBROCK_SCALE * X[:, i]
+            H[:, i + 1, i] += -4 * ROSENBROCK_SCALE * X[:, i]
         else:
-            H[:, i, i] += 200
-
+            H[:, i, i] += 2 * ROSENBROCK_SCALE
     return H
