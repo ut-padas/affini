@@ -185,10 +185,10 @@ class AdaptiveClusterer:
         f: Callable,
         grad_f: Optional[Callable],
         cupy_f: Optional[Callable],
-        level: int,
+        max_F_inf_norm: float,
     ) -> tuple[
         bool,
-        float,
+        np.ndarray,
         np.ndarray,
         np.ndarray,
         np.ndarray,
@@ -199,7 +199,7 @@ class AdaptiveClusterer:
 
         Returns:
             acceptable: whether cluster is acceptable
-            radius: cluster radius
+            trust_radius: matrix defining trust region (Shape: (D, D))
             centroid: (1, D) cluster centroid
             error_vec: (n,) error scalar for each point in cluster
             F_c: (1, FD) function value at centroid
@@ -220,29 +220,21 @@ class AdaptiveClusterer:
         else:
             F_taylor = F_c
 
-        error_vec = np.linalg.norm(F_cluster - F_taylor, axis=1)
-        error_vec_norm = np.linalg.norm(error_vec, 2)
+        # Updated to new error calculations
+        error_vec_norm = np.linalg.norm(F_cluster - F_taylor, np.inf)
+        abs_ok = np.all(error_vec_norm <= self.atol)
 
-        F_cluster_norm = np.linalg.norm(F_cluster, "fro")
-        if F_cluster_norm > 0:
-            local_error_ratio = error_vec_norm / F_cluster_norm
+        if self.rtol is None:
+            acceptable = abs_ok
         else:
-            local_error_ratio = float("inf")
+            rel_error = error_vec_norm / max_F_inf_norm
+            rel_ok = np.all(rel_error <= self.rtol)
+            acceptable = abs_ok and rel_ok
+        acceptable = bool(acceptable)
 
-        radius = float(np.max(np.linalg.norm(dx, axis=1)))
-        N_level = int(self.num_initial_clusters * (2**level))
-
-        # Check if relative error is within tolerance
-        rel_ok = (self.rtol is not None) and (local_error_ratio <= self.rtol)
-
-        # Check if absolute error is within tolerance
-        abs_thr = float(self.atol / np.sqrt(N_level))
-        abs_ok = error_vec_norm <= abs_thr
-
-        # Final acceptance
-        acceptable = bool(rel_ok or abs_ok)
-
-        return acceptable, radius, c, error_vec, F_c, J_c
+        # TODO: Update return statement aptly after incorporating trust region calculation
+        raise NotImplementedError("Trust region calculation not implemented yet.")
+        return acceptable, trust_radius, c, error_vec, F_c, J_c
 
     def fit(
         self,
@@ -279,6 +271,13 @@ class AdaptiveClusterer:
         labels = self._initial_cluster(X)
         toc = time.perf_counter()
         logger.info(f"Initial clustering done in {toc - tic:.4f}s")
+
+        # Compute the max |F|_inf norm for relative error calculation
+        if self.rtol is not None:
+            F_values = self._get_function_values(X, f, cupy_f)
+            max_F_inf_norm = np.max(np.linalg.norm(F_values, np.inf, axis=1))
+        else:
+            max_F_inf_norm = 1.0  # Dummy value. SHOULD NOT BE USED
 
         # Initialize queue with point arrays from initial clusters
         cluster_ids = np.unique(labels)
@@ -327,14 +326,25 @@ class AdaptiveClusterer:
                     if self.should_generate_extra_points:
                         # Generate extra points
                         new_X = self._generate_extra_points(X_cluster, cluster_size)
+
+                        # TODO (Ben):
+                        # Ideally, we should update the max_F_inf_norm here if using relative error: max(max_F_inf_norm, |f(new_X)|_inf)
+                        # But in this implementation, in a scenario like this:
+                        # [X1, X2, X3, ..., Xn], where first 10 clusters are small and need extra points, but its only in the X10th cluster where we find a new max |F|_inf norm and update accordingly, then we would have used the incorrect max_F_inf_norm for the first 9 clusters during error calculations.
+
                         X_cluster = np.vstack([X_cluster, new_X])
                         cluster_size = len(X_cluster)
                     else:
                         # Append to final clusters directly
                         force_add = True
 
-                acceptable, radius, c, error_vec, F_c, J_c = self._cluster_violation(
-                    X_cluster, f, grad_f, cupy_f, n_level
+                acceptable, trust_radius, c, error_vec, F_c, J_c = (
+                    self._cluster_violation(
+                        X_cluster, f, grad_f, cupy_f, max_F_inf_norm
+                    )
+                )
+                raise NotImplementedError(
+                    "Trust region calculation not implemented yet."
                 )
 
                 if acceptable or force_add:
