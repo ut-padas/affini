@@ -41,8 +41,8 @@ load-modules:
 		echo "Detected TACC Vista system. Loading required modules..."; \
 		if command -v module >/dev/null 2>&1; then \
 			module load nvidia; \
-			module load cuda/12.6 gcc; \
-			echo "Modules loaded: nvidia, cuda/12.6, gcc"; \
+			module load cuda/12.9 gcc; \
+			echo "Modules loaded: nvidia, cuda/12.9, gcc"; \
 		else \
 			echo "Warning: Module system not available. Skipping module loading."; \
 		fi; \
