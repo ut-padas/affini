@@ -11,45 +11,61 @@ def generate_synthetic_points_batched(
     X: cp.ndarray, starts: cp.ndarray, counts: cp.ndarray, N_min: int
 ) -> tuple[Optional[cp.ndarray], Optional[cp.ndarray]]:
     """
-    Generates convex combinations for clusters smaller than N_min.
+    Generate synthetic (convex-combination) points for clusters smaller than N_min,
+    in a batched manner over all clusters. This is intended to pad small clusters with
+    additional points to stabilize error-estimation without changing the original data.
 
     Args:
-        X (cp.ndarray): (N, d) array of data points sorted by cluster labels.
-        starts (cp.ndarray): (K,) array of starting indices for each cluster.
-        counts (cp.ndarray): (K,) array of counts for each cluster.
-        N_min (int): Minimum number of points required per cluster.
+        X: (N, d) Array of data points sorted by cluster labels.
+        starts: (K,) Array of starting indices for each cluster.
+        counts: (K,) Array of counts for each cluster.
+        N_min: Minimum number of points required per cluster.
 
     Returns:
-        X_synth (cp.ndarray): (M, d) array of synthetic points, or None if no synthesis needed.
-        cluster_ids_synth (cp.ndarray): (M,) array of cluster IDs for synthetic points, or None.
+        X_synth: (M, d) synthetic points, where M = sum_k max(0, N_min - counts[k]),
+            or None if no synthesis is needed.
+        cluster_ids_synth: (M,) integer cluster id for each synthetic point (so you can
+            associate each synthetic point back to its cluster), or None if none.
+
+    Construction:
+        For each cluster k with count m_k < N_min, we create n_needed[k] = N_min - m_k
+        synthetic points. Each synthetic point is a convex combination of two randomly
+        chosen points from that same cluster:
+            x_synth = a * x_i + (1 - a) * x_j,   where a ~ Uniform(0,1),
+        and i, j are random indices within the cluster segment.
     """
-    # 1. Identify clusters that need padding
-    n_needed = cp.maximum(0, N_min - counts)
+    # Identify how many synthetic points are needed per cluster
+    n_needed = cp.maximum(0, N_min - counts)  # (K,)
     total_synth = int(cp.sum(n_needed))
 
+    # If no synthesis needed, return None
     if total_synth == 0:
         return None, None
 
-    # 2. Map synthetic points to their cluster ID
-    small_cluster_indices = cp.nonzero(n_needed)[0]
-    needed_counts = n_needed[small_cluster_indices]
+    # Clusters that actually need synthetic points
+    small_cluster_indices = cp.nonzero(n_needed)[0]  # (K_small,)
+    needed_counts = n_needed[small_cluster_indices]  # (K_small,)
 
+    # For each synthetic point, assign it to which cluster it belongs
+    # E.g., if C0: 3 points, C1: 0 points, C2: 2 points, then
+    # cluster_ids_synth = [0,0,0,2,2]
     cluster_ids_synth = cp.repeat(small_cluster_indices.get(), needed_counts.get())
 
-    # 3. Select random pairs from these clusters
-    synth_starts = starts[cluster_ids_synth]
-    synth_counts = counts[cluster_ids_synth]
+    # For each synthetic point, pick two random indices within that cluster
+    synth_starts = starts[cluster_ids_synth]  # (M,)
+    synth_counts = counts[cluster_ids_synth]  # (M,)
 
     # Generate random offsets
     offsets1 = cp.floor(cp.random.rand(total_synth) * synth_counts).astype(cp.int32)
-    indices1 = synth_starts + offsets1
-
     offsets2 = cp.floor(cp.random.rand(total_synth) * synth_counts).astype(cp.int32)
-    indices2 = synth_starts + offsets2
 
-    # 4. Convex Combination
-    alpha = cp.random.rand(total_synth, 1).astype(X.dtype)
-    X_synth = alpha * X[indices1] + (1.0 - alpha) * X[indices2]
+    # Convert offsets to absolute indices into X
+    idx1 = synth_starts + offsets1
+    idx2 = synth_starts + offsets2
+
+    # Form convex combinations
+    alpha = cp.random.rand(total_synth, 1).astype(X.dtype)  # (M, 1)
+    X_synth = alpha * X[idx1] + (1.0 - alpha) * X[idx2]  # (M, d)
 
     return X_synth, cluster_ids_synth
 
@@ -64,7 +80,7 @@ def batched_estimate_hessian_symmetric(DeltaX, DeltaG, starts):
         starts: (K,) start indices of each cluster segment in DeltaX/DeltaG
 
     Returns:
-        H: (K, d, d) Estimated symmetric Hessians for each cluster
+        H: (K, d, d) Batch of symmetric Hessians for each cluster
 
     Equations (per cluster k):
         X = [Δx_1 ... Δx_m] ∈ R^{d x m}
@@ -83,15 +99,15 @@ def batched_estimate_hessian_symmetric(DeltaX, DeltaG, starts):
     # Segment sums (cluster-wise):
     # C_k = Σ Δx Δx^T
     # E_k = Σ Δx Δg^T
-    C = np.add.reduceat(XX_all, starts)  # (K, d, d)
-    E = np.add.reduceat(XG_all, starts)  # (K, d, d)
+    C = cp.add.reduceat(XX_all, starts)  # (K, d, d)
+    E = cp.add.reduceat(XG_all, starts)  # (K, d, d)
 
     # RHS S_k = E_k + E_k^T
     S = E + E.transpose(0, 2, 1)  # (K, d, d)
 
-    # Eigen-decomposition of each C_k = U_k D_k U_k^T
-    dvals, U = np.linalg.eigh((C + C.transpose(0, 2, 1)) * 0.5)
-    dvals = np.maximum(dvals, 1e-18)
+    # Batch eigen-decomposition of each C_k = U_k D_k U_k^T
+    dvals, U = cp.linalg.eigh((C + C.transpose(0, 2, 1)) * 0.5)
+    dvals = cp.maximum(dvals, 1e-18)
 
     # Gtilde = U^T S U
     Gtilde = U.transpose(0, 2, 1) @ S @ U
@@ -107,15 +123,51 @@ def batched_estimate_hessian_symmetric(DeltaX, DeltaG, starts):
     return (H + H.transpose(0, 2, 1)) * 0.5
 
 
-def batched_sqrt_abs_psd(H):
-    w, U = cp.linalg.eigh((H + H.transpose(0, 2, 1)) * 0.5)
+def batched_sqrt_abs_psd(H: cp.ndarray) -> cp.ndarray:
+    """
+    Computes the square root of the absolute value of symmetric PSD matrices.
+
+    Args:
+        H: (K, d, d) Batch of symmetric matrices (corresponding to Hessians of clusters)
+
+    Returns:
+        M: (K, d, d) Batch of square-rooted absolute value matrices, where
+            M_k M_k = |H_k|.
+
+    Equations (per matrix/cluster k):
+        If H_k is symmetric, it has eigendecomposition:
+            H_k = U_k diag(λ_k) U_k^T
+        Then the square root of the absolute value is:
+            |H_k|^{1/2} = U_k diag(sqrt(|λ_k|)) U_k^T
+    """
+    # Batch eigen-decomposition of each H_k = U_k D_k U_k^T
+    # w: (K, d) eigenvalues, U: (K, d, d) eigenvectors
+    w, U = cp.linalg.eigh(H)
+
+    # Compute sqrt(|w|) elementwise
     w_abs_sqrt = cp.sqrt(cp.abs(w))
-    return (U * w_abs_sqrt[:, None, :]) @ U.transpose(0, 2, 1)
+
+    M = (U * w_abs_sqrt[:, None, :]) @ U.transpose(0, 2, 1)  # (K, d, d)
+    return (M + M.transpose(0, 2, 1)) * 0.5
 
 
-def batched_top_eigvec(Cov):
+def batched_top_eigvec(Cov: cp.ndarray) -> cp.ndarray:
+    """
+    Returns the dominant (top) eigenvector for each symmetric matrix in the batch.
+
+    Args:
+        Cov: (K, d, d) Batch of symmetric covariance matrices.
+
+    Returns:
+        v: (K, d) Batch of top eigenvectors, where v[k] is the eigenvector corresponding
+            to the largest eigenvalue of Cov[k] matrix.
+    """
+    # Batch eigen-decomposition of symmetric matrices
+    # w: (K, d) eigenvalues (ascending), V: (K, d, d) eigenvectors
     w, V = cp.linalg.eigh((Cov + Cov.transpose(0, 2, 1)) * 0.5)
-    return V[:, :, -1]
+
+    # Since eigenvalues are ascending, the last column of V is the top eigenvector
+    return V[:, :, -1]  # (K, d)
 
 
 def batched_calculate_Q(DeltaX, starts, counts, K, ridge=1e-12):
