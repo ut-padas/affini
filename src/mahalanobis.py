@@ -151,9 +151,9 @@ if __name__ == "__main__":
         g_fn=rosenbrock_grad,
         ATOL=TOL,
         RTOL=TOL,
-        N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-        N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-        MAX_EST_CLUSTERS=100_000,
+        NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
+        MAX_CLUSTERS_EST=100_000,
     )
 
     print("-" * 40)

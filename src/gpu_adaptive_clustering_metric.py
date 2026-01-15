@@ -11,14 +11,14 @@ logger = logging.getLogger(__name__)
 
 
 def generate_synthetic_points_batched(
-    X: cp.ndarray, starts: cp.ndarray, counts: cp.ndarray, N_min: int
+    X: cp.ndarray, starts: cp.ndarray, counts: cp.ndarray, MIN_PTS_PER_CLUSTER: int
 ) -> tuple[Optional[cp.ndarray], Optional[cp.ndarray]]:
     """
     Batch generate synthetic (convex-combination) points for clusters smaller than N_min,
     over all clusters. This is intended to augment small clusters with additional points
     to stabilize error-estimation without changing the original data.
 
-    For each cluster k with count m_k < N_min, we create n_needed[k] = N_min - m_k
+    For each cluster k with count m_k < MIN_PTS_PER_CLUSTER, we create n_needed[k] = MIN_PTS_PER_CLUSTER - m_k
     synthetic points. Each synthetic point is a convex combination of two randomly
     chosen points from that same cluster:
         x_synth = a * x_i + (1 - a) * x_j,   where a ~ Uniform(0,1),
@@ -28,16 +28,16 @@ def generate_synthetic_points_batched(
         X: (N, d) Array of data points sorted by cluster labels.
         starts: (K,) Array of starting indices for each cluster.
         counts: (K,) Array of counts for each cluster.
-        N_min: Minimum number of points required per cluster.
+        MIN_PTS_PER_CLUSTER: Minimum number of points required per cluster.
 
     Returns:
-        X_synth: (M, d) synthetic points, where M = sum_k max(0, N_min - counts[k]),
-            or None if no synthesis is needed.
+        X_synth: (M, d) synthetic points, where M = sum_k max(0, MIN_PTS_PER_CLUSTER -
+        counts[k]), or None if no synthesis is needed.
         cluster_ids_synth: (M,) integer cluster id for each synthetic point (so you can
             associate each synthetic point back to its cluster), or None if none.
     """
     # Identify how many synthetic points are needed per cluster.
-    n_needed = cp.maximum(0, N_min - counts)  # (K,)
+    n_needed = cp.maximum(0, MIN_PTS_PER_CLUSTER - counts)  # (K,)
     total_synth = int(cp.sum(n_needed))
 
     # If no synthesis needed, return None.
@@ -305,13 +305,13 @@ def batched_calculate_Q(
 
 
 def allocate_output_buffers(
-    MAX_EST_CLUSTERS: int, d: int, dtype
+    MAX_CLUSTERS_EST: int, d: int, dtype
 ) -> tuple[dict[str, cp.ndarray], int]:
     """
     Allocate output buffers for adaptive clustering.
 
     Args:
-        MAX_EST_CLUSTERS: Estimated maximum number of clusters.
+        MAX_CLUSTERS_EST: Estimated maximum number of clusters.
         d: Data dimensionality.
         dtype: Data type for floating-point arrays.
 
@@ -320,7 +320,7 @@ def allocate_output_buffers(
             Keys: "centroids", "f", "g", "Q", "E_abs", "E_rel", "real_counts", "counts"
         capacity: The allocated capacity (number of clusters)
     """
-    capacity = max(1, MAX_EST_CLUSTERS)
+    capacity = max(1, MAX_CLUSTERS_EST)
     buffers = {
         "centroids": cp.empty((capacity, d), dtype=dtype),
         "f": cp.empty((capacity,), dtype=dtype),
@@ -389,9 +389,9 @@ def adaptive_clustering(
     g_fn,
     ATOL: float = 1e-2,
     RTOL: float = 1e-2,
-    N_INIT_CLUSTERS: int = 100,
-    N_MIN_PER_CLUSTER: int = 100,
-    MAX_EST_CLUSTERS: int = 100_000,
+    NUM_INITIAL_CLUSTERS: int = 100,
+    MIN_PTS_PER_CLUSTER: int = 100,
+    MAX_CLUSTERS_EST: int = 100_000,
     SEED: int = 0,
 ):
     """
@@ -430,10 +430,10 @@ def adaptive_clustering(
         g_fn: Callable mapping X (N, d) -> (N, 1, d) function gradients.
         ATOL: Absolute tolerance for max linearization error within a cluster.
         RTOL: Relative tolerance (w.r.t. global max |f|) for max error within a cluster.
-        N_INIT_CLUSTERS: Number of initial KMeans clusters (cuML KMeans).
-        N_MIN_PER_CLUSTER: Minimum points per cluster for stable geometry estimates.
+        NUM_INITIAL_CLUSTERS: Number of initial KMeans clusters (cuML KMeans).
+        MIN_PTS_PER_CLUSTER: Minimum points per cluster for stable geometry estimates.
             Clusters below this are augmented with synthetic points.
-        MAX_EST_CLUSTERS: Initial allocation capacity for output buffers (auto-grows).
+        MAX_CLUSTERS_EST: Initial allocation capacity for output buffers (auto-grows).
         SEED: RNG seed for KMeans and synthetic point generation.
 
     Returns:
@@ -461,9 +461,9 @@ def adaptive_clustering(
     msg = f"""Adaptive Clustering Parameters:
       {ATOL=}
       {RTOL=}
-      {N_INIT_CLUSTERS=:,}
-      {N_MIN_PER_CLUSTER=:,}
-      {MAX_EST_CLUSTERS=:,}
+      {NUM_INITIAL_CLUSTERS=:,}
+      {MIN_PTS_PER_CLUSTER=:,}
+      {MAX_CLUSTERS_EST=:,}
       {SEED=}
       Data Points: {X.shape[0]:,} (Dim: {X.shape[1]:,})"""
     logging.debug(msg)
@@ -473,12 +473,12 @@ def adaptive_clustering(
     #    The adaptive loop will refine this partition by splitting "bad" clusters.
     # -------------------------------------------------------------------------
     _start_init = time.perf_counter()
-    kmeans = cuKMeans(n_clusters=N_INIT_CLUSTERS, random_state=SEED)
+    kmeans = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
     labels = kmeans.fit_predict(X)
     logging.debug(f"Runtime - Initial KMeans: {time.perf_counter() - _start_init:.4f}s")
 
     # Allocate outputs with an estimated capacity; will grow if needed.
-    buffers, capacity = allocate_output_buffers(MAX_EST_CLUSTERS, d, X.dtype)
+    buffers, capacity = allocate_output_buffers(MAX_CLUSTERS_EST, d, X.dtype)
     valid_cluster_count = 0
 
     # -------------------------------------------------------------------------
@@ -539,7 +539,7 @@ def adaptive_clustering(
         #     with synthetic convex-combination points.
         # ---------------------------------------------------------------------
         X_synth, ids_synth = generate_synthetic_points_batched(
-            sorted_X_real, starts_real, counts_real, N_MIN_PER_CLUSTER
+            sorted_X_real, starts_real, counts_real, MIN_PTS_PER_CLUSTER
         )
 
         # ---------------------------------------------------------------------
@@ -786,8 +786,8 @@ if __name__ == "__main__":
     X = cp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(_N, d))
 
     TOL = 1e-3
-    N_INIT_CLUSTERS = 100
-    N_MIN_PER_CLUSTER = 1000
+    NUM_INITIAL_CLUSTERS = 100
+    MIN_PTS_PER_CLUSTER = 1000
 
     print("Starting Adaptive GPU Clustering...")
     results = adaptive_clustering(
@@ -796,9 +796,9 @@ if __name__ == "__main__":
         g_fn=rosenbrock_grad,
         ATOL=TOL,
         RTOL=TOL,
-        N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-        N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-        MAX_EST_CLUSTERS=100_000,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        MAX_CLUSTERS_EST=100_000,
     )
 
     print("-" * 40)
@@ -919,12 +919,12 @@ if __name__ == "__main__":
         axs[1].legend()
         plt.tight_layout()
         fig.suptitle(
-            f"Adaptive Clustering: Rosenbrock (TOL={TOL}, N_INIT={N_INIT_CLUSTERS}, N_MIN={N_MIN_PER_CLUSTER}), Final Clusters: {results['centroids'].shape[0]:,}",
+            f"Adaptive Clustering: Rosenbrock (TOL={TOL}, N_INIT={NUM_INITIAL_CLUSTERS}, N_MIN={MIN_PTS_PER_CLUSTER}), Final Clusters: {results['centroids'].shape[0]:,}",
             fontsize=16,
         )
 
         plt.subplots_adjust(top=0.88)
-        fname = f"adaptive_clustering_rosenbrock_tol{int(TOL*1e4)}_init{N_INIT_CLUSTERS}_min{N_MIN_PER_CLUSTER}.png"
+        fname = f"adaptive_clustering_rosenbrock_tol{int(TOL*1e4)}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}.png"
         plt.savefig(fname, dpi=300)
         print(f"Saved figure to {fname}")
     else:
