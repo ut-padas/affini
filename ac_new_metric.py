@@ -49,6 +49,8 @@ def rosenbrock_grad(X: np.ndarray) -> np.ndarray:
 @dataclass
 class ClusterRecord:
     idx: np.ndarray  # (m,) indices into global X
+    n_synth: int  # number of synthetic points used (for error / accounting)
+    n_total: int  # idx.size + n_synth
     mu: np.ndarray  # (d,)
     f_mu: float  # scalar
     g_mu: np.ndarray  # (d,)
@@ -173,6 +175,7 @@ def _evaluate_frontier_batch(
             np.empty((0, X.shape[1]), dtype=X.dtype),
             np.empty((0,), dtype=float),
             np.empty((0,), dtype=float),
+            np.empty((0,), dtype=np.int64),
             np.empty((0,), dtype=bool),
         )
 
@@ -209,6 +212,9 @@ def _evaluate_frontier_batch(
     starts = np.r_[0, np.cumsum(sizes)[:-1]]
     E_abs = np.maximum.reduceat(err_flat, starts).astype(float, copy=False)
 
+    # Track how many synthetic points were generated per cluster.
+    n_synth_arr = np.zeros((K,), dtype=np.int64)
+
     # Optional augmentation for small clusters: avoid concatenation; just update the max.
     if N_min > 0:
         small = np.where((sizes < N_min) & (sizes > 1))[0]
@@ -217,6 +223,9 @@ def _evaluate_frontier_batch(
             Xc = X[idx]
             m = Xc.shape[0]
             n_synth = int(N_min - m)
+
+            # Store for accounting (even if this cluster later ends up splitting).
+            n_synth_arr[k] = n_synth
 
             idx0 = np.random.randint(0, m, size=n_synth)
             offset = np.random.randint(1, m, size=n_synth)
@@ -233,7 +242,7 @@ def _evaluate_frontier_batch(
 
     E_rel = E_abs / float(F_inf)
     good_mask = (E_abs < ATOL) | (E_rel < RTOL)
-    return mu, f_mu, g_mu, E_abs, E_rel, good_mask
+    return mu, f_mu, g_mu, E_abs, E_rel, n_synth_arr, good_mask
 
 
 # ============================================================
@@ -277,13 +286,13 @@ def adaptive_bfs_clusters(
         good_clusters: list[np.ndarray] = []
         bad_clusters: list[np.ndarray] = []
         accepted_cluster_data: list[
-            tuple[np.ndarray, np.ndarray, float, np.ndarray, float, float]
+            tuple[np.ndarray, int, np.ndarray, float, np.ndarray, float, float]
         ] = []
         failed_cluster_data: list[
-            tuple[np.ndarray, np.ndarray, float, np.ndarray, float, float]
+            tuple[np.ndarray, int, np.ndarray, float, np.ndarray, float, float]
         ] = []
 
-        mu_arr, f_mu_arr, g_mu_arr, E_abs_arr, E_rel_arr, good_mask = (
+        mu_arr, f_mu_arr, g_mu_arr, E_abs_arr, E_rel_arr, n_synth_arr, good_mask = (
             _evaluate_frontier_batch(
                 X=X,
                 frontier=frontier,
@@ -303,21 +312,26 @@ def adaptive_bfs_clusters(
             g_mu = g_mu_arr[k]
             E_abs = float(E_abs_arr[k])
             E_rel = float(E_rel_arr[k])
+            n_synth = int(n_synth_arr[k])
 
             if bool(good_mask[k]):
                 good_clusters.append(idx)
-                accepted_cluster_data.append((idx, mu, f_mu, g_mu, E_abs, E_rel))
+                accepted_cluster_data.append(
+                    (idx, n_synth, mu, f_mu, g_mu, E_abs, E_rel)
+                )
             else:
                 bad_clusters.append(idx)
-                failed_cluster_data.append((idx, mu, f_mu, g_mu, E_abs, E_rel))
+                failed_cluster_data.append((idx, n_synth, mu, f_mu, g_mu, E_abs, E_rel))
 
         # ---- Finalize GOOD clusters with trust ellipse Q (batched per cluster) ----
-        for idx, mu, f_mu, g_mu, E_abs, E_rel in accepted_cluster_data:
+        for idx, n_synth, mu, f_mu, g_mu, E_abs, E_rel in accepted_cluster_data:
             Y = X[idx] - mu[None, :]  # (m, d)
             Q = calculate_pca_ellipse_parameters(Y)
             final_records.append(
                 ClusterRecord(
                     idx=idx,
+                    n_synth=n_synth,
+                    n_total=int(idx.size + n_synth),
                     mu=mu,
                     f_mu=f_mu,
                     g_mu=g_mu,
@@ -330,7 +344,7 @@ def adaptive_bfs_clusters(
         # ---- Split BAD clusters using Hessian-weighted PCA ----
         next_frontier: list[np.ndarray] = []
 
-        for idx, mu, f_mu, g_mu, E_abs, E_rel in failed_cluster_data:
+        for idx, n_synth, mu, f_mu, g_mu, E_abs, E_rel in failed_cluster_data:
             Xc = X[idx]  # (m, d)
             DeltaX = Xc - mu[None, :]  # (m, d)
 
@@ -420,20 +434,19 @@ if __name__ == "__main__":
     initial_clusters = [idx for idx in initial_clusters if idx.size > 0]
 
     # Tolerances
-    ATOL = 1e-2
-    RTOL = 1e-2
-    N_min = 100
-    print(f"Clustering tolerances: ATOL={ATOL}, RTOL={RTOL}, N_min={N_min}")
+    TOL = 1e-4
+    N_min = 1000
+    print(f"Clustering tolerances: ATOL={TOL}, RTOL={TOL}, N_min={N_min}")
 
     tic_ac = time.perf_counter()
     final_clusters = adaptive_bfs_clusters(
         X=X,
         initial_clusters=initial_clusters,
-        ATOL=ATOL,
-        RTOL=RTOL,
+        ATOL=TOL,
+        RTOL=TOL,
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
-        lam_hess=1e-4,
+        lam_hess=0,
         N_min=N_min,
         debug=True,
     )
@@ -445,14 +458,21 @@ if __name__ == "__main__":
     # Print summary
     E_abs_vals = np.array([c.E_abs for c in final_clusters])
     E_rel_vals = np.array([c.E_rel for c in final_clusters])
-    sizes = np.array([c.idx.size for c in final_clusters])
+    sizes_base = np.array([c.idx.size for c in final_clusters])
+    sizes_total = np.array([c.n_total for c in final_clusters])
 
     print(f"Final clusters: {len(final_clusters):,}")
     print(
-        "Size stats: min/mean/max =",
-        round(sizes.min(), 3),
-        round(sizes.mean(), 3),
-        round(sizes.max(), 3),
+        "Size (base) stats: min/mean/max =",
+        int(sizes_base.min()),
+        round(sizes_base.mean(), 3),
+        int(sizes_base.max()),
+    )
+    print(
+        "Size (with synth) stats: min/mean/max =",
+        int(sizes_total.min()),
+        round(sizes_total.mean(), 3),
+        int(sizes_total.max()),
     )
     print(
         "E_abs stats: min/mean/max =",
@@ -467,7 +487,7 @@ if __name__ == "__main__":
         round(E_rel_vals.max(), 3),
     )
 
-    if d == 2:
+    if d == 2 and len(final_clusters) <= 2000:
         import matplotlib.pyplot as plt
         from matplotlib.patches import Ellipse
 
@@ -564,11 +584,11 @@ if __name__ == "__main__":
         plt.tight_layout()
         # Add title to entire figure
         fig.suptitle(
-            f"Adaptive Clustering on Rosenbrock: N={N}, d={d}, ATOL={ATOL}, RTOL={RTOL}, Final Clusters={len(final_clusters)}",
+            f"Adaptive Clustering on Rosenbrock: N={N}, d={d}, ATOL={TOL}, RTOL={TOL}, Final Clusters={len(final_clusters)}",
             fontsize=16,
         )
         plt.subplots_adjust(top=0.92)
-        fname = f"ac_rosenbrock_adaptive_clusters_N{N}_ATOL{ATOL}_RTOL{RTOL}.png"
+        fname = f"ac_rosenbrock_adaptive_clusters_N{N}_ATOL{TOL}_RTOL{TOL}.png"
         plt.savefig(fname, dpi=300)
         plt.close()
         print(f"Saved 2D cluster plot to: {fname}")

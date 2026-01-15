@@ -401,7 +401,7 @@ if __name__ == "__main__":
     cp.random.seed(0)
 
     _N = 100_000
-    d = 10
+    d = 2
     print(f"Generating {_N:,} points (d={d})...")
 
     X_list = []
@@ -421,17 +421,17 @@ if __name__ == "__main__":
     print("Starting Adaptive GPU Clustering...")
     start_total = time.perf_counter()
 
-    ATOL = 1e-3
-    RTOL = 1e-3
+    TOL = 1e-4
     results = adaptive_clustering_fit(
         X_gpu,
         initial_labels,
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
-        ATOL=ATOL,
-        RTOL=RTOL,
+        ATOL=TOL,
+        RTOL=TOL,
         max_estimated_clusters=100_000,
         verbose=True,
+        N_min=1000,
     )
     end_total = time.perf_counter()
 
@@ -454,7 +454,7 @@ if __name__ == "__main__":
         f"E_rel Stats: Min {cp.min(E_rel_vals):.3g} | Max {cp.max(E_rel_vals):.3g} | Mean {cp.mean(E_rel_vals):.3g}"
     )
 
-    if d == 2:
+    if d == 2 and len(results["centroids"]) <= 1000:
         try:
             import matplotlib.pyplot as plt
             from matplotlib.patches import Ellipse
@@ -549,12 +549,12 @@ if __name__ == "__main__":
 
             plt.tight_layout()
             fig.suptitle(
-                f"Adaptive Clustering on Rosenbrock: N={_N}, d={d}, ATOL={ATOL}, RTOL={RTOL}, Final Clusters={final_centroids.shape[0]}",
+                f"Adaptive Clustering on Rosenbrock: N={_N}, d={d}, ATOL={TOL}, RTOL={TOL}, Final Clusters={final_centroids.shape[0]}",
                 fontsize=16,
             )
             plt.subplots_adjust(top=0.92)
             fname = (
-                f"temp_rosenbrock_adaptive_clusters_N{_N}_ATOL{ATOL:g}_RTOL{RTOL:g}.png"
+                f"temp_rosenbrock_adaptive_clusters_N{_N}_ATOL{TOL:g}_RTOL{TOL:g}.png"
             )
             plt.savefig(fname, dpi=300)
             plt.close()
