@@ -1,4 +1,5 @@
 import time
+from typing import Optional
 
 import cupy as cp
 import numpy as np
@@ -6,9 +7,21 @@ from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max
 
 
-def generate_synthetic_points_batched(X, starts, counts, N_min):
+def generate_synthetic_points_batched(
+    X: cp.ndarray, starts: cp.ndarray, counts: cp.ndarray, N_min: int
+) -> tuple[Optional[cp.ndarray], Optional[cp.ndarray]]:
     """
     Generates convex combinations for clusters smaller than N_min.
+
+    Args:
+        X (cp.ndarray): (N, d) array of data points sorted by cluster labels.
+        starts (cp.ndarray): (K,) array of starting indices for each cluster.
+        counts (cp.ndarray): (K,) array of counts for each cluster.
+        N_min (int): Minimum number of points required per cluster.
+
+    Returns:
+        X_synth (cp.ndarray): (M, d) array of synthetic points, or None if no synthesis needed.
+        cluster_ids_synth (cp.ndarray): (M,) array of cluster IDs for synthetic points, or None.
     """
     # 1. Identify clusters that need padding
     n_needed = cp.maximum(0, N_min - counts)
@@ -41,37 +54,56 @@ def generate_synthetic_points_batched(X, starts, counts, N_min):
     return X_synth, cluster_ids_synth
 
 
-# ============================================================
-# Standard Estimators (No Augmentation Logic Needed)
-# ============================================================
-def batched_estimate_hessian_symmetric(DeltaX, DeltaG, starts, lam=1e-6):
+def batched_estimate_hessian_symmetric(DeltaX, DeltaG, starts):
     """
-    Standard batched Hessian estimation.
-    Now works on combined (Real + Synth) data seamlessly.
+    Estimates the symmetric Hessian for batches of clusters.
+
+    Args:
+        DeltaX: (N, d) rows are Δx_i^T, packed cluster-wise
+        DeltaG: (N, d) rows are Δg_i^T, packed cluster-wise
+        starts: (K,) start indices of each cluster segment in DeltaX/DeltaG
+
+    Returns:
+        H: (K, d, d) Estimated symmetric Hessians for each cluster
+
+    Equations (per cluster k):
+        X = [Δx_1 ... Δx_m] ∈ R^{d x m}
+        G = [Δg_1 ... Δg_m] ∈ R^{d x m}
+
+        C = X X^T = Σ Δx Δx^T
+        E = X G^T = Σ Δx Δg^T
+        Solve: H C + C H = E + E^T via C = U D U^T
     """
-    d = DeltaX.shape[1]
+    # Build per-point outer products:
+    # XX_all[i] = Δx_i Δx_i^T
+    # XG_all[i] = Δx_i Δg_i^T
+    XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]  # (N, d, d)
+    XG_all = DeltaX[:, :, None] * DeltaG[:, None, :]  # (N, d, d)
 
-    # XX_i = x_i * x_i.T
-    XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]
-    XG_all = DeltaX[:, :, None] * DeltaG[:, None, :]
+    # Segment sums (cluster-wise):
+    # C_k = Σ Δx Δx^T
+    # E_k = Σ Δx Δg^T
+    C = np.add.reduceat(XX_all, starts)  # (K, d, d)
+    E = np.add.reduceat(XG_all, starts)  # (K, d, d)
 
-    # Simple reduceat on the sorted array
-    XX_sum = cp.add.reduceat(XX_all, starts)
-    XG_sum = cp.add.reduceat(XG_all, starts)
+    # RHS S_k = E_k + E_k^T
+    S = E + E.transpose(0, 2, 1)  # (K, d, d)
 
-    eye_d = cp.eye(d, dtype=DeltaX.dtype)[None, :, :]
-    C = XX_sum + lam * eye_d
+    # Eigen-decomposition of each C_k = U_k D_k U_k^T
+    dvals, U = np.linalg.eigh((C + C.transpose(0, 2, 1)) * 0.5)
+    dvals = np.maximum(dvals, 1e-18)
 
-    S = XG_sum + XG_sum.transpose(0, 2, 1)
-
-    dvals, U = cp.linalg.eigh((C + C.transpose(0, 2, 1)) * 0.5)
-    dvals = cp.maximum(dvals, 1e-18)
-
+    # Gtilde = U^T S U
     Gtilde = U.transpose(0, 2, 1) @ S @ U
+
+    # F_ij = Gtilde_ij / (d_i + d_j)
     denom = dvals[:, :, None] + dvals[:, None, :]
     F = Gtilde / denom
 
+    # H = U F U^T
     H = U @ F @ U.transpose(0, 2, 1)
+
+    # Ensure symmetry
     return (H + H.transpose(0, 2, 1)) * 0.5
 
 
@@ -108,9 +140,6 @@ def batched_calculate_Q(DeltaX, starts, counts, K, ridge=1e-12):
     return (Q + Q.transpose(0, 2, 1)) * 0.5
 
 
-# ============================================================
-# Memory Management
-# ============================================================
 def _init_output_buffers(max_estimated_clusters, d, dtype):
     cap = max(1, int(max_estimated_clusters))
     buffers = {
@@ -148,26 +177,38 @@ def _ensure_capacity(buffers, out_n, cap, required_total):
     return new_buffers, int(new_cap)
 
 
-# ============================================================
-# Main Loop (Unified Data Stream)
-# ============================================================
 def adaptive_clustering_fit(
-    X_cpu,
-    labels,
+    X: cp.ndarray,
     *,
     f_fn,
     g_fn,
-    ATOL=1e-2,
-    RTOL=1e-2,
-    N_min=100,
-    max_estimated_clusters=100_000,
-    verbose=True,
+    ATOL: float = 1e-2,
+    RTOL: float = 1e-2,
+    N_INIT_CLUSTERS: int = 100,
+    N_MIN_PER_CLUSTER: int = 100,
+    MAX_EST_CLUSTERS: int = 100_000,
+    VERBOSE: bool = True,
+    SEED: int = 0,
 ):
-    X = cp.asarray(X_cpu)
-    labels = cp.asarray(labels).copy()
-    N, d = X.shape
+    if VERBOSE:
+        print("Adaptive Clustering Parameters:")
+        print(f"  ATOL: {ATOL}")
+        print(f"  RTOL: {RTOL}")
+        print(f"  N_INIT_CLUSTERS: {N_INIT_CLUSTERS}")
+        print(f"  N_MIN_PER_CLUSTER: {N_MIN_PER_CLUSTER}")
+        print(f"  MAX_EST_CLUSTERS: {MAX_EST_CLUSTERS}")
+        print(f"  SEED: {SEED}")
 
-    buffers, cap = _init_output_buffers(max_estimated_clusters, d=d, dtype=X.dtype)
+    X = cp.asarray(X)
+
+    start_init = time.perf_counter()
+    kmeans = cuKMeans(n_clusters=N_INIT_CLUSTERS, random_state=SEED)
+    labels = kmeans.fit_predict(X)
+    if VERBOSE:
+        print(f"  >Initial KMeans: {time.perf_counter() - start_init:.4f}s")
+
+    N, d = X.shape
+    buffers, cap = _init_output_buffers(MAX_EST_CLUSTERS, d=d, dtype=X.dtype)
     out_n = 0
 
     F_all = f_fn(X).ravel()
@@ -175,8 +216,8 @@ def adaptive_clustering_fit(
     F_inf = float(cp.max(cp.abs(F_all))) + 1e-30
 
     active_mask = cp.ones(N, dtype=bool)
-    level = 0
 
+    level = 0
     while True:
         n_active = int(cp.sum(active_mask))
         if n_active == 0:
@@ -201,10 +242,10 @@ def adaptive_clustering_fit(
 
         # --- 2. Generate Synthetic Points ---
         X_synth, ids_synth = generate_synthetic_points_batched(
-            sorted_X_real, starts_real, counts_real, N_min
+            sorted_X_real, starts_real, counts_real, N_MIN_PER_CLUSTER
         )
 
-        # --- 3. Merge & Resort (The Cost) ---
+        # --- 3. Merge & Resort ---
         if X_synth is not None:
             # Create "Combined" arrays
             # We track original indices: 0..N for real, -1 for synth
@@ -377,19 +418,20 @@ def adaptive_clustering_fit(
         labels[global_indices_bad_real] = new_ids
 
         level += 1
-        if verbose:
+        if VERBOSE:
             n_synth_count = X_synth.shape[0] if X_synth is not None else 0
             print(
                 f"Level {level}: Active {n_active:,} (+{n_synth_count} synth) -> {K_batch} clusters (Good: {good_indices.size}, Bad: {bad_indices.size}) | {time.perf_counter() - t_start:.4f}s"
             )
 
     n_final = int(out_n)
+
+    if VERBOSE:
+        print(f"Adaptive Clustering Complete: {n_final:,} final clusters.")
+        print(f"  > Total Time: {time.perf_counter() - start_init:.4f}s")
     return {k: buffers[k][:n_final] for k in buffers}
 
 
-# ============================================================
-# Driver
-# ============================================================
 ROSENBROCK_SCALE = 100.0
 
 
@@ -415,30 +457,25 @@ def rosenbrock_grad(X):
 
 if __name__ == "__main__":
     cp.random.seed(0)
-    _N = 1_000_00
-    d = 10
+    _N = 100_000
+    d = 2
     print(f"Generating {_N:,} points (d={d})...")
+    X = cp.random.uniform(-2.0, 3.0, size=(_N, d))
 
-    X_gpu = cp.random.uniform(-2.0, 3.0, size=(_N, d))
-
-    print("Running Init KMeans...")
-    N_INIT_CLUSTERS = 100
     TOL = 1e-2
-    N_MIN = 1000
-    print(f"Parameters: N_INIT_CLUSTERS={N_INIT_CLUSTERS}, TOL={TOL}, N_MIN={N_MIN}")
-    kmeans = cuKMeans(n_clusters=N_INIT_CLUSTERS, random_state=0)
-    initial_labels = kmeans.fit_predict(X_gpu)
+    N_MIN_PER_CLUSTER = 100
+    N_INIT_CLUSTERS = 100
 
-    print("Starting Adaptive GPU Clustering (Unified Augmentation)...")
+    print("Starting Adaptive GPU Clustering...")
     results = adaptive_clustering_fit(
-        X_gpu,
-        initial_labels,
+        X,
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
         ATOL=TOL,
         RTOL=TOL,
-        N_min=N_MIN,
-        verbose=True,
+        N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+        N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+        VERBOSE=True,
     )
 
     print("-" * 40)
