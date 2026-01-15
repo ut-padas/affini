@@ -401,7 +401,7 @@ if __name__ == "__main__":
     cp.random.seed(0)
 
     _N = 100_000
-    d = 2
+    d = 10
     print(f"Generating {_N:,} points (d={d})...")
 
     X_list = []
