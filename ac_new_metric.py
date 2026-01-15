@@ -4,10 +4,9 @@ from dataclasses import dataclass
 import numpy as np
 from sklearn.cluster import KMeans
 
+ROSENBROCK_SCALE = 100.0
 
-# ============================================================
-# Rosenbrock (scalar) + gradient (batched)
-# ============================================================
+
 def rosenbrock(X: np.ndarray) -> np.ndarray:
     """
     Rosenbrock function.
@@ -16,8 +15,11 @@ def rosenbrock(X: np.ndarray) -> np.ndarray:
     """
     x_i = X[:, :-1]
     x_next = X[:, 1:]
+
     F = np.sum(
-        100.0 * (x_next - x_i**2.0) ** 2.0 + (1.0 - x_i) ** 2.0, axis=1, keepdims=True
+        ROSENBROCK_SCALE * (x_next - x_i**2.0) ** 2.0 + (1.0 - x_i) ** 2.0,
+        axis=1,
+        keepdims=True,
     )
     return F
 
@@ -31,9 +33,13 @@ def rosenbrock_grad(X: np.ndarray) -> np.ndarray:
     n_pts, n_dim = X.shape
     J = np.zeros((n_pts, 1, n_dim), dtype=X.dtype)
 
+    # Gradient with respect to x_i: 2*(x_i - 1) - 4*a*x_i*(x_next - x_i^2)
     J[:, 0, :-1] += 2 * (X[:, :-1] - 1)
-    J[:, 0, :-1] -= 400 * X[:, :-1] * (X[:, 1:] - X[:, :-1] ** 2)
-    J[:, 0, 1:] += 200 * (X[:, 1:] - X[:, :-1] ** 2)
+    J[:, 0, :-1] -= 4 * ROSENBROCK_SCALE * X[:, :-1] * (X[:, 1:] - X[:, :-1] ** 2)
+
+    # Gradient with respect to x_{i+1}: 2*a*(x_next - x_i^2)
+    J[:, 0, 1:] += 2 * ROSENBROCK_SCALE * (X[:, 1:] - X[:, :-1] ** 2)
+
     return J
 
 
@@ -384,10 +390,10 @@ if __name__ == "__main__":
     np.random.seed(0)
 
     # Generate test points
-    d = 10
+    _N = 100_000
+    d = 2
     PROB_LIMS = [(-2.0, 3.0) for _ in range(d)]
     assert d == len(PROB_LIMS), "Adjust PROB_LIMS for desired d."
-    _N = 400_000
     X_list = []
     for i in range(d):
         x_min, x_max = PROB_LIMS[i]
@@ -562,7 +568,7 @@ if __name__ == "__main__":
             fontsize=16,
         )
         plt.subplots_adjust(top=0.92)
-        fname = f"rosenbrock_adaptive_clusters_N{N}_ATOL{ATOL}_RTOL{RTOL}.png"
+        fname = f"ac_rosenbrock_adaptive_clusters_N{N}_ATOL{ATOL}_RTOL{RTOL}.png"
         plt.savefig(fname, dpi=300)
         plt.close()
         print(f"Saved 2D cluster plot to: {fname}")
