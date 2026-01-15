@@ -11,9 +11,15 @@ def generate_synthetic_points_batched(
     X: cp.ndarray, starts: cp.ndarray, counts: cp.ndarray, N_min: int
 ) -> tuple[Optional[cp.ndarray], Optional[cp.ndarray]]:
     """
-    Generate synthetic (convex-combination) points for clusters smaller than N_min,
-    in a batched manner over all clusters. This is intended to pad small clusters with
-    additional points to stabilize error-estimation without changing the original data.
+    Batch generate synthetic (convex-combination) points for clusters smaller than N_min,
+    over all clusters. This is intended to pad small clusters with additional points to
+    stabilize error-estimation without changing the original data.
+
+    For each cluster k with count m_k < N_min, we create n_needed[k] = N_min - m_k
+    synthetic points. Each synthetic point is a convex combination of two randomly
+    chosen points from that same cluster:
+        x_synth = a * x_i + (1 - a) * x_j,   where a ~ Uniform(0,1),
+    and i, j are random indices within the cluster segment.
 
     Args:
         X: (N, d) Array of data points sorted by cluster labels.
@@ -26,13 +32,6 @@ def generate_synthetic_points_batched(
             or None if no synthesis is needed.
         cluster_ids_synth: (M,) integer cluster id for each synthetic point (so you can
             associate each synthetic point back to its cluster), or None if none.
-
-    Construction:
-        For each cluster k with count m_k < N_min, we create n_needed[k] = N_min - m_k
-        synthetic points. Each synthetic point is a convex combination of two randomly
-        chosen points from that same cluster:
-            x_synth = a * x_i + (1 - a) * x_j,   where a ~ Uniform(0,1),
-        and i, j are random indices within the cluster segment.
     """
     # Identify how many synthetic points are needed per cluster
     n_needed = cp.maximum(0, N_min - counts)  # (K,)
@@ -70,18 +69,11 @@ def generate_synthetic_points_batched(
     return X_synth, cluster_ids_synth
 
 
-def batched_estimate_hessian_symmetric(DeltaX, DeltaG, starts):
+def batched_estimate_hessian_symmetric(
+    DeltaX: cp.ndarray, DeltaG: cp.ndarray, starts: cp.ndarray
+) -> cp.ndarray:
     """
-    Estimates the symmetric Hessian for batches of clusters.
-
-    Args:
-        DeltaX: (N, d) rows are Δx_i^T, packed cluster-wise
-        DeltaG: (N, d) rows are Δg_i^T, packed cluster-wise
-        starts: (K,) start indices of each cluster segment in DeltaX/DeltaG
-
-    Returns:
-        H: (K, d, d) Batch of symmetric Hessians for each cluster
-
+    Batch estimate the symmetric Hessian matrices for multiple clusters.
     Equations (per cluster k):
         X = [Δx_1 ... Δx_m] ∈ R^{d x m}
         G = [Δg_1 ... Δg_m] ∈ R^{d x m}
@@ -89,6 +81,17 @@ def batched_estimate_hessian_symmetric(DeltaX, DeltaG, starts):
         C = X X^T = Σ Δx Δx^T
         E = X G^T = Σ Δx Δg^T
         Solve: H C + C H = E + E^T via C = U D U^T
+
+    Args:
+        DeltaX: (N, d) *Centered* array of data points sorted by cluster labels,
+            i.e. rows are Δx_i^T = (x_i - μ_k)^T for the cluster that point i belongs to.
+        DeltaG: (N, d) *Centered* array of gradients corresponding to DeltaX,
+            i.e. rows are Δg_i^T = (g_i - g(μ_k))^T for the cluster that point i belongs
+            to.
+        starts: (K,) Array of starting indices for each cluster.
+
+    Returns:
+        H: (K, d, d) Batch of symmetric Hessians for each cluster
     """
     # Build per-point outer products:
     # XX_all[i] = Δx_i Δx_i^T
@@ -125,7 +128,13 @@ def batched_estimate_hessian_symmetric(DeltaX, DeltaG, starts):
 
 def batched_sqrt_abs_psd(H: cp.ndarray) -> cp.ndarray:
     """
-    Computes the square root of the absolute value of symmetric PSD matrices.
+    Batch compute the square root of the absolute value of symmetric PSD matrices over
+    all clusters.
+    Equations (per matrix/cluster k):
+        If H_k is symmetric, it has eigendecomposition:
+            H_k = U_k diag(λ_k) U_k^T
+        Then the square root of the absolute value is:
+            |H_k|^{1/2} = U_k diag(sqrt(|λ_k|)) U_k^T
 
     Args:
         H: (K, d, d) Batch of symmetric matrices (corresponding to Hessians of clusters)
@@ -133,12 +142,6 @@ def batched_sqrt_abs_psd(H: cp.ndarray) -> cp.ndarray:
     Returns:
         M: (K, d, d) Batch of square-rooted absolute value matrices, where
             M_k M_k = |H_k|.
-
-    Equations (per matrix/cluster k):
-        If H_k is symmetric, it has eigendecomposition:
-            H_k = U_k diag(λ_k) U_k^T
-        Then the square root of the absolute value is:
-            |H_k|^{1/2} = U_k diag(sqrt(|λ_k|)) U_k^T
     """
     # Batch eigen-decomposition of each H_k = U_k D_k U_k^T
     # w: (K, d) eigenvalues, U: (K, d, d) eigenvectors
@@ -153,7 +156,8 @@ def batched_sqrt_abs_psd(H: cp.ndarray) -> cp.ndarray:
 
 def batched_top_eigvec(Cov: cp.ndarray) -> cp.ndarray:
     """
-    Returns the dominant (top) eigenvector for each symmetric matrix in the batch.
+    Batch compute the dominant (top) eigenvector of symmetric covariance matrices over
+    all clusters.
 
     Args:
         Cov: (K, d, d) Batch of symmetric covariance matrices.
@@ -170,25 +174,79 @@ def batched_top_eigvec(Cov: cp.ndarray) -> cp.ndarray:
     return V[:, :, -1]  # (K, d)
 
 
-def batched_calculate_Q(DeltaX, starts, counts, K, ridge=1e-12):
-    XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]
-    Cov = cp.add.reduceat(XX_all, starts)
-    _, U = cp.linalg.eigh(Cov)
+def batched_calculate_Q(
+    DeltaX: cp.ndarray,
+    starts: cp.ndarray,
+    counts: cp.ndarray,
+    K: int,
+    eps: float = 1e-12,
+) -> cp.ndarray:
+    """
+    Batch compute PCA-aligned trust ellipsoid matrices Q_k over all clusters.
+    This constructs, for every cluster k, a PSD matrix Q_k such that the ellipsoid:
+        { y : y^T Q_k y <= 1 },
+    is aligned with the cluster's PCA directions, and its axis lengths are chosen from
+    max-absolute projections of points onto those PCA axes.
+    Equations (per cluster k):
+        Let Y_k be the centered points of cluster k (rows), and let Δx_i be rows of
+        DeltaX.
+        1) Compute cluster-wise covariance (scale doesn't matter here (no 1/m) since we
+        only need eigenvectors):
+            Cov_k = Σ Δx Δx^T    ∈ R^{d x d}
 
+        2) PCA directions via eigendecomposition:
+            Cov_k = U_k Λ_k U_k^T
+
+        3) Axis extents via max-absolute projection:
+            d_{k,j} = max | u_{k,j}^T Δx_i |    for j=1..d
+
+        4) Ellipsoid matrix:
+            Q_k = U_k diag(1/d_{k,1}^2, ..., 1/d_{k,d}^2) U_k^T
+
+    Args:
+        DeltaX: (N, d) *Centered* array of data points sorted by cluster labels,
+            i.e. rows are Δx_i^T = (x_i - μ_k)^T for the cluster that point i belongs to.
+        starts: (K,) Array of starting indices for each cluster.
+        counts: (K,) Array of counts for each cluster.
+        K: Number of clusters.
+        eps: Small positive number to avoid divide-by-zero if a cluster has ~0 extent
+            along some PCA axis.
+
+    Returns:
+        Q: (K, d, d) Batch of PSD trust-ellipsoid matrices Q_k.
+
+    """
+    # Build per-point outer products:
+    # XX_all[i] = Δx_i Δx_i^T
+    XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]  # (N, d, d)
+    # Segment sums (cluster-wise) to get Covariance matrices
+    Cov = cp.add.reduceat(XX_all, starts)  # (K, d, d)
+
+    # Batch eigen-decomposition of each Cov_k = U_k D_k U_k^T
+    _, U = cp.linalg.eigh((Cov + Cov.transpose(0, 2, 1)) * 0.5)
+
+    # Projections of points onto PCA axes
     map_n_to_k = cp.repeat(np.arange(K), counts.get())
 
-    U_expanded = U[map_n_to_k]
-    proj = U_expanded.transpose(0, 2, 1) @ DeltaX[:, :, None]
-    proj = proj[:, :, 0]
+    # Expand U so every point gets its cluster's eigenvector matrix
+    U_expanded = U[map_n_to_k]  # (N, d, d)
 
+    # Compute projections of points onto their cluster's PCA axes
+    proj = U_expanded.transpose(0, 2, 1) @ DeltaX[:, :, None]  # (N, d, 1)
+    proj = proj[:, :, 0]  # (N, d)
+
+    # Compute per-axis max |projection| per cluster
     proj_abs = cp.abs(proj)
     d_axes = cp.zeros((K, proj_abs.shape[1]), dtype=proj_abs.dtype)
     scatter_max(d_axes, map_n_to_k, proj_abs)
 
-    d_axes = cp.maximum(d_axes, ridge)
-    Dinv2 = 1.0 / (d_axes**2)
-    Q_inner = U * Dinv2[:, None, :]
-    Q = Q_inner @ U.transpose(0, 2, 1)
+    # Avoid divide-by-zero
+    d_axes = cp.maximum(d_axes, eps)  # (K, d)
+
+    # Build Q_k matrices
+    Dinv2 = 1.0 / (d_axes**2)  # (K, d)
+    Q_inner = U * Dinv2[:, None, :]  # (K, d, d)
+    Q = Q_inner @ U.transpose(0, 2, 1)  # (K, d, d)
     return (Q + Q.transpose(0, 2, 1)) * 0.5
 
 
