@@ -7,6 +7,66 @@ from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max
 
 
+def median_split_decision_batched(
+    scores: cp.ndarray,
+    cluster_id: cp.ndarray,
+    starts: cp.ndarray,
+    counts: cp.ndarray,
+) -> cp.ndarray:
+    """
+    Compute a per-cluster median split decision for packed/segmented data.
+
+    Given per-point scores s_i and cluster ids k(i), this returns:
+        decision_i = (s_i >= median_k(i))
+    where median_k is the median score within cluster k.
+
+    Args:
+        scores: (N,) per-point scalar scores.
+        cluster_id: (N,) integer cluster ids in [0, K-1] for each point.
+        starts: (K,) start offsets for each cluster *in the packed order*
+                (typically starts = [0, cumsum(counts)[:-1]]).
+        counts: (K,) cluster sizes.
+
+    Returns:
+        split_decision: (N,) boolean array; True means "right child", False "left child".
+
+    Notes:
+        This performs a global radix-like sort:
+            1) stable sort by score
+            2) stable sort by cluster_id
+        which yields (cluster_id asc, score asc within cluster).
+    """
+    N = int(scores.shape[0])
+    if N == 0:
+        return scores >= 0  # empty, doesn't matter
+
+    # --- radix sort: secondary key = score, primary key = cluster_id ---
+    # stable sort by score first
+    idx_by_score = cp.argsort(scores, kind="stable")  # (N,)
+    cluster_sorted_by_score = cluster_id[idx_by_score.get()]
+
+    # stable sort by cluster id (preserves score-order within each cluster)
+    idx_group = cp.argsort(cluster_sorted_by_score, kind="stable")  # (N,)
+    order = idx_by_score[idx_group]  # (N,)
+
+    # scores sorted within clusters
+    scores_sorted = scores[order]  # (N,)
+
+    # --- median per cluster in sorted array ---
+    # For each cluster segment [starts[k] : starts[k] + counts[k]),
+    # median is average of middle element(s).
+    i0 = starts + (counts - 1) // 2  # (K,)
+    i1 = starts + counts // 2  # (K,)
+
+    med = 0.5 * (scores_sorted[i0] + scores_sorted[i1])  # (K,)
+
+    # --- assign median threshold back to original point order ---
+    # threshold for point i is med[cluster_id[i]]
+    split_decision = scores >= med[cluster_id]  # (N,)
+
+    return split_decision
+
+
 def generate_synthetic_points_batched(
     X: cp.ndarray, starts: cp.ndarray, counts: cp.ndarray, N_min: int
 ) -> tuple[Optional[cp.ndarray], Optional[cp.ndarray]]:
@@ -287,7 +347,7 @@ def _ensure_capacity(buffers, out_n, cap, required_total):
     return new_buffers, int(new_cap)
 
 
-def adaptive_clustering_fit(
+def adaptive_clustering(
     X: cp.ndarray,
     *,
     f_fn,
@@ -300,22 +360,23 @@ def adaptive_clustering_fit(
     VERBOSE: bool = True,
     SEED: int = 0,
 ):
+    X = cp.asarray(X)
+
     if VERBOSE:
         print("Adaptive Clustering Parameters:")
         print(f"  ATOL: {ATOL}")
         print(f"  RTOL: {RTOL}")
-        print(f"  N_INIT_CLUSTERS: {N_INIT_CLUSTERS}")
-        print(f"  N_MIN_PER_CLUSTER: {N_MIN_PER_CLUSTER}")
-        print(f"  MAX_EST_CLUSTERS: {MAX_EST_CLUSTERS}")
+        print(f"  N_INIT_CLUSTERS: {N_INIT_CLUSTERS:,}")
+        print(f"  N_MIN_PER_CLUSTER: {N_MIN_PER_CLUSTER:,}")
+        print(f"  MAX_EST_CLUSTERS: {MAX_EST_CLUSTERS:,}")
         print(f"  SEED: {SEED}")
-
-    X = cp.asarray(X)
+        print(f"  Data Points: {X.shape[0]:,} (Dim: {X.shape[1]:,})")
 
     start_init = time.perf_counter()
     kmeans = cuKMeans(n_clusters=N_INIT_CLUSTERS, random_state=SEED)
     labels = kmeans.fit_predict(X)
     if VERBOSE:
-        print(f"  >Initial KMeans: {time.perf_counter() - start_init:.4f}s")
+        print(f"  > Initial KMeans: {time.perf_counter() - start_init:.4f}s")
 
     N, d = X.shape
     buffers, cap = _init_output_buffers(MAX_EST_CLUSTERS, d=d, dtype=X.dtype)
@@ -500,17 +561,23 @@ def adaptive_clustering_fit(
         M = batched_sqrt_abs_psd(H)
 
         map_bad_n_to_k = cp.repeat(np.arange(K_bad), bad_counts.get())
-        M_expanded = M[map_bad_n_to_k]
-        Z = (M_expanded @ bad_DeltaX[:, :, None])[:, :, 0]
+        M_expanded = M[map_bad_n_to_k]  # (N_bad, d, d)
+        Z = (M_expanded @ bad_DeltaX[:, :, None])[:, :, 0]  # (N_bad, d)
 
         Z_starts = bad_starts
-        ZZ_all = Z[:, :, None] * Z[:, None, :]
-        Cov_Z = cp.add.reduceat(ZZ_all, Z_starts)
+        # Build per-point outer products:
+        # ZZ_all[i] = z_i z_i^T
+        ZZ_all = Z[:, :, None] * Z[:, None, :]  # (N_bad, d, d)
+        # Segment sums (cluster-wise) to get Covariance matrices for Z
+        Cov_Z = cp.add.reduceat(ZZ_all, Z_starts)  # (K_bad, d, d)
 
-        v = batched_top_eigvec(Cov_Z)
-        v_expanded = v[map_bad_n_to_k]
-        scores = cp.sum(Z * v_expanded, axis=1)
-        split_decision = scores >= 0
+        # Compute score projections of Z onto top eigenvector of Cov_Z
+        v = batched_top_eigvec(Cov_Z)  # (K_bad, d)
+        v_expanded = v[map_bad_n_to_k]  # (N_bad, d)
+        scores = cp.sum(Z * v_expanded, axis=1)  # (N_bad,)
+        split_decision = median_split_decision_batched(
+            scores, map_bad_n_to_k, bad_starts, bad_counts
+        )  # (N_bad,)
 
         # Update Labels for REAL points only
         # We must align the split decision back to the original points
@@ -567,17 +634,18 @@ def rosenbrock_grad(X):
 
 if __name__ == "__main__":
     cp.random.seed(0)
-    _N = 100_000
+    _N = 1_000_000
     d = 2
     print(f"Generating {_N:,} points (d={d})...")
-    X = cp.random.uniform(-2.0, 3.0, size=(_N, d))
+    PROB_LIMS = (-1.0, 3)
+    X = cp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(_N, d))
 
     TOL = 1e-2
     N_MIN_PER_CLUSTER = 100
     N_INIT_CLUSTERS = 100
 
     print("Starting Adaptive GPU Clustering...")
-    results = adaptive_clustering_fit(
+    results = adaptive_clustering(
         X,
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
@@ -612,3 +680,100 @@ if __name__ == "__main__":
         f"{counts.mean():.1f}",
         int(counts.max()),
     )
+
+    if d == 2 and len(results["centroids"]) <= 3000:
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LogNorm
+        from matplotlib.patches import Ellipse
+
+        # 1 plot 2 subplots (1X2)
+        # Subplot 1: scatter of final cluster centroids on contourf
+        # Subplot 2: scatter of final cluster centroids with trust ellipses on contourf
+
+        x = cp.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
+        y = cp.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
+        X_grid, Y_grid = cp.meshgrid(x, y)
+        Z_grid = rosenbrock(cp.vstack([X_grid.ravel(), Y_grid.ravel()]).T).reshape(
+            X_grid.shape
+        )
+
+        fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+        cs = axs[0].contourf(
+            X_grid.get(),
+            Y_grid.get(),
+            Z_grid.get(),
+            levels=50,
+            cmap="viridis",
+            norm=LogNorm(),
+        )
+        fig.colorbar(cs, ax=axs[0])
+        axs[0].set_title("Rosenbrock Function Contour")
+        axs[0].set_xlabel("x")
+        axs[0].set_ylabel("y")
+        axs[0].set_aspect("equal")
+
+        # Subplot 2: with ellipses
+        cs2 = axs[1].contourf(
+            X_grid.get(),
+            Y_grid.get(),
+            Z_grid.get(),
+            levels=50,
+            cmap="viridis",
+            norm=LogNorm(),
+        )
+        fig.colorbar(cs2, ax=axs[1])
+        axs[1].set_title("Adaptive Clustering with Trust Ellipses")
+        axs[1].set_xlabel("x")
+        axs[1].set_ylabel("y")
+        axs[1].set_aspect("equal")
+        axs[1].scatter(
+            results["centroids"][:, 0].get(),
+            results["centroids"][:, 1].get(),
+            c="red",
+            s=10,
+            label="Centroids",
+        )
+
+        # Draw ellipses
+        level = 1.0
+        for i in range(results["centroids"].shape[0]):
+            mu = results["centroids"][i].get()
+            Q = results["Q"][i].get()
+
+            # Eigen-decomposition of Q
+            w, V = np.linalg.eigh(Q)
+            w = np.maximum(w, 1e-12)
+
+            order = np.argsort(w)[::-1]
+            w = w[order]
+            V = V[:, order]
+
+            a = np.sqrt(level / w[0])
+            b = np.sqrt(level / w[1])
+
+            angle = np.degrees(np.arctan2(V[1, 0], V[0, 0]))
+
+            ellipse = Ellipse(
+                xy=(mu[0], mu[1]),
+                width=2 * a,
+                height=2 * b,
+                angle=angle,
+                edgecolor="red",
+                facecolor="none",
+                lw=1,
+                alpha=0.5,
+            )
+            axs[1].add_patch(ellipse)
+        axs[1].legend()
+        plt.tight_layout()
+        fig.suptitle(
+            f"Adaptive Clustering: Rosenbrock (TOL={TOL}, N_INIT={N_INIT_CLUSTERS}, N_MIN={N_MIN_PER_CLUSTER}), Final Clusters: {results['centroids'].shape[0]:,}",
+            fontsize=16,
+        )
+
+        plt.subplots_adjust(top=0.88)
+        fname = f"adaptive_clustering_rosenbrock_tol{int(TOL*1e4)}_init{N_INIT_CLUSTERS}_min{N_MIN_PER_CLUSTER}.png"
+        plt.savefig(fname, dpi=300)
+        print(f"Saved figure to {fname}")
+    else:
+        print("Skipping plot (d != 2 or too many clusters).")
