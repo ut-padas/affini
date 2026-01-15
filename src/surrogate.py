@@ -206,24 +206,9 @@ class NearODESurrogate:
         # 4. Guarantee / trust-region checks (simplified)
         # ---------------------------------------------------------------------
         # We interpret "guaranteed" purely geometrically w.r.t. trust ellipses:
-        #   - If trust_region_containment=True: kNN already filtered to contained
-        #     clusters, so a query is guaranteed iff a neighbor exists.
-        #   - Else: a query is guaranteed iff the nearest neighbor contains it,
-        #     i.e., Mahalanobis dist2 <= 1 (or <= containment_level, if preferred).
-        #
-        # NOTE: This intentionally ignores ATOL/RTOL/L_global/ALPHA-based bounds.
-        # If you want those bounds back, keep your previous tolerance math and combine.
-        guaranteed_mask = cp.zeros(N, dtype=bool)
-
-        if trust_region_containment:
-            # In containment mode, existence of a neighbor implies containment.
-            # For k>1 this is "any neighbor exists"; for k=1 it's equivalent to nn_idx[:,0] >= 0.
-            guaranteed_mask = num_valid > 0
-        else:
-            # Unconstrained mode: check whether the nearest neighbor contains the point.
-            # nn_dist2 is (x-μ)^T Q (x-μ) since return_sqrt=False.
-            guaranteed_mask = nn_dist2[:, 0] <= 1.0
-
+        #   A query is guaranteed iff the nearest neighbor contains it,
+        #   i.e., Mahalanobis dist2 <= 1
+        guaranteed_mask = nn_dist2[:, 0] <= 1.0
         ungauranteed_mask = ~guaranteed_mask
 
         num_ungauranteed = cp.sum(ungauranteed_mask)
