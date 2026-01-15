@@ -5,7 +5,8 @@ from sklearn.cluster import KMeans
 import time
 import functools
 import scipy.linalg as la
-from numba import jit
+from scipy.spatial import ConvexHull
+import pandas as pd
 
 
 #### FUNCTIONS TO GENERATE POINTS
@@ -52,11 +53,11 @@ def generate_random_ellipse_points(num_points, dimension, size):
     # generate random spd matrix A and center c
     R = np.random.uniform(-1, 1, (dimension,dimension))
     A = R.T @ R
-    c = np.random.uniform(-2, 2, dimension)
+    c = np.random.uniform(-4, 4, dimension)
     
     # compute unique positive square root
     D, U = np.linalg.eigh(A)
-    B = U @ np.diag(np.sqrt(D))
+    B = (U * (D ** 0.5)) @ U.T
 
     # use this to generate samples
     # first generate points in unit ball
@@ -64,7 +65,7 @@ def generate_random_ellipse_points(num_points, dimension, size):
     # map points to ellipse
     points = (points - c) @ B.T
 
-    return points
+    return points, c, B
 
 
 def generate_random_box_points_randloc(num_points, dimension, size):
@@ -78,6 +79,42 @@ def generate_random_box_points(num_points, domain):
 
     box_points = np.random.uniform(domain[:,0], domain[:,1], (num_points, len(domain)))
     return box_points
+
+
+'''
+V: number of vertices of the polytope
+N: number of points to use rejection sampling
+d: dimension
+'''
+def generate_random_polytope_points(V, N, d, size):
+
+    # Generate a bunch of points inside an ellipse
+    ellipse_interior_points, c, B = generate_random_ellipse_points(N, d, size)
+    # B takes points on ball to ellipse via B @ (x_ball - c)
+
+    # Generate V points on the boundary of a ball
+    ball_points = size * generate_random_ball_boundary(V, d)
+
+    # Map these boundary points to ellipse def. by B; these will be vertices
+    vertices = (ball_points - c) @ B.T
+
+    # Compute the bounding planes of the polytope (convex hull)
+    convex_hull = ConvexHull(vertices)
+    equations = convex_hull.equations
+    A = equations[:,:-1]
+    b = equations[:,-1]
+
+    # point is in convex hull if Ax + b < 0
+    in_half_plane = ((ellipse_interior_points @ A.T) + b) < 0
+    in_convex_hull = in_half_plane.all(axis=1)
+
+    volume = convex_hull.volume
+    points_in_polytope = ellipse_interior_points[in_convex_hull]
+    density = len(points_in_polytope) / volume
+
+    return points_in_polytope, volume, density
+    
+
 
 
 
@@ -139,7 +176,7 @@ def fit_ellipse_SDP(points):
 
 
 # Thanks ChatGPT :D
-@timeit
+# @timeit
 # @jit(nopython=False)
 def fit_ellipse_SDP_khachiyan(X, tol=1e-2, max_iter=1000):
     """
@@ -187,8 +224,7 @@ def fit_ellipse_SDP_khachiyan(X, tol=1e-2, max_iter=1000):
 
     # Final ellipsoid matrix
     M = (X.T * u) @ X
-    A = la.inv(M) / d
-    print(f'Khachiyan uses {i+1} iterations')
+    A = np.linalg.inv(M) / d
     return A
 
 
@@ -218,9 +254,9 @@ def fit_ellipse_PCA_scaled(points):
 
 # Assume points are normalized
 @timeit
-def bound_hessian_SDP(points, errors):
+def bound_hessian_SDP(x_diffs, errors):
 
-    num_points, dimension = points.shape
+    num_points, dimension = x_diffs.shape
 
     # Normalize points
 
@@ -228,7 +264,7 @@ def bound_hessian_SDP(points, errors):
     # build constraints and variables
     A = []
     for j in range(num_points):
-        A.append(np.outer(points[j], points[j]))
+        A.append(np.outer(x_diffs[j], x_diffs[j]))
     Q = cp.Variable((dimension,dimension), PSD=True)
     constraints = [
         cp.trace(A[j] @ Q) >= 2 * errors[j] for j in range(num_points)
@@ -240,18 +276,7 @@ def bound_hessian_SDP(points, errors):
     return Q.value
 
 
-@timeit
-def solve_hessian_least_squares(points, f, df):
-    # assume each row is a point
-    # f takes each row to a value
-    # df takes row to row
-
-    # first get all the f and df/dx data (for simplicity, do solves in function)
-    f_points = np.zeros(len(points))
-    df_points = np.zeros_like(points)
-    for j, point in enumerate(points):
-        f_points[j] = f(point)
-        df_points[j] = df(point)
+def solve_hessian_least_squares(points, df_points):
 
     # compute centroid and function value
     centroid = np.mean(points, axis=0)
@@ -259,7 +284,7 @@ def solve_hessian_least_squares(points, f, df):
     x_diffs = points - centroid
     df_diffs = df_points - df_centroid
 
-    # solve for Hessian directly using least squares (uses SVD for pseudoinverse)
+    # solve for Hessian directly using Moore-Penrose psuedoinverse
     X = x_diffs.T
     G = df_diffs.T
     U, Sigma, VT = np.linalg.svd(X, full_matrices=False)
@@ -269,6 +294,75 @@ def solve_hessian_least_squares(points, f, df):
 
     return H_sym
 
+@timeit
+def solve_hessian_least_squares_with_solves(points, df, absolute_value=False):
+    # assume each row is a point
+    # f takes each row to a value
+    # df takes row to row
+
+    # for simplicity, do solves here
+    df_points = np.zeros_like(points)
+    for j, point in enumerate(points):
+        df_points[j] = df(point)
+
+    return solve_hessian_least_squares(points, df_points, absolute_value)
+
+
+def solve_hessian_least_squares_symm(x_diffs, df_diffs, absolute_value=False):
+    # assume each row corresponds to a point
+    # need to loop through each output variable
+    if df_diffs.ndim == 2:
+
+        XT = x_diffs
+        GT = df_diffs
+
+        # df_centroid is the gradient at mu
+        C = XT.T @ XT # X*X^T
+        D = XT.T @ GT # X*G^T
+
+        # solve CH + HC = D+D^T
+        H = la.solve_continuous_lyapunov(C, D + D.T)
+        return H
+    
+    elif df_diffs.ndim == 3:
+
+        # N is number of points, n is output dim, m is input dim
+        # diffs should be size N*m
+        N, n, m = df_diffs.shape
+        Htensor = np.zeros((n,m,m))
+        for j in range(n):
+            XT = x_diffs
+            GT = df_diffs[:,j,:]
+
+            # df_centroid is the gradient at mu
+            C = XT.T @ XT # X*X^T
+            D = XT.T @ GT # X*G^T
+
+            # solve CH + HC = D+D^T
+            Htensor[j] = la.solve_continuous_lyapunov(C, D + D.T)
+        
+        H = np.mean(Htensor, axis=0)
+        
+    if absolute_value:
+        return compute_absolute_value(H)
+    else:
+        return H
+
+
+
+@timeit
+def solve_hessian_least_squares_symm_with_solves(points, df):
+
+    centroid = np.mean(points, axis=0)
+    df_points = np.zeros_like(points)
+    for j, point in enumerate(points):
+        df_points[j] = df(point)
+    df_centroid = df(centroid)
+
+    x_diffs = points - centroid
+    df_diffs = df_points - df_centroid
+
+    return solve_hessian_least_squares_symm(x_diffs, df_diffs)
 
 
 
@@ -294,7 +388,7 @@ def compute_domain_of_plot(points):
     minimum = np.min(points, axis=0)
     maximum = np.max(points, axis=0)
     range = maximum - minimum
-    padding = 0.1 * range
+    padding = 0.2 * range
     return np.column_stack((minimum - padding, maximum + padding))
 
 
@@ -318,7 +412,16 @@ def plot_contours(domain, f, ax):
     ymin = domain[1,0]
     ymax = domain[1,1]
 
-    # 1. Define grid
+    # Make it a bit bigger
+    factor = 0.5
+    xrange = xmax - xmin
+    xmax += xrange * factor
+    xmin -= xrange * factor
+    yrange = ymax - ymin
+    ymax += yrange * factor
+    ymin -= yrange * factor
+
+    # Define grid
     x = np.linspace(xmin, xmax, 400)
     y = np.linspace(ymin, ymax, 400)
     X, Y = np.meshgrid(x, y)
@@ -332,10 +435,12 @@ def plot_contours(domain, f, ax):
 
 
 # Plot the ellipse defined by x^T A x <= r on the plot ax
-def plot_ellipse(A, c, r, ax, color, label='', plot_axes=False):
+def plot_ellipse(A, c, r, ax, color, label='', plot_axes=False, use_absolute_value=False):
 
     D, U = np.linalg.eigh(A)
     dim = len(D)
+    if use_absolute_value:
+        D = np.abs(D)
     B = U @ np.diag(D ** (-1/2)) # inverse square root
 
     if dim == 3:
@@ -367,6 +472,13 @@ def plot_ellipse(A, c, r, ax, color, label='', plot_axes=False):
         ellipse_pts = (B @ ball_pts).T + c
         ax.plot(ellipse_pts[:,0], ellipse_pts[:,1], '--', label=label, color=color)
 
+
+def plot_text_in_br_corner(string, ax):
+
+    ax.text(0.95, 0.05, string,
+        horizontalalignment='right',
+        verticalalignment='bottom',
+        transform = ax.transAxes)
 
 
 ##### HELPER FUNCTIONS
@@ -508,7 +620,7 @@ def normal_clustering(points, n_clusters=2):
     return centroids, labels
 
 
-@jit(nopython=True)
+
 def lower_triangular_solve(A: np.ndarray, B: np.ndarray):
 
     # Sizes of matrices A (lower triangular) and B
@@ -525,6 +637,97 @@ def lower_triangular_solve(A: np.ndarray, B: np.ndarray):
     return X
 
 
+def compute_absolute_value(Q: np.ndarray):
+    D, U = np.linalg.eigh(Q)
+    return (U * np.abs(D)) @ U.T
+
+
+
+
+
+##### FUNCTIONS TO GENERATE FIGURES
+
+def ellipse_comparison_figure(points, atol, f, df, hf):
+
+    fig1, ax1 = plt.subplots()
+    fig2, ax2 = plt.subplots(2,2)
+
+    n_pts, dim = points.shape
+    centroid = points.mean(axis=0)
+    diffs = points - centroid
+    errors = linear_interpolant_errors_one_cluster(points, centroid, f, df)
+
+    # sort points
+    good_error = errors <= atol
+    bad_error = errors > atol
+
+    Qvec = np.zeros((4,dim,dim))
+
+    # a) No new metric (Q=I)
+    Qvec[0] = np.eye(dim)
+
+    # b) Least squares
+    hessian_lsq = solve_hessian_least_squares_symm_with_solves(points, df)
+    Qvec[1] = compute_absolute_value(hessian_lsq)
+
+    # c) Solve SDP PCA version: uses SVD
+    Qvec[2] = bound_hessian_SDP(diffs, errors)
+
+    # d) Shape-aligned ellipse via PCA
+    Qvec[3] = fit_ellipse_PCA(diffs[good_error])
+
+    # e) Sanity check: compute true abs hessian
+    true_hessian = compute_absolute_value(hf(centroid))
+    print(f'True abs. Hessian:\n{true_hessian}')
+    print(f'SDP abs. Hessian:\n{Qvec[2]}')
+    print(f'Least Squares abs. Hessian:\n{Qvec[1]}')
+
+
+    # figure (a): plot each ellipse in one figure. Write down linear interpolant error
+    domain_of_plot = compute_domain_of_plot(points)
+    plot_contours(domain_of_plot, f, ax1)
+    scatter_points(points[good_error], 'black', ax1)
+    scatter_points(points[bad_error], 'gray', ax1)
+
+    plot_ellipse(Qvec[1], centroid, 1, ax1, 'orange', '(b) LSQ', plot_axes=False, use_absolute_value=True)
+    plot_ellipse(Qvec[2], centroid, 1, ax1, 'cyan', '(c) SDP', plot_axes=False)
+    plot_ellipse(Qvec[3], centroid, 1, ax1, 'lime', '(d) PCA', plot_axes=False)
+    precluster_errors = np.sum(errors)
+    plot_text_in_br_corner(f'$E_1 = {precluster_errors:.3f}$', ax1)
+    ax1.legend()
+
+    # figure (b): plot the result of clustering with a matrix Q
+    for i in range(4):
+
+        ax_cur = ax2[i//2,i%2]
+
+        # cluster
+        new_centroids_old_frame, labels = metric_adaptive_two_means_PCA_clustering(diffs, Qvec[i], 0)
+        centroids = new_centroids_old_frame + centroid
+
+        # plot points
+        plot_contours(domain_of_plot, f, ax_cur)
+        scatter_points(points[labels==0], 'pink', ax_cur)
+        scatter_points(points[labels==1], 'lime', ax_cur)
+        scatter_points(centroids, 'red', ax_cur)
+
+        # compute and display error
+        error_c1 = linear_interpolant_errors_one_cluster(points[labels==0], centroids[0], f, df)
+        error_c2 = linear_interpolant_errors_one_cluster(points[labels==1], centroids[1], f, df)
+        total_error = error_c1.sum() + error_c2.sum()
+        plot_text_in_br_corner(f'$E = {total_error:.3f}$', ax_cur)
+        
+        # set title
+        if i == 0:
+            ax_cur.set_title('(a) No metric change')
+        elif i == 1:
+            ax_cur.set_title('(b) Least Squares')
+        elif i == 2:
+            ax_cur.set_title('(c) Semi-definite program')
+        elif i == 3:
+            ax_cur.set_title('(d) Shape-aligned ellipse via PCA')
+
+    plt.show()
 
 
 
@@ -534,7 +737,7 @@ def lower_triangular_solve(A: np.ndarray, B: np.ndarray):
 
 def test_trust_region_via_hessian_lsq(points, f, df, hf):
     
-    H = solve_hessian_least_squares(points, f, df)
+    H = solve_hessian_least_squares_with_solves(points, df)
     c = points.mean(axis=0)
     H_exact = hf(c)
 
@@ -615,7 +818,7 @@ def test_trust_region_via_hessian_sdp(points, atol, f, df):
 
 
 
-def test_clustering_rotating_frame(points, atol, f, df):
+def test_clustering_rotating_frame(points, atol, f, df, hf):
 
     n_pts, dim = points.shape
     centroid = points.mean(axis=0)
@@ -634,10 +837,17 @@ def test_clustering_rotating_frame(points, atol, f, df):
     Q2 = bound_hessian_SDP(diffs, errors)
 
     # PCA version: uses SVD
-    Q3 = fit_ellipse_PCA_scaled(diffs[good_error])
+    Q3 = fit_ellipse_PCA(diffs[good_error])
 
     # Least squares version
-    Q4 = solve_hessian_least_squares(points, f, df)
+    Q4 = solve_hessian_least_squares_symm_with_solves(points, df)
+    Q4_abs = compute_absolute_value(Q4)
+
+    # How close are Q2 and Q4 to the true Hessian?
+    Q_true_abs = compute_absolute_value(hf(centroid))
+    print(f'True abs. Hessian:\n{Q_true_abs}')
+    print(f'SDP abs. Hessian:\n{Q2}')
+    print(f'Least Squares abs. Hessian:\n{Q4_abs}')
 
     # plot everything
     fig1, ax1 = plt.subplots()
@@ -645,7 +855,7 @@ def test_clustering_rotating_frame(points, atol, f, df):
     # plot_ellipse(Q1, centroid, 1, ax1, 'cyan', 'MVEE', plot_axes=True)
     plot_ellipse(Q2, centroid, 1, ax1, 'orange', 'SDP (Hessian bound)', plot_axes=True)
     plot_ellipse(Q3, centroid, 1, ax1, 'cyan', 'PCA', plot_axes=True)
-    plot_ellipse(Q4, centroid, 1, ax1, 'lime', 'Least Squares', plot_axes=True)
+    plot_ellipse(Q4, centroid, 1, ax1, 'lime', 'Least Squares', plot_axes=True, use_absolute_value=True)
 
     domain_of_plot = get_domain_of_plot(ax1)
     plot_contours(domain_of_plot, f, ax1)
@@ -711,9 +921,137 @@ def test_clustering_rotating_frame(points, atol, f, df):
 
 
 
+'''
+Compare using PCA (shape Hessian) to using least squares to approximate Hessian
+Do not worry about figures as we would like these tests to be valid in high dimensions
+'''
+def compare_pca_vs_lsq_hessian(f, df, hf, d):
 
+    N_tests = 10000
+    atol = 0.05
 
+    table_data = np.empty((N_tests, 7))
+    # first column is # points
+    # second column is point density (#points/unit volume)
+    # third column is original cluster linear errors
+    # fourth column is pca linear errors
+    # fifth column is lsq linear errors
+    # sixth column is theoretically optimal linear errors
 
+    # do a bunch of tests at once
+    for j in range(N_tests):
+
+        # generate points in a polytope
+        V = np.random.randint(15, 25)
+        N_points = np.random.randint(20000, 30000)
+
+        points, volume, density = generate_random_polytope_points(V, N_points, d, size)
+        centroid = points.mean(axis=0)
+        df_centroid = df(centroid)
+
+        # solves for points
+        f_points = f(points)
+        df_points = df(points)
+        for k in range(len(points)):
+            f_points[k] = f(points[k])
+            df_points[k] = df(points[k])
+
+        diffs = points - centroid
+        df_diffs = df_points - df_centroid
+
+        # with these points, compute the linearization error
+        errors = linear_interpolant_errors_one_cluster(points, centroid, f, df)
+        good_error = errors <= atol
+
+        # If there are not enough points to measure, then pca fails.
+        while np.sum(good_error) <= d:
+            atol *= 2
+            good_error = errors <= atol
+
+        # compute PCA and LSQ ellipses
+        Q_pca = fit_ellipse_PCA(diffs[good_error])
+        Q_lsq = solve_hessian_least_squares_symm(diffs, df_diffs, True)
+        Q_exact = compute_absolute_value(hf(centroid))
+
+        # do clustering and measure errors
+
+        # first for pca
+        centroids_scaled, labels_PCA = metric_adaptive_two_means_PCA_clustering(diffs, Q_pca, 0)
+        centroids_PCA = centroids_scaled + centroid
+
+        error_c1 = linear_interpolant_errors_one_cluster(points[labels_PCA==0], centroids_PCA[0], f, df)
+        error_c2 = linear_interpolant_errors_one_cluster(points[labels_PCA==1], centroids_PCA[1], f, df)
+        total_error_PCA = error_c1.sum() + error_c2.sum()
+
+        # second for lsq
+        centroids_scaled, labels_LSQ = metric_adaptive_two_means_PCA_clustering(diffs, Q_lsq, 0)
+        centroids_LSQ = centroids_scaled + centroid
+
+        error_c1 = linear_interpolant_errors_one_cluster(points[labels_LSQ==0], centroids_LSQ[0], f, df)
+        error_c2 = linear_interpolant_errors_one_cluster(points[labels_LSQ==1], centroids_LSQ[1], f, df)
+        total_error_LSQ = error_c1.sum() + error_c2.sum()
+
+        # third for exact hessian
+        centroids_scaled, labels_exact = metric_adaptive_two_means_PCA_clustering(diffs, Q_exact, 0)
+        centroids_exact = centroids_scaled + centroid
+
+        error_c1 = linear_interpolant_errors_one_cluster(points[labels_exact==0], centroids_exact[0], f, df)
+        error_c2 = linear_interpolant_errors_one_cluster(points[labels_exact==1], centroids_exact[1], f, df)
+        total_error_exact = error_c1.sum() + error_c2.sum()
+
+        # save results in table
+        table_data[j, 0] = len(points)
+        table_data[j, 1] = volume
+        table_data[j, 2] = density
+        table_data[j, 3] = errors.sum()
+        table_data[j, 4] = total_error_PCA
+        table_data[j, 5] = total_error_LSQ
+        table_data[j, 6] = total_error_exact
+
+    # Create pandas table for visualization
+    error_table = pd.DataFrame(table_data, columns=[
+        '# Points',
+        'Volume',
+        'Density',
+        'Before Splitting Error',
+        'PCA Errors',
+        'LSQ Errors',
+        '"Optimal" Errors'
+    ])
+    print(error_table)
+
+    # What other statistics can we compute?
+
+    # Count the number of instances where LSQ is less than PCA
+    num_LSQ_better = np.sum(table_data[:,5] < table_data[:,4])
+    num_PCA_better = np.sum(table_data[:,4] < table_data[:,5])
+    num_same = np.sum(table_data[:,4] == table_data[:,5])
+    print(f'Number of instances least squares performs better: {num_LSQ_better}/{N_tests}')
+    print(f'Number of instances PCA performs better: {num_PCA_better}/{N_tests}')
+    print(f'Number of instances where they perform the same: {num_same}')
+
+    # Plot density of points vs which error is better
+    amount_LSQ_better = table_data[:,4] - table_data[:,5]
+
+    # figure 1: density vs errors
+    fig, ax = plt.subplots()
+    ax.scatter(table_data[:,2], amount_LSQ_better, s=5, c='k', marker='x')
+    ax.set_xlabel('Density (#Points/unit volume)')
+    ax.set_ylabel('$E\_\{pca\} - E\_\{lsq\}$')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_title('Rosenbrock 4D')
+
+    # figure 2: volume vs errors
+    fig, ax = plt.subplots()
+    ax.scatter(table_data[:,1], amount_LSQ_better, s=5, c='k', marker='x')
+    ax.set_xlabel('Volume')
+    ax.set_ylabel('$E\_\{pca\} - E\_\{lsq\}$')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_title('Rosenbrock 4D')
+
+    plt.show()
 
 
 
@@ -749,53 +1087,85 @@ def grad_rosenbrock(X):
     return z
 
 def hessian_rosenbrock(X):
-    shape = X.shape
+    shape = np.array(X.shape)
     input_dim = shape[:-1]
     x = X[...,0]
     y = X[...,1]
-    z = np.zeros(np.append((input_dim, (2,2))))
+    z = np.zeros(np.concat((input_dim, (2,2))))
     z[...,0,0] = -4*b*(y-x**2) + 8*b*x**2 + 2
     z[...,0,1] = -4*b*x
-    z[...,1,0] = -4*b*X
+    z[...,1,0] = -4*b*x
     z[...,1,1] = 2*b
     return z
 
 
 # FUNCTION 3: higher dimensional rosenbrock
 # taken from Prajwal's code
-def rosenbrock_high_d(point):
-    x_i = point[:-1]
-    x_next = point[1:]
-    return np.sum(100.0 * (x_next - x_i**2.0) ** 2.0 + (1.0 - x_i) ** 2.0)
+"""Rosenbrock function and its derivatives."""
+def rosenbrock_high_d(X):
+    """
+    Computes the Rosenbrock function for given input points.
 
-def grad_rosenbrock_high_d(point):
-    n_dim = len(point)
-    J = np.zeros(n_dim)
+    Args:
+        X: (n, d) data matrix
+
+    Returns:
+        F: (n, 1) function values at X
+    """
+    x_i = X[..., :-1]
+    x_next = X[..., 1:]
+    F = np.sum(
+        100.0 * (x_next - x_i**2.0) ** 2.0 + (1.0 - x_i) ** 2.0, axis=-1
+    )
+    return F
+
+
+def grad_rosenbrock_high_d(X):
+    """
+    Computes the gradient of the Rosenbrock function for given input points.
+
+    Args:
+        X: (n, d) data matrix
+
+    Returns:
+        J: (n, 1, d) Jacobian at X
+    """
+    J = np.zeros(X.shape, dtype=X.dtype)
 
     # The term (1 - x_i)^2 only exists for i = 0 to d-2
-    J[:-1] += 2 * (point[:-1] - 1)
+    J[..., :-1] += 2 * (X[..., :-1] - 1)
 
     # Term from 100*(x_{i+1} - x_i^2)^2 for i < d-1 (derivative w.r.t x_i)
     # This affects 0 to d-2
-    J[:-1] -= 400 * point[:-1] * (point[1:] - point[:-1] ** 2)
+    J[..., :-1] -= 400 * X[..., :-1] * (X[..., 1:] - X[..., :-1] ** 2)
 
     # Term from 100*(x_i - x_{i-1}^2)^2 for i > 0 (derivative w.r.t x_{i+1})
     # This affects 1 to d-1
-    J[1:] += 200 * (point[1:] - point[:-1] ** 2)
+    J[..., 1:] += 200 * (X[..., 1:] - X[..., :-1] ** 2)
 
     return J
 
-def hessian_rosenbrock_high_d(point):
-    n_dim = len(point)
-    H = np.zeros((n_dim, n_dim))
+
+def hessian_rosenbrock_high_d(X: np.ndarray):
+    """
+    Computes the Hessian of the Rosenbrock function for given input points.
+
+    Args:
+        X: (n, d) data matrix
+
+    Returns:
+        H: (n, d, d) Hessian at X
+    """
+    n_dim = X.shape[-1]
+    H = np.zeros(np.concat((X.shape, np.array([n_dim]))))
 
     for i in range(n_dim):
         if i < n_dim - 1:
-            H[i, i] += 1200 * point[i] ** 2 - 400 * point[i + 1] + 2
-            H[i, i + 1] += -400 * point[i]
-            H[i + 1, i] += -400 * point[i]
+            H[..., i, i] += 1200 * X[..., i] ** 2 - 400 * X[..., i + 1] + 2
+            H[..., i, i + 1] += -400 * X[..., i]
+            H[..., i + 1, i] += -400 * X[..., i]
         else:
-            H[i, i] += 200
+            H[..., i, i] += 200
 
     return H
 
@@ -839,19 +1209,20 @@ def goldstein_price(X):
 
 if __name__ == '__main__':
 
-
-    N = 200
+    N = 5000
     d = 2
-    size = 0.05
-    points = generate_random_box_points_randloc(N, d, size)
+    size = 0.2
+    # points = generate_random_box_points_randloc(N, d, size)
     # points = generate_random_box_points_randloc(N, d, size)
     # domain = np.array([
     #     [-0.6, -0.55],
     #     [-0.2, -0.1]
     # ])
     # points = generate_random_box_points(N, domain)
+    V = 5
+    points = generate_random_polytope_points(V, N, d, size)
 
-    test = 'rosenbrock'
+    test = 'rosenbrock_high_d'
 
     if test == 'parabola':
         a = 100
@@ -874,6 +1245,6 @@ if __name__ == '__main__':
         hf = hessian_beale
     
     # fit_ellipsoid_trust_region(ellipse_points, 0.01, 0.01, f, df, hf)
-    test_clustering_rotating_frame(points, 0.05, f, df)
-    
-
+    # test_clustering_rotating_frame(points, 0.05, f, df, hf)
+    # ellipse_comparison_figure(points, 0.05, f, df, hf)
+    compare_pca_vs_lsq_hessian(f, df, hf, 6)

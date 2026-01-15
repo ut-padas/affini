@@ -3,7 +3,7 @@ import numpy as np
 from collections.abc import Callable
 from sklearn.cluster import KMeans
 from ellipse_test import metric_adaptive_two_means_PCA_clustering, \
-                         fit_ellipse_PCA, fit_ellipse_PCA_scaled
+                         fit_ellipse_PCA_scaled, solve_hessian_least_squares_symm
 
 
 # bi-tree structures that we use in the recursive algorithm implemented below
@@ -40,6 +40,7 @@ def adaptive_cluster_algorithm(
     min_ppc: int = 1, # minimum number of points used in a cluster (to measure error)
     use_gradient: bool = False,
     function_vals: np.ndarray = None, # if this is not none, uses these as solves. Otherwise runs eval_function every time
+    gradients: np.ndarray = None,
     seed = None, # seed used for kmeans rng
     num_levels = -1, # specify the number of levels for the algorithm to go in the tree.
         # If this is -1, then just go forever.  Otherwise only go up to this level in the tree.
@@ -52,7 +53,7 @@ def adaptive_cluster_algorithm(
     
     # also check dimensions of function vals
     # do solves if necessary. TODO: specify dimension of output of eval_function
-    if function_vals is None:
+    if function_vals is None or gradients is None:
         function_vals = np.zeros(len(training_data))
         if not use_gradient:
             for j, row in enumerate(training_data):
@@ -73,10 +74,13 @@ def adaptive_cluster_algorithm(
 
     centroids, labels = _cluster(training_data, N_init_clusters, seed)
 
+    fmax = np.max(np.abs(function_vals))
+
     for j in range(N_init_clusters):
 
         params_in_cluster = training_data[labels==j]
         fvals_in_cluster = function_vals[labels==j]
+        grads_in_cluster = gradients[labels==j]
             
         centroid_params = centroids[j]
         fval_c, grad_c = _compute_oracle_at_point(centroid_params, eval_function, use_gradient)
@@ -86,8 +90,23 @@ def adaptive_cluster_algorithm(
             raise Exception('Error: gradient function does return shape m*n')
 
         k, cluster_structure[j] = _adaptive_cluster_algorithm_helper(
-                params_in_cluster, fvals_in_cluster, centroid_params, fval_c, grad_c, eval_function,
-                N_init_clusters * 2, atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1, soft_clustering_factor)
+            params_in_cluster,
+            fvals_in_cluster,
+            grads_in_cluster,
+            centroid_params,
+            fval_c,
+            grad_c,
+            eval_function,
+            fmax,
+            atol,
+            rtol,
+            min_ppc,
+            use_gradient,
+            k,
+            seed,
+            num_levels-1,
+            soft_clustering_factor
+        )
 
     return k, cluster_structure
 
@@ -96,11 +115,12 @@ def adaptive_cluster_algorithm(
 def _adaptive_cluster_algorithm_helper(
     training_data: np.ndarray,
     function_vals: np.ndarray,
+    gradients: np.ndarray,
     prev_centroid: np.ndarray,
     f_prev_centroid: np.ndarray,
     grad_prev_centroid: np.ndarray,
     eval_function: Callable,
-    total_clusters: float, # required to compute global absolute error
+    fmax: np.ndarray,
     atol = None,
     rtol = None,
     min_ppc: int = 1,
@@ -116,48 +136,38 @@ def _adaptive_cluster_algorithm_helper(
         return k, None
 
     # Add extra points to the cluster (randomly sampled) until we get to the minimum ppc
-    training_data, function_vals = \
-        _generate_extra_points(training_data, function_vals, eval_function, min_ppc, use_gradient)
+    training_data, function_vals, gradients = \
+        _generate_extra_points(training_data, function_vals, gradients, eval_function, min_ppc, use_gradient)
 
     # With metric adaptive clustering, we check error first
     # prev_centroid is the centroid of the data
     # check linear interpolant fit around this centroid
     distance = training_data - prev_centroid
     if not use_gradient:
-        evec = np.linalg.norm(function_vals-f_prev_centroid, 2, axis=1)
+        errors = function_vals - f_prev_centroid
     elif use_gradient:
-        # make sure we compute in euclidean, non-log scaled distance
-        evec = np.linalg.norm(function_vals - (f_prev_centroid + (distance @ grad_prev_centroid.T)), 2, axis=1)
+        errors = function_vals - (f_prev_centroid + (distance @ grad_prev_centroid.T))
 
-    # abs_error = np.linalg.norm(evec, 2) # TODO: are we using the correct norm?
-    # rel_error = abs_error / np.linalg.norm(function_vals, 'fro')
-    with_good_error = np.logical_or(evec <= atol, evec <= (rtol * f_prev_centroid))
+    error_norms = np.linalg.norm(errors, ord=np.inf, axis=1)
+    with_good_error = np.logical_or(error_norms <= atol, error_norms <= (rtol * fmax))
 
     # from this, decide if we should split or not
-    # TODO: look at the error criterion.
-    # if (rtol is not None and rel_error <= rtol) \
-            # or (atol is not None and abs_error <= (atol / np.sqrt(total_clusters))) \
-    if with_good_error.all() \
-            or num_levels == 0:
+    if with_good_error.all() or num_levels == 0:
         
         # Create a cluster. Use ellipse formulation
-        trust_ellipse = fit_ellipse_PCA_scaled(distance[with_good_error])
+        df_diffs = gradients - grad_prev_centroid
+        trust_ellipse = solve_hessian_least_squares_symm(distance, df_diffs, absolute_value=True)
+        # trust_ellipse = fit_ellipse_SDP_khachiyan(distance)
         k += 1
-        return k, Cluster(k-1, prev_centroid, f_prev_centroid, grad_prev_centroid, trust_ellipse, len(evec))
+        return k, Cluster(k-1, prev_centroid, f_prev_centroid, grad_prev_centroid, trust_ellipse, len(errors))
         
 
-    
     # Otherwise we plan to split the cluster. Use metric-adaptive.
-    good_error_abs = evec <= atol
-    good_error_rel = evec <= (rtol * f_prev_centroid)
-    good_error = np.logical_or(good_error_abs, good_error_rel)
 
-    # sort points, compute SVD of points with good error
+    # sort points, compute optimal ellipse for clustering
     _, dim = training_data.shape
-    if good_error.sum() > dim:
-        Q = fit_ellipse_PCA(distance[good_error])
-    else:
-        Q = np.eye(dim)
+    df_diffs = gradients - grad_prev_centroid
+    Q = solve_hessian_least_squares_symm(distance, df_diffs, absolute_value=True)
     
     # with this psd matrix in hand, do metric adaptive clustering
     centroids_scaled, labels = metric_adaptive_two_means_PCA_clustering(distance, Q, soft_clustering_factor)
@@ -166,22 +176,24 @@ def _adaptive_cluster_algorithm_helper(
     # First cluster (N=0)
     pts_cluster = training_data[labels <= 0.5]
     fvals_cluster = function_vals[labels <= 0.5]
+    grads_cluster = gradients[labels <= 0.5]
     centroid_params = centroids[0]
     fval_c, grad_c = _compute_oracle_at_point(centroid_params, eval_function, use_gradient)
 
     k, left = _adaptive_cluster_algorithm_helper(
-            pts_cluster, fvals_cluster, centroid_params, fval_c, grad_c, eval_function,
-            total_clusters * 2, atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1, soft_clustering_factor)
+            pts_cluster, fvals_cluster, grads_cluster, centroid_params, fval_c, grad_c, eval_function,
+            fmax, atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1, soft_clustering_factor)
 
     # Second cluster (N=1)
     pts_cluster = training_data[labels >= 0.5]
     fvals_cluster = function_vals[labels >= 0.5]
+    grads_cluster = gradients[labels >= 0.5]
     centroid_params = centroids[1]
     fval_c, grad_c = _compute_oracle_at_point(centroid_params, eval_function, use_gradient)
 
     k, right = _adaptive_cluster_algorithm_helper(
-            pts_cluster, fvals_cluster, centroid_params, fval_c, grad_c, eval_function,
-            total_clusters * 2, atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1, soft_clustering_factor)
+            pts_cluster, fvals_cluster, grads_cluster, centroid_params, fval_c, grad_c, eval_function,
+            fmax, atol, rtol, min_ppc, use_gradient, k, seed, num_levels-1, soft_clustering_factor)
 
 
     return k, ClusterTree(prev_centroid, left, right)
@@ -190,12 +202,12 @@ def _adaptive_cluster_algorithm_helper(
 
 # At the moment, this implementation is really bad and will be slow. Redo how we sample (for loop).
 # We require more than one point in the cluster (this number can change).
-def _generate_extra_points(pts_cluster, fvals_cluster, oracle, min_ppc, use_gradient):
+def _generate_extra_points(pts_cluster, fvals_cluster, grads_cluster, oracle, min_ppc, use_gradient):
 
     n_pts_sample = min_ppc - len(pts_cluster)
 
     if n_pts_sample <= 0:
-        return pts_cluster, fvals_cluster
+        return pts_cluster, fvals_cluster, grads_cluster
 
     # take random convex combinations
     lambdas = np.random.uniform(0, 1, n_pts_sample)
@@ -215,18 +227,20 @@ def _generate_extra_points(pts_cluster, fvals_cluster, oracle, min_ppc, use_grad
 
     # do ode solves for these new points
     new_fvals_cluster = np.zeros(shape=(n_pts_sample, fvals_cluster.shape[1]))
+    new_grads_cluster = np.zeros(shape=(n_pts_sample, grads_cluster.shape[1], grads_cluster.shape[2]))
     for i, row in enumerate(new_pts_cluster):
         # compute true value (save in qi)
         if use_gradient:
-            new_fvals_cluster[i], _ = oracle(row)
+            new_fvals_cluster[i], new_grads_cluster[i] = oracle(row)
         else:
             new_fvals_cluster[i] = oracle(row)
 
     # put these new points together with the old ones
     pts_cluster = np.vstack((pts_cluster, new_pts_cluster))
     fvals_cluster = np.vstack((fvals_cluster, new_fvals_cluster))
+    grads_cluster = np.vstack((grads_cluster, new_grads_cluster))
 
-    return pts_cluster, fvals_cluster
+    return pts_cluster, fvals_cluster, grads_cluster
 
 
 def _compute_oracle_at_point(x, oracle, use_gradient):

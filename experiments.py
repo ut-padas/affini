@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from nearode import NearODESurrogate, load_surrogate, save_surrogate
 from scipy.stats import qmc
 from scipy.integrate import solve_ivp
-from ellipse_test import plot_contours, scatter_points
+from ellipse_test import plot_contours, scatter_points, plot_ellipse
 
 
 # One dimensional example
@@ -33,8 +33,10 @@ b = 100
 def rosenbrock(x: np.ndarray):
     if x.ndim == 1:
         return (a - x[0]) ** 2 + b * (x[1] - x[0] ** 2) ** 2
-    elif x.ndim == 2:
-        return (a - x[:,0]) ** 2 + b * (x[:,1] - x[:,0] ** 2) ** 2
+    else:
+        xx = x[...,0]
+        yy = x[...,1]
+        return (a-xx) ** 2 + b * (yy - xx**2)**2
 
 def grad_rosenbrock(x: np.ndarray):
     if x.ndim == 1:
@@ -701,9 +703,10 @@ def test_surrogate_error(surrogate: NearODESurrogate, f, m, domain, atol, rtol, 
     for j in range(len(exact)):
         exact[j] = f(pts[j])
     interp, bad_pts = surrogate.evaluate(pts, disp_time=True)
+    exact_max = np.max(np.abs(exact))
 
-    abs_error = np.linalg.norm(exact - interp, 2, axis=1)
-    rel_error = abs_error / np.linalg.norm(exact, 2, axis=1)
+    abs_error = np.linalg.norm(exact - interp, np.inf, axis=1)
+    rel_error = abs_error / exact_max
     good_abs_error = abs_error <= atol
     good_rel_error = rel_error <= rtol
     good_overall_error = np.logical_or(good_abs_error, good_rel_error)
@@ -866,6 +869,68 @@ def train_lorenz_surrogate(N_init, d, atol, F, dt):
     return interpolant
 
 
+def figure_successive_levels_rosenbrock():
+
+    # generate data
+    domain = np.array([
+        [-2,2],
+        [-1,3]
+    ])
+    left = domain[:,0]
+    right = domain[:,1]
+    n, _ = domain.shape
+    N = 10000
+    data = np.random.uniform(left, right, (N, n))
+    solves = np.zeros((N,1))
+    gradients = np.zeros((N,1,2))
+
+    # solves at data
+    for j, x in enumerate(data):
+        solves[j] = rosenbrock(x)
+        gradients[j] = grad_rosenbrock(x)
+
+    # we use this data to train successive surrogates for each level
+    fmax = np.max(np.abs(solves))
+    L = [1, 2, 4, -1]
+    atol = 1
+    rtol = 0.001
+    fig, axgrid = plt.subplots(2, 2)
+    for i, num_levels in enumerate(L):
+        ax = axgrid[i//2, i%2]
+
+        # train surrogate for L levels
+        surrogate = NearODESurrogate()
+        surrogate.train_model_from_data(
+            data,
+            solves,
+            gradients,
+            True,
+            True,
+            rosenbrock_combined,
+            10,
+            atol,
+            rtol,
+            100,
+            num_levels = num_levels,
+            soft_clustering_factor = 0
+        )
+        centers = surrogate.get_sources()
+        trust_regions = surrogate.get_trust_regions()
+
+        # plot centroids
+        plot_contours(domain, rosenbrock, ax)
+        scatter_points(data, 'grey', ax, 'Points')
+        scatter_points(centers, 'pink', ax, 'Centroids')
+        ax.set_title(f'Surrogate with {num_levels} Levels')
+
+        # plot trust regions as dotted ellipses (x - mu)^T Q (x - mu) = 1
+        for j, Q in enumerate(trust_regions):
+            plot_ellipse(Q, centers[j], 2 * np.maximum(atol, rtol * fmax), ax, 'red')
+
+    plt.show()
+        
+
+
 def visualize_centroids_of_surrogate(surrogate: NearODESurrogate, domain, f):
 
     fig, ax = plt.subplots()
@@ -958,8 +1023,8 @@ if __name__ == '__main__':
         convergence_test_2D_SHCF(tolmat, 100000, domain, min_ppc=100)
 
     # Rosenbrock 2D
-    elif 1:
-        convergence_test_2d_rosenbrock(tolmat, 100000, 100, scf=0.03)
+    elif 0:
+        convergence_test_2d_rosenbrock(tolmat, 100000, 100, scf=0.01)
 
     # Borehole function (d=8)
     elif 0:
@@ -1101,7 +1166,7 @@ if __name__ == '__main__':
         plt.show()
 
 
-    # visualize centroids of surrogate
+    # visualize centroids of Rosenbrock surrogate
     elif 0:
 
         surrogate = load_surrogate('rosenbrock_surrogates/rosenbrock_surrogate_2_atol_0.1_rtol_0.02.pkl')
@@ -1110,3 +1175,6 @@ if __name__ == '__main__':
             [-1,3]
         ])
         visualize_centroids_of_surrogate(surrogate, domain, rosenbrock)
+
+    elif 1:
+        figure_successive_levels_rosenbrock()

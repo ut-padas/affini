@@ -52,11 +52,14 @@ class NN_Inference:
     # uses the average of the k-nearest neighbors (default only uses 1 nearest neighbor)
     def predict(self,
         targets: np.ndarray,
+        atol,
+        rtol,
+        fmax,
         disp_time=False,
     ):
 
         N = len(targets)
-        K = 5
+        K = 10
 
         start_time = time.perf_counter()
         # TODO check if the length of each feature vector matches the length of training vectors
@@ -71,7 +74,7 @@ class NN_Inference:
             diffs = targets - near_neighbors
             near_trust_ellipses = self.trust_ellipses[Ind[:,j]]
             trust_distances = np.einsum('ni,nij,nj->n', diffs, near_trust_ellipses, diffs)
-            in_trust_region = trust_distances <= 1
+            in_trust_region = trust_distances <= 2 * np.maximum(atol, rtol * fmax)
             near_ind[in_trust_region] = Ind[in_trust_region,j]
 
         # what if a point has no nearest neighbors in trust region? Just use nearest neighbor

@@ -50,6 +50,7 @@ class NearODESurrogate:
         alpha = 1,
         disp_time = True,
         seed = None,
+        num_levels = -1,
         soft_clustering_factor = 0,
 
     ):
@@ -73,6 +74,7 @@ class NearODESurrogate:
             
         self.atol = atol
         self.rtol = rtol
+        self.fmax = np.max(np.abs(labels))
         self.oracle = oracle
         self.n = n
         self.m = m
@@ -90,15 +92,13 @@ class NearODESurrogate:
 
             # call clustering algorithm
             k, cluster_tree = adaptive_cluster_algorithm(features, oracle, atol, rtol, \
-                    N_init_clusters, min_ppc, use_gradient, labels, seed,
+                    N_init_clusters, min_ppc, use_gradient, labels, gradients, seed, num_levels,
                     soft_clustering_factor=soft_clustering_factor)
             
             new_features, new_labels, new_gradients, trust_ellipses, n_pts, tree_levels = \
                     flatten_cluster_centers_with_gradient(k, n, m, cluster_tree)
             
             
-        
-
         else:
             new_features = features
             new_labels = labels
@@ -217,7 +217,8 @@ class NearODESurrogate:
         
         # plug this into above function
         self.train_model_from_data(features, labels, gradients, do_clustering, use_gradient, oracle,
-                N_init_clusters, atol, rtol, min_ppc, check_guarantee_N_times, L, alpha, False, seed, soft_clustering_factor)
+                N_init_clusters, atol, rtol, min_ppc, check_guarantee_N_times, L, alpha, False, seed,
+                -1, soft_clustering_factor)
 
         end_time = time.perf_counter()
         if disp_time:
@@ -236,11 +237,17 @@ class NearODESurrogate:
             if targets.ndim == 1:
                 predictions, unguaranteed_points = self.KNN_search.predict(
                     targets.reshape(len(targets), 1),
+                    self.atol,
+                    self.rtol,
+                    self.fmax,
                     disp_time
                 )
             else:
                 predictions, unguaranteed_points = self.KNN_search.predict(
                     targets,
+                    self.atol,
+                    self.rtol,
+                    self.fmax,
                     disp_time
                 )
 
@@ -255,6 +262,15 @@ class NearODESurrogate:
     # This function returns the source points used for nearest neighbors searches
     def get_sources(self):
         return self.KNN_search.features
+    
+    def get_fvals(self):
+        return self.KNN_search.labels
+    
+    def get_gradients(self):
+        return self.KNN_search.gradients
+    
+    def get_trust_regions(self):
+        return self.KNN_search.trust_ellipses
 
 
     def add_sources(self, features):
