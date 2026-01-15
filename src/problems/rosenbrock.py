@@ -41,17 +41,9 @@ def rosenbrock_grad(X):
     n_pts, n_dim = X.shape
     J = xp.zeros((n_pts, 1, n_dim), dtype=X.dtype)
 
-    # The term (1 - x_i)^2 only exists for i = 0 to d-2
     J[:, 0, :-1] += 2 * (X[:, :-1] - 1)
-
-    # Term from 100*(x_{i+1} - x_i^2)^2 for i < d-1 (derivative w.r.t x_i)
-    # This affects 0 to d-2
     J[:, 0, :-1] -= 4 * ROSENBROCK_SCALE * X[:, :-1] * (X[:, 1:] - X[:, :-1] ** 2)
-
-    # Term from 100*(x_i - x_{i-1}^2)^2 for i > 0 (derivative w.r.t x_{i+1})
-    # This affects 1 to d-1
     J[:, 0, 1:] += 2 * ROSENBROCK_SCALE * (X[:, 1:] - X[:, :-1] ** 2)
-
     return J
 
 
@@ -72,13 +64,13 @@ def rosenbrock_hess(X):
 
     for i in range(n_dim):
         if i < n_dim - 1:
+            if i > 0:
+                H[:, i, i] += 2 * ROSENBROCK_SCALE
             H[:, i, i] += (
                 12 * ROSENBROCK_SCALE * X[:, i] ** 2
                 - 4 * ROSENBROCK_SCALE * X[:, i + 1]
                 + 2
             )
-            if i > 0:
-                H[:, i, i] += 2 * ROSENBROCK_SCALE
             H[:, i, i + 1] += -4 * ROSENBROCK_SCALE * X[:, i]
             H[:, i + 1, i] += -4 * ROSENBROCK_SCALE * X[:, i]
         else:

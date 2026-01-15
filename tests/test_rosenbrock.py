@@ -32,10 +32,16 @@ class TestRosenbrockSympyDerivatives(unittest.TestCase):
 
     def test_value_grad_hess_match_sympy(self):
         rng = np.random.default_rng(0)
+        num_pts = 60
+        prob_extents = (-3.0, 3.0)
 
         for n_dim, (f_fn, g_fn, h_fn) in self._sympy.items():
             with self.subTest(n_dim=n_dim):
-                X = rng.normal(size=(6, n_dim)).astype(np.float64)
+                X = rng.uniform(
+                    low=prob_extents[0],
+                    high=prob_extents[1],
+                    size=(num_pts, n_dim),
+                ).astype(np.float64)
 
                 f_impl = rosenbrock(X)  # (n, 1)
                 g_impl = rosenbrock_grad(X)[:, 0, :]  # (n, d)
