@@ -7,7 +7,7 @@ cp = np
 from sklearn.cluster import KMeans
 
 
-def batched_estimate_hessian_symmetric(DeltaX, DeltaG, starts, counts):
+def batched_estimate_hessian_symmetric(DeltaX, DeltaG, starts):
     """
     Computes H for K clusters simultaneously using segmented aggregation.
     """
@@ -335,9 +335,7 @@ def adaptive_clustering_fit(
         K_bad = int(bad_indices.size)
 
         # 6a. Estimate Hessian
-        H = batched_estimate_hessian_symmetric(
-            bad_DeltaX, bad_DeltaG, bad_starts, bad_counts
-        )
+        H = batched_estimate_hessian_symmetric(bad_DeltaX, bad_DeltaG, bad_starts)
 
         # 6b. Transform Geometry
         M = batched_sqrt_abs_psd(H)  # (K_bad, d, d)
@@ -414,18 +412,11 @@ if __name__ == "__main__":
         X_list.append(Xi)
     X_gpu = cp.hstack(X_list)
 
-    print("Running Init KMeans (CPU on sample)...")
-    idx_sample = np.random.choice(_N, min(10000, _N), replace=False)
-    X_sample_cpu = X_gpu[idx_sample]
+    print("Running Init KMeans...")
 
     K0 = 10
-    kmeans = KMeans(n_clusters=K0, n_init=1, random_state=0)
-    kmeans.fit(X_sample_cpu)
-
-    centroids_gpu = cp.asarray(kmeans.cluster_centers_)
-    dists = cp.linalg.norm(X_gpu[:, None, :] - centroids_gpu[None, :, :], axis=2)
-    initial_labels = cp.argmin(dists, axis=1)
-    initial_labels0 = initial_labels.copy()
+    kmeans = KMeans(n_clusters=K0, random_state=0)
+    initial_labels = kmeans.fit_predict(X_gpu)
 
     print("Starting Adaptive GPU Clustering...")
     start_total = time.perf_counter()
@@ -471,7 +462,7 @@ if __name__ == "__main__":
             print(f"Skipping 2D plot (matplotlib import failed): {e}")
         else:
             X = np.asarray(X_gpu)
-            initial_labels_np = np.asarray(initial_labels0)
+            initial_labels_np = np.asarray(initial_labels)
             counts0 = np.bincount(initial_labels_np, minlength=K0).astype(np.float64)
             counts0 = np.maximum(counts0, 1.0)
             sums0 = np.stack(
