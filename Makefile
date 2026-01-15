@@ -40,9 +40,9 @@ load-modules:
 	@if hostname | grep -q "vista.tacc.utexas.edu"; then \
 		echo "Detected TACC Vista system. Loading required modules..."; \
 		if command -v module >/dev/null 2>&1; then \
-			module load nvidia; \
-			module load cuda/12.9 gcc; \
-			echo "Modules loaded: nvidia, cuda/12.9, gcc"; \
+			module load nvidia/25.9 gcc/15.1.0; \
+			module load cuda/12.9; \
+			echo "Modules loaded: nvidia/25.9, cuda/12.9, gcc/15.1.0"; \
 		else \
 			echo "Warning: Module system not available. Skipping module loading."; \
 		fi; \
