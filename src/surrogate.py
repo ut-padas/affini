@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from typing import Any, Callable
@@ -238,6 +239,9 @@ if __name__ == "__main__":
 
     setup_logging(console_level=logging.DEBUG, file_output=False)
 
+    SURR_EXP_DIR = FIGURES_DIR / "surrogate_experiments"
+    SURR_EXP_DIR.mkdir(parents=True, exist_ok=True)
+
     # Parse Args
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -287,6 +291,15 @@ if __name__ == "__main__":
     CONTAINMENT_LEVEL = args.containment_level
     SEED = args.seed
 
+    img_fpath = (
+        SURR_EXP_DIR
+        / f"rosen_nearode_surrogate_rel_error_histogram_dim{dim}_tol{TOL:.1e}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
+    )
+    json_fpath = img_fpath.with_suffix(".json")
+    if img_fpath.exists() and json_fpath.exists():
+        print(f"Results already exist at {img_fpath} and {json_fpath}. Exiting.")
+        exit(0)
+
     # 1. Setup Domain
     domain = cp.array([[-3, 3] * dim]).reshape(dim, 2)
     print(f"--- Domain: {domain.get().tolist()} ---")
@@ -302,6 +315,7 @@ if __name__ == "__main__":
 
     # 3. Train
     print("--- Training ---")
+    _start_train_time = time.perf_counter()
     surrogate.train(
         X_train=X_train,
         f=rosenbrock,
@@ -312,6 +326,7 @@ if __name__ == "__main__":
         RTOL=TOL,
         SEED=SEED,
     )
+    _end_train_time = time.perf_counter()
 
     # 4. Evaluate
     print("\n--- Evaluation ---")
@@ -319,22 +334,30 @@ if __name__ == "__main__":
     X_test = cp.asarray(X_test)
 
     # Example utilizing the new signature with Guarantee checks
+    _start_predict_time = time.perf_counter()
     preds, ungauranteed_mask = surrogate.predict(
         X_test,
         k_NEIGHBOURS=K_NEIGHBOURS,
         trust_region_containment=True,
         containment_level=CONTAINMENT_LEVEL,
     )
+    _end_predict_time = time.perf_counter()
 
     ground_truth = rosenbrock(X_test)
     rel_error = cp.abs(preds - ground_truth) / (cp.abs(ground_truth) + 1e-12)
+    rel_error_l2 = cp.linalg.norm(ground_truth - preds, axis=1) / (
+        cp.linalg.norm(ground_truth, axis=1) + 1e-12
+    )
+    max_rel_error = cp.nanmax(rel_error).get()
+    max_rel_error_l2 = cp.nanmax(rel_error_l2).get()
 
     n_ungauranteed = cp.sum(ungauranteed_mask)
     perct_ungauranteed = 100.0 * n_ungauranteed / X_test.shape[0]
     print(
         f"Unguaranteed Points: {n_ungauranteed:,} / {X_test.shape[0]:,} ({perct_ungauranteed:.2f}%)"
     )
-    print(f"Max Relative Error (InfiniteNorm): {cp.nanmax(rel_error).get():.4e}")
+    print(f"Max Relative Error (InfiniteNorm): {max_rel_error:.4e}")
+    print(f"Max Relative Error (L2Norm): {max_rel_error_l2:.4e}")
     n_within_tol = cp.sum(rel_error <= TOL)
     perct_within_tol = 100.0 * n_within_tol / X_test.shape[0]
     print(
@@ -358,9 +381,30 @@ if __name__ == "__main__":
     plt.legend()
     plt.xscale("log")
     plt.grid(True)
-    fname = (
-        FIGURES_DIR
-        / f"rosen_nearode_surrogate_rel_error_histogram_dim{dim}_tol{TOL}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
-    )
-    plt.savefig(fname, dpi=300)
-    print(f"Saved relative error histogram to {fname}")
+    plt.savefig(img_fpath, dpi=300)
+    print(f"Saved relative error histogram to {img_fpath}")
+
+    # Save results to JSON
+
+    json_data_dict = {
+        "dim": dim,
+        "tol": TOL,
+        "n_train": N_train,
+        "n_test": N_test,
+        "n_clusters": surrogate.N_src,
+        "k_neighbours": K_NEIGHBOURS,
+        "n_ungauranteed": int(n_ungauranteed.get()),
+        "perct_ungauranteed": float(perct_ungauranteed.get()),
+        "max_rel_error": float(max_rel_error),
+        "max_rel_error_l2": float(max_rel_error_l2),
+        "n_within_tol": int(n_within_tol.get()),
+        "perct_within_tol": float(perct_within_tol.get()),
+        "train_time_sec": float(_end_train_time - _start_train_time),
+        "predict_time_sec": float(_end_predict_time - _start_predict_time),
+        "median_rel_error": float(cp.nanmedian(rel_error).get()),
+        "mean_rel_error": float(cp.nanmean(rel_error).get()),
+    }
+
+    with open(json_fpath, "w") as json_file:
+        json.dump(json_data_dict, json_file, indent=4)
+    print(f"Saved results to {json_fpath}")
