@@ -7,8 +7,6 @@ import numpy as np
 from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max
 
-from src.logging_config import log_mem_stats
-
 logger = logging.getLogger(__name__)
 
 
@@ -336,7 +334,7 @@ def allocate_output_buffers(
     return buffers, capacity
 
 
-def _ensure_capacity(
+def adjust_buffer_capacity(
     buffers: dict[str, cp.ndarray],
     current_cluster_count: int,
     current_capacity: int,
@@ -668,7 +666,7 @@ def adaptive_clustering(
             # Ensure output buffers can hold the newly accepted clusters.
             n_good = int(good_indices.size)
             end_out = valid_cluster_count + n_good
-            buffers, capacity = _ensure_capacity(
+            buffers, capacity = adjust_buffer_capacity(
                 buffers, valid_cluster_count, capacity, end_out
             )
 
@@ -757,8 +755,8 @@ def adaptive_clustering(
         level += 1
         n_synth_count = X_synth.shape[0] if X_synth is not None else 0
         logger.debug(
-            f"Level {level}: Active {n_active:,} (+{n_synth_count} synth) -> "
-            f"{K_batch} clusters (Good: {good_indices.size}, Bad: {bad_indices.size})"
+            f"Level {level}: Active {n_active:,} (+{n_synth_count:,} synth) -> "
+            f"{K_batch:,} clusters (Good: {good_indices.size:,}, Bad: {bad_indices.size:,})"
         )
         logger.debug(
             f"Runtime - Level {level}: {time.perf_counter() - _start_loop:.4f}s"
@@ -775,40 +773,21 @@ def adaptive_clustering(
     return {k: buffers[k][:final_cluster_count] for k in buffers}
 
 
-ROSENBROCK_SCALE = 100.0
-
-
-def rosenbrock(X):
-    x_i = X[:, :-1]
-    x_next = X[:, 1:]
-    return cp.sum(
-        ROSENBROCK_SCALE * (x_next - x_i**2.0) ** 2.0 + (1.0 - x_i) ** 2.0,
-        axis=1,
-        keepdims=True,
-    )
-
-
-def rosenbrock_grad(X):
-    n_pts, n_dim = X.shape
-    J = cp.zeros((n_pts, 1, n_dim), dtype=X.dtype)
-    J[:, 0, :-1] += 2 * (X[:, :-1] - 1) - 4 * ROSENBROCK_SCALE * X[:, :-1] * (
-        X[:, 1:] - X[:, :-1] ** 2
-    )
-    J[:, 0, 1:] += 2 * ROSENBROCK_SCALE * (X[:, 1:] - X[:, :-1] ** 2)
-    return J
-
-
 if __name__ == "__main__":
+    from src.logging_config import setup_logging
+    from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
+
+    setup_logging(console_level=logging.DEBUG)
     cp.random.seed(0)
-    _N = 1_000_000
+    _N = 100_000
     d = 2
     print(f"Generating {_N:,} points (d={d})...")
     PROB_LIMS = (-1.0, 3)
     X = cp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(_N, d))
 
-    TOL = 1e-2
-    N_MIN_PER_CLUSTER = 100
+    TOL = 1e-3
     N_INIT_CLUSTERS = 100
+    N_MIN_PER_CLUSTER = 1000
 
     print("Starting Adaptive GPU Clustering...")
     results = adaptive_clustering(
@@ -819,6 +798,7 @@ if __name__ == "__main__":
         RTOL=TOL,
         N_INIT_CLUSTERS=N_INIT_CLUSTERS,
         N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+        MAX_EST_CLUSTERS=100_000,
     )
 
     print("-" * 40)
