@@ -5,8 +5,10 @@ from pathlib import Path
 import cupy as cp
 from tqdm import tqdm
 
-from src.adaptive_clustering import adaptive_cluster_algorithm
-from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
+from _experiments._deprecated.adaptive_clustering import adaptive_cluster_algorithm
+from _experiments._deprecated.gpu_adaptive_clustering import (
+    adaptive_cluster_algorithm_gpu,
+)
 from src.logging_config import setup_logging
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 

@@ -10,9 +10,11 @@ import cupy as cp
 import numpy as np
 from scipy.stats import qmc
 
+from _experiments._deprecated.adaptive_clustering import adaptive_cluster_algorithm
+from _experiments._deprecated.gpu_adaptive_clustering import (
+    adaptive_cluster_algorithm_gpu,
+)
 from _experiments._deprecated.nn_inference import NN_Inference
-from src.adaptive_clustering import adaptive_cluster_algorithm
-from src.gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
 
 
 class ClusteringBackend(Enum):
