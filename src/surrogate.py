@@ -218,6 +218,7 @@ class NearODESurrogate:
 
 if __name__ == "__main__":
     import argparse
+    from functools import partial
 
     import matplotlib.pyplot as plt
 
@@ -268,6 +269,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--seed", type=int, default=0, help="Random seed for training data sampling"
     )
+    parser.add_argument(
+        "--rosenbrock-a", type=float, default=10.0, help="Rosenbrock 'a' parameter"
+    )
+
+    # Parse arguments
     args = parser.parse_args()
     dim = args.dim
     TOL = args.tol
@@ -278,10 +284,15 @@ if __name__ == "__main__":
     K_NEIGHBOURS = args.k_neighbours
     CONTAINMENT_LEVEL = args.containment_level
     SEED = args.seed
+    A_ROSENBROCK = args.rosenbrock_a
+
+    # Creat partial Rosenbrock functions
+    rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
+    rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
 
     img_fpath = (
         SURR_EXP_DIR
-        / f"rosen_nearode_surrogate_rel_error_histogram_dim{dim}_tol{TOL:.1e}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
+        / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_dim{dim}_tol{TOL:.1e}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
     )
     json_fpath = img_fpath.with_suffix(".json")
     if img_fpath.exists() and json_fpath.exists():
@@ -359,7 +370,7 @@ if __name__ == "__main__":
     plt.xlabel("Relative Error (log scale)")
     plt.ylabel("Frequency (log scale)")
     plt.title(
-        f"NearODESurrogate RelError (dim={dim}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_ung.={n_ungauranteed} ({perct_ungauranteed:.2f}%))",
+        f"NearODESurrogate RelError (Rosenbrock: a={A_ROSENBROCK}) (dim={dim}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_ung.={n_ungauranteed} ({perct_ungauranteed:.2f}%))",
         fontsize=7,
     )
     plt.axvline(
@@ -377,6 +388,7 @@ if __name__ == "__main__":
     # Save results to JSON
 
     json_data_dict = {
+        "rosenbrock_a": A_ROSENBROCK,
         "dim": dim,
         "tol": TOL,
         "n_train": N_train,

@@ -22,3 +22,4 @@ xp = array_namespace(_dummy)
 _file_path = Path(__file__).parent.resolve()
 PROJECT_DIR = _file_path.parent.resolve()
 FIGURES_DIR = PROJECT_DIR / "figures"
+RESULTS_DIR = PROJECT_DIR / "results"

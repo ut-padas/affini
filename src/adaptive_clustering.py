@@ -807,20 +807,65 @@ def adaptive_clustering(
 
 
 if __name__ == "__main__":
+    import argparse
+    from functools import partial
+
+    from src import FIGURES_DIR
     from src.logging_config import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
+    AC_PLOTS_DIR = FIGURES_DIR / "adaptive_clustering_rosenbrock"
+    AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Argument parsing
+    parser = argparse.ArgumentParser(
+        description="Adaptive GPU Clustering Example with Rosenbrock Function"
+    )
+    parser.add_argument(
+        "--dim", type=int, default=2, help="Dimensionality of the problem"
+    )
+    parser.add_argument(
+        "--tol", type=float, default=1e-1, help="Tolerance for training and evaluation"
+    )
+    parser.add_argument(
+        "--n-train", type=int, default=1_000_000, help="Number of training samples"
+    )
+    parser.add_argument(
+        "--n-init-clusters",
+        type=int,
+        default=100,
+        help="Number of initial clusters for adaptive clustering",
+    )
+    parser.add_argument(
+        "--n-min-per-cluster",
+        type=int,
+        default=100,
+        help="Minimum points per cluster for adaptive clustering",
+    )
+    parser.add_argument(
+        "--rosenbrock-a",
+        type=float,
+        default=100.0,
+        help="Rosenbrock function parameter 'a'",
+    )
+
+    args = parser.parse_args()
+    DIM = args.dim
+    TOL = args.tol
+    N_TRAIN = args.n_train
+    NUM_INITIAL_CLUSTERS = args.n_init_clusters
+    MIN_PTS_PER_CLUSTER = args.n_min_per_cluster
+    A_ROSENBROCK = args.rosenbrock_a
+
+    # Creat partial Rosenbrock functions
+    rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
+    rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
+
     setup_logging(console_level=logging.DEBUG)
     xp.random.seed(0)
-    _N = 100_000
-    d = 2
-    print(f"Generating {_N:,} points (d={d})...")
+    print(f"Generating {N_TRAIN:,} points (d={DIM})...")
     PROB_LIMS = (-1.0, 3)
-    X = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(_N, d))
-
-    TOL = 1e-3
-    NUM_INITIAL_CLUSTERS = 100
-    MIN_PTS_PER_CLUSTER = 1000
+    X = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(N_TRAIN, DIM))
 
     print("Starting Adaptive GPU Clustering...")
     results = adaptive_clustering(
@@ -831,7 +876,6 @@ if __name__ == "__main__":
         RTOL=TOL,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        MAX_CLUSTERS_EST=100_000,
     )
 
     print("-" * 40)
@@ -866,7 +910,7 @@ if __name__ == "__main__":
         int(real_counts.max()),
     )
 
-    if d == 2 and len(results["centroids"]) <= 3000:
+    if DIM == 2 and len(results["centroids"]) <= 3000:
         import matplotlib.pyplot as plt
         import numpy as np
         from matplotlib.colors import LogNorm
@@ -956,12 +1000,15 @@ if __name__ == "__main__":
         axs[1].legend()
         plt.tight_layout()
         fig.suptitle(
-            f"Adaptive Clustering: Rosenbrock (TOL={TOL}, N_INIT={NUM_INITIAL_CLUSTERS}, N_MIN={MIN_PTS_PER_CLUSTER}), Final Clusters: {results['centroids'].shape[0]:,}",
+            f"Adaptive Clustering: Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL}, N_INIT={NUM_INITIAL_CLUSTERS}, N_MIN={MIN_PTS_PER_CLUSTER}), Final Clusters: {results['centroids'].shape[0]:,}",
             fontsize=16,
         )
 
         plt.subplots_adjust(top=0.88)
-        fname = f"adaptive_clustering_rosenbrock_tol{int(TOL*1e4)}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}.png"
+        fname = (
+            AC_PLOTS_DIR
+            / f"adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}.png"
+        )
         plt.savefig(fname, dpi=300)
         print(f"Saved figure to {fname}")
     else:
