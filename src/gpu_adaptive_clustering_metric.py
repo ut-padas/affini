@@ -2,19 +2,20 @@ import logging
 import time
 from typing import Optional
 
-import cupy as cp
-import numpy as np
 from cuml.cluster import KMeans as cuKMeans
-from cupyx import scatter_max
+from cupyx import scatter_max as cupy_scatter_max
+from sklearn.cluster import KMeans
 
+from src import _HAS_GPU, Array, xp
 from src.logging_config import log_mem_stats
+from src.utils import repeats
 
 logger = logging.getLogger(__name__)
 
 
 def generate_synthetic_points_batched(
-    X: cp.ndarray, starts: cp.ndarray, counts: cp.ndarray, MIN_PTS_PER_CLUSTER: int
-) -> tuple[Optional[cp.ndarray], Optional[cp.ndarray]]:
+    X: Array, starts: Array, counts: Array, MIN_PTS_PER_CLUSTER: int
+) -> tuple[Optional[Array], Optional[Array]]:
     """
     Batch generate synthetic (convex-combination) points for clusters smaller than N_min,
     over all clusters. This is intended to augment small clusters with additional points
@@ -39,44 +40,44 @@ def generate_synthetic_points_batched(
             associate each synthetic point back to its cluster), or None if none.
     """
     # Identify how many synthetic points are needed per cluster.
-    n_needed = cp.maximum(0, MIN_PTS_PER_CLUSTER - counts)  # (K,)
-    total_synth = int(cp.sum(n_needed))
+    n_needed = xp.maximum(0, MIN_PTS_PER_CLUSTER - counts)  # (K,)
+    total_synth = int(xp.sum(n_needed))
 
     # If no synthesis needed, return None.
     if total_synth == 0:
         return None, None
 
     # Clusters that actually need synthetic points.
-    small_cluster_indices = cp.nonzero(n_needed)[0]  # (K_small,)
+    small_cluster_indices = xp.nonzero(n_needed)[0]  # (K_small,)
     needed_counts = n_needed[small_cluster_indices]  # (K_small,)
 
     # For each synthetic point, assign it to which cluster it belongs.
     # E.g., if C0: 3 points, C1: 0 points, C2: 2 points, then
     # cluster_ids_synth = [0,0,0,2,2].
-    cluster_ids_synth = cp.repeat(small_cluster_indices.get(), needed_counts.get())
+    cluster_ids_synth = repeats(small_cluster_indices, needed_counts)
 
     # For each synthetic point, pick two random indices within that cluster.
     synth_starts = starts[cluster_ids_synth]  # (M,)
     synth_counts = counts[cluster_ids_synth]  # (M,)
 
     # Generate random offsets.
-    offsets1 = cp.floor(cp.random.rand(total_synth) * synth_counts).astype(cp.int32)
-    offsets2 = cp.floor(cp.random.rand(total_synth) * synth_counts).astype(cp.int32)
+    offsets1 = xp.floor(xp.random.rand(total_synth) * synth_counts).astype(xp.int32)
+    offsets2 = xp.floor(xp.random.rand(total_synth) * synth_counts).astype(xp.int32)
 
     # Convert offsets to absolute indices into X.
     idx1 = synth_starts + offsets1
     idx2 = synth_starts + offsets2
 
     # Form convex combinations.
-    alpha = cp.random.rand(total_synth, 1).astype(X.dtype)  # (M, 1)
+    alpha = xp.random.rand(total_synth, 1).astype(X.dtype)  # (M, 1)
     X_synth = alpha * X[idx1] + (1.0 - alpha) * X[idx2]  # (M, d)
 
     return X_synth, cluster_ids_synth
 
 
 def batched_estimate_hessian_symmetric(
-    DeltaX: cp.ndarray, DeltaG: cp.ndarray, starts: cp.ndarray
-) -> cp.ndarray:
+    DeltaX: Array, DeltaG: Array, starts: Array
+) -> Array:
     """
     Batch estimate the symmetric Hessian matrices for multiple clusters.
     Equations (per cluster k):
@@ -107,15 +108,15 @@ def batched_estimate_hessian_symmetric(
     # Segment sums (cluster-wise):
     # C_k = Σ Δx Δx^T
     # E_k = Σ Δx Δg^T
-    C = cp.add.reduceat(XX_all, starts)  # (K, d, d)
-    E = cp.add.reduceat(XG_all, starts)  # (K, d, d)
+    C = xp.add.reduceat(XX_all, starts)  # (K, d, d)
+    E = xp.add.reduceat(XG_all, starts)  # (K, d, d)
 
     # RHS S_k = E_k + E_k^T
     S = E + E.transpose(0, 2, 1)  # (K, d, d)
 
     # Batch eigen-decomposition of each C_k = U_k D_k U_k^T.
-    dvals, U = cp.linalg.eigh((C + C.transpose(0, 2, 1)) * 0.5)
-    dvals = cp.maximum(dvals, 1e-18)
+    dvals, U = xp.linalg.eigh((C + C.transpose(0, 2, 1)) * 0.5)
+    dvals = xp.maximum(dvals, 1e-18)
 
     # Gtilde = U^T S U.
     Gtilde = U.transpose(0, 2, 1) @ S @ U
@@ -131,7 +132,7 @@ def batched_estimate_hessian_symmetric(
     return (H + H.transpose(0, 2, 1)) * 0.5
 
 
-def batched_sqrt_abs_psd(H: cp.ndarray) -> cp.ndarray:
+def batched_sqrt_abs_psd(H: Array) -> Array:
     """
     Batch compute the square root of the absolute value of symmetric PSD matrices over
     all clusters.
@@ -150,16 +151,16 @@ def batched_sqrt_abs_psd(H: cp.ndarray) -> cp.ndarray:
     """
     # Batch eigen-decomposition of each H_k = U_k D_k U_k^T.
     # w: (K, d) eigenvalues, U: (K, d, d) eigenvectors.
-    w, U = cp.linalg.eigh(H)
+    w, U = xp.linalg.eigh(H)
 
     # Compute sqrt(|w|) elementwise.
-    w_abs_sqrt = cp.sqrt(cp.abs(w))
+    w_abs_sqrt = xp.sqrt(xp.abs(w))
 
     M = (U * w_abs_sqrt[:, None, :]) @ U.transpose(0, 2, 1)  # (K, d, d)
     return (M + M.transpose(0, 2, 1)) * 0.5
 
 
-def batched_top_eigvec(Cov: cp.ndarray) -> cp.ndarray:
+def batched_top_eigvec(Cov: Array) -> Array:
     """
     Batch compute the dominant (top) eigenvector of symmetric covariance matrices over
     all clusters.
@@ -173,15 +174,15 @@ def batched_top_eigvec(Cov: cp.ndarray) -> cp.ndarray:
     """
     # Batch eigen-decomposition of symmetric matrices.
     # w: (K, d) eigenvalues (ascending), V: (K, d, d) eigenvectors.
-    w, V = cp.linalg.eigh((Cov + Cov.transpose(0, 2, 1)) * 0.5)
+    w, V = xp.linalg.eigh((Cov + Cov.transpose(0, 2, 1)) * 0.5)
 
     # Since eigenvalues are ascending, the last column of V is the top eigenvector.
     return V[:, :, -1]  # (K, d)
 
 
 def batched_median_split_decision(
-    scores: cp.ndarray, cluster_id: cp.ndarray, starts: cp.ndarray, counts: cp.ndarray
-) -> cp.ndarray:
+    scores: Array, cluster_id: Array, starts: Array, counts: Array
+) -> Array:
     """
     Batch compute a median split decision from per-point scores over all clusters.
     Given per-point scores s_i and cluster ids k(i), this returns:
@@ -209,11 +210,11 @@ def batched_median_split_decision(
         return scores >= 0
 
     # Sort by score first.
-    idx_by_score = cp.argsort(scores)  # (N,)
-    cluster_sorted_by_score = cluster_id[idx_by_score.get()]
+    idx_by_score = xp.argsort(scores)  # (N,)
+    cluster_sorted_by_score = cluster_id[idx_by_score]
 
     # Sort by cluster id, while preserving score-order within each cluster.
-    idx_group = cp.argsort(cluster_sorted_by_score)  # (N,)
+    idx_group = xp.argsort(cluster_sorted_by_score)  # (N,)
     order = idx_by_score[idx_group]
 
     # Scores sorted within clusters.
@@ -231,12 +232,8 @@ def batched_median_split_decision(
 
 
 def batched_calculate_Q(
-    DeltaX: cp.ndarray,
-    starts: cp.ndarray,
-    counts: cp.ndarray,
-    K: int,
-    eps: float = 1e-12,
-) -> cp.ndarray:
+    DeltaX: Array, starts: Array, counts: Array, K: int, eps: float = 1e-12
+) -> Array:
     """
     Batch compute PCA-aligned trust ellipsoid matrices Q_k over all clusters.
     This constructs, for every cluster k, a PSD matrix Q_k such that the ellipsoid:
@@ -276,13 +273,13 @@ def batched_calculate_Q(
     # XX_all[i] = Δx_i Δx_i^T
     XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]  # (N, d, d)
     # Segment sums (cluster-wise) to get Covariance matrices.
-    Cov = cp.add.reduceat(XX_all, starts)  # (K, d, d)
+    Cov = xp.add.reduceat(XX_all, starts)  # (K, d, d)
 
     # Batch eigen-decomposition of each Cov_k = U_k D_k U_k^T.
-    _, U = cp.linalg.eigh((Cov + Cov.transpose(0, 2, 1)) * 0.5)
+    _, U = xp.linalg.eigh((Cov + Cov.transpose(0, 2, 1)) * 0.5)
 
     # Projections of points onto PCA axes.
-    map_n_to_k = cp.repeat(np.arange(K), counts.get())
+    map_n_to_k = repeats(xp.arange(K), counts)
 
     # Expand U so every point gets its cluster's eigenvector matrix.
     U_expanded = U[map_n_to_k]  # (N, d, d)
@@ -292,12 +289,15 @@ def batched_calculate_Q(
     proj = proj[:, :, 0]  # (N, d)
 
     # Compute per-axis max |projection| per cluster.
-    proj_abs = cp.abs(proj)
-    d_axes = cp.zeros((K, proj_abs.shape[1]), dtype=proj_abs.dtype)
-    scatter_max(d_axes, map_n_to_k, proj_abs)
+    proj_abs = xp.abs(proj)
+    d_axes = xp.zeros((K, proj_abs.shape[1]), dtype=proj_abs.dtype)
+    if xp.__name__ == "array_api_compat.numpy":
+        xp.maximum.at(d_axes, map_n_to_k, proj_abs)
+    else:
+        cupy_scatter_max(d_axes, map_n_to_k, proj_abs)
 
     # Avoid divide-by-zero.
-    d_axes = cp.maximum(d_axes, eps)  # (K, d)
+    d_axes = xp.maximum(d_axes, eps)  # (K, d)
 
     # Build Q_k matrices.
     Dinv2 = 1.0 / (d_axes**2)  # (K, d)
@@ -308,7 +308,7 @@ def batched_calculate_Q(
 
 def allocate_output_buffers(
     MAX_CLUSTERS_EST: int, d: int, dtype
-) -> tuple[dict[str, cp.ndarray], int]:
+) -> tuple[dict[str, Array], int]:
     """
     Allocate output buffers for adaptive clustering.
 
@@ -324,24 +324,24 @@ def allocate_output_buffers(
     """
     capacity = max(1, MAX_CLUSTERS_EST)
     buffers = {
-        "centroids": cp.empty((capacity, d), dtype=dtype),
-        "f": cp.empty((capacity,), dtype=dtype),
-        "g": cp.empty((capacity, d), dtype=dtype),
-        "Q": cp.empty((capacity, d, d), dtype=dtype),
-        "E_abs": cp.empty((capacity,), dtype=dtype),
-        "E_rel": cp.empty((capacity,), dtype=dtype),
-        "real_counts": cp.empty((capacity,), dtype=cp.int64),
-        "counts": cp.empty((capacity,), dtype=cp.int64),
+        "centroids": xp.empty((capacity, d), dtype=dtype),
+        "f": xp.empty((capacity,), dtype=dtype),
+        "g": xp.empty((capacity, d), dtype=dtype),
+        "Q": xp.empty((capacity, d, d), dtype=dtype),
+        "E_abs": xp.empty((capacity,), dtype=dtype),
+        "E_rel": xp.empty((capacity,), dtype=dtype),
+        "real_counts": xp.empty((capacity,), dtype=xp.int64),
+        "counts": xp.empty((capacity,), dtype=xp.int64),
     }
     return buffers, capacity
 
 
 def adjust_buffer_capacity(
-    buffers: dict[str, cp.ndarray],
+    buffers: dict[str, Array],
     current_cluster_count: int,
     current_capacity: int,
     required_total: int,
-) -> tuple[dict[str, cp.ndarray], int]:
+) -> tuple[dict[str, Array], int]:
     """
     Ensure that output buffers have enough capacity for required_total clusters.
 
@@ -367,14 +367,14 @@ def adjust_buffer_capacity(
     )
 
     new_buffers = {
-        "centroids": cp.empty((new_capacity, d), dtype=dtype),
-        "f": cp.empty((new_capacity,), dtype=dtype),
-        "g": cp.empty((new_capacity, d), dtype=dtype),
-        "Q": cp.empty((new_capacity, d, d), dtype=dtype),
-        "E_abs": cp.empty((new_capacity,), dtype=dtype),
-        "E_rel": cp.empty((new_capacity,), dtype=dtype),
-        "real_counts": cp.empty((new_capacity,), dtype=buffers["real_counts"].dtype),
-        "counts": cp.empty((new_capacity,), dtype=buffers["counts"].dtype),
+        "centroids": xp.empty((new_capacity, d), dtype=dtype),
+        "f": xp.empty((new_capacity,), dtype=dtype),
+        "g": xp.empty((new_capacity, d), dtype=dtype),
+        "Q": xp.empty((new_capacity, d, d), dtype=dtype),
+        "E_abs": xp.empty((new_capacity,), dtype=dtype),
+        "E_rel": xp.empty((new_capacity,), dtype=dtype),
+        "real_counts": xp.empty((new_capacity,), dtype=buffers["real_counts"].dtype),
+        "counts": xp.empty((new_capacity,), dtype=buffers["counts"].dtype),
     }
     if current_cluster_count > 0:
         for k in new_buffers:
@@ -385,7 +385,7 @@ def adjust_buffer_capacity(
 
 
 def adaptive_clustering(
-    X: cp.ndarray,
+    X: Array,
     *,
     f_fn,
     g_fn,
@@ -396,7 +396,7 @@ def adaptive_clustering(
     MAX_CLUSTERS_EST: int = 100_000,
     SEED: int = 0,
     LOG_MEM_STATS: bool = False,
-):
+) -> dict[str, Array]:
     """
     Adaptive, GPU-native clustering driven by first-order Taylor error, with
     Hessian-informed splits for clusters that violate error tolerances.
@@ -458,7 +458,7 @@ def adaptive_clustering(
           more stable in under-populated clusters.
     """
     # Ensure data is on GPU.
-    X = cp.asarray(X)  # (N, d)
+    X = xp.asarray(X)  # (N, d)
     N, d = X.shape
 
     if LOG_MEM_STATS:
@@ -480,8 +480,12 @@ def adaptive_clustering(
     #    The adaptive loop will refine this partition by splitting "bad" clusters.
     # -------------------------------------------------------------------------
     _start_init = time.perf_counter()
-    kmeans = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
-    labels = kmeans.fit_predict(X)
+    if _HAS_GPU:
+        kmeans = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+        labels = kmeans.fit_predict(X)
+    else:
+        kmeans = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+        labels = kmeans.fit_predict(X)
     logging.debug(f"Runtime - Initial KMeans: {time.perf_counter() - _start_init:.4f}s")
 
     # Allocate outputs with an estimated capacity; will grow if needed.
@@ -506,10 +510,10 @@ def adaptive_clustering(
     assert G_all.shape == (N, d), f"Expected G_all to be (N, d), got {G_all.shape}"
 
     # Global scaling for relative errors: use max |f| over the currently-evaluated set.
-    F_inf = float(cp.max(cp.abs(F_all))) + 1e-30
+    F_inf = float(xp.max(xp.abs(F_all))) + 1e-30
 
     # Active-mask tracks REAL points that still need to be assigned to an acceptable cluster.
-    active_mask = cp.ones(N, dtype=bool)  # (N,)
+    active_mask = xp.ones(N, dtype=bool)  # (N,)
 
     if LOG_MEM_STATS:
         log_mem_stats("After: Precompute f/g for all points")
@@ -526,26 +530,26 @@ def adaptive_clustering(
         if LOG_MEM_STATS:
             log_mem_stats(f"Start: L{level:02}")
 
-        n_active = int(cp.sum(active_mask))
+        n_active = int(xp.sum(active_mask))
         if n_active == 0:
             # All REAL points have been assigned to acceptable clusters.
             break
         _start_loop = time.perf_counter()
 
         # Extract active REAL points and their current labels.
-        active_indices = cp.nonzero(active_mask)[0]  # (N_active,)
+        active_indices = xp.nonzero(active_mask)[0]  # (N_active,)
         active_labels = labels[active_indices]  # (N_active,)
 
         # ---------------------------------------------------------------------
         # 3a) Sort active REAL points by label so we can do segmented reductions.
         # ---------------------------------------------------------------------
-        sort_order_real = cp.argsort(active_labels)  # (N_active,)
+        sort_order_real = xp.argsort(active_labels)  # (N_active,)
         sorted_indices_real = active_indices[sort_order_real]
         sorted_labels_real = active_labels[sort_order_real]
         sorted_X_real = X[sorted_indices_real]  # (N_active, d)
 
         # Compute per-cluster segmentation for REAL points (within active set).
-        unique_cluster_ids, starts_real, counts_real = cp.unique(  # type: ignore
+        unique_cluster_ids, starts_real, counts_real = xp.unique(  # type: ignore
             sorted_labels_real, return_index=True, return_counts=True
         )
         K_batch = int(unique_cluster_ids.shape[0])
@@ -567,7 +571,7 @@ def adaptive_clustering(
         # ---------------------------------------------------------------------
         if X_synth is not None:
             # Global ids for synth points are -1.
-            global_ids_synth = cp.full(
+            global_ids_synth = xp.full(
                 X_synth.shape[0], -1, dtype=sorted_indices_real.dtype
             )
 
@@ -575,23 +579,23 @@ def adaptive_clustering(
             labels_synth = unique_cluster_ids[ids_synth]
 
             # Concatenate real + synth, then sort by label to restore segmented layout.
-            X_combined = cp.vstack([sorted_X_real, X_synth])
-            L_combined = cp.concatenate([sorted_labels_real, labels_synth])
-            I_combined = cp.concatenate([sorted_indices_real, global_ids_synth])
+            X_combined = xp.vstack([sorted_X_real, X_synth])
+            L_combined = xp.concatenate([sorted_labels_real, labels_synth])
+            I_combined = xp.concatenate([sorted_indices_real, global_ids_synth])
 
             # Sort the combined data.
-            sort_order_comb = cp.argsort(L_combined)
+            sort_order_comb = xp.argsort(L_combined)
             X_batch = X_combined[sort_order_comb]
             L_batch = L_combined[sort_order_comb]
             I_batch = I_combined[sort_order_comb]
 
             # Recompute segmentation on the combined batch (starts/counts change).
-            _, starts_batch, counts_batch = cp.unique(  # type: ignore
+            _, starts_batch, counts_batch = xp.unique(  # type: ignore
                 L_batch, return_index=True, return_counts=True
             )
             is_real_pt = I_batch >= 0
-            real_counts_batch = cp.add.reduceat(
-                is_real_pt.astype(cp.int64), starts_batch
+            real_counts_batch = xp.add.reduceat(
+                is_real_pt.astype(xp.int64), starts_batch
             )  # (K_batch,)
 
             # Build F_batch/G_batch aligned with X_batch.
@@ -601,8 +605,8 @@ def adaptive_clustering(
             F_synth = f_fn(X_synth).ravel()
             G_synth = g_fn(X_synth)[:, 0, :]
 
-            F_comb = cp.concatenate([F_real, F_synth])  # (N_real + N_synth,)
-            G_comb = cp.vstack([G_real, G_synth])  # (N_real + N_synth, d)
+            F_comb = xp.concatenate([F_real, F_synth])  # (N_real + N_synth,)
+            G_comb = xp.vstack([G_real, G_synth])  # (N_real + N_synth, d)
 
             F_batch = F_comb[sort_order_comb]
             G_batch = G_comb[sort_order_comb]
@@ -619,7 +623,7 @@ def adaptive_clustering(
             G_batch = G_all[sorted_indices_real]
 
         # Update global scaling for relative errors.
-        F_inf = float(cp.max(cp.abs(F_batch))) + 1e-30
+        F_inf = float(xp.max(xp.abs(F_batch))) + 1e-30
 
         if LOG_MEM_STATS:
             log_mem_stats(f"After: L{level:02} Batch Preparation")
@@ -628,29 +632,32 @@ def adaptive_clustering(
         # 3d) Batched first-order model and error computation:
         #     - compute centroids μ_k, f(μ_k), g(μ_k) for each cluster segment.
         # ---------------------------------------------------------------------
-        sums = cp.add.reduceat(X_batch, starts_batch)  # (K_batch, d)
+        sums = xp.add.reduceat(X_batch, starts_batch)  # (K_batch, d)
         mus = sums / counts_batch[:, None]  # (K_batch, d)
 
         f_mus = f_fn(mus)[:, 0]  # (K_batch,)
         g_mus = g_fn(mus)[:, 0, :]  # (K_batch, d)
 
         # Map each point in the batch to a local cluster index k in [0, K_batch).
-        map_n_to_k = cp.repeat(np.arange(K_batch), counts_batch.get())  # (N_batch,)
+        map_n_to_k = repeats(xp.arange(K_batch), counts_batch)
 
         # Center points around their cluster centroids.
         DeltaX = X_batch - mus[map_n_to_k]  # (N_batch, d)
 
         # First-order Taylor prediction around μ_k for each point.
-        f_linear = f_mus[map_n_to_k] + cp.sum(
+        f_linear = f_mus[map_n_to_k] + xp.sum(
             DeltaX * g_mus[map_n_to_k], axis=1
         )  # (N_batch,)
 
         # Pointwise absolute linearization error.
-        err_point = cp.abs(F_batch - f_linear)  # (N_batch,)
+        err_point = xp.abs(F_batch - f_linear)  # (N_batch,)
 
         # Cluster-wise max error
-        E_abs = cp.zeros(K_batch, dtype=err_point.dtype)  # (K_batch,)
-        scatter_max(E_abs, map_n_to_k, err_point)
+        E_abs = xp.zeros(K_batch, dtype=err_point.dtype)  # (K_batch,)
+        if xp.__name__ == "array_api_compat.numpy":
+            xp.maximum.at(E_abs, map_n_to_k, err_point)
+        else:
+            cupy_scatter_max(E_abs, map_n_to_k, err_point)
 
         # Relative error scaled by max |f| in the batch.
         E_rel = E_abs / F_inf
@@ -667,7 +674,7 @@ def adaptive_clustering(
         #     - append to output buffers
         #     - deactivate only REAL points belonging to good clusters.
         # ---------------------------------------------------------------------
-        good_indices = cp.nonzero(is_good)[0]  # (K_good,)
+        good_indices = xp.nonzero(is_good)[0]  # (K_good,)
         if good_indices.size > 0:
             cluster_good_mask = is_good
             point_good_mask = cluster_good_mask[map_n_to_k]  # (N_batch,)
@@ -678,7 +685,7 @@ def adaptive_clustering(
             # Rebuild per-good-cluster segmentation (contiguous because batch is label-sorted).
             good_counts_total = counts_batch[good_indices]
             good_counts_real = real_counts_batch[good_indices]
-            good_starts = cp.r_[0, cp.cumsum(good_counts_total)[:-1]]
+            good_starts = xp.r_[0, xp.cumsum(good_counts_total)[:-1]]
 
             Qs = batched_calculate_Q(
                 good_DeltaX, good_starts, good_counts_total, int(good_indices.size)
@@ -716,7 +723,7 @@ def adaptive_clustering(
         #     transform points z = M_k Δx, and split by median along dominant PCA
         #     direction of Cov(z).
         # ---------------------------------------------------------------------
-        bad_indices = cp.nonzero(~is_good)[0]  # (K_bad,)
+        bad_indices = xp.nonzero(~is_good)[0]  # (K_bad,)
         if bad_indices.size == 0:
             # No more bad clusters to split; we're done.
             break
@@ -732,7 +739,7 @@ def adaptive_clustering(
 
         # Rebuild segmentation for the bad subset (still contiguous due to global sorting).
         bad_counts = counts_batch[bad_indices]
-        bad_starts = cp.r_[0, cp.cumsum(bad_counts)[:-1]]
+        bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
         K_bad = int(bad_indices.size)
 
         # Hessian estimation and absolute-square-root transform for each bad cluster.
@@ -742,20 +749,20 @@ def adaptive_clustering(
         M = batched_sqrt_abs_psd(H)  # (K_bad, d, d)
 
         # Expand M_k to each point in the bad subset, then compute z = M_k Δx.
-        map_bad_n_to_k = cp.repeat(np.arange(K_bad), bad_counts.get())  # (N_bad,)
+        map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)  # (N_bad,)
         M_expanded = M[map_bad_n_to_k]  # (N_bad, d, d)
         Z = (M_expanded @ bad_DeltaX[:, :, None])[:, :, 0]  # (N_bad, d)
 
         # Cluster-wise covariance of Z for PCA split direction.
         ZZ_all = Z[:, :, None] * Z[:, None, :]  # (N_bad, d, d)
-        Cov_Z = cp.add.reduceat(ZZ_all, bad_starts)  # (K_bad, d, d)
+        Cov_Z = xp.add.reduceat(ZZ_all, bad_starts)  # (K_bad, d, d)
 
         # Dominant eigenvector per cluster gives the split direction in Z-space.
         v = batched_top_eigvec(Cov_Z)  # (K_bad, d)
         v_expanded = v[map_bad_n_to_k]  # (N_bad, d)
 
         # Scalar projection scores and within-cluster median split.
-        scores = cp.sum(Z * v_expanded, axis=1)  # (N_bad,)
+        scores = xp.sum(Z * v_expanded, axis=1)  # (N_bad,)
         split_decision = batched_median_split_decision(
             scores, map_bad_n_to_k, bad_starts, bad_counts
         )  # (N_bad,)
@@ -774,7 +781,7 @@ def adaptive_clustering(
 
         decisions_real = split_decision[is_real_in_bad]
         old_ids = labels[global_indices_bad_real]
-        new_ids = old_ids * 2 + decisions_real.astype(cp.int32)
+        new_ids = old_ids * 2 + decisions_real.astype(xp.int32)
         labels[global_indices_bad_real] = new_ids
 
         # Bookkeeping / debug logs.
@@ -804,12 +811,12 @@ if __name__ == "__main__":
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG)
-    cp.random.seed(0)
+    xp.random.seed(0)
     _N = 100_000
     d = 2
     print(f"Generating {_N:,} points (d={d})...")
     PROB_LIMS = (-1.0, 3)
-    X = cp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(_N, d))
+    X = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(_N, d))
 
     TOL = 1e-3
     NUM_INITIAL_CLUSTERS = 100
@@ -836,15 +843,15 @@ if __name__ == "__main__":
     real_counts = results["real_counts"]
     print(
         "E_abs stats: min/mean/max =",
-        cp.round(E_abs_vals.min(), 3),
-        cp.round(E_abs_vals.mean(), 3),
-        cp.round(E_abs_vals.max(), 3),
+        xp.round(E_abs_vals.min(), 3),
+        xp.round(E_abs_vals.mean(), 3),
+        xp.round(E_abs_vals.max(), 3),
     )
     print(
         "E_rel stats: min/mean/max =",
-        cp.round(E_rel_vals.min(), 6),
-        cp.round(E_rel_vals.mean(), 6),
-        cp.round(E_rel_vals.max(), 6),
+        xp.round(E_rel_vals.min(), 6),
+        xp.round(E_rel_vals.mean(), 6),
+        xp.round(E_rel_vals.max(), 6),
     )
     print(
         "Counts stats: min/mean/max =",
@@ -861,6 +868,7 @@ if __name__ == "__main__":
 
     if d == 2 and len(results["centroids"]) <= 3000:
         import matplotlib.pyplot as plt
+        import numpy as np
         from matplotlib.colors import LogNorm
         from matplotlib.patches import Ellipse
 
@@ -868,18 +876,18 @@ if __name__ == "__main__":
         # Subplot 1: scatter of final cluster centroids on contourf
         # Subplot 2: scatter of final cluster centroids with trust ellipses on contourf
 
-        x = cp.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
-        y = cp.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
-        X_grid, Y_grid = cp.meshgrid(x, y)
-        Z_grid = rosenbrock(cp.vstack([X_grid.ravel(), Y_grid.ravel()]).T).reshape(
+        x = np.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
+        y = np.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
+        X_grid, Y_grid = np.meshgrid(x, y)
+        Z_grid = rosenbrock(np.vstack([X_grid.ravel(), Y_grid.ravel()]).T).reshape(
             X_grid.shape
         )
 
         fig, axs = plt.subplots(1, 2, figsize=(12, 5))
         cs = axs[0].contourf(
-            X_grid.get(),
-            Y_grid.get(),
-            Z_grid.get(),
+            X_grid,
+            Y_grid,
+            Z_grid,
             levels=50,
             cmap="viridis",
             norm=LogNorm(),
@@ -892,9 +900,9 @@ if __name__ == "__main__":
 
         # Subplot 2: with ellipses
         cs2 = axs[1].contourf(
-            X_grid.get(),
-            Y_grid.get(),
-            Z_grid.get(),
+            X_grid,
+            Y_grid,
+            Z_grid,
             levels=50,
             cmap="viridis",
             norm=LogNorm(),
@@ -905,8 +913,8 @@ if __name__ == "__main__":
         axs[1].set_ylabel("y")
         axs[1].set_aspect("equal")
         axs[1].scatter(
-            results["centroids"][:, 0].get(),
-            results["centroids"][:, 1].get(),
+            results["centroids"][:, 0],
+            results["centroids"][:, 1],
             c="red",
             s=10,
             label="Centroids",
@@ -915,8 +923,8 @@ if __name__ == "__main__":
         # Draw ellipses
         level = 1.0
         for i in range(results["centroids"].shape[0]):
-            mu = results["centroids"][i].get()
-            Q = results["Q"][i].get()
+            mu = results["centroids"][i]
+            Q = results["Q"][i]
 
             # Eigen-decomposition of Q
             w, V = np.linalg.eigh(Q)
