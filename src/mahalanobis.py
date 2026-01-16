@@ -2,7 +2,7 @@ import logging
 import time
 from typing import Tuple
 
-import cupy as cp
+from src import Array, xp
 
 logger = logging.getLogger(__name__)
 
@@ -13,16 +13,16 @@ logger = logging.getLogger(__name__)
 
 
 def knn_mahalanobis_clusters(
-    query_points: cp.ndarray,
-    centroids: cp.ndarray,
-    Q: cp.ndarray,
+    query_points: Array,
+    centroids: Array,
+    Q: Array,
     k: int,
     *,
     return_sqrt: bool = False,
     eps: float = 0.0,
     trust_region_containment: bool = False,
     containment_level: float = 1.0,
-) -> Tuple[cp.ndarray, cp.ndarray]:
+) -> Tuple[Array, Array]:
     """
     GPU-only kNN over cluster centroids using the cluster-specific Mahalanobis distance.
     For query point x (row of `query_points`) and cluster k with centroid μ_k and
@@ -61,9 +61,9 @@ def knn_mahalanobis_clusters(
             Missing entries are +inf.
     """
     # Ensure GPU arrays.
-    query_points = cp.asarray(query_points)
-    centroids = cp.asarray(centroids)
-    Q = cp.asarray(Q)
+    query_points = xp.asarray(query_points)
+    centroids = xp.asarray(centroids)
+    Q = xp.asarray(Q)
 
     M, d = query_points.shape
     K = int(centroids.shape[0])
@@ -96,31 +96,30 @@ def knn_mahalanobis_clusters(
     # Compute full squared Mahalanobis distance matrix dist2 (M, K):
     # dist2[m, k] = dx[m,k,:]^T Q[k,:,:] dx[m,k,:]
     dx = query_points[:, None, :] - centroids[None, :, :]  # (M, K, d)
-    dist2 = cp.einsum("mkd,kde,mke->mk", dx, Q, dx, optimize=True)  # (M, K)
+    dist2 = xp.einsum("mkd,kde,mke->mk", dx, Q, dx, optimize=True)  # (M, K)
 
     if trust_region_containment:
         # Mask out clusters whose trust region does not contain the query.
-        dist2 = cp.where(dist2 <= containment_level, dist2, cp.inf)
+        dist2 = xp.where(dist2 <= containment_level, dist2, xp.inf)
 
     # Select k smallest per query using argpartition (for fast selection),
     # then sort those k by distance for nicer output ordering.
-    part = cp.argpartition(dist2, kth=k - 1, axis=1)[:, :k]  # (M, k)
-    part_dist2 = cp.take_along_axis(dist2, part, axis=1)  # (M, k)
-
-    order = cp.argsort(part_dist2, axis=1)  # (M, k)
-    nn_idx = cp.take_along_axis(part, order, axis=1).astype(cp.int32)  # (M, k)
-    nn_dist2 = cp.take_along_axis(part_dist2, order, axis=1)  # (M, k)
+    part = xp.argpartition(dist2, kth=k - 1, axis=1)[:, :k]  # (M, k)
+    part_dist2 = xp.take_along_axis(dist2, part, axis=1)  # (M, k)
+    order = xp.argsort(part_dist2, axis=1)  # (M, k)
+    nn_idx = xp.take_along_axis(part, order, axis=1).astype(xp.int32)  # (M, k)
+    nn_dist2 = xp.take_along_axis(part_dist2, order, axis=1)  # (M, k)
 
     if trust_region_containment:
         # Convert masked-out (+inf) entries into "missing" indices (-1).
-        nn_idx = cp.where(cp.isfinite(nn_dist2), nn_idx, -1).astype(cp.int32)
+        nn_idx = xp.where(xp.isfinite(nn_dist2), nn_idx, -1).astype(xp.int32)
 
     logger.debug(
         "Runtime - knn_mahalanobis_clusters: %.3fs", time.perf_counter() - _start_time
     )
 
     if return_sqrt:
-        nn_dist2 = cp.sqrt(cp.maximum(nn_dist2 + eps, 0))
+        nn_dist2 = xp.sqrt(xp.maximum(nn_dist2 + eps, 0))
 
     return nn_idx, nn_dist2
 
@@ -132,12 +131,12 @@ if __name__ == "__main__":
 
     setup_logging(console_level=logging.DEBUG)
 
-    cp.random.seed(0)
+    xp.random.seed(0)
     _N = 100_000
     d = 2
     print(f"Generating {_N:,} points (d={d})...")
     PROB_LIMS = (-1.0, 3)
-    X = cp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(_N, d))
+    X = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(_N, d))
 
     TOL = 1e-3
     N_INIT_CLUSTERS = 100
@@ -161,7 +160,7 @@ if __name__ == "__main__":
     print("Testing knn_mahalanobis_clusters...")
     M = 30
     k = 5
-    query_points = cp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(M, d))
+    query_points = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(M, d))
     centroids = results["centroids"]
     Q = results["Q"]
     print(f"# of Clusters: {centroids.shape[0]:,}, Query Points: {M:,}, k={k}")
@@ -198,10 +197,17 @@ if __name__ == "__main__":
         from matplotlib.colors import LogNorm
         from matplotlib.patches import Ellipse
 
-        x = cp.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
-        y = cp.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
-        X_grid, Y_grid = cp.meshgrid(x, y)
-        Z_grid = rosenbrock(cp.vstack([X_grid.ravel(), Y_grid.ravel()]).T).reshape(
+        if xp.__name__ == "array_api_compat.cupy":
+            centroids = xp.asnumpy(centroids)
+            Q = xp.asnumpy(Q)
+            query_points = xp.asnumpy(query_points)
+            nn_idx_vis = xp.asnumpy(nn_idx_vis)
+            nn_dist2_vis = xp.asnumpy(nn_dist2_vis)
+
+        x = np.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
+        y = np.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
+        X_grid, Y_grid = np.meshgrid(x, y)
+        Z_grid = rosenbrock(np.vstack([X_grid.ravel(), Y_grid.ravel()]).T).reshape(
             X_grid.shape
         )
 
@@ -209,17 +215,17 @@ if __name__ == "__main__":
 
         # Subplot 1: centroids + ellipses
         cs = axs[0].contourf(
-            X_grid.get(),
-            Y_grid.get(),
-            Z_grid.get(),
+            X_grid,
+            Y_grid,
+            Z_grid,
             levels=50,
             cmap="viridis",
             norm=LogNorm(),
         )
         fig.colorbar(cs, ax=axs[0])
         axs[0].scatter(
-            centroids[:, 0].get(),
-            centroids[:, 1].get(),
+            centroids[:, 0],
+            centroids[:, 1],
             c="red",
             s=10,
             label="Centroids",
@@ -227,8 +233,8 @@ if __name__ == "__main__":
 
         # Draw trust ellipses (level=1)
         for i in range(centroids.shape[0]):
-            mu = centroids[i].get()
-            Qi = Q[i].get()
+            mu = centroids[i]
+            Qi = Q[i]
             w, V = np.linalg.eigh(Qi)
             w = np.maximum(w, 1e-12)
             order = np.argsort(w)[::-1]
@@ -258,9 +264,9 @@ if __name__ == "__main__":
 
         # Subplot 2: queries + (contained) ellipses from neighbors
         cs2 = axs[1].contourf(
-            X_grid.get(),
-            Y_grid.get(),
-            Z_grid.get(),
+            X_grid,
+            Y_grid,
+            Z_grid,
             levels=50,
             cmap="viridis",
             norm=LogNorm(),
@@ -268,16 +274,15 @@ if __name__ == "__main__":
         fig.colorbar(cs2, ax=axs[1])
 
         dist0 = nn_dist2_vis[:, 0]
-        finite = cp.isfinite(dist0)
-        max_finite = cp.max(dist0[finite]).get() if bool(cp.any(finite)) else 1.0
-
+        finite = np.isfinite(dist0)
+        max_finite = np.max(dist0[finite]) if bool(np.any(finite)) else 1.0
         for m in range(M):
-            d0 = float(dist0[m].get())
+            d0 = float(dist0[m])
             color = plt.cm.viridis(d0 / max_finite) if np.isfinite(d0) else (0, 0, 0, 1)  # type: ignore
 
             axs[1].scatter(
-                query_points[m, 0].get(),
-                query_points[m, 1].get(),
+                query_points[m, 0],
+                query_points[m, 1],
                 c=[color],
                 s=30,
                 edgecolor="black",
@@ -285,15 +290,15 @@ if __name__ == "__main__":
             )
 
             for kk in range(k):
-                cid = int(nn_idx_vis[m, kk].get())
+                cid = int(nn_idx_vis[m, kk])
                 if cid < 0:
                     continue
 
-                mu = centroids[cid].get()
-                Qi = Q[cid].get()
+                mu = centroids[cid]
+                Qi = Q[cid]
 
                 # Determine if actually contained (for styling)
-                dx = query_points[m].get() - mu
+                dx = query_points[m] - mu
                 d2 = float(dx @ Qi @ dx)
                 contained = d2 <= 1.0 + 1e-10
 
