@@ -1,7 +1,6 @@
 """Rosenbrock function and its derivatives."""
 
-from array_api_compat import array_namespace
-from array_api_compat.common._typing import Array
+from src import Array, xp
 
 ROSENBROCK_SCALE = 100.0
 
@@ -17,7 +16,6 @@ def rosenbrock(X: Array, a: float = ROSENBROCK_SCALE):
     Returns:
         F: (n, 1) function values at X
     """
-    xp = array_namespace(X)
     x_i = X[:, :-1]
     x_next = X[:, 1:]
     F = xp.sum(
@@ -39,8 +37,6 @@ def rosenbrock_grad(X: Array, a: float = ROSENBROCK_SCALE):
     Returns:
         J: (n, 1, d) Jacobian at X
     """
-    xp = array_namespace(X)
-
     n_pts, n_dim = X.shape
     J = xp.zeros((n_pts, 1, n_dim), dtype=X.dtype)
 
@@ -61,8 +57,6 @@ def rosenbrock_hess(X: Array, a: float = ROSENBROCK_SCALE):
     Returns:
         H: (n, d, d) Hessian at X
     """
-    xp = array_namespace(X)
-
     n_pts, n_dim = X.shape
     H = xp.zeros((n_pts, n_dim, n_dim), dtype=X.dtype)
 
