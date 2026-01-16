@@ -872,6 +872,9 @@ if __name__ == "__main__":
         from matplotlib.colors import LogNorm
         from matplotlib.patches import Ellipse
 
+        if xp.__name__ == "array_api_compat.cupy":
+            results = {k: xp.asnumpy(v) for k, v in results.items()}
+
         # 1 plot 2 subplots (1X2)
         # Subplot 1: scatter of final cluster centroids on contourf
         # Subplot 2: scatter of final cluster centroids with trust ellipses on contourf
