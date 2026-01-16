@@ -1,20 +1,18 @@
 """Borehole function and its gradient implementation."""
 
-from array_api_compat import array_namespace
+from src import Array, xp
 
 
-def borehole(X):
+def borehole(X: Array) -> Array:
     """
     Borehole function to simulate water flow through a borehole.
 
     Args:
-        X: (n_samples, 8) data matrix where each row represents a set of input parameters.
+        X: (N, 8) data matrix where each row represents a set of input parameters.
 
     Returns:
-        F: (n_samples, 1) function values at X
+        F: (N, 1) function values at X
     """
-    xp = array_namespace(X)
-
     r_w = X[:, 0]  # radius of the borehole (m)
     r = X[:, 1]  # radius of influence (m)
     T_u = X[:, 2]  # transmissivity of upper aquifer (m^2/yr)
@@ -29,21 +27,19 @@ def borehole(X):
     log_term = xp.log(r / r_w)
     denom = (T_u / T_l) + log_term * (1.5 + 2 * L / (K_w * r_w**2) * T_u / log_term)
     Q = 5 * term1 * term2 / denom
-    return Q[:, xp.newaxis]  # Ensure shape is (n_samples, 1)
+    return Q[:, xp.newaxis]  # Ensure shape is (N, 1)
 
 
-def borehole_grad(X):
+def borehole_grad(X: Array) -> Array:
     """
     Gradient of the Borehole function.
 
     Args:
-        X: (n_samples, 8) data matrix where each row represents a set of input parameters.
+        X: (N, 8) data matrix where each row represents a set of input parameters.
 
     Returns:
-        J: (n_samples, 1, 8) Jacobian at X
+        J: (N, 1, 8) Jacobian at X
     """
-    xp = array_namespace(X)
-
     x1 = X[:, 0]
     x2 = X[:, 1]
     x3 = X[:, 2]
@@ -53,8 +49,8 @@ def borehole_grad(X):
     x7 = X[:, 6]
     x8 = X[:, 7]
 
-    n_samples = X.shape[0]
-    g = xp.zeros((n_samples, 8), dtype=X.dtype)
+    N = X.shape[0]
+    g = xp.zeros((N, 8), dtype=X.dtype)
 
     log_term = xp.log(x2 / x1)
     denom = (x3 / x5) + log_term * (1.5 + 2 * x7 / (x8 * x1**2) * x3 / log_term)
@@ -78,4 +74,4 @@ def borehole_grad(X):
     g[:, 5] = -5 * x3 / denom
     g[:, 6] = common_factor * (-10 * x3**2 / (x8 * x1**2))
     g[:, 7] = common_factor * (10 * x3**2 * x7 / (x8**2 * x1**2))
-    return g.reshape(n_samples, 1, 8)
+    return g.reshape(N, 1, 8)

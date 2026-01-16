@@ -5,16 +5,16 @@ from src import Array, xp
 ROSENBROCK_SCALE = 100.0
 
 
-def rosenbrock(X: Array, a: float = ROSENBROCK_SCALE):
+def rosenbrock(X: Array, a: float = ROSENBROCK_SCALE) -> Array:
     """
     Computes the Rosenbrock function for given input points.
 
     Args:
-        X: (n, d) data matrix
+        X: (N, d) data matrix
         a: scale parameter
 
     Returns:
-        F: (n, 1) function values at X
+        F: (N, 1) function values at X
     """
     x_i = X[:, :-1]
     x_next = X[:, 1:]
@@ -26,19 +26,19 @@ def rosenbrock(X: Array, a: float = ROSENBROCK_SCALE):
     return F
 
 
-def rosenbrock_grad(X: Array, a: float = ROSENBROCK_SCALE):
+def rosenbrock_grad(X: Array, a: float = ROSENBROCK_SCALE) -> Array:
     """
     Computes the gradient of the Rosenbrock function for given input points.
 
     Args:
-        X: (n, d) data matrix
+        X: (N, d) data matrix
         a: scale parameter
 
     Returns:
-        J: (n, 1, d) Jacobian at X
+        J: (N, 1, d) Jacobian at X
     """
-    n_pts, n_dim = X.shape
-    J = xp.zeros((n_pts, 1, n_dim), dtype=X.dtype)
+    N, d = X.shape
+    J = xp.zeros((N, 1, d), dtype=X.dtype)
 
     J[:, 0, :-1] += 2 * (X[:, :-1] - 1)
     J[:, 0, :-1] -= 4 * a * X[:, :-1] * (X[:, 1:] - X[:, :-1] ** 2)
@@ -46,22 +46,22 @@ def rosenbrock_grad(X: Array, a: float = ROSENBROCK_SCALE):
     return J
 
 
-def rosenbrock_hess(X: Array, a: float = ROSENBROCK_SCALE):
+def rosenbrock_hess(X: Array, a: float = ROSENBROCK_SCALE) -> Array:
     """
     Computes the Hessian of the Rosenbrock function for given input points.
 
     Args:
-        X: (n, d) data matrix
+        X: (N, d) data matrix
         a: scale parameter
 
     Returns:
-        H: (n, d, d) Hessian at X
+        H: (N, d, d) Hessian at X
     """
-    n_pts, n_dim = X.shape
-    H = xp.zeros((n_pts, n_dim, n_dim), dtype=X.dtype)
+    N, d = X.shape
+    H = xp.zeros((N, d, d), dtype=X.dtype)
 
-    for i in range(n_dim):
-        if i < n_dim - 1:
+    for i in range(d):
+        if i < d - 1:
             if i > 0:
                 H[:, i, i] += 2 * a
             H[:, i, i] += 12 * a * X[:, i] ** 2 - 4 * a * X[:, i + 1] + 2
