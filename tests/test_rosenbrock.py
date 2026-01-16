@@ -3,19 +3,14 @@ import unittest
 import numpy as np
 import sympy as sp
 
-from src.problems.rosenbrock import (
-    ROSENBROCK_SCALE,
-    rosenbrock,
-    rosenbrock_grad,
-    rosenbrock_hess,
-)
+from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess
 
 
-def _sympy_rosenbrock_f_g_h(n_dim: int):
+def _sympy_rosenbrock_f_g_h(n_dim: int, a: float = 1.0):
     x = sp.symbols(f"x0:{n_dim}")
     f = sp.Integer(0)
     for i in range(n_dim - 1):
-        f += ROSENBROCK_SCALE * (x[i + 1] - x[i] ** 2) ** 2 + (1 - x[i]) ** 2
+        f += a * (x[i + 1] - x[i] ** 2) ** 2 + (1 - x[i]) ** 2
     g = sp.Matrix([sp.diff(f, xi) for xi in x])
     h = sp.hessian(f, x)
 
@@ -28,24 +23,26 @@ def _sympy_rosenbrock_f_g_h(n_dim: int):
 class TestRosenbrockSympyDerivatives(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls._sympy = {d: _sympy_rosenbrock_f_g_h(d) for d in (2, 5)}
+        cls._sympy = {
+            (d, a): _sympy_rosenbrock_f_g_h(d, a) for d in (2, 5) for a in (1, 10, 100)
+        }
 
     def test_value_grad_hess_match_sympy(self):
         rng = np.random.default_rng(0)
         num_pts = 60
         prob_extents = (-3.0, 3.0)
 
-        for n_dim, (f_fn, g_fn, h_fn) in self._sympy.items():
-            with self.subTest(n_dim=n_dim):
+        for (n_dim, a_val), (f_fn, g_fn, h_fn) in self._sympy.items():
+            with self.subTest(n_dim=n_dim, a=a_val):
                 X = rng.uniform(
                     low=prob_extents[0],
                     high=prob_extents[1],
                     size=(num_pts, n_dim),
                 ).astype(np.float64)
 
-                f_impl = rosenbrock(X)  # (n, 1)
-                g_impl = rosenbrock_grad(X)[:, 0, :]  # (n, d)
-                h_impl = rosenbrock_hess(X)  # (n, d, d)
+                f_impl = rosenbrock(X, a=a_val)  # (n, 1)
+                g_impl = rosenbrock_grad(X, a=a_val)[:, 0, :]  # (n, d)
+                h_impl = rosenbrock_hess(X, a=a_val)  # (n, d, d)
 
                 f_sym = np.array([float(f_fn(*row)) for row in X], dtype=np.float64)[
                     :, None
