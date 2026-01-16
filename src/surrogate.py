@@ -3,18 +3,12 @@ import logging
 import time
 from typing import Any, Callable
 
-import cupy as cp
-
-from src import _HAS_GPU
+from src import Array, xp
 from src.adaptive_clustering import adaptive_clustering
 from src.data_sampler import DataSampler
 from src.mahalanobis import knn_mahalanobis_clusters
 
 logger = logging.getLogger(__name__)
-
-if not _HAS_GPU:
-    msg = "GPU not available. Cannot run NearODESurrogate with GPU acceleration."
-    raise ImportError(msg)
 
 
 class NearODESurrogate:
@@ -34,7 +28,7 @@ class NearODESurrogate:
 
     def train(
         self,
-        X_train,
+        X_train: Array,
         f: Callable,
         grad: Callable,
         *,
@@ -66,11 +60,10 @@ class NearODESurrogate:
             SEED=SEED,
         )
 
-        # Convert to original backend
-        centroids = cp.asarray(results["centroids"])
-        f_vals = cp.asarray(results["f"])
-        grads = cp.asarray(results["g"])
-        trust_ellipses = results["Q"]
+        centroids = xp.asarray(results["centroids"])
+        f_vals = xp.asarray(results["f"])
+        grads = xp.asarray(results["g"])
+        trust_ellipses = xp.asarray(results["Q"])
 
         # 2. Store Data
         self.X_src = centroids
@@ -137,9 +130,7 @@ class NearODESurrogate:
             raise RuntimeError("Model not trained.")
 
         t0 = time.perf_counter()
-
-        # Ensure GPU arrays for the kNN + downstream computation.
-        qp = cp.asarray(query_points)
+        qp = xp.asarray(query_points)
 
         # ---------------------------------------------------------------------
         # 1. kNN in cluster-wise Mahalanobis distance using stored (centroids, Q)
@@ -147,8 +138,8 @@ class NearODESurrogate:
         t_search = time.perf_counter()
         nn_idx, nn_dist2 = knn_mahalanobis_clusters(
             qp,
-            cp.asarray(self.X_src),
-            cp.asarray(self.trust_ellipses_src),
+            xp.asarray(self.X_src),
+            xp.asarray(self.trust_ellipses_src),
             k_NEIGHBOURS,
             trust_region_containment=trust_region_containment,
             containment_level=containment_level,
@@ -164,19 +155,19 @@ class NearODESurrogate:
         F = self.f_src.shape[1] if len(self.f_src.shape) > 1 else 1  # type: ignore
 
         valid_mask = nn_idx >= 0  # (N, k)
-        num_valid = cp.sum(valid_mask, axis=1)  # (N,)
+        num_valid = xp.sum(valid_mask, axis=1)  # (N,)
 
         # Flatten indices for gathers; clamp invalid to 0 to keep gather safe.
-        nn_idx_safe = cp.where(valid_mask, nn_idx, 0).astype(cp.int32)  # (N, k)
+        nn_idx_safe = xp.where(valid_mask, nn_idx, 0).astype(xp.int32)  # (N, k)
         flat_idx = nn_idx_safe.reshape(-1)  # (N*k,)
 
         # ---------------------------------------------------------------------
         # 2. Gather neighbor metadata (μ_k, f(μ_k), g(μ_k), Q_k)
         # ---------------------------------------------------------------------
-        X_neighbors = cp.asarray(self.X_src)[flat_idx]  # (N*k, D)
-        f_neighbors = cp.asarray(self.f_src)[flat_idx]  # (N*k, F) or (N*k,)
-        J_neighbors = cp.asarray(self.J_src)[flat_idx]  # (N*k, F, D)
-        Q_neighbors = cp.asarray(self.trust_ellipses_src)[flat_idx]  # (N*k, D, D)
+        X_neighbors = xp.asarray(self.X_src)[flat_idx]  # (N*k, D)
+        f_neighbors = xp.asarray(self.f_src)[flat_idx]  # (N*k, F) or (N*k,)
+        J_neighbors = xp.asarray(self.J_src)[flat_idx]  # (N*k, F, D)
+        Q_neighbors = xp.asarray(self.trust_ellipses_src)[flat_idx]  # (N*k, D, D)
 
         X_neighbors = X_neighbors.reshape(N, k_NEIGHBOURS, D)
         f_neighbors = f_neighbors.reshape(N, k_NEIGHBOURS, F)
@@ -190,18 +181,18 @@ class NearODESurrogate:
         dx = qp_expanded - X_neighbors  # (N, k, D)
 
         # linear_term[n,k,f] = sum_d J[n,k,f,d] * dx[n,k,d]
-        linear_term = cp.einsum("nkfd,nkd->nkf", J_neighbors, dx)  # (N, k, F)
+        linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)  # (N, k, F)
         predictions_k = f_neighbors + linear_term  # (N, k, F)
 
         # Mask out invalid neighbor slots (if containment mode produced -1s).
         # We convert invalid predictions to 0 and then divide by #valid.
         valid_mask_f = valid_mask[:, :, None]  # (N, k, 1)
-        predictions_k = cp.where(valid_mask_f, predictions_k, 0)
+        predictions_k = xp.where(valid_mask_f, predictions_k, 0)
 
         # Average across valid neighbors (per query). If none valid, set NaN.
-        denom = cp.maximum(num_valid, 1).astype(predictions_k.dtype)[:, None]  # (N, 1)
-        predictions = cp.sum(predictions_k, axis=1) / denom  # (N, F)
-        predictions = cp.where(num_valid[:, None] > 0, predictions, cp.nan)
+        denom = xp.maximum(num_valid, 1).astype(predictions_k.dtype)[:, None]  # (N, 1)
+        predictions = xp.sum(predictions_k, axis=1) / denom  # (N, F)
+        predictions = xp.where(num_valid[:, None] > 0, predictions, xp.nan)
 
         # ---------------------------------------------------------------------
         # 4. Guarantee / trust-region checks (simplified)
@@ -209,14 +200,14 @@ class NearODESurrogate:
         guaranteed_mask = nn_dist2[:, 0] <= 1.0
         ungauranteed_mask = ~guaranteed_mask
 
-        num_ungauranteed = cp.sum(ungauranteed_mask)
-        logger.info(f"Unguaranteed Points: {int(num_ungauranteed.get())} / {N}")
+        num_ungauranteed = xp.sum(ungauranteed_mask)
+        logger.info(f"Unguaranteed Points: {int(num_ungauranteed)} / {N}")
 
         # Heuristic warning for under-resolved surrogate coverage
-        if int(num_ungauranteed.get()) > 3 * self.N_src:
+        if int(num_ungauranteed) > 3 * self.N_src:
             msg = (
                 "Too many unguaranteed points. Need more clusters! "
-                f"(Unguaranteed: {int(num_ungauranteed.get())} > 3 x Sources: {self.N_src})"
+                f"(Unguaranteed: {int(num_ungauranteed)} > 3 x Sources: {self.N_src})"
             )
             print(f"\033[91m{msg}\033[0m")
             logger.warning(msg)
@@ -298,14 +289,12 @@ if __name__ == "__main__":
         exit(0)
 
     # 1. Setup Domain
-    domain = cp.array([[-3, 3] * dim]).reshape(dim, 2)
-    print(f"--- Domain: {domain.get().tolist()} ---")
+    domain = xp.array([[-3, 3] * dim]).reshape(dim, 2)
+    print(f"--- Domain: {domain.tolist()} ---")
 
     # Sample Training Data
-    X_train = DataSampler.sample_latin_hypercube(
-        cp.asnumpy(domain), N=N_train, seed=SEED
-    )
-    X_train = cp.asarray(X_train)
+    X_train = DataSampler.sample_latin_hypercube(domain, N=N_train, seed=SEED)
+    X_train = xp.asarray(X_train)
 
     # 2. Initialize Surrogate
     surrogate = NearODESurrogate()
@@ -327,8 +316,8 @@ if __name__ == "__main__":
 
     # 4. Evaluate
     print("\n--- Evaluation ---")
-    X_test = DataSampler.sample_uniform(cp.asnumpy(domain), N=N_test, seed=SEED + 1)
-    X_test = cp.asarray(X_test)
+    X_test = DataSampler.sample_uniform(domain, N=N_test, seed=SEED + 1)
+    X_test = xp.asarray(X_test)
 
     # Example utilizing the new signature with Guarantee checks
     _start_predict_time = time.perf_counter()
@@ -341,28 +330,32 @@ if __name__ == "__main__":
     _end_predict_time = time.perf_counter()
 
     ground_truth = rosenbrock(X_test)
-    rel_error = cp.abs(preds - ground_truth) / (cp.abs(ground_truth) + 1e-12)
-    rel_error_l2 = cp.linalg.norm(ground_truth - preds, axis=1) / (
-        cp.linalg.norm(ground_truth, axis=1) + 1e-12
+    rel_error = xp.abs(preds - ground_truth) / (xp.abs(ground_truth) + 1e-12)
+    rel_error_l2 = xp.linalg.norm(ground_truth - preds, axis=1) / (
+        xp.linalg.norm(ground_truth, axis=1) + 1e-12
     )
-    max_rel_error = cp.nanmax(rel_error).get()
-    max_rel_error_l2 = cp.nanmax(rel_error_l2).get()
+    max_rel_error = xp.nanmax(rel_error)
+    max_rel_error_l2 = xp.nanmax(rel_error_l2)
 
-    n_ungauranteed = cp.sum(ungauranteed_mask)
+    n_ungauranteed = xp.sum(ungauranteed_mask)
     perct_ungauranteed = 100.0 * n_ungauranteed / X_test.shape[0]
     print(
         f"Unguaranteed Points: {n_ungauranteed:,} / {X_test.shape[0]:,} ({perct_ungauranteed:.2f}%)"
     )
     print(f"Max Relative Error (InfiniteNorm): {max_rel_error:.4e}")
     print(f"Max Relative Error (L2Norm): {max_rel_error_l2:.4e}")
-    n_within_tol = cp.sum(rel_error <= TOL)
+    n_within_tol = xp.sum(rel_error <= TOL)
     perct_within_tol = 100.0 * n_within_tol / X_test.shape[0]
     print(
         f"Points within TOL={TOL}: {n_within_tol:,} / {X_test.shape[0]:,} ({perct_within_tol:.2f}%)"
     )
 
     plt.figure(figsize=(8, 5))
-    plt.hist(cp.asnumpy(rel_error.flatten()), bins=50, log=True)
+    if xp.__name__ == "array_api_compat.numpy":
+        plt.hist(rel_error.flatten(), bins=50, log=True)
+    else:
+        plt.hist(rel_error.get().flatten(), bins=50, log=True)
+
     plt.xlabel("Relative Error (log scale)")
     plt.ylabel("Frequency (log scale)")
     plt.title(
@@ -390,16 +383,16 @@ if __name__ == "__main__":
         "n_test": N_test,
         "n_clusters": surrogate.N_src,
         "k_neighbours": K_NEIGHBOURS,
-        "n_ungauranteed": int(n_ungauranteed.get()),
-        "perct_ungauranteed": float(perct_ungauranteed.get()),
+        "n_ungauranteed": int(n_ungauranteed),
+        "perct_ungauranteed": float(perct_ungauranteed),
         "max_rel_error": float(max_rel_error),
         "max_rel_error_l2": float(max_rel_error_l2),
-        "n_within_tol": int(n_within_tol.get()),
-        "perct_within_tol": float(perct_within_tol.get()),
+        "n_within_tol": int(n_within_tol),
+        "perct_within_tol": float(perct_within_tol),
         "train_time_sec": float(_end_train_time - _start_train_time),
         "predict_time_sec": float(_end_predict_time - _start_predict_time),
-        "median_rel_error": float(cp.nanmedian(rel_error).get()),
-        "mean_rel_error": float(cp.nanmean(rel_error).get()),
+        "median_rel_error": float(xp.nanmedian(rel_error)),
+        "mean_rel_error": float(xp.nanmean(rel_error)),
     }
 
     with open(json_fpath, "w") as json_file:
