@@ -125,7 +125,7 @@ def knn_mahalanobis_clusters(
 
 
 if __name__ == "__main__":
-    from src.gpu_adaptive_clustering_metric import adaptive_clustering
+    from src.adaptive_clustering import adaptive_clustering
     from src.logging_config import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 

@@ -6,8 +6,8 @@ from typing import Any, Callable
 import cupy as cp
 
 from src import _HAS_GPU
+from src.adaptive_clustering import adaptive_clustering
 from src.data_sampler import DataSampler
-from src.gpu_adaptive_clustering_metric import adaptive_clustering
 from src.mahalanobis import knn_mahalanobis_clusters
 
 logger = logging.getLogger(__name__)
