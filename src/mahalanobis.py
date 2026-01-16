@@ -6,6 +6,11 @@ import cupy as cp
 
 logger = logging.getLogger(__name__)
 
+# TODO: To speed things up, we could find the out the nearest neighours first in L2
+# space through cupy kNN, and then compute Mahalanobis distances only for those. This
+# would be particularly useful when K (# of clusters), d (dimensionality), M (# of
+# query points) are all large.
+
 
 def knn_mahalanobis_clusters(
     query_points: cp.ndarray,
@@ -86,12 +91,6 @@ def knn_mahalanobis_clusters(
         trust_region_containment,
         containment_level,
     )
-
-    dtype = query_points.dtype
-    level = (
-        dtype.type(containment_level) if hasattr(dtype, "type") else containment_level
-    )
-
     _start_time = time.perf_counter()
 
     # Compute full squared Mahalanobis distance matrix dist2 (M, K):
@@ -101,7 +100,7 @@ def knn_mahalanobis_clusters(
 
     if trust_region_containment:
         # Mask out clusters whose trust region does not contain the query.
-        dist2 = cp.where(dist2 <= level, dist2, cp.inf)
+        dist2 = cp.where(dist2 <= containment_level, dist2, cp.inf)
 
     # Select k smallest per query using argpartition (for fast selection),
     # then sort those k by distance for nicer output ordering.

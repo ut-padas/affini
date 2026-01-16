@@ -206,9 +206,6 @@ class NearODESurrogate:
         # ---------------------------------------------------------------------
         # 4. Guarantee / trust-region checks (simplified)
         # ---------------------------------------------------------------------
-        # We interpret "guaranteed" purely geometrically w.r.t. trust ellipses:
-        #   A query is guaranteed iff the nearest neighbor contains it,
-        #   i.e., Mahalanobis dist2 <= 1
         guaranteed_mask = nn_dist2[:, 0] <= 1.0
         ungauranteed_mask = ~guaranteed_mask
 

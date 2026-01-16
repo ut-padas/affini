@@ -7,6 +7,8 @@ import numpy as np
 from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max
 
+from src.logging_config import log_mem_stats
+
 logger = logging.getLogger(__name__)
 
 
@@ -393,6 +395,7 @@ def adaptive_clustering(
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
     SEED: int = 0,
+    LOG_MEM_STATS: bool = False,
 ):
     """
     Adaptive, GPU-native clustering driven by first-order Taylor error, with
@@ -435,6 +438,7 @@ def adaptive_clustering(
             Clusters below this are augmented with synthetic points.
         MAX_CLUSTERS_EST: Initial allocation capacity for output buffers (auto-grows).
         SEED: RNG seed for KMeans and synthetic point generation.
+        LOG_MEM_STATS: If True, log GPU memory stats at key points.
 
     Returns:
         outputs: Dictionary of arrays, truncated to the number of accepted clusters:
@@ -456,6 +460,9 @@ def adaptive_clustering(
     # Ensure data is on GPU.
     X = cp.asarray(X)  # (N, d)
     N, d = X.shape
+
+    if LOG_MEM_STATS:
+        log_mem_stats("Start: Adaptive Clustering")
 
     # Log run parameters.
     msg = f"""Adaptive Clustering Parameters:
@@ -481,6 +488,9 @@ def adaptive_clustering(
     buffers, capacity = allocate_output_buffers(MAX_CLUSTERS_EST, d, X.dtype)
     valid_cluster_count = 0
 
+    if LOG_MEM_STATS:
+        log_mem_stats("After: Initial KMeans")
+
     # -------------------------------------------------------------------------
     # 2) Precompute f and g for all REAL points once.
     #    We will gather these values later when constructing each active batch.
@@ -501,6 +511,9 @@ def adaptive_clustering(
     # Active-mask tracks REAL points that still need to be assigned to an acceptable cluster.
     active_mask = cp.ones(N, dtype=bool)  # (N,)
 
+    if LOG_MEM_STATS:
+        log_mem_stats("After: Precompute f/g for all points")
+
     # -------------------------------------------------------------------------
     # 3) Adaptive refinement loop:
     #    - batch active points by current labels
@@ -510,6 +523,9 @@ def adaptive_clustering(
     # -------------------------------------------------------------------------
     level = 0
     while True:
+        if LOG_MEM_STATS:
+            log_mem_stats(f"Start: L{level:02}")
+
         n_active = int(cp.sum(active_mask))
         if n_active == 0:
             # All REAL points have been assigned to acceptable clusters.
@@ -605,6 +621,9 @@ def adaptive_clustering(
         # Update global scaling for relative errors.
         F_inf = float(cp.max(cp.abs(F_batch))) + 1e-30
 
+        if LOG_MEM_STATS:
+            log_mem_stats(f"After: L{level:02} Batch Preparation")
+
         # ---------------------------------------------------------------------
         # 3d) Batched first-order model and error computation:
         #     - compute centroids μ_k, f(μ_k), g(μ_k) for each cluster segment.
@@ -616,7 +635,6 @@ def adaptive_clustering(
         g_mus = g_fn(mus)[:, 0, :]  # (K_batch, d)
 
         # Map each point in the batch to a local cluster index k in [0, K_batch).
-        # NOTE: this uses counts_batch (real+synth counts if synth exists).
         map_n_to_k = cp.repeat(np.arange(K_batch), counts_batch.get())  # (N_batch,)
 
         # Center points around their cluster centroids.
@@ -639,6 +657,9 @@ def adaptive_clustering(
 
         # Cluster accept/reject criterion (good/bad)
         is_good = (E_abs < ATOL) | (E_rel < RTOL)  # (K_batch,)
+
+        if LOG_MEM_STATS:
+            log_mem_stats(f"After: L{level:02} Error Computation")
 
         # ---------------------------------------------------------------------
         # 3e) Finalize acceptable clusters:
@@ -687,6 +708,8 @@ def adaptive_clustering(
             global_indices_good = point_indices_in_batch[real_point_mask]
             active_mask[global_indices_good] = False
 
+        if LOG_MEM_STATS:
+            log_mem_stats(f"After: L{level:02} Finalize Good Clusters")
         # ---------------------------------------------------------------------
         # 3f) Split unacceptable clusters (bad clusters):
         #     Estimate symmetric Hessian H_k via (Δx, Δg), compute M_k = |H_k|^{1/2},
@@ -736,6 +759,9 @@ def adaptive_clustering(
         split_decision = batched_median_split_decision(
             scores, map_bad_n_to_k, bad_starts, bad_counts
         )  # (N_bad,)
+
+        if LOG_MEM_STATS:
+            log_mem_stats(f"After: L{level:02} Bad Cluster Splitting")
 
         # ---------------------------------------------------------------------
         # 3g) Update labels for REAL points only:
