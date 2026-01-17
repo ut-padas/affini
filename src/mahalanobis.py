@@ -125,11 +125,50 @@ def knn_mahalanobis_clusters(
 
 
 if __name__ == "__main__":
+    import argparse
+
+    from src import FIGURES_DIR
     from src.adaptive_clustering import adaptive_clustering
     from src.logging_config import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG)
+
+    MD_DIR = FIGURES_DIR / "mahalanobis"
+    MD_DIR.mkdir(parents=True, exist_ok=True)
+
+    parser = argparse.ArgumentParser(
+        description="Demo of knn_mahalanobis_clusters with Adaptive GPU Clustering"
+    )
+    parser.add_argument(
+        "--trust-region-containment",
+        action="store_true",
+        help="Enable trust-region containment mode in kNN search",
+    )
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=5,
+        help="Number of nearest clusters to find per query point",
+    )
+    parser.add_argument(
+        "--containment-level",
+        type=float,
+        default=1.0,
+        help="Trust-region containment level (default: 1.0 = boundary)",
+    )
+    args = parser.parse_args()
+    TRUST_REGION_CONTAINMENT = args.trust_region_containment
+    K = args.k
+    CONTAINMENT_LEVEL = args.containment_level
+
+    img_fpath = (
+        MD_DIR
+        / f"knn_mahalanobis_clusters_k{K}_{'constrained' if TRUST_REGION_CONTAINMENT else 'unconstrained'}_containment{CONTAINMENT_LEVEL}.png"
+    )
+    if img_fpath.exists():
+        print(f"Image {img_fpath} already exists, skipping demo.")
+        exit(0)
 
     xp.random.seed(0)
     _N = 100_000
@@ -139,7 +178,7 @@ if __name__ == "__main__":
     X = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(_N, d))
 
     TOL = 1e-3
-    N_INIT_CLUSTERS = 100
+    N_INIT_CLUSTERS = d * 2
     N_MIN_PER_CLUSTER = 1000
 
     print("Starting Adaptive GPU Clustering...")
@@ -147,11 +186,10 @@ if __name__ == "__main__":
         X,
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
-        ATOL=TOL,
-        RTOL=TOL,
+        TOL=TOL,
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
-        MAX_CLUSTERS_EST=100_000,
+        SYNTH_BUDGET_FACTOR=5,
     )
 
     print("-" * 40)
@@ -159,35 +197,33 @@ if __name__ == "__main__":
 
     print("Testing knn_mahalanobis_clusters...")
     M = 30
-    k = 5
     query_points = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(M, d))
     centroids = results["centroids"]
     Q = results["Q"]
-    print(f"# of Clusters: {centroids.shape[0]:,}, Query Points: {M:,}, k={k}")
+    print(f"# of Clusters: {centroids.shape[0]:,}, Query Points: {M:,}, k={K}")
 
-    for trust_region_containment in (False, True):
+    for _t in (False, True):
         _start_time = time.time()
         nn_idx, nn_dist2 = knn_mahalanobis_clusters(
             query_points,
             centroids,
             Q,
-            k,
+            K,
             return_sqrt=False,
-            trust_region_containment=trust_region_containment,
+            trust_region_containment=_t,
         )
         _end_time = time.time()
-        mode = "CONTAINED" if trust_region_containment else "UNCONSTRAINED"
+        mode = "CONTAINED" if TRUST_REGION_CONTAINMENT else "UNCONSTRAINED"
         print(f"[{mode}] Runtime: {_end_time - _start_time:.3f}s")
 
-    trust_region_containment = False
     nn_idx_vis, nn_dist2_vis = knn_mahalanobis_clusters(
         query_points,
         centroids,
         Q,
-        k,
+        K,
         return_sqrt=False,
-        trust_region_containment=trust_region_containment,
-        containment_level=1.0,
+        trust_region_containment=TRUST_REGION_CONTAINMENT,
+        containment_level=CONTAINMENT_LEVEL,
     )
 
     # Optional visualization (small sizes only)
@@ -289,7 +325,7 @@ if __name__ == "__main__":
                 zorder=5,
             )
 
-            for kk in range(k):
+            for kk in range(K):
                 cid = int(nn_idx_vis[m, kk])
                 if cid < 0:
                     continue
@@ -326,7 +362,8 @@ if __name__ == "__main__":
                 axs[1].add_patch(ellipse)
 
         axs[1].set_title(
-            f"Query Points with Nearest Containing Clusters (k={k}, containment={trust_region_containment})"
+            f"Query Points with Nearest Containing Clusters (k={K}, containment={TRUST_REGION_CONTAINMENT}, level={CONTAINMENT_LEVEL})",
+            fontsize=6,
         )
 
         axs[1].set_xlabel("x1")
@@ -334,8 +371,7 @@ if __name__ == "__main__":
         axs[1].set_aspect("equal")
 
         plt.tight_layout()
-        fname = f"knn_mahalanobis_clusters_demo_{'cont' if trust_region_containment else 'unconstr'}.png"
-        plt.savefig(fname, dpi=300)
-        print(f"Saved plot to {fname}")
+        plt.savefig(img_fpath, dpi=300)
+        print(f"Saved plot to {img_fpath}")
     else:
         print("Skipping plot due to size constraints.")
