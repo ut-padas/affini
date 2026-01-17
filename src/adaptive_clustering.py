@@ -143,12 +143,8 @@ def generate_sythetic_points(
     if total_synth == 0:
         return None, None
 
-    if IS_CUPY_BACKEND:
-        rs = xp.random.RandomState(SEED + level)
-        rand = rs.random
-    else:
-        rng = xp.random.default_rng(SEED + level)
-        rand = rng.random
+    rng = xp.random.default_rng(SEED + level)
+    rand = rng.random
 
     # Map each synthetic sample to a local segment id k in [0..K-1].
     k_synth = repeats(xp.arange(int(need.shape[0])), need)  # (M,)

@@ -96,7 +96,13 @@ def knn_mahalanobis_clusters(
     # Compute full squared Mahalanobis distance matrix dist2 (M, K):
     # dist2[m, k] = dx[m,k,:]^T Q[k,:,:] dx[m,k,:]
     dx = query_points[:, None, :] - centroids[None, :, :]  # (M, K, d)
-    dist2 = xp.einsum("mkd,kde,mke->mk", dx, Q, dx, optimize=True)  # (M, K)
+    # Compute (Q * dx)
+    dx_T = dx.transpose(1, 0, 2)  # (K, M, D)
+    temp = xp.matmul(Q, dx_T.transpose(0, 2, 1))  # (K, D, M)
+
+    # Final dot product and sum over the 'D' dimension
+    temp = temp.transpose(2, 0, 1)  # (M, K, D)
+    dist2 = xp.sum(dx * temp, axis=-1)  # (M, K)
 
     if trust_region_containment:
         # Mask out clusters whose trust region does not contain the query.
