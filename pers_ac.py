@@ -865,6 +865,12 @@ if __name__ == "__main__":
         default="",
         help="Subdirectory for output files",
     )
+    parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Force re-execution even if output file exists",
+    )
 
     args = parser.parse_args()
     DIM = args.dim
@@ -875,6 +881,7 @@ if __name__ == "__main__":
     ERROR_SCALING_METHOD = args.error_scaling_method
     A_ROSENBROCK = args.rosenbrock_a
     OUTPUT_SUBDIR = args.output_subdir
+    FORCE_REEXEC = args.force
 
     # Check if file already exists
     AC_PLOTS_DIR = AC_PLOTS_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else AC_PLOTS_DIR
@@ -883,7 +890,7 @@ if __name__ == "__main__":
         AC_PLOTS_DIR
         / f"adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_{ERROR_SCALING_METHOD}.png"
     )
-    if DIM == 2 and img_fpath.exists():
+    if DIM == 2 and img_fpath.exists() and not FORCE_REEXEC:
         print(f"Plot file {img_fpath} already exists. Skipping execution.")
         exit(0)
 
