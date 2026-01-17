@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Literal, Optional, Tuple
 
 from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max as cupy_scatter_max
@@ -236,7 +236,7 @@ def calculate_Q(
     return 0.5 * (Q + Q.transpose(0, 2, 1))
 
 
-def estimate_hessian_symmetric(
+def estimate_hessian_sqrt_symmetric(
     DeltaX: Array,
     DeltaG: Array,
     starts: Array,
@@ -244,50 +244,56 @@ def estimate_hessian_symmetric(
     H_RIDGE: float = 1e-18,
 ) -> Array:
     """
-    Symmetric Hessian fit via Sylvester solve in eigen-basis:
-      C = sum dx dx^T, E = sum dx dg^T, S = E + E^T
-      Solve H C + C H = S.
+    Symmetric Hessian estimation via least-squares fit (Sylvester solve in eigenbasis),
+    followed by |H|^{1/2} computation via eigendecomposition.
+    Solve: H C + C H = S,  where
+        C = sum_i (Δx_i Δx_i^T)
+        S = sum_i (Δx_i Δg_i^T + Δg_i Δx_i^T)
 
     Args:
         DeltaX: (N, d) centered points for a packed batch.
-        DeltaG: (N, d) centered gradients, i.e. (g(x_i) - g(mu_k)) per point.
+        DeltaG: (N, d) centered gradients, i.e. (g(x_i - g(mu_k)) per point.
         starts: (K,) segment starts.
         H_RIDGE: floor for eigenvalues of C (ridge for numerical stability).
 
     Returns:
-        H: (K, d, d) symmetric Hessian estimate per cluster.
+        M: (K, d, d) symmetric matrices with M_k @ M_k = |H_k|.
     """
     XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]  # (N,d,d)
     XG_all = DeltaX[:, :, None] * DeltaG[:, None, :]  # (N,d,d)
 
-    C = xp.add.reduceat(XX_all, starts)
-    E = xp.add.reduceat(XG_all, starts)
+    C = xp.add.reduceat(XX_all, starts)  # (K,d,d)
+    E = xp.add.reduceat(XG_all, starts)  # (K,d,d)
+
+    # Symmetrize C and S
     C = 0.5 * (C + C.transpose(0, 2, 1))
     S = E + E.transpose(0, 2, 1)
 
+    # 1. Eigendecompose C to find the basis U
     dvals, U = xp.linalg.eigh(C)
-    dvals = xp.maximum(dvals, H_RIDGE)
+    dvals = xp.maximum(dvals, H_RIDGE)  # (K,d)
 
-    Gtilde = U.transpose(0, 2, 1) @ S @ U
-    denom = dvals[:, :, None] + dvals[:, None, :]
-    F = Gtilde / denom
-    H = U @ F @ U.transpose(0, 2, 1)
-    return 0.5 * (H + H.transpose(0, 2, 1))
+    # 2. Solve Sylvester Equation in U-basis to get F
+    # Gtilde = U.T @ S @ U
+    Gtilde = U.transpose(0, 2, 1) @ S @ U  # (K,d,d)
+    denom = dvals[:, :, None] + dvals[:, None, :]  # (K,d,d)
+    F = Gtilde / denom  # (K,d,d)
 
+    # 3. Diagonalize F directly (F is H in the rotated basis)
+    # F is symmetric, so we use eigh
+    h_eigvals, V = xp.linalg.eigh(F)
 
-def sqrt_abs_symmetric(H: Array) -> Array:
-    # TODO: is it better to do this in the prev function only?
-    """Compute M_k = sqrt(|H_k|) for symmetric H_k, batched.
+    # 4. Recover eigenvectors of H: Z = U @ V
+    # Because H = U @ F @ U.T and F = V @ diag(w) @ V.T
+    # H = (U @ V) @ diag(w) @ (U @ V).T = Z @ diag(w) @ Z.T
+    Z = U @ V  # (K,d,d)
 
-    Args:
-        H: (K, d, d) symmetric matrices.
+    # 5. Construct M using sqrt(|w|) and Z
+    w_abs_sqrt = xp.sqrt(xp.abs(h_eigvals))  # (K,d)
 
-    Returns:
-        M: (K, d, d) symmetric matrices with M_k @ M_k = |H_k|.
-    """
-    w, U = xp.linalg.eigh(0.5 * (H + H.transpose(0, 2, 1)))
-    w = xp.sqrt(xp.abs(w))
-    M = (U * w[:, None, :]) @ U.transpose(0, 2, 1)
+    # M = Z @ diag(w') @ Z.T
+    M = (Z * w_abs_sqrt[:, None, :]) @ Z.transpose(0, 2, 1)
+
     return 0.5 * (M + M.transpose(0, 2, 1))
 
 
@@ -419,7 +425,8 @@ def adaptive_clustering(
     *,
     f_fn: Callable[[Array], Array],
     g_fn: Callable[[Array], Array],
-    RTOL: float,
+    TOL: float,
+    ERROR_SCALING_METHOD: Literal["global", "local"] = "local",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
@@ -443,11 +450,11 @@ def adaptive_clustering(
 
             f(x) ≈ f(μ_k) + (x - μ_k)^T g(μ_k),
 
-    where g(·) denotes the gradient (∇f). A cluster is accepted using RTOL:
+    where g(·) denotes the gradient (∇f). A cluster is accepted using TOL:
 
             E_abs,k = max_{x in cluster k} |f(x) - f_lin(x; μ_k)|
             E_rel,k = E_abs,k / max_{x in active pool} |f(x)|
-            accept if E_rel,k < RTOL
+            accept if E_rel,k < TOL
 
     Clusters that fail are split using a second-order-informed direction derived from
     a symmetric Hessian estimate H_k fitted from (Δx, Δg) within the cluster.
@@ -466,7 +473,9 @@ def adaptive_clustering(
         X: (N0, d) initial real point cloud.
         f_fn: callable mapping (N, d) -> (N,) or (N,1) values.
         g_fn: callable mapping (N, d) -> (N, d) or (N,1,d) gradients.
-        RTOL: relative tolerance for accept criterion.
+        TOL: tolerance for accept criterion.
+        ERROR_SCALING_METHOD: "global" uses max |f| over all points for normalization when
+            computing E_rel; "local" uses max |f| within each cluster.
         NUM_INITIAL_CLUSTERS: initial KMeans cluster count.
         MIN_PTS_PER_CLUSTER: minimum points desired per active cluster (padding target).
         MAX_CLUSTERS_EST: initial allocation for output buffers (can grow).
@@ -558,7 +567,7 @@ def adaptive_clustering(
         if F_inf < TINY_EPS:
             logger.warning(
                 f"Level {level:03}: F_inf = {F_inf} is very small "
-                f"RTOL-based decisions may be unreliable."
+                f"TOL-based decisions may be unreliable."
             )
 
         # Active indices within the currently-used pool prefix [0..n_total).
@@ -633,7 +642,7 @@ def adaptive_clustering(
 
         # ---------------------------------------------------------------------
         # Per-cluster centroids, first-order Taylor prediction, and max error.
-        # Accept/reject uses RTOL-only.
+        # Accept/reject uses TOL-only.
         # ---------------------------------------------------------------------
         X_sorted = X_pool[idx_sorted]
         F_sorted = F_pool[idx_sorted]
@@ -657,8 +666,18 @@ def adaptive_clustering(
         # Cluster-wise max error E_abs,k = max_i err_point within each segment.
         E_abs = xp.zeros((K_batch,), dtype=err_point.dtype)
         scatter_maximum_1d(E_abs, map_n_to_k, err_point)
-        E_rel = E_abs / F_inf
-        is_good = E_rel < RTOL
+
+        if ERROR_SCALING_METHOD == "global":
+            E_rel = E_abs / F_inf
+            is_good = E_rel < TOL
+        else:
+            # Cluster-wise max abs value F_max,k = max_i |f(x_i)| within each segment.
+            F_max_cluster = xp.zeros((K_batch,), dtype=F_sorted.dtype)
+            scatter_maximum_1d(F_max_cluster, map_n_to_k, xp.abs(F_sorted))
+
+            # Relative error using local normalization.
+            E_rel = E_abs / xp.maximum(F_max_cluster, TINY_EPS)
+            is_good = (E_rel < TOL) | (E_abs < TOL)
 
         if LOG_MEM_STATS:
             log_mem_stats(f"After: L{level:02} Error Computation")
@@ -733,8 +752,7 @@ def adaptive_clustering(
         K_bad = int(bad_idx.shape[0])
 
         # Hessian fit (symmetric) + |H|^{1/2} transform.
-        H = estimate_hessian_symmetric(dx_bad, dG_bad, bad_starts, H_RIDGE=H_RIDGE)
-        M = sqrt_abs_symmetric(H)
+        M = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts, H_RIDGE=H_RIDGE)
 
         # Transform coordinates: z = M_k Δx (cluster-wise).
         map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
@@ -802,7 +820,6 @@ if __name__ == "__main__":
     setup_logging(console_level=logging.DEBUG)
 
     AC_PLOTS_DIR = FIGURES_DIR / "adaptive_clustering_rosenbrock"
-    AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Argument parsing
     parser = argparse.ArgumentParser(
@@ -830,10 +847,23 @@ if __name__ == "__main__":
         help="Minimum points per cluster for adaptive clustering",
     )
     parser.add_argument(
+        "--error-scaling-method",
+        type=str,
+        default="global",
+        choices=["local", "global"],
+        help="Type of error scaling for relative error computation",
+    )
+    parser.add_argument(
         "--rosenbrock-a",
         type=float,
         default=100.0,
         help="Rosenbrock function parameter 'a'",
+    )
+    parser.add_argument(
+        "--output-subdir",
+        type=str,
+        default="",
+        help="Subdirectory for output files",
     )
 
     args = parser.parse_args()
@@ -842,7 +872,20 @@ if __name__ == "__main__":
     N_TRAIN = args.n_train
     NUM_INITIAL_CLUSTERS = args.n_init_clusters
     MIN_PTS_PER_CLUSTER = args.n_min_per_cluster
+    ERROR_SCALING_METHOD = args.error_scaling_method
     A_ROSENBROCK = args.rosenbrock_a
+    OUTPUT_SUBDIR = args.output_subdir
+
+    # Check if file already exists
+    AC_PLOTS_DIR = AC_PLOTS_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else AC_PLOTS_DIR
+    AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    img_fpath = (
+        AC_PLOTS_DIR
+        / f"adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_{ERROR_SCALING_METHOD}.png"
+    )
+    if DIM == 2 and img_fpath.exists():
+        print(f"Plot file {img_fpath} already exists. Skipping execution.")
+        exit(0)
 
     # Creat partial Rosenbrock functions
     rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
@@ -858,9 +901,11 @@ if __name__ == "__main__":
         X,
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
-        RTOL=TOL,
+        TOL=TOL,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        SYNTH_BUDGET_FACTOR=50 * 50,
+        ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
     )
 
     print("-" * 40)
@@ -881,7 +926,7 @@ if __name__ == "__main__":
         int(counts.max()),
     )
 
-    if DIM == 2 and len(results["centroids"]) <= 3000:
+    if DIM == 2 and len(results["centroids"]) <= 10_000:
         import matplotlib.pyplot as plt
         import numpy as np
         from matplotlib.colors import LogNorm
@@ -971,16 +1016,12 @@ if __name__ == "__main__":
         axs[1].legend()
         plt.tight_layout()
         fig.suptitle(
-            f"Adaptive Clustering: Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL}, N_INIT={NUM_INITIAL_CLUSTERS}, N_MIN={MIN_PTS_PER_CLUSTER}), Final Clusters: {results['centroids'].shape[0]:,}",
+            f"Adaptive Clustering: Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL} ({ERROR_SCALING_METHOD}), N_INIT={NUM_INITIAL_CLUSTERS}, N_MIN={MIN_PTS_PER_CLUSTER}), Final Clusters: {results['centroids'].shape[0]:,}",
             fontsize=16,
         )
 
         plt.subplots_adjust(top=0.88)
-        fname = (
-            AC_PLOTS_DIR
-            / f"adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_persistent.png"
-        )
-        plt.savefig(fname, dpi=300)
-        print(f"Saved figure to {fname}")
+        plt.savefig(img_fpath, dpi=300)
+        print(f"Saved figure to {img_fpath}")
     else:
         print("Skipping plot (d != 2 or too many clusters).")
