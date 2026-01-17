@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max as cupy_scatter_max
@@ -12,25 +12,62 @@ from src.utils import repeats
 
 logger = logging.getLogger(__name__)
 
+TINY_EPS = 1e-12
 
-def _scatter_max_1d(out: Array, idx: Array, vals: Array) -> None:
-    """out[idx[i]] = max(out[idx[i]], vals[i])"""
+
+def scatter_maximum_1d(out: Array, idx: Array, vals: Array) -> None:
+    """
+    1D segmented max scatter: ``out[idx[i]] = max(out[idx[i]], vals[i])``.
+    Uses `cupyx.scatter_max` on GPU and `numpy.maximum.at` semantics on CPU.
+    Eg:
+        out = [0, 0, 0]
+        idx = [0, 1, 0, 2, 1]
+        vals = [1, 2, 3, 4, 0]
+        scatter_maximum_1d(out, idx, vals)
+        # out is now [3, 2, 4]
+
+    Args:
+        out: (K,) output array updated in-place.
+        idx: (N,) integer indices in [0, K).
+        vals: (N,) values to reduce via max per index.
+    """
     if IS_CUPY_BACKEND:
         cupy_scatter_max(out, idx, vals)
     else:
         xp.maximum.at(out, idx, vals)
 
 
-def _ensure_2d_f(F: Array) -> Array:
-    """Return f(x) as (N,)"""
+def flatten_function_array(F: Array) -> Array:
+    """
+    Normalize function values to a flat (N,) array.
+    The user-provided `f_fn` may return either (N,), (N,1), or something reshapeable
+    to (N,).
+
+    Args:
+        F: Array-like of function values.
+
+    Returns:
+        F_flat: (N,) array.
+    """
     F = xp.asarray(F)
     if getattr(F, "ndim", 1) == 2 and F.shape[1] == 1:
         return F[:, 0]
     return F.reshape((-1,))
 
 
-def _ensure_2d_g(G: Array) -> Array:
-    """Return g(x) as (N,d)"""
+def flatten_gradient_array(G: Array) -> Array:
+    """
+    Normalize gradients to a dense (N, d) array.
+    Accepts either:
+      - (N, d) gradients, or
+      - (N, 1, d) gradients (common when batching Jacobians).
+
+    Args:
+        G: Array-like gradients.
+
+    Returns:
+        G2: (N, d) gradient array.
+    """
     G = xp.asarray(G)
     if getattr(G, "ndim", 1) == 3 and G.shape[1] == 1:
         return G[:, 0, :]
@@ -39,13 +76,24 @@ def _ensure_2d_g(G: Array) -> Array:
     raise ValueError(f"Unexpected gradient shape {G.shape}; expected (N,d) or (N,1,d).")
 
 
-def _segment_starts_counts(sorted_labels: Array) -> Tuple[Array, Array, Array]:
-    """uniq_labels, starts, counts for a label-sorted array."""
-    uniq, starts, counts = xp.unique(sorted_labels, return_index=True, return_counts=True)  # type: ignore
+def compute_label_segments(sorted_labels: Array) -> Tuple[Array, Array, Array]:
+    """Compute segmentation metadata for a label-sorted 1D label array.
+
+    Args:
+        sorted_labels: (N,) labels sorted in nondecreasing order.
+
+    Returns:
+        uniq: (K,) unique label values (ascending).
+        starts: (K,) start indices of each label-run in `sorted_labels`.
+        counts: (K,) run lengths.
+    """
+    uniq, starts, counts = xp.unique(
+        sorted_labels, return_index=True, return_counts=True
+    )
     return uniq, starts, counts
 
 
-def generate_persistent_convex_samples_from_sorted_active(
+def generate_sythetic_points(
     X_sorted: Array,
     starts: Array,
     counts: Array,
@@ -54,14 +102,32 @@ def generate_persistent_convex_samples_from_sorted_active(
     *,
     SEED: int,
     level: int,
-) -> Tuple[Optional[Array], Optional[Array], bool]:
+) -> Tuple[Optional[Array], Optional[Array]]:
     """
-    Vectorized convex padding for a label-sorted active array.
+    Batch generate synthetic point generation via convex combinations within clusters.
+
+    For each cluster whose active count is below `MIN_PTS_PER_CLUSTER`, generate the
+    required number of synthetic points via convex combinations of *two distinct*
+    points from the same cluster:
+
+        x_synth = a * x_i + (1 - a) * x_j,    a ~ Uniform(0, 1)
+
+    This stabilizes covariance / Hessian-estimation steps in later geometry, while the
+    pool design makes synthetic points persist across levels.
+
+    Args:
+        X_sorted: (N_active, d) active points sorted by label.
+        starts: (K,) cluster segment starts within `X_sorted`.
+        counts: (K,) active counts per cluster.
+        uniq_labels: (K,) label values for each segment.
+        MIN_PTS_PER_CLUSTER: minimum desired points per cluster.
+        SEED: base RNG seed.
+        level: current refinement level; used to derive deterministic RNG stream.
 
     Returns:
-        X_synth: (M,d) or None
-        labels_synth: (M,) or None   (global label values, not local indices)
-        added: bool
+        X_synth: (M, d) synthetic points, or None if no padding needed.
+        labels_synth: (M,) *global* label values associated to each synthetic point,
+            or None if no padding needed.
     """
     # If any cluster has <3 points, convex-combo padding is ill-defined (degenerate).
     if xp.any(counts < 3):
@@ -71,10 +137,11 @@ def generate_persistent_convex_samples_from_sorted_active(
             f"Example labels: {bad.tolist()} (showing up to 10)."
         )
 
+    # How many synthetic points we need per cluster.
     need = xp.maximum(0, MIN_PTS_PER_CLUSTER - counts)  # (K,)
     total_synth = int(xp.sum(need))
     if total_synth == 0:
-        return None, None, False
+        return None, None
 
     if IS_CUPY_BACKEND:
         rs = xp.random.RandomState(SEED + level)
@@ -83,7 +150,7 @@ def generate_persistent_convex_samples_from_sorted_active(
         rng = xp.random.default_rng(SEED + level)
         rand = rng.random
 
-    # Map each synth sample to a cluster k in [0..K-1]
+    # Map each synthetic sample to a local segment id k in [0..K-1].
     k_synth = repeats(xp.arange(int(need.shape[0])), need)  # (M,)
     labels_synth = uniq_labels[k_synth]  # (M,)
 
@@ -102,13 +169,10 @@ def generate_persistent_convex_samples_from_sorted_active(
 
     a = rand((total_synth, 1)).astype(X_sorted.dtype)  # (M,1)
     X_synth = a * X_sorted[idx_i] + (1.0 - a) * X_sorted[idx_j]  # (M,d)
-    return X_synth, labels_synth.astype(xp.int64), True
+    return X_synth, labels_synth.astype(xp.int64)
 
 
-# -----------------------------------------------------------------------------
-# Batched linear algebra building blocks (with shrinkage)
-# -----------------------------------------------------------------------------
-def batched_calculate_Q(
+def calculate_Q(
     DeltaX: Array,
     starts: Array,
     counts: Array,
@@ -118,9 +182,26 @@ def batched_calculate_Q(
     Q_SHRINK: float = 0.0,
 ) -> Array:
     """
-    PCA-aligned trust ellipsoid Q_k using max-abs projections, with covariance shrinkage.
+    PCA-aligned trust ellipsoid $Q_k$ using max-abs projections, with covariance shrinkage.
+
+    This constructs, for each cluster k, a PSD matrix Q_k defining an ellipsoid:
+        { y : y^T Q_k y <= 1 }
+    aligned with PCA directions of the cluster, with axis lengths chosen by maximum
+    absolute projection of centered points onto those axes.
+
+    Args:
+        DeltaX: (N, d) centered points for a *packed* batch (cluster segments contiguous).
+        starts: (K,) segment starts within `DeltaX`.
+        counts: (K,) points per segment.
+        K: number of segments/clusters.
+        Q_EPS_AXIS: lower bound on per-axis extent (avoids divide-by-zero).
+        Q_SHRINK: covariance shrinkage factor in [0,1]. When >0:
+            Cov <- (1-a) Cov + a * (tr(Cov)/d) I.
+
+    Returns:
+        Q: (K, d, d) PSD ellipsoid matrices.
     """
-    # Cov_k = sum dx dx^T
+    # Cov_k = sum_i (dx_i dx_i^T) for points belonging to cluster k.
     XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]  # (N,d,d)
     Cov = xp.add.reduceat(XX_all, starts)  # (K,d,d)
     Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
@@ -134,18 +215,18 @@ def batched_calculate_Q(
         Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (scale[:, None, None] * I)
         Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
 
-    # PCA directions U (cols) from eigh
+    # PCA directions U (columns).
     _, U = xp.linalg.eigh(Cov)
 
-    # projections: proj_i = U_k^T dx_i
+    # Projection scores onto PCA axes: proj_i = U_k^T dx_i.
     map_n_to_k = repeats(xp.arange(K), counts)  # (N,)
     U_exp = U[map_n_to_k]  # (N,d,d)
     proj = (U_exp.transpose(0, 2, 1) @ DeltaX[:, :, None])[:, :, 0]  # (N,d)
     proj_abs = xp.abs(proj)
 
-    # d_axes[k,j] = max_i |proj[i,j]| within cluster k
+    # Axis extents: d_axes[k,j] = max_i |proj[i,j]| within cluster k.
     d_axes = xp.zeros((K, proj_abs.shape[1]), dtype=proj_abs.dtype)
-    _scatter_max_1d(d_axes, map_n_to_k, proj_abs)
+    scatter_maximum_1d(d_axes, map_n_to_k, proj_abs)
 
     d_axes = xp.maximum(d_axes, Q_EPS_AXIS)
     Dinv2 = 1.0 / (d_axes * d_axes)  # (K,d)
@@ -155,7 +236,7 @@ def batched_calculate_Q(
     return 0.5 * (Q + Q.transpose(0, 2, 1))
 
 
-def batched_estimate_hessian_symmetric(
+def estimate_hessian_symmetric(
     DeltaX: Array,
     DeltaG: Array,
     starts: Array,
@@ -166,6 +247,15 @@ def batched_estimate_hessian_symmetric(
     Symmetric Hessian fit via Sylvester solve in eigen-basis:
       C = sum dx dx^T, E = sum dx dg^T, S = E + E^T
       Solve H C + C H = S.
+
+    Args:
+        DeltaX: (N, d) centered points for a packed batch.
+        DeltaG: (N, d) centered gradients, i.e. (g(x_i) - g(mu_k)) per point.
+        starts: (K,) segment starts.
+        H_RIDGE: floor for eigenvalues of C (ridge for numerical stability).
+
+    Returns:
+        H: (K, d, d) symmetric Hessian estimate per cluster.
     """
     XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]  # (N,d,d)
     XG_all = DeltaX[:, :, None] * DeltaG[:, None, :]  # (N,d,d)
@@ -185,29 +275,52 @@ def batched_estimate_hessian_symmetric(
     return 0.5 * (H + H.transpose(0, 2, 1))
 
 
-def batched_sqrt_abs_symmetric(H: Array) -> Array:
-    """M_k = sqrt(|H_k|) for symmetric H_k."""
+def sqrt_abs_symmetric(H: Array) -> Array:
+    # TODO: is it better to do this in the prev function only?
+    """Compute M_k = sqrt(|H_k|) for symmetric H_k, batched.
+
+    Args:
+        H: (K, d, d) symmetric matrices.
+
+    Returns:
+        M: (K, d, d) symmetric matrices with M_k @ M_k = |H_k|.
+    """
     w, U = xp.linalg.eigh(0.5 * (H + H.transpose(0, 2, 1)))
     w = xp.sqrt(xp.abs(w))
     M = (U * w[:, None, :]) @ U.transpose(0, 2, 1)
     return 0.5 * (M + M.transpose(0, 2, 1))
 
 
-def batched_top_eigvec(Cov: Array) -> Array:
-    """Dominant eigenvector (K,d) of symmetric Cov (K,d,d)."""
-    w, V = xp.linalg.eigh(0.5 * (Cov + Cov.transpose(0, 2, 1)))
+def get_dominant_eigenvector(Cov: Array) -> Array:
+    """Dominant eigenvector of symmetric covariance matrices.
+
+    Args:
+        Cov: (K, d, d) symmetric matrices.
+
+    Returns:
+        v: (K, d) top eigenvector per matrix.
+    """
     # w asc => last is largest
+    w, V = xp.linalg.eigh(Cov)
     return V[:, :, -1]
 
 
-def batched_median_split_decision(
+def compute_median_split_decision(
     scores: Array,
     cluster_id: Array,
     starts: Array,
     counts: Array,
 ) -> Array:
     """
-    Global radix-like sort to get per-cluster medians; returns decision (scores >= median_k).
+    Compute per-cluster median split decisions for a packed (clustered) score vector.
+
+    Given per-point scores `scores` and a per-point cluster id `cluster_id` (local ids
+    like 0..K-1), return a boolean decision:
+        decision[i] = scores[i] >= median(scores within that cluster).
+
+    Implementation note:
+        This uses a two-stage argsort (by score, then by cluster id) to obtain scores
+        sorted *within clusters* without explicit Python loops.
     """
     N = int(scores.shape[0])
     if N == 0:
@@ -228,13 +341,23 @@ def batched_median_split_decision(
     return scores >= median[cluster_id]
 
 
-# -----------------------------------------------------------------------------
-# Output buffer management
-# -----------------------------------------------------------------------------
 def allocate_output_buffers(
-    MAX_CLUSTERS_EST: int, d: int, dtype
+    MAX_CLUSTERS_EST: int, d: int, dtype: Any
 ) -> Tuple[Dict[str, Array], int]:
-    """Pre-allocate output buffers."""
+    """Allocate output buffers for finalized clusters.
+
+    Args:
+        MAX_CLUSTERS_EST: initial capacity estimate for finalized clusters.
+        d: dimensionality of the input space.
+        dtype: floating dtype for outputs.
+
+    Returns:
+        buffers: dict of arrays sized to `cap`.
+        cap: allocated capacity (number of clusters).
+
+    Notes:
+        This matches the contract of `adaptive_clustering` return value.
+    """
     cap = max(1, int(MAX_CLUSTERS_EST))
     buffers = {
         "centroids": xp.empty((cap, d), dtype=dtype),
@@ -253,7 +376,18 @@ def adjust_buffer_capacity(
     current_cap: int,
     required_total: int,
 ) -> Tuple[Dict[str, Array], int]:
-    """Grow output buffers if needed."""
+    """Grow output buffers if the finalized cluster count exceeds current capacity.
+
+    Args:
+        buffers: current output buffers.
+        current_count: number of clusters currently written.
+        current_cap: current capacity.
+        required_total: required capacity after the next write.
+
+    Returns:
+        new_buffers: potentially reallocated buffers.
+        new_cap: updated capacity.
+    """
     if required_total <= current_cap:
         return buffers, current_cap
 
@@ -274,12 +408,12 @@ def adjust_buffer_capacity(
     if current_count > 0:
         for k in new_buffers:
             new_buffers[k][:current_count] = buffers[k][:current_count]
+
+    # Delete old buffers to free memory.
+    del buffers
     return new_buffers, int(new_cap)
 
 
-# -----------------------------------------------------------------------------
-# Main algorithm: Persistent pool padding + shrinkage + RTOL-only accept
-# -----------------------------------------------------------------------------
 def adaptive_clustering(
     X: Array,
     *,
@@ -303,59 +437,106 @@ def adaptive_clustering(
 ) -> Dict[str, Array]:
     """
     BFS adaptive clustering with *persistent* convex padding via a preallocated pool.
+    This routine constructs a piecewise-local surrogate of a scalar function f(x) over
+    a point cloud X by forming clusters whose members are well-approximated by a
+    first-order Taylor model about the cluster centroid μ_k:
 
-    Key properties:
-      - Synthetic points become indistinguishable from real points (persist across levels).
-      - Pool never resizes (GPU-friendly); we just advance a write pointer.
-      - RTOL-only accept criterion: accept cluster k if E_rel,k < RTOL.
-      - Q and split-direction PCA use covariance shrinkage to prevent PSD issues.
+            f(x) ≈ f(μ_k) + (x - μ_k)^T g(μ_k),
+
+    where g(·) denotes the gradient (∇f). A cluster is accepted using RTOL:
+
+            E_abs,k = max_{x in cluster k} |f(x) - f_lin(x; μ_k)|
+            E_rel,k = E_abs,k / max_{x in active pool} |f(x)|
+            accept if E_rel,k < RTOL
+
+    Clusters that fail are split using a second-order-informed direction derived from
+    a symmetric Hessian estimate H_k fitted from (Δx, Δg) within the cluster.
+    The split direction is computed in transformed coordinates z = |H_k|^{1/2} Δx,
+    followed by choosing the top PCA direction of Cov(z). Points are partitioned by a
+    within-cluster median split along that direction.
+
+    Key properties (pool design):
+        - Synthetic points persist across levels and become indistinguishable from real
+            points in later geometry calculations.
+        - The pool never resizes (to keep it efficient on GPUs), we only advance a write
+        pointer.
+        - Function values and gradients are cached for every pool entry.
+
+    Args:
+        X: (N0, d) initial real point cloud.
+        f_fn: callable mapping (N, d) -> (N,) or (N,1) values.
+        g_fn: callable mapping (N, d) -> (N, d) or (N,1,d) gradients.
+        RTOL: relative tolerance for accept criterion.
+        NUM_INITIAL_CLUSTERS: initial KMeans cluster count.
+        MIN_PTS_PER_CLUSTER: minimum points desired per active cluster (padding target).
+        MAX_CLUSTERS_EST: initial allocation for output buffers (can grow).
+        SEED: RNG seed for KMeans and padding.
+        LOG_MEM_STATS: whether to log memory stats at key points.
+        SYNTH_BUDGET: maximum number of synthetic points allowed in the pool.
+        SYNTH_BUDGET_FACTOR: if SYNTH_BUDGET is None, sets SYNTH_BUDGET ≈ factor*N0.
+        Q_EPS_AXIS: minimum PCA axis extent when building Q (avoids singular Q).
+        Q_SHRINK: covariance shrinkage for Q computation.
+        COVZ_SHRINK: covariance shrinkage in Z-space for split direction.
+        H_RIDGE: eigenvalue floor for Hessian fit stability.
+        MAX_LEVELS: maximum refinement iterations.
+
+    Returns:
+        outputs: dict with arrays truncated to number of accepted clusters:
+            - centroids: (K_final, d)
+            - f: (K_final,)
+            - g: (K_final, d)
+            - Q: (K_final, d, d)
+            - E_rel: (K_final,)
+            - counts: (K_final,) total (real+synth) points in each accepted cluster
     """
-    X0 = xp.asarray(X)
+    _start_time = time.perf_counter()
+    X0 = xp.asarray(X)  # (N0, d)
     N0, d = X0.shape
 
     if SYNTH_BUDGET is None:
-        # Rule of thumb: allow up to factor*N synth points (can be tuned).
         SYNTH_BUDGET = int(max(0, SYNTH_BUDGET_FACTOR * N0))
 
+    # Pool capacity
     capacity = int(N0 + SYNTH_BUDGET)
-    if capacity < N0:
-        raise ValueError("Pool capacity underflow (check SYNTH_BUDGET).")
-
     if LOG_MEM_STATS:
         log_mem_stats("Start: Adaptive Clustering (pool alloc)")
 
     # ---- Pool allocation (fixed capacity) ----
+    # X_pool: (capacity, d) stores all points (real then synthetic as appended).
     X_pool = xp.empty((capacity, d), dtype=X0.dtype)
     X_pool[:N0] = X0
     n_total = int(N0)
 
-    # Precompute f/g for initial points
+    # Precompute and cache f/g for the initial real points.
+    # F_pool: (capacity,) scalar values; G_pool: (capacity, d) gradients ∇f.
     _t0 = time.perf_counter()
     F_pool = xp.empty((capacity,), dtype=X0.dtype)
     G_pool = xp.empty((capacity, d), dtype=X0.dtype)
 
-    F_pool[:N0] = _ensure_2d_f(f_fn(X_pool[:N0]))
-    G_pool[:N0] = _ensure_2d_g(g_fn(X_pool[:N0]))
-    logger.info(f"Initial f/g on {N0:,} pts: {time.perf_counter()-_t0:.3f}s")
+    F_pool[:N0] = flatten_function_array(f_fn(X_pool[:N0]))
+    G_pool[:N0] = flatten_gradient_array(g_fn(X_pool[:N0]))
+    logger.info(f"Runtime - Initial f/g eval: {time.perf_counter()-_t0:.3f}s")
 
-    # Initial global scale (updated only at *next* level after synth insertion)
-    tiny = 1e-30
-    F_inf = float(xp.max(xp.abs(F_pool[:N0]))) + tiny
+    # Global scaling for relative error. Updated only at next level boundary after
+    # synthetic insertion to avoid oscillating threshold mid-iteration.
+    F_inf = xp.max(xp.abs(F_pool[:N0]))
     synth_added_prev_level = False
 
-    # Initial clustering on initial (real) set only
+    # Initial clustering on initial (real) set only.
     _t1 = time.perf_counter()
     if IS_CUPY_BACKEND:
         km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
         labels0 = km.fit_predict(X_pool[:N0])
     else:
-        km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED, n_init="auto")
+        km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
         labels0 = km.fit_predict(xp.asarray(X_pool[:N0]))
+
     labels_pool = xp.empty((capacity,), dtype=xp.int64)
     labels_pool[:N0] = labels0.astype(xp.int64)
-    logger.info(f"Initial KMeans: {time.perf_counter()-_t1:.3f}s")
+    logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
 
-    # Active mask (all points in pool that are still being processed)
+    # Active mask (all pool points currently being processed). `active[i] == True`
+    # means pool index i participates in the current refinement frontier.
     active = xp.zeros((capacity,), dtype=bool)
     active[:N0] = True
 
@@ -365,118 +546,139 @@ def adaptive_clustering(
 
     level = 0
     while level <= MAX_LEVELS:
+        t_level = time.perf_counter()
         if LOG_MEM_STATS:
             log_mem_stats(f"Start: L{level:02}")
 
-        # Deferred F_inf update: only at level boundary, only if synth was added last level
+        # Deferred F_inf update: level boundary only, and only if padding happened
+        # in the previous level.
         if synth_added_prev_level:
-            F_inf = float(xp.max(xp.abs(F_pool[:n_total]))) + tiny
+            F_inf = xp.max(xp.abs(F_pool[:n_total]))
 
-        # Active indices within [0..n_total)
+        if F_inf < TINY_EPS:
+            logger.warning(
+                f"Level {level:03}: F_inf = {F_inf} is very small "
+                f"RTOL-based decisions may be unreliable."
+            )
+
+        # Active indices within the currently-used pool prefix [0..n_total).
         idx_active = xp.nonzero(active[:n_total])[0]
         n_active = int(idx_active.shape[0])
         if n_active == 0:
+            logger.info(f"Level {level:03}: no active points remain, terminating.")
             break
 
-        t_level = time.perf_counter()
         synth_added_this_level = False
 
-        # Sort active points by label (segmented layout)
-        lab_active = labels_pool[idx_active]
-        perm = xp.argsort(lab_active)  # stable not guaranteed, but OK
+        # Sort active points by label to create contiguous segments per cluster.
+        # label_active: (n_active,) global label values.
+        label_active = labels_pool[idx_active]
+        perm = xp.argsort(label_active)
         idx_sorted = idx_active[perm]
-        lab_sorted = lab_active[perm]
-        uniq_labels, starts, counts = _segment_starts_counts(lab_sorted)
+        label_sorted = label_active[perm]
+        uniq_labels, starts, counts = compute_label_segments(label_sorted)
         K_batch = int(uniq_labels.shape[0])
 
+        if LOG_MEM_STATS:
+            log_mem_stats(f"After: L{level:02} Setup")
+
         # ---------------------------------------------------------------------
-        # Persistent padding step: write synth points into pool, mark active
+        # Generate per-cluster convex-combination points and append them to the pool.
         # ---------------------------------------------------------------------
         X_sorted = X_pool[idx_sorted]  # (n_active, d), label-sorted
-        X_synth, labels_synth, added = (
-            generate_persistent_convex_samples_from_sorted_active(
-                X_sorted,
-                starts,
-                counts,
-                uniq_labels,
-                MIN_PTS_PER_CLUSTER,
-                SEED=SEED,
-                level=level,
-            )
+        X_synth, labels_synth = generate_sythetic_points(
+            X_sorted,
+            starts,
+            counts,
+            uniq_labels,
+            MIN_PTS_PER_CLUSTER,
+            SEED=SEED,
+            level=level,
         )
-        if added:
+        if X_synth is not None:
             M = int(X_synth.shape[0])  # type: ignore
-            if n_total + M > capacity:
+            n_plus_M = n_total + M
+            if n_plus_M > capacity:
                 raise MemoryError(
-                    f"Pool capacity exceeded: need {n_total+M} > {capacity}. "
+                    f"Pool capacity exceeded: need {n_plus_M} > {capacity}. "
                     f"Increase SYNTH_BUDGET / SYNTH_BUDGET_FACTOR."
                 )
 
-            # Write into pool
-            X_pool[n_total : n_total + M] = X_synth
-            labels_pool[n_total : n_total + M] = labels_synth
-            active[n_total : n_total + M] = True
+            # Write new synthetic points into the pool tail and mark them active.
+            X_pool[n_total:n_plus_M] = X_synth
+            labels_pool[n_total:n_plus_M] = labels_synth
+            active[n_total:n_plus_M] = True
 
-            # Evaluate f/g for synth points and cache
-            F_pool[n_total : n_total + M] = _ensure_2d_f(f_fn(X_synth))
-            G_pool[n_total : n_total + M] = _ensure_2d_g(g_fn(X_synth))
+            # Evaluate f/g for synthetic points and cache.
+            # (These are real gradients of f at synthetic locations.)
+            F_pool[n_total:n_plus_M] = flatten_function_array(f_fn(X_synth))
+            G_pool[n_total:n_plus_M] = flatten_gradient_array(g_fn(X_synth))
 
             n_total += M
             synth_added_this_level = True
 
             # Rebuild active segmentation INCLUDING newly-added points (same level)
+            # so that error evaluation and potential split decisions see the padded
+            # geometry immediately.
             idx_active = xp.nonzero(active[:n_total])[0]
-            lab_active = labels_pool[idx_active]
-            perm = xp.argsort(lab_active)
+            label_active = labels_pool[idx_active]
+            perm = xp.argsort(label_active)
             idx_sorted = idx_active[perm]
-            lab_sorted = lab_active[perm]
-            uniq_labels, starts, counts = _segment_starts_counts(lab_sorted)
+            label_sorted = label_active[perm]
+            uniq_labels, starts, counts = compute_label_segments(label_sorted)
             K_batch = int(uniq_labels.shape[0])
 
         if LOG_MEM_STATS:
             log_mem_stats(f"After: L{level:02} Padding")
 
         # ---------------------------------------------------------------------
-        # Per-cluster centroids, Taylor error, accept/reject (RTOL-only)
+        # Per-cluster centroids, first-order Taylor prediction, and max error.
+        # Accept/reject uses RTOL-only.
         # ---------------------------------------------------------------------
         X_sorted = X_pool[idx_sorted]
         F_sorted = F_pool[idx_sorted]
         G_sorted = G_pool[idx_sorted]
 
-        # Centroids mu_k
+        # Centroids μ_k for each label segment.
         sums = xp.add.reduceat(X_sorted, starts)  # (K,d)
         mus = sums / counts[:, None]  # (K,d)
 
-        f_mus = _ensure_2d_f(f_fn(mus))  # (K,)
-        g_mus = _ensure_2d_g(g_fn(mus))  # (K,d)
+        f_mus = flatten_function_array(f_fn(mus))  # (K,)
+        g_mus = flatten_gradient_array(g_fn(mus))  # (K,d)
 
-        # Map each point to local cluster index
+        # Map each point to its local segment id k in [0..K_batch).
         map_n_to_k = repeats(xp.arange(K_batch), counts)  # (n_active,)
+        # Centered coordinates Δx.
         dx = X_sorted - mus[map_n_to_k]  # (n_active,d)
+        # First-order Taylor model around μ_k.
         f_lin = f_mus[map_n_to_k] + xp.sum(dx * g_mus[map_n_to_k], axis=1)
         err_point = xp.abs(F_sorted - f_lin)
 
+        # Cluster-wise max error E_abs,k = max_i err_point within each segment.
         E_abs = xp.zeros((K_batch,), dtype=err_point.dtype)
-        _scatter_max_1d(E_abs, map_n_to_k, err_point)
+        scatter_maximum_1d(E_abs, map_n_to_k, err_point)
         E_rel = E_abs / F_inf
         is_good = E_rel < RTOL
 
         if LOG_MEM_STATS:
-            log_mem_stats(f"After: L{level:02} Error")
+            log_mem_stats(f"After: L{level:02} Error Computation")
 
         # ---------------------------------------------------------------------
-        # Finalize good clusters: compute Q, write outputs, deactivate their points
+        # Finalize good clusters:
+        #  - compute Q from centered points in accepted clusters,
+        #  - append results to output buffers,
+        #  - deactivate their pool points so they are no longer processed.
         # ---------------------------------------------------------------------
         good_idx = xp.nonzero(is_good)[0]
         if int(good_idx.shape[0]) > 0:
-            # Build a packed DeltaX for only-good points (contiguous)
+            # Build a packed DeltaX for only-good points (contiguous).
             point_good_mask = is_good[map_n_to_k]
             dx_good = dx[point_good_mask]
 
             good_counts = counts[good_idx]
             good_starts = xp.r_[0, xp.cumsum(good_counts)[:-1]]
 
-            Qs = batched_calculate_Q(
+            Qs = calculate_Q(
                 dx_good,
                 good_starts,
                 good_counts,
@@ -499,7 +701,7 @@ def adaptive_clustering(
             buffers["counts"][out_count:end_out] = counts[good_idx].astype(xp.int64)
             out_count = end_out
 
-            # Deactivate all points (real+synth) in good clusters
+            # Deactivate all points (real + synthetic) in accepted clusters.
             global_ids_good = idx_sorted[point_good_mask]
             active[global_ids_good] = False
 
@@ -507,56 +709,62 @@ def adaptive_clustering(
         bad_idx = xp.nonzero(~is_good)[0]
         if int(bad_idx.shape[0]) == 0:
             synth_added_prev_level = synth_added_this_level
+            logger.info(f"Level {level:03}: no bad clusters remain, terminating.")
             break
 
         if LOG_MEM_STATS:
-            log_mem_stats(f"After: L{level:02} Finalize good")
+            log_mem_stats(f"After: L{level:02} Finalize good clusters")
 
         # ---------------------------------------------------------------------
-        # Split bad clusters (Hessian-informed), update labels in-place for ALL points
+        # Split bad clusters (Hessian-informed) and update labels in-place for ALL
+        # pool points in those clusters (real + synthetic).
         # ---------------------------------------------------------------------
         point_bad_mask = (~is_good)[map_n_to_k]
         idx_bad = idx_sorted[point_bad_mask]  # global indices in pool
+        # Extract the packed bad subset.
         dx_bad = dx[point_bad_mask]
         G_bad = G_sorted[point_bad_mask]
         gmu_bad = g_mus[map_n_to_k][point_bad_mask]
+        # Center gradients per cluster: Δg = g(x) - g(μ_k).
         dG_bad = G_bad - gmu_bad
 
         bad_counts = counts[bad_idx]
         bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
         K_bad = int(bad_idx.shape[0])
 
-        # Hessian fit + |H|^{1/2}
-        H = batched_estimate_hessian_symmetric(
-            dx_bad, dG_bad, bad_starts, H_RIDGE=H_RIDGE
-        )
-        M = batched_sqrt_abs_symmetric(H)
+        # Hessian fit (symmetric) + |H|^{1/2} transform.
+        H = estimate_hessian_symmetric(dx_bad, dG_bad, bad_starts, H_RIDGE=H_RIDGE)
+        M = sqrt_abs_symmetric(H)
 
-        # z = M_k dx
+        # Transform coordinates: z = M_k Δx (cluster-wise).
         map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
         M_exp = M[map_bad_n_to_k]
         Z = (M_exp @ dx_bad[:, :, None])[:, :, 0]
 
-        # CovZ with shrinkage
+        # Cov(Z) with (optional) shrinkage to stabilize eigenvectors.
         ZZ_all = Z[:, :, None] * Z[:, None, :]
         CovZ = xp.add.reduceat(ZZ_all, bad_starts)
         CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))
         if COVZ_SHRINK > 0.0:
+            # Sigma = (1-a)Cov + a*(tr(Cov)/d)*I, per cluster
             tr = xp.trace(CovZ, axis1=1, axis2=2)
             scale = tr / max(d, 1)
             I = xp.eye(d, dtype=CovZ.dtype)[None, :, :]
             CovZ = (1.0 - COVZ_SHRINK) * CovZ + COVZ_SHRINK * (scale[:, None, None] * I)
             CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))
 
-        v = batched_top_eigvec(CovZ)
+        # Split direction per cluster = top eigenvector of CovZ.
+        v = get_dominant_eigenvector(CovZ)
         v_exp = v[map_bad_n_to_k]
+        # Per-point scalar projection scores in Z-space.
         scores = xp.sum(Z * v_exp, axis=1)
 
-        split_right = batched_median_split_decision(
+        split_right = compute_median_split_decision(
             scores, map_bad_n_to_k, bad_starts, bad_counts
         )
 
-        # Update labels for ALL points in bad subset (including synth)
+        # Update labels for ALL points in bad subset (including synthetic).
+        # Tree-like label encoding: left child = old*2, right child = old*2+1.
         old_label_values = uniq_labels[bad_idx]  # (K_bad,)
         old_per_point = old_label_values[map_bad_n_to_k]  # (N_bad,)
 
@@ -566,18 +774,20 @@ def adaptive_clustering(
 
         # End-of-level bookkeeping
         synth_added_prev_level = synth_added_this_level
-
         logger.info(
-            f"Level {level:03}: active={n_active:,}, clusters={K_batch:,}, "
+            f"Level {level:03}: Clusters={K_batch:,}, active={n_active:,}, "
             f"good={int(good_idx.shape[0]):,}, bad={int(bad_idx.shape[0]):,}, "
-            f"pool_used={n_total:,}/{capacity:,}, time={time.perf_counter()-t_level:.3f}s"
+            f"synth={n_total - N0:,}, "
+            f"pool_used={n_total:.1e}/{capacity:.1e} ({n_total/capacity:.0%}), "
+            f"F_inf={F_inf:.1e}"
         )
-
+        logger.info(f"Runtime - Level {level:03}: {time.perf_counter()-t_level:.3f}s")
         level += 1
 
     # Truncate outputs
     final_count = int(out_count)
     logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
+    logger.info(f"Runtime - Total: {time.perf_counter() -_start_time:.3f}s")
     return {k: buffers[k][:final_count] for k in buffers}
 
 
