@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Any, Callable
 
-from src import Array, xp
+from src import IS_CUPY_BACKEND, Array, xp
 from src.adaptive_clustering import adaptive_clustering
 from src.data_sampler import DataSampler
 from src.mahalanobis import knn_mahalanobis_clusters
@@ -362,10 +362,10 @@ if __name__ == "__main__":
     )
 
     plt.figure(figsize=(8, 5))
-    if xp.__name__ == "array_api_compat.numpy":
-        plt.hist(rel_error.flatten(), bins=50, log=True)
-    else:
+    if IS_CUPY_BACKEND:
         plt.hist(rel_error.get().flatten(), bins=50, log=True)
+    else:
+        plt.hist(rel_error.flatten(), bins=50, log=True)
 
     plt.xlabel("Relative Error (log scale)")
     plt.ylabel("Frequency (log scale)")

@@ -6,7 +6,7 @@ from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max as cupy_scatter_max
 from sklearn.cluster import KMeans
 
-from src import _HAS_GPU, Array, xp
+from src import IS_CUPY_BACKEND, Array, xp
 from src.logging_config import log_mem_stats
 from src.utils import repeats
 
@@ -39,6 +39,9 @@ def generate_synthetic_points_batched(
         cluster_ids_synth: (M,) integer cluster id for each synthetic point (so you can
             associate each synthetic point back to its cluster), or None if none.
     """
+    if xp.any(counts < 3):
+        raise ValueError("Each cluster must have at least 3 real points.")
+
     # Identify how many synthetic points are needed per cluster.
     n_needed = xp.maximum(0, MIN_PTS_PER_CLUSTER - counts)  # (K,)
     total_synth = int(xp.sum(n_needed))
@@ -232,7 +235,7 @@ def batched_median_split_decision(
 
 
 def batched_calculate_Q(
-    DeltaX: Array, starts: Array, counts: Array, K: int, eps: float = 1e-12
+    DeltaX: Array, starts: Array, counts: Array, K: int, eps: float = 1e-6
 ) -> Array:
     """
     Batch compute PCA-aligned trust ellipsoid matrices Q_k over all clusters.
@@ -291,10 +294,10 @@ def batched_calculate_Q(
     # Compute per-axis max |projection| per cluster.
     proj_abs = xp.abs(proj)
     d_axes = xp.zeros((K, proj_abs.shape[1]), dtype=proj_abs.dtype)
-    if xp.__name__ == "array_api_compat.numpy":
-        xp.maximum.at(d_axes, map_n_to_k, proj_abs)
-    else:
+    if IS_CUPY_BACKEND:
         cupy_scatter_max(d_axes, map_n_to_k, proj_abs)
+    else:
+        xp.maximum.at(d_axes, map_n_to_k, proj_abs)
 
     # Avoid divide-by-zero.
     d_axes = xp.maximum(d_axes, eps)  # (K, d)
@@ -480,7 +483,7 @@ def adaptive_clustering(
     #    The adaptive loop will refine this partition by splitting "bad" clusters.
     # -------------------------------------------------------------------------
     _start_init = time.perf_counter()
-    if _HAS_GPU:
+    if IS_CUPY_BACKEND:
         kmeans = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
         labels = kmeans.fit_predict(X)
     else:
@@ -654,10 +657,10 @@ def adaptive_clustering(
 
         # Cluster-wise max error
         E_abs = xp.zeros(K_batch, dtype=err_point.dtype)  # (K_batch,)
-        if xp.__name__ == "array_api_compat.numpy":
-            xp.maximum.at(E_abs, map_n_to_k, err_point)
-        else:
+        if IS_CUPY_BACKEND:
             cupy_scatter_max(E_abs, map_n_to_k, err_point)
+        else:
+            xp.maximum.at(E_abs, map_n_to_k, err_point)
 
         # Relative error scaled by max |f| in the batch.
         E_rel = E_abs / F_inf
@@ -787,11 +790,11 @@ def adaptive_clustering(
         # Bookkeeping / debug logs.
         level += 1
         n_synth_count = X_synth.shape[0] if X_synth is not None else 0
-        logger.debug(
+        logger.info(
             f"Level {level}: Active {n_active:,} (+{n_synth_count:,} synth) -> "
             f"{K_batch:,} clusters (Good: {good_indices.size:,}, Bad: {bad_indices.size:,})"
         )
-        logger.debug(
+        logger.info(
             f"Runtime - Level {level}: {time.perf_counter() - _start_loop:.4f}s"
         )
 
@@ -799,10 +802,10 @@ def adaptive_clustering(
     # 4) Truncate outputs to the number of finalized clusters and return.
     # -------------------------------------------------------------------------
     final_cluster_count = int(valid_cluster_count)
-    logger.debug(
+    logger.info(
         f"Adaptive Clustering Complete: {final_cluster_count:,} final clusters."
     )
-    logger.debug(f"Runtime - Total: {time.perf_counter() - _start_init:.4f}s")
+    logger.info(f"Runtime - Total: {time.perf_counter() - _start_init:.4f}s")
     return {k: buffers[k][:final_cluster_count] for k in buffers}
 
 
@@ -916,7 +919,7 @@ if __name__ == "__main__":
         from matplotlib.colors import LogNorm
         from matplotlib.patches import Ellipse
 
-        if xp.__name__ == "array_api_compat.cupy":
+        if IS_CUPY_BACKEND:
             results = {k: xp.asnumpy(v) for k, v in results.items()}
 
         # 1 plot 2 subplots (1X2)

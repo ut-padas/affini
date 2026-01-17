@@ -3,7 +3,7 @@ import time
 
 from scipy.stats import qmc
 
-from src import Array, xp
+from src import IS_CUPY_BACKEND, Array, xp
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ class DataSampler:
         sample = sampler.random(n=N)
 
         # Scale to domain bounds
-        if xp.__name__ == "array_api_compat.cupy":
+        if IS_CUPY_BACKEND:
             l_np = xp.asnumpy(l_np)
             r_np = xp.asnumpy(r_np)
 

@@ -215,7 +215,7 @@ def run_experiment(
     """
     # 1. Train
     X_train = DataSampler.sample_latin_hypercube(prob.domain, N=N_train, seed=prob.seed)
-    if _HAS_GPU:
+    if IS_CUPY_BACKEND:
         xp = cp
         X_train = xp.asarray(X_train)
     else:
@@ -305,10 +305,10 @@ def run_experiment(
 
 
 if __name__ == "__main__":
-    from src import _HAS_GPU
+    from src import IS_CUPY_BACKEND
     from src.logging_config import setup_logging
 
-    if _HAS_GPU:
+    if IS_CUPY_BACKEND:
         mempool = cp.get_default_memory_pool()
 
     setup_logging(console_level=logging.INFO)
@@ -488,7 +488,7 @@ if __name__ == "__main__":
                 )
                 results.append(result)
 
-                if _HAS_GPU:
+                if IS_CUPY_BACKEND:
                     # Clear GPU memory between runs
                     mempool.free_all_blocks()  # type: ignore
                     pass
@@ -551,4 +551,5 @@ if __name__ == "__main__":
             f.write(latex_str)
         logger.info(f"Saved LaTeX table to {latex_path}")
 
+    print("\nAll experiments completed.")
     print("\nAll experiments completed.")

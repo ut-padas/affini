@@ -1,3 +1,4 @@
+import logging
 import warnings
 from pathlib import Path
 
@@ -6,17 +7,23 @@ import numpy as np
 from array_api_compat import array_namespace
 from array_api_compat.common._typing import Array
 
+logger = logging.getLogger(__name__)
+
 try:
-    _HAS_GPU = cp.is_available()
+    IS_CUPY_BACKEND = cp.is_available()
 except Exception:
-    _HAS_GPU = False
+    IS_CUPY_BACKEND = False
     msg = "CuPy not available; GPU acceleration will be disabled."
     warnings.warn(msg)
 
-if not _HAS_GPU:
-    _dummy = np.array([0])
-else:
+# Set up the array namespace based on backend availability
+if IS_CUPY_BACKEND:
     _dummy = cp.array([0])
+    logging.info("Array backend: CuPy")
+else:
+    _dummy = np.array([0])
+    logging.info("Array backend: NumPy")
+
 xp = array_namespace(_dummy)
 
 _file_path = Path(__file__).parent.resolve()

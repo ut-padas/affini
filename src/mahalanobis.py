@@ -2,7 +2,7 @@ import logging
 import time
 from typing import Tuple
 
-from src import Array, xp
+from src import IS_CUPY_BACKEND, Array, xp
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ if __name__ == "__main__":
         from matplotlib.colors import LogNorm
         from matplotlib.patches import Ellipse
 
-        if xp.__name__ == "array_api_compat.cupy":
+        if IS_CUPY_BACKEND:
             centroids = xp.asnumpy(centroids)
             Q = xp.asnumpy(Q)
             query_points = xp.asnumpy(query_points)
