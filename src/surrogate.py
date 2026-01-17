@@ -35,9 +35,9 @@ class NearODESurrogate:
         # Clustering params
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
-        ATOL: float = 1e-2,
-        RTOL: float = 1e-2,
+        TOL: float = 1e-2,
         MAX_CLUSTERS_EST: int = 1_000_000,
+        SYNTH_BUDGET_FACTOR: float = 10.0,
         SEED: int = 0,
     ):
         """
@@ -52,12 +52,12 @@ class NearODESurrogate:
             X=X_train,
             f_fn=f,
             g_fn=grad,
-            ATOL=ATOL,
-            RTOL=RTOL,
+            TOL=TOL,
             NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             SEED=SEED,
+            SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
         )
 
         centroids = xp.asarray(results["centroids"])
@@ -319,9 +319,9 @@ if __name__ == "__main__":
         grad=rosenbrock_grad,
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
-        ATOL=TOL,
-        RTOL=TOL,
+        TOL=TOL,
         SEED=SEED,
+        SYNTH_BUDGET_FACTOR=100,
     )
     _end_train_time = time.perf_counter()
 
