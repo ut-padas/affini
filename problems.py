@@ -279,7 +279,7 @@ def experiment_adaptive_clustering_global_vs_local() -> Path:
     EXP_DIR = ICS26_DIR / "adaptive_clustering_global_vs_local"
     ERROR_SCALING_METHODs = ["global", "local"]
     ROSENBROCK_As = [100**-1, 1, 100]
-    TOLs = [1e-1, 1e-2]
+    TOLs = [1e-1, 1e-2, 1e-3]
 
     for ERROR_SCALING_METHOD, ROSENBROCK_A, TOL in product(
         ERROR_SCALING_METHODs, ROSENBROCK_As, TOLs
@@ -322,13 +322,15 @@ def experiment_adaptive_clustering_global_vs_n_init_clusters() -> Path:
     CONTAINMENT_LEVEL = 1.0
     TRUST_REGION_CONTAINMENT = True
     ERROR_SCALING_METHOD = "global"
-    ROSENBROCK_A = 100
 
     EXP_DIR = ICS26_DIR / "adaptive_clustering_global_vs_n_init_clusters"
     N_INIT_CLUSTERSs = [1, 5, 25, 125, 625, 1000]
-    TOLs = [1e-3, 1e-4]
+    TOLs = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
+    ROSENBROCK_As = [1, 100]
 
-    for N_INIT_CLUSTERS, TOL in product(N_INIT_CLUSTERSs, TOLs):
+    for N_INIT_CLUSTERS, TOL, ROSENBROCK_A in product(
+        N_INIT_CLUSTERSs, TOLs, ROSENBROCK_As
+    ):
         json_fpath = (
             EXP_DIR
             / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}.json"
@@ -365,15 +367,15 @@ def experiment_adaptive_clustering_global_local_vs_min_pts_cluster():
     K_NEIGHBOURS = 5
     CONTAINMENT_LEVEL = 1.0
     TRUST_REGION_CONTAINMENT = True
-    ROSENBROCK_A = 100
-    TOL = 1e-3
 
     EXP_DIR = ICS26_DIR / "adaptive_clustering_global_local_vs_min_pts_per_cluster"
     ERROR_SCALING_METHODs = ["global", "local"]
     N_MIN_PER_CLUSTERs = [5, 25, 125, 625, 1000]
+    TOLs = [1e-1, 1e-2, 1e-3]
+    ROSENBROCK_As = [1, 100]
 
-    for ERROR_SCALING_METHOD, N_MIN_PER_CLUSTER in product(
-        ERROR_SCALING_METHODs, N_MIN_PER_CLUSTERs
+    for ERROR_SCALING_METHOD, N_MIN_PER_CLUSTER, TOL, ROSENBROCK_A in product(
+        ERROR_SCALING_METHODs, N_MIN_PER_CLUSTERs, TOLs, ROSENBROCK_As
     ):
         json_fpath = (
             EXP_DIR
@@ -417,7 +419,7 @@ def experiment_mahalanobis_knn_containment() -> Path:
     K_NEIGHBOURSs = [1, 2, 3, 5, 10]
     CONTAINMENT_LEVELs = [1.0, 2.0, 3.0]
     TRUST_REGION_CONTAINMENTs = [True, False]
-    TOLs = [1e-2, 1e-3, 1e-4, 1e-5]
+    TOLs = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
 
     for K_NEIGHBOURS, CONTAINMENT_LEVEL, TRUST_REGION_CONTAINMENT, TOL in product(
         K_NEIGHBOURSs, CONTAINMENT_LEVELs, TRUST_REGION_CONTAINMENTs, TOLs
@@ -462,7 +464,7 @@ def experiment_rosenbrock_convergence() -> Path:
     ERROR_SCALING_METHOD = "global"
 
     EXP_DIR = ICS26_DIR / "rosenbrock_convergence"
-    DIMs = [2]
+    DIMs = [2, 5]
     ROSENBROCK_As = [1, 100]
     TOLs = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
 
