@@ -29,6 +29,14 @@ def create_summary_dataframe(results_dir: Path):
 
     df.to_csv(results_dir / "summary.csv", index=False)
     print(f"Summary dataframe saved to {results_dir / 'summary.csv'}")
+    # Count number of error cases
+    n_errors = df["error_tag"].apply(lambda x: x != "").sum()
+    if n_errors == 0:
+        # print in green color
+        print(f"\033[92mNo error cases in {results_dir}!\033[0m")
+    else:
+        # print in red color
+        print(f"\033[91mError cases found: {n_errors} in {results_dir}!\033[0m")
 
 
 def create_problem_result_dict(
@@ -146,6 +154,23 @@ def plot_error_histogram(
     plt.close()
 
 
+def del_all_error_files_in_dir(results_dir: Path):
+    error_files = list(results_dir.glob("*.error.txt"))
+    for ef in error_files:
+        print(f"Deleting error file: {ef}")
+        ef.unlink()
+
+    # Get all json files
+    json_files = list(results_dir.glob("*.json"))
+    for jf in json_files:
+        # Check if the error_tag is non-empty
+        with open(jf, "r") as f:
+            data = json.load(f)
+            if data.get("error_tag", "") != "":
+                print(f"Deleting json file with error: {jf}")
+                jf.unlink()
+
+
 def rosenbrock_experiment_setup(
     json_fpath: Path,
     DIM: int,
@@ -160,6 +185,7 @@ def rosenbrock_experiment_setup(
     K_NEIGHBOURS: int,
     CONTAINMENT_LEVEL: float,
     TRUST_REGION_CONTAINMENT: bool,
+    SYNTH_BUDGET_FACTOR: int = 100,
 ):
     scaled_rosenbrock = partial(rosenbrock, a=ROSENBROCK_A)
     scaled_rosenbrock_grad = partial(rosenbrock_grad, a=ROSENBROCK_A)
@@ -190,7 +216,7 @@ def rosenbrock_experiment_setup(
             MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             SEED=SEED,
-            SYNTH_BUDGET_FACTOR=100,
+            SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
         )
         _end_train_time = time.perf_counter()
 
@@ -250,6 +276,7 @@ def rosenbrock_experiment_setup(
         K_NEIGHBOURS=K_NEIGHBOURS,
         TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
         CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
+        SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
     )
 
     with open(json_fpath, "w") as f:
@@ -277,9 +304,10 @@ def experiment_adaptive_clustering_global_vs_local() -> Path:
     TRUST_REGION_CONTAINMENT = True
 
     EXP_DIR = ICS26_DIR / "adaptive_clustering_global_vs_local"
+    del_all_error_files_in_dir(EXP_DIR)
     ERROR_SCALING_METHODs = ["global", "local"]
     ROSENBROCK_As = [100**-1, 1, 100]
-    TOLs = [1e-1, 1e-2, 1e-3]
+    TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4]
 
     for ERROR_SCALING_METHOD, ROSENBROCK_A, TOL in product(
         ERROR_SCALING_METHODs, ROSENBROCK_As, TOLs
@@ -324,6 +352,7 @@ def experiment_adaptive_clustering_global_vs_n_init_clusters() -> Path:
     ERROR_SCALING_METHOD = "global"
 
     EXP_DIR = ICS26_DIR / "adaptive_clustering_global_vs_n_init_clusters"
+    del_all_error_files_in_dir(EXP_DIR)
     N_INIT_CLUSTERSs = [1, 5, 25, 125, 625, 1000]
     TOLs = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
     ROSENBROCK_As = [1, 100]
@@ -354,6 +383,7 @@ def experiment_adaptive_clustering_global_vs_n_init_clusters() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
+            SYNTH_BUDGET_FACTOR=500,
         )
     return EXP_DIR
 
@@ -369,6 +399,7 @@ def experiment_adaptive_clustering_global_local_vs_min_pts_cluster():
     TRUST_REGION_CONTAINMENT = True
 
     EXP_DIR = ICS26_DIR / "adaptive_clustering_global_local_vs_min_pts_per_cluster"
+    del_all_error_files_in_dir(EXP_DIR)
     ERROR_SCALING_METHODs = ["global", "local"]
     N_MIN_PER_CLUSTERs = [5, 25, 125, 625, 1000]
     TOLs = [1e-1, 1e-2, 1e-3]
@@ -400,6 +431,7 @@ def experiment_adaptive_clustering_global_local_vs_min_pts_cluster():
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
+            SYNTH_BUDGET_FACTOR=500,
         )
 
     return EXP_DIR
@@ -416,6 +448,7 @@ def experiment_mahalanobis_knn_containment() -> Path:
     ROSENBROCK_A = 100
 
     EXP_DIR = ICS26_DIR / "mahalanobis_knn_containment"
+    del_all_error_files_in_dir(EXP_DIR)
     K_NEIGHBOURSs = [1, 2, 3, 5, 10]
     CONTAINMENT_LEVELs = [1.0, 2.0, 3.0]
     TRUST_REGION_CONTAINMENTs = [True, False]
@@ -447,6 +480,7 @@ def experiment_mahalanobis_knn_containment() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
+            SYNTH_BUDGET_FACTOR=500,
         )
 
     return EXP_DIR
@@ -464,6 +498,7 @@ def experiment_rosenbrock_convergence() -> Path:
     ERROR_SCALING_METHOD = "global"
 
     EXP_DIR = ICS26_DIR / "rosenbrock_convergence"
+    del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 5]
     ROSENBROCK_As = [1, 100]
     TOLs = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
@@ -492,6 +527,7 @@ def experiment_rosenbrock_convergence() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
+            SYNTH_BUDGET_FACTOR=500,
         )
 
     return EXP_DIR
@@ -499,10 +535,19 @@ def experiment_rosenbrock_convergence() -> Path:
 
 if __name__ == "__main__":
     dir_exp_1 = experiment_adaptive_clustering_global_vs_local()
-    dir_exp_2 = experiment_adaptive_clustering_global_vs_n_init_clusters()
+    create_summary_dataframe(dir_exp_1)
+
     dir_exp_3 = experiment_adaptive_clustering_global_local_vs_min_pts_cluster()
+    create_summary_dataframe(dir_exp_3)
+
     dir_exp_4 = experiment_mahalanobis_knn_containment()
+    create_summary_dataframe(dir_exp_4)
+
     dir_exp_5 = experiment_rosenbrock_convergence()
+    create_summary_dataframe(dir_exp_5)
+
+    dir_exp_2 = experiment_adaptive_clustering_global_vs_n_init_clusters()
+    create_summary_dataframe(dir_exp_2)
 
     _dirs = [dir_exp_1, dir_exp_2, dir_exp_3, dir_exp_4, dir_exp_5]
     for d in _dirs:
