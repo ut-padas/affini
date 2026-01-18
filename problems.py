@@ -64,7 +64,7 @@ def create_problem_result_dict(
             "perct_within_tol": None,
             "train_time_sec": None,
             "predict_time_sec": None,
-            error_tag: error_tag,
+            "error_tag": error_tag,
             **kwargs,
         }
 
