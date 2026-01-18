@@ -501,7 +501,7 @@ def experiment_rosenbrock_convergence() -> Path:
     del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 5]
     ROSENBROCK_As = [1, 100]
-    TOLs = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
+    TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 5e-6]
 
     for DIM, ROSENBROCK_A, TOL in product(DIMs, ROSENBROCK_As, TOLs):
         json_fpath = (
@@ -527,7 +527,7 @@ def experiment_rosenbrock_convergence() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
-            SYNTH_BUDGET_FACTOR=500,
+            SYNTH_BUDGET_FACTOR=300,
         )
 
     return EXP_DIR

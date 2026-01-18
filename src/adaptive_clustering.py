@@ -606,7 +606,9 @@ def adaptive_clustering(
             if n_plus_M > capacity:
                 raise MemoryError(
                     f"Pool capacity exceeded: need {n_plus_M} > {capacity}. "
-                    f"Increase SYNTH_BUDGET / SYNTH_BUDGET_FACTOR."
+                    f"Increase SYNTH_BUDGET / SYNTH_BUDGET_FACTOR. "
+                    f"Level {level:03}, good clusters so far: {out_count}. "
+                    f"Active clusters this level: {K_batch}."
                 )
 
             # Write new synthetic points into the pool tail and mark them active.
