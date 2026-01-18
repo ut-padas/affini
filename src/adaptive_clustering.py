@@ -436,7 +436,7 @@ def adaptive_clustering(
     Q_SHRINK: float = 0.05,
     COVZ_SHRINK: float = 0.05,
     H_RIDGE: float = 1e-18,
-    MAX_LEVELS: int = 10_000,
+    MAX_LEVELS: int = 50,
 ) -> Dict[str, Array]:
     """
     BFS adaptive clustering with *persistent* convex padding via a preallocated pool.
@@ -797,6 +797,9 @@ def adaptive_clustering(
         )
         logger.info(f"Runtime - Level {level:03}: {time.perf_counter()-t_level:.3f}s")
         level += 1
+
+    if level > MAX_LEVELS:
+        logger.warning(f"Reached MAX_LEVELS={MAX_LEVELS}, terminating.")
 
     # Truncate outputs
     final_count = int(out_count)

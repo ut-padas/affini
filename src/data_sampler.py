@@ -12,11 +12,12 @@ class DataSampler:
     """Helper to generate training data X in a backend-agnostic way."""
 
     @staticmethod
-    def sample_uniform(domain, N: int, seed: int = 0) -> Array:
+    def sample_uniform(domain, N: int | float, seed: int = 0) -> Array:
         """
         Sample N points uniformly from domain.
         Backend matches domain's backend.
         """
+        N = int(N)
         logger.debug("Sampling %d points uniformly from domain.", N)
         t0 = time.perf_counter()
 
@@ -37,11 +38,12 @@ class DataSampler:
         return xp.astype(X, xp.float64)
 
     @staticmethod
-    def sample_grid(domain, num_points_per_dim: int) -> Array:
+    def sample_grid(domain, num_points_per_dim: int | float) -> Array:
         """
         Sample points on a grid from domain.
         Backend matches domain's backend.
         """
+        num_points_per_dim = int(num_points_per_dim)
         logger.debug(
             "Sampling grid with %d points per dimension from domain.",
             num_points_per_dim,
@@ -67,11 +69,12 @@ class DataSampler:
         return xp.astype(X, xp.float64)
 
     @staticmethod
-    def sample_latin_hypercube(domain, N: int, seed: int = 0) -> Array:
+    def sample_latin_hypercube(domain, N: int | float, seed: int = 0) -> Array:
         """
         Sample N points using Latin Hypercube Sampling.
         Uses Scipy (CPU) internally, then moves to domain's backend.
         """
+        N = int(N)
         logger.debug("Sampling %d points using Latin Hypercube from domain.", N)
         t0 = time.perf_counter()
 

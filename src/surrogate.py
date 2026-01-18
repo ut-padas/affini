@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from src import IS_CUPY_BACKEND, Array, xp
 from src.adaptive_clustering import adaptive_clustering
@@ -29,13 +29,14 @@ class NearODESurrogate:
     def train(
         self,
         X_train: Array,
-        f: Callable,
-        grad: Callable,
+        f_fn: Callable,
+        g_fn: Callable,
         *,
         # Clustering params
+        TOL: float = 1e-2,
+        ERROR_SCALING_METHOD: Literal["global", "local"] = "global",
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
-        TOL: float = 1e-2,
         MAX_CLUSTERS_EST: int = 1_000_000,
         SYNTH_BUDGET_FACTOR: float = 10.0,
         SEED: int = 0,
@@ -50,9 +51,10 @@ class NearODESurrogate:
         # 1. Adaptive Clustering
         results = adaptive_clustering(
             X=X_train,
-            f_fn=f,
-            g_fn=grad,
+            f_fn=f_fn,
+            g_fn=g_fn,
             TOL=TOL,
+            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
             NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
@@ -315,8 +317,8 @@ if __name__ == "__main__":
     _start_train_time = time.perf_counter()
     surrogate.train(
         X_train=X_train,
-        f=rosenbrock,
-        grad=rosenbrock_grad,
+        f_fn=rosenbrock,
+        g_fn=rosenbrock_grad,
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
         TOL=TOL,

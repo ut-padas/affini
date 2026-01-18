@@ -51,8 +51,8 @@ def run_1D_experiment(
     surrogate = NearODESurrogate(data_dim=1, f_dim=1)
     surrogate.train(
         X_train=X_train,
-        f=one_d_example,
-        grad=one_d_example_grad,
+        f_fn=one_d_example,
+        g_fn=one_d_example_grad,
         TOL=ATOL,
         RTOL=RTOL,
         NUM_INITIAL_CLUSTERS=10,
@@ -225,8 +225,8 @@ def run_experiment(
     surrogate = NearODESurrogate(data_dim=prob.data_dim, f_dim=prob.f_dim)
     surrogate.train(
         X_train=X_train,
-        f=prob.f,
-        grad=prob.grad,
+        f_fn=prob.f,
+        g_fn=prob.grad,
         DIMS_TO_LOG_SCALE=prob.dims_to_log_scale,
         NUM_INITIAL_CLUSTERS=prob.num_initial_clusters,
         MIN_PTS_PER_CLUSTER=prob.min_pts_per_cluster,
