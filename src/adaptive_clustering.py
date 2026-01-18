@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Callable, Dict, Literal, Optional, Tuple
+from typing import Any, Callable, Literal, Optional
 
 from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max as cupy_scatter_max
@@ -76,7 +76,7 @@ def flatten_gradient_array(G: Array) -> Array:
     raise ValueError(f"Unexpected gradient shape {G.shape}; expected (N,d) or (N,1,d).")
 
 
-def compute_label_segments(sorted_labels: Array) -> Tuple[Array, Array, Array]:
+def compute_label_segments(sorted_labels: Array) -> tuple[Array, Array, Array]:
     """Compute segmentation metadata for a label-sorted 1D label array.
 
     Args:
@@ -102,7 +102,7 @@ def generate_sythetic_points(
     *,
     SEED: int,
     level: int,
-) -> Tuple[Optional[Array], Optional[Array]]:
+) -> tuple[Optional[Array], Optional[Array]]:
     """
     Batch generate synthetic point generation via convex combinations within clusters.
 
@@ -176,7 +176,7 @@ def calculate_Q(
     *,
     Q_EPS_AXIS: float = 1e-8,
     Q_SHRINK: float = 0.0,
-) -> Array:
+) -> tuple[Array, Array]:
     """
     PCA-aligned trust ellipsoid $Q_k$ using max-abs projections, with covariance shrinkage.
 
@@ -229,7 +229,7 @@ def calculate_Q(
 
     # Q = U diag(Dinv2) U^T
     Q = (U * Dinv2[:, None, :]) @ U.transpose(0, 2, 1)
-    return 0.5 * (Q + Q.transpose(0, 2, 1))
+    return 0.5 * (Q + Q.transpose(0, 2, 1)), Cov
 
 
 def estimate_hessian_sqrt_symmetric(
@@ -345,7 +345,7 @@ def compute_median_split_decision(
 
 def allocate_output_buffers(
     MAX_CLUSTERS_EST: int, d: int, dtype: Any
-) -> Tuple[Dict[str, Array], int]:
+) -> tuple[dict[str, Array], int]:
     """Allocate output buffers for finalized clusters.
 
     Args:
@@ -373,11 +373,11 @@ def allocate_output_buffers(
 
 
 def adjust_buffer_capacity(
-    buffers: Dict[str, Array],
+    buffers: dict[str, Array],
     current_count: int,
     current_cap: int,
     required_total: int,
-) -> Tuple[Dict[str, Array], int]:
+) -> tuple[dict[str, Array], int]:
     """Grow output buffers if the finalized cluster count exceeds current capacity.
 
     Args:
@@ -437,7 +437,7 @@ def adaptive_clustering(
     COVZ_SHRINK: float = 0.05,
     H_RIDGE: float = 1e-18,
     MAX_LEVELS: int = 50,
-) -> Dict[str, Array]:
+) -> dict[str, Array]:
     """
     BFS adaptive clustering with *persistent* convex padding via a preallocated pool.
     This routine constructs a piecewise-local surrogate of a scalar function f(x) over
@@ -693,7 +693,7 @@ def adaptive_clustering(
             good_counts = counts[good_idx]
             good_starts = xp.r_[0, xp.cumsum(good_counts)[:-1]]
 
-            Qs = calculate_Q(
+            Qs, _ = calculate_Q(
                 dx_good,
                 good_starts,
                 good_counts,
