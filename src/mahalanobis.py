@@ -22,6 +22,7 @@ def knn_mahalanobis_clusters(
     eps: float = 0.0,
     trust_region_containment: bool = False,
     containment_level: float = 1.0,
+    batch_size: int = 1024,
 ) -> Tuple[Array, Array]:
     """
     GPU-only kNN over cluster centroids using the cluster-specific Mahalanobis distance.
@@ -52,6 +53,7 @@ def knn_mahalanobis_clusters(
         trust_region_containment: If True, only clusters satisfying
             dist2 <= containment_level are considered eligible.
         containment_level: Trust-region level defining containment (1.0 = boundary).
+        batch_size: Number of query points to process at once. Lower this if OOM persists.
 
     Returns:
         nn_idx: (M, k) int32 indices of nearest clusters (sorted by increasing distance).
@@ -84,50 +86,88 @@ def knn_mahalanobis_clusters(
 
     logger.debug(
         "kNN Mahalanobis Clusters Search: k=%d, return_sqrt=%s, eps=%g, "
-        "trust_region_containment=%s, containment_level=%g",
+        "trust_region_containment=%s, containment_level=%g, batch_size=%d",
         k,
         return_sqrt,
         eps,
         trust_region_containment,
         containment_level,
+        batch_size,
     )
     _start_time = time.perf_counter()
 
-    # Compute full squared Mahalanobis distance matrix dist2 (M, K):
-    # dist2[m, k] = dx[m,k,:]^T Q[k,:,:] dx[m,k,:]
-    dx = query_points[:, None, :] - centroids[None, :, :]  # (M, K, d)
-    # Compute (Q * dx)
-    dx_T = dx.transpose(1, 0, 2)  # (K, M, D)
-    temp = xp.matmul(Q, dx_T.transpose(0, 2, 1))  # (K, D, M)
+    # Lists to store results from each batch.
+    all_indices = []
+    all_dists = []
 
-    # Final dot product and sum over the 'D' dimension
-    temp = temp.transpose(2, 0, 1)  # (M, K, D)
-    dist2 = xp.sum(dx * temp, axis=-1)  # (M, K)
+    # Iterate over query points in chunks.
+    for start_idx in range(0, M, batch_size):
+        end_idx = min(start_idx + batch_size, M)
 
-    if trust_region_containment:
-        # Mask out clusters whose trust region does not contain the query.
-        dist2 = xp.where(dist2 <= containment_level, dist2, xp.inf)
+        # Slice current batch of queries
+        batch_queries = query_points[start_idx:end_idx]  # (B, d)
 
-    # Select k smallest per query using argpartition (for fast selection),
-    # then sort those k by distance for nicer output ordering.
-    part = xp.argpartition(dist2, kth=k - 1, axis=1)[:, :k]  # (M, k)
-    part_dist2 = xp.take_along_axis(dist2, part, axis=1)  # (M, k)
-    order = xp.argsort(part_dist2, axis=1)  # (M, k)
-    nn_idx = xp.take_along_axis(part, order, axis=1).astype(xp.int32)  # (M, k)
-    nn_dist2 = xp.take_along_axis(part_dist2, order, axis=1)  # (M, k)
+        # --- Compute Distances for Batch Against All Centroids ---
+        dx = batch_queries[:, None, :] - centroids[None, :, :]  # (B, K, d)
 
-    if trust_region_containment:
-        # Convert masked-out (+inf) entries into "missing" indices (-1).
-        nn_idx = xp.where(xp.isfinite(nn_dist2), nn_idx, -1).astype(xp.int32)
+        # 2. Compute (Q * dx)
+        # Transpose dx for easier batch matrix multiplication.
+        dx_T = dx.transpose(1, 0, 2)  # (K, B, d)
+
+        # Q: (K, d, d), dx_T: (K, B, d), dx_T transposed: (K, d, B).
+        temp = xp.matmul(Q, dx_T.transpose(0, 2, 1))  # (K, d, B)
+
+        # 3. Final dot product and sum over the 'd' dimension.
+        temp = temp.transpose(2, 0, 1)  # (B, K, d)
+
+        # Element-wise multiply and sum: (B, K, d) -> (B, K).
+        dist2_batch = xp.sum(dx * temp, axis=-1)  # (B, K)
+
+        # --- Post-Processing ---
+        if trust_region_containment:
+            # Mask out clusters whose trust region does not contain the query.
+            dist2_batch = xp.where(
+                dist2_batch <= containment_level, dist2_batch, xp.inf
+            )
+
+        # Select k smallest per query in the batch using argpartition (for fast
+        # selection), then sort those k by distance.
+        # If K is very large, argpartition is much faster than full sort
+        part = xp.argpartition(dist2_batch, kth=k - 1, axis=1)[:, :k]  # (B, k)
+        part_dist2 = xp.take_along_axis(dist2_batch, part, axis=1)  # (B, k)
+
+        # Sort the top k for clean output
+        order = xp.argsort(part_dist2, axis=1)  # (B, k)
+        batch_nn_idx = xp.take_along_axis(part, order, axis=1).astype(
+            xp.int32
+        )  # (B, k)
+        batch_nn_dist2 = xp.take_along_axis(part_dist2, order, axis=1)  # (B, k)
+
+        if trust_region_containment:
+            # Convert masked-out (+inf) entries into "missing" indices (-1).
+            batch_nn_idx = xp.where(
+                xp.isfinite(batch_nn_dist2), batch_nn_idx, -1
+            ).astype(xp.int32)
+
+        if return_sqrt:
+            batch_nn_dist2 = xp.sqrt(xp.maximum(batch_nn_dist2 + eps, 0))
+
+        # Append to results
+        all_indices.append(batch_nn_idx)
+        all_dists.append(batch_nn_dist2)
+
+        # Explicitly free large temp arrays to help CuPy memory pool
+        del dx, temp, dist2_batch, part_dist2
+
+    # Concatenate all batches into final (M, k) arrays
+    nn_idx = xp.concatenate(all_indices, axis=0)
+    nn_dist = xp.concatenate(all_dists, axis=0)
 
     logger.debug(
         "Runtime - knn_mahalanobis_clusters: %.3fs", time.perf_counter() - _start_time
     )
 
-    if return_sqrt:
-        nn_dist2 = xp.sqrt(xp.maximum(nn_dist2 + eps, 0))
-
-    return nn_idx, nn_dist2
+    return nn_idx, nn_dist
 
 
 if __name__ == "__main__":
