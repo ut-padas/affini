@@ -417,7 +417,7 @@ def experiment_mahalanobis_knn_containment() -> Path:
     K_NEIGHBOURSs = [1, 2, 3, 5, 10]
     CONTAINMENT_LEVELs = [1.0, 2.0, 3.0]
     TRUST_REGION_CONTAINMENTs = [True, False]
-    TOLs = [1e-3, 1e-4]
+    TOLs = [1e-2, 1e-3, 1e-4, 1e-5]
 
     for K_NEIGHBOURS, CONTAINMENT_LEVEL, TRUST_REGION_CONTAINMENT, TOL in product(
         K_NEIGHBOURSs, CONTAINMENT_LEVELs, TRUST_REGION_CONTAINMENTs, TOLs
@@ -450,12 +450,58 @@ def experiment_mahalanobis_knn_containment() -> Path:
     return EXP_DIR
 
 
+def experiment_rosenbrock_convergence() -> Path:
+    N_INIT_CLUSTERS = 25
+    N_MIN_PER_CLUSTER = 100
+    MAX_CLUSTERS_EST = 50_000
+    N_TRAIN = int(2e5)
+    N_TEST = int(1e5)
+    K_NEIGHBOURS = 5
+    CONTAINMENT_LEVEL = 1.0
+    TRUST_REGION_CONTAINMENT = True
+    ERROR_SCALING_METHOD = "global"
+
+    EXP_DIR = ICS26_DIR / "rosenbrock_convergence"
+    DIMs = [2]
+    ROSENBROCK_As = [1, 100]
+    TOLs = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
+
+    for DIM, ROSENBROCK_A, TOL in product(DIMs, ROSENBROCK_As, TOLs):
+        json_fpath = (
+            EXP_DIR
+            / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}.json"
+        )
+        json_fpath.parent.mkdir(parents=True, exist_ok=True)
+        if json_fpath.exists():
+            print(f"Skipping existing: {json_fpath}")
+            continue
+
+        rosenbrock_experiment_setup(
+            json_fpath=json_fpath,
+            DIM=DIM,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            ROSENBROCK_A=ROSENBROCK_A,
+            TOL=TOL,
+            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
+            TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
+        )
+
+    return EXP_DIR
+
+
 if __name__ == "__main__":
     dir_exp_1 = experiment_adaptive_clustering_global_vs_local()
     dir_exp_2 = experiment_adaptive_clustering_global_vs_n_init_clusters()
     dir_exp_3 = experiment_adaptive_clustering_global_local_vs_min_pts_cluster()
     dir_exp_4 = experiment_mahalanobis_knn_containment()
+    dir_exp_5 = experiment_rosenbrock_convergence()
 
-    _dirs = [dir_exp_1, dir_exp_2, dir_exp_3, dir_exp_4]
+    _dirs = [dir_exp_1, dir_exp_2, dir_exp_3, dir_exp_4, dir_exp_5]
     for d in _dirs:
         create_summary_dataframe(d)
