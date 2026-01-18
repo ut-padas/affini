@@ -85,6 +85,12 @@ class NearODESurrogate:
             raise RuntimeError("Model not trained.")
         return self.X_src
 
+    def get_number_of_sources(self) -> int:
+        """Return the number of source centroids used in training."""
+        if not self.trained:
+            raise RuntimeError("Model not trained.")
+        return self.N_src
+
     def predict(
         self,
         query_points,

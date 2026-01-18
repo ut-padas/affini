@@ -4,6 +4,7 @@ from functools import partial
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import pandas as pd
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, Array, xp
 from src.data_sampler import DataSampler
@@ -17,6 +18,18 @@ SEED = 0
 TINY_EPS = 1e-12
 
 
+def create_summary_dataframe(results_dir: Path):
+    assert results_dir.exists(), f"Directory {results_dir} does not exist."
+
+    json_files = list(results_dir.glob("*.json"))
+    data_dicts = [json.load(open(f, "r")) for f in json_files]
+    df = pd.DataFrame(data_dicts)
+    df = df.sort_values(by=["dim", "tol"], ascending=[True, False])
+
+    df.to_csv(results_dir / "summary.csv", index=False)
+    print(f"Summary dataframe saved to {results_dir / 'summary.csv'}")
+
+
 def create_problem_result_dict(
     problem_name: str,
     problem_tag: str,
@@ -26,6 +39,9 @@ def create_problem_result_dict(
     predictions: Array,
     ungauranteed_mask: Array,
     TOL: float,
+    DIM: int,
+    N_TRAIN: int,
+    N_CLUSTERS: int,
     **kwargs,
 ) -> dict:
     N_TEST = ground_truth.shape[0]
@@ -45,17 +61,23 @@ def create_problem_result_dict(
     n_within_tol = xp.sum(rel_error_linf <= TOL)
     perct_within_tol = 100.0 * n_within_tol / N_TEST
 
+    # Mandatory metrics
     result_dict = {
         "problem_name": problem_name,
         "problem_tag": problem_tag,
-        "train_time_sec": train_time,
-        "predict_time_sec": predict_time,
+        "tol": TOL,
+        "dim": DIM,
+        "n_train": N_TRAIN,
+        "n_test": N_TEST,
+        "n_clusters": N_CLUSTERS,
         "max_rel_error_linf": float(max_rel_error_linf),
         "max_rel_error_l2": float(max_rel_error_l2),
         "n_ungauranteed": int(n_ungauranteed),
         "perct_ungauranteed": float(perct_ungauranteed),
         "n_within_tol": int(n_within_tol),
         "perct_within_tol": float(perct_within_tol),
+        "train_time_sec": train_time,
+        "predict_time_sec": predict_time,
     }
     # Add any additional metrics
     for key, value in kwargs.items():
@@ -98,10 +120,10 @@ def plot_error_histogram(
     plt.savefig(img_fpath, dpi=300)
 
 
-def experiment_adaptive_clustering_global_vs_local():
+def experiment_adaptive_clustering_global_vs_local() -> Path:
     DIM = 2
     TOL = 1e-1
-    N_TRAIN = 2e5
+    N_TRAIN = int(2e5)
     N_INIT_CLUSTERS = 50
     N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 50_000
@@ -115,8 +137,9 @@ def experiment_adaptive_clustering_global_vs_local():
         for ROSENBROCK_A in [100**-1, 1, 100]:
             json_fpath = (
                 EXP_DIR
-                / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling{ERROR_SCALING_METHOD}.json"
+                / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}.json"
             )
+            json_fpath.parent.mkdir(parents=True, exist_ok=True)
             if json_fpath.exists():
                 print(f"Skipping existing: {json_fpath}")
                 continue
@@ -176,11 +199,11 @@ def experiment_adaptive_clustering_global_vs_local():
                 predictions=preds,
                 ungauranteed_mask=ungauranteed_mask,
                 TOL=TOL,
-                ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-                ROSENBROCK_A=ROSENBROCK_A,
                 DIM=DIM,
                 N_TRAIN=N_TRAIN,
-                N_TEST=N_TEST,
+                N_CLUSTERS=surrogate.get_number_of_sources(),
+                ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+                ROSENBROCK_A=ROSENBROCK_A,
                 N_INIT_CLUSTERS=N_INIT_CLUSTERS,
                 N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
                 K_NEIGHBOURS=K_NEIGHBOURS,
@@ -194,3 +217,13 @@ def experiment_adaptive_clustering_global_vs_local():
                 json_fpath=json_fpath,
                 TOL=TOL,
             )
+
+    return EXP_DIR
+
+
+if __name__ == "__main__":
+    dir_exp_1 = experiment_adaptive_clustering_global_vs_local()
+
+    _dirs = [dir_exp_1]
+    for d in _dirs:
+        create_summary_dataframe(d)
