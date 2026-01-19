@@ -6,14 +6,14 @@ from typing import Any, Callable, Literal
 from src import IS_CUPY_BACKEND, Array, xp
 from src.adaptive_clustering import adaptive_clustering
 from src.data_sampler import DataSampler
-from src.mahalanobis import knn_mahalanobis_clusters
+from src.ellipsoidal_distance import knn_ellipsoidal_distance
 
 logger = logging.getLogger(__name__)
 
 
 class NearODESurrogate:
     """
-    Surrogate using Adaptive Clustering + kNN with Mahalanobis Distance on GPU.
+    Surrogate using Adaptive Clustering + kNN with Ellipsoidal Distance on GPU.
     """
 
     def __init__(self):
@@ -100,10 +100,10 @@ class NearODESurrogate:
         containment_level: float = 1.0,
     ) -> tuple:
         """
-        Inference via GPU Mahalanobis kNN over cluster centroids + local Taylor surrogate.
+        Inference via GPU Ellipsoidal kNN over cluster centroids + local Taylor surrogate.
 
         Pipeline:
-        1) kNN search over source centroids using cluster-wise Mahalanobis distance:
+        1) kNN search over source centroids using cluster-wise Ellipsoidal distance:
                 dist2_k(x) = (x - μ_k)^T Q_k (x - μ_k)
             optionally requiring trust-region containment:
                 dist2_k(x) <= containment_level
@@ -141,19 +141,19 @@ class NearODESurrogate:
         qp = xp.asarray(query_points)
 
         # ---------------------------------------------------------------------
-        # 1. kNN in cluster-wise Mahalanobis distance using stored (centroids, Q)
+        # 1. kNN in cluster-wise E distance using stored (centroids, Q)
         # ---------------------------------------------------------------------
         t_search = time.perf_counter()
-        nn_idx, nn_dist2 = knn_mahalanobis_clusters(
+        nn_idx, nn_dist2 = knn_ellipsoidal_distance(
             qp,
             xp.asarray(self.X_src),
             xp.asarray(self.trust_ellipses_src),
             k_NEIGHBOURS,
-            trust_region_containment=trust_region_containment,
+            enforce_containment=trust_region_containment,
             containment_level=containment_level,
             return_sqrt=False,  # keep squared distances for checks
         )
-        logger.info(f"Mahalanobis kNN Search Time: {time.perf_counter()-t_search:.4f}s")
+        logger.info(f"Ellipsoidal kNN Search Time: {time.perf_counter()-t_search:.4f}s")
 
         # If containment is enabled, some slots may be -1. For inference we need
         # valid neighbors. We handle this by:

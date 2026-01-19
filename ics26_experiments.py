@@ -437,7 +437,7 @@ def experiment_adaptive_clustering_global_local_vs_min_pts_cluster():
     return EXP_DIR
 
 
-def experiment_mahalanobis_knn_containment() -> Path:
+def experiment_ellipsoidal_knn_containment() -> Path:
     DIM = 2
     N_TRAIN = int(2e5)
     N_INIT_CLUSTERS = 25
@@ -447,7 +447,7 @@ def experiment_mahalanobis_knn_containment() -> Path:
     ERROR_SCALING_METHOD = "global"
     ROSENBROCK_A = 100
 
-    EXP_DIR = ICS26_DIR / "mahalanobis_knn_containment"
+    EXP_DIR = ICS26_DIR / "ellipsoidal_knn_containment"
     del_all_error_files_in_dir(EXP_DIR)
     K_NEIGHBOURSs = [1, 2, 3, 5, 10]
     CONTAINMENT_LEVELs = [1.0, 2.0, 3.0]
@@ -540,7 +540,7 @@ if __name__ == "__main__":
     dir_exp_3 = experiment_adaptive_clustering_global_local_vs_min_pts_cluster()
     create_summary_dataframe(dir_exp_3)
 
-    dir_exp_4 = experiment_mahalanobis_knn_containment()
+    dir_exp_4 = experiment_ellipsoidal_knn_containment()
     create_summary_dataframe(dir_exp_4)
 
     dir_exp_5 = experiment_rosenbrock_convergence()

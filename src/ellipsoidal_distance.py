@@ -7,12 +7,12 @@ from src import IS_CUPY_BACKEND, Array, xp
 logger = logging.getLogger(__name__)
 
 # TODO: To speed things up, we could find the out the nearest neighours first in L2
-# space through cupy kNN, and then compute Mahalanobis distances only for those. This
+# space through cupy kNN, and then compute Ellipsoidal distances only for those. This
 # would be particularly useful when K (# of clusters), d (dimensionality), M (# of
 # query points) are all large.
 
 
-def knn_mahalanobis_clusters(
+def knn_ellipsoidal_distance(
     query_points: Array,
     centroids: Array,
     Q: Array,
@@ -20,14 +20,15 @@ def knn_mahalanobis_clusters(
     *,
     return_sqrt: bool = False,
     eps: float = 0.0,
-    trust_region_containment: bool = False,
+    enforce_containment: bool = False,
     containment_level: float = 1.0,
     batch_size: int = 1024,
 ) -> Tuple[Array, Array]:
     """
-    GPU-only kNN over cluster centroids using the cluster-specific Mahalanobis distance.
+    GPU-only kNN over cluster centroids using the cluster-specific Ellipsoidal trust
+    distance metric defined by per-cluster matrices Q.
     For query point x (row of `query_points`) and cluster k with centroid μ_k and
-    trust-region matrix Q_k, we define the squared Mahalanobis distance:
+    trust-region matrix Q_k, we define the squared Ellipsoidal distance as
 
         dist2_k(x) = (x - μ_k)^T Q_k (x - μ_k).
 
@@ -50,14 +51,14 @@ def knn_mahalanobis_clusters(
         return_sqrt: If True, return sqrt(dist2) instead of dist2.
         eps: Nonnegative guard used only when return_sqrt=True:
             sqrt(max(dist2 + eps, 0)).
-        trust_region_containment: If True, only clusters satisfying
+        enforce_containment: If True, only clusters satisfying
             dist2 <= containment_level are considered eligible.
         containment_level: Trust-region level defining containment (1.0 = boundary).
         batch_size: Number of query points to process at once. Lower this if OOM persists.
 
     Returns:
         nn_idx: (M, k) int32 indices of nearest clusters (sorted by increasing distance).
-            If trust_region_containment=True and a query has fewer than k eligible
+            If enforce_containment=True and a query has fewer than k eligible
             clusters, remaining entries are -1.
         nn_dist: (M, k) distances corresponding to nn_idx (squared unless return_sqrt).
             Missing entries are +inf.
@@ -85,12 +86,12 @@ def knn_mahalanobis_clusters(
         raise ValueError("eps must be nonnegative.")
 
     logger.debug(
-        "kNN Mahalanobis Clusters Search: k=%d, return_sqrt=%s, eps=%g, "
+        "kNN Ellipsoidal Clusters Search: k=%d, return_sqrt=%s, eps=%g, "
         "trust_region_containment=%s, containment_level=%g, batch_size=%d",
         k,
         return_sqrt,
         eps,
-        trust_region_containment,
+        enforce_containment,
         containment_level,
         batch_size,
     )
@@ -124,7 +125,7 @@ def knn_mahalanobis_clusters(
         dist2_batch = xp.sum(dx * temp, axis=-1)  # (B, K)
 
         # --- Post-Processing ---
-        if trust_region_containment:
+        if enforce_containment:
             # Mask out clusters whose trust region does not contain the query.
             dist2_batch = xp.where(
                 dist2_batch <= containment_level, dist2_batch, xp.inf
@@ -143,7 +144,7 @@ def knn_mahalanobis_clusters(
         )  # (B, k)
         batch_nn_dist2 = xp.take_along_axis(part_dist2, order, axis=1)  # (B, k)
 
-        if trust_region_containment:
+        if enforce_containment:
             # Convert masked-out (+inf) entries into "missing" indices (-1).
             batch_nn_idx = xp.where(
                 xp.isfinite(batch_nn_dist2), batch_nn_idx, -1
@@ -163,9 +164,7 @@ def knn_mahalanobis_clusters(
     nn_idx = xp.concatenate(all_indices, axis=0)
     nn_dist = xp.concatenate(all_dists, axis=0)
 
-    logger.debug(
-        "Runtime - knn_mahalanobis_clusters: %.3fs", time.perf_counter() - _start_time
-    )
+    logger.debug("Runtime - knn_elli: %.3fs", time.perf_counter() - _start_time)
 
     return nn_idx, nn_dist
 
@@ -180,14 +179,14 @@ if __name__ == "__main__":
 
     setup_logging(console_level=logging.DEBUG)
 
-    MD_DIR = FIGURES_DIR / "mahalanobis"
+    MD_DIR = FIGURES_DIR / "ellipsoidal_knn"
     MD_DIR.mkdir(parents=True, exist_ok=True)
 
     parser = argparse.ArgumentParser(
-        description="Demo of knn_mahalanobis_clusters with Adaptive GPU Clustering"
+        description="Demo of knn_ellipsoidal_distance with Adaptive GPU Clustering"
     )
     parser.add_argument(
-        "--trust-region-containment",
+        "--enforce-containment",
         action="store_true",
         help="Enable trust-region containment mode in kNN search",
     )
@@ -204,13 +203,13 @@ if __name__ == "__main__":
         help="Trust-region containment level (default: 1.0 = boundary)",
     )
     args = parser.parse_args()
-    TRUST_REGION_CONTAINMENT = args.trust_region_containment
+    ENFORCE_CONTAINMENT = args.enforce_containment
     K = args.k
     CONTAINMENT_LEVEL = args.containment_level
 
     img_fpath = (
         MD_DIR
-        / f"knn_mahalanobis_clusters_k{K}_{'constrained' if TRUST_REGION_CONTAINMENT else 'unconstrained'}_containment{CONTAINMENT_LEVEL}.png"
+        / f"knn_ellipsoidal_distance_k{K}_{'constrained' if ENFORCE_CONTAINMENT else 'unconstrained'}_containment{CONTAINMENT_LEVEL}.png"
     )
     if img_fpath.exists():
         print(f"Image {img_fpath} already exists, skipping demo.")
@@ -241,7 +240,7 @@ if __name__ == "__main__":
     print("-" * 40)
     print(f"Final Cluster Count: {results['centroids'].shape[0]:,}")
 
-    print("Testing knn_mahalanobis_clusters...")
+    print("Testing kNN Ellipsoidal Distance Search...")
     M = 30
     query_points = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(M, d))
     centroids = results["centroids"]
@@ -250,25 +249,25 @@ if __name__ == "__main__":
 
     for _t in (False, True):
         _start_time = time.time()
-        nn_idx, nn_dist2 = knn_mahalanobis_clusters(
+        nn_idx, nn_dist2 = knn_ellipsoidal_distance(
             query_points,
             centroids,
             Q,
             K,
             return_sqrt=False,
-            trust_region_containment=_t,
+            enforce_containment=_t,
         )
         _end_time = time.time()
-        mode = "CONTAINED" if TRUST_REGION_CONTAINMENT else "UNCONSTRAINED"
+        mode = "CONTAINED" if ENFORCE_CONTAINMENT else "UNCONSTRAINED"
         print(f"[{mode}] Runtime: {_end_time - _start_time:.3f}s")
 
-    nn_idx_vis, nn_dist2_vis = knn_mahalanobis_clusters(
+    nn_idx_vis, nn_dist2_vis = knn_ellipsoidal_distance(
         query_points,
         centroids,
         Q,
         K,
         return_sqrt=False,
-        trust_region_containment=TRUST_REGION_CONTAINMENT,
+        enforce_containment=ENFORCE_CONTAINMENT,
         containment_level=CONTAINMENT_LEVEL,
     )
 
@@ -408,7 +407,7 @@ if __name__ == "__main__":
                 axs[1].add_patch(ellipse)
 
         axs[1].set_title(
-            f"Query Points with Nearest Containing Clusters (k={K}, containment={TRUST_REGION_CONTAINMENT}, level={CONTAINMENT_LEVEL})",
+            f"Query Points with Nearest Containing Clusters (k={K}, containment={CONTAINMENT_LEVEL}, level={CONTAINMENT_LEVEL})",
             fontsize=6,
         )
 
