@@ -87,7 +87,7 @@ def knn_ellipsoidal_distance(
 
     logger.debug(
         "kNN Ellipsoidal Clusters Search: k=%d, return_sqrt=%s, eps=%g, "
-        "trust_region_containment=%s, containment_level=%g, batch_size=%d",
+        "enforce_containment=%s, containment_level=%g, batch_size=%d",
         k,
         return_sqrt,
         eps,

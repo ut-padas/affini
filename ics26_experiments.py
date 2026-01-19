@@ -184,7 +184,7 @@ def rosenbrock_experiment_setup(
     N_TEST: int,
     K_NEIGHBOURS: int,
     CONTAINMENT_LEVEL: float,
-    TRUST_REGION_CONTAINMENT: bool,
+    ENFORCE_CONTAINMENT: bool,
     SYNTH_BUDGET_FACTOR: int = 100,
 ):
     scaled_rosenbrock = partial(rosenbrock, a=ROSENBROCK_A)
@@ -230,7 +230,7 @@ def rosenbrock_experiment_setup(
         preds, ungauranteed_mask = surrogate.predict(
             X_test,
             k_NEIGHBOURS=K_NEIGHBOURS,
-            trust_region_containment=TRUST_REGION_CONTAINMENT,
+            enforce_containment=ENFORCE_CONTAINMENT,
             containment_level=CONTAINMENT_LEVEL,
         )
         _end_predict_time = time.perf_counter()
@@ -274,7 +274,7 @@ def rosenbrock_experiment_setup(
         N_INIT_CLUSTERS=N_INIT_CLUSTERS,
         N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
         K_NEIGHBOURS=K_NEIGHBOURS,
-        TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
+        ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
         CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
         SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
     )
@@ -301,7 +301,7 @@ def experiment_adaptive_clustering_global_vs_local() -> Path:
     N_TEST = int(5e4)
     K_NEIGHBOURS = 5
     CONTAINMENT_LEVEL = 1.0
-    TRUST_REGION_CONTAINMENT = True
+    ENFORCE_CONTAINMENT = True
 
     EXP_DIR = ICS26_DIR / "adaptive_clustering_global_vs_local"
     del_all_error_files_in_dir(EXP_DIR)
@@ -334,7 +334,7 @@ def experiment_adaptive_clustering_global_vs_local() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
+            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
         )
 
     return EXP_DIR
@@ -348,7 +348,7 @@ def experiment_adaptive_clustering_global_vs_n_init_clusters() -> Path:
     N_TEST = int(5e4)
     K_NEIGHBOURS = 5
     CONTAINMENT_LEVEL = 1.0
-    TRUST_REGION_CONTAINMENT = True
+    ENFORCE_CONTAINMENT = True
     ERROR_SCALING_METHOD = "global"
 
     EXP_DIR = ICS26_DIR / "adaptive_clustering_global_vs_n_init_clusters"
@@ -382,7 +382,7 @@ def experiment_adaptive_clustering_global_vs_n_init_clusters() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
+            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             SYNTH_BUDGET_FACTOR=500,
         )
     return EXP_DIR
@@ -396,7 +396,7 @@ def experiment_adaptive_clustering_global_local_vs_min_pts_cluster():
     N_TEST = int(5e4)
     K_NEIGHBOURS = 5
     CONTAINMENT_LEVEL = 1.0
-    TRUST_REGION_CONTAINMENT = True
+    ENFORCE_CONTAINMENT = True
 
     EXP_DIR = ICS26_DIR / "adaptive_clustering_global_local_vs_min_pts_per_cluster"
     del_all_error_files_in_dir(EXP_DIR)
@@ -430,7 +430,7 @@ def experiment_adaptive_clustering_global_local_vs_min_pts_cluster():
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
+            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             SYNTH_BUDGET_FACTOR=500,
         )
 
@@ -451,15 +451,15 @@ def experiment_ellipsoidal_knn_containment() -> Path:
     del_all_error_files_in_dir(EXP_DIR)
     K_NEIGHBOURSs = [1, 2, 3, 5, 10]
     CONTAINMENT_LEVELs = [1.0, 2.0, 3.0]
-    TRUST_REGION_CONTAINMENTs = [True, False]
+    ENFORCE_CONTAINMENT = [True, False]
     TOLs = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
 
-    for K_NEIGHBOURS, CONTAINMENT_LEVEL, TRUST_REGION_CONTAINMENT, TOL in product(
-        K_NEIGHBOURSs, CONTAINMENT_LEVELs, TRUST_REGION_CONTAINMENTs, TOLs
+    for K_NEIGHBOURS, CONTAINMENT_LEVEL, ENFORCE_CONTAINMENT, TOL in product(
+        K_NEIGHBOURSs, CONTAINMENT_LEVELs, ENFORCE_CONTAINMENT, TOLs
     ):
         json_fpath = (
             EXP_DIR
-            / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}_containment{CONTAINMENT_LEVEL}_trustregion{TRUST_REGION_CONTAINMENT}.json"
+            / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}_containment{CONTAINMENT_LEVEL}_trustregion{ENFORCE_CONTAINMENT}.json"
         )
         json_fpath.parent.mkdir(parents=True, exist_ok=True)
         if json_fpath.exists():
@@ -479,7 +479,7 @@ def experiment_ellipsoidal_knn_containment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
+            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             SYNTH_BUDGET_FACTOR=500,
         )
 
@@ -494,7 +494,7 @@ def experiment_rosenbrock_convergence() -> Path:
     N_TEST = int(1e5)
     K_NEIGHBOURS = 5
     CONTAINMENT_LEVEL = 1.0
-    TRUST_REGION_CONTAINMENT = True
+    ENFORCE_CONTAINMENT = True
     ERROR_SCALING_METHOD = "global"
 
     EXP_DIR = ICS26_DIR / "rosenbrock_convergence"
@@ -526,7 +526,7 @@ def experiment_rosenbrock_convergence() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            TRUST_REGION_CONTAINMENT=TRUST_REGION_CONTAINMENT,
+            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             SYNTH_BUDGET_FACTOR=300,
         )
 

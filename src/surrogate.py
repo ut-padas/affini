@@ -96,7 +96,7 @@ class NearODESurrogate:
         query_points,
         k_NEIGHBOURS: int = 1,
         *,
-        trust_region_containment: bool = False,
+        enforce_containment: bool = False,
         containment_level: float = 1.0,
     ) -> tuple:
         """
@@ -127,7 +127,7 @@ class NearODESurrogate:
             RTOL: relative tolerance ε_rel for guarantee checks (optional).
             L_global: global curvature bound L_g (optional).
             ALPHA: trust factor alpha used in tolerance terms.
-            trust_region_containment: if True, neighbors must contain query under Q_k.
+            enforce_containment: if True, neighbors must contain query under Q_k.
             containment_level: ellipsoid level for containment, typically 1.0.
 
         Returns:
@@ -149,7 +149,7 @@ class NearODESurrogate:
             xp.asarray(self.X_src),
             xp.asarray(self.trust_ellipses_src),
             k_NEIGHBOURS,
-            enforce_containment=trust_region_containment,
+            enforce_containment=enforce_containment,
             containment_level=containment_level,
             return_sqrt=False,  # keep squared distances for checks
         )
@@ -343,7 +343,7 @@ if __name__ == "__main__":
     preds, ungauranteed_mask = surrogate.predict(
         X_test,
         k_NEIGHBOURS=K_NEIGHBOURS,
-        trust_region_containment=True,
+        enforce_containment=True,
         containment_level=CONTAINMENT_LEVEL,
     )
     _end_predict_time = time.perf_counter()
