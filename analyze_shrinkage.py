@@ -1,10 +1,9 @@
-from typing import Literal
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from scipy import stats
 
 from ics26_experiments import ICS26_DIR
 from src.adaptive_clustering import calculate_Q
@@ -14,288 +13,313 @@ np.random.seed(0)
 SHRK_RES_DIR = ICS26_DIR / "shrinkage_analysis"
 SHRK_RES_DIR.mkdir(parents=True, exist_ok=True)
 
-SHRINK_VALS = [0.0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0]
+# Publication-Quality Plot Settings
+plt.rcParams.update(
+    {
+        "text.usetex": True,
+        "font.family": "serif",
+        "font.size": 10,
+        "axes.labelsize": 11,
+        "axes.titlesize": 12,
+        "xtick.labelsize": 9,
+        "ytick.labelsize": 9,
+        "legend.fontsize": 9,
+        "figure.figsize": (6.5, 4.5),
+        "figure.dpi": 100,
+        "savefig.dpi": 300,
+        "lines.linewidth": 1.5,
+        "lines.markersize": 5,
+        "axes.grid": True,
+        "grid.alpha": 0.3,
+        "axes.axisbelow": True,
+    }
+)
+
+
+# Common Constants
+SHRINK_VALS = [0.0, 0.01, 0.05, 0.1]
+PALETTE = "deep"
+COLORS = sns.color_palette(PALETTE, n_colors=len(SHRINK_VALS))
+
+
+def get_target_N(d):
+    """Calculates the Vershynin threshold: 10 * d * log(d)"""
+    if d <= 1:
+        return 10
+    return int(10 * d * np.log(d))
 
 
 def generate_degenerate_data(
-    dim,
-    n_points,
-    main_scale=1.0,
-    small_scale=0.01,
-    num_degen_dims: int | Literal["random", "max"] = "random",
+    dim, n_points, main_scale=1.0, small_scale=0.1, num_degen_dims=1
 ):
     """
-    Generates data that is highly stretched (high correlation).
-    Almost all variance is in the first dimension.
+    Generates data where 'num_degen_dims' dimensions have 'small_scale' variance,
+    and the rest have 'main_scale'. The data is then randomly rotated.
     """
-    rand_mat = np.random.randn(dim, dim)
-    Q_rot, _ = np.linalg.qr(rand_mat)
-
-    if num_degen_dims == "random":
-        # pick a random number of degenerate dims between 1 and dim-1
-        _n_dd = np.random.randint(1, dim)
-    elif num_degen_dims == "max":
-        _n_dd = dim - 1
-    else:
-        _n_dd = int(num_degen_dims)
-    print(f"Generating data in {dim}D with {_n_dd} degenerate dims.")
-    major_dims = dim - _n_dd
-    scales = np.array([main_scale] * major_dims + [small_scale] * _n_dd)
+    # 1. Create diagonal scales
+    n_normal = dim - num_degen_dims
+    scales = np.array([main_scale] * n_normal + [small_scale] * num_degen_dims)
     np.random.shuffle(scales)
 
-    data_aligned = np.random.randn(n_points, dim) * scales
-    return data_aligned @ Q_rot.T
+    # 2. Generate axis-aligned data
+    data = np.random.randn(n_points, dim) * scales
+
+    # 3. Random rotation (QR decomposition of random matrix)
+    Q_rot, _ = np.linalg.qr(np.random.randn(dim, dim))
+    return data @ Q_rot.T
 
 
-def analyze_shrinkage_dataframe():
-    dimensions = [5, 10, 50, 100]
+def run_covariance_experiment(X, shrinkage_list):
+    """Helper to compute condition numbers for a given dataset X and list of shrinkages."""
+    results = {}
+    N, D = X.shape
 
-    records = []
+    starts = np.array([0])
+    counts = np.array([N])
+    K = 1
 
-    print("Running simulations across dimensions and shrinkage values...")
+    for s_val in shrinkage_list:
+        _, Cov = calculate_Q(X, starts, counts, K, Q_SHRINK=s_val)
 
-    for d in dimensions:
-        # Use low sample count (N = d + 2) to force instability
-        N = d + 2
-        X = generate_degenerate_data(d, N)
+        # Calculate Condition Number
+        evals = np.linalg.eigvalsh(Cov[0])
+        # Avoid division by zero
+        min_eig = max(evals.min(), 1e-15)
+        cond_num = evals.max() / min_eig
+        results[s_val] = cond_num
 
-        starts = np.array([0])
-        counts = np.array([N])
-        K = 1
-
-        for s_val in SHRINK_VALS:
-            _, Cov = calculate_Q(X, starts, counts, K, Q_SHRINK=s_val)
-
-            # Calculate Condition Number: max_eig / min_eig
-            # Add tiny epsilon to avoid div-by-zero if singular
-            evals = np.linalg.eigvalsh(Cov[0])
-            cond_num = evals.max() / (evals.min() + 1e-15)
-
-            records.append(
-                {
-                    "Dimension": d,
-                    "Shrinkage": s_val,
-                    "CondNumber": cond_num,
-                    "LogCond": np.log10(
-                        cond_num
-                    ),  # Log scale is easier to read/correlate
-                }
-            )
-
-    # Create DataFrame
-    df = pd.DataFrame(records)
-
-    # --- 1. DISPLAY TABLE ---
-    print("\n" + "=" * 20 + " CONDITION NUMBER TABLE " + "=" * 20)
-    # Pivot to show Shrinkage as rows, Dimensions as columns
-    pivot_df = df.pivot(index="Shrinkage", columns="Dimension", values="CondNumber")
-
-    # Format the float output for cleaner reading
-    pd.set_option("display.float_format", "{:.2e}".format)
-    print(pivot_df)
-
-    # --- 2. STATISTICAL TEST ---
-    print("\n" + "=" * 20 + " STATISTICAL CORRELATION TEST " + "=" * 20)
-    print(
-        "Hypothesis: Higher Shrinkage is correlated with lower Condition Number (Better Stability)."
-    )
-    print("Using Spearman Rank Correlation (non-parametric).\n")
-
-    for d in dimensions:
-        sub_df = df[df["Dimension"] == d]
-
-        # We test correlation between Shrinkage and Condition Number
-        # We expect a strong NEGATIVE correlation (more shrink = lower condition num)
-        corr, p_val = stats.spearmanr(sub_df["Shrinkage"], sub_df["CondNumber"])
-
-        significance = "SIGNIFICANT" if p_val < 0.05 else "NOT SIGNIFICANT"  # type: ignore
-        print(
-            f"Dim {d:<3} | Spearman R: {corr:>6.3f} | p-value: {p_val:.2e} -> {significance}"
-        )
-
-    # --- 3. PLOT VISUALIZATION ---
-    print("\nGenerating visual plot...")
-    plt.figure(figsize=(10, 6))
-
-    sns.lineplot(
-        data=df,
-        x="Shrinkage",
-        y="LogCond",
-        hue="Dimension",
-        marker="o",
-        palette="tab10",
-    )
-    plt.title("Effect of Shrinkage on Condition Number of Covariance Matrix")
-    plt.xlabel("Shrinkage Value")
-    plt.ylabel("Log10 Condition Number")
-    plt.yscale("linear")
-    plt.grid(True)
-    plt.legend(title="Dimension")
-    plt.tight_layout()
-    plt.savefig(SHRK_RES_DIR / "shrinkage_condition_number_analysis.png", dpi=300)
-    plt.close()
+    return results
 
 
-def analyze_shrinkage_for_fixed_d_but_varying_degen(
-    dim=10, main_scale=1, small_scale=0.01, n_points=None
-):
-    if n_points is None:
-        n_points = dim + 2  # minimal points to force instability
-    else:
-        n_points = int(n_points)
+# =============================================================================
+# EXPERIMENT 1: Varying Degenerate Dimensions (Fixed D, Fixed N)
+# =============================================================================
+def experiment_1_varying_degeneracy():
+    print("\n--- Running Experiment 1: Varying Degeneracy ---")
+    D = 50
+    N = get_target_N(D)
+    main_scale = 100.0
+    small_scale = 1.0
+    ratio = int(main_scale / small_scale)
 
-    degen_dims_options = np.linspace(1, dim - 1, num=3, dtype=int)
+    # Vary degenerate dimensions from 1 to D-1 (increment by 2)
+    degen_range = list(range(1, D, 2))
 
     records = []
 
-    print("Running simulations for fixed dimension with varying degenerate dims...")
-
-    for n_dd in degen_dims_options:
+    for n_deg in degen_range:
         X = generate_degenerate_data(
-            dim,
-            n_points,
-            num_degen_dims=n_dd,
-            main_scale=main_scale,
-            small_scale=small_scale,
+            D, N, main_scale, small_scale, num_degen_dims=n_deg
         )
+        res = run_covariance_experiment(X, SHRINK_VALS)
 
-        starts = np.array([0])
-        counts = np.array([n_points])
-        K = 1
-
-        for s_val in SHRINK_VALS:
-            _, Cov = calculate_Q(X, starts, counts, K, Q_SHRINK=s_val)
-
-            evals = np.linalg.eigvalsh(Cov[0])
-            cond_num = evals.max() / (evals.min() + 1e-15)
-
+        for s_val, cond in res.items():
             records.append(
                 {
-                    "N": n_points,
-                    "D": dim,
-                    "Min/Max Scales": main_scale / small_scale,
-                    "DegenerateDims": n_dd,
+                    "Degenerate_Dims": n_deg,
                     "Shrinkage": s_val,
-                    "CondNumber": cond_num,
-                    "LogCond": np.log10(cond_num),
+                    "CondNumber": cond,
+                    "LogCond": np.log10(cond),
                 }
             )
 
     df = pd.DataFrame(records)
-    print(df.head())
 
-    # --- 3. PLOT VISUALIZATION ---
-    print("\nGenerating visual plot...")
-    plt.figure(figsize=(10, 6))
+    # Dump Table
+    csv_path = SHRK_RES_DIR / "exp1_varying_degeneracy.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"Exp 1 Data saved to {csv_path}")
 
+    # Plot
+    fig, ax = plt.subplots(figsize=(6.5, 4.5))
     sns.lineplot(
         data=df,
-        x="Shrinkage",
-        y="LogCond",
-        hue="DegenerateDims",
+        x="Degenerate_Dims",
+        y="CondNumber",
+        hue="Shrinkage",
+        palette=PALETTE,
         marker="o",
-        palette="tab10",
+        ax=ax,
+        linewidth=1.5,
+        markersize=5,
     )
-    plt.title(
-        f"Shrinkage on cond(COV) (Fixed Dim={dim}, Scales: {main_scale}/{small_scale}, N={n_points})"
+    ax.set_title(
+        rf"Condition Number vs.Degeneracy ($D={D}$, $N={N}$, Ratio={ratio:.0f})",
+        fontsize=12,
     )
-    plt.xlabel("Shrinkage Value")
-    plt.ylabel("Log10 Condition Number")
-    plt.yscale("linear")
-    plt.grid(True)
-    plt.legend(title="Degenerate Dimensions")
+    ax.set_yscale("log")
+    ax.set_xlabel(r"Number of Degenerate Dimensions")
+    ax.set_ylabel(r"Condition Number $\kappa$")
+    ax.grid(True, which="both", ls="-", alpha=0.3)
+    ax.legend(title=r"Shrinkage $\tau$", frameon=True)
     plt.tight_layout()
-    fname = f"shrinkage_condition_number_npoints{n_points}_fixedD{dim}_main{main_scale}_small{small_scale}_analysis.png"
-    plt.savefig(SHRK_RES_DIR / fname, dpi=300)
+    plt.savefig(
+        SHRK_RES_DIR / "exp1_cond_vs_degeneracy.png", dpi=300, bbox_inches="tight"
+    )
     plt.close()
 
-    return df
+
+# =============================================================================
+# EXPERIMENT 2: Varying Sample Size N (Fixed D, Fixed Degeneracy)
+# =============================================================================
+def experiment_2_varying_N():
+    print("\n--- Running Experiment 2: Varying Sample Size N ---")
+    D = 50
+    n_deg = 10
+    target_N = get_target_N(D)
+
+    # Scale Ratios to test: 10 and 100
+    scale_configs = [
+        {"ratio": 10, "main": 100.0, "small": 1.0},
+        {"ratio": 100, "main": 1000.0, "small": 1.0},
+    ]
+
+    # Sample sizes: From D+2 up to 2*Target_N
+    n_steps = np.unique(np.linspace(D + 5, target_N * 2.5, 20).astype(int))
+    n_steps = np.sort(n_steps)
+
+    records = []
+
+    for config in scale_configs:
+        ratio = config["ratio"]
+        for n_points in n_steps:
+            X = generate_degenerate_data(
+                D, n_points, config["main"], config["small"], num_degen_dims=n_deg
+            )
+            res = run_covariance_experiment(X, SHRINK_VALS)
+
+            for s_val, cond in res.items():
+                records.append(
+                    {
+                        "N": n_points,
+                        "Scale_Ratio": ratio,
+                        "Shrinkage": s_val,
+                        "CondNumber": cond,
+                    }
+                )
+
+    df = pd.DataFrame(records)
+
+    # Dump Table
+    csv_path = SHRK_RES_DIR / "exp2_varying_sample_size.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"Exp 2 Data saved to {csv_path}")
+
+    # Plot
+    g = sns.FacetGrid(
+        df,
+        col="Scale_Ratio",
+        hue="Shrinkage",
+        height=4.5,
+        aspect=1.35,
+        palette=PALETTE,
+        despine=True,
+    )
+    g.map(
+        sns.lineplot,
+        "N",
+        "CondNumber",
+        marker="o",
+        linewidth=1.5,
+        markersize=5,
+    )
+
+    # Add vertical line at Target N and format axes
+    for ax, ratio in zip(g.axes.flat, sorted(df["Scale_Ratio"].unique())):
+        ax.axvline(
+            target_N,
+            color="red",
+            linestyle="--",
+            linewidth=1,
+            label=rf"Target $N$ ({target_N})",
+            alpha=0.7,
+        )
+        ax.set_yscale("log")
+        ax.set_xlabel(r"Sample Size $N$")
+        ax.set_ylabel(r"Condition Number $\kappa$")
+        ax.grid(True, which="both", ls="-", alpha=0.3)
+        ax.set_title(rf"Scale Ratio = {int(ratio)}")
+
+    g.add_legend(title=r"Shrinkage $\tau$", frameon=True)
+
+    g.figure.suptitle(
+        rf"Condition Number vs.\ Sample Size ($D={D}$, Degenerate Dims={n_deg})",
+        y=0.98,
+        fontsize=12,
+    )
+    g.figure.subplots_adjust(top=0.86)
+
+    plt.savefig(
+        SHRK_RES_DIR / "exp2_cond_vs_samplesize.png", dpi=300, bbox_inches="tight"
+    )
+    plt.close()
+
+
+# =============================================================================
+# EXPERIMENT 3: Varying Dimensions D (N = 10 d log d)
+# =============================================================================
+def experiment_3_varying_D():
+    print("\n--- Running Experiment 3: Varying Dimensions D ---")
+    dimensions = [2, 10, 50, 100, 200]
+    main_scale = 100.0
+    small_scale = 1.0  # Ratio = 10
+    ratio = int(main_scale / small_scale)
+
+    records = []
+
+    for D in dimensions:
+        N = get_target_N(D)
+        # Use a proportional number of degenerate dims, e.g., 20% of D, minimum 1
+        n_deg = max(1, int(D * 0.2))
+
+        X = generate_degenerate_data(
+            D, N, main_scale, small_scale, num_degen_dims=n_deg
+        )
+        res = run_covariance_experiment(X, SHRINK_VALS)
+
+        for s_val, cond in res.items():
+            records.append(
+                {"Dimension": D, "N_used": N, "Shrinkage": s_val, "CondNumber": cond}
+            )
+
+    df = pd.DataFrame(records)
+
+    # Dump Table
+    csv_path = SHRK_RES_DIR / "exp3_varying_dimension.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"Exp 3 Data saved to {csv_path}")
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(6.5, 4.5))
+    sns.lineplot(
+        data=df,
+        x="Dimension",
+        y="CondNumber",
+        hue="Shrinkage",
+        palette=PALETTE,
+        marker="o",
+        ax=ax,
+        linewidth=1.5,
+        markersize=5,
+    )
+    ax.set_title(
+        rf"Condition Number vs.\ Dimension ($N = 10d\log d$, Ratio={ratio})",
+        fontsize=12,
+    )
+    ax.set_yscale("log")
+    ax.set_ylabel(r"Condition Number $\kappa$")
+    ax.set_xlabel(r"Dimension $d$")
+    ax.grid(True, which="both", ls="-", alpha=0.3)
+    ax.legend(title=r"Shrinkage $\tau$", frameon=True)
+    plt.tight_layout()
+    plt.savefig(
+        SHRK_RES_DIR / "exp3_cond_vs_dimension.png", dpi=300, bbox_inches="tight"
+    )
+    plt.close()
 
 
 if __name__ == "__main__":
-    analyze_shrinkage_dataframe()
-
-    # Large fixed dim, varying scales of degeneracy
-    dim = 50
-    ms = 1
-    df_d_vs_ss_1 = analyze_shrinkage_for_fixed_d_but_varying_degen(
-        dim=dim, main_scale=ms, small_scale=0.001
-    )
-    df_d_vs_ss_2 = analyze_shrinkage_for_fixed_d_but_varying_degen(
-        dim=dim, main_scale=ms, small_scale=0.01
-    )
-    df_d_vs_ss_3 = analyze_shrinkage_for_fixed_d_but_varying_degen(
-        dim=dim, main_scale=ms, small_scale=0.1
-    )
-    # merge these dataframes for comparison lineplot sns
-    df_merged = pd.concat(
-        [df_d_vs_ss_1, df_d_vs_ss_2, df_d_vs_ss_3],
-        ignore_index=True,
-    )
-    plt.figure(figsize=(10, 6))
-    sns.lineplot(
-        data=df_merged,
-        x="Shrinkage",
-        y="CondNumber",
-        hue="Min/Max Scales",
-        style="DegenerateDims",
-        marker="o",
-        palette="tab10",
-    )
-    plt.title(f"Shrinkage on cond(COV) (Fixed Dim={dim}, Varying Scales of Degeneracy)")
-    plt.xlabel("Shrinkage Value")
-    plt.ylabel("Condition Number")
-    plt.yscale("log")
-    ymin = df_merged["CondNumber"].min()
-    ymax = min(1e5, df_merged["CondNumber"].max())
-    plt.ylim(ymin * 0.9, ymax * 1.1)
-
-    plt.grid(True)
-    plt.legend(title="Min/Max Scales, DegenerateDims")
-    plt.tight_layout()
-    fname = f"shrinkage_condition_number_varying_scales_fixedD{dim}_analysis.png"
-    plt.savefig(SHRK_RES_DIR / fname, dpi=300)
-    plt.close()
-
-    # Large fixed dims, varying n_points
-    ms, ss = 1, 0.01
-    dim = 100
-    df_d_vs_n_1 = analyze_shrinkage_for_fixed_d_but_varying_degen(
-        dim=dim, main_scale=ms, small_scale=ss, n_points=None
-    )
-    df_d_vs_n_2 = analyze_shrinkage_for_fixed_d_but_varying_degen(
-        dim=dim, main_scale=ms, small_scale=ss, n_points=200
-    )
-    df_d_vs_n_3 = analyze_shrinkage_for_fixed_d_but_varying_degen(
-        dim=dim, main_scale=ms, small_scale=ss, n_points=1000
-    )
-
-    # merge these dataframes for comparison lineplot sns
-    df_merged = pd.concat(
-        [df_d_vs_n_1, df_d_vs_n_2, df_d_vs_n_3],
-        ignore_index=True,
-    )
-
-    plt.figure(figsize=(10, 6))
-    sns.lineplot(
-        data=df_merged,
-        x="Shrinkage",
-        y="CondNumber",
-        hue="N",
-        style="DegenerateDims",
-        marker="o",
-        palette="tab10",
-    )
-    plt.title(f"Shrinkage on cond(COV) (Fixed Dim={dim}, Scales: {ms}/{ss}, Varying N)")
-    plt.xlabel("Shrinkage Value")
-    plt.ylabel("Condition Number")
-    plt.yscale("log")
-    ymin = df_merged["CondNumber"].min()
-    ymax = min(1e5, df_merged["CondNumber"].max())
-    plt.ylim(ymin * 0.9, ymax * 1.1)
-    plt.grid(True)
-    plt.legend(title="N, DegenerateDims")
-    plt.tight_layout()
-    fname = f"shrinkage_condition_number_npoints_varying_fixedD{dim}_main{ms}_small{ss}_analysis.png"
-    plt.savefig(SHRK_RES_DIR / fname, dpi=300)
-    plt.close()
+    experiment_1_varying_degeneracy()
+    experiment_2_varying_N()
+    experiment_3_varying_D()
+    print("\nAll experiments completed.")
