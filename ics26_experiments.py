@@ -527,7 +527,7 @@ def experiment_rosenbrock_convergence() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            SYNTH_BUDGET_FACTOR=300,
+            SYNTH_BUDGET_FACTOR=300 * 2,
         )
 
     return EXP_DIR
@@ -537,6 +537,9 @@ if __name__ == "__main__":
     dir_exp_1 = experiment_adaptive_clustering_global_vs_local()
     create_summary_dataframe(dir_exp_1)
 
+    dir_exp_2 = experiment_adaptive_clustering_global_vs_n_init_clusters()
+    create_summary_dataframe(dir_exp_2)
+
     dir_exp_3 = experiment_adaptive_clustering_global_local_vs_min_pts_cluster()
     create_summary_dataframe(dir_exp_3)
 
@@ -545,9 +548,6 @@ if __name__ == "__main__":
 
     dir_exp_5 = experiment_rosenbrock_convergence()
     create_summary_dataframe(dir_exp_5)
-
-    dir_exp_2 = experiment_adaptive_clustering_global_vs_n_init_clusters()
-    create_summary_dataframe(dir_exp_2)
 
     _dirs = [dir_exp_1, dir_exp_2, dir_exp_3, dir_exp_4, dir_exp_5]
     for d in _dirs:
