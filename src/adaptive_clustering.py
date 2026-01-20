@@ -807,7 +807,10 @@ def adaptive_clustering(
     final_count = int(out_count)
     logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
     logger.info(f"Runtime - Total: {time.perf_counter() -_start_time:.3f}s")
-    return {k: buffers[k][:final_count] for k in buffers}
+
+    out_dict = {k: buffers[k][:final_count] for k in buffers}
+    out_dict["num_levels"] = level
+    return out_dict
 
 
 if __name__ == "__main__":

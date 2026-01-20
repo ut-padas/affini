@@ -52,6 +52,7 @@ def create_problem_result_dict(
     N_TRAIN: int,
     N_CLUSTERS: int,
     error_tag: str,
+    num_levels: int,
     **kwargs,
 ) -> dict:
     if ground_truth is None:
@@ -73,6 +74,7 @@ def create_problem_result_dict(
             "train_time_sec": None,
             "predict_time_sec": None,
             "error_tag": error_tag,
+            "num_levels": -1,
             **kwargs,
         }
 
@@ -111,6 +113,7 @@ def create_problem_result_dict(
         "train_time_sec": train_time,
         "predict_time_sec": predict_time,
         "error_tag": error_tag,
+        "num_levels": num_levels,
     }
     # Add any additional metrics
     for key, value in kwargs.items():
@@ -240,6 +243,7 @@ def rosenbrock_experiment_setup(
         predict_time = _end_predict_time - _start_predict_time
 
         N_CLUSTERS = surrogate.get_number_of_sources()
+        num_levels = surrogate.training_num_levels
     except Exception as e:
         FAILED = True
         error_tag = f"Experiment failed with exception: {e}"
@@ -255,6 +259,7 @@ def rosenbrock_experiment_setup(
         train_time = -1.0
         predict_time = -1.0
         N_CLUSTERS = -1
+        num_levels = -1
 
     result_dict = create_problem_result_dict(
         problem_name="Rosenbrock",
@@ -265,6 +270,7 @@ def rosenbrock_experiment_setup(
         ground_truth=ground_truth,
         predictions=preds,
         ungauranteed_mask=ungauranteed_mask,
+        num_levels=num_levels,
         TOL=TOL,
         DIM=DIM,
         N_TRAIN=N_TRAIN,

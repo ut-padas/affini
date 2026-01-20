@@ -25,6 +25,7 @@ class NearODESurrogate:
         self.J_src = None
         self.trust_ellipses_src = None
         self.N_src = 0
+        self.training_num_levels = -1
 
     def train(
         self,
@@ -60,12 +61,14 @@ class NearODESurrogate:
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             SEED=SEED,
             SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
+            LOG_MEM_STATS=True,
         )
 
         centroids = xp.asarray(results["centroids"])
         f_vals = xp.asarray(results["f"])
         grads = xp.asarray(results["g"])
         trust_ellipses = xp.asarray(results["Q"])
+        num_levels = results.get("num_levels", -1)
 
         # 2. Store Data
         self.X_src = centroids
@@ -73,6 +76,7 @@ class NearODESurrogate:
         self.J_src = grads
         self.trust_ellipses_src = trust_ellipses
         self.N_src = centroids.shape[0]
+        self.training_num_levels = num_levels
 
         # 3. Training complete
         self.trained = True
@@ -234,7 +238,7 @@ if __name__ == "__main__":
     from src.logging_config import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
-    setup_logging(console_level=logging.DEBUG, file_output=False)
+    setup_logging(console_level=logging.DEBUG, file_output=True)
 
     SURR_EXP_DIR = FIGURES_DIR / "surrogate_experiments"
     SURR_EXP_DIR.mkdir(parents=True, exist_ok=True)
@@ -329,7 +333,7 @@ if __name__ == "__main__":
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
         TOL=TOL,
         SEED=SEED,
-        SYNTH_BUDGET_FACTOR=100,
+        SYNTH_BUDGET_FACTOR=10,
     )
     _end_train_time = time.perf_counter()
 
