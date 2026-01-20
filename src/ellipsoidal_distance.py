@@ -3,6 +3,7 @@ import time
 from typing import Tuple
 
 from src import IS_CUPY_BACKEND, Array, xp
+from src.logging_config import log_mem_stats
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ def knn_ellipsoidal_distance(
     enforce_containment: bool = False,
     containment_level: float = 1.0,
     batch_size: int = 1024,
+    cluster_batch_size: int = 10_000,
+    LOG_MEM_STATS: bool = True,
 ) -> Tuple[Array, Array]:
     """
     GPU-only kNN over cluster centroids using the cluster-specific Ellipsoidal trust
@@ -55,6 +58,8 @@ def knn_ellipsoidal_distance(
             dist2 <= containment_level are considered eligible.
         containment_level: Trust-region level defining containment (1.0 = boundary).
         batch_size: Number of query points to process at once. Lower this if OOM persists.
+        cluster_batch_size: Number of clusters to process at once. Lower this if OOM persists.
+        LOG_MEM_STATS: If True, log GPU memory stats.
 
     Returns:
         nn_idx: (M, k) int32 indices of nearest clusters (sorted by increasing distance).
@@ -63,6 +68,9 @@ def knn_ellipsoidal_distance(
         nn_dist: (M, k) distances corresponding to nn_idx (squared unless return_sqrt).
             Missing entries are +inf.
     """
+    if LOG_MEM_STATS:
+        log_mem_stats("knn_ellipsoidal_distance: start")
+
     # Ensure GPU arrays.
     query_points = xp.asarray(query_points)
     centroids = xp.asarray(centroids)
@@ -80,68 +88,80 @@ def knn_ellipsoidal_distance(
         raise ValueError("centroids must have shape (K, d) matching query_points.")
     if Q.shape != (K, d, d):
         raise ValueError("Q must have shape (K, d, d).")
-    if containment_level <= 0:
-        raise ValueError("containment_level must be positive.")
-    if eps < 0:
-        raise ValueError("eps must be nonnegative.")
 
     logger.debug(
         "kNN Ellipsoidal Clusters Search: k=%d, return_sqrt=%s, eps=%g, "
-        "enforce_containment=%s, containment_level=%g, batch_size=%d",
+        "enforce_containment=%s, containment_level=%g, batch_size=%d, "
+        "cluster_batch_size=%d",
         k,
         return_sqrt,
         eps,
         enforce_containment,
         containment_level,
         batch_size,
+        cluster_batch_size,
     )
     _start_time = time.perf_counter()
 
-    # Lists to store results from each batch.
     all_indices = []
     all_dists = []
 
-    # Iterate over query points in chunks.
+    # Outer Loop: Iterate over Query Batches (B rows)
     for start_idx in range(0, M, batch_size):
         end_idx = min(start_idx + batch_size, M)
-
-        # Slice current batch of queries
         batch_queries = query_points[start_idx:end_idx]  # (B, d)
+        current_B = batch_queries.shape[0]
 
-        # --- Compute Distances for Batch Against All Centroids ---
-        dx = batch_queries[:, None, :] - centroids[None, :, :]  # (B, K, d)
+        # Allocate result buffer for this batch: (B, K)
+        # For B=1024, K=1.4M, float64 -> ~11 GB. This fits in 100GB VRAM.
+        # If K grows to >10M, we would need a running top-k reduction, but this is faster for now.
+        dist2_batch = xp.empty((current_B, K), dtype=query_points.dtype)
 
-        # 2. Compute (Q * dx)
-        # Transpose dx for easier batch matrix multiplication.
-        dx_T = dx.transpose(1, 0, 2)  # (K, B, d)
+        # Inner Loop: Iterate over Cluster Batches (K_chunk clusters)
+        # This prevents allocating the massive (B, K, d) difference tensor (~115 GB)
+        for c_start in range(0, K, cluster_batch_size):
+            c_end = min(c_start + cluster_batch_size, K)
 
-        # Q: (K, d, d), dx_T: (K, B, d), dx_T transposed: (K, d, B).
-        temp = xp.matmul(Q, dx_T.transpose(0, 2, 1))  # (K, d, B)
+            # Slice geometry for this chunk
+            Q_chunk = Q[c_start:c_end]  # (K_c, d, d)
+            mu_chunk = centroids[c_start:c_end]  # (K_c, d)
 
-        # 3. Final dot product and sum over the 'd' dimension.
-        temp = temp.transpose(2, 0, 1)  # (B, K, d)
+            # 1. Compute dx for this chunk: (B, K_c, d)
+            # Memory: 1024 * 10000 * 10 * 8 bytes ~= 800 MB (Safe)
+            dx = batch_queries[:, None, :] - mu_chunk[None, :, :]
 
-        # Element-wise multiply and sum: (B, K, d) -> (B, K).
-        dist2_batch = xp.sum(dx * temp, axis=-1)  # (B, K)
+            # 2. Compute (Q * dx^T)^T
+            # dx shape: (B, K_c, d)
+            # dx_T shape: (K_c, B, d) -> transpose(0,2,1) -> (K_c, d, B) matches Q's last dim
+            dx_T = dx.transpose(1, 0, 2)
 
-        # --- Post-Processing ---
+            # Q_chunk (K_c, d, d) @ (K_c, d, B) -> (K_c, d, B)
+            temp = xp.matmul(Q_chunk, dx_T.transpose(0, 2, 1))
+
+            # Transpose back to align with dx: (B, K_c, d)
+            temp = temp.transpose(2, 0, 1)
+
+            # 3. Final dot product (B, K_c) and store in main buffer
+            # sum over 'd' dimension
+            dist2_batch[:, c_start:c_end] = xp.sum(dx * temp, axis=-1)
+
+            # Free chunk memory immediately
+            del dx, dx_T, temp, Q_chunk, mu_chunk
+
+        # --- Post-Processing for the Batch ---
         if enforce_containment:
-            # Mask out clusters whose trust region does not contain the query.
             dist2_batch = xp.where(
                 dist2_batch <= containment_level, dist2_batch, xp.inf
             )
 
-        # Select k smallest per query in the batch using argpartition (for fast
-        # selection), then sort those k by distance.
-        # If K is very large, argpartition is much faster than full sort
+        # Select k smallest
+        # argpartition is faster than sort for finding top-k
         part = xp.argpartition(dist2_batch, kth=k - 1, axis=1)[:, :k]  # (B, k)
         part_dist2 = xp.take_along_axis(dist2_batch, part, axis=1)  # (B, k)
 
         # Sort the top k for clean output
         order = xp.argsort(part_dist2, axis=1)  # (B, k)
-        batch_nn_idx = xp.take_along_axis(part, order, axis=1).astype(
-            xp.int32
-        )  # (B, k)
+        batch_nn_idx = xp.take_along_axis(part, order, axis=1).astype(xp.int32)
         batch_nn_dist2 = xp.take_along_axis(part_dist2, order, axis=1)  # (B, k)
 
         if enforce_containment:
@@ -157,10 +177,12 @@ def knn_ellipsoidal_distance(
         all_indices.append(batch_nn_idx)
         all_dists.append(batch_nn_dist2)
 
-        # Explicitly free large temp arrays to help CuPy memory pool
-        del dx, temp, dist2_batch, part_dist2
+        # Explicitly free large temp arrays
+        del dist2_batch, part, part_dist2
 
-    # Concatenate all batches into final (M, k) arrays
+        if IS_CUPY_BACKEND:
+            xp.get_default_memory_pool().free_all_blocks()
+
     nn_idx = xp.concatenate(all_indices, axis=0)
     nn_dist = xp.concatenate(all_dists, axis=0)
 
