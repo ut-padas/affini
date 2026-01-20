@@ -510,12 +510,12 @@ def experiment_rosenbrock_convergence() -> Path:
     MAX_CLUSTERS_EST = 50_000
     N_TRAIN = int(2e5)
     N_TEST = int(1e5)
-    K_NEIGHBOURS = 5
+    K_NEIGHBOURS = 1
     CONTAINMENT_LEVEL = 1.0
-    ENFORCE_CONTAINMENT = True
+    ENFORCE_CONTAINMENT = False
     ERROR_SCALING_METHOD = "global"
 
-    EXP_DIR = ICS26_DIR / "rosenbrock_convergence"
+    EXP_DIR = ICS26_DIR / "rosenbrock_convergence_no_containment"
     create_summary_dataframe(EXP_DIR)
     del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 5]
