@@ -83,17 +83,22 @@ def create_problem_result_dict(
         xp.abs(ground_truth) + TINY_EPS
     )
     max_rel_error_linf = xp.nanmax(rel_error_linf)
+    median_rel_error_linf = xp.nanmedian(rel_error_linf)
 
     rel_error_l2 = xp.linalg.norm(ground_truth - predictions, axis=1) / (
         xp.linalg.norm(ground_truth, axis=1) + TINY_EPS
     )
     max_rel_error_l2 = xp.nanmax(rel_error_l2)
+    median_rel_error_l2 = xp.nanmedian(rel_error_l2)
 
     n_ungauranteed = xp.sum(ungauranteed_mask)
     perct_ungauranteed = 100.0 * n_ungauranteed / N_TEST
 
     n_within_tol = xp.sum(rel_error_linf <= TOL)
     perct_within_tol = 100.0 * n_within_tol / N_TEST
+
+    n_unresolved = xp.sum(xp.isnan(predictions))
+    perct_unresolved = 100.0 * n_unresolved / N_TEST
 
     # Mandatory metrics
     result_dict = {
@@ -106,10 +111,14 @@ def create_problem_result_dict(
         "n_clusters": N_CLUSTERS,
         "max_rel_error_linf": float(max_rel_error_linf),
         "max_rel_error_l2": float(max_rel_error_l2),
+        "median_rel_error_linf": float(median_rel_error_linf),
+        "median_rel_error_l2": float(median_rel_error_l2),
         "n_ungauranteed": int(n_ungauranteed),
         "perct_ungauranteed": float(perct_ungauranteed),
         "n_within_tol": int(n_within_tol),
         "perct_within_tol": float(perct_within_tol),
+        "n_unresolved": int(n_unresolved),
+        "perct_unresolved": float(perct_unresolved),
         "train_time_sec": train_time,
         "predict_time_sec": predict_time,
         "error_tag": error_tag,
@@ -205,6 +214,7 @@ def rosenbrock_experiment_setup(
     error_tag = ""
 
     FAILED = False
+    _TRAINED, _PREDICTED = False, False
     try:
         # 3. Train
         print("--- Training ---")
@@ -222,6 +232,7 @@ def rosenbrock_experiment_setup(
             SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
         )
         _end_train_time = time.perf_counter()
+        _TRAINED = True
 
         # 4. Evaluate
         print("\n--- Evaluation ---")
@@ -237,6 +248,7 @@ def rosenbrock_experiment_setup(
             containment_level=CONTAINMENT_LEVEL,
         )
         _end_predict_time = time.perf_counter()
+        _PREDICTED = True
 
         ground_truth = scaled_rosenbrock(X_test)
         train_time = _end_train_time - _start_train_time
@@ -246,7 +258,7 @@ def rosenbrock_experiment_setup(
         num_levels = surrogate.training_num_levels
     except Exception as e:
         FAILED = True
-        error_tag = f"Experiment failed with exception: {e}"
+        error_tag = f"Experiment failed with exception: {e} | TRAINED={_TRAINED}, PREDICTED={_PREDICTED}"
         print(error_tag)
 
         error_path = json_fpath.with_suffix(".error.txt")
@@ -504,6 +516,7 @@ def experiment_rosenbrock_convergence() -> Path:
     ERROR_SCALING_METHOD = "global"
 
     EXP_DIR = ICS26_DIR / "rosenbrock_convergence"
+    create_summary_dataframe(EXP_DIR)
     del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 5]
     ROSENBROCK_As = [1, 100]
@@ -533,7 +546,7 @@ def experiment_rosenbrock_convergence() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            SYNTH_BUDGET_FACTOR=300 * 2,
+            SYNTH_BUDGET_FACTOR=10,
         )
 
     return EXP_DIR
