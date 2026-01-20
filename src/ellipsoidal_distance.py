@@ -56,7 +56,8 @@ def knn_ellipsoidal_distance(
             sqrt(max(dist2 + eps, 0)).
         enforce_containment: If True, only clusters satisfying
             dist2 <= containment_level are considered eligible.
-        containment_level: Trust-region level defining containment (1.0 = boundary).
+        containment_level: Trust-region level defining containment (1.0 = boundary). This
+            is ignored if enforce_containment=False.
         batch_size: Number of query points to process at once. Lower this if OOM persists.
         cluster_batch_size: Number of clusters to process at once. Lower this if OOM persists.
         LOG_MEM_STATS: If True, log GPU memory stats.
