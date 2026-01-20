@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from tqdm import tqdm
 
 from ics26_experiments import ICS26_DIR
 from src.adaptive_clustering import calculate_Q
@@ -38,13 +39,14 @@ plt.rcParams.update(
 SHRINK_VALS = [0.0, 0.01, 0.05, 0.1]
 PALETTE = "deep"
 COLORS = sns.color_palette(PALETTE, n_colors=len(SHRINK_VALS))
+N_MULTIPLIER = 2
 
 
 def get_target_N(d):
     """Calculates the Vershynin threshold: 10 * d * log(d)"""
     if d <= 1:
         return 10
-    return int(10 * d * np.log(d))
+    return int(N_MULTIPLIER * d * np.log(d))
 
 
 def generate_degenerate_data(
@@ -60,10 +62,10 @@ def generate_degenerate_data(
     np.random.shuffle(scales)
 
     # 2. Generate axis-aligned data
-    data = np.random.randn(n_points, dim) * scales
+    data = np.random.randn(n_points, dim) * scales  # Dim: (n_points, dim)
 
     # 3. Random rotation (QR decomposition of random matrix)
-    Q_rot, _ = np.linalg.qr(np.random.randn(dim, dim))
+    Q_rot, _ = np.linalg.qr(np.random.randn(dim, dim))  # Dim: (dim, dim)
     return data @ Q_rot.T
 
 
@@ -105,7 +107,7 @@ def experiment_1_varying_degeneracy():
 
     records = []
 
-    for n_deg in degen_range:
+    for n_deg in tqdm(degen_range, desc="Degenerate Dimensions"):
         X = generate_degenerate_data(
             D, N, main_scale, small_scale, num_degen_dims=n_deg
         )
@@ -178,9 +180,9 @@ def experiment_2_varying_N():
 
     records = []
 
-    for config in scale_configs:
+    for config in tqdm(scale_configs, desc="Scale Ratios"):
         ratio = config["ratio"]
-        for n_points in n_steps:
+        for n_points in tqdm(n_steps, desc="Sample Sizes", leave=False):
             X = generate_degenerate_data(
                 D, n_points, config["main"], config["small"], num_degen_dims=n_deg
             )
@@ -258,14 +260,14 @@ def experiment_2_varying_N():
 # =============================================================================
 def experiment_3_varying_D():
     print("\n--- Running Experiment 3: Varying Dimensions D ---")
-    dimensions = [2, 10, 50, 100, 200]
+    dimensions = [2, 4, 8, 16, 32, 64, 128, 256]
     main_scale = 100.0
-    small_scale = 1.0  # Ratio = 10
+    small_scale = 1.0
     ratio = int(main_scale / small_scale)
 
     records = []
 
-    for D in dimensions:
+    for D in tqdm(dimensions, desc="Dimensions"):
         N = get_target_N(D)
         # Use a proportional number of degenerate dims, e.g., 20% of D, minimum 1
         n_deg = max(1, int(D * 0.2))
@@ -301,10 +303,11 @@ def experiment_3_varying_D():
         markersize=5,
     )
     ax.set_title(
-        rf"Condition Number vs.\ Dimension ($N = 10d\log d$, Ratio={ratio})",
+        rf"Condition Number vs.\ Dimension ($N = {N_MULTIPLIER}d\log d$, Ratio={ratio})",
         fontsize=12,
     )
     ax.set_yscale("log")
+    ax.set_xscale("log")
     ax.set_ylabel(r"Condition Number $\kappa$")
     ax.set_xlabel(r"Dimension $d$")
     ax.grid(True, which="both", ls="-", alpha=0.3)
