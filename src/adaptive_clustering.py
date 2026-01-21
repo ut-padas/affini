@@ -212,23 +212,40 @@ def calculate_Q(
         Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
 
     # PCA directions U (columns).
-    _, U = xp.linalg.eigh(Cov)
+    Lambda, U = xp.linalg.eigh(Cov)
 
-    # Projection scores onto PCA axes: proj_i = U_k^T dx_i.
-    map_n_to_k = repeats(xp.arange(K), counts)  # (N,)
-    U_exp = U[map_n_to_k]  # (N,d,d)
+    # Invert Eigenvalues to get shape.
+    # Since Cov is PSD and shrunk, Lambda > 0.
+    Lambda_inv = 1.0 / Lambda  # (K,d)
+
+    # dist^2 = x^T S x = x^T (U Lambda_inv U^T) x
+    map_n_to_k = repeats(xp.arange(K), counts)
+    U_exp = U[map_n_to_k]  # (N, d, d)
+    L_inv_exp = Lambda_inv[map_n_to_k]  # (N, d)
+
+    # Projection: p = U^T x
     proj = (U_exp.transpose(0, 2, 1) @ DeltaX[:, :, None])[:, :, 0]  # (N,d)
-    proj_abs = xp.abs(proj)
 
-    # Axis extents: d_axes[k,j] = max_i |proj[i,j]| within cluster k.
-    d_axes = xp.zeros((K, proj_abs.shape[1]), dtype=proj_abs.dtype)
-    scatter_maximum_1d(d_axes, map_n_to_k, proj_abs)
+    # Distance squared relative to eigen-shape
+    dist_sq = xp.sum((proj * proj) * L_inv_exp, axis=1)  # (N,)
 
-    d_axes = xp.maximum(d_axes, Q_EPS_AXIS)
-    Dinv2 = 1.0 / (d_axes * d_axes)  # (K,d)
+    # Find max distance per cluster to scale the ellipsoid
+    # scale = 1.0 / max(dist_sq)
+    max_dist_sq = xp.zeros((K,), dtype=proj.dtype)
+    scatter_maximum_1d(max_dist_sq, map_n_to_k, dist_sq)
 
-    # Q = U diag(Dinv2) U^T
-    Q = (U * Dinv2[:, None, :]) @ U.transpose(0, 2, 1)
+    # Avoid degenerate axes
+    max_dist_sq = xp.maximum(max_dist_sq, Q_EPS_AXIS)
+
+    scale = 1.0 / max_dist_sq  # (K,)
+
+    # Q = scale * (U Lambda_inv U^T)
+    # Combine scale into Lambda_inv
+    final_D = scale[:, None] * Lambda_inv  # (K, d)
+
+    # Q = U diag(final_D) U^T
+    Q = (U * final_D[:, None, :]) @ U.transpose(0, 2, 1)  # (K,d,d)
+
     return 0.5 * (Q + Q.transpose(0, 2, 1)), Cov
 
 
@@ -434,7 +451,6 @@ def adaptive_clustering(
     # Geometry stabilizers
     Q_EPS_AXIS: float = 1e-8,
     Q_SHRINK: float = 0.05,
-    COVZ_SHRINK: float = 0.05,
     H_RIDGE: float = 1e-18,
     MAX_LEVELS: int = 50,
 ) -> dict[str, Array]:
@@ -481,7 +497,6 @@ def adaptive_clustering(
         SYNTH_BUDGET_FACTOR: if SYNTH_BUDGET is None, sets SYNTH_BUDGET ≈ factor*N0.
         Q_EPS_AXIS: minimum PCA axis extent when building Q (avoids singular Q).
         Q_SHRINK: covariance shrinkage for Q computation.
-        COVZ_SHRINK: covariance shrinkage in Z-space for split direction.
         H_RIDGE: eigenvalue floor for Hessian fit stability.
         MAX_LEVELS: maximum refinement iterations.
 
@@ -761,13 +776,6 @@ def adaptive_clustering(
         ZZ_all = Z[:, :, None] * Z[:, None, :]
         CovZ = xp.add.reduceat(ZZ_all, bad_starts)
         CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))
-        if COVZ_SHRINK > 0.0:
-            # Sigma = (1-a)Cov + a*(tr(Cov)/d)*I, per cluster
-            tr = xp.trace(CovZ, axis1=1, axis2=2)
-            scale = tr / max(d, 1)
-            I = xp.eye(d, dtype=CovZ.dtype)[None, :, :]
-            CovZ = (1.0 - COVZ_SHRINK) * CovZ + COVZ_SHRINK * (scale[:, None, None] * I)
-            CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))
 
         # Split direction per cluster = top eigenvector of CovZ.
         v = get_dominant_eigenvector(CovZ)
@@ -915,7 +923,7 @@ if __name__ == "__main__":
         TOL=TOL,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        SYNTH_BUDGET_FACTOR=100,
+        SYNTH_BUDGET_FACTOR=100 * 10,
         ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
     )
 
@@ -1036,3 +1044,9 @@ if __name__ == "__main__":
         print(f"Saved figure to {img_fpath}")
     else:
         print("Skipping plot (d != 2 or too many clusters).")
+
+    # Save npz file of results
+    npx_fpath = img_fpath.with_suffix(".npz")
+    if IS_CUPY_BACKEND:
+        results = {k: xp.asnumpy(v) for k, v in results.items()}
+    xp.savez_compressed(npx_fpath, **results)
