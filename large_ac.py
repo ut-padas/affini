@@ -113,41 +113,72 @@ def calculate_Q(
     N, d = DeltaX.shape
     dtype = DeltaX.dtype
 
+    # Accumulate Covariance
     Cov = xp.empty((K, d, d), dtype=dtype)
     for i in range(d):
         dxi = DeltaX[:, i]
         for j in range(i, d):
+            # sum(x_i * x_j) for each cluster
             val = xp.add.reduceat(dxi * DeltaX[:, j], starts)
             Cov[:, i, j] = val
             if i != j:
                 Cov[:, j, i] = val
     Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
 
+    # Covariance Shrinkage
     if Q_SHRINK > 0.0:
-        d = int(Cov.shape[1])
+        d_int = int(Cov.shape[1])
         tr = xp.trace(Cov, axis1=1, axis2=2)
-        scale = tr / max(d, 1)
-        I = xp.eye(d, dtype=Cov.dtype)[None, :, :]
-        Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (scale[:, None, None] * I)
+        scale_tr = tr / max(d_int, 1)
+        I = xp.eye(d_int, dtype=Cov.dtype)[None, :, :]
+        Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (scale_tr[:, None, None] * I)
         Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
 
-    _, U = xp.linalg.eigh(Cov)
-    map_n_to_k = repeats(xp.arange(K), counts)
+    # Eigendecomposition
+    Lambda, U = xp.linalg.eigh(Cov)
 
+    # Invert eigenvalues to get the shape matrix diagonal
+    # Since Cov is shrunk/PSD, Lambda > 0 usually, but we clamp for safety
+    Lambda = xp.maximum(Lambda, Q_EPS_AXIS)
+    Lambda_inv = 1.0 / Lambda  # (K, d)
+
+    # Calculate Projections
+    # Computes p = U^T x without creating (N, d, d)
+    map_n_to_k = repeats(xp.arange(K), counts)
     proj = xp.empty((N, d), dtype=dtype)
+
     for j in range(d):
         accum = xp.zeros(N, dtype=dtype)
         for m in range(d):
+            # Dot product of point x with j-th eigenvector u_j
+            # U[k, m, j] is the m-th component of the j-th eigenvector for cluster k
             u_elem = U[map_n_to_k, m, j]
             accum += u_elem * DeltaX[:, m]
         proj[:, j] = accum
 
-    proj_abs = xp.abs(proj)
-    d_axes = xp.zeros((K, proj_abs.shape[1]), dtype=proj_abs.dtype)
-    scatter_maximum_1d(d_axes, map_n_to_k, proj_abs)
-    d_axes = xp.maximum(d_axes, Q_EPS_AXIS)
-    Dinv2 = 1.0 / (d_axes * d_axes)
-    Q = (U * Dinv2[:, None, :]) @ U.transpose(0, 2, 1)
+    # Calculate Scaled Covariance Size
+    # dist^2 = sum(proj_j^2 / lambda_j)
+    L_inv_points = Lambda_inv[map_n_to_k]  # (N, d)
+    dist_sq = xp.sum((proj * proj) * L_inv_points, axis=1)  # (N,)
+
+    # Find max distance per cluster
+    max_dist_sq = xp.zeros((K,), dtype=proj.dtype)
+    scatter_maximum_1d(max_dist_sq, map_n_to_k, dist_sq)
+
+    # Prevent divide-by-zero for single-point clusters
+    max_dist_sq = xp.maximum(max_dist_sq, Q_EPS_AXIS)
+
+    # Scale factor alpha = 1 / max_dist
+    scale = 1.0 / max_dist_sq  # (K,)
+
+    # Construct Q
+    # Q = scale * (U Lambda_inv U^T)
+    # effectively new eigenvalues are scale / Lambda
+    final_D = scale[:, None] * Lambda_inv  # (K, d)
+
+    # Reconstruct Q matrix
+    Q = (U * final_D[:, None, :]) @ U.transpose(0, 2, 1)
+
     return 0.5 * (Q + Q.transpose(0, 2, 1)), Cov
 
 
@@ -277,7 +308,6 @@ def adaptive_clustering(
     SYNTH_BUDGET_FACTOR: float = 2.0,
     Q_EPS_AXIS: float = 1e-8,
     Q_SHRINK: float = 0.05,
-    COVZ_SHRINK: float = 0.05,
     H_RIDGE: float = 1e-18,
     MAX_LEVELS: int = 50,
     LOG_MEM_STATS: bool = False,
@@ -646,14 +676,6 @@ def adaptive_clustering(
                 if i != j:
                     CovZ[:, j, i] = val
         CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))
-
-        if COVZ_SHRINK > 0.0:
-            tr = xp.trace(CovZ, axis1=1, axis2=2)
-            scale = tr / max(d, 1)
-            I = xp.eye(d, dtype=CovZ.dtype)[None, :, :]
-            CovZ = (1.0 - COVZ_SHRINK) * CovZ + COVZ_SHRINK * (scale[:, None, None] * I)
-            CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))
-
         v = get_dominant_eigenvector(CovZ)
         v_exp = v[map_bad_n_to_k]
         scores = xp.sum(Z * v_exp, axis=1)
