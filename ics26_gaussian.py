@@ -11,6 +11,7 @@ from ics26_experiments import (
     SEED,
     create_problem_result_dict,
     create_summary_dataframe,
+    del_all_error_files_in_dir,
     plot_error_histogram,
 )
 from src import xp
@@ -165,6 +166,7 @@ def experiment_no_q_shrink() -> Path:
     ERROR_SCALING_METHOD = "global"
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_no_q_shrink_global_error_scaling"
+    del_all_error_files_in_dir(EXP_DIR)
     TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4]
     DIMs = [2, 3]
 
