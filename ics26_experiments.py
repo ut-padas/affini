@@ -42,17 +42,17 @@ def create_summary_dataframe(results_dir: Path):
 def create_problem_result_dict(
     problem_name: str,
     problem_tag: str,
-    train_time: float,
-    predict_time: float,
+    train_time: float | None,
+    predict_time: float | None,
     ground_truth: Array,
     predictions: Array,
     ungauranteed_mask: Array,
     TOL: float,
     DIM: int,
     N_TRAIN: int,
-    N_CLUSTERS: int,
+    N_CLUSTERS: int | None,
     error_tag: str,
-    num_levels: int,
+    num_levels: int | None,
     **kwargs,
 ) -> dict:
     if ground_truth is None:
