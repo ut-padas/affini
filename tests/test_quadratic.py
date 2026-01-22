@@ -77,7 +77,7 @@ class TestQuadraticSympyDerivatives(unittest.TestCase):
                 # For default parameters (C=1.0, A=0.1), use the implementation as-is
                 if c == C and a == A:
                     f_impl = quadratic(X)
-                    g_impl = quadratic_grad(X)
+                    g_impl = quadratic_grad(X)[:, 0, :]
                 else:
                     # For custom parameters, we need to modify the computation
                     # manually since the implementation uses fixed constants

@@ -2,7 +2,7 @@
 
 from src import Array, xp
 
-C = 1.0  # Constant term
+C = 10.0  # Constant term
 A = 0.1  # Quadratic term coefficient
 
 
@@ -31,10 +31,10 @@ def quadratic_grad(X: Array) -> Array:
         X: (N, d) data matrix
 
     Returns:
-        G: (N, d) gradients at X
+        G: (N,1 d) gradients at X
     """
 
     N, d = X.shape
     w = xp.ones((d,), dtype=X.dtype)
     G = w[None, :] + 2 * A * X  # (N, d)
-    return G
+    return G[:, None, :]  # (N, 1, d)
