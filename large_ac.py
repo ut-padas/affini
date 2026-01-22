@@ -134,50 +134,68 @@ def calculate_Q(
         Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (scale_tr[:, None, None] * I)
         Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
 
-    # Eigendecomposition
-    Lambda, U = xp.linalg.eigh(Cov)
+        # Eigendecomposition
+        Lambda, U = xp.linalg.eigh(Cov)
 
-    # Invert eigenvalues to get the shape matrix diagonal
-    # Since Cov is shrunk/PSD, Lambda > 0 usually, but we clamp for safety
-    Lambda = xp.maximum(Lambda, Q_EPS_AXIS)
-    Lambda_inv = 1.0 / Lambda  # (K, d)
+        # Invert eigenvalues to get the shape matrix diagonal
+        # Since Cov is shrunk/PSD, Lambda > 0 usually, but we clamp for safety
+        Lambda = xp.maximum(Lambda, Q_EPS_AXIS)
+        Lambda_inv = 1.0 / Lambda  # (K, d)
 
-    # Calculate Projections
-    # Computes p = U^T x without creating (N, d, d)
-    map_n_to_k = repeats(xp.arange(K), counts)
-    proj = xp.empty((N, d), dtype=dtype)
+        # Calculate Projections
+        # Computes p = U^T x without creating (N, d, d)
+        map_n_to_k = repeats(xp.arange(K), counts)
+        proj = xp.empty((N, d), dtype=dtype)
 
-    for j in range(d):
-        accum = xp.zeros(N, dtype=dtype)
-        for m in range(d):
-            # Dot product of point x with j-th eigenvector u_j
-            # U[k, m, j] is the m-th component of the j-th eigenvector for cluster k
-            u_elem = U[map_n_to_k, m, j]
-            accum += u_elem * DeltaX[:, m]
-        proj[:, j] = accum
+        for j in range(d):
+            accum = xp.zeros(N, dtype=dtype)
+            for m in range(d):
+                # Dot product of point x with j-th eigenvector u_j
+                # U[k, m, j] is the m-th component of the j-th eigenvector for cluster k
+                u_elem = U[map_n_to_k, m, j]
+                accum += u_elem * DeltaX[:, m]
+            proj[:, j] = accum
 
-    # Calculate Scaled Covariance Size
-    # dist^2 = sum(proj_j^2 / lambda_j)
-    L_inv_points = Lambda_inv[map_n_to_k]  # (N, d)
-    dist_sq = xp.sum((proj * proj) * L_inv_points, axis=1)  # (N,)
+        # Calculate Scaled Covariance Size
+        # dist^2 = sum(proj_j^2 / lambda_j)
+        L_inv_points = Lambda_inv[map_n_to_k]  # (N, d)
+        dist_sq = xp.sum((proj * proj) * L_inv_points, axis=1)  # (N,)
 
-    # Find max distance per cluster
-    max_dist_sq = xp.zeros((K,), dtype=proj.dtype)
-    scatter_maximum_1d(max_dist_sq, map_n_to_k, dist_sq)
+        # Find max distance per cluster
+        max_dist_sq = xp.zeros((K,), dtype=proj.dtype)
+        scatter_maximum_1d(max_dist_sq, map_n_to_k, dist_sq)
 
-    # Prevent divide-by-zero for single-point clusters
-    max_dist_sq = xp.maximum(max_dist_sq, Q_EPS_AXIS)
+        # Prevent divide-by-zero for single-point clusters
+        max_dist_sq = xp.maximum(max_dist_sq, Q_EPS_AXIS)
 
-    # Scale factor alpha = 1 / max_dist
-    scale = 1.0 / max_dist_sq  # (K,)
+        # Scale factor alpha = 1 / max_dist
+        scale = 1.0 / max_dist_sq  # (K,)
 
-    # Construct Q
-    # Q = scale * (U Lambda_inv U^T)
-    # effectively new eigenvalues are scale / Lambda
-    final_D = scale[:, None] * Lambda_inv  # (K, d)
+        # Construct Q
+        # Q = scale * (U Lambda_inv U^T)
+        # effectively new eigenvalues are scale / Lambda
+        final_D = scale[:, None] * Lambda_inv  # (K, d)
 
-    # Reconstruct Q matrix
-    Q = (U * final_D[:, None, :]) @ U.transpose(0, 2, 1)
+        # Reconstruct Q matrix
+        Q = (U * final_D[:, None, :]) @ U.transpose(0, 2, 1)
+    else:
+        _, U = xp.linalg.eigh(Cov)
+        map_n_to_k = repeats(xp.arange(K), counts)
+
+        proj = xp.empty((N, d), dtype=dtype)
+        for j in range(d):
+            accum = xp.zeros(N, dtype=dtype)
+            for m in range(d):
+                u_elem = U[map_n_to_k, m, j]
+                accum += u_elem * DeltaX[:, m]
+            proj[:, j] = accum
+
+        proj_abs = xp.abs(proj)
+        d_axes = xp.zeros((K, proj_abs.shape[1]), dtype=proj_abs.dtype)
+        scatter_maximum_1d(d_axes, map_n_to_k, proj_abs)
+        d_axes = xp.maximum(d_axes, Q_EPS_AXIS)
+        Dinv2 = 1.0 / (d_axes * d_axes)
+        Q = (U * Dinv2[:, None, :]) @ U.transpose(0, 2, 1)
 
     return 0.5 * (Q + Q.transpose(0, 2, 1)), Cov
 
