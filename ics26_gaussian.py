@@ -160,10 +160,15 @@ def SGaussian_experiment_setup(
         # 1 plot 2 subplots (1X2)
         # Subplot 1: contourf of shifted gaussians function
         # Subplot 2: scatter of final cluster centroids with trust ellipses on contourf
-        x = np.linspace(-4, 4, 200)
-        y = np.linspace(-4, 4, 200)
-        X, Y = np.meshgrid(x, y)
-        Z = sg_f(np.vstack([X.ravel(), Y.ravel()]).T).reshape(X.shape)
+        x = xp.linspace(-4, 4, 200)
+        y = xp.linspace(-4, 4, 200)
+        X, Y = xp.meshgrid(x, y)
+        Z = sg_f(xp.vstack([X.ravel(), Y.ravel()]).T).reshape(X.shape)
+
+        if IS_CUPY_BACKEND:
+            X = xp.asnumpy(X)
+            Y = xp.asnumpy(Y)
+            Z = xp.asnumpy(Z)
 
         fig, axs = plt.subplots(1, 2, figsize=(12, 5))
         cs = axs[0].contourf(X, Y, Z, levels=50, cmap="viridis")
@@ -234,7 +239,7 @@ def experiment_no_q_shrink() -> Path:
     ERROR_SCALING_METHOD = "global"
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_no_q_shrink_global_error_scaling"
-    TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4]
+    TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
     DIMs = [2, 3]
 
     for DIM, TOL in product(DIMs, TOLs):
