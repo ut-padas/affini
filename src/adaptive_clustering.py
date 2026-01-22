@@ -1,9 +1,12 @@
 import logging
 import time
+from pathlib import Path
 from typing import Any, Callable, Literal, Optional
 
+import matplotlib.pyplot as plt
 from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max as cupy_scatter_max
+from matplotlib.colors import LogNorm
 from sklearn.cluster import KMeans
 
 from src import IS_CUPY_BACKEND, Array, xp
@@ -466,6 +469,7 @@ def adaptive_clustering(
     # Geometry stabilizers
     Q_SHRINK: float = 0.05,
     MAX_LEVELS: int = 50,
+    VISUAL_DEBUG: bool = True,
 ) -> dict[str, Array]:
     """
     BFS adaptive clustering with *persistent* convex padding via a preallocated pool.
@@ -512,6 +516,8 @@ def adaptive_clustering(
         SYNTH_BUDGET_FACTOR: if SYNTH_BUDGET is None, sets SYNTH_BUDGET ≈ factor*N0.
         Q_SHRINK: covariance shrinkage for Q computation.
         MAX_LEVELS: maximum refinement iterations.
+        VISUAL_DEBUG: (supported only on 2D data, is ignored otherwise) whether to
+            save intermediate clustering states for visualization.
 
     Returns:
         outputs: dict with arrays truncated to number of accepted clusters:
@@ -522,6 +528,8 @@ def adaptive_clustering(
             - E_rel: (K_final,)
             - counts: (K_final,) total (real+synth) points in each accepted cluster
     """
+    _VISUAL_DEBUG_DIR = Path.cwd() / "adaptive_clustering_debug"
+
     _start_time = time.perf_counter()
     X0 = xp.asarray(X)  # (N0, d)
     N0, d = X0.shape
@@ -568,6 +576,42 @@ def adaptive_clustering(
     labels_pool[:N0] = labels0.astype(xp.int64)
     logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
 
+    if VISUAL_DEBUG and d == 2:
+        # Plot initial centroids
+        centroids = km.cluster_centers_
+        if IS_CUPY_BACKEND:
+            centroids = xp.asnumpy(centroids)
+        plt.figure(figsize=(6, 6))
+        plt.scatter(
+            centroids[:, 0], centroids[:, 1], c="red", marker="x", label="Centroids"
+        )
+
+        # Plot countourf of f over the bounding box
+        x_min, x_max = xp.min(X0[:, 0]), xp.max(X0[:, 0])
+        y_min, y_max = xp.min(X0[:, 1]), xp.max(X0[:, 1])
+        xx, yy = xp.meshgrid(
+            xp.linspace(x_min, x_max, 100),
+            xp.linspace(y_min, y_max, 100),
+        )
+        grid_points = xp.stack([xx.ravel(), yy.ravel()], axis=-1)
+        f_grid = flatten_function_array(f_fn(grid_points))
+        if IS_CUPY_BACKEND:
+            f_grid = xp.asnumpy(f_grid)
+        f_grid = f_grid.reshape(xx.shape)
+        plt.contourf(
+            xx, yy, f_grid, levels=50, cmap="viridis", alpha=0.6, norm=LogNorm()
+        )
+        plt.colorbar()
+        plt.title("Initial Clustering and Function Contours")
+        plt.xlabel(r"$x_1$")
+        plt.ylabel(r"$x_2$")
+        plt.axis("equal")
+        plt.legend(loc="upper right")
+
+        _VISUAL_DEBUG_DIR.mkdir(exist_ok=True, parents=True)
+        plt.savefig(_VISUAL_DEBUG_DIR / "adaptive_clustering_L00.png", dpi=300)
+        plt.close()
+
     # Active mask (all pool points currently being processed). `active[i] == True`
     # means pool index i participates in the current refinement frontier.
     active = xp.zeros((capacity,), dtype=bool)
@@ -577,7 +621,7 @@ def adaptive_clustering(
     buffers, out_cap = allocate_output_buffers(MAX_CLUSTERS_EST, d, X0.dtype)
     out_count = 0
 
-    level = 0
+    level = 1
     while level <= MAX_LEVELS:
         t_level = time.perf_counter()
         if LOG_MEM_STATS:
@@ -828,10 +872,110 @@ def adaptive_clustering(
             f"F_inf={F_inf:.1e}"
         )
         logger.info(f"Runtime - Level {level:03}: {time.perf_counter()-t_level:.3f}s")
+
+        if VISUAL_DEBUG and d == 2:
+            # check if buffer has good centroids from previous steps
+            good_centroids = mus[good_idx]
+            if out_count > 0:
+                good_centroids_from_buffers = buffers["centroids"][:out_count]
+                if IS_CUPY_BACKEND:
+                    good_centroids_from_buffers = xp.asnumpy(
+                        good_centroids_from_buffers
+                    )
+
+            bad_centroids = mus[bad_idx]
+
+            plt.figure(figsize=(6, 6))
+            if out_count > 0:
+                plt.scatter(
+                    good_centroids_from_buffers[:, 0],  # type: ignore
+                    good_centroids_from_buffers[:, 1],  # type: ignore
+                    c="blue",
+                    marker="s",
+                    label="Accepted previous levels",
+                )
+            if int(good_centroids.shape[0]) > 0:
+                plt.scatter(
+                    good_centroids[:, 0],
+                    good_centroids[:, 1],
+                    c="green",
+                    marker="o",
+                    label="Accepted this level",
+                )
+            if int(bad_centroids.shape[0]) > 0:
+                plt.scatter(
+                    bad_centroids[:, 0],
+                    bad_centroids[:, 1],
+                    c="red",
+                    marker="x",
+                    label="To Split next level",
+                )
+            # Plot countourf of f over the bounding box
+            x_min, x_max = xp.min(X0[:, 0]), xp.max(X0[:, 0])
+            y_min, y_max = xp.min(X0[:, 1]), xp.max(X0[:, 1])
+            xx, yy = xp.meshgrid(
+                xp.linspace(x_min, x_max, 100),
+                xp.linspace(y_min, y_max, 100),
+            )
+            grid_points = xp.stack([xx.ravel(), yy.ravel()], axis=-1)
+            f_grid = flatten_function_array(f_fn(grid_points))
+            if IS_CUPY_BACKEND:
+                f_grid = xp.asnumpy(f_grid)
+            f_grid = f_grid.reshape(xx.shape)
+            plt.contourf(
+                xx, yy, f_grid, levels=50, cmap="viridis", alpha=0.6, norm=LogNorm()
+            )
+            plt.colorbar()
+            plt.title(f"Adaptive Clustering Level {level:02}")
+            plt.xlabel(r"$x_1$")
+            plt.ylabel(r"$x_2$")
+            plt.axis("equal")
+            plt.legend(loc="upper right")
+
+            plt.savefig(
+                _VISUAL_DEBUG_DIR / f"adaptive_clustering_L{level:02}.png", dpi=300
+            )
+            plt.close()
+
         level += 1
 
     if level > MAX_LEVELS:
         logger.warning(f"Reached MAX_LEVELS={MAX_LEVELS}, terminating.")
+
+    if VISUAL_DEBUG and d == 2:
+        all_good_centroids = buffers["centroids"][:out_count]
+        plt.figure(figsize=(6, 6))
+        if int(all_good_centroids.shape[0]) > 0:
+            plt.scatter(
+                all_good_centroids[:, 0],
+                all_good_centroids[:, 1],
+                c="blue",
+                marker="s",
+                label="Accepted clusters",
+            )
+        # Plot countourf of f over the bounding box
+        x_min, x_max = xp.min(X0[:, 0]), xp.max(X0[:, 0])
+        y_min, y_max = xp.min(X0[:, 1]), xp.max(X0[:, 1])
+        xx, yy = xp.meshgrid(
+            xp.linspace(x_min, x_max, 100),
+            xp.linspace(y_min, y_max, 100),
+        )
+        grid_points = xp.stack([xx.ravel(), yy.ravel()], axis=-1)
+        f_grid = flatten_function_array(f_fn(grid_points))
+        if IS_CUPY_BACKEND:
+            f_grid = xp.asnumpy(f_grid)
+        f_grid = f_grid.reshape(xx.shape)
+        plt.contourf(
+            xx, yy, f_grid, levels=50, cmap="viridis", alpha=0.6, norm=LogNorm()
+        )
+        plt.colorbar()
+        plt.title(f"Adaptive Clustering Final Result")
+        plt.xlabel(r"$x_1$")
+        plt.ylabel(r"$x_2$")
+        plt.axis("equal")
+        plt.legend(loc="upper right")
+        plt.savefig(_VISUAL_DEBUG_DIR / f"adaptive_clustering_L{level:02}.png", dpi=300)
+        plt.close()
 
     # Truncate outputs
     final_count = int(out_count)
@@ -977,9 +1121,7 @@ if __name__ == "__main__":
     )
 
     if DIM == 2 and len(results["centroids"]) <= 10_000:
-        import matplotlib.pyplot as plt
         import numpy as np
-        from matplotlib.colors import LogNorm
         from matplotlib.patches import Ellipse
 
         if IS_CUPY_BACKEND:
