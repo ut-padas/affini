@@ -40,6 +40,7 @@ class NearODESurrogate:
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
         SYNTH_BUDGET_FACTOR: float = 10.0,
+        Q_SHRINK: float = 0.0,
         SEED: int = 0,
     ):
         """
@@ -62,6 +63,7 @@ class NearODESurrogate:
             SEED=SEED,
             SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
             LOG_MEM_STATS=True,
+            Q_SHRINK=Q_SHRINK,
         )
 
         centroids = xp.asarray(results["centroids"])
