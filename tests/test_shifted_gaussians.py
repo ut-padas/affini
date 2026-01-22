@@ -86,6 +86,7 @@ class TestShiftedGaussiansSympyDerivatives(unittest.TestCase):
 
                 # Compute using SymPy
                 f_sym = np.array([float(f_fn(*row)) for row in X], dtype=np.float64)
+                f_sym = f_sym.reshape(-1, 1)
                 g_sym = np.stack(
                     [np.asarray(g_fn(*row), dtype=np.float64).reshape(-1) for row in X]
                 )

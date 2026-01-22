@@ -32,7 +32,7 @@ def shifted_gaussians(
 
     # 3. Apply Gaussian, sum over centers (axis 1), and add shift
     f_x = xp.sum(xp.exp(-sq_dist / (2 * std_dev**2)), axis=1) + shift
-    return f_x
+    return f_x[:, xp.newaxis]  # Return shape (N, 1)
 
 
 def shifted_gaussians_grad(X: Array, centers: Array, std_dev: float = 0.5) -> Array:
