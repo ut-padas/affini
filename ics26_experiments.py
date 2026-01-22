@@ -63,42 +63,53 @@ def create_problem_result_dict(
             "tol": TOL,
             "dim": DIM,
             "n_train": N_TRAIN,
-            "n_test": 0,
+            "n_test": None,
             "n_clusters": None,
             "max_rel_error_linf": None,
             "max_rel_error_l2": None,
-            "n_ungauranteed": None,
-            "perct_ungauranteed": None,
-            "n_within_tol": None,
-            "perct_within_tol": None,
+            "median_rel_error_linf": None,
+            "median_rel_error_l2": None,
+            "n_out": None,
+            "perct_out": None,
+            "n_in": None,
+            "n_in_good": None,
+            "perct_in_good": None,
+            "n_in_bad": None,
+            "perct_in_bad": None,
             "train_time_sec": None,
             "predict_time_sec": None,
             "error_tag": error_tag,
-            "num_levels": -1,
+            "num_levels": None,
             **kwargs,
         }
 
     N_TEST = ground_truth.shape[0]
-    rel_error_linf = xp.abs(predictions - ground_truth) / (
-        xp.abs(ground_truth) + TINY_EPS
+
+    # Consider only guaranteed points for error metrics
+    g_idx = xp.where(ungauranteed_mask == False)[0]  # type: ignore
+    rel_error_linf = xp.abs(predictions[g_idx] - ground_truth[g_idx]) / (
+        xp.abs(ground_truth[g_idx]) + TINY_EPS
     )
     max_rel_error_linf = xp.nanmax(rel_error_linf)
     median_rel_error_linf = xp.nanmedian(rel_error_linf)
 
-    rel_error_l2 = xp.linalg.norm(ground_truth - predictions, axis=1) / (
-        xp.linalg.norm(ground_truth, axis=1) + TINY_EPS
+    rel_error_l2 = xp.linalg.norm(ground_truth[g_idx] - predictions[g_idx], axis=1) / (
+        xp.linalg.norm(ground_truth[g_idx], axis=1) + TINY_EPS
     )
     max_rel_error_l2 = xp.nanmax(rel_error_l2)
     median_rel_error_l2 = xp.nanmedian(rel_error_l2)
 
-    n_ungauranteed = xp.sum(ungauranteed_mask)
-    perct_ungauranteed = 100.0 * n_ungauranteed / N_TEST
+    # pout: percentage of points outside the trust region
+    # pin_good: percentage of points inside the trust region with error below tolerance
+    # pin_bad: percentage of points inside the trust region with error above tolerance
+    n_out = xp.sum(ungauranteed_mask)
+    perct_out = 100.0 * n_out / N_TEST
 
-    n_within_tol = xp.sum(rel_error_linf <= TOL)
-    perct_within_tol = 100.0 * n_within_tol / N_TEST
-
-    n_unresolved = xp.sum(xp.isnan(predictions))
-    perct_unresolved = 100.0 * n_unresolved / N_TEST
+    n_in = N_TEST - n_out
+    n_in_good = xp.sum(rel_error_linf <= TOL)
+    n_in_bad = xp.sum(rel_error_linf > TOL)
+    perct_in_good = 100.0 * n_in_good / N_TEST
+    perct_in_bad = 100.0 * n_in_bad / N_TEST
 
     # Mandatory metrics
     result_dict = {
@@ -113,12 +124,13 @@ def create_problem_result_dict(
         "max_rel_error_l2": float(max_rel_error_l2),
         "median_rel_error_linf": float(median_rel_error_linf),
         "median_rel_error_l2": float(median_rel_error_l2),
-        "n_ungauranteed": int(n_ungauranteed),
-        "perct_ungauranteed": float(perct_ungauranteed),
-        "n_within_tol": int(n_within_tol),
-        "perct_within_tol": float(perct_within_tol),
-        "n_unresolved": int(n_unresolved),
-        "perct_unresolved": float(perct_unresolved),
+        "n_out": int(n_out),
+        "perct_out": float(perct_out),
+        "n_in": int(n_in),
+        "n_in_good": int(n_in_good),
+        "perct_in_good": float(perct_in_good),
+        "n_in_bad": int(n_in_bad),
+        "perct_in_bad": float(perct_in_bad),
         "train_time_sec": train_time,
         "predict_time_sec": predict_time,
         "error_tag": error_tag,
