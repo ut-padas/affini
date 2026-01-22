@@ -82,7 +82,7 @@ class TestShiftedGaussiansSympyDerivatives(unittest.TestCase):
 
                 # Compute using implementation
                 f_impl = shifted_gaussians(X, centers_np, shift=shift, std_dev=std_dev)
-                g_impl = shifted_gaussians_grad(X, centers_np, std_dev=std_dev)
+                g_impl = shifted_gaussians_grad(X, centers_np, std_dev=std_dev)[:, 0, :]
 
                 # Compute using SymPy
                 f_sym = np.array([float(f_fn(*row)) for row in X], dtype=np.float64)
