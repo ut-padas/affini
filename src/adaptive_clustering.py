@@ -1,9 +1,12 @@
 import logging
 import time
+from pathlib import Path
 from typing import Any, Callable, Literal, Optional
 
+import matplotlib.pyplot as plt
 from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max as cupy_scatter_max
+from matplotlib.colors import LogNorm
 from sklearn.cluster import KMeans
 
 from src import IS_CUPY_BACKEND, Array, xp
@@ -174,7 +177,6 @@ def calculate_Q(
     counts: Array,
     K: int,
     *,
-    Q_EPS_AXIS: float = 1e-8,
     Q_SHRINK: float = 0.0,
 ) -> tuple[Array, Array]:
     """
@@ -190,7 +192,6 @@ def calculate_Q(
         starts: (K,) segment starts within `DeltaX`.
         counts: (K,) points per segment.
         K: number of segments/clusters.
-        Q_EPS_AXIS: lower bound on per-axis extent (avoids divide-by-zero).
         Q_SHRINK: covariance shrinkage factor in [0,1]. When >0:
             Cov <- (1-a) Cov + a * (tr(Cov)/d) I.
 
@@ -235,7 +236,7 @@ def calculate_Q(
         scatter_maximum_1d(max_dist_sq, map_n_to_k, dist_sq)
 
         # Avoid degenerate axes
-        max_dist_sq = xp.maximum(max_dist_sq, Q_EPS_AXIS)
+        max_dist_sq = xp.maximum(max_dist_sq, TINY_EPS)
 
         scale = 1.0 / max_dist_sq  # (K,)
 
@@ -259,7 +260,7 @@ def calculate_Q(
         d_axes = xp.zeros((K, proj_abs.shape[1]), dtype=proj_abs.dtype)
         scatter_maximum_1d(d_axes, map_n_to_k, proj_abs)
 
-        d_axes = xp.maximum(d_axes, Q_EPS_AXIS)
+        d_axes = xp.maximum(d_axes, TINY_EPS)
         Dinv2 = 1.0 / (d_axes * d_axes)  # (K,d)
 
         # Q = U diag(Dinv2) U^T
@@ -272,8 +273,6 @@ def estimate_hessian_sqrt_symmetric(
     DeltaX: Array,
     DeltaG: Array,
     starts: Array,
-    *,
-    H_RIDGE: float = 1e-18,
 ) -> Array:
     """
     Symmetric Hessian estimation via least-squares fit (Sylvester solve in eigenbasis),
@@ -286,7 +285,6 @@ def estimate_hessian_sqrt_symmetric(
         DeltaX: (N, d) centered points for a packed batch.
         DeltaG: (N, d) centered gradients, i.e. (g(x_i - g(mu_k)) per point.
         starts: (K,) segment starts.
-        H_RIDGE: floor for eigenvalues of C (ridge for numerical stability).
 
     Returns:
         M: (K, d, d) symmetric matrices with M_k @ M_k = |H_k|.
@@ -303,7 +301,7 @@ def estimate_hessian_sqrt_symmetric(
 
     # 1. Eigendecompose C to find the basis U
     dvals, U = xp.linalg.eigh(C)
-    dvals = xp.maximum(dvals, H_RIDGE)  # (K,d)
+    dvals = xp.maximum(dvals, TINY_EPS)  # (K,d)
 
     # 2. Solve Sylvester Equation in U-basis to get F
     # Gtilde = U.T @ S @ U
@@ -459,6 +457,7 @@ def adaptive_clustering(
     g_fn: Callable[[Array], Array],
     TOL: float,
     ERROR_SCALING_METHOD: Literal["global", "local"] = "global",
+    CLUSTER_SPLITTING_METHOD: Literal["hessian_pca", "pca_only"] = "hessian_pca",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
@@ -468,10 +467,9 @@ def adaptive_clustering(
     SYNTH_BUDGET: Optional[int] = None,
     SYNTH_BUDGET_FACTOR: float = 1.0,
     # Geometry stabilizers
-    Q_EPS_AXIS: float = 1e-8,
     Q_SHRINK: float = 0.05,
-    H_RIDGE: float = 1e-18,
     MAX_LEVELS: int = 50,
+    VISUAL_DEBUG: bool = True,
 ) -> dict[str, Array]:
     """
     BFS adaptive clustering with *persistent* convex padding via a preallocated pool.
@@ -507,6 +505,8 @@ def adaptive_clustering(
         TOL: tolerance for accept criterion.
         ERROR_SCALING_METHOD: "global" uses max |f| over all points for normalization when
             computing E_rel; "local" uses max |f| within each cluster.
+        CLUSTER_SPLITTING_METHOD: "hessian_pca" uses Hessian-informed directions, and
+            rotates by |H|^{1/2} before PCA; "pca_only" uses PCA directions of raw Δx.
         NUM_INITIAL_CLUSTERS: initial KMeans cluster count.
         MIN_PTS_PER_CLUSTER: minimum points desired per active cluster (padding target).
         MAX_CLUSTERS_EST: initial allocation for output buffers (can grow).
@@ -514,10 +514,10 @@ def adaptive_clustering(
         LOG_MEM_STATS: whether to log memory stats at key points.
         SYNTH_BUDGET: maximum number of synthetic points allowed in the pool.
         SYNTH_BUDGET_FACTOR: if SYNTH_BUDGET is None, sets SYNTH_BUDGET ≈ factor*N0.
-        Q_EPS_AXIS: minimum PCA axis extent when building Q (avoids singular Q).
         Q_SHRINK: covariance shrinkage for Q computation.
-        H_RIDGE: eigenvalue floor for Hessian fit stability.
         MAX_LEVELS: maximum refinement iterations.
+        VISUAL_DEBUG: (supported only on 2D data, is ignored otherwise) whether to
+            save intermediate clustering states for visualization.
 
     Returns:
         outputs: dict with arrays truncated to number of accepted clusters:
@@ -528,6 +528,8 @@ def adaptive_clustering(
             - E_rel: (K_final,)
             - counts: (K_final,) total (real+synth) points in each accepted cluster
     """
+    _VISUAL_DEBUG_DIR = Path.cwd() / "adaptive_clustering_debug"
+
     _start_time = time.perf_counter()
     X0 = xp.asarray(X)  # (N0, d)
     N0, d = X0.shape
@@ -574,6 +576,42 @@ def adaptive_clustering(
     labels_pool[:N0] = labels0.astype(xp.int64)
     logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
 
+    if VISUAL_DEBUG and d == 2:
+        # Plot initial centroids
+        centroids = km.cluster_centers_
+        if IS_CUPY_BACKEND:
+            centroids = xp.asnumpy(centroids)
+        plt.figure(figsize=(6, 6))
+        plt.scatter(
+            centroids[:, 0], centroids[:, 1], c="red", marker="x", label="Centroids"
+        )
+
+        # Plot countourf of f over the bounding box
+        x_min, x_max = xp.min(X0[:, 0]), xp.max(X0[:, 0])
+        y_min, y_max = xp.min(X0[:, 1]), xp.max(X0[:, 1])
+        xx, yy = xp.meshgrid(
+            xp.linspace(x_min, x_max, 100),
+            xp.linspace(y_min, y_max, 100),
+        )
+        grid_points = xp.stack([xx.ravel(), yy.ravel()], axis=-1)
+        f_grid = flatten_function_array(f_fn(grid_points))
+        if IS_CUPY_BACKEND:
+            f_grid = xp.asnumpy(f_grid)
+        f_grid = f_grid.reshape(xx.shape)
+        plt.contourf(
+            xx, yy, f_grid, levels=50, cmap="viridis", alpha=0.6, norm=LogNorm()
+        )
+        plt.colorbar()
+        plt.title("Initial Clustering and Function Contours")
+        plt.xlabel(r"$x_1$")
+        plt.ylabel(r"$x_2$")
+        plt.axis("equal")
+        plt.legend(loc="upper right")
+
+        _VISUAL_DEBUG_DIR.mkdir(exist_ok=True, parents=True)
+        plt.savefig(_VISUAL_DEBUG_DIR / "adaptive_clustering_L00.png", dpi=300)
+        plt.close()
+
     # Active mask (all pool points currently being processed). `active[i] == True`
     # means pool index i participates in the current refinement frontier.
     active = xp.zeros((capacity,), dtype=bool)
@@ -583,7 +621,7 @@ def adaptive_clustering(
     buffers, out_cap = allocate_output_buffers(MAX_CLUSTERS_EST, d, X0.dtype)
     out_count = 0
 
-    level = 0
+    level = 1
     while level <= MAX_LEVELS:
         t_level = time.perf_counter()
         if LOG_MEM_STATS:
@@ -734,7 +772,6 @@ def adaptive_clustering(
                 good_starts,
                 good_counts,
                 int(good_idx.shape[0]),
-                Q_EPS_AXIS=Q_EPS_AXIS,
                 Q_SHRINK=Q_SHRINK,
             )
 
@@ -783,18 +820,28 @@ def adaptive_clustering(
         bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
         K_bad = int(bad_idx.shape[0])
 
-        # Hessian fit (symmetric) + |H|^{1/2} transform.
-        M = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts, H_RIDGE=H_RIDGE)
+        if CLUSTER_SPLITTING_METHOD == "hessian_pca":
+            # Hessian fit (symmetric) + |H|^{1/2} transform.
+            M = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts)
 
-        # Transform coordinates: z = M_k Δx (cluster-wise).
-        map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
-        M_exp = M[map_bad_n_to_k]
-        Z = (M_exp @ dx_bad[:, :, None])[:, :, 0]
+            # Transform coordinates: z = M_k Δx (cluster-wise).
+            map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
+            M_exp = M[map_bad_n_to_k]
+            Z = (M_exp @ dx_bad[:, :, None])[:, :, 0]
 
-        # Cov(Z) with (optional) shrinkage to stabilize eigenvectors.
-        ZZ_all = Z[:, :, None] * Z[:, None, :]
-        CovZ = xp.add.reduceat(ZZ_all, bad_starts)
-        CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))
+            # Cov(Z) per cluster.
+            ZZ_all = Z[:, :, None] * Z[:, None, :]
+            CovZ = xp.add.reduceat(ZZ_all, bad_starts)
+            CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))  # (K_bad,d,d)
+        elif CLUSTER_SPLITTING_METHOD == "pca_only":
+            # PCA-only split: Cov(Δx)
+            map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
+            XX_all = dx_bad[:, :, None] * dx_bad[:, None, :]  # (N_bad,d,d)
+            CovZ = xp.add.reduceat(XX_all, bad_starts)
+            CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))  # (K_bad,d,d)
+            Z = dx_bad
+        else:
+            raise ValueError(f"Unknown {CLUSTER_SPLITTING_METHOD=}")
 
         # Split direction per cluster = top eigenvector of CovZ.
         v = get_dominant_eigenvector(CovZ)
@@ -825,10 +872,110 @@ def adaptive_clustering(
             f"F_inf={F_inf:.1e}"
         )
         logger.info(f"Runtime - Level {level:03}: {time.perf_counter()-t_level:.3f}s")
+
+        if VISUAL_DEBUG and d == 2:
+            # check if buffer has good centroids from previous steps
+            good_centroids = mus[good_idx]
+            if out_count > 0:
+                good_centroids_from_buffers = buffers["centroids"][:out_count]
+                if IS_CUPY_BACKEND:
+                    good_centroids_from_buffers = xp.asnumpy(
+                        good_centroids_from_buffers
+                    )
+
+            bad_centroids = mus[bad_idx]
+
+            plt.figure(figsize=(6, 6))
+            if out_count > 0:
+                plt.scatter(
+                    good_centroids_from_buffers[:, 0],  # type: ignore
+                    good_centroids_from_buffers[:, 1],  # type: ignore
+                    c="blue",
+                    marker="s",
+                    label="Accepted previous levels",
+                )
+            if int(good_centroids.shape[0]) > 0:
+                plt.scatter(
+                    good_centroids[:, 0],
+                    good_centroids[:, 1],
+                    c="green",
+                    marker="o",
+                    label="Accepted this level",
+                )
+            if int(bad_centroids.shape[0]) > 0:
+                plt.scatter(
+                    bad_centroids[:, 0],
+                    bad_centroids[:, 1],
+                    c="red",
+                    marker="x",
+                    label="To Split next level",
+                )
+            # Plot countourf of f over the bounding box
+            x_min, x_max = xp.min(X0[:, 0]), xp.max(X0[:, 0])
+            y_min, y_max = xp.min(X0[:, 1]), xp.max(X0[:, 1])
+            xx, yy = xp.meshgrid(
+                xp.linspace(x_min, x_max, 100),
+                xp.linspace(y_min, y_max, 100),
+            )
+            grid_points = xp.stack([xx.ravel(), yy.ravel()], axis=-1)
+            f_grid = flatten_function_array(f_fn(grid_points))
+            if IS_CUPY_BACKEND:
+                f_grid = xp.asnumpy(f_grid)
+            f_grid = f_grid.reshape(xx.shape)
+            plt.contourf(
+                xx, yy, f_grid, levels=50, cmap="viridis", alpha=0.6, norm=LogNorm()
+            )
+            plt.colorbar()
+            plt.title(f"Adaptive Clustering Level {level:02}")
+            plt.xlabel(r"$x_1$")
+            plt.ylabel(r"$x_2$")
+            plt.axis("equal")
+            plt.legend(loc="upper right")
+
+            plt.savefig(
+                _VISUAL_DEBUG_DIR / f"adaptive_clustering_L{level:02}.png", dpi=300
+            )
+            plt.close()
+
         level += 1
 
     if level > MAX_LEVELS:
         logger.warning(f"Reached MAX_LEVELS={MAX_LEVELS}, terminating.")
+
+    if VISUAL_DEBUG and d == 2:
+        all_good_centroids = buffers["centroids"][:out_count]
+        plt.figure(figsize=(6, 6))
+        if int(all_good_centroids.shape[0]) > 0:
+            plt.scatter(
+                all_good_centroids[:, 0],
+                all_good_centroids[:, 1],
+                c="blue",
+                marker="s",
+                label="Accepted clusters",
+            )
+        # Plot countourf of f over the bounding box
+        x_min, x_max = xp.min(X0[:, 0]), xp.max(X0[:, 0])
+        y_min, y_max = xp.min(X0[:, 1]), xp.max(X0[:, 1])
+        xx, yy = xp.meshgrid(
+            xp.linspace(x_min, x_max, 100),
+            xp.linspace(y_min, y_max, 100),
+        )
+        grid_points = xp.stack([xx.ravel(), yy.ravel()], axis=-1)
+        f_grid = flatten_function_array(f_fn(grid_points))
+        if IS_CUPY_BACKEND:
+            f_grid = xp.asnumpy(f_grid)
+        f_grid = f_grid.reshape(xx.shape)
+        plt.contourf(
+            xx, yy, f_grid, levels=50, cmap="viridis", alpha=0.6, norm=LogNorm()
+        )
+        plt.colorbar()
+        plt.title(f"Adaptive Clustering Final Result")
+        plt.xlabel(r"$x_1$")
+        plt.ylabel(r"$x_2$")
+        plt.axis("equal")
+        plt.legend(loc="upper right")
+        plt.savefig(_VISUAL_DEBUG_DIR / f"adaptive_clustering_L{level:02}.png", dpi=300)
+        plt.close()
 
     # Truncate outputs
     final_count = int(out_count)
@@ -885,6 +1032,13 @@ if __name__ == "__main__":
         help="Type of error scaling for relative error computation",
     )
     parser.add_argument(
+        "--cluster-splitting-method",
+        type=str,
+        default="hessian_pca",
+        choices=["hessian_pca", "pca_only"],
+        help="Method for cluster splitting",
+    )
+    parser.add_argument(
         "--rosenbrock-a",
         type=float,
         default=100.0,
@@ -910,6 +1064,7 @@ if __name__ == "__main__":
     NUM_INITIAL_CLUSTERS = args.n_init_clusters
     MIN_PTS_PER_CLUSTER = args.n_min_per_cluster
     ERROR_SCALING_METHOD = args.error_scaling_method
+    CLUSTER_SPLITTING_METHOD = args.cluster_splitting_method
     A_ROSENBROCK = args.rosenbrock_a
     OUTPUT_SUBDIR = args.output_subdir
     FORCE_REEXEC = args.force
@@ -919,7 +1074,7 @@ if __name__ == "__main__":
     AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     img_fpath = (
         AC_PLOTS_DIR
-        / f"adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_{ERROR_SCALING_METHOD}.png"
+        / f"adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_{ERROR_SCALING_METHOD}_{CLUSTER_SPLITTING_METHOD}.png"
     )
     if DIM == 2 and img_fpath.exists() and not FORCE_REEXEC:
         print(f"Plot file {img_fpath} already exists. Skipping execution.")
@@ -944,6 +1099,7 @@ if __name__ == "__main__":
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         SYNTH_BUDGET_FACTOR=100 * 10,
         ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+        CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
     )
 
     print("-" * 40)
@@ -965,9 +1121,7 @@ if __name__ == "__main__":
     )
 
     if DIM == 2 and len(results["centroids"]) <= 10_000:
-        import matplotlib.pyplot as plt
         import numpy as np
-        from matplotlib.colors import LogNorm
         from matplotlib.patches import Ellipse
 
         if IS_CUPY_BACKEND:
@@ -1054,8 +1208,8 @@ if __name__ == "__main__":
         axs[1].legend()
         plt.tight_layout()
         fig.suptitle(
-            f"Adaptive Clustering: Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL} ({ERROR_SCALING_METHOD}), N_INIT={NUM_INITIAL_CLUSTERS}, N_MIN={MIN_PTS_PER_CLUSTER}), Final Clusters: {results['centroids'].shape[0]:,}",
-            fontsize=16,
+            f"Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL} (error_normalization={ERROR_SCALING_METHOD}), N_INIT={NUM_INITIAL_CLUSTERS}, N_MIN={MIN_PTS_PER_CLUSTER}, CLUSTER_SPLITTING_METHOD={CLUSTER_SPLITTING_METHOD}), Final Clusters: {results['centroids'].shape[0]:,}",
+            fontsize=11,
         )
 
         plt.subplots_adjust(top=0.88)
@@ -1068,4 +1222,5 @@ if __name__ == "__main__":
     npx_fpath = img_fpath.with_suffix(".npz")
     if IS_CUPY_BACKEND:
         results = {k: xp.asnumpy(v) for k, v in results.items()}
+    xp.savez_compressed(npx_fpath, **results)
     xp.savez_compressed(npx_fpath, **results)
