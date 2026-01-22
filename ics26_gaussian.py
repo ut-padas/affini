@@ -38,7 +38,7 @@ def SGaussian_experiment_setup(
     K_NEIGHBOURS: int,
     CONTAINMENT_LEVEL: float,
     ENFORCE_CONTAINMENT: bool,
-    Q_SRINK_FLAG: bool,
+    Q_SHRINK: float,
     SYNTH_BUDGET_FACTOR: int = 10,
 ):
     if DIM == 2:
@@ -63,8 +63,6 @@ def SGaussian_experiment_setup(
     FAILED = False
     _TRAINED, _PREDICTED = False, False
     try:
-        Q_SHRINK = 0.05 if Q_SRINK_FLAG else -1.0
-
         # Train
         print("\n--- Training ---")
         _start_train_time = time.perf_counter()
@@ -124,7 +122,7 @@ def SGaussian_experiment_setup(
 
     result_dict = create_problem_result_dict(
         problem_name="ShiftedGaussians",
-        problem_tag=f"{DIM}D_N{N_TRAIN}_InitClust{N_INIT_CLUSTERS}_Tol{TOL}_ErrScale{ERROR_SCALING_METHOD}_MinPts{N_MIN_PER_CLUSTER}_MaxClustEst{MAX_CLUSTERS_EST}_K{K_NEIGHBOURS}_ContainLvl{CONTAINMENT_LEVEL}_EnfContain{ENFORCE_CONTAINMENT}_QShrink{Q_SRINK_FLAG}",
+        problem_tag=f"{DIM}D_N{N_TRAIN}_InitClust{N_INIT_CLUSTERS}_Tol{TOL}_ErrScale{ERROR_SCALING_METHOD}_MinPts{N_MIN_PER_CLUSTER}_MaxClustEst{MAX_CLUSTERS_EST}_K{K_NEIGHBOURS}_ContainLvl{CONTAINMENT_LEVEL}_EnfContain{ENFORCE_CONTAINMENT}_QShrink{Q_SHRINK}",
         error_tag=error_tag,
         train_time=train_time,
         predict_time=predict_time,
@@ -142,7 +140,7 @@ def SGaussian_experiment_setup(
         K_NEIGHBOURS=K_NEIGHBOURS,
         ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
         CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-        Q_SRINK_FLAG=Q_SRINK_FLAG,
+        Q_SHRINK=Q_SHRINK,
         SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
     )
 
@@ -183,6 +181,8 @@ def SGaussian_experiment_setup(
 
         centroids = surrogate.X_src
         Qs = surrogate.trust_ellipses_src
+        if centroids is None or Qs is None:
+            raise ValueError("Centroids or Trust Ellipses are None")
 
         if IS_CUPY_BACKEND:
             centroids = xp.asnumpy(centroids)
@@ -237,6 +237,7 @@ def experiment_no_q_shrink() -> Path:
     CONTAINMENT_LEVEL = 1.0
     ENFORCE_CONTAINMENT = False
     ERROR_SCALING_METHOD = "global"
+    Q_SHRINK = -1.0
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_no_q_shrink_global_error_scaling"
     TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
@@ -271,7 +272,105 @@ def experiment_no_q_shrink() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            Q_SRINK_FLAG=False,
+            Q_SHRINK=Q_SHRINK,
+        )
+
+    return EXP_DIR
+
+
+def experiment_with_q_shrink() -> Path:
+    N_INIT_CLUSTERS = 25
+    N_MIN_PER_CLUSTER = 100
+    MAX_CLUSTERS_EST = 10_000
+    K_NEIGHBOURS = 1
+    CONTAINMENT_LEVEL = 1.0
+    ENFORCE_CONTAINMENT = False
+    ERROR_SCALING_METHOD = "global"
+    Q_SHRINK = 0.05
+
+    EXP_DIR = ICS26_DIR / "shifted_gaussians_with_q_shrink_global_error_scaling"
+    TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
+    DIMs = [2, 3]
+
+    for DIM, TOL in product(DIMs, TOLs):
+        json_path = EXP_DIR / f"ics26_sgaussian_dim{DIM}_tol{TOL}.json"
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+
+        if DIM == 2:
+            N_TRAIN = 200_000
+            N_TEST = 20_000
+        elif DIM == 3:
+            N_TRAIN = 300_000
+            N_TEST = 30_000
+        else:
+            raise ValueError("DIM must be 2 or 3")
+
+        SGaussian_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
+            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
+            Q_SHRINK=Q_SHRINK,
+        )
+
+    return EXP_DIR
+
+
+def experiment_with_identity() -> Path:
+    N_INIT_CLUSTERS = 25
+    N_MIN_PER_CLUSTER = 100
+    MAX_CLUSTERS_EST = 10_000
+    K_NEIGHBOURS = 1
+    CONTAINMENT_LEVEL = 1.0
+    ENFORCE_CONTAINMENT = False
+    ERROR_SCALING_METHOD = "global"
+    Q_SHRINK = 1.0
+
+    EXP_DIR = ICS26_DIR / "shifted_gaussians_with_identity_global_error_scaling"
+    TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
+    DIMs = [2, 3]
+
+    for DIM, TOL in product(DIMs, TOLs):
+        json_path = EXP_DIR / f"ics26_sgaussian_dim{DIM}_tol{TOL}.json"
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+
+        if DIM == 2:
+            N_TRAIN = 200_000
+            N_TEST = 20_000
+        elif DIM == 3:
+            N_TRAIN = 300_000
+            N_TEST = 30_000
+        else:
+            raise ValueError("DIM must be 2 or 3")
+
+        SGaussian_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
+            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
+            Q_SHRINK=Q_SHRINK,
         )
 
     return EXP_DIR
@@ -283,3 +382,9 @@ if __name__ == "__main__":
     setup_logging()
     dir1 = experiment_no_q_shrink()
     create_summary_dataframe(dir1)
+
+    dir2 = experiment_with_q_shrink()
+    create_summary_dataframe(dir2)
+
+    dir3 = experiment_with_identity()
+    create_summary_dataframe(dir3)
