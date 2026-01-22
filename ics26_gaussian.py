@@ -11,7 +11,6 @@ from ics26_experiments import (
     SEED,
     create_problem_result_dict,
     create_summary_dataframe,
-    del_all_error_files_in_dir,
     plot_error_histogram,
 )
 from src import xp
@@ -52,8 +51,9 @@ def SGaussian_experiment_setup(
         raise ValueError("DIM must be 2 or 3")
 
     # Sample training data according to N(0, 2I)
-    rng = xp.random.default_rng(SEED)
-    X_train = rng.normal(0, np.sqrt(2), size=(N_TRAIN, DIM))
+    xp.random.seed(SEED)
+    X_train = xp.random.normal(0, np.sqrt(2), size=(N_TRAIN, DIM))
+    X_test = xp.random.normal(0, np.sqrt(2), size=(N_TEST, DIM))
 
     surrogate = NearODESurrogate()
     error_tag = ""
@@ -84,8 +84,6 @@ def SGaussian_experiment_setup(
 
         # Evaluate
         print("--- Evaluation ---")
-        # Sample test data according to N(0, 2I)
-        X_test = rng.normal(0, np.sqrt(2), size=(N_TEST, DIM))
         ground_truth = sg_f(X_test)
 
         # Example utilizing the new signature with Guarantee checks
@@ -166,7 +164,6 @@ def experiment_no_q_shrink() -> Path:
     ERROR_SCALING_METHOD = "global"
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_no_q_shrink_global_error_scaling"
-    del_all_error_files_in_dir(EXP_DIR)
     TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4]
     DIMs = [2, 3]
 
