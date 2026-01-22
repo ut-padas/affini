@@ -4,20 +4,16 @@ from functools import partial
 from itertools import product
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 
 from ics26_experiments import (
     ICS26_DIR,
     SEED,
-    TINY_EPS,
     create_problem_result_dict,
     create_summary_dataframe,
     plot_error_histogram,
 )
-from src import IS_CUPY_BACKEND, RESULTS_DIR, Array, xp
-from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
+from src import xp
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
     CENTERS_3D,
@@ -54,7 +50,6 @@ def SGaussian_experiment_setup(
     else:
         raise ValueError("DIM must be 2 or 3")
 
-    domain = xp.array([[-3.0, 3.0]] * DIM)
     # Sample training data according to N(0, 2I)
     rng = xp.random.default_rng(SEED)
     X_train = rng.normal(0, np.sqrt(2), size=(N_TRAIN, DIM))
@@ -68,7 +63,7 @@ def SGaussian_experiment_setup(
         Q_SHRINK = 0.05 if Q_SRINK_FLAG else -1.0
 
         # Train
-        print("--- Training ---")
+        print("\n--- Training ---")
         _start_train_time = time.perf_counter()
         surrogate.train(
             X_train=X_train,
@@ -87,7 +82,7 @@ def SGaussian_experiment_setup(
         _TRAINED = True
 
         # Evaluate
-        print("\n--- Evaluation ---")
+        print("--- Evaluation ---")
         # Sample test data according to N(0, 2I)
         X_test = rng.normal(0, np.sqrt(2), size=(N_TEST, DIM))
         ground_truth = sg_f(X_test)
@@ -209,5 +204,8 @@ def experiment_no_q_shrink() -> Path:
 
 
 if __name__ == "__main__":
+    from src.logging_config import setup_logging
+
+    setup_logging()
     dir1 = experiment_no_q_shrink()
     create_summary_dataframe(dir1)
