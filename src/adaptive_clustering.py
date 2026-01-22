@@ -211,40 +211,59 @@ def calculate_Q(
         Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (scale[:, None, None] * I)
         Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
 
-    # PCA directions U (columns).
-    Lambda, U = xp.linalg.eigh(Cov)
+        # PCA directions U (columns).
+        Lambda, U = xp.linalg.eigh(Cov)
 
-    # Invert Eigenvalues to get shape.
-    # Since Cov is PSD and shrunk, Lambda > 0.
-    Lambda_inv = 1.0 / Lambda  # (K,d)
+        # Invert Eigenvalues to get shape.
+        # Since Cov is PSD and shrunk, Lambda > 0.
+        Lambda_inv = 1.0 / Lambda  # (K,d)
 
-    # dist^2 = x^T S x = x^T (U Lambda_inv U^T) x
-    map_n_to_k = repeats(xp.arange(K), counts)
-    U_exp = U[map_n_to_k]  # (N, d, d)
-    L_inv_exp = Lambda_inv[map_n_to_k]  # (N, d)
+        # dist^2 = x^T S x = x^T (U Lambda_inv U^T) x
+        map_n_to_k = repeats(xp.arange(K), counts)
+        U_exp = U[map_n_to_k]  # (N, d, d)
+        L_inv_exp = Lambda_inv[map_n_to_k]  # (N, d)
 
-    # Projection: p = U^T x
-    proj = (U_exp.transpose(0, 2, 1) @ DeltaX[:, :, None])[:, :, 0]  # (N,d)
+        # Projection: p = U^T x
+        proj = (U_exp.transpose(0, 2, 1) @ DeltaX[:, :, None])[:, :, 0]  # (N,d)
 
-    # Distance squared relative to eigen-shape
-    dist_sq = xp.sum((proj * proj) * L_inv_exp, axis=1)  # (N,)
+        # Distance squared relative to eigen-shape
+        dist_sq = xp.sum((proj * proj) * L_inv_exp, axis=1)  # (N,)
 
-    # Find max distance per cluster to scale the ellipsoid
-    # scale = 1.0 / max(dist_sq)
-    max_dist_sq = xp.zeros((K,), dtype=proj.dtype)
-    scatter_maximum_1d(max_dist_sq, map_n_to_k, dist_sq)
+        # Find max distance per cluster to scale the ellipsoid
+        # scale = 1.0 / max(dist_sq)
+        max_dist_sq = xp.zeros((K,), dtype=proj.dtype)
+        scatter_maximum_1d(max_dist_sq, map_n_to_k, dist_sq)
 
-    # Avoid degenerate axes
-    max_dist_sq = xp.maximum(max_dist_sq, Q_EPS_AXIS)
+        # Avoid degenerate axes
+        max_dist_sq = xp.maximum(max_dist_sq, Q_EPS_AXIS)
 
-    scale = 1.0 / max_dist_sq  # (K,)
+        scale = 1.0 / max_dist_sq  # (K,)
 
-    # Q = scale * (U Lambda_inv U^T)
-    # Combine scale into Lambda_inv
-    final_D = scale[:, None] * Lambda_inv  # (K, d)
+        # Q = scale * (U Lambda_inv U^T)
+        # Combine scale into Lambda_inv
+        final_D = scale[:, None] * Lambda_inv  # (K, d)
 
-    # Q = U diag(final_D) U^T
-    Q = (U * final_D[:, None, :]) @ U.transpose(0, 2, 1)  # (K,d,d)
+        # Q = U diag(final_D) U^T
+        Q = (U * final_D[:, None, :]) @ U.transpose(0, 2, 1)  # (K,d,d)
+    else:
+        # PCA directions U (columns).
+        _, U = xp.linalg.eigh(Cov)
+
+        # Projection scores onto PCA axes: proj_i = U_k^T dx_i.
+        map_n_to_k = repeats(xp.arange(K), counts)  # (N,)
+        U_exp = U[map_n_to_k]  # (N,d,d)
+        proj = (U_exp.transpose(0, 2, 1) @ DeltaX[:, :, None])[:, :, 0]  # (N,d)
+        proj_abs = xp.abs(proj)
+
+        # Axis extents: d_axes[k,j] = max_i |proj[i,j]| within cluster k.
+        d_axes = xp.zeros((K, proj_abs.shape[1]), dtype=proj_abs.dtype)
+        scatter_maximum_1d(d_axes, map_n_to_k, proj_abs)
+
+        d_axes = xp.maximum(d_axes, Q_EPS_AXIS)
+        Dinv2 = 1.0 / (d_axes * d_axes)  # (K,d)
+
+        # Q = U diag(Dinv2) U^T
+        Q = (U * Dinv2[:, None, :]) @ U.transpose(0, 2, 1)
 
     return 0.5 * (Q + Q.transpose(0, 2, 1)), Cov
 
