@@ -469,7 +469,7 @@ def adaptive_clustering(
     # Geometry stabilizers
     Q_SHRINK: float = 0.05,
     MAX_LEVELS: int = 50,
-    VISUAL_DEBUG: bool = True,
+    VISUAL_DEBUG: bool = False,
 ) -> dict[str, Array]:
     """
     BFS adaptive clustering with *persistent* convex padding via a preallocated pool.
