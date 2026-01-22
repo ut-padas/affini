@@ -36,6 +36,7 @@ class NearODESurrogate:
         # Clustering params
         TOL: float = 1e-2,
         ERROR_SCALING_METHOD: Literal["global", "local"] = "global",
+        CLUSTER_SPLITTING_METHOD: Literal["hessian_pca", "pca_only"] = "hessian_pca",
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
@@ -57,6 +58,7 @@ class NearODESurrogate:
             g_fn=g_fn,
             TOL=TOL,
             ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
             NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,

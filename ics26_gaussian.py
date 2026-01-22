@@ -3,6 +3,7 @@ import time
 from functools import partial
 from itertools import product
 from pathlib import Path
+from typing import Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,7 +32,8 @@ def SGaussian_experiment_setup(
     N_TRAIN: int,
     N_INIT_CLUSTERS: int,
     TOL: float,
-    ERROR_SCALING_METHOD: str,
+    ERROR_SCALING_METHOD: Literal["global", "local"],
+    CLUSTER_SPLITTING_METHOD: Literal["hessian_pca", "pca_only"],
     N_MIN_PER_CLUSTER: int,
     MAX_CLUSTERS_EST: int,
     N_TEST: int,
@@ -71,7 +73,8 @@ def SGaussian_experiment_setup(
             f_fn=sg_f,
             g_fn=sg_grad_f,
             TOL=TOL,
-            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,  # type: ignore
+            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
             NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
             MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
@@ -135,6 +138,7 @@ def SGaussian_experiment_setup(
         N_TRAIN=N_TRAIN,
         N_CLUSTERS=N_CLUSTERS,
         ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+        CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
         N_INIT_CLUSTERS=N_INIT_CLUSTERS,
         N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
         K_NEIGHBOURS=K_NEIGHBOURS,
@@ -237,6 +241,7 @@ def experiment_no_q_shrink() -> Path:
     CONTAINMENT_LEVEL = 1.0
     ENFORCE_CONTAINMENT = False
     ERROR_SCALING_METHOD = "global"
+    CLUSTER_SPLITTING_METHOD = "hessian_pca"
     Q_SHRINK = -1.0
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_no_q_shrink_global_error_scaling"
@@ -266,6 +271,7 @@ def experiment_no_q_shrink() -> Path:
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
             TOL=TOL,
             ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
             N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
@@ -286,6 +292,7 @@ def experiment_with_q_shrink() -> Path:
     CONTAINMENT_LEVEL = 1.0
     ENFORCE_CONTAINMENT = False
     ERROR_SCALING_METHOD = "global"
+    CLUSTER_SPLITTING_METHOD = "hessian_pca"
     Q_SHRINK = 0.05
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_with_q_shrink_global_error_scaling"
@@ -315,6 +322,7 @@ def experiment_with_q_shrink() -> Path:
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
             TOL=TOL,
             ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
             N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
@@ -327,7 +335,7 @@ def experiment_with_q_shrink() -> Path:
     return EXP_DIR
 
 
-def experiment_with_identity() -> Path:
+def experiment_with_pca_only() -> Path:
     N_INIT_CLUSTERS = 25
     N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 10_000
@@ -335,9 +343,10 @@ def experiment_with_identity() -> Path:
     CONTAINMENT_LEVEL = 1.0
     ENFORCE_CONTAINMENT = False
     ERROR_SCALING_METHOD = "global"
-    Q_SHRINK = 1.0
+    Q_SHRINK = 0.05
+    CLUSTER_SPLITTING_METHOD = "pca_only"
 
-    EXP_DIR = ICS26_DIR / "shifted_gaussians_with_identity_global_error_scaling"
+    EXP_DIR = ICS26_DIR / "shifted_gaussians_with_pca_only_global_error_scaling"
     TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
     DIMs = [2, 3]
 
@@ -364,6 +373,7 @@ def experiment_with_identity() -> Path:
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
             TOL=TOL,
             ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
             N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
@@ -386,5 +396,5 @@ if __name__ == "__main__":
     dir2 = experiment_with_q_shrink()
     create_summary_dataframe(dir2)
 
-    dir3 = experiment_with_identity()
+    dir3 = experiment_with_pca_only()
     create_summary_dataframe(dir3)
