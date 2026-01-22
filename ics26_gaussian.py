@@ -4,7 +4,9 @@ from functools import partial
 from itertools import product
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Ellipse
 
 from ics26_experiments import (
     ICS26_DIR,
@@ -13,7 +15,7 @@ from ics26_experiments import (
     create_summary_dataframe,
     plot_error_histogram,
 )
-from src import xp
+from src import IS_CUPY_BACKEND, xp
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
     CENTERS_3D,
@@ -102,6 +104,7 @@ def SGaussian_experiment_setup(
 
         N_CLUSTERS = surrogate.get_number_of_sources()
         num_levels = surrogate.training_num_levels
+
     except Exception as e:
         FAILED = True
         error_tag = f"Experiment failed with exception: {e} | TRAINED={_TRAINED}, PREDICTED={_PREDICTED}"
@@ -116,7 +119,7 @@ def SGaussian_experiment_setup(
         ungauranteed_mask = None
         train_time = None
         predict_time = None
-        N_CLUSTERS = None
+        N_CLUSTERS = 0
         num_levels = None
 
     result_dict = create_problem_result_dict(
@@ -152,6 +155,73 @@ def SGaussian_experiment_setup(
     plot_error_histogram(
         ground_truth=ground_truth, predictions=preds, json_fpath=json_fpath, TOL=TOL
     )
+
+    if DIM == 2 and N_CLUSTERS < 3000:
+        # 1 plot 2 subplots (1X2)
+        # Subplot 1: contourf of shifted gaussians function
+        # Subplot 2: scatter of final cluster centroids with trust ellipses on contourf
+        x = np.linspace(-4, 4, 200)
+        y = np.linspace(-4, 4, 200)
+        X, Y = np.meshgrid(x, y)
+        Z = sg_f(np.vstack([X.ravel(), Y.ravel()]).T).reshape(X.shape)
+
+        fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+        cs = axs[0].contourf(X, Y, Z, levels=50, cmap="viridis")
+        fig.colorbar(cs, ax=axs[0])
+        axs[0].set_title("Shifted Gaussians with Cluster Centroids")
+        axs[0].set_xlabel(r"$x_1$")
+        axs[0].set_ylabel(r"$x_2$")
+        axs[0].set_aspect("equal")
+
+        # Subplot 2: scatter of cluster centroids with trust ellipses
+        cs2 = axs[1].contourf(X, Y, Z, levels=50, cmap="viridis")
+
+        centroids = surrogate.X_src
+        Qs = surrogate.trust_ellipses_src
+
+        if IS_CUPY_BACKEND:
+            centroids = xp.asnumpy(centroids)
+            Qs = xp.asnumpy(Qs)
+
+        fig.colorbar(cs2, ax=axs[1])
+        axs[1].scatter(
+            centroids[:, 0], centroids[:, 1], c="red", s=10, label="Cluster Centroids"
+        )
+
+        # Draw ellipses
+        for i in range(centroids.shape[0]):
+            mu = centroids[i]
+            Q = Qs[i]
+            w, V = np.linalg.eigh(Q)
+            w = np.maximum(w, 1e-12)
+            order = w.argsort()[::-1]
+            w = w[order]
+            V = V[:, order]
+
+            a = np.sqrt(1.0 / w[0])
+            b = np.sqrt(1.0 / w[1])
+            angle = np.degrees(np.arctan2(V[1, 0], V[0, 0]))
+            ellipse = Ellipse(
+                xy=mu,
+                width=2 * a,
+                height=2 * b,
+                angle=angle,
+                edgecolor="red",
+                fc="None",
+                lw=1,
+                alpha=0.5,
+            )
+            axs[1].add_patch(ellipse)
+        axs[1].set_title("Cluster Centroids with Trust Ellipses")
+        axs[1].set_xlabel(r"$x_1$")
+        axs[1].set_ylabel(r"$x_2$")
+        axs[1].set_aspect("equal")
+        plt.legend()
+
+        fname = json_fpath.name.replace(".json", "_centroids_ellipses.png")
+        plot_path = json_fpath.parent / fname
+        plt.savefig(plot_path, dpi=300)
+        plt.close(fig)
 
 
 def experiment_no_q_shrink() -> Path:
