@@ -7,23 +7,35 @@ from typing import Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Ellipse
+from matplotlib.patches import Circle, Ellipse
 
 from ics26_experiments import (
     ICS26_DIR,
     SEED,
     create_problem_result_dict,
     create_summary_dataframe,
+    del_all_error_files_in_dir,
     plot_error_histogram,
 )
 from src import IS_CUPY_BACKEND, xp
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
     CENTERS_3D,
+    CENTERS_4D,
     shifted_gaussians,
     shifted_gaussians_grad,
 )
 from src.surrogate import NearODESurrogate
+
+N_INIT_CLUSTERS = 1
+N_MIN_PER_CLUSTER = 100
+MAX_CLUSTERS_EST = 10_000
+K_NEIGHBOURS = 1
+CONTAINMENT_LEVEL = 1.0
+ENFORCE_CONTAINMENT = False
+ERROR_SCALING_METHOD = "global"
+TOLs = [i / 100.0 for i in [2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005]]
+TOLs = [i / 100.0 for i in [10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01]]
 
 
 def SGaussian_experiment_setup(
@@ -41,25 +53,28 @@ def SGaussian_experiment_setup(
     CONTAINMENT_LEVEL: float,
     ENFORCE_CONTAINMENT: bool,
     Q_SHRINK: float,
+    CLUSTERING_VERSION: Literal["v1", "v2"],
     SYNTH_BUDGET_FACTOR: int = 10,
 ):
     if DIM == 2:
         centers = CENTERS_2D
-        sg_f = partial(shifted_gaussians, centers=centers)
-        sg_grad_f = partial(shifted_gaussians_grad, centers=centers)
     elif DIM == 3:
         centers = CENTERS_3D
-        sg_f = partial(shifted_gaussians, centers=centers)
-        sg_grad_f = partial(shifted_gaussians_grad, centers=centers)
+    elif DIM == 4:
+        centers = CENTERS_4D
     else:
-        raise ValueError("DIM must be 2 or 3")
+        raise ValueError("DIM must be 2, 3, or 4")
 
-    # Sample training data according to N(0, 2I)
+    sg_f = partial(shifted_gaussians, centers=centers)
+    sg_grad_f = partial(shifted_gaussians_grad, centers=centers)
+
+    # Sample training data uniformly from [-2, 2]^d
     xp.random.seed(SEED)
-    X_train = xp.random.normal(0, np.sqrt(2), size=(N_TRAIN, DIM))
-    X_test = xp.random.normal(0, np.sqrt(2), size=(N_TEST, DIM))
+    DOMAIN = [-2.0, 2.0]
+    X_train = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TRAIN, DIM))
+    X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, DIM))
 
-    surrogate = NearODESurrogate()
+    surrogate = NearODESurrogate(version=CLUSTERING_VERSION)
     error_tag = ""
 
     FAILED = False
@@ -137,6 +152,7 @@ def SGaussian_experiment_setup(
         DIM=DIM,
         N_TRAIN=N_TRAIN,
         N_CLUSTERS=N_CLUSTERS,
+        CLUSTERING_VERSION=CLUSTERING_VERSION,
         ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
         CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
         N_INIT_CLUSTERS=N_INIT_CLUSTERS,
@@ -162,8 +178,8 @@ def SGaussian_experiment_setup(
         # 1 plot 2 subplots (1X2)
         # Subplot 1: contourf of shifted gaussians function
         # Subplot 2: scatter of final cluster centroids with trust ellipses on contourf
-        x = xp.linspace(-4, 4, 200)
-        y = xp.linspace(-4, 4, 200)
+        x = xp.linspace(-2, 2, 200)
+        y = xp.linspace(-2, 2, 200)
         X, Y = xp.meshgrid(x, y)
         Z = sg_f(xp.vstack([X.ravel(), Y.ravel()]).T).reshape(X.shape)
 
@@ -175,7 +191,9 @@ def SGaussian_experiment_setup(
         fig, axs = plt.subplots(1, 2, figsize=(12, 5))
         cs = axs[0].contourf(X, Y, Z, levels=50, cmap="viridis")
         fig.colorbar(cs, ax=axs[0])
-        axs[0].set_title("Shifted Gaussians with Cluster Centroids")
+        axs[0].set_title(
+            f"Shifted Gaussians with Cluster Centroids (TOL={TOL})", fontsize=10
+        )
         axs[0].set_xlabel(r"$x_1$")
         axs[0].set_ylabel(r"$x_2$")
         axs[0].set_aspect("equal")
@@ -184,44 +202,71 @@ def SGaussian_experiment_setup(
         cs2 = axs[1].contourf(X, Y, Z, levels=50, cmap="viridis")
 
         centroids = surrogate.X_src
-        Qs = surrogate.trust_ellipses_src
-        if centroids is None or Qs is None:
-            raise ValueError("Centroids or Trust Ellipses are None")
-
-        if IS_CUPY_BACKEND:
-            centroids = xp.asnumpy(centroids)
-            Qs = xp.asnumpy(Qs)
+        if centroids is None:
+            raise ValueError("Surrogate has no cluster centroids to plot.")
 
         fig.colorbar(cs2, ax=axs[1])
         axs[1].scatter(
             centroids[:, 0], centroids[:, 1], c="red", s=10, label="Cluster Centroids"
         )
+        if CLUSTERING_VERSION == "v2":
+            Qs = surrogate.trust_ellipses_src
+            if Qs is None:
+                raise ValueError("Surrogate has no trust ellipses to plot.")
 
-        # Draw ellipses
-        for i in range(centroids.shape[0]):
-            mu = centroids[i]
-            Q = Qs[i]
-            w, V = np.linalg.eigh(Q)
-            w = np.maximum(w, 1e-12)
-            order = w.argsort()[::-1]
-            w = w[order]
-            V = V[:, order]
+            if IS_CUPY_BACKEND:
+                centroids = xp.asnumpy(centroids)
+                Qs = xp.asnumpy(Qs)
+            # Draw ellipses
+            for i in range(centroids.shape[0]):
+                mu = centroids[i]
+                Q = Qs[i]
+                w, V = np.linalg.eigh(Q)
+                w = np.maximum(w, 1e-12)
+                order = w.argsort()[::-1]
+                w = w[order]
+                V = V[:, order]
 
-            a = np.sqrt(1.0 / w[0])
-            b = np.sqrt(1.0 / w[1])
-            angle = np.degrees(np.arctan2(V[1, 0], V[0, 0]))
-            ellipse = Ellipse(
-                xy=mu,
-                width=2 * a,
-                height=2 * b,
-                angle=angle,
-                edgecolor="red",
-                fc="None",
-                lw=1,
-                alpha=0.5,
-            )
-            axs[1].add_patch(ellipse)
-        axs[1].set_title("Cluster Centroids with Trust Ellipses")
+                a = np.sqrt(1.0 / w[0])
+                b = np.sqrt(1.0 / w[1])
+                angle = np.degrees(np.arctan2(V[1, 0], V[0, 0]))
+                ellipse = Ellipse(
+                    xy=mu,
+                    width=2 * a,
+                    height=2 * b,
+                    angle=angle,
+                    edgecolor="red",
+                    fc="None",
+                    lw=1,
+                    alpha=0.5,
+                )
+                axs[1].add_patch(ellipse)
+        elif CLUSTERING_VERSION == "v1":
+            trust_radii = surrogate.trust_ellipses_src  # (N_CLUSTERS, )
+            if trust_radii is None:
+                raise ValueError("Surrogate has no trust radii to plot.")
+            if IS_CUPY_BACKEND:
+                centroids = xp.asnumpy(centroids)
+                trust_radii = xp.asnumpy(trust_radii)
+
+            # Draw circles
+            for i in range(centroids.shape[0]):
+                mu = centroids[i]
+                r = trust_radii[i]
+                circle = Circle(
+                    xy=mu,
+                    radius=r,
+                    edgecolor="red",
+                    fc="None",
+                    lw=1,
+                    alpha=0.5,
+                )
+                axs[1].add_patch(circle)
+
+        axs[1].set_title(
+            f"Cluster Centroids with Trust Ellipses (N_CLUSTERS={N_CLUSTERS})",
+            fontsize=10,
+        )
         axs[1].set_xlabel(r"$x_1$")
         axs[1].set_ylabel(r"$x_2$")
         axs[1].set_aspect("equal")
@@ -234,18 +279,12 @@ def SGaussian_experiment_setup(
 
 
 def experiment_no_q_shrink() -> Path:
-    N_INIT_CLUSTERS = 25
-    N_MIN_PER_CLUSTER = 100
-    MAX_CLUSTERS_EST = 10_000
-    K_NEIGHBOURS = 1
-    CONTAINMENT_LEVEL = 1.0
-    ENFORCE_CONTAINMENT = False
-    ERROR_SCALING_METHOD = "global"
     CLUSTER_SPLITTING_METHOD = "hessian_pca"
     Q_SHRINK = -1.0
+    CLUSTERING_VERSION = "v2"
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_no_q_shrink_global_error_scaling"
-    TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
+    del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 3]
 
     for DIM, TOL in product(DIMs, TOLs):
@@ -279,24 +318,20 @@ def experiment_no_q_shrink() -> Path:
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             Q_SHRINK=Q_SHRINK,
+            SYNTH_BUDGET_FACTOR=1000,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
         )
 
     return EXP_DIR
 
 
 def experiment_with_q_shrink() -> Path:
-    N_INIT_CLUSTERS = 25
-    N_MIN_PER_CLUSTER = 100
-    MAX_CLUSTERS_EST = 10_000
-    K_NEIGHBOURS = 1
-    CONTAINMENT_LEVEL = 1.0
-    ENFORCE_CONTAINMENT = False
-    ERROR_SCALING_METHOD = "global"
     CLUSTER_SPLITTING_METHOD = "hessian_pca"
     Q_SHRINK = 0.05
+    CLUSTERING_VERSION = "v2"
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_with_q_shrink_global_error_scaling"
-    TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
+    del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 3]
 
     for DIM, TOL in product(DIMs, TOLs):
@@ -307,11 +342,11 @@ def experiment_with_q_shrink() -> Path:
             continue
 
         if DIM == 2:
-            N_TRAIN = 200_000
-            N_TEST = 20_000
+            N_TRAIN = 100_000
+            N_TEST = 10_000
         elif DIM == 3:
-            N_TRAIN = 300_000
-            N_TEST = 30_000
+            N_TRAIN = 100_000
+            N_TEST = 10_000
         else:
             raise ValueError("DIM must be 2 or 3")
 
@@ -330,24 +365,20 @@ def experiment_with_q_shrink() -> Path:
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             Q_SHRINK=Q_SHRINK,
+            SYNTH_BUDGET_FACTOR=1000,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
         )
 
     return EXP_DIR
 
 
 def experiment_with_pca_only() -> Path:
-    N_INIT_CLUSTERS = 25
-    N_MIN_PER_CLUSTER = 100
-    MAX_CLUSTERS_EST = 10_000
-    K_NEIGHBOURS = 1
-    CONTAINMENT_LEVEL = 1.0
-    ENFORCE_CONTAINMENT = False
-    ERROR_SCALING_METHOD = "global"
     Q_SHRINK = 0.05
     CLUSTER_SPLITTING_METHOD = "pca_only"
+    CLUSTERING_VERSION = "v2"
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_with_pca_only_global_error_scaling"
-    TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
+    del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 3]
 
     for DIM, TOL in product(DIMs, TOLs):
@@ -381,6 +412,53 @@ def experiment_with_pca_only() -> Path:
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             Q_SHRINK=Q_SHRINK,
+            SYNTH_BUDGET_FACTOR=500,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+        )
+
+    return EXP_DIR
+
+
+def experiment_with_v1() -> Path:
+    Q_SHRINK = 0.05
+    CLUSTER_SPLITTING_METHOD = "pca_only"
+    CLUSTERING_VERSION = "v1"
+
+    EXP_DIR = ICS26_DIR / "shifted_gaussians_with_ac_v1"
+    del_all_error_files_in_dir(EXP_DIR)
+    DIMs = [2, 3, 4]
+
+    for DIM, TOL in product(DIMs, TOLs):
+        json_path = EXP_DIR / f"ics26_sgaussian_dim{DIM}_tol{TOL}.json"
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+
+        if DIM == 2:
+            N_TRAIN = 200_000
+            N_TEST = 20_000
+        else:
+            N_TRAIN = 300_000
+            N_TEST = 30_000
+
+        SGaussian_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
+            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
+            Q_SHRINK=Q_SHRINK,
+            SYNTH_BUDGET_FACTOR=500,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
         )
 
     return EXP_DIR
@@ -390,11 +468,14 @@ if __name__ == "__main__":
     from src.logging_config import setup_logging
 
     setup_logging()
-    dir1 = experiment_no_q_shrink()
-    create_summary_dataframe(dir1)
+    # dir1 = experiment_no_q_shrink()
+    # create_summary_dataframe(dir1)
 
-    dir2 = experiment_with_q_shrink()
-    create_summary_dataframe(dir2)
+    # dir2 = experiment_with_q_shrink()
+    # create_summary_dataframe(dir2)
 
-    dir3 = experiment_with_pca_only()
-    create_summary_dataframe(dir3)
+    # dir3 = experiment_with_pca_only()
+    # create_summary_dataframe(dir3)
+
+    dir4 = experiment_with_v1()
+    create_summary_dataframe(dir4)
