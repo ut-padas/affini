@@ -420,6 +420,7 @@ if __name__ == "__main__":
     from matplotlib.patches import Ellipse
 
     from src.logging_config import setup_logging
+    from src.problems.quadratic import quadratic, quadratic_grad
     from src.problems.shifted_gaussians import (
         CENTERS_2D,
         shifted_gaussians,
@@ -435,6 +436,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     TOL = args.tol
 
+    # -----------------------------------------
+    # Gaussian Function
     shif_g_fn = partial(shifted_gaussians, centers=CENTERS_2D)
     shif_g_grad_fn = partial(shifted_gaussians_grad, centers=CENTERS_2D)
 
@@ -508,6 +511,81 @@ if __name__ == "__main__":
     plt.title(
         f"Adaptive Clustering with Ellipsoids on Shifted Gaussians (TOL={TOL}, N = {len(centroids)})"
     )
-    fname = "ben_ac_code.png"
+    fname = "ben_ac_code_gaussian.png"
+    plt.savefig(fname)
+    plt.close()
+
+    # -----------------------------------------
+    # Quadratic Function
+    def evaluate_quadratic(x):
+        # If x is 1D, make it 2D
+        if x.ndim == 1:
+            x = np.expand_dims(x, axis=0)
+        f_val = quadratic(x).flatten()  # (N, )
+        g_val = quadratic_grad(x)  # (N, 1, D)
+        g_val = g_val.reshape(g_val.shape[0], g_val.shape[2])  # (N, D)
+        return f_val, g_val
+
+    # Generate Data
+    N = 10_000
+    D = 2
+    rng = np.random.default_rng(0)
+    X = rng.uniform(-10, 10, size=(N, D))
+
+    k, clusters = adaptive_cluster_algorithm(
+        training_data=X,
+        eval_function=evaluate_quadratic,
+        atol=TOL,
+        rtol=TOL,
+        N_init_clusters=1,
+        min_ppc=50,
+        use_gradient=True,
+        seed=0,
+    )
+    centroids, QoI_values, gradients, trust_ellipses, n_pts, tree_levels = (
+        flatten_cluster_centers_with_gradient(k, D, 1, clusters)
+    )
+
+    # Plot centroids with ellipses on contourf
+    x1 = np.linspace(-10, 10, 100)
+    x2 = np.linspace(-10, 10, 100)
+    X1, X2 = np.meshgrid(x1, x2)
+    X_grid = np.vstack([X1.ravel(), X2.ravel()]).T
+    F_grid = quadratic(X_grid).reshape(X1.shape)
+
+    plt.figure(figsize=(10, 8))
+    plt.contourf(X1, X2, F_grid, levels=50, cmap="viridis")
+
+    for i in range(len(centroids)):
+        mu = centroids[i]
+        Q = trust_ellipses[i]
+        # Compute eigenvalues and eigenvectors of Q
+        w, V = np.linalg.eigh(Q)
+        order = np.argsort(w)[::]
+        w = w[order]
+        V = V[:, order]
+        a = 1.0 / np.sqrt(w[0])
+        b = 1.0 / np.sqrt(w[1])
+        angle = np.degrees(np.arctan2(V[1, 0], V[0, 0]))
+
+        ellipse = Ellipse(
+            xy=mu,
+            width=2 * a,
+            height=2 * b,
+            angle=angle,
+            edgecolor="red",
+            facecolor="none",
+            lw=2,
+            alpha=0.7,
+        )
+        plt.gca().add_patch(ellipse)
+    plt.scatter(centroids[:, 0], centroids[:, 1], c="red", s=50)
+    plt.colorbar(label="Function Value")
+    plt.xlim(-10, 10)
+    plt.ylim(-10, 10)
+    plt.title(
+        f"Adaptive Clustering with Ellipsoids on Quadratic Function (TOL={TOL}, N = {len(centroids)})"
+    )
+    fname = "ben_ac_code_quadratic.png"
     plt.savefig(fname)
     plt.close()
