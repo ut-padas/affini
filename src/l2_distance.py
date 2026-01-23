@@ -68,7 +68,7 @@ def _knn_l2_distance_gpu(
     """
     Find K nearest neighbors using cuML with trust radius checking.
     """
-    index = cuMLNearestNeighbors(metric="euclidean", n_neighbors="brute")
+    index = cuMLNearestNeighbors(metric="euclidean", algorithm="auto")
     index.fit(centroids)
     distances, indices = index.kneighbors(query_points, n_neighbors=k_nn)
 
