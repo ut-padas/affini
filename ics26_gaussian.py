@@ -425,6 +425,7 @@ def experiment_with_v1() -> Path:
     CLUSTERING_VERSION = "v1"
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_with_ac_v1"
+    create_summary_dataframe(EXP_DIR)
     del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 3, 4]
 
