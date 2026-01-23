@@ -35,7 +35,7 @@ CONTAINMENT_LEVEL = 1.0
 ENFORCE_CONTAINMENT = False
 ERROR_SCALING_METHOD = "global"
 TOLs = [i / 100.0 for i in [2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005]]
-TOLs = [i / 100.0 for i in [10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01]]
+TOLs = [i / 100.0 for i in [20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05]]
 
 
 def SGaussian_experiment_setup(
@@ -53,6 +53,7 @@ def SGaussian_experiment_setup(
     CONTAINMENT_LEVEL: float,
     ENFORCE_CONTAINMENT: bool,
     Q_SHRINK: float,
+    USE_HESSIAN_INFORMED_SPLIT: bool,
     CLUSTERING_VERSION: Literal["v1", "v2"],
     SYNTH_BUDGET_FACTOR: int = 10,
 ):
@@ -96,6 +97,7 @@ def SGaussian_experiment_setup(
             SEED=SEED,
             SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
             Q_SHRINK=Q_SHRINK,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         )
         _end_train_time = time.perf_counter()
         _TRAINED = True
@@ -162,6 +164,7 @@ def SGaussian_experiment_setup(
         CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
         Q_SHRINK=Q_SHRINK,
         SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
+        USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
     )
 
     with open(json_fpath, "w") as jf:
@@ -282,6 +285,7 @@ def experiment_no_q_shrink() -> Path:
     CLUSTER_SPLITTING_METHOD = "hessian_pca"
     Q_SHRINK = -1.0
     CLUSTERING_VERSION = "v2"
+    USE_HESSIAN_INFORMED_SPLIT = True
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_no_q_shrink_global_error_scaling"
     del_all_error_files_in_dir(EXP_DIR)
@@ -320,6 +324,7 @@ def experiment_no_q_shrink() -> Path:
             Q_SHRINK=Q_SHRINK,
             SYNTH_BUDGET_FACTOR=1000,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         )
 
     return EXP_DIR
@@ -329,6 +334,7 @@ def experiment_with_q_shrink() -> Path:
     CLUSTER_SPLITTING_METHOD = "hessian_pca"
     Q_SHRINK = 0.05
     CLUSTERING_VERSION = "v2"
+    USE_HESSIAN_INFORMED_SPLIT = True
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_with_q_shrink_global_error_scaling"
     del_all_error_files_in_dir(EXP_DIR)
@@ -367,6 +373,7 @@ def experiment_with_q_shrink() -> Path:
             Q_SHRINK=Q_SHRINK,
             SYNTH_BUDGET_FACTOR=1000,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         )
 
     return EXP_DIR
@@ -414,6 +421,7 @@ def experiment_with_pca_only() -> Path:
             Q_SHRINK=Q_SHRINK,
             SYNTH_BUDGET_FACTOR=500,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
+            USE_HESSIAN_INFORMED_SPLIT=True,
         )
 
     return EXP_DIR
@@ -424,13 +432,19 @@ def experiment_with_v1() -> Path:
     CLUSTER_SPLITTING_METHOD = "pca_only"
     CLUSTERING_VERSION = "v1"
 
-    EXP_DIR = ICS26_DIR / "shifted_gaussians_with_ac_v1"
+    EXP_DIR = ICS26_DIR / "shifted_gaussians_with_ac_v1_hessian_informed_experiments"
     create_summary_dataframe(EXP_DIR)
     del_all_error_files_in_dir(EXP_DIR)
-    DIMs = [2, 3, 4]
+    DIMs = [2, 3]
+    USE_HESSIAN_INFORMED_SPLITs = [True, False]
 
-    for DIM, TOL in product(DIMs, TOLs):
-        json_path = EXP_DIR / f"ics26_sgaussian_dim{DIM}_tol{TOL}.json"
+    for DIM, TOL, USE_HESSIAN_INFORMED_SPLIT in product(
+        DIMs, TOLs, USE_HESSIAN_INFORMED_SPLITs
+    ):
+        json_path = (
+            EXP_DIR
+            / f"ics26_sgaussian_dim{DIM}_tol{TOL}_hessian_informed_{USE_HESSIAN_INFORMED_SPLIT}.json"
+        )
         json_path.parent.mkdir(parents=True, exist_ok=True)
         if json_path.exists():
             print(f"Skipping existing experiment at {json_path}")
@@ -460,6 +474,7 @@ def experiment_with_v1() -> Path:
             Q_SHRINK=Q_SHRINK,
             SYNTH_BUDGET_FACTOR=500,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         )
 
     return EXP_DIR

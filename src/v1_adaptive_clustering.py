@@ -10,8 +10,8 @@ import numpy as np
 from cuml.cluster import KMeans as cuKMeans
 from sklearn.cluster import KMeans
 
-from _experiments._deprecated.two_means import two_means_pca_threshold
 from src import IS_CUPY_BACKEND
+from src.two_means import estimate_hessian_abs_sqrt, two_means_pca_threshold
 
 CP_DTYPE = cp.float64 if IS_CUPY_BACKEND else None  # type: ignore
 NP_DTYPE = np.float64
@@ -65,6 +65,7 @@ class AdaptiveClusterer:
         gpu_len_threshold: int = 10_000,
         should_generate_extra_points: bool = True,
         two_means_split_method: str = "optimal",
+        use_hessian_informed_split: bool = True,
     ):
         """
         Initialize the adaptive clusterer.
@@ -79,6 +80,7 @@ class AdaptiveClusterer:
             gpu_len_threshold: Minimum data length to use GPU clustering. The value for this was decided based on empirical benchmarks from: research/benchmark_kmeans_cpu_vs_gpu.py
             should_generate_extra_points: Whether to generate extra points for small clusters.
             two_means_split_method: Method for splitting in TwoMeans ('optimal' or 'median').
+            use_hessian_informed_split: Whether to use Hessian-informed splitting.
         """
         self.atol = atol
         self.rtol = rtol
@@ -93,6 +95,7 @@ class AdaptiveClusterer:
             f"Should generate extra points: {self.should_generate_extra_points}"
         )
         self.two_means_split_method = two_means_split_method
+        self.use_hessian_informed_split = use_hessian_informed_split
 
         self._cluster_id = 0
 
@@ -245,7 +248,7 @@ class AdaptiveClusterer:
         X: np.ndarray,
         f: Callable,
         grad_f: Optional[Callable],
-        cupy_f: Optional[Callable] = None,
+        cupy_f: Optional[Callable],
         debug: bool = False,
     ) -> tuple[list[Cluster], int]:
         """
@@ -352,8 +355,21 @@ class AdaptiveClusterer:
                     )
                 else:
                     # Split based on cluster size via TwoMeans or CuML KMeans
+                    X_norm, mu = self._normalize_data(X_cluster)
+
+                    if self.use_hessian_informed_split and grad_f is not None:
+                        # Center the gradient estimates
+                        Grad_norm = grad_f(X_cluster) - grad_f(mu[None, :])
+                        Grad_norm = Grad_norm[:, 0, :]
+                        M = estimate_hessian_abs_sqrt(
+                            X=X_norm,
+                            G=Grad_norm,
+                        )
+
+                        # Transform data into Hessian-informed space
+                        X_norm = X_norm @ M
+
                     if cluster_size < self.gpu_len_threshold:
-                        X_norm, mu = self._normalize_data(X_cluster)
                         labels, _ = two_means_pca_threshold(
                             X_norm,
                             mean=mu,
@@ -372,7 +388,6 @@ class AdaptiveClusterer:
                         left = X_cluster[labels == 0]
                         right = X_cluster[labels == 1]
                     else:
-                        X_norm, mu = self._normalize_data(X_cluster)
                         km = KMeans(n_clusters=2, random_state=self.seed, n_init=1)
                         labels = km.fit_predict(X_norm)
                         NUM_CLUSTERED_BY_SKLEARN += 1
@@ -408,6 +423,7 @@ def adaptive_cluster_algorithm(
     should_generate_extra_points: bool = True,
     debug: bool = False,
     two_means_split_method: str = "median",
+    use_hessian_informed_split: bool = True,
 ) -> tuple[list[Cluster], int]:
     """Run the adaptive clustering algorithm and return the list of clusters."""
     clusterer = AdaptiveClusterer(
@@ -418,6 +434,7 @@ def adaptive_cluster_algorithm(
         seed=seed,
         should_generate_extra_points=should_generate_extra_points,
         two_means_split_method=two_means_split_method,
+        use_hessian_informed_split=use_hessian_informed_split,
     )
     clusters, num_levels = clusterer.fit(
         X=X_train, f=f, grad_f=grad_f, cupy_f=cupy_f, debug=debug
@@ -486,7 +503,8 @@ if __name__ == "__main__":
     N_SAMPLES = 100_000
     N_INIT_CLUSTERS = 1
     MIN_PTS_PER_CLUSTER = 5
-    TOL = 0.1
+    USE_HESSIAN_INFORMED_SPLIT = True
+    TOL = 0.01
     print(f"{TOL=}, {TOL=}")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
     D = 2
@@ -511,6 +529,7 @@ if __name__ == "__main__":
         min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
         seed=seed,
         should_generate_extra_points=True,
+        use_hessian_informed_split=USE_HESSIAN_INFORMED_SPLIT,
     )
     toc = time.perf_counter()
     print(f"Total clusters formed: {len(clusters):,}")
@@ -526,7 +545,7 @@ if __name__ == "__main__":
     logger.info(f"Time taken: {toc - tic:.4f} seconds")
 
     if D == 2 and len(clusters) < 1000:
-        fname = f"old_ac_clusters_gaussian_{N_SAMPLES}_pts_tol{TOL}.png"
+        fname = f"old_ac_clusters_gaussian_{N_SAMPLES}_pts_tol{TOL}_{USE_HESSIAN_INFORMED_SPLIT}.png"
         plot_clusters(clusters, sg_fn, domain=DOMAIN, fname=fname)
         print(f"Cluster plot saved to {fname}")
 

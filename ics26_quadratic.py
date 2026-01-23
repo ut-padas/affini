@@ -1,6 +1,5 @@
 import json
 import time
-from functools import partial
 from itertools import product
 from pathlib import Path
 from typing import Literal
@@ -27,7 +26,8 @@ MAX_CLUSTERS_EST = 10_000
 K_NEIGHBOURS = 1
 CONTAINMENT_LEVEL = 1.0
 ENFORCE_CONTAINMENT = False
-TOLs = [i / 100.0 for i in [10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01]]
+ERROR_SCALING_METHOD = "global"
+TOLs = [i / 100.0 for i in [20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05]]
 
 
 def Quadratic_experiment_setup(
@@ -45,6 +45,7 @@ def Quadratic_experiment_setup(
     CONTAINMENT_LEVEL: float,
     ENFORCE_CONTAINMENT: bool,
     Q_SHRINK: float,
+    USE_HESSIAN_INFORMED_SPLIT: bool,
     CLUSTERING_VERSION: Literal["v1", "v2"],
     SYNTH_BUDGET_FACTOR: int = 10,
 ):
@@ -76,6 +77,7 @@ def Quadratic_experiment_setup(
             SEED=SEED,
             SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
             Q_SHRINK=Q_SHRINK,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         )
         _end_train_time = time.perf_counter()
         _TRAINED = True
@@ -142,6 +144,7 @@ def Quadratic_experiment_setup(
         Q_SHRINK=Q_SHRINK,
         SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
         CLUSTERING_VERSION=CLUSTERING_VERSION,
+        USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
     )
 
     with open(json_fpath, "w") as jf:
@@ -171,7 +174,7 @@ def Quadratic_experiment_setup(
         fig, axs = plt.subplots(1, 2, figsize=(12, 5))
         cs = axs[0].contourf(X, Y, Z, levels=50, cmap="viridis")
         fig.colorbar(cs, ax=axs[0])
-        axs[0].set_title("Quadratic with Cluster Centroids")
+        axs[0].set_title("Quadratic")
         axs[0].set_xlabel(r"$x_1$")
         axs[0].set_ylabel(r"$x_2$")
         axs[0].set_aspect("equal")
@@ -188,17 +191,22 @@ def Quadratic_experiment_setup(
             if Qs is None:
                 raise ValueError("Trust Ellipses are None")
 
+            # Ensure centroids and Qs are numpy arrays for matplotlib
             if IS_CUPY_BACKEND:
                 centroids = xp.asnumpy(centroids)
                 Qs = xp.asnumpy(Qs)
+            else:
+                centroids = np.asarray(centroids)
+                Qs = np.asarray(Qs)
 
             fig.colorbar(cs2, ax=axs[1])
             axs[1].scatter(
                 centroids[:, 0],
                 centroids[:, 1],
                 c="red",
-                s=10,
+                s=20,
                 label="Cluster Centroids",
+                marker="o",
             )
 
             # Draw ellipses
@@ -230,9 +238,23 @@ def Quadratic_experiment_setup(
             if trust_radii is None:
                 raise ValueError("Trust Radii are None")
 
+            # Ensure centroids and trust_radii are numpy arrays for matplotlib
             if IS_CUPY_BACKEND:
                 centroids = xp.asnumpy(centroids)
                 trust_radii = xp.asnumpy(trust_radii)
+            else:
+                centroids = np.asarray(centroids)
+                trust_radii = np.asarray(trust_radii)
+
+            fig.colorbar(cs2, ax=axs[1])
+            axs[1].scatter(
+                centroids[:, 0],
+                centroids[:, 1],
+                c="red",
+                s=20,
+                label="Cluster Centroids",
+                marker="o",
+            )
 
             # Draw circles
             for i in range(centroids.shape[0]):
@@ -249,7 +271,8 @@ def Quadratic_experiment_setup(
                 axs[1].add_patch(circle)
 
         axs[1].set_title(
-            f"Cluster Centroids with Trust Ellipses (N_CLUSTERS={N_CLUSTERS})"
+            f"Cluster Centroids with Trust Ellipses (N_CLUSTERS={N_CLUSTERS}, TOL={TOL})",
+            fontsize=7,
         )
         axs[1].set_xlabel(r"$x_1$")
         axs[1].set_ylabel(r"$x_2$")
@@ -262,20 +285,22 @@ def Quadratic_experiment_setup(
         plt.close(fig)
 
 
-def experiment_with_q_shrink() -> Path:
+def experiment_with_v1() -> Path:
     CLUSTER_SPLITTING_METHOD = "hessian_pca"
     Q_SHRINK = 0.05
     CLUSTERING_VERSION = "v1"
 
-    EXP_DIR = ICS26_DIR / "quadratic_with_q_shrink"
+    EXP_DIR = ICS26_DIR / "quadratic_v1_hessian_informed_split_experiments"
     del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 3, 4, 5]
-    ERROR_SCALING_METHODs = ["local"]
+    USE_HESSIAN_INFORMED_SPLITs = [True, False]
 
-    for DIM, TOL, ERROR_SCALING_METHOD in product(DIMs, TOLs, ERROR_SCALING_METHODs):
+    for DIM, TOL, USE_HESSIAN_INFORMED_SPLIT in product(
+        DIMs, TOLs, USE_HESSIAN_INFORMED_SPLITs
+    ):
         json_path = (
             EXP_DIR
-            / f"ics26_quadratic_dim{DIM}_tol{TOL}_errscale{ERROR_SCALING_METHOD}_qshrink{Q_SHRINK}.json"
+            / f"ics26_quadratic_dim{DIM}_tol{TOL}_hessian_informed_split{USE_HESSIAN_INFORMED_SPLIT}.json"
         )
         json_path.parent.mkdir(parents=True, exist_ok=True)
         if json_path.exists():
@@ -306,6 +331,7 @@ def experiment_with_q_shrink() -> Path:
             Q_SHRINK=Q_SHRINK,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             SYNTH_BUDGET_FACTOR=1000,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         )
 
     return EXP_DIR
@@ -316,5 +342,5 @@ if __name__ == "__main__":
 
     setup_logging()
 
-    dir1 = experiment_with_q_shrink()
+    dir1 = experiment_with_v1()
     create_summary_dataframe(dir1)

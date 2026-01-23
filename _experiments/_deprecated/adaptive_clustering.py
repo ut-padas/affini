@@ -10,8 +10,8 @@ import numpy as np
 from cuml.cluster import KMeans as cuKMeans
 from sklearn.cluster import KMeans
 
-from _experiments._deprecated.two_means import two_means_pca_threshold
 from src import IS_CUPY_BACKEND
+from src.two_means import two_means_pca_threshold
 
 CP_DTYPE = cp.float64 if IS_CUPY_BACKEND else None  # type: ignore
 NP_DTYPE = np.float64

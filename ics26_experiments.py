@@ -7,6 +7,8 @@ from typing import Literal
 
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.colors import LogNorm
+from matplotlib.patches import Circle
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, Array, xp
 from src.data_sampler import DataSampler
@@ -23,9 +25,14 @@ CLUSTERING_VERSION = "v1"
 
 
 def create_summary_dataframe(results_dir: Path):
-    assert results_dir.exists(), f"Directory {results_dir} does not exist."
+    if not results_dir.exists():
+        print(f"Results directory {results_dir} does not exist!")
+        return
 
     json_files = list(results_dir.glob("*.json"))
+    if len(json_files) == 0:
+        print(f"No json result files found in {results_dir}!")
+        return
     data_dicts = [json.load(open(f, "r")) for f in json_files]
     df = pd.DataFrame(data_dicts)
     df = df.sort_values(by=["dim", "tol"], ascending=[True, False])
@@ -213,6 +220,7 @@ def rosenbrock_experiment_setup(
     CONTAINMENT_LEVEL: float,
     ENFORCE_CONTAINMENT: bool,
     CLUSTERING_VERSION: Literal["v1", "v2"],
+    USE_HESSIAN_INFORMED_SPLIT: bool = True,
     SYNTH_BUDGET_FACTOR: int = 100,
 ):
     scaled_rosenbrock = partial(rosenbrock, a=ROSENBROCK_A)
@@ -246,6 +254,7 @@ def rosenbrock_experiment_setup(
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             SEED=SEED,
             SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         )
         _end_train_time = time.perf_counter()
         _TRAINED = True
@@ -312,6 +321,7 @@ def rosenbrock_experiment_setup(
         CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
         SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
         CLUSTERING_VERSION=CLUSTERING_VERSION,
+        USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
     )
 
     with open(json_fpath, "w") as f:
@@ -325,6 +335,55 @@ def rosenbrock_experiment_setup(
         json_fpath=json_fpath,
         TOL=TOL,
     )
+
+    if DIM == 2:
+        if CLUSTERING_VERSION == "v1":
+            # plot contours of the function and the centroids on domain -3 to 3
+            x1 = xp.linspace(-3, 3, 100)
+            x2 = xp.linspace(-3, 3, 100)
+
+            X1, X2 = xp.meshgrid(x1, x2)
+            Z = scaled_rosenbrock(xp.vstack([X1.ravel(), X2.ravel()]).T).reshape(
+                100, 100
+            )
+
+            plt.figure(figsize=(10, 6))
+            cp = plt.contourf(X1, X2, Z, levels=50, cmap="viridis", norm=LogNorm())
+
+            centroids = surrogate.X_src
+            radii = surrogate.trust_ellipses_src
+
+            for i in range(centroids.shape[0]):
+                circle = Circle(
+                    (centroids[i, 0], centroids[i, 1]),
+                    radii[i],
+                    color="red",
+                    fill=False,
+                    linestyle="--",
+                    alpha=0.5,
+                )
+                plt.gca().add_patch(circle)
+
+            # plot centroids
+            plt.scatter(
+                centroids[:, 0],
+                centroids[:, 1],
+                color="red",
+                marker="o",
+                label="Centroids",
+            )
+            plt.colorbar(cp)
+
+            fname = json_fpath.with_name(json_fpath.stem + "_centroids.png")
+            plt.title(
+                f"Rosenbrock Function Contours and Centroids\n{json_fpath.stem}",
+                fontsize=8,
+            )
+            plt.xlabel("x1")
+            plt.ylabel("x2")
+            plt.legend()
+            plt.axis("equal")
+            plt.savefig(fname, dpi=300)
 
 
 def experiment_adaptive_clustering_global_vs_local() -> Path:
@@ -528,25 +587,33 @@ def experiment_ellipsoidal_knn_containment() -> Path:
 def experiment_rosenbrock_convergence() -> Path:
     N_INIT_CLUSTERS = 25
     N_MIN_PER_CLUSTER = 100
-    MAX_CLUSTERS_EST = 50_000
+    MAX_CLUSTERS_EST = 500_000 * 50
     N_TRAIN = int(2e5)
     N_TEST = int(1e5)
     K_NEIGHBOURS = 1
     CONTAINMENT_LEVEL = 1.0
     ENFORCE_CONTAINMENT = False
     ERROR_SCALING_METHOD = "global"
+    USE_HESSIAN_INFORMED_SPLITs = [True, False]
 
-    EXP_DIR = ICS26_DIR / "rosenbrock_convergence"
-    create_summary_dataframe(EXP_DIR)
+    EXP_DIR = ICS26_DIR / "rosenbrock_convergence_v1_hessian_informed_experiments"
     del_all_error_files_in_dir(EXP_DIR)
-    DIMs = [2, 5]
+    create_summary_dataframe(EXP_DIR)
+    DIMs = [2]
     ROSENBROCK_As = [1, 100]
-    TOLs = [1e-1, 5e-2, 2e-2, 1e-2, 5e-3, 2e-3, 1e-3, 5e-4, 2e-4, 1e-4]
+    TOLs = [1e-1, 5e-2, 2e-2, 1e-2, 5e-3]
 
-    for DIM, ROSENBROCK_A, TOL in product(DIMs, ROSENBROCK_As, TOLs):
+    for DIM, ROSENBROCK_A, TOL, USE_HESSIAN_INFORMED_SPLIT in product(
+        DIMs, ROSENBROCK_As, TOLs, USE_HESSIAN_INFORMED_SPLITs
+    ):
+        if DIM > 2 and TOL <= 1e-3:
+            print(
+                f"Skipping infeasible case: DIM={DIM}, TOL={TOL}, ROSENBROCK_A={ROSENBROCK_A}"
+            )
+            continue
         json_fpath = (
             EXP_DIR
-            / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}.json"
+            / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}_hessian_informed_{USE_HESSIAN_INFORMED_SPLIT}.json"
         )
         json_fpath.parent.mkdir(parents=True, exist_ok=True)
         if json_fpath.exists():
@@ -569,6 +636,7 @@ def experiment_rosenbrock_convergence() -> Path:
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             SYNTH_BUDGET_FACTOR=10,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         )
 
     return EXP_DIR

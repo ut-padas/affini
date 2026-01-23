@@ -47,6 +47,7 @@ class NearODESurrogate:
         SYNTH_BUDGET_FACTOR: float = 10.0,
         Q_SHRINK: float = 0.0,
         SEED: int = 0,
+        USE_HESSIAN_INFORMED_SPLIT: bool = False,
     ):
         """
         1. Sample X from domain.
@@ -98,6 +99,7 @@ class NearODESurrogate:
                     num_initial_clusters=NUM_INITIAL_CLUSTERS,
                     min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
                     seed=SEED,
+                    use_hessian_informed_split=USE_HESSIAN_INFORMED_SPLIT,
                 )
                 centroids = xp.asarray([clust.centroid for clust in clusters])
                 f_vals = xp.asarray([clust.F_centroid for clust in clusters])

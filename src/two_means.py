@@ -41,6 +41,60 @@ def find_optimal_split_1d(s_sorted: np.ndarray) -> int:
     return best_k
 
 
+def estimate_hessian_abs_sqrt(X: np.ndarray, G: np.ndarray) -> np.ndarray:
+    """
+    Estimates the absolute value square root of the Hessian |H|^{1/2}
+    for a single cluster of centered points and gradients.
+
+    Args:
+        X: (N, d) centered points (x_i - mu)
+        G: (N, d) centered gradients (g_i - g_mu)
+
+    Returns:
+        M: (d, d) symmetric matrix where M @ M = |H|
+    """
+    d = X.shape[1]
+    TINY_EPS = 1e-12
+
+    # 1. Compute C (Covariance-like) and S (Symmetrized Gradient Outer Product)
+    # Equivalent to C = X.T @ X and S = X.T @ G + G.T @ X
+    C = X.T @ X
+    S = X.T @ G + G.T @ X
+
+    # 2. Eigendecompose C to enter the coordinate system where it is diagonal
+    # C = U @ diag(lambdas) @ U.T
+    lambdas, U = np.linalg.eigh(C)
+
+    # Clip eigenvalues to avoid division by zero in the Sylvester solve
+    lambdas = np.maximum(lambdas, TINY_EPS)
+
+    # 3. Rotate S into the U-basis: F_tilde = U.T @ S @ U
+    S_tilde = U.T @ S @ U
+
+    # 4. Solve the Sylvester equation in the diagonal basis
+    # Entry-wise: f_ij = s_tilde_ij / (lambda_i + lambda_j)
+    # This represents the Hessian H in the U-basis.
+    denom = lambdas[:, None] + lambdas[None, :]
+    F = S_tilde / denom
+
+    # 5. Eigendecompose F to handle the absolute value and square root
+    # F = V @ diag(w) @ V.T
+    w, V = np.linalg.eigh(F)
+
+    # 6. Recover the eigenvectors of the original H: Z = U @ V
+    Z = U @ V
+
+    # 7. Construct M = Z @ diag(sqrt(|w|)) @ Z.T
+    # This gives us the matrix square root of the absolute Hessian.
+    w_abs_sqrt = np.sqrt(np.abs(w))
+
+    # Efficiently compute Z @ diag(w_abs_sqrt) @ Z.T
+    M = (Z * w_abs_sqrt) @ Z.T
+
+    # Ensure final symmetry against floating point drift
+    return 0.5 * (M + M.T)
+
+
 def two_means_pca_threshold(
     X_norm: np.ndarray,
     mean: np.ndarray,
