@@ -4,6 +4,14 @@ from src import Array, xp
 
 CENTERS_2D = xp.array([[1.0, 1.0], [-1.0, -1.0]])
 CENTERS_3D = xp.array([[1.0, 1.0, 1.0], [-1.0, -1.0, -1.0], [1.0, -1.0, 1.0]])
+CENTERS_4D = xp.array(
+    [
+        [1.0, 1.0, 1.0, 1.0],
+        [-1.0, -1.0, -1.0, -1.0],
+        [1.0, -1.0, 1.0, -1.0],
+        [-1.0, 1.0, -1.0, 1.0],
+    ]
+)
 
 
 def shifted_gaussians(

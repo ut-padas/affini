@@ -6,6 +6,7 @@ import sympy as sp
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
     CENTERS_3D,
+    CENTERS_4D,
     shifted_gaussians,
     shifted_gaussians_grad,
 )
@@ -45,6 +46,8 @@ class TestShiftedGaussiansSympyDerivatives(unittest.TestCase):
             (2, CENTERS_2D, 1.0, 1.0),
             (3, CENTERS_3D, 1.0, 0.5),
             (3, CENTERS_3D, 0.5, 0.3),
+            (4, CENTERS_4D, 1.0, 0.5),
+            (4, CENTERS_4D, 0.5, 0.3),
         ]
 
         for n_dim, centers, shift, std_dev in configs:
@@ -66,6 +69,8 @@ class TestShiftedGaussiansSympyDerivatives(unittest.TestCase):
             (2, CENTERS_2D, 1.0, 1.0),
             (3, CENTERS_3D, 1.0, 0.5),
             (3, CENTERS_3D, 0.5, 0.3),
+            (4, CENTERS_4D, 1.0, 0.5),
+            (4, CENTERS_4D, 0.5, 0.3),
         ]
 
         for n_dim, centers, shift, std_dev in test_configs:
