@@ -343,18 +343,18 @@ if __name__ == "__main__":
         "--dim", type=int, default=2, help="Dimensionality of the problem"
     )
     parser.add_argument(
-        "--tol", type=float, default=1e-1, help="Tolerance for training and evaluation"
+        "--tol", type=float, default=5e-2, help="Tolerance for training and evaluation"
     )
     parser.add_argument(
-        "--n-train", type=int, default=1_000_000, help="Number of training samples"
+        "--n-train", type=int, default=200_000, help="Number of training samples"
     )
     parser.add_argument(
-        "--n-test", type=int, default=10_000, help="Number of test samples"
+        "--n-test", type=int, default=100_000, help="Number of test samples"
     )
     parser.add_argument(
         "--n-init-clusters",
         type=int,
-        default=100,
+        default=25,
         help="Number of initial clusters for adaptive clustering",
     )
     parser.add_argument(
@@ -364,7 +364,7 @@ if __name__ == "__main__":
         help="Minimum points per cluster for adaptive clustering",
     )
     parser.add_argument(
-        "--k-neighbours", type=int, default=5, help="Number of neighbors for kNN"
+        "--k-neighbours", type=int, default=1, help="Number of neighbors for kNN"
     )
     parser.add_argument(
         "--containment-level",
@@ -376,7 +376,10 @@ if __name__ == "__main__":
         "--seed", type=int, default=0, help="Random seed for training data sampling"
     )
     parser.add_argument(
-        "--rosenbrock-a", type=float, default=10.0, help="Rosenbrock 'a' parameter"
+        "--rosenbrock-a", type=float, default=100, help="Rosenbrock 'a' parameter"
+    )
+    parser.add_argument(
+        "-f", "--force", action="store_true", help="Force re-computation of results"
     )
 
     # Parse arguments
@@ -391,6 +394,7 @@ if __name__ == "__main__":
     CONTAINMENT_LEVEL = args.containment_level
     SEED = args.seed
     A_ROSENBROCK = args.rosenbrock_a
+    FORCE_RECOMPUTE = args.force
 
     # Creat partial Rosenbrock functions
     rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
@@ -401,13 +405,13 @@ if __name__ == "__main__":
         / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_dim{dim}_tol{TOL:.1e}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
     )
     json_fpath = img_fpath.with_suffix(".json")
-    if img_fpath.exists() and json_fpath.exists():
+    if img_fpath.exists() and json_fpath.exists() and not FORCE_RECOMPUTE:
         print(f"Results already exist at {img_fpath} and {json_fpath}. Exiting.")
         exit(0)
 
     # 1. Setup Domain
-    domain = xp.array([[-3, 3] * dim]).reshape(dim, 2)
-    print(f"--- Domain: {domain.tolist()} ---")
+    DIM = 2
+    domain = xp.array([[-3, 3] * DIM]).reshape(DIM, 2)
 
     # Sample Training Data
     X_train = DataSampler.sample_latin_hypercube(domain, N=N_train, seed=SEED)
@@ -415,25 +419,29 @@ if __name__ == "__main__":
 
     # 2. Initialize Surrogate
     surrogate = NearODESurrogate(version="v1")
-
-    # 3. Train
     print("--- Training ---")
     _start_train_time = time.perf_counter()
     surrogate.train(
         X_train=X_train,
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
+        TOL=TOL,
+        ERROR_SCALING_METHOD="global",
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
-        TOL=TOL,
+        MAX_CLUSTERS_EST=50_000,
         SEED=SEED,
-        SYNTH_BUDGET_FACTOR=10,
+        SYNTH_BUDGET_FACTOR=100,
     )
     _end_train_time = time.perf_counter()
+    N_CLUSTERS = surrogate.get_number_of_sources()
+    print(
+        f"Trained with {N_CLUSTERS:,} clusters in {_end_train_time - _start_train_time:.2f}s"
+    )
 
     # 4. Evaluate
     print("\n--- Evaluation ---")
-    X_test = DataSampler.sample_uniform(domain, N=N_test, seed=SEED + 1)
+    X_test = DataSampler.sample_uniform(domain, N=N_test, seed=SEED)
     X_test = xp.asarray(X_test)
 
     # Example utilizing the new signature with Guarantee checks
@@ -445,53 +453,49 @@ if __name__ == "__main__":
         containment_level=CONTAINMENT_LEVEL,
     )
     _end_predict_time = time.perf_counter()
+    print(
+        f"Predicted {N_test:,} test points in {_end_predict_time - _start_predict_time:.2f}s"
+    )
 
     ground_truth = rosenbrock(X_test)
-    rel_error = xp.abs(preds - ground_truth) / (xp.abs(ground_truth) + 1e-12)
-    rel_error_l2 = xp.linalg.norm(ground_truth - preds, axis=1) / (
-        xp.linalg.norm(ground_truth, axis=1) + 1e-12
+    good_idx = ~ungauranteed_mask
+    rel_error_linf = xp.abs(preds[good_idx] - ground_truth[good_idx]) / xp.abs(
+        ground_truth[good_idx]
     )
-    max_rel_error = xp.nanmax(rel_error)
-    max_rel_error_l2 = xp.nanmax(rel_error_l2)
+    max_rel_error_linf = xp.nanmax(rel_error_linf)
+    median_rel_error_linf = xp.nanmedian(rel_error_linf)
 
-    n_ungauranteed = xp.sum(ungauranteed_mask)
-    perct_ungauranteed = 100.0 * n_ungauranteed / X_test.shape[0]
-    print(
-        f"Unguaranteed Points: {n_ungauranteed:,} / {X_test.shape[0]:,} ({perct_ungauranteed:.2f}%)"
-    )
-    print(f"Max Relative Error (InfiniteNorm): {max_rel_error:.4e}")
-    print(f"Max Relative Error (L2Norm): {max_rel_error_l2:.4e}")
-    n_within_tol = xp.sum(rel_error <= TOL)
-    perct_within_tol = 100.0 * n_within_tol / X_test.shape[0]
-    print(
-        f"Points within TOL={TOL}: {n_within_tol:,} / {X_test.shape[0]:,} ({perct_within_tol:.2f}%)"
-    )
+    n_out = xp.sum(ungauranteed_mask)
+    perct_out = 100.0 * n_out / N_test
+
+    n_in_good = xp.sum(rel_error_linf <= TOL)
+    n_in_bad = xp.sum(rel_error_linf > TOL)
+    perct_in_good = 100.0 * n_in_good / N_test
+    perct_in_bad = 100.0 * n_in_bad / N_test
 
     plt.figure(figsize=(8, 5))
     if IS_CUPY_BACKEND:
-        plt.hist(rel_error.get().flatten(), bins=50, log=True)
+        plt.hist(rel_error_linf.get().flatten(), bins=50, log=True)
     else:
-        plt.hist(rel_error.flatten(), bins=50, log=True)
+        plt.hist(rel_error_linf.flatten(), bins=50, log=True)
 
     plt.xlabel("Relative Error (log scale)")
     plt.ylabel("Frequency (log scale)")
     plt.title(
-        f"NearODESurrogate RelError (Rosenbrock: a={A_ROSENBROCK}) (dim={dim}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_ung.={n_ungauranteed} ({perct_ungauranteed:.2f}%))",
+        f"NearODESurrogate RelError (Rosenbrock: a={A_ROSENBROCK}) (dim={dim}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_out={n_out} ({perct_out:.2f}%))",
         fontsize=7,
     )
     plt.axvline(
         x=TOL,
         color="red",
         linestyle="--",
-        label=f"TOL={TOL:.1e} | N_within_tol: {n_within_tol} ({perct_within_tol:.2f}%)",
+        label=f"TOL={TOL:.1e} | N_in_good={int(n_in_good)} ({perct_in_good:.2f}%) | N_in_bad={int(n_in_bad)} ({perct_in_bad:.2f}%)",
     )
     plt.legend()
     plt.xscale("log")
     plt.grid(True)
     plt.savefig(img_fpath, dpi=300)
     print(f"Saved relative error histogram to {img_fpath}")
-
-    # Save results to JSON
 
     json_data_dict = {
         "rosenbrock_a": A_ROSENBROCK,
@@ -501,16 +505,16 @@ if __name__ == "__main__":
         "n_test": N_test,
         "n_clusters": surrogate.N_src,
         "k_neighbours": K_NEIGHBOURS,
-        "n_ungauranteed": int(n_ungauranteed),
-        "perct_ungauranteed": float(perct_ungauranteed),
-        "max_rel_error": float(max_rel_error),
-        "max_rel_error_l2": float(max_rel_error_l2),
-        "n_within_tol": int(n_within_tol),
-        "perct_within_tol": float(perct_within_tol),
+        "n_out": int(n_out),
+        "perct_out": float(perct_out),
+        "n_in_good": int(n_in_good),
+        "perct_in_good": float(perct_in_good),
+        "n_in_bad": int(n_in_bad),
+        "perct_in_bad": float(perct_in_bad),
+        "max_rel_error_linf": float(max_rel_error_linf),
+        "median_rel_error_linf": float(median_rel_error_linf),
         "train_time_sec": float(_end_train_time - _start_train_time),
         "predict_time_sec": float(_end_predict_time - _start_predict_time),
-        "median_rel_error": float(xp.nanmedian(rel_error)),
-        "mean_rel_error": float(xp.nanmean(rel_error)),
     }
 
     with open(json_fpath, "w") as json_file:
