@@ -212,6 +212,104 @@ def affine_combined(x):
     return affine(x), grad_affine()
 
 
+# quadratic for George
+def quadratic(x):
+    C = 10.0
+    A = 0.1
+    d = len(x)
+
+    # f(x) = c + w^T x + a x^T x, where w = ones(d)
+
+    w = np.ones(d)
+    F = C + np.dot(w, x) + A * np.sum(x**2)  # (N, 1)
+    return F
+
+def quadratic_grad(x):
+    # C = 10.0
+    A = 0.1
+    d = len(x)
+    w = np.ones(d)
+    return np.reshape(w + 2 * A * x, (1,d))
+
+def quadratic_combined(x):
+    return quadratic(x), quadratic_grad(x)
+
+
+def shifted_gaussians(x):
+    CENTERS_2D = np.array([[1.0, 1.0], [-1.0, -1.0]])
+    CENTERS_3D = np.array([[1.0, 1.0, 1.0], [-1.0, -1.0, -1.0], [1.0, -1.0, 1.0]])
+    CENTERS_4D = np.array(
+    [
+        [1.0, 1.0, 1.0, 1.0],
+        [-1.0, -1.0, -1.0, -1.0],
+        [1.0, -1.0, 1.0, -1.0],
+        [-1.0, 1.0, -1.0, 1.0],
+    ])
+
+    d = len(x)
+    if d == 2:
+        centers = CENTERS_2D
+    elif d == 3:
+        centers = CENTERS_3D
+    elif d == 4:
+        centers = CENTERS_4D
+    shift = 1.0
+    std_dev = 0.5
+
+    diff = -1 * (centers - x)
+
+    # 2. Calculate squared Euclidean distance for all pairs
+    # sq_dist shape: (N, M)
+    sq_dist = np.sum(diff**2, axis=1)
+
+    # 3. Apply Gaussian, sum over centers (axis 1), and add shift
+    f = np.sum(np.exp(-sq_dist / (2 * std_dev**2))) + shift
+    return f
+        
+
+def shifted_gaussians_grad(x):
+    CENTERS_2D = np.array([[1.0, 1.0], [-1.0, -1.0]])
+    CENTERS_3D = np.array([[1.0, 1.0, 1.0], [-1.0, -1.0, -1.0], [1.0, -1.0, 1.0]])
+    CENTERS_4D = np.array(
+    [
+        [1.0, 1.0, 1.0, 1.0],
+        [-1.0, -1.0, -1.0, -1.0],
+        [1.0, -1.0, 1.0, -1.0],
+        [-1.0, 1.0, -1.0, 1.0],
+    ])
+
+    d = len(x)
+    if d == 2:
+        centers = CENTERS_2D
+    elif d == 3:
+        centers = CENTERS_3D
+    elif d == 4:
+        centers = CENTERS_4D
+    std_dev = 0.5
+
+    diff = -1 * (centers - x)
+
+    # sq_dist shape: (N, M)
+    sq_dist = np.sum(diff**2, axis=1)
+
+    # gaussians shape: (N, M)
+    gaussians = np.exp(-sq_dist / (2 * std_dev**2))
+
+    # 1. Compute coefficients: shape (N, M)
+    # 2. Reshape coefficients to (N, M, 1) to multiply with diff (N, M, D)
+    # 3. Sum across the M centers (axis 1)
+    coeff = -gaussians / (std_dev**2)
+    grad_f = diff.T @ coeff
+
+    return np.reshape(grad_f, (1,d))
+
+
+def shifted_gaussians_combined(x):
+    return shifted_gaussians(x), shifted_gaussians_grad(x)
+
+
+
+
 # quadratic vector function (Lorenz 96), arbitrary dimensions
 def L96(x,p):
     """Lorenz 96 model with constant forcing"""
@@ -345,7 +443,7 @@ def generate_latex_table(data):
     headers = ['$N_{init}$', 'atol', 'rtol',
         '$N_{sources}$', '$p_{out}$', '$p_{in,good}$', '$p_{in,bad}$',
         '$\\|e\\|_2 / \\|f\\|_2$', '$\\|e\\|_\\infty / \\|f\\|_\\infty$', '$\\|e\\|_\\infty$',
-        '$\\|e\\|_2 / \\|f\\|_2$', '$\\|e\\|_\\infty / \\|f\\|_\\infty$']
+        '$\\|e\\|_2 / \\|f\\|_2$', '$\\|e\\|_\\infty / \\|f\\|_\\infty$', '$e_\{med, abs\}$']
     headerstring = ''
     for j, header in enumerate(headers):
         headerstring += header
@@ -610,6 +708,35 @@ def convergence_test_2D_SHCF(tolmat, N_init, domain, min_ppc=40):
     convergence_test_a_function(lambda a,b,c,d: test_2D_SHCF(domain,a,b,c,d), tolmat, N_init, min_ppc)
 
 
+def test_shifted_gaussians(atol=0.01, rtol=0.01, N_init = 100000, min_ppc = 50):
+
+    domain = np.array([
+        [-2, 2],
+        [-2, 2],
+    ])
+    return test_a_function(shifted_gaussians, shifted_gaussians_combined, 1, domain, atol, rtol, N_init, min_ppc)
+
+
+def convergence_tests_shifted_gaussians(tolmat, N_init, min_ppc=100):
+    convergence_test_a_function( \
+        lambda arg1,arg2,arg3,arg4: test_shifted_gaussians(arg1,arg2,arg3,arg4), tolmat, N_init, min_ppc)
+
+
+
+def test_quadratic_george(atol=0.01, rtol=0.01, N_init = 100000, min_ppc = 50):
+
+    domain = np.array([
+        [-10, 10],
+        [-10, 10],
+    ])
+    return test_a_function(quadratic, quadratic_combined, 1, domain, atol, rtol, N_init, min_ppc)
+
+
+def convergence_test_quadratic_george(tolmat, N_init, min_ppc=100):
+    convergence_test_a_function( \
+        lambda arg1,arg2,arg3,arg4: test_quadratic_george(arg1,arg2,arg3,arg4), tolmat, N_init, min_ppc)
+
+
 
 
 def test_8D(atol=0.2, rtol=0.01, N_init = 10000, min_ppc = 40):
@@ -675,8 +802,9 @@ def test_a_function(f, f_combined, m, domain, atol=0.01, rtol=0.01, N_init=10000
     interpolant = NearODESurrogate()
     interpolant.train_model_from_sampling(
             f_combined, domain, m, N_init, 'LHS', True,
-            N_init_clusters=100, atol = atol, rtol = rtol, min_ppc = min_ppc,
+            N_init_clusters=1, atol = atol, rtol = rtol, min_ppc = min_ppc,
             check_guarantee_N_times=0, disp_time = True, use_gradient=True)
+    visualize_centroids_of_surrogate(interpolant, domain, f)
     
     datavec = test_surrogate_error(interpolant, f, m, domain, atol, rtol, N_init)
 
@@ -738,6 +866,7 @@ def test_surrogate_error(surrogate: NearODESurrogate, f, m, domain, atol, rtol, 
             # section 4: overall errors
             np.linalg.norm(abs_error, 2) / np.linalg.norm(exact, 2), # relative l2 error (entire region)
             np.linalg.norm(abs_error, np.inf) / np.linalg.norm(exact, np.inf), # relative l-inf error
+            np.median(abs_error) # median abs l-inf error
         ])
     else:
         datavec = np.array([
@@ -753,13 +882,14 @@ def test_surrogate_error(surrogate: NearODESurrogate, f, m, domain, atol, rtol, 
             0,
             np.linalg.norm(abs_error, 2) / np.linalg.norm(exact, 2), # relative l2 error (entire region)
             np.linalg.norm(abs_error, np.inf) / np.linalg.norm(exact, np.inf), # relative l-inf error
+            np.median(abs_error) # median abs l-inf error
         ])
     
     return datavec
 
 
 def convergence_test_a_function(test_function, tolmat, N_init, min_ppc=100):
-    datamat = np.empty((len(tolmat), 12))
+    datamat = np.empty((len(tolmat), 13))
     for j, tols in enumerate(tolmat):
         datamat[j] = test_function(tols[0], tols[1], N_init, min_ppc)
     
@@ -914,6 +1044,89 @@ def lorenz_time_stepping_test(interpolant: NearODESurrogate, d, F, dt, x0, tf):
 
 
 
+def visualize_centroids_of_surrogate(surrogate: NearODESurrogate, domain, f):
+
+    fig, ax = plt.subplots()
+
+    # plot the contours of f on the axes
+    plot_contours(domain, f, ax)
+
+    # scatter all points of the surrogate
+    sources = surrogate.get_sources()
+    scatter_points(sources, 'red', ax, 'Source Points')
+
+    atol = surrogate.atol
+    rtol = surrogate.rtol
+    ax.set_title(f'atol={atol}, rtol={rtol}')
+
+    # Plot trust regions
+    radii = surrogate.get
+
+
+    fig.legend()
+    fig.savefig(f'/Users/blongaker/Desktop/gaussian_centroids/gaussian_tol_{atol}.png')
+
+
+# only supports 2d of course
+def plot_contours(domain, f, ax):
+    
+    xmin = domain[0,0]
+    xmax = domain[0,1]
+    ymin = domain[1,0]
+    ymax = domain[1,1]
+
+    # Make it a bit bigger
+    factor = 0.05
+    xrange = xmax - xmin
+    xmax += xrange * factor
+    xmin -= xrange * factor
+    yrange = ymax - ymin
+    ymax += yrange * factor
+    ymin -= yrange * factor
+
+    # Define grid
+    x = np.linspace(xmin, xmax, 400)
+    y = np.linspace(ymin, ymax, 400)
+    X, Y = np.meshgrid(x, y)
+    XY = np.stack((X,Y), axis=-1)
+    Z = np.zeros((len(x), len(y)))
+
+    for i in range(len(x)):
+        for j in range(len(y)):
+            pt = XY[i,j,:]
+            Z[i,j] = f(pt)
+
+    # 2. Plot contour lines
+    cs = ax.contourf(X, Y, Z, levels=50)
+    plt.gcf().colorbar(cs, ax=ax)
+    ax.axis('equal')
+
+
+def scatter_points(points, color, ax, label=''):
+
+    _, dim = points.shape
+
+    if dim == 3:
+        ax.scatter(points[:,0], points[:,1], points[:,2], marker='x', color=color, label=label)
+
+    if dim == 2:
+        ax.scatter(points[:,0], points[:,1], marker='x', color=color, label=label)
+    
+    ax.set_aspect('equal')
+
+
+def plot_ball(center, radius, ax):
+
+    ball_pts_complex = radius * np.exp(1j * np.linspace(0, 2*np.pi, 200))
+    ball_pts_centered = np.vstack((np.real(ball_pts_complex), np.imag(ball_pts_complex)))
+    ball_pts = (ball_pts_centered.T + center).T
+
+    ax.plot(ball_pts[:,0], ball_pts[:,1], '--', color='pink')
+
+
+
+
+
 
 
 
@@ -939,6 +1152,38 @@ if __name__ == '__main__':
     # Rosenbrock 2D
     elif 0:
         convergence_test_2d_rosenbrock(tolmat, 100000, 100)
+
+    # Shifted Gaussians for george
+    elif 1:
+        tolmat = np.array([
+            [0.1, 0.1],
+            [0.05, 0.05],
+            [0.02, 0.02],
+            [0.01, 0.01],
+            [0.005, 0.005],
+            [0.002, 0.002],
+            [0.001, 0.001],
+            [0.0005, 0.0005],
+            [0.0002, 0.0002],
+            [0.0001, 0.0001]
+        ])
+        convergence_tests_shifted_gaussians(tolmat, 100000, 100)
+
+    elif 0:
+        tolmat = np.array([
+            [0.1, 0.1],
+            [0.05, 0.05],
+            [0.02, 0.02],
+            [0.01, 0.01],
+            [0.005, 0.005],
+            [0.002, 0.002],
+            [0.001, 0.001],
+            [0.0005, 0.0005],
+            [0.0002, 0.0002],
+            [0.0001, 0.0001]
+        ])
+        convergence_test_quadratic_george(tolmat, 100000, 100)
+    
 
     # Borehole function (d=8)
     elif 0:
@@ -1033,7 +1278,7 @@ if __name__ == '__main__':
         np.save('data/output_dt4.npy', labels)
         np.save('data/gradients_dt4.npy', gradients)
 
-    elif 1:
+    elif 0:
         d = 4
         # N_init = 100000
         atol = 0.025

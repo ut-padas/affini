@@ -275,6 +275,10 @@ class NearODESurrogate:
         self.N_sources += len(new_features)
 
 
+    def get_radii(self):
+        return self.KNN_search.hessians
+
+
     # Override this method so we save and load everything but the oracle field when we pickle
     def __getstate__(self):
         state = {
