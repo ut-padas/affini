@@ -11,13 +11,13 @@ from cuml.cluster import KMeans as cuKMeans
 from sklearn.cluster import KMeans
 
 from _experiments._deprecated.two_means import two_means_pca_threshold
+from src import IS_CUPY_BACKEND
 
-_HAS_GPU = False
-CP_DTYPE = cp.float64 if _HAS_GPU else None  # type: ignore
+CP_DTYPE = cp.float64 if IS_CUPY_BACKEND else None  # type: ignore
 NP_DTYPE = np.float64
 
 logger = logging.getLogger(__name__)
-logger.info(f"GPU acceleration available: {_HAS_GPU}")
+logger.info(f"GPU acceleration available: {IS_CUPY_BACKEND}")
 
 # Global counters for clustering method usage
 NUM_CLUSTERED_BY_CUML = 0
@@ -86,7 +86,7 @@ class AdaptiveClusterer:
         self.min_points = min_points
         self.seed = seed
 
-        self.use_gpu = use_gpu and _HAS_GPU
+        self.use_gpu = use_gpu and IS_CUPY_BACKEND
         self.gpu_len_threshold = gpu_len_threshold
         self.should_generate_extra_points = should_generate_extra_points
         logger.info(

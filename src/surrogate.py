@@ -9,6 +9,7 @@ from src.data_sampler import DataSampler
 from src.ellipsoidal_distance import knn_ellipsoidal_distance
 from src.l2_distance import knn_l2_distance
 from src.v1_adaptive_clustering import adaptive_cluster_algorithm
+from src.v1_gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
 
 logger = logging.getLogger(__name__)
 
@@ -86,21 +87,40 @@ class NearODESurrogate:
             self.N_src = centroids.shape[0]
             self.training_num_levels = num_levels
         elif self.version == "v1":
-            clusters, num_levels = adaptive_cluster_algorithm(
-                X_train=X_train,
-                f=f_fn,
-                grad_f=g_fn,
-                cupy_f=f_fn,
-                atol=TOL,
-                rtol=TOL,
-                num_initial_clusters=NUM_INITIAL_CLUSTERS,
-                min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
-                seed=SEED,
-            )
-            centroids = xp.asarray([clust.centroid for clust in clusters])
-            f_vals = xp.asarray([clust.F_centroid for clust in clusters])
-            grads = xp.asarray([clust.J_centroid for clust in clusters])
-            trust_radii = xp.asarray([clust.radius for clust in clusters])
+            if not IS_CUPY_BACKEND:
+                clusters, num_levels = adaptive_cluster_algorithm(
+                    X_train=X_train,
+                    f=f_fn,
+                    grad_f=g_fn,
+                    cupy_f=f_fn,
+                    atol=TOL,
+                    rtol=TOL,
+                    num_initial_clusters=NUM_INITIAL_CLUSTERS,
+                    min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
+                    seed=SEED,
+                )
+                centroids = xp.asarray([clust.centroid for clust in clusters])
+                f_vals = xp.asarray([clust.F_centroid for clust in clusters])
+                grads = xp.asarray([clust.J_centroid for clust in clusters])
+                trust_radii = xp.asarray([clust.radius for clust in clusters])
+            else:
+                result = adaptive_cluster_algorithm_gpu(
+                    X_train=X_train,
+                    f=f_fn,
+                    grad=g_fn,
+                    DATA_DIM=X_train.shape[1],
+                    F_DIM=f_fn(X_train[:1]).shape[1],
+                    NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                    MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                    ATOL=TOL,
+                    RTOL=TOL,
+                    SEED=SEED,
+                )
+                centroids = result[0]
+                f_vals = result[1]
+                grads = result[2]
+                trust_radii = result[4]
+                num_levels = result[9]
 
             self.X_src = centroids
             self.f_src = f_vals
