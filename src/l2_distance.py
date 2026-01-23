@@ -1,36 +1,36 @@
 import faiss
-import numpy as np
+from cuml.neighbors import NearestNeighbors as cuMLNearestNeighbors
+
+from src import IS_CUPY_BACKEND, Array, xp
 
 
-def knn_l2_distance(
-    query_points: np.ndarray, centroids: np.ndarray, trust_radii: np.ndarray, k_nn: int
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _knn_l2_distance_cpu(
+    query_points: Array, centroids: Array, trust_radii: Array, k_nn: int
+) -> tuple[Array, Array, Array]:
     """
     Find K nearest neighbors using FAISS with trust radius checking.
 
     This is the main function you should use for K nearest neighbor search.
 
-    Parameters:
-    -----------
-    query_points : np.ndarray, shape (M, D)
-        Query points to find neighbors for
-    centroids : np.ndarray, shape (K, D)
-        Centroid points to search from
-    trust_radii : np.ndarray, shape (K,)
-        Trust radius for each centroid
-    k_nn : int
-        Number of nearest neighbors to find
+    Arg:
+        query_points : xp.ndarray, shape (M, D)
+            Query points to find neighbors for
+        centroids : xp.ndarray, shape (K, D)
+            Centroid points to search from
+        trust_radii : xp.ndarray, shape (K,)
+            Trust radius for each centroid
+        k_nn : int
+            Number of nearest neighbors to find
 
     Returns:
     --------
-    indices : np.ndarray, shape (M, K_NN)
+    indices : xp.ndarray, shape (M, K_NN)
         Indices of K nearest neighbors for each query point
-    distances : np.ndarray, shape (M, K_NN)
+    distances : xp.ndarray, shape (M, K_NN)
         L2 distances to K nearest neighbors for each query point
-    unguaranteed_mask : np.ndarray, shape (M,)
+    unguaranteed_mask : xp.ndarray, shape (M,)
         Boolean mask indicating if nearest neighbor distance > trust radius
     """
-
     M, D = query_points.shape
     K, _ = centroids.shape
 
@@ -38,8 +38,8 @@ def knn_l2_distance(
     k_nn = min(k_nn, K)
 
     # Ensure data types are correct for FAISS (float32)
-    centroids_f32 = centroids.astype(np.float32)
-    query_points_f32 = query_points.astype(np.float32)
+    centroids_f32 = centroids.astype(xp.float32)
+    query_points_f32 = query_points.astype(xp.float32)
 
     # Build FAISS index
     index = faiss.IndexFlatL2(D)  # L2 distance index
@@ -49,7 +49,7 @@ def knn_l2_distance(
     distances_sq, indices = index.search(query_points_f32, k_nn)  # type: ignore
 
     # Convert squared distances to L2 distances
-    distances = np.sqrt(distances_sq)
+    distances = xp.sqrt(distances_sq)
 
     # Check if nearest neighbor distance exceeds trust radius
     nearest_neighbor_indices = indices[:, 0]  # (M,)
@@ -60,3 +60,48 @@ def knn_l2_distance(
     unguaranteed_mask = nearest_neighbor_distances > nearest_neighbor_trust_radii
 
     return indices, distances, unguaranteed_mask
+
+
+def _knn_l2_distance_gpu(
+    query_points: Array, centroids: Array, trust_radii: Array, k_nn: int
+) -> tuple[Array, Array, Array]:
+    """
+    Find K nearest neighbors using cuML with trust radius checking.
+    """
+    index = cuMLNearestNeighbors(metric="euclidean", n_neighbors="brute")
+    index.fit(centroids)
+    distances, indices = index.kneighbors(query_points, n_neighbors=k_nn)
+
+    # Check if nearest neighbor distance exceeds trust radius
+    nearest_neighbor_indices = indices[:, 0]  # (M,)
+    nearest_neighbor_distances = distances[:, 0]  # (M,)
+    nearest_neighbor_trust_radii = trust_radii[nearest_neighbor_indices]  # (M,)
+
+    # Create unguaranteed mask
+    unguaranteed_mask = nearest_neighbor_distances > nearest_neighbor_trust_radii
+    return indices, distances, unguaranteed_mask
+
+
+def knn_l2_distance(
+    query_points: Array, centroids: Array, trust_radii: Array, k_nn: int
+) -> tuple[Array, Array, Array]:
+    """
+    Find K nearest neighbors using either FAISS (CPU) or cuML (GPU) with trust radius checking.
+
+    This is the main function you should use for K nearest neighbor search.
+
+    Arg:
+        query_points: (M, D) Query points.
+        centroids: (K, D) Centroid centroids.
+        trust_radii: (K,) Trust radius for each centroid.
+        k_nn: Number of nearest neighbors to find.
+
+    Returns:
+        nn_indices: (M, K_NN) Indices of K nearest neighbors for each query point.
+        nn_distances: (M, K_NN) L2 distances to K nearest neighbors for each query point.
+        unguaranteed_mask: (M,) Boolean mask indicating if nearest neighbor distance > trust radius.
+    """
+    if IS_CUPY_BACKEND:
+        return _knn_l2_distance_gpu(query_points, centroids, trust_radii, k_nn)
+    else:
+        return _knn_l2_distance_cpu(query_points, centroids, trust_radii, k_nn)

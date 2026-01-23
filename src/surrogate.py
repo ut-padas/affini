@@ -117,10 +117,10 @@ class NearODESurrogate:
                     RTOL=TOL,
                     SEED=SEED,
                 )
-                centroids = xp.asnumpy(result[0])
-                f_vals = xp.asnumpy(result[1])
-                grads = xp.asnumpy(result[2])
-                trust_radii = xp.asnumpy(result[4])
+                centroids = result[0]
+                f_vals = result[1]
+                grads = result[2]
+                trust_radii = result[4]
                 num_levels = result[9]
 
             self.X_src = centroids
@@ -285,20 +285,12 @@ class NearODESurrogate:
 
             logger.info(f"Prediction Time: {time.perf_counter()-t0:.4f}s")
         elif self.version == "v1":
-            if IS_CUPY_BACKEND:
-                nn_idx, nn_dist2, ungauranteed_mask = knn_l2_distance(
-                    xp.asnumpy(qp),
-                    xp.asnumpy(self.X_src),
-                    xp.asnumpy(self.trust_ellipses_src),
-                    k_NEIGHBOURS,
-                )
-            else:
-                nn_idx, nn_dist2, ungauranteed_mask = knn_l2_distance(
-                    qp,
-                    xp.asarray(self.X_src),
-                    xp.asarray(self.trust_ellipses_src),
-                    k_NEIGHBOURS,
-                )
+            nn_idx, nn_dist2, ungauranteed_mask = knn_l2_distance(
+                qp,
+                self.X_src,
+                self.trust_ellipses_src,
+                k_NEIGHBOURS,
+            )
             logger.info(f"L2 kNN Search Time: {time.perf_counter()-t_search:.4f}s")
 
             N, D = qp.shape
@@ -327,9 +319,6 @@ class NearODESurrogate:
         else:
             raise ValueError(f"Unknown version: {self.version}")
 
-        if IS_CUPY_BACKEND:
-            ungauranteed_mask = xp.asarray(ungauranteed_mask)
-            predictions = xp.asarray(predictions)
         return predictions, ungauranteed_mask
 
 
