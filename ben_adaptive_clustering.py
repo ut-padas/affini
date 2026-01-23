@@ -442,9 +442,9 @@ if __name__ == "__main__":
         # If x is 1D, make it 2D
         if x.ndim == 1:
             x = np.expand_dims(x, axis=0)
-        f_val = shif_g_fn(x).flatten()
+        f_val = shif_g_fn(x).flatten()  # (N, )
         g_val = shif_g_grad_fn(x)  # (N, 1, D)
-        g_val = g_val.reshape(g_val.shape[0], g_val.shape[2])
+        g_val = g_val.reshape(g_val.shape[0], g_val.shape[2])  # (N, D)
         return f_val, g_val
 
     # Generate Data
