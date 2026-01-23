@@ -128,7 +128,6 @@ def knn_ellipsoidal_distance(
             mu_chunk = centroids[c_start:c_end]  # (K_c, d)
 
             # 1. Compute dx for this chunk: (B, K_c, d)
-            # Memory: 1024 * 10000 * 10 * 8 bytes ~= 800 MB (Safe)
             dx = batch_queries[:, None, :] - mu_chunk[None, :, :]
 
             # 2. Compute (Q * dx^T)^T
@@ -156,14 +155,11 @@ def knn_ellipsoidal_distance(
             )
 
         # Select k smallest
-        # argpartition is faster than sort for finding top-k
-        part = xp.argpartition(dist2_batch, kth=k - 1, axis=1)[:, :k]  # (B, k)
-        part_dist2 = xp.take_along_axis(dist2_batch, part, axis=1)  # (B, k)
-
-        # Sort the top k for clean output
-        order = xp.argsort(part_dist2, axis=1)  # (B, k)
-        batch_nn_idx = xp.take_along_axis(part, order, axis=1).astype(xp.int32)
-        batch_nn_dist2 = xp.take_along_axis(part_dist2, order, axis=1)  # (B, k)
+        sorted_indices = xp.argsort(dist2_batch, axis=1)[:, :k]  # (B, k)
+        batch_nn_dist2 = xp.take_along_axis(
+            dist2_batch, sorted_indices, axis=1
+        )  # (B, k)
+        batch_nn_idx = sorted_indices.astype(xp.int32)
 
         if enforce_containment:
             # Convert masked-out (+inf) entries into "missing" indices (-1).
@@ -177,9 +173,6 @@ def knn_ellipsoidal_distance(
         # Append to results
         all_indices.append(batch_nn_idx)
         all_dists.append(batch_nn_dist2)
-
-        # Explicitly free large temp arrays
-        del dist2_batch, part, part_dist2
 
         if IS_CUPY_BACKEND:
             xp.get_default_memory_pool().free_all_blocks()

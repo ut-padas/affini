@@ -4,6 +4,14 @@ from src import Array, xp
 
 CENTERS_2D = xp.array([[1.0, 1.0], [-1.0, -1.0]])
 CENTERS_3D = xp.array([[1.0, 1.0, 1.0], [-1.0, -1.0, -1.0], [1.0, -1.0, 1.0]])
+CENTERS_4D = xp.array(
+    [
+        [1.0, 1.0, 1.0, 1.0],
+        [-1.0, -1.0, -1.0, -1.0],
+        [1.0, -1.0, 1.0, -1.0],
+        [-1.0, 1.0, -1.0, 1.0],
+    ]
+)
 
 
 def shifted_gaussians(
@@ -45,7 +53,7 @@ def shifted_gaussians_grad(X: Array, centers: Array, std_dev: float = 0.5) -> Ar
         std_dev: standard deviation of the Gaussians
 
     Returns:
-        grad_f_x: (N, D) gradient at each point in X
+        grad_f_x: (N, 1, D) gradient at each point in X
     """
     # X: (N, D), centers: (M, D)
     # diff shape: (N, M, D)
@@ -63,4 +71,4 @@ def shifted_gaussians_grad(X: Array, centers: Array, std_dev: float = 0.5) -> Ar
     coeff = -gaussians / (std_dev**2)
     grad_f_x = xp.sum(coeff[:, :, xp.newaxis] * diff, axis=1)
 
-    return grad_f_x
+    return grad_f_x[:, xp.newaxis, :]  # Return shape (N, 1, D)
