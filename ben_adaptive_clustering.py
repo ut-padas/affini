@@ -4,7 +4,7 @@ from collections.abc import Callable
 import numpy as np
 from sklearn.cluster import KMeans
 
-from ben_ellipse import fit_ellipse_PCA, metric_adaptive_clustering
+from ben_ellipse import fit_ellipse_PCA_scaled, fit_ellipse_PCA, metric_adaptive_clustering
 
 
 # bi-tree structures that we use in the recursive algorithm implemented below
@@ -165,7 +165,7 @@ def _adaptive_cluster_algorithm_helper(
     ):
 
         # Create a cluster. Use ellipse formulation
-        trust_ellipse = fit_ellipse_PCA(distance[with_good_error])
+        trust_ellipse = fit_ellipse_PCA_scaled(distance[with_good_error])
         k += 1
         return k, Cluster(
             k - 1,
