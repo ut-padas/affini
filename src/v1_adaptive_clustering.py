@@ -486,7 +486,7 @@ if __name__ == "__main__":
     N_SAMPLES = 100_000
     N_INIT_CLUSTERS = 1
     MIN_PTS_PER_CLUSTER = 5
-    TOL = 0.01
+    TOL = 0.1
     print(f"{TOL=}, {TOL=}")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
     D = 2
@@ -513,7 +513,7 @@ if __name__ == "__main__":
         should_generate_extra_points=True,
     )
     toc = time.perf_counter()
-    print(f"Total clusters formed: {len(clusters)}")
+    print(f"Total clusters formed: {len(clusters):,}")
     total = (
         NUM_CLUSTERED_BY_CUML + NUM_CLUSTERED_BY_SKLEARN + NUM_CLUSTERED_BY_TWO_MEANS
     )
@@ -525,7 +525,17 @@ if __name__ == "__main__":
     logger.info(f"Time taken: {toc - tic:.4f} seconds")
     logger.info(f"Time taken: {toc - tic:.4f} seconds")
 
-    if D == 2:
+    if D == 2 and len(clusters) < 1000:
         fname = f"old_ac_clusters_gaussian_{N_SAMPLES}_pts_tol{TOL}.png"
         plot_clusters(clusters, sg_fn, domain=DOMAIN, fname=fname)
         print(f"Cluster plot saved to {fname}")
+
+    npz_fpath = f"v1_adaptive_clusters_gaussian_train_{N_SAMPLES}_pts_tol_{TOL}.npz"
+    results = {
+        "centroids": np.array([cluster.centroid for cluster in clusters]),
+        "f": np.array([cluster.F_centroid for cluster in clusters]),
+        "g": np.array([cluster.J_centroid for cluster in clusters]),
+        "radii": np.array([cluster.radius for cluster in clusters]),
+    }
+    np.savez_compressed(npz_fpath, **results)
+    print(f"Cluster data saved to {npz_fpath}")

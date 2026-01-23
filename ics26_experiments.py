@@ -3,6 +3,7 @@ import time
 from functools import partial
 from itertools import product
 from pathlib import Path
+from typing import Literal
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -17,6 +18,8 @@ ICS26_DIR.mkdir(parents=True, exist_ok=True)
 
 SEED = 0
 TINY_EPS = 1e-12
+
+CLUSTERING_VERSION = "v1"
 
 
 def create_summary_dataframe(results_dir: Path):
@@ -209,6 +212,7 @@ def rosenbrock_experiment_setup(
     K_NEIGHBOURS: int,
     CONTAINMENT_LEVEL: float,
     ENFORCE_CONTAINMENT: bool,
+    CLUSTERING_VERSION: Literal["v1", "v2"],
     SYNTH_BUDGET_FACTOR: int = 100,
 ):
     scaled_rosenbrock = partial(rosenbrock, a=ROSENBROCK_A)
@@ -222,7 +226,7 @@ def rosenbrock_experiment_setup(
     X_train = xp.asarray(X_train)
 
     # 2. Initialize Surrogate
-    surrogate = NearODESurrogate()
+    surrogate = NearODESurrogate(version=CLUSTERING_VERSION)
     error_tag = ""
 
     FAILED = False
@@ -307,6 +311,7 @@ def rosenbrock_experiment_setup(
         ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
         CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
         SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
+        CLUSTERING_VERSION=CLUSTERING_VERSION,
     )
 
     with open(json_fpath, "w") as f:
@@ -365,6 +370,7 @@ def experiment_adaptive_clustering_global_vs_local() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
         )
 
     return EXP_DIR
@@ -414,6 +420,7 @@ def experiment_adaptive_clustering_global_vs_n_init_clusters() -> Path:
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             SYNTH_BUDGET_FACTOR=500,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
         )
     return EXP_DIR
 
@@ -462,6 +469,7 @@ def experiment_adaptive_clustering_global_local_vs_min_pts_cluster():
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             SYNTH_BUDGET_FACTOR=500,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
         )
 
     return EXP_DIR
@@ -511,6 +519,7 @@ def experiment_ellipsoidal_knn_containment() -> Path:
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             SYNTH_BUDGET_FACTOR=500,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
         )
 
     return EXP_DIR
@@ -527,12 +536,12 @@ def experiment_rosenbrock_convergence() -> Path:
     ENFORCE_CONTAINMENT = False
     ERROR_SCALING_METHOD = "global"
 
-    EXP_DIR = ICS26_DIR / "rosenbrock_convergence_no_containment"
+    EXP_DIR = ICS26_DIR / "rosenbrock_convergence"
     create_summary_dataframe(EXP_DIR)
     del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 5]
     ROSENBROCK_As = [1, 100]
-    TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 5e-6]
+    TOLs = [1e-1, 5e-2, 2e-2, 1e-2, 5e-3, 2e-3, 1e-3, 5e-4, 2e-4, 1e-4]
 
     for DIM, ROSENBROCK_A, TOL in product(DIMs, ROSENBROCK_As, TOLs):
         json_fpath = (
@@ -559,27 +568,28 @@ def experiment_rosenbrock_convergence() -> Path:
             CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
             ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
             SYNTH_BUDGET_FACTOR=10,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
         )
 
     return EXP_DIR
 
 
 if __name__ == "__main__":
-    dir_exp_1 = experiment_adaptive_clustering_global_vs_local()
-    create_summary_dataframe(dir_exp_1)
+    # dir_exp_1 = experiment_adaptive_clustering_global_vs_local()
+    # create_summary_dataframe(dir_exp_1)
 
-    dir_exp_2 = experiment_adaptive_clustering_global_vs_n_init_clusters()
-    create_summary_dataframe(dir_exp_2)
+    # dir_exp_2 = experiment_adaptive_clustering_global_vs_n_init_clusters()
+    # create_summary_dataframe(dir_exp_2)
 
-    dir_exp_3 = experiment_adaptive_clustering_global_local_vs_min_pts_cluster()
-    create_summary_dataframe(dir_exp_3)
+    # dir_exp_3 = experiment_adaptive_clustering_global_local_vs_min_pts_cluster()
+    # create_summary_dataframe(dir_exp_3)
 
-    dir_exp_4 = experiment_ellipsoidal_knn_containment()
-    create_summary_dataframe(dir_exp_4)
+    # dir_exp_4 = experiment_ellipsoidal_knn_containment()
+    # create_summary_dataframe(dir_exp_4)
 
     dir_exp_5 = experiment_rosenbrock_convergence()
     create_summary_dataframe(dir_exp_5)
 
-    _dirs = [dir_exp_1, dir_exp_2, dir_exp_3, dir_exp_4, dir_exp_5]
-    for d in _dirs:
-        create_summary_dataframe(d)
+    # _dirs = [dir_exp_1, dir_exp_2, dir_exp_3, dir_exp_4, dir_exp_5]
+    # for d in _dirs:
+    #     create_summary_dataframe(d)

@@ -1219,8 +1219,8 @@ if __name__ == "__main__":
         print("Skipping plot (d != 2 or too many clusters).")
 
     # Save npz file of results
-    npx_fpath = img_fpath.with_suffix(".npz")
+    npz_fpath = img_fpath.with_suffix(".npz")
     if IS_CUPY_BACKEND:
         results = {k: xp.asnumpy(v) for k, v in results.items()}
-    xp.savez_compressed(npx_fpath, **results)
-    xp.savez_compressed(npx_fpath, **results)
+    xp.savez_compressed(npz_fpath, **results)
+    xp.savez_compressed(npz_fpath, **results)
