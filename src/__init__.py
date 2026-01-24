@@ -2,7 +2,6 @@ import logging
 import warnings
 from pathlib import Path
 
-import cupy as cp
 import numpy as np
 from array_api_compat import array_namespace
 from array_api_compat.common._typing import Array
@@ -10,6 +9,8 @@ from array_api_compat.common._typing import Array
 logger = logging.getLogger(__name__)
 
 try:
+    import cupy as cp
+
     IS_CUPY_BACKEND = cp.is_available()
 except Exception:
     IS_CUPY_BACKEND = False

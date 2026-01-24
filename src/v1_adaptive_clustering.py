@@ -5,7 +5,6 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-import cupy as cp
 import numpy as np
 from cuml.cluster import KMeans as cuKMeans
 from sklearn.cluster import KMeans
@@ -14,7 +13,15 @@ from typing_extensions import Literal
 from src import IS_CUPY_BACKEND
 from src.two_means import estimate_hessian_abs_sqrt, two_means_pca_threshold
 
-CP_DTYPE = cp.float64 if IS_CUPY_BACKEND else None  # type: ignore
+if IS_CUPY_BACKEND:
+    import cupy as cp
+
+    CP_DTYPE = cp.float64
+else:
+    cp = None  # type: ignore
+    CP_DTYPE = None
+
+
 NP_DTYPE = np.float64
 
 logger = logging.getLogger(__name__)
