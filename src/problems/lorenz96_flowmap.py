@@ -1,8 +1,9 @@
 import numpy as np
 from array_api_compat import array_namespace
-from lorenz96 import lorenz96, lorenz96_grad
 from scipy.integrate import solve_ivp
-from sensitivities_solver import sensitivities_solver
+
+from src.problems.lorenz96 import lorenz96, lorenz96_grad
+from src.problems.sensitivities_solver import sensitivities_solver
 
 # Issue: value and derivative are part of same lorenz solve.
 # How to deal with splitting the solve into each function?
@@ -36,8 +37,8 @@ def lorenz96_flowmap(X0, forcing=1.0, tf=0.1):
     # return solution at final time
     t_span = [0, tf]
     t_eval = [tf]
-    sol = solve_ivp(lorenz96_batch_ode, t_span, X0_flat, 'RK45', t_eval, rtol=1e-6)
-    
+    sol = solve_ivp(lorenz96_batch_ode, t_span, X0_flat, "RK45", t_eval, rtol=1e-6)
+
     # sol.y contains (1, n_trajectories * dim) array. Reshape accordingly
     XF = sol.y.reshape(n_trajectories, dim)
 
@@ -63,18 +64,11 @@ def lorenz96_flowmap_grad(X0, forcing=1.0, tf=0.1):
     return DXF
 
 
-
-if __name__ == '__main__':
-
-    # Test 1: make sure lorenz96_flowmap works
+if __name__ == "__main__":
     n_trajectories = 1
     dim = 5
-    # X0 = np.random.uniform(1, 10, (n_trajectories, dim))
-    X0 = 0.5 * np.ones((n_trajectories,dim))
+    X0 = 0.5 * np.ones((n_trajectories, dim))
     F = 1
     t_final = 0.01
     XF = lorenz96_flowmap(X0, forcing=F, tf=t_final)
-
-    # Test 2: make sure lorenz96_flowmap_grad works
     DXF = lorenz96_flowmap_grad(X0, forcing=F, tf=t_final)
-
