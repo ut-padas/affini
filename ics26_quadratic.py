@@ -286,6 +286,8 @@ def Quadratic_experiment_setup(
 
 
 def experiment_with_v1() -> Path:
+    N_TRAIN = 100_000
+    N_TEST = 10_000
     CLUSTER_SPLITTING_METHOD = "hessian_pca"
     Q_SHRINK = 0.05
     CLUSTERING_VERSION = "v1"
@@ -293,12 +295,18 @@ def experiment_with_v1() -> Path:
     EXP_DIR = ICS26_DIR / "quadratic_v1_hessian_informed_split_experiments"
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 3, 4, 5]
+    DIMs = [2, 3, 4, 5, 8, 10]
     USE_HESSIAN_INFORMED_SPLITs = [True, False]
 
     for DIM, TOL, USE_HESSIAN_INFORMED_SPLIT in product(
         DIMs, TOLs, USE_HESSIAN_INFORMED_SPLITs
     ):
+        if DIM > 5 and TOL < 1e-3:
+            print(
+                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
+            )
+            continue
+
         json_path = (
             EXP_DIR
             / f"ics26_quadratic_dim{DIM}_tol{TOL}_hessian_informed_split{USE_HESSIAN_INFORMED_SPLIT}.json"
@@ -307,13 +315,6 @@ def experiment_with_v1() -> Path:
         if json_path.exists():
             print(f"Skipping existing experiment at {json_path}")
             continue
-
-        if DIM == 2:
-            N_TRAIN = 100_000
-            N_TEST = 10_000
-        else:
-            N_TRAIN = 100_000
-            N_TEST = 10_000
 
         Quadratic_experiment_setup(
             json_fpath=json_path,
