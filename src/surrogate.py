@@ -48,6 +48,7 @@ class NearODESurrogate:
         Q_SHRINK: float = 0.0,
         SEED: int = 0,
         USE_HESSIAN_INFORMED_SPLIT: bool = False,
+        ERROR_SPLIT_CRITERION: Literal["L2", "Linf"] = "L2",
     ):
         """
         1. Sample X from domain.
@@ -94,12 +95,12 @@ class NearODESurrogate:
                     f=f_fn,
                     grad_f=g_fn,
                     cupy_f=f_fn,
-                    atol=TOL,
-                    rtol=TOL,
+                    tol=TOL,
                     num_initial_clusters=NUM_INITIAL_CLUSTERS,
                     min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
                     seed=SEED,
                     use_hessian_informed_split=USE_HESSIAN_INFORMED_SPLIT,
+                    error_split_criterion=ERROR_SPLIT_CRITERION,
                 )
                 centroids = xp.asarray([clust.centroid for clust in clusters])
                 f_vals = xp.asarray([clust.F_centroid for clust in clusters])

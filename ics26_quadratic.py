@@ -47,6 +47,7 @@ def Quadratic_experiment_setup(
     Q_SHRINK: float,
     USE_HESSIAN_INFORMED_SPLIT: bool,
     CLUSTERING_VERSION: Literal["v1", "v2"],
+    ERROR_SPLIT_CRITERION: Literal["L2", "Linf"] = "L2",
     SYNTH_BUDGET_FACTOR: int = 10,
 ):
     # Sample data from a uniform distribution
@@ -78,6 +79,7 @@ def Quadratic_experiment_setup(
             SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
             Q_SHRINK=Q_SHRINK,
             USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,
         )
         _end_train_time = time.perf_counter()
         _TRAINED = True
@@ -145,6 +147,7 @@ def Quadratic_experiment_setup(
         SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
         CLUSTERING_VERSION=CLUSTERING_VERSION,
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+        ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,
     )
 
     with open(json_fpath, "w") as jf:
@@ -339,6 +342,62 @@ def experiment_with_v1() -> Path:
     return EXP_DIR
 
 
+def experiment_with_v1_error_split_criteria() -> Path:
+    N_TRAIN = 100_000
+    N_TEST = 10_000
+    CLUSTER_SPLITTING_METHOD = "hessian_pca"
+    Q_SHRINK = 0.05
+    CLUSTERING_VERSION = "v1"
+
+    EXP_DIR = ICS26_DIR / "quadratic_v1_hessian_informed_split_experiments"
+    del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
+    DIMs = [2, 3, 4, 5]
+    USE_HESSIAN_INFORMED_SPLITs = [True, False]
+    ERROR_SPLIT_CRITERIONs = ["L2", "Linf"]
+
+    for DIM, TOL, USE_HESSIAN_INFORMED_SPLIT, ERROR_SPLIT_CRITERION in product(
+        DIMs, TOLs, USE_HESSIAN_INFORMED_SPLITs, ERROR_SPLIT_CRITERIONs
+    ):
+        if DIM > 5 and TOL < 1e-3:
+            print(
+                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
+            )
+            continue
+
+        json_path = (
+            EXP_DIR
+            / f"ics26_quadratic_dim{DIM}_tol{TOL}_hessian_informed_split{USE_HESSIAN_INFORMED_SPLIT}_error_split_criterion{ERROR_SPLIT_CRITERION}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+
+        Quadratic_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,  # type: ignore
+            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
+            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
+            Q_SHRINK=Q_SHRINK,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            SYNTH_BUDGET_FACTOR=1000,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,  # type: ignore
+        )
+
+    return EXP_DIR
+
+
 if __name__ == "__main__":
     from src.logging_config import setup_logging
 
@@ -346,3 +405,6 @@ if __name__ == "__main__":
 
     dir1 = experiment_with_v1()
     create_summary_dataframe(dir1)
+
+    dir2 = experiment_with_v1_error_split_criteria()
+    create_summary_dataframe(dir2)
