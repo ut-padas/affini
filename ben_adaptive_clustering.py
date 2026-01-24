@@ -4,7 +4,11 @@ from collections.abc import Callable
 import numpy as np
 from sklearn.cluster import KMeans
 
-from ben_ellipse import fit_ellipse_PCA_scaled, fit_ellipse_PCA, metric_adaptive_clustering
+from ben_ellipse import (
+    fit_ellipse_PCA,
+    fit_ellipse_PCA_scaled,
+    metric_adaptive_clustering,
+)
 
 
 # bi-tree structures that we use in the recursive algorithm implemented below
@@ -589,3 +593,4 @@ if __name__ == "__main__":
     fname = "ben_ac_code_quadratic.png"
     plt.savefig(fname)
     plt.close()
+    print(f'Saved figure to "{fname}"')
