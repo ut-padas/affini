@@ -95,29 +95,32 @@ def create_problem_result_dict(
 
     N_TEST = ground_truth.shape[0]
 
+    n_out = xp.sum(ungauranteed_mask)
+
     # Consider only guaranteed points for error metrics
-    g_idx = xp.where(ungauranteed_mask == False)[0]  # type: ignore
-    rel_error_linf = xp.abs(predictions[g_idx] - ground_truth[g_idx]) / (
+    g_idx = ~ungauranteed_mask
+    ptwise_rel_error_linf = xp.abs(predictions[g_idx] - ground_truth[g_idx]) / (
         xp.abs(ground_truth[g_idx]) + TINY_EPS
     )
-    max_rel_error_linf = xp.nanmax(rel_error_linf)
-    median_rel_error_linf = xp.nanmedian(rel_error_linf)
-
-    rel_error_l2 = xp.linalg.norm(ground_truth[g_idx] - predictions[g_idx], axis=1) / (
-        xp.linalg.norm(ground_truth[g_idx], axis=1) + TINY_EPS
+    ptwise_max_rel_error_linf = xp.nanmax(ptwise_rel_error_linf)
+    ptwise_median_rel_error_linf = xp.nanmedian(ptwise_rel_error_linf)
+    l2_relative_error = float(
+        xp.linalg.norm(ground_truth[g_idx] - predictions[g_idx], ord=2)
+        / xp.linalg.norm(ground_truth[g_idx], ord=2)
     )
-    max_rel_error_l2 = xp.nanmax(rel_error_l2)
-    median_rel_error_l2 = xp.nanmedian(rel_error_l2)
+    l2_abs_error = float(
+        xp.linalg.norm(ground_truth[g_idx] - predictions[g_idx], ord=2)
+        / xp.sqrt(g_idx.sum())
+    )
 
+    n_in = N_TEST - n_out
     # pout: percentage of points outside the trust region
     # pin_good: percentage of points inside the trust region with error below tolerance
     # pin_bad: percentage of points inside the trust region with error above tolerance
-    n_out = xp.sum(ungauranteed_mask)
     perct_out = 100.0 * n_out / N_TEST
 
-    n_in = N_TEST - n_out
-    n_in_good = xp.sum(rel_error_linf <= TOL)
-    n_in_bad = xp.sum(rel_error_linf > TOL)
+    n_in_good = xp.sum(ptwise_rel_error_linf <= TOL)
+    n_in_bad = xp.sum(ptwise_rel_error_linf > TOL)
     perct_in_good = 100.0 * n_in_good / N_TEST
     perct_in_bad = 100.0 * n_in_bad / N_TEST
 
@@ -130,10 +133,10 @@ def create_problem_result_dict(
         "n_train": N_TRAIN,
         "n_test": N_TEST,
         "n_clusters": N_CLUSTERS,
-        "max_rel_error_linf": float(max_rel_error_linf),
-        "max_rel_error_l2": float(max_rel_error_l2),
-        "median_rel_error_linf": float(median_rel_error_linf),
-        "median_rel_error_l2": float(median_rel_error_l2),
+        "ptwise_max_rel_error_linf": float(ptwise_max_rel_error_linf),
+        "ptwise_median_rel_error_linf": float(ptwise_median_rel_error_linf),
+        "l2_relative_error": l2_relative_error,
+        "l2_abs_error": l2_abs_error,
         "n_out": int(n_out),
         "perct_out": float(perct_out),
         "n_in": int(n_in),
@@ -352,6 +355,9 @@ def rosenbrock_experiment_setup(
 
             centroids = surrogate.X_src
             radii = surrogate.trust_ellipses_src
+            if centroids is None or radii is None:
+                print("Centroids or radii are None, skipping centroid plot.")
+                raise ValueError("Centroids or radii are None.")
 
             for i in range(centroids.shape[0]):
                 circle = Circle(
@@ -386,206 +392,8 @@ def rosenbrock_experiment_setup(
             plt.savefig(fname, dpi=300)
 
 
-def experiment_adaptive_clustering_global_vs_local() -> Path:
-    DIM = 2
-    N_TRAIN = int(2e5)
-    N_INIT_CLUSTERS = 50
-    N_MIN_PER_CLUSTER = 100
-    MAX_CLUSTERS_EST = 50_000
-    N_TEST = int(5e4)
-    K_NEIGHBOURS = 5
-    CONTAINMENT_LEVEL = 1.0
-    ENFORCE_CONTAINMENT = True
-
-    EXP_DIR = ICS26_DIR / "adaptive_clustering_global_vs_local"
-    del_all_error_files_in_dir(EXP_DIR)
-    ERROR_SCALING_METHODs = ["global", "local"]
-    ROSENBROCK_As = [100**-1, 1, 100]
-    TOLs = [1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4]
-
-    for ERROR_SCALING_METHOD, ROSENBROCK_A, TOL in product(
-        ERROR_SCALING_METHODs, ROSENBROCK_As, TOLs
-    ):
-        json_fpath = (
-            EXP_DIR
-            / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}.json"
-        )
-        json_fpath.parent.mkdir(parents=True, exist_ok=True)
-        if json_fpath.exists():
-            print(f"Skipping existing: {json_fpath}")
-            continue
-
-        rosenbrock_experiment_setup(
-            json_fpath=json_fpath,
-            DIM=DIM,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            ROSENBROCK_A=ROSENBROCK_A,
-            TOL=TOL,
-            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-        )
-
-    return EXP_DIR
-
-
-def experiment_adaptive_clustering_global_vs_n_init_clusters() -> Path:
-    DIM = 2
-    N_TRAIN = int(2e5)
-    N_MIN_PER_CLUSTER = 100
-    MAX_CLUSTERS_EST = 50_000
-    N_TEST = int(5e4)
-    K_NEIGHBOURS = 5
-    CONTAINMENT_LEVEL = 1.0
-    ENFORCE_CONTAINMENT = True
-    ERROR_SCALING_METHOD = "global"
-
-    EXP_DIR = ICS26_DIR / "adaptive_clustering_global_vs_n_init_clusters"
-    del_all_error_files_in_dir(EXP_DIR)
-    N_INIT_CLUSTERSs = [1, 5, 25, 125, 625, 1000]
-    TOLs = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
-    ROSENBROCK_As = [1, 100]
-
-    for N_INIT_CLUSTERS, TOL, ROSENBROCK_A in product(
-        N_INIT_CLUSTERSs, TOLs, ROSENBROCK_As
-    ):
-        json_fpath = (
-            EXP_DIR
-            / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}.json"
-        )
-        json_fpath.parent.mkdir(parents=True, exist_ok=True)
-        if json_fpath.exists():
-            print(f"Skipping existing: {json_fpath}")
-            continue
-
-        rosenbrock_experiment_setup(
-            json_fpath=json_fpath,
-            DIM=DIM,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            ROSENBROCK_A=ROSENBROCK_A,
-            TOL=TOL,
-            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            SYNTH_BUDGET_FACTOR=500,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-        )
-    return EXP_DIR
-
-
-def experiment_adaptive_clustering_global_local_vs_min_pts_cluster():
-    DIM = 2
-    N_TRAIN = int(2e5)
-    N_INIT_CLUSTERS = 50
-    MAX_CLUSTERS_EST = 50_000
-    N_TEST = int(5e4)
-    K_NEIGHBOURS = 5
-    CONTAINMENT_LEVEL = 1.0
-    ENFORCE_CONTAINMENT = True
-
-    EXP_DIR = ICS26_DIR / "adaptive_clustering_global_local_vs_min_pts_per_cluster"
-    del_all_error_files_in_dir(EXP_DIR)
-    ERROR_SCALING_METHODs = ["global", "local"]
-    N_MIN_PER_CLUSTERs = [5, 25, 125, 625, 1000]
-    TOLs = [1e-1, 1e-2, 1e-3]
-    ROSENBROCK_As = [1, 100]
-
-    for ERROR_SCALING_METHOD, N_MIN_PER_CLUSTER, TOL, ROSENBROCK_A in product(
-        ERROR_SCALING_METHODs, N_MIN_PER_CLUSTERs, TOLs, ROSENBROCK_As
-    ):
-        json_fpath = (
-            EXP_DIR
-            / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}.json"
-        )
-        json_fpath.parent.mkdir(parents=True, exist_ok=True)
-        if json_fpath.exists():
-            print(f"Skipping existing: {json_fpath}")
-            continue
-
-        rosenbrock_experiment_setup(
-            json_fpath=json_fpath,
-            DIM=DIM,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            ROSENBROCK_A=ROSENBROCK_A,
-            TOL=TOL,
-            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            SYNTH_BUDGET_FACTOR=500,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-        )
-
-    return EXP_DIR
-
-
-def experiment_ellipsoidal_knn_containment() -> Path:
-    DIM = 2
-    N_TRAIN = int(2e5)
-    N_INIT_CLUSTERS = 25
-    N_MIN_PER_CLUSTER = 100
-    MAX_CLUSTERS_EST = 50_000
-    N_TEST = int(5e4)
-    ERROR_SCALING_METHOD = "global"
-    ROSENBROCK_A = 100
-
-    EXP_DIR = ICS26_DIR / "ellipsoidal_knn_containment"
-    del_all_error_files_in_dir(EXP_DIR)
-    K_NEIGHBOURSs = [1, 2, 3, 5, 10]
-    CONTAINMENT_LEVELs = [1.0, 2.0, 3.0]
-    ENFORCE_CONTAINMENT = [True, False]
-    TOLs = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
-
-    for K_NEIGHBOURS, CONTAINMENT_LEVEL, ENFORCE_CONTAINMENT, TOL in product(
-        K_NEIGHBOURSs, CONTAINMENT_LEVELs, ENFORCE_CONTAINMENT, TOLs
-    ):
-        json_fpath = (
-            EXP_DIR
-            / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}_containment{CONTAINMENT_LEVEL}_trustregion{ENFORCE_CONTAINMENT}.json"
-        )
-        json_fpath.parent.mkdir(parents=True, exist_ok=True)
-        if json_fpath.exists():
-            print(f"Skipping existing: {json_fpath}")
-            continue
-
-        rosenbrock_experiment_setup(
-            json_fpath=json_fpath,
-            DIM=DIM,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            ROSENBROCK_A=ROSENBROCK_A,
-            TOL=TOL,
-            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            SYNTH_BUDGET_FACTOR=500,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-        )
-
-    return EXP_DIR
-
-
 def experiment_rosenbrock_convergence() -> Path:
-    N_INIT_CLUSTERS = 25
+    N_INIT_CLUSTERS = 10
     N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 500_000 * 50
     N_TRAIN = int(2e5)
@@ -643,21 +451,9 @@ def experiment_rosenbrock_convergence() -> Path:
 
 
 if __name__ == "__main__":
-    # dir_exp_1 = experiment_adaptive_clustering_global_vs_local()
-    # create_summary_dataframe(dir_exp_1)
+    from src.logging_config import setup_logging
 
-    # dir_exp_2 = experiment_adaptive_clustering_global_vs_n_init_clusters()
-    # create_summary_dataframe(dir_exp_2)
-
-    # dir_exp_3 = experiment_adaptive_clustering_global_local_vs_min_pts_cluster()
-    # create_summary_dataframe(dir_exp_3)
-
-    # dir_exp_4 = experiment_ellipsoidal_knn_containment()
-    # create_summary_dataframe(dir_exp_4)
+    setup_logging()
 
     dir_exp_5 = experiment_rosenbrock_convergence()
     create_summary_dataframe(dir_exp_5)
-
-    # _dirs = [dir_exp_1, dir_exp_2, dir_exp_3, dir_exp_4, dir_exp_5]
-    # for d in _dirs:
-    #     create_summary_dataframe(d)

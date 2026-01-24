@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Ellipse
 
-from ics26_experiments import (
+from ics26_rosenbrock import (
     ICS26_DIR,
     SEED,
     create_problem_result_dict,
@@ -281,152 +281,6 @@ def SGaussian_experiment_setup(
         plt.close(fig)
 
 
-def experiment_no_q_shrink() -> Path:
-    CLUSTER_SPLITTING_METHOD = "hessian_pca"
-    Q_SHRINK = -1.0
-    CLUSTERING_VERSION = "v2"
-    USE_HESSIAN_INFORMED_SPLIT = True
-
-    EXP_DIR = ICS26_DIR / "shifted_gaussians_no_q_shrink_global_error_scaling"
-    del_all_error_files_in_dir(EXP_DIR)
-    DIMs = [2, 3]
-
-    for DIM, TOL in product(DIMs, TOLs):
-        json_path = EXP_DIR / f"ics26_sgaussian_dim{DIM}_tol{TOL}.json"
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        if json_path.exists():
-            print(f"Skipping existing experiment at {json_path}")
-            continue
-
-        if DIM == 2:
-            N_TRAIN = 200_000
-            N_TEST = 20_000
-        elif DIM == 3:
-            N_TRAIN = 300_000
-            N_TEST = 30_000
-        else:
-            raise ValueError("DIM must be 2 or 3")
-
-        SGaussian_experiment_setup(
-            json_fpath=json_path,
-            DIM=DIM,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            TOL=TOL,
-            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            Q_SHRINK=Q_SHRINK,
-            SYNTH_BUDGET_FACTOR=1000,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-        )
-
-    return EXP_DIR
-
-
-def experiment_with_q_shrink() -> Path:
-    CLUSTER_SPLITTING_METHOD = "hessian_pca"
-    Q_SHRINK = 0.05
-    CLUSTERING_VERSION = "v2"
-    USE_HESSIAN_INFORMED_SPLIT = True
-
-    EXP_DIR = ICS26_DIR / "shifted_gaussians_with_q_shrink_global_error_scaling"
-    del_all_error_files_in_dir(EXP_DIR)
-    DIMs = [2, 3]
-
-    for DIM, TOL in product(DIMs, TOLs):
-        json_path = EXP_DIR / f"ics26_sgaussian_dim{DIM}_tol{TOL}.json"
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        if json_path.exists():
-            print(f"Skipping existing experiment at {json_path}")
-            continue
-
-        if DIM == 2:
-            N_TRAIN = 100_000
-            N_TEST = 10_000
-        elif DIM == 3:
-            N_TRAIN = 100_000
-            N_TEST = 10_000
-        else:
-            raise ValueError("DIM must be 2 or 3")
-
-        SGaussian_experiment_setup(
-            json_fpath=json_path,
-            DIM=DIM,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            TOL=TOL,
-            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            Q_SHRINK=Q_SHRINK,
-            SYNTH_BUDGET_FACTOR=1000,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-        )
-
-    return EXP_DIR
-
-
-def experiment_with_pca_only() -> Path:
-    Q_SHRINK = 0.05
-    CLUSTER_SPLITTING_METHOD = "pca_only"
-    CLUSTERING_VERSION = "v2"
-
-    EXP_DIR = ICS26_DIR / "shifted_gaussians_with_pca_only_global_error_scaling"
-    del_all_error_files_in_dir(EXP_DIR)
-    DIMs = [2, 3]
-
-    for DIM, TOL in product(DIMs, TOLs):
-        json_path = EXP_DIR / f"ics26_sgaussian_dim{DIM}_tol{TOL}.json"
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        if json_path.exists():
-            print(f"Skipping existing experiment at {json_path}")
-            continue
-
-        if DIM == 2:
-            N_TRAIN = 200_000
-            N_TEST = 20_000
-        elif DIM == 3:
-            N_TRAIN = 300_000
-            N_TEST = 30_000
-        else:
-            raise ValueError("DIM must be 2 or 3")
-
-        SGaussian_experiment_setup(
-            json_fpath=json_path,
-            DIM=DIM,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            TOL=TOL,
-            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            Q_SHRINK=Q_SHRINK,
-            SYNTH_BUDGET_FACTOR=500,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-            USE_HESSIAN_INFORMED_SPLIT=True,
-        )
-
-    return EXP_DIR
-
-
 def experiment_with_v1() -> Path:
     Q_SHRINK = 0.05
     CLUSTER_SPLITTING_METHOD = "pca_only"
@@ -484,14 +338,6 @@ if __name__ == "__main__":
     from src.logging_config import setup_logging
 
     setup_logging()
-    # dir1 = experiment_no_q_shrink()
-    # create_summary_dataframe(dir1)
-
-    # dir2 = experiment_with_q_shrink()
-    # create_summary_dataframe(dir2)
-
-    # dir3 = experiment_with_pca_only()
-    # create_summary_dataframe(dir3)
 
     dir4 = experiment_with_v1()
     create_summary_dataframe(dir4)

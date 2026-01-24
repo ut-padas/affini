@@ -4,7 +4,7 @@ import pandas as pd
 import seaborn as sns
 from tqdm import tqdm
 
-from ics26_experiments import ICS26_DIR
+from ics26_rosenbrock import ICS26_DIR
 from src.adaptive_clustering import calculate_Q
 
 np.random.seed(0)

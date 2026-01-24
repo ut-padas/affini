@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Ellipse
 
-from ics26_experiments import (
+from ics26_rosenbrock import (
     ICS26_DIR,
     SEED,
     create_problem_result_dict,
@@ -20,7 +20,7 @@ from src import IS_CUPY_BACKEND, xp
 from src.problems.quadratic import quadratic, quadratic_grad
 from src.surrogate import NearODESurrogate
 
-N_INIT_CLUSTERS = 25
+N_INIT_CLUSTERS = 1
 N_MIN_PER_CLUSTER = 100
 MAX_CLUSTERS_EST = 10_000
 K_NEIGHBOURS = 1
@@ -292,6 +292,7 @@ def experiment_with_v1() -> Path:
 
     EXP_DIR = ICS26_DIR / "quadratic_v1_hessian_informed_split_experiments"
     del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
     DIMs = [2, 3, 4, 5]
     USE_HESSIAN_INFORMED_SPLITs = [True, False]
 
