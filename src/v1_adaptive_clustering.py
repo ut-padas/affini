@@ -9,6 +9,7 @@ import cupy as cp
 import numpy as np
 from cuml.cluster import KMeans as cuKMeans
 from sklearn.cluster import KMeans
+from typing_extensions import Literal
 
 from src import IS_CUPY_BACKEND
 from src.two_means import estimate_hessian_abs_sqrt, two_means_pca_threshold
@@ -54,8 +55,7 @@ class AdaptiveClusterer:
 
     def __init__(
         self,
-        atol: float = 1e-2,
-        rtol: Optional[float] = None,
+        tol: float,
         num_initial_clusters: int = 10,
         min_points: int = 1,
         seed: int = 0,
@@ -64,15 +64,14 @@ class AdaptiveClusterer:
         use_gpu: bool = True,
         gpu_len_threshold: int = 10_000,
         should_generate_extra_points: bool = True,
-        two_means_split_method: str = "optimal",
+        two_means_split_method: Literal["optimal", "median"] = "median",
         use_hessian_informed_split: bool = True,
     ):
         """
         Initialize the adaptive clusterer.
 
         Args:
-            atol: Absolute tolerance for cluster acceptance.
-            rtol: Relative tolerance for cluster acceptance. If None, only absolute tolerance is used.
+            tol: Tolerance for cluster acceptance.
             num_initial_clusters: Number of initial clusters.
             min_points: Minimum points per cluster.
             seed: Random seed for reproducibility.
@@ -82,8 +81,7 @@ class AdaptiveClusterer:
             two_means_split_method: Method for splitting in TwoMeans ('optimal' or 'median').
             use_hessian_informed_split: Whether to use Hessian-informed splitting.
         """
-        self.atol = atol
-        self.rtol = rtol
+        self.tol = tol
         self.num_initial_clusters = num_initial_clusters
         self.min_points = min_points
         self.seed = seed
@@ -183,6 +181,8 @@ class AdaptiveClusterer:
         grad_f: Optional[Callable],
         cupy_f: Optional[Callable],
         level: int,
+        error_split_criterion: Literal["L2", "Linf"],
+        F_inf: Optional[float],
     ) -> tuple[
         bool,
         float,
@@ -212,34 +212,34 @@ class AdaptiveClusterer:
         J_c = grad_f(c) if grad_f is not None else None
 
         dx = X_cluster - c
+        radius = float(np.max(np.linalg.norm(dx, axis=1)))
         if J_c is not None:
             F_taylor = F_c + np.einsum("ijk,nk->nj", J_c, dx)
         else:
             F_taylor = F_c
 
-        error_vec = np.linalg.norm(F_cluster - F_taylor, axis=1)
-        error_vec_norm = np.linalg.norm(error_vec, 2)
+        if error_split_criterion == "L2":
+            error_vec = np.linalg.norm(F_cluster - F_taylor, axis=1)
+            error_vec_norm = np.linalg.norm(error_vec, 2)
 
-        # We use Frobenius norm, since F_cluster is (n, fd)
-        # and it is equivalent to sqrt(sum(norm(v, axis=1) ** 2))
-        F_cluster_norm = np.linalg.norm(F_cluster, "fro")
-        if F_cluster_norm > 0:
-            local_error_ratio = error_vec_norm / F_cluster_norm
+            # We use Frobenius norm, since F_cluster is (n, fd)
+            # and it is equivalent to sqrt(sum(norm(v, axis=1) ** 2))
+            F_cluster_norm = np.linalg.norm(F_cluster, "fro")
+            if F_cluster_norm > 0:
+                local_error_ratio = error_vec_norm / F_cluster_norm
+            else:
+                local_error_ratio = float("inf")
+
+            # Check if relative error is within tolerance
+            acceptable = bool(local_error_ratio <= self.tol)
+
+        elif error_split_criterion == "Linf" and F_inf is not None:
+            error_vec = np.linalg.norm(F_cluster - F_taylor, ord=np.inf, axis=1)
+            max_error = float(np.max(error_vec))
+            e_rel = max_error / F_inf
+            acceptable = bool(e_rel <= self.tol)
         else:
-            local_error_ratio = float("inf")
-
-        radius = float(np.max(np.linalg.norm(dx, axis=1)))
-        N_level = int(self.num_initial_clusters * (2**level))
-
-        # Check if relative error is within tolerance
-        rel_ok = (self.rtol is not None) and (local_error_ratio <= self.rtol)
-
-        # Check if absolute error is within tolerance
-        abs_thr = float(self.atol / np.sqrt(N_level))
-        abs_ok = error_vec_norm <= abs_thr
-
-        # Final acceptance
-        acceptable = bool(rel_ok or abs_ok)
+            raise ValueError(f"Invalid error_split_criterion: {error_split_criterion}")
 
         return acceptable, radius, c, error_vec, F_c, J_c
 
@@ -249,7 +249,7 @@ class AdaptiveClusterer:
         f: Callable,
         grad_f: Optional[Callable],
         cupy_f: Optional[Callable],
-        debug: bool = False,
+        error_split_criterion: Literal["L2", "Linf"],
     ) -> tuple[list[Cluster], int]:
         """
         Main clustering algorithm.
@@ -258,6 +258,8 @@ class AdaptiveClusterer:
             X: Input data points with shape (n, d) where n=number of points, d=input dimensions.
             f: Function to evaluate. Should return values with shape (n, fd) where fd=output dimensions.
             grad_f: Optional function to compute gradients. Should return gradients with shape (n, fd, d).
+            cupy_f: Optional function to evaluate on GPU. Should return values with shape (n, fd).
+            error_split_criterion: Criterion for error splitting ('L2' or 'Linf').
 
         Returns:
             List of tree nodes representing the clustered data.
@@ -290,6 +292,14 @@ class AdaptiveClusterer:
         final_clusters: list[Cluster] = []
         n_level = 0
 
+        if error_split_criterion == "Linf":
+            # Get max of f over entire dataset for Linf criterion
+            F_all = self._get_function_values(X, f, cupy_f)
+            # CCompute infinity norm: max_x |f(x)|_oo
+            F_inf = float(np.max(np.linalg.norm(F_all, ord=np.inf, axis=1)))
+        else:
+            F_inf = None
+
         # BFS by levels
         while queue:
             level_start = time.perf_counter()
@@ -305,7 +315,7 @@ class AdaptiveClusterer:
 
             for X_cluster in level:
                 cluster_size = len(X_cluster)
-                if cluster_size <= 1:
+                if cluster_size <= 2:
                     final_clusters.append(
                         Cluster(
                             centroid=np.squeeze(X_cluster[0]),
@@ -334,7 +344,7 @@ class AdaptiveClusterer:
                         force_add = True
 
                 acceptable, radius, c, error_vec, F_c, J_c = self._cluster_violation(
-                    X_cluster, f, grad_f, cupy_f, n_level
+                    X_cluster, f, grad_f, cupy_f, n_level, error_split_criterion, F_inf
                 )
 
                 if acceptable or force_add:
@@ -415,20 +425,18 @@ def adaptive_cluster_algorithm(
     f: Callable,
     grad_f: Optional[Callable],
     cupy_f: Optional[Callable] = None,
-    atol: float = 0.01,
-    rtol: Optional[float] = 0.01,
+    tol: float = 0.01,
     num_initial_clusters=10,
     min_pts_per_cluster=1,
     seed=0,
     should_generate_extra_points: bool = True,
-    debug: bool = False,
-    two_means_split_method: str = "median",
+    error_split_criterion: Literal["L2", "Linf"] = "L2",
+    two_means_split_method: Literal["optimal", "median"] = "median",
     use_hessian_informed_split: bool = True,
 ) -> tuple[list[Cluster], int]:
     """Run the adaptive clustering algorithm and return the list of clusters."""
     clusterer = AdaptiveClusterer(
-        atol=atol,
-        rtol=rtol,
+        tol=tol,
         num_initial_clusters=num_initial_clusters,
         min_points=min_pts_per_cluster,
         seed=seed,
@@ -437,7 +445,11 @@ def adaptive_cluster_algorithm(
         use_hessian_informed_split=use_hessian_informed_split,
     )
     clusters, num_levels = clusterer.fit(
-        X=X_train, f=f, grad_f=grad_f, cupy_f=cupy_f, debug=debug
+        X=X_train,
+        f=f,
+        grad_f=grad_f,
+        cupy_f=cupy_f,
+        error_split_criterion=error_split_criterion,
     )
     return clusters, num_levels
 
@@ -503,7 +515,8 @@ if __name__ == "__main__":
     N_SAMPLES = 100_000
     N_INIT_CLUSTERS = 1
     MIN_PTS_PER_CLUSTER = 5
-    USE_HESSIAN_INFORMED_SPLIT = True
+    USE_HESSIAN_INFORMED_SPLIT = False
+    ERROR_SPLIT_CRITERION = "L2"
     TOL = 0.01
     print(f"{TOL=}, {TOL=}")
     print(f"{N_INIT_CLUSTERS=}, {MIN_PTS_PER_CLUSTER=}")
@@ -523,13 +536,13 @@ if __name__ == "__main__":
         f=sg_fn,
         grad_f=sg_grad_fn,
         cupy_f=sg_fn,
-        atol=TOL,
-        rtol=TOL,
+        tol=TOL,
         num_initial_clusters=N_INIT_CLUSTERS,
         min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
         seed=seed,
         should_generate_extra_points=True,
         use_hessian_informed_split=USE_HESSIAN_INFORMED_SPLIT,
+        error_split_criterion=ERROR_SPLIT_CRITERION,
     )
     toc = time.perf_counter()
     print(f"Total clusters formed: {len(clusters):,}")
@@ -545,7 +558,7 @@ if __name__ == "__main__":
     logger.info(f"Time taken: {toc - tic:.4f} seconds")
 
     if D == 2 and len(clusters) < 1000:
-        fname = f"old_ac_clusters_gaussian_{N_SAMPLES}_pts_tol{TOL}_{USE_HESSIAN_INFORMED_SPLIT}.png"
+        fname = f"old_ac_clusters_gaussian_{N_SAMPLES}_pts_tol{TOL}_{USE_HESSIAN_INFORMED_SPLIT}_{ERROR_SPLIT_CRITERION}.png"
         plot_clusters(clusters, sg_fn, domain=DOMAIN, fname=fname)
         print(f"Cluster plot saved to {fname}")
 
