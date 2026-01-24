@@ -223,6 +223,7 @@ def rosenbrock_experiment_setup(
     CONTAINMENT_LEVEL: float,
     ENFORCE_CONTAINMENT: bool,
     CLUSTERING_VERSION: Literal["v1", "v2"],
+    ERROR_SPLIT_CRITERION: Literal["L2", "Linf"] = "L2",
     USE_HESSIAN_INFORMED_SPLIT: bool = True,
     SYNTH_BUDGET_FACTOR: int = 100,
 ):
@@ -258,6 +259,7 @@ def rosenbrock_experiment_setup(
             SEED=SEED,
             SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
             USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,
         )
         _end_train_time = time.perf_counter()
         _TRAINED = True
@@ -325,6 +327,7 @@ def rosenbrock_experiment_setup(
         SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
         CLUSTERING_VERSION=CLUSTERING_VERSION,
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+        ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,
     )
 
     with open(json_fpath, "w") as f:
@@ -450,10 +453,82 @@ def experiment_rosenbrock_convergence() -> Path:
     return EXP_DIR
 
 
+def experiment_rosenbrock_convergence_error_splitting() -> Path:
+    N_INIT_CLUSTERS = 10
+    N_MIN_PER_CLUSTER = 100
+    MAX_CLUSTERS_EST = 500_000 * 50
+    N_TRAIN = int(2e5)
+    N_TEST = int(1e5)
+    K_NEIGHBOURS = 1
+    CONTAINMENT_LEVEL = 1.0
+    ENFORCE_CONTAINMENT = False
+    ERROR_SCALING_METHOD = "global"
+    USE_HESSIAN_INFORMED_SPLITs = [True, False]
+    ERROR_SPLIT_CRITERIONs = ["L2", "Linf"]
+
+    EXP_DIR = (
+        ICS26_DIR
+        / "rosenbrock_convergence_v1_hessian_informed_error_splitting_experiments"
+    )
+    del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
+    DIMs = [2, 3]
+    ROSENBROCK_As = [1, 100]
+    TOLs = [1e-1, 5e-2, 2e-2, 1e-2, 5e-3]
+
+    for (
+        DIM,
+        ROSENBROCK_A,
+        TOL,
+        USE_HESSIAN_INFORMED_SPLIT,
+        ERROR_SPLIT_CRITERION,
+    ) in product(
+        DIMs, ROSENBROCK_As, TOLs, USE_HESSIAN_INFORMED_SPLITs, ERROR_SPLIT_CRITERIONs
+    ):
+        if DIM > 2 and TOL <= 1e-3:
+            print(
+                f"Skipping infeasible case: DIM={DIM}, TOL={TOL}, ROSENBROCK_A={ROSENBROCK_A}"
+            )
+            continue
+        json_fpath = (
+            EXP_DIR
+            / f"rosenbrock_a{ROSENBROCK_A}_dim{DIM}_tol{TOL}_train{N_TRAIN}_test{N_TEST}_initclusters{N_INIT_CLUSTERS}_minpercluster{N_MIN_PER_CLUSTER}_k{K_NEIGHBOURS}_errscaling_{ERROR_SCALING_METHOD}_hessian_informed_{USE_HESSIAN_INFORMED_SPLIT}_error_split_criterion_{ERROR_SPLIT_CRITERION}.json"
+        )
+        json_fpath.parent.mkdir(parents=True, exist_ok=True)
+        if json_fpath.exists():
+            print(f"Skipping existing: {json_fpath}")
+            continue
+
+        rosenbrock_experiment_setup(
+            json_fpath=json_fpath,
+            DIM=DIM,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            ROSENBROCK_A=ROSENBROCK_A,
+            TOL=TOL,
+            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
+            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
+            SYNTH_BUDGET_FACTOR=10,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,  # type: ignore
+        )
+
+    return EXP_DIR
+
+
 if __name__ == "__main__":
     from src.logging_config import setup_logging
 
     setup_logging()
 
-    dir_exp_5 = experiment_rosenbrock_convergence()
-    create_summary_dataframe(dir_exp_5)
+    # dir_exp_1 = experiment_rosenbrock_convergence()
+    # create_summary_dataframe(dir_exp_1)
+
+    dir_exp_2 = experiment_rosenbrock_convergence_error_splitting()
+    create_summary_dataframe(dir_exp_2)

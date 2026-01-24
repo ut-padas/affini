@@ -55,6 +55,7 @@ def SGaussian_experiment_setup(
     Q_SHRINK: float,
     USE_HESSIAN_INFORMED_SPLIT: bool,
     CLUSTERING_VERSION: Literal["v1", "v2"],
+    ERROR_SPLIT_CRITERION: Literal["L2", "Linf"] = "L2",
     SYNTH_BUDGET_FACTOR: int = 10,
 ):
     if DIM == 2:
@@ -98,6 +99,7 @@ def SGaussian_experiment_setup(
             SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
             Q_SHRINK=Q_SHRINK,
             USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,
         )
         _end_train_time = time.perf_counter()
         _TRAINED = True
@@ -165,6 +167,7 @@ def SGaussian_experiment_setup(
         Q_SHRINK=Q_SHRINK,
         SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+        ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,
     )
 
     with open(json_fpath, "w") as jf:
@@ -306,10 +309,10 @@ def experiment_with_v1() -> Path:
 
         if DIM == 2:
             N_TRAIN = 200_000
-            N_TEST = 20_000
+            N_TEST = 50_000
         else:
             N_TRAIN = 300_000
-            N_TEST = 30_000
+            N_TEST = 100_000
 
         SGaussian_experiment_setup(
             json_fpath=json_path,
@@ -334,10 +337,71 @@ def experiment_with_v1() -> Path:
     return EXP_DIR
 
 
+def experiment_with_v1_error_split() -> Path:
+    Q_SHRINK = 0.05
+    CLUSTER_SPLITTING_METHOD = "pca_only"
+    CLUSTERING_VERSION = "v1"
+
+    EXP_DIR = (
+        ICS26_DIR
+        / "shifted_gaussians_with_ac_v1_hessian_informed_error_split_experiments"
+    )
+    create_summary_dataframe(EXP_DIR)
+    del_all_error_files_in_dir(EXP_DIR)
+    DIMs = [2, 3]
+    USE_HESSIAN_INFORMED_SPLITs = [True, False]
+    ERROR_SPLIT_CRITERIONs = ["L2", "Linf"]
+
+    for DIM, TOL, USE_HESSIAN_INFORMED_SPLIT, ERROR_SPLIT_CRITERION in product(
+        DIMs, TOLs, USE_HESSIAN_INFORMED_SPLITs, ERROR_SPLIT_CRITERIONs
+    ):
+        json_path = (
+            EXP_DIR
+            / f"ics26_sgaussian_dim{DIM}_tol{TOL}_hessian_informed_{USE_HESSIAN_INFORMED_SPLIT}_error_split_{ERROR_SPLIT_CRITERION}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+
+        if DIM == 2:
+            N_TRAIN = 200_000
+            N_TEST = 50_000
+        else:
+            N_TRAIN = 300_000
+            N_TEST = 100_000
+
+        SGaussian_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
+            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
+            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
+            Q_SHRINK=Q_SHRINK,
+            SYNTH_BUDGET_FACTOR=500,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,  # type: ignore
+        )
+
+    return EXP_DIR
+
+
 if __name__ == "__main__":
     from src.logging_config import setup_logging
 
     setup_logging()
 
-    dir4 = experiment_with_v1()
-    create_summary_dataframe(dir4)
+    dir1 = experiment_with_v1()
+    create_summary_dataframe(dir1)
+
+    dir2 = experiment_with_v1_error_split()
+    create_summary_dataframe(dir2)
