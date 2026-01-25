@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.colors import LogNorm
-from matplotlib.patches import Circle, Ellipse
+from matplotlib.patches import Ellipse
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, Array, xp
 from src.surrogate import NearODESurrogate
@@ -413,9 +413,11 @@ def Problem_experiment_setup(
             axs[1].add_patch(ellipse)
 
             # Draw trust radius circle
-            circle = Circle(
+            circle = Ellipse(
                 xy=mu,
-                radius=radius,
+                width=2 * radius,
+                height=2 * radius,
+                angle=0,
                 edgecolor="black",
                 facecolor="none",
                 linestyle=":",
