@@ -12,6 +12,7 @@ from experiments_utils import (
 )
 from src.problems.quadratic import quadratic, quadratic_grad
 from src.problems.rastrigin import rastrigin, rastrigin_grad
+from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
     CENTERS_3D,
@@ -221,6 +222,75 @@ def rastrigin_experiment_with_v2() -> Path:
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             SYNTH_BUDGET_FACTOR=1000,  # High budget for complex padding
+            USE_HESSIAN_INFORMED_SPLIT=True,
+        )
+
+    return EXP_DIR
+
+
+def rosenbrock_experiment_with_v2() -> Path:
+    # Rosenbrock has a narrow, curved valley.
+    # We need slightly more data than Quadratic, but less than Rastrigin.
+    N_TRAIN = 200_000
+    N_TEST = 50_000
+
+    # We start with a few clusters to help isolate the valley early on
+    N_INIT_CLUSTERS = 50
+    N_MIN_PER_CLUSTER = 100
+    MAX_CLUSTERS_EST = 20_000
+
+    # K=2 helps bridge the linear approximations along the curve better than K=1
+    K_NEIGHBOURS = 2
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "rosenbrock_v2"
+    del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
+
+    DIMs = [2, 5, 10]
+
+    # Rosenbrock scale is 100, so gradients are steep.
+    # We test tolerances from 50% down to 0.1%
+    TOLs = [i / 100.0 for i in [50, 20, 10, 5, 2, 1, 0.5, 0.1]]
+
+    ERROR_METRICs = ["Linf-global", "Linf-local"]
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rosenbrock Experiments"):
+
+        # Resource constraints checks
+        if DIM == 10 and TOL <= 0.005:
+            print(
+                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
+            )
+            continue
+
+        json_path = (
+            EXP_DIR / f"ics26_rosenbrock_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            # Domain [-2, 3] captures the global min at 1.0 and the steep walls
+            DOMAIN=[-2.0, 3.0],
+            f_fn=rosenbrock,
+            g_fn=rosenbrock_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            SYNTH_BUDGET_FACTOR=1000,
             USE_HESSIAN_INFORMED_SPLIT=True,
         )
 
