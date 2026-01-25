@@ -36,15 +36,10 @@ def Quadratic_experiment_setup(
     N_TRAIN: int,
     N_INIT_CLUSTERS: int,
     TOL: float,
-    ERROR_SCALING_METHOD: Literal["global", "local"],
-    CLUSTER_SPLITTING_METHOD: Literal["hessian_pca", "pca_only"],
     N_MIN_PER_CLUSTER: int,
     MAX_CLUSTERS_EST: int,
     N_TEST: int,
     K_NEIGHBOURS: int,
-    CONTAINMENT_LEVEL: float,
-    ENFORCE_CONTAINMENT: bool,
-    Q_SHRINK: float,
     USE_HESSIAN_INFORMED_SPLIT: bool,
     CLUSTERING_VERSION: Literal["v1", "v2"],
     ERROR_SPLIT_CRITERION: Literal["L2", "Linf"] = "L2",
@@ -70,14 +65,11 @@ def Quadratic_experiment_setup(
             f_fn=quadratic,
             g_fn=quadratic_grad,
             TOL=TOL,
-            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
             NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
             MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             SEED=SEED,
             SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
-            Q_SHRINK=Q_SHRINK,
             USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
             ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,
         )
@@ -93,8 +85,6 @@ def Quadratic_experiment_setup(
         preds, ungauranteed_mask = surrogate.predict(
             X_test,
             k_NEIGHBOURS=K_NEIGHBOURS,
-            enforce_containment=ENFORCE_CONTAINMENT,
-            containment_level=CONTAINMENT_LEVEL,
         )
         _end_predict_time = time.perf_counter()
         _PREDICTED = True
@@ -124,7 +114,7 @@ def Quadratic_experiment_setup(
 
     result_dict = create_problem_result_dict(
         problem_name="Quadratic",
-        problem_tag=f"{DIM}D_N{N_TRAIN}_InitClust{N_INIT_CLUSTERS}_Tol{TOL}_ErrScale{ERROR_SCALING_METHOD}_MinPts{N_MIN_PER_CLUSTER}_MaxClustEst{MAX_CLUSTERS_EST}_K{K_NEIGHBOURS}_ContainLvl{CONTAINMENT_LEVEL}_EnfContain{ENFORCE_CONTAINMENT}_QShrink{Q_SHRINK}",
+        problem_tag=f"{DIM}D_N{N_TRAIN}_InitClust{N_INIT_CLUSTERS}_Tol{TOL}_ErrScale{ERROR_SCALING_METHOD}_MinPts{N_MIN_PER_CLUSTER}_MaxClustEst{MAX_CLUSTERS_EST}_K{K_NEIGHBOURS}",
         error_tag=error_tag,
         train_time=train_time,
         predict_time=predict_time,
@@ -136,14 +126,9 @@ def Quadratic_experiment_setup(
         DIM=DIM,
         N_TRAIN=N_TRAIN,
         N_CLUSTERS=N_CLUSTERS,
-        ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-        CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
         N_INIT_CLUSTERS=N_INIT_CLUSTERS,
         N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
         K_NEIGHBOURS=K_NEIGHBOURS,
-        ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-        CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-        Q_SHRINK=Q_SHRINK,
         SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
         CLUSTERING_VERSION=CLUSTERING_VERSION,
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
@@ -189,89 +174,41 @@ def Quadratic_experiment_setup(
         if centroids is None:
             raise ValueError("Cluster centroids are None")
 
-        if CLUSTERING_VERSION == "v2":
-            Qs = surrogate.trust_ellipses_src
-            if Qs is None:
-                raise ValueError("Trust Ellipses are None")
+        trust_radii = surrogate.trust_radii  # (N_CLUSTERS, )
+        if trust_radii is None:
+            raise ValueError("Trust Radii are None")
 
-            # Ensure centroids and Qs are numpy arrays for matplotlib
-            if IS_CUPY_BACKEND:
-                centroids = xp.asnumpy(centroids)
-                Qs = xp.asnumpy(Qs)
-            else:
-                centroids = np.asarray(centroids)
-                Qs = np.asarray(Qs)
-
-            fig.colorbar(cs2, ax=axs[1])
-            axs[1].scatter(
-                centroids[:, 0],
-                centroids[:, 1],
-                c="red",
-                s=20,
-                label="Cluster Centroids",
-                marker="o",
-            )
-
-            # Draw ellipses
-            for i in range(centroids.shape[0]):
-                mu = centroids[i]
-                Q = Qs[i]
-                w, V = np.linalg.eigh(Q)
-                w = np.maximum(w, 1e-12)
-                order = w.argsort()[::-1]
-                w = w[order]
-                V = V[:, order]
-
-                a = np.sqrt(1.0 / w[0])
-                b = np.sqrt(1.0 / w[1])
-                angle = np.degrees(np.arctan2(V[1, 0], V[0, 0]))
-                ellipse = Ellipse(
-                    xy=mu,
-                    width=2 * a,
-                    height=2 * b,
-                    angle=angle,
-                    edgecolor="red",
-                    fc="None",
-                    lw=1,
-                    alpha=0.5,
-                )
-                axs[1].add_patch(ellipse)
+        # Ensure centroids and trust_radii are numpy arrays for matplotlib
+        if IS_CUPY_BACKEND:
+            centroids = xp.asnumpy(centroids)
+            trust_radii = xp.asnumpy(trust_radii)
         else:
-            trust_radii = surrogate.trust_ellipses_src  # (N_CLUSTERS, )
-            if trust_radii is None:
-                raise ValueError("Trust Radii are None")
+            centroids = np.asarray(centroids)
+            trust_radii = np.asarray(trust_radii)
 
-            # Ensure centroids and trust_radii are numpy arrays for matplotlib
-            if IS_CUPY_BACKEND:
-                centroids = xp.asnumpy(centroids)
-                trust_radii = xp.asnumpy(trust_radii)
-            else:
-                centroids = np.asarray(centroids)
-                trust_radii = np.asarray(trust_radii)
+        fig.colorbar(cs2, ax=axs[1])
+        axs[1].scatter(
+            centroids[:, 0],
+            centroids[:, 1],
+            c="red",
+            s=20,
+            label="Cluster Centroids",
+            marker="o",
+        )
 
-            fig.colorbar(cs2, ax=axs[1])
-            axs[1].scatter(
-                centroids[:, 0],
-                centroids[:, 1],
-                c="red",
-                s=20,
-                label="Cluster Centroids",
-                marker="o",
+        # Draw circles
+        for i in range(centroids.shape[0]):
+            mu = centroids[i]
+            r = trust_radii[i]
+            circle = Circle(
+                xy=mu,
+                radius=r,
+                edgecolor="red",
+                fc="None",
+                lw=1,
+                alpha=0.5,
             )
-
-            # Draw circles
-            for i in range(centroids.shape[0]):
-                mu = centroids[i]
-                r = trust_radii[i]
-                circle = Circle(
-                    xy=mu,
-                    radius=r,
-                    edgecolor="red",
-                    fc="None",
-                    lw=1,
-                    alpha=0.5,
-                )
-                axs[1].add_patch(circle)
+            axs[1].add_patch(circle)
 
         axs[1].set_title(
             f"Cluster Centroids with Trust Ellipses (N_CLUSTERS={N_CLUSTERS}, TOL={TOL})",
@@ -291,8 +228,6 @@ def Quadratic_experiment_setup(
 def experiment_with_v1() -> Path:
     N_TRAIN = 100_000
     N_TEST = 10_000
-    CLUSTER_SPLITTING_METHOD = "hessian_pca"
-    Q_SHRINK = 0.05
     CLUSTERING_VERSION = "v1"
 
     EXP_DIR = ICS26_DIR / "quadratic_v1_hessian_informed_split_experiments"
@@ -326,14 +261,10 @@ def experiment_with_v1() -> Path:
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
             TOL=TOL,
             ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,  # type: ignore
-            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
             N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            Q_SHRINK=Q_SHRINK,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             SYNTH_BUDGET_FACTOR=1000,
             USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
@@ -345,8 +276,6 @@ def experiment_with_v1() -> Path:
 def experiment_with_v1_error_split_criteria() -> Path:
     N_TRAIN = 100_000
     N_TEST = 10_000
-    CLUSTER_SPLITTING_METHOD = "hessian_pca"
-    Q_SHRINK = 0.05
     CLUSTERING_VERSION = "v1"
 
     EXP_DIR = (
@@ -389,19 +318,61 @@ def experiment_with_v1_error_split_criteria() -> Path:
             N_TRAIN=N_TRAIN,
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
             TOL=TOL,
-            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,  # type: ignore
-            CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
             N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            CONTAINMENT_LEVEL=CONTAINMENT_LEVEL,
-            ENFORCE_CONTAINMENT=ENFORCE_CONTAINMENT,
-            Q_SHRINK=Q_SHRINK,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             SYNTH_BUDGET_FACTOR=1000,
             USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
             ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,  # type: ignore
+        )
+
+    return EXP_DIR
+
+
+def experiment_with_v2() -> Path:
+    N_TRAIN = 100_000
+    N_TEST = 10_000
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "quadratic_v2"
+    del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
+    DIMs = [2, 3, 4, 5, 8, 10]
+
+    for DIM, TOL in product(DIMs, TOLs):
+        if DIM > 5 and TOL < 1e-3:
+            print(
+                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
+            )
+            continue
+        elif DIM >= 8 and TOL < 5e-2:
+            print(
+                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
+            )
+            continue
+
+        json_path = EXP_DIR / f"ics26_quadratic_dim{DIM}_tol{TOL}.json"
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        Quadratic_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            SYNTH_BUDGET_FACTOR=1000,
+            USE_HESSIAN_INFORMED_SPLIT=True,
         )
 
     return EXP_DIR
@@ -417,3 +388,6 @@ if __name__ == "__main__":
 
     dir2 = experiment_with_v1_error_split_criteria()
     create_summary_dataframe(dir2)
+
+    dir3 = experiment_with_v2()
+    create_summary_dataframe(dir3)
