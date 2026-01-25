@@ -1,7 +1,7 @@
 import gc
 import logging
 import time
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Literal
 
 import cupy as cp
 import numpy as np
@@ -17,9 +17,11 @@ logger = logging.getLogger(__name__)
 TINY_EPS = 1e-12
 
 # -----------------------------------------------------------------------------
-# 1. CUDA KERNELS (Unchanged)
+# 1. CUDA KERNELS
 # -----------------------------------------------------------------------------
-# [Keeping your optimized dense kernels]
+# These custom kernels "fuse" multiple arithmetic operations into a single
+# GPU kernel launch. This reduces memory bandwidth pressure by avoiding
+# the creation of large intermediate temporary arrays (e.g., (N, D) difference matrices).
 
 _taylor_kernel_sq_code = r"""
 extern "C" __global__
@@ -28,6 +30,7 @@ void fused_taylor_sq(
     const double* F_vals, const double* f_mus, const double* g_mus,
     double* E_out, int N, int D) 
 {
+    // Computes squared Taylor error: (f(x) - (f(mu) + g(mu)^T(x-mu)))^2
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if (idx >= N) return;
     long long k = labels[idx];
@@ -51,6 +54,7 @@ void fused_taylor_abs(
     const double* F_vals, const double* f_mus, const double* g_mus,
     double* E_out, int N, int D) 
 {
+    // Computes absolute Taylor error: |f(x) - (f(mu) + g(mu)^T(x-mu))|
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if (idx >= N) return;
     long long k = labels[idx];
@@ -75,6 +79,8 @@ void fused_pointwise_metrics(
     double* dist_out, double* ratio_out,
     int N, int D) 
 {
+    // Computes Euclidean distance |x - mu| and gradient ratio |g(x) - g(mu)| / |x - mu|
+    // This is used to estimate the Lipschitz constant and trust radius.
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if (idx >= N) return;
     long long k = labels[idx];
@@ -107,6 +113,8 @@ void fused_hessian_stats(
     double* C_out, double* E_out,
     int N, int D, int K, bool calc_E) 
 {
+    // Accumulates covariance (C) and gradient-coordinate interaction (E) matrices.
+    // Uses atomicAdd to sum contributions from points belonging to the same cluster.
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if (idx >= N) return;
     long long k = labels[idx];
@@ -140,6 +148,8 @@ void fused_proj_score(
     const double* M, const double* v,
     double* scores_out, int N, int D) 
 {
+    // Projects points onto the dominant eigenvector v in the transformed space M.
+    // Score = v^T * M * (x - mu). Used for splitting clusters.
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if (idx >= N) return;
     long long k = labels[idx];
@@ -167,6 +177,8 @@ void fused_q_dist(
     const double* U, const double* L_inv,
     double* dist_out, int N, int D) 
 {
+    // Computes Mahalanobis-like distance for the Q-norm (Ellipsoid).
+    // dist = x^T (U * L_inv * U^T) x
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if (idx >= N) return;
     long long k = labels[idx];
@@ -187,6 +199,7 @@ void fused_q_dist(
 }
 """
 
+# Compilation of RawModules
 _mod_taylor_sq = xp.RawModule(code=_taylor_kernel_sq_code)
 _kern_taylor_sq = _mod_taylor_sq.get_function("fused_taylor_sq")
 _mod_taylor_abs = xp.RawModule(code=_taylor_kernel_abs_code)
@@ -206,6 +219,10 @@ _kern_q = _mod_q.get_function("fused_q_dist")
 
 
 def run_fused_taylor_error(X, mus, labels, F_vals, f_mus, g_mus, mode="abs"):
+    """
+    Wrapper for Taylor Error Kernels.
+    Calculates the error between the function value and the first-order approximation.
+    """
     N, D = X.shape
     E_out = xp.empty((N,), dtype=xp.float64)
     labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
@@ -231,6 +248,7 @@ def run_fused_taylor_error(X, mus, labels, F_vals, f_mus, g_mus, mode="abs"):
 
 
 def run_fused_metrics(X, G, mus, g_mus, labels):
+    """Wrapper for Pointwise Metrics Kernel (Radii and Lipschitz obs)."""
     N, D = X.shape
     dist_out = xp.empty((N,), dtype=xp.float64)
     ratio_out = xp.empty((N,), dtype=xp.float64)
@@ -256,6 +274,7 @@ def run_fused_metrics(X, G, mus, g_mus, labels):
 
 
 def run_fused_stats(X, mus, labels, K, D, G=None, g_mus=None, calc_E=False):
+    """Wrapper for Hessian Statistics Kernel (Covariance/Gradient-Interaction)."""
     N = X.shape[0]
     C_out = xp.zeros((K, D, D), dtype=xp.float64)
     E_out = (
@@ -289,6 +308,7 @@ def run_fused_stats(X, mus, labels, K, D, G=None, g_mus=None, calc_E=False):
 
 
 def run_fused_score(X, mus, labels, M, v):
+    """Wrapper for Projection Score Kernel (Splitting logic)."""
     N, D = X.shape
     scores = xp.empty((N,), dtype=xp.float64)
     labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
@@ -312,6 +332,7 @@ def run_fused_score(X, mus, labels, M, v):
 
 
 def run_fused_q_dist(X, mus, labels, U, L_inv):
+    """Wrapper for Q-Distribution Kernel (Ellipsoid bounds)."""
     N, D = X.shape
     dist_out = xp.empty((N,), dtype=xp.float64)
     labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
@@ -335,6 +356,7 @@ def run_fused_q_dist(X, mus, labels, U, L_inv):
 
 
 def flatten_function_array(F: Array) -> Array:
+    """Ensures function values are (N,) shape."""
     F = xp.asarray(F)
     if getattr(F, "ndim", 1) == 2 and F.shape[1] == 1:
         return F[:, 0]
@@ -342,6 +364,7 @@ def flatten_function_array(F: Array) -> Array:
 
 
 def flatten_gradient_array(G: Array) -> Array:
+    """Ensures gradients are (N, D) shape."""
     G = xp.asarray(G)
     if getattr(G, "ndim", 1) == 3 and G.shape[1] == 1:
         return G[:, 0, :]
@@ -351,6 +374,10 @@ def flatten_gradient_array(G: Array) -> Array:
 
 
 def allocate_output_buffers_cpu(MAX_CLUSTERS_EST: int, d: int) -> tuple[dict, int]:
+    """
+    Allocates storage buffers on the HOST (CPU).
+    This allows storing an arbitrary number of final clusters without consuming GPU VRAM.
+    """
     cap = max(1, int(MAX_CLUSTERS_EST))
     buffers = {
         "centroids": np.empty((cap, d), dtype=np.float64),
@@ -368,6 +395,7 @@ def allocate_output_buffers_cpu(MAX_CLUSTERS_EST: int, d: int) -> tuple[dict, in
 def adjust_buffer_capacity_cpu(
     buffers: dict, current_count: int, current_cap: int, required_total: int
 ) -> tuple[dict, int]:
+    """Dynamically resizes CPU buffers if the number of clusters exceeds estimation."""
     if required_total <= current_cap:
         return buffers, current_cap
     new_cap = max(required_total, max(1, current_cap) * 2)
@@ -375,6 +403,7 @@ def adjust_buffer_capacity_cpu(
         f"Resizing CPU output buffers: {current_cap:,} -> {new_cap:,} clusters"
     )
     d = int(buffers["centroids"].shape[1])
+    # Allocate new larger buffers
     new_buffers = {
         "centroids": np.empty((new_cap, d), dtype=np.float64),
         "f": np.empty((new_cap,), dtype=np.float64),
@@ -393,7 +422,7 @@ def adjust_buffer_capacity_cpu(
 
 
 # -----------------------------------------------------------------------------
-# 3. MAIN ALGORITHM (Using Sort-Based Offloading)
+# 3. MAIN ALGORITHM (Sort-Streaming Architecture)
 # -----------------------------------------------------------------------------
 
 
@@ -408,52 +437,78 @@ def adaptive_clustering(
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
     SEED: int = 0,
-    SYNTH_BUDGET: Optional[int] = None,
-    SYNTH_BUDGET_FACTOR: float = 1.0,
     Q_EPS_AXIS: float = 1e-8,
     Q_SHRINK: float = 0.05,
     H_RIDGE: float = 1e-18,
     MAX_LEVELS: int = 50,
-    BATCH_SIZE: int = 5_000_000,
+    BATCH_SIZE: int = 10_000_000,
+    LOG_MEM_STATS: bool = False,
 ) -> dict[str, Any]:
+    """
+    Adaptive Clustering with "Sort-Streaming" Architecture.
+
+    Strategy:
+    1.  **Contiguity**: Points are physically sorted by cluster label on the GPU.
+        This enables zero-copy slicing (`X[start:end]`) and fast `reduceat` operations
+        instead of slow random-access gathers.
+    2.  **Streaming**: Data for the current level resides on GPU. As clusters are
+        split, their children (next level data) are streamed to CPU RAM.
+    3.  **Level-Reset**: Once a level is done, GPU memory is cleared, and the
+        consolidated next level is uploaded from CPU to GPU.
+    4.  **Batching**: If a level is too large for VRAM, it is processed in chunks.
+    5.  **Offloading**: Finalized ("good") clusters are immediately moved to CPU buffers.
+    """
 
     _start_time = time.perf_counter()
     mempool = cp.get_default_memory_pool()
 
-    # 1. Initialize First Level on GPU (Assuming Level 0 fits in VRAM)
-    # If Level 0 is too big for VRAM, we can't start easily anyway.
+    # --- 1. Initialize First Level on GPU ---
+    # We assume the initial dataset fits in VRAM.
     X0_gpu = xp.asarray(X, dtype=xp.float64)
-    N0, d = X0_gpu.shape
+    d = X0_gpu.shape[1]
 
-    # Eval f/g for initial points
+    if LOG_MEM_STATS:
+        log_mem_stats("Start Adaptive Clustering")
+
+    # Evaluate function and gradient for initial points
     F0_gpu = flatten_function_array(f_fn(X0_gpu))
     G0_gpu = flatten_gradient_array(g_fn(X0_gpu))
+    if LOG_MEM_STATS:
+        log_mem_stats("After Initial F/G Evaluation")
 
+    # Compute global max F for relative error normalization
     F_inf = float(xp.max(xp.abs(F0_gpu)))
 
-    # KMeans
+    # Initial KMeans clustering
     km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
     labels0 = km.fit_predict(X0_gpu)
+    if LOG_MEM_STATS:
+        log_mem_stats("After Initial KMeans Clustering")
 
-    # --- PHYSICAL SORTING (The key from the old code) ---
-    # We group points by cluster physically in memory
+    # --- PHYSICAL SORT ---
+    # Crucial Step: Sort points by cluster label.
+    # This groups cluster data contiguously in memory.
     sort_idx = xp.argsort(labels0)
 
-    # Primary GPU Buffers (These will hold ONE level's data)
+    # Primary GPU Buffers (Hold the CURRENT level's data)
     CLUSTER_PTS = X0_gpu[sort_idx]
     CLUSTER_F = F0_gpu[sort_idx]
     CLUSTER_G = G0_gpu[sort_idx]
 
-    # Calculate initial sizes/starts
+    # Calculate initial cluster sizes and start indices
     uniq_labels, CLUSTER_SIZES = xp.unique(labels0[sort_idx], return_counts=True)
+    # Starts are simply the cumulative sum of sizes because data is sorted
     CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
 
+    # Free temporary buffers
     del X0_gpu, F0_gpu, G0_gpu, labels0, sort_idx, uniq_labels
     mempool.free_all_blocks()
 
-    # Output Buffers (CPU)
+    # Initialize Output Buffers on CPU (Host) to save VRAM
     buffers, out_cap = allocate_output_buffers_cpu(MAX_CLUSTERS_EST, d)
     out_count = 0
+    if LOG_MEM_STATS:
+        log_mem_stats("After Initial Setup")
 
     level = 0
     while level <= MAX_LEVELS:
@@ -463,30 +518,33 @@ def adaptive_clustering(
         if num_clusters == 0:
             break
 
-        total_pts_level = int(xp.sum(CLUSTER_SIZES))
-
-        # --- Augmentation (Synthetic Points) ---
-        # We calculate augmentation requirements on GPU, but handle memory carefully
+        # --- Augmentation Calculation ---
+        # Calculate how many synthetic points are needed per cluster (on GPU)
         level_augmented_sizes = xp.maximum(CLUSTER_SIZES, MIN_PTS_PER_CLUSTER)
         level_total_aug_pts = int(xp.sum(level_augmented_sizes))
 
-        # Helper: CPU cumulative sums for batching
+        # Transfer sizes to CPU to manage batch scheduling
         aug_sizes_cpu = xp.asnumpy(level_augmented_sizes)
         aug_cumsum_cpu = np.cumsum(aug_sizes_cpu)
 
-        # Host buffers for next level (The "Offload Strategy")
+        # --- Host Staging Buffers ---
+        # We accumulate the data for the NEXT level on the CPU.
+        # This clears VRAM as we process the current level.
         next_level_X_list = []
         next_level_F_list = []
         next_level_G_list = []
-        next_level_sizes_list = (
-            []
-        )  # Store sizes on CPU or GPU? GPU is fine for small array.
+        next_level_sizes_list = []
 
         # --- BATCH LOOP ---
+        # Process the current level in chunks to respect memory limits.
+        # Because data is sorted, a "batch" is just a contiguous slice of clusters.
         num_batches = (level_total_aug_pts + BATCH_SIZE - 1) // BATCH_SIZE
         start_cluster_idx = 0
 
+        if LOG_MEM_STATS:
+            log_mem_stats(f"Start L{level} Batching")
         for b in range(num_batches):
+            # Determine range of clusters for this batch
             target_aug_count = (b + 1) * BATCH_SIZE
             end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
             end_cluster_idx = min(end_cluster_idx + 1, num_clusters)
@@ -494,42 +552,36 @@ def adaptive_clustering(
             if start_cluster_idx >= end_cluster_idx:
                 break
 
-            # Slice Clusters
+            # Get sizes/starts for this batch on GPU
             sizes = CLUSTER_SIZES[start_cluster_idx:end_cluster_idx]
             starts_local = CLUSTER_STARTS[start_cluster_idx:end_cluster_idx]
 
-            # Map to points in CLUSTER_PTS
+            # Slice the contiguous GPU arrays (Zero-Copy)
             slice_start = int(starts_local[0])
             slice_end = int(starts_local[-1] + sizes[-1])
 
-            # Zero-copy slice (Points are already contiguous!)
             pts = CLUSTER_PTS[slice_start:slice_end]
             f_vals = CLUSTER_F[slice_start:slice_end]
             g_vals = CLUSTER_G[slice_start:slice_end]
 
-            # Adjust starts to be local to this batch (0-based)
+            # Adjust starts to be relative to the batch start (0-based)
             starts_local_shifted = starts_local - slice_start
 
-            # --- AUGMENTATION ---
-            # We construct a temporary 'aug_pts' buffer for this batch only
+            # --- AUGMENTATION (Synthetic Points) ---
+            # Create a temporary batch buffer including synthetic points
             aug_sizes = level_augmented_sizes[start_cluster_idx:end_cluster_idx]
             aug_total = int(xp.sum(aug_sizes))
 
-            # Allocate Batch Buffers
             X_batch = xp.empty((aug_total, d), dtype=xp.float64)
             F_batch = xp.empty((aug_total,), dtype=xp.float64)
             G_batch = xp.empty((aug_total, d), dtype=xp.float64)
 
-            # Helper indices
+            # Helper arrays for scatter/gather within batch
             aug_starts = xp.r_[0, xp.cumsum(aug_sizes)[:-1]]
             aug_ids = repeats(xp.arange(len(aug_sizes)), aug_sizes)
 
-            # Fill Real Data
-            # Vectorized fill:
-            # We need to map 'pts' (packed real) to 'X_batch' (packed augmented)
-            # This requires a scatter or kernel because 'gaps' are created for synth points
-
-            # Create boolean mask for real points in X_batch
+            # 1. Fill Real Data
+            # Map packed real points 'pts' to sparse 'X_batch' locations
             pt_idxs_in_cluster = (
                 xp.arange(aug_total, dtype=xp.int32) - aug_starts[aug_ids]
             )
@@ -539,21 +591,20 @@ def adaptive_clustering(
             F_batch[is_real] = f_vals
             G_batch[is_real] = g_vals
 
-            # Fill Synthetic
+            # 2. Fill Synthetic Data
             is_synth = ~is_real
             num_synth = int(xp.sum(is_synth))
 
             if num_synth > 0:
-                synth_c_ids = aug_ids[is_synth]
-                # To generate synth points, we need random pairs from real points
-                # s_starts = starts_local_shifted[synth_c_ids]
-                # s_sizes = sizes[synth_c_ids]
+                if LOG_MEM_STATS:
+                    log_mem_stats(f"L{level} B{b} Augmenting {num_synth} Synth Points")
 
-                # Using simple logic from your old code:
-                # Pick 2 random indices within the cluster limits
+                synth_c_ids = aug_ids[is_synth]
+
+                # Generate synthetic points via convex combination of random pairs
+                # entirely on GPU within the batch context.
                 rng = xp.random.default_rng(SEED + level + b)
 
-                # Pointers relative to 'pts' array
                 c_starts = starts_local_shifted[synth_c_ids]
                 c_counts = sizes[synth_c_ids]
 
@@ -569,32 +620,34 @@ def adaptive_clustering(
                 X_synth_vals = p1 * alpha + p2 * (1.0 - alpha)
                 X_batch[is_synth] = X_synth_vals
 
-                # Eval F/G for synth
+                # Evaluate F/G for new points
                 F_synth_vals = flatten_function_array(f_fn(X_synth_vals))
                 G_synth_vals = flatten_gradient_array(g_fn(X_synth_vals))
                 F_batch[is_synth] = F_synth_vals
                 G_batch[is_synth] = G_synth_vals
 
                 del p1, p2, alpha, X_synth_vals, F_synth_vals, G_synth_vals
+            if LOG_MEM_STATS:
+                log_mem_stats(f"L{level} B{b} Completed Augmentation")
 
-            # --- PROCESS BATCH ---
-            # Now we have X_batch, F_batch, G_batch fully populated and grouped by cluster
+            # --- BATCH COMPUTATION ---
+            # We now have contiguous, augmented clusters in X_batch
 
-            # 1. Centroids
+            # 1. Centroids & Gradients at Centroids
+            # Use fast 'reduceat' because clusters are contiguous
             sums = xp.add.reduceat(X_batch, aug_starts)
             mus = sums / aug_sizes[:, None]
             f_mus = flatten_function_array(f_fn(mus))
             g_mus = flatten_gradient_array(g_fn(mus))
 
-            # 2. Error
+            # 2. Error Metrics
             K_batch = len(aug_sizes)
-            dense_labels = aug_ids  # Already computed
+            dense_labels = aug_ids
 
             if ERROR_METRIC == "L2":
                 err_sq = run_fused_taylor_error(
                     X_batch, mus, dense_labels, F_batch, f_mus, g_mus, mode="sq"
                 )
-                # reduceat is safe for contiguous segments
                 sum_sq = xp.add.reduceat(err_sq, aug_starts)
                 E_cluster = xp.sqrt(sum_sq)
                 is_good = E_cluster < TOL
@@ -602,8 +655,7 @@ def adaptive_clustering(
                 err_abs = run_fused_taylor_error(
                     X_batch, mus, dense_labels, F_batch, f_mus, g_mus, mode="abs"
                 )
-                # Fallback to scatter for max (reduceat max not reliable) OR use simple loop if fast enough
-                # Actually, using cupyx.scatter_max is reliable
+                # scatter_max is safer for max reduction if segments can be empty (though here they aren't)
                 E_abs = xp.zeros((K_batch,), dtype=err_abs.dtype)
                 cupy_scatter_max(E_abs, dense_labels, err_abs)
                 E_cluster = E_abs / F_inf
@@ -620,7 +672,10 @@ def adaptive_clustering(
                 E_cluster = E_abs / xp.maximum(F_max, TINY_EPS)
                 is_good = (E_cluster < TOL) | (E_abs < TOL)
 
-            # 3. Handle Good (Download)
+            if LOG_MEM_STATS:
+                log_mem_stats(f"L{level} B{b} Completed Error Metrics")
+
+            # 3. Handle Good Clusters (Download to CPU)
             good_idx_local = xp.nonzero(is_good)[0]
             n_good = int(good_idx_local.shape[0])
 
@@ -630,9 +685,9 @@ def adaptive_clustering(
                 G_good = G_batch[good_mask]
 
                 good_counts = aug_sizes[good_idx_local]
-                # Need dense labels for metrics relative to X_good
                 dense_labels_good = repeats(xp.arange(n_good), good_counts)
 
+                # Compute final metrics only for good clusters
                 radii_pt, ratio_pt = run_fused_metrics(
                     X_good,
                     G_good,
@@ -645,6 +700,7 @@ def adaptive_clustering(
                 cupy_scatter_max(radii, dense_labels_good, radii_pt)
                 cupy_scatter_max(L_obs, dense_labels_good, ratio_pt)
 
+                # Compute Q Matrices
                 Cov, _ = run_fused_stats(
                     X_good,
                     mus[good_idx_local],
@@ -672,7 +728,7 @@ def adaptive_clustering(
                 final_D = scale_fac[:, None] * Lambda_inv
                 Qs = (U * final_D[:, None, :]) @ U.transpose(0, 2, 1)
 
-                # STORE ON CPU
+                # Transfer results to CPU
                 end_out = out_count + n_good
                 buffers, out_cap = adjust_buffer_capacity_cpu(
                     buffers, out_count, out_cap, end_out
@@ -693,8 +749,10 @@ def adaptive_clustering(
                     good_counts.astype(xp.int64)
                 )
                 out_count = end_out
+            if LOG_MEM_STATS:
+                log_mem_stats(f"L{level} B{b} Handled Good Clusters")
 
-            # 4. Handle Bad (Split & Stream to CPU)
+            # 4. Handle Bad Clusters (Split & Stream to CPU)
             bad_idx_local = xp.nonzero(~is_good)[0]
             n_bad = int(bad_idx_local.shape[0])
 
@@ -707,7 +765,7 @@ def adaptive_clustering(
                 bad_counts = aug_sizes[bad_idx_local]
                 dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
 
-                # Hessian Split Logic
+                # Hessian Stats for Splitting
                 C, E = run_fused_stats(
                     X_bad,
                     mus[bad_idx_local],
@@ -720,6 +778,8 @@ def adaptive_clustering(
                 )
                 C = 0.5 * (C + C.transpose(0, 2, 1))
                 S = E + E.transpose(0, 2, 1)
+
+                # Eigendecomposition for split direction
                 dvals, U = xp.linalg.eigh(C)
                 dvals = xp.maximum(dvals, H_RIDGE)
                 Gtilde = U.transpose(0, 2, 1) @ S @ U
@@ -738,27 +798,11 @@ def adaptive_clustering(
                     X_bad, mus[bad_idx_local], dense_labels_bad, M, v
                 )
 
-                # We need to sort X_bad by (Cluster, Score) to effectively split
-                # But physically sorting inside batch is simpler:
-                # We can just use the boolean mask logic from median split to send points to Left/Right queues
-
-                # Re-calculate starts for X_bad to compute medians
-                bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
-
-                # Need per-cluster median
-                # scores are not sorted by score, they are grouped by cluster.
-                # We need to compute median per cluster.
-                # Just use quickselect or sort per cluster?
-                # Faster: Just global sort by (Cluster, Score)
-                # Since X_bad is already grouped by cluster, we just need to sort by score STABLE-ly
-                # But cp.argsort is stable? No.
-                # Simple hack: Sort using (ClusterID * LargeNumber + Score)
-                # But scores are float.
-
-                # Standard trick: Lexsort
-                # keys = (dense_labels_bad, scores)
-                # But cp.lexsort keys order is reversed: (scores, dense_labels_bad)
-                # This sorts primarily by cluster, secondarily by score
+                # --- SORT FOR NEXT LEVEL ---
+                # To maintain the "Sorted/Contiguous" property for the next level,
+                # we must group points by their NEW split labels (Left/Right children).
+                # We use lexsort to sort by (Cluster_ID, Score), efficiently grouping
+                # all Left children then all Right children for each cluster.
 
                 sort_order = xp.lexsort(xp.stack([scores, dense_labels_bad]))
 
@@ -766,97 +810,74 @@ def adaptive_clustering(
                 F_bad_sorted = F_bad[sort_order]
                 G_bad_sorted = G_bad[sort_order]
 
-                # Split counts
+                # Calculate new sizes
                 half_counts = bad_counts // 2
                 other_counts = bad_counts - half_counts
 
-                # We need to interleave these for the next level: [L0, R0, L1, R1...]
-                # This ensures the physical layout remains (Cluster 0 Children, Cluster 1 Children...)
-                # Actually, simpler: Just dump all Left children then all Right children?
-                # No, we want DFS/BFS order.
-                # The easiest way to preserve "Group by Cluster" for next level is to just
-                # dump X_bad_sorted into the next level list.
-                # AND record the new sizes: [half_0, other_0, half_1, other_1...]
-
-                # Construct new sizes array
+                # Store new sizes interleaved [L0, R0, L1, R1...]
                 new_sizes = xp.zeros(2 * n_bad, dtype=xp.int64)
                 new_sizes[0::2] = half_counts
                 new_sizes[1::2] = other_counts
 
-                # OFFLOAD TO HOST
+                # Stream results to Host (CPU) to free VRAM for next batch
                 next_level_X_list.append(xp.asnumpy(X_bad_sorted))
                 next_level_F_list.append(xp.asnumpy(F_bad_sorted))
                 next_level_G_list.append(xp.asnumpy(G_bad_sorted))
                 next_level_sizes_list.append(xp.asnumpy(new_sizes))
 
+            if LOG_MEM_STATS:
+                log_mem_stats(f"L{level} B{b} Handled Bad Clusters")
+
             # Prepare next batch
             start_cluster_idx = end_cluster_idx
 
-            # Cleanup GPU Batch
+            # Explicit cleanup
             del X_batch, F_batch, G_batch
             mempool.free_all_blocks()
 
-        # --- END OF LEVEL ---
+        # --- LEVEL TRANSITION ---
         if len(next_level_sizes_list) == 0:
             break
 
-        # Prepare Next Level Data
-        # Concatenate on Host
+        # Concatenate Next Level Data on Host
         next_X_host = np.concatenate(next_level_X_list)
         next_F_host = np.concatenate(next_level_F_list)
         next_G_host = np.concatenate(next_level_G_list)
         next_sizes_host = np.concatenate(next_level_sizes_list)
 
-        # Filter empty
+        # Handle 0-size clusters (if any generated by split logic)
         valid = next_sizes_host > 0
         if not np.all(valid):
-            # This is tricky because points correspond to sizes implicitly by order
-            # We must filter points too.
-            # But wait, did we generate 0-size clusters?
-            # half_counts = size // 2. If size=1, half=0, other=1.
-            # So yes, 0 sizes possible.
-            # Reconstruct keep mask for points
-
-            # Expansion of 'valid' to points
-            # repeat 'valid' by 'next_sizes_host'
             keep_points = np.repeat(valid, next_sizes_host)
 
-            CLUSTER_SIZES = xp.asarray(next_sizes_host[valid])
-
-            # Upload Filtered Points
-            # If too big, this might fail. But we just cleared VRAM.
-            # Assuming active set fits in VRAM.
-            # If not, we'd need to keep this on Host and stream slices.
-            # Given previous error, let's assume it might be tight but usually active set shrinks?
-            # Actually, active set grows (augmentation).
-            # So we MUST check capacity.
-
-            req_bytes = next_X_host.nbytes + next_F_host.nbytes + next_G_host.nbytes
-            # Quick check: 60M points * 10 dim * 8 bytes ~ 4.8GB.
-            # 60M * 100 dim => 48GB.
-            # With 10D, we are fine uploading all to GPU.
-
+            # Upload Valid Data to GPU
             CLUSTER_PTS = xp.asarray(next_X_host[keep_points])
             CLUSTER_F = xp.asarray(next_F_host[keep_points])
             CLUSTER_G = xp.asarray(next_G_host[keep_points])
+            CLUSTER_SIZES = xp.asarray(next_sizes_host[valid])
         else:
-            CLUSTER_SIZES = xp.asarray(next_sizes_host)
+            # Upload All Data to GPU
             CLUSTER_PTS = xp.asarray(next_X_host)
             CLUSTER_F = xp.asarray(next_F_host)
             CLUSTER_G = xp.asarray(next_G_host)
+            CLUSTER_SIZES = xp.asarray(next_sizes_host)
 
         CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
+        if LOG_MEM_STATS:
+            log_mem_stats(f"Completed L{level} Transition")
 
-        # Cleanup Host
+        # Clear Host Buffers
         del (
             next_level_X_list,
             next_level_F_list,
             next_level_G_list,
             next_level_sizes_list,
+            next_X_host,
+            next_F_host,
+            next_G_host,
+            next_sizes_host,
         )
-        del next_X_host, next_F_host, next_G_host, next_sizes_host
         gc.collect()
-
         level += 1
 
     final_count = int(out_count)
@@ -972,7 +993,6 @@ if __name__ == "__main__":
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS * DIM,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ERROR_METRIC=ERROR_METRIC,
-        SYNTH_BUDGET_FACTOR=10,
         BATCH_SIZE=100_000_000,
     )
 
