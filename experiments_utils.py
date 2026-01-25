@@ -320,12 +320,12 @@ def Problem_experiment_setup(
         ground_truth=ground_truth, predictions=preds, json_fpath=json_fpath, TOL=TOL
     )
 
-    if DIM == 2 and N_CLUSTERS < 10000:
+    if DIM == 2 and N_CLUSTERS < 1000:
         # 1 plot 2 subplots (1X2)
         # Subplot 1: contourf of shifted gaussians function
         # Subplot 2: scatter of final cluster centroids with trust ellipses on contourf
-        x = xp.linspace(-2, 2, 200)
-        y = xp.linspace(-2, 2, 200)
+        x = xp.linspace(DOMAIN[0], DOMAIN[1], 200)
+        y = xp.linspace(DOMAIN[0], DOMAIN[1], 200)
         X, Y = xp.meshgrid(x, y)
         Z = f_fn(xp.vstack([X.ravel(), Y.ravel()]).T).reshape(X.shape)
 
