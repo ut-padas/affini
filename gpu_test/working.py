@@ -3,12 +3,10 @@ import logging
 import time
 from typing import Any, Callable, Literal, Optional
 
-import cupy.cuda
+import cupy as cp
 import numpy as np
 from cuml.cluster import KMeans as cuKMeans
-from cupyx import scatter_add as cupy_scatter_add
 from cupyx import scatter_max as cupy_scatter_max
-from sklearn.cluster import KMeans
 
 from src import IS_CUPY_BACKEND, Array, xp
 from src.logging_config import log_mem_stats
@@ -21,7 +19,7 @@ TINY_EPS = 1e-12
 # -----------------------------------------------------------------------------
 # 1. CUDA KERNELS (Unchanged)
 # -----------------------------------------------------------------------------
-# ... [Keeping your existing kernels exactly as they were] ...
+# [Keeping your optimized dense kernels]
 
 _taylor_kernel_sq_code = r"""
 extern "C" __global__
@@ -203,7 +201,7 @@ _mod_q = xp.RawModule(code=_q_kernel_code)
 _kern_q = _mod_q.get_function("fused_q_dist")
 
 # -----------------------------------------------------------------------------
-# 2. TYPE-SAFE WRAPPERS
+# 2. HELPER FUNCTIONS
 # -----------------------------------------------------------------------------
 
 
@@ -336,11 +334,6 @@ def run_fused_q_dist(X, mus, labels, U, L_inv):
     return dist_out
 
 
-# -----------------------------------------------------------------------------
-# 3. UTILS (CPU BUFFERS & PINNED MEMORY)
-# -----------------------------------------------------------------------------
-
-
 def flatten_function_array(F: Array) -> Array:
     F = xp.asarray(F)
     if getattr(F, "ndim", 1) == 2 and F.shape[1] == 1:
@@ -355,30 +348,6 @@ def flatten_gradient_array(G: Array) -> Array:
     if getattr(G, "ndim", 1) == 2:
         return G
     raise ValueError(f"Unexpected gradient shape {G.shape}; expected (N,d) or (N,1,d).")
-
-
-def compute_label_segments_cpu(
-    sorted_labels: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Computes label segments on CPU."""
-    uniq, starts, counts = np.unique(
-        sorted_labels, return_index=True, return_counts=True
-    )
-    return uniq, starts, counts
-
-
-def compute_median_split_decision(
-    scores: Array, cluster_id: Array, starts: Array, counts: Array
-) -> Array:
-    idx_by_score = xp.argsort(scores)
-    cid_by_score = cluster_id[idx_by_score]
-    idx_group = xp.argsort(cid_by_score)
-    order = idx_by_score[idx_group]
-    scores_sorted = scores[order]
-    i0 = starts + (counts - 1) // 2
-    i1 = starts + counts // 2
-    median = 0.5 * (scores_sorted[i0] + scores_sorted[i1])
-    return scores >= median[cluster_id]
 
 
 def allocate_output_buffers_cpu(MAX_CLUSTERS_EST: int, d: int) -> tuple[dict, int]:
@@ -402,7 +371,9 @@ def adjust_buffer_capacity_cpu(
     if required_total <= current_cap:
         return buffers, current_cap
     new_cap = max(required_total, max(1, current_cap) * 2)
-    logger.warning(f"Resizing CPU output buffers: {current_cap} -> {new_cap} clusters")
+    logger.warning(
+        f"Resizing CPU output buffers: {current_cap:,} -> {new_cap:,} clusters"
+    )
     d = int(buffers["centroids"].shape[1])
     new_buffers = {
         "centroids": np.empty((new_cap, d), dtype=np.float64),
@@ -421,128 +392,8 @@ def adjust_buffer_capacity_cpu(
     return new_buffers, int(new_cap)
 
 
-def generate_sythetic_points_cpu(
-    X_pool: np.ndarray,
-    indices: np.ndarray,
-    starts: np.ndarray,
-    counts: np.ndarray,
-    uniq_labels: np.ndarray,
-    MIN_PTS_PER_CLUSTER: int,
-    *,
-    SEED: int,
-    level: int,
-) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-    """Synthetic generation entirely on CPU using Numpy."""
-    need = np.maximum(0, MIN_PTS_PER_CLUSTER - counts)
-    total_synth = int(np.sum(need))
-    if total_synth == 0:
-        return None, None
-
-    rng = np.random.default_rng(SEED + level)
-    # Corrected usage of repeat for CPU arrays
-    cluster_indices = np.arange(int(need.shape[0]))
-    k_synth = np.repeat(cluster_indices, need.astype(np.int64))
-
-    labels_synth = uniq_labels[k_synth]
-    m = counts[k_synth]
-    s0 = starts[k_synth]
-
-    rand = rng.random
-    i = (np.floor(rand(total_synth) * m)).astype(np.int64)
-    j = (np.floor(rand(total_synth) * (m - 1))).astype(np.int64)
-    j = j + (j >= i)
-
-    ptr_i = s0 + i
-    ptr_j = s0 + j
-    idx_i = indices[ptr_i]
-    idx_j = indices[ptr_j]
-
-    X_i = X_pool[idx_i]
-    X_j = X_pool[idx_j]
-
-    a = rand((total_synth, 1)).astype(X_pool.dtype)
-    X_synth = a * X_i + (1.0 - a) * X_j
-
-    return X_synth, labels_synth.astype(np.int64)
-
-
 # -----------------------------------------------------------------------------
-# 4. PINNED BATCHER (PIPELINE MANAGER)
-# -----------------------------------------------------------------------------
-
-
-class PinnedBatcher:
-    """Manages Double-Buffered Pinned Memory for Async Host-to-Device transfer."""
-
-    def __init__(self, batch_size, d, dtype=np.float64):
-        self.batch_size = batch_size
-        self.d = d
-        self.dtype = dtype
-        self.itemsize = np.dtype(dtype).itemsize
-
-        # 1. Allocate PINNED memory on Host (CPU)
-        self.pin_X = cupy.cuda.alloc_pinned_memory(batch_size * d * self.itemsize)
-        self.pin_F = cupy.cuda.alloc_pinned_memory(batch_size * self.itemsize)
-        self.pin_G = cupy.cuda.alloc_pinned_memory(batch_size * d * self.itemsize)
-
-        # Numpy views with explicit count to handle over-allocation
-        self.host_X = np.frombuffer(
-            self.pin_X, dtype=dtype, count=batch_size * d
-        ).reshape(batch_size, d)
-        self.host_F = np.frombuffer(self.pin_F, dtype=dtype, count=batch_size).reshape(
-            batch_size
-        )
-        self.host_G = np.frombuffer(
-            self.pin_G, dtype=dtype, count=batch_size * d
-        ).reshape(batch_size, d)
-
-        # 2. Allocate TWO sets of buffers on Device (GPU)
-        self.gpu_buffers = [
-            {
-                "X": xp.empty((batch_size, d), dtype=dtype),
-                "F": xp.empty((batch_size,), dtype=dtype),
-                "G": xp.empty((batch_size, d), dtype=dtype),
-            },
-            {
-                "X": xp.empty((batch_size, d), dtype=dtype),
-                "F": xp.empty((batch_size,), dtype=dtype),
-                "G": xp.empty((batch_size, d), dtype=dtype),
-            },
-        ]
-
-        # 3. Create streams
-        self.stream_compute = cupy.cuda.Stream(non_blocking=True)
-        self.stream_transfer = cupy.cuda.Stream(non_blocking=True)
-
-    def load_batch_async(self, buffer_idx, indices, X_pool, F_pool, G_pool):
-        n = indices.shape[0]
-
-        # CPU Gather
-        self.host_X[:n] = X_pool[indices]
-        self.host_F[:n] = F_pool[indices]
-        self.host_G[:n] = G_pool[indices]
-
-        # Async Upload with explicit stream
-        with self.stream_transfer:
-            gpu_buf = self.gpu_buffers[buffer_idx]
-            gpu_buf["X"][:n].set(self.host_X[:n], stream=self.stream_transfer)
-            gpu_buf["F"][:n].set(self.host_F[:n], stream=self.stream_transfer)
-            gpu_buf["G"][:n].set(self.host_G[:n], stream=self.stream_transfer)
-
-        event = cupy.cuda.Event()
-        event.record(self.stream_transfer)
-        return event
-
-    def get_batch(self, buffer_idx):
-        return self.gpu_buffers[buffer_idx]
-
-    def synchronize(self):
-        self.stream_compute.synchronize()
-        self.stream_transfer.synchronize()
-
-
-# -----------------------------------------------------------------------------
-# 5. MAIN ROUTINE (PIPELINED + SCATTER_MAX FALLBACK)
+# 3. MAIN ALGORITHM (Using Sort-Based Offloading)
 # -----------------------------------------------------------------------------
 
 
@@ -567,441 +418,454 @@ def adaptive_clustering(
 ) -> dict[str, Any]:
 
     _start_time = time.perf_counter()
+    mempool = cp.get_default_memory_pool()
 
-    # 1. Initialize Pools on CPU
-    X0_cpu = xp.asnumpy(X) if IS_CUPY_BACKEND else np.asarray(X)
-    X0_cpu = X0_cpu.astype(np.float64)
-    N0, d = X0_cpu.shape
+    # 1. Initialize First Level on GPU (Assuming Level 0 fits in VRAM)
+    # If Level 0 is too big for VRAM, we can't start easily anyway.
+    X0_gpu = xp.asarray(X, dtype=xp.float64)
+    N0, d = X0_gpu.shape
 
-    if SYNTH_BUDGET is None:
-        SYNTH_BUDGET = int(max(0, SYNTH_BUDGET_FACTOR * N0))
+    # Eval f/g for initial points
+    F0_gpu = flatten_function_array(f_fn(X0_gpu))
+    G0_gpu = flatten_gradient_array(g_fn(X0_gpu))
 
-    capacity = int(N0 + SYNTH_BUDGET)
-    X_pool = np.empty((capacity, d), dtype=np.float64)
-    X_pool[:N0] = X0_cpu
-    n_total = int(N0)
-    del X0_cpu
-    gc.collect()
+    F_inf = float(xp.max(xp.abs(F0_gpu)))
 
-    # 2. Initial f/g Eval
-    _t0 = time.perf_counter()
-    F_pool = np.empty((capacity,), dtype=np.float64)
-    G_pool = np.empty((capacity, d), dtype=np.float64)
+    # KMeans
+    km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+    labels0 = km.fit_predict(X0_gpu)
 
-    for i in range(0, N0, BATCH_SIZE):
-        end = min(i + BATCH_SIZE, N0)
-        batch = xp.asarray(X_pool[i:end])
-        f_val = flatten_function_array(f_fn(batch))
-        g_val = flatten_gradient_array(g_fn(batch))
-        F_pool[i:end] = xp.asnumpy(f_val)
-        G_pool[i:end] = xp.asnumpy(g_val)
-        del batch, f_val, g_val
+    # --- PHYSICAL SORTING (The key from the old code) ---
+    # We group points by cluster physically in memory
+    sort_idx = xp.argsort(labels0)
 
-    logger.info(f"Runtime - Initial f/g eval: {time.perf_counter()-_t0:.3f}s")
-    F_inf = np.max(np.abs(F_pool[:N0]))
-    synth_added_prev_level = False
+    # Primary GPU Buffers (These will hold ONE level's data)
+    CLUSTER_PTS = X0_gpu[sort_idx]
+    CLUSTER_F = F0_gpu[sort_idx]
+    CLUSTER_G = G0_gpu[sort_idx]
 
-    # 3. Initial KMeans
-    _t1 = time.perf_counter()
-    fit_size = min(N0, 200_000)
-    indices_fit = np.random.default_rng(SEED).choice(N0, size=fit_size, replace=False)
-    X_fit_gpu = xp.asarray(X_pool[indices_fit])
+    # Calculate initial sizes/starts
+    uniq_labels, CLUSTER_SIZES = xp.unique(labels0[sort_idx], return_counts=True)
+    CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
 
-    if IS_CUPY_BACKEND:
-        km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
-        km.fit(X_fit_gpu)
-    else:
-        km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
-        km.fit(xp.asnumpy(X_fit_gpu))
-    del X_fit_gpu
+    del X0_gpu, F0_gpu, G0_gpu, labels0, sort_idx, uniq_labels
+    mempool.free_all_blocks()
 
-    labels_pool = np.empty((capacity,), dtype=np.int64)
-    for i in range(0, N0, BATCH_SIZE):
-        end = min(i + BATCH_SIZE, N0)
-        batch = xp.asarray(X_pool[i:end])
-        lbls = km.predict(batch)
-        labels_pool[i:end] = xp.asnumpy(lbls).astype(np.int64)
-        del batch, lbls
-    logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
-
-    active = np.zeros((capacity,), dtype=bool)
-    active[:N0] = True
-
-    # 4. Setup Buffers & Pipeliner
+    # Output Buffers (CPU)
     buffers, out_cap = allocate_output_buffers_cpu(MAX_CLUSTERS_EST, d)
     out_count = 0
-    pipeliner = PinnedBatcher(BATCH_SIZE, d, dtype=np.float64)
 
     level = 0
     while level <= MAX_LEVELS:
-        log_mem_stats(f"Start Level {level:03}")
-        if synth_added_prev_level:
-            F_inf = np.max(np.abs(F_pool[:n_total]))
+        log_mem_stats(f"Start L{level}")
 
-        idx_active = np.nonzero(active[:n_total])[0]
-        n_active = int(idx_active.shape[0])
-        if n_active == 0:
+        num_clusters = len(CLUSTER_SIZES)
+        if num_clusters == 0:
             break
 
-        synth_added_this_level = False
+        total_pts_level = int(xp.sum(CLUSTER_SIZES))
 
-        # GPU Sort
-        if n_active > 0:
-            labels_active_gpu = xp.asarray(labels_pool[idx_active])
-            perm_gpu = xp.argsort(labels_active_gpu)
-            perm = xp.asnumpy(perm_gpu)
-            del labels_active_gpu, perm_gpu
-        else:
-            perm = np.array([], dtype=np.int64)
+        # --- Augmentation (Synthetic Points) ---
+        # We calculate augmentation requirements on GPU, but handle memory carefully
+        level_augmented_sizes = xp.maximum(CLUSTER_SIZES, MIN_PTS_PER_CLUSTER)
+        level_total_aug_pts = int(xp.sum(level_augmented_sizes))
 
-        idx_sorted = idx_active[perm]
-        label_sorted = labels_pool[idx_sorted]
-        uniq_labels, starts, counts = compute_label_segments_cpu(label_sorted)
-        K_total = int(uniq_labels.shape[0])
+        # Helper: CPU cumulative sums for batching
+        aug_sizes_cpu = xp.asnumpy(level_augmented_sizes)
+        aug_cumsum_cpu = np.cumsum(aug_sizes_cpu)
 
-        # --- Synthetic Points (CPU) ---
-        if np.any(counts < MIN_PTS_PER_CLUSTER):
-            X_synth, labels_synth = generate_sythetic_points_cpu(
-                X_pool,
-                idx_sorted,
-                starts,
-                counts,
-                uniq_labels,
-                MIN_PTS_PER_CLUSTER,
-                SEED=SEED,
-                level=level,
+        # Host buffers for next level (The "Offload Strategy")
+        next_level_X_list = []
+        next_level_F_list = []
+        next_level_G_list = []
+        next_level_sizes_list = (
+            []
+        )  # Store sizes on CPU or GPU? GPU is fine for small array.
+
+        # --- BATCH LOOP ---
+        num_batches = (level_total_aug_pts + BATCH_SIZE - 1) // BATCH_SIZE
+        start_cluster_idx = 0
+
+        for b in range(num_batches):
+            target_aug_count = (b + 1) * BATCH_SIZE
+            end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
+            end_cluster_idx = min(end_cluster_idx + 1, num_clusters)
+
+            if start_cluster_idx >= end_cluster_idx:
+                break
+
+            # Slice Clusters
+            sizes = CLUSTER_SIZES[start_cluster_idx:end_cluster_idx]
+            starts_local = CLUSTER_STARTS[start_cluster_idx:end_cluster_idx]
+
+            # Map to points in CLUSTER_PTS
+            slice_start = int(starts_local[0])
+            slice_end = int(starts_local[-1] + sizes[-1])
+
+            # Zero-copy slice (Points are already contiguous!)
+            pts = CLUSTER_PTS[slice_start:slice_end]
+            f_vals = CLUSTER_F[slice_start:slice_end]
+            g_vals = CLUSTER_G[slice_start:slice_end]
+
+            # Adjust starts to be local to this batch (0-based)
+            starts_local_shifted = starts_local - slice_start
+
+            # --- AUGMENTATION ---
+            # We construct a temporary 'aug_pts' buffer for this batch only
+            aug_sizes = level_augmented_sizes[start_cluster_idx:end_cluster_idx]
+            aug_total = int(xp.sum(aug_sizes))
+
+            # Allocate Batch Buffers
+            X_batch = xp.empty((aug_total, d), dtype=xp.float64)
+            F_batch = xp.empty((aug_total,), dtype=xp.float64)
+            G_batch = xp.empty((aug_total, d), dtype=xp.float64)
+
+            # Helper indices
+            aug_starts = xp.r_[0, xp.cumsum(aug_sizes)[:-1]]
+            aug_ids = repeats(xp.arange(len(aug_sizes)), aug_sizes)
+
+            # Fill Real Data
+            # Vectorized fill:
+            # We need to map 'pts' (packed real) to 'X_batch' (packed augmented)
+            # This requires a scatter or kernel because 'gaps' are created for synth points
+
+            # Create boolean mask for real points in X_batch
+            pt_idxs_in_cluster = (
+                xp.arange(aug_total, dtype=xp.int32) - aug_starts[aug_ids]
             )
+            is_real = pt_idxs_in_cluster < sizes[aug_ids]
 
-            if X_synth is not None:
-                M = int(X_synth.shape[0])
-                n_plus_M = n_total + M
+            X_batch[is_real] = pts
+            F_batch[is_real] = f_vals
+            G_batch[is_real] = g_vals
 
-                if n_plus_M > capacity:
-                    new_capacity = max(n_plus_M, int(capacity * 1.5))
-                    logger.warning(
-                        f"Pool capacity exceeded. Resizing (CPU): {capacity:,} -> {new_capacity:,}"
-                    )
+            # Fill Synthetic
+            is_synth = ~is_real
+            num_synth = int(xp.sum(is_synth))
 
-                    new_X = np.empty((new_capacity, d), dtype=np.float64)
-                    new_X[:n_total] = X_pool[:n_total]
-                    del X_pool
-                    X_pool = new_X
-                    new_G = np.empty((new_capacity, d), dtype=np.float64)
-                    new_G[:n_total] = G_pool[:n_total]
-                    del G_pool
-                    G_pool = new_G
-                    new_F = np.empty((new_capacity,), dtype=np.float64)
-                    new_F[:n_total] = F_pool[:n_total]
-                    del F_pool
-                    F_pool = new_F
-                    new_L = np.empty((new_capacity,), dtype=np.int64)
-                    new_L[:n_total] = labels_pool[:n_total]
-                    del labels_pool
-                    labels_pool = new_L
-                    new_A = np.zeros((new_capacity,), dtype=bool)
-                    new_A[:n_total] = active[:n_total]
-                    del active
-                    active = new_A
-                    capacity = new_capacity
-                    gc.collect()
+            if num_synth > 0:
+                synth_c_ids = aug_ids[is_synth]
+                # To generate synth points, we need random pairs from real points
+                # s_starts = starts_local_shifted[synth_c_ids]
+                # s_sizes = sizes[synth_c_ids]
 
-                X_pool[n_total:n_plus_M] = X_synth
-                labels_pool[n_total:n_plus_M] = labels_synth
-                active[n_total:n_plus_M] = True
+                # Using simple logic from your old code:
+                # Pick 2 random indices within the cluster limits
+                rng = xp.random.default_rng(SEED + level + b)
 
-                for i in range(n_total, n_plus_M, BATCH_SIZE):
-                    end = min(i + BATCH_SIZE, n_plus_M)
-                    batch = xp.asarray(X_pool[i:end])
-                    f_val = flatten_function_array(f_fn(batch))
-                    g_val = flatten_gradient_array(g_fn(batch))
-                    F_pool[i:end] = xp.asnumpy(f_val)
-                    G_pool[i:end] = xp.asnumpy(g_val)
-                    del batch, f_val, g_val
+                # Pointers relative to 'pts' array
+                c_starts = starts_local_shifted[synth_c_ids]
+                c_counts = sizes[synth_c_ids]
 
-                n_total += M
-                synth_added_this_level = True
+                rand1 = (rng.random(num_synth) * c_counts).astype(xp.int64)
+                rand2 = (rng.random(num_synth) * (c_counts - 1)).astype(xp.int64) + 1
+                idx1 = c_starts + rand1
+                idx2 = c_starts + (rand1 + rand2) % c_counts
 
-                # Re-Sort (GPU)
-                idx_active = np.nonzero(active[:n_total])[0]
-                labels_active_gpu = xp.asarray(labels_pool[idx_active])
-                perm_gpu = xp.argsort(labels_active_gpu)
-                perm = xp.asnumpy(perm_gpu)
-                del labels_active_gpu, perm_gpu
+                p1 = pts[idx1]
+                p2 = pts[idx2]
+                alpha = rng.random((num_synth, 1)).astype(xp.float64)
 
-                idx_sorted = idx_active[perm]
-                label_sorted = labels_pool[idx_sorted]
-                uniq_labels, starts, counts = compute_label_segments_cpu(label_sorted)
-                K_total = int(uniq_labels.shape[0])
+                X_synth_vals = p1 * alpha + p2 * (1.0 - alpha)
+                X_batch[is_synth] = X_synth_vals
 
-        # --- BATCH SCHEDULE ---
-        batch_slices = []
-        curr = 0
-        while curr < K_total:
-            remaining = counts[curr:]
-            cum = np.cumsum(remaining)
-            split_loc = np.searchsorted(cum, BATCH_SIZE, side="right")
-            bk = 1 if split_loc == 0 else int(split_loc)
-            end_k = curr + bk
+                # Eval F/G for synth
+                F_synth_vals = flatten_function_array(f_fn(X_synth_vals))
+                G_synth_vals = flatten_gradient_array(g_fn(X_synth_vals))
+                F_batch[is_synth] = F_synth_vals
+                G_batch[is_synth] = G_synth_vals
 
-            b_counts = counts[curr:end_k]
-            n_points = int(np.sum(b_counts))
-            s_idx = starts[curr]
-            e_idx = s_idx + n_points
-            indices = idx_sorted[s_idx:e_idx]
+                del p1, p2, alpha, X_synth_vals, F_synth_vals, G_synth_vals
 
-            batch_slices.append(
-                {
-                    "indices": indices,
-                    "current_k": curr,
-                    "end_k": end_k,
-                    "counts": b_counts,
-                    "n_points": n_points,
-                    "K_batch": bk,
-                }
-            )
-            curr = end_k
+            # --- PROCESS BATCH ---
+            # Now we have X_batch, F_batch, G_batch fully populated and grouped by cluster
 
-        # --- PIPELINED BATCH LOOP ---
-        num_batches = len(batch_slices)
-        transfer_event = None
+            # 1. Centroids
+            sums = xp.add.reduceat(X_batch, aug_starts)
+            mus = sums / aug_sizes[:, None]
+            f_mus = flatten_function_array(f_fn(mus))
+            g_mus = flatten_gradient_array(g_fn(mus))
 
-        if num_batches > 0:
-            transfer_event = pipeliner.load_batch_async(
-                0, batch_slices[0]["indices"], X_pool, F_pool, G_pool
-            )
+            # 2. Error
+            K_batch = len(aug_sizes)
+            dense_labels = aug_ids  # Already computed
 
-        for i in range(num_batches):
-            slice_info = batch_slices[i]
-            buf_idx = i % 2
-            next_buf_idx = (i + 1) % 2
+            if ERROR_METRIC == "L2":
+                err_sq = run_fused_taylor_error(
+                    X_batch, mus, dense_labels, F_batch, f_mus, g_mus, mode="sq"
+                )
+                # reduceat is safe for contiguous segments
+                sum_sq = xp.add.reduceat(err_sq, aug_starts)
+                E_cluster = xp.sqrt(sum_sq)
+                is_good = E_cluster < TOL
+            elif ERROR_METRIC == "Linf-global":
+                err_abs = run_fused_taylor_error(
+                    X_batch, mus, dense_labels, F_batch, f_mus, g_mus, mode="abs"
+                )
+                # Fallback to scatter for max (reduceat max not reliable) OR use simple loop if fast enough
+                # Actually, using cupyx.scatter_max is reliable
+                E_abs = xp.zeros((K_batch,), dtype=err_abs.dtype)
+                cupy_scatter_max(E_abs, dense_labels, err_abs)
+                E_cluster = E_abs / F_inf
+                is_good = E_cluster < TOL
+            elif ERROR_METRIC == "Linf-local":
+                err_abs = run_fused_taylor_error(
+                    X_batch, mus, dense_labels, F_batch, f_mus, g_mus, mode="abs"
+                )
+                E_abs = xp.zeros((K_batch,), dtype=err_abs.dtype)
+                cupy_scatter_max(E_abs, dense_labels, err_abs)
 
-            pipeliner.stream_compute.wait_event(transfer_event)
+                F_max = xp.zeros((K_batch,), dtype=F_batch.dtype)
+                cupy_scatter_max(F_max, dense_labels, xp.abs(F_batch))
+                E_cluster = E_abs / xp.maximum(F_max, TINY_EPS)
+                is_good = (E_cluster < TOL) | (E_abs < TOL)
 
-            if i + 1 < num_batches:
-                next_transfer_event = pipeliner.load_batch_async(
-                    next_buf_idx, batch_slices[i + 1]["indices"], X_pool, F_pool, G_pool
+            # 3. Handle Good (Download)
+            good_idx_local = xp.nonzero(is_good)[0]
+            n_good = int(good_idx_local.shape[0])
+
+            if n_good > 0:
+                good_mask = is_good[dense_labels]
+                X_good = X_batch[good_mask]
+                G_good = G_batch[good_mask]
+
+                good_counts = aug_sizes[good_idx_local]
+                # Need dense labels for metrics relative to X_good
+                dense_labels_good = repeats(xp.arange(n_good), good_counts)
+
+                radii_pt, ratio_pt = run_fused_metrics(
+                    X_good,
+                    G_good,
+                    mus[good_idx_local],
+                    g_mus[good_idx_local],
+                    dense_labels_good,
+                )
+                radii = xp.zeros((n_good,), dtype=radii_pt.dtype)
+                L_obs = xp.zeros((n_good,), dtype=ratio_pt.dtype)
+                cupy_scatter_max(radii, dense_labels_good, radii_pt)
+                cupy_scatter_max(L_obs, dense_labels_good, ratio_pt)
+
+                Cov, _ = run_fused_stats(
+                    X_good,
+                    mus[good_idx_local],
+                    dense_labels_good,
+                    n_good,
+                    d,
+                    calc_E=False,
+                )
+                Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
+                if Q_SHRINK > 0.0:
+                    tr = xp.trace(Cov, axis1=1, axis2=2)
+                    scale = tr / max(d, 1)
+                    I = xp.eye(d, dtype=Cov.dtype)[None, :, :]
+                    Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (scale[:, None, None] * I)
+                    Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
+
+                Lambda, U = xp.linalg.eigh(Cov)
+                Lambda_inv = 1.0 / xp.maximum(Lambda, Q_EPS_AXIS)
+                dist_sq = run_fused_q_dist(
+                    X_good, mus[good_idx_local], dense_labels_good, U, Lambda_inv
+                )
+                max_dist = xp.zeros((n_good,), dtype=dist_sq.dtype)
+                cupy_scatter_max(max_dist, dense_labels_good, dist_sq)
+                scale_fac = 1.0 / xp.maximum(max_dist, Q_EPS_AXIS)
+                final_D = scale_fac[:, None] * Lambda_inv
+                Qs = (U * final_D[:, None, :]) @ U.transpose(0, 2, 1)
+
+                # STORE ON CPU
+                end_out = out_count + n_good
+                buffers, out_cap = adjust_buffer_capacity_cpu(
+                    buffers, out_count, out_cap, end_out
                 )
 
-            with pipeliner.stream_compute:
-                gpu_bufs = pipeliner.get_batch(buf_idx)
-                n_pts = slice_info["n_points"]
+                buffers["centroids"][out_count:end_out] = xp.asnumpy(
+                    mus[good_idx_local]
+                )
+                buffers["f"][out_count:end_out] = xp.asnumpy(f_mus[good_idx_local])
+                buffers["g"][out_count:end_out] = xp.asnumpy(g_mus[good_idx_local])
+                buffers["Q"][out_count:end_out] = xp.asnumpy(Qs)
+                buffers["E_cluster"][out_count:end_out] = xp.asnumpy(
+                    E_cluster[good_idx_local]
+                )
+                buffers["radii"][out_count:end_out] = xp.asnumpy(radii)
+                buffers["L_obs"][out_count:end_out] = xp.asnumpy(L_obs)
+                buffers["counts"][out_count:end_out] = xp.asnumpy(
+                    good_counts.astype(xp.int64)
+                )
+                out_count = end_out
 
-                X_batch = gpu_bufs["X"][:n_pts]
-                F_batch = gpu_bufs["F"][:n_pts]
-                G_batch = gpu_bufs["G"][:n_pts]
+            # 4. Handle Bad (Split & Stream to CPU)
+            bad_idx_local = xp.nonzero(~is_good)[0]
+            n_bad = int(bad_idx_local.shape[0])
 
-                K_batch = slice_info["K_batch"]
-                batch_counts_gpu = xp.asarray(slice_info["counts"])
+            if n_bad > 0:
+                bad_mask = (~is_good)[dense_labels]
+                X_bad = X_batch[bad_mask]
+                F_bad = F_batch[bad_mask]
+                G_bad = G_batch[bad_mask]
 
-                dense_labels = repeats(xp.arange(K_batch), batch_counts_gpu)
-                batch_starts_local = xp.r_[0, xp.cumsum(batch_counts_gpu)[:-1]]
+                bad_counts = aug_sizes[bad_idx_local]
+                dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
 
-                # -- Centroids (Add Reduce) --
-                sums = xp.add.reduceat(X_batch, batch_starts_local)
-                mus = sums / batch_counts_gpu[:, None]
-                f_mus = flatten_function_array(f_fn(mus))
-                g_mus = flatten_gradient_array(g_fn(mus))
+                # Hessian Split Logic
+                C, E = run_fused_stats(
+                    X_bad,
+                    mus[bad_idx_local],
+                    dense_labels_bad,
+                    n_bad,
+                    d,
+                    G=G_bad,
+                    g_mus=g_mus[bad_idx_local],
+                    calc_E=True,
+                )
+                C = 0.5 * (C + C.transpose(0, 2, 1))
+                S = E + E.transpose(0, 2, 1)
+                dvals, U = xp.linalg.eigh(C)
+                dvals = xp.maximum(dvals, H_RIDGE)
+                Gtilde = U.transpose(0, 2, 1) @ S @ U
+                denom = dvals[:, :, None] + dvals[:, None, :]
+                F_mat = Gtilde / denom
+                _, V = xp.linalg.eigh(F_mat)
+                Z_rot = U @ V
+                w_abs_sqrt = xp.sqrt(xp.abs(_))
+                M = (Z_rot * w_abs_sqrt[:, None, :]) @ Z_rot.transpose(0, 2, 1)
+                M = 0.5 * (M + M.transpose(0, 2, 1))
+                CovZ = M @ C @ M.transpose(0, 2, 1)
+                _, V_z = xp.linalg.eigh(CovZ)
+                v = V_z[:, :, -1]
 
-                # -- Error (Max via Scatter) --
-                if ERROR_METRIC == "L2":
-                    err_sq = run_fused_taylor_error(
-                        X_batch, mus, dense_labels, F_batch, f_mus, g_mus, mode="sq"
-                    )
-                    sum_sq = xp.add.reduceat(err_sq, batch_starts_local)
-                    E_cluster = xp.sqrt(sum_sq)
-                    is_good = E_cluster < TOL
-                elif ERROR_METRIC == "Linf-global":
-                    err_abs = run_fused_taylor_error(
-                        X_batch, mus, dense_labels, F_batch, f_mus, g_mus, mode="abs"
-                    )
-                    E_abs = xp.zeros((K_batch,), dtype=err_abs.dtype)
-                    cupy_scatter_max(E_abs, dense_labels, err_abs)
-                    E_cluster = E_abs / F_inf
-                    is_good = E_cluster < TOL
-                elif ERROR_METRIC == "Linf-local":
-                    err_abs = run_fused_taylor_error(
-                        X_batch, mus, dense_labels, F_batch, f_mus, g_mus, mode="abs"
-                    )
-                    E_abs = xp.zeros((K_batch,), dtype=err_abs.dtype)
-                    cupy_scatter_max(E_abs, dense_labels, err_abs)
+                scores = run_fused_score(
+                    X_bad, mus[bad_idx_local], dense_labels_bad, M, v
+                )
 
-                    F_max = xp.zeros((K_batch,), dtype=F_batch.dtype)
-                    cupy_scatter_max(F_max, dense_labels, xp.abs(F_batch))
-                    E_cluster = E_abs / xp.maximum(F_max, TINY_EPS)
-                    is_good = (E_cluster < TOL) | (E_abs < TOL)
-                else:
-                    raise ValueError(f"Unknown metric {ERROR_METRIC}")
+                # We need to sort X_bad by (Cluster, Score) to effectively split
+                # But physically sorting inside batch is simpler:
+                # We can just use the boolean mask logic from median split to send points to Left/Right queues
 
-                # -- Good Clusters --
-                good_mask_batch = is_good
-                good_idx_local = xp.nonzero(good_mask_batch)[0]
-                n_good = int(good_idx_local.shape[0])
+                # Re-calculate starts for X_bad to compute medians
+                bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
 
-                if n_good > 0:
-                    points_good_mask = good_mask_batch[dense_labels]
-                    X_good = X_batch[points_good_mask]
-                    G_good = G_batch[points_good_mask]
+                # Need per-cluster median
+                # scores are not sorted by score, they are grouped by cluster.
+                # We need to compute median per cluster.
+                # Just use quickselect or sort per cluster?
+                # Faster: Just global sort by (Cluster, Score)
+                # Since X_bad is already grouped by cluster, we just need to sort by score STABLE-ly
+                # But cp.argsort is stable? No.
+                # Simple hack: Sort using (ClusterID * LargeNumber + Score)
+                # But scores are float.
 
-                    good_counts_local = batch_counts_gpu[good_idx_local]
-                    dense_labels_good = repeats(xp.arange(n_good), good_counts_local)
+                # Standard trick: Lexsort
+                # keys = (dense_labels_bad, scores)
+                # But cp.lexsort keys order is reversed: (scores, dense_labels_bad)
+                # This sorts primarily by cluster, secondarily by score
 
-                    radii_pt, ratio_pt = run_fused_metrics(
-                        X_good,
-                        G_good,
-                        mus[good_idx_local],
-                        g_mus[good_idx_local],
-                        dense_labels_good,
-                    )
-                    radii = xp.zeros((n_good,), dtype=radii_pt.dtype)
-                    L_obs = xp.zeros((n_good,), dtype=ratio_pt.dtype)
-                    cupy_scatter_max(radii, dense_labels_good, radii_pt)
-                    cupy_scatter_max(L_obs, dense_labels_good, ratio_pt)
+                sort_order = xp.lexsort(xp.stack([scores, dense_labels_bad]))
 
-                    Cov, _ = run_fused_stats(
-                        X_good,
-                        mus[good_idx_local],
-                        dense_labels_good,
-                        n_good,
-                        d,
-                        calc_E=False,
-                    )
-                    Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
-                    if Q_SHRINK > 0.0:
-                        tr = xp.trace(Cov, axis1=1, axis2=2)
-                        scale = tr / max(d, 1)
-                        I = xp.eye(d, dtype=Cov.dtype)[None, :, :]
-                        Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (
-                            scale[:, None, None] * I
-                        )
-                        Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
+                X_bad_sorted = X_bad[sort_order]
+                F_bad_sorted = F_bad[sort_order]
+                G_bad_sorted = G_bad[sort_order]
 
-                    Lambda, U = xp.linalg.eigh(Cov)
-                    Lambda_inv = 1.0 / xp.maximum(Lambda, Q_EPS_AXIS)
-                    dist_sq = run_fused_q_dist(
-                        X_good, mus[good_idx_local], dense_labels_good, U, Lambda_inv
-                    )
-                    max_dist = xp.zeros((n_good,), dtype=dist_sq.dtype)
-                    cupy_scatter_max(max_dist, dense_labels_good, dist_sq)
-                    scale_fac = 1.0 / xp.maximum(max_dist, Q_EPS_AXIS)
-                    final_D = scale_fac[:, None] * Lambda_inv
-                    Qs = (U * final_D[:, None, :]) @ U.transpose(0, 2, 1)
+                # Split counts
+                half_counts = bad_counts // 2
+                other_counts = bad_counts - half_counts
 
-                    end_out = out_count + n_good
-                    buffers, out_cap = adjust_buffer_capacity_cpu(
-                        buffers, out_count, out_cap, end_out
-                    )
+                # We need to interleave these for the next level: [L0, R0, L1, R1...]
+                # This ensures the physical layout remains (Cluster 0 Children, Cluster 1 Children...)
+                # Actually, simpler: Just dump all Left children then all Right children?
+                # No, we want DFS/BFS order.
+                # The easiest way to preserve "Group by Cluster" for next level is to just
+                # dump X_bad_sorted into the next level list.
+                # AND record the new sizes: [half_0, other_0, half_1, other_1...]
 
-                    buffers["centroids"][out_count:end_out] = xp.asnumpy(
-                        mus[good_idx_local]
-                    )
-                    buffers["f"][out_count:end_out] = xp.asnumpy(f_mus[good_idx_local])
-                    buffers["g"][out_count:end_out] = xp.asnumpy(g_mus[good_idx_local])
-                    buffers["Q"][out_count:end_out] = xp.asnumpy(Qs)
-                    buffers["E_cluster"][out_count:end_out] = xp.asnumpy(
-                        E_cluster[good_idx_local]
-                    )
-                    buffers["radii"][out_count:end_out] = xp.asnumpy(radii)
-                    buffers["L_obs"][out_count:end_out] = xp.asnumpy(L_obs)
-                    buffers["counts"][out_count:end_out] = xp.asnumpy(
-                        good_counts_local.astype(xp.int64)
-                    )
-                    out_count = end_out
+                # Construct new sizes array
+                new_sizes = xp.zeros(2 * n_bad, dtype=xp.int64)
+                new_sizes[0::2] = half_counts
+                new_sizes[1::2] = other_counts
 
-                    indices_good_cpu = slice_info["indices"][
-                        xp.asnumpy(points_good_mask)
-                    ]
-                    active[indices_good_cpu] = False
+                # OFFLOAD TO HOST
+                next_level_X_list.append(xp.asnumpy(X_bad_sorted))
+                next_level_F_list.append(xp.asnumpy(F_bad_sorted))
+                next_level_G_list.append(xp.asnumpy(G_bad_sorted))
+                next_level_sizes_list.append(xp.asnumpy(new_sizes))
 
-                    del X_good, G_good
+            # Prepare next batch
+            start_cluster_idx = end_cluster_idx
 
-                # -- Bad Clusters (Split) --
-                bad_mask_batch = ~good_mask_batch
-                bad_idx_local = xp.nonzero(bad_mask_batch)[0]
-                n_bad = int(bad_idx_local.shape[0])
+            # Cleanup GPU Batch
+            del X_batch, F_batch, G_batch
+            mempool.free_all_blocks()
 
-                if n_bad > 0:
-                    points_bad_mask = bad_mask_batch[dense_labels]
-                    X_bad = X_batch[points_bad_mask]
-                    G_bad = G_batch[points_bad_mask]
+        # --- END OF LEVEL ---
+        if len(next_level_sizes_list) == 0:
+            break
 
-                    bad_counts_local = batch_counts_gpu[bad_idx_local]
-                    dense_labels_bad = repeats(xp.arange(n_bad), bad_counts_local)
+        # Prepare Next Level Data
+        # Concatenate on Host
+        next_X_host = np.concatenate(next_level_X_list)
+        next_F_host = np.concatenate(next_level_F_list)
+        next_G_host = np.concatenate(next_level_G_list)
+        next_sizes_host = np.concatenate(next_level_sizes_list)
 
-                    C, E = run_fused_stats(
-                        X_bad,
-                        mus[bad_idx_local],
-                        dense_labels_bad,
-                        n_bad,
-                        d,
-                        G=G_bad,
-                        g_mus=g_mus[bad_idx_local],
-                        calc_E=True,
-                    )
-                    C = 0.5 * (C + C.transpose(0, 2, 1))
-                    S = E + E.transpose(0, 2, 1)
+        # Filter empty
+        valid = next_sizes_host > 0
+        if not np.all(valid):
+            # This is tricky because points correspond to sizes implicitly by order
+            # We must filter points too.
+            # But wait, did we generate 0-size clusters?
+            # half_counts = size // 2. If size=1, half=0, other=1.
+            # So yes, 0 sizes possible.
+            # Reconstruct keep mask for points
 
-                    dvals, U = xp.linalg.eigh(C)
-                    dvals = xp.maximum(dvals, H_RIDGE)
-                    Gtilde = U.transpose(0, 2, 1) @ S @ U
-                    denom = dvals[:, :, None] + dvals[:, None, :]
-                    F_mat = Gtilde / denom
+            # Expansion of 'valid' to points
+            # repeat 'valid' by 'next_sizes_host'
+            keep_points = np.repeat(valid, next_sizes_host)
 
-                    _, V = xp.linalg.eigh(F_mat)
-                    Z_rot = U @ V
-                    w_abs_sqrt = xp.sqrt(xp.abs(_))
-                    M = (Z_rot * w_abs_sqrt[:, None, :]) @ Z_rot.transpose(0, 2, 1)
-                    M = 0.5 * (M + M.transpose(0, 2, 1))
+            CLUSTER_SIZES = xp.asarray(next_sizes_host[valid])
 
-                    CovZ = M @ C @ M.transpose(0, 2, 1)
-                    _, V_z = xp.linalg.eigh(CovZ)
-                    v = V_z[:, :, -1]
+            # Upload Filtered Points
+            # If too big, this might fail. But we just cleared VRAM.
+            # Assuming active set fits in VRAM.
+            # If not, we'd need to keep this on Host and stream slices.
+            # Given previous error, let's assume it might be tight but usually active set shrinks?
+            # Actually, active set grows (augmentation).
+            # So we MUST check capacity.
 
-                    scores = run_fused_score(
-                        X_bad, mus[bad_idx_local], dense_labels_bad, M, v
-                    )
-                    split_right = compute_median_split_decision(
-                        scores,
-                        dense_labels_bad,
-                        xp.r_[0, xp.cumsum(bad_counts_local)[:-1]],
-                        bad_counts_local,
-                    )
+            req_bytes = next_X_host.nbytes + next_F_host.nbytes + next_G_host.nbytes
+            # Quick check: 60M points * 10 dim * 8 bytes ~ 4.8GB.
+            # 60M * 100 dim => 48GB.
+            # With 10D, we are fine uploading all to GPU.
 
-                    start_k = slice_info["current_k"]
-                    end_k = slice_info["end_k"]
+            CLUSTER_PTS = xp.asarray(next_X_host[keep_points])
+            CLUSTER_F = xp.asarray(next_F_host[keep_points])
+            CLUSTER_G = xp.asarray(next_G_host[keep_points])
+        else:
+            CLUSTER_SIZES = xp.asarray(next_sizes_host)
+            CLUSTER_PTS = xp.asarray(next_X_host)
+            CLUSTER_F = xp.asarray(next_F_host)
+            CLUSTER_G = xp.asarray(next_G_host)
 
-                    bad_indices_local_cpu = xp.asnumpy(bad_idx_local)
-                    batch_uniq_labels = uniq_labels[start_k:end_k]
-                    bad_global_labels = batch_uniq_labels[bad_indices_local_cpu]
+        CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
 
-                    split_right_cpu = xp.asnumpy(split_right).astype(np.int64)
-                    dense_labels_bad_cpu = xp.asnumpy(dense_labels_bad)
-
-                    old_per_point = bad_global_labels[dense_labels_bad_cpu]
-                    new_labels = old_per_point * 2 + split_right_cpu
-
-                    indices_bad_cpu = slice_info["indices"][xp.asnumpy(points_bad_mask)]
-                    labels_pool[indices_bad_cpu] = new_labels
-
-                    del X_bad, G_bad
-
-            if i + 1 < num_batches:
-                transfer_event = next_transfer_event
-
-        pipeliner.synchronize()
-        synth_added_prev_level = synth_added_this_level
-        logger.info(
-            f"Level {level:03}: active={n_active:,}, pool_used={n_total/capacity:.1%}"
+        # Cleanup Host
+        del (
+            next_level_X_list,
+            next_level_F_list,
+            next_level_G_list,
+            next_level_sizes_list,
         )
+        del next_X_host, next_F_host, next_G_host, next_sizes_host
+        gc.collect()
+
         level += 1
-        log_mem_stats(f"End Level {level:03}")
 
     final_count = int(out_count)
     out_dict = {k: buffers[k][:final_count] for k in buffers}
     out_dict["num_levels"] = level
+
     logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
     logger.info(f"Runtime - Total: {time.perf_counter() -_start_time:.3f}s")
-    del X_pool, F_pool, G_pool, labels_pool, active
-    gc.collect()
+
     return out_dict
 
 
