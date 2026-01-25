@@ -27,7 +27,7 @@ class NearODESurrogate:
         self.X_src = None
         self.f_src = None
         self.J_src = None
-        self.trust_ellipses_src = None
+        self.trust_radii = None
         self.N_src = 0
         self.training_num_levels = -1
 
@@ -39,13 +39,10 @@ class NearODESurrogate:
         *,
         # Clustering params
         TOL: float = 1e-2,
-        ERROR_SCALING_METHOD: Literal["global", "local"] = "global",
-        CLUSTER_SPLITTING_METHOD: Literal["hessian_pca", "pca_only"] = "hessian_pca",
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
         SYNTH_BUDGET_FACTOR: float = 10.0,
-        Q_SHRINK: float = 0.0,
         SEED: int = 0,
         USE_HESSIAN_INFORMED_SPLIT: bool = False,
         ERROR_SPLIT_CRITERION: Literal["L2", "Linf"] = "L2",
@@ -64,28 +61,25 @@ class NearODESurrogate:
                 f_fn=f_fn,
                 g_fn=g_fn,
                 TOL=TOL,
-                ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-                CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
                 NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
                 MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                 SEED=SEED,
                 SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
                 LOG_MEM_STATS=True,
-                Q_SHRINK=Q_SHRINK,
             )
 
             centroids = xp.asarray(results["centroids"])
             f_vals = xp.asarray(results["f"])
             grads = xp.asarray(results["g"])
-            trust_ellipses = xp.asarray(results["Q"])
+            radii = xp.asarray(results["radii"])
             num_levels = results.get("num_levels", -1)
 
             # 2. Store Data
             self.X_src = centroids
             self.f_src = f_vals
             self.J_src = grads
-            self.trust_ellipses_src = trust_ellipses
+            self.trust_radii = radii
             self.N_src = centroids.shape[0]
             self.training_num_levels = num_levels
         elif self.version == "v1":
@@ -129,7 +123,7 @@ class NearODESurrogate:
             self.X_src = centroids
             self.f_src = f_vals
             self.J_src = grads
-            self.trust_ellipses_src = trust_radii
+            self.trust_radii = trust_radii
             self.N_src = centroids.shape[0]
             self.training_num_levels = num_levels
         else:
@@ -156,172 +150,46 @@ class NearODESurrogate:
         self,
         query_points,
         k_NEIGHBOURS: int = 1,
-        *,
-        enforce_containment: bool = False,
-        containment_level: float = 1.0,
     ) -> tuple:
         """
-        Inference via GPU Ellipsoidal kNN over cluster centroids + local Taylor surrogate.
-
-        Pipeline:
-        1) kNN search over source centroids using cluster-wise Ellipsoidal distance:
-                dist2_k(x) = (x - μ_k)^T Q_k (x - μ_k)
-            optionally requiring trust-region containment:
-                dist2_k(x) <= containment_level
-
-        2) Gather neighbor (μ_k, f(μ_k), g(μ_k)) and evaluate first-order Taylor model:
-                f̃_k(x) = f(μ_k) + g(μ_k)^T (x - μ_k)
-
-        3) If k_NEIGHBOURS > 1, average predictions across neighbors.
-
-        4) Guarantee / trust checks:
-            For k=1, check whether x lies inside a conservative region derived from local
-            curvature estimates and tolerances. Here we replace the old scalar radius r_k
-            with the ellipsoidal trust region defined by Q_k:
-                inside if (x - μ_k)^T Q_k (x - μ_k) <= containment_level.
-            The tolerance-based check using ATOL/RTOL/L_global is preserved.
-
-        Args:
-            query_points: (N, D) query points (NumPy or CuPy).
-            k_NEIGHBOURS: number of neighbors (k). Guarantees are defined for k=1.
-            ATOL: absolute tolerance ε_abs for guarantee checks (optional).
-            RTOL: relative tolerance ε_rel for guarantee checks (optional).
-            L_global: global curvature bound L_g (optional).
-            ALPHA: trust factor alpha used in tolerance terms.
-            enforce_containment: if True, neighbors must contain query under Q_k.
-            containment_level: ellipsoid level for containment, typically 1.0.
-
-        Returns:
-            predictions: (N, F) predicted function values.
-            ungauranteed_mask: (N,) boolean mask; True indicates guarantee violation.
+        Inference via GPU kNN with L2 Distance.
         """
         if not self.trained:
             raise RuntimeError("Model not trained.")
 
-        t0 = time.perf_counter()
         qp = xp.asarray(query_points)
-
-        # ---------------------------------------------------------------------
-        # 1. kNN in cluster-wise E distance using stored (centroids, Q)
-        # ---------------------------------------------------------------------
         t_search = time.perf_counter()
-        if self.version == "v2":
-            nn_idx, nn_dist2 = knn_ellipsoidal_distance(
-                qp,
-                xp.asarray(self.X_src),
-                xp.asarray(self.trust_ellipses_src),
-                k_NEIGHBOURS,
-                enforce_containment=enforce_containment,
-                containment_level=containment_level,
-                return_sqrt=False,  # keep squared distances for checks
-            )
-            guaranteed_mask = nn_dist2[:, 0] <= 1.0
-            ungauranteed_mask = ~guaranteed_mask
-            logger.info(
-                f"Ellipsoidal kNN Search Time: {time.perf_counter()-t_search:.4f}s"
-            )
+        nn_idx, nn_dist2, ungauranteed_mask = knn_l2_distance(
+            qp,
+            self.X_src,
+            self.trust_radii,
+            k_NEIGHBOURS,
+        )
+        logger.info(f"L2 kNN Search Time: {time.perf_counter()-t_search:.4f}s")
 
-            # If containment is enabled, some slots may be -1. For inference we need
-            # valid neighbors. We handle this by:
-            #   - for k=1: if idx=-1 => prediction becomes NaN and marked unguaranteed
-            #   - for k>1: ignore invalid neighbors in the average (count-valid per point)
-            N, D = qp.shape
-            F = self.f_src.shape[1] if len(self.f_src.shape) > 1 else 1  # type: ignore
+        N, D = qp.shape
+        F = self.f_src.shape[1] if len(self.f_src.shape) > 1 else 1  # type: ignore
 
-            valid_mask = nn_idx >= 0  # (N, k)
-            num_valid = xp.sum(valid_mask, axis=1)  # (N,)
+        # Flatten indices for gathers
+        flat_idx = nn_idx.reshape(-1)  # (N*k,)
+        X_neighbors = xp.asarray(self.X_src)[flat_idx]  # (N*k, D)
+        f_neighbors = xp.asarray(self.f_src)[flat_idx]  # (N*k, F) or (N*k,)
+        J_neighbors = xp.asarray(self.J_src)[flat_idx]  # (N*k, F, D)
 
-            # Flatten indices for gathers; clamp invalid to 0 to keep gather safe.
-            nn_idx_safe = xp.where(valid_mask, nn_idx, 0).astype(xp.int32)  # (N, k)
-            flat_idx = nn_idx_safe.reshape(-1)  # (N*k,)
+        X_neighbors = X_neighbors.reshape(N, k_NEIGHBOURS, D)
+        f_neighbors = f_neighbors.reshape(N, k_NEIGHBOURS, F)
+        J_neighbors = J_neighbors.reshape(N, k_NEIGHBOURS, F, D)
 
-            # ---------------------------------------------------------------------
-            # 2. Gather neighbor metadata (μ_k, f(μ_k), g(μ_k), Q_k)
-            # ---------------------------------------------------------------------
-            X_neighbors = xp.asarray(self.X_src)[flat_idx]  # (N*k, D)
-            f_neighbors = xp.asarray(self.f_src)[flat_idx]  # (N*k, F) or (N*k,)
-            J_neighbors = xp.asarray(self.J_src)[flat_idx]  # (N*k, F, D)
-            Q_neighbors = xp.asarray(self.trust_ellipses_src)[flat_idx]  # (N*k, D, D)
+        # ---------------------------------------------------------------------
+        # First-order Taylor predictions around each neighbor centroid
+        # ---------------------------------------------------------------------
+        qp_expanded = qp[:, None, :]  # (N, 1, D)
+        dx = qp_expanded - X_neighbors  # (N, k, D)
 
-            X_neighbors = X_neighbors.reshape(N, k_NEIGHBOURS, D)
-            f_neighbors = f_neighbors.reshape(N, k_NEIGHBOURS, F)
-            J_neighbors = J_neighbors.reshape(N, k_NEIGHBOURS, F, D)
-            Q_neighbors = Q_neighbors.reshape(N, k_NEIGHBOURS, D, D)
-
-            # ---------------------------------------------------------------------
-            # 3. First-order Taylor predictions around each neighbor centroid
-            # ---------------------------------------------------------------------
-            qp_expanded = qp[:, None, :]  # (N, 1, D)
-            dx = qp_expanded - X_neighbors  # (N, k, D)
-
-            # linear_term[n,k,f] = sum_d J[n,k,f,d] * dx[n,k,d]
-            linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)  # (N, k, F)
-            predictions_k = f_neighbors + linear_term  # (N, k, F)
-
-            # Mask out invalid neighbor slots (if containment mode produced -1s).
-            # We convert invalid predictions to 0 and then divide by #valid.
-            valid_mask_f = valid_mask[:, :, None]  # (N, k, 1)
-            predictions_k = xp.where(valid_mask_f, predictions_k, 0)
-
-            # Average across valid neighbors (per query). If none valid, set NaN.
-            denom = xp.maximum(num_valid, 1).astype(predictions_k.dtype)[
-                :, None
-            ]  # (N, 1)
-            predictions = xp.sum(predictions_k, axis=1) / denom  # (N, F)
-            predictions = xp.where(num_valid[:, None] > 0, predictions, xp.nan)
-
-            # ---------------------------------------------------------------------
-            # 4. Guarantee / trust-region checks (simplified)
-            # ---------------------------------------------------------------------
-
-            num_ungauranteed = xp.sum(ungauranteed_mask)
-            logger.info(f"Unguaranteed Points: {int(num_ungauranteed)} / {N}")
-
-            # Heuristic warning for under-resolved surrogate coverage
-            if int(num_ungauranteed) > 3 * self.N_src:
-                msg = (
-                    "Too many unguaranteed points. Need more clusters! "
-                    f"(Unguaranteed: {int(num_ungauranteed)} > 3 x Sources: {self.N_src})"
-                )
-                print(f"\033[91m{msg}\033[0m")
-                logger.warning(msg)
-
-            logger.info(f"Prediction Time: {time.perf_counter()-t0:.4f}s")
-        elif self.version == "v1":
-            nn_idx, nn_dist2, ungauranteed_mask = knn_l2_distance(
-                qp,
-                self.X_src,
-                self.trust_ellipses_src,
-                k_NEIGHBOURS,
-            )
-            logger.info(f"L2 kNN Search Time: {time.perf_counter()-t_search:.4f}s")
-
-            N, D = qp.shape
-            F = self.f_src.shape[1] if len(self.f_src.shape) > 1 else 1  # type: ignore
-
-            # Flatten indices for gathers
-            flat_idx = nn_idx.reshape(-1)  # (N*k,)
-            X_neighbors = xp.asarray(self.X_src)[flat_idx]  # (N*k, D)
-            f_neighbors = xp.asarray(self.f_src)[flat_idx]  # (N*k, F) or (N*k,)
-            J_neighbors = xp.asarray(self.J_src)[flat_idx]  # (N*k, F, D)
-
-            X_neighbors = X_neighbors.reshape(N, k_NEIGHBOURS, D)
-            f_neighbors = f_neighbors.reshape(N, k_NEIGHBOURS, F)
-            J_neighbors = J_neighbors.reshape(N, k_NEIGHBOURS, F, D)
-
-            # ---------------------------------------------------------------------
-            # 3. First-order Taylor predictions around each neighbor centroid
-            # ---------------------------------------------------------------------
-            qp_expanded = qp[:, None, :]  # (N, 1, D)
-            dx = qp_expanded - X_neighbors  # (N, k, D)
-
-            # linear_term[n,k,f] = sum_d J[n,k,f,d] * dx[n,k,d]
-            linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)  # (N, k, F)
-            predictions_k = f_neighbors + linear_term  # (N, k, F)
-            predictions = xp.mean(predictions_k, axis=1)  # (N, F)
-        else:
-            raise ValueError(f"Unknown version: {self.version}")
-
+        # linear_term[n,k,f] = sum_d J[n,k,f,d] * dx[n,k,d]
+        linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)  # (N, k, F)
+        predictions_k = f_neighbors + linear_term  # (N, k, F)
+        predictions = xp.mean(predictions_k, axis=1)  # (N, F)
         return predictions, ungauranteed_mask
 
 
@@ -370,12 +238,6 @@ if __name__ == "__main__":
         "--k-neighbours", type=int, default=1, help="Number of neighbors for kNN"
     )
     parser.add_argument(
-        "--containment-level",
-        type=float,
-        default=1.0,
-        help="Containment level for trust-region checks",
-    )
-    parser.add_argument(
         "--seed", type=int, default=0, help="Random seed for training data sampling"
     )
     parser.add_argument(
@@ -394,7 +256,6 @@ if __name__ == "__main__":
     N_INIT_CLUSTERS = args.n_init_clusters
     N_MIN_PER_CLUSTER = args.n_min_per_cluster
     K_NEIGHBOURS = args.k_neighbours
-    CONTAINMENT_LEVEL = args.containment_level
     SEED = args.seed
     A_ROSENBROCK = args.rosenbrock_a
     FORCE_RECOMPUTE = args.force
@@ -429,7 +290,6 @@ if __name__ == "__main__":
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
         TOL=TOL,
-        ERROR_SCALING_METHOD="global",
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
         MAX_CLUSTERS_EST=50_000,
@@ -452,8 +312,6 @@ if __name__ == "__main__":
     preds, ungauranteed_mask = surrogate.predict(
         X_test,
         k_NEIGHBOURS=K_NEIGHBOURS,
-        enforce_containment=True,
-        containment_level=CONTAINMENT_LEVEL,
     )
     _end_predict_time = time.perf_counter()
     print(
