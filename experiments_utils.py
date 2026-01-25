@@ -90,31 +90,46 @@ def create_problem_result_dict(
     N_TEST = ground_truth.shape[0]
 
     n_out = xp.sum(ungauranteed_mask)
-
-    # Consider only guaranteed points for error metrics
-    g_idx = ~ungauranteed_mask
-    ptwise_rel_error_linf = xp.abs(predictions[g_idx] - ground_truth[g_idx]) / (
-        xp.abs(ground_truth[g_idx]) + TINY_EPS
-    )
-    ptwise_max_rel_error_linf = xp.nanmax(ptwise_rel_error_linf)
-    ptwise_median_rel_error_linf = xp.nanmedian(ptwise_rel_error_linf)
-    l2_relative_error = float(
-        xp.linalg.norm(ground_truth[g_idx] - predictions[g_idx], ord=2)
-        / xp.linalg.norm(ground_truth[g_idx], ord=2)
-    )
-    l2_abs_error = float(
-        xp.linalg.norm(ground_truth[g_idx] - predictions[g_idx], ord=2)
-        / xp.sqrt(g_idx.sum())
-    )
-
     n_in = N_TEST - n_out
+    g_idx = ~ungauranteed_mask
+
+    if n_in == 0:
+        # Handle the case where NO points are guaranteed
+        ptwise_max_rel_error_linf = 0.0  # Or None/NaN depending on preference
+        ptwise_median_rel_error_linf = 0.0
+        l2_relative_error = 0.0
+        l2_abs_error = 0.0
+
+        perct_in_good = 0.0
+        perct_in_bad = 0.0
+        n_in_good = 0
+        n_in_bad = 0
+    else:
+        # Original Logic
+        ptwise_rel_error_linf = xp.abs(predictions[g_idx] - ground_truth[g_idx]) / (
+            xp.abs(ground_truth[g_idx]) + TINY_EPS
+        )
+        ptwise_max_rel_error_linf = xp.nanmax(ptwise_rel_error_linf)
+        ptwise_median_rel_error_linf = xp.nanmedian(ptwise_rel_error_linf)
+
+        l2_relative_error = float(
+            xp.linalg.norm(ground_truth[g_idx] - predictions[g_idx], ord=2)
+            / xp.linalg.norm(ground_truth[g_idx], ord=2)
+        )
+        l2_abs_error = float(
+            xp.linalg.norm(ground_truth[g_idx] - predictions[g_idx], ord=2)
+            / xp.sqrt(n_in)  # Use n_in instead of g_idx.sum() for speed
+        )
+
+        n_in_good = xp.sum(ptwise_rel_error_linf <= TOL)
+        n_in_bad = xp.sum(ptwise_rel_error_linf > TOL)
+        perct_in_good = 100.0 * n_in_good / N_TEST
+        perct_in_bad = 100.0 * n_in_bad / N_TEST
+
     # pout: percentage of points outside the trust region
     # pin_good: percentage of points inside the trust region with error below tolerance
     # pin_bad: percentage of points inside the trust region with error above tolerance
     perct_out = 100.0 * n_out / N_TEST
-
-    n_in_good = xp.sum(ptwise_rel_error_linf <= TOL)
-    n_in_bad = xp.sum(ptwise_rel_error_linf > TOL)
     perct_in_good = 100.0 * n_in_good / N_TEST
     perct_in_bad = 100.0 * n_in_bad / N_TEST
 
