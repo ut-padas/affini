@@ -6,7 +6,6 @@ from typing import Any, Callable, Literal
 from src import IS_CUPY_BACKEND, Array, xp
 from src.adaptive_clustering import adaptive_clustering
 from src.data_sampler import DataSampler
-from src.ellipsoidal_distance import knn_ellipsoidal_distance
 from src.l2_distance import knn_l2_distance
 from src.v1_adaptive_clustering import adaptive_cluster_algorithm
 from src.v1_gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
@@ -28,6 +27,8 @@ class NearODESurrogate:
         self.f_src = None
         self.J_src = None
         self.trust_radii = None
+        self.obb_rotation_matrices = None
+        self.obb_extents = None
         self.N_src = 0
         self.training_num_levels = -1
 
@@ -67,6 +68,7 @@ class NearODESurrogate:
                 SEED=SEED,
                 SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
                 LOG_MEM_STATS=True,
+                ERROR_METRIC="Linf-local",
             )
 
             centroids = xp.asarray(results["centroids"])
@@ -80,6 +82,8 @@ class NearODESurrogate:
             self.f_src = f_vals
             self.J_src = grads
             self.trust_radii = radii
+            self.obb_rotation_matrices = results["obb_rotation_matrices"]
+            self.obb_extents = results["obb_extents"]
             self.N_src = centroids.shape[0]
             self.training_num_levels = num_levels
         elif self.version == "v1":
@@ -157,6 +161,16 @@ class NearODESurrogate:
         if not self.trained:
             raise RuntimeError("Model not trained.")
 
+        if self.version == "v2":
+            t_search_start = time.perf_counter()
+            predictions, unguaranteed_mask = self._predict_obb(
+                query_points, k=k_NEIGHBOURS
+            )
+            logger.info(
+                f"OBB kNN Search + Predict Time: {time.perf_counter()-t_search_start:.4f}s"
+            )
+            return predictions, unguaranteed_mask
+
         qp = xp.asarray(query_points)
         t_search = time.perf_counter()
         nn_idx, nn_dist2, ungauranteed_mask = knn_l2_distance(
@@ -191,6 +205,76 @@ class NearODESurrogate:
         predictions_k = f_neighbors + linear_term  # (N, k, F)
         predictions = xp.mean(predictions_k, axis=1)  # (N, F)
         return predictions, ungauranteed_mask
+
+    def _predict_obb(self, query_points, k=1):
+        if not self.trained:
+            raise RuntimeError("Model not trained.")
+
+        qp = xp.asarray(query_points)
+
+        # 1. Standard L2 kNN
+        nn_idx, nn_dist2, _ = knn_l2_distance(qp, self.X_src, self.trust_radii, k)
+
+        # 2. Retrieve OBB info
+        Obb_rotation_matrices = self.obb_rotation_matrices[nn_idx]
+        obb_extents = self.obb_extents[nn_idx]
+        centroids = self.X_src[nn_idx]
+
+        # 3. Rotate & Normalize
+        dx = qp[:, None, :] - centroids
+        z = xp.einsum("nk...i,nk...ij->nk...j", dx, Obb_rotation_matrices)
+
+        # 4. Box Check (Compute "Box Distance")
+        # normalized_dist_vector: (N, k, D) -- distance along each axis relative to extent
+        INFLATION_FACTOR = 1.1
+        box_radius = obb_extents * INFLATION_FACTOR
+
+        normalized_dist_vector = xp.abs(z) / box_radius
+
+        # The "distance" to the box center is the L-inf norm of the normalized vector
+        # 0.0 = Center, 1.0 = Boundary
+        box_dist = xp.max(normalized_dist_vector, axis=2)  # (N, k)
+
+        valid_mask = box_dist <= 1.0
+
+        # ---------------------------------------------------------------------
+        # 5. Compute Trust Weights (NEW)
+        # ---------------------------------------------------------------------
+        # We use a quadratic kernel: (1 - d)^2
+        # This gives high weight to points near the centroid, and decays to 0 at the boundary.
+        # We perform the operation only on valid points (masking handles the rest)
+
+        raw_weights = xp.maximum(0.0, 1.0 - box_dist) ** 2  # (N, k)
+
+        # Apply strict validity mask (zero out invalid neighbors)
+        final_weights = raw_weights * valid_mask
+
+        # 6. Gather & Predict
+        N, D = qp.shape
+        F = self.f_src.shape[1] if self.f_src.ndim > 1 else 1
+        flat_idx = nn_idx.reshape(-1)
+
+        f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(N, k, F)
+        J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(N, k, F, D)
+
+        linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
+        predictions_k = f_neighbors + linear_term
+
+        # 7. Weighted Averaging
+        # Broadcast weights: (N, k) -> (N, k, 1) for F-dimension
+        weights_expanded = final_weights[:, :, None]
+
+        weighted_preds = predictions_k * weights_expanded
+        total_weight = xp.sum(weights_expanded, axis=1)  # (N, 1)
+
+        # Handle case where total_weight is 0 (all neighbors invalid)
+        # We add TINY_EPS to denominator to prevent NaN, then mask later
+        predictions = xp.sum(weighted_preds, axis=1) / (total_weight + 1e-12)
+
+        # If total weight is effectively 0, the point is unguaranteed
+        unguaranteed_mask = total_weight.squeeze(-1) < 1e-12
+
+        return predictions, unguaranteed_mask
 
 
 if __name__ == "__main__":
@@ -282,7 +366,7 @@ if __name__ == "__main__":
     X_train = xp.asarray(X_train)
 
     # 2. Initialize Surrogate
-    surrogate = NearODESurrogate(version="v1")
+    surrogate = NearODESurrogate(version="v2")
     print("--- Training ---")
     _start_train_time = time.perf_counter()
     surrogate.train(
