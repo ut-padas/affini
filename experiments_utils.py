@@ -373,6 +373,11 @@ def Problem_experiment_setup(
         if centroids is None or Qs is None or radii is None:
             raise ValueError("Surrogate has no cluster centroids to plot.")
 
+        if IS_CUPY_BACKEND:
+            centroids = xp.asnumpy(centroids)
+            Qs = xp.asnumpy(Qs)
+            radii = xp.asnumpy(radii)
+
         axs[0].scatter(
             centroids[:, 0], centroids[:, 1], c="red", s=10, label="Cluster Centroids"
         )
@@ -381,10 +386,6 @@ def Problem_experiment_setup(
         axs[1].scatter(
             centroids[:, 0], centroids[:, 1], c="red", s=10, label="Cluster Centroids"
         )
-
-        if IS_CUPY_BACKEND:
-            centroids = xp.asnumpy(centroids)
-            Qs = xp.asnumpy(Qs)
 
         # Draw ellipses
         for i in range(centroids.shape[0]):
