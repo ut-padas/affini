@@ -1,12 +1,13 @@
 import logging
 import time
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Optional
 
 import matplotlib.pyplot as plt
 from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max as cupy_scatter_max
 from matplotlib.colors import LogNorm
+from matplotlib.patches import Circle
 from sklearn.cluster import KMeans
 
 from src import IS_CUPY_BACKEND, Array, xp
@@ -171,102 +172,53 @@ def generate_sythetic_points(
     return X_synth, labels_synth.astype(xp.int64)
 
 
-def calculate_Q(
+def calculate_scalar_metrics(
     DeltaX: Array,
-    starts: Array,
-    counts: Array,
+    G_points: Array,
+    G_centroids: Array,
+    map_n_to_k: Array,
     K: int,
-    *,
-    Q_SHRINK: float = 0.0,
 ) -> tuple[Array, Array]:
     """
-    PCA-aligned trust ellipsoid $Q_k$ using max-abs projections, with covariance shrinkage.
-
-    This constructs, for each cluster k, a PSD matrix Q_k defining an ellipsoid:
-        { y : y^T Q_k y <= 1 }
-    aligned with PCA directions of the cluster, with axis lengths chosen by maximum
-    absolute projection of centered points onto those axes.
+    Computes scalar trust radius and observed Lipschitz constant per cluster.
 
     Args:
-        DeltaX: (N, d) centered points for a *packed* batch (cluster segments contiguous).
-        starts: (K,) segment starts within `DeltaX`.
-        counts: (K,) points per segment.
-        K: number of segments/clusters.
-        Q_SHRINK: covariance shrinkage factor in [0,1]. When >0:
-            Cov <- (1-a) Cov + a * (tr(Cov)/d) I.
+        DeltaX: (N, d) centered points (x_i - mu_k).
+        G_points: (N, d) gradients at the points x_i.
+        G_centroids: (K, d) gradients at the centroids mu_k.
+        map_n_to_k: (N,) indices mapping points to their cluster k.
+        K: number of clusters.
 
     Returns:
-        Q: (K, d, d) PSD ellipsoid matrices.
+        radii: (K,) max Euclidean distance from centroid.
+        L_obs: (K,) max observed curvature |dg|/|dx|.
     """
-    # Cov_k = sum_i (dx_i dx_i^T) for points belonging to cluster k.
-    XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]  # (N,d,d)
-    Cov = xp.add.reduceat(XX_all, starts)  # (K,d,d)
-    Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
+    # 1. Compute distances |dx|
+    # Note: explicit axis=1 norm is faster than applying sqrt to sum-sq later
+    dist_x = xp.linalg.norm(DeltaX, axis=1)
 
-    if Q_SHRINK > 0.0:
-        # Sigma = (1-a)Cov + a*(tr(Cov)/d)*I, per cluster
-        d = int(Cov.shape[1])
-        tr = xp.trace(Cov, axis1=1, axis2=2)  # (K,)
-        scale = tr / max(d, 1)
-        I = xp.eye(d, dtype=Cov.dtype)[None, :, :]  # (1,d,d)
-        Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (scale[:, None, None] * I)
-        Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
+    # 2. Compute Scalar Radius: max(|dx|) per cluster
+    radii = xp.zeros((K,), dtype=DeltaX.dtype)
+    scatter_maximum_1d(radii, map_n_to_k, dist_x)
 
-        # PCA directions U (columns).
-        Lambda, U = xp.linalg.eigh(Cov)
+    # 3. Compute Gradient Differences |dg|
+    # Expand centroid gradients to match point shape: (N, d)
+    g_center_expanded = G_centroids[map_n_to_k]
+    diff_g = xp.linalg.norm(G_points - g_center_expanded, axis=1)
 
-        # Invert Eigenvalues to get shape.
-        # Since Cov is PSD and shrunk, Lambda > 0.
-        Lambda_inv = 1.0 / Lambda  # (K,d)
+    # 4. Compute Ratios |dg| / |dx|
+    # Handle division by zero (centroid point itself has dist_x=0)
+    valid_mask = dist_x > TINY_EPS
+    ratios = xp.zeros_like(dist_x)
 
-        # dist^2 = x^T S x = x^T (U Lambda_inv U^T) x
-        map_n_to_k = repeats(xp.arange(K), counts)
-        U_exp = U[map_n_to_k]  # (N, d, d)
-        L_inv_exp = Lambda_inv[map_n_to_k]  # (N, d)
+    if xp.any(valid_mask):
+        ratios[valid_mask] = diff_g[valid_mask] / dist_x[valid_mask]
 
-        # Projection: p = U^T x
-        proj = (U_exp.transpose(0, 2, 1) @ DeltaX[:, :, None])[:, :, 0]  # (N,d)
+    # 5. Compute L_obs: max(ratio) per cluster
+    L_obs = xp.zeros((K,), dtype=DeltaX.dtype)
+    scatter_maximum_1d(L_obs, map_n_to_k, ratios)
 
-        # Distance squared relative to eigen-shape
-        dist_sq = xp.sum((proj * proj) * L_inv_exp, axis=1)  # (N,)
-
-        # Find max distance per cluster to scale the ellipsoid
-        # scale = 1.0 / max(dist_sq)
-        max_dist_sq = xp.zeros((K,), dtype=proj.dtype)
-        scatter_maximum_1d(max_dist_sq, map_n_to_k, dist_sq)
-
-        # Avoid degenerate axes
-        max_dist_sq = xp.maximum(max_dist_sq, TINY_EPS)
-
-        scale = 1.0 / max_dist_sq  # (K,)
-
-        # Q = scale * (U Lambda_inv U^T)
-        # Combine scale into Lambda_inv
-        final_D = scale[:, None] * Lambda_inv  # (K, d)
-
-        # Q = U diag(final_D) U^T
-        Q = (U * final_D[:, None, :]) @ U.transpose(0, 2, 1)  # (K,d,d)
-    else:
-        # PCA directions U (columns).
-        _, U = xp.linalg.eigh(Cov)
-
-        # Projection scores onto PCA axes: proj_i = U_k^T dx_i.
-        map_n_to_k = repeats(xp.arange(K), counts)  # (N,)
-        U_exp = U[map_n_to_k]  # (N,d,d)
-        proj = (U_exp.transpose(0, 2, 1) @ DeltaX[:, :, None])[:, :, 0]  # (N,d)
-        proj_abs = xp.abs(proj)
-
-        # Axis extents: d_axes[k,j] = max_i |proj[i,j]| within cluster k.
-        d_axes = xp.zeros((K, proj_abs.shape[1]), dtype=proj_abs.dtype)
-        scatter_maximum_1d(d_axes, map_n_to_k, proj_abs)
-
-        d_axes = xp.maximum(d_axes, TINY_EPS)
-        Dinv2 = 1.0 / (d_axes * d_axes)  # (K,d)
-
-        # Q = U diag(Dinv2) U^T
-        Q = (U * Dinv2[:, None, :]) @ U.transpose(0, 2, 1)
-
-    return 0.5 * (Q + Q.transpose(0, 2, 1)), Cov
+    return radii, L_obs
 
 
 def estimate_hessian_sqrt_symmetric(
@@ -399,7 +351,8 @@ def allocate_output_buffers(
         "centroids": xp.empty((cap, d), dtype=dtype),
         "f": xp.empty((cap,), dtype=dtype),
         "g": xp.empty((cap, d), dtype=dtype),
-        "Q": xp.empty((cap, d, d), dtype=dtype),
+        "radii": xp.empty((cap,), dtype=dtype),
+        "L_obs": xp.empty((cap,), dtype=dtype),
         "E_rel": xp.empty((cap,), dtype=dtype),
         "counts": xp.empty((cap,), dtype=xp.int64),
     }
@@ -437,7 +390,8 @@ def adjust_buffer_capacity(
         "centroids": xp.empty((new_cap, d), dtype=dtype),
         "f": xp.empty((new_cap,), dtype=dtype),
         "g": xp.empty((new_cap, d), dtype=dtype),
-        "Q": xp.empty((new_cap, d, d), dtype=dtype),
+        "radii": xp.empty((new_cap,), dtype=dtype),
+        "L_obs": xp.empty((new_cap,), dtype=dtype),
         "E_rel": xp.empty((new_cap,), dtype=dtype),
         "counts": xp.empty((new_cap,), dtype=xp.int64),
     }
@@ -456,8 +410,6 @@ def adaptive_clustering(
     f_fn: Callable[[Array], Array],
     g_fn: Callable[[Array], Array],
     TOL: float,
-    ERROR_SCALING_METHOD: Literal["global", "local"] = "global",
-    CLUSTER_SPLITTING_METHOD: Literal["hessian_pca", "pca_only"] = "hessian_pca",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
@@ -467,7 +419,6 @@ def adaptive_clustering(
     SYNTH_BUDGET: Optional[int] = None,
     SYNTH_BUDGET_FACTOR: float = 1.0,
     # Geometry stabilizers
-    Q_SHRINK: float = 0.05,
     MAX_LEVELS: int = 50,
     VISUAL_DEBUG: bool = False,
 ) -> dict[str, Array]:
@@ -503,10 +454,6 @@ def adaptive_clustering(
         f_fn: callable mapping (N, d) -> (N,) or (N,1) values.
         g_fn: callable mapping (N, d) -> (N, d) or (N,1,d) gradients.
         TOL: tolerance for accept criterion.
-        ERROR_SCALING_METHOD: "global" uses max |f| over all points for normalization when
-            computing E_rel; "local" uses max |f| within each cluster.
-        CLUSTER_SPLITTING_METHOD: "hessian_pca" uses Hessian-informed directions, and
-            rotates by |H|^{1/2} before PCA; "pca_only" uses PCA directions of raw Δx.
         NUM_INITIAL_CLUSTERS: initial KMeans cluster count.
         MIN_PTS_PER_CLUSTER: minimum points desired per active cluster (padding target).
         MAX_CLUSTERS_EST: initial allocation for output buffers (can grow).
@@ -737,45 +684,37 @@ def adaptive_clustering(
         E_abs = xp.zeros((K_batch,), dtype=err_point.dtype)
         scatter_maximum_1d(E_abs, map_n_to_k, err_point)
 
-        if ERROR_SCALING_METHOD == "global":
-            E_rel = E_abs / F_inf
-            is_good = E_rel < TOL
-        else:
-            # Cluster-wise max abs value F_max,k = max_i |f(x_i)| within each segment.
-            F_max_cluster = xp.zeros((K_batch,), dtype=F_sorted.dtype)
-            scatter_maximum_1d(F_max_cluster, map_n_to_k, xp.abs(F_sorted))
-
-            # Relative error using local normalization.
-            E_rel = E_abs / xp.maximum(F_max_cluster, TINY_EPS)
-            is_good = (E_rel < TOL) | (E_abs < TOL)
-
+        E_rel = E_abs / F_inf
+        is_good = E_rel < TOL
         if LOG_MEM_STATS:
             log_mem_stats(f"After: L{level:02} Error Computation")
 
         # ---------------------------------------------------------------------
         # Finalize good clusters:
-        #  - compute Q from centered points in accepted clusters,
+        #  - compute Radius and L_obs from accepted clusters,
         #  - append results to output buffers,
-        #  - deactivate their pool points so they are no longer processed.
+        #  - deactivate their pool points.
         # ---------------------------------------------------------------------
         good_idx = xp.nonzero(is_good)[0]
-        if int(good_idx.shape[0]) > 0:
-            # Build a packed DeltaX for only-good points (contiguous).
-            point_good_mask = is_good[map_n_to_k]
-            dx_good = dx[point_good_mask]
+        n_good = int(good_idx.shape[0])
 
-            good_counts = counts[good_idx]
-            good_starts = xp.r_[0, xp.cumsum(good_counts)[:-1]]
+        if n_good > 0:
+            # --- STRATEGY: Compute Metrics for ALL active clusters (Batch) ---
+            # It is vectorized and likely faster than index manipulation.
 
-            Qs, _ = calculate_Q(
-                dx_good,
-                good_starts,
-                good_counts,
-                int(good_idx.shape[0]),
-                Q_SHRINK=Q_SHRINK,
+            all_radii, all_L_obs = calculate_scalar_metrics(
+                dx,  # All active points centered
+                G_sorted,  # All active point gradients
+                g_mus,  # All active centroids
+                map_n_to_k,  # All active mapping
+                K_batch,
             )
 
-            n_good = int(good_idx.shape[0])
+            # Now just slice the good ones
+            radii_good = all_radii[good_idx]
+            L_obs_good = all_L_obs[good_idx]
+
+            # Write to buffers
             end_out = out_count + n_good
             buffers, out_cap = adjust_buffer_capacity(
                 buffers, out_count, out_cap, end_out
@@ -784,12 +723,17 @@ def adaptive_clustering(
             buffers["centroids"][out_count:end_out] = mus[good_idx]
             buffers["f"][out_count:end_out] = f_mus[good_idx]
             buffers["g"][out_count:end_out] = g_mus[good_idx]
-            buffers["Q"][out_count:end_out] = Qs
+
+            # Store New Scalar Metrics
+            buffers["radii"][out_count:end_out] = radii_good
+            buffers["L_obs"][out_count:end_out] = L_obs_good
+
             buffers["E_rel"][out_count:end_out] = E_rel[good_idx]
             buffers["counts"][out_count:end_out] = counts[good_idx].astype(xp.int64)
             out_count = end_out
 
             # Deactivate all points (real + synthetic) in accepted clusters.
+            point_good_mask = is_good[map_n_to_k]
             global_ids_good = idx_sorted[point_good_mask]
             active[global_ids_good] = False
 
@@ -820,28 +764,18 @@ def adaptive_clustering(
         bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
         K_bad = int(bad_idx.shape[0])
 
-        if CLUSTER_SPLITTING_METHOD == "hessian_pca":
-            # Hessian fit (symmetric) + |H|^{1/2} transform.
-            M = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts)
+        # Hessian fit (symmetric) + |H|^{1/2} transform.
+        M = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts)
 
-            # Transform coordinates: z = M_k Δx (cluster-wise).
-            map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
-            M_exp = M[map_bad_n_to_k]
-            Z = (M_exp @ dx_bad[:, :, None])[:, :, 0]
+        # Transform coordinates: z = M_k Δx (cluster-wise).
+        map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
+        M_exp = M[map_bad_n_to_k]
+        Z = (M_exp @ dx_bad[:, :, None])[:, :, 0]
 
-            # Cov(Z) per cluster.
-            ZZ_all = Z[:, :, None] * Z[:, None, :]
-            CovZ = xp.add.reduceat(ZZ_all, bad_starts)
-            CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))  # (K_bad,d,d)
-        elif CLUSTER_SPLITTING_METHOD == "pca_only":
-            # PCA-only split: Cov(Δx)
-            map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
-            XX_all = dx_bad[:, :, None] * dx_bad[:, None, :]  # (N_bad,d,d)
-            CovZ = xp.add.reduceat(XX_all, bad_starts)
-            CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))  # (K_bad,d,d)
-            Z = dx_bad
-        else:
-            raise ValueError(f"Unknown {CLUSTER_SPLITTING_METHOD=}")
+        # Cov(Z) per cluster.
+        ZZ_all = Z[:, :, None] * Z[:, None, :]
+        CovZ = xp.add.reduceat(ZZ_all, bad_starts)
+        CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))  # (K_bad,d,d)
 
         # Split direction per cluster = top eigenvector of CovZ.
         v = get_dominant_eigenvector(CovZ)
@@ -1015,7 +949,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n-init-clusters",
         type=int,
-        default=20,
+        default=1,
         help="Number of initial clusters for adaptive clustering",
     )
     parser.add_argument(
@@ -1023,20 +957,6 @@ if __name__ == "__main__":
         type=int,
         default=500,
         help="Minimum points per cluster for adaptive clustering",
-    )
-    parser.add_argument(
-        "--error-scaling-method",
-        type=str,
-        default="global",
-        choices=["local", "global"],
-        help="Type of error scaling for relative error computation",
-    )
-    parser.add_argument(
-        "--cluster-splitting-method",
-        type=str,
-        default="hessian_pca",
-        choices=["hessian_pca", "pca_only"],
-        help="Method for cluster splitting",
     )
     parser.add_argument(
         "--rosenbrock-a",
@@ -1063,8 +983,6 @@ if __name__ == "__main__":
     N_TRAIN = int(args.n_train)
     NUM_INITIAL_CLUSTERS = args.n_init_clusters
     MIN_PTS_PER_CLUSTER = args.n_min_per_cluster
-    ERROR_SCALING_METHOD = args.error_scaling_method
-    CLUSTER_SPLITTING_METHOD = args.cluster_splitting_method
     A_ROSENBROCK = args.rosenbrock_a
     OUTPUT_SUBDIR = args.output_subdir
     FORCE_REEXEC = args.force
@@ -1074,7 +992,7 @@ if __name__ == "__main__":
     AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     img_fpath = (
         AC_PLOTS_DIR
-        / f"adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_{ERROR_SCALING_METHOD}_{CLUSTER_SPLITTING_METHOD}.png"
+        / f"adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}.png"
     )
     if DIM == 2 and img_fpath.exists() and not FORCE_REEXEC:
         print(f"Plot file {img_fpath} already exists. Skipping execution.")
@@ -1098,8 +1016,6 @@ if __name__ == "__main__":
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         SYNTH_BUDGET_FACTOR=100 * 10,
-        ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,
-        CLUSTER_SPLITTING_METHOD=CLUSTER_SPLITTING_METHOD,
     )
 
     print("-" * 40)
@@ -1122,7 +1038,6 @@ if __name__ == "__main__":
 
     if DIM == 2 and len(results["centroids"]) <= 10_000:
         import numpy as np
-        from matplotlib.patches import Ellipse
 
         if IS_CUPY_BACKEND:
             results = {k: xp.asnumpy(v) for k, v in results.items()}
@@ -1163,7 +1078,7 @@ if __name__ == "__main__":
             norm=LogNorm(),
         )
         fig.colorbar(cs2, ax=axs[1])
-        axs[1].set_title("Adaptive Clustering with Trust Ellipses")
+        axs[1].set_title("Adaptive Clustering with Trust Circles")
         axs[1].set_xlabel("x")
         axs[1].set_ylabel("y")
         axs[1].set_aspect("equal")
@@ -1175,40 +1090,24 @@ if __name__ == "__main__":
             label="Centroids",
         )
 
-        # Draw ellipses
-        level = 1.0
+        # Draw trust circles
         for i in range(results["centroids"].shape[0]):
             mu = results["centroids"][i]
-            Q = results["Q"][i]
+            radius = results["radii"][i]
 
-            # Eigen-decomposition of Q
-            w, V = np.linalg.eigh(Q)
-            w = np.maximum(w, 1e-12)
-
-            order = np.argsort(w)[::-1]
-            w = w[order]
-            V = V[:, order]
-
-            a = np.sqrt(level / w[0])
-            b = np.sqrt(level / w[1])
-
-            angle = np.degrees(np.arctan2(V[1, 0], V[0, 0]))
-
-            ellipse = Ellipse(
+            circle = Circle(
                 xy=(mu[0], mu[1]),
-                width=2 * a,
-                height=2 * b,
-                angle=angle,
+                radius=radius,
                 edgecolor="red",
                 facecolor="none",
                 lw=1,
                 alpha=0.5,
             )
-            axs[1].add_patch(ellipse)
+            axs[1].add_patch(circle)
         axs[1].legend()
         plt.tight_layout()
         fig.suptitle(
-            f"Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL} (error_normalization={ERROR_SCALING_METHOD}), N_INIT={NUM_INITIAL_CLUSTERS}, N_MIN={MIN_PTS_PER_CLUSTER}, CLUSTER_SPLITTING_METHOD={CLUSTER_SPLITTING_METHOD}), Final Clusters: {results['centroids'].shape[0]:,}",
+            f"Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL}), N_INIT={NUM_INITIAL_CLUSTERS}, N_MIN={MIN_PTS_PER_CLUSTER}), Final Clusters: {results['centroids'].shape[0]:,}",
             fontsize=11,
         )
 
