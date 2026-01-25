@@ -4,13 +4,14 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from ics_experiments_utils import (
+from experiments_utils import (
     ICS26_DIR,
     Problem_experiment_setup,
     create_summary_dataframe,
     del_all_error_files_in_dir,
 )
 from src.problems.quadratic import quadratic, quadratic_grad
+from src.problems.rastrigin import rastrigin, rastrigin_grad
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
     CENTERS_3D,
@@ -162,6 +163,70 @@ def gaussian_experiment_with_v2() -> Path:
     return EXP_DIR
 
 
+def rastrigin_experiment_with_v2() -> Path:
+    # Rastrigin is complex (oscillatory), so we need more initial clusters and data
+    N_TRAIN = 300_000
+    N_TEST = 50_000
+    N_INIT_CLUSTERS = 50
+    N_MIN_PER_CLUSTER = 100
+    MAX_CLUSTERS_EST = 50_000
+    K_NEIGHBOURS = 5  # Higher K needed to bridge gaps between the many "grid" clusters
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "rastrigin_v2"
+    del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
+
+    # Rastrigin becomes extremely difficult in high dimensions for local surrogates
+    # due to the exponential growth of local minima. We stick to 2, 3, 4.
+    DIMs = [2, 3, 4]
+
+    # Global Max is approx 80 for d=2, 120 for d=3.
+    # TOLs: 0.5 (50%) down to 0.005 (0.5%)
+    TOLs = [i / 100.0 for i in [50, 25, 10, 5, 2, 1, 0.5]]
+
+    # L2 is excluded by default as it tends to over-segment the oscillating "floor"
+    ERROR_METRICs = ["Linf-global", "Linf-local"]
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rastrigin Experiments"):
+
+        # Resource constraints check
+        if DIM >= 3 and TOL <= 1e-2:
+            print(f"Skipping DIM={DIM}, TOL={TOL} (High Compute Cost)")
+            continue
+
+        json_path = (
+            EXP_DIR / f"ics26_rastrigin_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            DOMAIN=[-5.12, 5.12],  # Standard Rastrigin Domain
+            f_fn=rastrigin,
+            g_fn=rastrigin_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            SYNTH_BUDGET_FACTOR=1000,  # High budget for complex padding
+            USE_HESSIAN_INFORMED_SPLIT=True,
+        )
+
+    return EXP_DIR
+
+
 if __name__ == "__main__":
     from src.logging_config import setup_logging
 
@@ -172,3 +237,6 @@ if __name__ == "__main__":
 
     dir2 = gaussian_experiment_with_v2()
     create_summary_dataframe(dir2)
+
+    dir3 = rastrigin_experiment_with_v2()
+    create_summary_dataframe(dir3)
