@@ -6,7 +6,8 @@ from typing import Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Circle, Ellipse
+from matplotlib.patches import Ellipse
+from tqdm import tqdm
 
 from ics26_rosenbrock import (
     ICS26_DIR,
@@ -42,7 +43,7 @@ def Quadratic_experiment_setup(
     K_NEIGHBOURS: int,
     USE_HESSIAN_INFORMED_SPLIT: bool,
     CLUSTERING_VERSION: Literal["v1", "v2"],
-    ERROR_SPLIT_CRITERION: Literal["L2", "Linf"] = "L2",
+    ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     SYNTH_BUDGET_FACTOR: int = 10,
 ):
     # Sample data from a uniform distribution
@@ -71,7 +72,7 @@ def Quadratic_experiment_setup(
             SEED=SEED,
             SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
             USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-            ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,
+            ERROR_METRIC=ERROR_METRIC,
         )
         _end_train_time = time.perf_counter()
         _TRAINED = True
@@ -132,7 +133,7 @@ def Quadratic_experiment_setup(
         SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
         CLUSTERING_VERSION=CLUSTERING_VERSION,
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-        ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,
+        ERROR_METRIC=ERROR_METRIC,
     )
 
     with open(json_fpath, "w") as jf:
@@ -174,17 +175,14 @@ def Quadratic_experiment_setup(
         if centroids is None:
             raise ValueError("Cluster centroids are None")
 
-        trust_radii = surrogate.trust_radii  # (N_CLUSTERS, )
-        if trust_radii is None:
-            raise ValueError("Trust Radii are None")
+        Qs = surrogate.Qs_src
+        if Qs is None:
+            raise ValueError("Trust Ellipse matrices are None")
 
         # Ensure centroids and trust_radii are numpy arrays for matplotlib
         if IS_CUPY_BACKEND:
             centroids = xp.asnumpy(centroids)
-            trust_radii = xp.asnumpy(trust_radii)
-        else:
-            centroids = np.asarray(centroids)
-            trust_radii = np.asarray(trust_radii)
+            Qs = xp.asnumpy(Qs)
 
         fig.colorbar(cs2, ax=axs[1])
         axs[1].scatter(
@@ -199,16 +197,25 @@ def Quadratic_experiment_setup(
         # Draw circles
         for i in range(centroids.shape[0]):
             mu = centroids[i]
-            r = trust_radii[i]
-            circle = Circle(
+            Q = Qs[i]
+            # Eigen decomposition
+            eigvals, eigvecs = np.linalg.eigh(Q)
+            # Calculate angle in degrees
+            angle = np.degrees(np.arctan2(eigvecs[1, 0], eigvecs[0, 0]))
+            # Width and height are "2 * sqrt(eigenvalue)" for 1 std dev
+            width, height = 2 * np.sqrt(eigvals)
+            ellipse = Ellipse(
                 xy=mu,
-                radius=r,
-                edgecolor="red",
-                fc="None",
-                lw=1,
-                alpha=0.5,
+                width=width,
+                height=height,
+                angle=angle,
+                edgecolor="blue",
+                facecolor="none",
+                linestyle="--",
+                alpha=0.7,
+                lw=0.8,
             )
-            axs[1].add_patch(circle)
+            axs[1].add_patch(ellipse)
 
         axs[1].set_title(
             f"Cluster Centroids with Trust Ellipses (N_CLUSTERS={N_CLUSTERS}, TOL={TOL})",
@@ -225,112 +232,6 @@ def Quadratic_experiment_setup(
         plt.close(fig)
 
 
-def experiment_with_v1() -> Path:
-    N_TRAIN = 100_000
-    N_TEST = 10_000
-    CLUSTERING_VERSION = "v1"
-
-    EXP_DIR = ICS26_DIR / "quadratic_v1_hessian_informed_split_experiments"
-    del_all_error_files_in_dir(EXP_DIR)
-    create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 3, 4, 5, 8, 10]
-    USE_HESSIAN_INFORMED_SPLITs = [True, False]
-
-    for DIM, TOL, USE_HESSIAN_INFORMED_SPLIT in product(
-        DIMs, TOLs, USE_HESSIAN_INFORMED_SPLITs
-    ):
-        if DIM > 5 and TOL < 1e-3:
-            print(
-                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
-            )
-            continue
-
-        json_path = (
-            EXP_DIR
-            / f"ics26_quadratic_dim{DIM}_tol{TOL}_hessian_informed_split{USE_HESSIAN_INFORMED_SPLIT}.json"
-        )
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        if json_path.exists():
-            print(f"Skipping existing experiment at {json_path}")
-            continue
-
-        Quadratic_experiment_setup(
-            json_fpath=json_path,
-            DIM=DIM,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            TOL=TOL,
-            ERROR_SCALING_METHOD=ERROR_SCALING_METHOD,  # type: ignore
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-            SYNTH_BUDGET_FACTOR=1000,
-            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-        )
-
-    return EXP_DIR
-
-
-def experiment_with_v1_error_split_criteria() -> Path:
-    N_TRAIN = 100_000
-    N_TEST = 10_000
-    CLUSTERING_VERSION = "v1"
-
-    EXP_DIR = (
-        ICS26_DIR
-        / "quadratic_v1_hessian_informed_split_experiments_error_split_criteria"
-    )
-    del_all_error_files_in_dir(EXP_DIR)
-    create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 3, 4, 5, 8, 10]
-    USE_HESSIAN_INFORMED_SPLITs = [True, False]
-    ERROR_SPLIT_CRITERIONs = ["L2", "Linf"]
-
-    for DIM, TOL, USE_HESSIAN_INFORMED_SPLIT, ERROR_SPLIT_CRITERION in product(
-        DIMs, TOLs, USE_HESSIAN_INFORMED_SPLITs, ERROR_SPLIT_CRITERIONs
-    ):
-        if DIM > 5 and TOL < 1e-3:
-            print(
-                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
-            )
-            continue
-        elif DIM >= 8 and TOL < 1e-2:
-            print(
-                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
-            )
-            continue
-
-        json_path = (
-            EXP_DIR
-            / f"ics26_quadratic_dim{DIM}_tol{TOL}_hessian_informed_split{USE_HESSIAN_INFORMED_SPLIT}_error_split_criterion{ERROR_SPLIT_CRITERION}.json"
-        )
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        if json_path.exists():
-            print(f"Skipping existing experiment at {json_path}")
-            continue
-        print(f"Running experiment: {json_path}")
-
-        Quadratic_experiment_setup(
-            json_fpath=json_path,
-            DIM=DIM,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            TOL=TOL,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-            SYNTH_BUDGET_FACTOR=1000,
-            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-            ERROR_SPLIT_CRITERION=ERROR_SPLIT_CRITERION,  # type: ignore
-        )
-
-    return EXP_DIR
-
-
 def experiment_with_v2() -> Path:
     N_TRAIN = 100_000
     N_TEST = 10_000
@@ -340,20 +241,30 @@ def experiment_with_v2() -> Path:
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
     DIMs = [2, 3, 4, 5, 8, 10]
+    ERROR_METRICs = ["L2", "Linf-global", "Linf-local"]
 
-    for DIM, TOL in product(DIMs, TOLs):
-        if DIM > 5 and TOL < 1e-3:
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        if DIM > 5 and TOL <= 1e-4:
             print(
                 f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
             )
             continue
-        elif DIM >= 8 and TOL < 5e-2:
+        elif DIM >= 8 and TOL <= 1e-2:
             print(
                 f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
             )
             continue
+        elif ERROR_METRIC == "L2" and TOL <= 0.2 and DIM >= 4:
+            print(
+                f"Skipping experiment for ERROR_METRIC={ERROR_METRIC}, TOL={TOL} and DIM={DIM} due to high computational cost."
+            )
+            continue
 
-        json_path = EXP_DIR / f"ics26_quadratic_dim{DIM}_tol{TOL}.json"
+        json_path = (
+            EXP_DIR / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        )
         json_path.parent.mkdir(parents=True, exist_ok=True)
         if json_path.exists():
             print(f"Skipping existing experiment at {json_path}")
@@ -371,6 +282,7 @@ def experiment_with_v2() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
             SYNTH_BUDGET_FACTOR=1000,
             USE_HESSIAN_INFORMED_SPLIT=True,
         )
@@ -382,12 +294,6 @@ if __name__ == "__main__":
     from src.logging_config import setup_logging
 
     setup_logging()
-
-    # dir1 = experiment_with_v1()
-    # create_summary_dataframe(dir1)
-
-    dir2 = experiment_with_v1_error_split_criteria()
-    create_summary_dataframe(dir2)
 
     dir3 = experiment_with_v2()
     create_summary_dataframe(dir3)
