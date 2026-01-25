@@ -45,6 +45,7 @@ class Cluster:
     cluster_size: int
     max_error: float
     mean_error: float
+    lipschitz_obs: float
 
 
 @dataclass
@@ -335,6 +336,7 @@ class AdaptiveClusterer:
                             cluster_size=1,
                             max_error=0.0,
                             mean_error=0.0,
+                            lipschitz_obs=0.0,
                         )
                     )
                     continue
@@ -358,6 +360,31 @@ class AdaptiveClusterer:
                     max_error = float(np.max(error_vec))
                     mean_error = float(np.mean(error_vec))
                     h_proxy = 2.0 * max_error / (radius**2) if radius > 0 else 0.0
+
+                    # Calculate Lipschitz observation - NEW STRATEGY: Scan all points to find max curvature
+                    L_obs = 0.0
+                    if grad_f is not None and cluster_size > 1:
+                        # 1. Compute Gradients for ALL points in cluster
+                        # Note: In production, you might only sample subset for speed
+                        J_all = grad_f(X_cluster)  # (N, FD, D)
+
+                        # 2. Vectorized Difference Calculation
+                        # J_c is (1, FD, D) -> Broadcast subtract
+                        diff_grad = np.linalg.norm(
+                            (J_all - J_c).reshape(cluster_size, -1), axis=1
+                        )
+                        diff_x = np.linalg.norm(
+                            (X_cluster - c).reshape(cluster_size, -1), axis=1
+                        )
+
+                        # 3. Compute Ratios
+                        # Filter out tiny diff_x to avoid division by zero (centroid itself)
+                        valid_mask = diff_x > 1e-9
+                        if np.any(valid_mask):
+                            ratios = diff_grad[valid_mask] / diff_x[valid_mask]
+                            # The max ratio corresponds to the steepest direction
+                            L_obs = float(np.max(ratios))
+
                     final_clusters.append(
                         Cluster(
                             centroid=np.squeeze(c),
@@ -368,6 +395,7 @@ class AdaptiveClusterer:
                             cluster_size=cluster_size,
                             max_error=max_error,
                             mean_error=mean_error,
+                            lipschitz_obs=float(L_obs),
                         )
                     )
                 else:
