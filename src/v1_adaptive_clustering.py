@@ -188,7 +188,7 @@ class AdaptiveClusterer:
         f: Callable,
         grad_f: Optional[Callable],
         cupy_f: Optional[Callable],
-        error_split_criterion: Literal["L2", "Linf-global", "Linf-local"],
+        error_metric: Literal["L2", "Linf-global", "Linf-local"],
         F_inf: Optional[float],
     ) -> tuple[
         bool,
@@ -225,7 +225,7 @@ class AdaptiveClusterer:
         else:
             F_taylor = F_c
 
-        if error_split_criterion == "L2":
+        if error_metric == "L2":
             error_vec = np.linalg.norm(F_cluster - F_taylor, axis=1)
             error_vec_norm = np.linalg.norm(error_vec, 2)
 
@@ -240,12 +240,12 @@ class AdaptiveClusterer:
             # Check if relative error is within tolerance
             acceptable = bool(local_error_ratio <= self.tol)
 
-        elif error_split_criterion == "Linf-global" and F_inf is not None:
+        elif error_metric == "Linf-global" and F_inf is not None:
             error_vec = np.linalg.norm(F_cluster - F_taylor, ord=np.inf, axis=1)
             max_error = float(np.max(error_vec))
             e_rel = max_error / F_inf
             acceptable = bool(e_rel <= self.tol)
-        elif error_split_criterion == "Linf-local":
+        elif error_metric == "Linf-local":
             error_vec = np.linalg.norm(F_cluster - F_taylor, ord=np.inf, axis=1)
             max_error = float(np.max(error_vec))
 
@@ -258,7 +258,7 @@ class AdaptiveClusterer:
             e_rel = max_error / normalization
             acceptable = bool((e_rel <= self.tol) or (max_error <= self.tol))
         else:
-            raise ValueError(f"Invalid error_split_criterion: {error_split_criterion}")
+            raise ValueError(f"Invalid error_split_criterion: {error_metric}")
 
         return acceptable, radius, c, error_vec, F_c, J_c
 
@@ -268,7 +268,7 @@ class AdaptiveClusterer:
         f: Callable,
         grad_f: Optional[Callable],
         cupy_f: Optional[Callable],
-        error_split_criterion: Literal["L2", "Linf-global", "Linf-local"],
+        error_metric: Literal["L2", "Linf-global", "Linf-local"],
     ) -> tuple[list[Cluster], int]:
         """
         Main clustering algorithm.
@@ -311,7 +311,7 @@ class AdaptiveClusterer:
         final_clusters: list[Cluster] = []
         n_level = 0
 
-        if error_split_criterion != "L2":
+        if error_metric != "L2":
             # Get max of f over entire dataset for Linf criterion
             F_all = self._get_function_values(X, f, cupy_f)
             # CCompute infinity norm: max_x |f(x)|_oo
@@ -364,7 +364,7 @@ class AdaptiveClusterer:
                         force_add = True
 
                 acceptable, radius, c, error_vec, F_c, J_c = self._cluster_violation(
-                    X_cluster, f, grad_f, cupy_f, error_split_criterion, F_inf
+                    X_cluster, f, grad_f, cupy_f, error_metric, F_inf
                 )
 
                 if acceptable or force_add:
@@ -476,7 +476,7 @@ def adaptive_cluster_algorithm(
     min_pts_per_cluster=1,
     seed=0,
     should_generate_extra_points: bool = True,
-    error_split_criterion: Literal["L2", "Linf-global", "Linf-local"] = "L2",
+    error_metric: Literal["L2", "Linf-global", "Linf-local"] = "L2",
     two_means_split_method: Literal["optimal", "median"] = "median",
     use_hessian_informed_split: bool = True,
 ) -> tuple[list[Cluster], int]:
@@ -495,7 +495,7 @@ def adaptive_cluster_algorithm(
         f=f,
         grad_f=grad_f,
         cupy_f=cupy_f,
-        error_split_criterion=error_split_criterion,
+        error_metric=error_metric,
     )
     return clusters, num_levels
 
@@ -588,7 +588,7 @@ if __name__ == "__main__":
         seed=seed,
         should_generate_extra_points=True,
         use_hessian_informed_split=USE_HESSIAN_INFORMED_SPLIT,
-        error_split_criterion=ERROR_SPLIT_CRITERION,
+        error_metric=ERROR_SPLIT_CRITERION,
     )
     toc = time.perf_counter()
     print(f"Total clusters formed: {len(clusters):,}")

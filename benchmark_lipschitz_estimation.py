@@ -45,7 +45,7 @@ def benchmark_hessian_estimation():
     np.random.seed(SEED)
     X = np.random.uniform(-2, 2, size=(N, D))
 
-    # Configurations to test: (Criterion, Use Hessian Split)
+    # Configurations to test: (Error Metric, Use Hessian Split)
     # Now testing L2, Linf-global, and Linf-local
     configs = [
         ("L2", False),
@@ -62,7 +62,7 @@ def benchmark_hessian_estimation():
         f"Benchmarking Hessian Estimation on Anisotropic Quadratic Function (True L = {func_obj.true_lipschitz}, Tol = {TOL})"
     )
     print(
-        f"{'Criterion':<15} | {'Split Method':<15} | {'Clusters':<10} | {'Est. Lipschitz':<15} | {'Bias':<10}"
+        f"{'Error Metric':<15} | {'Split Method':<15} | {'Clusters':<10} | {'Est. Lipschitz':<15} | {'Bias':<10}"
     )
     print("-" * 80)
 
@@ -86,7 +86,7 @@ def benchmark_hessian_estimation():
     # Variable to store the contour plot for the colorbar
     last_cp = None
 
-    for idx, (criterion, use_hessian) in enumerate(configs):
+    for idx, (error_metric, use_hessian) in enumerate(configs):
         # 2. Run Clustering
         clusterer = AdaptiveClusterer(
             tol=TOL,
@@ -97,7 +97,7 @@ def benchmark_hessian_estimation():
         )
 
         clusters, _ = clusterer.fit(
-            X, func_obj.f, func_obj.grad, cupy_f=None, error_split_criterion=criterion  # type: ignore
+            X, func_obj.f, func_obj.grad, cupy_f=None, error_metric=error_metric  # type: ignore
         )
 
         # 3. Analyze Estimation Quality
@@ -116,11 +116,11 @@ def benchmark_hessian_estimation():
 
             results.append(
                 {
-                    "Criterion": criterion,
+                    "Error Metric": error_metric,
                     "Hessian Split": use_hessian,
                     "Estimated_L": c.lipschitz_obs,
                     "True_L": func_obj.true_lipschitz,
-                    "Error_Type": criterion,  # Use detailed criterion name
+                    "Error_Type": error_metric,  # Use detailed criterion name
                 }
             )
 
@@ -135,14 +135,14 @@ def benchmark_hessian_estimation():
         # Print Summary stats
         split_name = "Hessian" if use_hessian else "Geometric"
         print(
-            f"{criterion:<15} | {split_name:<15} | {len(clusters):<10} | {lip_mean:.2f}           | {bias:.2f}"
+            f"{error_metric:<15} | {split_name:<15} | {len(clusters):<10} | {lip_mean:.2f}           | {bias:.2f}"
         )
 
         # Store summary results
         summary_results.append(
             {
                 "Tol": TOL,
-                "Criterion": criterion,
+                "Error Metric": error_metric,
                 "Hessian Split": use_hessian,
                 "N_Clusters": len(clusters),
                 "Mean_Estimated_L": lip_mean,
@@ -183,7 +183,7 @@ def benchmark_hessian_estimation():
 
         split_title = "Hessian Split" if use_hessian else "Geometric Split"
         ax.set_title(
-            f"{criterion} | {split_title}\nN_Clusters = {len(clusters)}", fontsize=11
+            f"{error_metric} | {split_title}\nN_Clusters = {len(clusters)}", fontsize=11
         )
         ax.set_xlim(-2, 2)
         ax.set_ylim(-2, 2)
@@ -210,7 +210,7 @@ def benchmark_hessian_estimation():
     plt.figure(figsize=(12, 8))
     sns.boxplot(
         data=df,
-        x="Criterion",
+        x="Error Metric",
         y="Estimation_Bias",
         hue="Hessian Split",
         showfliers=False,
