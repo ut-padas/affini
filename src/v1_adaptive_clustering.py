@@ -188,8 +188,7 @@ class AdaptiveClusterer:
         f: Callable,
         grad_f: Optional[Callable],
         cupy_f: Optional[Callable],
-        level: int,
-        error_split_criterion: Literal["L2", "Linf"],
+        error_split_criterion: Literal["L2", "Linf-global", "Linf-local"],
         F_inf: Optional[float],
     ) -> tuple[
         bool,
@@ -241,11 +240,23 @@ class AdaptiveClusterer:
             # Check if relative error is within tolerance
             acceptable = bool(local_error_ratio <= self.tol)
 
-        elif error_split_criterion == "Linf" and F_inf is not None:
+        elif error_split_criterion == "Linf-global" and F_inf is not None:
             error_vec = np.linalg.norm(F_cluster - F_taylor, ord=np.inf, axis=1)
             max_error = float(np.max(error_vec))
             e_rel = max_error / F_inf
             acceptable = bool(e_rel <= self.tol)
+        elif error_split_criterion == "Linf-local":
+            error_vec = np.linalg.norm(F_cluster - F_taylor, ord=np.inf, axis=1)
+            max_error = float(np.max(error_vec))
+
+            # F_cluster shape is (N, F_dim). We take norm over F_dim, then max over N points.
+            F_cluster_abs = np.linalg.norm(F_cluster, ord=np.inf, axis=1)
+            local_F_max = float(np.max(F_cluster_abs))
+
+            # Compute Relative Error with safety
+            normalization = max(local_F_max, 1e-12)
+            e_rel = max_error / normalization
+            acceptable = bool((e_rel <= self.tol) or (max_error <= self.tol))
         else:
             raise ValueError(f"Invalid error_split_criterion: {error_split_criterion}")
 
@@ -257,7 +268,7 @@ class AdaptiveClusterer:
         f: Callable,
         grad_f: Optional[Callable],
         cupy_f: Optional[Callable],
-        error_split_criterion: Literal["L2", "Linf"],
+        error_split_criterion: Literal["L2", "Linf-global", "Linf-local"],
     ) -> tuple[list[Cluster], int]:
         """
         Main clustering algorithm.
@@ -267,7 +278,7 @@ class AdaptiveClusterer:
             f: Function to evaluate. Should return values with shape (n, fd) where fd=output dimensions.
             grad_f: Optional function to compute gradients. Should return gradients with shape (n, fd, d).
             cupy_f: Optional function to evaluate on GPU. Should return values with shape (n, fd).
-            error_split_criterion: Criterion for error splitting ('L2' or 'Linf').
+            error_split_criterion: Criterion for error splitting ('L2' or 'Linf-global' or 'Linf-local').
 
         Returns:
             List of tree nodes representing the clustered data.
@@ -300,7 +311,7 @@ class AdaptiveClusterer:
         final_clusters: list[Cluster] = []
         n_level = 0
 
-        if error_split_criterion == "Linf":
+        if error_split_criterion != "L2":
             # Get max of f over entire dataset for Linf criterion
             F_all = self._get_function_values(X, f, cupy_f)
             # CCompute infinity norm: max_x |f(x)|_oo
@@ -465,7 +476,7 @@ def adaptive_cluster_algorithm(
     min_pts_per_cluster=1,
     seed=0,
     should_generate_extra_points: bool = True,
-    error_split_criterion: Literal["L2", "Linf"] = "L2",
+    error_split_criterion: Literal["L2", "Linf-global", "Linf-local"] = "L2",
     two_means_split_method: Literal["optimal", "median"] = "median",
     use_hessian_informed_split: bool = True,
 ) -> tuple[list[Cluster], int]:
