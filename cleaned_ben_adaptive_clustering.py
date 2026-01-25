@@ -135,7 +135,7 @@ def generate_padding(
     return X_synth
 
 
-def adaptive_clustering(
+def bens_adaptive_clustering(
     X: np.ndarray,
     f_fn: Callable,
     g_fn: Callable,
@@ -347,7 +347,7 @@ if __name__ == "__main__":
     D = 2
     rng = np.random.default_rng(0)
     X = rng.uniform(-2, 2, size=(N, D))
-    results = adaptive_clustering(
+    results = bens_adaptive_clustering(
         X,
         f_fn=shif_g_fn,
         g_fn=shif_g_grad_fn,
@@ -428,7 +428,7 @@ if __name__ == "__main__":
     D = 2
     rng = np.random.default_rng(1)
     X = rng.uniform(-5, 5, size=(N, D))
-    results = adaptive_clustering(
+    results = bens_adaptive_clustering(
         X,
         f_fn=quadratic,
         g_fn=quadratic_grad,
