@@ -350,6 +350,13 @@ if __name__ == "__main__":
         help="Minimum points per cluster for adaptive clustering",
     )
     parser.add_argument(
+        "--error-metric",
+        type=str,
+        default="Linf-global",
+        choices=["L2", "Linf-local", "Linf-global"],
+        help="Error metric for adaptive clustering",
+    )
+    parser.add_argument(
         "--k-neighbours", type=int, default=1, help="Number of neighbors for kNN"
     )
     parser.add_argument(
@@ -370,6 +377,7 @@ if __name__ == "__main__":
     N_test = args.n_test
     N_INIT_CLUSTERS = args.n_init_clusters
     N_MIN_PER_CLUSTER = args.n_min_per_cluster
+    ERROR_METRIC = args.error_metric
     K_NEIGHBOURS = args.k_neighbours
     SEED = args.seed
     A_ROSENBROCK = args.rosenbrock_a
@@ -381,7 +389,7 @@ if __name__ == "__main__":
 
     img_fpath = (
         SURR_EXP_DIR
-        / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_dim{dim}_tol{TOL:.1e}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
+        / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_dim{dim}_tol{TOL:.1e}_error{ERROR_METRIC}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
     )
     json_fpath = img_fpath.with_suffix(".json")
     if img_fpath.exists() and json_fpath.exists() and not FORCE_RECOMPUTE:
@@ -405,6 +413,7 @@ if __name__ == "__main__":
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
         TOL=TOL,
+        ERROR_METRIC=ERROR_METRIC,
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
         MAX_CLUSTERS_EST=50_000,
