@@ -6,7 +6,6 @@ from typing import Any, Callable, Literal
 from src import IS_CUPY_BACKEND, Array, xp
 from src.adaptive_clustering import adaptive_clustering
 from src.data_sampler import DataSampler
-from src.ellipsoidal_distance import knn_ellipsoidal_distance
 from src.l2_distance import knn_l2_distance
 from src.v1_adaptive_clustering import adaptive_cluster_algorithm
 from src.v1_gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
@@ -27,7 +26,8 @@ class NearODESurrogate:
         self.X_src = None
         self.f_src = None
         self.J_src = None
-        self.trust_radii = None
+        self.trust_radii_src = None
+        self.Qs_src = None
         self.N_src = 0
         self.training_num_levels = -1
 
@@ -39,13 +39,13 @@ class NearODESurrogate:
         *,
         # Clustering params
         TOL: float = 1e-2,
+        ERROR_METRIC: Literal["L2", "Linf-local", "Linf-global"] = "Linf-global",
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
         SYNTH_BUDGET_FACTOR: float = 10.0,
         SEED: int = 0,
         USE_HESSIAN_INFORMED_SPLIT: bool = False,
-        ERROR_SPLIT_CRITERION: Literal["L2", "Linf"] = "L2",
     ):
         """
         1. Sample X from domain.
@@ -61,25 +61,28 @@ class NearODESurrogate:
                 f_fn=f_fn,
                 g_fn=g_fn,
                 TOL=TOL,
+                ERROR_METRIC=ERROR_METRIC,
                 NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
                 MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                 SEED=SEED,
                 SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
-                LOG_MEM_STATS=True,
+                LOG_MEM_STATS=False,
             )
 
             centroids = xp.asarray(results["centroids"])
             f_vals = xp.asarray(results["f"])
             grads = xp.asarray(results["g"])
             radii = xp.asarray(results["radii"])
+            Qs = xp.asarray(results["Q"])
             num_levels = results.get("num_levels", -1)
 
             # 2. Store Data
             self.X_src = centroids
             self.f_src = f_vals
             self.J_src = grads
-            self.trust_radii = radii
+            self.trust_radii_src = radii
+            self.Qs_src = Qs
             self.N_src = centroids.shape[0]
             self.training_num_levels = num_levels
         elif self.version == "v1":
@@ -94,7 +97,7 @@ class NearODESurrogate:
                     min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
                     seed=SEED,
                     use_hessian_informed_split=USE_HESSIAN_INFORMED_SPLIT,
-                    error_split_criterion=ERROR_SPLIT_CRITERION,
+                    error_metric=ERROR_METRIC,
                 )
                 centroids = xp.asarray([clust.centroid for clust in clusters])
                 f_vals = xp.asarray([clust.F_centroid for clust in clusters])
@@ -123,7 +126,7 @@ class NearODESurrogate:
             self.X_src = centroids
             self.f_src = f_vals
             self.J_src = grads
-            self.trust_radii = trust_radii
+            self.trust_radii_src = trust_radii
             self.N_src = centroids.shape[0]
             self.training_num_levels = num_levels
         else:
@@ -157,12 +160,22 @@ class NearODESurrogate:
         if not self.trained:
             raise RuntimeError("Model not trained.")
 
+        if self.version == "v2":
+            t_search_start = time.perf_counter()
+            predictions, unguaranteed_mask = self._predict_knn_Q(
+                query_points, k=k_NEIGHBOURS
+            )
+            logger.info(
+                f"Ellipsoidal kNN Search + Predict Time: {time.perf_counter()-t_search_start:.4f}s"
+            )
+            return predictions, unguaranteed_mask
+
         qp = xp.asarray(query_points)
         t_search = time.perf_counter()
         nn_idx, nn_dist2, ungauranteed_mask = knn_l2_distance(
             qp,
             self.X_src,
-            self.trust_radii,
+            self.trust_radii_src,
             k_NEIGHBOURS,
         )
         logger.info(f"L2 kNN Search Time: {time.perf_counter()-t_search:.4f}s")
@@ -191,6 +204,108 @@ class NearODESurrogate:
         predictions_k = f_neighbors + linear_term  # (N, k, F)
         predictions = xp.mean(predictions_k, axis=1)  # (N, F)
         return predictions, ungauranteed_mask
+
+    def _predict_knn_Q(self, query_points, k=1):
+        """
+        Inference via GPU kNN:
+        1. Coarse Filter: Find k * COARSE_FACTOR candidates via L2 distance.
+        2. Refine: Sort candidates by Q-matrix distance.
+        3. Select: Pick top-k closest in Q-metric.
+        4. Predict: Weighted average with validity check.
+        """
+        if not self.trained:
+            raise RuntimeError("Model not trained.")
+
+        assert (
+            self.X_src is not None
+            and self.Qs_src is not None
+            and self.f_src is not None
+            and self.J_src is not None
+        )
+
+        qp = xp.asarray(query_points)
+        N, D = qp.shape
+
+        # --- 1. Coarse L2 Filter ---
+        # We fetch more candidates than needed because L2 distance != Q distance.
+        # A cluster might be far in L2 but "close" in Q (if aligned well).
+        COARSE_FACTOR = 5
+        k_coarse = k * COARSE_FACTOR
+
+        # nn_idx_coarse: (N, k_coarse)
+        nn_idx_coarse, _, _ = knn_l2_distance(
+            qp, self.X_src, self.trust_radii_src, k_coarse
+        )
+
+        # Retrieve Coarse Candidates info
+        Qs_coarse = self.Qs_src[nn_idx_coarse]  # (N, k_coarse, D, D)
+        centroids_coarse = self.X_src[nn_idx_coarse]  # (N, k_coarse, D)
+
+        # Compute Displacement
+        dx_coarse = qp[:, None, :] - centroids_coarse  # (N, k_coarse, D)
+
+        # --- 2. Compute Q-Distance for Candidates ---
+        # dist_sq = (x-u)^T Q (x-u)
+        # Result: (N, k_coarse)
+        dist_sq_coarse = xp.einsum("nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse)
+
+        # --- 3. Refine: Sort by Q-Distance ---
+        # We want the 'k' neighbors that are "closest" in the Mahalanobis sense.
+        # This brings the most relevant clusters to the front.
+
+        # Get indices that sort dist_sq_coarse along axis 1
+        # sorted_local_indices: (N, k_coarse)
+        sorted_local_indices = xp.argsort(dist_sq_coarse, axis=1)
+
+        # Keep only the top k
+        top_k_local = sorted_local_indices[:, :k]  # (N, k)
+
+        # Gather the Refined Top-k Data
+        # 1. Global Indices (for fetching f/J later)
+        nn_idx = xp.take_along_axis(nn_idx_coarse, top_k_local, axis=1)  # (N, k)
+
+        # 2. Q-Distances (for weights)
+        dist_sq = xp.take_along_axis(dist_sq_coarse, top_k_local, axis=1)  # (N, k)
+
+        # 3. dx vectors (for Taylor expansion) - reuse to avoid recomputing
+        # dx_coarse is (N, k_coarse, D), we need (N, k, D)
+        # We need to broadcast the indices to match D dimension
+        # top_k_expanded: (N, k, D)
+        # This manual gather is a bit tricky in ND, so simpler to just recompute dx
+        # or use advanced indexing. Recomputing dx for k points is cheap.
+        centroids = self.X_src[nn_idx]
+        dx = qp[:, None, :] - centroids  # (N, k, D)
+
+        # --- 4. Validity & Trust Weights ---
+        # Validity Check: d^2 <= 1.0
+        valid_mask = dist_sq <= 1.0
+
+        # Trust Weights: (1 - d)^2
+        dist = xp.sqrt(dist_sq)
+        raw_weights = xp.maximum(0.0, 1.0 - dist) ** 2
+        final_weights = raw_weights * valid_mask
+
+        # --- 5. Taylor Prediction ---
+        F_dim = self.f_src.shape[1] if self.f_src.ndim > 1 else 1
+        flat_idx = nn_idx.reshape(-1)
+
+        f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(N, k, F_dim)
+        J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(N, k, F_dim, D)
+
+        # linear_term = J * dx
+        linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
+        predictions_k = f_neighbors + linear_term
+
+        # --- 6. Weighted Averaging ---
+        weights_expanded = final_weights[:, :, None]
+        weighted_preds = predictions_k * weights_expanded
+        total_weight = xp.sum(weights_expanded, axis=1)
+
+        # Avoid div/0
+        predictions = xp.sum(weighted_preds, axis=1) / (total_weight + 1e-12)
+        unguaranteed_mask = total_weight.squeeze(-1) < 1e-12
+
+        return predictions, unguaranteed_mask
 
 
 if __name__ == "__main__":
@@ -282,7 +397,7 @@ if __name__ == "__main__":
     X_train = xp.asarray(X_train)
 
     # 2. Initialize Surrogate
-    surrogate = NearODESurrogate(version="v1")
+    surrogate = NearODESurrogate(version="v2")
     print("--- Training ---")
     _start_train_time = time.perf_counter()
     surrogate.train(
