@@ -364,7 +364,7 @@ class AdaptiveClusterer:
                         force_add = True
 
                 acceptable, radius, c, error_vec, F_c, J_c = self._cluster_violation(
-                    X_cluster, f, grad_f, cupy_f, n_level, error_split_criterion, F_inf
+                    X_cluster, f, grad_f, cupy_f, error_split_criterion, F_inf
                 )
 
                 if acceptable or force_add:

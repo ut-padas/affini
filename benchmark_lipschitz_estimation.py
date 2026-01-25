@@ -57,7 +57,7 @@ def benchmark_hessian_estimation():
     ]
 
     results = []
-
+    summary_results = []
     print(
         f"Benchmarking Hessian Estimation on Anisotropic Quadratic Function (True L = {func_obj.true_lipschitz}, Tol = {TOL})"
     )
@@ -138,6 +138,19 @@ def benchmark_hessian_estimation():
             f"{criterion:<15} | {split_name:<15} | {len(clusters):<10} | {lip_mean:.2f}           | {bias:.2f}"
         )
 
+        # Store summary results
+        summary_results.append(
+            {
+                "Tol": TOL,
+                "Criterion": criterion,
+                "Hessian Split": use_hessian,
+                "N_Clusters": len(clusters),
+                "Mean_Estimated_L": lip_mean,
+                "True_L": func_obj.true_lipschitz,
+                "Bias": bias,
+            }
+        )
+
         # 4. Plotting on Subplot
         ax = axes_flat[idx]
 
@@ -174,6 +187,7 @@ def benchmark_hessian_estimation():
         )
         ax.set_xlim(-2, 2)
         ax.set_ylim(-2, 2)
+        ax.axis("equal")
 
         # Only add legend to the first plot
         if idx == 0:
@@ -212,6 +226,12 @@ def benchmark_hessian_estimation():
     plt.savefig("lipschitz_estimation_quality.png", dpi=300)
     print("Saved Lipschitz estimation plot to lipschitz_estimation_quality.png")
     plt.close()
+
+    # Convert summary results to DataFrame and print
+    summary_df = pd.DataFrame(summary_results)
+    # save summary to CSV
+    summary_df.to_csv("hessian_estimation_summary.csv", index=False)
+    print("Saved summary results to hessian_estimation_summary.csv")
 
 
 if __name__ == "__main__":
