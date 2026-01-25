@@ -66,7 +66,6 @@ class NearODESurrogate:
                 MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                 SEED=SEED,
-                SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
                 LOG_MEM_STATS=False,
             )
 
@@ -229,8 +228,16 @@ class NearODESurrogate:
         # --- 1. Coarse L2 Filter ---
         # We fetch more candidates than needed because L2 distance != Q distance.
         # A cluster might be far in L2 but "close" in Q (if aligned well).
-        COARSE_FACTOR = 5
-        k_coarse = k * COARSE_FACTOR
+        if k < len(self.X_src):
+            COARSE_FACTOR = 5
+            k_coarse = min(k * COARSE_FACTOR, len(self.X_src))
+            k = min(k, len(self.X_src))
+        else:
+            logger.warning(
+                f"Requested k={k} exceeds number of source points={len(self.X_src)}. Using all source points."
+            )
+            k_coarse = len(self.X_src)
+            k = len(self.X_src)
 
         # nn_idx_coarse: (N, k_coarse)
         nn_idx_coarse, _, _ = knn_l2_distance(
