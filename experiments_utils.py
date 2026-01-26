@@ -233,7 +233,6 @@ def Problem_experiment_setup(
     USE_HESSIAN_INFORMED_SPLIT: bool,
     CLUSTERING_VERSION: Literal["v1", "v2"],
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
-    SYNTH_BUDGET_FACTOR: int = 10,
     PLOT_CONTOUR_IN_LOG_SCALE: bool = False,
 ):
     # Sample data from a uniform distribution
@@ -259,7 +258,6 @@ def Problem_experiment_setup(
             MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             SEED=SEED,
-            SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
             USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
             ERROR_METRIC=ERROR_METRIC,
         )
@@ -319,7 +317,6 @@ def Problem_experiment_setup(
         N_INIT_CLUSTERS=N_INIT_CLUSTERS,
         N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
         K_NEIGHBOURS=K_NEIGHBOURS,
-        SYNTH_BUDGET_FACTOR=SYNTH_BUDGET_FACTOR,
         CLUSTERING_VERSION=CLUSTERING_VERSION,
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         ERROR_METRIC=ERROR_METRIC,

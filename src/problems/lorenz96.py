@@ -1,21 +1,19 @@
 """Lorenz96 problem and its gradient."""
 
-from array_api_compat import array_namespace
+from src import IS_CUPY_BACKEND, Array, xp
 
 
-def lorenz96(X, forcing=8.0):
+def lorenz96(X: Array, forcing=8.0) -> Array:
     """
     Lorenz96 function implementation.
 
     Args:
-        X: (n_samples, F) data matrix where each row represents a state of the system.
+        X: (N, d) data matrix where each row represents a state of the system.
         forcing: Forcing term in the Lorenz96 equations.
 
     Returns:
-        dXdt: (n_samples, F) time derivatives at each state in X.
+        dXdt: (n_samples, d) time derivatives at each state in X.
     """
-    xp = array_namespace(X)
-
     dXdt = (
         (xp.roll(X, -1, axis=1) - xp.roll(X, 2, axis=1)) * xp.roll(X, 1, axis=1)
         - X
@@ -25,30 +23,28 @@ def lorenz96(X, forcing=8.0):
     return dXdt
 
 
-def lorenz96_grad(X):
+def lorenz96_grad(X) -> Array:
     """
     Gradient (Jacobian) of the Lorenz96 function.
 
     Args:
-        X: (n_samples, F) data matrix where each row represents a state of the system.
+        X: (N, d) data matrix where each row represents a state of the system.
 
     Returns:
-        J: (n_samples, F, F) Jacobian matrices at each state in X.
+        J: (N, d, d) Jacobian matrices at each state in X.
     """
-    xp = array_namespace(X)
-
-    n_samples, dim = X.shape
-    J = xp.zeros((n_samples, dim, dim), dtype=X.dtype)
+    N, d = X.shape
+    J = xp.zeros((N, d, d), dtype=X.dtype)
 
     X_im2 = xp.roll(X, 2, axis=1)
     X_im1 = xp.roll(X, 1, axis=1)
     X_ip1 = xp.roll(X, -1, axis=1)
 
     # Create index arrays for the band diagonals
-    i_idx = xp.arange(dim)
-    im2_idx = (i_idx - 2) % dim
-    im1_idx = (i_idx - 1) % dim
-    ip1_idx = (i_idx + 1) % dim
+    i_idx = xp.arange(d)
+    im2_idx = (i_idx - 2) % d
+    im1_idx = (i_idx - 1) % d
+    ip1_idx = (i_idx + 1) % d
 
     # Populate Jacobian using vectorized indexing
     J[:, i_idx, im2_idx] = -X_im1
