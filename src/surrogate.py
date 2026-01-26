@@ -4,11 +4,8 @@ import time
 from typing import Any, Callable, Literal
 
 from src import IS_CUPY_BACKEND, Array, xp
-from src.adaptive_clustering import adaptive_clustering
 from src.data_sampler import DataSampler
 from src.l2_distance import knn_l2_distance
-from src.v1_adaptive_clustering import adaptive_cluster_algorithm
-from src.v1_gpu_adaptive_clustering import adaptive_cluster_algorithm_gpu
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +40,6 @@ class NearODESurrogate:
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
-        SYNTH_BUDGET_FACTOR: float = 10.0,
         SEED: int = 0,
         USE_HESSIAN_INFORMED_SPLIT: bool = False,
     ):
@@ -55,26 +51,53 @@ class NearODESurrogate:
         t0 = time.perf_counter()
 
         if self.version == "v2":
-            # 1. Adaptive Clustering
-            results = adaptive_clustering(
-                X=X_train,
-                f_fn=f_fn,
-                g_fn=g_fn,
-                TOL=TOL,
-                ERROR_METRIC=ERROR_METRIC,
-                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                SEED=SEED,
-                LOG_MEM_STATS=False,
-            )
+            if not IS_CUPY_BACKEND:
+                from src.adaptive_clustering import adaptive_clustering
 
-            centroids = xp.asarray(results["centroids"])
-            f_vals = xp.asarray(results["f"])
-            grads = xp.asarray(results["g"])
-            radii = xp.asarray(results["radii"])
-            Qs = xp.asarray(results["Q"])
-            num_levels = results.get("num_levels", -1)
+                # 1. Adaptive Clustering
+                results = adaptive_clustering(
+                    X=X_train,
+                    f_fn=f_fn,
+                    g_fn=g_fn,
+                    TOL=TOL,
+                    ERROR_METRIC=ERROR_METRIC,
+                    NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                    MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                    MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                    SEED=SEED,
+                    LOG_MEM_STATS=False,
+                    SYNTH_BUDGET_FACTOR=100.0,
+                )
+
+                centroids = xp.asarray(results["centroids"])
+                f_vals = xp.asarray(results["f"])
+                grads = xp.asarray(results["g"])
+                radii = xp.asarray(results["radii"])
+                Qs = xp.asarray(results["Q"])
+                num_levels = results.get("num_levels", -1)
+            else:
+                from src.gpu_adaptive_clustering import (
+                    adaptive_clustering as gpu_adaptive_clustering,
+                )
+
+                results = gpu_adaptive_clustering(
+                    X=X_train,
+                    f_fn=f_fn,
+                    g_fn=g_fn,
+                    TOL=TOL,
+                    ERROR_METRIC=ERROR_METRIC,
+                    NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                    MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                    MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                    SEED=SEED,
+                    Q_SHRINK=0.05,
+                )
+                centroids = results["centroids"]
+                f_vals = results["f"]
+                grads = results["g"]
+                radii = results["radii"]
+                Qs = results["Q"]
+                num_levels = results.get("num_levels", -1)
 
             # 2. Store Data
             self.X_src = centroids
@@ -86,6 +109,8 @@ class NearODESurrogate:
             self.training_num_levels = num_levels
         elif self.version == "v1":
             if not IS_CUPY_BACKEND:
+                from src.v1_adaptive_clustering import adaptive_cluster_algorithm
+
                 clusters, num_levels = adaptive_cluster_algorithm(
                     X_train=X_train,
                     f=f_fn,
@@ -103,6 +128,10 @@ class NearODESurrogate:
                 grads = xp.asarray([clust.J_centroid for clust in clusters])
                 trust_radii = xp.asarray([clust.radius for clust in clusters])
             else:
+                from src.v1_gpu_adaptive_clustering import (
+                    adaptive_cluster_algorithm_gpu,
+                )
+
                 result = adaptive_cluster_algorithm_gpu(
                     X_train=X_train,
                     f=f_fn,
