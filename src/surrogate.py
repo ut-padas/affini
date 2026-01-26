@@ -92,11 +92,11 @@ class NearODESurrogate:
                     SEED=SEED,
                     Q_SHRINK=0.05,
                 )
-                centroids = results["centroids"]
-                f_vals = results["f"]
-                grads = results["g"]
-                radii = results["radii"]
-                Qs = results["Q"]
+                centroids = xp.asarray(results["centroids"])
+                f_vals = xp.asarray(results["f"])
+                grads = xp.asarray(results["g"])
+                radii = xp.asarray(results["radii"])
+                Qs = xp.asarray(results["Q"])
                 num_levels = results.get("num_levels", -1)
 
             # 2. Store Data
@@ -454,7 +454,6 @@ if __name__ == "__main__":
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
         MAX_CLUSTERS_EST=50_000,
         SEED=SEED,
-        SYNTH_BUDGET_FACTOR=100,
     )
     _end_train_time = time.perf_counter()
     N_CLUSTERS = surrogate.get_number_of_sources()
