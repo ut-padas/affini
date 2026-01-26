@@ -19,12 +19,12 @@ def rastrigin(X: Array, A=RASTRIGIN_A) -> Array:
         F: (N, 1) function values at X
     """
     # X: (N, D)
-    n = X.shape[1]
+    d = X.shape[1]
 
     # sum(x^2 - A * cos(2pi*x))
     sum_term = xp.sum(X**2 - A * xp.cos(2.0 * xp.pi * X), axis=1)
 
-    return (A * n + sum_term)[:, None]  # (N, 1)
+    return (A * d + sum_term)[:, None]  # (N, 1)
 
 
 def rastrigin_grad(X: Array, A=RASTRIGIN_A) -> Array:

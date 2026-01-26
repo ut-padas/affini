@@ -10,15 +10,15 @@ def _sympy_rastrigin_f_g(n_dim: int, A: float = 10.0):
     """Create symbolic function and gradient for Rastrigin function."""
     x = sp.symbols(f"x0:{n_dim}")
 
-    # Build the Rastrigin function: f(x) = A*n + sum(x^2 - A*cos(2*pi*x))
-    n = sp.Float(n_dim)
+    # Build the Rastrigin function: f(x) = A*d + sum(x^2 - A*cos(2*pi*x))
+    d = sp.Float(n_dim)
     A_sym = sp.Float(A)
 
     # Sum term: sum(x^2 - A*cos(2*pi*x))
     sum_term = sum(x[i] ** 2 - A_sym * sp.cos(2 * sp.pi * x[i]) for i in range(n_dim))  # type: ignore
 
-    # Full function: f(x) = A*n + sum_term
-    f = A_sym * n + sum_term  # type: ignore
+    # Full function: f(x) = A*d + sum_term
+    f = A_sym * d + sum_term  # type: ignore
 
     # Compute gradient: df/dx_i = 2*x_i + 2*pi*A*sin(2*pi*x_i)
     g = sp.Matrix([sp.diff(f, xi) for xi in x])
