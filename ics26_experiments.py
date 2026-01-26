@@ -403,7 +403,7 @@ def lorenz_experiment_with_v2() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            SYNTH_BUDGET_FACTOR=1000,
+            SYNTH_BUDGET_FACTOR=10000,
             USE_HESSIAN_INFORMED_SPLIT=True,
         )
 
@@ -415,17 +415,17 @@ if __name__ == "__main__":
 
     setup_logging()
 
-    dir1 = quadratic_experiment_with_v2()
-    create_summary_dataframe(dir1)
+    # dir1 = quadratic_experiment_with_v2()
+    # create_summary_dataframe(dir1)
 
-    dir2 = gaussian_experiment_with_v2()
-    create_summary_dataframe(dir2)
+    # dir2 = gaussian_experiment_with_v2()
+    # create_summary_dataframe(dir2)
 
-    dir3 = rastrigin_experiment_with_v2()
-    create_summary_dataframe(dir3)
+    # dir3 = rastrigin_experiment_with_v2()
+    # create_summary_dataframe(dir3)
 
     # dir4 = rosenbrock_experiment_with_v2()
     # create_summary_dataframe(dir4)
 
-    # dir5 = lorenz_experiment_with_v2()
-    # create_summary_dataframe(dir5)
+    dir5 = lorenz_experiment_with_v2()
+    create_summary_dataframe(dir5)
