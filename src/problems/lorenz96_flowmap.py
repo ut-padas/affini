@@ -56,12 +56,14 @@ def lorenz96_flowmap_grad(X0, forcing=1.0, tf=0.1):
         tf: final time for solves
 
     Returns:
-        DXF: (n_samples, F) data matrix of states at later time.
+        DXF: (n_samples, F, F) data matrix of states at later time.
     """
 
     _, DXF = sensitivities_solver(lambda X: lorenz96(X, forcing), lorenz96_grad, X0, tf)
-
-    return DXF
+    
+    # For each Jacobian matrix above, the rows correspond to the same derivative, not the function.
+    # We need to take a transpose of each matrix.
+    return DXF.transpose((0,2,1))
 
 
 if __name__ == "__main__":

@@ -343,12 +343,13 @@ def lorenz_experiment_with_v2() -> Path:
     # For now, just do gradient in the first variable.
     # This way the output of the function is 1d.
     def f(x):
-        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
-        return f[:, OUTPUT_VARIABLE]
+        f = lorenz96_flowmap(x, FORCING, FINAL_TIME) # (N, d) vector
+        N, d = f.shape
+        return f[:, OUTPUT_VARIABLE].reshape((N,1))
 
     def grad_f(x):
         g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
-        return g[:, OUTPUT_VARIABLE, :]
+        return g[:, :, OUTPUT_VARIABLE]
 
     N_TRAIN = 200_000
     N_TEST = 50_000
