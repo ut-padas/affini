@@ -305,11 +305,19 @@ Imagine this is the very first time step in a string of simulations.
 """
 def lorenz_experiment_with_v2() -> Path:
 
+    # We must modify the functions to include forcing and tf as constants.
     FORCING = 1
     FINAL_TIME = 0.1
-    f = lambda x: lorenz96_flowmap(x, FORCING, FINAL_TIME)
-    grad_f = lambda x: lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
-    
+    OUTPUT_VARIABLE = 0
+    # For now, just do gradient in the first variable.
+    # This way the output of the function is 1d.
+    def f(x):
+        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
+        return f[:,OUTPUT_VARIABLE]
+    def grad_f(x):
+        g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+        return g[:,OUTPUT_VARIABLE,:]
+
     N_TRAIN = 200_000
     N_TEST = 50_000
 
@@ -380,14 +388,14 @@ if __name__ == "__main__":
 
     setup_logging()
 
-    dir1 = quadratic_experiment_with_v2()
-    create_summary_dataframe(dir1)
+    # dir1 = quadratic_experiment_with_v2()
+    # create_summary_dataframe(dir1)
 
-    dir2 = gaussian_experiment_with_v2()
-    create_summary_dataframe(dir2)
+    # dir2 = gaussian_experiment_with_v2()
+    # create_summary_dataframe(dir2)
 
-    dir3 = rastrigin_experiment_with_v2()
-    create_summary_dataframe(dir3)
+    # dir3 = rastrigin_experiment_with_v2()
+    # create_summary_dataframe(dir3)
 
     dir4 = lorenz_experiment_with_v2()
     create_summary_dataframe(dir4)
