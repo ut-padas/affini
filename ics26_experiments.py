@@ -10,6 +10,7 @@ from experiments_utils import (
     create_summary_dataframe,
     del_all_error_files_in_dir,
 )
+from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 from src.problems.quadratic import quadratic, quadratic_grad
 from src.problems.rastrigin import rastrigin, rastrigin_grad
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
@@ -20,7 +21,6 @@ from src.problems.shifted_gaussians import (
     shifted_gaussians,
     shifted_gaussians_grad,
 )
-from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 
 
 def quadratic_experiment_with_v2() -> Path:
@@ -36,22 +36,37 @@ def quadratic_experiment_with_v2() -> Path:
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
     DIMs = [2, 3, 4, 5, 8, 10]
-    TOLs = [i / 100.0 for i in [20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05]]
+    TOLs = [
+        2e-1,
+        1e-1,
+        5e-2,
+        2e-2,
+        1e-2,
+        5e-3,
+        2e-3,
+        1e-3,
+        5e-4,
+        2e-4,
+        1e-4,
+        5e-5,
+        2e-5,
+        1e-5,
+    ]
     ERROR_METRICs = ["L2", "Linf-global", "Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
-        if DIM > 5 and TOL <= 1e-4:
+        if DIM > 5 and TOL < 1e-4:
             print(
                 f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
             )
             continue
-        elif DIM >= 8 and TOL <= 1e-2:
+        elif DIM >= 8 and TOL <= 1e-3:
             print(
                 f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
             )
             continue
-        elif ERROR_METRIC == "L2" and TOL <= 0.2 and DIM >= 4:
+        elif ERROR_METRIC == "L2" and ((TOL <= 2e-2 and DIM >= 4) or (TOL <= 5e-4)):
             print(
                 f"Skipping experiment for ERROR_METRIC={ERROR_METRIC}, TOL={TOL} and DIM={DIM} due to high computational cost."
             )
@@ -99,12 +114,27 @@ def gaussian_experiment_with_v2() -> Path:
     create_summary_dataframe(EXP_DIR)
     del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 3, 4]
-    TOLs = [i / 100.0 for i in [50, 35, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.01]]
+    TOLs = [
+        5e-1,
+        3.5e-1,
+        2e-1,
+        1e-1,
+        5e-2,
+        2e-2,
+        1e-2,
+        5e-3,
+        2e-3,
+        1e-3,
+        5e-4,
+        2e-4,
+        1e-4,
+        5e-5,
+    ]
     ERROR_METRICs = ["Linf-global", "Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
-        if DIM >= 3 and TOL <= 1e-3:
+        if DIM >= 5 and TOL <= 5e-4:
             print(
                 f"Skipping experiment for DIM={DIM} with very small TOL={TOL} due to resource constraints."
             )
@@ -180,12 +210,10 @@ def rastrigin_experiment_with_v2() -> Path:
     create_summary_dataframe(EXP_DIR)
 
     # Rastrigin becomes extremely difficult in high dimensions for local surrogates
-    # due to the exponential growth of local minima. We stick to 2, 3, 4.
-    DIMs = [2, 3, 4]
+    DIMs = [2, 3, 4, 5, 10]
 
     # Global Max is approx 80 for d=2, 120 for d=3.
-    # TOLs: 0.5 (50%) down to 0.005 (0.5%)
-    TOLs = [i / 100.0 for i in [50, 25, 10, 5, 2, 1, 0.5]]
+    TOLs = [5e-1, 2e-1, 1e-1, 5e-2, 2e-2, 1e-2, 5e-3, 2e-3, 1e-3]
 
     # L2 is excluded by default as it tends to over-segment the oscillating "floor"
     ERROR_METRICs = ["Linf-global", "Linf-local"]
@@ -194,7 +222,7 @@ def rastrigin_experiment_with_v2() -> Path:
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rastrigin Experiments"):
 
         # Resource constraints check
-        if DIM >= 3 and TOL <= 1e-2:
+        if (DIM >= 4 and TOL <= 5e-3) or (DIM == 10 and TOL <= 1e-1):
             print(f"Skipping DIM={DIM}, TOL={TOL} (High Compute Cost)")
             continue
 
@@ -303,20 +331,24 @@ Lorenz surrogate for a SINGLE time step.
 We are not worrying about sampling along manifolds in this case.
 Imagine this is the very first time step in a string of simulations.
 """
+
+
 def lorenz_experiment_with_v2() -> Path:
 
     # We must modify the functions to include forcing and tf as constants.
     FORCING = 1
     FINAL_TIME = 0.1
     OUTPUT_VARIABLE = 0
+
     # For now, just do gradient in the first variable.
     # This way the output of the function is 1d.
     def f(x):
         f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
-        return f[:,OUTPUT_VARIABLE]
+        return f[:, OUTPUT_VARIABLE]
+
     def grad_f(x):
         g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
-        return g[:,OUTPUT_VARIABLE,:]
+        return g[:, OUTPUT_VARIABLE, :]
 
     N_TRAIN = 200_000
     N_TEST = 50_000
@@ -377,25 +409,22 @@ def lorenz_experiment_with_v2() -> Path:
     return EXP_DIR
 
 
-
-
-
-
-
-
 if __name__ == "__main__":
     from src.logging_config import setup_logging
 
     setup_logging()
 
-    # dir1 = quadratic_experiment_with_v2()
-    # create_summary_dataframe(dir1)
+    dir1 = quadratic_experiment_with_v2()
+    create_summary_dataframe(dir1)
 
-    # dir2 = gaussian_experiment_with_v2()
-    # create_summary_dataframe(dir2)
+    dir2 = gaussian_experiment_with_v2()
+    create_summary_dataframe(dir2)
 
-    # dir3 = rastrigin_experiment_with_v2()
-    # create_summary_dataframe(dir3)
+    dir3 = rastrigin_experiment_with_v2()
+    create_summary_dataframe(dir3)
 
-    dir4 = lorenz_experiment_with_v2()
-    create_summary_dataframe(dir4)
+    # dir4 = rosenbrock_experiment_with_v2()
+    # create_summary_dataframe(dir4)
+
+    # dir5 = lorenz_experiment_with_v2()
+    # create_summary_dataframe(dir5)
