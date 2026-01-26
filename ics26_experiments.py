@@ -96,7 +96,6 @@ def quadratic_experiment_with_v2() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            SYNTH_BUDGET_FACTOR=1000,
             USE_HESSIAN_INFORMED_SPLIT=True,
         )
 
@@ -186,7 +185,6 @@ def gaussian_experiment_with_v2() -> Path:
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            SYNTH_BUDGET_FACTOR=500,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
@@ -250,7 +248,6 @@ def rastrigin_experiment_with_v2() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            SYNTH_BUDGET_FACTOR=1000,  # High budget for complex padding
             USE_HESSIAN_INFORMED_SPLIT=True,
         )
 
@@ -319,7 +316,6 @@ def rosenbrock_experiment_with_v2() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            SYNTH_BUDGET_FACTOR=1000,
             USE_HESSIAN_INFORMED_SPLIT=True,
         )
 
@@ -334,7 +330,6 @@ Imagine this is the very first time step in a string of simulations.
 
 
 def lorenz_experiment_with_v2() -> Path:
-
     # We must modify the functions to include forcing and tf as constants.
     FORCING = 1
     FINAL_TIME = 0.1
@@ -343,9 +338,9 @@ def lorenz_experiment_with_v2() -> Path:
     # For now, just do gradient in the first variable.
     # This way the output of the function is 1d.
     def f(x):
-        f = lorenz96_flowmap(x, FORCING, FINAL_TIME) # (N, d) vector
+        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
         N, d = f.shape
-        return f[:, OUTPUT_VARIABLE].reshape((N,1))
+        return f[:, OUTPUT_VARIABLE].reshape((N, 1))
 
     def grad_f(x):
         g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
@@ -379,9 +374,7 @@ def lorenz_experiment_with_v2() -> Path:
             )
             continue
 
-        json_path = (
-            EXP_DIR / f"ics26_rosenbrock_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
-        )
+        json_path = EXP_DIR / f"ics26_lorenz_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
         json_path.parent.mkdir(parents=True, exist_ok=True)
         if json_path.exists():
             print(f"Skipping existing experiment at {json_path}")
@@ -403,7 +396,6 @@ def lorenz_experiment_with_v2() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            SYNTH_BUDGET_FACTOR=1000,
             USE_HESSIAN_INFORMED_SPLIT=True,
         )
 
@@ -415,17 +407,17 @@ if __name__ == "__main__":
 
     setup_logging()
 
-    dir1 = quadratic_experiment_with_v2()
-    create_summary_dataframe(dir1)
+    # dir1 = quadratic_experiment_with_v2()
+    # create_summary_dataframe(dir1)
 
-    dir2 = gaussian_experiment_with_v2()
-    create_summary_dataframe(dir2)
+    # dir2 = gaussian_experiment_with_v2()
+    # create_summary_dataframe(dir2)
 
-    dir3 = rastrigin_experiment_with_v2()
-    create_summary_dataframe(dir3)
+    # dir3 = rastrigin_experiment_with_v2()
+    # create_summary_dataframe(dir3)
 
     # dir4 = rosenbrock_experiment_with_v2()
     # create_summary_dataframe(dir4)
 
-    # dir5 = lorenz_experiment_with_v2()
-    # create_summary_dataframe(dir5)
+    dir5 = lorenz_experiment_with_v2()
+    create_summary_dataframe(dir5)
