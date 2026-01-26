@@ -20,6 +20,7 @@ from src.problems.shifted_gaussians import (
     shifted_gaussians,
     shifted_gaussians_grad,
 )
+from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 
 
 def quadratic_experiment_with_v2() -> Path:
@@ -297,6 +298,83 @@ def rosenbrock_experiment_with_v2() -> Path:
     return EXP_DIR
 
 
+"""
+Lorenz surrogate for a SINGLE time step.
+We are not worrying about sampling along manifolds in this case.
+Imagine this is the very first time step in a string of simulations.
+"""
+def lorenz_experiment_with_v2() -> Path:
+
+    FORCING = 1
+    FINAL_TIME = 0.1
+    f = lambda x: lorenz96_flowmap(x, FORCING, FINAL_TIME)
+    grad_f = lambda x: lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+    
+    N_TRAIN = 200_000
+    N_TEST = 50_000
+
+    N_INIT_CLUSTERS = 50
+    N_MIN_PER_CLUSTER = 100
+    MAX_CLUSTERS_EST = 20_000
+
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "lorenz_v2"
+    del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
+
+    DIMs = [4, 5, 6, 10]
+    TOLs = [i / 100.0 for i in [50, 20, 10, 5, 2, 1]]
+    ERROR_METRICs = ["Linf-global", "Linf-local"]
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Lorenz Experiments"):
+
+        # Resource constraints checks
+        if DIM == 10 and TOL <= 0.005:
+            print(
+                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
+            )
+            continue
+
+        json_path = (
+            EXP_DIR / f"ics26_rosenbrock_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            DOMAIN=[-10.0, 10.0],
+            f_fn=f,
+            g_fn=grad_f,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            SYNTH_BUDGET_FACTOR=1000,
+            USE_HESSIAN_INFORMED_SPLIT=True,
+        )
+
+    return EXP_DIR
+
+
+
+
+
+
+
+
 if __name__ == "__main__":
     from src.logging_config import setup_logging
 
@@ -310,3 +388,6 @@ if __name__ == "__main__":
 
     dir3 = rastrigin_experiment_with_v2()
     create_summary_dataframe(dir3)
+
+    dir4 = lorenz_experiment_with_v2()
+    create_summary_dataframe(dir4)
