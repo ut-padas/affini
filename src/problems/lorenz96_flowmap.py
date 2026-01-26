@@ -1,3 +1,4 @@
+import numpy as np
 from scipy.integrate import solve_ivp
 
 from src import IS_CUPY_BACKEND, Array, xp
@@ -41,6 +42,8 @@ def lorenz96_flowmap(X0: Array, forcing=1.0, tf=0.1) -> Array:
     # sol.y contains (1, n_trajectories * dim) array. Reshape accordingly
     XF = sol.y.reshape(n_trajectories, d)
 
+    if IS_CUPY_BACKEND:
+        XF = xp.asarray(XF)
     return XF
 
 
@@ -57,18 +60,22 @@ def lorenz96_flowmap_grad(X0: Array, forcing=1.0, tf=0.1) -> Array:
     Returns:
         DXF: (N, d, d) data matrix of states at later time.
     """
+    if IS_CUPY_BACKEND:
+        X0 = xp.asnumpy(X0)
 
     _, DXF = sensitivities_solver(lambda X: lorenz96(X, forcing), lorenz96_grad, X0, tf)
 
     # For each Jacobian matrix above, the rows correspond to the same derivative, not the function.
     # We need to take a transpose of each matrix.
+    if IS_CUPY_BACKEND:
+        DXF = xp.asarray(DXF)
     return DXF.transpose((0, 2, 1))
 
 
 if __name__ == "__main__":
     n_trajectories = 1
     dim = 5
-    X0 = 0.5 * xp.ones((n_trajectories, dim))
+    X0 = 0.5 * np.ones((n_trajectories, dim))
     F = 1
     t_final = 0.01
     XF = lorenz96_flowmap(X0, forcing=F, tf=t_final)
