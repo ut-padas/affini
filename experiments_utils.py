@@ -43,6 +43,58 @@ def create_summary_dataframe(results_dir: Path):
         print(f"\033[91mError cases found: {n_errors} in {results_dir}!\033[0m")
 
 
+def plot_error_histogram(
+    ground_truth: Array, predictions: Array, json_fpath: Path, TOL: float
+):
+    img_fpath = json_fpath.with_suffix(".png")
+    img_title = json_fpath.stem
+
+    rel_error_linf = xp.abs(predictions - ground_truth) / (
+        xp.abs(ground_truth) + TINY_EPS
+    )
+    n_within_tol = xp.sum(rel_error_linf <= TOL)
+    perct_within_tol = 100.0 * n_within_tol / ground_truth.shape[0]
+
+    plt.figure(figsize=(10, 6))
+    if IS_CUPY_BACKEND:
+        plt.hist(rel_error_linf.get().flatten(), bins=50, log=True)
+    else:
+        plt.hist(rel_error_linf.flatten(), bins=50, log=True)
+
+    plt.axvline(
+        x=TOL,
+        color="r",
+        linestyle="--",
+        label=f"TOL={TOL} (N_within_tol={perct_within_tol:.2f}%)",
+    )
+
+    plt.ylabel("Frequency (log scale)")
+    plt.xlabel(r"Relative Error $\| . \|_{\infty}$ (log scale)")
+    plt.title(img_title)
+    plt.legend()
+    plt.xscale("log")
+    plt.grid(True, which="both", linestyle="--", linewidth=0.5)
+    plt.savefig(img_fpath, dpi=300)
+    plt.close()
+
+
+def del_all_error_files_in_dir(results_dir: Path):
+    error_files = list(results_dir.glob("*.error.txt"))
+    for ef in error_files:
+        print(f"Deleting error file: {ef}")
+        ef.unlink()
+
+    # Get all json files
+    json_files = list(results_dir.glob("*.json"))
+    for jf in json_files:
+        # Check if the error_tag is non-empty
+        with open(jf, "r") as f:
+            data = json.load(f)
+            if data.get("error_tag", "") != "":
+                print(f"Deleting json file with error: {jf}")
+                jf.unlink()
+
+
 def create_problem_result_dict(
     problem_name: str,
     problem_tag: str,
@@ -163,58 +215,6 @@ def create_problem_result_dict(
         result_dict[key] = value
 
     return result_dict
-
-
-def plot_error_histogram(
-    ground_truth: Array, predictions: Array, json_fpath: Path, TOL: float
-):
-    img_fpath = json_fpath.with_suffix(".png")
-    img_title = json_fpath.stem
-
-    rel_error_linf = xp.abs(predictions - ground_truth) / (
-        xp.abs(ground_truth) + TINY_EPS
-    )
-    n_within_tol = xp.sum(rel_error_linf <= TOL)
-    perct_within_tol = 100.0 * n_within_tol / ground_truth.shape[0]
-
-    plt.figure(figsize=(10, 6))
-    if IS_CUPY_BACKEND:
-        plt.hist(rel_error_linf.get().flatten(), bins=50, log=True)
-    else:
-        plt.hist(rel_error_linf.flatten(), bins=50, log=True)
-
-    plt.axvline(
-        x=TOL,
-        color="r",
-        linestyle="--",
-        label=f"TOL={TOL} (N_within_tol={perct_within_tol:.2f}%)",
-    )
-
-    plt.ylabel("Frequency (log scale)")
-    plt.xlabel(r"Relative Error $\| . \|_{\infty}$ (log scale)")
-    plt.title(img_title)
-    plt.legend()
-    plt.xscale("log")
-    plt.grid(True, which="both", linestyle="--", linewidth=0.5)
-    plt.savefig(img_fpath, dpi=300)
-    plt.close()
-
-
-def del_all_error_files_in_dir(results_dir: Path):
-    error_files = list(results_dir.glob("*.error.txt"))
-    for ef in error_files:
-        print(f"Deleting error file: {ef}")
-        ef.unlink()
-
-    # Get all json files
-    json_files = list(results_dir.glob("*.json"))
-    for jf in json_files:
-        # Check if the error_tag is non-empty
-        with open(jf, "r") as f:
-            data = json.load(f)
-            if data.get("error_tag", "") != "":
-                print(f"Deleting json file with error: {jf}")
-                jf.unlink()
 
 
 def Problem_experiment_setup(
