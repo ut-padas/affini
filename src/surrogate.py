@@ -351,7 +351,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     from src import FIGURES_DIR
-    from src.logging_config import setup_logging
+    from src.logging_utils import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG, file_output=True)

@@ -403,7 +403,7 @@ def lorenz_experiment_with_v2() -> Path:
 
 
 if __name__ == "__main__":
-    from src.logging_config import setup_logging
+    from src.logging_utils import setup_logging
 
     setup_logging()
 

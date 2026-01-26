@@ -14,7 +14,7 @@ from cupy.linalg import norm
 from cupyx import scatter_max
 from rmm.allocators.cupy import rmm_cupy_allocator
 
-from src.logging_config import log_mem_stats
+from src.logging_utils import log_mem_stats
 
 logger = logging.getLogger(__name__)
 
@@ -786,7 +786,7 @@ def adaptive_cluster_algorithm_gpu(
 
 
 if __name__ == "__main__":
-    from src.logging_config import setup_logging
+    from src.logging_utils import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG)

@@ -9,7 +9,7 @@ from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max as cupy_scatter_max
 
 from src import IS_CUPY_BACKEND, Array, xp
-from src.logging_config import log_mem_stats
+from src.logging_utils import log_mem_stats
 from src.utils import repeats
 
 logger = logging.getLogger(__name__)
@@ -895,7 +895,7 @@ if __name__ == "__main__":
     from functools import partial
 
     from src import FIGURES_DIR
-    from src.logging_config import setup_logging
+    from src.logging_utils import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG)

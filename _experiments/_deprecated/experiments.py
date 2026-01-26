@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from src.logging_config import log_mem_stats
+from src.logging_utils import log_mem_stats
 from src.problems.affine import AFFINE_DATA_DIM, AFFINE_F_DIM, affine, affine_grad
 from src.problems.borehole import borehole, borehole_grad
 from src.problems.dixon_price import dixon_price, dixon_price_grad
@@ -306,7 +306,7 @@ def run_experiment(
 
 if __name__ == "__main__":
     from src import IS_CUPY_BACKEND
-    from src.logging_config import setup_logging
+    from src.logging_utils import setup_logging
 
     if IS_CUPY_BACKEND:
         mempool = cp.get_default_memory_pool()

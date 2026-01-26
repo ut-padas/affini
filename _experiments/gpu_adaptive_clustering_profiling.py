@@ -9,7 +9,7 @@ from _experiments._deprecated.adaptive_clustering import adaptive_cluster_algori
 from _experiments._deprecated.gpu_adaptive_clustering import (
     adaptive_cluster_algorithm_gpu,
 )
-from src.logging_config import setup_logging
+from src.logging_utils import setup_logging
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
 if __name__ == "__main__":

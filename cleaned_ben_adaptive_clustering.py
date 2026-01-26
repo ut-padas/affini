@@ -322,7 +322,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from matplotlib.patches import Circle, Ellipse
 
-    from src.logging_config import setup_logging
+    from src.logging_utils import setup_logging
     from src.problems.quadratic import quadratic, quadratic_grad
     from src.problems.shifted_gaussians import (
         CENTERS_2D,

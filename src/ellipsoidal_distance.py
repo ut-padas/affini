@@ -3,7 +3,7 @@ import time
 from typing import Tuple
 
 from src import IS_CUPY_BACKEND, Array, xp
-from src.logging_config import log_mem_stats
+from src.logging_utils import log_mem_stats
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ if __name__ == "__main__":
 
     from src import FIGURES_DIR
     from src.adaptive_clustering import adaptive_clustering
-    from src.logging_config import setup_logging
+    from src.logging_utils import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG)
