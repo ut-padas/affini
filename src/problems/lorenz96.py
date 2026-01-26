@@ -1,6 +1,8 @@
 """Lorenz96 problem and its gradient."""
 
-from src import IS_CUPY_BACKEND, Array, xp
+import numpy as np
+
+from src import Array
 
 
 def lorenz96(X: Array, forcing=8.0) -> Array:
@@ -15,11 +17,10 @@ def lorenz96(X: Array, forcing=8.0) -> Array:
         dXdt: (n_samples, d) time derivatives at each state in X.
     """
     dXdt = (
-        (xp.roll(X, -1, axis=1) - xp.roll(X, 2, axis=1)) * xp.roll(X, 1, axis=1)
+        (np.roll(X, -1, axis=1) - np.roll(X, 2, axis=1)) * np.roll(X, 1, axis=1)
         - X
         + forcing
     )
-
     return dXdt
 
 
@@ -34,14 +35,14 @@ def lorenz96_grad(X) -> Array:
         J: (N, d, d) Jacobian matrices at each state in X.
     """
     N, d = X.shape
-    J = xp.zeros((N, d, d), dtype=X.dtype)
+    J = np.zeros((N, d, d), dtype=X.dtype)
 
-    X_im2 = xp.roll(X, 2, axis=1)
-    X_im1 = xp.roll(X, 1, axis=1)
-    X_ip1 = xp.roll(X, -1, axis=1)
+    X_im2 = np.roll(X, 2, axis=1)
+    X_im1 = np.roll(X, 1, axis=1)
+    X_ip1 = np.roll(X, -1, axis=1)
 
     # Create index arrays for the band diagonals
-    i_idx = xp.arange(d)
+    i_idx = np.arange(d)
     im2_idx = (i_idx - 2) % d
     im1_idx = (i_idx - 1) % d
     ip1_idx = (i_idx + 1) % d
