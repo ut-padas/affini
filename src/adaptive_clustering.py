@@ -517,7 +517,7 @@ def adaptive_clustering(
     LOG_MEM_STATS: bool = False,
     # Pool sizing
     SYNTH_BUDGET: Optional[int] = None,
-    SYNTH_BUDGET_FACTOR: float = 1.0,
+    SYNTH_BUDGET_FACTOR: float = 50.0,
     # Geometry stabilizers
     MAX_LEVELS: int = 50,
     VISUAL_DEBUG: bool = False,
