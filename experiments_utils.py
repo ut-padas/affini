@@ -1,7 +1,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Callable, Literal, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,6 +10,7 @@ from matplotlib.colors import LogNorm
 from matplotlib.patches import Ellipse
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, Array, xp
+from src.logging_utils import capture_evaluations
 from src.surrogate import NearODESurrogate
 
 ICS26_DIR = RESULTS_DIR / "ics26"
@@ -234,6 +235,9 @@ def Problem_experiment_setup(
     CLUSTERING_VERSION: Literal["v1", "v2"],
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     PLOT_CONTOUR_IN_LOG_SCALE: bool = False,
+    STORE_TRAIN_EVALS: bool = False,
+    TRAIN_EVALS_PREFIX: str = "train_evals",
+    TRAIN_EVALS_DIR: Optional[Path] = None,
 ):
     # Sample data from a uniform distribution
     xp.random.seed(SEED)
@@ -246,23 +250,58 @@ def Problem_experiment_setup(
     FAILED = False
     _TRAINED, _PREDICTED = False, False
     try:
-        # Train
-        print("\n--- Training ---")
-        _start_train_time = time.perf_counter()
-        surrogate.train(
-            X_train=X_train,
-            f_fn=f_fn,
-            g_fn=g_fn,
-            TOL=TOL,
-            NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
-            MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            SEED=SEED,
-            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-            ERROR_METRIC=ERROR_METRIC,
-        )
-        _end_train_time = time.perf_counter()
-        _TRAINED = True
+
+        if STORE_TRAIN_EVALS:
+            assert (
+                TRAIN_EVALS_DIR is not None
+            ), "TRAIN_EVALS_DIR must be provided if STORE_TRAIN_EVALS is True"
+            TRAIN_EVALS_DIR.mkdir(parents=True, exist_ok=True)
+            f_debug = capture_evaluations(
+                f_fn,
+                save_dir=TRAIN_EVALS_DIR,
+                prefix=TRAIN_EVALS_PREFIX + "_f",
+            )
+            g_debug = capture_evaluations(
+                g_fn,
+                save_dir=TRAIN_EVALS_DIR,
+                prefix=TRAIN_EVALS_PREFIX + "_g",
+            )
+
+            # Train
+            print("\n--- Training ---")
+            _start_train_time = time.perf_counter()
+            surrogate.train(
+                X_train=X_train,
+                f_fn=f_debug,
+                g_fn=g_debug,
+                TOL=TOL,
+                NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
+                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                SEED=SEED,
+                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                ERROR_METRIC=ERROR_METRIC,
+            )
+            _end_train_time = time.perf_counter()
+            _TRAINED = True
+        else:
+            # Train
+            print("\n--- Training ---")
+            _start_train_time = time.perf_counter()
+            surrogate.train(
+                X_train=X_train,
+                f_fn=f_fn,
+                g_fn=g_fn,
+                TOL=TOL,
+                NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
+                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                SEED=SEED,
+                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                ERROR_METRIC=ERROR_METRIC,
+            )
+            _end_train_time = time.perf_counter()
+            _TRAINED = True
 
         # Evaluate
         print("--- Evaluation ---")
