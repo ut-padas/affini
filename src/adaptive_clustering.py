@@ -434,7 +434,10 @@ def compute_median_split_decision(
 
 
 def allocate_output_buffers(
-    MAX_CLUSTERS_EST: int, d: int, dtype: Any
+    MAX_CLUSTERS_EST: int,
+    d: int,
+    dtype: Any,
+    STORE_HESSIAN_SQRT_PER_CLUSTER: bool,
 ) -> tuple[dict[str, Array], int]:
     """Allocate output buffers for finalized clusters.
 
@@ -461,6 +464,8 @@ def allocate_output_buffers(
         "counts": xp.empty((cap,), dtype=xp.int64),
         "Q": xp.empty((cap, d, d), dtype=dtype),
     }
+    if STORE_HESSIAN_SQRT_PER_CLUSTER:
+        buffers["H_sqrt"] = xp.empty((cap, d, d), dtype=dtype)
     return buffers, cap
 
 
@@ -469,6 +474,7 @@ def adjust_buffer_capacity(
     current_count: int,
     current_cap: int,
     required_total: int,
+    STORE_HESSIAN_SQRT_PER_CLUSTER: bool,
 ) -> tuple[dict[str, Array], int]:
     """Grow output buffers if the finalized cluster count exceeds current capacity.
 
@@ -505,6 +511,11 @@ def adjust_buffer_capacity(
         for k in new_buffers:
             new_buffers[k][:current_count] = buffers[k][:current_count]
 
+    if STORE_HESSIAN_SQRT_PER_CLUSTER:
+        new_buffers["H_sqrt"] = xp.empty((new_cap, d, d), dtype=dtype)
+        if current_count > 0:
+            new_buffers["H_sqrt"][:current_count] = buffers["H_sqrt"][:current_count]
+
     # Delete old buffers to free memory.
     del buffers
     return new_buffers, int(new_cap)
@@ -529,9 +540,10 @@ def adaptive_clustering(
     MAX_LEVELS: int = 50,
     VISUAL_DEBUG: bool = False,
     # Hessian informed splitting
-    USE_HESSIAN_INFORMED_SPLIT = True,
+    USE_HESSIAN_INFORMED_SPLIT=True,
     # Testing purposes: run without gradient to compare
     IGNORE_GRADIENT: bool = False,
+    STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
 ) -> dict[str, Array]:
     """
     BFS adaptive clustering with *persistent* convex padding via a preallocated pool.
@@ -580,6 +592,11 @@ def adaptive_clustering(
         MAX_LEVELS: maximum refinement iterations.
         VISUAL_DEBUG: (supported only on 2D data, is ignored otherwise) whether to
             save intermediate clustering states for visualization.
+        USE_HESSIAN_INFORMED_SPLIT: whether to use Hessian-informed splitting, or
+            fall back to PCA-based splitting.
+        IGNORE_GRADIENT: for testing purposes, if true uses zero gradients.
+        STORE_HESSIAN_SQRT_PER_CLUSTER: whether to store the |H|^{1/2} matrix per
+            cluster in the output dict under key 'H_sqrt'.
 
     Returns:
         outputs: dict with arrays truncated to number of accepted clusters:
@@ -687,7 +704,9 @@ def adaptive_clustering(
     active[:N0] = True
 
     # Outputs
-    buffers, out_cap = allocate_output_buffers(MAX_CLUSTERS_EST, d, X0.dtype)
+    buffers, out_cap = allocate_output_buffers(
+        MAX_CLUSTERS_EST, d, X0.dtype, STORE_HESSIAN_SQRT_PER_CLUSTER
+    )
     out_count = 0
 
     level = 1
@@ -894,8 +913,16 @@ def adaptive_clustering(
             # Write to buffers
             end_out = out_count + n_good
             buffers, out_cap = adjust_buffer_capacity(
-                buffers, out_count, out_cap, end_out
+                buffers, out_count, out_cap, end_out, STORE_HESSIAN_SQRT_PER_CLUSTER
             )
+
+            if STORE_HESSIAN_SQRT_PER_CLUSTER:
+                # Compute |H|^{1/2} per good cluster for output storage
+                G_good = G_sorted[point_good_mask]
+                gmu_good = g_mus[map_n_to_k][point_good_mask]
+                dG_good = G_good - gmu_good
+                H_sqrt = estimate_hessian_sqrt_symmetric(dx_good, dG_good, good_starts)
+                buffers["H_sqrt"][out_count : out_count + n_good] = H_sqrt
 
             buffers["centroids"][out_count:end_out] = mus[good_idx]
             buffers["f"][out_count:end_out] = f_mus[good_idx]
