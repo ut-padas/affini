@@ -383,6 +383,54 @@ def estimate_hessian_sqrt_symmetric(
     return 0.5 * (M + M.transpose(0, 2, 1))
 
 
+
+def estimate_hessian_symmetric(
+    DeltaX: Array,
+    DeltaG: Array,
+    starts: Array,
+) -> Array:
+    """
+    Symmetric Hessian estimation via least-squares fit (Sylvester solve in eigenbasis),
+    followed by |H|^{1/2} computation via eigendecomposition.
+    Solve: H C + C H = S,  where
+        C = sum_i (Δx_i Δx_i^T)
+        S = sum_i (Δx_i Δg_i^T + Δg_i Δx_i^T)
+
+    Args:
+        DeltaX: (N, d) centered points for a packed batch.
+        DeltaG: (N, d) centered gradients, i.e. (g(x_i - g(mu_k)) per point.
+        starts: (K,) segment starts.
+
+    Returns:
+        M: (K, d, d) symmetric matrices with M_k @ M_k = |H_k|.
+    """
+    XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]  # (N,d,d)
+    XG_all = DeltaX[:, :, None] * DeltaG[:, None, :]  # (N,d,d)
+
+    C = xp.add.reduceat(XX_all, starts)  # (K,d,d)
+    E = xp.add.reduceat(XG_all, starts)  # (K,d,d)
+
+    # Symmetrize C and S
+    C = 0.5 * (C + C.transpose(0, 2, 1))
+    S = E + E.transpose(0, 2, 1)
+
+    # 1. Eigendecompose C to find the basis U
+    dvals, U = xp.linalg.eigh(C)
+    dvals = xp.maximum(dvals, TINY_EPS)  # (K,d)
+
+    # 2. Solve Sylvester Equation in U-basis to get F
+    # Gtilde = U.T @ S @ U
+    Gtilde = U.transpose(0, 2, 1) @ S @ U  # (K,d,d)
+    denom = dvals[:, :, None] + dvals[:, None, :]  # (K,d,d)
+    F = Gtilde / denom  # (K,d,d)
+
+    # Just want to approximate Hessian, not abs square root
+    M = (U @ F) @ U.transpose(0, 2, 1)
+
+    return 0.5 * (M + M.transpose(0, 2, 1))
+
+
+
 def get_dominant_eigenvector(Cov: Array) -> Array:
     """Dominant eigenvector of symmetric covariance matrices.
 
