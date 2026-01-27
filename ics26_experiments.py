@@ -23,26 +23,34 @@ from src.problems.shifted_gaussians import (
 )
 
 
-def get_N_TRAIN(dim: int, tol: float, base: int = 50_000) -> int:
+def get_N_TRAIN(dim: int, *, base: float = 1.3, factor: int = 50_000) -> int:
     """
     Heuristic to determine N_TRAIN based on dimension and tolerance.
-        base * (1/TOL)^dim
+        factor * (base)^dim
     """
-    N_TRAIN = int(base * (1.0 / tol) ** dim)
+    N_TRAIN = int(factor * (base**dim))
     return N_TRAIN
 
 
-def get_N_INIT_CLUSTERS(dim: int, tol: float, base: int = 10) -> int:
+def get_N_INIT_CLUSTERS(dim: int, *, base: float = 1.3, factor: int = 25) -> int:
     """
-    Heuristic to determine N_INIT_CLUSTERS based on dimension and tolerance.
-        base * (1/TOL)^dim
+    Heuristic to determine N_INIT_CLUSTERS based on dimension.
+        factor * (base)^dim
     """
-    N_INIT_CLUSTERS = int(base * (1.0 / tol) ** dim)
+    N_INIT_CLUSTERS = int(factor * (base**dim))
     return N_INIT_CLUSTERS
 
 
+def get_N_MIN_PER_CLUSTER(dim: int, *, base: float = 1.3, factor: int = 100) -> int:
+    """
+    Heuristic to determine N_MIN_PER_CLUSTER based on dimension.
+        factor * (base)^dim
+    """
+    N_MIN_PER_CLUSTER = int(factor * (base**dim))
+    return N_MIN_PER_CLUSTER
+
+
 def quadratic_experiment_with_v2() -> Path:
-    N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 10_000
     K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
@@ -96,9 +104,10 @@ def quadratic_experiment_with_v2() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
-        N_TRAIN = get_N_TRAIN(DIM, TOL)
+        N_TRAIN = get_N_TRAIN(DIM)
         N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, TOL)
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
         Problem_experiment_setup(
             json_fpath=json_path,
@@ -123,7 +132,6 @@ def quadratic_experiment_with_v2() -> Path:
 
 def gaussian_experiment_with_v2() -> Path:
     CLUSTERING_VERSION = "v2"
-    N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 10_000
     K_NEIGHBOURS = 1
 
@@ -164,10 +172,10 @@ def gaussian_experiment_with_v2() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
-        N_TRAIN = get_N_TRAIN(DIM, TOL)
+        N_TRAIN = get_N_TRAIN(DIM)
         N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, TOL)
-        print(f"N_TRAIN: {N_TRAIN:,}, N_INIT_CLUSTERS: {N_INIT_CLUSTERS:,}")
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
         save_dir = EXP_DIR / f"dim{DIM}_tol{TOL}_err{ERROR_METRIC}"
 
@@ -215,7 +223,6 @@ def gaussian_experiment_with_v2() -> Path:
 
 def rastrigin_experiment_with_v2() -> Path:
     # Rastrigin is complex (oscillatory), so we need more initial clusters and data
-    N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 50_000
     K_NEIGHBOURS = 5  # Higher K needed to bridge gaps between the many "grid" clusters
     CLUSTERING_VERSION = "v2"
@@ -250,9 +257,10 @@ def rastrigin_experiment_with_v2() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
-        N_TRAIN = get_N_TRAIN(DIM, TOL, base=150_000)
+        N_TRAIN = get_N_TRAIN(DIM)
         N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, TOL, base=20)
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
         Problem_experiment_setup(
             json_fpath=json_path,
@@ -278,7 +286,6 @@ def rastrigin_experiment_with_v2() -> Path:
 def rosenbrock_experiment_with_v2() -> Path:
     # Rosenbrock has a narrow, curved valley.
     # We need slightly more data than Quadratic, but less than Rastrigin.
-    N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 20_000
 
     # K=2 helps bridge the linear approximations along the curve better than K=1
@@ -316,9 +323,10 @@ def rosenbrock_experiment_with_v2() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
-        N_TRAIN = get_N_TRAIN(DIM, TOL)
+        N_TRAIN = get_N_TRAIN(DIM)
         N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, TOL)
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
         Problem_experiment_setup(
             json_fpath=json_path,
@@ -366,7 +374,6 @@ def lorenz_experiment_with_v2() -> Path:
         g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
         return g[:, :, OUTPUT_VARIABLE]
 
-    N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 20_000
 
     K_NEIGHBOURS = 1
@@ -397,9 +404,10 @@ def lorenz_experiment_with_v2() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
-        N_TRAIN = get_N_TRAIN(DIM, TOL)
+        N_TRAIN = get_N_TRAIN(DIM)
         N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, TOL)
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
         Problem_experiment_setup(
             json_fpath=json_path,
