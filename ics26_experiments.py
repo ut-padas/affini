@@ -10,6 +10,7 @@ from experiments_utils import (
     create_summary_dataframe,
     del_all_error_files_in_dir,
 )
+from src.logging_utils import capture_evaluations
 from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 from src.problems.quadratic import quadratic, quadratic_grad
 from src.problems.rastrigin import rastrigin, rastrigin_grad
@@ -23,10 +24,25 @@ from src.problems.shifted_gaussians import (
 )
 
 
+def get_N_TRAIN(dim: int, tol: float, base: int = 50_000) -> int:
+    """
+    Heuristic to determine N_TRAIN based on dimension and tolerance.
+        base * (1/TOL)^dim
+    """
+    N_TRAIN = int(base * (1.0 / tol) ** dim)
+    return N_TRAIN
+
+
+def get_N_INIT_CLUSTERS(dim: int, tol: float, base: int = 10) -> int:
+    """
+    Heuristic to determine N_INIT_CLUSTERS based on dimension and tolerance.
+        base * (1/TOL)^dim
+    """
+    N_INIT_CLUSTERS = int(base * (1.0 / tol) ** dim)
+    return N_INIT_CLUSTERS
+
+
 def quadratic_experiment_with_v2() -> Path:
-    N_TRAIN = 100_000
-    N_TEST = 10_000
-    N_INIT_CLUSTERS = 1
     N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 10_000
     K_NEIGHBOURS = 1
@@ -81,6 +97,10 @@ def quadratic_experiment_with_v2() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
+        N_TRAIN = get_N_TRAIN(DIM, TOL)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, TOL)
+
         Problem_experiment_setup(
             json_fpath=json_path,
             DIM=DIM,
@@ -104,7 +124,6 @@ def quadratic_experiment_with_v2() -> Path:
 
 def gaussian_experiment_with_v2() -> Path:
     CLUSTERING_VERSION = "v2"
-    N_INIT_CLUSTERS = 4
     N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 10_000
     K_NEIGHBOURS = 1
@@ -112,22 +131,21 @@ def gaussian_experiment_with_v2() -> Path:
     EXP_DIR = ICS26_DIR / "shifted_gaussians_v2"
     create_summary_dataframe(EXP_DIR)
     del_all_error_files_in_dir(EXP_DIR)
-    DIMs = [2, 3, 4]
+    DIMs = [2, 4]
     TOLs = [
         5e-1,
-        3.5e-1,
         2e-1,
         1e-1,
         5e-2,
         2e-2,
-        1e-2,
-        5e-3,
-        2e-3,
-        1e-3,
-        5e-4,
-        2e-4,
-        1e-4,
-        5e-5,
+        # 1e-2,
+        # 5e-3,
+        # 2e-3,
+        # 1e-3,
+        # 5e-4,
+        # 2e-4,
+        # 1e-4,
+        # 5e-5,
     ]
     ERROR_METRICs = ["Linf-global", "Linf-local"]
 
@@ -147,29 +165,33 @@ def gaussian_experiment_with_v2() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
-        if DIM == 2:
-            N_TRAIN = 200_000
-            N_TEST = 50_000
-        else:
-            N_TRAIN = 300_000
-            N_TEST = 100_000
+        N_TRAIN = get_N_TRAIN(DIM, TOL)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, TOL)
+        print(f"N_TRAIN: {N_TRAIN:,}, N_INIT_CLUSTERS: {N_INIT_CLUSTERS:,}")
+
+        save_dir = EXP_DIR / f"dim{DIM}_tol{TOL}_err{ERROR_METRIC}"
 
         # Set up partial functions for shifted gaussians with centers
-        shifted_gaussians_partial = partial(
+        shifted_gaussians_partial = capture_evaluations(
             shifted_gaussians,
             centers={
                 2: CENTERS_2D,
                 3: CENTERS_3D,
                 4: CENTERS_4D,
             }[DIM],
+            save_dir=save_dir,
+            prefix="shifted_gaussians_fn",
         )
-        shifted_gaussians_grad_partial = partial(
+        shifted_gaussians_grad_partial = capture_evaluations(
             shifted_gaussians_grad,
             centers={
                 2: CENTERS_2D,
                 3: CENTERS_3D,
                 4: CENTERS_4D,
             }[DIM],
+            save_dir=save_dir,
+            prefix="shifted_gaussians_grad",
         )
 
         Problem_experiment_setup(
@@ -195,9 +217,6 @@ def gaussian_experiment_with_v2() -> Path:
 
 def rastrigin_experiment_with_v2() -> Path:
     # Rastrigin is complex (oscillatory), so we need more initial clusters and data
-    N_TRAIN = 300_000
-    N_TEST = 50_000
-    N_INIT_CLUSTERS = 50
     N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 50_000
     K_NEIGHBOURS = 5  # Higher K needed to bridge gaps between the many "grid" clusters
@@ -233,6 +252,10 @@ def rastrigin_experiment_with_v2() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
+        N_TRAIN = get_N_TRAIN(DIM, TOL, base=150_000)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, TOL, base=20)
+
         Problem_experiment_setup(
             json_fpath=json_path,
             DIM=DIM,
@@ -257,11 +280,6 @@ def rastrigin_experiment_with_v2() -> Path:
 def rosenbrock_experiment_with_v2() -> Path:
     # Rosenbrock has a narrow, curved valley.
     # We need slightly more data than Quadratic, but less than Rastrigin.
-    N_TRAIN = 200_000
-    N_TEST = 50_000
-
-    # We start with a few clusters to help isolate the valley early on
-    N_INIT_CLUSTERS = 50
     N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 20_000
 
@@ -299,6 +317,10 @@ def rosenbrock_experiment_with_v2() -> Path:
             print(f"Skipping existing experiment at {json_path}")
             continue
         print(f"Running experiment: {json_path}")
+
+        N_TRAIN = get_N_TRAIN(DIM, TOL)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, TOL)
 
         Problem_experiment_setup(
             json_fpath=json_path,
@@ -346,10 +368,6 @@ def lorenz_experiment_with_v2() -> Path:
         g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
         return g[:, :, OUTPUT_VARIABLE]
 
-    N_TRAIN = 200_000
-    N_TEST = 50_000
-
-    N_INIT_CLUSTERS = 50
     N_MIN_PER_CLUSTER = 100
     MAX_CLUSTERS_EST = 20_000
 
@@ -381,6 +399,10 @@ def lorenz_experiment_with_v2() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
+        N_TRAIN = get_N_TRAIN(DIM, TOL)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, TOL)
+
         Problem_experiment_setup(
             json_fpath=json_path,
             DIM=DIM,
@@ -410,8 +432,8 @@ if __name__ == "__main__":
     # dir1 = quadratic_experiment_with_v2()
     # create_summary_dataframe(dir1)
 
-    # dir2 = gaussian_experiment_with_v2()
-    # create_summary_dataframe(dir2)
+    dir2 = gaussian_experiment_with_v2()
+    create_summary_dataframe(dir2)
 
     # dir3 = rastrigin_experiment_with_v2()
     # create_summary_dataframe(dir3)
@@ -419,5 +441,5 @@ if __name__ == "__main__":
     # dir4 = rosenbrock_experiment_with_v2()
     # create_summary_dataframe(dir4)
 
-    dir5 = lorenz_experiment_with_v2()
-    create_summary_dataframe(dir5)
+    # dir5 = lorenz_experiment_with_v2()
+    # create_summary_dataframe(dir5)
