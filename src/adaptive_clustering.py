@@ -220,6 +220,13 @@ def calculate_scalar_metrics(
     return radii, L_obs
 
 
+# Used if IGNORE_GRADIENT is true.
+# If so, we use this as a replacement for the gradients.
+# Takes (N, d) matrix and returns (N, d) matrix.
+def zero_grad(X):
+    return xp.zeros_like(X)
+
+
 def calculate_Q(
     DeltaX: Array,
     starts: Array,
@@ -521,6 +528,10 @@ def adaptive_clustering(
     # Geometry stabilizers
     MAX_LEVELS: int = 50,
     VISUAL_DEBUG: bool = False,
+    # Hessian informed splitting
+    USE_HESSIAN_INFORMED_SPLIT = True,
+    # Testing purposes: run without gradient to compare
+    IGNORE_GRADIENT: bool = False,
 ) -> dict[str, Array]:
     """
     BFS adaptive clustering with *persistent* convex padding via a preallocated pool.
@@ -587,6 +598,10 @@ def adaptive_clustering(
     _start_time = time.perf_counter()
     X0 = xp.asarray(X)  # (N0, d)
     N0, d = X0.shape
+
+    # Use zeros for gradient if we wish to ignore for testing
+    if IGNORE_GRADIENT:
+        g_fn = zero_grad
 
     if SYNTH_BUDGET is None:
         SYNTH_BUDGET = int(max(0, SYNTH_BUDGET_FACTOR * N0))
@@ -929,8 +944,14 @@ def adaptive_clustering(
         bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
         K_bad = int(bad_idx.shape[0])
 
+        # Fix for either below condition
+        if IGNORE_GRADIENT or not USE_HESSIAN_INFORMED_SPLIT:
+            N_hessians = len(bad_starts)
+            M = xp.repeat(xp.eye(d)[None, :, :], N_hessians, axis=0)
+
         # Hessian fit (symmetric) + |H|^{1/2} transform.
-        M = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts)
+        else:
+            M = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts)
 
         # Transform coordinates: z = M_k Δx (cluster-wise).
         map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)

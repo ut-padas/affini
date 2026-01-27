@@ -42,6 +42,7 @@ class NearODESurrogate:
         MAX_CLUSTERS_EST: int = 1_000_000,
         SEED: int = 0,
         USE_HESSIAN_INFORMED_SPLIT: bool = False,
+        IGNORE_GRADIENT: bool = False,
     ):
         """
         1. Sample X from domain.
@@ -67,6 +68,8 @@ class NearODESurrogate:
                     SEED=SEED,
                     LOG_MEM_STATS=False,
                     SYNTH_BUDGET_FACTOR=100.0,
+                    USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                    IGNORE_GRADIENT=IGNORE_GRADIENT
                 )
 
                 centroids = xp.asarray(results["centroids"])

@@ -238,6 +238,7 @@ def Problem_experiment_setup(
     STORE_TRAIN_EVALS: bool = False,
     TRAIN_EVALS_PREFIX: str = "train_evals",
     TRAIN_EVALS_DIR: Optional[Path] = None,
+    IGNORE_GRADIENT: bool = False,
 ):
     # Sample data from a uniform distribution
     xp.random.seed(SEED)
@@ -281,6 +282,7 @@ def Problem_experiment_setup(
                 SEED=SEED,
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 ERROR_METRIC=ERROR_METRIC,
+                IGNORE_GRADIENT=IGNORE_GRADIENT
             )
             _end_train_time = time.perf_counter()
             _TRAINED = True
@@ -299,6 +301,7 @@ def Problem_experiment_setup(
                 SEED=SEED,
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 ERROR_METRIC=ERROR_METRIC,
+                IGNORE_GRADIENT=IGNORE_GRADIENT
             )
             _end_train_time = time.perf_counter()
             _TRAINED = True
