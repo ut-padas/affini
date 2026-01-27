@@ -162,6 +162,8 @@ class EvaluationCapture:
         """Call function and save X, result to timestamped NPZ file."""
         import numpy as np
 
+        from src import xp
+
         # Call the original function
         result = self.func(X, *self.func_args, **self.func_kwargs)
 
@@ -177,6 +179,9 @@ class EvaluationCapture:
         # Save just X and result
         np.savez_compressed(filepath, X=X_np, result=result_np)
         logger.debug(f"Saved evaluation: {filename}")
+
+        # Convert back to original array type
+        result = xp.asarray(result_np)
         return result
 
 
