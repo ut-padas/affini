@@ -4,10 +4,10 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import psutil
 import pynvml
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +209,7 @@ def capture_evaluations(
 def consolidate_evaluations(
     save_dir: Path,
     prefix: str,
-    output_name: Optional[str] = None,
+    output_path: Path,
     remove_duplicates: bool = True,
 ) -> Path:
     """
@@ -247,26 +247,49 @@ def consolidate_evaluations(
     all_X = []
     all_results = []
 
-    for npz_file in npz_files:
+    # Determine expected result dimensionality from first file
+    first_data = np.load(npz_files[0])
+    expected_result_ndim = first_data["result"].ndim
+    logger.debug(f"Expected result dimensionality: {expected_result_ndim}D")
+
+    for npz_file in tqdm(npz_files, desc=f"Loading {prefix} files"):
         data = np.load(npz_file)
         all_X.append(data["X"])
         all_results.append(data["result"])
+
+        assert data["X"].ndim == 2, f"X array in {npz_file} is not 2D"
+        assert (
+            data["result"].ndim == expected_result_ndim
+        ), f"result array in {npz_file} has {data['result'].ndim}D but expected {expected_result_ndim}D"
 
     # Concatenate all data
     X_concat = np.vstack(all_X)
     results_concat = np.vstack(all_results)
 
     if remove_duplicates:
-        # Remove duplicate rows based on (X, result) pairs
-        combined = np.hstack((X_concat, results_concat))
-        unique_combined = np.unique(combined, axis=0)
-        X_concat = unique_combined[:, : X_concat.shape[1]]
-        results_concat = unique_combined[:, X_concat.shape[1] :]
+        if expected_result_ndim == 2:
+            # For 2D results (function evaluations): can use hstack directly
+            combined = np.hstack((X_concat, results_concat))
+            unique_combined = np.unique(combined, axis=0)
+            X_concat = unique_combined[:, : X_concat.shape[1]]
+            results_concat = unique_combined[:, X_concat.shape[1] :]
+        elif expected_result_ndim == 3:
+            # For 3D results (gradients): flatten results for duplicate detection
+            results_flat = results_concat.reshape(results_concat.shape[0], -1)
+            combined = np.hstack((X_concat, results_flat))
+            unique_combined = np.unique(combined, axis=0)
+            X_concat = unique_combined[:, : X_concat.shape[1]]
+            results_flat = unique_combined[:, X_concat.shape[1] :]
+            # Reshape results back to 3D
+            results_concat = results_flat.reshape(
+                -1, results_concat.shape[1], results_concat.shape[2]
+            )
+        else:
+            raise ValueError(
+                f"Unsupported result dimensionality: {expected_result_ndim}D"
+            )
 
     # Determine output filename
-    if output_name is None:
-        output_name = f"{prefix}_consolidated.npz"
-    output_path = save_dir / output_name
     np.savez_compressed(output_path, X=X_concat, result=results_concat)
     logger.info(f"Consolidated file saved: {output_path}")
     return output_path
