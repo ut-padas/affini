@@ -130,29 +130,91 @@ def quadratic_experiment_with_v2() -> Path:
     return EXP_DIR
 
 
+def quadratic_experiment_with_v2_no_grad() -> Path:
+
+    MAX_CLUSTERS_EST = 10_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "quadratic_no_grad_v2"
+    del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
+    DIMs = [2, 3, 4, 5, 8, 10]
+    TOLs = [
+        0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1,
+        0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01,
+        0.009, 0.008, 0.007, 0.006, 0.005
+    ]
+    ERROR_METRICs = ["Linf-global", "Linf-local"]
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        if DIM > 5 and TOL < 1e-4:
+            print(
+                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
+            )
+            continue
+        elif DIM >= 8 and TOL <= 1e-3:
+            print(
+                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
+            )
+            continue
+        elif ERROR_METRIC == "L2" and ((TOL <= 2e-2 and DIM >= 4) or (TOL <= 5e-4)):
+            print(
+                f"Skipping experiment for ERROR_METRIC={ERROR_METRIC}, TOL={TOL} and DIM={DIM} due to high computational cost."
+            )
+            continue
+
+        json_path = (
+            EXP_DIR / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            DOMAIN=[-2, 2],
+            f_fn=quadratic,
+            g_fn=quadratic_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            USE_HESSIAN_INFORMED_SPLIT=False,
+            IGNORE_GRADIENT=True
+        )
+
+    return EXP_DIR
+
+
 def gaussian_experiment_with_v2() -> Path:
     CLUSTERING_VERSION = "v2"
     MAX_CLUSTERS_EST = 10_000
     K_NEIGHBOURS = 1
 
-    EXP_DIR = ICS26_DIR / "shifted_gaussians_v2"
+    EXP_DIR = ICS26_DIR / "shifted_gaussians_no_grad_v2"
     create_summary_dataframe(EXP_DIR)
     del_all_error_files_in_dir(EXP_DIR)
-    DIMs = [2, 4]
+    DIMs = [2, 3, 4]
     TOLs = [
-        5e-1,
-        2e-1,
-        1e-1,
-        5e-2,
-        2e-2,
-        # 1e-2,
-        # 5e-3,
-        # 2e-3,
-        # 1e-3,
-        # 5e-4,
-        # 2e-4,
-        # 1e-4,
-        # 5e-5,
+        0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04,
+        0.03, 0.029, 0.028, 0.027, 0.026, 0.025, 0.024, 0.023, 0.022, 0.021, 0.02,
+        0.019, 0.018, 0.017, 0.016, 0.015, 0.014, 0.013, 0.012, 0.011, 0.01,
+        0.009, 0.008, 0.007, 0.006, 0.005, 0.004, 0.003, 0.002, 0.001
     ]
     ERROR_METRICs = ["Linf-global", "Linf-local"]
 
@@ -213,10 +275,7 @@ def gaussian_experiment_with_v2() -> Path:
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
-            STORE_TRAIN_EVALS=False, # changed this
-            TRAIN_EVALS_DIR=save_dir,
-            TRAIN_EVALS_PREFIX=save_dir.name,
-            IGNORE_GRADIENT=True # also changed/added this
+            STORE_TRAIN_EVALS=False,
         )
 
     return EXP_DIR
@@ -351,6 +410,78 @@ def rosenbrock_experiment_with_v2() -> Path:
     return EXP_DIR
 
 
+
+def rosenbrock_experiment_with_v2_no_grad() -> Path:
+    # Rosenbrock has a narrow, curved valley.
+    # We need slightly more data than Quadratic, but less than Rastrigin.
+    MAX_CLUSTERS_EST = 20_000
+
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "rosenbrock_no_grad_v2"
+    del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
+
+    DIMs = [2, 5, 10]
+
+    # Rosenbrock scale is 100, so gradients are steep.
+    # We test tolerances from 50% down to 0.1%
+    TOLs = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1,
+            0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01,
+            0.009, 0.008, 0.007, 0.006, 0.005]
+
+    ERROR_METRICs = ["Linf-global", "Linf-local"]
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rosenbrock Experiments"):
+
+        # Resource constraints checks
+        if DIM == 10 and TOL < 0.1:
+            print(
+                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
+            )
+            continue
+
+        json_path = (
+            EXP_DIR / f"ics26_rosenbrock_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            # Domain [-2, 3] captures the global min at 1.0 and the steep walls
+            DOMAIN=[-2.0, 3.0],
+            f_fn=rosenbrock,
+            g_fn=rosenbrock_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            USE_HESSIAN_INFORMED_SPLIT=False,
+            IGNORE_GRADIENT=True,
+        )
+
+    return EXP_DIR
+
+
+
+
 """
 Lorenz surrogate for a SINGLE time step.
 We are not worrying about sampling along manifolds in this case.
@@ -436,11 +567,11 @@ if __name__ == "__main__":
 
     setup_logging()
 
-    # dir1 = quadratic_experiment_with_v2()
-    # create_summary_dataframe(dir1)
+    dir1 = quadratic_experiment_with_v2()
+    create_summary_dataframe(dir1)
 
-    dir2 = gaussian_experiment_with_v2()
-    create_summary_dataframe(dir2)
+    # dir2 = gaussian_experiment_with_v2()
+    # create_summary_dataframe(dir2)
 
     # dir3 = rastrigin_experiment_with_v2()
     # create_summary_dataframe(dir3)
@@ -450,3 +581,6 @@ if __name__ == "__main__":
 
     # dir5 = lorenz_experiment_with_v2()
     # create_summary_dataframe(dir5)
+
+    # dir7 = rosenbrock_experiment_with_v2_no_grad()
+    # create_summary_dataframe(dir7)
