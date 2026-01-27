@@ -10,7 +10,6 @@ from experiments_utils import (
     create_summary_dataframe,
     del_all_error_files_in_dir,
 )
-from src.logging_utils import capture_evaluations
 from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 from src.problems.quadratic import quadratic, quadratic_grad
 from src.problems.rastrigin import rastrigin, rastrigin_grad
@@ -173,25 +172,21 @@ def gaussian_experiment_with_v2() -> Path:
         save_dir = EXP_DIR / f"dim{DIM}_tol{TOL}_err{ERROR_METRIC}"
 
         # Set up partial functions for shifted gaussians with centers
-        shifted_gaussians_partial = capture_evaluations(
+        shifted_gaussians_partial = partial(
             shifted_gaussians,
             centers={
                 2: CENTERS_2D,
                 3: CENTERS_3D,
                 4: CENTERS_4D,
             }[DIM],
-            save_dir=save_dir,
-            prefix="shifted_gaussians_fn",
         )
-        shifted_gaussians_grad_partial = capture_evaluations(
+        shifted_gaussians_grad_partial = partial(
             shifted_gaussians_grad,
             centers={
                 2: CENTERS_2D,
                 3: CENTERS_3D,
                 4: CENTERS_4D,
             }[DIM],
-            save_dir=save_dir,
-            prefix="shifted_gaussians_grad",
         )
 
         Problem_experiment_setup(
@@ -210,6 +205,9 @@ def gaussian_experiment_with_v2() -> Path:
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
+            STORE_TRAIN_EVALS=True,
+            TRAIN_EVALS_DIR=save_dir,
+            TRAIN_EVALS_PREFIX=save_dir.name,
         )
 
     return EXP_DIR
