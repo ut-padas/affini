@@ -165,8 +165,8 @@ def gaussian_experiment_with_v2() -> Path:
         print(f"Running experiment: {json_path}")
 
         N_TRAIN = get_N_TRAIN(DIM, TOL)
-        N_TEST = N_TRAIN // 2
         N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, TOL)
+        N_TEST = N_TRAIN // 2
         print(f"N_TRAIN: {N_TRAIN:,}, N_INIT_CLUSTERS: {N_INIT_CLUSTERS:,}")
 
         save_dir = EXP_DIR / f"dim{DIM}_tol{TOL}_err{ERROR_METRIC}"
@@ -205,9 +205,10 @@ def gaussian_experiment_with_v2() -> Path:
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
-            STORE_TRAIN_EVALS=True,
+            STORE_TRAIN_EVALS=False, # changed this
             TRAIN_EVALS_DIR=save_dir,
             TRAIN_EVALS_PREFIX=save_dir.name,
+            IGNORE_GRADIENT=True # also changed/added this
         )
 
     return EXP_DIR
