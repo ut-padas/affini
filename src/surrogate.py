@@ -69,7 +69,7 @@ class NearODESurrogate:
                     LOG_MEM_STATS=False,
                     SYNTH_BUDGET_FACTOR=100.0,
                     USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-                    IGNORE_GRADIENT=IGNORE_GRADIENT
+                    IGNORE_GRADIENT=IGNORE_GRADIENT,
                 )
 
                 centroids = xp.asarray(results["centroids"])
@@ -261,7 +261,7 @@ class NearODESurrogate:
         # We fetch more candidates than needed because L2 distance != Q distance.
         # A cluster might be far in L2 but "close" in Q (if aligned well).
         if k < len(self.X_src):
-            COARSE_FACTOR = 5
+            COARSE_FACTOR = 1000
             k_coarse = min(k * COARSE_FACTOR, len(self.X_src))
             k = min(k, len(self.X_src))
         else:
