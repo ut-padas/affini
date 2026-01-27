@@ -13,7 +13,9 @@ from ics26_experiments import (
 )
 from src import xp
 from src.adaptive_clustering import adaptive_clustering
-from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess
+from src.problems.quadratic import quadratic, quadratic_grad, quadratic_hess
+
+# from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess
 
 # --- Configuration ---
 TOLS = [5e-1, 2e-1, 1e-1, 5e-2, 2e-2, 1e-2, 5e-3, 2e-3]
@@ -23,7 +25,8 @@ ERROR_METRICS_LIST = ["Linf-global", "Linf-local"]  # Added Sweep List
 # Constant Parameters
 PROB_LIMS = (-1.0, 3.0)
 
-TEMP_JSON_DIR = ICS26_DIR / "hessian_estimation_rosenbrock"
+# TEMP_JSON_DIR = ICS26_DIR / "hessian_estimation_rosenbrock"
+TEMP_JSON_DIR = ICS26_DIR / "hessian_estimation_quadratic"
 TEMP_JSON_DIR.mkdir(exist_ok=True)
 create_summary_dataframe(TEMP_JSON_DIR)
 
@@ -66,8 +69,8 @@ for dim in tqdm(DIMS, desc="Dimensions"):
                     # 2. Run Clustering
                     res = adaptive_clustering(
                         X,
-                        f_fn=rosenbrock,
-                        g_fn=rosenbrock_grad,
+                        f_fn=quadratic,
+                        g_fn=quadratic_grad,
                         TOL=tol,
                         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
                         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
@@ -103,7 +106,7 @@ for dim in tqdm(DIMS, desc="Dimensions"):
                     )
 
                     # B. True Eigenvalues (from analytical Hessian)
-                    H_true = rosenbrock_hess(centroids)
+                    H_true = quadratic_hess(centroids)
                     H_true_vals, _ = xp.linalg.eigh(H_true)
 
                     # Take Magnitude (Abs) because our estimator approximates |H|
