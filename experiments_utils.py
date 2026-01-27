@@ -34,14 +34,18 @@ def create_summary_dataframe(results_dir: Path):
 
     df.to_csv(results_dir / "summary.csv", index=False)
     print(f"Summary dataframe saved to {results_dir / 'summary.csv'}")
-    # Count number of error cases
-    n_errors = df["error_tag"].apply(lambda x: x != "").sum()
-    if n_errors == 0:
-        # print in green color
-        print(f"\033[92mNo error cases in {results_dir}!\033[0m")
-    else:
-        # print in red color
-        print(f"\033[91mError cases found: {n_errors} in {results_dir}!\033[0m")
+
+    try:
+        # Count number of error cases
+        n_errors = df["error_tag"].apply(lambda x: x != "").sum()
+        if n_errors == 0:
+            # print in green color
+            print(f"\033[92mNo error cases in {results_dir}!\033[0m")
+        else:
+            # print in red color
+            print(f"\033[91mError cases found: {n_errors} in {results_dir}!\033[0m")
+    except Exception:
+        pass
 
 
 def plot_error_histogram(
@@ -282,7 +286,7 @@ def Problem_experiment_setup(
                 SEED=SEED,
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 ERROR_METRIC=ERROR_METRIC,
-                IGNORE_GRADIENT=IGNORE_GRADIENT
+                IGNORE_GRADIENT=IGNORE_GRADIENT,
             )
             _end_train_time = time.perf_counter()
             _TRAINED = True
@@ -301,7 +305,7 @@ def Problem_experiment_setup(
                 SEED=SEED,
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 ERROR_METRIC=ERROR_METRIC,
-                IGNORE_GRADIENT=IGNORE_GRADIENT
+                IGNORE_GRADIENT=IGNORE_GRADIENT,
             )
             _end_train_time = time.perf_counter()
             _TRAINED = True

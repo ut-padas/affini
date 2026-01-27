@@ -56,7 +56,6 @@ def quadratic_experiment_with_v2() -> Path:
     CLUSTERING_VERSION = "v2"
 
     EXP_DIR = ICS26_DIR / "quadratic_v2"
-    del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
     DIMs = [2, 3, 4, 5, 8, 10]
     TOLs = [
@@ -79,7 +78,7 @@ def quadratic_experiment_with_v2() -> Path:
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
-        if DIM > 5 and TOL < 1e-4:
+        if DIM >= 5 and TOL <= 5e-5:
             print(
                 f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
             )
@@ -239,8 +238,6 @@ def gaussian_experiment_with_v2() -> Path:
         N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
-        save_dir = EXP_DIR / f"dim{DIM}_tol{TOL}_err{ERROR_METRIC}"
-
         # Set up partial functions for shifted gaussians with centers
         shifted_gaussians_partial = partial(
             shifted_gaussians,
@@ -284,7 +281,7 @@ def gaussian_experiment_with_v2() -> Path:
 def rastrigin_experiment_with_v2() -> Path:
     # Rastrigin is complex (oscillatory), so we need more initial clusters and data
     MAX_CLUSTERS_EST = 50_000
-    K_NEIGHBOURS = 5  # Higher K needed to bridge gaps between the many "grid" clusters
+    K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
 
     EXP_DIR = ICS26_DIR / "rastrigin_v2"
@@ -293,8 +290,6 @@ def rastrigin_experiment_with_v2() -> Path:
 
     # Rastrigin becomes extremely difficult in high dimensions for local surrogates
     DIMs = [2, 3, 4, 5, 10]
-
-    # Global Max is approx 80 for d=2, 120 for d=3.
     TOLs = [5e-1, 2e-1, 1e-1, 5e-2, 2e-2, 1e-2, 5e-3, 2e-3, 1e-3]
 
     # L2 is excluded by default as it tends to over-segment the oscillating "floor"
@@ -344,12 +339,10 @@ def rastrigin_experiment_with_v2() -> Path:
 
 
 def rosenbrock_experiment_with_v2() -> Path:
-    # Rosenbrock has a narrow, curved valley.
-    # We need slightly more data than Quadratic, but less than Rastrigin.
     MAX_CLUSTERS_EST = 20_000
 
     # K=2 helps bridge the linear approximations along the curve better than K=1
-    K_NEIGHBOURS = 2
+    K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
 
     EXP_DIR = ICS26_DIR / "rosenbrock_v2"
@@ -358,9 +351,7 @@ def rosenbrock_experiment_with_v2() -> Path:
 
     DIMs = [2, 5, 10]
 
-    # Rosenbrock scale is 100, so gradients are steep.
-    # We test tolerances from 50% down to 0.1%
-    TOLs = [i / 100.0 for i in [50, 20, 10, 5, 2, 1, 0.5, 0.1]]
+    TOLs = [5e-1, 2e-1, 1e-1, 5e-2, 2e-2, 1e-2, 5e-3, 2e-3, 1e-3]
 
     ERROR_METRICs = ["Linf-global", "Linf-local"]
 
@@ -368,7 +359,7 @@ def rosenbrock_experiment_with_v2() -> Path:
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rosenbrock Experiments"):
 
         # Resource constraints checks
-        if DIM == 10 and TOL <= 0.005:
+        if (DIM == 10 and TOL <= 5e-2) or (DIM == 5 and TOL <= 5e-3):
             print(
                 f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
             )
@@ -491,6 +482,9 @@ Imagine this is the very first time step in a string of simulations.
 
 def lorenz_experiment_with_v2() -> Path:
     # We must modify the functions to include forcing and tf as constants.
+    raise NotImplementedError(
+        "Currently the adaptive clustering does not support vector outputs."
+    )
     FORCING = 1
     FINAL_TIME = 0.1
     OUTPUT_VARIABLE = 0
@@ -573,11 +567,11 @@ if __name__ == "__main__":
     # dir2 = gaussian_experiment_with_v2()
     # create_summary_dataframe(dir2)
 
-    # dir3 = rastrigin_experiment_with_v2()
-    # create_summary_dataframe(dir3)
+    dir3 = rastrigin_experiment_with_v2()
+    create_summary_dataframe(dir3)
 
-    # dir4 = rosenbrock_experiment_with_v2()
-    # create_summary_dataframe(dir4)
+    dir4 = rosenbrock_experiment_with_v2()
+    create_summary_dataframe(dir4)
 
     # dir5 = lorenz_experiment_with_v2()
     # create_summary_dataframe(dir5)

@@ -40,17 +40,16 @@ def quadratic_grad(X: Array) -> Array:
     return G[:, None, :]  # (N, 1, d)
 
 
-def quadratic_hessian(X: Array) -> Array:
+def quadratic_hess(X: Array) -> Array:
     """
     Computes the Hessian of the Quadratic function for given input points.
-    hess f(x) = 2 * a * eye(d)
+    Hessian f(x) = 2 a I_d
     Args:
         X: (N, d) data matrix
 
     Returns:
-        G: (N,d,d) hessians at X
+        H: (N, d, d) Hessians at X
     """
-
     N, d = X.shape
-    H = xp.repeat(2 * A * xp.eye(d)[None, :, :], N, axis=0)
-    return H
+    H = 2 * A * xp.eye(d, dtype=X.dtype)[None, :, :]  # (1, d, d)
+    return xp.repeat(H, N, axis=0)  # (N, d, d)
