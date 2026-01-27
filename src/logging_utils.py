@@ -154,10 +154,6 @@ class EvaluationCapture:
         # Create directory if needed
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info(
-            f"Capturing evaluations for {func.__name__} -> {self.save_dir}/{prefix}-*.npz"
-        )
-
     def __call__(self, X):
         """Call function and save X, result to timestamped NPZ file."""
         import numpy as np
