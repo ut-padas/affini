@@ -4,6 +4,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import psutil
 import pynvml
@@ -127,3 +128,144 @@ def log_mem_stats(tag: str = ""):
         msg = f"[MEM] {tag:<25} | RAM: {ram_used_gb:6.2f} / {ram_total_gb:6.2f} GB"
 
     logger.debug(msg)
+
+
+class EvaluationCapture:
+    """Captures function evaluations and saves them to NPZ files."""
+
+    def __init__(
+        self, func, *func_args, save_dir: Path, prefix: str = "eval", **func_kwargs
+    ):
+        """
+        Initialize the evaluation capture wrapper.
+
+        Args:
+            func: The function to wrap
+            save_dir: Directory where NPZ files will be saved
+            prefix: Prefix for the NPZ filenames
+            *func_args, **func_kwargs: Arguments passed to the function
+        """
+        self.func = func
+        self.func_args = func_args
+        self.func_kwargs = func_kwargs
+        self.save_dir = Path(save_dir)
+        self.prefix = prefix
+
+        # Create directory if needed
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(
+            f"Capturing evaluations for {func.__name__} -> {self.save_dir}/{prefix}-*.npz"
+        )
+
+    def __call__(self, X):
+        """Call function and save X, result to timestamped NPZ file."""
+        import numpy as np
+
+        # Call the original function
+        result = self.func(X, *self.func_args, **self.func_kwargs)
+
+        # Create timestamped filename
+        timestamp = datetime.now().strftime("%H-%M-%S-%f")[:-3]  # Include milliseconds
+        filename = f"{self.prefix}-{timestamp}.npz"
+        filepath = self.save_dir / filename
+
+        # Convert to numpy arrays for saving
+        X_np = X.get() if hasattr(X, "get") else np.asarray(X)
+        result_np = result.get() if hasattr(result, "get") else np.asarray(result)
+
+        # Save just X and result
+        np.savez_compressed(filepath, X=X_np, result=result_np)
+        logger.debug(f"Saved evaluation: {filename}")
+        return result
+
+
+def capture_evaluations(
+    func, *func_args, save_dir: Path, prefix: str = "eval", **func_kwargs
+):
+    """
+    Create a function wrapper that captures evaluations to NPZ files.
+
+    Args:
+        func: Function to wrap
+        save_dir: Directory to save NPZ files
+        prefix: Filename prefix
+        *func_args, **func_kwargs: Arguments for the function
+
+    Returns:
+        Wrapped function that saves X, result to timestamped NPZ files
+
+    Example:
+        >>> f_logged = capture_evaluations(rosenbrock, a=100.0,
+        ...                               save_dir=Path("./evals"), prefix="rosenbrock")
+        >>> result = f_logged(X)  # Saves X, result to rosenbrock-HH-MM-SS-fff.npz
+    """
+    return EvaluationCapture(
+        func, *func_args, save_dir=save_dir, prefix=prefix, **func_kwargs
+    )
+
+
+def consolidate_evaluations(
+    save_dir: Path,
+    prefix: str,
+    output_name: Optional[str] = None,
+    remove_duplicates: bool = True,
+) -> Path:
+    """
+    Consolidate multiple NPZ evaluation files into a single file.
+
+    Args:
+        save_dir: Directory containing the NPZ files
+        prefix: Prefix to filter files (e.g., "rosenbrock")
+        output_name: Name for consolidated file (default: "{prefix}_consolidated.npz")
+        remove_duplicates: Whether to remove duplicate (X, result) pairs
+
+    Returns:
+        Path to the consolidated NPZ file
+
+    Example:
+        >>> # After capturing many evaluations...
+        >>> consolidated = consolidate_evaluations(Path("./evals"), "rosenbrock")
+        >>> data = np.load(consolidated)
+        >>> print(f"Total points: {data['X'].shape[0]}")
+    """
+    import numpy as np
+
+    save_dir = Path(save_dir)
+    if not save_dir.exists():
+        raise FileNotFoundError(f"Directory not found: {save_dir}")
+
+    # Find all NPZ files with the given prefix
+    npz_files = list(save_dir.glob(f"{prefix}-*.npz"))
+    if not npz_files:
+        raise FileNotFoundError(
+            f"No NPZ files found with prefix '{prefix}' in {save_dir}"
+        )
+
+    logger.info(f"Consolidating {len(npz_files)} files with prefix '{prefix}'")
+    all_X = []
+    all_results = []
+
+    for npz_file in npz_files:
+        data = np.load(npz_file)
+        all_X.append(data["X"])
+        all_results.append(data["result"])
+
+    # Concatenate all data
+    X_concat = np.vstack(all_X)
+    results_concat = np.vstack(all_results)
+
+    if remove_duplicates:
+        # Remove duplicate rows based on (X, result) pairs
+        combined = np.hstack((X_concat, results_concat))
+        unique_combined = np.unique(combined, axis=0)
+        X_concat = unique_combined[:, : X_concat.shape[1]]
+        results_concat = unique_combined[:, X_concat.shape[1] :]
+
+    # Determine output filename
+    if output_name is None:
+        output_name = f"{prefix}_consolidated.npz"
+    output_path = save_dir / output_name
+    np.savez_compressed(output_path, X=X_concat, result=results_concat)
+    logger.info(f"Consolidated file saved: {output_path}")
+    return output_path
