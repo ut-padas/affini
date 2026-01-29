@@ -58,9 +58,9 @@ def ics_quadratic_experiment() -> Path:
 
     EXP_DIR = ICS26_DIR / "ics_quadratic"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [5, 8]
+    DIMs = [2, 5, 8]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-local"]
+    ERROR_METRICs = ["Linf-local", "Linf-global"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
@@ -81,6 +81,7 @@ def ics_quadratic_experiment() -> Path:
         Problem_experiment_setup(
             json_fpath=json_path,
             DIM=DIM,
+            F_DIM=1,
             DOMAIN=[-2, 2],
             f_fn=quadratic,
             g_fn=quadratic_grad,
