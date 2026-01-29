@@ -51,50 +51,19 @@ def get_N_MIN_PER_CLUSTER(dim: int, *, base: float = 1.3, factor: int = 100) -> 
     return N_MIN_PER_CLUSTER
 
 
-def quadratic_experiment_with_v2() -> Path:
-    MAX_CLUSTERS_EST = 10_000
+def ics_quadratic_experiment() -> Path:
+    MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
 
-    EXP_DIR = ICS26_DIR / "quadratic_v2"
+    EXP_DIR = ICS26_DIR / "ics_quadratic"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 3, 4, 5, 8, 10]
-    TOLs = [
-        2e-1,
-        1e-1,
-        5e-2,
-        2e-2,
-        1e-2,
-        5e-3,
-        2e-3,
-        1e-3,
-        5e-4,
-        2e-4,
-        1e-4,
-        5e-5,
-        2e-5,
-        1e-5,
-    ]
-    ERROR_METRICs = ["L2", "Linf-global", "Linf-local"]
+    DIMs = [5, 8]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+    ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
-        if DIM >= 5 and TOL <= 5e-5:
-            print(
-                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
-            )
-            continue
-        elif DIM >= 8 and TOL <= 1e-3:
-            print(
-                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
-            )
-            continue
-        elif ERROR_METRIC == "L2" and ((TOL <= 2e-2 and DIM >= 4) or (TOL <= 5e-4)):
-            print(
-                f"Skipping experiment for ERROR_METRIC={ERROR_METRIC}, TOL={TOL} and DIM={DIM} due to high computational cost."
-            )
-            continue
-
         json_path = (
             EXP_DIR / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
         )
@@ -707,11 +676,11 @@ if __name__ == "__main__":
 
     setup_logging()
 
-    # dir1 = quadratic_experiment_with_v2()
-    # create_summary_dataframe(dir1)
+    dir1 = ics_quadratic_experiment()
+    create_summary_dataframe(dir1)
 
-    dir2 = vector_quadratic_experiment_with_v2()
-    create_summary_dataframe(dir2)
+    # dir2 = vector_quadratic_experiment_with_v2()
+    # create_summary_dataframe(dir2)
 
     # dir3 = gaussian_experiment_with_v2()
     # create_summary_dataframe(dir3)
