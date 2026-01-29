@@ -67,7 +67,7 @@ class NearODESurrogate:
                     MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                     SEED=SEED,
                     LOG_MEM_STATS=False,
-                    SYNTH_BUDGET_FACTOR=100.0,
+                    SYNTH_BUDGET_FACTOR=200.0,
                     USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                     IGNORE_GRADIENT=IGNORE_GRADIENT,
                 )
