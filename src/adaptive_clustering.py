@@ -1,6 +1,5 @@
 import logging
 import time
-from pathlib import Path
 from typing import Any, Callable, Literal, Optional
 
 import matplotlib.pyplot as plt
@@ -38,45 +37,6 @@ def scatter_maximum_1d(out: Array, idx: Array, vals: Array) -> None:
         cupy_scatter_max(out, idx, vals)
     else:
         xp.maximum.at(out, idx, vals)
-
-
-def flatten_function_array(F: Array) -> Array:
-    """
-    Normalize function values to a flat (N,) array.
-    The user-provided `f_fn` may return either (N,), (N,1), or something reshapeable
-    to (N,).
-
-    Args:
-        F: Array-like of function values.
-
-    Returns:
-        F_flat: (N,) array.
-    """
-    F = xp.asarray(F)
-    if getattr(F, "ndim", 1) == 2 and F.shape[1] == 1:
-        return F[:, 0]
-    return F.reshape((-1,))
-
-
-def flatten_gradient_array(G: Array) -> Array:
-    """
-    Normalize gradients to a dense (N, d) array.
-    Accepts either:
-      - (N, d) gradients, or
-      - (N, 1, d) gradients (common when batching Jacobians).
-
-    Args:
-        G: Array-like gradients.
-
-    Returns:
-        G2: (N, d) gradient array.
-    """
-    G = xp.asarray(G)
-    if getattr(G, "ndim", 1) == 3 and G.shape[1] == 1:
-        return G[:, 0, :]
-    if getattr(G, "ndim", 1) == 2:
-        return G
-    raise ValueError(f"Unexpected gradient shape {G.shape}; expected (N,d) or (N,1,d).")
 
 
 def compute_label_segments(sorted_labels: Array) -> tuple[Array, Array, Array]:
@@ -182,49 +142,42 @@ def calculate_scalar_metrics(
     Computes scalar trust radius and observed Lipschitz constant per cluster.
 
     Args:
-        DeltaX: (N, d) centered points (x_i - mu_k).
-        G_points: (N, d) gradients at the points x_i.
-        G_centroids: (K, d) gradients at the centroids mu_k.
-        map_n_to_k: (N,) indices mapping points to their cluster k.
-        K: number of clusters.
+        DeltaX: (N, d) centered points.
+        G_points: (N, fd, d) gradients at points.
+        G_centroids: (K, fd, d) gradients at centroids.
+        map_n_to_k: (N,) mapping.
 
     Returns:
         radii: (K,) max Euclidean distance from centroid.
-        L_obs: (K,) max observed curvature |dg|/|dx|.
+        L_obs: (K,) max observed curvature |dg|/|dx| across all output dimensions.
     """
-    # 1. Compute distances |dx|
-    # Note: explicit axis=1 norm is faster than applying sqrt to sum-sq later
-    dist_x = xp.linalg.norm(DeltaX, axis=1)
-
-    # 2. Compute Scalar Radius: max(|dx|) per cluster
+    # 1. Radius: max(|dx|)
+    dist_x = xp.linalg.norm(DeltaX, axis=1)  # (N,)
     radii = xp.zeros((K,), dtype=DeltaX.dtype)
     scatter_maximum_1d(radii, map_n_to_k, dist_x)
 
-    # 3. Compute Gradient Differences |dg|
-    # Expand centroid gradients to match point shape: (N, d)
-    g_center_expanded = G_centroids[map_n_to_k]
-    diff_g = xp.linalg.norm(G_points - g_center_expanded, axis=1)
+    # 2. Gradient Diff: |dg| per component.
+    # Expand centroids: (N, fd, d)
+    g_center_exp = G_centroids[map_n_to_k]
+    diff_g_tensor = G_points - g_center_exp  # (N, fd, d)
 
-    # 4. Compute Ratios |dg| / |dx|
-    # Handle division by zero (centroid point itself has dist_x=0)
+    # Norm per component per point: (N, fd)
+    diff_g_norms = xp.linalg.norm(diff_g_tensor, axis=2)
+
+    # 3. Ratios per component: (N, fd)
     valid_mask = dist_x > TINY_EPS
-    ratios = xp.zeros_like(dist_x)
-
+    ratios = xp.zeros_like(diff_g_norms)
     if xp.any(valid_mask):
-        ratios[valid_mask] = diff_g[valid_mask] / dist_x[valid_mask]
+        ratios[valid_mask] = diff_g_norms[valid_mask] / dist_x[valid_mask][:, None]
 
-    # 5. Compute L_obs: max(ratio) per cluster
+    # 4. L_obs: Max over points AND components
+    # First max over components for each point
+    max_ratio_per_point = xp.max(ratios, axis=1)  # (N,)
+
     L_obs = xp.zeros((K,), dtype=DeltaX.dtype)
-    scatter_maximum_1d(L_obs, map_n_to_k, ratios)
+    scatter_maximum_1d(L_obs, map_n_to_k, max_ratio_per_point)
 
     return radii, L_obs
-
-
-# Used if IGNORE_GRADIENT is true.
-# If so, we use this as a replacement for the gradients.
-# Takes (N, d) matrix and returns (N, d) matrix.
-def zero_grad(X):
-    return xp.zeros_like(X)
 
 
 def calculate_Q(
@@ -273,10 +226,10 @@ def calculate_Q(
 
         # Invert Eigenvalues to get shape.
         # Since Cov is PSD and shrunk, Lambda > 0.
-        Lambda_inv = 1.0 / Lambda  # (K,d)
+        Lambda_inv = 1.0 / xp.maximum(Lambda, TINY_EPS)  # (K,d)
 
         # dist^2 = x^T S x = x^T (U Lambda_inv U^T) x
-        map_n_to_k = repeats(xp.arange(K), counts)
+        map_n_to_k = repeats(xp.arange(K), counts)  # (N,)
         U_exp = U[map_n_to_k]  # (N, d, d)
         L_inv_exp = Lambda_inv[map_n_to_k]  # (N, d)
 
@@ -331,55 +284,39 @@ def estimate_hessian_sqrt_symmetric(
     starts: Array,
 ) -> Array:
     """
-    Symmetric Hessian estimation via least-squares fit (Sylvester solve in eigenbasis),
-    followed by |H|^{1/2} computation via eigendecomposition.
-    Solve: H C + C H = S,  where
-        C = sum_i (Δx_i Δx_i^T)
-        S = sum_i (Δx_i Δg_i^T + Δg_i Δx_i^T)
+    Scalar Symmetric Hessian estimation.
+    For vector-valued adaptation, the caller must provide DeltaG corresponding
+    to the specific *active component* for each cluster segment.
 
     Args:
-        DeltaX: (N, d) centered points for a packed batch.
-        DeltaG: (N, d) centered gradients, i.e. (g(x_i - g(mu_k)) per point.
+        DeltaX: (N, d) centered points.
+        DeltaG: (N, d) centered gradients (of the active component).
         starts: (K,) segment starts.
 
     Returns:
-        M: (K, d, d) symmetric matrices with M_k @ M_k = |H_k|.
+        M: (K, d, d) |H|^1/2.
     """
-    XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]  # (N,d,d)
-    XG_all = DeltaX[:, :, None] * DeltaG[:, None, :]  # (N,d,d)
+    XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]
+    XG_all = DeltaX[:, :, None] * DeltaG[:, None, :]
 
-    C = xp.add.reduceat(XX_all, starts)  # (K,d,d)
-    E = xp.add.reduceat(XG_all, starts)  # (K,d,d)
+    C = xp.add.reduceat(XX_all, starts)
+    E = xp.add.reduceat(XG_all, starts)
 
-    # Symmetrize C and S
     C = 0.5 * (C + C.transpose(0, 2, 1))
     S = E + E.transpose(0, 2, 1)
 
-    # 1. Eigendecompose C to find the basis U
     dvals, U = xp.linalg.eigh(C)
-    dvals = xp.maximum(dvals, TINY_EPS)  # (K,d)
+    dvals = xp.maximum(dvals, TINY_EPS)
 
-    # 2. Solve Sylvester Equation in U-basis to get F
-    # Gtilde = U.T @ S @ U
-    Gtilde = U.transpose(0, 2, 1) @ S @ U  # (K,d,d)
-    denom = dvals[:, :, None] + dvals[:, None, :]  # (K,d,d)
-    F = Gtilde / denom  # (K,d,d)
+    Gtilde = U.transpose(0, 2, 1) @ S @ U
+    denom = dvals[:, :, None] + dvals[:, None, :]
+    F = Gtilde / denom
 
-    # 3. Diagonalize F directly (F is H in the rotated basis)
-    # F is symmetric, so we use eigh
     h_eigvals, V = xp.linalg.eigh(F)
+    Z = U @ V
+    w_abs_sqrt = xp.sqrt(xp.abs(h_eigvals))
 
-    # 4. Recover eigenvectors of H: Z = U @ V
-    # Because H = U @ F @ U.T and F = V @ diag(w) @ V.T
-    # H = (U @ V) @ diag(w) @ (U @ V).T = Z @ diag(w) @ Z.T
-    Z = U @ V  # (K,d,d)
-
-    # 5. Construct M using sqrt(|w|) and Z
-    w_abs_sqrt = xp.sqrt(xp.abs(h_eigvals))  # (K,d)
-
-    # M = Z @ diag(w') @ Z.T
     M = (Z * w_abs_sqrt[:, None, :]) @ Z.transpose(0, 2, 1)
-
     return 0.5 * (M + M.transpose(0, 2, 1))
 
 
@@ -436,6 +373,7 @@ def compute_median_split_decision(
 def allocate_output_buffers(
     MAX_CLUSTERS_EST: int,
     d: int,
+    fd: int,  # Function output dimension
     dtype: Any,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool,
 ) -> tuple[dict[str, Array], int]:
@@ -456,8 +394,8 @@ def allocate_output_buffers(
     cap = max(1, int(MAX_CLUSTERS_EST))
     buffers = {
         "centroids": xp.empty((cap, d), dtype=dtype),
-        "f": xp.empty((cap,), dtype=dtype),
-        "g": xp.empty((cap, d), dtype=dtype),
+        "f": xp.empty((cap, fd), dtype=dtype),  # Vector valued
+        "g": xp.empty((cap, fd, d), dtype=dtype),  # Tensor valued
         "radii": xp.empty((cap,), dtype=dtype),
         "L_obs": xp.empty((cap,), dtype=dtype),
         "E_cluster": xp.empty((cap,), dtype=dtype),
@@ -492,15 +430,16 @@ def adjust_buffer_capacity(
         return buffers, current_cap
 
     d = int(buffers["centroids"].shape[1])
+    fd = int(buffers["f"].shape[1])
     new_cap = max(required_total, max(1, current_cap) * 2)
     dtype = buffers["centroids"].dtype
 
-    logger.warning(f"Resizing output buffers: {current_cap} -> {new_cap} clusters")
+    logger.warning(f"Resizing output buffers: {current_cap:,} -> {new_cap:,} clusters")
 
     new_buffers = {
         "centroids": xp.empty((new_cap, d), dtype=dtype),
-        "f": xp.empty((new_cap,), dtype=dtype),
-        "g": xp.empty((new_cap, d), dtype=dtype),
+        "f": xp.empty((new_cap, fd), dtype=dtype),
+        "g": xp.empty((new_cap, fd, d), dtype=dtype),
         "radii": xp.empty((new_cap,), dtype=dtype),
         "L_obs": xp.empty((new_cap,), dtype=dtype),
         "E_cluster": xp.empty((new_cap,), dtype=dtype),
@@ -536,9 +475,7 @@ def adaptive_clustering(
     # Pool sizing
     SYNTH_BUDGET: Optional[int] = None,
     SYNTH_BUDGET_FACTOR: float = 50.0,
-    # Geometry stabilizers
     MAX_LEVELS: int = 50,
-    VISUAL_DEBUG: bool = False,
     # Hessian informed splitting
     USE_HESSIAN_INFORMED_SPLIT=True,
     # Testing purposes: run without gradient to compare
@@ -546,110 +483,53 @@ def adaptive_clustering(
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
 ) -> dict[str, Array]:
     """
-    BFS adaptive clustering with *persistent* convex padding via a preallocated pool.
-    This routine constructs a piecewise-local surrogate of a scalar function f(x) over
-    a point cloud X by forming clusters whose members are well-approximated by a
-    first-order Taylor model about the cluster centroid μ_k:
-
-            f(x) ≈ f(μ_k) + (x - μ_k)^T g(μ_k),
-
-    where g(·) denotes the gradient (∇f). A cluster is accepted using TOL based on the
-    specified ERROR_METRIC:
-        - "L2": RMS error over the cluster.
-        - "Linf-global": max absolute error normalized by global max |f| across all
-            active points.
-        - "Linf-local": max absolute error normalized by local max |f| within the
-            cluster.
-
-    Clusters that fail are split using a second-order-informed direction derived from
-    a symmetric Hessian estimate H_k fitted from (Δx, Δg) within the cluster.
-    The split direction is computed in transformed coordinates z = |H_k|^{1/2} Δx,
-    followed by choosing the top PCA direction of Cov(z). Points are partitioned by a
-    within-cluster median split along that direction.
-
-    Key properties (pool design):
-        - Synthetic points persist across levels and become indistinguishable from real
-            points in later geometry calculations.
-        - The pool never resizes (to keep it efficient on GPUs), we only advance a write
-        pointer.
-        - Function values and gradients are cached for every pool entry.
-
-    Args:
-        X: (N0, d) initial real point cloud.
-        f_fn: callable mapping (N, d) -> (N,) or (N,1) values.
-        g_fn: callable mapping (N, d) -> (N, d) or (N,1,d) gradients.
-        TOL: tolerance for accept criterion.
-        ERROR_METRIC: method for computing relative error. "L2" uses RMS error,
-            "Linf-global" normalizes by global max |f| across all active points,
-            "Linf-local" normalizes by local max |f| within each cluster.
-        NUM_INITIAL_CLUSTERS: initial KMeans cluster count.
-        MIN_PTS_PER_CLUSTER: minimum points desired per active cluster (padding target).
-        MAX_CLUSTERS_EST: initial allocation for output buffers (can grow).
-        SEED: RNG seed for KMeans and padding.
-        LOG_MEM_STATS: whether to log memory stats at key points.
-        SYNTH_BUDGET: maximum number of synthetic points allowed in the pool.
-        SYNTH_BUDGET_FACTOR: if SYNTH_BUDGET is None, sets SYNTH_BUDGET ≈ factor*N0.
-        MAX_LEVELS: maximum refinement iterations.
-        VISUAL_DEBUG: (supported only on 2D data, is ignored otherwise) whether to
-            save intermediate clustering states for visualization.
-        USE_HESSIAN_INFORMED_SPLIT: whether to use Hessian-informed splitting, or
-            fall back to PCA-based splitting.
-        IGNORE_GRADIENT: for testing purposes, if true uses zero gradients.
-        STORE_HESSIAN_SQRT_PER_CLUSTER: whether to store the |H|^{1/2} matrix per
-            cluster in the output dict under key 'H_sqrt'.
-
-    Returns:
-        outputs: dict with arrays truncated to number of accepted clusters:
-            - centroids: (K_final, d)
-            - f: (K_final,)
-            - g: (K_final, d)
-            - radii: (K_final,) trust radius per cluster
-            - L_obs: (K_final,) observed Lipschitz constant per cluster
-            - E_rel: (K_final,)
-            - counts: (K_final,) total (real+synth) points in each accepted cluster
-            - obb_rotation_matrices: (K_final, d, d) OBB rotation matrices (PCA axes in columns)
-            - obb_extents: (K_final, d) OBB half-widths along each axis
+    Adaptive clustering for Vector-Valued functions F: R^d -> R^m.
+    Supports component-wise relative error metrics and Hessian-informed splitting
+    via Worst-Case Active Component selection.
     """
-    _VISUAL_DEBUG_DIR = Path.cwd() / "adaptive_clustering_debug"
-
     _start_time = time.perf_counter()
+
     X0 = xp.asarray(X)  # (N0, d)
     N0, d = X0.shape
 
-    # Use zeros for gradient if we wish to ignore for testing
-    if IGNORE_GRADIENT:
-        g_fn = zero_grad
-
     if SYNTH_BUDGET is None:
         SYNTH_BUDGET = int(max(0, SYNTH_BUDGET_FACTOR * N0))
-
-    # Pool capacity
     capacity = int(N0 + SYNTH_BUDGET)
     if LOG_MEM_STATS:
         log_mem_stats("Start: Adaptive Clustering (pool alloc)")
 
-    # ---- Pool allocation (fixed capacity) ----
-    # X_pool: (capacity, d) stores all points (real then synthetic as appended).
+    # ---- 1. Initialize Pool ----
     X_pool = xp.empty((capacity, d), dtype=X0.dtype)
     X_pool[:N0] = X0
     n_total = int(N0)
 
-    # Precompute and cache f/g for the initial real points.
-    # F_pool: (capacity,) scalar values; G_pool: (capacity, d) gradients ∇f.
+    # Eval initial F/G to determine m (output dimension)
     _t0 = time.perf_counter()
-    F_pool = xp.empty((capacity,), dtype=X0.dtype)
-    G_pool = xp.empty((capacity, d), dtype=X0.dtype)
+    F0_val = xp.asarray(f_fn(X_pool[:N0]))
+    if F0_val.ndim == 1:
+        F0_val = F0_val[:, None]
+    fd = F0_val.shape[1]  # Output dimension (fd)
 
-    F_pool[:N0] = flatten_function_array(f_fn(X_pool[:N0]))
-    G_pool[:N0] = flatten_gradient_array(g_fn(X_pool[:N0]))
-    logger.info(f"Runtime - Initial f/g eval: {time.perf_counter()-_t0:.3f}s")
+    F_pool = xp.empty((capacity, fd), dtype=X0.dtype)
+    G_pool = xp.empty((capacity, fd, d), dtype=X0.dtype)
 
-    # Global scaling for relative error. Updated only at next level boundary after
-    # synthetic insertion to avoid oscillating threshold mid-iteration.
-    F_inf = xp.max(xp.abs(F_pool[:N0]))
+    F_pool[:N0] = F0_val
+
+    if IGNORE_GRADIENT:
+        G_pool[:N0] = 0.0
+    else:
+        G0_val = xp.asarray(g_fn(X_pool[:N0]))
+        G_pool[:N0] = G0_val
+
+    logger.info(f"Runtime - Initial f/g: {time.perf_counter()-_t0:.3f}s")
+    logger.info(f"Vector Function detected: Input d={d}, Output m={fd}")
+
+    # Global scale per component for Linf-global
+    # S_j = max_{x \in \Omega} |f_j(x)|
+    F_max_global = xp.max(xp.abs(F_pool[:N0]), axis=0)  # (fd,)
     synth_added_prev_level = False
 
-    # Initial clustering on initial (real) set only.
+    # ---- 2. Initial Clustering ----
     _t1 = time.perf_counter()
     if IS_CUPY_BACKEND:
         km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
@@ -662,69 +542,29 @@ def adaptive_clustering(
     labels_pool[:N0] = labels0.astype(xp.int64)
     logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
 
-    if VISUAL_DEBUG and d == 2:
-        # Plot initial centroids
-        centroids = km.cluster_centers_
-        if IS_CUPY_BACKEND:
-            centroids = xp.asnumpy(centroids)
-        plt.figure(figsize=(6, 6))
-        plt.scatter(
-            centroids[:, 0], centroids[:, 1], c="red", marker="x", label="Centroids"
-        )
-
-        # Plot countourf of f over the bounding box
-        x_min, x_max = xp.min(X0[:, 0]), xp.max(X0[:, 0])
-        y_min, y_max = xp.min(X0[:, 1]), xp.max(X0[:, 1])
-        xx, yy = xp.meshgrid(
-            xp.linspace(x_min, x_max, 100),
-            xp.linspace(y_min, y_max, 100),
-        )
-        grid_points = xp.stack([xx.ravel(), yy.ravel()], axis=-1)
-        f_grid = flatten_function_array(f_fn(grid_points))
-        if IS_CUPY_BACKEND:
-            f_grid = xp.asnumpy(f_grid)
-        f_grid = f_grid.reshape(xx.shape)
-        plt.contourf(
-            xx, yy, f_grid, levels=50, cmap="viridis", alpha=0.6, norm=LogNorm()
-        )
-        plt.colorbar()
-        plt.title("Initial Clustering and Function Contours")
-        plt.xlabel(r"$x_1$")
-        plt.ylabel(r"$x_2$")
-        plt.axis("equal")
-        plt.legend(loc="upper right")
-
-        _VISUAL_DEBUG_DIR.mkdir(exist_ok=True, parents=True)
-        plt.savefig(_VISUAL_DEBUG_DIR / "adaptive_clustering_L00.png", dpi=300)
-        plt.close()
-
-    # Active mask (all pool points currently being processed). `active[i] == True`
-    # means pool index i participates in the current refinement frontier.
     active = xp.zeros((capacity,), dtype=bool)
     active[:N0] = True
 
     # Outputs
     buffers, out_cap = allocate_output_buffers(
-        MAX_CLUSTERS_EST, d, X0.dtype, STORE_HESSIAN_SQRT_PER_CLUSTER
+        MAX_CLUSTERS_EST, d, fd, X0.dtype, STORE_HESSIAN_SQRT_PER_CLUSTER
     )
     out_count = 0
 
+    # ---- 3. Main Loop ----
     level = 1
     while level <= MAX_LEVELS:
         t_level = time.perf_counter()
         if LOG_MEM_STATS:
             log_mem_stats(f"Start: L{level:02}")
 
-        # Deferred F_inf update: level boundary only, and only if padding happened
-        # in the previous level.
+        # Update Global Scale if synthetic points added previously
         if synth_added_prev_level:
-            F_inf = xp.max(xp.abs(F_pool[:n_total]))
+            F_max_global = xp.max(xp.abs(F_pool[:n_total]), axis=0)
 
-        if F_inf < TINY_EPS:
-            logger.warning(
-                f"Level {level:03}: F_inf = {F_inf} is very small "
-                f"TOL-based decisions may be unreliable."
-            )
+        # Basic Check
+        if xp.all(F_max_global < TINY_EPS):
+            logger.warning(f"Level {level}: F is near zero everywhere.")
 
         # Active indices within the currently-used pool prefix [0..n_total).
         idx_active = xp.nonzero(active[:n_total])[0]
@@ -735,8 +575,7 @@ def adaptive_clustering(
 
         synth_added_this_level = False
 
-        # Sort active points by label to create contiguous segments per cluster.
-        # label_active: (n_active,) global label values.
+        # Sort and Segment
         label_active = labels_pool[idx_active]
         perm = xp.argsort(label_active)
         idx_sorted = idx_active[perm]
@@ -747,10 +586,8 @@ def adaptive_clustering(
         if LOG_MEM_STATS:
             log_mem_stats(f"After: L{level:02} Setup")
 
-        # ---------------------------------------------------------------------
-        # Generate per-cluster convex-combination points and append them to the pool.
-        # ---------------------------------------------------------------------
-        X_sorted = X_pool[idx_sorted]  # (n_active, d), label-sorted
+        # --- Padding Step ---
+        X_sorted = X_pool[idx_sorted]
         X_synth, labels_synth = generate_sythetic_points(
             X_sorted,
             starts,
@@ -760,33 +597,41 @@ def adaptive_clustering(
             SEED=SEED,
             level=level,
         )
+
         if X_synth is not None:
-            M = int(X_synth.shape[0])  # type: ignore
-            n_plus_M = n_total + M
-            if n_plus_M > capacity:
+            M_synth = int(X_synth.shape[0])
+            n_new = n_total + M_synth
+            if n_new > capacity:
                 raise MemoryError(
-                    f"Pool capacity exceeded: need {n_plus_M} > {capacity}. "
+                    f"Pool capacity exceeded: need {n_new} > {capacity}. "
                     f"Increase SYNTH_BUDGET / SYNTH_BUDGET_FACTOR. "
-                    f"Level {level:03}, good clusters so far: {out_count}. "
-                    f"Active clusters this level: {K_batch}."
+                    f"Level {level:03}, good clusters so far: {out_count:,} "
+                    f"Active clusters this level: {K_batch:,}."
                 )
 
             # Write new synthetic points into the pool tail and mark them active.
-            X_pool[n_total:n_plus_M] = X_synth
-            labels_pool[n_total:n_plus_M] = labels_synth
-            active[n_total:n_plus_M] = True
+            X_pool[n_total:n_new] = X_synth
+            labels_pool[n_total:n_new] = labels_synth
+            active[n_total:n_new] = True
 
-            # Evaluate f/g for synthetic points and cache.
-            # (These are real gradients of f at synthetic locations.)
-            F_pool[n_total:n_plus_M] = flatten_function_array(f_fn(X_synth))
-            G_pool[n_total:n_plus_M] = flatten_gradient_array(g_fn(X_synth))
+            # Evaluate F/G at new synthetic points
+            F_new = xp.asarray(f_fn(X_synth))
+            if F_new.ndim == 1:
+                F_new = F_new[:, None]
+            F_pool[n_total:n_new] = F_new
 
-            n_total += M
+            if IGNORE_GRADIENT:
+                G_pool[n_total:n_new] = 0.0
+            else:
+                G_new = xp.asarray(g_fn(X_synth))
+                if G_new.ndim == 2:
+                    G_new = G_new[:, None, :]
+                G_pool[n_total:n_new] = G_new
+
+            n_total = n_new
             synth_added_this_level = True
 
-            # Rebuild active segmentation INCLUDING newly-added points (same level)
-            # so that error evaluation and potential split decisions see the padded
-            # geometry immediately.
+            # Re-sort active set
             idx_active = xp.nonzero(active[:n_total])[0]
             label_active = labels_pool[idx_active]
             perm = xp.argsort(label_active)
@@ -794,114 +639,112 @@ def adaptive_clustering(
             label_sorted = label_active[perm]
             uniq_labels, starts, counts = compute_label_segments(label_sorted)
             K_batch = int(uniq_labels.shape[0])
+            X_sorted = X_pool[idx_sorted]  # Refresh views
 
         if LOG_MEM_STATS:
             log_mem_stats(f"After: L{level:02} Padding")
 
-        # ---------------------------------------------------------------------
-        # Per-cluster centroids, first-order Taylor prediction, and max error.
-        # Accept/reject uses TOL-only.
-        # ---------------------------------------------------------------------
-        X_sorted = X_pool[idx_sorted]
-        F_sorted = F_pool[idx_sorted]
-        G_sorted = G_pool[idx_sorted]
+        # --- Error Computation (Vector-Valued) ---
+        F_sorted = F_pool[idx_sorted]  # (N_act, fd)
+        G_sorted = G_pool[idx_sorted]  # (N_act, fd, d)
 
-        # Centroids μ_k for each label segment.
-        sums = xp.add.reduceat(X_sorted, starts)  # (K,d)
-        mus = sums / counts[:, None]  # (K,d)
+        # Centroids
+        mus = xp.add.reduceat(X_sorted, starts) / counts[:, None]  # (K, d)
 
-        f_mus = flatten_function_array(f_fn(mus))  # (K,)
-        g_mus = flatten_gradient_array(g_fn(mus))  # (K,d)
+        # Eval f/g at centroids
+        f_mus = xp.asarray(f_fn(mus))
+        if f_mus.ndim == 1:
+            f_mus = f_mus[:, None]  # (K, fd)
 
-        # Map each point to its local segment id k in [0..K_batch).
-        map_n_to_k = repeats(xp.arange(K_batch), counts)  # (n_active,)
-        # Centered coordinates Δx.
-        dx = X_sorted - mus[map_n_to_k]  # (n_active,d)
-        # First-order Taylor model around μ_k.
-        f_lin = f_mus[map_n_to_k] + xp.sum(dx * g_mus[map_n_to_k], axis=1)
-        diff = F_sorted - f_lin
+        if IGNORE_GRADIENT:
+            g_mus = xp.zeros((K_batch, fd, d), dtype=mus.dtype)
+        else:
+            g_mus = xp.asarray(g_fn(mus))
+            if g_mus.ndim == 2:
+                g_mus = g_mus[:, None, :]  # (K, fd, d)
 
+        map_n_to_k = repeats(xp.arange(K_batch), counts)
+        dx = X_sorted - mus[map_n_to_k]  # (N_act, d)
+
+        # Linear Surrogate: f_lin = f(mu) + g(mu) * dx
+        # g(mu) shape (K, fd, d) -> expand -> (N, fd, d)
+        # dx shape (N, d) -> (N, d, 1)
+        # result (N, fd)
+        g_mus_exp = g_mus[map_n_to_k]  # (N, fd, d)
+        linear_term = (g_mus_exp @ dx[:, :, None])[:, :, 0]  # (N, fd)
+        f_lin = f_mus[map_n_to_k] + linear_term
+
+        diff = F_sorted - f_lin  # (N, fd)
+        abs_diff = xp.abs(diff)
+
+        # Calculate E_cluster based on metric
         if ERROR_METRIC == "L2":
-            # L2 Error: sqrt( sum( (f - f_lin)^2 ) )
+            # Max component-wise RMSE
             sq_err = diff**2
-
-            # Sum squared errors per cluster.
-            sum_sq_err = xp.add.reduceat(sq_err, starts)
-            E_cluster = xp.sqrt(sum_sq_err)
-
-            # Standard L2 check is usually absolute.
+            sum_sq = xp.add.reduceat(sq_err, starts)  # (K, fd)
+            rmse = xp.sqrt(sum_sq / counts[:, None])
+            E_cluster = xp.max(rmse, axis=1)  # (K,)
             is_good = E_cluster < TOL
 
         elif ERROR_METRIC == "Linf-global":
-            # Linf Error: max( |f - f_lin| )
-            err_point = xp.abs(diff)
-            E_abs = xp.zeros((K_batch,), dtype=err_point.dtype)
-            scatter_maximum_1d(E_abs, map_n_to_k, err_point)
+            # e_j(C) = max_{x} |diff_j|
+            # Need max per cluster, per component.
+            # We iterate columns of m to use scatter_max
+            E_rel_max = xp.zeros((K_batch,), dtype=diff.dtype)
 
-            # Normalized by Global Max |f|
-            E_cluster = E_abs / F_inf
+            for j in range(fd):
+                max_diff_j = xp.zeros((K_batch,), dtype=diff.dtype)
+                scatter_maximum_1d(max_diff_j, map_n_to_k, abs_diff[:, j])
+
+                # Normalize by Global S_j
+                scale = F_max_global[j] + TINY_EPS
+                rel_err_j = max_diff_j / scale
+
+                # Accumulate max relative error across components
+                E_rel_max = xp.maximum(E_rel_max, rel_err_j)
+
+            E_cluster = E_rel_max
             is_good = E_cluster < TOL
 
         elif ERROR_METRIC == "Linf-local":
-            # Linf Error: max( |f - f_lin| )
-            err_point = xp.abs(diff)
-            E_abs = xp.zeros((K_batch,), dtype=err_point.dtype)
-            scatter_maximum_1d(E_abs, map_n_to_k, err_point)
-
-            # Local Normalization: max |f| within cluster
+            E_rel_max = xp.zeros((K_batch,), dtype=diff.dtype)
             abs_F = xp.abs(F_sorted)
-            F_max_cluster = xp.zeros((K_batch,), dtype=F_sorted.dtype)
-            scatter_maximum_1d(F_max_cluster, map_n_to_k, abs_F)
 
-            # Prevent div/0
-            normalization = xp.maximum(F_max_cluster, TINY_EPS)
-            E_cluster = E_abs / normalization
+            for j in range(fd):
+                max_diff_j = xp.zeros((K_batch,), dtype=diff.dtype)
+                scatter_maximum_1d(max_diff_j, map_n_to_k, abs_diff[:, j])
 
-            # Hybrid Acceptance: Relative < TOL  OR  Absolute < TOL
-            is_good = (E_cluster < TOL) | (E_abs < TOL)
+                # Local Scale L_j = max_{x in C} |f_j|
+                local_max_F = xp.zeros((K_batch,), dtype=diff.dtype)
+                scatter_maximum_1d(local_max_F, map_n_to_k, abs_F[:, j])
 
+                scale = local_max_F + TINY_EPS
+                rel_err_j = max_diff_j / scale
+
+                E_rel_max = xp.maximum(E_rel_max, rel_err_j)
+
+            E_cluster = E_rel_max
+            is_good = E_cluster < TOL
         else:
             raise ValueError(f"Unknown ERROR_METRIC: {ERROR_METRIC}")
 
         if LOG_MEM_STATS:
             log_mem_stats(f"After: L{level:02} Error Computation")
-
-        # ---------------------------------------------------------------------
-        # Finalize good clusters:
-        #  - compute Radius and L_obs from accepted clusters,
-        #  - append results to output buffers,
-        #  - deactivate their pool points.
-        # ---------------------------------------------------------------------
+        # ---- 4. Finalize Good Clusters ----
         good_idx = xp.nonzero(is_good)[0]
         n_good = int(good_idx.shape[0])
 
         if n_good > 0:
-            # --- STRATEGY: Compute Metrics for ALL active clusters (Batch) ---
-            # It is vectorized and likely faster than index manipulation.
-
             all_radii, all_L_obs = calculate_scalar_metrics(
-                dx,  # All active points centered
-                G_sorted,  # All active point gradients
-                g_mus,  # All active centroids
-                map_n_to_k,  # All active mapping
-                K_batch,
+                dx, G_sorted, g_mus, map_n_to_k, K_batch
             )
 
-            # Now just slice the good ones
-            radii_good = all_radii[good_idx]
-            L_obs_good = all_L_obs[good_idx]
-
-            # Compute Q Matrix (Ellipsoidal Norm)
-            # Need to pack points for only the good clusters to run Q calculation
-            point_good_mask = is_good[map_n_to_k]
-            dx_good = dx[point_good_mask]
-
+            # Pack good points for Q calculation
+            mask_good_pts = is_good[map_n_to_k]
+            dx_good = dx[mask_good_pts]
             good_counts = counts[good_idx]
-            # Recompute starts for the contiguous 'dx_good' array
             good_starts = xp.r_[0, xp.cumsum(good_counts)[:-1]]
 
-            # Assuming Q_SHRINK is defined in outer scope or passed as arg
-            # If not passed, default to 0.0 or add to args
             Qs, _ = calculate_Q(
                 dx_good,
                 good_starts,
@@ -910,221 +753,163 @@ def adaptive_clustering(
                 Q_SHRINK=0.05,
             )
 
-            # Write to buffers
+            # Store results
             end_out = out_count + n_good
             buffers, out_cap = adjust_buffer_capacity(
                 buffers, out_count, out_cap, end_out, STORE_HESSIAN_SQRT_PER_CLUSTER
             )
 
+            # Optional: Store Hessian for good clusters (using their active component)
             if STORE_HESSIAN_SQRT_PER_CLUSTER:
-                # Compute |H|^{1/2} per good cluster for output storage
-                G_good = G_sorted[point_good_mask]
-                gmu_good = g_mus[map_n_to_k][point_good_mask]
-                dG_good = G_good - gmu_good
-                H_sqrt = estimate_hessian_sqrt_symmetric(dx_good, dG_good, good_starts)
-                buffers["H_sqrt"][out_count : out_count + n_good] = H_sqrt
+                # Need to determine active component for good clusters too?
+                # Prompt only specified it for Splitting.
+                # We will pick component 0 or dominant just for storage,
+                # OR re-run selection. Let's run selection for consistency.
+
+                # 1. Compute L2 relative error per component
+                diff_good = diff[mask_good_pts]  # (N_good, fd)
+                F_good = F_sorted[mask_good_pts]
+
+                sq_err = xp.add.reduceat(diff_good**2, good_starts)  # (K_good, fd)
+                sq_norm = xp.add.reduceat(F_good**2, good_starts)
+
+                l2_err_num = xp.sqrt(sq_err)
+                l2_err_den = xp.sqrt(sq_norm) + TINY_EPS
+                rel_l2 = l2_err_num / l2_err_den
+
+                active_comps = xp.argmax(rel_l2, axis=1)  # (K_good,)
+
+                # 2. Extract Gradients
+                G_good_all = G_sorted[mask_good_pts]  # (N_good, fd, d)
+                g_mu_good_all = g_mus[good_idx]  # (K_good, fd, d)
+
+                # We need to slice G per point based on the cluster's active component
+                # Expand active_comps to points
+                map_good_n_to_k = repeats(xp.arange(n_good), good_counts)
+                pt_active = active_comps[map_good_n_to_k]  # (N_good,)
+
+                # Fancy indexing to grab (N_good, d)
+                # G[i, pt_active[i], :]
+                idx_n = xp.arange(int(diff_good.shape[0]))
+                G_sel = G_good_all[idx_n, pt_active, :]
+                g_mu_sel = g_mu_good_all[map_good_n_to_k, pt_active, :]  # approx
+
+                dG_sel = G_sel - g_mu_sel
+                H_sqrt = estimate_hessian_sqrt_symmetric(dx_good, dG_sel, good_starts)
+                buffers["H_sqrt"][out_count:end_out] = H_sqrt
 
             buffers["centroids"][out_count:end_out] = mus[good_idx]
             buffers["f"][out_count:end_out] = f_mus[good_idx]
             buffers["g"][out_count:end_out] = g_mus[good_idx]
-
-            # Store Scalar Metrics
-            buffers["radii"][out_count:end_out] = radii_good
-            buffers["L_obs"][out_count:end_out] = L_obs_good
-
-            # Store Q Matrices
+            buffers["radii"][out_count:end_out] = all_radii[good_idx]
+            buffers["L_obs"][out_count:end_out] = all_L_obs[good_idx]
             buffers["Q"][out_count:end_out] = Qs
-
             buffers["E_cluster"][out_count:end_out] = E_cluster[good_idx]
-            buffers["counts"][out_count:end_out] = counts[good_idx].astype(xp.int64)
+            buffers["counts"][out_count:end_out] = counts[good_idx]
+
             out_count = end_out
 
             # Deactivate all points (real + synthetic) in accepted clusters.
-            point_good_mask = is_good[map_n_to_k]
-            global_ids_good = idx_sorted[point_good_mask]
-            active[global_ids_good] = False
+            active[idx_sorted[mask_good_pts]] = False
 
-        # If no bad clusters remain, done
+        # ---- 5. Hessian-Informed Split for Bad Clusters ----
         bad_idx = xp.nonzero(~is_good)[0]
-        if int(bad_idx.shape[0]) == 0:
+        n_bad_clusters = int(bad_idx.shape[0])
+
+        if n_bad_clusters == 0:
             synth_added_prev_level = synth_added_this_level
             logger.info(f"Level {level:03}: no bad clusters remain, terminating.")
             break
 
         if LOG_MEM_STATS:
             log_mem_stats(f"After: L{level:02} Finalize good clusters")
-
-        # ---------------------------------------------------------------------
-        # Split bad clusters (Hessian-informed) and update labels in-place for ALL
-        # pool points in those clusters (real + synthetic).
-        # ---------------------------------------------------------------------
-        point_bad_mask = (~is_good)[map_n_to_k]
-        idx_bad = idx_sorted[point_bad_mask]  # global indices in pool
-        # Extract the packed bad subset.
-        dx_bad = dx[point_bad_mask]
-        G_bad = G_sorted[point_bad_mask]
-        gmu_bad = g_mus[map_n_to_k][point_bad_mask]
-        # Center gradients per cluster: Δg = g(x) - g(μ_k).
-        dG_bad = G_bad - gmu_bad
-
+        mask_bad_pts = (~is_good)[map_n_to_k]
+        dx_bad = dx[mask_bad_pts]
         bad_counts = counts[bad_idx]
         bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
-        K_bad = int(bad_idx.shape[0])
 
-        # Fix for either below condition
         if IGNORE_GRADIENT or not USE_HESSIAN_INFORMED_SPLIT:
-            N_hessians = len(bad_starts)
-            M = xp.repeat(xp.eye(d)[None, :, :], N_hessians, axis=0)
-
-        # Hessian fit (symmetric) + |H|^{1/2} transform.
+            M_split = xp.eye(d)[None, :, :].repeat(n_bad_clusters, axis=0)
         else:
-            M = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts)
+            # --- Worst-Case Active Component Selection ---
+            # 1. Compute L2 Relative Error per component for BAD clusters
+            diff_bad = diff[mask_bad_pts]  # (N_bad, m)
+            F_bad_pts = F_sorted[mask_bad_pts]
 
-        # Transform coordinates: z = M_k Δx (cluster-wise).
-        map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
-        M_exp = M[map_bad_n_to_k]
-        Z = (M_exp @ dx_bad[:, :, None])[:, :, 0]
+            # Sum squares per cluster segment
+            sum_sq_err = xp.add.reduceat(diff_bad**2, bad_starts)  # (K_bad, fd)
+            sum_sq_val = xp.add.reduceat(F_bad_pts**2, bad_starts)  # (K_bad, fd)
 
-        # Cov(Z) per cluster.
+            err_l2 = xp.sqrt(sum_sq_err)
+            norm_l2 = xp.sqrt(sum_sq_val) + TINY_EPS
+            scores = err_l2 / norm_l2  # (K_bad, fd)
+
+            # Select winner
+            active_comps = xp.argmax(scores, axis=1)  # (K_bad,)
+
+            # 2. Extract specific Gradients
+            G_bad_all = G_sorted[mask_bad_pts]  # (N_bad, fd, d)
+            g_mu_bad_all = g_mus[bad_idx]  # (K_bad, fd, d)
+
+            # Map cluster choice to points
+            map_bad_n_to_k = repeats(xp.arange(n_bad_clusters), bad_counts)
+            pt_active_comp = active_comps[map_bad_n_to_k]  # (N_bad,)
+
+            # Slice: G_sel[i] = G_bad_all[i, pt_active_comp[i], :]
+            range_N = xp.arange(int(dx_bad.shape[0]))
+            G_sel = G_bad_all[range_N, pt_active_comp, :]  # (N_bad, d)
+
+            # Centroid grad for that component (expanded)
+            g_mu_sel = g_mu_bad_all[map_bad_n_to_k, pt_active_comp, :]
+
+            dG_bad = G_sel - g_mu_sel
+
+            # 3. Compute H^1/2
+            M_split = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts)
+
+        # Transform and Split
+        map_bad_n_to_k = repeats(xp.arange(n_bad_clusters), bad_counts)
+        M_exp = M_split[map_bad_n_to_k]
+        Z = (M_exp @ dx_bad[:, :, None])[:, :, 0]  # (N_bad, d)
+
+        # Cov(Z)
         ZZ_all = Z[:, :, None] * Z[:, None, :]
         CovZ = xp.add.reduceat(ZZ_all, bad_starts)
-        CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))  # (K_bad,d,d)
+        CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))
 
-        # Split direction per cluster = top eigenvector of CovZ.
+        # Eigenvector
         v = get_dominant_eigenvector(CovZ)
         v_exp = v[map_bad_n_to_k]
-        # Per-point scalar projection scores in Z-space.
-        scores = xp.sum(Z * v_exp, axis=1)
+        proj_scores = xp.sum(Z * v_exp, axis=1)
 
         split_right = compute_median_split_decision(
-            scores, map_bad_n_to_k, bad_starts, bad_counts
+            proj_scores, map_bad_n_to_k, bad_starts, bad_counts
         )
 
-        # Update labels for ALL points in bad subset (including synthetic).
-        # Tree-like label encoding: left child = old*2, right child = old*2+1.
-        old_label_values = uniq_labels[bad_idx]  # (K_bad,)
-        old_per_point = old_label_values[map_bad_n_to_k]  # (N_bad,)
+        # Update labels
+        idx_bad_pool = idx_sorted[mask_bad_pts]
+        old_labels = uniq_labels[bad_idx]
+        old_per_point = old_labels[map_bad_n_to_k]
 
-        # left: old*2, right: old*2+1
         new_labels = old_per_point * 2 + split_right.astype(xp.int64)
-        labels_pool[idx_bad] = new_labels
+        labels_pool[idx_bad_pool] = new_labels
 
         # End-of-level bookkeeping
         synth_added_prev_level = synth_added_this_level
         logger.info(
             f"Level {level:03}: Clusters={K_batch:,}, active={n_active:,}, "
-            f"good={int(good_idx.shape[0]):,}, bad={int(bad_idx.shape[0]):,}, "
+            f"good={int(n_good):,}, bad={n_bad_clusters:,}, "
             f"synth={n_total - N0:,}, "
-            f"pool_used={n_total:.1e}/{capacity:.1e} ({n_total/capacity:.0%}), "
-            f"F_inf={F_inf:.1e}"
+            f"pool_used={n_total:,}/{capacity:,} ({n_total/capacity:.0%}) , "
+            f"F_in_max={xp.max(F_max_global):.3e}, "
         )
         logger.info(f"Runtime - Level {level:03}: {time.perf_counter()-t_level:.3f}s")
 
-        if VISUAL_DEBUG and d == 2:
-            # check if buffer has good centroids from previous steps
-            good_centroids = mus[good_idx]
-            if out_count > 0:
-                good_centroids_from_buffers = buffers["centroids"][:out_count]
-                if IS_CUPY_BACKEND:
-                    good_centroids_from_buffers = xp.asnumpy(
-                        good_centroids_from_buffers
-                    )
-
-            bad_centroids = mus[bad_idx]
-
-            plt.figure(figsize=(6, 6))
-            if out_count > 0:
-                plt.scatter(
-                    good_centroids_from_buffers[:, 0],  # type: ignore
-                    good_centroids_from_buffers[:, 1],  # type: ignore
-                    c="blue",
-                    marker="s",
-                    label="Accepted previous levels",
-                )
-            if int(good_centroids.shape[0]) > 0:
-                plt.scatter(
-                    good_centroids[:, 0],
-                    good_centroids[:, 1],
-                    c="green",
-                    marker="o",
-                    label="Accepted this level",
-                )
-            if int(bad_centroids.shape[0]) > 0:
-                plt.scatter(
-                    bad_centroids[:, 0],
-                    bad_centroids[:, 1],
-                    c="red",
-                    marker="x",
-                    label="To Split next level",
-                )
-            # Plot countourf of f over the bounding box
-            x_min, x_max = xp.min(X0[:, 0]), xp.max(X0[:, 0])
-            y_min, y_max = xp.min(X0[:, 1]), xp.max(X0[:, 1])
-            xx, yy = xp.meshgrid(
-                xp.linspace(x_min, x_max, 100),
-                xp.linspace(y_min, y_max, 100),
-            )
-            grid_points = xp.stack([xx.ravel(), yy.ravel()], axis=-1)
-            f_grid = flatten_function_array(f_fn(grid_points))
-            if IS_CUPY_BACKEND:
-                f_grid = xp.asnumpy(f_grid)
-            f_grid = f_grid.reshape(xx.shape)
-            plt.contourf(
-                xx, yy, f_grid, levels=50, cmap="viridis", alpha=0.6, norm=LogNorm()
-            )
-            plt.colorbar()
-            plt.title(f"Adaptive Clustering Level {level:02}")
-            plt.xlabel(r"$x_1$")
-            plt.ylabel(r"$x_2$")
-            plt.axis("equal")
-            plt.legend(loc="upper right")
-
-            plt.savefig(
-                _VISUAL_DEBUG_DIR / f"adaptive_clustering_L{level:02}.png", dpi=300
-            )
-            plt.close()
-
         level += 1
 
+    # ---- 6. Finalize ----
     if level > MAX_LEVELS:
         logger.warning(f"Reached MAX_LEVELS={MAX_LEVELS}, terminating.")
-
-    if VISUAL_DEBUG and d == 2:
-        all_good_centroids = buffers["centroids"][:out_count]
-        plt.figure(figsize=(6, 6))
-        if int(all_good_centroids.shape[0]) > 0:
-            plt.scatter(
-                all_good_centroids[:, 0],
-                all_good_centroids[:, 1],
-                c="blue",
-                marker="s",
-                label="Accepted clusters",
-            )
-        # Plot countourf of f over the bounding box
-        x_min, x_max = xp.min(X0[:, 0]), xp.max(X0[:, 0])
-        y_min, y_max = xp.min(X0[:, 1]), xp.max(X0[:, 1])
-        xx, yy = xp.meshgrid(
-            xp.linspace(x_min, x_max, 100),
-            xp.linspace(y_min, y_max, 100),
-        )
-        grid_points = xp.stack([xx.ravel(), yy.ravel()], axis=-1)
-        f_grid = flatten_function_array(f_fn(grid_points))
-        if IS_CUPY_BACKEND:
-            f_grid = xp.asnumpy(f_grid)
-        f_grid = f_grid.reshape(xx.shape)
-        plt.contourf(
-            xx, yy, f_grid, levels=50, cmap="viridis", alpha=0.6, norm=LogNorm()
-        )
-        plt.colorbar()
-        plt.title(f"Adaptive Clustering Final Result")
-        plt.xlabel(r"$x_1$")
-        plt.ylabel(r"$x_2$")
-        plt.axis("equal")
-        plt.legend(loc="upper right")
-        plt.savefig(_VISUAL_DEBUG_DIR / f"adaptive_clustering_L{level:02}.png", dpi=300)
-        plt.close()
-
-    # Truncate outputs
     final_count = int(out_count)
     logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
     logger.info(f"Runtime - Total: {time.perf_counter() -_start_time:.3f}s")
@@ -1140,7 +925,7 @@ if __name__ == "__main__":
 
     from src import FIGURES_DIR
     from src.logging_utils import setup_logging
-    from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
+    from src.problems.vector_quadratic import vector_quadratic, vector_quadratic_grad
 
     setup_logging(console_level=logging.DEBUG)
 
@@ -1219,10 +1004,6 @@ if __name__ == "__main__":
         print(f"Plot file {img_fpath} already exists. Skipping execution.")
         exit(0)
 
-    # Creat partial Rosenbrock functions
-    rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
-    rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
-
     xp.random.seed(0)
     print(f"Generating {N_TRAIN:,} points (d={DIM})...")
     PROB_LIMS = (-1.0, 3)
@@ -1231,8 +1012,8 @@ if __name__ == "__main__":
     print("Starting Adaptive Clustering...")
     results = adaptive_clustering(
         X,
-        f_fn=rosenbrock,
-        g_fn=rosenbrock_grad,
+        f_fn=vector_quadratic,
+        g_fn=vector_quadratic_grad,
         TOL=TOL,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
@@ -1258,7 +1039,7 @@ if __name__ == "__main__":
         int(counts.max()),
     )
 
-    if DIM == 2 and len(results["centroids"]) <= 10_000:
+    if DIM == 2 and len(results["centroids"]) <= 10_000 and False:
         import numpy as np
         from matplotlib.lines import Line2D
         from matplotlib.patches import Circle, Ellipse
