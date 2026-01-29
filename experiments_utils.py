@@ -54,27 +54,43 @@ def plot_error_histogram(
     img_fpath = json_fpath.with_suffix(".png")
     img_title = json_fpath.stem
 
-    rel_error_linf = xp.abs(predictions - ground_truth) / (
+    # 1. Compute Element-wise Relative Error
+    # Shape: (N, m) for vectors, (N,) for scalars
+    element_rel_error = xp.abs(predictions - ground_truth) / (
         xp.abs(ground_truth) + TINY_EPS
     )
-    n_within_tol = xp.sum(rel_error_linf <= TOL)
-    perct_within_tol = 100.0 * n_within_tol / ground_truth.shape[0]
 
-    plt.figure(figsize=(10, 6))
-    if IS_CUPY_BACKEND:
-        plt.hist(rel_error_linf.get().flatten(), bins=50, log=True)
+    # 2. Reduce to Point-wise Max (Worst Component)
+    # If vector (ndim > 1), take max over components (axis=1)
+    # This aligns with the "Pointwise Relative Error" definition where a point
+    # is only good if ALL its components are good.
+    if element_rel_error.ndim > 1:
+        ptwise_rel_error = xp.max(element_rel_error, axis=1)
     else:
-        plt.hist(rel_error_linf.flatten(), bins=50, log=True)
+        ptwise_rel_error = element_rel_error
+
+    # 3. Compute Stats
+    n_within_tol = xp.sum(ptwise_rel_error <= TOL)
+    perct_within_tol = 100.0 * n_within_tol / ptwise_rel_error.shape[0]
+
+    # 4. Plotting
+    plt.figure(figsize=(10, 6))
+
+    # Extract data to CPU for plotting
+    data_to_plot = ptwise_rel_error
+    if IS_CUPY_BACKEND:
+        data_to_plot = data_to_plot.get()
+    plt.hist(data_to_plot.flatten(), bins=50, log=True)
 
     plt.axvline(
         x=TOL,
         color="r",
         linestyle="--",
-        label=f"TOL={TOL} (N_within_tol={perct_within_tol:.2f}%)",
+        label=f"TOL={TOL} (Good Points={perct_within_tol:.2f}%)",
     )
 
     plt.ylabel("Frequency (log scale)")
-    plt.xlabel(r"Relative Error $\| . \|_{\infty}$ (log scale)")
+    plt.xlabel(r"Pointwise Max Relative Error (log scale)")
     plt.title(img_title)
     plt.legend()
     plt.xscale("log")
@@ -110,6 +126,7 @@ def create_problem_result_dict(
     ungauranteed_mask: Array,
     TOL: float,
     DIM: int,
+    F_DIM: int,
     N_TRAIN: int,
     N_CLUSTERS: int | None,
     error_tag: str,
@@ -123,6 +140,7 @@ def create_problem_result_dict(
             "problem_tag": problem_tag,
             "tol": TOL,
             "dim": DIM,
+            "f_dim": F_DIM,
             "n_train": N_TRAIN,
             "n_test": None,
             "n_clusters": None,
@@ -144,6 +162,7 @@ def create_problem_result_dict(
             **kwargs,
         }
 
+    # ground_truth shape is (N_TEST, F_DIM)
     N_TEST = ground_truth.shape[0]
 
     n_out = xp.sum(ungauranteed_mask)
@@ -152,43 +171,59 @@ def create_problem_result_dict(
 
     if n_in == 0:
         # Handle the case where NO points are guaranteed
-        ptwise_max_rel_error_linf = 0.0  # Or None/NaN depending on preference
+        ptwise_max_rel_error_linf = 0.0
         ptwise_median_rel_error_linf = 0.0
         l2_relative_error = 0.0
         l2_abs_error = 0.0
 
-        perct_in_good = 0.0
-        perct_in_bad = 0.0
         n_in_good = 0
         n_in_bad = 0
+        perct_in_good = 0.0
+        perct_in_bad = 0.0
     else:
-        # Original Logic
-        ptwise_rel_error_linf = xp.abs(predictions[g_idx] - ground_truth[g_idx]) / (
-            xp.abs(ground_truth[g_idx]) + TINY_EPS
-        )
-        ptwise_max_rel_error_linf = xp.nanmax(ptwise_rel_error_linf)
-        ptwise_median_rel_error_linf = xp.nanmedian(ptwise_rel_error_linf)
+        # 1. Filter to valid (guaranteed) points
+        gt_in = ground_truth[g_idx]
+        pred_in = predictions[g_idx]
 
-        l2_relative_error = float(
-            xp.linalg.norm(ground_truth[g_idx] - predictions[g_idx], ord=2)
-            / xp.linalg.norm(ground_truth[g_idx], ord=2)
-        )
-        l2_abs_error = float(
-            xp.linalg.norm(ground_truth[g_idx] - predictions[g_idx], ord=2)
-            / xp.sqrt(n_in)  # Use n_in instead of g_idx.sum() for speed
-        )
+        # 2. Compute Element-wise Diff
+        diff = pred_in - gt_in
 
-        n_in_good = xp.sum(ptwise_rel_error_linf <= TOL)
-        n_in_bad = xp.sum(ptwise_rel_error_linf > TOL)
+        # 3. Global L2 Metrics (Frobenius Norm)
+        # We calculate the norm over the entire flattened array of differences.
+        # This corresponds to sqrt(sum(|y_ij - yhat_ij|^2)) for all i, j.
+        norm_diff = xp.linalg.norm(diff)
+        norm_gt = xp.linalg.norm(gt_in)
+
+        l2_relative_error = float(norm_diff / (norm_gt + TINY_EPS))
+
+        # L2 Absolute Error (RMSE): Average energy per sample
+        l2_abs_error = float(norm_diff / xp.sqrt(n_in))
+
+        # 4. Pointwise Relative Error (L_inf style)
+        # Compute relative error for EVERY component: |y_ij - yhat_ij| / |y_ij|
+        element_rel_error = xp.abs(diff) / (xp.abs(gt_in) + TINY_EPS)
+
+        if element_rel_error.ndim > 1:
+            # Vector Case: A point is "good" only if ALL components are good.
+            # Equivalently, the point error is the MAX error across components.
+            ptwise_rel_error = xp.max(element_rel_error, axis=1)  # Shape: (N_in,)
+        else:
+            # Scalar Case
+            ptwise_rel_error = element_rel_error  # Shape: (N_in,)
+
+        # 5. Aggregate Stats
+        ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error))
+        ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error))
+
+        # 6. Good/Bad Counts
+        n_in_good = int(xp.sum(ptwise_rel_error <= TOL))
+        n_in_bad = int(n_in - n_in_good)
+
         perct_in_good = 100.0 * n_in_good / N_TEST
         perct_in_bad = 100.0 * n_in_bad / N_TEST
 
     # pout: percentage of points outside the trust region
-    # pin_good: percentage of points inside the trust region with error below tolerance
-    # pin_bad: percentage of points inside the trust region with error above tolerance
     perct_out = 100.0 * n_out / N_TEST
-    perct_in_good = 100.0 * n_in_good / N_TEST
-    perct_in_bad = 100.0 * n_in_bad / N_TEST
 
     # Mandatory metrics
     result_dict = {
@@ -196,6 +231,7 @@ def create_problem_result_dict(
         "problem_tag": problem_tag,
         "tol": TOL,
         "dim": DIM,
+        "f_dim": F_DIM,
         "n_train": N_TRAIN,
         "n_test": N_TEST,
         "n_clusters": N_CLUSTERS,
@@ -228,6 +264,7 @@ def Problem_experiment_setup(
     f_fn: Callable,
     g_fn: Callable,
     DIM: int,
+    F_DIM: int,
     N_TRAIN: int,
     N_INIT_CLUSTERS: int,
     TOL: float,
@@ -358,6 +395,7 @@ def Problem_experiment_setup(
         num_levels=num_levels,
         TOL=TOL,
         DIM=DIM,
+        F_DIM=F_DIM,
         N_TRAIN=N_TRAIN,
         N_CLUSTERS=N_CLUSTERS,
         N_INIT_CLUSTERS=N_INIT_CLUSTERS,
@@ -378,7 +416,7 @@ def Problem_experiment_setup(
         ground_truth=ground_truth, predictions=preds, json_fpath=json_fpath, TOL=TOL
     )
 
-    if DIM == 2 and N_CLUSTERS < 1000:
+    if DIM == 2 and N_CLUSTERS < 1000 and F_DIM == 1:
         # 1 plot 2 subplots (1X2)
         # Subplot 1: contourf of shifted gaussians function
         # Subplot 2: scatter of final cluster centroids with trust ellipses on contourf
