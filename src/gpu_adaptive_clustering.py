@@ -675,6 +675,7 @@ def adaptive_clustering(
         -   `counts`: (K,) Number of points support per cluster.
         -   `H_sqrt`: (K, d, d) (Optional) Symmetric Hessian square roots.
         -   `num_levels`: (int) Total levels refined.
+        -   `num_generated_pts`: (int) Number of generated points.
     """
 
     _start_time = time.perf_counter()
@@ -690,6 +691,7 @@ def adaptive_clustering(
 
     # Evaluate initial F/G on GPU
     _t0 = time.perf_counter()
+    num_generated_pts = 0
     F0_gpu = convert_to_2d_array(f_fn(X0_gpu))  # Shape: (N, fd)
     fd = F0_gpu.shape[1]
 
@@ -811,6 +813,7 @@ def adaptive_clustering(
             # Fill Synthetic Data
             is_synth = ~is_real
             num_synth = int(xp.sum(is_synth))
+            num_generated_pts += num_synth
             if num_synth > 0:
                 if LOG_MEM_STATS:
                     log_mem_stats(f" L{level:02} B{b:02}: Start Augmentation")
@@ -1220,6 +1223,7 @@ def adaptive_clustering(
     final_count = int(out_count)
     out_dict = {k: buffers[k][:final_count] for k in buffers}
     out_dict["num_levels"] = level
+    out_dict["num_generated_pts"] = num_generated_pts
     logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
     logger.info(f"Runtime - Total: {time.perf_counter() -_start_time:.3f}s")
     return out_dict
