@@ -58,7 +58,7 @@ def ics_quadratic_experiment() -> Path:
 
     EXP_DIR = ICS26_DIR / "ics_quadratic"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 5, 8]
+    DIMs = [5, 8]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local", "Linf-global"]
 
