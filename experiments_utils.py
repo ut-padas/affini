@@ -143,11 +143,15 @@ def create_problem_result_dict(
             "f_dim": F_DIM,
             "n_train": N_TRAIN,
             "n_test": None,
-            "n_clusters": None,
-            "max_rel_error_linf": None,
-            "max_rel_error_l2": None,
-            "median_rel_error_linf": None,
-            "median_rel_error_l2": None,
+            "n_clusters": N_CLUSTERS,
+            "ptwise_max_rel_error_linf": None,
+            "ptwise_median_rel_error_linf": None,
+            "l2_relative_error": None,
+            "l2_abs_error": None,
+            "out_l2_relative_error": None,
+            "out_l2_abs_error": None,
+            "out_ptwise_max_rel_error_linf": None,
+            "out_ptwise_median_rel_error_linf": None,
             "n_out": None,
             "perct_out": None,
             "n_in": None,
@@ -158,7 +162,7 @@ def create_problem_result_dict(
             "train_time_sec": None,
             "predict_time_sec": None,
             "error_tag": error_tag,
-            "num_levels": None,
+            "num_levels": num_levels,
             **kwargs,
         }
 
@@ -222,6 +226,26 @@ def create_problem_result_dict(
         perct_in_good = 100.0 * n_in_good / N_TEST
         perct_in_bad = 100.0 * n_in_bad / N_TEST
 
+    # Calculate similar error metrics for OUTSIDE trust region points
+    gt_out = ground_truth[ungauranteed_mask]
+    pred_out = predictions[ungauranteed_mask]
+    diff = pred_out - gt_out
+    norm_diff = xp.linalg.norm(diff)
+    norm_gt = xp.linalg.norm(gt_out)
+    out_l2_relative_error = float(norm_diff / (norm_gt + TINY_EPS))
+    out_l2_abs_error = float(norm_diff / xp.sqrt(n_out)) if n_out > 0 else 0.0
+    element_rel_error = xp.abs(diff) / (xp.abs(gt_out) + TINY_EPS)
+    if element_rel_error.ndim > 1:
+        ptwise_rel_error_out = xp.max(element_rel_error, axis=1)
+    else:
+        ptwise_rel_error_out = element_rel_error
+    out_ptwise_max_rel_error_linf = (
+        float(xp.nanmax(ptwise_rel_error_out)) if n_out > 0 else 0.0
+    )
+    out_ptwise_median_rel_error_linf = (
+        float(xp.nanmedian(ptwise_rel_error_out)) if n_out > 0 else 0.0
+    )
+
     # pout: percentage of points outside the trust region
     perct_out = 100.0 * n_out / N_TEST
 
@@ -239,6 +263,10 @@ def create_problem_result_dict(
         "ptwise_median_rel_error_linf": float(ptwise_median_rel_error_linf),
         "l2_relative_error": l2_relative_error,
         "l2_abs_error": l2_abs_error,
+        "out_l2_relative_error": out_l2_relative_error,
+        "out_l2_abs_error": out_l2_abs_error,
+        "out_ptwise_max_rel_error_linf": out_ptwise_max_rel_error_linf,
+        "out_ptwise_median_rel_error_linf": out_ptwise_median_rel_error_linf,
         "n_out": int(n_out),
         "perct_out": float(perct_out),
         "n_in": int(n_in),
@@ -321,8 +349,8 @@ def Problem_experiment_setup(
                 MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                 SEED=SEED,
-                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 ERROR_METRIC=ERROR_METRIC,
+                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
             )
             _end_train_time = time.perf_counter()
@@ -340,8 +368,8 @@ def Problem_experiment_setup(
                 MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                 SEED=SEED,
-                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 ERROR_METRIC=ERROR_METRIC,
+                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
             )
             _end_train_time = time.perf_counter()
