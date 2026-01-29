@@ -62,6 +62,15 @@ def ics_quadratic_experiment() -> Path:
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        if (
+            DIM == 10
+            and (TOL <= 0.01 and ERROR_METRIC == "Linf-local")
+            or (TOL <= 0.005 and ERROR_METRIC == "Linf-global")
+        ):
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
+            )
+            continue
         json_path = (
             EXP_DIR / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
         )
@@ -105,7 +114,6 @@ def ics_shifted_gaussian_experiment() -> Path:
 
     EXP_DIR = ICS26_DIR / "ics_shifted_gaussians"
     create_summary_dataframe(EXP_DIR)
-    del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-global", "Linf-local"]
