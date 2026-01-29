@@ -10,18 +10,16 @@ from experiments_utils import (
     create_summary_dataframe,
     del_all_error_files_in_dir,
 )
-from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 from src.problems.quadratic import quadratic, quadratic_grad
-from src.problems.rastrigin import rastrigin, rastrigin_grad
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
     CENTERS_3D,
     CENTERS_4D,
+    CENTERS_5D,
     shifted_gaussians,
     shifted_gaussians_grad,
 )
-from src.problems.vector_quadratic import vector_quadratic, vector_quadratic_grad
 
 
 def get_N_TRAIN(dim: int, *, base: float = 1.3, factor: int = 50_000) -> int:
@@ -58,7 +56,7 @@ def ics_quadratic_experiment() -> Path:
 
     EXP_DIR = ICS26_DIR / "ics_quadratic"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [5, 8]
+    DIMs = [2, 5, 10]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local", "Linf-global"]
 
@@ -105,10 +103,10 @@ def ics_shifted_gaussian_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
 
-    EXP_DIR = ICS26_DIR / "ics_shifted_gaussiansk"
+    EXP_DIR = ICS26_DIR / "ics_shifted_gaussians"
     create_summary_dataframe(EXP_DIR)
     del_all_error_files_in_dir(EXP_DIR)
-    DIMs = [2, 4]
+    DIMs = [2, 5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-global", "Linf-local"]
 
@@ -134,21 +132,19 @@ def ics_shifted_gaussian_experiment() -> Path:
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
         # Set up partial functions for shifted gaussians with centers
+        _centers = {
+            2: CENTERS_2D,
+            3: CENTERS_3D,
+            4: CENTERS_4D,
+            5: CENTERS_5D,
+        }
         shifted_gaussians_partial = partial(
             shifted_gaussians,
-            centers={
-                2: CENTERS_2D,
-                3: CENTERS_3D,
-                4: CENTERS_4D,
-            }[DIM],
+            centers=_centers[DIM],
         )
         shifted_gaussians_grad_partial = partial(
             shifted_gaussians_grad,
-            centers={
-                2: CENTERS_2D,
-                3: CENTERS_3D,
-                4: CENTERS_4D,
-            }[DIM],
+            centers=_centers[DIM],
         )
 
         Problem_experiment_setup(
