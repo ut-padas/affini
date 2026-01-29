@@ -124,6 +124,7 @@ def quadratic_experiment_with_v2() -> Path:
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
+            STORE_TRAIN_EVALS=False,
         )
 
     return EXP_DIR
@@ -135,14 +136,18 @@ def quadratic_experiment_with_v2_no_grad() -> Path:
     K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
 
-    EXP_DIR = ICS26_DIR / "quadratic_no_grad_v2"
+    EXP_DIR = ICS26_DIR / "quadratic_no_hessian_v2"
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
     DIMs = [2, 3, 4, 5, 8, 10]
     TOLs = [
-        0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1,
-        0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01,
-        0.009, 0.008, 0.007, 0.006, 0.005
+        0.5, 0.45, 0.4, 0.35,
+        0.3, 0.29, 0.28, 0.27, 0.26, 0.25, 0.24, 0.23, 0.22, 0.21,
+        0.2, 0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
+        0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04,
+        0.03, 0.029, 0.028, 0.027, 0.026, 0.025, 0.024, 0.023, 0.022, 0.021, 0.02,
+        0.019, 0.018, 0.017, 0.016, 0.015, 0.014, 0.013, 0.012, 0.011, 0.01,
+        0.009, 0.008, 0.007, 0.006, 0.005, 0.004, 0.003, 0.002, 0.001
     ]
     ERROR_METRICs = ["Linf-global", "Linf-local"]
 
@@ -153,7 +158,7 @@ def quadratic_experiment_with_v2_no_grad() -> Path:
                 f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
             )
             continue
-        elif DIM >= 8 and TOL <= 1e-3:
+        elif DIM >= 8 and TOL <= 1e-4:
             print(
                 f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
             )
@@ -194,7 +199,7 @@ def quadratic_experiment_with_v2_no_grad() -> Path:
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=False,
-            IGNORE_GRADIENT=True
+            IGNORE_GRADIENT=False
         )
 
     return EXP_DIR
@@ -205,12 +210,15 @@ def gaussian_experiment_with_v2() -> Path:
     MAX_CLUSTERS_EST = 10_000
     K_NEIGHBOURS = 1
 
-    EXP_DIR = ICS26_DIR / "shifted_gaussians_no_grad_v2"
+    EXP_DIR = ICS26_DIR / "shifted_gaussians_no_hessian_v2"
     create_summary_dataframe(EXP_DIR)
     del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 3, 4]
     TOLs = [
-        0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04,
+        0.5, 0.45, 0.4, 0.35,
+        0.3, 0.29, 0.28, 0.27, 0.26, 0.25, 0.24, 0.23, 0.22, 0.21,
+        0.2, 0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
+        0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04,
         0.03, 0.029, 0.028, 0.027, 0.026, 0.025, 0.024, 0.023, 0.022, 0.021, 0.02,
         0.019, 0.018, 0.017, 0.016, 0.015, 0.014, 0.013, 0.012, 0.011, 0.01,
         0.009, 0.008, 0.007, 0.006, 0.005, 0.004, 0.003, 0.002, 0.001
@@ -271,8 +279,9 @@ def gaussian_experiment_with_v2() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=True,
+            USE_HESSIAN_INFORMED_SPLIT=False,
             STORE_TRAIN_EVALS=False,
+            IGNORE_GRADIENT=False,
         )
 
     return EXP_DIR
@@ -410,7 +419,7 @@ def rosenbrock_experiment_with_v2_no_grad() -> Path:
     K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
 
-    EXP_DIR = ICS26_DIR / "rosenbrock_no_grad_v2"
+    EXP_DIR = ICS26_DIR / "rosenbrock_no_hessian_v2"
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
 
@@ -418,9 +427,15 @@ def rosenbrock_experiment_with_v2_no_grad() -> Path:
 
     # Rosenbrock scale is 100, so gradients are steep.
     # We test tolerances from 50% down to 0.1%
-    TOLs = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1,
-            0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01,
-            0.009, 0.008, 0.007, 0.006, 0.005]
+    TOLs = [
+        0.5, 0.45, 0.4, 0.35,
+        0.3, 0.29, 0.28, 0.27, 0.26, 0.25, 0.24, 0.23, 0.22, 0.21,
+        0.2, 0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
+        0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04,
+        0.03, 0.029, 0.028, 0.027, 0.026, 0.025, 0.024, 0.023, 0.022, 0.021, 0.02,
+        0.019, 0.018, 0.017, 0.016, 0.015, 0.014, 0.013, 0.012, 0.011, 0.01,
+        0.009, 0.008, 0.007, 0.006, 0.005
+    ]
 
     ERROR_METRICs = ["Linf-global", "Linf-local"]
 
@@ -465,7 +480,7 @@ def rosenbrock_experiment_with_v2_no_grad() -> Path:
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=False,
-            IGNORE_GRADIENT=True,
+            IGNORE_GRADIENT=False,
         )
 
     return EXP_DIR
@@ -482,11 +497,9 @@ Imagine this is the very first time step in a string of simulations.
 
 def lorenz_experiment_with_v2() -> Path:
     # We must modify the functions to include forcing and tf as constants.
-    raise NotImplementedError(
-        "Currently the adaptive clustering does not support vector outputs."
-    )
+    
     FORCING = 1
-    FINAL_TIME = 0.1
+    FINAL_TIME = 0.2
     OUTPUT_VARIABLE = 0
 
     # For now, just do gradient in the first variable.
@@ -509,15 +522,18 @@ def lorenz_experiment_with_v2() -> Path:
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
 
-    DIMs = [4, 5, 6, 10]
-    TOLs = [i / 100.0 for i in [50, 20, 10, 5, 2, 1]]
-    ERROR_METRICs = ["Linf-global", "Linf-local"]
+    DIMs = [5, 10]
+    TOLs = [
+        0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15,
+        0.1, 0.08, 0.05, 0.04, 0.02, 0.01, 0.005
+    ]
+    ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Lorenz Experiments"):
 
         # Resource constraints checks
-        if DIM == 10 and TOL <= 0.005:
+        if DIM == 10 and TOL <= 0.001:
             print(
                 f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
             )
@@ -538,7 +554,7 @@ def lorenz_experiment_with_v2() -> Path:
         Problem_experiment_setup(
             json_fpath=json_path,
             DIM=DIM,
-            DOMAIN=[-10.0, 10.0],
+            DOMAIN=[-5.0, 5.0],
             f_fn=f,
             g_fn=grad_f,
             N_TRAIN=N_TRAIN,
@@ -561,20 +577,23 @@ if __name__ == "__main__":
 
     setup_logging()
 
-    dir1 = quadratic_experiment_with_v2()
-    create_summary_dataframe(dir1)
+    # dir1 = quadratic_experiment_with_v2()
+    # create_summary_dataframe(dir1)
 
     # dir2 = gaussian_experiment_with_v2()
     # create_summary_dataframe(dir2)
 
-    dir3 = rastrigin_experiment_with_v2()
-    create_summary_dataframe(dir3)
+    # dir3 = rastrigin_experiment_with_v2()
+    # create_summary_dataframe(dir3)
 
-    dir4 = rosenbrock_experiment_with_v2()
-    create_summary_dataframe(dir4)
+    # dir4 = rosenbrock_experiment_with_v2()
+    # create_summary_dataframe(dir4)
 
     # dir5 = lorenz_experiment_with_v2()
     # create_summary_dataframe(dir5)
+
+    dir6 = quadratic_experiment_with_v2_no_grad()
+    create_summary_dataframe(dir6)
 
     # dir7 = rosenbrock_experiment_with_v2_no_grad()
     # create_summary_dataframe(dir7)

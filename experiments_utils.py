@@ -238,16 +238,38 @@ def Problem_experiment_setup(
     USE_HESSIAN_INFORMED_SPLIT: bool,
     CLUSTERING_VERSION: Literal["v1", "v2"],
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
+    SAMPLING: Literal["Uniform", "Trajectories"] = "Uniform",
     PLOT_CONTOUR_IN_LOG_SCALE: bool = False,
     STORE_TRAIN_EVALS: bool = False,
     TRAIN_EVALS_PREFIX: str = "train_evals",
     TRAIN_EVALS_DIR: Optional[Path] = None,
     IGNORE_GRADIENT: bool = False,
 ):
-    # Sample data from a uniform distribution
-    xp.random.seed(SEED)
-    X_train = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TRAIN, DIM))
-    X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, DIM))
+    # Sample data from a uniform distribution (if we choose to do so)
+    if SAMPLING == "Uniform":
+        xp.random.seed(SEED)
+        X_train = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TRAIN, DIM))
+        X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, DIM))
+
+    # Can also sample along trajectories, which is relevant for ODE applications.
+    elif SAMPLING == "Trajectories":
+        xp.random.seed(SEED)
+        N_timesteps = 10
+        N_train_init = N_TRAIN // N_timesteps
+        N_test_init = N_TEST // N_timesteps
+
+        # Save as tensor, then flatten at the end
+        X_train = xp.zeros(shape=(N_timesteps, N_train_init, DIM))
+        X_test = xp.zeros(shape=(N_timesteps, N_train_init, DIM))
+
+        X_train[0] = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_train_init, DIM))
+        X_test[0] = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_test_init, DIM))
+        for j in range(1, N_timesteps):
+            X_train[j] = f_fn(X_train[j-1])
+            X_test[j] = f_fn(X_test[j-1])
+
+        X_train = X_train.reshape((N_train_init * N_timesteps, DIM))
+        X_test = X_test.reshape((N_train_init * N_timesteps, DIM))
 
     surrogate = NearODESurrogate(version=CLUSTERING_VERSION)
     error_tag = ""
