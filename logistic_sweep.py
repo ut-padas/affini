@@ -276,7 +276,7 @@ def run_logistic_experiment(
         ground_truth = f_logistic(X_test)
 
         t0 = time.perf_counter()
-        preds, mask = surrogate.predict(X_test, k_NEIGHBOURS=1)
+        preds, mask = surrogate.predict(X_test, k_nn=1)
         predict_time = time.perf_counter() - t0
 
     except Exception as e:

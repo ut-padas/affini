@@ -27,6 +27,8 @@ class NearODESurrogate:
         self.Qs_src = None
         self.N_src = 0
         self.training_num_levels = -1
+        self.num_generated_pts = -1
+        self.total_f_evals = -1
 
     def train(
         self,
@@ -79,6 +81,8 @@ class NearODESurrogate:
                 radii = xp.asarray(results["radii"])
                 Qs = xp.asarray(results["Q"])
                 num_levels = results.get("num_levels", -1)
+                num_generated_pts = results.get("num_generated_pts", -1)
+                total_f_evals = results.get("total_f_evals", -1)
             else:
                 from src.gpu_adaptive_clustering import (
                     adaptive_clustering as gpu_adaptive_clustering,
@@ -105,6 +109,7 @@ class NearODESurrogate:
                 Qs = xp.asarray(results["Q"])
                 num_levels = results.get("num_levels", -1)
                 num_generated_pts = results.get("num_generated_pts", -1)
+                total_f_evals = results.get("total_f_evals", -1)
 
             # 2. Store Data
             self.X_src = centroids
@@ -115,62 +120,11 @@ class NearODESurrogate:
             self.N_src = centroids.shape[0]
             self.training_num_levels = num_levels
             self.num_generated_pts = num_generated_pts
-
-        elif self.version == "v1":
+            self.total_f_evals = total_f_evals
+        else:
             raise NotImplementedError(
                 "Version v1 is deprecated. Use version v2 instead."
             )
-            if not IS_CUPY_BACKEND:
-                from src.v1_adaptive_clustering import adaptive_cluster_algorithm
-
-                clusters, num_levels = adaptive_cluster_algorithm(
-                    X_train=X_train,
-                    f=f_fn,
-                    grad_f=g_fn,
-                    cupy_f=f_fn,
-                    tol=TOL,
-                    num_initial_clusters=NUM_INITIAL_CLUSTERS,
-                    min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
-                    seed=SEED,
-                    use_hessian_informed_split=USE_HESSIAN_INFORMED_SPLIT,
-                    error_metric=ERROR_METRIC,
-                )
-                centroids = xp.asarray([clust.centroid for clust in clusters])
-                f_vals = xp.asarray([clust.F_centroid for clust in clusters])
-                grads = xp.asarray([clust.J_centroid for clust in clusters])
-                trust_radii = xp.asarray([clust.radius for clust in clusters])
-            else:
-                from src.v1_gpu_adaptive_clustering import (
-                    adaptive_cluster_algorithm_gpu,
-                )
-
-                result = adaptive_cluster_algorithm_gpu(
-                    X_train=X_train,
-                    f=f_fn,
-                    grad=g_fn,
-                    DATA_DIM=X_train.shape[1],
-                    F_DIM=f_fn(X_train[:1]).shape[1],
-                    NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-                    MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-                    MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                    ATOL=TOL,
-                    RTOL=TOL,
-                    SEED=SEED,
-                )
-                centroids = result[0]
-                f_vals = result[1]
-                grads = result[2]
-                trust_radii = result[4]
-                num_levels = result[9]
-
-            self.X_src = centroids
-            self.f_src = f_vals
-            self.J_src = grads
-            self.trust_radii_src = trust_radii
-            self.N_src = centroids.shape[0]
-            self.training_num_levels = num_levels
-        else:
-            raise ValueError(f"Unknown version: {self.version}")
 
         # 3. Training complete
         self.trained = True
@@ -192,7 +146,7 @@ class NearODESurrogate:
     def predict(
         self,
         query_points,
-        k_NEIGHBOURS: int = 1,
+        k_nn: int = 1,
         strict_trust_region: bool = False,
     ) -> tuple:
         """
@@ -201,64 +155,10 @@ class NearODESurrogate:
         if not self.trained:
             raise RuntimeError("Model not trained.")
 
-        if self.version == "v2":
-            t_search_start = time.perf_counter()
-            predictions, unguaranteed_mask = self._predict_knn_Q(
-                query_points, k=k_NEIGHBOURS, strict_trust_region=strict_trust_region
+        if self.version != "v2":
+            raise NotImplementedError(
+                "Version v1 is deprecated. Use version v2 instead."
             )
-            logger.info(
-                f"Ellipsoidal kNN Search + Predict Time: {time.perf_counter()-t_search_start:.4f}s"
-            )
-            return predictions, unguaranteed_mask
-
-        raise NotImplementedError("Stop using version v1 for new experiments.")
-        qp = xp.asarray(query_points)
-        t_search = time.perf_counter()
-        nn_idx, nn_dist2, ungauranteed_mask = knn_l2_distance(
-            qp,
-            self.X_src,
-            self.trust_radii_src,
-            k_NEIGHBOURS,
-        )
-        logger.info(f"L2 kNN Search Time: {time.perf_counter()-t_search:.4f}s")
-
-        N, D = qp.shape
-        F = self.f_src.shape[1] if len(self.f_src.shape) > 1 else 1  # type: ignore
-
-        # Flatten indices for gathers
-        flat_idx = nn_idx.reshape(-1)  # (N*k,)
-        X_neighbors = xp.asarray(self.X_src)[flat_idx]  # (N*k, D)
-        f_neighbors = xp.asarray(self.f_src)[flat_idx]  # (N*k, F) or (N*k,)
-        J_neighbors = xp.asarray(self.J_src)[flat_idx]  # (N*k, F, D)
-
-        X_neighbors = X_neighbors.reshape(N, k_NEIGHBOURS, D)
-        f_neighbors = f_neighbors.reshape(N, k_NEIGHBOURS, F)
-        J_neighbors = J_neighbors.reshape(N, k_NEIGHBOURS, F, D)
-
-        # ---------------------------------------------------------------------
-        # First-order Taylor predictions around each neighbor centroid
-        # ---------------------------------------------------------------------
-        qp_expanded = qp[:, None, :]  # (N, 1, D)
-        dx = qp_expanded - X_neighbors  # (N, k, D)
-
-        # linear_term[n,k,f] = sum_d J[n,k,f,d] * dx[n,k,d]
-        linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)  # (N, k, F)
-        predictions_k = f_neighbors + linear_term  # (N, k, F)
-        predictions = xp.mean(predictions_k, axis=1)  # (N, F)
-        return predictions, ungauranteed_mask
-
-    def _predict_knn_Q(self, query_points, k=1, strict_trust_region: bool = False):
-        """
-        Inference via GPU kNN.
-
-        Args:
-            strict_trust_region (bool):
-                If True: Uses weighted average (decaying to 0 at dist=1.0).
-                        Points outside trust region predict 0.
-                If False: Uses simple average (uniform weights) of the k-nearest neighbors. Predictions are always returned, even for far points.
-        """
-        if not self.trained:
-            raise RuntimeError("Model not trained.")
 
         assert (
             self.X_src is not None
@@ -271,13 +171,13 @@ class NearODESurrogate:
         N, D = qp.shape
 
         # --- 1. Coarse L2 Filter ---
-        if k < len(self.X_src):
+        if k_nn < len(self.X_src):
             COARSE_FACTOR = 10
-            k_coarse = min(k * COARSE_FACTOR, len(self.X_src))
-            k = min(k, len(self.X_src))
+            k_coarse = min(k_nn * COARSE_FACTOR, len(self.X_src))
+            k_nn = min(k_nn, len(self.X_src))
         else:
             k_coarse = len(self.X_src)
-            k = len(self.X_src)
+            k_nn = len(self.X_src)
 
         nn_idx_coarse, _, _ = knn_l2_distance(
             qp, self.X_src, self.trust_radii_src, k_coarse
@@ -292,7 +192,7 @@ class NearODESurrogate:
 
         # --- 3. Refine: Sort by Q-Distance ---
         sorted_local_indices = xp.argsort(dist_sq_coarse, axis=1)
-        top_k_local = sorted_local_indices[:, :k]
+        top_k_local = sorted_local_indices[:, :k_nn]
 
         # Gather Top-k Data
         nn_idx = xp.take_along_axis(nn_idx_coarse, top_k_local, axis=1)
@@ -327,8 +227,8 @@ class NearODESurrogate:
         F_dim = self.f_src.shape[1] if self.f_src.ndim > 1 else 1
         flat_idx = nn_idx.reshape(-1)
 
-        f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(N, k, F_dim)
-        J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(N, k, F_dim, D)
+        f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(N, k_nn, F_dim)
+        J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(N, k_nn, F_dim, D)
 
         linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
         predictions_k = f_neighbors + linear_term
@@ -470,7 +370,7 @@ if __name__ == "__main__":
     _start_predict_time = time.perf_counter()
     preds, ungauranteed_mask = surrogate.predict(
         X_test,
-        k_NEIGHBOURS=K_NEIGHBOURS,
+        k_nn=K_NEIGHBOURS,
     )
     _end_predict_time = time.perf_counter()
     print(

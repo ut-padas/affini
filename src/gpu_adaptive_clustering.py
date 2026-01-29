@@ -676,10 +676,14 @@ def adaptive_clustering(
         -   `H_sqrt`: (K, d, d) (Optional) Symmetric Hessian square roots.
         -   `num_levels`: (int) Total levels refined.
         -   `num_generated_pts`: (int) Number of generated points.
+        -  `total_f_evals`: (int) Total function evaluations performed.
     """
 
     _start_time = time.perf_counter()
     mempool = cp.get_default_memory_pool()
+
+    num_generated_pts = 0
+    total_f_evals = 0
 
     # --- 1. Initialization Phase ---
     # Upload initial data to GPU
@@ -691,8 +695,8 @@ def adaptive_clustering(
 
     # Evaluate initial F/G on GPU
     _t0 = time.perf_counter()
-    num_generated_pts = 0
     F0_gpu = convert_to_2d_array(f_fn(X0_gpu))  # Shape: (N, fd)
+    total_f_evals += X0_gpu.shape[0]
     fd = F0_gpu.shape[1]
 
     if IGNORE_GRADIENT:
@@ -836,6 +840,7 @@ def adaptive_clustering(
 
                 # Evaluate Physics for Synth Points
                 F_synth = convert_to_2d_array(f_fn(X_synth_vals))
+                total_f_evals += X_synth_vals.shape[0]
                 F_batch[is_synth] = F_synth
                 if IGNORE_GRADIENT:
                     G_batch[is_synth] = 0.0
@@ -851,6 +856,7 @@ def adaptive_clustering(
             sums = xp.add.reduceat(X_batch, aug_starts)
             mus = sums / aug_sizes[:, None]  # (K_batch, d)
             f_mus = convert_to_2d_array(f_fn(mus))  # (K_batch, fd)
+            total_f_evals += mus.shape[0]
             if IGNORE_GRADIENT:
                 g_mus = xp.zeros((len(aug_sizes), fd, d), dtype=xp.float64)
             else:
@@ -1224,6 +1230,7 @@ def adaptive_clustering(
     out_dict = {k: buffers[k][:final_count] for k in buffers}
     out_dict["num_levels"] = level
     out_dict["num_generated_pts"] = num_generated_pts
+    out_dict["total_f_evals"] = total_f_evals
     logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
     logger.info(f"Runtime - Total: {time.perf_counter() -_start_time:.3f}s")
     return out_dict

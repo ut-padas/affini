@@ -353,8 +353,8 @@ def Problem_experiment_setup(
         X_train[0] = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_train_init, DIM))
         X_test[0] = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_test_init, DIM))
         for j in range(1, N_timesteps):
-            X_train[j] = f_fn(X_train[j-1])
-            X_test[j] = f_fn(X_test[j-1])
+            X_train[j] = f_fn(X_train[j - 1])
+            X_test[j] = f_fn(X_test[j - 1])
 
         X_train = X_train.reshape((N_train_init * N_timesteps, DIM))
         X_test = X_test.reshape((N_train_init * N_timesteps, DIM))
@@ -428,7 +428,7 @@ def Problem_experiment_setup(
         _start_predict_time = time.perf_counter()
         preds, ungauranteed_mask = surrogate.predict(
             X_test,
-            k_NEIGHBOURS=K_NEIGHBOURS,
+            k_nn=K_NEIGHBOURS,
             strict_trust_region=False,
         )
         _end_predict_time = time.perf_counter()
@@ -440,6 +440,7 @@ def Problem_experiment_setup(
         N_CLUSTERS = surrogate.get_number_of_sources()
         num_levels = surrogate.training_num_levels
         num_generated_pts = surrogate.num_generated_pts
+        total_f_evals = surrogate.total_f_evals
 
     except Exception as e:
         FAILED = True
@@ -458,6 +459,7 @@ def Problem_experiment_setup(
         N_CLUSTERS = 0
         num_levels = None
         num_generated_pts = None
+        total_f_evals = None
 
     result_dict = create_problem_result_dict(
         problem_name="Quadratic",
@@ -470,6 +472,7 @@ def Problem_experiment_setup(
         ungauranteed_mask=ungauranteed_mask,
         num_levels=num_levels,
         num_generated_pts=num_generated_pts,
+        total_f_evals=total_f_evals,
         TOL=TOL,
         DIM=DIM,
         F_DIM=F_DIM,

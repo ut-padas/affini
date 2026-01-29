@@ -202,8 +202,8 @@ def ics_rosenbrock_experiment() -> Path:
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rosenbrock Experiments"):
         if (
             DIM == 10
-            and (TOL <= 0.01 and ERROR_METRIC == "Linf-local")
-            or (TOL <= 0.005 and ERROR_METRIC == "Linf-global")
+            and (TOL <= 0.1 and ERROR_METRIC == "Linf-local")
+            or (TOL <= 0.02 and ERROR_METRIC == "Linf-global")
         ):
             print(
                 f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."

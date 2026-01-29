@@ -490,6 +490,8 @@ def adaptive_clustering(
     """
     _start_time = time.perf_counter()
 
+    total_f_evals = 0
+
     X0 = xp.asarray(X)  # (N0, d)
     N0, d = X0.shape
 
@@ -507,6 +509,7 @@ def adaptive_clustering(
     # Eval initial F/G to determine m (output dimension)
     _t0 = time.perf_counter()
     F0_val = xp.asarray(f_fn(X_pool[:N0]))
+    total_f_evals += N0
     if F0_val.ndim == 1:
         F0_val = F0_val[:, None]
     fd = F0_val.shape[1]  # Output dimension (fd)
@@ -617,6 +620,7 @@ def adaptive_clustering(
 
             # Evaluate F/G at new synthetic points
             F_new = xp.asarray(f_fn(X_synth))
+            total_f_evals += X_synth.shape[0]
             if F_new.ndim == 1:
                 F_new = F_new[:, None]
             F_pool[n_total:n_new] = F_new
@@ -654,6 +658,7 @@ def adaptive_clustering(
 
         # Eval f/g at centroids
         f_mus = xp.asarray(f_fn(mus))
+        total_f_evals += mus.shape[0]
         if f_mus.ndim == 1:
             f_mus = f_mus[:, None]  # (K, fd)
 
@@ -937,6 +942,7 @@ def adaptive_clustering(
     out_dict = {k: buffers[k][:final_count] for k in buffers}
     out_dict["num_levels"] = level
     out_dict["num_generated_pts"] = n_total - N0
+    out_dict["total_f_evals"] = int(total_f_evals)
     return out_dict
 
 
