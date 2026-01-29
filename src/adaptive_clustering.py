@@ -708,11 +708,15 @@ def adaptive_clustering(
 
         elif ERROR_METRIC == "Linf-local":
             E_rel_max = xp.zeros((K_batch,), dtype=diff.dtype)
+            E_abs_max = xp.zeros((K_batch,), dtype=diff.dtype)  # <--- Track Abs Error
             abs_F = xp.abs(F_sorted)
 
             for j in range(fd):
                 max_diff_j = xp.zeros((K_batch,), dtype=diff.dtype)
                 scatter_maximum_1d(max_diff_j, map_n_to_k, abs_diff[:, j])
+
+                # Accumulate Max Absolute Error across components
+                E_abs_max = xp.maximum(E_abs_max, max_diff_j)  # <--- Update
 
                 # Local Scale L_j = max_{x in C} |f_j|
                 local_max_F = xp.zeros((K_batch,), dtype=diff.dtype)
@@ -724,7 +728,10 @@ def adaptive_clustering(
                 E_rel_max = xp.maximum(E_rel_max, rel_err_j)
 
             E_cluster = E_rel_max
-            is_good = E_cluster < TOL
+
+            # Hybrid Acceptance: Relative < TOL  OR  Absolute < TOL
+            # This prevents over-refining near f(x) = 0
+            is_good = (E_cluster < TOL) | (E_abs_max < TOL)
         else:
             raise ValueError(f"Unknown ERROR_METRIC: {ERROR_METRIC}")
 
@@ -1191,4 +1198,5 @@ if __name__ == "__main__":
     npz_fpath = img_fpath.with_suffix(".npz")
     if IS_CUPY_BACKEND:
         results = {k: xp.asnumpy(v) for k, v in results.items()}
+    xp.savez_compressed(npz_fpath, **results)
     xp.savez_compressed(npz_fpath, **results)
