@@ -436,6 +436,8 @@ def Problem_experiment_setup(
 
         N_CLUSTERS = surrogate.get_number_of_sources()
         num_levels = surrogate.training_num_levels
+        num_generated_pts = surrogate.num_generated_pts
+        total_f_evals = surrogate.total_f_evals
 
     except Exception as e:
         FAILED = True
@@ -453,6 +455,8 @@ def Problem_experiment_setup(
         predict_time = None
         N_CLUSTERS = 0
         num_levels = None
+        num_generated_pts = None
+        total_f_evals = None
 
     result_dict = create_problem_result_dict(
         problem_name="Quadratic",
@@ -464,6 +468,8 @@ def Problem_experiment_setup(
         predictions=preds,
         ungauranteed_mask=ungauranteed_mask,
         num_levels=num_levels,
+        num_generated_pts=num_generated_pts,
+        total_f_evals=total_f_evals,
         TOL=TOL,
         DIM=DIM,
         F_DIM=F_DIM,
