@@ -936,6 +936,7 @@ def adaptive_clustering(
 
     out_dict = {k: buffers[k][:final_count] for k in buffers}
     out_dict["num_levels"] = level
+    out_dict["num_generated_pts"] = n_total - N0
     return out_dict
 
 
@@ -1042,7 +1043,7 @@ if __name__ == "__main__":
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ERROR_METRIC=ERROR_METRIC,
-        SYNTH_BUDGET_FACTOR=100 * 10,
+        SYNTH_BUDGET_FACTOR=1000,
     )
 
     print("-" * 40)
