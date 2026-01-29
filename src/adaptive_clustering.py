@@ -470,6 +470,7 @@ def adaptive_clustering(
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
+    Q_SHRINK: float = 0.05,
     SEED: int = 0,
     LOG_MEM_STATS: bool = False,
     # Pool sizing
@@ -769,7 +770,7 @@ def adaptive_clustering(
                 good_starts,
                 good_counts,
                 n_good,
-                Q_SHRINK=0.05,
+                Q_SHRINK=Q_SHRINK,
             )
 
             # Store results

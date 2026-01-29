@@ -41,7 +41,7 @@ class NearODESurrogate:
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
         SEED: int = 0,
-        USE_HESSIAN_INFORMED_SPLIT: bool = False,
+        USE_HESSIAN_INFORMED_SPLIT: bool = True,
         IGNORE_GRADIENT: bool = False,
     ):
         """
@@ -70,6 +70,7 @@ class NearODESurrogate:
                     SYNTH_BUDGET_FACTOR=200.0,
                     USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                     IGNORE_GRADIENT=IGNORE_GRADIENT,
+                    Q_SHRINK=0.05,
                 )
 
                 centroids = xp.asarray(results["centroids"])
@@ -92,6 +93,8 @@ class NearODESurrogate:
                     NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
                     MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
                     MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                    USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                    IGNORE_GRADIENT=IGNORE_GRADIENT,
                     SEED=SEED,
                     Q_SHRINK=0.05,
                 )
