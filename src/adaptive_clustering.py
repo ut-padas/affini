@@ -679,11 +679,23 @@ def adaptive_clustering(
 
         # Calculate E_cluster based on metric
         if ERROR_METRIC == "L2":
-            # Max component-wise RMSE
+            # L2 Error: Total Frobenius Norm of the error matrix for the cluster.
+            # Matches "Old Code" behavior (Total L2 Norm) extended to vectors.
+
+            # 1. Square errors: (N, fd)
             sq_err = diff**2
-            sum_sq = xp.add.reduceat(sq_err, starts)  # (K, fd)
-            rmse = xp.sqrt(sum_sq / counts[:, None])
-            E_cluster = xp.max(rmse, axis=1)  # (K,)
+
+            # 2. Sum squared errors per cluster per component: (K, fd)
+            sum_sq_per_cluster_comp = xp.add.reduceat(sq_err, starts)
+
+            # 3. Sum over components to get total squared error per cluster: (K,)
+            # (If fd=1, this is a no-op which matches scalar behavior)
+            total_sq_error = xp.sum(sum_sq_per_cluster_comp, axis=1)
+
+            # 4. Square root to get L2 norm
+            E_cluster = xp.sqrt(total_sq_error)
+
+            # Standard L2 check
             is_good = E_cluster < TOL
 
         elif ERROR_METRIC == "Linf-global":
