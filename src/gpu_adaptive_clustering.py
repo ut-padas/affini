@@ -611,10 +611,10 @@ def adaptive_clustering(
     Q_SHRINK: float = 0.05,
     MAX_LEVELS: int = 50,
     BATCH_SIZE: int = 10_000_000,
-    LOG_MEM_STATS: bool = False,
     USE_HESSIAN_INFORMED_SPLIT: bool = True,
     IGNORE_GRADIENT: bool = False,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
+    LOG_MEM_STATS: bool = False,
 ) -> dict[str, Any]:
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).
@@ -654,7 +654,6 @@ def adaptive_clustering(
         Q_SHRINK: Shrinkage factor a for covariance: Σ ← (1-a)Σ + a (Tr(Σ)/d)I.
         MAX_LEVELS: Maximum recursion depth for splitting.
         BATCH_SIZE: Maximum number of points processed in a single GPU kernel launch.
-        LOG_MEM_STATS: If True, prints VRAM usage at key steps.
         USE_HESSIAN_INFORMED_SPLIT: If True, splits clusters along the dominant
         eigenvector of the local Hessian estimate. If False, splits along the principal
         axis (PCA) of points.
@@ -662,6 +661,7 @@ def adaptive_clustering(
         approximation).
         STORE_HESSIAN_SQRT_PER_CLUSTER: If True, computes and stores |H|^{1/2} for every
         accepted cluster (useful for anisotropic trust regions downstream).
+        LOG_MEM_STATS: If True, prints VRAM usage at key steps.
 
     Returns:
         A dictionary containing the surrogate model parameters:
@@ -685,7 +685,11 @@ def adaptive_clustering(
     X0_gpu = xp.asarray(X, dtype=xp.float64)  # Shape: (N, d)
     d = X0_gpu.shape[1]
 
-    # Evaluate physics
+    if LOG_MEM_STATS:
+        log_mem_stats("Start Adaptive Clustering")
+
+    # Evaluate initial F/G on GPU
+    _t0 = time.perf_counter()
     F0_gpu = convert_to_2d_array(f_fn(X0_gpu))  # Shape: (N, fd)
     fd = F0_gpu.shape[1]
 
@@ -694,15 +698,21 @@ def adaptive_clustering(
     else:
         G0_gpu = convert_to_3d_array(g_fn(X0_gpu))  # Shape: (N, fd, d)
 
+    logger.info(f"Runtime - Initial f/g: {time.perf_counter()-_t0:.3f}s")
+    logger.info(f"Function: Input d={d}, Output fd={fd}")
     if LOG_MEM_STATS:
-        log_mem_stats("After Init F/G")
+        log_mem_stats("After Initial F/G Evaluation")
 
     # Compute Global Scale for Linf-global metric: S_j = max_x |F_j(x)|
     F_max_global = xp.max(xp.abs(F0_gpu), axis=0)  # Shape: (fd,)
 
     # Initial K-Means Clustering
+    _t1 = time.perf_counter()
     km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
     labels0 = km.fit_predict(X0_gpu)
+    logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
+    if LOG_MEM_STATS:
+        log_mem_stats("After Initial KMeans Clustering")
 
     # --- Physical Sort ---
     # Group data by cluster in VRAM to enable contiguous slicing later
@@ -727,10 +737,13 @@ def adaptive_clustering(
     # --- 2. Main Refinement Loop (BFS) ---
     level = 0
     while level <= MAX_LEVELS:
+        _t_level = time.perf_counter()
         if LOG_MEM_STATS:
-            log_mem_stats(f"Start L{level}")
+            log_mem_stats(f"Start: L{level:02}")
+
         num_clusters = len(CLUSTER_SIZES)
         if num_clusters == 0:
+            logger.info(f"Level {level:02}: No clusters to process, terminating.")
             break
 
         # Calculate augmentation needs (how many synthetic points per cluster?)
@@ -751,6 +764,9 @@ def adaptive_clustering(
         # Process clusters in chunks that fit in GPU memory
         num_batches = (level_total_aug_pts + BATCH_SIZE - 1) // BATCH_SIZE
         start_cluster_idx = 0
+
+        if LOG_MEM_STATS:
+            log_mem_stats(f"Start: L{level:02} Batching")
 
         for b in range(num_batches):
             # Determine cluster range for this batch
@@ -796,6 +812,8 @@ def adaptive_clustering(
             is_synth = ~is_real
             num_synth = int(xp.sum(is_synth))
             if num_synth > 0:
+                if LOG_MEM_STATS:
+                    log_mem_stats(f" L{level:02} B{b:02}: Start Augmentation")
                 synth_c_ids = aug_ids[is_synth]
                 rng = xp.random.default_rng(SEED + level + b)
 
@@ -823,6 +841,8 @@ def adaptive_clustering(
                     G_batch[is_synth] = G_synth
 
                 del p1, p2, alpha, X_synth_vals
+            if LOG_MEM_STATS:
+                log_mem_stats(f" L{level:02} B{b:02}: After Augmentation")
 
             # 3. Compute Centroids & Reference Gradients
             sums = xp.add.reduceat(X_batch, aug_starts)
@@ -899,6 +919,9 @@ def adaptive_clustering(
                     cupy_scatter_max(E_cluster, dense_labels, err_pts)
 
                 is_good = E_cluster < TOL
+
+            if LOG_MEM_STATS:
+                log_mem_stats(f" L{level:02} B{b:02}: After Error Metrics")
 
             # 5. Handle Accepted ("Good") Clusters
             good_idx_local = xp.nonzero(is_good)[0]
@@ -1032,6 +1055,9 @@ def adaptive_clustering(
                 )
                 out_count = end_out
 
+            if LOG_MEM_STATS:
+                log_mem_stats(f" L{level:02} B{b:02}: After Good Clusters")
+
             # 6. Handle Rejected ("Bad") Clusters -> Split
             bad_idx_local = xp.nonzero(~is_good)[0]
             n_bad = int(bad_idx_local.shape[0])
@@ -1132,12 +1158,16 @@ def adaptive_clustering(
                 new_sz[1::2] = other
                 next_level_sizes_list.append(xp.asnumpy(new_sz))
 
+            if LOG_MEM_STATS:
+                log_mem_stats(f" L{level:02} B{b:02}: After Bad Clusters")
+
             start_cluster_idx = end_cluster_idx
             del X_batch, F_batch, G_batch
             mempool.free_all_blocks()
 
         # --- 3. Level Transition ---
         if len(next_level_sizes_list) == 0:
+            logger.info(f"Level {level:02}: No bad clusters to refine, terminating.")
             break
 
         # Consolidate Next Level Data
@@ -1162,24 +1192,36 @@ def adaptive_clustering(
 
         CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
 
+        if LOG_MEM_STATS:
+            log_mem_stats(f"End: L{level:02} Transition")
+
         # Cleanup Host Buffers
         del (
             next_level_X_list,
             next_level_F_list,
             next_level_G_list,
             next_level_sizes_list,
+            next_X,
+            next_F,
+            next_G,
+            next_sizes,
         )
-        del next_X, next_F, next_G, next_sizes
         gc.collect()
+
+        logger.info(
+            f"Level {level:02}: Clusters={num_clusters:,}, active={len(CLUSTER_SIZES):,}"
+        )
+        logger.info(
+            f"Runtime - Level {level:02}: {time.perf_counter() - _t_level:.3f}s"
+        )
         level += 1
 
     # --- 4. Finalization ---
     final_count = int(out_count)
     out_dict = {k: buffers[k][:final_count] for k in buffers}
     out_dict["num_levels"] = level
-    logger.info(
-        f"Complete: {final_count} clusters. Time: {time.perf_counter()-_start_time:.2f}s"
-    )
+    logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
+    logger.info(f"Runtime - Total: {time.perf_counter() -_start_time:.3f}s")
     return out_dict
 
 
@@ -1286,7 +1328,7 @@ if __name__ == "__main__":
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS * DIM,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ERROR_METRIC=ERROR_METRIC,
-        BATCH_SIZE=100_000_000,
+        LOG_MEM_STATS=True,
     )
 
     print("-" * 40)
