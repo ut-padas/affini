@@ -114,6 +114,9 @@ class NearODESurrogate:
             self.N_src = centroids.shape[0]
             self.training_num_levels = num_levels
         elif self.version == "v1":
+            raise NotImplementedError(
+                "Version v1 is deprecated. Use version v2 instead."
+            )
             if not IS_CUPY_BACKEND:
                 from src.v1_adaptive_clustering import adaptive_cluster_algorithm
 
@@ -187,6 +190,7 @@ class NearODESurrogate:
         self,
         query_points,
         k_NEIGHBOURS: int = 1,
+        strict_trust_region: bool = False,
     ) -> tuple:
         """
         Inference via GPU kNN with L2 Distance.
@@ -197,13 +201,14 @@ class NearODESurrogate:
         if self.version == "v2":
             t_search_start = time.perf_counter()
             predictions, unguaranteed_mask = self._predict_knn_Q(
-                query_points, k=k_NEIGHBOURS
+                query_points, k=k_NEIGHBOURS, strict_trust_region=strict_trust_region
             )
             logger.info(
                 f"Ellipsoidal kNN Search + Predict Time: {time.perf_counter()-t_search_start:.4f}s"
             )
             return predictions, unguaranteed_mask
 
+        raise NotImplementedError("Stop using version v1 for new experiments.")
         qp = xp.asarray(query_points)
         t_search = time.perf_counter()
         nn_idx, nn_dist2, ungauranteed_mask = knn_l2_distance(
@@ -239,13 +244,15 @@ class NearODESurrogate:
         predictions = xp.mean(predictions_k, axis=1)  # (N, F)
         return predictions, ungauranteed_mask
 
-    def _predict_knn_Q(self, query_points, k=1):
+    def _predict_knn_Q(self, query_points, k=1, strict_trust_region: bool = False):
         """
-        Inference via GPU kNN:
-        1. Coarse Filter: Find k * COARSE_FACTOR candidates via L2 distance.
-        2. Refine: Sort candidates by Q-matrix distance.
-        3. Select: Pick top-k closest in Q-metric.
-        4. Predict: Weighted average with validity check.
+        Inference via GPU kNN.
+
+        Args:
+            strict_trust_region (bool):
+                If True: Uses weighted average (decaying to 0 at dist=1.0).
+                        Points outside trust region predict 0.
+                If False: Uses simple average (uniform weights) of the k-nearest neighbors. Predictions are always returned, even for far points.
         """
         if not self.trained:
             raise RuntimeError("Model not trained.")
@@ -261,71 +268,57 @@ class NearODESurrogate:
         N, D = qp.shape
 
         # --- 1. Coarse L2 Filter ---
-        # We fetch more candidates than needed because L2 distance != Q distance.
-        # A cluster might be far in L2 but "close" in Q (if aligned well).
         if k < len(self.X_src):
             COARSE_FACTOR = 10
             k_coarse = min(k * COARSE_FACTOR, len(self.X_src))
             k = min(k, len(self.X_src))
         else:
-            logger.warning(
-                f"Requested k={k} exceeds number of source points={len(self.X_src)}. Using all source points."
-            )
             k_coarse = len(self.X_src)
             k = len(self.X_src)
 
-        # nn_idx_coarse: (N, k_coarse)
         nn_idx_coarse, _, _ = knn_l2_distance(
             qp, self.X_src, self.trust_radii_src, k_coarse
         )
 
-        # Retrieve Coarse Candidates info
-        Qs_coarse = self.Qs_src[nn_idx_coarse]  # (N, k_coarse, D, D)
-        centroids_coarse = self.X_src[nn_idx_coarse]  # (N, k_coarse, D)
+        Qs_coarse = self.Qs_src[nn_idx_coarse]
+        centroids_coarse = self.X_src[nn_idx_coarse]
+        dx_coarse = qp[:, None, :] - centroids_coarse
 
-        # Compute Displacement
-        dx_coarse = qp[:, None, :] - centroids_coarse  # (N, k_coarse, D)
-
-        # --- 2. Compute Q-Distance for Candidates ---
-        # dist_sq = (x-u)^T Q (x-u)
-        # Result: (N, k_coarse)
+        # --- 2. Compute Q-Distance ---
         dist_sq_coarse = xp.einsum("nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse)
 
         # --- 3. Refine: Sort by Q-Distance ---
-        # We want the 'k' neighbors that are "closest" in the Mahalanobis sense.
-        # This brings the most relevant clusters to the front.
-
-        # Get indices that sort dist_sq_coarse along axis 1
-        # sorted_local_indices: (N, k_coarse)
         sorted_local_indices = xp.argsort(dist_sq_coarse, axis=1)
+        top_k_local = sorted_local_indices[:, :k]
 
-        # Keep only the top k
-        top_k_local = sorted_local_indices[:, :k]  # (N, k)
+        # Gather Top-k Data
+        nn_idx = xp.take_along_axis(nn_idx_coarse, top_k_local, axis=1)
+        dist_sq = xp.take_along_axis(dist_sq_coarse, top_k_local, axis=1)
 
-        # Gather the Refined Top-k Data
-        # 1. Global Indices (for fetching f/J later)
-        nn_idx = xp.take_along_axis(nn_idx_coarse, top_k_local, axis=1)  # (N, k)
-
-        # 2. Q-Distances (for weights)
-        dist_sq = xp.take_along_axis(dist_sq_coarse, top_k_local, axis=1)  # (N, k)
-
-        # 3. dx vectors (for Taylor expansion) - reuse to avoid recomputing
-        # dx_coarse is (N, k_coarse, D), we need (N, k, D)
-        # We need to broadcast the indices to match D dimension
-        # top_k_expanded: (N, k, D)
-        # This manual gather is a bit tricky in ND, so simpler to just recompute dx
-        # or use advanced indexing. Recomputing dx for k points is cheap.
         centroids = self.X_src[nn_idx]
-        dx = qp[:, None, :] - centroids  # (N, k, D)
+        dx = qp[:, None, :] - centroids
 
-        # --- 4. Validity & Trust Weights ---
-        # Validity Check: d^2 <= 1.0
-        valid_mask = dist_sq <= 1.0
-
-        # Trust Weights: (1 - d)^2
+        # --- 4. Validity & Weights ---
         dist = xp.sqrt(dist_sq)
-        raw_weights = xp.maximum(0.0, 1.0 - dist) ** 2
-        final_weights = raw_weights * valid_mask
+
+        # A. Calculate STRICT status (for the mask only)
+        # We check if points would have been zeroed out under strict rules.
+        valid_mask_strict = dist_sq <= 1.0
+        weights_strict = xp.maximum(0.0, 1.0 - dist) ** 2
+        weights_strict *= valid_mask_strict
+
+        # If strict sum is effectively 0, the point is "unguaranteed"
+        total_weight_strict = xp.sum(weights_strict, axis=1)
+        unguaranteed_mask = total_weight_strict < 1e-12
+
+        # B. Determine Final Weights for Prediction
+        if strict_trust_region:
+            final_weights = weights_strict
+            total_weight = total_weight_strict
+        else:
+            # Simple Average: Set all weights to 1.0
+            final_weights = xp.ones_like(dist_sq)
+            total_weight = xp.sum(final_weights, axis=1)
 
         # --- 5. Taylor Prediction ---
         F_dim = self.f_src.shape[1] if self.f_src.ndim > 1 else 1
@@ -334,18 +327,16 @@ class NearODESurrogate:
         f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(N, k, F_dim)
         J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(N, k, F_dim, D)
 
-        # linear_term = J * dx
         linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
         predictions_k = f_neighbors + linear_term
 
-        # --- 6. Weighted Averaging ---
+        # --- 6. Averaging ---
         weights_expanded = final_weights[:, :, None]
         weighted_preds = predictions_k * weights_expanded
-        total_weight = xp.sum(weights_expanded, axis=1)
 
-        # Avoid div/0
-        predictions = xp.sum(weighted_preds, axis=1) / (total_weight + 1e-12)
-        unguaranteed_mask = total_weight.squeeze(-1) < 1e-12
+        # If strict=True and total_weight is 0 -> Predict 0.0 (safe fallback)
+        # If strict=False, total_weight is k -> Simple Mean
+        predictions = xp.sum(weighted_preds, axis=1) / (total_weight[:, None] + 1e-12)
 
         return predictions, unguaranteed_mask
 
