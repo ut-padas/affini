@@ -522,7 +522,7 @@ def adaptive_clustering(
         G_pool[:N0] = G0_val
 
     logger.info(f"Runtime - Initial f/g: {time.perf_counter()-_t0:.3f}s")
-    logger.info(f"Vector Function detected: Input d={d}, Output m={fd}")
+    logger.info(f"Function: Input d={d}, Output fd={fd}")
 
     # Global scale per component for Linf-global
     # S_j = max_{x \in \Omega} |f_j(x)|
