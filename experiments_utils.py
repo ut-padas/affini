@@ -386,6 +386,7 @@ def Problem_experiment_setup(
         preds, ungauranteed_mask = surrogate.predict(
             X_test,
             k_NEIGHBOURS=K_NEIGHBOURS,
+            strict_trust_region=False,
         )
         _end_predict_time = time.perf_counter()
         _PREDICTED = True
