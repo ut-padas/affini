@@ -144,14 +144,18 @@ def create_problem_result_dict(
             "n_train": N_TRAIN,
             "n_test": None,
             "n_clusters": N_CLUSTERS,
-            "ptwise_max_rel_error_linf": None,
-            "ptwise_median_rel_error_linf": None,
-            "l2_relative_error": None,
-            "l2_abs_error": None,
+            "in_ptwise_max_rel_error_linf": None,
+            "in_ptwise_median_rel_error_linf": None,
+            "in_l2_relative_error": None,
+            "in_l2_abs_error": None,
             "out_l2_relative_error": None,
             "out_l2_abs_error": None,
             "out_ptwise_max_rel_error_linf": None,
             "out_ptwise_median_rel_error_linf": None,
+            "all_ptwise_max_rel_error_linf": None,
+            "all_ptwise_median_rel_error_linf": None,
+            "all_l2_relative_error": None,
+            "all_l2_abs_error": None,
             "n_out": None,
             "perct_out": None,
             "n_in": None,
@@ -175,10 +179,10 @@ def create_problem_result_dict(
 
     if n_in == 0:
         # Handle the case where NO points are guaranteed
-        ptwise_max_rel_error_linf = None
-        ptwise_median_rel_error_linf = None
-        l2_relative_error = None
-        l2_abs_error = None
+        in_ptwise_max_rel_error_linf = None
+        in_ptwise_median_rel_error_linf = None
+        in_l2_relative_error = None
+        in_l2_abs_error = None
 
         n_in_good = 0
         n_in_bad = 0
@@ -197,14 +201,10 @@ def create_problem_result_dict(
         # This corresponds to sqrt(sum(|y_ij - yhat_ij|^2)) for all i, j.
         norm_diff = xp.linalg.norm(diff)
         norm_gt = xp.linalg.norm(gt_in)
-
-        l2_relative_error = float(norm_diff / (norm_gt + TINY_EPS))
-
-        # L2 Absolute Error (RMSE): Average energy per sample
-        l2_abs_error = float(norm_diff / xp.sqrt(n_in))
+        in_l2_relative_error = float(norm_diff / (norm_gt + TINY_EPS))
+        in_l2_abs_error = float(norm_diff / xp.sqrt(n_in))
 
         # 4. Pointwise Relative Error (L_inf style)
-        # Compute relative error for EVERY component: |y_ij - yhat_ij| / |y_ij|
         element_rel_error = xp.abs(diff) / (xp.abs(gt_in) + TINY_EPS)
 
         if element_rel_error.ndim > 1:
@@ -216,8 +216,8 @@ def create_problem_result_dict(
             ptwise_rel_error = element_rel_error  # Shape: (N_in,)
 
         # 5. Aggregate Stats
-        ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error))
-        ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error))
+        in_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error))
+        in_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error))
 
         # 6. Good/Bad Counts
         n_in_good = int(xp.sum(ptwise_rel_error <= TOL))
@@ -248,6 +248,20 @@ def create_problem_result_dict(
         out_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error_out))
         out_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error_out))
 
+    # Calculate simple error metrics for all points
+    diff = predictions - ground_truth
+    norm_diff = xp.linalg.norm(diff)
+    norm_gt = xp.linalg.norm(ground_truth)
+    all_l2_relative_error = float(norm_diff / (norm_gt + TINY_EPS))
+    all_l2_abs_error = float(norm_diff / xp.sqrt(N_TEST))
+    element_rel_error = xp.abs(diff) / (xp.abs(ground_truth) + TINY_EPS)
+    if element_rel_error.ndim > 1:
+        ptwise_rel_error_all = xp.max(element_rel_error, axis=1)
+    else:
+        ptwise_rel_error_all = element_rel_error
+    all_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error_all))
+    all_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error_all))
+
     # pout: percentage of points outside the trust region
     perct_out = float(100.0 * n_out / N_TEST)
 
@@ -261,14 +275,18 @@ def create_problem_result_dict(
         "n_train": N_TRAIN,
         "n_test": N_TEST,
         "n_clusters": N_CLUSTERS,
-        "ptwise_max_rel_error_linf": ptwise_max_rel_error_linf,
-        "ptwise_median_rel_error_linf": ptwise_median_rel_error_linf,
-        "l2_relative_error": l2_relative_error,
-        "l2_abs_error": l2_abs_error,
+        "in_ptwise_max_rel_error_linf": in_ptwise_max_rel_error_linf,
+        "in_ptwise_median_rel_error_linf": in_ptwise_median_rel_error_linf,
+        "in_l2_relative_error": in_l2_relative_error,
+        "in_l2_abs_error": in_l2_abs_error,
         "out_l2_relative_error": out_l2_relative_error,
         "out_l2_abs_error": out_l2_abs_error,
         "out_ptwise_max_rel_error_linf": out_ptwise_max_rel_error_linf,
         "out_ptwise_median_rel_error_linf": out_ptwise_median_rel_error_linf,
+        "all_ptwise_max_rel_error_linf": all_ptwise_max_rel_error_linf,
+        "all_ptwise_median_rel_error_linf": all_ptwise_median_rel_error_linf,
+        "all_l2_relative_error": all_l2_relative_error,
+        "all_l2_abs_error": all_l2_abs_error,
         "n_out": int(n_out),
         "perct_out": perct_out,
         "n_in": int(n_in),
