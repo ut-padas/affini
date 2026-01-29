@@ -21,6 +21,7 @@ from src.problems.shifted_gaussians import (
     shifted_gaussians,
     shifted_gaussians_grad,
 )
+from src.problems.vector_quadratic import vector_quadratic, vector_quadratic_grad
 
 
 def get_N_TRAIN(dim: int, *, base: float = 1.3, factor: int = 50_000) -> int:
@@ -140,9 +141,29 @@ def quadratic_experiment_with_v2_no_grad() -> Path:
     create_summary_dataframe(EXP_DIR)
     DIMs = [2, 3, 4, 5, 8, 10]
     TOLs = [
-        0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1,
-        0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01,
-        0.009, 0.008, 0.007, 0.006, 0.005
+        0.5,
+        0.45,
+        0.4,
+        0.35,
+        0.3,
+        0.25,
+        0.2,
+        0.15,
+        0.1,
+        0.09,
+        0.08,
+        0.07,
+        0.06,
+        0.05,
+        0.04,
+        0.03,
+        0.02,
+        0.01,
+        0.009,
+        0.008,
+        0.007,
+        0.006,
+        0.005,
     ]
     ERROR_METRICs = ["Linf-global", "Linf-local"]
 
@@ -194,15 +215,99 @@ def quadratic_experiment_with_v2_no_grad() -> Path:
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=False,
-            IGNORE_GRADIENT=True
+            IGNORE_GRADIENT=True,
         )
 
     return EXP_DIR
 
 
+def vector_quadratic_experiment_with_v2() -> Path:
+    MAX_CLUSTERS_EST = 10_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "vector_quadratic_v2"
+    del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
+    DIMs = [2, 3]
+    TOLs = [
+        2e-1,
+        1e-1,
+        5e-2,
+        2e-2,
+        1e-2,
+        5e-3,
+        2e-3,
+        1e-3,
+        5e-4,
+        2e-4,
+        1e-4,
+        5e-5,
+        2e-5,
+        1e-5,
+    ]
+    ERROR_METRICs = ["Linf-global", "Linf-local"]
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        if (
+            (DIM >= 5 and TOL <= 5e-5)
+            or (DIM >= 8 and TOL <= 2e-3)
+            or (DIM == 10 and TOL <= 5e-3)
+        ):
+            print(
+                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
+            )
+            continue
+        elif ERROR_METRIC == "L2" and (
+            (TOL <= 2e-2 and DIM >= 4)
+            or (TOL <= 5e-4)
+            or (DIM == 8 and TOL <= 1e-2)
+            or (DIM == 10)
+        ):
+            print(
+                f"Skipping experiment for ERROR_METRIC={ERROR_METRIC}, TOL={TOL} and DIM={DIM} due to high computational cost."
+            )
+            continue
+
+        json_path = (
+            EXP_DIR / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            F_DIM=2,
+            DOMAIN=[-2, 2],
+            f_fn=vector_quadratic,
+            g_fn=vector_quadratic_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            USE_HESSIAN_INFORMED_SPLIT=True,
+        )
+    return EXP_DIR
+
+
 def gaussian_experiment_with_v2() -> Path:
     CLUSTERING_VERSION = "v2"
-    MAX_CLUSTERS_EST = 10_000
+    MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
 
     EXP_DIR = ICS26_DIR / "shifted_gaussians_no_grad_v2"
@@ -210,16 +315,25 @@ def gaussian_experiment_with_v2() -> Path:
     del_all_error_files_in_dir(EXP_DIR)
     DIMs = [2, 3, 4]
     TOLs = [
-        0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04,
-        0.03, 0.029, 0.028, 0.027, 0.026, 0.025, 0.024, 0.023, 0.022, 0.021, 0.02,
-        0.019, 0.018, 0.017, 0.016, 0.015, 0.014, 0.013, 0.012, 0.011, 0.01,
-        0.009, 0.008, 0.007, 0.006, 0.005, 0.004, 0.003, 0.002, 0.001
+        5e-1,
+        2e-1,
+        1e-1,
+        5e-2,
+        2e-2,
+        1e-2,
+        5e-3,
+        2e-3,
+        1e-3,
+        5e-4,
+        2e-4,
+        1e-4,
+        5e-5,
     ]
     ERROR_METRICs = ["Linf-global", "Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
-        if DIM >= 5 and TOL <= 5e-4:
+        if DIM >= 4 and TOL <= 5e-4:
             print(
                 f"Skipping experiment for DIM={DIM} with very small TOL={TOL} due to resource constraints."
             )
@@ -289,7 +403,7 @@ def rastrigin_experiment_with_v2() -> Path:
     create_summary_dataframe(EXP_DIR)
 
     # Rastrigin becomes extremely difficult in high dimensions for local surrogates
-    DIMs = [2, 3, 4, 5, 10]
+    DIMs = [2, 3, 4]
     TOLs = [5e-1, 2e-1, 1e-1, 5e-2, 2e-2, 1e-2, 5e-3, 2e-3, 1e-3]
 
     # L2 is excluded by default as it tends to over-segment the oscillating "floor"
@@ -339,7 +453,7 @@ def rastrigin_experiment_with_v2() -> Path:
 
 
 def rosenbrock_experiment_with_v2() -> Path:
-    MAX_CLUSTERS_EST = 20_000
+    MAX_CLUSTERS_EST = 100_000
 
     # K=2 helps bridge the linear approximations along the curve better than K=1
     K_NEIGHBOURS = 1
@@ -350,16 +464,29 @@ def rosenbrock_experiment_with_v2() -> Path:
     create_summary_dataframe(EXP_DIR)
 
     DIMs = [2, 5, 10]
-
-    TOLs = [5e-1, 2e-1, 1e-1, 5e-2, 2e-2, 1e-2, 5e-3, 2e-3, 1e-3]
-
+    TOLs = [
+        5e-1,
+        2e-1,
+        1e-1,
+        5e-2,
+        2e-2,
+        1e-2,
+        5e-3,
+        2e-3,
+        1e-3,
+        5e-4,
+        2e-4,
+        1e-4,
+        5e-5,
+        2e-5,
+    ]
     ERROR_METRICs = ["Linf-global", "Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rosenbrock Experiments"):
 
         # Resource constraints checks
-        if (DIM == 10 and TOL <= 5e-2) or (DIM == 5 and TOL <= 5e-3):
+        if (DIM == 10 and TOL <= 1e-2) or (DIM == 5 and TOL <= 1e-3):
             print(
                 f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
             )
@@ -401,7 +528,6 @@ def rosenbrock_experiment_with_v2() -> Path:
     return EXP_DIR
 
 
-
 def rosenbrock_experiment_with_v2_no_grad() -> Path:
     # Rosenbrock has a narrow, curved valley.
     # We need slightly more data than Quadratic, but less than Rastrigin.
@@ -418,9 +544,31 @@ def rosenbrock_experiment_with_v2_no_grad() -> Path:
 
     # Rosenbrock scale is 100, so gradients are steep.
     # We test tolerances from 50% down to 0.1%
-    TOLs = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1,
-            0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01,
-            0.009, 0.008, 0.007, 0.006, 0.005]
+    TOLs = [
+        0.5,
+        0.45,
+        0.4,
+        0.35,
+        0.3,
+        0.25,
+        0.2,
+        0.15,
+        0.1,
+        0.09,
+        0.08,
+        0.07,
+        0.06,
+        0.05,
+        0.04,
+        0.03,
+        0.02,
+        0.01,
+        0.009,
+        0.008,
+        0.007,
+        0.006,
+        0.005,
+    ]
 
     ERROR_METRICs = ["Linf-global", "Linf-local"]
 
@@ -469,8 +617,6 @@ def rosenbrock_experiment_with_v2_no_grad() -> Path:
         )
 
     return EXP_DIR
-
-
 
 
 """
@@ -561,20 +707,20 @@ if __name__ == "__main__":
 
     setup_logging()
 
-    dir1 = quadratic_experiment_with_v2()
-    create_summary_dataframe(dir1)
+    # dir1 = quadratic_experiment_with_v2()
+    # create_summary_dataframe(dir1)
 
-    # dir2 = gaussian_experiment_with_v2()
-    # create_summary_dataframe(dir2)
+    dir2 = vector_quadratic_experiment_with_v2()
+    create_summary_dataframe(dir2)
 
-    dir3 = rastrigin_experiment_with_v2()
-    create_summary_dataframe(dir3)
+    # dir3 = gaussian_experiment_with_v2()
+    # create_summary_dataframe(dir3)
 
-    dir4 = rosenbrock_experiment_with_v2()
-    create_summary_dataframe(dir4)
+    # dir4 = rastrigin_experiment_with_v2()
+    # create_summary_dataframe(dir4)
 
-    # dir5 = lorenz_experiment_with_v2()
+    # dir5 = rosenbrock_experiment_with_v2()
     # create_summary_dataframe(dir5)
 
-    # dir7 = rosenbrock_experiment_with_v2_no_grad()
-    # create_summary_dataframe(dir7)
+    # dir6 = lorenz_experiment_with_v2()
+    # create_summary_dataframe(dir6)
