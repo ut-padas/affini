@@ -114,11 +114,15 @@ def ics_shifted_gaussian_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
 
-    EXP_DIR = ICS26_DIR / "ics_shifted_gaussians"
+    EXP_DIR = ICS26_DIR / "ics_shifted_gaussians_no_hessian"
     create_summary_dataframe(EXP_DIR)
     DIMs = [2, 5]
-    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-global", "Linf-local"]
+    # TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+    TOLs = [
+        0.2, 0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
+        0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01
+    ]
+    ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
@@ -173,10 +177,9 @@ def ics_shifted_gaussian_experiment() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=True,
+            USE_HESSIAN_INFORMED_SPLIT=False,
             IGNORE_GRADIENT=False,
             STORE_TRAIN_EVALS=False,
-            IGNORE_GRADIENT=False,
         )
 
     return EXP_DIR
@@ -253,29 +256,34 @@ Imagine this is the very first time step in a string of simulations.
 
 
 def ics_lorenz_experiment() -> Path:
+
+    from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
     # We must modify the functions to include forcing and tf as constants.
     
     FORCING = 1
-    FINAL_TIME = 0.2
-    OUTPUT_VARIABLE = 0
+    FINAL_TIME = 0.1
+    # OUTPUT_VARIABLE = 0
 
     # For now, just do gradient in the first variable.
     # This way the output of the function is 1d.
     def f(x):
         f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
-        N, d = f.shape
-        return f[:, OUTPUT_VARIABLE].reshape((N, 1))
+        # N, d = f.shape
+        # return f[:, OUTPUT_VARIABLE].reshape((N, 1))
+        return f
 
     def grad_f(x):
         g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
-        return g[:, :, OUTPUT_VARIABLE]
+        # N, d, _ = g.shape
+        # return g[:, :, OUTPUT_VARIABLE].reshape((N, 1, d))
+        return g
 
     MAX_CLUSTERS_EST = 20_000
 
     K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
 
-    EXP_DIR = ICS26_DIR / "lorenz_v2"
+    EXP_DIR = ICS26_DIR / "lorenz_all_d_out_tf_0.1_F_1_v2"
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
 
@@ -290,7 +298,7 @@ def ics_lorenz_experiment() -> Path:
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Lorenz Experiments"):
 
         # Resource constraints checks
-        if DIM == 10 and TOL <= 0.001:
+        if DIM == 10 and TOL < 0.01:
             print(
                 f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
             )
@@ -311,6 +319,7 @@ def ics_lorenz_experiment() -> Path:
         Problem_experiment_setup(
             json_fpath=json_path,
             DIM=DIM,
+            F_DIM=1,
             DOMAIN=[-5.0, 5.0],
             f_fn=f,
             g_fn=grad_f,
@@ -334,11 +343,14 @@ if __name__ == "__main__":
 
     setup_logging()
 
-    dir1 = ics_quadratic_experiment()
-    create_summary_dataframe(dir1)
+    # dir1 = ics_quadratic_experiment()
+    # create_summary_dataframe(dir1)
 
     dir2 = ics_shifted_gaussian_experiment()
     create_summary_dataframe(dir2)
 
-    dir3 = ics_rosenbrock_experiment()
-    create_summary_dataframe(dir3)
+    # dir3 = ics_rosenbrock_experiment()
+    # create_summary_dataframe(dir3)
+
+    # dir4 = ics_lorenz_experiment()
+    # create_summary_dataframe(dir4)
