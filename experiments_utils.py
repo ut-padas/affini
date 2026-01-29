@@ -350,8 +350,8 @@ def Problem_experiment_setup(
         X_train[0] = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_train_init, DIM))
         X_test[0] = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_test_init, DIM))
         for j in range(1, N_timesteps):
-            X_train[j] = f_fn(X_train[j-1])
-            X_test[j] = f_fn(X_test[j-1])
+            X_train[j] = f_fn(X_train[j - 1])
+            X_test[j] = f_fn(X_test[j - 1])
 
         X_train = X_train.reshape((N_train_init * N_timesteps, DIM))
         X_test = X_test.reshape((N_train_init * N_timesteps, DIM))
@@ -425,7 +425,7 @@ def Problem_experiment_setup(
         _start_predict_time = time.perf_counter()
         preds, ungauranteed_mask = surrogate.predict(
             X_test,
-            k_NEIGHBOURS=K_NEIGHBOURS,
+            k_nn=K_NEIGHBOURS,
             strict_trust_region=False,
         )
         _end_predict_time = time.perf_counter()
