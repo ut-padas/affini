@@ -71,6 +71,7 @@ def ics_quadratic_experiment() -> Path:
                 f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
             )
             continue
+
         json_path = (
             EXP_DIR / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
         )
@@ -179,6 +180,67 @@ def ics_shifted_gaussian_experiment() -> Path:
     return EXP_DIR
 
 
+def ics_rosenbrock_experiment() -> Path:
+    MAX_CLUSTERS_EST = 100_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "ics_rosenbrock"
+    del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
+
+    DIMs = [2, 5, 10]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+    ERROR_METRICs = ["Linf-global", "Linf-local"]
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rosenbrock Experiments"):
+        if (
+            DIM == 10
+            and (TOL <= 0.01 and ERROR_METRIC == "Linf-local")
+            or (TOL <= 0.005 and ERROR_METRIC == "Linf-global")
+        ):
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
+            )
+            continue
+
+        json_path = (
+            EXP_DIR / f"ics26_rosenbrock_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            F_DIM=1,
+            DOMAIN=[-2.0, 3.0],
+            f_fn=rosenbrock,
+            g_fn=rosenbrock_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            USE_HESSIAN_INFORMED_SPLIT=True,
+        )
+
+    return EXP_DIR
+
+
 if __name__ == "__main__":
     from src.logging_utils import setup_logging
 
@@ -189,3 +251,6 @@ if __name__ == "__main__":
 
     dir2 = ics_shifted_gaussian_experiment()
     create_summary_dataframe(dir2)
+
+    dir3 = ics_rosenbrock_experiment()
+    create_summary_dataframe(dir3)
