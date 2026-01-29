@@ -932,7 +932,7 @@ if __name__ == "__main__":
 
     from src import FIGURES_DIR
     from src.logging_utils import setup_logging
-    from src.problems.vector_quadratic import vector_quadratic, vector_quadratic_grad
+    from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG)
 
@@ -1011,6 +1011,10 @@ if __name__ == "__main__":
         print(f"Plot file {img_fpath} already exists. Skipping execution.")
         exit(0)
 
+    # Creat partial Rosenbrock functions
+    rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
+    rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
+
     xp.random.seed(0)
     print(f"Generating {N_TRAIN:,} points (d={DIM})...")
     PROB_LIMS = (-1.0, 3)
@@ -1019,8 +1023,8 @@ if __name__ == "__main__":
     print("Starting Adaptive Clustering...")
     results = adaptive_clustering(
         X,
-        f_fn=vector_quadratic,
-        g_fn=vector_quadratic_grad,
+        f_fn=rosenbrock,
+        g_fn=rosenbrock_grad,
         TOL=TOL,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
@@ -1046,7 +1050,7 @@ if __name__ == "__main__":
         int(counts.max()),
     )
 
-    if DIM == 2 and len(results["centroids"]) <= 10_000 and False:
+    if DIM == 2 and len(results["centroids"]) <= 10_000:
         import numpy as np
         from matplotlib.lines import Line2D
         from matplotlib.patches import Circle, Ellipse
@@ -1198,5 +1202,4 @@ if __name__ == "__main__":
     npz_fpath = img_fpath.with_suffix(".npz")
     if IS_CUPY_BACKEND:
         results = {k: xp.asnumpy(v) for k, v in results.items()}
-    xp.savez_compressed(npz_fpath, **results)
     xp.savez_compressed(npz_fpath, **results)
