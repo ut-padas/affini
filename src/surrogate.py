@@ -104,6 +104,7 @@ class NearODESurrogate:
                 radii = xp.asarray(results["radii"])
                 Qs = xp.asarray(results["Q"])
                 num_levels = results.get("num_levels", -1)
+                num_generated_pts = results.get("num_generated_pts", -1)
 
             # 2. Store Data
             self.X_src = centroids
@@ -113,6 +114,8 @@ class NearODESurrogate:
             self.Qs_src = Qs
             self.N_src = centroids.shape[0]
             self.training_num_levels = num_levels
+            self.num_generated_pts = num_generated_pts
+
         elif self.version == "v1":
             raise NotImplementedError(
                 "Version v1 is deprecated. Use version v2 instead."

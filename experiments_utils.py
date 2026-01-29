@@ -131,6 +131,7 @@ def create_problem_result_dict(
     N_CLUSTERS: int | None,
     error_tag: str,
     num_levels: int | None,
+    num_generated_pts: int | None,
     **kwargs,
 ) -> dict:
     if ground_truth is None:
@@ -167,6 +168,7 @@ def create_problem_result_dict(
             "predict_time_sec": None,
             "error_tag": error_tag,
             "num_levels": num_levels,
+            "num_generated_pts": num_generated_pts
             **kwargs,
         }
 
@@ -298,6 +300,7 @@ def create_problem_result_dict(
         "predict_time_sec": predict_time,
         "error_tag": error_tag,
         "num_levels": num_levels,
+        "num_generated_pts": num_generated_pts
     }
     # Add any additional metrics
     for key, value in kwargs.items():
@@ -436,6 +439,7 @@ def Problem_experiment_setup(
 
         N_CLUSTERS = surrogate.get_number_of_sources()
         num_levels = surrogate.training_num_levels
+        num_generated_pts = surrogate.num_generated_pts
 
     except Exception as e:
         FAILED = True
@@ -453,6 +457,7 @@ def Problem_experiment_setup(
         predict_time = None
         N_CLUSTERS = 0
         num_levels = None
+        num_generated_pts = None
 
     result_dict = create_problem_result_dict(
         problem_name="Quadratic",
@@ -464,6 +469,7 @@ def Problem_experiment_setup(
         predictions=preds,
         ungauranteed_mask=ungauranteed_mask,
         num_levels=num_levels,
+        num_generated_pts=num_generated_pts,
         TOL=TOL,
         DIM=DIM,
         F_DIM=F_DIM,
