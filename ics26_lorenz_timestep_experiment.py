@@ -46,11 +46,13 @@ def generate_training_data_along_trajectories(seed, f, N_train, N_timesteps):
 if __name__ == '__main__':
 
     # Chaining together multiple time steps.
+    from src.logging_utils import setup_logging
+    setup_logging()
 
     # Parameters for surrogate training
     DIM = 5
-    TOL = 0.1
-    ERROR_METRIC = 'Linf_local'
+    TOL = 0.01
+    ERROR_METRIC = 'Linf-global'
     DOMAIN = [-5.0, 5.0]
     SEED = 0
     FORCING = 1
@@ -83,7 +85,7 @@ if __name__ == '__main__':
 
     # 2. Train surrogate
     # We choose to train d one-d output surrogates, as it seems to scale better in practice.
-    surrogates = [HATANNSurrogate(version='v2') for i in range(DIM)]
+    surrogates = [HATANNSurrogate(version='v2') for _ in range(DIM)]
     for i in range(DIM):
         surrogates[i].train(
             X_train=X_train,
@@ -103,12 +105,11 @@ if __name__ == '__main__':
     # First, parameters for testing
     N_TRAJECTORIES = 100
     TF = 3.0
-    
+
     # We take a slightly smaller cube because trajectories can go outside the domain
     x0 = xp.random.uniform(-4, 4, (N_TRAJECTORIES, DIM))
 
     # Initialize time stepping
-    import numpy as xp
     tvec = xp.arange(0, TF+DT, DT)
     yvec_surrogate = xp.empty((len(x0), N_TRAJECTORIES, DIM))
     # dim 0: time steps, dim 1: trajectories, dim 2: dimension.
@@ -117,7 +118,7 @@ if __name__ == '__main__':
     yvec_exact[0] = x0
 
     # Step in time
-    for k, in range(1, len(tvec)):
+    for k in range(1, len(tvec)):
 
         # Surrogates evaluation
         for i in range(DIM):
