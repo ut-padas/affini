@@ -168,7 +168,6 @@ def create_problem_result_dict(
             "predict_time_sec": None,
             "error_tag": error_tag,
             "num_levels": num_levels,
-            "num_generated_pts": num_generated_pts
             **kwargs,
         }
 
@@ -300,7 +299,6 @@ def create_problem_result_dict(
         "predict_time_sec": predict_time,
         "error_tag": error_tag,
         "num_levels": num_levels,
-        "num_generated_pts": num_generated_pts
     }
     # Add any additional metrics
     for key, value in kwargs.items():
