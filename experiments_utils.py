@@ -131,7 +131,6 @@ def create_problem_result_dict(
     N_CLUSTERS: int | None,
     error_tag: str,
     num_levels: int | None,
-    num_generated_pts: int | None,
     **kwargs,
 ) -> dict:
     if ground_truth is None:
