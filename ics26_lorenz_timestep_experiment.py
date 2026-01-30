@@ -8,8 +8,15 @@ from experiments_utils import (
     create_summary_dataframe,
     del_all_error_files_in_dir,
 )
-from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
-from ics26_experiments import get_N_TRAIN
+from src.problems.lorenz96_flowmap import (
+    lorenz96_flowmap,
+    lorenz96_flowmap_grad
+)
+from ics26_experiments import (
+    get_N_TRAIN,
+    get_N_INIT_CLUSTERS,
+    get_N_MIN_PER_CLUSTER
+)
 from src import IS_CUPY_BACKEND, RESULTS_DIR, Array, xp
 from src.surrogate import HATANNSurrogate
 
@@ -47,26 +54,28 @@ if __name__ == '__main__':
     DOMAIN = [-5.0, 5.0]
     SEED = 0
     FORCING = 1
-    FINAL_TIME = 0.2
+    DT = 0.2
     N_TRAIN = get_N_TRAIN(DIM)
     N_TIMESTEPS = 20
+    N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+    N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
     # Modified functions for output variables of choice
     def f(x, output_var: int):
-        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
+        f = lorenz96_flowmap(x, FORCING, DT)  # (N, d) vector
         N, d = f.shape
         return f[:, output_var].reshape((N, 1))
 
     def f_full(x):
-        return lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
+        return lorenz96_flowmap(x, FORCING, DT)  # (N, d) vector
 
     def grad_f(x, output_var: int):
-        g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+        g = lorenz96_flowmap_grad(x, FORCING, DT)
         N, d, _ = g.shape
         return g[:, output_var, :].reshape((N, 1, d))
 
     def grad_f_full(x):
-        return lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+        return lorenz96_flowmap_grad(x, FORCING, DT)
 
 
     # 1. Generate training data for surrogate (uniform along trajectories)
@@ -74,6 +83,56 @@ if __name__ == '__main__':
 
     # 2. Train surrogate
     # We choose to train d one-d output surrogates, as it seems to scale better in practice.
-    surrogates = [HATANNSurrogate(version=CLUSTERING_VERSION)]
+    surrogates = [HATANNSurrogate(version='v2') for i in range(DIM)]
+    for i in range(DIM):
+        surrogates[i].train(
+            X_train=X_train,
+            f_fn=lambda x: f(x, i),
+            g_fn=lambda x: grad_f(x, i),
+            TOL=TOL,
+            ERROR_METRIC=ERROR_METRIC,
+            NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
+            MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=20_000,
+            SEED=SEED,
+            USE_HESSIAN_INFORMED_SPLIT=True,
+            IGNORE_GRADIENT=False
+        )
+
+    # 3. Each surrogate is trained. Pick some initial points.
+    # First, parameters for testing
+    N_TRAJECTORIES = 100
+    TF = 3.0
     
+    # We take a slightly smaller cube because trajectories can go outside the domain
+    x0 = xp.random.uniform(-4, 4, (N_TRAJECTORIES, DIM))
+
+    # Initialize time stepping
+    import numpy as xp
+    tvec = xp.arange(0, TF+DT, DT)
+    yvec_surrogate = xp.empty((len(x0), N_TRAJECTORIES, DIM))
+    # dim 0: time steps, dim 1: trajectories, dim 2: dimension.
+    yvec_surrogate[0] = x0
+    yvec_exact = xp.empty((len(x0), N_TRAJECTORIES, DIM))
+    yvec_exact[0] = x0
+
+    # Step in time
+    for k, in range(1, len(tvec)):
+
+        # Surrogates evaluation
+        for i in range(DIM):
+            pred, unguar_mask = surrogates[i].predict(yvec_surrogate[k-1,:,:])
+            yvec_surrogate[k,:,i] = pred.flatten()
+            # We should definitely evaluate exactly the unguaranteed points here
+            # But for now, ignoring for simplicity
+
+        # Exact evaluation
+        yvec_exact[k,:,:] = f_full(yvec_exact[k-1,:,:])
+
+    # Compare trajectories (how?)
     
+
+
+
+    
+
