@@ -10,6 +10,7 @@ from experiments_utils import (
     create_summary_dataframe,
     del_all_error_files_in_dir,
 )
+from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 from src.problems.quadratic import quadratic, quadratic_grad
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 from src.problems.shifted_gaussians import (
@@ -335,16 +336,75 @@ def ics_rosenbrock_experiment() -> Path:
     return EXP_DIR
 
 
-"""
-Lorenz surrogate for a SINGLE time step.
-We are not worrying about sampling along manifolds in this case.
-Imagine this is the very first time step in a string of simulations.
-"""
+def ics_rosenbrock_n_min_per_cluster_experiment() -> Path:
+    MAX_CLUSTERS_EST = 100_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "ics_rosenbrock_n_min_per_cluster"
+    create_summary_dataframe(EXP_DIR)
+
+    DIMs = [5]
+    TOLs = [0.1, 0.05, 0.02]
+    ERROR_METRICs = ["Linf-global", "Linf-local"]
+    N_MIN_PER_CLUSTER_FACTORS = [100, 500, 1000, 5000]
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs, N_MIN_PER_CLUSTER_FACTORS))
+    for DIM, TOL, ERROR_METRIC, N_MIN_PER_CLUSTER_FACTOR in tqdm(
+        combos, desc="Rosenbrock Experiments"
+    ):
+        if DIM == 10 and (
+            (TOL <= 0.1 and ERROR_METRIC == "Linf-local")
+            or (TOL <= 0.02 and ERROR_METRIC == "Linf-global")
+        ):
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
+            )
+            continue
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM, factor=N_MIN_PER_CLUSTER_FACTOR)
+
+        json_path = (
+            EXP_DIR
+            / f"ics26_rosenbrock_n_min_per_cluster_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_n_min_factor{N_MIN_PER_CLUSTER_FACTOR}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            F_DIM=1,
+            DOMAIN=[-2.0, 3.0],
+            f_fn=rosenbrock,
+            g_fn=rosenbrock_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            USE_HESSIAN_INFORMED_SPLIT=True,
+        )
+
+    return EXP_DIR
 
 
 def ics_lorenz_experiment() -> Path:
-
-    from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
+    """
+    Lorenz surrogate for a SINGLE time step.
+    We are not worrying about sampling along manifolds in this case.
+    Imagine this is the very first time step in a string of simulations.
+    """
 
     # We must modify the functions to include forcing and tf as constants.
 
@@ -454,6 +514,9 @@ if __name__ == "__main__":
 
     dir3 = ics_rosenbrock_experiment()
     create_summary_dataframe(dir3)
+
+    dir4 = ics_rosenbrock_n_min_per_cluster_experiment()
+    create_summary_dataframe(dir4)
 
     # dir4 = ics_lorenz_experiment()
     # create_summary_dataframe(dir4)
