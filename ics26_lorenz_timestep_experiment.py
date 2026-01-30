@@ -133,4 +133,4 @@ if __name__ == '__main__':
     # Save data (to analyze in notebook)
     directory = ICS26_DIR / 'lorenz_successive_timestep_data'
     directory.mkdir(parents=True, exist_ok=True)
-    xp.savez(directory / 'trajectory_data.npy', exact=yvec_exact, surrogate=yvec_surrogate)
+    xp.savez(directory / 'trajectory_data.npz', exact=yvec_exact, surrogate=yvec_surrogate)
