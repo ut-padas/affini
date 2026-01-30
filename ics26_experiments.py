@@ -119,8 +119,26 @@ def ics_shifted_gaussian_experiment() -> Path:
     DIMs = [2, 5]
     # TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     TOLs = [
-        0.2, 0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
-        0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01
+        0.2,
+        0.19,
+        0.18,
+        0.17,
+        0.16,
+        0.15,
+        0.14,
+        0.13,
+        0.12,
+        0.11,
+        0.1,
+        0.09,
+        0.08,
+        0.07,
+        0.06,
+        0.05,
+        0.04,
+        0.03,
+        0.02,
+        0.01,
     ]
     ERROR_METRICs = ["Linf-local"]
 
@@ -246,8 +264,6 @@ def ics_rosenbrock_experiment() -> Path:
     return EXP_DIR
 
 
-
-
 """
 Lorenz surrogate for a SINGLE time step.
 We are not worrying about sampling along manifolds in this case.
@@ -258,8 +274,9 @@ Imagine this is the very first time step in a string of simulations.
 def ics_lorenz_experiment() -> Path:
 
     from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
+
     # We must modify the functions to include forcing and tf as constants.
-    
+
     FORCING = 1
     FINAL_TIME = 0.1
     # OUTPUT_VARIABLE = 0
@@ -289,8 +306,21 @@ def ics_lorenz_experiment() -> Path:
 
     DIMs = [5, 10]
     TOLs = [
-        0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15,
-        0.1, 0.08, 0.05, 0.04, 0.02, 0.01, 0.005
+        0.5,
+        0.45,
+        0.4,
+        0.35,
+        0.3,
+        0.25,
+        0.2,
+        0.15,
+        0.1,
+        0.08,
+        0.05,
+        0.04,
+        0.02,
+        0.01,
+        0.005,
     ]
     ERROR_METRICs = ["Linf-local"]
 
