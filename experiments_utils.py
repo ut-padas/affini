@@ -329,6 +329,7 @@ def Problem_experiment_setup(
     TRAIN_EVALS_PREFIX: str = "train_evals",
     TRAIN_EVALS_DIR: Optional[Path] = None,
     IGNORE_GRADIENT: bool = False,
+    BATCH_SIZE: int = 10_000_000,
 ):
     # Sample data from a uniform distribution (if we choose to do so)
     if SAMPLING == "Uniform":
@@ -394,6 +395,7 @@ def Problem_experiment_setup(
                 ERROR_METRIC=ERROR_METRIC,
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
+                BATCH_SIZE=BATCH_SIZE,
             )
             _end_train_time = time.perf_counter()
             _TRAINED = True
@@ -481,6 +483,7 @@ def Problem_experiment_setup(
         CLUSTERING_VERSION=CLUSTERING_VERSION,
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         ERROR_METRIC=ERROR_METRIC,
+        BATCH_SIZE=BATCH_SIZE,
     )
 
     with open(json_fpath, "w") as jf:
