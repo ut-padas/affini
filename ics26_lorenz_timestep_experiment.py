@@ -48,8 +48,8 @@ if __name__ == '__main__':
     # Chaining together multiple time steps.
 
     # Parameters for surrogate training
-    DIM = 10
-    TOL = 0.01
+    DIM = 5
+    TOL = 0.1
     ERROR_METRIC = 'Linf_local'
     DOMAIN = [-5.0, 5.0]
     SEED = 0
@@ -129,10 +129,8 @@ if __name__ == '__main__':
         # Exact evaluation
         yvec_exact[k,:,:] = f_full(yvec_exact[k-1,:,:])
 
-    # Compare trajectories (how?)
-    
-
-
-
-    
-
+    # Save data (to analyze in notebook)
+    directory = ICS26_DIR / 'lorenz_successive_timestep_data'
+    directory.mkdir(parents=True, exist_ok=True)
+    xp.savez(directory / 'exact_data.npz', yvec_exact)
+    xp.savez(directory / 'surrogate_data.npz', yvec_surrogate)
