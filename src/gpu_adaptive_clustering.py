@@ -287,7 +287,7 @@ void fused_proj_score(
 
 # Kernel: fused_q_dist
 # -----------------------------------------------------------------------------
-# Computes the Mahalanobis-like distance for the Trust Ellipsoid Q.
+# Computes the Ellipsoidal distance for the Trust Ellipsoid Q.
 #
 # Math: dist^2 = (x - mu)^T Q (x - mu)
 #       where Q = U * diag(L_inv) * U^T
@@ -768,7 +768,7 @@ def adaptive_clustering(
 
         # --- Batch Processing Loop ---
         # Process clusters in chunks that fit in GPU memory
-        num_batches = (level_total_aug_pts + BATCH_SIZE - 1) // BATCH_SIZE
+        num_batches = level_total_aug_pts // BATCH_SIZE + 1
         start_cluster_idx = 0
 
         if LOG_MEM_STATS:
@@ -796,14 +796,16 @@ def adaptive_clustering(
             # 2. Augmentation (Synthetic Points via Convex Combinations)
             aug_sizes = level_augmented_sizes[start_cluster_idx:end_cluster_idx]
             aug_total = int(xp.sum(aug_sizes))
+            K_batch = len(aug_sizes)
 
             X_batch = xp.empty((aug_total, d), dtype=xp.float64)
             F_batch = xp.empty((aug_total, fd), dtype=xp.float64)
             G_batch = xp.empty((aug_total, fd, d), dtype=xp.float64)
 
             # Map augmented indices to local cluster IDs
+            # Eg: aug_sizes = [3,5,2] -> aug_ids = [0,0,0,1,1,1,1,1,2,2]
             aug_starts = xp.r_[0, xp.cumsum(aug_sizes)[:-1]]
-            aug_ids = repeats(xp.arange(len(aug_sizes)), aug_sizes)
+            aug_ids = repeats(xp.arange(K_batch), aug_sizes)
 
             # Fill Real Data
             pt_idxs_in_cluster = (
@@ -838,64 +840,72 @@ def adaptive_clustering(
                 X_synth_vals = p1 * alpha + p2 * (1.0 - alpha)
                 X_batch[is_synth] = X_synth_vals
 
-                # Evaluate Physics for Synth Points
-                F_synth = convert_to_2d_array(f_fn(X_synth_vals))
+                # Evaluate f for synthetic points
+                F_batch[is_synth] = convert_to_2d_array(f_fn(X_synth_vals))
                 total_f_evals += X_synth_vals.shape[0]
-                F_batch[is_synth] = F_synth
                 if IGNORE_GRADIENT:
                     G_batch[is_synth] = 0.0
                 else:
-                    G_synth = convert_to_3d_array(g_fn(X_synth_vals))
-                    G_batch[is_synth] = G_synth
+                    G_batch[is_synth] = convert_to_3d_array(g_fn(X_synth_vals))
+                del (
+                    c_starts,
+                    c_counts,
+                    rand1,
+                    rand2,
+                    idx1,
+                    idx2,
+                    p1,
+                    p2,
+                    alpha,
+                    X_synth_vals,
+                )
 
-                del p1, p2, alpha, X_synth_vals
             if LOG_MEM_STATS:
                 log_mem_stats(f" L{level:02} B{b:02}: After Augmentation")
 
             # 3. Compute Centroids & Reference Gradients
-            sums = xp.add.reduceat(X_batch, aug_starts)
-            mus = sums / aug_sizes[:, None]  # (K_batch, d)
+            mus = (
+                xp.add.reduceat(X_batch, aug_starts) / aug_sizes[:, None]
+            )  # (K_batch, d)
             f_mus = convert_to_2d_array(f_fn(mus))  # (K_batch, fd)
             total_f_evals += mus.shape[0]
+
             if IGNORE_GRADIENT:
-                g_mus = xp.zeros((len(aug_sizes), fd, d), dtype=xp.float64)
+                g_mus = xp.zeros((K_batch, fd, d), dtype=xp.float64)
             else:
                 g_mus = convert_to_3d_array(g_fn(mus))  # (K_batch, fd, d)
 
             # 4. Error Metrics & Acceptance Logic
-            K_batch = len(aug_sizes)
-            dense_labels = aug_ids
-
             if ERROR_METRIC == "Linf-local":
-                # Special Case: Hybrid Acceptance (Rel < TOL || Abs < TOL)
-                E_cluster_accum = xp.zeros((K_batch,), dtype=xp.float64)
+                # Acceptance (Rel < TOL || Abs < TOL)
+                E_cluster_rel_max = xp.zeros((K_batch,), dtype=xp.float64)
                 E_cluster_abs_max = xp.zeros((K_batch,), dtype=xp.float64)
 
                 # Loop over dimensions to avoid materializing (N, FD) diff tensor
                 for j in range(fd):
-                    # Local Scale: max |f_j| in cluster
+                    # Compute max |f_j| per cluster
                     F_max_j = xp.zeros((K_batch,), dtype=xp.float64)
-                    cupy_scatter_max(F_max_j, dense_labels, xp.abs(F_batch[:, j]))
+                    cupy_scatter_max(F_max_j, aug_ids, xp.abs(F_batch[:, j]))
 
                     # Taylor Error (Absolute)
-                    diff_pts_j = run_fused_taylor_comp_abs(
-                        X_batch, mus, dense_labels, F_batch, f_mus, g_mus, j
-                    )
+                    pointwise_tay_err_j = run_fused_taylor_comp_abs(
+                        X_batch, mus, aug_ids, F_batch, f_mus, g_mus, j
+                    )  # (N_batch,)
 
                     # Max Error per cluster
                     E_abs_j = xp.zeros((K_batch,), dtype=xp.float64)
-                    cupy_scatter_max(E_abs_j, dense_labels, diff_pts_j)
+                    cupy_scatter_max(E_abs_j, aug_ids, pointwise_tay_err_j)
 
                     # Normalize
                     scale = xp.maximum(F_max_j, TINY_EPS)
-                    E_rel_j = E_abs_j / scale
+                    E_rel_j = E_abs_j / scale  # (K_batch,)
 
                     # Accumulate Max
-                    E_cluster_accum = xp.maximum(E_cluster_accum, E_rel_j)
+                    E_cluster_rel_max = xp.maximum(E_cluster_rel_max, E_rel_j)
                     E_cluster_abs_max = xp.maximum(E_cluster_abs_max, E_abs_j)
 
-                is_good = (E_cluster_accum < TOL) | (E_cluster_abs_max < TOL)
-                E_cluster = E_cluster_accum  # Log relative error
+                is_good = (E_cluster_rel_max < TOL) | (E_cluster_abs_max < TOL)
+                E_cluster = E_cluster_rel_max
 
             else:
                 # Standard Metrics (L2 or Linf-global)
@@ -906,11 +916,11 @@ def adaptive_clustering(
                     scales_ker = F_max_global
                     metric_mode = 1  # Max Relative
 
-                # err_pts: (N,) aggregated error per point
+                # err_pts: (N_batch,) aggregated error per point
                 err_pts = run_fused_taylor_metric(
                     X_batch,
                     mus,
-                    dense_labels,
+                    aug_ids,
                     F_batch,
                     f_mus,
                     g_mus,
@@ -920,14 +930,14 @@ def adaptive_clustering(
 
                 if ERROR_METRIC == "L2":
                     # Sum squared errors over points -> sqrt (Frobenius Norm)
-                    sum_sq = xp.add.reduceat(err_pts, aug_starts)
+                    sum_sq = xp.add.reduceat(err_pts, aug_starts)  # (K_batch,)
                     E_cluster = xp.sqrt(sum_sq)
                 else:
                     # Max relative error over points
-                    E_cluster = xp.zeros((K_batch,), dtype=xp.float64)
-                    cupy_scatter_max(E_cluster, dense_labels, err_pts)
+                    E_cluster = xp.zeros((K_batch,), dtype=xp.float64)  # (K_batch,)
+                    cupy_scatter_max(E_cluster, aug_ids, err_pts)
 
-                is_good = E_cluster < TOL
+                is_good = E_cluster < TOL  # (K_batch,)
 
             if LOG_MEM_STATS:
                 log_mem_stats(f" L{level:02} B{b:02}: After Error Metrics")
@@ -937,7 +947,7 @@ def adaptive_clustering(
             n_good = int(good_idx_local.shape[0])
 
             if n_good > 0:
-                good_mask = is_good[dense_labels]
+                good_mask = is_good[aug_ids]
                 X_good = X_batch[good_mask]
                 G_good = G_batch[good_mask]
                 good_counts = aug_sizes[good_idx_local]
@@ -1072,8 +1082,8 @@ def adaptive_clustering(
             n_bad = int(bad_idx_local.shape[0])
 
             if n_bad > 0:
-                bad_mask = (~is_good)[dense_labels]
-                X_bad = X_batch[bad_mask]
+                bad_mask = (~is_good)[aug_ids]
+                X_bad = X_batch[bad_mask]  # (N_bad, d)
                 F_bad = F_batch[bad_mask]
                 G_bad = G_batch[bad_mask]
                 bad_counts = aug_sizes[bad_idx_local]
@@ -1154,7 +1164,7 @@ def adaptive_clustering(
                 )
                 sort_order = xp.lexsort(xp.stack([scores_proj, dense_labels_bad]))
 
-                # Stream to Host Buffers
+                # Collect Sorted Data for Next Level
                 next_level_X_list.append(xp.asnumpy(X_bad[sort_order]))
                 next_level_F_list.append(xp.asnumpy(F_bad[sort_order]))
                 next_level_G_list.append(xp.asnumpy(G_bad[sort_order]))
@@ -1162,10 +1172,25 @@ def adaptive_clustering(
                 # Calculate Child Sizes (Binary Split)
                 half = bad_counts // 2
                 other = bad_counts - half
-                new_sz = xp.zeros(2 * n_bad, dtype=xp.int64)
+                new_sz = xp.zeros(2 * n_bad, dtype=xp.int64)  # (2 * n_bad,)
                 new_sz[0::2] = half
                 new_sz[1::2] = other
                 next_level_sizes_list.append(xp.asnumpy(new_sz))
+
+                del (
+                    M_split,
+                    C,
+                    scores_proj,
+                    sort_order,
+                    bad_mask,
+                    X_bad,
+                    F_bad,
+                    G_bad,
+                    dense_labels_bad,
+                    bad_counts,
+                    half,
+                    other,
+                )
 
             if LOG_MEM_STATS:
                 log_mem_stats(f" L{level:02} B{b:02}: After Bad Clusters")
@@ -1188,12 +1213,14 @@ def adaptive_clustering(
         # Upload to GPU (Handling potential zero-size clusters from splits)
         valid = next_sizes > 0
         if not np.all(valid):
+            # Some clusters are empty after split, filter them out
             keep = np.repeat(valid, next_sizes)
             CLUSTER_PTS = xp.asarray(next_X[keep])
             CLUSTER_F = xp.asarray(next_F[keep])
             CLUSTER_G = xp.asarray(next_G[keep])
             CLUSTER_SIZES = xp.asarray(next_sizes[valid])
         else:
+            # All clusters valid
             CLUSTER_PTS = xp.asarray(next_X)
             CLUSTER_F = xp.asarray(next_F)
             CLUSTER_G = xp.asarray(next_G)
