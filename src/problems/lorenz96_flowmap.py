@@ -69,7 +69,8 @@ def lorenz96_flowmap_grad(X0: Array, forcing=1.0, tf=0.1) -> Array:
     # We need to take a transpose of each matrix.
     if IS_CUPY_BACKEND:
         DXF = xp.asarray(DXF)
-    return DXF.transpose((0, 2, 1))
+    # return DXF.transpose((0, 2, 1))
+    return DXF
 
 
 if __name__ == "__main__":

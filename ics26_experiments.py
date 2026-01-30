@@ -433,7 +433,7 @@ def ics_lorenz_experiment() -> Path:
     def grad_f(x):
         g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
         # N, d, _ = g.shape
-        # return g[:, :, OUTPUT_VARIABLE].reshape((N, 1, d))
+        # return g[:, OUTPUT_VARIABLE, :].reshape((N, 1, d))
         return g
 
     MAX_CLUSTERS_EST = 20_000
@@ -514,19 +514,20 @@ if __name__ == "__main__":
 
     setup_logging()
 
-    dir1 = ics_quadratic_experiment()
-    create_summary_dataframe(dir1)
+    # dir1 = ics_quadratic_experiment()
+    # create_summary_dataframe(dir1)
 
     # dir2 = ics_shifted_gaussians_no_hess_experiment()
     # create_summary_dataframe(dir2)
-    dir2 = ics_shifted_gaussians_experiment()
-    create_summary_dataframe(dir2)
+    
+    # dir2 = ics_shifted_gaussians_experiment()
+    # create_summary_dataframe(dir2)
 
-    dir3 = ics_rosenbrock_experiment()
-    create_summary_dataframe(dir3)
+    # dir3 = ics_rosenbrock_experiment()
+    # create_summary_dataframe(dir3)
 
-    dir4 = ics_rosenbrock_n_min_per_cluster_experiment()
-    create_summary_dataframe(dir4)
-
-    # dir4 = ics_lorenz_experiment()
+    # dir4 = ics_rosenbrock_n_min_per_cluster_experiment()
     # create_summary_dataframe(dir4)
+
+    dir4 = ics_lorenz_experiment()
+    create_summary_dataframe(dir4)
