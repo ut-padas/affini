@@ -353,12 +353,22 @@ def ics_rosenbrock_n_min_per_cluster_experiment() -> Path:
     for DIM, TOL, ERROR_METRIC, N_MIN_PER_CLUSTER_FACTOR in tqdm(
         combos, desc="Rosenbrock Experiments"
     ):
-        if DIM == 10 and (
-            (TOL <= 0.1 and ERROR_METRIC == "Linf-local")
-            or (TOL <= 0.02 and ERROR_METRIC == "Linf-global")
+        if DIM >= 5 and (
+            (
+                ERROR_METRIC == "Linf-local"
+                and (
+                    (TOL <= 0.05 and N_MIN_PER_CLUSTER_FACTOR >= 5000)
+                    or (TOL <= 0.02 and N_MIN_PER_CLUSTER_FACTOR >= 1000)
+                )
+            )
+            or (
+                ERROR_METRIC == "Linf-global"
+                and TOL <= 0.02
+                and N_MIN_PER_CLUSTER_FACTOR >= 1000
+            )
         ):
             print(
-                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC}, N_MIN_PER_CLUSTER_FACTOR={N_MIN_PER_CLUSTER_FACTOR} due to resource constraints."
             )
             continue
 
