@@ -20,7 +20,7 @@ from src.problems.six_hump_camelback import (
     six_hump_camelback_grad,
     six_hump_camelback_hess,
 )
-from src.surrogate import DataSampler, NearODESurrogate
+from src.surrogate import DataSampler, HATANNSurrogate
 from src.utils import get_matrix_2_norm
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def run_1D_experiment(
 
     X_train = DataSampler.sample_latin_hypercube(domain, N=N_train, seed=0)
 
-    surrogate = NearODESurrogate(data_dim=1, f_dim=1)
+    surrogate = HATANNSurrogate(data_dim=1, f_dim=1)
     surrogate.train(
         X_train=X_train,
         f_fn=one_d_example,
@@ -222,7 +222,7 @@ def run_experiment(
         xp = np
 
     t0 = time.perf_counter()
-    surrogate = NearODESurrogate(data_dim=prob.data_dim, f_dim=prob.f_dim)
+    surrogate = HATANNSurrogate(data_dim=prob.data_dim, f_dim=prob.f_dim)
     surrogate.train(
         X_train=X_train,
         f_fn=prob.f,

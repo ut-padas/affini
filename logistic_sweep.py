@@ -11,7 +11,7 @@ from tqdm import tqdm
 # Assuming these are available in your environment as per your previous snippet
 from experiments_utils import create_summary_dataframe
 from src import xp
-from src.surrogate import NearODESurrogate
+from src.surrogate import HATANNSurrogate
 
 # ==========================================
 # 1. Physics: Parameterized Logistic Equation
@@ -244,7 +244,7 @@ def run_logistic_experiment(
     X_test = raw_test * (DOMAIN_MAX - DOMAIN_MIN) + DOMAIN_MIN
 
     # Initialize Surrogate
-    surrogate = NearODESurrogate(version="v2")
+    surrogate = HATANNSurrogate(version="v2")
 
     train_time = 0.0
     predict_time = 0.0

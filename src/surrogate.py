@@ -10,7 +10,7 @@ from src.l2_distance import knn_l2_distance
 logger = logging.getLogger(__name__)
 
 
-class NearODESurrogate:
+class HATANNSurrogate:
     """
     Surrogate using Adaptive Clustering + kNN with Ellipsoidal Distance on GPU.
     """
@@ -341,7 +341,7 @@ if __name__ == "__main__":
     X_train = xp.asarray(X_train)
 
     # 2. Initialize Surrogate
-    surrogate = NearODESurrogate(version="v2")
+    surrogate = HATANNSurrogate(version="v2")
     print("--- Training ---")
     _start_train_time = time.perf_counter()
     surrogate.train(

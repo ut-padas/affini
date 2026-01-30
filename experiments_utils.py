@@ -11,7 +11,7 @@ from matplotlib.patches import Ellipse
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, Array, xp
 from src.logging_utils import capture_evaluations
-from src.surrogate import NearODESurrogate
+from src.surrogate import HATANNSurrogate
 
 ICS26_DIR = RESULTS_DIR / "ics26"
 ICS26_DIR.mkdir(parents=True, exist_ok=True)
@@ -356,7 +356,7 @@ def Problem_experiment_setup(
         X_train = X_train.reshape((N_train_init * N_timesteps, DIM))
         X_test = X_test.reshape((N_train_init * N_timesteps, DIM))
 
-    surrogate = NearODESurrogate(version=CLUSTERING_VERSION)
+    surrogate = HATANNSurrogate(version=CLUSTERING_VERSION)
     error_tag = ""
 
     FAILED = False
