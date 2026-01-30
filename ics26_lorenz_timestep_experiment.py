@@ -111,7 +111,7 @@ if __name__ == '__main__':
 
     # Initialize time stepping
     tvec = xp.arange(0, TF+DT, DT)
-    yvec_surrogate = xp.empty((len(x0), N_TRAJECTORIES, DIM))
+    yvec_surrogate = xp.empty((len(tvec), N_TRAJECTORIES, DIM))
     # dim 0: time steps, dim 1: trajectories, dim 2: dimension.
     yvec_surrogate[0] = x0
     yvec_exact = xp.empty((len(x0), N_TRAJECTORIES, DIM))
@@ -133,5 +133,4 @@ if __name__ == '__main__':
     # Save data (to analyze in notebook)
     directory = ICS26_DIR / 'lorenz_successive_timestep_data'
     directory.mkdir(parents=True, exist_ok=True)
-    xp.savez(directory / 'exact_data.npz', yvec_exact)
-    xp.savez(directory / 'surrogate_data.npz', yvec_surrogate)
+    xp.savez(directory / 'trajectory_data.npy', exact=yvec_exact, surrogate=yvec_surrogate)
