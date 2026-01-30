@@ -774,7 +774,9 @@ def adaptive_clustering(
         if LOG_MEM_STATS:
             log_mem_stats(f"Start: L{level:02} Batching")
 
+        K_good = 0
         for b in range(num_batches):
+            logger.info(f"Level {level:02}: Processing Batch {b+1}/{num_batches}")
             # Determine cluster range for this batch
             target_aug_count = (b + 1) * BATCH_SIZE
             end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
@@ -822,7 +824,9 @@ def adaptive_clustering(
             num_generated_pts += num_synth
             if num_synth > 0:
                 if LOG_MEM_STATS:
-                    log_mem_stats(f" L{level:02} B{b:02}: Start Augmentation")
+                    log_mem_stats(
+                        f" L{level:02} B{b:02}/{num_batches:02}: Start Augmentation"
+                    )
                 synth_c_ids = aug_ids[is_synth]
                 rng = xp.random.default_rng(SEED + level + b)
 
@@ -861,7 +865,9 @@ def adaptive_clustering(
                 )
 
             if LOG_MEM_STATS:
-                log_mem_stats(f" L{level:02} B{b:02}: After Augmentation")
+                log_mem_stats(
+                    f" L{level:02} B{b:02}/{num_batches:02}: After Augmentation"
+                )
 
             # 3. Compute Centroids & Reference Gradients
             mus = (
@@ -940,18 +946,20 @@ def adaptive_clustering(
                 is_good = E_cluster < TOL  # (K_batch,)
 
             if LOG_MEM_STATS:
-                log_mem_stats(f" L{level:02} B{b:02}: After Error Metrics")
+                log_mem_stats(
+                    f" L{level:02} B{b:02}/{num_batches:02}: After Error Metrics"
+                )
 
             # 5. Handle Accepted ("Good") Clusters
             good_idx_local = xp.nonzero(is_good)[0]
-            n_good = int(good_idx_local.shape[0])
+            K_good = int(good_idx_local.shape[0])
 
-            if n_good > 0:
+            if K_good > 0:
                 good_mask = is_good[aug_ids]
                 X_good = X_batch[good_mask]
                 G_good = G_batch[good_mask]
                 good_counts = aug_sizes[good_idx_local]
-                dense_labels_good = repeats(xp.arange(n_good), good_counts)
+                dense_labels_good = repeats(xp.arange(K_good), good_counts)
 
                 # Geometry Metrics (Radii, Lipschitz)
                 radii_pt, ratio_pt = run_fused_metrics(
@@ -961,8 +969,8 @@ def adaptive_clustering(
                     g_mus[good_idx_local],
                     dense_labels_good,
                 )
-                radii = xp.zeros((n_good,), dtype=radii_pt.dtype)
-                L_obs = xp.zeros((n_good,), dtype=ratio_pt.dtype)
+                radii = xp.zeros((K_good,), dtype=radii_pt.dtype)
+                L_obs = xp.zeros((K_good,), dtype=ratio_pt.dtype)
                 cupy_scatter_max(radii, dense_labels_good, radii_pt)
                 cupy_scatter_max(L_obs, dense_labels_good, ratio_pt)
 
@@ -971,10 +979,10 @@ def adaptive_clustering(
                     X_good,
                     mus[good_idx_local],
                     dense_labels_good,
-                    n_good,
+                    K_good,
                     d,
                     fd,
-                    xp.zeros(n_good, dtype=xp.int32),
+                    xp.zeros(K_good, dtype=xp.int32),
                     calc_E=False,
                 )
                 Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
@@ -997,7 +1005,7 @@ def adaptive_clustering(
                 dist_sq = run_fused_q_dist(
                     X_good, mus[good_idx_local], dense_labels_good, U, Lambda_inv
                 )
-                max_dist = xp.zeros((n_good,), dtype=dist_sq.dtype)
+                max_dist = xp.zeros((K_good,), dtype=dist_sq.dtype)
                 cupy_scatter_max(max_dist, dense_labels_good, dist_sq)
                 scale_fac = 1.0 / xp.maximum(max_dist, TINY_EPS)
 
@@ -1028,7 +1036,7 @@ def adaptive_clustering(
                         X_good,
                         mus[good_idx_local],
                         dense_labels_good,
-                        n_good,
+                        K_good,
                         d,
                         fd,
                         active_comps_good,
@@ -1052,7 +1060,7 @@ def adaptive_clustering(
                     H_sqrt = 0.5 * (M + M.transpose(0, 2, 1))
 
                 # Download Results to CPU
-                end_out = out_count + n_good
+                end_out = out_count + K_good
                 buffers, out_cap = adjust_buffer_capacity_cpu(
                     buffers, out_count, out_cap, end_out, STORE_HESSIAN_SQRT_PER_CLUSTER
                 )
@@ -1075,7 +1083,9 @@ def adaptive_clustering(
                 out_count = end_out
 
             if LOG_MEM_STATS:
-                log_mem_stats(f" L{level:02} B{b:02}: After Good Clusters")
+                log_mem_stats(
+                    f" L{level:02} B{b:02}/{num_batches:02}: After Good Clusters"
+                )
 
             # 6. Handle Rejected ("Bad") Clusters -> Split
             bad_idx_local = xp.nonzero(~is_good)[0]
@@ -1193,7 +1203,9 @@ def adaptive_clustering(
                 )
 
             if LOG_MEM_STATS:
-                log_mem_stats(f" L{level:02} B{b:02}: After Bad Clusters")
+                log_mem_stats(
+                    f" L{level:02} B{b:02}/{num_batches:02}: After Bad Clusters"
+                )
 
             start_cluster_idx = end_cluster_idx
             del X_batch, F_batch, G_batch
@@ -1245,7 +1257,15 @@ def adaptive_clustering(
         gc.collect()
 
         logger.info(
-            f"Level {level:02}: Clusters={num_clusters:,}, active={len(CLUSTER_SIZES):,}"
+            f"Level {level:02}: Clusters (start): {num_clusters:,}, "
+            f"Clusters (end): {len(CLUSTER_SIZES):,}, "
+            f"Good Clusters: {K_good:,}, "
+            f"Num Pts (next level): {CLUSTER_PTS.shape[0]:,} "
+        )
+        logger.info(
+            f"Level {level:02}: Cluster Sizes - min: {int(CLUSTER_SIZES.min())}, "
+            f"mean: {CLUSTER_SIZES.mean():.1f}, median: {int(xp.median(CLUSTER_SIZES))}, "
+            f"max: {int(CLUSTER_SIZES.max())}"
         )
         logger.info(
             f"Runtime - Level {level:02}: {time.perf_counter() - _t_level:.3f}s"
