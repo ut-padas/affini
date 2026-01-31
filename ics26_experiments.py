@@ -10,6 +10,7 @@ from experiments_utils import (
     create_summary_dataframe,
     del_all_error_files_in_dir,
 )
+from src.logging_utils import consolidate_evaluations
 from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 from src.problems.quadratic import quadratic, quadratic_grad
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
@@ -482,6 +483,42 @@ def ics_rosenbrock_n_min_per_cluster_experiment() -> Path:
     return EXP_DIR
 
 
+def generate_train_data_for_neural_network() -> None:
+    TRAIN_EVALS_ROOT = ICS26_DIR / "ics_neural_network_train_evals"
+    TOL = 0.02
+    _prefix = "train_evals"
+
+    # 5D Rosenbrock
+    DIM = 5
+    _evals_dir = TRAIN_EVALS_ROOT / "rosenbrock_5d"
+    Problem_experiment_setup(
+        json_fpath=TRAIN_EVALS_ROOT / "ics26_rosenbrock_5d_train_evals.json",
+        DIM=DIM,
+        F_DIM=1,
+        DOMAIN=[-2.0, 3.0],
+        TOL=TOL,
+        f_fn=rosenbrock,
+        g_fn=rosenbrock_grad,
+        N_TRAIN=get_N_TRAIN(DIM),
+        N_INIT_CLUSTERS=get_N_INIT_CLUSTERS(DIM),
+        N_MIN_PER_CLUSTER=get_N_MIN_PER_CLUSTER(DIM),
+        MAX_CLUSTERS_EST=100_000,
+        N_TEST=get_N_TRAIN(DIM) // 2,
+        K_NEIGHBOURS=1,
+        CLUSTERING_VERSION="v2",
+        ERROR_METRIC="Linf-local",
+        USE_HESSIAN_INFORMED_SPLIT=True,
+        STORE_TRAIN_EVALS=True,
+        TRAIN_EVALS_DIR=_evals_dir,
+        TRAIN_EVALS_PREFIX=_prefix,
+    )
+    consolidate_evaluations(
+        save_dir=_evals_dir,
+        prefix=_prefix,
+        output_path=_evals_dir / "rosenbrock_5d.npz",
+    )
+
+
 def ics_lorenz_experiment() -> Path:
     """
     Lorenz surrogate for a SINGLE time step.
@@ -605,5 +642,7 @@ if __name__ == "__main__":
     # dir4 = ics_lorenz_experiment()
     # create_summary_dataframe(dir4)
 
-    dir5 = ics_quadratic_runtime_scalability_experiment()
-    create_summary_dataframe(dir5)
+    # dir5 = ics_quadratic_runtime_scalability_experiment()
+    # create_summary_dataframe(dir5)
+
+    generate_train_data_for_neural_network()

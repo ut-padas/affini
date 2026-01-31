@@ -374,11 +374,6 @@ def Problem_experiment_setup(
                 save_dir=TRAIN_EVALS_DIR,
                 prefix=TRAIN_EVALS_PREFIX + "_f",
             )
-            g_debug = capture_evaluations(
-                g_fn,
-                save_dir=TRAIN_EVALS_DIR,
-                prefix=TRAIN_EVALS_PREFIX + "_g",
-            )
 
             # Train
             print("\n--- Training ---")
@@ -386,7 +381,7 @@ def Problem_experiment_setup(
             surrogate.train(
                 X_train=X_train,
                 f_fn=f_debug,
-                g_fn=g_debug,
+                g_fn=g_fn,
                 TOL=TOL,
                 NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
                 MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
