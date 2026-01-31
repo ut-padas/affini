@@ -485,7 +485,7 @@ def ics_rosenbrock_n_min_per_cluster_experiment() -> Path:
 
 def generate_train_data_for_neural_network() -> None:
     TRAIN_EVALS_ROOT = ICS26_DIR / "ics_neural_network_train_evals"
-    TOL = 0.02
+    TOL = 0.05
     ERROR_METRIC = "Linf-local"
     USE_HESSIAN_INFORMED_SPLIT = True
     CLUSTERING_VERSION = "v2"
@@ -495,7 +495,7 @@ def generate_train_data_for_neural_network() -> None:
     # 2D, 5D Gaussians
     DIMs = [2, 5]
     for DIM in DIMs:
-        _evals_dir = TRAIN_EVALS_ROOT / f"shifted_gaussians_{DIM}d"
+        _evals_dir = TRAIN_EVALS_ROOT / f"shifted_gaussians_{DIM}d_tol{TOL}"
         _centers = {
             2: CENTERS_2D,
             3: CENTERS_3D,
@@ -512,7 +512,7 @@ def generate_train_data_for_neural_network() -> None:
         )
         Problem_experiment_setup(
             json_fpath=TRAIN_EVALS_ROOT
-            / f"ics26_shifted_gaussians_{DIM}d_train_evals.json",
+            / f"ics26_shifted_gaussians_{DIM}d_tol{TOL}_train_evals.json",
             DIM=DIM,
             F_DIM=1,
             DOMAIN=[-2.0, 2.0],
@@ -536,15 +536,15 @@ def generate_train_data_for_neural_network() -> None:
             consolidate_evaluations(
                 save_dir=_evals_dir,
                 prefix=_prefix + _p,
-                output_path=_evals_dir / f"shifted_gaussians_{DIM}d{_p}.npz",
+                output_path=_evals_dir / f"shifted_gaussians_{DIM}d_tol{TOL}{_p}.npz",
                 delete_individual_files_after=True,
             )
 
     # 5D Rosenbrock
     DIM = 5
-    _evals_dir = TRAIN_EVALS_ROOT / f"rosenbrock_{DIM}d"
+    _evals_dir = TRAIN_EVALS_ROOT / f"rosenbrock_{DIM}d_tol{TOL}"
     Problem_experiment_setup(
-        json_fpath=TRAIN_EVALS_ROOT / f"ics26_rosenbrock_{DIM}d_train_evals.json",
+        json_fpath=TRAIN_EVALS_ROOT / f"ics26_rosenbrock_{DIM}d_tol{TOL}_train_evals.json",
         DIM=DIM,
         F_DIM=1,
         DOMAIN=[-2.0, 3.0],
@@ -568,7 +568,7 @@ def generate_train_data_for_neural_network() -> None:
         consolidate_evaluations(
             save_dir=_evals_dir,
             prefix=_prefix + _p,
-            output_path=_evals_dir / f"rosenbrock_{DIM}d{_p}.npz",
+            output_path=_evals_dir / f"rosenbrock_{DIM}d_tol{TOL}{_p}.npz",
             delete_individual_files_after=True,
         )
 
