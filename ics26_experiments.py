@@ -536,7 +536,7 @@ def generate_train_data_for_neural_network() -> None:
             consolidate_evaluations(
                 save_dir=_evals_dir,
                 prefix=_prefix + _p,
-                output_path=_evals_dir / f"shifted_gaussians_{DIM}d.npz",
+                output_path=_evals_dir / f"shifted_gaussians_{DIM}d{_p}.npz",
                 delete_individual_files_after=True,
             )
 
@@ -568,7 +568,7 @@ def generate_train_data_for_neural_network() -> None:
         consolidate_evaluations(
             save_dir=_evals_dir,
             prefix=_prefix + _p,
-            output_path=_evals_dir / f"rosenbrock_{DIM}d.npz",
+            output_path=_evals_dir / f"rosenbrock_{DIM}d{_p}.npz",
             delete_individual_files_after=True,
         )
 
