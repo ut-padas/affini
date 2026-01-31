@@ -544,7 +544,8 @@ def generate_train_data_for_neural_network() -> None:
     DIM = 5
     _evals_dir = TRAIN_EVALS_ROOT / f"rosenbrock_{DIM}d_tol{TOL}"
     Problem_experiment_setup(
-        json_fpath=TRAIN_EVALS_ROOT / f"ics26_rosenbrock_{DIM}d_tol{TOL}_train_evals.json",
+        json_fpath=TRAIN_EVALS_ROOT
+        / f"ics26_rosenbrock_{DIM}d_tol{TOL}_train_evals.json",
         DIM=DIM,
         F_DIM=1,
         DOMAIN=[-2.0, 3.0],
