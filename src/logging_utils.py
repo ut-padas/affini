@@ -211,15 +211,17 @@ def consolidate_evaluations(
     prefix: str,
     output_path: Path,
     remove_duplicates: bool = True,
+    delete_individual_files_after: bool = False,
 ) -> Path:
     """
     Consolidate multiple NPZ evaluation files into a single file.
 
     Args:
-        save_dir: Directory containing the NPZ files
-        prefix: Prefix to filter files (e.g., "rosenbrock")
-        output_name: Name for consolidated file (default: "{prefix}_consolidated.npz")
-        remove_duplicates: Whether to remove duplicate (X, result) pairs
+        save_dir: Directory containing NPZ files
+        prefix: Filename prefix to identify relevant NPZ files
+        output_path: Path to save the consolidated NPZ file
+        remove_duplicates: Whether to remove duplicate evaluations
+        delete_individual_files_after: Whether to delete individual NPZ files after consolidation
 
     Returns:
         Path to the consolidated NPZ file
@@ -292,4 +294,12 @@ def consolidate_evaluations(
     # Determine output filename
     np.savez_compressed(output_path, X=X_concat, result=results_concat)
     logger.info(f"Consolidated file saved: {output_path}")
+
+    if delete_individual_files_after:
+        for npz_file in npz_files:
+            npz_file.unlink()
+        logger.info(
+            f"Deleted individual NPZ files with prefix '{prefix}' in {save_dir}"
+        )
+
     return output_path
