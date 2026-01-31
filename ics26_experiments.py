@@ -492,36 +492,6 @@ def generate_train_data_for_neural_network() -> None:
     _prefix = "train_evals"
     K_NEIGHBOURS = 1
 
-    # 5D Rosenbrock
-    DIM = 5
-    _evals_dir = TRAIN_EVALS_ROOT / f"rosenbrock_{DIM}d"
-    Problem_experiment_setup(
-        json_fpath=TRAIN_EVALS_ROOT / f"ics26_rosenbrock_{DIM}d_train_evals.json",
-        DIM=DIM,
-        F_DIM=1,
-        DOMAIN=[-2.0, 3.0],
-        TOL=TOL,
-        f_fn=rosenbrock,
-        g_fn=rosenbrock_grad,
-        N_TRAIN=get_N_TRAIN(DIM),
-        N_INIT_CLUSTERS=get_N_INIT_CLUSTERS(DIM),
-        N_MIN_PER_CLUSTER=get_N_MIN_PER_CLUSTER(DIM),
-        MAX_CLUSTERS_EST=100_000,
-        N_TEST=get_N_TRAIN(DIM) // 2,
-        K_NEIGHBOURS=K_NEIGHBOURS,
-        CLUSTERING_VERSION=CLUSTERING_VERSION,
-        ERROR_METRIC=ERROR_METRIC,
-        STORE_TRAIN_EVALS=True,
-        TRAIN_EVALS_DIR=_evals_dir,
-        TRAIN_EVALS_PREFIX=_prefix,
-        USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-    )
-    consolidate_evaluations(
-        save_dir=_evals_dir,
-        prefix=_prefix,
-        output_path=_evals_dir / f"rosenbrock_{DIM}d.npz",
-    )
-
     # 2D, 5D Gaussians
     DIMs = [2, 5]
     for DIM in DIMs:
@@ -566,7 +536,39 @@ def generate_train_data_for_neural_network() -> None:
             save_dir=_evals_dir,
             prefix=_prefix,
             output_path=_evals_dir / f"shifted_gaussians_{DIM}d.npz",
+            delete_individual_files_after=True,
         )
+
+    # 5D Rosenbrock
+    DIM = 5
+    _evals_dir = TRAIN_EVALS_ROOT / f"rosenbrock_{DIM}d"
+    Problem_experiment_setup(
+        json_fpath=TRAIN_EVALS_ROOT / f"ics26_rosenbrock_{DIM}d_train_evals.json",
+        DIM=DIM,
+        F_DIM=1,
+        DOMAIN=[-2.0, 3.0],
+        TOL=TOL,
+        f_fn=rosenbrock,
+        g_fn=rosenbrock_grad,
+        N_TRAIN=get_N_TRAIN(DIM),
+        N_INIT_CLUSTERS=get_N_INIT_CLUSTERS(DIM),
+        N_MIN_PER_CLUSTER=get_N_MIN_PER_CLUSTER(DIM),
+        MAX_CLUSTERS_EST=100_000,
+        N_TEST=get_N_TRAIN(DIM) // 2,
+        K_NEIGHBOURS=K_NEIGHBOURS,
+        CLUSTERING_VERSION=CLUSTERING_VERSION,
+        ERROR_METRIC=ERROR_METRIC,
+        STORE_TRAIN_EVALS=True,
+        TRAIN_EVALS_DIR=_evals_dir,
+        TRAIN_EVALS_PREFIX=_prefix,
+        USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+    )
+    consolidate_evaluations(
+        save_dir=_evals_dir,
+        prefix=_prefix,
+        output_path=_evals_dir / f"rosenbrock_{DIM}d.npz",
+        delete_individual_files_after=True,
+    )
 
 
 def ics_lorenz_experiment() -> Path:

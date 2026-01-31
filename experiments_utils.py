@@ -331,6 +331,10 @@ def Problem_experiment_setup(
     IGNORE_GRADIENT: bool = False,
     BATCH_SIZE: int = 10_000_000,
 ):
+    if json_fpath.exists():
+        print(f"Result file {json_fpath} already exists. Skipping experiment.")
+        return
+
     # Sample data from a uniform distribution (if we choose to do so)
     if SAMPLING == "Uniform":
         xp.random.seed(SEED)
