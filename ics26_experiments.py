@@ -532,12 +532,13 @@ def generate_train_data_for_neural_network() -> None:
             TRAIN_EVALS_PREFIX=_prefix,
             USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         )
-        consolidate_evaluations(
-            save_dir=_evals_dir,
-            prefix=_prefix,
-            output_path=_evals_dir / f"shifted_gaussians_{DIM}d.npz",
-            delete_individual_files_after=True,
-        )
+        for _p in ["_f", "_g"]:
+            consolidate_evaluations(
+                save_dir=_evals_dir,
+                prefix=_prefix + _p,
+                output_path=_evals_dir / f"shifted_gaussians_{DIM}d.npz",
+                delete_individual_files_after=True,
+            )
 
     # 5D Rosenbrock
     DIM = 5
@@ -563,12 +564,13 @@ def generate_train_data_for_neural_network() -> None:
         TRAIN_EVALS_PREFIX=_prefix,
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
     )
-    consolidate_evaluations(
-        save_dir=_evals_dir,
-        prefix=_prefix,
-        output_path=_evals_dir / f"rosenbrock_{DIM}d.npz",
-        delete_individual_files_after=True,
-    )
+    for _p in ["_f", "_g"]:
+        consolidate_evaluations(
+            save_dir=_evals_dir,
+            prefix=_prefix + _p,
+            output_path=_evals_dir / f"rosenbrock_{DIM}d.npz",
+            delete_individual_files_after=True,
+        )
 
 
 def ics_lorenz_experiment() -> Path:
