@@ -372,7 +372,7 @@ def Problem_experiment_setup(
             f_debug = capture_evaluations(
                 f_fn,
                 save_dir=TRAIN_EVALS_DIR,
-                prefix=TRAIN_EVALS_PREFIX + "_f",
+                prefix=TRAIN_EVALS_PREFIX,
             )
 
             # Train

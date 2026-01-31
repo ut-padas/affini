@@ -486,13 +486,17 @@ def ics_rosenbrock_n_min_per_cluster_experiment() -> Path:
 def generate_train_data_for_neural_network() -> None:
     TRAIN_EVALS_ROOT = ICS26_DIR / "ics_neural_network_train_evals"
     TOL = 0.02
+    ERROR_METRIC = "Linf-local"
+    USE_HESSIAN_INFORMED_SPLIT = True
+    CLUSTERING_VERSION = "v2"
     _prefix = "train_evals"
+    K_NEIGHBOURS = 1
 
     # 5D Rosenbrock
     DIM = 5
-    _evals_dir = TRAIN_EVALS_ROOT / "rosenbrock_5d"
+    _evals_dir = TRAIN_EVALS_ROOT / f"rosenbrock_{DIM}d"
     Problem_experiment_setup(
-        json_fpath=TRAIN_EVALS_ROOT / "ics26_rosenbrock_5d_train_evals.json",
+        json_fpath=TRAIN_EVALS_ROOT / f"ics26_rosenbrock_{DIM}d_train_evals.json",
         DIM=DIM,
         F_DIM=1,
         DOMAIN=[-2.0, 3.0],
@@ -504,19 +508,65 @@ def generate_train_data_for_neural_network() -> None:
         N_MIN_PER_CLUSTER=get_N_MIN_PER_CLUSTER(DIM),
         MAX_CLUSTERS_EST=100_000,
         N_TEST=get_N_TRAIN(DIM) // 2,
-        K_NEIGHBOURS=1,
-        CLUSTERING_VERSION="v2",
-        ERROR_METRIC="Linf-local",
-        USE_HESSIAN_INFORMED_SPLIT=True,
+        K_NEIGHBOURS=K_NEIGHBOURS,
+        CLUSTERING_VERSION=CLUSTERING_VERSION,
+        ERROR_METRIC=ERROR_METRIC,
         STORE_TRAIN_EVALS=True,
         TRAIN_EVALS_DIR=_evals_dir,
         TRAIN_EVALS_PREFIX=_prefix,
+        USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
     )
     consolidate_evaluations(
         save_dir=_evals_dir,
         prefix=_prefix,
-        output_path=_evals_dir / "rosenbrock_5d.npz",
+        output_path=_evals_dir / f"rosenbrock_{DIM}d.npz",
     )
+
+    # 2D, 5D Gaussians
+    DIMs = [2, 5]
+    for DIM in DIMs:
+        _evals_dir = TRAIN_EVALS_ROOT / f"shifted_gaussians_{DIM}d"
+        _centers = {
+            2: CENTERS_2D,
+            3: CENTERS_3D,
+            4: CENTERS_4D,
+            5: CENTERS_5D,
+        }
+        shifted_gaussians_partial = partial(
+            shifted_gaussians,
+            centers=_centers[DIM],
+        )
+        shifted_gaussians_grad_partial = partial(
+            shifted_gaussians_grad,
+            centers=_centers[DIM],
+        )
+        Problem_experiment_setup(
+            json_fpath=TRAIN_EVALS_ROOT
+            / f"ics26_shifted_gaussians_{DIM}d_train_evals.json",
+            DIM=DIM,
+            F_DIM=1,
+            DOMAIN=[-2.0, 2.0],
+            TOL=TOL,
+            f_fn=shifted_gaussians_partial,
+            g_fn=shifted_gaussians_grad_partial,
+            N_TRAIN=get_N_TRAIN(DIM),
+            N_INIT_CLUSTERS=get_N_INIT_CLUSTERS(DIM),
+            N_MIN_PER_CLUSTER=get_N_MIN_PER_CLUSTER(DIM),
+            MAX_CLUSTERS_EST=100_000,
+            N_TEST=get_N_TRAIN(DIM) // 2,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,
+            STORE_TRAIN_EVALS=True,
+            TRAIN_EVALS_DIR=_evals_dir,
+            TRAIN_EVALS_PREFIX=_prefix,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+        )
+        consolidate_evaluations(
+            save_dir=_evals_dir,
+            prefix=_prefix,
+            output_path=_evals_dir / f"shifted_gaussians_{DIM}d.npz",
+        )
 
 
 def ics_lorenz_experiment() -> Path:
