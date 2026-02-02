@@ -573,6 +573,46 @@ def generate_train_data_for_neural_network() -> None:
             delete_individual_files_after=True,
         )
 
+    # Lorenz 5D, F=1
+    DIM = 5
+    FORCING = 1
+    FINAL_TIME = 0.1
+    lorenz_f = partial(lorenz96_flowmap, forcing=FORCING, tf=FINAL_TIME)
+    lorenz_g = partial(lorenz96_flowmap_grad, forcing=FORCING, tf=FINAL_TIME)
+    _evals_dir = (
+        TRAIN_EVALS_ROOT / f"lorenz96_{DIM}d_F{FORCING}_tf{FINAL_TIME}_tol{TOL}"
+    )
+    Problem_experiment_setup(
+        json_fpath=TRAIN_EVALS_ROOT
+        / f"ics26_lorenz96_{DIM}d_F{FORCING}_tf{FINAL_TIME}_tol{TOL}_train_evals.json",
+        DIM=DIM,
+        F_DIM=DIM,
+        DOMAIN=[-5.0, 5.0],
+        TOL=TOL,
+        f_fn=lorenz_f,
+        g_fn=lorenz_g,
+        N_TRAIN=get_N_TRAIN(DIM),
+        N_INIT_CLUSTERS=get_N_INIT_CLUSTERS(DIM),
+        N_MIN_PER_CLUSTER=get_N_MIN_PER_CLUSTER(DIM),
+        MAX_CLUSTERS_EST=100_000,
+        N_TEST=get_N_TRAIN(DIM) // 2,
+        K_NEIGHBOURS=K_NEIGHBOURS,
+        CLUSTERING_VERSION=CLUSTERING_VERSION,
+        ERROR_METRIC=ERROR_METRIC,
+        STORE_TRAIN_EVALS=True,
+        TRAIN_EVALS_DIR=_evals_dir,
+        TRAIN_EVALS_PREFIX=_prefix,
+        USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+    )
+    for _p in ["_f", "_g"]:
+        consolidate_evaluations(
+            save_dir=_evals_dir,
+            prefix=_prefix + _p,
+            output_path=_evals_dir
+            / f"lorenz96_{DIM}d_F{FORCING}_tf{FINAL_TIME}_tol{TOL}{_p}.npz",
+            delete_individual_files_after=True,
+        )
+
 
 def ics_lorenz_experiment() -> Path:
     """
