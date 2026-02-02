@@ -114,7 +114,7 @@ if __name__ == '__main__':
     yvec_surrogate = xp.empty((len(tvec), N_TRAJECTORIES, DIM))
     # dim 0: time steps, dim 1: trajectories, dim 2: dimension.
     yvec_surrogate[0] = x0
-    yvec_exact = xp.empty((len(x0), N_TRAJECTORIES, DIM))
+    yvec_exact = xp.empty((len(tvec), N_TRAJECTORIES, DIM))
     yvec_exact[0] = x0
 
     # Step in time
