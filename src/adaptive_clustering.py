@@ -463,8 +463,9 @@ def adjust_buffer_capacity(
 def adaptive_clustering(
     X: Array,
     *,
-    f_fn: Callable[[Array], Array],
-    g_fn: Callable[[Array], Array],
+    f_fn: Optional[Callable[[Array], Array]] = None,
+    g_fn: Optional[Callable[[Array], Array]] = None,
+    oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     NUM_INITIAL_CLUSTERS: int = 100,
@@ -488,6 +489,16 @@ def adaptive_clustering(
     Supports component-wise relative error metrics and Hessian-informed splitting
     via Worst-Case Active Component selection.
     """
+    # Validate function arguments
+    if oracle_fn is not None:
+        if f_fn is not None or g_fn is not None:
+            raise ValueError(
+                "Cannot specify both oracle_fn and f_fn/g_fn. Use either oracle_fn OR both f_fn and g_fn."
+            )
+    else:
+        if f_fn is None or g_fn is None:
+            raise ValueError("Must specify either oracle_fn OR both f_fn and g_fn.")
+
     _start_time = time.perf_counter()
 
     total_f_evals = 0
@@ -508,22 +519,24 @@ def adaptive_clustering(
 
     # Eval initial F/G to determine m (output dimension)
     _t0 = time.perf_counter()
-    F0_val = xp.asarray(f_fn(X_pool[:N0]))
-    total_f_evals += N0
-    if F0_val.ndim == 1:
-        F0_val = F0_val[:, None]
+    if oracle_fn is not None:
+        F0_val, G0_val = oracle_fn(X_pool[:N0])
+        total_f_evals += N0
+    else:
+        F0_val = f_fn(X_pool[:N0])  # type: ignore
+        total_f_evals += N0
+        if IGNORE_GRADIENT:
+            G0_val = 0.0
+        else:
+            G0_val = g_fn(X_pool[:N0])  # type: ignore
+
     fd = F0_val.shape[1]  # Output dimension (fd)
 
     F_pool = xp.empty((capacity, fd), dtype=X0.dtype)
     G_pool = xp.empty((capacity, fd, d), dtype=X0.dtype)
 
     F_pool[:N0] = F0_val
-
-    if IGNORE_GRADIENT:
-        G_pool[:N0] = 0.0
-    else:
-        G0_val = xp.asarray(g_fn(X_pool[:N0]))
-        G_pool[:N0] = G0_val
+    G_pool[:N0] = G0_val
 
     logger.info(f"Runtime - Initial f/g: {time.perf_counter()-_t0:.3f}s")
     logger.info(f"Function: Input d={d}, Output fd={fd}")
@@ -619,19 +632,18 @@ def adaptive_clustering(
             active[n_total:n_new] = True
 
             # Evaluate F/G at new synthetic points
-            F_new = xp.asarray(f_fn(X_synth))
-            total_f_evals += X_synth.shape[0]
-            if F_new.ndim == 1:
-                F_new = F_new[:, None]
-            F_pool[n_total:n_new] = F_new
-
-            if IGNORE_GRADIENT:
-                G_pool[n_total:n_new] = 0.0
+            if oracle_fn is not None:
+                F_new, G_new = oracle_fn(X_synth)
+                total_f_evals += X_synth.shape[0]
             else:
-                G_new = xp.asarray(g_fn(X_synth))
-                if G_new.ndim == 2:
-                    G_new = G_new[:, None, :]
-                G_pool[n_total:n_new] = G_new
+                F_new = f_fn(X_synth)  # type: ignore
+                total_f_evals += X_synth.shape[0]
+                if IGNORE_GRADIENT:
+                    G_new = 0.0
+                else:
+                    G_new = g_fn(X_synth)  # type: ignore
+            F_pool[n_total:n_new] = F_new
+            G_pool[n_total:n_new] = G_new
 
             n_total = n_new
             synth_added_this_level = True
@@ -657,17 +669,16 @@ def adaptive_clustering(
         mus = xp.add.reduceat(X_sorted, starts) / counts[:, None]  # (K, d)
 
         # Eval f/g at centroids
-        f_mus = xp.asarray(f_fn(mus))
-        total_f_evals += mus.shape[0]
-        if f_mus.ndim == 1:
-            f_mus = f_mus[:, None]  # (K, fd)
-
-        if IGNORE_GRADIENT:
-            g_mus = xp.zeros((K_batch, fd, d), dtype=mus.dtype)
+        if oracle_fn is not None:
+            f_mus, g_mus = oracle_fn(mus)
+            total_f_evals += mus.shape[0]
         else:
-            g_mus = xp.asarray(g_fn(mus))
-            if g_mus.ndim == 2:
-                g_mus = g_mus[:, None, :]  # (K, fd, d)
+            f_mus = f_fn(mus)  # type: ignore
+            total_f_evals += mus.shape[0]
+            if IGNORE_GRADIENT:
+                g_mus = xp.zeros((K_batch, fd, d), dtype=mus.dtype)
+            else:
+                g_mus = g_fn(mus)  # type: ignore
 
         map_n_to_k = repeats(xp.arange(K_batch), counts)
         dx = X_sorted - mus[map_n_to_k]  # (N_act, d)
