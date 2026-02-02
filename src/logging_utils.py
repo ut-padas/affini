@@ -4,6 +4,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import psutil
 import pynvml
@@ -212,7 +213,7 @@ def consolidate_evaluations(
     output_path: Path,
     remove_duplicates: bool = True,
     delete_individual_files_after: bool = False,
-) -> Path:
+) -> Optional[Path]:
     """
     Consolidate multiple NPZ evaluation files into a single file.
 
@@ -224,7 +225,7 @@ def consolidate_evaluations(
         delete_individual_files_after: Whether to delete individual NPZ files after consolidation
 
     Returns:
-        Path to the consolidated NPZ file
+        Optional[Path]: Path to the consolidated NPZ file or None if no files found
 
     Example:
         >>> # After capturing many evaluations...
@@ -241,9 +242,8 @@ def consolidate_evaluations(
     # Find all NPZ files with the given prefix
     npz_files = list(save_dir.glob(f"{prefix}-*.npz"))
     if not npz_files:
-        raise FileNotFoundError(
-            f"No NPZ files found with prefix '{prefix}' in {save_dir}"
-        )
+        logger.warning(f"No NPZ files found with prefix '{prefix}' in {save_dir}")
+        return None
 
     logger.info(f"Consolidating {len(npz_files)} files with prefix '{prefix}'")
     all_X = []
