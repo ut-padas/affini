@@ -45,6 +45,7 @@ class HATANNSurrogate:
         SEED: int = 0,
         USE_HESSIAN_INFORMED_SPLIT: bool = True,
         IGNORE_GRADIENT: bool = False,
+        BATCH_SIZE: int = 10_000_000,
     ):
         """
         1. Sample X from domain.
@@ -100,6 +101,7 @@ class HATANNSurrogate:
                     USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                     IGNORE_GRADIENT=IGNORE_GRADIENT,
                     SEED=SEED,
+                    BATCH_SIZE=BATCH_SIZE,
                     Q_SHRINK=0.05,
                 )
                 centroids = xp.asarray(results["centroids"])

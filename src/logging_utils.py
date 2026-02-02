@@ -4,6 +4,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import psutil
 import pynvml
@@ -211,18 +212,20 @@ def consolidate_evaluations(
     prefix: str,
     output_path: Path,
     remove_duplicates: bool = True,
-) -> Path:
+    delete_individual_files_after: bool = False,
+) -> Optional[Path]:
     """
     Consolidate multiple NPZ evaluation files into a single file.
 
     Args:
-        save_dir: Directory containing the NPZ files
-        prefix: Prefix to filter files (e.g., "rosenbrock")
-        output_name: Name for consolidated file (default: "{prefix}_consolidated.npz")
-        remove_duplicates: Whether to remove duplicate (X, result) pairs
+        save_dir: Directory containing NPZ files
+        prefix: Filename prefix to identify relevant NPZ files
+        output_path: Path to save the consolidated NPZ file
+        remove_duplicates: Whether to remove duplicate evaluations
+        delete_individual_files_after: Whether to delete individual NPZ files after consolidation
 
     Returns:
-        Path to the consolidated NPZ file
+        Optional[Path]: Path to the consolidated NPZ file or None if no files found
 
     Example:
         >>> # After capturing many evaluations...
@@ -239,9 +242,8 @@ def consolidate_evaluations(
     # Find all NPZ files with the given prefix
     npz_files = list(save_dir.glob(f"{prefix}-*.npz"))
     if not npz_files:
-        raise FileNotFoundError(
-            f"No NPZ files found with prefix '{prefix}' in {save_dir}"
-        )
+        logger.warning(f"No NPZ files found with prefix '{prefix}' in {save_dir}")
+        return None
 
     logger.info(f"Consolidating {len(npz_files)} files with prefix '{prefix}'")
     all_X = []
@@ -292,4 +294,12 @@ def consolidate_evaluations(
     # Determine output filename
     np.savez_compressed(output_path, X=X_concat, result=results_concat)
     logger.info(f"Consolidated file saved: {output_path}")
+
+    if delete_individual_files_after:
+        for npz_file in npz_files:
+            npz_file.unlink()
+        logger.info(
+            f"Deleted individual NPZ files with prefix '{prefix}' in {save_dir}"
+        )
+
     return output_path
