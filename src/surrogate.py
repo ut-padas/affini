@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Optional
 
 from src import IS_CUPY_BACKEND, Array, xp
 from src.data_sampler import DataSampler
@@ -33,8 +33,9 @@ class HATANNSurrogate:
     def train(
         self,
         X_train: Array,
-        f_fn: Callable,
-        g_fn: Callable,
+        f_fn: Optional[Callable] = None,
+        g_fn: Optional[Callable] = None,
+        oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
         *,
         # Clustering params
         TOL: float = 1e-2,
@@ -52,6 +53,16 @@ class HATANNSurrogate:
         2. Run GPU Adaptive Clustering.
         3. Store Reference Data.
         """
+        # Validate function arguments
+        if oracle_fn is not None:
+            if f_fn is not None or g_fn is not None:
+                raise ValueError(
+                    "Cannot specify both oracle_fn and f_fn/g_fn. Use either oracle_fn OR both f_fn and g_fn."
+                )
+        else:
+            if f_fn is None or g_fn is None:
+                raise ValueError("Must specify either oracle_fn OR both f_fn and g_fn.")
+
         t0 = time.perf_counter()
 
         if self.version == "v2":
@@ -63,6 +74,7 @@ class HATANNSurrogate:
                     X=X_train,
                     f_fn=f_fn,
                     g_fn=g_fn,
+                    oracle_fn=oracle_fn,
                     TOL=TOL,
                     ERROR_METRIC=ERROR_METRIC,
                     NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
@@ -88,6 +100,15 @@ class HATANNSurrogate:
                 from src.gpu_adaptive_clustering import (
                     adaptive_clustering as gpu_adaptive_clustering,
                 )
+
+                if oracle_fn is not None:
+                    raise NotImplementedError(
+                        "oracle_fn is not supported with GPU backend."
+                    )
+                if f_fn is None or g_fn is None:
+                    raise ValueError(
+                        "Must specify both f_fn and g_fn when using GPU backend."
+                    )
 
                 results = gpu_adaptive_clustering(
                     X=X_train,
