@@ -32,7 +32,57 @@ def create_summary_dataframe(results_dir: Path):
     df = pd.DataFrame(data_dicts)
     df = df.sort_values(by=["dim", "tol"], ascending=[True, False])
 
-    df.to_csv(results_dir / "summary.csv", index=False)
+    # Extract profiling stats to a separate CSV if available
+    if "profiling_stats" in df.columns:
+        profile_rows = []
+        for _, row in df.iterrows():
+            stats = row["profiling_stats"]
+
+            # Base entry with identifiers
+            entry = {
+                "problem_tag": row.get("problem_tag"),
+                "dim": row.get("dim"),
+                "tol": row.get("tol"),
+                "num_levels": row.get("num_levels"),
+            }
+
+            if isinstance(stats, dict):
+                # Add scalar timing keys
+                for k, v in stats.items():
+                    if k != "level_stats":
+                        entry[k] = v
+
+                # Add level stats as comma-separated strings
+                level_info = stats.get("level_stats", [])
+                if isinstance(level_info, list) and level_info:
+                    # Gather all keys present across levels
+                    keys = set().union(*(d.keys() for d in level_info))
+                    for k in sorted(keys):
+                        vals = [str(lvl.get(k, "")) for lvl in level_info]
+                        entry[k] = ",".join(vals)
+
+            profile_rows.append(entry)
+
+        if profile_rows:
+            prof_df = pd.DataFrame(profile_rows)
+            # Reorder columns to put identifiers first
+            cols = list(prof_df.columns)
+            prio_cols = ["problem_tag", "dim", "tol", "num_levels", "time_total"]
+            sorted_cols = [c for c in prio_cols if c in cols] + [
+                c for c in cols if c not in prio_cols
+            ]
+            prof_df = prof_df[sorted_cols]
+
+            prof_path = results_dir / "training_profiles.csv"
+            prof_df.to_csv(prof_path, index=False)
+            print(f"Training profiles dataframe saved to {prof_path}")
+
+        # Drop profiling_stats for the main summary (it's a dict and breaks CSV structure)
+        df_summary = df.drop(columns=["profiling_stats"])
+    else:
+        df_summary = df
+
+    df_summary.to_csv(results_dir / "summary.csv", index=False)
     print(f"Summary dataframe saved to {results_dir / 'summary.csv'}")
 
     try:
