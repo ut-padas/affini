@@ -50,13 +50,13 @@ if __name__ == '__main__':
     setup_logging()
 
     # Parameters for surrogate training
-    DIM = 5
+    DIM = 10
     TOL = 0.01
     ERROR_METRIC = 'Linf-global'
     DOMAIN = [-5.0, 5.0]
     SEED = 0
     FORCING = 1
-    DT = 0.2
+    DT = 0.1
     N_TRAIN = get_N_TRAIN(DIM)
     N_TIMESTEPS = 20
     N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
@@ -87,6 +87,8 @@ if __name__ == '__main__':
     # We choose to train d one-d output surrogates, as it seems to scale better in practice.
     surrogates = [HATANNSurrogate(version='v2') for _ in range(DIM)]
     for i in range(DIM):
+        lorenz_path = Path.cwd() / 'lorenz_surrogates'
+        model_path = lorenz_path / f"lorenz96_dim{DIM}_F{FORCING}_tol{TOL}_tf{DT}_outputvar_{i}.npz"
         surrogates[i].train(
             X_train=X_train,
             f_fn=lambda x: f(x, i),
@@ -98,16 +100,19 @@ if __name__ == '__main__':
             MAX_CLUSTERS_EST=20_000,
             SEED=SEED,
             USE_HESSIAN_INFORMED_SPLIT=True,
-            IGNORE_GRADIENT=False
+            IGNORE_GRADIENT=False,
+            save_model=model_path,
+            load_if_exists=True
         )
 
+    '''
     # 3. Each surrogate is trained. Pick some initial points.
     # First, parameters for testing
     N_TRAJECTORIES = 100
     TF = 3.0
 
     # We take a slightly smaller cube because trajectories can go outside the domain
-    x0 = xp.random.uniform(-4, 4, (N_TRAJECTORIES, DIM))
+    x0 = xp.random.uniform(-5, 5, (N_TRAJECTORIES, DIM)) + FORCING
 
     # Initialize time stepping
     tvec = xp.arange(0, TF+DT, DT)
@@ -134,3 +139,4 @@ if __name__ == '__main__':
     directory = ICS26_DIR / 'lorenz_successive_timestep_data'
     directory.mkdir(parents=True, exist_ok=True)
     xp.savez(directory / 'trajectory_data.npz', exact=yvec_exact, surrogate=yvec_surrogate)
+    '''
