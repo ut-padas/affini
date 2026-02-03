@@ -279,9 +279,9 @@ class HATANNSurrogate:
         if IS_CUPY_BACKEND:
             import numpy as np
 
-            np.savez_compressed(str(filepath), **save_dict)
+            np.savez_compressed(str(filepath), **save_dict, allow_pickle=True)
         else:
-            xp.savez_compressed(str(filepath), **save_dict)
+            xp.savez_compressed(str(filepath), **save_dict, allow_pickle=True)
 
         self._model_file = filepath
         logger.info(f"Model saved to {filepath}")
@@ -306,9 +306,9 @@ class HATANNSurrogate:
         if IS_CUPY_BACKEND:
             import numpy as np
 
-            data = np.load(str(filepath))
+            data = np.load(str(filepath), allow_pickle=True)
         else:
-            data = xp.load(str(filepath))
+            data = xp.load(str(filepath), allow_pickle=True)
 
         # Create instance
         instance = cls(version="v2")
