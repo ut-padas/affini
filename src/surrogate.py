@@ -30,6 +30,7 @@ class HATANNSurrogate:
         self.training_num_levels = -1
         self.num_generated_pts = -1
         self.total_f_evals = -1
+        self.profiling_stats = {}
 
         # Model file path (for saving/loading)
         self._model_file = None
@@ -54,6 +55,7 @@ class HATANNSurrogate:
         USE_HESSIAN_INFORMED_SPLIT: bool = True,
         IGNORE_GRADIENT: bool = False,
         BATCH_SIZE: int = 10_000_000,
+        profile_timing: bool = False,
     ):
         """
         Train the surrogate model or load from saved file.
@@ -68,6 +70,7 @@ class HATANNSurrogate:
             load_if_exists: If True and save_model file exists, loads instead of training.
             TOL: Tolerance for adaptive clustering
             ... (other clustering parameters)
+            profile_timing: If True, enables detailed performance profiling (GPU only).
         """
         # Handle save_model parameter
         model_filepath = None
@@ -97,6 +100,7 @@ class HATANNSurrogate:
                 self.training_num_levels = loaded_model.training_num_levels
                 self.num_generated_pts = loaded_model.num_generated_pts
                 self.total_f_evals = loaded_model.total_f_evals
+                self.profiling_stats = loaded_model.profiling_stats
                 self._model_file = model_filepath
                 logger.info(f"Loaded existing model from {model_filepath}")
                 return
@@ -148,6 +152,7 @@ class HATANNSurrogate:
                 num_levels = results.get("num_levels", -1)
                 num_generated_pts = results.get("num_generated_pts", -1)
                 total_f_evals = results.get("total_f_evals", -1)
+                profiling_stats = {}
             else:
                 from src.gpu_adaptive_clustering import (
                     adaptive_clustering as gpu_adaptive_clustering,
@@ -176,6 +181,7 @@ class HATANNSurrogate:
                     SEED=SEED,
                     BATCH_SIZE=BATCH_SIZE,
                     Q_SHRINK=0.05,
+                    PROFILE_TIMING=profile_timing,
                 )
                 centroids = xp.asarray(results["centroids"])
                 f_vals = xp.asarray(results["f"])
@@ -185,6 +191,7 @@ class HATANNSurrogate:
                 num_levels = results.get("num_levels", -1)
                 num_generated_pts = results.get("num_generated_pts", -1)
                 total_f_evals = results.get("total_f_evals", -1)
+                profiling_stats = results.get("profiling_stats", {})
 
             # 2. Store Data
             self.X_src = centroids
@@ -196,6 +203,7 @@ class HATANNSurrogate:
             self.training_num_levels = num_levels
             self.num_generated_pts = num_generated_pts
             self.total_f_evals = total_f_evals
+            self.profiling_stats = profiling_stats
         else:
             raise NotImplementedError(
                 "Version v1 is deprecated. Use version v2 instead."
@@ -238,6 +246,7 @@ class HATANNSurrogate:
             "training_num_levels": self.training_num_levels,
             "num_generated_pts": self.num_generated_pts,
             "total_f_evals": self.total_f_evals,
+            "profiling_stats": self.profiling_stats,
         }
 
         # Convert arrays to numpy for saving
@@ -310,6 +319,18 @@ class HATANNSurrogate:
         instance.training_num_levels = int(data["training_num_levels"])
         instance.num_generated_pts = int(data["num_generated_pts"])
         instance.total_f_evals = int(data["total_f_evals"])
+
+        # profiling_stats is stored as a 0-d array object if saved via np.savez
+        # We try to extract it, handling potential absence in older files
+        if "profiling_stats" in data:
+            ps_data = data["profiling_stats"]
+            if ps_data.shape == ():
+                instance.profiling_stats = ps_data.item()
+            else:
+                # Should not happen if saved correctly as object
+                instance.profiling_stats = {}
+        else:
+            instance.profiling_stats = {}
 
         # Restore arrays (convert back to appropriate backend)
         instance.X_src = (
@@ -573,6 +594,7 @@ if __name__ == "__main__":
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
         MAX_CLUSTERS_EST=50_000,
         SEED=SEED,
+        profile_timing=True,
     )
     _end_train_time = time.perf_counter()
     N_CLUSTERS = surrogate.get_number_of_sources()
@@ -659,3 +681,6 @@ if __name__ == "__main__":
     with open(json_fpath, "w") as json_file:
         json.dump(json_data_dict, json_file, indent=4)
     print(f"Saved results to {json_fpath}")
+
+    print("\n--- Profiling Stats ---")
+    print(surrogate.profiling_stats)
