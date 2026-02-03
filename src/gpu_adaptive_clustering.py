@@ -715,6 +715,7 @@ def adaptive_clustering(
         "time_find_req_synth": 0.0,
         "time_synth_gen": 0.0,
         "time_error_calc": 0.0,
+        "time_filter": 0.0,
         "time_good_Q": 0.0,
         "time_good_d2h": 0.0,
         "time_bad_split": 0.0,
@@ -1013,8 +1014,9 @@ def adaptive_clustering(
                 )
 
             # 5. Handle Accepted ("Good") Clusters
-            good_idx_local = xp.nonzero(is_good)[0]
-            K_good = int(good_idx_local.shape[0])
+            with CudaTimer("time_filter", profiling_stats, PROFILE_TIMING):
+                good_idx_local = xp.nonzero(is_good)[0]
+                K_good = int(good_idx_local.shape[0])
 
             if K_good > 0:
                 with CudaTimer("time_good_Q", profiling_stats, PROFILE_TIMING):
@@ -1156,8 +1158,9 @@ def adaptive_clustering(
                 )
 
             # 6. Handle Rejected ("Bad") Clusters -> Split
-            bad_idx_local = xp.nonzero(~is_good)[0]
-            n_bad = int(bad_idx_local.shape[0])
+            with CudaTimer("time_filter", profiling_stats, PROFILE_TIMING):
+                bad_idx_local = xp.nonzero(~is_good)[0]
+                n_bad = int(bad_idx_local.shape[0])
 
             if n_bad > 0:
                 with CudaTimer("time_bad_split", profiling_stats, PROFILE_TIMING):
@@ -1257,20 +1260,21 @@ def adaptive_clustering(
                     new_sz[1::2] = other
                     next_level_sizes_list.append(xp.asnumpy(new_sz))
 
-                del (
-                    M_split,
-                    C,
-                    scores_proj,
-                    sort_order,
-                    bad_mask,
-                    X_bad,
-                    F_bad,
-                    G_bad,
-                    dense_labels_bad,
-                    bad_counts,
-                    half,
-                    other,
-                )
+                with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
+                    del (
+                        M_split,
+                        C,
+                        scores_proj,
+                        sort_order,
+                        bad_mask,
+                        X_bad,
+                        F_bad,
+                        G_bad,
+                        dense_labels_bad,
+                        bad_counts,
+                        half,
+                        other,
+                    )
 
             if LOG_MEM_STATS:
                 log_mem_stats(
