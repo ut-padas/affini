@@ -179,6 +179,7 @@ def ics_quadratic_runtime_scalability_experiment() -> Path:
             USE_HESSIAN_INFORMED_SPLIT=True,
             STORE_TRAIN_EVALS=False,
             BATCH_SIZE=BATCH_SIZE,
+            PROFILE_TIMING=True,
         )
 
     return EXP_DIR
@@ -737,7 +738,7 @@ if __name__ == "__main__":
     # dir4 = ics_lorenz_experiment()
     # create_summary_dataframe(dir4)
 
-    # dir5 = ics_quadratic_runtime_scalability_experiment()
-    # create_summary_dataframe(dir5)
+    dir5 = ics_quadratic_runtime_scalability_experiment()
+    create_summary_dataframe(dir5)
 
-    generate_train_data_for_neural_network()
+    # generate_train_data_for_neural_network()
