@@ -709,6 +709,7 @@ def adaptive_clustering(
 
     # Profiling Stats
     profiling_stats = {
+        "time_total": 0.0,
         "time_find_req_synth": 0.0,
         "time_synth_gen": 0.0,
         "time_error_calc": 0.0,
@@ -1347,6 +1348,9 @@ def adaptive_clustering(
         )
         level += 1
 
+    _total_time = time.perf_counter() - _start_time
+    profiling_stats["time_total"] = _total_time
+
     # --- 4. Finalization ---
     final_count = int(out_count)
     out_dict = {k: buffers[k][:final_count] for k in buffers}
@@ -1355,7 +1359,7 @@ def adaptive_clustering(
     out_dict["total_f_evals"] = total_f_evals
     out_dict["profiling_stats"] = profiling_stats
     logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
-    logger.info(f"Runtime - Total: {time.perf_counter() -_start_time:.3f}s")
+    logger.info(f"Runtime - Total: {_total_time:.3f}s")
     return out_dict
 
 
