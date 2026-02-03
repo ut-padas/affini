@@ -330,6 +330,7 @@ def Problem_experiment_setup(
     TRAIN_EVALS_DIR: Optional[Path] = None,
     IGNORE_GRADIENT: bool = False,
     BATCH_SIZE: int = 10_000_000,
+    PROFILE_TIMING: bool = False,
 ):
     if json_fpath.exists():
         print(f"Result file {json_fpath} already exists. Skipping experiment.")
@@ -400,6 +401,7 @@ def Problem_experiment_setup(
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
                 BATCH_SIZE=BATCH_SIZE,
+                PROFILE_TIMING=PROFILE_TIMING,
             )
             _end_train_time = time.perf_counter()
             _TRAINED = True
@@ -419,6 +421,7 @@ def Problem_experiment_setup(
                 ERROR_METRIC=ERROR_METRIC,
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
+                PROFILE_TIMING=PROFILE_TIMING,
             )
             _end_train_time = time.perf_counter()
             _TRAINED = True
@@ -488,6 +491,8 @@ def Problem_experiment_setup(
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         ERROR_METRIC=ERROR_METRIC,
         BATCH_SIZE=BATCH_SIZE,
+        PROFILE_TIMING=PROFILE_TIMING,
+        profiling_stats=surrogate.profiling_stats,
     )
 
     with open(json_fpath, "w") as jf:
