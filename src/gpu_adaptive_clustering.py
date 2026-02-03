@@ -710,6 +710,8 @@ def adaptive_clustering(
     # Profiling Stats
     profiling_stats = {
         "time_total": 0.0,
+        "time_init": 0.0,
+        "time_slicing": 0.0,
         "time_find_req_synth": 0.0,
         "time_synth_gen": 0.0,
         "time_error_calc": 0.0,
@@ -718,6 +720,7 @@ def adaptive_clustering(
         "time_bad_split": 0.0,
         "time_bad_d2h": 0.0,
         "time_transition": 0.0,
+        "time_gc": 0.0,
         "level_stats": [],
     }
 
@@ -725,59 +728,60 @@ def adaptive_clustering(
     total_f_evals = 0
 
     # --- 1. Initialization Phase ---
-    # Upload initial data to GPU
-    X0_gpu = xp.asarray(X, dtype=xp.float64)  # Shape: (N, d)
-    d = X0_gpu.shape[1]
+    with CudaTimer("time_init", profiling_stats, PROFILE_TIMING):
+        # Upload initial data to GPU
+        X0_gpu = xp.asarray(X, dtype=xp.float64)  # Shape: (N, d)
+        d = X0_gpu.shape[1]
 
-    if LOG_MEM_STATS:
-        log_mem_stats("Start Adaptive Clustering")
+        if LOG_MEM_STATS:
+            log_mem_stats("Start Adaptive Clustering")
 
-    # Evaluate initial F/G on GPU
-    _t0 = time.perf_counter()
-    F0_gpu = convert_to_2d_array(f_fn(X0_gpu))  # Shape: (N, fd)
-    total_f_evals += X0_gpu.shape[0]
-    fd = F0_gpu.shape[1]
+        # Evaluate initial F/G on GPU
+        _t0 = time.perf_counter()
+        F0_gpu = convert_to_2d_array(f_fn(X0_gpu))  # Shape: (N, fd)
+        total_f_evals += X0_gpu.shape[0]
+        fd = F0_gpu.shape[1]
 
-    if IGNORE_GRADIENT:
-        G0_gpu = xp.zeros((X0_gpu.shape[0], fd, d), dtype=xp.float64)
-    else:
-        G0_gpu = convert_to_3d_array(g_fn(X0_gpu))  # Shape: (N, fd, d)
+        if IGNORE_GRADIENT:
+            G0_gpu = xp.zeros((X0_gpu.shape[0], fd, d), dtype=xp.float64)
+        else:
+            G0_gpu = convert_to_3d_array(g_fn(X0_gpu))  # Shape: (N, fd, d)
 
-    logger.info(f"Runtime - Initial f/g: {time.perf_counter()-_t0:.3f}s")
-    logger.info(f"Function: Input d={d}, Output fd={fd}")
-    if LOG_MEM_STATS:
-        log_mem_stats("After Initial F/G Evaluation")
+        logger.info(f"Runtime - Initial f/g: {time.perf_counter()-_t0:.3f}s")
+        logger.info(f"Function: Input d={d}, Output fd={fd}")
+        if LOG_MEM_STATS:
+            log_mem_stats("After Initial F/G Evaluation")
 
-    # Compute Global Scale for Linf-global metric: S_j = max_x |F_j(x)|
-    F_max_global = xp.max(xp.abs(F0_gpu), axis=0)  # Shape: (fd,)
+        # Compute Global Scale for Linf-global metric: S_j = max_x |F_j(x)|
+        F_max_global = xp.max(xp.abs(F0_gpu), axis=0)  # Shape: (fd,)
 
-    # Initial K-Means Clustering
-    _t1 = time.perf_counter()
-    km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
-    labels0 = km.fit_predict(X0_gpu)
-    logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
-    if LOG_MEM_STATS:
-        log_mem_stats("After Initial KMeans Clustering")
+        # Initial K-Means Clustering
+        _t1 = time.perf_counter()
+        km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+        labels0 = km.fit_predict(X0_gpu)
+        logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
+        if LOG_MEM_STATS:
+            log_mem_stats("After Initial KMeans Clustering")
 
-    # --- Physical Sort ---
-    # Group data by cluster in VRAM to enable contiguous slicing later
-    sort_idx = xp.argsort(labels0)
-    CLUSTER_PTS = X0_gpu[sort_idx]  # (N, d)
-    CLUSTER_F = F0_gpu[sort_idx]  # (N, fd)
-    CLUSTER_G = G0_gpu[sort_idx]  # (N, fd, d)
+        # --- Physical Sort ---
+        # Group data by cluster in VRAM to enable contiguous slicing later
+        sort_idx = xp.argsort(labels0)
+        CLUSTER_PTS = X0_gpu[sort_idx]  # (N, d)
+        CLUSTER_F = F0_gpu[sort_idx]  # (N, fd)
+        CLUSTER_G = G0_gpu[sort_idx]  # (N, fd, d)
 
-    uniq_labels, CLUSTER_SIZES = xp.unique(labels0[sort_idx], return_counts=True)
-    CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
+        uniq_labels, CLUSTER_SIZES = xp.unique(labels0[sort_idx], return_counts=True)
+        CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
 
-    # Free temp buffers
-    del X0_gpu, F0_gpu, G0_gpu, labels0, sort_idx, uniq_labels
-    mempool.free_all_blocks()
+        # Free temp buffers
+        del X0_gpu, F0_gpu, G0_gpu, labels0, sort_idx, uniq_labels
+        mempool.free_all_blocks()
 
-    # Allocate Output Buffers on CPU (Host) to save VRAM
-    buffers, out_cap = allocate_output_buffers_cpu(
-        MAX_CLUSTERS_EST, d, fd, STORE_HESSIAN_SQRT_PER_CLUSTER
-    )
-    out_count = 0
+        # Allocate Output Buffers on CPU (Host) to save VRAM
+        buffers, out_cap = allocate_output_buffers_cpu(
+            MAX_CLUSTERS_EST, d, fd, STORE_HESSIAN_SQRT_PER_CLUSTER
+        )
+        out_count = 0
 
     # --- 2. Main Refinement Loop (BFS) ---
     level = 0
@@ -838,15 +842,16 @@ def adaptive_clustering(
                 break
 
             # 1. Zero-Copy Slicing from GPU Arrays
-            sizes = CLUSTER_SIZES[start_cluster_idx:end_cluster_idx]
-            starts_local = CLUSTER_STARTS[start_cluster_idx:end_cluster_idx]
-            slice_start = int(starts_local[0])
-            slice_end = int(starts_local[-1] + sizes[-1])
+            with CudaTimer("time_slicing", profiling_stats, PROFILE_TIMING):
+                sizes = CLUSTER_SIZES[start_cluster_idx:end_cluster_idx]
+                starts_local = CLUSTER_STARTS[start_cluster_idx:end_cluster_idx]
+                slice_start = int(starts_local[0])
+                slice_end = int(starts_local[-1] + sizes[-1])
 
-            pts = CLUSTER_PTS[slice_start:slice_end]
-            f_vals = CLUSTER_F[slice_start:slice_end]
-            g_vals = CLUSTER_G[slice_start:slice_end]
-            starts_local_shifted = starts_local - slice_start
+                pts = CLUSTER_PTS[slice_start:slice_end]
+                f_vals = CLUSTER_F[slice_start:slice_end]
+                g_vals = CLUSTER_G[slice_start:slice_end]
+                starts_local_shifted = starts_local - slice_start
 
             # 2. Augmentation (Synthetic Points via Convex Combinations)
             with CudaTimer("time_synth_gen", profiling_stats, PROFILE_TIMING):
@@ -1320,17 +1325,18 @@ def adaptive_clustering(
             log_mem_stats(f"End: L{level:02} Transition")
 
         # Cleanup Host Buffers
-        del (
-            next_level_X_list,
-            next_level_F_list,
-            next_level_G_list,
-            next_level_sizes_list,
-            next_X,
-            next_F,
-            next_G,
-            next_sizes,
-        )
-        gc.collect()
+        with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
+            del (
+                next_level_X_list,
+                next_level_F_list,
+                next_level_G_list,
+                next_level_sizes_list,
+                next_X,
+                next_F,
+                next_G,
+                next_sizes,
+            )
+            gc.collect()
 
         logger.info(
             f"Level {level:02}: Clusters (start): {num_clusters:,}, "
