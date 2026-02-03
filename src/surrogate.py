@@ -188,10 +188,10 @@ class HATANNSurrogate:
                 grads = xp.asarray(results["g"])
                 radii = xp.asarray(results["radii"])
                 Qs = xp.asarray(results["Q"])
-                num_levels = results.get("num_levels", -1)
-                num_generated_pts = results.get("num_generated_pts", -1)
-                total_f_evals = results.get("total_f_evals", -1)
-                profiling_stats = results.get("profiling_stats", {})
+                profiling_stats = results["profiling_stats"]
+                num_levels = profiling_stats["num_levels"]
+                num_generated_pts = profiling_stats["num_generated_pts"]
+                total_f_evals = profiling_stats["total_f_evals"]
 
             # 2. Store Data
             self.X_src = centroids
