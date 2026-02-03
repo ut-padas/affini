@@ -55,7 +55,7 @@ class HATANNSurrogate:
         USE_HESSIAN_INFORMED_SPLIT: bool = True,
         IGNORE_GRADIENT: bool = False,
         BATCH_SIZE: int = 10_000_000,
-        profile_timing: bool = False,
+        PROFILE_TIMING: bool = False,
     ):
         """
         Train the surrogate model or load from saved file.
@@ -70,7 +70,7 @@ class HATANNSurrogate:
             load_if_exists: If True and save_model file exists, loads instead of training.
             TOL: Tolerance for adaptive clustering
             ... (other clustering parameters)
-            profile_timing: If True, enables detailed performance profiling (GPU only).
+            PROFILE_TIMING: If True, enables detailed performance profiling (GPU only).
         """
         # Handle save_model parameter
         model_filepath = None
@@ -181,7 +181,7 @@ class HATANNSurrogate:
                     SEED=SEED,
                     BATCH_SIZE=BATCH_SIZE,
                     Q_SHRINK=0.05,
-                    PROFILE_TIMING=profile_timing,
+                    PROFILE_TIMING=PROFILE_TIMING,
                 )
                 centroids = xp.asarray(results["centroids"])
                 f_vals = xp.asarray(results["f"])
@@ -502,7 +502,7 @@ if __name__ == "__main__":
         "--tol", type=float, default=5e-2, help="Tolerance for training and evaluation"
     )
     parser.add_argument(
-        "--n-train", type=int, default=200_000, help="Number of training samples"
+        "--n-train", type=int, default=400_000, help="Number of training samples"
     )
     parser.add_argument(
         "--n-test", type=int, default=100_000, help="Number of test samples"
@@ -594,7 +594,7 @@ if __name__ == "__main__":
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
         MAX_CLUSTERS_EST=50_000,
         SEED=SEED,
-        profile_timing=True,
+        PROFILE_TIMING=True,
     )
     _end_train_time = time.perf_counter()
     N_CLUSTERS = surrogate.get_number_of_sources()
@@ -676,6 +676,7 @@ if __name__ == "__main__":
         "median_rel_error_linf": float(median_rel_error_linf),
         "train_time_sec": float(_end_train_time - _start_train_time),
         "predict_time_sec": float(_end_predict_time - _start_predict_time),
+        "profiling_stats": surrogate.profiling_stats,
     }
 
     with open(json_fpath, "w") as json_file:
