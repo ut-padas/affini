@@ -46,6 +46,7 @@ class HATANNSurrogate:
         USE_HESSIAN_INFORMED_SPLIT: bool = True,
         IGNORE_GRADIENT: bool = False,
         BATCH_SIZE: int = 10_000_000,
+        MAX_LEVELS: int = 50,
     ):
         """
         1. Sample X from domain.
@@ -74,6 +75,7 @@ class HATANNSurrogate:
                     USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                     IGNORE_GRADIENT=IGNORE_GRADIENT,
                     Q_SHRINK=0.05,
+                    MAX_LEVELS=MAX_LEVELS
                 )
 
                 centroids = xp.asarray(results["centroids"])
@@ -138,6 +140,12 @@ class HATANNSurrogate:
         if not self.trained:
             raise RuntimeError("Model not trained.")
         return self.X_src
+    
+    def get_trust_regions(self) -> Any:
+        """Return the trust regions for each cluster."""
+        if not self.trained:
+            raise RuntimeError("Model not trained.")
+        return self.Qs_src
 
     def get_number_of_sources(self) -> int:
         """Return the number of source centroids used in training."""

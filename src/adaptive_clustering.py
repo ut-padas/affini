@@ -3,8 +3,8 @@ import time
 from typing import Any, Callable, Literal, Optional
 
 import matplotlib.pyplot as plt
-from cuml.cluster import KMeans as cuKMeans
-from cupyx import scatter_max as cupy_scatter_max
+# from cuml.cluster import KMeans as cuKMeans
+# from cupyx import scatter_max as cupy_scatter_max
 from matplotlib.colors import LogNorm
 from sklearn.cluster import KMeans
 
