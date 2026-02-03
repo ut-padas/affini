@@ -50,8 +50,8 @@ if __name__ == '__main__':
     setup_logging()
 
     # Parameters for surrogate training
-    DIM = 10
-    TOL = 0.01
+    DIM = 5
+    TOL = 0.02
     ERROR_METRIC = 'Linf-global'
     DOMAIN = [-5.0, 5.0]
     SEED = 0
