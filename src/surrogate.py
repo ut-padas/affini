@@ -27,9 +27,6 @@ class HATANNSurrogate:
         self.trust_radii_src = None
         self.Qs_src = None
         self.N_src = 0
-        self.training_num_levels = -1
-        self.num_generated_pts = -1
-        self.total_f_evals = -1
         self.profiling_stats = {}
 
         # Model file path (for saving/loading)
@@ -97,9 +94,6 @@ class HATANNSurrogate:
                 self.trust_radii_src = loaded_model.trust_radii_src
                 self.Qs_src = loaded_model.Qs_src
                 self.N_src = loaded_model.N_src
-                self.training_num_levels = loaded_model.training_num_levels
-                self.num_generated_pts = loaded_model.num_generated_pts
-                self.total_f_evals = loaded_model.total_f_evals
                 self.profiling_stats = loaded_model.profiling_stats
                 self._model_file = model_filepath
                 logger.info(f"Loaded existing model from {model_filepath}")
@@ -149,10 +143,11 @@ class HATANNSurrogate:
                 grads = xp.asarray(results["g"])
                 radii = xp.asarray(results["radii"])
                 Qs = xp.asarray(results["Q"])
-                num_levels = results.get("num_levels", -1)
-                num_generated_pts = results.get("num_generated_pts", -1)
-                total_f_evals = results.get("total_f_evals", -1)
-                profiling_stats = {}
+                profiling_stats = {
+                    "num_levels": results["num_levels"],
+                    "num_generated_pts": results["num_generated_pts"],
+                    "total_f_evals": results["total_f_evals"],
+                }
             else:
                 from src.gpu_adaptive_clustering import (
                     adaptive_clustering as gpu_adaptive_clustering,
@@ -189,9 +184,6 @@ class HATANNSurrogate:
                 radii = xp.asarray(results["radii"])
                 Qs = xp.asarray(results["Q"])
                 profiling_stats = results["profiling_stats"]
-                num_levels = profiling_stats["num_levels"]
-                num_generated_pts = profiling_stats["num_generated_pts"]
-                total_f_evals = profiling_stats["total_f_evals"]
 
             # 2. Store Data
             self.X_src = centroids
@@ -200,9 +192,6 @@ class HATANNSurrogate:
             self.trust_radii_src = radii
             self.Qs_src = Qs
             self.N_src = centroids.shape[0]
-            self.training_num_levels = num_levels
-            self.num_generated_pts = num_generated_pts
-            self.total_f_evals = total_f_evals
             self.profiling_stats = profiling_stats
         else:
             raise NotImplementedError(
@@ -243,9 +232,6 @@ class HATANNSurrogate:
         save_dict = {
             "trained": self.trained,
             "N_src": self.N_src,
-            "training_num_levels": self.training_num_levels,
-            "num_generated_pts": self.num_generated_pts,
-            "total_f_evals": self.total_f_evals,
             "profiling_stats": self.profiling_stats,
         }
 
@@ -316,9 +302,6 @@ class HATANNSurrogate:
         # Restore state
         instance.trained = bool(data["trained"])
         instance.N_src = int(data["N_src"])
-        instance.training_num_levels = int(data["training_num_levels"])
-        instance.num_generated_pts = int(data["num_generated_pts"])
-        instance.total_f_evals = int(data["total_f_evals"])
 
         # profiling_stats is stored as a 0-d array object if saved via np.savez
         # We try to extract it, handling potential absence in older files

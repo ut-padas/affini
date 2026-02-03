@@ -494,9 +494,9 @@ def Problem_experiment_setup(
         predict_time = _end_predict_time - _start_predict_time
 
         N_CLUSTERS = surrogate.get_number_of_sources()
-        num_levels = surrogate.training_num_levels
-        num_generated_pts = surrogate.num_generated_pts
-        total_f_evals = surrogate.total_f_evals
+        num_levels = surrogate.profiling_stats["num_levels"]
+        num_generated_pts = surrogate.profiling_stats["num_generated_pts"]
+        total_f_evals = surrogate.profiling_stats["total_f_evals"]
 
     except Exception as e:
         FAILED = True
