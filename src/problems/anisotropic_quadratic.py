@@ -3,7 +3,7 @@
 from src import Array, xp
 
 C = 10.0  # Constant term
-ANISO_RATIO = 100.0  # How much "stretcheder" each dim is than the previous
+ANISO_RATIO = 100.0
 
 
 def _get_scales(d: int, dtype) -> Array:
