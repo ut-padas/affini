@@ -118,7 +118,7 @@ def ics_quadratic_experiment_no_hess_no_grad() -> Path:
 
     EXP_DIR = ICS26_DIR / "ics_quadratic_no_hessian_no_gradient"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [5]
+    DIMs = [2, 5, 10]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
     case = [
@@ -143,7 +143,7 @@ def ics_quadratic_experiment_no_hess_no_grad() -> Path:
 
         json_path = (
             EXP_DIR
-            / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_nohess{USE_HESSIAN_INFORMED_SPLIT}_nograd{IGNORE_GRADIENT}.json"
+            / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
         )
         json_path.parent.mkdir(parents=True, exist_ok=True)
         if json_path.exists():
@@ -261,10 +261,9 @@ def ics_shifted_gaussians_experiment() -> Path:
 
     EXP_DIR = ICS26_DIR / "ics_shifted_gaussians"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [2]
+    DIMs = [2, 5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    TOLs = [0.05]
-    ERROR_METRICs = ["Linf-local"]
+    ERROR_METRICs = ["Linf-local", "Linf-global"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
@@ -322,55 +321,39 @@ def ics_shifted_gaussians_experiment() -> Path:
             USE_HESSIAN_INFORMED_SPLIT=False,
             IGNORE_GRADIENT=False,
             STORE_TRAIN_EVALS=False,
-            SAVE_TRAINED_DATA=True,
-            SAVE_TEST_DATA=True,
         )
 
     return EXP_DIR
 
 
-def ics_shifted_gaussians_no_hess_experiment() -> Path:
+def ics_shifted_gaussians_experiment_no_hess_no_grad() -> Path:
     CLUSTERING_VERSION = "v2"
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
 
-    EXP_DIR = ICS26_DIR / "ics_shifted_gaussians_no_hessian"
+    EXP_DIR = ICS26_DIR / "ics_shifted_gaussians_no_hess_no_grad"
     create_summary_dataframe(EXP_DIR)
     DIMs = [2, 5]
-    # TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    TOLs = [
-        0.2,
-        0.19,
-        0.18,
-        0.17,
-        0.16,
-        0.15,
-        0.14,
-        0.13,
-        0.12,
-        0.11,
-        0.1,
-        0.09,
-        0.08,
-        0.07,
-        0.06,
-        0.05,
-        0.04,
-        0.03,
-        0.02,
-        0.01,
-    ]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
+    CASES = [
+        (True, False),
+        (False, False),
+        (False, True),
+    ]  # (use_hessian, ignore_gradient)
 
-    combos = list(product(DIMs, TOLs, ERROR_METRICs))
-    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+    combos = list(product(DIMs, TOLs, ERROR_METRICs, CASES))
+    for DIM, TOL, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
+        combos, desc="Experiments"
+    ):
         if DIM >= 4 and TOL <= 5e-4:
             print(
                 f"Skipping experiment for DIM={DIM} with very small TOL={TOL} due to resource constraints."
             )
             continue
         json_path = (
-            EXP_DIR / f"ics26_sgaussians_dim{DIM}_tol{TOL}_metric{ERROR_METRIC}.json"
+            EXP_DIR
+            / f"ics26_sgaussians_dim{DIM}_tol{TOL}_metric{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
         )
         json_path.parent.mkdir(parents=True, exist_ok=True)
         if json_path.exists():
@@ -798,8 +781,8 @@ if __name__ == "__main__":
     # dir2 = ics_shifted_gaussians_no_hess_experiment()
     # create_summary_dataframe(dir2)
 
-    dir2 = ics_shifted_gaussians_experiment()
-    create_summary_dataframe(dir2)
+    # dir2 = ics_shifted_gaussians_experiment()
+    # create_summary_dataframe(dir2)
 
     # dir3 = ics_rosenbrock_experiment()
     # create_summary_dataframe(dir3)
@@ -813,7 +796,7 @@ if __name__ == "__main__":
     # dir5 = ics_quadratic_runtime_scalability_experiment()
     # create_summary_dataframe(dir5)
 
-    dir6 = ics_quadratic_experiment_no_hess_no_grad()
+    dir6 = ics_shifted_gaussians_experiment_no_hess_no_grad()
     create_summary_dataframe(dir6)
 
     # generate_train_data_for_neural_network()
