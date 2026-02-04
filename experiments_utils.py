@@ -381,6 +381,8 @@ def Problem_experiment_setup(
     IGNORE_GRADIENT: bool = False,
     BATCH_SIZE: int = 10_000_000,
     PROFILE_TIMING: bool = False,
+    SAVE_TRAINED_DATA: bool = False,
+    SAVE_TEST_DATA: bool = False,
 ):
     if json_fpath.exists():
         print(f"Result file {json_fpath} already exists. Skipping experiment.")
@@ -476,9 +478,24 @@ def Problem_experiment_setup(
             _end_train_time = time.perf_counter()
             _TRAINED = True
 
+        if SAVE_TRAINED_DATA:
+            trained_data_path = json_fpath.with_name(
+                json_fpath.stem + "_trained_data.npz"
+            )
+            _t_d = surrogate.get_trained_data_as_dict()
+            np.savez_compressed(trained_data_path, **_t_d)
+            print(f"Trained surrogate data saved to {trained_data_path}")
+
         # Evaluate
         print("--- Evaluation ---")
         ground_truth = f_fn(X_test)
+
+        if SAVE_TEST_DATA:
+            test_data_path = json_fpath.with_name(json_fpath.stem + "_test_data.npz")
+            np.savez_compressed(
+                test_data_path, X_test=X_test, ground_truth=ground_truth
+            )
+            print(f"Test data saved to {test_data_path}")
 
         # Example utilizing the new signature with Guarantee checks
         _start_predict_time = time.perf_counter()
