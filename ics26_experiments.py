@@ -285,20 +285,14 @@ def ics_anisotropic_quadratic_experiment_no_hess_no_grad() -> Path:
     for DIM, TOL, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
         combos, desc="Experiments"
     ):
-        if (
-            DIM == 10
-            and (TOL <= 0.01 and ERROR_METRIC == "Linf-local")
-            or (TOL <= 0.005 and ERROR_METRIC == "Linf-global")
-        ):
+        if DIM >= 5 and IGNORE_GRADIENT is True:
             print(
-                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC}, USE_HESSIAN_INFORMED_SPLIT={USE_HESSIAN_INFORMED_SPLIT}, IGNORE_GRADIENT={IGNORE_GRADIENT} due to resource constraints."
             )
             continue
 
-        if (
-            DIM == 10
-            and USE_HESSIAN_INFORMED_SPLIT is False
-            and IGNORE_GRADIENT is True
+        if USE_HESSIAN_INFORMED_SPLIT is False and (
+            (DIM >= 5 and TOL <= 0.05) or (DIM >= 10 and TOL <= 0.1)
         ):
             print(
                 f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC}, USE_HESSIAN_INFORMED_SPLIT={USE_HESSIAN_INFORMED_SPLIT}, IGNORE_GRADIENT={IGNORE_GRADIENT} due to resource constraints."
