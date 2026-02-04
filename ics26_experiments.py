@@ -118,10 +118,14 @@ def ics_quadratic_experiment_no_hess_no_grad() -> Path:
 
     EXP_DIR = ICS26_DIR / "ics_quadratic_no_hessian_no_gradient"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 5, 10]
+    DIMs = [5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
-    case = [(False, False), (False, True)]  # (use_hessian, ignore_gradient)
+    case = [
+        (True, False),
+        (False, False),
+        (False, True),
+    ]  # (use_hessian, ignore_gradient)
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs, case))
     for DIM, TOL, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
