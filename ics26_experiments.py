@@ -636,6 +636,7 @@ def ics_rosenbrock_experiment_no_hess_no_grad() -> Path:
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
             IGNORE_GRADIENT=IGNORE_GRADIENT,
+            PLOT_CONTOUR_IN_LOG_SCALE=True,
         )
 
     return EXP_DIR
@@ -808,16 +809,27 @@ def generate_train_data_for_neural_network() -> None:
     DIM = 5
     FORCING = 1
     FINAL_TIME = 0.1
-    lorenz_f = partial(lorenz96_flowmap, forcing=FORCING, tf=FINAL_TIME)
-    lorenz_g = partial(lorenz96_flowmap_grad, forcing=FORCING, tf=FINAL_TIME)
+    OUTPUT_VARIABLE = 0
+
+    def lorenz_f(x):
+        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
+        N, _ = f.shape
+        return f[:, OUTPUT_VARIABLE].reshape((N, 1))
+
+    def lorenz_g(x):
+        g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+        N, d, _ = g.shape
+        return g[:, OUTPUT_VARIABLE, :].reshape((N, 1, d))
+
     _evals_dir = (
-        TRAIN_EVALS_ROOT / f"lorenz96_{DIM}d_F{FORCING}_tf{FINAL_TIME}_tol{TOL}"
+        TRAIN_EVALS_ROOT
+        / f"lorenz96_{DIM}d_output_var{OUTPUT_VARIABLE}_F{FORCING}_tf{FINAL_TIME}_tol{TOL}"
     )
     Problem_experiment_setup(
         json_fpath=TRAIN_EVALS_ROOT
-        / f"ics26_lorenz96_{DIM}d_F{FORCING}_tf{FINAL_TIME}_tol{TOL}_train_evals.json",
+        / f"ics26_lorenz96_{DIM}d_output_var{OUTPUT_VARIABLE}_F{FORCING}_tf{FINAL_TIME}_tol{TOL}.json",
         DIM=DIM,
-        F_DIM=DIM,
+        F_DIM=1,
         DOMAIN=[-5.0, 5.0],
         TOL=TOL,
         f_fn=lorenz_f,
@@ -834,6 +846,8 @@ def generate_train_data_for_neural_network() -> None:
         TRAIN_EVALS_DIR=_evals_dir,
         TRAIN_EVALS_PREFIX=_prefix,
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+        SAVE_TEST_DATA=True,
+        SAVE_TRAINED_DATA=True,
     )
     for _p in ["_f", "_g"]:
         consolidate_evaluations(
@@ -851,54 +865,34 @@ def ics_lorenz_experiment() -> Path:
     We are not worrying about sampling along manifolds in this case.
     Imagine this is the very first time step in a string of simulations.
     """
-
-    # We must modify the functions to include forcing and tf as constants.
-
     FORCING = 1
     FINAL_TIME = 0.1
-    # OUTPUT_VARIABLE = 0
+    OUTPUT_VARIABLE = 0
 
-    # For now, just do gradient in the first variable.
-    # This way the output of the function is 1d.
     def f(x):
         f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
-        # N, d = f.shape
-        # return f[:, OUTPUT_VARIABLE].reshape((N, 1))
-        return f
+        N, _ = f.shape
+        return f[:, OUTPUT_VARIABLE].reshape((N, 1))
 
     def grad_f(x):
         g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
-        # N, d, _ = g.shape
-        # return g[:, OUTPUT_VARIABLE, :].reshape((N, 1, d))
-        return g
+        N, d, _ = g.shape
+        return g[:, OUTPUT_VARIABLE, :].reshape((N, 1, d))
 
     MAX_CLUSTERS_EST = 20_000
 
     K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
 
-    EXP_DIR = ICS26_DIR / "lorenz_all_d_out_tf_0.1_F_1_v2"
+    EXP_DIR = (
+        ICS26_DIR
+        / f"ics_lorenz_finaltime{FINAL_TIME}_outputvar{OUTPUT_VARIABLE}_forcing{FORCING}"
+    )
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
 
     DIMs = [5, 10]
-    TOLs = [
-        0.5,
-        0.45,
-        0.4,
-        0.35,
-        0.3,
-        0.25,
-        0.2,
-        0.15,
-        0.1,
-        0.08,
-        0.05,
-        0.04,
-        0.02,
-        0.01,
-        0.005,
-    ]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
@@ -911,7 +905,10 @@ def ics_lorenz_experiment() -> Path:
             )
             continue
 
-        json_path = EXP_DIR / f"ics26_lorenz_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        json_path = (
+            EXP_DIR
+            / f"ics26_lorenz_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_outputvar{OUTPUT_VARIABLE}.json"
+        )
         json_path.parent.mkdir(parents=True, exist_ok=True)
         if json_path.exists():
             print(f"Skipping existing experiment at {json_path}")
@@ -974,13 +971,15 @@ if __name__ == "__main__":
     # dir6 = ics_shifted_gaussians_experiment_no_hess_no_grad()
     # create_summary_dataframe(dir6)
 
-    # dir7 = ics_quadratic_experiment_no_hess_no_grad()
-    # create_summary_dataframe(dir7)
+    # # dir7 = ics_quadratic_experiment_no_hess_no_grad()
+    # # create_summary_dataframe(dir7)
 
     # dir8 = ics_rosenbrock_experiment_no_hess_no_grad()
     # create_summary_dataframe(dir8)
 
-    dir9 = ics_anisotropic_quadratic_experiment_no_hess_no_grad()
-    create_summary_dataframe(dir9)
+    # dir9 = ics_anisotropic_quadratic_experiment_no_hess_no_grad()
+    # create_summary_dataframe(dir9)
 
     # generate_train_data_for_neural_network()
+
+    # ics_lorenz_experiment()
