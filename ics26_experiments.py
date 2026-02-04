@@ -489,6 +489,84 @@ def ics_rosenbrock_experiment() -> Path:
     return EXP_DIR
 
 
+def ics_rosenbrock_experiment_no_hess_no_grad() -> Path:
+    MAX_CLUSTERS_EST = 100_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "ics_rosenbrock_no_hess_no_grad"
+    create_summary_dataframe(EXP_DIR)
+
+    DIMs = [2, 5, 10]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+    ERROR_METRICs = ["Linf-local"]
+    CASES = [
+        (True, False),
+        (False, False),
+        (False, True),
+    ]  # (use_hessian, ignore_gradient)
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs, CASES))
+    for DIM, TOL, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
+        combos, desc="Rosenbrock Experiments"
+    ):
+        if DIM == 10 and (
+            (TOL <= 0.1 and ERROR_METRIC == "Linf-local")
+            or (TOL <= 0.02 and ERROR_METRIC == "Linf-global")
+        ):
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
+            )
+            continue
+
+        if (
+            DIM == 10
+            and USE_HESSIAN_INFORMED_SPLIT is False
+            and IGNORE_GRADIENT is True
+            and TOL <= 0.01
+        ):
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC}, USE_HESSIAN_INFORMED_SPLIT={USE_HESSIAN_INFORMED_SPLIT}, IGNORE_GRADIENT={IGNORE_GRADIENT} due to resource constraints."
+            )
+
+        json_path = (
+            EXP_DIR
+            / f"ics26_rosenbrock_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            F_DIM=1,
+            DOMAIN=[-2.0, 3.0],
+            f_fn=rosenbrock,
+            g_fn=rosenbrock_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            IGNORE_GRADIENT=IGNORE_GRADIENT,
+        )
+
+    return EXP_DIR
+
+
 def ics_rosenbrock_n_min_per_cluster_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
@@ -824,5 +902,8 @@ if __name__ == "__main__":
 
     dir7 = ics_quadratic_experiment_no_hess_no_grad()
     create_summary_dataframe(dir7)
+
+    dir8 = ics_rosenbrock_experiment_no_hess_no_grad()
+    create_summary_dataframe(dir8)
 
     # generate_train_data_for_neural_network()
