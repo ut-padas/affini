@@ -381,6 +381,8 @@ def Problem_experiment_setup(
     IGNORE_GRADIENT: bool = False,
     BATCH_SIZE: int = 10_000_000,
     PROFILE_TIMING: bool = False,
+    SAVE_TRAINED_DATA: bool = False,
+    SAVE_TEST_DATA: bool = False,
 ):
     if json_fpath.exists():
         print(f"Result file {json_fpath} already exists. Skipping experiment.")
@@ -476,9 +478,24 @@ def Problem_experiment_setup(
             _end_train_time = time.perf_counter()
             _TRAINED = True
 
+        if SAVE_TRAINED_DATA:
+            trained_data_path = json_fpath.with_name(
+                json_fpath.stem + "_trained_data.npz"
+            )
+            _t_d = surrogate.get_trained_data_as_dict()
+            np.savez_compressed(trained_data_path, **_t_d)
+            print(f"Trained surrogate data saved to {trained_data_path}")
+
         # Evaluate
         print("--- Evaluation ---")
         ground_truth = f_fn(X_test)
+
+        if SAVE_TEST_DATA:
+            test_data_path = json_fpath.with_name(json_fpath.stem + "_test_data.npz")
+            np.savez_compressed(
+                test_data_path, X_test=X_test, ground_truth=ground_truth
+            )
+            print(f"Test data saved to {test_data_path}")
 
         # Example utilizing the new signature with Guarantee checks
         _start_predict_time = time.perf_counter()
@@ -539,6 +556,7 @@ def Problem_experiment_setup(
         K_NEIGHBOURS=K_NEIGHBOURS,
         CLUSTERING_VERSION=CLUSTERING_VERSION,
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+        IGNORE_GRADIENT=IGNORE_GRADIENT,
         ERROR_METRIC=ERROR_METRIC,
         BATCH_SIZE=BATCH_SIZE,
         PROFILE_TIMING=PROFILE_TIMING,
@@ -626,40 +644,45 @@ def Problem_experiment_setup(
         for i in range(centroids.shape[0]):
             mu = centroids[i]
             Q = Qs[i]
-            radius = radii[i]
 
-            # Eigen decomposition
+            # 1. Eigen decomposition
             eigvals, eigvecs = np.linalg.eigh(Q)
-            # Calculate angle in degrees
-            angle = np.degrees(np.arctan2(eigvecs[1, 0], eigvecs[0, 0]))
-            # Width and height are "2 * sqrt(eigenvalue)" for 1 std dev
-            width, height = 2 * np.sqrt(eigvals)
+
+            order = np.argsort(eigvals)
+            eigvals = eigvals[order]
+            eigvecs = eigvecs[:, order]
+
+            # 2. Calculate Axis Lengths (Inverse Relationship)
+            # The trust region boundary is: (x-mu)^T Q (x-mu) <= r^2
+            # Length of axis = r / sqrt(eigenvalue)
+            # We multiply by 2 to get full width/height (diameter, not radius)
+            # Add epsilon to avoid division by zero
+            axes_lengths = 2.0 * 1.0 / np.sqrt(eigvals + 1e-12)
+
+            # 3. Assign Width/Height
+            # We map index 0 to width and index 1 to height.
+            width = axes_lengths[0]
+            height = axes_lengths[1]
+
+            # 4. Calculate Angle
+            # Since 'width' is based on index 0, we calculate the angle of eigenvector 0.
+            # eigvecs[:, 0] is the vector [x_component, y_component]
+            v0 = eigvecs[:, 0]
+            angle = np.degrees(np.arctan2(v0[1], v0[0]))
+
+            # 5. Create Ellipse
             ellipse = Ellipse(
                 xy=mu,
                 width=width,
                 height=height,
                 angle=angle,
-                edgecolor="blue",
-                facecolor="none",
-                linestyle="--",
-                alpha=0.7,
-                lw=0.8,
-            )
-            axs[1].add_patch(ellipse)
-
-            # Draw trust radius circle
-            circle = Ellipse(
-                xy=mu,
-                width=2 * radius,
-                height=2 * radius,
-                angle=0,
                 edgecolor="black",
                 facecolor="none",
-                linestyle=":",
+                linestyle="-",
                 alpha=0.7,
-                lw=0.8,
+                lw=1.0,
             )
-            axs[1].add_patch(circle)
+            axs[1].add_patch(ellipse)
 
         axs[1].set_title(
             f"Cluster Centroids with Trust Ellipses (N_CLUSTERS={N_CLUSTERS})",
@@ -668,8 +691,8 @@ def Problem_experiment_setup(
         axs[1].set_xlabel(r"$x_1$")
         axs[1].set_ylabel(r"$x_2$")
         axs[1].set_aspect("equal")
-        axs[1].set_xlim(DOMAIN[0], DOMAIN[1])
-        axs[1].set_ylim(DOMAIN[0], DOMAIN[1])
+        # axs[1].set_xlim(DOMAIN[0], DOMAIN[1])
+        # axs[1].set_ylim(DOMAIN[0], DOMAIN[1])
         plt.legend()
 
         fname = json_fpath.name.replace(".json", "_centroids_ellipses.png")

@@ -869,6 +869,8 @@ def adaptive_clustering(
 
                 # Map augmented indices to local cluster IDs
                 # Eg: aug_sizes = [3,5,2] -> aug_ids = [0,0,0,1,1,1,1,1,2,2]
+                # Aug starts: starting index of each cluster in augmented batch
+                # Eg: aug_sizes = [3,5,2] -> aug_starts = [0,3,8,10]
                 aug_starts = xp.r_[0, xp.cumsum(aug_sizes)[:-1]]
                 aug_ids = repeats(xp.arange(K_batch), aug_sizes)
 

@@ -43,6 +43,12 @@ def repeats(values: Array, repeats: Array) -> Array:
 
     Returns:
         cp.ndarray: The expanded array
+
+    Example::
+        values = cp.array([10, 20, 30])
+        repeats = cp.array([3, 0, 2])
+        result = repeats(values, repeats)
+        # result is cp.array([10, 10, 10, 30, 30])
     """
     # 1. Calculate the output positions (offsets)
     # If repeats is [3, 0, 2], offsets is [0, 3, 3, 5]
