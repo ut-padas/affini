@@ -141,6 +141,16 @@ def ics_quadratic_experiment_no_hess_no_grad() -> Path:
             )
             continue
 
+        if (
+            DIM == 10
+            and USE_HESSIAN_INFORMED_SPLIT is False
+            and IGNORE_GRADIENT is True
+        ):
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC}, USE_HESSIAN_INFORMED_SPLIT={USE_HESSIAN_INFORMED_SPLIT}, IGNORE_GRADIENT={IGNORE_GRADIENT} due to resource constraints."
+            )
+            continue
+
         json_path = (
             EXP_DIR
             / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
@@ -351,6 +361,18 @@ def ics_shifted_gaussians_experiment_no_hess_no_grad() -> Path:
                 f"Skipping experiment for DIM={DIM} with very small TOL={TOL} due to resource constraints."
             )
             continue
+
+        if (
+            DIM >= 5
+            and USE_HESSIAN_INFORMED_SPLIT is False
+            and IGNORE_GRADIENT is True
+            and TOL <= 0.05
+        ):
+            print(
+                f"Skipping experiment for DIM={DIM} with TOL={TOL}, USE_HESSIAN_INFORMED_SPLIT={USE_HESSIAN_INFORMED_SPLIT}, IGNORE_GRADIENT={IGNORE_GRADIENT} due to resource constraints."
+            )
+            continue
+
         json_path = (
             EXP_DIR
             / f"ics26_sgaussians_dim{DIM}_tol{TOL}_metric{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
@@ -359,6 +381,7 @@ def ics_shifted_gaussians_experiment_no_hess_no_grad() -> Path:
         if json_path.exists():
             print(f"Skipping existing experiment at {json_path}")
             continue
+
         print(f"Running experiment: {json_path}")
 
         N_TRAIN = get_N_TRAIN(DIM)
@@ -798,5 +821,8 @@ if __name__ == "__main__":
 
     dir6 = ics_shifted_gaussians_experiment_no_hess_no_grad()
     create_summary_dataframe(dir6)
+
+    dir7 = ics_quadratic_experiment_no_hess_no_grad()
+    create_summary_dataframe(dir7)
 
     # generate_train_data_for_neural_network()
