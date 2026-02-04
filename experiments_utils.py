@@ -480,7 +480,7 @@ def Problem_experiment_setup(
 
         if SAVE_TRAINED_DATA:
             trained_data_path = json_fpath.with_name(
-                json_fpath.stem + "_trained_data.npz"
+                json_fpath.stem + "_trained_clusters_data.npz"
             )
             _t_d = surrogate.get_trained_data_as_dict()
             np.savez_compressed(trained_data_path, **_t_d)
