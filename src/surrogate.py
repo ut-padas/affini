@@ -32,6 +32,27 @@ class HATANNSurrogate:
         # Model file path (for saving/loading)
         self._model_file = None
 
+    def get_trained_data_as_dict(self) -> dict:
+        """
+        Return the trained data as a dictionary of arrays.
+        Useful for saving or inspection.
+
+        Returns:
+            Dictionary containing trained data arrays.
+        """
+        if not self.trained:
+            raise RuntimeError("Model not trained.")
+
+        return {
+            "X_src": self.X_src,
+            "f_src": self.f_src,
+            "J_src": self.J_src,
+            "trust_radii_src": self.trust_radii_src,
+            "Qs_src": self.Qs_src,
+            "N_src": self.N_src,
+            "profiling_stats": self.profiling_stats,
+        }
+
     def train(
         self,
         X_train: Array,
@@ -137,7 +158,7 @@ class HATANNSurrogate:
                     USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                     IGNORE_GRADIENT=IGNORE_GRADIENT,
                     Q_SHRINK=0.05,
-                    MAX_LEVELS=MAX_LEVELS
+                    MAX_LEVELS=MAX_LEVELS,
                 )
 
                 centroids = xp.asarray(results["centroids"])
@@ -355,7 +376,7 @@ class HATANNSurrogate:
         if not self.trained:
             raise RuntimeError("Model not trained.")
         return self.X_src
-    
+
     def get_trust_regions(self) -> Any:
         """Return the trust regions for each cluster."""
         if not self.trained:
