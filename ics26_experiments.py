@@ -111,6 +111,71 @@ def ics_quadratic_experiment() -> Path:
     return EXP_DIR
 
 
+def ics_quadratic_experiment_no_hess_no_grad() -> Path:
+    MAX_CLUSTERS_EST = 100_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "ics_quadratic_no_hessian_no_gradient"
+    create_summary_dataframe(EXP_DIR)
+    DIMs = [2, 5, 10]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+    ERROR_METRICs = ["Linf-local"]
+    case = [(False, False), (False, True)]  # (use_hessian, ignore_gradient)
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs, case))
+    for DIM, TOL, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
+        combos, desc="Experiments"
+    ):
+        if (
+            DIM == 10
+            and (TOL <= 0.01 and ERROR_METRIC == "Linf-local")
+            or (TOL <= 0.005 and ERROR_METRIC == "Linf-global")
+        ):
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
+            )
+            continue
+
+        json_path = (
+            EXP_DIR
+            / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_nohess{USE_HESSIAN_INFORMED_SPLIT}_nograd{IGNORE_GRADIENT}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            F_DIM=1,
+            DOMAIN=[-2, 2],
+            f_fn=quadratic,
+            g_fn=quadratic_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            IGNORE_GRADIENT=IGNORE_GRADIENT,
+            STORE_TRAIN_EVALS=False,
+        )
+
+    return EXP_DIR
+
+
 def ics_quadratic_runtime_scalability_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
@@ -738,7 +803,10 @@ if __name__ == "__main__":
     # dir4 = ics_lorenz_experiment()
     # create_summary_dataframe(dir4)
 
-    dir5 = ics_quadratic_runtime_scalability_experiment()
-    create_summary_dataframe(dir5)
+    # dir5 = ics_quadratic_runtime_scalability_experiment()
+    # create_summary_dataframe(dir5)
+
+    dir6 = ics_quadratic_experiment_no_hess_no_grad()
+    create_summary_dataframe(dir6)
 
     # generate_train_data_for_neural_network()
