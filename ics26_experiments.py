@@ -398,8 +398,8 @@ def ics_shifted_gaussians_experiment_no_hess_no_grad() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=False,
-            IGNORE_GRADIENT=False,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            IGNORE_GRADIENT=IGNORE_GRADIENT,
             STORE_TRAIN_EVALS=False,
         )
 
