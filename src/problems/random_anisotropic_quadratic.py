@@ -3,6 +3,7 @@
 from src import Array, xp
 
 SEED = 0
+DIAGONAL_EXPONENT = 1.5
 
 
 def _get_random_rotation(d: int, dtype) -> Array:
@@ -22,7 +23,7 @@ def random_aniso_quadratic(X: Array) -> Array:
     """
     Computes the Randomly Rotated Anisotropic Quadratic function.
     f(x) = x^T (Q S Q^T) x
-    where Q is a random rotation matrix and S = diag([(1/i)^4 for i in 1..d])
+    where Q is a random rotation matrix and S = diag([(1/i)^DIAGONAL_EXPONENT for i in 1..d])
     Args:
         X: (N, d) data matrix
     Returns:
@@ -31,8 +32,10 @@ def random_aniso_quadratic(X: Array) -> Array:
     N, d = X.shape
     dtype = X.dtype
 
-    # Create scales: S = diag([(1/i)^4 for i in 1..d])
-    scales = xp.array([(1.0 / (i + 1)) ** 4 for i in range(d)], dtype=dtype)  # (d,)
+    # Create scales: S = diag([(1/i)^DIAGONAL_EXPONENT for i in 1..d])
+    scales = xp.array(
+        [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(d)], dtype=dtype
+    )  # (d,)
 
     # Create random rotation matrix Q
     Q = _get_random_rotation(d, dtype)  # (d, d)
@@ -57,8 +60,10 @@ def random_aniso_quadratic_grad(X: Array) -> Array:
     N, d = X.shape
     dtype = X.dtype
 
-    # Create scales: S = diag([(1/i)^4 for i in 1..d])
-    scales = xp.array([(1.0 / (i + 1)) ** 4 for i in range(d)], dtype=dtype)  # (d,)
+    # Create scales: S = diag([(1/i)^DIAGONAL_EXPONENT for i in 1..d])
+    scales = xp.array(
+        [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(d)], dtype=dtype
+    )  # (d,)
 
     # Create random rotation matrix Q
     Q = _get_random_rotation(d, dtype)  # (d, d)
@@ -86,8 +91,10 @@ def random_aniso_quadratic_hess(X: Array) -> Array:
     N, d = X.shape
     dtype = X.dtype
 
-    # Create scales: S = diag([(1/i)^4 for i in 1..d])
-    scales = xp.array([(1.0 / (i + 1)) ** 4 for i in range(d)], dtype=dtype)  # (d,)
+    # Create scales: S = diag([(1/i)^DIAGONAL_EXPONENT for i in 1..d])
+    scales = xp.array(
+        [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(d)], dtype=dtype
+    )  # (d,)
 
     # Create random rotation matrix Q
     Q = _get_random_rotation(d, dtype)  # (d, d)

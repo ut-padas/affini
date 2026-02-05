@@ -3,6 +3,7 @@
 from src import Array, xp
 
 SEED = 0
+DIAGONAL_EXPONENT = 1.5
 
 
 def _get_random_rotation(d: int, dtype) -> Array:
@@ -31,7 +32,9 @@ def random_aniso_gaussian(X: Array) -> Array:
     dtype = X.dtype
 
     # Create scales (Eigenvalues of the matrix in the exponent)
-    scales = xp.array([(1.0 / (i + 1)) ** 4 for i in range(d)], dtype=dtype)
+    scales = xp.array(
+        [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(d)], dtype=dtype
+    )
 
     # Create random rotation matrix Q
     Q = _get_random_rotation(d, dtype)
@@ -67,7 +70,9 @@ def random_aniso_gaussian_grad(X: Array) -> Array:
     F = random_aniso_gaussian(X)  # (N, 1)
 
     # --- 2. Compute Matrix-Vector product (Q S Q^T x) ---
-    scales = xp.array([(1.0 / (i + 1)) ** 4 for i in range(d)], dtype=dtype)
+    scales = xp.array(
+        [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(d)], dtype=dtype
+    )
     Q = _get_random_rotation(d, dtype)
 
     # M x = Q (S (Q^T x))
@@ -98,7 +103,9 @@ def random_aniso_gaussian_hess(X: Array) -> Array:
     F = random_aniso_gaussian(X)  # (N, 1)
 
     # --- 2. Construct Matrix M = Q S Q^T ---
-    scales = xp.array([(1.0 / (i + 1)) ** 4 for i in range(d)], dtype=dtype)
+    scales = xp.array(
+        [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(d)], dtype=dtype
+    )
     Q = _get_random_rotation(d, dtype)
     S_mat = xp.diag(scales)
 
