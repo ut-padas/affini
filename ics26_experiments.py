@@ -236,12 +236,12 @@ def ics_aniso_quadratic_experiment_no_hess_no_grad() -> Path:
     EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_no_hess_no_grad"
     create_summary_dataframe(EXP_DIR)
 
-    DIMs = [5]
+    DIMs = [5, 10]
     ERROR_METRICs = ["Linf-local"]
-    CASES = [(False, True)]  # (use_hessian, ignore_gradient)
+    CASES = [(False, True)]  # (use_hessian, ignore_gradint)
 
-    TOLS_FOR_DIM5 = [0.9, 0.9, 0.7]
-    TOLS_FOR_DIM10 = [0.52, 0.44, 0.29, 0.175]
+    TOLS_FOR_DIM5 = [0.924, 0.885, 0.77, 0.62, 0.44]
+    TOLS_FOR_DIM10 = [0.9795, 0.975, 0.925, 0.871]
 
     combos = list(product(DIMs, ERROR_METRICs, CASES))
     for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
