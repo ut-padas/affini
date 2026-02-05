@@ -4,6 +4,8 @@ import numpy as np
 import sympy as sp
 
 from src.problems.anisotropic_quadratic import (
+    BETA,
+    DECAY_EXPONENT,
     SEED,
     _get_params,
     _get_random_rotation,
@@ -12,15 +14,11 @@ from src.problems.anisotropic_quadratic import (
     aniso_quadratic_hess,
 )
 
-# Default parameter values for testing
-DEFAULT_BETA = 10.0
-DEFAULT_DECAY_EXPONENT = 3.0
-
 
 def _sympy_aniso_quadratic_f_g_h(
     n_dim: int,
-    beta: float = DEFAULT_BETA,
-    decay_exp: float = DEFAULT_DECAY_EXPONENT,
+    beta: float = BETA,
+    decay_exp: float = DECAY_EXPONENT,
 ):
     """Create symbolic function, gradient, and Hessian for anisotropic quadratic function."""
     x = sp.symbols(f"x0:{n_dim}")
@@ -82,8 +80,8 @@ class TestAnisoQuadraticSympyDerivatives(unittest.TestCase):
 
         # Test configurations: (dimension, beta, decay_exp)
         cls.test_configs = [
-            (2, DEFAULT_BETA, DEFAULT_DECAY_EXPONENT),
-            (3, DEFAULT_BETA, DEFAULT_DECAY_EXPONENT),
+            (2, BETA, DECAY_EXPONENT),
+            (3, BETA, DECAY_EXPONENT),
             (4, 5.0, 2.0),
             (5, 15.0, 4.0),
         ]
@@ -150,7 +148,7 @@ class TestAnisoQuadraticSympyDerivatives(unittest.TestCase):
         """Test properties of the eigenvalues."""
 
         n_dim = 4
-        w, H = _get_params(n_dim, np.float64, DEFAULT_DECAY_EXPONENT)
+        w, H = _get_params(n_dim, np.float64, DECAY_EXPONENT)
 
         # Weight vector should be all ones
         expected_w = np.ones(n_dim)
@@ -167,7 +165,7 @@ class TestAnisoQuadraticSympyDerivatives(unittest.TestCase):
         eigenvals_sorted = np.sort(eigenvals)[::-1]  # Sort in descending order
 
         # The largest eigenvalue should correspond to 1^(-DEFAULT_DECAY_EXPONENT) = 1
-        expected_largest = 1.0 ** (-DEFAULT_DECAY_EXPONENT)
+        expected_largest = 1.0 ** (-DECAY_EXPONENT)
         self.assertAlmostEqual(eigenvals_sorted[0], expected_largest, places=10)
 
     def test_function_properties(self):
@@ -183,7 +181,7 @@ class TestAnisoQuadraticSympyDerivatives(unittest.TestCase):
         # At origin, function should equal beta (since w^T * 0 + 0^T * H * 0 = 0)
         X_origin = np.zeros((1, 2), dtype=np.float64)
         f_origin = aniso_quadratic(X_origin)
-        np.testing.assert_allclose(f_origin, [[DEFAULT_BETA]], rtol=1e-12, atol=1e-14)
+        np.testing.assert_allclose(f_origin, [[BETA]], rtol=1e-12, atol=1e-14)
 
     def test_gradient_properties(self):
         """Test properties of the gradient."""
