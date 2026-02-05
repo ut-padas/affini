@@ -161,6 +161,140 @@ def ics_aniso_quadratic_experiment() -> Path:
     return EXP_DIR
 
 
+def ics_aniso_quadratic_experiment_no_hess() -> Path:
+    MAX_CLUSTERS_EST = 100_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_no_hess"
+    create_summary_dataframe(EXP_DIR)
+
+    DIMs = [5, 10]
+    ERROR_METRICs = ["Linf-local"]
+    CASES = [(False, False)]  # (use_hessian, ignore_gradient)
+
+    TOLS_FOR_DIM5 = [0.38, 0.295, 0.155, 0.074, 0.034]
+    TOLS_FOR_DIM10 = [0.52, 0.44, 0.29, 0.175]
+
+    combos = list(product(DIMs, ERROR_METRICs, CASES))
+    for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
+        combos, desc="Experiments"
+    ):
+        if DIM == 5:
+            TOLs = TOLS_FOR_DIM5
+        elif DIM == 10:
+            TOLs = TOLS_FOR_DIM10
+        else:
+            raise ValueError(f"Unexpected DIM: {DIM}")
+
+        for TOL in TOLs:
+            json_path = (
+                EXP_DIR
+                / f"ics26_aniso_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
+            )
+            json_path.parent.mkdir(parents=True, exist_ok=True)
+            if json_path.exists():
+                print(f"Skipping existing experiment at {json_path}")
+                continue
+            print(f"Running experiment: {json_path}")
+
+            N_TRAIN = get_N_TRAIN(DIM)
+            N_TEST = N_TRAIN // 2
+            N_INIT_CLUSTERS = 1
+            N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+            Problem_experiment_setup(
+                json_fpath=json_path,
+                DIM=DIM,
+                F_DIM=1,
+                DOMAIN=[-3.0, 3.0],
+                f_fn=aniso_quadratic,
+                g_fn=aniso_quadratic_grad,
+                N_TRAIN=N_TRAIN,
+                N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+                TOL=TOL,
+                N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                N_TEST=N_TEST,
+                K_NEIGHBOURS=K_NEIGHBOURS,
+                CLUSTERING_VERSION=CLUSTERING_VERSION,
+                ERROR_METRIC=ERROR_METRIC,  # type: ignore
+                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                IGNORE_GRADIENT=IGNORE_GRADIENT,
+                PLOT_CONTOUR_IN_LOG_SCALE=True,
+            )
+            create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
+def ics_aniso_quadratic_experiment_no_hess_no_grad() -> Path:
+    MAX_CLUSTERS_EST = 100_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_no_hess_no_grad"
+    create_summary_dataframe(EXP_DIR)
+
+    DIMs = [5]
+    ERROR_METRICs = ["Linf-local"]
+    CASES = [(False, True)]  # (use_hessian, ignore_gradient)
+
+    TOLS_FOR_DIM5 = [0.9, 0.9, 0.7]
+    TOLS_FOR_DIM10 = [0.52, 0.44, 0.29, 0.175]
+
+    combos = list(product(DIMs, ERROR_METRICs, CASES))
+    for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
+        combos, desc="Experiments"
+    ):
+        if DIM == 5:
+            TOLs = TOLS_FOR_DIM5
+        elif DIM == 10:
+            TOLs = TOLS_FOR_DIM10
+        else:
+            raise ValueError(f"Unexpected DIM: {DIM}")
+
+        for TOL in TOLs:
+            json_path = (
+                EXP_DIR
+                / f"ics26_aniso_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
+            )
+            json_path.parent.mkdir(parents=True, exist_ok=True)
+            if json_path.exists():
+                print(f"Skipping existing experiment at {json_path}")
+                continue
+            print(f"Running experiment: {json_path}")
+
+            N_TRAIN = get_N_TRAIN(DIM)
+            N_TEST = N_TRAIN // 2
+            N_INIT_CLUSTERS = 1
+            N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+            Problem_experiment_setup(
+                json_fpath=json_path,
+                DIM=DIM,
+                F_DIM=1,
+                DOMAIN=[-3.0, 3.0],
+                f_fn=aniso_quadratic,
+                g_fn=aniso_quadratic_grad,
+                N_TRAIN=N_TRAIN,
+                N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+                TOL=TOL,
+                N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                N_TEST=N_TEST,
+                K_NEIGHBOURS=K_NEIGHBOURS,
+                CLUSTERING_VERSION=CLUSTERING_VERSION,
+                ERROR_METRIC=ERROR_METRIC,  # type: ignore
+                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                IGNORE_GRADIENT=IGNORE_GRADIENT,
+                PLOT_CONTOUR_IN_LOG_SCALE=True,
+            )
+            create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
 def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
@@ -791,17 +925,23 @@ if __name__ == "__main__":
 
         # ics_lorenz_experiment()
 
-        dir1 = ics_aniso_gaussian_experiment()
-        create_summary_dataframe(dir1)
+        # dir1 = ics_aniso_gaussian_experiment()
+        # create_summary_dataframe(dir1)
 
-        dir2 = ics_aniso_quadratic_experiment()
-        create_summary_dataframe(dir2)
+        # dir2 = ics_aniso_quadratic_experiment()
+        # create_summary_dataframe(dir2)
 
-        dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
-        create_summary_dataframe(dir3)
+        # dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
+        # create_summary_dataframe(dir3)
 
-        dir4 = ics_rosenbrock_runtime_scalability_experiment()
-        create_summary_dataframe(dir4)
+        # dir4 = ics_rosenbrock_runtime_scalability_experiment()
+        # create_summary_dataframe(dir4)
+
+        dir5 = ics_aniso_quadratic_experiment_no_hess()
+        create_summary_dataframe(dir5)
+
+        dir6 = ics_aniso_quadratic_experiment_no_hess_no_grad()
+        create_summary_dataframe(dir6)
 
     else:
         print("Run only on GPU backend.")
