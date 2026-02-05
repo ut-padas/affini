@@ -96,6 +96,10 @@ def parallel_sensitivities_solver(rhs, DfDx, X0, tf):
     # Prepare arguments for each worker
     # We must pass the functions rhs and DfDx. They must be picklable (defined at module level)
     tasks = [(chunk, rhs, DfDx, tf) for chunk in chunks if chunk.shape[0] > 0]
+    mean_chunk_size = X0.shape[0] / len(tasks) if tasks else 0
+    print(
+        f"Total trajectories: {X0.shape[0]:,}, Workers: {len(tasks):,}, Mean chunk size: {mean_chunk_size:.2f}"
+    )
 
     # Run in parallel
     with mp.Pool(processes=len(tasks)) as pool:
@@ -109,5 +113,4 @@ def parallel_sensitivities_solver(rhs, DfDx, X0, tf):
     XF_combined = xp.concat(xf_list, axis=0)
     SF_combined = xp.concat(sf_list, axis=0)
 
-    return XF_combined, SF_combined
     return XF_combined, SF_combined
