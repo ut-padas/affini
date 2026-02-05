@@ -168,9 +168,10 @@ def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
 
     EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_runtime_scalability"
     create_summary_dataframe(EXP_DIR)
-    # del_all_error_files_in_dir(EXP_DIR)
+
+    # DO NOT CHANGE ANY OF THE SETTINGS BELOW
     DIMs = [1, 2, 4, 8, 16, 20, 32, 40, 64]
-    TOLs = [0.1]
+    TOLs = [0.01]
     ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
@@ -185,6 +186,10 @@ def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
         N_TRAIN = get_N_TRAIN(DIM, base=base, factor=100_000)
         N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, base=1.01, factor=10)
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM, base=base, factor=100)
+
+        N_TRAIN = N_TRAIN // 2
+        N_INIT_CLUSTERS = N_INIT_CLUSTERS // 2
+        N_MIN_PER_CLUSTER = N_MIN_PER_CLUSTER // 2
         N_TEST = max(N_TRAIN // 4, 500)
 
         if DIM >= 128:
@@ -232,6 +237,8 @@ def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
             PROFILE_TIMING=True,
         )
 
+        create_summary_dataframe(EXP_DIR)
+
     return EXP_DIR
 
 
@@ -242,11 +249,10 @@ def ics_rosenbrock_runtime_scalability_experiment() -> Path:
 
     EXP_DIR = ICS26_DIR / "ics_rosenbrock_runtime_scalability"
     create_summary_dataframe(EXP_DIR)
-    # del_all_error_files_in_dir(EXP_DIR)
     DIMs = [5]
     TOLs = [0.05]
     ERROR_METRICs = ["Linf-local"]
-    N_TRAINs = [10_000 * 2**i for i in range(16)]
+    N_TRAINs = [10_000 * 2**i for i in range(18)]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs, N_TRAINs))
     for DIM, TOL, ERROR_METRIC, N_TRAIN in tqdm(combos, desc="Experiments"):
