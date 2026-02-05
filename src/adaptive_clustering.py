@@ -278,6 +278,59 @@ def calculate_Q(
     return 0.5 * (Q + Q.transpose(0, 2, 1)), Cov
 
 
+def compute_good_covariance_hessian(
+    DeltaX: Array,
+    Fvals_linear: Array,
+    Fvals_exact: Array,
+    starts: Array,
+) -> Array:
+    """
+    Estimates the Hessian using the covariance formulation.
+    It can be shown that by taking level curves of the linear error,
+    the Hessian can be approximated by the inverse of the covariance matrix of these points.
+    We make sure each level curve has enough points to make sure matrix is well-conditioned.
+    """
+    # len(starts) is the number of ellipses we are computing for
+    points_in_level_curve = xp.full(len(DeltaX), False)
+    Ndx, d = DeltaX.shape
+
+    # Compute errors
+    errors = Fvals_linear - Fvals_exact
+
+    # Pick points from each such that we have floor(2d*log(d)) points in each level curve
+    # I am using a for loop because I don't know what I am doing otherwise (need to vectorize)
+    for j in range(len(starts)):
+        eps = 1e-3
+        errors_current = errors[starts[j]:starts[j+1]]
+        within_tol = errors_current < eps
+        if len(within_tol) <= 2 * d * xp.log(d) + 1:
+            within_tol = errors_current > eps
+        else:
+            while xp.sum(within_tol) < xp.floor(2 * d * xp.log(d)):
+                eps = eps * 2
+                within_tol = errors_current < eps
+
+        points_in_level_curve[starts[j]:starts[j+1]] = within_tol.flatten()
+    
+
+    # error_blocks = np.split(errors, starts[1:])
+    # sorted_error_blocks = [np.sort(b) for b in error_blocks]
+    # Compute the covariances
+    DeltaX_within_tol = DeltaX[points_in_level_curve]
+    XX_all = DeltaX_within_tol[:, :, None] * DeltaX_within_tol[:, None, :]
+    C = xp.add.reduceat(XX_all, starts)
+
+    # Take the absolute value, inverse square root (use eigendecomposition)
+    dvals, U = xp.linalg.eigh(C)
+    abs_dvals = np.abs(dvals)
+    inv_abs_sqrt_dvals = abs_dvals ** (-0.5)
+    M = (U * inv_abs_sqrt_dvals[:, None, :]) @ U.transpose(0, 2, 1)
+    return 0.5 * (M + M.transpose(0,2,1))
+
+
+
+
+
 def estimate_hessian_sqrt_symmetric(
     DeltaX: Array,
     DeltaG: Array,
@@ -480,9 +533,11 @@ def adaptive_clustering(
     MAX_LEVELS: int = 50,
     # Hessian informed splitting
     USE_HESSIAN_INFORMED_SPLIT=True,
+    USE_COVARIANCE_HESSIAN=False,
     # Testing purposes: run without gradient to compare
     IGNORE_GRADIENT: bool = False,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
+    SAVE_GENERATED_TRAINING_DATA: bool = False
 ) -> dict[str, Array]:
     """
     Adaptive clustering for Vector-Valued functions F: R^d -> R^m.
@@ -884,24 +939,37 @@ def adaptive_clustering(
             active_comps = xp.argmax(scores, axis=1)  # (K_bad,)
 
             # 2. Extract specific Gradients
-            G_bad_all = G_sorted[mask_bad_pts]  # (N_bad, fd, d)
-            g_mu_bad_all = g_mus[bad_idx]  # (K_bad, fd, d)
+            if not USE_COVARIANCE_HESSIAN:
+                G_bad_all = G_sorted[mask_bad_pts]  # (N_bad, fd, d)
+                g_mu_bad_all = g_mus[bad_idx]  # (K_bad, fd, d)
 
-            # Map cluster choice to points
-            map_bad_n_to_k = repeats(xp.arange(n_bad_clusters), bad_counts)
-            pt_active_comp = active_comps[map_bad_n_to_k]  # (N_bad,)
+                # Map cluster choice to points
+                map_bad_n_to_k = repeats(xp.arange(n_bad_clusters), bad_counts)
+                pt_active_comp = active_comps[map_bad_n_to_k]  # (N_bad,)
 
-            # Slice: G_sel[i] = G_bad_all[i, pt_active_comp[i], :]
-            range_N = xp.arange(int(dx_bad.shape[0]))
-            G_sel = G_bad_all[range_N, pt_active_comp, :]  # (N_bad, d)
+                # Slice: G_sel[i] = G_bad_all[i, pt_active_comp[i], :]
+                range_N = xp.arange(int(dx_bad.shape[0]))
+                G_sel = G_bad_all[range_N, pt_active_comp, :]  # (N_bad, d)
 
-            # Centroid grad for that component (expanded)
-            g_mu_sel = g_mu_bad_all[map_bad_n_to_k, pt_active_comp, :]
+                # Centroid grad for that component (expanded)
+                g_mu_sel = g_mu_bad_all[map_bad_n_to_k, pt_active_comp, :]
 
-            dG_bad = G_sel - g_mu_sel
+                dG_bad = G_sel - g_mu_sel
 
-            # 3. Compute H^1/2
-            M_split = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts)
+                # 3. Compute H^1/2
+                M_split = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts)
+
+            else:
+                # Instead of directly computing Hessian via least squares,
+                # we take points in good error, compute covariance,
+                # and use the inverse as the approximate Hessian.
+                # It can be shown that if we have enough points,
+                # this is close to the Hessian, and requires much less computation.
+                # Do not use gradients at all.
+                F_bad_all = F_sorted[mask_bad_pts] # (N_bad, fd)
+
+                M_split = compute_good_covariance_hessian(dx_bad, F_bad_all, f_lin, bad_starts)
+
 
         # Transform and Split
         map_bad_n_to_k = repeats(xp.arange(n_bad_clusters), bad_counts)
@@ -954,6 +1022,8 @@ def adaptive_clustering(
     out_dict["num_levels"] = level
     out_dict["num_generated_pts"] = n_total - N0
     out_dict["total_f_evals"] = int(total_f_evals)
+    if SAVE_GENERATED_TRAINING_DATA:
+        out_dict["gen_training_data"] = X_pool[:n_new]
     return out_dict
 
 

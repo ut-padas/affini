@@ -75,6 +75,7 @@ class HATANNSurrogate:
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
         PROFILE_TIMING: bool = False,
+        SAVE_GENERATED_TRAINING_DATA: bool = False
     ):
         """
         Train the surrogate model or load from saved file.
@@ -159,6 +160,7 @@ class HATANNSurrogate:
                     IGNORE_GRADIENT=IGNORE_GRADIENT,
                     Q_SHRINK=0.05,
                     MAX_LEVELS=MAX_LEVELS,
+                    SAVE_GENERATED_TRAINING_DATA=SAVE_GENERATED_TRAINING_DATA
                 )
 
                 centroids = xp.asarray(results["centroids"])
@@ -171,6 +173,9 @@ class HATANNSurrogate:
                     "num_generated_pts": results["num_generated_pts"],
                     "total_f_evals": results["total_f_evals"],
                 }
+                if SAVE_GENERATED_TRAINING_DATA:
+                    training_data = results["gen_training_data"]
+
             else:
                 from src.gpu_adaptive_clustering import (
                     adaptive_clustering as gpu_adaptive_clustering,
@@ -216,6 +221,8 @@ class HATANNSurrogate:
             self.Qs_src = Qs
             self.N_src = centroids.shape[0]
             self.profiling_stats = profiling_stats
+            if SAVE_GENERATED_TRAINING_DATA:
+                self.training_data = training_data
         else:
             raise NotImplementedError(
                 "Version v1 is deprecated. Use version v2 instead."
