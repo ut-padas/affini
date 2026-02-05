@@ -11,20 +11,13 @@ BETA = 1.0
 
 def _get_random_rotation(d: int, dtype) -> Array:
     """
-    Creates a random rotation matrix Q using QR decomposition.
-    Ensures determinism by resetting the seed.
+    Creates a random rotation matrix using QR decomposition.
     """
-    state = xp.random.get_state()
     xp.random.seed(SEED)
-
     A = xp.random.randn(d, d).astype(dtype)
     Q, _ = xp.linalg.qr(A)
-
-    # Ensure consistent orientation
     if xp.linalg.det(Q) < 0:
         Q[:, 0] = -Q[:, 0]
-
-    xp.random.set_state(state)
     return Q
 
 
