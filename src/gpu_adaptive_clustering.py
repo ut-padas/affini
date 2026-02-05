@@ -709,6 +709,7 @@ def adaptive_clustering(
 
     # Profiling Stats
     profiling_stats = {
+        "N0": int(xp.asarray(X).shape[0]),
         "num_levels": 0,
         "num_generated_pts": 0,
         "total_f_evals": 0,

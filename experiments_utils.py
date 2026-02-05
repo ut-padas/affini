@@ -44,6 +44,7 @@ def create_summary_dataframe(results_dir: Path):
                 "dim": row.get("dim"),
                 "tol": row.get("tol"),
                 "num_levels": row.get("num_levels"),
+                "N0": row.get("N0"),
             }
 
             if isinstance(stats, dict):
