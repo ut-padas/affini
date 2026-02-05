@@ -2,70 +2,129 @@
 
 from src import Array, xp
 
-C = 10.0  # Constant term
-ANISO_RATIO = 100.0
+# Configuration
+SEED = 0
+
+DECAY_EXPONENT = 3.0
+BETA = 1.0
 
 
-def _get_scales(d: int, dtype) -> Array:
+def _get_random_rotation(d: int, dtype) -> Array:
     """
-    Creates diagonal scales [1, R, R^2, ...] to force high anisotropy.
-    For d=2, scales=[1, 100]. The valley is 100x narrower in y than x.
+    Creates a random rotation matrix Q using QR decomposition.
+    Ensures determinism by resetting the seed.
     """
-    exponents = xp.arange(d, dtype=dtype)
-    return xp.power(ANISO_RATIO, exponents)
+    state = xp.random.get_state()
+    xp.random.seed(SEED)
+
+    A = xp.random.randn(d, d).astype(dtype)
+    Q, _ = xp.linalg.qr(A)
+
+    # Ensure consistent orientation
+    if xp.linalg.det(Q) < 0:
+        Q[:, 0] = -Q[:, 0]
+
+    xp.random.set_state(state)
+    return Q
 
 
-def aniso_quadratic(X: Array) -> Array:
+def _get_params(
+    d: int, dtype, decay_exponent: float = DECAY_EXPONENT
+) -> tuple[Array, Array]:
     """
-    Computes the Anisotropic Quadratic function.
-    f(x) = C + sum(x) + sum(s_i * x_i^2)
+    Computes w and the symmetric matrix H = Q * Lambda * Q^T.
+
+    Returns:
+        w: (d,) linear weight vector
+        H: (d, d) quadratic form matrix
+    """
+    # 1. Linear weights: w = [1, 1, ..., 1]
+    w = xp.ones((d,), dtype=dtype)
+
+    # 2. Eigenvalues: Lambda_ii = i^(-decay_exponent)
+    indices = xp.arange(1, d + 1, dtype=dtype)
+    lambdas = xp.power(indices, -decay_exponent)
+
+    # 3. Rotation: Q
+    Q = _get_random_rotation(d, dtype)
+
+    # 4. Construct H = Q @ diag(lambdas) @ Q.T
+    H = (Q * lambdas[None, :]) @ Q.T
+
+    return w, H
+
+
+def aniso_quadratic(
+    X: Array, beta: float = BETA, decay_exponent: float = DECAY_EXPONENT
+) -> Array:
+    """
+    Computes the Rotated Anisotropic Quadratic function.
+    f(x) = beta + w^T x + x^T H x
 
     Args:
         X: (N, d) data matrix
+        beta: Constant offset term (default: DEFAULT_BETA)
+        decay_exponent: Eigenvalue decay exponent (default: DECAY_EXPONENT)
     Returns:
         F: (N, 1) function values
     """
     N, d = X.shape
-    scales = _get_scales(d, X.dtype)  # (d,)
+    w, H = _get_params(d, X.dtype, decay_exponent)
 
-    # Linear term: sum(x)
-    linear_term = xp.sum(X, axis=1, keepdims=True)
+    # Linear term: w^T x -> (N, d) @ (d,) -> (N,)
+    linear_term = X @ w
 
-    # Quadratic term: x^T Lambda x = sum(s_i * x_i^2)
-    quad_term = xp.sum(scales[None, :] * (X**2), axis=1, keepdims=True)
+    # Quadratic term: x^T H x
+    quad_term = xp.sum((X @ H) * X, axis=1)
 
-    return C + linear_term + quad_term
+    # Combine: beta + linear + quadratic
+    res = beta + linear_term + quad_term
+
+    return res[:, None]  # (N, 1)
 
 
-def aniso_quadratic_grad(X: Array) -> Array:
+def aniso_quadratic_grad(X: Array, decay_exponent: float = DECAY_EXPONENT) -> Array:
     """
     Computes gradient.
-    g_i(x) = 1 + 2 * s_i * x_i
+    grad f(x) = w + 2Hx
 
+    Args:
+        X: (N, d) data matrix
+        decay_exponent: Eigenvalue decay exponent (default: DECAY_EXPONENT)
     Returns:
         G: (N, 1, d) gradients
     """
     N, d = X.shape
-    scales = _get_scales(d, X.dtype)  # (d,)
+    w, H = _get_params(d, X.dtype, decay_exponent)
 
-    # Broadcasting: (N, d) = (1, d) + (1, d) * (N, d)
-    G = 1.0 + 2.0 * scales[None, :] * X
-    return G[:, None, :]
+    # term: 2 * H * x
+    # (N, d) @ (d, d) -> (N, d)
+    # Note: H is symmetric, so (H @ x) or (x @ H) results in same vector,
+    # but for (N, d) shape we do X @ H.
+    grad_quad = 2.0 * (X @ H)
+
+    # term: w (broadcasting (d,) to (N, d))
+    G = w[None, :] + grad_quad
+
+    return G[:, None, :]  # (N, 1, d)
 
 
-def aniso_quadratic_hess(X: Array) -> Array:
+def aniso_quadratic_hess(X: Array, decay_exponent: float = DECAY_EXPONENT) -> Array:
     """
     Computes Hessian.
-    H = diag(2 * s)
+    Hess f(x) = 2H
 
+    Args:
+        X: (N, d) data matrix
+        decay_exponent: Eigenvalue decay exponent (default: DECAY_EXPONENT)
     Returns:
-        H: (N, d, d) Hessians
+        H_vals: (N, d, d) Hessians
     """
     N, d = X.shape
-    scales = _get_scales(d, X.dtype)  # (d,)
+    _, H = _get_params(d, X.dtype, decay_exponent)
 
-    # Create diagonal matrix (d, d)
-    H_base = xp.diag(2.0 * scales)
+    # The Hessian is constant: 2 * H
+    H_const = 2.0 * H
 
     # Repeat for all N points
-    return xp.repeat(H_base[None, :, :], N, axis=0)
+    return xp.repeat(H_const[None, :, :], N, axis=0)
