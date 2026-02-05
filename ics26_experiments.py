@@ -15,10 +15,6 @@ from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_gra
 from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad
 from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 from src.problems.quadratic import quadratic, quadratic_grad
-from src.problems.random_anisotropic_quadratic import (
-    random_aniso_quadratic,
-    random_aniso_quadratic_grad,
-)
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
@@ -57,69 +53,12 @@ def get_N_MIN_PER_CLUSTER(dim: int, *, base: float = 1.3, factor: int = 100) -> 
     return N_MIN_PER_CLUSTER
 
 
-def ics_random_aniso_quadratic_experiment() -> Path:
+def ics_aniso_gaussian_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
 
-    EXP_DIR = ICS26_DIR / "ics_random_anisotropic_quadratic"
-    create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 5, 10]
-    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-local"]
-
-    combos = list(product(DIMs, TOLs, ERROR_METRICs))
-    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
-        if DIM == 10 and TOL <= 0.05:
-            print(
-                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
-            )
-            continue
-
-        json_path = (
-            EXP_DIR
-            / f"ics26_random_anisotropic_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
-        )
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        if json_path.exists():
-            print(f"Skipping existing experiment at {json_path}")
-            continue
-        print(f"Running experiment: {json_path}")
-
-        N_TRAIN = get_N_TRAIN(DIM)
-        N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
-        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
-
-        Problem_experiment_setup(
-            json_fpath=json_path,
-            DIM=DIM,
-            F_DIM=1,
-            DOMAIN=[-2, 2],
-            f_fn=random_aniso_quadratic,
-            g_fn=random_aniso_quadratic_grad,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            TOL=TOL,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-            ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=True,
-            STORE_TRAIN_EVALS=False,
-        )
-
-    return EXP_DIR
-
-
-def ics_random_aniso_gaussian_experiment() -> Path:
-    MAX_CLUSTERS_EST = 100_000
-    K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
-    EXP_DIR = ICS26_DIR / "ics_random_anisotropic_gaussian"
+    EXP_DIR = ICS26_DIR / "ics_anisotropic_gaussian"
     create_summary_dataframe(EXP_DIR)
     DIMs = [2, 5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
@@ -165,31 +104,22 @@ def ics_random_aniso_gaussian_experiment() -> Path:
     return EXP_DIR
 
 
-def ics_quadratic_experiment() -> Path:
+def ics_aniso_quadratic_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
 
-    EXP_DIR = ICS26_DIR / "ics_quadratic"
+    EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic"
     create_summary_dataframe(EXP_DIR)
     DIMs = [2, 5, 10]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-local", "Linf-global"]
+    ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
-        if (
-            DIM == 10
-            and (TOL <= 0.01 and ERROR_METRIC == "Linf-local")
-            or (TOL <= 0.005 and ERROR_METRIC == "Linf-global")
-        ):
-            print(
-                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
-            )
-            continue
-
         json_path = (
-            EXP_DIR / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+            EXP_DIR
+            / f"ics26_anisotropic_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
         )
         json_path.parent.mkdir(parents=True, exist_ok=True)
         if json_path.exists():
@@ -198,7 +128,7 @@ def ics_quadratic_experiment() -> Path:
         print(f"Running experiment: {json_path}")
 
         N_TRAIN = get_N_TRAIN(DIM)
-        N_TEST = N_TRAIN // 2
+        N_TEST = N_TRAIN
         N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
@@ -206,7 +136,7 @@ def ics_quadratic_experiment() -> Path:
             json_fpath=json_path,
             DIM=DIM,
             F_DIM=1,
-            DOMAIN=[-2, 2],
+            DOMAIN=[-3, 3],
             f_fn=quadratic,
             g_fn=quadratic_grad,
             N_TRAIN=N_TRAIN,
@@ -225,91 +155,12 @@ def ics_quadratic_experiment() -> Path:
     return EXP_DIR
 
 
-def ics_quadratic_experiment_no_hess_no_grad() -> Path:
+def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
 
-    EXP_DIR = ICS26_DIR / "ics_quadratic_no_hessian_no_gradient"
-    create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 5, 10]
-    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-local"]
-    case = [
-        (True, False),
-        (False, False),
-        (False, True),
-    ]  # (use_hessian, ignore_gradient)
-
-    combos = list(product(DIMs, TOLs, ERROR_METRICs, case))
-    for DIM, TOL, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
-        combos, desc="Experiments"
-    ):
-        if (
-            DIM == 10
-            and (TOL <= 0.01 and ERROR_METRIC == "Linf-local")
-            or (TOL <= 0.005 and ERROR_METRIC == "Linf-global")
-        ):
-            print(
-                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
-            )
-            continue
-
-        if (
-            DIM == 10
-            and USE_HESSIAN_INFORMED_SPLIT is False
-            and IGNORE_GRADIENT is True
-        ):
-            print(
-                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC}, USE_HESSIAN_INFORMED_SPLIT={USE_HESSIAN_INFORMED_SPLIT}, IGNORE_GRADIENT={IGNORE_GRADIENT} due to resource constraints."
-            )
-            continue
-
-        json_path = (
-            EXP_DIR
-            / f"ics26_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
-        )
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        if json_path.exists():
-            print(f"Skipping existing experiment at {json_path}")
-            continue
-        print(f"Running experiment: {json_path}")
-
-        N_TRAIN = get_N_TRAIN(DIM)
-        N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
-        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
-
-        Problem_experiment_setup(
-            json_fpath=json_path,
-            DIM=DIM,
-            F_DIM=1,
-            DOMAIN=[-2, 2],
-            f_fn=quadratic,
-            g_fn=quadratic_grad,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            TOL=TOL,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-            ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-            IGNORE_GRADIENT=IGNORE_GRADIENT,
-            STORE_TRAIN_EVALS=False,
-        )
-
-    return EXP_DIR
-
-
-def ics_quadratic_runtime_scalability_experiment() -> Path:
-    MAX_CLUSTERS_EST = 100_000
-    K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
-    EXP_DIR = ICS26_DIR / "ics_quadratic_runtime_scalability"
+    EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_runtime_scalability"
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
     DIMs = [1, 2, 4, 8, 16, 20, 32, 40, 64]
@@ -318,17 +169,11 @@ def ics_quadratic_runtime_scalability_experiment() -> Path:
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
-        if DIM >= 16 and TOL <= 0.05:
-            print(
-                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
-            )
-            continue
-
         base = 1.01
         N_TRAIN = get_N_TRAIN(DIM, base=base, factor=100_000)
         N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, base=base, factor=100)
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM, base=base, factor=100)
-        N_TEST = max(N_TRAIN // 2, 500)
+        N_TEST = max(N_TRAIN, 500)
 
         if DIM >= 128:
             BATCH_SIZE = 500_000
@@ -341,7 +186,7 @@ def ics_quadratic_runtime_scalability_experiment() -> Path:
 
         json_path = (
             EXP_DIR
-            / f"ics26_quadratic_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_batch{BATCH_SIZE}_err{ERROR_METRIC}.json"
+            / f"ics26_anisotropic_quadratic_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_batch{BATCH_SIZE}_err{ERROR_METRIC}.json"
         )
         json_path.parent.mkdir(parents=True, exist_ok=True)
         if json_path.exists():
@@ -357,7 +202,7 @@ def ics_quadratic_runtime_scalability_experiment() -> Path:
             json_fpath=json_path,
             DIM=DIM,
             F_DIM=1,
-            DOMAIN=[-2, 2],
+            DOMAIN=[-3, 3],
             f_fn=quadratic,
             g_fn=quadratic_grad,
             N_TRAIN=N_TRAIN,
@@ -373,244 +218,6 @@ def ics_quadratic_runtime_scalability_experiment() -> Path:
             STORE_TRAIN_EVALS=False,
             BATCH_SIZE=BATCH_SIZE,
             PROFILE_TIMING=True,
-        )
-
-    return EXP_DIR
-
-
-def ics_anisotropic_quadratic_experiment_no_hess_no_grad() -> Path:
-    MAX_CLUSTERS_EST = 100_000
-    K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
-    EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_no_hessian_no_gradient"
-    create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 5, 10]
-    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-local"]
-    case = [
-        (True, False),
-        (False, False),
-        (False, True),
-    ]  # (use_hessian, ignore_gradient)
-
-    combos = list(product(DIMs, TOLs, ERROR_METRICs, case))
-    for DIM, TOL, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
-        combos, desc="Experiments"
-    ):
-        if DIM >= 5 and IGNORE_GRADIENT is True:
-            print(
-                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC}, USE_HESSIAN_INFORMED_SPLIT={USE_HESSIAN_INFORMED_SPLIT}, IGNORE_GRADIENT={IGNORE_GRADIENT} due to resource constraints."
-            )
-            continue
-
-        if USE_HESSIAN_INFORMED_SPLIT is False and (
-            (DIM >= 5 and TOL <= 0.05) or (DIM >= 10 and TOL <= 0.1)
-        ):
-            print(
-                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC}, USE_HESSIAN_INFORMED_SPLIT={USE_HESSIAN_INFORMED_SPLIT}, IGNORE_GRADIENT={IGNORE_GRADIENT} due to resource constraints."
-            )
-            continue
-
-        json_path = (
-            EXP_DIR
-            / f"ics26_anisotropic_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
-        )
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        if json_path.exists():
-            print(f"Skipping existing experiment at {json_path}")
-            continue
-        print(f"Running experiment: {json_path}")
-
-        N_TRAIN = get_N_TRAIN(DIM)
-        N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
-        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
-
-        Problem_experiment_setup(
-            json_fpath=json_path,
-            DIM=DIM,
-            F_DIM=1,
-            DOMAIN=[-2, 2],
-            f_fn=aniso_quadratic,
-            g_fn=aniso_quadratic_grad,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            TOL=TOL,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-            ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-            IGNORE_GRADIENT=IGNORE_GRADIENT,
-            STORE_TRAIN_EVALS=False,
-        )
-
-    return EXP_DIR
-
-
-def ics_shifted_gaussians_experiment() -> Path:
-    CLUSTERING_VERSION = "v2"
-    MAX_CLUSTERS_EST = 100_000
-    K_NEIGHBOURS = 1
-
-    EXP_DIR = ICS26_DIR / "ics_shifted_gaussians"
-    create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 5]
-    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-local", "Linf-global"]
-
-    combos = list(product(DIMs, TOLs, ERROR_METRICs))
-    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
-        if DIM >= 4 and TOL <= 5e-4:
-            print(
-                f"Skipping experiment for DIM={DIM} with very small TOL={TOL} due to resource constraints."
-            )
-            continue
-        json_path = (
-            EXP_DIR / f"ics26_sgaussians_dim{DIM}_tol{TOL}_metric{ERROR_METRIC}.json"
-        )
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        if json_path.exists():
-            print(f"Skipping existing experiment at {json_path}")
-            continue
-        print(f"Running experiment: {json_path}")
-
-        N_TRAIN = get_N_TRAIN(DIM)
-        N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
-        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
-
-        # Set up partial functions for shifted gaussians with centers
-        _centers = {
-            2: CENTERS_2D,
-            3: CENTERS_3D,
-            4: CENTERS_4D,
-            5: CENTERS_5D,
-        }
-        shifted_gaussians_partial = partial(
-            shifted_gaussians,
-            centers=_centers[DIM],
-        )
-        shifted_gaussians_grad_partial = partial(
-            shifted_gaussians_grad,
-            centers=_centers[DIM],
-        )
-
-        Problem_experiment_setup(
-            json_fpath=json_path,
-            DIM=DIM,
-            F_DIM=1,
-            DOMAIN=[-2, 2],
-            f_fn=shifted_gaussians_partial,
-            g_fn=shifted_gaussians_grad_partial,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            TOL=TOL,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-            ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=False,
-            IGNORE_GRADIENT=False,
-            STORE_TRAIN_EVALS=False,
-        )
-
-    return EXP_DIR
-
-
-def ics_shifted_gaussians_experiment_no_hess_no_grad() -> Path:
-    CLUSTERING_VERSION = "v2"
-    MAX_CLUSTERS_EST = 100_000
-    K_NEIGHBOURS = 1
-
-    EXP_DIR = ICS26_DIR / "ics_shifted_gaussians_no_hess_no_grad"
-    create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 5]
-    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-local"]
-    CASES = [
-        (True, False),
-        (False, False),
-        (False, True),
-    ]  # (use_hessian, ignore_gradient)
-
-    combos = list(product(DIMs, TOLs, ERROR_METRICs, CASES))
-    for DIM, TOL, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
-        combos, desc="Experiments"
-    ):
-        if DIM >= 4 and TOL <= 5e-4:
-            print(
-                f"Skipping experiment for DIM={DIM} with very small TOL={TOL} due to resource constraints."
-            )
-            continue
-
-        if (
-            DIM >= 5
-            and USE_HESSIAN_INFORMED_SPLIT is False
-            and IGNORE_GRADIENT is True
-            and TOL <= 0.05
-        ):
-            print(
-                f"Skipping experiment for DIM={DIM} with TOL={TOL}, USE_HESSIAN_INFORMED_SPLIT={USE_HESSIAN_INFORMED_SPLIT}, IGNORE_GRADIENT={IGNORE_GRADIENT} due to resource constraints."
-            )
-            continue
-
-        json_path = (
-            EXP_DIR
-            / f"ics26_sgaussians_dim{DIM}_tol{TOL}_metric{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
-        )
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        if json_path.exists():
-            print(f"Skipping existing experiment at {json_path}")
-            continue
-
-        print(f"Running experiment: {json_path}")
-
-        N_TRAIN = get_N_TRAIN(DIM)
-        N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
-        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
-
-        # Set up partial functions for shifted gaussians with centers
-        _centers = {
-            2: CENTERS_2D,
-            3: CENTERS_3D,
-            4: CENTERS_4D,
-            5: CENTERS_5D,
-        }
-        shifted_gaussians_partial = partial(
-            shifted_gaussians,
-            centers=_centers[DIM],
-        )
-        shifted_gaussians_grad_partial = partial(
-            shifted_gaussians_grad,
-            centers=_centers[DIM],
-        )
-
-        Problem_experiment_setup(
-            json_fpath=json_path,
-            DIM=DIM,
-            F_DIM=1,
-            DOMAIN=[-2, 2],
-            f_fn=shifted_gaussians_partial,
-            g_fn=shifted_gaussians_grad_partial,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            TOL=TOL,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-            ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-            IGNORE_GRADIENT=IGNORE_GRADIENT,
-            STORE_TRAIN_EVALS=False,
         )
 
     return EXP_DIR
@@ -1105,5 +712,11 @@ if __name__ == "__main__":
     # dir10 = ics_random_aniso_quadratic_experiment()
     # create_summary_dataframe(dir10)
 
-    dir11 = ics_random_aniso_gaussian_experiment()
+    dir11 = ics_aniso_gaussian_experiment()
     create_summary_dataframe(dir11)
+
+    dir12 = ics_aniso_quadratic_experiment()
+    create_summary_dataframe(dir12)
+
+    dir13 = ics_aniso_quadratic_runtime_scalability_experiment()
+    create_summary_dataframe(dir13)
