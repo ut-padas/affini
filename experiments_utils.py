@@ -374,6 +374,7 @@ def Problem_experiment_setup(
     K_NEIGHBOURS: int,
     USE_HESSIAN_INFORMED_SPLIT: bool,
     CLUSTERING_VERSION: Literal["v1", "v2"],
+    oracle_fn: Optional[Callable] = None,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     SAMPLING: Literal["Uniform", "Trajectories"] = "Uniform",
     PLOT_CONTOUR_IN_LOG_SCALE: bool = False,
@@ -463,20 +464,38 @@ def Problem_experiment_setup(
             # Train
             print("\n--- Training ---")
             _start_train_time = time.perf_counter()
-            surrogate.train(
-                X_train=X_train,
-                f_fn=f_fn,
-                g_fn=g_fn,
-                TOL=TOL,
-                NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
-                MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                SEED=SEED,
-                ERROR_METRIC=ERROR_METRIC,
-                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-                IGNORE_GRADIENT=IGNORE_GRADIENT,
-                PROFILE_TIMING=PROFILE_TIMING,
-            )
+
+            if oracle_fn is not None:
+                print("Using oracle function for training...")
+                surrogate.train(
+                    X_train=X_train,
+                    oracle_fn=oracle_fn,
+                    TOL=TOL,
+                    NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
+                    MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
+                    MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                    SEED=SEED,
+                    ERROR_METRIC=ERROR_METRIC,
+                    USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                    IGNORE_GRADIENT=IGNORE_GRADIENT,
+                    PROFILE_TIMING=PROFILE_TIMING,
+                )
+            else:
+                surrogate.train(
+                    X_train=X_train,
+                    f_fn=f_fn,
+                    g_fn=g_fn,
+                    TOL=TOL,
+                    NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
+                    MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
+                    MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                    SEED=SEED,
+                    ERROR_METRIC=ERROR_METRIC,
+                    USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                    IGNORE_GRADIENT=IGNORE_GRADIENT,
+                    BATCH_SIZE=BATCH_SIZE,
+                    PROFILE_TIMING=PROFILE_TIMING,
+                )
             _end_train_time = time.perf_counter()
             _TRAINED = True
 
