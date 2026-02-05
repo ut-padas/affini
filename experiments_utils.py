@@ -44,6 +44,8 @@ def create_summary_dataframe(results_dir: Path):
                 "dim": row.get("dim"),
                 "tol": row.get("tol"),
                 "num_levels": row.get("num_levels"),
+                "N0": row.get("N0"),
+                "Nc": row.get("n_clusters") or row.get("profiling_stats").get("num_final_clusters"),  # type: ignore
             }
 
             if isinstance(stats, dict):
@@ -480,7 +482,7 @@ def Problem_experiment_setup(
 
         if SAVE_TRAINED_DATA:
             trained_data_path = json_fpath.with_name(
-                json_fpath.stem + "_trained_data.npz"
+                json_fpath.stem + "_trained_clusters_data.npz"
             )
             _t_d = surrogate.get_trained_data_as_dict()
             np.savez_compressed(trained_data_path, **_t_d)
@@ -535,7 +537,7 @@ def Problem_experiment_setup(
         total_f_evals = None
 
     result_dict = create_problem_result_dict(
-        problem_name="Quadratic",
+        problem_name="Problem_experiment",
         problem_tag=f"{DIM}D_N{N_TRAIN}_InitClust{N_INIT_CLUSTERS}_Tol{TOL}_ErrScale{ERROR_METRIC}_MinPts{N_MIN_PER_CLUSTER}_MaxClustEst{MAX_CLUSTERS_EST}_K{K_NEIGHBOURS}",
         error_tag=error_tag,
         train_time=train_time,
@@ -601,7 +603,8 @@ def Problem_experiment_setup(
             cs = axs[0].contourf(X, Y, Z, levels=50, cmap="viridis")
         fig.colorbar(cs, ax=axs[0])
         axs[0].set_title(
-            f"Shifted Gaussians with Cluster Centroids (TOL={TOL})", fontsize=10
+            f"Function Contour Plot (N_CLUSTERS={N_CLUSTERS})",
+            fontsize=10,
         )
         axs[0].set_xlabel(r"$x_1$")
         axs[0].set_ylabel(r"$x_2$")

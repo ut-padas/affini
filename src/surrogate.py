@@ -139,6 +139,11 @@ class HATANNSurrogate:
         t0 = time.perf_counter()
 
         if self.version == "v2":
+            if USE_HESSIAN_INFORMED_SPLIT == False or IGNORE_GRADIENT == True:
+                logger.warning(
+                    "USE_HESSIAN_INFORMED_SPLIT=False or IGNORE_GRADIENT=True may lead to suboptimal clustering performance."
+                )
+
             if not IS_CUPY_BACKEND:
                 from src.adaptive_clustering import adaptive_clustering
 

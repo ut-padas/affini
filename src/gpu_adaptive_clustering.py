@@ -709,9 +709,11 @@ def adaptive_clustering(
 
     # Profiling Stats
     profiling_stats = {
+        "N0": int(xp.asarray(X).shape[0]),
         "num_levels": 0,
         "num_generated_pts": 0,
         "total_f_evals": 0,
+        "num_final_clusters": 0,
         "time_total": 0.0,
         "time_init": 0.0,
         "time_slicing": 0.0,
@@ -1372,6 +1374,7 @@ def adaptive_clustering(
     profiling_stats["num_levels"] = level
     profiling_stats["num_generated_pts"] = num_generated_pts
     profiling_stats["total_f_evals"] = total_f_evals
+    profiling_stats["num_final_clusters"] = final_count
 
     out_dict = {k: buffers[k][:final_count] for k in buffers}
     out_dict["profiling_stats"] = profiling_stats
