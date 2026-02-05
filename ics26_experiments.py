@@ -11,10 +11,7 @@ from experiments_utils import (
     del_all_error_files_in_dir,
 )
 from src.logging_utils import consolidate_evaluations
-from src.problems.anisotropic_gaussian import (
-    random_aniso_gaussian,
-    random_aniso_gaussian_grad,
-)
+from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad
 from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad
 from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 from src.problems.quadratic import quadratic, quadratic_grad
@@ -141,7 +138,7 @@ def ics_random_aniso_gaussian_experiment() -> Path:
         print(f"Running experiment: {json_path}")
 
         N_TRAIN = get_N_TRAIN(DIM)
-        N_TEST = N_TRAIN // 2
+        N_TEST = N_TRAIN
         N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
@@ -149,9 +146,9 @@ def ics_random_aniso_gaussian_experiment() -> Path:
             json_fpath=json_path,
             DIM=DIM,
             F_DIM=1,
-            DOMAIN=[-(DIM**2), DIM**2],
-            f_fn=random_aniso_gaussian,
-            g_fn=random_aniso_gaussian_grad,
+            DOMAIN=[-3, 3],
+            f_fn=aniso_gaussian,
+            g_fn=aniso_gaussian_grad,
             N_TRAIN=N_TRAIN,
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
             TOL=TOL,
