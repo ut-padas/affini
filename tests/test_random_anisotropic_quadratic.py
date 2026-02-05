@@ -4,6 +4,7 @@ import numpy as np
 import sympy as sp
 
 from src.problems.random_anisotropic_quadratic import (
+    DIAGONAL_EXPONENT,
     SEED,
     random_aniso_quadratic,
     random_aniso_quadratic_grad,
@@ -15,8 +16,8 @@ def _sympy_random_aniso_quadratic_f_g_h(n_dim: int, seed: int = SEED):
     """Create symbolic function, gradient, and Hessian for random anisotropic quadratic function."""
     x = sp.symbols(f"x0:{n_dim}")
 
-    # Create scales: S = diag([(1/i)^4 for i in 1..d])
-    scales = [sp.Float((1.0 / (i + 1)) ** 4) for i in range(n_dim)]
+    # Create scales: S = diag([(1/i)^DIAGONAL_EXPONENT for i in 1..d])
+    scales = [sp.Float((1.0 / (i + 1)) ** DIAGONAL_EXPONENT) for i in range(n_dim)]
 
     # Create random rotation matrix Q using same logic as implementation
     np.random.seed(seed)
@@ -104,9 +105,10 @@ class TestRandomAnisoQuadraticSympyDerivatives(unittest.TestCase):
                     h_impl = random_aniso_quadratic_hess(X)
                 else:
                     # For custom seeds, compute manually since implementation uses fixed SEED
-                    # Create scales: S = diag([(1/i)^4 for i in 1..d])
+                    # Create scales: S = diag([(1/i)^DIAGONAL_EXPONENT for i in 1..d])
                     scales = np.array(
-                        [(1.0 / (i + 1)) ** 4 for i in range(n_dim)], dtype=X.dtype
+                        [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(n_dim)],
+                        dtype=X.dtype,
                     )
 
                     # Create random rotation matrix Q with custom seed
@@ -177,7 +179,9 @@ class TestRandomAnisoQuadraticSympyDerivatives(unittest.TestCase):
 
         for n_dim in n_dims:
             with self.subTest(n_dim=n_dim):
-                scales = np.array([(1.0 / (i + 1)) ** 4 for i in range(n_dim)])
+                scales = np.array(
+                    [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(n_dim)]
+                )
 
                 # Test that scales are decreasing
                 for i in range(1, n_dim):
@@ -185,7 +189,9 @@ class TestRandomAnisoQuadraticSympyDerivatives(unittest.TestCase):
 
                 # Test specific values
                 expected_first = 1.0
-                expected_second = (1.0 / 2.0) ** 4 if n_dim > 1 else None
+                expected_second = (
+                    (1.0 / 2.0) ** DIAGONAL_EXPONENT if n_dim > 1 else None
+                )
 
                 np.testing.assert_allclose(scales[0], expected_first, rtol=1e-12)
                 if expected_second is not None:

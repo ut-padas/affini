@@ -4,18 +4,20 @@ import numpy as np
 import sympy as sp
 
 from src.problems.anisotropic_gaussian import (
+    DIAGONAL_EXPONENT,
     SEED,
     random_aniso_gaussian,
     random_aniso_gaussian_grad,
+    random_aniso_gaussian_hess,
 )
 
 
-def _sympy_aniso_gaussian_f_g(n_dim: int, seed: int = SEED):
-    """Create symbolic function and gradient for anisotropic Gaussian function."""
+def _sympy_aniso_gaussian_f_g_h(n_dim: int, seed: int = SEED):
+    """Create symbolic function, gradient, and Hessian for anisotropic Gaussian function."""
     x = sp.symbols(f"x0:{n_dim}")
 
-    # Create scales: S = diag([(1/i)^4 for i in 1..d])
-    scales = [sp.Float((1.0 / (i + 1)) ** 4) for i in range(n_dim)]
+    # Create scales: S = diag([(1/i)^DIAGONAL_EXPONENT for i in 1..d])
+    scales = [sp.Float((1.0 / (i + 1)) ** DIAGONAL_EXPONENT) for i in range(n_dim)]
 
     # Create random rotation matrix Q using same logic as implementation
     np.random.seed(seed)
@@ -50,11 +52,15 @@ def _sympy_aniso_gaussian_f_g(n_dim: int, seed: int = SEED):
     # Compute gradient: g(x) = -f(x) * M * x
     g = sp.Matrix([sp.diff(f, xi) for xi in x])
 
+    # Compute Hessian: H(x) = f(x) * [ (Mx)(Mx)^T - M ]
+    h = sp.Matrix([[sp.diff(f, xi, xj) for xj in x] for xi in x])
+
     # Create numerical functions
     f_fn = sp.lambdify(x, f, "numpy")
     g_fn = sp.lambdify(x, g, "numpy")
+    h_fn = sp.lambdify(x, h, "numpy")
 
-    return f_fn, g_fn
+    return f_fn, g_fn, h_fn
 
 
 class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
@@ -73,9 +79,9 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
 
         for n_dim, seed in configs:
             key = (n_dim, seed)
-            cls._sympy[key] = _sympy_aniso_gaussian_f_g(n_dim, seed)
+            cls._sympy[key] = _sympy_aniso_gaussian_f_g_h(n_dim, seed)
 
-    def test_value_grad_match_sympy(self):
+    def test_value_grad_hess_match_sympy(self):
         rng = np.random.default_rng(1)  # Use different seed for test data
         num_pts = 15  # Smaller number due to computational complexity
         prob_extents = (-0.3, 0.3)  # Small range to avoid numerical issues
@@ -90,7 +96,7 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
 
         for n_dim, seed in test_configs:
             key = (n_dim, seed)
-            f_fn, g_fn = self._sympy[key]
+            f_fn, g_fn, h_fn = self._sympy[key]
 
             with self.subTest(n_dim=n_dim, seed=seed):
                 X = rng.uniform(
@@ -103,11 +109,13 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
                 if seed == SEED:
                     f_impl = random_aniso_gaussian(X)
                     g_impl = random_aniso_gaussian_grad(X)[:, 0, :]
+                    h_impl = random_aniso_gaussian_hess(X)
                 else:
                     # For custom seeds, compute manually since implementation uses fixed SEED
-                    # Create scales: S = diag([(1/i)^4 for i in 1..d])
+                    # Create scales: S = diag([(1/i)^DIAGONAL_EXPONENT for i in 1..d])
                     scales = np.array(
-                        [(1.0 / (i + 1)) ** 4 for i in range(n_dim)], dtype=X.dtype
+                        [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(n_dim)],
+                        dtype=X.dtype,
                     )
 
                     # Create random rotation matrix Q with custom seed
@@ -138,11 +146,28 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
                     Mx = temp @ Q.T  # X Q S Q^T
                     g_impl = -f_impl * Mx
 
+                    # Hessian: H(x) = f(x) * [ (Mx)(Mx)^T - M ]
+                    # Construct M = Q S Q^T
+                    S_mat = np.diag(scales)
+                    M = Q @ S_mat @ Q.T  # (d, d)
+
+                    # Compute outer product (Mx)(Mx)^T for each point
+                    term1 = Mx[:, :, None] * Mx[:, None, :]  # (N, d, d)
+
+                    # M broadcasted to (N, d, d)
+                    term2 = M[None, :, :]  # (1, d, d) -> (N, d, d)
+
+                    # H = f(x) * (term1 - term2), f_impl is (N, 1)
+                    h_impl = f_impl[:, :, None] * (term1 - term2)
+
                 # Compute using SymPy
                 f_sym = np.array([float(f_fn(*row)) for row in X], dtype=np.float64)
                 f_sym = f_sym.reshape(-1, 1)
                 g_sym = np.stack(
                     [np.asarray(g_fn(*row), dtype=np.float64).reshape(-1) for row in X]
+                )
+                h_sym = np.stack(
+                    [np.asarray(h_fn(*row), dtype=np.float64) for row in X]
                 )
 
                 # Compare function values
@@ -151,13 +176,18 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
                 # Compare gradients
                 np.testing.assert_allclose(g_impl, g_sym, rtol=1e-10, atol=1e-10)
 
+                # Compare Hessians
+                np.testing.assert_allclose(h_impl, h_sym, rtol=1e-10, atol=1e-10)
+
     def test_normalization_properties(self):
         """Test properties of the normalization constant."""
         n_dims = [2, 3, 4]
 
         for n_dim in n_dims:
             with self.subTest(n_dim=n_dim):
-                scales = np.array([(1.0 / (i + 1)) ** 4 for i in range(n_dim)])
+                scales = np.array(
+                    [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(n_dim)]
+                )
 
                 # Test that normalization constant is computed correctly
                 log_det = np.sum(np.log(scales))
@@ -216,7 +246,9 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
 
         for n_dim in n_dims:
             with self.subTest(n_dim=n_dim):
-                scales = np.array([(1.0 / (i + 1)) ** 4 for i in range(n_dim)])
+                scales = np.array(
+                    [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(n_dim)]
+                )
 
                 # Test that scales are decreasing
                 for i in range(1, n_dim):
@@ -224,9 +256,9 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
 
                 # Test specific values
                 expected_first = 1.0
-                expected_second = (1.0 / 2.0) ** 4 if n_dim > 1 else None
-
-                np.testing.assert_allclose(scales[0], expected_first, rtol=1e-12)
+                expected_second = (
+                    (1.0 / 2.0) ** DIAGONAL_EXPONENT if n_dim > 1 else None
+                )
                 if expected_second is not None:
                     np.testing.assert_allclose(scales[1], expected_second, rtol=1e-12)
 
