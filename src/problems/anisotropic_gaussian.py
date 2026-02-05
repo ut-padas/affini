@@ -4,6 +4,7 @@ from src import Array, xp
 
 SEED = 0
 DIAGONAL_EXPONENT = 1.5
+BETA = 1
 
 
 def _get_random_rotation(d: int, dtype) -> Array:
@@ -21,7 +22,7 @@ def _get_random_rotation(d: int, dtype) -> Array:
 def random_aniso_gaussian(X: Array) -> Array:
     """
     Computes the Randomly Rotated Anisotropic Gaussian function.
-    f(x) = exp(-0.5 * x^T (Q S Q^T) x)
+    f(x) = BETA + exp(-0.5 * x^T (Q S Q^T) x)
 
     Args:
         X: (N, d) data matrix
@@ -46,14 +47,15 @@ def random_aniso_gaussian(X: Array) -> Array:
     # This is equivalent to sum(s_i * x_rot_i^2)
     quad_term = xp.sum(scales[None, :] * (X_rot**2), axis=1, keepdims=True)
 
-    # f(x) = exp(-0.5 * quad_term)
-    return xp.exp(-0.5 * quad_term)
+    # f(x) = BETA + exp(-0.5 * quad_term)
+    return BETA + xp.exp(-0.5 * quad_term)
 
 
 def random_aniso_gaussian_grad(X: Array) -> Array:
     """
     Computes gradient of the Gaussian function.
-    g(x) = -f(x) * (Q S Q^T x)
+    g(x) = -exp(-0.5 * x^T M x) * (Q S Q^T x)
+    Note: BETA constant disappears in derivative
 
     Returns:
         G: (N, 1, d) gradients
@@ -61,23 +63,23 @@ def random_aniso_gaussian_grad(X: Array) -> Array:
     N, d = X.shape
     dtype = X.dtype
 
-    # --- 1. Compute f(x) ---
-    F = random_aniso_gaussian(X)  # (N, 1)
-
-    # --- 2. Compute Matrix-Vector product (Q S Q^T x) ---
+    # --- 1. Compute exponential part only (without BETA) ---
     scales = xp.array(
         [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(d)], dtype=dtype
     )
     Q = _get_random_rotation(d, dtype)
+    X_rot = X @ Q
+    quad_term = xp.sum(scales[None, :] * (X_rot**2), axis=1, keepdims=True)
+    exp_part = xp.exp(-0.5 * quad_term)  # (N, 1) - only exponential, no BETA
 
+    # --- 2. Compute Matrix-Vector product (Q S Q^T x) ---
     # M x = Q (S (Q^T x))
-    X_rot = X @ Q  # X Q
     temp = scales[None, :] * X_rot  # X Q S
     Mx = temp @ Q.T  # X Q S Q^T  => (N, d)
 
     # --- 3. Compute Gradient ---
-    # g = -f(x) * (M x)
-    G = -F * Mx
+    # g = -exp_part * (M x)
+    G = -exp_part * Mx
 
     return G[:, None, :]
 
@@ -85,8 +87,9 @@ def random_aniso_gaussian_grad(X: Array) -> Array:
 def random_aniso_gaussian_hess(X: Array) -> Array:
     """
     Computes Hessian of the Gaussian function.
-    H(x) = f(x) * [ (Mx)(Mx)^T - M ]
+    H(x) = exp(-0.5 * x^T M x) * [ (Mx)(Mx)^T - M ]
     where M = Q S Q^T
+    Note: BETA constant disappears in second derivative
 
     Returns:
         H: (N, d, d) Hessians
@@ -94,21 +97,21 @@ def random_aniso_gaussian_hess(X: Array) -> Array:
     N, d = X.shape
     dtype = X.dtype
 
-    # --- 1. Compute f(x) ---
-    F = random_aniso_gaussian(X)  # (N, 1)
-
-    # --- 2. Construct Matrix M = Q S Q^T ---
+    # --- 1. Compute exponential part only (without BETA) ---
     scales = xp.array(
         [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(d)], dtype=dtype
     )
     Q = _get_random_rotation(d, dtype)
-    S_mat = xp.diag(scales)
+    X_rot = X @ Q
+    quad_term = xp.sum(scales[None, :] * (X_rot**2), axis=1, keepdims=True)
+    exp_part = xp.exp(-0.5 * quad_term)  # (N, 1) - only exponential, no BETA
 
+    # --- 2. Construct Matrix M = Q S Q^T ---
+    S_mat = xp.diag(scales)
     M = Q @ S_mat @ Q.T  # (d, d)
 
     # --- 3. Compute Vector term v = M x ---
     # We need v for every point X_i
-    X_rot = X @ Q
     temp = scales[None, :] * X_rot
     Mx = temp @ Q.T  # (N, d)
 
@@ -120,8 +123,8 @@ def random_aniso_gaussian_hess(X: Array) -> Array:
     # Term 2: M broadcasted to (N, d, d)
     term2 = M[None, :, :]
 
-    # Combine: f(x) * (term1 - term2)
-    # F is (N, 1), reshape to (N, 1, 1) for broadcasting
-    H = F[:, :, None] * (term1 - term2)
+    # Combine: exp_part * (term1 - term2)
+    # exp_part is (N, 1), reshape to (N, 1, 1) for broadcasting
+    H = exp_part[:, :, None] * (term1 - term2)
 
     return H

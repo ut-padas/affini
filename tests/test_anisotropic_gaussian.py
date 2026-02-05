@@ -4,6 +4,7 @@ import numpy as np
 import sympy as sp
 
 from src.problems.anisotropic_gaussian import (
+    BETA,
     DIAGONAL_EXPONENT,
     SEED,
     random_aniso_gaussian,
@@ -41,8 +42,8 @@ def _sympy_aniso_gaussian_f_g_h(n_dim: int, seed: int = SEED):
     quad_form = x_vec.T @ M @ x_vec
     quad_form = quad_form[0]  # Extract scalar from 1x1 matrix
 
-    # Function: f(x) = exp(-0.5 * x^T M x)
-    f = sp.exp(-sp.Rational(1, 2) * quad_form)
+    # Function: f(x) = BETA + exp(-0.5 * x^T M x)
+    f = BETA + sp.exp(-sp.Rational(1, 2) * quad_form)
 
     # Compute gradient: g(x) = -f(x) * M * x
     g = sp.Matrix([sp.diff(f, xi) for xi in x])
@@ -128,16 +129,17 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
                         scales[None, :] * (X_rot**2), axis=1, keepdims=True
                     )
 
-                    # Function: f(x) = exp(-0.5 * quad_term)
-                    f_impl = np.exp(-0.5 * quad_term)
+                    # Function: f(x) = BETA + exp(-0.5 * quad_term)
+                    exp_part = np.exp(-0.5 * quad_term)
+                    f_impl = BETA + exp_part
 
-                    # Gradient: g(x) = -f(x) * (Q S Q^T x)
+                    # Gradient: g(x) = -exp(-0.5 * quad_term) * (Q S Q^T x)
                     # First compute M x = Q (S (Q^T x))
                     temp = scales[None, :] * X_rot  # X Q S
                     Mx = temp @ Q.T  # X Q S Q^T
-                    g_impl = -f_impl * Mx
+                    g_impl = -exp_part * Mx
 
-                    # Hessian: H(x) = f(x) * [ (Mx)(Mx)^T - M ]
+                    # Hessian: H(x) = exp(-0.5 * quad_term) * [ (Mx)(Mx)^T - M ]
                     # Construct M = Q S Q^T
                     S_mat = np.diag(scales)
                     M = Q @ S_mat @ Q.T  # (d, d)
@@ -148,8 +150,8 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
                     # M broadcasted to (N, d, d)
                     term2 = M[None, :, :]  # (1, d, d) -> (N, d, d)
 
-                    # H = f(x) * (term1 - term2), f_impl is (N, 1)
-                    h_impl = f_impl[:, :, None] * (term1 - term2)
+                    # H = exp_part * (term1 - term2), exp_part is (N, 1)
+                    h_impl = exp_part[:, :, None] * (term1 - term2)
 
                 # Compute using SymPy
                 f_sym = np.array([float(f_fn(*row)) for row in X], dtype=np.float64)
