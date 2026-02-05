@@ -14,7 +14,6 @@ from src.logging_utils import consolidate_evaluations
 from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad
 from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad
 from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
-from src.problems.quadratic import quadratic, quadratic_grad
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
@@ -117,6 +116,12 @@ def ics_aniso_quadratic_experiment() -> Path:
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        if DIM == 10 and TOL <= 0.005:
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
+            )
+            continue
+
         json_path = (
             EXP_DIR
             / f"ics26_anisotropic_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
@@ -137,8 +142,8 @@ def ics_aniso_quadratic_experiment() -> Path:
             DIM=DIM,
             F_DIM=1,
             DOMAIN=[-3, 3],
-            f_fn=quadratic,
-            g_fn=quadratic_grad,
+            f_fn=aniso_quadratic,
+            g_fn=aniso_quadratic_grad,
             N_TRAIN=N_TRAIN,
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
             TOL=TOL,
@@ -150,6 +155,7 @@ def ics_aniso_quadratic_experiment() -> Path:
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
             STORE_TRAIN_EVALS=False,
+            PLOT_CONTOUR_IN_LOG_SCALE=True,
         )
 
     return EXP_DIR
@@ -161,19 +167,25 @@ def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
     CLUSTERING_VERSION = "v2"
 
     EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_runtime_scalability"
-    del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
+    # del_all_error_files_in_dir(EXP_DIR)
     DIMs = [1, 2, 4, 8, 16, 20, 32, 40, 64]
     TOLs = [0.1]
     ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
-        base = 1.01
+        if DIM >= 64 and TOL <= 0.1:
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
+            )
+            continue
+
+        base = 1.1
         N_TRAIN = get_N_TRAIN(DIM, base=base, factor=100_000)
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, base=base, factor=100)
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM, base=1.01, factor=10)
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM, base=base, factor=100)
-        N_TEST = max(N_TRAIN, 500)
+        N_TEST = max(N_TRAIN // 4, 500)
 
         if DIM >= 128:
             BATCH_SIZE = 500_000
@@ -203,8 +215,8 @@ def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
             DIM=DIM,
             F_DIM=1,
             DOMAIN=[-3, 3],
-            f_fn=quadratic,
-            g_fn=quadratic_grad,
+            f_fn=aniso_quadratic,
+            g_fn=aniso_quadratic_grad,
             N_TRAIN=N_TRAIN,
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
             TOL=TOL,
@@ -668,55 +680,45 @@ def ics_lorenz_experiment() -> Path:
 
 
 if __name__ == "__main__":
+    from src import IS_CUPY_BACKEND
     from src.logging_utils import setup_logging
 
     setup_logging()
 
-    # dir1 = ics_quadratic_experiment()
-    # create_summary_dataframe(dir1)
+    if IS_CUPY_BACKEND:
+        # dir4 = ics_rosenbrock_n_min_per_cluster_experiment()
+        # create_summary_dataframe(dir4)
 
-    # dir2 = ics_shifted_gaussians_no_hess_experiment()
-    # create_summary_dataframe(dir2)
+        # dir4 = ics_lorenz_experiment()
+        # create_summary_dataframe(dir4)
 
-    # dir2 = ics_shifted_gaussians_experiment()
-    # create_summary_dataframe(dir2)
+        # dir5 = ics_quadratic_runtime_scalability_experiment()
+        # create_summary_dataframe(dir5)
 
-    # dir3 = ics_rosenbrock_experiment()
-    # create_summary_dataframe(dir3)
+        # dir6 = ics_shifted_gaussians_experiment_no_hess_no_grad()
+        # create_summary_dataframe(dir6)
 
-    # dir4 = ics_rosenbrock_n_min_per_cluster_experiment()
-    # create_summary_dataframe(dir4)
+        # # dir7 = ics_quadratic_experiment_no_hess_no_grad()
+        # # create_summary_dataframe(dir7)
 
-    # dir4 = ics_lorenz_experiment()
-    # create_summary_dataframe(dir4)
+        # dir8 = ics_rosenbrock_experiment_no_hess_no_grad()
+        # create_summary_dataframe(dir8)
 
-    # dir5 = ics_quadratic_runtime_scalability_experiment()
-    # create_summary_dataframe(dir5)
+        # dir9 = ics_anisotropic_quadratic_experiment_no_hess_no_grad()
+        # create_summary_dataframe(dir9)
 
-    # dir6 = ics_shifted_gaussians_experiment_no_hess_no_grad()
-    # create_summary_dataframe(dir6)
+        # generate_train_data_for_neural_network()
 
-    # # dir7 = ics_quadratic_experiment_no_hess_no_grad()
-    # # create_summary_dataframe(dir7)
+        # ics_lorenz_experiment()
 
-    # dir8 = ics_rosenbrock_experiment_no_hess_no_grad()
-    # create_summary_dataframe(dir8)
+        dir1 = ics_aniso_gaussian_experiment()
+        create_summary_dataframe(dir1)
 
-    # dir9 = ics_anisotropic_quadratic_experiment_no_hess_no_grad()
-    # create_summary_dataframe(dir9)
+        dir2 = ics_aniso_quadratic_experiment()
+        create_summary_dataframe(dir2)
 
-    # generate_train_data_for_neural_network()
+        dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
+        create_summary_dataframe(dir3)
 
-    # ics_lorenz_experiment()
-
-    # dir10 = ics_random_aniso_quadratic_experiment()
-    # create_summary_dataframe(dir10)
-
-    dir11 = ics_aniso_gaussian_experiment()
-    create_summary_dataframe(dir11)
-
-    dir12 = ics_aniso_quadratic_experiment()
-    create_summary_dataframe(dir12)
-
-    dir13 = ics_aniso_quadratic_runtime_scalability_experiment()
-    create_summary_dataframe(dir13)
+    else:
+        print("Run only on GPU backend.")
