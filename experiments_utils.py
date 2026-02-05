@@ -45,7 +45,7 @@ def create_summary_dataframe(results_dir: Path):
                 "tol": row.get("tol"),
                 "num_levels": row.get("num_levels"),
                 "N0": row.get("N0"),
-                "Nc": row.get("num_final_clusters"),
+                "Nc": row.get("n_clusters") or row.get("profiling_stats").get("num_final_clusters"),  # type: ignore
             }
 
             if isinstance(stats, dict):
