@@ -7,6 +7,8 @@ from src.problems.anisotropic_gaussian import (
     BETA,
     SEED,
     SIGMA_DECAY_EXPONENT,
+    _get_precision_eigenvalues,
+    _get_random_rotation,
     aniso_gaussian,
     aniso_gaussian_grad,
     aniso_gaussian_hess,
@@ -16,14 +18,13 @@ from src.problems.anisotropic_gaussian import (
 def _sympy_aniso_gaussian_f_g_h(
     n_dim: int,
     beta: float = BETA,
-    sigma_decay_exp: float = SIGMA_DECAY_EXPONENT,
-    seed: int = SEED,
+    sigma_decay_exp: int = SIGMA_DECAY_EXPONENT,
 ):
     """Create symbolic function, gradient, and Hessian for anisotropic Gaussian function."""
     x = sp.symbols(f"x0:{n_dim}")
 
     # Create random rotation matrix Q using the same seed and method as implementation
-    np.random.seed(seed)
+    np.random.seed(SEED)
     A = np.random.randn(n_dim, n_dim).astype(np.float64)
     Q, _ = np.linalg.qr(A)
     if np.linalg.det(Q) < 0:
@@ -72,62 +73,42 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
     def setUpClass(cls):
         cls._sympy = {}
 
-        # Test configurations: (dimension, beta, sigma_decay_exp, seed)
-        configs = [
-            (2, BETA, SIGMA_DECAY_EXPONENT, SEED),
-            (2, 0.5, SIGMA_DECAY_EXPONENT, SEED),
-            (2, BETA, 2.0, SEED),
-            (3, BETA, SIGMA_DECAY_EXPONENT, SEED),
-            (3, 2.0, 4.0, SEED),
+        # Test configurations: (dimension, beta, sigma_decay_exp)
+        cls.test_configs = [
+            (2, BETA, SIGMA_DECAY_EXPONENT),
+            (3, BETA, SIGMA_DECAY_EXPONENT),
+            (4, 2.0, 2),
+            (5, 5.0, 4),
         ]
 
-        for n_dim, beta, sigma_decay_exp, seed in configs:
-            key = (n_dim, beta, sigma_decay_exp, seed)
-            cls._sympy[key] = _sympy_aniso_gaussian_f_g_h(
-                n_dim, beta, sigma_decay_exp, seed
-            )
+        for n_dim, beta, sigma_decay_exp in cls.test_configs:
+            key = (n_dim, beta, sigma_decay_exp)
+            cls._sympy[key] = _sympy_aniso_gaussian_f_g_h(n_dim, beta, sigma_decay_exp)
 
     def test_value_grad_hess_match_sympy(self):
         rng = np.random.default_rng(42)  # Different seed for test data
         num_pts = 20
         prob_extents = (-0.5, 0.5)  # Small range due to exponential nature
 
-        test_configs = [
-            (2, BETA, SIGMA_DECAY_EXPONENT, SEED),
-            (2, 0.5, SIGMA_DECAY_EXPONENT, SEED),
-            (2, BETA, 2.0, SEED),
-            (3, BETA, SIGMA_DECAY_EXPONENT, SEED),
-            (3, 2.0, 4.0, SEED),
-        ]
-
-        for n_dim, beta, sigma_decay_exp, seed in test_configs:
-            key = (n_dim, beta, sigma_decay_exp, seed)
+        for n_dim, beta, sigma_decay_exp in self.test_configs:
+            key = (n_dim, beta, sigma_decay_exp)
             f_fn, g_fn, h_fn, Q_expected, prec_diag_expected = self._sympy[key]
 
-            with self.subTest(
-                n_dim=n_dim, beta=beta, sigma_decay_exp=sigma_decay_exp, seed=seed
-            ):
+            with self.subTest(n_dim=n_dim, beta=beta, sigma_decay_exp=sigma_decay_exp):
                 X = rng.uniform(
                     low=prob_extents[0],
                     high=prob_extents[1],
                     size=(num_pts, n_dim),
                 ).astype(np.float64)
 
-                # For default parameters, use implementation as-is
-                if (
-                    beta == BETA
-                    and sigma_decay_exp == SIGMA_DECAY_EXPONENT
-                    and seed == SEED
-                ):
-                    f_impl = aniso_gaussian(X)
-                    g_impl = aniso_gaussian_grad(X)[:, 0, :]
-                    h_impl = aniso_gaussian_hess(X)
-
-                else:
-                    # For custom parameters, compute manually since implementation uses fixed constants
-                    # This is a simplified version - for full test coverage, we'd need to modify the implementation
-                    # to accept parameters, but for now we'll test the default case
-                    continue
+                # Use implementation with parameters
+                f_impl = aniso_gaussian(
+                    X, beta=beta, sigma_decay_exponent=sigma_decay_exp
+                )
+                g_impl = aniso_gaussian_grad(X, sigma_decay_exponent=sigma_decay_exp)[
+                    :, 0, :
+                ]
+                h_impl = aniso_gaussian_hess(X, sigma_decay_exponent=sigma_decay_exp)
 
                 # Compute using SymPy
                 f_sym = np.array([float(f_fn(*row)) for row in X], dtype=np.float64)
@@ -150,9 +131,6 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
         """Test that the rotation matrix has proper orthogonal properties."""
         n_dim = 3
 
-        # Import the actual function to test
-        from src.problems.anisotropic_gaussian import _get_random_rotation
-
         Q = _get_random_rotation(n_dim, np.float64)
 
         # Test orthogonality: Q^T @ Q should be identity
@@ -165,10 +143,8 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
 
     def test_precision_eigenvalues_properties(self):
         """Test properties of the precision eigenvalues."""
-        from src.problems.anisotropic_gaussian import _get_precision_eigenvalues
-
         n_dim = 4
-        prec_diag = _get_precision_eigenvalues(n_dim, np.float64)
+        prec_diag = _get_precision_eigenvalues(n_dim, np.float64, SIGMA_DECAY_EXPONENT)
 
         # Should have n_dim elements
         self.assertEqual(len(prec_diag), n_dim)
@@ -181,18 +157,18 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
         for i in range(n_dim - 1):
             self.assertGreater(prec_diag[i + 1], prec_diag[i])
 
-        # First element should be (1^(2*SIGMA_DECAY_EXPONENT)) = 1
+        # First element should be (1^(2*DEFAULT_SIGMA_DECAY_EXPONENT)) = 1
         expected_first = 1.0 ** (2 * SIGMA_DECAY_EXPONENT)
         self.assertAlmostEqual(prec_diag[0], expected_first, places=10)
 
     def test_function_positivity(self):
-        """Test that function values are always >= BETA."""
+        """Test that function values are always >= DEFAULT_BETA."""
         rng = np.random.default_rng(123)
         X = rng.uniform(-2.0, 2.0, size=(50, 2)).astype(np.float64)
 
         f_vals = aniso_gaussian(X)
 
-        # All function values should be >= BETA
+        # All function values should be >= DEFAULT_BETA
         self.assertTrue(np.all(f_vals >= BETA))
 
 
