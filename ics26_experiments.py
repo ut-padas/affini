@@ -13,7 +13,11 @@ from experiments_utils import (
 from src.logging_utils import consolidate_evaluations
 from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad
 from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad
-from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
+from src.problems.lorenz96_flowmap import (
+    lorenz96_flowmap,
+    lorenz96_flowmap_grad,
+    lorenz96_flowmap_oracle,
+)
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
@@ -1019,6 +1023,17 @@ def ics_lorenz_experiment() -> Path:
         N, d, _ = g.shape
         return g[:, OUTPUT_VARIABLE, :].reshape((N, 1, d))
 
+    def oracle(x):
+        """
+        Compute the flowmap, and the gradient of the flowmap, for the given input x,
+        and retun for the specified output variable.
+        """
+        f, g = lorenz96_flowmap_oracle(x, FORCING, FINAL_TIME)
+        N, _ = f.shape
+        f_out = f[:, OUTPUT_VARIABLE].reshape((N, 1))
+        g_out = g[:, OUTPUT_VARIABLE, :].reshape((N, 1, -1))
+        return f_out, g_out
+
     MAX_CLUSTERS_EST = 20_000
 
     K_NEIGHBOURS = 1
@@ -1067,6 +1082,7 @@ def ics_lorenz_experiment() -> Path:
             DOMAIN=[-5.0, 5.0],
             f_fn=f,
             g_fn=grad_f,
+            oracle_fn=oracle,
             N_TRAIN=N_TRAIN,
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
             TOL=TOL,
@@ -1112,19 +1128,17 @@ if __name__ == "__main__":
 
         # generate_train_data_for_neural_network()
 
-        # ics_lorenz_experiment()
-
         dir1 = ics_aniso_gaussian_experiment()
         create_summary_dataframe(dir1)
 
-        # dir2 = ics_aniso_quadratic_experiment()
-        # create_summary_dataframe(dir2)
+        dir2 = ics_aniso_quadratic_experiment()
+        create_summary_dataframe(dir2)
 
-        # dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
-        # create_summary_dataframe(dir3)
+        dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
+        create_summary_dataframe(dir3)
 
-        # dir4 = ics_rosenbrock_runtime_scalability_experiment()
-        # create_summary_dataframe(dir4)
+        dir4 = ics_rosenbrock_runtime_scalability_experiment()
+        create_summary_dataframe(dir4)
 
         dir5 = ics_aniso_quadratic_experiment_no_hess()
         create_summary_dataframe(dir5)
@@ -1144,4 +1158,5 @@ if __name__ == "__main__":
         dir10 = ics_rosenbrock_experiment_no_hess_no_grad()
         create_summary_dataframe(dir10)
     else:
+        ics_lorenz_experiment()
         print("Run only on GPU backend.")
