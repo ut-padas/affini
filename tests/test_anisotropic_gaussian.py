@@ -41,13 +41,8 @@ def _sympy_aniso_gaussian_f_g_h(n_dim: int, seed: int = SEED):
     quad_form = x_vec.T @ M @ x_vec
     quad_form = quad_form[0]  # Extract scalar from 1x1 matrix
 
-    # Compute normalization constant C
-    # log(C) = 0.5 * (sum(log(scales)) - d * log(2pi))
-    log_det = sum(sp.log(scale) for scale in scales)  # type: ignore
-    log_C = sp.Rational(1, 2) * (log_det - n_dim * sp.log(2 * sp.pi))  # type: ignore
-
-    # Function: f(x) = C * exp(-0.5 * x^T M x) = exp(log_C - 0.5 * quad_form)
-    f = sp.exp(log_C - sp.Rational(1, 2) * quad_form)
+    # Function: f(x) = exp(-0.5 * x^T M x)
+    f = sp.exp(-sp.Rational(1, 2) * quad_form)
 
     # Compute gradient: g(x) = -f(x) * M * x
     g = sp.Matrix([sp.diff(f, xi) for xi in x])
@@ -133,12 +128,8 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
                         scales[None, :] * (X_rot**2), axis=1, keepdims=True
                     )
 
-                    # Normalization constant
-                    log_det = np.sum(np.log(scales))
-                    log_C = 0.5 * (log_det - n_dim * np.log(2 * np.pi))
-
-                    # Function: f(x) = exp(log_C - 0.5 * quad_term)
-                    f_impl = np.exp(log_C - 0.5 * quad_term)
+                    # Function: f(x) = exp(-0.5 * quad_term)
+                    f_impl = np.exp(-0.5 * quad_term)
 
                     # Gradient: g(x) = -f(x) * (Q S Q^T x)
                     # First compute M x = Q (S (Q^T x))
@@ -179,8 +170,8 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
                 # Compare Hessians
                 np.testing.assert_allclose(h_impl, h_sym, rtol=1e-10, atol=1e-10)
 
-    def test_normalization_properties(self):
-        """Test properties of the normalization constant."""
+    def test_function_properties(self):
+        """Test properties of the Gaussian function without normalization."""
         n_dims = [2, 3, 4]
 
         for n_dim in n_dims:
@@ -189,16 +180,12 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
                     [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(n_dim)]
                 )
 
-                # Test that normalization constant is computed correctly
-                log_det = np.sum(np.log(scales))
-                log_C = 0.5 * (log_det - n_dim * np.log(2 * np.pi))
-                C = np.exp(log_C)
+                # Test that scales are positive
+                self.assertTrue(np.all(scales > 0.0))
 
-                # C should be positive
-                self.assertGreater(C, 0.0)
-
-                # For verification: log_det should be negative (since scales < 1)
-                self.assertLess(log_det, 0.0)
+                # Test that scales are decreasing (anisotropy property)
+                for i in range(1, n_dim):
+                    self.assertGreater(scales[i - 1], scales[i])
 
     def test_function_positivity(self):
         """Test that the Gaussian function is always positive."""

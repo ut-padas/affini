@@ -21,7 +21,7 @@ def _get_random_rotation(d: int, dtype) -> Array:
 def random_aniso_gaussian(X: Array) -> Array:
     """
     Computes the Randomly Rotated Anisotropic Gaussian function.
-    f(x) = C * exp(-0.5 * x^T (Q S Q^T) x)
+    f(x) = exp(-0.5 * x^T (Q S Q^T) x)
 
     Args:
         X: (N, d) data matrix
@@ -46,13 +46,8 @@ def random_aniso_gaussian(X: Array) -> Array:
     # This is equivalent to sum(s_i * x_rot_i^2)
     quad_term = xp.sum(scales[None, :] * (X_rot**2), axis=1, keepdims=True)
 
-    # Compute Normalization Constant C
-    # log(C) = 0.5 * (sum(log(scales)) - d * log(2pi))
-    log_det = xp.sum(xp.log(scales))
-    log_C = 0.5 * (log_det - d * xp.log(2 * xp.pi))
-
-    # f(x) = exp(log_C - 0.5 * quad_term)
-    return xp.exp(log_C - 0.5 * quad_term)
+    # f(x) = exp(-0.5 * quad_term)
+    return xp.exp(-0.5 * quad_term)
 
 
 def random_aniso_gaussian_grad(X: Array) -> Array:
