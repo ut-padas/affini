@@ -235,6 +235,80 @@ def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
     return EXP_DIR
 
 
+def ics_rosenbrock_runtime_scalability_experiment() -> Path:
+    MAX_CLUSTERS_EST = 100_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "ics_rosenbrock_runtime_scalability"
+    create_summary_dataframe(EXP_DIR)
+    # del_all_error_files_in_dir(EXP_DIR)
+    DIMs = [5]
+    TOLs = [0.05]
+    ERROR_METRICs = ["Linf-local"]
+    N_TRAINs = [20_000 * 2**i for i in range(10)]
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs, N_TRAINs))
+    for DIM, TOL, ERROR_METRIC, N_TRAIN in tqdm(combos, desc="Experiments"):
+        if DIM >= 64 and TOL <= 0.1:
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC}, N_TRAIN={N_TRAIN:.2e} due to resource constraints."
+            )
+            continue
+
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+        N_TEST = max(N_TRAIN // 4, 500)
+
+        if DIM >= 128:
+            BATCH_SIZE = 500_000
+        elif DIM >= 32:
+            BATCH_SIZE = 10_000_000
+        elif DIM >= 16:
+            BATCH_SIZE = 50_000_000
+        else:
+            BATCH_SIZE = 100_000_000
+
+        json_path = (
+            EXP_DIR
+            / f"ics26_rosenbrock_dim{DIM}_tol{TOL}_ntrain{N_TRAIN:.2e}_batch{BATCH_SIZE}_err{ERROR_METRIC}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        print(
+            f"N_TRAIN: {N_TRAIN:,}, N_INIT_CLUSTERS: {N_INIT_CLUSTERS:,}, N_MIN_PER_CLUSTER: {N_MIN_PER_CLUSTER:,}, BATCH_SIZE: {BATCH_SIZE:,}, N_TEST: {N_TEST:,}"
+        )
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            F_DIM=1,
+            DOMAIN=[-2, 3],
+            f_fn=rosenbrock,
+            g_fn=rosenbrock_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            USE_HESSIAN_INFORMED_SPLIT=True,
+            STORE_TRAIN_EVALS=False,
+            BATCH_SIZE=BATCH_SIZE,
+            PROFILE_TIMING=True,
+            PLOT_CONTOUR_IN_LOG_SCALE=True,
+        )
+
+    return EXP_DIR
+
+
 def ics_rosenbrock_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
@@ -719,6 +793,9 @@ if __name__ == "__main__":
 
         dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
         create_summary_dataframe(dir3)
+
+        dir4 = ics_rosenbrock_runtime_scalability_experiment()
+        create_summary_dataframe(dir4)
 
     else:
         print("Run only on GPU backend.")
