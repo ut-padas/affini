@@ -246,7 +246,7 @@ def ics_rosenbrock_runtime_scalability_experiment() -> Path:
     DIMs = [5]
     TOLs = [0.05]
     ERROR_METRICs = ["Linf-local"]
-    N_TRAINs = [10_000 * 2**i for i in range(11)]
+    N_TRAINs = [10_000 * 2**i for i in range(16)]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs, N_TRAINs))
     for DIM, TOL, ERROR_METRIC, N_TRAIN in tqdm(combos, desc="Experiments"):
