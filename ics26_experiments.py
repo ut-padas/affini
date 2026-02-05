@@ -103,6 +103,140 @@ def ics_aniso_gaussian_experiment() -> Path:
     return EXP_DIR
 
 
+def ics_aniso_gaussian_experiment_no_hess() -> Path:
+    MAX_CLUSTERS_EST = 100_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "ics_anisotropic_gaussian_no_hess"
+    create_summary_dataframe(EXP_DIR)
+
+    DIMs = [2, 5]
+    ERROR_METRICs = ["Linf-local"]
+    CASES = [(False, False)]  # (use_hessian, ignore_gradient)
+
+    TOLS_FOR_DIM2 = [0.2, 0.1, 0.05, 0.02, 0.011]
+    TOLS_FOR_DIM5 = [0.08, 0.045, 0.02, 0.009, 0.0048]
+
+    combos = list(product(DIMs, ERROR_METRICs, CASES))
+    for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
+        combos, desc="Experiments"
+    ):
+        if DIM == 2:
+            TOLs = TOLS_FOR_DIM2
+        elif DIM == 5:
+            TOLs = TOLS_FOR_DIM5
+        else:
+            raise ValueError(f"Unexpected DIM: {DIM}")
+
+        for TOL in TOLs:
+            json_path = (
+                EXP_DIR
+                / f"ics26_aniso_gaussian_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
+            )
+            json_path.parent.mkdir(parents=True, exist_ok=True)
+            if json_path.exists():
+                print(f"Skipping existing experiment at {json_path}")
+                continue
+            print(f"Running experiment: {json_path}")
+
+            N_TRAIN = get_N_TRAIN(DIM)
+            N_TEST = N_TRAIN // 2
+            N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+            N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+            Problem_experiment_setup(
+                json_fpath=json_path,
+                DIM=DIM,
+                F_DIM=1,
+                DOMAIN=[-3.0, 3.0],
+                f_fn=aniso_gaussian,
+                g_fn=aniso_gaussian_grad,
+                N_TRAIN=N_TRAIN,
+                N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+                TOL=TOL,
+                N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                N_TEST=N_TEST,
+                K_NEIGHBOURS=K_NEIGHBOURS,
+                CLUSTERING_VERSION=CLUSTERING_VERSION,
+                ERROR_METRIC=ERROR_METRIC,  # type: ignore
+                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                IGNORE_GRADIENT=IGNORE_GRADIENT,
+                PLOT_CONTOUR_IN_LOG_SCALE=False,
+            )
+            create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
+def ics_aniso_gaussian_experiment_no_hess_no_grad() -> Path:
+    MAX_CLUSTERS_EST = 100_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "ics_anisotropic_gaussian_no_hess_no_grad"
+    create_summary_dataframe(EXP_DIR)
+
+    DIMs = [2]
+    ERROR_METRICs = ["Linf-local"]
+    CASES = [(False, True)]  # (use_hessian, ignore_gradient)
+
+    TOLS_FOR_DIM2 = [0.2, 0.1, 0.05, 0.02, 0.011]
+    TOLS_FOR_DIM5 = [0.08, 0.045, 0.02, 0.009, 0.0048]
+
+    combos = list(product(DIMs, ERROR_METRICs, CASES))
+    for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
+        combos, desc="Experiments"
+    ):
+        if DIM == 2:
+            TOLs = TOLS_FOR_DIM2
+        elif DIM == 5:
+            TOLs = TOLS_FOR_DIM5
+        else:
+            raise ValueError(f"Unexpected DIM: {DIM}")
+
+        for TOL in TOLs:
+            json_path = (
+                EXP_DIR
+                / f"ics26_aniso_gaussian_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
+            )
+            json_path.parent.mkdir(parents=True, exist_ok=True)
+            if json_path.exists():
+                print(f"Skipping existing experiment at {json_path}")
+                continue
+            print(f"Running experiment: {json_path}")
+
+            N_TRAIN = get_N_TRAIN(DIM)
+            N_TEST = N_TRAIN // 2
+            N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+            N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+            Problem_experiment_setup(
+                json_fpath=json_path,
+                DIM=DIM,
+                F_DIM=1,
+                DOMAIN=[-3.0, 3.0],
+                f_fn=aniso_gaussian,
+                g_fn=aniso_gaussian_grad,
+                N_TRAIN=N_TRAIN,
+                N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+                TOL=TOL,
+                N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                N_TEST=N_TEST,
+                K_NEIGHBOURS=K_NEIGHBOURS,
+                CLUSTERING_VERSION=CLUSTERING_VERSION,
+                ERROR_METRIC=ERROR_METRIC,  # type: ignore
+                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                IGNORE_GRADIENT=IGNORE_GRADIENT,
+                PLOT_CONTOUR_IN_LOG_SCALE=False,
+            )
+            create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
 def ics_aniso_quadratic_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
@@ -943,5 +1077,10 @@ if __name__ == "__main__":
         dir6 = ics_aniso_quadratic_experiment_no_hess_no_grad()
         create_summary_dataframe(dir6)
 
+        dir7 = ics_aniso_gaussian_experiment_no_hess()
+        create_summary_dataframe(dir7)
+
+        dir8 = ics_aniso_gaussian_experiment_no_hess_no_grad()
+        create_summary_dataframe(dir8)
     else:
         print("Run only on GPU backend.")
