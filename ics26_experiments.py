@@ -73,6 +73,12 @@ def ics_random_aniso_quadratic_experiment() -> Path:
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        if DIM == 10 and TOL <= 0.05:
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
+            )
+            continue
+
         json_path = (
             EXP_DIR
             / f"ics26_random_anisotropic_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
@@ -873,6 +879,8 @@ def generate_train_data_for_neural_network() -> None:
             TRAIN_EVALS_DIR=_evals_dir,
             TRAIN_EVALS_PREFIX=_prefix,
             USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            SAVE_TEST_DATA=True,
+            SAVE_TRAINED_DATA=True,
         )
         for _p in ["_f", "_g"]:
             consolidate_evaluations(
@@ -883,37 +891,40 @@ def generate_train_data_for_neural_network() -> None:
             )
 
     # 5D Rosenbrock
-    DIM = 5
-    _evals_dir = TRAIN_EVALS_ROOT / f"rosenbrock_{DIM}d_tol{TOL}"
-    Problem_experiment_setup(
-        json_fpath=TRAIN_EVALS_ROOT
-        / f"ics26_rosenbrock_{DIM}d_tol{TOL}_train_evals.json",
-        DIM=DIM,
-        F_DIM=1,
-        DOMAIN=[-2.0, 3.0],
-        TOL=TOL,
-        f_fn=rosenbrock,
-        g_fn=rosenbrock_grad,
-        N_TRAIN=get_N_TRAIN(DIM),
-        N_INIT_CLUSTERS=get_N_INIT_CLUSTERS(DIM),
-        N_MIN_PER_CLUSTER=get_N_MIN_PER_CLUSTER(DIM),
-        MAX_CLUSTERS_EST=100_000,
-        N_TEST=get_N_TRAIN(DIM) // 2,
-        K_NEIGHBOURS=K_NEIGHBOURS,
-        CLUSTERING_VERSION=CLUSTERING_VERSION,
-        ERROR_METRIC=ERROR_METRIC,
-        STORE_TRAIN_EVALS=True,
-        TRAIN_EVALS_DIR=_evals_dir,
-        TRAIN_EVALS_PREFIX=_prefix,
-        USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-    )
-    for _p in ["_f", "_g"]:
-        consolidate_evaluations(
-            save_dir=_evals_dir,
-            prefix=_prefix + _p,
-            output_path=_evals_dir / f"rosenbrock_{DIM}d_tol{TOL}{_p}.npz",
-            delete_individual_files_after=True,
+    DIMs = [2, 5]
+    for DIM in DIMs:
+        _evals_dir = TRAIN_EVALS_ROOT / f"rosenbrock_{DIM}d_tol{TOL}"
+        Problem_experiment_setup(
+            json_fpath=TRAIN_EVALS_ROOT
+            / f"ics26_rosenbrock_{DIM}d_tol{TOL}_train_evals.json",
+            DIM=DIM,
+            F_DIM=1,
+            DOMAIN=[-2.0, 3.0],
+            TOL=TOL,
+            f_fn=rosenbrock,
+            g_fn=rosenbrock_grad,
+            N_TRAIN=get_N_TRAIN(DIM),
+            N_INIT_CLUSTERS=get_N_INIT_CLUSTERS(DIM),
+            N_MIN_PER_CLUSTER=get_N_MIN_PER_CLUSTER(DIM),
+            MAX_CLUSTERS_EST=100_000,
+            N_TEST=get_N_TRAIN(DIM) // 2,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,
+            STORE_TRAIN_EVALS=True,
+            TRAIN_EVALS_DIR=_evals_dir,
+            TRAIN_EVALS_PREFIX=_prefix,
+            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            SAVE_TEST_DATA=True,
+            SAVE_TRAINED_DATA=True,
         )
+        for _p in ["_f", "_g"]:
+            consolidate_evaluations(
+                save_dir=_evals_dir,
+                prefix=_prefix + _p,
+                output_path=_evals_dir / f"rosenbrock_{DIM}d_tol{TOL}{_p}.npz",
+                delete_individual_files_after=True,
+            )
 
     # Lorenz 5D, F=1
     DIM = 5
@@ -1094,8 +1105,8 @@ if __name__ == "__main__":
 
     # ics_lorenz_experiment()
 
-    dir10 = ics_random_aniso_quadratic_experiment()
-    create_summary_dataframe(dir10)
+    # dir10 = ics_random_aniso_quadratic_experiment()
+    # create_summary_dataframe(dir10)
 
     dir11 = ics_random_aniso_gaussian_experiment()
     create_summary_dataframe(dir11)
