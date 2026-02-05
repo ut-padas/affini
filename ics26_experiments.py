@@ -76,7 +76,7 @@ def ics_aniso_gaussian_experiment() -> Path:
         print(f"Running experiment: {json_path}")
 
         N_TRAIN = get_N_TRAIN(DIM)
-        N_TEST = N_TRAIN
+        N_TEST = N_TRAIN // 2
         N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
@@ -133,7 +133,7 @@ def ics_aniso_quadratic_experiment() -> Path:
         print(f"Running experiment: {json_path}")
 
         N_TRAIN = get_N_TRAIN(DIM)
-        N_TEST = N_TRAIN
+        N_TEST = N_TRAIN // 2
         N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
