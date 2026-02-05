@@ -3,7 +3,7 @@
 from src import Array, xp
 
 SEED = 0
-SIGMA_DECAY_EXPONENT = 3.0
+SIGMA_DECAY_EXPONENT = 3
 BETA = 1
 
 
@@ -36,7 +36,7 @@ def _get_precision_eigenvalues(d: int, dtype) -> Array:
 
     # 2. Compute Precision (inverse variance)
     # This is the diagonal matrix \Lambda^{-1}
-    precision_diag = 1.0 / (sigmas**2)
+    precision_diag = 1.0 / (sigmas)
 
     return precision_diag
 

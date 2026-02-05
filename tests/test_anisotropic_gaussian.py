@@ -35,7 +35,7 @@ def _sympy_aniso_gaussian_f_g_h(
     # Create precision eigenvalues: precision_i = (i + 1)^(2*p)
     indices = np.arange(n_dim) + 1
     sigmas = 1.0 / (indices**sigma_decay_exp)
-    prec_diag = 1.0 / (sigmas**2)
+    prec_diag = 1.0 / (sigmas)
 
     # Create diagonal precision matrix
     Prec_diag = sp.diag(*[sp.Float(p) for p in prec_diag])
