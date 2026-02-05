@@ -3,7 +3,7 @@
 from src import Array, xp
 
 SEED = 0
-DIAGONAL_EXPONENT = 1.5
+SIGMA_DECAY_EXPONENT = 3.0
 BETA = 1
 
 
@@ -19,10 +19,33 @@ def _get_random_rotation(d: int, dtype) -> Array:
     return Q
 
 
-def random_aniso_gaussian(X: Array) -> Array:
+def _get_precision_eigenvalues(d: int, dtype) -> Array:
+    """
+    Constructs the eigenvalues of the Precision Matrix (Sigma^-1).
+
+    Logic:
+    1. Define Sigma (Standard Deviations) such that sigma_max = 1.
+       sigma_i = 1 / (i + 1)^p
+    2. Precision = 1 / Variance = 1 / sigma^2
+       precision_i = (i + 1)^(2p)
+    """
+    # 1. Define Sigmas: Start at 1.0, decay by power law
+    # sigma_0 = 1, sigma_1 = 1/2^p, ...
+    indices = xp.arange(d, dtype=dtype) + 1
+    sigmas = 1.0 / (indices**SIGMA_DECAY_EXPONENT)
+
+    # 2. Compute Precision (inverse variance)
+    # This is the diagonal matrix \Lambda^{-1}
+    precision_diag = 1.0 / (sigmas**2)
+
+    return precision_diag
+
+
+def aniso_gaussian(X: Array) -> Array:
     """
     Computes the Randomly Rotated Anisotropic Gaussian function.
-    f(x) = BETA + exp(-0.5 * x^T (Q S Q^T) x)
+    f(x) = BETA + exp(-0.5 * x^T Sigma^-1 x)
+    where Sigma^-1 = Q Lambda^-1 Q^T
 
     Args:
         X: (N, d) data matrix
@@ -32,10 +55,8 @@ def random_aniso_gaussian(X: Array) -> Array:
     N, d = X.shape
     dtype = X.dtype
 
-    # Create scales (Eigenvalues of the matrix in the exponent)
-    scales = xp.array(
-        [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(d)], dtype=dtype
-    )
+    # Get Precision eigenvalues (Lambda^-1)
+    prec_diag = _get_precision_eigenvalues(d, dtype)
 
     # Create random rotation matrix Q
     Q = _get_random_rotation(d, dtype)
@@ -43,19 +64,18 @@ def random_aniso_gaussian(X: Array) -> Array:
     # Rotate data: X_rot = X Q
     X_rot = X @ Q  # (N, d)
 
-    # Compute Quadratic part: x^T (Q S Q^T) x
-    # This is equivalent to sum(s_i * x_rot_i^2)
-    quad_term = xp.sum(scales[None, :] * (X_rot**2), axis=1, keepdims=True)
+    # Compute Mahalanobis distance squared: x^T (Q Lambda^-1 Q^T) x
+    # = sum( (X_rot_i^2) / sigma_i^2 )
+    mahalanobis_sq = xp.sum(prec_diag[None, :] * (X_rot**2), axis=1, keepdims=True)
 
-    # f(x) = BETA + exp(-0.5 * quad_term)
-    return BETA + xp.exp(-0.5 * quad_term)
+    # f(x) = BETA + exp(-0.5 * dist^2)
+    return BETA + xp.exp(-0.5 * mahalanobis_sq)
 
 
-def random_aniso_gaussian_grad(X: Array) -> Array:
+def aniso_gaussian_grad(X: Array) -> Array:
     """
     Computes gradient of the Gaussian function.
-    g(x) = -exp(-0.5 * x^T M x) * (Q S Q^T x)
-    Note: BETA constant disappears in derivative
+    g(x) = -exp(...) * (Sigma^-1 x)
 
     Returns:
         G: (N, 1, d) gradients
@@ -63,33 +83,31 @@ def random_aniso_gaussian_grad(X: Array) -> Array:
     N, d = X.shape
     dtype = X.dtype
 
-    # --- 1. Compute exponential part only (without BETA) ---
-    scales = xp.array(
-        [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(d)], dtype=dtype
-    )
+    # --- 1. Compute PDF components ---
+    prec_diag = _get_precision_eigenvalues(d, dtype)
     Q = _get_random_rotation(d, dtype)
-    X_rot = X @ Q
-    quad_term = xp.sum(scales[None, :] * (X_rot**2), axis=1, keepdims=True)
-    exp_part = xp.exp(-0.5 * quad_term)  # (N, 1) - only exponential, no BETA
 
-    # --- 2. Compute Matrix-Vector product (Q S Q^T x) ---
-    # M x = Q (S (Q^T x))
-    temp = scales[None, :] * X_rot  # X Q S
-    Mx = temp @ Q.T  # X Q S Q^T  => (N, d)
+    X_rot = X @ Q
+    mahalanobis_sq = xp.sum(prec_diag[None, :] * (X_rot**2), axis=1, keepdims=True)
+    exp_part = xp.exp(-0.5 * mahalanobis_sq)  # (N, 1)
+
+    # --- 2. Compute Sigma^-1 x ---
+    # Apply diagonal precision in rotated space
+    temp = prec_diag[None, :] * X_rot  # (X Q) Lambda^-1
+
+    # Rotate back
+    inv_sigma_x = temp @ Q.T  # (N, d)
 
     # --- 3. Compute Gradient ---
-    # g = -exp_part * (M x)
-    G = -exp_part * Mx
+    G = -exp_part * inv_sigma_x
 
     return G[:, None, :]
 
 
-def random_aniso_gaussian_hess(X: Array) -> Array:
+def aniso_gaussian_hess(X: Array) -> Array:
     """
     Computes Hessian of the Gaussian function.
-    H(x) = exp(-0.5 * x^T M x) * [ (Mx)(Mx)^T - M ]
-    where M = Q S Q^T
-    Note: BETA constant disappears in second derivative
+    H(x) = exp(...) * [ (Sigma^-1 x)(Sigma^-1 x)^T - Sigma^-1 ]
 
     Returns:
         H: (N, d, d) Hessians
@@ -97,34 +115,24 @@ def random_aniso_gaussian_hess(X: Array) -> Array:
     N, d = X.shape
     dtype = X.dtype
 
-    # --- 1. Compute exponential part only (without BETA) ---
-    scales = xp.array(
-        [(1.0 / (i + 1)) ** DIAGONAL_EXPONENT for i in range(d)], dtype=dtype
-    )
+    # --- 1. Compute PDF components ---
+    prec_diag = _get_precision_eigenvalues(d, dtype)
     Q = _get_random_rotation(d, dtype)
+
     X_rot = X @ Q
-    quad_term = xp.sum(scales[None, :] * (X_rot**2), axis=1, keepdims=True)
-    exp_part = xp.exp(-0.5 * quad_term)  # (N, 1) - only exponential, no BETA
+    mahalanobis_sq = xp.sum(prec_diag[None, :] * (X_rot**2), axis=1, keepdims=True)
+    exp_part = xp.exp(-0.5 * mahalanobis_sq)  # (N, 1)
 
-    # --- 2. Construct Matrix M = Q S Q^T ---
-    S_mat = xp.diag(scales)
-    M = Q @ S_mat @ Q.T  # (d, d)
+    # --- 2. Construct Full Precision Matrix Sigma^-1 ---
+    Prec_Mat = xp.diag(prec_diag)
+    M = Q @ Prec_Mat @ Q.T  # (d, d)
 
-    # --- 3. Compute Vector term v = M x ---
-    # We need v for every point X_i
-    temp = scales[None, :] * X_rot
-    Mx = temp @ Q.T  # (N, d)
+    # --- 3. Compute Vector term v = Sigma^-1 x ---
+    temp = prec_diag[None, :] * X_rot
+    v = temp @ Q.T  # (N, d)
 
     # --- 4. Compute Hessian Terms ---
-    # Term 1: Outer product (Mx)(Mx)^T for each N
-    # Shape becomes (N, d, d)
-    term1 = Mx[:, :, None] * Mx[:, None, :]
-
-    # Term 2: M broadcasted to (N, d, d)
+    term1 = v[:, :, None] * v[:, None, :]
     term2 = M[None, :, :]
-
-    # Combine: exp_part * (term1 - term2)
-    # exp_part is (N, 1), reshape to (N, 1, 1) for broadcasting
     H = exp_part[:, :, None] * (term1 - term2)
-
     return H
