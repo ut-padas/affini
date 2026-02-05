@@ -535,7 +535,7 @@ def Problem_experiment_setup(
         total_f_evals = None
 
     result_dict = create_problem_result_dict(
-        problem_name="Quadratic",
+        problem_name="Problem_experiment",
         problem_tag=f"{DIM}D_N{N_TRAIN}_InitClust{N_INIT_CLUSTERS}_Tol{TOL}_ErrScale{ERROR_METRIC}_MinPts{N_MIN_PER_CLUSTER}_MaxClustEst{MAX_CLUSTERS_EST}_K{K_NEIGHBOURS}",
         error_tag=error_tag,
         train_time=train_time,
@@ -601,7 +601,8 @@ def Problem_experiment_setup(
             cs = axs[0].contourf(X, Y, Z, levels=50, cmap="viridis")
         fig.colorbar(cs, ax=axs[0])
         axs[0].set_title(
-            f"Shifted Gaussians with Cluster Centroids (TOL={TOL})", fontsize=10
+            f"Function Contour Plot (N_CLUSTERS={N_CLUSTERS})",
+            fontsize=10,
         )
         axs[0].set_xlabel(r"$x_1$")
         axs[0].set_ylabel(r"$x_2$")
