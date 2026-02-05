@@ -178,12 +178,12 @@ def ics_aniso_gaussian_experiment_no_hess_no_grad() -> Path:
     EXP_DIR = ICS26_DIR / "ics_anisotropic_gaussian_no_hess_no_grad"
     create_summary_dataframe(EXP_DIR)
 
-    DIMs = [2]
+    DIMs = [2, 5]
     ERROR_METRICs = ["Linf-local"]
     CASES = [(False, True)]  # (use_hessian, ignore_gradient)
 
-    TOLS_FOR_DIM2 = [0.2, 0.1, 0.05, 0.02, 0.011]
-    TOLS_FOR_DIM5 = [0.08, 0.045, 0.02, 0.009, 0.0048]
+    TOLS_FOR_DIM2 = [0.25, 0.2, 0.13, 0.09, 0.06]
+    TOLS_FOR_DIM5 = [0.113, 0.067, 0.044, 0.029, 0.025]
 
     combos = list(product(DIMs, ERROR_METRICs, CASES))
     for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
@@ -1059,8 +1059,8 @@ if __name__ == "__main__":
 
         # ics_lorenz_experiment()
 
-        # dir1 = ics_aniso_gaussian_experiment()
-        # create_summary_dataframe(dir1)
+        dir1 = ics_aniso_gaussian_experiment()
+        create_summary_dataframe(dir1)
 
         # dir2 = ics_aniso_quadratic_experiment()
         # create_summary_dataframe(dir2)
