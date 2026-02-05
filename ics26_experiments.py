@@ -11,6 +11,10 @@ from experiments_utils import (
     del_all_error_files_in_dir,
 )
 from src.logging_utils import consolidate_evaluations
+from src.problems.anisotropic_gaussian import (
+    random_aniso_gaussian,
+    random_aniso_gaussian_grad,
+)
 from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad
 from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 from src.problems.quadratic import quadratic, quadratic_grad
@@ -91,6 +95,57 @@ def ics_random_aniso_quadratic_experiment() -> Path:
             DOMAIN=[-2, 2],
             f_fn=random_aniso_quadratic,
             g_fn=random_aniso_quadratic_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            USE_HESSIAN_INFORMED_SPLIT=True,
+            STORE_TRAIN_EVALS=False,
+        )
+
+    return EXP_DIR
+
+
+def ics_random_aniso_gaussian_experiment() -> Path:
+    MAX_CLUSTERS_EST = 100_000
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = ICS26_DIR / "ics_random_anisotropic_gaussian"
+    create_summary_dataframe(EXP_DIR)
+    DIMs = [2, 5]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+    ERROR_METRICs = ["Linf-local"]
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        json_path = (
+            EXP_DIR
+            / f"ics26_random_anisotropic_gaussian_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            F_DIM=1,
+            DOMAIN=[-(DIM**2), DIM**2],
+            f_fn=random_aniso_gaussian,
+            g_fn=random_aniso_gaussian_grad,
             N_TRAIN=N_TRAIN,
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
             TOL=TOL,
@@ -1041,3 +1096,6 @@ if __name__ == "__main__":
 
     dir10 = ics_random_aniso_quadratic_experiment()
     create_summary_dataframe(dir10)
+
+    dir11 = ics_random_aniso_gaussian_experiment()
+    create_summary_dataframe(dir11)
