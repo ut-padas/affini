@@ -152,15 +152,17 @@ def parallel_sensitivities_solver(
     DfDx,
     X0,
     tf,
-    min_parallel_trajectories=20_000,
-    min_trajectories_per_worker=8_000,
+    MIN_PARALLEL_TRAJECTORIES=20_000,
+    MIN_TRAJECTORIES_PER_WORKER=8_000,
+    MAX_SAFE_WORKERS=60,
 ):
     """
     Parallel solver using Shared Memory to avoid pipe overhead.
 
     Args:
-        min_parallel_trajectories (int): If N is below this threshold, run serially on the main process to avoid spawn overhead.
-        min_trajectories_per_worker (int): Minimum workload per core to justify spawning a new process. Prevents over-parallelization on medium datasets.
+        MIN_PARALLEL_TRAJECTORIES (int): If N is below this threshold, run serially on the main process to avoid spawn overhead.
+        MIN_TRAJECTORIES_PER_WORKER (int): Minimum workload per core to justify spawning a new process. Prevents over-parallelization on medium datasets.
+        MAX_SAFE_WORKERS (int): Absolute cap on number of worker processes to prevent resource exhaustion on very large machines. Even on 70+ core machines, spawning more than ~50 workers for heavy math tasks can lead to excessive overhead and instability.
     """
     # Ensure Inputs are NumPy (CPU) for SharedMemory compatibility
     if hasattr(X0, "device"):  # Handle CuPy/Torch/JAX arrays
@@ -170,9 +172,9 @@ def parallel_sensitivities_solver(
     dtype = X0.dtype
 
     # Check for small dataset serial bypass
-    if N < min_parallel_trajectories:
+    if N < MIN_PARALLEL_TRAJECTORIES:
         logging.info(
-            f"Small dataset ({N} < {min_parallel_trajectories}): running serially."
+            f"Small dataset ({N} < {MIN_PARALLEL_TRAJECTORIES}): running serially."
         )
         return _serial_solve(X0, rhs, DfDx, tf)
 
@@ -198,17 +200,13 @@ def parallel_sensitivities_solver(
     try:
         # 3. Configure Workers
         total_cores = os.cpu_count() or 1
-        # Cap max workers to leave headroom - 50 is a safe upper limit for heavy math tasks
-        # even on 70+ core machines, to avoid excessive context switching/latency overheads
-        # and resource fd exhaustion.
-        MAX_SAFE_WORKERS = 60
         max_possible_workers = min(max(1, total_cores - 2), MAX_SAFE_WORKERS)
 
         # Calculate optimal number of workers based on density
         # We only want to add a worker if it has at least 'min_trajectories_per_worker' to do.
         needed_workers = (
-            N + min_trajectories_per_worker - 1
-        ) // min_trajectories_per_worker
+            N + MIN_TRAJECTORIES_PER_WORKER - 1
+        ) // MIN_TRAJECTORIES_PER_WORKER
 
         # Dispatch only as many workers as needed, up to the hardware limit
         num_workers = min(max_possible_workers, needed_workers)
