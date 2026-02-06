@@ -3,6 +3,7 @@ import time
 from typing import Any, Callable, Literal, Optional
 
 import matplotlib.pyplot as plt
+
 # from cuml.cluster import KMeans as cuKMeans
 # from cupyx import scatter_max as cupy_scatter_max
 from matplotlib.colors import LogNorm
@@ -301,7 +302,7 @@ def compute_good_covariance_hessian(
     # I am using a for loop because I don't know what I am doing otherwise (need to vectorize)
     for j in range(len(starts)):
         eps = 1e-3
-        errors_current = errors[starts[j]:starts[j+1]]
+        errors_current = errors[starts[j] : starts[j + 1]]
         within_tol = errors_current < eps
         if len(within_tol) <= 2 * d * xp.log(d) + 1:
             within_tol = errors_current > eps
@@ -310,8 +311,7 @@ def compute_good_covariance_hessian(
                 eps = eps * 2
                 within_tol = errors_current < eps
 
-        points_in_level_curve[starts[j]:starts[j+1]] = within_tol.flatten()
-    
+        points_in_level_curve[starts[j] : starts[j + 1]] = within_tol.flatten()
 
     # error_blocks = np.split(errors, starts[1:])
     # sorted_error_blocks = [np.sort(b) for b in error_blocks]
@@ -325,10 +325,7 @@ def compute_good_covariance_hessian(
     abs_dvals = np.abs(dvals)
     inv_abs_sqrt_dvals = abs_dvals ** (-0.5)
     M = (U * inv_abs_sqrt_dvals[:, None, :]) @ U.transpose(0, 2, 1)
-    return 0.5 * (M + M.transpose(0,2,1))
-
-
-
+    return 0.5 * (M + M.transpose(0, 2, 1))
 
 
 def estimate_hessian_sqrt_symmetric(
@@ -537,7 +534,7 @@ def adaptive_clustering(
     # Testing purposes: run without gradient to compare
     IGNORE_GRADIENT: bool = False,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
-    SAVE_GENERATED_TRAINING_DATA: bool = False
+    SAVE_GENERATED_TRAINING_DATA: bool = False,
 ) -> dict[str, Array]:
     """
     Adaptive clustering for Vector-Valued functions F: R^d -> R^m.
@@ -966,10 +963,11 @@ def adaptive_clustering(
                 # It can be shown that if we have enough points,
                 # this is close to the Hessian, and requires much less computation.
                 # Do not use gradients at all.
-                F_bad_all = F_sorted[mask_bad_pts] # (N_bad, fd)
+                F_bad_all = F_sorted[mask_bad_pts]  # (N_bad, fd)
 
-                M_split = compute_good_covariance_hessian(dx_bad, F_bad_all, f_lin, bad_starts)
-
+                M_split = compute_good_covariance_hessian(
+                    dx_bad, F_bad_all, f_lin, bad_starts
+                )
 
         # Transform and Split
         map_bad_n_to_k = repeats(xp.arange(n_bad_clusters), bad_counts)
