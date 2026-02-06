@@ -1100,6 +1100,9 @@ def ics_jax_lorenz() -> Path:
     Lorenz 96 surrogate for a SINGLE time step using JAX-accelerated oracle.
     Target: 20D.
     """
+    raise NotImplementedError(
+        "Not implemented yet. Need to ensure JAX is properly set up and integrated."
+    )
     from src.problems.jax_lorenz96 import (
         lorenz96_jax_flowmap,
         lorenz96_jax_grad,
@@ -1169,6 +1172,8 @@ def ics_jax_lorenz() -> Path:
         print(f"Running experiment: {json_path}")
 
         N_TRAIN = min(get_N_TRAIN(DIM), int(2e6))
+        # Reduce N_TRAIN for debugging if needed, but keeping it standard for now.
+
         N_TEST = N_TRAIN // 2
         N_INIT_CLUSTERS = min(get_N_INIT_CLUSTERS(DIM), 1000)
         N_MIN_PER_CLUSTER = min(get_N_MIN_PER_CLUSTER(DIM), 500)
@@ -1261,7 +1266,6 @@ if __name__ == "__main__":
         dir10 = ics_rosenbrock_experiment_no_hess_no_grad()
         create_summary_dataframe(dir10)
 
-        # ics_jax_lorenz()
         ics_lorenz_experiment()
 
     else:
