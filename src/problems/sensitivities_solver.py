@@ -538,7 +538,7 @@ def parallel_sensitivities_solver_single_component(
         XF_final = np.ndarray(xf_shape, dtype=dtype, buffer=shm_xf.buf).copy()
         SF_final = np.ndarray(sf_shape, dtype=dtype, buffer=shm_sf.buf).copy()
 
-        return XF_final, SF_final
+        return XF_final, SF_final.reshape(sf_shape[0], 1, sf_shape[1])
 
     finally:
         # 5. Cleanup Shared Memory

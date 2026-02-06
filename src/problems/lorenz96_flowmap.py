@@ -135,6 +135,12 @@ def lorenz96_flowmap_oracle_single_component(
     Returns:
         Tuple (XF, DXF).
     """
+
+    raise NotImplementedError(
+        "This is actually broken because each \"decoupled\" block doesn't correspond to an entry of the gradient."
+    )
+
+
     X0_np = _ensure_numpy(X0)
 
     # Use partial for picklability

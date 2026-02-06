@@ -1013,21 +1013,26 @@ def ics_lorenz_experiment() -> Path:
     FORCING = 1
     FINAL_TIME = 0.1
 
-    # def oracle(x):
-    #     """
-    #     Compute the flowmap, and the gradient of the flowmap, for the given input x,
-    #     and retun for the specified output variable.
-    #     """
-    #     f, g = lorenz96_flowmap_oracle(x, FORCING, FINAL_TIME)
-    #     N, _ = f.shape
-    #     f_out = f[:, OUTPUT_VARIABLE].reshape((N, 1))
-    #     g_out = g[:, OUTPUT_VARIABLE, :].reshape((N, 1, -1))
-    #     return f_out, g_out
+    def f(x):
+        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
+        N, _ = f.shape
+        return f[:, 0].reshape((N, 1))
+
+    def grad_f(x):
+        g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+        N, d, _ = g.shape
+        return g[:, 0, :].reshape((N, 1, d))
 
     def oracle(x):
-        # Flowmap for the single component
-        f, g = lorenz96_flowmap_oracle_single_component(x, FORCING, FINAL_TIME)
-        return f, g
+        """
+        Compute the flowmap, and the gradient of the flowmap, for the given input x,
+        and retun for the specified output variable.
+        """
+        f, g = lorenz96_flowmap_oracle(x, FORCING, FINAL_TIME)
+        N, _ = f.shape
+        f_out = f[:, 0].reshape((N, 1))
+        g_out = g[:, 0, :].reshape((N, 1, -1))
+        return f_out, g_out
 
 
     MAX_CLUSTERS_EST = 20_000
@@ -1042,7 +1047,7 @@ def ics_lorenz_experiment() -> Path:
     # del_all_error_files_in_dir(EXP_DIR)
     # create_summary_dataframe(EXP_DIR)
 
-    DIMs = [20]
+    DIMs = [5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-global"]
 
@@ -1071,8 +1076,8 @@ def ics_lorenz_experiment() -> Path:
             DIM=DIM,
             F_DIM=1,
             DOMAIN=[-5.0, 5.0],
-            f_fn=None, # check
-            g_fn=None,
+            f_fn=f, # check
+            g_fn=grad_f,
             oracle_fn=oracle,
             N_TRAIN=N_TRAIN,
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
