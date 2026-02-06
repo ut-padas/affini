@@ -75,7 +75,7 @@ class HATANNSurrogate:
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
         PROFILE_TIMING: bool = False,
-        SAVE_GENERATED_TRAINING_DATA: bool = False
+        SAVE_GENERATED_TRAINING_DATA: bool = False,
     ):
         """
         Train the surrogate model or load from saved file.
@@ -165,7 +165,7 @@ class HATANNSurrogate:
                     IGNORE_GRADIENT=IGNORE_GRADIENT,
                     Q_SHRINK=0.05,
                     MAX_LEVELS=MAX_LEVELS,
-                    SAVE_GENERATED_TRAINING_DATA=SAVE_GENERATED_TRAINING_DATA
+                    SAVE_GENERATED_TRAINING_DATA=SAVE_GENERATED_TRAINING_DATA,
                 )
 
                 centroids = xp.asarray(results["centroids"])
@@ -178,27 +178,23 @@ class HATANNSurrogate:
                     "num_generated_pts": results["num_generated_pts"],
                     "total_f_evals": results["total_f_evals"],
                 }
-                if SAVE_GENERATED_TRAINING_DATA:
-                    training_data = results["gen_training_data"]
+                training_data = results.get("gen_training_data", None)
 
             else:
                 from src.gpu_adaptive_clustering import (
                     adaptive_clustering as gpu_adaptive_clustering,
                 )
 
-                if oracle_fn is not None:
-                    raise NotImplementedError(
-                        "oracle_fn is not supported with GPU backend."
-                    )
-                if f_fn is None or g_fn is None:
-                    raise ValueError(
-                        "Must specify both f_fn and g_fn when using GPU backend."
+                if SAVE_GENERATED_TRAINING_DATA:
+                    logger.warning(
+                        "SAVE_GENERATED_TRAINING_DATA=True is not currently supported in GPU version. Generated training data will not be saved."
                     )
 
                 results = gpu_adaptive_clustering(
                     X=X_train,
                     f_fn=f_fn,
                     g_fn=g_fn,
+                    oracle_fn=oracle_fn,
                     TOL=TOL,
                     ERROR_METRIC=ERROR_METRIC,
                     NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
@@ -217,6 +213,7 @@ class HATANNSurrogate:
                 radii = xp.asarray(results["radii"])
                 Qs = xp.asarray(results["Q"])
                 profiling_stats = results["profiling_stats"]
+                training_data = None  # Not supported in GPU version
 
             # 2. Store Data
             self.X_src = centroids
