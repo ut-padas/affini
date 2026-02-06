@@ -17,6 +17,7 @@ from src.problems.lorenz96_flowmap import (
     lorenz96_flowmap,
     lorenz96_flowmap_grad,
     lorenz96_flowmap_oracle,
+    lorenz96_flowmap_oracle_single_component
 )
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 from src.problems.shifted_gaussians import (
@@ -1023,16 +1024,22 @@ def ics_lorenz_experiment() -> Path:
         N, d, _ = g.shape
         return g[:, OUTPUT_VARIABLE, :].reshape((N, 1, d))
 
+    # def oracle(x):
+    #     """
+    #     Compute the flowmap, and the gradient of the flowmap, for the given input x,
+    #     and retun for the specified output variable.
+    #     """
+    #     f, g = lorenz96_flowmap_oracle(x, FORCING, FINAL_TIME)
+    #     N, _ = f.shape
+    #     f_out = f[:, OUTPUT_VARIABLE].reshape((N, 1))
+    #     g_out = g[:, OUTPUT_VARIABLE, :].reshape((N, 1, -1))
+    #     return f_out, g_out
+
     def oracle(x):
-        """
-        Compute the flowmap, and the gradient of the flowmap, for the given input x,
-        and retun for the specified output variable.
-        """
-        f, g = lorenz96_flowmap_oracle(x, FORCING, FINAL_TIME)
-        N, _ = f.shape
-        f_out = f[:, OUTPUT_VARIABLE].reshape((N, 1))
-        g_out = g[:, OUTPUT_VARIABLE, :].reshape((N, 1, -1))
-        return f_out, g_out
+        # Flowmap for the single component
+        f, g = lorenz96_flowmap_oracle_single_component(x, FORCING, FINAL_TIME)
+        return f, g
+
 
     MAX_CLUSTERS_EST = 20_000
 
@@ -1043,12 +1050,12 @@ def ics_lorenz_experiment() -> Path:
         ICS26_DIR
         / f"ics_lorenz_finaltime{FINAL_TIME}_outputvar{OUTPUT_VARIABLE}_forcing{FORCING}"
     )
-    del_all_error_files_in_dir(EXP_DIR)
-    create_summary_dataframe(EXP_DIR)
+    # del_all_error_files_in_dir(EXP_DIR)
+    # create_summary_dataframe(EXP_DIR)
 
-    DIMs = [10]
+    DIMs = [20]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-local"]
+    ERROR_METRICs = ["Linf-global"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Lorenz Experiments"):
@@ -1075,8 +1082,8 @@ def ics_lorenz_experiment() -> Path:
             DIM=DIM,
             F_DIM=1,
             DOMAIN=[-5.0, 5.0],
-            f_fn=f,
-            g_fn=grad_f,
+            # f_fn=f,
+            # g_fn=grad_f,
             oracle_fn=oracle,
             N_TRAIN=N_TRAIN,
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,

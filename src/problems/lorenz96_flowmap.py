@@ -7,7 +7,10 @@ from scipy.integrate import solve_ivp
 # Assumes these modules exist in your project structure
 from src import IS_CUPY_BACKEND, Array, xp
 from src.problems.lorenz96 import lorenz96, lorenz96_grad
-from src.problems.sensitivities_solver import parallel_sensitivities_solver
+from src.problems.sensitivities_solver import (
+    parallel_sensitivities_solver,
+    parallel_sensitivities_solver_single_component
+)
 
 
 def _ensure_numpy(x: Array) -> np.ndarray:
@@ -115,6 +118,32 @@ def lorenz96_flowmap_oracle(
     XF, DXF = parallel_sensitivities_solver(rhs, lorenz96_grad, X0_np, tf)
 
     return _ensure_backend(XF), _ensure_backend(DXF)
+
+
+
+def lorenz96_flowmap_oracle_single_component(
+    X0: Array, forcing: float = 1.0, tf: float = 0.1
+) -> tuple[Array, Array]:
+    """
+    Computes both the flowmap and its gradients in parallel.
+
+    Args:
+        X0: (N, d) initial states.
+        forcing: Forcing term.
+        tf: Final time.
+
+    Returns:
+        Tuple (XF, DXF).
+    """
+    X0_np = _ensure_numpy(X0)
+
+    # Use partial for picklability
+    rhs = partial(lorenz96, forcing=forcing)
+
+    XF, DXF = parallel_sensitivities_solver_single_component(rhs, lorenz96_grad, X0_np, tf)
+
+    return _ensure_backend(XF), _ensure_backend(DXF)
+
 
 
 if __name__ == "__main__":
