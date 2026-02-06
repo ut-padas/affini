@@ -1012,17 +1012,6 @@ def ics_lorenz_experiment() -> Path:
     """
     FORCING = 1
     FINAL_TIME = 0.1
-    OUTPUT_VARIABLE = 0
-
-    def f(x):
-        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
-        N, _ = f.shape
-        return f[:, OUTPUT_VARIABLE].reshape((N, 1))
-
-    def grad_f(x):
-        g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
-        N, d, _ = g.shape
-        return g[:, OUTPUT_VARIABLE, :].reshape((N, 1, d))
 
     # def oracle(x):
     #     """
@@ -1048,7 +1037,7 @@ def ics_lorenz_experiment() -> Path:
 
     EXP_DIR = (
         ICS26_DIR
-        / f"ics_lorenz_finaltime{FINAL_TIME}_outputvar{OUTPUT_VARIABLE}_forcing{FORCING}"
+        / f"ics_lorenz_finaltime{FINAL_TIME}_outputvar0_forcing{FORCING}"
     )
     # del_all_error_files_in_dir(EXP_DIR)
     # create_summary_dataframe(EXP_DIR)
@@ -1061,7 +1050,7 @@ def ics_lorenz_experiment() -> Path:
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Lorenz Experiments"):
         json_path = (
             EXP_DIR
-            / f"ics26_lorenz_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_outputvar{OUTPUT_VARIABLE}.json"
+            / f"ics26_lorenz_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_outputvar0.json"
         )
         json_path.parent.mkdir(parents=True, exist_ok=True)
         if json_path.exists():
@@ -1082,8 +1071,8 @@ def ics_lorenz_experiment() -> Path:
             DIM=DIM,
             F_DIM=1,
             DOMAIN=[-5.0, 5.0],
-            # f_fn=f,
-            # g_fn=grad_f,
+            f_fn=None, # check
+            g_fn=None,
             oracle_fn=oracle,
             N_TRAIN=N_TRAIN,
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
@@ -1243,35 +1232,35 @@ if __name__ == "__main__":
 
         # generate_train_data_for_neural_network()
 
-        dir1 = ics_aniso_gaussian_experiment()
-        create_summary_dataframe(dir1)
+        # dir1 = ics_aniso_gaussian_experiment()
+        # create_summary_dataframe(dir1)
 
-        dir2 = ics_aniso_quadratic_experiment()
-        create_summary_dataframe(dir2)
+        # dir2 = ics_aniso_quadratic_experiment()
+        # create_summary_dataframe(dir2)
 
-        dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
-        create_summary_dataframe(dir3)
+        # dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
+        # create_summary_dataframe(dir3)
 
-        dir4 = ics_rosenbrock_runtime_scalability_experiment()
-        create_summary_dataframe(dir4)
+        # dir4 = ics_rosenbrock_runtime_scalability_experiment()
+        # create_summary_dataframe(dir4)
 
-        dir5 = ics_aniso_quadratic_experiment_no_hess()
-        create_summary_dataframe(dir5)
+        # dir5 = ics_aniso_quadratic_experiment_no_hess()
+        # create_summary_dataframe(dir5)
 
-        dir6 = ics_aniso_quadratic_experiment_no_hess_no_grad()
-        create_summary_dataframe(dir6)
+        # dir6 = ics_aniso_quadratic_experiment_no_hess_no_grad()
+        # create_summary_dataframe(dir6)
 
-        dir7 = ics_aniso_gaussian_experiment_no_hess()
-        create_summary_dataframe(dir7)
+        # dir7 = ics_aniso_gaussian_experiment_no_hess()
+        # create_summary_dataframe(dir7)
 
-        dir8 = ics_aniso_gaussian_experiment_no_hess_no_grad()
-        create_summary_dataframe(dir8)
+        # dir8 = ics_aniso_gaussian_experiment_no_hess_no_grad()
+        # create_summary_dataframe(dir8)
 
-        dir9 = ics_rosenbrock_experiment_no_hess()
-        create_summary_dataframe(dir9)
+        # dir9 = ics_rosenbrock_experiment_no_hess()
+        # create_summary_dataframe(dir9)
 
-        dir10 = ics_rosenbrock_experiment_no_hess_no_grad()
-        create_summary_dataframe(dir10)
+        # dir10 = ics_rosenbrock_experiment_no_hess_no_grad()
+        # create_summary_dataframe(dir10)
 
         ics_lorenz_experiment()
 

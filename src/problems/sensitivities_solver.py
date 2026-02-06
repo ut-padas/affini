@@ -113,26 +113,15 @@ def _serial_solve_single_component(X0, rhs, DfDx, tf):
         x_batch = x_s_batch[:, :n_equations]
         s_batch = x_s_batch[:, n_equations:]
 
-        # Reshape sensitivities into matrices for matrix multiplication
-        # Shape: (n_trajectories, n_equations)
-        # unnecessary?
-        s_batch_matrices = s_batch.reshape(n_trajectories, n_equations)
-
         # 2. Compute Physics RHS
         rhs_x_batch = rhs(x_batch)
 
         # 3. Compute Sensitivity RHS (Jacobian * Sensitivities)
-        J = DfDx(x_batch)  # Shape: (n_trajectories, n_equations, n_equations)
+        Jacobian = DfDx(x_batch)  # Shape: (n_trajectories, n_equations, n_equations)
 
         # Batched Matrix Multiplication: J @ S
-        rhs_s_batch_tensor = xp.einsum("ijk,ik->ij", J, s_batch_matrices)
+        rhs_s_batch_matrix = xp.einsum("ijk,ik->ij", Jacobian, s_batch)
         # Shape: (n_trajectories, n_equations)
-
-        # Flatten the sensitivity matrices back to vectors
-        # unnecessary?
-        rhs_s_batch_matrix = rhs_s_batch_tensor.reshape(
-            n_trajectories, n_equations
-        )
 
         # 4. Combine and flatten
         result = xp.column_stack((rhs_x_batch, rhs_s_batch_matrix))
@@ -147,7 +136,7 @@ def _serial_solve_single_component(X0, rhs, DfDx, tf):
     # sol.y shape is (n_flat_vars, 1) because t_eval has length 1
     final_flat = sol.y.T  # Transpose to get (1, n_flat_vars)
 
-    XF_SF_batch = final_flat.reshape(n_trajectories, n_equations * (1 + n_equations))
+    XF_SF_batch = final_flat.reshape(n_trajectories, n_equations * 2)
     XF_batch = XF_SF_batch[:, :n_equations]
     SF_batch = XF_SF_batch[:, n_equations:].reshape(
         n_trajectories, n_equations
