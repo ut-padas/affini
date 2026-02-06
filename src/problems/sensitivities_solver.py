@@ -95,25 +95,48 @@ def parallel_sensitivities_solver(rhs, DfDx, X0, tf):
     total_cores = os.cpu_count() or 1
     num_workers = max(1, total_cores - 1)
 
-    # Split X0 into chunks
-    # Note: array_split handles cases where n_trajectories < num_workers gracefully
-    chunks = np.array_split(X0, num_workers)
+    # Calculate safe batch size to avoid IO pipe breakage with massive results
+    # Each trajectory outputs d (state) + d^2 (jacobian) floats.
+    # For d=20, this is ~420 floats * 8 bytes = 3360 bytes.
+    # A 5000 batch is ~16 MB payload. Ideally keep payload < 50MB-100MB.
+    d = X0.shape[1]
+    vars_per_traj = d * (d + 1)
+    # Target max ~50MB return payload per chunk (safety margin for Pipe buffer)
+    target_payload_floats = 6.0e6  # 6M floats * 8b = 48MB
+    max_batch_size = int(target_payload_floats / vars_per_traj)
+    # Clamp batch size
+    BATCH_SIZE = max(10, min(max_batch_size, 2000))
+
+    # Split into fixed-size chunks
+    N = X0.shape[0]
+    indices = np.arange(0, N, BATCH_SIZE)
+    # Create simple list of chunks. Slicing numpy array is a view (cheap).
+    chunks = [X0[i : i + BATCH_SIZE] for i in indices]
 
     # Prepare arguments for each worker
     # We must pass the functions rhs and DfDx. They must be picklable (defined at module level)
     tasks = [(chunk, rhs, DfDx, tf) for chunk in chunks if chunk.shape[0] > 0]
-    mean_chunk_size = X0.shape[0] / len(tasks) if tasks else 0
     print(
-        f"Total trajectories: {X0.shape[0]:,}, Workers: {len(tasks):,}, Mean chunk size: {mean_chunk_size:.2f}"
+        f"Total trajectories: {X0.shape[0]:,}, Workers: {num_workers}, Tasks: {len(tasks)}, Batch Size: {BATCH_SIZE} (Payload ~{BATCH_SIZE*vars_per_traj*8/1e6:.1f} MB)"
     )
 
     # Run in parallel
-    with mp.Pool(processes=len(tasks)) as pool:
+    # Use 'spawn' context to ensure thread safety with JAX/CUDA/OpenBLAS.
+    # 'fork' (default on Linux) causes crashes/hangs if the parent process has
+    # initialized GPU contexts or thread pools.
+    ctx = mp.get_context("spawn")
+
+    # We rely on the Pool to manage worker lifespan.
+    # Unlike 'fork', 'spawn' has high startup overhead, so we DO NOT use maxtasksperchild=1.
+    with ctx.Pool(processes=num_workers) as pool:
+        # Use imap (ordered) to stream results as they complete
+        # We wrap in list() to consume the iterator and block until done
         results = list(
             tqdm(
                 pool.imap(_worker_solve_wrapper, tasks),
                 total=len(tasks),
                 desc="Solving ODEs (Chunks)",
+                unit="chunk",
             )
         )
 
