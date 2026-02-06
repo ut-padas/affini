@@ -148,7 +148,12 @@ def _worker_wrapper_shm(args):
 
 
 def parallel_sensitivities_solver(
-    rhs, DfDx, X0, tf, min_parallel_trajectories=6000, min_trajectories_per_worker=6000
+    rhs,
+    DfDx,
+    X0,
+    tf,
+    min_parallel_trajectories=20_000,
+    min_trajectories_per_worker=8_000,
 ):
     """
     Parallel solver using Shared Memory to avoid pipe overhead.
@@ -235,7 +240,7 @@ def parallel_sensitivities_solver(
             )
 
         logging.info(
-            f"SharedMemory Solver: {N:,} trajectories, {len(tasks)} tasks, {num_workers} workers (Min/Worker: {min_trajectories_per_worker})."
+            f"Solver: {N:,} trajectories, {num_workers} workers (N/Worker: {(N // num_workers):,})."
         )
 
         ctx = mp.get_context("spawn")
@@ -244,7 +249,7 @@ def parallel_sensitivities_solver(
                 tqdm(
                     pool.imap(_worker_wrapper_shm, tasks),
                     total=len(tasks),
-                    desc="Solving ODEs (SharedMem)",
+                    desc="Solving ODEs",
                 )
             )
 
