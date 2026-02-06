@@ -1,30 +1,27 @@
+import logging
+import multiprocessing as mp
+import os
+import sys
+import traceback
+from multiprocessing.shared_memory import SharedMemory
 
-from array_api_compat import array_namespace
+import numpy as np
 from scipy.integrate import solve_ivp
+from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 
-def sensitivities_solver(rhs, DfDx, X0, tf):
+def _serial_solve(X0, rhs, DfDx, tf):
     """
-    Modifies an ODE rhs to also solve for sensitivities.
-    If x' = f(x), we modify the initial condition and rhs function to solve
-        sensitivities in conjuction with the standard ODE.
-    For now, does not include parameters as a variable in the system; assume fixed.
-
-    Args:
-        rhs: (function) The right hand side of the ODE
-        DfDx: (function) The Jacobian of the right hand side
-        DfDp: (function) The derivative with respect to parameters
-        x0: (n_trajectories, n_equations) The initial conditions. Each row represents a trajectory
-        p: (vector) The physical parameters of the system.
-        tf: (scalar) final time
-
-    Returns:
-        xf: (n_trajectories, dim) The solution at tf
-        dxf: (n_trajectories, n_equations, n_equations)
-            The derivatives, of each equation, with respect to each other equation and parameter at tf
+    Core solver logic acting on a batch of trajectories.
+    Returns (XF, SF).
     """
-    xp = array_namespace(X0)
+    if X0.shape[0] == 0:
+        return None, None
 
+    # We assume numpy for the solver internals
+    xp = np
     n_trajectories, n_equations = X0.shape
 
     # Modify initial condition so that it contains sensitivity variables
@@ -33,44 +30,259 @@ def sensitivities_solver(rhs, DfDx, X0, tf):
     X0_combined = xp.column_stack((X0, X0_sensitivities))
     X0_flat = X0_combined.ravel()
 
-    # Modify rhs to deal with sensitivities
-    def new_rhs(x_s_flat, f, DfDx):
-
+    # Define the coupled ODE system (State + Sensitivities)
+    def coupled_rhs(t, x_s_flat):
         # x refers to regular variables, s refers to sensitivity variables
 
-        # first reshape
+        # 1. Reshape flat input into batch format
+        # Shape: (n_trajectories, n_equations * (1 + n_equations))
         x_s_batch = x_s_flat.reshape(n_trajectories, n_equations * (1 + n_equations))
-        x_batch = x_s_batch[:, :n_equations] # (n_trajectories, n_equations)
-        s_batch = x_s_batch[:, n_equations:] # (n_trajectories, n_equations * n_equations)
-        s_batch_matrices = s_batch.reshape(n_trajectories, n_equations, n_equations) # (n_trajectories, n_equations, n_equations)
 
-        # apply f to x_batch
-        rhs_x_batch = f(x_batch) # (n_trajectories, n_equations)
+        x_batch = x_s_batch[:, :n_equations]
+        s_batch = x_s_batch[:, n_equations:]
 
-        # apply J to each vector in s_batch (sensitivity RHS)
-        J = DfDx(x_batch) # (n_trajectories, n_equations, n_equations)
-        rhs_s_batch_tensor = xp.einsum('ijk,ikl->ijl', J, s_batch_matrices) # (n_trajectories, n_equations, n_equations)
+        # Reshape sensitivities into matrices for matrix multiplication
+        # Shape: (n_trajectories, n_equations, n_equations)
+        s_batch_matrices = s_batch.reshape(n_trajectories, n_equations, n_equations)
 
-        # combine these back together and flatten
-        rhs_s_batch_matrix = rhs_s_batch_tensor.reshape(n_trajectories, n_equations * n_equations)
-        rhs = xp.column_stack((rhs_x_batch, rhs_s_batch_matrix))
-        return rhs.ravel()
+        # 2. Compute Physics RHS
+        rhs_x_batch = rhs(x_batch)
 
-    # solve ODEs
+        # 3. Compute Sensitivity RHS (Jacobian * Sensitivities)
+        J = DfDx(x_batch)  # Shape: (n_trajectories, n_equations, n_equations)
+
+        # Batched Matrix Multiplication: J @ S
+        rhs_s_batch_tensor = xp.einsum("ijk,ikl->ijl", J, s_batch_matrices)
+
+        # Flatten the sensitivity matrices back to vectors
+        rhs_s_batch_matrix = rhs_s_batch_tensor.reshape(
+            n_trajectories, n_equations * n_equations
+        )
+
+        # 4. Combine and flatten
+        result = xp.column_stack((rhs_x_batch, rhs_s_batch_matrix))
+        return result.ravel()
+
+    # Solve ODEs
     t_span = [0, tf]
-    t_eval = [tf]
-    sol = solve_ivp(
-        lambda t,x: new_rhs(x,rhs,DfDx),
-        t_span,
-        X0_flat,
-        method='RK45',
-        t_eval=t_eval
+    # RK45 is generally robust, t_eval ensures we get output exactly at tf
+    sol = solve_ivp(coupled_rhs, t_span, X0_flat, method="RK45", t_eval=[tf])
+
+    # Restructure results
+    # sol.y shape is (n_flat_vars, 1) because t_eval has length 1
+    final_flat = sol.y.T  # Transpose to get (1, n_flat_vars)
+
+    XF_SF_batch = final_flat.reshape(n_trajectories, n_equations * (1 + n_equations))
+    XF_batch = XF_SF_batch[:, :n_equations]
+    SF_batch = XF_SF_batch[:, n_equations:].reshape(
+        n_trajectories, n_equations, n_equations
     )
 
-    # restructure and return
-    XF_SF_batch = sol.y.reshape(n_trajectories, n_equations * (1 + n_equations))
-    XF_batch = XF_SF_batch[:, :n_equations] # (n_trajectories, n_equations)
-    SF_batch = XF_SF_batch[:, n_equations:] # (n_trajectories, n_equations * n_equations)
-    SF_batch_matrices = SF_batch.reshape(n_trajectories, n_equations, n_equations)
+    return XF_batch, SF_batch
 
-    return XF_batch, SF_batch_matrices
+
+def _solve_and_write_chunk(
+    x0_shm_name,
+    xf_shm_name,
+    sf_shm_name,
+    x0_shape,
+    xf_shape,
+    sf_shape,
+    dtype,
+    start_idx,
+    end_idx,
+    rhs,
+    DfDx,
+    tf,
+):
+    """
+    Worker function that reads from shared input, solves, and writes to shared output.
+    """
+    # 0. Restrict threads to avoid oversubscription bombing the CPU
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+    try:
+        # Attach to shared memory
+        shm_x0 = SharedMemory(name=x0_shm_name)
+        shm_xf = SharedMemory(name=xf_shm_name)
+        shm_sf = SharedMemory(name=sf_shm_name)
+
+        # Reconstruct numpy arrays backed by shared memory
+        X0_all = np.ndarray(x0_shape, dtype=dtype, buffer=shm_x0.buf)
+        XF_all = np.ndarray(xf_shape, dtype=dtype, buffer=shm_xf.buf)
+        SF_all = np.ndarray(sf_shape, dtype=dtype, buffer=shm_sf.buf)
+
+        # 1. Read Input Chunk
+        X0_chunk = X0_all[start_idx:end_idx]
+
+        # 2. Solve (Reuse existing logic inline for simplicity/pickling)
+        if X0_chunk.shape[0] > 0:
+            XF_batch, SF_batch_matrices = _serial_solve(X0_chunk, rhs, DfDx, tf)
+
+            # 3. Write Output directly to Shared Memory
+            XF_all[start_idx:end_idx] = XF_batch
+            SF_all[start_idx:end_idx] = SF_batch_matrices
+
+        # Clean up
+        shm_x0.close()
+        shm_xf.close()
+        shm_sf.close()
+        return True
+
+    except Exception as e:
+        # Print to stderr carefully
+        try:
+            sys.stderr.write(f"Worker Error: {e}\n")
+            traceback.print_exc(file=sys.stderr)
+        except:
+            pass
+        return False
+
+
+def _worker_wrapper_shm(args):
+    return _solve_and_write_chunk(*args)
+
+
+def parallel_sensitivities_solver(
+    rhs,
+    DfDx,
+    X0,
+    tf,
+    min_parallel_trajectories=20_000,
+    min_trajectories_per_worker=8_000,
+):
+    """
+    Parallel solver using Shared Memory to avoid pipe overhead.
+
+    Args:
+        min_parallel_trajectories (int): If N is below this threshold, run serially on the main process to avoid spawn overhead.
+        min_trajectories_per_worker (int): Minimum workload per core to justify spawning a new process. Prevents over-parallelization on medium datasets.
+    """
+    # Ensure Inputs are NumPy (CPU) for SharedMemory compatibility
+    if hasattr(X0, "device"):  # Handle CuPy/Torch/JAX arrays
+        X0 = np.array(X0)
+
+    N, d = X0.shape
+    dtype = X0.dtype
+
+    # Check for small dataset serial bypass
+    if N < min_parallel_trajectories:
+        logging.info(
+            f"Small dataset ({N} < {min_parallel_trajectories}): running serially."
+        )
+        return _serial_solve(X0, rhs, DfDx, tf)
+
+    # 1. Allocate Shared Memory for Inputs and Outputs
+    # Inputs
+    shm_x0 = SharedMemory(create=True, size=X0.nbytes)
+    # Outputs
+    xf_nbytes = N * d * X0.itemsize
+    sf_nbytes = N * d * d * X0.itemsize
+
+    shm_xf = SharedMemory(create=True, size=xf_nbytes)
+    shm_sf = SharedMemory(create=True, size=sf_nbytes)
+
+    # 2. Populate Input Shared Memory
+    input_array = np.ndarray(X0.shape, dtype=dtype, buffer=shm_x0.buf)
+    input_array[:] = X0[:]
+
+    # Define shapes for workers to reconstruct
+    x0_shape = X0.shape
+    xf_shape = (N, d)
+    sf_shape = (N, d, d)
+
+    try:
+        # 3. Configure Workers
+        total_cores = os.cpu_count() or 1
+        # Cap max workers to leave headroom - 50 is a safe upper limit for heavy math tasks
+        # even on 70+ core machines, to avoid excessive context switching/latency overheads
+        # and resource fd exhaustion.
+        MAX_SAFE_WORKERS = 60
+        max_possible_workers = min(max(1, total_cores - 2), MAX_SAFE_WORKERS)
+
+        # Calculate optimal number of workers based on density
+        # We only want to add a worker if it has at least 'min_trajectories_per_worker' to do.
+        needed_workers = (
+            N + min_trajectories_per_worker - 1
+        ) // min_trajectories_per_worker
+
+        # Dispatch only as many workers as needed, up to the hardware limit
+        num_workers = min(max_possible_workers, needed_workers)
+        num_workers = max(1, num_workers)
+
+        # Split work into equal chunks based on worker count
+        chunk_size = (N + num_workers - 1) // num_workers
+        indices = [(i, min(i + chunk_size, N)) for i in range(0, N, chunk_size)]
+
+        tasks = []
+        for start, end in indices:
+            if start >= end:
+                continue
+            tasks.append(
+                (
+                    shm_x0.name,
+                    shm_xf.name,
+                    shm_sf.name,
+                    x0_shape,
+                    xf_shape,
+                    sf_shape,
+                    dtype,
+                    start,
+                    end,
+                    rhs,
+                    DfDx,
+                    tf,
+                )
+            )
+
+        logging.info(
+            f"Solver: {N:,} trajectories, {num_workers} workers (N/Worker: {(N // num_workers):,})."
+        )
+
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(processes=num_workers) as pool:
+            results = list(
+                tqdm(
+                    pool.imap(_worker_wrapper_shm, tasks),
+                    total=len(tasks),
+                    desc="Solving ODEs",
+                )
+            )
+
+        if not all(results):
+            raise RuntimeError("Some workers failed. Check stderr logs.")
+
+        # 4. Read Final Results from Shared Memory
+        # Create final arrays (Copying out of shared memory to standard memory)
+        # We copy because SharedMemory will be unlinked/destroyed.
+        # This copy operation is fast (memory-to-memory memcpy).
+        XF_final = np.ndarray(xf_shape, dtype=dtype, buffer=shm_xf.buf).copy()
+        SF_final = np.ndarray(sf_shape, dtype=dtype, buffer=shm_sf.buf).copy()
+
+        return XF_final, SF_final
+
+    finally:
+        # 5. Cleanup Shared Memory
+        # Close and unlink locally.
+        # The workers have already closed their handles in _solve_and_write_chunk.
+        try:
+            shm_x0.close()
+            shm_x0.unlink()
+        except:
+            pass
+
+        try:
+            shm_xf.close()
+            shm_xf.unlink()
+        except:
+            pass
+
+        try:
+            shm_sf.close()
+            shm_sf.unlink()
+        except:
+            pass

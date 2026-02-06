@@ -622,8 +622,9 @@ def adjust_buffer_capacity_cpu(
 def adaptive_clustering(
     X: Array,
     *,
-    f_fn: Callable[[Array], Array],
-    g_fn: Callable[[Array], Array],
+    f_fn: Optional[Callable[[Array], Array]] = None,
+    g_fn: Optional[Callable[[Array], Array]] = None,
+    oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     NUM_INITIAL_CLUSTERS: int = 100,
@@ -704,6 +705,16 @@ def adaptive_clustering(
         -  `profiling_stats`: (dict) Detailed timing and statistics if PROFILE_TIMING is True.
     """
 
+    # Validate function arguments
+    if oracle_fn is not None:
+        if f_fn is not None or g_fn is not None:
+            raise ValueError(
+                "Cannot specify both oracle_fn and f_fn/g_fn. Use either oracle_fn OR both f_fn and g_fn."
+            )
+    else:
+        if f_fn is None or g_fn is None:
+            raise ValueError("Must specify either oracle_fn OR both f_fn and g_fn.")
+
     _start_time = time.perf_counter()
     mempool = cp.get_default_memory_pool()
 
@@ -744,14 +755,26 @@ def adaptive_clustering(
 
         # Evaluate initial F/G on GPU
         _t0 = time.perf_counter()
-        F0_gpu = convert_to_2d_array(f_fn(X0_gpu))  # Shape: (N, fd)
-        total_f_evals += X0_gpu.shape[0]
-        fd = F0_gpu.shape[1]
-
-        if IGNORE_GRADIENT:
-            G0_gpu = xp.zeros((X0_gpu.shape[0], fd, d), dtype=xp.float64)
+        if oracle_fn is not None:
+            F_out, G_out = oracle_fn(X0_gpu)
+            F0_gpu = convert_to_2d_array(F_out)
+            fd = F0_gpu.shape[1]
+            if IGNORE_GRADIENT:
+                G0_gpu = xp.zeros((X0_gpu.shape[0], fd, d), dtype=xp.float64)
+            else:
+                G0_gpu = convert_to_3d_array(G_out)
         else:
-            G0_gpu = convert_to_3d_array(g_fn(X0_gpu))  # Shape: (N, fd, d)
+            assert f_fn is not None
+            F0_gpu = convert_to_2d_array(f_fn(X0_gpu))  # Shape: (N, fd)
+            fd = F0_gpu.shape[1]
+
+            if IGNORE_GRADIENT:
+                G0_gpu = xp.zeros((X0_gpu.shape[0], fd, d), dtype=xp.float64)
+            else:
+                assert g_fn is not None
+                G0_gpu = convert_to_3d_array(g_fn(X0_gpu))  # Shape: (N, fd, d)
+
+        total_f_evals += X0_gpu.shape[0]
 
         logger.info(f"Runtime - Initial f/g: {time.perf_counter()-_t0:.3f}s")
         logger.info(f"Function: Input d={d}, Output fd={fd}")
@@ -914,12 +937,22 @@ def adaptive_clustering(
                     X_batch[is_synth] = X_synth_vals
 
                     # Evaluate f for synthetic points
-                    F_batch[is_synth] = convert_to_2d_array(f_fn(X_synth_vals))
-                    total_f_evals += X_synth_vals.shape[0]
-                    if IGNORE_GRADIENT:
-                        G_batch[is_synth] = 0.0
+                    if oracle_fn is not None:
+                        F_syn, G_syn = oracle_fn(X_synth_vals)
+                        F_batch[is_synth] = convert_to_2d_array(F_syn)
+                        if IGNORE_GRADIENT:
+                            G_batch[is_synth] = 0.0
+                        else:
+                            G_batch[is_synth] = convert_to_3d_array(G_syn)
                     else:
-                        G_batch[is_synth] = convert_to_3d_array(g_fn(X_synth_vals))
+                        assert f_fn is not None
+                        F_batch[is_synth] = convert_to_2d_array(f_fn(X_synth_vals))
+                        if IGNORE_GRADIENT:
+                            G_batch[is_synth] = 0.0
+                        else:
+                            assert g_fn is not None
+                            G_batch[is_synth] = convert_to_3d_array(g_fn(X_synth_vals))
+                    total_f_evals += X_synth_vals.shape[0]
                     del (
                         c_starts,
                         c_counts,
@@ -943,13 +976,24 @@ def adaptive_clustering(
                 mus = (
                     xp.add.reduceat(X_batch, aug_starts) / aug_sizes[:, None]
                 )  # (K_batch, d)
-                f_mus = convert_to_2d_array(f_fn(mus))  # (K_batch, fd)
-                total_f_evals += mus.shape[0]
 
-                if IGNORE_GRADIENT:
-                    g_mus = xp.zeros((K_batch, fd, d), dtype=xp.float64)
+                if oracle_fn is not None:
+                    F_mus_val, G_mus_val = oracle_fn(mus)
+                    f_mus = convert_to_2d_array(F_mus_val)
+                    if IGNORE_GRADIENT:
+                        g_mus = xp.zeros((K_batch, fd, d), dtype=xp.float64)
+                    else:
+                        g_mus = convert_to_3d_array(G_mus_val)
                 else:
-                    g_mus = convert_to_3d_array(g_fn(mus))  # (K_batch, fd, d)
+                    assert f_fn is not None
+                    f_mus = convert_to_2d_array(f_fn(mus))  # (K_batch, fd)
+                    if IGNORE_GRADIENT:
+                        g_mus = xp.zeros((K_batch, fd, d), dtype=xp.float64)
+                    else:
+                        assert g_fn is not None
+                        g_mus = convert_to_3d_array(g_fn(mus))  # (K_batch, fd, d)
+
+                total_f_evals += mus.shape[0]
 
                 # 4. Error Metrics & Acceptance Logic
                 if ERROR_METRIC == "Linf-local":
