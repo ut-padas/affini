@@ -1046,20 +1046,12 @@ def ics_lorenz_experiment() -> Path:
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
 
-    DIMs = [5, 10]
+    DIMs = [20]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Lorenz Experiments"):
-
-        # Resource constraints checks
-        if DIM == 10 and TOL < 0.01:
-            print(
-                f"Skipping experiment for DIM={DIM}, TOL={TOL} due to high computational cost."
-            )
-            continue
-
         json_path = (
             EXP_DIR
             / f"ics26_lorenz_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_outputvar{OUTPUT_VARIABLE}.json"
@@ -1070,10 +1062,13 @@ def ics_lorenz_experiment() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
-        N_TRAIN = get_N_TRAIN(DIM)
+        N_TRAIN = min(get_N_TRAIN(DIM), int(2e6))
         N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
-        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+        N_INIT_CLUSTERS = min(get_N_INIT_CLUSTERS(DIM), 1000)
+        N_MIN_PER_CLUSTER = min(get_N_MIN_PER_CLUSTER(DIM), 500)
+        print(
+            f"N_TRAIN: {N_TRAIN:,}, N_INIT_CLUSTERS: {N_INIT_CLUSTERS:,}, N_MIN_PER_CLUSTER: {N_MIN_PER_CLUSTER:,}"
+        )
 
         Problem_experiment_setup(
             json_fpath=json_path,
@@ -1093,7 +1088,9 @@ def ics_lorenz_experiment() -> Path:
             CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
+            PROFILE_TIMING=True,
         )
+        create_summary_dataframe(EXP_DIR)
 
     return EXP_DIR
 
@@ -1157,6 +1154,7 @@ if __name__ == "__main__":
 
         dir10 = ics_rosenbrock_experiment_no_hess_no_grad()
         create_summary_dataframe(dir10)
-    else:
+
         ics_lorenz_experiment()
+    else:
         print("Run only on GPU backend.")
