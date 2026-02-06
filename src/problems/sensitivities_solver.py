@@ -4,6 +4,7 @@ import os
 import numpy as np
 from array_api_compat import array_namespace
 from scipy.integrate import solve_ivp
+from tqdm import tqdm
 
 
 def _worker_solve(X0_chunk, rhs, DfDx, tf):
@@ -73,6 +74,11 @@ def _worker_solve(X0_chunk, rhs, DfDx, tf):
     return XF_batch, SF_batch_matrices
 
 
+def _worker_solve_wrapper(args):
+    """Wrapper to unpack arguments for multiprocessing.imap"""
+    return _worker_solve(*args)
+
+
 def parallel_sensitivities_solver(rhs, DfDx, X0, tf):
     """
     Parallel version of sensitivities_solver using multiprocessing.
@@ -103,7 +109,13 @@ def parallel_sensitivities_solver(rhs, DfDx, X0, tf):
 
     # Run in parallel
     with mp.Pool(processes=len(tasks)) as pool:
-        results = pool.starmap(_worker_solve, tasks)
+        results = list(
+            tqdm(
+                pool.imap(_worker_solve_wrapper, tasks),
+                total=len(tasks),
+                desc="Solving ODEs (Chunks)",
+            )
+        )
 
     # Unpack and combine results
     # results is a list of tuples: [(xf_1, sf_1), (xf_2, sf_2), ...]
