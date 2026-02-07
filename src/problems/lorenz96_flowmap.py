@@ -6,8 +6,8 @@ from scipy.integrate import solve_ivp
 
 # Assumes these modules exist in your project structure
 from src import IS_CUPY_BACKEND, Array, xp
-from src.problems.lorenz96 import lorenz96, lorenz96_grad
 from src.problems.adjoint_solver import parallel_adjoint_solver
+from src.problems.lorenz96 import lorenz96, lorenz96_grad
 from src.problems.sensitivities_solver import parallel_sensitivities_solver
 
 
@@ -18,7 +18,7 @@ def _ensure_numpy(x: Array) -> np.ndarray:
     return x
 
 
-def _ensure_backend(x: np.ndarray) -> Array:
+def _ensure_backend(x: Array) -> Array:
     """Helper to return data to the configured backend (CPU or GPU)."""
     if IS_CUPY_BACKEND:
         return xp.asarray(x)
@@ -119,4 +119,3 @@ def lorenz96_flowmap_oracle_first_component(
     XF, DXF = parallel_adjoint_solver(rhs, lorenz96_grad, X0_np, tf, e1)
 
     return _ensure_backend(XF), _ensure_backend(DXF)
-

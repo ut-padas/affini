@@ -1,4 +1,3 @@
-
 import logging
 import multiprocessing as mp
 import os
@@ -12,22 +11,17 @@ from tqdm import tqdm
 
 
 def adjoint_solve(x0, f, DfDx, T, c):
-    '''
+    """
     FOR A SINGLE COMPONENT:
     We have an ode dx/dt = f(x,p)$, with IC x_0 = x(0).
     x is a vector.
     Goal: compute the derivative of <c, x(T)> with respect to vector IC x_0.
     This is mostly just a toy code.
-    '''
+    """
 
     # 1. Compute the solution to final time x(T)
     primal_solve = solve_ivp(
-        fun = f,
-        t_span = [0,T],
-        y0 = x0,
-        method='RK45',
-        rtol=1e-6,
-        dense_output=True
+        fun=f, t_span=[0, T], y0=x0, method="RK45", rtol=1e-6, dense_output=True
     )
 
     # 2. With the solution in hand, solve adjoint equation backwards
@@ -37,15 +31,14 @@ def adjoint_solve(x0, f, DfDx, T, c):
         return -jac.T @ a
 
     adjoint_solve = solve_ivp(
-        fun = lambda t, a: adjoint_rhs(t, a, primal_solve),
-        t_span = [T, 0],
-        y0 = c,
-        method = 'RK45',
-        rtol = 1e-6
+        fun=lambda t, a: adjoint_rhs(t, a, primal_solve),
+        t_span=[T, 0],
+        y0=c,
+        method="RK45",
+        rtol=1e-6,
     )
 
-    return np.dot(c, primal_solve.y[:,-1]), adjoint_solve.y[:,-1]
-
+    return np.dot(c, primal_solve.y[:, -1]), adjoint_solve.y[:, -1]
 
 
 def batched_adjoint_solve(X0, rhs, DfDx, tf, c):
@@ -82,12 +75,12 @@ def batched_adjoint_solve(X0, rhs, DfDx, tf, c):
 
     # Solve the ODEs
     forward_solve = solve_ivp(
-        fun = modified_forward_rhs,
-        t_span = [0,tf],
-        y0 = X0.ravel(),
-        method='RK45',
+        fun=modified_forward_rhs,
+        t_span=[0, tf],
+        y0=X0.ravel(),
+        method="RK45",
         rtol=1e-6,
-        dense_output=True
+        dense_output=True,
     )
 
     # 2. Backward solve
@@ -96,30 +89,29 @@ def batched_adjoint_solve(X0, rhs, DfDx, tf, c):
     # Again, a (the adjoint variable) is flattened
     # So we need to apply a Jacobian to every block
     def modified_adjoint_rhs(t, a):
-        x_t = forward_solve.sol(t) # flattened state
+        x_t = forward_solve.sol(t)  # flattened state
         x_t_batch = x_t.reshape(n_trajectories, n_equations)
-        jac_batch = DfDx(x_t_batch) # batched Jacobian (n_traj, n_eq, n_eq)
+        jac_batch = DfDx(x_t_batch)  # batched Jacobian (n_traj, n_eq, n_eq)
         a_batch = a.reshape(n_trajectories, n_equations)
         # make sure to take transposes of Jacobians (taken care of in einsumå)
-        adjoint_rhs_batch = -1 * np.einsum('ikj,ik->ij', jac_batch, a_batch)
+        adjoint_rhs_batch = -1 * np.einsum("ikj,ik->ij", jac_batch, a_batch)
         return adjoint_rhs_batch.ravel()
 
     # Modify the right hand side
     batch_adjoint_ic = np.tile(c, n_trajectories)
 
     adjoint_solve = solve_ivp(
-        fun = modified_adjoint_rhs,
-        t_span = [tf, 0],
-        y0 = batch_adjoint_ic,
-        method = 'RK45',
-        rtol = 1e-6
+        fun=modified_adjoint_rhs,
+        t_span=[tf, 0],
+        y0=batch_adjoint_ic,
+        method="RK45",
+        rtol=1e-6,
     )
 
-    xf_batch = forward_solve.y[:,-1].reshape(n_trajectories, n_equations)
+    xf_batch = forward_solve.y[:, -1].reshape(n_trajectories, n_equations)
     q_batch = xf_batch @ c
-    a_batch = adjoint_solve.y[:,-1].reshape(n_trajectories, n_equations)
+    a_batch = adjoint_solve.y[:, -1].reshape(n_trajectories, n_equations)
     return q_batch, a_batch
-
 
 
 """
@@ -191,7 +183,6 @@ def _solve_and_write_chunk(
         return False
 
 
-
 def _worker_wrapper_shm(args):
     return _solve_and_write_chunk(*args)
 
@@ -243,7 +234,7 @@ def parallel_adjoint_solver(
 
     # Define shapes for workers to reconstruct
     x0_shape = X0.shape
-    xf_shape = (N)
+    xf_shape = N
     sf_shape = (N, d)
 
     try:
@@ -334,4 +325,3 @@ def parallel_adjoint_solver(
             shm_sf.unlink()
         except:
             pass
-

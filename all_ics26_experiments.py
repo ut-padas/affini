@@ -660,6 +660,117 @@ def lorenz_experiment_with_v2() -> Path:
     return EXP_DIR
 
 
+def ics_jax_lorenz() -> Path:
+    """
+    Lorenz 96 surrogate for a SINGLE time step using JAX-accelerated oracle.
+    Target: 20D.
+    """
+    raise NotImplementedError(
+        "Not implemented yet. Need to ensure JAX is properly set up and integrated."
+    )
+    from src.problems.jax_lorenz96 import (
+        lorenz96_jax_flowmap,
+        lorenz96_jax_grad,
+        lorenz96_jax_oracle,
+    )
+
+    FORCING = 1.0
+    FINAL_TIME = 0.1
+    OUTPUT_VARIABLE = 0
+
+    # We use the JAX oracle which runs on GPU
+    # src/problems/jax_lorenz96.py
+
+    def f(x):
+        # x is (N, d)
+        # lorenz96_jax_flowmap returns (N, d) on the active backend (CuPy/NumPy)
+        f_val = lorenz96_jax_flowmap(x, FORCING, FINAL_TIME)
+
+        N, _ = f_val.shape
+        return f_val[:, OUTPUT_VARIABLE].reshape((N, 1))
+
+    def grad_f(x):
+        # lorenz96_jax_grad returns (N, d, d) on the active backend
+        g_val = lorenz96_jax_grad(x, FORCING, FINAL_TIME)
+
+        N, d, _ = g_val.shape
+        return g_val[:, OUTPUT_VARIABLE, :].reshape((N, 1, d))
+
+    def oracle(x):
+        """
+        Compute the flowmap, and the gradient of the flowmap.
+        """
+        # lorenz96_jax_oracle returns (Val, Jacobian) on the active backend
+        f_val, g_val = lorenz96_jax_oracle(x, FORCING, FINAL_TIME)
+
+        N, _ = f_val.shape
+        f_out = f_val[:, OUTPUT_VARIABLE].reshape((N, 1))
+        g_out = g_val[:, OUTPUT_VARIABLE, :].reshape((N, 1, -1))
+        return f_out, g_out
+
+    MAX_CLUSTERS_EST = 20_000
+
+    K_NEIGHBOURS = 1
+    CLUSTERING_VERSION = "v2"
+
+    EXP_DIR = (
+        ICS26_DIR
+        / f"ics_jax_lorenz_finaltime{FINAL_TIME}_outputvar{OUTPUT_VARIABLE}_forcing{FORCING}"
+    )
+    del_all_error_files_in_dir(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
+
+    DIMs = [20]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+    ERROR_METRICs = ["Linf-local"]
+
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="JAX Lorenz Experiments"):
+        json_path = (
+            EXP_DIR
+            / f"ics26_jax_lorenz_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_outputvar{OUTPUT_VARIABLE}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        N_TRAIN = min(get_N_TRAIN(DIM), int(2e6))
+        # Reduce N_TRAIN for debugging if needed, but keeping it standard for now.
+
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = min(get_N_INIT_CLUSTERS(DIM), 1000)
+        N_MIN_PER_CLUSTER = min(get_N_MIN_PER_CLUSTER(DIM), 500)
+        print(
+            f"N_TRAIN: {N_TRAIN:,}, N_INIT_CLUSTERS: {N_INIT_CLUSTERS:,}, N_MIN_PER_CLUSTER: {N_MIN_PER_CLUSTER:,}"
+        )
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            F_DIM=1,
+            DOMAIN=[-5.0, 5.0],
+            f_fn=f,
+            g_fn=grad_f,
+            oracle_fn=oracle,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            CLUSTERING_VERSION=CLUSTERING_VERSION,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            USE_HESSIAN_INFORMED_SPLIT=True,
+            PROFILE_TIMING=True,
+        )
+        create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
 if __name__ == "__main__":
     from src.logging_utils import setup_logging
 
