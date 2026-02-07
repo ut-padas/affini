@@ -114,13 +114,16 @@ def batched_adjoint_solve(X0, rhs, DfDx, tf, c):
         rtol = 1e-6
     )
 
-    return np.dot(c, forward_solve.y[:,-1]), adjoint_solve.y[:,-1]
+    xf_batch = forward_solve.y[:,-1].reshape(n_trajectories, n_equations)
+    q_batch = xf_batch @ c
+    a_batch = adjoint_solve.y[:,-1].reshape(n_trajectories, n_equations)
+    return q_batch, a_batch
 
 
 
 """
-Everything now is taken from Prajwal and modified to do
-adjoint solves scattered across multiple processes.
+Everything after this is taken from Prajwal and slightly modified
+to do adjoint solves scattered across multiple processes.
 """
 
 
@@ -137,6 +140,7 @@ def _solve_and_write_chunk(
     rhs,
     DfDx,
     tf,
+    c,
 ):
     """
     Worker function that reads from shared input, solves, and writes to shared output.
@@ -164,7 +168,7 @@ def _solve_and_write_chunk(
 
         # 2. Solve (Reuse existing logic inline for simplicity/pickling)
         if X0_chunk.shape[0] > 0:
-            XF_batch, SF_batch_matrices = _serial_solve(X0_chunk, rhs, DfDx, tf)
+            XF_batch, SF_batch_matrices = batched_adjoint_solve(X0_chunk, rhs, DfDx, tf, c)
 
             # 3. Write Output directly to Shared Memory
             XF_all[start_idx:end_idx] = XF_batch
@@ -191,11 +195,12 @@ def _worker_wrapper_shm(args):
     return _solve_and_write_chunk(*args)
 
 
-def parallel_sensitivities_solver(
+def parallel_adjoint_solver(
     rhs,
     DfDx,
     X0,
     tf,
+    c,
     MIN_PARALLEL_TRAJECTORIES=20_000,
     MIN_TRAJECTORIES_PER_WORKER=8_000,
     MAX_SAFE_WORKERS=60,
@@ -220,15 +225,14 @@ def parallel_sensitivities_solver(
         logging.info(
             f"Small dataset ({N} < {MIN_PARALLEL_TRAJECTORIES}): running serially."
         )
-        return _serial_solve(X0, rhs, DfDx, tf)
+        return batched_adjoint_solve(X0, rhs, DfDx, tf, c)
 
     # 1. Allocate Shared Memory for Inputs and Outputs
     # Inputs
     shm_x0 = SharedMemory(create=True, size=X0.nbytes)
     # Outputs
-    xf_nbytes = N * d * X0.itemsize
-    sf_nbytes = N * d * d * X0.itemsize
-
+    xf_nbytes = N * X0.itemsize
+    sf_nbytes = N * d * X0.itemsize
     shm_xf = SharedMemory(create=True, size=xf_nbytes)
     shm_sf = SharedMemory(create=True, size=sf_nbytes)
 
@@ -238,8 +242,8 @@ def parallel_sensitivities_solver(
 
     # Define shapes for workers to reconstruct
     x0_shape = X0.shape
-    xf_shape = (N, d)
-    sf_shape = (N, d, d)
+    xf_shape = (N)
+    sf_shape = (N, d)
 
     try:
         # 3. Configure Workers
@@ -278,6 +282,7 @@ def parallel_sensitivities_solver(
                     rhs,
                     DfDx,
                     tf,
+                    c,
                 )
             )
 
@@ -305,6 +310,7 @@ def parallel_sensitivities_solver(
         XF_final = np.ndarray(xf_shape, dtype=dtype, buffer=shm_xf.buf).copy()
         SF_final = np.ndarray(sf_shape, dtype=dtype, buffer=shm_sf.buf).copy()
 
+        # might need to reshape here
         return XF_final, SF_final
 
     finally:
