@@ -137,7 +137,8 @@ def lorenz96_flowmap_oracle_single_component(
     """
 
     raise NotImplementedError(
-        "This is actually broken because each \"decoupled\" block doesn't correspond to an entry of the gradient."
+        "This is actually broken because each \"decoupled\" block doesn't correspond to an entry of the gradient.\
+        User must instead solve every sensitivity equation and pull one component from each block."
     )
 
 
