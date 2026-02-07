@@ -1010,7 +1010,7 @@ def ics_lorenz_experiment() -> Path:
     Imagine this is the very first time step in a string of simulations.
     """
     FORCING = 1
-    FINAL_TIME = 0.1
+    FINAL_TIME = 0.05
 
     def f(x):
         f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
@@ -1044,8 +1044,8 @@ def ics_lorenz_experiment() -> Path:
     # del_all_error_files_in_dir(EXP_DIR)
     # create_summary_dataframe(EXP_DIR)
 
-    DIMs = [5]
-    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+    DIMs = [5, 10, 20, 40, 80]
+    TOLs = [0.1]
     ERROR_METRICs = ["Linf-global"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
@@ -1060,8 +1060,8 @@ def ics_lorenz_experiment() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
-        N_TRAIN = min(get_N_TRAIN(DIM), int(4e6))
-        N_TEST = N_TRAIN // 2
+        N_TRAIN = min(get_N_TRAIN(DIM), int(1e6))
+        N_TEST = 50_000
         N_INIT_CLUSTERS = min(get_N_INIT_CLUSTERS(DIM), 1000)
         N_MIN_PER_CLUSTER = min(get_N_MIN_PER_CLUSTER(DIM), 500)
         print(
@@ -1267,4 +1267,4 @@ if __name__ == "__main__":
         ics_lorenz_experiment()
 
     else:
-        ics_lorenz_experiment()
+        print('Run only on GPU node.')
