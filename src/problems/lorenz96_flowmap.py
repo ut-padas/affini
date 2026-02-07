@@ -7,9 +7,8 @@ from scipy.integrate import solve_ivp
 # Assumes these modules exist in your project structure
 from src import IS_CUPY_BACKEND, Array, xp
 from src.problems.lorenz96 import lorenz96, lorenz96_grad
-from src.problems.sensitivities_solver import (
-    parallel_sensitivities_solver,
-    parallel_sensitivities_solver_single_component
+from src.problems.adjoint_solver import (
+    parallel_adjoint_solver
 )
 
 
@@ -84,6 +83,7 @@ def lorenz96_flowmap_grad(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> A
         DXF: (N, d, d) Jacobian matrices d(x_tf)/d(x_0).
     """
     X0_np = _ensure_numpy(X0)
+    N, d = X0_np.shape
 
     # KEY FIX: Use partial instead of lambda.
     # Multiprocessing relies on pickle, which cannot serialize lambda functions.
@@ -91,9 +91,10 @@ def lorenz96_flowmap_grad(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> A
     rhs = partial(lorenz96, forcing=forcing)
 
     # We only need the sensitivities (index 1), ignoring the flowmap state (index 0)
-    _, DXF = parallel_sensitivities_solver(rhs, lorenz96_grad, X0_np, tf)
+    e1 = np.eye(d)[0]
+    _, DXF = parallel_adjoint_solver(rhs, lorenz96_grad, X0_np, tf, e1)
 
-    return _ensure_backend(DXF)
+    return _ensure_backend(DXF.reshape(N,1,d))
 
 
 def lorenz96_flowmap_oracle(
@@ -111,13 +112,15 @@ def lorenz96_flowmap_oracle(
         Tuple (XF, DXF).
     """
     X0_np = _ensure_numpy(X0)
+    N, d = X0_np.shape
 
     # Use partial for picklability
     rhs = partial(lorenz96, forcing=forcing)
 
-    XF, DXF = parallel_sensitivities_solver(rhs, lorenz96_grad, X0_np, tf)
+    e1 = np.eye(d)[0]
+    XF, DXF = parallel_adjoint_solver(rhs, lorenz96_grad, X0_np, tf, e1)
 
-    return _ensure_backend(XF), _ensure_backend(DXF)
+    return _ensure_backend(XF.reshape(N,1)), _ensure_backend(DXF.reshape(N,1,d))
 
 
 
