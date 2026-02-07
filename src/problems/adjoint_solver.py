@@ -100,7 +100,7 @@ def batched_adjoint_solve(X0, rhs, DfDx, tf, c):
         x_t_batch = x_t.reshape(n_trajectories, n_equations)
         jac_batch = DfDx(x_t_batch) # batched Jacobian (n_traj, n_eq, n_eq)
         a_batch = a.reshape(n_trajectories, n_equations)
-        # make sure to take transposes of Jacobians
+        # make sure to take transposes of Jacobians (taken care of in einsumå)
         adjoint_rhs_batch = -1 * np.einsum('ikj,ik->ij', jac_batch, a_batch)
         return adjoint_rhs_batch.ravel()
 
@@ -169,11 +169,11 @@ def _solve_and_write_chunk(
 
         # 2. Solve (Reuse existing logic inline for simplicity/pickling)
         if X0_chunk.shape[0] > 0:
-            XF_batch, SF_batch_matrices = batched_adjoint_solve(X0_chunk, rhs, DfDx, tf, c)
+            XF_batch, SF_batch = batched_adjoint_solve(X0_chunk, rhs, DfDx, tf, c)
 
             # 3. Write Output directly to Shared Memory
             XF_all[start_idx:end_idx] = XF_batch
-            SF_all[start_idx:end_idx] = SF_batch_matrices
+            SF_all[start_idx:end_idx] = SF_batch
 
         # Clean up
         shm_x0.close()
@@ -311,7 +311,6 @@ def parallel_adjoint_solver(
         XF_final = np.ndarray(xf_shape, dtype=dtype, buffer=shm_xf.buf).copy()
         SF_final = np.ndarray(sf_shape, dtype=dtype, buffer=shm_sf.buf).copy()
 
-        # might need to reshape here
         return XF_final, SF_final
 
     finally:

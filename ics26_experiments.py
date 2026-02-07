@@ -16,8 +16,7 @@ from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_
 from src.problems.lorenz96_flowmap import (
     lorenz96_flowmap,
     lorenz96_flowmap_grad,
-    lorenz96_flowmap_oracle,
-    lorenz96_flowmap_oracle_single_component
+    lorenz96_flowmap_oracle_first_component
 )
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 from src.problems.shifted_gaussians import (
@@ -1026,13 +1025,11 @@ def ics_lorenz_experiment() -> Path:
     def oracle(x):
         """
         Compute the flowmap, and the gradient of the flowmap, for the given input x,
-        and retun for the specified output variable.
+        and return for the specified output variable.
         """
-        f, g = lorenz96_flowmap_oracle(x, FORCING, FINAL_TIME)
-        N, _ = f.shape
-        f_out = f[:, 0].reshape((N, 1))
-        g_out = g[:, 0, :].reshape((N, 1, -1))
-        return f_out, g_out
+        N, d = x.shape
+        f, g = lorenz96_flowmap_oracle_first_component(x, FORCING, FINAL_TIME)
+        return f.reshape(N,1), g.reshape(N,1,d)
 
 
     MAX_CLUSTERS_EST = 20_000
@@ -1270,4 +1267,4 @@ if __name__ == "__main__":
         ics_lorenz_experiment()
 
     else:
-        print("Run only on GPU backend.")
+        ics_lorenz_experiment()
