@@ -47,6 +47,7 @@ def adjoint_solve(x0, f, DfDx, T, c):
     return np.dot(c, primal_solve.y[:,-1]), adjoint_solve.y[:,-1]
 
 
+
 def batched_adjoint_solve(X0, rhs, DfDx, tf, c):
     """
     A serial solver for a bunch of trajectories at once.
@@ -69,7 +70,6 @@ def batched_adjoint_solve(X0, rhs, DfDx, tf, c):
     xp = np
     n_trajectories, n_equations = X0.shape
 
-
     # 1. Forward solve (save entire state)
 
     # Modified right hand side for forward solve
@@ -84,7 +84,7 @@ def batched_adjoint_solve(X0, rhs, DfDx, tf, c):
     forward_solve = solve_ivp(
         fun = modified_forward_rhs,
         t_span = [0,tf],
-        y0 = X0,
+        y0 = X0.ravel(),
         method='RK45',
         rtol=1e-6,
         dense_output=True
@@ -95,12 +95,13 @@ def batched_adjoint_solve(X0, rhs, DfDx, tf, c):
     # Modified adjoint rhs
     # Again, a (the adjoint variable) is flattened
     # So we need to apply a Jacobian to every block
-    def modified_adjoint_rhs(t, a, forward_solve):
+    def modified_adjoint_rhs(t, a):
         x_t = forward_solve.sol(t) # flattened state
         x_t_batch = x_t.reshape(n_trajectories, n_equations)
-        jac_batch = DfDx(x_t) # batched Jacobian (n_traj, n_eq, n_eq)
+        jac_batch = DfDx(x_t_batch) # batched Jacobian (n_traj, n_eq, n_eq)
+        a_batch = a.reshape(n_trajectories, n_equations)
         # make sure to take transposes of Jacobians
-        adjoint_rhs_batch = -1 * np.einsum('ikj,ik->ij', jac_batch, x_t_batch)
+        adjoint_rhs_batch = -1 * np.einsum('ikj,ik->ij', jac_batch, a_batch)
         return adjoint_rhs_batch.ravel()
 
     # Modify the right hand side
