@@ -522,18 +522,12 @@ def ics_rosenbrock_runtime_scalability_experiment() -> Path:
     EXP_DIR = ICS26_DIR / "ics_rosenbrock_runtime_scalability"
     create_summary_dataframe(EXP_DIR)
     DIMs = [5]
-    TOLs = [0.05]
+    TOLs = [1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
-    N_TRAINs = [10_000 * 2**i for i in range(18)]
 
-    combos = list(product(DIMs, TOLs, ERROR_METRICs, N_TRAINs))
-    for DIM, TOL, ERROR_METRIC, N_TRAIN in tqdm(combos, desc="Experiments"):
-        if DIM >= 64 and TOL <= 0.1:
-            print(
-                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC}, N_TRAIN={N_TRAIN:.2e} due to resource constraints."
-            )
-            continue
-
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        N_TRAIN = get_N_TRAIN(DIM)
         N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
         N_TEST = max(N_TRAIN // 4, 500)
@@ -1130,8 +1124,8 @@ if __name__ == "__main__":
         # dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
         # create_summary_dataframe(dir3)
 
-        # dir4 = ics_rosenbrock_runtime_scalability_experiment()
-        # create_summary_dataframe(dir4)
+        dir4 = ics_rosenbrock_runtime_scalability_experiment()
+        create_summary_dataframe(dir4)
 
         # dir5 = ics_aniso_quadratic_experiment_no_hess()
         # create_summary_dataframe(dir5)
@@ -1151,7 +1145,7 @@ if __name__ == "__main__":
         # dir10 = ics_rosenbrock_experiment_no_hess_no_grad()
         # create_summary_dataframe(dir10)
 
-        ics_lorenz_experiment()
+        # ics_lorenz_experiment()
 
     else:
         print("Run only on GPU node.")
