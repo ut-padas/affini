@@ -147,6 +147,7 @@ class HATANNSurrogate:
             from src.adaptive_clustering import adaptive_clustering
 
             # 1. Adaptive Clustering
+            t0 = time.perf_counter()
             results = adaptive_clustering(
                 X=X_train,
                 f_fn=f_fn,
@@ -176,6 +177,7 @@ class HATANNSurrogate:
                 "num_levels": results["num_levels"],
                 "num_generated_pts": results["num_generated_pts"],
                 "total_f_evals": results["total_f_evals"],
+                "time_total": time.perf_counter() - t0,
             }
             training_data = results.get("gen_training_data", None)
 
