@@ -442,7 +442,6 @@ def Problem_experiment_setup(
 
             # Train
             print("\n--- Training ---")
-            _start_train_time = time.perf_counter()
             surrogate.train(
                 X_train=X_train,
                 f_fn=f_debug,
@@ -459,13 +458,10 @@ def Problem_experiment_setup(
                 PROFILE_TIMING=PROFILE_TIMING,
                 save_model=model_save_path,
             )
-            _end_train_time = time.perf_counter()
             _TRAINED = True
         else:
             # Train
             print("\n--- Training ---")
-            _start_train_time = time.perf_counter()
-
             if oracle_fn is not None:
                 print("Using oracle function for training...")
                 surrogate.train(
@@ -499,7 +495,6 @@ def Problem_experiment_setup(
                     PROFILE_TIMING=PROFILE_TIMING,
                     save_model=model_save_path,
                 )
-            _end_train_time = time.perf_counter()
             _TRAINED = True
 
         if SAVE_TRAINED_DATA:
@@ -531,7 +526,7 @@ def Problem_experiment_setup(
         _end_predict_time = time.perf_counter()
         _PREDICTED = True
 
-        train_time = _end_train_time - _start_train_time
+        train_time = surrogate.profiling_stats["time_total"]
         predict_time = _end_predict_time - _start_predict_time
 
         N_CLUSTERS = surrogate.get_number_of_sources()
