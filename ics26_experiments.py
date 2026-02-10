@@ -553,6 +553,7 @@ def ics_rosenbrock_runtime_scalability_experiment() -> Path:
             PROFILE_TIMING=True,
             PLOT_CONTOUR_IN_LOG_SCALE=True,
         )
+        create_summary_dataframe(EXP_DIR)
 
     return EXP_DIR
 

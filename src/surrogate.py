@@ -404,7 +404,7 @@ class HATANNSurrogate:
             self.knn_index = faiss.IndexFlatL2(D)
             self.knn_index.add(centroids_f32)  # type: ignore
 
-        logger.debug(f"KNN Index built in {time.perf_counter()-t0:.4f}s")
+        logger.info(f"KNN Index built in {time.perf_counter()-t0:.4f}s")
 
     def _query_knn(self, query_points: Array, k: int) -> tuple[Array, Array]:
         """
