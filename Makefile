@@ -3,7 +3,8 @@
 help:
 	@echo "Available commands:"
 	@echo "  benchmarks   - Run all the benchmarking scripts"
-	@echo "  dev          - Install all development packages"
+	@echo "  dev          - Install development packages relevant for GPU, linting, and testing"
+	@echo "  dev-and-viz  - Install all development and visualization packages"
 	@echo "  install-cpu  - Install packages relevant for runtime only"
 	@echo "  install-gpu  - Install GPU-specific packages"
 	@echo "  format       - Format code with ruff (Ref: https://ruff.rs/)"
@@ -18,6 +19,9 @@ benchmarks: load-modules
 	uv run python -m research.benchmark_two_means_vs_kmeans
 
 dev:
+	uv sync --group gpu --group lint --group test
+
+dev-and-viz:
 	uv sync --all-groups
 
 install-cpu:

@@ -64,3 +64,6 @@ test = [
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
 ]
+viz = [
+    "manim>=0.19.2",
+]
