@@ -228,8 +228,9 @@ tacc-files/
 profiles*/
 timing_results*/
 
-# Gifs
+# Media
 gifs/
+media/
 
 # Models
 models/
