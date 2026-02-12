@@ -25,6 +25,7 @@ result = adaptive_clustering(
     ERROR_METRIC="Linf-local",
     NUM_INITIAL_CLUSTERS=10,
     STORE_TREE_DATA=True,
+    USE_HESSIAN_INFORMED_SPLIT=True,
 )
 tree_data = result["tree_data"]
 
@@ -62,7 +63,11 @@ class RosenbrockAdaptiveClustering(Scene):
         levels_to_show = list(tree_data.keys())  # Show all levels
 
         # Animate through each level
-        for counter, level in tqdm(enumerate(levels_to_show), desc="Animating levels"):
+        for counter, level in tqdm(
+            enumerate(levels_to_show),
+            desc="Animating levels",
+            total=len(levels_to_show),
+        ):
             level_data = tree_data[level]
             centroids = level_data["centroids"]
             Qs = level_data["Q"]
