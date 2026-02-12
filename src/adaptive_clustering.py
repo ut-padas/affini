@@ -3,7 +3,6 @@ import time
 from typing import Any, Callable, Literal, Optional
 
 import matplotlib.pyplot as plt
-
 from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max as cupy_scatter_max
 from matplotlib.colors import LogNorm
@@ -426,6 +425,7 @@ def allocate_output_buffers(
     fd: int,  # Function output dimension
     dtype: Any,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool,
+    STORE_TREE_DATA: bool,
 ) -> tuple[dict[str, Array], int]:
     """Allocate output buffers for finalized clusters.
 
@@ -454,6 +454,8 @@ def allocate_output_buffers(
     }
     if STORE_HESSIAN_SQRT_PER_CLUSTER:
         buffers["H_sqrt"] = xp.empty((cap, d, d), dtype=dtype)
+    if STORE_TREE_DATA:
+        buffers["tree_data"] = {}
     return buffers, cap
 
 
@@ -463,6 +465,7 @@ def adjust_buffer_capacity(
     current_cap: int,
     required_total: int,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool,
+    STORE_TREE_DATA: bool,
 ) -> tuple[dict[str, Array], int]:
     """Grow output buffers if the finalized cluster count exceeds current capacity.
 
@@ -505,6 +508,12 @@ def adjust_buffer_capacity(
         if current_count > 0:
             new_buffers["H_sqrt"][:current_count] = buffers["H_sqrt"][:current_count]
 
+    if STORE_TREE_DATA:
+        new_buffers["tree_data"] = {}
+        if "tree_data" in buffers and buffers["tree_data"]:
+            for key, value in buffers["tree_data"].items():
+                new_buffers["tree_data"][key] = value
+
     # Delete old buffers to free memory.
     del buffers
     return new_buffers, int(new_cap)
@@ -531,10 +540,10 @@ def adaptive_clustering(
     # Hessian informed splitting
     USE_HESSIAN_INFORMED_SPLIT=True,
     USE_COVARIANCE_HESSIAN=False,
-    # Testing purposes: run without gradient to compare
+    # Testing flags
     IGNORE_GRADIENT: bool = False,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
-    SAVE_GENERATED_TRAINING_DATA: bool = False,
+    STORE_TREE_DATA: bool = False,
 ) -> dict[str, Array]:
     """
     Adaptive clustering for Vector-Valued functions F: R^d -> R^m.
@@ -616,7 +625,12 @@ def adaptive_clustering(
 
     # Outputs
     buffers, out_cap = allocate_output_buffers(
-        MAX_CLUSTERS_EST, d, fd, X0.dtype, STORE_HESSIAN_SQRT_PER_CLUSTER
+        MAX_CLUSTERS_EST,
+        d,
+        fd,
+        X0.dtype,
+        STORE_HESSIAN_SQRT_PER_CLUSTER,
+        STORE_TREE_DATA,
     )
     out_count = 0
 
@@ -844,7 +858,12 @@ def adaptive_clustering(
             # Store results
             end_out = out_count + n_good
             buffers, out_cap = adjust_buffer_capacity(
-                buffers, out_count, out_cap, end_out, STORE_HESSIAN_SQRT_PER_CLUSTER
+                buffers,
+                out_count,
+                out_cap,
+                end_out,
+                STORE_HESSIAN_SQRT_PER_CLUSTER,
+                STORE_TREE_DATA,
             )
 
             # Optional: Store Hessian for good clusters (using their active component)
@@ -896,6 +915,24 @@ def adaptive_clustering(
             buffers["counts"][out_count:end_out] = counts[good_idx]
 
             out_count = end_out
+
+            if STORE_TREE_DATA:
+                buffers["tree_data"][level] = {}
+                points_in_clusters = []
+                for i, idx in enumerate(good_idx):
+                    cluster_points = X_sorted[map_n_to_k == idx]
+                    points_in_clusters.append(cluster_points)
+                buffers["tree_data"][level] = {
+                    "centroids": mus[good_idx],
+                    "f": f_mus[good_idx],
+                    "g": g_mus[good_idx],
+                    "radii": all_radii[good_idx],
+                    "L_obs": all_L_obs[good_idx],
+                    "E_cluster": E_cluster[good_idx],
+                    "counts": counts[good_idx],
+                    "Q": Qs,
+                    "points_in_clusters": points_in_clusters,
+                }
 
             # Deactivate all points (real + synthetic) in accepted clusters.
             active[idx_sorted[mask_good_pts]] = False
@@ -1016,12 +1053,12 @@ def adaptive_clustering(
     logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
     logger.info(f"Runtime - Total: {time.perf_counter() -_start_time:.3f}s")
 
-    out_dict = {k: buffers[k][:final_count] for k in buffers}
+    out_dict = {k: buffers[k][:final_count] for k in buffers if k != "tree_data"}
+    if STORE_TREE_DATA:
+        out_dict["tree_data"] = buffers["tree_data"]
     out_dict["num_levels"] = level
     out_dict["num_generated_pts"] = n_total - N0
     out_dict["total_f_evals"] = int(total_f_evals)
-    if SAVE_GENERATED_TRAINING_DATA:
-        out_dict["gen_training_data"] = X_pool[:n_new]
     return out_dict
 
 
