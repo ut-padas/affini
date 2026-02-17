@@ -805,6 +805,81 @@ wheels = [
 ]
 
 [[package]]
+name = "hataan"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "array-api-compat" },
+    { name = "faiss-cpu" },
+    { name = "ipykernel" },
+    { name = "ipympl" },
+    { name = "knndbscan" },
+    { name = "matplotlib" },
+    { name = "nbformat" },
+    { name = "numba" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "seaborn" },
+    { name = "sympy" },
+    { name = "tqdm" },
+]
+
+[package.dev-dependencies]
+gpu = [
+    { name = "cuml-cu12" },
+    { name = "cupy-cuda12x" },
+]
+lint = [
+    { name = "ruff" },
+]
+test = [
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
+viz = [
+    { name = "imageio" },
+    { name = "manim" },
+    { name = "plotly" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "array-api-compat", specifier = ">=1.12.0" },
+    { name = "faiss-cpu", specifier = ">=1.12.0" },
+    { name = "ipykernel", specifier = ">=7.1.0" },
+    { name = "ipympl", specifier = ">=0.10.0" },
+    { name = "knndbscan", specifier = "==0.1.2", index = "https://test.pypi.org/simple/" },
+    { name = "matplotlib", specifier = ">=3.10.7" },
+    { name = "nbformat", specifier = ">=5.10.4" },
+    { name = "numba", specifier = ">=0.61.2" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "pandas", specifier = ">=2.3.3" },
+    { name = "scikit-learn", specifier = ">=1.7.2" },
+    { name = "scipy", specifier = ">=1.16.3" },
+    { name = "seaborn", specifier = ">=0.13.2" },
+    { name = "sympy", specifier = ">=1.14.0" },
+    { name = "tqdm", specifier = ">=4.67.1" },
+]
+
+[package.metadata.requires-dev]
+gpu = [
+    { name = "cuml-cu12", specifier = ">=25.10.0" },
+    { name = "cupy-cuda12x", specifier = ">=13.6.0" },
+]
+lint = [{ name = "ruff", specifier = ">=0.14.2" }]
+test = [
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+]
+viz = [
+    { name = "imageio", specifier = ">=2.37.2" },
+    { name = "manim", specifier = ">=0.19.2" },
+    { name = "plotly", specifier = ">=6.5.2" },
+]
+
+[[package]]
 name = "imageio"
 version = "2.37.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1098,81 +1173,6 @@ dependencies = [
 sdist = { url = "https://test-files.pythonhosted.org/packages/16/45/e8776cbef55f1153c51a71f373ba76208efa5c378e55ff6b5a887275a9dd/knndbscan-0.1.2.tar.gz", hash = "sha256:f4a32d8b65d35672a24408c07bcb534abc750a08fddef279e5361f88b1cb892f", size = 20377, upload-time = "2026-02-17T00:20:19.101Z" }
 wheels = [
     { url = "https://test-files.pythonhosted.org/packages/f1/c6/b7c4da8e21423e9912c68ea957c51f4d68f15956c240fdf7793200d68267/knndbscan-0.1.2-cp313-cp313-manylinux_2_39_x86_64.whl", hash = "sha256:e4246689331a17e030eaa906ced39ec454643d6641d7ef0aba6e380bdd035356", size = 7592841, upload-time = "2026-02-17T00:20:17.475Z" },
-]
-
-[[package]]
-name = "knnsur"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "array-api-compat" },
-    { name = "faiss-cpu" },
-    { name = "ipykernel" },
-    { name = "ipympl" },
-    { name = "knndbscan" },
-    { name = "matplotlib" },
-    { name = "nbformat" },
-    { name = "numba" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "scikit-learn" },
-    { name = "scipy" },
-    { name = "seaborn" },
-    { name = "sympy" },
-    { name = "tqdm" },
-]
-
-[package.dev-dependencies]
-gpu = [
-    { name = "cuml-cu12" },
-    { name = "cupy-cuda12x" },
-]
-lint = [
-    { name = "ruff" },
-]
-test = [
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
-viz = [
-    { name = "imageio" },
-    { name = "manim" },
-    { name = "plotly" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "array-api-compat", specifier = ">=1.12.0" },
-    { name = "faiss-cpu", specifier = ">=1.12.0" },
-    { name = "ipykernel", specifier = ">=7.1.0" },
-    { name = "ipympl", specifier = ">=0.10.0" },
-    { name = "knndbscan", specifier = "==0.1.2", index = "https://test.pypi.org/simple/" },
-    { name = "matplotlib", specifier = ">=3.10.7" },
-    { name = "nbformat", specifier = ">=5.10.4" },
-    { name = "numba", specifier = ">=0.61.2" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "pandas", specifier = ">=2.3.3" },
-    { name = "scikit-learn", specifier = ">=1.7.2" },
-    { name = "scipy", specifier = ">=1.16.3" },
-    { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "sympy", specifier = ">=1.14.0" },
-    { name = "tqdm", specifier = ">=4.67.1" },
-]
-
-[package.metadata.requires-dev]
-gpu = [
-    { name = "cuml-cu12", specifier = ">=25.10.0" },
-    { name = "cupy-cuda12x", specifier = ">=13.6.0" },
-]
-lint = [{ name = "ruff", specifier = ">=0.14.2" }]
-test = [
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-]
-viz = [
-    { name = "imageio", specifier = ">=2.37.2" },
-    { name = "manim", specifier = ">=0.19.2" },
-    { name = "plotly", specifier = ">=6.5.2" },
 ]
 
 [[package]]

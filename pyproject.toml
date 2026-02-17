@@ -1,7 +1,7 @@
 [project]
-name = "knnsur"
+name = "hataan"
 version = "0.1.0"
-description = "kNN Surrogate"
+description = "HATAAN: High-dimensional Approximation using Taylor expansions and Adaptive Nearest Neighbors"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
