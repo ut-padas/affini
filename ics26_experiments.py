@@ -16,8 +16,7 @@ from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_
 from src.problems.lorenz96_flowmap import (
     lorenz96_flowmap,
     lorenz96_flowmap_grad,
-    lorenz96_flowmap_oracle,
-    lorenz96_flowmap_oracle_single_component
+    lorenz96_flowmap_oracle_first_component,
 )
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 from src.problems.shifted_gaussians import (
@@ -60,8 +59,6 @@ def get_N_MIN_PER_CLUSTER(dim: int, *, base: float = 1.3, factor: int = 100) -> 
 def ics_aniso_gaussian_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_anisotropic_gaussian"
     create_summary_dataframe(EXP_DIR)
     DIMs = [2, 5]
@@ -99,7 +96,6 @@ def ics_aniso_gaussian_experiment() -> Path:
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
             STORE_TRAIN_EVALS=False,
@@ -111,8 +107,6 @@ def ics_aniso_gaussian_experiment() -> Path:
 def ics_aniso_gaussian_experiment_no_hess() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_anisotropic_gaussian_no_hess"
     create_summary_dataframe(EXP_DIR)
 
@@ -164,7 +158,6 @@ def ics_aniso_gaussian_experiment_no_hess() -> Path:
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                 N_TEST=N_TEST,
                 K_NEIGHBOURS=K_NEIGHBOURS,
-                CLUSTERING_VERSION=CLUSTERING_VERSION,
                 ERROR_METRIC=ERROR_METRIC,  # type: ignore
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
@@ -178,8 +171,6 @@ def ics_aniso_gaussian_experiment_no_hess() -> Path:
 def ics_aniso_gaussian_experiment_no_hess_no_grad() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_anisotropic_gaussian_no_hess_no_grad"
     create_summary_dataframe(EXP_DIR)
 
@@ -231,7 +222,6 @@ def ics_aniso_gaussian_experiment_no_hess_no_grad() -> Path:
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                 N_TEST=N_TEST,
                 K_NEIGHBOURS=K_NEIGHBOURS,
-                CLUSTERING_VERSION=CLUSTERING_VERSION,
                 ERROR_METRIC=ERROR_METRIC,  # type: ignore
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
@@ -245,8 +235,6 @@ def ics_aniso_gaussian_experiment_no_hess_no_grad() -> Path:
 def ics_aniso_quadratic_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic"
     create_summary_dataframe(EXP_DIR)
     DIMs = [2, 5, 10]
@@ -290,7 +278,6 @@ def ics_aniso_quadratic_experiment() -> Path:
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
             STORE_TRAIN_EVALS=False,
@@ -303,8 +290,6 @@ def ics_aniso_quadratic_experiment() -> Path:
 def ics_aniso_quadratic_experiment_no_hess() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_no_hess"
     create_summary_dataframe(EXP_DIR)
 
@@ -356,7 +341,6 @@ def ics_aniso_quadratic_experiment_no_hess() -> Path:
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                 N_TEST=N_TEST,
                 K_NEIGHBOURS=K_NEIGHBOURS,
-                CLUSTERING_VERSION=CLUSTERING_VERSION,
                 ERROR_METRIC=ERROR_METRIC,  # type: ignore
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
@@ -370,8 +354,6 @@ def ics_aniso_quadratic_experiment_no_hess() -> Path:
 def ics_aniso_quadratic_experiment_no_hess_no_grad() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_no_hess_no_grad"
     create_summary_dataframe(EXP_DIR)
 
@@ -423,7 +405,6 @@ def ics_aniso_quadratic_experiment_no_hess_no_grad() -> Path:
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                 N_TEST=N_TEST,
                 K_NEIGHBOURS=K_NEIGHBOURS,
-                CLUSTERING_VERSION=CLUSTERING_VERSION,
                 ERROR_METRIC=ERROR_METRIC,  # type: ignore
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
@@ -437,8 +418,6 @@ def ics_aniso_quadratic_experiment_no_hess_no_grad() -> Path:
 def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_runtime_scalability"
     create_summary_dataframe(EXP_DIR)
 
@@ -502,7 +481,6 @@ def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
             STORE_TRAIN_EVALS=False,
@@ -518,23 +496,15 @@ def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
 def ics_rosenbrock_runtime_scalability_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_rosenbrock_runtime_scalability"
     create_summary_dataframe(EXP_DIR)
     DIMs = [5]
-    TOLs = [0.05]
+    TOLs = [1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
-    N_TRAINs = [10_000 * 2**i for i in range(18)]
 
-    combos = list(product(DIMs, TOLs, ERROR_METRICs, N_TRAINs))
-    for DIM, TOL, ERROR_METRIC, N_TRAIN in tqdm(combos, desc="Experiments"):
-        if DIM >= 64 and TOL <= 0.1:
-            print(
-                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC}, N_TRAIN={N_TRAIN:.2e} due to resource constraints."
-            )
-            continue
-
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        N_TRAIN = get_N_TRAIN(DIM)
         N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
         N_TEST = max(N_TRAIN // 4, 500)
@@ -576,7 +546,6 @@ def ics_rosenbrock_runtime_scalability_experiment() -> Path:
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
             STORE_TRAIN_EVALS=False,
@@ -584,6 +553,7 @@ def ics_rosenbrock_runtime_scalability_experiment() -> Path:
             PROFILE_TIMING=True,
             PLOT_CONTOUR_IN_LOG_SCALE=True,
         )
+        create_summary_dataframe(EXP_DIR)
 
     return EXP_DIR
 
@@ -591,8 +561,6 @@ def ics_rosenbrock_runtime_scalability_experiment() -> Path:
 def ics_rosenbrock_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_rosenbrock"
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
@@ -640,7 +608,6 @@ def ics_rosenbrock_experiment() -> Path:
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
         )
@@ -651,8 +618,6 @@ def ics_rosenbrock_experiment() -> Path:
 def ics_rosenbrock_experiment_no_hess() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_rosenbrock_no_hess"
     create_summary_dataframe(EXP_DIR)
 
@@ -704,7 +669,6 @@ def ics_rosenbrock_experiment_no_hess() -> Path:
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                 N_TEST=N_TEST,
                 K_NEIGHBOURS=K_NEIGHBOURS,
-                CLUSTERING_VERSION=CLUSTERING_VERSION,
                 ERROR_METRIC=ERROR_METRIC,  # type: ignore
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
@@ -718,8 +682,6 @@ def ics_rosenbrock_experiment_no_hess() -> Path:
 def ics_rosenbrock_experiment_no_hess_no_grad() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_rosenbrock_no_hess_no_grad"
     create_summary_dataframe(EXP_DIR)
 
@@ -771,7 +733,6 @@ def ics_rosenbrock_experiment_no_hess_no_grad() -> Path:
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
                 N_TEST=N_TEST,
                 K_NEIGHBOURS=K_NEIGHBOURS,
-                CLUSTERING_VERSION=CLUSTERING_VERSION,
                 ERROR_METRIC=ERROR_METRIC,  # type: ignore
                 USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
@@ -785,8 +746,6 @@ def ics_rosenbrock_experiment_no_hess_no_grad() -> Path:
 def ics_rosenbrock_n_min_per_cluster_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = ICS26_DIR / "ics_rosenbrock_n_min_per_cluster"
     create_summary_dataframe(EXP_DIR)
 
@@ -847,7 +806,6 @@ def ics_rosenbrock_n_min_per_cluster_experiment() -> Path:
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
         )
@@ -860,7 +818,6 @@ def generate_train_data_for_neural_network() -> None:
     TOL = 0.05
     ERROR_METRIC = "Linf-local"
     USE_HESSIAN_INFORMED_SPLIT = True
-    CLUSTERING_VERSION = "v2"
     _prefix = "train_evals"
     K_NEIGHBOURS = 1
 
@@ -897,7 +854,6 @@ def generate_train_data_for_neural_network() -> None:
             MAX_CLUSTERS_EST=100_000,
             N_TEST=get_N_TRAIN(DIM) // 2,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,
             STORE_TRAIN_EVALS=True,
             TRAIN_EVALS_DIR=_evals_dir,
@@ -933,7 +889,6 @@ def generate_train_data_for_neural_network() -> None:
             MAX_CLUSTERS_EST=100_000,
             N_TEST=get_N_TRAIN(DIM) // 2,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,
             STORE_TRAIN_EVALS=True,
             TRAIN_EVALS_DIR=_evals_dir,
@@ -985,7 +940,6 @@ def generate_train_data_for_neural_network() -> None:
         MAX_CLUSTERS_EST=100_000,
         N_TEST=get_N_TRAIN(DIM) // 2,
         K_NEIGHBOURS=K_NEIGHBOURS,
-        CLUSTERING_VERSION=CLUSTERING_VERSION,
         ERROR_METRIC=ERROR_METRIC,
         STORE_TRAIN_EVALS=True,
         TRAIN_EVALS_DIR=_evals_dir,
@@ -1011,7 +965,7 @@ def ics_lorenz_experiment() -> Path:
     Imagine this is the very first time step in a string of simulations.
     """
     FORCING = 1
-    FINAL_TIME = 0.1
+    FINAL_TIME = 0.05
 
     def f(x):
         f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
@@ -1026,29 +980,22 @@ def ics_lorenz_experiment() -> Path:
     def oracle(x):
         """
         Compute the flowmap, and the gradient of the flowmap, for the given input x,
-        and retun for the specified output variable.
+        and return for the specified output variable.
         """
-        f, g = lorenz96_flowmap_oracle(x, FORCING, FINAL_TIME)
-        N, _ = f.shape
-        f_out = f[:, 0].reshape((N, 1))
-        g_out = g[:, 0, :].reshape((N, 1, -1))
-        return f_out, g_out
-
+        N, d = x.shape
+        f, g = lorenz96_flowmap_oracle_first_component(x, FORCING, FINAL_TIME)
+        return f.reshape(N, 1), g.reshape(N, 1, d)
 
     MAX_CLUSTERS_EST = 20_000
-
     K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
     EXP_DIR = (
-        ICS26_DIR
-        / f"ics_lorenz_finaltime{FINAL_TIME}_outputvar0_forcing{FORCING}"
+        ICS26_DIR / f"ics_lorenz_finaltime{FINAL_TIME}_outputvar0_forcing{FORCING}"
     )
     # del_all_error_files_in_dir(EXP_DIR)
     # create_summary_dataframe(EXP_DIR)
 
-    DIMs = [5]
-    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+    DIMs = [5, 10, 20, 40, 80]
+    TOLs = [0.1]
     ERROR_METRICs = ["Linf-global"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
@@ -1063,119 +1010,8 @@ def ics_lorenz_experiment() -> Path:
             continue
         print(f"Running experiment: {json_path}")
 
-        N_TRAIN = min(get_N_TRAIN(DIM), int(4e6))
-        N_TEST = N_TRAIN // 2
-        N_INIT_CLUSTERS = min(get_N_INIT_CLUSTERS(DIM), 1000)
-        N_MIN_PER_CLUSTER = min(get_N_MIN_PER_CLUSTER(DIM), 500)
-        print(
-            f"N_TRAIN: {N_TRAIN:,}, N_INIT_CLUSTERS: {N_INIT_CLUSTERS:,}, N_MIN_PER_CLUSTER: {N_MIN_PER_CLUSTER:,}"
-        )
-
-        Problem_experiment_setup(
-            json_fpath=json_path,
-            DIM=DIM,
-            F_DIM=1,
-            DOMAIN=[-5.0, 5.0],
-            f_fn=f, # check
-            g_fn=grad_f,
-            oracle_fn=oracle,
-            N_TRAIN=N_TRAIN,
-            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-            TOL=TOL,
-            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            N_TEST=N_TEST,
-            K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
-            ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=True,
-            PROFILE_TIMING=True,
-        )
-        create_summary_dataframe(EXP_DIR)
-
-    return EXP_DIR
-
-
-def ics_jax_lorenz() -> Path:
-    """
-    Lorenz 96 surrogate for a SINGLE time step using JAX-accelerated oracle.
-    Target: 20D.
-    """
-    raise NotImplementedError(
-        "Not implemented yet. Need to ensure JAX is properly set up and integrated."
-    )
-    from src.problems.jax_lorenz96 import (
-        lorenz96_jax_flowmap,
-        lorenz96_jax_grad,
-        lorenz96_jax_oracle,
-    )
-
-    FORCING = 1.0
-    FINAL_TIME = 0.1
-    OUTPUT_VARIABLE = 0
-
-    # We use the JAX oracle which runs on GPU
-    # src/problems/jax_lorenz96.py
-
-    def f(x):
-        # x is (N, d)
-        # lorenz96_jax_flowmap returns (N, d) on the active backend (CuPy/NumPy)
-        f_val = lorenz96_jax_flowmap(x, FORCING, FINAL_TIME)
-
-        N, _ = f_val.shape
-        return f_val[:, OUTPUT_VARIABLE].reshape((N, 1))
-
-    def grad_f(x):
-        # lorenz96_jax_grad returns (N, d, d) on the active backend
-        g_val = lorenz96_jax_grad(x, FORCING, FINAL_TIME)
-
-        N, d, _ = g_val.shape
-        return g_val[:, OUTPUT_VARIABLE, :].reshape((N, 1, d))
-
-    def oracle(x):
-        """
-        Compute the flowmap, and the gradient of the flowmap.
-        """
-        # lorenz96_jax_oracle returns (Val, Jacobian) on the active backend
-        f_val, g_val = lorenz96_jax_oracle(x, FORCING, FINAL_TIME)
-
-        N, _ = f_val.shape
-        f_out = f_val[:, OUTPUT_VARIABLE].reshape((N, 1))
-        g_out = g_val[:, OUTPUT_VARIABLE, :].reshape((N, 1, -1))
-        return f_out, g_out
-
-    MAX_CLUSTERS_EST = 20_000
-
-    K_NEIGHBOURS = 1
-    CLUSTERING_VERSION = "v2"
-
-    EXP_DIR = (
-        ICS26_DIR
-        / f"ics_jax_lorenz_finaltime{FINAL_TIME}_outputvar{OUTPUT_VARIABLE}_forcing{FORCING}"
-    )
-    del_all_error_files_in_dir(EXP_DIR)
-    create_summary_dataframe(EXP_DIR)
-
-    DIMs = [20]
-    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-local"]
-
-    combos = list(product(DIMs, TOLs, ERROR_METRICs))
-    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="JAX Lorenz Experiments"):
-        json_path = (
-            EXP_DIR
-            / f"ics26_jax_lorenz_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_outputvar{OUTPUT_VARIABLE}.json"
-        )
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        if json_path.exists():
-            print(f"Skipping existing experiment at {json_path}")
-            continue
-        print(f"Running experiment: {json_path}")
-
-        N_TRAIN = min(get_N_TRAIN(DIM), int(2e6))
-        # Reduce N_TRAIN for debugging if needed, but keeping it standard for now.
-
-        N_TEST = N_TRAIN // 2
+        N_TRAIN = min(get_N_TRAIN(DIM), int(1e6))
+        N_TEST = 50_000
         N_INIT_CLUSTERS = min(get_N_INIT_CLUSTERS(DIM), 1000)
         N_MIN_PER_CLUSTER = min(get_N_MIN_PER_CLUSTER(DIM), 500)
         print(
@@ -1197,7 +1033,6 @@ def ics_jax_lorenz() -> Path:
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            CLUSTERING_VERSION=CLUSTERING_VERSION,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             USE_HESSIAN_INFORMED_SPLIT=True,
             PROFILE_TIMING=True,
@@ -1246,8 +1081,8 @@ if __name__ == "__main__":
         # dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
         # create_summary_dataframe(dir3)
 
-        # dir4 = ics_rosenbrock_runtime_scalability_experiment()
-        # create_summary_dataframe(dir4)
+        dir4 = ics_rosenbrock_runtime_scalability_experiment()
+        create_summary_dataframe(dir4)
 
         # dir5 = ics_aniso_quadratic_experiment_no_hess()
         # create_summary_dataframe(dir5)
@@ -1267,7 +1102,7 @@ if __name__ == "__main__":
         # dir10 = ics_rosenbrock_experiment_no_hess_no_grad()
         # create_summary_dataframe(dir10)
 
-        ics_lorenz_experiment()
+        # ics_lorenz_experiment()
 
     else:
-        print("Run only on GPU backend.")
+        print("Run only on GPU node.")

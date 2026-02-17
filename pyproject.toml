@@ -1,35 +1,48 @@
 [project]
-name = "knnsur"
+name = "hataan"
 version = "0.1.0"
-description = "kNN Surrogate"
+description = "HATAAN: High-dimensional Approximation using Taylor expansions and Adaptive Nearest Neighbors"
 readme = "README.md"
 requires-python = ">=3.13"
+# license = "MIT" # TODO
 dependencies = [
     "array-api-compat>=1.12.0",
-    "cvxpy>=1.7.5",
-    "diffrax>=0.7.1",
     "faiss-cpu>=1.12.0",
-    "imageio>=2.37.2",
     "ipykernel>=7.1.0",
     "ipympl>=0.10.0",
-    "jax[cuda12]>=0.9.0.1",
+    "knndbscan==0.1.2",
     "matplotlib>=3.10.7",
     "nbformat>=5.10.4",
     "numba>=0.61.2",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
-    "plotly>=6.5.2",
     "scikit-learn>=1.7.2",
     "scipy>=1.16.3",
     "seaborn>=0.13.2",
     "sympy>=1.14.0",
-    "torch>=2.10.0",
     "tqdm>=4.67.1",
 ]
+
+# [project.urls]
+# "Homepage" = "TODO"
+# "Bug Reports" = "TODO"
+# "Source" = "TODO"
+
+[tool.uv]
+resolution = "lowest-direct"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+explicit = true
+
+[tool.uv.sources]
+knndbscan = { index = "testpypi" }
 
 [[tool.uv.index]]
 name = "nvidia"
 url = "https://pypi.nvidia.com/"
+explicit = true
 
 [tool.ruff]
 line-length = 88
@@ -37,7 +50,12 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "B", "A", "C4", "PIE", "T20", "UP", "NPY", "SIM"]
-ignore = ["E501"]  # Line too long (handled by formatter)
+ignore = [
+    "E501", # Line too long (handled by formatter)
+    "N803", # Allow non-standard naming (e.g., single-letter variables) in some contexts
+    "N806", # Allow mathematical variable names (e.g., N, A, JA, minPts) in some contexts
+    "T201", # Allow print statements in examples
+]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*.py" = ["T201", "N803", "N806"]  # Allow print statements and non-standard naming in examples
@@ -63,4 +81,9 @@ lint = [
 test = [
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
+]
+viz = [
+    "imageio>=2.37.2",
+    "manim>=0.19.2",
+    "plotly>=6.5.2",
 ]

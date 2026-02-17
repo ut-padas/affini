@@ -6,11 +6,9 @@ from scipy.integrate import solve_ivp
 
 # Assumes these modules exist in your project structure
 from src import IS_CUPY_BACKEND, Array, xp
+from src.problems.adjoint_solver import parallel_adjoint_solver
 from src.problems.lorenz96 import lorenz96, lorenz96_grad
-from src.problems.sensitivities_solver import (
-    parallel_sensitivities_solver,
-    parallel_sensitivities_solver_single_component
-)
+from src.problems.sensitivities_solver import parallel_sensitivities_solver
 
 
 def _ensure_numpy(x: Array) -> np.ndarray:
@@ -20,7 +18,7 @@ def _ensure_numpy(x: Array) -> np.ndarray:
     return x
 
 
-def _ensure_backend(x: np.ndarray) -> Array:
+def _ensure_backend(x: Array) -> Array:
     """Helper to return data to the configured backend (CPU or GPU)."""
     if IS_CUPY_BACKEND:
         return xp.asarray(x)
@@ -84,6 +82,7 @@ def lorenz96_flowmap_grad(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> A
         DXF: (N, d, d) Jacobian matrices d(x_tf)/d(x_0).
     """
     X0_np = _ensure_numpy(X0)
+    N, d = X0_np.shape
 
     # KEY FIX: Use partial instead of lambda.
     # Multiprocessing relies on pickle, which cannot serialize lambda functions.
@@ -96,7 +95,7 @@ def lorenz96_flowmap_grad(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> A
     return _ensure_backend(DXF)
 
 
-def lorenz96_flowmap_oracle(
+def lorenz96_flowmap_oracle_first_component(
     X0: Array, forcing: float = 1.0, tf: float = 0.1
 ) -> tuple[Array, Array]:
     """
@@ -111,73 +110,12 @@ def lorenz96_flowmap_oracle(
         Tuple (XF, DXF).
     """
     X0_np = _ensure_numpy(X0)
+    N, d = X0_np.shape
 
     # Use partial for picklability
     rhs = partial(lorenz96, forcing=forcing)
 
-    XF, DXF = parallel_sensitivities_solver(rhs, lorenz96_grad, X0_np, tf)
+    e1 = np.eye(d)[0]
+    XF, DXF = parallel_adjoint_solver(rhs, lorenz96_grad, X0_np, tf, e1)
 
     return _ensure_backend(XF), _ensure_backend(DXF)
-
-
-
-def lorenz96_flowmap_oracle_single_component(
-    X0: Array, forcing: float = 1.0, tf: float = 0.1
-) -> tuple[Array, Array]:
-    """
-    Computes both the flowmap and its gradients in parallel.
-
-    Args:
-        X0: (N, d) initial states.
-        forcing: Forcing term.
-        tf: Final time.
-
-    Returns:
-        Tuple (XF, DXF).
-    """
-
-    raise NotImplementedError(
-        "This is actually broken because each \"decoupled\" block doesn't correspond to an entry of the gradient."
-    )
-
-
-    X0_np = _ensure_numpy(X0)
-
-    # Use partial for picklability
-    rhs = partial(lorenz96, forcing=forcing)
-
-    XF, DXF = parallel_sensitivities_solver_single_component(rhs, lorenz96_grad, X0_np, tf)
-
-    return _ensure_backend(XF), _ensure_backend(DXF)
-
-
-
-if __name__ == "__main__":
-    # Essential for Windows compatibility when using multiprocessing
-    mp.freeze_support()
-
-    # --- Test Configuration ---
-    n_trajectories = 5
-    dim = 5
-    X0_test = 0.5 * np.ones((n_trajectories, dim))
-    F_val = 8.0
-    t_final = 0.05
-
-    print(f"--- Running Lorenz96 Benchmarks (N={n_trajectories}, d={dim}) ---")
-
-    # 1. Test Standard Flowmap
-    X_out = lorenz96_flowmap(X0_test, forcing=F_val, tf=t_final)
-    print(f"Flowmap Shape: {X_out.shape}")
-
-    # 2. Test Gradient Only
-    DX_out = lorenz96_flowmap_grad(X0_test, forcing=F_val, tf=t_final)
-    print(f"Gradient Shape: {DX_out.shape}")
-
-    # 3. Test Oracle (Both)
-    X_or, DX_or = lorenz96_flowmap_oracle(X0_test, forcing=F_val, tf=t_final)
-    print(f"Oracle Shapes: State={X_or.shape}, Grad={DX_or.shape}")
-
-    # Simple sanity check: Gradients should be Identity-like for very small t
-    if t_final < 1e-3:
-        is_identity = np.allclose(DX_or, np.eye(dim), atol=1e-2)
-        print(f"Small t sanity check (expect Identity): {is_identity}")

@@ -5,8 +5,6 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Union
 
 from src import IS_CUPY_BACKEND, Array, xp
-from src.data_sampler import DataSampler
-from src.l2_distance import knn_l2_distance
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +14,8 @@ class HATANNSurrogate:
     Surrogate using Adaptive Clustering + kNN with Ellipsoidal Distance on GPU.
     """
 
-    def __init__(self, version: Literal["v1", "v2"]):
+    def __init__(self):
         self.trained = False
-        self.version = version
 
         # Storage for source points (Reference data)
         self.X_src = None
@@ -31,6 +28,9 @@ class HATANNSurrogate:
 
         # Model file path (for saving/loading)
         self._model_file = None
+
+        # Persistent KNN Index
+        self.knn_index = None
 
     def get_trained_data_as_dict(self) -> dict:
         """
@@ -66,6 +66,7 @@ class HATANNSurrogate:
         # Clustering params
         TOL: float = 1e-2,
         ERROR_METRIC: Literal["L2", "Linf-local", "Linf-global"] = "Linf-global",
+        INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"] = "kmeans",
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
@@ -75,7 +76,7 @@ class HATANNSurrogate:
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
         PROFILE_TIMING: bool = False,
-        SAVE_GENERATED_TRAINING_DATA: bool = False,
+        STORE_TREE_DATA: bool = False,
     ):
         """
         Train the surrogate model or load from saved file.
@@ -138,99 +139,106 @@ class HATANNSurrogate:
 
         t0 = time.perf_counter()
 
-        if self.version == "v2":
-            if USE_HESSIAN_INFORMED_SPLIT == False or IGNORE_GRADIENT == True:
-                logger.warning(
-                    "USE_HESSIAN_INFORMED_SPLIT=False or IGNORE_GRADIENT=True may lead to suboptimal clustering performance."
-                )
-
-            if not IS_CUPY_BACKEND:
-                from src.adaptive_clustering import adaptive_clustering
-
-                # 1. Adaptive Clustering
-                results = adaptive_clustering(
-                    X=X_train,
-                    f_fn=f_fn,
-                    g_fn=g_fn,
-                    oracle_fn=oracle_fn,
-                    TOL=TOL,
-                    ERROR_METRIC=ERROR_METRIC,
-                    NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-                    MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-                    MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                    SEED=SEED,
-                    LOG_MEM_STATS=False,
-                    SYNTH_BUDGET_FACTOR=200.0,
-                    USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-                    IGNORE_GRADIENT=IGNORE_GRADIENT,
-                    Q_SHRINK=0.05,
-                    MAX_LEVELS=MAX_LEVELS,
-                    SAVE_GENERATED_TRAINING_DATA=SAVE_GENERATED_TRAINING_DATA,
-                )
-
-                centroids = xp.asarray(results["centroids"])
-                f_vals = xp.asarray(results["f"])
-                grads = xp.asarray(results["g"])
-                radii = xp.asarray(results["radii"])
-                Qs = xp.asarray(results["Q"])
-                profiling_stats = {
-                    "num_levels": results["num_levels"],
-                    "num_generated_pts": results["num_generated_pts"],
-                    "total_f_evals": results["total_f_evals"],
-                }
-                training_data = results.get("gen_training_data", None)
-
-            else:
-                from src.gpu_adaptive_clustering import (
-                    adaptive_clustering as gpu_adaptive_clustering,
-                )
-
-                if SAVE_GENERATED_TRAINING_DATA:
-                    logger.warning(
-                        "SAVE_GENERATED_TRAINING_DATA=True is not currently supported in GPU version. Generated training data will not be saved."
-                    )
-
-                results = gpu_adaptive_clustering(
-                    X=X_train,
-                    f_fn=f_fn,
-                    g_fn=g_fn,
-                    oracle_fn=oracle_fn,
-                    TOL=TOL,
-                    ERROR_METRIC=ERROR_METRIC,
-                    NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-                    MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-                    MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                    USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-                    IGNORE_GRADIENT=IGNORE_GRADIENT,
-                    SEED=SEED,
-                    BATCH_SIZE=BATCH_SIZE,
-                    Q_SHRINK=0.05,
-                    PROFILE_TIMING=PROFILE_TIMING,
-                )
-                centroids = xp.asarray(results["centroids"])
-                f_vals = xp.asarray(results["f"])
-                grads = xp.asarray(results["g"])
-                radii = xp.asarray(results["radii"])
-                Qs = xp.asarray(results["Q"])
-                profiling_stats = results["profiling_stats"]
-                training_data = None  # Not supported in GPU version
-
-            # 2. Store Data
-            self.X_src = centroids
-            self.f_src = f_vals
-            self.J_src = grads
-            self.trust_radii_src = radii
-            self.Qs_src = Qs
-            self.N_src = centroids.shape[0]
-            self.profiling_stats = profiling_stats
-            if SAVE_GENERATED_TRAINING_DATA:
-                self.training_data = training_data
-        else:
-            raise NotImplementedError(
-                "Version v1 is deprecated. Use version v2 instead."
+        if USE_HESSIAN_INFORMED_SPLIT == False or IGNORE_GRADIENT == True:
+            logger.warning(
+                "USE_HESSIAN_INFORMED_SPLIT=False or IGNORE_GRADIENT=True may lead to suboptimal clustering performance."
             )
 
-        # 3. Training complete
+        if not IS_CUPY_BACKEND:
+            from src.adaptive_clustering import adaptive_clustering
+
+            # 1. Adaptive Clustering
+            t0 = time.perf_counter()
+            results = adaptive_clustering(
+                X=X_train,
+                f_fn=f_fn,
+                g_fn=g_fn,
+                oracle_fn=oracle_fn,
+                TOL=TOL,
+                ERROR_METRIC=ERROR_METRIC,
+                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                SEED=SEED,
+                LOG_MEM_STATS=False,
+                SYNTH_BUDGET_FACTOR=200.0,
+                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                IGNORE_GRADIENT=IGNORE_GRADIENT,
+                Q_SHRINK=0.05,
+                MAX_LEVELS=MAX_LEVELS,
+                STORE_TREE_DATA=STORE_TREE_DATA,
+                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+            )
+
+            centroids = xp.asarray(results["centroids"])
+            f_vals = xp.asarray(results["f"])
+            grads = xp.asarray(results["g"])
+            radii = xp.asarray(results["radii"])
+            Qs = xp.asarray(results["Q"])
+            profiling_stats = {
+                "num_levels": results["num_levels"],
+                "num_generated_pts": results["num_generated_pts"],
+                "total_f_evals": results["total_f_evals"],
+                "time_total": time.perf_counter() - t0,
+            }
+            training_data = results.get("gen_training_data", None)
+
+        else:
+            from src.gpu_adaptive_clustering import (
+                adaptive_clustering as gpu_adaptive_clustering,
+            )
+
+            if STORE_TREE_DATA:
+                logger.warning(
+                    "STORE_TREE_DATA=True is not currently supported in GPU version. Generated training data will not be saved."
+                )
+
+            if INITIAL_CLUSTERING_METHOD == "knndbscan":
+                logger.warning(
+                    "INITIAL_CLUSTERING_METHOD='knndbscan' is not currently supported in GPU version. Defaulting to 'kmeans'."
+                )
+                INITIAL_CLUSTERING_METHOD = "kmeans"
+
+            results = gpu_adaptive_clustering(
+                X=X_train,
+                f_fn=f_fn,
+                g_fn=g_fn,
+                oracle_fn=oracle_fn,
+                TOL=TOL,
+                ERROR_METRIC=ERROR_METRIC,
+                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                IGNORE_GRADIENT=IGNORE_GRADIENT,
+                SEED=SEED,
+                BATCH_SIZE=BATCH_SIZE,
+                Q_SHRINK=0.05,
+                PROFILE_TIMING=PROFILE_TIMING,
+            )
+            centroids = xp.asarray(results["centroids"])
+            f_vals = xp.asarray(results["f"])
+            grads = xp.asarray(results["g"])
+            radii = xp.asarray(results["radii"])
+            Qs = xp.asarray(results["Q"])
+            profiling_stats = results["profiling_stats"]
+            training_data = None  # Not supported in GPU version
+
+        # 2. Store Data
+        self.X_src = centroids
+        self.f_src = f_vals
+        self.J_src = grads
+        self.trust_radii_src = radii
+        self.Qs_src = Qs
+        self.N_src = centroids.shape[0]
+        self.profiling_stats = profiling_stats
+        if STORE_TREE_DATA:
+            self.training_data = training_data
+
+        # 3. Build KNN Index
+        self._build_knn_index()
+
+        # 4. Training complete
         self.trained = True
         logger.info(f"Training Time: {time.perf_counter()-t0:.4f}s")
         logger.info(f"Trained Clusters: {len(self.X_src):,}")
@@ -329,7 +337,7 @@ class HATANNSurrogate:
             data = xp.load(str(filepath), allow_pickle=True)
 
         # Create instance
-        instance = cls(version="v2")
+        instance = cls()
 
         # Restore state
         instance.trained = bool(data["trained"])
@@ -378,7 +386,58 @@ class HATANNSurrogate:
         logger.info(f"Model loaded from {filepath}")
         logger.info(f"Loaded model with {instance.N_src:,} clusters")
 
+        # Rebuild index
+        instance._build_knn_index()
+
         return instance
+
+    def _build_knn_index(self):
+        """Build the KNN index for the current source centroids."""
+        if self.X_src is None:
+            return
+
+        t0 = time.perf_counter()
+        if IS_CUPY_BACKEND:
+            from cuml.neighbors import NearestNeighbors as cuMLNearestNeighbors
+
+            self.knn_index = cuMLNearestNeighbors(metric="euclidean", algorithm="auto")
+            self.knn_index.fit(self.X_src)
+        else:
+            import faiss
+
+            # Ensure data types are correct for FAISS (float32)
+            centroids_f32 = self.X_src.astype(xp.float32)
+
+            D = self.X_src.shape[1]
+            self.knn_index = faiss.IndexFlatL2(D)
+            self.knn_index.add(centroids_f32)  # type: ignore
+
+        logger.info(f"KNN Index built in {time.perf_counter()-t0:.4f}s")
+
+    def _query_knn(self, query_points: Array, k: int) -> tuple[Array, Array]:
+        """
+        Query the internal KNN index.
+        Returns:
+            indices: (M, k)
+            distances: (M, k) L2 distances
+        """
+        if self.knn_index is None:
+            self._build_knn_index()
+
+        assert self.knn_index is not None, "KNN index is not built."
+
+        # Ensure k doesn't exceed number of centroids
+        k = min(k, self.N_src)
+
+        if IS_CUPY_BACKEND:
+            distances, indices = self.knn_index.kneighbors(query_points, n_neighbors=k)  # type: ignore
+        else:
+            # FAISS returns squared distances
+            query_points_f32 = query_points.astype(xp.float32)
+            distances_sq, indices = self.knn_index.search(query_points_f32, k)  # type: ignore
+            distances = xp.sqrt(distances_sq)
+
+        return indices, distances
 
     def get_source_centroids(self) -> Any:
         """Return the source centroids used in training."""
@@ -405,15 +464,10 @@ class HATANNSurrogate:
         strict_trust_region: bool = False,
     ) -> tuple:
         """
-        Inference via GPU kNN with L2 Distance.
+        Inference via kNN (CPU or GPU) with L2 Distance.
         """
         if not self.trained:
             raise RuntimeError("Model not trained.")
-
-        if self.version != "v2":
-            raise NotImplementedError(
-                "Version v1 is deprecated. Use version v2 instead."
-            )
 
         assert (
             self.X_src is not None
@@ -434,9 +488,7 @@ class HATANNSurrogate:
             k_coarse = len(self.X_src)
             k_nn = len(self.X_src)
 
-        nn_idx_coarse, _, _ = knn_l2_distance(
-            qp, self.X_src, self.trust_radii_src, k_coarse
-        )
+        nn_idx_coarse, _ = self._query_knn(qp, k_coarse)
 
         Qs_coarse = self.Qs_src[nn_idx_coarse]
         centroids_coarse = self.X_src[nn_idx_coarse]
@@ -506,6 +558,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     from src import FIGURES_DIR
+    from src.data_sampler import DataSampler
     from src.logging_utils import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
@@ -593,7 +646,7 @@ if __name__ == "__main__":
     X_train = xp.asarray(X_train)
 
     # 2. Initialize Surrogate
-    surrogate = HATANNSurrogate(version="v2")
+    surrogate = HATANNSurrogate()
     print("--- Training ---")
     _start_train_time = time.perf_counter()
 

@@ -373,7 +373,6 @@ def Problem_experiment_setup(
     N_TEST: int,
     K_NEIGHBOURS: int,
     USE_HESSIAN_INFORMED_SPLIT: bool,
-    CLUSTERING_VERSION: Literal["v1", "v2"],
     oracle_fn: Optional[Callable] = None,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     SAMPLING: Literal["Uniform", "Trajectories"] = "Uniform",
@@ -417,13 +416,14 @@ def Problem_experiment_setup(
         X_train = X_train.reshape((N_train_init * N_timesteps, DIM))
         X_test = X_test.reshape((N_train_init * N_timesteps, DIM))
 
-    surrogate = HATANNSurrogate(version=CLUSTERING_VERSION)
+    surrogate = HATANNSurrogate()
     error_tag = ""
 
     FAILED = False
     _TRAINED, _PREDICTED = False, False
     try:
 
+        model_save_path = json_fpath.with_name(json_fpath.stem + "_surrogate_model.npz")
         if STORE_TRAIN_EVALS:
             assert (
                 TRAIN_EVALS_DIR is not None
@@ -442,7 +442,6 @@ def Problem_experiment_setup(
 
             # Train
             print("\n--- Training ---")
-            _start_train_time = time.perf_counter()
             surrogate.train(
                 X_train=X_train,
                 f_fn=f_debug,
@@ -457,14 +456,12 @@ def Problem_experiment_setup(
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
                 BATCH_SIZE=BATCH_SIZE,
                 PROFILE_TIMING=PROFILE_TIMING,
+                save_model=model_save_path,
             )
-            _end_train_time = time.perf_counter()
             _TRAINED = True
         else:
             # Train
             print("\n--- Training ---")
-            _start_train_time = time.perf_counter()
-
             if oracle_fn is not None:
                 print("Using oracle function for training...")
                 surrogate.train(
@@ -479,6 +476,7 @@ def Problem_experiment_setup(
                     USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
                     IGNORE_GRADIENT=IGNORE_GRADIENT,
                     PROFILE_TIMING=PROFILE_TIMING,
+                    save_model=model_save_path,
                 )
             else:
                 surrogate.train(
@@ -495,8 +493,8 @@ def Problem_experiment_setup(
                     IGNORE_GRADIENT=IGNORE_GRADIENT,
                     BATCH_SIZE=BATCH_SIZE,
                     PROFILE_TIMING=PROFILE_TIMING,
+                    save_model=model_save_path,
                 )
-            _end_train_time = time.perf_counter()
             _TRAINED = True
 
         if SAVE_TRAINED_DATA:
@@ -528,7 +526,7 @@ def Problem_experiment_setup(
         _end_predict_time = time.perf_counter()
         _PREDICTED = True
 
-        train_time = _end_train_time - _start_train_time
+        train_time = surrogate.profiling_stats["time_total"]
         predict_time = _end_predict_time - _start_predict_time
 
         N_CLUSTERS = surrogate.get_number_of_sources()
@@ -575,7 +573,6 @@ def Problem_experiment_setup(
         N_INIT_CLUSTERS=N_INIT_CLUSTERS,
         N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
         K_NEIGHBOURS=K_NEIGHBOURS,
-        CLUSTERING_VERSION=CLUSTERING_VERSION,
         USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
         IGNORE_GRADIENT=IGNORE_GRADIENT,
         ERROR_METRIC=ERROR_METRIC,

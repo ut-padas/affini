@@ -251,6 +251,7 @@ if __name__ == "__main__":
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
         SYNTH_BUDGET_FACTOR=5,
+        INITIAL_CLUSTERING_METHOD="kmeans",
     )
 
     print("-" * 40)
