@@ -9,6 +9,7 @@ dependencies = [
     "faiss-cpu>=1.12.0",
     "ipykernel>=7.1.0",
     "ipympl>=0.10.0",
+    "knndbscan==0.1.2",
     "matplotlib>=3.10.7",
     "nbformat>=5.10.4",
     "numba>=0.61.2",
@@ -21,9 +22,21 @@ dependencies = [
     "tqdm>=4.67.1",
 ]
 
+[tool.uv]
+resolution = "lowest-direct"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+explicit = true
+
+[tool.uv.sources]
+knndbscan = { index = "testpypi" }
+
 [[tool.uv.index]]
 name = "nvidia"
 url = "https://pypi.nvidia.com/"
+explicit = true
 
 [tool.ruff]
 line-length = 88
@@ -55,7 +68,6 @@ testpaths = ["tests"]
 gpu = [
     "cuml-cu12>=25.10.0",
     "cupy-cuda12x>=13.6.0",
-    "torch>=2.10.0",
 ]
 lint = [
     "ruff>=0.14.2",
