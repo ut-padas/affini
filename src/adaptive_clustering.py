@@ -5,6 +5,7 @@ from typing import Any, Callable, Literal, Optional
 import matplotlib.pyplot as plt
 from cuml.cluster import KMeans as cuKMeans
 from cupyx import scatter_max as cupy_scatter_max
+from knndbscan import knn_dbscan
 from matplotlib.colors import LogNorm
 from sklearn.cluster import KMeans
 
@@ -527,6 +528,7 @@ def adaptive_clustering(
     oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
+    INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"],
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
@@ -608,17 +610,40 @@ def adaptive_clustering(
     synth_added_prev_level = False
 
     # ---- 2. Initial Clustering ----
-    _t1 = time.perf_counter()
-    if IS_CUPY_BACKEND:
-        km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
-        labels0 = km.fit_predict(X_pool[:N0])
-    else:
-        km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
-        labels0 = km.fit_predict(xp.asarray(X_pool[:N0]))
+    if INITIAL_CLUSTERING_METHOD == "kmeans":
+        _t1 = time.perf_counter()
+        if IS_CUPY_BACKEND:
+            km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+            labels0 = km.fit_predict(X_pool[:N0])
+        else:
+            km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+            labels0 = km.fit_predict(xp.asarray(X_pool[:N0]))
 
-    labels_pool = xp.empty((capacity,), dtype=xp.int64)
-    labels_pool[:N0] = labels0.astype(xp.int64)
-    logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
+        labels_pool = xp.empty((capacity,), dtype=xp.int64)
+        labels_pool[:N0] = labels0.astype(xp.int64)
+        logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
+    elif INITIAL_CLUSTERING_METHOD == "knndbscan":
+        _device = "gpu" if IS_CUPY_BACKEND else "cpu"
+        _t1 = time.perf_counter()
+        labels0 = knn_dbscan(
+            X_pool[:N0],
+            eps=0.1,
+            min_samples=MIN_PTS_PER_CLUSTER,
+            n_jobs=-1,
+            device=_device,
+        )
+        labels_pool = xp.empty((capacity,), dtype=xp.int64)
+        labels_pool[:N0] = labels0.astype(xp.int64)
+
+        # Includes noise label (-1) in count
+        num_initial_clusters = int(xp.unique(labels_pool[:N0]).shape[0])
+        logger.info(f"Runtime - Initial KNN-DBSCAN: {time.perf_counter()-_t1:.3f}s")
+        logger.info(f"Initial KNN-DBSCAN found {num_initial_clusters} clusters.")
+    else:
+        raise ValueError(
+            f"Invalid INITIAL_CLUSTERING_METHOD: {INITIAL_CLUSTERING_METHOD}. "
+            f"Choose 'kmeans' or 'knndbscan'."
+        )
 
     active = xp.zeros((capacity,), dtype=bool)
     active[:N0] = True
@@ -1107,6 +1132,13 @@ if __name__ == "__main__":
         help="Error metric for adaptive clustering",
     )
     parser.add_argument(
+        "--initial-clustering-method",
+        type=str,
+        default="kmeans",
+        choices=["kmeans", "knndbscan"],
+        help="Method for initial clustering",
+    )
+    parser.add_argument(
         "--rosenbrock-a",
         type=float,
         default=100.0,
@@ -1129,6 +1161,7 @@ if __name__ == "__main__":
     DIM = args.dim
     TOL = args.tol
     N_TRAIN = int(args.n_train)
+    INITIAL_CLUSTERING_METHOD = args.initial_clustering_method
     NUM_INITIAL_CLUSTERS = args.n_init_clusters
     MIN_PTS_PER_CLUSTER = args.n_min_per_cluster
     ERROR_METRIC = args.error_metric
@@ -1141,7 +1174,7 @@ if __name__ == "__main__":
     AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     img_fpath = (
         AC_PLOTS_DIR
-        / f"adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}.png"
+        / f"adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_initmethod_{INITIAL_CLUSTERING_METHOD}.png"
     )
     if DIM == 2 and img_fpath.exists() and not FORCE_REEXEC:
         print(f"Plot file {img_fpath} already exists. Skipping execution.")
@@ -1162,6 +1195,7 @@ if __name__ == "__main__":
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
         TOL=TOL,
+        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ERROR_METRIC=ERROR_METRIC,
@@ -1324,7 +1358,7 @@ if __name__ == "__main__":
 
         plt.tight_layout()
         fig.suptitle(
-            f"Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL}, ERROR_METRIC={ERROR_METRIC}), N_CLUSTERS={len(centroids):,}",
+            f"Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL}, ERROR_METRIC={ERROR_METRIC}), N_CLUSTERS={len(centroids):,}, INITIAL_CLUSTERING_METHOD={INITIAL_CLUSTERING_METHOD}",
             fontsize=11,
         )
 
