@@ -66,6 +66,7 @@ class HATANNSurrogate:
         # Clustering params
         TOL: float = 1e-2,
         ERROR_METRIC: Literal["L2", "Linf-local", "Linf-global"] = "Linf-global",
+        INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"] = "kmeans",
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
@@ -75,7 +76,7 @@ class HATANNSurrogate:
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
         PROFILE_TIMING: bool = False,
-        SAVE_GENERATED_TRAINING_DATA: bool = False,
+        STORE_TREE_DATA: bool = False,
     ):
         """
         Train the surrogate model or load from saved file.
@@ -165,7 +166,8 @@ class HATANNSurrogate:
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
                 Q_SHRINK=0.05,
                 MAX_LEVELS=MAX_LEVELS,
-                SAVE_GENERATED_TRAINING_DATA=SAVE_GENERATED_TRAINING_DATA,
+                STORE_TREE_DATA=STORE_TREE_DATA,
+                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
             )
 
             centroids = xp.asarray(results["centroids"])
@@ -186,10 +188,16 @@ class HATANNSurrogate:
                 adaptive_clustering as gpu_adaptive_clustering,
             )
 
-            if SAVE_GENERATED_TRAINING_DATA:
+            if STORE_TREE_DATA:
                 logger.warning(
-                    "SAVE_GENERATED_TRAINING_DATA=True is not currently supported in GPU version. Generated training data will not be saved."
+                    "STORE_TREE_DATA=True is not currently supported in GPU version. Generated training data will not be saved."
                 )
+
+            if INITIAL_CLUSTERING_METHOD == "knndbscan":
+                logger.warning(
+                    "INITIAL_CLUSTERING_METHOD='knndbscan' is not currently supported in GPU version. Defaulting to 'kmeans'."
+                )
+                INITIAL_CLUSTERING_METHOD = "kmeans"
 
             results = gpu_adaptive_clustering(
                 X=X_train,
@@ -224,7 +232,7 @@ class HATANNSurrogate:
         self.Qs_src = Qs
         self.N_src = centroids.shape[0]
         self.profiling_stats = profiling_stats
-        if SAVE_GENERATED_TRAINING_DATA:
+        if STORE_TREE_DATA:
             self.training_data = training_data
 
         # 3. Build KNN Index

@@ -97,6 +97,7 @@ def run_hessian_convergence_sweep(
                 SYNTH_BUDGET_FACTOR=synth_budget_factor,
                 LOG_MEM_STATS=False,
                 STORE_HESSIAN_SQRT_PER_CLUSTER=True,
+                INITIAL_CLUSTERING_METHOD="kmeans",
             )
             elapsed = time.perf_counter() - start_time
             centroids = res["centroids"]
