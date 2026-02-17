@@ -26,6 +26,7 @@ result = adaptive_clustering(
     NUM_INITIAL_CLUSTERS=10,
     STORE_TREE_DATA=True,
     USE_HESSIAN_INFORMED_SPLIT=True,
+    INITIAL_CLUSTERING_METHOD="kmeans",
 )
 tree_data = result["tree_data"]
 
