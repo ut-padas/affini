@@ -1,6 +1,7 @@
 import logging
 import warnings
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from array_api_compat import array_namespace
@@ -50,15 +51,22 @@ else:
 xp = array_namespace(_dummy)
 
 
-def _to_host(arr: Array) -> Array:
+def _to_host(arr: Array | Any) -> Array | Any:
     """Move array to host (NumPy) if it's on device (CuPy)."""
+
+    # If not an array, return as is
+    if not hasattr(arr, "shape") or not hasattr(arr, "dtype"):
+        return arr
+
     if hasattr(arr, "get"):  # CuPy array
-        return xp.asnumpy(arr)
+        return arr.get()
     return arr
 
 
-def _to_device(arr: Array) -> Array:
+def _to_device(arr: Array | Any) -> Array | Any:
     """Move array to device (CuPy) if available, else keep as NumPy."""
+    if not hasattr(arr, "shape") or not hasattr(arr, "dtype"):
+        return arr
     return xp.asarray(arr)
 
 
