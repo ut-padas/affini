@@ -614,6 +614,47 @@ def adjust_buffer_capacity_cpu(
     return new_buffers, int(new_cap)
 
 
+def get_n_smallest_per_block(values, start_indices, n):
+    # 1. Create an array of block IDs for every element
+    # Example: starts [0, 3, 7] -> block_ids [0, 0, 0, 1, 1, 1, 1, 2, 2...]
+    block_ids = xp.zeros(values.size, dtype=xp.int32)
+    # Mark the start of each block with a 1
+    block_ids[start_indices] = 1
+    # Cumulative sum turns markers into IDs: [1, 1, 1, 2, 2, 2, 2, 3, 3...]
+    block_ids = xp.cumsum(block_ids) - 1
+
+    # 2. Sort indices: primary key = block_ids, secondary key = values
+    # This groups blocks together and sorts values within them
+    sort_idx = xp.lexsort((values, block_ids))
+
+    sorted_values = values[sort_idx]
+    sorted_blocks = block_ids[sort_idx]
+
+    # 3. Pick the first 'n' elements of each block
+    # Generate local indices (0, 1, 2... for each block)
+    # We do this by finding where the block ID changes
+    block_change = xp.diff(sorted_blocks, prepend=-1)
+
+    # Use a clever trick: the index within the block is
+    # the distance from the last 'change' point
+    # For speed, we can use a scan or just compute local counts
+    # A simple way: find the rank of each element within its block
+    local_idx = xp.arange(len(sorted_values))
+    # To get local index 0, 1, 2... within blocks:
+    # We subtract the global index of the first element of each block
+    first_elem_indices = xp.where(block_change != 0)[0]
+    # Expand the start indices to match the full array size
+    offsets = xp.zeros_like(sorted_values)
+    offsets[first_elem_indices] = first_elem_indices
+    offsets = xp.maximum.accumulate(offsets)
+
+    intra_block_idx = local_idx - offsets
+
+    # 4. Mask and extract
+    mask = intra_block_idx < n
+    return mask
+
+
 # -----------------------------------------------------------------------------
 # 4. MAIN ALGORITHM
 # -----------------------------------------------------------------------------
@@ -634,7 +675,7 @@ def adaptive_clustering(
     Q_SHRINK: float = 0.05,
     MAX_LEVELS: int = 50,
     BATCH_SIZE: int = 10_000_000,
-    USE_HESSIAN_INFORMED_SPLIT: bool = True,
+    CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "None"] = "Hessian_LSQ",
     IGNORE_GRADIENT: bool = False,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
     LOG_MEM_STATS: bool = False,
@@ -1222,7 +1263,7 @@ def adaptive_clustering(
                     bad_counts = aug_sizes[bad_idx_local]
                     dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
 
-                    if IGNORE_GRADIENT or not USE_HESSIAN_INFORMED_SPLIT:
+                    if IGNORE_GRADIENT or CLUSTERING_MATRIX == "None":
                         # Fallback: PCA Split (Split along variance of X)
                         M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
                             n_bad, axis=0
@@ -1239,7 +1280,8 @@ def adaptive_clustering(
                         )
                         C = 0.5 * (C + C.transpose(0, 2, 1))
                         CovZ = C
-                    else:
+
+                    elif CLUSTERING_MATRIX == "Hessian_LSQ":
                         # Hessian Split: Split along eigenvector of Hessian estimate
                         # 1. Determine "Active Component" (Output dim with highest error)
                         g_mus_exp_bad = g_mus[bad_idx_local][dense_labels_bad]
@@ -1286,6 +1328,38 @@ def adaptive_clustering(
 
                         # Covariance in transformed space Z = M * dx
                         CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
+
+                    elif CLUSTERING_MATRIX == "Cov_Lvl_curves":
+                        # Approximate Hessian using inverse covariance formulation.
+                        # 1. Determine points we will use to approximate Hessian.
+                        # Use the errors we have already computed
+                        # We want to have enough points (2d*log(d))
+                        n_est_cov = 2 * d * xp.log(d)
+                        E_bad = E_cluster[bad_mask]
+                        cov_est_mask = get_n_smallest_per_block(
+                            E_bad,
+                            dense_labels_bad, # is this right?
+                            n_est_cov
+                        )
+                        X_est_cov = X_bad[cov_est_mask]
+
+                        # 2. Use these points to compute covariances
+                        C, _ = run_fused_stats(
+                            X_est_cov,
+                            mus[bad_idx_local],
+                            dense_labels_bad[cov_est_mask],
+                            n_bad,
+                            d,
+                            fd,
+                            xp.zeros(n_bad, dtype=xp.int32),
+                            calc_E=False,
+                        )
+                        C = 0.5 * (C + C.transpose(0, 2, 1))
+
+                        # 2.5: Shrinkage?
+
+                        # 3. Take inverses
+                        CovZ = xp.linalg.inv(C)
 
                     # Get Split Direction (Dominant Eigenvector)
                     _, V_z = xp.linalg.eigh(CovZ)
