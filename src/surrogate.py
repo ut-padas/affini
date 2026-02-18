@@ -145,7 +145,7 @@ class HATANNSurrogate:
             )
 
         if not IS_CUPY_BACKEND:
-            from src.adaptive_clustering_mpi import adaptive_clustering
+            from src.adaptive_clustering import adaptive_clustering
 
             # 1. Adaptive Clustering
             t0 = time.perf_counter()

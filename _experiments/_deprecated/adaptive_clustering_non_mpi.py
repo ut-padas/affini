@@ -1,43 +1,21 @@
-"""
-MPI-aware Adaptive Clustering.
-
-New features vs adaptive_clustering_mpi_exp.py:
-  1. MPI parallelism: Rank 0 inits/clusters/scatters; all ranks refine locally;
-     Rank 0 gathers/merges.
-  2. Dynamic pool resizing: no pre-committed SYNTH_BUDGET cap; pool grows
-     on demand via ensure_pool_capacity.
-
-Non-rank-0 ranks return None from adaptive_clustering.
-"""
-
 import logging
-import os
 import time
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Optional
 
-import numpy as np
-from mpi4py import MPI
+import matplotlib.pyplot as plt
+from cuml.cluster import KMeans as cuKMeans
+from cupyx import scatter_max as cupy_scatter_max
+from knndbscan import knn_dbscan
+from matplotlib.colors import LogNorm
 from sklearn.cluster import KMeans
 
-from src import IS_CUPY_BACKEND, Array, get_mpi_rank, xp
+from src import IS_CUPY_BACKEND, Array, xp
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
 
 logger = logging.getLogger(__name__)
 
 TINY_EPS = 1e-12
-
-
-def _to_host(arr: Array) -> Array:
-    """Move array to host (NumPy) if it's on device (CuPy)."""
-    if hasattr(arr, "get"):  # CuPy array
-        return xp.asnumpy(arr)
-    return arr
-
-
-def _to_device(arr: np.ndarray) -> Array:
-    """Move array to device (CuPy) if available, else keep as NumPy."""
-    return xp.asarray(arr)
 
 
 def scatter_maximum_1d(out: Array, idx: Array, vals: Array) -> None:
@@ -57,8 +35,6 @@ def scatter_maximum_1d(out: Array, idx: Array, vals: Array) -> None:
         vals: (N,) values to reduce via max per index.
     """
     if IS_CUPY_BACKEND:
-        from cupyx import scatter_max as cupy_scatter_max  # type: ignore[import]
-
         cupy_scatter_max(out, idx, vals)
     else:
         xp.maximum.at(out, idx, vals)
@@ -81,52 +57,6 @@ def compute_label_segments(sorted_labels: Array) -> tuple[Array, Array, Array]:
     return uniq, starts, counts
 
 
-def ensure_pool_capacity(
-    pool: dict[str, Array],
-    n_total: int,
-    needed: int,
-    capacity: int,
-) -> tuple[int, dict[str, Array]]:
-    """
-    Grow pool dict if n_total + needed > capacity, doubling capacity until sufficient.
-
-    Args:
-        pool: dict of arrays representing the pool; all arrays must have leading dim >= capacity.
-        n_total: current total count of points in the pool.
-        needed: additional points needed to accommodate (e.g. synthetic points).
-        capacity: current capacity of the pool.
-
-    Returns:
-        new_capacity: updated capacity after ensuring room for n_total + needed.
-        new_pool: potentially reallocated pool dict with arrays resized to new_capacity.
-    """
-    required = n_total + needed
-    if required <= capacity:
-        # No resizing needed; return original pool and capacity.
-        return capacity, pool
-
-    # Capacity needs to grow. Double until we have enough room.
-    new_cap = max(required, capacity * 2)
-    logger.info(f"Pool resize: {capacity:,} -> {new_cap:,} (need {required:,})")
-    new_pool: dict[str, Array] = {}
-
-    try:
-        for name, arr in pool.items():
-            shape = list(arr.shape)
-            shape[0] = new_cap
-            new_pool[name] = xp.empty(shape, dtype=arr.dtype)
-            new_pool[name][:n_total] = arr[:n_total]
-        del pool
-    except Exception as e:
-        logger.error(f"MemoryError during pool resizing: {e}")
-        raise e
-
-    if IS_CUPY_BACKEND:
-        # Free old CuPy memory blocks to prevent fragmentation after resizing.
-        xp.get_default_memory_pool().free_all_blocks()
-    return new_cap, new_pool
-
-
 def generate_sythetic_points(
     X_sorted: Array,
     starts: Array,
@@ -136,7 +66,7 @@ def generate_sythetic_points(
     *,
     SEED: int,
     level: int,
-) -> tuple[Array | None, Array | None]:
+) -> tuple[Optional[Array], Optional[Array]]:
     """
     Batch generate synthetic point generation via convex combinations within clusters.
 
@@ -277,7 +207,6 @@ def calculate_Q(
 
     Returns:
         Q: (K, d, d) PSD ellipsoid matrices.
-        Cov: (K, d, d) covariance matrices before shrinkage.
     """
     # Cov_k = sum_i (dx_i dx_i^T) for points belonging to cluster k.
     XX_all = DeltaX[:, :, None] * DeltaX[:, None, :]  # (N,d,d)
@@ -491,15 +420,10 @@ def compute_median_split_decision(
     return scores >= median[cluster_id]
 
 
-# ---------------------------------------------------------------------------
-# Output buffer helpers (unchanged from original)
-# ---------------------------------------------------------------------------
-
-
 def allocate_output_buffers(
     MAX_CLUSTERS_EST: int,
     d: int,
-    fd: int,
+    fd: int,  # Function output dimension
     dtype: Any,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool,
     STORE_TREE_DATA: bool,
@@ -596,441 +520,37 @@ def adjust_buffer_capacity(
     return new_buffers, int(new_cap)
 
 
-# ---------------------------------------------------------------------------
-# Local refinement loop (shared by each MPI rank)
-# ---------------------------------------------------------------------------
-def _run_local_refinement(
-    # Pool (dict of arrays, all of length >= n_total)
-    pool: dict[str, Array],
-    n_total: int,
-    capacity: int,
-    d: int,
-    fd: int,
-    # Oracles
-    f_fn,
-    g_fn,
-    oracle_fn,
-    # Config
-    TOL: float,
-    ERROR_METRIC: str,
-    MIN_PTS_PER_CLUSTER: int,
-    MAX_CLUSTERS_EST: int,
-    Q_SHRINK: float,
-    SEED: int,
-    LOG_MEM_STATS: bool,
-    MAX_LEVELS: int,
-    USE_HESSIAN_INFORMED_SPLIT: bool,
-    USE_COVARIANCE_HESSIAN: bool,
-    IGNORE_GRADIENT: bool,
-    STORE_HESSIAN_SQRT_PER_CLUSTER: bool,
-    STORE_TREE_DATA: bool,
-    F_max_global: Array,  # frozen global scale (broadcast from rank 0)
-    rank: int,
-) -> tuple[dict[str, Any], int, int]:
-    """
-    Core local refinement loop for adaptive clustering, run independently on each MPI rank. This performs the iterative clustering/refinement process on the local pool of points, returning the finalized clusters and counts of points/f-evals.
-    """
-
-    dtype = pool["X"].dtype
-    total_f_evals = 0
-
-    out_buffers, out_cap = allocate_output_buffers(
-        MAX_CLUSTERS_EST,
-        d,
-        fd,
-        dtype,
-        STORE_HESSIAN_SQRT_PER_CLUSTER,
-        STORE_TREE_DATA,
-    )
-    out_count = 0
-
-    for level in range(1, MAX_LEVELS + 1):
-        t_level = time.perf_counter()
-        if LOG_MEM_STATS:
-            log_mem_stats(f"R{rank:02} Start: L{level:02}")
-
-        idx_active = xp.nonzero(pool["active"][:n_total])[0]
-        n_active = int(idx_active.shape[0])
-        if n_active == 0:
-            logger.info(f"R{rank:02} L{level:03}: No Active Points, Done.")
-            break
-
-        # Sort & segment
-        label_active = pool["labels"][idx_active]
-        perm = xp.argsort(label_active)
-        idx_sorted = idx_active[perm]
-        label_sorted = label_active[perm]
-        uniq_labels, starts, counts = compute_label_segments(label_sorted)
-        K_batch = int(uniq_labels.shape[0])
-
-        if LOG_MEM_STATS:
-            log_mem_stats(f"R{rank:02} L{level:02}: After Setup")
-
-        # --- Dynamic-pool padding ---
-        need = xp.maximum(0, MIN_PTS_PER_CLUSTER - counts)
-        total_synth_needed = int(xp.sum(need))
-        capacity, pool = ensure_pool_capacity(
-            pool, n_total, total_synth_needed, capacity
-        )
-
-        X_sorted = pool["X"][idx_sorted]
-        X_synth, labels_synth = generate_sythetic_points(
-            X_sorted,
-            starts,
-            counts,
-            uniq_labels,
-            MIN_PTS_PER_CLUSTER,
-            SEED=SEED + rank,
-            level=level,
-        )
-
-        if X_synth is not None:
-            M_synth = int(X_synth.shape[0])
-            end_new = n_total + M_synth
-
-            # Evaluate F/G at new synthetic points.
-            if oracle_fn is not None:
-                F_new, G_new = oracle_fn(X_synth)
-                total_f_evals += M_synth
-            else:
-                F_new = f_fn(X_synth)
-                total_f_evals += M_synth
-                G_new = (
-                    xp.zeros((M_synth, fd, d), dtype=dtype)
-                    if IGNORE_GRADIENT
-                    else g_fn(X_synth)
-                )
-
-            # Write new synthetic points into the pool, marking them active.
-            pool["X"][n_total:end_new] = X_synth
-            pool["F"][n_total:end_new] = F_new
-            pool["G"][n_total:end_new] = G_new
-            pool["labels"][n_total:end_new] = labels_synth
-            pool["active"][n_total:end_new] = True
-            n_total = end_new
-
-            # Re-sort after padding
-            idx_active = xp.nonzero(pool["active"][:n_total])[0]
-            label_active = pool["labels"][idx_active]
-            perm = xp.argsort(label_active)
-            idx_sorted = idx_active[perm]
-            label_sorted = label_active[perm]
-            uniq_labels, starts, counts = compute_label_segments(label_sorted)
-            K_batch = int(uniq_labels.shape[0])
-            X_sorted = pool["X"][idx_sorted]
-
-        if LOG_MEM_STATS:
-            log_mem_stats(f"R{rank:02} L{level:02}: After Padding")
-
-        # --- Error computation ---
-        F_sorted = pool["F"][idx_sorted]  # (N_act, fd)
-        G_sorted = pool["G"][idx_sorted]  # (N_act, fd, d)
-
-        # Centroids.
-        mus = xp.add.reduceat(X_sorted, starts) / counts[:, None]  # (K, d)
-
-        # Evaluate F/G at centroids.
-        if oracle_fn is not None:
-            f_mus, g_mus = oracle_fn(mus)
-            total_f_evals += mus.shape[0]
-        else:
-            f_mus = f_fn(mus)
-            total_f_evals += mus.shape[0]
-            g_mus = (
-                xp.zeros((K_batch, fd, d), dtype=dtype)
-                if IGNORE_GRADIENT
-                else g_fn(mus)
-            )
-
-        map_n_to_k = repeats(xp.arange(K_batch), counts)
-        dx = X_sorted - mus[map_n_to_k]
-
-        # Linearized F at points: f_lin = f_centroid + g_centroid^T (x - centroid)
-        g_mus_exp = g_mus[map_n_to_k]
-        linear_term = (g_mus_exp @ dx[:, :, None])[:, :, 0]
-        f_lin = f_mus[map_n_to_k] + linear_term
-        diff = F_sorted - f_lin  # (N_act, fd)
-        abs_diff = xp.abs(diff)
-
-        # Calculate E_cluster based on metric.
-        if ERROR_METRIC == "L2":
-            # L2 Error: Total Frobenius Norm of the error for the cluster.
-
-            # 1. Squared error per point: (N_act, fd)
-            sq_err = diff**2
-
-            # 2. Sum over squared error per cluster for each component: (K, fd)
-            sum_sq_per_cluster_comp = xp.add.reduceat(sq_err, starts)
-
-            # 3. Sum over components and sqrt to get L2 error per cluster: (K,)
-            total_sq_error = xp.sum(sum_sq_per_cluster_comp, axis=1)
-            E_cluster = xp.sqrt(total_sq_error)  # (K,)
-            is_good = E_cluster < TOL
-
-        elif ERROR_METRIC == "Linf-global":
-            # e_j(C) = max_{x} |diff_j| / (max_{x} |f_j(x)|) across the entire domain.
-            # Need max per cluster, per component.
-            # We iterate columns of m to use scatter_maximum_1d efficiently.
-            E_rel_max = xp.zeros((K_batch,), dtype=diff.dtype)
-
-            for j in range(fd):
-                max_diff_j = xp.zeros((K_batch,), dtype=diff.dtype)
-                scatter_maximum_1d(max_diff_j, map_n_to_k, abs_diff[:, j])
-
-                # Avoid division by zero by adding a small epsilon to the denominator.
-                E_rel_max = xp.maximum(
-                    E_rel_max, max_diff_j / (F_max_global[j] + TINY_EPS)
-                )
-            E_cluster = E_rel_max
-            is_good = E_cluster < TOL
-
-        elif ERROR_METRIC == "Linf-local":
-            # e_j(C) = max_{x} |diff_j| / (max_{x} |f_j(x)|) within the cluster.
-            # We iterate columns of m to use scatter_maximum_1d efficiently.
-            E_rel_max = xp.zeros((K_batch,), dtype=diff.dtype)
-            E_abs_max = xp.zeros((K_batch,), dtype=diff.dtype)
-            abs_F = xp.abs(F_sorted)
-
-            for j in range(fd):
-                max_diff_j = xp.zeros((K_batch,), dtype=diff.dtype)
-                scatter_maximum_1d(max_diff_j, map_n_to_k, abs_diff[:, j])
-
-                # Accumulate absolute error max for the cluster across components.
-                E_abs_max = xp.maximum(E_abs_max, max_diff_j)
-
-                # Local max F for the cluster and component j.
-                local_max_F = xp.zeros((K_batch,), dtype=diff.dtype)
-                scatter_maximum_1d(local_max_F, map_n_to_k, abs_F[:, j])
-                E_rel_max = xp.maximum(E_rel_max, max_diff_j / (local_max_F + TINY_EPS))
-            E_cluster = E_rel_max
-            is_good = (E_cluster < TOL) | (E_abs_max < TOL)
-        else:
-            raise ValueError(f"Unknown ERROR_METRIC: {ERROR_METRIC}")
-
-        if LOG_MEM_STATS:
-            log_mem_stats(f"R{rank:02} L{level:02}: After Error Computation")
-
-        # --- Finalize good clusters ---
-        good_idx = xp.nonzero(is_good)[0]
-        K_good = int(good_idx.shape[0])
-
-        if K_good > 0:
-            all_radii, all_L_obs = calculate_scalar_metrics(
-                dx, G_sorted, g_mus, map_n_to_k, K_batch
-            )
-
-            # Pick out the points belonging to good clusters for Trust Region construction.
-            mask_good_pts = is_good[map_n_to_k]
-            dx_good = dx[mask_good_pts]
-            good_counts = counts[good_idx]
-            good_starts = xp.r_[0, xp.cumsum(good_counts)[:-1]]
-
-            Qs, _ = calculate_Q(
-                dx_good, good_starts, good_counts, K_good, Q_SHRINK=Q_SHRINK
-            )
-
-            # Store outputs for good clusters, growing buffers if needed.
-            end_out = out_count + K_good
-            out_buffers, out_cap = adjust_buffer_capacity(
-                out_buffers,
-                out_count,
-                out_cap,
-                end_out,
-                STORE_HESSIAN_SQRT_PER_CLUSTER,
-                STORE_TREE_DATA,
-            )
-
-            if STORE_HESSIAN_SQRT_PER_CLUSTER:
-                diff_good = diff[mask_good_pts]
-                F_good = F_sorted[mask_good_pts]
-                sq_err_g = xp.add.reduceat(diff_good**2, good_starts)
-                sq_norm_g = xp.add.reduceat(F_good**2, good_starts)
-                rel_l2 = xp.sqrt(sq_err_g) / (xp.sqrt(sq_norm_g) + TINY_EPS)
-                active_comps = xp.argmax(rel_l2, axis=1)
-                G_good_all = G_sorted[mask_good_pts]
-                g_mu_good_all = g_mus[good_idx]
-                map_good_n_to_k = repeats(xp.arange(K_good), good_counts)
-                pt_active = active_comps[map_good_n_to_k]
-                idx_n = xp.arange(int(diff_good.shape[0]))
-                G_sel = G_good_all[idx_n, pt_active, :]
-                g_mu_sel = g_mu_good_all[map_good_n_to_k, pt_active, :]
-
-                # Estimate Hessian sqrt using the symmetric formulation.
-                H_sqrt = estimate_hessian_sqrt_symmetric(
-                    dx_good, G_sel - g_mu_sel, good_starts
-                )
-                out_buffers["H_sqrt"][out_count:end_out] = H_sqrt
-
-            out_buffers["centroids"][out_count:end_out] = mus[good_idx]
-            out_buffers["f"][out_count:end_out] = f_mus[good_idx]
-            out_buffers["g"][out_count:end_out] = g_mus[good_idx]
-            out_buffers["radii"][out_count:end_out] = all_radii[good_idx]
-            out_buffers["L_obs"][out_count:end_out] = all_L_obs[good_idx]
-            out_buffers["Q"][out_count:end_out] = Qs
-            out_buffers["E_cluster"][out_count:end_out] = E_cluster[good_idx]
-            out_buffers["counts"][out_count:end_out] = counts[good_idx]
-            out_count = end_out
-
-            if STORE_TREE_DATA:
-                points_in_clusters = [X_sorted[map_n_to_k == gi] for gi in good_idx]
-                out_buffers["tree_data"][level] = {
-                    "centroids": mus[good_idx],
-                    "f": f_mus[good_idx],
-                    "g": g_mus[good_idx],
-                    "radii": all_radii[good_idx],
-                    "L_obs": all_L_obs[good_idx],
-                    "E_cluster": E_cluster[good_idx],
-                    "counts": counts[good_idx],
-                    "Q": Qs,
-                    "points_in_clusters": points_in_clusters,
-                    "mpi_rank": xp.ones((K_good,), dtype=xp.int64) * rank,
-                }
-
-            # Deactivate points in good clusters in the pool.
-            pool["active"][idx_sorted[mask_good_pts]] = False
-
-        # --- Split bad clusters ---
-        bad_idx = xp.nonzero(~is_good)[0]
-        K_bad = int(bad_idx.shape[0])
-
-        if K_bad == 0:
-            logger.info(f"R{rank:02} L{level:03}: No Bad Clusters, Done.")
-            break
-
-        if LOG_MEM_STATS:
-            log_mem_stats(f"R{rank:02} L{level:02}: After Finalizing Good Clusters")
-
-        mask_bad_pts = (~is_good)[map_n_to_k]
-        dx_bad = dx[mask_bad_pts]
-        bad_counts = counts[bad_idx]
-        bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
-
-        if IGNORE_GRADIENT or USE_HESSIAN_INFORMED_SPLIT == False:
-            M_split = xp.eye(d)[None, :, :].repeat(K_bad, axis=0)
-        else:
-            # Worst-component-informed splitting: find the component with the highest
-            # relative error and compute a Hessian sqrt for that component.
-
-            # 1. Find active component per cluster based on max relative error.
-            diff_bad = diff[mask_bad_pts]  # (N_bad, fd)
-            F_bad_pts = F_sorted[mask_bad_pts]
-            sum_sq_err = xp.add.reduceat(diff_bad**2, bad_starts)
-            sum_sq_val = xp.add.reduceat(F_bad_pts**2, bad_starts)
-            scores = xp.sqrt(sum_sq_err) / (
-                xp.sqrt(sum_sq_val) + TINY_EPS
-            )  # (K_bad, fd)
-            active_comps = xp.argmax(scores, axis=1)  # (K_bad,)
-
-            if USE_COVARIANCE_HESSIAN == False:
-                G_bad_all = G_sorted[mask_bad_pts]
-                g_mu_bad_all = g_mus[bad_idx]
-
-                # Map each bad point to its cluster's active component.
-                map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
-                pt_active_comp = active_comps[map_bad_n_to_k]
-
-                # Slice out the gradients for the active component.
-                range_N = xp.arange(int(dx_bad.shape[0]))
-                G_sel = G_bad_all[range_N, pt_active_comp, :]
-                g_mu_sel = g_mu_bad_all[map_bad_n_to_k, pt_active_comp, :]
-                dG_bad = G_sel - g_mu_sel
-
-                # Compute Hessian sqrt for splitting using the symmetric formulation.
-                M_split = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts)
-            else:
-                # Instead of directly computing Hessian via least squares,
-                # we take points in good error, compute covariance,
-                # and use the inverse as the approximate Hessian.
-                # It can be shown that if we have enough points,
-                # this is close to the Hessian, and requires much less computation.
-                # Do not use gradients at all.
-                F_bad_all = F_sorted[mask_bad_pts]
-                M_split = compute_good_covariance_hessian(
-                    dx_bad, F_bad_all, f_lin[mask_bad_pts], bad_starts
-                )
-
-        # Transform points in bad clusters by the Hessian sqrt, then split by the
-        # dominant eigenvector.
-        map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
-        M_exp = M_split[map_bad_n_to_k]
-        Z = (M_exp @ dx_bad[:, :, None])[:, :, 0]
-        ZZ_all = Z[:, :, None] * Z[:, None, :]
-        CovZ = xp.add.reduceat(ZZ_all, bad_starts)
-        CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))
-
-        # Compute dominant eigenvector of the covariance and split along that direction
-        # at the median.
-        v = get_dominant_eigenvector(CovZ)
-        v_exp = v[map_bad_n_to_k]
-        proj_scores = xp.sum(Z * v_exp, axis=1)
-        split_right = compute_median_split_decision(
-            proj_scores, map_bad_n_to_k, bad_starts, bad_counts
-        )
-
-        # Update labels in the pool for points in bad clusters based on the split
-        # decision.
-        idx_bad_pool = idx_sorted[mask_bad_pts]
-        old_labels = uniq_labels[bad_idx]
-        old_per_point = old_labels[map_bad_n_to_k]
-        new_labels = old_per_point * 2 + split_right.astype(xp.int64)
-        pool["labels"][idx_bad_pool] = new_labels
-
-        logger.info(
-            f"R{rank:02} L{level:03}: Clusters={K_batch:,} (Good={K_good:,} "
-            f"Bad={K_bad:,}) Active N={n_active:,} "
-        )
-        logger.info(
-            f"Runtime - R{rank:02} L{level:02}: {time.perf_counter() - t_level:.3f}s"
-        )
-
-    return out_buffers, out_count, total_f_evals
-
-
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
-
-
 def adaptive_clustering(
     X: Array,
     *,
-    f_fn: Callable[[Array], Array] | None = None,
-    g_fn: Callable[[Array], Array] | None = None,
-    oracle_fn: Callable[[Array], tuple[Array, Array]] | None = None,
+    f_fn: Optional[Callable[[Array], Array]] = None,
+    g_fn: Optional[Callable[[Array], Array]] = None,
+    oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
-    INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"] = "kmeans",
+    INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"],
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
     Q_SHRINK: float = 0.05,
     SEED: int = 0,
     LOG_MEM_STATS: bool = False,
-    # Pool sizing (SYNTH_BUDGET is an initial-capacity hint; pool grows dynamically)
-    SYNTH_BUDGET: int | None = None,
+    # Pool sizing
+    SYNTH_BUDGET: Optional[int] = None,
     SYNTH_BUDGET_FACTOR: float = 50.0,
     MAX_LEVELS: int = 50,
     # Hessian informed splitting
-    USE_HESSIAN_INFORMED_SPLIT: bool = True,
-    USE_COVARIANCE_HESSIAN: bool = False,
+    USE_HESSIAN_INFORMED_SPLIT=True,
+    USE_COVARIANCE_HESSIAN=False,
     # Testing flags
     IGNORE_GRADIENT: bool = False,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
     STORE_TREE_DATA: bool = False,
-) -> dict[str, Array] | None:
+) -> dict[str, Array]:
     """
-    MPI-aware adaptive clustering for F: R^d -> R^m.
-
-    Architecture:
-      - Rank 0: evaluates F/G on X, runs initial clustering, partitions by cluster
-        label, scatters subsets to all ranks.
-      - All ranks: independently run adaptive refinement on their local subset with
-        dynamic pool resizing (no hard SYNTH_BUDGET cap).
-      - Rank 0: gathers local results, concatenates, and returns merged dict.
-      - Non-zero ranks return None.
-
-    Return keys (rank 0 only): centroids, f, g, radii, L_obs, E_cluster, counts, Q,
-    [H_sqrt], [tree_data], num_levels, num_generated_pts, total_f_evals.
+    Adaptive clustering for Vector-Valued functions F: R^d -> R^m.
+    Supports component-wise relative error metrics and Hessian-informed splitting
+    via Worst-Case Active Component selection.
     """
     # Validate function arguments
     if oracle_fn is not None:
@@ -1042,255 +562,529 @@ def adaptive_clustering(
         if f_fn is None or g_fn is None:
             raise ValueError("Must specify either oracle_fn OR both f_fn and g_fn.")
 
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-    _start = time.perf_counter()
+    _start_time = time.perf_counter()
 
-    # ------------------------------------------------------------------
-    # 1. Rank 0: Evaluate, Cluster, Partition, Prepare scatter payloads
-    # ------------------------------------------------------------------
-    F_max_global_host: np.ndarray | None = None
-    scatter_data: list | None = None
+    total_f_evals = 0
 
-    if rank == 0:
-        logger.info(f"MPI Size: {size}")
+    X0 = xp.asarray(X)  # (N0, d)
+    N0, d = X0.shape
 
-        X0 = xp.asarray(X)
-        N0, d = X0.shape
-
-        _t0 = time.perf_counter()
-        if oracle_fn is not None:
-            F0_val, G0_val = oracle_fn(X0)
-        else:
-            F0_val = f_fn(X0)  # type: ignore
-            G0_val = (
-                xp.zeros((N0, F0_val.shape[1], d), dtype=X0.dtype)
-                if IGNORE_GRADIENT
-                else g_fn(X0)  # type: ignore
-            )
-
-        fd = int(F0_val.shape[1])
-        logger.info(f"R00: N0={N0:,}, d={d}, fd={fd}")
-        logger.info(f"Runtime - R00: Initial F/G Eval {time.perf_counter()-_t0:.3f}s")
-
-        F_max_global_host = _to_host(xp.max(xp.abs(F0_val), axis=0))
-
-        # Initial clustering
-        _t1 = time.perf_counter()
-        if INITIAL_CLUSTERING_METHOD == "kmeans":
-            _t1 = time.perf_counter()
-            if IS_CUPY_BACKEND:
-                from cuml.cluster import KMeans as cuKMeans  # type: ignore[import]
-
-                km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
-                labels0 = km.fit_predict(X0)
-            else:
-                km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
-                labels0 = km.fit_predict(np.asarray(_to_host(X0)))
-            labels0 = (
-                labels0.astype(np.int64)
-                if isinstance(labels0, np.ndarray)
-                else _to_host(labels0).astype(np.int64)
-            )
-            logger.info(f"Runtime - R00: Initial KMeans {time.perf_counter()-_t1:.3f}s")
-
-        elif INITIAL_CLUSTERING_METHOD == "knndbscan":
-            from knndbscan import (
-                knn_dbscan,
-            )  # lazy: avoids UCX atexit registration at module load
-
-            _t1 = time.perf_counter()
-            _device = "gpu" if IS_CUPY_BACKEND else "cpu"
-            labels0 = _to_host(
-                knn_dbscan(
-                    X0,
-                    eps=0.1,
-                    min_samples=MIN_PTS_PER_CLUSTER,
-                    n_jobs=-1,
-                    device=_device,
-                )
-            ).astype(np.int64)
-
-            # Includes noise label (-1) in count
-            num_initial_clusters = int(xp.unique(labels0).shape[0])
-            logger.info(f"Initial kNN-DBSCAN: {num_initial_clusters:,} clusters")
-            logger.info(
-                f"Runtime - R00: Initial kNN-DBSCAN {time.perf_counter()-_t1:.3f}s"
-            )
-        else:
-            raise ValueError(
-                f"Invalid INITIAL_CLUSTERING_METHOD: {INITIAL_CLUSTERING_METHOD}"
-            )
-
-        # Move data to Host for safe MPI scattering
-        X0_host = _to_host(X0)
-        F0_host = _to_host(F0_val)
-        G0_host = _to_host(G0_val)
-
-        # Partition by label chunks so full clusters stay together
-        unique_labels = np.unique(labels0)
-
-        # If # of unique labels is less than size, raise error to avoid empty scatter partitions
-        if unique_labels.shape[0] < size:
-            # TODO: How to handle this more gracefully?
-            raise ValueError(
-                f"Number of unique labels ({unique_labels.shape[0]}) is less than MPI size ({size}). Increase NUM_INITIAL_CLUSTERS or reduce MPI size to avoid empty scatter partitions."
-            )
-
-        label_chunks = np.array_split(unique_labels, size)
-
-        scatter_data = []
-        for chunk in label_chunks:
-            mask = np.isin(labels0, chunk)
-            scatter_data.append(
-                {
-                    "X": X0_host[mask],
-                    "F": F0_host[mask],
-                    "G": G0_host[mask],
-                    "labels": labels0[mask],
-                }
-            )
-    else:
-        scatter_data = None
-
-    # ------------------------------------------------------------------
-    # 2. Broadcast F_max_global; scatter data
-    # ------------------------------------------------------------------
-    F_max_global_host = comm.bcast(F_max_global_host, root=0)
-    F_max_global = _to_device(F_max_global_host)  # type: ignore
-
-    local_dict = comm.scatter(scatter_data, root=0)
-
-    local_X = _to_device(local_dict["X"])
-    local_F = _to_device(local_dict["F"])
-    local_G = _to_device(local_dict["G"])
-    local_labels = _to_device(local_dict["labels"])
-
-    N_local = int(local_X.shape[0])
-    d = int(local_X.shape[1])
-    fd = int(local_F.shape[1])
-    dtype = local_X.dtype
-
-    logger.info(f"R{rank:03}: Received {N_local:,} pts, Starting Refinement.")
-
-    # ------------------------------------------------------------------
-    # 3. Build local pool (dynamic; starts at SYNTH_BUDGET_FACTOR * N_local)
-    # ------------------------------------------------------------------
     if SYNTH_BUDGET is None:
-        init_cap = int(N_local + max(0, SYNTH_BUDGET_FACTOR * N_local))
+        SYNTH_BUDGET = int(max(0, SYNTH_BUDGET_FACTOR * N0))
+    capacity = int(N0 + SYNTH_BUDGET)
+    if LOG_MEM_STATS:
+        log_mem_stats("Start: Adaptive Clustering (pool alloc)")
+
+    # ---- 1. Initialize Pool ----
+    X_pool = xp.empty((capacity, d), dtype=X0.dtype)
+    X_pool[:N0] = X0
+    n_total = int(N0)
+
+    # Eval initial F/G to determine m (output dimension)
+    _t0 = time.perf_counter()
+    if oracle_fn is not None:
+        F0_val, G0_val = oracle_fn(X_pool[:N0])
+        total_f_evals += N0
     else:
-        init_cap = int(N_local + SYNTH_BUDGET // max(1, comm.Get_size()))
+        F0_val = f_fn(X_pool[:N0])  # type: ignore
+        total_f_evals += N0
+        if IGNORE_GRADIENT:
+            G0_val = 0.0
+        else:
+            G0_val = g_fn(X_pool[:N0])  # type: ignore
 
-    capacity = init_cap
-    pool: dict[str, Array] = {
-        "X": xp.empty((capacity, d), dtype=dtype),
-        "F": xp.empty((capacity, fd), dtype=dtype),
-        "G": xp.empty((capacity, fd, d), dtype=dtype),
-        "labels": xp.empty((capacity,), dtype=xp.int64),
-        "active": xp.zeros((capacity,), dtype=bool),
-    }
-    pool["X"][:N_local] = local_X
-    pool["F"][:N_local] = local_F
-    pool["G"][:N_local] = local_G
-    pool["labels"][:N_local] = local_labels
-    pool["active"][:N_local] = True
+    fd = F0_val.shape[1]  # Output dimension (fd)
 
-    # ------------------------------------------------------------------
-    # 4. Local refinement
-    # ------------------------------------------------------------------
-    out_buffers, out_count, local_f_evals = _run_local_refinement(
-        pool=pool,
-        n_total=N_local,
-        capacity=capacity,
-        d=d,
-        fd=fd,
-        f_fn=f_fn,
-        g_fn=g_fn,
-        oracle_fn=oracle_fn,
-        TOL=TOL,
-        ERROR_METRIC=ERROR_METRIC,
-        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        MAX_CLUSTERS_EST=max(1, MAX_CLUSTERS_EST // max(1, size)),
-        Q_SHRINK=Q_SHRINK,
-        SEED=SEED,
-        LOG_MEM_STATS=LOG_MEM_STATS,
-        MAX_LEVELS=MAX_LEVELS,
-        USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-        USE_COVARIANCE_HESSIAN=USE_COVARIANCE_HESSIAN,
-        IGNORE_GRADIENT=IGNORE_GRADIENT,
-        STORE_HESSIAN_SQRT_PER_CLUSTER=STORE_HESSIAN_SQRT_PER_CLUSTER,
-        STORE_TREE_DATA=STORE_TREE_DATA,
-        F_max_global=F_max_global,
-        rank=rank,
-    )
+    F_pool = xp.empty((capacity, fd), dtype=X0.dtype)
+    G_pool = xp.empty((capacity, fd, d), dtype=X0.dtype)
 
-    # ------------------------------------------------------------------
-    # 5. Pack local results to CPU dict
-    # ------------------------------------------------------------------
-    local_result_host = {
-        k: _to_host(out_buffers[k][:out_count]) for k in out_buffers if k != "tree_data"
-    }
-    if STORE_TREE_DATA:
-        local_result_host["tree_data"] = out_buffers.get("tree_data", {})
+    F_pool[:N0] = F0_val
+    G_pool[:N0] = G0_val
 
-    # Reduce total_f_evals across all ranks
-    total_f_evals = comm.reduce(local_f_evals, op=MPI.SUM, root=0)
+    logger.info(f"Runtime - Initial f/g: {time.perf_counter()-_t0:.3f}s")
+    logger.info(f"Function: Input d={d}, Output fd={fd}")
 
-    # ------------------------------------------------------------------
-    # 6. Gather & merge on rank 0
-    # ------------------------------------------------------------------
-    all_results = comm.gather(local_result_host, root=0)
+    # Global scale per component for Linf-global
+    # S_j = max_{x \in \Omega} |f_j(x)|
+    F_max_global = xp.max(xp.abs(F_pool[:N0]), axis=0)  # (fd,)
+    synth_added_prev_level = False
 
-    if rank == 0:
-        logger.info("Rank 00: Merging results from all ranks.")
-        array_keys = [k for k in all_results[0] if k != "tree_data"]  # type: ignore
-        merged: dict[str, Any] = {}
+    # ---- 2. Initial Clustering ----
+    if INITIAL_CLUSTERING_METHOD == "kmeans":
+        _t1 = time.perf_counter()
+        if IS_CUPY_BACKEND:
+            km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+            labels0 = km.fit_predict(X_pool[:N0])
+        else:
+            km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+            labels0 = km.fit_predict(xp.asarray(X_pool[:N0]))
 
-        for k in array_keys:
-            merged[k] = np.concatenate([r[k] for r in all_results], axis=0)  # type: ignore
-            if IS_CUPY_BACKEND:
-                merged[k] = _to_device(merged[k])
-
-        if STORE_TREE_DATA:
-            merged["tree_data"] = {}
-            for r in all_results:  # type: ignore
-                for lvl, data in r.get("tree_data", {}).items():
-                    if lvl not in merged["tree_data"]:
-                        merged["tree_data"][lvl] = data
-                    else:
-                        # Merge same-level tree data across ranks by concatenating
-                        existing = merged["tree_data"][lvl]
-                        for dk in (
-                            "centroids",
-                            "f",
-                            "g",
-                            "radii",
-                            "L_obs",
-                            "E_cluster",
-                            "counts",
-                            "Q",
-                            "mpi_rank",
-                        ):
-                            if dk in existing and dk in data:
-                                existing[dk] = np.concatenate(
-                                    [_to_host(existing[dk]), _to_host(data[dk])], axis=0
-                                )
-                        existing.setdefault("points_in_clusters", []).extend(
-                            data.get("points_in_clusters", [])
-                        )
-
-        total_clusters = int(merged["centroids"].shape[0])
-        merged["num_levels"] = MAX_LEVELS  # approximation
-        merged["num_generated_pts"] = total_clusters  # rough proxy
-        merged["total_f_evals"] = int(total_f_evals)  # type: ignore
-        logger.info(
-            f"Rank 0: final clusters={total_clusters:,}, "
-            f"total time={time.perf_counter()-_start:.2f}s"
+        labels_pool = xp.empty((capacity,), dtype=xp.int64)
+        labels_pool[:N0] = labels0.astype(xp.int64)
+        logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
+    elif INITIAL_CLUSTERING_METHOD == "knndbscan":
+        _device = "gpu" if IS_CUPY_BACKEND else "cpu"
+        _t1 = time.perf_counter()
+        labels0 = knn_dbscan(
+            X_pool[:N0],
+            eps=0.1,
+            min_samples=MIN_PTS_PER_CLUSTER,
+            n_jobs=-1,
+            device=_device,
         )
-        return merged
+        labels_pool = xp.empty((capacity,), dtype=xp.int64)
+        labels_pool[:N0] = labels0.astype(xp.int64)
+
+        # Includes noise label (-1) in count
+        num_initial_clusters = int(xp.unique(labels_pool[:N0]).shape[0])
+        logger.info(f"Runtime - Initial KNN-DBSCAN: {time.perf_counter()-_t1:.3f}s")
+        logger.info(f"Initial KNN-DBSCAN found {num_initial_clusters} clusters.")
     else:
-        return None
+        raise ValueError(
+            f"Invalid INITIAL_CLUSTERING_METHOD: {INITIAL_CLUSTERING_METHOD}. "
+            f"Choose 'kmeans' or 'knndbscan'."
+        )
+
+    active = xp.zeros((capacity,), dtype=bool)
+    active[:N0] = True
+
+    # Outputs
+    buffers, out_cap = allocate_output_buffers(
+        MAX_CLUSTERS_EST,
+        d,
+        fd,
+        X0.dtype,
+        STORE_HESSIAN_SQRT_PER_CLUSTER,
+        STORE_TREE_DATA,
+    )
+    out_count = 0
+
+    # ---- 3. Main Loop ----
+    level = 1
+    while level <= MAX_LEVELS:
+        t_level = time.perf_counter()
+        if LOG_MEM_STATS:
+            log_mem_stats(f"Start: L{level:02}")
+
+        # Update Global Scale if synthetic points added previously
+        if synth_added_prev_level:
+            F_max_global = xp.max(xp.abs(F_pool[:n_total]), axis=0)
+
+        # Basic Check
+        if xp.all(F_max_global < TINY_EPS):
+            logger.warning(f"Level {level}: F is near zero everywhere.")
+
+        # Active indices within the currently-used pool prefix [0..n_total).
+        idx_active = xp.nonzero(active[:n_total])[0]
+        n_active = int(idx_active.shape[0])
+        if n_active == 0:
+            logger.info(f"Level {level:03}: no active points remain, terminating.")
+            break
+
+        synth_added_this_level = False
+
+        # Sort and Segment
+        label_active = labels_pool[idx_active]
+        perm = xp.argsort(label_active)
+        idx_sorted = idx_active[perm]
+        label_sorted = label_active[perm]
+        uniq_labels, starts, counts = compute_label_segments(label_sorted)
+        K_batch = int(uniq_labels.shape[0])
+
+        if LOG_MEM_STATS:
+            log_mem_stats(f"After: L{level:02} Setup")
+
+        # --- Padding Step ---
+        X_sorted = X_pool[idx_sorted]
+        X_synth, labels_synth = generate_sythetic_points(
+            X_sorted,
+            starts,
+            counts,
+            uniq_labels,
+            MIN_PTS_PER_CLUSTER,
+            SEED=SEED,
+            level=level,
+        )
+
+        if X_synth is not None:
+            M_synth = int(X_synth.shape[0])
+            n_new = n_total + M_synth
+            if n_new > capacity:
+                raise MemoryError(
+                    f"Pool capacity exceeded: need {n_new} > {capacity}. "
+                    f"Increase SYNTH_BUDGET / SYNTH_BUDGET_FACTOR. "
+                    f"Level {level:03}, good clusters so far: {out_count:,} "
+                    f"Active clusters this level: {K_batch:,}."
+                )
+
+            # Write new synthetic points into the pool tail and mark them active.
+            X_pool[n_total:n_new] = X_synth
+            labels_pool[n_total:n_new] = labels_synth
+            active[n_total:n_new] = True
+
+            # Evaluate F/G at new synthetic points
+            if oracle_fn is not None:
+                F_new, G_new = oracle_fn(X_synth)
+                total_f_evals += X_synth.shape[0]
+            else:
+                F_new = f_fn(X_synth)  # type: ignore
+                total_f_evals += X_synth.shape[0]
+                if IGNORE_GRADIENT:
+                    G_new = 0.0
+                else:
+                    G_new = g_fn(X_synth)  # type: ignore
+            F_pool[n_total:n_new] = F_new
+            G_pool[n_total:n_new] = G_new
+
+            n_total = n_new
+            synth_added_this_level = True
+
+            # Re-sort active set
+            idx_active = xp.nonzero(active[:n_total])[0]
+            label_active = labels_pool[idx_active]
+            perm = xp.argsort(label_active)
+            idx_sorted = idx_active[perm]
+            label_sorted = label_active[perm]
+            uniq_labels, starts, counts = compute_label_segments(label_sorted)
+            K_batch = int(uniq_labels.shape[0])
+            X_sorted = X_pool[idx_sorted]  # Refresh views
+
+        if LOG_MEM_STATS:
+            log_mem_stats(f"After: L{level:02} Padding")
+
+        # --- Error Computation (Vector-Valued) ---
+        F_sorted = F_pool[idx_sorted]  # (N_act, fd)
+        G_sorted = G_pool[idx_sorted]  # (N_act, fd, d)
+
+        # Centroids
+        mus = xp.add.reduceat(X_sorted, starts) / counts[:, None]  # (K, d)
+
+        # Eval f/g at centroids
+        if oracle_fn is not None:
+            f_mus, g_mus = oracle_fn(mus)
+            total_f_evals += mus.shape[0]
+        else:
+            f_mus = f_fn(mus)  # type: ignore
+            total_f_evals += mus.shape[0]
+            if IGNORE_GRADIENT:
+                g_mus = xp.zeros((K_batch, fd, d), dtype=mus.dtype)
+            else:
+                g_mus = g_fn(mus)  # type: ignore
+
+        map_n_to_k = repeats(xp.arange(K_batch), counts)
+        dx = X_sorted - mus[map_n_to_k]  # (N_act, d)
+
+        # Linear Surrogate: f_lin = f(mu) + g(mu) * dx
+        # g(mu) shape (K, fd, d) -> expand -> (N, fd, d)
+        # dx shape (N, d) -> (N, d, 1)
+        # result (N, fd)
+        g_mus_exp = g_mus[map_n_to_k]  # (N, fd, d)
+        linear_term = (g_mus_exp @ dx[:, :, None])[:, :, 0]  # (N, fd)
+        f_lin = f_mus[map_n_to_k] + linear_term
+
+        diff = F_sorted - f_lin  # (N, fd)
+        abs_diff = xp.abs(diff)
+
+        # Calculate E_cluster based on metric
+        if ERROR_METRIC == "L2":
+            # L2 Error: Total Frobenius Norm of the error matrix for the cluster.
+            # Matches "Old Code" behavior (Total L2 Norm) extended to vectors.
+
+            # 1. Square errors: (N, fd)
+            sq_err = diff**2
+
+            # 2. Sum squared errors per cluster per component: (K, fd)
+            sum_sq_per_cluster_comp = xp.add.reduceat(sq_err, starts)
+
+            # 3. Sum over components to get total squared error per cluster: (K,)
+            # (If fd=1, this is a no-op which matches scalar behavior)
+            total_sq_error = xp.sum(sum_sq_per_cluster_comp, axis=1)
+
+            # 4. Square root to get L2 norm
+            E_cluster = xp.sqrt(total_sq_error)
+
+            # Standard L2 check
+            is_good = E_cluster < TOL
+
+        elif ERROR_METRIC == "Linf-global":
+            # e_j(C) = max_{x} |diff_j|
+            # Need max per cluster, per component.
+            # We iterate columns of m to use scatter_max
+            E_rel_max = xp.zeros((K_batch,), dtype=diff.dtype)
+
+            for j in range(fd):
+                max_diff_j = xp.zeros((K_batch,), dtype=diff.dtype)
+                scatter_maximum_1d(max_diff_j, map_n_to_k, abs_diff[:, j])
+
+                # Normalize by Global S_j
+                scale = F_max_global[j] + TINY_EPS
+                rel_err_j = max_diff_j / scale
+
+                # Accumulate max relative error across components
+                E_rel_max = xp.maximum(E_rel_max, rel_err_j)
+
+            E_cluster = E_rel_max
+            is_good = E_cluster < TOL
+
+        elif ERROR_METRIC == "Linf-local":
+            E_rel_max = xp.zeros((K_batch,), dtype=diff.dtype)
+            E_abs_max = xp.zeros((K_batch,), dtype=diff.dtype)  # <--- Track Abs Error
+            abs_F = xp.abs(F_sorted)
+
+            for j in range(fd):
+                max_diff_j = xp.zeros((K_batch,), dtype=diff.dtype)
+                scatter_maximum_1d(max_diff_j, map_n_to_k, abs_diff[:, j])
+
+                # Accumulate Max Absolute Error across components
+                E_abs_max = xp.maximum(E_abs_max, max_diff_j)  # <--- Update
+
+                # Local Scale L_j = max_{x in C} |f_j|
+                local_max_F = xp.zeros((K_batch,), dtype=diff.dtype)
+                scatter_maximum_1d(local_max_F, map_n_to_k, abs_F[:, j])
+
+                scale = local_max_F + TINY_EPS
+                rel_err_j = max_diff_j / scale
+
+                E_rel_max = xp.maximum(E_rel_max, rel_err_j)
+
+            E_cluster = E_rel_max
+
+            # Hybrid Acceptance: Relative < TOL  OR  Absolute < TOL
+            # This prevents over-refining near f(x) = 0
+            is_good = (E_cluster < TOL) | (E_abs_max < TOL)
+        else:
+            raise ValueError(f"Unknown ERROR_METRIC: {ERROR_METRIC}")
+
+        if LOG_MEM_STATS:
+            log_mem_stats(f"After: L{level:02} Error Computation")
+        # ---- 4. Finalize Good Clusters ----
+        good_idx = xp.nonzero(is_good)[0]
+        n_good = int(good_idx.shape[0])
+
+        if n_good > 0:
+            all_radii, all_L_obs = calculate_scalar_metrics(
+                dx, G_sorted, g_mus, map_n_to_k, K_batch
+            )
+
+            # Pack good points for Q calculation
+            mask_good_pts = is_good[map_n_to_k]
+            dx_good = dx[mask_good_pts]
+            good_counts = counts[good_idx]
+            good_starts = xp.r_[0, xp.cumsum(good_counts)[:-1]]
+
+            Qs, _ = calculate_Q(
+                dx_good,
+                good_starts,
+                good_counts,
+                n_good,
+                Q_SHRINK=Q_SHRINK,
+            )
+
+            # Store results
+            end_out = out_count + n_good
+            buffers, out_cap = adjust_buffer_capacity(
+                buffers,
+                out_count,
+                out_cap,
+                end_out,
+                STORE_HESSIAN_SQRT_PER_CLUSTER,
+                STORE_TREE_DATA,
+            )
+
+            # Optional: Store Hessian for good clusters (using their active component)
+            if STORE_HESSIAN_SQRT_PER_CLUSTER:
+                # Need to determine active component for good clusters too?
+                # Prompt only specified it for Splitting.
+                # We will pick component 0 or dominant just for storage,
+                # OR re-run selection. Let's run selection for consistency.
+
+                # 1. Compute L2 relative error per component
+                diff_good = diff[mask_good_pts]  # (N_good, fd)
+                F_good = F_sorted[mask_good_pts]
+
+                sq_err = xp.add.reduceat(diff_good**2, good_starts)  # (K_good, fd)
+                sq_norm = xp.add.reduceat(F_good**2, good_starts)
+
+                l2_err_num = xp.sqrt(sq_err)
+                l2_err_den = xp.sqrt(sq_norm) + TINY_EPS
+                rel_l2 = l2_err_num / l2_err_den
+
+                active_comps = xp.argmax(rel_l2, axis=1)  # (K_good,)
+
+                # 2. Extract Gradients
+                G_good_all = G_sorted[mask_good_pts]  # (N_good, fd, d)
+                g_mu_good_all = g_mus[good_idx]  # (K_good, fd, d)
+
+                # We need to slice G per point based on the cluster's active component
+                # Expand active_comps to points
+                map_good_n_to_k = repeats(xp.arange(n_good), good_counts)
+                pt_active = active_comps[map_good_n_to_k]  # (N_good,)
+
+                # Fancy indexing to grab (N_good, d)
+                # G[i, pt_active[i], :]
+                idx_n = xp.arange(int(diff_good.shape[0]))
+                G_sel = G_good_all[idx_n, pt_active, :]
+                g_mu_sel = g_mu_good_all[map_good_n_to_k, pt_active, :]  # approx
+
+                dG_sel = G_sel - g_mu_sel
+                H_sqrt = estimate_hessian_sqrt_symmetric(dx_good, dG_sel, good_starts)
+                buffers["H_sqrt"][out_count:end_out] = H_sqrt
+
+            buffers["centroids"][out_count:end_out] = mus[good_idx]
+            buffers["f"][out_count:end_out] = f_mus[good_idx]
+            buffers["g"][out_count:end_out] = g_mus[good_idx]
+            buffers["radii"][out_count:end_out] = all_radii[good_idx]
+            buffers["L_obs"][out_count:end_out] = all_L_obs[good_idx]
+            buffers["Q"][out_count:end_out] = Qs
+            buffers["E_cluster"][out_count:end_out] = E_cluster[good_idx]
+            buffers["counts"][out_count:end_out] = counts[good_idx]
+
+            out_count = end_out
+
+            if STORE_TREE_DATA:
+                buffers["tree_data"][level] = {}
+                points_in_clusters = []
+                for i, idx in enumerate(good_idx):
+                    cluster_points = X_sorted[map_n_to_k == idx]
+                    points_in_clusters.append(cluster_points)
+                buffers["tree_data"][level] = {
+                    "centroids": mus[good_idx],
+                    "f": f_mus[good_idx],
+                    "g": g_mus[good_idx],
+                    "radii": all_radii[good_idx],
+                    "L_obs": all_L_obs[good_idx],
+                    "E_cluster": E_cluster[good_idx],
+                    "counts": counts[good_idx],
+                    "Q": Qs,
+                    "points_in_clusters": points_in_clusters,
+                }
+
+            # Deactivate all points (real + synthetic) in accepted clusters.
+            active[idx_sorted[mask_good_pts]] = False
+
+        # ---- 5. Hessian-Informed Split for Bad Clusters ----
+        bad_idx = xp.nonzero(~is_good)[0]
+        n_bad_clusters = int(bad_idx.shape[0])
+
+        if n_bad_clusters == 0:
+            synth_added_prev_level = synth_added_this_level
+            logger.info(f"Level {level:03}: no bad clusters remain, terminating.")
+            break
+
+        if LOG_MEM_STATS:
+            log_mem_stats(f"After: L{level:02} Finalize good clusters")
+        mask_bad_pts = (~is_good)[map_n_to_k]
+        dx_bad = dx[mask_bad_pts]
+        bad_counts = counts[bad_idx]
+        bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
+
+        if IGNORE_GRADIENT or not USE_HESSIAN_INFORMED_SPLIT:
+            M_split = xp.eye(d)[None, :, :].repeat(n_bad_clusters, axis=0)
+        else:
+            # --- Worst-Case Active Component Selection ---
+            # 1. Compute L2 Relative Error per component for BAD clusters
+            diff_bad = diff[mask_bad_pts]  # (N_bad, m)
+            F_bad_pts = F_sorted[mask_bad_pts]
+
+            # Sum squares per cluster segment
+            sum_sq_err = xp.add.reduceat(diff_bad**2, bad_starts)  # (K_bad, fd)
+            sum_sq_val = xp.add.reduceat(F_bad_pts**2, bad_starts)  # (K_bad, fd)
+
+            err_l2 = xp.sqrt(sum_sq_err)
+            norm_l2 = xp.sqrt(sum_sq_val) + TINY_EPS
+            scores = err_l2 / norm_l2  # (K_bad, fd)
+
+            # Select winner
+            active_comps = xp.argmax(scores, axis=1)  # (K_bad,)
+
+            # 2. Extract specific Gradients
+            if not USE_COVARIANCE_HESSIAN:
+                G_bad_all = G_sorted[mask_bad_pts]  # (N_bad, fd, d)
+                g_mu_bad_all = g_mus[bad_idx]  # (K_bad, fd, d)
+
+                # Map cluster choice to points
+                map_bad_n_to_k = repeats(xp.arange(n_bad_clusters), bad_counts)
+                pt_active_comp = active_comps[map_bad_n_to_k]  # (N_bad,)
+
+                # Slice: G_sel[i] = G_bad_all[i, pt_active_comp[i], :]
+                range_N = xp.arange(int(dx_bad.shape[0]))
+                G_sel = G_bad_all[range_N, pt_active_comp, :]  # (N_bad, d)
+
+                # Centroid grad for that component (expanded)
+                g_mu_sel = g_mu_bad_all[map_bad_n_to_k, pt_active_comp, :]
+
+                dG_bad = G_sel - g_mu_sel
+
+                # 3. Compute H^1/2
+                M_split = estimate_hessian_sqrt_symmetric(dx_bad, dG_bad, bad_starts)
+
+            else:
+                # Instead of directly computing Hessian via least squares,
+                # we take points in good error, compute covariance,
+                # and use the inverse as the approximate Hessian.
+                # It can be shown that if we have enough points,
+                # this is close to the Hessian, and requires much less computation.
+                # Do not use gradients at all.
+                F_bad_all = F_sorted[mask_bad_pts]  # (N_bad, fd)
+
+                M_split = compute_good_covariance_hessian(
+                    dx_bad, F_bad_all, f_lin, bad_starts
+                )
+
+        # Transform and Split
+        map_bad_n_to_k = repeats(xp.arange(n_bad_clusters), bad_counts)
+        M_exp = M_split[map_bad_n_to_k]
+        Z = (M_exp @ dx_bad[:, :, None])[:, :, 0]  # (N_bad, d)
+
+        # Cov(Z)
+        ZZ_all = Z[:, :, None] * Z[:, None, :]
+        CovZ = xp.add.reduceat(ZZ_all, bad_starts)
+        CovZ = 0.5 * (CovZ + CovZ.transpose(0, 2, 1))
+
+        # Eigenvector
+        v = get_dominant_eigenvector(CovZ)
+        v_exp = v[map_bad_n_to_k]
+        proj_scores = xp.sum(Z * v_exp, axis=1)
+
+        split_right = compute_median_split_decision(
+            proj_scores, map_bad_n_to_k, bad_starts, bad_counts
+        )
+
+        # Update labels
+        idx_bad_pool = idx_sorted[mask_bad_pts]
+        old_labels = uniq_labels[bad_idx]
+        old_per_point = old_labels[map_bad_n_to_k]
+
+        new_labels = old_per_point * 2 + split_right.astype(xp.int64)
+        labels_pool[idx_bad_pool] = new_labels
+
+        # End-of-level bookkeeping
+        synth_added_prev_level = synth_added_this_level
+        logger.info(
+            f"Level {level:03}: Clusters={K_batch:,}, active={n_active:,}, "
+            f"good={int(n_good):,}, bad={n_bad_clusters:,}, "
+            f"synth={n_total - N0:,}, "
+            f"pool_used={n_total:,}/{capacity:,} ({n_total/capacity:.0%}) , "
+            f"F_in_max={xp.max(F_max_global):.3e}, "
+        )
+        logger.info(f"Runtime - Level {level:03}: {time.perf_counter()-t_level:.3f}s")
+
+        level += 1
+
+    # ---- 6. Finalize ----
+    if level > MAX_LEVELS:
+        logger.warning(f"Reached MAX_LEVELS={MAX_LEVELS}, terminating.")
+    final_count = int(out_count)
+    logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
+    logger.info(f"Runtime - Total: {time.perf_counter() -_start_time:.3f}s")
+
+    out_dict = {k: buffers[k][:final_count] for k in buffers if k != "tree_data"}
+    if STORE_TREE_DATA:
+        out_dict["tree_data"] = buffers["tree_data"]
+    out_dict["num_levels"] = level
+    out_dict["num_generated_pts"] = n_total - N0
+    out_dict["total_f_evals"] = int(total_f_evals)
+    return out_dict
 
 
 if __name__ == "__main__":
@@ -1406,14 +1200,8 @@ if __name__ == "__main__":
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ERROR_METRIC=ERROR_METRIC,
         SYNTH_BUDGET_FACTOR=1000,
-        STORE_TREE_DATA=True,
     )
 
-    # Only rank 0 gets results; other MPI workers exit cleanly here.
-    if get_mpi_rank() != 0:
-        raise SystemExit(0)
-
-    assert results is not None, "Rank 0 should have results after adaptive_clustering"
     print("-" * 40)
     print(f"Final Cluster Count: {results['centroids'].shape[0]:,}")
 
@@ -1433,9 +1221,7 @@ if __name__ == "__main__":
     )
 
     if DIM == 2 and len(results["centroids"]) <= 10_000:
-        import matplotlib.pyplot as plt
         import numpy as np
-        from matplotlib.colors import LogNorm
         from matplotlib.lines import Line2D
         from matplotlib.patches import Circle, Ellipse
 
@@ -1587,8 +1373,3 @@ if __name__ == "__main__":
     if IS_CUPY_BACKEND:
         results = {k: xp.asnumpy(v) for k, v in results.items()}
     xp.savez_compressed(npz_fpath, **results)
-
-    # Finalize MPI cleanly, then use os._exit to bypass Python atexit/GC
-    # shutdown which triggers a UCX/knndbscan libucp destructor segfault.
-    MPI.Finalize()
-    os._exit(0)

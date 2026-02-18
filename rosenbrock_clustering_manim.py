@@ -6,7 +6,7 @@ from manim import *
 from matplotlib.colors import LogNorm
 from tqdm import tqdm
 
-from src.adaptive_clustering import adaptive_clustering
+from _experiments._deprecated.adaptive_clustering_non_mpi import adaptive_clustering
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
 DOMAIN = [-2, 3]

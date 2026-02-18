@@ -2,10 +2,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from ics26_rosenbrock import ICS26_DIR
 from tqdm import tqdm
 
-from ics26_rosenbrock import ICS26_DIR
-from src.adaptive_clustering import calculate_Q
+from _experiments._deprecated.adaptive_clustering_non_mpi import calculate_Q
 
 np.random.seed(0)
 
