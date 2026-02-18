@@ -1,3 +1,12 @@
+"""
+Manim animation for adaptive clustering on the Rosenbrock function.
+To run:
+```bash
+uv run manim -qm rosenbrock_clustering_manim.py RosenbrockAdaptiveClustering
+```
+You can change the resolution and quality settings as needed (e.g. -qh for high quality).
+"""
+
 import os
 
 import matplotlib.pyplot as plt
