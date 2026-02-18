@@ -10,6 +10,8 @@ import psutil
 import pynvml
 from tqdm import tqdm
 
+from src import get_mpi_rank
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,8 +74,10 @@ def setup_logging(
         console_handler.setFormatter(formatter)
         root_logger.addHandler(console_handler)
 
-    # File Handler (with timestamp)
-    if file_output:
+    # File Handler (with timestamp) — only on MPI rank 0 to avoid N separate log files.
+    _is_rank0 = get_mpi_rank() == 0
+
+    if file_output and _is_rank0:
         # Create .logs directory if it doesn't exist
         log_path = Path(log_dir)
         log_path.mkdir(exist_ok=True)
@@ -93,21 +97,20 @@ def setup_logging(
     # Suppress external library logs
     if suppress_external:
         external_loggers = [
-            "matplotlib",
-            "PIL",
-            "numba",
+            "absl",
             "cupy",
-            "numpy",
+            "faiss",
             "jax",
             "jaxlib",
-            "absl",
-            "scipy",
-            "sklearn",
-            "scipy",
-            "sklearn",
-            "torch",
-            "tensorflow",
+            "matplotlib",
+            "numba",
+            "numpy",
             "pandas",
+            "PIL",
+            "scipy",
+            "sklearn",
+            "tensorflow",
+            "torch",
         ]
         for lib_name in external_loggers:
             logging.getLogger(lib_name).setLevel(logging.WARNING)
