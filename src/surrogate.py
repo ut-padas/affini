@@ -277,8 +277,12 @@ class HATANNSurrogate:
         instance.J_src = _to_device(data["J_src"])
         instance.trust_radii_src = _to_device(data["trust_radii_src"])
         instance.Qs_src = _to_device(data["Qs_src"])
-        instance.profiling_stats = data["profiling_stats"]
-        instance.tree_data = data["tree_data"]
+
+        # Convert profiling stats and tree data back to dict/objects if they exist
+        _prof = data["profiling_stats"]
+        instance.profiling_stats = _prof.item() if _prof.size > 0 else {}
+        _td = data["tree_data"]
+        instance.tree_data = _td.item() if _td.size > 0 else None
 
         instance._model_file = filepath
         logger.info(f"Model loaded from {filepath}")
@@ -498,7 +502,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--error-metric",
         type=str,
-        default="Linf-global",
+        default="Linf-local",
         choices=["L2", "Linf-local", "Linf-global"],
         help="Error metric for adaptive clustering",
     )
@@ -514,6 +518,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "-f", "--force", action="store_true", help="Force re-computation of results"
     )
+    parser.add_argument(
+        "-dlm",
+        "--do-not-load-model",
+        action="store_true",
+        help="Whether to not load from existing model file (forces retraining even if cache exists)",
+    )
 
     # Parse arguments
     args = parser.parse_args()
@@ -528,6 +538,7 @@ if __name__ == "__main__":
     SEED = args.seed
     A_ROSENBROCK = args.rosenbrock_a
     FORCE_RECOMPUTE = args.force
+    DO_NOT_LOAD_MODEL = args.do_not_load_model
 
     # Creat partial Rosenbrock functions
     rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
@@ -569,7 +580,7 @@ if __name__ == "__main__":
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
         save_model=model_cache_path,
-        load_if_exists=not FORCE_RECOMPUTE,
+        load_if_exists=not DO_NOT_LOAD_MODEL,
         TOL=TOL,
         ERROR_METRIC=ERROR_METRIC,
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
@@ -577,6 +588,7 @@ if __name__ == "__main__":
         MAX_CLUSTERS_EST=50_000,
         SEED=SEED,
         PROFILE_TIMING=True,
+        STORE_TREE_DATA=False,
     )
     _end_train_time = time.perf_counter()
 
@@ -669,6 +681,3 @@ if __name__ == "__main__":
     with open(json_fpath, "w") as json_file:
         json.dump(json_data_dict, json_file, indent=4)
     print(f"Saved results to {json_fpath}")
-
-    print("\n--- Profiling Stats ---")
-    print(surrogate.profiling_stats)
