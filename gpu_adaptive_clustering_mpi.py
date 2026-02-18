@@ -3,23 +3,13 @@ import logging
 import time
 from typing import Any, Callable, Literal, Optional
 
-import cupy as cp
 import numpy as np
-from cuml.cluster import KMeans as cuKMeans
-from cupyx import scatter_max as cupy_scatter_max
-
-from src import IS_CUPY_BACKEND, Array, xp
-from src.logging_utils import log_mem_stats
-from src.utils import repeats
-
-logger = logging.getLogger(__name__)
-
-TINY_EPS = 1e-12
+from sklearn.cluster import KMeans
 
 from adaptive_clustering_utils import (
     CudaTimer,
-    adjust_buffer_capacity_cpu,
-    allocate_output_buffers_cpu,
+    adjust_buffer_capacity_host,
+    allocate_output_buffers_host,
     convert_to_2d_array,
     convert_to_3d_array,
     get_n_smallest_per_block,
@@ -29,7 +19,14 @@ from adaptive_clustering_utils import (
     run_fused_stats,
     run_fused_taylor_comp_abs,
     run_fused_taylor_metric,
+    scatter_maximum_1d,
 )
+from src import IS_CUPY_BACKEND, Array, _to_device, _to_host, xp
+from src.logging_utils import log_mem_stats
+from src.utils import repeats
+
+logger = logging.getLogger(__name__)
+TINY_EPS = 1e-12
 
 
 def adaptive_clustering(
@@ -40,6 +37,7 @@ def adaptive_clustering(
     oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
+    INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"] = "kmeans",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
@@ -83,6 +81,7 @@ def adaptive_clustering(
         g_fn: Callable returning gradients/Jacobians. Output shape (N, fd, d).
         TOL: Error tolerance for cluster acceptance.
         ERROR_METRIC: Metric for acceptance ('L2', 'Linf-global', 'Linf-local').
+        INITIAL_CLUSTERING_METHOD: Method for initial clustering ('kmeans' or 'knndbscan').
         NUM_INITIAL_CLUSTERS: Number of seeds for initial K-Means.
         MIN_PTS_PER_CLUSTER: Minimum points per cluster. If a cluster has fewer,
             synthetic points are generated via convex combinations to stabilize geometry.
@@ -129,7 +128,12 @@ def adaptive_clustering(
             raise ValueError("Must specify either oracle_fn OR both f_fn and g_fn.")
 
     _start_time = time.perf_counter()
-    mempool = cp.get_default_memory_pool()
+
+    mempool = None
+    if IS_CUPY_BACKEND:
+        import cupy as cp
+
+        mempool = cp.get_default_memory_pool()
 
     # Profiling Stats
     profiling_stats = {
@@ -197,11 +201,47 @@ def adaptive_clustering(
         # Compute Global Scale for Linf-global metric: S_j = max_x |F_j(x)|
         F_max_global = xp.max(xp.abs(F0_gpu), axis=0)  # Shape: (fd,)
 
-        # Initial K-Means Clustering
+        # Initial Clustering
         _t1 = time.perf_counter()
-        km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
-        labels0 = km.fit_predict(X0_gpu)
-        logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
+        if INITIAL_CLUSTERING_METHOD == "kmeans":
+            if IS_CUPY_BACKEND:
+                from cuml.cluster import KMeans as cuKMeans
+
+                km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+                labels0 = km.fit_predict(X0_gpu)
+            else:
+                km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+                labels0 = km.fit_predict(X0_gpu)
+            logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
+        elif INITIAL_CLUSTERING_METHOD == "knndbscan":
+            from knndbscan import knn_dbscan
+
+            _device = "gpu" if IS_CUPY_BACKEND else "cpu"
+            labels0 = knn_dbscan(
+                X0_gpu,
+                eps=0.5,
+                min_samples=MIN_PTS_PER_CLUSTER,
+                device=_device,
+                n_jobs=-1,
+            ).astype(xp.int32)
+
+            # Output labels can include -1 for noise.
+            _uni_labels = xp.unique(labels0)
+            _num_clusters = int(_uni_labels.shape[0])
+            logger.info(f"Initial KNN-DBSCAN: Found {_num_clusters:,} clusters")
+
+            _has_noise = int(xp.sum(_uni_labels == -1) > 0)
+            if _has_noise:
+                logger.info("Initial KNN-DBSCAN: Detected noise points (label -1)")
+            else:
+                logger.info("Initial KNN-DBSCAN: No noise points detected")
+
+            logger.info(f"Runtime - Initial KNN-DBSCAN: {time.perf_counter()-_t1:.3f}s")
+        else:
+            raise ValueError(
+                f"Unsupported INITIAL_CLUSTERING_METHOD: {INITIAL_CLUSTERING_METHOD}"
+            )
+
         if LOG_MEM_STATS:
             log_mem_stats("After Initial KMeans Clustering")
 
@@ -217,10 +257,11 @@ def adaptive_clustering(
 
         # Free temp buffers
         del X0_gpu, F0_gpu, G0_gpu, labels0, sort_idx, uniq_labels
-        mempool.free_all_blocks()
+        if mempool is not None:
+            mempool.free_all_blocks()
 
         # Allocate Output Buffers on CPU (Host) to save VRAM
-        buffers, out_cap = allocate_output_buffers_cpu(
+        buffers, out_cap = allocate_output_buffers_host(
             MAX_CLUSTERS_EST, d, fd, STORE_HESSIAN_SQRT_PER_CLUSTER
         )
         out_count = 0
@@ -256,7 +297,7 @@ def adaptive_clustering(
             level_total_aug_pts = int(xp.sum(level_augmented_sizes))
 
         # CPU view for batch scheduling
-        aug_sizes_cpu = xp.asnumpy(level_augmented_sizes)
+        aug_sizes_cpu = _to_host(level_augmented_sizes)
         aug_cumsum_cpu = np.cumsum(aug_sizes_cpu)
 
         # Host Staging Buffers for the NEXT level (Streaming architecture)
@@ -418,7 +459,7 @@ def adaptive_clustering(
                     for j in range(fd):
                         # Compute max |f_j| per cluster
                         F_max_j = xp.zeros((K_batch,), dtype=xp.float64)
-                        cupy_scatter_max(F_max_j, aug_ids, xp.abs(F_batch[:, j]))
+                        scatter_maximum_1d(F_max_j, aug_ids, xp.abs(F_batch[:, j]))
 
                         # Taylor Error (Absolute)
                         pointwise_tay_err_j = run_fused_taylor_comp_abs(
@@ -427,7 +468,7 @@ def adaptive_clustering(
 
                         # Max Error per cluster
                         E_abs_j = xp.zeros((K_batch,), dtype=xp.float64)
-                        cupy_scatter_max(E_abs_j, aug_ids, pointwise_tay_err_j)
+                        scatter_maximum_1d(E_abs_j, aug_ids, pointwise_tay_err_j)
 
                         # Normalize
                         scale = xp.maximum(F_max_j, TINY_EPS)
@@ -468,7 +509,7 @@ def adaptive_clustering(
                     else:
                         # Max relative error over points
                         E_cluster = xp.zeros((K_batch,), dtype=xp.float64)  # (K_batch,)
-                        cupy_scatter_max(E_cluster, aug_ids, err_pts)
+                        scatter_maximum_1d(E_cluster, aug_ids, err_pts)
 
                     is_good = E_cluster < TOL  # (K_batch,)
 
@@ -500,8 +541,8 @@ def adaptive_clustering(
                     )
                     radii = xp.zeros((K_good,), dtype=radii_pt.dtype)
                     L_obs = xp.zeros((K_good,), dtype=ratio_pt.dtype)
-                    cupy_scatter_max(radii, dense_labels_good, radii_pt)
-                    cupy_scatter_max(L_obs, dense_labels_good, ratio_pt)
+                    scatter_maximum_1d(radii, dense_labels_good, radii_pt)
+                    scatter_maximum_1d(L_obs, dense_labels_good, ratio_pt)
 
                     # Compute Trust Ellipsoid (Q) via Covariance
                     Cov, _ = run_fused_stats(
@@ -535,7 +576,7 @@ def adaptive_clustering(
                         X_good, mus[good_idx_local], dense_labels_good, U, Lambda_inv
                     )
                     max_dist = xp.zeros((K_good,), dtype=dist_sq.dtype)
-                    cupy_scatter_max(max_dist, dense_labels_good, dist_sq)
+                    scatter_maximum_1d(max_dist, dense_labels_good, dist_sq)
                     scale_fac = 1.0 / xp.maximum(max_dist, TINY_EPS)
 
                     # Q = U * (scale * L_inv) * U^T
@@ -591,27 +632,27 @@ def adaptive_clustering(
                 # Download Results to CPU
                 with CudaTimer("time_good_d2h", profiling_stats, PROFILE_TIMING):
                     end_out = out_count + K_good
-                    buffers, out_cap = adjust_buffer_capacity_cpu(
+                    buffers, out_cap = adjust_buffer_capacity_host(
                         buffers,
                         out_count,
                         out_cap,
                         end_out,
                         STORE_HESSIAN_SQRT_PER_CLUSTER,
                     )
-                    buffers["centroids"][out_count:end_out] = xp.asnumpy(
+                    buffers["centroids"][out_count:end_out] = _to_host(
                         mus[good_idx_local]
                     )
-                    buffers["f"][out_count:end_out] = xp.asnumpy(f_mus[good_idx_local])
-                    buffers["g"][out_count:end_out] = xp.asnumpy(g_mus[good_idx_local])
-                    buffers["Q"][out_count:end_out] = xp.asnumpy(Qs)
+                    buffers["f"][out_count:end_out] = _to_host(f_mus[good_idx_local])
+                    buffers["g"][out_count:end_out] = _to_host(g_mus[good_idx_local])
+                    buffers["Q"][out_count:end_out] = _to_host(Qs)
                     if H_sqrt is not None:
-                        buffers["H_sqrt"][out_count:end_out] = xp.asnumpy(H_sqrt)
-                    buffers["E_cluster"][out_count:end_out] = xp.asnumpy(
+                        buffers["H_sqrt"][out_count:end_out] = _to_host(H_sqrt)
+                    buffers["E_cluster"][out_count:end_out] = _to_host(
                         E_cluster[good_idx_local]
                     )
-                    buffers["radii"][out_count:end_out] = xp.asnumpy(radii)
-                    buffers["L_obs"][out_count:end_out] = xp.asnumpy(L_obs)
-                    buffers["counts"][out_count:end_out] = xp.asnumpy(
+                    buffers["radii"][out_count:end_out] = _to_host(radii)
+                    buffers["L_obs"][out_count:end_out] = _to_host(L_obs)
+                    buffers["counts"][out_count:end_out] = _to_host(
                         good_counts.astype(xp.int64)
                     )
                     out_count = end_out
@@ -743,9 +784,9 @@ def adaptive_clustering(
 
                 with CudaTimer("time_bad_d2h", profiling_stats, PROFILE_TIMING):
                     # Collect Sorted Data for Next Level
-                    next_level_X_list.append(xp.asnumpy(X_bad[sort_order]))
-                    next_level_F_list.append(xp.asnumpy(F_bad[sort_order]))
-                    next_level_G_list.append(xp.asnumpy(G_bad[sort_order]))
+                    next_level_X_list.append(_to_host(X_bad[sort_order]))
+                    next_level_F_list.append(_to_host(F_bad[sort_order]))
+                    next_level_G_list.append(_to_host(G_bad[sort_order]))
 
                     # Calculate Child Sizes (Binary Split)
                     half = bad_counts // 2
@@ -753,7 +794,7 @@ def adaptive_clustering(
                     new_sz = xp.zeros(2 * n_bad, dtype=xp.int64)  # (2 * n_bad,)
                     new_sz[0::2] = half
                     new_sz[1::2] = other
-                    next_level_sizes_list.append(xp.asnumpy(new_sz))
+                    next_level_sizes_list.append(_to_host(new_sz))
 
                 with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
                     del (
@@ -778,7 +819,8 @@ def adaptive_clustering(
 
             start_cluster_idx = end_cluster_idx
             del X_batch, F_batch, G_batch
-            mempool.free_all_blocks()
+            if mempool is not None:
+                mempool.free_all_blocks()
 
         # --- 3. Level Transition ---
         if len(next_level_sizes_list) == 0:
@@ -917,6 +959,13 @@ if __name__ == "__main__":
         help="Error metric for adaptive clustering",
     )
     parser.add_argument(
+        "--initial-clustering-method",
+        type=str,
+        default="kmeans",
+        choices=["kmeans", "knndbscan"],
+        help="Method for initial clustering",
+    )
+    parser.add_argument(
         "--rosenbrock-a",
         type=float,
         default=100.0,
@@ -942,6 +991,7 @@ if __name__ == "__main__":
     NUM_INITIAL_CLUSTERS = args.n_init_clusters
     MIN_PTS_PER_CLUSTER = args.n_min_per_cluster
     ERROR_METRIC = args.error_metric
+    INITIAL_CLUSTERING_METHOD = args.initial_clustering_method
     A_ROSENBROCK = args.rosenbrock_a
     OUTPUT_SUBDIR = args.output_subdir
     FORCE_REEXEC = args.force
@@ -975,6 +1025,7 @@ if __name__ == "__main__":
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS * DIM,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ERROR_METRIC=ERROR_METRIC,
+        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
         LOG_MEM_STATS=True,
     )
 
@@ -1003,13 +1054,11 @@ if __name__ == "__main__":
         from matplotlib.lines import Line2D
         from matplotlib.patches import Circle, Ellipse
 
-        if IS_CUPY_BACKEND:
-            results = {k: xp.asnumpy(v) for k, v in results.items()}
-
         # 1 plot 2 subplots (1X2)
         # Subplot 1: scatter of final cluster centroids on contourf
         # Subplot 2: scatter of final cluster centroids with trust ellipsoids on contourf as well as circles corresponding to radii
 
+        results = {k: _to_host(v) for k, v in results.items()}
         x = np.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
         y = np.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
         X_grid, Y_grid = np.meshgrid(x, y)
@@ -1148,7 +1197,6 @@ if __name__ == "__main__":
 
     # Save npz file of results
     npz_fpath = img_fpath.with_suffix(".npz")
-    if IS_CUPY_BACKEND:
-        results = {k: xp.asnumpy(v) for k, v in results.items()}
+    results = {k: _to_host(v) for k, v in results.items()}
     xp.savez_compressed(npz_fpath, **results)
     xp.savez_compressed(npz_fpath, **results)
