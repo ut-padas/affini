@@ -10,6 +10,8 @@ import psutil
 import pynvml
 from tqdm import tqdm
 
+from src import get_mpi_rank, get_mpi_size
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +22,7 @@ def setup_logging(
     console_output: bool = True,
     file_output: bool = True,
     suppress_external: bool = True,
+    per_rank_files: bool = True,
 ) -> None:
     """Configure logging for the entire application.
 
@@ -28,6 +31,12 @@ def setup_logging(
     directory. All loggers created with logging.getLogger(__name__) will
     automatically use this configuration.
 
+    MPI behaviour:
+        - File output defaults to rank 0 only (single clean log).
+        - Set ``per_rank_files=True`` to write one log file per MPI rank
+          (e.g. ``rank_3_20260217_190000.log``) which is useful for debugging
+          worker-side issues.
+
     Args:
         console_level: Logging level for console output.
         file_level: Logging level for file output. Default: DEBUG (captures everything).
@@ -35,6 +44,9 @@ def setup_logging(
         console_output: Whether to log to console.
         file_output: Whether to log to file.
         suppress_external: Whether to suppress logs from external libraries. Default: True.
+        per_rank_files: If True, every MPI rank writes its own timestamped log file
+            (e.g. ``rank_3_20260217_190000.log``). Useful for debugging non-rank-0
+            workers. If False (default), only rank 0 writes a log file.
 
     Example:
         >>> from src.logging_config import setup_logging
@@ -53,6 +65,10 @@ def setup_logging(
     # Default format: timestamp - logger name - level - message
     format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
+    mpi_rank = get_mpi_rank()
+    mpi_size = get_mpi_size()
+    _is_rank0 = mpi_rank == 0
+
     # Get the root logger (parent of all loggers)
     root_logger = logging.getLogger()
 
@@ -65,49 +81,59 @@ def setup_logging(
     # Create formatter
     formatter = logging.Formatter(format_string, datefmt="%Y-%m-%d %H:%M:%S")
 
-    # Console Handler (StreamHandler)
+    # Console Handler
     if console_output:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(console_level)
         console_handler.setFormatter(formatter)
         root_logger.addHandler(console_handler)
 
-    # File Handler (with timestamp)
-    if file_output:
+    # File Handler:
+    #   - Default (per_rank_files=False): single file written by rank 0 only.
+    #   - per_rank_files=True: each rank writes its own file, named rank_N_<timestamp>.log.
+    _write_file = file_output and (_is_rank0 or per_rank_files)
+
+    if _write_file:
         # Create .logs directory if it doesn't exist
         log_path = Path(log_dir)
         log_path.mkdir(exist_ok=True)
 
         # Generate timestamped filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_filename = log_path / f"{timestamp}.log"
+        if per_rank_files and mpi_size >= 2:
+            log_filename = log_path / f"rank_{mpi_rank:02}_{timestamp}.log"
+        else:
+            log_filename = log_path / f"{timestamp}.log"
 
         file_handler = logging.FileHandler(log_filename, mode="w", encoding="utf-8")
         file_handler.setLevel(file_level)
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
 
-        # Log the location of the log file
-        root_logger.info(f"Logging to file: {log_filename.absolute()}")
+        if _is_rank0:
+            root_logger.info(f"Logging to file: {log_filename.absolute()}")
+        else:
+            root_logger.info(
+                f"Rank {mpi_rank:02}: logging to file: {log_filename.absolute()}"
+            )
 
     # Suppress external library logs
     if suppress_external:
         external_loggers = [
-            "matplotlib",
-            "PIL",
-            "numba",
+            "absl",
             "cupy",
-            "numpy",
+            "faiss",
             "jax",
             "jaxlib",
-            "absl",
-            "scipy",
-            "sklearn",
-            "scipy",
-            "sklearn",
-            "torch",
-            "tensorflow",
+            "matplotlib",
+            "numba",
+            "numpy",
             "pandas",
+            "PIL",
+            "scipy",
+            "sklearn",
+            "tensorflow",
+            "torch",
         ]
         for lib_name in external_loggers:
             logging.getLogger(lib_name).setLevel(logging.WARNING)

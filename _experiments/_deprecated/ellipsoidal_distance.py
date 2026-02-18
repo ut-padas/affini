@@ -188,8 +188,8 @@ def knn_ellipsoidal_distance(
 if __name__ == "__main__":
     import argparse
 
+    from _experiments._deprecated.adaptive_clustering_non_mpi import adaptive_clustering
     from src import FIGURES_DIR
-    from src.adaptive_clustering import adaptive_clustering
     from src.logging_utils import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 

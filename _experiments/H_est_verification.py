@@ -6,10 +6,10 @@ from typing import Callable, Dict, List, Tuple, Union
 import pandas as pd
 from tqdm import tqdm
 
+from _experiments._deprecated.adaptive_clustering_non_mpi import adaptive_clustering
 from experiments_utils import create_summary_dataframe
 from ics26_experiments import get_N_INIT_CLUSTERS, get_N_MIN_PER_CLUSTER, get_N_TRAIN
 from src import xp
-from src.adaptive_clustering import adaptive_clustering
 
 # Type alias for problem tuple: (f_fn, g_fn, h_fn)
 ProblemDef = Tuple[Callable, Callable, Callable]
