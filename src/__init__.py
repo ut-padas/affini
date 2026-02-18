@@ -10,7 +10,7 @@ from array_api_compat.common._typing import Array
 logger = logging.getLogger(__name__)
 
 
-def get_mpi_rank() -> int:
+def _get_mpi_rank() -> int:
     """Return current MPI rank, or 0 if MPI is not in use."""
     try:
         from mpi4py import MPI as _MPI
@@ -20,7 +20,7 @@ def get_mpi_rank() -> int:
         return 0
 
 
-def get_mpi_size() -> int:
+def _get_mpi_size() -> int:
     """Return total number of MPI ranks, or 1 if MPI is not in use."""
     try:
         from mpi4py import MPI as _MPI
@@ -28,27 +28,6 @@ def get_mpi_size() -> int:
         return _MPI.COMM_WORLD.Get_size()
     except ImportError:
         return 1
-
-
-try:
-    import cupy as cp
-
-    IS_CUPY_BACKEND = cp.is_available()
-except Exception:
-    IS_CUPY_BACKEND = False
-    if get_mpi_rank() == 0:
-        msg = "CuPy not available; GPU acceleration will be disabled."
-        warnings.warn(msg)
-
-# Set up the array namespace based on backend availability
-if IS_CUPY_BACKEND:
-    _dummy = cp.array([0])
-    logging.info("Array backend: CuPy")
-else:
-    _dummy = np.array([0])
-    logging.info("Array backend: NumPy")
-
-xp = array_namespace(_dummy)
 
 
 def _to_host(arr: Array | Any) -> Array | Any:
@@ -70,6 +49,28 @@ def _to_device(arr: Array | Any) -> Array | Any:
     return xp.asarray(arr)
 
 
+try:
+    import cupy as cp
+
+    IS_CUPY_BACKEND = cp.is_available()
+except Exception:
+    IS_CUPY_BACKEND = False
+    if _get_mpi_rank() == 0:
+        msg = "CuPy not available; GPU acceleration will be disabled."
+        warnings.warn(msg)
+
+# Set up the array namespace based on backend availability
+if IS_CUPY_BACKEND:
+    _dummy = cp.array([0])
+    logging.info("Array backend: CuPy")
+else:
+    _dummy = np.array([0])
+    logging.info("Array backend: NumPy")
+
+xp = array_namespace(_dummy)
+
+
+# Define project directories
 _file_path = Path(__file__).parent.resolve()
 PROJECT_DIR = _file_path.parent.resolve()
 FIGURES_DIR = PROJECT_DIR / "figures"

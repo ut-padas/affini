@@ -19,7 +19,7 @@ import numpy as np
 from mpi4py import MPI
 from sklearn.cluster import KMeans
 
-from src import IS_CUPY_BACKEND, Array, _to_device, _to_host, get_mpi_rank, xp
+from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _to_device, _to_host, xp
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
 
@@ -1421,7 +1421,7 @@ if __name__ == "__main__":
     )
 
     # Only rank 0 gets results; other MPI workers exit cleanly here.
-    if get_mpi_rank() != 0:
+    if _get_mpi_rank() != 0:
         raise SystemExit(0)
 
     assert results is not None, "Rank 0 should have results after adaptive_clustering"
