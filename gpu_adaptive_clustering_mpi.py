@@ -48,6 +48,7 @@ def adaptive_clustering(
     CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "None"] = "Hessian_LSQ",
     IGNORE_GRADIENT: bool = False,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
+    STORE_TREE_DATA: bool = False,
     LOG_MEM_STATS: bool = False,
     PROFILE_TIMING: bool = False,
 ) -> dict[str, Any]:
@@ -111,6 +112,7 @@ def adaptive_clustering(
         -   `E_cluster`: (K,) Max observed error per cluster.
         -   `counts`: (K,) Number of points support per cluster.
         -   `H_sqrt`: (K, d, d) (Optional) Symmetric Hessian square roots.
+        -   `tree_data`: (dict) (Optional) Per-level cluster data keyed by level index, for visualization/debugging.
         -   `num_levels`: (int) Total levels refined.
         -   `num_generated_pts`: (int) Number of generated points.
         -  `total_f_evals`: (int) Total function evaluations performed.
@@ -126,6 +128,11 @@ def adaptive_clustering(
     else:
         if f_fn is None or g_fn is None:
             raise ValueError("Must specify either oracle_fn OR both f_fn and g_fn.")
+
+    if STORE_TREE_DATA:
+        logger.warning(
+            "STORE_TREE_DATA=True: This will store per-cluster point data for all finalized clusters, which can consume a lot of memory, and slow down the algorithm. Use for debugging/visualization purposes, but be cautious with large datasets or many levels of refinement."
+        )
 
     _start_time = time.perf_counter()
 
@@ -160,6 +167,7 @@ def adaptive_clustering(
 
     num_generated_pts = 0
     total_f_evals = 0
+    tree_data: dict = {}
 
     # --- 1. Initialization Phase ---
     with CudaTimer("time_init", profiling_stats, PROFILE_TIMING):
@@ -657,6 +665,24 @@ def adaptive_clustering(
                     )
                     out_count = end_out
 
+                if STORE_TREE_DATA:
+                    _src = out_count - K_good
+                    _td_entry = {
+                        "centroids": buffers["centroids"][_src:out_count].copy(),
+                        "f": buffers["f"][_src:out_count].copy(),
+                        "g": buffers["g"][_src:out_count].copy(),
+                        "radii": buffers["radii"][_src:out_count].copy(),
+                        "L_obs": buffers["L_obs"][_src:out_count].copy(),
+                        "E_cluster": buffers["E_cluster"][_src:out_count].copy(),
+                        "counts": buffers["counts"][_src:out_count].copy(),
+                        "Q": buffers["Q"][_src:out_count].copy(),
+                        "points_in_clusters": [
+                            _to_host(X_good[dense_labels_good == i])
+                            for i in range(K_good)
+                        ],
+                    }
+                    tree_data[level] = _td_entry
+
             if LOG_MEM_STATS:
                 log_mem_stats(
                     f" L{level:02} B{b:02}/{num_batches:02}: After Good Clusters"
@@ -908,6 +934,8 @@ def adaptive_clustering(
 
     out_dict = {k: buffers[k][:final_count] for k in buffers}
     out_dict["profiling_stats"] = profiling_stats
+    if STORE_TREE_DATA:
+        out_dict["tree_data"] = tree_data
 
     logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
     logger.info(f"Runtime - Total: {_total_time:.3f}s")
@@ -1017,6 +1045,7 @@ if __name__ == "__main__":
     X = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(N_TRAIN, DIM))
 
     print("Starting Adaptive Clustering...")
+    STORE_TREE_DATA = True
     results = adaptive_clustering(
         X,
         f_fn=rosenbrock,
@@ -1027,6 +1056,7 @@ if __name__ == "__main__":
         ERROR_METRIC=ERROR_METRIC,
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
         LOG_MEM_STATS=True,
+        STORE_TREE_DATA=STORE_TREE_DATA,
     )
 
     print("-" * 40)
@@ -1046,6 +1076,12 @@ if __name__ == "__main__":
         f"{counts.mean():.1f}",
         int(counts.max()),
     )
+
+    if STORE_TREE_DATA:
+        tree_data = results["tree_data"]
+        print("\nTree Data Summary:")
+        for lvl, data in tree_data.items():
+            print(f"Level {lvl:02}: Clusters: {data['centroids'].shape[0]:,}")
 
     if DIM == 2 and len(results["centroids"]) <= 10_000:
         import matplotlib.pyplot as plt
