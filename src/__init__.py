@@ -8,14 +8,26 @@ from array_api_compat.common._typing import Array
 
 logger = logging.getLogger(__name__)
 
+
+def get_mpi_rank() -> int:
+    """Return current MPI rank, or 0 if MPI is not in use."""
+    try:
+        from mpi4py import MPI as _MPI
+
+        return _MPI.COMM_WORLD.Get_rank()
+    except ImportError:
+        return 0
+
+
 try:
     import cupy as cp
 
     IS_CUPY_BACKEND = cp.is_available()
 except Exception:
     IS_CUPY_BACKEND = False
-    msg = "CuPy not available; GPU acceleration will be disabled."
-    warnings.warn(msg)
+    if get_mpi_rank() == 0:
+        msg = "CuPy not available; GPU acceleration will be disabled."
+        warnings.warn(msg)
 
 # Set up the array namespace based on backend availability
 if IS_CUPY_BACKEND:
