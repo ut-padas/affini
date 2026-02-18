@@ -829,6 +829,11 @@ def _run_local_refinement(
                 dx_good, good_starts, good_counts, K_good, Q_SHRINK=Q_SHRINK
             )
 
+            if LOG_MEM_STATS:
+                log_mem_stats(
+                    f"R{rank:02} L{level:02}: After Computing Trust Region Metrics for Good Clusters"
+                )
+
             # Store outputs for good clusters, growing buffers if needed.
             end_out = out_count + K_good
             out_buffers, out_cap = adjust_buffer_capacity(
@@ -889,6 +894,9 @@ def _run_local_refinement(
             # Deactivate points in good clusters in the pool.
             pool["active"][idx_sorted[mask_good_pts]] = False
 
+        if LOG_MEM_STATS:
+            log_mem_stats(f"R{rank:02} L{level:02}: After Finalizing Good Clusters")
+
         # --- Split bad clusters ---
         bad_idx = xp.nonzero(~is_good)[0]
         K_bad = int(bad_idx.shape[0])
@@ -896,9 +904,6 @@ def _run_local_refinement(
         if K_bad == 0:
             logger.info(f"R{rank:02} L{level:03}: No Bad Clusters, Done.")
             break
-
-        if LOG_MEM_STATS:
-            log_mem_stats(f"R{rank:02} L{level:02}: After Finalizing Good Clusters")
 
         mask_bad_pts = (~is_good)[map_n_to_k]
         dx_bad = dx[mask_bad_pts]
@@ -949,6 +954,11 @@ def _run_local_refinement(
                     dx_bad, F_bad_all, f_lin[mask_bad_pts], bad_starts
                 )
 
+        if LOG_MEM_STATS:
+            log_mem_stats(
+                f"R{rank:02} L{level:02}: After Computing Hessian Sqrt for Splitting"
+            )
+
         # Transform points in bad clusters by the Hessian sqrt, then split by the
         # dominant eigenvector.
         map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
@@ -966,6 +976,9 @@ def _run_local_refinement(
         split_right = compute_median_split_decision(
             proj_scores, map_bad_n_to_k, bad_starts, bad_counts
         )
+
+        if LOG_MEM_STATS:
+            log_mem_stats(f"R{rank:02} L{level:02}: After Computing Split Decisions")
 
         # Update labels in the pool for points in bad clusters based on the split
         # decision.
@@ -1032,6 +1045,11 @@ def adaptive_clustering(
     Return keys (rank 0 only): centroids, f, g, radii, L_obs, E_cluster, counts, Q,
     [H_sqrt], [tree_data], num_levels, num_generated_pts, total_f_evals.
     """
+    if STORE_TREE_DATA:
+        logger.warning(
+            "STORE_TREE_DATA=True: This will store per-cluster point data for all finalized clusters, which can consume a lot of memory, and slow down the algorithm. Use for debugging/visualization purposes, but be cautious with large datasets or many levels of refinement."
+        )
+
     # Validate function arguments
     if oracle_fn is not None:
         if f_fn is not None or g_fn is not None:
@@ -1327,7 +1345,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n-init-clusters",
         type=int,
-        default=25,
+        default=50,
         help="Number of initial clusters for adaptive clustering",
     )
     parser.add_argument(
@@ -1412,7 +1430,7 @@ if __name__ == "__main__":
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ERROR_METRIC=ERROR_METRIC,
         SYNTH_BUDGET_FACTOR=1000,
-        STORE_TREE_DATA=True,
+        STORE_TREE_DATA=False,
         LOG_MEM_STATS=True,
     )
 
