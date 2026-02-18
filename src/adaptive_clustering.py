@@ -1225,6 +1225,12 @@ def adaptive_clustering(
         rank=rank,
     )
 
+    # Log local refinement results
+    logger.info(
+        f"R{rank:03}: Local Refinement Done. Found {out_count:,} clusters. "
+        f"Local f-evals={local_f_evals:,}. Time={time.perf_counter()-_start:.2f}s"
+    )
+
     # ------------------------------------------------------------------
     # 5. Pack local results to CPU dict
     # ------------------------------------------------------------------
@@ -1407,6 +1413,7 @@ if __name__ == "__main__":
         ERROR_METRIC=ERROR_METRIC,
         SYNTH_BUDGET_FACTOR=1000,
         STORE_TREE_DATA=True,
+        LOG_MEM_STATS=True,
     )
 
     # Only rank 0 gets results; other MPI workers exit cleanly here.
