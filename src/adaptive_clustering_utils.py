@@ -10,30 +10,6 @@ logger = logging.getLogger(__name__)
 TINY_EPS = 1e-12
 
 
-def scatter_maximum_1d(out: Array, idx: Array, vals: Array) -> None:
-    """
-    1D segmented max scatter: ``out[idx[i]] = max(out[idx[i]], vals[i])``.
-    Uses `cupyx.scatter_max` on GPU and `numpy.maximum.at` semantics on CPU.
-    Eg:
-        out = [0, 0, 0]
-        idx = [0, 1, 0, 2, 1]
-        vals = [1, 2, 3, 4, 0]
-        scatter_maximum_1d(out, idx, vals)
-        # out is now [3, 2, 4]
-
-    Args:
-        out: (K,) output array updated in-place.
-        idx: (N,) integer indices in [0, K).
-        vals: (N,) values to reduce via max per index.
-    """
-    if IS_CUPY_BACKEND:
-        from cupyx import scatter_max as cupy_scatter_max  # type: ignore[import]
-
-        cupy_scatter_max(out, idx, vals)
-    else:
-        xp.maximum.at(out, idx, vals)
-
-
 # -----------------------------------------------------------------------------
 # 1. CUDA KERNELS
 # -----------------------------------------------------------------------------
@@ -656,6 +632,30 @@ class CudaTimer:
                 xp.cuda.Device().synchronize()
             dt = time.perf_counter() - self.t0  # type: ignore
             self.stats[self.key] += dt
+
+
+def scatter_maximum_1d(out: Array, idx: Array, vals: Array) -> None:
+    """
+    1D segmented max scatter: ``out[idx[i]] = max(out[idx[i]], vals[i])``.
+    Uses `cupyx.scatter_max` on GPU and `numpy.maximum.at` semantics on CPU.
+    Eg:
+        out = [0, 0, 0]
+        idx = [0, 1, 0, 2, 1]
+        vals = [1, 2, 3, 4, 0]
+        scatter_maximum_1d(out, idx, vals)
+        # out is now [3, 2, 4]
+
+    Args:
+        out: (K,) output array updated in-place.
+        idx: (N,) integer indices in [0, K).
+        vals: (N,) values to reduce via max per index.
+    """
+    if IS_CUPY_BACKEND:
+        from cupyx import scatter_max as cupy_scatter_max
+
+        cupy_scatter_max(out, idx, vals)
+    else:
+        xp.maximum.at(out, idx, vals)
 
 
 def convert_to_2d_array(F: Array) -> Array:

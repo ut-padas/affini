@@ -7,7 +7,8 @@ import numpy as np
 from mpi4py import MPI
 from sklearn.cluster import KMeans
 
-from adaptive_clustering_utils import (
+from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _to_host, xp
+from src.adaptive_clustering_utils import (
     CudaTimer,
     adjust_buffer_capacity_host,
     allocate_output_buffers_host,
@@ -22,7 +23,6 @@ from adaptive_clustering_utils import (
     run_fused_taylor_metric,
     scatter_maximum_1d,
 )
-from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _to_device, _to_host, xp
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
 

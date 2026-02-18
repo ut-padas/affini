@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Union
 
-from src import IS_CUPY_BACKEND, Array, get_mpi_rank, xp
+from src import IS_CUPY_BACKEND, Array, xp
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,9 @@ class HATANNSurrogate:
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
         SEED: int = 0,
-        CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "None"] = "Hessian_LSQ",
+        CLUSTERING_MATRIX: Literal[
+            "Hessian_LSQ", "Cov_Lvl_curves", "None"
+        ] = "Hessian_LSQ",
         IGNORE_GRADIENT: bool = False,
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
@@ -145,7 +147,9 @@ class HATANNSurrogate:
             )
 
         if not IS_CUPY_BACKEND:
-            from src.adaptive_clustering import adaptive_clustering
+            from _experiments._deprecated.adaptive_clustering_mpi_final import (
+                adaptive_clustering,
+            )
 
             # 1. Adaptive Clustering
             t0 = time.perf_counter()
@@ -162,7 +166,7 @@ class HATANNSurrogate:
                 SEED=SEED,
                 LOG_MEM_STATS=False,
                 SYNTH_BUDGET_FACTOR=200.0,
-                USE_HESSIAN_INFORMED_SPLIT=True, # TODO: implement this new method in cpu code as well
+                USE_HESSIAN_INFORMED_SPLIT=True,  # TODO: implement this new method in cpu code as well
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
                 Q_SHRINK=0.05,
                 MAX_LEVELS=MAX_LEVELS,
@@ -560,7 +564,7 @@ if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
 
-    from src import FIGURES_DIR
+    from src import FIGURES_DIR, _get_mpi_rank
     from src.data_sampler import DataSampler
     from src.logging_utils import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
@@ -647,7 +651,7 @@ if __name__ == "__main__":
     # Sample Training Data only on rank 0.
     # Non-zero ranks pass None — adaptive_clustering_mpi only accesses X on rank 0,
     # then scatters partitions internally. No broadcast needed.
-    if get_mpi_rank() == 0:
+    if _get_mpi_rank() == 0:
         X_train = xp.asarray(
             DataSampler.sample_latin_hypercube(domain, N=N_train, seed=SEED)
         )
@@ -682,7 +686,7 @@ if __name__ == "__main__":
     _end_train_time = time.perf_counter()
 
     # Only rank 0 has a trained model; other MPI workers exit cleanly here.
-    if get_mpi_rank() != 0:
+    if _get_mpi_rank() != 0:
         raise SystemExit(0)
 
     N_CLUSTERS = surrogate.get_number_of_sources()
