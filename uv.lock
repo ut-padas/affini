@@ -851,7 +851,7 @@ requires-dist = [
     { name = "faiss-cpu", specifier = ">=1.12.0" },
     { name = "ipykernel", specifier = ">=7.1.0" },
     { name = "ipympl", specifier = ">=0.10.0" },
-    { name = "knndbscan", specifier = "==0.1.2", index = "https://test.pypi.org/simple/" },
+    { name = "knndbscan", specifier = "==0.1.3", index = "https://test.pypi.org/simple/" },
     { name = "matplotlib", specifier = ">=3.10.7" },
     { name = "mpi4py", specifier = ">=4.1.1" },
     { name = "nbformat", specifier = ">=5.10.4" },
@@ -1164,7 +1164,7 @@ wheels = [
 
 [[package]]
 name = "knndbscan"
-version = "0.1.2"
+version = "0.1.3"
 source = { registry = "https://test.pypi.org/simple/" }
 dependencies = [
     { name = "matplotlib" },
@@ -1172,9 +1172,9 @@ dependencies = [
     { name = "pip" },
     { name = "scikit-learn" },
 ]
-sdist = { url = "https://test-files.pythonhosted.org/packages/16/45/e8776cbef55f1153c51a71f373ba76208efa5c378e55ff6b5a887275a9dd/knndbscan-0.1.2.tar.gz", hash = "sha256:f4a32d8b65d35672a24408c07bcb534abc750a08fddef279e5361f88b1cb892f", size = 20377, upload-time = "2026-02-17T00:20:19.101Z" }
+sdist = { url = "https://test-files.pythonhosted.org/packages/93/d7/dc7278b1ad93795a93448fa1537e74edc5eb0df6cb21786c2362ce442d7c/knndbscan-0.1.3.tar.gz", hash = "sha256:846a77e81e901c37602b692b9187d38e794dcad613ba9035bd3908ce56fb777f", size = 20672, upload-time = "2026-02-18T21:45:33.053Z" }
 wheels = [
-    { url = "https://test-files.pythonhosted.org/packages/f1/c6/b7c4da8e21423e9912c68ea957c51f4d68f15956c240fdf7793200d68267/knndbscan-0.1.2-cp313-cp313-manylinux_2_39_x86_64.whl", hash = "sha256:e4246689331a17e030eaa906ced39ec454643d6641d7ef0aba6e380bdd035356", size = 7592841, upload-time = "2026-02-17T00:20:17.475Z" },
+    { url = "https://test-files.pythonhosted.org/packages/16/b4/2aed35155c9f5d22511a9cb5eeabf8d7357c4eb955b803fad4c0b19b72b2/knndbscan-0.1.3-cp313-cp313-manylinux_2_39_x86_64.whl", hash = "sha256:52a5c4cbabc88901ee687c62459a8a3059e8672ad2b5535c8544875d80c0b7b7", size = 7600564, upload-time = "2026-02-18T21:45:31.508Z" },
 ]
 
 [[package]]
