@@ -503,6 +503,7 @@ def _run_local_refinement(
                     dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
 
                     if IGNORE_GRADIENT or CLUSTERING_MATRIX == "None":
+                        # Fallback: PCA Split (Split along variance of X)
                         M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
                             n_bad, axis=0
                         )
@@ -520,6 +521,8 @@ def _run_local_refinement(
                         CovZ = C
 
                     elif CLUSTERING_MATRIX == "Hessian_LSQ":
+                        # Hessian Split: Split along eigenvector of Hessian estimate
+                        # 1. Determine "Active Component" (Output dim with highest error)
                         g_mus_exp_bad = g_mus[bad_idx_local][dense_labels_bad]
                         dx_bad = X_bad - mus[bad_idx_local][dense_labels_bad]
                         lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp_bad, dx_bad)
@@ -533,6 +536,7 @@ def _run_local_refinement(
                         scores = xp.sqrt(sq_err) / (xp.sqrt(sq_val) + TINY_EPS)
                         active_comps = xp.argmax(scores, axis=1).astype(xp.int32)
 
+                        # 2. Accumulate Stats and Solve for Hessian
                         C, E = run_fused_stats(
                             X_bad,
                             mus[bad_idx_local],
@@ -554,23 +558,41 @@ def _run_local_refinement(
                         F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])
                         _, V = xp.linalg.eigh(F_mat)
 
+                        # M = |H|^1/2
                         Z = U @ V
                         M_split = (Z * xp.sqrt(xp.abs(_))[:, None, :]) @ Z.transpose(
                             0, 2, 1
                         )
                         M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
+
+                        # Covariance in transformed space Z = M * dx
                         CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
 
                     elif CLUSTERING_MATRIX == "Cov_Lvl_curves":
-                        n_est_cov = 2 * d * xp.log(d)
-                        E_bad = E_cluster[bad_mask]
+                        # Approximate Hessian using inverse covariance formulation.
+
+                        # 1. Compute the linear surrogate errors
+                        lin_bad = xp.einsum(
+                            "nmd,nd->nm",
+                            g_mus[bad_idx_local][dense_labels_bad],
+                            X_bad - mus[bad_idx_local][dense_labels_bad],
+                        )
+                        diff_bad = F_bad - (
+                            f_mus[bad_idx_local][dense_labels_bad] + lin_bad
+                        )
+                        E_bad = xp.linalg.norm(diff_bad, axis=1)
+
+                        # 2. Sort and pick out the smallest n
+                        n_est_cov = (
+                            MIN_PTS_PER_CLUSTER // 3
+                        )  # this is empirical for now
                         cov_est_mask = get_n_smallest_per_block(
                             E_bad, dense_labels_bad, n_est_cov
                         )
-                        X_est_cov = X_bad[cov_est_mask]
 
-                        C, _ = run_fused_stats(
-                            X_est_cov,
+                        # 3. Use these points to compute the sample covariances for the Hessian
+                        H_inv, _ = run_fused_stats(
+                            X_bad[cov_est_mask],
                             mus[bad_idx_local],
                             dense_labels_bad[cov_est_mask],
                             n_bad,
@@ -579,25 +601,52 @@ def _run_local_refinement(
                             xp.zeros(n_bad, dtype=xp.int32),
                             calc_E=False,
                         )
-                        C = 0.5 * (C + C.transpose(0, 2, 1))
-                        CovZ = xp.linalg.inv(C)
+                        H_inv = 0.5 * (H_inv + H_inv.transpose(0, 2, 1))
 
+                        # 3. Compute square root inverse of H_inv to get the scaling matrix for the split
+                        dvals, U = xp.linalg.eigh(H_inv)
+                        dvals_sqrt_inv = 1.0 / xp.sqrt(
+                            xp.maximum(xp.abs(dvals), TINY_EPS)
+                        )
+                        M_split = (U * dvals_sqrt_inv[:, None]) @ U.transpose(0, 2, 1)
+                        M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
+
+                        # 4. Full covariance
+                        C, _ = run_fused_stats(
+                            X_bad,
+                            mus[bad_idx_local],
+                            dense_labels_bad,
+                            n_bad,
+                            d,
+                            fd,
+                            xp.zeros(n_bad, dtype=xp.int32),
+                            calc_E=False,
+                        )
+                        C = 0.5 * (C + C.transpose(0, 2, 1))
+
+                        # 5. Covariance in transformed space
+                        CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
+
+                    # Get Split Direction (Dominant Eigenvector)
                     _, V_z = xp.linalg.eigh(CovZ)
                     v = V_z[:, :, -1]
 
+                    # Project Points & Sort
                     scores_proj = run_fused_score(
                         X_bad, mus[bad_idx_local], dense_labels_bad, M_split, v
                     )
                     sort_order = xp.lexsort(xp.stack([scores_proj, dense_labels_bad]))
 
                 with CudaTimer("time_bad_d2h", profiling_stats, PROFILE_TIMING):
+                    # Collect Sorted Data for Next Level
                     next_level_X_list.append(_to_host(X_bad[sort_order]))
                     next_level_F_list.append(_to_host(F_bad[sort_order]))
                     next_level_G_list.append(_to_host(G_bad[sort_order]))
 
+                    # Calculate Child Sizes (Binary Split)
                     half = bad_counts // 2
                     other = bad_counts - half
-                    new_sz = xp.zeros(2 * n_bad, dtype=xp.int64)
+                    new_sz = xp.zeros(2 * n_bad, dtype=xp.int64)  # (2 * n_bad,)
                     new_sz[0::2] = half
                     new_sz[1::2] = other
                     next_level_sizes_list.append(_to_host(new_sz))
