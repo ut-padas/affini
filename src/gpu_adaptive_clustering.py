@@ -614,45 +614,32 @@ def adjust_buffer_capacity_cpu(
     return new_buffers, int(new_cap)
 
 
-def get_n_smallest_per_block(values, start_indices, n):
-    # 1. Create an array of block IDs for every element
-    # Example: starts [0, 3, 7] -> block_ids [0, 0, 0, 1, 1, 1, 1, 2, 2...]
-    block_ids = xp.zeros(values.size, dtype=xp.int32)
-    # Mark the start of each block with a 1
-    block_ids[start_indices] = 1
-    # Cumulative sum turns markers into IDs: [1, 1, 1, 2, 2, 2, 2, 3, 3...]
-    block_ids = xp.cumsum(block_ids) - 1
+def get_n_smallest_per_block(values, blocks, n):
+    """
+    Returns a boolean mask for the n smallest values in each block.
+    """
+    # 1. Get indices that would sort by block, then by value
+    # lexsort uses keys from last to first
+    sort_idx = cp.lexsort(xp.stack([values, blocks]))
 
-    # 2. Sort indices: primary key = block_ids, secondary key = values
-    # This groups blocks together and sorts values within them
-    sort_idx = xp.lexsort((values, block_ids))
+    # 2. Compute the sizes of each block
+    block_sizes = xp.bincount(blocks)
+    block_starts = xp.concatenate((xp.array([0]), xp.cumsum(block_sizes[:-1])))
 
-    sorted_values = values[sort_idx]
-    sorted_blocks = block_ids[sort_idx]
+    # 3. Create array like blocks, but with the start indices instead of the original ids
+    offsets = cp.zeros(len(blocks), dtype=cp.int64)
+    diffs = cp.diff(block_starts, prepend=0)
+    offsets[block_starts] = diffs
+    local_indices = cp.cumsum(offsets)
 
-    # 3. Pick the first 'n' elements of each block
-    # Generate local indices (0, 1, 2... for each block)
-    # We do this by finding where the block ID changes
-    block_change = xp.diff(sorted_blocks, prepend=-1)
+    # 4. Sort these and create a mask for the n smallest in each block
+    inv_sort_idx = cp.empty_like(sort_idx)
+    inv_sort_idx[sort_idx] = cp.arange(len(sort_idx), dtype=sort_idx.dtype)
+    sorted_local_indices = inv_sort_idx - local_indices
 
-    # Use a clever trick: the index within the block is
-    # the distance from the last 'change' point
-    # For speed, we can use a scan or just compute local counts
-    # A simple way: find the rank of each element within its block
-    local_idx = xp.arange(len(sorted_values))
-    # To get local index 0, 1, 2... within blocks:
-    # We subtract the global index of the first element of each block
-    first_elem_indices = xp.where(block_change != 0)[0]
-    # Expand the start indices to match the full array size
-    offsets = xp.zeros_like(sorted_values)
-    offsets[first_elem_indices] = first_elem_indices
-    offsets = xp.maximum.accumulate(offsets)
-
-    intra_block_idx = local_idx - offsets
-
-    # 4. Mask and extract
-    mask = intra_block_idx < n
-    return mask
+    # 5. Return the mask for the n smallest in each block
+    pts_mask = sorted_local_indices < n
+    return pts_mask
 
 
 # -----------------------------------------------------------------------------
@@ -1331,21 +1318,56 @@ def adaptive_clustering(
 
                     elif CLUSTERING_MATRIX == "Cov_Lvl_curves":
                         # Approximate Hessian using inverse covariance formulation.
-                        # 1. Determine points we will use to approximate Hessian.
-                        # Use the errors we have already computed
-                        # We want to have enough points (2d*log(d))
-                        n_est_cov = 2 * d * xp.log(d)
-                        E_bad = E_cluster[bad_mask]
+
+                        # 1. Compute the linear surrogate errors
+                        # TODO: probably should just compute this without the kernel...
+                        # But I need to make sure I am using the correct variables.
+                        # X_bad contains X points for the bad clusters
+                        # mus[bad_idx_local] contains the centroids for the bad clusters
+                        # dense_labels_bad contains the cluster assignment for each point in X_bad
+                        lin_bad = xp.einsum("nmd,nd->nm", g_mus[bad_idx_local][dense_labels_bad], X_bad - mus[bad_idx_local][dense_labels_bad])
+                        diff_bad = F_bad - (f_mus[bad_idx_local][dense_labels_bad] + lin_bad)
+                        E_bad = xp.linalg.norm(diff_bad, axis=1)
+
+                        # 2. Sort and pick out the smallest n
+                        n_est_cov = MIN_PTS_PER_CLUSTER // 3  # this is empirical for now
                         cov_est_mask = get_n_smallest_per_block(
                             E_bad,
-                            dense_labels_bad, # is this right?
+                            dense_labels_bad,
                             n_est_cov
                         )
-                        X_est_cov = X_bad[cov_est_mask]
 
-                        # 2. Use these points to compute covariances
-                        C, _ = run_fused_stats(
-                            X_est_cov,
+                        # 2.1 Test get_n_smallest_per_block on simple test case
+                        # if False:
+                        #     test_vals = xp.array([0.5, 0.2, 0.1, 0.4, 0.3, 0.05, 0.25, 0.45, 0.15, 0.35, 0.4])
+                        #     test_labels = xp.array([0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2])
+                        #     n_smallest = 2
+                        #     mask = get_n_smallest_per_block(test_vals, test_labels, n_smallest)
+                        #     expected_mask = xp.array([False, True, True, False, False, True, True, False, True, True, False])
+                        #     assert xp.all(mask == expected_mask), f"Expected {expected_mask}, got {mask}"
+
+                        # 2.2 Check for bugs by plotting points in gray and ones we measure covariance with in red, and saving figure
+                        # Also plot centers
+                        # convert cupy arrays to numpy for plotting
+                        # if False:
+                        #     import matplotlib.pyplot as plt
+
+                        #     # mask for lin_bad below tolerance
+                        #     E_bad_tol_mask = E_bad < (TOL / 4)
+
+                        #     plt.figure(figsize=(8, 6))
+                        #     plt.scatter(X_bad.get()[:, 0], X_bad.get()[:, 1], c="gray", label="All Points")
+                        #     plt.scatter(X_bad.get()[E_bad_tol_mask.get(), 0], X_bad.get()[E_bad_tol_mask.get(), 1], c="red", label="< TOL/4 Points")
+                        #     plt.scatter(X_bad.get()[cov_est_mask.get(), 0], X_bad.get()[cov_est_mask.get(), 1], c="green", label="Covariance Points")
+                        #     plt.scatter(mus.get()[bad_idx_local.get()][:, 0], mus.get()[bad_idx_local.get()][:, 1], c="blue", label="Cluster Centers")
+                        #     plt.legend()
+                        #     plt.title("Covariance Estimation Points")
+                        #     plt.savefig(f"covariance_estimation_dim{d}.png")
+                        #     plt.close()
+
+                        # 3. Use these points to compute the sample covariances for the Hessian
+                        H_inv, _ = run_fused_stats(
+                            X_bad[cov_est_mask],
                             mus[bad_idx_local],
                             dense_labels_bad[cov_est_mask],
                             n_bad,
@@ -1354,12 +1376,29 @@ def adaptive_clustering(
                             xp.zeros(n_bad, dtype=xp.int32),
                             calc_E=False,
                         )
+                        H_inv = 0.5 * (H_inv + H_inv.transpose(0, 2, 1))
+
+                        # 3. Compute square root inverse of H_inv to get the scaling matrix for the split
+                        dvals, U = xp.linalg.eigh(H_inv)
+                        dvals_sqrt_inv = 1.0 / xp.sqrt(xp.maximum(xp.abs(dvals), TINY_EPS))
+                        M_split = (U * dvals_sqrt_inv[:, None]) @ U.transpose(0, 2, 1)
+                        M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
+
+                        # 4. Full covariance
+                        C, _ = run_fused_stats(
+                            X_bad,
+                            mus[bad_idx_local],
+                            dense_labels_bad,
+                            n_bad,
+                            d,
+                            fd,
+                            xp.zeros(n_bad, dtype=xp.int32),
+                            calc_E=False,
+                        )
                         C = 0.5 * (C + C.transpose(0, 2, 1))
 
-                        # 2.5: Shrinkage?
-
-                        # 3. Take inverses
-                        CovZ = xp.linalg.inv(C)
+                        # 5. Covariance in transformed space
+                        CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
 
                     # Get Split Direction (Dominant Eigenvector)
                     _, V_z = xp.linalg.eigh(CovZ)

@@ -71,7 +71,7 @@ class HATANNSurrogate:
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
         SEED: int = 0,
-        USE_HESSIAN_INFORMED_SPLIT: bool = True,
+        CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "None"] = "Hessian_LSQ",
         IGNORE_GRADIENT: bool = False,
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
@@ -139,7 +139,7 @@ class HATANNSurrogate:
 
         t0 = time.perf_counter()
 
-        if USE_HESSIAN_INFORMED_SPLIT == False or IGNORE_GRADIENT == True:
+        if CLUSTERING_MATRIX == "None" or IGNORE_GRADIENT == True:
             logger.warning(
                 "USE_HESSIAN_INFORMED_SPLIT=False or IGNORE_GRADIENT=True may lead to suboptimal clustering performance."
             )
@@ -162,7 +162,7 @@ class HATANNSurrogate:
                 SEED=SEED,
                 LOG_MEM_STATS=False,
                 SYNTH_BUDGET_FACTOR=200.0,
-                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                USE_HESSIAN_INFORMED_SPLIT=True, # TODO: implement this new method in cpu code as well
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
                 Q_SHRINK=0.05,
                 MAX_LEVELS=MAX_LEVELS,
@@ -212,7 +212,7 @@ class HATANNSurrogate:
                 NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
                 MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
                 MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+                CLUSTERING_MATRIX=CLUSTERING_MATRIX,
                 IGNORE_GRADIENT=IGNORE_GRADIENT,
                 SEED=SEED,
                 BATCH_SIZE=BATCH_SIZE,

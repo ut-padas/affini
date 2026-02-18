@@ -237,8 +237,8 @@ def ics_aniso_quadratic_experiment() -> Path:
     K_NEIGHBOURS = 1
     EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 5, 10]
-    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+    DIMs = [2]
+    TOLs = [0.1]
     ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
@@ -279,7 +279,7 @@ def ics_aniso_quadratic_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=True,
+            CLUSTERING_MATRIX="Hessian_LSQ",
             STORE_TRAIN_EVALS=False,
             PLOT_CONTOUR_IN_LOG_SCALE=True,
         )
@@ -565,9 +565,9 @@ def ics_rosenbrock_experiment() -> Path:
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
 
-    DIMs = [2, 5, 10]
+    DIMs = [2, 5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-global", "Linf-local"]
+    ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rosenbrock Experiments"):
@@ -609,7 +609,7 @@ def ics_rosenbrock_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=True,
+            CLUSTERING_MATRIX="Cov_Lvl_curves",
         )
 
     return EXP_DIR
@@ -1081,8 +1081,8 @@ if __name__ == "__main__":
         # dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
         # create_summary_dataframe(dir3)
 
-        dir4 = ics_rosenbrock_runtime_scalability_experiment()
-        create_summary_dataframe(dir4)
+        # dir4 = ics_rosenbrock_runtime_scalability_experiment()
+        # create_summary_dataframe(dir4)
 
         # dir5 = ics_aniso_quadratic_experiment_no_hess()
         # create_summary_dataframe(dir5)
@@ -1103,6 +1103,9 @@ if __name__ == "__main__":
         # create_summary_dataframe(dir10)
 
         # ics_lorenz_experiment()
+
+        dir = ics_rosenbrock_experiment()
+        create_summary_dataframe(dir)
 
     else:
         print("Run only on GPU node.")
