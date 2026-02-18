@@ -3,7 +3,7 @@ import time
 
 from scipy.stats import qmc
 
-from src import IS_CUPY_BACKEND, Array, xp
+from src import IS_CUPY_BACKEND, Array, _to_host, xp
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +93,8 @@ class DataSampler:
         sample = sampler.random(n=N)
 
         # Scale to domain bounds
-        if IS_CUPY_BACKEND:
-            l_np = xp.asnumpy(l_np)
-            r_np = xp.asnumpy(r_np)
+        l_np = _to_host(l_np)
+        r_np = _to_host(r_np)
 
         sample_scaled = qmc.scale(sample, l_np, r_np)
 

@@ -19,25 +19,13 @@ import numpy as np
 from mpi4py import MPI
 from sklearn.cluster import KMeans
 
-from src import IS_CUPY_BACKEND, Array, get_mpi_rank, xp
+from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _to_device, _to_host, xp
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
 
 logger = logging.getLogger(__name__)
 
 TINY_EPS = 1e-12
-
-
-def _to_host(arr: Array) -> Array:
-    """Move array to host (NumPy) if it's on device (CuPy)."""
-    if hasattr(arr, "get"):  # CuPy array
-        return xp.asnumpy(arr)
-    return arr
-
-
-def _to_device(arr: np.ndarray) -> Array:
-    """Move array to device (CuPy) if available, else keep as NumPy."""
-    return xp.asarray(arr)
 
 
 def scatter_maximum_1d(out: Array, idx: Array, vals: Array) -> None:
@@ -829,6 +817,11 @@ def _run_local_refinement(
                 dx_good, good_starts, good_counts, K_good, Q_SHRINK=Q_SHRINK
             )
 
+            if LOG_MEM_STATS:
+                log_mem_stats(
+                    f"R{rank:02} L{level:02}: After Computing Trust Region Metrics for Good Clusters"
+                )
+
             # Store outputs for good clusters, growing buffers if needed.
             end_out = out_count + K_good
             out_buffers, out_cap = adjust_buffer_capacity(
@@ -889,6 +882,9 @@ def _run_local_refinement(
             # Deactivate points in good clusters in the pool.
             pool["active"][idx_sorted[mask_good_pts]] = False
 
+        if LOG_MEM_STATS:
+            log_mem_stats(f"R{rank:02} L{level:02}: After Finalizing Good Clusters")
+
         # --- Split bad clusters ---
         bad_idx = xp.nonzero(~is_good)[0]
         K_bad = int(bad_idx.shape[0])
@@ -896,9 +892,6 @@ def _run_local_refinement(
         if K_bad == 0:
             logger.info(f"R{rank:02} L{level:03}: No Bad Clusters, Done.")
             break
-
-        if LOG_MEM_STATS:
-            log_mem_stats(f"R{rank:02} L{level:02}: After Finalizing Good Clusters")
 
         mask_bad_pts = (~is_good)[map_n_to_k]
         dx_bad = dx[mask_bad_pts]
@@ -949,6 +942,11 @@ def _run_local_refinement(
                     dx_bad, F_bad_all, f_lin[mask_bad_pts], bad_starts
                 )
 
+        if LOG_MEM_STATS:
+            log_mem_stats(
+                f"R{rank:02} L{level:02}: After Computing Hessian Sqrt for Splitting"
+            )
+
         # Transform points in bad clusters by the Hessian sqrt, then split by the
         # dominant eigenvector.
         map_bad_n_to_k = repeats(xp.arange(K_bad), bad_counts)
@@ -966,6 +964,9 @@ def _run_local_refinement(
         split_right = compute_median_split_decision(
             proj_scores, map_bad_n_to_k, bad_starts, bad_counts
         )
+
+        if LOG_MEM_STATS:
+            log_mem_stats(f"R{rank:02} L{level:02}: After Computing Split Decisions")
 
         # Update labels in the pool for points in bad clusters based on the split
         # decision.
@@ -1032,6 +1033,11 @@ def adaptive_clustering(
     Return keys (rank 0 only): centroids, f, g, radii, L_obs, E_cluster, counts, Q,
     [H_sqrt], [tree_data], num_levels, num_generated_pts, total_f_evals.
     """
+    if STORE_TREE_DATA:
+        logger.warning(
+            "STORE_TREE_DATA=True: This will store per-cluster point data for all finalized clusters, which can consume a lot of memory, and slow down the algorithm. Use for debugging/visualization purposes, but be cautious with large datasets or many levels of refinement."
+        )
+
     # Validate function arguments
     if oracle_fn is not None:
         if f_fn is not None or g_fn is not None:
@@ -1079,7 +1085,6 @@ def adaptive_clustering(
         # Initial clustering
         _t1 = time.perf_counter()
         if INITIAL_CLUSTERING_METHOD == "kmeans":
-            _t1 = time.perf_counter()
             if IS_CUPY_BACKEND:
                 from cuml.cluster import KMeans as cuKMeans  # type: ignore[import]
 
@@ -1100,7 +1105,6 @@ def adaptive_clustering(
                 knn_dbscan,
             )  # lazy: avoids UCX atexit registration at module load
 
-            _t1 = time.perf_counter()
             _device = "gpu" if IS_CUPY_BACKEND else "cpu"
             labels0 = _to_host(
                 knn_dbscan(
@@ -1225,6 +1229,12 @@ def adaptive_clustering(
         rank=rank,
     )
 
+    # Log local refinement results
+    logger.info(
+        f"R{rank:03}: Local Refinement Done. Found {out_count:,} clusters. "
+        f"Local f-evals={local_f_evals:,}. Time={time.perf_counter()-_start:.2f}s"
+    )
+
     # ------------------------------------------------------------------
     # 5. Pack local results to CPU dict
     # ------------------------------------------------------------------
@@ -1321,7 +1331,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n-init-clusters",
         type=int,
-        default=25,
+        default=50,
         help="Number of initial clusters for adaptive clustering",
     )
     parser.add_argument(
@@ -1406,11 +1416,12 @@ if __name__ == "__main__":
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ERROR_METRIC=ERROR_METRIC,
         SYNTH_BUDGET_FACTOR=1000,
-        STORE_TREE_DATA=True,
+        STORE_TREE_DATA=False,
+        LOG_MEM_STATS=True,
     )
 
     # Only rank 0 gets results; other MPI workers exit cleanly here.
-    if get_mpi_rank() != 0:
+    if _get_mpi_rank() != 0:
         raise SystemExit(0)
 
     assert results is not None, "Rank 0 should have results after adaptive_clustering"
@@ -1440,7 +1451,7 @@ if __name__ == "__main__":
         from matplotlib.patches import Circle, Ellipse
 
         if IS_CUPY_BACKEND:
-            results = {k: xp.asnumpy(v) for k, v in results.items()}
+            results = {k: _to_host(v) for k, v in results.items()}
 
         # 1 plot 2 subplots (1X2)
         # Subplot 1: scatter of final cluster centroids on contourf
@@ -1585,7 +1596,7 @@ if __name__ == "__main__":
     # Save npz file of results
     npz_fpath = img_fpath.with_suffix(".npz")
     if IS_CUPY_BACKEND:
-        results = {k: xp.asnumpy(v) for k, v in results.items()}
+        results = {k: _to_host(v) for k, v in results.items()}
     xp.savez_compressed(npz_fpath, **results)
 
     # Finalize MPI cleanly, then use os._exit to bypass Python atexit/GC
