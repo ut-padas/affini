@@ -19,6 +19,16 @@ def get_mpi_rank() -> int:
         return 0
 
 
+def get_mpi_size() -> int:
+    """Return total number of MPI ranks, or 1 if MPI is not in use."""
+    try:
+        from mpi4py import MPI as _MPI
+
+        return _MPI.COMM_WORLD.Get_size()
+    except ImportError:
+        return 1
+
+
 try:
     import cupy as cp
 
