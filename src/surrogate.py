@@ -4,7 +4,10 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Union
 
-from src import IS_CUPY_BACKEND, Array, xp
+import numpy as np
+
+from src import IS_CUPY_BACKEND, Array, _to_device, _to_host, xp
+from src.adaptive_clustering import adaptive_clustering
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +21,14 @@ class HATANNSurrogate:
         self.trained = False
 
         # Storage for source points (Reference data)
+        self.N_src = 0
         self.X_src = None
         self.f_src = None
         self.J_src = None
         self.trust_radii_src = None
         self.Qs_src = None
-        self.N_src = 0
         self.profiling_stats = {}
+        self.tree_data = None  # Optional: Store tree data for analysis/visualization
 
         # Model file path (for saving/loading)
         self._model_file = None
@@ -51,6 +55,7 @@ class HATANNSurrogate:
             "Qs_src": self.Qs_src,
             "N_src": self.N_src,
             "profiling_stats": self.profiling_stats,
+            "tree_data": self.tree_data,
         }
 
     def train(
@@ -146,90 +151,38 @@ class HATANNSurrogate:
                 "USE_HESSIAN_INFORMED_SPLIT=False or IGNORE_GRADIENT=True may lead to suboptimal clustering performance."
             )
 
-        if not IS_CUPY_BACKEND:
-            from _experiments._deprecated.adaptive_clustering_mpi_final import (
-                adaptive_clustering,
-            )
+        # 1. Adaptive Clustering
+        t0 = time.perf_counter()
+        results = adaptive_clustering(
+            X=X_train,
+            f_fn=f_fn,
+            g_fn=g_fn,
+            oracle_fn=oracle_fn,
+            TOL=TOL,
+            ERROR_METRIC=ERROR_METRIC,
+            INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+            CLUSTERING_MATRIX=CLUSTERING_MATRIX,
+            NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+            MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            SEED=SEED,
+            Q_SHRINK=0.05,
+            MAX_LEVELS=MAX_LEVELS,
+            BATCH_SIZE=BATCH_SIZE,
+            IGNORE_GRADIENT=IGNORE_GRADIENT,
+            STORE_TREE_DATA=STORE_TREE_DATA,
+            PROFILE_TIMING=PROFILE_TIMING,
+        )
+        # Non-rank-0 MPI workers return None — their work is done.
+        if results is None:
+            return
 
-            # 1. Adaptive Clustering
-            t0 = time.perf_counter()
-            results = adaptive_clustering(
-                X=X_train,
-                f_fn=f_fn,
-                g_fn=g_fn,
-                oracle_fn=oracle_fn,
-                TOL=TOL,
-                ERROR_METRIC=ERROR_METRIC,
-                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                SEED=SEED,
-                LOG_MEM_STATS=False,
-                SYNTH_BUDGET_FACTOR=200.0,
-                USE_HESSIAN_INFORMED_SPLIT=True,  # TODO: implement this new method in cpu code as well
-                IGNORE_GRADIENT=IGNORE_GRADIENT,
-                Q_SHRINK=0.05,
-                MAX_LEVELS=MAX_LEVELS,
-                STORE_TREE_DATA=STORE_TREE_DATA,
-                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-            )
-            # Non-rank-0 MPI workers return None — their work is done.
-            if results is None:
-                return
-
-            centroids = xp.asarray(results["centroids"])
-            f_vals = xp.asarray(results["f"])
-            grads = xp.asarray(results["g"])
-            radii = xp.asarray(results["radii"])
-            Qs = xp.asarray(results["Q"])
-            profiling_stats = {
-                "num_levels": results["num_levels"],
-                "num_generated_pts": results["num_generated_pts"],
-                "total_f_evals": results["total_f_evals"],
-                "time_total": time.perf_counter() - t0,
-            }
-            training_data = results.get("gen_training_data", None)
-
-        else:
-            from src.gpu_adaptive_clustering import (
-                adaptive_clustering as gpu_adaptive_clustering,
-            )
-
-            if STORE_TREE_DATA:
-                logger.warning(
-                    "STORE_TREE_DATA=True is not currently supported in GPU version. Generated training data will not be saved."
-                )
-
-            if INITIAL_CLUSTERING_METHOD == "knndbscan":
-                logger.warning(
-                    "INITIAL_CLUSTERING_METHOD='knndbscan' is not currently supported in GPU version. Defaulting to 'kmeans'."
-                )
-                INITIAL_CLUSTERING_METHOD = "kmeans"
-
-            results = gpu_adaptive_clustering(
-                X=X_train,
-                f_fn=f_fn,
-                g_fn=g_fn,
-                oracle_fn=oracle_fn,
-                TOL=TOL,
-                ERROR_METRIC=ERROR_METRIC,
-                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                CLUSTERING_MATRIX=CLUSTERING_MATRIX,
-                IGNORE_GRADIENT=IGNORE_GRADIENT,
-                SEED=SEED,
-                BATCH_SIZE=BATCH_SIZE,
-                Q_SHRINK=0.05,
-                PROFILE_TIMING=PROFILE_TIMING,
-            )
-            centroids = xp.asarray(results["centroids"])
-            f_vals = xp.asarray(results["f"])
-            grads = xp.asarray(results["g"])
-            radii = xp.asarray(results["radii"])
-            Qs = xp.asarray(results["Q"])
-            profiling_stats = results["profiling_stats"]
-            training_data = None  # Not supported in GPU version
+        centroids = xp.asarray(results["centroids"])
+        f_vals = xp.asarray(results["f"])
+        grads = xp.asarray(results["g"])
+        radii = xp.asarray(results["radii"])
+        Qs = xp.asarray(results["Q"])
+        profiling_stats = results["profiling_stats"]
 
         # 2. Store Data
         self.X_src = centroids
@@ -240,7 +193,7 @@ class HATANNSurrogate:
         self.N_src = centroids.shape[0]
         self.profiling_stats = profiling_stats
         if STORE_TREE_DATA:
-            self.training_data = training_data
+            self.tree_data = results["tree_data"]
 
         # 3. Build KNN Index
         self._build_knn_index()
@@ -248,7 +201,7 @@ class HATANNSurrogate:
         # 4. Training complete
         self.trained = True
         logger.info(f"Training Time: {time.perf_counter()-t0:.4f}s")
-        logger.info(f"Trained Clusters: {len(self.X_src):,}")
+        logger.info(f"Trained Clusters: {self.N_src:,}")
 
         # Save model if requested
         if model_filepath is not None:
@@ -279,42 +232,17 @@ class HATANNSurrogate:
         save_dict = {
             "trained": self.trained,
             "N_src": self.N_src,
+            "X_src": _to_host(self.X_src),
+            "f_src": _to_host(self.f_src),
+            "J_src": _to_host(self.J_src),
+            "trust_radii_src": _to_host(self.trust_radii_src),
+            "Qs_src": _to_host(self.Qs_src),
             "profiling_stats": self.profiling_stats,
+            "tree_data": self.tree_data,
         }
 
-        # Convert arrays to numpy for saving
-        if IS_CUPY_BACKEND:
-            save_dict.update(
-                {
-                    "X_src": self.X_src.get() if self.X_src is not None else None,
-                    "f_src": self.f_src.get() if self.f_src is not None else None,
-                    "J_src": self.J_src.get() if self.J_src is not None else None,
-                    "trust_radii_src": (
-                        self.trust_radii_src.get()
-                        if self.trust_radii_src is not None
-                        else None
-                    ),
-                    "Qs_src": self.Qs_src.get() if self.Qs_src is not None else None,
-                }
-            )
-        else:
-            save_dict.update(
-                {
-                    "X_src": self.X_src,
-                    "f_src": self.f_src,
-                    "J_src": self.J_src,
-                    "trust_radii_src": self.trust_radii_src,
-                    "Qs_src": self.Qs_src,
-                }
-            )
-
         # Save using numpy
-        if IS_CUPY_BACKEND:
-            import numpy as np
-
-            np.savez_compressed(str(filepath), **save_dict, allow_pickle=True)
-        else:
-            xp.savez_compressed(str(filepath), **save_dict, allow_pickle=True)
+        np.savez_compressed(str(filepath), **save_dict, allow_pickle=True)
 
         self._model_file = filepath
         logger.info(f"Model saved to {filepath}")
@@ -336,58 +264,21 @@ class HATANNSurrogate:
             raise FileNotFoundError(f"Model file not found: {filepath}")
 
         # Load the data
-        if IS_CUPY_BACKEND:
-            import numpy as np
-
-            data = np.load(str(filepath), allow_pickle=True)
-        else:
-            data = xp.load(str(filepath), allow_pickle=True)
+        data = np.load(str(filepath), allow_pickle=True)
 
         # Create instance
         instance = cls()
 
-        # Restore state
+        # Restore state & arrays
         instance.trained = bool(data["trained"])
         instance.N_src = int(data["N_src"])
-
-        # profiling_stats is stored as a 0-d array object if saved via np.savez
-        # We try to extract it, handling potential absence in older files
-        if "profiling_stats" in data:
-            ps_data = data["profiling_stats"]
-            if ps_data.shape == ():
-                instance.profiling_stats = ps_data.item()
-            else:
-                # Should not happen if saved correctly as object
-                instance.profiling_stats = {}
-        else:
-            instance.profiling_stats = {}
-
-        # Restore arrays (convert back to appropriate backend)
-        instance.X_src = (
-            xp.asarray(data["X_src"])
-            if data["X_src"] is not None and data["X_src"].size > 0
-            else None
-        )
-        instance.f_src = (
-            xp.asarray(data["f_src"])
-            if data["f_src"] is not None and data["f_src"].size > 0
-            else None
-        )
-        instance.J_src = (
-            xp.asarray(data["J_src"])
-            if data["J_src"] is not None and data["J_src"].size > 0
-            else None
-        )
-        instance.trust_radii_src = (
-            xp.asarray(data["trust_radii_src"])
-            if data["trust_radii_src"] is not None and data["trust_radii_src"].size > 0
-            else None
-        )
-        instance.Qs_src = (
-            xp.asarray(data["Qs_src"])
-            if data["Qs_src"] is not None and data["Qs_src"].size > 0
-            else None
-        )
+        instance.X_src = _to_device(data["X_src"])
+        instance.f_src = _to_device(data["f_src"])
+        instance.J_src = _to_device(data["J_src"])
+        instance.trust_radii_src = _to_device(data["trust_radii_src"])
+        instance.Qs_src = _to_device(data["Qs_src"])
+        instance.profiling_stats = data["profiling_stats"]
+        instance.tree_data = data["tree_data"]
 
         instance._model_file = filepath
         logger.info(f"Model loaded from {filepath}")
@@ -408,12 +299,14 @@ class HATANNSurrogate:
             from cuml.neighbors import NearestNeighbors as cuMLNearestNeighbors
 
             self.knn_index = cuMLNearestNeighbors(metric="euclidean", algorithm="auto")
+            self.X_src = _to_device(self.X_src)
             self.knn_index.fit(self.X_src)
         else:
             import faiss
 
             # Ensure data types are correct for FAISS (float32)
-            centroids_f32 = self.X_src.astype(xp.float32)
+            self.X_src = _to_host(self.X_src)
+            centroids_f32 = self.X_src.astype(np.float32)
 
             D = self.X_src.shape[1]
             self.knn_index = faiss.IndexFlatL2(D)
@@ -437,9 +330,11 @@ class HATANNSurrogate:
         k = min(k, self.N_src)
 
         if IS_CUPY_BACKEND:
+            query_points = _to_device(query_points)
             distances, indices = self.knn_index.kneighbors(query_points, n_neighbors=k)  # type: ignore
         else:
             # FAISS returns squared distances
+            query_points = _to_host(query_points)
             query_points_f32 = query_points.astype(xp.float32)
             distances_sq, indices = self.knn_index.search(query_points_f32, k)  # type: ignore
             distances = xp.sqrt(distances_sq)
@@ -483,7 +378,7 @@ class HATANNSurrogate:
             and self.J_src is not None
         )
 
-        qp = xp.asarray(query_points)
+        qp = _to_host(query_points)
         N, D = qp.shape
 
         # --- 1. Coarse L2 Filter ---

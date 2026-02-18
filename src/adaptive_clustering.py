@@ -761,6 +761,7 @@ def adaptive_clustering(
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"] = "kmeans",
+    CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "None"] = "Hessian_LSQ",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
@@ -768,7 +769,6 @@ def adaptive_clustering(
     Q_SHRINK: float = 0.05,
     MAX_LEVELS: int = 50,
     BATCH_SIZE: int = 10_000_000,
-    CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "None"] = "Hessian_LSQ",
     IGNORE_GRADIENT: bool = False,
     STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
     STORE_TREE_DATA: bool = False,
@@ -805,7 +805,10 @@ def adaptive_clustering(
         g_fn: Callable returning gradients/Jacobians. Output shape (N, fd, d).
         TOL: Error tolerance for cluster acceptance.
         ERROR_METRIC: Metric for acceptance ('L2', 'Linf-global', 'Linf-local').
-        INITIAL_CLUSTERING_METHOD: Method for initial clustering ('kmeans' or 'knndbscan').
+        INITIAL_CLUSTERING_METHOD: Method for initial clustering
+            ('kmeans', 'knndbscan').
+        CLUSTERING_MATRIX: Matrix for spectral clustering of "Bad" clusters
+            ('Hessian_LSQ', 'Cov_Lvl_curves', 'None').
         NUM_INITIAL_CLUSTERS: Number of seeds for initial K-Means.
         MIN_PTS_PER_CLUSTER: Minimum points per cluster. If a cluster has fewer,
             synthetic points are generated via convex combinations to stabilize geometry.
@@ -814,15 +817,13 @@ def adaptive_clustering(
         Q_SHRINK: Shrinkage factor a for covariance: Σ ← (1-a)Σ + a (Tr(Σ)/d)I.
         MAX_LEVELS: Maximum recursion depth for splitting.
         BATCH_SIZE: Maximum number of points processed in a single GPU kernel launch.
-        USE_HESSIAN_INFORMED_SPLIT: If True, splits clusters along the dominant
-        eigenvector of the local Hessian estimate. If False, splits along the principal
-        axis (PCA) of points.
         IGNORE_GRADIENT: If True, assumes ∇F = 0 (Voronoi/Piecewise-Constant
-        approximation).
+            approximation).
         STORE_HESSIAN_SQRT_PER_CLUSTER: If True, computes and stores |H|^{1/2} for every
-        accepted cluster (useful for anisotropic trust regions downstream).
+            accepted cluster (useful for anisotropic trust regions downstream).
         LOG_MEM_STATS: If True, prints VRAM usage at key steps.
-        PROFILE_TIMING: If True, tracks detailed execution times for performance profiling.
+        PROFILE_TIMING: If True, tracks detailed execution times for performance
+            profiling.
 
     Returns:
         A dictionary containing the surrogate model parameters:

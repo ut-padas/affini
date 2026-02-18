@@ -4,10 +4,9 @@ from functools import partial
 
 import cupy as cp
 
-from ics26_experiments import get_N_INIT_CLUSTERS, get_N_MIN_PER_CLUSTER, get_N_TRAIN
-
 # Import your actual code structure
-from src.gpu_adaptive_clustering import adaptive_clustering
+from _experiments._deprecated.gpu_adaptive_clustering_final import adaptive_clustering
+from ics26_experiments import get_N_INIT_CLUSTERS, get_N_MIN_PER_CLUSTER, get_N_TRAIN
 from src.logging_utils import setup_logging
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
