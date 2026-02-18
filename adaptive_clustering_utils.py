@@ -1,7 +1,6 @@
 import logging
 import time
 
-import cupy as cp
 import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, xp
@@ -9,6 +8,31 @@ from src import IS_CUPY_BACKEND, Array, xp
 logger = logging.getLogger(__name__)
 
 TINY_EPS = 1e-12
+
+
+def scatter_maximum_1d(out: Array, idx: Array, vals: Array) -> None:
+    """
+    1D segmented max scatter: ``out[idx[i]] = max(out[idx[i]], vals[i])``.
+    Uses `cupyx.scatter_max` on GPU and `numpy.maximum.at` semantics on CPU.
+    Eg:
+        out = [0, 0, 0]
+        idx = [0, 1, 0, 2, 1]
+        vals = [1, 2, 3, 4, 0]
+        scatter_maximum_1d(out, idx, vals)
+        # out is now [3, 2, 4]
+
+    Args:
+        out: (K,) output array updated in-place.
+        idx: (N,) integer indices in [0, K).
+        vals: (N,) values to reduce via max per index.
+    """
+    if IS_CUPY_BACKEND:
+        from cupyx import scatter_max as cupy_scatter_max  # type: ignore[import]
+
+        cupy_scatter_max(out, idx, vals)
+    else:
+        xp.maximum.at(out, idx, vals)
+
 
 # -----------------------------------------------------------------------------
 # 1. CUDA KERNELS
@@ -316,203 +340,295 @@ void fused_q_dist(
 }
 """
 
-# Compilation of RawModules
-_mod_taylor = xp.RawModule(code=_taylor_metric_kernel_code)
-_kern_taylor = _mod_taylor.get_function("fused_taylor_metric")
+# Compilation of RawModules (only when CuPy backend is available)
+if IS_CUPY_BACKEND:
+    _mod_taylor = xp.RawModule(code=_taylor_metric_kernel_code)
+    _kern_taylor = _mod_taylor.get_function("fused_taylor_metric")
 
-_mod_taylor_comp = xp.RawModule(code=_taylor_comp_abs_kernel_code)
-_kern_taylor_comp = _mod_taylor_comp.get_function("fused_taylor_component_abs")
+    _mod_taylor_comp = xp.RawModule(code=_taylor_comp_abs_kernel_code)
+    _kern_taylor_comp = _mod_taylor_comp.get_function("fused_taylor_component_abs")
 
-_mod_metrics = xp.RawModule(code=_metrics_kernel_code)
-_kern_metrics = _mod_metrics.get_function("fused_pointwise_metrics")
+    _mod_metrics = xp.RawModule(code=_metrics_kernel_code)
+    _kern_metrics = _mod_metrics.get_function("fused_pointwise_metrics")
 
-_mod_stats = xp.RawModule(code=_stats_kernel_code)
-_kern_stats = _mod_stats.get_function("fused_hessian_stats")
+    _mod_stats = xp.RawModule(code=_stats_kernel_code)
+    _kern_stats = _mod_stats.get_function("fused_hessian_stats")
 
-_mod_proj = xp.RawModule(code=_proj_score_kernel_code)
-_kern_proj = _mod_proj.get_function("fused_proj_score")
+    _mod_proj = xp.RawModule(code=_proj_score_kernel_code)
+    _kern_proj = _mod_proj.get_function("fused_proj_score")
 
-_mod_q = xp.RawModule(code=_q_kernel_code)
-_kern_q = _mod_q.get_function("fused_q_dist")
+    _mod_q = xp.RawModule(code=_q_kernel_code)
+    _kern_q = _mod_q.get_function("fused_q_dist")
 
 
 # -----------------------------------------------------------------------------
 # 2. PYTHON WRAPPERS
+# Each function dispatches to the raw CUDA kernel (IS_CUPY_BACKEND=True)
+# or a fully-vectorized xp fallback (IS_CUPY_BACKEND=False).
 # -----------------------------------------------------------------------------
 def run_fused_taylor_metric(X, mus, labels, F_vals, f_mus, g_mus, scales, mode):
     """
     Calculates aggregated Taylor error per point (Sum-sq or Max-Rel).
     Mode: 0 = L2 (Sum of Squares), 1 = Linf (Max Relative)
     """
-    N, D = X.shape
-    FD = F_vals.shape[1]
-    E_out = xp.empty((N,), dtype=xp.float64)
-    labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-    block = 256
-    grid = (N + block - 1) // block
-    scales_ptr = xp.ascontiguousarray(scales, dtype=xp.float64)
-    _kern_taylor(
-        (grid,),
-        (block,),
-        (
-            xp.ascontiguousarray(X),
-            xp.ascontiguousarray(mus),
-            labels_64,
-            xp.ascontiguousarray(F_vals),
-            xp.ascontiguousarray(f_mus),
-            xp.ascontiguousarray(g_mus),
-            scales_ptr,
-            E_out,
-            N,
-            D,
-            FD,
-            int(mode),
-        ),
-    )
-    return E_out
+    if IS_CUPY_BACKEND:
+        N, D = X.shape
+        FD = F_vals.shape[1]
+        E_out = xp.empty((N,), dtype=xp.float64)
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        block = 256
+        grid = (N + block - 1) // block
+        scales_ptr = xp.ascontiguousarray(scales, dtype=xp.float64)
+        _kern_taylor(
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(X),
+                xp.ascontiguousarray(mus),
+                labels_64,
+                xp.ascontiguousarray(F_vals),
+                xp.ascontiguousarray(f_mus),
+                xp.ascontiguousarray(g_mus),
+                scales_ptr,
+                E_out,
+                N,
+                D,
+                FD,
+                int(mode),
+            ),
+        )
+        return E_out
+    else:
+        # dx[i] = X[i] - mus[labels[i]]              shape: (N, D)
+        # lin[i,j] = g_mus[labels[i], j, :] . dx[i]  shape: (N, FD)
+        # diff[i,j] = F_vals[i,j] - (f_mus[labels[i],j] + lin[i,j])
+        dx = X - mus[labels]  # (N, D)
+        lin = xp.einsum("nfd,nd->nf", g_mus[labels], dx)  # (N, FD)
+        diff = F_vals - (f_mus[labels] + lin)  # (N, FD)
+        if mode == 0:
+            # L2: sum of squared errors across output dims
+            E_out = xp.sum(diff**2, axis=1)  # (N,)
+        else:
+            # Linf: max relative error across output dims
+            E_out = xp.max(xp.abs(diff) / (scales[None, :] + TINY_EPS), axis=1)  # (N,)
+        return E_out
 
 
 def run_fused_taylor_comp_abs(X, mus, labels, F_vals, f_mus, g_mus, comp_idx):
     """Calculates Absolute Taylor error for a single specific output component."""
-    N, D = X.shape
-    FD = F_vals.shape[1]
-    E_out = xp.empty((N,), dtype=xp.float64)
-    labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-    block = 256
-    grid = (N + block - 1) // block
-    _kern_taylor_comp(
-        (grid,),
-        (block,),
-        (
-            xp.ascontiguousarray(X),
-            xp.ascontiguousarray(mus),
-            labels_64,
-            xp.ascontiguousarray(F_vals),
-            xp.ascontiguousarray(f_mus),
-            xp.ascontiguousarray(g_mus),
-            E_out,
-            N,
-            D,
-            FD,
-            int(comp_idx),
-        ),
-    )
-    return E_out
+    if IS_CUPY_BACKEND:
+        N, D = X.shape
+        FD = F_vals.shape[1]
+        E_out = xp.empty((N,), dtype=xp.float64)
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        block = 256
+        grid = (N + block - 1) // block
+        _kern_taylor_comp(
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(X),
+                xp.ascontiguousarray(mus),
+                labels_64,
+                xp.ascontiguousarray(F_vals),
+                xp.ascontiguousarray(f_mus),
+                xp.ascontiguousarray(g_mus),
+                E_out,
+                N,
+                D,
+                FD,
+                int(comp_idx),
+            ),
+        )
+        return E_out
+    else:
+        # E_out[i] = | F_vals[i, comp_idx] - (f_mus[labels[i], comp_idx]
+        #                                      + g_mus[labels[i], comp_idx, :] . dx[i]) |
+        dx = X - mus[labels]  # (N, D)
+        g_comp = g_mus[labels, comp_idx, :]  # (N, D)
+        dot = xp.sum(dx * g_comp, axis=1)  # (N,)
+        f_lin = f_mus[labels, comp_idx] + dot  # (N,)
+        E_out = xp.abs(F_vals[:, comp_idx] - f_lin)  # (N,)
+        return E_out
 
 
 def run_fused_metrics(X, G, mus, g_mus, labels):
     """Calculates point radii and Lipschitz ratio estimates."""
-    N, D = X.shape
-    FD = G.shape[1]
-    dist_out = xp.empty((N,), dtype=xp.float64)
-    ratio_out = xp.empty((N,), dtype=xp.float64)
-    labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-    block = 256
-    grid = (N + block - 1) // block
-    _kern_metrics(
-        (grid,),
-        (block,),
-        (
-            xp.ascontiguousarray(X),
-            xp.ascontiguousarray(G),
-            xp.ascontiguousarray(mus),
-            xp.ascontiguousarray(g_mus),
-            labels_64,
-            dist_out,
-            ratio_out,
-            N,
-            D,
-            FD,
-        ),
-    )
-    return dist_out, ratio_out
+    if IS_CUPY_BACKEND:
+        N, D = X.shape
+        FD = G.shape[1]
+        dist_out = xp.empty((N,), dtype=xp.float64)
+        ratio_out = xp.empty((N,), dtype=xp.float64)
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        block = 256
+        grid = (N + block - 1) // block
+        _kern_metrics(
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(X),
+                xp.ascontiguousarray(G),
+                xp.ascontiguousarray(mus),
+                xp.ascontiguousarray(g_mus),
+                labels_64,
+                dist_out,
+                ratio_out,
+                N,
+                D,
+                FD,
+            ),
+        )
+        return dist_out, ratio_out
+    else:
+        dx = X - mus[labels]  # (N, D)
+        dist = xp.sqrt(xp.sum(dx**2, axis=1))  # (N,)
+
+        # dG[i,j,:] = G[i,j,:] - g_mus[labels[i],j,:]   shape: (N, FD, D)
+        dG = G - g_mus[labels]  # (N, FD, D)
+        # ||dG[i,j,:]||_2 / dist[i]  →  max over j
+        dg_norms = xp.sqrt(xp.sum(dG**2, axis=2))  # (N, FD)
+        safe_dist = xp.maximum(dist, TINY_EPS)
+        ratio = xp.max(dg_norms / safe_dist[:, None], axis=1)  # (N,)
+        # Zero out ratio where point coincides with centroid
+        ratio = xp.where(dist > TINY_EPS, ratio, xp.zeros_like(ratio))
+        return dist, ratio
 
 
 def run_fused_stats(
     X, mus, labels, K, D, FD, active_comps, G=None, g_mus=None, calc_E=False
 ):
     """Accumulates Covariance (C) and Gradient Interaction (E) matrices."""
-    N = X.shape[0]
-    C_out = xp.zeros((K, D, D), dtype=xp.float64)
-    E_out = (
-        xp.zeros((K, D, D), dtype=xp.float64)
-        if calc_E
-        else xp.array([], dtype=xp.float64)
-    )
-    G_ptr = G if G is not None else X
-    g_mus_ptr = g_mus if g_mus is not None else mus
-    labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-    ac_32 = xp.ascontiguousarray(active_comps, dtype=xp.int32)
-    block = 256
-    grid = (N + block - 1) // block
-    _kern_stats(
-        (grid,),
-        (block,),
-        (
-            xp.ascontiguousarray(X),
-            xp.ascontiguousarray(G_ptr),
-            xp.ascontiguousarray(mus),
-            xp.ascontiguousarray(g_mus_ptr),
-            labels_64,
-            ac_32,
-            C_out,
-            E_out,
-            N,
-            D,
-            FD,
-            K,
-            calc_E,
-        ),
-    )
-    return C_out, E_out
+    if IS_CUPY_BACKEND:
+        N = X.shape[0]
+        C_out = xp.zeros((K, D, D), dtype=xp.float64)
+        E_out = (
+            xp.zeros((K, D, D), dtype=xp.float64)
+            if calc_E
+            else xp.array([], dtype=xp.float64)
+        )
+        G_ptr = G if G is not None else X
+        g_mus_ptr = g_mus if g_mus is not None else mus
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        ac_32 = xp.ascontiguousarray(active_comps, dtype=xp.int32)
+        block = 256
+        grid = (N + block - 1) // block
+        _kern_stats(
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(X),
+                xp.ascontiguousarray(G_ptr),
+                xp.ascontiguousarray(mus),
+                xp.ascontiguousarray(g_mus_ptr),
+                labels_64,
+                ac_32,
+                C_out,
+                E_out,
+                N,
+                D,
+                FD,
+                K,
+                calc_E,
+            ),
+        )
+        return C_out, E_out
+    else:
+        # C_k = sum_{i: label=k} (x_i - mu_k)(x_i - mu_k)^T
+        # E_k = sum_{i: label=k} (x_i - mu_k)(g_active(x_i) - g_active(mu_k))^T
+        N = X.shape[0]
+        dx = X - mus[labels]  # (N, D)
+        C_out = xp.zeros((K, D, D), dtype=xp.float64)
+        # Outer product per point: (N, D, D)
+        outer_C = dx[:, :, None] * dx[:, None, :]  # (N, D, D)
+        xp.add.at(C_out, labels, outer_C)
+        C_out = xp.asarray(C_out)
+
+        if calc_E:
+            assert G is not None and g_mus is not None
+            # active component for each point: active_comps[labels[i]]
+            active_j = active_comps[labels]  # (N,)
+            n_idx = xp.arange(N)
+            # g_x[i,:] = G[i, active_j[i], :]      shape: (N, D)
+            # g_mu[i,:] = g_mus[labels[i], active_j[i], :]  shape: (N, D)
+            g_x = G[n_idx, active_j, :]  # (N, D)
+            g_mu = g_mus[
+                labels, active_j, :
+            ]  # (N, D) — fancy index: (labels[i], active_j[i])
+            # Note: g_mus[labels, active_j] uses paired fancy indexing correctly here
+            dg = g_x - g_mu  # (N, D)
+            # E contribution: dx_r * dg_c  →  outer product (N, D, D)
+            outer_E = dx[:, :, None] * dg[:, None, :]  # (N, D, D)
+            E_out = xp.zeros((K, D, D), dtype=xp.float64)
+            xp.add.at(E_out, labels, outer_E)
+            E_out = xp.asarray(E_out)
+        else:
+            E_out = xp.array([], dtype=xp.float64)
+
+        return C_out, E_out
 
 
 def run_fused_score(X, mus, labels, M, v):
-    """Projects points onto split direction."""
-    N, D = X.shape
-    scores = xp.empty((N,), dtype=xp.float64)
-    labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-    block = 256
-    grid = (N + block - 1) // block
-    _kern_proj(
-        (grid,),
-        (block,),
-        (
-            xp.ascontiguousarray(X),
-            xp.ascontiguousarray(mus),
-            labels_64,
-            xp.ascontiguousarray(M),
-            xp.ascontiguousarray(v),
-            scores,
-            N,
-            D,
-        ),
-    )
-    return scores
+    """Projects points onto split direction: score[i] = v[k]^T M[k] (x[i] - mu[k])."""
+    if IS_CUPY_BACKEND:
+        N, D = X.shape
+        scores = xp.empty((N,), dtype=xp.float64)
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        block = 256
+        grid = (N + block - 1) // block
+        _kern_proj(
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(X),
+                xp.ascontiguousarray(mus),
+                labels_64,
+                xp.ascontiguousarray(M),
+                xp.ascontiguousarray(v),
+                scores,
+                N,
+                D,
+            ),
+        )
+        return scores
+    else:
+        # z[i] = M[labels[i]] @ (x[i] - mu[labels[i]])  shape: (N, D)
+        # score[i] = v[labels[i]] . z[i]
+        dx = X - mus[labels]  # (N, D)
+        z = xp.einsum("nij,nj->ni", M[labels], dx)  # (N, D)
+        return xp.sum(z * v[labels], axis=1)  # (N,)
 
 
 def run_fused_q_dist(X, mus, labels, U, L_inv):
-    """Calculates Ellipsoidal distance for trust ellipsoids."""
-    N, D = X.shape
-    dist_out = xp.empty((N,), dtype=xp.float64)
-    labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-    block = 256
-    grid = (N + block - 1) // block
-    _kern_q(
-        (grid,),
-        (block,),
-        (
-            xp.ascontiguousarray(X),
-            xp.ascontiguousarray(mus),
-            labels_64,
-            xp.ascontiguousarray(U),
-            xp.ascontiguousarray(L_inv),
-            dist_out,
-            N,
-            D,
-        ),
-    )
-    return dist_out
+    """Calculates Ellipsoidal distance for trust ellipsoids: dist^2 = (x-mu)^T Q (x-mu)."""
+    if IS_CUPY_BACKEND:
+        N, D = X.shape
+        dist_out = xp.empty((N,), dtype=xp.float64)
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        block = 256
+        grid = (N + block - 1) // block
+        _kern_q(
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(X),
+                xp.ascontiguousarray(mus),
+                labels_64,
+                xp.ascontiguousarray(U),
+                xp.ascontiguousarray(L_inv),
+                dist_out,
+                N,
+                D,
+            ),
+        )
+        return dist_out
+    else:
+        # Q = U diag(L_inv) U^T,  so (x-mu)^T Q (x-mu) = sum_j proj_j^2 * L_inv_j
+        # where proj_j = (x - mu) . U[:,j]
+        dx = X - mus[labels]  # (N, D)
+        # proj[i,j] = dx[i,:] . U[labels[i],:,j]  →  dx @ U  (batch matmul)
+        # U[labels] shape: (N, D, D);  proj = einsum("ni,nij->nj", dx, U[labels])
+        proj = xp.einsum("ni,nij->nj", dx, U[labels])  # (N, D)
+        return xp.sum(proj**2 * L_inv[labels], axis=1)  # (N,)
 
 
 # -----------------------------------------------------------------------------
@@ -529,13 +645,15 @@ class CudaTimer:
 
     def __enter__(self):
         if self.enabled:
-            cp.cuda.Device().synchronize()
+            if IS_CUPY_BACKEND:
+                xp.cuda.Device().synchronize()
             self.t0 = time.perf_counter()
         return self
 
     def __exit__(self, *args):
         if self.enabled:
-            cp.cuda.Device().synchronize()
+            if IS_CUPY_BACKEND:
+                xp.cuda.Device().synchronize()
             dt = time.perf_counter() - self.t0  # type: ignore
             self.stats[self.key] += dt
 
@@ -556,7 +674,7 @@ def convert_to_3d_array(G: Array) -> Array:
     return G
 
 
-def allocate_output_buffers_cpu(
+def allocate_output_buffers_host(
     MAX_CLUSTERS_EST: int, d: int, fd: int, store_hess: bool
 ) -> tuple[dict, int]:
     """Allocates host (CPU) memory for final clusters."""
@@ -576,7 +694,7 @@ def allocate_output_buffers_cpu(
     return buffers, cap
 
 
-def adjust_buffer_capacity_cpu(
+def adjust_buffer_capacity_host(
     buffers: dict,
     current_count: int,
     current_cap: int,
