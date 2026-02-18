@@ -49,6 +49,19 @@ else:
 
 xp = array_namespace(_dummy)
 
+
+def _to_host(arr: Array) -> Array:
+    """Move array to host (NumPy) if it's on device (CuPy)."""
+    if hasattr(arr, "get"):  # CuPy array
+        return xp.asnumpy(arr)
+    return arr
+
+
+def _to_device(arr: Array) -> Array:
+    """Move array to device (CuPy) if available, else keep as NumPy."""
+    return xp.asarray(arr)
+
+
 _file_path = Path(__file__).parent.resolve()
 PROJECT_DIR = _file_path.parent.resolve()
 FIGURES_DIR = PROJECT_DIR / "figures"

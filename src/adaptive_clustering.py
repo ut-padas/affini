@@ -19,25 +19,13 @@ import numpy as np
 from mpi4py import MPI
 from sklearn.cluster import KMeans
 
-from src import IS_CUPY_BACKEND, Array, get_mpi_rank, xp
+from src import IS_CUPY_BACKEND, Array, _to_device, _to_host, get_mpi_rank, xp
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
 
 logger = logging.getLogger(__name__)
 
 TINY_EPS = 1e-12
-
-
-def _to_host(arr: Array) -> Array:
-    """Move array to host (NumPy) if it's on device (CuPy)."""
-    if hasattr(arr, "get"):  # CuPy array
-        return xp.asnumpy(arr)
-    return arr
-
-
-def _to_device(arr: np.ndarray) -> Array:
-    """Move array to device (CuPy) if available, else keep as NumPy."""
-    return xp.asarray(arr)
 
 
 def scatter_maximum_1d(out: Array, idx: Array, vals: Array) -> None:
@@ -1097,7 +1085,6 @@ def adaptive_clustering(
         # Initial clustering
         _t1 = time.perf_counter()
         if INITIAL_CLUSTERING_METHOD == "kmeans":
-            _t1 = time.perf_counter()
             if IS_CUPY_BACKEND:
                 from cuml.cluster import KMeans as cuKMeans  # type: ignore[import]
 
@@ -1118,7 +1105,6 @@ def adaptive_clustering(
                 knn_dbscan,
             )  # lazy: avoids UCX atexit registration at module load
 
-            _t1 = time.perf_counter()
             _device = "gpu" if IS_CUPY_BACKEND else "cpu"
             labels0 = _to_host(
                 knn_dbscan(
@@ -1465,7 +1451,7 @@ if __name__ == "__main__":
         from matplotlib.patches import Circle, Ellipse
 
         if IS_CUPY_BACKEND:
-            results = {k: xp.asnumpy(v) for k, v in results.items()}
+            results = {k: _to_host(v) for k, v in results.items()}
 
         # 1 plot 2 subplots (1X2)
         # Subplot 1: scatter of final cluster centroids on contourf
@@ -1610,7 +1596,7 @@ if __name__ == "__main__":
     # Save npz file of results
     npz_fpath = img_fpath.with_suffix(".npz")
     if IS_CUPY_BACKEND:
-        results = {k: xp.asnumpy(v) for k, v in results.items()}
+        results = {k: _to_host(v) for k, v in results.items()}
     xp.savez_compressed(npz_fpath, **results)
 
     # Finalize MPI cleanly, then use os._exit to bypass Python atexit/GC

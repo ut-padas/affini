@@ -5,24 +5,10 @@ import numpy as np
 from scipy.integrate import solve_ivp
 
 # Assumes these modules exist in your project structure
-from src import IS_CUPY_BACKEND, Array, xp
+from src import IS_CUPY_BACKEND, Array, _to_device, _to_host, xp
 from src.problems.adjoint_solver import parallel_adjoint_solver
 from src.problems.lorenz96 import lorenz96, lorenz96_grad
 from src.problems.sensitivities_solver import parallel_sensitivities_solver
-
-
-def _ensure_numpy(x: Array) -> np.ndarray:
-    """Helper to ensure data is on CPU for scipy/multiprocessing."""
-    if IS_CUPY_BACKEND:
-        return xp.asnumpy(x)
-    return x
-
-
-def _ensure_backend(x: Array) -> Array:
-    """Helper to return data to the configured backend (CPU or GPU)."""
-    if IS_CUPY_BACKEND:
-        return xp.asarray(x)
-    return x
 
 
 def lorenz96_flowmap(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> Array:
@@ -41,7 +27,7 @@ def lorenz96_flowmap(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> Array:
     Returns:
         XF: (N, d) data matrix of states at time tf.
     """
-    X0_np = _ensure_numpy(X0)
+    X0_np = _to_host(X0)
     n_trajectories, d = X0_np.shape
     X0_flat = X0_np.ravel()
 
@@ -64,7 +50,7 @@ def lorenz96_flowmap(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> Array:
     # Reshape result: sol.y is (n_vars, 1) -> transpose -> (1, n_vars) -> reshape
     XF = sol.y.T.reshape(n_trajectories, d)
 
-    return _ensure_backend(XF)
+    return _to_device(XF)
 
 
 def lorenz96_flowmap_grad(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> Array:
@@ -81,7 +67,7 @@ def lorenz96_flowmap_grad(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> A
     Returns:
         DXF: (N, d, d) Jacobian matrices d(x_tf)/d(x_0).
     """
-    X0_np = _ensure_numpy(X0)
+    X0_np = _to_host(X0)
     N, d = X0_np.shape
 
     # KEY FIX: Use partial instead of lambda.
@@ -92,7 +78,7 @@ def lorenz96_flowmap_grad(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> A
     # We only need the sensitivities (index 1), ignoring the flowmap state (index 0)
     _, DXF = parallel_sensitivities_solver(rhs, lorenz96_grad, X0_np, tf)
 
-    return _ensure_backend(DXF)
+    return _to_device(DXF)
 
 
 def lorenz96_flowmap_oracle_first_component(
@@ -109,7 +95,7 @@ def lorenz96_flowmap_oracle_first_component(
     Returns:
         Tuple (XF, DXF).
     """
-    X0_np = _ensure_numpy(X0)
+    X0_np = _to_host(X0)
     N, d = X0_np.shape
 
     # Use partial for picklability
@@ -118,4 +104,4 @@ def lorenz96_flowmap_oracle_first_component(
     e1 = np.eye(d)[0]
     XF, DXF = parallel_adjoint_solver(rhs, lorenz96_grad, X0_np, tf, e1)
 
-    return _ensure_backend(XF), _ensure_backend(DXF)
+    return _to_device(XF), _to_device(DXF)
