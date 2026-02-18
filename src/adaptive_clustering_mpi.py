@@ -19,7 +19,7 @@ import numpy as np
 from mpi4py import MPI
 from sklearn.cluster import KMeans
 
-from src import IS_CUPY_BACKEND, Array, xp
+from src import IS_CUPY_BACKEND, Array, get_mpi_rank, xp
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
 
@@ -1409,11 +1409,11 @@ if __name__ == "__main__":
         STORE_TREE_DATA=True,
     )
 
-    # Only rank 0 gets results; other ranks return None.
-    if results is None:
-        MPI.Finalize()
-        os._exit(0)
+    # Only rank 0 gets results; other MPI workers exit cleanly here.
+    if get_mpi_rank() != 0:
+        raise SystemExit(0)
 
+    assert results is not None, "Rank 0 should have results after adaptive_clustering"
     print("-" * 40)
     print(f"Final Cluster Count: {results['centroids'].shape[0]:,}")
 
