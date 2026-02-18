@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Union
 
-from src import IS_CUPY_BACKEND, Array, xp
+from src import IS_CUPY_BACKEND, Array, get_mpi_rank, xp
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,7 @@ class HATANNSurrogate:
             )
 
         if not IS_CUPY_BACKEND:
-            from src.adaptive_clustering import adaptive_clustering
+            from src.adaptive_clustering_mpi import adaptive_clustering
 
             # 1. Adaptive Clustering
             t0 = time.perf_counter()
@@ -169,6 +169,9 @@ class HATANNSurrogate:
                 STORE_TREE_DATA=STORE_TREE_DATA,
                 INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
             )
+            # Non-rank-0 MPI workers return None — their work is done.
+            if results is None:
+                return
 
             centroids = xp.asarray(results["centroids"])
             f_vals = xp.asarray(results["f"])
@@ -576,7 +579,7 @@ if __name__ == "__main__":
         "--tol", type=float, default=5e-2, help="Tolerance for training and evaluation"
     )
     parser.add_argument(
-        "--n-train", type=int, default=400_000, help="Number of training samples"
+        "--n-train", type=float, default=400_000, help="Number of training samples"
     )
     parser.add_argument(
         "--n-test", type=int, default=100_000, help="Number of test samples"
@@ -584,7 +587,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n-init-clusters",
         type=int,
-        default=25,
+        default=30,
         help="Number of initial clusters for adaptive clustering",
     )
     parser.add_argument(
@@ -617,7 +620,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     dim = args.dim
     TOL = args.tol
-    N_train = args.n_train
+    N_train = int(args.n_train)
     N_test = args.n_test
     N_INIT_CLUSTERS = args.n_init_clusters
     N_MIN_PER_CLUSTER = args.n_min_per_cluster
@@ -641,13 +644,19 @@ if __name__ == "__main__":
     DIM = 2
     domain = xp.array([[-3, 3] * DIM]).reshape(DIM, 2)
 
-    # Sample Training Data
-    X_train = DataSampler.sample_latin_hypercube(domain, N=N_train, seed=SEED)
-    X_train = xp.asarray(X_train)
+    # Sample Training Data only on rank 0.
+    # Non-zero ranks pass None — adaptive_clustering_mpi only accesses X on rank 0,
+    # then scatters partitions internally. No broadcast needed.
+    if get_mpi_rank() == 0:
+        X_train = xp.asarray(
+            DataSampler.sample_latin_hypercube(domain, N=N_train, seed=SEED)
+        )
+        print("--- Training ---")
+    else:
+        X_train = None
 
     # 2. Initialize Surrogate
     surrogate = HATANNSurrogate()
-    print("--- Training ---")
     _start_train_time = time.perf_counter()
 
     # Use save/load functionality - will load from cache if exists, otherwise train and save
@@ -671,6 +680,11 @@ if __name__ == "__main__":
         PROFILE_TIMING=True,
     )
     _end_train_time = time.perf_counter()
+
+    # Only rank 0 has a trained model; other MPI workers exit cleanly here.
+    if get_mpi_rank() != 0:
+        raise SystemExit(0)
+
     N_CLUSTERS = surrogate.get_number_of_sources()
     print(
         f"Trained with {N_CLUSTERS:,} clusters in {_end_train_time - _start_train_time:.2f}s"
