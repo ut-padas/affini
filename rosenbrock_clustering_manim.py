@@ -15,7 +15,7 @@ from manim import *
 from matplotlib.colors import LogNorm
 from tqdm import tqdm
 
-from _experiments._deprecated.adaptive_clustering_non_mpi import adaptive_clustering
+from src.adaptive_clustering import adaptive_clustering
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
 DOMAIN = [-2, 3]
@@ -32,11 +32,12 @@ result = adaptive_clustering(
     g_fn=rosenbrock_grad,
     TOL=TOL,
     ERROR_METRIC="Linf-local",
+    INITIAL_CLUSTERING_METHOD="kmeans",
+    CLUSTERING_MATRIX="Hessian_LSQ",
     NUM_INITIAL_CLUSTERS=10,
     STORE_TREE_DATA=True,
-    USE_HESSIAN_INFORMED_SPLIT=True,
-    INITIAL_CLUSTERING_METHOD="kmeans",
 )
+assert result is not None, "Adaptive clustering failed to produce a result"
 tree_data = result["tree_data"]
 
 
