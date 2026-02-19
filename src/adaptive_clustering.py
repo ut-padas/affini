@@ -682,6 +682,16 @@ def _run_local_refinement(
             logger.info(
                 f"R{rank:02} L{level:02}: No bad clusters to refine, terminating."
             )
+            # All clusters were accepted; update level_stats before exiting so the
+            # final level shows good_clusters correctly in profiling / heatmaps.
+            if profiling_stats["level_stats"]:
+                profiling_stats["level_stats"][-1].update(
+                    {
+                        "clusters_level_end": 0,
+                        "good_clusters": int(K_good),
+                        "num_pts_next_level": 0,
+                    }
+                )
             break
 
         with CudaTimer("time_transition", profiling_stats, PROFILE_TIMING):
@@ -1084,9 +1094,14 @@ def adaptive_clustering(
     if STORE_TREE_DATA:
         local_result_host["tree_data"] = local_tree_data
 
-    # Reduce total_f_evals and generated pts across all ranks
-    total_f_evals_all = comm.reduce(local_f_evals, op=MPI.SUM, root=0)
-    total_gen_pts_all = comm.reduce(local_gen_pts, op=MPI.SUM, root=0)
+    # Stamp per-rank scalars into profiling_stats before the gather
+    profiling_stats["num_levels"] = last_level
+    profiling_stats["num_generated_pts"] = local_gen_pts
+    profiling_stats["total_f_evals"] = local_f_evals
+    profiling_stats["num_final_clusters"] = out_count
+    profiling_stats["time_total"] = time.perf_counter() - _start_time
+    # Piggyback profiling stats on the existing gather (no extra comms round)
+    local_result_host["_profiling_stats"] = profiling_stats
 
     # ------------------------------------------------------------------
     # 5. Gather & merge on rank 0
@@ -1095,7 +1110,11 @@ def adaptive_clustering(
 
     if rank == 0:
         logger.info("R00: Merging results from all ranks.")
-        array_keys = [k for k in all_results[0] if k != "tree_data"]  # type: ignore
+
+        # Extract per-rank profiling stats piggybacked on the gather payload
+        all_profiling_stats: list[dict] = [r.pop("_profiling_stats") for r in all_results]  # type: ignore
+
+        array_keys = [k for k in all_results[0] if k not in ("tree_data",)]  # type: ignore
 
         merged: dict[str, Any] = {}
         for k in array_keys:
@@ -1136,16 +1155,46 @@ def adaptive_clustering(
         total_clusters = int(merged["centroids"].shape[0])
         _total_time = time.perf_counter() - _start_time
 
-        profiling_stats["num_levels"] = last_level
-        profiling_stats["num_generated_pts"] = int(total_gen_pts_all)  # type: ignore
-        profiling_stats["total_f_evals"] = int(total_f_evals_all)  # type: ignore
-        profiling_stats["num_final_clusters"] = total_clusters
-        profiling_stats["time_total"] = _total_time
+        # ------------------------------------------------------------------
+        # Build profiling_stats: consolidated (reduced across ranks) + per_rank
+        # ------------------------------------------------------------------
+        _timer_keys = [
+            k
+            for k in all_profiling_stats[0]
+            if k.startswith("time_") and k != "time_total"
+        ]
+        _sum_keys = ["num_generated_pts", "total_f_evals"]
 
-        merged["num_levels"] = last_level
-        merged["num_generated_pts"] = int(total_gen_pts_all)  # type: ignore
-        merged["total_f_evals"] = int(total_f_evals_all)  # type: ignore
-        merged["profiling_stats"] = profiling_stats
+        consolidated_profiling: dict[str, Any] = {
+            # Wall-clock total is the slowest rank (critical path)
+            "time_total": _total_time,
+            # N0 is only populated by rank 0
+            "N0": all_profiling_stats[0].get("N0", 0),
+            # Deepest level reached across all ranks
+            "num_levels": max(ps["num_levels"] for ps in all_profiling_stats),
+            # All final clusters already merged above
+            "num_final_clusters": total_clusters,
+            # Flat list of every per-rank level entry, sorted by (level, rank)
+            "level_stats": sorted(
+                [entry for ps in all_profiling_stats for entry in ps["level_stats"]],
+                key=lambda e: (e["level"], e["rank"]),
+            ),
+        }
+        # Summed timers (cumulative compute across all ranks)
+        for k in _timer_keys:
+            consolidated_profiling[k] = sum(
+                ps.get(k, 0.0) for ps in all_profiling_stats
+            )
+        # Summed scalar counts
+        for k in _sum_keys:
+            consolidated_profiling[k] = sum(ps.get(k, 0) for ps in all_profiling_stats)
+        # Attach the per-rank breakdown
+        consolidated_profiling["per_rank"] = all_profiling_stats
+
+        merged["num_levels"] = consolidated_profiling["num_levels"]
+        merged["num_generated_pts"] = consolidated_profiling["num_generated_pts"]
+        merged["total_f_evals"] = consolidated_profiling["total_f_evals"]
+        merged["profiling_stats"] = consolidated_profiling
 
         logger.info(
             f"R00: final clusters={total_clusters:,}, " f"total time={_total_time:.2f}s"
@@ -1162,7 +1211,10 @@ if __name__ == "__main__":
 
     from src import FIGURES_DIR
     from src.logging_utils import setup_logging
-    from src.plotter_utils import plot_adaptive_clustering_results
+    from src.plotter_utils import (
+        plot_adaptive_clustering_results,
+        plot_mpi_level_heatmap,
+    )
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG)
@@ -1287,6 +1339,7 @@ if __name__ == "__main__":
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
         STORE_TREE_DATA=STORE_TREE_DATA,
         LOG_MEM_STATS=False,
+        PROFILE_TIMING=True,
     )
 
     # Only rank 0 gets results; other MPI workers exit cleanly here.
@@ -1332,6 +1385,13 @@ if __name__ == "__main__":
         )
     else:
         print("Skipping plot (d != 2 or too many clusters).")
+
+    # MPI × Level workload heatmap (good_clusters is the primary workload signal)
+    for _heatmap_col in ("good_clusters", "clusters_start", "num_pts_next_level"):
+        _hm_path = img_fpath.with_name(
+            img_fpath.stem + f"_mpi_heatmap_{_heatmap_col}.png"
+        )
+        plot_mpi_level_heatmap(results, _hm_path, values_col=_heatmap_col)
 
     # Save npz file of results
     npz_fpath = img_fpath.with_suffix(".npz")
