@@ -7,7 +7,7 @@ import numpy as np
 from mpi4py import MPI
 from sklearn.cluster import KMeans
 
-from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _to_host, xp
+from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _get_mpi_size, _to_host, xp
 from src.adaptive_clustering_utils import (
     CudaTimer,
     adjust_buffer_capacity_host,
@@ -1370,6 +1370,7 @@ if __name__ == "__main__":
     setup_logging(console_level=logging.DEBUG)
 
     _rank = _get_mpi_rank()
+    _size = _get_mpi_size()
 
     AC_PLOTS_DIR = FIGURES_DIR / "adaptive_clustering_rosenbrock_rebalancing"
 
@@ -1453,7 +1454,7 @@ if __name__ == "__main__":
     AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     img_fpath = (
         AC_PLOTS_DIR
-        / f"mpi_rank{_rank}_ac_rosen{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}.png"
+        / f"mpi_sz{_size}_ac_rosen{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}.png"
     )
     _skip = DIM == 2 and img_fpath.exists() and not FORCE_REEXEC
     if _skip:
