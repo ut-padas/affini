@@ -1303,7 +1303,7 @@ if __name__ == "__main__":
     AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     img_fpath = (
         AC_PLOTS_DIR
-        / f"adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}.png"
+        / f"mpi_rank{_rank}_adaptive_clustering_rosenbrock_{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}.png"
     )
     _skip = DIM == 2 and img_fpath.exists() and not FORCE_REEXEC
     if _skip:
