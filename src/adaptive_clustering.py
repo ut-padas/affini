@@ -1162,6 +1162,7 @@ if __name__ == "__main__":
 
     from src import FIGURES_DIR
     from src.logging_utils import setup_logging
+    from src.plotter_utils import plot_adaptive_clustering_results
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG)
@@ -1319,151 +1320,16 @@ if __name__ == "__main__":
         for lvl, data in tree_data.items():
             print(f"Level {lvl:02}: Clusters: {data['centroids'].shape[0]:,}")
 
-    if DIM == 2 and len(results["centroids"]) <= 10_000:
-        import matplotlib.pyplot as plt
-        import numpy as np
-        from matplotlib.colors import LogNorm
-        from matplotlib.lines import Line2D
-        from matplotlib.patches import Circle, Ellipse
-
-        # 1 plot 2 subplots (1X2)
-        # Subplot 1: scatter of final cluster centroids on contourf
-        # Subplot 2: scatter of final cluster centroids with trust ellipsoids on contourf as well as circles corresponding to radii
-
-        results = {k: _to_host(v) for k, v in results.items()}
-        x = np.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
-        y = np.linspace(PROB_LIMS[0], PROB_LIMS[1], 400)
-        X_grid, Y_grid = np.meshgrid(x, y)
-
-        # Ensure input to rosenbrock is (N, 2)
-        grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
-        Z_grid = rosenbrock(grid_pts)
-        if hasattr(Z_grid, "get"):
-            Z_grid = Z_grid.get()  # Handle cupy return if needed
-        Z_grid = Z_grid.reshape(X_grid.shape)
-
-        fig, axs = plt.subplots(1, 2, figsize=(12, 5))
-
-        # -- Subplot 1: Contours + Centroids --
-        cs = axs[0].contourf(
-            X_grid,
-            Y_grid,
-            Z_grid,
-            levels=50,
-            cmap="viridis",
-            norm=LogNorm(),
+    n_centroids = results["centroids"].shape[0]
+    if DIM == 2 and n_centroids <= 10_000:
+        title = f"Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL}, ERROR_METRIC={ERROR_METRIC}), N_CLUSTERS={n_centroids:,}"
+        plot_adaptive_clustering_results(
+            results,
+            domain=PROB_LIMS,
+            f_fn=rosenbrock,
+            img_fpath=img_fpath,
+            title=title,
         )
-        fig.colorbar(cs, ax=axs[0])
-        axs[0].set_title("Rosenbrock Function Contour")
-        axs[0].set_xlabel("x")
-        axs[0].set_ylabel("y")
-        axs[0].set_aspect("equal")
-        axs[0].scatter(
-            results["centroids"][:, 0],
-            results["centroids"][:, 1],
-            c="red",
-            s=5,
-            label="Centroids",
-        )
-
-        # -- Subplot 2: Contours + OBBs --
-        cs2 = axs[1].contourf(
-            X_grid,
-            Y_grid,
-            Z_grid,
-            levels=50,
-            cmap="viridis",
-            norm=LogNorm(),
-        )
-        fig.colorbar(cs2, ax=axs[1])
-        axs[1].set_title("Adaptive Clustering with Oriented Bounding Boxes")
-        axs[1].set_xlabel("x")
-        axs[1].set_ylabel("y")
-        axs[1].set_aspect("equal")
-
-        # Plot Centroids
-        axs[1].scatter(
-            results["centroids"][:, 0],
-            results["centroids"][:, 1],
-            c="red",
-            s=5,
-            zorder=10,
-        )
-
-        # Draw Ellipsoids
-        centroids = results["centroids"]
-        Qs = results["Q"]
-        radii = results["radii"]
-
-        for i in range(centroids.shape[0]):
-            center = centroids[i]
-            Q = Qs[i]
-            radius = radii[i]
-
-            # Eigen-decomposition of Q
-            eigvals, eigvecs = np.linalg.eigh(Q)
-            order = eigvals.argsort()[::-1]
-            eigvals = eigvals[order]
-            eigvecs = eigvecs[:, order]
-
-            a, b = 2.0 * np.sqrt(1.0 / eigvals)  # 2-sigma lengths
-            angle = np.degrees(np.arctan2(eigvecs[1, 0], eigvecs[0, 0]))
-            ellip = Ellipse(
-                xy=center,
-                width=a,
-                height=b,
-                angle=angle,
-                edgecolor="blue",
-                facecolor="none",
-                lw=0.5,
-                alpha=0.7,
-            )
-            axs[1].add_patch(ellip)
-
-            # Draw radius circle with dashed line
-            circ = Circle(
-                xy=center,
-                radius=radius,
-                edgecolor="black",
-                facecolor="none",
-                lw=0.5,
-                alpha=0.7,
-                linestyle="dashed",
-            )
-            axs[1].add_patch(circ)
-
-        # Update legend to include ellipses and circles
-        legend_elements = [
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="w",
-                label="Centroids",
-                markerfacecolor="red",
-                markersize=5,
-            ),
-            Line2D([0], [0], color="blue", lw=0.5, label="Trust Ellipsoid"),
-            Line2D(
-                [0],
-                [0],
-                color="black",
-                lw=0.5,
-                linestyle="dashed",
-                label="Trust Radius",
-            ),
-        ]
-        axs[1].legend(handles=legend_elements, loc="upper right")
-
-        plt.tight_layout()
-        fig.suptitle(
-            f"Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL}, ERROR_METRIC={ERROR_METRIC}), N_CLUSTERS={len(centroids):,}",
-            fontsize=11,
-        )
-
-        plt.subplots_adjust(top=0.88)
-        plt.savefig(img_fpath, dpi=300)
-        print(f"Saved figure to {img_fpath}")
     else:
         print("Skipping plot (d != 2 or too many clusters).")
 
