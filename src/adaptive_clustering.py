@@ -1391,7 +1391,8 @@ if __name__ == "__main__":
         _hm_path = img_fpath.with_name(
             img_fpath.stem + f"_mpi_heatmap_{_heatmap_col}.png"
         )
-        plot_mpi_level_heatmap(results, _hm_path, values_col=_heatmap_col)
+        title = f"MPI x Level Heatmap ({_heatmap_col}) (Train Time={results['profiling_stats']['time_total']:.1f}s) (N_CLUSTERS={n_centroids:,})"
+        plot_mpi_level_heatmap(results, _hm_path, values_col=_heatmap_col, title=title)
 
     # Save npz file of results
     npz_fpath = img_fpath.with_suffix(".npz")
