@@ -1,13 +1,120 @@
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Ellipse
 
 from src import _to_device, _to_host
+
+_LEVEL_STAT_COL_LABELS: dict[str, str] = {
+    "good_clusters": "Good Clusters (Accepted)",
+    "clusters_start": "Clusters at Start of Level",
+    "clusters_level_end": "Clusters at End of Level",
+    "num_pts_next_level": "Points for Next Level",
+    "size_min": "Min Cluster Size",
+    "size_mean": "Mean Cluster Size",
+    "size_median": "Median Cluster Size",
+    "size_max": "Max Cluster Size",
+}
+
+
+def plot_mpi_level_heatmap(
+    results: dict[str, Any],
+    img_fpath: Path,
+    values_col: Literal[
+        "good_clusters",
+        "clusters_start",
+        "clusters_level_end",
+        "num_pts_next_level",
+        "size_min",
+        "size_mean",
+        "size_median",
+        "size_max",
+    ] = "good_clusters",
+    title: str | None = None,
+) -> None:
+    """
+    Plots a heatmap of a per-rank, per-level statistic from ``level_stats``
+    collected during adaptive clustering.
+
+    Rows are BFS levels, columns are MPI ranks.  Cell colour and annotation
+    reflect the chosen ``values_col``.  Ranks / levels that were idle at a
+    given level are shown in white (zero).
+
+    Args:
+        results: Return value of ``adaptive_clustering`` (rank 0 only).
+        img_fpath: Output path for the saved figure.
+        values_col: Which field from each ``level_stats`` entry to visualise.
+        title: Optional figure title.
+    """
+    profiling_stats = results.get("profiling_stats", {})
+    level_stats: list[dict] = profiling_stats.get("level_stats", [])
+
+    if not level_stats:
+        print("plot_mpi_level_heatmap: no level_stats found, skipping plot.")
+        return
+
+    # Collect unique ranks and levels (sorted)
+    ranks = sorted({e["rank"] for e in level_stats})
+    levels = sorted({e["level"] for e in level_stats})
+
+    # Build dense matrix: rows=levels, cols=ranks, default 0
+    matrix = np.zeros((len(levels), len(ranks)), dtype=float)
+    rank_idx = {r: i for i, r in enumerate(ranks)}
+    level_idx = {l: i for i, l in enumerate(levels)}
+    for entry in level_stats:
+        r = rank_idx[entry["rank"]]
+        l = level_idx[entry["level"]]
+        matrix[l, r] = float(entry.get(values_col, 0) or 0)
+
+    # Decide annotation format (float for means, int for everything else)
+    is_float_col = values_col in ("size_mean",)
+    fmt = ".1f" if is_float_col else "g"
+
+    # Mask truly-zero cells so they render white
+    mask = matrix == 0
+
+    col_label = _LEVEL_STAT_COL_LABELS.get(values_col, values_col)
+    row_labels = [f"Lvl {l}" for l in levels]
+    col_labels = [str(r) for r in ranks]
+
+    fig_h = max(6, len(levels) * 0.42)
+    fig_w = max(6, len(ranks) * 0.72 + 2)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+
+    sns.heatmap(
+        matrix,
+        mask=mask,
+        ax=ax,
+        cmap="Reds",
+        annot=True,
+        fmt=fmt,
+        linewidths=0.4,
+        linecolor="#e0e0e0",
+        cbar_kws={"label": col_label, "shrink": 0.8},
+        xticklabels=col_labels,
+        yticklabels=row_labels,
+        annot_kws={"size": 8},
+    )
+    # Fill masked (zero) cells explicitly with white
+    ax.set_facecolor("white")
+
+    ax.set_xlabel("MPI Rank")
+    ax.set_ylabel("Level")
+    ax.tick_params(axis="both", labelsize=9)
+
+    default_title = f"MPI Workload Heatmap by Level\n(White = 0  |  {col_label})"
+    ax.set_title(title if title is not None else default_title, fontsize=11)
+
+    plt.tight_layout()
+    img_fpath.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(img_fpath, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved MPI heatmap to {img_fpath}")
 
 
 def plot_adaptive_clustering_results(
