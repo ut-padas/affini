@@ -751,9 +751,10 @@ def _run_local_refinement(
             f"mean: {CLUSTER_SIZES.mean():.1f}, median: {int(xp.median(CLUSTER_SIZES))}, "
             f"max: {int(CLUSTER_SIZES.max())}"
         )
-        logger.info(
-            f"Runtime - R{rank:02} L{level:02}: {time.perf_counter() - _t_level:.3f}s"
-        )
+        level_runtime = time.perf_counter() - _t_level
+        logger.info(f"Runtime - R{rank:02} L{level:02}: {level_runtime:.3f}s")
+        if profiling_stats["level_stats"]:
+            profiling_stats["level_stats"][-1].update({"runtime_sec": level_runtime})
         level += 1
 
     return buffers, out_count, total_f_evals, num_generated_pts, tree_data, level
@@ -1304,7 +1305,7 @@ if __name__ == "__main__":
     AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     img_fpath = (
         AC_PLOTS_DIR
-        / f"mpi_sz{_size}_ac_rosen{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}.png"
+        / f"mpi_sz{_size}_ac_rosen{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_ntrain{N_TRAIN}_dim{DIM}_{INITIAL_CLUSTERING_METHOD}.png"
     )
     _skip = DIM == 2 and img_fpath.exists() and not FORCE_REEXEC
     if _skip:
@@ -1388,7 +1389,12 @@ if __name__ == "__main__":
         print("Skipping plot (d != 2 or too many clusters).")
 
     # MPI × Level workload heatmap (good_clusters is the primary workload signal)
-    for _heatmap_col in ("good_clusters", "clusters_start", "num_pts_next_level"):
+    for _heatmap_col in (
+        "good_clusters",
+        "clusters_start",
+        "num_pts_next_level",
+        "runtime_sec",
+    ):
         _hm_path = img_fpath.with_name(
             img_fpath.stem + f"_mpi_heatmap_{_heatmap_col}.png"
         )

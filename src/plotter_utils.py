@@ -19,6 +19,7 @@ _LEVEL_STAT_COL_LABELS: dict[str, str] = {
     "size_mean": "Mean Cluster Size",
     "size_median": "Median Cluster Size",
     "size_max": "Max Cluster Size",
+    "runtime_sec": "Runtime (s)",
 }
 
 
@@ -34,6 +35,7 @@ def plot_mpi_level_heatmap(
         "size_mean",
         "size_median",
         "size_max",
+        "runtime_sec",
     ] = "good_clusters",
     title: str | None = None,
 ) -> None:
