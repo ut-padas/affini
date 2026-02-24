@@ -71,9 +71,8 @@ def plot_mpi_level_heatmap(
         l = level_idx[entry["level"]]
         matrix[l, r] = float(entry.get(values_col, 0) or 0)
 
-    # Decide annotation format (float for means, int for everything else)
-    is_float_col = values_col in ("size_mean",)
-    fmt = ".1f" if is_float_col else "g"
+    # Set annotation format
+    fmt = ".1e"
 
     # Mask truly-zero cells so they render white
     mask = matrix == 0
