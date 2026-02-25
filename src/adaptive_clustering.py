@@ -333,10 +333,12 @@ def _run_local_refinement(
                 with CudaTimer("time_good_Q", profiling_stats, PROFILE_TIMING):
                     good_mask = is_good[aug_ids]
                     X_good = X_batch[good_mask]
-                    G_good = G_batch[good_mask]
+                    if CLUSTER_G is not None:
+                        G_good = G_batch[good_mask]
                     good_counts = aug_sizes[good_idx_local]
                     dense_labels_good = repeats(xp.arange(K_good), good_counts)
 
+                    # TODO: what to do about reference to G_good here?
                     radii_pt, ratio_pt = run_fused_metrics(
                         X_good,
                         G_good,
@@ -506,7 +508,7 @@ def _run_local_refinement(
                     bad_mask = (~is_good)[aug_ids]
                     X_bad = X_batch[bad_mask]
                     F_bad = F_batch[bad_mask]
-                    if CLUSTER_G is None:
+                    if CLUSTER_G is not None:
                         G_bad = G_batch[bad_mask]
                     bad_counts = aug_sizes[bad_idx_local]
                     dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
@@ -650,7 +652,7 @@ def _run_local_refinement(
                     # Collect Sorted Data for Next Level
                     next_level_X_list.append(_to_host(X_bad[sort_order]))
                     next_level_F_list.append(_to_host(F_bad[sort_order]))
-                    if CLUSTER_G is None:
+                    if CLUSTER_G is not None:
                         next_level_G_list.append(_to_host(G_bad[sort_order]))
 
                     # Calculate Child Sizes (Binary Split)
@@ -1077,10 +1079,11 @@ def adaptive_clustering(
 
     local_X = xp.asarray(local_dict["X"], dtype=xp.float64)
     local_F = xp.asarray(local_dict["F"], dtype=xp.float64)
-    if CLUSTERING_MATRIX != "Cov_Lvl_curves":
-        local_G = xp.asarray(local_dict["G"], dtype=xp.float64)
-    else:
-        local_G = None
+    # if CLUSTERING_MATRIX != "Cov_Lvl_curves":
+    #     local_G = xp.asarray(local_dict["G"], dtype=xp.float64)
+    # else:
+    #     local_G = None
+    local_G = xp.asarray(local_dict["G"], dtype=xp.float64)
     local_sizes = xp.asarray(local_dict["sizes"], dtype=xp.int64)
     local_starts = xp.r_[0, xp.cumsum(local_sizes)[:-1]]
 

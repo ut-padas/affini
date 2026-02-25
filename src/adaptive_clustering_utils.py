@@ -726,42 +726,29 @@ def adjust_buffer_capacity_host(
     return new_buffers, int(new_cap)
 
 
-def get_n_smallest_per_block(values, start_indices, n):
-    # 1. Create an array of block IDs for every element
-    # Example: starts [0, 3, 7] -> block_ids [0, 0, 0, 1, 1, 1, 1, 2, 2...]
-    block_ids = xp.zeros(values.size, dtype=xp.int32)
-    # Mark the start of each block with a 1
-    block_ids[start_indices] = 1
-    # Cumulative sum turns markers into IDs: [1, 1, 1, 2, 2, 2, 2, 3, 3...]
-    block_ids = xp.cumsum(block_ids) - 1
+def get_n_smallest_per_block(values, blocks, n):
+    """
+    Returns a boolean mask for the n smallest values in each block.
+    """
+    # 1. Get indices that would sort by block, then by value
+    # lexsort uses keys from last to first
+    sort_idx = xp.lexsort(xp.stack([values, blocks]))
 
-    # 2. Sort indices: primary key = block_ids, secondary key = values
-    # This groups blocks together and sorts values within them
-    sort_idx = xp.lexsort((values, block_ids))
+    # 2. Compute the sizes of each block
+    block_sizes = xp.bincount(blocks)
+    block_starts = xp.concatenate((xp.array([0]), xp.cumsum(block_sizes[:-1])))
 
-    sorted_values = values[sort_idx]
-    sorted_blocks = block_ids[sort_idx]
+    # 3. Create array like blocks, but with the start indices instead of the original ids
+    offsets = xp.zeros(len(blocks), dtype=xp.int64)
+    diffs = xp.diff(block_starts, prepend=0)
+    offsets[block_starts] = diffs
+    local_indices = xp.cumsum(offsets)
 
-    # 3. Pick the first 'n' elements of each block
-    # Generate local indices (0, 1, 2... for each block)
-    # We do this by finding where the block ID changes
-    block_change = xp.diff(sorted_blocks, prepend=-1)
+    # 4. Sort these and create a mask for the n smallest in each block
+    inv_sort_idx = xp.empty_like(sort_idx)
+    inv_sort_idx[sort_idx] = xp.arange(len(sort_idx), dtype=sort_idx.dtype)
+    sorted_local_indices = inv_sort_idx - local_indices
 
-    # Use a clever trick: the index within the block is
-    # the distance from the last 'change' point
-    # For speed, we can use a scan or just compute local counts
-    # A simple way: find the rank of each element within its block
-    local_idx = xp.arange(len(sorted_values))
-    # To get local index 0, 1, 2... within blocks:
-    # We subtract the global index of the first element of each block
-    first_elem_indices = xp.where(block_change != 0)[0]
-    # Expand the start indices to match the full array size
-    offsets = xp.zeros_like(sorted_values)
-    offsets[first_elem_indices] = first_elem_indices
-    offsets = xp.maximum.accumulate(offsets)
-
-    intra_block_idx = local_idx - offsets
-
-    # 4. Mask and extract
-    mask = intra_block_idx < n
-    return mask
+    # 5. Return the mask for the n smallest in each block
+    pts_mask = sorted_local_indices < n
+    return pts_mask
