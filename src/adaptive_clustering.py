@@ -153,7 +153,8 @@ def _run_local_refinement(
 
                 pts = CLUSTER_PTS[slice_start:slice_end]
                 f_vals = CLUSTER_F[slice_start:slice_end]
-                g_vals = CLUSTER_G[slice_start:slice_end]
+                if CLUSTER_G is not None:
+                    g_vals = CLUSTER_G[slice_start:slice_end]
                 starts_local_shifted = starts_local - slice_start
 
             # 2. Augmentation
@@ -164,7 +165,8 @@ def _run_local_refinement(
 
                 X_batch = xp.empty((aug_total, d), dtype=xp.float64)
                 F_batch = xp.empty((aug_total, fd), dtype=xp.float64)
-                G_batch = xp.empty((aug_total, fd, d), dtype=xp.float64)
+                if CLUSTER_G is not None:
+                    G_batch = xp.empty((aug_total, fd, d), dtype=xp.float64)
 
                 aug_starts = xp.r_[0, xp.cumsum(aug_sizes)[:-1]]
                 aug_ids = repeats(xp.arange(K_batch), aug_sizes)
@@ -175,7 +177,8 @@ def _run_local_refinement(
                 is_real = pt_idxs_in_cluster < sizes[aug_ids]
                 X_batch[is_real] = pts
                 F_batch[is_real] = f_vals
-                G_batch[is_real] = g_vals
+                if CLUSTER_G is not None:
+                    G_batch[is_real] = g_vals
 
                 is_synth = ~is_real
                 num_synth = int(xp.sum(is_synth))
@@ -204,20 +207,25 @@ def _run_local_refinement(
                     X_batch[is_synth] = X_synth_vals
 
                     if oracle_fn is not None:
-                        F_syn, G_syn = oracle_fn(X_synth_vals)
-                        F_batch[is_synth] = convert_to_2d_array(F_syn)
-                        if IGNORE_GRADIENT:
-                            G_batch[is_synth] = 0.0
+                        if CLUSTER_G is None:
+                            F_syn = f_fn(X_synth_vals)
+                            F_batch[is_synth] = convert_to_2d_array(F_syn)
                         else:
-                            G_batch[is_synth] = convert_to_3d_array(G_syn)
+                            F_syn, G_syn = oracle_fn(X_synth_vals)
+                            F_batch[is_synth] = convert_to_2d_array(F_syn)
+                            if IGNORE_GRADIENT:
+                                G_batch[is_synth] = 0.0
+                            else:
+                                G_batch[is_synth] = convert_to_3d_array(G_syn)
                     else:
                         assert f_fn is not None
                         F_batch[is_synth] = convert_to_2d_array(f_fn(X_synth_vals))
-                        if IGNORE_GRADIENT:
-                            G_batch[is_synth] = 0.0
-                        else:
-                            assert g_fn is not None
-                            G_batch[is_synth] = convert_to_3d_array(g_fn(X_synth_vals))
+                        if CLUSTER_G is not None:
+                            if IGNORE_GRADIENT:
+                                G_batch[is_synth] = 0.0
+                            else:
+                                assert g_fn is not None
+                                G_batch[is_synth] = convert_to_3d_array(g_fn(X_synth_vals))
                     total_f_evals += X_synth_vals.shape[0]
                     del (
                         c_starts,
@@ -498,7 +506,8 @@ def _run_local_refinement(
                     bad_mask = (~is_good)[aug_ids]
                     X_bad = X_batch[bad_mask]
                     F_bad = F_batch[bad_mask]
-                    G_bad = G_batch[bad_mask]
+                    if CLUSTER_G is None:
+                        G_bad = G_batch[bad_mask]
                     bad_counts = aug_sizes[bad_idx_local]
                     dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
 
@@ -641,7 +650,8 @@ def _run_local_refinement(
                     # Collect Sorted Data for Next Level
                     next_level_X_list.append(_to_host(X_bad[sort_order]))
                     next_level_F_list.append(_to_host(F_bad[sort_order]))
-                    next_level_G_list.append(_to_host(G_bad[sort_order]))
+                    if CLUSTER_G is None:
+                        next_level_G_list.append(_to_host(G_bad[sort_order]))
 
                     # Calculate Child Sizes (Binary Split)
                     half = bad_counts // 2
@@ -652,20 +662,35 @@ def _run_local_refinement(
                     next_level_sizes_list.append(_to_host(new_sz))
 
                 with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
-                    del (
-                        M_split,
-                        C,
-                        scores_proj,
-                        sort_order,
-                        bad_mask,
-                        X_bad,
-                        F_bad,
-                        G_bad,
-                        dense_labels_bad,
-                        bad_counts,
-                        half,
-                        other,
-                    )
+                    if CLUSTER_G is not None:
+                        del (
+                            M_split,
+                            C,
+                            scores_proj,
+                            sort_order,
+                            bad_mask,
+                            X_bad,
+                            F_bad,
+                            G_bad,
+                            dense_labels_bad,
+                            bad_counts,
+                            half,
+                            other,
+                        )
+                    else:
+                        del (
+                            M_split,
+                            C,
+                            scores_proj,
+                            sort_order,
+                            bad_mask,
+                            X_bad,
+                            F_bad,
+                            dense_labels_bad,
+                            bad_counts,
+                            half,
+                            other,
+                        )
 
             if LOG_MEM_STATS:
                 log_mem_stats(
@@ -705,12 +730,12 @@ def _run_local_refinement(
                 keep = np.repeat(valid, next_sizes)
                 CLUSTER_PTS = xp.asarray(next_X[keep])
                 CLUSTER_F = xp.asarray(next_F[keep])
-                CLUSTER_G = xp.asarray(next_G[keep])
+                CLUSTER_G = xp.asarray(next_G[keep]) # TODO: what is this
                 CLUSTER_SIZES = xp.asarray(next_sizes[valid])
             else:
                 CLUSTER_PTS = xp.asarray(next_X)
                 CLUSTER_F = xp.asarray(next_F)
-                CLUSTER_G = xp.asarray(next_G)
+                CLUSTER_G = xp.asarray(next_G) # TODO: what is this
                 CLUSTER_SIZES = xp.asarray(next_sizes)
 
             CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
@@ -855,14 +880,31 @@ def adaptive_clustering(
     """
 
     # Validate function arguments
-    if oracle_fn is not None:
-        if f_fn is not None or g_fn is not None:
-            raise ValueError(
-                "Cannot specify both oracle_fn and f_fn/g_fn. Use either oracle_fn OR both f_fn and g_fn."
-            )
+    if CLUSTERING_MATRIX == "Cov_Lvl_curves":
+        # In this case, we do not want to compute gradients in general.
+        # When we generate points, we want to use f_fn and when we generate centroids,
+        # we want to use f_fn/g_fn or oracle.
+        # Hence it is ok to define both.
+        if oracle_fn is None:
+            if f_fn is None or g_fn is None:
+                raise ValueError(
+                    "Cannot specify both oracle_fn and f_fn/g_fn. Use either oracle_fn OR both f_fn and g_fn."
+                )
+        else: # oracle_fn is defined
+            if g_fn is not None:
+                raise ValueError(
+                    "We are using Cov_Lvl_curves, but we specify both oracle_fn and g_fn. We cannot specify both."
+                )
+
     else:
-        if f_fn is None or g_fn is None:
-            raise ValueError("Must specify either oracle_fn OR both f_fn and g_fn.")
+        if oracle_fn is not None:
+            if f_fn is not None or g_fn is not None:
+                raise ValueError(
+                    "Cannot specify both oracle_fn and f_fn/g_fn. Use either oracle_fn OR both f_fn and g_fn."
+                )
+        else:
+            if f_fn is None or g_fn is None:
+                raise ValueError("Must specify either oracle_fn OR both f_fn and g_fn.")
 
     if STORE_TREE_DATA:
         logger.warning(
@@ -1035,7 +1077,10 @@ def adaptive_clustering(
 
     local_X = xp.asarray(local_dict["X"], dtype=xp.float64)
     local_F = xp.asarray(local_dict["F"], dtype=xp.float64)
-    local_G = xp.asarray(local_dict["G"], dtype=xp.float64)
+    if CLUSTERING_MATRIX != "Cov_Lvl_curves":
+        local_G = xp.asarray(local_dict["G"], dtype=xp.float64)
+    else:
+        local_G = None
     local_sizes = xp.asarray(local_dict["sizes"], dtype=xp.int64)
     local_starts = xp.r_[0, xp.cumsum(local_sizes)[:-1]]
 
