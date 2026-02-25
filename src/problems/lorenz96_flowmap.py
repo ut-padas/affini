@@ -81,6 +81,34 @@ def lorenz96_flowmap_grad(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> A
     return _to_device(DXF)
 
 
+def lorenz96_flowmap_oracle(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> Array:
+    """
+    Computes the gradients (Jacobians) of the Lorenz96 flowmap.
+
+    Uses multiprocessing to solve sensitivities in parallel chunks.
+
+    Args:
+        X0: (N, d) initial states.
+        forcing: Forcing term.
+        tf: Final time.
+
+    Returns:
+        DXF: (N, d, d) Jacobian matrices d(x_tf)/d(x_0).
+    """
+    X0_np = _to_host(X0)
+    N, d = X0_np.shape
+
+    # KEY FIX: Use partial instead of lambda.
+    # Multiprocessing relies on pickle, which cannot serialize lambda functions.
+    # partial creates a picklable callable with 'forcing' baked in.
+    rhs = partial(lorenz96, forcing=forcing)
+
+    # We only need the sensitivities (index 1), ignoring the flowmap state (index 0)
+    XF, DXF = parallel_sensitivities_solver(rhs, lorenz96_grad, X0_np, tf)
+
+    return _to_device(XF), _to_device(DXF)
+
+
 def lorenz96_flowmap_oracle_first_component(
     X0: Array, forcing: float = 1.0, tf: float = 0.1
 ) -> tuple[Array, Array]:

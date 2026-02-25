@@ -382,8 +382,8 @@ class HATANNSurrogate:
             and self.J_src is not None
         )
 
-        qp = _to_host(query_points)
-        N, D = qp.shape
+        # qp = _to_host(query_points)
+        N, D = query_points.shape
 
         # --- 1. Coarse L2 Filter ---
         if k_nn < len(self.X_src):
@@ -394,11 +394,11 @@ class HATANNSurrogate:
             k_coarse = len(self.X_src)
             k_nn = len(self.X_src)
 
-        nn_idx_coarse, _ = self._query_knn(qp, k_coarse)
+        nn_idx_coarse, _ = self._query_knn(query_points, k_coarse)
 
         Qs_coarse = self.Qs_src[nn_idx_coarse]
         centroids_coarse = self.X_src[nn_idx_coarse]
-        dx_coarse = qp[:, None, :] - centroids_coarse
+        dx_coarse = query_points[:, None, :] - centroids_coarse
 
         # --- 2. Compute Q-Distance ---
         dist_sq_coarse = xp.einsum("nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse)
@@ -412,7 +412,7 @@ class HATANNSurrogate:
         dist_sq = xp.take_along_axis(dist_sq_coarse, top_k_local, axis=1)
 
         centroids = self.X_src[nn_idx]
-        dx = qp[:, None, :] - centroids
+        dx = query_points[:, None, :] - centroids
 
         # --- 4. Validity & Weights ---
         dist = xp.sqrt(dist_sq)

@@ -887,6 +887,10 @@ def adaptive_clustering(
         # When we generate points, we want to use f_fn and when we generate centroids,
         # we want to use f_fn/g_fn or oracle.
         # Hence it is ok to define both.
+        if f_fn is None:
+            raise ValueError(
+                "Must specify f_fn when using Cov_Lvl_curves for speed"
+            )
         if oracle_fn is None:
             if f_fn is None or g_fn is None:
                 raise ValueError(
