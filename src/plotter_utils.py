@@ -2,7 +2,9 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mtick
 import numpy as np
+import pandas as pd
 import seaborn as sns
 from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
@@ -116,6 +118,159 @@ def plot_mpi_level_heatmap(
     plt.savefig(img_fpath, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved MPI heatmap to {img_fpath}")
+
+
+def plot_mpi_rank_time_breakdown(
+    profiling_stats,
+    img_fpath: Path,
+    top_n_annotate=10,
+    min_val_annotate=0.05,
+    figsize=(12, 12),
+    tick_fontsize=13,
+    axis_title_fontsize=14,
+):
+    """
+    Plot a stacked 100% bar chart of time breakdown per MPI rank,
+    with a bottom panel showing total train time per rank.
+
+    Args:
+        profiling_stats: Dict containing "per_rank" list of dicts with timing info.
+        img_fpath: Path to save the resulting figure.
+        top_n_annotate: Number of top segments (by proportion) to annotate per bar.
+        min_val_annotate: Minimum proportion threshold for annotation.
+        figsize: Figure size.
+        tick_fontsize: Font size for tick labels.
+        axis_title_fontsize: Font size for axis titles.
+    """
+    rename_props = {
+        "Preprocessing": ["time_init"],
+        "H2D: Level Transfer": ["time_transition", "time_slicing", "time_gc"],
+        "Augment Points": ["time_find_req_synth", "time_synth_gen"],
+        "Error Estimation": ["time_error_calc", "time_filter"],
+        "Trust Region Calculation": ["time_good_Q"],
+        "D2H: Accepted Leaves": ["time_good_d2h"],
+        "Split Bad Clusters": ["time_bad_split"],
+        "D2H: Split Clusters Buffer": ["time_bad_d2h"],
+        "MPI Scatter (Init Wait)": ["time_scatter"],
+        "MPI Gather": ["time_gather"],
+        "MPI Idle/Stealing": ["time_idle"],
+    }
+
+    num_ranks = len(profiling_stats["per_rank"])
+
+    # --- Build per-rank DataFrame ---
+    rows = []
+    for rank in range(num_ranks):
+        rank_data = profiling_stats["per_rank"][rank]
+        row = {"MPI Rank": rank}
+        for category, props in rename_props.items():
+            row[category] = sum(rank_data.get(p, 0.0) for p in props)
+        # Total time from the raw profiling data
+        row["Total Time (s)"] = rank_data.get("time_total", 0.0)
+        rows.append(row)
+
+    rank_df = pd.DataFrame(rows)
+
+    # --- Proportional DataFrame for stacked bars ---
+    bar_cols = list(rename_props.keys())
+    plot_df = rank_df.set_index("MPI Rank")[bar_cols]
+    plot_df_100 = plot_df.div(plot_df.sum(axis=1), axis=0)
+
+    colors = sns.color_palette("tab20", n_colors=len(bar_cols))
+
+    # --- Figure ---
+    fig, axs = plt.subplots(
+        2, 1, figsize=figsize, sharex=True, gridspec_kw={"height_ratios": [1.8, 1]}
+    )
+    plt.subplots_adjust(hspace=0, top=0.88)
+
+    # ── TOP: Stacked 100% bar ──────────────────────────────────────────────
+    ax_bar = axs[0]
+    plot_df_100.plot(
+        kind="bar",
+        stacked=True,
+        ax=ax_bar,
+        color=colors,
+        width=0.9,
+        edgecolor="white",
+        linewidth=0.5,
+        legend=False,
+    )
+
+    # Annotations
+    ranks_order = plot_df_100.rank(axis=1, method="min", ascending=False)
+    for col_idx, container in enumerate(ax_bar.containers):
+        for row_idx, patch in enumerate(container):
+            rank_val = int(ranks_order.iloc[row_idx, col_idx])  # type: ignore
+            if rank_val <= top_n_annotate:
+                val = float(plot_df_100.iloc[row_idx, col_idx])  # type: ignore
+                if val < min_val_annotate:
+                    continue
+                x = patch.get_x() + patch.get_width() / 2
+                y = patch.get_y() + patch.get_height() / 2
+                ax_bar.text(
+                    x,
+                    y,
+                    f"{val:.0%}",
+                    ha="center",
+                    va="center",
+                    color="black",
+                    fontsize=11,
+                )
+
+    ax_bar.set_ylabel("Proportion of Time", fontsize=axis_title_fontsize)
+    ax_bar.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+    ax_bar.grid(axis="y", linestyle="--", alpha=0.5)
+    ax_bar.set_xlabel("")
+    ax_bar.tick_params(axis="y", labelsize=tick_fontsize)
+
+    # ── BOTTOM: Total time per rank ────────────────────────────────────────
+    ax_line = axs[1]
+    x_indices = np.arange(num_ranks)
+    y_total = rank_df["Total Time (s)"].values
+
+    sns.lineplot(
+        x=x_indices,
+        y=y_total,
+        marker="o",
+        ax=ax_line,
+        color="#333333",
+        linewidth=2,
+        markersize=8,
+    )
+    for x, y in zip(x_indices, y_total):
+        ax_line.text(
+            x,
+            y,
+            f"{y:.2f}s",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            color="#333333",
+        )
+
+    ax_line.set_yscale("log")
+    ax_line.set_ylim(min(y_total) * 0.3, max(y_total) * 2.5)
+    ax_line.set_ylabel("Total Train (s)", fontsize=axis_title_fontsize)
+    ax_line.set_xlabel("MPI Rank", fontsize=axis_title_fontsize)
+    ax_line.set_xticks(x_indices)
+    ax_line.set_xticklabels([str(r) for r in rank_df["MPI Rank"]])
+    ax_line.tick_params(axis="both", labelsize=tick_fontsize)
+    ax_line.grid(True, which="both", linestyle="--", alpha=0.3)
+
+    # ── Legend + Title ─────────────────────────────────────────────────────
+    handles, labels = ax_bar.get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.96),
+        ncol=6,
+        frameon=False,
+        fontsize=12,
+    )
+    # Save figure
+    plt.savefig(img_fpath, dpi=200, bbox_inches="tight")
 
 
 def plot_adaptive_clustering_results(
