@@ -204,20 +204,21 @@ def _run_local_refinement(
                             CLUSTER_SIZES = xp.asarray(payload["sizes"])
                             CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
 
-                            _t_transfer = time.perf_counter() - _t_recv
-                            if PROFILE_TIMING:
-                                profiling_stats["time_mpi_recv"] += _t_transfer
-
                             local_load = int(CLUSTER_PTS.shape[0])
                             global_loads[rank] = local_load
                             broadcast_state()
+
                             _t_wait = time.perf_counter() - _t_steal_wait
+                            _t_transfer = time.perf_counter() - _t_recv
                             logger.info(
                                 f"R{rank:02}: Steal OK from R{target_rank:02} | "
                                 f"pts={local_load:,} clusters={len(CLUSTER_SIZES):,} | "
-                                f"wait={_t_wait:.3f}s transfer={_t_transfer:.3f}s"
+                                f"waited={_t_wait:.3f}s transfer={_t_transfer:.3f}s"
                             )
                             waiting = False
+
+                            if PROFILE_TIMING:
+                                profiling_stats["time_mpi_recv"] += _t_transfer
 
                         # If we get a steal denial, log and sleep for a bit before trying again to avoid hammering the target rank with requests if it's overloaded or has just gone idle.
                         elif comm.Iprobe(source=target_rank, tag=TAG_STEAL_DENY):
@@ -326,9 +327,6 @@ def _run_local_refinement(
                     }
 
                     comm.send(steal_payload, dest=req_src, tag=TAG_STEAL_GRANT)
-                    _t_send_elapsed = time.perf_counter() - _t_send
-                    if PROFILE_TIMING:
-                        profiling_stats["time_mpi_send"] += _t_send_elapsed
 
                     # Safely truncate our arrays to remove the stolen tail
                     CLUSTER_PTS = CLUSTER_PTS[:pt_split]
@@ -348,12 +346,16 @@ def _run_local_refinement(
                     global_loads[rank] = local_load
                     broadcast_state()
 
+                    _t_send_elapsed = time.perf_counter() - _t_send
                     logger.info(
                         f"R{rank:02} L{level:02} B{b+1}: Granted mid-level steal to R{req_src:02} | "
                         f"gave {steal_payload['X'].shape[0]:,} pts "
                         f"{len(steal_payload['sizes']):,} clusters | "
+                        f"send={_t_send_elapsed:.3f}s | "
                         f"remaining pts={local_load:,} clusters={num_clusters:,}"
                     )
+                    if PROFILE_TIMING:
+                        profiling_stats["time_mpi_send"] += _t_send_elapsed
                 else:
                     deny_reason = f"MID_LEVEL_LOAD ({unprocessed_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
                     comm.isend(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
@@ -792,7 +794,7 @@ def _run_local_refinement(
                 with CudaTimer("time_bad_d2h", profiling_stats, PROFILE_TIMING):
                     next_level_X_list.append(_to_host(X_bad[sort_order]))
                     next_level_F_list.append(_to_host(F_bad[sort_order]))
-                    if CLUSTER_G is not None:
+                    if CLUSTER_G is not None and G_bad is not None:
                         next_level_G_list.append(_to_host(G_bad[sort_order]))
 
                     half = bad_counts // 2
@@ -811,7 +813,7 @@ def _run_local_refinement(
             if mempool is not None:
                 mempool.free_all_blocks()
 
-        # --- Phase 2: The Level Boundary (Transition & Philanthropy) ---
+        # --- Phase 2: The Level Boundary (Transition & Steal Response) ---
         with CudaTimer("time_transition", profiling_stats, PROFILE_TIMING):
             if len(next_level_sizes_list) > 0:
                 next_X = np.concatenate(next_level_X_list)
@@ -829,7 +831,7 @@ def _run_local_refinement(
                         next_F[keep],
                         next_sizes[valid],
                     )
-                    if CLUSTER_G is not None:
+                    if CLUSTER_G is not None and next_G is not None:
                         next_G = next_G[keep]
             else:
                 next_X, next_F, next_G, next_sizes = (
@@ -846,12 +848,14 @@ def _run_local_refinement(
             global_loads[rank] = local_load
             broadcast_state()
 
-            # Philanthropy: Answer accumulated steal requests
+            # Steal Granting Strategy: If we have enough points and more than 1 cluster, we can afford to give away some work. We slice from the end to avoid shifting memory. We give away a chunk of points approximately equal to STEAL_SIZE, which may correspond to multiple clusters. We always keep at least 1 cluster for ourselves to ensure we don't go idle immediately after stealing. If we can't grant the steal (not enough points or only 1 cluster), we send a denial with the reason.
             while comm.Iprobe(source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status):
                 req_src = status.Get_source()
                 comm.recv(source=req_src, tag=TAG_STEAL_REQ)
 
                 if total_next_pts > MIN_LOAD_THRESHOLD and len(next_sizes) > 1:
+                    _t_send = time.perf_counter()
+
                     # Slice from the end to avoid shifting memory
                     rev_cumsum = np.cumsum(next_sizes[::-1])
                     split_rev_idx = np.searchsorted(rev_cumsum, STEAL_SIZE)
@@ -869,11 +873,7 @@ def _run_local_refinement(
                         "sizes": next_sizes[split_idx:],
                     }
 
-                    _t_send = time.perf_counter()
                     comm.send(steal_payload, dest=req_src, tag=TAG_STEAL_GRANT)
-                    _t_send_elapsed = time.perf_counter() - _t_send
-                    if PROFILE_TIMING:
-                        profiling_stats["time_mpi_send"] += _t_send_elapsed
 
                     # Truncate our own arrays
                     next_X = next_X[:pt_split]
@@ -883,10 +883,12 @@ def _run_local_refinement(
                     next_sizes = next_sizes[:split_idx]
                     total_next_pts = np.sum(next_sizes)
 
-                    # Update heartbeat to reflect lower load
+                    # Update local state
                     local_load = int(total_next_pts)
                     global_loads[rank] = local_load
                     broadcast_state()
+
+                    _t_send_elapsed = time.perf_counter() - _t_send
                     logger.info(
                         f"R{rank:02} L{level:02}: Granted steal to R{req_src:02} | "
                         f"gave {steal_payload['X'].shape[0]:,} pts "
@@ -894,6 +896,9 @@ def _run_local_refinement(
                         f"send={_t_send_elapsed:.3f}s | "
                         f"remaining pts={total_next_pts:,} clusters={len(next_sizes):,}"
                     )
+
+                    if PROFILE_TIMING:
+                        profiling_stats["time_mpi_send"] += _t_send_elapsed
                 else:
                     if total_next_pts <= MIN_LOAD_THRESHOLD:
                         deny_reason = f"LOAD ({total_next_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"

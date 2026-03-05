@@ -154,7 +154,7 @@ def plot_mpi_rank_time_breakdown(
         "MPI Scatter (Init Wait)": ["time_scatter"],
         "MPI Gather": ["time_gather"],
         "MPI Idle": ["time_idle"],
-        "MPI Stealing": ["time_heartbeat", "time_mpi_send", "time_mpi_recv"],
+        "MPI Stealing": ["time_state_update", "time_mpi_send", "time_mpi_recv"],
     }
 
     num_ranks = len(profiling_stats["per_rank"])
@@ -252,7 +252,7 @@ def plot_mpi_rank_time_breakdown(
 
     ax_line.set_yscale("log")
     ax_line.set_ylim(min(y_total) * 0.3, max(y_total) * 2.5)
-    ax_line.set_ylabel("Total Train (s)", fontsize=axis_title_fontsize)
+    ax_line.set_ylabel("Total Time (s)", fontsize=axis_title_fontsize)
     ax_line.set_xlabel("MPI Rank", fontsize=axis_title_fontsize)
     ax_line.set_xticks(x_indices)
     ax_line.set_xticklabels([str(r) for r in rank_df["MPI Rank"]])
