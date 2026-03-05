@@ -981,6 +981,8 @@ def adaptive_clustering(
         "time_heartbeat": 0.0,
         "time_mpi_send": 0.0,
         "time_mpi_recv": 0.0,
+        "time_scatter": 0.0,
+        "time_gather": 0.0,
         "level_stats": [],
     }
 
@@ -1115,10 +1117,11 @@ def adaptive_clustering(
     # ------------------------------------------------------------------
     # 2. Broadcast F_max_global and dimensions; scatter data
     # ------------------------------------------------------------------
-    F_max_global_host = comm.bcast(F_max_global_host, root=0)
-    d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
+    with CudaTimer("time_scatter", profiling_stats, PROFILE_TIMING):
+        F_max_global_host = comm.bcast(F_max_global_host, root=0)
+        d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
 
-    local_dict = comm.scatter(scatter_data, root=0)
+        local_dict = comm.scatter(scatter_data, root=0)
 
     local_X = xp.asarray(local_dict["X"], dtype=xp.float64)
     local_F = xp.asarray(local_dict["F"], dtype=xp.float64)
@@ -1201,7 +1204,8 @@ def adaptive_clustering(
     # ------------------------------------------------------------------
     # 5. Gather & merge on rank 0
     # ------------------------------------------------------------------
-    all_results = comm.gather(local_result_host, root=0)
+    with CudaTimer("time_gather", profiling_stats, PROFILE_TIMING):
+        all_results = comm.gather(local_result_host, root=0)
 
     if rank == 0:
         logger.info("R00: Merging results from all ranks.")
@@ -1309,6 +1313,7 @@ if __name__ == "__main__":
     from src.plotter_utils import (
         plot_adaptive_clustering_results,
         plot_mpi_level_heatmap,
+        plot_mpi_rank_time_breakdown,
     )
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
@@ -1481,6 +1486,12 @@ if __name__ == "__main__":
         )
     else:
         print("Skipping plot (d != 2 or too many clusters).")
+
+    # Save MPI rank time breakdown plot
+    time_breakdown_path = img_fpath.with_name(
+        img_fpath.stem + "_mpi_time_breakdown.png"
+    )
+    plot_mpi_rank_time_breakdown(results["profiling_stats"], time_breakdown_path)
 
     # MPI × Level workload heatmap (good_clusters is the primary workload signal)
     for _heatmap_col in (
