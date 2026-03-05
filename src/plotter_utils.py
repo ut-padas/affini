@@ -153,7 +153,8 @@ def plot_mpi_rank_time_breakdown(
         "D2H: Split Clusters Buffer": ["time_bad_d2h"],
         "MPI Scatter (Init Wait)": ["time_scatter"],
         "MPI Gather": ["time_gather"],
-        "MPI Idle/Stealing": ["time_idle"],
+        "MPI Idle": ["time_idle"],
+        "MPI Stealing": ["time_heartbeat", "time_mpi_send", "time_mpi_recv"],
     }
 
     num_ranks = len(profiling_stats["per_rank"])
