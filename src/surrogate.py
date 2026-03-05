@@ -199,6 +199,8 @@ class HATANNSurrogate:
             self.tree_data = results["tree_data"]
         if Hs is not None:
             self.Hs_src = xp.asarray(Hs)
+        else:
+            self.Hs_src = None
 
         # 3. Build KNN Index
         self._build_knn_index()
@@ -374,12 +376,18 @@ class HATANNSurrogate:
         query_points,
         k_nn: int = 1,
         strict_trust_region: bool = False,
+        use_saved_hessian: bool = False,
     ) -> tuple:
         """
         Inference via kNN (CPU or GPU) with L2 Distance.
         """
         if not self.trained:
             raise RuntimeError("Model not trained.")
+
+        if use_saved_hessian and self.Hs_src is None:
+            logger.warning(
+                "use_saved_hessian=True but Hessians are not computed."
+            )
 
         assert (
             self.X_src is not None
@@ -451,6 +459,12 @@ class HATANNSurrogate:
 
         linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
         predictions_k = f_neighbors + linear_term
+
+        # --- 5.1. Increase accuracy via Hessian (if selected by user) ---
+        if use_saved_hessian and self.Hs_src is not None:
+            H_neighbors = xp.asarray(self.Hs_src)[flat_idx].reshape(N, k_nn, F_dim, D, D)
+            quadratic_term = xp.einsum("nkc,nkfcd,nkd->nkf", dx, H_neighbors, dx)
+            predictions_k += quadratic_term
 
         # --- 6. Averaging ---
         weights_expanded = final_weights[:, :, None]

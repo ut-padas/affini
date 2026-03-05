@@ -612,6 +612,7 @@ def ics_rosenbrock_experiment() -> Path:
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             CLUSTERING_MATRIX="Cov_Lvl_curves",
             STORE_HESSIAN=True,
+            USE_HESSIAN_FOR_INFERENCE=True,
         )
 
     return EXP_DIR

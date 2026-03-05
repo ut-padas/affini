@@ -386,6 +386,7 @@ def Problem_experiment_setup(
     SAVE_TRAINED_DATA: bool = False,
     SAVE_TEST_DATA: bool = False,
     STORE_HESSIAN: bool = False,
+    USE_HESSIAN_FOR_INFERENCE: bool = False,
 ):
     if json_fpath.exists():
         print(f"Result file {json_fpath} already exists. Skipping experiment.")
@@ -526,6 +527,7 @@ def Problem_experiment_setup(
             X_test,
             k_nn=K_NEIGHBOURS,
             strict_trust_region=False,
+            use_saved_hessian=USE_HESSIAN_FOR_INFERENCE
         )
         _end_predict_time = time.perf_counter()
         _PREDICTED = True
