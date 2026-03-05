@@ -117,7 +117,8 @@ def _run_local_refinement(
 
     # --- Decentralized Work-Stealing Main Loop ---
     while not is_terminated:
-        process_heartbeats()
+        with CudaTimer("time_heartbeat", profiling_stats, PROFILE_TIMING):
+            process_heartbeats()
 
         num_clusters = len(CLUSTER_SIZES)
         local_load = int(CLUSTER_PTS.shape[0] if num_clusters > 0 else 0)
@@ -125,91 +126,99 @@ def _run_local_refinement(
 
         # --- Phase 3: The Idle / Stealing Phase ---
         if num_clusters == 0 or level > MAX_LEVELS:
-            # A rank that hit MAX_LEVELS may still hold data but will never process
-            # it. Ensure we advertise 0 so the termination condition works correctly.
-            if local_load != 0:
-                local_load = 0
-                global_loads[rank] = 0
-                broadcast_heartbeat()
-            if np.sum(global_loads) == 0:
-                # Heuristic termination: everyone claims to be empty.
-                # Drain any pending steal requests (sent before we went idle) so
-                # the requesting ranks are not stuck in their spin-wait forever.
-                while comm.Iprobe(
-                    source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status
-                ):
-                    req_src = status.Get_source()
-                    comm.recv(source=req_src, tag=TAG_STEAL_REQ)
-                    comm.isend("TERMINATING", dest=req_src, tag=TAG_STEAL_DENY)
-                logger.info(f"R{rank:02}: Global loads sum to 0. Terminating.")
-                is_terminated = True
-                break
+            with CudaTimer("time_idle", profiling_stats, PROFILE_TIMING):
+                # A rank that hit MAX_LEVELS may still hold data but will never process
+                # it. Ensure we advertise 0 so the termination condition works correctly.
+                if local_load != 0:
+                    local_load = 0
+                    global_loads[rank] = 0
+                    broadcast_heartbeat()
+                if np.sum(global_loads) == 0:
+                    # Heuristic termination: everyone claims to be empty.
+                    # Drain any pending steal requests (sent before we went idle) so
+                    # the requesting ranks are not stuck in their spin-wait forever.
+                    while comm.Iprobe(
+                        source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status
+                    ):
+                        req_src = status.Get_source()
+                        comm.recv(source=req_src, tag=TAG_STEAL_REQ)
+                        comm.isend("TERMINATING", dest=req_src, tag=TAG_STEAL_DENY)
+                    logger.info(f"R{rank:02}: Global loads sum to 0. Terminating.")
+                    is_terminated = True
+                    break
 
-            target_rank = int(np.argmax(global_loads))
+                target_rank = int(np.argmax(global_loads))
 
-            if global_loads[target_rank] >= WEALTH_THRESHOLD:
-                logger.debug(
-                    f"R{rank:02}: Idle. Attempting steal from R{target_rank:02} "
-                    f"(Load: {global_loads[target_rank]:,}) [my load: {local_load:,}]"
-                )
-                comm.isend(rank, dest=target_rank, tag=TAG_STEAL_REQ)
-                _t_steal_wait = time.perf_counter()
+                if global_loads[target_rank] >= WEALTH_THRESHOLD:
+                    logger.debug(
+                        f"R{rank:02}: Idle. Attempting steal from R{target_rank:02} "
+                        f"(Load: {global_loads[target_rank]:,}) [my load: {local_load:,}]"
+                    )
+                    comm.isend(rank, dest=target_rank, tag=TAG_STEAL_REQ)
+                    _t_steal_wait = time.perf_counter()
 
-                # Spin-wait for response while keeping heartbeats alive
-                waiting = True
-                while waiting:
-                    process_heartbeats()
-                    # Escape if the target has gone idle/terminated (load dropped to 0)
-                    if global_loads[target_rank] == 0:
-                        logger.debug(
-                            f"R{rank:02}: Steal target R{target_rank:02} load dropped to 0 "
-                            f"while waiting. Aborting steal."
-                        )
-                        # Consume the deny/grant message if it arrives, otherwise just move on
-                        if comm.Iprobe(source=target_rank, tag=TAG_STEAL_DENY):
-                            comm.recv(source=target_rank, tag=TAG_STEAL_DENY)
-                        elif comm.Iprobe(source=target_rank, tag=TAG_STEAL_GRANT):
-                            # Unlikely but safe: consume the payload and discard
-                            comm.recv(source=target_rank, tag=TAG_STEAL_GRANT)
-                        waiting = False
-                        continue
-                    if comm.Iprobe(source=target_rank, tag=TAG_STEAL_GRANT):
-                        _t_recv = time.perf_counter()
-                        payload = comm.recv(source=target_rank, tag=TAG_STEAL_GRANT)
-                        _t_transfer = time.perf_counter() - _t_recv
-                        CLUSTER_PTS = xp.asarray(payload["X"])
-                        CLUSTER_F = xp.asarray(payload["F"])
-                        CLUSTER_G = (
-                            xp.asarray(payload["G"])
-                            if payload["G"] is not None
-                            else None
-                        )
-                        CLUSTER_SIZES = xp.asarray(payload["sizes"])
-                        CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
+                    # Spin-wait for response while keeping heartbeats alive
+                    waiting = True
+                    while waiting:
+                        with CudaTimer(
+                            "time_heartbeat", profiling_stats, PROFILE_TIMING
+                        ):
+                            process_heartbeats()
+                        # Escape if the target has gone idle/terminated (load dropped to 0)
+                        if global_loads[target_rank] == 0:
+                            logger.debug(
+                                f"R{rank:02}: Steal target R{target_rank:02} load dropped to 0 "
+                                f"while waiting. Aborting steal."
+                            )
+                            # Consume the deny/grant message if it arrives, otherwise just move on
+                            if comm.Iprobe(source=target_rank, tag=TAG_STEAL_DENY):
+                                comm.recv(source=target_rank, tag=TAG_STEAL_DENY)
+                            elif comm.Iprobe(source=target_rank, tag=TAG_STEAL_GRANT):
+                                # Unlikely but safe: consume the payload and discard
+                                comm.recv(source=target_rank, tag=TAG_STEAL_GRANT)
+                            waiting = False
+                            continue
+                        if comm.Iprobe(source=target_rank, tag=TAG_STEAL_GRANT):
+                            _t_recv = time.perf_counter()
+                            payload = comm.recv(source=target_rank, tag=TAG_STEAL_GRANT)
+                            _t_transfer = time.perf_counter() - _t_recv
+                            if PROFILE_TIMING:
+                                profiling_stats["time_mpi_recv"] += _t_transfer
+                            CLUSTER_PTS = xp.asarray(payload["X"])
+                            CLUSTER_F = xp.asarray(payload["F"])
+                            CLUSTER_G = (
+                                xp.asarray(payload["G"])
+                                if payload["G"] is not None
+                                else None
+                            )
+                            CLUSTER_SIZES = xp.asarray(payload["sizes"])
+                            CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
 
-                        local_load = int(CLUSTER_PTS.shape[0])
-                        global_loads[rank] = local_load
-                        broadcast_heartbeat()
-                        _t_wait = time.perf_counter() - _t_steal_wait
-                        logger.info(
-                            f"R{rank:02}: Steal OK from R{target_rank:02} | "
-                            f"pts={local_load:,} clusters={len(CLUSTER_SIZES):,} | "
-                            f"wait={_t_wait:.3f}s transfer={_t_transfer:.3f}s"
-                        )
-                        waiting = False
+                            local_load = int(CLUSTER_PTS.shape[0])
+                            global_loads[rank] = local_load
+                            broadcast_heartbeat()
+                            _t_wait = time.perf_counter() - _t_steal_wait
+                            logger.info(
+                                f"R{rank:02}: Steal OK from R{target_rank:02} | "
+                                f"pts={local_load:,} clusters={len(CLUSTER_SIZES):,} | "
+                                f"wait={_t_wait:.3f}s transfer={_t_transfer:.3f}s"
+                            )
+                            waiting = False
 
-                    elif comm.Iprobe(source=target_rank, tag=TAG_STEAL_DENY):
-                        deny_reason = comm.recv(source=target_rank, tag=TAG_STEAL_DENY)
-                        _t_wait = time.perf_counter() - _t_steal_wait
-                        logger.debug(
-                            f"R{rank:02}: Steal denied by R{target_rank:02} "
-                            f"(reason={deny_reason}, waited {_t_wait:.3f}s). Sleeping."
-                        )
-                        time.sleep(SLEEP_INTERVAL)
-                        waiting = False
-            else:
-                # Gatekeeper Check Failed
-                time.sleep(SLEEP_INTERVAL)
+                        elif comm.Iprobe(source=target_rank, tag=TAG_STEAL_DENY):
+                            deny_reason = comm.recv(
+                                source=target_rank, tag=TAG_STEAL_DENY
+                            )
+                            _t_wait = time.perf_counter() - _t_steal_wait
+                            logger.debug(
+                                f"R{rank:02}: Steal denied by R{target_rank:02} "
+                                f"(reason={deny_reason}, waited {_t_wait:.3f}s). Sleeping."
+                            )
+                            time.sleep(SLEEP_INTERVAL)
+                            waiting = False
+                else:
+                    # Gatekeeper Check Failed
+                    time.sleep(SLEEP_INTERVAL)
 
             continue  # Loop back around
 
@@ -262,7 +271,8 @@ def _run_local_refinement(
                 comm.recv(source=req_src, tag=TAG_STEAL_REQ)
                 comm.isend("MID_LEVEL", dest=req_src, tag=TAG_STEAL_DENY)
 
-            process_heartbeats()
+            with CudaTimer("time_heartbeat", profiling_stats, PROFILE_TIMING):
+                process_heartbeats()
 
             target_aug_count = (b + 1) * BATCH_SIZE
             end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
@@ -733,6 +743,8 @@ def _run_local_refinement(
                     _t_send = time.perf_counter()
                     comm.send(steal_payload, dest=req_src, tag=TAG_STEAL_GRANT)
                     _t_send_elapsed = time.perf_counter() - _t_send
+                    if PROFILE_TIMING:
+                        profiling_stats["time_mpi_send"] += _t_send_elapsed
 
                     # Truncate our own arrays
                     next_X = next_X[:pt_split]
@@ -965,6 +977,10 @@ def adaptive_clustering(
         "time_bad_d2h": 0.0,
         "time_transition": 0.0,
         "time_gc": 0.0,
+        "time_idle": 0.0,
+        "time_heartbeat": 0.0,
+        "time_mpi_send": 0.0,
+        "time_mpi_recv": 0.0,
         "level_stats": [],
     }
 
