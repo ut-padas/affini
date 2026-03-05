@@ -30,15 +30,15 @@ logger = logging.getLogger(__name__)
 TINY_EPS = 1e-12
 
 # --- Custom MPI Tags for Decentralized Work-Stealing ---
-TAG_HEARTBEAT = 101
+TAG_STATE_BROADCAST = 101
 TAG_STEAL_REQ = 102
 TAG_STEAL_GRANT = 103
 TAG_STEAL_DENY = 104
 TAG_TERM = 105
 
 # --- Work-Stealing Tuning Parameters ---
-WEALTH_THRESHOLD = 1_000_000  # Min points to be a valid target
-STEAL_SIZE = 500_000  # Target point count to steal
+MIN_LOAD_THRESHOLD = 2_000_000  # Min points to be eligible for stealing
+STEAL_SIZE = 600_000  # Target point count to steal
 
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
 
@@ -65,7 +65,7 @@ def _run_local_refinement(
     BATCH_SIZE: int,
     CLUSTERING_MATRIX: str,
     IGNORE_GRADIENT: bool,
-    STORE_HESSIAN_SQRT_PER_CLUSTER: bool,
+    STORE_HESSIAN_PER_CLUSTER: bool,
     STORE_TREE_DATA: bool,
     LOG_MEM_STATS: bool,
     PROFILE_TIMING: bool,
@@ -85,11 +85,11 @@ def _run_local_refinement(
     tree_data: dict = {}
 
     buffers, out_cap = allocate_output_buffers_host(
-        MAX_CLUSTERS_EST, d, fd, STORE_HESSIAN_SQRT_PER_CLUSTER
+        MAX_CLUSTERS_EST, d, fd, STORE_HESSIAN_PER_CLUSTER
     )
     out_count = 0
 
-    # Architecture State
+    # Architecture State for Decentralized Work-Stealing
     global_loads = np.zeros(size, dtype=np.int64)
     local_load = int(CLUSTER_PTS.shape[0])
     global_loads[rank] = local_load
@@ -98,41 +98,48 @@ def _run_local_refinement(
     is_terminated = False
     status = MPI.Status()
 
-    # Helper: Phase 4 (Async Heartbeat & Gossip processing)
-    def process_heartbeats():
+    def receive_and_update_state():
+        """
+        Helper function (async gossip receiver): Check for and process any incoming load updates from other ranks.
+        """
         # Receive incoming gossip to update our view of the world
-        while comm.Iprobe(source=MPI.ANY_SOURCE, tag=TAG_HEARTBEAT, status=status):
+        while comm.Iprobe(
+            source=MPI.ANY_SOURCE, tag=TAG_STATE_BROADCAST, status=status
+        ):
             src = status.Get_source()
-            val = comm.recv(source=src, tag=TAG_HEARTBEAT)
+            val = comm.recv(source=src, tag=TAG_STATE_BROADCAST)
             global_loads[src] = val
 
-    # Helper: Broadcast our state to others
-    def broadcast_heartbeat():
+    def broadcast_state():
+        """
+        Helper function: Broadcast our current load to all other ranks. Used after any local state change (e.g. after processing a batch or after stealing/giving work) to keep the system's view of load balanced and up-to-date.
+        """
         for r in range(size):
             if r != rank:
-                comm.isend(local_load, dest=r, tag=TAG_HEARTBEAT)
+                comm.isend(local_load, dest=r, tag=TAG_STATE_BROADCAST)
 
     # Broadcast initial state
-    broadcast_heartbeat()
+    broadcast_state()
 
     # --- Decentralized Work-Stealing Main Loop ---
     while not is_terminated:
-        with CudaTimer("time_heartbeat", profiling_stats, PROFILE_TIMING):
-            process_heartbeats()
+        with CudaTimer("time_state_update", profiling_stats, PROFILE_TIMING):
+            receive_and_update_state()
 
         num_clusters = len(CLUSTER_SIZES)
         local_load = int(CLUSTER_PTS.shape[0] if num_clusters > 0 else 0)
         global_loads[rank] = local_load
 
-        # --- Phase 3: The Idle / Stealing Phase ---
+        # --- Phase 3: Idle / Stealing Phase ---
         if num_clusters == 0 or level > MAX_LEVELS:
+            # TODO: Checking max levels here is a bit hacky, since if we steal points, we ideally ought to be resetting the level back down to 0 for those points. Idea: Just add current level to MAX_LEVELS, and I think it should work out to the same thing but be more principled?
             with CudaTimer("time_idle", profiling_stats, PROFILE_TIMING):
                 # A rank that hit MAX_LEVELS may still hold data but will never process
                 # it. Ensure we advertise 0 so the termination condition works correctly.
                 if local_load != 0:
                     local_load = 0
                     global_loads[rank] = 0
-                    broadcast_heartbeat()
+                    broadcast_state()
                 if np.sum(global_loads) == 0:
                     # Heuristic termination: everyone claims to be empty.
                     # Drain any pending steal requests (sent before we went idle) so
@@ -149,7 +156,8 @@ def _run_local_refinement(
 
                 target_rank = int(np.argmax(global_loads))
 
-                if global_loads[target_rank] >= WEALTH_THRESHOLD:
+                # Gatekeeper Check: Only start steal if the target has at least MIN_LOAD_THRESHOLD points to avoid hammering ranks that are already nearly idle or stealing from ranks that have just gone idle (but haven't updated their load info everywhere yet).
+                if global_loads[target_rank] >= MIN_LOAD_THRESHOLD:
                     logger.debug(
                         f"R{rank:02}: Idle. Attempting steal from R{target_rank:02} "
                         f"(Load: {global_loads[target_rank]:,}) [my load: {local_load:,}]"
@@ -157,14 +165,15 @@ def _run_local_refinement(
                     comm.isend(rank, dest=target_rank, tag=TAG_STEAL_REQ)
                     _t_steal_wait = time.perf_counter()
 
-                    # Spin-wait for response while keeping heartbeats alive
+                    # Wait for a response, but keep processing incoming state updates in the meantime to avoid getting stuck if the target goes idle or terminates while we're waiting.
                     waiting = True
                     while waiting:
                         with CudaTimer(
-                            "time_heartbeat", profiling_stats, PROFILE_TIMING
+                            "time_state_update", profiling_stats, PROFILE_TIMING
                         ):
-                            process_heartbeats()
-                        # Escape if the target has gone idle/terminated (load dropped to 0)
+                            receive_and_update_state()
+
+                        # Escape if the target has gone idle/terminated (load -> 0)
                         if global_loads[target_rank] == 0:
                             logger.debug(
                                 f"R{rank:02}: Steal target R{target_rank:02} load dropped to 0 "
@@ -178,12 +187,13 @@ def _run_local_refinement(
                                 comm.recv(source=target_rank, tag=TAG_STEAL_GRANT)
                             waiting = False
                             continue
+
+                        # Check for steal response
                         if comm.Iprobe(source=target_rank, tag=TAG_STEAL_GRANT):
                             _t_recv = time.perf_counter()
+
+                            # Receive the stolen data & update local state
                             payload = comm.recv(source=target_rank, tag=TAG_STEAL_GRANT)
-                            _t_transfer = time.perf_counter() - _t_recv
-                            if PROFILE_TIMING:
-                                profiling_stats["time_mpi_recv"] += _t_transfer
                             CLUSTER_PTS = xp.asarray(payload["X"])
                             CLUSTER_F = xp.asarray(payload["F"])
                             CLUSTER_G = (
@@ -194,9 +204,13 @@ def _run_local_refinement(
                             CLUSTER_SIZES = xp.asarray(payload["sizes"])
                             CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
 
+                            _t_transfer = time.perf_counter() - _t_recv
+                            if PROFILE_TIMING:
+                                profiling_stats["time_mpi_recv"] += _t_transfer
+
                             local_load = int(CLUSTER_PTS.shape[0])
                             global_loads[rank] = local_load
-                            broadcast_heartbeat()
+                            broadcast_state()
                             _t_wait = time.perf_counter() - _t_steal_wait
                             logger.info(
                                 f"R{rank:02}: Steal OK from R{target_rank:02} | "
@@ -205,6 +219,7 @@ def _run_local_refinement(
                             )
                             waiting = False
 
+                        # If we get a steal denial, log and sleep for a bit before trying again to avoid hammering the target rank with requests if it's overloaded or has just gone idle.
                         elif comm.Iprobe(source=target_rank, tag=TAG_STEAL_DENY):
                             deny_reason = comm.recv(
                                 source=target_rank, tag=TAG_STEAL_DENY
@@ -265,14 +280,86 @@ def _run_local_refinement(
                 f"R{rank:02} L{level:02}: Batch {b+1}/{num_batches} "
                 f"[clusters {start_cluster_idx}–{min(start_cluster_idx + BATCH_SIZE, num_clusters)}]"
             )
-            # Phase 1 Anti-Deadlock: Deny impatient thieves mid-batch
+
+            # --- Phase 1 Mid-Level Work Stealing ---
             while comm.Iprobe(source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status):
                 req_src = status.Get_source()
                 comm.recv(source=req_src, tag=TAG_STEAL_REQ)
-                comm.isend("MID_LEVEL", dest=req_src, tag=TAG_STEAL_DENY)
 
-            with CudaTimer("time_heartbeat", profiling_stats, PROFILE_TIMING):
-                process_heartbeats()
+                unprocessed_clusters = num_clusters - start_cluster_idx
+
+                # We need at least 2 unprocessed clusters to keep 1 for ourselves and give 1 away
+                if unprocessed_clusters <= 1:
+                    comm.isend(
+                        "MID_LEVEL_NO_CLUSTERS", dest=req_src, tag=TAG_STEAL_DENY
+                    )
+                    continue
+
+                unprocessed_sizes = CLUSTER_SIZES[start_cluster_idx:]
+                unprocessed_pts = int(xp.sum(unprocessed_sizes))
+
+                if unprocessed_pts > MIN_LOAD_THRESHOLD:
+                    _t_send = time.perf_counter()
+
+                    # Find how many clusters to give from the tail end
+                    rev_sizes_cpu = _to_host(unprocessed_sizes[::-1])
+                    rev_cumsum = np.cumsum(rev_sizes_cpu)
+                    split_rev_idx = int(np.searchsorted(rev_cumsum, STEAL_SIZE))
+
+                    # Number of clusters to give away (at least 1, at most unprocessed - 1)
+                    give_clusters = split_rev_idx + 1
+                    give_clusters = min(give_clusters, unprocessed_clusters - 1)
+
+                    split_idx = num_clusters - give_clusters
+                    pt_split = int(CLUSTER_STARTS[split_idx])
+
+                    # Prepare the payload to send to the stealing rank
+                    steal_payload = {
+                        "X": _to_host(CLUSTER_PTS[pt_split:]),
+                        "F": _to_host(CLUSTER_F[pt_split:]),
+                        "G": (
+                            _to_host(CLUSTER_G[pt_split:])
+                            if CLUSTER_G is not None
+                            else None
+                        ),
+                        "sizes": _to_host(CLUSTER_SIZES[split_idx:]),
+                    }
+
+                    comm.send(steal_payload, dest=req_src, tag=TAG_STEAL_GRANT)
+                    _t_send_elapsed = time.perf_counter() - _t_send
+                    if PROFILE_TIMING:
+                        profiling_stats["time_mpi_send"] += _t_send_elapsed
+
+                    # Safely truncate our arrays to remove the stolen tail
+                    CLUSTER_PTS = CLUSTER_PTS[:pt_split]
+                    CLUSTER_F = CLUSTER_F[:pt_split]
+                    if CLUSTER_G is not None:
+                        CLUSTER_G = CLUSTER_G[:pt_split]
+                    CLUSTER_SIZES = CLUSTER_SIZES[:split_idx]
+                    CLUSTER_STARTS = CLUSTER_STARTS[:split_idx]
+
+                    level_augmented_sizes = level_augmented_sizes[:split_idx]
+                    aug_sizes_cpu = aug_sizes_cpu[:split_idx]
+                    aug_cumsum_cpu = aug_cumsum_cpu[:split_idx]
+
+                    # Update local state
+                    num_clusters = split_idx
+                    local_load = int(CLUSTER_PTS.shape[0])
+                    global_loads[rank] = local_load
+                    broadcast_state()
+
+                    logger.info(
+                        f"R{rank:02} L{level:02} B{b+1}: Granted mid-level steal to R{req_src:02} | "
+                        f"gave {steal_payload['X'].shape[0]:,} pts "
+                        f"{len(steal_payload['sizes']):,} clusters | "
+                        f"remaining pts={local_load:,} clusters={num_clusters:,}"
+                    )
+                else:
+                    deny_reason = f"MID_LEVEL_LOAD ({unprocessed_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
+                    comm.isend(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
+
+            with CudaTimer("time_state_update", profiling_stats, PROFILE_TIMING):
+                receive_and_update_state()
 
             target_aug_count = (b + 1) * BATCH_SIZE
             end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
@@ -315,7 +402,7 @@ def _run_local_refinement(
                 is_real = pt_idxs_in_cluster < sizes[aug_ids]
                 X_batch[is_real] = pts
                 F_batch[is_real] = f_vals
-                if CLUSTER_G is not None:
+                if CLUSTER_G is not None and G_batch is not None:
                     G_batch[is_real] = g_vals
 
                 is_synth = ~is_real
@@ -341,7 +428,7 @@ def _run_local_refinement(
                     X_batch[is_synth] = X_synth_vals
 
                     if oracle_fn is not None:
-                        if CLUSTER_G is None:
+                        if CLUSTER_G is None or G_batch is None:
                             F_syn = f_fn(X_synth_vals)
                             F_batch[is_synth] = convert_to_2d_array(F_syn)
                         else:
@@ -352,7 +439,7 @@ def _run_local_refinement(
                             )
                     else:
                         F_batch[is_synth] = convert_to_2d_array(f_fn(X_synth_vals))
-                        if CLUSTER_G is not None:
+                        if CLUSTER_G is not None and G_batch is not None:
                             G_batch[is_synth] = (
                                 0.0
                                 if IGNORE_GRADIENT
@@ -430,7 +517,11 @@ def _run_local_refinement(
                 with CudaTimer("time_good_Q", profiling_stats, PROFILE_TIMING):
                     good_mask = is_good[aug_ids]
                     X_good = X_batch[good_mask]
-                    G_good = G_batch[good_mask] if CLUSTER_G is not None else None
+                    G_good = (
+                        G_batch[good_mask]
+                        if (CLUSTER_G is not None and G_batch is not None)
+                        else None
+                    )
                     good_counts = aug_sizes[good_idx_local]
                     dense_labels_good = repeats(xp.arange(K_good_batch), good_counts)
 
@@ -482,10 +573,44 @@ def _run_local_refinement(
                         @ U.transpose(0, 2, 1)
                     )
 
-                    H_sqrt = None
-                    if STORE_HESSIAN_SQRT_PER_CLUSTER:
-                        # (Omitted full Hessian generation here for brevity, keep your original block exactly as is)
-                        pass
+                    Hs = None
+                    if STORE_HESSIAN_PER_CLUSTER:
+                        g_mus_exp = g_mus[good_idx_local][dense_labels_good]
+                        dx = X_good - mus[good_idx_local][dense_labels_good]
+                        lin = xp.einsum("nmd,nd->nm", g_mus_exp, dx)
+                        diff_vals = F_batch[good_mask] - (
+                            f_mus[good_idx_local][dense_labels_good] + lin
+                        )
+
+                        good_starts = xp.r_[0, xp.cumsum(good_counts)[:-1]]
+                        sq_err = xp.add.reduceat(diff_vals**2, good_starts)
+                        sq_val = xp.add.reduceat(F_batch[good_mask] ** 2, good_starts)
+                        scores = xp.sqrt(sq_err) / (xp.sqrt(sq_val) + TINY_EPS)
+                        active_comps_good = xp.argmax(scores, axis=1).astype(xp.int32)
+
+                        C_h, E_h = run_fused_stats(
+                            X_good,
+                            mus[good_idx_local],
+                            dense_labels_good,
+                            K_good_batch,
+                            d,
+                            fd,
+                            active_comps_good,
+                            G=G_good,
+                            g_mus=g_mus[good_idx_local],
+                            calc_E=True,
+                        )
+                        C_h = 0.5 * (C_h + C_h.transpose(0, 2, 1))
+                        S_h = E_h + E_h.transpose(0, 2, 1)
+
+                        dvals, U_h = xp.linalg.eigh(C_h)
+                        dvals = xp.maximum(dvals, TINY_EPS)
+                        Gtilde = U_h.transpose(0, 2, 1) @ S_h @ U_h
+                        F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])
+
+                        # Computing H, not |H|. No need to eigendecompose F.
+                        Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
+                        Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
 
                 with CudaTimer("time_good_d2h", profiling_stats, PROFILE_TIMING):
                     end_out = out_count + K_good_batch
@@ -494,7 +619,7 @@ def _run_local_refinement(
                         out_count,
                         out_cap,
                         end_out,
-                        STORE_HESSIAN_SQRT_PER_CLUSTER,
+                        STORE_HESSIAN_PER_CLUSTER,
                     )
                     buffers["centroids"][out_count:end_out] = _to_host(
                         mus[good_idx_local]
@@ -502,8 +627,8 @@ def _run_local_refinement(
                     buffers["f"][out_count:end_out] = _to_host(f_mus[good_idx_local])
                     buffers["g"][out_count:end_out] = _to_host(g_mus[good_idx_local])
                     buffers["Q"][out_count:end_out] = _to_host(Qs)
-                    if H_sqrt is not None:
-                        buffers["H_sqrt"][out_count:end_out] = _to_host(H_sqrt)
+                    if Hs is not None:
+                        buffers["H"][out_count:end_out] = _to_host(Hs)
                     buffers["E_cluster"][out_count:end_out] = _to_host(
                         E_cluster[good_idx_local]
                     )
@@ -523,7 +648,11 @@ def _run_local_refinement(
                     bad_mask = (~is_good)[aug_ids]
                     X_bad = X_batch[bad_mask]
                     F_bad = F_batch[bad_mask]
-                    G_bad = G_batch[bad_mask] if CLUSTER_G is not None else None
+                    G_bad = (
+                        G_batch[bad_mask]
+                        if (CLUSTER_G is not None and G_batch is not None)
+                        else None
+                    )
                     bad_counts = aug_sizes[bad_idx_local]
                     dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
 
@@ -712,17 +841,17 @@ def _run_local_refinement(
 
             total_next_pts = np.sum(next_sizes) if len(next_sizes) > 0 else 0
 
-            # Broadcast our newly established wealth
+            # Broadcast our newly established load before answering steal requests so thieves get an updated view of the world
             local_load = int(total_next_pts)
             global_loads[rank] = local_load
-            broadcast_heartbeat()
+            broadcast_state()
 
             # Philanthropy: Answer accumulated steal requests
             while comm.Iprobe(source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status):
                 req_src = status.Get_source()
                 comm.recv(source=req_src, tag=TAG_STEAL_REQ)
 
-                if total_next_pts > WEALTH_THRESHOLD and len(next_sizes) > 1:
+                if total_next_pts > MIN_LOAD_THRESHOLD and len(next_sizes) > 1:
                     # Slice from the end to avoid shifting memory
                     rev_cumsum = np.cumsum(next_sizes[::-1])
                     split_rev_idx = np.searchsorted(rev_cumsum, STEAL_SIZE)
@@ -757,7 +886,7 @@ def _run_local_refinement(
                     # Update heartbeat to reflect lower load
                     local_load = int(total_next_pts)
                     global_loads[rank] = local_load
-                    broadcast_heartbeat()
+                    broadcast_state()
                     logger.info(
                         f"R{rank:02} L{level:02}: Granted steal to R{req_src:02} | "
                         f"gave {steal_payload['X'].shape[0]:,} pts "
@@ -766,8 +895,8 @@ def _run_local_refinement(
                         f"remaining pts={total_next_pts:,} clusters={len(next_sizes):,}"
                     )
                 else:
-                    if total_next_pts <= WEALTH_THRESHOLD:
-                        deny_reason = f"WEALTH ({total_next_pts:,} <= threshold {WEALTH_THRESHOLD:,})"
+                    if total_next_pts <= MIN_LOAD_THRESHOLD:
+                        deny_reason = f"LOAD ({total_next_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
                     else:
                         deny_reason = (
                             f"STEAL_SIZE (only {len(next_sizes)} cluster(s), need > 1)"
@@ -845,7 +974,7 @@ def adaptive_clustering(
     MAX_LEVELS: int = 50,
     BATCH_SIZE: int = 10_000_000,
     IGNORE_GRADIENT: bool = False,
-    STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
+    STORE_HESSIAN_PER_CLUSTER: bool = False,
     STORE_TREE_DATA: bool = False,
     LOG_MEM_STATS: bool = False,
     PROFILE_TIMING: bool = False,
@@ -894,8 +1023,7 @@ def adaptive_clustering(
         BATCH_SIZE: Maximum number of points processed in a single GPU kernel launch.
         IGNORE_GRADIENT: If True, assumes ∇F = 0 (Voronoi/Piecewise-Constant
             approximation).
-        STORE_HESSIAN_SQRT_PER_CLUSTER: If True, computes and stores |H|^{1/2} for every
-            accepted cluster (useful for anisotropic trust regions downstream).
+        STORE_HESSIAN_PER_CLUSTER: If True, computes and stores H for every accepted cluster, to use for extra inference accuracy.
         LOG_MEM_STATS: If True, prints VRAM usage at key steps.
         PROFILE_TIMING: If True, tracks detailed execution times for performance
             profiling.
@@ -910,7 +1038,7 @@ def adaptive_clustering(
         -   `L_obs`: (K,) Observed Lipschitz constants.
         -   `E_cluster`: (K,) Max observed error per cluster.
         -   `counts`: (K,) Number of points support per cluster.
-        -   `H_sqrt`: (K, d, d) (Optional) Symmetric Hessian square roots.
+        -   `H`: (K, d, d) (Optional) Symmetric Hessian.
         -   `tree_data`: (dict) (Optional) Per-level cluster data keyed by level index, for visualization/debugging.
         -   `num_levels`: (int) Total levels refined.
         -   `num_generated_pts`: (int) Number of generated points.
@@ -978,7 +1106,7 @@ def adaptive_clustering(
         "time_transition": 0.0,
         "time_gc": 0.0,
         "time_idle": 0.0,
-        "time_heartbeat": 0.0,
+        "time_state_update": 0.0,
         "time_mpi_send": 0.0,
         "time_mpi_recv": 0.0,
         "time_scatter": 0.0,
@@ -1168,7 +1296,7 @@ def adaptive_clustering(
             BATCH_SIZE=BATCH_SIZE,
             CLUSTERING_MATRIX=CLUSTERING_MATRIX,
             IGNORE_GRADIENT=IGNORE_GRADIENT,
-            STORE_HESSIAN_SQRT_PER_CLUSTER=STORE_HESSIAN_SQRT_PER_CLUSTER,
+            STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN_PER_CLUSTER,
             STORE_TREE_DATA=STORE_TREE_DATA,
             LOG_MEM_STATS=LOG_MEM_STATS,
             PROFILE_TIMING=PROFILE_TIMING,
@@ -1202,7 +1330,7 @@ def adaptive_clustering(
     # Update time_idle by removing the measured active times from send/recv
     active_time = sum(
         profiling_stats.get(k, 0.0)
-        for k in ["time_heartbeat", "time_mpi_send", "time_mpi_recv"]
+        for k in ["time_state_update", "time_mpi_send", "time_mpi_recv"]
     )
     profiling_stats["time_idle"] = max(
         0.0, profiling_stats.get("time_idle", 0.0) - active_time
