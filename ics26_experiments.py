@@ -611,6 +611,7 @@ def ics_rosenbrock_experiment() -> Path:
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
             CLUSTERING_MATRIX="Cov_Lvl_curves",
+            STORE_HESSIAN=True,
         )
 
     return EXP_DIR
@@ -1115,10 +1116,10 @@ if __name__ == "__main__":
         # dir10 = ics_rosenbrock_experiment_no_hess_no_grad()
         # create_summary_dataframe(dir10)
 
-        ics_lorenz_experiment()
+        # ics_lorenz_experiment()
 
-        # dir = ics_rosenbrock_experiment()
-        # create_summary_dataframe(dir)
+        dir = ics_rosenbrock_experiment()
+        create_summary_dataframe(dir)
 
     else:
         print("Run only on GPU node.")

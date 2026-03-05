@@ -385,6 +385,7 @@ def Problem_experiment_setup(
     PROFILE_TIMING: bool = False,
     SAVE_TRAINED_DATA: bool = False,
     SAVE_TEST_DATA: bool = False,
+    STORE_HESSIAN: bool = False,
 ):
     if json_fpath.exists():
         print(f"Result file {json_fpath} already exists. Skipping experiment.")
@@ -457,6 +458,7 @@ def Problem_experiment_setup(
                 BATCH_SIZE=BATCH_SIZE,
                 PROFILE_TIMING=PROFILE_TIMING,
                 save_model=model_save_path,
+                SAVE_HESSIAN=STORE_HESSIAN,
             )
             _TRAINED = True
         else:
@@ -477,6 +479,7 @@ def Problem_experiment_setup(
                     IGNORE_GRADIENT=IGNORE_GRADIENT,
                     PROFILE_TIMING=PROFILE_TIMING,
                     save_model=model_save_path,
+                    SAVE_HESSIAN=STORE_HESSIAN,
                 )
             else:
                 surrogate.train(
@@ -494,6 +497,7 @@ def Problem_experiment_setup(
                     BATCH_SIZE=BATCH_SIZE,
                     PROFILE_TIMING=PROFILE_TIMING,
                     save_model=model_save_path,
+                    STORE_HESSIAN=STORE_HESSIAN
                 )
             _TRAINED = True
 

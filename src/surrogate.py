@@ -80,6 +80,7 @@ class HATANNSurrogate:
             "Hessian_LSQ", "Cov_Lvl_curves", "None"
         ] = "Hessian_LSQ",
         IGNORE_GRADIENT: bool = False,
+        STORE_HESSIAN: bool = False,
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
         PROFILE_TIMING: bool = False,
@@ -172,6 +173,7 @@ class HATANNSurrogate:
             IGNORE_GRADIENT=IGNORE_GRADIENT,
             STORE_TREE_DATA=STORE_TREE_DATA,
             PROFILE_TIMING=PROFILE_TIMING,
+            STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
         )
         # Non-rank-0 MPI workers return None — their work is done.
         if results is None:
@@ -183,6 +185,7 @@ class HATANNSurrogate:
         radii = xp.asarray(results["radii"])
         Qs = xp.asarray(results["Q"])
         profiling_stats = results["profiling_stats"]
+        Hs = results.get("H", None)
 
         # 2. Store Data
         self.X_src = centroids
@@ -194,6 +197,8 @@ class HATANNSurrogate:
         self.profiling_stats = profiling_stats
         if STORE_TREE_DATA:
             self.tree_data = results["tree_data"]
+        if Hs is not None:
+            self.Hs_src = xp.asarray(Hs)
 
         # 3. Build KNN Index
         self._build_knn_index()
@@ -237,6 +242,7 @@ class HATANNSurrogate:
             "J_src": _to_host(self.J_src),
             "trust_radii_src": _to_host(self.trust_radii_src),
             "Qs_src": _to_host(self.Qs_src),
+            "Hs_src": _to_host(self.Hs_src),
             "profiling_stats": self.profiling_stats,
             "tree_data": self.tree_data,
         }

@@ -59,7 +59,7 @@ def _run_local_refinement(
     BATCH_SIZE: int,
     CLUSTERING_MATRIX: str,
     IGNORE_GRADIENT: bool,
-    STORE_HESSIAN_SQRT_PER_CLUSTER: bool,
+    STORE_HESSIAN_PER_CLUSTER: bool,
     STORE_TREE_DATA: bool,
     LOG_MEM_STATS: bool,
     PROFILE_TIMING: bool,
@@ -83,7 +83,7 @@ def _run_local_refinement(
 
     # Allocate Output Buffers on CPU (Host) to save VRAM
     buffers, out_cap = allocate_output_buffers_host(
-        MAX_CLUSTERS_EST, d, fd, STORE_HESSIAN_SQRT_PER_CLUSTER
+        MAX_CLUSTERS_EST, d, fd, STORE_HESSIAN_PER_CLUSTER
     )
     out_count = 0
 
@@ -386,8 +386,8 @@ def _run_local_refinement(
                         U * (scale_fac[:, None] * Lambda_inv)[:, None, :]
                     ) @ U.transpose(0, 2, 1)
 
-                    H_sqrt = None
-                    if STORE_HESSIAN_SQRT_PER_CLUSTER:
+                    Hs = None
+                    if STORE_HESSIAN_PER_CLUSTER:
                         g_mus_exp = g_mus[good_idx_local][dense_labels_good]
                         dx = X_good - mus[good_idx_local][dense_labels_good]
                         lin = xp.einsum("nmd,nd->nm", g_mus_exp, dx)
@@ -420,11 +420,10 @@ def _run_local_refinement(
                         dvals = xp.maximum(dvals, TINY_EPS)
                         Gtilde = U_h.transpose(0, 2, 1) @ S_h @ U_h
                         F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])
-                        _, V_h = xp.linalg.eigh(F_mat)
 
-                        Z = U_h @ V_h
-                        M = (Z * xp.sqrt(xp.abs(_))[:, None, :]) @ Z.transpose(0, 2, 1)
-                        H_sqrt = 0.5 * (M + M.transpose(0, 2, 1))
+                        # Computing H, not |H|. No need to eigendecompose F.
+                        Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
+                        Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
 
                 with CudaTimer("time_good_d2h", profiling_stats, PROFILE_TIMING):
                     end_out = out_count + K_good
@@ -433,7 +432,7 @@ def _run_local_refinement(
                         out_count,
                         out_cap,
                         end_out,
-                        STORE_HESSIAN_SQRT_PER_CLUSTER,
+                        STORE_HESSIAN_PER_CLUSTER,
                     )
                     buffers["centroids"][out_count:end_out] = _to_host(
                         mus[good_idx_local]
@@ -441,8 +440,8 @@ def _run_local_refinement(
                     buffers["f"][out_count:end_out] = _to_host(f_mus[good_idx_local])
                     buffers["g"][out_count:end_out] = _to_host(g_mus[good_idx_local])
                     buffers["Q"][out_count:end_out] = _to_host(Qs)
-                    if H_sqrt is not None:
-                        buffers["H_sqrt"][out_count:end_out] = _to_host(H_sqrt)
+                    if Hs is not None:
+                        buffers["H"][out_count:end_out] = _to_host(Hs)
                     buffers["E_cluster"][out_count:end_out] = _to_host(
                         E_cluster[good_idx_local]
                     )
@@ -808,7 +807,7 @@ def adaptive_clustering(
     MAX_LEVELS: int = 50,
     BATCH_SIZE: int = 10_000_000,
     IGNORE_GRADIENT: bool = False,
-    STORE_HESSIAN_SQRT_PER_CLUSTER: bool = False,
+    STORE_HESSIAN_PER_CLUSTER: bool = False,
     STORE_TREE_DATA: bool = False,
     LOG_MEM_STATS: bool = False,
     PROFILE_TIMING: bool = False,
@@ -857,8 +856,8 @@ def adaptive_clustering(
         BATCH_SIZE: Maximum number of points processed in a single GPU kernel launch.
         IGNORE_GRADIENT: If True, assumes ∇F = 0 (Voronoi/Piecewise-Constant
             approximation).
-        STORE_HESSIAN_SQRT_PER_CLUSTER: If True, computes and stores |H|^{1/2} for every
-            accepted cluster (useful for anisotropic trust regions downstream).
+        STORE_HESSIAN_PER_CLUSTER: If True, computes and stores H for every
+            accepted cluster, to use for extra inference accuracy.
         LOG_MEM_STATS: If True, prints VRAM usage at key steps.
         PROFILE_TIMING: If True, tracks detailed execution times for performance
             profiling.
@@ -1126,7 +1125,7 @@ def adaptive_clustering(
             BATCH_SIZE=BATCH_SIZE,
             CLUSTERING_MATRIX=CLUSTERING_MATRIX,
             IGNORE_GRADIENT=IGNORE_GRADIENT,
-            STORE_HESSIAN_SQRT_PER_CLUSTER=STORE_HESSIAN_SQRT_PER_CLUSTER,
+            STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN_PER_CLUSTER,
             STORE_TREE_DATA=STORE_TREE_DATA,
             LOG_MEM_STATS=LOG_MEM_STATS,
             PROFILE_TIMING=PROFILE_TIMING,

@@ -690,7 +690,7 @@ def allocate_output_buffers_host(
         "counts": np.empty((cap,), dtype=np.int64),
     }
     if store_hess:
-        buffers["H_sqrt"] = np.empty((cap, d, d), dtype=np.float64)
+        buffers["H"] = np.empty((cap, d, d), dtype=np.float64)
     return buffers, cap
 
 
@@ -718,7 +718,7 @@ def adjust_buffer_capacity_host(
         "counts": np.empty((new_cap,), dtype=np.int64),
     }
     if store_hess:
-        new_buffers["H_sqrt"] = np.empty((new_cap, d, d), dtype=np.float64)
+        new_buffers["H"] = np.empty((new_cap, d, d), dtype=np.float64)
     if current_count > 0:
         for k in new_buffers:
             new_buffers[k][:current_count] = buffers[k][:current_count]
