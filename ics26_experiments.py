@@ -16,6 +16,7 @@ from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_
 from src.problems.lorenz96_flowmap import (
     lorenz96_flowmap,
     lorenz96_flowmap_grad,
+    lorenz96_flowmap_oracle,
     lorenz96_flowmap_oracle_first_component,
 )
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
@@ -565,7 +566,7 @@ def ics_rosenbrock_experiment() -> Path:
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
 
-    DIMs = [2, 5]
+    DIMs = [2]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
 
@@ -967,24 +968,36 @@ def ics_lorenz_experiment() -> Path:
     FORCING = 1
     FINAL_TIME = 0.05
 
+    # def f(x):
+    #     f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
+    #     N, _ = f.shape
+    #     return f[:, 0].reshape((N, 1))
+
+    # def grad_f(x):
+    #     g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+    #     N, d, _ = g.shape
+    #     return g[:, 0, :].reshape((N, 1, d))
+
+    # def oracle(x):
+    #     """
+    #     Compute the flowmap, and the gradient of the flowmap, for the given input x,
+    #     and return for the specified output variable.
+    #     """
+    #     N, d = x.shape
+    #     f, g = lorenz96_flowmap_oracle_first_component(x, FORCING, FINAL_TIME)
+    #     return f.reshape(N, 1), g.reshape(N, 1, d)
+
     def f(x):
-        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
-        N, _ = f.shape
-        return f[:, 0].reshape((N, 1))
+        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
+        return f
 
     def grad_f(x):
         g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
-        N, d, _ = g.shape
-        return g[:, 0, :].reshape((N, 1, d))
+        return g
 
     def oracle(x):
-        """
-        Compute the flowmap, and the gradient of the flowmap, for the given input x,
-        and return for the specified output variable.
-        """
-        N, d = x.shape
-        f, g = lorenz96_flowmap_oracle_first_component(x, FORCING, FINAL_TIME)
-        return f.reshape(N, 1), g.reshape(N, 1, d)
+        f, g = lorenz96_flowmap_oracle(x, FORCING, FINAL_TIME)
+        return f, g
 
     MAX_CLUSTERS_EST = 20_000
     K_NEIGHBOURS = 1
@@ -994,8 +1007,8 @@ def ics_lorenz_experiment() -> Path:
     # del_all_error_files_in_dir(EXP_DIR)
     # create_summary_dataframe(EXP_DIR)
 
-    DIMs = [5, 10, 20, 40, 80]
-    TOLs = [0.1]
+    DIMs = [10]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-global"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
@@ -1025,7 +1038,7 @@ def ics_lorenz_experiment() -> Path:
             DOMAIN=[-5.0, 5.0],
             f_fn=f,
             g_fn=grad_f,
-            oracle_fn=oracle,
+            # oracle_fn=oracle,
             N_TRAIN=N_TRAIN,
             N_INIT_CLUSTERS=N_INIT_CLUSTERS,
             TOL=TOL,
@@ -1034,7 +1047,7 @@ def ics_lorenz_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=True,
+            CLUSTERING_MATRIX="Cov_Lvl_curves",
             PROFILE_TIMING=True,
         )
         create_summary_dataframe(EXP_DIR)
@@ -1102,10 +1115,10 @@ if __name__ == "__main__":
         # dir10 = ics_rosenbrock_experiment_no_hess_no_grad()
         # create_summary_dataframe(dir10)
 
-        # ics_lorenz_experiment()
+        ics_lorenz_experiment()
 
-        dir = ics_rosenbrock_experiment()
-        create_summary_dataframe(dir)
+        # dir = ics_rosenbrock_experiment()
+        # create_summary_dataframe(dir)
 
     else:
         print("Run only on GPU node.")
