@@ -1199,6 +1199,14 @@ def adaptive_clustering(
     profiling_stats["num_final_clusters"] = out_count
     profiling_stats["time_total"] = total_time
     # Piggyback profiling stats on the existing gather (no extra comms round)
+    # Update time_idle by removing the measured active times from send/recv
+    active_time = sum(
+        profiling_stats.get(k, 0.0)
+        for k in ["time_heartbeat", "time_mpi_send", "time_mpi_recv"]
+    )
+    profiling_stats["time_idle"] = max(
+        0.0, profiling_stats.get("time_idle", 0.0) - active_time
+    )
     local_result_host["_profiling_stats"] = profiling_stats
 
     # ------------------------------------------------------------------
