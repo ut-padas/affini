@@ -459,7 +459,7 @@ def Problem_experiment_setup(
                 BATCH_SIZE=BATCH_SIZE,
                 PROFILE_TIMING=PROFILE_TIMING,
                 save_model=model_save_path,
-                SAVE_HESSIAN=STORE_HESSIAN,
+                STORE_HESSIAN=STORE_HESSIAN,
             )
             _TRAINED = True
         else:
@@ -480,7 +480,7 @@ def Problem_experiment_setup(
                     IGNORE_GRADIENT=IGNORE_GRADIENT,
                     PROFILE_TIMING=PROFILE_TIMING,
                     save_model=model_save_path,
-                    SAVE_HESSIAN=STORE_HESSIAN,
+                    STORE_HESSIAN=STORE_HESSIAN,
                 )
             else:
                 surrogate.train(

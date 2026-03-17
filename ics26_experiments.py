@@ -11,6 +11,8 @@ from experiments_utils import (
     del_all_error_files_in_dir,
 )
 from src.logging_utils import consolidate_evaluations
+from src.problems.vector_quadratic_2 import vector_quadratic_2, vector_quadratic_2_grad
+from src.problems.vector_quadratic_3 import vector_quadratic_3, vector_quadratic_3_grad
 from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad
 from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad
 from src.problems.lorenz96_flowmap import (
@@ -60,9 +62,9 @@ def get_N_MIN_PER_CLUSTER(dim: int, *, base: float = 1.3, factor: int = 100) -> 
 def ics_aniso_gaussian_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "ics_anisotropic_gaussian"
+    EXP_DIR = ICS26_DIR / "gaussian_no_hessian_for_inference"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [2, 5]
+    DIMs = [5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
 
@@ -98,137 +100,12 @@ def ics_aniso_gaussian_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=True,
+            CLUSTERING_MATRIX='Hessian_LSQ',
+            IGNORE_GRADIENT=False,
             STORE_TRAIN_EVALS=False,
+            STORE_HESSIAN=False,
+            USE_HESSIAN_FOR_INFERENCE=False,
         )
-
-    return EXP_DIR
-
-
-def ics_aniso_gaussian_experiment_no_hess() -> Path:
-    MAX_CLUSTERS_EST = 100_000
-    K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "ics_anisotropic_gaussian_no_hess"
-    create_summary_dataframe(EXP_DIR)
-
-    DIMs = [2, 5]
-    ERROR_METRICs = ["Linf-local"]
-    CASES = [(False, False)]  # (use_hessian, ignore_gradient)
-
-    TOLS_FOR_DIM2 = [0.2, 0.1, 0.05, 0.02, 0.011]
-    TOLS_FOR_DIM5 = [0.08, 0.045, 0.02, 0.009, 0.0048]
-
-    combos = list(product(DIMs, ERROR_METRICs, CASES))
-    for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
-        combos, desc="Experiments"
-    ):
-        if DIM == 2:
-            TOLs = TOLS_FOR_DIM2
-        elif DIM == 5:
-            TOLs = TOLS_FOR_DIM5
-        else:
-            raise ValueError(f"Unexpected DIM: {DIM}")
-
-        for TOL in TOLs:
-            json_path = (
-                EXP_DIR
-                / f"ics26_aniso_gaussian_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
-            )
-            json_path.parent.mkdir(parents=True, exist_ok=True)
-            if json_path.exists():
-                print(f"Skipping existing experiment at {json_path}")
-                continue
-            print(f"Running experiment: {json_path}")
-
-            N_TRAIN = get_N_TRAIN(DIM)
-            N_TEST = N_TRAIN // 2
-            N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
-            N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
-
-            Problem_experiment_setup(
-                json_fpath=json_path,
-                DIM=DIM,
-                F_DIM=1,
-                DOMAIN=[-3.0, 3.0],
-                f_fn=aniso_gaussian,
-                g_fn=aniso_gaussian_grad,
-                N_TRAIN=N_TRAIN,
-                N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-                TOL=TOL,
-                N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                N_TEST=N_TEST,
-                K_NEIGHBOURS=K_NEIGHBOURS,
-                ERROR_METRIC=ERROR_METRIC,  # type: ignore
-                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-                IGNORE_GRADIENT=IGNORE_GRADIENT,
-                PLOT_CONTOUR_IN_LOG_SCALE=False,
-            )
-            create_summary_dataframe(EXP_DIR)
-
-    return EXP_DIR
-
-
-def ics_aniso_gaussian_experiment_no_hess_no_grad() -> Path:
-    MAX_CLUSTERS_EST = 100_000
-    K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "ics_anisotropic_gaussian_no_hess_no_grad"
-    create_summary_dataframe(EXP_DIR)
-
-    DIMs = [2, 5]
-    ERROR_METRICs = ["Linf-local"]
-    CASES = [(False, True)]  # (use_hessian, ignore_gradient)
-
-    TOLS_FOR_DIM2 = [0.25, 0.2, 0.13, 0.09, 0.06]
-    TOLS_FOR_DIM5 = [0.113, 0.067, 0.044, 0.029, 0.025]
-
-    combos = list(product(DIMs, ERROR_METRICs, CASES))
-    for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
-        combos, desc="Experiments"
-    ):
-        if DIM == 2:
-            TOLs = TOLS_FOR_DIM2
-        elif DIM == 5:
-            TOLs = TOLS_FOR_DIM5
-        else:
-            raise ValueError(f"Unexpected DIM: {DIM}")
-
-        for TOL in TOLs:
-            json_path = (
-                EXP_DIR
-                / f"ics26_aniso_gaussian_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
-            )
-            json_path.parent.mkdir(parents=True, exist_ok=True)
-            if json_path.exists():
-                print(f"Skipping existing experiment at {json_path}")
-                continue
-            print(f"Running experiment: {json_path}")
-
-            N_TRAIN = get_N_TRAIN(DIM)
-            N_TEST = N_TRAIN // 2
-            N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
-            N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
-
-            Problem_experiment_setup(
-                json_fpath=json_path,
-                DIM=DIM,
-                F_DIM=1,
-                DOMAIN=[-3.0, 3.0],
-                f_fn=aniso_gaussian,
-                g_fn=aniso_gaussian_grad,
-                N_TRAIN=N_TRAIN,
-                N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-                TOL=TOL,
-                N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                N_TEST=N_TEST,
-                K_NEIGHBOURS=K_NEIGHBOURS,
-                ERROR_METRIC=ERROR_METRIC,  # type: ignore
-                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-                IGNORE_GRADIENT=IGNORE_GRADIENT,
-                PLOT_CONTOUR_IN_LOG_SCALE=False,
-            )
-            create_summary_dataframe(EXP_DIR)
 
     return EXP_DIR
 
@@ -236,10 +113,10 @@ def ics_aniso_gaussian_experiment_no_hess_no_grad() -> Path:
 def ics_aniso_quadratic_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic"
+    EXP_DIR = ICS26_DIR / "quadratic_no_hessian_for_inference"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [2]
-    TOLs = [0.1]
+    DIMs = [5]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
@@ -279,141 +156,146 @@ def ics_aniso_quadratic_experiment() -> Path:
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
-            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            ERROR_METRIC=ERROR_METRIC,
             CLUSTERING_MATRIX="Hessian_LSQ",
+            IGNORE_GRADIENT=False,
             STORE_TRAIN_EVALS=False,
             PLOT_CONTOUR_IN_LOG_SCALE=True,
+            STORE_HESSIAN=False,
+            USE_HESSIAN_FOR_INFERENCE=False,
         )
 
     return EXP_DIR
 
 
-def ics_aniso_quadratic_experiment_no_hess() -> Path:
+# Tests the alg on vector_quadratic_2, which has multiple outputs with different Hessians.
+# Compare to not using no Hessian (will they average out to isotropic?)
+def quadratic_2_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_no_hess"
+    EXP_DIR = ICS26_DIR / "quadratic_2_none"
     create_summary_dataframe(EXP_DIR)
-
-    DIMs = [5, 10]
+    DIMs = [2]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
-    CASES = [(False, False)]  # (use_hessian, ignore_gradient)
 
-    TOLS_FOR_DIM5 = [0.38, 0.295, 0.155, 0.074, 0.034]
-    TOLS_FOR_DIM10 = [0.52, 0.44, 0.29, 0.175]
-
-    combos = list(product(DIMs, ERROR_METRICs, CASES))
-    for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
-        combos, desc="Experiments"
-    ):
-        if DIM == 5:
-            TOLs = TOLS_FOR_DIM5
-        elif DIM == 10:
-            TOLs = TOLS_FOR_DIM10
-        else:
-            raise ValueError(f"Unexpected DIM: {DIM}")
-
-        for TOL in TOLs:
-            json_path = (
-                EXP_DIR
-                / f"ics26_aniso_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        if DIM == 10 and TOL <= 0.005:
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
             )
-            json_path.parent.mkdir(parents=True, exist_ok=True)
-            if json_path.exists():
-                print(f"Skipping existing experiment at {json_path}")
-                continue
-            print(f"Running experiment: {json_path}")
+            continue
 
-            N_TRAIN = get_N_TRAIN(DIM)
-            N_TEST = N_TRAIN // 2
-            N_INIT_CLUSTERS = 1
-            N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+        json_path = (
+            EXP_DIR
+            / f"ics26_anisotropic_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
 
-            Problem_experiment_setup(
-                json_fpath=json_path,
-                DIM=DIM,
-                F_DIM=1,
-                DOMAIN=[-3.0, 3.0],
-                f_fn=aniso_quadratic,
-                g_fn=aniso_quadratic_grad,
-                N_TRAIN=N_TRAIN,
-                N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-                TOL=TOL,
-                N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                N_TEST=N_TEST,
-                K_NEIGHBOURS=K_NEIGHBOURS,
-                ERROR_METRIC=ERROR_METRIC,  # type: ignore
-                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-                IGNORE_GRADIENT=IGNORE_GRADIENT,
-                PLOT_CONTOUR_IN_LOG_SCALE=True,
-            )
-            create_summary_dataframe(EXP_DIR)
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            F_DIM=2,
+            DOMAIN=[-3, 3],
+            f_fn=vector_quadratic_2,
+            g_fn=vector_quadratic_2_grad,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            ERROR_METRIC=ERROR_METRIC,
+            CLUSTERING_MATRIX="None",
+            IGNORE_GRADIENT=False,
+            STORE_TRAIN_EVALS=False,
+            PLOT_CONTOUR_IN_LOG_SCALE=True,
+            STORE_HESSIAN=False,
+            USE_HESSIAN_FOR_INFERENCE=False,
+        )
 
     return EXP_DIR
 
 
-def ics_aniso_quadratic_experiment_no_hess_no_grad() -> Path:
+
+# Tests the alg on vector_quadratic_3, which has multiple outputs with the same Hessian.
+def quadratic_3_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "ics_anisotropic_quadratic_no_hess_no_grad"
+    output_d = 1
+    EXP_DIR = ICS26_DIR / f"quadratic_3_outd_{output_d}_covlvlcurves"
     create_summary_dataframe(EXP_DIR)
-
-    DIMs = [5, 10]
+    DIMs = [2]
+    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
-    CASES = [(False, True)]  # (use_hessian, ignore_gradint)
 
-    TOLS_FOR_DIM5 = [0.924, 0.885, 0.77, 0.62, 0.44]
-    TOLS_FOR_DIM10 = [0.9795, 0.975, 0.925, 0.871]
-
-    combos = list(product(DIMs, ERROR_METRICs, CASES))
-    for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
-        combos, desc="Experiments"
-    ):
-        if DIM == 5:
-            TOLs = TOLS_FOR_DIM5
-        elif DIM == 10:
-            TOLs = TOLS_FOR_DIM10
-        else:
-            raise ValueError(f"Unexpected DIM: {DIM}")
-
-        for TOL in TOLs:
-            json_path = (
-                EXP_DIR
-                / f"ics26_aniso_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
+    combos = list(product(DIMs, TOLs, ERROR_METRICs))
+    for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        if DIM == 10 and TOL <= 0.005:
+            print(
+                f"Skipping: DIM={DIM}, TOL={TOL}, ERROR_METRIC={ERROR_METRIC} due to resource constraints."
             )
-            json_path.parent.mkdir(parents=True, exist_ok=True)
-            if json_path.exists():
-                print(f"Skipping existing experiment at {json_path}")
-                continue
-            print(f"Running experiment: {json_path}")
+            continue
 
-            N_TRAIN = get_N_TRAIN(DIM)
-            N_TEST = N_TRAIN // 2
-            N_INIT_CLUSTERS = 1
-            N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+        json_path = (
+            EXP_DIR
+            / f"ics26_anisotropic_quadratic_dim{DIM}_tol{TOL}_err{ERROR_METRIC}.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
 
-            Problem_experiment_setup(
-                json_fpath=json_path,
-                DIM=DIM,
-                F_DIM=1,
-                DOMAIN=[-3.0, 3.0],
-                f_fn=aniso_quadratic,
-                g_fn=aniso_quadratic_grad,
-                N_TRAIN=N_TRAIN,
-                N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-                TOL=TOL,
-                N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                N_TEST=N_TEST,
-                K_NEIGHBOURS=K_NEIGHBOURS,
-                ERROR_METRIC=ERROR_METRIC,  # type: ignore
-                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-                IGNORE_GRADIENT=IGNORE_GRADIENT,
-                PLOT_CONTOUR_IN_LOG_SCALE=True,
-            )
-            create_summary_dataframe(EXP_DIR)
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
+        N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
+
+        def f_fn(X):
+            return vector_quadratic_3(X, d_out=output_d)
+        def g_fn(X):
+            return vector_quadratic_3_grad(X, d_out=output_d)
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=DIM,
+            F_DIM=output_d,
+            DOMAIN=[-3, 3],
+            f_fn=f_fn,
+            g_fn=g_fn,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            ERROR_METRIC=ERROR_METRIC,
+            CLUSTERING_MATRIX="Cov_Lvl_curves",
+            IGNORE_GRADIENT=False,
+            STORE_TRAIN_EVALS=False,
+            PLOT_CONTOUR_IN_LOG_SCALE=True,
+            STORE_HESSIAN=False,
+            USE_HESSIAN_FOR_INFERENCE=False,
+        )
 
     return EXP_DIR
+
+
+
+
 
 
 def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
@@ -483,7 +365,7 @@ def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=True,
+            CLUSTERING_MATRIX='Hessian_LSQ',
             STORE_TRAIN_EVALS=False,
             BATCH_SIZE=BATCH_SIZE,
             PROFILE_TIMING=True,
@@ -548,7 +430,7 @@ def ics_rosenbrock_runtime_scalability_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=True,
+            CLUSTERING_MATRIX='Hessian_LSQ',
             STORE_TRAIN_EVALS=False,
             BATCH_SIZE=BATCH_SIZE,
             PROFILE_TIMING=True,
@@ -562,11 +444,11 @@ def ics_rosenbrock_runtime_scalability_experiment() -> Path:
 def ics_rosenbrock_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "ics_rosenbrock"
+    EXP_DIR = ICS26_DIR / "ics_rosenbrock_no_grad"
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
 
-    DIMs = [2]
+    DIMs = [5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
 
@@ -610,138 +492,11 @@ def ics_rosenbrock_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            CLUSTERING_MATRIX="Cov_Lvl_curves",
-            STORE_HESSIAN=True,
-            USE_HESSIAN_FOR_INFERENCE=True,
+            CLUSTERING_MATRIX="None",
+            IGNORE_GRADIENT=True,
+            STORE_HESSIAN=False,
+            USE_HESSIAN_FOR_INFERENCE=False,
         )
-
-    return EXP_DIR
-
-
-def ics_rosenbrock_experiment_no_hess() -> Path:
-    MAX_CLUSTERS_EST = 100_000
-    K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "ics_rosenbrock_no_hess"
-    create_summary_dataframe(EXP_DIR)
-
-    DIMs = [2, 5]
-    ERROR_METRICs = ["Linf-local"]
-    CASES = [(False, False)]  # (use_hessian, ignore_gradient)
-
-    TOLS_FOR_DIM2 = [0.35, 0.22, 0.1, 0.05, 0.026]
-    TOLS_FOR_DIM5 = [0.18, 0.1, 0.046, 0.025, 0.013]
-
-    combos = list(product(DIMs, ERROR_METRICs, CASES))
-    for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
-        combos, desc="Experiments"
-    ):
-        if DIM == 2:
-            TOLs = TOLS_FOR_DIM2
-        elif DIM == 5:
-            TOLs = TOLS_FOR_DIM5
-        else:
-            raise ValueError(f"Unexpected DIM: {DIM}")
-
-        for TOL in TOLs:
-            json_path = (
-                EXP_DIR
-                / f"ics26_rosenbrock_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
-            )
-            json_path.parent.mkdir(parents=True, exist_ok=True)
-            if json_path.exists():
-                print(f"Skipping existing experiment at {json_path}")
-                continue
-            print(f"Running experiment: {json_path}")
-
-            N_TRAIN = get_N_TRAIN(DIM)
-            N_TEST = N_TRAIN // 2
-            N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
-            N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
-
-            Problem_experiment_setup(
-                json_fpath=json_path,
-                DIM=DIM,
-                F_DIM=1,
-                DOMAIN=[-2.0, 3.0],
-                f_fn=rosenbrock,
-                g_fn=rosenbrock_grad,
-                N_TRAIN=N_TRAIN,
-                N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-                TOL=TOL,
-                N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                N_TEST=N_TEST,
-                K_NEIGHBOURS=K_NEIGHBOURS,
-                ERROR_METRIC=ERROR_METRIC,  # type: ignore
-                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-                IGNORE_GRADIENT=IGNORE_GRADIENT,
-                PLOT_CONTOUR_IN_LOG_SCALE=True,
-            )
-            create_summary_dataframe(EXP_DIR)
-
-    return EXP_DIR
-
-
-def ics_rosenbrock_experiment_no_hess_no_grad() -> Path:
-    MAX_CLUSTERS_EST = 100_000
-    K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "ics_rosenbrock_no_hess_no_grad"
-    create_summary_dataframe(EXP_DIR)
-
-    DIMs = [2, 5]
-    ERROR_METRICs = ["Linf-local"]
-    CASES = [(False, True)]  # (use_hessian, ignore_gradient)
-
-    TOLS_FOR_DIM2 = [0.7, 0.57, 0.4, 0.3, 0.225]
-    TOLS_FOR_DIM5 = [0.47, 0.35, 0.245, 0.18, 0.133]
-
-    combos = list(product(DIMs, ERROR_METRICs, CASES))
-    for DIM, ERROR_METRIC, (USE_HESSIAN_INFORMED_SPLIT, IGNORE_GRADIENT) in tqdm(
-        combos, desc="Experiments"
-    ):
-        if DIM == 2:
-            TOLs = TOLS_FOR_DIM2
-        elif DIM == 5:
-            TOLs = TOLS_FOR_DIM5
-        else:
-            raise ValueError(f"Unexpected DIM: {DIM}")
-
-        for TOL in TOLs:
-            json_path = (
-                EXP_DIR
-                / f"ics26_rosenbrock_dim{DIM}_tol{TOL}_err{ERROR_METRIC}_usehess{USE_HESSIAN_INFORMED_SPLIT}_ignoregrad{IGNORE_GRADIENT}.json"
-            )
-            json_path.parent.mkdir(parents=True, exist_ok=True)
-            if json_path.exists():
-                print(f"Skipping existing experiment at {json_path}")
-                continue
-            print(f"Running experiment: {json_path}")
-
-            N_TRAIN = get_N_TRAIN(DIM)
-            N_TEST = N_TRAIN // 2
-            N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
-            N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
-
-            Problem_experiment_setup(
-                json_fpath=json_path,
-                DIM=DIM,
-                F_DIM=1,
-                DOMAIN=[-2.0, 3.0],
-                f_fn=rosenbrock,
-                g_fn=rosenbrock_grad,
-                N_TRAIN=N_TRAIN,
-                N_INIT_CLUSTERS=N_INIT_CLUSTERS,
-                TOL=TOL,
-                N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                N_TEST=N_TEST,
-                K_NEIGHBOURS=K_NEIGHBOURS,
-                ERROR_METRIC=ERROR_METRIC,  # type: ignore
-                USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
-                IGNORE_GRADIENT=IGNORE_GRADIENT,
-                PLOT_CONTOUR_IN_LOG_SCALE=True,
-            )
-            create_summary_dataframe(EXP_DIR)
 
     return EXP_DIR
 
@@ -810,7 +565,7 @@ def ics_rosenbrock_n_min_per_cluster_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            USE_HESSIAN_INFORMED_SPLIT=True,
+            CLUSTERING_MATRIX='Cov_Lvl_curves',
         )
 
     return EXP_DIR
@@ -861,7 +616,7 @@ def generate_train_data_for_neural_network() -> None:
             STORE_TRAIN_EVALS=True,
             TRAIN_EVALS_DIR=_evals_dir,
             TRAIN_EVALS_PREFIX=_prefix,
-            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            CLUSTERING_MATRIX='Cov_Lvl_curves',
             SAVE_TEST_DATA=True,
             SAVE_TRAINED_DATA=True,
         )
@@ -896,7 +651,7 @@ def generate_train_data_for_neural_network() -> None:
             STORE_TRAIN_EVALS=True,
             TRAIN_EVALS_DIR=_evals_dir,
             TRAIN_EVALS_PREFIX=_prefix,
-            USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+            CLUSTERING_MATRIX='Cov_Lvl_curves',
             SAVE_TEST_DATA=True,
             SAVE_TRAINED_DATA=True,
         )
@@ -947,7 +702,7 @@ def generate_train_data_for_neural_network() -> None:
         STORE_TRAIN_EVALS=True,
         TRAIN_EVALS_DIR=_evals_dir,
         TRAIN_EVALS_PREFIX=_prefix,
-        USE_HESSIAN_INFORMED_SPLIT=USE_HESSIAN_INFORMED_SPLIT,
+        CLUSTERING_MATRIX='Cov_Lvl_curves',
         SAVE_TEST_DATA=True,
         SAVE_TRAINED_DATA=True,
     )
@@ -970,15 +725,15 @@ def ics_lorenz_experiment() -> Path:
     FORCING = 1
     FINAL_TIME = 0.05
 
-    # def f(x):
-    #     f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
-    #     N, _ = f.shape
-    #     return f[:, 0].reshape((N, 1))
+    def f(x):
+        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)  # (N, d) vector
+        N, _ = f.shape
+        return f[:, 0].reshape((N, 1))
 
-    # def grad_f(x):
-    #     g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
-    #     N, d, _ = g.shape
-    #     return g[:, 0, :].reshape((N, 1, d))
+    def grad_f(x):
+        g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+        N, d, _ = g.shape
+        return g[:, 0, :].reshape((N, 1, d))
 
     # def oracle(x):
     #     """
@@ -989,29 +744,32 @@ def ics_lorenz_experiment() -> Path:
     #     f, g = lorenz96_flowmap_oracle_first_component(x, FORCING, FINAL_TIME)
     #     return f.reshape(N, 1), g.reshape(N, 1, d)
 
-    def f(x):
-        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
-        return f
+    # def f(x):
+    #     f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
+    #     return f
 
-    def grad_f(x):
-        g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
-        return g
+    # def grad_f(x):
+    #     g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+    #     return g
 
-    def oracle(x):
-        f, g = lorenz96_flowmap_oracle(x, FORCING, FINAL_TIME)
-        return f, g
+    # def oracle(x):
+    #     f, g = lorenz96_flowmap_oracle(x, FORCING, FINAL_TIME)
+    #     return f, g
 
     MAX_CLUSTERS_EST = 20_000
     K_NEIGHBOURS = 1
+    # EXP_DIR = (
+    #     ICS26_DIR / f"ics_lorenz_finaltime{FINAL_TIME}_outputvar0_forcing{FORCING}"
+    # )
     EXP_DIR = (
-        ICS26_DIR / f"ics_lorenz_finaltime{FINAL_TIME}_outputvar0_forcing{FORCING}"
+        ICS26_DIR / f"lorenz_cov_lvl_curves_1d_out_no_gradient"
     )
     # del_all_error_files_in_dir(EXP_DIR)
     # create_summary_dataframe(EXP_DIR)
 
-    DIMs = [10]
+    DIMs = [5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-    ERROR_METRICs = ["Linf-global"]
+    ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Lorenz Experiments"):
@@ -1049,7 +807,8 @@ def ics_lorenz_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            CLUSTERING_MATRIX="Cov_Lvl_curves",
+            CLUSTERING_MATRIX="None",
+            IGNORE_GRADIENT=True,
             PROFILE_TIMING=True,
         )
         create_summary_dataframe(EXP_DIR)
@@ -1064,63 +823,10 @@ if __name__ == "__main__":
     setup_logging()
 
     if IS_CUPY_BACKEND:
-        # dir4 = ics_rosenbrock_n_min_per_cluster_experiment()
-        # create_summary_dataframe(dir4)
-
-        # dir4 = ics_lorenz_experiment()
-        # create_summary_dataframe(dir4)
-
-        # dir5 = ics_quadratic_runtime_scalability_experiment()
-        # create_summary_dataframe(dir5)
-
-        # dir6 = ics_shifted_gaussians_experiment_no_hess_no_grad()
-        # create_summary_dataframe(dir6)
-
-        # # dir7 = ics_quadratic_experiment_no_hess_no_grad()
-        # # create_summary_dataframe(dir7)
-
-        # dir8 = ics_rosenbrock_experiment_no_hess_no_grad()
-        # create_summary_dataframe(dir8)
-
-        # dir9 = ics_anisotropic_quadratic_experiment_no_hess_no_grad()
-        # create_summary_dataframe(dir9)
-
-        # generate_train_data_for_neural_network()
-
-        # dir1 = ics_aniso_gaussian_experiment()
-        # create_summary_dataframe(dir1)
-
-        # dir2 = ics_aniso_quadratic_experiment()
-        # create_summary_dataframe(dir2)
-
-        # dir3 = ics_aniso_quadratic_runtime_scalability_experiment()
-        # create_summary_dataframe(dir3)
-
-        # dir4 = ics_rosenbrock_runtime_scalability_experiment()
-        # create_summary_dataframe(dir4)
-
-        # dir5 = ics_aniso_quadratic_experiment_no_hess()
-        # create_summary_dataframe(dir5)
-
-        # dir6 = ics_aniso_quadratic_experiment_no_hess_no_grad()
-        # create_summary_dataframe(dir6)
-
-        # dir7 = ics_aniso_gaussian_experiment_no_hess()
-        # create_summary_dataframe(dir7)
-
-        # dir8 = ics_aniso_gaussian_experiment_no_hess_no_grad()
-        # create_summary_dataframe(dir8)
-
-        # dir9 = ics_rosenbrock_experiment_no_hess()
-        # create_summary_dataframe(dir9)
-
-        # dir10 = ics_rosenbrock_experiment_no_hess_no_grad()
-        # create_summary_dataframe(dir10)
-
-        # ics_lorenz_experiment()
-
-        dir = ics_rosenbrock_experiment()
+        
+        dir = quadratic_3_experiment()
         create_summary_dataframe(dir)
+
 
     else:
         print("Run only on GPU node.")
