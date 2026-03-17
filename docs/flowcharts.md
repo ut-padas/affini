@@ -118,5 +118,48 @@ flowchart TD
     class R2,R3B,R3C,R4,RS3 decision;
     class R3A,R3D,R3E,R3F,RB3,R4A,RS0,RS2,RS4,RS5,RS6 loopBlock;
     class RB0,RB1,RB2,RB4,RB5,RB6,RB7,RB8 batchBlock;
+```
 
+# MPI Parallelization
+```mermaid
+gantt
+    title MPI Parallelization: Static Vs Dynamic
+    dateFormat  mm:ss
+    axisFormat  %M:%S
+    
+    section (Static) Rank 0: Fewer Clusters
+    Level 0             :done, s1, 00:00, 1s
+    Level 1             :done, s2, after s1, 2s
+    Level 2             :done, s3, after s2, 2s
+    Level 3             :done, s4, after s3, 1s
+    IDLE (STARVING)     :crit, s5, after s4, 18s
+    
+    section (Static) Rank 1: More Clusters
+    Level 0             :done, s6, 00:00, 1s
+    Level 1             :done, s7, after s6, 2s
+    Level 2             :done, s8, after s7, 3s
+    Level 3             :done, s9, after s8, 5s
+    Level 4             :done, s10, after s9, 10s
+    Level 5             :done, s11, after s10, 2s
+    Level 6             :done, s12, after s11, 1s
+
+    section (Dynamic) Rank 0: Simple Workload
+    Level 0             :done, d1, 00:00, 1s
+    Level 1             :done, d2, after d1, 2s
+    Level 2             :done, d3, after d2, 2s
+    Level 3             :done, d4, after d3, 1s
+    Steal From Rank 1   :active, d5, after d4, 0.2s
+    Level 1'   :done, d6, after d5, 2s
+    Level 2'   :done, d7, after d6, 2s
+    Level 3'   :done, d8, after d7, 1s
+
+    section (Dynamic) Rank 1: Complex Workload
+    Level 0             :done, d9, 00:00, 1s
+    Level 1             :done, d10, after d9, 2s
+    Level 2             :done, d11, after d10, 3s
+    Offload To Rank 0   :active, d12, 00:06, 0.2s
+    Level 3             :done, d13, after d12, 3s
+    Level 4             :done, d14, after d13, 5s
+    Level 5             :done, d15, after d14, 2s
+    Level 6             :done, d16, after d15, 1s
 ```
