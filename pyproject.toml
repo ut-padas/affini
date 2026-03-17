@@ -1,0 +1,90 @@
+[project]
+name = "hataan"
+version = "0.1.0"
+description = "HATAAN: High-dimensional Approximation using Taylor expansions and Adaptive Nearest Neighbors"
+readme = "README.md"
+requires-python = ">=3.13"
+# license = "MIT" # TODO
+dependencies = [
+    "array-api-compat>=1.12.0",
+    "faiss-cpu>=1.12.0",
+    "ipykernel>=7.1.0",
+    "ipympl>=0.10.0",
+    "knndbscan==0.1.3",
+    "matplotlib>=3.10.7",
+    "mpi4py>=4.1.1",
+    "nbformat>=5.10.4",
+    "numba>=0.61.2",
+    "numpy>=2.2.6",
+    "pandas>=2.3.3",
+    "scikit-learn>=1.7.2",
+    "scipy>=1.16.3",
+    "seaborn>=0.13.2",
+    "sympy>=1.14.0",
+    "tqdm>=4.67.1",
+]
+
+# [project.urls]
+# "Homepage" = "TODO"
+# "Bug Reports" = "TODO"
+# "Source" = "TODO"
+
+[tool.uv]
+resolution = "lowest-direct"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+explicit = true
+
+[tool.uv.sources]
+knndbscan = { index = "testpypi" }
+
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com/"
+explicit = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B", "A", "C4", "PIE", "T20", "UP", "NPY", "SIM"]
+ignore = [
+    "E501", # Line too long (handled by formatter)
+    "N803", # Allow non-standard naming (e.g., single-letter variables) in some contexts
+    "N806", # Allow mathematical variable names (e.g., N, A, JA, minPts) in some contexts
+    "T201", # Allow print statements in examples
+]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*.py" = ["T201", "N803", "N806"]  # Allow print statements and non-standard naming in examples
+"test/*.py" = ["N806"]  # Allow mathematical variable names in tests (N, A, JA, minPts)
+"*.pyi" = ["N803"]  # Allow non-standard naming in type stubs
+
+[tool.pytest.ini_options]
+addopts = [
+    "--cov=src",
+    "--cov-report=html",
+    "--cov-report=term-missing",
+]
+testpaths = ["tests"]
+
+[dependency-groups]
+gpu = [
+    "cuml-cu12>=25.10.0",
+    "cupy-cuda12x>=13.6.0",
+]
+lint = [
+    "ruff>=0.14.2",
+]
+test = [
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+]
+viz = [
+    "imageio>=2.37.2",
+    "manim>=0.19.2",
+    "plotly>=6.5.2",
+]

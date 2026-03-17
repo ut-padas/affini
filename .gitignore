@@ -61,6 +61,9 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Log directory
+.logs/
+
 # Flask stuff:
 instance/
 .webassets-cache
@@ -205,3 +208,29 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# VS Code Settings
+.vscode/
+
+# Figures Directory
+figures/
+
+# Results Directory
+results/
+
+# Profiling data
+*.prof
+
+# TACC Files
+tacc-files/
+
+# Profiling files
+profiles*/
+timing_results*/
+
+# Media
+gifs/
+media/
+
+# Models
+models/
