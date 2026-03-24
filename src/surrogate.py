@@ -464,7 +464,7 @@ class HATANNSurrogate:
         if use_saved_hessian and self.Hs_src is not None:
             H_neighbors = xp.asarray(self.Hs_src)[flat_idx].reshape(N, k_nn, F_dim, D, D)
             quadratic_term = xp.einsum("nkc,nkfcd,nkd->nkf", dx, H_neighbors, dx)
-            predictions_k += quadratic_term
+            predictions_k += 0.5 * quadratic_term
 
         # --- 6. Averaging ---
         weights_expanded = final_weights[:, :, None]

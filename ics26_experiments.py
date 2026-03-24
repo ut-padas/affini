@@ -62,7 +62,7 @@ def get_N_MIN_PER_CLUSTER(dim: int, *, base: float = 1.3, factor: int = 100) -> 
 def ics_aniso_gaussian_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "gaussian_no_hessian_for_inference"
+    EXP_DIR = ICS26_DIR / "gaussian_do_not_use_hessian_for_inference"
     create_summary_dataframe(EXP_DIR)
     DIMs = [5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
@@ -113,7 +113,7 @@ def ics_aniso_gaussian_experiment() -> Path:
 def ics_aniso_quadratic_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "quadratic_no_hessian_for_inference"
+    EXP_DIR = ICS26_DIR / "quadratic_do_not_use_hessian_for_inference"
     create_summary_dataframe(EXP_DIR)
     DIMs = [5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
@@ -824,9 +824,8 @@ if __name__ == "__main__":
 
     if IS_CUPY_BACKEND:
         
-        dir = quadratic_3_experiment()
+        dir = ics_aniso_gaussian_experiment()
         create_summary_dataframe(dir)
-
 
     else:
         print("Run only on GPU node.")
