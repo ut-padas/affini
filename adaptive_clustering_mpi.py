@@ -1464,7 +1464,7 @@ if __name__ == "__main__":
     _rank = _get_mpi_rank()
     _size = _get_mpi_size()
 
-    OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi"
+    _OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi"
 
     # --------------------------------------------------------------------------
     # Argument parsing & setup
@@ -1542,7 +1542,7 @@ if __name__ == "__main__":
     FORCE_REEXEC = args.force
 
     # Check if output already exists
-    OUTPUT_DIR = OUTPUT_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else OUTPUT_DIR
+    OUTPUT_DIR = _OUTPUT_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else _OUTPUT_DIR
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     img_fpath = (
         OUTPUT_DIR
@@ -1670,9 +1670,10 @@ if __name__ == "__main__":
         "dim": DIM,
         "n_train": N_TRAIN,
     }
-    json_fpath = f"dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_mpi{_size}.json"
-    with open(OUTPUT_DIR / json_fpath, "w") as f:
+    json_fpath = OUTPUT_DIR / f"dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_mpi{_size}.json"
+    with open(json_fpath, "w") as f:
         json.dump(json_data, f, indent=4)
+    print(f"Saved results JSON: {json_fpath}")
 
     # Finalize MPI cleanly, then use os._exit to bypass Python atexit/GC
     # shutdown which triggers a UCX/knndbscan libucp destructor segfault.
