@@ -1446,10 +1446,11 @@ def adaptive_clustering(
 
 if __name__ == "__main__":
     import argparse
+    import json
     import os
     from functools import partial
 
-    from src import FIGURES_DIR
+    from src import RESULTS_DIR
     from src.logging_utils import setup_logging
     from src.plotter_utils import (
         plot_adaptive_clustering_results,
@@ -1463,7 +1464,7 @@ if __name__ == "__main__":
     _rank = _get_mpi_rank()
     _size = _get_mpi_size()
 
-    AC_PLOTS_DIR = FIGURES_DIR / "ac_rb_v2"
+    OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi"
 
     # --------------------------------------------------------------------------
     # Argument parsing & setup
@@ -1541,10 +1542,10 @@ if __name__ == "__main__":
     FORCE_REEXEC = args.force
 
     # Check if output already exists
-    AC_PLOTS_DIR = AC_PLOTS_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else AC_PLOTS_DIR
-    AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR = OUTPUT_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else OUTPUT_DIR
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     img_fpath = (
-        AC_PLOTS_DIR
+        OUTPUT_DIR
         / f"mpi_sz{_size}_ac_rosen{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_ntrain{N_TRAIN}_dim{DIM}_{INITIAL_CLUSTERING_METHOD}.png"
     )
     _skip = DIM == 2 and img_fpath.exists() and not FORCE_REEXEC
@@ -1592,7 +1593,8 @@ if __name__ == "__main__":
     assert results is not None, "Rank 0 should have results after adaptive_clustering"
 
     print("-" * 40)
-    print(f"Final Cluster Count: {results['centroids'].shape[0]:,}")
+    n_centroids = results["centroids"].shape[0]
+    print(f"Final Cluster Count: {n_centroids:,}")
 
     E_cluster_vals = results["E_cluster"]
     counts = results["counts"]
@@ -1615,7 +1617,6 @@ if __name__ == "__main__":
         for lvl, data in tree_data.items():
             print(f"Level {lvl:02}: Clusters: {data['centroids'].shape[0]:,}")
 
-    n_centroids = results["centroids"].shape[0]
     if DIM == 2 and n_centroids <= 10_000:
         title = f"Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL}, ERROR_METRIC={ERROR_METRIC}), N_CLUSTERS={n_centroids:,}"
         plot_adaptive_clustering_results(
@@ -1651,6 +1652,27 @@ if __name__ == "__main__":
     npz_fpath = img_fpath.with_suffix(".npz")
     results = {k: _to_host(v) for k, v in results.items()}
     xp.savez_compressed(npz_fpath, **results)
+
+    # Dump json of important run params, n_centroids and training time
+    json_data = {
+        "mpi_size": _size,
+        "num_clusters": n_centroids,
+        "train_time_sec": results["profiling_stats"]["time_total"],
+        "num_levels": results["num_levels"],
+        "num_generated_pts": results["num_generated_pts"],
+        "total_f_evals": results["total_f_evals"],
+        "error_metric": ERROR_METRIC,
+        "initial_clustering_method": INITIAL_CLUSTERING_METHOD,
+        "tol": TOL,
+        "num_initial_clusters": NUM_INITIAL_CLUSTERS * DIM,
+        "min_pts_per_cluster": MIN_PTS_PER_CLUSTER,
+        "rosenbrock_a": A_ROSENBROCK,
+        "dim": DIM,
+        "n_train": N_TRAIN,
+    }
+    json_fpath = f"dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_mpi{_size}.json"
+    with open(OUTPUT_DIR / json_fpath, "w") as f:
+        json.dump(json_data, f, indent=4)
 
     # Finalize MPI cleanly, then use os._exit to bypass Python atexit/GC
     # shutdown which triggers a UCX/knndbscan libucp destructor segfault.
