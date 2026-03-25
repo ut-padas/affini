@@ -43,6 +43,61 @@ STEAL_SIZE = 600_000  # Target point count to steal
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
 
 
+def _prime_factors(n: int) -> list[int]:
+    """Return prime factors of n in non-decreasing order."""
+    if n < 2:
+        return []
+    factors: list[int] = []
+    while n % 2 == 0:
+        factors.append(2)
+        n //= 2
+    p = 3
+    while p * p <= n:
+        while n % p == 0:
+            factors.append(p)
+            n //= p
+        p += 2
+    if n > 1:
+        factors.append(n)
+    return factors
+
+
+def _uniform_grid_cluster_labels(
+    X_host: np.ndarray,
+    num_initial_clusters: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Assign labels by partitioning each dimension into uniform bins.
+
+    The total number of bins is exactly ``num_initial_clusters`` by distributing
+    prime factors across dimensions based on current per-dimension cell widths.
+    """
+    if num_initial_clusters < 1:
+        raise ValueError("num_initial_clusters must be >= 1 for uniform_grid")
+    if X_host.ndim != 2:
+        raise ValueError(f"X_host must be 2D, got shape={X_host.shape}")
+
+    _, d = X_host.shape
+    lower = np.min(X_host, axis=0)
+    upper = np.max(X_host, axis=0)
+    extents = np.maximum(upper - lower, TINY_EPS)
+
+    bins = np.ones(d, dtype=np.int64)
+    for p in sorted(_prime_factors(num_initial_clusters), reverse=True):
+        split_scores = extents / bins
+        split_dim = int(np.argmax(split_scores))
+        bins[split_dim] *= p
+
+    extents_safe = np.maximum(upper - lower, TINY_EPS)
+    rel = (X_host - lower[None, :]) / extents_safe[None, :]
+    rel = np.clip(rel, 0.0, 1.0 - np.finfo(np.float64).eps)
+    coords = np.floor(rel * bins[None, :]).astype(np.int64)
+    coords = np.minimum(coords, bins[None, :] - 1)
+    labels = np.ravel_multi_index(coords.T, dims=tuple(int(b) for b in bins))
+
+    return labels.astype(np.int64), bins
+
+
 def _run_local_refinement(
     CLUSTER_PTS,
     CLUSTER_F,
@@ -969,7 +1024,9 @@ def adaptive_clustering(
     oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
-    INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"] = "kmeans",
+    INITIAL_CLUSTERING_METHOD: Literal[
+        "kmeans", "knndbscan", "uniform_grid"
+    ] = "kmeans",
     CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "None"] = "Hessian_LSQ",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
@@ -1015,7 +1072,7 @@ def adaptive_clustering(
         TOL: Error tolerance for cluster acceptance.
         ERROR_METRIC: Metric for acceptance ('L2', 'Linf-global', 'Linf-local').
         INITIAL_CLUSTERING_METHOD: Method for initial clustering
-            ('kmeans', 'knndbscan').
+            ('kmeans', 'knndbscan', 'uniform_grid').
         CLUSTERING_MATRIX: Matrix for spectral clustering of "Bad" clusters
             ('Hessian_LSQ', 'Cov_Lvl_curves', 'None').
         NUM_INITIAL_CLUSTERS: Number of seeds for initial K-Means.
@@ -1167,6 +1224,7 @@ def adaptive_clustering(
 
             # Initial Clustering
             _t1 = time.perf_counter()
+            X0_host_cache: np.ndarray | None = None
             if INITIAL_CLUSTERING_METHOD == "kmeans":
                 if IS_CUPY_BACKEND:
                     from cuml.cluster import KMeans as cuKMeans
@@ -1205,6 +1263,21 @@ def adaptive_clustering(
                 logger.info(
                     f"Runtime - R00: Initial kNN-DBSCAN {time.perf_counter()-_t1:.3f}s"
                 )
+            elif INITIAL_CLUSTERING_METHOD == "uniform_grid":
+                X0_host_cache = _to_host(X0_gpu)
+                assert X0_host_cache is not None
+                labels0, grid_bins = _uniform_grid_cluster_labels(
+                    X0_host_cache, NUM_INITIAL_CLUSTERS
+                )
+                num_initial_clusters = int(np.unique(labels0).shape[0])
+                logger.info(
+                    "R00: Initial uniform_grid: "
+                    f"target={NUM_INITIAL_CLUSTERS:,}, occupied={num_initial_clusters:,}, "
+                    f"bins={grid_bins.tolist()}"
+                )
+                logger.info(
+                    f"Runtime - R00: Initial uniform_grid {time.perf_counter()-_t1:.3f}s"
+                )
             else:
                 raise ValueError(
                     f"Unsupported INITIAL_CLUSTERING_METHOD: {INITIAL_CLUSTERING_METHOD}"
@@ -1214,7 +1287,7 @@ def adaptive_clustering(
                 log_mem_stats("R00: After Initial Clustering")
 
             # Move data to host for safe MPI scattering
-            X0_host = _to_host(X0_gpu)
+            X0_host = X0_host_cache if X0_host_cache is not None else _to_host(X0_gpu)
             F0_host = _to_host(F0_gpu)
             G0_host = _to_host(G0_gpu)
             del X0_gpu, F0_gpu, G0_gpu
@@ -1506,8 +1579,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--initial-clustering-method",
         type=str,
-        default="kmeans",
-        choices=["kmeans", "knndbscan"],
+        default="uniform_grid",
+        choices=["kmeans", "knndbscan", "uniform_grid"],
         help="Method for initial clustering",
     )
     parser.add_argument(
@@ -1658,6 +1731,7 @@ if __name__ == "__main__":
         "mpi_size": _size,
         "num_clusters": n_centroids,
         "train_time_sec": results["profiling_stats"]["time_total"],
+        "init_time_sec": results["profiling_stats"]["time_init"],
         "num_levels": results["num_levels"],
         "num_generated_pts": results["num_generated_pts"],
         "total_f_evals": results["total_f_evals"],
@@ -1670,7 +1744,10 @@ if __name__ == "__main__":
         "dim": DIM,
         "n_train": N_TRAIN,
     }
-    json_fpath = OUTPUT_DIR / f"dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_mpi{_size}.json"
+    json_fpath = (
+        OUTPUT_DIR
+        / f"dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_init_{INITIAL_CLUSTERING_METHOD}_mpi{_size}.json"
+    )
     with open(json_fpath, "w") as f:
         json.dump(json_data, f, indent=4)
     print(f"Saved results JSON: {json_fpath}")
