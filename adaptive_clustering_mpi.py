@@ -153,25 +153,30 @@ def _run_local_refinement(
     is_terminated = False
     status = MPI.Status()
 
+    # Pre-allocate 1-element arrays for C-level MPI state updates
+    state_send_buf = np.empty(1, dtype=np.int64)
+    state_recv_buf = np.empty(1, dtype=np.int64)
+
     def receive_and_update_state():
         """
         Helper function (async gossip receiver): Check for and process any incoming load updates from other ranks.
         """
-        # Receive incoming gossip to update our view of the world
         while comm.Iprobe(
             source=MPI.ANY_SOURCE, tag=TAG_STATE_BROADCAST, status=status
         ):
             src = status.Get_source()
-            val = comm.recv(source=src, tag=TAG_STATE_BROADCAST)
-            global_loads[src] = val
+            comm.Recv(state_recv_buf, source=src, tag=TAG_STATE_BROADCAST)
+            global_loads[src] = state_recv_buf[0]
 
     def broadcast_state():
         """
-        Helper function: Broadcast our current load to all other ranks. Used after any local state change (e.g. after processing a batch or after stealing/giving work) to keep the system's view of load balanced and up-to-date.
+        Helper function: Broadcast our current load to all other ranks.
         """
+        state_send_buf[0] = local_load
         for r in range(size):
             if r != rank:
-                comm.isend(local_load, dest=r, tag=TAG_STATE_BROADCAST)
+                # 8 bytes is well within the MPI eager limit; this returns instantly.
+                comm.Send(state_send_buf, dest=r, tag=TAG_STATE_BROADCAST)
 
     # Broadcast initial state
     broadcast_state()
@@ -204,7 +209,7 @@ def _run_local_refinement(
                     ):
                         req_src = status.Get_source()
                         comm.recv(source=req_src, tag=TAG_STEAL_REQ)
-                        comm.isend("TERMINATING", dest=req_src, tag=TAG_STEAL_DENY)
+                        comm.send("TERMINATING", dest=req_src, tag=TAG_STEAL_DENY)
                     logger.info(f"R{rank:02}: Global loads sum to 0. Terminating.")
                     is_terminated = True
                     break
@@ -217,7 +222,7 @@ def _run_local_refinement(
                         f"R{rank:02}: Idle. Attempting steal from R{target_rank:02} "
                         f"(Load: {global_loads[target_rank]:,}) [my load: {local_load:,}]"
                     )
-                    comm.isend(rank, dest=target_rank, tag=TAG_STEAL_REQ)
+                    comm.send(rank, dest=target_rank, tag=TAG_STEAL_REQ)
                     _t_steal_wait = time.perf_counter()
 
                     # Wait for a response, but keep processing incoming state updates in the meantime to avoid getting stuck if the target goes idle or terminates while we're waiting.
@@ -239,7 +244,28 @@ def _run_local_refinement(
                                 comm.recv(source=target_rank, tag=TAG_STEAL_DENY)
                             elif comm.Iprobe(source=target_rank, tag=TAG_STEAL_GRANT):
                                 # Unlikely but safe: consume the payload and discard
-                                comm.recv(source=target_rank, tag=TAG_STEAL_GRANT)
+                                meta = comm.recv(
+                                    source=target_rank, tag=TAG_STEAL_GRANT
+                                )
+                                _X = np.empty((meta["n_pts"], d), dtype=np.float64)
+                                _F = np.empty((meta["n_pts"], fd), dtype=np.float64)
+                                comm.Recv(
+                                    _X, source=target_rank, tag=TAG_STEAL_GRANT + 1
+                                )
+                                comm.Recv(
+                                    _F, source=target_rank, tag=TAG_STEAL_GRANT + 2
+                                )
+                                if meta["has_g"]:
+                                    _G = np.empty(
+                                        (meta["n_pts"], fd, d), dtype=np.float64
+                                    )
+                                    comm.Recv(
+                                        _G, source=target_rank, tag=TAG_STEAL_GRANT + 3
+                                    )
+                                _s = np.empty(meta["n_clusters"], dtype=np.int64)
+                                comm.Recv(
+                                    _s, source=target_rank, tag=TAG_STEAL_GRANT + 4
+                                )
                             waiting = False
                             continue
 
@@ -247,16 +273,39 @@ def _run_local_refinement(
                         if comm.Iprobe(source=target_rank, tag=TAG_STEAL_GRANT):
                             _t_recv = time.perf_counter()
 
-                            # Receive the stolen data & update local state
-                            payload = comm.recv(source=target_rank, tag=TAG_STEAL_GRANT)
-                            CLUSTER_PTS = xp.asarray(payload["X"])
-                            CLUSTER_F = xp.asarray(payload["F"])
-                            CLUSTER_G = (
-                                xp.asarray(payload["G"])
-                                if payload["G"] is not None
+                            # 1. Receive metadata handshake
+                            meta = comm.recv(source=target_rank, tag=TAG_STEAL_GRANT)
+
+                            # 2. Pre-allocate NumPy arrays on host for C-level MPI transfer
+                            X_host = np.empty((meta["n_pts"], d), dtype=np.float64)
+                            F_host = np.empty((meta["n_pts"], fd), dtype=np.float64)
+                            G_host = (
+                                np.empty((meta["n_pts"], fd, d), dtype=np.float64)
+                                if meta["has_g"]
                                 else None
                             )
-                            CLUSTER_SIZES = xp.asarray(payload["sizes"])
+                            sizes_host = np.empty(meta["n_clusters"], dtype=np.int64)
+
+                            # 3. Receive raw array buffers (bypassing pickle)
+                            comm.Recv(
+                                X_host, source=target_rank, tag=TAG_STEAL_GRANT + 1
+                            )
+                            comm.Recv(
+                                F_host, source=target_rank, tag=TAG_STEAL_GRANT + 2
+                            )
+                            if meta["has_g"]:
+                                comm.Recv(
+                                    G_host, source=target_rank, tag=TAG_STEAL_GRANT + 3  # type: ignore
+                                )
+                            comm.Recv(
+                                sizes_host, source=target_rank, tag=TAG_STEAL_GRANT + 4
+                            )
+
+                            # 4. Move to target device
+                            CLUSTER_PTS = xp.asarray(X_host)
+                            CLUSTER_F = xp.asarray(F_host)
+                            CLUSTER_G = xp.asarray(G_host) if meta["has_g"] else None
+                            CLUSTER_SIZES = xp.asarray(sizes_host)
                             CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
 
                             local_load = int(CLUSTER_PTS.shape[0])
@@ -346,9 +395,7 @@ def _run_local_refinement(
 
                 # We need at least 2 unprocessed clusters to keep 1 for ourselves and give 1 away
                 if unprocessed_clusters <= 1:
-                    comm.isend(
-                        "MID_LEVEL_NO_CLUSTERS", dest=req_src, tag=TAG_STEAL_DENY
-                    )
+                    comm.send("MID_LEVEL_NO_CLUSTERS", dest=req_src, tag=TAG_STEAL_DENY)
                     continue
 
                 unprocessed_sizes = CLUSTER_SIZES[start_cluster_idx:]
@@ -369,19 +416,46 @@ def _run_local_refinement(
                     split_idx = num_clusters - give_clusters
                     pt_split = int(CLUSTER_STARTS[split_idx])
 
-                    # Prepare the payload to send to the stealing rank
-                    steal_payload = {
-                        "X": _to_host(CLUSTER_PTS[pt_split:]),
-                        "F": _to_host(CLUSTER_F[pt_split:]),
-                        "G": (
-                            _to_host(CLUSTER_G[pt_split:])
-                            if CLUSTER_G is not None
-                            else None
-                        ),
-                        "sizes": _to_host(CLUSTER_SIZES[split_idx:]),
-                    }
+                    # Prepare arrays
+                    X_send = _to_host(CLUSTER_PTS[pt_split:])
+                    F_send = _to_host(CLUSTER_F[pt_split:])
+                    G_send = (
+                        _to_host(CLUSTER_G[pt_split:])
+                        if CLUSTER_G is not None
+                        else None
+                    )
+                    sizes_send = _to_host(CLUSTER_SIZES[split_idx:])
 
-                    comm.send(steal_payload, dest=req_src, tag=TAG_STEAL_GRANT)
+                    # 1. Send metadata handshake
+                    meta = {
+                        "n_pts": int(X_send.shape[0]),
+                        "n_clusters": int(sizes_send.shape[0]),
+                        "has_g": G_send is not None,
+                    }
+                    comm.send(meta, dest=req_src, tag=TAG_STEAL_GRANT)
+
+                    # 2. Send raw C-buffers (must be contiguous)
+                    comm.Send(
+                        np.ascontiguousarray(X_send),
+                        dest=req_src,
+                        tag=TAG_STEAL_GRANT + 1,
+                    )
+                    comm.Send(
+                        np.ascontiguousarray(F_send),
+                        dest=req_src,
+                        tag=TAG_STEAL_GRANT + 2,
+                    )
+                    if meta["has_g"]:
+                        comm.Send(
+                            np.ascontiguousarray(G_send),
+                            dest=req_src,
+                            tag=TAG_STEAL_GRANT + 3,
+                        )
+                    comm.Send(
+                        np.ascontiguousarray(sizes_send),
+                        dest=req_src,
+                        tag=TAG_STEAL_GRANT + 4,
+                    )
 
                     # Safely truncate our arrays to remove the stolen tail
                     CLUSTER_PTS = CLUSTER_PTS[:pt_split]
@@ -404,8 +478,8 @@ def _run_local_refinement(
                     _t_send_elapsed = time.perf_counter() - _t_send
                     logger.info(
                         f"R{rank:02} L{level:02} B{b+1}: Granted mid-level steal to R{req_src:02} | "
-                        f"gave {steal_payload['X'].shape[0]:,} pts "
-                        f"{len(steal_payload['sizes']):,} clusters | "
+                        f"gave {X_send.shape[0]:,} pts "
+                        f"{sizes_send.shape[0]:,} clusters | "
                         f"send={_t_send_elapsed:.3f}s | "
                         f"remaining pts={local_load:,} clusters={num_clusters:,}"
                     )
@@ -413,7 +487,7 @@ def _run_local_refinement(
                         profiling_stats["time_mpi_send"] += _t_send_elapsed
                 else:
                     deny_reason = f"MID_LEVEL_LOAD ({unprocessed_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
-                    comm.isend(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
+                    comm.send(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
 
             with CudaTimer("time_state_update", profiling_stats, PROFILE_TIMING):
                 receive_and_update_state()
@@ -921,14 +995,39 @@ def _run_local_refinement(
 
                     pt_split = int(np.sum(next_sizes[:split_idx]))
 
-                    steal_payload = {
-                        "X": next_X[pt_split:],
-                        "F": next_F[pt_split:],
-                        "G": next_G[pt_split:] if next_G is not None else None,
-                        "sizes": next_sizes[split_idx:],
-                    }
+                    X_send = next_X[pt_split:]
+                    F_send = next_F[pt_split:]
+                    G_send = next_G[pt_split:] if next_G is not None else None
+                    sizes_send = next_sizes[split_idx:]
 
-                    comm.send(steal_payload, dest=req_src, tag=TAG_STEAL_GRANT)
+                    meta = {
+                        "n_pts": int(X_send.shape[0]),
+                        "n_clusters": int(sizes_send.shape[0]),
+                        "has_g": G_send is not None,
+                    }
+                    comm.send(meta, dest=req_src, tag=TAG_STEAL_GRANT)
+
+                    comm.Send(
+                        np.ascontiguousarray(X_send),
+                        dest=req_src,
+                        tag=TAG_STEAL_GRANT + 1,
+                    )
+                    comm.Send(
+                        np.ascontiguousarray(F_send),
+                        dest=req_src,
+                        tag=TAG_STEAL_GRANT + 2,
+                    )
+                    if meta["has_g"]:
+                        comm.Send(
+                            np.ascontiguousarray(G_send),
+                            dest=req_src,
+                            tag=TAG_STEAL_GRANT + 3,
+                        )
+                    comm.Send(
+                        np.ascontiguousarray(sizes_send),
+                        dest=req_src,
+                        tag=TAG_STEAL_GRANT + 4,
+                    )
 
                     # Truncate our own arrays
                     next_X = next_X[:pt_split]
@@ -946,8 +1045,8 @@ def _run_local_refinement(
                     _t_send_elapsed = time.perf_counter() - _t_send
                     logger.info(
                         f"R{rank:02} L{level:02}: Granted steal to R{req_src:02} | "
-                        f"gave {steal_payload['X'].shape[0]:,} pts "
-                        f"{len(steal_payload['sizes']):,} clusters | "
+                        f"gave {X_send.shape[0]:,} pts "
+                        f"{sizes_send.shape[0]:,} clusters | "
                         f"send={_t_send_elapsed:.3f}s | "
                         f"remaining pts={total_next_pts:,} clusters={len(next_sizes):,}"
                     )
@@ -961,7 +1060,7 @@ def _run_local_refinement(
                         deny_reason = (
                             f"STEAL_SIZE (only {len(next_sizes)} cluster(s), need > 1)"
                         )
-                    comm.isend(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
+                    comm.send(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
                     logger.debug(
                         f"R{rank:02} L{level:02}: Denied steal to R{req_src:02}: {deny_reason}"
                     )
@@ -1560,7 +1659,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n-init-clusters",
         type=int,
-        default=50,
+        default=64,
         help="Number of initial clusters for adaptive clustering",
     )
     parser.add_argument(
