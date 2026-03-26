@@ -1636,7 +1636,7 @@ if __name__ == "__main__":
     _rank = _get_mpi_rank()
     _size = _get_mpi_size()
 
-    _OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi"
+    _OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi_rebalancing"
 
     # --------------------------------------------------------------------------
     # Argument parsing & setup
@@ -1713,6 +1713,9 @@ if __name__ == "__main__":
     OUTPUT_SUBDIR = args.output_subdir
     FORCE_REEXEC = args.force
 
+    # Scale initial clusters with dimension for better
+    NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
+
     # Check if output already exists
     OUTPUT_DIR = _OUTPUT_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else _OUTPUT_DIR
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1748,7 +1751,7 @@ if __name__ == "__main__":
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
         TOL=TOL,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS * DIM,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ERROR_METRIC=ERROR_METRIC,
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
@@ -1837,7 +1840,7 @@ if __name__ == "__main__":
         "error_metric": ERROR_METRIC,
         "initial_clustering_method": INITIAL_CLUSTERING_METHOD,
         "tol": TOL,
-        "num_initial_clusters": NUM_INITIAL_CLUSTERS * DIM,
+        "num_initial_clusters": NUM_INITIAL_CLUSTERS,
         "min_pts_per_cluster": MIN_PTS_PER_CLUSTER,
         "rosenbrock_a": A_ROSENBROCK,
         "dim": DIM,
