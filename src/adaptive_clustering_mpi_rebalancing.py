@@ -22,6 +22,7 @@ from src.adaptive_clustering_utils import (
     run_fused_taylor_comp_abs,
     run_fused_taylor_metric,
     scatter_maximum_1d,
+    uniform_grid_cluster_labels,
 )
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
@@ -41,61 +42,6 @@ MIN_LOAD_THRESHOLD = 2_000_000  # Min points to be eligible for stealing
 STEAL_SIZE = 600_000  # Target point count to steal
 
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
-
-
-def _prime_factors(n: int) -> list[int]:
-    """Return prime factors of n in non-decreasing order."""
-    if n < 2:
-        return []
-    factors: list[int] = []
-    while n % 2 == 0:
-        factors.append(2)
-        n //= 2
-    p = 3
-    while p * p <= n:
-        while n % p == 0:
-            factors.append(p)
-            n //= p
-        p += 2
-    if n > 1:
-        factors.append(n)
-    return factors
-
-
-def _uniform_grid_cluster_labels(
-    X_host: np.ndarray,
-    num_initial_clusters: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Assign labels by partitioning each dimension into uniform bins.
-
-    The total number of bins is exactly ``num_initial_clusters`` by distributing
-    prime factors across dimensions based on current per-dimension cell widths.
-    """
-    if num_initial_clusters < 1:
-        raise ValueError("num_initial_clusters must be >= 1 for uniform_grid")
-    if X_host.ndim != 2:
-        raise ValueError(f"X_host must be 2D, got shape={X_host.shape}")
-
-    _, d = X_host.shape
-    lower = np.min(X_host, axis=0)
-    upper = np.max(X_host, axis=0)
-    extents = np.maximum(upper - lower, TINY_EPS)
-
-    bins = np.ones(d, dtype=np.int64)
-    for p in sorted(_prime_factors(num_initial_clusters), reverse=True):
-        split_scores = extents / bins
-        split_dim = int(np.argmax(split_scores))
-        bins[split_dim] *= p
-
-    extents_safe = np.maximum(upper - lower, TINY_EPS)
-    rel = (X_host - lower[None, :]) / extents_safe[None, :]
-    rel = np.clip(rel, 0.0, 1.0 - np.finfo(np.float64).eps)
-    coords = np.floor(rel * bins[None, :]).astype(np.int64)
-    coords = np.minimum(coords, bins[None, :] - 1)
-    labels = np.ravel_multi_index(coords.T, dims=tuple(int(b) for b in bins))
-
-    return labels.astype(np.int64), bins
 
 
 def _run_local_refinement(
@@ -1365,7 +1311,7 @@ def adaptive_clustering(
             elif INITIAL_CLUSTERING_METHOD == "uniform_grid":
                 X0_host_cache = _to_host(X0_gpu)
                 assert X0_host_cache is not None
-                labels0, grid_bins = _uniform_grid_cluster_labels(
+                labels0, grid_bins = uniform_grid_cluster_labels(
                     X0_host_cache, NUM_INITIAL_CLUSTERS
                 )
                 num_initial_clusters = int(np.unique(labels0).shape[0])
