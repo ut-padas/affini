@@ -225,7 +225,9 @@ def _run_local_refinement(
                                 G_batch[is_synth] = 0.0
                             else:
                                 assert g_fn is not None
-                                G_batch[is_synth] = convert_to_3d_array(g_fn(X_synth_vals))
+                                G_batch[is_synth] = convert_to_3d_array(
+                                    g_fn(X_synth_vals)
+                                )
                     total_f_evals += X_synth_vals.shape[0]
                     del (
                         c_starts,
@@ -731,12 +733,12 @@ def _run_local_refinement(
                 keep = np.repeat(valid, next_sizes)
                 CLUSTER_PTS = xp.asarray(next_X[keep])
                 CLUSTER_F = xp.asarray(next_F[keep])
-                CLUSTER_G = xp.asarray(next_G[keep]) # TODO: what is this
+                CLUSTER_G = xp.asarray(next_G[keep])  # TODO: what is this
                 CLUSTER_SIZES = xp.asarray(next_sizes[valid])
             else:
                 CLUSTER_PTS = xp.asarray(next_X)
                 CLUSTER_F = xp.asarray(next_F)
-                CLUSTER_G = xp.asarray(next_G) # TODO: what is this
+                CLUSTER_G = xp.asarray(next_G)  # TODO: what is this
                 CLUSTER_SIZES = xp.asarray(next_sizes)
 
             CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
@@ -887,15 +889,13 @@ def adaptive_clustering(
         # we want to use f_fn/g_fn or oracle.
         # Hence it is ok to define both.
         if f_fn is None:
-            raise ValueError(
-                "Must specify f_fn when using Cov_Lvl_curves for speed"
-            )
+            raise ValueError("Must specify f_fn when using Cov_Lvl_curves for speed")
         if oracle_fn is None:
             if f_fn is None or g_fn is None:
                 raise ValueError(
                     "Cannot specify both oracle_fn and f_fn/g_fn. Use either oracle_fn OR both f_fn and g_fn."
                 )
-        else: # oracle_fn is defined
+        else:  # oracle_fn is defined
             if g_fn is not None:
                 raise ValueError(
                     "We are using Cov_Lvl_curves, but we specify both oracle_fn and g_fn. We cannot specify both."
@@ -1258,10 +1258,11 @@ def adaptive_clustering(
 
 if __name__ == "__main__":
     import argparse
+    import json
     import os
     from functools import partial
 
-    from src import FIGURES_DIR
+    from src import RESULTS_DIR
     from src.logging_utils import setup_logging
     from src.plotter_utils import (
         plot_adaptive_clustering_results,
@@ -1274,7 +1275,7 @@ if __name__ == "__main__":
     _rank = _get_mpi_rank()
     _size = _get_mpi_size()
 
-    AC_PLOTS_DIR = FIGURES_DIR / "adaptive_clustering_rosenbrock"
+    _OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi_static"
 
     # --------------------------------------------------------------------------
     # Argument parsing & setup
@@ -1351,11 +1352,14 @@ if __name__ == "__main__":
     OUTPUT_SUBDIR = args.output_subdir
     FORCE_REEXEC = args.force
 
+    # Scale initial clusters with dimension for better
+    NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
+
     # Check if output already exists
-    AC_PLOTS_DIR = AC_PLOTS_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else AC_PLOTS_DIR
-    AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR = _OUTPUT_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else _OUTPUT_DIR
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     img_fpath = (
-        AC_PLOTS_DIR
+        OUTPUT_DIR
         / f"mpi_sz{_size}_ac_rosen{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_ntrain{N_TRAIN}_dim{DIM}_{INITIAL_CLUSTERING_METHOD}.png"
     )
     _skip = DIM == 2 and img_fpath.exists() and not FORCE_REEXEC
@@ -1386,7 +1390,7 @@ if __name__ == "__main__":
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
         TOL=TOL,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS * DIM,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ERROR_METRIC=ERROR_METRIC,
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
@@ -1456,6 +1460,32 @@ if __name__ == "__main__":
     npz_fpath = img_fpath.with_suffix(".npz")
     results = {k: _to_host(v) for k, v in results.items()}
     xp.savez_compressed(npz_fpath, **results)
+
+    # Dump json of important run params, n_centroids and training
+    json_data = {
+        "mpi_size": _size,
+        "num_clusters": n_centroids,
+        "train_time_sec": results["profiling_stats"]["time_total"],
+        "init_time_sec": results["profiling_stats"]["time_init"],
+        "num_levels": results["num_levels"],
+        "num_generated_pts": results["num_generated_pts"],
+        "total_f_evals": results["total_f_evals"],
+        "error_metric": ERROR_METRIC,
+        "initial_clustering_method": INITIAL_CLUSTERING_METHOD,
+        "tol": TOL,
+        "num_initial_clusters": NUM_INITIAL_CLUSTERS,
+        "min_pts_per_cluster": MIN_PTS_PER_CLUSTER,
+        "rosenbrock_a": A_ROSENBROCK,
+        "dim": DIM,
+        "n_train": N_TRAIN,
+    }
+    json_fpath = (
+        OUTPUT_DIR
+        / f"dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_init_{INITIAL_CLUSTERING_METHOD}_mpi{_size}.json"
+    )
+    with open(json_fpath, "w") as f:
+        json.dump(json_data, f, indent=4)
+    print(f"Saved results JSON: {json_fpath}")
 
     # Finalize MPI cleanly, then use os._exit to bypass Python atexit/GC
     # shutdown which triggers a UCX/knndbscan libucp destructor segfault.
