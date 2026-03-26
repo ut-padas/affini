@@ -11,5 +11,14 @@
 source .venv/bin/activate
 ibrun python -m src.adaptive_clustering_mpi_rebalancing -f \
     --dim 2 \
+    --n-init-clusters 50 \
     --tol 1e-4 \
     --n-train 1e7
+
+# ibrun python -m src.adaptive_clustering -f \
+#     --dim 2 \
+#     --n-init-clusters 50 \
+#     --tol 1e-4 \
+#     --n-train 1e7
+    
+
