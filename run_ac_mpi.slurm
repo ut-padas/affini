@@ -3,7 +3,7 @@
 #SBATCH --output=sl-logs/cluster_%j.out        # Output file name (%j = job ID)
 #SBATCH --error=sl-logs/cluster_%j.err         # Error file name
 #SBATCH --nodes=1                      # Number of nodes
-#SBATCH --ntasks=1
+#SBATCH --ntasks=16
 #SBATCH --partition=gg                 # Target the Grace-Grace queue
 #SBATCH --time=02:00:00                # Time limit (hh:mm:ss)
 
@@ -19,6 +19,4 @@ ibrun python -m src.adaptive_clustering_mpi_rebalancing -f \
 #     --dim 2 \
 #     --n-init-clusters 50 \
 #     --tol 1e-4 \
-#     --n-train 1e7
-    
-
+#     --n-train 1e9
