@@ -962,6 +962,7 @@ def adaptive_clustering(
             X0_gpu = xp.asarray(X, dtype=xp.float64)
             N0, d_bcast = X0_gpu.shape
             profiling_stats["N0"] = N0
+            profiling_stats["total_f_evals"] = N0
 
             if LOG_MEM_STATS:
                 log_mem_stats("R00: Start Adaptive Clustering")
@@ -1256,7 +1257,9 @@ def adaptive_clustering(
     # Stamp per-rank scalars into profiling_stats before the gather
     profiling_stats["num_levels"] = last_level
     profiling_stats["num_generated_pts"] = local_gen_pts
-    profiling_stats["total_f_evals"] = local_f_evals
+    profiling_stats["total_f_evals"] = (
+        profiling_stats.get("total_f_evals", 0) + local_f_evals
+    )
     profiling_stats["num_final_clusters"] = out_count
     profiling_stats["time_total"] = time.perf_counter() - _start_time
     # Piggyback profiling stats on the existing gather (no extra comms round)
