@@ -9,7 +9,7 @@
 
 # Execute the Python script with the specified parameters
 source .venv/bin/activate
-ibrun python adaptive_clustering_mpi.py -f \
+ibrun python -m src.adaptive_clustering_mpi_rebalancing -f \
     --dim 2 \
     --tol 1e-4 \
     --n-train 1e7
