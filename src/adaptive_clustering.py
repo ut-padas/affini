@@ -22,6 +22,7 @@ from src.adaptive_clustering_utils import (
     run_fused_taylor_comp_abs,
     run_fused_taylor_metric,
     scatter_maximum_1d,
+    uniform_grid_cluster_labels,
 )
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
@@ -799,7 +800,9 @@ def adaptive_clustering(
     oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
-    INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"] = "kmeans",
+    INITIAL_CLUSTERING_METHOD: Literal[
+        "kmeans", "knndbscan", "uniform_grid"
+    ] = "kmeans",
     CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "None"] = "Hessian_LSQ",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
@@ -845,7 +848,7 @@ def adaptive_clustering(
         TOL: Error tolerance for cluster acceptance.
         ERROR_METRIC: Metric for acceptance ('L2', 'Linf-global', 'Linf-local').
         INITIAL_CLUSTERING_METHOD: Method for initial clustering
-            ('kmeans', 'knndbscan').
+            ('kmeans', 'knndbscan', 'uniform_grid').
         CLUSTERING_MATRIX: Matrix for spectral clustering of "Bad" clusters
             ('Hessian_LSQ', 'Cov_Lvl_curves', 'None').
         NUM_INITIAL_CLUSTERS: Number of seeds for initial K-Means.
@@ -992,6 +995,7 @@ def adaptive_clustering(
 
             # Initial Clustering
             _t1 = time.perf_counter()
+            X0_host_cache: np.ndarray | None = None
             if INITIAL_CLUSTERING_METHOD == "kmeans":
                 if IS_CUPY_BACKEND:
                     from cuml.cluster import KMeans as cuKMeans
@@ -1030,6 +1034,22 @@ def adaptive_clustering(
                 logger.info(
                     f"Runtime - R00: Initial kNN-DBSCAN {time.perf_counter()-_t1:.3f}s"
                 )
+            elif INITIAL_CLUSTERING_METHOD == "uniform_grid":
+                X0_host_cache = _to_host(X0_gpu)
+                assert X0_host_cache is not None
+
+                labels0, grid_bins = uniform_grid_cluster_labels(
+                    X0_host_cache, NUM_INITIAL_CLUSTERS
+                )
+                num_initial_clusters = int(np.unique(labels0).shape[0])
+                logger.info(
+                    "R00: Initial uniform_grid: "
+                    f"target={NUM_INITIAL_CLUSTERS:,}, occupied={num_initial_clusters:,}, "
+                    f"bins={grid_bins.tolist()}"
+                )
+                logger.info(
+                    f"Runtime - R00: Initial uniform_grid {time.perf_counter()-_t1:.3f}s"
+                )
             else:
                 raise ValueError(
                     f"Unsupported INITIAL_CLUSTERING_METHOD: {INITIAL_CLUSTERING_METHOD}"
@@ -1039,7 +1059,7 @@ def adaptive_clustering(
                 log_mem_stats("R00: After Initial Clustering")
 
             # Move data to host for safe MPI scattering
-            X0_host = _to_host(X0_gpu)
+            X0_host = X0_host_cache if X0_host_cache is not None else _to_host(X0_gpu)
             F0_host = _to_host(F0_gpu)
             G0_host = _to_host(G0_gpu)
             del X0_gpu, F0_gpu, G0_gpu
@@ -1317,8 +1337,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--initial-clustering-method",
         type=str,
-        default="kmeans",
-        choices=["kmeans", "knndbscan"],
+        default="uniform_grid",
+        choices=["kmeans", "knndbscan", "uniform_grid"],
         help="Method for initial clustering",
     )
     parser.add_argument(
