@@ -1347,18 +1347,45 @@ def adaptive_clustering(
                 )
 
             label_chunks = np.array_split(unique_labels, size)
+            # Create a lookup array mapping each label to a target rank
+            label_to_rank = np.zeros(labels0.max() + 1, dtype=np.int32)
+            for r, chunk in enumerate(label_chunks):
+                label_to_rank[chunk] = r
+
+            # Map all 10 million points to their target rank in ONE pass
+            target_ranks = label_to_rank[labels0]
+
+            # Sort everything once based on the target rank
+            sort_idx = np.argsort(target_ranks, kind="stable")
+            target_ranks_sorted = target_ranks[sort_idx]
+            labels0_sorted = labels0[sort_idx]
+
+            X0_sorted = X0_host[sort_idx]
+            F0_sorted = F0_host[sort_idx]
+            if G0_host is not None:
+                G0_sorted = G0_host[sort_idx]
+
+            # Find the exact indices where the rank changes
+            # Since target_ranks are 0 to size-1, we search for 1, 2, ..., size-1
+            split_boundaries = np.searchsorted(target_ranks_sorted, np.arange(1, size))
+
+            # Split the arrays instantly without memory copying
+            X_splits = np.split(X0_sorted, split_boundaries)
+            F_splits = np.split(F0_sorted, split_boundaries)
+            labels_splits = np.split(labels0_sorted, split_boundaries)
+            if G0_host is not None:
+                G_splits = np.split(G0_sorted, split_boundaries)
+
+            # Build the scatter payload
             scatter_data = []
-            for chunk in label_chunks:
-                mask = np.isin(labels0, chunk)
-                sub_labels = labels0[mask]
-                sort_idx = np.argsort(sub_labels, kind="stable")
-                sub_labels_sorted = sub_labels[sort_idx]
-                _, sub_counts = np.unique(sub_labels_sorted, return_counts=True)
+            for r in range(size):
+                # Now we only do np.unique on the tiny sub-arrays
+                _, sub_counts = np.unique(labels_splits[r], return_counts=True)
                 scatter_data.append(
                     {
-                        "X": X0_host[mask][sort_idx],
-                        "F": F0_host[mask][sort_idx],
-                        "G": G0_host[mask][sort_idx],
+                        "X": X_splits[r],
+                        "F": F_splits[r],
+                        "G": G_splits[r] if G0_host is not None else None,
                         "sizes": sub_counts.astype(np.int64),
                     }
                 )
