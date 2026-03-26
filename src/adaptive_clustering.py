@@ -1318,7 +1318,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n-init-clusters",
         type=int,
-        default=50,
+        default=64,
         help="Number of initial clusters for adaptive clustering",
     )
     parser.add_argument(
