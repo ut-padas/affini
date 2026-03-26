@@ -1113,20 +1113,87 @@ def adaptive_clustering(
         scatter_data = None
 
     # ------------------------------------------------------------------
-    # 2. Broadcast F_max_global and dimensions; scatter data
+    # 2. Broadcast F_max_global and dimensions; distribute data manually
     # ------------------------------------------------------------------
-    F_max_global_host = comm.bcast(F_max_global_host, root=0)
-    d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
+    with CudaTimer("time_scatter", profiling_stats, PROFILE_TIMING):
+        # Broadcast the global scales and dimensions first so workers can pre-allocate
+        F_max_global_host = comm.bcast(F_max_global_host, root=0)
+        d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
 
-    local_dict = comm.scatter(scatter_data, root=0)
+        if rank == 0:
+            current_idx = 0
+            local_dict = {}
+            # 4. Stream the chunks manually via uppercase Send/Recv
+            for r in range(size):
+                num_pts_in_rank = int(np.sum(counts_chunks[r]))
+                end_idx = current_idx + num_pts_in_rank
 
+                chunk_X = X0_sorted[current_idx:end_idx]
+                chunk_F = F0_sorted[current_idx:end_idx]
+                chunk_G = (
+                    G0_sorted[current_idx:end_idx] if G0_sorted is not None else None
+                )
+                chunk_sizes = counts_chunks[r].astype(np.int64)
+
+                if r == 0:
+                    # Keep Rank 0's chunk locally
+                    local_dict = {
+                        "X": chunk_X,
+                        "F": chunk_F,
+                        "G": chunk_G,
+                        "sizes": chunk_sizes,
+                    }
+                else:
+                    # 1. Send metadata handshake
+                    meta = {
+                        "n_pts": int(chunk_X.shape[0]),
+                        "n_clusters": int(chunk_sizes.shape[0]),
+                        "has_g": chunk_G is not None,
+                    }
+                    comm.send(meta, dest=r, tag=999)
+
+                    # 2. Send raw C-buffers (bypassing pickle and 2GB limit)
+                    comm.Send(np.ascontiguousarray(chunk_X), dest=r, tag=1000)
+                    comm.Send(np.ascontiguousarray(chunk_F), dest=r, tag=1001)
+                    if meta["has_g"]:
+                        comm.Send(np.ascontiguousarray(chunk_G), dest=r, tag=1002)
+                    comm.Send(np.ascontiguousarray(chunk_sizes), dest=r, tag=1003)
+
+                current_idx = end_idx
+        else:
+            # Workers receive the handshake and allocate C-level buffers
+            meta = comm.recv(source=0, tag=999)
+            chunk_X = np.empty((meta["n_pts"], d_bcast), dtype=np.float64)
+            chunk_F = np.empty((meta["n_pts"], fd_bcast), dtype=np.float64)
+            chunk_G = (
+                np.empty((meta["n_pts"], fd_bcast, d_bcast), dtype=np.float64)
+                if meta["has_g"]
+                else None
+            )
+            chunk_sizes = np.empty(meta["n_clusters"], dtype=np.int64)
+
+            # Receive the raw arrays directly into memory
+            comm.Recv(chunk_X, source=0, tag=1000)
+            comm.Recv(chunk_F, source=0, tag=1001)
+            if meta["has_g"] and chunk_G is not None:
+                comm.Recv(chunk_G, source=0, tag=1002)
+            comm.Recv(chunk_sizes, source=0, tag=1003)
+
+            local_dict = {
+                "X": chunk_X,
+                "F": chunk_F,
+                "G": chunk_G,
+                "sizes": chunk_sizes,
+            }
+
+    # Map directly to the target device
     local_X = xp.asarray(local_dict["X"], dtype=xp.float64)
     local_F = xp.asarray(local_dict["F"], dtype=xp.float64)
-    # if CLUSTERING_MATRIX != "Cov_Lvl_curves":
-    #     local_G = xp.asarray(local_dict["G"], dtype=xp.float64)
-    # else:
-    #     local_G = None
-    local_G = xp.asarray(local_dict["G"], dtype=xp.float64)
+    local_G = (
+        xp.asarray(local_dict["G"], dtype=xp.float64)
+        if local_dict["G"] is not None
+        else None
+    )
     local_sizes = xp.asarray(local_dict["sizes"], dtype=xp.int64)
     local_starts = xp.r_[0, xp.cumsum(local_sizes)[:-1]]
 
