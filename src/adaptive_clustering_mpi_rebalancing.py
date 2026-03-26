@@ -1346,49 +1346,42 @@ def adaptive_clustering(
                     f"size ({size}). Increase NUM_INITIAL_CLUSTERS or reduce MPI size."
                 )
 
-            label_chunks = np.array_split(unique_labels, size)
-            # Create a lookup array mapping each label to a target rank
-            label_to_rank = np.zeros(labels0.max() + 1, dtype=np.int32)
-            for r, chunk in enumerate(label_chunks):
-                label_to_rank[chunk] = r
-
-            # Map all 10 million points to their target rank in ONE pass
-            target_ranks = label_to_rank[labels0]
-
-            # Sort everything once based on the target rank
-            sort_idx = np.argsort(target_ranks, kind="stable")
-            target_ranks_sorted = target_ranks[sort_idx]
+            # 1. Sort the entire dataset globally by cluster label ONCE
+            sort_idx = np.argsort(labels0, kind="stable")
             labels0_sorted = labels0[sort_idx]
 
             X0_sorted = X0_host[sort_idx]
             F0_sorted = F0_host[sort_idx]
-            if G0_host is not None:
-                G0_sorted = G0_host[sort_idx]
+            G0_sorted = G0_host[sort_idx] if G0_host is not None else None
 
-            # Find the exact indices where the rank changes
-            # Since target_ranks are 0 to size-1, we search for 1, 2, ..., size-1
-            split_boundaries = np.searchsorted(target_ranks_sorted, np.arange(1, size))
+            # 2. Get unique labels and their exact point counts
+            uniq_labels_sorted, all_counts = np.unique(
+                labels0_sorted, return_counts=True
+            )
 
-            # Split the arrays instantly without memory copying
-            X_splits = np.split(X0_sorted, split_boundaries)
-            F_splits = np.split(F0_sorted, split_boundaries)
-            labels_splits = np.split(labels0_sorted, split_boundaries)
-            if G0_host is not None:
-                G_splits = np.split(G0_sorted, split_boundaries)
+            # 3. Split the counts array evenly across the MPI ranks
+            counts_chunks = np.array_split(all_counts, size)
 
-            # Build the scatter payload
+            # 4. Build the scatter payload by slicing the globally sorted arrays
             scatter_data = []
+            current_idx = 0
             for r in range(size):
-                # Now we only do np.unique on the tiny sub-arrays
-                _, sub_counts = np.unique(labels_splits[r], return_counts=True)
+                num_pts_in_rank = int(np.sum(counts_chunks[r]))
+                end_idx = current_idx + num_pts_in_rank
+
                 scatter_data.append(
                     {
-                        "X": X_splits[r],
-                        "F": F_splits[r],
-                        "G": G_splits[r] if G0_host is not None else None,
-                        "sizes": sub_counts.astype(np.int64),
+                        "X": X0_sorted[current_idx:end_idx],
+                        "F": F0_sorted[current_idx:end_idx],
+                        "G": (
+                            G0_sorted[current_idx:end_idx]
+                            if G0_sorted is not None
+                            else None
+                        ),
+                        "sizes": counts_chunks[r].astype(np.int64),
                     }
                 )
+                current_idx = end_idx
     else:
         scatter_data = None
 
