@@ -50,6 +50,55 @@ def json_to_csv(target_dirs):
         print(f"Successfully saved {len(df)} records to {output_path}")
 
 
+def json_to_csv_cumrf(target_dir):
+    """
+    Convert cuML RF JSON result files in one directory to a flattened CSV.
+
+    Args:
+        target_dir: Path object or directory path
+    """
+    target_path = Path(target_dir)
+
+    if not target_path.exists():
+        print(f"Directory not found: {target_path}")
+        return
+
+    json_files = sorted(target_path.glob("*.json"))
+
+    if not json_files:
+        print(f"No JSON files found in {target_path}")
+        return
+
+    data_list = []
+
+    for file_path in json_files:
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            print(f"Warning: Could not parse {file_path}")
+            continue
+
+        row = {k: v for k, v in data.items() if k != "rmse_history"}
+
+        best_params = row.pop("best_params", {})
+        if isinstance(best_params, dict):
+            row.update(best_params)
+
+        row["source_file"] = file_path.name
+        data_list.append(row)
+
+    if not data_list:
+        print(f"No valid JSON records found in {target_path}")
+        return
+
+    df = pd.DataFrame(data_list)
+    output_path = target_path.parent / f"{target_path.name}.csv"
+    df.to_csv(output_path, index=False)
+
+    print(f"Successfully saved {len(df)} records to {output_path}")
+
+
 if __name__ == "__main__":
     result_dir = Path("results")
     dirs = [
@@ -57,3 +106,4 @@ if __name__ == "__main__":
         result_dir / "adaptive_clustering_mpi_rebalancing",
     ]
     json_to_csv(dirs)
+    json_to_csv_cumrf(result_dir / "cuml_rf")
