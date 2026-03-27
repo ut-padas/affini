@@ -72,6 +72,9 @@ addopts = [
 testpaths = ["tests"]
 
 [dependency-groups]
+experimental = [
+    "optuna>=4.7.0",
+]
 gpu = [
     "cuml-cu12>=25.10.0",
     "cupy-cuda12x>=13.6.0",
