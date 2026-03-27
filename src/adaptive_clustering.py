@@ -269,6 +269,20 @@ def _run_local_refinement(
 
                 total_f_evals += mus.shape[0]
 
+                # 3.1 Update Hessians via Symmetric Rank-1
+                # There are exactly twice as many clusters now as bad ones on the previous level.
+                if CLUSTERING_MATRIX == "SR1" and level > 1:
+                    H_prev_lvl_repeated = xp.repeat(H_prev_level, 2)
+                    yk = g_mus - xp.repeat(bad_g_prev_level, 2)
+                    sk = mus - xp.repeat(bad_mus_prev_level, 2)
+                    update_vec = yk - H_prev_lvl_repeated @ sk
+                    # TODO: deal with numerical instability (compute norms)
+                    H_current = H_prev_lvl_repeated + xp.outer(update_vec, update_vec) / xp.dot(update_vec, sk)
+                elif CLUSTERING_MATRIX == "SR1" and level == 1:
+                    H_current = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
+                        len(CLUSTER_SIZES), axis=0
+                    )
+
                 # 4. Error Metrics & Acceptance Logic
                 if ERROR_METRIC == "Linf-local":
                     E_cluster_rel_max = xp.zeros((K_batch,), dtype=xp.float64)
@@ -637,6 +651,35 @@ def _run_local_refinement(
                         # 5. Covariance in transformed space
                         CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
 
+                    elif CLUSTERING_MATRIX == "SR1":
+
+                        # Do not compute the Hessian here. Use the ones we computed on the previous level.
+                        # Still need to compute the absolute value square root, which kind of sucks.
+                        # TODO: in the future, would like updating formula for Hessian absolute value square root.
+                        #   This would probably only work for convex functions.
+                        dvals, U = xp.linalg.eigh(H_current[bad_idx_local])
+                        dvals_sqrt = xp.sqrt(
+                            xp.maximum(xp.abs(dvals), TINY_EPS)
+                        )
+                        M_split = (U * dvals_sqrt[:, None]) @ U.transpose(0, 2, 1)
+                        M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
+
+                        # Full covariance
+                        C, _ = run_fused_stats(
+                            X_bad,
+                            mus[bad_idx_local],
+                            dense_labels_bad,
+                            n_bad,
+                            d,
+                            fd,
+                            xp.zeros(n_bad, dtype=xp.int32),
+                            calc_E=False,
+                        )
+                        C = 0.5 * (C + C.transpose(0, 2, 1))
+
+                        # 5. Covariance in transformed space
+                        CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
+
                     # Get Split Direction (Dominant Eigenvector)
                     _, V_z = xp.linalg.eigh(CovZ)
                     v = V_z[:, :, -1]
@@ -661,6 +704,12 @@ def _run_local_refinement(
                     new_sz[0::2] = half
                     new_sz[1::2] = other
                     next_level_sizes_list.append(_to_host(new_sz))
+
+                # SR1: save old mus and gradients for use in Hessian update.
+                if CLUSTERING_MATRIX == "SR1":
+                    bad_mus_prev_level = mus[bad_idx_local]
+                    bad_g_prev_level = g_mus[bad_idx_local]
+                    H_prev_level = H_current # Need to save the Hessians
 
                 with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
                     if CLUSTER_G is not None:
@@ -798,7 +847,7 @@ def adaptive_clustering(
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"] = "kmeans",
-    CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "None"] = "Hessian_LSQ",
+    CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"] = "Hessian_LSQ",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,

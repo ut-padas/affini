@@ -484,10 +484,11 @@ def _run_local_refinement(
                     new_sz[1::2] = other
                     next_level_sizes_list.append(_to_host(new_sz))
 
-                
-                # TODO: update Hessians with SR1 formulas, if user chooses this option
                 if CLUSTERING_MATRIX == "SR1":
-                    sk = 
+                    # save old mus
+                    mus_prev_level = mus
+                    f_prev_level = f_mus
+                    g_prev_level = g_mus
 
                 with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
                     del (
@@ -915,7 +916,6 @@ def adaptive_clustering(
             MAX_LEVELS=MAX_LEVELS,
             BATCH_SIZE=BATCH_SIZE,
             CLUSTERING_MATRIX=CLUSTERING_MATRIX,
-            IGNORE_GRADIENT=IGNORE_GRADIENT,
             STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN_PER_CLUSTER,
             STORE_TREE_DATA=STORE_TREE_DATA,
             LOG_MEM_STATS=LOG_MEM_STATS,

@@ -372,7 +372,7 @@ def Problem_experiment_setup(
     MAX_CLUSTERS_EST: int,
     N_TEST: int,
     K_NEIGHBOURS: int,
-    CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "None"] = "Hessian_LSQ",
+    CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"] = "Hessian_LSQ",
     oracle_fn: Optional[Callable] = None,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     SAMPLING: Literal["Uniform", "Trajectories"] = "Uniform",
@@ -387,6 +387,7 @@ def Problem_experiment_setup(
     SAVE_TEST_DATA: bool = False,
     STORE_HESSIAN: bool = False,
     USE_HESSIAN_FOR_INFERENCE: bool = False,
+    MAX_LEVELS: int = 50,
 ):
     if json_fpath.exists():
         print(f"Result file {json_fpath} already exists. Skipping experiment.")
@@ -460,6 +461,7 @@ def Problem_experiment_setup(
                 PROFILE_TIMING=PROFILE_TIMING,
                 save_model=model_save_path,
                 STORE_HESSIAN=STORE_HESSIAN,
+                MAX_LEVELS=MAX_LEVELS
             )
             _TRAINED = True
         else:
@@ -481,6 +483,7 @@ def Problem_experiment_setup(
                     PROFILE_TIMING=PROFILE_TIMING,
                     save_model=model_save_path,
                     STORE_HESSIAN=STORE_HESSIAN,
+                    MAX_LEVELS=MAX_LEVELS
                 )
             else:
                 surrogate.train(
@@ -498,7 +501,8 @@ def Problem_experiment_setup(
                     BATCH_SIZE=BATCH_SIZE,
                     PROFILE_TIMING=PROFILE_TIMING,
                     save_model=model_save_path,
-                    STORE_HESSIAN=STORE_HESSIAN
+                    STORE_HESSIAN=STORE_HESSIAN,
+                    MAX_LEVELS=MAX_LEVELS
                 )
             _TRAINED = True
 

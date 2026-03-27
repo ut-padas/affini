@@ -77,7 +77,7 @@ class HATANNSurrogate:
         MAX_CLUSTERS_EST: int = 1_000_000,
         SEED: int = 0,
         CLUSTERING_MATRIX: Literal[
-            "Hessian_LSQ", "Cov_Lvl_curves", "None"
+            "Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"
         ] = "Hessian_LSQ",
         IGNORE_GRADIENT: bool = False,
         STORE_HESSIAN: bool = False,
