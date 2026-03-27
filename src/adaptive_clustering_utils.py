@@ -752,3 +752,89 @@ def get_n_smallest_per_block(values, blocks, n):
     # 5. Return the mask for the n smallest in each block
     pts_mask = sorted_local_indices < n
     return pts_mask
+
+
+def get_prime_factors(n: int) -> list[int]:
+    """Return prime factors of an integer in non-decreasing order.
+
+    Args:
+        n: Integer to factorize.
+
+    Returns:
+        A list containing the prime factors of ``n`` in non-decreasing order.
+        Returns an empty list when ``n < 2``.
+
+    Example:
+        get_prime_factors(60)  # Returns [2, 2, 3, 5]
+    """
+    if n < 2:
+        return []
+    factors: list[int] = []
+    while n % 2 == 0:
+        factors.append(2)
+        n //= 2
+    p = 3
+    while p * p <= n:
+        while n % p == 0:
+            factors.append(p)
+            n //= p
+        p += 2
+    if n > 1:
+        # Any leftover > 1 must be prime once trial divisors exceeded sqrt(n).
+        factors.append(n)
+    return factors
+
+
+def uniform_grid_cluster_labels(
+    X_host: np.ndarray,
+    num_initial_clusters: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Assign labels using a uniform axis-aligned grid.
+
+    The grid's total number of cells is exactly ``num_initial_clusters``. This is
+    achieved by prime-factorizing ``num_initial_clusters`` and assigning each
+    factor to the currently widest normalized dimension.
+
+    Args:
+        X_host: Input points with shape ``(N, d)``.
+        num_initial_clusters: Target number of grid cells/clusters.
+
+    Returns:
+        A tuple ``(labels, bins)`` where:
+        - ``labels`` has shape ``(N,)`` and contains flat grid-cell indices.
+        - ``bins`` has shape ``(d,)`` and stores the number of bins per
+          dimension.
+
+    Raises:
+        ValueError: If ``num_initial_clusters < 1``.
+        ValueError: If ``X_host`` is not a 2D array.
+    """
+    if num_initial_clusters < 1:
+        raise ValueError("num_initial_clusters must be >= 1 for uniform_grid")
+    if X_host.ndim != 2:
+        raise ValueError(f"X_host must be 2D, got shape={X_host.shape}")
+
+    _, d = X_host.shape
+    lower = np.min(X_host, axis=0)
+    upper = np.max(X_host, axis=0)
+    extents = np.maximum(upper - lower, TINY_EPS)
+
+    bins = np.ones(d, dtype=np.int64)
+    for p in sorted(get_prime_factors(num_initial_clusters), reverse=True):
+        # Prefer splitting the dimension with the currently largest cell width.
+        split_scores = extents / bins
+        split_dim = int(np.argmax(split_scores))
+        bins[split_dim] *= p
+
+    extents_safe = np.maximum(upper - lower, TINY_EPS)
+    rel = (X_host - lower[None, :]) / extents_safe[None, :]
+
+    # Keep right-edge points in-range so floor(...) never produces out-of-bounds.
+    rel = np.clip(rel, 0.0, 1.0 - np.finfo(np.float64).eps)
+    coords = np.floor(rel * bins[None, :]).astype(np.int64)
+    coords = np.minimum(coords, bins[None, :] - 1)
+
+    # Flatten multi-dimensional bin coordinates into a single cluster id.
+    labels = np.ravel_multi_index(coords.T, dims=tuple(int(b) for b in bins))
+
+    return labels.astype(np.int64), bins

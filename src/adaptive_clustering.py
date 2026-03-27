@@ -22,6 +22,7 @@ from src.adaptive_clustering_utils import (
     run_fused_taylor_comp_abs,
     run_fused_taylor_metric,
     scatter_maximum_1d,
+    uniform_grid_cluster_labels,
 )
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
@@ -225,7 +226,9 @@ def _run_local_refinement(
                                 G_batch[is_synth] = 0.0
                             else:
                                 assert g_fn is not None
-                                G_batch[is_synth] = convert_to_3d_array(g_fn(X_synth_vals))
+                                G_batch[is_synth] = convert_to_3d_array(
+                                    g_fn(X_synth_vals)
+                                )
                     total_f_evals += X_synth_vals.shape[0]
                     del (
                         c_starts,
@@ -780,12 +783,12 @@ def _run_local_refinement(
                 keep = np.repeat(valid, next_sizes)
                 CLUSTER_PTS = xp.asarray(next_X[keep])
                 CLUSTER_F = xp.asarray(next_F[keep])
-                CLUSTER_G = xp.asarray(next_G[keep]) # TODO: what is this
+                CLUSTER_G = xp.asarray(next_G[keep])  # TODO: what is this
                 CLUSTER_SIZES = xp.asarray(next_sizes[valid])
             else:
                 CLUSTER_PTS = xp.asarray(next_X)
                 CLUSTER_F = xp.asarray(next_F)
-                CLUSTER_G = xp.asarray(next_G) # TODO: what is this
+                CLUSTER_G = xp.asarray(next_G)  # TODO: what is this
                 CLUSTER_SIZES = xp.asarray(next_sizes)
 
             CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
@@ -846,7 +849,9 @@ def adaptive_clustering(
     oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
-    INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"] = "kmeans",
+    INITIAL_CLUSTERING_METHOD: Literal[
+        "kmeans", "knndbscan", "uniform_grid"
+    ] = "kmeans",
     CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"] = "Hessian_LSQ",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
@@ -892,7 +897,7 @@ def adaptive_clustering(
         TOL: Error tolerance for cluster acceptance.
         ERROR_METRIC: Metric for acceptance ('L2', 'Linf-global', 'Linf-local').
         INITIAL_CLUSTERING_METHOD: Method for initial clustering
-            ('kmeans', 'knndbscan').
+            ('kmeans', 'knndbscan', 'uniform_grid').
         CLUSTERING_MATRIX: Matrix for spectral clustering of "Bad" clusters
             ('Hessian_LSQ', 'Cov_Lvl_curves', 'None').
         NUM_INITIAL_CLUSTERS: Number of seeds for initial K-Means.
@@ -936,15 +941,13 @@ def adaptive_clustering(
         # we want to use f_fn/g_fn or oracle.
         # Hence it is ok to define both.
         if f_fn is None:
-            raise ValueError(
-                "Must specify f_fn when using Cov_Lvl_curves for speed"
-            )
+            raise ValueError("Must specify f_fn when using Cov_Lvl_curves for speed")
         if oracle_fn is None:
             if f_fn is None or g_fn is None:
                 raise ValueError(
                     "Cannot specify both oracle_fn and f_fn/g_fn. Use either oracle_fn OR both f_fn and g_fn."
                 )
-        else: # oracle_fn is defined
+        else:  # oracle_fn is defined
             if g_fn is not None:
                 raise ValueError(
                     "We are using Cov_Lvl_curves, but we specify both oracle_fn and g_fn. We cannot specify both."
@@ -1008,6 +1011,7 @@ def adaptive_clustering(
             X0_gpu = xp.asarray(X, dtype=xp.float64)
             N0, d_bcast = X0_gpu.shape
             profiling_stats["N0"] = N0
+            profiling_stats["total_f_evals"] = N0
 
             if LOG_MEM_STATS:
                 log_mem_stats("R00: Start Adaptive Clustering")
@@ -1041,6 +1045,7 @@ def adaptive_clustering(
 
             # Initial Clustering
             _t1 = time.perf_counter()
+            X0_host_cache: np.ndarray | None = None
             if INITIAL_CLUSTERING_METHOD == "kmeans":
                 if IS_CUPY_BACKEND:
                     from cuml.cluster import KMeans as cuKMeans
@@ -1079,6 +1084,22 @@ def adaptive_clustering(
                 logger.info(
                     f"Runtime - R00: Initial kNN-DBSCAN {time.perf_counter()-_t1:.3f}s"
                 )
+            elif INITIAL_CLUSTERING_METHOD == "uniform_grid":
+                X0_host_cache = _to_host(X0_gpu)
+                assert X0_host_cache is not None
+
+                labels0, grid_bins = uniform_grid_cluster_labels(
+                    X0_host_cache, NUM_INITIAL_CLUSTERS
+                )
+                num_initial_clusters = int(np.unique(labels0).shape[0])
+                logger.info(
+                    "R00: Initial uniform_grid: "
+                    f"target={NUM_INITIAL_CLUSTERS:,}, occupied={num_initial_clusters:,}, "
+                    f"bins={grid_bins.tolist()}"
+                )
+                logger.info(
+                    f"Runtime - R00: Initial uniform_grid {time.perf_counter()-_t1:.3f}s"
+                )
             else:
                 raise ValueError(
                     f"Unsupported INITIAL_CLUSTERING_METHOD: {INITIAL_CLUSTERING_METHOD}"
@@ -1088,7 +1109,7 @@ def adaptive_clustering(
                 log_mem_stats("R00: After Initial Clustering")
 
             # Move data to host for safe MPI scattering
-            X0_host = _to_host(X0_gpu)
+            X0_host = X0_host_cache if X0_host_cache is not None else _to_host(X0_gpu)
             F0_host = _to_host(F0_gpu)
             G0_host = _to_host(G0_gpu)
             del X0_gpu, F0_gpu, G0_gpu
@@ -1102,40 +1123,127 @@ def adaptive_clustering(
                     f"size ({size}). Increase NUM_INITIAL_CLUSTERS or reduce MPI size."
                 )
 
-            label_chunks = np.array_split(unique_labels, size)
+            # 1. Sort the entire dataset globally by cluster label ONCE
+            sort_idx = np.argsort(labels0, kind="stable")
+            labels0_sorted = labels0[sort_idx]
+
+            X0_sorted = X0_host[sort_idx]
+            F0_sorted = F0_host[sort_idx]
+            G0_sorted = G0_host[sort_idx] if G0_host is not None else None
+
+            # 2. Get unique labels and their exact point counts
+            uniq_labels_sorted, all_counts = np.unique(
+                labels0_sorted, return_counts=True
+            )
+
+            # 3. Split the counts array evenly across the MPI ranks
+            counts_chunks = np.array_split(all_counts, size)
+
+            # 4. Build the scatter payload by slicing the globally sorted arrays
             scatter_data = []
-            for chunk in label_chunks:
-                mask = np.isin(labels0, chunk)
-                sub_labels = labels0[mask]
-                sort_idx = np.argsort(sub_labels, kind="stable")
-                sub_labels_sorted = sub_labels[sort_idx]
-                _, sub_counts = np.unique(sub_labels_sorted, return_counts=True)
+            current_idx = 0
+            for r in range(size):
+                num_pts_in_rank = int(np.sum(counts_chunks[r]))
+                end_idx = current_idx + num_pts_in_rank
+
                 scatter_data.append(
                     {
-                        "X": X0_host[mask][sort_idx],
-                        "F": F0_host[mask][sort_idx],
-                        "G": G0_host[mask][sort_idx],
-                        "sizes": sub_counts.astype(np.int64),
+                        "X": X0_sorted[current_idx:end_idx],
+                        "F": F0_sorted[current_idx:end_idx],
+                        "G": (
+                            G0_sorted[current_idx:end_idx]
+                            if G0_sorted is not None
+                            else None
+                        ),
+                        "sizes": counts_chunks[r].astype(np.int64),
                     }
                 )
+                current_idx = end_idx
     else:
         scatter_data = None
 
     # ------------------------------------------------------------------
-    # 2. Broadcast F_max_global and dimensions; scatter data
+    # 2. Broadcast F_max_global and dimensions; distribute data manually
     # ------------------------------------------------------------------
-    F_max_global_host = comm.bcast(F_max_global_host, root=0)
-    d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
+    with CudaTimer("time_scatter", profiling_stats, PROFILE_TIMING):
+        # Broadcast the global scales and dimensions first so workers can pre-allocate
+        F_max_global_host = comm.bcast(F_max_global_host, root=0)
+        d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
 
-    local_dict = comm.scatter(scatter_data, root=0)
+        if rank == 0:
+            current_idx = 0
+            local_dict = {}
+            # 4. Stream the chunks manually via uppercase Send/Recv
+            for r in range(size):
+                num_pts_in_rank = int(np.sum(counts_chunks[r]))
+                end_idx = current_idx + num_pts_in_rank
 
+                chunk_X = X0_sorted[current_idx:end_idx]
+                chunk_F = F0_sorted[current_idx:end_idx]
+                chunk_G = (
+                    G0_sorted[current_idx:end_idx] if G0_sorted is not None else None
+                )
+                chunk_sizes = counts_chunks[r].astype(np.int64)
+
+                if r == 0:
+                    # Keep Rank 0's chunk locally
+                    local_dict = {
+                        "X": chunk_X,
+                        "F": chunk_F,
+                        "G": chunk_G,
+                        "sizes": chunk_sizes,
+                    }
+                else:
+                    # 1. Send metadata handshake
+                    meta = {
+                        "n_pts": int(chunk_X.shape[0]),
+                        "n_clusters": int(chunk_sizes.shape[0]),
+                        "has_g": chunk_G is not None,
+                    }
+                    comm.send(meta, dest=r, tag=999)
+
+                    # 2. Send raw C-buffers (bypassing pickle and 2GB limit)
+                    comm.Send(np.ascontiguousarray(chunk_X), dest=r, tag=1000)
+                    comm.Send(np.ascontiguousarray(chunk_F), dest=r, tag=1001)
+                    if meta["has_g"]:
+                        comm.Send(np.ascontiguousarray(chunk_G), dest=r, tag=1002)
+                    comm.Send(np.ascontiguousarray(chunk_sizes), dest=r, tag=1003)
+
+                current_idx = end_idx
+        else:
+            # Workers receive the handshake and allocate C-level buffers
+            meta = comm.recv(source=0, tag=999)
+            chunk_X = np.empty((meta["n_pts"], d_bcast), dtype=np.float64)
+            chunk_F = np.empty((meta["n_pts"], fd_bcast), dtype=np.float64)
+            chunk_G = (
+                np.empty((meta["n_pts"], fd_bcast, d_bcast), dtype=np.float64)
+                if meta["has_g"]
+                else None
+            )
+            chunk_sizes = np.empty(meta["n_clusters"], dtype=np.int64)
+
+            # Receive the raw arrays directly into memory
+            comm.Recv(chunk_X, source=0, tag=1000)
+            comm.Recv(chunk_F, source=0, tag=1001)
+            if meta["has_g"] and chunk_G is not None:
+                comm.Recv(chunk_G, source=0, tag=1002)
+            comm.Recv(chunk_sizes, source=0, tag=1003)
+
+            local_dict = {
+                "X": chunk_X,
+                "F": chunk_F,
+                "G": chunk_G,
+                "sizes": chunk_sizes,
+            }
+
+    # Map directly to the target device
     local_X = xp.asarray(local_dict["X"], dtype=xp.float64)
     local_F = xp.asarray(local_dict["F"], dtype=xp.float64)
-    # if CLUSTERING_MATRIX != "Cov_Lvl_curves":
-    #     local_G = xp.asarray(local_dict["G"], dtype=xp.float64)
-    # else:
-    #     local_G = None
-    local_G = xp.asarray(local_dict["G"], dtype=xp.float64)
+    local_G = (
+        xp.asarray(local_dict["G"], dtype=xp.float64)
+        if local_dict["G"] is not None
+        else None
+    )
     local_sizes = xp.asarray(local_dict["sizes"], dtype=xp.int64)
     local_starts = xp.r_[0, xp.cumsum(local_sizes)[:-1]]
 
@@ -1198,7 +1306,9 @@ def adaptive_clustering(
     # Stamp per-rank scalars into profiling_stats before the gather
     profiling_stats["num_levels"] = last_level
     profiling_stats["num_generated_pts"] = local_gen_pts
-    profiling_stats["total_f_evals"] = local_f_evals
+    profiling_stats["total_f_evals"] = (
+        profiling_stats.get("total_f_evals", 0) + local_f_evals
+    )
     profiling_stats["num_final_clusters"] = out_count
     profiling_stats["time_total"] = time.perf_counter() - _start_time
     # Piggyback profiling stats on the existing gather (no extra comms round)
@@ -1307,10 +1417,11 @@ def adaptive_clustering(
 
 if __name__ == "__main__":
     import argparse
+    import json
     import os
     from functools import partial
 
-    from src import FIGURES_DIR
+    from src import RESULTS_DIR
     from src.logging_utils import setup_logging
     from src.plotter_utils import (
         plot_adaptive_clustering_results,
@@ -1323,7 +1434,7 @@ if __name__ == "__main__":
     _rank = _get_mpi_rank()
     _size = _get_mpi_size()
 
-    AC_PLOTS_DIR = FIGURES_DIR / "adaptive_clustering_rosenbrock"
+    _OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi_static"
 
     # --------------------------------------------------------------------------
     # Argument parsing & setup
@@ -1346,7 +1457,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n-init-clusters",
         type=int,
-        default=50,
+        default=64,
         help="Number of initial clusters for adaptive clustering",
     )
     parser.add_argument(
@@ -1365,8 +1476,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--initial-clustering-method",
         type=str,
-        default="kmeans",
-        choices=["kmeans", "knndbscan"],
+        default="uniform_grid",
+        choices=["kmeans", "knndbscan", "uniform_grid"],
         help="Method for initial clustering",
     )
     parser.add_argument(
@@ -1400,11 +1511,14 @@ if __name__ == "__main__":
     OUTPUT_SUBDIR = args.output_subdir
     FORCE_REEXEC = args.force
 
+    # Scale initial clusters with dimension for better
+    NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
+
     # Check if output already exists
-    AC_PLOTS_DIR = AC_PLOTS_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else AC_PLOTS_DIR
-    AC_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR = _OUTPUT_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else _OUTPUT_DIR
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     img_fpath = (
-        AC_PLOTS_DIR
+        OUTPUT_DIR
         / f"mpi_sz{_size}_ac_rosen{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_ntrain{N_TRAIN}_dim{DIM}_{INITIAL_CLUSTERING_METHOD}.png"
     )
     _skip = DIM == 2 and img_fpath.exists() and not FORCE_REEXEC
@@ -1435,7 +1549,7 @@ if __name__ == "__main__":
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
         TOL=TOL,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS * DIM,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         ERROR_METRIC=ERROR_METRIC,
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
@@ -1505,6 +1619,32 @@ if __name__ == "__main__":
     npz_fpath = img_fpath.with_suffix(".npz")
     results = {k: _to_host(v) for k, v in results.items()}
     xp.savez_compressed(npz_fpath, **results)
+
+    # Dump json of important run params, n_centroids and training
+    json_data = {
+        "mpi_size": _size,
+        "num_clusters": n_centroids,
+        "train_time_sec": results["profiling_stats"]["time_total"],
+        "init_time_sec": results["profiling_stats"]["time_init"],
+        "num_levels": results["num_levels"],
+        "num_generated_pts": results["num_generated_pts"],
+        "total_f_evals": results["total_f_evals"],
+        "error_metric": ERROR_METRIC,
+        "initial_clustering_method": INITIAL_CLUSTERING_METHOD,
+        "tol": TOL,
+        "num_initial_clusters": NUM_INITIAL_CLUSTERS,
+        "min_pts_per_cluster": MIN_PTS_PER_CLUSTER,
+        "rosenbrock_a": A_ROSENBROCK,
+        "dim": DIM,
+        "n_train": N_TRAIN,
+    }
+    json_fpath = (
+        OUTPUT_DIR
+        / f"dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_init_{INITIAL_CLUSTERING_METHOD}_mpi{_size}.json"
+    )
+    with open(json_fpath, "w") as f:
+        json.dump(json_data, f, indent=4)
+    print(f"Saved results JSON: {json_fpath}")
 
     # Finalize MPI cleanly, then use os._exit to bypass Python atexit/GC
     # shutdown which triggers a UCX/knndbscan libucp destructor segfault.
