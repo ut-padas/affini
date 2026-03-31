@@ -1553,7 +1553,14 @@ def adaptive_clustering(
     # 5. Gather & merge on rank 0
     # ------------------------------------------------------------------
     with CudaTimer("time_gather", profiling_stats, PROFILE_TIMING):
-        all_results = comm.gather(local_result_host, root=0)
+        _data_exchange_tag = 2000
+        if rank != 0:
+            comm.send(local_result_host, dest=0, tag=_data_exchange_tag)
+        else:
+            all_results = [local_result_host]
+            for r in range(1, size):
+                # Receive sequentially to bypass collective size limits
+                all_results.append(comm.recv(source=r, tag=_data_exchange_tag))
 
     if rank == 0:
         logger.info("R00: Merging results from all ranks.")
@@ -1869,6 +1876,7 @@ if __name__ == "__main__":
         "num_clusters": n_centroids,
         "train_time_sec": results["profiling_stats"]["time_total"],
         "init_time_sec": results["profiling_stats"]["time_init"],
+        "gather_time_sec": results["profiling_stats"]["time_gather"],
         "num_levels": results["num_levels"],
         "num_generated_pts": results["num_generated_pts"],
         "total_f_evals": results["total_f_evals"],

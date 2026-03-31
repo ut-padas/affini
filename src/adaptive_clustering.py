@@ -280,7 +280,9 @@ def _run_local_refinement(
                     sk = mus - xp.repeat(bad_mus_prev_level, 2)
                     update_vec = yk - H_prev_lvl_repeated @ sk
                     # TODO: deal with numerical instability (compute norms)
-                    H_current = H_prev_lvl_repeated + xp.outer(update_vec, update_vec) / xp.dot(update_vec, sk)
+                    H_current = H_prev_lvl_repeated + xp.outer(
+                        update_vec, update_vec
+                    ) / xp.dot(update_vec, sk)
                 elif CLUSTERING_MATRIX == "SR1" and level == 1:
                     H_current = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
                         len(CLUSTER_SIZES), axis=0
@@ -661,9 +663,7 @@ def _run_local_refinement(
                         # TODO: in the future, would like updating formula for Hessian absolute value square root.
                         #   This would probably only work for convex functions.
                         dvals, U = xp.linalg.eigh(H_current[bad_idx_local])
-                        dvals_sqrt = xp.sqrt(
-                            xp.maximum(xp.abs(dvals), TINY_EPS)
-                        )
+                        dvals_sqrt = xp.sqrt(xp.maximum(xp.abs(dvals), TINY_EPS))
                         M_split = (U * dvals_sqrt[:, None]) @ U.transpose(0, 2, 1)
                         M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
 
@@ -712,7 +712,7 @@ def _run_local_refinement(
                 if CLUSTERING_MATRIX == "SR1":
                     bad_mus_prev_level = mus[bad_idx_local]
                     bad_g_prev_level = g_mus[bad_idx_local]
-                    H_prev_level = H_current # Need to save the Hessians
+                    H_prev_level = H_current  # Need to save the Hessians
 
                 with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
                     if CLUSTER_G is not None:
@@ -852,7 +852,9 @@ def adaptive_clustering(
     INITIAL_CLUSTERING_METHOD: Literal[
         "kmeans", "knndbscan", "uniform_grid"
     ] = "kmeans",
-    CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"] = "Hessian_LSQ",
+    CLUSTERING_MATRIX: Literal[
+        "Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"
+    ] = "Hessian_LSQ",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
@@ -993,6 +995,7 @@ def adaptive_clustering(
         "time_bad_d2h": 0.0,
         "time_transition": 0.0,
         "time_gc": 0.0,
+        "time_scatter": 0.0,
         "level_stats": [],
     }
 
@@ -1317,7 +1320,15 @@ def adaptive_clustering(
     # ------------------------------------------------------------------
     # 5. Gather & merge on rank 0
     # ------------------------------------------------------------------
-    all_results = comm.gather(local_result_host, root=0)
+    with CudaTimer("time_gather", profiling_stats, PROFILE_TIMING):
+        _data_exchange_tag = 2000
+        if rank != 0:
+            comm.send(local_result_host, dest=0, tag=_data_exchange_tag)
+        else:
+            all_results = [local_result_host]
+            for r in range(1, size):
+                # Receive sequentially to bypass collective size limits
+                all_results.append(comm.recv(source=r, tag=_data_exchange_tag))
 
     if rank == 0:
         logger.info("R00: Merging results from all ranks.")
@@ -1626,6 +1637,7 @@ if __name__ == "__main__":
         "num_clusters": n_centroids,
         "train_time_sec": results["profiling_stats"]["time_total"],
         "init_time_sec": results["profiling_stats"]["time_init"],
+        "gather_time_sec": results["profiling_stats"]["time_gather"],
         "num_levels": results["num_levels"],
         "num_generated_pts": results["num_generated_pts"],
         "total_f_evals": results["total_f_evals"],
