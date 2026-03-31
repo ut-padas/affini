@@ -43,6 +43,36 @@ def json_to_csv(target_dirs):
         if "mpi_size" in df.columns:
             df = df.sort_values("mpi_size")
 
+        # Keep only dim==5 and tol==5e-3
+        if "dim" in df.columns and "tol" in df.columns:
+            df = df[(df["dim"] == 5) & (df["tol"] <= 5e-3)]
+        if "train_time_sec" in df.columns and "init_time_sec" in df.columns:
+            if "gather_time_sec" in df.columns:
+                df["compute_time_sec"] = (
+                    df["train_time_sec"] - df["init_time_sec"] - df["gather_time_sec"]
+                )
+            else:
+                df["compute_time_sec"] = df["train_time_sec"] - df["init_time_sec"]
+                df["gather_time_sec"] = None
+
+        # Rename & Reorder columns
+        column_mapping = {
+            "mpi_size": "MPI Size",
+            "dim": "Dim",
+            "tol": "Tol",
+            "num_clusters": "N_c",
+            "compute_time_sec": "Compute Time (s)",
+            "train_time_sec": "Train Time (s)",
+            "init_time_sec": "Init Time (s)",
+            "gather_time_sec": "Gather Time (s)",
+            "n_train": "N_0",
+            "total_f_evals": "N",
+            "max_tree_level": "Max Tree Level",
+        }
+        df = df.rename(columns=column_mapping)
+        desired_order = list(column_mapping.values())
+        df = df[[col for col in desired_order if col in df.columns]]
+
         # 4. Save CSV with subdirectory name
         output_path = target_path.parent / f"{target_path.name}.csv"
         df.to_csv(output_path, index=False)
