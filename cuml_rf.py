@@ -15,15 +15,19 @@ logger = logging.getLogger(__name__)
 
 SEED = 0
 DOMAIN = [-2.0, 3.0]
-N_TRAIN = int(1.74e5)
-N_TRAIN = int(1.12e7)
 N_VAL = int(5e4)
 DIM = 5
 EPS = 1e-10
 
-N_TRIALS = 3
+if DIM == 2:
+    N_TRAIN = int(1.74e5)
+elif DIM == 5:
+    N_TRAIN = int(1.12e7)
+
+N_TRIALS = 30
 TUNING_FEATURE_BUDGET = int(8e5)
 MIN_TUNING_SAMPLES = 100_000
+MAX_SAMPLES = 0.1
 
 
 def create_dataset():
@@ -88,13 +92,13 @@ def train_and_evaluate_rf(X_train_full, Y_train_full, X_val, Y_val) -> dict[str,
 
     def objective(trial):
         if DIM == 2:
-            max_depth = trial.suggest_int("max_depth", 2, 4)
+            max_depth = trial.suggest_int("max_depth", 20, 21)
             min_samples_split = trial.suggest_int("min_samples_split", 2, 1000)
             n_estimators = trial.suggest_categorical("n_estimators", [50])
         elif DIM == 5:
-            max_depth = trial.suggest_int("max_depth", 2, 9)
+            max_depth = trial.suggest_int("max_depth", 20, 21)
             min_samples_split = trial.suggest_int("min_samples_split", 2, 1000)
-            n_estimators = trial.suggest_categorical("n_estimators", [58])
+            n_estimators = trial.suggest_categorical("n_estimators", [50])
         else:
             raise ValueError(f"Unsupported DIM={DIM} for RF tuning")
 
@@ -103,6 +107,7 @@ def train_and_evaluate_rf(X_train_full, Y_train_full, X_val, Y_val) -> dict[str,
                 n_estimators=n_estimators,
                 max_depth=max_depth,
                 min_samples_split=min_samples_split,
+                max_samples=MAX_SAMPLES,
                 random_state=SEED,
             )
         else:
@@ -111,6 +116,7 @@ def train_and_evaluate_rf(X_train_full, Y_train_full, X_val, Y_val) -> dict[str,
                 max_depth=max_depth,
                 min_samples_split=min_samples_split,
                 random_state=SEED,
+                max_samples=MAX_SAMPLES,
                 n_jobs=-1,
             )
 
@@ -127,15 +133,15 @@ def train_and_evaluate_rf(X_train_full, Y_train_full, X_val, Y_val) -> dict[str,
 
     if DIM == 2:
         RF_START_PARAMS = {
-            "max_depth": 4,
-            "min_samples_split": 792,
+            "max_depth": 21,
+            "min_samples_split": 27,
             "n_estimators": 50,
         }
     elif DIM == 5:
         RF_START_PARAMS = {
-            "max_depth": 9,
-            "min_samples_split": 11,
-            "n_estimators": 58,
+            "max_depth": 20,
+            "min_samples_split": 2,
+            "n_estimators": 50,
         }
     else:
         raise ValueError(f"Unsupported DIM={DIM} for RF tuning")
@@ -166,6 +172,7 @@ def train_and_evaluate_rf(X_train_full, Y_train_full, X_val, Y_val) -> dict[str,
             n_estimators=best_params["n_estimators"],
             max_depth=best_params["max_depth"],
             min_samples_split=best_params["min_samples_split"],
+            max_samples=MAX_SAMPLES,
             random_state=SEED,
         )
     else:
@@ -174,6 +181,7 @@ def train_and_evaluate_rf(X_train_full, Y_train_full, X_val, Y_val) -> dict[str,
             max_depth=best_params["max_depth"],
             min_samples_split=best_params["min_samples_split"],
             random_state=SEED,
+            max_samples=MAX_SAMPLES,
             n_jobs=-1,
         )
 
@@ -203,6 +211,7 @@ def train_and_evaluate_rf(X_train_full, Y_train_full, X_val, Y_val) -> dict[str,
             rf_total_leaves = int(sum(rf_leaves_per_tree))
             rf_avg_leaves_per_tree = float(rf_total_leaves / len(rf_leaves_per_tree))
 
+    best_params["max_samples"] = MAX_SAMPLES
     data_dict = {
         "model": "RandomForest",
         "IS_CUPY_BACKEND": IS_CUPY_BACKEND,
@@ -265,7 +274,3 @@ if __name__ == "__main__":
     # 1. Random Forest
     rf_results = train_and_evaluate_rf(X_train_full, Y_train_full, X_val, Y_val)
     save_results(rf_results)
-
-    # 2. XGBoost
-    # xgb_results = train_and_evaluate_xgb(X_train_full, Y_train_full, X_val, Y_val)
-    # save_results(xgb_results)
