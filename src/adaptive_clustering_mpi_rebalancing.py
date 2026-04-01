@@ -1846,32 +1846,9 @@ if __name__ == "__main__":
     else:
         print("Skipping plot (d != 2 or too many clusters).")
 
-    # Save MPI rank time breakdown plot
-    time_breakdown_path = img_fpath.with_name(
-        img_fpath.stem + "_mpi_time_breakdown.png"
-    )
-    plot_mpi_rank_time_breakdown(results["profiling_stats"], time_breakdown_path)
-
-    # MPI × Level workload heatmap (good_clusters is the primary workload signal)
-    for _heatmap_col in (
-        "good_clusters",
-        "clusters_start",
-        "num_pts_next_level",
-        "runtime_sec",
-    ):
-        _hm_path = img_fpath.with_name(
-            img_fpath.stem + f"_mpi_heatmap_{_heatmap_col}.png"
-        )
-        title = f"MPI x Level Heatmap ({_heatmap_col}) (Train Time={results['profiling_stats']['time_total']:.1f}s) (N_CLUSTERS={n_centroids:,})"
-        plot_mpi_level_heatmap(results, _hm_path, values_col=_heatmap_col, title=title)
-
-    # Save npz file of results
-    npz_fpath = img_fpath.with_suffix(".npz")
-    results = {k: _to_host(v) for k, v in results.items()}
-    xp.savez_compressed(npz_fpath, **results)
-
     # Dump json of important run params, n_centroids and training time
     json_data = {
+        "IS_CUPY_BACKEND": IS_CUPY_BACKEND,
         "mpi_size": _size,
         "num_clusters": n_centroids,
         "train_time_sec": results["profiling_stats"]["time_total"],
@@ -1896,6 +1873,30 @@ if __name__ == "__main__":
     with open(json_fpath, "w") as f:
         json.dump(json_data, f, indent=4)
     print(f"Saved results JSON: {json_fpath}")
+
+    # Save MPI rank time breakdown plot
+    time_breakdown_path = img_fpath.with_name(
+        img_fpath.stem + "_mpi_time_breakdown.png"
+    )
+    plot_mpi_rank_time_breakdown(results["profiling_stats"], time_breakdown_path)
+
+    # MPI × Level workload heatmap (good_clusters is the primary workload signal)
+    for _heatmap_col in (
+        "good_clusters",
+        "clusters_start",
+        "num_pts_next_level",
+        "runtime_sec",
+    ):
+        _hm_path = img_fpath.with_name(
+            img_fpath.stem + f"_mpi_heatmap_{_heatmap_col}.png"
+        )
+        title = f"MPI x Level Heatmap ({_heatmap_col}) (Train Time={results['profiling_stats']['time_total']:.1f}s) (N_CLUSTERS={n_centroids:,})"
+        plot_mpi_level_heatmap(results, _hm_path, values_col=_heatmap_col, title=title)
+
+    # Save npz file of results
+    npz_fpath = img_fpath.with_suffix(".npz")
+    results = {k: _to_host(v) for k, v in results.items()}
+    xp.savez_compressed(npz_fpath, **results)
 
     # Finalize MPI cleanly, then use os._exit to bypass Python atexit/GC
     # shutdown which triggers a UCX/knndbscan libucp destructor segfault.

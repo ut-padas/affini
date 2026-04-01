@@ -46,14 +46,12 @@ def json_to_csv(target_dirs):
         # Keep only dim==5 and tol==5e-3
         if "dim" in df.columns and "tol" in df.columns:
             df = df[(df["dim"] == 5) & (df["tol"] <= 5e-3)]
+
+        if "gather_time_sec" not in df.columns:
+            df["gather_time_sec"] = pd.NA
+
         if "train_time_sec" in df.columns and "init_time_sec" in df.columns:
-            if "gather_time_sec" in df.columns:
-                df["compute_time_sec"] = (
-                    df["train_time_sec"] - df["init_time_sec"] - df["gather_time_sec"]
-                )
-            else:
-                df["compute_time_sec"] = df["train_time_sec"] - df["init_time_sec"]
-                df["gather_time_sec"] = None
+            df["compute_time_sec"] = df["train_time_sec"] - df["init_time_sec"]
 
         # Rename & Reorder columns
         column_mapping = {
@@ -68,6 +66,7 @@ def json_to_csv(target_dirs):
             "n_train": "N_0",
             "total_f_evals": "N",
             "max_tree_level": "Max Tree Level",
+            "num_initial_clusters": "N_init_clusters",
         }
         df = df.rename(columns=column_mapping)
         desired_order = list(column_mapping.values())
