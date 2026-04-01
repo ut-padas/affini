@@ -71,7 +71,9 @@ class HATANNSurrogate:
         # Clustering params
         TOL: float = 1e-2,
         ERROR_METRIC: Literal["L2", "Linf-local", "Linf-global"] = "Linf-global",
-        INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"] = "kmeans",
+        INITIAL_CLUSTERING_METHOD: Literal[
+            "kmeans", "knndbscan", "uniform_grid"
+        ] = "kmeans",
         NUM_INITIAL_CLUSTERS: int = 100,
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
@@ -385,9 +387,7 @@ class HATANNSurrogate:
             raise RuntimeError("Model not trained.")
 
         if use_saved_hessian and self.Hs_src is None:
-            logger.warning(
-                "use_saved_hessian=True but Hessians are not computed."
-            )
+            logger.warning("use_saved_hessian=True but Hessians are not computed.")
 
         assert (
             self.X_src is not None
@@ -462,7 +462,9 @@ class HATANNSurrogate:
 
         # --- 5.1. Increase accuracy via Hessian (if selected by user) ---
         if use_saved_hessian and self.Hs_src is not None:
-            H_neighbors = xp.asarray(self.Hs_src)[flat_idx].reshape(N, k_nn, F_dim, D, D)
+            H_neighbors = xp.asarray(self.Hs_src)[flat_idx].reshape(
+                N, k_nn, F_dim, D, D
+            )
             quadratic_term = xp.einsum("nkc,nkfcd,nkd->nkf", dx, H_neighbors, dx)
             predictions_k += 0.5 * quadratic_term
 

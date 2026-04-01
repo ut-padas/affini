@@ -1446,8 +1446,6 @@ if __name__ == "__main__":
     _rank = _get_mpi_rank()
     _size = _get_mpi_size()
 
-    _OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi_static"
-
     # --------------------------------------------------------------------------
     # Argument parsing & setup
     # --------------------------------------------------------------------------
@@ -1499,12 +1497,6 @@ if __name__ == "__main__":
         help="Rosenbrock function parameter 'a'",
     )
     parser.add_argument(
-        "--output-subdir",
-        type=str,
-        default="",
-        help="Subdirectory for output files",
-    )
-    parser.add_argument(
         "-f",
         "--force",
         action="store_true",
@@ -1520,15 +1512,17 @@ if __name__ == "__main__":
     ERROR_METRIC = args.error_metric
     INITIAL_CLUSTERING_METHOD = args.initial_clustering_method
     A_ROSENBROCK = args.rosenbrock_a
-    OUTPUT_SUBDIR = args.output_subdir
     FORCE_REEXEC = args.force
 
     # Scale initial clusters with dimension for better
     NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
 
-    # Check if output already exists
-    OUTPUT_DIR = _OUTPUT_DIR / OUTPUT_SUBDIR if OUTPUT_SUBDIR else _OUTPUT_DIR
+    if IS_CUPY_BACKEND:
+        OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi_static_gpu"
+    else:
+        OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi_static"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
     img_fpath = (
         OUTPUT_DIR
         / f"mpi_sz{_size}_ac_rosen{A_ROSENBROCK}_tol{TOL}_error_metric_{ERROR_METRIC}_init{NUM_INITIAL_CLUSTERS}_min{MIN_PTS_PER_CLUSTER}_ntrain{N_TRAIN}_dim{DIM}_{INITIAL_CLUSTERING_METHOD}.png"

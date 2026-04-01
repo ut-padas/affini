@@ -45,7 +45,7 @@ def json_to_csv(target_dirs):
 
         # Keep only dim==5 and tol==5e-3
         if "dim" in df.columns and "tol" in df.columns:
-            df = df[(df["dim"] == 5) & (df["tol"] <= 5e-3)]
+            df = df[(df["dim"] >= 5) & (df["tol"] <= 5e-3)]
 
         if "gather_time_sec" not in df.columns:
             df["gather_time_sec"] = pd.NA
@@ -133,6 +133,8 @@ if __name__ == "__main__":
     dirs = [
         result_dir / "adaptive_clustering_mpi_static",
         result_dir / "adaptive_clustering_mpi_rebalancing",
+        result_dir / "adaptive_clustering_mpi_static_gpu",
+        result_dir / "adaptive_clustering_mpi_rebalancing_gpu",
     ]
     json_to_csv(dirs)
     json_to_csv_cumrf(result_dir / "cuml_rf")
