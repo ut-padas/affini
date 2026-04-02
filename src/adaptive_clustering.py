@@ -15,12 +15,12 @@ from src.adaptive_clustering_utils import (
     convert_to_2d_array,
     convert_to_3d_array,
     get_n_smallest_per_block,
+    run_fused_linear_surrogate_comp_abs,
+    run_fused_linear_surrogate_metric,
     run_fused_metrics,
     run_fused_q_dist,
     run_fused_score,
     run_fused_stats,
-    run_fused_taylor_comp_abs,
-    run_fused_taylor_metric,
     scatter_maximum_1d,
     uniform_grid_cluster_labels,
 )
@@ -52,6 +52,7 @@ def _run_local_refinement(
     # Config
     TOL: float,
     ERROR_METRIC: str,
+    ERROR_EVAL_MODE: str,
     MIN_PTS_PER_CLUSTER: int,
     MAX_CLUSTERS_EST: int,
     SEED: int,
@@ -294,54 +295,137 @@ def _run_local_refinement(
                     )
 
                 # 4. Error Metrics & Acceptance Logic
-                if ERROR_METRIC == "Linf-local":
-                    E_cluster_rel_max = xp.zeros((K_batch,), dtype=xp.float64)
-                    E_cluster_abs_max = xp.zeros((K_batch,), dtype=xp.float64)
+                if ERROR_EVAL_MODE == "affine":
+                    # 1. Compute Affine Parameters for entire batch
+                    mean_F_batch = (
+                        xp.add.reduceat(F_batch, aug_starts) / aug_sizes[:, None]
+                    )
+                    X_c_batch = X_batch - mus[aug_ids]
+                    F_c_batch = F_batch - mean_F_batch[aug_ids]
 
-                    for j in range(fd):
-                        F_max_j = xp.zeros((K_batch,), dtype=xp.float64)
-                        scatter_maximum_1d(F_max_j, aug_ids, xp.abs(F_batch[:, j]))
-
-                        pointwise_tay_err_j = run_fused_taylor_comp_abs(
-                            X_batch, mus, aug_ids, F_batch, f_mus, g_mus, j
-                        )
-                        E_abs_j = xp.zeros((K_batch,), dtype=xp.float64)
-                        scatter_maximum_1d(E_abs_j, aug_ids, pointwise_tay_err_j)
-                        scale = xp.maximum(F_max_j, TINY_EPS)
-                        E_rel_j = E_abs_j / scale
-                        E_cluster_rel_max = xp.maximum(E_cluster_rel_max, E_rel_j)
-                        E_cluster_abs_max = xp.maximum(E_cluster_abs_max, E_abs_j)
-
-                    is_good = (E_cluster_rel_max < TOL) | (E_cluster_abs_max < TOL)
-                    E_cluster = E_cluster_rel_max
-
-                else:
-                    if ERROR_METRIC == "L2":
-                        scales_ker = xp.ones((fd,), dtype=xp.float64)
-                        metric_mode = 0
-                    else:
-                        scales_ker = F_max_global
-                        metric_mode = 1
-
-                    err_pts = run_fused_taylor_metric(
-                        X_batch,
-                        mus,
-                        aug_ids,
-                        F_batch,
-                        f_mus,
-                        g_mus,
-                        scales_ker,
-                        metric_mode,
+                    auto_cov_batch = xp.add.reduceat(
+                        X_c_batch[:, :, None] * X_c_batch[:, None, :], aug_starts
+                    )
+                    cross_cov_batch = xp.add.reduceat(
+                        X_c_batch[:, :, None] * F_c_batch[:, None, :], aug_starts
                     )
 
-                    if ERROR_METRIC == "L2":
-                        sum_sq = xp.add.reduceat(err_pts, aug_starts)
-                        E_cluster = xp.sqrt(sum_sq)
-                    else:
-                        E_cluster = xp.zeros((K_batch,), dtype=xp.float64)
-                        scatter_maximum_1d(E_cluster, aug_ids, err_pts)
+                    reg = TINY_EPS * xp.eye(d, dtype=xp.float64)[None, :, :]
+                    A_T_batch = xp.linalg.solve(auto_cov_batch + reg, cross_cov_batch)
 
-                    is_good = E_cluster < TOL
+                    A_batch = A_T_batch.transpose(0, 2, 1)  # Slope
+                    b_batch = mean_F_batch - xp.einsum(
+                        "kfd,kd->kf", A_batch, mus
+                    )  # Intercept
+                    X_anchor_batch = xp.zeros_like(mus)  # Origin anchor for y = Ax + b
+
+                    # 2. Evaluate Error Metric
+                    if ERROR_METRIC == "Linf-local":
+                        E_cluster_rel_max = xp.zeros((K_batch,), dtype=xp.float64)
+                        E_cluster_abs_max = xp.zeros((K_batch,), dtype=xp.float64)
+
+                        for j in range(fd):
+                            F_max_j = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(F_max_j, aug_ids, xp.abs(F_batch[:, j]))
+
+                            pointwise_err_j = run_fused_linear_surrogate_comp_abs(
+                                X_batch,
+                                X_anchor_batch,
+                                aug_ids,
+                                F_batch,
+                                b_batch,
+                                A_batch,
+                                j,
+                            )
+                            E_abs_j = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(E_abs_j, aug_ids, pointwise_err_j)
+                            scale = xp.maximum(F_max_j, TINY_EPS)
+                            E_cluster_rel_max = xp.maximum(
+                                E_cluster_rel_max, E_abs_j / scale
+                            )
+                            E_cluster_abs_max = xp.maximum(E_cluster_abs_max, E_abs_j)
+
+                        is_good = (E_cluster_rel_max < TOL) | (E_cluster_abs_max < TOL)
+                        E_cluster = E_cluster_rel_max
+
+                    else:
+                        scales_ker = (
+                            xp.ones((fd,), dtype=xp.float64)
+                            if ERROR_METRIC == "L2"
+                            else F_max_global
+                        )
+                        metric_mode = 0 if ERROR_METRIC == "L2" else 1
+
+                        err_pts = run_fused_linear_surrogate_metric(
+                            X_batch,
+                            X_anchor_batch,
+                            aug_ids,
+                            F_batch,
+                            b_batch,
+                            A_batch,
+                            scales_ker,
+                            metric_mode,
+                        )
+
+                        if ERROR_METRIC == "L2":
+                            E_cluster = xp.sqrt(xp.add.reduceat(err_pts, aug_starts))
+                        else:
+                            E_cluster = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(E_cluster, aug_ids, err_pts)
+
+                        is_good = E_cluster < TOL
+
+                elif ERROR_EVAL_MODE == "taylor":
+                    if ERROR_METRIC == "Linf-local":
+                        E_cluster_rel_max = xp.zeros((K_batch,), dtype=xp.float64)
+                        E_cluster_abs_max = xp.zeros((K_batch,), dtype=xp.float64)
+
+                        for j in range(fd):
+                            F_max_j = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(F_max_j, aug_ids, xp.abs(F_batch[:, j]))
+
+                            pointwise_err_j = run_fused_linear_surrogate_comp_abs(
+                                X_batch, mus, aug_ids, F_batch, f_mus, g_mus, j
+                            )
+                            E_abs_j = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(E_abs_j, aug_ids, pointwise_err_j)
+                            scale = xp.maximum(F_max_j, TINY_EPS)
+                            E_cluster_rel_max = xp.maximum(
+                                E_cluster_rel_max, E_abs_j / scale
+                            )
+                            E_cluster_abs_max = xp.maximum(E_cluster_abs_max, E_abs_j)
+
+                        is_good = (E_cluster_rel_max < TOL) | (E_cluster_abs_max < TOL)
+                        E_cluster = E_cluster_rel_max
+
+                    else:
+                        scales_ker = (
+                            xp.ones((fd,), dtype=xp.float64)
+                            if ERROR_METRIC == "L2"
+                            else F_max_global
+                        )
+                        metric_mode = 0 if ERROR_METRIC == "L2" else 1
+
+                        err_pts = run_fused_linear_surrogate_metric(
+                            X_batch,
+                            mus,
+                            aug_ids,
+                            F_batch,
+                            f_mus,
+                            g_mus,
+                            scales_ker,
+                            metric_mode,
+                        )
+
+                        if ERROR_METRIC == "L2":
+                            E_cluster = xp.sqrt(xp.add.reduceat(err_pts, aug_starts))
+                        else:
+                            E_cluster = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(E_cluster, aug_ids, err_pts)
+
+                        is_good = E_cluster < TOL
+                else:
+                    raise ValueError(f"Unknown ERROR_EVAL_MODE: {ERROR_EVAL_MODE}")
 
             if LOG_MEM_STATS:
                 log_mem_stats(
@@ -451,7 +535,11 @@ def _run_local_refinement(
 
                     # Compute Affine Fit (Batched Least Squares)
                     A_fit, b_fit = None, None
-                    if STORE_AFFINE_FIT_PER_CLUSTER:
+                    if ERROR_EVAL_MODE == "affine":
+                        A_fit = A_batch[good_idx_local]
+                        b_fit = b_batch[good_idx_local]
+                    elif STORE_AFFINE_FIT_PER_CLUSTER:
+                        # Re-run it ONLY for the good clusters if we didn't compute it earlier
                         good_starts = xp.r_[0, xp.cumsum(good_counts)[:-1]]
                         F_good = F_batch[good_mask]
                         mean_F_good = (
@@ -797,6 +885,17 @@ def _run_local_refinement(
 
             start_cluster_idx = end_cluster_idx
             del X_batch, F_batch, G_batch
+            if ERROR_EVAL_MODE == "affine":
+                del (
+                    A_batch,
+                    b_batch,
+                    X_anchor_batch,
+                    X_c_batch,
+                    F_c_batch,
+                    auto_cov_batch,
+                    cross_cov_batch,
+                    A_T_batch,
+                )
             if mempool is not None:
                 mempool.free_all_blocks()
 
@@ -894,6 +993,7 @@ def adaptive_clustering(
     oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
+    ERROR_EVAL_MODE: Literal["taylor", "affine"] = "taylor",
     INITIAL_CLUSTERING_METHOD: Literal[
         "kmeans", "knndbscan", "uniform_grid"
     ] = "kmeans",
@@ -985,6 +1085,8 @@ def adaptive_clustering(
     """
 
     # Validate function arguments
+    # TODO: Clean up this in a better way. The logic is a bit convoluted right now.
+    # Especially the need for grads (or lack thereof) depends on the CLUSTERING_MATRIX
     if CLUSTERING_MATRIX == "Cov_Lvl_curves":
         # In this case, we do not want to compute gradients in general.
         # When we generate points, we want to use f_fn and when we generate centroids,
@@ -1326,6 +1428,7 @@ def adaptive_clustering(
             oracle_fn=oracle_fn,
             TOL=TOL,
             ERROR_METRIC=ERROR_METRIC,
+            ERROR_EVAL_MODE=ERROR_EVAL_MODE,
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
             MAX_CLUSTERS_EST=max(1, MAX_CLUSTERS_EST // max(1, size)),
             SEED=SEED,
@@ -1526,11 +1629,25 @@ if __name__ == "__main__":
         help="Minimum points per cluster for adaptive clustering",
     )
     parser.add_argument(
+        "--error-eval-mode",
+        type=str,
+        default="taylor",
+        choices=["taylor", "affine"],
+        help="Method for evaluating cluster error (Taylor expansion vs affine fit)",
+    )
+    parser.add_argument(
         "--error-metric",
         type=str,
         default="Linf-local",
         choices=["L2", "Linf-global", "Linf-local"],
         help="Error metric for adaptive clustering",
+    )
+    parser.add_argument(
+        "--clustering-matrix",
+        type=str,
+        default="Hessian_LSQ",
+        choices=["Hessian_LSQ", "Cov_Lvl_curves", "None"],
+        help="Matrix for spectral clustering of 'Bad' clusters",
     )
     parser.add_argument(
         "--initial-clustering-method",
@@ -1558,7 +1675,9 @@ if __name__ == "__main__":
     N_TRAIN = int(args.n_train)
     NUM_INITIAL_CLUSTERS = args.n_init_clusters
     MIN_PTS_PER_CLUSTER = args.n_min_per_cluster
+    ERROR_EVAL_MODE = args.error_eval_mode
     ERROR_METRIC = args.error_metric
+    CLUSTERING_MATRIX = args.clustering_matrix
     INITIAL_CLUSTERING_METHOD = args.initial_clustering_method
     A_ROSENBROCK = args.rosenbrock_a
     FORCE_REEXEC = args.force
@@ -1606,7 +1725,9 @@ if __name__ == "__main__":
         TOL=TOL,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        ERROR_EVAL_MODE=ERROR_EVAL_MODE,
         ERROR_METRIC=ERROR_METRIC,
+        CLUSTERING_MATRIX=CLUSTERING_MATRIX,
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
         STORE_TREE_DATA=STORE_TREE_DATA,
         LOG_MEM_STATS=False,
