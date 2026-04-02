@@ -76,6 +76,7 @@ class HATANNSurrogate:
         load_if_exists: bool = True,
         # Clustering params
         TOL: float = 1e-2,
+        ERROR_EVAL_MODE: Literal["taylor", "affine"] = "taylor",
         ERROR_METRIC: Literal["L2", "Linf-local", "Linf-global"] = "Linf-global",
         INITIAL_CLUSTERING_METHOD: Literal[
             "kmeans", "knndbscan", "uniform_grid"
@@ -174,6 +175,7 @@ class HATANNSurrogate:
             oracle_fn=oracle_fn,
             TOL=TOL,
             ERROR_METRIC=ERROR_METRIC,
+            ERROR_EVAL_MODE=ERROR_EVAL_MODE,
             INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
             CLUSTERING_MATRIX=CLUSTERING_MATRIX,
             NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
@@ -523,6 +525,145 @@ class HATANNSurrogate:
         return predictions, unguaranteed_mask
 
 
+def compute_error_metrics(
+    preds, gt, ug_mask, tol: float, return_ptwise_error_arrays: bool = False
+) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Array]]:
+    """
+    Compute error metrics for the predictions.
+
+    Args:
+        preds: Predicted values (N, F_dim)
+        gt: True values (N, F_dim)
+        ug_mask: Boolean array indicating which points are unguaranteed (N,)
+        tol: Tolerance for determining "good" vs "bad" points among the guaranteed ones.
+            return_ptwise_error_arrays: If True, also return the pointwise relative error arrays.
+
+    Returns:
+        Dictionary of error metrics.
+    """
+    TINY_EPS = 1e-12
+
+    n_test = gt.shape[0]
+    n_out = xp.sum(ug_mask)
+    n_in = n_test - n_out
+
+    good_idx = ~ug_mask
+
+    if n_in > 0:
+        # 1. Filter to guaranteed points
+        gt_in = gt[good_idx]
+        preds_in = preds[good_idx]
+        diff = preds_in - gt_in
+        norm_diff = xp.linalg.norm(diff)
+        norm_gt = xp.linalg.norm(gt_in)
+
+        in_l2_rel_error = float(norm_diff / (norm_gt + TINY_EPS))
+        in_l2_abs_error = float(norm_diff / xp.sqrt(n_in))
+
+        element_rel_error = xp.abs(diff) / (xp.abs(gt_in) + TINY_EPS)
+        if element_rel_error.ndim > 1:
+            # Vector Case: A point is "good" only if ALL components are good.
+            # Equivalently, the point error is the MAX error across components.
+            ptwise_rel_error = xp.max(element_rel_error, axis=1)  # Shape: (N_in,)
+        else:
+            # Scalar Case: Just take the element-wise relative error.
+            ptwise_rel_error = element_rel_error  # Shape: (N_in,)
+
+        in_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error))
+        in_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error))
+
+        n_in_good = int(xp.sum(ptwise_rel_error <= tol))
+        n_in_bad = int(n_in - n_in_good)
+    else:
+        in_l2_rel_error = float("nan")
+        in_l2_abs_error = float("nan")
+        in_ptwise_max_rel_error_linf = float("nan")
+        in_ptwise_median_rel_error_linf = float("nan")
+        n_in_good = 0
+        n_in_bad = 0
+
+    if n_out > 0:
+        gt_out = gt[ug_mask]
+        preds_out = preds[ug_mask]
+        diff_out = preds_out - gt_out
+        norm_diff_out = xp.linalg.norm(diff_out)
+        norm_gt_out = xp.linalg.norm(gt_out)
+
+        out_l2_rel_error = float(norm_diff_out / (norm_gt_out + TINY_EPS))
+        out_l2_abs_error = float(norm_diff_out / xp.sqrt(n_out))
+
+        element_rel_error_out = xp.abs(diff_out) / (xp.abs(gt_out) + TINY_EPS)
+        if element_rel_error_out.ndim > 1:
+            ptwise_rel_error_out = xp.max(element_rel_error_out, axis=1)
+        else:
+            ptwise_rel_error_out = element_rel_error_out
+
+        out_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error_out))
+        out_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error_out))
+    else:
+        out_l2_rel_error = float("nan")
+        out_l2_abs_error = float("nan")
+        out_ptwise_max_rel_error_linf = float("nan")
+        out_ptwise_median_rel_error_linf = float("nan")
+
+    # Metrics for all points
+    diff_all = preds - gt
+    norm_diff_all = xp.linalg.norm(diff_all)
+    norm_gt_all = xp.linalg.norm(gt)
+
+    all_l2_rel_error = float(norm_diff_all / (norm_gt_all + TINY_EPS))
+    all_l2_abs_error = float(norm_diff_all / xp.sqrt(n_test))
+    element_rel_error_all = xp.abs(diff_all) / (xp.abs(gt) + TINY_EPS)
+    if element_rel_error_all.ndim > 1:
+        ptwise_rel_error_all = xp.max(element_rel_error_all, axis=1)
+    else:
+        ptwise_rel_error_all = element_rel_error_all
+    all_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error_all))
+    all_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error_all))
+
+    # Calculate percentages
+    perct_out = 100.0 * n_out / n_test
+    perct_in_good = 100.0 * n_in_good / n_test
+    perct_in_bad = 100.0 * n_in_bad / n_test
+
+    # Create error metrics dictionary
+    error_metrics = {
+        "n_test": int(n_test),
+        "n_out": int(n_out),
+        "perct_out": perct_out,
+        "n_in_good": n_in_good,
+        "perct_in_good": perct_in_good,
+        "n_in_bad": n_in_bad,
+        "perct_in_bad": perct_in_bad,
+        "all": {
+            "l2_rel_error": all_l2_rel_error,
+            "l2_abs_error": all_l2_abs_error,
+            "ptwise_max_rel_error_linf": all_ptwise_max_rel_error_linf,
+            "ptwise_median_rel_error_linf": all_ptwise_median_rel_error_linf,
+        },
+        "in": {
+            "l2_rel_error": in_l2_rel_error,
+            "l2_abs_error": in_l2_abs_error,
+            "ptwise_max_rel_error_linf": in_ptwise_max_rel_error_linf,
+            "ptwise_median_rel_error_linf": in_ptwise_median_rel_error_linf,
+        },
+        "out": {
+            "l2_rel_error": out_l2_rel_error,
+            "l2_abs_error": out_l2_abs_error,
+            "ptwise_max_rel_error_linf": out_ptwise_max_rel_error_linf,
+            "ptwise_median_rel_error_linf": out_ptwise_median_rel_error_linf,
+        },
+    }
+    if not return_ptwise_error_arrays:
+        return error_metrics
+    else:
+        return error_metrics, {
+            "all": _to_host(ptwise_rel_error_all),
+            "in": _to_host(ptwise_rel_error),
+            "out": _to_host(ptwise_rel_error_out),
+        }
+
+
 if __name__ == "__main__":
     import argparse
     from functools import partial
@@ -566,6 +707,13 @@ if __name__ == "__main__":
         help="Minimum points per cluster for adaptive clustering",
     )
     parser.add_argument(
+        "--error-eval-mode",
+        type=str,
+        default="taylor",
+        choices=["taylor", "affine"],
+        help="Method for evaluating cluster error (Taylor expansion vs affine fit)",
+    )
+    parser.add_argument(
         "--error-metric",
         type=str,
         default="Linf-local",
@@ -573,14 +721,14 @@ if __name__ == "__main__":
         help="Error metric for adaptive clustering",
     )
     parser.add_argument(
-        "--k-neighbours", type=int, default=1, help="Number of neighbors for kNN"
+        "--clustering-matrix",
+        type=str,
+        default="Hessian_LSQ",
+        choices=["Hessian_LSQ", "Cov_Lvl_curves", "None"],
+        help="Matrix for spectral clustering of 'Bad' clusters",
     )
     parser.add_argument(
-        "--predict-mode",
-        type=str,
-        default="taylor",
-        choices=["taylor", "affine"],
-        help="Prediction mode: 'taylor' for Taylor expansion, 'affine' for affine fit",
+        "--k-neighbours", type=int, default=1, help="Number of neighbors for kNN"
     )
     parser.add_argument(
         "--seed", type=int, default=0, help="Random seed for training data sampling"
@@ -606,9 +754,10 @@ if __name__ == "__main__":
     N_test = args.n_test
     N_INIT_CLUSTERS = args.n_init_clusters
     N_MIN_PER_CLUSTER = args.n_min_per_cluster
+    ERROR_EVAL_MODE = args.error_eval_mode
     ERROR_METRIC = args.error_metric
+    CLUSTERING_MATRIX = args.clustering_matrix
     K_NEIGHBOURS = args.k_neighbours
-    PREDICT_MODE = args.predict_mode
     SEED = args.seed
     A_ROSENBROCK = args.rosenbrock_a
     FORCE_RECOMPUTE = args.force
@@ -620,7 +769,7 @@ if __name__ == "__main__":
 
     img_fpath = (
         SURR_EXP_DIR
-        / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_{PREDICT_MODE}_dim{dim}_tol{TOL:.1e}_error{ERROR_METRIC}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
+        / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_{ERROR_EVAL_MODE}_{CLUSTERING_MATRIX}_dim{dim}_tol{TOL:.1e}_error{ERROR_METRIC}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
     )
     json_fpath = img_fpath.with_suffix(".json")
 
@@ -646,7 +795,7 @@ if __name__ == "__main__":
     # Use save/load functionality - will load from cache if exists, otherwise train and save
     model_cache_path = (
         SURR_EXP_DIR
-        / f"cached_model_rosen{A_ROSENBROCK}_dim{dim}_tol{TOL:.1e}_Ntrain{N_train}_clusters{N_INIT_CLUSTERS}.npz"
+        / f"cached_model_rosen{A_ROSENBROCK}_{ERROR_EVAL_MODE}_{CLUSTERING_MATRIX}_dim{dim}_tol{TOL:.1e}_Ntrain{N_train}_clusters{N_INIT_CLUSTERS}.npz"
     )
 
     surrogate.train(
@@ -656,7 +805,9 @@ if __name__ == "__main__":
         save_model=model_cache_path,
         load_if_exists=not DO_NOT_LOAD_MODEL,
         TOL=TOL,
+        ERROR_EVAL_MODE=ERROR_EVAL_MODE,
         ERROR_METRIC=ERROR_METRIC,
+        CLUSTERING_MATRIX=CLUSTERING_MATRIX,
         NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
         MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
         MAX_CLUSTERS_EST=50_000,
@@ -686,7 +837,7 @@ if __name__ == "__main__":
     preds, ungauranteed_mask = surrogate.predict(
         X_test,
         k_nn=K_NEIGHBOURS,
-        predict_mode=PREDICT_MODE,
+        predict_mode=ERROR_EVAL_MODE,
     )
     _end_predict_time = time.perf_counter()
     print(
@@ -694,31 +845,24 @@ if __name__ == "__main__":
     )
 
     ground_truth = rosenbrock(X_test)
-    good_idx = ~ungauranteed_mask
-    rel_error_linf = xp.abs(preds[good_idx] - ground_truth[good_idx]) / xp.abs(
-        ground_truth[good_idx]
+    error_metrics, ptwise_error_arrays = compute_error_metrics(
+        preds, ground_truth, ungauranteed_mask, tol=TOL, return_ptwise_error_arrays=True
     )
-    max_rel_error_linf = xp.nanmax(rel_error_linf)
-    median_rel_error_linf = xp.nanmedian(rel_error_linf)
 
-    n_out = xp.sum(ungauranteed_mask)
-    perct_out = 100.0 * n_out / N_test
-
-    n_in_good = xp.sum(rel_error_linf <= TOL)
-    n_in_bad = xp.sum(rel_error_linf > TOL)
-    perct_in_good = 100.0 * n_in_good / N_test
-    perct_in_bad = 100.0 * n_in_bad / N_test
+    rel_error_linf = ptwise_error_arrays["in"]  # type: ignore
+    n_out = error_metrics["n_out"]  # type: ignore
+    perct_out = error_metrics["perct_out"]  # type: ignore
+    n_in_good = error_metrics["n_in_good"]  # type: ignore
+    perct_in_good = error_metrics["perct_in_good"]  # type: ignore
+    n_in_bad = error_metrics["n_in_bad"]  # type: ignore
+    perct_in_bad = error_metrics["perct_in_bad"]  # type: ignore
 
     plt.figure(figsize=(8, 5))
-    if IS_CUPY_BACKEND:
-        plt.hist(rel_error_linf.get().flatten(), bins=50, log=True)
-    else:
-        plt.hist(rel_error_linf.flatten(), bins=50, log=True)
-
+    plt.hist(rel_error_linf, bins=50, log=True)
     plt.xlabel("Relative Error (log scale)")
     plt.ylabel("Frequency (log scale)")
     plt.title(
-        f"NearODESurrogate RelError ({PREDICT_MODE}) (Rosenbrock: a={A_ROSENBROCK}) (dim={dim}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_out={n_out} ({perct_out:.2f}%))",
+        f"NearODESurrogate RelError ({ERROR_EVAL_MODE}, {CLUSTERING_MATRIX}) (Rosenbrock: a={A_ROSENBROCK}) (dim={dim}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_out={n_out} ({perct_out:.2f}%))",
         fontsize=7,
     )
     plt.axvline(
@@ -740,18 +884,14 @@ if __name__ == "__main__":
         "n_train": N_train,
         "n_test": N_test,
         "n_clusters": surrogate.N_src,
+        "error_eval_mode": ERROR_EVAL_MODE,
+        "error_metric": ERROR_METRIC,
+        "clustering_matrix": CLUSTERING_MATRIX,
         "k_neighbours": K_NEIGHBOURS,
-        "n_out": int(n_out),
-        "perct_out": float(perct_out),
-        "n_in_good": int(n_in_good),
-        "perct_in_good": float(perct_in_good),
-        "n_in_bad": int(n_in_bad),
-        "perct_in_bad": float(perct_in_bad),
-        "max_rel_error_linf": float(max_rel_error_linf),
-        "median_rel_error_linf": float(median_rel_error_linf),
         "train_time_sec": float(_end_train_time - _start_train_time),
         "predict_time_sec": float(_end_predict_time - _start_predict_time),
         "profiling_stats": surrogate.profiling_stats,
+        "error_metrics": error_metrics,
     }
 
     with open(json_fpath, "w") as json_file:
