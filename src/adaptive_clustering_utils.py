@@ -316,6 +316,86 @@ void fused_q_dist(
 }
 """
 
+_linear_surrogate_metric_kernel_code = r"""
+extern "C" __global__
+void fused_linear_surrogate_metric(
+    const double* X,        // (N, D) Input points
+    const double* X_base,   // (K, D) Base point for expansion (mus or 0)
+    const long long* labels,// (N,)   Cluster assignment indices
+    const double* F_vals,   // (N, FD) True function values
+    const double* F_base,   // (K, FD) Intercept / Base value (f_mus or b)
+    const double* G_slope,  // (K, FD, D) Slope / Jacobian (g_mus or A)
+    const double* scales,   // (FD,) Normalization scales (for Linf)
+    double* E_out,          // (N,) Output error metric
+    int N, int D, int FD, int METRIC_MODE) 
+{
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx >= N) return;
+    
+    long long k = labels[idx];
+    
+    int x_offset = idx * D;
+    int x_base_offset = k * D;
+    int f_val_start = idx * FD;
+    int f_base_start = k * FD;
+    int g_slope_start = k * FD * D;
+
+    double val_acc = 0.0; 
+
+    for (int j = 0; j < FD; j++) {
+        double dot = 0.0;
+        int g_row_start = g_slope_start + j * D;
+        for (int r = 0; r < D; r++) {
+            double diff = X[x_offset + r] - X_base[x_base_offset + r];
+            dot += diff * G_slope[g_row_start + r];
+        }
+        
+        double f_lin = F_base[f_base_start + j] + dot;
+        double diff = F_vals[f_val_start + j] - f_lin;
+        double abs_diff = fabs(diff);
+
+        if (METRIC_MODE == 0) {
+            val_acc += diff * diff; // L2
+        } else {
+            double s = scales[j];   // Linf
+            double rel = abs_diff / (s + 1e-12);
+            if (rel > val_acc) val_acc = rel;
+        }
+    }
+    E_out[idx] = val_acc;
+}
+"""
+
+_linear_surrogate_comp_abs_kernel_code = r"""
+extern "C" __global__
+void fused_linear_surrogate_comp_abs(
+    const double* X, const double* X_base, const long long* labels,
+    const double* F_vals, const double* F_base, const double* G_slope,
+    double* E_out, 
+    int N, int D, int FD, int COMP_IDX) 
+{
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx >= N) return;
+    
+    long long k = labels[idx];
+    int x_offset = idx * D;
+    int x_base_offset = k * D;
+    
+    int f_val_idx = idx * FD + COMP_IDX;
+    int f_base_idx = k * FD + COMP_IDX;
+    int g_slope_idx = k * FD * D + COMP_IDX * D;
+
+    double dot = 0.0;
+    for (int r = 0; r < D; r++) {
+        double diff = X[x_offset + r] - X_base[x_base_offset + r];
+        dot += diff * G_slope[g_slope_idx + r];
+    }
+    
+    double f_lin = F_base[f_base_idx] + dot;
+    E_out[idx] = fabs(F_vals[f_val_idx] - f_lin);
+}
+"""
+
 # Compilation of RawModules (only when CuPy backend is available)
 if IS_CUPY_BACKEND:
     _mod_taylor = xp.RawModule(code=_taylor_metric_kernel_code)
@@ -335,6 +415,98 @@ if IS_CUPY_BACKEND:
 
     _mod_q = xp.RawModule(code=_q_kernel_code)
     _kern_q = _mod_q.get_function("fused_q_dist")
+
+    _mod_linear_surrogate_metric = xp.RawModule(
+        code=_linear_surrogate_metric_kernel_code
+    )
+    _kern_linear_surrogate_metric = _mod_linear_surrogate_metric.get_function(
+        "fused_linear_surrogate_metric"
+    )
+
+    _mod_linear_surrogate_comp_abs = xp.RawModule(
+        code=_linear_surrogate_comp_abs_kernel_code
+    )
+    _kern_linear_surrogate_comp_abs = _mod_linear_surrogate_comp_abs.get_function(
+        "fused_linear_surrogate_comp_abs"
+    )
+
+
+def run_fused_linear_surrogate_metric(
+    X, X_base, labels, F_vals, F_base, G_slope, scales, mode
+):
+    """Calculates aggregated linear surrogate error per point (Sum-sq or Max-Rel)."""
+    if IS_CUPY_BACKEND:
+        N, D = X.shape
+        FD = F_vals.shape[1]
+        E_out = xp.empty((N,), dtype=xp.float64)
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        block = 256
+        grid = (N + block - 1) // block
+        scales_ptr = xp.ascontiguousarray(scales, dtype=xp.float64)
+        _kern_linear_surrogate_metric(  # Ensure you compile the kernel to this variable name
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(X),
+                xp.ascontiguousarray(X_base),
+                labels_64,
+                xp.ascontiguousarray(F_vals),
+                xp.ascontiguousarray(F_base),
+                xp.ascontiguousarray(G_slope),
+                scales_ptr,
+                E_out,
+                N,
+                D,
+                FD,
+                int(mode),
+            ),
+        )
+        return E_out
+    else:
+        dx = X - X_base[labels]
+        lin = xp.einsum("nfd,nd->nf", G_slope[labels], dx)
+        diff = F_vals - (F_base[labels] + lin)
+        if mode == 0:
+            return xp.sum(diff**2, axis=1)
+        else:
+            return xp.max(xp.abs(diff) / (scales[None, :] + TINY_EPS), axis=1)
+
+
+def run_fused_linear_surrogate_comp_abs(
+    X, X_base, labels, F_vals, F_base, G_slope, comp_idx
+):
+    """Calculates Absolute linear surrogate error for a single output component."""
+    if IS_CUPY_BACKEND:
+        N, D = X.shape
+        FD = F_vals.shape[1]
+        E_out = xp.empty((N,), dtype=xp.float64)
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        block = 256
+        grid = (N + block - 1) // block
+        _kern_linear_surrogate_comp_abs(  # Ensure you compile the kernel to this variable name
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(X),
+                xp.ascontiguousarray(X_base),
+                labels_64,
+                xp.ascontiguousarray(F_vals),
+                xp.ascontiguousarray(F_base),
+                xp.ascontiguousarray(G_slope),
+                E_out,
+                N,
+                D,
+                FD,
+                int(comp_idx),
+            ),
+        )
+        return E_out
+    else:
+        dx = X - X_base[labels]
+        g_comp = G_slope[labels, comp_idx, :]
+        dot = xp.sum(dx * g_comp, axis=1)
+        f_lin = F_base[labels, comp_idx] + dot
+        return xp.abs(F_vals[:, comp_idx] - f_lin)
 
 
 # -----------------------------------------------------------------------------
