@@ -681,7 +681,7 @@ def _run_local_refinement(
                     bad_counts = aug_sizes[bad_idx_local]
                     dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
 
-                    if IGNORE_GRADIENT or CLUSTERING_MATRIX == "None":
+                    if IGNORE_GRADIENT and CLUSTERING_MATRIX == "None":
                         # Fallback: PCA Split (Split along variance of X)
                         M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
                             n_bad, axis=0
@@ -700,14 +700,27 @@ def _run_local_refinement(
                         CovZ = C
 
                     elif CLUSTERING_MATRIX == "Hessian_LSQ":
+                        if IGNORE_GRADIENT:
+                            raise ValueError(
+                                "Cannot use Hessian_LSQ clustering matrix when IGNORE_GRADIENT is True."
+                            )
                         # Hessian Split: Split along eigenvector of Hessian estimate
                         # 1. Determine "Active Component" (Output dim with highest error)
-                        g_mus_exp_bad = g_mus[bad_idx_local][dense_labels_bad]
-                        dx_bad = X_bad - mus[bad_idx_local][dense_labels_bad]
-                        lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp_bad, dx_bad)
-                        diff_bad = F_bad - (
-                            f_mus[bad_idx_local][dense_labels_bad] + lin_bad
-                        )
+                        if ERROR_EVAL_MODE == "affine":
+                            A_exp_bad = A_batch[bad_idx_local][dense_labels_bad]
+                            b_exp_bad = b_batch[bad_idx_local][dense_labels_bad]
+
+                            lin_bad = xp.einsum("nmd,nd->nm", A_exp_bad, X_bad)
+                            diff_bad = F_bad - (b_exp_bad + lin_bad)
+
+                        elif ERROR_EVAL_MODE == "taylor":
+                            g_mus_exp_bad = g_mus[bad_idx_local][dense_labels_bad]
+                            dx_bad = X_bad - mus[bad_idx_local][dense_labels_bad]
+
+                            lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp_bad, dx_bad)
+                            diff_bad = F_bad - (
+                                f_mus[bad_idx_local][dense_labels_bad] + lin_bad
+                            )
 
                         bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
                         sq_err = xp.add.reduceat(diff_bad**2, bad_starts)
@@ -751,16 +764,26 @@ def _run_local_refinement(
                         # Approximate Hessian using inverse covariance formulation.
 
                         # 1. Compute the linear surrogate errors
-                        lin_bad = xp.einsum(
-                            "nmd,nd->nm",
-                            g_mus[bad_idx_local][dense_labels_bad],
-                            X_bad - mus[bad_idx_local][dense_labels_bad],
-                        )
-                        diff_bad = F_bad - (
-                            f_mus[bad_idx_local][dense_labels_bad] + lin_bad
-                        )
-                        E_bad = xp.linalg.norm(diff_bad, axis=1)
+                        if ERROR_EVAL_MODE == "affine":
+                            lin_bad = xp.einsum(
+                                "nmd,nd->nm",
+                                A_batch[bad_idx_local][dense_labels_bad],
+                                X_bad,
+                            )
+                            diff_bad = F_bad - (
+                                b_batch[bad_idx_local][dense_labels_bad] + lin_bad
+                            )
+                        elif ERROR_EVAL_MODE == "taylor":
+                            lin_bad = xp.einsum(
+                                "nmd,nd->nm",
+                                g_mus[bad_idx_local][dense_labels_bad],
+                                X_bad - mus[bad_idx_local][dense_labels_bad],
+                            )
+                            diff_bad = F_bad - (
+                                f_mus[bad_idx_local][dense_labels_bad] + lin_bad
+                            )
 
+                        E_bad = xp.linalg.norm(diff_bad, axis=1)
                         # 2. Sort and pick out the smallest n
                         n_est_cov = (
                             MIN_PTS_PER_CLUSTER // 3
@@ -1104,6 +1127,25 @@ def adaptive_clustering(
     # Validate function arguments
     # TODO: Clean up this in a better way. The logic is a bit convoluted right now.
     # Especially the need for grads (or lack thereof) depends on the CLUSTERING_MATRIX
+    if ERROR_EVAL_MODE == "affine":
+        if IGNORE_GRADIENT is False:
+            IGNORE_GRADIENT = True
+            logger.warning(
+                "ERROR_EVAL_MODE is set to 'affine', which does not use gradients. Setting IGNORE_GRADIENT to True."
+            )
+
+        if CLUSTERING_MATRIX != "Cov_Lvl_curves":
+            CLUSTERING_MATRIX = "Cov_Lvl_curves"
+            logger.warning(
+                "ERROR_EVAL_MODE is set to 'affine', which is only compatible with CLUSTERING_MATRIX='Cov_Lvl_curves'. Setting CLUSTERING_MATRIX to 'Cov_Lvl_curves'."
+            )
+
+    if ERROR_EVAL_MODE == "taylor":
+        if IGNORE_GRADIENT and CLUSTERING_MATRIX == "Hessian_LSQ":
+            raise ValueError(
+                "Hessian_LSQ clustering matrix requires gradient information"
+            )
+
     if CLUSTERING_MATRIX == "Cov_Lvl_curves":
         # In this case, we do not want to compute gradients in general.
         # When we generate points, we want to use f_fn and when we generate centroids,
@@ -1662,7 +1704,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--clustering-matrix",
         type=str,
-        default="Hessian_LSQ",
+        default="Cov_Lvl_curves",
         choices=["Hessian_LSQ", "Cov_Lvl_curves", "None"],
         help="Matrix for spectral clustering of 'Bad' clusters",
     )
@@ -1775,6 +1817,7 @@ if __name__ == "__main__":
         f"{counts.mean():.1f}",
         int(counts.max()),
     )
+    raise SystemExit(0)
 
     if STORE_TREE_DATA:
         tree_data = results["tree_data"]
