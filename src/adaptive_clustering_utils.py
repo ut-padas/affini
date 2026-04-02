@@ -675,7 +675,7 @@ def convert_to_3d_array(G: Array) -> Array:
 
 
 def allocate_output_buffers_host(
-    MAX_CLUSTERS_EST: int, d: int, fd: int, store_hess: bool
+    MAX_CLUSTERS_EST: int, d: int, fd: int, store_hess: bool, store_affine_fit: bool
 ) -> tuple[dict, int]:
     """Allocates host (CPU) memory for final clusters."""
     cap = max(1, int(MAX_CLUSTERS_EST))
@@ -691,6 +691,9 @@ def allocate_output_buffers_host(
     }
     if store_hess:
         buffers["H"] = np.empty((cap, d, d), dtype=np.float64)
+    if store_affine_fit:
+        buffers["A_fit"] = np.empty((cap, fd, d), dtype=np.float64)
+        buffers["b_fit"] = np.empty((cap, fd), dtype=np.float64)
     return buffers, cap
 
 
@@ -700,6 +703,7 @@ def adjust_buffer_capacity_host(
     current_cap: int,
     required_total: int,
     store_hess: bool,
+    store_affine_fit: bool,
 ) -> tuple[dict, int]:
     """Doubles the capacity of output buffers if required."""
     if required_total <= current_cap:
@@ -719,6 +723,11 @@ def adjust_buffer_capacity_host(
     }
     if store_hess:
         new_buffers["H"] = np.empty((new_cap, d, d), dtype=np.float64)
+
+    if store_affine_fit:
+        new_buffers["A_fit"] = np.empty((new_cap, fd, d), dtype=np.float64)
+        new_buffers["b_fit"] = np.empty((new_cap, fd), dtype=np.float64)
+
     if current_count > 0:
         for k in new_buffers:
             new_buffers[k][:current_count] = buffers[k][:current_count]

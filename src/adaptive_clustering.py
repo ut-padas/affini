@@ -61,6 +61,7 @@ def _run_local_refinement(
     CLUSTERING_MATRIX: str,
     IGNORE_GRADIENT: bool,
     STORE_HESSIAN_PER_CLUSTER: bool,
+    STORE_AFFINE_FIT_PER_CLUSTER: bool,
     STORE_TREE_DATA: bool,
     LOG_MEM_STATS: bool,
     PROFILE_TIMING: bool,
@@ -84,7 +85,11 @@ def _run_local_refinement(
 
     # Allocate Output Buffers on CPU (Host) to save VRAM
     buffers, out_cap = allocate_output_buffers_host(
-        MAX_CLUSTERS_EST, d, fd, STORE_HESSIAN_PER_CLUSTER
+        MAX_CLUSTERS_EST,
+        d,
+        fd,
+        store_hess=STORE_HESSIAN_PER_CLUSTER,
+        store_affine_fit=STORE_AFFINE_FIT_PER_CLUSTER,
     )
     out_count = 0
 
@@ -444,6 +449,36 @@ def _run_local_refinement(
                         Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
                         Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
 
+                    # Compute Affine Fit (Batched Least Squares)
+                    A_fit, b_fit = None, None
+                    if STORE_AFFINE_FIT_PER_CLUSTER:
+                        good_starts = xp.r_[0, xp.cumsum(good_counts)[:-1]]
+                        F_good = F_batch[good_mask]
+                        mean_F_good = (
+                            xp.add.reduceat(F_good, good_starts) / good_counts[:, None]
+                        )
+                        # Center data
+                        X_c = X_good - mus[good_idx_local][dense_labels_good]
+                        F_c = F_good - mean_F_good[dense_labels_good]
+
+                        # Compute batched X_c^T X_c and X_c^T F_c
+                        auto_cov = xp.add.reduceat(
+                            X_c[:, :, None] * X_c[:, None, :], good_starts
+                        )  # (K_good, d, d)
+                        cross_cov = xp.add.reduceat(
+                            X_c[:, :, None] * F_c[:, None, :], good_starts
+                        )  # (K_good, d, fd)
+
+                        # Solve (X_c^T X_c) A^T = X_c^T F_c (with tiny Tikhonov regularization for stability)
+                        reg = TINY_EPS * xp.eye(d, dtype=xp.float64)[None, :, :]
+                        A_T = xp.linalg.solve(auto_cov + reg, cross_cov)
+                        A_fit = A_T.transpose(0, 2, 1)  # (K_good, fd, d)
+
+                        # b = mean(F) - A * mean(X)
+                        b_fit = mean_F_good - xp.einsum(
+                            "kfd,kd->kf", A_fit, mus[good_idx_local]
+                        )
+
                 with CudaTimer("time_good_d2h", profiling_stats, PROFILE_TIMING):
                     end_out = out_count + K_good
                     buffers, out_cap = adjust_buffer_capacity_host(
@@ -451,7 +486,8 @@ def _run_local_refinement(
                         out_count,
                         out_cap,
                         end_out,
-                        STORE_HESSIAN_PER_CLUSTER,
+                        store_hess=STORE_HESSIAN_PER_CLUSTER,
+                        store_affine_fit=STORE_AFFINE_FIT_PER_CLUSTER,
                     )
                     buffers["centroids"][out_count:end_out] = _to_host(
                         mus[good_idx_local]
@@ -459,8 +495,17 @@ def _run_local_refinement(
                     buffers["f"][out_count:end_out] = _to_host(f_mus[good_idx_local])
                     buffers["g"][out_count:end_out] = _to_host(g_mus[good_idx_local])
                     buffers["Q"][out_count:end_out] = _to_host(Qs)
-                    if Hs is not None:
+
+                    if STORE_HESSIAN_PER_CLUSTER and Hs is not None:
                         buffers["H"][out_count:end_out] = _to_host(Hs)
+                    if (
+                        STORE_AFFINE_FIT_PER_CLUSTER
+                        and A_fit is not None
+                        and b_fit is not None
+                    ):
+                        buffers["A_fit"][out_count:end_out] = _to_host(A_fit)
+                        buffers["b_fit"][out_count:end_out] = _to_host(b_fit)
+
                     buffers["E_cluster"][out_count:end_out] = _to_host(
                         E_cluster[good_idx_local]
                     )
@@ -864,6 +909,7 @@ def adaptive_clustering(
     BATCH_SIZE: int = 10_000_000,
     IGNORE_GRADIENT: bool = False,
     STORE_HESSIAN_PER_CLUSTER: bool = False,
+    STORE_AFFINE_FIT_PER_CLUSTER: bool = False,
     STORE_TREE_DATA: bool = False,
     LOG_MEM_STATS: bool = False,
     PROFILE_TIMING: bool = False,
@@ -914,6 +960,8 @@ def adaptive_clustering(
             approximation).
         STORE_HESSIAN_PER_CLUSTER: If True, computes and stores H for every
             accepted cluster, to use for extra inference accuracy.
+        STORE_AFFINE_FIT_PER_CLUSTER: If True, stores the affine fit parameters (A and b)
+            for each cluster, to use for extra inference accuracy.
         LOG_MEM_STATS: If True, prints VRAM usage at key steps.
         PROFILE_TIMING: If True, tracks detailed execution times for performance
             profiling.
@@ -1287,6 +1335,7 @@ def adaptive_clustering(
             CLUSTERING_MATRIX=CLUSTERING_MATRIX,
             IGNORE_GRADIENT=IGNORE_GRADIENT,
             STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN_PER_CLUSTER,
+            STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT_PER_CLUSTER,
             STORE_TREE_DATA=STORE_TREE_DATA,
             LOG_MEM_STATS=LOG_MEM_STATS,
             PROFILE_TIMING=PROFILE_TIMING,
