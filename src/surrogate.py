@@ -27,6 +27,9 @@ class HATANNSurrogate:
         self.J_src = None
         self.trust_radii_src = None
         self.Qs_src = None
+        self.Hs_src = None
+        self.A_fits_src = None
+        self.b_fits_src = None
         self.profiling_stats = {}
         self.tree_data = None  # Optional: Store tree data for analysis/visualization
 
@@ -56,6 +59,9 @@ class HATANNSurrogate:
             "N_src": self.N_src,
             "profiling_stats": self.profiling_stats,
             "tree_data": self.tree_data,
+            "Hs_src": self.Hs_src,
+            "A_fits_src": self.A_fits_src,
+            "b_fits_src": self.b_fits_src,
         }
 
     def train(
@@ -83,6 +89,7 @@ class HATANNSurrogate:
         ] = "Hessian_LSQ",
         IGNORE_GRADIENT: bool = False,
         STORE_HESSIAN: bool = False,
+        STORE_AFFINE_FIT: bool = False,
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
         PROFILE_TIMING: bool = False,
@@ -129,6 +136,10 @@ class HATANNSurrogate:
                 self.Qs_src = loaded_model.Qs_src
                 self.N_src = loaded_model.N_src
                 self.profiling_stats = loaded_model.profiling_stats
+                self.tree_data = loaded_model.tree_data
+                self.Hs_src = loaded_model.Hs_src
+                self.A_fits_src = loaded_model.A_fits_src
+                self.b_fits_src = loaded_model.b_fits_src
                 self._model_file = model_filepath
                 logger.info(f"Loaded existing model from {model_filepath}")
                 return
@@ -176,6 +187,7 @@ class HATANNSurrogate:
             STORE_TREE_DATA=STORE_TREE_DATA,
             PROFILE_TIMING=PROFILE_TIMING,
             STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
+            STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
         )
         # Non-rank-0 MPI workers return None — their work is done.
         if results is None:
@@ -188,6 +200,8 @@ class HATANNSurrogate:
         Qs = xp.asarray(results["Q"])
         profiling_stats = results["profiling_stats"]
         Hs = results.get("H", None)
+        A_fits = results.get("A_fit", None)
+        b_fits = results.get("b_fit", None)
 
         # 2. Store Data
         self.X_src = centroids
@@ -201,8 +215,9 @@ class HATANNSurrogate:
             self.tree_data = results["tree_data"]
         if Hs is not None:
             self.Hs_src = xp.asarray(Hs)
-        else:
-            self.Hs_src = None
+        if A_fits is not None and b_fits is not None:
+            self.A_fits_src = xp.asarray(A_fits)
+            self.b_fits_src = xp.asarray(b_fits)
 
         # 3. Build KNN Index
         self._build_knn_index()
@@ -247,6 +262,8 @@ class HATANNSurrogate:
             "trust_radii_src": _to_host(self.trust_radii_src),
             "Qs_src": _to_host(self.Qs_src),
             "Hs_src": _to_host(self.Hs_src),
+            "A_fits_src": _to_host(self.A_fits_src),
+            "b_fits_src": _to_host(self.b_fits_src),
             "profiling_stats": self.profiling_stats,
             "tree_data": self.tree_data,
         }
@@ -287,6 +304,9 @@ class HATANNSurrogate:
         instance.J_src = _to_device(data["J_src"])
         instance.trust_radii_src = _to_device(data["trust_radii_src"])
         instance.Qs_src = _to_device(data["Qs_src"])
+        instance.Hs_src = _to_device(data["Hs_src"])
+        instance.A_fits_src = _to_device(data["A_fits_src"])
+        instance.b_fits_src = _to_device(data["b_fits_src"])
 
         # Convert profiling stats and tree data back to dict/objects if they exist
         _prof = data["profiling_stats"]
@@ -379,6 +399,7 @@ class HATANNSurrogate:
         k_nn: int = 1,
         strict_trust_region: bool = False,
         use_saved_hessian: bool = False,
+        predict_mode: Literal["taylor", "affine"] = "taylor",
     ) -> tuple:
         """
         Inference via kNN (CPU or GPU) with L2 Distance.
@@ -389,6 +410,14 @@ class HATANNSurrogate:
         if use_saved_hessian and self.Hs_src is None:
             logger.warning("use_saved_hessian=True but Hessians are not computed.")
 
+        if predict_mode == "affine" and (
+            self.A_fits_src is None or self.b_fits_src is None
+        ):
+            raise ValueError(
+                "predict_mode='affine' requested, but affine fit parameters (A, b) "
+                "were not found. Please retrain with STORE_AFFINE_FIT=True."
+            )
+
         assert (
             self.X_src is not None
             and self.Qs_src is not None
@@ -396,7 +425,6 @@ class HATANNSurrogate:
             and self.J_src is not None
         )
 
-        # qp = _to_host(query_points)
         N, D = query_points.shape
 
         # --- 1. Coarse L2 Filter ---
@@ -450,23 +478,39 @@ class HATANNSurrogate:
             final_weights = xp.ones_like(dist_sq)
             total_weight = xp.sum(final_weights, axis=1)
 
-        # --- 5. Taylor Prediction ---
+        # --- 5. Prediction Calculation ---
         F_dim = self.f_src.shape[1] if self.f_src.ndim > 1 else 1
         flat_idx = nn_idx.reshape(-1)
 
-        f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(N, k_nn, F_dim)
-        J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(N, k_nn, F_dim, D)
+        if predict_mode == "taylor":
+            f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(N, k_nn, F_dim)
+            J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(N, k_nn, F_dim, D)
 
-        linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
-        predictions_k = f_neighbors + linear_term
+            linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
+            predictions_k = f_neighbors + linear_term
 
-        # --- 5.1. Increase accuracy via Hessian (if selected by user) ---
-        if use_saved_hessian and self.Hs_src is not None:
-            H_neighbors = xp.asarray(self.Hs_src)[flat_idx].reshape(
-                N, k_nn, F_dim, D, D
+            # Increase accuracy via Hessian (if selected by user)
+            if use_saved_hessian and self.Hs_src is not None:
+                H_neighbors = xp.asarray(self.Hs_src)[flat_idx].reshape(
+                    N, k_nn, F_dim, D, D
+                )
+                quadratic_term = xp.einsum("nkc,nkfcd,nkd->nkf", dx, H_neighbors, dx)
+                predictions_k += 0.5 * quadratic_term
+
+        elif predict_mode == "affine":
+            A_neighbors = xp.asarray(self.A_fits_src)[flat_idx].reshape(
+                N, k_nn, F_dim, D
             )
-            quadratic_term = xp.einsum("nkc,nkfcd,nkd->nkf", dx, H_neighbors, dx)
-            predictions_k += 0.5 * quadratic_term
+            b_neighbors = xp.asarray(self.b_fits_src)[flat_idx].reshape(N, k_nn, F_dim)
+
+            # affine_term applies the correct A matrix to the query point (x_q), NOT dx.
+            affine_term = xp.einsum("nkfd,nd->nkf", A_neighbors, query_points)
+            predictions_k = affine_term + b_neighbors
+
+        else:
+            raise ValueError(
+                f"Unknown predict_mode: '{predict_mode}'. Use 'taylor' or 'affine'."
+            )
 
         # --- 6. Averaging ---
         weights_expanded = final_weights[:, :, None]
@@ -532,6 +576,13 @@ if __name__ == "__main__":
         "--k-neighbours", type=int, default=1, help="Number of neighbors for kNN"
     )
     parser.add_argument(
+        "--predict-mode",
+        type=str,
+        default="taylor",
+        choices=["taylor", "affine"],
+        help="Prediction mode: 'taylor' for Taylor expansion, 'affine' for affine fit",
+    )
+    parser.add_argument(
         "--seed", type=int, default=0, help="Random seed for training data sampling"
     )
     parser.add_argument(
@@ -557,6 +608,7 @@ if __name__ == "__main__":
     N_MIN_PER_CLUSTER = args.n_min_per_cluster
     ERROR_METRIC = args.error_metric
     K_NEIGHBOURS = args.k_neighbours
+    PREDICT_MODE = args.predict_mode
     SEED = args.seed
     A_ROSENBROCK = args.rosenbrock_a
     FORCE_RECOMPUTE = args.force
@@ -568,7 +620,7 @@ if __name__ == "__main__":
 
     img_fpath = (
         SURR_EXP_DIR
-        / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_dim{dim}_tol{TOL:.1e}_error{ERROR_METRIC}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
+        / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_{PREDICT_MODE}_dim{dim}_tol{TOL:.1e}_error{ERROR_METRIC}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
     )
     json_fpath = img_fpath.with_suffix(".json")
 
@@ -611,6 +663,7 @@ if __name__ == "__main__":
         SEED=SEED,
         PROFILE_TIMING=True,
         STORE_TREE_DATA=False,
+        STORE_AFFINE_FIT=True,
     )
     _end_train_time = time.perf_counter()
 
@@ -633,6 +686,7 @@ if __name__ == "__main__":
     preds, ungauranteed_mask = surrogate.predict(
         X_test,
         k_nn=K_NEIGHBOURS,
+        predict_mode=PREDICT_MODE,
     )
     _end_predict_time = time.perf_counter()
     print(
@@ -664,7 +718,7 @@ if __name__ == "__main__":
     plt.xlabel("Relative Error (log scale)")
     plt.ylabel("Frequency (log scale)")
     plt.title(
-        f"NearODESurrogate RelError (Rosenbrock: a={A_ROSENBROCK}) (dim={dim}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_out={n_out} ({perct_out:.2f}%))",
+        f"NearODESurrogate RelError ({PREDICT_MODE}) (Rosenbrock: a={A_ROSENBROCK}) (dim={dim}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_out={n_out} ({perct_out:.2f}%))",
         fontsize=7,
     )
     plt.axvline(
