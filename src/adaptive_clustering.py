@@ -310,13 +310,25 @@ def _run_local_refinement(
                         X_c_batch[:, :, None] * F_c_batch[:, None, :], aug_starts
                     )
 
-                    reg = TINY_EPS * xp.eye(d, dtype=xp.float64)[None, :, :]
+                    # --- Adaptive Tikhonov Regularization ---
+                    # Find eigenvalues for the batch: shape (K_batch, d)
+                    # eigvals = xp.linalg.eigvalsh(auto_cov_batch)
+                    # max_eigvals = xp.max(eigvals, axis=1)
+
+                    # Faster proxy for max eigenvalue using trace (sum of eigenvalues) -
+                    # this is less accurate but much cheaper
+                    # shape (K_batch,)
+                    max_eigvals_proxy = xp.trace(auto_cov_batch, axis1=1, axis2=2)
+                    _lam = xp.maximum(1e-8 * max_eigvals_proxy, TINY_EPS)
+
+                    # Create batched diagonal matrices: shape (K_batch, d, d)
+                    reg = _lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]
+
                     A_T_batch = xp.linalg.solve(auto_cov_batch + reg, cross_cov_batch)
 
-                    A_batch = A_T_batch.transpose(0, 2, 1)  # Slope
-                    b_batch = mean_F_batch - xp.einsum(
-                        "kfd,kd->kf", A_batch, mus
-                    )  # Intercept
+                    # Slope & Intercept
+                    A_batch = A_T_batch.transpose(0, 2, 1)
+                    b_batch = mean_F_batch - xp.einsum("kfd,kd->kf", A_batch, mus)
                     X_anchor_batch = xp.zeros_like(mus)  # Origin anchor for y = Ax + b
 
                     # 2. Evaluate Error Metric
@@ -557,8 +569,13 @@ def _run_local_refinement(
                             X_c[:, :, None] * F_c[:, None, :], good_starts
                         )  # (K_good, d, fd)
 
-                        # Solve (X_c^T X_c) A^T = X_c^T F_c (with tiny Tikhonov regularization for stability)
-                        reg = TINY_EPS * xp.eye(d, dtype=xp.float64)[None, :, :]
+                        # Solve (X_c^T X_c) A^T = X_c^T F_c
+                        max_eigvals_proxy = xp.trace(auto_cov, axis1=1, axis2=2)
+                        _lam = xp.maximum(1e-8 * max_eigvals_proxy, TINY_EPS)
+                        reg = (
+                            _lam[:, None, None]
+                            * xp.eye(d, dtype=xp.float64)[None, :, :]
+                        )
                         A_T = xp.linalg.solve(auto_cov + reg, cross_cov)
                         A_fit = A_T.transpose(0, 2, 1)  # (K_good, fd, d)
 
