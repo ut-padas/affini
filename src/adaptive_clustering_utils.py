@@ -13,14 +13,16 @@ TINY_EPS = 1e-12
 # -----------------------------------------------------------------------------
 # 1. CUDA KERNELS
 # -----------------------------------------------------------------------------
-# Kernel: fused_taylor_metric
+# Kernel: fused_linear_surrogate_metric
 # -----------------------------------------------------------------------------
-# Computes the error between the true function value and the first-order
-# Taylor approximation at the cluster centroid.
+# Computes the error between the true function value and a linear surrogate
+# model. Designed to be generic to support both Taylor expansions (where
+# X_base = mu, F_base = f(mu), G_slope = g_mu) and Affine Fits (where
+# X_base = 0, F_base = b, G_slope = A).
 #
 # Math:
-#   f_lin_j(x) = f_j(mu) + dot(x - mu, g_j(mu))
-#   diff_j     = F_vals[j] - f_lin_j
+#   f_lin_j(x) = F_base_j + dot(x - X_base, G_slope_j)
+#   diff_j     = F_vals_j - f_lin_j(x)
 #
 # Modes:
 #   METRIC_MODE == 0 (L2): Returns sum of squared errors across components.
@@ -29,19 +31,19 @@ TINY_EPS = 1e-12
 #       Out[i] = max_j ( |diff_j| / scale[j] )
 #
 # Dimensions:
-#   N: Number of points
-#   D: Input dimension
+#   N:  Number of points
+#   D:  Input dimension
 #   FD: Output dimension (Function Dimension)
 # -----------------------------------------------------------------------------
-_taylor_metric_kernel_code = r"""
+_linear_surrogate_metric_kernel_code = r"""
 extern "C" __global__
-void fused_taylor_metric(
+void fused_linear_surrogate_metric(
     const double* X,        // (N, D) Input points
-    const double* mus,      // (K, D) Centroids
+    const double* X_base,   // (K, D) Base point for expansion (mus or 0)
     const long long* labels,// (N,)   Cluster assignment indices
     const double* F_vals,   // (N, FD) True function values
-    const double* f_mus,    // (K, FD) Function values at centroids
-    const double* g_mus,    // (K, FD, D) Gradients at centroids
+    const double* F_base,   // (K, FD) Intercept / Base value (f_mus or b)
+    const double* G_slope,  // (K, FD, D) Slope / Jacobian (g_mus or A)
     const double* scales,   // (FD,) Normalization scales (for Linf)
     double* E_out,          // (N,) Output error metric
     int N, int D, int FD, int METRIC_MODE) 
@@ -51,36 +53,30 @@ void fused_taylor_metric(
     
     long long k = labels[idx];
     
-    // Offset calculations
     int x_offset = idx * D;
-    int mu_offset = k * D;
-    int f_idx_start = idx * FD;
-    int f_mu_start = k * FD;
-    int g_mu_start = k * FD * D;
+    int x_base_offset = k * D;
+    int f_val_start = idx * FD;
+    int f_base_start = k * FD;
+    int g_slope_start = k * FD * D;
 
     double val_acc = 0.0; 
 
     for (int j = 0; j < FD; j++) {
-        // 1. Compute dot product: (x - mu)^T * g_j(mu)
         double dot = 0.0;
-        int g_row_start = g_mu_start + j * D;
+        int g_row_start = g_slope_start + j * D;
         for (int r = 0; r < D; r++) {
-            double diff = X[x_offset + r] - mus[mu_offset + r];
-            dot += diff * g_mus[g_row_start + r];
+            double diff = X[x_offset + r] - X_base[x_base_offset + r];
+            dot += diff * G_slope[g_row_start + r];
         }
         
-        // 2. Linear prediction
-        double f_lin = f_mus[f_mu_start + j] + dot;
-        double diff = F_vals[f_idx_start + j] - f_lin;
+        double f_lin = F_base[f_base_start + j] + dot;
+        double diff = F_vals[f_val_start + j] - f_lin;
         double abs_diff = fabs(diff);
 
-        // 3. Accumulate based on metric mode
         if (METRIC_MODE == 0) {
-            // L2: Sum of squares
-            val_acc += diff * diff;
+            val_acc += diff * diff; // L2
         } else {
-            // Linf: Max Relative Error
-            double s = scales[j]; 
+            double s = scales[j];   // Linf
             double rel = abs_diff / (s + 1e-12);
             if (rel > val_acc) val_acc = rel;
         }
@@ -89,18 +85,28 @@ void fused_taylor_metric(
 }
 """
 
-# Kernel: fused_taylor_component_abs
+# Kernel: fused_linear_surrogate_comp_abs
 # -----------------------------------------------------------------------------
-# Computes the absolute Taylor error for a SINGLE specific output component.
-# Used for Linf-local metric where normalization logic is complex and per-cluster.
+# Computes the absolute error for a SINGLE specific output component between
+# the true function value and a generic linear surrogate model.
+# Used primarily for the Linf-local metric where normalization logic is
+# complex and calculated externally per-cluster.
 #
-# Math: E_out[i] = | f_c(x) - (f_c(mu) + g_c(mu)^T (x-mu)) |
+# Math: Let 'c' be the specific component index (COMP_IDX)
+#   f_lin_c(x) = F_base_c + dot(x - X_base, G_slope_c)
+#   Out[i]     = | F_vals_c - f_lin_c(x) |
+#
+# Dimensions:
+#   N:  Number of points
+#   D:  Input dimension
+#   FD: Total output dimension (Function Dimension)
+#   COMP_IDX: The specific output dimension index to evaluate
 # -----------------------------------------------------------------------------
-_taylor_comp_abs_kernel_code = r"""
+_linear_surrogate_comp_abs_kernel_code = r"""
 extern "C" __global__
-void fused_taylor_component_abs(
-    const double* X, const double* mus, const long long* labels,
-    const double* F_vals, const double* f_mus, const double* g_mus,
+void fused_linear_surrogate_comp_abs(
+    const double* X, const double* X_base, const long long* labels,
+    const double* F_vals, const double* F_base, const double* G_slope,
     double* E_out, 
     int N, int D, int FD, int COMP_IDX) 
 {
@@ -109,20 +115,19 @@ void fused_taylor_component_abs(
     
     long long k = labels[idx];
     int x_offset = idx * D;
-    int mu_offset = k * D;
+    int x_base_offset = k * D;
     
-    // Offsets for the specific component COMP_IDX
     int f_val_idx = idx * FD + COMP_IDX;
-    int f_mu_idx = k * FD + COMP_IDX;
-    int g_mu_idx = k * FD * D + COMP_IDX * D;
+    int f_base_idx = k * FD + COMP_IDX;
+    int g_slope_idx = k * FD * D + COMP_IDX * D;
 
     double dot = 0.0;
     for (int r = 0; r < D; r++) {
-        double diff = X[x_offset + r] - mus[mu_offset + r];
-        dot += diff * g_mus[g_mu_idx + r];
+        double diff = X[x_offset + r] - X_base[x_base_offset + r];
+        dot += diff * G_slope[g_slope_idx + r];
     }
     
-    double f_lin = f_mus[f_mu_idx] + dot;
+    double f_lin = F_base[f_base_idx] + dot;
     E_out[idx] = fabs(F_vals[f_val_idx] - f_lin);
 }
 """
@@ -316,94 +321,9 @@ void fused_q_dist(
 }
 """
 
-_linear_surrogate_metric_kernel_code = r"""
-extern "C" __global__
-void fused_linear_surrogate_metric(
-    const double* X,        // (N, D) Input points
-    const double* X_base,   // (K, D) Base point for expansion (mus or 0)
-    const long long* labels,// (N,)   Cluster assignment indices
-    const double* F_vals,   // (N, FD) True function values
-    const double* F_base,   // (K, FD) Intercept / Base value (f_mus or b)
-    const double* G_slope,  // (K, FD, D) Slope / Jacobian (g_mus or A)
-    const double* scales,   // (FD,) Normalization scales (for Linf)
-    double* E_out,          // (N,) Output error metric
-    int N, int D, int FD, int METRIC_MODE) 
-{
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx >= N) return;
-    
-    long long k = labels[idx];
-    
-    int x_offset = idx * D;
-    int x_base_offset = k * D;
-    int f_val_start = idx * FD;
-    int f_base_start = k * FD;
-    int g_slope_start = k * FD * D;
-
-    double val_acc = 0.0; 
-
-    for (int j = 0; j < FD; j++) {
-        double dot = 0.0;
-        int g_row_start = g_slope_start + j * D;
-        for (int r = 0; r < D; r++) {
-            double diff = X[x_offset + r] - X_base[x_base_offset + r];
-            dot += diff * G_slope[g_row_start + r];
-        }
-        
-        double f_lin = F_base[f_base_start + j] + dot;
-        double diff = F_vals[f_val_start + j] - f_lin;
-        double abs_diff = fabs(diff);
-
-        if (METRIC_MODE == 0) {
-            val_acc += diff * diff; // L2
-        } else {
-            double s = scales[j];   // Linf
-            double rel = abs_diff / (s + 1e-12);
-            if (rel > val_acc) val_acc = rel;
-        }
-    }
-    E_out[idx] = val_acc;
-}
-"""
-
-_linear_surrogate_comp_abs_kernel_code = r"""
-extern "C" __global__
-void fused_linear_surrogate_comp_abs(
-    const double* X, const double* X_base, const long long* labels,
-    const double* F_vals, const double* F_base, const double* G_slope,
-    double* E_out, 
-    int N, int D, int FD, int COMP_IDX) 
-{
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx >= N) return;
-    
-    long long k = labels[idx];
-    int x_offset = idx * D;
-    int x_base_offset = k * D;
-    
-    int f_val_idx = idx * FD + COMP_IDX;
-    int f_base_idx = k * FD + COMP_IDX;
-    int g_slope_idx = k * FD * D + COMP_IDX * D;
-
-    double dot = 0.0;
-    for (int r = 0; r < D; r++) {
-        double diff = X[x_offset + r] - X_base[x_base_offset + r];
-        dot += diff * G_slope[g_slope_idx + r];
-    }
-    
-    double f_lin = F_base[f_base_idx] + dot;
-    E_out[idx] = fabs(F_vals[f_val_idx] - f_lin);
-}
-"""
 
 # Compilation of RawModules (only when CuPy backend is available)
 if IS_CUPY_BACKEND:
-    _mod_taylor = xp.RawModule(code=_taylor_metric_kernel_code)
-    _kern_taylor = _mod_taylor.get_function("fused_taylor_metric")
-
-    _mod_taylor_comp = xp.RawModule(code=_taylor_comp_abs_kernel_code)
-    _kern_taylor_comp = _mod_taylor_comp.get_function("fused_taylor_component_abs")
-
     _mod_metrics = xp.RawModule(code=_metrics_kernel_code)
     _kern_metrics = _mod_metrics.get_function("fused_pointwise_metrics")
 
@@ -431,6 +351,11 @@ if IS_CUPY_BACKEND:
     )
 
 
+# -----------------------------------------------------------------------------
+# 2. PYTHON WRAPPERS
+# Each function dispatches to the raw CUDA kernel (IS_CUPY_BACKEND=True)
+# or a fully-vectorized xp fallback (IS_CUPY_BACKEND=False).
+# -----------------------------------------------------------------------------
 def run_fused_linear_surrogate_metric(
     X, X_base, labels, F_vals, F_base, G_slope, scales, mode
 ):
@@ -443,7 +368,7 @@ def run_fused_linear_surrogate_metric(
         block = 256
         grid = (N + block - 1) // block
         scales_ptr = xp.ascontiguousarray(scales, dtype=xp.float64)
-        _kern_linear_surrogate_metric(  # Ensure you compile the kernel to this variable name
+        _kern_linear_surrogate_metric(
             (grid,),
             (block,),
             (
@@ -483,7 +408,7 @@ def run_fused_linear_surrogate_comp_abs(
         labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
         block = 256
         grid = (N + block - 1) // block
-        _kern_linear_surrogate_comp_abs(  # Ensure you compile the kernel to this variable name
+        _kern_linear_surrogate_comp_abs(
             (grid,),
             (block,),
             (
@@ -507,97 +432,6 @@ def run_fused_linear_surrogate_comp_abs(
         dot = xp.sum(dx * g_comp, axis=1)
         f_lin = F_base[labels, comp_idx] + dot
         return xp.abs(F_vals[:, comp_idx] - f_lin)
-
-
-# -----------------------------------------------------------------------------
-# 2. PYTHON WRAPPERS
-# Each function dispatches to the raw CUDA kernel (IS_CUPY_BACKEND=True)
-# or a fully-vectorized xp fallback (IS_CUPY_BACKEND=False).
-# -----------------------------------------------------------------------------
-def run_fused_taylor_metric(X, mus, labels, F_vals, f_mus, g_mus, scales, mode):
-    """
-    Calculates aggregated Taylor error per point (Sum-sq or Max-Rel).
-    Mode: 0 = L2 (Sum of Squares), 1 = Linf (Max Relative)
-    """
-    if IS_CUPY_BACKEND:
-        N, D = X.shape
-        FD = F_vals.shape[1]
-        E_out = xp.empty((N,), dtype=xp.float64)
-        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-        block = 256
-        grid = (N + block - 1) // block
-        scales_ptr = xp.ascontiguousarray(scales, dtype=xp.float64)
-        _kern_taylor(
-            (grid,),
-            (block,),
-            (
-                xp.ascontiguousarray(X),
-                xp.ascontiguousarray(mus),
-                labels_64,
-                xp.ascontiguousarray(F_vals),
-                xp.ascontiguousarray(f_mus),
-                xp.ascontiguousarray(g_mus),
-                scales_ptr,
-                E_out,
-                N,
-                D,
-                FD,
-                int(mode),
-            ),
-        )
-        return E_out
-    else:
-        # dx[i] = X[i] - mus[labels[i]]              shape: (N, D)
-        # lin[i,j] = g_mus[labels[i], j, :] . dx[i]  shape: (N, FD)
-        # diff[i,j] = F_vals[i,j] - (f_mus[labels[i],j] + lin[i,j])
-        dx = X - mus[labels]  # (N, D)
-        lin = xp.einsum("nfd,nd->nf", g_mus[labels], dx)  # (N, FD)
-        diff = F_vals - (f_mus[labels] + lin)  # (N, FD)
-        if mode == 0:
-            # L2: sum of squared errors across output dims
-            E_out = xp.sum(diff**2, axis=1)  # (N,)
-        else:
-            # Linf: max relative error across output dims
-            E_out = xp.max(xp.abs(diff) / (scales[None, :] + TINY_EPS), axis=1)  # (N,)
-        return E_out
-
-
-def run_fused_taylor_comp_abs(X, mus, labels, F_vals, f_mus, g_mus, comp_idx):
-    """Calculates Absolute Taylor error for a single specific output component."""
-    if IS_CUPY_BACKEND:
-        N, D = X.shape
-        FD = F_vals.shape[1]
-        E_out = xp.empty((N,), dtype=xp.float64)
-        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-        block = 256
-        grid = (N + block - 1) // block
-        _kern_taylor_comp(
-            (grid,),
-            (block,),
-            (
-                xp.ascontiguousarray(X),
-                xp.ascontiguousarray(mus),
-                labels_64,
-                xp.ascontiguousarray(F_vals),
-                xp.ascontiguousarray(f_mus),
-                xp.ascontiguousarray(g_mus),
-                E_out,
-                N,
-                D,
-                FD,
-                int(comp_idx),
-            ),
-        )
-        return E_out
-    else:
-        # E_out[i] = | F_vals[i, comp_idx] - (f_mus[labels[i], comp_idx]
-        #                                      + g_mus[labels[i], comp_idx, :] . dx[i]) |
-        dx = X - mus[labels]  # (N, D)
-        g_comp = g_mus[labels, comp_idx, :]  # (N, D)
-        dot = xp.sum(dx * g_comp, axis=1)  # (N,)
-        f_lin = f_mus[labels, comp_idx] + dot  # (N,)
-        E_out = xp.abs(F_vals[:, comp_idx] - f_lin)  # (N,)
-        return E_out
 
 
 def run_fused_metrics(X, G, mus, g_mus, labels):
