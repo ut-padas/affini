@@ -675,22 +675,19 @@ def convert_to_3d_array(G: Array) -> Array:
 
 
 def allocate_output_buffers_host(
-    MAX_CLUSTERS_EST: int, d: int, fd: int, store_hess: bool
+    MAX_CLUSTERS_EST: int, d: int,
 ) -> tuple[dict, int]:
     """Allocates host (CPU) memory for final clusters."""
     cap = max(1, int(MAX_CLUSTERS_EST))
     buffers = {
         "centroids": np.empty((cap, d), dtype=np.float64),
-        "f": np.empty((cap, fd), dtype=np.float64),
-        "g": np.empty((cap, fd, d), dtype=np.float64),
+        "f": np.empty((cap), dtype=np.float64),
         "Q": np.empty((cap, d, d), dtype=np.float64),
         "E_cluster": np.empty((cap,), dtype=np.float64),
         "radii": np.empty((cap,), dtype=np.float64),
         "L_obs": np.empty((cap,), dtype=np.float64),
         "counts": np.empty((cap,), dtype=np.int64),
     }
-    if store_hess:
-        buffers["H"] = np.empty((cap, d, d), dtype=np.float64)
     return buffers, cap
 
 
