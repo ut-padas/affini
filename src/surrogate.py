@@ -769,7 +769,7 @@ if __name__ == "__main__":
 
     img_fpath = (
         SURR_EXP_DIR
-        / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_{ERROR_EVAL_MODE}_{CLUSTERING_MATRIX}_dim{DIM}_tol{TOL:.1e}_error{ERROR_METRIC}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
+        / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_{ERROR_EVAL_MODE}_{ERROR_METRIC}_{CLUSTERING_MATRIX}_dim{DIM}_tol{TOL:.1e}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
     )
     json_fpath = img_fpath.with_suffix(".json")
 
@@ -794,7 +794,7 @@ if __name__ == "__main__":
     # Use save/load functionality - will load from cache if exists, otherwise train and save
     model_cache_path = (
         SURR_EXP_DIR
-        / f"cached_model_rosen{A_ROSENBROCK}_{ERROR_EVAL_MODE}_{CLUSTERING_MATRIX}_dim{DIM}_tol{TOL:.1e}_Ntrain{N_train}_clusters{N_INIT_CLUSTERS}.npz"
+        / f"cached_model_rosen{A_ROSENBROCK}_{ERROR_EVAL_MODE}_{ERROR_METRIC}_{CLUSTERING_MATRIX}_dim{DIM}_tol{TOL:.1e}_Ntrain{N_train}_clusters{N_INIT_CLUSTERS}.npz"
     )
 
     surrogate.train(
@@ -861,7 +861,7 @@ if __name__ == "__main__":
     plt.xlabel("Relative Error (log scale)")
     plt.ylabel("Frequency (log scale)")
     plt.title(
-        f"NearODESurrogate RelError ({ERROR_EVAL_MODE}, {CLUSTERING_MATRIX}) (Rosenbrock: a={A_ROSENBROCK}) (dim={DIM}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_out={n_out} ({perct_out:.2f}%))",
+        f"NearODESurrogate RelError ({ERROR_EVAL_MODE}, {ERROR_METRIC} {CLUSTERING_MATRIX}) (Rosenbrock: a={A_ROSENBROCK}) (dim={DIM}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_out={n_out} ({perct_out:.2f}%))",
         fontsize=7,
     )
     plt.axvline(

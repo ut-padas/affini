@@ -51,8 +51,8 @@ def _run_local_refinement(
     oracle_fn,
     # Config
     TOL: float,
-    ERROR_METRIC: str,
     ERROR_EVAL_MODE: str,
+    ERROR_METRIC: str,
     MIN_PTS_PER_CLUSTER: int,
     MAX_CLUSTERS_EST: int,
     SEED: int,
@@ -1074,8 +1074,8 @@ def adaptive_clustering(
     g_fn: Optional[Callable[[Array], Array]] = None,
     oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
     TOL: float,
-    ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     ERROR_EVAL_MODE: Literal["taylor", "affine"] = "taylor",
+    ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     INITIAL_CLUSTERING_METHOD: Literal[
         "kmeans", "knndbscan", "uniform_grid"
     ] = "kmeans",
@@ -1528,8 +1528,8 @@ def adaptive_clustering(
             g_fn=g_fn,
             oracle_fn=oracle_fn,
             TOL=TOL,
-            ERROR_METRIC=ERROR_METRIC,
             ERROR_EVAL_MODE=ERROR_EVAL_MODE,
+            ERROR_METRIC=ERROR_METRIC,
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
             MAX_CLUSTERS_EST=max(1, MAX_CLUSTERS_EST // max(1, size)),
             SEED=SEED,
@@ -1859,7 +1859,7 @@ if __name__ == "__main__":
         f"{counts.mean():.1f}",
         int(counts.max()),
     )
-    raise SystemExit(0)
+    # raise SystemExit(0)
 
     if STORE_TREE_DATA:
         tree_data = results["tree_data"]
