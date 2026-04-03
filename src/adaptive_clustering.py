@@ -783,11 +783,10 @@ def _run_local_refinement(
                             core_starts = xp.r_[0, xp.cumsum(core_counts)[:-1]]
 
                             # 2. Compute Deltas strictly anchored to mu and f(mu)
-                            # DO NOT mean-center. This forces the plane through (mu, f(mu))
                             dX_core = X_core - mus[bad_idx_local][labels_core]
                             dF_core = F_core - f_mus[bad_idx_local][labels_core]
 
-                            # 3. Uncentered Second Moments
+                            # 3. Second Moments
                             M_XX = xp.add.reduceat(
                                 dX_core[:, :, None] * dX_core[:, None, :], core_starts
                             )
@@ -806,7 +805,7 @@ def _run_local_refinement(
                             A_T_tangent = xp.linalg.solve(M_XX + reg, M_XF)
                             A_tangent = A_T_tangent.transpose(0, 2, 1)
 
-                            # 5. Compute errors for the WHOLE cluster using anchored A_tangent
+                            # 5. Compute errors for the entire cluster using A_tangent
                             dX_bad = X_bad - mus[bad_idx_local][dense_labels_bad]
                             lin_bad = xp.einsum(
                                 "nmd,nd->nm", A_tangent[dense_labels_bad], dX_bad
