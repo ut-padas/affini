@@ -681,7 +681,7 @@ def _run_local_refinement(
                     bad_counts = aug_sizes[bad_idx_local]
                     dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
 
-                    if IGNORE_GRADIENT and CLUSTERING_MATRIX == "None":
+                    if CLUSTERING_MATRIX == "None":
                         # Fallback: PCA Split (Split along variance of X)
                         M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
                             n_bad, axis=0
@@ -765,13 +765,55 @@ def _run_local_refinement(
 
                         # 1. Compute the linear surrogate errors
                         if ERROR_EVAL_MODE == "affine":
-                            lin_bad = xp.einsum(
-                                "nmd,nd->nm",
-                                A_batch[bad_idx_local][dense_labels_bad],
-                                X_bad,
+                            # 1. Grab the closest neighborhood
+                            dist_to_mu = xp.linalg.norm(
+                                X_bad - mus[bad_idx_local][dense_labels_bad], axis=1
                             )
+                            # Use 25% of points for a robust local moment matrix
+                            n_tangent = max(d * 2, MIN_PTS_PER_CLUSTER // 4)
+                            tangent_mask = get_n_smallest_per_block(
+                                dist_to_mu, dense_labels_bad, n_tangent
+                            )
+
+                            X_core = X_bad[tangent_mask]
+                            F_core = F_bad[tangent_mask]
+                            labels_core = dense_labels_bad[tangent_mask]
+
+                            core_counts = xp.bincount(labels_core, minlength=n_bad)
+                            core_starts = xp.r_[0, xp.cumsum(core_counts)[:-1]]
+
+                            # 2. Compute Deltas strictly anchored to mu and f(mu)
+                            # DO NOT mean-center. This forces the plane through (mu, f(mu))
+                            dX_core = X_core - mus[bad_idx_local][labels_core]
+                            dF_core = F_core - f_mus[bad_idx_local][labels_core]
+
+                            # 3. Uncentered Second Moments
+                            M_XX = xp.add.reduceat(
+                                dX_core[:, :, None] * dX_core[:, None, :], core_starts
+                            )
+                            M_XF = xp.add.reduceat(
+                                dX_core[:, :, None] * dF_core[:, None, :], core_starts
+                            )
+
+                            max_eigvals_proxy = xp.trace(M_XX, axis1=1, axis2=2)
+                            _lam = xp.maximum(1e-8 * max_eigvals_proxy, TINY_EPS)
+                            reg = (
+                                _lam[:, None, None]
+                                * xp.eye(d, dtype=xp.float64)[None, :, :]
+                            )
+
+                            # 4. Solve for anchored slope A
+                            A_T_tangent = xp.linalg.solve(M_XX + reg, M_XF)
+                            A_tangent = A_T_tangent.transpose(0, 2, 1)
+
+                            # 5. Compute errors for the WHOLE cluster using anchored A_tangent
+                            dX_bad = X_bad - mus[bad_idx_local][dense_labels_bad]
+                            lin_bad = xp.einsum(
+                                "nmd,nd->nm", A_tangent[dense_labels_bad], dX_bad
+                            )
+                            # Because it's anchored, b is implicitly f_mus
                             diff_bad = F_bad - (
-                                b_batch[bad_idx_local][dense_labels_bad] + lin_bad
+                                f_mus[bad_idx_local][dense_labels_bad] + lin_bad
                             )
                         elif ERROR_EVAL_MODE == "taylor":
                             lin_bad = xp.einsum(
