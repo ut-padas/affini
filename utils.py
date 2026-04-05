@@ -123,7 +123,7 @@ def evaluate_cluster_errors(
         SurrogateMode.TAYLOR_HESSIAN,
         SurrogateMode.TAYLOR_COV_CENTROID,
     ):
-        assert g_mus
+        assert g_mus is not None
         lin = xp.einsum("nmd,nd->nm", g_mus[aug_ids], dx)
         diff = F_batch - (f_mus[aug_ids] + lin)
         surrogate_params = {"g_mus": g_mus}
