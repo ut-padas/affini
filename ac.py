@@ -60,6 +60,7 @@ def _run_local_refinement(
     Q_SHRINK: float,
     MAX_LEVELS: int,
     BATCH_SIZE: int,
+    USE_WORK_STEALING: bool,
     LOG_MEM_STATS: bool,
     PROFILE_TIMING: bool,
     rank: int,
@@ -94,54 +95,70 @@ def _run_local_refinement(
     )
     out_count = 0
 
-    # Architecture State for Decentralized Work-Stealing
-    global_loads = np.zeros(size, dtype=np.int64)
-    local_load = int(CLUSTER_PTS.shape[0])
-    global_loads[rank] = local_load
-
     level = 0
     is_terminated = False
     status = MPI.Status()
+    local_load = int(CLUSTER_PTS.shape[0])
 
-    # Pre-allocate 1-element arrays for C-level MPI state updates
-    state_send_buf = np.empty(1, dtype=np.int64)
-    state_recv_buf = np.empty(1, dtype=np.int64)
+    if USE_WORK_STEALING:
+        # Architecture State for Decentralized Work-Stealing
+        global_loads = np.zeros(size, dtype=np.int64)
+        global_loads[rank] = local_load
 
-    def receive_and_update_state():
-        """
-        Helper function (async gossip receiver): Check for and process any incoming load updates from other ranks.
-        """
-        while comm.Iprobe(
-            source=MPI.ANY_SOURCE, tag=TAG_STATE_BROADCAST, status=status
-        ):
-            src = status.Get_source()
-            comm.Recv(state_recv_buf, source=src, tag=TAG_STATE_BROADCAST)
-            global_loads[src] = state_recv_buf[0]
+        # Pre-allocate 1-element arrays for C-level MPI state updates
+        state_send_buf = np.empty(1, dtype=np.int64)
+        state_recv_buf = np.empty(1, dtype=np.int64)
 
-    def broadcast_state():
-        """
-        Helper function: Broadcast our current load to all other ranks.
-        """
-        state_send_buf[0] = local_load
-        for r in range(size):
-            if r != rank:
-                # 8 bytes is well within the MPI eager limit; this returns instantly.
-                comm.Send(state_send_buf, dest=r, tag=TAG_STATE_BROADCAST)
+        def receive_and_update_state():
+            """
+            Helper function (async gossip receiver): Check for and process any incoming load updates from other ranks.
+            """
+            while comm.Iprobe(
+                source=MPI.ANY_SOURCE, tag=TAG_STATE_BROADCAST, status=status
+            ):
+                src = status.Get_source()
+                comm.Recv(state_recv_buf, source=src, tag=TAG_STATE_BROADCAST)
+                global_loads[src] = state_recv_buf[0]
 
-    # Broadcast initial state
-    broadcast_state()
+        def broadcast_state():
+            """
+            Helper function: Broadcast our current load to all other ranks.
+            """
+            state_send_buf[0] = local_load
+            for r in range(size):
+                if r != rank:
+                    # 8 bytes is well within the MPI eager limit; this returns instantly.
+                    comm.Send(state_send_buf, dest=r, tag=TAG_STATE_BROADCAST)
+
+        # Broadcast initial state
+        broadcast_state()
+    else:
+
+        def receive_and_update_state():
+            pass
+
+        def broadcast_state():
+            pass
 
     # --- Decentralized Work-Stealing Main Loop ---
     while not is_terminated:
-        with CudaTimer("time_state_update", profiling_stats, PROFILE_TIMING):
-            receive_and_update_state()
-
         num_clusters = len(CLUSTER_SIZES)
         local_load = int(CLUSTER_PTS.shape[0] if num_clusters > 0 else 0)
-        global_loads[rank] = local_load
+
+        if USE_WORK_STEALING:
+            with CudaTimer("time_state_update", profiling_stats, PROFILE_TIMING):
+                receive_and_update_state()
+            global_loads[rank] = local_load
 
         # --- Phase 3: Idle / Stealing Phase ---
         if num_clusters == 0 or level > MAX_LEVELS:
+            if not USE_WORK_STEALING:
+                logger.info(
+                    f"R{rank:02}: No clusters to process or exceeded max levels. Terminating."
+                )
+                is_terminated = True
+                break
+
             with CudaTimer("time_idle", profiling_stats, PROFILE_TIMING):
                 # A rank that hit MAX_LEVELS may still hold data but will never process
                 # it. Ensure we advertise 0 so the termination condition works correctly.
@@ -323,103 +340,108 @@ def _run_local_refinement(
         for b in range(num_batches):
             logger.info(f"R{rank:02} L{level:02}: Processing Batch {b+1}/{num_batches}")
 
-            # --- Mid-Level Work Stealing ---
-            while comm.Iprobe(source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status):
-                req_src = status.Get_source()
-                comm.recv(source=req_src, tag=TAG_STEAL_REQ)
+            if USE_WORK_STEALING:
+                # --- Mid-Level Work Stealing ---
+                while comm.Iprobe(
+                    source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status
+                ):
+                    req_src = status.Get_source()
+                    comm.recv(source=req_src, tag=TAG_STEAL_REQ)
 
-                unprocessed_clusters = num_clusters - start_cluster_idx
+                    unprocessed_clusters = num_clusters - start_cluster_idx
 
-                if unprocessed_clusters <= 1:
-                    comm.send("MID_LEVEL_NO_CLUSTERS", dest=req_src, tag=TAG_STEAL_DENY)
-                    continue
-
-                unprocessed_sizes = CLUSTER_SIZES[start_cluster_idx:]
-                unprocessed_pts = int(xp.sum(unprocessed_sizes))
-
-                if unprocessed_pts > MIN_LOAD_THRESHOLD:
-                    _t_send = time.perf_counter()
-
-                    rev_sizes_cpu = _to_host(unprocessed_sizes[::-1])
-                    rev_cumsum = np.cumsum(rev_sizes_cpu)
-                    split_rev_idx = int(np.searchsorted(rev_cumsum, STEAL_SIZE))
-
-                    give_clusters = split_rev_idx + 1
-                    give_clusters = min(give_clusters, unprocessed_clusters - 1)
-
-                    split_idx = num_clusters - give_clusters
-                    pt_split = int(CLUSTER_STARTS[split_idx])
-
-                    X_send = _to_host(CLUSTER_PTS[pt_split:])
-                    F_send = _to_host(CLUSTER_F[pt_split:])
-                    G_send = (
-                        _to_host(CLUSTER_G[pt_split:])
-                        if CLUSTER_G is not None
-                        else None
-                    )
-                    sizes_send = _to_host(CLUSTER_SIZES[split_idx:])
-
-                    meta = {
-                        "n_pts": int(X_send.shape[0]),
-                        "n_clusters": int(sizes_send.shape[0]),
-                        "has_g": G_send is not None,
-                    }
-                    comm.send(meta, dest=req_src, tag=TAG_STEAL_GRANT)
-
-                    comm.Send(
-                        np.ascontiguousarray(X_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 1,
-                    )
-                    comm.Send(
-                        np.ascontiguousarray(F_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 2,
-                    )
-                    if meta["has_g"]:
-                        comm.Send(
-                            np.ascontiguousarray(G_send),
-                            dest=req_src,
-                            tag=TAG_STEAL_GRANT + 3,
+                    if unprocessed_clusters <= 1:
+                        comm.send(
+                            "MID_LEVEL_NO_CLUSTERS", dest=req_src, tag=TAG_STEAL_DENY
                         )
-                    comm.Send(
-                        np.ascontiguousarray(sizes_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 4,
-                    )
+                        continue
 
-                    CLUSTER_PTS = CLUSTER_PTS[:pt_split]
-                    CLUSTER_F = CLUSTER_F[:pt_split]
-                    if CLUSTER_G is not None:
-                        CLUSTER_G = CLUSTER_G[:pt_split]
-                    CLUSTER_SIZES = CLUSTER_SIZES[:split_idx]
-                    CLUSTER_STARTS = CLUSTER_STARTS[:split_idx]
+                    unprocessed_sizes = CLUSTER_SIZES[start_cluster_idx:]
+                    unprocessed_pts = int(xp.sum(unprocessed_sizes))
 
-                    level_augmented_sizes = level_augmented_sizes[:split_idx]
-                    aug_sizes_cpu = aug_sizes_cpu[:split_idx]
-                    aug_cumsum_cpu = aug_cumsum_cpu[:split_idx]
+                    if unprocessed_pts > MIN_LOAD_THRESHOLD:
+                        _t_send = time.perf_counter()
 
-                    num_clusters = split_idx
-                    local_load = int(CLUSTER_PTS.shape[0])
-                    global_loads[rank] = local_load
-                    broadcast_state()
+                        rev_sizes_cpu = _to_host(unprocessed_sizes[::-1])
+                        rev_cumsum = np.cumsum(rev_sizes_cpu)
+                        split_rev_idx = int(np.searchsorted(rev_cumsum, STEAL_SIZE))
 
-                    _t_send_elapsed = time.perf_counter() - _t_send
-                    logger.info(
-                        f"R{rank:02} L{level:02} B{b+1}: Granted mid-level steal to R{req_src:02} | "
-                        f"gave {X_send.shape[0]:,} pts "
-                        f"{sizes_send.shape[0]:,} clusters | "
-                        f"send={_t_send_elapsed:.3f}s | "
-                        f"remaining pts={local_load:,} clusters={num_clusters:,}"
-                    )
-                    if PROFILE_TIMING:
-                        profiling_stats["time_mpi_send"] += _t_send_elapsed
-                else:
-                    deny_reason = f"MID_LEVEL_LOAD ({unprocessed_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
-                    comm.send(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
+                        give_clusters = split_rev_idx + 1
+                        give_clusters = min(give_clusters, unprocessed_clusters - 1)
 
-            with CudaTimer("time_state_update", profiling_stats, PROFILE_TIMING):
-                receive_and_update_state()
+                        split_idx = num_clusters - give_clusters
+                        pt_split = int(CLUSTER_STARTS[split_idx])
+
+                        X_send = _to_host(CLUSTER_PTS[pt_split:])
+                        F_send = _to_host(CLUSTER_F[pt_split:])
+                        G_send = (
+                            _to_host(CLUSTER_G[pt_split:])
+                            if CLUSTER_G is not None
+                            else None
+                        )
+                        sizes_send = _to_host(CLUSTER_SIZES[split_idx:])
+
+                        meta = {
+                            "n_pts": int(X_send.shape[0]),
+                            "n_clusters": int(sizes_send.shape[0]),
+                            "has_g": G_send is not None,
+                        }
+                        comm.send(meta, dest=req_src, tag=TAG_STEAL_GRANT)
+
+                        comm.Send(
+                            np.ascontiguousarray(X_send),
+                            dest=req_src,
+                            tag=TAG_STEAL_GRANT + 1,
+                        )
+                        comm.Send(
+                            np.ascontiguousarray(F_send),
+                            dest=req_src,
+                            tag=TAG_STEAL_GRANT + 2,
+                        )
+                        if meta["has_g"]:
+                            comm.Send(
+                                np.ascontiguousarray(G_send),
+                                dest=req_src,
+                                tag=TAG_STEAL_GRANT + 3,
+                            )
+                        comm.Send(
+                            np.ascontiguousarray(sizes_send),
+                            dest=req_src,
+                            tag=TAG_STEAL_GRANT + 4,
+                        )
+
+                        CLUSTER_PTS = CLUSTER_PTS[:pt_split]
+                        CLUSTER_F = CLUSTER_F[:pt_split]
+                        if CLUSTER_G is not None:
+                            CLUSTER_G = CLUSTER_G[:pt_split]
+                        CLUSTER_SIZES = CLUSTER_SIZES[:split_idx]
+                        CLUSTER_STARTS = CLUSTER_STARTS[:split_idx]
+
+                        level_augmented_sizes = level_augmented_sizes[:split_idx]
+                        aug_sizes_cpu = aug_sizes_cpu[:split_idx]
+                        aug_cumsum_cpu = aug_cumsum_cpu[:split_idx]
+
+                        num_clusters = split_idx
+                        local_load = int(CLUSTER_PTS.shape[0])
+                        global_loads[rank] = local_load
+                        broadcast_state()
+
+                        _t_send_elapsed = time.perf_counter() - _t_send
+                        logger.info(
+                            f"R{rank:02} L{level:02} B{b+1}: Granted mid-level steal to R{req_src:02} | "
+                            f"gave {X_send.shape[0]:,} pts "
+                            f"{sizes_send.shape[0]:,} clusters | "
+                            f"send={_t_send_elapsed:.3f}s | "
+                            f"remaining pts={local_load:,} clusters={num_clusters:,}"
+                        )
+                        if PROFILE_TIMING:
+                            profiling_stats["time_mpi_send"] += _t_send_elapsed
+                    else:
+                        deny_reason = f"MID_LEVEL_LOAD ({unprocessed_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
+                        comm.send(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
+
+                with CudaTimer("time_state_update", profiling_stats, PROFILE_TIMING):
+                    receive_and_update_state()
 
             target_aug_count = (b + 1) * BATCH_SIZE
             end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
@@ -658,6 +680,9 @@ def _run_local_refinement(
                     # ==========================================
                     # MATH PIPELINE STAGE 3
                     # ==========================================
+                    bad_surrogate_params = {
+                        k: v[bad_idx_local] for k, v in surrogate_params.items()
+                    }
                     sort_order = split_rejected_clusters(
                         config,
                         X_bad,
@@ -668,7 +693,7 @@ def _run_local_refinement(
                         dense_labels_bad,
                         bad_counts,
                         MIN_PTS_PER_CLUSTER,
-                        surrogate_params,
+                        bad_surrogate_params,
                     )
 
                 with CudaTimer("time_bad_d2h", profiling_stats, PROFILE_TIMING):
@@ -728,90 +753,92 @@ def _run_local_refinement(
             total_next_pts = np.sum(next_sizes) if len(next_sizes) > 0 else 0
 
             local_load = int(total_next_pts)
-            global_loads[rank] = local_load
-            broadcast_state()
 
-            while comm.Iprobe(source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status):
-                req_src = status.Get_source()
-                comm.recv(source=req_src, tag=TAG_STEAL_REQ)
+            if USE_WORK_STEALING:
+                global_loads[rank] = local_load
+                broadcast_state()
 
-                if total_next_pts > MIN_LOAD_THRESHOLD and len(next_sizes) > 1:
-                    _t_send = time.perf_counter()
+                while comm.Iprobe(
+                    source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status
+                ):
+                    req_src = status.Get_source()
+                    comm.recv(source=req_src, tag=TAG_STEAL_REQ)
 
-                    rev_cumsum = np.cumsum(next_sizes[::-1])
-                    split_rev_idx = np.searchsorted(rev_cumsum, STEAL_SIZE)
-                    split_idx = len(next_sizes) - 1 - split_rev_idx
-                    split_idx = max(1, split_idx)
+                    if total_next_pts > MIN_LOAD_THRESHOLD and len(next_sizes) > 1:
+                        _t_send = time.perf_counter()
 
-                    pt_split = int(np.sum(next_sizes[:split_idx]))
+                        rev_cumsum = np.cumsum(next_sizes[::-1])
+                        split_rev_idx = np.searchsorted(rev_cumsum, STEAL_SIZE)
+                        split_idx = len(next_sizes) - 1 - split_rev_idx
+                        split_idx = max(1, split_idx)
 
-                    X_send = next_X[pt_split:]
-                    F_send = next_F[pt_split:]
-                    G_send = next_G[pt_split:] if next_G is not None else None
-                    sizes_send = next_sizes[split_idx:]
+                        pt_split = int(np.sum(next_sizes[:split_idx]))
 
-                    meta = {
-                        "n_pts": int(X_send.shape[0]),
-                        "n_clusters": int(sizes_send.shape[0]),
-                        "has_g": G_send is not None,
-                    }
-                    comm.send(meta, dest=req_src, tag=TAG_STEAL_GRANT)
+                        X_send = next_X[pt_split:]
+                        F_send = next_F[pt_split:]
+                        G_send = next_G[pt_split:] if next_G is not None else None
+                        sizes_send = next_sizes[split_idx:]
 
-                    comm.Send(
-                        np.ascontiguousarray(X_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 1,
-                    )
-                    comm.Send(
-                        np.ascontiguousarray(F_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 2,
-                    )
-                    if meta["has_g"]:
+                        meta = {
+                            "n_pts": int(X_send.shape[0]),
+                            "n_clusters": int(sizes_send.shape[0]),
+                            "has_g": G_send is not None,
+                        }
+                        comm.send(meta, dest=req_src, tag=TAG_STEAL_GRANT)
+
                         comm.Send(
-                            np.ascontiguousarray(G_send),
+                            np.ascontiguousarray(X_send),
                             dest=req_src,
-                            tag=TAG_STEAL_GRANT + 3,
+                            tag=TAG_STEAL_GRANT + 1,
                         )
-                    comm.Send(
-                        np.ascontiguousarray(sizes_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 4,
-                    )
+                        comm.Send(
+                            np.ascontiguousarray(F_send),
+                            dest=req_src,
+                            tag=TAG_STEAL_GRANT + 2,
+                        )
+                        if meta["has_g"]:
+                            comm.Send(
+                                np.ascontiguousarray(G_send),
+                                dest=req_src,
+                                tag=TAG_STEAL_GRANT + 3,
+                            )
+                        comm.Send(
+                            np.ascontiguousarray(sizes_send),
+                            dest=req_src,
+                            tag=TAG_STEAL_GRANT + 4,
+                        )
 
-                    next_X = next_X[:pt_split]
-                    next_F = next_F[:pt_split]
-                    if next_G is not None:
-                        next_G = next_G[:pt_split]
-                    next_sizes = next_sizes[:split_idx]
-                    total_next_pts = np.sum(next_sizes)
+                        next_X = next_X[:pt_split]
+                        next_F = next_F[:pt_split]
+                        if next_G is not None:
+                            next_G = next_G[:pt_split]
+                        next_sizes = next_sizes[:split_idx]
+                        total_next_pts = np.sum(next_sizes)
 
-                    local_load = int(total_next_pts)
-                    global_loads[rank] = local_load
-                    broadcast_state()
+                        local_load = int(total_next_pts)
+                        global_loads[rank] = local_load
+                        broadcast_state()
 
-                    _t_send_elapsed = time.perf_counter() - _t_send
-                    logger.info(
-                        f"R{rank:02} L{level:02}: Granted steal to R{req_src:02} | "
-                        f"gave {X_send.shape[0]:,} pts "
-                        f"{sizes_send.shape[0]:,} clusters | "
-                        f"send={_t_send_elapsed:.3f}s | "
-                        f"remaining pts={total_next_pts:,} clusters={len(next_sizes):,}"
-                    )
+                        _t_send_elapsed = time.perf_counter() - _t_send
+                        logger.info(
+                            f"R{rank:02} L{level:02}: Granted steal to R{req_src:02} | "
+                            f"gave {X_send.shape[0]:,} pts "
+                            f"{sizes_send.shape[0]:,} clusters | "
+                            f"send={_t_send_elapsed:.3f}s | "
+                            f"remaining pts={total_next_pts:,} clusters={len(next_sizes):,}"
+                        )
 
-                    if PROFILE_TIMING:
-                        profiling_stats["time_mpi_send"] += _t_send_elapsed
-                else:
-                    if total_next_pts <= MIN_LOAD_THRESHOLD:
-                        deny_reason = f"LOAD ({total_next_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
+                        if PROFILE_TIMING:
+                            profiling_stats["time_mpi_send"] += _t_send_elapsed
                     else:
-                        deny_reason = (
-                            f"STEAL_SIZE (only {len(next_sizes)} cluster(s), need > 1)"
+                        if total_next_pts <= MIN_LOAD_THRESHOLD:
+                            deny_reason = f"LOAD ({total_next_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
+                        else:
+                            deny_reason = f"STEAL_SIZE (only {len(next_sizes)} cluster(s), need > 1)"
+                        comm.send(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
+                        logger.debug(
+                            f"R{rank:02} L{level:02}: Denied steal to R{req_src:02}: {deny_reason}"
                         )
-                    comm.send(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
-                    logger.debug(
-                        f"R{rank:02} L{level:02}: Denied steal to R{req_src:02}: {deny_reason}"
-                    )
 
             if len(next_sizes) > 0:
                 CLUSTER_PTS = xp.asarray(next_X)
@@ -890,6 +917,7 @@ def adaptive_clustering(
     Q_SHRINK: float = 0.05,
     MAX_LEVELS: int = 50,
     BATCH_SIZE: int = 10_000_000,
+    USE_WORK_STEALING: bool = True,
     STORE_HESSIAN_PER_CLUSTER: bool = False,
     STORE_AFFINE_FIT_PER_CLUSTER: bool = False,
     LOG_MEM_STATS: bool = False,
@@ -1008,6 +1036,9 @@ def adaptive_clustering(
 
             uniq_labels, all_counts = np.unique(labels0_sorted, return_counts=True)
             counts_chunks = np.array_split(all_counts, size)
+        logger.info(
+            f"Initial clustering done. Number of clusters: {uniq_labels.shape[0]}."
+        )
 
     with CudaTimer("time_scatter", profiling_stats, PROFILE_TIMING):
         F_max_global_host = comm.bcast(F_max_global_host, root=0)
@@ -1033,6 +1064,10 @@ def adaptive_clustering(
                         "sizes": chunk_sizes,
                     }
                 else:
+                    logger.info(
+                        f"R00: Sending initial data chunk to R{r:02} | "
+                        f"pts={chunk_X.shape[0]:,} clusters={chunk_sizes.shape[0]:,}"
+                    )
                     meta_arr = np.array(
                         [
                             chunk_X.shape[0],
@@ -1049,6 +1084,7 @@ def adaptive_clustering(
                     comm.Send(np.ascontiguousarray(chunk_sizes), dest=r, tag=1003)
                 current_idx = end_idx
         else:
+            logger.info(f"R{rank:02}: Waiting to receive initial data chunk from R00.")
             meta_arr = np.empty(3, dtype=np.int64)
             comm.Recv(meta_arr, source=0, tag=999)
 
@@ -1106,6 +1142,7 @@ def adaptive_clustering(
             Q_SHRINK=Q_SHRINK,
             MAX_LEVELS=MAX_LEVELS,
             BATCH_SIZE=BATCH_SIZE,
+            USE_WORK_STEALING=USE_WORK_STEALING,
             LOG_MEM_STATS=LOG_MEM_STATS,
             PROFILE_TIMING=PROFILE_TIMING,
             rank=rank,
@@ -1194,7 +1231,13 @@ if __name__ == "__main__":
     import json
     from functools import partial
 
+    from src import RESULTS_DIR
     from src.logging_utils import setup_logging
+    from src.plotter_utils import (
+        plot_adaptive_clustering_results,
+        plot_mpi_level_heatmap,
+        plot_mpi_rank_time_breakdown,
+    )
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG)
@@ -1209,12 +1252,24 @@ if __name__ == "__main__":
     N_TRAIN = 100_000
     DIM = 2
     PROB_LIMS = (-1.0, 3)
-    TOL = 1e-2
-    NUM_INITIAL_CLUSTERS = 100
+    TOL = 1e-3
+    NUM_INITIAL_CLUSTERS = 64
     MIN_PTS_PER_CLUSTER = 500
+    USE_WORK_STEALING = True
+    ERROR_METRIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "uniform_grid"
+    ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV
 
     # Scale initial clusters with dimension for better
     NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
+
+    OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_experimental"
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    img_fpath = (
+        OUTPUT_DIR
+        / f"mpi_sz{_size}_rosen{A_ROSENBROCK}_ntrain{N_TRAIN}_dim{DIM}_tol{TOL}_err{ERROR_EVAL_MODE.value}_metric{ERROR_METRIC}_init{INITIAL_CLUSTERING_METHOD}_nclust{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}.png"
+    )
 
     if _rank == 0:
         xp.random.seed(0)
@@ -1227,13 +1282,14 @@ if __name__ == "__main__":
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
         TOL=TOL,
-        ERROR_EVAL_MODE=SurrogateMode.AFFINE_COV,
-        ERROR_METRIC="Linf-local",
-        INITIAL_CLUSTERING_METHOD="uniform_grid",
+        ERROR_EVAL_MODE=ERROR_EVAL_MODE,
+        ERROR_METRIC=ERROR_METRIC,
+        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        LOG_MEM_STATS=True,
+        LOG_MEM_STATS=False,
         PROFILE_TIMING=True,
+        USE_WORK_STEALING=USE_WORK_STEALING,
     )
 
     if _rank != 0:
@@ -1241,8 +1297,22 @@ if __name__ == "__main__":
         raise SystemExit(0)
 
     assert result, "Rank 0 should have the result"
-    print("Num clusters found:", result["centroids"].shape[0])
+    n_centroids = result["centroids"].shape[0]
+    print(f"Num clusters found: {n_centroids:,}")
+    print(f"Time taken: {result['profiling_stats']['time_total']:.3f}s")
 
     # Store json of all profiling stats
-    with open("profiling_stats.json", "w") as f:
+    json_fpath = img_fpath.with_suffix(".json")
+    with open(json_fpath, "w") as f:
         json.dump(result["profiling_stats"], f, indent=4)
+    print(f"Saved profiling stats to {json_fpath}")
+
+    if DIM == 2 and n_centroids <= 10_000:
+        title = f"Rosenbrock (a={A_ROSENBROCK}) (Tol={TOL}, ErrMode={ERROR_EVAL_MODE.value}, Metric={ERROR_METRIC}, N_init={NUM_INITIAL_CLUSTERS}, MinPts={MIN_PTS_PER_CLUSTER}, Steal={USE_WORK_STEALING}) (N0={N_TRAIN:,}, N_clusters={n_centroids:,})"
+        plot_adaptive_clustering_results(
+            results=result,
+            domain=PROB_LIMS,
+            f_fn=rosenbrock,
+            img_fpath=img_fpath,
+            title=title,
+        )
