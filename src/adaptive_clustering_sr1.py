@@ -7,8 +7,7 @@ import numpy as np
 from mpi4py import MPI
 from sklearn.cluster import KMeans
 
-from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _get_mpi_size, _to_host, xp
-from src.adaptive_clustering_utils import (
+from _experiments.ics_deprecated.adaptive_clustering_utils import (
     CudaTimer,
     adjust_buffer_capacity_host,
     allocate_output_buffers_host,
@@ -23,6 +22,7 @@ from src.adaptive_clustering_utils import (
     run_fused_taylor_metric,
     scatter_maximum_1d,
 )
+from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _get_mpi_size, _to_host, xp
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
 
@@ -348,7 +348,7 @@ def _run_local_refinement(
                     ) @ U.transpose(0, 2, 1)
 
                     Hs = None
-                    
+
                 with CudaTimer("time_good_d2h", profiling_stats, PROFILE_TIMING):
                     end_out = out_count + K_good
                     buffers, out_cap = adjust_buffer_capacity_host(
@@ -439,9 +439,7 @@ def _run_local_refinement(
                         # TODO: in the future, would like updating formula for Hessian absolute value square root.
                         #   This would probably only work for convex functions.
                         dvals, U = xp.linalg.eigh(H_prev_level)
-                        dvals_sqrt = xp.sqrt(
-                            xp.maximum(xp.abs(dvals), TINY_EPS)
-                        )
+                        dvals_sqrt = xp.sqrt(xp.maximum(xp.abs(dvals), TINY_EPS))
                         M_split = (U * dvals_sqrt[:, None]) @ U.transpose(0, 2, 1)
                         M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
 
@@ -593,8 +591,6 @@ def _run_local_refinement(
     return buffers, out_count, total_f_evals, num_generated_pts, tree_data, level
 
 
-
-
 # ---------------------------------------------------------------------------
 # Public entry point (MPI-aware)
 # ---------------------------------------------------------------------------
@@ -607,7 +603,9 @@ def adaptive_clustering(
     TOL: float,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan"] = "kmeans",
-    CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"] = "Hessian_LSQ",
+    CLUSTERING_MATRIX: Literal[
+        "Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"
+    ] = "Hessian_LSQ",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
@@ -696,15 +694,13 @@ def adaptive_clustering(
         # we want to use f_fn/g_fn or oracle.
         # Hence it is ok to define both.
         if f_fn is None:
-            raise ValueError(
-                "Must specify f_fn when using Cov_Lvl_curves for speed"
-            )
+            raise ValueError("Must specify f_fn when using Cov_Lvl_curves for speed")
         if oracle_fn is None:
             if f_fn is None or g_fn is None:
                 raise ValueError(
                     "Cannot specify both oracle_fn and f_fn/g_fn. Use either oracle_fn OR both f_fn and g_fn."
                 )
-        else: # oracle_fn is defined
+        else:  # oracle_fn is defined
             if g_fn is not None:
                 raise ValueError(
                     "We are using Cov_Lvl_curves, but we specify both oracle_fn and g_fn. We cannot specify both."

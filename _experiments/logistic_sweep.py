@@ -7,11 +7,12 @@ import numpy as np
 from scipy.integrate import solve_ivp
 from tqdm import tqdm
 
+from _experiments.ics_deprecated.surrogate import HATANNSurrogate
+
 # --- User Imports ---
 # Assuming these are available in your environment as per your previous snippet
 from experiments_utils import create_summary_dataframe
 from src import xp
-from src.surrogate import HATANNSurrogate
 
 # ==========================================
 # 1. Physics: Parameterized Logistic Equation

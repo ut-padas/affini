@@ -1,621 +1,437 @@
 import logging
 import time
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Optional
 
 import numpy as np
 
+# Adjust imports based on your actual source tree
 from src import IS_CUPY_BACKEND, Array, xp
 
 logger = logging.getLogger(__name__)
 
 TINY_EPS = 1e-12
 
-
 # -----------------------------------------------------------------------------
-# 1. CUDA KERNELS
+# 1. CONFIGURATION & MODES
 # -----------------------------------------------------------------------------
-# Kernel: fused_linear_surrogate_metric
-# -----------------------------------------------------------------------------
-# Computes the error between the true function value and a linear surrogate
-# model. Designed to be generic to support both Taylor expansions (where
-# X_base = mu, F_base = f(mu), G_slope = g_mu) and Affine Fits (where
-# X_base = 0, F_base = b, G_slope = A).
-#
-# Math:
-#   f_lin_j(x) = F_base_j + dot(x - X_base, G_slope_j)
-#   diff_j     = F_vals_j - f_lin_j(x)
-#
-# Modes:
-#   METRIC_MODE == 0 (L2): Returns sum of squared errors across components.
-#       Out[i] = sum_j (diff_j)^2
-#   METRIC_MODE == 1 (Linf): Returns max relative error across components.
-#       Out[i] = max_j ( |diff_j| / scale[j] )
-#
-# Dimensions:
-#   N:  Number of points
-#   D:  Input dimension
-#   FD: Output dimension (Function Dimension)
-# -----------------------------------------------------------------------------
-_linear_surrogate_metric_kernel_code = r"""
-extern "C" __global__
-void fused_linear_surrogate_metric(
-    const double* X,        // (N, D) Input points
-    const double* X_base,   // (K, D) Base point for expansion (mus or 0)
-    const long long* labels,// (N,)   Cluster assignment indices
-    const double* F_vals,   // (N, FD) True function values
-    const double* F_base,   // (K, FD) Intercept / Base value (f_mus or b)
-    const double* G_slope,  // (K, FD, D) Slope / Jacobian (g_mus or A)
-    const double* scales,   // (FD,) Normalization scales (for Linf)
-    double* E_out,          // (N,) Output error metric
-    int N, int D, int FD, int METRIC_MODE) 
-{
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx >= N) return;
-    
-    long long k = labels[idx];
-    
-    int x_offset = idx * D;
-    int x_base_offset = k * D;
-    int f_val_start = idx * FD;
-    int f_base_start = k * FD;
-    int g_slope_start = k * FD * D;
-
-    double val_acc = 0.0; 
-
-    for (int j = 0; j < FD; j++) {
-        double dot = 0.0;
-        int g_row_start = g_slope_start + j * D;
-        for (int r = 0; r < D; r++) {
-            double diff = X[x_offset + r] - X_base[x_base_offset + r];
-            dot += diff * G_slope[g_row_start + r];
-        }
-        
-        double f_lin = F_base[f_base_start + j] + dot;
-        double diff = F_vals[f_val_start + j] - f_lin;
-        double abs_diff = fabs(diff);
-
-        if (METRIC_MODE == 0) {
-            val_acc += diff * diff; // L2
-        } else {
-            double s = scales[j];   // Linf
-            double rel = abs_diff / (s + 1e-12);
-            if (rel > val_acc) val_acc = rel;
-        }
-    }
-    E_out[idx] = val_acc;
-}
-"""
-
-# Kernel: fused_linear_surrogate_comp_abs
-# -----------------------------------------------------------------------------
-# Computes the absolute error for a SINGLE specific output component between
-# the true function value and a generic linear surrogate model.
-# Used primarily for the Linf-local metric where normalization logic is
-# complex and calculated externally per-cluster.
-#
-# Math: Let 'c' be the specific component index (COMP_IDX)
-#   f_lin_c(x) = F_base_c + dot(x - X_base, G_slope_c)
-#   Out[i]     = | F_vals_c - f_lin_c(x) |
-#
-# Dimensions:
-#   N:  Number of points
-#   D:  Input dimension
-#   FD: Total output dimension (Function Dimension)
-#   COMP_IDX: The specific output dimension index to evaluate
-# -----------------------------------------------------------------------------
-_linear_surrogate_comp_abs_kernel_code = r"""
-extern "C" __global__
-void fused_linear_surrogate_comp_abs(
-    const double* X, const double* X_base, const long long* labels,
-    const double* F_vals, const double* F_base, const double* G_slope,
-    double* E_out, 
-    int N, int D, int FD, int COMP_IDX) 
-{
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx >= N) return;
-    
-    long long k = labels[idx];
-    int x_offset = idx * D;
-    int x_base_offset = k * D;
-    
-    int f_val_idx = idx * FD + COMP_IDX;
-    int f_base_idx = k * FD + COMP_IDX;
-    int g_slope_idx = k * FD * D + COMP_IDX * D;
-
-    double dot = 0.0;
-    for (int r = 0; r < D; r++) {
-        double diff = X[x_offset + r] - X_base[x_base_offset + r];
-        dot += diff * G_slope[g_slope_idx + r];
-    }
-    
-    double f_lin = F_base[f_base_idx] + dot;
-    E_out[idx] = fabs(F_vals[f_val_idx] - f_lin);
-}
-"""
-
-# Kernel: fused_pointwise_metrics
-# -----------------------------------------------------------------------------
-# Computes geometry metrics for the trust region.
-# 1. Euclidean distance from centroid: |x - mu|
-# 2. Local Lipschitz ratio estimate: max_j ( |g_j(x) - g_j(mu)| / |x - mu| )
-# -----------------------------------------------------------------------------
-_metrics_kernel_code = r"""
-extern "C" __global__
-void fused_pointwise_metrics(
-    const double* X, const double* G,
-    const double* mus, const double* g_mus,
-    const long long* labels,
-    double* dist_out, double* ratio_out,
-    int N, int D, int FD) 
-{
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx >= N) return;
-    
-    long long k = labels[idx];
-    int x_offset = idx * D;
-    int mu_offset = k * D;
-
-    // 1. Distance
-    double dist_sq = 0.0;
-    for (int r = 0; r < D; r++) {
-        double dx = X[x_offset + r] - mus[mu_offset + r];
-        dist_sq += dx * dx;
-    }
-    double dist = sqrt(dist_sq);
-    dist_out[idx] = dist;
-
-    // 2. Lipschitz Ratio (Max over FD components)
-    double max_ratio = 0.0;
-    
-    if (dist > 1e-12) {
-        int g_idx_start = idx * FD * D;
-        int g_mu_start = k * FD * D;
-
-        for (int j = 0; j < FD; j++) {
-            double dg_sq = 0.0;
-            int row_offset_x = g_idx_start + j * D;
-            int row_offset_mu = g_mu_start + j * D;
-            
-            for (int r = 0; r < D; r++) {
-                double dg = G[row_offset_x + r] - g_mus[row_offset_mu + r];
-                dg_sq += dg * dg;
-            }
-            double ratio = sqrt(dg_sq) / dist;
-            if (ratio > max_ratio) max_ratio = ratio;
-        }
-    }
-    ratio_out[idx] = max_ratio;
-}
-"""
-
-# Kernel: fused_hessian_stats
-# -----------------------------------------------------------------------------
-# Accumulates the sufficient statistics matrices C and E for Hessian estimation.
-# Uses atomicAdd to sum contributions from all points in a cluster.
-#
-# Math:
-#   C_k = sum_{x in C_k} (x - mu)(x - mu)^T
-#   E_k = sum_{x in C_k} (x - mu)(g_active(x) - g_active(mu))^T
-#
-# Supports "Active Component" selection: For vector functions, we estimate the
-# Hessian of the specific output component that dominates the local error.
-# -----------------------------------------------------------------------------
-_stats_kernel_code = r"""
-extern "C" __global__
-void fused_hessian_stats(
-    const double* X, const double* G, 
-    const double* mus, const double* g_mus, 
-    const long long* labels,
-    const int* active_comps, 
-    double* C_out, double* E_out,
-    int N, int D, int FD, int K, bool calc_E) 
-{
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx >= N) return;
-    
-    long long k = labels[idx];
-    int mu_offset = k * D;
-    int x_offset = idx * D;
-
-    // 1. Covariance (Active Component independent)
-    for (int r = 0; r < D; r++) {
-        double dx_r = X[x_offset + r] - mus[mu_offset + r];
-        for (int c = r; c < D; c++) {
-            double dx_c = X[x_offset + c] - mus[mu_offset + c];
-            double val_c = dx_r * dx_c;
-            atomicAdd(&C_out[k*D*D + r*D + c], val_c);
-            if (r != c) {
-                atomicAdd(&C_out[k*D*D + c*D + r], val_c);
-            }
-        }
-    }
-
-    // 2. Gradient Interaction (E = sum dx dg^T) for the active component
-    if (calc_E) {
-        int active_j = active_comps[k]; 
-        int g_row_x = (idx * FD * D) + (active_j * D);
-        int g_row_mu = (k * FD * D) + (active_j * D);
-
-        for (int r = 0; r < D; r++) {
-            double dx_r = X[x_offset + r] - mus[mu_offset + r];
-            for (int c = 0; c < D; c++) {
-                double dg_c = G[g_row_x + c] - g_mus[g_row_mu + c];
-                double val_e = dx_r * dg_c;
-                atomicAdd(&E_out[k*D*D + r*D + c], val_e);
-            }
-        }
-    }
-}
-"""
-
-# Kernel: fused_proj_score
-# -----------------------------------------------------------------------------
-# Projects points onto the splitting direction vector v in the transformed space M.
-# Used to determine cluster splits (median split).
-#
-# Math: Score = v^T * M * (x - mu)
-# -----------------------------------------------------------------------------
-_proj_score_kernel_code = r"""
-extern "C" __global__
-void fused_proj_score(
-    const double* X, const double* mus, const long long* labels,
-    const double* M, const double* v,
-    double* scores_out, int N, int D) 
-{
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx >= N) return;
-    long long k = labels[idx];
-    int mu_offset = k * D;
-    int x_offset = idx * D;
-    int M_start = k * D * D;
-    int v_start = k * D;
-    double score = 0.0;
-    
-    // Matrix-vector multiplication: z = M * (x - mu)
-    // Then dot product: score = v^T * z
-    for (int r = 0; r < D; r++) {
-        double z_r = 0.0;
-        for (int c = 0; c < D; c++) {
-            double dx_c = X[x_offset + c] - mus[mu_offset + c];
-            z_r += M[M_start + r * D + c] * dx_c;
-        }
-        score += z_r * v[v_start + r];
-    }
-    scores_out[idx] = score;
-}
-"""
-
-# Kernel: fused_q_dist
-# -----------------------------------------------------------------------------
-# Computes the Ellipsoidal distance for the Trust Ellipsoid Q.
-#
-# Math: dist^2 = (x - mu)^T Q (x - mu)
-#       where Q = U * diag(L_inv) * U^T
-# -----------------------------------------------------------------------------
-_q_kernel_code = r"""
-extern "C" __global__
-void fused_q_dist(
-    const double* X, const double* mus, const long long* labels,
-    const double* U, const double* L_inv,
-    double* dist_out, int N, int D) 
-{
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx >= N) return;
-    long long k = labels[idx];
-    int mu_offset = k * D;
-    int x_offset = idx * D;
-    int u_start = k * D * D;
-    int l_start = k * D;
-    
-    double dist_sq = 0.0;
-    for (int j = 0; j < D; j++) {
-        // Project x onto j-th eigenvector
-        double proj_j = 0.0;
-        for (int r = 0; r < D; r++) {
-            double dx_r = X[x_offset + r] - mus[mu_offset + r];
-            proj_j += dx_r * U[u_start + r * D + j];
-        }
-        // Scale by inverse square of extent along this axis
-        dist_sq += (proj_j * proj_j) * L_inv[l_start + j];
-    }
-    dist_out[idx] = dist_sq;
-}
-"""
 
 
-# Compilation of RawModules (only when CuPy backend is available)
-if IS_CUPY_BACKEND:
-    _mod_metrics = xp.RawModule(code=_metrics_kernel_code)
-    _kern_metrics = _mod_metrics.get_function("fused_pointwise_metrics")
-
-    _mod_stats = xp.RawModule(code=_stats_kernel_code)
-    _kern_stats = _mod_stats.get_function("fused_hessian_stats")
-
-    _mod_proj = xp.RawModule(code=_proj_score_kernel_code)
-    _kern_proj = _mod_proj.get_function("fused_proj_score")
-
-    _mod_q = xp.RawModule(code=_q_kernel_code)
-    _kern_q = _mod_q.get_function("fused_q_dist")
-
-    _mod_linear_surrogate_metric = xp.RawModule(
-        code=_linear_surrogate_metric_kernel_code
+class SurrogateMode(Enum):
+    NEAREST_NEIGHBOR = "nearest_neighbor"  #  No grads, f(mu) only, split via X^T X
+    AFFINE_COV_NO_HESS = "affine_cov_no_hess"  # No grads, fit A/b, split via X^T X
+    TAYLOR_COV_NO_HESS = (
+        "taylor_cov_no_hess"  # Grads at centroids only, split via X^T X
     )
-    _kern_linear_surrogate_metric = _mod_linear_surrogate_metric.get_function(
-        "fused_linear_surrogate_metric"
-    )
+    AFFINE_COV_HESS = "affine_cov_hess"  # No grads, fit A/b, split via X^T H X, where H is estimated from covariance
+    TAYLOR_COV_HESS = "taylor_cov_hess"  # Grads at centroids only, split via X^T H X, where H is estimated from covariance
+    TAYLOR_LSQ_HESS = "taylor_lsq_hess"  # Grads everywhere, split via X^T H X, where H is estimated from LSQ fit to gradient residuals
 
-    _mod_linear_surrogate_comp_abs = xp.RawModule(
-        code=_linear_surrogate_comp_abs_kernel_code
-    )
-    _kern_linear_surrogate_comp_abs = _mod_linear_surrogate_comp_abs.get_function(
-        "fused_linear_surrogate_comp_abs"
-    )
+
+@dataclass
+class ClusteringConfig:
+    mode: SurrogateMode
+    error_metric: str  # "L2", "Linf-global", "Linf-local"
+    store_hess: bool = False
+    store_affine_fits: bool = False
+
+    @property
+    def requires_grad_everywhere(self) -> bool:
+        return self.mode == SurrogateMode.TAYLOR_LSQ_HESS
+
+    @property
+    def requires_grad_centroids(self) -> bool:
+        return self.mode in (
+            SurrogateMode.TAYLOR_LSQ_HESS,
+            SurrogateMode.TAYLOR_COV_HESS,
+            SurrogateMode.TAYLOR_COV_NO_HESS,
+        )
+
+    @property
+    def requires_no_grads(self) -> bool:
+        return self.mode in (
+            SurrogateMode.NEAREST_NEIGHBOR,
+            SurrogateMode.AFFINE_COV_NO_HESS,
+            SurrogateMode.AFFINE_COV_HESS,
+        )
 
 
 # -----------------------------------------------------------------------------
-# 2. PYTHON WRAPPERS
-# Each function dispatches to the raw CUDA kernel (IS_CUPY_BACKEND=True)
-# or a fully-vectorized xp fallback (IS_CUPY_BACKEND=False).
+# 2. MATH HELPERS (Vectorized xp)
 # -----------------------------------------------------------------------------
-def run_fused_linear_surrogate_metric(
-    X, X_base, labels, F_vals, F_base, G_slope, scales, mode
-):
-    """Calculates aggregated linear surrogate error per point (Sum-sq or Max-Rel)."""
+
+
+def repeats(arr: Array, counts: Array) -> Array:
+    """Repeats elements of an array given a counts array."""
     if IS_CUPY_BACKEND:
-        N, D = X.shape
-        FD = F_vals.shape[1]
-        E_out = xp.empty((N,), dtype=xp.float64)
-        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-        block = 256
-        grid = (N + block - 1) // block
-        scales_ptr = xp.ascontiguousarray(scales, dtype=xp.float64)
-        _kern_linear_surrogate_metric(
-            (grid,),
-            (block,),
-            (
-                xp.ascontiguousarray(X),
-                xp.ascontiguousarray(X_base),
-                labels_64,
-                xp.ascontiguousarray(F_vals),
-                xp.ascontiguousarray(F_base),
-                xp.ascontiguousarray(G_slope),
-                scales_ptr,
-                E_out,
-                N,
-                D,
-                FD,
-                int(mode),
-            ),
-        )
-        return E_out
+        return xp.repeat(arr, counts)
     else:
-        dx = X - X_base[labels]
-        lin = xp.einsum("nfd,nd->nf", G_slope[labels], dx)
-        diff = F_vals - (F_base[labels] + lin)
-        if mode == 0:
-            return xp.sum(diff**2, axis=1)
-        else:
-            return xp.max(xp.abs(diff) / (scales[None, :] + TINY_EPS), axis=1)
+        return np.repeat(arr, counts)
 
 
-def run_fused_linear_surrogate_comp_abs(
-    X, X_base, labels, F_vals, F_base, G_slope, comp_idx
-):
-    """Calculates Absolute linear surrogate error for a single output component."""
-    if IS_CUPY_BACKEND:
-        N, D = X.shape
-        FD = F_vals.shape[1]
-        E_out = xp.empty((N,), dtype=xp.float64)
-        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-        block = 256
-        grid = (N + block - 1) // block
-        _kern_linear_surrogate_comp_abs(
-            (grid,),
-            (block,),
-            (
-                xp.ascontiguousarray(X),
-                xp.ascontiguousarray(X_base),
-                labels_64,
-                xp.ascontiguousarray(F_vals),
-                xp.ascontiguousarray(F_base),
-                xp.ascontiguousarray(G_slope),
-                E_out,
-                N,
-                D,
-                FD,
-                int(comp_idx),
-            ),
-        )
-        return E_out
-    else:
-        dx = X - X_base[labels]
-        g_comp = G_slope[labels, comp_idx, :]
-        dot = xp.sum(dx * g_comp, axis=1)
-        f_lin = F_base[labels, comp_idx] + dot
-        return xp.abs(F_vals[:, comp_idx] - f_lin)
+def _reduce_max_1d(vals: Array, starts: Array) -> Array:
+    """Segmented maximum reduction for contiguous blocks."""
+    return xp.maximum.reduceat(vals, starts)
 
 
-def run_fused_metrics(X, G, mus, g_mus, labels):
-    """Calculates point radii and Lipschitz ratio estimates."""
-    if IS_CUPY_BACKEND:
-        N, D = X.shape
-        FD = G.shape[1]
-        dist_out = xp.empty((N,), dtype=xp.float64)
-        ratio_out = xp.empty((N,), dtype=xp.float64)
-        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-        block = 256
-        grid = (N + block - 1) // block
-        _kern_metrics(
-            (grid,),
-            (block,),
-            (
-                xp.ascontiguousarray(X),
-                xp.ascontiguousarray(G),
-                xp.ascontiguousarray(mus),
-                xp.ascontiguousarray(g_mus),
-                labels_64,
-                dist_out,
-                ratio_out,
-                N,
-                D,
-                FD,
-            ),
-        )
-        return dist_out, ratio_out
-    else:
-        dx = X - mus[labels]  # (N, D)
-        dist = xp.sqrt(xp.sum(dx**2, axis=1))  # (N,)
-
-        # dG[i,j,:] = G[i,j,:] - g_mus[labels[i],j,:]   shape: (N, FD, D)
-        dG = G - g_mus[labels]  # (N, FD, D)
-        # ||dG[i,j,:]||_2 / dist[i]  →  max over j
-        dg_norms = xp.sqrt(xp.sum(dG**2, axis=2))  # (N, FD)
-        safe_dist = xp.maximum(dist, TINY_EPS)
-        ratio = xp.max(dg_norms / safe_dist[:, None], axis=1)  # (N,)
-        # Zero out ratio where point coincides with centroid
-        ratio = xp.where(dist > TINY_EPS, ratio, xp.zeros_like(ratio))
-        return dist, ratio
+def _reduce_sum_1d(vals: Array, starts: Array) -> Array:
+    """Segmented sum reduction for contiguous blocks."""
+    return xp.add.reduceat(vals, starts)
 
 
-def run_fused_stats(
-    X, mus, labels, K, D, FD, active_comps, G=None, g_mus=None, calc_E=False
-):
-    """Accumulates Covariance (C) and Gradient Interaction (E) matrices."""
-    if IS_CUPY_BACKEND:
-        N = X.shape[0]
-        C_out = xp.zeros((K, D, D), dtype=xp.float64)
-        E_out = (
-            xp.zeros((K, D, D), dtype=xp.float64)
-            if calc_E
-            else xp.array([], dtype=xp.float64)
-        )
-        G_ptr = G if G is not None else X
-        g_mus_ptr = g_mus if g_mus is not None else mus
-        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-        ac_32 = xp.ascontiguousarray(active_comps, dtype=xp.int32)
-        block = 256
-        grid = (N + block - 1) // block
-        _kern_stats(
-            (grid,),
-            (block,),
-            (
-                xp.ascontiguousarray(X),
-                xp.ascontiguousarray(G_ptr),
-                xp.ascontiguousarray(mus),
-                xp.ascontiguousarray(g_mus_ptr),
-                labels_64,
-                ac_32,
-                C_out,
-                E_out,
-                N,
-                D,
-                FD,
-                K,
-                calc_E,
-            ),
-        )
-        return C_out, E_out
-    else:
-        # C_k = sum_{i: label=k} (x_i - mu_k)(x_i - mu_k)^T
-        # E_k = sum_{i: label=k} (x_i - mu_k)(g_active(x_i) - g_active(mu_k))^T
-        N = X.shape[0]
-        dx = X - mus[labels]  # (N, D)
-        C_out = xp.zeros((K, D, D), dtype=xp.float64)
-        # Outer product per point: (N, D, D)
-        outer_C = dx[:, :, None] * dx[:, None, :]  # (N, D, D)
-        xp.add.at(C_out, labels, outer_C)
-        C_out = xp.asarray(C_out)
+def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
+    """Returns a boolean mask for the n smallest values in each block."""
+    sort_idx = xp.lexsort(xp.stack([values, blocks]))
+    block_sizes = xp.bincount(blocks)
+    block_starts = xp.concatenate((xp.array([0]), xp.cumsum(block_sizes[:-1])))
 
-        if calc_E:
-            assert G is not None and g_mus is not None
-            # active component for each point: active_comps[labels[i]]
-            active_j = active_comps[labels]  # (N,)
-            n_idx = xp.arange(N)
-            # g_x[i,:] = G[i, active_j[i], :]      shape: (N, D)
-            # g_mu[i,:] = g_mus[labels[i], active_j[i], :]  shape: (N, D)
-            g_x = G[n_idx, active_j, :]  # (N, D)
-            g_mu = g_mus[
-                labels, active_j, :
-            ]  # (N, D) — fancy index: (labels[i], active_j[i])
-            # Note: g_mus[labels, active_j] uses paired fancy indexing correctly here
-            dg = g_x - g_mu  # (N, D)
-            # E contribution: dx_r * dg_c  →  outer product (N, D, D)
-            outer_E = dx[:, :, None] * dg[:, None, :]  # (N, D, D)
-            E_out = xp.zeros((K, D, D), dtype=xp.float64)
-            xp.add.at(E_out, labels, outer_E)
-            E_out = xp.asarray(E_out)
-        else:
-            E_out = xp.array([], dtype=xp.float64)
+    offsets = xp.zeros(len(blocks), dtype=xp.int64)
+    diffs = xp.diff(block_starts, prepend=0)
+    offsets[block_starts] = diffs
+    local_indices = xp.cumsum(offsets)
 
-        return C_out, E_out
-
-
-def run_fused_score(X, mus, labels, M, v):
-    """Projects points onto split direction: score[i] = v[k]^T M[k] (x[i] - mu[k])."""
-    if IS_CUPY_BACKEND:
-        N, D = X.shape
-        scores = xp.empty((N,), dtype=xp.float64)
-        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-        block = 256
-        grid = (N + block - 1) // block
-        _kern_proj(
-            (grid,),
-            (block,),
-            (
-                xp.ascontiguousarray(X),
-                xp.ascontiguousarray(mus),
-                labels_64,
-                xp.ascontiguousarray(M),
-                xp.ascontiguousarray(v),
-                scores,
-                N,
-                D,
-            ),
-        )
-        return scores
-    else:
-        # z[i] = M[labels[i]] @ (x[i] - mu[labels[i]])  shape: (N, D)
-        # score[i] = v[labels[i]] . z[i]
-        dx = X - mus[labels]  # (N, D)
-        z = xp.einsum("nij,nj->ni", M[labels], dx)  # (N, D)
-        return xp.sum(z * v[labels], axis=1)  # (N,)
-
-
-def run_fused_q_dist(X, mus, labels, U, L_inv):
-    """Calculates Ellipsoidal distance for trust ellipsoids: dist^2 = (x-mu)^T Q (x-mu)."""
-    if IS_CUPY_BACKEND:
-        N, D = X.shape
-        dist_out = xp.empty((N,), dtype=xp.float64)
-        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
-        block = 256
-        grid = (N + block - 1) // block
-        _kern_q(
-            (grid,),
-            (block,),
-            (
-                xp.ascontiguousarray(X),
-                xp.ascontiguousarray(mus),
-                labels_64,
-                xp.ascontiguousarray(U),
-                xp.ascontiguousarray(L_inv),
-                dist_out,
-                N,
-                D,
-            ),
-        )
-        return dist_out
-    else:
-        # Q = U diag(L_inv) U^T,  so (x-mu)^T Q (x-mu) = sum_j proj_j^2 * L_inv_j
-        # where proj_j = (x - mu) . U[:,j]
-        dx = X - mus[labels]  # (N, D)
-        # proj[i,j] = dx[i,:] . U[labels[i],:,j]  →  dx @ U  (batch matmul)
-        # U[labels] shape: (N, D, D);  proj = einsum("ni,nij->nj", dx, U[labels])
-        proj = xp.einsum("ni,nij->nj", dx, U[labels])  # (N, D)
-        return xp.sum(proj**2 * L_inv[labels], axis=1)  # (N,)
+    inv_sort_idx = xp.empty_like(sort_idx)
+    inv_sort_idx[sort_idx] = xp.arange(len(sort_idx), dtype=sort_idx.dtype)
+    sorted_local_indices = inv_sort_idx - local_indices
+    return sorted_local_indices < n
 
 
 # -----------------------------------------------------------------------------
-# 3. UTILS
+# 3. PIPELINE STAGE 1: EVALUATION
 # -----------------------------------------------------------------------------
+
+
+def evaluate_cluster_errors(
+    config: ClusteringConfig,
+    X_batch: Array,
+    F_batch: Array,
+    mus: Array,
+    f_mus: Array,
+    g_mus: Optional[Array],
+    aug_starts: Array,
+    aug_sizes: Array,
+    aug_ids: Array,
+    F_max_global: Array,
+    TOL: float,
+) -> tuple[Array, Array, dict[str, Any]]:
+    """
+    Fits the appropriate surrogate and computes the error metric.
+    Returns: (is_good_mask, E_cluster, surrogate_params_dict)
+    """
+    N, d = X_batch.shape
+    fd = F_batch.shape[1]
+    K_batch = len(aug_sizes)
+    surrogate_params = {}
+
+    dx = X_batch - mus[aug_ids]
+
+    # --- 1. Compute Differences based on Mode ---
+    if config.mode == SurrogateMode.NEAREST_NEIGHBOR:
+        diff = F_batch - f_mus[aug_ids]
+
+    elif config.mode in (
+        SurrogateMode.TAYLOR_LSQ_HESS,
+        SurrogateMode.TAYLOR_COV_HESS,
+        SurrogateMode.TAYLOR_COV_NO_HESS,
+    ):
+        assert g_mus is not None
+        lin = xp.einsum("nmd,nd->nm", g_mus[aug_ids], dx)
+        diff = F_batch - (f_mus[aug_ids] + lin)
+        surrogate_params = {"g_mus": g_mus}
+
+    elif config.mode in (
+        SurrogateMode.AFFINE_COV_HESS,
+        SurrogateMode.AFFINE_COV_NO_HESS,
+    ):
+        # Adaptive Tikhonov fitting
+        mean_F = _reduce_sum_1d(F_batch, aug_starts) / aug_sizes[:, None]
+        Fc = F_batch - mean_F[aug_ids]
+
+        auto_cov = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], aug_starts)
+        cross_cov = _reduce_sum_1d(dx[:, :, None] * Fc[:, None, :], aug_starts)
+
+        tr = xp.trace(auto_cov, axis1=1, axis2=2)
+        lam = xp.maximum(1e-8 * tr, TINY_EPS)
+        reg = lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]
+
+        A_T = xp.linalg.solve(auto_cov + reg, cross_cov)
+        A = A_T.transpose(0, 2, 1)
+        b = mean_F - xp.einsum("kfd,kd->kf", A, mus)
+
+        lin = xp.einsum("nfd,nd->nf", A[aug_ids], X_batch)
+        diff = F_batch - (b[aug_ids] + lin)
+        surrogate_params = {"A": A, "b": b}
+
+    else:
+        raise ValueError(f"Unknown mode: {config.mode}")
+
+    # --- 2. Evaluate Error Metrics ---
+    if config.error_metric == "L2":
+        err_pts = xp.sum(diff**2, axis=1)
+        E_cluster = xp.sqrt(_reduce_sum_1d(err_pts, aug_starts))
+    elif config.error_metric == "Linf-global":
+        err_pts = xp.max(xp.abs(diff) / (F_max_global[None, :] + TINY_EPS), axis=1)
+        E_cluster = _reduce_max_1d(err_pts, aug_starts)
+    elif config.error_metric == "Linf-local":
+        E_cluster_rel = xp.zeros(K_batch, dtype=xp.float64)
+        E_cluster_abs = xp.zeros(K_batch, dtype=xp.float64)
+        for j in range(fd):
+            abs_diff_j = xp.abs(diff[:, j])
+            local_max_F_j = _reduce_max_1d(xp.abs(F_batch[:, j]), aug_starts)
+            max_err_j = _reduce_max_1d(abs_diff_j, aug_starts)
+
+            E_cluster_abs = xp.maximum(E_cluster_abs, max_err_j)
+            E_cluster_rel = xp.maximum(
+                E_cluster_rel, max_err_j / xp.maximum(local_max_F_j, TINY_EPS)
+            )
+
+        is_good = (E_cluster_rel < TOL) | (E_cluster_abs < TOL)
+        return is_good, E_cluster_rel, surrogate_params
+
+    is_good = E_cluster < TOL
+    return is_good, E_cluster, surrogate_params
+
+
+# -----------------------------------------------------------------------------
+# 4. PIPELINE STAGE 2: ACCEPTED STATS (Q, H, radii)
+# -----------------------------------------------------------------------------
+
+
+def compute_accepted_stats(
+    config: ClusteringConfig,
+    X_good: Array,
+    G_good: Optional[Array],
+    mus_good: Array,
+    g_mus_good: Optional[Array],
+    dense_labels_good: Array,
+    counts_good: Array,
+    Q_SHRINK: float,
+    surrogate_params: dict,
+) -> tuple[Array, Optional[Array], Array, Optional[Array]]:
+    """
+    Computes Q (Trust Region shape), H (Hessian), radii, and L_obs for accepted clusters.
+    """
+    K_good = len(counts_good)
+    N_good, d = X_good.shape
+    good_starts = xp.r_[0, xp.cumsum(counts_good)[:-1]]
+
+    dx = X_good - mus_good[dense_labels_good]
+
+    # --- 1. Compute Q (Inverse Covariance) ---
+    Cov = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], good_starts)
+    Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
+
+    if Q_SHRINK > 0.0:
+        tr = xp.trace(Cov, axis1=1, axis2=2)
+        scale_tr = tr / max(d, 1)
+        I = xp.eye(d, dtype=xp.float64)[None, :, :]
+        Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (scale_tr[:, None, None] * I)
+        Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
+
+    Lambda, U = xp.linalg.eigh(Cov)
+    Lambda_inv = 1.0 / xp.maximum(Lambda, TINY_EPS)
+
+    proj = xp.einsum("ni,nij->nj", dx, U[dense_labels_good])
+    dist_sq_mahalanobis = xp.sum(proj**2 * Lambda_inv[dense_labels_good], axis=1)
+    max_dist = _reduce_max_1d(dist_sq_mahalanobis, good_starts)
+
+    scale_fac = 1.0 / xp.maximum(max_dist, TINY_EPS)
+    Qs = U * (scale_fac[:, None] * Lambda_inv)[:, None, :] @ U.transpose(0, 2, 1)
+
+    # --- 2. Compute Radii & L_obs ---
+    dist_euclidean = xp.sqrt(xp.sum(dx**2, axis=1))
+    radii = _reduce_max_1d(dist_euclidean, good_starts)
+
+    L_obs = None
+    if (
+        config.requires_grad_everywhere
+        and G_good is not None
+        and g_mus_good is not None
+    ):
+        dG = G_good - g_mus_good[dense_labels_good]
+        dg_norms = xp.sqrt(xp.sum(dG**2, axis=2))
+        safe_dist = xp.maximum(dist_euclidean, TINY_EPS)[:, None]
+        ratio_pts = xp.max(dg_norms / safe_dist, axis=1)
+        ratio_pts = xp.where(
+            dist_euclidean > TINY_EPS, ratio_pts, xp.zeros_like(ratio_pts)
+        )
+        L_obs = _reduce_max_1d(ratio_pts, good_starts)
+
+    # --- 3. Compute Hessian (If requested) ---
+    Hs = None
+    if config.store_hess:
+        if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_good and g_mus_good:
+            g_mus_exp = g_mus_good[dense_labels_good]
+            dG = G_good - g_mus_exp
+            E_mat = xp.einsum("ni,nj->nij", dx, xp.sum(dG, axis=1))
+            E_k = _reduce_sum_1d(E_mat, good_starts)
+            S_h = E_k + E_k.transpose(0, 2, 1)
+
+            dvals, U_h = xp.linalg.eigh(Cov)
+            dvals = xp.maximum(dvals, TINY_EPS)
+            Gtilde = U_h.transpose(0, 2, 1) @ S_h @ U_h
+            F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])
+            Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
+            Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
+
+        elif config.mode == SurrogateMode.AFFINE_COV_HESS:
+            Hs = xp.linalg.inv(Cov + TINY_EPS * xp.eye(d)[None, :, :])
+
+    return Qs, Hs, radii, L_obs
+
+
+# -----------------------------------------------------------------------------
+# 5. PIPELINE STAGE 3: SPLIT REJECTED
+# -----------------------------------------------------------------------------
+
+
+def split_rejected_clusters(
+    config: ClusteringConfig,
+    X_bad: Array,
+    F_bad: Array,
+    G_bad: Optional[Array],
+    mus_bad: Array,
+    f_mus_bad: Array,
+    dense_labels_bad: Array,
+    counts_bad: Array,
+    MIN_PTS_PER_CLUSTER: int,
+    surrogate_params: dict,
+) -> Array:
+    """
+    Computes the splitting direction and returns the sort_order for the next level.
+    """
+    K_bad = len(counts_bad)
+    N_bad, d = X_bad.shape
+    bad_starts = xp.r_[0, xp.cumsum(counts_bad)[:-1]]
+    dx = X_bad - mus_bad[dense_labels_bad]
+
+    # --- Mode 2: Hessian LSQ Split ---
+    if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_bad is not None:
+        g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]
+        f_mus_exp = f_mus_bad[dense_labels_bad]
+
+        lin = xp.einsum("nmd,nd->nm", g_mus_exp, dx)
+        diff_bad = F_bad - (f_mus_exp + lin)
+
+        sq_err = _reduce_sum_1d(diff_bad**2, bad_starts)
+        sq_val = _reduce_sum_1d(F_bad**2, bad_starts)
+        scores = xp.sqrt(sq_err) / (xp.sqrt(sq_val) + TINY_EPS)
+        active_comps = xp.argmax(scores, axis=1)  # (K,)
+
+        active_j = active_comps[dense_labels_bad]
+        n_idx = xp.arange(N_bad)
+        dG_active = G_bad[n_idx, active_j, :] - g_mus_exp[n_idx, active_j, :]
+
+        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)
+        E = _reduce_sum_1d(dx[:, :, None] * dG_active[:, None, :], bad_starts)
+
+        C = 0.5 * (C + C.transpose(0, 2, 1))
+        S = E + E.transpose(0, 2, 1)
+
+        dvals, U = xp.linalg.eigh(C)
+        dvals = xp.maximum(dvals, TINY_EPS)
+        Gtilde = U.transpose(0, 2, 1) @ S @ U
+        F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])
+        _, V = xp.linalg.eigh(F_mat)
+
+        Z = U @ V
+        M_split = (Z * xp.sqrt(xp.abs(_))[:, None, :]) @ Z.transpose(0, 2, 1)
+        M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
+
+        CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
+
+    # --- Mode 1 & 3: Covariance Level Curves Split ---
+    elif config.mode in (SurrogateMode.AFFINE_COV_HESS, SurrogateMode.TAYLOR_COV_HESS):
+        if config.mode == SurrogateMode.TAYLOR_COV_HESS:
+            g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]
+            lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp, dx)
+            diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)
+            E_bad = xp.linalg.norm(diff_bad, axis=1)
+        else:  # AFFINE_COV - RESTORE TWO-PASS LOCAL FIT
+            dist_to_mu = xp.linalg.norm(dx, axis=1)
+            n_tangent = max(d * 2, MIN_PTS_PER_CLUSTER // 4)
+            tangent_mask = get_n_smallest_per_block(
+                dist_to_mu, dense_labels_bad, n_tangent
+            )
+
+            X_core = X_bad[tangent_mask]
+            F_core = F_bad[tangent_mask]
+            labels_core = dense_labels_bad[tangent_mask]
+
+            core_counts = xp.bincount(labels_core, minlength=K_bad)
+            core_starts = xp.r_[0, xp.cumsum(core_counts)[:-1]]
+
+            dX_core = X_core - mus_bad[labels_core]
+            dF_core = F_core - f_mus_bad[labels_core]
+
+            M_XX = _reduce_sum_1d(
+                dX_core[:, :, None] * dX_core[:, None, :], core_starts
+            )
+            M_XF = _reduce_sum_1d(
+                dX_core[:, :, None] * dF_core[:, None, :], core_starts
+            )
+
+            max_eigvals_proxy = xp.trace(M_XX, axis1=1, axis2=2)
+            _lam = xp.maximum(1e-8 * max_eigvals_proxy, TINY_EPS)
+            reg = _lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]
+
+            A_T_tangent = xp.linalg.solve(M_XX + reg, M_XF)
+            A_tangent = A_T_tangent.transpose(0, 2, 1)
+
+            lin_bad = xp.einsum("nmd,nd->nm", A_tangent[dense_labels_bad], dx)
+            diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)
+            E_bad = xp.linalg.norm(diff_bad, axis=1)
+
+        # Find SMALLEST errors (where surrogate == true func)
+        n_est_cov = max(1, MIN_PTS_PER_CLUSTER // 3)
+        cov_est_mask = get_n_smallest_per_block(E_bad, dense_labels_bad, n_est_cov)
+
+        X_hard = X_bad[cov_est_mask]
+        dx_hard = X_hard - mus_bad[dense_labels_bad[cov_est_mask]]
+        hard_counts = xp.bincount(dense_labels_bad[cov_est_mask], minlength=K_bad)
+        hard_starts = xp.r_[0, xp.cumsum(hard_counts)[:-1]]
+
+        H_inv = _reduce_sum_1d(dx_hard[:, :, None] * dx_hard[:, None, :], hard_starts)
+        H_inv = 0.5 * (H_inv + H_inv.transpose(0, 2, 1))
+
+        dvals, U = xp.linalg.eigh(H_inv)
+        dvals_sqrt_inv = 1.0 / xp.sqrt(xp.maximum(xp.abs(dvals), TINY_EPS))
+        M_split = (U * dvals_sqrt_inv[:, None]) @ U.transpose(0, 2, 1)
+        M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
+
+        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)
+        CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
+
+    # --- Mode 4: Nearest Neighbor / PCA Split ---
+    elif config.mode in (
+        SurrogateMode.NEAREST_NEIGHBOR,
+        SurrogateMode.AFFINE_COV_NO_HESS,
+        SurrogateMode.TAYLOR_COV_NO_HESS,
+    ):
+        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)
+        CovZ = 0.5 * (C + C.transpose(0, 2, 1))
+        M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(K_bad, axis=0)
+
+    else:
+        raise ValueError(f"Unknown split mode: {config.mode}")
+
+    # --- Apply Split Projection ---
+    _, V_z = xp.linalg.eigh(CovZ)
+    v = V_z[:, :, -1]  # Highest variance eigenvector
+
+    z = xp.einsum("nij,nj->ni", M_split[dense_labels_bad], dx)
+    scores_proj = xp.sum(z * v[dense_labels_bad], axis=1)
+
+    sort_order = xp.lexsort(xp.stack([scores_proj, dense_labels_bad]))
+    return sort_order
+
+
+# -----------------------------------------------------------------------------
+# 6. MISC UTILS
+# -----------------------------------------------------------------------------
+
+
 class CudaTimer:
     """Helper context manager for timing GPU operations with synchronization."""
 
@@ -640,32 +456,7 @@ class CudaTimer:
             self.stats[self.key] += dt
 
 
-def scatter_maximum_1d(out: Array, idx: Array, vals: Array) -> None:
-    """
-    1D segmented max scatter: ``out[idx[i]] = max(out[idx[i]], vals[i])``.
-    Uses `cupyx.scatter_max` on GPU and `numpy.maximum.at` semantics on CPU.
-    Eg:
-        out = [0, 0, 0]
-        idx = [0, 1, 0, 2, 1]
-        vals = [1, 2, 3, 4, 0]
-        scatter_maximum_1d(out, idx, vals)
-        # out is now [3, 2, 4]
-
-    Args:
-        out: (K,) output array updated in-place.
-        idx: (N,) integer indices in [0, K).
-        vals: (N,) values to reduce via max per index.
-    """
-    if IS_CUPY_BACKEND:
-        from cupyx import scatter_max as cupy_scatter_max
-
-        cupy_scatter_max(out, idx, vals)
-    else:
-        xp.maximum.at(out, idx, vals)
-
-
 def convert_to_2d_array(F: Array) -> Array:
-    """Ensures function values are (N, fd) shape."""
     F = xp.asarray(F)
     if F.ndim == 1:
         return F[:, None]
@@ -673,7 +464,6 @@ def convert_to_2d_array(F: Array) -> Array:
 
 
 def convert_to_3d_array(G: Array) -> Array:
-    """Ensures gradients are (N, fd, d) shape."""
     G = xp.asarray(G)
     if G.ndim == 2:
         return G[:, None, :]
@@ -681,20 +471,25 @@ def convert_to_3d_array(G: Array) -> Array:
 
 
 def allocate_output_buffers_host(
-    MAX_CLUSTERS_EST: int, d: int, fd: int, store_hess: bool, store_affine_fit: bool
+    MAX_CLUSTERS_EST: int,
+    d: int,
+    fd: int,
+    store_hess: bool,
+    store_affine_fit: bool,
+    no_gradient: bool,
 ) -> tuple[dict, int]:
-    """Allocates host (CPU) memory for final clusters."""
     cap = max(1, int(MAX_CLUSTERS_EST))
     buffers = {
         "centroids": np.empty((cap, d), dtype=np.float64),
         "f": np.empty((cap, fd), dtype=np.float64),
-        "g": np.empty((cap, fd, d), dtype=np.float64),
         "Q": np.empty((cap, d, d), dtype=np.float64),
         "E_cluster": np.empty((cap,), dtype=np.float64),
         "radii": np.empty((cap,), dtype=np.float64),
-        "L_obs": np.empty((cap,), dtype=np.float64),
         "counts": np.empty((cap,), dtype=np.int64),
     }
+    if not no_gradient:
+        buffers["g"] = np.empty((cap, fd, d), dtype=np.float64)
+        buffers["L_obs"] = np.empty((cap,), dtype=np.float64)
     if store_hess:
         buffers["H"] = np.empty((cap, d, d), dtype=np.float64)
     if store_affine_fit:
@@ -710,8 +505,8 @@ def adjust_buffer_capacity_host(
     required_total: int,
     store_hess: bool,
     store_affine_fit: bool,
+    no_gradient: bool,
 ) -> tuple[dict, int]:
-    """Doubles the capacity of output buffers if required."""
     if required_total <= current_cap:
         return buffers, current_cap
     new_cap = max(required_total, max(1, current_cap) * 2)
@@ -720,16 +515,16 @@ def adjust_buffer_capacity_host(
     new_buffers = {
         "centroids": np.empty((new_cap, d), dtype=np.float64),
         "f": np.empty((new_cap, fd), dtype=np.float64),
-        "g": np.empty((new_cap, fd, d), dtype=np.float64),
         "Q": np.empty((new_cap, d, d), dtype=np.float64),
         "E_cluster": np.empty((new_cap,), dtype=np.float64),
         "radii": np.empty((new_cap,), dtype=np.float64),
-        "L_obs": np.empty((new_cap,), dtype=np.float64),
         "counts": np.empty((new_cap,), dtype=np.int64),
     }
+    if not no_gradient:
+        new_buffers["g"] = np.empty((new_cap, fd, d), dtype=np.float64)
+        new_buffers["L_obs"] = np.empty((new_cap,), dtype=np.float64)
     if store_hess:
         new_buffers["H"] = np.empty((new_cap, d, d), dtype=np.float64)
-
     if store_affine_fit:
         new_buffers["A_fit"] = np.empty((new_cap, fd, d), dtype=np.float64)
         new_buffers["b_fit"] = np.empty((new_cap, fd), dtype=np.float64)
@@ -741,47 +536,7 @@ def adjust_buffer_capacity_host(
     return new_buffers, int(new_cap)
 
 
-def get_n_smallest_per_block(values, blocks, n):
-    """
-    Returns a boolean mask for the n smallest values in each block.
-    """
-    # 1. Get indices that would sort by block, then by value
-    # lexsort uses keys from last to first
-    sort_idx = xp.lexsort(xp.stack([values, blocks]))
-
-    # 2. Compute the sizes of each block
-    block_sizes = xp.bincount(blocks)
-    block_starts = xp.concatenate((xp.array([0]), xp.cumsum(block_sizes[:-1])))
-
-    # 3. Create array like blocks, but with the start indices instead of the original ids
-    offsets = xp.zeros(len(blocks), dtype=xp.int64)
-    diffs = xp.diff(block_starts, prepend=0)
-    offsets[block_starts] = diffs
-    local_indices = xp.cumsum(offsets)
-
-    # 4. Sort these and create a mask for the n smallest in each block
-    inv_sort_idx = xp.empty_like(sort_idx)
-    inv_sort_idx[sort_idx] = xp.arange(len(sort_idx), dtype=sort_idx.dtype)
-    sorted_local_indices = inv_sort_idx - local_indices
-
-    # 5. Return the mask for the n smallest in each block
-    pts_mask = sorted_local_indices < n
-    return pts_mask
-
-
 def get_prime_factors(n: int) -> list[int]:
-    """Return prime factors of an integer in non-decreasing order.
-
-    Args:
-        n: Integer to factorize.
-
-    Returns:
-        A list containing the prime factors of ``n`` in non-decreasing order.
-        Returns an empty list when ``n < 2``.
-
-    Example:
-        get_prime_factors(60)  # Returns [2, 2, 3, 5]
-    """
     if n < 2:
         return []
     factors: list[int] = []
@@ -795,61 +550,36 @@ def get_prime_factors(n: int) -> list[int]:
             n //= p
         p += 2
     if n > 1:
-        # Any leftover > 1 must be prime once trial divisors exceeded sqrt(n).
         factors.append(n)
     return factors
 
 
 def uniform_grid_cluster_labels(
-    X_host: np.ndarray,
-    num_initial_clusters: int,
+    X_host: np.ndarray, num_initial_clusters: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Assign labels using a uniform axis-aligned grid.
-
-    The grid's total number of cells is exactly ``num_initial_clusters``. This is
-    achieved by prime-factorizing ``num_initial_clusters`` and assigning each
-    factor to the currently widest normalized dimension.
-
-    Args:
-        X_host: Input points with shape ``(N, d)``.
-        num_initial_clusters: Target number of grid cells/clusters.
-
-    Returns:
-        A tuple ``(labels, bins)`` where:
-        - ``labels`` has shape ``(N,)`` and contains flat grid-cell indices.
-        - ``bins`` has shape ``(d,)`` and stores the number of bins per
-          dimension.
-
-    Raises:
-        ValueError: If ``num_initial_clusters < 1``.
-        ValueError: If ``X_host`` is not a 2D array.
-    """
     if num_initial_clusters < 1:
-        raise ValueError("num_initial_clusters must be >= 1 for uniform_grid")
-    if X_host.ndim != 2:
-        raise ValueError(f"X_host must be 2D, got shape={X_host.shape}")
-
+        raise ValueError("num_initial_clusters must be >= 1")
     _, d = X_host.shape
-    lower = np.min(X_host, axis=0)
-    upper = np.max(X_host, axis=0)
+    lower, upper = np.min(X_host, axis=0), np.max(X_host, axis=0)
     extents = np.maximum(upper - lower, TINY_EPS)
-
     bins = np.ones(d, dtype=np.int64)
     for p in sorted(get_prime_factors(num_initial_clusters), reverse=True):
-        # Prefer splitting the dimension with the currently largest cell width.
         split_scores = extents / bins
         split_dim = int(np.argmax(split_scores))
         bins[split_dim] *= p
-
-    extents_safe = np.maximum(upper - lower, TINY_EPS)
-    rel = (X_host - lower[None, :]) / extents_safe[None, :]
-
-    # Keep right-edge points in-range so floor(...) never produces out-of-bounds.
+    rel = (X_host - lower[None, :]) / extents
     rel = np.clip(rel, 0.0, 1.0 - np.finfo(np.float64).eps)
     coords = np.floor(rel * bins[None, :]).astype(np.int64)
     coords = np.minimum(coords, bins[None, :] - 1)
-
-    # Flatten multi-dimensional bin coordinates into a single cluster id.
     labels = np.ravel_multi_index(coords.T, dims=tuple(int(b) for b in bins))
-
     return labels.astype(np.int64), bins
+
+
+def log_mem_stats(prefix: str):
+    if IS_CUPY_BACKEND:
+        import cupy as cp
+
+        mempool = cp.get_default_memory_pool()
+        used = mempool.used_bytes() / (1024**3)
+        total = mempool.total_bytes() / (1024**3)
+        logger.info(f"{prefix} | Mem: {used:.2f}GB / {total:.2f}GB")
