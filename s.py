@@ -65,7 +65,7 @@ class HATANNSurrogate:
         g_fn: Optional[Callable] = None,
         oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
         *,
-        mode: SurrogateMode = SurrogateMode.TAYLOR_HESSIAN,
+        mode: SurrogateMode = SurrogateMode.AFFINE_COV_HESS,
         save_model: Optional[Union[bool, str, Path]] = None,
         load_if_exists: bool = True,
         TOL: float = 1e-2,
@@ -117,7 +117,7 @@ class HATANNSurrogate:
         else:
             if (
                 f_fn is None
-                or mode != SurrogateMode.AFFINE_COV
+                or mode != SurrogateMode.AFFINE_COV_HESS
                 and mode != SurrogateMode.NEAREST_NEIGHBOR
                 and g_fn is None
             ):
@@ -417,8 +417,9 @@ class HATANNSurrogate:
             predictions_k = f_neighbors
 
         elif self.mode in (
-            SurrogateMode.TAYLOR_HESSIAN,
-            SurrogateMode.TAYLOR_COV_CENTROID,
+            SurrogateMode.TAYLOR_LSQ_HESS,
+            SurrogateMode.TAYLOR_COV_HESS,
+            SurrogateMode.TAYLOR_COV_NO_HESS,
         ):
             J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(N, k_nn, F_dim, D)
             linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
@@ -431,7 +432,10 @@ class HATANNSurrogate:
                 quadratic_term = xp.einsum("nkc,nkfcd,nkd->nkf", dx, H_neighbors, dx)
                 predictions_k += 0.5 * quadratic_term
 
-        elif self.mode == SurrogateMode.AFFINE_COV:
+        elif self.mode in (
+            SurrogateMode.AFFINE_COV_HESS,
+            SurrogateMode.AFFINE_COV_NO_HESS,
+        ):
             A_neighbors = xp.asarray(self.A_fits_src)[flat_idx].reshape(
                 N, k_nn, F_dim, D
             )
@@ -608,15 +612,15 @@ if __name__ == "__main__":
 
     N_TRAIN = 100_000
     N_TEST = 100_000
-    DIM = 10
+    DIM = 20
     PROB_LIMS = (-1.0, 3)
-    TOL = 2e-1
+    TOL = 1
     NUM_INITIAL_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 500
     USE_WORK_STEALING = True
     ERROR_METRIC = "Linf-local"
     INITIAL_CLUSTERING_METHOD = "uniform_grid"
-    ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV
+    ERROR_EVAL_MODE = SurrogateMode.TAYLOR_COV_NO_HESS
 
     # Scale initial clusters with dimension for better
     NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM

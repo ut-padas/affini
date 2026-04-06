@@ -19,12 +19,14 @@ TINY_EPS = 1e-12
 
 
 class SurrogateMode(Enum):
-    AFFINE_COV = "affine_cov"  # 1. No grads, fit A/b, split via covariance
-    TAYLOR_HESSIAN = "taylor_hessian"  # 2. Grads everywhere, split via Hessian LSQ
-    TAYLOR_COV_CENTROID = (
-        "taylor_cov_centroid"  # 3. Grads at centroids only, split via covariance
+    NEAREST_NEIGHBOR = "nearest_neighbor"  #  No grads, f(mu) only, split via X^T X
+    AFFINE_COV_NO_HESS = "affine_cov_no_hess"  # No grads, fit A/b, split via X^T X
+    TAYLOR_COV_NO_HESS = (
+        "taylor_cov_no_hess"  # Grads at centroids only, split via X^T X
     )
-    NEAREST_NEIGHBOR = "nearest_neighbor"  # 4. No grads, f(mu) only, split via PCA/XX^T
+    AFFINE_COV_HESS = "affine_cov_hess"  # No grads, fit A/b, split via X^T H X, where H is estimated from covariance
+    TAYLOR_COV_HESS = "taylor_cov_centroid"  # Grads at centroids only, split via X^T H X, where H is estimated from covariance
+    TAYLOR_LSQ_HESS = "taylor_lsq_hess"  # Grads everywhere, split via X^T H X, where H is estimated from LSQ fit to gradient residuals
 
 
 @dataclass
@@ -36,20 +38,22 @@ class ClusteringConfig:
 
     @property
     def requires_grad_everywhere(self) -> bool:
-        return self.mode == SurrogateMode.TAYLOR_HESSIAN
+        return self.mode == SurrogateMode.TAYLOR_LSQ_HESS
 
     @property
     def requires_grad_centroids(self) -> bool:
         return self.mode in (
-            SurrogateMode.TAYLOR_HESSIAN,
-            SurrogateMode.TAYLOR_COV_CENTROID,
+            SurrogateMode.TAYLOR_LSQ_HESS,
+            SurrogateMode.TAYLOR_COV_HESS,
+            SurrogateMode.TAYLOR_COV_NO_HESS,
         )
 
     @property
     def requires_no_grads(self) -> bool:
         return self.mode in (
-            SurrogateMode.AFFINE_COV,
             SurrogateMode.NEAREST_NEIGHBOR,
+            SurrogateMode.AFFINE_COV_NO_HESS,
+            SurrogateMode.AFFINE_COV_HESS,
         )
 
 
@@ -127,15 +131,19 @@ def evaluate_cluster_errors(
         diff = F_batch - f_mus[aug_ids]
 
     elif config.mode in (
-        SurrogateMode.TAYLOR_HESSIAN,
-        SurrogateMode.TAYLOR_COV_CENTROID,
+        SurrogateMode.TAYLOR_LSQ_HESS,
+        SurrogateMode.TAYLOR_COV_HESS,
+        SurrogateMode.TAYLOR_COV_NO_HESS,
     ):
         assert g_mus is not None
         lin = xp.einsum("nmd,nd->nm", g_mus[aug_ids], dx)
         diff = F_batch - (f_mus[aug_ids] + lin)
         surrogate_params = {"g_mus": g_mus}
 
-    elif config.mode == SurrogateMode.AFFINE_COV:
+    elif config.mode in (
+        SurrogateMode.AFFINE_COV_HESS,
+        SurrogateMode.AFFINE_COV_NO_HESS,
+    ):
         # Adaptive Tikhonov fitting
         mean_F = _reduce_sum_1d(F_batch, aug_starts) / aug_sizes[:, None]
         Fc = F_batch - mean_F[aug_ids]
@@ -253,7 +261,7 @@ def compute_accepted_stats(
     # --- 3. Compute Hessian (If requested) ---
     Hs = None
     if config.store_hess:
-        if config.mode == SurrogateMode.TAYLOR_HESSIAN and G_good and g_mus_good:
+        if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_good and g_mus_good:
             g_mus_exp = g_mus_good[dense_labels_good]
             dG = G_good - g_mus_exp
             E_mat = xp.einsum("ni,nj->nij", dx, xp.sum(dG, axis=1))
@@ -267,7 +275,7 @@ def compute_accepted_stats(
             Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
             Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
 
-        elif config.mode == SurrogateMode.AFFINE_COV:
+        elif config.mode == SurrogateMode.AFFINE_COV_HESS:
             Hs = xp.linalg.inv(Cov + TINY_EPS * xp.eye(d)[None, :, :])
 
     return Qs, Hs, radii, L_obs
@@ -299,7 +307,7 @@ def split_rejected_clusters(
     dx = X_bad - mus_bad[dense_labels_bad]
 
     # --- Mode 2: Hessian LSQ Split ---
-    if config.mode == SurrogateMode.TAYLOR_HESSIAN and G_bad is not None:
+    if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_bad is not None:
         g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]
         f_mus_exp = f_mus_bad[dense_labels_bad]
 
@@ -334,8 +342,8 @@ def split_rejected_clusters(
         CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
 
     # --- Mode 1 & 3: Covariance Level Curves Split ---
-    elif config.mode in (SurrogateMode.AFFINE_COV, SurrogateMode.TAYLOR_COV_CENTROID):
-        if config.mode == SurrogateMode.TAYLOR_COV_CENTROID:
+    elif config.mode in (SurrogateMode.AFFINE_COV_HESS, SurrogateMode.TAYLOR_COV_HESS):
+        if config.mode == SurrogateMode.TAYLOR_COV_HESS:
             g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]
             lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp, dx)
             diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)
@@ -375,7 +383,7 @@ def split_rejected_clusters(
             diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)
             E_bad = xp.linalg.norm(diff_bad, axis=1)
 
-        # CRITICAL FIX: Find SMALLEST errors (where surrogate == true func)
+        # Find SMALLEST errors (where surrogate == true func)
         n_est_cov = max(1, MIN_PTS_PER_CLUSTER // 3)
         cov_est_mask = get_n_smallest_per_block(E_bad, dense_labels_bad, n_est_cov)
 
@@ -396,7 +404,11 @@ def split_rejected_clusters(
         CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
 
     # --- Mode 4: Nearest Neighbor / PCA Split ---
-    elif config.mode == SurrogateMode.NEAREST_NEIGHBOR:
+    elif config.mode in (
+        SurrogateMode.NEAREST_NEIGHBOR,
+        SurrogateMode.AFFINE_COV_NO_HESS,
+        SurrogateMode.TAYLOR_COV_NO_HESS,
+    ):
         C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)
         CovZ = 0.5 * (C + C.transpose(0, 2, 1))
         M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(K_bad, axis=0)
