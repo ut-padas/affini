@@ -54,8 +54,8 @@ def generate_flow_map_plots(dt=np.array([0.1, 0.5, 1.0, 5.0, 10.0, 20.0]), mu=1)
     assert len(dt) == 6
 
     domain = np.array([
-        [-3, 3],
-        [-3, 3]
+        [-4, 4],
+        [-4, 4]
     ])
     xgrid, ygrid = generate_grid(domain, n=100)
     
@@ -99,9 +99,9 @@ def generate_flow_map_plots(dt=np.array([0.1, 0.5, 1.0, 5.0, 10.0, 20.0]), mu=1)
         ax2.set_title(f'$y(\\Delta t = {dt[k]})$')
         fig.colorbar(cf, cax=cax)
 
-    plt.suptitle('Van der Pol Oscillator Flow Maps')
+    plt.suptitle(f'Van der Pol Oscillator Flow Maps ($\\mu={mu}$)')
     plt.tight_layout()
-    plt.savefig('van_der_pol_flow_map_plot.png')
+    plt.savefig(f'van_der_pol_flow_map_plot_mu_{mu}.png')
 
 
 if __name__ == '__main__':

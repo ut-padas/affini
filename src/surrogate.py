@@ -402,6 +402,7 @@ class HATANNSurrogate:
         strict_trust_region: bool = False,
         use_saved_hessian: bool = False,
         predict_mode: Literal["taylor", "affine"] = "taylor",
+        return_cluster_assignments: bool = False,
     ) -> tuple:
         """
         Inference via kNN (CPU or GPU) with L2 Distance.
@@ -522,7 +523,10 @@ class HATANNSurrogate:
         # If strict=False, total_weight is k -> Simple Mean
         predictions = xp.sum(weighted_preds, axis=1) / (total_weight[:, None] + 1e-12)
 
-        return predictions, unguaranteed_mask
+        if return_cluster_assignments:
+            return predictions, unguaranteed_mask, nn_idx
+        else:
+            return predictions, unguaranteed_mask
 
 
 def compute_error_metrics(

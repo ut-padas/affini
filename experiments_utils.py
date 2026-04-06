@@ -388,6 +388,7 @@ def Problem_experiment_setup(
     STORE_HESSIAN: bool = False,
     USE_HESSIAN_FOR_INFERENCE: bool = False,
     MAX_LEVELS: int = 50,
+    ERROR_EVAL_MODE: Literal["taylor", "affine"] = "taylor",
 ):
     if json_fpath.exists():
         print(f"Result file {json_fpath} already exists. Skipping experiment.")
@@ -461,7 +462,8 @@ def Problem_experiment_setup(
                 PROFILE_TIMING=PROFILE_TIMING,
                 save_model=model_save_path,
                 STORE_HESSIAN=STORE_HESSIAN,
-                MAX_LEVELS=MAX_LEVELS
+                MAX_LEVELS=MAX_LEVELS,
+                ERROR_EVAL_MODE=ERROR_EVAL_MODE,
             )
             _TRAINED = True
         else:
@@ -483,7 +485,8 @@ def Problem_experiment_setup(
                     PROFILE_TIMING=PROFILE_TIMING,
                     save_model=model_save_path,
                     STORE_HESSIAN=STORE_HESSIAN,
-                    MAX_LEVELS=MAX_LEVELS
+                    MAX_LEVELS=MAX_LEVELS,
+                    ERROR_EVAL_MODE=ERROR_EVAL_MODE
                 )
             else:
                 surrogate.train(
@@ -502,7 +505,8 @@ def Problem_experiment_setup(
                     PROFILE_TIMING=PROFILE_TIMING,
                     save_model=model_save_path,
                     STORE_HESSIAN=STORE_HESSIAN,
-                    MAX_LEVELS=MAX_LEVELS
+                    MAX_LEVELS=MAX_LEVELS,
+                    ERROR_EVAL_MODE=ERROR_EVAL_MODE,
                 )
             _TRAINED = True
 
@@ -589,6 +593,7 @@ def Problem_experiment_setup(
         BATCH_SIZE=BATCH_SIZE,
         PROFILE_TIMING=PROFILE_TIMING,
         profiling_stats=surrogate.profiling_stats,
+        ERROR_EVAL_MODE=ERROR_EVAL_MODE
     )
 
     with open(json_fpath, "w") as jf:
