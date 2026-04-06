@@ -1250,10 +1250,10 @@ if __name__ == "__main__":
     N_TRAIN = 500_000
     DIM = 2
     PROB_LIMS = (-1.0, 3)
-    TOL = 1e-4
-    NUM_INITIAL_CLUSTERS = 64
+    TOL = 3e-2
+    NUM_INITIAL_CLUSTERS = 1
     MIN_PTS_PER_CLUSTER = 500
-    USE_WORK_STEALING = False
+    USE_WORK_STEALING = True
     ERROR_METRIC = "Linf-local"
     INITIAL_CLUSTERING_METHOD = "uniform_grid"
     ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV
