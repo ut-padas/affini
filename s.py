@@ -7,7 +7,7 @@ import numpy as np
 from mpi4py import MPI
 
 from ac import adaptive_clustering
-from src import IS_CUPY_BACKEND, Array, _to_device, _to_host, xp
+from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _to_device, _to_host, xp
 from utils import SurrogateMode
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ class HATANNSurrogate:
         PROFILE_TIMING: bool = False,
     ):
         comm = MPI.COMM_WORLD
-        rank = comm.Get_rank()
+        rank = _get_mpi_rank()
 
         model_filepath = None
         if save_model is not None and save_model is not False:
@@ -286,7 +286,8 @@ class HATANNSurrogate:
             self.knn_index = faiss.IndexFlatL2(D)
             self.knn_index.add(centroids_f32)  # type: ignore
 
-        logger.info(f"KNN Index built in {time.perf_counter()-t0:.4f}s")
+        if _get_mpi_rank() == 0:
+            logger.info(f"KNN Index built in {time.perf_counter()-t0:.4f}s")
 
     def _query_knn(self, query_points: Array, k: int) -> tuple[Array, Array]:
         if self.knn_index is None:
@@ -620,9 +621,9 @@ if __name__ == "__main__":
     OUTPUT_DIR = RESULTS_DIR / "surrogate_experimental"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    img_fpath = (
+    json_fpath = (
         OUTPUT_DIR
-        / f"mpi_sz{_size}_rosen{A_ROSENBROCK}_ntrain{N_TRAIN}_dim{DIM}_tol{TOL}_err{ERROR_EVAL_MODE.value}_metric{ERROR_METRIC}_init{INITIAL_CLUSTERING_METHOD}_nclust{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}.png"
+        / f"mpi_sz{_size}_rosen{A_ROSENBROCK}_ntrain{N_TRAIN}_dim{DIM}_tol{TOL}_err{ERROR_EVAL_MODE.value}_metric{ERROR_METRIC}_init{INITIAL_CLUSTERING_METHOD}_nclust{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}.json"
     )
 
     if _rank == 0:
@@ -647,51 +648,71 @@ if __name__ == "__main__":
     )
 
     # Evaluate Surrogate
-    print("\n--- Evaluation ---")
-    X_test = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(N_TEST, DIM))
-    X_test = xp.asarray(X_test)
-    ground_truth = rosenbrock(X_test)
+    if _rank == 0:
+        print("\n--- Evaluation ---")
+        X_test = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(N_TEST, DIM))
+        X_test = xp.asarray(X_test)
+        ground_truth = rosenbrock(X_test)
+        query_pts_input = X_test
+    else:
+        query_pts_input = None
 
     # Predict in parallel across MPI ranks
-    # We only need to provide query_points on Rank 0
-    query_pts_input = X_test if _rank == 0 else None
-
     t0_pred = time.perf_counter()
     preds, ug_mask = surrogate.predict(
         query_points=query_pts_input,
         k_nn=1,
-        strict_trust_region=True,  # Set to True to properly flag points outside trust regions
+        strict_trust_region=False,
     )
 
     # Evaluate error metrics and print only on Rank 0
-    if _rank == 0:
-        logger.info(f"Prediction completed in {time.perf_counter() - t0_pred:.4f}s")
+    if _rank != 0:
+        MPI.Finalize()
+        raise SystemExit(0)
 
-        # Ensure ground truth and predictions are 2D arrays (N, F_dim)
-        # as expected by compute_error_metrics
-        if ground_truth.ndim == 1:
-            ground_truth = ground_truth.reshape(-1, 1)
-        if preds.ndim == 1:
-            preds = preds.reshape(-1, 1)
+    logger.info(f"Prediction completed in {time.perf_counter() - t0_pred:.4f}s")
 
-        # Compute the metrics
-        error_metrics = compute_error_metrics(
-            preds=preds,
-            gt=ground_truth,
-            ug_mask=ug_mask,
-            tol=TOL,
-            return_ptwise_error_arrays=False,
-        )
+    # Ensure ground truth and predictions are 2D arrays (N, F_dim)
+    # as expected by compute_error_metrics
+    if ground_truth.ndim == 1:
+        ground_truth = ground_truth.reshape(-1, 1)
+    if preds.ndim == 1:
+        preds = preds.reshape(-1, 1)
 
-        # Print the metrics nicely
-        print("\n=== Error Metrics ===")
-        print(json.dumps(error_metrics, indent=4))
+    # Compute the metrics
+    error_metrics = compute_error_metrics(
+        preds=preds,
+        gt=ground_truth,
+        ug_mask=ug_mask,
+        tol=TOL,
+        return_ptwise_error_arrays=False,
+    )
 
-        # logger.info(f"Total Points: {error_metrics['n_test']:,}")
-        # logger.info(
-        #     f"Guaranteed (In) Points: {error_metrics['n_test'] - error_metrics['n_out']:,}"
-        # )
-        # logger.info(f"Unguaranteed (Out) Points: {error_metrics['n_out']:,}")
-        # logger.info(
-        #     f"In-Distribution L2 Rel Error: {error_metrics['in']['l2_rel_error']:.4e}"
-        # )
+    json_data = {
+        "IS_CUPY_BACKEND": IS_CUPY_BACKEND,
+        "mpi_size": _size,
+        "rosenbrock_a": A_ROSENBROCK,
+        "dim": DIM,
+        "tol": TOL,
+        "n_train": N_TRAIN,
+        "num_clusters": surrogate.N_src,
+        "train_time_sec": surrogate.profiling_stats.get("total_time", None),
+        "num_levels": surrogate.profiling_stats.get("num_levels", None),
+        "num_generated_pts": surrogate.profiling_stats.get("num_generated_pts", None),
+        "total_f_evals": surrogate.profiling_stats.get("total_f_evals", None),
+        "error_metric": ERROR_METRIC,
+        "error_eval_mode": ERROR_EVAL_MODE.value,
+        "initial_clustering_method": INITIAL_CLUSTERING_METHOD,
+        "num_initial_clusters": NUM_INITIAL_CLUSTERS,
+        "min_pts_per_cluster": MIN_PTS_PER_CLUSTER,
+        # Add the error metrics to the JSON data
+        **error_metrics,  # type: ignore
+    }
+    # Print the metrics nicely
+    print("\n=== Error Metrics ===")
+    print(json.dumps(error_metrics, indent=4))
+
+    # Save the metrics to a JSON file
+    with open(json_fpath, "w") as f:
+        json.dump(json_data, f, indent=4)
+    print(f"Error metrics saved to {json_fpath}")
