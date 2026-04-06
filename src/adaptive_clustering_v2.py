@@ -954,6 +954,24 @@ def adaptive_clustering(
             f"Selected mode {ERROR_EVAL_MODE.value} requires gradient information. Please provide g_fn or oracle_fn."
         )
 
+    if ERROR_EVAL_MODE in (
+        SurrogateMode.AFFINE_COV_HESS,
+        SurrogateMode.AFFINE_COV_NO_HESS,
+    ):
+        if not STORE_AFFINE_FIT_PER_CLUSTER:
+            STORE_AFFINE_FIT_PER_CLUSTER = True
+            logger.warning(
+                f"Selected mode {ERROR_EVAL_MODE.value} requires storing affine fit parameters. Overriding STORE_AFFINE_FIT_PER_CLUSTER to True."
+            )
+
+    if USE_WORK_STEALING:
+        if MAX_LEVELS <= 100:
+            _safe_MAX_LEVELS = 1000
+            logger.warning(
+                f"Work stealing enabled but MAX_LEVELS is only {MAX_LEVELS}. Overriding MAX_LEVELS to {_safe_MAX_LEVELS} to ensure sufficient stealing opportunities across levels."
+            )
+            MAX_LEVELS = _safe_MAX_LEVELS
+
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -1268,8 +1286,8 @@ if __name__ == "__main__":
     N_TRAIN = 500_000
     DIM = 2
     PROB_LIMS = (-1.0, 3)
-    TOL = 3e-2
-    NUM_INITIAL_CLUSTERS = 1
+    TOL = 1e-4
+    NUM_INITIAL_CLUSTERS = 500
     MIN_PTS_PER_CLUSTER = 500
     USE_WORK_STEALING = True
     ERROR_METRIC = "Linf-local"
@@ -1306,6 +1324,7 @@ if __name__ == "__main__":
         LOG_MEM_STATS=False,
         PROFILE_TIMING=True,
         USE_WORK_STEALING=USE_WORK_STEALING,
+        MAX_LEVELS=200,
     )
 
     if _rank != 0:
@@ -1373,7 +1392,7 @@ if __name__ == "__main__":
         plot_mpi_level_heatmap(result, _hm_path, values_col=_heatmap_col, title=title)
 
     # Save npz file of results
-    # npz_fpath = img_fpath.with_suffix(".npz")
-    # result = {k: _to_host(v) for k, v in result.items()}
-    # xp.savez_compressed(npz_fpath, **result)
-    # print(f"Saved results to {npz_fpath}")
+    npz_fpath = img_fpath.with_suffix(".npz")
+    result = {k: _to_host(v) for k, v in result.items()}
+    xp.savez_compressed(npz_fpath, **result)
+    print(f"Saved results to {npz_fpath}")
