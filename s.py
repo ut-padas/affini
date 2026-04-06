@@ -79,6 +79,7 @@ class HATANNSurrogate:
         SEED: int = 0,
         STORE_HESSIAN: bool = False,
         STORE_AFFINE_FIT: bool = False,
+        USE_WORK_STEALING: bool = True,
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
         PROFILE_TIMING: bool = False,
@@ -148,6 +149,7 @@ class HATANNSurrogate:
             PROFILE_TIMING=PROFILE_TIMING,
             STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
             STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
+            USE_WORK_STEALING=USE_WORK_STEALING,
         )
 
         # 2. Broadcast trained structures to all ranks
@@ -588,6 +590,7 @@ def compute_error_metrics(
 
 if __name__ == "__main__":
     import json
+    import time
     from functools import partial
 
     from src import RESULTS_DIR, _get_mpi_rank, _get_mpi_size
@@ -603,12 +606,12 @@ if __name__ == "__main__":
     rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
     rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
 
-    N_TRAIN = 500_000
+    N_TRAIN = 100_000
     N_TEST = 100_000
-    DIM = 2
+    DIM = 10
     PROB_LIMS = (-1.0, 3)
-    TOL = 0.001
-    NUM_INITIAL_CLUSTERS = 1
+    TOL = 2e-1
+    NUM_INITIAL_CLUSTERS = 100
     MIN_PTS_PER_CLUSTER = 500
     USE_WORK_STEALING = True
     ERROR_METRIC = "Linf-local"
@@ -634,6 +637,7 @@ if __name__ == "__main__":
 
     # Train surrogate
     surrogate = HATANNSurrogate()
+    _start_time = time.perf_counter()
     surrogate.train(
         X_train=X,
         f_fn=rosenbrock,
@@ -644,12 +648,15 @@ if __name__ == "__main__":
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        USE_WORK_STEALING=USE_WORK_STEALING,
         STORE_AFFINE_FIT=True,
     )
+    _train_time = time.perf_counter() - _start_time
 
     # Evaluate Surrogate
     if _rank == 0:
         print("\n--- Evaluation ---")
+        xp.random.seed(100)
         X_test = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(N_TEST, DIM))
         X_test = xp.asarray(X_test)
         ground_truth = rosenbrock(X_test)
@@ -659,11 +666,13 @@ if __name__ == "__main__":
 
     # Predict in parallel across MPI ranks
     t0_pred = time.perf_counter()
+    _start_time = time.perf_counter()
     preds, ug_mask = surrogate.predict(
         query_points=query_pts_input,
         k_nn=1,
         strict_trust_region=False,
     )
+    _pred_time = time.perf_counter() - _start_time
 
     # Evaluate error metrics and print only on Rank 0
     if _rank != 0:
@@ -695,8 +704,10 @@ if __name__ == "__main__":
         "dim": DIM,
         "tol": TOL,
         "n_train": N_TRAIN,
+        "n_test": N_TEST,
         "num_clusters": surrogate.N_src,
-        "train_time_sec": surrogate.profiling_stats.get("total_time", None),
+        "train_time_sec": _train_time,
+        "pred_time_sec": _pred_time,
         "num_levels": surrogate.profiling_stats.get("num_levels", None),
         "num_generated_pts": surrogate.profiling_stats.get("num_generated_pts", None),
         "total_f_evals": surrogate.profiling_stats.get("total_f_evals", None),
@@ -705,8 +716,9 @@ if __name__ == "__main__":
         "initial_clustering_method": INITIAL_CLUSTERING_METHOD,
         "num_initial_clusters": NUM_INITIAL_CLUSTERS,
         "min_pts_per_cluster": MIN_PTS_PER_CLUSTER,
+        "use_work_stealing": USE_WORK_STEALING,
         # Add the error metrics to the JSON data
-        **error_metrics,  # type: ignore
+        "error_metrics": error_metrics,
     }
     # Print the metrics nicely
     print("\n=== Error Metrics ===")
