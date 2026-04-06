@@ -280,6 +280,7 @@ def plot_adaptive_clustering_results(
     f_fn: Callable,
     img_fpath: Path,
     title: str | None = None,
+    plot_circle: bool = False,
 ):
     """
     Plots the results of adaptive clustering on the given function and saves the figure
@@ -300,6 +301,7 @@ def plot_adaptive_clustering_results(
         img_fpath: A Path object where the resulting figure will be saved.
         title: Optional string for the overall figure title. If None, a default title
             will be generated based on the number of clusters.
+        plot_circle: Whether to plot circles for the trust region radii (default: False).
     """
     # Get dimensions of X
     d = results["centroids"].shape[1]
@@ -401,16 +403,17 @@ def plot_adaptive_clustering_results(
         axs[1].add_patch(ellipse)
 
         # Draw radius circle with dashed line
-        circle = Circle(
-            xy=center,
-            radius=radius,
-            edgecolor="black",
-            facecolor="none",
-            lw=0.5,
-            alpha=0.7,
-            linestyle="dashed",
-        )
-        axs[1].add_patch(circle)
+        if plot_circle:
+            circle = Circle(
+                xy=center,
+                radius=radius,
+                edgecolor="black",
+                facecolor="none",
+                lw=0.5,
+                alpha=0.7,
+                linestyle="dashed",
+            )
+            axs[1].add_patch(circle)
 
     # Update legend to include ellipses and circles
     legend_elements = [
@@ -424,15 +427,18 @@ def plot_adaptive_clustering_results(
             markersize=5,
         ),
         Line2D([0], [0], color="blue", lw=0.5, label="Trust Ellipsoid"),
-        Line2D(
-            [0],
-            [0],
-            color="black",
-            lw=0.5,
-            linestyle="dashed",
-            label="Trust Radius",
-        ),
     ]
+    if plot_circle:
+        legend_elements.append(
+            Line2D(
+                [0],
+                [0],
+                color="black",
+                lw=0.5,
+                linestyle="dashed",
+                label="Trust Radius",
+            )
+        )
     axs[1].legend(handles=legend_elements, loc="upper right")
 
     plt.tight_layout()
