@@ -1,0 +1,898 @@
+import json
+import logging
+import time
+from pathlib import Path
+from typing import Any, Callable, Literal, Optional, Union
+
+import numpy as np
+
+from _experiments.ics_deprecated.adaptive_clustering import adaptive_clustering
+from src import IS_CUPY_BACKEND, Array, _to_device, _to_host, xp
+
+logger = logging.getLogger(__name__)
+
+
+class HATANNSurrogate:
+    """
+    Surrogate using Adaptive Clustering + kNN with Ellipsoidal Distance on GPU.
+    """
+
+    def __init__(self):
+        self.trained = False
+
+        # Storage for source points (Reference data)
+        self.N_src = 0
+        self.X_src = None
+        self.f_src = None
+        self.J_src = None
+        self.trust_radii_src = None
+        self.Qs_src = None
+        self.Hs_src = None
+        self.A_fits_src = None
+        self.b_fits_src = None
+        self.profiling_stats = {}
+        self.tree_data = None  # Optional: Store tree data for analysis/visualization
+
+        # Model file path (for saving/loading)
+        self._model_file = None
+
+        # Persistent KNN Index
+        self.knn_index = None
+
+    def get_trained_data_as_dict(self) -> dict:
+        """
+        Return the trained data as a dictionary of arrays.
+        Useful for saving or inspection.
+
+        Returns:
+            Dictionary containing trained data arrays.
+        """
+        if not self.trained:
+            raise RuntimeError("Model not trained.")
+
+        return {
+            "X_src": self.X_src,
+            "f_src": self.f_src,
+            "J_src": self.J_src,
+            "trust_radii_src": self.trust_radii_src,
+            "Qs_src": self.Qs_src,
+            "N_src": self.N_src,
+            "profiling_stats": self.profiling_stats,
+            "tree_data": self.tree_data,
+            "Hs_src": self.Hs_src,
+            "A_fits_src": self.A_fits_src,
+            "b_fits_src": self.b_fits_src,
+        }
+
+    def train(
+        self,
+        X_train: Array,
+        f_fn: Optional[Callable] = None,
+        g_fn: Optional[Callable] = None,
+        oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
+        *,
+        # Model persistence
+        save_model: Optional[Union[bool, str, Path]] = None,
+        load_if_exists: bool = True,
+        # Clustering params
+        TOL: float = 1e-2,
+        ERROR_EVAL_MODE: Literal["taylor", "affine"] = "taylor",
+        ERROR_METRIC: Literal["L2", "Linf-local", "Linf-global"] = "Linf-global",
+        INITIAL_CLUSTERING_METHOD: Literal[
+            "kmeans", "knndbscan", "uniform_grid"
+        ] = "kmeans",
+        NUM_INITIAL_CLUSTERS: int = 100,
+        MIN_PTS_PER_CLUSTER: int = 100,
+        MAX_CLUSTERS_EST: int = 1_000_000,
+        SEED: int = 0,
+        CLUSTERING_MATRIX: Literal[
+            "Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"
+        ] = "Hessian_LSQ",
+        IGNORE_GRADIENT: bool = False,
+        STORE_HESSIAN: bool = False,
+        STORE_AFFINE_FIT: bool = False,
+        BATCH_SIZE: int = 10_000_000,
+        MAX_LEVELS: int = 50,
+        PROFILE_TIMING: bool = False,
+        STORE_TREE_DATA: bool = False,
+    ):
+        """
+        Train the surrogate model or load from saved file.
+
+        Args:
+            X_train: Training data points
+            f_fn: Function to evaluate
+            g_fn: Gradient function
+            oracle_fn: Combined function that returns (f, g)
+            save_model: If True, saves to default location. If str/Path, saves to that
+            location. If None/False, doesn't save.
+            load_if_exists: If True and save_model file exists, loads instead of training.
+            TOL: Tolerance for adaptive clustering
+            ... (other clustering parameters)
+            PROFILE_TIMING: If True, enables detailed performance profiling (GPU only).
+        """
+        # Handle save_model parameter
+        model_filepath = None
+        if save_model is not None and save_model is not False:
+            if isinstance(save_model, bool) and save_model:
+                # Default save location
+                model_filepath = Path.cwd() / "hatann_surrogate.npz"
+            else:
+                model_filepath = Path(save_model)
+                if model_filepath.is_dir():
+                    model_filepath = model_filepath / "hatann_surrogate.npz"
+                elif model_filepath.suffix != ".npz":
+                    model_filepath = model_filepath.with_suffix(".npz")
+
+        # Try to load existing model if requested
+        if load_if_exists and model_filepath is not None and model_filepath.exists():
+            try:
+                loaded_model = self.load_model(model_filepath)
+                # Transfer state to current instance
+                self.trained = loaded_model.trained
+                self.X_src = loaded_model.X_src
+                self.f_src = loaded_model.f_src
+                self.J_src = loaded_model.J_src
+                self.trust_radii_src = loaded_model.trust_radii_src
+                self.Qs_src = loaded_model.Qs_src
+                self.N_src = loaded_model.N_src
+                self.profiling_stats = loaded_model.profiling_stats
+                self.tree_data = loaded_model.tree_data
+                self.Hs_src = loaded_model.Hs_src
+                self.A_fits_src = loaded_model.A_fits_src
+                self.b_fits_src = loaded_model.b_fits_src
+                self._model_file = model_filepath
+                logger.info(f"Loaded existing model from {model_filepath}")
+                return
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load existing model: {e}. Proceeding with training."
+                )
+
+        # Validate function arguments
+        if oracle_fn is not None:
+            if f_fn is not None or g_fn is not None:
+                raise ValueError(
+                    "Cannot specify both oracle_fn and f_fn/g_fn. Use either oracle_fn OR both f_fn and g_fn."
+                )
+        else:
+            if f_fn is None or g_fn is None:
+                raise ValueError("Must specify either oracle_fn OR both f_fn and g_fn.")
+
+        t0 = time.perf_counter()
+
+        if CLUSTERING_MATRIX == "None" or IGNORE_GRADIENT == True:
+            logger.warning(
+                "USE_HESSIAN_INFORMED_SPLIT=False or IGNORE_GRADIENT=True may lead to suboptimal clustering performance."
+            )
+
+        # 1. Adaptive Clustering
+        t0 = time.perf_counter()
+        results = adaptive_clustering(
+            X=X_train,
+            f_fn=f_fn,
+            g_fn=g_fn,
+            oracle_fn=oracle_fn,
+            TOL=TOL,
+            ERROR_METRIC=ERROR_METRIC,
+            ERROR_EVAL_MODE=ERROR_EVAL_MODE,
+            INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+            CLUSTERING_MATRIX=CLUSTERING_MATRIX,
+            NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+            MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            SEED=SEED,
+            Q_SHRINK=0.05,
+            MAX_LEVELS=MAX_LEVELS,
+            BATCH_SIZE=BATCH_SIZE,
+            IGNORE_GRADIENT=IGNORE_GRADIENT,
+            STORE_TREE_DATA=STORE_TREE_DATA,
+            PROFILE_TIMING=PROFILE_TIMING,
+            STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
+            STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
+        )
+        # Non-rank-0 MPI workers return None — their work is done.
+        if results is None:
+            return
+
+        centroids = xp.asarray(results["centroids"])
+        f_vals = xp.asarray(results["f"])
+        grads = xp.asarray(results["g"])
+        radii = xp.asarray(results["radii"])
+        Qs = xp.asarray(results["Q"])
+        profiling_stats = results["profiling_stats"]
+        Hs = results.get("H", None)
+        A_fits = results.get("A_fit", None)
+        b_fits = results.get("b_fit", None)
+
+        # 2. Store Data
+        self.X_src = centroids
+        self.f_src = f_vals
+        self.J_src = grads
+        self.trust_radii_src = radii
+        self.Qs_src = Qs
+        self.N_src = centroids.shape[0]
+        self.profiling_stats = profiling_stats
+        if STORE_TREE_DATA:
+            self.tree_data = results["tree_data"]
+        if Hs is not None:
+            self.Hs_src = xp.asarray(Hs)
+        if A_fits is not None and b_fits is not None:
+            self.A_fits_src = xp.asarray(A_fits)
+            self.b_fits_src = xp.asarray(b_fits)
+
+        # 3. Build KNN Index
+        self._build_knn_index()
+
+        # 4. Training complete
+        self.trained = True
+        logger.info(f"Training Time: {time.perf_counter()-t0:.4f}s")
+        logger.info(f"Trained Clusters: {self.N_src:,}")
+
+        # Save model if requested
+        if model_filepath is not None:
+            self.save(model_filepath)
+
+    def save(self, filepath: Union[str, Path]) -> None:
+        """
+        Save the trained model to a file.
+
+        Args:
+            filepath: Path to save the model. If directory, uses default filename.
+        """
+        if not self.trained:
+            raise RuntimeError("Cannot save an untrained model.")
+
+        filepath = Path(filepath)
+
+        # If it's a directory, create a default filename
+        if filepath.is_dir():
+            filepath = filepath / "hatann_surrogate.npz"
+        elif filepath.suffix != ".npz":
+            filepath = filepath.with_suffix(".npz")
+
+        # Create directory if it doesn't exist
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        # Prepare data for saving
+        save_dict = {
+            "trained": self.trained,
+            "N_src": self.N_src,
+            "X_src": _to_host(self.X_src),
+            "f_src": _to_host(self.f_src),
+            "J_src": _to_host(self.J_src),
+            "trust_radii_src": _to_host(self.trust_radii_src),
+            "Qs_src": _to_host(self.Qs_src),
+            "Hs_src": _to_host(self.Hs_src),
+            "A_fits_src": _to_host(self.A_fits_src),
+            "b_fits_src": _to_host(self.b_fits_src),
+            "profiling_stats": self.profiling_stats,
+            "tree_data": self.tree_data,
+        }
+
+        # Save using numpy
+        np.savez_compressed(str(filepath), **save_dict, allow_pickle=True)
+
+        self._model_file = filepath
+        logger.info(f"Model saved to {filepath}")
+
+    @classmethod
+    def load_model(cls, filepath: Union[str, Path]) -> "HATANNSurrogate":
+        """
+        Load a trained model from a file.
+
+        Args:
+            filepath: Path to the saved model file.
+
+        Returns:
+            Loaded HATANNSurrogate instance.
+        """
+        filepath = Path(filepath)
+
+        if not filepath.exists():
+            raise FileNotFoundError(f"Model file not found: {filepath}")
+
+        # Load the data
+        data = np.load(str(filepath), allow_pickle=True)
+
+        # Create instance
+        instance = cls()
+
+        # Restore state & arrays
+        instance.trained = bool(data["trained"])
+        instance.N_src = int(data["N_src"])
+        instance.X_src = _to_device(data["X_src"])
+        instance.f_src = _to_device(data["f_src"])
+        instance.J_src = _to_device(data["J_src"])
+        instance.trust_radii_src = _to_device(data["trust_radii_src"])
+        instance.Qs_src = _to_device(data["Qs_src"])
+        instance.Hs_src = _to_device(data["Hs_src"])
+        instance.A_fits_src = _to_device(data["A_fits_src"])
+        instance.b_fits_src = _to_device(data["b_fits_src"])
+
+        # Convert profiling stats and tree data back to dict/objects if they exist
+        _prof = data["profiling_stats"]
+        instance.profiling_stats = _prof.item() if _prof.size > 0 else {}
+        _td = data["tree_data"]
+        instance.tree_data = _td.item() if _td.size > 0 else None
+
+        instance._model_file = filepath
+        logger.info(f"Model loaded from {filepath}")
+        logger.info(f"Loaded model with {instance.N_src:,} clusters")
+
+        # Rebuild index
+        instance._build_knn_index()
+
+        return instance
+
+    def _build_knn_index(self):
+        """Build the KNN index for the current source centroids."""
+        if self.X_src is None:
+            return
+
+        t0 = time.perf_counter()
+        if IS_CUPY_BACKEND:
+            from cuml.neighbors import NearestNeighbors as cuMLNearestNeighbors
+
+            self.knn_index = cuMLNearestNeighbors(metric="euclidean", algorithm="auto")
+            self.X_src = _to_device(self.X_src)
+            self.knn_index.fit(self.X_src)
+        else:
+            import faiss
+
+            # Ensure data types are correct for FAISS (float32)
+            self.X_src = _to_host(self.X_src)
+            centroids_f32 = self.X_src.astype(np.float32)
+
+            D = self.X_src.shape[1]
+            self.knn_index = faiss.IndexFlatL2(D)
+            self.knn_index.add(centroids_f32)  # type: ignore
+
+        logger.info(f"KNN Index built in {time.perf_counter()-t0:.4f}s")
+
+    def _query_knn(self, query_points: Array, k: int) -> tuple[Array, Array]:
+        """
+        Query the internal KNN index.
+        Returns:
+            indices: (M, k)
+            distances: (M, k) L2 distances
+        """
+        if self.knn_index is None:
+            self._build_knn_index()
+
+        assert self.knn_index is not None, "KNN index is not built."
+
+        # Ensure k doesn't exceed number of centroids
+        k = min(k, self.N_src)
+
+        if IS_CUPY_BACKEND:
+            query_points = _to_device(query_points)
+            distances, indices = self.knn_index.kneighbors(query_points, n_neighbors=k)  # type: ignore
+        else:
+            # FAISS returns squared distances
+            query_points = _to_host(query_points)
+            query_points_f32 = query_points.astype(xp.float32)
+            distances_sq, indices = self.knn_index.search(query_points_f32, k)  # type: ignore
+            distances = xp.sqrt(distances_sq)
+
+        return indices, distances
+
+    def get_source_centroids(self) -> Any:
+        """Return the source centroids used in training."""
+        if not self.trained:
+            raise RuntimeError("Model not trained.")
+        return self.X_src
+
+    def get_trust_regions(self) -> Any:
+        """Return the trust regions for each cluster."""
+        if not self.trained:
+            raise RuntimeError("Model not trained.")
+        return self.Qs_src
+
+    def get_number_of_sources(self) -> int:
+        """Return the number of source centroids used in training."""
+        if not self.trained:
+            raise RuntimeError("Model not trained.")
+        return self.N_src
+
+    def predict(
+        self,
+        query_points,
+        k_nn: int = 1,
+        strict_trust_region: bool = False,
+        use_saved_hessian: bool = False,
+        predict_mode: Literal["taylor", "affine"] = "taylor",
+    ) -> tuple:
+        """
+        Inference via kNN (CPU or GPU) with L2 Distance.
+        """
+        if not self.trained:
+            raise RuntimeError("Model not trained.")
+
+        if use_saved_hessian and self.Hs_src is None:
+            logger.warning("use_saved_hessian=True but Hessians are not computed.")
+
+        if predict_mode == "affine" and (
+            self.A_fits_src is None or self.b_fits_src is None
+        ):
+            raise ValueError(
+                "predict_mode='affine' requested, but affine fit parameters (A, b) "
+                "were not found. Please retrain with STORE_AFFINE_FIT=True."
+            )
+
+        assert (
+            self.X_src is not None
+            and self.Qs_src is not None
+            and self.f_src is not None
+            and self.J_src is not None
+        )
+
+        N, D = query_points.shape
+
+        # --- 1. Coarse L2 Filter ---
+        if k_nn < len(self.X_src):
+            COARSE_FACTOR = 10
+            k_coarse = min(k_nn * COARSE_FACTOR, len(self.X_src))
+            k_nn = min(k_nn, len(self.X_src))
+        else:
+            k_coarse = len(self.X_src)
+            k_nn = len(self.X_src)
+
+        nn_idx_coarse, _ = self._query_knn(query_points, k_coarse)
+
+        Qs_coarse = self.Qs_src[nn_idx_coarse]
+        centroids_coarse = self.X_src[nn_idx_coarse]
+        dx_coarse = query_points[:, None, :] - centroids_coarse
+
+        # --- 2. Compute Q-Distance ---
+        dist_sq_coarse = xp.einsum("nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse)
+
+        # --- 3. Refine: Sort by Q-Distance ---
+        sorted_local_indices = xp.argsort(dist_sq_coarse, axis=1)
+        top_k_local = sorted_local_indices[:, :k_nn]
+
+        # Gather Top-k Data
+        nn_idx = xp.take_along_axis(nn_idx_coarse, top_k_local, axis=1)
+        dist_sq = xp.take_along_axis(dist_sq_coarse, top_k_local, axis=1)
+
+        centroids = self.X_src[nn_idx]
+        dx = query_points[:, None, :] - centroids
+
+        # --- 4. Validity & Weights ---
+        dist = xp.sqrt(dist_sq)
+
+        # A. Calculate STRICT status (for the mask only)
+        # We check if points would have been zeroed out under strict rules.
+        valid_mask_strict = dist_sq <= 1.0
+        weights_strict = xp.maximum(0.0, 1.0 - dist) ** 2
+        weights_strict *= valid_mask_strict
+
+        # If strict sum is effectively 0, the point is "unguaranteed"
+        total_weight_strict = xp.sum(weights_strict, axis=1)
+        unguaranteed_mask = total_weight_strict < 1e-12
+
+        # B. Determine Final Weights for Prediction
+        if strict_trust_region:
+            final_weights = weights_strict
+            total_weight = total_weight_strict
+        else:
+            # Simple Average: Set all weights to 1.0
+            final_weights = xp.ones_like(dist_sq)
+            total_weight = xp.sum(final_weights, axis=1)
+
+        # --- 5. Prediction Calculation ---
+        F_dim = self.f_src.shape[1] if self.f_src.ndim > 1 else 1
+        flat_idx = nn_idx.reshape(-1)
+
+        if predict_mode == "taylor":
+            f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(N, k_nn, F_dim)
+            J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(N, k_nn, F_dim, D)
+
+            linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
+            predictions_k = f_neighbors + linear_term
+
+            # Increase accuracy via Hessian (if selected by user)
+            if use_saved_hessian and self.Hs_src is not None:
+                H_neighbors = xp.asarray(self.Hs_src)[flat_idx].reshape(
+                    N, k_nn, F_dim, D, D
+                )
+                quadratic_term = xp.einsum("nkc,nkfcd,nkd->nkf", dx, H_neighbors, dx)
+                predictions_k += 0.5 * quadratic_term
+
+        elif predict_mode == "affine":
+            A_neighbors = xp.asarray(self.A_fits_src)[flat_idx].reshape(
+                N, k_nn, F_dim, D
+            )
+            b_neighbors = xp.asarray(self.b_fits_src)[flat_idx].reshape(N, k_nn, F_dim)
+
+            # affine_term applies the correct A matrix to the query point (x_q), NOT dx.
+            affine_term = xp.einsum("nkfd,nd->nkf", A_neighbors, query_points)
+            predictions_k = affine_term + b_neighbors
+
+        else:
+            raise ValueError(
+                f"Unknown predict_mode: '{predict_mode}'. Use 'taylor' or 'affine'."
+            )
+
+        # --- 6. Averaging ---
+        weights_expanded = final_weights[:, :, None]
+        weighted_preds = predictions_k * weights_expanded
+
+        # If strict=True and total_weight is 0 -> Predict 0.0 (safe fallback)
+        # If strict=False, total_weight is k -> Simple Mean
+        predictions = xp.sum(weighted_preds, axis=1) / (total_weight[:, None] + 1e-12)
+
+        return predictions, unguaranteed_mask
+
+
+def compute_error_metrics(
+    preds, gt, ug_mask, tol: float, return_ptwise_error_arrays: bool = False
+) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Array]]:
+    """
+    Compute error metrics for the predictions.
+
+    Args:
+        preds: Predicted values (N, F_dim)
+        gt: True values (N, F_dim)
+        ug_mask: Boolean array indicating which points are unguaranteed (N,)
+        tol: Tolerance for determining "good" vs "bad" points among the guaranteed ones.
+            return_ptwise_error_arrays: If True, also return the pointwise relative error arrays.
+
+    Returns:
+        Dictionary of error metrics.
+    """
+    TINY_EPS = 1e-12
+
+    n_test = gt.shape[0]
+    n_out = xp.sum(ug_mask)
+    n_in = n_test - n_out
+
+    good_idx = ~ug_mask
+
+    if n_in > 0:
+        # 1. Filter to guaranteed points
+        gt_in = gt[good_idx]
+        preds_in = preds[good_idx]
+        diff = preds_in - gt_in
+        norm_diff = xp.linalg.norm(diff)
+        norm_gt = xp.linalg.norm(gt_in)
+
+        in_l2_rel_error = float(norm_diff / (norm_gt + TINY_EPS))
+        in_l2_abs_error = float(norm_diff / xp.sqrt(n_in))
+
+        element_rel_error = xp.abs(diff) / (xp.abs(gt_in) + TINY_EPS)
+        if element_rel_error.ndim > 1:
+            # Vector Case: A point is "good" only if ALL components are good.
+            # Equivalently, the point error is the MAX error across components.
+            ptwise_rel_error = xp.max(element_rel_error, axis=1)  # Shape: (N_in,)
+        else:
+            # Scalar Case: Just take the element-wise relative error.
+            ptwise_rel_error = element_rel_error  # Shape: (N_in,)
+
+        in_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error))
+        in_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error))
+
+        n_in_good = int(xp.sum(ptwise_rel_error <= tol))
+        n_in_bad = int(n_in - n_in_good)
+    else:
+        in_l2_rel_error = float("nan")
+        in_l2_abs_error = float("nan")
+        in_ptwise_max_rel_error_linf = float("nan")
+        in_ptwise_median_rel_error_linf = float("nan")
+        n_in_good = 0
+        n_in_bad = 0
+
+    if n_out > 0:
+        gt_out = gt[ug_mask]
+        preds_out = preds[ug_mask]
+        diff_out = preds_out - gt_out
+        norm_diff_out = xp.linalg.norm(diff_out)
+        norm_gt_out = xp.linalg.norm(gt_out)
+
+        out_l2_rel_error = float(norm_diff_out / (norm_gt_out + TINY_EPS))
+        out_l2_abs_error = float(norm_diff_out / xp.sqrt(n_out))
+
+        element_rel_error_out = xp.abs(diff_out) / (xp.abs(gt_out) + TINY_EPS)
+        if element_rel_error_out.ndim > 1:
+            ptwise_rel_error_out = xp.max(element_rel_error_out, axis=1)
+        else:
+            ptwise_rel_error_out = element_rel_error_out
+
+        out_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error_out))
+        out_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error_out))
+    else:
+        out_l2_rel_error = float("nan")
+        out_l2_abs_error = float("nan")
+        out_ptwise_max_rel_error_linf = float("nan")
+        out_ptwise_median_rel_error_linf = float("nan")
+
+    # Metrics for all points
+    diff_all = preds - gt
+    norm_diff_all = xp.linalg.norm(diff_all)
+    norm_gt_all = xp.linalg.norm(gt)
+
+    all_l2_rel_error = float(norm_diff_all / (norm_gt_all + TINY_EPS))
+    all_l2_abs_error = float(norm_diff_all / xp.sqrt(n_test))
+    element_rel_error_all = xp.abs(diff_all) / (xp.abs(gt) + TINY_EPS)
+    if element_rel_error_all.ndim > 1:
+        ptwise_rel_error_all = xp.max(element_rel_error_all, axis=1)
+    else:
+        ptwise_rel_error_all = element_rel_error_all
+    all_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error_all))
+    all_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error_all))
+
+    # Calculate percentages
+    perct_out = 100.0 * n_out / n_test
+    perct_in_good = 100.0 * n_in_good / n_test
+    perct_in_bad = 100.0 * n_in_bad / n_test
+
+    # Create error metrics dictionary
+    error_metrics = {
+        "n_test": int(n_test),
+        "n_out": int(n_out),
+        "perct_out": perct_out,
+        "n_in_good": n_in_good,
+        "perct_in_good": perct_in_good,
+        "n_in_bad": n_in_bad,
+        "perct_in_bad": perct_in_bad,
+        "all": {
+            "l2_rel_error": all_l2_rel_error,
+            "l2_abs_error": all_l2_abs_error,
+            "ptwise_max_rel_error_linf": all_ptwise_max_rel_error_linf,
+            "ptwise_median_rel_error_linf": all_ptwise_median_rel_error_linf,
+        },
+        "in": {
+            "l2_rel_error": in_l2_rel_error,
+            "l2_abs_error": in_l2_abs_error,
+            "ptwise_max_rel_error_linf": in_ptwise_max_rel_error_linf,
+            "ptwise_median_rel_error_linf": in_ptwise_median_rel_error_linf,
+        },
+        "out": {
+            "l2_rel_error": out_l2_rel_error,
+            "l2_abs_error": out_l2_abs_error,
+            "ptwise_max_rel_error_linf": out_ptwise_max_rel_error_linf,
+            "ptwise_median_rel_error_linf": out_ptwise_median_rel_error_linf,
+        },
+    }
+    if not return_ptwise_error_arrays:
+        return error_metrics
+    else:
+        return error_metrics, {
+            "all": _to_host(ptwise_rel_error_all),
+            "in": _to_host(ptwise_rel_error),
+            "out": _to_host(ptwise_rel_error_out),
+        }
+
+
+if __name__ == "__main__":
+    import argparse
+    from functools import partial
+
+    import matplotlib.pyplot as plt
+
+    from src import FIGURES_DIR, _get_mpi_rank
+    from src.data_sampler import DataSampler
+    from src.logging_utils import setup_logging
+    from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
+
+    setup_logging(console_level=logging.DEBUG, file_output=True)
+
+    SURR_EXP_DIR = FIGURES_DIR / "surrogate_experiments"
+    SURR_EXP_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Parse Args
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dim", type=int, default=2, help="Dimensionality of the problem"
+    )
+    parser.add_argument(
+        "--tol", type=float, default=5e-2, help="Tolerance for training and evaluation"
+    )
+    parser.add_argument(
+        "--n-train", type=float, default=400_000, help="Number of training samples"
+    )
+    parser.add_argument(
+        "--n-test", type=int, default=100_000, help="Number of test samples"
+    )
+    parser.add_argument(
+        "--n-init-clusters",
+        type=int,
+        default=30,
+        help="Number of initial clusters for adaptive clustering",
+    )
+    parser.add_argument(
+        "--n-min-per-cluster",
+        type=int,
+        default=100,
+        help="Minimum points per cluster for adaptive clustering",
+    )
+    parser.add_argument(
+        "--error-eval-mode",
+        type=str,
+        default="taylor",
+        choices=["taylor", "affine"],
+        help="Method for evaluating cluster error (Taylor expansion vs affine fit)",
+    )
+    parser.add_argument(
+        "--error-metric",
+        type=str,
+        default="Linf-local",
+        choices=["L2", "Linf-local", "Linf-global"],
+        help="Error metric for adaptive clustering",
+    )
+    parser.add_argument(
+        "--clustering-matrix",
+        type=str,
+        default="Hessian_LSQ",
+        choices=["Hessian_LSQ", "Cov_Lvl_curves", "None"],
+        help="Matrix for spectral clustering of 'Bad' clusters",
+    )
+    parser.add_argument(
+        "--k-neighbours", type=int, default=1, help="Number of neighbors for kNN"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=0, help="Random seed for training data sampling"
+    )
+    parser.add_argument(
+        "--rosenbrock-a", type=float, default=100, help="Rosenbrock 'a' parameter"
+    )
+    parser.add_argument(
+        "-f", "--force", action="store_true", help="Force re-computation of results"
+    )
+    parser.add_argument(
+        "-dlm",
+        "--do-not-load-model",
+        action="store_true",
+        help="Whether to not load from existing model file (forces retraining even if cache exists)",
+    )
+
+    # Parse arguments
+    args = parser.parse_args()
+    DIM = args.dim
+    TOL = args.tol
+    N_train = int(args.n_train)
+    N_test = args.n_test
+    N_INIT_CLUSTERS = args.n_init_clusters
+    N_MIN_PER_CLUSTER = args.n_min_per_cluster
+    ERROR_EVAL_MODE = args.error_eval_mode
+    ERROR_METRIC = args.error_metric
+    CLUSTERING_MATRIX = args.clustering_matrix
+    K_NEIGHBOURS = args.k_neighbours
+    SEED = args.seed
+    A_ROSENBROCK = args.rosenbrock_a
+    FORCE_RECOMPUTE = args.force
+    DO_NOT_LOAD_MODEL = args.do_not_load_model
+
+    # Creat partial Rosenbrock functions
+    rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
+    rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
+
+    img_fpath = (
+        SURR_EXP_DIR
+        / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_{ERROR_EVAL_MODE}_{ERROR_METRIC}_{CLUSTERING_MATRIX}_dim{DIM}_tol{TOL:.1e}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
+    )
+    json_fpath = img_fpath.with_suffix(".json")
+
+    # 1. Setup Domain
+    domain = xp.array([[-3, 3] * DIM]).reshape(DIM, 2)
+
+    # Sample Training Data only on rank 0.
+    # Non-zero ranks pass None — adaptive_clustering_mpi only accesses X on rank 0,
+    # then scatters partitions internally. No broadcast needed.
+    if _get_mpi_rank() == 0:
+        X_train = xp.asarray(
+            DataSampler.sample_latin_hypercube(domain, N=N_train, seed=SEED)
+        )
+        print("--- Training ---")
+    else:
+        X_train = None
+
+    # 2. Initialize Surrogate
+    surrogate = HATANNSurrogate()
+    _start_train_time = time.perf_counter()
+
+    # Use save/load functionality - will load from cache if exists, otherwise train and save
+    model_cache_path = (
+        SURR_EXP_DIR
+        / f"cached_model_rosen{A_ROSENBROCK}_{ERROR_EVAL_MODE}_{ERROR_METRIC}_{CLUSTERING_MATRIX}_dim{DIM}_tol{TOL:.1e}_Ntrain{N_train}_clusters{N_INIT_CLUSTERS}.npz"
+    )
+
+    surrogate.train(
+        X_train=X_train,
+        f_fn=rosenbrock,
+        g_fn=rosenbrock_grad,
+        save_model=model_cache_path,
+        load_if_exists=not DO_NOT_LOAD_MODEL,
+        TOL=TOL,
+        ERROR_EVAL_MODE=ERROR_EVAL_MODE,
+        ERROR_METRIC=ERROR_METRIC,
+        CLUSTERING_MATRIX=CLUSTERING_MATRIX,
+        NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
+        MAX_CLUSTERS_EST=50_000,
+        SEED=SEED,
+        PROFILE_TIMING=True,
+        STORE_TREE_DATA=False,
+        STORE_AFFINE_FIT=True,
+    )
+    _end_train_time = time.perf_counter()
+
+    # Only rank 0 has a trained model; other MPI workers exit cleanly here.
+    if _get_mpi_rank() != 0:
+        raise SystemExit(0)
+
+    N_CLUSTERS = surrogate.get_number_of_sources()
+    print(
+        f"Trained with {N_CLUSTERS:,} clusters in {_end_train_time - _start_train_time:.2f}s"
+    )
+
+    # 4. Evaluate
+    print("\n--- Evaluation ---")
+    X_test = DataSampler.sample_uniform(domain, N=N_test, seed=SEED)
+    X_test = xp.asarray(X_test)
+
+    # Example utilizing the new signature with Guarantee checks
+    _start_predict_time = time.perf_counter()
+    preds, ungauranteed_mask = surrogate.predict(
+        X_test,
+        k_nn=K_NEIGHBOURS,
+        predict_mode=ERROR_EVAL_MODE,
+    )
+    _end_predict_time = time.perf_counter()
+    print(
+        f"Predicted {N_test:,} test points in {_end_predict_time - _start_predict_time:.2f}s"
+    )
+
+    ground_truth = rosenbrock(X_test)
+    error_metrics, ptwise_error_arrays = compute_error_metrics(
+        preds, ground_truth, ungauranteed_mask, tol=TOL, return_ptwise_error_arrays=True
+    )
+
+    rel_error_linf = ptwise_error_arrays["in"]  # type: ignore
+    n_out = error_metrics["n_out"]  # type: ignore
+    perct_out = error_metrics["perct_out"]  # type: ignore
+    n_in_good = error_metrics["n_in_good"]  # type: ignore
+    perct_in_good = error_metrics["perct_in_good"]  # type: ignore
+    n_in_bad = error_metrics["n_in_bad"]  # type: ignore
+    perct_in_bad = error_metrics["perct_in_bad"]  # type: ignore
+
+    plt.figure(figsize=(8, 5))
+    plt.hist(rel_error_linf, bins=50, log=True)
+    plt.xlabel("Relative Error (log scale)")
+    plt.ylabel("Frequency (log scale)")
+    plt.title(
+        f"NearODESurrogate RelError ({ERROR_EVAL_MODE}, {ERROR_METRIC} {CLUSTERING_MATRIX}) (Rosenbrock: a={A_ROSENBROCK}) (dim={DIM}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_out={n_out} ({perct_out:.2f}%))",
+        fontsize=7,
+    )
+    plt.axvline(
+        x=TOL,
+        color="red",
+        linestyle="--",
+        label=f"TOL={TOL:.1e} | N_in_good={int(n_in_good)} ({perct_in_good:.2f}%) | N_in_bad={int(n_in_bad)} ({perct_in_bad:.2f}%)",
+    )
+    plt.legend()
+    plt.xscale("log")
+    plt.grid(True)
+    plt.savefig(img_fpath, dpi=300)
+    print(f"Saved relative error histogram to {img_fpath}")
+
+    json_data_dict = {
+        "rosenbrock_a": A_ROSENBROCK,
+        "dim": DIM,
+        "tol": TOL,
+        "n_train": N_train,
+        "n_test": N_test,
+        "n_clusters": surrogate.N_src,
+        "error_eval_mode": ERROR_EVAL_MODE,
+        "error_metric": ERROR_METRIC,
+        "clustering_matrix": CLUSTERING_MATRIX,
+        "k_neighbours": K_NEIGHBOURS,
+        "train_time_sec": float(_end_train_time - _start_train_time),
+        "predict_time_sec": float(_end_predict_time - _start_predict_time),
+        "profiling_stats": surrogate.profiling_stats,
+        "error_metrics": error_metrics,
+    }
+
+    with open(json_fpath, "w") as json_file:
+        json.dump(json_data_dict, json_file, indent=4)
+    print(f"Saved results to {json_fpath}")

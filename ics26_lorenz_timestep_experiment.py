@@ -1,27 +1,22 @@
 from functools import partial
 from itertools import product
 from pathlib import Path
+
 from tqdm import tqdm
+
+from _experiments.ics_deprecated.surrogate import HATANNSurrogate
 from experiments_utils import (
     ICS26_DIR,
     Problem_experiment_setup,
     create_summary_dataframe,
     del_all_error_files_in_dir,
 )
-from src.problems.lorenz96_flowmap import (
-    lorenz96_flowmap,
-    lorenz96_flowmap_grad
-)
-from ics26_experiments import (
-    get_N_TRAIN,
-    get_N_INIT_CLUSTERS,
-    get_N_MIN_PER_CLUSTER
-)
+from ics26_experiments import get_N_INIT_CLUSTERS, get_N_MIN_PER_CLUSTER, get_N_TRAIN
 from src import IS_CUPY_BACKEND, RESULTS_DIR, Array, xp
-from src.surrogate import HATANNSurrogate
-
+from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 
 # Helper functions
+
 
 def generate_training_data_along_trajectories(seed, f, N_train, N_timesteps):
 
@@ -41,18 +36,17 @@ def generate_training_data_along_trajectories(seed, f, N_train, N_timesteps):
     return X_train
 
 
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
 
     # Chaining together multiple time steps.
     from src.logging_utils import setup_logging
+
     setup_logging()
 
     # Parameters for surrogate training
     DIM = 5
     TOL = 0.02
-    ERROR_METRIC = 'Linf-global'
+    ERROR_METRIC = "Linf-global"
     DOMAIN = [-5.0, 5.0]
     SEED = 0
     FORCING = 1
@@ -79,16 +73,20 @@ if __name__ == '__main__':
     def grad_f_full(x):
         return lorenz96_flowmap_grad(x, FORCING, DT)
 
-
     # 1. Generate training data for surrogate (uniform along trajectories)
-    X_train = generate_training_data_along_trajectories(SEED, f_full, N_TRAIN, N_TIMESTEPS)
+    X_train = generate_training_data_along_trajectories(
+        SEED, f_full, N_TRAIN, N_TIMESTEPS
+    )
 
     # 2. Train surrogate
     # We choose to train d one-d output surrogates, as it seems to scale better in practice.
-    surrogates = [HATANNSurrogate(version='v2') for _ in range(DIM)]
+    surrogates = [HATANNSurrogate(version="v2") for _ in range(DIM)]
     for i in range(DIM):
-        lorenz_path = Path.cwd() / 'lorenz_surrogates'
-        model_path = lorenz_path / f"lorenz96_dim{DIM}_F{FORCING}_tol{TOL}_tf{DT}_outputvar_{i}.npz"
+        lorenz_path = Path.cwd() / "lorenz_surrogates"
+        model_path = (
+            lorenz_path
+            / f"lorenz96_dim{DIM}_F{FORCING}_tol{TOL}_tf{DT}_outputvar_{i}.npz"
+        )
         surrogates[i].train(
             X_train=X_train,
             f_fn=lambda x: f(x, i),
@@ -102,10 +100,10 @@ if __name__ == '__main__':
             USE_HESSIAN_INFORMED_SPLIT=True,
             IGNORE_GRADIENT=False,
             save_model=model_path,
-            load_if_exists=True
+            load_if_exists=True,
         )
 
-    '''
+    """
     # 3. Each surrogate is trained. Pick some initial points.
     # First, parameters for testing
     N_TRAJECTORIES = 100
@@ -139,4 +137,4 @@ if __name__ == '__main__':
     directory = ICS26_DIR / 'lorenz_successive_timestep_data'
     directory.mkdir(parents=True, exist_ok=True)
     xp.savez(directory / 'trajectory_data.npz', exact=yvec_exact, surrogate=yvec_surrogate)
-    '''
+    """

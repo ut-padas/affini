@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+from _experiments.ics_deprecated.surrogate import DataSampler, HATANNSurrogate
 from src.logging_utils import log_mem_stats
 from src.problems.affine import AFFINE_DATA_DIM, AFFINE_F_DIM, affine, affine_grad
 from src.problems.borehole import borehole, borehole_grad
@@ -20,7 +21,6 @@ from src.problems.six_hump_camelback import (
     six_hump_camelback_grad,
     six_hump_camelback_hess,
 )
-from src.surrogate import DataSampler, HATANNSurrogate
 from src.utils import get_matrix_2_norm
 
 logger = logging.getLogger(__name__)

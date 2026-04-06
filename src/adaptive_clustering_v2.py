@@ -7,9 +7,7 @@ import numpy as np
 from mpi4py import MPI
 
 from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _get_mpi_size, _to_host, xp
-from src.logging_utils import log_mem_stats
-from src.utils import repeats
-from utils import (
+from src.adaptive_clustering_utils import (
     ClusteringConfig,
     CudaTimer,
     SurrogateMode,
@@ -22,6 +20,8 @@ from utils import (
     split_rejected_clusters,
     uniform_grid_cluster_labels,
 )
+from src.logging_utils import log_mem_stats
+from src.utils import repeats
 
 logger = logging.getLogger(__name__)
 TINY_EPS = 1e-12
@@ -316,11 +316,8 @@ def _run_local_refinement(
             }
         )
 
-        with CudaTimer("time_find_req_synth", profiling_stats, PROFILE_TIMING):
-            level_augmented_sizes = xp.maximum(CLUSTER_SIZES, MIN_PTS_PER_CLUSTER)
-            level_total_aug_pts = int(xp.sum(level_augmented_sizes))
-
-        aug_sizes_cpu = _to_host(level_augmented_sizes)
+        level_total_pts = int(xp.sum(CLUSTER_SIZES))
+        aug_sizes_cpu = _to_host(CLUSTER_SIZES)
         aug_cumsum_cpu = np.cumsum(aug_sizes_cpu)
 
         (
@@ -330,7 +327,7 @@ def _run_local_refinement(
             next_level_sizes_list,
         ) = ([], [], [], [])
 
-        num_batches = level_total_aug_pts // BATCH_SIZE + 1
+        num_batches = level_total_pts // BATCH_SIZE + 1
         start_cluster_idx = 0
         K_good = 0
 
@@ -417,7 +414,6 @@ def _run_local_refinement(
                         CLUSTER_SIZES = CLUSTER_SIZES[:split_idx]
                         CLUSTER_STARTS = CLUSTER_STARTS[:split_idx]
 
-                        level_augmented_sizes = level_augmented_sizes[:split_idx]
                         aug_sizes_cpu = aug_sizes_cpu[:split_idx]
                         aug_cumsum_cpu = aug_cumsum_cpu[:split_idx]
 
@@ -462,79 +458,15 @@ def _run_local_refinement(
                 )
                 starts_local_shifted = starts_local - slice_start
 
-            with CudaTimer("time_synth_gen", profiling_stats, PROFILE_TIMING):
-                aug_sizes = level_augmented_sizes[start_cluster_idx:end_cluster_idx]
-                aug_total = int(xp.sum(aug_sizes))
-                K_batch = len(aug_sizes)
+            aug_sizes = sizes
+            K_batch = len(sizes)
 
-                X_batch = xp.empty((aug_total, d), dtype=xp.float64)
-                F_batch = xp.empty((aug_total, fd), dtype=xp.float64)
-                G_batch = (
-                    xp.empty((aug_total, fd, d), dtype=xp.float64)
-                    if config.requires_grad_everywhere
-                    else None
-                )
+            X_batch = pts
+            F_batch = f_vals
+            G_batch = g_vals
 
-                aug_starts = xp.r_[0, xp.cumsum(aug_sizes)[:-1]]
-                aug_ids = repeats(xp.arange(K_batch), aug_sizes)
-
-                pt_idxs_in_cluster = (
-                    xp.arange(aug_total, dtype=xp.int32) - aug_starts[aug_ids]
-                )
-                is_real = pt_idxs_in_cluster < sizes[aug_ids]
-                X_batch[is_real] = pts
-                F_batch[is_real] = f_vals
-                if G_batch is not None and g_vals is not None:
-                    G_batch[is_real] = g_vals
-
-                is_synth = ~is_real
-                num_synth = int(xp.sum(is_synth))
-                num_generated_pts += num_synth
-                if num_synth > 0:
-                    if LOG_MEM_STATS:
-                        log_mem_stats(
-                            f" R{rank:02} L{level:02} B{b:02}/{num_batches:02}: Start Augmentation"
-                        )
-                    synth_c_ids = aug_ids[is_synth]
-                    rng = xp.random.default_rng(SEED + level + b + rank * 1000)
-
-                    c_starts = starts_local_shifted[synth_c_ids]
-                    c_counts = sizes[synth_c_ids]
-                    rand1 = (rng.random(num_synth) * c_counts).astype(xp.int64)
-                    rand2 = (rng.random(num_synth) * (c_counts - 1)).astype(
-                        xp.int64
-                    ) + 1
-                    idx1 = c_starts + rand1
-                    idx2 = c_starts + (rand1 + rand2) % c_counts
-
-                    p1 = pts[idx1]
-                    p2 = pts[idx2]
-                    alpha = rng.random((num_synth, 1)).astype(xp.float64)
-                    X_synth_vals = p1 * alpha + p2 * (1.0 - alpha)
-                    X_batch[is_synth] = X_synth_vals
-
-                    if oracle_fn is not None:
-                        if CLUSTER_G is None or G_batch is None:
-                            assert f_fn
-                            F_syn = f_fn(X_synth_vals)
-                            F_batch[is_synth] = convert_to_2d_array(F_syn)
-                        else:
-                            F_syn, G_syn = oracle_fn(X_synth_vals)
-                            F_batch[is_synth] = convert_to_2d_array(F_syn)
-                            G_batch[is_synth] = convert_to_3d_array(G_syn)
-                    else:
-                        assert f_fn is not None
-                        F_batch[is_synth] = convert_to_2d_array(f_fn(X_synth_vals))
-                        if CLUSTER_G is not None and G_batch is not None:
-                            assert g_fn is not None
-                            G_batch[is_synth] = convert_to_3d_array(g_fn(X_synth_vals))
-
-                    total_f_evals += X_synth_vals.shape[0]
-
-            if LOG_MEM_STATS:
-                log_mem_stats(
-                    f" R{rank:02} L{level:02} B{b:02}/{num_batches:02}: After Augmentation"
-                )
+            aug_starts = starts_local_shifted
+            aug_ids = repeats(xp.arange(K_batch), sizes)
 
             with CudaTimer("time_error_calc", profiling_stats, PROFILE_TIMING):
                 mus = xp.add.reduceat(X_batch, aug_starts) / aug_sizes[:, None]
@@ -675,7 +607,91 @@ def _run_local_refinement(
                         else None
                     )
                     bad_counts = aug_sizes[bad_idx_local]
-                    dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
+
+                    # --- NEW: Dynamically augment bad clusters before splitting ---
+                    target_bad_counts = xp.where(
+                        bad_counts < 2 * MIN_PTS_PER_CLUSTER,
+                        xp.maximum(2 * bad_counts, 2 * MIN_PTS_PER_CLUSTER),
+                        bad_counts,
+                    )
+
+                    total_target_pts = int(xp.sum(target_bad_counts))
+
+                    X_bad_aug = xp.empty((total_target_pts, d), dtype=xp.float64)
+                    F_bad_aug = xp.empty((total_target_pts, fd), dtype=xp.float64)
+                    G_bad_aug = (
+                        xp.empty((total_target_pts, fd, d), dtype=xp.float64)
+                        if G_bad is not None
+                        else None
+                    )
+
+                    target_starts = xp.r_[0, xp.cumsum(target_bad_counts)[:-1]]
+                    aug_dense_labels_bad = repeats(xp.arange(n_bad), target_bad_counts)
+
+                    # Map indices to interleave original and synthetic points correctly
+                    pt_idxs_in_cluster = (
+                        xp.arange(total_target_pts, dtype=xp.int32)
+                        - target_starts[aug_dense_labels_bad]
+                    )
+                    is_orig = pt_idxs_in_cluster < bad_counts[aug_dense_labels_bad]
+
+                    # Copy original points over
+                    X_bad_aug[is_orig] = X_bad
+                    F_bad_aug[is_orig] = F_bad
+                    if G_bad is not None and G_bad_aug is not None:
+                        G_bad_aug[is_orig] = G_bad
+
+                    is_synth = ~is_orig
+                    num_synth = int(xp.sum(is_synth))
+
+                    if num_synth > 0:
+                        num_generated_pts += num_synth
+                        synth_c_ids = aug_dense_labels_bad[is_synth]
+                        rng = xp.random.default_rng(SEED + level + b + rank * 1000)
+
+                        bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
+                        c_starts_synth = bad_starts[synth_c_ids]
+                        c_counts_synth = bad_counts[synth_c_ids]
+
+                        rand1 = (rng.random(num_synth) * c_counts_synth).astype(
+                            xp.int64
+                        )
+                        rand2 = (rng.random(num_synth) * (c_counts_synth - 1)).astype(
+                            xp.int64
+                        ) + 1
+
+                        idx1 = c_starts_synth + rand1
+                        idx2 = c_starts_synth + (rand1 + rand2) % c_counts_synth
+
+                        p1 = X_bad[idx1]
+                        p2 = X_bad[idx2]
+                        alpha = rng.random((num_synth, 1)).astype(xp.float64)
+                        X_synth_vals = p1 * alpha + p2 * (1.0 - alpha)
+
+                        X_bad_aug[is_synth] = X_synth_vals
+
+                        # Evaluate F and G for synthetic points
+                        if oracle_fn is not None:
+                            if G_bad is None:
+                                assert f_fn
+                                F_syn = f_fn(X_synth_vals)
+                                F_bad_aug[is_synth] = convert_to_2d_array(F_syn)
+                            else:
+                                assert G_bad_aug is not None
+                                F_syn, G_syn = oracle_fn(X_synth_vals)
+                                F_bad_aug[is_synth] = convert_to_2d_array(F_syn)
+                                G_bad_aug[is_synth] = convert_to_3d_array(G_syn)
+                        else:
+                            assert f_fn
+                            F_bad_aug[is_synth] = convert_to_2d_array(
+                                f_fn(X_synth_vals)
+                            )
+                            if g_fn and G_bad_aug is not None:
+                                G_bad_aug[is_synth] = convert_to_3d_array(
+                                    g_fn(X_synth_vals)
+                                )
+
+                        total_f_evals += num_synth
 
                     # ==========================================
                     # MATH PIPELINE STAGE 3
@@ -685,25 +701,27 @@ def _run_local_refinement(
                     }
                     sort_order = split_rejected_clusters(
                         config,
-                        X_bad,
-                        F_bad,
-                        G_bad,
+                        X_bad_aug,
+                        F_bad_aug,
+                        G_bad_aug,
                         mus[bad_idx_local],
                         f_mus[bad_idx_local],
-                        dense_labels_bad,
-                        bad_counts,
+                        aug_dense_labels_bad,
+                        target_bad_counts,
                         MIN_PTS_PER_CLUSTER,
                         bad_surrogate_params,
                     )
 
                 with CudaTimer("time_bad_d2h", profiling_stats, PROFILE_TIMING):
-                    next_level_X_list.append(_to_host(X_bad[sort_order]))
-                    next_level_F_list.append(_to_host(F_bad[sort_order]))
-                    if config.requires_grad_everywhere and G_bad is not None:
-                        next_level_G_list.append(_to_host(G_bad[sort_order]))
+                    # Append the sorted augmented arrays
+                    next_level_X_list.append(_to_host(X_bad_aug[sort_order]))
+                    next_level_F_list.append(_to_host(F_bad_aug[sort_order]))
+                    if config.requires_grad_everywhere and G_bad_aug is not None:
+                        next_level_G_list.append(_to_host(G_bad_aug[sort_order]))
 
-                    half = bad_counts // 2
-                    other = bad_counts - half
+                    # Split the new target counts
+                    half = target_bad_counts // 2
+                    other = target_bad_counts - half
                     new_sz = xp.zeros(2 * n_bad, dtype=xp.int64)
                     new_sz[0::2] = half
                     new_sz[1::2] = other
@@ -1256,12 +1274,12 @@ if __name__ == "__main__":
     USE_WORK_STEALING = True
     ERROR_METRIC = "Linf-local"
     INITIAL_CLUSTERING_METHOD = "uniform_grid"
-    ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV
+    ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS
 
     # Scale initial clusters with dimension for better
     NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
 
-    OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_experimental"
+    OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_experimental_v2"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     img_fpath = (

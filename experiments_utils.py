@@ -9,9 +9,9 @@ import pandas as pd
 from matplotlib.colors import LogNorm
 from matplotlib.patches import Ellipse
 
+from _experiments.ics_deprecated.surrogate import HATANNSurrogate
 from src import IS_CUPY_BACKEND, RESULTS_DIR, Array, xp
 from src.logging_utils import capture_evaluations
-from src.surrogate import HATANNSurrogate
 
 ICS26_DIR = RESULTS_DIR / "ics26"
 ICS26_DIR.mkdir(parents=True, exist_ok=True)
@@ -372,7 +372,9 @@ def Problem_experiment_setup(
     MAX_CLUSTERS_EST: int,
     N_TEST: int,
     K_NEIGHBOURS: int,
-    CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"] = "Hessian_LSQ",
+    CLUSTERING_MATRIX: Literal[
+        "Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"
+    ] = "Hessian_LSQ",
     oracle_fn: Optional[Callable] = None,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     SAMPLING: Literal["Uniform", "Trajectories"] = "Uniform",
@@ -535,7 +537,7 @@ def Problem_experiment_setup(
             X_test,
             k_nn=K_NEIGHBOURS,
             strict_trust_region=False,
-            use_saved_hessian=USE_HESSIAN_FOR_INFERENCE
+            use_saved_hessian=USE_HESSIAN_FOR_INFERENCE,
         )
         _end_predict_time = time.perf_counter()
         _PREDICTED = True

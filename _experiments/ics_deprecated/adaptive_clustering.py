@@ -7,56 +7,51 @@ import numpy as np
 from mpi4py import MPI
 from sklearn.cluster import KMeans
 
-from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _get_mpi_size, _to_host, xp
-from src.adaptive_clustering_utils import (
+from _experiments.ics_deprecated.adaptive_clustering_utils import (
     CudaTimer,
     adjust_buffer_capacity_host,
     allocate_output_buffers_host,
     convert_to_2d_array,
     convert_to_3d_array,
     get_n_smallest_per_block,
+    run_fused_linear_surrogate_comp_abs,
+    run_fused_linear_surrogate_metric,
     run_fused_metrics,
     run_fused_q_dist,
     run_fused_score,
     run_fused_stats,
-    run_fused_taylor_comp_abs,
-    run_fused_taylor_metric,
     scatter_maximum_1d,
     uniform_grid_cluster_labels,
 )
+from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _get_mpi_size, _to_host, xp
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
 
 logger = logging.getLogger(__name__)
 TINY_EPS = 1e-12
 
-# --- Custom MPI Tags for Decentralized Work-Stealing ---
-TAG_STATE_BROADCAST = 101
-TAG_STEAL_REQ = 102
-TAG_STEAL_GRANT = 103
-TAG_STEAL_DENY = 104
-TAG_TERM = 105
 
-# --- Work-Stealing Tuning Parameters ---
-MIN_LOAD_THRESHOLD = 2_000_000  # Min points to be eligible for stealing
-STEAL_SIZE = 600_000  # Target point count to steal
-
-SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
-
-
+# ---------------------------------------------------------------------------
+# Local BFS refinement loop (shared by each MPI rank)
+# ---------------------------------------------------------------------------
 def _run_local_refinement(
-    CLUSTER_PTS,
-    CLUSTER_F,
-    CLUSTER_G,
-    CLUSTER_SIZES,
-    CLUSTER_STARTS,
-    F_max_global,
+    # Initial sorted GPU arrays for this rank's partition
+    CLUSTER_PTS,  # (N_local, d)
+    CLUSTER_F,  # (N_local, fd)
+    CLUSTER_G,  # (N_local, fd, d)
+    CLUSTER_SIZES,  # (K_local,)
+    CLUSTER_STARTS,  # (K_local,)
+    F_max_global,  # (fd,)  frozen global scale broadcast from rank 0
+    # Dimensions
     d: int,
     fd: int,
+    # Oracles
     f_fn,
     g_fn,
     oracle_fn,
+    # Config
     TOL: float,
+    ERROR_EVAL_MODE: str,
     ERROR_METRIC: str,
     MIN_PTS_PER_CLUSTER: int,
     MAX_CLUSTERS_EST: int,
@@ -67,14 +62,18 @@ def _run_local_refinement(
     CLUSTERING_MATRIX: str,
     IGNORE_GRADIENT: bool,
     STORE_HESSIAN_PER_CLUSTER: bool,
+    STORE_AFFINE_FIT_PER_CLUSTER: bool,
     STORE_TREE_DATA: bool,
     LOG_MEM_STATS: bool,
     PROFILE_TIMING: bool,
     rank: int,
-    size: int,
     profiling_stats: dict,
-    comm: MPI.Intracomm,
 ):
+    """
+    Core local BFS refinement loop for GPU adaptive clustering, run independently
+    on each MPI rank. Accepts pre-sorted GPU data for the rank's partition and
+    returns finalized output buffers plus counts.
+    """
     mempool = None
     if IS_CUPY_BACKEND:
         import cupy as cp
@@ -85,215 +84,28 @@ def _run_local_refinement(
     total_f_evals = 0
     tree_data: dict = {}
 
+    # Allocate Output Buffers on CPU (Host) to save VRAM
     buffers, out_cap = allocate_output_buffers_host(
-        MAX_CLUSTERS_EST, d, fd, STORE_HESSIAN_PER_CLUSTER
+        MAX_CLUSTERS_EST,
+        d,
+        fd,
+        store_hess=STORE_HESSIAN_PER_CLUSTER,
+        store_affine_fit=STORE_AFFINE_FIT_PER_CLUSTER,
     )
     out_count = 0
 
-    # Architecture State for Decentralized Work-Stealing
-    global_loads = np.zeros(size, dtype=np.int64)
-    local_load = int(CLUSTER_PTS.shape[0])
-    global_loads[rank] = local_load
-
+    # --- BFS Loop ---
     level = 0
-    is_terminated = False
-    status = MPI.Status()
-
-    # Pre-allocate 1-element arrays for C-level MPI state updates
-    state_send_buf = np.empty(1, dtype=np.int64)
-    state_recv_buf = np.empty(1, dtype=np.int64)
-
-    def receive_and_update_state():
-        """
-        Helper function (async gossip receiver): Check for and process any incoming load updates from other ranks.
-        """
-        while comm.Iprobe(
-            source=MPI.ANY_SOURCE, tag=TAG_STATE_BROADCAST, status=status
-        ):
-            src = status.Get_source()
-            comm.Recv(state_recv_buf, source=src, tag=TAG_STATE_BROADCAST)
-            global_loads[src] = state_recv_buf[0]
-
-    def broadcast_state():
-        """
-        Helper function: Broadcast our current load to all other ranks.
-        """
-        state_send_buf[0] = local_load
-        for r in range(size):
-            if r != rank:
-                # 8 bytes is well within the MPI eager limit; this returns instantly.
-                comm.Send(state_send_buf, dest=r, tag=TAG_STATE_BROADCAST)
-
-    # Broadcast initial state
-    broadcast_state()
-
-    # --- Decentralized Work-Stealing Main Loop ---
-    while not is_terminated:
-        with CudaTimer("time_state_update", profiling_stats, PROFILE_TIMING):
-            receive_and_update_state()
+    K_good = 0
+    while level <= MAX_LEVELS:
+        _t_level = time.perf_counter()
+        if LOG_MEM_STATS:
+            log_mem_stats(f"R{rank:02} Start: L{level:02}")
 
         num_clusters = len(CLUSTER_SIZES)
-        local_load = int(CLUSTER_PTS.shape[0] if num_clusters > 0 else 0)
-        global_loads[rank] = local_load
-
-        # --- Phase 3: Idle / Stealing Phase ---
-        if num_clusters == 0 or level > MAX_LEVELS:
-            # TODO: Checking max levels here is a bit hacky, since if we steal points, we ideally ought to be resetting the level back down to 0 for those points. Idea: Just add current level to MAX_LEVELS, and I think it should work out to the same thing but be more principled?
-            with CudaTimer("time_idle", profiling_stats, PROFILE_TIMING):
-                # A rank that hit MAX_LEVELS may still hold data but will never process
-                # it. Ensure we advertise 0 so the termination condition works correctly.
-                if local_load != 0:
-                    local_load = 0
-                    global_loads[rank] = 0
-                    broadcast_state()
-                if np.sum(global_loads) == 0:
-                    # Heuristic termination: everyone claims to be empty.
-                    # Drain any pending steal requests (sent before we went idle) so
-                    # the requesting ranks are not stuck in their spin-wait forever.
-                    while comm.Iprobe(
-                        source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status
-                    ):
-                        req_src = status.Get_source()
-                        comm.recv(source=req_src, tag=TAG_STEAL_REQ)
-                        comm.send("TERMINATING", dest=req_src, tag=TAG_STEAL_DENY)
-                    logger.info(f"R{rank:02}: Global loads sum to 0. Terminating.")
-                    is_terminated = True
-                    break
-
-                target_rank = int(np.argmax(global_loads))
-
-                # Gatekeeper Check: Only start steal if the target has at least MIN_LOAD_THRESHOLD points to avoid hammering ranks that are already nearly idle or stealing from ranks that have just gone idle (but haven't updated their load info everywhere yet).
-                if global_loads[target_rank] >= MIN_LOAD_THRESHOLD:
-                    logger.debug(
-                        f"R{rank:02}: Idle. Attempting steal from R{target_rank:02} "
-                        f"(Load: {global_loads[target_rank]:,}) [my load: {local_load:,}]"
-                    )
-                    comm.send(rank, dest=target_rank, tag=TAG_STEAL_REQ)
-                    _t_steal_wait = time.perf_counter()
-
-                    # Wait for a response, but keep processing incoming state updates in the meantime to avoid getting stuck if the target goes idle or terminates while we're waiting.
-                    waiting = True
-                    while waiting:
-                        with CudaTimer(
-                            "time_state_update", profiling_stats, PROFILE_TIMING
-                        ):
-                            receive_and_update_state()
-
-                        # Escape if the target has gone idle/terminated (load -> 0)
-                        if global_loads[target_rank] == 0:
-                            logger.debug(
-                                f"R{rank:02}: Steal target R{target_rank:02} load dropped to 0 "
-                                f"while waiting. Aborting steal."
-                            )
-                            # Consume the deny/grant message if it arrives, otherwise just move on
-                            if comm.Iprobe(source=target_rank, tag=TAG_STEAL_DENY):
-                                comm.recv(source=target_rank, tag=TAG_STEAL_DENY)
-                            elif comm.Iprobe(source=target_rank, tag=TAG_STEAL_GRANT):
-                                # Unlikely but safe: consume the payload and discard
-                                meta = comm.recv(
-                                    source=target_rank, tag=TAG_STEAL_GRANT
-                                )
-                                _X = np.empty((meta["n_pts"], d), dtype=np.float64)
-                                _F = np.empty((meta["n_pts"], fd), dtype=np.float64)
-                                comm.Recv(
-                                    _X, source=target_rank, tag=TAG_STEAL_GRANT + 1
-                                )
-                                comm.Recv(
-                                    _F, source=target_rank, tag=TAG_STEAL_GRANT + 2
-                                )
-                                if meta["has_g"]:
-                                    _G = np.empty(
-                                        (meta["n_pts"], fd, d), dtype=np.float64
-                                    )
-                                    comm.Recv(
-                                        _G, source=target_rank, tag=TAG_STEAL_GRANT + 3
-                                    )
-                                _s = np.empty(meta["n_clusters"], dtype=np.int64)
-                                comm.Recv(
-                                    _s, source=target_rank, tag=TAG_STEAL_GRANT + 4
-                                )
-                            waiting = False
-                            continue
-
-                        # Check for steal response
-                        if comm.Iprobe(source=target_rank, tag=TAG_STEAL_GRANT):
-                            _t_recv = time.perf_counter()
-
-                            # 1. Receive metadata handshake
-                            meta = comm.recv(source=target_rank, tag=TAG_STEAL_GRANT)
-
-                            # 2. Pre-allocate NumPy arrays on host for C-level MPI transfer
-                            X_host = np.empty((meta["n_pts"], d), dtype=np.float64)
-                            F_host = np.empty((meta["n_pts"], fd), dtype=np.float64)
-                            G_host = (
-                                np.empty((meta["n_pts"], fd, d), dtype=np.float64)
-                                if meta["has_g"]
-                                else None
-                            )
-                            sizes_host = np.empty(meta["n_clusters"], dtype=np.int64)
-
-                            # 3. Receive raw array buffers (bypassing pickle)
-                            comm.Recv(
-                                X_host, source=target_rank, tag=TAG_STEAL_GRANT + 1
-                            )
-                            comm.Recv(
-                                F_host, source=target_rank, tag=TAG_STEAL_GRANT + 2
-                            )
-                            if meta["has_g"]:
-                                comm.Recv(
-                                    G_host, source=target_rank, tag=TAG_STEAL_GRANT + 3  # type: ignore
-                                )
-                            comm.Recv(
-                                sizes_host, source=target_rank, tag=TAG_STEAL_GRANT + 4
-                            )
-
-                            # 4. Move to target device
-                            CLUSTER_PTS = xp.asarray(X_host)
-                            CLUSTER_F = xp.asarray(F_host)
-                            CLUSTER_G = xp.asarray(G_host) if meta["has_g"] else None
-                            CLUSTER_SIZES = xp.asarray(sizes_host)
-                            CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
-
-                            local_load = int(CLUSTER_PTS.shape[0])
-                            global_loads[rank] = local_load
-                            broadcast_state()
-
-                            _t_wait = time.perf_counter() - _t_steal_wait
-                            _t_transfer = time.perf_counter() - _t_recv
-                            logger.info(
-                                f"R{rank:02}: Steal OK from R{target_rank:02} | "
-                                f"pts={local_load:,} clusters={len(CLUSTER_SIZES):,} | "
-                                f"waited={_t_wait:.3f}s transfer={_t_transfer:.3f}s"
-                            )
-                            waiting = False
-
-                            if PROFILE_TIMING:
-                                profiling_stats["time_mpi_recv"] += _t_transfer
-
-                        # If we get a steal denial, log and sleep for a bit before trying again to avoid hammering the target rank with requests if it's overloaded or has just gone idle.
-                        elif comm.Iprobe(source=target_rank, tag=TAG_STEAL_DENY):
-                            deny_reason = comm.recv(
-                                source=target_rank, tag=TAG_STEAL_DENY
-                            )
-                            _t_wait = time.perf_counter() - _t_steal_wait
-                            logger.debug(
-                                f"R{rank:02}: Steal denied by R{target_rank:02} "
-                                f"(reason={deny_reason}, waited {_t_wait:.3f}s). Sleeping."
-                            )
-                            time.sleep(SLEEP_INTERVAL)
-                            waiting = False
-                else:
-                    # Gatekeeper Check Failed
-                    time.sleep(SLEEP_INTERVAL)
-
-            continue  # Loop back around
-
-        # --- Phase 1: The Compute Phase (Mid-Level) ---
-        _t_level = time.perf_counter()
-        logger.info(
-            f"R{rank:02} L{level:02}: Starting | clusters={num_clusters:,} "
-            f"pts={local_load:,}"
-        )
+        if num_clusters == 0:
+            logger.info(f"R{rank:02} L{level:02}: No clusters to process, terminating.")
+            break
 
         # Collect Level Stats
         profiling_stats["level_stats"].append(
@@ -308,6 +120,7 @@ def _run_local_refinement(
             }
         )
 
+        # Calculate augmentation needs
         with CudaTimer("time_find_req_synth", profiling_stats, PROFILE_TIMING):
             level_augmented_sizes = xp.maximum(CLUSTER_SIZES, MIN_PTS_PER_CLUSTER)
             level_total_aug_pts = int(xp.sum(level_augmented_sizes))
@@ -315,128 +128,22 @@ def _run_local_refinement(
         aug_sizes_cpu = _to_host(level_augmented_sizes)
         aug_cumsum_cpu = np.cumsum(aug_sizes_cpu)
 
-        (
-            next_level_X_list,
-            next_level_F_list,
-            next_level_G_list,
-            next_level_sizes_list,
-        ) = ([], [], [], [])
+        # Host Staging Buffers for the NEXT level
+        next_level_X_list = []
+        next_level_F_list = []
+        next_level_G_list = []
+        next_level_sizes_list = []
 
+        # --- Batch Processing Loop ---
         num_batches = level_total_aug_pts // BATCH_SIZE + 1
         start_cluster_idx = 0
+
+        if LOG_MEM_STATS:
+            log_mem_stats(f"R{rank:02} Start: L{level:02} Batching")
+
         K_good = 0
-
         for b in range(num_batches):
-            logger.debug(
-                f"R{rank:02} L{level:02}: Batch {b+1}/{num_batches} "
-                f"[clusters {start_cluster_idx}–{min(start_cluster_idx + BATCH_SIZE, num_clusters)}]"
-            )
-
-            # --- Phase 1 Mid-Level Work Stealing ---
-            while comm.Iprobe(source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status):
-                req_src = status.Get_source()
-                comm.recv(source=req_src, tag=TAG_STEAL_REQ)
-
-                unprocessed_clusters = num_clusters - start_cluster_idx
-
-                # We need at least 2 unprocessed clusters to keep 1 for ourselves and give 1 away
-                if unprocessed_clusters <= 1:
-                    comm.send("MID_LEVEL_NO_CLUSTERS", dest=req_src, tag=TAG_STEAL_DENY)
-                    continue
-
-                unprocessed_sizes = CLUSTER_SIZES[start_cluster_idx:]
-                unprocessed_pts = int(xp.sum(unprocessed_sizes))
-
-                if unprocessed_pts > MIN_LOAD_THRESHOLD:
-                    _t_send = time.perf_counter()
-
-                    # Find how many clusters to give from the tail end
-                    rev_sizes_cpu = _to_host(unprocessed_sizes[::-1])
-                    rev_cumsum = np.cumsum(rev_sizes_cpu)
-                    split_rev_idx = int(np.searchsorted(rev_cumsum, STEAL_SIZE))
-
-                    # Number of clusters to give away (at least 1, at most unprocessed - 1)
-                    give_clusters = split_rev_idx + 1
-                    give_clusters = min(give_clusters, unprocessed_clusters - 1)
-
-                    split_idx = num_clusters - give_clusters
-                    pt_split = int(CLUSTER_STARTS[split_idx])
-
-                    # Prepare arrays
-                    X_send = _to_host(CLUSTER_PTS[pt_split:])
-                    F_send = _to_host(CLUSTER_F[pt_split:])
-                    G_send = (
-                        _to_host(CLUSTER_G[pt_split:])
-                        if CLUSTER_G is not None
-                        else None
-                    )
-                    sizes_send = _to_host(CLUSTER_SIZES[split_idx:])
-
-                    # 1. Send metadata handshake
-                    meta = {
-                        "n_pts": int(X_send.shape[0]),
-                        "n_clusters": int(sizes_send.shape[0]),
-                        "has_g": G_send is not None,
-                    }
-                    comm.send(meta, dest=req_src, tag=TAG_STEAL_GRANT)
-
-                    # 2. Send raw C-buffers (must be contiguous)
-                    comm.Send(
-                        np.ascontiguousarray(X_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 1,
-                    )
-                    comm.Send(
-                        np.ascontiguousarray(F_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 2,
-                    )
-                    if meta["has_g"]:
-                        comm.Send(
-                            np.ascontiguousarray(G_send),
-                            dest=req_src,
-                            tag=TAG_STEAL_GRANT + 3,
-                        )
-                    comm.Send(
-                        np.ascontiguousarray(sizes_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 4,
-                    )
-
-                    # Safely truncate our arrays to remove the stolen tail
-                    CLUSTER_PTS = CLUSTER_PTS[:pt_split]
-                    CLUSTER_F = CLUSTER_F[:pt_split]
-                    if CLUSTER_G is not None:
-                        CLUSTER_G = CLUSTER_G[:pt_split]
-                    CLUSTER_SIZES = CLUSTER_SIZES[:split_idx]
-                    CLUSTER_STARTS = CLUSTER_STARTS[:split_idx]
-
-                    level_augmented_sizes = level_augmented_sizes[:split_idx]
-                    aug_sizes_cpu = aug_sizes_cpu[:split_idx]
-                    aug_cumsum_cpu = aug_cumsum_cpu[:split_idx]
-
-                    # Update local state
-                    num_clusters = split_idx
-                    local_load = int(CLUSTER_PTS.shape[0])
-                    global_loads[rank] = local_load
-                    broadcast_state()
-
-                    _t_send_elapsed = time.perf_counter() - _t_send
-                    logger.info(
-                        f"R{rank:02} L{level:02} B{b+1}: Granted mid-level steal to R{req_src:02} | "
-                        f"gave {X_send.shape[0]:,} pts "
-                        f"{sizes_send.shape[0]:,} clusters | "
-                        f"send={_t_send_elapsed:.3f}s | "
-                        f"remaining pts={local_load:,} clusters={num_clusters:,}"
-                    )
-                    if PROFILE_TIMING:
-                        profiling_stats["time_mpi_send"] += _t_send_elapsed
-                else:
-                    deny_reason = f"MID_LEVEL_LOAD ({unprocessed_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
-                    comm.send(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
-
-            with CudaTimer("time_state_update", profiling_stats, PROFILE_TIMING):
-                receive_and_update_state()
+            logger.info(f"R{rank:02} L{level:02}: Processing Batch {b+1}/{num_batches}")
 
             target_aug_count = (b + 1) * BATCH_SIZE
             end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
@@ -444,6 +151,7 @@ def _run_local_refinement(
             if start_cluster_idx >= end_cluster_idx:
                 break
 
+            # 1. Zero-Copy Slicing
             with CudaTimer("time_slicing", profiling_stats, PROFILE_TIMING):
                 sizes = CLUSTER_SIZES[start_cluster_idx:end_cluster_idx]
                 starts_local = CLUSTER_STARTS[start_cluster_idx:end_cluster_idx]
@@ -452,11 +160,11 @@ def _run_local_refinement(
 
                 pts = CLUSTER_PTS[slice_start:slice_end]
                 f_vals = CLUSTER_F[slice_start:slice_end]
-                g_vals = (
-                    CLUSTER_G[slice_start:slice_end] if CLUSTER_G is not None else None
-                )
+                if CLUSTER_G is not None:
+                    g_vals = CLUSTER_G[slice_start:slice_end]
                 starts_local_shifted = starts_local - slice_start
 
+            # 2. Augmentation
             with CudaTimer("time_synth_gen", profiling_stats, PROFILE_TIMING):
                 aug_sizes = level_augmented_sizes[start_cluster_idx:end_cluster_idx]
                 aug_total = int(xp.sum(aug_sizes))
@@ -464,11 +172,8 @@ def _run_local_refinement(
 
                 X_batch = xp.empty((aug_total, d), dtype=xp.float64)
                 F_batch = xp.empty((aug_total, fd), dtype=xp.float64)
-                G_batch = (
-                    xp.empty((aug_total, fd, d), dtype=xp.float64)
-                    if CLUSTER_G is not None
-                    else None
-                )
+                if CLUSTER_G is not None:
+                    G_batch = xp.empty((aug_total, fd, d), dtype=xp.float64)
 
                 aug_starts = xp.r_[0, xp.cumsum(aug_sizes)[:-1]]
                 aug_ids = repeats(xp.arange(K_batch), aug_sizes)
@@ -479,13 +184,17 @@ def _run_local_refinement(
                 is_real = pt_idxs_in_cluster < sizes[aug_ids]
                 X_batch[is_real] = pts
                 F_batch[is_real] = f_vals
-                if CLUSTER_G is not None and G_batch is not None:
+                if CLUSTER_G is not None:
                     G_batch[is_real] = g_vals
 
                 is_synth = ~is_real
                 num_synth = int(xp.sum(is_synth))
                 num_generated_pts += num_synth
                 if num_synth > 0:
+                    if LOG_MEM_STATS:
+                        log_mem_stats(
+                            f" R{rank:02} L{level:02} B{b:02}/{num_batches:02}: Start Augmentation"
+                        )
                     synth_c_ids = aug_ids[is_synth]
                     rng = xp.random.default_rng(SEED + level + b + rank * 1000)
 
@@ -505,103 +214,251 @@ def _run_local_refinement(
                     X_batch[is_synth] = X_synth_vals
 
                     if oracle_fn is not None:
-                        if CLUSTER_G is None or G_batch is None:
+                        if CLUSTER_G is None:
                             F_syn = f_fn(X_synth_vals)
                             F_batch[is_synth] = convert_to_2d_array(F_syn)
                         else:
                             F_syn, G_syn = oracle_fn(X_synth_vals)
                             F_batch[is_synth] = convert_to_2d_array(F_syn)
-                            G_batch[is_synth] = (
-                                0.0 if IGNORE_GRADIENT else convert_to_3d_array(G_syn)
-                            )
+                            if IGNORE_GRADIENT:
+                                G_batch[is_synth] = 0.0
+                            else:
+                                G_batch[is_synth] = convert_to_3d_array(G_syn)
                     else:
+                        assert f_fn is not None
                         F_batch[is_synth] = convert_to_2d_array(f_fn(X_synth_vals))
-                        if CLUSTER_G is not None and G_batch is not None:
-                            G_batch[is_synth] = (
-                                0.0
-                                if IGNORE_GRADIENT
-                                else convert_to_3d_array(g_fn(X_synth_vals))
-                            )
-
+                        if CLUSTER_G is not None:
+                            if IGNORE_GRADIENT:
+                                G_batch[is_synth] = 0.0
+                            else:
+                                assert g_fn is not None
+                                G_batch[is_synth] = convert_to_3d_array(
+                                    g_fn(X_synth_vals)
+                                )
                     total_f_evals += X_synth_vals.shape[0]
+                    del (
+                        c_starts,
+                        c_counts,
+                        rand1,
+                        rand2,
+                        idx1,
+                        idx2,
+                        p1,
+                        p2,
+                        alpha,
+                        X_synth_vals,
+                    )
 
+            if LOG_MEM_STATS:
+                log_mem_stats(
+                    f" R{rank:02} L{level:02} B{b:02}/{num_batches:02}: After Augmentation"
+                )
+
+            # 3. Compute Centroids & Reference Gradients
             with CudaTimer("time_error_calc", profiling_stats, PROFILE_TIMING):
-                mus = xp.add.reduceat(X_batch, aug_starts) / aug_sizes[:, None]
+                mus = (
+                    xp.add.reduceat(X_batch, aug_starts) / aug_sizes[:, None]
+                )  # (K_batch, d)
+
                 if oracle_fn is not None:
                     F_mus_val, G_mus_val = oracle_fn(mus)
                     f_mus = convert_to_2d_array(F_mus_val)
-                    g_mus = (
-                        xp.zeros((K_batch, fd, d), dtype=xp.float64)
-                        if IGNORE_GRADIENT
-                        else convert_to_3d_array(G_mus_val)
-                    )
+                    if IGNORE_GRADIENT:
+                        g_mus = xp.zeros((K_batch, fd, d), dtype=xp.float64)
+                    else:
+                        g_mus = convert_to_3d_array(G_mus_val)
                 else:
+                    assert f_fn is not None
                     f_mus = convert_to_2d_array(f_fn(mus))
-                    g_mus = (
-                        xp.zeros((K_batch, fd, d), dtype=xp.float64)
-                        if IGNORE_GRADIENT
-                        else convert_to_3d_array(g_fn(mus))
-                    )
+                    if IGNORE_GRADIENT:
+                        g_mus = xp.zeros((K_batch, fd, d), dtype=xp.float64)
+                    else:
+                        assert g_fn is not None
+                        g_mus = convert_to_3d_array(g_fn(mus))
 
                 total_f_evals += mus.shape[0]
 
-                if ERROR_METRIC == "Linf-local":
-                    E_cluster_rel_max = xp.zeros((K_batch,), dtype=xp.float64)
-                    E_cluster_abs_max = xp.zeros((K_batch,), dtype=xp.float64)
-                    for j in range(fd):
-                        F_max_j = xp.zeros((K_batch,), dtype=xp.float64)
-                        scatter_maximum_1d(F_max_j, aug_ids, xp.abs(F_batch[:, j]))
-                        pointwise_tay_err_j = run_fused_taylor_comp_abs(
-                            X_batch, mus, aug_ids, F_batch, f_mus, g_mus, j
-                        )
-                        E_abs_j = xp.zeros((K_batch,), dtype=xp.float64)
-                        scatter_maximum_1d(E_abs_j, aug_ids, pointwise_tay_err_j)
-                        E_rel_j = E_abs_j / xp.maximum(F_max_j, TINY_EPS)
-                        E_cluster_rel_max = xp.maximum(E_cluster_rel_max, E_rel_j)
-                        E_cluster_abs_max = xp.maximum(E_cluster_abs_max, E_abs_j)
-                    is_good = (E_cluster_rel_max < TOL) | (E_cluster_abs_max < TOL)
-                    E_cluster = E_cluster_rel_max
-                else:
-                    scales_ker = (
-                        xp.ones((fd,), dtype=xp.float64)
-                        if ERROR_METRIC == "L2"
-                        else F_max_global
+                # 3.1 Update Hessians via Symmetric Rank-1
+                # There are exactly twice as many clusters now as bad ones on the previous level.
+                if CLUSTERING_MATRIX == "SR1" and level > 1:
+                    H_prev_lvl_repeated = xp.repeat(H_prev_level, 2)
+                    yk = g_mus - xp.repeat(bad_g_prev_level, 2)
+                    sk = mus - xp.repeat(bad_mus_prev_level, 2)
+                    update_vec = yk - H_prev_lvl_repeated @ sk
+                    # TODO: deal with numerical instability (compute norms)
+                    H_current = H_prev_lvl_repeated + xp.outer(
+                        update_vec, update_vec
+                    ) / xp.dot(update_vec, sk)
+                elif CLUSTERING_MATRIX == "SR1" and level == 1:
+                    H_current = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
+                        len(CLUSTER_SIZES), axis=0
                     )
-                    metric_mode = 0 if ERROR_METRIC == "L2" else 1
-                    err_pts = run_fused_taylor_metric(
-                        X_batch,
-                        mus,
-                        aug_ids,
-                        F_batch,
-                        f_mus,
-                        g_mus,
-                        scales_ker,
-                        metric_mode,
-                    )
-                    if ERROR_METRIC == "L2":
-                        E_cluster = xp.sqrt(xp.add.reduceat(err_pts, aug_starts))
-                    else:
-                        E_cluster = xp.zeros((K_batch,), dtype=xp.float64)
-                        scatter_maximum_1d(E_cluster, aug_ids, err_pts)
-                    is_good = E_cluster < TOL
 
+                # 4. Error Metrics & Acceptance Logic
+                if ERROR_EVAL_MODE == "affine":
+                    # 1. Compute Affine Parameters for entire batch
+                    mean_F_batch = (
+                        xp.add.reduceat(F_batch, aug_starts) / aug_sizes[:, None]
+                    )
+                    X_c_batch = X_batch - mus[aug_ids]
+                    F_c_batch = F_batch - mean_F_batch[aug_ids]
+
+                    auto_cov_batch = xp.add.reduceat(
+                        X_c_batch[:, :, None] * X_c_batch[:, None, :], aug_starts
+                    )
+                    cross_cov_batch = xp.add.reduceat(
+                        X_c_batch[:, :, None] * F_c_batch[:, None, :], aug_starts
+                    )
+
+                    # --- Adaptive Tikhonov Regularization ---
+                    # Find eigenvalues for the batch: shape (K_batch, d)
+                    # eigvals = xp.linalg.eigvalsh(auto_cov_batch)
+                    # max_eigvals = xp.max(eigvals, axis=1)
+
+                    # Faster proxy for max eigenvalue using trace (sum of eigenvalues) -
+                    # this is less accurate but much cheaper
+                    # shape (K_batch,)
+                    max_eigvals_proxy = xp.trace(auto_cov_batch, axis1=1, axis2=2)
+                    _lam = xp.maximum(1e-8 * max_eigvals_proxy, TINY_EPS)
+
+                    # Create batched diagonal matrices: shape (K_batch, d, d)
+                    reg = _lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]
+
+                    A_T_batch = xp.linalg.solve(auto_cov_batch + reg, cross_cov_batch)
+
+                    # Slope & Intercept
+                    A_batch = A_T_batch.transpose(0, 2, 1)
+                    b_batch = mean_F_batch - xp.einsum("kfd,kd->kf", A_batch, mus)
+                    X_anchor_batch = xp.zeros_like(mus)  # Origin anchor for y = Ax + b
+
+                    # 2. Evaluate Error Metric
+                    if ERROR_METRIC == "Linf-local":
+                        E_cluster_rel_max = xp.zeros((K_batch,), dtype=xp.float64)
+                        E_cluster_abs_max = xp.zeros((K_batch,), dtype=xp.float64)
+
+                        for j in range(fd):
+                            F_max_j = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(F_max_j, aug_ids, xp.abs(F_batch[:, j]))
+
+                            pointwise_err_j = run_fused_linear_surrogate_comp_abs(
+                                X_batch,
+                                X_anchor_batch,
+                                aug_ids,
+                                F_batch,
+                                b_batch,
+                                A_batch,
+                                j,
+                            )
+                            E_abs_j = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(E_abs_j, aug_ids, pointwise_err_j)
+                            scale = xp.maximum(F_max_j, TINY_EPS)
+                            E_cluster_rel_max = xp.maximum(
+                                E_cluster_rel_max, E_abs_j / scale
+                            )
+                            E_cluster_abs_max = xp.maximum(E_cluster_abs_max, E_abs_j)
+
+                        is_good = (E_cluster_rel_max < TOL) | (E_cluster_abs_max < TOL)
+                        E_cluster = E_cluster_rel_max
+
+                    else:
+                        scales_ker = (
+                            xp.ones((fd,), dtype=xp.float64)
+                            if ERROR_METRIC == "L2"
+                            else F_max_global
+                        )
+                        metric_mode = 0 if ERROR_METRIC == "L2" else 1
+
+                        err_pts = run_fused_linear_surrogate_metric(
+                            X_batch,
+                            X_anchor_batch,
+                            aug_ids,
+                            F_batch,
+                            b_batch,
+                            A_batch,
+                            scales_ker,
+                            metric_mode,
+                        )
+
+                        if ERROR_METRIC == "L2":
+                            E_cluster = xp.sqrt(xp.add.reduceat(err_pts, aug_starts))
+                        else:
+                            E_cluster = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(E_cluster, aug_ids, err_pts)
+
+                        is_good = E_cluster < TOL
+
+                elif ERROR_EVAL_MODE == "taylor":
+                    if ERROR_METRIC == "Linf-local":
+                        E_cluster_rel_max = xp.zeros((K_batch,), dtype=xp.float64)
+                        E_cluster_abs_max = xp.zeros((K_batch,), dtype=xp.float64)
+
+                        for j in range(fd):
+                            F_max_j = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(F_max_j, aug_ids, xp.abs(F_batch[:, j]))
+
+                            pointwise_err_j = run_fused_linear_surrogate_comp_abs(
+                                X_batch, mus, aug_ids, F_batch, f_mus, g_mus, j
+                            )
+                            E_abs_j = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(E_abs_j, aug_ids, pointwise_err_j)
+                            scale = xp.maximum(F_max_j, TINY_EPS)
+                            E_cluster_rel_max = xp.maximum(
+                                E_cluster_rel_max, E_abs_j / scale
+                            )
+                            E_cluster_abs_max = xp.maximum(E_cluster_abs_max, E_abs_j)
+
+                        is_good = (E_cluster_rel_max < TOL) | (E_cluster_abs_max < TOL)
+                        E_cluster = E_cluster_rel_max
+
+                    else:
+                        scales_ker = (
+                            xp.ones((fd,), dtype=xp.float64)
+                            if ERROR_METRIC == "L2"
+                            else F_max_global
+                        )
+                        metric_mode = 0 if ERROR_METRIC == "L2" else 1
+
+                        err_pts = run_fused_linear_surrogate_metric(
+                            X_batch,
+                            mus,
+                            aug_ids,
+                            F_batch,
+                            f_mus,
+                            g_mus,
+                            scales_ker,
+                            metric_mode,
+                        )
+
+                        if ERROR_METRIC == "L2":
+                            E_cluster = xp.sqrt(xp.add.reduceat(err_pts, aug_starts))
+                        else:
+                            E_cluster = xp.zeros((K_batch,), dtype=xp.float64)
+                            scatter_maximum_1d(E_cluster, aug_ids, err_pts)
+
+                        is_good = E_cluster < TOL
+                else:
+                    raise ValueError(f"Unknown ERROR_EVAL_MODE: {ERROR_EVAL_MODE}")
+
+            if LOG_MEM_STATS:
+                log_mem_stats(
+                    f" R{rank:02} L{level:02} B{b:02}/{num_batches:02}: After Error Metrics"
+                )
+
+            # 5. Handle Accepted ("Good") Clusters
             with CudaTimer("time_filter", profiling_stats, PROFILE_TIMING):
                 good_idx_local = xp.nonzero(is_good)[0]
-                K_good_batch = int(good_idx_local.shape[0])
-                K_good += K_good_batch
+                K_good = int(good_idx_local.shape[0])
 
-            if K_good_batch > 0:
+            if K_good > 0:
                 with CudaTimer("time_good_Q", profiling_stats, PROFILE_TIMING):
                     good_mask = is_good[aug_ids]
                     X_good = X_batch[good_mask]
-                    G_good = (
-                        G_batch[good_mask]
-                        if (CLUSTER_G is not None and G_batch is not None)
-                        else None
-                    )
+                    if CLUSTER_G is not None:
+                        G_good = G_batch[good_mask]
                     good_counts = aug_sizes[good_idx_local]
-                    dense_labels_good = repeats(xp.arange(K_good_batch), good_counts)
+                    dense_labels_good = repeats(xp.arange(K_good), good_counts)
 
+                    # TODO: what to do about reference to G_good here?
                     radii_pt, ratio_pt = run_fused_metrics(
                         X_good,
                         G_good,
@@ -609,8 +466,8 @@ def _run_local_refinement(
                         g_mus[good_idx_local],
                         dense_labels_good,
                     )
-                    radii = xp.zeros((K_good_batch,), dtype=radii_pt.dtype)
-                    L_obs = xp.zeros((K_good_batch,), dtype=ratio_pt.dtype)
+                    radii = xp.zeros((K_good,), dtype=radii_pt.dtype)
+                    L_obs = xp.zeros((K_good,), dtype=ratio_pt.dtype)
                     scatter_maximum_1d(radii, dense_labels_good, radii_pt)
                     scatter_maximum_1d(L_obs, dense_labels_good, ratio_pt)
 
@@ -618,10 +475,10 @@ def _run_local_refinement(
                         X_good,
                         mus[good_idx_local],
                         dense_labels_good,
-                        K_good_batch,
+                        K_good,
                         d,
                         fd,
-                        xp.zeros(K_good_batch, dtype=xp.int32),
+                        xp.zeros(K_good, dtype=xp.int32),
                         calc_E=False,
                     )
                     Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
@@ -641,14 +498,13 @@ def _run_local_refinement(
                     dist_sq = run_fused_q_dist(
                         X_good, mus[good_idx_local], dense_labels_good, U, Lambda_inv
                     )
-                    max_dist = xp.zeros((K_good_batch,), dtype=dist_sq.dtype)
+                    max_dist = xp.zeros((K_good,), dtype=dist_sq.dtype)
                     scatter_maximum_1d(max_dist, dense_labels_good, dist_sq)
                     scale_fac = 1.0 / xp.maximum(max_dist, TINY_EPS)
+
                     Qs = (
-                        U
-                        * (scale_fac[:, None] * Lambda_inv)[:, None, :]
-                        @ U.transpose(0, 2, 1)
-                    )
+                        U * (scale_fac[:, None] * Lambda_inv)[:, None, :]
+                    ) @ U.transpose(0, 2, 1)
 
                     Hs = None
                     if STORE_HESSIAN_PER_CLUSTER:
@@ -669,7 +525,7 @@ def _run_local_refinement(
                             X_good,
                             mus[good_idx_local],
                             dense_labels_good,
-                            K_good_batch,
+                            K_good,
                             d,
                             fd,
                             active_comps_good,
@@ -689,14 +545,54 @@ def _run_local_refinement(
                         Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
                         Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
 
+                    # Compute Affine Fit (Batched Least Squares)
+                    A_fit, b_fit = None, None
+                    if ERROR_EVAL_MODE == "affine":
+                        A_fit = A_batch[good_idx_local]
+                        b_fit = b_batch[good_idx_local]
+                    elif STORE_AFFINE_FIT_PER_CLUSTER:
+                        # Re-run it ONLY for the good clusters if we didn't compute it earlier
+                        good_starts = xp.r_[0, xp.cumsum(good_counts)[:-1]]
+                        F_good = F_batch[good_mask]
+                        mean_F_good = (
+                            xp.add.reduceat(F_good, good_starts) / good_counts[:, None]
+                        )
+                        # Center data
+                        X_c = X_good - mus[good_idx_local][dense_labels_good]
+                        F_c = F_good - mean_F_good[dense_labels_good]
+
+                        # Compute batched X_c^T X_c and X_c^T F_c
+                        auto_cov = xp.add.reduceat(
+                            X_c[:, :, None] * X_c[:, None, :], good_starts
+                        )  # (K_good, d, d)
+                        cross_cov = xp.add.reduceat(
+                            X_c[:, :, None] * F_c[:, None, :], good_starts
+                        )  # (K_good, d, fd)
+
+                        # Solve (X_c^T X_c) A^T = X_c^T F_c
+                        max_eigvals_proxy = xp.trace(auto_cov, axis1=1, axis2=2)
+                        _lam = xp.maximum(1e-8 * max_eigvals_proxy, TINY_EPS)
+                        reg = (
+                            _lam[:, None, None]
+                            * xp.eye(d, dtype=xp.float64)[None, :, :]
+                        )
+                        A_T = xp.linalg.solve(auto_cov + reg, cross_cov)
+                        A_fit = A_T.transpose(0, 2, 1)  # (K_good, fd, d)
+
+                        # b = mean(F) - A * mean(X)
+                        b_fit = mean_F_good - xp.einsum(
+                            "kfd,kd->kf", A_fit, mus[good_idx_local]
+                        )
+
                 with CudaTimer("time_good_d2h", profiling_stats, PROFILE_TIMING):
-                    end_out = out_count + K_good_batch
+                    end_out = out_count + K_good
                     buffers, out_cap = adjust_buffer_capacity_host(
                         buffers,
                         out_count,
                         out_cap,
                         end_out,
-                        STORE_HESSIAN_PER_CLUSTER,
+                        store_hess=STORE_HESSIAN_PER_CLUSTER,
+                        store_affine_fit=STORE_AFFINE_FIT_PER_CLUSTER,
                     )
                     buffers["centroids"][out_count:end_out] = _to_host(
                         mus[good_idx_local]
@@ -704,8 +600,17 @@ def _run_local_refinement(
                     buffers["f"][out_count:end_out] = _to_host(f_mus[good_idx_local])
                     buffers["g"][out_count:end_out] = _to_host(g_mus[good_idx_local])
                     buffers["Q"][out_count:end_out] = _to_host(Qs)
-                    if Hs is not None:
+
+                    if STORE_HESSIAN_PER_CLUSTER and Hs is not None:
                         buffers["H"][out_count:end_out] = _to_host(Hs)
+                    if (
+                        STORE_AFFINE_FIT_PER_CLUSTER
+                        and A_fit is not None
+                        and b_fit is not None
+                    ):
+                        buffers["A_fit"][out_count:end_out] = _to_host(A_fit)
+                        buffers["b_fit"][out_count:end_out] = _to_host(b_fit)
+
                     buffers["E_cluster"][out_count:end_out] = _to_host(
                         E_cluster[good_idx_local]
                     )
@@ -716,6 +621,52 @@ def _run_local_refinement(
                     )
                     out_count = end_out
 
+                if STORE_TREE_DATA:
+                    _src = out_count - K_good
+                    _td_entry = {
+                        "centroids": buffers["centroids"][_src:out_count].copy(),
+                        "f": buffers["f"][_src:out_count].copy(),
+                        "g": buffers["g"][_src:out_count].copy(),
+                        "radii": buffers["radii"][_src:out_count].copy(),
+                        "L_obs": buffers["L_obs"][_src:out_count].copy(),
+                        "E_cluster": buffers["E_cluster"][_src:out_count].copy(),
+                        "counts": buffers["counts"][_src:out_count].copy(),
+                        "Q": buffers["Q"][_src:out_count].copy(),
+                        "points_in_clusters": [
+                            _to_host(X_good[dense_labels_good == i])
+                            for i in range(K_good)
+                        ],
+                        "mpi_rank": np.full((K_good,), rank, dtype=np.int64),
+                    }
+                    if level not in tree_data:
+                        tree_data[level] = _td_entry
+                    else:
+                        existing = tree_data[level]
+                        for dk in (
+                            "centroids",
+                            "f",
+                            "g",
+                            "radii",
+                            "L_obs",
+                            "E_cluster",
+                            "counts",
+                            "Q",
+                            "mpi_rank",
+                        ):
+                            if dk in existing and dk in _td_entry:
+                                existing[dk] = np.concatenate(
+                                    [existing[dk], _td_entry[dk]], axis=0
+                                )
+                        existing.setdefault("points_in_clusters", []).extend(
+                            _td_entry.get("points_in_clusters", [])
+                        )
+
+            if LOG_MEM_STATS:
+                log_mem_stats(
+                    f" R{rank:02} L{level:02} B{b:02}/{num_batches:02}: After Good Clusters"
+                )
+
+            # 6. Handle Rejected ("Bad") Clusters -> Split
             with CudaTimer("time_filter", profiling_stats, PROFILE_TIMING):
                 bad_idx_local = xp.nonzero(~is_good)[0]
                 n_bad = int(bad_idx_local.shape[0])
@@ -725,15 +676,16 @@ def _run_local_refinement(
                     bad_mask = (~is_good)[aug_ids]
                     X_bad = X_batch[bad_mask]
                     F_bad = F_batch[bad_mask]
-                    G_bad = (
-                        G_batch[bad_mask]
-                        if (CLUSTER_G is not None and G_batch is not None)
-                        else None
-                    )
+                    if CLUSTER_G is not None:
+                        G_bad = G_batch[bad_mask]
                     bad_counts = aug_sizes[bad_idx_local]
                     dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
 
-                    if IGNORE_GRADIENT or CLUSTERING_MATRIX == "None":
+                    if CLUSTERING_MATRIX == "None":
+                        # Fallback: PCA Split (Split along variance of X)
+                        M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
+                            n_bad, axis=0
+                        )
                         C, _ = run_fused_stats(
                             X_bad,
                             mus[bad_idx_local],
@@ -744,19 +696,31 @@ def _run_local_refinement(
                             xp.zeros(n_bad, dtype=xp.int32),
                             calc_E=False,
                         )
-                        CovZ = 0.5 * (C + C.transpose(0, 2, 1))
-                        M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
-                            n_bad, axis=0
-                        )
+                        C = 0.5 * (C + C.transpose(0, 2, 1))
+                        CovZ = C
+
                     elif CLUSTERING_MATRIX == "Hessian_LSQ":
+                        if IGNORE_GRADIENT:
+                            raise ValueError(
+                                "Cannot use Hessian_LSQ clustering matrix when IGNORE_GRADIENT is True."
+                            )
                         # Hessian Split: Split along eigenvector of Hessian estimate
                         # 1. Determine "Active Component" (Output dim with highest error)
-                        g_mus_exp_bad = g_mus[bad_idx_local][dense_labels_bad]
-                        dx_bad = X_bad - mus[bad_idx_local][dense_labels_bad]
-                        lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp_bad, dx_bad)
-                        diff_bad = F_bad - (
-                            f_mus[bad_idx_local][dense_labels_bad] + lin_bad
-                        )
+                        if ERROR_EVAL_MODE == "affine":
+                            A_exp_bad = A_batch[bad_idx_local][dense_labels_bad]
+                            b_exp_bad = b_batch[bad_idx_local][dense_labels_bad]
+
+                            lin_bad = xp.einsum("nmd,nd->nm", A_exp_bad, X_bad)
+                            diff_bad = F_bad - (b_exp_bad + lin_bad)
+
+                        elif ERROR_EVAL_MODE == "taylor":
+                            g_mus_exp_bad = g_mus[bad_idx_local][dense_labels_bad]
+                            dx_bad = X_bad - mus[bad_idx_local][dense_labels_bad]
+
+                            lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp_bad, dx_bad)
+                            diff_bad = F_bad - (
+                                f_mus[bad_idx_local][dense_labels_bad] + lin_bad
+                            )
 
                         bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
                         sq_err = xp.add.reduceat(diff_bad**2, bad_starts)
@@ -800,23 +764,76 @@ def _run_local_refinement(
                         # Approximate Hessian using inverse covariance formulation.
 
                         # 1. Compute the linear surrogate errors
-                        lin_bad = xp.einsum(
-                            "nmd,nd->nm",
-                            g_mus[bad_idx_local][dense_labels_bad],
-                            X_bad - mus[bad_idx_local][dense_labels_bad],
-                        )
-                        diff_bad = F_bad - (
-                            f_mus[bad_idx_local][dense_labels_bad] + lin_bad
-                        )
-                        E_bad = xp.linalg.norm(diff_bad, axis=1)
+                        if ERROR_EVAL_MODE == "affine":
+                            # 1. Grab the closest neighborhood
+                            dist_to_mu = xp.linalg.norm(
+                                X_bad - mus[bad_idx_local][dense_labels_bad], axis=1
+                            )
+                            # Use 25% of points for a robust local moment matrix
+                            n_tangent = max(d * 2, MIN_PTS_PER_CLUSTER // 4)
+                            tangent_mask = get_n_smallest_per_block(
+                                dist_to_mu, dense_labels_bad, n_tangent
+                            )
 
+                            X_core = X_bad[tangent_mask]
+                            F_core = F_bad[tangent_mask]
+                            labels_core = dense_labels_bad[tangent_mask]
+
+                            core_counts = xp.bincount(labels_core, minlength=n_bad)
+                            core_starts = xp.r_[0, xp.cumsum(core_counts)[:-1]]
+
+                            # 2. Compute Deltas strictly anchored to mu and f(mu)
+                            dX_core = X_core - mus[bad_idx_local][labels_core]
+                            dF_core = F_core - f_mus[bad_idx_local][labels_core]
+
+                            # 3. Second Moments
+                            M_XX = xp.add.reduceat(
+                                dX_core[:, :, None] * dX_core[:, None, :], core_starts
+                            )
+                            M_XF = xp.add.reduceat(
+                                dX_core[:, :, None] * dF_core[:, None, :], core_starts
+                            )
+
+                            max_eigvals_proxy = xp.trace(M_XX, axis1=1, axis2=2)
+                            _lam = xp.maximum(1e-8 * max_eigvals_proxy, TINY_EPS)
+                            reg = (
+                                _lam[:, None, None]
+                                * xp.eye(d, dtype=xp.float64)[None, :, :]
+                            )
+
+                            # 4. Solve for anchored slope A
+                            A_T_tangent = xp.linalg.solve(M_XX + reg, M_XF)
+                            A_tangent = A_T_tangent.transpose(0, 2, 1)
+
+                            # 5. Compute errors for the entire cluster using A_tangent
+                            dX_bad = X_bad - mus[bad_idx_local][dense_labels_bad]
+                            lin_bad = xp.einsum(
+                                "nmd,nd->nm", A_tangent[dense_labels_bad], dX_bad
+                            )
+                            # Because it's anchored, b is implicitly f_mus
+                            diff_bad = F_bad - (
+                                f_mus[bad_idx_local][dense_labels_bad] + lin_bad
+                            )
+                        elif ERROR_EVAL_MODE == "taylor":
+                            lin_bad = xp.einsum(
+                                "nmd,nd->nm",
+                                g_mus[bad_idx_local][dense_labels_bad],
+                                X_bad - mus[bad_idx_local][dense_labels_bad],
+                            )
+                            diff_bad = F_bad - (
+                                f_mus[bad_idx_local][dense_labels_bad] + lin_bad
+                            )
+
+                        E_bad = xp.linalg.norm(diff_bad, axis=1)
                         # 2. Sort and pick out the smallest n
-                        n_est_cov = MIN_PTS_PER_CLUSTER // 3  # empirical
+                        n_est_cov = (
+                            MIN_PTS_PER_CLUSTER // 3
+                        )  # this is empirical for now
                         cov_est_mask = get_n_smallest_per_block(
                             E_bad, dense_labels_bad, n_est_cov
                         )
 
-                        # 3. Use these points to compute sample covariances for the Hessian
+                        # 3. Use these points to compute the sample covariances for the Hessian
                         H_inv, _ = run_fused_stats(
                             X_bad[cov_est_mask],
                             mus[bad_idx_local],
@@ -829,7 +846,7 @@ def _run_local_refinement(
                         )
                         H_inv = 0.5 * (H_inv + H_inv.transpose(0, 2, 1))
 
-                        # 4. Compute square root inverse of H_inv
+                        # 3. Compute square root inverse of H_inv to get the scaling matrix for the split
                         dvals, U = xp.linalg.eigh(H_inv)
                         dvals_sqrt_inv = 1.0 / xp.sqrt(
                             xp.maximum(xp.abs(dvals), TINY_EPS)
@@ -837,7 +854,7 @@ def _run_local_refinement(
                         M_split = (U * dvals_sqrt_inv[:, None]) @ U.transpose(0, 2, 1)
                         M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
 
-                        # 5. Full covariance
+                        # 4. Full covariance
                         C, _ = run_fused_stats(
                             X_bad,
                             mus[bad_idx_local],
@@ -850,209 +867,197 @@ def _run_local_refinement(
                         )
                         C = 0.5 * (C + C.transpose(0, 2, 1))
 
-                        # 6. Covariance in transformed space
+                        # 5. Covariance in transformed space
                         CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
 
-                    else:
-                        raise ValueError(
-                            f"Unknown CLUSTERING_MATRIX: {CLUSTERING_MATRIX}"
-                        )
+                    elif CLUSTERING_MATRIX == "SR1":
 
+                        # Do not compute the Hessian here. Use the ones we computed on the previous level.
+                        # Still need to compute the absolute value square root, which kind of sucks.
+                        # TODO: in the future, would like updating formula for Hessian absolute value square root.
+                        #   This would probably only work for convex functions.
+                        dvals, U = xp.linalg.eigh(H_current[bad_idx_local])
+                        dvals_sqrt = xp.sqrt(xp.maximum(xp.abs(dvals), TINY_EPS))
+                        M_split = (U * dvals_sqrt[:, None]) @ U.transpose(0, 2, 1)
+                        M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
+
+                        # Full covariance
+                        C, _ = run_fused_stats(
+                            X_bad,
+                            mus[bad_idx_local],
+                            dense_labels_bad,
+                            n_bad,
+                            d,
+                            fd,
+                            xp.zeros(n_bad, dtype=xp.int32),
+                            calc_E=False,
+                        )
+                        C = 0.5 * (C + C.transpose(0, 2, 1))
+
+                        # 5. Covariance in transformed space
+                        CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
+
+                    # Get Split Direction (Dominant Eigenvector)
                     _, V_z = xp.linalg.eigh(CovZ)
                     v = V_z[:, :, -1]
 
+                    # Project Points & Sort
                     scores_proj = run_fused_score(
                         X_bad, mus[bad_idx_local], dense_labels_bad, M_split, v
                     )
                     sort_order = xp.lexsort(xp.stack([scores_proj, dense_labels_bad]))
 
                 with CudaTimer("time_bad_d2h", profiling_stats, PROFILE_TIMING):
+                    # Collect Sorted Data for Next Level
                     next_level_X_list.append(_to_host(X_bad[sort_order]))
                     next_level_F_list.append(_to_host(F_bad[sort_order]))
-                    if CLUSTER_G is not None and G_bad is not None:
+                    if CLUSTER_G is not None:
                         next_level_G_list.append(_to_host(G_bad[sort_order]))
 
+                    # Calculate Child Sizes (Binary Split)
                     half = bad_counts // 2
                     other = bad_counts - half
-                    new_sz = xp.zeros(2 * n_bad, dtype=xp.int64)
+                    new_sz = xp.zeros(2 * n_bad, dtype=xp.int64)  # (2 * n_bad,)
                     new_sz[0::2] = half
                     new_sz[1::2] = other
                     next_level_sizes_list.append(_to_host(new_sz))
 
-            logger.debug(
-                f"R{rank:02} L{level:02} B{b+1}: good={K_good_batch} bad={n_bad} "
-                f"(cumulative good={K_good})"
-            )
+                # SR1: save old mus and gradients for use in Hessian update.
+                if CLUSTERING_MATRIX == "SR1":
+                    bad_mus_prev_level = mus[bad_idx_local]
+                    bad_g_prev_level = g_mus[bad_idx_local]
+                    H_prev_level = H_current  # Need to save the Hessians
+
+                with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
+                    if CLUSTER_G is not None:
+                        del (
+                            M_split,
+                            C,
+                            scores_proj,
+                            sort_order,
+                            bad_mask,
+                            X_bad,
+                            F_bad,
+                            G_bad,
+                            dense_labels_bad,
+                            bad_counts,
+                            half,
+                            other,
+                        )
+                    else:
+                        del (
+                            M_split,
+                            C,
+                            scores_proj,
+                            sort_order,
+                            bad_mask,
+                            X_bad,
+                            F_bad,
+                            dense_labels_bad,
+                            bad_counts,
+                            half,
+                            other,
+                        )
+
+            if LOG_MEM_STATS:
+                log_mem_stats(
+                    f" R{rank:02} L{level:02} B{b:02}/{num_batches:02}: After Bad Clusters"
+                )
+
             start_cluster_idx = end_cluster_idx
             del X_batch, F_batch, G_batch
+            if ERROR_EVAL_MODE == "affine":
+                del (
+                    A_batch,
+                    b_batch,
+                    X_anchor_batch,
+                    X_c_batch,
+                    F_c_batch,
+                    auto_cov_batch,
+                    cross_cov_batch,
+                    A_T_batch,
+                )
             if mempool is not None:
                 mempool.free_all_blocks()
 
-        # --- Phase 2: The Level Boundary (Transition & Steal Response) ---
-        with CudaTimer("time_transition", profiling_stats, PROFILE_TIMING):
-            if len(next_level_sizes_list) > 0:
-                next_X = np.concatenate(next_level_X_list)
-                next_F = np.concatenate(next_level_F_list)
-                next_G = (
-                    np.concatenate(next_level_G_list) if CLUSTER_G is not None else None
-                )
-                next_sizes = np.concatenate(next_level_sizes_list)
-
-                valid = next_sizes > 0
-                if not np.all(valid):
-                    keep = np.repeat(valid, next_sizes)
-                    next_X, next_F, next_sizes = (
-                        next_X[keep],
-                        next_F[keep],
-                        next_sizes[valid],
-                    )
-                    if CLUSTER_G is not None and next_G is not None:
-                        next_G = next_G[keep]
-            else:
-                next_X, next_F, next_G, next_sizes = (
-                    np.array([]),
-                    np.array([]),
-                    None,
-                    np.array([]),
-                )
-
-            total_next_pts = np.sum(next_sizes) if len(next_sizes) > 0 else 0
-
-            # Broadcast our newly established load before answering steal requests so thieves get an updated view of the world
-            local_load = int(total_next_pts)
-            global_loads[rank] = local_load
-            broadcast_state()
-
-            # Steal Granting Strategy: If we have enough points and more than 1 cluster, we can afford to give away some work. We slice from the end to avoid shifting memory. We give away a chunk of points approximately equal to STEAL_SIZE, which may correspond to multiple clusters. We always keep at least 1 cluster for ourselves to ensure we don't go idle immediately after stealing. If we can't grant the steal (not enough points or only 1 cluster), we send a denial with the reason.
-            while comm.Iprobe(source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status):
-                req_src = status.Get_source()
-                comm.recv(source=req_src, tag=TAG_STEAL_REQ)
-
-                if total_next_pts > MIN_LOAD_THRESHOLD and len(next_sizes) > 1:
-                    _t_send = time.perf_counter()
-
-                    # Slice from the end to avoid shifting memory
-                    rev_cumsum = np.cumsum(next_sizes[::-1])
-                    split_rev_idx = np.searchsorted(rev_cumsum, STEAL_SIZE)
-                    split_idx = len(next_sizes) - 1 - split_rev_idx
-                    split_idx = max(
-                        1, split_idx
-                    )  # keep at least 1 cluster for ourselves
-
-                    pt_split = int(np.sum(next_sizes[:split_idx]))
-
-                    X_send = next_X[pt_split:]
-                    F_send = next_F[pt_split:]
-                    G_send = next_G[pt_split:] if next_G is not None else None
-                    sizes_send = next_sizes[split_idx:]
-
-                    meta = {
-                        "n_pts": int(X_send.shape[0]),
-                        "n_clusters": int(sizes_send.shape[0]),
-                        "has_g": G_send is not None,
+        # --- Level Transition ---
+        if len(next_level_sizes_list) == 0:
+            logger.info(
+                f"R{rank:02} L{level:02}: No bad clusters to refine, terminating."
+            )
+            # All clusters were accepted; update level_stats before exiting so the
+            # final level shows good_clusters correctly in profiling / heatmaps.
+            if profiling_stats["level_stats"]:
+                profiling_stats["level_stats"][-1].update(
+                    {
+                        "clusters_level_end": 0,
+                        "good_clusters": int(K_good),
+                        "num_pts_next_level": 0,
                     }
-                    comm.send(meta, dest=req_src, tag=TAG_STEAL_GRANT)
+                )
+            break
 
-                    comm.Send(
-                        np.ascontiguousarray(X_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 1,
-                    )
-                    comm.Send(
-                        np.ascontiguousarray(F_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 2,
-                    )
-                    if meta["has_g"]:
-                        comm.Send(
-                            np.ascontiguousarray(G_send),
-                            dest=req_src,
-                            tag=TAG_STEAL_GRANT + 3,
-                        )
-                    comm.Send(
-                        np.ascontiguousarray(sizes_send),
-                        dest=req_src,
-                        tag=TAG_STEAL_GRANT + 4,
-                    )
+        with CudaTimer("time_transition", profiling_stats, PROFILE_TIMING):
+            next_X = np.concatenate(next_level_X_list)
+            next_F = np.concatenate(next_level_F_list)
+            next_G = np.concatenate(next_level_G_list)
+            next_sizes = np.concatenate(next_level_sizes_list)
 
-                    # Truncate our own arrays
-                    next_X = next_X[:pt_split]
-                    next_F = next_F[:pt_split]
-                    if next_G is not None:
-                        next_G = next_G[:pt_split]
-                    next_sizes = next_sizes[:split_idx]
-                    total_next_pts = np.sum(next_sizes)
-
-                    # Update local state
-                    local_load = int(total_next_pts)
-                    global_loads[rank] = local_load
-                    broadcast_state()
-
-                    _t_send_elapsed = time.perf_counter() - _t_send
-                    logger.info(
-                        f"R{rank:02} L{level:02}: Granted steal to R{req_src:02} | "
-                        f"gave {X_send.shape[0]:,} pts "
-                        f"{sizes_send.shape[0]:,} clusters | "
-                        f"send={_t_send_elapsed:.3f}s | "
-                        f"remaining pts={total_next_pts:,} clusters={len(next_sizes):,}"
-                    )
-
-                    if PROFILE_TIMING:
-                        profiling_stats["time_mpi_send"] += _t_send_elapsed
-                else:
-                    if total_next_pts <= MIN_LOAD_THRESHOLD:
-                        deny_reason = f"LOAD ({total_next_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
-                    else:
-                        deny_reason = (
-                            f"STEAL_SIZE (only {len(next_sizes)} cluster(s), need > 1)"
-                        )
-                    comm.send(deny_reason, dest=req_src, tag=TAG_STEAL_DENY)
-                    logger.debug(
-                        f"R{rank:02} L{level:02}: Denied steal to R{req_src:02}: {deny_reason}"
-                    )
-
-            # Map remaining next level to GPU
-            if len(next_sizes) > 0:
+            valid = next_sizes > 0
+            if not np.all(valid):
+                keep = np.repeat(valid, next_sizes)
+                CLUSTER_PTS = xp.asarray(next_X[keep])
+                CLUSTER_F = xp.asarray(next_F[keep])
+                CLUSTER_G = xp.asarray(next_G[keep])  # TODO: what is this
+                CLUSTER_SIZES = xp.asarray(next_sizes[valid])
+            else:
                 CLUSTER_PTS = xp.asarray(next_X)
                 CLUSTER_F = xp.asarray(next_F)
-                CLUSTER_G = xp.asarray(next_G) if CLUSTER_G is not None else None
+                CLUSTER_G = xp.asarray(next_G)  # TODO: what is this
                 CLUSTER_SIZES = xp.asarray(next_sizes)
-                CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
-            else:
-                CLUSTER_PTS = xp.array([])
-                CLUSTER_SIZES = xp.array([])
 
-        _level_runtime = time.perf_counter() - _t_level
-        _clusters_end = int(len(CLUSTER_SIZES))
-        _pts_next = int(CLUSTER_PTS.shape[0])
+            CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
+
         if profiling_stats["level_stats"]:
             profiling_stats["level_stats"][-1].update(
                 {
-                    "clusters_level_end": _clusters_end,
+                    "clusters_level_end": int(len(CLUSTER_SIZES)),
                     "good_clusters": int(K_good),
-                    "num_pts_next_level": _pts_next,
-                    "runtime_sec": _level_runtime,
+                    "num_pts_next_level": int(CLUSTER_PTS.shape[0]),
                 }
             )
 
-        logger.info(
-            f"R{rank:02} L{level:02}: Done | "
-            f"clusters start={num_clusters:,} end={_clusters_end:,} good={K_good:,} | "
-            f"pts next level={_pts_next:,} | "
-            f"runtime={_level_runtime:.3f}s"
-        )
-        if _clusters_end > 0:
-            logger.info(
-                f"R{rank:02} L{level:02}: Cluster sizes | "
-                f"min={int(float(xp.min(CLUSTER_SIZES)))} "
-                f"mean={float(xp.mean(CLUSTER_SIZES)):.1f} "
-                f"median={int(float(xp.median(CLUSTER_SIZES)))} "
-                f"max={int(float(xp.max(CLUSTER_SIZES)))}"
-            )
+        if LOG_MEM_STATS:
+            log_mem_stats(f"R{rank:02} End: L{level:02} Transition")
 
         with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
+            del (
+                next_level_X_list,
+                next_level_F_list,
+                next_level_G_list,
+                next_level_sizes_list,
+                next_X,
+                next_F,
+                next_G,
+                next_sizes,
+            )
             gc.collect()
 
+        logger.info(
+            f"R{rank:02} L{level:02}: Clusters (start): {num_clusters:,}, "
+            f"Clusters (end): {len(CLUSTER_SIZES):,}, "
+            f"Good Clusters: {K_good:,}, "
+            f"Num Pts (next level): {CLUSTER_PTS.shape[0]:,}"
+        )
+        logger.info(
+            f"R{rank:02} L{level:02}: Cluster Sizes - min: {int(CLUSTER_SIZES.min())}, "
+            f"mean: {CLUSTER_SIZES.mean():.1f}, median: {int(xp.median(CLUSTER_SIZES))}, "
+            f"max: {int(CLUSTER_SIZES.max())}"
+        )
+        level_runtime = time.perf_counter() - _t_level
+        logger.info(f"Runtime - R{rank:02} L{level:02}: {level_runtime:.3f}s")
+        if profiling_stats["level_stats"]:
+            profiling_stats["level_stats"][-1].update({"runtime_sec": level_runtime})
         level += 1
 
     return buffers, out_count, total_f_evals, num_generated_pts, tree_data, level
@@ -1068,11 +1073,14 @@ def adaptive_clustering(
     g_fn: Optional[Callable[[Array], Array]] = None,
     oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
     TOL: float,
+    ERROR_EVAL_MODE: Literal["taylor", "affine"] = "taylor",
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     INITIAL_CLUSTERING_METHOD: Literal[
         "kmeans", "knndbscan", "uniform_grid"
     ] = "kmeans",
-    CLUSTERING_MATRIX: Literal["Hessian_LSQ", "Cov_Lvl_curves", "None"] = "Hessian_LSQ",
+    CLUSTERING_MATRIX: Literal[
+        "Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"
+    ] = "Hessian_LSQ",
     NUM_INITIAL_CLUSTERS: int = 100,
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
@@ -1082,6 +1090,7 @@ def adaptive_clustering(
     BATCH_SIZE: int = 10_000_000,
     IGNORE_GRADIENT: bool = False,
     STORE_HESSIAN_PER_CLUSTER: bool = False,
+    STORE_AFFINE_FIT_PER_CLUSTER: bool = False,
     STORE_TREE_DATA: bool = False,
     LOG_MEM_STATS: bool = False,
     PROFILE_TIMING: bool = False,
@@ -1130,7 +1139,10 @@ def adaptive_clustering(
         BATCH_SIZE: Maximum number of points processed in a single GPU kernel launch.
         IGNORE_GRADIENT: If True, assumes ∇F = 0 (Voronoi/Piecewise-Constant
             approximation).
-        STORE_HESSIAN_PER_CLUSTER: If True, computes and stores H for every accepted cluster, to use for extra inference accuracy.
+        STORE_HESSIAN_PER_CLUSTER: If True, computes and stores H for every
+            accepted cluster, to use for extra inference accuracy.
+        STORE_AFFINE_FIT_PER_CLUSTER: If True, stores the affine fit parameters (A and b)
+            for each cluster, to use for extra inference accuracy.
         LOG_MEM_STATS: If True, prints VRAM usage at key steps.
         PROFILE_TIMING: If True, tracks detailed execution times for performance
             profiling.
@@ -1145,7 +1157,7 @@ def adaptive_clustering(
         -   `L_obs`: (K,) Observed Lipschitz constants.
         -   `E_cluster`: (K,) Max observed error per cluster.
         -   `counts`: (K,) Number of points support per cluster.
-        -   `H`: (K, d, d) (Optional) Symmetric Hessian.
+        -   `H_sqrt`: (K, d, d) (Optional) Symmetric Hessian square roots.
         -   `tree_data`: (dict) (Optional) Per-level cluster data keyed by level index, for visualization/debugging.
         -   `num_levels`: (int) Total levels refined.
         -   `num_generated_pts`: (int) Number of generated points.
@@ -1154,6 +1166,27 @@ def adaptive_clustering(
     """
 
     # Validate function arguments
+    # TODO: Clean up this in a better way. The logic is a bit convoluted right now.
+    # Especially the need for grads (or lack thereof) depends on the CLUSTERING_MATRIX
+    if ERROR_EVAL_MODE == "affine":
+        if IGNORE_GRADIENT is False:
+            IGNORE_GRADIENT = True
+            logger.warning(
+                "ERROR_EVAL_MODE is set to 'affine', which does not use gradients. Setting IGNORE_GRADIENT to True."
+            )
+
+        if CLUSTERING_MATRIX != "Cov_Lvl_curves":
+            CLUSTERING_MATRIX = "Cov_Lvl_curves"
+            logger.warning(
+                "ERROR_EVAL_MODE is set to 'affine', which is only compatible with CLUSTERING_MATRIX='Cov_Lvl_curves'. Setting CLUSTERING_MATRIX to 'Cov_Lvl_curves'."
+            )
+
+    if ERROR_EVAL_MODE == "taylor":
+        if IGNORE_GRADIENT and CLUSTERING_MATRIX == "Hessian_LSQ":
+            raise ValueError(
+                "Hessian_LSQ clustering matrix requires gradient information"
+            )
+
     if CLUSTERING_MATRIX == "Cov_Lvl_curves":
         # In this case, we do not want to compute gradients in general.
         # When we generate points, we want to use f_fn and when we generate centroids,
@@ -1212,10 +1245,6 @@ def adaptive_clustering(
         "time_bad_d2h": 0.0,
         "time_transition": 0.0,
         "time_gc": 0.0,
-        "time_idle": 0.0,
-        "time_state_update": 0.0,
-        "time_mpi_send": 0.0,
-        "time_mpi_recv": 0.0,
         "time_scatter": 0.0,
         "time_gather": 0.0,
         "level_stats": [],
@@ -1312,6 +1341,7 @@ def adaptive_clustering(
             elif INITIAL_CLUSTERING_METHOD == "uniform_grid":
                 X0_host_cache = _to_host(X0_gpu)
                 assert X0_host_cache is not None
+
                 labels0, grid_bins = uniform_grid_cluster_labels(
                     X0_host_cache, NUM_INITIAL_CLUSTERS
                 )
@@ -1497,6 +1527,7 @@ def adaptive_clustering(
             g_fn=g_fn,
             oracle_fn=oracle_fn,
             TOL=TOL,
+            ERROR_EVAL_MODE=ERROR_EVAL_MODE,
             ERROR_METRIC=ERROR_METRIC,
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
             MAX_CLUSTERS_EST=max(1, MAX_CLUSTERS_EST // max(1, size)),
@@ -1507,16 +1538,14 @@ def adaptive_clustering(
             CLUSTERING_MATRIX=CLUSTERING_MATRIX,
             IGNORE_GRADIENT=IGNORE_GRADIENT,
             STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN_PER_CLUSTER,
+            STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT_PER_CLUSTER,
             STORE_TREE_DATA=STORE_TREE_DATA,
             LOG_MEM_STATS=LOG_MEM_STATS,
             PROFILE_TIMING=PROFILE_TIMING,
             rank=rank,
             profiling_stats=profiling_stats,
-            size=size,
-            comm=comm,
         )
     )
-    total_time = time.perf_counter() - _start_time
 
     logger.info(
         f"R{rank:03}: Local BFS done. Found {out_count:,} clusters. "
@@ -1537,16 +1566,8 @@ def adaptive_clustering(
         profiling_stats.get("total_f_evals", 0) + local_f_evals
     )
     profiling_stats["num_final_clusters"] = out_count
-    profiling_stats["time_total"] = total_time
+    profiling_stats["time_total"] = time.perf_counter() - _start_time
     # Piggyback profiling stats on the existing gather (no extra comms round)
-    # Update time_idle by removing the measured active times from send/recv
-    active_time = sum(
-        profiling_stats.get(k, 0.0)
-        for k in ["time_state_update", "time_mpi_send", "time_mpi_recv"]
-    )
-    profiling_stats["time_idle"] = max(
-        0.0, profiling_stats.get("time_idle", 0.0) - active_time
-    )
     local_result_host["_profiling_stats"] = profiling_stats
 
     # ------------------------------------------------------------------
@@ -1669,7 +1690,6 @@ if __name__ == "__main__":
     from src.plotter_utils import (
         plot_adaptive_clustering_results,
         plot_mpi_level_heatmap,
-        plot_mpi_rank_time_breakdown,
     )
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
@@ -1709,11 +1729,25 @@ if __name__ == "__main__":
         help="Minimum points per cluster for adaptive clustering",
     )
     parser.add_argument(
+        "--error-eval-mode",
+        type=str,
+        default="taylor",
+        choices=["taylor", "affine"],
+        help="Method for evaluating cluster error (Taylor expansion vs affine fit)",
+    )
+    parser.add_argument(
         "--error-metric",
         type=str,
         default="Linf-local",
         choices=["L2", "Linf-global", "Linf-local"],
         help="Error metric for adaptive clustering",
+    )
+    parser.add_argument(
+        "--clustering-matrix",
+        type=str,
+        default="Cov_Lvl_curves",
+        choices=["Hessian_LSQ", "Cov_Lvl_curves", "None"],
+        help="Matrix for spectral clustering of 'Bad' clusters",
     )
     parser.add_argument(
         "--initial-clustering-method",
@@ -1741,7 +1775,9 @@ if __name__ == "__main__":
     N_TRAIN = int(args.n_train)
     NUM_INITIAL_CLUSTERS = args.n_init_clusters
     MIN_PTS_PER_CLUSTER = args.n_min_per_cluster
+    ERROR_EVAL_MODE = args.error_eval_mode
     ERROR_METRIC = args.error_metric
+    CLUSTERING_MATRIX = args.clustering_matrix
     INITIAL_CLUSTERING_METHOD = args.initial_clustering_method
     A_ROSENBROCK = args.rosenbrock_a
     FORCE_REEXEC = args.force
@@ -1750,9 +1786,9 @@ if __name__ == "__main__":
     NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
 
     if IS_CUPY_BACKEND:
-        OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi_rebalancing_gpu"
+        OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi_static_gpu"
     else:
-        OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi_rebalancing"
+        OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_mpi_static"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     img_fpath = (
@@ -1789,7 +1825,9 @@ if __name__ == "__main__":
         TOL=TOL,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        ERROR_EVAL_MODE=ERROR_EVAL_MODE,
         ERROR_METRIC=ERROR_METRIC,
+        CLUSTERING_MATRIX=CLUSTERING_MATRIX,
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
         STORE_TREE_DATA=STORE_TREE_DATA,
         LOG_MEM_STATS=False,
@@ -1804,8 +1842,7 @@ if __name__ == "__main__":
     assert results is not None, "Rank 0 should have results after adaptive_clustering"
 
     print("-" * 40)
-    n_centroids = results["centroids"].shape[0]
-    print(f"Final Cluster Count: {n_centroids:,}")
+    print(f"Final Cluster Count: {results['centroids'].shape[0]:,}")
 
     E_cluster_vals = results["E_cluster"]
     counts = results["counts"]
@@ -1821,6 +1858,7 @@ if __name__ == "__main__":
         f"{counts.mean():.1f}",
         int(counts.max()),
     )
+    # raise SystemExit(0)
 
     if STORE_TREE_DATA:
         tree_data = results["tree_data"]
@@ -1828,6 +1866,7 @@ if __name__ == "__main__":
         for lvl, data in tree_data.items():
             print(f"Level {lvl:02}: Clusters: {data['centroids'].shape[0]:,}")
 
+    n_centroids = results["centroids"].shape[0]
     if DIM == 2 and n_centroids <= 10_000:
         title = f"Rosenbrock (a={A_ROSENBROCK}) (TOL={TOL}, ERROR_METRIC={ERROR_METRIC}), N_CLUSTERS={n_centroids:,}"
         plot_adaptive_clustering_results(
@@ -1840,7 +1879,7 @@ if __name__ == "__main__":
     else:
         print("Skipping plot (d != 2 or too many clusters).")
 
-    # Dump json of important run params, n_centroids and training time
+    # Dump json of important run params, n_centroids and training
     json_data = {
         "IS_CUPY_BACKEND": IS_CUPY_BACKEND,
         "mpi_size": _size,
@@ -1867,12 +1906,6 @@ if __name__ == "__main__":
     with open(json_fpath, "w") as f:
         json.dump(json_data, f, indent=4)
     print(f"Saved results JSON: {json_fpath}")
-
-    # Save MPI rank time breakdown plot
-    time_breakdown_path = img_fpath.with_name(
-        img_fpath.stem + "_mpi_time_breakdown.png"
-    )
-    plot_mpi_rank_time_breakdown(results["profiling_stats"], time_breakdown_path)
 
     # MPI × Level workload heatmap (good_clusters is the primary workload signal)
     for _heatmap_col in (

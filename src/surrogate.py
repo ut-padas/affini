@@ -1,13 +1,15 @@
-import json
 import logging
 import time
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Union
 
 import numpy as np
+from mpi4py import MPI
 
-from src import IS_CUPY_BACKEND, Array, _to_device, _to_host, xp
+from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _to_device, _to_host, xp
 from src.adaptive_clustering import adaptive_clustering
+from src.adaptive_clustering_utils import SurrogateMode
+from src.adaptive_clustering_v2 import adaptive_clustering as adaptive_clustering_v2
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +17,12 @@ logger = logging.getLogger(__name__)
 class HATANNSurrogate:
     """
     Surrogate using Adaptive Clustering + kNN with Ellipsoidal Distance on GPU.
+    Supports MPI-parallelized training and inference.
     """
 
     def __init__(self):
         self.trained = False
+        self.mode: Optional[SurrogateMode] = None
 
         # Storage for source points (Reference data)
         self.N_src = 0
@@ -31,26 +35,17 @@ class HATANNSurrogate:
         self.A_fits_src = None
         self.b_fits_src = None
         self.profiling_stats = {}
-        self.tree_data = None  # Optional: Store tree data for analysis/visualization
+        self.tree_data = None
 
-        # Model file path (for saving/loading)
         self._model_file = None
-
-        # Persistent KNN Index
         self.knn_index = None
 
     def get_trained_data_as_dict(self) -> dict:
-        """
-        Return the trained data as a dictionary of arrays.
-        Useful for saving or inspection.
-
-        Returns:
-            Dictionary containing trained data arrays.
-        """
         if not self.trained:
             raise RuntimeError("Model not trained.")
 
         return {
+            "mode": self.mode.value if self.mode else None,
             "X_src": self.X_src,
             "f_src": self.f_src,
             "J_src": self.J_src,
@@ -67,16 +62,15 @@ class HATANNSurrogate:
     def train(
         self,
         X_train: Array,
+        USE_V2: bool,
         f_fn: Optional[Callable] = None,
         g_fn: Optional[Callable] = None,
         oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
         *,
-        # Model persistence
+        mode: SurrogateMode = SurrogateMode.AFFINE_COV_HESS,
         save_model: Optional[Union[bool, str, Path]] = None,
         load_if_exists: bool = True,
-        # Clustering params
         TOL: float = 1e-2,
-        ERROR_EVAL_MODE: Literal["taylor", "affine"] = "taylor",
         ERROR_METRIC: Literal["L2", "Linf-local", "Linf-global"] = "Linf-global",
         INITIAL_CLUSTERING_METHOD: Literal[
             "kmeans", "knndbscan", "uniform_grid"
@@ -85,37 +79,19 @@ class HATANNSurrogate:
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
         SEED: int = 0,
-        CLUSTERING_MATRIX: Literal[
-            "Hessian_LSQ", "Cov_Lvl_curves", "SR1", "None"
-        ] = "Hessian_LSQ",
-        IGNORE_GRADIENT: bool = False,
         STORE_HESSIAN: bool = False,
         STORE_AFFINE_FIT: bool = False,
+        USE_WORK_STEALING: bool = True,
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
         PROFILE_TIMING: bool = False,
-        STORE_TREE_DATA: bool = False,
     ):
-        """
-        Train the surrogate model or load from saved file.
+        comm = MPI.COMM_WORLD
+        rank = _get_mpi_rank()
 
-        Args:
-            X_train: Training data points
-            f_fn: Function to evaluate
-            g_fn: Gradient function
-            oracle_fn: Combined function that returns (f, g)
-            save_model: If True, saves to default location. If str/Path, saves to that
-            location. If None/False, doesn't save.
-            load_if_exists: If True and save_model file exists, loads instead of training.
-            TOL: Tolerance for adaptive clustering
-            ... (other clustering parameters)
-            PROFILE_TIMING: If True, enables detailed performance profiling (GPU only).
-        """
-        # Handle save_model parameter
         model_filepath = None
         if save_model is not None and save_model is not False:
             if isinstance(save_model, bool) and save_model:
-                # Default save location
                 model_filepath = Path.cwd() / "hatann_surrogate.npz"
             else:
                 model_filepath = Path(save_model)
@@ -124,209 +100,200 @@ class HATANNSurrogate:
                 elif model_filepath.suffix != ".npz":
                     model_filepath = model_filepath.with_suffix(".npz")
 
-        # Try to load existing model if requested
         if load_if_exists and model_filepath is not None and model_filepath.exists():
             try:
                 loaded_model = self.load_model(model_filepath)
-                # Transfer state to current instance
-                self.trained = loaded_model.trained
-                self.X_src = loaded_model.X_src
-                self.f_src = loaded_model.f_src
-                self.J_src = loaded_model.J_src
-                self.trust_radii_src = loaded_model.trust_radii_src
-                self.Qs_src = loaded_model.Qs_src
-                self.N_src = loaded_model.N_src
-                self.profiling_stats = loaded_model.profiling_stats
-                self.tree_data = loaded_model.tree_data
-                self.Hs_src = loaded_model.Hs_src
-                self.A_fits_src = loaded_model.A_fits_src
-                self.b_fits_src = loaded_model.b_fits_src
-                self._model_file = model_filepath
-                logger.info(f"Loaded existing model from {model_filepath}")
+                self.__dict__.update(loaded_model.__dict__)
+                if rank == 0:
+                    logger.info(f"Loaded existing model from {model_filepath}")
                 return
             except Exception as e:
-                logger.warning(
-                    f"Failed to load existing model: {e}. Proceeding with training."
-                )
+                if rank == 0:
+                    logger.warning(
+                        f"Failed to load existing model: {e}. Proceeding with training."
+                    )
 
-        # Validate function arguments
         if oracle_fn is not None:
             if f_fn is not None or g_fn is not None:
-                raise ValueError(
-                    "Cannot specify both oracle_fn and f_fn/g_fn. Use either oracle_fn OR both f_fn and g_fn."
-                )
+                raise ValueError("Cannot specify both oracle_fn and f_fn/g_fn.")
         else:
-            if f_fn is None or g_fn is None:
-                raise ValueError("Must specify either oracle_fn OR both f_fn and g_fn.")
+            if (
+                f_fn is None
+                or mode != SurrogateMode.AFFINE_COV_HESS
+                and mode != SurrogateMode.NEAREST_NEIGHBOR
+                and g_fn is None
+            ):
+                raise ValueError(
+                    "Must specify oracle_fn or required f_fn/g_fn for the chosen mode."
+                )
 
         t0 = time.perf_counter()
 
-        if CLUSTERING_MATRIX == "None" or IGNORE_GRADIENT == True:
-            logger.warning(
-                "USE_HESSIAN_INFORMED_SPLIT=False or IGNORE_GRADIENT=True may lead to suboptimal clustering performance."
+        self.mode = mode
+
+        # 1. MPI-Distributed Adaptive Clustering
+        if not USE_V2:
+            results = adaptive_clustering(
+                X=X_train,
+                f_fn=f_fn,
+                g_fn=g_fn,
+                oracle_fn=oracle_fn,
+                TOL=TOL,
+                ERROR_EVAL_MODE=self.mode,
+                ERROR_METRIC=ERROR_METRIC,
+                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                SEED=SEED,
+                Q_SHRINK=0.05,
+                MAX_LEVELS=MAX_LEVELS,
+                BATCH_SIZE=BATCH_SIZE,
+                PROFILE_TIMING=PROFILE_TIMING,
+                STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
+                STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
+                USE_WORK_STEALING=USE_WORK_STEALING,
+            )
+        else:
+            results = adaptive_clustering_v2(
+                X=X_train,
+                f_fn=f_fn,
+                g_fn=g_fn,
+                oracle_fn=oracle_fn,
+                TOL=TOL,
+                ERROR_EVAL_MODE=self.mode,
+                ERROR_METRIC=ERROR_METRIC,
+                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+                SEED=SEED,
+                Q_SHRINK=0.05,
+                MAX_LEVELS=MAX_LEVELS,
+                BATCH_SIZE=BATCH_SIZE,
+                PROFILE_TIMING=PROFILE_TIMING,
+                STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
+                STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
+                USE_WORK_STEALING=USE_WORK_STEALING,
             )
 
-        # 1. Adaptive Clustering
-        t0 = time.perf_counter()
-        results = adaptive_clustering(
-            X=X_train,
-            f_fn=f_fn,
-            g_fn=g_fn,
-            oracle_fn=oracle_fn,
-            TOL=TOL,
-            ERROR_METRIC=ERROR_METRIC,
-            ERROR_EVAL_MODE=ERROR_EVAL_MODE,
-            INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-            CLUSTERING_MATRIX=CLUSTERING_MATRIX,
-            NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-            MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            SEED=SEED,
-            Q_SHRINK=0.05,
-            MAX_LEVELS=MAX_LEVELS,
-            BATCH_SIZE=BATCH_SIZE,
-            IGNORE_GRADIENT=IGNORE_GRADIENT,
-            STORE_TREE_DATA=STORE_TREE_DATA,
-            PROFILE_TIMING=PROFILE_TIMING,
-            STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
-            STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
-        )
-        # Non-rank-0 MPI workers return None — their work is done.
-        if results is None:
-            return
+        # 2. Broadcast trained structures to all ranks
+        bcast_data = None
+        if rank == 0:
+            assert results is not None
+            # Push to host memory to safely pickle/broadcast over MPI
+            bcast_data = {
+                k: _to_host(v) if isinstance(v, xp.ndarray) else v
+                for k, v in results.items()
+            }
 
-        centroids = xp.asarray(results["centroids"])
-        f_vals = xp.asarray(results["f"])
-        grads = xp.asarray(results["g"])
-        radii = xp.asarray(results["radii"])
-        Qs = xp.asarray(results["Q"])
-        profiling_stats = results["profiling_stats"]
-        Hs = results.get("H", None)
-        A_fits = results.get("A_fit", None)
-        b_fits = results.get("b_fit", None)
+        bcast_data = comm.bcast(bcast_data, root=0)
 
-        # 2. Store Data
-        self.X_src = centroids
-        self.f_src = f_vals
-        self.J_src = grads
-        self.trust_radii_src = radii
-        self.Qs_src = Qs
-        self.N_src = centroids.shape[0]
-        self.profiling_stats = profiling_stats
-        if STORE_TREE_DATA:
-            self.tree_data = results["tree_data"]
-        if Hs is not None:
-            self.Hs_src = xp.asarray(Hs)
-        if A_fits is not None and b_fits is not None:
-            self.A_fits_src = xp.asarray(A_fits)
-            self.b_fits_src = xp.asarray(b_fits)
+        # 3. Store Data on all ranks
+        self.X_src = xp.asarray(bcast_data["centroids"])
+        self.f_src = xp.asarray(bcast_data["f"])
 
-        # 3. Build KNN Index
+        # Guard optional arrays
+        if "g" in bcast_data and bcast_data["g"] is not None:
+            self.J_src = xp.asarray(bcast_data["g"])
+        self.trust_radii_src = xp.asarray(bcast_data["radii"])
+        self.Qs_src = xp.asarray(bcast_data["Q"])
+        self.N_src = self.X_src.shape[0]
+        self.profiling_stats = bcast_data["profiling_stats"]
+
+        if "H" in bcast_data and bcast_data["H"] is not None:
+            self.Hs_src = xp.asarray(bcast_data["H"])
+        if "A_fit" in bcast_data and bcast_data["A_fit"] is not None:
+            self.A_fits_src = xp.asarray(bcast_data["A_fit"])
+            self.b_fits_src = xp.asarray(bcast_data["b_fit"])
+
+        # 4. Build individual KNN index per rank
         self._build_knn_index()
-
-        # 4. Training complete
         self.trained = True
-        logger.info(f"Training Time: {time.perf_counter()-t0:.4f}s")
-        logger.info(f"Trained Clusters: {self.N_src:,}")
 
-        # Save model if requested
-        if model_filepath is not None:
-            self.save(model_filepath)
+        if rank == 0:
+            logger.info(f"Training Time: {time.perf_counter()-t0:.4f}s")
+            logger.info(f"Trained Clusters: {self.N_src:,}")
+            if model_filepath is not None:
+                self.save(model_filepath)
 
     def save(self, filepath: Union[str, Path]) -> None:
-        """
-        Save the trained model to a file.
-
-        Args:
-            filepath: Path to save the model. If directory, uses default filename.
-        """
         if not self.trained:
             raise RuntimeError("Cannot save an untrained model.")
 
         filepath = Path(filepath)
-
-        # If it's a directory, create a default filename
         if filepath.is_dir():
             filepath = filepath / "hatann_surrogate.npz"
         elif filepath.suffix != ".npz":
             filepath = filepath.with_suffix(".npz")
 
-        # Create directory if it doesn't exist
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
-        # Prepare data for saving
         save_dict = {
             "trained": self.trained,
+            "mode": self.mode.value if self.mode else None,
             "N_src": self.N_src,
             "X_src": _to_host(self.X_src),
             "f_src": _to_host(self.f_src),
-            "J_src": _to_host(self.J_src),
+            "J_src": _to_host(self.J_src) if self.J_src is not None else None,
             "trust_radii_src": _to_host(self.trust_radii_src),
             "Qs_src": _to_host(self.Qs_src),
-            "Hs_src": _to_host(self.Hs_src),
-            "A_fits_src": _to_host(self.A_fits_src),
-            "b_fits_src": _to_host(self.b_fits_src),
+            "Hs_src": _to_host(self.Hs_src) if self.Hs_src is not None else None,
+            "A_fits_src": (
+                _to_host(self.A_fits_src) if self.A_fits_src is not None else None
+            ),
+            "b_fits_src": (
+                _to_host(self.b_fits_src) if self.b_fits_src is not None else None
+            ),
             "profiling_stats": self.profiling_stats,
             "tree_data": self.tree_data,
         }
 
-        # Save using numpy
         np.savez_compressed(str(filepath), **save_dict, allow_pickle=True)
-
         self._model_file = filepath
         logger.info(f"Model saved to {filepath}")
 
     @classmethod
     def load_model(cls, filepath: Union[str, Path]) -> "HATANNSurrogate":
-        """
-        Load a trained model from a file.
-
-        Args:
-            filepath: Path to the saved model file.
-
-        Returns:
-            Loaded HATANNSurrogate instance.
-        """
         filepath = Path(filepath)
-
         if not filepath.exists():
             raise FileNotFoundError(f"Model file not found: {filepath}")
 
-        # Load the data
         data = np.load(str(filepath), allow_pickle=True)
-
-        # Create instance
         instance = cls()
 
-        # Restore state & arrays
         instance.trained = bool(data["trained"])
+
+        mode_val = data.get("mode", None)
+        if mode_val is not None and mode_val.item() is not None:
+            instance.mode = SurrogateMode(mode_val.item())
+
         instance.N_src = int(data["N_src"])
         instance.X_src = _to_device(data["X_src"])
         instance.f_src = _to_device(data["f_src"])
-        instance.J_src = _to_device(data["J_src"])
+
+        instance.J_src = _to_device(data["J_src"]) if data["J_src"].shape else None
         instance.trust_radii_src = _to_device(data["trust_radii_src"])
         instance.Qs_src = _to_device(data["Qs_src"])
-        instance.Hs_src = _to_device(data["Hs_src"])
-        instance.A_fits_src = _to_device(data["A_fits_src"])
-        instance.b_fits_src = _to_device(data["b_fits_src"])
+        instance.Hs_src = _to_device(data["Hs_src"]) if data["Hs_src"].shape else None
+        instance.A_fits_src = (
+            _to_device(data["A_fits_src"]) if data["A_fits_src"].shape else None
+        )
+        instance.b_fits_src = (
+            _to_device(data["b_fits_src"]) if data["b_fits_src"].shape else None
+        )
 
-        # Convert profiling stats and tree data back to dict/objects if they exist
         _prof = data["profiling_stats"]
         instance.profiling_stats = _prof.item() if _prof.size > 0 else {}
         _td = data["tree_data"]
         instance.tree_data = _td.item() if _td.size > 0 else None
 
         instance._model_file = filepath
-        logger.info(f"Model loaded from {filepath}")
-        logger.info(f"Loaded model with {instance.N_src:,} clusters")
-
-        # Rebuild index
         instance._build_knn_index()
 
         return instance
 
     def _build_knn_index(self):
-        """Build the KNN index for the current source centroids."""
         if self.X_src is None:
             return
 
@@ -340,36 +307,24 @@ class HATANNSurrogate:
         else:
             import faiss
 
-            # Ensure data types are correct for FAISS (float32)
             self.X_src = _to_host(self.X_src)
             centroids_f32 = self.X_src.astype(np.float32)
-
             D = self.X_src.shape[1]
             self.knn_index = faiss.IndexFlatL2(D)
             self.knn_index.add(centroids_f32)  # type: ignore
 
-        logger.info(f"KNN Index built in {time.perf_counter()-t0:.4f}s")
+        if _get_mpi_rank() == 0:
+            logger.info(f"KNN Index built in {time.perf_counter()-t0:.4f}s")
 
     def _query_knn(self, query_points: Array, k: int) -> tuple[Array, Array]:
-        """
-        Query the internal KNN index.
-        Returns:
-            indices: (M, k)
-            distances: (M, k) L2 distances
-        """
         if self.knn_index is None:
             self._build_knn_index()
 
-        assert self.knn_index is not None, "KNN index is not built."
-
-        # Ensure k doesn't exceed number of centroids
         k = min(k, self.N_src)
-
         if IS_CUPY_BACKEND:
             query_points = _to_device(query_points)
             distances, indices = self.knn_index.kneighbors(query_points, n_neighbors=k)  # type: ignore
         else:
-            # FAISS returns squared distances
             query_points = _to_host(query_points)
             query_points_f32 = query_points.astype(xp.float32)
             distances_sq, indices = self.knn_index.search(query_points_f32, k)  # type: ignore
@@ -377,60 +332,65 @@ class HATANNSurrogate:
 
         return indices, distances
 
-    def get_source_centroids(self) -> Any:
-        """Return the source centroids used in training."""
-        if not self.trained:
-            raise RuntimeError("Model not trained.")
-        return self.X_src
-
-    def get_trust_regions(self) -> Any:
-        """Return the trust regions for each cluster."""
-        if not self.trained:
-            raise RuntimeError("Model not trained.")
-        return self.Qs_src
-
-    def get_number_of_sources(self) -> int:
-        """Return the number of source centroids used in training."""
-        if not self.trained:
-            raise RuntimeError("Model not trained.")
-        return self.N_src
-
     def predict(
         self,
-        query_points,
+        query_points: Optional[Array] = None,
         k_nn: int = 1,
         strict_trust_region: bool = False,
-        use_saved_hessian: bool = False,
-        predict_mode: Literal["taylor", "affine"] = "taylor",
-        return_cluster_assignments: bool = False,
     ) -> tuple:
         """
-        Inference via kNN (CPU or GPU) with L2 Distance.
+        MPI-Parallel Inference via kNN.
+        Rank 0 splits and scatters query points, computes locally, and gathers results.
         """
         if not self.trained:
             raise RuntimeError("Model not trained.")
 
-        if use_saved_hessian and self.Hs_src is None:
-            logger.warning("use_saved_hessian=True but Hessians are not computed.")
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        size = comm.Get_size()
 
-        if predict_mode == "affine" and (
-            self.A_fits_src is None or self.b_fits_src is None
-        ):
-            raise ValueError(
-                "predict_mode='affine' requested, but affine fit parameters (A, b) "
-                "were not found. Please retrain with STORE_AFFINE_FIT=True."
-            )
+        chunks = None
+        if rank == 0:
+            if query_points is None:
+                raise ValueError("query_points must be provided on rank 0.")
+            query_host = _to_host(query_points)
+            chunks = np.array_split(query_host, size)
 
-        assert (
-            self.X_src is not None
-            and self.Qs_src is not None
-            and self.f_src is not None
-            and self.J_src is not None
+        # Scatter evenly across ranks
+        local_queries_host = comm.scatter(chunks, root=0)
+        local_queries = xp.asarray(local_queries_host)
+
+        # Run mathematical logic independently
+        local_preds, local_mask = self._predict_local(
+            local_queries, k_nn, strict_trust_region
         )
 
-        N, D = query_points.shape
+        # Bring back to host and merge
+        gathered_preds = comm.gather(_to_host(local_preds), root=0)
+        gathered_masks = comm.gather(_to_host(local_mask), root=0)
 
-        # --- 1. Coarse L2 Filter ---
+        if rank == 0:
+            return xp.asarray(np.concatenate(gathered_preds)), xp.asarray(np.concatenate(gathered_masks))  # type: ignore
+
+        return None, None
+
+    def _predict_local(
+        self,
+        query_points: Array,
+        k_nn: int,
+        strict_trust_region: bool,
+    ) -> tuple[Array, Array]:
+        """
+        Core localized math function execution on an individual rank's data chunk.
+        """
+        N, D = query_points.shape
+        assert (
+            self.trained
+            and self.X_src is not None
+            and self.f_src is not None
+            and self.Qs_src is not None
+        )
+
         if k_nn < len(self.X_src):
             COARSE_FACTOR = 10
             k_coarse = min(k_nn * COARSE_FACTOR, len(self.X_src))
@@ -445,82 +405,74 @@ class HATANNSurrogate:
         centroids_coarse = self.X_src[nn_idx_coarse]
         dx_coarse = query_points[:, None, :] - centroids_coarse
 
-        # --- 2. Compute Q-Distance ---
         dist_sq_coarse = xp.einsum("nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse)
 
-        # --- 3. Refine: Sort by Q-Distance ---
         sorted_local_indices = xp.argsort(dist_sq_coarse, axis=1)
         top_k_local = sorted_local_indices[:, :k_nn]
 
-        # Gather Top-k Data
         nn_idx = xp.take_along_axis(nn_idx_coarse, top_k_local, axis=1)
         dist_sq = xp.take_along_axis(dist_sq_coarse, top_k_local, axis=1)
 
         centroids = self.X_src[nn_idx]
         dx = query_points[:, None, :] - centroids
-
-        # --- 4. Validity & Weights ---
         dist = xp.sqrt(dist_sq)
 
-        # A. Calculate STRICT status (for the mask only)
-        # We check if points would have been zeroed out under strict rules.
         valid_mask_strict = dist_sq <= 1.0
         weights_strict = xp.maximum(0.0, 1.0 - dist) ** 2
         weights_strict *= valid_mask_strict
 
-        # If strict sum is effectively 0, the point is "unguaranteed"
         total_weight_strict = xp.sum(weights_strict, axis=1)
         unguaranteed_mask = total_weight_strict < 1e-12
 
-        # B. Determine Final Weights for Prediction
         if strict_trust_region:
             final_weights = weights_strict
             total_weight = total_weight_strict
         else:
-            # Simple Average: Set all weights to 1.0
             final_weights = xp.ones_like(dist_sq)
             total_weight = xp.sum(final_weights, axis=1)
 
-        # --- 5. Prediction Calculation ---
         F_dim = self.f_src.shape[1] if self.f_src.ndim > 1 else 1
         flat_idx = nn_idx.reshape(-1)
+        f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(N, k_nn, F_dim)
 
-        if predict_mode == "taylor":
-            f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(N, k_nn, F_dim)
+        # ---------------------------------------------------------------------
+        # Dynamic Mode Routing
+        # ---------------------------------------------------------------------
+        if self.mode == SurrogateMode.NEAREST_NEIGHBOR:
+            predictions_k = f_neighbors
+
+        elif self.mode in (
+            SurrogateMode.TAYLOR_LSQ_HESS,
+            SurrogateMode.TAYLOR_COV_HESS,
+            SurrogateMode.TAYLOR_COV_NO_HESS,
+        ):
             J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(N, k_nn, F_dim, D)
-
             linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
             predictions_k = f_neighbors + linear_term
 
-            # Increase accuracy via Hessian (if selected by user)
-            if use_saved_hessian and self.Hs_src is not None:
+            if self.Hs_src is not None:
                 H_neighbors = xp.asarray(self.Hs_src)[flat_idx].reshape(
                     N, k_nn, F_dim, D, D
                 )
                 quadratic_term = xp.einsum("nkc,nkfcd,nkd->nkf", dx, H_neighbors, dx)
                 predictions_k += 0.5 * quadratic_term
 
-        elif predict_mode == "affine":
+        elif self.mode in (
+            SurrogateMode.AFFINE_COV_HESS,
+            SurrogateMode.AFFINE_COV_NO_HESS,
+        ):
             A_neighbors = xp.asarray(self.A_fits_src)[flat_idx].reshape(
                 N, k_nn, F_dim, D
             )
             b_neighbors = xp.asarray(self.b_fits_src)[flat_idx].reshape(N, k_nn, F_dim)
-
-            # affine_term applies the correct A matrix to the query point (x_q), NOT dx.
             affine_term = xp.einsum("nkfd,nd->nkf", A_neighbors, query_points)
             predictions_k = affine_term + b_neighbors
 
         else:
-            raise ValueError(
-                f"Unknown predict_mode: '{predict_mode}'. Use 'taylor' or 'affine'."
-            )
+            raise ValueError(f"Unknown or improperly set SurrogateMode: '{self.mode}'.")
 
-        # --- 6. Averaging ---
         weights_expanded = final_weights[:, :, None]
         weighted_preds = predictions_k * weights_expanded
-
-        # If strict=True and total_weight is 0 -> Predict 0.0 (safe fallback)
-        # If strict=False, total_weight is k -> Simple Mean
         predictions = xp.sum(weighted_preds, axis=1) / (total_weight[:, None] + 1e-12)
 
         if return_cluster_assignments:
@@ -669,234 +621,153 @@ def compute_error_metrics(
 
 
 if __name__ == "__main__":
-    import argparse
+    import json
+    import time
     from functools import partial
 
-    import matplotlib.pyplot as plt
-
-    from src import FIGURES_DIR, _get_mpi_rank
-    from src.data_sampler import DataSampler
+    from src import RESULTS_DIR, _get_mpi_rank, _get_mpi_size
     from src.logging_utils import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
-    setup_logging(console_level=logging.DEBUG, file_output=True)
+    setup_logging(console_level=logging.DEBUG)
+    _rank = _get_mpi_rank()
+    _size = _get_mpi_size()
 
-    SURR_EXP_DIR = FIGURES_DIR / "surrogate_experiments"
-    SURR_EXP_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Parse Args
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--dim", type=int, default=2, help="Dimensionality of the problem"
-    )
-    parser.add_argument(
-        "--tol", type=float, default=5e-2, help="Tolerance for training and evaluation"
-    )
-    parser.add_argument(
-        "--n-train", type=float, default=400_000, help="Number of training samples"
-    )
-    parser.add_argument(
-        "--n-test", type=int, default=100_000, help="Number of test samples"
-    )
-    parser.add_argument(
-        "--n-init-clusters",
-        type=int,
-        default=30,
-        help="Number of initial clusters for adaptive clustering",
-    )
-    parser.add_argument(
-        "--n-min-per-cluster",
-        type=int,
-        default=100,
-        help="Minimum points per cluster for adaptive clustering",
-    )
-    parser.add_argument(
-        "--error-eval-mode",
-        type=str,
-        default="taylor",
-        choices=["taylor", "affine"],
-        help="Method for evaluating cluster error (Taylor expansion vs affine fit)",
-    )
-    parser.add_argument(
-        "--error-metric",
-        type=str,
-        default="Linf-local",
-        choices=["L2", "Linf-local", "Linf-global"],
-        help="Error metric for adaptive clustering",
-    )
-    parser.add_argument(
-        "--clustering-matrix",
-        type=str,
-        default="Hessian_LSQ",
-        choices=["Hessian_LSQ", "Cov_Lvl_curves", "None"],
-        help="Matrix for spectral clustering of 'Bad' clusters",
-    )
-    parser.add_argument(
-        "--k-neighbours", type=int, default=1, help="Number of neighbors for kNN"
-    )
-    parser.add_argument(
-        "--seed", type=int, default=0, help="Random seed for training data sampling"
-    )
-    parser.add_argument(
-        "--rosenbrock-a", type=float, default=100, help="Rosenbrock 'a' parameter"
-    )
-    parser.add_argument(
-        "-f", "--force", action="store_true", help="Force re-computation of results"
-    )
-    parser.add_argument(
-        "-dlm",
-        "--do-not-load-model",
-        action="store_true",
-        help="Whether to not load from existing model file (forces retraining even if cache exists)",
-    )
-
-    # Parse arguments
-    args = parser.parse_args()
-    DIM = args.dim
-    TOL = args.tol
-    N_train = int(args.n_train)
-    N_test = args.n_test
-    N_INIT_CLUSTERS = args.n_init_clusters
-    N_MIN_PER_CLUSTER = args.n_min_per_cluster
-    ERROR_EVAL_MODE = args.error_eval_mode
-    ERROR_METRIC = args.error_metric
-    CLUSTERING_MATRIX = args.clustering_matrix
-    K_NEIGHBOURS = args.k_neighbours
-    SEED = args.seed
-    A_ROSENBROCK = args.rosenbrock_a
-    FORCE_RECOMPUTE = args.force
-    DO_NOT_LOAD_MODEL = args.do_not_load_model
-
-    # Creat partial Rosenbrock functions
+    # Create partial Rosenbrock functions (all ranks need these for oracle calls)
+    A_ROSENBROCK = 100.0
     rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
     rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
 
-    img_fpath = (
-        SURR_EXP_DIR
-        / f"rosen_nearode_surrogate_rel_error_histogram_rosen{A_ROSENBROCK}_{ERROR_EVAL_MODE}_{ERROR_METRIC}_{CLUSTERING_MATRIX}_dim{DIM}_tol{TOL:.1e}_Ntrain{N_train}_Ntest{N_test}_k{K_NEIGHBOURS}.png"
-    )
-    json_fpath = img_fpath.with_suffix(".json")
+    N_TRAIN = 100_000
+    N_TEST = 100_000
+    DIM = 30
+    PROB_LIMS = (-1.0, 3)
+    TOL = 0.4
+    NUM_INITIAL_CLUSTERS = 10
+    MIN_PTS_PER_CLUSTER = 500
+    USE_WORK_STEALING = True
+    ERROR_METRIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "uniform_grid"
+    ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS
 
-    # 1. Setup Domain
-    domain = xp.array([[-3, 3] * DIM]).reshape(DIM, 2)
+    USE_V2 = False
 
-    # Sample Training Data only on rank 0.
-    # Non-zero ranks pass None — adaptive_clustering_mpi only accesses X on rank 0,
-    # then scatters partitions internally. No broadcast needed.
-    if _get_mpi_rank() == 0:
-        X_train = xp.asarray(
-            DataSampler.sample_latin_hypercube(domain, N=N_train, seed=SEED)
+    # Scale initial clusters with dimension for better
+    NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
+
+    OUTPUT_DIR = RESULTS_DIR / "surrogate_experimental"
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    if USE_V2:
+        json_fpath = (
+            OUTPUT_DIR
+            / f"mpi_sz{_size}_rosen{A_ROSENBROCK}_ntrain{N_TRAIN}_dim{DIM}_tol{TOL}_err{ERROR_EVAL_MODE.value}_v2_metric{ERROR_METRIC}_init{INITIAL_CLUSTERING_METHOD}_nclust{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}.json"
         )
-        print("--- Training ---")
     else:
-        X_train = None
+        json_fpath = (
+            OUTPUT_DIR
+            / f"mpi_sz{_size}_rosen{A_ROSENBROCK}_ntrain{N_TRAIN}_dim{DIM}_tol{TOL}_err{ERROR_EVAL_MODE.value}_metric{ERROR_METRIC}_init{INITIAL_CLUSTERING_METHOD}_nclust{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}.json"
+        )
 
-    # 2. Initialize Surrogate
+    if _rank == 0:
+        xp.random.seed(0)
+        X = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(N_TRAIN, DIM))
+    else:
+        X = xp.empty((0, DIM), dtype=xp.float64)
+
+    # Train surrogate
     surrogate = HATANNSurrogate()
-    _start_train_time = time.perf_counter()
-
-    # Use save/load functionality - will load from cache if exists, otherwise train and save
-    model_cache_path = (
-        SURR_EXP_DIR
-        / f"cached_model_rosen{A_ROSENBROCK}_{ERROR_EVAL_MODE}_{ERROR_METRIC}_{CLUSTERING_MATRIX}_dim{DIM}_tol{TOL:.1e}_Ntrain{N_train}_clusters{N_INIT_CLUSTERS}.npz"
-    )
-
+    _start_time = time.perf_counter()
     surrogate.train(
-        X_train=X_train,
+        X_train=X,
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
-        save_model=model_cache_path,
-        load_if_exists=not DO_NOT_LOAD_MODEL,
+        mode=ERROR_EVAL_MODE,
         TOL=TOL,
-        ERROR_EVAL_MODE=ERROR_EVAL_MODE,
         ERROR_METRIC=ERROR_METRIC,
-        CLUSTERING_MATRIX=CLUSTERING_MATRIX,
-        NUM_INITIAL_CLUSTERS=N_INIT_CLUSTERS,
-        MIN_PTS_PER_CLUSTER=N_MIN_PER_CLUSTER,
-        MAX_CLUSTERS_EST=50_000,
-        SEED=SEED,
-        PROFILE_TIMING=True,
-        STORE_TREE_DATA=False,
+        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        USE_WORK_STEALING=USE_WORK_STEALING,
         STORE_AFFINE_FIT=True,
+        USE_V2=USE_V2,
     )
-    _end_train_time = time.perf_counter()
+    _train_time = time.perf_counter() - _start_time
 
-    # Only rank 0 has a trained model; other MPI workers exit cleanly here.
-    if _get_mpi_rank() != 0:
+    # Evaluate Surrogate
+    if _rank == 0:
+        print("\n--- Evaluation ---")
+        xp.random.seed(100)
+        X_test = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(N_TEST, DIM))
+        X_test = xp.asarray(X_test)
+        ground_truth = rosenbrock(X_test)
+        query_pts_input = X_test
+    else:
+        query_pts_input = None
+
+    # Predict in parallel across MPI ranks
+    t0_pred = time.perf_counter()
+    _start_time = time.perf_counter()
+    preds, ug_mask = surrogate.predict(
+        query_points=query_pts_input,
+        k_nn=1,
+        strict_trust_region=False,
+    )
+    _pred_time = time.perf_counter() - _start_time
+
+    # Evaluate error metrics and print only on Rank 0
+    if _rank != 0:
+        MPI.Finalize()
         raise SystemExit(0)
 
-    N_CLUSTERS = surrogate.get_number_of_sources()
-    print(
-        f"Trained with {N_CLUSTERS:,} clusters in {_end_train_time - _start_train_time:.2f}s"
+    logger.info(f"Prediction completed in {time.perf_counter() - t0_pred:.4f}s")
+
+    # Ensure ground truth and predictions are 2D arrays (N, F_dim)
+    # as expected by compute_error_metrics
+    if ground_truth.ndim == 1:
+        ground_truth = ground_truth.reshape(-1, 1)
+    if preds.ndim == 1:
+        preds = preds.reshape(-1, 1)
+
+    # Compute the metrics
+    error_metrics = compute_error_metrics(
+        preds=preds,
+        gt=ground_truth,
+        ug_mask=ug_mask,
+        tol=TOL,
+        return_ptwise_error_arrays=False,
     )
 
-    # 4. Evaluate
-    print("\n--- Evaluation ---")
-    X_test = DataSampler.sample_uniform(domain, N=N_test, seed=SEED)
-    X_test = xp.asarray(X_test)
-
-    # Example utilizing the new signature with Guarantee checks
-    _start_predict_time = time.perf_counter()
-    preds, ungauranteed_mask = surrogate.predict(
-        X_test,
-        k_nn=K_NEIGHBOURS,
-        predict_mode=ERROR_EVAL_MODE,
-    )
-    _end_predict_time = time.perf_counter()
-    print(
-        f"Predicted {N_test:,} test points in {_end_predict_time - _start_predict_time:.2f}s"
-    )
-
-    ground_truth = rosenbrock(X_test)
-    error_metrics, ptwise_error_arrays = compute_error_metrics(
-        preds, ground_truth, ungauranteed_mask, tol=TOL, return_ptwise_error_arrays=True
-    )
-
-    rel_error_linf = ptwise_error_arrays["in"]  # type: ignore
-    n_out = error_metrics["n_out"]  # type: ignore
-    perct_out = error_metrics["perct_out"]  # type: ignore
-    n_in_good = error_metrics["n_in_good"]  # type: ignore
-    perct_in_good = error_metrics["perct_in_good"]  # type: ignore
-    n_in_bad = error_metrics["n_in_bad"]  # type: ignore
-    perct_in_bad = error_metrics["perct_in_bad"]  # type: ignore
-
-    plt.figure(figsize=(8, 5))
-    plt.hist(rel_error_linf, bins=50, log=True)
-    plt.xlabel("Relative Error (log scale)")
-    plt.ylabel("Frequency (log scale)")
-    plt.title(
-        f"NearODESurrogate RelError ({ERROR_EVAL_MODE}, {ERROR_METRIC} {CLUSTERING_MATRIX}) (Rosenbrock: a={A_ROSENBROCK}) (dim={DIM}, tol={TOL:.1e}, N_train={N_train:.1e}, N_clusters={surrogate.N_src}, N_test={N_test:.1e}, k={K_NEIGHBOURS}, N_out={n_out} ({perct_out:.2f}%))",
-        fontsize=7,
-    )
-    plt.axvline(
-        x=TOL,
-        color="red",
-        linestyle="--",
-        label=f"TOL={TOL:.1e} | N_in_good={int(n_in_good)} ({perct_in_good:.2f}%) | N_in_bad={int(n_in_bad)} ({perct_in_bad:.2f}%)",
-    )
-    plt.legend()
-    plt.xscale("log")
-    plt.grid(True)
-    plt.savefig(img_fpath, dpi=300)
-    print(f"Saved relative error histogram to {img_fpath}")
-
-    json_data_dict = {
+    json_data = {
+        "IS_CUPY_BACKEND": IS_CUPY_BACKEND,
+        "mpi_size": _size,
         "rosenbrock_a": A_ROSENBROCK,
         "dim": DIM,
         "tol": TOL,
-        "n_train": N_train,
-        "n_test": N_test,
-        "n_clusters": surrogate.N_src,
-        "error_eval_mode": ERROR_EVAL_MODE,
+        "n_train": N_TRAIN,
+        "n_test": N_TEST,
+        "num_clusters": surrogate.N_src,
+        "train_time_sec": _train_time,
+        "pred_time_sec": _pred_time,
+        "num_levels": surrogate.profiling_stats.get("num_levels", None),
+        "num_generated_pts": surrogate.profiling_stats.get("num_generated_pts", None),
+        "total_f_evals": surrogate.profiling_stats.get("total_f_evals", None),
         "error_metric": ERROR_METRIC,
-        "clustering_matrix": CLUSTERING_MATRIX,
-        "k_neighbours": K_NEIGHBOURS,
-        "train_time_sec": float(_end_train_time - _start_train_time),
-        "predict_time_sec": float(_end_predict_time - _start_predict_time),
-        "profiling_stats": surrogate.profiling_stats,
+        "error_eval_mode": (
+            (ERROR_EVAL_MODE.value + "_v2") if USE_V2 else ERROR_EVAL_MODE.value
+        ),
+        "initial_clustering_method": INITIAL_CLUSTERING_METHOD,
+        "num_initial_clusters": NUM_INITIAL_CLUSTERS,
+        "min_pts_per_cluster": MIN_PTS_PER_CLUSTER,
+        "use_work_stealing": USE_WORK_STEALING,
+        # Add the error metrics to the JSON data
         "error_metrics": error_metrics,
     }
+    # Print the metrics nicely
+    print("\n=== Error Metrics ===")
+    print(json.dumps(error_metrics, indent=4))
 
-    with open(json_fpath, "w") as json_file:
-        json.dump(json_data_dict, json_file, indent=4)
-    print(f"Saved results to {json_fpath}")
+    # Save the metrics to a JSON file
+    with open(json_fpath, "w") as f:
+        json.dump(json_data, f, indent=4)
+    print(f"Error metrics saved to {json_fpath}")
