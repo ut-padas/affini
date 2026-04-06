@@ -715,43 +715,39 @@ def _run_local_refinement(
                 mempool.free_all_blocks()
 
         # --- Phase 2: The Level Boundary (Transition & Steal Response) ---
-        if len(next_level_sizes_list) == 0:
-            logger.info(
-                f"R{rank:02} L{level:02}: No bad clusters to refine, terminating."
-            )
-            if profiling_stats["level_stats"]:
-                profiling_stats["level_stats"][-1].update(
-                    {
-                        "clusters_level_end": 0,
-                        "good_clusters": int(K_good),
-                        "num_pts_next_level": 0,
-                    }
-                )
-            break
-
         with CudaTimer("time_transition", profiling_stats, PROFILE_TIMING):
-            next_X = np.concatenate(next_level_X_list)
-            next_F = np.concatenate(next_level_F_list)
-            next_G = (
-                np.concatenate(next_level_G_list)
-                if config.requires_grad_everywhere
-                else None
-            )
-            next_sizes = np.concatenate(next_level_sizes_list)
-
-            valid = next_sizes > 0
-            if not np.all(valid):
-                keep = np.repeat(valid, next_sizes)
-                next_X, next_F, next_sizes = (
-                    next_X[keep],
-                    next_F[keep],
-                    next_sizes[valid],
+            if len(next_level_sizes_list) > 0:
+                next_X = np.concatenate(next_level_X_list)
+                next_F = np.concatenate(next_level_F_list)
+                next_G = (
+                    np.concatenate(next_level_G_list)
+                    if config.requires_grad_everywhere
+                    else None
                 )
-                if next_G is not None:
-                    next_G = next_G[keep]
+                next_sizes = np.concatenate(next_level_sizes_list)
+
+                valid = next_sizes > 0
+                if not np.all(valid):
+                    keep = np.repeat(valid, next_sizes)
+                    next_X, next_F, next_sizes = (
+                        next_X[keep],
+                        next_F[keep],
+                        next_sizes[valid],
+                    )
+                    if next_G is not None:
+                        next_G = next_G[keep]
+            else:
+                logger.info(
+                    f"R{rank:02} L{level:02}: No bad clusters to refine, terminating."
+                )
+
+                # Prep empty arrays so we gracefully loop back up to Phase 3
+                next_X = np.array([])
+                next_F = np.array([])
+                next_G = None
+                next_sizes = np.array([])
 
             total_next_pts = np.sum(next_sizes) if len(next_sizes) > 0 else 0
-
             local_load = int(total_next_pts)
 
             if USE_WORK_STEALING:
@@ -881,13 +877,15 @@ def _run_local_refinement(
             f"Good Clusters: {K_good:,}, "
             f"Num Pts (next level): {CLUSTER_PTS.shape[0]:,}"
         )
-        logger.info(
-            f"R{rank:02} L{level:02}: Cluster Sizes - min: {int(CLUSTER_SIZES.min())}, "
-            f"mean: {CLUSTER_SIZES.mean():.1f}, median: {int(xp.median(CLUSTER_SIZES))}, "
-            f"max: {int(CLUSTER_SIZES.max())}"
-        )
+        if len(CLUSTER_SIZES) > 0:
+            logger.info(
+                f"R{rank:02} L{level:02}: Cluster Sizes - min: {int(CLUSTER_SIZES.min())}, "
+                f"mean: {CLUSTER_SIZES.mean():.1f}, median: {int(xp.median(CLUSTER_SIZES))}, "
+                f"max: {int(CLUSTER_SIZES.max())}"
+            )
         level_runtime = time.perf_counter() - _t_level
         logger.info(f"Runtime - R{rank:02} L{level:02}: {level_runtime:.3f}s")
+
         if profiling_stats["level_stats"]:
             profiling_stats["level_stats"][-1].update({"runtime_sec": level_runtime})
         level += 1
@@ -1249,13 +1247,13 @@ if __name__ == "__main__":
     rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
     rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
 
-    N_TRAIN = 100_000
+    N_TRAIN = 500_000
     DIM = 2
     PROB_LIMS = (-1.0, 3)
-    TOL = 1e-3
+    TOL = 1e-4
     NUM_INITIAL_CLUSTERS = 64
     MIN_PTS_PER_CLUSTER = 500
-    USE_WORK_STEALING = True
+    USE_WORK_STEALING = False
     ERROR_METRIC = "Linf-local"
     INITIAL_CLUSTERING_METHOD = "uniform_grid"
     ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV
@@ -1303,8 +1301,28 @@ if __name__ == "__main__":
 
     # Store json of all profiling stats
     json_fpath = img_fpath.with_suffix(".json")
+    json_data = {
+        "IS_CUPY_BACKEND": IS_CUPY_BACKEND,
+        "mpi_size": _size,
+        "rosenbrock_a": A_ROSENBROCK,
+        "dim": DIM,
+        "tol": TOL,
+        "n_train": N_TRAIN,
+        "num_clusters": n_centroids,
+        "train_time_sec": result["profiling_stats"]["time_total"],
+        "init_time_sec": result["profiling_stats"]["time_init"],
+        "gather_time_sec": result["profiling_stats"]["time_gather"],
+        "num_levels": result["num_levels"],
+        "num_generated_pts": result["num_generated_pts"],
+        "total_f_evals": result["total_f_evals"],
+        "error_metric": ERROR_METRIC,
+        "error_eval_mode": ERROR_EVAL_MODE.value,
+        "initial_clustering_method": INITIAL_CLUSTERING_METHOD,
+        "num_initial_clusters": NUM_INITIAL_CLUSTERS,
+        "min_pts_per_cluster": MIN_PTS_PER_CLUSTER,
+    }
     with open(json_fpath, "w") as f:
-        json.dump(result["profiling_stats"], f, indent=4)
+        json.dump(json_data, f, indent=4)
     print(f"Saved profiling stats to {json_fpath}")
 
     if DIM == 2 and n_centroids <= 10_000:
@@ -1316,3 +1334,28 @@ if __name__ == "__main__":
             img_fpath=img_fpath,
             title=title,
         )
+
+    # Save MPI rank time breakdown plot
+    time_breakdown_path = img_fpath.with_name(
+        img_fpath.stem + "_mpi_time_breakdown.png"
+    )
+    plot_mpi_rank_time_breakdown(result["profiling_stats"], time_breakdown_path)
+
+    # MPI × Level workload heatmap (good_clusters is the primary workload signal)
+    for _heatmap_col in (
+        "good_clusters",
+        "clusters_start",
+        "num_pts_next_level",
+        "runtime_sec",
+    ):
+        _hm_path = img_fpath.with_name(
+            img_fpath.stem + f"_mpi_heatmap_{_heatmap_col}.png"
+        )
+        title = f"MPI x Level Heatmap ({_heatmap_col}) (Train Time={result['profiling_stats']['time_total']:.1f}s) (N_CLUSTERS={n_centroids:,})"
+        plot_mpi_level_heatmap(result, _hm_path, values_col=_heatmap_col, title=title)
+
+    # Save npz file of results
+    # npz_fpath = img_fpath.with_suffix(".npz")
+    # result = {k: _to_host(v) for k, v in result.items()}
+    # xp.savez_compressed(npz_fpath, **result)
+    # print(f"Saved results to {npz_fpath}")
