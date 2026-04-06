@@ -45,6 +45,13 @@ class ClusteringConfig:
             SurrogateMode.TAYLOR_COV_CENTROID,
         )
 
+    @property
+    def requires_no_grads(self) -> bool:
+        return self.mode in (
+            SurrogateMode.AFFINE_COV,
+            SurrogateMode.NEAREST_NEIGHBOR,
+        )
+
 
 # -----------------------------------------------------------------------------
 # 2. MATH HELPERS (Vectorized xp)

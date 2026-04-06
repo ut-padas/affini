@@ -5,7 +5,6 @@ from typing import Any, Callable, Literal, Optional
 
 import numpy as np
 from mpi4py import MPI
-from sklearn.cluster import KMeans
 
 from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _get_mpi_size, _to_host, xp
 from src.logging_utils import log_mem_stats
@@ -81,7 +80,6 @@ def _run_local_refinement(
 
     num_generated_pts = 0
     total_f_evals = 0
-    tree_data: dict = {}
 
     # Allocate Output Buffers on CPU (Host) to save VRAM
     buffers, out_cap = allocate_output_buffers_host(
@@ -867,7 +865,7 @@ def _run_local_refinement(
             profiling_stats["level_stats"][-1].update({"runtime_sec": level_runtime})
         level += 1
 
-    return buffers, out_count, total_f_evals, num_generated_pts, tree_data, level
+    return buffers, out_count, total_f_evals, num_generated_pts, level
 
 
 # ---------------------------------------------------------------------------
@@ -900,29 +898,17 @@ def adaptive_clustering(
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).
     """
-
-    if ERROR_EVAL_MODE == SurrogateMode.AFFINE_COV:
-        no_grad_override = True
-    elif ERROR_EVAL_MODE == SurrogateMode.TAYLOR_HESSIAN:
-        no_grad_override = False
-    elif ERROR_EVAL_MODE == SurrogateMode.TAYLOR_COV_CENTROID:
-        no_grad_override = False
-    elif ERROR_EVAL_MODE == SurrogateMode.NEAREST_NEIGHBOR:
-        no_grad_override = True
-    else:
-        raise ValueError(f"Invalid mode combination: ERROR={ERROR_EVAL_MODE}")
-
-    if no_grad_override is False and (g_fn is None and oracle_fn is None):
-        raise ValueError(
-            f"Selected mode {ERROR_EVAL_MODE.value} requires gradient information. Please provide g_fn or oracle_fn."
-        )
-
     config = ClusteringConfig(
         mode=ERROR_EVAL_MODE,
         error_metric=ERROR_METRIC,
         store_hess=STORE_HESSIAN_PER_CLUSTER,
         store_affine_fits=STORE_AFFINE_FIT_PER_CLUSTER,
     )
+    NO_GRADS = config.requires_no_grads
+    if NO_GRADS is False and (g_fn is None and oracle_fn is None):
+        raise ValueError(
+            f"Selected mode {ERROR_EVAL_MODE.value} requires gradient information. Please provide g_fn or oracle_fn."
+        )
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -937,8 +923,13 @@ def adaptive_clustering(
         "num_final_clusters": 0,
         "time_total": 0.0,
         "time_init": 0.0,
-        "time_slicing": 0.0,
+        "time_scatter": 0.0,
+        "time_state_update": 0.0,
+        "time_idle": 0.0,
         "time_find_req_synth": 0.0,
+        "time_mpi_send": 0.0,
+        "time_mpi_recv": 0.0,
+        "time_slicing": 0.0,
         "time_synth_gen": 0.0,
         "time_error_calc": 0.0,
         "time_filter": 0.0,
@@ -948,11 +939,6 @@ def adaptive_clustering(
         "time_bad_d2h": 0.0,
         "time_transition": 0.0,
         "time_gc": 0.0,
-        "time_idle": 0.0,
-        "time_state_update": 0.0,
-        "time_mpi_send": 0.0,
-        "time_mpi_recv": 0.0,
-        "time_scatter": 0.0,
         "time_gather": 0.0,
         "level_stats": [],
     }
@@ -969,14 +955,16 @@ def adaptive_clustering(
             if oracle_fn:
                 F_out, G_out = oracle_fn(X0_gpu)
                 F0_gpu = convert_to_2d_array(F_out)
-                G0_gpu = convert_to_3d_array(G_out) if not no_grad_override else None
+                if NO_GRADS:
+                    del G_out
+                    G0_gpu = None
+                else:
+                    G0_gpu = convert_to_3d_array(G_out)
             else:
                 assert f_fn
                 F0_gpu = convert_to_2d_array(f_fn(X0_gpu))
                 G0_gpu = (
-                    convert_to_3d_array(g_fn(X0_gpu))
-                    if not no_grad_override and g_fn
-                    else None
+                    convert_to_3d_array(g_fn(X0_gpu)) if not NO_GRADS and g_fn else None
                 )
             fd_bcast = F0_gpu.shape[1]
 
@@ -989,6 +977,8 @@ def adaptive_clustering(
                     km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
                     labels0 = km.fit_predict(X0_gpu)
                 else:
+                    from sklearn.cluster import KMeans
+
                     km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
                     labels0 = km.fit_predict(_to_host(X0_gpu))
                 labels0 = _to_host(labels0).astype(np.int64)
@@ -1095,7 +1085,7 @@ def adaptive_clustering(
     local_starts = xp.r_[0, xp.cumsum(local_sizes)[:-1]]
     F_max_global = xp.asarray(F_max_global_host, dtype=xp.float64)
 
-    buffers, out_count, local_f_evals, local_gen_pts, local_tree_data, last_level = (
+    buffers, out_count, local_f_evals, local_gen_pts, last_level = (
         _run_local_refinement(
             config=config,
             CLUSTER_PTS=local_X,
@@ -1201,6 +1191,7 @@ def adaptive_clustering(
 
 
 if __name__ == "__main__":
+    import json
     from functools import partial
 
     from src.logging_utils import setup_logging
@@ -1242,6 +1233,7 @@ if __name__ == "__main__":
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         LOG_MEM_STATS=True,
+        PROFILE_TIMING=True,
     )
 
     if _rank != 0:
@@ -1250,3 +1242,7 @@ if __name__ == "__main__":
 
     assert result, "Rank 0 should have the result"
     print("Num clusters found:", result["centroids"].shape[0])
+
+    # Store json of all profiling stats
+    with open("profiling_stats.json", "w") as f:
+        json.dump(result["profiling_stats"], f, indent=4)
