@@ -71,6 +71,8 @@ def conductExperiment(
     USE_V2=True,
     # Prediction-specific
     K_NEIGHBOURS: int = 1,
+    # Post-processing-specific
+    CENTROIDS_PLOT_IN_LOG_SCALE: bool = True,
 ):
     if json_fpath.exists():
         if _rank == 0:
@@ -140,7 +142,7 @@ def conductExperiment(
                 ef.write(error_tag)
         raise e
 
-    # >>> FIX: Workers return HERE, after completing the MPI-collective predict <<<
+    # Workers return HERE, after completing the MPI-collective
     if _rank != 0:
         return
 
@@ -199,10 +201,16 @@ def conductExperiment(
             domain=DOMAIN,  # type: ignore
             f_fn=f_fn,
             img_fpath=plot_save_path,
+            plot_in_log=CENTROIDS_PLOT_IN_LOG_SCALE,
         )
 
 
 def create_summary_dataframe(exp_dir: Path):
+    if _rank != 0:
+        # Only rank 0 creates the summary dataframe. Other ranks
+        # workers return immediately after MPI-collective in conductExperiment().
+        return
+
     import pandas as pd
 
     json_files = list(exp_dir.glob("*.json"))
@@ -326,6 +334,78 @@ def anisotropic_quadratic_experiment():
     return EXP_DIR
 
 
+def anisotropic_gaussian_experiment():
+    from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad
+
+    EXP_DIR = SC26_DIR / "anisotropic_gaussian"
+
+    F_DIM = 1
+    ERROR_METIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+    USE_V2 = True
+    USE_WORK_STEALING = True
+
+    DIMs = [2, 5]
+    ERROR_EVAL_MODES = [
+        SurrogateMode.AFFINE_COV_HESS,
+        SurrogateMode.AFFINE_COV_NO_HESS,
+        SurrogateMode.NEAREST_NEIGHBOR,
+    ]
+
+    combos = list(product(DIMs, ERROR_EVAL_MODES))
+    for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
+        if ERROR_EVAL_MODE == SurrogateMode.AFFINE_COV_HESS:
+            TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+        else:
+            # TODO for each ERROR_EVAL_MODE
+            print(
+                f"Skipping ERROR_EVAL_MODE={ERROR_EVAL_MODE.value} for now. TODO: Add other TOLs for this mode."
+            )
+            continue
+
+        if DIM == 2 and ERROR_EVAL_MODE != SurrogateMode.AFFINE_COV_HESS:
+            continue
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
+        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
+
+        for TOL in TOLs:
+            if DIM == 10 and TOL <= 0.005:
+                print("This is throwing OOM errors. Skipping for now.")
+                continue
+            json_fpath = (
+                EXP_DIR
+                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+            )
+            conductExperiment(
+                # Problem-specific
+                json_fpath=json_fpath,
+                DOMAIN=[-3.0, 3.0],
+                F_DIM=F_DIM,
+                DIM=DIM,
+                N_TRAIN=N_TRAIN,
+                N_TEST=N_TEST,
+                # Training-specific
+                f_fn=aniso_gaussian,
+                g_fn=aniso_gaussian_grad,
+                TOL=TOL,
+                ERROR_EVAL_MODE=ERROR_EVAL_MODE,
+                ERROR_METRIC=ERROR_METIC,
+                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                USE_WORK_STEALING=USE_WORK_STEALING,
+                USE_V2=USE_V2,
+                CENTROIDS_PLOT_IN_LOG_SCALE=False,
+            )
+
+            create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
 def rosenbrock_experiment():
     from functools import partial
 
@@ -405,9 +485,10 @@ if __name__ == "__main__":
     setup_logging(console_level=logging.DEBUG)
 
     dir1 = anisotropic_quadratic_experiment()
-    dir2 = rosenbrock_experiment()
+    dir2 = anisotropic_gaussian_experiment()
+    dir3 = rosenbrock_experiment()
 
-    _dirs = [dir1, dir2]
+    _dirs = [dir1, dir2, dir3]
     for d in _dirs:
         if _rank == 0:
             print(f"\nCreating summary dataframe for {d}...")
