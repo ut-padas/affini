@@ -116,6 +116,8 @@ def conductExperiment(
             USE_WORK_STEALING=USE_WORK_STEALING,
             MAX_LEVELS=MAX_LEVELS,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            LOG_MEM_STATS=True,
+            PROFILE_TIMING=True,
         )
         _train_time = time.perf_counter() - _start_train_time
         _TRAINED = True
