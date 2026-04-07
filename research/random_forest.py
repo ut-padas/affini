@@ -10,6 +10,7 @@ from sklearn.ensemble import RandomForestRegressor as SklearnRF
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, xp
 from src.problems.rosenbrock import rosenbrock
+from src.problems.lorenz96_flowmap import lorenz96_flowmap_oracle_first_component
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ EPS = 1e-10
 if DIM == 2:
     N_TRAIN = int(1.74e5)
 elif DIM == 5:
-    N_TRAIN = int(1.12e7)
+    N_TRAIN = int(100000)
 
 N_TRIALS = 30
 TUNING_FEATURE_BUDGET = int(8e5)
@@ -30,7 +31,7 @@ MIN_TUNING_SAMPLES = 100_000
 MAX_SAMPLES = 0.1
 
 
-def create_dataset():
+def create_dataset_rosenbrock():
     xp.random.seed(SEED)
     # Generate the training data (will be split 80/20 internally)
     X_train_full = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TRAIN, DIM))
@@ -39,6 +40,19 @@ def create_dataset():
     # Generate the unseen validation data
     X_val = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_VAL, DIM))
     Y_val = rosenbrock(X_val)
+
+    return X_train_full, Y_train_full, X_val, Y_val
+
+
+def create_dataset_lorenz(forcing=1, tf=0.1):
+    xp.random.seed(SEED)
+    # Generate the training data (will be split 80/20 internally)
+    X_train_full = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TRAIN, DIM))
+    Y_train_full, _ = lorenz96_flowmap_oracle_first_component(X_train_full, forcing, tf)
+
+    # Generate the unseen validation data
+    X_val = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_VAL, DIM))
+    Y_val, _ = lorenz96_flowmap_oracle_first_component(X_val, forcing, tf)
 
     return X_train_full, Y_train_full, X_val, Y_val
 
@@ -269,7 +283,8 @@ if __name__ == "__main__":
     setup_logging()
 
     logger.info("Creating datasets...")
-    X_train_full, Y_train_full, X_val, Y_val = create_dataset()
+    # X_train_full, Y_train_full, X_val, Y_val = create_dataset_rosenbrock()
+    X_train_full, Y_train_full, X_val, Y_val = create_dataset_lorenz()
 
     # 1. Random Forest
     rf_results = train_and_evaluate_rf(X_train_full, Y_train_full, X_val, Y_val)
