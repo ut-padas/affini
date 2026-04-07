@@ -6,6 +6,7 @@ import gpytorch
 import matplotlib.pyplot as plt
 from matplotlib import cm
 import time
+from src.problems.lorenz96_flowmap import lorenz96_flowmap_oracle_first_component
 
 
 """
@@ -104,7 +105,7 @@ def sample_uniform_nd(n, d, range, device='cpu'):
     # Generate points in [0, 1) and scale to [low, high]
     low = range[0]
     high = range[1]
-    return (high - low) * torch.rand(n, d, device=device) + low
+    return (high - low) * torch.rand(n, d, dtype=torch.float, device=device) + low
 
 
 def rosenbrock(x):
@@ -164,7 +165,6 @@ def rosenbrock_5d_combined(X):
     f = rosenbrock(X)
     grad_f = rosenbrock_grad(X)
     return torch.column_stack((f, grad_f))
-
 
 """
 Examples
@@ -515,14 +515,68 @@ def rosenbrock_5d_gp_with_derivatives(n_train=1000, n_test=2000):
 
 
 
+def lorenz_gp_regression(n_train=50000, n_test=50000, d=5):
+    """
+    Adapts the simple notebook to the 2D Rosenbrock function.
+    """
+
+    # Generate training data
+    # Do not add any noise to the model! Maybe we should but let's see how it works
+    
+    train_x = sample_uniform_nd(n_train, d, [-5, 5], device='cpu')
+    train_y, _ = lorenz96_flowmap_oracle_first_component(train_x.numpy(), forcing=1, tf=0.1)
+    train_y = torch.from_numpy(train_y.flatten().get()).to(torch.float)
+
+    # Setup the GP regression model
+    likelihood = gpytorch.likelihoods.GaussianLikelihood()
+    model = ExactGPModel(train_x, train_y, likelihood)
+
+    # CUDA!
+    train_x = train_x.cuda()
+    train_y = train_y.cuda()
+    likelihood = likelihood.cuda()
+    model = model.cuda()
+
+    # Train the model
+    model.train()
+    likelihood.train()
+    start_train = time.perf_counter()
+    train(model, likelihood, train_x, train_y, training_iter=50)
+    end_train = time.perf_counter()
+    time_train = end_train - start_train
+
+    # Predict
+    test_x = sample_uniform_nd(n_test, d, [-2, 3], device='cpu')
+    exact_y, _ = lorenz96_flowmap_oracle_first_component(test_x.numpy())
+    exact_y = torch.from_numpy(exact_y.flatten().get()).to(torch.float)
+    test_x_cuda = test_x.cuda()
+    start_pred = time.perf_counter()
+    observed_pred = predict(model, likelihood, test_x_cuda)
+    pred_y = observed_pred.mean.cpu().numpy()
+    end_pred = time.perf_counter()
+    time_pred = end_pred - start_pred
+
+    # Compare to exact
+    error = exact_y - pred_y
+    abs_err = np.linalg.norm(error, 2)
+    rel_err = abs_err / np.linalg.norm(exact_y, 2)
+
+    print(f'Time to train: {time_train:.4f} seconds')
+    print(f'Relative L2 error of Gaussian process model: {rel_err:.4f}')
+    print(f'Time for inference: {time_pred:.4f} seconds')
+    
+    return torch.tensor([n_train, rel_err, time_train, time_pred])
 
 
 if __name__ == '__main__':
 
-    print('\n----- d = 2 -----')
-    gpytorch.settings.memory_efficient(True)
-    n_train_vec = np.array([60000])
-    on_first = True
-    for n_train in n_train_vec:
-        print(f'Training with {n_train} data points')
-        table_row = rosenbrock_gp_regression_example(n_train=n_train, n_test=50000, d=2)
+    # print('\n----- d = 2 -----')
+    # gpytorch.settings.memory_efficient(True)
+    # n_train_vec = np.array([60000])
+    # on_first = True
+    # for n_train in n_train_vec:
+    #     print(f'Training with {n_train} data points')
+    #     table_row = rosenbrock_gp_regression_example(n_train=n_train, n_test=50000, d=2)
+
+    table_row = lorenz_gp_regression(n_train=1000, n_test=50000)
+    print(table_row)
