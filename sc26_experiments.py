@@ -9,6 +9,11 @@ from tqdm import tqdm
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_host, xp
 from src.adaptive_clustering_utils import SurrogateMode
+from src.heuristic_parameters import (
+    get_MIN_PTS_PER_CLUSTER,
+    get_N_TRAIN,
+    get_NUM_INITIAL_CLUSTERS,
+)
 from src.plotter_utils import plot_adaptive_clustering_results, plot_error_histogram
 from src.surrogate import HATANNSurrogate, compute_error_metrics
 
@@ -19,33 +24,6 @@ SEED = 0
 
 _size = _get_mpi_size()
 _rank = _get_mpi_rank()
-
-
-def get_N_TRAIN(dim: int, *, base: float = 1.3, factor: int = 50_000) -> int:
-    """
-    Heuristic to determine N_TRAIN based on dimension and tolerance.
-        factor * (base)^dim
-    """
-    N_TRAIN = int(factor * (base**dim))
-    return N_TRAIN
-
-
-def get_NUM_INITIAL_CLUSTERS(dim: int, *, base: float = 1.3, factor: int = 25) -> int:
-    """
-    Heuristic to determine N_INIT_CLUSTERS based on dimension.
-        factor * (base)^dim
-    """
-    N_INIT_CLUSTERS = int(factor * (base**dim))
-    return N_INIT_CLUSTERS
-
-
-def get_MIN_PTS_PER_CLUSTER(dim: int, *, base: float = 1.3, factor: int = 100) -> int:
-    """
-    Heuristic to determine N_MIN_PER_CLUSTER based on dimension.
-        factor * (base)^dim
-    """
-    N_MIN_PER_CLUSTER = int(factor * (base**dim))
-    return N_MIN_PER_CLUSTER
 
 
 def conductExperiment(
@@ -463,6 +441,7 @@ def lorenz96_experiment():
         f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
         N, _ = f.shape
         return f[:, 0].reshape((N, 1))
+
     def lorenz_grad(x):
         g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
         N, d, _ = g.shape
@@ -476,9 +455,7 @@ def lorenz96_experiment():
     USE_WORK_STEALING = True
 
     DIMs = [5]
-    ERROR_EVAL_MODES = [
-        SurrogateMode.AFFINE_COV_HESS
-    ]
+    ERROR_EVAL_MODES = [SurrogateMode.AFFINE_COV_HESS]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
