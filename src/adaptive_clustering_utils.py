@@ -37,10 +37,16 @@ class ClusteringConfig:
 
     @property
     def requires_grad_everywhere(self) -> bool:
+        """
+        Returns True if the surrogate mode requires gradients at every point.
+        """
         return self.mode == SurrogateMode.TAYLOR_LSQ_HESS
 
     @property
     def requires_grad_centroids(self) -> bool:
+        """
+        Returns True if the surrogate mode requires gradients only at the centroids.
+        """
         return self.mode in (
             SurrogateMode.TAYLOR_LSQ_HESS,
             SurrogateMode.TAYLOR_COV_HESS,
@@ -49,6 +55,9 @@ class ClusteringConfig:
 
     @property
     def requires_no_grads(self) -> bool:
+        """
+        Returns True if the surrogate mode does not require any gradients.
+        """
         return self.mode in (
             SurrogateMode.NEAREST_NEIGHBOR,
             SurrogateMode.AFFINE_COV_NO_HESS,

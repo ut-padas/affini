@@ -79,9 +79,6 @@ def _run_local_refinement(
 
         mempool = cp.get_default_memory_pool()
 
-    num_generated_pts = 0
-    total_f_evals = 0
-
     # Allocate Output Buffers on CPU (Host) to save VRAM
     buffers, out_cap = allocate_output_buffers_host(
         MAX_CLUSTERS_EST,
@@ -89,13 +86,13 @@ def _run_local_refinement(
         fd,
         store_hess=config.store_hess,
         store_affine_fit=config.store_affine_fits,
-        no_gradient=(
-            not config.requires_grad_everywhere and not config.requires_grad_centroids
-        ),
+        no_gradient=config.requires_no_grads,
     )
     out_count = 0
-
+    num_generated_pts = 0
+    total_f_evals = 0
     level = 0
+
     is_terminated = False
     status = MPI.Status()
     local_load = int(CLUSTER_PTS.shape[0])
@@ -180,6 +177,7 @@ def _run_local_refinement(
                     is_terminated = True
                     break
 
+                # Get the rank with the highest load as our steal target
                 target_rank = int(np.argmax(global_loads))
 
                 # Gatekeeper Check
@@ -474,17 +472,18 @@ def _run_local_refinement(
                 if oracle_fn is not None:
                     F_mus_val, G_mus_val = oracle_fn(mus)
                     f_mus = convert_to_2d_array(F_mus_val)
-                    g_mus = (
-                        convert_to_3d_array(G_mus_val)
-                        if config.requires_grad_centroids
-                        else None
-                    )
+                    if config.requires_grad_centroids:
+                        g_mus = convert_to_3d_array(G_mus_val)
+                    else:
+                        g_mus = None
+                        del G_mus_val
+
                 else:
-                    assert f_fn and g_fn
+                    assert f_fn
                     f_mus = convert_to_2d_array(f_fn(mus))
                     g_mus = (
                         convert_to_3d_array(g_fn(mus))
-                        if config.requires_grad_centroids
+                        if config.requires_grad_centroids and g_fn
                         else None
                     )
 
@@ -542,7 +541,6 @@ def _run_local_refinement(
                         dense_labels_good,
                         good_counts,
                         Q_SHRINK,
-                        surrogate_params,
                     )
 
                 with CudaTimer("time_good_d2h", profiling_stats, PROFILE_TIMING):
@@ -581,7 +579,7 @@ def _run_local_refinement(
                         buffers["L_obs"][out_count:end_out] = _to_host(L_obs)
                     if Hs is not None:
                         buffers["H"][out_count:end_out] = _to_host(Hs)
-                    if config.store_affine_fits and "A" in surrogate_params:
+                    if "A" in surrogate_params and "b" in surrogate_params:
                         buffers["A_fit"][out_count:end_out] = _to_host(
                             surrogate_params["A"][good_idx_local]
                         )
@@ -608,7 +606,7 @@ def _run_local_refinement(
                     )
                     bad_counts = aug_sizes[bad_idx_local]
 
-                    # --- NEW: Dynamically augment bad clusters before splitting ---
+                    # --- Dynamically augment bad clusters before splitting ---
                     target_bad_counts = xp.where(
                         bad_counts < 2 * MIN_PTS_PER_CLUSTER,
                         xp.maximum(2 * bad_counts, 2 * MIN_PTS_PER_CLUSTER),
@@ -719,7 +717,7 @@ def _run_local_refinement(
                     if config.requires_grad_everywhere and G_bad_aug is not None:
                         next_level_G_list.append(_to_host(G_bad_aug[sort_order]))
 
-                    # Split the new target counts
+                    # Split the new target counts: TODO: understand
                     half = target_bad_counts // 2
                     other = target_bad_counts - half
                     new_sz = xp.zeros(2 * n_bad, dtype=xp.int64)
@@ -728,9 +726,10 @@ def _run_local_refinement(
                     next_level_sizes_list.append(_to_host(new_sz))
 
             start_cluster_idx = end_cluster_idx
-            del X_batch, F_batch, G_batch
-            if mempool is not None:
-                mempool.free_all_blocks()
+            with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
+                del X_batch, F_batch, G_batch
+                if mempool is not None:
+                    mempool.free_all_blocks()
 
         # --- Phase 2: The Level Boundary (Transition & Steal Response) ---
         with CudaTimer("time_transition", profiling_stats, PROFILE_TIMING):
@@ -942,18 +941,6 @@ def adaptive_clustering(
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).
     """
-    config = ClusteringConfig(
-        mode=ERROR_EVAL_MODE,
-        error_metric=ERROR_METRIC,
-        store_hess=STORE_HESSIAN_PER_CLUSTER,
-        store_affine_fits=STORE_AFFINE_FIT_PER_CLUSTER,
-    )
-    NO_GRADS = config.requires_no_grads
-    if NO_GRADS is False and (g_fn is None and oracle_fn is None):
-        raise ValueError(
-            f"Selected mode {ERROR_EVAL_MODE.value} requires gradient information. Please provide g_fn or oracle_fn."
-        )
-
     if ERROR_EVAL_MODE in (
         SurrogateMode.AFFINE_COV_HESS,
         SurrogateMode.AFFINE_COV_NO_HESS,
@@ -971,6 +958,18 @@ def adaptive_clustering(
                 f"Work stealing enabled but MAX_LEVELS is only {MAX_LEVELS}. Overriding MAX_LEVELS to {_safe_MAX_LEVELS} to ensure sufficient stealing opportunities across levels."
             )
             MAX_LEVELS = _safe_MAX_LEVELS
+
+    config = ClusteringConfig(
+        mode=ERROR_EVAL_MODE,
+        error_metric=ERROR_METRIC,
+        store_hess=STORE_HESSIAN_PER_CLUSTER,
+        store_affine_fits=STORE_AFFINE_FIT_PER_CLUSTER,
+    )
+    NO_GRADS = config.requires_no_grads
+    if NO_GRADS is False and (g_fn is None and oracle_fn is None):
+        raise ValueError(
+            f"Selected mode {ERROR_EVAL_MODE.value} requires gradient information. Please provide g_fn or oracle_fn."
+        )
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -1061,8 +1060,12 @@ def adaptive_clustering(
                 labels0, _ = uniform_grid_cluster_labels(
                     _to_host(X0_gpu), NUM_INITIAL_CLUSTERS
                 )
+                labels0 = labels0.astype(np.int64)
 
-            sort_idx = np.argsort(labels0, kind="stable")
+            else:
+                raise ValueError(f"Invalid: {INITIAL_CLUSTERING_METHOD}")
+
+            sort_idx = np.argsort(labels0)
             labels0_sorted = labels0[sort_idx]
             X0_sorted = _to_host(X0_gpu)[sort_idx]
             F0_sorted = _to_host(F0_gpu)[sort_idx]
@@ -1077,6 +1080,12 @@ def adaptive_clustering(
     with CudaTimer("time_scatter", profiling_stats, PROFILE_TIMING):
         F_max_global_host = comm.bcast(F_max_global_host, root=0)
         d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
+
+        META_TAG = 999
+        X_TAG = 1000
+        F_TAG = 1001
+        G_TAG = 1002
+        SIZES_TAG = 1003
 
         if rank == 0:
             current_idx = 0
@@ -1110,17 +1119,17 @@ def adaptive_clustering(
                         ],
                         dtype=np.int64,
                     )
-                    comm.Send(meta_arr, dest=r, tag=999)
-                    comm.Send(np.ascontiguousarray(chunk_X), dest=r, tag=1000)
-                    comm.Send(np.ascontiguousarray(chunk_F), dest=r, tag=1001)
+                    comm.Send(meta_arr, dest=r, tag=META_TAG)
+                    comm.Send(np.ascontiguousarray(chunk_X), dest=r, tag=X_TAG)
+                    comm.Send(np.ascontiguousarray(chunk_F), dest=r, tag=F_TAG)
                     if chunk_G is not None:
-                        comm.Send(np.ascontiguousarray(chunk_G), dest=r, tag=1002)
-                    comm.Send(np.ascontiguousarray(chunk_sizes), dest=r, tag=1003)
+                        comm.Send(np.ascontiguousarray(chunk_G), dest=r, tag=G_TAG)
+                    comm.Send(np.ascontiguousarray(chunk_sizes), dest=r, tag=SIZES_TAG)
                 current_idx = end_idx
         else:
             logger.info(f"R{rank:02}: Waiting to receive initial data chunk from R00.")
             meta_arr = np.empty(3, dtype=np.int64)
-            comm.Recv(meta_arr, source=0, tag=999)
+            comm.Recv(meta_arr, source=0, tag=META_TAG)
 
             n_pts, n_clusters, has_g = meta_arr[0], meta_arr[1], meta_arr[2] == 1
             chunk_X = np.empty((n_pts, d_bcast), dtype=np.float64)
@@ -1132,11 +1141,11 @@ def adaptive_clustering(
             )
             chunk_sizes = np.empty(n_clusters, dtype=np.int64)
 
-            comm.Recv(chunk_X, source=0, tag=1000)
-            comm.Recv(chunk_F, source=0, tag=1001)
+            comm.Recv(chunk_X, source=0, tag=X_TAG)
+            comm.Recv(chunk_F, source=0, tag=F_TAG)
             if has_g and chunk_G is not None:
-                comm.Recv(chunk_G, source=0, tag=1002)
-            comm.Recv(chunk_sizes, source=0, tag=1003)
+                comm.Recv(chunk_G, source=0, tag=G_TAG)
+            comm.Recv(chunk_sizes, source=0, tag=SIZES_TAG)
             local_dict = {
                 "X": chunk_X,
                 "F": chunk_F,
@@ -1203,26 +1212,23 @@ def adaptive_clustering(
     local_result_host["_profiling_stats"] = profiling_stats
 
     with CudaTimer("time_gather", profiling_stats, PROFILE_TIMING):
+        LOCAL_RESULT_TAG = 2000
         if rank != 0:
             logger.info(
                 f"R{rank:03}: Sending local results ({out_count:,} clusters) to rank 0."
             )
-            comm.send(local_result_host, dest=0, tag=2000)
+            comm.send(local_result_host, dest=0, tag=LOCAL_RESULT_TAG)
         else:
             logger.info("R00: Merging results from all ranks.")
             all_results = [local_result_host]
             for r in range(1, size):
-                all_results.append(comm.recv(source=r, tag=2000))
+                all_results.append(comm.recv(source=r, tag=LOCAL_RESULT_TAG))
             logger.info(f"R00: Received local results from {size:,} ranks.")
 
     if rank == 0:
         all_profiling_stats = [r.pop("_profiling_stats") for r in all_results]
         merged = {
-            k: (
-                xp.asarray(np.concatenate([r[k] for r in all_results], axis=0))
-                if IS_CUPY_BACKEND
-                else np.concatenate([r[k] for r in all_results], axis=0)
-            )
+            k: xp.asarray(np.concatenate([r[k] for r in all_results], axis=0))
             for k in all_results[0]
         }
 
@@ -1286,7 +1292,7 @@ if __name__ == "__main__":
     N_TRAIN = 500_000
     DIM = 2
     PROB_LIMS = (-1.0, 3)
-    TOL = 1e-4
+    TOL = 1e-1
     NUM_INITIAL_CLUSTERS = 500
     MIN_PTS_PER_CLUSTER = 500
     USE_WORK_STEALING = True
