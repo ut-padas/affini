@@ -1,13 +1,10 @@
 import json
 import time
 from collections import defaultdict
-from functools import partial
 from itertools import product
 from pathlib import Path
 from typing import Literal
 
-import pandas as pd
-from mpi4py import MPI
 from tqdm import tqdm
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_host, xp
@@ -206,6 +203,8 @@ def conductExperiment(
 
 
 def create_summary_dataframe(exp_dir: Path):
+    import pandas as pd
+
     json_files = list(exp_dir.glob("*.json"))
     key_list = [
         "dim",
@@ -327,15 +326,88 @@ def anisotropic_quadratic_experiment():
     return EXP_DIR
 
 
+def rosenbrock_experiment():
+    from functools import partial
+
+    from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
+
+    EXP_DIR = SC26_DIR / "rosenbrock"
+
+    ROSENBROCK_A = 100.0
+    rosenbrock = partial(rosenbrock, a=ROSENBROCK_A)
+    rosenbrock_grad = partial(rosenbrock_grad, a=ROSENBROCK_A)
+
+    F_DIM = 1
+    ERROR_METIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+    USE_V2 = True
+    USE_WORK_STEALING = True
+
+    DIMs = [2, 5]
+    ERROR_EVAL_MODES = [
+        SurrogateMode.AFFINE_COV_HESS,
+        SurrogateMode.AFFINE_COV_NO_HESS,
+        SurrogateMode.NEAREST_NEIGHBOR,
+    ]
+
+    combos = list(product(DIMs, ERROR_EVAL_MODES))
+    for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
+        if ERROR_EVAL_MODE == SurrogateMode.AFFINE_COV_HESS:
+            TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+        else:
+            # TODO for each ERROR_EVAL_MODE
+            print(
+                f"Skipping ERROR_EVAL_MODE={ERROR_EVAL_MODE.value} for now. TODO: Add other TOLs for this mode."
+            )
+            continue
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
+        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
+
+        for TOL in TOLs:
+            json_fpath = (
+                EXP_DIR
+                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+            )
+            conductExperiment(
+                # Problem-specific
+                json_fpath=json_fpath,
+                DOMAIN=[-2.0, 3.0],
+                F_DIM=F_DIM,
+                DIM=DIM,
+                N_TRAIN=N_TRAIN,
+                N_TEST=N_TEST,
+                # Training-specific
+                f_fn=rosenbrock,
+                g_fn=rosenbrock_grad,
+                TOL=TOL,
+                ERROR_EVAL_MODE=ERROR_EVAL_MODE,
+                ERROR_METRIC=ERROR_METIC,
+                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                USE_WORK_STEALING=USE_WORK_STEALING,
+                USE_V2=USE_V2,
+            )
+
+            create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
 if __name__ == "__main__":
     import logging
 
     from src.logging_utils import setup_logging
 
     setup_logging(console_level=logging.DEBUG)
-    dir1 = anisotropic_quadratic_experiment()
 
-    _dirs = [dir1]
+    dir1 = anisotropic_quadratic_experiment()
+    dir2 = rosenbrock_experiment()
+
+    _dirs = [dir1, dir2]
     for d in _dirs:
         if _rank == 0:
             print(f"\nCreating summary dataframe for {d}...")
