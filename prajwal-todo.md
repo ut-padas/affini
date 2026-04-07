@@ -1,3 +1,11 @@
+- Time per level heatmaps static vs work stealing
+  - Every 4 levels, show the max
+
+
+
+
+
+
 # Iterative $p_\mathrm{out}$ Improvement Experiment
 ## Setup
 1. **Training**
@@ -69,3 +77,49 @@ $$ \Sigma_{\text{orig}} = \text{diag}(\text{np.linspace(10, 1, d)}) $$
 - Random Chord preserves original variance across dimensions but not Dirichlet Sampling which tends to 0.
 - Even the spread of the data (Mean Radius & Pairwise Distance) is not preserved by Dirichlet Sampling, but kept well by Random Chord.
 - The covariance error grows to 100% for Dirichlet Sampling, but is much smaller for Random Chord.
+
+
+
+# Affine Surrogates
+## Training
+Given function $f: \mathbb{R}^d \to \mathbb{R}$, and a cluster of points $X \in \mathbb{R}^{N \times d}$, we define centered points $X_c = X - \mu$ and centered function values $F_c = f(X) - f_\mu$ where $\mu$ is the cluster center and $f_\mu$ is the average of function values in the cluster.
+
+A linear model is fit, given by:
+$$ \hat{f}(x) = A x + b $$
+where $A \in \mathbb{R}^{1 \times d}$ and $b \in \mathbb{R}$ are found by solving the normal equations (with Tikhonov regularization), using batched `np.linalg.solve`:
+$$ \left( X_c^T X_c + \lambda I \right) A^T = X_c^T F_c $$
+$$ b = f_\mu - A \mu $$
+
+$\lambda$ is defined as $\lambda = 10^{-8} \cdot \text{max\_eigenvalue}(X_c^T X_c)$ to ensure numerical stability. Here, since $X_c^T X_c$ is a positive semi-definite matrix, its eigenvalues are non-negative, which implies $\lambda_\text{max} = O(\sum_i \lambda_i) = O(\text{Tr}(X_c^T X_c))$. Hence, instead of computing the eigenvalues of the symmetric matrix $X_c^T X_c$, we can compute the trace which is much cheaper and still provides a good scaling for $\lambda$.
+
+## Inference
+For a query point $x_q$, we find the cluster center closest to $x_q$ in $\| \cdot \|_{H}$ Hessian norm. Then using the linear model of that cluster, we compute the predicted function:
+$$ \hat{f}(x_q; A_{k}, b_{k}) = A_{k} x_q + b_{k} $$
+
+
+## Estimation of $H^{-1}$ from the Covariance of the Cluster - Taylor Surrogaters
+When we were using the Taylor surrogates, we had access to oteh grads, and we estimate the Hessian inverse $H^{-1}$ using the covariance of the cluster points, whose errors are small w.r.t the Taylor expansion:
+$$ e = f(x) - \hat{f}(x; \mu) = f(x) - f(\mu) - \nabla f(\mu)^T (x - \mu) $$
+where $\hat{f}(x; \mu)$ is the first-order Taylor expansion of $f$ around $\mu$, the cluster center. 
+We do so by finding the $n$ points with the smallest errors, and computing their covariance:
+$$ H^{-1} \approx \text{Cov}(x_i \text{ with smallest } e_i). $$
+
+- MAKE THIS SECTION TECHNICAL, eplxianing why it is necessary to pick the smallest points, and how this covariance captures the local geometry of the function around the cluster center, which is crucial for estimating HEss later to split the cluster along dominant eigenvector of the Hessian.
+
+
+## Issues with Affine Surrogates
+With affine surrogates, we do not have access to the gradients. Hence when we tried to estimate $H^{-1}$ using the same approach as with Taylor surrogates, with error defined as:
+$$ e = f(x) - \hat{f}(x; A, b) = f(x) - A x - b $$
+we found that the covariance of the points with the smallest errors did not capture the local geometry of the function around the cluster center, and hence we were getting more clusters.
+- Make this section technical again
+
+## Fix - Anchoring the Affine Surrogate to the Cluster Center
+To fix the issue with estimating $H^{-1}$ from the covariance of the points with the smallest errors, we propose to anchor the affine surrogate to the cluster center:
+$$ eqn $$
+- Explain the tehncial details and what it is and how it fits the region, and essentially got us what we wanted.
+
+
+Fill up the above sections with the technical details and equations, and make it more rigorous, while being mathematically precise and grounded. Be concise, use the same nottaions I have already used/defined. To make things easy to describe block equations, you can use $X \in \mathbb{R}^{N \times d}$ to denote the cluster points, and $f(x) : \mathbb{R}^d \to \mathbb{R}$ to denote the function we are trying to approximate, and $F = f(X) \in \mathbb{R}^N$ to denote the function values at the cluster points, $\mu$ to denote the cluster center.
+
+
+---
