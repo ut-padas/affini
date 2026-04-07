@@ -585,9 +585,9 @@ def compute_error_metrics(
     all_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error_all))
 
     # Calculate percentages
-    perct_out = 100.0 * n_out / n_test
-    perct_in_good = 100.0 * n_in_good / n_test
-    perct_in_bad = 100.0 * n_in_bad / n_test
+    perct_out = float(100.0 * n_out / n_test)
+    perct_in_good = float(100.0 * n_in_good / n_test)
+    perct_in_bad = float(100.0 * n_in_bad / n_test)
 
     # Create error metrics dictionary
     error_metrics = {

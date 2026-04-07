@@ -325,9 +325,11 @@ def anisotropic_quadratic_experiment():
 
 
 if __name__ == "__main__":
+    import logging
+
     from src.logging_utils import setup_logging
 
-    setup_logging()
+    setup_logging(console_level=logging.DEBUG)
     dir1 = anisotropic_quadratic_experiment()
 
     _dirs = [dir1]
