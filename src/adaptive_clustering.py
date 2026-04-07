@@ -610,7 +610,6 @@ def _run_local_refinement(
                         dense_labels_good,
                         good_counts,
                         Q_SHRINK,
-                        surrogate_params,
                     )
 
                 with CudaTimer("time_good_d2h", profiling_stats, PROFILE_TIMING):
@@ -924,6 +923,24 @@ def adaptive_clustering(
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).
     """
+    if ERROR_EVAL_MODE in (
+        SurrogateMode.AFFINE_COV_HESS,
+        SurrogateMode.AFFINE_COV_NO_HESS,
+    ):
+        if not STORE_AFFINE_FIT_PER_CLUSTER:
+            STORE_AFFINE_FIT_PER_CLUSTER = True
+            logger.warning(
+                f"Selected mode {ERROR_EVAL_MODE.value} requires storing affine fit parameters. Overriding STORE_AFFINE_FIT_PER_CLUSTER to True."
+            )
+
+    if USE_WORK_STEALING:
+        if MAX_LEVELS <= 100:
+            _safe_MAX_LEVELS = 1000
+            logger.warning(
+                f"Work stealing enabled but MAX_LEVELS is only {MAX_LEVELS}. Overriding MAX_LEVELS to {_safe_MAX_LEVELS} to ensure sufficient stealing opportunities across levels."
+            )
+            MAX_LEVELS = _safe_MAX_LEVELS
+
     config = ClusteringConfig(
         mode=ERROR_EVAL_MODE,
         error_metric=ERROR_METRIC,
@@ -1250,13 +1267,13 @@ if __name__ == "__main__":
     N_TRAIN = 500_000
     DIM = 2
     PROB_LIMS = (-1.0, 3)
-    TOL = 3e-2
-    NUM_INITIAL_CLUSTERS = 1
+    TOL = 1e-4
+    NUM_INITIAL_CLUSTERS = 500
     MIN_PTS_PER_CLUSTER = 500
     USE_WORK_STEALING = True
     ERROR_METRIC = "Linf-local"
     INITIAL_CLUSTERING_METHOD = "uniform_grid"
-    ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_NO_HESS
+    ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS
 
     # Scale initial clusters with dimension for better
     NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
@@ -1288,6 +1305,7 @@ if __name__ == "__main__":
         LOG_MEM_STATS=False,
         PROFILE_TIMING=True,
         USE_WORK_STEALING=USE_WORK_STEALING,
+        MAX_LEVELS=200,
     )
 
     if _rank != 0:
@@ -1328,13 +1346,14 @@ if __name__ == "__main__":
     if DIM == 2 and n_centroids <= 10_000:
         title = f"Rosenbrock (a={A_ROSENBROCK}) (Tol={TOL}, ErrMode={ERROR_EVAL_MODE.value}, Metric={ERROR_METRIC}, N_init={NUM_INITIAL_CLUSTERS}, MinPts={MIN_PTS_PER_CLUSTER}, Steal={USE_WORK_STEALING}) (N0={N_TRAIN:,}, N_clusters={n_centroids:,})"
         plot_adaptive_clustering_results(
-            results=result,
+            centroids=_to_host(result["centroids"]),
+            Q=_to_host(result["Q"]),
+            radii=_to_host(result["radii"]),
             domain=PROB_LIMS,
             f_fn=rosenbrock,
             img_fpath=img_fpath,
             title=title,
         )
-
     # Save MPI rank time breakdown plot
     time_breakdown_path = img_fpath.with_name(
         img_fpath.stem + "_mpi_time_breakdown.png"
@@ -1354,8 +1373,8 @@ if __name__ == "__main__":
         title = f"MPI x Level Heatmap ({_heatmap_col}) (Train Time={result['profiling_stats']['time_total']:.1f}s) (N_CLUSTERS={n_centroids:,})"
         plot_mpi_level_heatmap(result, _hm_path, values_col=_heatmap_col, title=title)
 
-    # Save npz file of results
-    # npz_fpath = img_fpath.with_suffix(".npz")
-    # result = {k: _to_host(v) for k, v in result.items()}
-    # xp.savez_compressed(npz_fpath, **result)
-    # print(f"Saved results to {npz_fpath}")
+    # Save npz file of entire results dict
+    npz_fpath = img_fpath.with_suffix(".npz")
+    result = {k: _to_host(v) for k, v in result.items()}
+    xp.savez_compressed(npz_fpath, **result)
+    print(f"Saved results to {npz_fpath}")

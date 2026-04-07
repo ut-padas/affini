@@ -10,7 +10,7 @@ from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Ellipse
 
-from src import _to_device, _to_host
+from src import Array, _to_device, _to_host, xp
 
 _LEVEL_STAT_COL_LABELS: dict[str, str] = {
     "good_clusters": "Good Clusters (Accepted)",
@@ -275,7 +275,9 @@ def plot_mpi_rank_time_breakdown(
 
 
 def plot_adaptive_clustering_results(
-    results: dict[str, Any],
+    centroids: np.ndarray,
+    Q: np.ndarray,
+    radii: np.ndarray,
     domain: tuple[float, float],
     f_fn: Callable,
     img_fpath: Path,
@@ -291,10 +293,9 @@ def plot_adaptive_clustering_results(
        and circles corresponding to the trust region radii overlaid.
 
     Args:
-        results: A dictionary containing the results of adaptive clustering, including:
-            - "centroids": (N, 2) array of cluster centroids,
-            - "Q": (N, 2, 2) array of precision matrices for each cluster,
-            - "radii": (N,) array of trust region radii for each cluster.
+        centroids: (N, 2) array of cluster centroids,
+        Q: (N, 2, 2) array of precision matrices for each cluster,
+        radii: (N,) array of trust region radii for each cluster,
         domain: A tuple (min, max) defining the range of x and y values for the plot.
         f_fn: A callable that takes an (N, 2) array of points and returns an (N,) array
             of function values.
@@ -304,15 +305,12 @@ def plot_adaptive_clustering_results(
         plot_circle: Whether to plot circles for the trust region radii (default: False).
     """
     # Get dimensions of X
-    d = results["centroids"].shape[1]
+    d = centroids.shape[1]
     if d != 2:
         print(
             f"Warning: Plotting is designed for 2D functions, but centroids have dimension {d}. Skipping plot."
         )
         return
-
-    # Move all data to host for plotting
-    results = {k: _to_host(v) for k, v in results.items()}
 
     # Create grid for contour plot
     _n = 400
@@ -341,8 +339,8 @@ def plot_adaptive_clustering_results(
     axs[0].set_ylabel("y")
     axs[0].set_aspect("equal")
     axs[0].scatter(
-        results["centroids"][:, 0],
-        results["centroids"][:, 1],
+        centroids[:, 0],
+        centroids[:, 1],
         c="red",
         s=5,
         label="Centroids",
@@ -365,25 +363,20 @@ def plot_adaptive_clustering_results(
 
     # Plot Centroids
     axs[1].scatter(
-        results["centroids"][:, 0],
-        results["centroids"][:, 1],
+        centroids[:, 0],
+        centroids[:, 1],
         c="red",
         s=5,
         zorder=10,
     )
 
     # Draw Ellipsoids and Circles
-    centroids = results["centroids"]
-    Qs = results["Q"]
-    radii = results["radii"]
-
     for i in range(centroids.shape[0]):
-        center = centroids[i]
-        Q = Qs[i]
-        radius = radii[i]
+        _centroid = centroids[i]
+        _Q = Q[i]
 
         # Eigen-decomposition of Q
-        eigvals, eigvecs = np.linalg.eigh(Q)
+        eigvals, eigvecs = np.linalg.eigh(_Q)
         order = eigvals.argsort()[::-1]
         eigvals = eigvals[order]
         eigvecs = eigvecs[:, order]
@@ -391,7 +384,7 @@ def plot_adaptive_clustering_results(
         a, b = 2.0 * np.sqrt(1.0 / eigvals)  # 2-sigma lengths
         angle = np.degrees(np.arctan2(eigvecs[1, 0], eigvecs[0, 0]))
         ellipse = Ellipse(
-            xy=center,
+            xy=_centroid,
             width=a,
             height=b,
             angle=angle,
@@ -404,9 +397,10 @@ def plot_adaptive_clustering_results(
 
         # Draw radius circle with dashed line
         if plot_circle:
+            _radius = radii[i]
             circle = Circle(
-                xy=center,
-                radius=radius,
+                xy=_centroid,
+                radius=_radius,
                 edgecolor="black",
                 facecolor="none",
                 lw=0.5,
@@ -456,3 +450,52 @@ def plot_adaptive_clustering_results(
     plt.savefig(img_fpath, dpi=300)
     plt.close(fig)
     print(f"Saved figure to {img_fpath}")
+
+
+def plot_error_histogram(
+    ground_truth: Array, predictions: Array, img_fpath: Path, tol: float
+):
+    TINY_EPS = 1e-12
+    img_title = img_fpath.stem
+
+    # 1. Compute Element-wise Relative Error
+    # Shape: (N, m) for vectors, (N,) for scalars
+    element_rel_error = xp.abs(predictions - ground_truth) / (
+        xp.abs(ground_truth) + TINY_EPS
+    )
+
+    # 2. Reduce to Point-wise Max (Worst Component)
+    # If vector (ndim > 1), take max over components (axis=1)
+    # This aligns with the "Pointwise Relative Error" definition where a point
+    # is only good if ALL its components are good.
+    if element_rel_error.ndim > 1:
+        ptwise_rel_error = xp.max(element_rel_error, axis=1)
+    else:
+        ptwise_rel_error = element_rel_error
+
+    # 3. Compute Stats
+    n_within_tol = xp.sum(ptwise_rel_error <= tol)
+    perct_within_tol = 100.0 * n_within_tol / ptwise_rel_error.shape[0]
+
+    # 4. Plotting
+    plt.figure(figsize=(10, 6))
+
+    # Extract data to CPU for plotting
+    data_to_plot = _to_host(ptwise_rel_error)
+    plt.hist(data_to_plot.flatten(), bins=50, log=True)
+
+    plt.axvline(
+        x=tol,
+        color="r",
+        linestyle="--",
+        label=f"TOL={tol} (Good Points={perct_within_tol:.2f}%)",
+    )
+
+    plt.ylabel("Frequency (log scale)")
+    plt.xlabel(r"Pointwise Max Relative Error (log scale)")
+    plt.title(img_title)
+    plt.legend()
+    plt.xscale("log")
+    plt.grid(True, which="both", linestyle="--", linewidth=0.5)
+    plt.savefig(img_fpath, dpi=300)
+    plt.close()

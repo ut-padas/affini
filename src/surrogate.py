@@ -85,6 +85,7 @@ class HATANNSurrogate:
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
         PROFILE_TIMING: bool = False,
+        LOG_MEM_STATS: bool = False,
     ):
         comm = MPI.COMM_WORLD
         rank = _get_mpi_rank()
@@ -133,6 +134,9 @@ class HATANNSurrogate:
 
         # 1. MPI-Distributed Adaptive Clustering
         if not USE_V2:
+            raise NotImplementedError(
+                "Keeping this disabled. Enable if you are absolutely sure you want to run the original version of adaptive_clustering"
+            )
             results = adaptive_clustering(
                 X=X_train,
                 f_fn=f_fn,
@@ -153,6 +157,7 @@ class HATANNSurrogate:
                 STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
                 STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
                 USE_WORK_STEALING=USE_WORK_STEALING,
+                LOG_MEM_STATS=LOG_MEM_STATS,
             )
         else:
             results = adaptive_clustering_v2(
@@ -175,6 +180,7 @@ class HATANNSurrogate:
                 STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
                 STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
                 USE_WORK_STEALING=USE_WORK_STEALING,
+                LOG_MEM_STATS=LOG_MEM_STATS,
             )
 
         # 2. Broadcast trained structures to all ranks
@@ -379,6 +385,7 @@ class HATANNSurrogate:
         query_points: Array,
         k_nn: int,
         strict_trust_region: bool,
+        return_cluster_assignments: bool = False,
     ) -> tuple[Array, Array]:
         """
         Core localized math function execution on an individual rank's data chunk.
@@ -476,7 +483,7 @@ class HATANNSurrogate:
         predictions = xp.sum(weighted_preds, axis=1) / (total_weight[:, None] + 1e-12)
 
         if return_cluster_assignments:
-            return predictions, unguaranteed_mask, nn_idx
+            return predictions, unguaranteed_mask, nn_idx  # type: ignore
         else:
             return predictions, unguaranteed_mask
 
@@ -578,9 +585,9 @@ def compute_error_metrics(
     all_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error_all))
 
     # Calculate percentages
-    perct_out = 100.0 * n_out / n_test
-    perct_in_good = 100.0 * n_in_good / n_test
-    perct_in_bad = 100.0 * n_in_bad / n_test
+    perct_out = float(100.0 * n_out / n_test)
+    perct_in_good = float(100.0 * n_in_good / n_test)
+    perct_in_bad = float(100.0 * n_in_bad / n_test)
 
     # Create error metrics dictionary
     error_metrics = {

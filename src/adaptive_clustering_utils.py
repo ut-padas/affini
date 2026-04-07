@@ -13,11 +13,10 @@ logger = logging.getLogger(__name__)
 
 TINY_EPS = 1e-12
 
+
 # -----------------------------------------------------------------------------
 # 1. CONFIGURATION & MODES
 # -----------------------------------------------------------------------------
-
-
 class SurrogateMode(Enum):
     NEAREST_NEIGHBOR = "nearest_neighbor"  #  No grads, f(mu) only, split via X^T X
     AFFINE_COV_NO_HESS = "affine_cov_no_hess"  # No grads, fit A/b, split via X^T X
@@ -38,10 +37,16 @@ class ClusteringConfig:
 
     @property
     def requires_grad_everywhere(self) -> bool:
+        """
+        Returns True if the surrogate mode requires gradients at every point.
+        """
         return self.mode == SurrogateMode.TAYLOR_LSQ_HESS
 
     @property
     def requires_grad_centroids(self) -> bool:
+        """
+        Returns True if the surrogate mode requires gradients only at the centroids.
+        """
         return self.mode in (
             SurrogateMode.TAYLOR_LSQ_HESS,
             SurrogateMode.TAYLOR_COV_HESS,
@@ -50,6 +55,9 @@ class ClusteringConfig:
 
     @property
     def requires_no_grads(self) -> bool:
+        """
+        Returns True if the surrogate mode does not require any gradients.
+        """
         return self.mode in (
             SurrogateMode.NEAREST_NEIGHBOR,
             SurrogateMode.AFFINE_COV_NO_HESS,
@@ -60,8 +68,6 @@ class ClusteringConfig:
 # -----------------------------------------------------------------------------
 # 2. MATH HELPERS (Vectorized xp)
 # -----------------------------------------------------------------------------
-
-
 def repeats(arr: Array, counts: Array) -> Array:
     """Repeats elements of an array given a counts array."""
     if IS_CUPY_BACKEND:
@@ -70,9 +76,73 @@ def repeats(arr: Array, counts: Array) -> Array:
         return np.repeat(arr, counts)
 
 
+# -----------------------------------------------------------------------------
+# 2. MATH HELPERS (Vectorized xp)
+# -----------------------------------------------------------------------------
+def repeats(arr: Array, counts: Array) -> Array:
+    """Repeats elements of an array given a counts array."""
+    if IS_CUPY_BACKEND:
+        return xp.repeat(arr, counts)
+    else:
+        return np.repeat(arr, counts)
+
+
+if IS_CUPY_BACKEND:
+    import cupy as cp
+
+    # Compile the raw CUDA kernel only once when the module loads
+    _segmented_max_kernel = cp.RawKernel(
+        r"""
+    extern "C" __global__
+    void segmented_max_float64(const double* vals, const long long* starts, double* out, int num_starts, int num_vals) {
+        int tid = blockDim.x * blockIdx.x + threadIdx.x;
+        if (tid < num_starts) {
+            long long start = starts[tid];
+            // The end index is either the start of the next segment, or the end of the array
+            long long end = (tid + 1 < num_starts) ? starts[tid + 1] : num_vals;
+            
+            double max_val = vals[start]; 
+            for (long long i = start + 1; i < end; ++i) {
+                if (vals[i] > max_val) {
+                    max_val = vals[i];
+                }
+            }
+            out[tid] = max_val;
+        }
+    }
+    """,
+        "segmented_max_float64",
+    )
+
+
 def _reduce_max_1d(vals: Array, starts: Array) -> Array:
     """Segmented maximum reduction for contiguous blocks."""
-    return xp.maximum.reduceat(vals, starts)
+    if IS_CUPY_BACKEND:
+        import cupy as cp
+
+        K = starts.shape[0]
+        N = vals.shape[0]
+
+        # Ensure proper types for the C-kernel (double, long long) and memory layout
+        vals_c = cp.ascontiguousarray(vals, dtype=cp.float64)
+        starts_c = cp.ascontiguousarray(starts, dtype=cp.int64)
+        out = cp.empty(K, dtype=cp.float64)
+
+        # Standard CUDA block/grid sizing
+        threads_per_block = 256
+        blocks_per_grid = (K + threads_per_block - 1) // threads_per_block
+
+        _segmented_max_kernel(
+            (blocks_per_grid,), (threads_per_block,), (vals_c, starts_c, out, K, N)
+        )
+
+        # Recast if the original array wasn't float64 (e.g., float32)
+        if vals.dtype != cp.float64:
+            out = out.astype(vals.dtype)
+        return out
+    else:
+        # Standard NumPy fallback
+        return np.maximum.reduceat(vals, starts)
 
 
 def _reduce_sum_1d(vals: Array, starts: Array) -> Array:
@@ -100,8 +170,6 @@ def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
 # -----------------------------------------------------------------------------
 # 3. PIPELINE STAGE 1: EVALUATION
 # -----------------------------------------------------------------------------
-
-
 def evaluate_cluster_errors(
     config: ClusteringConfig,
     X_batch: Array,
@@ -136,7 +204,7 @@ def evaluate_cluster_errors(
         SurrogateMode.TAYLOR_COV_NO_HESS,
     ):
         assert g_mus is not None
-        lin = xp.einsum("nmd,nd->nm", g_mus[aug_ids], dx)
+        lin = xp.einsum("nmd,nd->nm", g_mus[aug_ids], dx)  # (N, fd)
         diff = F_batch - (f_mus[aug_ids] + lin)
         surrogate_params = {"g_mus": g_mus}
 
@@ -145,21 +213,25 @@ def evaluate_cluster_errors(
         SurrogateMode.AFFINE_COV_NO_HESS,
     ):
         # Adaptive Tikhonov fitting
-        mean_F = _reduce_sum_1d(F_batch, aug_starts) / aug_sizes[:, None]
-        Fc = F_batch - mean_F[aug_ids]
+        mean_F = _reduce_sum_1d(F_batch, aug_starts) / aug_sizes[:, None]  # (K, fd)
+        Fc = F_batch - mean_F[aug_ids]  # (N, fd)
 
-        auto_cov = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], aug_starts)
-        cross_cov = _reduce_sum_1d(dx[:, :, None] * Fc[:, None, :], aug_starts)
+        auto_cov = _reduce_sum_1d(
+            dx[:, :, None] * dx[:, None, :], aug_starts
+        )  # (K, d, d)
+        cross_cov = _reduce_sum_1d(
+            dx[:, :, None] * Fc[:, None, :], aug_starts
+        )  # (K, d, fd)
 
-        tr = xp.trace(auto_cov, axis1=1, axis2=2)
+        tr = xp.trace(auto_cov, axis1=1, axis2=2)  # (K,)
         lam = xp.maximum(1e-8 * tr, TINY_EPS)
-        reg = lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]
+        reg = lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]  # (K, d, d)
 
-        A_T = xp.linalg.solve(auto_cov + reg, cross_cov)
-        A = A_T.transpose(0, 2, 1)
-        b = mean_F - xp.einsum("kfd,kd->kf", A, mus)
+        A_T = xp.linalg.solve(auto_cov + reg, cross_cov)  # (K, d, fd)
+        A = A_T.transpose(0, 2, 1)  # (K, fd, d)
+        b = mean_F - xp.einsum("kfd,kd->kf", A, mus)  # (K, fd)
 
-        lin = xp.einsum("nfd,nd->nf", A[aug_ids], X_batch)
+        lin = xp.einsum("nfd,nd->nf", A[aug_ids], X_batch)  # (N, fd)
         diff = F_batch - (b[aug_ids] + lin)
         surrogate_params = {"A": A, "b": b}
 
@@ -168,36 +240,36 @@ def evaluate_cluster_errors(
 
     # --- 2. Evaluate Error Metrics ---
     if config.error_metric == "L2":
-        err_pts = xp.sum(diff**2, axis=1)
-        E_cluster = xp.sqrt(_reduce_sum_1d(err_pts, aug_starts))
+        err_pts = xp.sum(diff**2, axis=1)  # (N,)
+        E_cluster = xp.sqrt(_reduce_sum_1d(err_pts, aug_starts))  # (K,)
     elif config.error_metric == "Linf-global":
-        err_pts = xp.max(xp.abs(diff) / (F_max_global[None, :] + TINY_EPS), axis=1)
-        E_cluster = _reduce_max_1d(err_pts, aug_starts)
+        err_pts = xp.max(
+            xp.abs(diff) / (F_max_global[None, :] + TINY_EPS), axis=1
+        )  # (N,)
+        E_cluster = _reduce_max_1d(err_pts, aug_starts)  # (K,)
     elif config.error_metric == "Linf-local":
         E_cluster_rel = xp.zeros(K_batch, dtype=xp.float64)
         E_cluster_abs = xp.zeros(K_batch, dtype=xp.float64)
         for j in range(fd):
-            abs_diff_j = xp.abs(diff[:, j])
-            local_max_F_j = _reduce_max_1d(xp.abs(F_batch[:, j]), aug_starts)
-            max_err_j = _reduce_max_1d(abs_diff_j, aug_starts)
+            abs_diff_j = xp.abs(diff[:, j])  # (N,)
+            local_max_F_j = _reduce_max_1d(xp.abs(F_batch[:, j]), aug_starts)  # (K,)
+            max_err_j = _reduce_max_1d(abs_diff_j, aug_starts)  # (K,)
 
-            E_cluster_abs = xp.maximum(E_cluster_abs, max_err_j)
+            E_cluster_abs = xp.maximum(E_cluster_abs, max_err_j)  # (K,)
             E_cluster_rel = xp.maximum(
                 E_cluster_rel, max_err_j / xp.maximum(local_max_F_j, TINY_EPS)
-            )
+            )  # (K,)
 
         is_good = (E_cluster_rel < TOL) | (E_cluster_abs < TOL)
         return is_good, E_cluster_rel, surrogate_params
 
-    is_good = E_cluster < TOL
+    is_good = E_cluster < TOL  # (K,)
     return is_good, E_cluster, surrogate_params
 
 
 # -----------------------------------------------------------------------------
 # 4. PIPELINE STAGE 2: ACCEPTED STATS (Q, H, radii)
 # -----------------------------------------------------------------------------
-
-
 def compute_accepted_stats(
     config: ClusteringConfig,
     X_good: Array,
@@ -207,41 +279,46 @@ def compute_accepted_stats(
     dense_labels_good: Array,
     counts_good: Array,
     Q_SHRINK: float,
-    surrogate_params: dict,
 ) -> tuple[Array, Optional[Array], Array, Optional[Array]]:
     """
     Computes Q (Trust Region shape), H (Hessian), radii, and L_obs for accepted clusters.
     """
     K_good = len(counts_good)
     N_good, d = X_good.shape
-    good_starts = xp.r_[0, xp.cumsum(counts_good)[:-1]]
+    good_starts = xp.r_[0, xp.cumsum(counts_good)[:-1]]  # (K,)
 
-    dx = X_good - mus_good[dense_labels_good]
+    dx = X_good - mus_good[dense_labels_good]  # (N_good, d)
 
     # --- 1. Compute Q (Inverse Covariance) ---
-    Cov = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], good_starts)
+    Cov = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], good_starts)  # (K, d, d)
     Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
 
     if Q_SHRINK > 0.0:
-        tr = xp.trace(Cov, axis1=1, axis2=2)
+        tr = xp.trace(Cov, axis1=1, axis2=2)  # (K,)
         scale_tr = tr / max(d, 1)
         I = xp.eye(d, dtype=xp.float64)[None, :, :]
-        Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (scale_tr[:, None, None] * I)
+        Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (
+            scale_tr[:, None, None] * I
+        )  # (K, d, d)
         Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
 
     Lambda, U = xp.linalg.eigh(Cov)
-    Lambda_inv = 1.0 / xp.maximum(Lambda, TINY_EPS)
+    Lambda_inv = 1.0 / xp.maximum(Lambda, TINY_EPS)  # (K, d)
 
-    proj = xp.einsum("ni,nij->nj", dx, U[dense_labels_good])
-    dist_sq_mahalanobis = xp.sum(proj**2 * Lambda_inv[dense_labels_good], axis=1)
-    max_dist = _reduce_max_1d(dist_sq_mahalanobis, good_starts)
+    proj = xp.einsum("ni,nij->nj", dx, U[dense_labels_good])  # (N_good, d)
+    dist_sq_mahalanobis = xp.sum(
+        proj**2 * Lambda_inv[dense_labels_good], axis=1
+    )  # (N_good,)
+    max_dist = _reduce_max_1d(dist_sq_mahalanobis, good_starts)  # (K,)
 
     scale_fac = 1.0 / xp.maximum(max_dist, TINY_EPS)
-    Qs = U * (scale_fac[:, None] * Lambda_inv)[:, None, :] @ U.transpose(0, 2, 1)
+    Qs = (
+        U * (scale_fac[:, None] * Lambda_inv)[:, None, :] @ U.transpose(0, 2, 1)
+    )  # (K, d, d)
 
     # --- 2. Compute Radii & L_obs ---
     dist_euclidean = xp.sqrt(xp.sum(dx**2, axis=1))
-    radii = _reduce_max_1d(dist_euclidean, good_starts)
+    radii = _reduce_max_1d(dist_euclidean, good_starts)  # (K,)
 
     L_obs = None
     if (
@@ -256,7 +333,7 @@ def compute_accepted_stats(
         ratio_pts = xp.where(
             dist_euclidean > TINY_EPS, ratio_pts, xp.zeros_like(ratio_pts)
         )
-        L_obs = _reduce_max_1d(ratio_pts, good_starts)
+        L_obs = _reduce_max_1d(ratio_pts, good_starts)  # (K,)
 
     # --- 3. Compute Hessian (If requested) ---
     Hs = None
@@ -264,14 +341,14 @@ def compute_accepted_stats(
         if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_good and g_mus_good:
             g_mus_exp = g_mus_good[dense_labels_good]
             dG = G_good - g_mus_exp
-            E_mat = xp.einsum("ni,nj->nij", dx, xp.sum(dG, axis=1))
-            E_k = _reduce_sum_1d(E_mat, good_starts)
+            E_mat = xp.einsum("ni,nj->nij", dx, xp.sum(dG, axis=1))  # (N_good, d, d)
+            E_k = _reduce_sum_1d(E_mat, good_starts)  # (K, d, d)
             S_h = E_k + E_k.transpose(0, 2, 1)
 
             dvals, U_h = xp.linalg.eigh(Cov)
             dvals = xp.maximum(dvals, TINY_EPS)
-            Gtilde = U_h.transpose(0, 2, 1) @ S_h @ U_h
-            F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])
+            Gtilde = U_h.transpose(0, 2, 1) @ S_h @ U_h  # (K, d, d)
+            F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])  # (K, d, d)
             Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
             Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
 
@@ -284,8 +361,6 @@ def compute_accepted_stats(
 # -----------------------------------------------------------------------------
 # 5. PIPELINE STAGE 3: SPLIT REJECTED
 # -----------------------------------------------------------------------------
-
-
 def split_rejected_clusters(
     config: ClusteringConfig,
     X_bad: Array,
@@ -303,104 +378,114 @@ def split_rejected_clusters(
     """
     K_bad = len(counts_bad)
     N_bad, d = X_bad.shape
-    bad_starts = xp.r_[0, xp.cumsum(counts_bad)[:-1]]
-    dx = X_bad - mus_bad[dense_labels_bad]
+    bad_starts = xp.r_[0, xp.cumsum(counts_bad)[:-1]]  # (K,)
+    dx = X_bad - mus_bad[dense_labels_bad]  # (N_bad, d)
 
     # --- Mode 2: Hessian LSQ Split ---
     if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_bad is not None:
-        g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]
-        f_mus_exp = f_mus_bad[dense_labels_bad]
+        g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]  # (N_bad, fd, d)
+        f_mus_exp = f_mus_bad[dense_labels_bad]  # (N_bad, fd)
 
         lin = xp.einsum("nmd,nd->nm", g_mus_exp, dx)
-        diff_bad = F_bad - (f_mus_exp + lin)
+        diff_bad = F_bad - (f_mus_exp + lin)  # (N_bad, fd)
 
-        sq_err = _reduce_sum_1d(diff_bad**2, bad_starts)
-        sq_val = _reduce_sum_1d(F_bad**2, bad_starts)
+        sq_err = _reduce_sum_1d(diff_bad**2, bad_starts)  # (K,)
+        sq_val = _reduce_sum_1d(F_bad**2, bad_starts)  # (K,)
         scores = xp.sqrt(sq_err) / (xp.sqrt(sq_val) + TINY_EPS)
         active_comps = xp.argmax(scores, axis=1)  # (K,)
 
-        active_j = active_comps[dense_labels_bad]
-        n_idx = xp.arange(N_bad)
-        dG_active = G_bad[n_idx, active_j, :] - g_mus_exp[n_idx, active_j, :]
+        active_j = active_comps[dense_labels_bad]  # (N_bad,)
+        n_idx = xp.arange(N_bad)  # (N_bad,)
+        dG_active = (
+            G_bad[n_idx, active_j, :] - g_mus_exp[n_idx, active_j, :]
+        )  # (N_bad, d)
 
-        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)
-        E = _reduce_sum_1d(dx[:, :, None] * dG_active[:, None, :], bad_starts)
+        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)  # (K, d, d)
+        E = _reduce_sum_1d(
+            dx[:, :, None] * dG_active[:, None, :], bad_starts
+        )  # (K, d, d)
 
         C = 0.5 * (C + C.transpose(0, 2, 1))
         S = E + E.transpose(0, 2, 1)
 
         dvals, U = xp.linalg.eigh(C)
-        dvals = xp.maximum(dvals, TINY_EPS)
+        dvals = xp.maximum(dvals, TINY_EPS)  # (K, d)
         Gtilde = U.transpose(0, 2, 1) @ S @ U
-        F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])
+        F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])  # (K, d, d)
         _, V = xp.linalg.eigh(F_mat)
 
-        Z = U @ V
+        Z = U @ V  # (K, d, d)
         M_split = (Z * xp.sqrt(xp.abs(_))[:, None, :]) @ Z.transpose(0, 2, 1)
-        M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
+        M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))  # (K, d, d)
 
-        CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
+        CovZ = M_split @ C @ M_split.transpose(0, 2, 1)  # (K, d, d)
 
     # --- Mode 1 & 3: Covariance Level Curves Split ---
     elif config.mode in (SurrogateMode.AFFINE_COV_HESS, SurrogateMode.TAYLOR_COV_HESS):
         if config.mode == SurrogateMode.TAYLOR_COV_HESS:
-            g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]
-            lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp, dx)
-            diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)
-            E_bad = xp.linalg.norm(diff_bad, axis=1)
-        else:  # AFFINE_COV - RESTORE TWO-PASS LOCAL FIT
-            dist_to_mu = xp.linalg.norm(dx, axis=1)
+            g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]  # (N_bad, fd, d)
+            lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp, dx)  # (N_bad, fd)
+            diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)  # (N_bad, fd)
+            E_bad = xp.linalg.norm(diff_bad, axis=1)  # (N_bad,)
+        else:  # AFFINE_COV - TWO-PASS LOCAL FIT
+            dist_to_mu = xp.linalg.norm(dx, axis=1)  # (N_bad,)
             n_tangent = max(d * 2, MIN_PTS_PER_CLUSTER // 4)
             tangent_mask = get_n_smallest_per_block(
                 dist_to_mu, dense_labels_bad, n_tangent
-            )
+            )  # (N_bad,)
 
-            X_core = X_bad[tangent_mask]
-            F_core = F_bad[tangent_mask]
-            labels_core = dense_labels_bad[tangent_mask]
+            X_core = X_bad[tangent_mask]  # (N_core, d)
+            F_core = F_bad[tangent_mask]  # (N_core, fd)
+            labels_core = dense_labels_bad[tangent_mask]  # (N_core,)
 
             core_counts = xp.bincount(labels_core, minlength=K_bad)
             core_starts = xp.r_[0, xp.cumsum(core_counts)[:-1]]
 
-            dX_core = X_core - mus_bad[labels_core]
-            dF_core = F_core - f_mus_bad[labels_core]
+            dX_core = X_core - mus_bad[labels_core]  # (N_core, d)
+            dF_core = F_core - f_mus_bad[labels_core]  # (N_core, fd)
 
             M_XX = _reduce_sum_1d(
                 dX_core[:, :, None] * dX_core[:, None, :], core_starts
-            )
+            )  # (K, d, d)
             M_XF = _reduce_sum_1d(
                 dX_core[:, :, None] * dF_core[:, None, :], core_starts
-            )
+            )  # (K, d, fd)
 
-            max_eigvals_proxy = xp.trace(M_XX, axis1=1, axis2=2)
-            _lam = xp.maximum(1e-8 * max_eigvals_proxy, TINY_EPS)
-            reg = _lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]
+            max_eigvals_proxy = xp.trace(M_XX, axis1=1, axis2=2)  # (K,)
+            _lam = xp.maximum(1e-8 * max_eigvals_proxy, TINY_EPS)  # (K,)
+            reg = (
+                _lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]
+            )  # (K, d, d)
 
-            A_T_tangent = xp.linalg.solve(M_XX + reg, M_XF)
-            A_tangent = A_T_tangent.transpose(0, 2, 1)
+            A_T_tangent = xp.linalg.solve(M_XX + reg, M_XF)  # (K, d, fd)
+            A_tangent = A_T_tangent.transpose(0, 2, 1)  # (K, fd, d)
 
-            lin_bad = xp.einsum("nmd,nd->nm", A_tangent[dense_labels_bad], dx)
-            diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)
-            E_bad = xp.linalg.norm(diff_bad, axis=1)
+            lin_bad = xp.einsum(
+                "nmd,nd->nm", A_tangent[dense_labels_bad], dx
+            )  # (N_bad, fd)
+            diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)  # (N_bad, fd)
+            E_bad = xp.linalg.norm(diff_bad, axis=1)  # (N_bad,)
 
         # Find SMALLEST errors (where surrogate == true func)
         n_est_cov = max(1, MIN_PTS_PER_CLUSTER // 3)
         cov_est_mask = get_n_smallest_per_block(E_bad, dense_labels_bad, n_est_cov)
 
-        X_hard = X_bad[cov_est_mask]
-        dx_hard = X_hard - mus_bad[dense_labels_bad[cov_est_mask]]
+        X_hard = X_bad[cov_est_mask]  # (N_hard, d)
+        dx_hard = X_hard - mus_bad[dense_labels_bad[cov_est_mask]]  # (N_hard, d)
         hard_counts = xp.bincount(dense_labels_bad[cov_est_mask], minlength=K_bad)
         hard_starts = xp.r_[0, xp.cumsum(hard_counts)[:-1]]
 
-        H_inv = _reduce_sum_1d(dx_hard[:, :, None] * dx_hard[:, None, :], hard_starts)
+        H_inv = _reduce_sum_1d(
+            dx_hard[:, :, None] * dx_hard[:, None, :], hard_starts
+        )  # (K, d, d)
         H_inv = 0.5 * (H_inv + H_inv.transpose(0, 2, 1))
 
         dvals, U = xp.linalg.eigh(H_inv)
         dvals_sqrt_inv = 1.0 / xp.sqrt(xp.maximum(xp.abs(dvals), TINY_EPS))
-        M_split = (U * dvals_sqrt_inv[:, None]) @ U.transpose(0, 2, 1)
+        M_split = (U * dvals_sqrt_inv[:, None]) @ U.transpose(0, 2, 1)  # (K, d, d)
         M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
 
-        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)
+        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)  # (K, d, d)
         CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
 
     # --- Mode 4: Nearest Neighbor / PCA Split ---
@@ -409,29 +494,29 @@ def split_rejected_clusters(
         SurrogateMode.AFFINE_COV_NO_HESS,
         SurrogateMode.TAYLOR_COV_NO_HESS,
     ):
-        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)
+        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)  # (K, d, d)
         CovZ = 0.5 * (C + C.transpose(0, 2, 1))
-        M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(K_bad, axis=0)
+        M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
+            K_bad, axis=0
+        )  # (K, d, d)
 
     else:
         raise ValueError(f"Unknown split mode: {config.mode}")
 
     # --- Apply Split Projection ---
     _, V_z = xp.linalg.eigh(CovZ)
-    v = V_z[:, :, -1]  # Highest variance eigenvector
+    v = V_z[:, :, -1]  # Highest variance eigenvector # (K, d)
 
-    z = xp.einsum("nij,nj->ni", M_split[dense_labels_bad], dx)
-    scores_proj = xp.sum(z * v[dense_labels_bad], axis=1)
+    z = xp.einsum("nij,nj->ni", M_split[dense_labels_bad], dx)  # (N_bad, d)
+    scores_proj = xp.sum(z * v[dense_labels_bad], axis=1)  # (N_bad,)
 
-    sort_order = xp.lexsort(xp.stack([scores_proj, dense_labels_bad]))
+    sort_order = xp.lexsort(xp.stack([scores_proj, dense_labels_bad]))  # (N_bad,)
     return sort_order
 
 
 # -----------------------------------------------------------------------------
 # 6. MISC UTILS
 # -----------------------------------------------------------------------------
-
-
 class CudaTimer:
     """Helper context manager for timing GPU operations with synchronization."""
 
@@ -457,16 +542,22 @@ class CudaTimer:
 
 
 def convert_to_2d_array(F: Array) -> Array:
+    """
+    Ensures that F is a 2D array of shape (N, fd). If F is 1D, it converts it to (N, 1).
+    """
     F = xp.asarray(F)
     if F.ndim == 1:
-        return F[:, None]
+        return F[:, None]  # Convert (N,) to (N, 1)
     return F
 
 
 def convert_to_3d_array(G: Array) -> Array:
+    """
+    Ensures that G is a 3D array of shape (N, 1, d). If G is 2D, it converts it to (N, 1, d).
+    """
     G = xp.asarray(G)
     if G.ndim == 2:
-        return G[:, None, :]
+        return G[:, None, :]  # Convert (N, d) to (N, 1, d)
     return G
 
 
@@ -478,6 +569,11 @@ def allocate_output_buffers_host(
     store_affine_fit: bool,
     no_gradient: bool,
 ) -> tuple[dict, int]:
+    """
+    Allocates output buffers for centroids, surrogate params, Q, E_cluster, radii, counts, and optionally gradients and Hessians.
+
+    Returns the buffers and the initial capacity.
+    """
     cap = max(1, int(MAX_CLUSTERS_EST))
     buffers = {
         "centroids": np.empty((cap, d), dtype=np.float64),
@@ -507,6 +603,11 @@ def adjust_buffer_capacity_host(
     store_affine_fit: bool,
     no_gradient: bool,
 ) -> tuple[dict, int]:
+    """
+    Checks if the current buffers have enough capacity for required_total clusters. If not, it doubles the capacity until it does, copying existing data.
+
+    Returns the (possibly new) buffers and the new capacity.
+    """
     if required_total <= current_cap:
         return buffers, current_cap
     new_cap = max(required_total, max(1, current_cap) * 2)
@@ -537,6 +638,10 @@ def adjust_buffer_capacity_host(
 
 
 def get_prime_factors(n: int) -> list[int]:
+    """
+    Returns the prime factors of n as a list.
+    For example, get_prime_factors(12) returns [2, 2, 3].
+    """
     if n < 2:
         return []
     factors: list[int] = []
@@ -557,6 +662,15 @@ def get_prime_factors(n: int) -> list[int]:
 def uniform_grid_cluster_labels(
     X_host: np.ndarray, num_initial_clusters: int
 ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Assigns each point in X_host to a cluster based on a uniform grid.
+
+    The grid is constructed by dividing the bounding box of X_host into bins along each dimension. The number of bins in each dimension is determined by factorizing num_initial_clusters into prime factors and assigning them to dimensions in a way that balances the bin sizes.
+
+    Returns:
+    - labels: An array of shape (N,) containing the cluster label for each point.
+    - bins: An array of shape (d,) containing the number of bins along each dimension. The total number of clusters is the product of the values in bins.
+    """
     if num_initial_clusters < 1:
         raise ValueError("num_initial_clusters must be >= 1")
     _, d = X_host.shape
@@ -573,13 +687,3 @@ def uniform_grid_cluster_labels(
     coords = np.minimum(coords, bins[None, :] - 1)
     labels = np.ravel_multi_index(coords.T, dims=tuple(int(b) for b in bins))
     return labels.astype(np.int64), bins
-
-
-def log_mem_stats(prefix: str):
-    if IS_CUPY_BACKEND:
-        import cupy as cp
-
-        mempool = cp.get_default_memory_pool()
-        used = mempool.used_bytes() / (1024**3)
-        total = mempool.total_bytes() / (1024**3)
-        logger.info(f"{prefix} | Mem: {used:.2f}GB / {total:.2f}GB")
