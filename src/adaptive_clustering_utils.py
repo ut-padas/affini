@@ -9,6 +9,9 @@ import numpy as np
 # Adjust imports based on your actual source tree
 from src import IS_CUPY_BACKEND, Array, xp
 
+if IS_CUPY_BACKEND:
+    import cupy as cp
+
 logger = logging.getLogger(__name__)
 
 TINY_EPS = 1e-12
@@ -66,60 +69,127 @@ class ClusteringConfig:
 
 
 # -----------------------------------------------------------------------------
-# 2. MATH HELPERS (Vectorized xp)
+# 2. CUDA KERNELS
 # -----------------------------------------------------------------------------
-def repeats(arr: Array, counts: Array) -> Array:
-    """Repeats elements of an array given a counts array."""
-    if IS_CUPY_BACKEND:
-        return xp.repeat(arr, counts)
-    else:
-        return np.repeat(arr, counts)
-
-
-# -----------------------------------------------------------------------------
-# 2. MATH HELPERS (Vectorized xp)
-# -----------------------------------------------------------------------------
-def repeats(arr: Array, counts: Array) -> Array:
-    """Repeats elements of an array given a counts array."""
-    if IS_CUPY_BACKEND:
-        return xp.repeat(arr, counts)
-    else:
-        return np.repeat(arr, counts)
-
-
-if IS_CUPY_BACKEND:
-    import cupy as cp
-
-    # Compile the raw CUDA kernel only once when the module loads
-    _segmented_max_kernel = cp.RawKernel(
-        r"""
-    extern "C" __global__
-    void segmented_max_float64(const double* vals, const long long* starts, double* out, int num_starts, int num_vals) {
-        int tid = blockDim.x * blockIdx.x + threadIdx.x;
-        if (tid < num_starts) {
-            long long start = starts[tid];
-            // The end index is either the start of the next segment, or the end of the array
-            long long end = (tid + 1 < num_starts) ? starts[tid + 1] : num_vals;
-            
-            double max_val = vals[start]; 
-            for (long long i = start + 1; i < end; ++i) {
-                if (vals[i] > max_val) {
-                    max_val = vals[i];
-                }
+_segmented_max_kernel_code = r"""
+extern "C" __global__
+void segmented_max_float64(const double* vals, const long long* starts, double* out, int num_starts, int num_vals) {
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    if (tid < num_starts) {
+        long long start = starts[tid];
+        long long end = (tid + 1 < num_starts) ? starts[tid + 1] : num_vals;
+        
+        double max_val = vals[start]; 
+        for (long long i = start + 1; i < end; ++i) {
+            if (vals[i] > max_val) {
+                max_val = vals[i];
             }
-            out[tid] = max_val;
+        }
+        out[tid] = max_val;
+    }
+}
+"""
+
+_stats_kernel_code = r"""
+extern "C" __global__
+void fused_hessian_stats(
+    const double* X, const double* G, 
+    const double* mus, const double* g_mus, 
+    const long long* labels,
+    const int* active_comps, 
+    double* C_out, double* E_out,
+    int N, int D, int FD, int K, bool calc_E) 
+{
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx >= N) return;
+    
+    long long k = labels[idx];
+    int mu_offset = k * D;
+    int x_offset = idx * D;
+
+    // 1. Covariance (Active Component independent)
+    for (int r = 0; r < D; r++) {
+        double dx_r = X[x_offset + r] - mus[mu_offset + r];
+        for (int c = r; c < D; c++) {
+            double dx_c = X[x_offset + c] - mus[mu_offset + c];
+            double val_c = dx_r * dx_c;
+            atomicAdd(&C_out[k*D*D + r*D + c], val_c);
+            if (r != c) {
+                atomicAdd(&C_out[k*D*D + c*D + r], val_c);
+            }
         }
     }
-    """,
-        "segmented_max_float64",
-    )
+
+    // 2. Gradient Interaction (E = sum dx dg^T) for the active component
+    if (calc_E) {
+        int active_j = active_comps[k]; 
+        int g_row_x = (idx * FD * D) + (active_j * D);
+        int g_row_mu = (k * FD * D) + (active_j * D);
+
+        for (int r = 0; r < D; r++) {
+            double dx_r = X[x_offset + r] - mus[mu_offset + r];
+            for (int c = 0; c < D; c++) {
+                double dg_c = G[g_row_x + c] - g_mus[g_row_mu + c];
+                double val_e = dx_r * dg_c;
+                atomicAdd(&E_out[k*D*D + r*D + c], val_e);
+            }
+        }
+    }
+}
+"""
+
+_cross_cov_kernel_code = r"""
+extern "C" __global__
+void fused_cross_cov(
+    const double* X, const double* F,
+    const double* mus, const double* f_mus,
+    const long long* labels,
+    double* cross_out,
+    int N, int D, int FD) 
+{
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx >= N) return;
+    
+    long long k = labels[idx];
+    int mu_offset = k * D;
+    int x_offset = idx * D;
+    int f_offset = idx * FD;
+    int f_mu_offset = k * FD;
+
+    for (int r = 0; r < D; r++) {
+        double dx_r = X[x_offset + r] - mus[mu_offset + r];
+        for (int c = 0; c < FD; c++) {
+            double df_c = F[f_offset + c] - f_mus[f_mu_offset + c];
+            atomicAdd(&cross_out[k*D*FD + r*FD + c], dx_r * df_c);
+        }
+    }
+}
+"""
+
+if IS_CUPY_BACKEND:
+    _mod_seg_max = cp.RawModule(code=_segmented_max_kernel_code)
+    _kern_seg_max = _mod_seg_max.get_function("segmented_max_float64")
+
+    _mod_stats = cp.RawModule(code=_stats_kernel_code)
+    _kern_stats = _mod_stats.get_function("fused_hessian_stats")
+
+    _mod_cross = cp.RawModule(code=_cross_cov_kernel_code)
+    _kern_cross = _mod_cross.get_function("fused_cross_cov")
+
+
+# -----------------------------------------------------------------------------
+# 3. MATH HELPERS & WRAPPERS
+# -----------------------------------------------------------------------------
+def repeats(arr: Array, counts: Array) -> Array:
+    """Repeats elements of an array given a counts array."""
+    if IS_CUPY_BACKEND:
+        return xp.repeat(arr, counts)
+    return np.repeat(arr, counts)
 
 
 def _reduce_max_1d(vals: Array, starts: Array) -> Array:
     """Segmented maximum reduction for contiguous blocks."""
     if IS_CUPY_BACKEND:
-        import cupy as cp
-
         K = starts.shape[0]
         N = vals.shape[0]
 
@@ -131,8 +201,7 @@ def _reduce_max_1d(vals: Array, starts: Array) -> Array:
         # Standard CUDA block/grid sizing
         threads_per_block = 256
         blocks_per_grid = (K + threads_per_block - 1) // threads_per_block
-
-        _segmented_max_kernel(
+        _kern_seg_max(
             (blocks_per_grid,), (threads_per_block,), (vals_c, starts_c, out, K, N)
         )
 
@@ -148,6 +217,102 @@ def _reduce_max_1d(vals: Array, starts: Array) -> Array:
 def _reduce_sum_1d(vals: Array, starts: Array) -> Array:
     """Segmented sum reduction for contiguous blocks."""
     return xp.add.reduceat(vals, starts)
+
+
+def run_fused_stats(
+    X, mus, labels, K, D, FD, active_comps, G=None, g_mus=None, calc_E=False
+):
+    """Accumulates Covariance (C) and Gradient Interaction (E) matrices."""
+    if IS_CUPY_BACKEND:
+        N = X.shape[0]
+        C_out = xp.zeros((K, D, D), dtype=xp.float64)
+        E_out = (
+            xp.zeros((K, D, D), dtype=xp.float64)
+            if calc_E
+            else xp.array([], dtype=xp.float64)
+        )
+        G_ptr = G if G is not None else X
+        g_mus_ptr = g_mus if g_mus is not None else mus
+        ac_ptr = (
+            active_comps if active_comps is not None else xp.zeros(K, dtype=xp.int32)
+        )
+
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        ac_32 = xp.ascontiguousarray(ac_ptr, dtype=xp.int32)
+        block = 256
+        grid = (N + block - 1) // block
+        _kern_stats(
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(X),
+                xp.ascontiguousarray(G_ptr),
+                xp.ascontiguousarray(mus),
+                xp.ascontiguousarray(g_mus_ptr),
+                labels_64,
+                ac_32,
+                C_out,
+                E_out,
+                N,
+                D,
+                FD,
+                K,
+                calc_E,
+            ),
+        )
+        return C_out, E_out
+    else:
+        dx = X - mus[labels]
+        outer_C = dx[:, :, None] * dx[:, None, :]
+        C_out = xp.zeros((K, D, D), dtype=xp.float64)
+        xp.add.at(C_out, labels, outer_C)
+
+        if calc_E:
+            assert G is not None and g_mus is not None
+            active_j = active_comps[labels]
+            n_idx = xp.arange(X.shape[0])
+            g_x = G[n_idx, active_j, :]
+            g_mu = g_mus[labels, active_j, :]
+            dg = g_x - g_mu
+            outer_E = dx[:, :, None] * dg[:, None, :]
+            E_out = xp.zeros((K, D, D), dtype=xp.float64)
+            xp.add.at(E_out, labels, outer_E)
+        else:
+            E_out = xp.array([], dtype=xp.float64)
+        return C_out, E_out
+
+
+def run_fused_cross_cov(X, F, mus, f_mus, labels, K, D, FD):
+    """Accumulates Cross-Covariance matrix (dx * df^T)."""
+    if IS_CUPY_BACKEND:
+        N = X.shape[0]
+        cross_out = xp.zeros((K, D, FD), dtype=xp.float64)
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        block = 256
+        grid = (N + block - 1) // block
+        _kern_cross(
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(X),
+                xp.ascontiguousarray(F),
+                xp.ascontiguousarray(mus),
+                xp.ascontiguousarray(f_mus),
+                labels_64,
+                cross_out,
+                N,
+                D,
+                FD,
+            ),
+        )
+        return cross_out
+    else:
+        dx = X - mus[labels]
+        df = F - f_mus[labels]
+        outer = dx[:, :, None] * df[:, None, :]
+        cross_out = xp.zeros((K, D, FD), dtype=xp.float64)
+        xp.add.at(cross_out, labels, outer)
+        return cross_out
 
 
 def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
@@ -168,7 +333,7 @@ def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
 
 
 # -----------------------------------------------------------------------------
-# 3. PIPELINE STAGE 1: EVALUATION
+# 4. PIPELINE STAGE 1: EVALUATION
 # -----------------------------------------------------------------------------
 def evaluate_cluster_errors(
     config: ClusteringConfig,
@@ -214,13 +379,13 @@ def evaluate_cluster_errors(
     ):
         # Adaptive Tikhonov fitting
         mean_F = _reduce_sum_1d(F_batch, aug_starts) / aug_sizes[:, None]  # (K, fd)
-        Fc = F_batch - mean_F[aug_ids]  # (N, fd)
 
-        auto_cov = _reduce_sum_1d(
-            dx[:, :, None] * dx[:, None, :], aug_starts
+        # Computation of Covariance and Cross-Covariance
+        auto_cov, _ = run_fused_stats(
+            X_batch, mus, aug_ids, K_batch, d, fd, None, calc_E=False
         )  # (K, d, d)
-        cross_cov = _reduce_sum_1d(
-            dx[:, :, None] * Fc[:, None, :], aug_starts
+        cross_cov = run_fused_cross_cov(
+            X_batch, F_batch, mus, mean_F, aug_ids, K_batch, d, fd
         )  # (K, d, fd)
 
         tr = xp.trace(auto_cov, axis1=1, axis2=2)  # (K,)
@@ -268,7 +433,7 @@ def evaluate_cluster_errors(
 
 
 # -----------------------------------------------------------------------------
-# 4. PIPELINE STAGE 2: ACCEPTED STATS (Q, H, radii)
+# 5. PIPELINE STAGE 2: ACCEPTED STATS (Q, H, radii)
 # -----------------------------------------------------------------------------
 def compute_accepted_stats(
     config: ClusteringConfig,
@@ -290,8 +455,10 @@ def compute_accepted_stats(
     dx = X_good - mus_good[dense_labels_good]  # (N_good, d)
 
     # --- 1. Compute Q (Inverse Covariance) ---
-    Cov = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], good_starts)  # (K, d, d)
-    Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
+    Cov, _ = run_fused_stats(
+        X_good, mus_good, dense_labels_good, K_good, d, 0, None, calc_E=False
+    )
+    Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))  # (K, d, d)
 
     if Q_SHRINK > 0.0:
         tr = xp.trace(Cov, axis1=1, axis2=2)  # (K,)
@@ -338,11 +505,30 @@ def compute_accepted_stats(
     # --- 3. Compute Hessian (If requested) ---
     Hs = None
     if config.store_hess:
-        if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_good and g_mus_good:
-            g_mus_exp = g_mus_good[dense_labels_good]
-            dG = G_good - g_mus_exp
-            E_mat = xp.einsum("ni,nj->nij", dx, xp.sum(dG, axis=1))  # (N_good, d, d)
-            E_k = _reduce_sum_1d(E_mat, good_starts)  # (K, d, d)
+        if (
+            config.mode == SurrogateMode.TAYLOR_LSQ_HESS
+            and G_good is not None
+            and g_mus_good is not None
+        ):
+            # Accumulate Gradient interaction matrix over all components iteratively to avoid OOM
+            fd = G_good.shape[1]
+            E_k = xp.zeros((K_good, d, d), dtype=xp.float64)
+            for j in range(fd):
+                ac = xp.full(K_good, j, dtype=xp.int32)
+                _, E_j = run_fused_stats(
+                    X_good,
+                    mus_good,
+                    dense_labels_good,
+                    K_good,
+                    d,
+                    fd,
+                    ac,
+                    G=G_good,
+                    g_mus=g_mus_good,
+                    calc_E=True,
+                )
+                E_k += E_j
+
             S_h = E_k + E_k.transpose(0, 2, 1)
 
             dvals, U_h = xp.linalg.eigh(Cov)
@@ -359,7 +545,7 @@ def compute_accepted_stats(
 
 
 # -----------------------------------------------------------------------------
-# 5. PIPELINE STAGE 3: SPLIT REJECTED
+# 6. PIPELINE STAGE 3: SPLIT REJECTED
 # -----------------------------------------------------------------------------
 def split_rejected_clusters(
     config: ClusteringConfig,
@@ -378,10 +564,10 @@ def split_rejected_clusters(
     """
     K_bad = len(counts_bad)
     N_bad, d = X_bad.shape
-    bad_starts = xp.r_[0, xp.cumsum(counts_bad)[:-1]]  # (K,)
-    dx = X_bad - mus_bad[dense_labels_bad]  # (N_bad, d)
+    fd = F_bad.shape[1]
+    bad_starts = xp.r_[0, xp.cumsum(counts_bad)[:-1]]
+    dx = X_bad - mus_bad[dense_labels_bad]
 
-    # --- Mode 2: Hessian LSQ Split ---
     if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_bad is not None:
         g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]  # (N_bad, fd, d)
         f_mus_exp = f_mus_bad[dense_labels_bad]  # (N_bad, fd)
@@ -392,18 +578,21 @@ def split_rejected_clusters(
         sq_err = _reduce_sum_1d(diff_bad**2, bad_starts)  # (K,)
         sq_val = _reduce_sum_1d(F_bad**2, bad_starts)  # (K,)
         scores = xp.sqrt(sq_err) / (xp.sqrt(sq_val) + TINY_EPS)
-        active_comps = xp.argmax(scores, axis=1)  # (K,)
+        active_comps = xp.argmax(scores, axis=1).astype(xp.int32)  # (K,)
 
-        active_j = active_comps[dense_labels_bad]  # (N_bad,)
-        n_idx = xp.arange(N_bad)  # (N_bad,)
-        dG_active = (
-            G_bad[n_idx, active_j, :] - g_mus_exp[n_idx, active_j, :]
-        )  # (N_bad, d)
-
-        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)  # (K, d, d)
-        E = _reduce_sum_1d(
-            dx[:, :, None] * dG_active[:, None, :], bad_starts
-        )  # (K, d, d)
+        # Covariance and Active-Component Gradient Interaction
+        C, E = run_fused_stats(
+            X_bad,
+            mus_bad,
+            dense_labels_bad,
+            K_bad,
+            d,
+            fd,
+            active_comps,
+            G=G_bad,
+            g_mus=surrogate_params["g_mus"],
+            calc_E=True,
+        )
 
         C = 0.5 * (C + C.transpose(0, 2, 1))
         S = E + E.transpose(0, 2, 1)
@@ -438,17 +627,12 @@ def split_rejected_clusters(
             F_core = F_bad[tangent_mask]  # (N_core, fd)
             labels_core = dense_labels_bad[tangent_mask]  # (N_core,)
 
-            core_counts = xp.bincount(labels_core, minlength=K_bad)
-            core_starts = xp.r_[0, xp.cumsum(core_counts)[:-1]]
-
-            dX_core = X_core - mus_bad[labels_core]  # (N_core, d)
-            dF_core = F_core - f_mus_bad[labels_core]  # (N_core, fd)
-
-            M_XX = _reduce_sum_1d(
-                dX_core[:, :, None] * dX_core[:, None, :], core_starts
+            # Tangent Fitting
+            M_XX, _ = run_fused_stats(
+                X_core, mus_bad, labels_core, K_bad, d, 0, None, calc_E=False
             )  # (K, d, d)
-            M_XF = _reduce_sum_1d(
-                dX_core[:, :, None] * dF_core[:, None, :], core_starts
+            M_XF = run_fused_cross_cov(
+                X_core, F_core, mus_bad, f_mus_bad, labels_core, K_bad, d, fd
             )  # (K, d, fd)
 
             max_eigvals_proxy = xp.trace(M_XX, axis1=1, axis2=2)  # (K,)
@@ -471,12 +655,17 @@ def split_rejected_clusters(
         cov_est_mask = get_n_smallest_per_block(E_bad, dense_labels_bad, n_est_cov)
 
         X_hard = X_bad[cov_est_mask]  # (N_hard, d)
-        dx_hard = X_hard - mus_bad[dense_labels_bad[cov_est_mask]]  # (N_hard, d)
-        hard_counts = xp.bincount(dense_labels_bad[cov_est_mask], minlength=K_bad)
-        hard_starts = xp.r_[0, xp.cumsum(hard_counts)[:-1]]
 
-        H_inv = _reduce_sum_1d(
-            dx_hard[:, :, None] * dx_hard[:, None, :], hard_starts
+        # Hessian Inverse Estimate
+        H_inv, _ = run_fused_stats(
+            X_hard,
+            mus_bad,
+            dense_labels_bad[cov_est_mask],
+            K_bad,
+            d,
+            0,
+            None,
+            calc_E=False,
         )  # (K, d, d)
         H_inv = 0.5 * (H_inv + H_inv.transpose(0, 2, 1))
 
@@ -485,16 +674,19 @@ def split_rejected_clusters(
         M_split = (U * dvals_sqrt_inv[:, None]) @ U.transpose(0, 2, 1)  # (K, d, d)
         M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
 
-        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)  # (K, d, d)
+        C, _ = run_fused_stats(
+            X_bad, mus_bad, dense_labels_bad, K_bad, d, 0, None, calc_E=False
+        )  # (K, d, d)
         CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
 
-    # --- Mode 4: Nearest Neighbor / PCA Split ---
     elif config.mode in (
         SurrogateMode.NEAREST_NEIGHBOR,
         SurrogateMode.AFFINE_COV_NO_HESS,
         SurrogateMode.TAYLOR_COV_NO_HESS,
     ):
-        C = _reduce_sum_1d(dx[:, :, None] * dx[:, None, :], bad_starts)  # (K, d, d)
+        C, _ = run_fused_stats(
+            X_bad, mus_bad, dense_labels_bad, K_bad, d, 0, None, calc_E=False
+        )  # (K, d, d)
         CovZ = 0.5 * (C + C.transpose(0, 2, 1))
         M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
             K_bad, axis=0
