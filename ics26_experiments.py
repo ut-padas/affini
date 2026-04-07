@@ -21,6 +21,12 @@ from src.problems.lorenz96_flowmap import (
     lorenz96_flowmap_oracle,
     lorenz96_flowmap_oracle_first_component,
 )
+from src.problems.vanderpol_flowmap import (
+    vanderpol_flowmap,
+    vanderpol_flowmap_grad,
+    vanderpol_flowmap_oracle,
+    vanderpol_flowmap_oracle_first_component
+)
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
@@ -62,9 +68,9 @@ def get_N_MIN_PER_CLUSTER(dim: int, *, base: float = 1.3, factor: int = 100) -> 
 def ics_aniso_gaussian_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "gaussian_do_not_use_hessian_for_inference"
+    EXP_DIR = ICS26_DIR / "gaussian_cov_taylor"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [5]
+    DIMs = [2, 5]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
 
@@ -100,11 +106,12 @@ def ics_aniso_gaussian_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            CLUSTERING_MATRIX='Hessian_LSQ',
+            CLUSTERING_MATRIX="Cov_Lvl_curves",
             IGNORE_GRADIENT=False,
             STORE_TRAIN_EVALS=False,
             STORE_HESSIAN=False,
             USE_HESSIAN_FOR_INFERENCE=False,
+            ERROR_EVAL_MODE="taylor"
         )
 
     return EXP_DIR
@@ -115,7 +122,7 @@ def ics_aniso_quadratic_experiment() -> Path:
     K_NEIGHBOURS = 1
     EXP_DIR = ICS26_DIR / "quadratic_do_not_use_hessian_for_inference"
     create_summary_dataframe(EXP_DIR)
-    DIMs = [5]
+    DIMs = [5, 10]
     TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
     ERROR_METRICs = ["Linf-local"]
 
@@ -157,7 +164,7 @@ def ics_aniso_quadratic_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,
-            CLUSTERING_MATRIX="Hessian_LSQ",
+            CLUSTERING_MATRIX="Cov_Lvl_curves",
             IGNORE_GRADIENT=False,
             STORE_TRAIN_EVALS=False,
             PLOT_CONTOUR_IN_LOG_SCALE=True,
@@ -444,12 +451,12 @@ def ics_rosenbrock_runtime_scalability_experiment() -> Path:
 def ics_rosenbrock_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
     K_NEIGHBOURS = 1
-    EXP_DIR = ICS26_DIR / "ics_rosenbrock_no_grad"
+    EXP_DIR = ICS26_DIR / "rosenbrock"
     del_all_error_files_in_dir(EXP_DIR)
     create_summary_dataframe(EXP_DIR)
 
-    DIMs = [5]
-    TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+    DIMs = [2]
+    TOLs = [0.05]
     ERROR_METRICs = ["Linf-local"]
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
@@ -473,7 +480,7 @@ def ics_rosenbrock_experiment() -> Path:
         print(f"Running experiment: {json_path}")
 
         N_TRAIN = get_N_TRAIN(DIM)
-        N_TEST = N_TRAIN // 2
+        N_TEST = 50000
         N_INIT_CLUSTERS = get_N_INIT_CLUSTERS(DIM)
         N_MIN_PER_CLUSTER = get_N_MIN_PER_CLUSTER(DIM)
 
@@ -492,8 +499,8 @@ def ics_rosenbrock_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            CLUSTERING_MATRIX="None",
-            IGNORE_GRADIENT=True,
+            CLUSTERING_MATRIX="Hessian_LSQ",
+            IGNORE_GRADIENT=False,
             STORE_HESSIAN=False,
             USE_HESSIAN_FOR_INFERENCE=False,
         )
@@ -816,6 +823,90 @@ def ics_lorenz_experiment() -> Path:
     return EXP_DIR
 
 
+
+
+def vanderpol_experiment() -> Path:
+    """
+    Van der Pol surrogate for a single time step.
+    We are not worrying about sampling along manifolds in this case.
+    Imagine this is the very first time step in a string of simulations.
+    """
+
+    MU = 5.0
+    FINAL_TIME = 5.0
+
+    def f(x):
+        f = vanderpol_flowmap(x, MU, FINAL_TIME)  # (N, d) vector
+        N, _ = f.shape
+        return f[:, 0].reshape((N, 1))
+
+    def grad_f(x):
+        g = vanderpol_flowmap_grad(x, MU, FINAL_TIME)
+        N, d, _ = g.shape
+        return g[:, 0, :].reshape((N, 1, d))
+
+    def oracle_f(x):
+        return vanderpol_flowmap_oracle_first_component(x, MU, FINAL_TIME)
+
+    MAX_CLUSTERS_EST = 20_000
+    K_NEIGHBOURS = 1
+    EXP_DIR = (
+        ICS26_DIR / f"vanderpol"
+    )
+    # del_all_error_files_in_dir(EXP_DIR)
+    # create_summary_dataframe(EXP_DIR)
+
+    TOLs = [0.01]
+    ERROR_METRICs = ["Linf-global"]
+
+    combos = list(product(TOLs, ERROR_METRICs))
+    for TOL, ERROR_METRIC in tqdm(combos, desc="Lorenz Experiments"):
+        json_path = (
+            EXP_DIR
+            / f"vanderpol_tol{TOL}_err{ERROR_METRIC}_outputvar1.json"
+        )
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        if json_path.exists():
+            print(f"Skipping existing experiment at {json_path}")
+            continue
+        print(f"Running experiment: {json_path}")
+
+        N_TRAIN = min(get_N_TRAIN(2), int(1e6))
+        N_TEST = 50_000
+        N_INIT_CLUSTERS = min(get_N_INIT_CLUSTERS(2), 1000)
+        N_MIN_PER_CLUSTER = min(get_N_MIN_PER_CLUSTER(2), 500)
+        print(
+            f"N_TRAIN: {N_TRAIN:,}, N_INIT_CLUSTERS: {N_INIT_CLUSTERS:,}, N_MIN_PER_CLUSTER: {N_MIN_PER_CLUSTER:,}"
+        )
+
+        Problem_experiment_setup(
+            json_fpath=json_path,
+            DIM=2,
+            F_DIM=1,
+            DOMAIN=[-4.0, 4.0],
+            f_fn=f,
+            g_fn=grad_f,
+            oracle_fn=oracle_f,
+            N_TRAIN=N_TRAIN,
+            N_INIT_CLUSTERS=N_INIT_CLUSTERS,
+            TOL=TOL,
+            N_MIN_PER_CLUSTER=N_MIN_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            N_TEST=N_TEST,
+            K_NEIGHBOURS=K_NEIGHBOURS,
+            ERROR_METRIC=ERROR_METRIC,  # type: ignore
+            CLUSTERING_MATRIX="Hessian_LSQ",
+            IGNORE_GRADIENT=False,
+            PROFILE_TIMING=True,
+            MAX_LEVELS=30
+        )
+        create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
+
+
 if __name__ == "__main__":
     from src import IS_CUPY_BACKEND
     from src.logging_utils import setup_logging
@@ -824,8 +915,9 @@ if __name__ == "__main__":
 
     if IS_CUPY_BACKEND:
         
+        print("Running on GPU node.")
         dir = ics_aniso_gaussian_experiment()
         create_summary_dataframe(dir)
 
     else:
-        print("Run only on GPU node.")
+        print("Running on CPU node.")
