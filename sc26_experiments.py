@@ -294,6 +294,9 @@ def anisotropic_quadratic_experiment():
         MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
 
         for TOL in TOLs:
+            if DIM == 10 and TOL <= 0.005:
+                print("This is throwing OOM errors. Skipping for now.")
+                continue
             json_fpath = (
                 EXP_DIR
                 / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
