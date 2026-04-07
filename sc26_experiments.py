@@ -274,27 +274,15 @@ def anisotropic_quadratic_experiment():
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    DIMs = [2, 5, 10]
+    DIMs = [5, 10]
     ERROR_EVAL_MODES = [
         SurrogateMode.AFFINE_COV_HESS,
-        SurrogateMode.AFFINE_COV_NO_HESS,
-        SurrogateMode.NEAREST_NEIGHBOR,
     ]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
-        if ERROR_EVAL_MODE == SurrogateMode.AFFINE_COV_HESS:
-            TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-        else:
-            # TODO for each ERROR_EVAL_MODE
-            print(
-                f"Skipping ERROR_EVAL_MODE={ERROR_EVAL_MODE.value} for now. TODO: Add other TOLs for this mode."
-            )
-            continue
 
-        if DIM == 2 and ERROR_EVAL_MODE != SurrogateMode.AFFINE_COV_HESS:
-            continue
-
+        TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
         N_TRAIN = get_N_TRAIN(DIM)
         N_TEST = N_TRAIN // 2
         NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
@@ -348,33 +336,18 @@ def anisotropic_gaussian_experiment():
     DIMs = [2, 5]
     ERROR_EVAL_MODES = [
         SurrogateMode.AFFINE_COV_HESS,
-        SurrogateMode.AFFINE_COV_NO_HESS,
-        SurrogateMode.NEAREST_NEIGHBOR,
     ]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
-        if ERROR_EVAL_MODE == SurrogateMode.AFFINE_COV_HESS:
-            TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
-        else:
-            # TODO for each ERROR_EVAL_MODE
-            print(
-                f"Skipping ERROR_EVAL_MODE={ERROR_EVAL_MODE.value} for now. TODO: Add other TOLs for this mode."
-            )
-            continue
 
-        if DIM == 2 and ERROR_EVAL_MODE != SurrogateMode.AFFINE_COV_HESS:
-            continue
-
+        TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
         N_TRAIN = get_N_TRAIN(DIM)
         N_TEST = N_TRAIN // 2
         NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
         MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
 
         for TOL in TOLs:
-            if DIM == 10 and TOL <= 0.005:
-                print("This is throwing OOM errors. Skipping for now.")
-                continue
             json_fpath = (
                 EXP_DIR
                 / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
@@ -478,10 +451,73 @@ def rosenbrock_experiment():
 
 
 def lorenz96_experiment():
-    from src.problems.lorenz96 import lorenz96, lorenz96_grad
+
+    from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
+
+    # Lorenz flowmap parameters set here
+    FORCING = 1
+    FINAL_TIME = 0.1
+
+    # Custom oracles to return only the first component
+    def lorenz(x):
+        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
+        N, _ = f.shape
+        return f[:, 0].reshape((N, 1))
+    def lorenz_grad(x):
+        g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+        N, d, _ = g.shape
+        return g[:, 0, :].reshape((N, 1, d))
 
     EXP_DIR = SC26_DIR / "lorenz96"
-    raise NotImplementedError("TODO: Implement this experiment")
+    F_DIM = 1
+    ERROR_METRIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+    USE_V2 = True
+    USE_WORK_STEALING = True
+
+    DIMs = [5]
+    ERROR_EVAL_MODES = [
+        SurrogateMode.AFFINE_COV_HESS
+    ]
+
+    combos = list(product(DIMs, ERROR_EVAL_MODES))
+    for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
+        TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
+        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
+
+        for TOL in TOLs:
+            json_fpath = (
+                EXP_DIR
+                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+            )
+            conductExperiment(
+                # Problem-specific
+                json_fpath=json_fpath,
+                DOMAIN=[-2.0, 3.0],
+                F_DIM=F_DIM,
+                DIM=DIM,
+                N_TRAIN=N_TRAIN,
+                N_TEST=N_TEST,
+                # Training-specific
+                f_fn=lorenz,
+                g_fn=lorenz_grad,
+                TOL=TOL,
+                ERROR_EVAL_MODE=ERROR_EVAL_MODE,
+                ERROR_METRIC=ERROR_METRIC,
+                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                USE_WORK_STEALING=USE_WORK_STEALING,
+                USE_V2=USE_V2,
+            )
+
+            create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
 
 
 if __name__ == "__main__":
