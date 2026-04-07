@@ -477,6 +477,13 @@ def rosenbrock_experiment():
     return EXP_DIR
 
 
+def lorenz96_experiment():
+    from src.problems.lorenz96 import lorenz96, lorenz96_grad
+
+    EXP_DIR = SC26_DIR / "lorenz96"
+    raise NotImplementedError("TODO: Implement this experiment")
+
+
 if __name__ == "__main__":
     import logging
 
@@ -487,8 +494,9 @@ if __name__ == "__main__":
     dir1 = anisotropic_quadratic_experiment()
     dir2 = anisotropic_gaussian_experiment()
     dir3 = rosenbrock_experiment()
+    dir4 = lorenz96_experiment()
 
-    _dirs = [dir1, dir2, dir3]
+    _dirs = [dir1, dir2, dir3, dir4]
     for d in _dirs:
         if _rank == 0:
             print(f"\nCreating summary dataframe for {d}...")
