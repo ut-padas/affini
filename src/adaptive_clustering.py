@@ -610,7 +610,6 @@ def _run_local_refinement(
                         dense_labels_good,
                         good_counts,
                         Q_SHRINK,
-                        surrogate_params,
                     )
 
                 with CudaTimer("time_good_d2h", profiling_stats, PROFILE_TIMING):
@@ -924,18 +923,6 @@ def adaptive_clustering(
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).
     """
-    config = ClusteringConfig(
-        mode=ERROR_EVAL_MODE,
-        error_metric=ERROR_METRIC,
-        store_hess=STORE_HESSIAN_PER_CLUSTER,
-        store_affine_fits=STORE_AFFINE_FIT_PER_CLUSTER,
-    )
-    NO_GRADS = config.requires_no_grads
-    if NO_GRADS is False and (g_fn is None and oracle_fn is None):
-        raise ValueError(
-            f"Selected mode {ERROR_EVAL_MODE.value} requires gradient information. Please provide g_fn or oracle_fn."
-        )
-
     if ERROR_EVAL_MODE in (
         SurrogateMode.AFFINE_COV_HESS,
         SurrogateMode.AFFINE_COV_NO_HESS,
@@ -953,6 +940,18 @@ def adaptive_clustering(
                 f"Work stealing enabled but MAX_LEVELS is only {MAX_LEVELS}. Overriding MAX_LEVELS to {_safe_MAX_LEVELS} to ensure sufficient stealing opportunities across levels."
             )
             MAX_LEVELS = _safe_MAX_LEVELS
+
+    config = ClusteringConfig(
+        mode=ERROR_EVAL_MODE,
+        error_metric=ERROR_METRIC,
+        store_hess=STORE_HESSIAN_PER_CLUSTER,
+        store_affine_fits=STORE_AFFINE_FIT_PER_CLUSTER,
+    )
+    NO_GRADS = config.requires_no_grads
+    if NO_GRADS is False and (g_fn is None and oracle_fn is None):
+        raise ValueError(
+            f"Selected mode {ERROR_EVAL_MODE.value} requires gradient information. Please provide g_fn or oracle_fn."
+        )
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -1347,13 +1346,14 @@ if __name__ == "__main__":
     if DIM == 2 and n_centroids <= 10_000:
         title = f"Rosenbrock (a={A_ROSENBROCK}) (Tol={TOL}, ErrMode={ERROR_EVAL_MODE.value}, Metric={ERROR_METRIC}, N_init={NUM_INITIAL_CLUSTERS}, MinPts={MIN_PTS_PER_CLUSTER}, Steal={USE_WORK_STEALING}) (N0={N_TRAIN:,}, N_clusters={n_centroids:,})"
         plot_adaptive_clustering_results(
-            results=result,
+            centroids=_to_host(result["centroids"]),
+            Q=_to_host(result["Q"]),
+            radii=_to_host(result["radii"]),
             domain=PROB_LIMS,
             f_fn=rosenbrock,
             img_fpath=img_fpath,
             title=title,
         )
-
     # Save MPI rank time breakdown plot
     time_breakdown_path = img_fpath.with_name(
         img_fpath.stem + "_mpi_time_breakdown.png"

@@ -1371,7 +1371,9 @@ if __name__ == "__main__":
     if DIM == 2 and n_centroids <= 10_000:
         title = f"Rosenbrock (a={A_ROSENBROCK}) (Tol={TOL}, ErrMode={ERROR_EVAL_MODE.value}, Metric={ERROR_METRIC}, N_init={NUM_INITIAL_CLUSTERS}, MinPts={MIN_PTS_PER_CLUSTER}, Steal={USE_WORK_STEALING}) (N0={N_TRAIN:,}, N_clusters={n_centroids:,})"
         plot_adaptive_clustering_results(
-            results=result,
+            centroids=_to_host(result["centroids"]),
+            Q=_to_host(result["Q"]),
+            radii=_to_host(result["radii"]),
             domain=PROB_LIMS,
             f_fn=rosenbrock,
             img_fpath=img_fpath,

@@ -133,6 +133,9 @@ class HATANNSurrogate:
 
         # 1. MPI-Distributed Adaptive Clustering
         if not USE_V2:
+            raise NotImplementedError(
+                "Keeping this disabled. Enable if you are absolutely sure you want to run the original version of adaptive_clustering"
+            )
             results = adaptive_clustering(
                 X=X_train,
                 f_fn=f_fn,
@@ -379,6 +382,7 @@ class HATANNSurrogate:
         query_points: Array,
         k_nn: int,
         strict_trust_region: bool,
+        return_cluster_assignments: bool = False,
     ) -> tuple[Array, Array]:
         """
         Core localized math function execution on an individual rank's data chunk.
@@ -476,7 +480,7 @@ class HATANNSurrogate:
         predictions = xp.sum(weighted_preds, axis=1) / (total_weight[:, None] + 1e-12)
 
         if return_cluster_assignments:
-            return predictions, unguaranteed_mask, nn_idx
+            return predictions, unguaranteed_mask, nn_idx  # type: ignore
         else:
             return predictions, unguaranteed_mask
 

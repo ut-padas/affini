@@ -11,8 +11,6 @@ from experiments_utils import (
     del_all_error_files_in_dir,
 )
 from src.logging_utils import consolidate_evaluations
-from src.problems.vector_quadratic_2 import vector_quadratic_2, vector_quadratic_2_grad
-from src.problems.vector_quadratic_3 import vector_quadratic_3, vector_quadratic_3_grad
 from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad
 from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad
 from src.problems.lorenz96_flowmap import (
@@ -30,6 +28,8 @@ from src.problems.shifted_gaussians import (
     shifted_gaussians,
     shifted_gaussians_grad,
 )
+from src.problems.vector_quadratic_2 import vector_quadratic_2, vector_quadratic_2_grad
+from src.problems.vector_quadratic_3 import vector_quadratic_3, vector_quadratic_3_grad
 
 
 def get_N_TRAIN(dim: int, *, base: float = 1.3, factor: int = 50_000) -> int:
@@ -100,7 +100,7 @@ def ics_aniso_gaussian_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            CLUSTERING_MATRIX='Hessian_LSQ',
+            CLUSTERING_MATRIX="Hessian_LSQ",
             IGNORE_GRADIENT=False,
             STORE_TRAIN_EVALS=False,
             STORE_HESSIAN=False,
@@ -228,7 +228,6 @@ def quadratic_2_experiment() -> Path:
     return EXP_DIR
 
 
-
 # Tests the alg on vector_quadratic_3, which has multiple outputs with the same Hessian.
 def quadratic_3_experiment() -> Path:
     MAX_CLUSTERS_EST = 100_000
@@ -265,6 +264,7 @@ def quadratic_3_experiment() -> Path:
 
         def f_fn(X):
             return vector_quadratic_3(X, d_out=output_d)
+
         def g_fn(X):
             return vector_quadratic_3_grad(X, d_out=output_d)
 
@@ -292,10 +292,6 @@ def quadratic_3_experiment() -> Path:
         )
 
     return EXP_DIR
-
-
-
-
 
 
 def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
@@ -365,7 +361,7 @@ def ics_aniso_quadratic_runtime_scalability_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            CLUSTERING_MATRIX='Hessian_LSQ',
+            CLUSTERING_MATRIX="Hessian_LSQ",
             STORE_TRAIN_EVALS=False,
             BATCH_SIZE=BATCH_SIZE,
             PROFILE_TIMING=True,
@@ -430,7 +426,7 @@ def ics_rosenbrock_runtime_scalability_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            CLUSTERING_MATRIX='Hessian_LSQ',
+            CLUSTERING_MATRIX="Hessian_LSQ",
             STORE_TRAIN_EVALS=False,
             BATCH_SIZE=BATCH_SIZE,
             PROFILE_TIMING=True,
@@ -565,7 +561,7 @@ def ics_rosenbrock_n_min_per_cluster_experiment() -> Path:
             N_TEST=N_TEST,
             K_NEIGHBOURS=K_NEIGHBOURS,
             ERROR_METRIC=ERROR_METRIC,  # type: ignore
-            CLUSTERING_MATRIX='Cov_Lvl_curves',
+            CLUSTERING_MATRIX="Cov_Lvl_curves",
         )
 
     return EXP_DIR
@@ -616,7 +612,7 @@ def generate_train_data_for_neural_network() -> None:
             STORE_TRAIN_EVALS=True,
             TRAIN_EVALS_DIR=_evals_dir,
             TRAIN_EVALS_PREFIX=_prefix,
-            CLUSTERING_MATRIX='Cov_Lvl_curves',
+            CLUSTERING_MATRIX="Cov_Lvl_curves",
             SAVE_TEST_DATA=True,
             SAVE_TRAINED_DATA=True,
         )
@@ -651,7 +647,7 @@ def generate_train_data_for_neural_network() -> None:
             STORE_TRAIN_EVALS=True,
             TRAIN_EVALS_DIR=_evals_dir,
             TRAIN_EVALS_PREFIX=_prefix,
-            CLUSTERING_MATRIX='Cov_Lvl_curves',
+            CLUSTERING_MATRIX="Cov_Lvl_curves",
             SAVE_TEST_DATA=True,
             SAVE_TRAINED_DATA=True,
         )
@@ -702,7 +698,7 @@ def generate_train_data_for_neural_network() -> None:
         STORE_TRAIN_EVALS=True,
         TRAIN_EVALS_DIR=_evals_dir,
         TRAIN_EVALS_PREFIX=_prefix,
-        CLUSTERING_MATRIX='Cov_Lvl_curves',
+        CLUSTERING_MATRIX="Cov_Lvl_curves",
         SAVE_TEST_DATA=True,
         SAVE_TRAINED_DATA=True,
     )
@@ -761,9 +757,7 @@ def ics_lorenz_experiment() -> Path:
     # EXP_DIR = (
     #     ICS26_DIR / f"ics_lorenz_finaltime{FINAL_TIME}_outputvar0_forcing{FORCING}"
     # )
-    EXP_DIR = (
-        ICS26_DIR / f"lorenz_cov_lvl_curves_1d_out_no_gradient"
-    )
+    EXP_DIR = ICS26_DIR / f"lorenz_cov_lvl_curves_1d_out_no_gradient"
     # del_all_error_files_in_dir(EXP_DIR)
     # create_summary_dataframe(EXP_DIR)
 
@@ -823,7 +817,7 @@ if __name__ == "__main__":
     setup_logging()
 
     if IS_CUPY_BACKEND:
-        
+
         dir = ics_aniso_gaussian_experiment()
         create_summary_dataframe(dir)
 
