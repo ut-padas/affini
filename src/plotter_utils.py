@@ -283,6 +283,7 @@ def plot_adaptive_clustering_results(
     img_fpath: Path,
     title: str | None = None,
     plot_circle: bool = False,
+    plot_in_log: bool = True,
 ):
     """
     Plots the results of adaptive clustering on the given function and saves the figure
@@ -303,6 +304,7 @@ def plot_adaptive_clustering_results(
         title: Optional string for the overall figure title. If None, a default title
             will be generated based on the number of clusters.
         plot_circle: Whether to plot circles for the trust region radii (default: False).
+        plot_in_log: Whether to render contour color normalization on a log scale.
     """
     # Get dimensions of X
     d = centroids.shape[1]
@@ -321,6 +323,7 @@ def plot_adaptive_clustering_results(
     # Evaluate function on grid
     grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
     Z_grid = _to_host(f_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+    cbar_norm = LogNorm() if plot_in_log else None
 
     fig, axs = plt.subplots(1, 2, figsize=(12, 5))
 
@@ -331,7 +334,7 @@ def plot_adaptive_clustering_results(
         Z_grid,
         levels=50,
         cmap="viridis",
-        norm=LogNorm(),
+        norm=cbar_norm,
     )
     fig.colorbar(cs, ax=axs[0])
     axs[0].set_title("Function Contour")
@@ -353,7 +356,7 @@ def plot_adaptive_clustering_results(
         Z_grid,
         levels=50,
         cmap="viridis",
-        norm=LogNorm(),
+        norm=cbar_norm,
     )
     fig.colorbar(cs2, ax=axs[1])
     axs[1].set_title("Adaptive Clustering with Trust Ellipsoids")
