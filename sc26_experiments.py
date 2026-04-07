@@ -261,7 +261,7 @@ def anisotropic_quadratic_experiment():
 
     F_DIM = 1
     ERROR_METIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "uniform_grid"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
     USE_V2 = True
     USE_WORK_STEALING = True
 
