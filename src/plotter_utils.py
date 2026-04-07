@@ -125,9 +125,12 @@ def plot_mpi_rank_time_breakdown(
     img_fpath: Path,
     top_n_annotate=10,
     min_val_annotate=0.05,
-    figsize=(12, 12),
+    figsize=(16, 10),
     tick_fontsize=13,
     axis_title_fontsize=14,
+    bottom_log_scale=False,
+    bottom_ylim=None,
+    top_to_bottom_ratio=4,
 ):
     """
     Plot a stacked 100% bar chart of time breakdown per MPI rank,
@@ -141,6 +144,10 @@ def plot_mpi_rank_time_breakdown(
         figsize: Figure size.
         tick_fontsize: Font size for tick labels.
         axis_title_fontsize: Font size for axis titles.
+        bottom_log_scale: If True, use a log y-axis for the bottom subplot.
+        bottom_ylim: Optional y-limits tuple for the bottom subplot.
+        top_to_bottom_ratio: Height ratio between the top and bottom subplots.
+            1 means equal height, 2 means the top subplot is twice as tall.
     """
     rename_props = {
         "Preprocessing": ["time_init"],
@@ -181,7 +188,11 @@ def plot_mpi_rank_time_breakdown(
 
     # --- Figure ---
     fig, axs = plt.subplots(
-        2, 1, figsize=figsize, sharex=True, gridspec_kw={"height_ratios": [1.8, 1]}
+        2,
+        1,
+        figsize=figsize,
+        sharex=True,
+        gridspec_kw={"height_ratios": [top_to_bottom_ratio, 1]},
     )
     plt.subplots_adjust(hspace=0, top=0.88)
 
@@ -212,7 +223,7 @@ def plot_mpi_rank_time_breakdown(
                 ax_bar.text(
                     x,
                     y,
-                    f"{val:.0%}",
+                    f"{val:.0}%",
                     ha="center",
                     va="center",
                     color="black",
@@ -250,8 +261,15 @@ def plot_mpi_rank_time_breakdown(
             color="#333333",
         )
 
-    ax_line.set_yscale("log")
-    ax_line.set_ylim(min(y_total) * 0.3, max(y_total) * 2.5)
+    if bottom_log_scale:
+        ax_line.set_yscale("log")
+        if bottom_ylim is None:
+            ax_line.set_ylim(min(y_total) * 0.3, max(y_total) * 2.5)
+        else:
+            ax_line.set_ylim(bottom_ylim)
+    elif bottom_ylim is not None:
+        ax_line.set_ylim(bottom_ylim)
+
     ax_line.set_ylabel("Total Time (s)", fontsize=axis_title_fontsize)
     ax_line.set_xlabel("MPI Rank", fontsize=axis_title_fontsize)
     ax_line.set_xticks(x_indices)
@@ -270,8 +288,8 @@ def plot_mpi_rank_time_breakdown(
         frameon=False,
         fontsize=12,
     )
-    # Save figure
-    plt.savefig(img_fpath, dpi=200, bbox_inches="tight")
+
+    fig.savefig(img_fpath, bbox_inches="tight")
 
 
 def plot_adaptive_clustering_results(
