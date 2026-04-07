@@ -76,9 +76,73 @@ def repeats(arr: Array, counts: Array) -> Array:
         return np.repeat(arr, counts)
 
 
+# -----------------------------------------------------------------------------
+# 2. MATH HELPERS (Vectorized xp)
+# -----------------------------------------------------------------------------
+def repeats(arr: Array, counts: Array) -> Array:
+    """Repeats elements of an array given a counts array."""
+    if IS_CUPY_BACKEND:
+        return xp.repeat(arr, counts)
+    else:
+        return np.repeat(arr, counts)
+
+
+if IS_CUPY_BACKEND:
+    import cupy as cp
+
+    # Compile the raw CUDA kernel only once when the module loads
+    _segmented_max_kernel = cp.RawKernel(
+        r"""
+    extern "C" __global__
+    void segmented_max_float64(const double* vals, const long long* starts, double* out, int num_starts, int num_vals) {
+        int tid = blockDim.x * blockIdx.x + threadIdx.x;
+        if (tid < num_starts) {
+            long long start = starts[tid];
+            // The end index is either the start of the next segment, or the end of the array
+            long long end = (tid + 1 < num_starts) ? starts[tid + 1] : num_vals;
+            
+            double max_val = vals[start]; 
+            for (long long i = start + 1; i < end; ++i) {
+                if (vals[i] > max_val) {
+                    max_val = vals[i];
+                }
+            }
+            out[tid] = max_val;
+        }
+    }
+    """,
+        "segmented_max_float64",
+    )
+
+
 def _reduce_max_1d(vals: Array, starts: Array) -> Array:
     """Segmented maximum reduction for contiguous blocks."""
-    return xp.maximum.reduceat(vals, starts)
+    if IS_CUPY_BACKEND:
+        import cupy as cp
+
+        K = starts.shape[0]
+        N = vals.shape[0]
+
+        # Ensure proper types for the C-kernel (double, long long) and memory layout
+        vals_c = cp.ascontiguousarray(vals, dtype=cp.float64)
+        starts_c = cp.ascontiguousarray(starts, dtype=cp.int64)
+        out = cp.empty(K, dtype=cp.float64)
+
+        # Standard CUDA block/grid sizing
+        threads_per_block = 256
+        blocks_per_grid = (K + threads_per_block - 1) // threads_per_block
+
+        _segmented_max_kernel(
+            (blocks_per_grid,), (threads_per_block,), (vals_c, starts_c, out, K, N)
+        )
+
+        # Recast if the original array wasn't float64 (e.g., float32)
+        if vals.dtype != cp.float64:
+            out = out.astype(vals.dtype)
+        return out
+    else:
+        # Standard NumPy fallback
+        return np.maximum.reduceat(vals, starts)
 
 
 def _reduce_sum_1d(vals: Array, starts: Array) -> Array:
