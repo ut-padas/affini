@@ -657,7 +657,7 @@ if __name__ == "__main__":
     INITIAL_CLUSTERING_METHOD = "uniform_grid"
     ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS
 
-    USE_V2 = False
+    USE_V2 = True
 
     # Scale initial clusters with dimension for better
     NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM

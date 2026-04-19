@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Optional
 
 import psutil
-import pynvml
 from tqdm import tqdm
 
 from src import _get_mpi_rank, _get_mpi_size
@@ -146,6 +145,7 @@ def log_mem_stats(tag: str = ""):
     ram_used_gb = ram.used / 1e9
     ram_total_gb = ram.total / 1e9
     try:
+        import pynvml
 
         # Get GPU VRAM usage
         pynvml.nvmlInit()
