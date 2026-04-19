@@ -15,7 +15,7 @@ from src.heuristic_parameters import (
     get_NUM_INITIAL_CLUSTERS,
 )
 from src.plotter_utils import plot_adaptive_clustering_results, plot_error_histogram
-from src.surrogate import HATANNSurrogate, compute_error_metrics
+from src.surrogate import AFINNISurrogate, compute_error_metrics
 
 SC26_DIR = RESULTS_DIR / "sc26"
 SC26_DIR.mkdir(parents=True, exist_ok=True)
@@ -66,7 +66,7 @@ def conductExperiment(
         X_train = None
         X_test = None
 
-    surrogate = HATANNSurrogate()
+    surrogate = AFINNISurrogate()
     error_tag = ""
     FAILED = False
     _TRAINED, _PREDICTED = False, False

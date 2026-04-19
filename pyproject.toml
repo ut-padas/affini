@@ -1,7 +1,7 @@
 [project]
-name = "hataan"
+name = "afinni"
 version = "0.1.0"
-description = "HATAAN: High-dimensional Approximation using Taylor expansions and Adaptive Nearest Neighbors"
+description = "AFINNI: Adaptive affine nearest neighbor interpolation"
 readme = "README.md"
 requires-python = ">=3.13"
 # license = "MIT" # TODO

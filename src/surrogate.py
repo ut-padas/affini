@@ -14,7 +14,7 @@ from src.adaptive_clustering_v2 import adaptive_clustering as adaptive_clusterin
 logger = logging.getLogger(__name__)
 
 
-class HATANNSurrogate:
+class AFINNISurrogate:
     """
     Surrogate using Adaptive Clustering + kNN with Ellipsoidal Distance on GPU.
     Supports MPI-parallelized training and inference.
@@ -260,7 +260,7 @@ class HATANNSurrogate:
         logger.info(f"Model saved to {filepath}")
 
     @classmethod
-    def load_model(cls, filepath: Union[str, Path]) -> "HATANNSurrogate":
+    def load_model(cls, filepath: Union[str, Path]) -> "AFINNISurrogate":
         filepath = Path(filepath)
         if not filepath.exists():
             raise FileNotFoundError(f"Model file not found: {filepath}")
@@ -683,7 +683,7 @@ if __name__ == "__main__":
         X = xp.empty((0, DIM), dtype=xp.float64)
 
     # Train surrogate
-    surrogate = HATANNSurrogate()
+    surrogate = AFINNISurrogate()
     _start_time = time.perf_counter()
     surrogate.train(
         X_train=X,
