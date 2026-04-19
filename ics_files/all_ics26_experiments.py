@@ -4,7 +4,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from experiments_utils import (
+from ics_files.experiments_utils import (
     ICS26_DIR,
     Problem_experiment_setup,
     create_summary_dataframe,
