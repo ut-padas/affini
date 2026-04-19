@@ -296,7 +296,8 @@ def _run_local_refinement(
                 else:
                     time.sleep(SLEEP_INTERVAL)
 
-            continue  # Loop back around
+            # Loop back around to check termination condition and steal opportunities again.
+            continue
 
         # --- Phase 1: The Compute Phase (Mid-Level) ---
         _t_level = time.perf_counter()
