@@ -13,7 +13,7 @@ help:
 	@echo "  test           - Run pytest tests"
 
 sc-experiments: load-modules
-	uv run python -m sc26_experiments.py
+	uv run python sc26_experiments.py
 
 dev:
 	uv sync --group gpu --group lint --group test
