@@ -694,10 +694,11 @@ if __name__ == "__main__":
     # dir4 = ics_rosenbrock_n_min_per_cluster_experiment()
     # create_summary_dataframe(dir4)
 
-    # dir4 = ics_lorenz_experiment()
-    # create_summary_dataframe(dir4)
+    dir4 = ics_lorenz_experiment()
+    create_summary_dataframe(dir4)
 
     # dir5 = ics_quadratic_runtime_scalability_experiment()
     # create_summary_dataframe(dir5)
 
-    generate_train_data_for_neural_network()
+    #generate_train_data_for_neural_network()
+
