@@ -342,6 +342,7 @@ class AFINNISurrogate:
         self,
         query_points: Optional[Array] = None,
         k_nn: int = 1,
+        coarse_factor: int = 10,
         strict_trust_region: bool = False,
     ) -> tuple:
         """
@@ -350,6 +351,11 @@ class AFINNISurrogate:
         """
         if not self.trained:
             raise RuntimeError("Model not trained.")
+
+        if k_nn > coarse_factor:
+            raise ValueError(
+                "k_nn cannot be greater than coarse_factor for the two-stage kNN to work properly."
+            )
 
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
@@ -368,7 +374,10 @@ class AFINNISurrogate:
 
         # Run mathematical logic independently
         local_preds, local_mask = self._predict_local(
-            local_queries, k_nn, strict_trust_region
+            query_points=local_queries,
+            k_nn=k_nn,
+            coarse_factor=coarse_factor,
+            strict_trust_region=strict_trust_region,
         )
 
         # Bring back to host and merge
@@ -384,6 +393,7 @@ class AFINNISurrogate:
         self,
         query_points: Array,
         k_nn: int,
+        coarse_factor: int,
         strict_trust_region: bool,
         return_cluster_assignments: bool = False,
     ) -> tuple[Array, Array]:
@@ -399,8 +409,7 @@ class AFINNISurrogate:
         )
 
         if k_nn < len(self.X_src):
-            COARSE_FACTOR = 10
-            k_coarse = min(k_nn * COARSE_FACTOR, len(self.X_src))
+            k_coarse = min(k_nn * coarse_factor, len(self.X_src))
             k_nn = min(k_nn, len(self.X_src))
         else:
             k_coarse = len(self.X_src)
