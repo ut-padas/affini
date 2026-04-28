@@ -302,6 +302,7 @@ def plot_adaptive_clustering_results(
     title: str | None = None,
     plot_circle: bool = False,
     plot_in_log: bool = True,
+    plot_f_abs: bool = False,
 ):
     """
     Plots the results of adaptive clustering on the given function and saves the figure
@@ -323,6 +324,7 @@ def plot_adaptive_clustering_results(
             will be generated based on the number of clusters.
         plot_circle: Whether to plot circles for the trust region radii (default: False).
         plot_in_log: Whether to render contour color normalization on a log scale.
+        plot_f_abs: Whether to take the absolute value of the function for plotting.
     """
     # Get dimensions of X
     d = centroids.shape[1]
@@ -341,6 +343,8 @@ def plot_adaptive_clustering_results(
     # Evaluate function on grid
     grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
     Z_grid = _to_host(f_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+    if plot_f_abs:
+        Z_grid = np.abs(Z_grid)
     cbar_norm = LogNorm() if plot_in_log else None
 
     fig, axs = plt.subplots(1, 2, figsize=(12, 5))

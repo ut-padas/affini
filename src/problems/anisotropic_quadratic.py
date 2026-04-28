@@ -2,9 +2,7 @@
 
 from src import Array, xp
 
-# Configuration
 SEED = 0
-
 DECAY_EXPONENT = 3.0
 BETA = 1.0
 
