@@ -135,7 +135,7 @@ class AFINNISurrogate:
         # 1. MPI-Distributed Adaptive Clustering
         if not USE_V2:
             raise NotImplementedError(
-                "Keeping this disabled. Enable if you are absolutely sure you want to run the original version of adaptive_clustering"
+                "Keeping this disabled. Enable if you are absolutely sure you want to run the original version of adaptive_clustering, which does split then augment, as opposed to the v2 version which does augment then split"
             )
             results = adaptive_clustering(
                 X=X_train,

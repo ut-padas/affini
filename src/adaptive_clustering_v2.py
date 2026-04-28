@@ -1298,18 +1298,15 @@ if __name__ == "__main__":
     rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
 
     DIM = 2
-    TOL = 1e-2
+    TOL = 0.02
     PROB_LIMS = (-1.0, 3)
     N_TRAIN = get_N_TRAIN(DIM)
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
     USE_WORK_STEALING = True
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "uniform_grid"
+    ERROR_METRIC = "L2"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
     ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS
-
-    # Scale initial clusters with dimension for better
-    NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
 
     OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_experimental_v2"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
