@@ -585,6 +585,72 @@ def lorenz96_dimension_scaling_experiment():
     return EXP_DIR
 
 
+def indefinite_quadratic_experiment():
+
+    d = 5
+    avec = xp.array([1, -10, 50, -100, 200])
+    # The Hessian matrix will be diagonal.
+    def indefinite_quadratic(x):
+        return (x ** 2) @ avec
+    def indefinite_quadratic_grad(x):
+        return 2 * avec[:,xp.newaxis] * x
+
+    EXP_DIR = SC26_DIR / "indef_quad"
+    F_DIM = 1
+    ERROR_METRIC = "Linf-global"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+    USE_V2 = True
+    USE_WORK_STEALING = False
+
+    DIMs = [d]
+    ERROR_EVAL_MODES = [
+        SurrogateMode.AFFINE_COV_HESS,      # cluster via X^T @ H @ X
+        SurrogateMode.AFFINE_COV_NO_HESS,   # cluster via X^T @ I @ X
+        SurrogateMode.TAYLOR_COV_HESS,      # 
+        SurrogateMode.TAYLOR_LSQ_HESS,      # cluster via X^T @ H @ X, with very accurate H
+    ]
+
+    combos = list(product(DIMs, ERROR_EVAL_MODES))
+    for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
+        TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
+        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
+
+        for TOL in TOLs:
+            json_fpath = (
+                EXP_DIR
+                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+            )
+            conductExperiment(
+                # Problem-specific
+                json_fpath=json_fpath,
+                DOMAIN=[-2.0, 3.0],
+                F_DIM=F_DIM,
+                DIM=DIM,
+                N_TRAIN=N_TRAIN,
+                N_TEST=N_TEST,
+                # Training-specific
+                f_fn=indefinite_quadratic,
+                g_fn=indefinite_quadratic_grad,
+                TOL=TOL,
+                ERROR_EVAL_MODE=ERROR_EVAL_MODE,
+                ERROR_METRIC=ERROR_METRIC,
+                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                USE_WORK_STEALING=USE_WORK_STEALING,
+                USE_V2=USE_V2,
+            )
+
+            create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
+
 if __name__ == "__main__":
     import logging
 
@@ -596,7 +662,8 @@ if __name__ == "__main__":
     # dir2 = anisotropic_gaussian_experiment()
     # dir3 = rosenbrock_experiment()
     # dir4 = lorenz96_experiment()
-    dir5 = rosenbrock_diff_error_metrics_experiment()
+    # dir5 = rosenbrock_diff_error_metrics_experiment()
+    dir6 = indefinite_quadratic_experiment()
 
     # _dirs = [dir1, dir2, dir3, dir4, dir5]
     # for d in _dirs:
