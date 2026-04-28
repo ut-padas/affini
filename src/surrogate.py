@@ -14,7 +14,7 @@ from src.adaptive_clustering_v2 import adaptive_clustering as adaptive_clusterin
 logger = logging.getLogger(__name__)
 
 
-class HATANNSurrogate:
+class AFINNISurrogate:
     """
     Surrogate using Adaptive Clustering + kNN with Ellipsoidal Distance on GPU.
     Supports MPI-parallelized training and inference.
@@ -135,7 +135,7 @@ class HATANNSurrogate:
         # 1. MPI-Distributed Adaptive Clustering
         if not USE_V2:
             raise NotImplementedError(
-                "Keeping this disabled. Enable if you are absolutely sure you want to run the original version of adaptive_clustering"
+                "Keeping this disabled. Enable if you are absolutely sure you want to run the original version of adaptive_clustering, which does split then augment, as opposed to the v2 version which does augment then split"
             )
             results = adaptive_clustering(
                 X=X_train,
@@ -260,7 +260,7 @@ class HATANNSurrogate:
         logger.info(f"Model saved to {filepath}")
 
     @classmethod
-    def load_model(cls, filepath: Union[str, Path]) -> "HATANNSurrogate":
+    def load_model(cls, filepath: Union[str, Path]) -> "AFINNISurrogate":
         filepath = Path(filepath)
         if not filepath.exists():
             raise FileNotFoundError(f"Model file not found: {filepath}")
@@ -342,14 +342,21 @@ class HATANNSurrogate:
         self,
         query_points: Optional[Array] = None,
         k_nn: int = 1,
+        coarse_factor: int = 10,
         strict_trust_region: bool = False,
+        batch_size: int = 5000,
     ) -> tuple:
         """
-        MPI-Parallel Inference via kNN.
+        MPI-Parallel Inference via kNN with Memory-Safe Batching.
         Rank 0 splits and scatters query points, computes locally, and gathers results.
         """
         if not self.trained:
             raise RuntimeError("Model not trained.")
+
+        if k_nn > coarse_factor:
+            raise ValueError(
+                "k_nn cannot be greater than coarse_factor for the two-stage kNN to work properly."
+            )
 
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
@@ -366,9 +373,13 @@ class HATANNSurrogate:
         local_queries_host = comm.scatter(chunks, root=0)
         local_queries = xp.asarray(local_queries_host)
 
-        # Run mathematical logic independently
+        # Run mathematical logic independently with batching
         local_preds, local_mask = self._predict_local(
-            local_queries, k_nn, strict_trust_region
+            query_points=local_queries,
+            k_nn=k_nn,
+            coarse_factor=coarse_factor,
+            strict_trust_region=strict_trust_region,
+            batch_size=batch_size,
         )
 
         # Bring back to host and merge
@@ -384,11 +395,14 @@ class HATANNSurrogate:
         self,
         query_points: Array,
         k_nn: int,
+        coarse_factor: int,
         strict_trust_region: bool,
+        batch_size: int = 5000,
         return_cluster_assignments: bool = False,
     ) -> tuple[Array, Array]:
         """
-        Core localized math function execution on an individual rank's data chunk.
+        Core localized math function execution on an individual rank's data chunk,
+        processed in batches to prevent Out-Of-Memory (OOM) errors during einsum.
         """
         N, D = query_points.shape
         assert (
@@ -398,92 +412,141 @@ class HATANNSurrogate:
             and self.Qs_src is not None
         )
 
+        # Determine true k values based on available centroids
         if k_nn < len(self.X_src):
-            COARSE_FACTOR = 10
-            k_coarse = min(k_nn * COARSE_FACTOR, len(self.X_src))
+            k_coarse = min(k_nn * coarse_factor, len(self.X_src))
             k_nn = min(k_nn, len(self.X_src))
         else:
             k_coarse = len(self.X_src)
             k_nn = len(self.X_src)
 
-        nn_idx_coarse, _ = self._query_knn(query_points, k_coarse)
+        F_dim = self.f_src.shape[1] if self.f_src.ndim > 1 else 1
 
-        Qs_coarse = self.Qs_src[nn_idx_coarse]
-        centroids_coarse = self.X_src[nn_idx_coarse]
-        dx_coarse = query_points[:, None, :] - centroids_coarse
+        all_predictions = []
+        all_ung_masks = []
+        all_nn_idx = []
 
-        dist_sq_coarse = xp.einsum("nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse)
+        # Process queries in Memory-Safe Batches
+        for start_idx in range(0, N, batch_size):
+            end_idx = min(start_idx + batch_size, N)
+            batch_queries = query_points[start_idx:end_idx]
+            chunk_size = len(batch_queries)
 
-        sorted_local_indices = xp.argsort(dist_sq_coarse, axis=1)
-        top_k_local = sorted_local_indices[:, :k_nn]
+            # 1. Phase 1: L2 Coarse Search
+            nn_idx_coarse, _ = self._query_knn(batch_queries, k_coarse)
 
-        nn_idx = xp.take_along_axis(nn_idx_coarse, top_k_local, axis=1)
-        dist_sq = xp.take_along_axis(dist_sq_coarse, top_k_local, axis=1)
+            # 2. Extract coarse candidate properties
+            Qs_coarse = self.Qs_src[nn_idx_coarse]
+            centroids_coarse = self.X_src[nn_idx_coarse]
+            dx_coarse = batch_queries[:, None, :] - centroids_coarse
 
-        centroids = self.X_src[nn_idx]
-        dx = query_points[:, None, :] - centroids
-        dist = xp.sqrt(dist_sq)
+            # Compute Mahalanobis distance squared for all coarse candidates
+            dist_sq_coarse = xp.einsum(
+                "nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse
+            )
 
-        valid_mask_strict = dist_sq <= 1.0
-        weights_strict = xp.maximum(0.0, 1.0 - dist) ** 2
-        weights_strict *= valid_mask_strict
+            # 3. Phase 2: Refine to top k_nn based on true Trust Region distance
+            sorted_local_indices = xp.argsort(dist_sq_coarse, axis=1)
+            top_k_local = sorted_local_indices[:, :k_nn]
 
-        total_weight_strict = xp.sum(weights_strict, axis=1)
-        unguaranteed_mask = total_weight_strict < 1e-12
+            nn_idx = xp.take_along_axis(nn_idx_coarse, top_k_local, axis=1)
+            dist_sq = xp.take_along_axis(dist_sq_coarse, top_k_local, axis=1)
 
-        if strict_trust_region:
-            final_weights = weights_strict
-            total_weight = total_weight_strict
-        else:
-            final_weights = xp.ones_like(dist_sq)
+            centroids = self.X_src[nn_idx]
+            dx = batch_queries[:, None, :] - centroids
+
+            # 4. Shepard's Inverse Distance Weighting
+            # Weight = 1 / (d^p + eps). Points exactly at the centroid get dominating weight.
+            p = 4.0
+            base_weights = 1.0 / (xp.power(dist_sq, p / 2) + 1e-12)
+
+            if strict_trust_region:
+                # Zero out weights for centroids outside the trust region (d_sq > 1.0)
+                final_weights = xp.where(dist_sq <= 1.0, base_weights, 0.0)
+            else:
+                # Pure Shepard's weighting across all k_nn points
+                final_weights = base_weights
+
             total_weight = xp.sum(final_weights, axis=1)
 
-        F_dim = self.f_src.shape[1] if self.f_src.ndim > 1 else 1
-        flat_idx = nn_idx.reshape(-1)
-        f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(N, k_nn, F_dim)
+            # A point is unguaranteed if its CLOSEST centroid is outside the trust region (d_sq > 1.0)
+            unguaranteed_mask = xp.min(dist_sq, axis=1) > 1.0
 
-        # ---------------------------------------------------------------------
-        # Dynamic Mode Routing
-        # ---------------------------------------------------------------------
-        if self.mode == SurrogateMode.NEAREST_NEIGHBOR:
-            predictions_k = f_neighbors
+            # Prevent divide-by-zero if strict_trust_region killed all weights
+            total_weight = xp.maximum(total_weight, 1e-12)
 
-        elif self.mode in (
-            SurrogateMode.TAYLOR_LSQ_HESS,
-            SurrogateMode.TAYLOR_COV_HESS,
-            SurrogateMode.TAYLOR_COV_NO_HESS,
-        ):
-            J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(N, k_nn, F_dim, D)
-            linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
-            predictions_k = f_neighbors + linear_term
-
-            if self.Hs_src is not None:
-                H_neighbors = xp.asarray(self.Hs_src)[flat_idx].reshape(
-                    N, k_nn, F_dim, D, D
-                )
-                quadratic_term = xp.einsum("nkc,nkfcd,nkd->nkf", dx, H_neighbors, dx)
-                predictions_k += 0.5 * quadratic_term
-
-        elif self.mode in (
-            SurrogateMode.AFFINE_COV_HESS,
-            SurrogateMode.AFFINE_COV_NO_HESS,
-        ):
-            A_neighbors = xp.asarray(self.A_fits_src)[flat_idx].reshape(
-                N, k_nn, F_dim, D
+            # Extract function values for the k_nn neighbors
+            flat_idx = nn_idx.reshape(-1)
+            f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(
+                chunk_size, k_nn, F_dim
             )
-            b_neighbors = xp.asarray(self.b_fits_src)[flat_idx].reshape(N, k_nn, F_dim)
-            affine_term = xp.einsum("nkfd,nd->nkf", A_neighbors, query_points)
-            predictions_k = affine_term + b_neighbors
 
-        else:
-            raise ValueError(f"Unknown or improperly set SurrogateMode: '{self.mode}'.")
+            # ---------------------------------------------------------------------
+            # 5. Dynamic Mode Routing (Local Model Evaluation)
+            # ---------------------------------------------------------------------
+            if self.mode == SurrogateMode.NEAREST_NEIGHBOR:
+                predictions_k = f_neighbors
 
-        weights_expanded = final_weights[:, :, None]
-        weighted_preds = predictions_k * weights_expanded
-        predictions = xp.sum(weighted_preds, axis=1) / (total_weight[:, None] + 1e-12)
+            elif self.mode in (
+                SurrogateMode.TAYLOR_LSQ_HESS,
+                SurrogateMode.TAYLOR_COV_HESS,
+                SurrogateMode.TAYLOR_COV_NO_HESS,
+            ):
+                J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(
+                    chunk_size, k_nn, F_dim, D
+                )
+                linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
+                predictions_k = f_neighbors + linear_term
+
+                if self.Hs_src is not None:
+                    H_neighbors = xp.asarray(self.Hs_src)[flat_idx].reshape(
+                        chunk_size, k_nn, F_dim, D, D
+                    )
+                    quadratic_term = xp.einsum(
+                        "nkc,nkfcd,nkd->nkf", dx, H_neighbors, dx
+                    )
+                    predictions_k += 0.5 * quadratic_term
+
+            elif self.mode in (
+                SurrogateMode.AFFINE_COV_HESS,
+                SurrogateMode.AFFINE_COV_NO_HESS,
+            ):
+                A_neighbors = xp.asarray(self.A_fits_src)[flat_idx].reshape(
+                    chunk_size, k_nn, F_dim, D
+                )
+                b_neighbors = xp.asarray(self.b_fits_src)[flat_idx].reshape(
+                    chunk_size, k_nn, F_dim
+                )
+
+                # Evaluate the affine model: A*x + b
+                affine_term = xp.einsum("nkfd,nd->nkf", A_neighbors, batch_queries)
+                predictions_k = affine_term + b_neighbors
+
+            else:
+                raise ValueError(
+                    f"Unknown or improperly set SurrogateMode: '{self.mode}'."
+                )
+
+            # 6. Apply Shepard's Weights
+            weights_expanded = final_weights[:, :, None]
+            weighted_preds = predictions_k * weights_expanded
+
+            # If total_weight was 1e-12 (all centroids strict-rejected), this gracefully zeros out the prediction
+            batch_predictions = xp.sum(weighted_preds, axis=1) / total_weight[:, None]
+
+            # Store chunk results
+            all_predictions.append(batch_predictions)
+            all_ung_masks.append(unguaranteed_mask)
+            if return_cluster_assignments:
+                all_nn_idx.append(nn_idx)
+
+        # Reconstruct the full arrays
+        predictions = xp.concatenate(all_predictions, axis=0)
+        unguaranteed_mask = xp.concatenate(all_ung_masks, axis=0)
 
         if return_cluster_assignments:
-            return predictions, unguaranteed_mask, nn_idx  # type: ignore
+            nn_idx_full = xp.concatenate(all_nn_idx, axis=0)
+            return predictions, unguaranteed_mask, nn_idx_full  # type: ignore
         else:
             return predictions, unguaranteed_mask
 
@@ -657,7 +720,7 @@ if __name__ == "__main__":
     INITIAL_CLUSTERING_METHOD = "uniform_grid"
     ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS
 
-    USE_V2 = False
+    USE_V2 = True
 
     # Scale initial clusters with dimension for better
     NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
@@ -683,7 +746,7 @@ if __name__ == "__main__":
         X = xp.empty((0, DIM), dtype=xp.float64)
 
     # Train surrogate
-    surrogate = HATANNSurrogate()
+    surrogate = AFINNISurrogate()
     _start_time = time.perf_counter()
     surrogate.train(
         X_train=X,

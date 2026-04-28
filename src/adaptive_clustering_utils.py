@@ -405,8 +405,23 @@ def evaluate_cluster_errors(
 
     # --- 2. Evaluate Error Metrics ---
     if config.error_metric == "L2":
+        # Calculate sum of squared errors
         err_pts = xp.sum(diff**2, axis=1)  # (N,)
-        E_cluster = xp.sqrt(_reduce_sum_1d(err_pts, aug_starts))  # (K,)
+        sq_err_cluster = _reduce_sum_1d(err_pts, aug_starts)  # (K,)
+
+        # Calculate sum of squared true values for relative scaling
+        val_pts = xp.sum(F_batch**2, axis=1)  # (N,)
+        sq_val_cluster = _reduce_sum_1d(val_pts, aug_starts)  # (K,)
+
+        # Relative L2 Error
+        E_cluster_rel = xp.sqrt(sq_err_cluster) / (xp.sqrt(sq_val_cluster) + TINY_EPS)
+
+        # Absolute RMS Error (Average absolute error per point)
+        E_cluster_abs = xp.sqrt(sq_err_cluster / aug_sizes)
+
+        # Pass if relative error is good, OR if absolute error is already negligible
+        is_good = (E_cluster_rel < TOL) | (E_cluster_abs < TOL)
+        return is_good, E_cluster_rel, surrogate_params
     elif config.error_metric == "Linf-global":
         err_pts = xp.max(
             xp.abs(diff) / (F_max_global[None, :] + TINY_EPS), axis=1
@@ -425,6 +440,7 @@ def evaluate_cluster_errors(
                 E_cluster_rel, max_err_j / xp.maximum(local_max_F_j, TINY_EPS)
             )  # (K,)
 
+        # Pass if relative error is good, OR if absolute error is already negligible
         is_good = (E_cluster_rel < TOL) | (E_cluster_abs < TOL)
         return is_good, E_cluster_rel, surrogate_params
 

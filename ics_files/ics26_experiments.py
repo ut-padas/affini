@@ -4,7 +4,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from experiments_utils import (
+from ics_files.experiments_utils import (
     ICS26_DIR,
     Problem_experiment_setup,
     create_summary_dataframe,
@@ -19,12 +19,6 @@ from src.problems.lorenz96_flowmap import (
     lorenz96_flowmap_oracle,
     lorenz96_flowmap_oracle_first_component,
 )
-from src.problems.vanderpol_flowmap import (
-    vanderpol_flowmap,
-    vanderpol_flowmap_grad,
-    vanderpol_flowmap_oracle,
-    vanderpol_flowmap_oracle_first_component
-)
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 from src.problems.shifted_gaussians import (
     CENTERS_2D,
@@ -33,6 +27,12 @@ from src.problems.shifted_gaussians import (
     CENTERS_5D,
     shifted_gaussians,
     shifted_gaussians_grad,
+)
+from src.problems.vanderpol_flowmap import (
+    vanderpol_flowmap,
+    vanderpol_flowmap_grad,
+    vanderpol_flowmap_oracle,
+    vanderpol_flowmap_oracle_first_component,
 )
 from src.problems.vector_quadratic_2 import vector_quadratic_2, vector_quadratic_2_grad
 from src.problems.vector_quadratic_3 import vector_quadratic_3, vector_quadratic_3_grad
@@ -111,7 +111,7 @@ def ics_aniso_gaussian_experiment() -> Path:
             STORE_TRAIN_EVALS=False,
             STORE_HESSIAN=False,
             USE_HESSIAN_FOR_INFERENCE=False,
-            ERROR_EVAL_MODE="taylor"
+            ERROR_EVAL_MODE="taylor",
         )
 
     return EXP_DIR
@@ -817,8 +817,6 @@ def ics_lorenz_experiment() -> Path:
     return EXP_DIR
 
 
-
-
 def vanderpol_experiment() -> Path:
     """
     Van der Pol surrogate for a single time step.
@@ -844,9 +842,7 @@ def vanderpol_experiment() -> Path:
 
     MAX_CLUSTERS_EST = 20_000
     K_NEIGHBOURS = 1
-    EXP_DIR = (
-        ICS26_DIR / f"vanderpol"
-    )
+    EXP_DIR = ICS26_DIR / f"vanderpol"
     # del_all_error_files_in_dir(EXP_DIR)
     # create_summary_dataframe(EXP_DIR)
 
@@ -855,10 +851,7 @@ def vanderpol_experiment() -> Path:
 
     combos = list(product(TOLs, ERROR_METRICs))
     for TOL, ERROR_METRIC in tqdm(combos, desc="Lorenz Experiments"):
-        json_path = (
-            EXP_DIR
-            / f"vanderpol_tol{TOL}_err{ERROR_METRIC}_outputvar1.json"
-        )
+        json_path = EXP_DIR / f"vanderpol_tol{TOL}_err{ERROR_METRIC}_outputvar1.json"
         json_path.parent.mkdir(parents=True, exist_ok=True)
         if json_path.exists():
             print(f"Skipping existing experiment at {json_path}")
@@ -892,13 +885,11 @@ def vanderpol_experiment() -> Path:
             CLUSTERING_MATRIX="Hessian_LSQ",
             IGNORE_GRADIENT=False,
             PROFILE_TIMING=True,
-            MAX_LEVELS=30
+            MAX_LEVELS=30,
         )
         create_summary_dataframe(EXP_DIR)
 
     return EXP_DIR
-
-
 
 
 if __name__ == "__main__":
@@ -908,7 +899,7 @@ if __name__ == "__main__":
     setup_logging()
 
     if IS_CUPY_BACKEND:
-        
+
         print("Running on GPU node.")
         dir = ics_aniso_gaussian_experiment()
         create_summary_dataframe(dir)

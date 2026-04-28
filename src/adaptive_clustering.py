@@ -923,6 +923,9 @@ def adaptive_clustering(
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).
     """
+    raise NotImplementedError(
+        "Keeping this disabled. Enable if you are absolutely sure you want to run the original version of adaptive_clustering, which does split then augment, as opposed to the v2 version which does augment then split"
+    )
     if ERROR_EVAL_MODE in (
         SurrogateMode.AFFINE_COV_HESS,
         SurrogateMode.AFFINE_COV_NO_HESS,

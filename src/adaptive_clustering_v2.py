@@ -296,7 +296,8 @@ def _run_local_refinement(
                 else:
                     time.sleep(SLEEP_INTERVAL)
 
-            continue  # Loop back around
+            # Loop back around to check termination condition and steal opportunities again.
+            continue
 
         # --- Phase 1: The Compute Phase (Mid-Level) ---
         _t_level = time.perf_counter()
@@ -1274,6 +1275,11 @@ if __name__ == "__main__":
     from functools import partial
 
     from src import RESULTS_DIR
+    from src.heuristic_parameters import (
+        get_MIN_PTS_PER_CLUSTER,
+        get_N_TRAIN,
+        get_NUM_INITIAL_CLUSTERS,
+    )
     from src.logging_utils import setup_logging
     from src.plotter_utils import (
         plot_adaptive_clustering_results,
@@ -1291,19 +1297,16 @@ if __name__ == "__main__":
     rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
     rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
 
-    N_TRAIN = 100_000
     DIM = 2
+    TOL = 0.02
     PROB_LIMS = (-1.0, 3)
-    TOL = 1e-2
-    NUM_INITIAL_CLUSTERS = 500
-    MIN_PTS_PER_CLUSTER = 500
+    N_TRAIN = get_N_TRAIN(DIM)
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
+    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
     USE_WORK_STEALING = True
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "uniform_grid"
+    ERROR_METRIC = "L2"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
     ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS
-
-    # Scale initial clusters with dimension for better
-    NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
 
     OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_experimental_v2"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

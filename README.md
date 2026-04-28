@@ -1,8 +1,10 @@
-# knnsur
-Code for knn surrogate.
+# `AFINNI` - Adaptive Affine Nearest Neighbor Interpolation
+Code for the `AFINNI` algorithm.
 
 # Installation
 The project makes use a [`Makefile`](Makefile) for installing the necessary dependencies (support for both CPU-only and GPU-enabled).
+
+`AFINNI` is currently tested on Linux and macOS. Windows is not currently tested or supported, especially for workflows involving MPI or GPU-enabled dependencies.
 
 Run the necessary make command based on your system configuration to install the dependencies.
 
