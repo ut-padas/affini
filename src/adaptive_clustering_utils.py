@@ -405,8 +405,16 @@ def evaluate_cluster_errors(
 
     # --- 2. Evaluate Error Metrics ---
     if config.error_metric == "L2":
+        # Calculate sum of squared errors
         err_pts = xp.sum(diff**2, axis=1)  # (N,)
-        E_cluster = xp.sqrt(_reduce_sum_1d(err_pts, aug_starts))  # (K,)
+        sq_err_cluster = _reduce_sum_1d(err_pts, aug_starts)  # (K,)
+
+        # Calculate sum of squared true values for relative scaling
+        val_pts = xp.sum(F_batch**2, axis=1)  # (N,)
+        sq_val_cluster = _reduce_sum_1d(val_pts, aug_starts)  # (K,)
+
+        # Relative L2 Error
+        E_cluster = xp.sqrt(sq_err_cluster) / (xp.sqrt(sq_val_cluster) + TINY_EPS)
     elif config.error_metric == "Linf-global":
         err_pts = xp.max(
             xp.abs(diff) / (F_max_global[None, :] + TINY_EPS), axis=1
