@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from collections import defaultdict
 from itertools import product
@@ -22,6 +23,7 @@ SC26_DIR.mkdir(parents=True, exist_ok=True)
 TINY_EPS = 1e-12
 SEED = 0
 
+logger = logging.getLogger(__name__)
 _size = _get_mpi_size()
 _rank = _get_mpi_rank()
 
@@ -113,7 +115,9 @@ def conductExperiment(
 
     except Exception as e:
         error_tag = f"Experiment failed with exception: {e} | TRAINED={_TRAINED}, PREDICTED={_PREDICTED}"
-        print(f"R{_rank:02}: {error_tag}")
+        msg = f"R{_rank:02}: {error_tag}"
+        print(msg)
+        logger.error(msg, exc_info=True)
         if _rank == 0:
             error_path = json_fpath.with_suffix(".error.txt")
             with open(error_path, "w") as ef:
@@ -247,7 +251,7 @@ def anisotropic_quadratic_experiment():
     EXP_DIR = SC26_DIR / "anisotropic_quadratic"
 
     F_DIM = 1
-    ERROR_METIC = "Linf-local"
+    ERROR_METRIC = "Linf-local"
     INITIAL_CLUSTERING_METHOD = "kmeans"
     USE_V2 = True
     USE_WORK_STEALING = True
@@ -272,7 +276,7 @@ def anisotropic_quadratic_experiment():
                 continue
             json_fpath = (
                 EXP_DIR
-                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
             )
             conductExperiment(
                 # Problem-specific
@@ -287,7 +291,7 @@ def anisotropic_quadratic_experiment():
                 g_fn=aniso_quadratic_grad,
                 TOL=TOL,
                 ERROR_EVAL_MODE=ERROR_EVAL_MODE,
-                ERROR_METRIC=ERROR_METIC,
+                ERROR_METRIC=ERROR_METRIC,
                 INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
                 NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
                 MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
@@ -306,7 +310,7 @@ def anisotropic_gaussian_experiment():
     EXP_DIR = SC26_DIR / "anisotropic_gaussian"
 
     F_DIM = 1
-    ERROR_METIC = "Linf-local"
+    ERROR_METRIC = "Linf-local"
     INITIAL_CLUSTERING_METHOD = "kmeans"
     USE_V2 = True
     USE_WORK_STEALING = True
@@ -328,7 +332,7 @@ def anisotropic_gaussian_experiment():
         for TOL in TOLs:
             json_fpath = (
                 EXP_DIR
-                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
             )
             conductExperiment(
                 # Problem-specific
@@ -343,7 +347,7 @@ def anisotropic_gaussian_experiment():
                 g_fn=aniso_gaussian_grad,
                 TOL=TOL,
                 ERROR_EVAL_MODE=ERROR_EVAL_MODE,
-                ERROR_METRIC=ERROR_METIC,
+                ERROR_METRIC=ERROR_METRIC,
                 INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
                 NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
                 MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
@@ -369,7 +373,7 @@ def rosenbrock_experiment():
     rosenbrock_grad = partial(rosenbrock_grad, a=ROSENBROCK_A)
 
     F_DIM = 1
-    ERROR_METIC = "Linf-local"
+    ERROR_METRIC = "Linf-local"
     INITIAL_CLUSTERING_METHOD = "kmeans"
     USE_V2 = True
     USE_WORK_STEALING = True
@@ -400,7 +404,7 @@ def rosenbrock_experiment():
         for TOL in TOLs:
             json_fpath = (
                 EXP_DIR
-                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
             )
             conductExperiment(
                 # Problem-specific
@@ -415,7 +419,84 @@ def rosenbrock_experiment():
                 g_fn=rosenbrock_grad,
                 TOL=TOL,
                 ERROR_EVAL_MODE=ERROR_EVAL_MODE,
-                ERROR_METRIC=ERROR_METIC,
+                ERROR_METRIC=ERROR_METRIC,
+                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+                USE_WORK_STEALING=USE_WORK_STEALING,
+                USE_V2=USE_V2,
+            )
+
+            create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
+def rosenbrock_diff_error_metrics_experiment():
+    from functools import partial
+
+    from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
+
+    EXP_DIR = SC26_DIR / "rosenbrock_diff_error_metrics"
+
+    ROSENBROCK_A = 100.0
+    rosenbrock = partial(rosenbrock, a=ROSENBROCK_A)
+    rosenbrock_grad = partial(rosenbrock_grad, a=ROSENBROCK_A)
+
+    F_DIM = 1
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+    USE_V2 = True
+    USE_WORK_STEALING = True
+
+    DIMs = [2, 5]
+    ERROR_METRICS = ["Linf-local", "L2", "Linf-global"]
+    ERROR_EVAL_MODES = [
+        SurrogateMode.AFFINE_COV_HESS,
+        SurrogateMode.AFFINE_COV_NO_HESS,
+        SurrogateMode.NEAREST_NEIGHBOR,
+    ]
+
+    combos = list(product(DIMs, ERROR_EVAL_MODES, ERROR_METRICS))
+    for DIM, ERROR_EVAL_MODE, ERROR_METRIC in tqdm(combos, desc="Experiments"):
+        if ERROR_EVAL_MODE == SurrogateMode.AFFINE_COV_HESS:
+            TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+        else:
+            # TODO for each ERROR_EVAL_MODE
+            print(
+                f"Skipping ERROR_EVAL_MODE={ERROR_EVAL_MODE.value} for now. TODO: Add other TOLs for this mode."
+            )
+            continue
+
+        N_TRAIN = get_N_TRAIN(DIM)
+        N_TEST = N_TRAIN // 2
+        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
+        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
+
+        for TOL in TOLs:
+            if (DIM > 2 and TOL < 0.01) or (
+                DIM > 2 and TOL < 0.05 and ERROR_METRIC == "Linf-local"
+            ):
+                print("skip for now")
+                continue
+
+            json_fpath = (
+                EXP_DIR
+                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+            )
+            conductExperiment(
+                # Problem-specific
+                json_fpath=json_fpath,
+                DOMAIN=[-2.0, 3.0],
+                F_DIM=F_DIM,
+                DIM=DIM,
+                N_TRAIN=N_TRAIN,
+                N_TEST=N_TEST,
+                # Training-specific
+                f_fn=rosenbrock,
+                g_fn=rosenbrock_grad,
+                TOL=TOL,
+                ERROR_EVAL_MODE=ERROR_EVAL_MODE,
+                ERROR_METRIC=ERROR_METRIC,  # type: ignore
                 INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
                 NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
                 MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
@@ -504,13 +585,14 @@ if __name__ == "__main__":
 
     setup_logging(console_level=logging.DEBUG)
 
-    dir1 = anisotropic_quadratic_experiment()
-    dir2 = anisotropic_gaussian_experiment()
-    dir3 = rosenbrock_experiment()
-    dir4 = lorenz96_experiment()
+    # dir1 = anisotropic_quadratic_experiment()
+    # dir2 = anisotropic_gaussian_experiment()
+    # dir3 = rosenbrock_experiment()
+    # dir4 = lorenz96_experiment()
+    dir5 = rosenbrock_diff_error_metrics_experiment()
 
-    _dirs = [dir1, dir2, dir3, dir4]
-    for d in _dirs:
-        if _rank == 0:
-            print(f"\nCreating summary dataframe for {d}...")
-            create_summary_dataframe(d)
+    # _dirs = [dir1, dir2, dir3, dir4, dir5]
+    # for d in _dirs:
+    #     if _rank == 0:
+    #         print(f"\nCreating summary dataframe for {d}...")
+    #         create_summary_dataframe(d)
