@@ -142,6 +142,7 @@ if __name__ == '__main__':
     # Training data
     d = 2
     N_train = 20000
+    np.random.seed(69)
     X_train = np.column_stack((np.random.uniform(-2, 2, N_train), np.random.uniform(-1, 3, N_train)))
     
     # Testing data
@@ -159,6 +160,7 @@ if __name__ == '__main__':
     surrogate = HATANNSurrogate()
     surrogate.train(
         X_train,
+        USE_V2=True,
         f_fn = rosenbrock,
         g_fn = rosenbrock_grad,
         save_model = False,
@@ -168,17 +170,14 @@ if __name__ == '__main__':
         MIN_PTS_PER_CLUSTER = 15,
         MAX_CLUSTERS_EST = 10000,
         SEED = 1,
-        CLUSTERING_MATRIX='Cov_Lvl_curves',
-        IGNORE_GRADIENT = False,
         STORE_AFFINE_FIT = True,
     )
 
-    centroids = surrogate.get_source_centroids()
-    TRs = surrogate.get_trust_regions()
+    dict = surrogate.get_trained_data_as_dict()
+    centroids = dict['X_src']
+    TRs = dict['Qs_src']
     inf_vals, unguaranteed, nn_idx = surrogate.predict(
-        X_test,
-        predict_mode='affine',
-        return_cluster_assignments=True
+        X_test, return_cluster_assignments=True
     )
 
     p = np.random.permutation(len(centroids))
@@ -249,5 +248,8 @@ if __name__ == '__main__':
     ax[p].set_xticks([])
     ax[p].set_yticks([])
     ax[p].legend(loc='upper right')
+
+    ax[p].text(-1.48, 0.95, '(A)', fontsize=12)
+    ax[p].text(-0.5, 2.8, '(B)', fontsize=12)
 
     fig.savefig('figures/ellipses_2_sideways.png', bbox_inches='tight', pad_inches=0, dpi=300)
