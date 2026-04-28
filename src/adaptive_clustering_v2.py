@@ -34,8 +34,8 @@ TAG_STEAL_DENY = 104
 TAG_TERM = 105
 
 # --- Work-Stealing Tuning Parameters ---
-MIN_LOAD_THRESHOLD = 2_000_000  # Min points to be eligible for stealing
-STEAL_SIZE = 600_000  # Target point count to steal
+MIN_LOAD_THRESHOLD = 1_000_000  # Min points to be eligible for stealing
+STEAL_SIZE = 500_000  # Target point count to steal
 
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
 
