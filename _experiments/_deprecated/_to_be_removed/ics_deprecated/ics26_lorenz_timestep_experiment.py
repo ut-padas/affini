@@ -4,14 +4,16 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from _experiments.ics_deprecated.surrogate import HATANNSurrogate
-from ics_files.experiments_utils import (
+from _experiments._deprecated._to_be_removed.ics_deprecated.surrogate import (
+    HATANNSurrogate,
+)
+from _experiments._deprecated._to_be_removed.ics_deprecated.experiments_utils import (
     ICS26_DIR,
     Problem_experiment_setup,
     create_summary_dataframe,
     del_all_error_files_in_dir,
 )
-from ics_files.ics26_experiments import (
+from _experiments._deprecated._to_be_removed.ics_deprecated.ics26_experiments import (
     get_N_INIT_CLUSTERS,
     get_N_MIN_PER_CLUSTER,
     get_N_TRAIN,

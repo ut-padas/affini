@@ -6,7 +6,9 @@ from typing import Any, Callable, Literal, Optional, Union
 
 import numpy as np
 
-from _experiments.ics_deprecated.adaptive_clustering import adaptive_clustering
+from _experiments._deprecated._to_be_removed.ics_deprecated.adaptive_clustering import (
+    adaptive_clustering,
+)
 from src import IS_CUPY_BACKEND, Array, _to_device, _to_host, xp
 
 logger = logging.getLogger(__name__)

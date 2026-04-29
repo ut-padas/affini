@@ -7,7 +7,7 @@ import numpy as np
 from mpi4py import MPI
 from sklearn.cluster import KMeans
 
-from _experiments.ics_deprecated.adaptive_clustering_utils import (
+from _experiments._deprecated._to_be_removed.ics_deprecated.adaptive_clustering_utils import (
     CudaTimer,
     adjust_buffer_capacity_host,
     allocate_output_buffers_host,

@@ -10,7 +10,10 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from _experiments.ics_deprecated.surrogate import DataSampler, HATANNSurrogate
+from _experiments._deprecated._to_be_removed.ics_deprecated.surrogate import (
+    DataSampler,
+    HATANNSurrogate,
+)
 from src.logging_utils import log_mem_stats
 from src.problems.affine import AFFINE_DATA_DIM, AFFINE_F_DIM, affine, affine_grad
 from src.problems.borehole import borehole, borehole_grad
