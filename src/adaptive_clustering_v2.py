@@ -19,6 +19,8 @@ from src.adaptive_clustering_utils import (
     evaluate_cluster_errors,
     split_rejected_clusters,
     uniform_grid_cluster_labels,
+    save_generated_data,
+    combine_generated_data,
 )
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
@@ -63,6 +65,7 @@ def _run_local_refinement(
     USE_WORK_STEALING: bool,
     LOG_MEM_STATS: bool,
     PROFILE_TIMING: bool,
+    SAVE_ALL_GEN_CLUSTER_DATA: bool,
     rank: int,
     size: int,
     profiling_stats: dict,
@@ -671,6 +674,9 @@ def _run_local_refinement(
                         alpha = rng.random((num_synth, 1)).astype(xp.float64)
                         X_synth_vals = p1 * alpha + p2 * (1.0 - alpha)
 
+                        if SAVE_ALL_GEN_CLUSTER_DATA is True:
+                            save_generated_data(X_synth_vals, f'train_data_tol_{TOL}_d{d}')
+
                         X_bad_aug[is_synth] = X_synth_vals
 
                         # Evaluate F and G for synthetic points
@@ -943,6 +949,7 @@ def adaptive_clustering(
     STORE_AFFINE_FIT_PER_CLUSTER: bool = False,
     LOG_MEM_STATS: bool = False,
     PROFILE_TIMING: bool = False,
+    SAVE_ALL_GEN_TRAINING_DATA: bool = True,
 ) -> dict[str, Any] | None:
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).
@@ -1014,6 +1021,11 @@ def adaptive_clustering(
     d_bcast, fd_bcast = 0, 0
 
     if rank == 0:
+
+        if SAVE_ALL_GEN_TRAINING_DATA is True:
+            _, DIM = X.shape
+            save_generated_data(X, f'train_data_tol_{TOL}_d{DIM}')
+
         with CudaTimer("time_init", profiling_stats, PROFILE_TIMING):
             X0_gpu = xp.asarray(X, dtype=xp.float64)
             N0, d_bcast = X0_gpu.shape
@@ -1191,6 +1203,7 @@ def adaptive_clustering(
             USE_WORK_STEALING=USE_WORK_STEALING,
             LOG_MEM_STATS=LOG_MEM_STATS,
             PROFILE_TIMING=PROFILE_TIMING,
+            SAVE_ALL_GEN_CLUSTER_DATA=SAVE_ALL_GEN_TRAINING_DATA,
             rank=rank,
             size=size,
             profiling_stats=profiling_stats,
@@ -1266,6 +1279,11 @@ def adaptive_clustering(
                 "profiling_stats": consolidated_profiling,
             }
         )
+
+        # Combine all the files if we are saving
+        if SAVE_ALL_GEN_TRAINING_DATA is True:
+            combine_generated_data(f'train_data_tol_{TOL}_d{d_bcast}')
+
         return merged
     return None
 

@@ -3,8 +3,12 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional
-
+from pathlib import Path
 import numpy as np
+import uuid
+import glob
+import os
+import shutil
 
 # Adjust imports based on your actual source tree
 from src import IS_CUPY_BACKEND, Array, xp
@@ -895,3 +899,37 @@ def uniform_grid_cluster_labels(
     coords = np.minimum(coords, bins[None, :] - 1)
     labels = np.ravel_multi_index(coords.T, dims=tuple(int(b) for b in bins))
     return labels.astype(np.int64), bins
+
+
+"""
+A new function to save the data to a single file.
+I imagine this will cause problems with MPI, since two processes could read/write at the same time.
+But for now I will run this without work stealing and it will be fine.
+I just need the training data to do the testing with FALKON.
+This will also be nice to have for later if, say, Skandan needs to compare training data.
+"""
+def save_generated_data(X, filename):
+    path = Path('saved_training_data/')
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+    xp.save(f'saved_training_data/{filename}_{uuid.uuid4()}.npy', X)
+
+
+def combine_generated_data(filename):
+    path = Path('saved_training_data/')
+    input_dir = "saved_training_data"
+
+    # Grab all .npy files in the folder with the correct beginning
+    files = glob.glob(os.path.join(input_dir, f"{filename}_*.npy"))
+
+    # Load all files into a list
+    data_list = [np.load(f) for f in files]
+
+    if data_list:
+        # Stack them into one large matrix and save
+        final_matrix = np.vstack(data_list)
+        if path.exists():
+            shutil.rmtree(input_dir)
+        np.save(f"{filename}.npy", final_matrix)
+    else:
+        print("ERROR: No files found to stack.")

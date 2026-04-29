@@ -53,6 +53,8 @@ def conductExperiment(
     K_NEIGHBOURS: int = 1,
     # Post-processing-specific
     CENTROIDS_PLOT_IN_LOG_SCALE: bool = True,
+    SAVE_ALL_GEN_TRAINING_DATA: bool = False,
+    SAVE_FINAL_CENTROIDS: bool = False,
 ):
     if json_fpath.exists():
         if _rank == 0:
@@ -97,13 +99,18 @@ def conductExperiment(
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             LOG_MEM_STATS=True,
             PROFILE_TIMING=True,
-            STORE_AFFINE_FIT=True
+            STORE_AFFINE_FIT=True,
+            SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
         )
         _train_time = time.perf_counter() - _start_train_time
         _TRAINED = True
 
         if _rank == 0:
             print("\n--- PREDICTION ---")
+
+        # Save centroid data if user requests it
+        if _rank == 0 and SAVE_FINAL_CENTROIDS is True:
+            xp.save(f'centroids_tol_{TOL}_d{DIM}.npy', surrogate.X_src)
 
         _start_predict_time = time.perf_counter()
 
@@ -385,7 +392,7 @@ def rosenbrock_experiment():
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    DIMs = [2, 5]
+    DIMs = [5]
     ERROR_EVAL_MODES = [
         SurrogateMode.AFFINE_COV_HESS,
         SurrogateMode.AFFINE_COV_NO_HESS,
@@ -395,7 +402,7 @@ def rosenbrock_experiment():
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
         if ERROR_EVAL_MODE == SurrogateMode.AFFINE_COV_HESS:
-            TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+            TOLs = [0.05]
         else:
             # TODO for each ERROR_EVAL_MODE
             print(
@@ -438,6 +445,8 @@ def rosenbrock_experiment():
                 MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
                 USE_WORK_STEALING=USE_WORK_STEALING,
                 USE_V2=USE_V2,
+                SAVE_ALL_GEN_TRAINING_DATA=True,
+                SAVE_FINAL_CENTROIDS=True,
             )
 
             create_summary_dataframe(EXP_DIR)
@@ -588,12 +597,15 @@ def lorenz96_dimension_scaling_experiment():
 def indefinite_quadratic_experiment():
 
     d = 5
-    avec = xp.array([1, -10, 50, -100, 200])
+    randmat = xp.random.uniform(-5, 5, (d,d))
+    H = 0.5 * (randmat + randmat.T)
+    # avec = xp.array([1, -10, 50, -100, 200])
     # The Hessian matrix will be diagonal.
     def indefinite_quadratic(x):
-        return (x ** 2) @ avec
+        import numpy as np
+        return np.einsum('ni,ij,nj->n',x,H,x)[:,np.newaxis]
     def indefinite_quadratic_grad(x):
-        return 2 * avec[:,xp.newaxis] * x
+        return 2 * x @ H
 
     EXP_DIR = SC26_DIR / "indef_quad"
     F_DIM = 1
@@ -606,13 +618,13 @@ def indefinite_quadratic_experiment():
     ERROR_EVAL_MODES = [
         SurrogateMode.AFFINE_COV_HESS,      # cluster via X^T @ H @ X
         SurrogateMode.AFFINE_COV_NO_HESS,   # cluster via X^T @ I @ X
-        SurrogateMode.TAYLOR_COV_HESS,      # 
+        SurrogateMode.TAYLOR_COV_HESS,
         SurrogateMode.TAYLOR_LSQ_HESS,      # cluster via X^T @ H @ X, with very accurate H
     ]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
-        TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
+        TOLs = [0.1, 0.05, 0.02]
 
         N_TRAIN = get_N_TRAIN(DIM)
         N_TEST = N_TRAIN // 2
@@ -660,10 +672,10 @@ if __name__ == "__main__":
 
     # dir1 = anisotropic_quadratic_experiment()
     # dir2 = anisotropic_gaussian_experiment()
-    # dir3 = rosenbrock_experiment()
+    dir3 = rosenbrock_experiment()
     # dir4 = lorenz96_experiment()
     # dir5 = rosenbrock_diff_error_metrics_experiment()
-    dir6 = indefinite_quadratic_experiment()
+    # dir6 = indefinite_quadratic_experiment()
 
     # _dirs = [dir1, dir2, dir3, dir4, dir5]
     # for d in _dirs:

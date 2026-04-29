@@ -86,6 +86,7 @@ class AFINNISurrogate:
         MAX_LEVELS: int = 50,
         PROFILE_TIMING: bool = False,
         LOG_MEM_STATS: bool = False,
+        SAVE_ALL_GEN_TRAINING_DATA: bool = False,
     ):
         comm = MPI.COMM_WORLD
         rank = _get_mpi_rank()
@@ -181,6 +182,7 @@ class AFINNISurrogate:
                 STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
                 USE_WORK_STEALING=USE_WORK_STEALING,
                 LOG_MEM_STATS=LOG_MEM_STATS,
+                SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
             )
 
         # 2. Broadcast trained structures to all ranks
