@@ -221,6 +221,7 @@ def create_summary_dataframe(exp_dir: Path):
 
         data_dict["e"].append(data["error_metrics"]["all"]["l2_rel_error"])
         data_dict["e_in"].append(data["error_metrics"]["in"]["l2_rel_error"])
+        data_dict["e_out"].append(data["error_metrics"]["out"]["l2_rel_error"])
         data_dict["p_out"].append(data["error_metrics"]["perct_out"])
 
     df = pd.DataFrame(data_dict)
@@ -237,8 +238,9 @@ def create_summary_dataframe(exp_dir: Path):
         "N_test",
         "N",
         "N_c",
-        "e",
         "e_in",
+        "e",
+        "e_out",
         "p_out",
         "Train_time_s",
         "Pred_time_s",
@@ -385,7 +387,7 @@ def anisotropic_gaussian_experiment():
     USE_WORK_STEALING = True
 
     DIMs = [2, 5]
-    ERROR_METRICs = ["Linf-local"]
+    ERROR_METRICs = ["Linf-local", "L2"]
     ERROR_EVAL_MODES = [
         SurrogateMode.AFFINE_COV_HESS,
     ]
@@ -654,12 +656,12 @@ if __name__ == "__main__":
 
     setup_logging(console_level=logging.DEBUG)
 
-    dir1 = anisotropic_quadratic_experiment()
+    # dir1 = anisotropic_quadratic_experiment()
     dir2 = anisotropic_gaussian_experiment()
     # dir3 = rosenbrock_experiment()
     # dir4 = lorenz96_experiment()
     # dir5 = rosenbrock_diff_error_metrics_experiment()
-    # dir6 = indefinite_quadratic_experiment()
+    dir6 = indefinite_quadratic_experiment()
 
     # _dirs = [dir1, dir2, dir3, dir4, dir5]
     # for d in _dirs:
