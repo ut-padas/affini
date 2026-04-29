@@ -9,7 +9,9 @@ import pandas as pd
 from matplotlib.colors import LogNorm
 from matplotlib.patches import Ellipse
 
-from _experiments.ics_deprecated.surrogate import HATANNSurrogate
+from _experiments._deprecated._to_be_removed.ics_deprecated.surrogate import (
+    HATANNSurrogate,
+)
 from src import IS_CUPY_BACKEND, RESULTS_DIR, Array, xp
 from src.logging_utils import capture_evaluations
 
@@ -488,7 +490,7 @@ def Problem_experiment_setup(
                     save_model=model_save_path,
                     STORE_HESSIAN=STORE_HESSIAN,
                     MAX_LEVELS=MAX_LEVELS,
-                    ERROR_EVAL_MODE=ERROR_EVAL_MODE
+                    ERROR_EVAL_MODE=ERROR_EVAL_MODE,
                 )
             else:
                 surrogate.train(
@@ -595,7 +597,7 @@ def Problem_experiment_setup(
         BATCH_SIZE=BATCH_SIZE,
         PROFILE_TIMING=PROFILE_TIMING,
         profiling_stats=surrogate.profiling_stats,
-        ERROR_EVAL_MODE=ERROR_EVAL_MODE
+        ERROR_EVAL_MODE=ERROR_EVAL_MODE,
     )
 
     with open(json_fpath, "w") as jf:

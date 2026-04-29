@@ -7,8 +7,10 @@ import pandas as pd
 from tqdm import tqdm
 
 from _experiments._deprecated.adaptive_clustering_non_mpi import adaptive_clustering
-from ics_files.experiments_utils import create_summary_dataframe
-from ics_files.ics26_experiments import (
+from _experiments._deprecated._to_be_removed.ics_deprecated.experiments_utils import (
+    create_summary_dataframe,
+)
+from _experiments._deprecated._to_be_removed.ics_deprecated.ics26_experiments import (
     get_N_INIT_CLUSTERS,
     get_N_MIN_PER_CLUSTER,
     get_N_TRAIN,
@@ -215,7 +217,9 @@ def run_hessian_convergence_sweep(
 
 # --- Example Usage ---
 if __name__ == "__main__":
-    from ics_files.ics26_experiments import ICS26_DIR
+    from _experiments._deprecated._to_be_removed.ics_deprecated.ics26_experiments import (
+        ICS26_DIR,
+    )
     from src.problems.quadratic import quadratic, quadratic_grad, quadratic_hess
     from src.problems.vector_quadratic import (
         vector_quadratic,

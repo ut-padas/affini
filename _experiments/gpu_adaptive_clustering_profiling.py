@@ -5,8 +5,10 @@ from pathlib import Path
 import cupy as cp
 from tqdm import tqdm
 
-from _experiments._deprecated.adaptive_clustering import adaptive_cluster_algorithm
-from _experiments._deprecated.gpu_adaptive_clustering import (
+from _experiments._deprecated._to_be_removed.adaptive_clustering import (
+    adaptive_cluster_algorithm,
+)
+from _experiments._deprecated._to_be_removed.gpu_adaptive_clustering import (
     adaptive_cluster_algorithm_gpu,
 )
 from src.logging_utils import setup_logging
