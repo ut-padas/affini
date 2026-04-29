@@ -1,12 +1,25 @@
-- Time per level heatmaps static vs work stealing
-  - Every 4 levels, show the max
+- [Iterative P\_out Improvement Experiment](#iterative-p_out-improvement-experiment)
+  - [Setup](#setup)
+- [Sampling Comparison Experiment](#sampling-comparison-experiment)
+  - [Metrics](#metrics)
+  - [Sampling Methods](#sampling-methods)
+  - [Original Data](#original-data)
+  - [Observations](#observations)
+- [Affine Surrogates](#affine-surrogates)
+  - [Training](#training)
+  - [Inference](#inference)
+  - [Estimation of $H^{-1}$ from the Covariance of the Cluster - Taylor Surrogaters](#estimation-of-h-1-from-the-covariance-of-the-cluster---taylor-surrogaters)
+  - [Issues with Affine Surrogates](#issues-with-affine-surrogates)
+  - [Fix - Anchoring the Affine Surrogate to the Cluster Center](#fix---anchoring-the-affine-surrogate-to-the-cluster-center)
+- [Analysis: Large errors for Anisotropic Gaussian](#analysis-large-errors-for-anisotropic-gaussian)
+  - [Table - $5D$ Anisotropic Gaussian](#table---5d-anisotropic-gaussian)
 
 
 
 
 
 
-# Iterative $p_\mathrm{out}$ Improvement Experiment
+# Iterative P_out Improvement Experiment
 ## Setup
 1. **Training**
    1. $X_\mathrm{train}$ is sampled uniformly from domain of apt dimensions.
