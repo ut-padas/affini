@@ -408,6 +408,10 @@ def evaluate_cluster_errors(
 
 
     elif config.mode == SurrogateMode.QUADRATIC:
+        '''
+        Fit model 0.5 * x^T * H * x + w^T * x + b, for H, w, b.
+        Requires at least D = d(d+1) + 1 points, probably more for decent conditioning.
+        '''
 
         # Build the quadratic part
         D = d ** 2 + d + 1
@@ -415,7 +419,7 @@ def evaluate_cluster_errors(
         for i in range(d):
             start = i * d
             end = (i+1) * d
-            quadratic_lhs_matrix[:,start:end] = dx[:,i] * dx
+            quadratic_lhs_matrix[:,start:end] = 0.5 * dx[:,i] * dx
 
         # Build the linear part
         quadratic_lhs_matrix[:,(d**2):-1] = dx
@@ -425,6 +429,7 @@ def evaluate_cluster_errors(
 
         # Compute covariance matrix
         # I think we can just do this with run_fused_stats (WHY IS IT CALLED THIS?)
+        # Replacing mus with zeros since we include it directly into the covariance.
         lhsmat, _ = run_fused_stats(
             quadratic_lhs_matrix,
             xp.zeros(K_batch),
@@ -454,14 +459,23 @@ def evaluate_cluster_errors(
         tr = xp.trace(lhsmat, axis1=1, axis2=2)  # (K,)
         lam = xp.maximum(1e-8 * tr, TINY_EPS)
         reg = lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]  # (K, D, D)
+        weights = xp.linalg.solve(lhsmat + reg, rhsvec).T  # (K, fd, D)
+        
+        # First d**2 dimensions define the Hessians.
+        H = weights[:,:,:(d**2)].reshape(K_batch, fd, d, d) # (K, fd, d, d)
+        # Make sure Hessians are symmetric
+        H = 0.5 * (H + H.transpose(0, 1, 3, 2))
+        # Next d dimensions define the gradient.
+        w = weights[:,:,(d**2):(d**2 + d)] # (K, fd, d)
+        # Last dimension defines the linear term.
+        b = weights[:,:,-1] # (K, fd)
 
-        A_T = xp.linalg.solve(lhsmat + reg, rhsvec)  # (K, D, fd)
-        A = A_T.transpose(0, 2, 1)  # (K, fd, D)
-        b = mean_F - xp.einsum("kfd,kd->kf", A, mus)  # (K, fd)
-
-        lin = xp.einsum("nfd,nd->nf", A[aug_ids], X_batch)  # (N, fd)
-        diff = F_batch - (b[aug_ids] + lin)
-        surrogate_params = {"A": A, "b": b}
+        # Compute the surrogate at the training data to measure errors
+        quadratic_term = xp.einsum("nfd,nfde,nfe->nf", X_batch, H[aug_ids], X_batch)  # (N, fd)
+        linear_term = xp.einsum("nfd,nd->nf", w[aug_ids], X_batch) # (N, fd)
+        surrogate_val = quadratic_term + linear_term + b[aug_ids]
+        diff = F_batch - surrogate_val
+        surrogate_params = {"H": H, "w": w, "b": b}
 
 
     else:
