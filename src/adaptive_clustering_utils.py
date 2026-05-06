@@ -404,6 +404,64 @@ def evaluate_cluster_errors(
         diff = F_batch - (b[aug_ids] + lin)
         surrogate_params = {"A": A, "b": b}
 
+    elif config.mode == 'SurrogateMode.QUADRATIC':
+
+        # Build the quadratic part
+        D = d ** 2 + d + 1
+        quadratic_lhs_matrix = xp.empty(N, D)
+        for i in range(d):
+            start = i * d
+            end = (i+1) * d
+            quadratic_lhs_matrix[:,start:end] = dx[:,i] * dx
+
+        # Build the linear part
+        quadratic_lhs_matrix[:,(d**2):-1] = dx
+
+        # Build the constant part
+        quadratic_lhs_matrix[:,-1] = xp.ones(N)
+
+        # Compute covariance matrix
+        # I think we can just do this with run_fused_stats (WHY IS IT CALLED THIS?)
+        lhsmat, _ = run_fused_stats(
+            quadratic_lhs_matrix,
+            xp.zeros(K_batch),
+            aug_ids,
+            K_batch,
+            D,
+            fd,
+            None,
+            calc_E=False
+        )
+
+        # Adaptive Tikhonov fitting
+        mean_F = _reduce_sum_1d(F_batch, aug_starts) / aug_sizes[:, None]  # (K, fd)
+
+        rhsvec = run_fused_cross_cov(
+            quadratic_lhs_matrix,
+            F_batch,
+            xp.zeros(K_batch),
+            mean_F,
+            aug_ids,
+            K_batch,
+            D,
+            fd
+        )
+        
+        # Solve linear system
+        tr = xp.trace(lhsmat, axis1=1, axis2=2)  # (K,)
+        lam = xp.maximum(1e-8 * tr, TINY_EPS)
+        reg = lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]  # (K, d, d)
+
+        A_T = xp.linalg.solve(lhsmat + reg, rhsvec)  # (K, d, fd)
+        A = A_T.transpose(0, 2, 1)  # (K, fd, d)
+        b = mean_F - xp.einsum("kfd,kd->kf", A, mus)  # (K, fd)
+
+        lin = xp.einsum("nfd,nd->nf", A[aug_ids], X_batch)  # (N, fd)
+        diff = F_batch - (b[aug_ids] + lin)
+        surrogate_params = {"A": A, "b": b}
+
+
+
     else:
         raise ValueError(f"Unknown mode: {config.mode}")
 
