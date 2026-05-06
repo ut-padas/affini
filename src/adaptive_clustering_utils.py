@@ -463,8 +463,6 @@ def evaluate_cluster_errors(
         
         # First d**2 dimensions define the Hessians.
         H = weights[:,:,:(d**2)].reshape(K_batch, fd, d, d) # (K, fd, d, d)
-        # Make sure Hessians are symmetric
-        H = 0.5 * (H + H.transpose(0, 1, 3, 2))
         # Next d dimensions define the gradient.
         w = weights[:,:,(d**2):(d**2 + d)] # (K, fd, d)
         # Last dimension defines the linear term.
@@ -662,6 +660,15 @@ def split_rejected_clusters(
     bad_starts = xp.r_[0, xp.cumsum(counts_bad)[:-1]]
     dx = X_bad - mus_bad[dense_labels_bad]
 
+
+    if config.mode == SurrogateMode.QUADRATIC:
+        '''
+        Use the Hessian matrix of the least squares fit for the splitting direction.
+        TODO: what to do about the Hessian?
+        '''
+        print('NOTE: specific split_rejected_clusters for SurrogateMode.QUADRATIC not implemented yet.\n\
+              For now, doing the same thing as the SurrogateMode.*_COV_HESS versions.')
+
     if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_bad is not None:
         g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]  # (N_bad, fd, d)
         f_mus_exp = f_mus_bad[dense_labels_bad]  # (N_bad, fd)
@@ -704,7 +711,11 @@ def split_rejected_clusters(
         CovZ = M_split @ C @ M_split.transpose(0, 2, 1)  # (K, d, d)
 
     # --- Mode 1 & 3: Covariance Level Curves Split ---
-    elif config.mode in (SurrogateMode.AFFINE_COV_HESS, SurrogateMode.TAYLOR_COV_HESS):
+    elif config.mode in (
+        SurrogateMode.AFFINE_COV_HESS,
+        SurrogateMode.TAYLOR_COV_HESS,
+        SurrogateMode.QUADRATIC,
+        ):
         if config.mode == SurrogateMode.TAYLOR_COV_HESS:
             g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]  # (N_bad, fd, d)
             lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp, dx)  # (N_bad, fd)

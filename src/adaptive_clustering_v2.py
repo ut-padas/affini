@@ -594,6 +594,16 @@ def _run_local_refinement(
                         buffers["b_fit"][out_count:end_out] = _to_host(
                             surrogate_params["b"][good_idx_local]
                         )
+                    elif "H" in surrogate_params and "w" in surrogate_params and "b" in surrogate_params:
+                        buffers["H_fit"][out_count:end_out] = _to_host(
+                            surrogate_params["H"][good_idx_local]
+                        )
+                        buffers["w_fit"][out_count:end_out] = _to_host(
+                            surrogate_params["w"][good_idx_local]
+                        )
+                        buffers["b_fit"][out_count:end_out] = _to_host(
+                            surrogate_params["b"][good_idx_local]
+                        )
 
                     out_count = end_out
 
