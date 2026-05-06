@@ -42,9 +42,6 @@ name = "testpypi"
 url = "https://test.pypi.org/simple/"
 explicit = true
 
-[tool.uv.sources]
-knndbscan = { index = "testpypi" }
-
 [[tool.uv.index]]
 name = "nvidia"
 url = "https://pypi.nvidia.com/"

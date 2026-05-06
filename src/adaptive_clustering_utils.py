@@ -33,6 +33,8 @@ class SurrogateMode(Enum):
     AFFINE_COV_HESS = "affine_cov_hess"  # No grads, fit A/b, split via X^T H X, where H is estimated from covariance
     TAYLOR_COV_HESS = "taylor_cov_hess"  # Grads at centroids only, split via X^T H X, where H is estimated from covariance
     TAYLOR_LSQ_HESS = "taylor_lsq_hess"  # Grads everywhere, split via X^T H X, where H is estimated from LSQ fit to gradient residuals
+    QUADRATIC       = "quadratic"        # No grads, save as affine_cov_hess but with quadratic fit.
+    # TODO: need to make it so that the Hessian of the quadratic is the Hessian we use for clustering.
 
 
 @dataclass
@@ -404,7 +406,8 @@ def evaluate_cluster_errors(
         diff = F_batch - (b[aug_ids] + lin)
         surrogate_params = {"A": A, "b": b}
 
-    elif config.mode == 'SurrogateMode.QUADRATIC':
+
+    elif config.mode == SurrogateMode.QUADRATIC:
 
         # Build the quadratic part
         D = d ** 2 + d + 1
@@ -453,7 +456,7 @@ def evaluate_cluster_errors(
         reg = lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]  # (K, D, D)
 
         A_T = xp.linalg.solve(lhsmat + reg, rhsvec)  # (K, D, fd)
-        A = A_T.transpose(0, 2, 1)  # (K, fd, d)
+        A = A_T.transpose(0, 2, 1)  # (K, fd, D)
         b = mean_F - xp.einsum("kfd,kd->kf", A, mus)  # (K, fd)
 
         lin = xp.einsum("nfd,nd->nf", A[aug_ids], X_batch)  # (N, fd)
