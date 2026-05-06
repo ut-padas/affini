@@ -450,16 +450,15 @@ def evaluate_cluster_errors(
         # Solve linear system
         tr = xp.trace(lhsmat, axis1=1, axis2=2)  # (K,)
         lam = xp.maximum(1e-8 * tr, TINY_EPS)
-        reg = lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]  # (K, d, d)
+        reg = lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]  # (K, D, D)
 
-        A_T = xp.linalg.solve(lhsmat + reg, rhsvec)  # (K, d, fd)
+        A_T = xp.linalg.solve(lhsmat + reg, rhsvec)  # (K, D, fd)
         A = A_T.transpose(0, 2, 1)  # (K, fd, d)
         b = mean_F - xp.einsum("kfd,kd->kf", A, mus)  # (K, fd)
 
         lin = xp.einsum("nfd,nd->nf", A[aug_ids], X_batch)  # (N, fd)
         diff = F_batch - (b[aug_ids] + lin)
         surrogate_params = {"A": A, "b": b}
-
 
 
     else:
