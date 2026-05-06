@@ -661,7 +661,7 @@ if __name__ == "__main__":
     # dir3 = rosenbrock_experiment()
     # dir4 = lorenz96_experiment()
     # dir5 = rosenbrock_diff_error_metrics_experiment()
-    dir6 = indefinite_quadratic_experiment()
+    # dir6 = indefinite_quadratic_experiment()
 
     # _dirs = [dir1, dir2, dir3, dir4, dir5]
     # for d in _dirs:
