@@ -318,8 +318,21 @@ class AFINNISurrogate:
             self.X_src = _to_host(self.X_src)
             centroids_f32 = self.X_src.astype(np.float32)
             D = self.X_src.shape[1]
-            self.knn_index = faiss.IndexFlatL2(D)
-            self.knn_index.add(centroids_f32)  # type: ignore
+
+            # ANN LOGIC FOR CPU
+            if self.N_src > 5000:
+                # Use HNSW graph for ultra-fast approximate search on large cluster sets
+                # 32 = number of links per node (higher is more accurate but uses more RAM)
+                self.knn_index = faiss.IndexHNSWFlat(D, 32)
+                # efConstruction controls index time vs accuracy trade-off
+                self.knn_index.hnsw.efConstruction = 40
+                self.knn_index.add(centroids_f32)  # type: ignore
+                # efSearch controls query time vs accuracy trade-off
+                self.knn_index.hnsw.efSearch = 32
+            else:
+                # Fallback to exact search for small models
+                self.knn_index = faiss.IndexFlatL2(D)
+                self.knn_index.add(centroids_f32)  # type: ignore
 
         if _get_mpi_rank() == 0:
             logger.info(f"KNN Index built in {time.perf_counter()-t0:.4f}s")
@@ -551,6 +564,42 @@ class AFINNISurrogate:
             return predictions, unguaranteed_mask, nn_idx_full  # type: ignore
         else:
             return predictions, unguaranteed_mask
+
+    def filter_unguaranteed_local(
+        self, query_points: Array, k_coarse: int = 10, batch_size: int = 50000
+    ) -> Array:
+        """
+        Fast dedicated method to return only the unguaranteed mask.
+        Bypasses all surrogate prediction math (Affine/Taylor/Shepard).
+        Assumes query_points are already local to the rank.
+        """
+        assert self.trained and self.X_src is not None and self.Qs_src is not None
+        N = query_points.shape[0]
+        if N == 0:
+            return xp.array([], dtype=bool)
+
+        all_ung_masks = []
+        for start_idx in range(0, N, batch_size):
+            end_idx = min(start_idx + batch_size, N)
+            batch_queries = query_points[start_idx:end_idx]
+
+            # 1. Coarse KNN Search
+            nn_idx_coarse, _ = self._query_knn(batch_queries, k_coarse)
+
+            # 2. Extract Qs and compute Mahalanobis Distance
+            Qs_coarse = self.Qs_src[nn_idx_coarse]
+            centroids_coarse = self.X_src[nn_idx_coarse]
+            dx_coarse = batch_queries[:, None, :] - centroids_coarse
+
+            dist_sq_coarse = xp.einsum(
+                "nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse
+            )
+
+            # 3. Mask: Point is unguaranteed if its closest Mahalanobis distance > 1.0
+            unguaranteed_mask = xp.min(dist_sq_coarse, axis=1) > 1.0
+            all_ung_masks.append(unguaranteed_mask)
+
+        return xp.concatenate(all_ung_masks, axis=0)
 
 
 def compute_error_metrics(

@@ -183,14 +183,15 @@ if __name__ == "__main__":
         MIN_PTS_PER_CLUSTER = 15,
         MAX_CLUSTERS_EST = 10000,
         SEED = 1,
-        STORE_AFFINE_FIT = True,
+        USE_WORK_STEALING=False,
     )
 
     dict = surrogate.get_trained_data_as_dict()
     centroids = dict['X_src']
     TRs = dict['Qs_src']
     inf_vals, unguaranteed, nn_idx = surrogate.predict(
-        X_test, predict_mode="affine", return_cluster_assignments=True
+        X_test,
+        return_cluster_assignments=True
     )
 
     p = np.random.permutation(len(centroids))
