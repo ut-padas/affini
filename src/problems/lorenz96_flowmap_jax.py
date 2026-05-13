@@ -2,8 +2,6 @@ import jax
 import jax.numpy as jnp
 from diffrax import diffeqsolve, ODETerm, Dopri5, PIDController
 import time
-from scipy.integrate import solve_ivp
-import numpy as np
 
 # Definition of Lorenz system
 def lorenz96_jax(t, x, F):
@@ -29,6 +27,7 @@ def lorenz96_flowmap_jax(y0, forcing, tf):
         stepsize_controller=controller
     )
     return sol.ys
+
 
 batch_solve = jax.vmap(lorenz96_flowmap_jax, in_axes=(0, None, None))
 lorenz96_flowmap_jax_batched = jax.jit(batch_solve)

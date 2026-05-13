@@ -12,9 +12,11 @@ classifiers = [
 # license = "MIT" # TODO
 dependencies = [
     "array-api-compat>=1.12.0",
+    "diffrax>=0.7.2",
     "faiss-cpu>=1.12.0",
     "ipykernel>=7.1.0",
     "ipympl>=0.10.0",
+    "jax[cuda-12,cuda12]>=0.10.0",
     "knndbscan==0.1.3; sys_platform == 'linux'",
     "matplotlib>=3.10.7",
     "mpi4py>=4.1.1",

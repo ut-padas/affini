@@ -5,6 +5,7 @@ from collections import defaultdict
 from itertools import product
 from pathlib import Path
 from typing import Literal
+import sys
 
 from tqdm import tqdm
 
@@ -454,28 +455,36 @@ def rosenbrock_experiment():
     return EXP_DIR
 
 
-def lorenz96_experiment():
+def lorenz96_experiment(tf):
 
-    from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
+    # from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
+    from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
 
     # Lorenz flowmap parameters set here
     FORCING = 1
-    FINAL_TIME = 0.1
+    FINAL_TIME = tf
 
     # Custom oracles to return only the first component
     def lorenz(x):
-        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
-        N, _ = f.shape
-        return f[:, 0].reshape((N, 1))
+        if IS_CUPY_BACKEND:
+            import jax.numpy as jnp, cupy
+            # x will be type CuPy. Convert to jax type.
+            x_jax = jnp.from_dlpack(x)
+            f = lorenz96_flowmap_jax_batched(x_jax, FORCING, FINAL_TIME)
+            # output is jax type; convert to CuPy.
+            return cupy.from_dlpack(f[:,:,0])
+        else:
+            f = lorenz96_flowmap_jax_batched(x, FORCING, FINAL_TIME)
+            return f
 
-    def lorenz_grad(x):
-        g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
-        N, d, _ = g.shape
-        return g[:, 0, :].reshape((N, 1, d))
+    # def lorenz_grad(x):
+    #     g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+    #     N, d, _ = g.shape
+    #     return g[:, 0, :].reshape((N, 1, d))
 
-    EXP_DIR = SC26_DIR / "lorenz96"
+    EXP_DIR = SC26_DIR / f"lorenz96_dt_{tf}"
     F_DIM = 1
-    ERROR_METRIC = "Linf-local"
+    ERROR_METRIC = "Linf-global"
     INITIAL_CLUSTERING_METHOD = "kmeans"
     USE_V2 = True
     USE_WORK_STEALING = True
@@ -489,10 +498,11 @@ def lorenz96_experiment():
         # TOLs = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2,
         #         0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
         #         0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01]
-        TOLs = [0.42]
-        N_TRAIN = get_N_TRAIN(DIM)
+        TOLs = [0.1, 0.05]
+        N_TRAIN = min(get_N_TRAIN(DIM), 1000000)
         N_TEST = N_TRAIN // 2
-        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
+        # NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
+        NUM_INITIAL_CLUSTERS = 144
         MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
 
         for TOL in TOLs:
@@ -510,7 +520,7 @@ def lorenz96_experiment():
                 N_TEST=N_TEST,
                 # Training-specific
                 f_fn=lorenz,
-                g_fn=lorenz_grad,
+                g_fn=None,
                 TOL=TOL,
                 ERROR_EVAL_MODE=ERROR_EVAL_MODE,
                 ERROR_METRIC=ERROR_METRIC,
@@ -669,11 +679,12 @@ if __name__ == "__main__":
     from src.logging_utils import setup_logging
 
     setup_logging(console_level=logging.DEBUG)
+    # tf = float(sys.argv[1])
 
     # dir1 = anisotropic_quadratic_experiment()
     # dir2 = anisotropic_gaussian_experiment()
-    dir3 = rosenbrock_experiment()
-    # dir4 = lorenz96_experiment()
+    # dir3 = rosenbrock_experiment()
+    dir1 = lorenz96_experiment(tf=0.15)
     # dir5 = rosenbrock_diff_error_metrics_experiment()
     # dir6 = indefinite_quadratic_experiment()
 
