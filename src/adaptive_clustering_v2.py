@@ -1068,7 +1068,7 @@ def adaptive_clustering(
                 else:
                     from sklearn.cluster import KMeans
 
-                    km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+                    km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED, max_iter=2)
                     labels0 = km.fit_predict(_to_host(X0_gpu))
                 labels0 = _to_host(labels0).astype(np.int64)
 
