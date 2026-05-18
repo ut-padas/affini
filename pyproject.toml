@@ -87,6 +87,7 @@ gpu = [
     "cupy-cuda12x>=13.6.0",
 ]
 lint = [
+    "isort>=1.0.0",
     "ruff>=0.14.2",
 ]
 test = [
