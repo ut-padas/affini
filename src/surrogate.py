@@ -7,9 +7,8 @@ import numpy as np
 from mpi4py import MPI
 
 from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _to_device, _to_host, xp
-from src.adaptive_clustering import adaptive_clustering
 from src.adaptive_clustering_utils import SurrogateMode
-from src.adaptive_clustering_v2 import adaptive_clustering as adaptive_clustering_v2
+from src.adaptive_clustering import adaptive_clustering
 
 logger = logging.getLogger(__name__)
 
@@ -134,56 +133,29 @@ class AFINNISurrogate:
         self.mode = mode
 
         # 1. MPI-Distributed Adaptive Clustering
-        if not USE_V2:
-            raise NotImplementedError(
-                "Keeping this disabled. Enable if you are absolutely sure you want to run the original version of adaptive_clustering, which does split then augment, as opposed to the v2 version which does augment then split"
-            )
-            results = adaptive_clustering(
-                X=X_train,
-                f_fn=f_fn,
-                g_fn=g_fn,
-                oracle_fn=oracle_fn,
-                TOL=TOL,
-                ERROR_EVAL_MODE=self.mode,
-                ERROR_METRIC=ERROR_METRIC,
-                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                SEED=SEED,
-                Q_SHRINK=0.05,
-                MAX_LEVELS=MAX_LEVELS,
-                BATCH_SIZE=BATCH_SIZE,
-                PROFILE_TIMING=PROFILE_TIMING,
-                STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
-                STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
-                USE_WORK_STEALING=USE_WORK_STEALING,
-                LOG_MEM_STATS=LOG_MEM_STATS,
-            )
-        else:
-            results = adaptive_clustering_v2(
-                X=X_train,
-                f_fn=f_fn,
-                g_fn=g_fn,
-                oracle_fn=oracle_fn,
-                TOL=TOL,
-                ERROR_EVAL_MODE=self.mode,
-                ERROR_METRIC=ERROR_METRIC,
-                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-                MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-                SEED=SEED,
-                Q_SHRINK=0.05,
-                MAX_LEVELS=MAX_LEVELS,
-                BATCH_SIZE=BATCH_SIZE,
-                PROFILE_TIMING=PROFILE_TIMING,
-                STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
-                STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
-                USE_WORK_STEALING=USE_WORK_STEALING,
-                LOG_MEM_STATS=LOG_MEM_STATS,
-                SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
-            )
+        results = adaptive_clustering(
+            X=X_train,
+            f_fn=f_fn,
+            g_fn=g_fn,
+            oracle_fn=oracle_fn,
+            TOL=TOL,
+            ERROR_EVAL_MODE=self.mode,
+            ERROR_METRIC=ERROR_METRIC,
+            INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+            NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+            MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
+            SEED=SEED,
+            Q_SHRINK=0.05,
+            MAX_LEVELS=MAX_LEVELS,
+            BATCH_SIZE=BATCH_SIZE,
+            PROFILE_TIMING=PROFILE_TIMING,
+            STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
+            STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
+            USE_WORK_STEALING=USE_WORK_STEALING,
+            LOG_MEM_STATS=LOG_MEM_STATS,
+            SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
+        )
 
         # 2. Broadcast trained structures to all ranks
         bcast_data = None

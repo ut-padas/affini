@@ -19,6 +19,8 @@ from src.adaptive_clustering_utils import (
     evaluate_cluster_errors,
     split_rejected_clusters,
     uniform_grid_cluster_labels,
+    save_generated_data,
+    combine_generated_data,
 )
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
@@ -34,8 +36,8 @@ TAG_STEAL_DENY = 104
 TAG_TERM = 105
 
 # --- Work-Stealing Tuning Parameters ---
-MIN_LOAD_THRESHOLD = 2_000_000  # Min points to be eligible for stealing
-STEAL_SIZE = 600_000  # Target point count to steal
+MIN_LOAD_THRESHOLD = 1_000_000  # Min points to be eligible for stealing
+STEAL_SIZE = 500_000  # Target point count to steal
 
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
 
@@ -63,6 +65,7 @@ def _run_local_refinement(
     USE_WORK_STEALING: bool,
     LOG_MEM_STATS: bool,
     PROFILE_TIMING: bool,
+    SAVE_ALL_GEN_CLUSTER_DATA: bool,
     rank: int,
     size: int,
     profiling_stats: dict,
@@ -79,9 +82,6 @@ def _run_local_refinement(
 
         mempool = cp.get_default_memory_pool()
 
-    num_generated_pts = 0
-    total_f_evals = 0
-
     # Allocate Output Buffers on CPU (Host) to save VRAM
     buffers, out_cap = allocate_output_buffers_host(
         MAX_CLUSTERS_EST,
@@ -89,13 +89,13 @@ def _run_local_refinement(
         fd,
         store_hess=config.store_hess,
         store_affine_fit=config.store_affine_fits,
-        no_gradient=(
-            not config.requires_grad_everywhere and not config.requires_grad_centroids
-        ),
+        no_gradient=config.requires_no_grads,
     )
     out_count = 0
-
+    num_generated_pts = 0
+    total_f_evals = 0
     level = 0
+
     is_terminated = False
     status = MPI.Status()
     local_load = int(CLUSTER_PTS.shape[0])
@@ -180,6 +180,7 @@ def _run_local_refinement(
                     is_terminated = True
                     break
 
+                # Get the rank with the highest load as our steal target
                 target_rank = int(np.argmax(global_loads))
 
                 # Gatekeeper Check
@@ -261,11 +262,12 @@ def _run_local_refinement(
                                 sizes_host, source=target_rank, tag=TAG_STEAL_GRANT + 4
                             )
 
-                            CLUSTER_PTS = xp.asarray(X_host)
-                            CLUSTER_F = xp.asarray(F_host)
-                            CLUSTER_G = xp.asarray(G_host) if meta["has_g"] else None
-                            CLUSTER_SIZES = xp.asarray(sizes_host)
-                            CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
+                            # Keep stolen data on the CPU
+                            CLUSTER_PTS = X_host
+                            CLUSTER_F = F_host
+                            CLUSTER_G = G_host
+                            CLUSTER_SIZES = sizes_host
+                            CLUSTER_STARTS = np.r_[0, np.cumsum(CLUSTER_SIZES)[:-1]]
 
                             local_load = int(CLUSTER_PTS.shape[0])
                             global_loads[rank] = local_load
@@ -297,7 +299,8 @@ def _run_local_refinement(
                 else:
                     time.sleep(SLEEP_INTERVAL)
 
-            continue  # Loop back around
+            # Loop back around to check termination condition and steal opportunities again.
+            continue
 
         # --- Phase 1: The Compute Phase (Mid-Level) ---
         _t_level = time.perf_counter()
@@ -309,18 +312,15 @@ def _run_local_refinement(
                 "rank": rank,
                 "level": int(level),
                 "clusters_start": int(num_clusters),
-                "size_min": int(float(xp.min(CLUSTER_SIZES))),
-                "size_mean": float(xp.mean(CLUSTER_SIZES)),
-                "size_median": int(float(xp.median(CLUSTER_SIZES))),
-                "size_max": int(float(xp.max(CLUSTER_SIZES))),
+                "size_min": int(float(np.min(CLUSTER_SIZES))),
+                "size_mean": float(np.mean(CLUSTER_SIZES)),
+                "size_median": int(float(np.median(CLUSTER_SIZES))),
+                "size_max": int(float(np.max(CLUSTER_SIZES))),
             }
         )
 
-        with CudaTimer("time_find_req_synth", profiling_stats, PROFILE_TIMING):
-            level_augmented_sizes = xp.maximum(CLUSTER_SIZES, MIN_PTS_PER_CLUSTER)
-            level_total_aug_pts = int(xp.sum(level_augmented_sizes))
-
-        aug_sizes_cpu = _to_host(level_augmented_sizes)
+        level_total_pts = int(np.sum(CLUSTER_SIZES))
+        aug_sizes_cpu = CLUSTER_SIZES
         aug_cumsum_cpu = np.cumsum(aug_sizes_cpu)
 
         (
@@ -330,7 +330,7 @@ def _run_local_refinement(
             next_level_sizes_list,
         ) = ([], [], [], [])
 
-        num_batches = level_total_aug_pts // BATCH_SIZE + 1
+        num_batches = level_total_pts // BATCH_SIZE + 1
         start_cluster_idx = 0
         K_good = 0
 
@@ -357,12 +357,12 @@ def _run_local_refinement(
                         continue
 
                     unprocessed_sizes = CLUSTER_SIZES[start_cluster_idx:]
-                    unprocessed_pts = int(xp.sum(unprocessed_sizes))
+                    unprocessed_pts = int(np.sum(unprocessed_sizes))
 
                     if unprocessed_pts > MIN_LOAD_THRESHOLD:
                         _t_send = time.perf_counter()
 
-                        rev_sizes_cpu = _to_host(unprocessed_sizes[::-1])
+                        rev_sizes_cpu = unprocessed_sizes[::-1]
                         rev_cumsum = np.cumsum(rev_sizes_cpu)
                         split_rev_idx = int(np.searchsorted(rev_cumsum, STEAL_SIZE))
 
@@ -372,14 +372,11 @@ def _run_local_refinement(
                         split_idx = num_clusters - give_clusters
                         pt_split = int(CLUSTER_STARTS[split_idx])
 
-                        X_send = _to_host(CLUSTER_PTS[pt_split:])
-                        F_send = _to_host(CLUSTER_F[pt_split:])
-                        G_send = (
-                            _to_host(CLUSTER_G[pt_split:])
-                            if CLUSTER_G is not None
-                            else None
-                        )
-                        sizes_send = _to_host(CLUSTER_SIZES[split_idx:])
+                        # Arrays are already on CPU, no need for _to_host
+                        X_send = CLUSTER_PTS[pt_split:]
+                        F_send = CLUSTER_F[pt_split:]
+                        G_send = CLUSTER_G[pt_split:] if CLUSTER_G is not None else None
+                        sizes_send = CLUSTER_SIZES[split_idx:]
 
                         meta = {
                             "n_pts": int(X_send.shape[0]),
@@ -417,7 +414,6 @@ def _run_local_refinement(
                         CLUSTER_SIZES = CLUSTER_SIZES[:split_idx]
                         CLUSTER_STARTS = CLUSTER_STARTS[:split_idx]
 
-                        level_augmented_sizes = level_augmented_sizes[:split_idx]
                         aug_sizes_cpu = aug_sizes_cpu[:split_idx]
                         aug_cumsum_cpu = aug_cumsum_cpu[:split_idx]
 
@@ -450,91 +446,33 @@ def _run_local_refinement(
                 break
 
             with CudaTimer("time_slicing", profiling_stats, PROFILE_TIMING):
-                sizes = CLUSTER_SIZES[start_cluster_idx:end_cluster_idx]
-                starts_local = CLUSTER_STARTS[start_cluster_idx:end_cluster_idx]
-                slice_start = int(starts_local[0])
-                slice_end = int(starts_local[-1] + sizes[-1])
+                sizes_cpu = CLUSTER_SIZES[start_cluster_idx:end_cluster_idx]
+                starts_local_cpu = CLUSTER_STARTS[start_cluster_idx:end_cluster_idx]
+                slice_start = int(starts_local_cpu[0])
+                slice_end = int(starts_local_cpu[-1] + sizes_cpu[-1])
 
-                pts = CLUSTER_PTS[slice_start:slice_end]
-                f_vals = CLUSTER_F[slice_start:slice_end]
+                # --- MOVE ONLY THIS BATCH TO THE GPU ---
+                pts = xp.asarray(CLUSTER_PTS[slice_start:slice_end])
+                f_vals = xp.asarray(CLUSTER_F[slice_start:slice_end])
                 g_vals = (
-                    CLUSTER_G[slice_start:slice_end] if CLUSTER_G is not None else None
-                )
-                starts_local_shifted = starts_local - slice_start
-
-            with CudaTimer("time_synth_gen", profiling_stats, PROFILE_TIMING):
-                aug_sizes = level_augmented_sizes[start_cluster_idx:end_cluster_idx]
-                aug_total = int(xp.sum(aug_sizes))
-                K_batch = len(aug_sizes)
-
-                X_batch = xp.empty((aug_total, d), dtype=xp.float64)
-                F_batch = xp.empty((aug_total, fd), dtype=xp.float64)
-                G_batch = (
-                    xp.empty((aug_total, fd, d), dtype=xp.float64)
-                    if config.requires_grad_everywhere
+                    xp.asarray(CLUSTER_G[slice_start:slice_end])
+                    if CLUSTER_G is not None
                     else None
                 )
 
-                aug_starts = xp.r_[0, xp.cumsum(aug_sizes)[:-1]]
-                aug_ids = repeats(xp.arange(K_batch), aug_sizes)
+                # Move structural arrays to GPU for the math logic
+                sizes = xp.asarray(sizes_cpu)
+                starts_local_shifted = xp.asarray(starts_local_cpu - slice_start)
 
-                pt_idxs_in_cluster = (
-                    xp.arange(aug_total, dtype=xp.int32) - aug_starts[aug_ids]
-                )
-                is_real = pt_idxs_in_cluster < sizes[aug_ids]
-                X_batch[is_real] = pts
-                F_batch[is_real] = f_vals
-                if G_batch is not None and g_vals is not None:
-                    G_batch[is_real] = g_vals
+            aug_sizes = sizes
+            K_batch = len(sizes)
 
-                is_synth = ~is_real
-                num_synth = int(xp.sum(is_synth))
-                num_generated_pts += num_synth
-                if num_synth > 0:
-                    if LOG_MEM_STATS:
-                        log_mem_stats(
-                            f" R{rank:02} L{level:02} B{b:02}/{num_batches:02}: Start Augmentation"
-                        )
-                    synth_c_ids = aug_ids[is_synth]
-                    rng = xp.random.default_rng(SEED + level + b + rank * 1000)
+            X_batch = pts
+            F_batch = f_vals
+            G_batch = g_vals
 
-                    c_starts = starts_local_shifted[synth_c_ids]
-                    c_counts = sizes[synth_c_ids]
-                    rand1 = (rng.random(num_synth) * c_counts).astype(xp.int64)
-                    rand2 = (rng.random(num_synth) * (c_counts - 1)).astype(
-                        xp.int64
-                    ) + 1
-                    idx1 = c_starts + rand1
-                    idx2 = c_starts + (rand1 + rand2) % c_counts
-
-                    p1 = pts[idx1]
-                    p2 = pts[idx2]
-                    alpha = rng.random((num_synth, 1)).astype(xp.float64)
-                    X_synth_vals = p1 * alpha + p2 * (1.0 - alpha)
-                    X_batch[is_synth] = X_synth_vals
-
-                    if oracle_fn is not None:
-                        if CLUSTER_G is None or G_batch is None:
-                            assert f_fn
-                            F_syn = f_fn(X_synth_vals)
-                            F_batch[is_synth] = convert_to_2d_array(F_syn)
-                        else:
-                            F_syn, G_syn = oracle_fn(X_synth_vals)
-                            F_batch[is_synth] = convert_to_2d_array(F_syn)
-                            G_batch[is_synth] = convert_to_3d_array(G_syn)
-                    else:
-                        assert f_fn is not None
-                        F_batch[is_synth] = convert_to_2d_array(f_fn(X_synth_vals))
-                        if CLUSTER_G is not None and G_batch is not None:
-                            assert g_fn is not None
-                            G_batch[is_synth] = convert_to_3d_array(g_fn(X_synth_vals))
-
-                    total_f_evals += X_synth_vals.shape[0]
-
-            if LOG_MEM_STATS:
-                log_mem_stats(
-                    f" R{rank:02} L{level:02} B{b:02}/{num_batches:02}: After Augmentation"
-                )
+            aug_starts = starts_local_shifted
+            aug_ids = repeats(xp.arange(K_batch), sizes)
 
             with CudaTimer("time_error_calc", profiling_stats, PROFILE_TIMING):
                 mus = xp.add.reduceat(X_batch, aug_starts) / aug_sizes[:, None]
@@ -542,17 +480,18 @@ def _run_local_refinement(
                 if oracle_fn is not None:
                     F_mus_val, G_mus_val = oracle_fn(mus)
                     f_mus = convert_to_2d_array(F_mus_val)
-                    g_mus = (
-                        convert_to_3d_array(G_mus_val)
-                        if config.requires_grad_centroids
-                        else None
-                    )
+                    if config.requires_grad_centroids:
+                        g_mus = convert_to_3d_array(G_mus_val)
+                    else:
+                        g_mus = None
+                        del G_mus_val
+
                 else:
-                    assert f_fn and g_fn
+                    assert f_fn
                     f_mus = convert_to_2d_array(f_fn(mus))
                     g_mus = (
                         convert_to_3d_array(g_fn(mus))
-                        if config.requires_grad_centroids
+                        if config.requires_grad_centroids and g_fn
                         else None
                     )
 
@@ -648,9 +587,23 @@ def _run_local_refinement(
                         buffers["L_obs"][out_count:end_out] = _to_host(L_obs)
                     if Hs is not None:
                         buffers["H"][out_count:end_out] = _to_host(Hs)
-                    if config.store_affine_fits and "A" in surrogate_params:
+                    if "A" in surrogate_params and "b" in surrogate_params:
                         buffers["A_fit"][out_count:end_out] = _to_host(
                             surrogate_params["A"][good_idx_local]
+                        )
+                        buffers["b_fit"][out_count:end_out] = _to_host(
+                            surrogate_params["b"][good_idx_local]
+                        )
+                    elif (
+                        "H" in surrogate_params
+                        and "w" in surrogate_params
+                        and "b" in surrogate_params
+                    ):
+                        buffers["H_fit"][out_count:end_out] = _to_host(
+                            surrogate_params["H"][good_idx_local]
+                        )
+                        buffers["w_fit"][out_count:end_out] = _to_host(
+                            surrogate_params["w"][good_idx_local]
                         )
                         buffers["b_fit"][out_count:end_out] = _to_host(
                             surrogate_params["b"][good_idx_local]
@@ -674,7 +627,96 @@ def _run_local_refinement(
                         else None
                     )
                     bad_counts = aug_sizes[bad_idx_local]
-                    dense_labels_bad = repeats(xp.arange(n_bad), bad_counts)
+
+                    # --- Dynamically augment bad clusters before splitting ---
+                    target_bad_counts = xp.where(
+                        bad_counts < 2 * MIN_PTS_PER_CLUSTER,
+                        xp.maximum(2 * bad_counts, 2 * MIN_PTS_PER_CLUSTER),
+                        bad_counts,
+                    )
+
+                    total_target_pts = int(xp.sum(target_bad_counts))
+
+                    X_bad_aug = xp.empty((total_target_pts, d), dtype=xp.float64)
+                    F_bad_aug = xp.empty((total_target_pts, fd), dtype=xp.float64)
+                    G_bad_aug = (
+                        xp.empty((total_target_pts, fd, d), dtype=xp.float64)
+                        if G_bad is not None
+                        else None
+                    )
+
+                    target_starts = xp.r_[0, xp.cumsum(target_bad_counts)[:-1]]
+                    aug_dense_labels_bad = repeats(xp.arange(n_bad), target_bad_counts)
+
+                    # Map indices to interleave original and synthetic points correctly
+                    pt_idxs_in_cluster = (
+                        xp.arange(total_target_pts, dtype=xp.int32)
+                        - target_starts[aug_dense_labels_bad]
+                    )
+                    is_orig = pt_idxs_in_cluster < bad_counts[aug_dense_labels_bad]
+
+                    # Copy original points over
+                    X_bad_aug[is_orig] = X_bad
+                    F_bad_aug[is_orig] = F_bad
+                    if G_bad is not None and G_bad_aug is not None:
+                        G_bad_aug[is_orig] = G_bad
+
+                    is_synth = ~is_orig
+                    num_synth = int(xp.sum(is_synth))
+
+                    if num_synth > 0:
+                        num_generated_pts += num_synth
+                        synth_c_ids = aug_dense_labels_bad[is_synth]
+                        rng = xp.random.default_rng(SEED + level + b + rank * 1000)
+
+                        bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
+                        c_starts_synth = bad_starts[synth_c_ids]
+                        c_counts_synth = bad_counts[synth_c_ids]
+
+                        rand1 = (rng.random(num_synth) * c_counts_synth).astype(
+                            xp.int64
+                        )
+                        rand2 = (rng.random(num_synth) * (c_counts_synth - 1)).astype(
+                            xp.int64
+                        ) + 1
+
+                        idx1 = c_starts_synth + rand1
+                        idx2 = c_starts_synth + (rand1 + rand2) % c_counts_synth
+
+                        p1 = X_bad[idx1]
+                        p2 = X_bad[idx2]
+                        alpha = rng.random((num_synth, 1)).astype(xp.float64)
+                        X_synth_vals = p1 * alpha + p2 * (1.0 - alpha)
+
+                        if SAVE_ALL_GEN_CLUSTER_DATA is True:
+                            save_generated_data(
+                                X_synth_vals, f"train_data_tol_{TOL}_d{d}"
+                            )
+
+                        X_bad_aug[is_synth] = X_synth_vals
+
+                        # Evaluate F and G for synthetic points
+                        if oracle_fn is not None:
+                            if G_bad is None:
+                                assert f_fn
+                                F_syn = f_fn(X_synth_vals)
+                                F_bad_aug[is_synth] = convert_to_2d_array(F_syn)
+                            else:
+                                assert G_bad_aug is not None
+                                F_syn, G_syn = oracle_fn(X_synth_vals)
+                                F_bad_aug[is_synth] = convert_to_2d_array(F_syn)
+                                G_bad_aug[is_synth] = convert_to_3d_array(G_syn)
+                        else:
+                            assert f_fn
+                            F_bad_aug[is_synth] = convert_to_2d_array(
+                                f_fn(X_synth_vals)
+                            )
+                            if g_fn and G_bad_aug is not None:
+                                G_bad_aug[is_synth] = convert_to_3d_array(
+                                    g_fn(X_synth_vals)
+                                )
+
+                        total_f_evals += num_synth
 
                     # ==========================================
                     # MATH PIPELINE STAGE 3
@@ -684,34 +726,37 @@ def _run_local_refinement(
                     }
                     sort_order = split_rejected_clusters(
                         config,
-                        X_bad,
-                        F_bad,
-                        G_bad,
+                        X_bad_aug,
+                        F_bad_aug,
+                        G_bad_aug,
                         mus[bad_idx_local],
                         f_mus[bad_idx_local],
-                        dense_labels_bad,
-                        bad_counts,
+                        aug_dense_labels_bad,
+                        target_bad_counts,
                         MIN_PTS_PER_CLUSTER,
                         bad_surrogate_params,
                     )
 
                 with CudaTimer("time_bad_d2h", profiling_stats, PROFILE_TIMING):
-                    next_level_X_list.append(_to_host(X_bad[sort_order]))
-                    next_level_F_list.append(_to_host(F_bad[sort_order]))
-                    if config.requires_grad_everywhere and G_bad is not None:
-                        next_level_G_list.append(_to_host(G_bad[sort_order]))
+                    # Append the sorted augmented arrays
+                    next_level_X_list.append(_to_host(X_bad_aug[sort_order]))
+                    next_level_F_list.append(_to_host(F_bad_aug[sort_order]))
+                    if config.requires_grad_everywhere and G_bad_aug is not None:
+                        next_level_G_list.append(_to_host(G_bad_aug[sort_order]))
 
-                    half = bad_counts // 2
-                    other = bad_counts - half
+                    # Split the new target counts: TODO: understand
+                    half = target_bad_counts // 2
+                    other = target_bad_counts - half
                     new_sz = xp.zeros(2 * n_bad, dtype=xp.int64)
                     new_sz[0::2] = half
                     new_sz[1::2] = other
                     next_level_sizes_list.append(_to_host(new_sz))
 
             start_cluster_idx = end_cluster_idx
-            del X_batch, F_batch, G_batch
-            if mempool is not None:
-                mempool.free_all_blocks()
+            with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
+                del X_batch, F_batch, G_batch
+                if mempool is not None:
+                    mempool.free_all_blocks()
 
         # --- Phase 2: The Level Boundary (Transition & Steal Response) ---
         with CudaTimer("time_transition", profiling_stats, PROFILE_TIMING):
@@ -835,15 +880,16 @@ def _run_local_refinement(
                             f"R{rank:02} L{level:02}: Denied steal to R{req_src:02}: {deny_reason}"
                         )
 
+            # Remove xp.asarray - keep the next level queued up in CPU RAM
             if len(next_sizes) > 0:
-                CLUSTER_PTS = xp.asarray(next_X)
-                CLUSTER_F = xp.asarray(next_F)
-                CLUSTER_G = xp.asarray(next_G) if next_G is not None else None
-                CLUSTER_SIZES = xp.asarray(next_sizes)
-                CLUSTER_STARTS = xp.r_[0, xp.cumsum(CLUSTER_SIZES)[:-1]]
+                CLUSTER_PTS = next_X
+                CLUSTER_F = next_F
+                CLUSTER_G = next_G
+                CLUSTER_SIZES = next_sizes
+                CLUSTER_STARTS = np.r_[0, np.cumsum(CLUSTER_SIZES)[:-1]]
             else:
-                CLUSTER_PTS = xp.array([])
-                CLUSTER_SIZES = xp.array([])
+                CLUSTER_PTS = np.array([])
+                CLUSTER_SIZES = np.array([])
 
         if profiling_stats["level_stats"]:
             profiling_stats["level_stats"][-1].update(
@@ -879,7 +925,7 @@ def _run_local_refinement(
         if len(CLUSTER_SIZES) > 0:
             logger.info(
                 f"R{rank:02} L{level:02}: Cluster Sizes - min: {int(CLUSTER_SIZES.min())}, "
-                f"mean: {CLUSTER_SIZES.mean():.1f}, median: {int(xp.median(CLUSTER_SIZES))}, "
+                f"mean: {CLUSTER_SIZES.mean():.1f}, median: {int(np.median(CLUSTER_SIZES))}, "
                 f"max: {int(CLUSTER_SIZES.max())}"
             )
         level_runtime = time.perf_counter() - _t_level
@@ -919,13 +965,11 @@ def adaptive_clustering(
     STORE_AFFINE_FIT_PER_CLUSTER: bool = False,
     LOG_MEM_STATS: bool = False,
     PROFILE_TIMING: bool = False,
+    SAVE_ALL_GEN_TRAINING_DATA: bool = True,
 ) -> dict[str, Any] | None:
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).
     """
-    raise NotImplementedError(
-        "Keeping this disabled. Enable if you are absolutely sure you want to run the original version of adaptive_clustering, which does split then augment, as opposed to the v2 version which does augment then split"
-    )
     if ERROR_EVAL_MODE in (
         SurrogateMode.AFFINE_COV_HESS,
         SurrogateMode.AFFINE_COV_NO_HESS,
@@ -993,6 +1037,11 @@ def adaptive_clustering(
     d_bcast, fd_bcast = 0, 0
 
     if rank == 0:
+
+        if SAVE_ALL_GEN_TRAINING_DATA is True:
+            _, DIM = X.shape
+            save_generated_data(X, f"train_data_tol_{TOL}_d{DIM}")
+
         with CudaTimer("time_init", profiling_stats, PROFILE_TIMING):
             X0_gpu = xp.asarray(X, dtype=xp.float64)
             N0, d_bcast = X0_gpu.shape
@@ -1025,7 +1074,9 @@ def adaptive_clustering(
                 else:
                     from sklearn.cluster import KMeans
 
-                    km = KMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+                    km = KMeans(
+                        n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED, max_iter=2
+                    )
                     labels0 = km.fit_predict(_to_host(X0_gpu))
                 labels0 = _to_host(labels0).astype(np.int64)
 
@@ -1045,8 +1096,12 @@ def adaptive_clustering(
                 labels0, _ = uniform_grid_cluster_labels(
                     _to_host(X0_gpu), NUM_INITIAL_CLUSTERS
                 )
+                labels0 = labels0.astype(np.int64)
 
-            sort_idx = np.argsort(labels0, kind="stable")
+            else:
+                raise ValueError(f"Invalid: {INITIAL_CLUSTERING_METHOD}")
+
+            sort_idx = np.argsort(labels0)
             labels0_sorted = labels0[sort_idx]
             X0_sorted = _to_host(X0_gpu)[sort_idx]
             F0_sorted = _to_host(F0_gpu)[sort_idx]
@@ -1061,6 +1116,12 @@ def adaptive_clustering(
     with CudaTimer("time_scatter", profiling_stats, PROFILE_TIMING):
         F_max_global_host = comm.bcast(F_max_global_host, root=0)
         d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
+
+        META_TAG = 999
+        X_TAG = 1000
+        F_TAG = 1001
+        G_TAG = 1002
+        SIZES_TAG = 1003
 
         if rank == 0:
             current_idx = 0
@@ -1094,17 +1155,17 @@ def adaptive_clustering(
                         ],
                         dtype=np.int64,
                     )
-                    comm.Send(meta_arr, dest=r, tag=999)
-                    comm.Send(np.ascontiguousarray(chunk_X), dest=r, tag=1000)
-                    comm.Send(np.ascontiguousarray(chunk_F), dest=r, tag=1001)
+                    comm.Send(meta_arr, dest=r, tag=META_TAG)
+                    comm.Send(np.ascontiguousarray(chunk_X), dest=r, tag=X_TAG)
+                    comm.Send(np.ascontiguousarray(chunk_F), dest=r, tag=F_TAG)
                     if chunk_G is not None:
-                        comm.Send(np.ascontiguousarray(chunk_G), dest=r, tag=1002)
-                    comm.Send(np.ascontiguousarray(chunk_sizes), dest=r, tag=1003)
+                        comm.Send(np.ascontiguousarray(chunk_G), dest=r, tag=G_TAG)
+                    comm.Send(np.ascontiguousarray(chunk_sizes), dest=r, tag=SIZES_TAG)
                 current_idx = end_idx
         else:
             logger.info(f"R{rank:02}: Waiting to receive initial data chunk from R00.")
             meta_arr = np.empty(3, dtype=np.int64)
-            comm.Recv(meta_arr, source=0, tag=999)
+            comm.Recv(meta_arr, source=0, tag=META_TAG)
 
             n_pts, n_clusters, has_g = meta_arr[0], meta_arr[1], meta_arr[2] == 1
             chunk_X = np.empty((n_pts, d_bcast), dtype=np.float64)
@@ -1116,11 +1177,11 @@ def adaptive_clustering(
             )
             chunk_sizes = np.empty(n_clusters, dtype=np.int64)
 
-            comm.Recv(chunk_X, source=0, tag=1000)
-            comm.Recv(chunk_F, source=0, tag=1001)
+            comm.Recv(chunk_X, source=0, tag=X_TAG)
+            comm.Recv(chunk_F, source=0, tag=F_TAG)
             if has_g and chunk_G is not None:
-                comm.Recv(chunk_G, source=0, tag=1002)
-            comm.Recv(chunk_sizes, source=0, tag=1003)
+                comm.Recv(chunk_G, source=0, tag=G_TAG)
+            comm.Recv(chunk_sizes, source=0, tag=SIZES_TAG)
             local_dict = {
                 "X": chunk_X,
                 "F": chunk_F,
@@ -1128,15 +1189,12 @@ def adaptive_clustering(
                 "sizes": chunk_sizes,
             }
 
-    local_X = xp.asarray(local_dict["X"], dtype=xp.float64)
-    local_F = xp.asarray(local_dict["F"], dtype=xp.float64)
-    local_G = (
-        xp.asarray(local_dict["G"], dtype=xp.float64)
-        if local_dict["G"] is not None
-        else None
-    )
-    local_sizes = xp.asarray(local_dict["sizes"], dtype=xp.int64)
-    local_starts = xp.r_[0, xp.cumsum(local_sizes)[:-1]]
+    # KEEP DATA ON THE CPU (Host RAM)
+    local_X = local_dict["X"]
+    local_F = local_dict["F"]
+    local_G = local_dict["G"]
+    local_sizes = local_dict["sizes"]
+    local_starts = np.r_[0, np.cumsum(local_sizes)[:-1]]
     F_max_global = xp.asarray(F_max_global_host, dtype=xp.float64)
 
     buffers, out_count, local_f_evals, local_gen_pts, last_level = (
@@ -1163,6 +1221,7 @@ def adaptive_clustering(
             USE_WORK_STEALING=USE_WORK_STEALING,
             LOG_MEM_STATS=LOG_MEM_STATS,
             PROFILE_TIMING=PROFILE_TIMING,
+            SAVE_ALL_GEN_CLUSTER_DATA=SAVE_ALL_GEN_TRAINING_DATA,
             rank=rank,
             size=size,
             profiling_stats=profiling_stats,
@@ -1187,26 +1246,23 @@ def adaptive_clustering(
     local_result_host["_profiling_stats"] = profiling_stats
 
     with CudaTimer("time_gather", profiling_stats, PROFILE_TIMING):
+        LOCAL_RESULT_TAG = 2000
         if rank != 0:
             logger.info(
                 f"R{rank:03}: Sending local results ({out_count:,} clusters) to rank 0."
             )
-            comm.send(local_result_host, dest=0, tag=2000)
+            comm.send(local_result_host, dest=0, tag=LOCAL_RESULT_TAG)
         else:
             logger.info("R00: Merging results from all ranks.")
             all_results = [local_result_host]
             for r in range(1, size):
-                all_results.append(comm.recv(source=r, tag=2000))
+                all_results.append(comm.recv(source=r, tag=LOCAL_RESULT_TAG))
             logger.info(f"R00: Received local results from {size:,} ranks.")
 
     if rank == 0:
         all_profiling_stats = [r.pop("_profiling_stats") for r in all_results]
         merged = {
-            k: (
-                xp.asarray(np.concatenate([r[k] for r in all_results], axis=0))
-                if IS_CUPY_BACKEND
-                else np.concatenate([r[k] for r in all_results], axis=0)
-            )
+            k: xp.asarray(np.concatenate([r[k] for r in all_results], axis=0))
             for k in all_results[0]
         }
 
@@ -1241,6 +1297,11 @@ def adaptive_clustering(
                 "profiling_stats": consolidated_profiling,
             }
         )
+
+        # Combine all the files if we are saving
+        if SAVE_ALL_GEN_TRAINING_DATA is True:
+            combine_generated_data(f"train_data_tol_{TOL}_d{d_bcast}")
+
         return merged
     return None
 
@@ -1250,6 +1311,11 @@ if __name__ == "__main__":
     from functools import partial
 
     from src import RESULTS_DIR
+    from src.heuristic_parameters import (
+        get_MIN_PTS_PER_CLUSTER,
+        get_N_TRAIN,
+        get_NUM_INITIAL_CLUSTERS,
+    )
     from src.logging_utils import setup_logging
     from src.plotter_utils import (
         plot_adaptive_clustering_results,
@@ -1267,21 +1333,18 @@ if __name__ == "__main__":
     rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
     rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
 
-    N_TRAIN = 500_000
     DIM = 2
+    TOL = 0.02
     PROB_LIMS = (-1.0, 3)
-    TOL = 1e-4
-    NUM_INITIAL_CLUSTERS = 500
-    MIN_PTS_PER_CLUSTER = 500
+    N_TRAIN = get_N_TRAIN(DIM)
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
+    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
     USE_WORK_STEALING = True
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "uniform_grid"
+    ERROR_METRIC = "L2"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
     ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS
 
-    # Scale initial clusters with dimension for better
-    NUM_INITIAL_CLUSTERS = NUM_INITIAL_CLUSTERS * DIM
-
-    OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_experimental"
+    OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_experimental_v2"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     img_fpath = (
@@ -1305,7 +1368,7 @@ if __name__ == "__main__":
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        LOG_MEM_STATS=False,
+        LOG_MEM_STATS=True,
         PROFILE_TIMING=True,
         USE_WORK_STEALING=USE_WORK_STEALING,
         MAX_LEVELS=200,
@@ -1357,6 +1420,7 @@ if __name__ == "__main__":
             img_fpath=img_fpath,
             title=title,
         )
+
     # Save MPI rank time breakdown plot
     time_breakdown_path = img_fpath.with_name(
         img_fpath.stem + "_mpi_time_breakdown.png"
@@ -1376,7 +1440,7 @@ if __name__ == "__main__":
         title = f"MPI x Level Heatmap ({_heatmap_col}) (Train Time={result['profiling_stats']['time_total']:.1f}s) (N_CLUSTERS={n_centroids:,})"
         plot_mpi_level_heatmap(result, _hm_path, values_col=_heatmap_col, title=title)
 
-    # Save npz file of entire results dict
+    # Save npz file of results
     npz_fpath = img_fpath.with_suffix(".npz")
     result = {k: _to_host(v) for k, v in result.items()}
     xp.savez_compressed(npz_fpath, **result)
