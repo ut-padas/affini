@@ -559,7 +559,10 @@ def lorenz96_experiment(tf):
 
 
 def lorenz96_dimension_scaling_experiment():
-    from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
+    from src.problems.lorenz96_flowmap import (
+        lorenz96_flowmap_grad,
+        lorenz96_flowmap_parallel,
+    )
 
     # Lorenz flowmap parameters set here
     FORCING = 1
@@ -567,7 +570,7 @@ def lorenz96_dimension_scaling_experiment():
 
     # Custom oracles to return only the first component
     def lorenz(x):
-        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
+        f = lorenz96_flowmap_parallel(x, FORCING, FINAL_TIME)
         N, _ = f.shape
         return f[:, 0].reshape((N, 1))
 
