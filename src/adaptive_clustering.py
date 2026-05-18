@@ -673,6 +673,22 @@ def _run_local_refinement(
                     )
 
                     total_target_pts = int(xp.sum(target_bad_counts))
+                    total_bad_input_pts = int(xp.sum(bad_counts))
+                    planned_synth_pts = total_target_pts - total_bad_input_pts
+                    bad_count_min = int(xp.min(bad_counts))
+                    bad_count_mean = float(xp.mean(bad_counts))
+                    bad_count_max = int(xp.max(bad_counts))
+                    expansion = total_target_pts / max(total_bad_input_pts, 1)
+
+                    logger.info(
+                        f"R{rank:02} L{level:02} B{b+1}: rejected-cluster augmentation plan | "
+                        f"bad_clusters={n_bad:,} "
+                        f"input_pts={total_bad_input_pts:,} "
+                        f"bad_count[min/mean/max]={bad_count_min:,}/{bad_count_mean:,.1f}/{bad_count_max:,} "
+                        f"target_pts={total_target_pts:,} "
+                        f"synthetic_pts={planned_synth_pts:,} "
+                        f"expansion={expansion:.2f}x"
+                    )
 
                     X_bad_aug = xp.empty((total_target_pts, d), dtype=xp.float64)
                     F_bad_aug = xp.empty((total_target_pts, fd), dtype=xp.float64)
