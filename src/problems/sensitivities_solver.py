@@ -1,6 +1,7 @@
 import logging
 import multiprocessing as mp
 import os
+import platform
 import sys
 import traceback
 from multiprocessing.shared_memory import SharedMemory
@@ -12,7 +13,35 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 
-def _serial_solve(X0, rhs, DfDx, tf):
+def _preferred_mp_start_method(requested: str | None = None) -> str:
+    """
+    Pick a multiprocessing start method for heavy numerical worker pools.
+
+    ``fork`` is much cheaper on Linux because children inherit the already
+    imported modules via copy-on-write.  macOS defaults to ``spawn`` because
+    forking a process that may have active native-library threads can be unsafe;
+    users can still opt into another method with ``HATANN_MP_START_METHOD`` or
+    the explicit argument.
+    """
+    requested = requested or os.environ.get("HATANN_MP_START_METHOD")
+    available = mp.get_all_start_methods()
+    if requested:
+        if requested not in available:
+            raise ValueError(
+                f"Requested multiprocessing start method {requested!r} is not "
+                f"available. Available methods: {available}"
+            )
+        return requested
+
+    system = platform.system()
+    if system == "Linux" and "fork" in available:
+        return "fork"
+    if "spawn" in available:
+        return "spawn"
+    return available[0]
+
+
+def _serial_solve(X0, rhs, DfDx, tf, rtol=1e-6, atol=1e-9):
     """
     Core solver logic acting on a batch of trajectories.
     Returns (XF, SF).
@@ -66,7 +95,17 @@ def _serial_solve(X0, rhs, DfDx, tf):
     # Solve ODEs
     t_span = [0, tf]
     # RK45 is generally robust, t_eval ensures we get output exactly at tf
-    sol = solve_ivp(coupled_rhs, t_span, X0_flat, method="RK45", t_eval=[tf])
+    sol = solve_ivp(
+        coupled_rhs,
+        t_span,
+        X0_flat,
+        method="RK45",
+        t_eval=[tf],
+        rtol=rtol,
+        atol=atol,
+    )
+    if not sol.success:
+        raise RuntimeError(f"Sensitivity solve_ivp failed: {sol.message}")
 
     # Restructure results
     # sol.y shape is (n_flat_vars, 1) because t_eval has length 1
@@ -94,6 +133,8 @@ def _solve_and_write_chunk(
     rhs,
     DfDx,
     tf,
+    rtol,
+    atol,
 ):
     """
     Worker function that reads from shared input, solves, and writes to shared output.
@@ -121,7 +162,9 @@ def _solve_and_write_chunk(
 
         # 2. Solve (Reuse existing logic inline for simplicity/pickling)
         if X0_chunk.shape[0] > 0:
-            XF_batch, SF_batch_matrices = _serial_solve(X0_chunk, rhs, DfDx, tf)
+            XF_batch, SF_batch_matrices = _serial_solve(
+                X0_chunk, rhs, DfDx, tf, rtol=rtol, atol=atol
+            )
 
             # 3. Write Output directly to Shared Memory
             XF_all[start_idx:end_idx] = XF_batch
@@ -155,6 +198,11 @@ def parallel_sensitivities_solver(
     MIN_PARALLEL_TRAJECTORIES=20_000,
     MIN_TRAJECTORIES_PER_WORKER=8_000,
     MAX_SAFE_WORKERS=60,
+    NUM_WORKERS=None,
+    MP_START_METHOD=None,
+    SHOW_PROGRESS=True,
+    RTOL=1e-6,
+    ATOL=1e-9,
 ):
     """
     Parallel solver using Shared Memory to avoid pipe overhead.
@@ -176,7 +224,7 @@ def parallel_sensitivities_solver(
         logging.info(
             f"Small dataset ({N} < {MIN_PARALLEL_TRAJECTORIES}): running serially."
         )
-        return _serial_solve(X0, rhs, DfDx, tf)
+        return _serial_solve(X0, rhs, DfDx, tf, rtol=RTOL, atol=ATOL)
 
     # 1. Allocate Shared Memory for Inputs and Outputs
     # Inputs
@@ -208,8 +256,13 @@ def parallel_sensitivities_solver(
             N + MIN_TRAJECTORIES_PER_WORKER - 1
         ) // MIN_TRAJECTORIES_PER_WORKER
 
-        # Dispatch only as many workers as needed, up to the hardware limit
-        num_workers = min(max_possible_workers, needed_workers)
+        # Dispatch only as many workers as needed, up to the hardware limit.
+        # NUM_WORKERS gives callers a way to use benchmark-informed policies
+        # without changing this generic solver's defaults.
+        if NUM_WORKERS is None:
+            num_workers = min(max_possible_workers, needed_workers)
+        else:
+            num_workers = min(max_possible_workers, needed_workers, NUM_WORKERS)
         num_workers = max(1, num_workers)
 
         # Split work into equal chunks based on worker count
@@ -234,6 +287,8 @@ def parallel_sensitivities_solver(
                     rhs,
                     DfDx,
                     tf,
+                    RTOL,
+                    ATOL,
                 )
             )
 
@@ -241,15 +296,14 @@ def parallel_sensitivities_solver(
             f"Solver: {N:,} trajectories, {num_workers} workers (N/Worker: {(N // num_workers):,})."
         )
 
-        ctx = mp.get_context("spawn")
+        start_method = _preferred_mp_start_method(MP_START_METHOD)
+        logging.info(f"Sensitivity solver multiprocessing start method: {start_method}")
+        ctx = mp.get_context(start_method)
         with ctx.Pool(processes=num_workers) as pool:
-            results = list(
-                tqdm(
-                    pool.imap(_worker_wrapper_shm, tasks),
-                    total=len(tasks),
-                    desc="Solving ODEs",
-                )
-            )
+            iterator = pool.imap(_worker_wrapper_shm, tasks)
+            if SHOW_PROGRESS:
+                iterator = tqdm(iterator, total=len(tasks), desc="Solving ODEs")
+            results = list(iterator)
 
         if not all(results):
             raise RuntimeError("Some workers failed. Check stderr logs.")
