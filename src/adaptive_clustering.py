@@ -13,14 +13,14 @@ from src.adaptive_clustering_utils import (
     SurrogateMode,
     adjust_buffer_capacity_host,
     allocate_output_buffers_host,
+    combine_generated_data,
     compute_accepted_stats,
     convert_to_2d_array,
     convert_to_3d_array,
     evaluate_cluster_errors,
+    save_generated_data,
     split_rejected_clusters,
     uniform_grid_cluster_labels,
-    save_generated_data,
-    combine_generated_data,
 )
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
@@ -323,12 +323,49 @@ def _run_local_refinement(
         aug_sizes_cpu = CLUSTER_SIZES
         aug_cumsum_cpu = np.cumsum(aug_sizes_cpu)
 
-        (
-            next_level_X_list,
-            next_level_F_list,
-            next_level_G_list,
-            next_level_sizes_list,
-        ) = ([], [], [], [])
+        # Growable host-side staging buffers for the next level. The final number
+        # of rejected points is only known after each batch is evaluated, so this
+        # replaces list accumulation + np.concatenate with direct slice writes.
+        next_pts_cap = max(1, level_total_pts)
+        next_sizes_cap = max(1, 2 * num_clusters)
+        next_level_X_buffer = np.empty((next_pts_cap, d), dtype=np.float64)
+        next_level_F_buffer = np.empty((next_pts_cap, fd), dtype=np.float64)
+        next_level_G_buffer = (
+            np.empty((next_pts_cap, fd, d), dtype=np.float64)
+            if config.requires_grad_everywhere
+            else None
+        )
+        next_level_sizes_buffer = np.empty((next_sizes_cap,), dtype=np.int64)
+        next_pts_count = 0
+        next_sizes_count = 0
+
+        def ensure_next_level_capacity(required_pts: int, required_sizes: int) -> None:
+            nonlocal next_pts_cap, next_sizes_cap
+            nonlocal next_level_X_buffer, next_level_F_buffer
+            nonlocal next_level_G_buffer, next_level_sizes_buffer
+
+            if required_pts > next_pts_cap:
+                new_pts_cap = max(required_pts, 2 * next_pts_cap)
+                X_new = np.empty((new_pts_cap, d), dtype=np.float64)
+                F_new = np.empty((new_pts_cap, fd), dtype=np.float64)
+                X_new[:next_pts_count] = next_level_X_buffer[:next_pts_count]
+                F_new[:next_pts_count] = next_level_F_buffer[:next_pts_count]
+                if next_level_G_buffer is not None:
+                    G_new = np.empty((new_pts_cap, fd, d), dtype=np.float64)
+                    G_new[:next_pts_count] = next_level_G_buffer[:next_pts_count]
+                    next_level_G_buffer = G_new
+                next_level_X_buffer = X_new
+                next_level_F_buffer = F_new
+                next_pts_cap = new_pts_cap
+
+            if required_sizes > next_sizes_cap:
+                new_sizes_cap = max(required_sizes, 2 * next_sizes_cap)
+                sizes_new = np.empty((new_sizes_cap,), dtype=np.int64)
+                sizes_new[:next_sizes_count] = next_level_sizes_buffer[
+                    :next_sizes_count
+                ]
+                next_level_sizes_buffer = sizes_new
+                next_sizes_cap = new_sizes_cap
 
         num_batches = level_total_pts // BATCH_SIZE + 1
         start_cluster_idx = 0
@@ -738,19 +775,51 @@ def _run_local_refinement(
                     )
 
                 with CudaTimer("time_bad_d2h", profiling_stats, PROFILE_TIMING):
-                    # Append the sorted augmented arrays
-                    next_level_X_list.append(_to_host(X_bad_aug[sort_order]))
-                    next_level_F_list.append(_to_host(F_bad_aug[sort_order]))
-                    if config.requires_grad_everywhere and G_bad_aug is not None:
-                        next_level_G_list.append(_to_host(G_bad_aug[sort_order]))
-
                     # Split the new target counts: TODO: understand
                     half = target_bad_counts // 2
                     other = target_bad_counts - half
                     new_sz = xp.zeros(2 * n_bad, dtype=xp.int64)
                     new_sz[0::2] = half
                     new_sz[1::2] = other
-                    next_level_sizes_list.append(_to_host(new_sz))
+
+                    sorted_X_host = _to_host(X_bad_aug[sort_order])
+                    sorted_F_host = _to_host(F_bad_aug[sort_order])
+                    sorted_G_host = (
+                        _to_host(G_bad_aug[sort_order])
+                        if config.requires_grad_everywhere and G_bad_aug is not None
+                        else None
+                    )
+                    new_sz_host = _to_host(new_sz)
+
+                    batch_next_pts = int(sorted_X_host.shape[0])
+                    batch_next_sizes = int(new_sz_host.shape[0])
+                    ensure_next_level_capacity(
+                        next_pts_count + batch_next_pts,
+                        next_sizes_count + batch_next_sizes,
+                    )
+
+                    pts_end = next_pts_count + batch_next_pts
+                    sizes_end = next_sizes_count + batch_next_sizes
+                    next_level_X_buffer[next_pts_count:pts_end] = sorted_X_host
+                    next_level_F_buffer[next_pts_count:pts_end] = sorted_F_host
+                    if sorted_G_host is not None and next_level_G_buffer is not None:
+                        next_level_G_buffer[next_pts_count:pts_end] = sorted_G_host
+                    next_level_sizes_buffer[next_sizes_count:sizes_end] = new_sz_host
+                    next_pts_count = pts_end
+                    next_sizes_count = sizes_end
+
+                with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
+                    del (
+                        X_bad_aug,
+                        F_bad_aug,
+                        G_bad_aug,
+                        sort_order,
+                        sorted_X_host,
+                        sorted_F_host,
+                        sorted_G_host,
+                    )
+                    if mempool is not None:
+                        mempool.free_all_blocks()
 
             start_cluster_idx = end_cluster_idx
             with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
@@ -760,15 +829,15 @@ def _run_local_refinement(
 
         # --- Phase 2: The Level Boundary (Transition & Steal Response) ---
         with CudaTimer("time_transition", profiling_stats, PROFILE_TIMING):
-            if len(next_level_sizes_list) > 0:
-                next_X = np.concatenate(next_level_X_list)
-                next_F = np.concatenate(next_level_F_list)
+            if next_sizes_count > 0:
+                next_X = next_level_X_buffer[:next_pts_count]
+                next_F = next_level_F_buffer[:next_pts_count]
                 next_G = (
-                    np.concatenate(next_level_G_list)
-                    if config.requires_grad_everywhere
+                    next_level_G_buffer[:next_pts_count]
+                    if next_level_G_buffer is not None
                     else None
                 )
-                next_sizes = np.concatenate(next_level_sizes_list)
+                next_sizes = next_level_sizes_buffer[:next_sizes_count]
 
                 valid = next_sizes > 0
                 if not np.all(valid):
@@ -905,10 +974,10 @@ def _run_local_refinement(
 
         with CudaTimer("time_gc", profiling_stats, PROFILE_TIMING):
             del (
-                next_level_X_list,
-                next_level_F_list,
-                next_level_G_list,
-                next_level_sizes_list,
+                next_level_X_buffer,
+                next_level_F_buffer,
+                next_level_G_buffer,
+                next_level_sizes_buffer,
                 next_X,
                 next_F,
                 next_G,
@@ -1197,6 +1266,54 @@ def adaptive_clustering(
     local_starts = np.r_[0, np.cumsum(local_sizes)[:-1]]
     F_max_global = xp.asarray(F_max_global_host, dtype=xp.float64)
 
+    # Hardware-aware sizing is more appropriate now that the split projection no
+    # longer materializes an (N, d, d) tensor. Keep the estimate conservative,
+    # though: a rejected batch can still be augmented to roughly 2x its original
+    # size and carries several live per-point work arrays during splitting.
+    if IS_CUPY_BACKEND:
+        import cupy as cp
+
+        free_vram_bytes, total_vram_bytes = cp.cuda.Device().mem_info
+        usable_vram_bytes = int(free_vram_bytes * 0.65)
+    else:
+        free_vram_bytes = total_vram_bytes = 32 * 1024**3
+        usable_vram_bytes = free_vram_bytes
+
+    # Approximate live storage during AFFINE_COV_HESS rejected-cluster handling:
+    # - base batch X/F/labels
+    # - augmented X/F/labels, dx, residual work arrays, split scores/sort buffers
+    # - the current tangent residual path still expands A_tangent[label] to
+    #   (N, fd, d), so account for that until it is fused as well.
+    base_batch_bytes_per_point = (d_bcast + fd_bcast + 1) * 8
+    split_augmented_bytes_per_point = (
+        3 * d_bcast  # X_aug, dx, selected/source point work
+        + fd_bcast * d_bcast
+        + 3 * fd_bcast
+        + 8  # labels, masks, scalar work arrays, sort/scores
+    ) * 8
+    augmentation_factor = 2
+    estimated_peak_bytes_per_point = (
+        base_batch_bytes_per_point
+        + augmentation_factor * split_augmented_bytes_per_point
+    )
+
+    hardware_batch_cap = usable_vram_bytes // max(1, estimated_peak_bytes_per_point)
+    dynamic_batch_cap = int(np.clip(hardware_batch_cap, 50_000, 20_000_000))
+    if BATCH_SIZE > dynamic_batch_cap:
+        logger.info(
+            "Hardware VRAM scaling: reducing BATCH_SIZE from %s to %s for d=%s, "
+            "fd=%s using %.2f GB free / %.2f GB total VRAM and an estimated "
+            "%.0f bytes/point peak footprint.",
+            f"{BATCH_SIZE:,}",
+            f"{dynamic_batch_cap:,}",
+            d_bcast,
+            fd_bcast,
+            free_vram_bytes / 1e9,
+            total_vram_bytes / 1e9,
+            float(estimated_peak_bytes_per_point),
+        )
+        BATCH_SIZE = dynamic_batch_cap
+
     buffers, out_count, local_f_evals, local_gen_pts, last_level = (
         _run_local_refinement(
             config=config,
@@ -1334,7 +1451,7 @@ if __name__ == "__main__":
     rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
 
     DIM = 2
-    TOL = 0.02
+    TOL = 0.0001
     PROB_LIMS = (-1.0, 3)
     N_TRAIN = get_N_TRAIN(DIM)
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
@@ -1344,7 +1461,7 @@ if __name__ == "__main__":
     INITIAL_CLUSTERING_METHOD = "kmeans"
     ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS
 
-    OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_experimental_v2"
+    OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_experimental"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     img_fpath = (

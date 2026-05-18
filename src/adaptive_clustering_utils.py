@@ -1,14 +1,15 @@
-import logging
-import time
-from dataclasses import dataclass
-from enum import Enum
-from typing import Any, Optional
-from pathlib import Path
-import numpy as np
-import uuid
 import glob
+import logging
 import os
 import shutil
+import time
+import uuid
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any, Optional
+
+import numpy as np
 
 # Adjust imports based on your actual source tree
 from src import IS_CUPY_BACKEND, Array, xp
@@ -33,7 +34,7 @@ class SurrogateMode(Enum):
     AFFINE_COV_HESS = "affine_cov_hess"  # No grads, fit A/b, split via X^T H X, where H is estimated from covariance
     TAYLOR_COV_HESS = "taylor_cov_hess"  # Grads at centroids only, split via X^T H X, where H is estimated from covariance
     TAYLOR_LSQ_HESS = "taylor_lsq_hess"  # Grads everywhere, split via X^T H X, where H is estimated from LSQ fit to gradient residuals
-    QUADRATIC       = "quadratic"        # No grads, save as affine_cov_hess but with quadratic fit.
+    QUADRATIC = "quadratic"  # No grads, save as affine_cov_hess but with quadratic fit.
     # TODO: need to make it so that the Hessian of the quadratic is the Hessian we use for clustering.
 
 
@@ -172,6 +173,117 @@ void fused_cross_cov(
 }
 """
 
+_affine_fit_inplace_kernel_code = r"""
+extern "C" __global__
+void fused_affine_fit_regularize(
+    double* Cov,
+    const double* traces,
+    double tiny_eps,
+    int D,
+    int K)
+{
+    int k = blockDim.x * blockIdx.x + threadIdx.x;
+    if (k >= K) return;
+
+    double lam = 1e-8 * traces[k];
+    if (lam < tiny_eps) lam = tiny_eps;
+
+    int matrix_offset = k * D * D;
+    for (int r = 0; r < D; r++) {
+        Cov[matrix_offset + r * D + r] += lam;
+    }
+}
+"""
+
+_inplace_cholesky_sub_kernel_code = r"""
+extern "C" __global__
+void batched_inplace_cholesky_solve(
+    double* A,
+    double* B,
+    int D,
+    int FD,
+    int K)
+{
+    int k = blockDim.x * blockIdx.x + threadIdx.x;
+    if (k >= K) return;
+
+    int a_start = k * D * D;
+    int b_start = k * D * FD;
+
+    for (int i = 0; i < D; i++) {
+        for (int j = 0; j <= i; j++) {
+            double sum = 0.0;
+            for (int p = 0; p < j; p++) {
+                sum += A[a_start + i * D + p] * A[a_start + j * D + p];
+            }
+            if (i == j) {
+                double val = A[a_start + i * D + i] - sum;
+                A[a_start + i * D + i] = sqrt(val > 0.0 ? val : 1e-12);
+            } else {
+                A[a_start + i * D + j] =
+                    (A[a_start + i * D + j] - sum) / A[a_start + j * D + j];
+            }
+        }
+    }
+
+    for (int j = 0; j < FD; j++) {
+        for (int i = 0; i < D; i++) {
+            double sum = 0.0;
+            for (int p = 0; p < i; p++) {
+                sum += A[a_start + i * D + p] * B[b_start + p * FD + j];
+            }
+            B[b_start + i * FD + j] =
+                (B[b_start + i * FD + j] - sum) / A[a_start + i * D + i];
+        }
+    }
+
+    for (int j = 0; j < FD; j++) {
+        for (int i = D - 1; i >= 0; i--) {
+            double sum = 0.0;
+            for (int p = i + 1; p < D; p++) {
+                sum += A[a_start + p * D + i] * B[b_start + p * FD + j];
+            }
+            B[b_start + i * FD + j] =
+                (B[b_start + i * FD + j] - sum) / A[a_start + i * D + i];
+        }
+    }
+}
+"""
+
+_fused_split_projection_kernel_code = r"""
+extern "C" __global__
+void fused_split_projection(
+    const double* X,
+    const double* mus,
+    const long long* labels,
+    const double* M_split,
+    const double* v,
+    double* scores_out,
+    int N,
+    int D)
+{
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx >= N) return;
+
+    long long k = labels[idx];
+    int mu_offset = k * D;
+    int x_offset = idx * D;
+    int m_offset = k * D * D;
+    int v_offset = k * D;
+
+    double final_score = 0.0;
+    for (int i = 0; i < D; i++) {
+        double z_i = 0.0;
+        for (int j = 0; j < D; j++) {
+            double dx_j = X[x_offset + j] - mus[mu_offset + j];
+            z_i += M_split[m_offset + i * D + j] * dx_j;
+        }
+        final_score += z_i * v[v_offset + i];
+    }
+    scores_out[idx] = final_score;
+}
+"""
+
 if IS_CUPY_BACKEND:
     _mod_seg_max = cp.RawModule(code=_segmented_max_kernel_code)
     _kern_seg_max = _mod_seg_max.get_function("segmented_max_float64")
@@ -181,6 +293,15 @@ if IS_CUPY_BACKEND:
 
     _mod_cross = cp.RawModule(code=_cross_cov_kernel_code)
     _kern_cross = _mod_cross.get_function("fused_cross_cov")
+
+    _mod_affine_reg = cp.RawModule(code=_affine_fit_inplace_kernel_code)
+    _kern_affine_reg = _mod_affine_reg.get_function("fused_affine_fit_regularize")
+
+    _mod_cholesky = cp.RawModule(code=_inplace_cholesky_sub_kernel_code)
+    _kern_cholesky = _mod_cholesky.get_function("batched_inplace_cholesky_solve")
+
+    _mod_split_proj = cp.RawModule(code=_fused_split_projection_kernel_code)
+    _kern_fused_split_proj = _mod_split_proj.get_function("fused_split_projection")
 
 
 # -----------------------------------------------------------------------------
@@ -321,6 +442,59 @@ def run_fused_cross_cov(X, F, mus, f_mus, labels, K, D, FD):
         return cross_out
 
 
+def solve_regularized_covariance_inplace(auto_cov, cross_cov, D, FD):
+    """
+    Solves ``(auto_cov + lambda I) X = cross_cov`` while minimizing peak GPU
+    allocations. On CuPy, both inputs are overwritten in-place and ``cross_cov``
+    becomes the solution. NumPy keeps the original vectorized fallback.
+    """
+    if IS_CUPY_BACKEND:
+        K = int(auto_cov.shape[0])
+        traces = xp.trace(auto_cov, axis1=1, axis2=2)
+        block = 256
+        grid = (K + block - 1) // block
+        _kern_affine_reg((grid,), (block,), (auto_cov, traces, TINY_EPS, D, K))
+        _kern_cholesky((grid,), (block,), (auto_cov, cross_cov, D, FD, K))
+        return cross_cov
+
+    tr = xp.trace(auto_cov, axis1=1, axis2=2)
+    lam = xp.maximum(1e-8 * tr, TINY_EPS)
+    reg = lam[:, None, None] * xp.eye(D, dtype=xp.float64)[None, :, :]
+    return xp.linalg.solve(auto_cov + reg, cross_cov)
+
+
+def run_fused_split_projection(X, mus, labels, M_split, v):
+    """
+    Computes ``dot(M_split[label] @ (x - mu[label]), v[label])`` per point
+    without materializing an ``(N, d, d)`` indexed matrix tensor on the GPU.
+    """
+    if IS_CUPY_BACKEND:
+        N, D = X.shape
+        scores_out = xp.empty((N,), dtype=xp.float64)
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        block = 256
+        grid = (N + block - 1) // block
+        _kern_fused_split_proj(
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(X),
+                xp.ascontiguousarray(mus),
+                labels_64,
+                xp.ascontiguousarray(M_split),
+                xp.ascontiguousarray(v),
+                scores_out,
+                N,
+                D,
+            ),
+        )
+        return scores_out
+
+    dx = X - mus[labels]
+    z = xp.einsum("nij,nj->ni", M_split[labels], dx)
+    return xp.sum(z * v[labels], axis=1)
+
+
 def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
     """Returns a boolean mask for the n smallest values in each block."""
     sort_idx = xp.lexsort(xp.stack([values, blocks]))
@@ -394,11 +568,8 @@ def evaluate_cluster_errors(
             X_batch, F_batch, mus, mean_F, aug_ids, K_batch, d, fd
         )  # (K, d, fd)
 
-        tr = xp.trace(auto_cov, axis1=1, axis2=2)  # (K,)
-        lam = xp.maximum(1e-8 * tr, TINY_EPS)
-        reg = lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]  # (K, d, d)
-
-        A_T = xp.linalg.solve(auto_cov + reg, cross_cov)  # (K, d, fd)
+        A_T = solve_regularized_covariance_inplace(auto_cov, cross_cov, d, fd)
+        del auto_cov
         A = A_T.transpose(0, 2, 1)  # (K, fd, d)
         b = mean_F - xp.einsum("kfd,kd->kf", A, mus)  # (K, fd)
 
@@ -406,26 +577,25 @@ def evaluate_cluster_errors(
         diff = F_batch - (b[aug_ids] + lin)
         surrogate_params = {"A": A, "b": b}
 
-
     elif config.mode == SurrogateMode.QUADRATIC:
-        '''
+        """
         Fit model 0.5 * x^T * H * x + w^T * x + b, for H, w, b.
         Requires at least D = d(d+1) + 1 points, probably more for decent conditioning.
-        '''
+        """
 
         # Build the quadratic part
-        D = d ** 2 + d + 1
+        D = d**2 + d + 1
         quadratic_lhs_matrix = xp.empty(N, D)
         for i in range(d):
             start = i * d
-            end = (i+1) * d
-            quadratic_lhs_matrix[:,start:end] = 0.5 * dx[:,i] * dx
+            end = (i + 1) * d
+            quadratic_lhs_matrix[:, start:end] = 0.5 * dx[:, i] * dx
 
         # Build the linear part
-        quadratic_lhs_matrix[:,(d**2):-1] = dx
+        quadratic_lhs_matrix[:, (d**2) : -1] = dx
 
         # Build the constant part
-        quadratic_lhs_matrix[:,-1] = xp.ones(N)
+        quadratic_lhs_matrix[:, -1] = xp.ones(N)
 
         # Compute covariance matrix
         # I think we can just do this with run_fused_stats (WHY IS IT CALLED THIS?)
@@ -438,7 +608,7 @@ def evaluate_cluster_errors(
             D,
             fd,
             None,
-            calc_E=False
+            calc_E=False,
         )
 
         # Adaptive Tikhonov fitting
@@ -452,29 +622,30 @@ def evaluate_cluster_errors(
             aug_ids,
             K_batch,
             D,
-            fd
+            fd,
         )
-        
+
         # Solve linear system
         tr = xp.trace(lhsmat, axis1=1, axis2=2)  # (K,)
         lam = xp.maximum(1e-8 * tr, TINY_EPS)
         reg = lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]  # (K, D, D)
         weights = xp.linalg.solve(lhsmat + reg, rhsvec).T  # (K, fd, D)
-        
+
         # First d**2 dimensions define the Hessians.
-        H = weights[:,:,:(d**2)].reshape(K_batch, fd, d, d) # (K, fd, d, d)
+        H = weights[:, :, : (d**2)].reshape(K_batch, fd, d, d)  # (K, fd, d, d)
         # Next d dimensions define the gradient.
-        w = weights[:,:,(d**2):(d**2 + d)] # (K, fd, d)
+        w = weights[:, :, (d**2) : (d**2 + d)]  # (K, fd, d)
         # Last dimension defines the linear term.
-        b = weights[:,:,-1] # (K, fd)
+        b = weights[:, :, -1]  # (K, fd)
 
         # Compute the surrogate at the training data to measure errors
-        quadratic_term = xp.einsum("nfd,nfde,nfe->nf", X_batch, H[aug_ids], X_batch)  # (N, fd)
-        linear_term = xp.einsum("nfd,nd->nf", w[aug_ids], X_batch) # (N, fd)
+        quadratic_term = xp.einsum(
+            "nfd,nfde,nfe->nf", X_batch, H[aug_ids], X_batch
+        )  # (N, fd)
+        linear_term = xp.einsum("nfd,nd->nf", w[aug_ids], X_batch)  # (N, fd)
         surrogate_val = quadratic_term + linear_term + b[aug_ids]
         diff = F_batch - surrogate_val
         surrogate_params = {"H": H, "w": w, "b": b}
-
 
     else:
         raise ValueError(f"Unknown mode: {config.mode}")
@@ -660,14 +831,15 @@ def split_rejected_clusters(
     bad_starts = xp.r_[0, xp.cumsum(counts_bad)[:-1]]
     dx = X_bad - mus_bad[dense_labels_bad]
 
-
     if config.mode == SurrogateMode.QUADRATIC:
-        '''
+        """
         Use the Hessian matrix of the least squares fit for the splitting direction.
         TODO: what to do about the Hessian?
-        '''
-        print('NOTE: specific split_rejected_clusters for SurrogateMode.QUADRATIC not implemented yet.\n\
-              For now, doing the same thing as the SurrogateMode.*_COV_HESS versions.')
+        """
+        print(
+            "NOTE: specific split_rejected_clusters for SurrogateMode.QUADRATIC not implemented yet.\n\
+              For now, doing the same thing as the SurrogateMode.*_COV_HESS versions."
+        )
 
     if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_bad is not None:
         g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]  # (N_bad, fd, d)
@@ -715,7 +887,7 @@ def split_rejected_clusters(
         SurrogateMode.AFFINE_COV_HESS,
         SurrogateMode.TAYLOR_COV_HESS,
         SurrogateMode.QUADRATIC,
-        ):
+    ):
         if config.mode == SurrogateMode.TAYLOR_COV_HESS:
             g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]  # (N_bad, fd, d)
             lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp, dx)  # (N_bad, fd)
@@ -740,13 +912,7 @@ def split_rejected_clusters(
                 X_core, F_core, mus_bad, f_mus_bad, labels_core, K_bad, d, fd
             )  # (K, d, fd)
 
-            max_eigvals_proxy = xp.trace(M_XX, axis1=1, axis2=2)  # (K,)
-            _lam = xp.maximum(1e-8 * max_eigvals_proxy, TINY_EPS)  # (K,)
-            reg = (
-                _lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]
-            )  # (K, d, d)
-
-            A_T_tangent = xp.linalg.solve(M_XX + reg, M_XF)  # (K, d, fd)
+            A_T_tangent = solve_regularized_covariance_inplace(M_XX, M_XF, d, fd)
             A_tangent = A_T_tangent.transpose(0, 2, 1)  # (K, fd, d)
 
             lin_bad = xp.einsum(
@@ -804,8 +970,13 @@ def split_rejected_clusters(
     _, V_z = xp.linalg.eigh(CovZ)
     v = V_z[:, :, -1]  # Highest variance eigenvector # (K, d)
 
-    z = xp.einsum("nij,nj->ni", M_split[dense_labels_bad], dx)  # (N_bad, d)
-    scores_proj = xp.sum(z * v[dense_labels_bad], axis=1)  # (N_bad,)
+    scores_proj = run_fused_split_projection(
+        X_bad, mus_bad, dense_labels_bad, M_split, v
+    )
+
+    if IS_CUPY_BACKEND:
+        del CovZ, V_z, v, M_split
+        cp.get_default_memory_pool().free_all_blocks()
 
     sort_order = xp.lexsort(xp.stack([scores_proj, dense_labels_bad]))  # (N_bad,)
     return sort_order
@@ -993,15 +1164,17 @@ But for now I will run this without work stealing and it will be fine.
 I just need the training data to do the testing with FALKON.
 This will also be nice to have for later if, say, Skandan needs to compare training data.
 """
+
+
 def save_generated_data(X, filename):
-    path = Path('saved_training_data/')
+    path = Path("saved_training_data/")
     if not path.exists():
         path.mkdir(parents=True, exist_ok=True)
-    xp.save(f'saved_training_data/{filename}_{uuid.uuid4()}.npy', X)
+    xp.save(f"saved_training_data/{filename}_{uuid.uuid4()}.npy", X)
 
 
 def combine_generated_data(filename):
-    path = Path('saved_training_data/')
+    path = Path("saved_training_data/")
     input_dir = "saved_training_data"
 
     # Grab all .npy files in the folder with the correct beginning
