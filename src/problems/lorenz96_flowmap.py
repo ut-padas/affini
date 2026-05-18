@@ -185,11 +185,12 @@ def _lorenz96_flowmap_parallel_policy(
     return N * d >= min_state_variables
 
 
-def _lorenz96_num_workers(default: int = 8) -> int:
+def _lorenz96_num_workers(default: int = 64) -> int:
     """
     Worker count for Lorenz96 multiprocessing paths.
     """
-    return int(os.environ.get("HATANN_LORENZ96_WORKERS", default))
+    cpu_count = max(os.cpu_count() or 1, 2)
+    return min(cpu_count - 1, default)
 
 
 def lorenz96_flowmap(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> Array:
