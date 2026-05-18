@@ -7,8 +7,8 @@ import numpy as np
 from mpi4py import MPI
 
 from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _to_device, _to_host, xp
-from src.adaptive_clustering_utils import SurrogateMode
 from src.adaptive_clustering import adaptive_clustering
+from src.adaptive_clustering_utils import SurrogateMode
 
 logger = logging.getLogger(__name__)
 
