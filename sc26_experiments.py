@@ -5,7 +5,6 @@ from collections import defaultdict
 from itertools import product
 from pathlib import Path
 from typing import Literal
-import sys
 
 from tqdm import tqdm
 
@@ -111,7 +110,7 @@ def conductExperiment(
 
         # Save centroid data if user requests it
         if _rank == 0 and SAVE_FINAL_CENTROIDS is True:
-            xp.save(f'centroids_tol_{TOL}_d{DIM}.npy', surrogate.X_src)
+            xp.save(f"centroids_tol_{TOL}_d{DIM}.npy", surrogate.X_src)
 
         _start_predict_time = time.perf_counter()
 
@@ -266,9 +265,7 @@ def anisotropic_quadratic_experiment():
     USE_WORK_STEALING = True
 
     DIMs = [10]
-    ERROR_EVAL_MODES = [
-        SurrogateMode.AFFINE_COV_NO_HESS
-    ]
+    ERROR_EVAL_MODES = [SurrogateMode.AFFINE_COV_NO_HESS]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
@@ -328,9 +325,7 @@ def anisotropic_gaussian_experiment():
     USE_WORK_STEALING = True
 
     DIMs = [5]
-    ERROR_EVAL_MODES = [
-        SurrogateMode.AFFINE_COV_NO_HESS
-    ]
+    ERROR_EVAL_MODES = [SurrogateMode.AFFINE_COV_NO_HESS]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
@@ -467,12 +462,14 @@ def lorenz96_experiment(tf):
     # Custom oracles to return only the first component
     def lorenz(x):
         if IS_CUPY_BACKEND:
-            import jax.numpy as jnp, cupy
+            import cupy
+            import jax.numpy as jnp
+
             # x will be type CuPy. Convert to jax type.
             x_jax = jnp.from_dlpack(x)
             f = lorenz96_flowmap_jax_batched(x_jax, FORCING, FINAL_TIME)
             # output is jax type; convert to CuPy.
-            return cupy.from_dlpack(f[:,:,0])
+            return cupy.from_dlpack(f[:, :, 0])
         else:
             f = lorenz96_flowmap_jax_batched(x, FORCING, FINAL_TIME)
             return f
@@ -548,6 +545,7 @@ def lorenz96_dimension_scaling_experiment():
         f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
         N, _ = f.shape
         return f[:, 0].reshape((N, 1))
+
     def lorenz_grad(x):
         g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
         N, d, _ = g.shape
@@ -561,9 +559,7 @@ def lorenz96_dimension_scaling_experiment():
     USE_WORK_STEALING = True
 
     DIMs = [5, 10, 20, 40, 80]
-    ERROR_EVAL_MODES = [
-        SurrogateMode.AFFINE_COV_HESS
-    ]
+    ERROR_EVAL_MODES = [SurrogateMode.AFFINE_COV_HESS]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
@@ -571,8 +567,8 @@ def lorenz96_dimension_scaling_experiment():
 
         N_TRAIN = min(get_N_TRAIN(DIM), 500_000)
         N_TEST = N_TRAIN // 2
-        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
-        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
+        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM) // 2
+        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM) // 2
 
         for TOL in TOLs:
             json_fpath = (
@@ -607,13 +603,16 @@ def lorenz96_dimension_scaling_experiment():
 def indefinite_quadratic_experiment():
 
     d = 5
-    randmat = xp.random.uniform(-5, 5, (d,d))
+    randmat = xp.random.uniform(-5, 5, (d, d))
     H = 0.5 * (randmat + randmat.T)
+
     # avec = xp.array([1, -10, 50, -100, 200])
     # The Hessian matrix will be diagonal.
     def indefinite_quadratic(x):
         import numpy as np
-        return np.einsum('ni,ij,nj->n',x,H,x)[:,np.newaxis]
+
+        return np.einsum("ni,ij,nj->n", x, H, x)[:, np.newaxis]
+
     def indefinite_quadratic_grad(x):
         return 2 * x @ H
 
@@ -626,10 +625,10 @@ def indefinite_quadratic_experiment():
 
     DIMs = [d]
     ERROR_EVAL_MODES = [
-        SurrogateMode.AFFINE_COV_HESS,      # cluster via X^T @ H @ X
-        SurrogateMode.AFFINE_COV_NO_HESS,   # cluster via X^T @ I @ X
+        SurrogateMode.AFFINE_COV_HESS,  # cluster via X^T @ H @ X
+        SurrogateMode.AFFINE_COV_NO_HESS,  # cluster via X^T @ I @ X
         SurrogateMode.TAYLOR_COV_HESS,
-        SurrogateMode.TAYLOR_LSQ_HESS,      # cluster via X^T @ H @ X, with very accurate H
+        SurrogateMode.TAYLOR_LSQ_HESS,  # cluster via X^T @ H @ X, with very accurate H
     ]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
@@ -672,7 +671,6 @@ def indefinite_quadratic_experiment():
     return EXP_DIR
 
 
-
 if __name__ == "__main__":
     import logging
 
@@ -684,7 +682,8 @@ if __name__ == "__main__":
     # dir1 = anisotropic_quadratic_experiment()
     # dir2 = anisotropic_gaussian_experiment()
     # dir3 = rosenbrock_experiment()
-    dir1 = lorenz96_experiment(tf=0.15)
+    # dir1 = lorenz96_experiment(tf=0.15)
+    dir2 = lorenz96_dimension_scaling_experiment()
     # dir5 = rosenbrock_diff_error_metrics_experiment()
     # dir6 = indefinite_quadratic_experiment()
 
