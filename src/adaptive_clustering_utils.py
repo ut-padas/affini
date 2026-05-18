@@ -284,6 +284,36 @@ void fused_split_projection(
 }
 """
 
+_fused_mahalanobis_projection_kernel_code = r"""
+extern "C" __global__
+void fused_mahalanobis_projection(
+    const double* dx,
+    const long long* labels,
+    const double* U,
+    double* proj_out,
+    int N,
+    int D)
+{
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx >= N) return;
+
+    long long k = labels[idx];
+    int dx_offset = idx * D;
+    int u_offset = k * D * D;
+    int proj_offset = idx * D;
+
+    // Match xp.einsum("ni,nij->nj", dx, U[labels]):
+    // proj[idx, j] = sum_i dx[idx, i] * U[k, i, j]
+    for (int j = 0; j < D; j++) {
+        double sum = 0.0;
+        for (int i = 0; i < D; i++) {
+            sum += dx[dx_offset + i] * U[u_offset + i * D + j];
+        }
+        proj_out[proj_offset + j] = sum;
+    }
+}
+"""
+
 if IS_CUPY_BACKEND:
     _mod_seg_max = cp.RawModule(code=_segmented_max_kernel_code)
     _kern_seg_max = _mod_seg_max.get_function("segmented_max_float64")
@@ -302,6 +332,9 @@ if IS_CUPY_BACKEND:
 
     _mod_split_proj = cp.RawModule(code=_fused_split_projection_kernel_code)
     _kern_fused_split_proj = _mod_split_proj.get_function("fused_split_projection")
+
+    _mod_mah_proj = cp.RawModule(code=_fused_mahalanobis_projection_kernel_code)
+    _kern_fused_mah_proj = _mod_mah_proj.get_function("fused_mahalanobis_projection")
 
 
 # -----------------------------------------------------------------------------
@@ -491,6 +524,37 @@ def run_fused_split_projection(X, mus, labels, M_split, v):
     dx = X - mus[labels]
     z = xp.einsum("nij,nj->ni", M_split[labels], dx)
     return xp.sum(z * v[labels], axis=1)
+
+
+def run_fused_mahalanobis_projection(dx, labels, U):
+    """
+    Computes ``dx @ U[label]`` per point without materializing
+    ``U[labels]`` as an ``(N, d, d)`` tensor.
+
+    This is used in accepted-cluster trust ellipsoid construction, where
+    materializing the indexed eigenvector tensor can be O(N*d^2) memory.
+    """
+    if IS_CUPY_BACKEND:
+        N, D = dx.shape
+        proj_out = xp.empty((N, D), dtype=xp.float64)
+        labels_64 = xp.ascontiguousarray(labels, dtype=xp.int64)
+        block = 256
+        grid = (N + block - 1) // block
+        _kern_fused_mah_proj(
+            (grid,),
+            (block,),
+            (
+                xp.ascontiguousarray(dx),
+                labels_64,
+                xp.ascontiguousarray(U),
+                proj_out,
+                N,
+                D,
+            ),
+        )
+        return proj_out
+
+    return xp.einsum("ni,nij->nj", dx, U[labels])
 
 
 def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
@@ -733,7 +797,7 @@ def compute_accepted_stats(
     Lambda, U = xp.linalg.eigh(Cov)
     Lambda_inv = 1.0 / xp.maximum(Lambda, TINY_EPS)  # (K, d)
 
-    proj = xp.einsum("ni,nij->nj", dx, U[dense_labels_good])  # (N_good, d)
+    proj = run_fused_mahalanobis_projection(dx, dense_labels_good, U)  # (N_good, d)
     dist_sq_mahalanobis = xp.sum(
         proj**2 * Lambda_inv[dense_labels_good], axis=1
     )  # (N_good,)
