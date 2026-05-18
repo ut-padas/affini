@@ -749,7 +749,7 @@ def adaptive_cluster_algorithm_gpu(
         mempool.free_all_blocks()
         current_depth += 1
         elapsed_level = time.perf_counter() - start_level_time
-        logger.debug(f"Level {current_depth-1} Time: {elapsed_level:.4f}s")
+        logger.debug(f"Level {current_depth - 1} Time: {elapsed_level:.4f}s")
 
     elapsed_time = time.perf_counter() - start_time
     logger.info(f"Total GPU Adaptive Clustering Time: {elapsed_time:.4f}s")

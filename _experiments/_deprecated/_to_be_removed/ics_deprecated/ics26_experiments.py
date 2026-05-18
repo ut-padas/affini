@@ -899,7 +899,6 @@ if __name__ == "__main__":
     setup_logging()
 
     if IS_CUPY_BACKEND:
-
         print("Running on GPU node.")
         dir = ics_aniso_gaussian_experiment()
         create_summary_dataframe(dir)

@@ -601,7 +601,7 @@ def adaptive_clustering(
     F_pool[:N0] = F0_val
     G_pool[:N0] = G0_val
 
-    logger.info(f"Runtime - Initial f/g: {time.perf_counter()-_t0:.3f}s")
+    logger.info(f"Runtime - Initial f/g: {time.perf_counter() - _t0:.3f}s")
     logger.info(f"Function: Input d={d}, Output fd={fd}")
 
     # Global scale per component for Linf-global
@@ -621,7 +621,7 @@ def adaptive_clustering(
 
         labels_pool = xp.empty((capacity,), dtype=xp.int64)
         labels_pool[:N0] = labels0.astype(xp.int64)
-        logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
+        logger.info(f"Runtime - Initial KMeans: {time.perf_counter() - _t1:.3f}s")
     elif INITIAL_CLUSTERING_METHOD == "knndbscan":
         _device = "gpu" if IS_CUPY_BACKEND else "cpu"
         _t1 = time.perf_counter()
@@ -637,7 +637,7 @@ def adaptive_clustering(
 
         # Includes noise label (-1) in count
         num_initial_clusters = int(xp.unique(labels_pool[:N0]).shape[0])
-        logger.info(f"Runtime - Initial KNN-DBSCAN: {time.perf_counter()-_t1:.3f}s")
+        logger.info(f"Runtime - Initial KNN-DBSCAN: {time.perf_counter() - _t1:.3f}s")
         logger.info(f"Initial KNN-DBSCAN found {num_initial_clusters} clusters.")
     else:
         raise ValueError(
@@ -1064,10 +1064,10 @@ def adaptive_clustering(
             f"Level {level:03}: Clusters={K_batch:,}, active={n_active:,}, "
             f"good={int(n_good):,}, bad={n_bad_clusters:,}, "
             f"synth={n_total - N0:,}, "
-            f"pool_used={n_total:,}/{capacity:,} ({n_total/capacity:.0%}) , "
+            f"pool_used={n_total:,}/{capacity:,} ({n_total / capacity:.0%}) , "
             f"F_in_max={xp.max(F_max_global):.3e}, "
         )
-        logger.info(f"Runtime - Level {level:03}: {time.perf_counter()-t_level:.3f}s")
+        logger.info(f"Runtime - Level {level:03}: {time.perf_counter() - t_level:.3f}s")
 
         level += 1
 
@@ -1076,7 +1076,7 @@ def adaptive_clustering(
         logger.warning(f"Reached MAX_LEVELS={MAX_LEVELS}, terminating.")
     final_count = int(out_count)
     logger.info(f"Adaptive clustering complete: {final_count:,} final clusters.")
-    logger.info(f"Runtime - Total: {time.perf_counter() -_start_time:.3f}s")
+    logger.info(f"Runtime - Total: {time.perf_counter() - _start_time:.3f}s")
 
     out_dict = {k: buffers[k][:final_count] for k in buffers if k != "tree_data"}
     if STORE_TREE_DATA:

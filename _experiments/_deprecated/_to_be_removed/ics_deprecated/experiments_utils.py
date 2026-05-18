@@ -47,7 +47,8 @@ def create_summary_dataframe(results_dir: Path):
                 "tol": row.get("tol"),
                 "num_levels": row.get("num_levels"),
                 "N0": row.get("N0"),
-                "Nc": row.get("n_clusters") or row.get("profiling_stats").get("num_final_clusters"),  # type: ignore
+                "Nc": row.get("n_clusters")
+                or row.get("profiling_stats").get("num_final_clusters"),  # type: ignore
             }
 
             if isinstance(stats, dict):
@@ -430,12 +431,11 @@ def Problem_experiment_setup(
     FAILED = False
     _TRAINED, _PREDICTED = False, False
     try:
-
         model_save_path = json_fpath.with_name(json_fpath.stem + "_surrogate_model.npz")
         if STORE_TRAIN_EVALS:
-            assert (
-                TRAIN_EVALS_DIR is not None
-            ), "TRAIN_EVALS_DIR must be provided if STORE_TRAIN_EVALS is True"
+            assert TRAIN_EVALS_DIR is not None, (
+                "TRAIN_EVALS_DIR must be provided if STORE_TRAIN_EVALS is True"
+            )
             TRAIN_EVALS_DIR.mkdir(parents=True, exist_ok=True)
             f_debug = capture_evaluations(
                 f_fn,

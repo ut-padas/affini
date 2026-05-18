@@ -5,7 +5,6 @@ from collections import defaultdict
 from itertools import product
 from pathlib import Path
 from typing import Literal
-import sys
 
 from tqdm import tqdm
 
@@ -27,6 +26,31 @@ SEED = 0
 logger = logging.getLogger(__name__)
 _size = _get_mpi_size()
 _rank = _get_mpi_rank()
+
+
+def cap_initial_augmentation_budget(
+    n_train: int,
+    num_initial_clusters: int,
+    min_pts_per_cluster: int,
+    *,
+    min_initial_clusters: int = 16,
+) -> tuple[int, int]:
+    """
+    Keep the level-0 rejected-cluster augmentation budget compatible with the
+    available training set once ``N_TRAIN`` has been capped.
+
+    Rejected clusters are padded to at least ``2 * MIN_PTS_PER_CLUSTER`` before
+    splitting.  The raw dimension-scaling heuristics keep growing after
+    ``N_TRAIN`` is capped, which can otherwise make level 0 request far more
+    synthetic points than the capped experiment can support.
+    """
+    max_min_pts_for_budget = max(2, n_train // (2 * min_initial_clusters))
+    capped_min_pts = min(min_pts_per_cluster, max_min_pts_for_budget)
+    max_initial_clusters_for_budget = max(1, n_train // (2 * capped_min_pts))
+    capped_num_initial_clusters = min(
+        num_initial_clusters, max_initial_clusters_for_budget
+    )
+    return capped_num_initial_clusters, capped_min_pts
 
 
 def conductExperiment(
@@ -111,7 +135,7 @@ def conductExperiment(
 
         # Save centroid data if user requests it
         if _rank == 0 and SAVE_FINAL_CENTROIDS is True:
-            xp.save(f'centroids_tol_{TOL}_d{DIM}.npy', surrogate.X_src)
+            xp.save(f"centroids_tol_{TOL}_d{DIM}.npy", surrogate.X_src)
 
         _start_predict_time = time.perf_counter()
 
@@ -266,13 +290,10 @@ def anisotropic_quadratic_experiment():
     USE_WORK_STEALING = True
 
     DIMs = [10]
-    ERROR_EVAL_MODES = [
-        SurrogateMode.AFFINE_COV_NO_HESS
-    ]
+    ERROR_EVAL_MODES = [SurrogateMode.AFFINE_COV_NO_HESS]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
-
         # TOLs = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2,
         #         0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
         #         0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01]
@@ -328,13 +349,10 @@ def anisotropic_gaussian_experiment():
     USE_WORK_STEALING = True
 
     DIMs = [5]
-    ERROR_EVAL_MODES = [
-        SurrogateMode.AFFINE_COV_NO_HESS
-    ]
+    ERROR_EVAL_MODES = [SurrogateMode.AFFINE_COV_NO_HESS]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
-
         # TOLs = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2,
         #         0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
         #         0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01]
@@ -456,7 +474,6 @@ def rosenbrock_experiment():
 
 
 def lorenz96_experiment(tf):
-
     # from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
     from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
 
@@ -467,12 +484,14 @@ def lorenz96_experiment(tf):
     # Custom oracles to return only the first component
     def lorenz(x):
         if IS_CUPY_BACKEND:
-            import jax.numpy as jnp, cupy
+            import cupy
+            import jax.numpy as jnp
+
             # x will be type CuPy. Convert to jax type.
             x_jax = jnp.from_dlpack(x)
             f = lorenz96_flowmap_jax_batched(x_jax, FORCING, FINAL_TIME)
             # output is jax type; convert to CuPy.
-            return cupy.from_dlpack(f[:,:,0])
+            return cupy.from_dlpack(f[:, :, 0])
         else:
             f = lorenz96_flowmap_jax_batched(x, FORCING, FINAL_TIME)
             return f
@@ -494,7 +513,6 @@ def lorenz96_experiment(tf):
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
-
         # TOLs = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2,
         #         0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
         #         0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01]
@@ -537,7 +555,10 @@ def lorenz96_experiment(tf):
 
 
 def lorenz96_dimension_scaling_experiment():
-    from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
+    from src.problems.lorenz96_flowmap import (
+        lorenz96_flowmap_auto,
+        lorenz96_flowmap_grad_auto,
+    )
 
     # Lorenz flowmap parameters set here
     FORCING = 1
@@ -545,11 +566,12 @@ def lorenz96_dimension_scaling_experiment():
 
     # Custom oracles to return only the first component
     def lorenz(x):
-        f = lorenz96_flowmap(x, FORCING, FINAL_TIME)
+        f = lorenz96_flowmap_auto(x, FORCING, FINAL_TIME)
         N, _ = f.shape
         return f[:, 0].reshape((N, 1))
+
     def lorenz_grad(x):
-        g = lorenz96_flowmap_grad(x, FORCING, FINAL_TIME)
+        g = lorenz96_flowmap_grad_auto(x, FORCING, FINAL_TIME)
         N, d, _ = g.shape
         return g[:, 0, :].reshape((N, 1, d))
 
@@ -561,18 +583,32 @@ def lorenz96_dimension_scaling_experiment():
     USE_WORK_STEALING = True
 
     DIMs = [5, 10, 20, 40, 80]
-    ERROR_EVAL_MODES = [
-        SurrogateMode.AFFINE_COV_HESS
-    ]
+    ERROR_EVAL_MODES = [SurrogateMode.AFFINE_COV_HESS]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
         TOLs = [0.1]
 
-        N_TRAIN = min(get_N_TRAIN(DIM), 500_000)
+        N_TRAIN = min(get_N_TRAIN(DIM), 1_000_000)
         N_TEST = N_TRAIN // 2
-        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
-        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
+        raw_num_initial_clusters = get_NUM_INITIAL_CLUSTERS(DIM)
+        raw_min_pts_per_cluster = get_MIN_PTS_PER_CLUSTER(DIM)
+        NUM_INITIAL_CLUSTERS, MIN_PTS_PER_CLUSTER = cap_initial_augmentation_budget(
+            N_TRAIN,
+            raw_num_initial_clusters,
+            raw_min_pts_per_cluster,
+        )
+
+        if _rank == 0 and (
+            NUM_INITIAL_CLUSTERS != raw_num_initial_clusters
+            or MIN_PTS_PER_CLUSTER != raw_min_pts_per_cluster
+        ):
+            print(
+                "Adjusted level-0 heuristics for capped training budget: "
+                f"dim={DIM}, N_TRAIN={N_TRAIN:,}, "
+                f"NUM_INITIAL_CLUSTERS={raw_num_initial_clusters:,}->{NUM_INITIAL_CLUSTERS:,}, "
+                f"MIN_PTS_PER_CLUSTER={raw_min_pts_per_cluster:,}->{MIN_PTS_PER_CLUSTER:,}"
+            )
 
         for TOL in TOLs:
             json_fpath = (
@@ -605,15 +641,17 @@ def lorenz96_dimension_scaling_experiment():
 
 
 def indefinite_quadratic_experiment():
-
     d = 5
-    randmat = xp.random.uniform(-5, 5, (d,d))
+    randmat = xp.random.uniform(-5, 5, (d, d))
     H = 0.5 * (randmat + randmat.T)
+
     # avec = xp.array([1, -10, 50, -100, 200])
     # The Hessian matrix will be diagonal.
     def indefinite_quadratic(x):
         import numpy as np
-        return np.einsum('ni,ij,nj->n',x,H,x)[:,np.newaxis]
+
+        return np.einsum("ni,ij,nj->n", x, H, x)[:, np.newaxis]
+
     def indefinite_quadratic_grad(x):
         return 2 * x @ H
 
@@ -626,10 +664,10 @@ def indefinite_quadratic_experiment():
 
     DIMs = [d]
     ERROR_EVAL_MODES = [
-        SurrogateMode.AFFINE_COV_HESS,      # cluster via X^T @ H @ X
-        SurrogateMode.AFFINE_COV_NO_HESS,   # cluster via X^T @ I @ X
+        SurrogateMode.AFFINE_COV_HESS,  # cluster via X^T @ H @ X
+        SurrogateMode.AFFINE_COV_NO_HESS,  # cluster via X^T @ I @ X
         SurrogateMode.TAYLOR_COV_HESS,
-        SurrogateMode.TAYLOR_LSQ_HESS,      # cluster via X^T @ H @ X, with very accurate H
+        SurrogateMode.TAYLOR_LSQ_HESS,  # cluster via X^T @ H @ X, with very accurate H
     ]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
@@ -672,7 +710,6 @@ def indefinite_quadratic_experiment():
     return EXP_DIR
 
 
-
 if __name__ == "__main__":
     import logging
 
@@ -684,7 +721,8 @@ if __name__ == "__main__":
     # dir1 = anisotropic_quadratic_experiment()
     # dir2 = anisotropic_gaussian_experiment()
     # dir3 = rosenbrock_experiment()
-    dir1 = lorenz96_experiment(tf=0.15)
+    # dir1 = lorenz96_experiment(tf=0.15)
+    dir2 = lorenz96_dimension_scaling_experiment()
     # dir5 = rosenbrock_diff_error_metrics_experiment()
     # dir6 = indefinite_quadratic_experiment()
 

@@ -65,7 +65,6 @@ def run_hessian_convergence_sweep(
     print("-" * 60)
 
     for prob_name, dim, tol, metric_name in tqdm(sweep_configs, desc="Sweep"):
-
         # Skip known slow configuration (Dim 4 + Linf-local + Tight Tol)
         if dim == 4 and metric_name == "Linf-local" and tol <= 2e-2:
             continue

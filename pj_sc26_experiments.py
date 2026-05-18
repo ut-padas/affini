@@ -267,7 +267,6 @@ def anisotropic_quadratic_experiment():
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
-
         TOLs = [0.1, 0.05, 0.02, 0.01, 0.005]
         N_TRAIN = get_N_TRAIN(DIM)
         N_TEST = N_TRAIN // 2
@@ -581,7 +580,6 @@ def rosenbrock_diff_error_metrics_experiment():
 
 
 def lorenz96_experiment():
-
     from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 
     # Lorenz flowmap parameters set here

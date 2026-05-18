@@ -1078,7 +1078,7 @@ def adaptive_clustering(
 
         fd = int(F0_val.shape[1])
         logger.info(f"R00: N0={N0:,}, d={d}, fd={fd}")
-        logger.info(f"Runtime - R00: Initial F/G Eval {time.perf_counter()-_t0:.3f}s")
+        logger.info(f"Runtime - R00: Initial F/G Eval {time.perf_counter() - _t0:.3f}s")
 
         F_max_global_host = _to_host(xp.max(xp.abs(F0_val), axis=0))
 
@@ -1098,7 +1098,9 @@ def adaptive_clustering(
                 if isinstance(labels0, np.ndarray)
                 else _to_host(labels0).astype(np.int64)
             )
-            logger.info(f"Runtime - R00: Initial KMeans {time.perf_counter()-_t1:.3f}s")
+            logger.info(
+                f"Runtime - R00: Initial KMeans {time.perf_counter() - _t1:.3f}s"
+            )
 
         elif INITIAL_CLUSTERING_METHOD == "knndbscan":
             from knndbscan import (
@@ -1120,7 +1122,7 @@ def adaptive_clustering(
             num_initial_clusters = int(xp.unique(labels0).shape[0])
             logger.info(f"Initial kNN-DBSCAN: {num_initial_clusters:,} clusters")
             logger.info(
-                f"Runtime - R00: Initial kNN-DBSCAN {time.perf_counter()-_t1:.3f}s"
+                f"Runtime - R00: Initial kNN-DBSCAN {time.perf_counter() - _t1:.3f}s"
             )
         else:
             raise ValueError(
@@ -1232,7 +1234,7 @@ def adaptive_clustering(
     # Log local refinement results
     logger.info(
         f"R{rank:03}: Local Refinement Done. Found {out_count:,} clusters. "
-        f"Local f-evals={local_f_evals:,}. Time={time.perf_counter()-_start:.2f}s"
+        f"Local f-evals={local_f_evals:,}. Time={time.perf_counter() - _start:.2f}s"
     )
 
     # ------------------------------------------------------------------
@@ -1296,7 +1298,7 @@ def adaptive_clustering(
         merged["total_f_evals"] = int(total_f_evals)  # type: ignore
         logger.info(
             f"Rank 0: final clusters={total_clusters:,}, "
-            f"total time={time.perf_counter()-_start:.2f}s"
+            f"total time={time.perf_counter() - _start:.2f}s"
         )
         return merged
     else:

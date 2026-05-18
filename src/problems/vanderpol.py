@@ -1,4 +1,5 @@
 """Van der Pol oscillator and its gradient."""
+
 import numpy as np
 from src import Array
 
@@ -14,9 +15,9 @@ def vanderpol(X: Array, mu=5.0) -> Array:
     Returns:
         dXdt: (N, 2) time derivatives at each state in X.
     """
-    x = X[:,0]
-    y = X[:,1]
-    dxdt = mu * (x - (x ** 3 / 3) - y)
+    x = X[:, 0]
+    y = X[:, 1]
+    dxdt = mu * (x - (x**3 / 3) - y)
     dydt = x / mu
     return np.column_stack((dxdt, dydt))
 
@@ -34,16 +35,16 @@ def vanderpol_grad(X, mu=5.0) -> Array:
     N = X.shape[0]
     x = X[:, 0]
     J = np.zeros((N, 2, 2))
-    
+
     # df1/dx = mu * (1 - x^2)
     J[:, 0, 0] = mu * (1 - x**2)
-    
+
     # df1/dy = -mu
     J[:, 0, 1] = -mu
-    
+
     # df2/dx = 1/mu
     J[:, 1, 0] = 1.0 / mu
-    
+
     # df2/dy = 0 (already zero from np.zeros)
     return J
 
@@ -111,7 +112,7 @@ if __name__ == "__main__":
             sol_batch[traj_idx, 0, :],
             color=colors[traj_idx],
             alpha=0.7,
-            label=f"Traj {traj_idx+1}",
+            label=f"Traj {traj_idx + 1}",
         )
 
     plt.xlabel("Time")

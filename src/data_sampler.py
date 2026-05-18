@@ -34,7 +34,7 @@ class DataSampler:
 
         # Generate (N, D)
         X = rng.uniform(l, r, (N, n_dim))
-        logger.info(f"Uniform Sampling Time: {time.perf_counter()-t0:.4f}s")
+        logger.info(f"Uniform Sampling Time: {time.perf_counter() - t0:.4f}s")
         return xp.astype(X, xp.float64)
 
     @staticmethod
@@ -65,7 +65,7 @@ class DataSampler:
         mesh = xp.meshgrid(*grids, indexing="ij")
         X = xp.stack(mesh, axis=-1).reshape(-1, n_dim)
 
-        logger.info(f"Grid Sampling Time: {time.perf_counter()-t0:.4f}s")
+        logger.info(f"Grid Sampling Time: {time.perf_counter() - t0:.4f}s")
         return xp.astype(X, xp.float64)
 
     @staticmethod
@@ -100,7 +100,7 @@ class DataSampler:
 
         # Convert to target backend
         X = xp.asarray(sample_scaled, dtype=xp.float64)
-        logger.info(f"LHS Sampling Time: {time.perf_counter()-t0:.4f}s")
+        logger.info(f"LHS Sampling Time: {time.perf_counter() - t0:.4f}s")
         return X
 
 

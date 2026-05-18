@@ -255,7 +255,10 @@ class AdaptiveClusterer:
         Returns:
             List of tree nodes representing the clustered data.
         """
-        global NUM_CLUSTERED_BY_TWO_MEANS, NUM_CLUSTERED_BY_CUML, NUM_CLUSTERED_BY_SKLEARN
+        global \
+            NUM_CLUSTERED_BY_TWO_MEANS, \
+            NUM_CLUSTERED_BY_CUML, \
+            NUM_CLUSTERED_BY_SKLEARN
         # Prepare data - ensure proper shape without forcing 2D
         X = X.astype(NP_DTYPE)
         if X.ndim != 2:
