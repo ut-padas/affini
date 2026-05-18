@@ -119,7 +119,7 @@ if __name__ == "__main__":
             sol_batch[traj_idx, 0, :],
             color=colors[traj_idx],
             alpha=0.7,
-            label=f"Traj {traj_idx+1}",
+            label=f"Traj {traj_idx + 1}",
         )
 
     plt.xlabel("Time")

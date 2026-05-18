@@ -25,7 +25,6 @@ from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_gra
 
 
 def generate_training_data_along_trajectories(seed, f, N_train, N_timesteps):
-
     xp.random.seed(SEED)
     N_train_init = N_train // N_timesteps
 
@@ -43,7 +42,6 @@ def generate_training_data_along_trajectories(seed, f, N_train, N_timesteps):
 
 
 if __name__ == "__main__":
-
     # Chaining together multiple time steps.
     from src.logging_utils import setup_logging
 

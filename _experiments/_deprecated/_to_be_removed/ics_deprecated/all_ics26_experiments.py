@@ -101,7 +101,6 @@ def ics_quadratic_experiment() -> Path:
 
 
 def quadratic_experiment_with_v2_no_grad() -> Path:
-
     MAX_CLUSTERS_EST = 10_000
     K_NEIGHBOURS = 1
     CLUSTERING_VERSION = "v2"
@@ -369,7 +368,6 @@ def rastrigin_experiment_with_v2() -> Path:
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rastrigin Experiments"):
-
         # Resource constraints check
         if (DIM >= 4 and TOL <= 5e-3) or (DIM == 10 and TOL <= 1e-1):
             print(f"Skipping DIM={DIM}, TOL={TOL} (High Compute Cost)")
@@ -442,7 +440,6 @@ def rosenbrock_experiment_with_v2() -> Path:
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rosenbrock Experiments"):
-
         # Resource constraints checks
         if (DIM == 10 and TOL <= 1e-2) or (DIM == 5 and TOL <= 1e-3):
             print(
@@ -532,7 +529,6 @@ def rosenbrock_experiment_with_v2_no_grad() -> Path:
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Rosenbrock Experiments"):
-
         # Resource constraints checks
         if DIM == 10 and TOL < 0.1:
             print(
@@ -619,7 +615,6 @@ def lorenz_experiment_with_v2() -> Path:
 
     combos = list(product(DIMs, TOLs, ERROR_METRICs))
     for DIM, TOL, ERROR_METRIC in tqdm(combos, desc="Lorenz Experiments"):
-
         # Resource constraints checks
         if DIM == 10 and TOL <= 0.005:
             print(

@@ -294,7 +294,6 @@ def anisotropic_quadratic_experiment():
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
-
         # TOLs = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2,
         #         0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
         #         0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01]
@@ -354,7 +353,6 @@ def anisotropic_gaussian_experiment():
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
-
         # TOLs = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2,
         #         0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
         #         0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01]
@@ -476,7 +474,6 @@ def rosenbrock_experiment():
 
 
 def lorenz96_experiment(tf):
-
     # from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
     from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
 
@@ -516,7 +513,6 @@ def lorenz96_experiment(tf):
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
-
         # TOLs = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2,
         #         0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
         #         0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01]
@@ -642,7 +638,6 @@ def lorenz96_dimension_scaling_experiment():
 
 
 def indefinite_quadratic_experiment():
-
     d = 5
     randmat = xp.random.uniform(-5, 5, (d, d))
     H = 0.5 * (randmat + randmat.T)

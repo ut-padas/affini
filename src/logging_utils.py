@@ -291,9 +291,9 @@ def consolidate_evaluations(
         all_results.append(data["result"])
 
         assert data["X"].ndim == 2, f"X array in {npz_file} is not 2D"
-        assert (
-            data["result"].ndim == expected_result_ndim
-        ), f"result array in {npz_file} has {data['result'].ndim}D but expected {expected_result_ndim}D"
+        assert data["result"].ndim == expected_result_ndim, (
+            f"result array in {npz_file} has {data['result'].ndim}D but expected {expected_result_ndim}D"
+        )
 
     # Concatenate all data
     X_concat = np.vstack(all_X)

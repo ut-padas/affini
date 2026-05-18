@@ -97,7 +97,11 @@ def benchmark_hessian_estimation():
         )
 
         clusters, _ = clusterer.fit(
-            X, func_obj.f, func_obj.grad, cupy_f=None, error_metric=error_metric  # type: ignore
+            X,
+            func_obj.f,
+            func_obj.grad,
+            cupy_f=None,
+            error_metric=error_metric,  # type: ignore
         )
 
         # 3. Analyze Estimation Quality

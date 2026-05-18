@@ -2,7 +2,8 @@ from falkon import Falkon, kernels
 import torch
 import time
 
-def sample_uniform_nd(n, d, range, device='cpu'):
+
+def sample_uniform_nd(n, d, range, device="cpu"):
     """
     Samples N points in a d-dimensional hypercube [low, high]^d.
     """
@@ -15,11 +16,11 @@ def sample_uniform_nd(n, d, range, device='cpu'):
 def rosenbrock(x):
     """
     Computes the Rosenbrock function.
-    
+
     Args:
         x (torch.Tensor): A tensor of shape (..., D), where D is the dimensionality.
                           The function is evaluated over the last dimension.
-    
+
     Returns:
         torch.Tensor: The value of the Rosenbrock function at each point.
     """
@@ -27,17 +28,15 @@ def rosenbrock(x):
     x_i = x[..., :-1]
     # x_{i+1}
     x_next = x[..., 1:]
-    
+
     # Summation terms
-    term1 = 100 * (x_next - x_i**2)**2
-    term2 = (x_i - 1)**2
-    
+    term1 = 100 * (x_next - x_i**2) ** 2
+    term2 = (x_i - 1) ** 2
+
     return torch.sum(term1 + term2, dim=-1)
 
 
-
 def rosenbrock_ridge_regression_example(n_train=1000, n_test=1000, d=2):
-
     # Generate training data data
     torch.manual_seed(67)
     train_x = sample_uniform_nd(n_train, d, [-2, 3])
@@ -61,13 +60,7 @@ def rosenbrock_ridge_regression_example(n_train=1000, n_test=1000, d=2):
     def mean_squared_error(true, pred):
         return torch.mean((true - pred) ** 2)
 
-    model = Falkon(
-        kernel=k,
-        penalty=1e-6,
-        M=5000,
-        seed=67,
-        error_fn=mean_squared_error
-    )
+    model = Falkon(kernel=k, penalty=1e-6, M=5000, seed=67, error_fn=mean_squared_error)
 
     # Train
     start_train = time.perf_counter()
@@ -81,13 +74,10 @@ def rosenbrock_ridge_regression_example(n_train=1000, n_test=1000, d=2):
     end_pred = time.perf_counter()
     time_pred = end_pred - start_pred
     rel_err = torch.linalg.norm(test_y - preds, 2) / torch.linalg.norm(test_y, 2)
-    print(f'Training time: {time_train:.4f} seconds')
-    print(f'Inference time: {time_pred:.4f} seconds')
-    print(f'Relative L2 Error: {rel_err}')
+    print(f"Training time: {time_train:.4f} seconds")
+    print(f"Inference time: {time_pred:.4f} seconds")
+    print(f"Relative L2 Error: {rel_err}")
 
 
-
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     rosenbrock_ridge_regression_example(n_train=776, n_test=50000, d=2)
-

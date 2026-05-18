@@ -241,7 +241,9 @@ def _run_local_refinement(
                             )
                             if meta["has_g"]:
                                 comm.Recv(
-                                    G_host, source=target_rank, tag=TAG_STEAL_GRANT + 3  # type: ignore
+                                    G_host,
+                                    source=target_rank,
+                                    tag=TAG_STEAL_GRANT + 3,  # type: ignore
                                 )
                             comm.Recv(
                                 sizes_host, source=target_rank, tag=TAG_STEAL_GRANT + 4
@@ -328,7 +330,7 @@ def _run_local_refinement(
 
         for b in range(num_batches):
             logger.debug(
-                f"R{rank:02} L{level:02}: Batch {b+1}/{num_batches} "
+                f"R{rank:02} L{level:02}: Batch {b + 1}/{num_batches} "
                 f"[clusters {start_cluster_idx}–{min(start_cluster_idx + BATCH_SIZE, num_clusters)}]"
             )
 
@@ -423,7 +425,7 @@ def _run_local_refinement(
 
                     _t_send_elapsed = time.perf_counter() - _t_send
                     logger.info(
-                        f"R{rank:02} L{level:02} B{b+1}: Granted mid-level steal to R{req_src:02} | "
+                        f"R{rank:02} L{level:02} B{b + 1}: Granted mid-level steal to R{req_src:02} | "
                         f"gave {X_send.shape[0]:,} pts "
                         f"{sizes_send.shape[0]:,} clusters | "
                         f"send={_t_send_elapsed:.3f}s | "
@@ -880,7 +882,7 @@ def _run_local_refinement(
                     next_level_sizes_list.append(_to_host(new_sz))
 
             logger.debug(
-                f"R{rank:02} L{level:02} B{b+1}: good={K_good_batch} bad={n_bad} "
+                f"R{rank:02} L{level:02} B{b + 1}: good={K_good_batch} bad={n_bad} "
                 f"(cumulative good={K_good})"
             )
             start_cluster_idx = end_cluster_idx
@@ -1261,7 +1263,7 @@ def adaptive_clustering(
                     G0_gpu = convert_to_3d_array(g_fn(X0_gpu))
 
             logger.info(f"R00: N0={N0:,}, d={d_bcast}, fd={fd_bcast}")
-            logger.info(f"Runtime - R00: Initial f/g: {time.perf_counter()-_t0:.3f}s")
+            logger.info(f"Runtime - R00: Initial f/g: {time.perf_counter() - _t0:.3f}s")
             if LOG_MEM_STATS:
                 log_mem_stats("R00: After Initial F/G Evaluation")
 
@@ -1286,7 +1288,7 @@ def adaptive_clustering(
                     else _to_host(labels0).astype(np.int64)
                 )
                 logger.info(
-                    f"Runtime - R00: Initial KMeans {time.perf_counter()-_t1:.3f}s"
+                    f"Runtime - R00: Initial KMeans {time.perf_counter() - _t1:.3f}s"
                 )
 
             elif INITIAL_CLUSTERING_METHOD == "knndbscan":
@@ -1307,7 +1309,7 @@ def adaptive_clustering(
                     f"R00: Initial kNN-DBSCAN: {num_initial_clusters:,} clusters"
                 )
                 logger.info(
-                    f"Runtime - R00: Initial kNN-DBSCAN {time.perf_counter()-_t1:.3f}s"
+                    f"Runtime - R00: Initial kNN-DBSCAN {time.perf_counter() - _t1:.3f}s"
                 )
             elif INITIAL_CLUSTERING_METHOD == "uniform_grid":
                 X0_host_cache = _to_host(X0_gpu)
@@ -1322,7 +1324,7 @@ def adaptive_clustering(
                     f"bins={grid_bins.tolist()}"
                 )
                 logger.info(
-                    f"Runtime - R00: Initial uniform_grid {time.perf_counter()-_t1:.3f}s"
+                    f"Runtime - R00: Initial uniform_grid {time.perf_counter() - _t1:.3f}s"
                 )
             else:
                 raise ValueError(
@@ -1520,7 +1522,7 @@ def adaptive_clustering(
 
     logger.info(
         f"R{rank:03}: Local BFS done. Found {out_count:,} clusters. "
-        f"Local f-evals={local_f_evals:,}. Time={time.perf_counter()-_start_time:.2f}s"
+        f"Local f-evals={local_f_evals:,}. Time={time.perf_counter() - _start_time:.2f}s"
     )
 
     # ------------------------------------------------------------------
@@ -1566,7 +1568,9 @@ def adaptive_clustering(
         logger.info("R00: Merging results from all ranks.")
 
         # Extract per-rank profiling stats piggybacked on the gather payload
-        all_profiling_stats: list[dict] = [r.pop("_profiling_stats") for r in all_results]  # type: ignore
+        all_profiling_stats: list[dict] = [
+            r.pop("_profiling_stats") for r in all_results
+        ]  # type: ignore
 
         array_keys = [k for k in all_results[0] if k not in ("tree_data",)]  # type: ignore
 
@@ -1651,7 +1655,7 @@ def adaptive_clustering(
         merged["profiling_stats"] = consolidated_profiling
 
         logger.info(
-            f"R00: final clusters={total_clusters:,}, " f"total time={_total_time:.2f}s"
+            f"R00: final clusters={total_clusters:,}, total time={_total_time:.2f}s"
         )
         return merged
     else:

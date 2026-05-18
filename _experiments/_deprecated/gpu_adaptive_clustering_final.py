@@ -804,7 +804,7 @@ def adaptive_clustering(
 
         total_f_evals += X0_gpu.shape[0]
 
-        logger.info(f"Runtime - Initial f/g: {time.perf_counter()-_t0:.3f}s")
+        logger.info(f"Runtime - Initial f/g: {time.perf_counter() - _t0:.3f}s")
         logger.info(f"Function: Input d={d}, Output fd={fd}")
         if LOG_MEM_STATS:
             log_mem_stats("After Initial F/G Evaluation")
@@ -816,7 +816,7 @@ def adaptive_clustering(
         _t1 = time.perf_counter()
         km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
         labels0 = km.fit_predict(X0_gpu)
-        logger.info(f"Runtime - Initial KMeans: {time.perf_counter()-_t1:.3f}s")
+        logger.info(f"Runtime - Initial KMeans: {time.perf_counter() - _t1:.3f}s")
         if LOG_MEM_STATS:
             log_mem_stats("After Initial KMeans Clustering")
 
@@ -890,7 +890,7 @@ def adaptive_clustering(
 
         K_good = 0
         for b in range(num_batches):
-            logger.info(f"Level {level:02}: Processing Batch {b+1}/{num_batches}")
+            logger.info(f"Level {level:02}: Processing Batch {b + 1}/{num_batches}")
             # Determine cluster range for this batch
             target_aug_count = (b + 1) * BATCH_SIZE
             end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
@@ -1325,16 +1325,22 @@ def adaptive_clustering(
                         # X_bad contains X points for the bad clusters
                         # mus[bad_idx_local] contains the centroids for the bad clusters
                         # dense_labels_bad contains the cluster assignment for each point in X_bad
-                        lin_bad = xp.einsum("nmd,nd->nm", g_mus[bad_idx_local][dense_labels_bad], X_bad - mus[bad_idx_local][dense_labels_bad])
-                        diff_bad = F_bad - (f_mus[bad_idx_local][dense_labels_bad] + lin_bad)
+                        lin_bad = xp.einsum(
+                            "nmd,nd->nm",
+                            g_mus[bad_idx_local][dense_labels_bad],
+                            X_bad - mus[bad_idx_local][dense_labels_bad],
+                        )
+                        diff_bad = F_bad - (
+                            f_mus[bad_idx_local][dense_labels_bad] + lin_bad
+                        )
                         E_bad = xp.linalg.norm(diff_bad, axis=1)
 
                         # 2. Sort and pick out the smallest n
-                        n_est_cov = MIN_PTS_PER_CLUSTER // 3  # this is empirical for now
+                        n_est_cov = (
+                            MIN_PTS_PER_CLUSTER // 3
+                        )  # this is empirical for now
                         cov_est_mask = get_n_smallest_per_block(
-                            E_bad,
-                            dense_labels_bad,
-                            n_est_cov
+                            E_bad, dense_labels_bad, n_est_cov
                         )
 
                         # 2.1 Test get_n_smallest_per_block on simple test case
@@ -1380,7 +1386,9 @@ def adaptive_clustering(
 
                         # 3. Compute square root inverse of H_inv to get the scaling matrix for the split
                         dvals, U = xp.linalg.eigh(H_inv)
-                        dvals_sqrt_inv = 1.0 / xp.sqrt(xp.maximum(xp.abs(dvals), TINY_EPS))
+                        dvals_sqrt_inv = 1.0 / xp.sqrt(
+                            xp.maximum(xp.abs(dvals), TINY_EPS)
+                        )
                         M_split = (U * dvals_sqrt_inv[:, None]) @ U.transpose(0, 2, 1)
                         M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
 

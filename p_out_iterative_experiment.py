@@ -255,7 +255,7 @@ def main():
 
         if rank == 0:
             print(
-                f"\n{'='*50}\nITERATION {iteration}: Training on {len(X_train):,} points\n{'='*50}"
+                f"\n{'=' * 50}\nITERATION {iteration}: Training on {len(X_train):,} points\n{'=' * 50}"
             )
 
         # 1. Train Surrogate

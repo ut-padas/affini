@@ -256,7 +256,9 @@ def _run_local_refinement(
                             )
                             if meta["has_g"]:
                                 comm.Recv(
-                                    G_host, source=target_rank, tag=TAG_STEAL_GRANT + 3  # type: ignore
+                                    G_host,
+                                    source=target_rank,
+                                    tag=TAG_STEAL_GRANT + 3,  # type: ignore
                                 )
                             comm.Recv(
                                 sizes_host, source=target_rank, tag=TAG_STEAL_GRANT + 4
@@ -375,7 +377,9 @@ def _run_local_refinement(
             log_mem_stats(f"R{rank:02} Start: L{level:02} Batching")
 
         for b in range(num_batches):
-            logger.info(f"R{rank:02} L{level:02}: Processing Batch {b+1}/{num_batches}")
+            logger.info(
+                f"R{rank:02} L{level:02}: Processing Batch {b + 1}/{num_batches}"
+            )
 
             if USE_WORK_STEALING:
                 # --- Mid-Level Work Stealing ---
@@ -461,7 +465,7 @@ def _run_local_refinement(
 
                         _t_send_elapsed = time.perf_counter() - _t_send
                         logger.info(
-                            f"R{rank:02} L{level:02} B{b+1}: Granted mid-level steal to R{req_src:02} | "
+                            f"R{rank:02} L{level:02} B{b + 1}: Granted mid-level steal to R{req_src:02} | "
                             f"gave {X_send.shape[0]:,} pts "
                             f"{sizes_send.shape[0]:,} clusters | "
                             f"send={_t_send_elapsed:.3f}s | "
@@ -681,7 +685,7 @@ def _run_local_refinement(
                     expansion = total_target_pts / max(total_bad_input_pts, 1)
 
                     logger.info(
-                        f"R{rank:02} L{level:02} B{b+1}: rejected-cluster augmentation plan | "
+                        f"R{rank:02} L{level:02} B{b + 1}: rejected-cluster augmentation plan | "
                         f"bad_clusters={n_bad:,} "
                         f"input_pts={total_bad_input_pts:,} "
                         f"bad_count[min/mean/max]={bad_count_min:,}/{bad_count_mean:,.1f}/{bad_count_max:,} "
@@ -1122,7 +1126,6 @@ def adaptive_clustering(
     d_bcast, fd_bcast = 0, 0
 
     if rank == 0:
-
         if SAVE_ALL_GEN_TRAINING_DATA is True:
             _, DIM = X.shape
             save_generated_data(X, f"train_data_tol_{TOL}_d{DIM}")

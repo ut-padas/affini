@@ -81,7 +81,6 @@ def _serial_solve(X0, rhs, DfDx, tf):
     return XF_batch, SF_batch
 
 
-
 def _solve_and_write_chunk(
     x0_shm_name,
     xf_shm_name,
@@ -142,7 +141,6 @@ def _solve_and_write_chunk(
         except:
             pass
         return False
-
 
 
 def _worker_wrapper_shm(args):
@@ -286,4 +284,3 @@ def parallel_sensitivities_solver(
             shm_sf.unlink()
         except:
             pass
-

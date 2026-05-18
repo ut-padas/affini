@@ -192,7 +192,7 @@ class AFINNISurrogate:
         self.trained = True
 
         if rank == 0:
-            logger.info(f"Training Time: {time.perf_counter()-t0:.4f}s")
+            logger.info(f"Training Time: {time.perf_counter() - t0:.4f}s")
             logger.info(f"Trained Clusters: {self.N_src:,}")
             if model_filepath is not None:
                 self.save(model_filepath)
@@ -307,7 +307,7 @@ class AFINNISurrogate:
                 self.knn_index.add(centroids_f32)  # type: ignore
 
         if _get_mpi_rank() == 0:
-            logger.info(f"KNN Index built in {time.perf_counter()-t0:.4f}s")
+            logger.info(f"KNN Index built in {time.perf_counter() - t0:.4f}s")
 
     def _query_knn(self, query_points: Array, k: int) -> tuple[Array, Array]:
         if self.knn_index is None:
@@ -374,7 +374,9 @@ class AFINNISurrogate:
         gathered_masks = comm.gather(_to_host(local_mask), root=0)
 
         if rank == 0:
-            return xp.asarray(np.concatenate(gathered_preds)), xp.asarray(np.concatenate(gathered_masks))  # type: ignore
+            return xp.asarray(np.concatenate(gathered_preds)), xp.asarray(
+                np.concatenate(gathered_masks)
+            )  # type: ignore
 
         return None, None
 

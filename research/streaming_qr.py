@@ -97,6 +97,6 @@ if __name__ == "__main__":
         sum(n * d * ell for n in sizes) * 2 / 1e9
     )  # rough GEMM tall*skinny flop count
     print(f"matrices={len(Ms)}, d={d}, ell={ell}")
-    print(f"Sequential : {t_seq:7.3f} s   (~{gops/t_seq:6.1f} GFLOP/s eqv.)")
-    print(f"8-streams  : {t_str:7.3f} s   (~{gops/t_str:6.1f} GFLOP/s eqv.)")
-    print(f"Speedup    : {t_seq/t_str:5.2f}×")
+    print(f"Sequential : {t_seq:7.3f} s   (~{gops / t_seq:6.1f} GFLOP/s eqv.)")
+    print(f"8-streams  : {t_str:7.3f} s   (~{gops / t_str:6.1f} GFLOP/s eqv.)")
+    print(f"Speedup    : {t_seq / t_str:5.2f}×")

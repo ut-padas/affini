@@ -47,11 +47,10 @@ def plot_ellipses(ellipses, ax: Axes, plot_numbers=False):
             xy = ellipses[j].get_center()
             x = xy[0] + shift
             y = xy[1] + shift
-            ax.text(x, y, f"{j+1}", horizontalalignment="left")
+            ax.text(x, y, f"{j + 1}", horizontalalignment="left")
 
 
 def convert_to_ellipse_object(Q, centroid, color="red", alpha=0.3, filled=True):
-
     D, U = np.linalg.eigh(Q)
     order = np.argsort(D)
     D = D[order]
@@ -109,7 +108,6 @@ def generate_unit_ball_points_boundary_uniform(N, d=2):
 
 
 def generate_random_polytope(V, N, d=2):
-
     # Generate vertices and candidate points
     candidates = generate_unit_ball_points_uniform(N, d)
     polytope_vertices = generate_unit_ball_points_boundary_uniform(V, d)
@@ -133,7 +131,6 @@ def matrix_sqrt(Q):
 
 
 if __name__ == "__main__":
-
     ### --- FIGURE 4: Entire description of algorithm --- ###
     """
     Underlying function: Rosenbrock 2D
@@ -152,8 +149,10 @@ if __name__ == "__main__":
     d = 2
     N_train = 20000
     np.random.seed(69)
-    X_train = np.column_stack((np.random.uniform(-2, 2, N_train), np.random.uniform(-1, 3, N_train)))
-    
+    X_train = np.column_stack(
+        (np.random.uniform(-2, 2, N_train), np.random.uniform(-1, 3, N_train))
+    )
+
     # Testing data
     N_test = 1000000
     X_test = np.column_stack(
@@ -174,24 +173,23 @@ if __name__ == "__main__":
     surrogate.train(
         X_train,
         USE_V2=True,
-        f_fn = rosenbrock,
-        g_fn = rosenbrock_grad,
-        save_model = False,
-        TOL = tol,
-        ERROR_METRIC = 'Linf-local',
-        NUM_INITIAL_CLUSTERS = N_init_clusters,
-        MIN_PTS_PER_CLUSTER = 15,
-        MAX_CLUSTERS_EST = 10000,
-        SEED = 1,
+        f_fn=rosenbrock,
+        g_fn=rosenbrock_grad,
+        save_model=False,
+        TOL=tol,
+        ERROR_METRIC="Linf-local",
+        NUM_INITIAL_CLUSTERS=N_init_clusters,
+        MIN_PTS_PER_CLUSTER=15,
+        MAX_CLUSTERS_EST=10000,
+        SEED=1,
         USE_WORK_STEALING=False,
     )
 
     dict = surrogate.get_trained_data_as_dict()
-    centroids = dict['X_src']
-    TRs = dict['Qs_src']
+    centroids = dict["X_src"]
+    TRs = dict["Qs_src"]
     inf_vals, unguaranteed, nn_idx = surrogate.predict(
-        X_test,
-        return_cluster_assignments=True
+        X_test, return_cluster_assignments=True
     )
 
     p = np.random.permutation(len(centroids))
@@ -276,10 +274,10 @@ if __name__ == "__main__":
     # plot_ellipses(ellipses, ax[p], False)
     ax[p].set_xticks([])
     ax[p].set_yticks([])
-    ax[p].legend(loc='upper right')
+    ax[p].legend(loc="upper right")
 
-    ax[p].text(-1.48, 0.95, '(A)', fontsize=12)
-    ax[p].text(-0.5, 2.8, '(B)', fontsize=12)
+    ax[p].text(-1.48, 0.95, "(A)", fontsize=12)
+    ax[p].text(-0.5, 2.8, "(B)", fontsize=12)
 
     fig.savefig(
         "figures/ellipses_2_sideways.png", bbox_inches="tight", pad_inches=0, dpi=300
