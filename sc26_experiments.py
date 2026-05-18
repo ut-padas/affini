@@ -28,6 +28,31 @@ _size = _get_mpi_size()
 _rank = _get_mpi_rank()
 
 
+def cap_initial_augmentation_budget(
+    n_train: int,
+    num_initial_clusters: int,
+    min_pts_per_cluster: int,
+    *,
+    min_initial_clusters: int = 16,
+) -> tuple[int, int]:
+    """
+    Keep the level-0 rejected-cluster augmentation budget compatible with the
+    available training set once ``N_TRAIN`` has been capped.
+
+    Rejected clusters are padded to at least ``2 * MIN_PTS_PER_CLUSTER`` before
+    splitting.  The raw dimension-scaling heuristics keep growing after
+    ``N_TRAIN`` is capped, which can otherwise make level 0 request far more
+    synthetic points than the capped experiment can support.
+    """
+    max_min_pts_for_budget = max(2, n_train // (2 * min_initial_clusters))
+    capped_min_pts = min(min_pts_per_cluster, max_min_pts_for_budget)
+    max_initial_clusters_for_budget = max(1, n_train // (2 * capped_min_pts))
+    capped_num_initial_clusters = min(
+        num_initial_clusters, max_initial_clusters_for_budget
+    )
+    return capped_num_initial_clusters, capped_min_pts
+
+
 def conductExperiment(
     # Problem-specific
     json_fpath: Path,
@@ -565,10 +590,26 @@ def lorenz96_dimension_scaling_experiment():
     for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
         TOLs = [0.1]
 
-        N_TRAIN = min(get_N_TRAIN(DIM), 500_000)
+        N_TRAIN = min(get_N_TRAIN(DIM), 1_000_000)
         N_TEST = N_TRAIN // 2
-        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM) // 2
-        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM) // 2
+        raw_num_initial_clusters = get_NUM_INITIAL_CLUSTERS(DIM)
+        raw_min_pts_per_cluster = get_MIN_PTS_PER_CLUSTER(DIM)
+        NUM_INITIAL_CLUSTERS, MIN_PTS_PER_CLUSTER = cap_initial_augmentation_budget(
+            N_TRAIN,
+            raw_num_initial_clusters,
+            raw_min_pts_per_cluster,
+        )
+
+        if _rank == 0 and (
+            NUM_INITIAL_CLUSTERS != raw_num_initial_clusters
+            or MIN_PTS_PER_CLUSTER != raw_min_pts_per_cluster
+        ):
+            print(
+                "Adjusted level-0 heuristics for capped training budget: "
+                f"dim={DIM}, N_TRAIN={N_TRAIN:,}, "
+                f"NUM_INITIAL_CLUSTERS={raw_num_initial_clusters:,}->{NUM_INITIAL_CLUSTERS:,}, "
+                f"MIN_PTS_PER_CLUSTER={raw_min_pts_per_cluster:,}->{MIN_PTS_PER_CLUSTER:,}"
+            )
 
         for TOL in TOLs:
             json_fpath = (
