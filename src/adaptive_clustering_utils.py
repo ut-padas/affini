@@ -309,9 +309,7 @@ if IS_CUPY_BACKEND:
 # -----------------------------------------------------------------------------
 def repeats(arr: Array, counts: Array) -> Array:
     """Repeats elements of an array given a counts array."""
-    if IS_CUPY_BACKEND:
-        return xp.repeat(arr, counts)
-    return np.repeat(arr, counts)
+    return xp.repeat(arr, counts)
 
 
 def _reduce_max_1d(vals: Array, starts: Array) -> Array:
@@ -338,7 +336,7 @@ def _reduce_max_1d(vals: Array, starts: Array) -> Array:
         return out
     else:
         # Standard NumPy fallback
-        return np.maximum.reduceat(vals, starts)
+        return xp.maximum.reduceat(vals, starts)
 
 
 def _reduce_sum_1d(vals: Array, starts: Array) -> Array:
