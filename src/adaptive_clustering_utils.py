@@ -442,6 +442,10 @@ def run_fused_stats(
 
 def run_fused_cross_cov(X, F, mus, f_mus, labels, K, D, FD):
     """Accumulates Cross-Covariance matrix (dx * df^T)."""
+
+    # TODO: The raw kernel below seems to be broken
+    #       for functions with multi-dimensional outputs.
+    '''
     if IS_CUPY_BACKEND:
         N = X.shape[0]
         cross_out = xp.zeros((K, D, FD), dtype=xp.float64)
@@ -465,12 +469,13 @@ def run_fused_cross_cov(X, F, mus, f_mus, labels, K, D, FD):
         )
         return cross_out
     else:
-        dx = X - mus[labels]
-        df = F - f_mus[labels]
-        outer = dx[:, :, None] * df[:, None, :]
-        cross_out = xp.zeros((K, D, FD), dtype=xp.float64)
-        xp.add.at(cross_out, labels, outer)
-        return cross_out
+    '''
+    dx = X - mus[labels]
+    df = F - f_mus[labels]
+    outer = dx[:, :, None] * df[:, None, :]
+    cross_out = xp.zeros((K, D, FD), dtype=xp.float64)
+    xp.add.at(cross_out, labels, outer)
+    return cross_out
 
 
 def solve_regularized_covariance_inplace(auto_cov, cross_cov, D, FD):

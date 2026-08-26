@@ -1033,6 +1033,7 @@ def _run_local_refinement(
 def adaptive_clustering(
     X: Array,
     *,
+    Y: Optional[Array] = None,
     f_fn: Optional[Callable[[Array], Array]] = None,
     g_fn: Optional[Callable[[Array], Array]] = None,
     oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
@@ -1145,10 +1146,13 @@ def adaptive_clustering(
                     G0_gpu = convert_to_3d_array(G_out)
             else:
                 assert f_fn
-                F0_gpu = convert_to_2d_array(f_fn(X0_gpu))
-                G0_gpu = (
-                    convert_to_3d_array(g_fn(X0_gpu)) if not NO_GRADS and g_fn else None
-                )
+                if Y is not None:
+                    F0_gpu = convert_to_2d_array(Y)
+                else:
+                    F0_gpu = convert_to_2d_array(f_fn(X0_gpu))
+                    G0_gpu = (
+                        convert_to_3d_array(g_fn(X0_gpu)) if not NO_GRADS and g_fn else None
+                    )
             fd_bcast = F0_gpu.shape[1]
 
             F_max_global_host = _to_host(xp.max(xp.abs(F0_gpu), axis=0))

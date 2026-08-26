@@ -62,6 +62,7 @@ class AFINNISurrogate:
         self,
         X_train: Array,
         USE_V2: bool,
+        Y_train: Optional[Array] = None,
         f_fn: Optional[Callable] = None,
         g_fn: Optional[Callable] = None,
         oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
@@ -135,6 +136,7 @@ class AFINNISurrogate:
         # 1. MPI-Distributed Adaptive Clustering
         results = adaptive_clustering(
             X=X_train,
+            Y=Y_train,
             f_fn=f_fn,
             g_fn=g_fn,
             oracle_fn=oracle_fn,
