@@ -1,0 +1,3 @@
+[submodule "chemistry-benchmark-surrogates"]
+	path = chemistry-benchmark-surrogates
+	url = git@github.com:NSF-Simons-CosmicAI-Institute/chemistry-benchmark-surrogates.git

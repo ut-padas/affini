@@ -1,11 +1,13 @@
 import json
 import logging
 import time
+import jax
+import cupy as cp
 from collections import defaultdict
 from itertools import product
 from pathlib import Path
 from typing import Literal
-
+import argparse
 from tqdm import tqdm
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_host, xp
@@ -53,7 +55,7 @@ def cap_initial_augmentation_budget(
     return capped_num_initial_clusters, capped_min_pts
 
 
-def conductExperiment(
+def conduct_experiment_given_data(
     # Problem-specific
     json_fpath: Path,
     DOMAIN: list[float],
@@ -62,6 +64,8 @@ def conductExperiment(
     N_TRAIN: int,
     N_TEST: int,
     # Training-specific
+    X_train,
+    X_test,
     f_fn,
     g_fn,
     TOL: float,
@@ -74,6 +78,7 @@ def conductExperiment(
     MAX_LEVELS: int = 1000,
     USE_WORK_STEALING: bool = True,
     USE_V2=True,
+    Y_train=None,
     # Prediction-specific
     K_NEIGHBOURS: int = 1,
     # Post-processing-specific
@@ -81,23 +86,15 @@ def conductExperiment(
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
     SAVE_FINAL_CENTROIDS: bool = False,
 ):
+    
     if json_fpath.exists():
         if _rank == 0:
             print(f"Experiment already exists at {json_fpath}. Skipping...")
         return
     json_fpath.parent.mkdir(parents=True, exist_ok=True)
 
-    if _rank == 0:
-        xp.random.seed(SEED)
-        X_train = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TRAIN, DIM))
-        X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, DIM))
-    else:
-        X_train = None
-        X_test = None
-
     surrogate = AFINNISurrogate()
     error_tag = ""
-    FAILED = False
     _TRAINED, _PREDICTED = False, False
     try:
         model_save_path = json_fpath.with_name(json_fpath.stem + "_surrogate_model.npz")
@@ -109,6 +106,7 @@ def conductExperiment(
         surrogate.train(
             X_train=X_train,
             USE_V2=USE_V2,
+            Y_train=None,
             f_fn=f_fn,
             g_fn=g_fn,
             mode=ERROR_EVAL_MODE,
@@ -220,6 +218,73 @@ def conductExperiment(
         )
 
 
+
+
+def conduct_experiment_generate_uniform_data(
+    # Problem-specific
+    json_fpath: Path,
+    DOMAIN: list[float],
+    F_DIM: int,
+    DIM: int,
+    N_TRAIN: int,
+    N_TEST: int,
+    # Training-specific
+    f_fn,
+    g_fn,
+    TOL: float,
+    ERROR_EVAL_MODE: SurrogateMode,
+    ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"],
+    INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan", "uniform_grid"],
+    NUM_INITIAL_CLUSTERS: int,
+    MIN_PTS_PER_CLUSTER: int,
+    MAX_CLUSTERS_EST: int = 100_000,
+    MAX_LEVELS: int = 1000,
+    USE_WORK_STEALING: bool = True,
+    USE_V2=True,
+    # Prediction-specific
+    K_NEIGHBOURS: int = 1,
+    # Post-processing-specific
+    CENTROIDS_PLOT_IN_LOG_SCALE: bool = True,
+    SAVE_ALL_GEN_TRAINING_DATA: bool = False,
+    SAVE_FINAL_CENTROIDS: bool = False,
+):
+
+    if _rank == 0:
+        xp.random.seed(SEED)
+        X_train = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TRAIN, DIM))
+        X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, DIM))
+    else:
+        X_train = None
+        X_test = None
+
+    conduct_experiment_given_data(
+        json_fpath,
+        DOMAIN,
+        F_DIM,
+        DIM,
+        N_TRAIN,
+        N_TEST,
+        X_train,
+        X_test,
+        f_fn,
+        g_fn,
+        TOL,
+        ERROR_EVAL_MODE,
+        ERROR_METRIC,
+        INITIAL_CLUSTERING_METHOD,
+        NUM_INITIAL_CLUSTERS,
+        MIN_PTS_PER_CLUSTER,
+        MAX_CLUSTERS_EST,
+        MAX_LEVELS,
+        USE_WORK_STEALING,
+        USE_V2,
+        K_NEIGHBOURS,
+        CENTROIDS_PLOT_IN_LOG_SCALE,
+        SAVE_ALL_GEN_TRAINING_DATA,
+        SAVE_FINAL_CENTROIDS
+    )
+
+
 def create_summary_dataframe(exp_dir: Path):
     if _rank != 0:
         # Only rank 0 creates the summary dataframe. Other ranks
@@ -278,7 +343,62 @@ def create_summary_dataframe(exp_dir: Path):
     df.to_csv(exp_dir / "_summary.csv", index=False)
 
 
-def anisotropic_quadratic_experiment():
+"""
+This is deprecated at the moment (incomplete).
+"""
+class NelsonBatchSolver:
+
+    def __init__(self, env):
+
+        Exception("ERROR: Nelson batch solver is not implemented yet.")
+
+        # First, import stuff
+        import sys
+        from pathlib import Path
+        repo_root = Path(__file__).parent
+        sys.path.insert(0, str(repo_root / "chemistry-benchmark-surrogates" / "src"))
+        from PythonODE import parser # type: ignore
+
+        # solver settings
+        atol = 1e-16
+        rtol = 1e-4
+
+        # Parse the KIDA files
+        print("Pasrsing gas network.\n")
+        net = parser.KidaNetwork(grains = False)
+        net.load_from_disk("chemistry-benchmark-surrogates/networks/nelson/gas_reactions.in")
+        dropped = net.drop_passive_species()
+        print(f"Dropped passive species: {dropped}")
+        print("Constructing matrices A and B.")
+        self.A, self.B = net.get_tensors(env)
+
+
+    def batch_solve(self, X, dt):
+
+        import sys
+        from pathlib import Path
+        repo_root = Path(__file__).parent
+        sys.path.insert(0, str(repo_root / "chemistry-benchmark-surrogates" / "src"))
+        from PythonODE import parser # type: ignore
+
+        atol = 1e-16
+        rtol = 1e-4
+
+        Y = xp.zeros_like(X)
+        for j, state in enumerate(X):
+            q = parser.QuadraticSolverPoint()
+            [t,y] = q.solve(self.A, self.B, [0, dt], state, atol=atol, rtol=rtol)
+            Y[j] = y[:,-1]
+
+        return Y
+
+
+
+
+
+### --- BEGIN EXPERIMENT FUNCTIONS --- ###
+
+def anisotropic_quadratic_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
     from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad
 
     EXP_DIR = SC26_DIR / "anisotropic_quadratic"
@@ -289,50 +409,41 @@ def anisotropic_quadratic_experiment():
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    DIMs = [10]
-    ERROR_EVAL_MODES = [SurrogateMode.AFFINE_COV_NO_HESS]
+    N_TRAIN = get_N_TRAIN(dim)
+    N_TEST = N_TRAIN // 2
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
+    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
 
-    combos = list(product(DIMs, ERROR_EVAL_MODES))
-    for DIM, ERROR_EVAL_MODE in tqdm(combos, desc="Experiments"):
-        # TOLs = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2,
-        #         0.19, 0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11,
-        #         0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01]
-        TOLs = [0.458, 0.381]
-        N_TRAIN = get_N_TRAIN(DIM)
-        N_TEST = N_TRAIN // 2
-        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
-        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
+    if dim >= 10 and tol <= 0.005:
+        print("This is throwing OOM errors. Skipping for now.")
+        return
 
-        for TOL in TOLs:
-            if DIM == 10 and TOL <= 0.005:
-                print("This is throwing OOM errors. Skipping for now.")
-                continue
-            json_fpath = (
-                EXP_DIR
-                / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
-            )
-            conductExperiment(
-                # Problem-specific
-                json_fpath=json_fpath,
-                DOMAIN=[-3.0, 3.0],
-                F_DIM=F_DIM,
-                DIM=DIM,
-                N_TRAIN=N_TRAIN,
-                N_TEST=N_TEST,
-                # Training-specific
-                f_fn=aniso_quadratic,
-                g_fn=aniso_quadratic_grad,
-                TOL=TOL,
-                ERROR_EVAL_MODE=ERROR_EVAL_MODE,
-                ERROR_METRIC=ERROR_METRIC,
-                INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-                NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-                MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-                USE_WORK_STEALING=USE_WORK_STEALING,
-                USE_V2=USE_V2,
-            )
+    json_fpath = (
+        EXP_DIR
+        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+    )
+    conduct_experiment_generate_uniform_data(
+        # Problem-specific
+        json_fpath=json_fpath,
+        DOMAIN=[-3.0, 3.0],
+        F_DIM=F_DIM,
+        DIM=dim,
+        N_TRAIN=N_TRAIN,
+        N_TEST=N_TEST,
+        # Training-specific
+        f_fn=aniso_quadratic,
+        g_fn=aniso_quadratic_grad,
+        TOL=tol,
+        ERROR_EVAL_MODE=error_eval_mode,
+        ERROR_METRIC=ERROR_METRIC,
+        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        USE_WORK_STEALING=USE_WORK_STEALING,
+        USE_V2=USE_V2,
+    )
 
-            create_summary_dataframe(EXP_DIR)
+    create_summary_dataframe(EXP_DIR)
 
     return EXP_DIR
 
@@ -367,7 +478,7 @@ def anisotropic_gaussian_experiment():
                 EXP_DIR
                 / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
             )
-            conductExperiment(
+            conduct_experiment_generate_uniform_data(
                 # Problem-specific
                 json_fpath=json_fpath,
                 DOMAIN=[-3.0, 3.0],
@@ -445,7 +556,7 @@ def rosenbrock_experiment():
                 EXP_DIR
                 / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
             )
-            conductExperiment(
+            conduct_experiment_generate_uniform_data(
                 # Problem-specific
                 json_fpath=json_fpath,
                 DOMAIN=[-2.0, 3.0],
@@ -528,7 +639,7 @@ def lorenz96_experiment(tf):
                 EXP_DIR
                 / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
             )
-            conductExperiment(
+            conduct_experiment_generate_uniform_data(
                 # Problem-specific
                 json_fpath=json_fpath,
                 DOMAIN=[-5.0, 5.0],
@@ -565,24 +676,31 @@ def lorenz96_dimension_scaling_experiment():
     FINAL_TIME = 0.1
 
     # Custom oracles to return only the first component
-    def lorenz(x):
-        f = lorenz96_flowmap_auto(x, FORCING, FINAL_TIME)
-        N, _ = f.shape
-        return f[:, 0].reshape((N, 1))
+    # def lorenz(x):
+    #     f = lorenz96_flowmap_auto(x, FORCING, FINAL_TIME)
+    #     N, _ = f.shape
+    #     return f[:, 0].reshape((N, 1))
+    from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
+    def lorenz(X):
+        N, d = X.shape
+        # For now, just assume that X lives on a GPU.
+        X_jax = jax.dlpack.from_dlpack(X)
+        Y_jax = lorenz96_flowmap_jax_batched(X_jax, FORCING, FINAL_TIME)
+        return cp.from_dlpack(Y_jax)[:,0,0].reshape(N,1)
 
-    def lorenz_grad(x):
-        g = lorenz96_flowmap_grad_auto(x, FORCING, FINAL_TIME)
-        N, d, _ = g.shape
-        return g[:, 0, :].reshape((N, 1, d))
+    # def lorenz_grad(x):
+    #     g = lorenz96_flowmap_grad_auto(x, FORCING, FINAL_TIME)
+    #     N, d, _ = g.shape
+    #     return g[:, 0, :].reshape((N, 1, d))
 
-    EXP_DIR = SC26_DIR / "dim_scaling_lorenz96"
+    EXP_DIR = SC26_DIR / "dim_scaling_lorenz96_dt0.1"
     F_DIM = 1
-    ERROR_METRIC = "Linf-local"
+    ERROR_METRIC = "Linf-global"
     INITIAL_CLUSTERING_METHOD = "kmeans"
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    DIMs = [5, 10, 20, 40, 80]
+    DIMs = [80]
     ERROR_EVAL_MODES = [SurrogateMode.AFFINE_COV_HESS]
 
     combos = list(product(DIMs, ERROR_EVAL_MODES))
@@ -615,7 +733,7 @@ def lorenz96_dimension_scaling_experiment():
                 EXP_DIR
                 / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
             )
-            conductExperiment(
+            conduct_experiment_generate_uniform_data(
                 # Problem-specific
                 json_fpath=json_fpath,
                 DOMAIN=[-5.0, 5.0],
@@ -625,7 +743,7 @@ def lorenz96_dimension_scaling_experiment():
                 N_TEST=N_TEST,
                 # Training-specific
                 f_fn=lorenz,
-                g_fn=lorenz_grad,
+                g_fn=None,
                 TOL=TOL,
                 ERROR_EVAL_MODE=ERROR_EVAL_MODE,
                 ERROR_METRIC=ERROR_METRIC,
@@ -638,6 +756,220 @@ def lorenz96_dimension_scaling_experiment():
             create_summary_dataframe(EXP_DIR)
 
     return EXP_DIR
+
+
+
+
+def lorenz96_low_rank_experiment(d, D, dt, tol):
+    '''
+    Goal: vary some of the variables and keep others fixed.
+    Does HATANN behave like a low-rank function in this case? We hope so.
+    Compare the behavior of the algorithm to running Lorenz for the low number of variables.
+    We would like to run Lorenz d=5,10,20,40,80, but only varying 3 variables at a time.
+    For now, fix the time step at dt=0.2.
+    So in other words the experiments we will run will be:
+    - d=5, D=10, dt=0.2, tol=varying
+    - d=5, D=20, dt=0.2, tol=varying
+    - d=5, D=40, dt=0.2, tol=varying
+    '''
+
+    print(f"Running simulation for d={d}, D={D}, dt={dt}, tol={tol}...")
+
+    # Parameters for experiment
+    dims2vary = xp.arange(d)
+    dims2fix = xp.setdiff1d(xp.arange(D), dims2vary)
+    d_fixed = D - len(dims2vary)
+    l = -5.0; r = 5.0
+    domain = [l, r]
+    N_train = get_N_TRAIN(d) # use low-dim amount of data
+    N_test = N_train // 2
+    forcing = 1
+    dt = 0.2
+
+    # Generate initial data in the low rank subspace. Fix the variables def. by dims2fix
+    fixed_row = xp.random.uniform(low=l, high=r, size=d_fixed)
+    X_train = xp.empty((N_train, D))
+    X_train[:,dims2vary] = xp.random.uniform(l, r, size=(N_train, d))
+    X_train[:,dims2fix] = xp.outer(xp.ones(N_train), fixed_row)
+
+    # In the same way, generate the testing data
+    X_test = xp.empty((N_test, D))
+    X_test[:,dims2vary] = xp.random.uniform(l, r, size=(N_test, d))
+    X_test[:,dims2fix] = xp.outer(xp.ones(N_test), fixed_row)
+
+    # Use the entire function
+    from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
+    def f_fn(X):
+        N, d = X.shape
+        # For now, just assume that X lives on a GPU.
+        X_jax = jax.dlpack.from_dlpack(X)
+        Y_jax = lorenz96_flowmap_jax_batched(X_jax, forcing, dt)
+        return cp.from_dlpack(Y_jax)[:,0,:]
+        # return cp.from_dlpack(Y_jax)[:,0,0].reshape(N,1)
+
+    # Put this into HATANN
+    EXP_DIR = SC26_DIR / "lorenz_lowrankexp"
+    json_fpath = (
+        EXP_DIR / f"ambdim_{d}_fulldim{D}_dt{dt}_tol{tol}_ntrain{N_train}.json"
+    )
+
+    conduct_experiment_given_data(
+        json_fpath = json_fpath,
+        DOMAIN = domain,
+        F_DIM = D,
+        DIM = D,
+        N_TRAIN = N_train,
+        N_TEST = N_test,
+        X_train = X_train,
+        X_test = X_test,
+        f_fn = f_fn,
+        g_fn = None,
+        TOL = tol,
+        ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS,
+        ERROR_METRIC = 'Linf-global',
+        INITIAL_CLUSTERING_METHOD = 'kmeans',
+        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(d),
+        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(d),
+        USE_WORK_STEALING = False
+    )
+
+    create_summary_dataframe(EXP_DIR)
+    return EXP_DIR
+
+
+
+def lorenz_trajectories_experiment(d, dt, tol):
+    '''
+    Goal: use time step data as training and testing to do experiments.
+    I.e. use manifolds of solutions as initial data.
+    '''
+    # Parameters for experiment
+    l = -5.0; r = 5.0; domain = [l, r]
+    N_test = 50_000
+    forcing = 1
+
+    # Define the function
+    from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
+    def f_fn(X):
+        N, d = X.shape
+        # For now, just assume that X lives on a GPU.
+        X_jax = jax.dlpack.from_dlpack(X)
+        Y_jax = lorenz96_flowmap_jax_batched(X_jax, forcing, dt)
+        return cp.from_dlpack(Y_jax)[:,0,:]
+        # return cp.from_dlpack(Y_jax)[:,0,0].reshape(N,1)
+
+    # Use this function to generate data.
+    N_start_train = 20000; N_start_test = 5000; N_steps = 9;
+    N_train = N_start_train * (N_steps + 1)
+    N_test = N_start_test * (N_steps + 1)
+    X_train = xp.zeros((N_start_train * (N_steps+1), d))
+    X_train[:N_start_train,:] = xp.random.uniform(l, r, size=(N_start_train, d))
+    X_test = xp.zeros((N_start_test * (N_steps+1), d))
+    X_test[:N_start_test,:] = xp.random.uniform(l, r, size=(N_start_test, d))
+    for j in range(1, N_steps + 1):
+        X_train[(j*N_start_train):((j+1)*N_start_train)] = f_fn(X_train[((j-1)*N_start_train):(j*N_start_train)])
+        X_test[(j*N_start_test):((j+1)*N_start_test)] = f_fn(X_train[((j-1)*N_start_test):(j*N_start_test)])
+
+    # Put this into HATANN
+    EXP_DIR = SC26_DIR / "lorenz_trajexp"
+    json_fpath = (
+        EXP_DIR / f"dim{d}_dt{dt}_tol{tol}_ntrain{N_start_train * (N_steps+1)}.json"
+    )
+
+    conduct_experiment_given_data(
+        json_fpath = json_fpath,
+        DOMAIN = domain,
+        F_DIM = d,
+        DIM = d,
+        N_TRAIN = N_train,
+        N_TEST = N_test,
+        X_train = X_train,
+        X_test = X_test,
+        f_fn = f_fn,
+        g_fn = None,
+        TOL = tol,
+        ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS,
+        ERROR_METRIC = 'Linf-global',
+        INITIAL_CLUSTERING_METHOD = 'kmeans',
+        NUM_INITIAL_CLUSTERS = min(get_NUM_INITIAL_CLUSTERS(d), 1000),
+        MIN_PTS_PER_CLUSTER = min(get_MIN_PTS_PER_CLUSTER(d), 500),
+        USE_WORK_STEALING = False
+    )
+
+    create_summary_dataframe(EXP_DIR)
+    return EXP_DIR
+
+
+
+def nelson_trajectories_experiment():
+    '''
+    Goal: use time step data as training and testing to do experiments.
+    '''
+    # Parameters for experiment
+    # Sample uniformly in powers, then take log, to cover all scales
+    l = -20.0; r = 0.0; domain = [l, r]
+    d = 14
+
+    # --- Define the function ---
+
+    # Nelson solver settings
+    env = dict(
+        T=10.0,             # Gas temperature 
+        nH=2e4,             # Hydrogen number density
+        Av=15.0,            # Visual Extinction
+        uv_flux=1,          # Standard interstellar radiation field, G_0
+        Tcap_2body=True,    # Set temperature to tmin or tmax if outside [tmin, tmax]
+        Tgrain=10.0,        # Grain temperature
+    )
+    solver = NelsonBatchSolver(env)
+    dt = 1000 * 365 * 24 * 3600 # 1000 years
+    f_fn = lambda X: solver.batch_solve(X, dt)
+
+    # Use this function to generate data.
+    N_start_train = 25000; N_start_test = 12500; N_steps = 39;
+    N_train = N_start_train * (N_steps + 1)
+    N_test = N_start_test * (N_steps + 1)
+    X_train = xp.zeros((N_start_train * (N_steps+1), d))
+    powers = xp.random.uniform(l, r, size=(N_start_train, d))
+    X_train[:N_start_train,:] = 10 ** powers
+    X_test = xp.zeros((N_start_test * (N_steps+1), d))
+    powers = xp.random.uniform(l, r, size=(N_start_test, d))
+    X_test[:N_start_test,:] = 10 ** powers
+    for j in range(1, N_steps + 1):
+        X_train[(j*N_start_train):((j+1)*N_start_train)] = f_fn(X_train[((j-1)*N_start_train):(j*N_start_train)])
+        X_test[(j*N_start_test):((j+1)*N_start_test)] = f_fn(X_train[((j-1)*N_start_test):(j*N_start_test)])
+
+    # Put this into HATANN
+    tol = 0.05
+    EXP_DIR = SC26_DIR / "nelson_trajexp"
+    json_fpath = (
+        EXP_DIR / f"dim{d}_tol{tol}_ntrain{N_train}.json"
+    )
+
+    conduct_experiment_given_data(
+        json_fpath = json_fpath,
+        DOMAIN = domain,
+        F_DIM = d,
+        DIM = d,
+        N_TRAIN = N_train,
+        N_TEST = N_test,
+        X_train = X_train,
+        X_test = X_test,
+        f_fn = f_fn,
+        g_fn = None,
+        TOL = tol,
+        ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS,
+        ERROR_METRIC = 'Linf-global',
+        INITIAL_CLUSTERING_METHOD = 'kmeans',
+        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(d),
+        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(d),
+        USE_WORK_STEALING = False
+    )
+
+    create_summary_dataframe(EXP_DIR)
+    return EXP_DIR
+
+
 
 
 def indefinite_quadratic_experiment():
@@ -684,7 +1016,7 @@ def indefinite_quadratic_experiment():
                 EXP_DIR
                 / f"mpi_sz{_size}_dim{DIM}_tol{TOL}_ntrain{N_TRAIN}_{ERROR_EVAL_MODE.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
             )
-            conductExperiment(
+            conduct_experiment_generate_uniform_data(
                 # Problem-specific
                 json_fpath=json_fpath,
                 DOMAIN=[-2.0, 3.0],
@@ -710,24 +1042,94 @@ def indefinite_quadratic_experiment():
     return EXP_DIR
 
 
+def setup_argparse():
+    parser = argparse.ArgumentParser()
+
+    # Experiment basics
+    parser.add_argument("--experiment", help="The name of the experiment to run.", type=str, default="rosenbrock_dim_scaling")
+    parser.add_argument("--tols", help="The tolerances to use for the experiments.", type=float, nargs='+', default=[0.1, 0.05])
+    parser.add_argument("--dims", help="The dims to use for the experiments.", type=int, nargs='+', default=[2, 5])
+
+    # Other optional stuff for specific experiments (i.e. dt for Lorenz or other flow maps)
+    parser.add_argument("--dt", help="The time horizon to use for the flow map experiment. \
+                        Only does something if a flow map experiment is specified.", type=float, default=0.1)
+    parser.add_argument("--error_eval_mode", help="The error eval mode to use.", type=str, default="affine_cov_hess")
+    parser.add_argument("--sampling", help="The sampling strategy to use for initial points.", type=str, default="uniform")
+
+    args = parser.parse_args()
+
+    # Check if specified strings are valid
+    possible_experiments = [
+        "anisotropic_quadratic",
+        "anisotropic_gaussian",
+        "rosenbrock",
+        "lorenz96"
+    ]
+    possible_error_eval_modes = [
+        "affine_cov_hess",
+        "affine_cov_no_hess",
+        "nearest_neighbor",
+        "quadratic",
+        "taylor_cov_hess",
+        "taylor_cov_no_hess",
+        "taylor_lsq_hess"
+    ]
+    possible_sampling = [
+        "uniform",
+        "modified"
+    ]
+    if args.experiment not in possible_experiments:
+        Exception(f"ERROR: experiment specified is not one of the implemented test functions.\nPossible options are: {possible_experiments}")
+    if args.error_eval_mode not in possible_error_eval_modes:
+        Exception(f"ERROR: error eval. mode specified is not implemented.\nPossible options are: {possible_error_eval_modes}")
+    if args.sampling not in possible_sampling:
+        Exception(f"ERROR: sampling strategy specified is not implemented. Possible options are: {possible_sampling}")
+
+    return args
+
+
+def run_experiment_from_args(args):
+
+    tolvec = args.tols
+    dvec = args.dims
+    function_name = args.experiment
+
+    for tol in tolvec:
+        for d in dvec:
+            if function_name == "anisotropic_quadratic":
+                anisotropic_quadratic_experiment()
+            elif function_name == "anisotropic_gaussian":
+                anisotropic_gaussian_experiment()
+            elif function_name == "rosenbrock":
+                rosenbrock_experiment()
+            elif function_name == "lorenz96":
+                lorenz96_experiment(args.dt)
+
+
 if __name__ == "__main__":
     import logging
 
     from src.logging_utils import setup_logging
 
     setup_logging(console_level=logging.DEBUG)
-    # tf = float(sys.argv[1])
 
-    # dir1 = anisotropic_quadratic_experiment()
-    # dir2 = anisotropic_gaussian_experiment()
-    # dir3 = rosenbrock_experiment()
-    # dir1 = lorenz96_experiment(tf=0.15)
-    dir2 = lorenz96_dimension_scaling_experiment()
-    # dir5 = rosenbrock_diff_error_metrics_experiment()
-    # dir6 = indefinite_quadratic_experiment()
+    lorenz96_dimension_scaling_experiment()
 
-    # _dirs = [dir1, dir2, dir3, dir4, dir5]
-    # for d in _dirs:
-    #     if _rank == 0:
-    #         print(f"\nCreating summary dataframe for {d}...")
-    #         create_summary_dataframe(d)
+    # args = setup_argparse()
+    
+
+    # Nelson low-ambient dimension experiment 1 (enforced ambient dimension):
+    # d=5; dt=0.2;
+    # Dvec = xp.array([10, 20, 40])
+    # tolvec = xp.array([0.02])
+    # for D in Dvec:
+    #     for tol in tolvec:
+    #         lorenz96_low_rank_experiment(d, int(D), dt, float(tol))
+
+    # Nelson low-ambient dimension experiment 2 (learned ambient dimension):
+    # dvec = xp.array([5, 10, 20, 40, 80])
+    # dt = 0.1
+    # tolvec = xp.array([0.1])
+    # for d in dvec:
+    #     for tol in tolvec:
+    #         lorenz_trajectories_experiment(int(d), dt, float(tol))
