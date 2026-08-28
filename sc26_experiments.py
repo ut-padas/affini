@@ -448,6 +448,66 @@ def anisotropic_quadratic_experiment(dim: int, tol: float, error_eval_mode: Surr
     return EXP_DIR
 
 
+def anisotropic_quadratic_modified_sampling(dim: int, tol: float, error_eval_mode: SurrogateMode):
+    from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad, _get_params
+    EXP_DIR = SC26_DIR / "anisotropic_quadratic_modified_sampling"
+
+    F_DIM = 1
+    ERROR_METRIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+    USE_V2 = True
+    USE_WORK_STEALING = True
+
+    N_TRAIN = get_N_TRAIN(dim)
+    N_TEST = N_TRAIN // 2
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
+    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
+
+    if dim >= 10 and tol <= 0.005:
+        print("This is throwing OOM errors. Skipping for now.")
+        return
+
+    json_fpath = (
+        EXP_DIR
+        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+    )
+
+    # Sample initial data from modified distribution
+    decay_exp = 3.0; beta = 1.0
+    w, H = _get_params(dim, xp.float64, decay_exp)
+    mean = -0.5 * xp.linalg.solve(H, w)
+    cov = 0.5 * xp.linalg.inv(H)
+    X_train = xp.random.multivariate_normal(mean, cov, size=N_TRAIN)
+    X_test = xp.random.multivariate_normal(mean, cov, size=N_TEST)
+    
+    conduct_experiment_given_data(
+        # Problem-specific
+        json_fpath=json_fpath,
+        DOMAIN=[-3.0, 3.0],
+        F_DIM=F_DIM,
+        DIM=dim,
+        N_TRAIN=N_TRAIN,
+        N_TEST=N_TEST,
+        X_train=X_train,
+        X_test=X_test,
+        # Training-specific
+        f_fn=aniso_quadratic,
+        g_fn=aniso_quadratic_grad,
+        TOL=tol,
+        ERROR_EVAL_MODE=error_eval_mode,
+        ERROR_METRIC=ERROR_METRIC,
+        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        USE_WORK_STEALING=USE_WORK_STEALING,
+        USE_V2=USE_V2,
+    )
+
+    create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
 def anisotropic_gaussian_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
     from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad
 
@@ -495,6 +555,66 @@ def anisotropic_gaussian_experiment(dim: int, tol: float, error_eval_mode: Surro
     return EXP_DIR
 
 
+def anisotropic_gaussian_modified_sampling(dim: int, tol: float, error_eval_mode: SurrogateMode):
+    from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad, _get_random_rotation, _get_precision_eigenvalues
+
+    EXP_DIR = SC26_DIR / "anisotropic_gaussian_modified_sampling"
+
+    F_DIM = 1
+    ERROR_METRIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+    USE_V2 = True
+    USE_WORK_STEALING = True
+
+    N_TRAIN = get_N_TRAIN(dim)
+    N_TEST = N_TRAIN // 2
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
+    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
+
+    json_fpath = (
+        EXP_DIR
+        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+    )
+
+    # Sample initial data from modified distribution
+    decay_exp = 3
+    beta = 1
+    Q = _get_random_rotation(dim, xp.float64)
+    Lambda = xp.diag(_get_precision_eigenvalues(dim, xp.float64, decay_exp))
+    Ainv = Q @ (Lambda ** -1.0) @ Q.T
+    X_train = xp.random.randn(N_TRAIN, dim) @ Ainv
+    X_test = xp.random.randn(N_TEST, dim) @ Ainv
+
+    conduct_experiment_given_data(
+        # Problem-specific
+        json_fpath=json_fpath,
+        DOMAIN=[-3.0, 3.0],
+        F_DIM=F_DIM,
+        DIM=dim,
+        N_TRAIN=N_TRAIN,
+        N_TEST=N_TEST,
+        X_train=X_train,
+        X_test=X_test,
+        # Training-specific
+        f_fn=aniso_gaussian,
+        g_fn=aniso_gaussian_grad,
+        TOL=tol,
+        ERROR_EVAL_MODE=error_eval_mode,
+        ERROR_METRIC=ERROR_METRIC,
+        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        USE_WORK_STEALING=USE_WORK_STEALING,
+        USE_V2=USE_V2,
+        CENTROIDS_PLOT_IN_LOG_SCALE=False,
+    )
+
+    create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
+
 def rosenbrock_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
     from functools import partial
 
@@ -524,12 +644,6 @@ def rosenbrock_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
 
-    if (dim > 2 and dim < 0.01) or (
-        dim > 2 and dim < 0.05 and ERROR_METRIC == "Linf-local"
-    ):
-        print("skip for now")
-        return
-
     json_fpath = (
         EXP_DIR
         / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
@@ -542,6 +656,82 @@ def rosenbrock_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
         DIM=dim,
         N_TRAIN=N_TRAIN,
         N_TEST=N_TEST,
+        # Training-specific
+        f_fn=rosenbrock,
+        g_fn=rosenbrock_grad,
+        TOL=tol,
+        ERROR_EVAL_MODE=error_eval_mode,
+        ERROR_METRIC=ERROR_METRIC,  # type: ignore
+        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        USE_WORK_STEALING=USE_WORK_STEALING,
+        USE_V2=USE_V2,
+        SAVE_ALL_GEN_TRAINING_DATA=True,
+        SAVE_FINAL_CENTROIDS=True,
+    )
+
+    create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
+def rosenbrock_experiment_modified_sampling(dim: int, tol: float, error_eval_mode: SurrogateMode):
+    from functools import partial
+
+    from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
+
+    EXP_DIR = SC26_DIR / "rosenbrock"
+
+    ROSENBROCK_A = 100.0
+    rosenbrock = partial(rosenbrock, a=ROSENBROCK_A)
+    rosenbrock_grad = partial(rosenbrock_grad, a=ROSENBROCK_A)
+
+    F_DIM = 1
+    ERROR_METRIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+    USE_V2 = True
+    USE_WORK_STEALING = True
+
+    if error_eval_mode != SurrogateMode.AFFINE_COV_HESS:
+        # TODO for each ERROR_EVAL_MODE
+        print(
+            f"Skipping ERROR_EVAL_MODE={error_eval_mode.value} for now. TODO: Add other TOLs for this mode."
+        )
+        return
+
+    N_TRAIN = get_N_TRAIN(dim)
+    N_TEST = N_TRAIN // 2
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
+    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
+
+    json_fpath = (
+        EXP_DIR
+        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+    )
+
+    # Generate Rosenbrock distribution data
+    if dim > 2:
+        print("Not implemented yet for dimensions other than d=2.")
+        return
+    a = 1.0; b = 5.0; mu = 1.0;
+    x1_train = xp.random.randn(N_TRAIN) / (2*a) + mu
+    x2_train = xp.random.randn(N_TRAIN) / (2*b) + (x1_train**2)
+    x1_test = xp.random.randn(N_TEST) / (2*a) + mu
+    x2_test = xp.random.randn(N_TEST) / (2*b) + (x1_train**2)
+    X_train = xp.column_stack((x1_train, x2_train))
+    X_test = xp.column_stack((x1_test, x2_test))
+
+    conduct_experiment_given_data(
+        # Problem-specific
+        json_fpath=json_fpath,
+        DOMAIN=[-2.0, 3.0],
+        F_DIM=F_DIM,
+        DIM=dim,
+        N_TRAIN=N_TRAIN,
+        N_TEST=N_TEST,
+        X_train=X_train,
+        X_test=X_test,
         # Training-specific
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
@@ -636,6 +826,7 @@ def lorenz96_experiment(
 
 
 
+# TODO: probably can remove this
 def lorenz96_dimension_scaling_experiment():
     from src.problems.lorenz96_flowmap import (
         lorenz96_flowmap_auto,
@@ -730,7 +921,7 @@ def lorenz96_dimension_scaling_experiment():
 
 
 
-
+# TODO: what to do with this guy?
 def lorenz96_low_rank_experiment(d, D, dt, tol):
     '''
     Goal: vary some of the variables and keep others fixed.
@@ -809,7 +1000,7 @@ def lorenz96_low_rank_experiment(d, D, dt, tol):
 
 
 
-def lorenz_trajectories_experiment(d, dt, tol):
+def lorenz_trajectories_experiment(d, tol, error_eval_mode, dt):
     '''
     Goal: use time step data as training and testing to do experiments.
     I.e. use manifolds of solutions as initial data.
@@ -859,7 +1050,7 @@ def lorenz_trajectories_experiment(d, dt, tol):
         f_fn = f_fn,
         g_fn = None,
         TOL = tol,
-        ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS,
+        ERROR_EVAL_MODE = error_eval_mode,
         ERROR_METRIC = 'Linf-global',
         INITIAL_CLUSTERING_METHOD = 'kmeans',
         NUM_INITIAL_CLUSTERS = min(get_NUM_INITIAL_CLUSTERS(d), 1000),
@@ -1085,14 +1276,22 @@ def run_experiment_from_args(args):
                 if sampling == "uniform":
                     anisotropic_quadratic_experiment(d, tol, error_eval_mode)
                 elif sampling == "modified":
-                    Exception("ERROR: modified sampling for anisotropic quadratic not implemented yet.")
+                    anisotropic_quadratic_modified_sampling(d, tol, error_eval_mode)
             elif function_name == "anisotropic_gaussian":
                 if sampling == "uniform":
                     anisotropic_gaussian_experiment(d, tol, error_eval_mode)
+                elif sampling == "modified":
+                    anisotropic_gaussian_modified_sampling(d, tol, error_eval_mode)
             elif function_name == "rosenbrock":
-                rosenbrock_experiment()
+                if sampling == "uniform":
+                    rosenbrock_experiment(d, tol, error_eval_mode)
+                elif sampling == "modified":
+                    rosenbrock_experiment_modified_sampling(d, tol, error_eval_mode)
             elif function_name == "lorenz96":
-                lorenz96_experiment(args.dt)
+                if sampling == "uniform":
+                    lorenz96_experiment(d, tol, error_eval_mode, args.dt)
+                elif sampling == "modified":
+                    lorenz_trajectories_experiment(d, tol, error_eval_mode, args.dt)
 
 
 if __name__ == "__main__":
@@ -1102,10 +1301,8 @@ if __name__ == "__main__":
 
     setup_logging(console_level=logging.DEBUG)
 
-    lorenz96_dimension_scaling_experiment()
-
-    # args = setup_argparse()
-    
+    args = setup_argparse()
+    run_experiment_from_args(args)
 
     # Nelson low-ambient dimension experiment 1 (enforced ambient dimension):
     # d=5; dt=0.2;
