@@ -101,12 +101,7 @@ def _shared_dir(root: Path, dimension: int, seed: int) -> Path:
 
 
 def _arm_dir(root: Path, dimension: int, seed: int, method: str) -> Path:
-    return (
-        root
-        / f"dimension_{dimension:02d}"
-        / f"seed_{seed:04d}"
-        / method
-    )
+    return root / f"dimension_{dimension:02d}" / f"seed_{seed:04d}" / method
 
 
 def ensure_shared_designs(
@@ -290,7 +285,10 @@ def run_arm(
             "peak_host_memory_gib": peak_host_memory_gib(),
             "gpu_pool_memory_gib": gpu_memory_gib(),
             **test_metrics,
-            **{f"calibration_{key}": value for key, value in calibration_metrics.items()},
+            **{
+                f"calibration_{key}": value
+                for key, value in calibration_metrics.items()
+            },
             **transition_metrics,
             **audit_metrics,
             "checkpoint_seconds": time.perf_counter() - checkpoint_start,
@@ -492,7 +490,9 @@ def _parse_str_tuple(value: str) -> tuple[str, ...]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--preset", choices=("smoke", "idev", "pilot", "full"), default="idev")
+    parser.add_argument(
+        "--preset", choices=("smoke", "idev", "pilot", "full"), default="idev"
+    )
     parser.add_argument("--output", type=str)
     parser.add_argument("--dimensions", type=_parse_int_tuple)
     parser.add_argument("--seeds", type=_parse_int_tuple)

@@ -35,12 +35,18 @@ def main(argv: list[str] | None = None) -> int:
 
         device = cp.cuda.Device()
         properties = cp.cuda.runtime.getDeviceProperties(device.id)
-        name = properties["name"].decode() if isinstance(properties["name"], bytes) else properties["name"]
+        name = (
+            properties["name"].decode()
+            if isinstance(properties["name"], bytes)
+            else properties["name"]
+        )
         free_bytes, total_bytes = cp.cuda.runtime.memGetInfo()
         probe = cp.arange(1024, dtype=cp.float64)
         probe_sum = float(cp.sum(probe).get())
         print(f"  GPU: {name}")
-        print(f"  GPU memory free/total: {free_bytes / 2**30:.1f}/{total_bytes / 2**30:.1f} GiB")
+        print(
+            f"  GPU memory free/total: {free_bytes / 2**30:.1f}/{total_bytes / 2**30:.1f} GiB"
+        )
         print(f"  GPU arithmetic probe: {probe_sum:.1f}")
     elif args.require_gpu:
         print("ERROR: CuPy did not initialize, so the GH200 would not be used.")
@@ -49,7 +55,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if shutil.which("nvidia-smi"):
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
+            [
+                "nvidia-smi",
+                "--query-gpu=name,driver_version,memory.total",
+                "--format=csv,noheader",
+            ],
             check=False,
             capture_output=True,
             text=True,

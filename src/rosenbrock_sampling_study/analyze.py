@@ -175,7 +175,9 @@ def _paired_cauc(run_metrics: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for dimension, frame in run_metrics.groupby("dimension"):
         methods = sorted(frame["method"].unique())
-        pivot = frame.pivot(index="seed", columns="method", values="normalized_coverage_auc")
+        pivot = frame.pivot(
+            index="seed", columns="method", values="normalized_coverage_auc"
+        )
         for method_a, method_b in itertools.combinations(methods, 2):
             differences = (pivot[method_a] - pivot[method_b]).dropna()
             n = len(differences)
@@ -236,17 +238,14 @@ def analyze(root: Path) -> int:
     paired = _paired_cauc(run_metrics)
     paired.to_csv(analysis_dir / "paired_cauc.csv", index=False)
 
-    final_summary = (
-        run_metrics.groupby(["dimension", "method"], as_index=False)
-        .agg(
-            seeds=("seed", "count"),
-            mean_final_p_out=("final_p_out", "mean"),
-            std_final_p_out=("final_p_out", "std"),
-            mean_normalized_cauc=("normalized_coverage_auc", "mean"),
-            mean_final_p_bad_given_in=("final_p_bad_given_in", "mean"),
-            mean_total_train_seconds=("total_train_seconds", "mean"),
-            mean_final_clusters=("final_n_clusters", "mean"),
-        )
+    final_summary = run_metrics.groupby(["dimension", "method"], as_index=False).agg(
+        seeds=("seed", "count"),
+        mean_final_p_out=("final_p_out", "mean"),
+        std_final_p_out=("final_p_out", "std"),
+        mean_normalized_cauc=("normalized_coverage_auc", "mean"),
+        mean_final_p_bad_given_in=("final_p_bad_given_in", "mean"),
+        mean_total_train_seconds=("total_train_seconds", "mean"),
+        mean_final_clusters=("final_n_clusters", "mean"),
     )
     final_summary.to_csv(analysis_dir / "final_summary.csv", index=False)
 
@@ -280,11 +279,19 @@ def analyze(root: Path) -> int:
         cbar_kws={"label": "Final uncovered volume (%)"},
         ax=axis,
     )
-    axis.set_yticklabels([METHOD_LABELS.get(item.get_text(), item.get_text()) for item in axis.get_yticklabels()], rotation=0)
+    axis.set_yticklabels(
+        [
+            METHOD_LABELS.get(item.get_text(), item.get_text())
+            for item in axis.get_yticklabels()
+        ],
+        rotation=0,
+    )
     axis.set_xlabel("Dimension")
     axis.set_ylabel("Sampler")
     fig.tight_layout()
-    fig.savefig(figures_dir / "final_coverage_heatmap.png", dpi=220, bbox_inches="tight")
+    fig.savefig(
+        figures_dir / "final_coverage_heatmap.png", dpi=220, bbox_inches="tight"
+    )
     plt.close(fig)
 
     if not acquisitions.empty:
@@ -306,7 +313,9 @@ def analyze(root: Path) -> int:
         axis.set_ylabel("Selected points / raw proposals")
         axis.grid(alpha=0.25)
         fig.tight_layout()
-        fig.savefig(figures_dir / "proposal_efficiency.png", dpi=220, bbox_inches="tight")
+        fig.savefig(
+            figures_dir / "proposal_efficiency.png", dpi=220, bbox_inches="tight"
+        )
         plt.close(fig)
 
     config = json.loads((root / "config.json").read_text())
@@ -314,24 +323,24 @@ def analyze(root: Path) -> int:
 
 Study directory: `{root}`
 
-- Preset: `{config['preset']}`
-- Dimensions: `{config['dimensions']}`
-- Seeds: `{config['seeds']}`
-- Samplers: `{config['samplers']}`
-- Acquisition iterations: `{config['iterations']}`
-- Error tolerance: `{config['tolerance']}`
+- Preset: `{config["preset"]}`
+- Dimensions: `{config["dimensions"]}`
+- Seeds: `{config["seeds"]}`
+- Samplers: `{config["samplers"]}`
+- Acquisition iterations: `{config["iterations"]}`
+- Error tolerance: `{config["tolerance"]}`
 
 ## Final checkpoint summary
 
 Lower final uncovered volume and lower normalized coverage AUC are better. The inside failure rate must also remain within the calibration target.
 
-{_markdown_table(final_summary, ['dimension', 'method', 'seeds', 'mean_final_p_out', 'mean_normalized_cauc', 'mean_final_p_bad_given_in', 'mean_total_train_seconds'])}
+{_markdown_table(final_summary, ["dimension", "method", "seeds", "mean_final_p_out", "mean_normalized_cauc", "mean_final_p_bad_given_in", "mean_total_train_seconds"])}
 
 ## Paired normalized coverage-AUC differences
 
 Negative `mean_cauc_a_minus_b` favors method A. With one seed, confidence limits remain undefined. Use the pilot or full preset for statistical inference.
 
-{_markdown_table(paired, ['dimension', 'method_a', 'method_b', 'n_paired_seeds', 'mean_cauc_a_minus_b', 'ci95_low', 'ci95_high'])}
+{_markdown_table(paired, ["dimension", "method_a", "method_b", "n_paired_seeds", "mean_cauc_a_minus_b", "ci95_low", "ci95_high"])}
 
 ## Generated figures
 

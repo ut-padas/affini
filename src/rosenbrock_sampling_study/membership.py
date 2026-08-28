@@ -51,9 +51,7 @@ def exact_unguaranteed_mask(
             block_centers = centers[cluster_start:cluster_end]
             block_matrices = matrices[cluster_start:cluster_end]
             delta = query[:, None, :] - block_centers[None, :, :]
-            q_values = xp.einsum(
-                "qci,cij,qcj->qc", delta, block_matrices, delta
-            )
+            q_values = xp.einsum("qci,cij,qcj->qc", delta, block_matrices, delta)
             min_q = xp.minimum(min_q, xp.min(q_values, axis=1))
         result[query_start:query_end] = np.asarray(_to_host(min_q > 1.0))
     return result

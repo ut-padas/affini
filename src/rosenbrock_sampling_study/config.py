@@ -50,7 +50,9 @@ class StudyConfig:
     initial_clustering_method: str = "kmeans"
     model_batch_size: int = 10_000_000
     max_levels: int = 50
-    use_work_stealing: bool = True
+    # The paired study runs on one MPI rank in an idev session. There is no
+    # second rank to steal work from, so enabling this only triggers a warning.
+    use_work_stealing: bool = False
     output_dir: str = "results/rosenbrock_sampling/idev"
 
     def validate(self) -> None:

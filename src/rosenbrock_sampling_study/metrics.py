@@ -54,9 +54,7 @@ def evaluate(
     def relative_l2(mask: np.ndarray) -> float:
         if not np.any(mask):
             return float("nan")
-        return float(
-            np.linalg.norm(diff[mask]) / (np.linalg.norm(truth[mask]) + 1e-12)
-        )
+        return float(np.linalg.norm(diff[mask]) / (np.linalg.norm(truth[mask]) + 1e-12))
 
     metrics = {
         "n_test": n_test,
