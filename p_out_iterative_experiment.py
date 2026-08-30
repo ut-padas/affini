@@ -10,7 +10,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Ellipse
 from mpi4py import MPI
 
-from src import RESULTS_DIR, _get_mpi_rank, _to_device, _to_host, xp, Array
+from src import RESULTS_DIR, Array, _get_mpi_rank, _to_device, _to_host, xp
 from src.adaptive_clustering_utils import SurrogateMode
 from src.logging_utils import setup_logging
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
@@ -270,10 +270,11 @@ def main():
             INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
             NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-            USE_WORK_STEALING=True,
+            USE_WORK_STEALING=False,
             USE_V2=True,
             STORE_AFFINE_FIT=True,
             save_model=False,
+            MAX_LEVELS=50,
             PROFILE_TIMING=False,
         )
         t_train = time.perf_counter() - _t_start
