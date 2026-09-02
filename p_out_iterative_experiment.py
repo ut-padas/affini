@@ -9,7 +9,7 @@ from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Ellipse
 
-from src import RESULTS_DIR, _get_mpi_rank, _to_device, _to_host, xp, Array
+from src import RESULTS_DIR, _to_device, _to_host, xp, Array
 from src.adaptive_clustering_utils import SurrogateMode
 from src.logging_utils import setup_logging
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
@@ -157,6 +157,52 @@ def plot_adaptive_clustering_results(
 
 
 
+def plot_test_points(X_test: Array):
+    """
+    For the paper, plots the test point distribution (on a scatter plot) with the background contours.
+    """
+    return None
+
+
+
+# ==========================================
+# DISTRIBUTED MANIFOLD INFLATION & FILTERING
+# ==========================================
+def generate_and_filter(
+    surrogate: AFINNISurrogate, pts_per_cluster: int, gamma: float
+) -> Array:
+    """
+    Each MPI rank generates candidates ONLY for its assigned fraction of clusters,
+    filters them locally using the fast geometric filter, and Rank 0 gathers the survivors.
+    """
+
+    Nc, d = surrogate.X_src.shape
+
+    centroids = surrogate.X_src
+    Qs = surrogate.Qs_src
+
+    # 2. Generate candidates only for MY clusters
+    eigenvals, eigenvecs = xp.linalg.eigh(Qs)
+    lambda_inv_sqrt = 1.0 / xp.sqrt(xp.maximum(eigenvals, 1e-12))
+
+    xp.random.seed(SEED)
+    z = xp.random.randn(Nc, pts_per_cluster, d)
+
+    scaled_z = z * lambda_inv_sqrt[:, None, :]
+    noise = xp.einsum("nij,npj->npi", eigenvecs, scaled_z)
+
+    X_cand = centroids[:, None, :] + (gamma * noise)
+    X_cand = X_cand.reshape(-1, d)
+    X_cand = xp.clip(X_cand, DOMAIN[0], DOMAIN[1])
+
+    # 3. Fast Filter Locally
+    my_ug_mask = surrogate.filter_unguaranteed_local(X_cand, k_coarse=10, batch_size=50000)
+    my_valid_points = X_cand[my_ug_mask]
+
+    return xp.asarray(np.concatenate(my_valid_points, axis=0))
+
+
+
 def main():
     xp.random.seed(SEED)
 
@@ -247,7 +293,7 @@ def main():
         if iteration < MAX_ITERATIONS and p_out > 0.1:
 
             _t_start = time.perf_counter()
-            X_new_halo = ... # TODO
+            X_new_halo = generate_and_filter(surrogate, dynamic_pts_per_cluster, HALO_FACTOR)
             t_gen_filter = time.perf_counter() - _t_start
 
             if X_new_halo is not None and len(X_new_halo) > 0:
@@ -292,6 +338,7 @@ def main():
         )
 
     print(f"\nActive Learning Complete! Metrics saved to {csv_path}")
+
 
 
 if __name__ == "__main__":
