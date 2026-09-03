@@ -36,7 +36,7 @@ INITIAL_CLUSTERING_METHOD = "kmeans"
 # Active Learning Configuration
 MAX_ITERATIONS = 5
 HALO_FACTOR = 1.5
-PTS_PER_CLUSTER_CANDIDATE = 200
+PTS_PER_CLUSTER_CANDIDATE = 10
 
 A_ROSENBROCK = 100.0
 
@@ -161,7 +161,7 @@ def plot_test_points(X_test: Array):
     """
     For the paper, plots the test point distribution (on a scatter plot) with the background contours.
     """
-    return None
+    
 
 
 
@@ -187,23 +187,27 @@ def generate_and_filter(
 
     xp.random.seed(SEED)
     z = xp.random.randn(Nc, pts_per_cluster, d)
+    z_normalized = z / xp.linalg.norm(z, axis=2)[:,:,None]
 
-    scaled_z = z * lambda_inv_sqrt[:, None, :]
-    noise = xp.einsum("nij,npj->npi", eigenvecs, scaled_z)
+    scaled_z = z_normalized * lambda_inv_sqrt[:, None, :]
+    rotated_scaled_z = xp.einsum("nij,npj->npi", eigenvecs, scaled_z)
 
-    X_cand = centroids[:, None, :] + (gamma * noise)
+    X_cand = centroids[:, None, :] + (gamma * rotated_scaled_z)
     X_cand = X_cand.reshape(-1, d)
-    X_cand = xp.clip(X_cand, DOMAIN[0], DOMAIN[1])
+    # Remove points that are outside the domain
+    X_cand_min = xp.min(X_cand, 1); X_cand_max = xp.max(X_cand, 1)
+    out_box_mask = (X_cand_min < DOMAIN[0]) | (X_cand_max > DOMAIN[1])
+    X_cand = X_cand[~out_box_mask]
 
     # 3. Fast Filter Locally
-    my_ug_mask = surrogate.filter_unguaranteed_local(X_cand, k_coarse=10, batch_size=50000)
-    my_valid_points = X_cand[my_ug_mask]
+    ug_mask = surrogate.filter_unguaranteed_local(X_cand, k_coarse=10, batch_size=50000)
+    valid_points = X_cand[ug_mask]
 
-    return xp.asarray(np.concatenate(my_valid_points, axis=0))
+    return valid_points
 
 
 
-def main():
+def run_halo_sampling():
     xp.random.seed(SEED)
 
     OUTPUT_DIR = RESULTS_DIR / "active_learning_halo"
@@ -289,19 +293,15 @@ def main():
             )
 
         # 3. Generate & Filter New Points via Distributed Halo Expansion
+        _t_start = time.perf_counter()
+        X_new_halo = generate_and_filter(surrogate, dynamic_pts_per_cluster, HALO_FACTOR)
+        t_gen_filter = time.perf_counter() - _t_start
 
-        if iteration < MAX_ITERATIONS and p_out > 0.1:
-
-            _t_start = time.perf_counter()
-            X_new_halo = generate_and_filter(surrogate, dynamic_pts_per_cluster, HALO_FACTOR)
-            t_gen_filter = time.perf_counter() - _t_start
-
-            if X_new_halo is not None and len(X_new_halo) > 0:
-                print(f"Retained {len(X_new_halo):,} verified gap points.")
-                X_train = xp.vstack([X_train, X_new_halo])
-                continue_flag = True
-            else:
-                print("Could not find any new gap points. Domain is fully packed.")
+        if X_new_halo is not None and len(X_new_halo) > 0:
+            print(f"Retained {len(X_new_halo):,} verified gap points.")
+            X_train = xp.vstack([X_train, X_new_halo])
+        else:
+            print("Could not find any new gap points. Domain is fully packed.")
 
         # Log metrics to CSV (Rank 0 only)
         with open(csv_path, mode="a", newline="") as f:
@@ -342,4 +342,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run_halo_sampling()
