@@ -12,7 +12,8 @@ usage() {
         "SC26-matched 5D Rosenbrock P_out race." \
         "Default: Linf-local, rtol=0.05, N0=185646, Ntest=92823," \
         "four methods (Uniform, Halo, Cloud, Random chord), target P_out < 2%," \
-        "10 acquisition rounds, and at most 5,000,000 persistent training points." \
+        "10 acquisition rounds, at most 5,000,000 persistent training points, and" \
+        "a post-checkpoint 8 GiB free-GPU-memory guard." \
         "" \
         "Options:" \
         "  --output PATH               result directory" \
@@ -20,7 +21,8 @@ usage() {
         "  --methods LIST              uniform,halo,cloud,random_chord" \
         "  --target-pout FRACTION      default 0.02" \
         "  --max-rounds N              default 10" \
-        "  --max-training-points N     default 5000000" \
+        "  --max-training-points N     default 5000000; set 0 to remove the cap" \
+        "  --min-free-gpu-gib N        default 8; set 0 to permit a caught OOM stop" \
         "  --points-per-cluster N      default 500" \
         "  --cluster-reference N       proposal budget begins scaling after this many clusters" \
         "  --help                      show this message"

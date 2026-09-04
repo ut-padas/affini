@@ -79,6 +79,9 @@ def analyze(root: Path) -> int:
     figures.mkdir(parents=True, exist_ok=True)
     config = json.loads((root / "race_config.json").read_text())
     metrics.to_csv(analysis / "all_metrics.csv", index=False)
+    oom_events = _read(root, "oom_events.csv")
+    if not oom_events.empty:
+        oom_events.to_csv(analysis / "oom_events.csv", index=False)
     _final_table(metrics).to_csv(analysis / "final_paper_style_table.csv", index=False)
     (analysis / "paper_style_iteration_table.md").write_text(_markdown_table(metrics))
     (analysis / "configuration.json").write_text(json.dumps(config, indent=2) + "\n")

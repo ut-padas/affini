@@ -70,7 +70,11 @@ class SC26PoutRaceConfig:
 
     target_pout: float = 0.02
     max_rounds: int = 10
+    # Zero disables the persistent-training cap.  In that mode a caught CUDA
+    # allocation failure becomes a recorded "oom" stop instead of losing the
+    # previous checkpoint.
     max_training_points: int = 5_000_000
+    min_free_gpu_gib: float = 8.0
     points_per_cluster: int = 500
     cluster_reference: int = 10_000
     min_points_per_cluster_candidate: int = 10
@@ -91,8 +95,12 @@ class SC26PoutRaceConfig:
             raise ValueError(f"methods must be drawn from {RACE_METHODS}")
         if not 0 < self.target_pout < 1:
             raise ValueError("target_pout must be a fraction in (0, 1).")
-        if self.max_rounds < 1 or self.max_training_points < self.initial_n:
+        if self.max_rounds < 1:
             raise ValueError("Invalid round or training-point limit.")
+        if 0 < self.max_training_points < self.initial_n:
+            raise ValueError("max_training_points must be zero or at least initial_n.")
+        if self.min_free_gpu_gib < 0:
+            raise ValueError("min_free_gpu_gib cannot be negative.")
         if self.points_per_cluster < 1 or self.chord_neighbours < 1:
             raise ValueError("Candidate counts must be positive.")
 
@@ -119,6 +127,46 @@ def _json(data: Any) -> str:
 
 def _config_hash(config: SC26PoutRaceConfig) -> str:
     return hashlib.sha256(json.dumps(asdict(config), sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _gpu_memory_snapshot() -> dict[str, float]:
+    """Return allocator and device memory state without requiring a GPU backend."""
+
+    if not IS_CUPY_BACKEND:
+        return {
+            "gpu_free_gib": float("nan"),
+            "gpu_total_gib": float("nan"),
+            "gpu_pool_used_gib": float("nan"),
+        }
+    try:
+        import cupy as cp
+
+        free_bytes, total_bytes = cp.cuda.runtime.memGetInfo()
+        return {
+            "gpu_free_gib": free_bytes / (1024.0**3),
+            "gpu_total_gib": total_bytes / (1024.0**3),
+            "gpu_pool_used_gib": cp.get_default_memory_pool().used_bytes() / (1024.0**3),
+        }
+    except Exception:
+        return {
+            "gpu_free_gib": float("nan"),
+            "gpu_total_gib": float("nan"),
+            "gpu_pool_used_gib": float("nan"),
+        }
+
+
+def _is_oom(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    markers = (
+        "out of memory",
+        "outofmemoryerror",
+        "memoryerror",
+        "memory allocation",
+        "cudaerrormemoryallocation",
+        "cudnn_status_alloc_failed",
+        "std::bad_alloc",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _append_csv(path: Path, row: dict[str, Any], unique_key: str) -> None:
@@ -383,10 +431,36 @@ def run_arm(config: SC26PoutRaceConfig, method: str, index: int) -> str:
     for round_number in range(next_round, config.max_rounds + 1):
         started = time.perf_counter()
         print(f"  [round {round_number}/{config.max_rounds}] fitting {len(training):,} points", flush=True)
-        surrogate, train_seconds = _train(study, training, config.dimension, config.seed)
+        try:
+            surrogate, train_seconds = _train(
+                study, training, config.dimension, config.seed
+            )
+        except Exception as exc:
+            if not _is_oom(exc):
+                raise
+            snapshot = _gpu_memory_snapshot()
+            oom_row = {
+                "config_hash": _config_hash(config),
+                "method": method,
+                "round_attempted": round_number,
+                "n_train_attempted": len(training),
+                "exception_type": type(exc).__name__,
+                "exception": str(exc),
+                **snapshot,
+                "peak_host_memory_gib": peak_host_memory_gib(),
+            }
+            _append_csv(arm / "oom_events.csv", oom_row, "round_attempted")
+            complete.write_text(_json({"status": "oom", **oom_row}))
+            print(
+                f"    OOM while fitting {len(training):,} points. "
+                "The preceding state checkpoint remains available.",
+                flush=True,
+            )
+            return "oom"
         errors, _ = evaluate(
             surrogate, evaluation, truth, config.tolerance, config.membership_coarse_factor
         )
+        gpu_memory = _gpu_memory_snapshot()
         elapsed = time.perf_counter() - started
         cumulative_seconds += elapsed
         cumulative_fit_points += len(training)
@@ -405,24 +479,38 @@ def run_arm(config: SC26PoutRaceConfig, method: str, index: int) -> str:
             "round_seconds": elapsed, "cumulative_seconds": cumulative_seconds,
             "cumulative_fit_points": cumulative_fit_points, "peak_host_memory_gib": peak_host_memory_gib(),
             "termination": "target" if hit_target else "", "error_metric": config.error_metric,
+            **gpu_memory,
         }
         print(f"    p_out={row['p_out_percent']:.2f}% e_in={row['e_in']:.3e} e={row['e']:.3e} N_c={surrogate.N_src:,}")
 
-        if hit_target or round_number == config.max_rounds or before >= config.max_training_points:
-            row["termination"] = "target" if hit_target else ("max_rounds" if round_number == config.max_rounds else "max_training_points")
+        cap_reached = bool(config.max_training_points and before >= config.max_training_points)
+        gpu_guard_reached = bool(
+            config.min_free_gpu_gib
+            and np.isfinite(gpu_memory["gpu_free_gib"])
+            and gpu_memory["gpu_free_gib"] < config.min_free_gpu_gib
+        )
+        if hit_target or round_number == config.max_rounds or cap_reached or gpu_guard_reached:
+            row["termination"] = (
+                "target" if hit_target else "max_rounds" if round_number == config.max_rounds
+                else "max_training_points" if cap_reached else "gpu_memory_guard"
+            )
             _append_csv(arm / "metrics.csv", row, "round")
             complete.write_text(_json({"status": row["termination"], "method": method, "round": round_number, "n_train": before, "p_out_percent": row["p_out_percent"]}))
             return str(row["termination"])
 
         acquisition_started = time.perf_counter()
         candidates, stats = _retained_chunks(config, surrogate, method, round_number)
-        available = config.max_training_points - before
+        available = (
+            config.max_training_points - before
+            if config.max_training_points
+            else len(candidates)
+        )
         additions = _limit_additions(candidates, available, derived_seed(config.seed, method, round_number, "cap"))
         acquisition_seconds = time.perf_counter() - acquisition_started
         cumulative_seconds += acquisition_seconds
         row.update({"n_train_after": before + len(additions), "n_added": len(additions), "round_seconds": elapsed + acquisition_seconds, "cumulative_seconds": cumulative_seconds})
         _append_csv(arm / "metrics.csv", row, "round")
-        acquisition = {"config_hash": _config_hash(config), "method": method, "round_from": round_number, "n_train_before": before, "n_train_after": before + len(additions), "training_cap_applied": len(additions) < len(candidates), "acquisition_seconds": acquisition_seconds, **asdict(stats)}
+        acquisition = {"config_hash": _config_hash(config), "method": method, "round_from": round_number, "n_train_before": before, "n_train_after": before + len(additions), "training_cap_applied": bool(config.max_training_points and len(additions) < len(candidates)), "acquisition_seconds": acquisition_seconds, **asdict(stats)}
         _append_csv(arm / "acquisitions.csv", acquisition, "round_from")
         print(f"    retained={len(additions):,}/{stats.proposed:,}; next fit={before + len(additions):,}; acquisition={acquisition_seconds:.1f}s", flush=True)
         if not len(additions):
@@ -461,7 +549,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--methods", type=_methods, default=RACE_METHODS)
     parser.add_argument("--target-pout", type=float, default=0.02)
     parser.add_argument("--max-rounds", type=int, default=10)
-    parser.add_argument("--max-training-points", type=int, default=5_000_000)
+    parser.add_argument(
+        "--max-training-points",
+        type=int,
+        default=5_000_000,
+        help="Persistent-point cap. Set 0 to disable the cap and stop only on target, rounds, a memory guard, or a caught OOM.",
+    )
+    parser.add_argument(
+        "--min-free-gpu-gib",
+        type=float,
+        default=8.0,
+        help="Stop after a completed checkpoint when free GPU memory falls below this value. Set 0 to disable the guard.",
+    )
     parser.add_argument("--points-per-cluster", type=int, default=500)
     parser.add_argument("--cluster-reference", type=int, default=10_000)
     return parser
@@ -469,7 +568,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return run(SC26PoutRaceConfig(output_dir=args.output, methods=args.methods, target_pout=args.target_pout, max_rounds=args.max_rounds, max_training_points=args.max_training_points, points_per_cluster=args.points_per_cluster, cluster_reference=args.cluster_reference))
+    return run(SC26PoutRaceConfig(output_dir=args.output, methods=args.methods, target_pout=args.target_pout, max_rounds=args.max_rounds, max_training_points=args.max_training_points, min_free_gpu_gib=args.min_free_gpu_gib, points_per_cluster=args.points_per_cluster, cluster_reference=args.cluster_reference))
 
 
 if __name__ == "__main__":
