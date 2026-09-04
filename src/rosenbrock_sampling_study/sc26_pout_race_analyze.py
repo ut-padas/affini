@@ -25,13 +25,13 @@ def _format(value: float, style: str) -> str:
     return "--" if pd.isna(value) else format(value, style)
 
 
-def _markdown_table(metrics: pd.DataFrame) -> str:
+def _markdown_table(metrics: pd.DataFrame, config: dict) -> str:
     lines = [
         "# SC26-matched 5D Rosenbrock P_out race",
         "",
-        "The model uses the SC26 configuration: `Linf-local`, `AFFINE_COV_HESS`, `rtol = 0.05`, domain `[-2, 3]^5`, 185,646 initial uniform points, 92,823 fixed uniform test points, 92 initial clusters, and 371 minimum points per cluster. Work stealing is disabled because this run uses one idev GPU rank.",
+        f"The model uses `{config['error_metric']}`, `AFFINE_COV_HESS`, `rtol = 0.05`, domain `[-2, 3]^5`, 185,646 initial uniform points, 92,823 fixed uniform test points, 92 initial clusters, and 371 minimum points per cluster. Work stealing is disabled because this run uses one idev GPU rank.",
         "",
-        "`N` is the fit's total oracle function-evaluation count, matching the paper's notation. `N_train_before` is the persistent input set used for the row's fit and metrics. `N_train_after` includes retained proposals that seed the next round. `e_in`, `e_out`, and `e` are relative L2 errors, even though the surrogate leaf criterion is local Linf.",
+        f"`N` is the fit's total oracle function-evaluation count, matching the paper's notation. `N_train_before` is the persistent input set used for the row's fit and metrics. `N_train_after` includes retained proposals that seed the next round. `e_in`, `e_out`, and `e` are relative L2 errors; the surrogate leaf acceptance criterion for this run is `{config['error_metric']}`.",
         "",
         "| Method | iter | d | rtol | N | N_train before | N_train after | N_c | p_out (%) | e_in | e_out | e | added | stop |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
@@ -83,7 +83,9 @@ def analyze(root: Path) -> int:
     if not oom_events.empty:
         oom_events.to_csv(analysis / "oom_events.csv", index=False)
     _final_table(metrics).to_csv(analysis / "final_paper_style_table.csv", index=False)
-    (analysis / "paper_style_iteration_table.md").write_text(_markdown_table(metrics))
+    (analysis / "paper_style_iteration_table.md").write_text(
+        _markdown_table(metrics, config)
+    )
     (analysis / "configuration.json").write_text(json.dumps(config, indent=2) + "\n")
     sns.set_theme(style="whitegrid", context="paper", font_scale=1.15)
     _plot(metrics, "round", "Acquisition iteration", figures / "pout_vs_iteration.png")

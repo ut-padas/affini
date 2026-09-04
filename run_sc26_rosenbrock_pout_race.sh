@@ -19,6 +19,7 @@ usage() {
         "  --output PATH               result directory" \
         "  --skip-preflight            skip GPU/import checks" \
         "  --methods LIST              uniform,halo,cloud,random_chord" \
+        "  --error-metric NAME         Linf-local (default) or L2" \
         "  --target-pout FRACTION      default 0.02" \
         "  --max-rounds N              default 10" \
         "  --max-training-points N     default 5000000; set 0 to remove the cap" \

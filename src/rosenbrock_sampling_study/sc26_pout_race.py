@@ -87,8 +87,8 @@ class SC26PoutRaceConfig:
     def validate(self) -> None:
         if self.dimension != 5:
             raise ValueError("This paper-matched driver is specified for d=5 only.")
-        if self.error_metric != "Linf-local":
-            raise ValueError("The SC26 paper configuration uses Linf-local.")
+        if self.error_metric not in {"L2", "Linf-local"}:
+            raise ValueError("error_metric must be L2 or Linf-local.")
         if self.error_eval_mode != "affine_cov_hess":
             raise ValueError("The SC26 paper configuration uses affine_cov_hess.")
         if not self.methods or set(self.methods) - set(RACE_METHODS):
@@ -533,7 +533,7 @@ def run(config: SC26PoutRaceConfig) -> int:
     if path.exists() and json.loads(path.read_text()) != serialized:
         raise RuntimeError(f"{path} differs from this configuration. Choose a new --output.")
     path.write_text(_json(serialized))
-    print(f"SC26-matched Rosenbrock P_out race: d=5, rtol=0.05, target={100*config.target_pout:g}%, methods={', '.join(config.methods)}, GPU={IS_CUPY_BACKEND}")
+    print(f"SC26-style Rosenbrock P_out race: d=5, rtol=0.05, metric={config.error_metric}, target={100*config.target_pout:g}%, methods={', '.join(config.methods)}, GPU={IS_CUPY_BACKEND}")
     statuses = {method: run_arm(config, method, index) for index, method in enumerate(config.methods, 1)}
     (root / "RACE_COMPLETE.json").write_text(_json(statuses))
     return 0
@@ -547,6 +547,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", default=SC26PoutRaceConfig.output_dir)
     parser.add_argument("--methods", type=_methods, default=RACE_METHODS)
+    parser.add_argument(
+        "--error-metric",
+        choices=("L2", "Linf-local"),
+        default="Linf-local",
+        help="Cluster acceptance criterion. Linf-local reproduces the SC26 paper setting.",
+    )
     parser.add_argument("--target-pout", type=float, default=0.02)
     parser.add_argument("--max-rounds", type=int, default=10)
     parser.add_argument(
@@ -568,7 +574,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return run(SC26PoutRaceConfig(output_dir=args.output, methods=args.methods, target_pout=args.target_pout, max_rounds=args.max_rounds, max_training_points=args.max_training_points, min_free_gpu_gib=args.min_free_gpu_gib, points_per_cluster=args.points_per_cluster, cluster_reference=args.cluster_reference))
+    return run(SC26PoutRaceConfig(output_dir=args.output, methods=args.methods, error_metric=args.error_metric, target_pout=args.target_pout, max_rounds=args.max_rounds, max_training_points=args.max_training_points, min_free_gpu_gib=args.min_free_gpu_gib, points_per_cluster=args.points_per_cluster, cluster_reference=args.cluster_reference))
 
 
 if __name__ == "__main__":
