@@ -609,9 +609,13 @@ def compute_error_metrics(
         diff = preds_in - gt_in
         norm_diff = xp.linalg.norm(diff)
         norm_gt = xp.linalg.norm(gt_in)
+        norm_diff_inf = xp.linalg.norm(diff, ord=xp.inf)
+        norm_gt_inf = xp.linalg.norm(gt_in, ord=xp.inf)
 
         in_l2_rel_error = float(norm_diff / (norm_gt + TINY_EPS))
         in_l2_abs_error = float(norm_diff / xp.sqrt(n_in))
+        in_linf_rel_error = float(norm_diff_inf / (norm_gt_inf + TINY_EPS))
+        in_linf_abs_error = float(norm_diff_inf / xp.sqrt(n_in))
 
         element_rel_error = xp.abs(diff) / (xp.abs(gt_in) + TINY_EPS)
         if element_rel_error.ndim > 1:
@@ -630,6 +634,8 @@ def compute_error_metrics(
     else:
         in_l2_rel_error = float("nan")
         in_l2_abs_error = float("nan")
+        in_linf_rel_error = float("nan")
+        in_linf_abs_error = float("nan")
         in_ptwise_max_rel_error_linf = float("nan")
         in_ptwise_median_rel_error_linf = float("nan")
         n_in_good = 0
@@ -640,10 +646,14 @@ def compute_error_metrics(
         preds_out = preds[ug_mask]
         diff_out = preds_out - gt_out
         norm_diff_out = xp.linalg.norm(diff_out)
+        norm_diff_out_inf = xp.linalg.norm(diff_out, ord=xp.inf)
         norm_gt_out = xp.linalg.norm(gt_out)
+        norm_gt_out_inf = xp.linalg.norm(gt_out, ord=xp.inf)
 
         out_l2_rel_error = float(norm_diff_out / (norm_gt_out + TINY_EPS))
         out_l2_abs_error = float(norm_diff_out / xp.sqrt(n_out))
+        out_linf_rel_error = float(norm_diff_out_inf / (norm_gt_out_inf + TINY_EPS))
+        out_linf_abs_error = float(norm_diff_out_inf / xp.sqrt(n_out))
 
         element_rel_error_out = xp.abs(diff_out) / (xp.abs(gt_out) + TINY_EPS)
         if element_rel_error_out.ndim > 1:
@@ -656,16 +666,22 @@ def compute_error_metrics(
     else:
         out_l2_rel_error = float("nan")
         out_l2_abs_error = float("nan")
+        out_linf_rel_error = float("nan")
+        out_linf_abs_error = float("nan")
         out_ptwise_max_rel_error_linf = float("nan")
         out_ptwise_median_rel_error_linf = float("nan")
 
     # Metrics for all points
     diff_all = preds - gt
     norm_diff_all = xp.linalg.norm(diff_all)
+    norm_diff_all_inf = xp.linalg.norm(diff_all, ord=xp.inf)
     norm_gt_all = xp.linalg.norm(gt)
+    norm_gt_all_inf = xp.linalg.norm(gt, ord=xp.inf)
 
     all_l2_rel_error = float(norm_diff_all / (norm_gt_all + TINY_EPS))
     all_l2_abs_error = float(norm_diff_all / xp.sqrt(n_test))
+    all_linf_rel_error = float(norm_diff_all_inf / (norm_gt_all_inf + TINY_EPS)) 
+    all_linf_abs_error = float(norm_diff_all_inf / xp.sqrt(n_test))
     element_rel_error_all = xp.abs(diff_all) / (xp.abs(gt) + TINY_EPS)
     if element_rel_error_all.ndim > 1:
         ptwise_rel_error_all = xp.max(element_rel_error_all, axis=1)
@@ -691,18 +707,24 @@ def compute_error_metrics(
         "all": {
             "l2_rel_error": all_l2_rel_error,
             "l2_abs_error": all_l2_abs_error,
+            "linf_rel_error": all_linf_rel_error,
+            "linf_abs_error": all_linf_abs_error,
             "ptwise_max_rel_error_linf": all_ptwise_max_rel_error_linf,
             "ptwise_median_rel_error_linf": all_ptwise_median_rel_error_linf,
         },
         "in": {
             "l2_rel_error": in_l2_rel_error,
             "l2_abs_error": in_l2_abs_error,
+            "linf_rel_error": in_linf_rel_error,
+            "linf_abs_error": in_linf_abs_error,
             "ptwise_max_rel_error_linf": in_ptwise_max_rel_error_linf,
             "ptwise_median_rel_error_linf": in_ptwise_median_rel_error_linf,
         },
         "out": {
             "l2_rel_error": out_l2_rel_error,
             "l2_abs_error": out_l2_abs_error,
+            "linf_rel_error": out_linf_rel_error,
+            "linf_abs_error": out_linf_abs_error,
             "ptwise_max_rel_error_linf": out_ptwise_max_rel_error_linf,
             "ptwise_median_rel_error_linf": out_ptwise_median_rel_error_linf,
         },

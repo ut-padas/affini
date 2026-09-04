@@ -12,42 +12,13 @@ from matplotlib.patches import Circle, Ellipse
 from src import RESULTS_DIR, _to_device, _to_host, xp, Array
 from src.adaptive_clustering_utils import SurrogateMode
 from src.logging_utils import setup_logging
-from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
+from src.problems.rosenbrock import rosenbrock
+from src.problems.anisotropic_quadratic import aniso_quadratic, _get_params
 from src.surrogate import AFINNISurrogate, compute_error_metrics
 
 setup_logging()
-
-# ==========================================
-# HYPERPARAMETERS
-# ==========================================
-DIM = 5
-TOL = 0.05
-DOMAIN = [-2.0, 3.0]
 SEED = 0
-
-N_INITIAL_TRAIN = 5000
-N_TEST = 20_000
-
-NUM_INITIAL_CLUSTERS = 20 * DIM
-MIN_PTS_PER_CLUSTER = 50 * DIM
-ERROR_METRIC = "Linf-local"
-INITIAL_CLUSTERING_METHOD = "kmeans"
-
-# Active Learning Configuration
-MAX_ITERATIONS = 5
-HALO_FACTOR = 1.5
-PTS_PER_CLUSTER_CANDIDATE = 10
-
-A_ROSENBROCK = 100.0
-
-
-def f_fn(x):
-    return rosenbrock(x, a=A_ROSENBROCK)
-
-
-def g_fn(x):
-    return rosenbrock_grad(x, a=A_ROSENBROCK)
-
+    
 
 # ==========================================
 # PLOTTING TEMPLATE
@@ -145,6 +116,7 @@ def plot_adaptive_clustering_results(
             )
         )
 
+    axs[1].set_xlim(domain); axs[1].set_ylim(domain)
     axs[1].legend(handles=legend_elements, loc="upper right")
     plt.tight_layout()
     plt.suptitle(title, fontsize=11)
@@ -157,19 +129,60 @@ def plot_adaptive_clustering_results(
 
 
 
-def plot_test_points(X_test: Array):
+def plot_test_points(
+    X_test: np.ndarray,
+    domain: list[float],
+    f_fn: Callable,
+    title: str,
+    img_fpath: Path
+):
     """
     For the paper, plots the test point distribution (on a scatter plot) with the background contours.
     """
-    
+    if X_test.shape[1] != 2:
+        return
+
+    _n = 400
+    x = np.linspace(domain[0], domain[1], _n)
+    y = np.linspace(domain[0], domain[1], _n)
+    X_grid, Y_grid = np.meshgrid(x, y)
+
+    grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
+    Z_grid = _to_host(f_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+    cbar_norm = LogNorm()
+
+    fig, axs = plt.subplots(figsize=(9, 7.5))
+
+    cs = axs.contourf(
+        X_grid, Y_grid, Z_grid, levels=50, cmap="viridis", norm=cbar_norm
+    )
+    fig.colorbar(cs, ax=axs)
+    axs.set_title(title)
+    axs.set_aspect("equal")
+
+    N_scatter = 1000
+    axs.scatter(X_test[:N_scatter, 0], X_test[:N_scatter, 1], c="red", s=5, label="Uniform Points")
+    axs.scatter(X_test[-N_scatter:, 0], X_test[-N_scatter:, 1], c="pink", s=5, label="Function Dist. Points")
+
+    axs.set_xlim(domain[0], domain[1]); axs.set_ylim(domain[0], domain[1])
+    axs.legend(loc="lower right")
+
+    img_fpath.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(img_fpath, dpi=300)
+    plt.close(fig)
+    print(f"Saved test points plot to {img_fpath}")
 
 
 
 # ==========================================
-# DISTRIBUTED MANIFOLD INFLATION & FILTERING
+# MANIFOLD INFLATION & FILTERING
 # ==========================================
 def generate_and_filter(
-    surrogate: AFINNISurrogate, pts_per_cluster: int, gamma: float
+    surrogate: AFINNISurrogate,
+    pts_per_cluster: int,
+    gamma: float,
+    left:float,
+    right:float
 ) -> Array:
     """
     Each MPI rank generates candidates ONLY for its assigned fraction of clusters,
@@ -195,9 +208,8 @@ def generate_and_filter(
     X_cand = centroids[:, None, :] + (gamma * rotated_scaled_z)
     X_cand = X_cand.reshape(-1, d)
     # Remove points that are outside the domain
-    X_cand_min = xp.min(X_cand, 1); X_cand_max = xp.max(X_cand, 1)
-    out_box_mask = (X_cand_min < DOMAIN[0]) | (X_cand_max > DOMAIN[1])
-    X_cand = X_cand[~out_box_mask]
+    in_box_mask = verify_in_domain(X_cand, left, right)
+    X_cand = X_cand[in_box_mask]
 
     # 3. Fast Filter Locally
     ug_mask = surrogate.filter_unguaranteed_local(X_cand, k_coarse=10, batch_size=50000)
@@ -207,14 +219,107 @@ def generate_and_filter(
 
 
 
-def run_halo_sampling():
+"""
+Rosenbrock test distribution: sample half the points from the valley distribution
+    and sample the other half from a uniform distribution.
+"""
+def sample_rosenbrock_test_distribution(N_test:int, d:int, left=-2.0, right=3.0):
+
+    N_valley = N_test // 2; N_uniform = N_test - N_valley
+    uniform_pts = xp.random.uniform(left, right, (N_uniform, d))
+
+    a = 1.0; b = 5.0; mu = 0.5;
+
+    # Use rejection sampling to ensure all points are in the bounding box.
+    in_domain = xp.full(N_valley, False)
+    valley_pts = xp.zeros((N_valley, d))
+    print("Sampling Rosenbrock distribution.")
+    counter = 1
+    while sum(in_domain) != N_valley:
+        N_out = int(N_valley - sum(in_domain))
+        print(f"Iteration {counter}: current points inside: {sum(in_domain)}.")
+        counter += 1
+        if d == 2:
+            x1 = mu + xp.random.randn(N_out) / xp.sqrt(2*a)
+            x2 = xp.random.randn(N_out) / np.sqrt(2*b) + (x1**2)
+            new_points = xp.column_stack((x1, x2))
+        elif d == 3:
+            x1 = mu + xp.random.randn(N_out) / xp.sqrt(2*a)
+            x2_mean = (2*b*x1**2 + 2*a*mu)**2 / (2*b + 2*a)
+            x2_var = 1 / (2*b + 2*a)
+            x2 = x2_mean + xp.random.randn(N_out) * xp.sqrt(x2_var)
+            x3 = (x2**2) + xp.random.randn(N_out) / xp.sqrt(2*b)
+            new_points = xp.column_stack((x1, x2, x3))
+        else:
+            print(f"Rosenbrock test distribution not explicitly defined for d={d}.")
+            return None
+        valley_pts[~in_domain] = new_points
+        in_domain = verify_in_domain(valley_pts, left, right)
+
+    return xp.vstack((uniform_pts, valley_pts))
+
+
+"""
+Quadratic test distribution: sample half the points from a Gaussian,
+    with covariance equal to the Hessian inverse. Other half comes from uniform distribution.
+"""
+def sample_quadratic_test_distribution(N_test:int, d:int, left=-3.0, right=3.0):
+
+    N_valley = N_test // 2; N_uniform = N_test - N_valley
+    uniform_pts = xp.random.uniform(left, right, (N_uniform, d))
+
+    w, H = _get_params(d, xp.float64)
+    mean = -0.5 * xp.linalg.solve(H, w)
+    cov = 0.5 * np.linalg.inv(H) / d
+    valley_pts = xp.random.multivariate_normal(mean, cov, size=N_valley)
+
+    # For verification: print stuff about the generated points
+    print("X_test quadratic distribution:")
+    print(f"Mean: {mean}")
+    print(f"Cov: {cov}")
+    print(f"# Uniform points: {N_uniform}; # valley points: {N_valley}")
+    print(f"Number of generated valley points in domain: {xp.sum(verify_in_domain(valley_pts, left, right))}")
+    print(valley_pts)
+
+    return np.vstack((uniform_pts, valley_pts))
+
+
+def verify_in_domain(X, left, right):
+    X_min = xp.min(X, 1); X_max = xp.max(X, 1)
+    out_box_mask = (X_min < left) | (X_max > right)
+    return xp.logical_not(out_box_mask)
+
+
+def run_halo_sampling(function:str, d:int, tol:float = 0.05):
+
+    # Hyperparameters
+    N_INITIAL_TRAIN = 20_000
+    N_TEST = 20_000
+
+    NUM_INITIAL_CLUSTERS = 20 * d
+    MIN_PTS_PER_CLUSTER = 50 * d
+    ERROR_METRIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+
+    MAX_ITERATIONS = 5
+    HALO_FACTOR = 1.5
+    PTS_PER_CLUSTER_CANDIDATE = 10
+
+    # Define parameters based on function selection
+    if function == "rosenbrock":
+        DOMAIN = [-2.0, 3.0] 
+        f_fn = lambda x: rosenbrock(x, a=100.0)
+    elif function == "quadratic":
+        DOMAIN = [-3.0, 3.0]
+        f_fn = lambda x: aniso_quadratic(x)
+    else:
+        print(f"Function \"{function}\" not implemented; aborting.")
+        return
+
     xp.random.seed(SEED)
 
     OUTPUT_DIR = RESULTS_DIR / "active_learning_halo"
-    csv_path = OUTPUT_DIR / f"halo_metrics_dim{DIM}_tol{TOL}.csv"
-
-    X_test, ground_truth, X_train = None, None, None
-    X_new_halo = None
+    csv_path = OUTPUT_DIR / f"halo_metrics_dim{d}_f_{function}_tol{tol}.csv"
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(csv_path, mode="w", newline="") as f:
@@ -227,6 +332,8 @@ def run_halo_sampling():
                 "e (All)",
                 "e_in (In)",
                 "e_out (Out)",
+                "e_in_inf (In)",
+                "e_in_ptwise (In)",
                 "P_Out (%)",
                 "Train_Time_s",
                 "Gen_Filter_Time_s",
@@ -234,9 +341,21 @@ def run_halo_sampling():
             ]
         )
 
-        X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, DIM))
-        ground_truth = f_fn(X_test)
-        X_train = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_INITIAL_TRAIN, DIM))
+    X_train = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_INITIAL_TRAIN, d))
+    
+    # Sample X_test from distribution defined by function
+    if function == "rosenbrock":
+        X_test = sample_rosenbrock_test_distribution(N_TEST, d, DOMAIN[0], DOMAIN[1])
+    elif function == "quadratic":
+        X_test = sample_quadratic_test_distribution(N_TEST, d, DOMAIN[0], DOMAIN[1])
+        # X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, d))
+    else:
+        print(f"Function \"{function}\" not implemented; aborting.")
+        return
+    plot_test_points(_to_host(X_test), DOMAIN, f_fn, "Test Distribution", OUTPUT_DIR / "test_points.png")
+
+
+    ground_truth = f_fn(X_test)
 
     surrogate = AFINNISurrogate()
 
@@ -252,9 +371,9 @@ def run_halo_sampling():
         surrogate.train(
             X_train=X_train,
             f_fn=f_fn,
-            g_fn=g_fn,
+            g_fn=None,
             mode=SurrogateMode.AFFINE_COV_HESS,
-            TOL=TOL,
+            TOL=tol,
             ERROR_METRIC=ERROR_METRIC,
             INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
             NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
@@ -277,10 +396,12 @@ def run_halo_sampling():
         t_eval = time.perf_counter() - _t_start
 
         p_out = 0.0
-        metrics = compute_error_metrics(preds, ground_truth, ug_mask, tol=TOL)
+        metrics = compute_error_metrics(preds, ground_truth, ug_mask, tol=tol)
         e_all = metrics["all"]["l2_rel_error"]
         e_in = metrics["in"]["l2_rel_error"]
         e_out = metrics["out"]["l2_rel_error"]
+        e_in_inf = metrics["in"]["linf_rel_error"]
+        e_in_ptwise_max = metrics["in"]["ptwise_max_rel_error_linf"]
         p_out = metrics["perct_out"]
         N_c = surrogate.N_src
 
@@ -294,7 +415,13 @@ def run_halo_sampling():
 
         # 3. Generate & Filter New Points via Distributed Halo Expansion
         _t_start = time.perf_counter()
-        X_new_halo = generate_and_filter(surrogate, dynamic_pts_per_cluster, HALO_FACTOR)
+        X_new_halo = generate_and_filter(
+            surrogate,
+            dynamic_pts_per_cluster,
+            HALO_FACTOR,
+            DOMAIN[0],
+            DOMAIN[1]
+        )
         t_gen_filter = time.perf_counter() - _t_start
 
         if X_new_halo is not None and len(X_new_halo) > 0:
@@ -314,6 +441,8 @@ def run_halo_sampling():
                     f"{e_all:.4e}",
                     f"{e_in:.4e}",
                     f"{e_out:.4e}",
+                    f"{e_in_inf:.4e}",
+                    f"{e_in_ptwise_max:.4e}",
                     f"{p_out:.2f}",
                     f"{t_train:.3f}",
                     f"{t_gen_filter:.3f}",
@@ -342,4 +471,4 @@ def run_halo_sampling():
 
 
 if __name__ == "__main__":
-    run_halo_sampling()
+    run_halo_sampling(function="rosenbrock", d=3, tol=0.05)
