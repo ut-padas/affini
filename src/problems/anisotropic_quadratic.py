@@ -23,14 +23,15 @@ def _get_params(
     d: int, dtype, decay_exponent: float = DECAY_EXPONENT
 ) -> tuple[Array, Array]:
     """
-    Computes w and the symmetric matrix H = Q * Lambda * Q^T.
+    Computes the symmetric matrix H = Q * Lambda * Q^T.
 
     Returns:
         w: (d,) linear weight vector
         H: (d, d) quadratic form matrix
     """
+    # BL: we are removing the linear weight vector w so the minimum is at zero.
     # 1. Linear weights: w = [1, 1, ..., 1]
-    w = xp.ones((d,), dtype=dtype)
+    # w = xp.ones((d,), dtype=dtype)
 
     # 2. Eigenvalues: Lambda_ii = i^(-decay_exponent)
     indices = xp.arange(1, d + 1, dtype=dtype)
@@ -42,7 +43,7 @@ def _get_params(
     # 4. Construct H = Q @ diag(lambdas) @ Q.T
     H = (Q * lambdas[None, :]) @ Q.T
 
-    return w, H
+    return H
 
 
 def aniso_quadratic(
@@ -60,16 +61,17 @@ def aniso_quadratic(
         F: (N, 1) function values
     """
     N, d = X.shape
-    w, H = _get_params(d, X.dtype, decay_exponent)
+    H = _get_params(d, X.dtype, decay_exponent)
 
     # Linear term: w^T x -> (N, d) @ (d,) -> (N,)
-    linear_term = X @ w
+    # linear_term = X @ w
 
     # Quadratic term: x^T H x
     quad_term = xp.sum((X @ H) * X, axis=1)
 
     # Combine: beta + linear + quadratic
-    res = beta + linear_term + quad_term
+    # res = beta + linear_term + quad_term
+    res = beta + quad_term
 
     return res[:, None]  # (N, 1)
 
@@ -86,7 +88,7 @@ def aniso_quadratic_grad(X: Array, decay_exponent: float = DECAY_EXPONENT) -> Ar
         G: (N, 1, d) gradients
     """
     N, d = X.shape
-    w, H = _get_params(d, X.dtype, decay_exponent)
+    H = _get_params(d, X.dtype, decay_exponent)
 
     # term: 2 * H * x
     # (N, d) @ (d, d) -> (N, d)
@@ -94,10 +96,7 @@ def aniso_quadratic_grad(X: Array, decay_exponent: float = DECAY_EXPONENT) -> Ar
     # but for (N, d) shape we do X @ H.
     grad_quad = 2.0 * (X @ H)
 
-    # term: w (broadcasting (d,) to (N, d))
-    G = w[None, :] + grad_quad
-
-    return G[:, None, :]  # (N, 1, d)
+    return grad_quad[:, None, :]  # (N, 1, d)
 
 
 def aniso_quadratic_hess(X: Array, decay_exponent: float = DECAY_EXPONENT) -> Array:
