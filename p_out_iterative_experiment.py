@@ -268,18 +268,22 @@ def sample_quadratic_test_distribution(N_test:int, d:int, left=-3.0, right=3.0):
     N_valley = N_test // 2; N_uniform = N_test - N_valley
     uniform_pts = xp.random.uniform(left, right, (N_uniform, d))
 
-    w, H = _get_params(d, xp.float64)
-    mean = -0.5 * xp.linalg.solve(H, w)
-    cov = 0.5 * np.linalg.inv(H) / d
-    valley_pts = xp.random.multivariate_normal(mean, cov, size=N_valley)
+    H = _get_params(d, xp.float64)
+    mean = xp.zeros(d)
+    cov = 0.5 * np.linalg.inv(H) / (d**2)
 
-    # For verification: print stuff about the generated points
-    print("X_test quadratic distribution:")
-    print(f"Mean: {mean}")
-    print(f"Cov: {cov}")
-    print(f"# Uniform points: {N_uniform}; # valley points: {N_valley}")
-    print(f"Number of generated valley points in domain: {xp.sum(verify_in_domain(valley_pts, left, right))}")
-    print(valley_pts)
+    # Use rejection sampling to ensure all points are in the bounding box.
+    in_domain = xp.full(N_valley, False)
+    valley_pts = xp.random.multivariate_normal(mean, cov, size=N_valley)
+    print("Sampling quadratic distribution.")
+    counter = 1
+    while sum(in_domain) != N_valley:
+        N_out = int(N_valley - sum(in_domain))
+        print(f"Iteration {counter}: current points inside: {sum(in_domain)}.")
+        counter += 1
+        new_pts = xp.random.multivariate_normal(mean, cov, size=N_out)
+        valley_pts[~in_domain] = new_pts
+        in_domain = verify_in_domain(valley_pts, left, right)
 
     return np.vstack((uniform_pts, valley_pts))
 
@@ -471,4 +475,4 @@ def run_halo_sampling(function:str, d:int, tol:float = 0.05):
 
 
 if __name__ == "__main__":
-    run_halo_sampling(function="rosenbrock", d=3, tol=0.05)
+    run_halo_sampling(function="quadratic", d=5, tol=0.05)
