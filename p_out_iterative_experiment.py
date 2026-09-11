@@ -12,7 +12,7 @@ from matplotlib.patches import Circle, Ellipse
 from src import RESULTS_DIR, _to_device, _to_host, xp, Array
 from src.adaptive_clustering_utils import SurrogateMode
 from src.logging_utils import setup_logging
-from src.problems.rosenbrock import rosenbrock
+from src.problems.rosenbrock import rosenbrock, rosenbrock_hess
 from src.problems.anisotropic_quadratic import aniso_quadratic, _get_params
 from src.surrogate import AFINNISurrogate, compute_error_metrics
 import faiss
@@ -309,20 +309,23 @@ def sample_rosenbrock_test_distribution(N_test:int, d:int, left=-2.0, right=3.0)
         N_out = int(N_valley - sum(in_domain))
         print(f"Iteration {counter}: current points inside: {sum(in_domain)}.")
         counter += 1
-        if d == 2:
-            x1 = mu + xp.random.randn(N_out) / xp.sqrt(2*a)
-            x2 = xp.random.randn(N_out) / np.sqrt(2*b) + (x1**2)
-            new_points = xp.column_stack((x1, x2))
-        elif d == 3:
+        # if d == 2:
+            # x1 = mu + xp.random.randn(N_out) / xp.sqrt(2*a)
+            # x2 = xp.random.randn(N_out) / np.sqrt(2*b) + (x1**2)
+            # new_points = xp.column_stack((x1, x2))
+        if d == 3:
             x1 = mu + xp.random.randn(N_out) / xp.sqrt(2*a)
             x2_mean = (2*b*x1**2 + 2*a*mu)**2 / (2*b + 2*a)
             x2_var = 1 / (2*b + 2*a)
             x2 = x2_mean + xp.random.randn(N_out) * xp.sqrt(x2_var)
             x3 = (x2**2) + xp.random.randn(N_out) / xp.sqrt(2*b)
             new_points = xp.column_stack((x1, x2, x3))
-        else:
-            print(f"Rosenbrock test distribution not explicitly defined for d={d}.")
-            return None
+        elif d  == 2:
+            mean = xp.ones(d)
+            cov_inv = rosenbrock_hess(mean)
+            cov = xp.linalg.inv(cov_inv)
+            np.random.multivariate_normal(mean, cov / (d**2))
+            
         valley_pts[~in_domain] = new_points
         in_domain = verify_in_domain(valley_pts, left, right)
 
@@ -556,4 +559,4 @@ def run_halo_sampling(function:str, sampling:str, d:int, tol:float = 0.05):
 
 
 if __name__ == "__main__":
-    run_halo_sampling(function="rosenbrock", sampling="chord", d=2, tol=0.02)
+    run_halo_sampling(function="rosenbrock", sampling="halo", d=2, tol=0.02)
