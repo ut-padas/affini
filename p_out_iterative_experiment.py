@@ -309,22 +309,25 @@ def sample_rosenbrock_test_distribution(N_test:int, d:int, left=-2.0, right=3.0)
         N_out = int(N_valley - sum(in_domain))
         print(f"Iteration {counter}: current points inside: {sum(in_domain)}.")
         counter += 1
-        # if d == 2:
-            # x1 = mu + xp.random.randn(N_out) / xp.sqrt(2*a)
-            # x2 = xp.random.randn(N_out) / np.sqrt(2*b) + (x1**2)
-            # new_points = xp.column_stack((x1, x2))
-        if d == 3:
+        if d == 2:
+            x1 = mu + xp.random.randn(N_out) / xp.sqrt(2*a)
+            x2 = xp.random.randn(N_out) / np.sqrt(2*b) + (x1**2)
+            new_points = xp.column_stack((x1, x2))
+        elif d == 3:
             x1 = mu + xp.random.randn(N_out) / xp.sqrt(2*a)
             x2_mean = (2*b*x1**2 + 2*a*mu)**2 / (2*b + 2*a)
             x2_var = 1 / (2*b + 2*a)
             x2 = x2_mean + xp.random.randn(N_out) * xp.sqrt(x2_var)
             x3 = (x2**2) + xp.random.randn(N_out) / xp.sqrt(2*b)
             new_points = xp.column_stack((x1, x2, x3))
-        elif d  == 2:
+        elif d > 3:
             mean = xp.ones(d)
-            cov_inv = rosenbrock_hess(mean)
+            cov_inv = rosenbrock_hess(xp.reshape(mean, (1,d))).reshape(d,d)
             cov = xp.linalg.inv(cov_inv)
-            np.random.multivariate_normal(mean, cov / (d**2))
+            new_points = xp.random.multivariate_normal(mean, cov / (d**2), N_out)
+        else:
+            print(f"Error: d={d} is not valid")
+            return None
             
         valley_pts[~in_domain] = new_points
         in_domain = verify_in_domain(valley_pts, left, right)
@@ -367,7 +370,13 @@ def verify_in_domain(X, left, right):
     return xp.logical_not(out_box_mask)
 
 
-def run_halo_sampling(function:str, sampling:str, d:int, tol:float = 0.05):
+def run_iterative_refinement(
+    function:str,
+    sampling:str,
+    d:int,
+    tol:float = 0.05,
+    n_iter:int = 5
+):
 
     # Hyperparameters
     N_INITIAL_TRAIN = 20_000
@@ -378,7 +387,6 @@ def run_halo_sampling(function:str, sampling:str, d:int, tol:float = 0.05):
     ERROR_METRIC = "Linf-local"
     INITIAL_CLUSTERING_METHOD = "kmeans"
 
-    MAX_ITERATIONS = 5
     HALO_FACTOR = 1.5
     PTS_PER_CLUSTER_CANDIDATE = 10
 
@@ -396,7 +404,7 @@ def run_halo_sampling(function:str, sampling:str, d:int, tol:float = 0.05):
     xp.random.seed(SEED)
 
     OUTPUT_DIR = RESULTS_DIR / "active_learning_halo"
-    csv_path = OUTPUT_DIR / f"halo_metrics_dim{d}_f_{function}_tol{tol}.csv"
+    csv_path = OUTPUT_DIR / f"halo_metrics_dim{d}_f_{function}_tol{tol}_sampling_{sampling}.csv"
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(csv_path, mode="w", newline="") as f:
@@ -419,6 +427,7 @@ def run_halo_sampling(function:str, sampling:str, d:int, tol:float = 0.05):
         )
 
     X_train = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_INITIAL_TRAIN, d))
+    p_out_vec = []
     
     # Sample X_test from distribution defined by function
     if function == "rosenbrock":
@@ -436,7 +445,7 @@ def run_halo_sampling(function:str, sampling:str, d:int, tol:float = 0.05):
 
     surrogate = AFINNISurrogate()
 
-    for iteration in range(MAX_ITERATIONS + 1):
+    for iteration in range(n_iter + 1):
         t_train, t_gen_filter, t_eval = 0.0, 0.0, 0.0
 
         print(
@@ -504,7 +513,6 @@ def run_halo_sampling(function:str, sampling:str, d:int, tol:float = 0.05):
             N_new_uniform = dynamic_pts_per_cluster * N_c
             X_new_halo = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_new_uniform, d))
         elif sampling == "chord":
-            # TODO: include chord sampling
             X_new_halo = chord_sampling(surrogate, dynamic_pts_per_cluster)
         elif sampling == "cloud":
             X_new_halo = cloud_sampling(surrogate, dynamic_pts_per_cluster, DOMAIN[0], DOMAIN[1])
@@ -537,6 +545,7 @@ def run_halo_sampling(function:str, sampling:str, d:int, tol:float = 0.05):
                     f"{t_eval:.3f}",
                 ]
             )
+        p_out_vec.append(p_out)
 
         # Plot current state
         plot_title = (
@@ -555,8 +564,29 @@ def run_halo_sampling(function:str, sampling:str, d:int, tol:float = 0.05):
         )
 
     print(f"\nActive Learning Complete! Metrics saved to {csv_path}")
+    return p_out_vec
+
+
+
+def plot_iterate_p_out(p_out_halo, p_out_cloud, p_out_uniform, p_out_chord):
+
+    fig, ax = plt.subplots()
+    xrange = np.arange(start=0, stop=10+1, step=1)
+    ax.plot(xrange, p_out_halo, '-o', label="Halo")
+    ax.plot(xrange, p_out_cloud, '-o', label="Cloud")
+    ax.plot(xrange, p_out_uniform, '-o', label="Uniform")
+    ax.plot(xrange, p_out_chord, '-o', label="Chord")
+    OUTPUT_DIR = RESULTS_DIR / "active_learning_halo"
+    ax.legend()
+    ax.set_ylim(0, 100)
+    fig.savefig(OUTPUT_DIR/"sampling_comparison.png")
 
 
 
 if __name__ == "__main__":
-    run_halo_sampling(function="rosenbrock", sampling="halo", d=2, tol=0.02)
+    d=10; function="quadratic"; n_iter=10; tol=0.05
+    p_out_halo = run_iterative_refinement(function=function, sampling="halo", d=d, tol=tol, n_iter=n_iter)
+    p_out_cloud = run_iterative_refinement(function=function, sampling="cloud", d=d, tol=tol, n_iter=n_iter)
+    p_out_uniform = run_iterative_refinement(function=function, sampling="uniform", d=d, tol=tol, n_iter= n_iter)
+    p_out_chord = run_iterative_refinement(function=function, sampling="chord", d=d, tol=tol, n_iter=n_iter)
+    plot_iterate_p_out(p_out_halo, p_out_cloud, p_out_uniform, p_out_chord)
