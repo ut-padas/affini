@@ -736,11 +736,13 @@ def evaluate_cluster_errors(
         # Pass if relative error is good, OR if absolute error is already negligible
         is_good = (E_cluster_rel < TOL) | (E_cluster_abs < TOL)
         return is_good, E_cluster_rel, surrogate_params
+    
     elif config.error_metric == "Linf-global":
         err_pts = xp.max(
             xp.abs(diff) / (F_max_global[None, :] + TINY_EPS), axis=1
         )  # (N,)
         E_cluster = _reduce_max_1d(err_pts, aug_starts)  # (K,)
+        
     elif config.error_metric == "Linf-local":
         E_cluster_rel = xp.zeros(K_batch, dtype=xp.float64)
         E_cluster_abs = xp.zeros(K_batch, dtype=xp.float64)

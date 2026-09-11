@@ -15,6 +15,7 @@ from src.logging_utils import setup_logging
 from src.problems.rosenbrock import rosenbrock
 from src.problems.anisotropic_quadratic import aniso_quadratic, _get_params
 from src.surrogate import AFINNISurrogate, compute_error_metrics
+import faiss
 
 setup_logging()
 SEED = 0
@@ -177,7 +178,7 @@ def plot_test_points(
 # ==========================================
 # MANIFOLD INFLATION & FILTERING
 # ==========================================
-def generate_and_filter(
+def halo_sampling(
     surrogate: AFINNISurrogate,
     pts_per_cluster: int,
     gamma: float,
@@ -215,6 +216,75 @@ def generate_and_filter(
     ug_mask = surrogate.filter_unguaranteed_local(X_cand, k_coarse=10, batch_size=50000)
     valid_points = X_cand[ug_mask]
 
+    return valid_points
+
+
+
+def cloud_sampling(
+    surrogate: AFINNISurrogate,
+    pts_per_cluster: int,
+    left: float,
+    right: float
+) -> Array:
+
+    Nc, d = surrogate.X_src.shape
+
+    centroids = surrogate.X_src
+    Qs = surrogate.Qs_src
+
+    # 2. Generate candidates only for MY clusters
+    eigenvals, eigenvecs = xp.linalg.eigh(Qs)
+    lambda_inv_sqrt = 1.0 / xp.sqrt(xp.maximum(eigenvals, 1e-12))
+
+    xp.random.seed(SEED)
+    z = xp.random.randn(Nc, pts_per_cluster, d)
+
+    scaled_z = z * lambda_inv_sqrt[:, None, :]
+    rotated_scaled_z = xp.einsum("nij,npj->npi", eigenvecs, scaled_z)
+
+    X_cand = centroids[:, None, :] + rotated_scaled_z
+    X_cand = X_cand.reshape(-1, d)
+    # Remove points that are outside the domain
+    in_box_mask = verify_in_domain(X_cand, left, right)
+    X_cand = X_cand[in_box_mask]
+
+    # 3. Fast Filter Locally
+    ug_mask = surrogate.filter_unguaranteed_local(X_cand, k_coarse=10, batch_size=50000)
+    valid_points = X_cand[ug_mask]
+
+    return valid_points
+
+
+def chord_sampling(
+    surrogate: AFINNISurrogate,
+    pts_per_cluster: int
+):
+    N_c, d = surrogate.X_src.shape
+    centroids = surrogate.X_src
+
+    # Find five nearest neighbors of each centroid (minus itself)
+    # Slow but I don't want to use a library
+    diff = centroids[:, None, :] - centroids[None, :, :]
+    sq_dists = xp.einsum('ijk,ijk->ij', diff, diff)
+    xp.fill_diagonal(sq_dists, xp.inf)
+    k = 5; idxs = xp.argpartition(sq_dists, k, axis=1)[:, :k]
+
+    # Sample uniformly between 0 and 4 (these will be the clusters we use to build chords)
+    N_sample = pts_per_cluster * N_c
+    random_ind = xp.random.randint(0, 5, size=N_sample)
+
+    # Build vectors of indices to sample
+    src_cluster_idx = xp.repeat(xp.arange(N_c), pts_per_cluster)    # (N_c * pts_per_cluster)
+    dest_cluster_idx = idxs[src_cluster_idx,random_ind]             # (N_c * pts_per_cluster)
+
+    # Build new points
+    src_cluster = centroids[src_cluster_idx]
+    dest_cluster = centroids[dest_cluster_idx]
+    rho = xp.random.uniform(size=N_sample)[:,None]
+    X_cand = rho * src_cluster + (1-rho) * dest_cluster
+
+    ug_mask = surrogate.filter_unguaranteed_local(X_cand, k_coarse=10, batch_size=50000)
+    valid_points = X_cand[ug_mask]
     return valid_points
 
 
@@ -294,7 +364,7 @@ def verify_in_domain(X, left, right):
     return xp.logical_not(out_box_mask)
 
 
-def run_halo_sampling(function:str, d:int, tol:float = 0.05):
+def run_halo_sampling(function:str, sampling:str, d:int, tol:float = 0.05):
 
     # Hyperparameters
     N_INITIAL_TRAIN = 20_000
@@ -417,15 +487,26 @@ def run_halo_sampling(function:str, d:int, tol:float = 0.05):
                 10, int(PTS_PER_CLUSTER_CANDIDATE * (10000 / N_c))
             )
 
-        # 3. Generate & Filter New Points via Distributed Halo Expansion
+        # 3. Generate & Filter New Points via new sampling method
         _t_start = time.perf_counter()
-        X_new_halo = generate_and_filter(
-            surrogate,
-            dynamic_pts_per_cluster,
-            HALO_FACTOR,
-            DOMAIN[0],
-            DOMAIN[1]
-        )
+        if sampling == "halo":
+            X_new_halo = halo_sampling(
+                surrogate,
+                dynamic_pts_per_cluster,
+                HALO_FACTOR,
+                DOMAIN[0],
+                DOMAIN[1]
+            )
+        elif sampling == "uniform":
+            N_new_uniform = dynamic_pts_per_cluster * N_c
+            X_new_halo = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_new_uniform, d))
+        elif sampling == "chord":
+            # TODO: include chord sampling
+            X_new_halo = chord_sampling(surrogate, dynamic_pts_per_cluster)
+        elif sampling == "cloud":
+            X_new_halo = cloud_sampling(surrogate, dynamic_pts_per_cluster, DOMAIN[0], DOMAIN[1])
+
+
         t_gen_filter = time.perf_counter() - _t_start
 
         if X_new_halo is not None and len(X_new_halo) > 0:
@@ -475,4 +556,4 @@ def run_halo_sampling(function:str, d:int, tol:float = 0.05):
 
 
 if __name__ == "__main__":
-    run_halo_sampling(function="quadratic", d=5, tol=0.05)
+    run_halo_sampling(function="rosenbrock", sampling="chord", d=2, tol=0.02)
