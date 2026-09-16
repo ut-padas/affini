@@ -9,12 +9,13 @@ from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Ellipse
 
+import argparse
 from src import RESULTS_DIR, _to_device, _to_host, xp, Array
 from src.adaptive_clustering_utils import SurrogateMode
 from src.logging_utils import setup_logging
 from src.problems.rosenbrock import rosenbrock, rosenbrock_hess
 from src.problems.anisotropic_quadratic import aniso_quadratic, _get_params
-from src.problems.anisotropic_gaussian import aniso_gaussian
+from src.problems.isotropic_gaussian import gaussian
 from src.problems.wave import wave
 from src.problems.lorenz96_flowmap import lorenz96_flowmap
 from src.surrogate import AFINNISurrogate, compute_error_metrics
@@ -475,7 +476,7 @@ def run_iterative_refinement(
         f_fn = lambda x: wave(x)
     elif function == "gaussian":
         DOMAIN = [-3.0, 3.0]
-        f_fn = lambda x: aniso_gaussian(x)
+        f_fn = lambda x: gaussian(x)
     else:
         print(f"Function \"{function}\" not implemented; aborting.")
         return
@@ -515,7 +516,7 @@ def run_iterative_refinement(
         X_test = sample_quadratic_test_distribution(N_TEST, d, DOMAIN[0], DOMAIN[1])
     else:
         print(f"No modified test distribution for selected function; using uniform points.")
-        X_test = xp.randomluniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, d))
+        X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, d))
     plot_test_points(_to_host(X_test), DOMAIN, f_fn, "Test Distribution", OUTPUT_DIR / "test_points.png")
 
 
@@ -676,7 +677,7 @@ def parse_args():
     parser.add_argument("--n-iter", type=int, default=10)
     parser.add_argument("--tol", type=float, default=0.05)
     parser.add_argument("--exp-num", type=int, default=1)
-    return parser.parse_args(argv)
+    return parser.parse_args()
 
 
 
