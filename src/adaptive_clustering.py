@@ -1055,7 +1055,7 @@ def adaptive_clustering(
     STORE_AFFINE_FIT_PER_CLUSTER: bool = False,
     LOG_MEM_STATS: bool = False,
     PROFILE_TIMING: bool = False,
-    SAVE_ALL_GEN_TRAINING_DATA: bool = True,
+    SAVE_ALL_GEN_TRAINING_DATA: bool = False,
 ) -> dict[str, Any] | None:
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).

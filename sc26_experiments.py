@@ -667,7 +667,7 @@ def rosenbrock_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
-        SAVE_ALL_GEN_TRAINING_DATA=True,
+        SAVE_ALL_GEN_TRAINING_DATA=False,
         SAVE_FINAL_CENTROIDS=True,
     )
 
@@ -743,7 +743,7 @@ def rosenbrock_experiment_modified_sampling(dim: int, tol: float, error_eval_mod
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
-        SAVE_ALL_GEN_TRAINING_DATA=True,
+        SAVE_ALL_GEN_TRAINING_DATA=False,
         SAVE_FINAL_CENTROIDS=True,
     )
 
@@ -1204,6 +1204,65 @@ def indefinite_quadratic_experiment():
     return EXP_DIR
 
 
+def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
+
+    from src.problems.wave import wave
+
+    EXP_DIR = SC26_DIR / "wave"
+
+    wave_fn = lambda x: wave(x)
+
+    F_DIM = 1
+    ERROR_METRIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+    USE_V2 = True
+    USE_WORK_STEALING = True
+
+    if error_eval_mode != SurrogateMode.AFFINE_COV_HESS:
+        # TODO for each ERROR_EVAL_MODE
+        print(
+            f"Skipping ERROR_EVAL_MODE={error_eval_mode.value} for now. TODO: Add other TOLs for this mode."
+        )
+        return
+
+    N_TRAIN = get_N_TRAIN(dim)
+    N_TEST = N_TRAIN // 2
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
+    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
+
+    json_fpath = (
+        EXP_DIR
+        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+    )
+    conduct_experiment_generate_uniform_data(
+        # Problem-specific
+        json_fpath=json_fpath,
+        DOMAIN=[-2.0, 3.0],
+        F_DIM=F_DIM,
+        DIM=dim,
+        N_TRAIN=N_TRAIN,
+        N_TEST=N_TEST,
+        # Training-specific
+        f_fn=wave_fn,
+        g_fn=None,
+        TOL=tol,
+        ERROR_EVAL_MODE=error_eval_mode,
+        ERROR_METRIC=ERROR_METRIC,  # type: ignore
+        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        USE_WORK_STEALING=USE_WORK_STEALING,
+        USE_V2=USE_V2,
+        SAVE_ALL_GEN_TRAINING_DATA=False,
+        SAVE_FINAL_CENTROIDS=False,
+    )
+
+    create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
+
 def setup_argparse():
     parser = argparse.ArgumentParser()
 
@@ -1225,7 +1284,8 @@ def setup_argparse():
         "anisotropic_quadratic",
         "anisotropic_gaussian",
         "rosenbrock",
-        "lorenz96"
+        "lorenz96",
+        "wave"
     ]
     possible_error_eval_modes = [
         "affine_cov_hess",
@@ -1292,6 +1352,10 @@ def run_experiment_from_args(args):
                     lorenz96_experiment(d, tol, error_eval_mode, args.dt)
                 elif sampling == "modified":
                     lorenz_trajectories_experiment(d, tol, error_eval_mode, args.dt)
+            elif function_name == "wave":
+                wave_experiment(d, tol, error_eval_mode)
+            else:
+                print(f"Function {function_name} not recognized.")
 
 
 if __name__ == "__main__":

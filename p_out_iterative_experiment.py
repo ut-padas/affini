@@ -451,7 +451,7 @@ def run_iterative_refinement(
 ):
 
     # Hyperparameters
-    N_INITIAL_TRAIN = 20_000
+    N_INITIAL_TRAIN = int(20_000 * (1.3 ** d))
     N_TEST = 20_000
 
     NUM_INITIAL_CLUSTERS = 20 * d
