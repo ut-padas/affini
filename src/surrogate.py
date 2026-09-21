@@ -87,6 +87,7 @@ class AFINNISurrogate:
         PROFILE_TIMING: bool = False,
         LOG_MEM_STATS: bool = False,
         SAVE_ALL_GEN_TRAINING_DATA: bool = False,
+        HESSIAN: Optional[Callable[[Array]]] = None
     ):
         comm = MPI.COMM_WORLD
         rank = _get_mpi_rank()
@@ -157,6 +158,7 @@ class AFINNISurrogate:
             USE_WORK_STEALING=USE_WORK_STEALING,
             LOG_MEM_STATS=LOG_MEM_STATS,
             SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
+            HESSIAN=HESSIAN,
         )
 
         # 2. Broadcast trained structures to all ranks

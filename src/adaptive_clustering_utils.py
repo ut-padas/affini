@@ -32,7 +32,9 @@ class SurrogateMode(Enum):
         "taylor_cov_no_hess"  # Grads at centroids only, split via X^T X
     )
     AFFINE_COV_HESS = "affine_cov_hess"  # No grads, fit A/b, split via X^T H X, where H is estimated from covariance
+    AFFINE_EXACT_HESS = "affine_exact_hess" # No grads, fit A/b, split via X^T H X, where H is given by an exact formula
     TAYLOR_COV_HESS = "taylor_cov_hess"  # Grads at centroids only, split via X^T H X, where H is estimated from covariance
+    TAYLOR_EXACT_HESS = "taylor_exact_hess" # Grads at centroids only, split via X^T H X, where H is given by an exact formula
     TAYLOR_LSQ_HESS = "taylor_lsq_hess"  # Grads everywhere, split via X^T H X, where H is estimated from LSQ fit to gradient residuals
     QUADRATIC = "quadratic"  # No grads, save as affine_cov_hess but with quadratic fit.
     # TODO: need to make it so that the Hessian of the quadratic is the Hessian we use for clustering.
@@ -890,6 +892,7 @@ def split_rejected_clusters(
     counts_bad: Array,
     MIN_PTS_PER_CLUSTER: int,
     surrogate_params: dict,
+    hessian, # TODO: how to make this either a function or None?
 ) -> Array:
     """
     Computes the splitting direction and returns the sort_order for the next level.
@@ -1018,6 +1021,23 @@ def split_rejected_clusters(
             X_bad, mus_bad, dense_labels_bad, K_bad, d, 0, None, calc_E=False
         )  # (K, d, d)
         CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
+
+    # Exact: requires exact Hessian
+    elif config.mode in (
+        SurrogateMode.AFFINE_EXACT_HESS,
+        SurrogateMode.TAYLOR_EXACT_HESS,
+    ):
+        if hessian is None:
+            print(f"ERROR: {config.mode} requires the Hessian argument to be defined.")
+            # TODO: throw error instead of returning None
+            return
+
+        H = hessian(mus_bad) # (N, d, d)
+        H_sym = 0.5 * (H + H.transpose(0, 2, 1))
+        dvals, U = xp.linalg.eigh(H_sym)
+        # TODO: let's fill in the rest
+
+
 
     elif config.mode in (
         SurrogateMode.NEAREST_NEIGHBOR,

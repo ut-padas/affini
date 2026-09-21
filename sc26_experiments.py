@@ -1321,10 +1321,12 @@ def run_experiment_from_args(args):
     # Pick correct enum for error_eval_mode
     enum_map = {
         "affine_cov_hess": SurrogateMode.AFFINE_COV_HESS,
+        "affine_exact_hess": SurrogateMode.AFFINE_EXACT_HESS,
         "affine_cov_no_hess": SurrogateMode.AFFINE_COV_NO_HESS,
         "nearest_neighbor": SurrogateMode.NEAREST_NEIGHBOR,
         "quadratic": SurrogateMode.QUADRATIC,
         "taylor_cov_hess": SurrogateMode.TAYLOR_COV_HESS,
+        "taylor_exact_hess": SurrogateMode.TAYLOR_EXACT_HESS,
         "taylor_cov_no_hess": SurrogateMode.TAYLOR_COV_NO_HESS,
         "taylor_lsq_hess": SurrogateMode.TAYLOR_LSQ_HESS
     }

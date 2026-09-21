@@ -66,6 +66,7 @@ def _run_local_refinement(
     LOG_MEM_STATS: bool,
     PROFILE_TIMING: bool,
     SAVE_ALL_GEN_CLUSTER_DATA: bool,
+    hessian: Optional[Callable],
     rank: int,
     size: int,
     profiling_stats: dict,
@@ -792,6 +793,7 @@ def _run_local_refinement(
                         target_bad_counts,
                         MIN_PTS_PER_CLUSTER,
                         bad_surrogate_params,
+                        hessian,
                     )
 
                 with CudaTimer("time_bad_d2h", profiling_stats, PROFILE_TIMING):
@@ -1056,6 +1058,7 @@ def adaptive_clustering(
     LOG_MEM_STATS: bool = False,
     PROFILE_TIMING: bool = False,
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
+    HESSIAN: Optional[Callable[[Array]]] = None,
 ) -> dict[str, Any] | None:
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).
@@ -1362,6 +1365,7 @@ def adaptive_clustering(
             LOG_MEM_STATS=LOG_MEM_STATS,
             PROFILE_TIMING=PROFILE_TIMING,
             SAVE_ALL_GEN_CLUSTER_DATA=SAVE_ALL_GEN_TRAINING_DATA,
+            hessian=HESSIAN,
             rank=rank,
             size=size,
             profiling_stats=profiling_stats,
