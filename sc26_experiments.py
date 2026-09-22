@@ -79,6 +79,7 @@ def conduct_experiment_given_data(
     USE_WORK_STEALING: bool = True,
     USE_V2=True,
     Y_train=None,
+    HESSIAN=None,
     # Prediction-specific
     K_NEIGHBOURS: int = 1,
     # Post-processing-specific
@@ -124,6 +125,7 @@ def conduct_experiment_given_data(
             PROFILE_TIMING=True,
             STORE_AFFINE_FIT=True,
             SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
+            HESSIAN=HESSIAN,
         )
         _train_time = time.perf_counter() - _start_train_time
         _TRAINED = True
@@ -241,6 +243,7 @@ def conduct_experiment_generate_uniform_data(
     MAX_LEVELS: int = 1000,
     USE_WORK_STEALING: bool = True,
     USE_V2=True,
+    HESSIAN=None,
     # Prediction-specific
     K_NEIGHBOURS: int = 1,
     # Post-processing-specific
@@ -278,6 +281,8 @@ def conduct_experiment_generate_uniform_data(
         MAX_LEVELS,
         USE_WORK_STEALING,
         USE_V2,
+        None,
+        HESSIAN,
         K_NEIGHBOURS,
         CENTROIDS_PLOT_IN_LOG_SCALE,
         SAVE_ALL_GEN_TRAINING_DATA,
@@ -1206,24 +1211,18 @@ def indefinite_quadratic_experiment():
 
 def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
 
-    from src.problems.wave import wave
+    from src.problems.wave import wave, wave_hess
 
     EXP_DIR = SC26_DIR / "wave"
 
     wave_fn = lambda x: wave(x)
+    wave_fn_hess = lambda x: wave_hess(x)
 
     F_DIM = 1
     ERROR_METRIC = "Linf-local"
     INITIAL_CLUSTERING_METHOD = "kmeans"
     USE_V2 = True
     USE_WORK_STEALING = True
-
-    if error_eval_mode != SurrogateMode.AFFINE_COV_HESS:
-        # TODO for each ERROR_EVAL_MODE
-        print(
-            f"Skipping ERROR_EVAL_MODE={error_eval_mode.value} for now. TODO: Add other TOLs for this mode."
-        )
-        return
 
     N_TRAIN = get_N_TRAIN(dim)
     N_TEST = N_TRAIN // 2
@@ -1245,6 +1244,7 @@ def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
         # Training-specific
         f_fn=wave_fn,
         g_fn=None,
+        HESSIAN=wave_fn_hess,
         TOL=tol,
         ERROR_EVAL_MODE=error_eval_mode,
         ERROR_METRIC=ERROR_METRIC,  # type: ignore
@@ -1294,7 +1294,9 @@ def setup_argparse():
         "quadratic",
         "taylor_cov_hess",
         "taylor_cov_no_hess",
-        "taylor_lsq_hess"
+        "taylor_lsq_hess",
+        "taylor_exact_hess",
+        "affine_exact_hess"
     ]
     possible_sampling = [
         "uniform",
@@ -1368,6 +1370,13 @@ if __name__ == "__main__":
     setup_logging(console_level=logging.DEBUG)
 
     args = setup_argparse()
+    # args = dict(
+    #     tols = [0.05],
+    #     dims = [2],
+    #     experiment = "wave",
+    #     sampling = "uniform",
+    #     error_eval_mode = "affine_exact_hess"
+    # )
     run_experiment_from_args(args)
 
     # Nelson low-ambient dimension experiment 1 (enforced ambient dimension):

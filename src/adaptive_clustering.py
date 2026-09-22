@@ -1058,7 +1058,7 @@ def adaptive_clustering(
     LOG_MEM_STATS: bool = False,
     PROFILE_TIMING: bool = False,
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
-    HESSIAN: Optional[Callable[[Array]]] = None,
+    HESSIAN: Optional[Callable] = None,
 ) -> dict[str, Any] | None:
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).

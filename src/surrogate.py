@@ -87,7 +87,7 @@ class AFINNISurrogate:
         PROFILE_TIMING: bool = False,
         LOG_MEM_STATS: bool = False,
         SAVE_ALL_GEN_TRAINING_DATA: bool = False,
-        HESSIAN: Optional[Callable[[Array]]] = None
+        HESSIAN: Optional[Callable] = None
     ):
         comm = MPI.COMM_WORLD
         rank = _get_mpi_rank()
@@ -123,6 +123,7 @@ class AFINNISurrogate:
             if (
                 f_fn is None
                 or mode != SurrogateMode.AFFINE_COV_HESS
+                and mode != SurrogateMode.AFFINE_EXACT_HESS
                 and mode != SurrogateMode.NEAREST_NEIGHBOR
                 and g_fn is None
             ):
@@ -503,6 +504,7 @@ class AFINNISurrogate:
             elif self.mode in (
                 SurrogateMode.AFFINE_COV_HESS,
                 SurrogateMode.AFFINE_COV_NO_HESS,
+                SurrogateMode.AFFINE_EXACT_HESS
             ):
                 A_neighbors = xp.asarray(self.A_fits_src)[flat_idx].reshape(
                     chunk_size, k_nn, F_dim, D

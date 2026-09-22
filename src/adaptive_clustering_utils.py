@@ -74,6 +74,7 @@ class ClusteringConfig:
             SurrogateMode.NEAREST_NEIGHBOR,
             SurrogateMode.AFFINE_COV_NO_HESS,
             SurrogateMode.AFFINE_COV_HESS,
+            SurrogateMode.AFFINE_EXACT_HESS
         )
 
 
@@ -625,6 +626,7 @@ def evaluate_cluster_errors(
     elif config.mode in (
         SurrogateMode.AFFINE_COV_HESS,
         SurrogateMode.AFFINE_COV_NO_HESS,
+        SurrogateMode.AFFINE_EXACT_HESS
     ):
         # Adaptive Tikhonov fitting
         mean_F = _reduce_sum_1d(F_batch, aug_starts) / aug_sizes[:, None]  # (K, fd)
@@ -892,7 +894,7 @@ def split_rejected_clusters(
     counts_bad: Array,
     MIN_PTS_PER_CLUSTER: int,
     surrogate_params: dict,
-    hessian: Optional[Callable[[Array], Array]]
+    hessian: Optional[Callable]
 ) -> Array:
     """
     Computes the splitting direction and returns the sort_order for the next level.
@@ -1036,9 +1038,9 @@ def split_rejected_clusters(
 
         # Compute matrix square root
         dvals, U = xp.linalg.eigh(H_sym)
-        H_sqrt = (U * dvals[:,None]) @ U.transpose(0, 2, 1)
+        M_split = (U * dvals[:,None]) @ U.transpose(0, 2, 1)
         C, _ = run_fused_stats(X_bad, mus_bad, dense_labels_bad, K_bad, d, 0, None, calc_E=False)  # (K, d, d)
-        CovZ = H_sqrt @ C @ H_sqrt.transpose(0, 2, 1) # H^{1/2} * X * X^T * H^{1/2}
+        CovZ = M_split @ C @ M_split.transpose(0, 2, 1) # H^{1/2} * X * X^T * H^{1/2}
 
         
     # No Hessian
