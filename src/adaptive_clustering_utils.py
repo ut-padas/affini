@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 
@@ -892,7 +892,7 @@ def split_rejected_clusters(
     counts_bad: Array,
     MIN_PTS_PER_CLUSTER: int,
     surrogate_params: dict,
-    hessian, # TODO: how to make this either a function or None?
+    hessian: Optional[Callable[[Array], Array]]
 ) -> Array:
     """
     Computes the splitting direction and returns the sort_order for the next level.
@@ -906,7 +906,7 @@ def split_rejected_clusters(
     if config.mode == SurrogateMode.QUADRATIC:
         """
         Use the Hessian matrix of the least squares fit for the splitting direction.
-        TODO: what to do about the Hessian?
+        What to do about the Hessian?
         """
         print(
             "NOTE: specific split_rejected_clusters for SurrogateMode.QUADRATIC not implemented yet.\n\
@@ -1016,11 +1016,12 @@ def split_rejected_clusters(
         dvals_sqrt_inv = 1.0 / xp.sqrt(xp.maximum(xp.abs(dvals), TINY_EPS))
         M_split = (U * dvals_sqrt_inv[:, None]) @ U.transpose(0, 2, 1)  # (K, d, d)
         M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
+        # M_split is sqrt absolute Hessian.
 
         C, _ = run_fused_stats(
             X_bad, mus_bad, dense_labels_bad, K_bad, d, 0, None, calc_E=False
         )  # (K, d, d)
-        CovZ = M_split @ C @ M_split.transpose(0, 2, 1)
+        CovZ = M_split @ C @ M_split.transpose(0, 2, 1) # H^{1/2} * X * X^T * H^{1/2}
 
     # Exact: requires exact Hessian
     elif config.mode in (
@@ -1028,17 +1029,19 @@ def split_rejected_clusters(
         SurrogateMode.TAYLOR_EXACT_HESS,
     ):
         if hessian is None:
-            print(f"ERROR: {config.mode} requires the Hessian argument to be defined.")
-            # TODO: throw error instead of returning None
-            return
+            raise RuntimeError(f"Mode {config.mode} requires the Hessian argument to be defined.")
 
         H = hessian(mus_bad) # (N, d, d)
         H_sym = 0.5 * (H + H.transpose(0, 2, 1))
+
+        # Compute matrix square root
         dvals, U = xp.linalg.eigh(H_sym)
-        # TODO: let's fill in the rest
+        H_sqrt = (U * dvals[:,None]) @ U.transpose(0, 2, 1)
+        C, _ = run_fused_stats(X_bad, mus_bad, dense_labels_bad, K_bad, d, 0, None, calc_E=False)  # (K, d, d)
+        CovZ = H_sqrt @ C @ H_sqrt.transpose(0, 2, 1) # H^{1/2} * X * X^T * H^{1/2}
 
-
-
+        
+    # No Hessian
     elif config.mode in (
         SurrogateMode.NEAREST_NEIGHBOR,
         SurrogateMode.AFFINE_COV_NO_HESS,
