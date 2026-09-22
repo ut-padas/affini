@@ -524,3 +524,23 @@ def plot_error_histogram(
     plt.grid(True, which="both", linestyle="--", linewidth=0.5)
     plt.savefig(img_fpath, dpi=300)
     plt.close()
+
+
+def plot_cluster_projections_for_wave(clusters: Array, img_fpath: Path, dim: int):
+    from src.problems.wave import _get_random_direction
+    q = _to_host(_get_random_direction(dim, clusters.dtype))
+    q = q / np.linalg.norm(q)
+
+    # Project onto span(q) and span(q)^(perp)
+    q_proj = clusters @ q
+    residual = clusters - np.outer(q_proj, q)
+    q_perp = np.linalg.norm(residual, axis=1)
+
+    # Plot scatter plot
+    plt.figure(figsize=(10,8))
+    plt.xlabel("$||proj_q c||$")
+    plt.ylabel("$||proj_{q^\\perp} c||$")
+    plt.title("Projections of centers onto wave direction")
+    plt.scatter(q_proj, q_perp)
+    plt.savefig(img_fpath, dpi=300)
+    plt.close()

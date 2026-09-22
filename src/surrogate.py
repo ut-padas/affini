@@ -123,6 +123,7 @@ class AFINNISurrogate:
             if (
                 f_fn is None
                 or mode != SurrogateMode.AFFINE_COV_HESS
+                and mode != SurrogateMode.AFFINE_COV_NO_HESS
                 and mode != SurrogateMode.AFFINE_EXACT_HESS
                 and mode != SurrogateMode.NEAREST_NEIGHBOR
                 and g_fn is None

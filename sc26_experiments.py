@@ -17,7 +17,7 @@ from src.heuristic_parameters import (
     get_N_TRAIN,
     get_NUM_INITIAL_CLUSTERS,
 )
-from src.plotter_utils import plot_adaptive_clustering_results, plot_error_histogram
+from src.plotter_utils import plot_adaptive_clustering_results, plot_error_histogram, plot_cluster_projections_for_wave
 from src.surrogate import AFINNISurrogate, compute_error_metrics
 
 SC26_DIR = RESULTS_DIR / "sc26"
@@ -141,7 +141,7 @@ def conduct_experiment_given_data(
 
         # FIX: ALL ranks MUST participate in predict() because of comm.scatter/gather
         preds, ung_mask = surrogate.predict(
-            query_points=X_test, k_nn=K_NEIGHBOURS, strict_trust_region=False
+            query_points=X_test, k_nn=K_NEIGHBOURS, strict_trust_region=False, coarse_factor=DIM**2
         )
         _predict_time = time.perf_counter() - _start_predict_time
         _PREDICTED = True
@@ -207,7 +207,7 @@ def conduct_experiment_given_data(
         img_fpath=plot_save_path,
     )
 
-    if DIM == 2 and surrogate.N_src <= 10_000:
+    if DIM == 2 and surrogate.N_src <= 100_000:
         plot_save_path = json_fpath.with_name(json_fpath.stem + "_centroid_plot.png")
         plot_adaptive_clustering_results(
             centroids=_to_host(surrogate.X_src),
@@ -218,6 +218,11 @@ def conduct_experiment_given_data(
             img_fpath=plot_save_path,
             plot_in_log=CENTROIDS_PLOT_IN_LOG_SCALE,
         )
+
+    
+    if json_fpath.parent.name == "wave":
+        plot_save_path = json_fpath.with_name(json_fpath.stem + "_projection_plot.png")
+        plot_cluster_projections_for_wave(_to_host(surrogate.X_src), plot_save_path, DIM)
 
 
 
@@ -247,7 +252,7 @@ def conduct_experiment_generate_uniform_data(
     # Prediction-specific
     K_NEIGHBOURS: int = 1,
     # Post-processing-specific
-    CENTROIDS_PLOT_IN_LOG_SCALE: bool = True,
+    CENTROIDS_PLOT_IN_LOG_SCALE: bool = False,
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
     SAVE_FINAL_CENTROIDS: bool = False,
 ):
@@ -399,8 +404,6 @@ class NelsonBatchSolver:
 
 
 
-
-
 ### --- BEGIN EXPERIMENT FUNCTIONS --- ###
 
 def anisotropic_quadratic_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
@@ -514,7 +517,7 @@ def anisotropic_quadratic_modified_sampling(dim: int, tol: float, error_eval_mod
 
 
 def anisotropic_gaussian_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
-    from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad
+    from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad, aniso_gaussian_hess
 
     EXP_DIR = SC26_DIR / "anisotropic_gaussian"
 
@@ -527,6 +530,7 @@ def anisotropic_gaussian_experiment(dim: int, tol: float, error_eval_mode: Surro
     N_TRAIN = get_N_TRAIN(dim)
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
+    # NUM_INITIAL_CLUSTERS = 2
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
 
     json_fpath = (
@@ -544,6 +548,7 @@ def anisotropic_gaussian_experiment(dim: int, tol: float, error_eval_mode: Surro
         # Training-specific
         f_fn=aniso_gaussian,
         g_fn=aniso_gaussian_grad,
+        HESSIAN=aniso_gaussian_hess,
         TOL=tol,
         ERROR_EVAL_MODE=error_eval_mode,
         ERROR_METRIC=ERROR_METRIC,
@@ -623,26 +628,20 @@ def anisotropic_gaussian_modified_sampling(dim: int, tol: float, error_eval_mode
 def rosenbrock_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
     from functools import partial
 
-    from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
+    from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess
 
     EXP_DIR = SC26_DIR / "rosenbrock"
 
     ROSENBROCK_A = 100.0
     rosenbrock = partial(rosenbrock, a=ROSENBROCK_A)
     rosenbrock_grad = partial(rosenbrock_grad, a=ROSENBROCK_A)
+    rosenbrock_hess = partial(rosenbrock_hess, a=ROSENBROCK_A)
 
     F_DIM = 1
     ERROR_METRIC = "Linf-local"
     INITIAL_CLUSTERING_METHOD = "kmeans"
     USE_V2 = True
     USE_WORK_STEALING = True
-
-    if error_eval_mode != SurrogateMode.AFFINE_COV_HESS:
-        # TODO for each ERROR_EVAL_MODE
-        print(
-            f"Skipping ERROR_EVAL_MODE={error_eval_mode.value} for now. TODO: Add other TOLs for this mode."
-        )
-        return
 
     N_TRAIN = get_N_TRAIN(dim)
     N_TEST = N_TRAIN // 2
@@ -664,6 +663,7 @@ def rosenbrock_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
         # Training-specific
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
+        HESSIAN=rosenbrock_hess,
         TOL=tol,
         ERROR_EVAL_MODE=error_eval_mode,
         ERROR_METRIC=ERROR_METRIC,  # type: ignore
@@ -1226,7 +1226,8 @@ def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
 
     N_TRAIN = get_N_TRAIN(dim)
     N_TEST = N_TRAIN // 2
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
+    # NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
+    NUM_INITIAL_CLUSTERS = 1
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
 
     json_fpath = (
@@ -1370,13 +1371,6 @@ if __name__ == "__main__":
     setup_logging(console_level=logging.DEBUG)
 
     args = setup_argparse()
-    # args = dict(
-    #     tols = [0.05],
-    #     dims = [2],
-    #     experiment = "wave",
-    #     sampling = "uniform",
-    #     error_eval_mode = "affine_exact_hess"
-    # )
     run_experiment_from_args(args)
 
     # Nelson low-ambient dimension experiment 1 (enforced ambient dimension):
