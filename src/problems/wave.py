@@ -32,3 +32,41 @@ def wave(X: Array, frequency: float = FREQUENCY, beta: float = BETA) -> Array:
     f = xp.cos(frequency * (X @ q)) + beta
     return xp.reshape(f, (N, 1))
 
+
+
+def wave_hess(
+    X: Array,
+    frequency: float = FREQUENCY,
+    beta: float = BETA,
+) -> Array:
+    """
+    Computes the Hessian of the wave function
+
+        f(x) = cos(frequency * q^T x) + beta
+
+    at each point in X.
+
+    Args:
+        X: (N, d) data matrix
+        frequency: frequency of the cosine
+        beta: constant offset (does not affect the Hessian)
+
+    Returns:
+        H: (N, d, d) tensor, where H[i] is the Hessian
+           at X[i].
+    """
+    N, d = X.shape
+    dtype = X.dtype
+
+    q = _get_random_direction(d, dtype)
+
+    # q^T x for every point
+    qTx = X @ q  # (N,)
+
+    # q q^T
+    qqT = xp.outer(q, q)  # (d, d)
+
+    # Hessian at every point
+    H = -frequency**2 * xp.cos(frequency * qTx)[:, None, None] * qqT
+
+    return H
