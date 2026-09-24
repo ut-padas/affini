@@ -33,6 +33,34 @@ def wave(X: Array, frequency: float = FREQUENCY, beta: float = BETA) -> Array:
     return xp.reshape(f, (N, 1))
 
 
+def wave_grad(
+    X: Array,
+    frequency: float = FREQUENCY,
+) -> Array:
+    """
+    Computes the gradient of
+
+        f(x) = cos(frequency * q^T x) + beta
+
+    at each point in X.
+
+    Args:
+        X: (N, d) data matrix
+        q: (d,) wave direction
+        frequency: frequency of the cosine
+
+    Returns:
+        G: (N, d) gradient at each point
+    """
+    N, d = X.shape
+    q = _get_random_direction(d, X.dtype)
+    qTx = X @ q  # (N,)
+
+    G = -frequency * xp.sin(frequency * qTx)[:, None] * q
+
+    return G
+
+
 
 def wave_hess(
     X: Array,
