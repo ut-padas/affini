@@ -486,6 +486,7 @@ class AFINNISurrogate:
                 SurrogateMode.TAYLOR_LSQ_HESS,
                 SurrogateMode.TAYLOR_COV_HESS,
                 SurrogateMode.TAYLOR_COV_NO_HESS,
+                SurrogateMode.TAYLOR_EXACT_HESS,
             ):
                 J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(
                     chunk_size, k_nn, F_dim, D

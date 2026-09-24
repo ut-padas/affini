@@ -407,7 +407,7 @@ class NelsonBatchSolver:
 ### --- BEGIN EXPERIMENT FUNCTIONS --- ###
 
 def anisotropic_quadratic_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
-    from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad
+    from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad, aniso_quadratic_hess
 
     EXP_DIR = SC26_DIR / "anisotropic_quadratic"
 
@@ -441,6 +441,7 @@ def anisotropic_quadratic_experiment(dim: int, tol: float, error_eval_mode: Surr
         # Training-specific
         f_fn=aniso_quadratic,
         g_fn=aniso_quadratic_grad,
+        HESSIAN=aniso_quadratic_hess,
         TOL=tol,
         ERROR_EVAL_MODE=error_eval_mode,
         ERROR_METRIC=ERROR_METRIC,
@@ -1211,11 +1212,12 @@ def indefinite_quadratic_experiment():
 
 def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
 
-    from src.problems.wave import wave, wave_hess
+    from src.problems.wave import wave, wave_grad, wave_hess
 
     EXP_DIR = SC26_DIR / "wave"
 
     wave_fn = lambda x: wave(x)
+    wave_fn_grad = lambda x: wave_grad(x)
     wave_fn_hess = lambda x: wave_hess(x)
 
     F_DIM = 1
@@ -1244,7 +1246,7 @@ def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
         N_TEST=N_TEST,
         # Training-specific
         f_fn=wave_fn,
-        g_fn=None,
+        g_fn=wave_fn_grad,
         HESSIAN=wave_fn_hess,
         TOL=tol,
         ERROR_EVAL_MODE=error_eval_mode,
