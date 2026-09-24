@@ -63,6 +63,7 @@ class ClusteringConfig:
             SurrogateMode.TAYLOR_LSQ_HESS,
             SurrogateMode.TAYLOR_COV_HESS,
             SurrogateMode.TAYLOR_COV_NO_HESS,
+            SurrogateMode.TAYLOR_EXACT_HESS
         )
 
     @property
@@ -617,6 +618,7 @@ def evaluate_cluster_errors(
         SurrogateMode.TAYLOR_LSQ_HESS,
         SurrogateMode.TAYLOR_COV_HESS,
         SurrogateMode.TAYLOR_COV_NO_HESS,
+        SurrogateMode.TAYLOR_EXACT_HESS
     ):
         assert g_mus is not None
         lin = xp.einsum("nmd,nd->nm", g_mus[aug_ids], dx)  # (N, fd)
@@ -1038,7 +1040,8 @@ def split_rejected_clusters(
 
         # Compute matrix square root
         dvals, U = xp.linalg.eigh(H_sym)
-        M_split = (U * dvals[:,None]) @ U.transpose(0, 2, 1)
+        dvals_new = xp.sqrt(xp.abs(dvals))
+        M_split = (U * dvals_new[:,None]) @ U.transpose(0, 2, 1)
         C, _ = run_fused_stats(X_bad, mus_bad, dense_labels_bad, K_bad, d, 0, None, calc_E=False)  # (K, d, d)
         CovZ = M_split @ C @ M_split.transpose(0, 2, 1) # H^{1/2} * X * X^T * H^{1/2}
 
