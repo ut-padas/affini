@@ -21,7 +21,7 @@ def _get_random_rotation(d: int, dtype) -> Array:
 
 def _get_params(
     d: int, dtype, decay_exponent: float = DECAY_EXPONENT
-) -> tuple[Array, Array]:
+) -> Array:
     """
     Computes the symmetric matrix H = Q * Lambda * Q^T.
 
@@ -111,10 +111,10 @@ def aniso_quadratic_hess(X: Array, decay_exponent: float = DECAY_EXPONENT) -> Ar
         H_vals: (N, d, d) Hessians
     """
     N, d = X.shape
-    _, H = _get_params(d, X.dtype, decay_exponent)
+    H = _get_params(d, X.dtype, decay_exponent)
 
     # The Hessian is constant: 2 * H
     H_const = 2.0 * H
 
     # Repeat for all N points
-    return xp.repeat(H_const[None, :, :], N, axis=0)
+    return xp.broadcast_to(H_const, (N, *H_const.shape))
