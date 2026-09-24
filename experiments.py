@@ -1265,6 +1265,111 @@ def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
     return EXP_DIR
 
 
+def degenerate_quadratic_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
+    from src.problems.degenerate_quadratic import degenerate_quadratic, degenerate_quadratic_grad, degenerate_quadratic_hess
+
+    EXP_DIR = SC26_DIR / "degenerate_quadratic"
+
+    F_DIM = 1
+    ERROR_METRIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+    USE_V2 = True
+    USE_WORK_STEALING = True
+
+    N_TRAIN = get_N_TRAIN(dim)
+    N_TEST = N_TRAIN // 2
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
+    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
+
+    if dim >= 10 and tol <= 0.005:
+        print("This is throwing OOM errors. Skipping for now.")
+        return
+
+    json_fpath = (
+        EXP_DIR
+        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+    )
+    conduct_experiment_generate_uniform_data(
+        # Problem-specific
+        json_fpath=json_fpath,
+        DOMAIN=[-3.0, 3.0],
+        F_DIM=F_DIM,
+        DIM=dim,
+        N_TRAIN=N_TRAIN,
+        N_TEST=N_TEST,
+        # Training-specific
+        f_fn=degenerate_quadratic,
+        g_fn=degenerate_quadratic_grad,
+        HESSIAN=degenerate_quadratic_hess,
+        TOL=tol,
+        ERROR_EVAL_MODE=error_eval_mode,
+        ERROR_METRIC=ERROR_METRIC,
+        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        USE_WORK_STEALING=USE_WORK_STEALING,
+        USE_V2=USE_V2,
+    )
+
+    create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
+
+def indef_degen_quadratic_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
+    from src.problems.indef_degen_quadratic import indef_degen_quad, indef_degen_quad_grad, indef_degen_quad_hess
+
+    EXP_DIR = SC26_DIR / "indef_degen_quadratic"
+
+    F_DIM = 1
+    ERROR_METRIC = "Linf-local"
+    INITIAL_CLUSTERING_METHOD = "kmeans"
+    USE_V2 = True
+    USE_WORK_STEALING = True
+
+    N_TRAIN = get_N_TRAIN(dim)
+    N_TEST = N_TRAIN // 2
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
+    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
+
+    if dim >= 10 and tol <= 0.005:
+        print("This is throwing OOM errors. Skipping for now.")
+        return
+
+    json_fpath = (
+        EXP_DIR
+        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+    )
+    conduct_experiment_generate_uniform_data(
+        # Problem-specific
+        json_fpath=json_fpath,
+        DOMAIN=[-3.0, 3.0],
+        F_DIM=F_DIM,
+        DIM=dim,
+        N_TRAIN=N_TRAIN,
+        N_TEST=N_TEST,
+        # Training-specific
+        f_fn=indef_degen_quad,
+        g_fn=indef_degen_quad_grad,
+        HESSIAN=indef_degen_quad_hess,
+        TOL=tol,
+        ERROR_EVAL_MODE=error_eval_mode,
+        ERROR_METRIC=ERROR_METRIC,
+        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
+        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
+        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
+        USE_WORK_STEALING=USE_WORK_STEALING,
+        USE_V2=USE_V2,
+    )
+
+    create_summary_dataframe(EXP_DIR)
+
+    return EXP_DIR
+
+
+
+
 
 def setup_argparse():
     parser = argparse.ArgumentParser()
@@ -1286,6 +1391,8 @@ def setup_argparse():
     possible_experiments = [
         "anisotropic_quadratic",
         "anisotropic_gaussian",
+        "degenerate_quadratic",
+        "indef_degen_quadratic",
         "rosenbrock",
         "lorenz96",
         "wave"
@@ -1349,6 +1456,10 @@ def run_experiment_from_args(args):
                     anisotropic_gaussian_experiment(d, tol, error_eval_mode)
                 elif sampling == "modified":
                     anisotropic_gaussian_modified_sampling(d, tol, error_eval_mode)
+            elif function_name == "degenerate_quadratic":
+                degenerate_quadratic_experiment(d, tol, error_eval_mode)
+            elif function_name == "indef_degen_quadratic":
+                indef_degen_quadratic_experiment(d, tol, error_eval_mode)
             elif function_name == "rosenbrock":
                 if sampling == "uniform":
                     rosenbrock_experiment(d, tol, error_eval_mode)
