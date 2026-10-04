@@ -3,13 +3,14 @@ from typing import Any, Callable, Literal
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
+from matplotlib.colors import ListedColormap
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Ellipse
-
+from src.surrogate import AFINNISurrogate
 from src import Array, _to_device, _to_host, xp
 
 _LEVEL_STAT_COL_LABELS: dict[str, str] = {
@@ -544,3 +545,291 @@ def plot_cluster_projections_for_wave(clusters: Array, img_fpath: Path, dim: int
     plt.scatter(q_proj, q_perp)
     plt.savefig(img_fpath, dpi=300)
     plt.close()
+
+
+def plot_wave_2d_errors(surrogate: AFINNISurrogate, domain, f_fn, img_fpath: Path):
+
+    # Generate grid of points
+    centers = surrogate.X_src
+    Nc, d = centers.shape
+    _n = 500
+    x = np.linspace(domain[0], domain[1], _n)
+    y = np.linspace(domain[0], domain[1], _n)
+    X_grid, Y_grid = np.meshgrid(x, y)
+    # Evaluate function on grid
+    grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
+    exact = _to_host(f_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+    # Evaluate surrogate
+    coarse_factor = 50
+    output = surrogate.predict(grid_pts, coarse_factor=coarse_factor)
+    approx = _to_host(output[0]).reshape(X_grid.shape)
+    trust = _to_host(output[1]).reshape(X_grid.shape)
+
+    # Compute error
+    error = np.abs(exact - approx) + 1e-12
+
+    # Plot errors
+    fig, axs = plt.subplots(2, 2, figsize=(16, 12))
+
+    # -- Subplot 1: Exact function --
+    cs = axs[0,0].contourf(X_grid, Y_grid, exact, cmap="viridis", levels=20)
+    fig.colorbar(cs, ax=axs[0,0])
+    axs[0,0].set_title("Exact Function")
+    axs[0,0].set_xlabel("x")
+    axs[0,0].set_ylabel("y")
+    axs[0,0].set_aspect("equal")
+
+    # -- Subplot 2: Surrogate --
+    cs2 = axs[0,1].contourf(X_grid, Y_grid, approx, cmap="viridis", levels=20)
+    fig.colorbar(cs2, ax=axs[0,1])
+    axs[0,1].scatter(centers[:, 0], centers[:, 1], c="red", s=5, label="Centroids")
+    axs[0,1].set_title("AFINNI Surrogate")
+    axs[0,1].set_xlabel("x")
+    axs[0,1].set_ylabel("y")
+    axs[0,1].set_aspect("equal")
+
+    # -- Subplot 3: Log Errors --
+    cs3 = axs[1,0].contourf(X_grid, Y_grid, np.log10(error), levels=10, cmap="viridis")
+    fig.colorbar(cs3, ax=axs[1,0])
+    axs[1,0].set_title("Log errors")
+    axs[1,0].set_xlabel("x")
+    axs[1,0].set_ylabel("y")
+    axs[1,0].set_aspect("equal")
+
+    # -- Subplot 4: Trust Regions
+    binary_cmap = ListedColormap(["green", "red"])
+    axs[1,1].contourf(X_grid, Y_grid, trust.astype(int), cmap=binary_cmap)
+    axs[1,1].set_title("Trust Regions")
+    axs[1,1].set_xlabel("x")
+    axs[1,1].set_ylabel("y")
+    axs[1,1].set_aspect("equal")
+    
+    plt.tight_layout()
+
+    plt.suptitle(f"$f(x) = cos(2q^\\top x)$, $N_c={Nc}$", fontsize=11)
+
+    img_fpath.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(img_fpath, dpi=300)
+    plt.close(fig)
+    print(f"Saved figure to {img_fpath}")
+
+
+def plot_wave_line_errors(
+    surrogate: AFINNISurrogate,
+    domain,
+    f_fn,
+    img_fpath: Path,
+    coarse_factor: int = 50,
+    betas=(0.0, 1.0, 2.0, 3.0),
+):
+    centers = surrogate.X_src
+    Nc, d = centers.shape
+
+    # Random direction and its orthogonal complement (2D only)
+    from src.problems.wave import _get_random_direction
+    q = _get_random_direction(d, centers.dtype)
+    e = np.zeros(d); e[0] = 1
+    q_perp = e - np.dot(q, e) * q
+    q_perp /= np.linalg.norm(q_perp)
+
+    # Alpha sweep along the domain
+    alpha = np.linspace(domain[0], domain[1], 2000)
+
+    # Projection of centers onto q (used to scatter them on the x-axis)
+    centers_proj = centers @ q
+
+    fig, axs = plt.subplots(2, 2, figsize=(16, 12))
+    axs = axs.ravel()
+
+    for i, beta in enumerate(betas):
+        # Points along alpha*q + beta*q_perp
+        pts = alpha[:, None] * q[None, :] + beta * q_perp[None, :]
+
+        # Keep only points inside DOMAIN (all coordinates within bounds)
+        in_domain = np.all((pts >= domain[0]) & (pts <= domain[1]), axis=1)
+        alpha_valid = alpha[in_domain]
+        pts_valid = pts[in_domain]
+
+        ax = axs[i]
+
+        if pts_valid.size == 0:
+            ax.set_title(f"$\\beta = {beta}$ (no points in domain)")
+            ax.set_xlabel(r"$\alpha$")
+            ax.set_ylabel("Error")
+            continue
+
+        # Evaluate exact function
+        exact = _to_host(f_fn(_to_device(pts_valid)))
+
+        # Evaluate surrogate
+        output = surrogate.predict(pts_valid, coarse_factor=coarse_factor)
+        approx = _to_host(output[0])
+
+        # Compute error
+        error = np.abs(exact - approx) + 1e-12
+
+        ax.semilogy(alpha_valid, error, color="tab:blue")
+
+        # Scatter centers' projections onto q, along the x-axis
+        # (only those whose corresponding line point is in-domain)
+        centers_proj_valid = centers_proj[
+            (centers_proj >= alpha_valid.min()) & (centers_proj <= alpha_valid.max())
+        ] if alpha_valid.size > 0 else centers_proj
+
+        ax.scatter(
+            centers_proj_valid,
+            np.zeros_like(centers_proj_valid),
+            transform=ax.get_xaxis_transform(),
+            marker="|",
+            s=100,
+            color="red",
+            clip_on=False,
+            label="Centroid projections",
+        )
+
+        ax.set_title(f"$\\beta = {beta}$")
+        ax.set_xlabel(r"$\alpha$")
+        ax.set_ylabel("Error")
+        ax.grid(True, which="both", ls="--", alpha=0.4)
+
+    axs[0].legend(loc="upper right")
+
+    plt.tight_layout()
+    plt.suptitle(
+        f"$f(x) = \\cos(2q^\\top x)$, $N_c={Nc}$, line errors along $\\alpha q + \\beta q_\\perp$",
+        fontsize=11,
+    )
+
+    img_fpath.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(img_fpath, dpi=300)
+    plt.close(fig)
+    print(f"Saved figure to {img_fpath}")
+
+
+
+def plot_near_centers(
+    surrogate: AFINNISurrogate,
+    target,
+    domain,
+    bg_fn,
+    img_fpath: Path,
+    coarse_factor: int = 50,
+    n_grid: int = 500,
+    n_report: int = 10,
+):
+    centers = surrogate.X_src      # (Nc, d)
+    Qs = surrogate.Qs_src          # (Nc, d, d)
+    Nc, d = centers.shape
+
+    target = np.asarray(target).reshape(1, d)
+
+    # --- Coarse step: Euclidean nearest neighbors to target ---
+    dists = np.linalg.norm(centers - target, axis=1)
+    nn_idx = np.argsort(dists)[:coarse_factor]
+
+    # --- Fine step: anisotropic quadratic form x^T Q x per candidate ---
+    diffs = target - centers[nn_idx]         # (coarse_factor, d)
+    Q_candidates = Qs[nn_idx]                # (coarse_factor, d, d)
+    quad_vals = np.einsum("ni,nij,nj->n", diffs, Q_candidates, diffs)
+
+    # --- Print smallest n_report quadratic-form values, with centroid locations ---
+    sort_order = np.argsort(quad_vals)
+    topk_local = sort_order[:n_report]
+    topk_idx = nn_idx[topk_local]            # global indices into `centers`
+    topk_vals = quad_vals[topk_local]
+    topk_centers = centers[topk_idx]
+
+    print(f"Smallest {n_report} values of x^T Q x (value, centroid location):")
+    for rank, (val, loc) in enumerate(zip(topk_vals, topk_centers), start=1):
+        loc_str = ", ".join(f"{c:.5f}" for c in loc)
+        print(f"  {rank}: {val:.5f}  @ ({loc_str})")
+
+    # --- Plotting only supported in 2D ---
+    if d != 2:
+        print(f"Skipping plot: plot_near_centers only supports d=2 (got d={d}).")
+        return
+
+    # Select the single best candidate under this metric
+    selected_idx = topk_idx[0]
+    center_sel = centers[selected_idx]
+
+    # --- Masks for plotting ---
+    is_nn = np.zeros(Nc, dtype=bool)
+    is_nn[nn_idx] = True
+    is_selected = np.zeros(Nc, dtype=bool)
+    is_selected[selected_idx] = True
+    is_topk = np.zeros(Nc, dtype=bool)
+    is_topk[topk_idx] = True
+
+    is_topk_rest = is_topk & ~is_selected          # ranks 2..n_report
+    is_other_nn = is_nn & ~is_topk                  # remaining NN candidates
+    is_not_nn = ~is_nn
+
+    # --- Background contour: user-provided function over the grid ---
+    x = np.linspace(domain[0], domain[1], n_grid)
+    y = np.linspace(domain[0], domain[1], n_grid)
+    X_grid, Y_grid = np.meshgrid(x, y)
+    grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
+    field = _to_host(bg_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    cs = ax.contourf(X_grid, Y_grid, field, levels=20, cmap="viridis", alpha=0.7)
+    fig.colorbar(cs, ax=ax)
+
+    # --- Ellipses x^T Q x = 1 for the top-k candidates (centered at each candidate) ---
+    ellipse_label_added = False
+    for idx in topk_idx:
+        c_i = centers[idx]
+        Q_i = Qs[idx]
+        diff_grid = grid_pts - c_i
+        quad_field = np.einsum("ni,ij,nj->n", diff_grid, Q_i, diff_grid).reshape(X_grid.shape)
+        ax.contour(
+            X_grid, Y_grid, quad_field,
+            levels=[1.0],
+            colors="red",
+            linestyles="dotted",
+            linewidths=1.0,
+            zorder=3.5,
+        )
+    # Dummy line for a single legend entry (contour objects don't auto-label)
+    ax.plot([], [], color="red", linestyle="dotted", linewidth=1.0, label=r"$x^\top Q x = 1$")
+
+    # Centers not among the coarse_factor nearest neighbors
+    ax.scatter(
+        centers[is_not_nn, 0], centers[is_not_nn, 1],
+        c="pink", s=5, label="Not selected (coarse)", zorder=1,
+    )
+    # Centers among the coarse_factor nearest neighbors (excluding top-k)
+    ax.scatter(
+        centers[is_other_nn, 0], centers[is_other_nn, 1],
+        c="red", s=20, label=f"{coarse_factor}-NN candidates", zorder=2,
+    )
+    # Top-k smallest x^T Q x candidates (excluding the selected one)
+    ax.scatter(
+        centers[is_topk_rest, 0], centers[is_topk_rest, 1],
+        c="blue", s=35, edgecolors="black", linewidths=0.5,
+        label=f"Top-{n_report} candidates", zorder=4,
+    )
+    # The single center ultimately selected
+    ax.scatter(
+        center_sel[0], center_sel[1],
+        c="orange", s=80, edgecolors="black", label="Selected center", zorder=5,
+    )
+
+    # Target point
+    ax.scatter(
+        target[0, 0], target[0, 1],
+        marker="x", c="black", s=120, linewidths=3, label="Target", zorder=6,
+    )
+
+    ax.set_title(f"Nearest-center selection (coarse_factor={coarse_factor})")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_aspect("equal")
+    ax.legend(loc="upper right", fontsize=8)
+
+    plt.tight_layout()
+    img_fpath.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(img_fpath, dpi=300)
+    plt.close(fig)
+    print(f"Saved figure to {img_fpath}")

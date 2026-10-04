@@ -115,7 +115,7 @@ def plot_cluster_points(points, center, g_approx, f_fn, g_fn, H_fn):
 
 
 '''
-index = 69
+index = 4
 points = X_bad[bad_starts[index]:bad_starts[index+1],:]
 center = mus_bad[index]
 g_approx = A_tangent[index,0,:]
@@ -136,9 +136,11 @@ exact_taylor_error = np.abs(f_pts - exact_taylor)
 
 # Sort
 inexact_order = np.argsort(inexact_taylor_error)
-inexact_mask = inexact_order[:50]
+N, d = points.shape
+n_approx = MIN_PTS_PER_CLUSTER // 3
+inexact_mask = inexact_order[:n_approx]
 exact_order = np.argsort(exact_taylor_error)
-exact_mask = exact_order[:50]
+exact_mask = exact_order[:n_approx]
 
 # Plot on two axes
 fig, ax = plt.subplots(1, 2, figsize=(12,8))
@@ -178,4 +180,27 @@ ax[1].set_title("Exact Taylor ellipse (exact gradient)")
 
 # Save figure
 fig.savefig("cluster.png", dpi=300)
+
+# Compute Hessian approximation
+H_approx_worse = np.linalg.matrix_power(M_split[index], 2)
+cov = points[exact_mask,:].T @ points[exact_mask,:]
+dvals, U = xp.linalg.eigh(cov)
+dvals_inv = 1.0 / xp.maximum(xp.abs(dvals), TINY_EPS)
+H_approx_better = (U * dvals_inv) @ U.transpose()
+H_exact = H_fn(center[None,:]).reshape(d,d)
+
+# Rescale and compute eigenvalue decomposition
+H_approx_worse_scaled = H_approx_worse / np.linalg.norm(H_approx_worse, 2)
+H_approx_better_scaled = H_approx_better / np.linalg.norm(H_approx_better, 2)
+H_exact_scaled = H_exact / np.linalg.norm(H_exact)
+D1, U1 = np.linalg.eigh(H_approx_worse_scaled)
+D2, U2 = np.linalg.eigh(H_approx_better_scaled)
+D3, U3 = np.linalg.eigh(H_exact)
+print("Hessian estimate with approx. gradient:")
+print(f"Eigenvalues: {D1}"); print(f"Eigenvectors:\n{U1}")
+print("Hessian estimate with exact gradient:")
+print(f"Eigenvalues: {D2}"); print(f"Eigenvectors:\n{U2}")
+print("Exact Hessian:")
+print(f"Eigenvalues: {D3}"); print(f"Eigenvectors:\n{U3}")
+
 '''
