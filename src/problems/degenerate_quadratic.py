@@ -6,6 +6,18 @@ SEED = 0
 BETA = 1.0
 
 
+def _get_random_rotation(d: int, dtype) -> Array:
+    """
+    Creates a random rotation matrix using QR decomposition.
+    """
+    xp.random.seed(SEED)
+    A = xp.random.randn(d, d).astype(dtype)
+    Q, _ = xp.linalg.qr(A)
+    if xp.linalg.det(Q) < 0:
+        Q[:, 0] = -Q[:, 0]
+    return Q
+
+
 def _get_params(d: int, dtype) -> Array:
     """
     Computes the symmetric matrix H = diag(lambda), where the first
@@ -14,15 +26,15 @@ def _get_params(d: int, dtype) -> Array:
     Returns:
         H: (d, d) quadratic form matrix
     """
-    # 1. Eigenvalues: 1 for the first half (rounding down), 0 for the rest
-    num_ones = d // 2
+    # 1. Eigenvalues: 1 for the first, 0 for the rest
     lambdas = xp.zeros((d,), dtype=dtype)
-    lambdas[:num_ones] = 1.0
+    lambdas[0] = 4.0
 
     # 2. Construct H = diag(lambdas)
     H = xp.diag(lambdas)
+    Q = _get_random_rotation(d, dtype)
 
-    return H
+    return Q @ H @ Q.T
 
 
 def degenerate_quadratic(X: Array, beta: float = BETA) -> Array:
