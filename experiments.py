@@ -1091,7 +1091,7 @@ def lorenz96_low_rank_experiment(d, D, dt, tol):
 
 
 
-def lorenz_trajectories_experiment(d, tol, error_eval_mode, dt):
+def lorenz_trajectories_experiment(d, tol, error_eval_mode, dt, Q_reg, coarse_factor):
     '''
     Goal: use time step data as training and testing to do experiments.
     I.e. use manifolds of solutions as initial data.
@@ -1146,7 +1146,9 @@ def lorenz_trajectories_experiment(d, tol, error_eval_mode, dt):
         INITIAL_CLUSTERING_METHOD = 'kmeans',
         NUM_INITIAL_CLUSTERS = min(get_NUM_INITIAL_CLUSTERS(d), 1000),
         MIN_PTS_PER_CLUSTER = min(get_MIN_PTS_PER_CLUSTER(d), 500),
-        USE_WORK_STEALING = False
+        USE_WORK_STEALING = False,
+        Q_reg=Q_reg,
+        COARSE_FACTOR=coarse_factor
     )
 
     create_summary_dataframe(EXP_DIR)
