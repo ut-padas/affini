@@ -79,6 +79,7 @@ class AFINNISurrogate:
         MIN_PTS_PER_CLUSTER: int = 100,
         MAX_CLUSTERS_EST: int = 1_000_000,
         SEED: int = 0,
+        Q_REG: float = 1e-6,
         STORE_HESSIAN: bool = False,
         STORE_AFFINE_FIT: bool = False,
         USE_WORK_STEALING: bool = True,
@@ -151,7 +152,7 @@ class AFINNISurrogate:
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
             MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
             SEED=SEED,
-            Q_SHRINK=0.05,
+            Q_REG=Q_REG,
             MAX_LEVELS=MAX_LEVELS,
             BATCH_SIZE=BATCH_SIZE,
             PROFILE_TIMING=PROFILE_TIMING,
@@ -506,7 +507,8 @@ class AFINNISurrogate:
             elif self.mode in (
                 SurrogateMode.AFFINE_COV_HESS,
                 SurrogateMode.AFFINE_COV_NO_HESS,
-                SurrogateMode.AFFINE_EXACT_HESS
+                SurrogateMode.AFFINE_EXACT_HESS,
+                SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
             ):
                 A_neighbors = xp.asarray(self.A_fits_src)[flat_idx].reshape(
                     chunk_size, k_nn, F_dim, D

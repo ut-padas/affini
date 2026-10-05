@@ -32,6 +32,7 @@ class SurrogateMode(Enum):
         "taylor_cov_no_hess"  # Grads at centroids only, split via X^T X
     )
     AFFINE_COV_HESS = "affine_cov_hess"  # No grads, fit A/b, split via X^T H X, where H is estimated from covariance
+    AFFINE_COV_HESS_EXACT_GRAD = "affine_cov_hess_exact_grad" # Same as above, but with Hessian estimated with exact gradient.
     AFFINE_EXACT_HESS = "affine_exact_hess" # No grads, fit A/b, split via X^T H X, where H is given by an exact formula
     TAYLOR_COV_HESS = "taylor_cov_hess"  # Grads at centroids only, split via X^T H X, where H is estimated from covariance
     TAYLOR_EXACT_HESS = "taylor_exact_hess" # Grads at centroids only, split via X^T H X, where H is given by an exact formula
@@ -63,7 +64,8 @@ class ClusteringConfig:
             SurrogateMode.TAYLOR_LSQ_HESS,
             SurrogateMode.TAYLOR_COV_HESS,
             SurrogateMode.TAYLOR_COV_NO_HESS,
-            SurrogateMode.TAYLOR_EXACT_HESS
+            SurrogateMode.TAYLOR_EXACT_HESS,
+            SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD
         )
 
     @property
@@ -628,7 +630,8 @@ def evaluate_cluster_errors(
     elif config.mode in (
         SurrogateMode.AFFINE_COV_HESS,
         SurrogateMode.AFFINE_COV_NO_HESS,
-        SurrogateMode.AFFINE_EXACT_HESS
+        SurrogateMode.AFFINE_EXACT_HESS,
+        SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
     ):
         # Adaptive Tikhonov fitting
         mean_F = _reduce_sum_1d(F_batch, aug_starts) / aug_sizes[:, None]  # (K, fd)
@@ -648,7 +651,12 @@ def evaluate_cluster_errors(
 
         lin = xp.einsum("nfd,nd->nf", A[aug_ids], X_batch)  # (N, fd)
         diff = F_batch - (b[aug_ids] + lin)
-        surrogate_params = {"A": A, "b": b}
+        if config.mode == SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD:
+            assert g_mus is not None
+            surrogate_params = {"A": A, "b": b, "g_mus": g_mus}
+        else:
+            surrogate_params = {"A": A, "b": b}
+            
 
     elif config.mode == SurrogateMode.QUADRATIC:
         """
@@ -781,7 +789,7 @@ def compute_accepted_stats(
     g_mus_good: Optional[Array],
     dense_labels_good: Array,
     counts_good: Array,
-    Q_SHRINK: float,
+    Q_reg: float,
 ) -> tuple[Array, Optional[Array], Array, Optional[Array]]:
     """
     Computes Q (Trust Region shape), H (Hessian), radii, and L_obs for accepted clusters.
@@ -797,17 +805,11 @@ def compute_accepted_stats(
         X_good, mus_good, dense_labels_good, K_good, d, 0, None, calc_E=False
     )
     Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))  # (K, d, d)
-
-    if Q_SHRINK > 0.0:
-        tr = xp.trace(Cov, axis1=1, axis2=2)  # (K,)
-        scale_tr = tr / max(d, 1)
-        I = xp.eye(d, dtype=xp.float64)[None, :, :]
-        Cov = (1.0 - Q_SHRINK) * Cov + Q_SHRINK * (
-            scale_tr[:, None, None] * I
-        )  # (K, d, d)
-        Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))
-
     Lambda, U = xp.linalg.eigh(Cov)
+
+    if Q_reg > 0.0:
+        Lambda = xp.maximum(Lambda, Q_reg)
+
     Lambda_inv = 1.0 / xp.maximum(Lambda, TINY_EPS)  # (K, d)
 
     proj = run_fused_mahalanobis_projection(dx, dense_labels_good, U)  # (N_good, d)
@@ -962,9 +964,11 @@ def split_rejected_clusters(
     elif config.mode in (
         SurrogateMode.AFFINE_COV_HESS,
         SurrogateMode.TAYLOR_COV_HESS,
+        SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
         SurrogateMode.QUADRATIC,
     ):
-        if config.mode == SurrogateMode.TAYLOR_COV_HESS:
+        if config.mode == SurrogateMode.TAYLOR_COV_HESS or \
+           config.mode == SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD:
             g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]  # (N_bad, fd, d)
             lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp, dx)  # (N_bad, fd)
             diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)  # (N_bad, fd)

@@ -59,7 +59,7 @@ def _run_local_refinement(
     MIN_PTS_PER_CLUSTER: int,
     MAX_CLUSTERS_EST: int,
     SEED: int,
-    Q_SHRINK: float,
+    Q_REG: float,
     MAX_LEVELS: int,
     BATCH_SIZE: int,
     USE_WORK_STEALING: bool,
@@ -590,7 +590,7 @@ def _run_local_refinement(
                         g_mus[good_idx_local] if g_mus is not None else None,
                         dense_labels_good,
                         good_counts,
-                        Q_SHRINK,
+                        Q_REG,
                     )
 
                 with CudaTimer("time_good_d2h", profiling_stats, PROFILE_TIMING):
@@ -1049,7 +1049,7 @@ def adaptive_clustering(
     MIN_PTS_PER_CLUSTER: int = 100,
     MAX_CLUSTERS_EST: int = 100_000,
     SEED: int = 0,
-    Q_SHRINK: float = 0.05,
+    Q_REG: float = 1e-6,
     MAX_LEVELS: int = 50,
     BATCH_SIZE: int = 10_000_000,
     USE_WORK_STEALING: bool = True,
@@ -1358,7 +1358,7 @@ def adaptive_clustering(
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
             MAX_CLUSTERS_EST=max(1, MAX_CLUSTERS_EST // max(1, size)),
             SEED=SEED,
-            Q_SHRINK=Q_SHRINK,
+            Q_REG=Q_REG,
             MAX_LEVELS=MAX_LEVELS,
             BATCH_SIZE=BATCH_SIZE,
             USE_WORK_STEALING=USE_WORK_STEALING,
