@@ -17,7 +17,14 @@ from src.heuristic_parameters import (
     get_N_TRAIN,
     get_NUM_INITIAL_CLUSTERS,
 )
-from src.plotter_utils import plot_adaptive_clustering_results, plot_error_histogram, plot_cluster_projections_for_wave
+from src.plotter_utils import \
+    plot_adaptive_clustering_results, \
+    plot_error_histogram, \
+    plot_cluster_projections_for_wave, \
+    plot_wave_2d_errors, \
+    plot_wave_line_errors, \
+    plot_near_centers
+
 from src.surrogate import AFINNISurrogate, compute_error_metrics
 
 SC26_DIR = RESULTS_DIR / "sc26"
@@ -79,9 +86,11 @@ def conduct_experiment_given_data(
     USE_WORK_STEALING: bool = True,
     USE_V2=True,
     Y_train=None,
+    Q_reg=1e-6,
     HESSIAN=None,
     # Prediction-specific
     K_NEIGHBOURS: int = 1,
+    COARSE_FACTOR: int = 10,
     # Post-processing-specific
     CENTROIDS_PLOT_IN_LOG_SCALE: bool = True,
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
@@ -126,6 +135,7 @@ def conduct_experiment_given_data(
             STORE_AFFINE_FIT=True,
             SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
             HESSIAN=HESSIAN,
+            Q_REG=Q_reg
         )
         _train_time = time.perf_counter() - _start_train_time
         _TRAINED = True
@@ -140,8 +150,12 @@ def conduct_experiment_given_data(
         _start_predict_time = time.perf_counter()
 
         # FIX: ALL ranks MUST participate in predict() because of comm.scatter/gather
+        # TODO: how to correctly choose coarse_factor? Another way to do nearest neighbor search?
         preds, ung_mask = surrogate.predict(
-            query_points=X_test, k_nn=K_NEIGHBOURS, strict_trust_region=False, coarse_factor=DIM**2
+            query_points=X_test,
+            k_nn=K_NEIGHBOURS,
+            strict_trust_region=False,
+            coarse_factor=COARSE_FACTOR
         )
         _predict_time = time.perf_counter() - _start_predict_time
         _PREDICTED = True
@@ -221,8 +235,22 @@ def conduct_experiment_given_data(
 
     
     if json_fpath.parent.name == "wave":
-        plot_save_path = json_fpath.with_name(json_fpath.stem + "_projection_plot.png")
-        plot_cluster_projections_for_wave(_to_host(surrogate.X_src), plot_save_path, DIM)
+        
+        proj_plot_save_path = json_fpath.with_name(json_fpath.stem + "_projection_plot.png")
+        plot_cluster_projections_for_wave(_to_host(surrogate.X_src), proj_plot_save_path, DIM)
+        
+        if DIM == 2:
+            err_plot_save_path = json_fpath.with_name(json_fpath.stem + "_error_plot.png")
+            plot_wave_2d_errors(surrogate, DOMAIN, f_fn, err_plot_save_path)
+
+        err_plot2_save_path = json_fpath.with_name(json_fpath.stem + "_projerror_plot.png")
+        plot_wave_line_errors(surrogate, DOMAIN, f_fn, err_plot2_save_path)
+
+        center_plot_save_path = json_fpath.with_name(json_fpath.stem + "_centers_plot.png")
+        target = xp.array([3, -3.5, 2, 3, 4])
+        plot_near_centers(surrogate, target, DOMAIN, f_fn, center_plot_save_path)
+
+        print('Plots complete')
 
 
 
@@ -249,8 +277,10 @@ def conduct_experiment_generate_uniform_data(
     USE_WORK_STEALING: bool = True,
     USE_V2=True,
     HESSIAN=None,
+    Q_reg=1e-6,
     # Prediction-specific
     K_NEIGHBOURS: int = 1,
+    COARSE_FACTOR: int = 10,
     # Post-processing-specific
     CENTROIDS_PLOT_IN_LOG_SCALE: bool = False,
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
@@ -287,8 +317,10 @@ def conduct_experiment_generate_uniform_data(
         USE_WORK_STEALING,
         USE_V2,
         None,
+        Q_reg,
         HESSIAN,
         K_NEIGHBOURS,
+        COARSE_FACTOR,
         CENTROIDS_PLOT_IN_LOG_SCALE,
         SAVE_ALL_GEN_TRAINING_DATA,
         SAVE_FINAL_CENTROIDS
@@ -406,7 +438,13 @@ class NelsonBatchSolver:
 
 ### --- BEGIN EXPERIMENT FUNCTIONS --- ###
 
-def anisotropic_quadratic_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
+def anisotropic_quadratic_experiment(
+        dim: int,
+        tol: float,
+        error_eval_mode: SurrogateMode,
+        Q_reg: float,
+        coarse_factor: int
+    ):
     from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad, aniso_quadratic_hess
 
     EXP_DIR = SC26_DIR / "anisotropic_quadratic"
@@ -450,6 +488,8 @@ def anisotropic_quadratic_experiment(dim: int, tol: float, error_eval_mode: Surr
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
+        Q_reg=Q_reg,
+        COARSE_FACTOR=coarse_factor
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -457,7 +497,14 @@ def anisotropic_quadratic_experiment(dim: int, tol: float, error_eval_mode: Surr
     return EXP_DIR
 
 
-def anisotropic_quadratic_modified_sampling(dim: int, tol: float, error_eval_mode: SurrogateMode):
+def anisotropic_quadratic_modified_sampling(
+        dim: int,
+        tol: float,
+        error_eval_mode: SurrogateMode,
+        Q_reg: float,
+        coarse_factor: int
+    ):
+
     from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad, _get_params
     EXP_DIR = SC26_DIR / "anisotropic_quadratic_modified_sampling"
 
@@ -510,6 +557,8 @@ def anisotropic_quadratic_modified_sampling(dim: int, tol: float, error_eval_mod
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
+        COARSE_FACTOR=coarse_factor,
+        Q_reg=Q_reg
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -517,7 +566,13 @@ def anisotropic_quadratic_modified_sampling(dim: int, tol: float, error_eval_mod
     return EXP_DIR
 
 
-def anisotropic_gaussian_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
+def anisotropic_gaussian_experiment(
+        dim: int,
+        tol: float,
+        error_eval_mode: SurrogateMode,
+        Q_reg: float,
+        coarse_factor: int
+    ):
     from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad, aniso_gaussian_hess
 
     EXP_DIR = SC26_DIR / "anisotropic_gaussian"
@@ -559,6 +614,8 @@ def anisotropic_gaussian_experiment(dim: int, tol: float, error_eval_mode: Surro
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
         CENTROIDS_PLOT_IN_LOG_SCALE=False,
+        Q_reg=Q_reg,
+        COARSE_FACTOR=coarse_factor
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -566,7 +623,13 @@ def anisotropic_gaussian_experiment(dim: int, tol: float, error_eval_mode: Surro
     return EXP_DIR
 
 
-def anisotropic_gaussian_modified_sampling(dim: int, tol: float, error_eval_mode: SurrogateMode):
+def anisotropic_gaussian_modified_sampling(
+        dim: int,
+        tol: float,
+        error_eval_mode: SurrogateMode,
+        Q_reg: float,
+        coarse_factor: int
+    ):
     from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad, _get_random_rotation, _get_precision_eigenvalues
 
     EXP_DIR = SC26_DIR / "anisotropic_gaussian_modified_sampling"
@@ -618,6 +681,8 @@ def anisotropic_gaussian_modified_sampling(dim: int, tol: float, error_eval_mode
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
         CENTROIDS_PLOT_IN_LOG_SCALE=False,
+        Q_reg=Q_reg,
+        COARSE_FACTOR=coarse_factor
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -626,7 +691,13 @@ def anisotropic_gaussian_modified_sampling(dim: int, tol: float, error_eval_mode
 
 
 
-def rosenbrock_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
+def rosenbrock_experiment(
+        dim: int,
+        tol: float,
+        error_eval_mode: SurrogateMode,
+        Q_reg: float,
+        coarse_factor: int
+    ):
     from functools import partial
 
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess
@@ -675,6 +746,8 @@ def rosenbrock_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
         USE_V2=USE_V2,
         SAVE_ALL_GEN_TRAINING_DATA=False,
         SAVE_FINAL_CENTROIDS=True,
+        Q_reg=Q_reg,
+        COARSE_FACTOR=coarse_factor
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -682,7 +755,13 @@ def rosenbrock_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
     return EXP_DIR
 
 
-def rosenbrock_experiment_modified_sampling(dim: int, tol: float, error_eval_mode: SurrogateMode):
+def rosenbrock_experiment_modified_sampling(
+        dim: int,
+        tol: float,
+        error_eval_mode: SurrogateMode,
+        Q_reg: float,
+        coarse_factor: int
+    ):
     from functools import partial
 
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
@@ -751,6 +830,8 @@ def rosenbrock_experiment_modified_sampling(dim: int, tol: float, error_eval_mod
         USE_V2=USE_V2,
         SAVE_ALL_GEN_TRAINING_DATA=False,
         SAVE_FINAL_CENTROIDS=True,
+        Q_reg=Q_reg,
+        COARSE_FACTOR=coarse_factor
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -766,8 +847,11 @@ def lorenz96_experiment(
         tol: float,
         error_eval_mode: SurrogateMode,
         tf: float,
+        Q_reg: float,
+        coarse_factor: int,
         forcing: float = 1.0,
-        output_component: int = 0):
+        output_component: int = 0
+    ):
     from src.problems.lorenz96_flowmap import lorenz96_flowmap
     from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
 
@@ -797,8 +881,7 @@ def lorenz96_experiment(
 
     N_TRAIN = min(get_N_TRAIN(dim), 1000000)
     N_TEST = N_TRAIN // 2
-    # NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
-    NUM_INITIAL_CLUSTERS = 144
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
 
     json_fpath = (
@@ -824,6 +907,8 @@ def lorenz96_experiment(
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
+        Q_reg=Q_reg,
+        COARSE_FACTOR=coarse_factor
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -1210,7 +1295,13 @@ def indefinite_quadratic_experiment():
     return EXP_DIR
 
 
-def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
+def wave_experiment(
+        dim: int,
+        tol: float,
+        error_eval_mode: SurrogateMode,
+        Q_reg: float,
+        coarse_factor: int,
+    ):
 
     from src.problems.wave import wave, wave_grad, wave_hess
 
@@ -1229,7 +1320,8 @@ def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
     N_TRAIN = get_N_TRAIN(dim)
     N_TEST = N_TRAIN // 2
     # NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    NUM_INITIAL_CLUSTERS = 1
+    # NUM_INITIAL_CLUSTERS = 1
+    NUM_INITIAL_CLUSTERS = 1000
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
 
     json_fpath = (
@@ -1239,7 +1331,7 @@ def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
     conduct_experiment_generate_uniform_data(
         # Problem-specific
         json_fpath=json_fpath,
-        DOMAIN=[-2.0, 3.0],
+        DOMAIN=[-5.0, 5.0],
         F_DIM=F_DIM,
         DIM=dim,
         N_TRAIN=N_TRAIN,
@@ -1258,6 +1350,8 @@ def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
         USE_V2=USE_V2,
         SAVE_ALL_GEN_TRAINING_DATA=False,
         SAVE_FINAL_CENTROIDS=False,
+        Q_reg=Q_reg,
+        COARSE_FACTOR=coarse_factor
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -1265,7 +1359,13 @@ def wave_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
     return EXP_DIR
 
 
-def degenerate_quadratic_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
+def degenerate_quadratic_experiment(
+        dim: int,
+        tol: float,
+        error_eval_mode: SurrogateMode,
+        Q_reg: float,
+        coarse_factor: int
+    ):
     from src.problems.degenerate_quadratic import degenerate_quadratic, degenerate_quadratic_grad, degenerate_quadratic_hess
 
     EXP_DIR = SC26_DIR / "degenerate_quadratic"
@@ -1279,6 +1379,7 @@ def degenerate_quadratic_experiment(dim: int, tol: float, error_eval_mode: Surro
     N_TRAIN = get_N_TRAIN(dim)
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
+    # NUM_INITIAL_CLUSTERS = 1
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
 
     if dim >= 10 and tol <= 0.005:
@@ -1309,6 +1410,8 @@ def degenerate_quadratic_experiment(dim: int, tol: float, error_eval_mode: Surro
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
+        Q_reg=Q_reg,
+        COARSE_FACTOR=coarse_factor
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -1317,7 +1420,13 @@ def degenerate_quadratic_experiment(dim: int, tol: float, error_eval_mode: Surro
 
 
 
-def indef_degen_quadratic_experiment(dim: int, tol: float, error_eval_mode: SurrogateMode):
+def indef_degen_quadratic_experiment(
+        dim: int,
+        tol: float,
+        error_eval_mode: SurrogateMode,
+        Q_reg: float,
+        coarse_factor: int
+    ):
     from src.problems.indef_degen_quadratic import indef_degen_quad, indef_degen_quad_grad, indef_degen_quad_hess
 
     EXP_DIR = SC26_DIR / "indef_degen_quadratic"
@@ -1361,6 +1470,8 @@ def indef_degen_quadratic_experiment(dim: int, tol: float, error_eval_mode: Surr
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
+        Q_reg=Q_reg,
+        COARSE_FACTOR=coarse_factor
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -1384,6 +1495,8 @@ def setup_argparse():
                         Only does something if a flow map experiment is specified.", type=float, default=0.1)
     parser.add_argument("--error_eval_mode", help="The error eval mode to use.", type=str, default="affine_cov_hess")
     parser.add_argument("--sampling", help="The sampling strategy to use for initial points.", type=str, default="uniform")
+    parser.add_argument("--coarse_factor", help="The number of nearest neighbor points to use during inference.", type=int, default=10)
+    parser.add_argument("--Q_reg", help="The regularization to use for the trust region construction, using Tikhonov.", type=float, default=1e-6)
 
     args = parser.parse_args()
 
@@ -1400,6 +1513,7 @@ def setup_argparse():
     possible_error_eval_modes = [
         "affine_cov_hess",
         "affine_cov_no_hess",
+        "affine_cov_hess_exact_grad",
         "nearest_neighbor",
         "quadratic",
         "taylor_cov_hess",
@@ -1429,12 +1543,15 @@ def run_experiment_from_args(args):
     dvec = args.dims
     function_name = args.experiment
     sampling = args.sampling
+    Q_reg = args.Q_reg
+    coarse_factor = args.coarse_factor
 
     # Pick correct enum for error_eval_mode
     enum_map = {
         "affine_cov_hess": SurrogateMode.AFFINE_COV_HESS,
         "affine_exact_hess": SurrogateMode.AFFINE_EXACT_HESS,
         "affine_cov_no_hess": SurrogateMode.AFFINE_COV_NO_HESS,
+        "affine_cov_hess_exact_grad": SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
         "nearest_neighbor": SurrogateMode.NEAREST_NEIGHBOR,
         "quadratic": SurrogateMode.QUADRATIC,
         "taylor_cov_hess": SurrogateMode.TAYLOR_COV_HESS,
@@ -1448,30 +1565,30 @@ def run_experiment_from_args(args):
         for d in dvec:
             if function_name == "anisotropic_quadratic":
                 if sampling == "uniform":
-                    anisotropic_quadratic_experiment(d, tol, error_eval_mode)
+                    anisotropic_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
                 elif sampling == "modified":
-                    anisotropic_quadratic_modified_sampling(d, tol, error_eval_mode)
+                    anisotropic_quadratic_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor)
             elif function_name == "anisotropic_gaussian":
                 if sampling == "uniform":
-                    anisotropic_gaussian_experiment(d, tol, error_eval_mode)
+                    anisotropic_gaussian_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
                 elif sampling == "modified":
-                    anisotropic_gaussian_modified_sampling(d, tol, error_eval_mode)
+                    anisotropic_gaussian_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor)
             elif function_name == "degenerate_quadratic":
-                degenerate_quadratic_experiment(d, tol, error_eval_mode)
+                degenerate_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
             elif function_name == "indef_degen_quadratic":
-                indef_degen_quadratic_experiment(d, tol, error_eval_mode)
+                indef_degen_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
             elif function_name == "rosenbrock":
                 if sampling == "uniform":
-                    rosenbrock_experiment(d, tol, error_eval_mode)
+                    rosenbrock_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
                 elif sampling == "modified":
-                    rosenbrock_experiment_modified_sampling(d, tol, error_eval_mode)
+                    rosenbrock_experiment_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor)
             elif function_name == "lorenz96":
                 if sampling == "uniform":
-                    lorenz96_experiment(d, tol, error_eval_mode, args.dt)
+                    lorenz96_experiment(d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor)
                 elif sampling == "modified":
-                    lorenz_trajectories_experiment(d, tol, error_eval_mode, args.dt)
+                    lorenz_trajectories_experiment(d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor)
             elif function_name == "wave":
-                wave_experiment(d, tol, error_eval_mode)
+                wave_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
             else:
                 print(f"Function {function_name} not recognized.")
 
@@ -1485,19 +1602,3 @@ if __name__ == "__main__":
 
     args = setup_argparse()
     run_experiment_from_args(args)
-
-    # Nelson low-ambient dimension experiment 1 (enforced ambient dimension):
-    # d=5; dt=0.2;
-    # Dvec = xp.array([10, 20, 40])
-    # tolvec = xp.array([0.02])
-    # for D in Dvec:
-    #     for tol in tolvec:
-    #         lorenz96_low_rank_experiment(d, int(D), dt, float(tol))
-
-    # Nelson low-ambient dimension experiment 2 (learned ambient dimension):
-    # dvec = xp.array([5, 10, 20, 40, 80])
-    # dt = 0.1
-    # tolvec = xp.array([0.1])
-    # for d in dvec:
-    #     for tol in tolvec:
-    #         lorenz_trajectories_experiment(int(d), dt, float(tol))
