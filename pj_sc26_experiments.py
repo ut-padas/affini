@@ -180,7 +180,6 @@ def conductExperiment(
         plot_adaptive_clustering_results(
             centroids=_to_host(surrogate.X_src),
             Q=_to_host(surrogate.Qs_src),
-            radii=_to_host(surrogate.trust_radii_src),
             domain=DOMAIN,  # type: ignore
             f_fn=f_fn,
             img_fpath=plot_save_path,
