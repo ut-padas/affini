@@ -61,7 +61,6 @@ class AFINNISurrogate:
     def train(
         self,
         X_train: Array,
-        USE_V2: bool,
         Y_train: Optional[Array] = None,
         f_fn: Optional[Callable] = None,
         g_fn: Optional[Callable] = None,
