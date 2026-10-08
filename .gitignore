@@ -215,9 +215,6 @@ __marimo__/
 # VS Code Settings
 .vscode/
 
-# Figures Directory
-figures/
-
 # Results Directory
 results/
 
