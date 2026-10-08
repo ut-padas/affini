@@ -1558,7 +1558,6 @@ if __name__ == "__main__":
         plot_adaptive_clustering_results(
             centroids=_to_host(result["centroids"]),
             Q=_to_host(result["Q"]),
-            radii=_to_host(result["radii"]),
             domain=PROB_LIMS,
             f_fn=rosenbrock,
             img_fpath=img_fpath,
