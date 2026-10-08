@@ -115,7 +115,6 @@ def conduct_experiment_given_data(
         # All ranks participate in training
         surrogate.train(
             X_train=X_train,
-            USE_V2=USE_V2,
             Y_train=None,
             f_fn=f_fn,
             g_fn=g_fn,
@@ -226,7 +225,6 @@ def conduct_experiment_given_data(
         plot_adaptive_clustering_results(
             centroids=_to_host(surrogate.X_src),
             Q=_to_host(surrogate.Qs_src),
-            radii=_to_host(surrogate.trust_radii_src),
             domain=DOMAIN,  # type: ignore
             f_fn=f_fn,
             img_fpath=plot_save_path,
@@ -445,9 +443,9 @@ def anisotropic_quadratic_experiment(
         Q_reg: float,
         coarse_factor: int
     ):
-    from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad, aniso_quadratic_hess
+    from src.problems.anisotropic_quadratic_2 import aniso_quadratic, aniso_quadratic_grad, aniso_quadratic_hess
 
-    EXP_DIR = SC26_DIR / "anisotropic_quadratic"
+    EXP_DIR = SC26_DIR / "anisotropic_quadratic_2"
 
     F_DIM = 1
     ERROR_METRIC = "Linf-local"
@@ -1321,9 +1319,7 @@ def wave_experiment(
 
     N_TRAIN = get_N_TRAIN(dim)
     N_TEST = N_TRAIN // 2
-    # NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    # NUM_INITIAL_CLUSTERS = 1
-    NUM_INITIAL_CLUSTERS = 1000
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
 
     json_fpath = (
@@ -1359,6 +1355,60 @@ def wave_experiment(
     create_summary_dataframe(EXP_DIR)
 
     return EXP_DIR
+
+
+def compare_wave_surrogates():
+
+    import numpy as np
+    from src.problems.wave import wave, wave_grad
+    DIM = 2
+    TOL = 0.01
+    DOMAIN = [-5, 5]
+    N_init_pts = 100000
+    eem1 = SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD
+    eem2 = SurrogateMode.AFFINE_COV_HESS
+    N_init_clusters = get_NUM_INITIAL_CLUSTERS(DIM)
+    min_ppc = get_MIN_PTS_PER_CLUSTER(DIM)
+
+    X_train = np.random.uniform(DOMAIN[0], DOMAIN[1], (N_init_pts, DIM))
+    exact_grad_surrogate = AFINNISurrogate()
+    exact_grad_surrogate.train(
+        X_train = X_train,
+        f_fn = wave,
+        g_fn = wave_grad,
+        ERROR_METRIC = "Linf-local",
+        mode = SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
+        TOL = TOL,
+        NUM_INITIAL_CLUSTERS = N_init_clusters,
+        MIN_PTS_PER_CLUSTER = min_ppc,
+        Q_REG = 1e-8,
+        STORE_AFFINE_FIT=True
+    )
+    approx_grad_surrogate = AFINNISurrogate()
+    approx_grad_surrogate.train(
+        X_train = X_train,
+        f_fn = wave,
+        ERROR_METRIC = "Linf-local",
+        mode = SurrogateMode.AFFINE_COV_HESS,
+        TOL = TOL,
+        NUM_INITIAL_CLUSTERS = N_init_clusters,
+        MIN_PTS_PER_CLUSTER = min_ppc,
+        Q_REG = 1e-8,
+        STORE_AFFINE_FIT=True
+    )
+    
+    from src.plotter_utils import plot_exact_hess_vs_estimated_hess
+
+    json_fpath = SC26_DIR / "wave" / "exact_hess_vs_estimated_hess.png"
+    plot_exact_hess_vs_estimated_hess(
+        approx_grad_surrogate,
+        exact_grad_surrogate,
+        wave,
+        DOMAIN,
+        json_fpath
+    )
+    
+
 
 
 def degenerate_quadratic_experiment(
