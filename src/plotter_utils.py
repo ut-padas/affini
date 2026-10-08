@@ -296,12 +296,10 @@ def plot_mpi_rank_time_breakdown(
 def plot_adaptive_clustering_results(
     centroids: np.ndarray,
     Q: np.ndarray,
-    radii: np.ndarray,
     domain: tuple[float, float],
     f_fn: Callable,
     img_fpath: Path,
     title: str | None = None,
-    plot_circle: bool = False,
     plot_in_log: bool = True,
     plot_f_abs: bool = False,
 ):
@@ -323,7 +321,6 @@ def plot_adaptive_clustering_results(
         img_fpath: A Path object where the resulting figure will be saved.
         title: Optional string for the overall figure title. If None, a default title
             will be generated based on the number of clusters.
-        plot_circle: Whether to plot circles for the trust region radii (default: False).
         plot_in_log: Whether to render contour color normalization on a log scale.
         plot_f_abs: Whether to take the absolute value of the function for plotting.
     """
@@ -421,20 +418,6 @@ def plot_adaptive_clustering_results(
         )
         axs[1].add_patch(ellipse)
 
-        # Draw radius circle with dashed line
-        if plot_circle:
-            _radius = radii[i]
-            circle = Circle(
-                xy=_centroid,
-                radius=_radius,
-                edgecolor="black",
-                facecolor="none",
-                lw=0.5,
-                alpha=0.7,
-                linestyle="dashed",
-            )
-            axs[1].add_patch(circle)
-
     # Update legend to include ellipses and circles
     legend_elements = [
         Line2D(
@@ -448,17 +431,6 @@ def plot_adaptive_clustering_results(
         ),
         Line2D([0], [0], color="blue", lw=0.5, label="Trust Ellipsoid"),
     ]
-    if plot_circle:
-        legend_elements.append(
-            Line2D(
-                [0],
-                [0],
-                color="black",
-                lw=0.5,
-                linestyle="dashed",
-                label="Trust Radius",
-            )
-        )
     axs[1].legend(handles=legend_elements, loc="upper right")
 
     plt.tight_layout()
@@ -833,3 +805,48 @@ def plot_near_centers(
     plt.savefig(img_fpath, dpi=300)
     plt.close(fig)
     print(f"Saved figure to {img_fpath}")
+
+
+def plot_exact_hess_vs_estimated_hess(
+        est_hess_surrogate: AFINNISurrogate,
+        exact_hess_surrogate: AFINNISurrogate,
+        bg_fn, domain, img_fpath
+    ):
+
+    # Compute background
+    fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(12, 6))
+    n_grid = 500
+    x = np.linspace(domain[0], domain[1], n_grid)
+    y = np.linspace(domain[0], domain[1], n_grid)
+    X_grid, Y_grid = np.meshgrid(x, y)
+    grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
+    field = _to_host(bg_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+    # Color background on each axis
+    cs = axs[0].contourf(X_grid, Y_grid, field, levels=20, cmap="viridis")
+    fig.colorbar(cs, ax=axs[0])
+    cs = axs[1].contourf(X_grid, Y_grid, field, levels=20, cmap="viridis")
+    fig.colorbar(cs, ax=axs[1])
+
+    # Plot centroids on each axis
+    centers1 = est_hess_surrogate.X_src; centers2 = exact_hess_surrogate.X_src
+    Nc1, d1 = centers1.shape; Nc2, d2 = centers2.shape
+    assert d1 == 2; assert d2 == 2;
+    axs[0].scatter(centers1[:, 0], centers1[:, 1], c="red", s=20, label="Centers", marker='^')
+    axs[1].scatter(centers2[:, 0], centers2[:, 1], c="red", s=20, label="Centers", marker='o')
+
+    # Other specifications
+    axs[0].set_title(f"Hessian approx. with LSQ gradient ($N_c = {Nc1}$)")
+    axs[1].set_title(f"Hessian approx. with exact gradient ($N_c = {Nc2}$)")
+    axs[0].legend(loc='upper right')
+    axs[1].legend(loc='upper right')
+
+
+    # Save
+    plt.tight_layout()
+    img_fpath.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(img_fpath, dpi=300)
+    plt.close(fig)
+    print(f"Saved figure to {img_fpath}")
+
+        
+
