@@ -1,3 +1,4 @@
-[submodule "chemistry-benchmark-surrogates"]
-	path = chemistry-benchmark-surrogates
-	url = git@github.com:NSF-Simons-CosmicAI-Institute/chemistry-benchmark-surrogates.git
+[submodule "libs/KIDApy"]
+	path = libs/KIDApy
+	url = https://github.com/NSF-Simons-CosmicAI-Institute/KIDApy.git
+	branch = pdfac
