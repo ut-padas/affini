@@ -1,5 +1,6 @@
 import gc
 import logging
+import os
 import time
 from typing import Any, Callable, Literal, Optional
 
@@ -24,6 +25,8 @@ from src.adaptive_clustering_utils import (
 )
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
+
+INITIAL_CLUSTERING_FILE = "initial_clustering_labels.npy"
 
 logger = logging.getLogger(__name__)
 TINY_EPS = 1e-12
@@ -1059,9 +1062,15 @@ def adaptive_clustering(
     PROFILE_TIMING: bool = False,
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
     HESSIAN: Optional[Callable] = None,
+    SAVE_INITIAL_CLUSTERING: bool = False,
+    USE_EXISTING_INITIAL_CLUSTERING: bool = False,
 ) -> dict[str, Any] | None:
     """
     Adaptive Clustering for Vector-Valued Functions (GPU Accelerated).
+
+    SAVE_INITIAL_CLUSTERING saves the initial cluster labels to INITIAL_CLUSTERING_FILE.
+    USE_EXISTING_INITIAL_CLUSTERING skips the initial clustering and loads the labels from that
+    file if it exists and has one label per row of X; otherwise clustering is done as normal.
     """
     if ERROR_EVAL_MODE in (
         SurrogateMode.AFFINE_COV_HESS,
@@ -1151,6 +1160,7 @@ def adaptive_clustering(
                 assert f_fn
                 if Y is not None:
                     F0_gpu = convert_to_2d_array(Y)
+                    G0_gpu = None # TODO: this is probably not correct and needs to check NO_GRADS
                 else:
                     F0_gpu = convert_to_2d_array(f_fn(X0_gpu))
                     G0_gpu = (
@@ -1160,41 +1170,57 @@ def adaptive_clustering(
 
             F_max_global_host = _to_host(xp.max(xp.abs(F0_gpu), axis=0))
 
-            if INITIAL_CLUSTERING_METHOD == "kmeans":
-                if IS_CUPY_BACKEND:
-                    from cuml.cluster import KMeans as cuKMeans
-
-                    km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
-                    labels0 = km.fit_predict(X0_gpu)
+            labels0 = None
+            if USE_EXISTING_INITIAL_CLUSTERING and os.path.exists(INITIAL_CLUSTERING_FILE):
+                saved_labels = np.load(INITIAL_CLUSTERING_FILE)
+                if saved_labels.ndim == 1 and saved_labels.shape[0] == N0:
+                    labels0 = saved_labels.astype(np.int64)
+                    logger.info(f"Loaded initial clustering from {INITIAL_CLUSTERING_FILE}.")
                 else:
-                    from sklearn.cluster import KMeans
-
-                    km = KMeans(
-                        n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED, max_iter=2
+                    logger.warning(
+                        f"{INITIAL_CLUSTERING_FILE} has shape {saved_labels.shape}, expected ({N0},). Clustering as normal."
                     )
-                    labels0 = km.fit_predict(_to_host(X0_gpu))
-                labels0 = _to_host(labels0).astype(np.int64)
 
-            elif INITIAL_CLUSTERING_METHOD == "knndbscan":
-                from knndbscan import knn_dbscan
+            if labels0 is None:
+                if INITIAL_CLUSTERING_METHOD == "kmeans":
+                    if IS_CUPY_BACKEND:
+                        from cuml.cluster import KMeans as cuKMeans
 
-                labels0 = _to_host(
-                    knn_dbscan(
-                        X0_gpu,
-                        eps=0.5,
-                        min_samples=MIN_PTS_PER_CLUSTER,
-                        device="gpu" if IS_CUPY_BACKEND else "cpu",
+                        km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+                        labels0 = km.fit_predict(X0_gpu)
+                    else:
+                        from sklearn.cluster import KMeans
+
+                        km = KMeans(
+                            n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED, max_iter=2
+                        )
+                        labels0 = km.fit_predict(_to_host(X0_gpu))
+                    labels0 = _to_host(labels0).astype(np.int64)
+
+                elif INITIAL_CLUSTERING_METHOD == "knndbscan":
+                    from knndbscan import knn_dbscan
+
+                    labels0 = _to_host(
+                        knn_dbscan(
+                            X0_gpu,
+                            eps=0.5,
+                            min_samples=MIN_PTS_PER_CLUSTER,
+                            device="gpu" if IS_CUPY_BACKEND else "cpu",
+                        )
+                    ).astype(np.int64)
+
+                elif INITIAL_CLUSTERING_METHOD == "uniform_grid":
+                    labels0, _ = uniform_grid_cluster_labels(
+                        _to_host(X0_gpu), NUM_INITIAL_CLUSTERS
                     )
-                ).astype(np.int64)
+                    labels0 = labels0.astype(np.int64)
 
-            elif INITIAL_CLUSTERING_METHOD == "uniform_grid":
-                labels0, _ = uniform_grid_cluster_labels(
-                    _to_host(X0_gpu), NUM_INITIAL_CLUSTERS
-                )
-                labels0 = labels0.astype(np.int64)
+                else:
+                    raise ValueError(f"Invalid: {INITIAL_CLUSTERING_METHOD}")
 
-            else:
-                raise ValueError(f"Invalid: {INITIAL_CLUSTERING_METHOD}")
+                if SAVE_INITIAL_CLUSTERING:
+                    np.save(INITIAL_CLUSTERING_FILE, labels0)
+                    logger.info(f"Saved initial clustering to {INITIAL_CLUSTERING_FILE}.")
 
             sort_idx = np.argsort(labels0)
             labels0_sorted = labels0[sort_idx]

@@ -87,7 +87,9 @@ class AFINNISurrogate:
         PROFILE_TIMING: bool = False,
         LOG_MEM_STATS: bool = False,
         SAVE_ALL_GEN_TRAINING_DATA: bool = False,
-        HESSIAN: Optional[Callable] = None
+        HESSIAN: Optional[Callable] = None,
+        SAVE_INITIAL_CLUSTERING: bool = False,
+        USE_EXISTING_INITIAL_CLUSTERING: bool = False,
     ):
         comm = MPI.COMM_WORLD
         rank = _get_mpi_rank()
@@ -161,6 +163,8 @@ class AFINNISurrogate:
             LOG_MEM_STATS=LOG_MEM_STATS,
             SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
             HESSIAN=HESSIAN,
+            SAVE_INITIAL_CLUSTERING=SAVE_INITIAL_CLUSTERING,
+            USE_EXISTING_INITIAL_CLUSTERING=USE_EXISTING_INITIAL_CLUSTERING,
         )
 
         # 2. Broadcast trained structures to all ranks
