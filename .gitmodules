@@ -1,4 +1,4 @@
 [submodule "libs/KIDApy"]
 	path = libs/KIDApy
-	url = https://github.com/NSF-Simons-CosmicAI-Institute/KIDApy.git
+	url = git@github.com:blongaker/KIDApy.git
 	branch = pdfac
