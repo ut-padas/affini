@@ -19,7 +19,7 @@ if __name__ == "__main__":
     DIM = 2
     N_TRAIN = get_N_TRAIN(DIM)
     N_TEST = N_TRAIN // 2
-    DOMAIN = xp.array()
+    DOMAIN = xp.array([-2.0, 3.0])
     TOL = 0.02
     N_init_clusters = get_NUM_INITIAL_CLUSTERS(DIM)
     min_ppc = get_MIN_PTS_PER_CLUSTER(DIM)
@@ -52,6 +52,7 @@ if __name__ == "__main__":
     f_test_pred = surrogate.predict(X_test)
     ptwise_errs = xp.abs(f_test_exact - f_test_pred).flatten()
     l2_rel_err = xp.linalg.norm(ptwise_errs) / xp.linalg.norm(f_test_exact)
+    print(f"L2 Relative Global Error: {l2_rel_err}")
 
     # --- Plot clusters ---
     plot_adaptive_clustering_results(
