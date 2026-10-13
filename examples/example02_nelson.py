@@ -144,7 +144,7 @@ FILE_PARAM_COLS   = slice(2, 9)     # nH, T, Tgrain, Av_pdfac, uv1, uv3, uv4 -- 
 FILE_SPECIES_COLS = slice(9, 23)    # C, C+, CHx, CO, H2, H3+, HCO+, He, He+, M, M+, O, OHx, e- -- same order as net.species
 
 
-def get_nelson_train_test_data(filepath, t, test_frac=1/3, f_fn=nelson_flow_map_wrapper):
+def get_nelson_train_test_data(filepath, f_fn, n_train_tracers=100):
     """
     Reads every (state, environment) sample from the first t tracers of a KIDApy collapse-chemistry
     output file, and splits them by tracer into training and testing sets: the last
@@ -167,27 +167,16 @@ def get_nelson_train_test_data(filepath, t, test_frac=1/3, f_fn=nelson_flow_map_
     if mm.ndim != 2 or mm.shape[1] != 25:
         raise ValueError(f"{filepath} should have shape (N_rows, 25); got {mm.shape}")
 
-    # Tracers are contiguous blocks of rows_per_tracer rows; column 0 (idx) changes at the first block boundary.
-    first_idx = mm[:20000, 0]
-    boundaries = np.flatnonzero(first_idx != first_idx[0])
-    rows_per_tracer = int(boundaries[0]) if boundaries.size else mm.shape[0]
-    n_tracers = mm.shape[0] // rows_per_tracer
-    if t > n_tracers:
-        raise ValueError(f"t={t} tracers requested but {filepath} only has {n_tracers}")
-
-    n_test = int(round(test_frac * t))
-    if not 0 < n_test < t:
-        raise ValueError(f"test_frac={test_frac} with t={t} tracers leaves an empty training or test set")
-
-    def read_tracers(first, last):
-        block = np.asarray(mm[first * rows_per_tracer:last * rows_per_tracer])
-        block = block[block[:, 2] != 0.0]                   # unwritten tracers
-        X = np.hstack([block[:, FILE_SPECIES_COLS], block[:, FILE_PARAM_COLS]])
-        X = X[~np.isnan(X).any(axis=1)]                     # failed solves
-        return xp.asarray(to_log(X))
-
-    X_train = read_tracers(0, t - n_test)
-    X_test = read_tracers(t - n_test, t)
+    rows_per_tracer = 4016
+    n_rows_until_output = 5
+    
+    end_index = int(rows_per_tracer * n_train_tracers)
+    X_train = np.asarray(mm[:end_index])
+    X_test = np.asarray(mm[end_index:(end_index + rows_per_tracer)])
+    
+    # Output is n_rows_until_output later.
+    # TODO: we already have the solves; format the data so we don't have to re-solve each time
+    X_train = X_train[:,2:23]; X_test = X_test[:,2:23]
 
     return X_train, f_fn(X_train), X_test, f_fn(X_test)
 
@@ -196,8 +185,7 @@ if __name__ == "__main__":
 
     # Parameters for training
     SEED = 67
-    DATA_FILE = Path("TODO/piecewise_constant/R0.1_M6_trace_cells.npy")  # TODO: set to the collapse-chemistry output file
-    N_TRACERS = 3
+    N_TRAIN_TRACERS = 100
     DIM = 21
     TOL = 0.2
     N_init_clusters = get_NUM_INITIAL_CLUSTERS(DIM)
@@ -208,7 +196,8 @@ if __name__ == "__main__":
     f_fn = partial(nelson_flow_map_wrapper, output=output, dt=dt, n_workers=n_workers)
 
     # --- Load data ---
-    X_train, f_train, X_test, f_test_exact = get_nelson_train_test_data(DATA_FILE, N_TRACERS, f_fn=f_fn)
+    datapath = Path("/scratch/10630/benjo74/R0.1_M6_trace_cells.npy")
+    X_train, f_train, X_test, f_test_exact = get_nelson_train_test_data(datapath, f_fn, N_TRAIN_TRACERS)
 
     # --- Build AFINNI surrogate ---
     surrogate = AFINNISurrogate()
@@ -227,10 +216,6 @@ if __name__ == "__main__":
         PROFILE_TIMING = True
     )
 
-    # --- Compute errors ---
-    f_test_pred = surrogate.predict(X_test)
-    ptwise_errs = xp.abs(f_test_exact - f_test_pred).flatten()
-    l2_rel_err = xp.linalg.norm(ptwise_errs) / xp.linalg.norm(f_test_exact)
-    print(f"L2 Relative Global Error: {l2_rel_err}")
+    # --- Plot test trajectory ---
+    
 
-    # --- Plot trajectories ---
