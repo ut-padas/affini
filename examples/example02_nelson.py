@@ -8,6 +8,7 @@ from functools import partial
 import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 from src import _to_device, _to_host, xp
@@ -144,48 +145,100 @@ FILE_PARAM_COLS   = slice(2, 9)     # nH, T, Tgrain, Av_pdfac, uv1, uv3, uv4 -- 
 FILE_SPECIES_COLS = slice(9, 23)    # C, C+, CHx, CO, H2, H3+, HCO+, He, He+, M, M+, O, OHx, e- -- same order as net.species
 
 
-def get_nelson_train_test_data(filepath, f_fn, n_train_tracers=100):
+def get_nelson_train_test_data(filepath, n_train_tracers=100, rows_per_tracer=4016, n_rows_until_output=5):
     """
-    Reads every (state, environment) sample from the first t tracers of a KIDApy collapse-chemistry
-    output file, and splits them by tracer into training and testing sets: the last
-    round(test_frac * t) tracers are the test set, the rest the training set.
+    Reads (state, environment) samples from a KIDApy collapse-chemistry output file. The first
+    n_train_tracers tracers are the training set and the next tracer is the test set.
 
-    Each input row is log10 of [states (14 species abundances), params (nH, T, Tgrain, Av, uv1, uv3, uv4)].
-    Outputs are evaluated with f_fn (nelson_flow_map_wrapper by default), so are also log10.
-    Rows with a NaN (failed solves) and unwritten tracers are dropped.
+    Each input row is log10 of [states (14 species abundances), params (nH, T, Tgrain, Av, uv1, uv3, uv4)],
+    the layout nelson_flow_map_wrapper expects. The output for a row is log10 of species column `output`
+    n_rows_until_output rows later in the same tracer, so the last n_rows_until_output rows of each tracer
+    (which have no output) are cut off. Pairs with a NaN (failed solves) or from unwritten tracers are dropped.
 
     Parameters
     ----------
     filepath : str or Path
         Path to one of the R*_M6_trace_cells.npy output files, an (N_rows, 25) array.
-    t : int
-        Number of tracers to read, starting from the first.
+    n_train_tracers : int
+        Number of tracers in the training set, starting from the first.
+    rows_per_tracer : int
+        Number of contiguous rows per tracer in the file.
+    n_rows_until_output : int
+        How many rows later in a tracer the output is.
 
     Returns X_train, f_train, X_test, f_test.
     """
     mm = np.load(filepath, mmap_mode="r")
     if mm.ndim != 2 or mm.shape[1] != 25:
         raise ValueError(f"{filepath} should have shape (N_rows, 25); got {mm.shape}")
+    if (n_train_tracers + 1) * rows_per_tracer > mm.shape[0]:
+        raise ValueError(f"{filepath} has fewer than {n_train_tracers + 1} tracers of {rows_per_tracer} rows")
 
-    rows_per_tracer = 4016
-    n_rows_until_output = 5
-    
-    end_index = int(rows_per_tracer * n_train_tracers)
-    X_train = np.asarray(mm[:end_index])
-    X_test = np.asarray(mm[end_index:(end_index + rows_per_tracer)])
-    
-    # Output is n_rows_until_output later.
-    # TODO: we already have the solves; format the data so we don't have to re-solve each time
-    X_train = X_train[:,2:23]; X_test = X_test[:,2:23]
+    def read_tracers(first, last):
+        block = np.asarray(mm[first * rows_per_tracer:last * rows_per_tracer])
+        block = block.reshape(last - first, rows_per_tracer, mm.shape[1])
+        inp = block[:, :-n_rows_until_output].reshape(-1, mm.shape[1])
+        out = block[:, n_rows_until_output:].reshape(-1, mm.shape[1])
 
-    return X_train, f_fn(X_train), X_test, f_fn(X_test)
+        X = np.hstack([inp[:, FILE_SPECIES_COLS], inp[:, FILE_PARAM_COLS]])
+        f = out[:, FILE_SPECIES_COLS]
+        keep = (inp[:, 2] != 0.0) & (out[:, 2] != 0.0)              # unwritten tracers
+        keep &= ~np.isnan(X).any(axis=1) & ~np.isnan(f).any(axis=1)  # failed solves
+        return xp.asarray(to_log(X[keep])), xp.asarray(to_log(f[keep]))
+
+    X_train, f_train = read_tracers(0, n_train_tracers)
+    X_test, f_test = read_tracers(n_train_tracers, n_train_tracers + 1)
+    return X_train, f_train, X_test, f_test
+
+
+def read_tracer(filepath, tracer, rows_per_tracer=4016):
+    """
+    Reads every row of one tracer, in time order and unfiltered, as log10 of [states, params]
+    (the same layout as get_nelson_train_test_data's inputs). Returns an array of shape (rows_per_tracer, 21).
+    """
+    mm = np.load(filepath, mmap_mode="r")
+    block = np.asarray(mm[tracer * rows_per_tracer:(tracer + 1) * rows_per_tracer])
+    return to_log(np.hstack([block[:, FILE_SPECIES_COLS], block[:, FILE_PARAM_COLS]]))
+
+
+def rollout(surrogates, X_true, n_rows_until_output=5):
+    """
+    Rolls a trajectory forward by feeding the surrogates' predictions back in as inputs.
+
+    Starting from the true first row, each step takes the previous rolled-out row, predicts the species
+    abundances n_rows_until_output rows later, and uses them as the next input. Species without a
+    surrogate, and the environment params, are taken from the true trajectory at each step.
+
+    Parameters
+    ----------
+    surrogates : dict of int -> AFINNISurrogate
+        Maps a species column (in net.species order) to the surrogate that predicts it.
+    X_true : array, shape (rows_per_tracer, 21)
+        The true trajectory of one tracer, from read_tracer.
+    n_rows_until_output : int
+        How many rows later in a tracer each surrogate's output is.
+
+    Returns
+    -------
+    rows : np.ndarray, shape (n_steps,)
+        Row index along the tracer of each rolled-out step.
+    X_roll : np.ndarray, shape (n_steps, 21)
+        The rolled-out trajectory, in the same layout as X_true.
+    """
+    rows = np.arange(0, len(X_true), n_rows_until_output)
+    X_roll = np.array(X_true[rows])
+    for k in range(1, len(rows)):
+        x_prev = X_roll[k - 1:k]
+        for col, surrogate in surrogates.items():
+            pred, _ = surrogate.predict(x_prev)
+            X_roll[k, col] = _to_host(pred).ravel()[0]
+    return rows, X_roll
 
 
 if __name__ == "__main__":
 
     # Parameters for training
     SEED = 67
-    N_TRAIN_TRACERS = 100
     DIM = 21
     TOL = 0.2
     N_init_clusters = get_NUM_INITIAL_CLUSTERS(DIM)
@@ -197,13 +250,18 @@ if __name__ == "__main__":
 
     # --- Load data ---
     datapath = Path("/scratch/10630/benjo74/R0.1_M6_trace_cells.npy")
-    X_train, f_train, X_test, f_test_exact = get_nelson_train_test_data(datapath, f_fn, N_TRAIN_TRACERS)
+    n_train_tracers = 200
+    rows_per_tracer = 4016
+    n_rows_until_output = 5
+    X_train, f_train, X_test, f_test_exact = get_nelson_train_test_data(datapath, n_train_tracers, rows_per_tracer, n_rows_until_output)
 
     # --- Build AFINNI surrogate ---
     surrogate = AFINNISurrogate()
+    f_train_component = f_train[:,output][:,None]
+    f_test_exact_component = f_test_exact[:,output][:,None]
     surrogate.train(
         X_train = X_train,
-        Y_train = f_train,
+        Y_train = f_train_component,
         f_fn = f_fn,
         mode = SurrogateMode.AFFINE_COV_HESS,
         TOL = TOL,
@@ -216,6 +274,21 @@ if __name__ == "__main__":
         PROFILE_TIMING = True
     )
 
+    # --- Roll out surrogate along test trajectory, feeding its output back in ---
+    X_test_traj = read_tracer(datapath, n_train_tracers, rows_per_tracer)
+    rollout_rows, X_rollout = rollout({output: surrogate}, X_test_traj, n_rows_until_output)
+
     # --- Plot test trajectory ---
-    
+    species_name = net.species[output]
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(np.arange(len(X_test_traj)), X_test_traj[:, output], color="#0b0b0b", linestyle="-", linewidth=2, label=f"{species_name}")
+    ax.plot(rollout_rows, X_rollout[:, output], color="#2a78d6", linestyle=":", linewidth=2)
+    ax.set_xlabel("Row along test tracer")
+    ax.set_ylabel(f"log10 abundance")
+    ax.set_title(f"AFINNI on Nelson flow map, {species_name}, tol={TOL}")
+    ax.grid(True, color="#e5e4df", linewidth=0.8)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(f"nelson_test_trajectory_{species_name}.png", dpi=300)
 
