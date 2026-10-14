@@ -232,11 +232,17 @@ def rollout(surrogates, X_true, n_rows_until_output=5):
     """
     rows = np.arange(0, len(X_true), n_rows_until_output)
     X_roll = np.array(X_true[rows])
+    trust_counter = 0
     for k in range(1, len(rows)):
         x_prev = X_roll[k - 1:k]
+        total_trust = True
         for col, surrogate in surrogates.items():
-            pred, _ = surrogate.predict(x_prev)
+            pred, ung = surrogate.predict(x_prev)
             X_roll[k, col] = _to_host(pred).ravel()[0]
+            if total_trust and ung.ravel()[0]
+                total_trust = False
+        trust_counter += int(total_trust)
+    print(f"Number of trustworthy evals: {trust_counter}/{len(rows)-1}")
     return rows, X_roll
 
 
@@ -245,7 +251,7 @@ if __name__ == "__main__":
     # Parameters for training
     SEED = 67
     DIM = 21
-    TOL = 0.01
+    TOL = 0.02
     N_init_clusters = get_NUM_INITIAL_CLUSTERS(DIM)
     min_ppc = get_MIN_PTS_PER_CLUSTER(DIM)
     dt = 250.0 * YEAR
@@ -253,9 +259,9 @@ if __name__ == "__main__":
 
     # --- Load data ---
     datapath = Path("/scratch/10630/benjo74/R0.1_M6_trace_cells.npy")
-    n_train_tracers = 500
+    n_train_tracers = 800
     rows_per_tracer = 4016
-    n_test_tracers = 20
+    n_test_tracers = 500
     n_rows_until_output = 5
     print(f"Loading Nelson data from {datapath}...")
     X_train, f_train, X_test, f_test_exact, t_test = get_nelson_train_test_data(datapath, n_train_tracers, n_test_tracers, rows_per_tracer, n_rows_until_output)
@@ -297,15 +303,20 @@ if __name__ == "__main__":
     n_species = len(net.species)
     colors = plt.get_cmap("tab20")(np.linspace(0, 1, 20))[:n_species]
     for t, (X_t, time_t) in enumerate(zip(X_test, t_test)):
+        roll_start_time = time.perf_counter()
         rollout_rows, X_rollout = rollout(surrogate_dict, X_t, n_rows_until_output)
+        roll_end_time = time.perf_counter()
+        roll_total_time = roll_end_time - roll_start_time
+        print(f"Time rollout for tracer {t}: {roll_total_time:.2f} seconds")
 
         fig, ax = plt.subplots(figsize=(16, 8))
         for i, name in enumerate(net.species):
             ax.plot(time_t / (1e3 * YEAR), X_t[:, i], color=colors[i], linestyle="-", linewidth=2, label=f"{name}")
-            ax.plot(time_t[rollout_rows] / (1e3 * YEAR), X_rollout[:, i], color=colors[i], linestyle=":", linewidth=3)
+            ax.plot(time_t[rollout_rows] / (1e3 * YEAR), X_rollout[:, i], color=colors[i],
+                linestyle="none", marker="o", markersize=10, markerfacecolor="none", markeredgewidth=1.5, markevery=10, alpha=0.7)
         # Line-style key: solid = exact, dotted = predicted
         ax.plot([], [], color="k", linestyle="-", linewidth=2, label="Exact")
-        ax.plot([], [], color="k", linestyle=":", linewidth=3, label="Predicted (rollout)")
+        ax.plot([], [], color="k", linestyle="none", marker="o", markersize=10, markerfacecolor="none", markeredgewidth=1.5, alpha=0.7, label="Surrogate")
         ax.set_xlabel("Time along test tracer [kyr]", fontsize=16)
         ax.set_ylabel("log10 abundance", fontsize=20)
         ax.set_title(f"AFINNI on Nelson flow map", fontsize=24)
