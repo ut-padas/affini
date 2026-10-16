@@ -7,6 +7,7 @@ from sklearn.cluster import KMeans
 from matplotlib.path import Path
 from matplotlib.patches import Polygon as MplPolygon
 from scipy.spatial import ConvexHull
+from cycler import cycler
 
 
 # FIGURE TO EXPLAIN CLUSTERING
@@ -385,14 +386,107 @@ def illustrate_hessian_approx(
 
 
 
+def iterative_refinement_plot():
+
+    # Data
+    names = [
+        "Rosenbrock $d=2$",
+        "Rosenbrock $d=5$",
+        "Gaussian $d=10$",
+        "Wave $d=5$",
+        "Wave $d=10$",
+        "Quadratic $d=5$",
+        "Quadratic $d=10$"
+    ]
+    Nc_data = np.round(20000 * (1.4 ** np.arange(11)))
+    pout_data = np.array([
+        [7.13, 4.47, 4.71, 4.4, 3.37, 3.31, 2.27, 1.7, 1.89, 1.85, 2.54], # rosenbrock d=2
+        [76.42, 74.33, 72.28, 69.79, 67.8, 66.31, 64.27, 62.36, 61.31, 60.23, 58.66], # rosenbrock d=5
+        [46.35, 38.21, 31.57, 26.33, 20.68, 16.59, 13.95, 9.74, 7.92, 5.79, 5.33], # gaussian d=10
+        [31.65, 26.64, 25.7, 19.92, 19.08, 17.25, 15.32, 14.54, 12.18, 11.4, 10.74], # wave d=5
+        [91.1, 87.72, 83.05, 79.83, 75.23, 71.4, 67.8, 65.03, 62.05, 56.92, 52.47], # wave d=10
+        [12.12, 11.83, 7.71, 6.04, 3.81, 2.21, 2.29, 1.29, 1.69, 1.18, 1.12], # quadratic d=5
+        [81.06, 72.69, 64.11, 57.72, 50.77, 47.58, 45.15, 41.86, 36.48, 33.52, 30.09], # quadratic d=10
+    ])
+
+    # ---------- Paper-ready global settings ----------
+    plt.rcParams.update({
+        # Fonts
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "DejaVu Serif"],
+        "mathtext.fontset": "stix",          # matches Times-like body text
+        "font.size": 9,
+        "axes.labelsize": 9,
+        "axes.titlesize": 9,
+        "xtick.labelsize": 8,
+        "ytick.labelsize": 8,
+        "legend.fontsize": 8,
+
+        # Lines and axes
+        "lines.linewidth": 1.2,
+        "lines.markersize": 3.5,
+        "axes.linewidth": 0.8,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.grid": True,
+        "grid.alpha": 0.25,
+        "grid.linewidth": 0.5,
+
+        # Ticks
+        "xtick.direction": "in",
+        "ytick.direction": "in",
+        "xtick.major.width": 0.8,
+        "ytick.major.width": 0.8,
+
+        # Legend
+        "legend.frameon": False,
+
+        # Output
+        "figure.dpi": 150,                   # on-screen preview
+        "savefig.dpi": 300,                  # for any raster output
+        "savefig.bbox": "tight",
+        "pdf.fonttype": 42,                  # embed TrueType (required by many publishers)
+        "ps.fonttype": 42,
+
+        # Okabe-Ito colorblind-safe palette + distinct line styles
+        "axes.prop_cycle": (
+            cycler(color=["#0072B2", "#D55E00", "#009E73", "#CC79A7",
+                        "#E69F00", "#56B4E9", "#000000"])
+            + cycler(linestyle=["-", "--", "-.", ":", "-", "--", "-."])
+            + cycler(marker=["o", "s", "^", "v", "D", "P", "X"])
+        ),
+    })
+
+    # ---------- Plot ----------
+    # Single column ~3.5 in (IEEE/ACM); use ~6.9 in for double column
+    fig, ax = plt.subplots(figsize=(6.9, 4.5))
+
+    x = np.arange(0, 11)
+    for i in range(7):
+        ax.plot(x, pout_data[i], label=names[i])
+
+    ax.set_xlabel("# Iterations")
+    ax.set_ylabel("$p_\\mathrm{out}$")
+    ax.set_ylim(0, 100)
+    ax.set_title("Iterative Refinement: Uniform Sampling")
+    ax.legend(ncol=1, loc="upper right", columnspacing=1.0, handlelength=2.0)
+
+    fig.savefig("iterative_refinement.pdf")                # vector, preferred for papers
+    fig.savefig("iterative_refinement.png")                # optional raster copy
+    plt.show()
+
+
+
 
 
 
 if __name__ == '__main__':
     if 0:
         methods_adaptive_clustering()
-    if 1:
+    if 0:
         error_approximation_illustration()
     if 0:
         illustrate_hessian_approx()
+    if 1:
+        iterative_refinement_plot()
     
