@@ -529,81 +529,87 @@ def sampling_illustration_plot():
         ),
     })
 
-    rng = np.random.default_rng(0)
     lo, hi = np.array([0., 0.]), np.array([1., 1.])
-    n_points = 300
-    n_regions = 7
-    n_total_per_region = 60
+    n_regions = 10
+    n_total_per_region = 100
 
-    # Uniform points over box
-    data = rng.uniform(lo, hi, size=(n_points, 2))
-
-    # Split these into random convex regions with some hierarchical splitting
-    # (repeatedly bisect the largest cluster with 2-means until we have n_regions)
-    clusters = [np.arange(n_points)]
-    while len(clusters) < n_regions:
-        j = max(range(len(clusters)), key=lambda i: len(clusters[i]))
-        idx = clusters.pop(j)
-        km = KMeans(n_clusters=2, n_init=1, random_state=int(rng.integers(1_000_000))).fit(data[idx])
-        clusters += [idx[km.labels_ == 0], idx[km.labels_ == 1]]
-    centers = np.array([data[idx].mean(axis=0) for idx in clusters])
-
-    # Compute Voronoi regions: alternate nearest-centroid assignment and centroid updates until the
-    # labels stop changing, so each region is exactly the set of points closest to its own centroid
-    labels = _assign_labels(centers, data).astype(int)
-    while True:
-        centers = np.array([data[labels == j].mean(axis=0) for j in range(n_regions)])
-        new_labels = _assign_labels(centers, data).astype(int)
-        if np.array_equal(new_labels, labels):
-            break
-        labels = new_labels
-    gx, gy = np.meshgrid(np.linspace(lo[0], hi[0], 400), np.linspace(lo[1], hi[1], 400))
-    grid = np.column_stack([gx.ravel(), gy.ravel()])
-    grid_labels = np.argmin(np.linalg.norm(grid[:, None, :] - centers[None, :, :], axis=2), axis=1)
-    grid_labels = grid_labels.reshape(gx.shape)
-
-    # Uniformly sample new points in each region using random convex combinations of points (so that points stay in the convex hull)
-    # Pick two points x, y in the region at random and take lambda * x + (1 - lambda) * y, lambda ~ U(0, 1)
-    new_points = []
-    for j in range(n_regions):
-        X_j = data[labels == j]
-        n_new = n_total_per_region - len(X_j)
-        if n_new <= 0:
-            continue
-        pairs = np.array([rng.choice(len(X_j), size=2, replace=False) for _ in range(n_new)])
-        lam = rng.uniform(0, 1, size=(n_new, 1))
-        new_points.append(lam * X_j[pairs[:, 0]] + (1 - lam) * X_j[pairs[:, 1]])
-    new_points = np.vstack(new_points)
-
-    # Plotting: plot points in black, color each Voronoi region a different color
     region_colors = ["#0072B2", "#D55E00", "#009E73", "#E69F00", "#56B4E9", "#F0E442", "#999999"]
     cmap = ListedColormap([region_colors[j % len(region_colors)] for j in range(n_regions)])
 
-    fig, ax = plt.subplots(figsize=(4, 4))
-    ax.imshow(grid_labels, origin="lower", extent=(lo[0], hi[0], lo[1], hi[1]),
-              cmap=cmap, vmin=-0.5, vmax=n_regions - 0.5, alpha=0.25, interpolation="nearest")
-    ax.contour(gx, gy, grid_labels, levels=np.arange(n_regions) + 0.5, colors="k", linewidths=0.5)
-    for j in range(n_regions):
-        X_j = data[labels == j]
-        if len(X_j) >= 3:
-            hull = ConvexHull(X_j)
-            ax.add_patch(MplPolygon(X_j[hull.vertices], closed=True, fill=False,
-                                    edgecolor=region_colors[j % len(region_colors)], linestyle="--", linewidth=0.8))
-    ax.scatter(data[:, 0], data[:, 1], c="black", marker="o", s=4, linewidths=0, label="Initial points")
+    # Left panel: 300 initial points; right panel: 500 initial points
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+    for ax, n_points in zip(axes, [350, 700]):
+        rng = np.random.default_rng(0)
 
-    # Plot new points in pink
-    ax.scatter(new_points[:, 0], new_points[:, 1], c="#FF69B4", marker="o", s=6, linewidths=0,
-               label="Convex-combination samples")
+        # Uniform points over box
+        data = rng.uniform(lo, hi, size=(n_points, 2))
 
-    # This should help visualize the distribution of points from this strategy in each cluster.
-    ax.set_xlim(lo[0], hi[0])
-    ax.set_ylim(lo[1], hi[1])
-    ax.set_aspect("equal")
-    ax.grid(False)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_title("Visualization of Sampling Strategy")
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.02), ncol=2, markerscale=2, handlelength=1.0)
+        # Split these into random convex regions with some hierarchical splitting
+        # (repeatedly bisect the largest cluster with 2-means until we have n_regions)
+        clusters = [np.arange(n_points)]
+        while len(clusters) < n_regions:
+            j = max(range(len(clusters)), key=lambda i: len(clusters[i]))
+            idx = clusters.pop(j)
+            km = KMeans(n_clusters=2, n_init=1, random_state=int(rng.integers(1_000_000))).fit(data[idx])
+            clusters += [idx[km.labels_ == 0], idx[km.labels_ == 1]]
+        centers = np.array([data[idx].mean(axis=0) for idx in clusters])
+
+        # Compute Voronoi regions: alternate nearest-centroid assignment and centroid updates until the
+        # labels stop changing, so each region is exactly the set of points closest to its own centroid
+        labels = _assign_labels(centers, data).astype(int)
+        while True:
+            centers = np.array([data[labels == j].mean(axis=0) for j in range(n_regions)])
+            new_labels = _assign_labels(centers, data).astype(int)
+            if np.array_equal(new_labels, labels):
+                break
+            labels = new_labels
+        gx, gy = np.meshgrid(np.linspace(lo[0], hi[0], 400), np.linspace(lo[1], hi[1], 400))
+        grid = np.column_stack([gx.ravel(), gy.ravel()])
+        grid_labels = np.argmin(np.linalg.norm(grid[:, None, :] - centers[None, :, :], axis=2), axis=1)
+        grid_labels = grid_labels.reshape(gx.shape)
+
+        # Uniformly sample new points in each region using random convex combinations of points (so that points stay in the convex hull)
+        # Pick two points x, y in the region at random and take lambda * x + (1 - lambda) * y, lambda ~ U(0, 1)
+        new_points = []
+        for j in range(n_regions):
+            X_j = data[labels == j]
+            n_new = n_total_per_region - len(X_j)
+            if n_new <= 0:
+                continue
+            pairs = np.array([rng.choice(len(X_j), size=2, replace=False) for _ in range(n_new)])
+            lam = rng.uniform(0, 1, size=(n_new, 1))
+            new_points.append(lam * X_j[pairs[:, 0]] + (1 - lam) * X_j[pairs[:, 1]])
+        new_points = np.vstack(new_points) if new_points else np.empty((0, 2))
+
+        # Plotting: plot points in black, color each Voronoi region a different color
+        ax.imshow(grid_labels, origin="lower", extent=(lo[0], hi[0], lo[1], hi[1]),
+                  cmap=cmap, vmin=-0.5, vmax=n_regions - 0.5, alpha=0.25, interpolation="nearest")
+        ax.contour(gx, gy, grid_labels, levels=np.arange(n_regions) + 0.5, colors="k", linewidths=0.5)
+        for j in range(n_regions):
+            X_j = data[labels == j]
+            if len(X_j) >= 3:
+                hull = ConvexHull(X_j)
+                ax.add_patch(MplPolygon(X_j[hull.vertices], closed=True, fill=False,
+                                        edgecolor=region_colors[j % len(region_colors)], linestyle="--", linewidth=0.8))
+        ax.scatter(data[:, 0], data[:, 1], c="black", marker="o", s=4, linewidths=0, label="Initial points")
+
+        # Plot new points in pink
+        ax.scatter(new_points[:, 0], new_points[:, 1], c="#FF69B4", marker="o", s=6, linewidths=0,
+                   label="Convex-combination samples")
+
+        # This should help visualize the distribution of points from this strategy in each cluster.
+        ax.set_xlim(lo[0], hi[0])
+        ax.set_ylim(lo[1], hi[1])
+        ax.set_aspect("equal")
+        ax.grid(False)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(f"{n_points} initial points")
+
+    fig.suptitle("Visualization of Sampling Strategy")
+    handles, legend_labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, legend_labels, loc="lower center", ncol=2, markerscale=2, handlelength=1.0)
+    fig.tight_layout(rect=(0, 0.05, 1, 1))
 
     fig.savefig("sampling_illustration.pdf")
     fig.savefig("sampling_illustration.png")
