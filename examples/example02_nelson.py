@@ -239,7 +239,7 @@ def rollout(surrogates, X_true, n_rows_until_output=5):
         for col, surrogate in surrogates.items():
             pred, ung = surrogate.predict(x_prev)
             X_roll[k, col] = _to_host(pred).ravel()[0]
-            if total_trust and ung.ravel()[0]
+            if total_trust and ung.ravel()[0]:
                 total_trust = False
         trust_counter += int(total_trust)
     print(f"Number of trustworthy evals: {trust_counter}/{len(rows)-1}")
