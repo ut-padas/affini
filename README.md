@@ -5,7 +5,7 @@ AFINNI runs on **Linux, macOS and Windows**. It always works on the CPU, and can
 
 ## Quick start
 
-You need [`uv`](https://docs.astral.sh/uv/getting-started/installation/), a Python package and environment manager. It installs a suitable Python for you if needed.
+You need Git and [`uv`](https://docs.astral.sh/uv/getting-started/installation/), a Python package and environment manager. `uv` installs a suitable Python for you if needed.
 
 ```bash
 git clone https://github.com/ut-padas/affini.git
@@ -31,17 +31,19 @@ Optional backends are uv *extras*. Combine them freely, for example `uv sync --e
 
 > [!IMPORTANT]
 > `uv sync` makes `.venv` match exactly what you request.
-> Running `uv sync` again without `--extra gpu` removes the GPU packages.
+> Running `uv sync` again without `--extra gpu` removes the GPU packages. `uv run` does not remove packages, so extras you installed stay available.
 
 To get a runtime-only environment without the dev tools, add `--no-dev`.
 
 ### Platform support
 
-|             | Linux         | macOS (Apple Silicon, 14+) | Windows                                                             |
-| ----------- | ------------- | -------------------------- | ------------------------------------------------------------------- |
-| CPU         | ✅             | ✅                          | ✅                                                                   |
-| MPI (`mpi`) | ✅             | ✅                          | ✅ Intel MPI (see [Running with MPI](#running-with-mpi))             |
-| GPU (`gpu`) | ✅ CuPy + cuML | ❌ no CUDA, runs on CPU     | ✅ CuPy only. KMeans/kNN fall back to scikit-learn/FAISS on the CPU. |
+|             | Linux (incl. WSL2) | macOS (Apple Silicon, 14+)           | Windows                                                             |
+| ----------- | ------------------ | ------------------------------------ | ------------------------------------------------------------------- |
+| CPU         | ✅                  | ⚠️ packages available, not yet tested | ✅                                                                   |
+| MPI (`mpi`) | ✅                  | ⚠️ packages available, not yet tested | ✅ Intel MPI (see [Running with MPI](#running-with-mpi))             |
+| GPU (`gpu`) | ✅ CuPy + cuML      | ❌ no CUDA, runs on CPU               | ✅ CuPy only. KMeans/kNN fall back to scikit-learn/FAISS on the CPU. |
+
+Verified so far: Linux x86_64 (CPU, MPICH), WSL2 and Windows with an NVIDIA laptop GPU (CPU, GPU, MPI), and TACC Vista (GH200, ARM64: CPU, GPU, Open MPI) and Stampede3 (H100, Intel MPI). On WSL2 the NVIDIA driver is installed on the Windows side; the CUDA libraries still come from pip.
 
 ### Running with MPI
 
@@ -76,15 +78,24 @@ The same flags are available in code: `from src import IS_CUPY_BACKEND, HAS_CUML
 
 On a cluster, use the `mpi-system` extra and **not** `mpi`. The pip-bundled MPICH would take priority over the cluster's MPI and its fast interconnect. Installing doesn't need any modules loaded. Running does, because mpi4py binds to the system MPI at runtime.
 
-On TACC (Stampede3, Vista):
+On TACC (Vista, Stampede3):
 
 ```bash
-make install-hpc                 # = uv sync --no-dev --extra gpu --extra mpi-system
-source scripts/hpc/tacc.sh       # loads gcc/cuda/MPI modules; add this line to your SLURM job scripts too
+# 1. Once per system, in ~/.bashrc: keep uv's downloads out of the small $HOME quota
+#    (14 GB on Stampede3, 23 GB on Vista; the GPU packages are several GB).
+export UV_CACHE_DIR=$WORK/.cache/uv
+export UV_PYTHON_INSTALL_DIR=$WORK/uv-python
+
+# 2. Get a compute node, and install there (see the notes below)
+idev -p gh -N 1 -n 4 -t 01:00:00           # Vista GH200 node; on Stampede3 use -p h100
+uv sync --extra gpu --extra mpi-system     # `make install-hpc` is the same without the dev tools (no pytest)
+
+# 3. Load the cluster's MPI, then run. Put the `source` line in your SLURM job scripts too.
+source scripts/hpc/tacc.sh
 ibrun .venv/bin/python afinni_launcher.py ...
 ```
 
-For another cluster, copy [`scripts/hpc/tacc.sh`](scripts/hpc/tacc.sh) to `scripts/hpc/<site>.sh` and change the `module load` lines.
+For another cluster, copy [`scripts/hpc/tacc.sh`](scripts/hpc/tacc.sh) to `scripts/hpc/<site>.sh` and change the module lines.
 
 ## Development
 
@@ -117,11 +128,23 @@ By default, a missing backend is skipped. Set an override to make it required in
 | GPU       | `uv sync --extra gpu` then `AFINNI_DEVICE=gpu uv run pytest tests/test_backend.py`                                                       |
 | MPI       | `uv sync --extra mpi` then `AFINNI_MPI=on uv run pytest tests/test_backend.py tests/mpi` (= `make test-mpi`)                             |
 | GPU + MPI | `uv sync --extra gpu --extra mpi` then `AFINNI_DEVICE=gpu AFINNI_MPI=on uv run pytest tests/test_backend.py tests/mpi`                   |
-| HPC       | `AFINNI_MPI=on AFINNI_MPIEXEC=ibrun uv run pytest tests/mpi` inside an allocation. `AFINNI_MPI_NP` sets the number of ranks (default 2). |
+| HPC       | `AFINNI_DEVICE=gpu AFINNI_MPI=on AFINNI_MPIEXEC=ibrun uv run pytest tests/mpi tests/test_backend.py` on a GPU node, after `source scripts/hpc/tacc.sh`. Allocate at least `AFINNI_MPI_NP` tasks (default 2). |
 
-To exclude the multi-rank tests, add `-m "not mpi"`.
+To exclude the multi-rank tests, add `-m "not mpi"`. To test the GPU on its own, with no MPI involved, use `AFINNI_DEVICE=gpu AFINNI_MPI=off uv run pytest -m "not mpi"`.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `error: Failed to spawn: mpiexec` on Windows | Intel MPI's launcher is not on `PATH`. See [Running with MPI](#running-with-mpi). |
+| `AFINNI_DEVICE=gpu was requested but … no usable CUDA device was found` | No NVIDIA GPU or driver is visible to this process. On a cluster you are probably on a login node. Run `uv run python -m src` to see what was detected. |
+| `UserWarning: CUDA path could not be detected` from CuPy | Harmless: the CUDA libraries come from pip. |
+| `OFI EP enable failed` MPI abort (seen when starting Python with Intel MPI on a Stampede3 login node) | Run on a compute node, through the cluster launcher (`ibrun`), after `source scripts/hpc/tacc.sh`. |
+| Scripts that use `multiprocessing` hang or re-run themselves on Windows and macOS | Those platforms start workers by re-importing your script. Put the entry point under `if __name__ == "__main__":`, as in `examples/`. |
 
 ## Roadmap
+
+- [ ] Verify on macOS (Apple Silicon). The packages are available but nobody has run it there yet.
 
 - [ ] Rename the `src` package to `afinni` (src layout) and add a `[build-system]`, so it can be installed with `pip install`.
 - [ ] Move `jax`/`diffrax` to an optional extra. `afinni_launcher.py` currently imports `jax` at top level.
