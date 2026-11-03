@@ -367,7 +367,7 @@ def sample_quadratic_test_distribution(N_test:int, d:int, left=-3.0, right=3.0):
 
     H = _get_params(d, xp.float64)
     mean = xp.zeros(d)
-    cov = 0.5 * np.linalg.inv(H) / (d**2)
+    cov = xp.asarray(0.5 * np.linalg.inv(H) / (d**2))  # H is a NumPy matrix; move to the backend
 
     # Use rejection sampling to ensure all points are in the bounding box.
     in_domain = xp.full(N_valley, False)
@@ -382,7 +382,7 @@ def sample_quadratic_test_distribution(N_test:int, d:int, left=-3.0, right=3.0):
         valley_pts[~in_domain] = new_pts
         in_domain = verify_in_domain(valley_pts, left, right)
 
-    return np.vstack((uniform_pts, valley_pts))
+    return xp.vstack((uniform_pts, valley_pts))
 
 
 def verify_in_domain(X, left, right):
@@ -434,7 +434,7 @@ def generate_new_points(
 
 
 def save_halo_points_for_testing_surrogates(X_train, function_name:str, d:int, strategy:str, N:int=50000):
-    numpy_data = _to_device(X_train)
+    numpy_data = np.array(_to_host(X_train))  # host copy: NumPy cannot shuffle a device array
     np.random.shuffle(numpy_data)
     np.save(f"{function_name}_d{d}_{strategy}.npy", numpy_data[:N])
 
@@ -538,13 +538,13 @@ def run_iterative_refinement(
             f_fn=f_fn,
             g_fn=None,
             mode=SurrogateMode.AFFINE_COV_HESS,
-            TOL=tol,
+            ATOL=tol,
+            RTOL=tol,
             ERROR_METRIC=ERROR_METRIC,
             INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
             NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
             USE_WORK_STEALING=False,
-            USE_V2=True,
             STORE_AFFINE_FIT=True,
             save_model=False,
             PROFILE_TIMING=False,
@@ -561,7 +561,7 @@ def run_iterative_refinement(
         t_eval = time.perf_counter() - _t_start
 
         p_out = 0.0
-        metrics = compute_error_metrics(preds, ground_truth, ug_mask, tol=tol)
+        metrics = compute_error_metrics(preds, ground_truth, ug_mask, atol=tol, rtol=tol)
         e_all = metrics["all"]["l2_rel_error"]
         e_in = metrics["in"]["l2_rel_error"]
         e_out = metrics["out"]["l2_rel_error"]
