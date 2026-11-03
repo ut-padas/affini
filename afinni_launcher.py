@@ -120,7 +120,8 @@ def conduct_experiment_given_data(
             mode=ERROR_EVAL_MODE,
             save_model=None,
             load_if_exists=True,
-            TOL=TOL,
+            ATOL=TOL,
+            RTOL=TOL,
             ERROR_METRIC=ERROR_METRIC,
             INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
             NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
@@ -176,7 +177,8 @@ def conduct_experiment_given_data(
     # Compute ground truth and error metrics (Rank 0 only)
     ground_truth = f_fn(X_test)
     error_metrics = compute_error_metrics(
-        tol=TOL,
+        atol=TOL,
+        rtol=TOL,
         preds=preds,
         gt=ground_truth,
         ug_mask=ung_mask,
@@ -213,7 +215,7 @@ def conduct_experiment_given_data(
 
     plot_save_path = json_fpath.with_name(json_fpath.stem + "_error_histogram.png")
     plot_error_histogram(
-        tol=TOL,
+        rtol=TOL,
         ground_truth=ground_truth,
         predictions=preds,
         img_fpath=plot_save_path,
@@ -457,10 +459,6 @@ def anisotropic_quadratic_experiment(
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
 
-    if dim >= 10 and tol <= 0.005:
-        print("This is throwing OOM errors. Skipping for now.")
-        return
-
     json_fpath = (
         EXP_DIR
         / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
@@ -515,10 +513,6 @@ def anisotropic_quadratic_modified_sampling(
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    if dim >= 10 and tol <= 0.005:
-        print("This is throwing OOM errors. Skipping for now.")
-        return
 
     json_fpath = (
         EXP_DIR
@@ -1377,7 +1371,8 @@ def compare_wave_surrogates():
         g_fn = wave_grad,
         ERROR_METRIC = "Linf-local",
         mode = SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
-        TOL = TOL,
+        ATOL = TOL,
+        RTOL = TOL,
         NUM_INITIAL_CLUSTERS = N_init_clusters,
         MIN_PTS_PER_CLUSTER = min_ppc,
         Q_REG = 1e-8,
@@ -1389,7 +1384,8 @@ def compare_wave_surrogates():
         f_fn = wave,
         ERROR_METRIC = "Linf-local",
         mode = SurrogateMode.AFFINE_COV_HESS,
-        TOL = TOL,
+        ATOL = TOL,
+        RTOL = TOL,
         NUM_INITIAL_CLUSTERS = N_init_clusters,
         MIN_PTS_PER_CLUSTER = min_ppc,
         Q_REG = 1e-8,
@@ -1432,10 +1428,6 @@ def degenerate_quadratic_experiment(
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     # NUM_INITIAL_CLUSTERS = 1
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    if dim >= 10 and tol <= 0.005:
-        print("This is throwing OOM errors. Skipping for now.")
-        return
 
     json_fpath = (
         EXP_DIR
@@ -1492,10 +1484,6 @@ def indef_degen_quadratic_experiment(
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    if dim >= 10 and tol <= 0.005:
-        print("This is throwing OOM errors. Skipping for now.")
-        return
 
     json_fpath = (
         EXP_DIR
