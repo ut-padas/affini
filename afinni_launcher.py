@@ -2,7 +2,6 @@ import json
 import logging
 import time
 import jax
-import cupy as cp
 from collections import defaultdict
 from itertools import product
 from pathlib import Path
