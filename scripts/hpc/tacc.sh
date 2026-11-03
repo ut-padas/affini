@@ -24,7 +24,18 @@ fi
 HOST_FQDN=$(hostname -f 2>/dev/null)
 HOST_SHORT=$(hostname)
 
-if [[ "$HOST_FQDN" == *stampede3* || "$HOST_SHORT" =~ ^c[0-9]{3}- || "$HOST_SHORT" =~ ^g[0-9]{3}- ]]; then
+# Vista is checked first: its compute nodes are also named cNNN-NNN, which the
+# Stampede3 short-name pattern below would otherwise match.
+if [[ "${TACC_SYSTEM:-}" == vista || "$HOST_FQDN" == *vista* ]]; then
+    echo "[afinni] TACC Vista detected"
+    # Keep Vista's default stack (no `module purge`): it already provides the
+    # Open MPI that mpi4py binds to at runtime. Loading is idempotent and
+    # restores it if a shell rc swapped compilers (gcc <-> nvidia).
+    module load gcc/15.1.0 cuda/12.9 openmpi/5.0.5
+
+    echo "[afinni] Loaded: gcc/15.1.0 cuda/12.9 openmpi/5.0.5"
+
+elif [[ "${TACC_SYSTEM:-}" == stampede3 || "$HOST_FQDN" == *stampede3* || "$HOST_SHORT" =~ ^[cg][0-9]{3}- ]]; then
     echo "[afinni] TACC Stampede3 detected"
     module purge
     module load gcc/15.1.0 cuda/12.8 impi
@@ -33,13 +44,6 @@ if [[ "$HOST_FQDN" == *stampede3* || "$HOST_SHORT" =~ ^c[0-9]{3}- || "$HOST_SHOR
     export FI_PROVIDER=shm
 
     echo "[afinni] Loaded: gcc/15.1.0 cuda/12.8 impi | FI_PROVIDER=shm"
-
-elif [[ "$HOST_FQDN" == *vista* ]]; then
-    echo "[afinni] TACC Vista detected"
-    module purge
-    module load nvidia/25.9 gcc/15.1.0 cuda/12.9
-
-    echo "[afinni] Loaded: nvidia/25.9 gcc/15.1.0 cuda/12.9"
 
 else
     echo "[afinni] error: '$HOST_SHORT' is not a recognised TACC system; nothing was changed." >&2
