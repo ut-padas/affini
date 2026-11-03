@@ -1,6 +1,7 @@
 
 from functools import partial
 import sys
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -206,44 +207,103 @@ def read_tracer(filepath, tracer, rows_per_tracer=4016):
     return block[:, FILE_TIME_COL], to_log(np.hstack([block[:, FILE_SPECIES_COLS], block[:, FILE_PARAM_COLS]]))
 
 
-def rollout(surrogates, X_true, n_rows_until_output=5):
+def rollout(surrogates, X_true_list, n_rows_until_output=5):
     """
-    Rolls a trajectory forward by feeding the surrogates' predictions back in as inputs.
+    Rolls several trajectories forward at once by feeding the surrogates' predictions back in as inputs.
 
-    Starting from the true first row, each step takes the previous rolled-out row, predicts the species
-    abundances n_rows_until_output rows later, and uses them as the next input. Species without a
-    surrogate, and the environment params, are taken from the true trajectory at each step.
+    Starting from the true first row of each tracer, each step takes the previous rolled-out row of every
+    tracer, predicts the species abundances n_rows_until_output rows later, and uses them as the next input.
+    The tracers are advanced together, so each step makes one batched predict call per surrogate rather
+    than one per tracer. Species without a surrogate, and the environment params, are taken from the true
+    trajectory at each step.
 
     Parameters
     ----------
     surrogates : dict of int -> AFINNISurrogate
         Maps a species column (in net.species order) to the surrogate that predicts it.
-    X_true : array, shape (rows_per_tracer, 21)
-        The true trajectory of one tracer, from read_tracer.
+    X_true_list : list of arrays, shape (n_rows_t, 21)
+        The true trajectory of each tracer. Lengths may differ.
     n_rows_until_output : int
         How many rows later in a tracer each surrogate's output is.
 
     Returns
     -------
-    rows : np.ndarray, shape (n_steps,)
-        Row index along the tracer of each rolled-out step.
-    X_roll : np.ndarray, shape (n_steps, 21)
-        The rolled-out trajectory, in the same layout as X_true.
+    rows_list : list of np.ndarray, shape (n_steps_t,)
+        Row index along each tracer of each rolled-out step.
+    X_roll_list : list of np.ndarray, shape (n_steps_t, 21)
+        The rolled-out trajectories, in the same layout as X_true_list.
+    trust_list : list of np.ndarray, shape (n_steps_t - 1,), bool
+        Whether each step was inside the trust region of every surrogate.
     """
-    rows = np.arange(0, len(X_true), n_rows_until_output)
-    X_roll = np.array(X_true[rows])
-    trust_counter = 0
-    for k in range(1, len(rows)):
-        x_prev = X_roll[k - 1:k]
-        total_trust = True
+    X_true_list = [np.asarray(_to_host(X)) for X in X_true_list]
+    rows_list = [np.arange(0, len(X), n_rows_until_output) for X in X_true_list]
+    X_roll_list = [np.array(X[rows]) for X, rows in zip(X_true_list, rows_list)]
+    trust_list = [np.ones(len(rows) - 1, dtype=bool) for rows in rows_list]
+    n_steps_all = np.array([len(rows) for rows in rows_list])
+
+    for k in range(1, n_steps_all.max()):
+        active = np.flatnonzero(n_steps_all > k)   # tracers that still have a step k
+        x_prev = np.stack([X_roll_list[t][k - 1] for t in active])
+        x_new = np.stack([X_roll_list[t][k] for t in active])
         for col, surrogate in surrogates.items():
             pred, ung = surrogate.predict(x_prev)
-            X_roll[k, col] = _to_host(pred).ravel()[0]
-            if total_trust and ung.ravel()[0]
-                total_trust = False
-        trust_counter += int(total_trust)
-    print(f"Number of trustworthy evals: {trust_counter}/{len(rows)-1}")
-    return rows, X_roll
+            x_new[:, col] = _to_host(pred).ravel()
+            for i, t in enumerate(active):
+                trust_list[t][k - 1] &= not bool(_to_host(ung).ravel()[i])
+        for i, t in enumerate(active):
+            X_roll_list[t][k] = x_new[i]
+
+    n_trust = sum(int(tr.sum()) for tr in trust_list)
+    n_total = sum(len(tr) for tr in trust_list)
+    print(f"Number of trustworthy evals: {n_trust}/{n_total} "
+          f"({100.0 * n_trust / n_total:.2f}% inside, {100.0 * (n_total - n_trust) / n_total:.2f}% outside trust region)")
+    return rows_list, X_roll_list, trust_list
+
+
+def one_step_l2_relative_error(surrogates, X_test, f_test):
+    """
+    Global relative L2 error of the surrogates' one-step predictions (no rollout): every test input is the
+    true state, so errors do not accumulate. Computed in the surrogates' output space (log10 abundance).
+
+    Parameters
+    ----------
+    surrogates : dict of int -> AFINNISurrogate
+        Maps a species column (in net.species order) to the surrogate that predicts it.
+    X_test : list of arrays, shape (M_t, 21)
+        Test inputs, one array per test tracer.
+    f_test : list of arrays, shape (M_t, 14)
+        Exact outputs for X_test, one array per test tracer.
+
+    Returns
+    -------
+    errors : dict of int -> float
+        ||pred - exact||_2 / ||exact||_2 per species, over all test rows pooled across tracers.
+    total : float
+        The same ratio over all surrogate species together.
+    """
+    X = xp.concatenate([xp.asarray(x) for x in X_test], axis=0)
+    F = np.concatenate([np.asarray(_to_host(f)) for f in f_test], axis=0)
+    errors, num_sq, den_sq = {}, 0.0, 0.0
+    for col, surrogate in surrogates.items():
+        pred, _ = surrogate.predict(X)
+        diff = np.asarray(_to_host(pred), dtype=np.float64).ravel() - F[:, col]
+        errors[col] = np.linalg.norm(diff) / np.linalg.norm(F[:, col])
+        num_sq += np.sum(diff ** 2)
+        den_sq += np.sum(F[:, col] ** 2)
+    return errors, np.sqrt(num_sq / den_sq)
+
+
+def rollout_final_relative_error(surrogates, X_true_list, rows_list, X_roll_list):
+    """
+    Relative error of each tracer's rollout at its final rolled-out step: ||roll - true||_2 / ||true||_2 over
+    the surrogate species (columns in `surrogates`), in log10 abundance. Returns an array of shape (n_tracers,).
+    """
+    cols = list(surrogates)
+    errors = []
+    for X_true, rows, X_roll in zip(X_true_list, rows_list, X_roll_list):
+        true = np.asarray(_to_host(X_true))[rows[-1], cols]
+        errors.append(np.linalg.norm(X_roll[-1, cols] - true) / np.linalg.norm(true))
+    return np.array(errors)
 
 
 if __name__ == "__main__":
@@ -259,9 +319,9 @@ if __name__ == "__main__":
 
     # --- Load data ---
     datapath = Path("/scratch/10630/benjo74/R0.1_M6_trace_cells.npy")
-    n_train_tracers = 800
+    n_train_tracers = 300
     rows_per_tracer = 4016
-    n_test_tracers = 500
+    n_test_tracers = 20
     n_rows_until_output = 5
     print(f"Loading Nelson data from {datapath}...")
     X_train, f_train, X_test, f_test_exact, t_test = get_nelson_train_test_data(datapath, n_train_tracers, n_test_tracers, rows_per_tracer, n_rows_until_output)
@@ -299,15 +359,28 @@ if __name__ == "__main__":
         surrogate_dict[output] = surrogate
 
 
+    # --- One-step (non-rollout) error on the test tracers ---
+    step_errors, step_total = one_step_l2_relative_error(surrogate_dict, X_test, f_test_exact)
+    print("One-step relative L2 error (log10 abundance, pooled over test tracers):")
+    for col, err in step_errors.items():
+        print(f"  {net.species[col]:>5}: {err:.3e}")
+    print(f"  Global: {step_total:.3e}")
+
     # --- Roll out surrogates along each test tracer, feeding their output back in, and plot ---
     n_species = len(net.species)
     colors = plt.get_cmap("tab20")(np.linspace(0, 1, 20))[:n_species]
+    roll_start_time = time.perf_counter()
+    rollout_rows_list, X_rollout_list, _ = rollout(surrogate_dict, X_test, n_rows_until_output)
+    roll_total_time = time.perf_counter() - roll_start_time
+    print(f"Time rollout for all {len(X_test)} tracers (batched): {roll_total_time:.2f} seconds")
+
+    final_errors = rollout_final_relative_error(surrogate_dict, X_test, rollout_rows_list, X_rollout_list)
+    print("Pointwise relative error at the end of the rollout (log10 abundance, over tracers):")
+    print(f"  Mean: {final_errors.mean():.3e}")
+    print(f"  Max:  {final_errors.max():.3e} (tracer {final_errors.argmax()})")
+
     for t, (X_t, time_t) in enumerate(zip(X_test, t_test)):
-        roll_start_time = time.perf_counter()
-        rollout_rows, X_rollout = rollout(surrogate_dict, X_t, n_rows_until_output)
-        roll_end_time = time.perf_counter()
-        roll_total_time = roll_end_time - roll_start_time
-        print(f"Time rollout for tracer {t}: {roll_total_time:.2f} seconds")
+        rollout_rows, X_rollout = rollout_rows_list[t], X_rollout_list[t]
 
         fig, ax = plt.subplots(figsize=(16, 8))
         for i, name in enumerate(net.species):
