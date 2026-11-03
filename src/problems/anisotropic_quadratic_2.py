@@ -26,21 +26,18 @@ def _get_params(
     Computes the symmetric matrix H = Q * Lambda * Q^T.
 
     Returns:
-        w: (d,) linear weight vector
         H: (d, d) quadratic form matrix
     """
-    # BL: we are removing the linear weight vector w so the minimum is at zero.
-    # 1. Linear weights: w = [1, 1, ..., 1]
-    # w = xp.ones((d,), dtype=dtype)
+    # BL: there is no linear term (w^T x) any more, so the minimum is at zero.
 
-    # 2. Eigenvalues: Lambda_ii = i^(-decay_exponent)
+    # 1. Eigenvalues: Lambda_ii = decay_base^(-i)  (geometric decay)
     indices = xp.arange(1, d + 1, dtype=dtype)
-    lambdas = xp.power(DECAY_BASE, -indices)
+    lambdas = xp.power(decay_base, -indices)
 
-    # 3. Rotation: Q
+    # 2. Rotation: Q
     Q = _get_random_rotation(d, dtype)
 
-    # 4. Construct H = Q @ diag(lambdas) @ Q.T
+    # 3. Construct H = Q @ diag(lambdas) @ Q.T
     H = (Q * lambdas[None, :]) @ Q.T
 
     return H
@@ -51,26 +48,22 @@ def aniso_quadratic(
 ) -> Array:
     """
     Computes the Rotated Anisotropic Quadratic function.
-    f(x) = beta + w^T x + x^T H x
+    f(x) = beta + x^T H x   (minimum f = beta at x = 0)
 
     Args:
         X: (N, d) data matrix
-        beta: Constant offset term (default: DEFAULT_BETA)
-        decay_exponent: Eigenvalue decay exponent (default: DECAY_EXPONENT)
+        beta: Constant offset term (default: BETA)
+        decay_base: Eigenvalue decay base, Lambda_ii = decay_base^(-i) (default: DECAY_BASE)
     Returns:
         F: (N, 1) function values
     """
     N, d = X.shape
     H = _get_params(d, X.dtype, decay_base)
 
-    # Linear term: w^T x -> (N, d) @ (d,) -> (N,)
-    # linear_term = X @ w
-
     # Quadratic term: x^T H x
     quad_term = xp.sum((X @ H) * X, axis=1)
 
-    # Combine: beta + linear + quadratic
-    # res = beta + linear_term + quad_term
+    # Combine: beta + quadratic
     res = beta + quad_term
 
     return res[:, None]  # (N, 1)
@@ -79,11 +72,11 @@ def aniso_quadratic(
 def aniso_quadratic_grad(X: Array, decay_base: float = DECAY_BASE) -> Array:
     """
     Computes gradient.
-    grad f(x) = w + 2Hx
+    grad f(x) = 2Hx
 
     Args:
         X: (N, d) data matrix
-        decay_exponent: Eigenvalue decay exponent (default: DECAY_EXPONENT)
+        decay_base: Eigenvalue decay base (default: DECAY_BASE)
     Returns:
         G: (N, 1, d) gradients
     """
@@ -106,7 +99,7 @@ def aniso_quadratic_hess(X: Array, decay_base: float = DECAY_BASE) -> Array:
 
     Args:
         X: (N, d) data matrix
-        decay_exponent: Eigenvalue decay exponent (default: DECAY_EXPONENT)
+        decay_base: Eigenvalue decay base (default: DECAY_BASE)
     Returns:
         H_vals: (N, d, d) Hessians
     """

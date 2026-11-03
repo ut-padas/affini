@@ -522,9 +522,11 @@ def anisotropic_quadratic_modified_sampling(
     )
 
     # Sample initial data from modified distribution
-    decay_exp = 3.0; beta = 1.0
-    w, H = _get_params(dim, xp.float64, decay_exp)
-    mean = -0.5 * xp.linalg.solve(H, w)
+    # f(x) = beta + x^T H x has its minimum at the origin, so the Gaussian is
+    # centred there with covariance shaped by the curvature (wider along flat directions).
+    decay_exp = 3.0
+    H = _get_params(dim, xp.float64, decay_exp)
+    mean = xp.zeros(dim, dtype=xp.float64)
     cov = 0.5 * xp.linalg.inv(H)
     X_train = xp.random.multivariate_normal(mean, cov, size=N_TRAIN)
     X_test = xp.random.multivariate_normal(mean, cov, size=N_TEST)

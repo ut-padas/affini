@@ -20,7 +20,10 @@ def _sympy_aniso_quadratic_f_g_h(
     beta: float = BETA,
     decay_exp: float = DECAY_EXPONENT,
 ):
-    """Create symbolic function, gradient, and Hessian for anisotropic quadratic function."""
+    """Create symbolic function, gradient, and Hessian for anisotropic quadratic function.
+
+    f(x) = beta + x^T H x  (no linear term, so the minimum is at the origin).
+    """
     x = sp.symbols(f"x0:{n_dim}")
 
     # Create random rotation matrix Q using the same seed and method as implementation
@@ -40,24 +43,16 @@ def _sympy_aniso_quadratic_f_g_h(
     # Create diagonal lambda matrix
     Lambda_diag = sp.diag(*[sp.Float(lam) for lam in lambdas])
 
-    # Create weight vector w = [1, 1, ..., 1]
-    w = sp.Matrix([1.0] * n_dim)
-
     # Full H matrix: H = Q * Lambda * Q^T
     H = Q_sym @ Lambda_diag @ Q_sym.T
 
     # Create x vector
     x_vec = sp.Matrix(x)
 
-    # Function: f(x) = beta + w^T * x + x^T * H * x
-    linear_term = w.T @ x_vec
-    quadratic_term = x_vec.T @ H @ x_vec
+    # Function: f(x) = beta + x^T * H * x
+    quadratic_term = (x_vec.T @ H @ x_vec)[0]  # scalar from 1x1 matrix
 
-    # Extract scalars from 1x1 matrices
-    linear_term = linear_term[0]
-    quadratic_term = quadratic_term[0]
-
-    f = sp.Float(beta) + linear_term + quadratic_term
+    f = sp.Float(beta) + quadratic_term
 
     # Compute gradient
     g = sp.Matrix([sp.diff(f, xi) for xi in x])
@@ -148,11 +143,7 @@ class TestAnisoQuadraticSympyDerivatives(unittest.TestCase):
         """Test properties of the eigenvalues."""
 
         n_dim = 4
-        w, H = _get_params(n_dim, np.float64, DECAY_EXPONENT)
-
-        # Weight vector should be all ones
-        expected_w = np.ones(n_dim)
-        np.testing.assert_allclose(w, expected_w, rtol=1e-12, atol=1e-14)
+        H = _get_params(n_dim, np.float64, DECAY_EXPONENT)
 
         # H should be symmetric
         np.testing.assert_allclose(H, H.T, rtol=1e-12, atol=1e-14)
@@ -178,7 +169,7 @@ class TestAnisoQuadraticSympyDerivatives(unittest.TestCase):
         # Function values should be finite
         self.assertTrue(np.all(np.isfinite(f_vals)))
 
-        # At origin, function should equal beta (since w^T * 0 + 0^T * H * 0 = 0)
+        # At origin, function should equal beta (since 0^T * H * 0 = 0)
         X_origin = np.zeros((1, 2), dtype=np.float64)
         f_origin = aniso_quadratic(X_origin)
         np.testing.assert_allclose(f_origin, [[BETA]], rtol=1e-12, atol=1e-14)
@@ -196,10 +187,10 @@ class TestAnisoQuadraticSympyDerivatives(unittest.TestCase):
         # Shape should be (N, 1, d)
         self.assertEqual(g_vals.shape, (20, 1, 3))
 
-        # At origin, gradient should equal w = [1, 1, 1]
+        # At origin (the minimum), gradient 2 * H * x should vanish
         X_origin = np.zeros((1, 3), dtype=np.float64)
         g_origin = aniso_quadratic_grad(X_origin)
-        expected_grad_origin = np.ones((1, 1, 3))
+        expected_grad_origin = np.zeros((1, 1, 3))
         np.testing.assert_allclose(
             g_origin, expected_grad_origin, rtol=1e-12, atol=1e-14
         )
