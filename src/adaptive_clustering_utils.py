@@ -599,7 +599,8 @@ def evaluate_cluster_errors(
     aug_sizes: Array,
     aug_ids: Array,
     F_max_global: Array,
-    TOL: float,
+    ATOL: float,
+    RTOL: float
 ) -> tuple[Array, Array, dict[str, Any]]:
     """
     Fits the appropriate surrogate and computes the error metric.
@@ -748,7 +749,7 @@ def evaluate_cluster_errors(
         E_cluster_abs = xp.sqrt(sq_err_cluster / aug_sizes)
 
         # Pass if relative error is good, OR if absolute error is already negligible
-        is_good = (E_cluster_rel < TOL) | (E_cluster_abs < TOL)
+        is_good = (E_cluster_rel < RTOL) | (E_cluster_abs < ATOL)
         return is_good, E_cluster_rel, surrogate_params
     
     elif config.error_metric == "Linf-global":
@@ -771,10 +772,10 @@ def evaluate_cluster_errors(
             )  # (K,)
 
         # Pass if relative error is good, OR if absolute error is already negligible
-        is_good = (E_cluster_rel < TOL) | (E_cluster_abs < TOL)
+        is_good = (E_cluster_rel < RTOL) | (E_cluster_abs < ATOL)
         return is_good, E_cluster_rel, surrogate_params
 
-    is_good = E_cluster < TOL  # (K,)
+    is_good = E_cluster < ATOL  # (K,)
     return is_good, E_cluster, surrogate_params
 
 

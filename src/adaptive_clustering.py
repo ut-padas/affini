@@ -58,7 +58,8 @@ def _run_local_refinement(
     f_fn: Optional[Callable],
     g_fn: Optional[Callable],
     oracle_fn: Optional[Callable],
-    TOL: float,
+    ATOL: float,
+    RTOL: float,
     MIN_PTS_PER_CLUSTER: int,
     MAX_CLUSTERS_EST: int,
     SEED: int,
@@ -556,7 +557,8 @@ def _run_local_refinement(
                     aug_sizes,
                     aug_ids,
                     F_max_global,
-                    TOL,
+                    ATOL,
+                    RTOL
                 )
 
             if LOG_MEM_STATS:
@@ -751,7 +753,7 @@ def _run_local_refinement(
 
                         if SAVE_ALL_GEN_CLUSTER_DATA is True:
                             save_generated_data(
-                                X_synth_vals, f"train_data_tol_{TOL}_d{d}"
+                                X_synth_vals, f"train_data_atol_{ATOL}_rtol_{RTOL}_d{d}"
                             )
 
                         X_bad_aug[is_synth] = X_synth_vals
@@ -1042,7 +1044,8 @@ def adaptive_clustering(
     f_fn: Optional[Callable[[Array], Array]] = None,
     g_fn: Optional[Callable[[Array], Array]] = None,
     oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
-    TOL: float,
+    ATOL: float,
+    RTOL: float,
     ERROR_EVAL_MODE: SurrogateMode,
     ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global",
     INITIAL_CLUSTERING_METHOD: Literal[
@@ -1141,7 +1144,7 @@ def adaptive_clustering(
     if rank == 0:
         if SAVE_ALL_GEN_TRAINING_DATA is True:
             _, DIM = X.shape
-            save_generated_data(X, f"train_data_tol_{TOL}_d{DIM}")
+            save_generated_data(X, f"train_data_atol_{ATOL}_rtol_{RTOL}_d{DIM}")
 
         with CudaTimer("time_init", profiling_stats, PROFILE_TIMING):
             X0_gpu = xp.asarray(X, dtype=xp.float64)
@@ -1380,7 +1383,8 @@ def adaptive_clustering(
             f_fn=f_fn,
             g_fn=g_fn,
             oracle_fn=oracle_fn,
-            TOL=TOL,
+            ATOL=ATOL,
+            RTOL=RTOL,
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
             MAX_CLUSTERS_EST=max(1, MAX_CLUSTERS_EST // max(1, size)),
             SEED=SEED,
@@ -1470,7 +1474,7 @@ def adaptive_clustering(
 
         # Combine all the files if we are saving
         if SAVE_ALL_GEN_TRAINING_DATA is True:
-            combine_generated_data(f"train_data_tol_{TOL}_d{d_bcast}")
+            combine_generated_data(f"train_data_atol_{ATOL}_rtol_{RTOL}_d{d_bcast}")
 
         return merged
     return None
@@ -1504,7 +1508,8 @@ if __name__ == "__main__":
     rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
 
     DIM = 2
-    TOL = 0.0001
+    ATOL = 0.0001
+    RTOL = 0.01
     PROB_LIMS = (-1.0, 3)
     N_TRAIN = get_N_TRAIN(DIM)
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
@@ -1519,7 +1524,7 @@ if __name__ == "__main__":
 
     img_fpath = (
         OUTPUT_DIR
-        / f"mpi_sz{_size}_rosen{A_ROSENBROCK}_ntrain{N_TRAIN}_dim{DIM}_tol{TOL}_err{ERROR_EVAL_MODE.value}_metric{ERROR_METRIC}_init{INITIAL_CLUSTERING_METHOD}_nclust{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}.png"
+        / f"mpi_sz{_size}_rosen{A_ROSENBROCK}_ntrain{N_TRAIN}_dim{DIM}_atol{ATOL}_rtol{RTOL}_err{ERROR_EVAL_MODE.value}_metric{ERROR_METRIC}_init{INITIAL_CLUSTERING_METHOD}_nclust{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}.png"
     )
 
     if _rank == 0:
@@ -1532,7 +1537,8 @@ if __name__ == "__main__":
         X=X,
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
-        TOL=TOL,
+        ATOL=ATOL,
+        RTOL=RTOL,
         ERROR_EVAL_MODE=ERROR_EVAL_MODE,
         ERROR_METRIC=ERROR_METRIC,
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
@@ -1560,7 +1566,8 @@ if __name__ == "__main__":
         "mpi_size": _size,
         "rosenbrock_a": A_ROSENBROCK,
         "dim": DIM,
-        "tol": TOL,
+        "atol": ATOL,
+        "rtol": RTOL,
         "n_train": N_TRAIN,
         "num_clusters": n_centroids,
         "train_time_sec": result["profiling_stats"]["time_total"],
@@ -1580,7 +1587,7 @@ if __name__ == "__main__":
     print(f"Saved profiling stats to {json_fpath}")
 
     if DIM == 2 and n_centroids <= 10_000:
-        title = f"Rosenbrock (a={A_ROSENBROCK}) (Tol={TOL}, ErrMode={ERROR_EVAL_MODE.value}, Metric={ERROR_METRIC}, N_init={NUM_INITIAL_CLUSTERS}, MinPts={MIN_PTS_PER_CLUSTER}, Steal={USE_WORK_STEALING}) (N0={N_TRAIN:,}, N_clusters={n_centroids:,})"
+        title = f"Rosenbrock (a={A_ROSENBROCK}) (Atol={ATOL}, Rtol={RTOL}, ErrMode={ERROR_EVAL_MODE.value}, Metric={ERROR_METRIC}, N_init={NUM_INITIAL_CLUSTERS}, MinPts={MIN_PTS_PER_CLUSTER}, Steal={USE_WORK_STEALING}) (N0={N_TRAIN:,}, N_clusters={n_centroids:,})"
         plot_adaptive_clustering_results(
             centroids=_to_host(result["centroids"]),
             Q=_to_host(result["Q"]),

@@ -451,7 +451,7 @@ def plot_adaptive_clustering_results(
 
 
 def plot_error_histogram(
-    ground_truth: Array, predictions: Array, img_fpath: Path, tol: float
+    ground_truth: Array, predictions: Array, img_fpath: Path, rtol: float
 ):
     TINY_EPS = 1e-12
     img_title = img_fpath.stem
@@ -472,7 +472,7 @@ def plot_error_histogram(
         ptwise_rel_error = element_rel_error
 
     # 3. Compute Stats
-    n_within_tol = xp.sum(ptwise_rel_error <= tol)
+    n_within_tol = xp.sum(ptwise_rel_error <= rtol)
     perct_within_tol = 100.0 * n_within_tol / ptwise_rel_error.shape[0]
 
     # 4. Plotting
@@ -483,10 +483,10 @@ def plot_error_histogram(
     plt.hist(data_to_plot.flatten(), bins=50, log=True)
 
     plt.axvline(
-        x=tol,
+        x=rtol,
         color="r",
         linestyle="--",
-        label=f"TOL={tol} (Good Points={perct_within_tol:.2f}%)",
+        label=f"RTOL={rtol} (Good Points={perct_within_tol:.2f}%)",
     )
 
     plt.ylabel("Frequency (log scale)")
