@@ -69,7 +69,8 @@ class AFINNISurrogate:
         mode: SurrogateMode = SurrogateMode.AFFINE_COV_HESS,
         save_model: Optional[Union[bool, str, Path]] = None,
         load_if_exists: bool = True,
-        TOL: float = 1e-2,
+        ATOL: float = 1e-2,
+        RTOL: float = 1e-2,
         ERROR_METRIC: Literal["L2", "Linf-local", "Linf-global"] = "Linf-global",
         INITIAL_CLUSTERING_METHOD: Literal[
             "kmeans", "knndbscan", "uniform_grid"
@@ -145,7 +146,8 @@ class AFINNISurrogate:
             f_fn=f_fn,
             g_fn=g_fn,
             oracle_fn=oracle_fn,
-            TOL=TOL,
+            ATOL=ATOL,
+            RTOL=RTOL,
             ERROR_EVAL_MODE=self.mode,
             ERROR_METRIC=ERROR_METRIC,
             INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
@@ -590,7 +592,7 @@ class AFINNISurrogate:
 
 
 def compute_error_metrics(
-    preds, gt, ug_mask, tol: float, return_ptwise_error_arrays: bool = False
+    preds, gt, ug_mask, atol: float, rtol: float, return_ptwise_error_arrays: bool = False
 ) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Array]]:
     """
     Compute error metrics for the predictions.
@@ -599,8 +601,9 @@ def compute_error_metrics(
         preds: Predicted values (N, F_dim)
         gt: True values (N, F_dim)
         ug_mask: Boolean array indicating which points are unguaranteed (N,)
-        tol: Tolerance for determining "good" vs "bad" points among the guaranteed ones.
-            return_ptwise_error_arrays: If True, also return the pointwise relative error arrays.
+        atol: Absolute tolerance for determining "good" vs "bad" points among the guaranteed ones.
+        rtol: Relative tolerance for determining "good" vs "bad" points among the guaranteed ones.
+        return_ptwise_error_arrays: If True, also return the pointwise relative error arrays.
 
     Returns:
         Dictionary of error metrics.
@@ -628,19 +631,22 @@ def compute_error_metrics(
         in_linf_rel_error = float(norm_diff_inf / (norm_gt_inf + TINY_EPS))
         in_linf_abs_error = float(norm_diff_inf / xp.sqrt(n_in))
 
+        element_abs_error = xp.abs(diff)
         element_rel_error = xp.abs(diff) / (xp.abs(gt_in) + TINY_EPS)
         if element_rel_error.ndim > 1:
             # Vector Case: A point is "good" only if ALL components are good.
             # Equivalently, the point error is the MAX error across components.
+            ptwise_abs_error = xp.max(element_abs_error, axis=1)  # Shape: (N_in,)
             ptwise_rel_error = xp.max(element_rel_error, axis=1)  # Shape: (N_in,)
         else:
             # Scalar Case: Just take the element-wise relative error.
+            ptwise_abs_error = element_abs_error  # Shape: (N_in,)
             ptwise_rel_error = element_rel_error  # Shape: (N_in,)
 
         in_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error))
         in_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error))
 
-        n_in_good = int(xp.sum(ptwise_rel_error <= tol))
+        n_in_good = int(xp.sum(xp.logical_or(ptwise_rel_error <= rtol, ptwise_abs_error <= atol)))
         n_in_bad = int(n_in - n_in_good)
     else:
         in_l2_rel_error = float("nan")
@@ -813,14 +819,14 @@ if __name__ == "__main__":
         f_fn=rosenbrock,
         g_fn=rosenbrock_grad,
         mode=ERROR_EVAL_MODE,
-        TOL=TOL,
+        ATOL=TOL,
+        RTOL=TOL,
         ERROR_METRIC=ERROR_METRIC,
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
         NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
         MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
         USE_WORK_STEALING=USE_WORK_STEALING,
-        STORE_AFFINE_FIT=True,
-        USE_V2=USE_V2,
+        STORE_AFFINE_FIT=True
     )
     _train_time = time.perf_counter() - _start_time
 
@@ -864,7 +870,8 @@ if __name__ == "__main__":
         preds=preds,
         gt=ground_truth,
         ug_mask=ug_mask,
-        tol=TOL,
+        atol=TOL,
+        rtol=TOL,
         return_ptwise_error_arrays=False,
     )
 
