@@ -1,6 +1,8 @@
 """Six-Hump camelback function and its derivatives."""
 
-from src import Array, xp
+from array_api_compat import array_namespace
+
+from src import Array
 
 
 def six_hump_camelback(X: Array) -> Array:
@@ -13,6 +15,7 @@ def six_hump_camelback(X: Array) -> Array:
     Returns:
         F: (N, 1) function values at X
     """
+    xp = array_namespace(X)
     scale = 10
     x1, x2 = X[:, 0], X[:, 1]
 
@@ -35,6 +38,7 @@ def six_hump_camelback_grad(X: Array) -> Array:
     Returns:
         J: (N, 1, 2) Jacobian at X
     """
+    xp = array_namespace(X)
     x1, x2 = X[:, 0], X[:, 1]
 
     # Compute gradient components
@@ -58,6 +62,7 @@ def six_hump_camelback_hess(X: Array) -> Array:
     Returns:
         H: (N, 2, 2) Hessian matrices at X
     """
+    xp = array_namespace(X)
     x1, x2 = X[:, 0], X[:, 1]
 
     # Compute hessian components for each point

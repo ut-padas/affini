@@ -1,6 +1,8 @@
 """Dixon-Price Function and its gradient implementation."""
 
-from src import Array, xp
+from array_api_compat import array_namespace
+
+from src import Array
 
 
 def dixon_price(X: Array) -> Array:
@@ -13,6 +15,7 @@ def dixon_price(X: Array) -> Array:
     Returns:
         F: (N, 1) function values at X
     """
+    xp = array_namespace(X)
     N, d = X.shape
     term1 = (X[:, 0] - 1) ** 2
     j = xp.arange(1, d)
@@ -31,6 +34,7 @@ def dixon_price_grad(X: Array) -> Array:
     Returns:
         J: (N, 1, d) gradient at X
     """
+    xp = array_namespace(X)
     N, d = X.shape
 
     # Initialize gradient array

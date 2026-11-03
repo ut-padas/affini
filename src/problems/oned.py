@@ -1,6 +1,8 @@
 """One-dimensional example function and its gradient."""
 
-from src import Array, xp
+from array_api_compat import array_namespace
+
+from src import Array
 
 
 def one_d_example(X: Array) -> Array:
@@ -13,6 +15,7 @@ def one_d_example(X: Array) -> Array:
     Returns:
         F: (N, 1) function values at X
     """
+    xp = array_namespace(X)
     x = X[:, 0]
     F = xp.sin(2 * xp.pi * x) / xp.exp(x)
     return F[:, xp.newaxis]  # Ensure shape is (N, 1)
@@ -28,6 +31,7 @@ def one_d_example_grad(X: Array) -> Array:
     Returns:
         J: (N, 1, 1) Jacobian at X
     """
+    xp = array_namespace(X)
     x = X[:, 0]
     grad = (2 * xp.pi * xp.cos(2 * xp.pi * x) - xp.sin(2 * xp.pi * x)) / xp.exp(x)
     return grad[:, xp.newaxis, xp.newaxis]  # Ensure shape is (N, 1, 1)
@@ -43,6 +47,7 @@ def one_d_example_hess(X: Array) -> Array:
     Returns:
         H: (N, 1, 1, 1) Hessian at X
     """
+    xp = array_namespace(X)
     x = X[:, 0]
     hess = (
         -4 * (xp.pi**2) * xp.sin(2 * xp.pi * x)

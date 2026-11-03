@@ -1,6 +1,8 @@
 """Isotropic Gaussian function."""
 
-from src import Array, xp
+from array_api_compat import array_namespace
+
+from src import Array
 
 BETA = 1
 
@@ -18,6 +20,7 @@ def gaussian(
     Returns:
         F: (N, 1) function values
     """
+    xp = array_namespace(X)
     N, d = X.shape
     dist_sq = xp.sum(X ** 2, axis=1)
     f = beta + xp.exp(-0.5 * dist_sq / d)

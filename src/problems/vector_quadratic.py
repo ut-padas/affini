@@ -1,21 +1,24 @@
 """Vector Quadratic function and its derivatives."""
 
-from src import Array, xp
+import numpy as np
+from array_api_compat import array_namespace
+
+from src import Array
 
 
-def _get_diagonals(d: int, dtype) -> tuple[Array, Array]:
+def _get_diagonals(d: int, dtype) -> tuple[np.ndarray, np.ndarray]:
     """
-    Helper to construct the diagonal curvature vectors.
+    Helper to construct the diagonal curvature vectors (NumPy host arrays).
     Math index j=1 (Odd) -> Code index 0.
     Math index j=2 (Even) -> Code index 1.
 
     A1: 100 on Odd (0, 2...), 1 on Even (1, 3...)
     A2: 1 on Odd (0, 2...), 100 on Even (1, 3...)
     """
-    diag1 = xp.ones((d,), dtype=dtype)
+    diag1 = np.ones((d,), dtype=dtype)
     diag1[0::2] = 100.0
 
-    diag2 = xp.ones((d,), dtype=dtype)
+    diag2 = np.ones((d,), dtype=dtype)
     diag2[1::2] = 100.0  # Initialize as 1s, set Evens to 100
 
     return diag1, diag2
@@ -32,8 +35,9 @@ def vector_quadratic(X: Array) -> Array:
     Returns:
         F: (N, 2) function values
     """
+    xp = array_namespace(X)
     N, d = X.shape
-    diag1, diag2 = _get_diagonals(d, X.dtype)
+    diag1, diag2 = map(xp.asarray, _get_diagonals(d, X.dtype))
 
     # f1: centered at +1
     diff1 = X - 1.0
@@ -57,8 +61,9 @@ def vector_quadratic_grad(X: Array) -> Array:
     Returns:
         G: (N, 2, d) gradients
     """
+    xp = array_namespace(X)
     N, d = X.shape
-    diag1, diag2 = _get_diagonals(d, X.dtype)
+    diag1, diag2 = map(xp.asarray, _get_diagonals(d, X.dtype))
 
     # Gradient 1: (N, d)
     g1 = 2.0 * diag1 * (X - 1.0)
@@ -81,8 +86,9 @@ def vector_quadratic_hess(X: Array) -> Array:
     Returns:
         H: (N, 2, d, d) Hessian matrices
     """
+    xp = array_namespace(X)
     N, d = X.shape
-    diag1, diag2 = _get_diagonals(d, X.dtype)
+    diag1, diag2 = map(xp.asarray, _get_diagonals(d, X.dtype))
 
     # Construct constant Hessian matrices (d, d)
     H1 = xp.diag(2.0 * diag1)

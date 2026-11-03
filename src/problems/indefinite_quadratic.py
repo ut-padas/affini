@@ -1,6 +1,9 @@
 """Indefinite Quadratic function and its derivatives."""
 
-from src import Array, xp
+import numpy as np
+from array_api_compat import array_namespace
+
+from src import Array
 from src.problems.anisotropic_quadratic import _get_random_rotation
 
 # Default hyperparameters matching the anisotropic case
@@ -11,25 +14,25 @@ BETA = 1.0
 
 def _get_indefinite_params(
     d: int, dtype, decay_exponent: float = DECAY_EXPONENT
-) -> tuple[Array, Array]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Computes the linear weights and the indefinite quadratic matrix.
     H is constructed as Q * Lambda * Q^T where Lambda contains alternating signs.
 
-    Returns:
+    Returns (as NumPy host arrays; callers move them to their backend):
         w: (d,) linear weight vector [1, 1, ..., 1]
         H: (d, d) indefinite symmetric matrix
     """
     # 1. Linear weights: w = [1, 1, ..., 1]
-    w = xp.ones((d,), dtype=dtype)
+    w = np.ones((d,), dtype=dtype)
 
     # 2. Eigenvalues: magnitude decays polynomially
-    indices = xp.arange(1, d + 1, dtype=dtype)
-    lambdas = xp.power(indices, -decay_exponent)
+    indices = np.arange(1, d + 1, dtype=dtype)
+    lambdas = np.power(indices, -decay_exponent)
 
     # 3. Indefinite Modification: Flip the sign of alternating eigenvalues [+, -, +, -, ...]
     # This ensures the matrix is neither positive nor negative definite.
-    signs = xp.ones(d, dtype=dtype)
+    signs = np.ones(d, dtype=dtype)
     signs[1::2] = -1.0  # Set every second element to -1
     lambdas = lambdas * signs
 
@@ -56,8 +59,9 @@ def indefinite_quadratic(
     Returns:
         F: (N, 1) function values
     """
+    xp = array_namespace(X)
     N, d = X.shape
-    w, H = _get_indefinite_params(d, X.dtype, decay_exponent)
+    w, H = map(xp.asarray, _get_indefinite_params(d, X.dtype, decay_exponent))
 
     # Linear term: w^T x -> (N, d) @ (d,) -> (N,)
     linear_term = X @ w
@@ -84,8 +88,9 @@ def indefinite_quadratic_grad(
     Returns:
         G: (N, 1, d) gradients
     """
+    xp = array_namespace(X)
     N, d = X.shape
-    w, H = _get_indefinite_params(d, X.dtype, decay_exponent)
+    w, H = map(xp.asarray, _get_indefinite_params(d, X.dtype, decay_exponent))
 
     # Quadratic gradient: 2 * H * x -> (N, d)
     grad_quad = 2.0 * (X @ H)
@@ -109,8 +114,9 @@ def indefinite_quadratic_hess(
     Returns:
         H_vals: (N, d, d) Hessians
     """
+    xp = array_namespace(X)
     N, d = X.shape
-    _, H = _get_indefinite_params(d, X.dtype, decay_exponent)
+    H = xp.asarray(_get_indefinite_params(d, X.dtype, decay_exponent)[1])
 
     # The Hessian is constant across the domain: 2 * H
     H_const = 2.0 * H

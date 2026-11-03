@@ -1,6 +1,8 @@
 """Rastrigin function and its derivatives."""
 
-from src import Array, xp
+from array_api_compat import array_namespace
+
+from src import Array
 
 RASTRIGIN_A = 10.0  # Default constant term
 
@@ -18,6 +20,7 @@ def rastrigin(X: Array, A=RASTRIGIN_A) -> Array:
     Returns:
         F: (N, 1) function values at X
     """
+    xp = array_namespace(X)
     # X: (N, D)
     d = X.shape[1]
 
@@ -38,6 +41,7 @@ def rastrigin_grad(X: Array, A=RASTRIGIN_A) -> Array:
     Returns:
         G: (N, 1, D) gradients at X
     """
+    xp = array_namespace(X)
     # df/dx_i = 2x_i + 2pi*A*sin(2pi*x_i)
     # X: (N, D)
 

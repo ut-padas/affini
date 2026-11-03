@@ -1,6 +1,8 @@
 """Borehole function and its gradient implementation."""
 
-from src import Array, xp
+from array_api_compat import array_namespace
+
+from src import Array
 
 
 def borehole(X: Array) -> Array:
@@ -13,6 +15,7 @@ def borehole(X: Array) -> Array:
     Returns:
         F: (N, 1) function values at X
     """
+    xp = array_namespace(X)
     r_w = X[:, 0]  # radius of the borehole (m)
     r = X[:, 1]  # radius of influence (m)
     T_u = X[:, 2]  # transmissivity of upper aquifer (m^2/yr)
@@ -40,6 +43,7 @@ def borehole_grad(X: Array) -> Array:
     Returns:
         J: (N, 1, 8) Jacobian at X
     """
+    xp = array_namespace(X)
     x1 = X[:, 0]
     x2 = X[:, 1]
     x3 = X[:, 2]
