@@ -4,11 +4,19 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Union
 
 import numpy as np
-from mpi4py import MPI
 
-from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _to_device, _to_host, xp
+from src import (
+    HAS_CUML,
+    IS_CUPY_BACKEND,
+    Array,
+    _get_mpi_rank,
+    _to_device,
+    _to_host,
+    xp,
+)
 from src.adaptive_clustering import adaptive_clustering
 from src.adaptive_clustering_utils import SurrogateMode
+from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 
 logger = logging.getLogger(__name__)
 
@@ -290,17 +298,19 @@ class AFINNISurrogate:
             return
 
         t0 = time.perf_counter()
-        if IS_CUPY_BACKEND:
+        # Keep X_src in the active array backend (device under CuPy); only the
+        # kNN index itself lives on the host when cuML is unavailable.
+        self.X_src = _to_device(self.X_src)
+        if HAS_CUML:
             from cuml.neighbors import NearestNeighbors as cuMLNearestNeighbors
 
             self.knn_index = cuMLNearestNeighbors(metric="euclidean", algorithm="auto")
-            self.X_src = _to_device(self.X_src)
             self.knn_index.fit(self.X_src)
         else:
+            # CPU backend, or CuPy without cuML (e.g. Windows + GPU): FAISS on host.
             import faiss
 
-            self.X_src = _to_host(self.X_src)
-            centroids_f32 = self.X_src.astype(np.float32)
+            centroids_f32 = np.ascontiguousarray(_to_host(self.X_src), dtype=np.float32)
             D = self.X_src.shape[1]
 
             # ANN LOGIC FOR CPU
@@ -326,14 +336,16 @@ class AFINNISurrogate:
             self._build_knn_index()
 
         k = min(k, self.N_src)
-        if IS_CUPY_BACKEND:
+        if HAS_CUML:
             query_points = _to_device(query_points)
             distances, indices = self.knn_index.kneighbors(query_points, n_neighbors=k)  # type: ignore
         else:
-            query_points = _to_host(query_points)
-            query_points_f32 = query_points.astype(xp.float32)
+            query_points_f32 = np.ascontiguousarray(_to_host(query_points), dtype=np.float32)
             distances_sq, indices = self.knn_index.search(query_points_f32, k)  # type: ignore
-            distances = xp.sqrt(distances_sq)
+            # FAISS returns host arrays; move them to the active backend so
+            # downstream indexing of device-resident X_src/f_src etc. works.
+            indices = _to_device(indices)
+            distances = _to_device(np.sqrt(distances_sq))
 
         return indices, distances
 

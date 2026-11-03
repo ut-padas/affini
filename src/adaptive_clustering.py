@@ -5,9 +5,16 @@ import time
 from typing import Any, Callable, Literal, Optional
 
 import numpy as np
-from mpi4py import MPI
 
-from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _get_mpi_size, _to_host, xp
+from src import (
+    HAS_CUML,
+    IS_CUPY_BACKEND,
+    Array,
+    _get_mpi_rank,
+    _get_mpi_size,
+    _to_host,
+    xp,
+)
 from src.adaptive_clustering_utils import (
     ClusteringConfig,
     CudaTimer,
@@ -23,6 +30,7 @@ from src.adaptive_clustering_utils import (
     split_rejected_clusters,
     uniform_grid_cluster_labels,
 )
+from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
 
@@ -1186,7 +1194,7 @@ def adaptive_clustering(
 
             if labels0 is None:
                 if INITIAL_CLUSTERING_METHOD == "kmeans":
-                    if IS_CUPY_BACKEND:
+                    if HAS_CUML:
                         from cuml.cluster import KMeans as cuKMeans
 
                         km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)

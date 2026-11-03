@@ -1,33 +1,34 @@
 import logging
-import warnings
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-from array_api_compat import array_namespace
 from array_api_compat.common._typing import Array
+
+from src.backend import (
+    HAS_CUML,
+    IS_CUPY_BACKEND,
+    backend_info,
+    get_mpi_rank,
+    get_mpi_size,
+    has_mpi,
+    print_backend_info,
+    xp,
+)
 
 logger = logging.getLogger(__name__)
 
-
-def _get_mpi_rank() -> int:
-    """Return current MPI rank, or 0 if MPI is not in use."""
-    try:
-        from mpi4py import MPI as _MPI
-
-        return _MPI.COMM_WORLD.Get_rank()
-    except ImportError:
-        return 0
+# Historical names used throughout the codebase.
+_get_mpi_rank = get_mpi_rank
+_get_mpi_size = get_mpi_size
 
 
-def _get_mpi_size() -> int:
-    """Return total number of MPI ranks, or 1 if MPI is not in use."""
-    try:
-        from mpi4py import MPI as _MPI
+def __getattr__(name: str) -> Any:
+    # Keep `HAS_MPI` / `MPI` lazy (see src.backend) so `import src` never runs MPI_Init.
+    if name in ("HAS_MPI", "MPI"):
+        from src import backend
 
-        return _MPI.COMM_WORLD.Get_size()
-    except ImportError:
-        return 1
+        return getattr(backend, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _to_host(arr: Array | Any) -> Array | Any:
@@ -49,29 +50,29 @@ def _to_device(arr: Array | Any) -> Array | Any:
     return xp.asarray(arr)
 
 
-try:
-    import cupy as cp
-
-    IS_CUPY_BACKEND = cp.is_available()
-except Exception:
-    IS_CUPY_BACKEND = False
-    if _get_mpi_rank() == 0:
-        msg = "CuPy not available; GPU acceleration will be disabled."
-        warnings.warn(msg)
-
-# Set up the array namespace based on backend availability
-if IS_CUPY_BACKEND:
-    _dummy = cp.array([0])
-    logging.info("Array backend: CuPy")
-else:
-    _dummy = np.array([0])
-    logging.info("Array backend: NumPy")
-
-xp = array_namespace(_dummy)
-
-
 # Define project directories
 _file_path = Path(__file__).parent.resolve()
 PROJECT_DIR = _file_path.parent.resolve()
 FIGURES_DIR = PROJECT_DIR / "figures"
 RESULTS_DIR = PROJECT_DIR / "results"
+
+__all__ = [
+    "HAS_CUML",
+    "HAS_MPI",
+    "IS_CUPY_BACKEND",
+    "MPI",
+    "Array",
+    "FIGURES_DIR",
+    "PROJECT_DIR",
+    "RESULTS_DIR",
+    "_get_mpi_rank",
+    "_get_mpi_size",
+    "_to_device",
+    "_to_host",
+    "backend_info",
+    "get_mpi_rank",
+    "get_mpi_size",
+    "has_mpi",
+    "print_backend_info",
+    "xp",
+]
