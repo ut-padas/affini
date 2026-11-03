@@ -646,7 +646,7 @@ def compute_error_metrics(
         in_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error))
         in_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error))
 
-        n_in_good = int(xp.sum(ptwise_rel_error <= rtol | ptwise_abs_error <= atol))
+        n_in_good = int(xp.sum(xp.logical_or(ptwise_rel_error <= rtol, ptwise_abs_error <= atol)))
         n_in_bad = int(n_in - n_in_good)
     else:
         in_l2_rel_error = float("nan")
