@@ -167,7 +167,9 @@ def _worker_mpi_state(_):
     return has_mpi, reason
 
 
-def test_spawn_workers_never_initialise_mpi():
+def test_spawn_workers_never_initialise_mpi(monkeypatch):
+    # The worker must decide on its own (AFINNI_MPI=off would short-circuit first).
+    monkeypatch.setenv("AFINNI_MPI", "auto")
     with mp.get_context("spawn").Pool(1) as pool:
         has_mpi, reason = pool.map(_worker_mpi_state, [0])[0]
     assert has_mpi is False

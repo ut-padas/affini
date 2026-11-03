@@ -35,10 +35,13 @@ N_RANKS = int(os.environ.get("AFINNI_MPI_NP", "2"))
 def _launcher() -> list[str]:
     cmd = shlex.split(os.environ.get("AFINNI_MPIEXEC", "mpiexec"))
     # Prefer the launcher shipped inside the venv (the `mpi` extra) when present.
-    venv_bin = Path(sys.executable).parent / cmd[0]
-    for candidate in (venv_bin, venv_bin.with_suffix(".exe")):
-        if candidate.exists():
-            return [str(candidate), *cmd[1:]]
+    # MPICH (Linux/macOS) installs it next to python; Intel MPI's impi-rt
+    # (Windows) uses the conda layout, i.e. .venv\Library\bin.
+    for bin_dir in (Path(sys.executable).parent, Path(sys.prefix) / "Library" / "bin"):
+        venv_bin = bin_dir / cmd[0]
+        for candidate in (venv_bin, venv_bin.with_suffix(".exe")):
+            if candidate.exists():
+                return [str(candidate), *cmd[1:]]
     found = shutil.which(cmd[0])
     return [found, *cmd[1:]] if found else []
 

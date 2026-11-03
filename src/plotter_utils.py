@@ -324,6 +324,9 @@ def plot_adaptive_clustering_results(
         plot_in_log: Whether to render contour color normalization on a log scale.
         plot_f_abs: Whether to take the absolute value of the function for plotting.
     """
+    # Matplotlib needs host arrays; accept device (CuPy) inputs too.
+    centroids, Q = _to_host(centroids), _to_host(Q)
+
     # Get dimensions of X
     d = centroids.shape[1]
     if d != 2:

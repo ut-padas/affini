@@ -40,7 +40,7 @@ To get a runtime-only environment without the dev tools, add `--no-dev`.
 |             | Linux         | macOS (Apple Silicon, 14+) | Windows                                                             |
 | ----------- | ------------- | -------------------------- | ------------------------------------------------------------------- |
 | CPU         | ✅             | ✅                          | ✅                                                                   |
-| MPI (`mpi`) | ✅             | ✅                          | ✅ (untested)                                                        |
+| MPI (`mpi`) | ✅             | ✅                          | ✅ Intel MPI (see [Running with MPI](#running-with-mpi))             |
 | GPU (`gpu`) | ✅ CuPy + cuML | ❌ no CUDA, runs on CPU     | ✅ CuPy only. KMeans/kNN fall back to scikit-learn/FAISS on the CPU. |
 
 ### Running with MPI
@@ -50,6 +50,16 @@ uv run mpiexec -n 4 python afinni_launcher.py --dims 2 --tols 0.1 --experiment r
 ```
 > [!IMPORTANT]
 > Without `mpiexec`, or when MPI isn't installed, the same code runs as a single rank. If a script is started under `mpiexec` but MPI can't be loaded, AFINNI stops with an error. Otherwise every process would quietly run the whole job as rank 0.
+
+On Windows, Intel MPI installs `mpiexec.exe` into `.venv\Library\bin`, which `uv run` does not put on `PATH`. Add it once per PowerShell session:
+
+```powershell
+$env:PATH = "$PWD\.venv\Library\bin;$env:PATH"
+```
+
+### CPU vs GPU results
+
+Every test problem in `src/problems/` is defined identically on all backends. Their fixed random constants (rotations, directions) always come from NumPy. Sampling, meaning training/test points, the algorithm's synthetic points and KMeans initialisation, uses the active backend's own random generator. The two are not bit-for-bit identical: CPU and GPU runs are statistically equivalent, and each one is reproducible on its own.
 
 ### Overriding detection
 
