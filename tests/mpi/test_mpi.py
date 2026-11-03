@@ -61,12 +61,16 @@ def mpi_launcher() -> list[str]:
     return _launcher()
 
 
-def _run_worker(cmd: list[str], env_overrides: dict[str, str] | None = None) -> dict:
+def _run_worker(
+    cmd: list[str],
+    env_overrides: dict[str, str] | None = None,
+    module: str = "tests.mpi._mpi_worker",
+) -> dict:
     env = dict(os.environ)
     env.update(env_overrides or {})
     try:
         proc = subprocess.run(
-            [*cmd, sys.executable, "-m", "tests.mpi._mpi_worker"],
+            [*cmd, sys.executable, "-m", module],
             cwd=REPO_ROOT,
             env=env,
             capture_output=True,
@@ -103,3 +107,21 @@ def test_multi_rank_matches_serial(parallel_result, serial_result):
     assert serial_result["n_ranks"] == 1 and serial_result["has_mpi"] is False
     assert parallel_result["n_clusters"] == serial_result["n_clusters"]
     assert parallel_result["max_rel_err"] == pytest.approx(serial_result["max_rel_err"], rel=1e-6)
+
+
+def test_work_stealing_conserves_work_and_drains_messages(mpi_launcher):
+    result = _run_worker(
+        [*mpi_launcher, "-n", str(N_RANKS)],
+        module="tests.mpi._work_stealing_worker",
+    )
+    assert result["conserved"] is True
+
+
+def test_work_stealing_end_to_end_leaves_no_messages(mpi_launcher):
+    """Real refinement must grant work at a level boundary and finish cleanly."""
+    result = _run_worker(
+        [*mpi_launcher, "-n", str(N_RANKS)],
+        module="tests.mpi._steal_e2e_worker",
+    )
+    assert result["ok"] is True, result["runs"]
+    assert result["grants"] > 0, result["runs"]
