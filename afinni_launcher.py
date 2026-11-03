@@ -441,7 +441,8 @@ def anisotropic_quadratic_experiment(
         tol: float,
         error_eval_mode: SurrogateMode,
         Q_reg: float,
-        coarse_factor: int
+        coarse_factor: int,
+        N_train: int | None = None,
     ):
     from src.problems.anisotropic_quadratic_2 import aniso_quadratic, aniso_quadratic_grad, aniso_quadratic_hess
 
@@ -453,7 +454,7 @@ def anisotropic_quadratic_experiment(
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    N_TRAIN = get_N_TRAIN(dim)
+    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
@@ -500,7 +501,8 @@ def anisotropic_quadratic_modified_sampling(
         tol: float,
         error_eval_mode: SurrogateMode,
         Q_reg: float,
-        coarse_factor: int
+        coarse_factor: int,
+        N_train: int | None = None,
     ):
 
     from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad, _get_params
@@ -512,7 +514,7 @@ def anisotropic_quadratic_modified_sampling(
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    N_TRAIN = get_N_TRAIN(dim)
+    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
@@ -569,7 +571,8 @@ def anisotropic_gaussian_experiment(
         tol: float,
         error_eval_mode: SurrogateMode,
         Q_reg: float,
-        coarse_factor: int
+        coarse_factor: int,
+        N_train: int | None = None,
     ):
     from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad, aniso_gaussian_hess
 
@@ -581,7 +584,7 @@ def anisotropic_gaussian_experiment(
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    N_TRAIN = get_N_TRAIN(dim)
+    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     # NUM_INITIAL_CLUSTERS = 2
@@ -626,7 +629,8 @@ def anisotropic_gaussian_modified_sampling(
         tol: float,
         error_eval_mode: SurrogateMode,
         Q_reg: float,
-        coarse_factor: int
+        coarse_factor: int,
+        N_train: int | None = None,
     ):
     from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad, _get_random_rotation, _get_precision_eigenvalues
 
@@ -638,7 +642,7 @@ def anisotropic_gaussian_modified_sampling(
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    N_TRAIN = get_N_TRAIN(dim)
+    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
@@ -694,7 +698,8 @@ def rosenbrock_experiment(
         tol: float,
         error_eval_mode: SurrogateMode,
         Q_reg: float,
-        coarse_factor: int
+        coarse_factor: int,
+        N_train: int | None = None,
     ):
     from functools import partial
 
@@ -713,8 +718,9 @@ def rosenbrock_experiment(
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    N_TRAIN = get_N_TRAIN(dim)
-    N_TEST = N_TRAIN // 2
+    # N_TRAIN = get_N_TRAIN(dim)
+    N_TRAIN = 40000 if N_train is None else N_train
+    N_TEST = 50000
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
 
@@ -743,7 +749,7 @@ def rosenbrock_experiment(
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
         SAVE_ALL_GEN_TRAINING_DATA=False,
-        SAVE_FINAL_CENTROIDS=True,
+        SAVE_FINAL_CENTROIDS=False,
         Q_reg=Q_reg,
         COARSE_FACTOR=coarse_factor
     )
@@ -758,7 +764,8 @@ def rosenbrock_experiment_modified_sampling(
         tol: float,
         error_eval_mode: SurrogateMode,
         Q_reg: float,
-        coarse_factor: int
+        coarse_factor: int,
+        N_train: int | None = None,
     ):
     from functools import partial
 
@@ -783,7 +790,7 @@ def rosenbrock_experiment_modified_sampling(
         )
         return
 
-    N_TRAIN = get_N_TRAIN(dim)
+    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
@@ -848,7 +855,8 @@ def lorenz96_experiment(
         Q_reg: float,
         coarse_factor: int,
         forcing: float = 1.0,
-        output_component: int = 0
+        output_component: int = 0,
+        N_train: int | None = None,
     ):
     from src.problems.lorenz96_flowmap import lorenz96_flowmap
     from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
@@ -877,7 +885,7 @@ def lorenz96_experiment(
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    N_TRAIN = min(get_N_TRAIN(dim), 1000000)
+    N_TRAIN = min(get_N_TRAIN(dim), 1000000) if N_train is None else N_train
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
@@ -1089,7 +1097,7 @@ def lorenz96_low_rank_experiment(d, D, dt, tol):
 
 
 
-def lorenz_trajectories_experiment(d, tol, error_eval_mode, dt, Q_reg, coarse_factor):
+def lorenz_trajectories_experiment(d, tol, error_eval_mode, dt, Q_reg, coarse_factor, N_train=None):
     '''
     Goal: use time step data as training and testing to do experiments.
     I.e. use manifolds of solutions as initial data.
@@ -1111,6 +1119,9 @@ def lorenz_trajectories_experiment(d, tol, error_eval_mode, dt, Q_reg, coarse_fa
 
     # Use this function to generate data.
     N_start_train = 20000; N_start_test = 5000; N_steps = 9;
+    if N_train is not None:
+        # Total training points = N_start_train * (N_steps + 1)
+        N_start_train = max(1, N_train // (N_steps + 1))
     N_train = N_start_train * (N_steps + 1)
     N_test = N_start_test * (N_steps + 1)
     X_train = xp.zeros((N_start_train * (N_steps+1), d))
@@ -1301,6 +1312,7 @@ def wave_experiment(
         error_eval_mode: SurrogateMode,
         Q_reg: float,
         coarse_factor: int,
+        N_train: int | None = None,
     ):
 
     from src.problems.wave import wave, wave_grad, wave_hess
@@ -1317,7 +1329,7 @@ def wave_experiment(
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    N_TRAIN = get_N_TRAIN(dim)
+    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
@@ -1416,7 +1428,8 @@ def degenerate_quadratic_experiment(
         tol: float,
         error_eval_mode: SurrogateMode,
         Q_reg: float,
-        coarse_factor: int
+        coarse_factor: int,
+        N_train: int | None = None,
     ):
     from src.problems.degenerate_quadratic import degenerate_quadratic, degenerate_quadratic_grad, degenerate_quadratic_hess
 
@@ -1428,7 +1441,7 @@ def degenerate_quadratic_experiment(
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    N_TRAIN = get_N_TRAIN(dim)
+    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     # NUM_INITIAL_CLUSTERS = 1
@@ -1477,7 +1490,8 @@ def indef_degen_quadratic_experiment(
         tol: float,
         error_eval_mode: SurrogateMode,
         Q_reg: float,
-        coarse_factor: int
+        coarse_factor: int,
+        N_train: int | None = None,
     ):
     from src.problems.indef_degen_quadratic import indef_degen_quad, indef_degen_quad_grad, indef_degen_quad_hess
 
@@ -1489,7 +1503,7 @@ def indef_degen_quadratic_experiment(
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    N_TRAIN = get_N_TRAIN(dim)
+    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
     N_TEST = N_TRAIN // 2
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
@@ -1549,6 +1563,7 @@ def setup_argparse():
     parser.add_argument("--sampling", help="The sampling strategy to use for initial points.", type=str, default="uniform")
     parser.add_argument("--coarse_factor", help="The number of nearest neighbor points to use during inference.", type=int, default=10)
     parser.add_argument("--Q_reg", help="The regularization to use for the trust region construction, using Tikhonov.", type=float, default=1e-6)
+    parser.add_argument("--N_train", help="The number of initial training points to use.", type=int, default=None)
 
     args = parser.parse_args()
 
@@ -1597,6 +1612,7 @@ def run_experiment_from_args(args):
     sampling = args.sampling
     Q_reg = args.Q_reg
     coarse_factor = args.coarse_factor
+    N_train = args.N_train
 
     # Pick correct enum for error_eval_mode
     enum_map = {
@@ -1617,30 +1633,30 @@ def run_experiment_from_args(args):
         for d in dvec:
             if function_name == "anisotropic_quadratic":
                 if sampling == "uniform":
-                    anisotropic_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
+                    anisotropic_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
                 elif sampling == "modified":
-                    anisotropic_quadratic_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor)
+                    anisotropic_quadratic_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
             elif function_name == "anisotropic_gaussian":
                 if sampling == "uniform":
-                    anisotropic_gaussian_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
+                    anisotropic_gaussian_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
                 elif sampling == "modified":
-                    anisotropic_gaussian_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor)
+                    anisotropic_gaussian_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
             elif function_name == "degenerate_quadratic":
-                degenerate_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
+                degenerate_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
             elif function_name == "indef_degen_quadratic":
-                indef_degen_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
+                indef_degen_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
             elif function_name == "rosenbrock":
                 if sampling == "uniform":
-                    rosenbrock_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
+                    rosenbrock_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
                 elif sampling == "modified":
-                    rosenbrock_experiment_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor)
+                    rosenbrock_experiment_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
             elif function_name == "lorenz96":
                 if sampling == "uniform":
-                    lorenz96_experiment(d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor)
+                    lorenz96_experiment(d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train)
                 elif sampling == "modified":
-                    lorenz_trajectories_experiment(d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor)
+                    lorenz_trajectories_experiment(d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train)
             elif function_name == "wave":
-                wave_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor)
+                wave_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
             else:
                 print(f"Function {function_name} not recognized.")
 
