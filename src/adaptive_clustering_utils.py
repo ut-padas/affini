@@ -810,9 +810,9 @@ def compute_accepted_stats(
     g_mus_good: Optional[Array],
     dense_labels_good: Array,
     counts_good: Array,
-) -> tuple[Array, Optional[Array], Array, Optional[Array]]:
+) -> tuple[Array, Optional[Array], Array]:
     """
-    Computes Q (Trust Region shape), H (Hessian), radii, and L_obs for accepted clusters.
+    Computes Q (Trust Region shape), H (Hessian), and radii for accepted clusters.
     """
     K_good = len(counts_good)
     N_good, d = X_good.shape
@@ -843,24 +843,9 @@ def compute_accepted_stats(
         U * (scale_fac[:, None] * Lambda_inv)[:, None, :] @ U.transpose(0, 2, 1)
     )  # (K, d, d)
 
-    # --- 2. Compute Radii & L_obs ---
+    # --- 2. Compute Radii ---
     dist_euclidean = xp.sqrt(xp.sum(dx**2, axis=1))
     radii = _reduce_max_1d(dist_euclidean, good_starts)  # (K,)
-
-    L_obs = None
-    if (
-        config.requires_grad_everywhere
-        and G_good is not None
-        and g_mus_good is not None
-    ):
-        dG = G_good - g_mus_good[dense_labels_good]
-        dg_norms = xp.sqrt(xp.sum(dG**2, axis=2))
-        safe_dist = xp.maximum(dist_euclidean, TINY_EPS)[:, None]
-        ratio_pts = xp.max(dg_norms / safe_dist, axis=1)
-        ratio_pts = xp.where(
-            dist_euclidean > TINY_EPS, ratio_pts, xp.zeros_like(ratio_pts)
-        )
-        L_obs = _reduce_max_1d(ratio_pts, good_starts)  # (K,)
 
     # --- 3. Compute Hessian (If requested) ---
     Hs = None
@@ -901,7 +886,7 @@ def compute_accepted_stats(
         elif config.mode == SurrogateMode.AFFINE_COV_HESS:
             Hs = xp.linalg.inv(Cov + TINY_EPS * xp.eye(d)[None, :, :])
 
-    return Qs, Hs, radii, L_obs
+    return Qs, Hs, radii
 
 
 # -----------------------------------------------------------------------------
@@ -1173,7 +1158,6 @@ def allocate_output_buffers_host(
     }
     if not no_gradient:
         buffers["g"] = np.empty((cap, fd, d), dtype=np.float64)
-        buffers["L_obs"] = np.empty((cap,), dtype=np.float64)
     if store_hess:
         buffers["H"] = np.empty((cap, d, d), dtype=np.float64)
     if store_affine_fit:
@@ -1211,7 +1195,6 @@ def adjust_buffer_capacity_host(
     }
     if not no_gradient:
         new_buffers["g"] = np.empty((new_cap, fd, d), dtype=np.float64)
-        new_buffers["L_obs"] = np.empty((new_cap,), dtype=np.float64)
     if store_hess:
         new_buffers["H"] = np.empty((new_cap, d, d), dtype=np.float64)
     if store_affine_fit:

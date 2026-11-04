@@ -593,7 +593,7 @@ def _run_local_refinement(
                     # ==========================================
                     # MATH PIPELINE STAGE 2
                     # ==========================================
-                    Qs, Hs, radii, L_obs = compute_accepted_stats(
+                    Qs, Hs, radii = compute_accepted_stats(
                         config,
                         X_good,
                         G_good,
@@ -635,8 +635,6 @@ def _run_local_refinement(
                         buffers["g"][out_count:end_out] = _to_host(
                             g_mus[good_idx_local]
                         )
-                    if L_obs is not None:
-                        buffers["L_obs"][out_count:end_out] = _to_host(L_obs)
                     if Hs is not None:
                         buffers["H"][out_count:end_out] = _to_host(Hs)
                     if "A" in surrogate_params and "b" in surrogate_params:
