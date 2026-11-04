@@ -743,8 +743,7 @@ def rosenbrock_experiment(
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    # N_TRAIN = get_N_TRAIN(dim)
-    N_TRAIN = 40000 if N_train is None else N_train
+    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
     N_TEST = 50000
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
@@ -1167,7 +1166,7 @@ def lorenz_trajectories_experiment(
             X_train[((j - 1) * N_start_train) : (j * N_start_train)]
         )
         X_test[(j * N_start_test) : ((j + 1) * N_start_test)] = f_fn(
-            X_train[((j - 1) * N_start_test) : (j * N_start_test)]
+            X_test[((j - 1) * N_start_test) : (j * N_start_test)]
         )
 
     # Put this into HATANN
