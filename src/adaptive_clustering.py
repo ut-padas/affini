@@ -1100,14 +1100,6 @@ def adaptive_clustering(
                 f"Selected mode {ERROR_EVAL_MODE.value} requires storing affine fit parameters. Overriding STORE_AFFINE_FIT_PER_CLUSTER to True."
             )
 
-    if USE_WORK_STEALING:
-        if MAX_LEVELS <= 100:
-            _safe_MAX_LEVELS = 1000
-            logger.warning(
-                f"Work stealing enabled but MAX_LEVELS is only {MAX_LEVELS}. Overriding MAX_LEVELS to {_safe_MAX_LEVELS} to ensure sufficient stealing opportunities across levels."
-            )
-            MAX_LEVELS = _safe_MAX_LEVELS
-
     config = ClusteringConfig(
         mode=ERROR_EVAL_MODE,
         error_metric=ERROR_METRIC,
@@ -1123,6 +1115,16 @@ def adaptive_clustering(
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
+
+    # With one rank there are no stealing opportunities, so respect the
+    # caller's refinement limit even when USE_WORK_STEALING defaults to True.
+    if USE_WORK_STEALING and size > 1 and MAX_LEVELS <= 100:
+        _safe_MAX_LEVELS = 1000
+        logger.warning(
+            f"Work stealing enabled but MAX_LEVELS is only {MAX_LEVELS}. Overriding MAX_LEVELS to {_safe_MAX_LEVELS} to ensure sufficient stealing opportunities across levels."
+        )
+        MAX_LEVELS = _safe_MAX_LEVELS
+
     _start_time = time.perf_counter()
 
     profiling_stats = {

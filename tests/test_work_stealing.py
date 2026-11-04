@@ -139,3 +139,30 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
         assert buffers["counts"][0] == 3
         assert buffers["centroids"][0, 0] == 1
         assert len(comm.payloads) == 3 + int(has_g)
+
+
+@pytest.mark.parametrize("stealing", [False, True])
+@pytest.mark.parametrize("max_levels", [0, 1])
+def test_single_rank_respects_refinement_limit(monkeypatch, stealing, max_levels):
+    from src.backend import _SerialMPI
+
+    monkeypatch.setattr(ac, "MPI", _SerialMPI)
+    result = ac.adaptive_clustering(
+        ac.xp.asarray(np.linspace(-1, 1, 128).reshape(-1, 1)),
+        f_fn=lambda x: x**2,
+        ATOL=1e-4,
+        RTOL=1e-4,
+        ERROR_EVAL_MODE=SurrogateMode.AFFINE_COV_NO_HESS,
+        NUM_INITIAL_CLUSTERS=1,
+        MIN_PTS_PER_CLUSTER=4,
+        MAX_CLUSTERS_EST=100,
+        MAX_LEVELS=max_levels,
+        USE_WORK_STEALING=stealing,
+    )
+    # Levels are numbered from zero, so the existing inclusive limit permits
+    # max_levels + 1 passes. The final queued clusters prove the depth cap,
+    # rather than convergence, stopped this run.
+    assert result["num_levels"] == max_levels + 1
+    levels = result["profiling_stats"]["level_stats"]
+    assert levels[-1]["level"] == max_levels
+    assert levels[-1]["clusters_level_end"] > 0
