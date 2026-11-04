@@ -1,12 +1,13 @@
+import argparse
 import json
 import logging
 import time
-import jax
 from collections import defaultdict
 from itertools import product
 from pathlib import Path
 from typing import Literal
-import argparse
+
+import jax
 from tqdm import tqdm
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_host, xp
@@ -16,14 +17,14 @@ from src.heuristic_parameters import (
     get_N_TRAIN,
     get_NUM_INITIAL_CLUSTERS,
 )
-from src.plotter_utils import \
-    plot_adaptive_clustering_results, \
-    plot_error_histogram, \
-    plot_cluster_projections_for_wave, \
-    plot_wave_2d_errors, \
-    plot_wave_line_errors, \
-    plot_near_centers
-
+from src.plotter_utils import (
+    plot_adaptive_clustering_results,
+    plot_cluster_projections_for_wave,
+    plot_error_histogram,
+    plot_near_centers,
+    plot_wave_2d_errors,
+    plot_wave_line_errors,
+)
 from src.surrogate import AFINNISurrogate, compute_error_metrics
 
 SC26_DIR = RESULTS_DIR / "sc26"
@@ -95,7 +96,7 @@ def conduct_experiment_given_data(
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
     SAVE_FINAL_CENTROIDS: bool = False,
 ):
-    
+
     if json_fpath.exists():
         if _rank == 0:
             print(f"Experiment already exists at {json_fpath}. Skipping...")
@@ -134,7 +135,7 @@ def conduct_experiment_given_data(
             STORE_AFFINE_FIT=True,
             SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
             HESSIAN=HESSIAN,
-            Q_REG=Q_reg
+            Q_REG=Q_reg,
         )
         _train_time = time.perf_counter() - _start_train_time
         _TRAINED = True
@@ -154,7 +155,7 @@ def conduct_experiment_given_data(
             query_points=X_test,
             k_nn=K_NEIGHBOURS,
             strict_trust_region=False,
-            coarse_factor=COARSE_FACTOR
+            coarse_factor=COARSE_FACTOR,
         )
         _predict_time = time.perf_counter() - _start_predict_time
         _PREDICTED = True
@@ -232,26 +233,33 @@ def conduct_experiment_given_data(
             plot_in_log=CENTROIDS_PLOT_IN_LOG_SCALE,
         )
 
-    
     if json_fpath.parent.name == "wave":
-        
-        proj_plot_save_path = json_fpath.with_name(json_fpath.stem + "_projection_plot.png")
-        plot_cluster_projections_for_wave(_to_host(surrogate.X_src), proj_plot_save_path, DIM)
-        
+
+        proj_plot_save_path = json_fpath.with_name(
+            json_fpath.stem + "_projection_plot.png"
+        )
+        plot_cluster_projections_for_wave(
+            _to_host(surrogate.X_src), proj_plot_save_path, DIM
+        )
+
         if DIM == 2:
-            err_plot_save_path = json_fpath.with_name(json_fpath.stem + "_error_plot.png")
+            err_plot_save_path = json_fpath.with_name(
+                json_fpath.stem + "_error_plot.png"
+            )
             plot_wave_2d_errors(surrogate, DOMAIN, f_fn, err_plot_save_path)
 
-        err_plot2_save_path = json_fpath.with_name(json_fpath.stem + "_projerror_plot.png")
+        err_plot2_save_path = json_fpath.with_name(
+            json_fpath.stem + "_projerror_plot.png"
+        )
         plot_wave_line_errors(surrogate, DOMAIN, f_fn, err_plot2_save_path)
 
-        center_plot_save_path = json_fpath.with_name(json_fpath.stem + "_centers_plot.png")
+        center_plot_save_path = json_fpath.with_name(
+            json_fpath.stem + "_centers_plot.png"
+        )
         target = xp.array([3, -3.5, 2, 3, 4])
         plot_near_centers(surrogate, target, DOMAIN, f_fn, center_plot_save_path)
 
-        print('Plots complete')
-
-
+        print("Plots complete")
 
 
 def conduct_experiment_generate_uniform_data(
@@ -322,7 +330,7 @@ def conduct_experiment_generate_uniform_data(
         COARSE_FACTOR,
         CENTROIDS_PLOT_IN_LOG_SCALE,
         SAVE_ALL_GEN_TRAINING_DATA,
-        SAVE_FINAL_CENTROIDS
+        SAVE_FINAL_CENTROIDS,
     )
 
 
@@ -387,6 +395,8 @@ def create_summary_dataframe(exp_dir: Path):
 """
 This is deprecated at the moment (incomplete).
 """
+
+
 class NelsonBatchSolver:
 
     def __init__(self, env):
@@ -396,9 +406,10 @@ class NelsonBatchSolver:
         # First, import stuff
         import sys
         from pathlib import Path
+
         repo_root = Path(__file__).parent
         sys.path.insert(0, str(repo_root / "chemistry-benchmark-surrogates" / "src"))
-        from PythonODE import parser # type: ignore
+        from PythonODE import parser  # type: ignore
 
         # solver settings
         atol = 1e-16
@@ -406,21 +417,23 @@ class NelsonBatchSolver:
 
         # Parse the KIDA files
         print("Pasrsing gas network.\n")
-        net = parser.KidaNetwork(grains = False)
-        net.load_from_disk("chemistry-benchmark-surrogates/networks/nelson/gas_reactions.in")
+        net = parser.KidaNetwork(grains=False)
+        net.load_from_disk(
+            "chemistry-benchmark-surrogates/networks/nelson/gas_reactions.in"
+        )
         dropped = net.drop_passive_species()
         print(f"Dropped passive species: {dropped}")
         print("Constructing matrices A and B.")
         self.A, self.B = net.get_tensors(env)
 
-
     def batch_solve(self, X, dt):
 
         import sys
         from pathlib import Path
+
         repo_root = Path(__file__).parent
         sys.path.insert(0, str(repo_root / "chemistry-benchmark-surrogates" / "src"))
-        from PythonODE import parser # type: ignore
+        from PythonODE import parser  # type: ignore
 
         atol = 1e-16
         rtol = 1e-4
@@ -428,24 +441,28 @@ class NelsonBatchSolver:
         Y = xp.zeros_like(X)
         for j, state in enumerate(X):
             q = parser.QuadraticSolverPoint()
-            [t,y] = q.solve(self.A, self.B, [0, dt], state, atol=atol, rtol=rtol)
-            Y[j] = y[:,-1]
+            [t, y] = q.solve(self.A, self.B, [0, dt], state, atol=atol, rtol=rtol)
+            Y[j] = y[:, -1]
 
         return Y
 
 
-
 ### --- BEGIN EXPERIMENT FUNCTIONS --- ###
 
+
 def anisotropic_quadratic_experiment(
-        dim: int,
-        tol: float,
-        error_eval_mode: SurrogateMode,
-        Q_reg: float,
-        coarse_factor: int,
-        N_train: int | None = None,
-    ):
-    from src.problems.anisotropic_quadratic_2 import aniso_quadratic, aniso_quadratic_grad, aniso_quadratic_hess
+    dim: int,
+    tol: float,
+    error_eval_mode: SurrogateMode,
+    Q_reg: float,
+    coarse_factor: int,
+    N_train: int | None = None,
+):
+    from src.problems.anisotropic_quadratic_2 import (
+        aniso_quadratic,
+        aniso_quadratic_grad,
+        aniso_quadratic_hess,
+    )
 
     EXP_DIR = SC26_DIR / "anisotropic_quadratic_2"
 
@@ -485,7 +502,7 @@ def anisotropic_quadratic_experiment(
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
         Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor
+        COARSE_FACTOR=coarse_factor,
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -494,15 +511,20 @@ def anisotropic_quadratic_experiment(
 
 
 def anisotropic_quadratic_modified_sampling(
-        dim: int,
-        tol: float,
-        error_eval_mode: SurrogateMode,
-        Q_reg: float,
-        coarse_factor: int,
-        N_train: int | None = None,
-    ):
+    dim: int,
+    tol: float,
+    error_eval_mode: SurrogateMode,
+    Q_reg: float,
+    coarse_factor: int,
+    N_train: int | None = None,
+):
 
-    from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad, _get_params
+    from src.problems.anisotropic_quadratic import (
+        _get_params,
+        aniso_quadratic,
+        aniso_quadratic_grad,
+    )
+
     EXP_DIR = SC26_DIR / "anisotropic_quadratic_modified_sampling"
 
     F_DIM = 1
@@ -530,7 +552,7 @@ def anisotropic_quadratic_modified_sampling(
     cov = 0.5 * xp.linalg.inv(H)
     X_train = xp.random.multivariate_normal(mean, cov, size=N_TRAIN)
     X_test = xp.random.multivariate_normal(mean, cov, size=N_TEST)
-    
+
     conduct_experiment_given_data(
         # Problem-specific
         json_fpath=json_fpath,
@@ -553,7 +575,7 @@ def anisotropic_quadratic_modified_sampling(
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
         COARSE_FACTOR=coarse_factor,
-        Q_reg=Q_reg
+        Q_reg=Q_reg,
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -562,14 +584,18 @@ def anisotropic_quadratic_modified_sampling(
 
 
 def anisotropic_gaussian_experiment(
-        dim: int,
-        tol: float,
-        error_eval_mode: SurrogateMode,
-        Q_reg: float,
-        coarse_factor: int,
-        N_train: int | None = None,
-    ):
-    from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad, aniso_gaussian_hess
+    dim: int,
+    tol: float,
+    error_eval_mode: SurrogateMode,
+    Q_reg: float,
+    coarse_factor: int,
+    N_train: int | None = None,
+):
+    from src.problems.anisotropic_gaussian import (
+        aniso_gaussian,
+        aniso_gaussian_grad,
+        aniso_gaussian_hess,
+    )
 
     EXP_DIR = SC26_DIR / "anisotropic_gaussian"
 
@@ -611,7 +637,7 @@ def anisotropic_gaussian_experiment(
         USE_V2=USE_V2,
         CENTROIDS_PLOT_IN_LOG_SCALE=False,
         Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor
+        COARSE_FACTOR=coarse_factor,
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -620,14 +646,19 @@ def anisotropic_gaussian_experiment(
 
 
 def anisotropic_gaussian_modified_sampling(
-        dim: int,
-        tol: float,
-        error_eval_mode: SurrogateMode,
-        Q_reg: float,
-        coarse_factor: int,
-        N_train: int | None = None,
-    ):
-    from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad, _get_random_rotation, _get_precision_eigenvalues
+    dim: int,
+    tol: float,
+    error_eval_mode: SurrogateMode,
+    Q_reg: float,
+    coarse_factor: int,
+    N_train: int | None = None,
+):
+    from src.problems.anisotropic_gaussian import (
+        _get_precision_eigenvalues,
+        _get_random_rotation,
+        aniso_gaussian,
+        aniso_gaussian_grad,
+    )
 
     EXP_DIR = SC26_DIR / "anisotropic_gaussian_modified_sampling"
 
@@ -652,7 +683,7 @@ def anisotropic_gaussian_modified_sampling(
     beta = 1
     Q = xp.asarray(_get_random_rotation(dim, xp.float64))  # helpers return NumPy
     Lambda = xp.diag(xp.asarray(_get_precision_eigenvalues(dim, xp.float64, decay_exp)))
-    Ainv = Q @ (Lambda ** -1.0) @ Q.T
+    Ainv = Q @ (Lambda**-1.0) @ Q.T
     X_train = xp.random.randn(N_TRAIN, dim) @ Ainv
     X_test = xp.random.randn(N_TEST, dim) @ Ainv
 
@@ -679,7 +710,7 @@ def anisotropic_gaussian_modified_sampling(
         USE_V2=USE_V2,
         CENTROIDS_PLOT_IN_LOG_SCALE=False,
         Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor
+        COARSE_FACTOR=coarse_factor,
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -687,15 +718,14 @@ def anisotropic_gaussian_modified_sampling(
     return EXP_DIR
 
 
-
 def rosenbrock_experiment(
-        dim: int,
-        tol: float,
-        error_eval_mode: SurrogateMode,
-        Q_reg: float,
-        coarse_factor: int,
-        N_train: int | None = None,
-    ):
+    dim: int,
+    tol: float,
+    error_eval_mode: SurrogateMode,
+    Q_reg: float,
+    coarse_factor: int,
+    N_train: int | None = None,
+):
     from functools import partial
 
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess
@@ -746,7 +776,7 @@ def rosenbrock_experiment(
         SAVE_ALL_GEN_TRAINING_DATA=False,
         SAVE_FINAL_CENTROIDS=False,
         Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor
+        COARSE_FACTOR=coarse_factor,
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -755,13 +785,13 @@ def rosenbrock_experiment(
 
 
 def rosenbrock_experiment_modified_sampling(
-        dim: int,
-        tol: float,
-        error_eval_mode: SurrogateMode,
-        Q_reg: float,
-        coarse_factor: int,
-        N_train: int | None = None,
-    ):
+    dim: int,
+    tol: float,
+    error_eval_mode: SurrogateMode,
+    Q_reg: float,
+    coarse_factor: int,
+    N_train: int | None = None,
+):
     from functools import partial
 
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
@@ -799,11 +829,13 @@ def rosenbrock_experiment_modified_sampling(
     if dim > 2:
         print("Not implemented yet for dimensions other than d=2.")
         return
-    a = 1.0; b = 5.0; mu = 1.0;
-    x1_train = xp.random.randn(N_TRAIN) / (2*a) + mu
-    x2_train = xp.random.randn(N_TRAIN) / (2*b) + (x1_train**2)
-    x1_test = xp.random.randn(N_TEST) / (2*a) + mu
-    x2_test = xp.random.randn(N_TEST) / (2*b) + (x1_test**2)
+    a = 1.0
+    b = 5.0
+    mu = 1.0
+    x1_train = xp.random.randn(N_TRAIN) / (2 * a) + mu
+    x2_train = xp.random.randn(N_TRAIN) / (2 * b) + (x1_train**2)
+    x1_test = xp.random.randn(N_TEST) / (2 * a) + mu
+    x2_test = xp.random.randn(N_TEST) / (2 * b) + (x1_test**2)
     X_train = xp.column_stack((x1_train, x2_train))
     X_test = xp.column_stack((x1_test, x2_test))
 
@@ -831,7 +863,7 @@ def rosenbrock_experiment_modified_sampling(
         SAVE_ALL_GEN_TRAINING_DATA=False,
         SAVE_FINAL_CENTROIDS=True,
         Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor
+        COARSE_FACTOR=coarse_factor,
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -842,17 +874,19 @@ def rosenbrock_experiment_modified_sampling(
 """
 Does the experiment for mapping to a single component of the output.
 """
+
+
 def lorenz96_experiment(
-        dim: int,
-        tol: float,
-        error_eval_mode: SurrogateMode,
-        tf: float,
-        Q_reg: float,
-        coarse_factor: int,
-        forcing: float = 1.0,
-        output_component: int = 0,
-        N_train: int | None = None,
-    ):
+    dim: int,
+    tol: float,
+    error_eval_mode: SurrogateMode,
+    tf: float,
+    Q_reg: float,
+    coarse_factor: int,
+    forcing: float = 1.0,
+    output_component: int = 0,
+    N_train: int | None = None,
+):
     from src.problems.lorenz96_flowmap import lorenz96_flowmap
     from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
 
@@ -863,9 +897,9 @@ def lorenz96_experiment(
             # For now, just assume that X lives on a GPU.
             X_jax = jax.dlpack.from_dlpack(x)
             Y_jax = lorenz96_flowmap_jax_batched(X_jax, forcing, tf)
-            return cp.from_dlpack(Y_jax)[:,output_component,0].reshape(N,1)
+            return cp.from_dlpack(Y_jax)[:, output_component, 0].reshape(N, 1)
         else:
-            f = lorenz96_flowmap(x, forcing, tf)[:,output_component]
+            f = lorenz96_flowmap(x, forcing, tf)[:, output_component]
             return f.reshape(N, 1)
 
     # def lorenz_grad(x):
@@ -909,13 +943,12 @@ def lorenz96_experiment(
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
         Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor
+        COARSE_FACTOR=coarse_factor,
     )
 
     create_summary_dataframe(EXP_DIR)
 
     return EXP_DIR
-
 
 
 # TODO: probably can remove this
@@ -935,12 +968,13 @@ def lorenz96_dimension_scaling_experiment():
     #     N, _ = f.shape
     #     return f[:, 0].reshape((N, 1))
     from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
+
     def lorenz(X):
         N, d = X.shape
         # For now, just assume that X lives on a GPU.
         X_jax = jax.dlpack.from_dlpack(X)
         Y_jax = lorenz96_flowmap_jax_batched(X_jax, FORCING, FINAL_TIME)
-        return cp.from_dlpack(Y_jax)[:,0,0].reshape(N,1)
+        return cp.from_dlpack(Y_jax)[:, 0, 0].reshape(N, 1)
 
     # def lorenz_grad(x):
     #     g = lorenz96_flowmap_grad_auto(x, FORCING, FINAL_TIME)
@@ -1012,10 +1046,9 @@ def lorenz96_dimension_scaling_experiment():
     return EXP_DIR
 
 
-
 # TODO: what to do with this guy?
 def lorenz96_low_rank_experiment(d, D, dt, tol):
-    '''
+    """
     Goal: vary some of the variables and keep others fixed.
     Does HATANN behave like a low-rank function in this case? We hope so.
     Compare the behavior of the algorithm to running Lorenz for the low number of variables.
@@ -1025,7 +1058,7 @@ def lorenz96_low_rank_experiment(d, D, dt, tol):
     - d=5, D=10, dt=0.2, tol=varying
     - d=5, D=20, dt=0.2, tol=varying
     - d=5, D=40, dt=0.2, tol=varying
-    '''
+    """
 
     print(f"Running simulation for d={d}, D={D}, dt={dt}, tol={tol}...")
 
@@ -1033,9 +1066,10 @@ def lorenz96_low_rank_experiment(d, D, dt, tol):
     dims2vary = xp.arange(d)
     dims2fix = xp.setdiff1d(xp.arange(D), dims2vary)
     d_fixed = D - len(dims2vary)
-    l = -5.0; r = 5.0
+    l = -5.0
+    r = 5.0
     domain = [l, r]
-    N_train = get_N_TRAIN(d) # use low-dim amount of data
+    N_train = get_N_TRAIN(d)  # use low-dim amount of data
     N_test = N_train // 2
     forcing = 1
     dt = 0.2
@@ -1043,89 +1077,98 @@ def lorenz96_low_rank_experiment(d, D, dt, tol):
     # Generate initial data in the low rank subspace. Fix the variables def. by dims2fix
     fixed_row = xp.random.uniform(low=l, high=r, size=d_fixed)
     X_train = xp.empty((N_train, D))
-    X_train[:,dims2vary] = xp.random.uniform(l, r, size=(N_train, d))
-    X_train[:,dims2fix] = xp.outer(xp.ones(N_train), fixed_row)
+    X_train[:, dims2vary] = xp.random.uniform(l, r, size=(N_train, d))
+    X_train[:, dims2fix] = xp.outer(xp.ones(N_train), fixed_row)
 
     # In the same way, generate the testing data
     X_test = xp.empty((N_test, D))
-    X_test[:,dims2vary] = xp.random.uniform(l, r, size=(N_test, d))
-    X_test[:,dims2fix] = xp.outer(xp.ones(N_test), fixed_row)
+    X_test[:, dims2vary] = xp.random.uniform(l, r, size=(N_test, d))
+    X_test[:, dims2fix] = xp.outer(xp.ones(N_test), fixed_row)
 
     # Use the entire function
     from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
+
     def f_fn(X):
         N, d = X.shape
         # For now, just assume that X lives on a GPU.
         X_jax = jax.dlpack.from_dlpack(X)
         Y_jax = lorenz96_flowmap_jax_batched(X_jax, forcing, dt)
-        return cp.from_dlpack(Y_jax)[:,0,:]
+        return cp.from_dlpack(Y_jax)[:, 0, :]
         # return cp.from_dlpack(Y_jax)[:,0,0].reshape(N,1)
 
     # Put this into HATANN
     EXP_DIR = SC26_DIR / "lorenz_lowrankexp"
-    json_fpath = (
-        EXP_DIR / f"ambdim_{d}_fulldim{D}_dt{dt}_tol{tol}_ntrain{N_train}.json"
-    )
+    json_fpath = EXP_DIR / f"ambdim_{d}_fulldim{D}_dt{dt}_tol{tol}_ntrain{N_train}.json"
 
     conduct_experiment_given_data(
-        json_fpath = json_fpath,
-        DOMAIN = domain,
-        F_DIM = D,
-        DIM = D,
-        N_TRAIN = N_train,
-        N_TEST = N_test,
-        X_train = X_train,
-        X_test = X_test,
-        f_fn = f_fn,
-        g_fn = None,
-        TOL = tol,
-        ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS,
-        ERROR_METRIC = 'Linf-global',
-        INITIAL_CLUSTERING_METHOD = 'kmeans',
-        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(d),
-        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(d),
-        USE_WORK_STEALING = False
+        json_fpath=json_fpath,
+        DOMAIN=domain,
+        F_DIM=D,
+        DIM=D,
+        N_TRAIN=N_train,
+        N_TEST=N_test,
+        X_train=X_train,
+        X_test=X_test,
+        f_fn=f_fn,
+        g_fn=None,
+        TOL=tol,
+        ERROR_EVAL_MODE=SurrogateMode.AFFINE_COV_HESS,
+        ERROR_METRIC="Linf-global",
+        INITIAL_CLUSTERING_METHOD="kmeans",
+        NUM_INITIAL_CLUSTERS=get_NUM_INITIAL_CLUSTERS(d),
+        MIN_PTS_PER_CLUSTER=get_MIN_PTS_PER_CLUSTER(d),
+        USE_WORK_STEALING=False,
     )
 
     create_summary_dataframe(EXP_DIR)
     return EXP_DIR
 
 
-
-def lorenz_trajectories_experiment(d, tol, error_eval_mode, dt, Q_reg, coarse_factor, N_train=None):
-    '''
+def lorenz_trajectories_experiment(
+    d, tol, error_eval_mode, dt, Q_reg, coarse_factor, N_train=None
+):
+    """
     Goal: use time step data as training and testing to do experiments.
     I.e. use manifolds of solutions as initial data.
-    '''
+    """
     # Parameters for experiment
-    l = -5.0; r = 5.0; domain = [l, r]
+    l = -5.0
+    r = 5.0
+    domain = [l, r]
     N_test = 50_000
     forcing = 1
 
     # Define the function
     from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
+
     def f_fn(X):
         N, d = X.shape
         # For now, just assume that X lives on a GPU.
         X_jax = jax.dlpack.from_dlpack(X)
         Y_jax = lorenz96_flowmap_jax_batched(X_jax, forcing, dt)
-        return cp.from_dlpack(Y_jax)[:,0,:]
+        return cp.from_dlpack(Y_jax)[:, 0, :]
         # return cp.from_dlpack(Y_jax)[:,0,0].reshape(N,1)
 
     # Use this function to generate data.
-    N_start_train = 20000; N_start_test = 5000; N_steps = 9;
+    N_start_train = 20000
+    N_start_test = 5000
+    N_steps = 9
     if N_train is not None:
         # Total training points = N_start_train * (N_steps + 1)
         N_start_train = max(1, N_train // (N_steps + 1))
     N_train = N_start_train * (N_steps + 1)
     N_test = N_start_test * (N_steps + 1)
-    X_train = xp.zeros((N_start_train * (N_steps+1), d))
-    X_train[:N_start_train,:] = xp.random.uniform(l, r, size=(N_start_train, d))
-    X_test = xp.zeros((N_start_test * (N_steps+1), d))
-    X_test[:N_start_test,:] = xp.random.uniform(l, r, size=(N_start_test, d))
+    X_train = xp.zeros((N_start_train * (N_steps + 1), d))
+    X_train[:N_start_train, :] = xp.random.uniform(l, r, size=(N_start_train, d))
+    X_test = xp.zeros((N_start_test * (N_steps + 1), d))
+    X_test[:N_start_test, :] = xp.random.uniform(l, r, size=(N_start_test, d))
     for j in range(1, N_steps + 1):
-        X_train[(j*N_start_train):((j+1)*N_start_train)] = f_fn(X_train[((j-1)*N_start_train):(j*N_start_train)])
-        X_test[(j*N_start_test):((j+1)*N_start_test)] = f_fn(X_train[((j-1)*N_start_test):(j*N_start_test)])
+        X_train[(j * N_start_train) : ((j + 1) * N_start_train)] = f_fn(
+            X_train[((j - 1) * N_start_train) : (j * N_start_train)]
+        )
+        X_test[(j * N_start_test) : ((j + 1) * N_start_test)] = f_fn(
+            X_train[((j - 1) * N_start_test) : (j * N_start_test)]
+        )
 
     # Put this into HATANN
     EXP_DIR = SC26_DIR / "lorenz_trajexp"
@@ -1134,101 +1177,104 @@ def lorenz_trajectories_experiment(d, tol, error_eval_mode, dt, Q_reg, coarse_fa
     )
 
     conduct_experiment_given_data(
-        json_fpath = json_fpath,
-        DOMAIN = domain,
-        F_DIM = d,
-        DIM = d,
-        N_TRAIN = N_train,
-        N_TEST = N_test,
-        X_train = X_train,
-        X_test = X_test,
-        f_fn = f_fn,
-        g_fn = None,
-        TOL = tol,
-        ERROR_EVAL_MODE = error_eval_mode,
-        ERROR_METRIC = 'Linf-global',
-        INITIAL_CLUSTERING_METHOD = 'kmeans',
-        NUM_INITIAL_CLUSTERS = min(get_NUM_INITIAL_CLUSTERS(d), 1000),
-        MIN_PTS_PER_CLUSTER = min(get_MIN_PTS_PER_CLUSTER(d), 500),
-        USE_WORK_STEALING = False,
+        json_fpath=json_fpath,
+        DOMAIN=domain,
+        F_DIM=d,
+        DIM=d,
+        N_TRAIN=N_train,
+        N_TEST=N_test,
+        X_train=X_train,
+        X_test=X_test,
+        f_fn=f_fn,
+        g_fn=None,
+        TOL=tol,
+        ERROR_EVAL_MODE=error_eval_mode,
+        ERROR_METRIC="Linf-global",
+        INITIAL_CLUSTERING_METHOD="kmeans",
+        NUM_INITIAL_CLUSTERS=min(get_NUM_INITIAL_CLUSTERS(d), 1000),
+        MIN_PTS_PER_CLUSTER=min(get_MIN_PTS_PER_CLUSTER(d), 500),
+        USE_WORK_STEALING=False,
         Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor
+        COARSE_FACTOR=coarse_factor,
     )
 
     create_summary_dataframe(EXP_DIR)
     return EXP_DIR
 
 
-
 def nelson_trajectories_experiment():
-    '''
+    """
     Goal: use time step data as training and testing to do experiments.
-    '''
+    """
     # Parameters for experiment
     # Sample uniformly in powers, then take log, to cover all scales
-    l = -20.0; r = 0.0; domain = [l, r]
+    l = -20.0
+    r = 0.0
+    domain = [l, r]
     d = 14
 
     # --- Define the function ---
 
     # Nelson solver settings
     env = dict(
-        T=10.0,             # Gas temperature 
-        nH=2e4,             # Hydrogen number density
-        Av=15.0,            # Visual Extinction
-        uv_flux=1,          # Standard interstellar radiation field, G_0
-        Tcap_2body=True,    # Set temperature to tmin or tmax if outside [tmin, tmax]
-        Tgrain=10.0,        # Grain temperature
+        T=10.0,  # Gas temperature
+        nH=2e4,  # Hydrogen number density
+        Av=15.0,  # Visual Extinction
+        uv_flux=1,  # Standard interstellar radiation field, G_0
+        Tcap_2body=True,  # Set temperature to tmin or tmax if outside [tmin, tmax]
+        Tgrain=10.0,  # Grain temperature
     )
     solver = NelsonBatchSolver(env)
-    dt = 1000 * 365 * 24 * 3600 # 1000 years
+    dt = 1000 * 365 * 24 * 3600  # 1000 years
     f_fn = lambda X: solver.batch_solve(X, dt)
 
     # Use this function to generate data.
-    N_start_train = 25000; N_start_test = 12500; N_steps = 39;
+    N_start_train = 25000
+    N_start_test = 12500
+    N_steps = 39
     N_train = N_start_train * (N_steps + 1)
     N_test = N_start_test * (N_steps + 1)
-    X_train = xp.zeros((N_start_train * (N_steps+1), d))
+    X_train = xp.zeros((N_start_train * (N_steps + 1), d))
     powers = xp.random.uniform(l, r, size=(N_start_train, d))
-    X_train[:N_start_train,:] = 10 ** powers
-    X_test = xp.zeros((N_start_test * (N_steps+1), d))
+    X_train[:N_start_train, :] = 10**powers
+    X_test = xp.zeros((N_start_test * (N_steps + 1), d))
     powers = xp.random.uniform(l, r, size=(N_start_test, d))
-    X_test[:N_start_test,:] = 10 ** powers
+    X_test[:N_start_test, :] = 10**powers
     for j in range(1, N_steps + 1):
-        X_train[(j*N_start_train):((j+1)*N_start_train)] = f_fn(X_train[((j-1)*N_start_train):(j*N_start_train)])
-        X_test[(j*N_start_test):((j+1)*N_start_test)] = f_fn(X_train[((j-1)*N_start_test):(j*N_start_test)])
+        X_train[(j * N_start_train) : ((j + 1) * N_start_train)] = f_fn(
+            X_train[((j - 1) * N_start_train) : (j * N_start_train)]
+        )
+        X_test[(j * N_start_test) : ((j + 1) * N_start_test)] = f_fn(
+            X_train[((j - 1) * N_start_test) : (j * N_start_test)]
+        )
 
     # Put this into HATANN
     tol = 0.05
     EXP_DIR = SC26_DIR / "nelson_trajexp"
-    json_fpath = (
-        EXP_DIR / f"dim{d}_tol{tol}_ntrain{N_train}.json"
-    )
+    json_fpath = EXP_DIR / f"dim{d}_tol{tol}_ntrain{N_train}.json"
 
     conduct_experiment_given_data(
-        json_fpath = json_fpath,
-        DOMAIN = domain,
-        F_DIM = d,
-        DIM = d,
-        N_TRAIN = N_train,
-        N_TEST = N_test,
-        X_train = X_train,
-        X_test = X_test,
-        f_fn = f_fn,
-        g_fn = None,
-        TOL = tol,
-        ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS,
-        ERROR_METRIC = 'Linf-global',
-        INITIAL_CLUSTERING_METHOD = 'kmeans',
-        NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(d),
-        MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(d),
-        USE_WORK_STEALING = False
+        json_fpath=json_fpath,
+        DOMAIN=domain,
+        F_DIM=d,
+        DIM=d,
+        N_TRAIN=N_train,
+        N_TEST=N_test,
+        X_train=X_train,
+        X_test=X_test,
+        f_fn=f_fn,
+        g_fn=None,
+        TOL=tol,
+        ERROR_EVAL_MODE=SurrogateMode.AFFINE_COV_HESS,
+        ERROR_METRIC="Linf-global",
+        INITIAL_CLUSTERING_METHOD="kmeans",
+        NUM_INITIAL_CLUSTERS=get_NUM_INITIAL_CLUSTERS(d),
+        MIN_PTS_PER_CLUSTER=get_MIN_PTS_PER_CLUSTER(d),
+        USE_WORK_STEALING=False,
     )
 
     create_summary_dataframe(EXP_DIR)
     return EXP_DIR
-
-
 
 
 def indefinite_quadratic_experiment():
@@ -1302,13 +1348,13 @@ def indefinite_quadratic_experiment():
 
 
 def wave_experiment(
-        dim: int,
-        tol: float,
-        error_eval_mode: SurrogateMode,
-        Q_reg: float,
-        coarse_factor: int,
-        N_train: int | None = None,
-    ):
+    dim: int,
+    tol: float,
+    error_eval_mode: SurrogateMode,
+    Q_reg: float,
+    coarse_factor: int,
+    N_train: int | None = None,
+):
 
     from src.problems.wave import wave, wave_grad, wave_hess
 
@@ -1356,7 +1402,7 @@ def wave_experiment(
         SAVE_ALL_GEN_TRAINING_DATA=False,
         SAVE_FINAL_CENTROIDS=False,
         Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor
+        COARSE_FACTOR=coarse_factor,
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -1367,7 +1413,9 @@ def wave_experiment(
 def compare_wave_surrogates():
 
     import numpy as np
+
     from src.problems.wave import wave, wave_grad
+
     DIM = 2
     TOL = 0.01
     DOMAIN = [-5, 5]
@@ -1380,55 +1428,53 @@ def compare_wave_surrogates():
     X_train = np.random.uniform(DOMAIN[0], DOMAIN[1], (N_init_pts, DIM))
     exact_grad_surrogate = AFINNISurrogate()
     exact_grad_surrogate.train(
-        X_train = X_train,
-        f_fn = wave,
-        g_fn = wave_grad,
-        ERROR_METRIC = "Linf-local",
-        mode = SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
-        ATOL = TOL,
-        RTOL = TOL,
-        NUM_INITIAL_CLUSTERS = N_init_clusters,
-        MIN_PTS_PER_CLUSTER = min_ppc,
-        Q_REG = 1e-8,
-        STORE_AFFINE_FIT=True
+        X_train=X_train,
+        f_fn=wave,
+        g_fn=wave_grad,
+        ERROR_METRIC="Linf-local",
+        mode=SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
+        ATOL=TOL,
+        RTOL=TOL,
+        NUM_INITIAL_CLUSTERS=N_init_clusters,
+        MIN_PTS_PER_CLUSTER=min_ppc,
+        Q_REG=1e-8,
+        STORE_AFFINE_FIT=True,
     )
     approx_grad_surrogate = AFINNISurrogate()
     approx_grad_surrogate.train(
-        X_train = X_train,
-        f_fn = wave,
-        ERROR_METRIC = "Linf-local",
-        mode = SurrogateMode.AFFINE_COV_HESS,
-        ATOL = TOL,
-        RTOL = TOL,
-        NUM_INITIAL_CLUSTERS = N_init_clusters,
-        MIN_PTS_PER_CLUSTER = min_ppc,
-        Q_REG = 1e-8,
-        STORE_AFFINE_FIT=True
+        X_train=X_train,
+        f_fn=wave,
+        ERROR_METRIC="Linf-local",
+        mode=SurrogateMode.AFFINE_COV_HESS,
+        ATOL=TOL,
+        RTOL=TOL,
+        NUM_INITIAL_CLUSTERS=N_init_clusters,
+        MIN_PTS_PER_CLUSTER=min_ppc,
+        Q_REG=1e-8,
+        STORE_AFFINE_FIT=True,
     )
-    
+
     from src.plotter_utils import plot_exact_hess_vs_estimated_hess
 
     json_fpath = SC26_DIR / "wave" / "exact_hess_vs_estimated_hess.png"
     plot_exact_hess_vs_estimated_hess(
-        approx_grad_surrogate,
-        exact_grad_surrogate,
-        wave,
-        DOMAIN,
-        json_fpath
+        approx_grad_surrogate, exact_grad_surrogate, wave, DOMAIN, json_fpath
     )
-    
-
 
 
 def degenerate_quadratic_experiment(
-        dim: int,
-        tol: float,
-        error_eval_mode: SurrogateMode,
-        Q_reg: float,
-        coarse_factor: int,
-        N_train: int | None = None,
-    ):
-    from src.problems.degenerate_quadratic import degenerate_quadratic, degenerate_quadratic_grad, degenerate_quadratic_hess
+    dim: int,
+    tol: float,
+    error_eval_mode: SurrogateMode,
+    Q_reg: float,
+    coarse_factor: int,
+    N_train: int | None = None,
+):
+    from src.problems.degenerate_quadratic import (
+        degenerate_quadratic,
+        degenerate_quadratic_grad,
+        degenerate_quadratic_hess,
+    )
 
     EXP_DIR = SC26_DIR / "degenerate_quadratic"
 
@@ -1469,7 +1515,7 @@ def degenerate_quadratic_experiment(
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
         Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor
+        COARSE_FACTOR=coarse_factor,
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -1477,16 +1523,19 @@ def degenerate_quadratic_experiment(
     return EXP_DIR
 
 
-
 def indef_degen_quadratic_experiment(
-        dim: int,
-        tol: float,
-        error_eval_mode: SurrogateMode,
-        Q_reg: float,
-        coarse_factor: int,
-        N_train: int | None = None,
-    ):
-    from src.problems.indef_degen_quadratic import indef_degen_quad, indef_degen_quad_grad, indef_degen_quad_hess
+    dim: int,
+    tol: float,
+    error_eval_mode: SurrogateMode,
+    Q_reg: float,
+    coarse_factor: int,
+    N_train: int | None = None,
+):
+    from src.problems.indef_degen_quadratic import (
+        indef_degen_quad,
+        indef_degen_quad_grad,
+        indef_degen_quad_hess,
+    )
 
     EXP_DIR = SC26_DIR / "indef_degen_quadratic"
 
@@ -1526,7 +1575,7 @@ def indef_degen_quadratic_experiment(
         USE_WORK_STEALING=USE_WORK_STEALING,
         USE_V2=USE_V2,
         Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor
+        COARSE_FACTOR=coarse_factor,
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -1534,25 +1583,69 @@ def indef_degen_quadratic_experiment(
     return EXP_DIR
 
 
-
-
-
 def setup_argparse():
     parser = argparse.ArgumentParser()
 
     # Experiment basics
-    parser.add_argument("--experiment", help="The name of the experiment to run.", type=str, default="rosenbrock_dim_scaling")
-    parser.add_argument("--tols", help="The tolerances to use for the experiments.", type=float, nargs='+', default=[0.1, 0.05])
-    parser.add_argument("--dims", help="The dims to use for the experiments.", type=int, nargs='+', default=[2, 5])
+    parser.add_argument(
+        "--experiment",
+        help="The name of the experiment to run.",
+        type=str,
+        default="rosenbrock_dim_scaling",
+    )
+    parser.add_argument(
+        "--tols",
+        help="The tolerances to use for the experiments.",
+        type=float,
+        nargs="+",
+        default=[0.1, 0.05],
+    )
+    parser.add_argument(
+        "--dims",
+        help="The dims to use for the experiments.",
+        type=int,
+        nargs="+",
+        default=[2, 5],
+    )
 
     # Other optional stuff for specific experiments (i.e. dt for Lorenz or other flow maps)
-    parser.add_argument("--dt", help="The time horizon to use for the flow map experiment. \
-                        Only does something if a flow map experiment is specified.", type=float, default=0.1)
-    parser.add_argument("--error_eval_mode", help="The error eval mode to use.", type=str, default="affine_cov_hess")
-    parser.add_argument("--sampling", help="The sampling strategy to use for initial points.", type=str, default="uniform")
-    parser.add_argument("--coarse_factor", help="The number of nearest neighbor points to use during inference.", type=int, default=10)
-    parser.add_argument("--Q_reg", help="The regularization to use for the trust region construction, using Tikhonov.", type=float, default=1e-6)
-    parser.add_argument("--N_train", help="The number of initial training points to use.", type=int, default=None)
+    parser.add_argument(
+        "--dt",
+        help="The time horizon to use for the flow map experiment. \
+                        Only does something if a flow map experiment is specified.",
+        type=float,
+        default=0.1,
+    )
+    parser.add_argument(
+        "--error_eval_mode",
+        help="The error eval mode to use.",
+        type=str,
+        default="affine_cov_hess",
+    )
+    parser.add_argument(
+        "--sampling",
+        help="The sampling strategy to use for initial points.",
+        type=str,
+        default="uniform",
+    )
+    parser.add_argument(
+        "--coarse_factor",
+        help="The number of nearest neighbor points to use during inference.",
+        type=int,
+        default=10,
+    )
+    parser.add_argument(
+        "--Q_reg",
+        help="The regularization to use for the trust region construction, using Tikhonov.",
+        type=float,
+        default=1e-6,
+    )
+    parser.add_argument(
+        "--N_train",
+        help="The number of initial training points to use.",
+        type=int,
+        default=None,
+    )
 
     args = parser.parse_args()
 
@@ -1564,7 +1657,7 @@ def setup_argparse():
         "indef_degen_quadratic",
         "rosenbrock",
         "lorenz96",
-        "wave"
+        "wave",
     ]
     possible_error_eval_modes = [
         "affine_cov_hess",
@@ -1576,18 +1669,21 @@ def setup_argparse():
         "taylor_cov_no_hess",
         "taylor_lsq_hess",
         "taylor_exact_hess",
-        "affine_exact_hess"
+        "affine_exact_hess",
     ]
-    possible_sampling = [
-        "uniform",
-        "modified"
-    ]
+    possible_sampling = ["uniform", "modified"]
     if args.experiment not in possible_experiments:
-        Exception(f"ERROR: experiment specified is not one of the implemented test functions.\nPossible options are: {possible_experiments}")
+        Exception(
+            f"ERROR: experiment specified is not one of the implemented test functions.\nPossible options are: {possible_experiments}"
+        )
     if args.error_eval_mode not in possible_error_eval_modes:
-        Exception(f"ERROR: error eval. mode specified is not implemented.\nPossible options are: {possible_error_eval_modes}")
+        Exception(
+            f"ERROR: error eval. mode specified is not implemented.\nPossible options are: {possible_error_eval_modes}"
+        )
     if args.sampling not in possible_sampling:
-        Exception(f"ERROR: sampling strategy specified is not implemented. Possible options are: {possible_sampling}")
+        Exception(
+            f"ERROR: sampling strategy specified is not implemented. Possible options are: {possible_sampling}"
+        )
 
     return args
 
@@ -1614,7 +1710,7 @@ def run_experiment_from_args(args):
         "taylor_cov_hess": SurrogateMode.TAYLOR_COV_HESS,
         "taylor_exact_hess": SurrogateMode.TAYLOR_EXACT_HESS,
         "taylor_cov_no_hess": SurrogateMode.TAYLOR_COV_NO_HESS,
-        "taylor_lsq_hess": SurrogateMode.TAYLOR_LSQ_HESS
+        "taylor_lsq_hess": SurrogateMode.TAYLOR_LSQ_HESS,
     }
     error_eval_mode = enum_map[args.error_eval_mode]
 
@@ -1622,28 +1718,48 @@ def run_experiment_from_args(args):
         for d in dvec:
             if function_name == "anisotropic_quadratic":
                 if sampling == "uniform":
-                    anisotropic_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
+                    anisotropic_quadratic_experiment(
+                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
+                    )
                 elif sampling == "modified":
-                    anisotropic_quadratic_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
+                    anisotropic_quadratic_modified_sampling(
+                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
+                    )
             elif function_name == "anisotropic_gaussian":
                 if sampling == "uniform":
-                    anisotropic_gaussian_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
+                    anisotropic_gaussian_experiment(
+                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
+                    )
                 elif sampling == "modified":
-                    anisotropic_gaussian_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
+                    anisotropic_gaussian_modified_sampling(
+                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
+                    )
             elif function_name == "degenerate_quadratic":
-                degenerate_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
+                degenerate_quadratic_experiment(
+                    d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
+                )
             elif function_name == "indef_degen_quadratic":
-                indef_degen_quadratic_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
+                indef_degen_quadratic_experiment(
+                    d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
+                )
             elif function_name == "rosenbrock":
                 if sampling == "uniform":
-                    rosenbrock_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
+                    rosenbrock_experiment(
+                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
+                    )
                 elif sampling == "modified":
-                    rosenbrock_experiment_modified_sampling(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
+                    rosenbrock_experiment_modified_sampling(
+                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
+                    )
             elif function_name == "lorenz96":
                 if sampling == "uniform":
-                    lorenz96_experiment(d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train)
+                    lorenz96_experiment(
+                        d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train
+                    )
                 elif sampling == "modified":
-                    lorenz_trajectories_experiment(d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train)
+                    lorenz_trajectories_experiment(
+                        d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train
+                    )
             elif function_name == "wave":
                 wave_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
             else:
