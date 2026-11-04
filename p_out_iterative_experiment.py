@@ -1,5 +1,6 @@
 import csv
 import time
+import warnings
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -202,7 +203,6 @@ def halo_sampling(
     eigenvals, eigenvecs = xp.linalg.eigh(Qs)
     lambda_inv_sqrt = 1.0 / xp.sqrt(xp.maximum(eigenvals, 1e-12))
 
-    xp.random.seed(SEED)
     z = xp.random.randn(Nc, pts_per_cluster, d)
     z_normalized = z / xp.linalg.norm(z, axis=2)[:,:,None]
 
@@ -239,7 +239,6 @@ def cloud_sampling(
     eigenvals, eigenvecs = xp.linalg.eigh(Qs)
     lambda_inv_sqrt = 1.0 / xp.sqrt(xp.maximum(eigenvals, 1e-12))
 
-    xp.random.seed(SEED)
     z = xp.random.randn(Nc, pts_per_cluster, d)
 
     scaled_z = z * lambda_inv_sqrt[:, None, :]
@@ -397,9 +396,19 @@ def generate_new_points(
     strategy: str,
     pct_to_add: float,
     domain: Array,
-    gamma: float
+    gamma: float,
+    *,
+    max_sampling_attempts: int = 100,
 ):
-    # We want to generate pct_to_add * Nc new points.
+    """Collect gap points, warning on empty batches and bounding total attempts.
+
+    The attempt limit applies to this call, independently of training iterations.
+    Failure to find enough points does not prove that the domain is covered.
+    """
+    if max_sampling_attempts < 1:
+        raise ValueError("max_sampling_attempts must be at least 1")
+
+    # We want to generate pct_to_add * N_train new points.
     # To do this, we can use rejection sampling.
     Nc, d = surrogate.X_src.shape
     N_target = int(N_train * pct_to_add)
@@ -407,8 +416,18 @@ def generate_new_points(
     N_current = 0
     pts_per_cluster = max(int(N_target / Nc) + 1, 5)
     
-    # Sample batches of points
+    # Sample batches of points, counting both empty and productive attempts.
+    sampling_attempts = 0
     while N_current < N_target:
+        if sampling_attempts >= max_sampling_attempts:
+            raise RuntimeError(
+                f"Gap sampling with strategy '{strategy}' exhausted "
+                f"{max_sampling_attempts} sampling attempts: collected "
+                f"{N_current} of {N_target} requested points. "
+                "Try a different sampling strategy or increase max_sampling_attempts. "
+                "This does not prove the domain is fully covered."
+            )
+        sampling_attempts += 1
         if strategy == "halo":
             X_new_current = halo_sampling(surrogate, pts_per_cluster, gamma, domain[0], domain[1])
         elif strategy == "uniform":
@@ -420,6 +439,16 @@ def generate_new_points(
         else:
             print(f"Error: sampling strategy \"{strategy}\" is not recognized.")
             return
+
+        if len(X_new_current) == 0:
+            warnings.warn(
+                f"Gap sampling with strategy '{strategy}' produced no gap points "
+                f"on attempt {sampling_attempts}/{max_sampling_attempts}; "
+                f"collected {N_current}/{N_target} points.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            continue
 
         if N_current + len(X_new_current) > N_target:
             N_remaining = N_target - N_current
@@ -448,6 +477,7 @@ def run_iterative_refinement(
     n_iter:int = 5,
     gamma:float = 1.5,
     save_halo_pts:bool = False,
+    max_sampling_attempts: int = 100,
 ):
 
     # Hyperparameters
@@ -580,7 +610,10 @@ def run_iterative_refinement(
 
         # 3. Generate & Filter New Points via new sampling method
         _t_start = time.perf_counter()
-        X_new = generate_new_points(surrogate, len(X_train), sampling, 0.4, DOMAIN, gamma)
+        X_new = generate_new_points(
+            surrogate, len(X_train), sampling, 0.4, DOMAIN, gamma,
+            max_sampling_attempts=max_sampling_attempts,
+        )
 
         t_gen_filter = time.perf_counter() - _t_start
 
@@ -640,15 +673,14 @@ def plot_iterates_p_out(p_out_halo, p_out_cloud, p_out_uniform, p_out_chord):
     fig_Nc, ax_Nc = plt.subplots()
     fig_queries, ax_queries = plt.subplots()
 
-    xrange = np.arange(start=0, stop=10+1, step=1)
     if p_out_halo is not None:
-        ax_p_out.plot(xrange, p_out_halo, '-o', label="Halo")
+        ax_p_out.plot(np.arange(len(p_out_halo)), p_out_halo, '-o', label="Halo")
     if p_out_cloud is not None:
-        ax_p_out.plot(xrange, p_out_cloud, '-o', label="Cloud")
+        ax_p_out.plot(np.arange(len(p_out_cloud)), p_out_cloud, '-o', label="Cloud")
     if p_out_uniform is not None:
-        ax_p_out.plot(xrange, p_out_uniform, '-o', label="Uniform")
+        ax_p_out.plot(np.arange(len(p_out_uniform)), p_out_uniform, '-o', label="Uniform")
     if p_out_chord is not None:
-        ax_p_out.plot(xrange, p_out_chord, '-o', label="Chord")
+        ax_p_out.plot(np.arange(len(p_out_chord)), p_out_chord, '-o', label="Chord")
     OUTPUT_DIR = RESULTS_DIR / "active_learning_halo"
     ax_p_out.legend()
     fig_p_out.savefig(OUTPUT_DIR/"sampling_comparison.png")
@@ -675,9 +707,16 @@ def parse_args():
     parser.add_argument("--function", type=str, default="rosenbrock")
     parser.add_argument("--dimension", type=int, default=2)
     parser.add_argument("--n-iter", type=int, default=10)
+    parser.add_argument(
+        "--max-sampling-attempts", type=int, default=100,
+        help="Maximum candidate batches per gap-sampling call, including empty batches.",
+    )
     parser.add_argument("--tol", type=float, default=0.05)
     parser.add_argument("--exp-num", type=int, default=1)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.max_sampling_attempts < 1:
+        parser.error("--max-sampling-attempts must be at least 1")
+    return args
 
 
 
@@ -693,9 +732,9 @@ if __name__ == "__main__":
 
     # Experiment 1: comparing sampling schemes
     if exp_num == 1:
-        p_out_halo = run_iterative_refinement(function=function, sampling="halo", d=d, tol=tol, n_iter=n_iter, save_halo_pts=True)
-        p_out_cloud = run_iterative_refinement(function=function, sampling="cloud", d=d, tol=tol, n_iter=n_iter)
-        p_out_uniform = run_iterative_refinement(function=function, sampling="uniform", d=d, tol=tol, n_iter= n_iter)
+        p_out_halo = run_iterative_refinement(function=function, sampling="halo", d=d, tol=tol, n_iter=n_iter, save_halo_pts=True, max_sampling_attempts=args.max_sampling_attempts)
+        p_out_cloud = run_iterative_refinement(function=function, sampling="cloud", d=d, tol=tol, n_iter=n_iter, max_sampling_attempts=args.max_sampling_attempts)
+        p_out_uniform = run_iterative_refinement(function=function, sampling="uniform", d=d, tol=tol, n_iter= n_iter, max_sampling_attempts=args.max_sampling_attempts)
         plot_iterates_p_out(p_out_halo, p_out_cloud, p_out_uniform, None)
 
     # Experiment 2: comparing values of gamma for halo sampling
@@ -709,6 +748,7 @@ if __name__ == "__main__":
                 d=d,
                 tol=tol,
                 n_iter=n_iter,
-                gamma=gammavec[j]
+                gamma=gammavec[j],
+                max_sampling_attempts=args.max_sampling_attempts,
             )
         plot_halo_various_gamma(p_out_mat, gammavec)
