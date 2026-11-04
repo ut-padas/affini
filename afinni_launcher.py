@@ -803,7 +803,7 @@ def rosenbrock_experiment_modified_sampling(
     x1_train = xp.random.randn(N_TRAIN) / (2*a) + mu
     x2_train = xp.random.randn(N_TRAIN) / (2*b) + (x1_train**2)
     x1_test = xp.random.randn(N_TEST) / (2*a) + mu
-    x2_test = xp.random.randn(N_TEST) / (2*b) + (x1_train**2)
+    x2_test = xp.random.randn(N_TEST) / (2*b) + (x1_test**2)
     X_train = xp.column_stack((x1_train, x2_train))
     X_test = xp.column_stack((x1_test, x2_test))
 
