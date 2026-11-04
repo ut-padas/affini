@@ -1,10 +1,15 @@
 """Shifted Gaussian function and its derivatives."""
 
-from src import Array, xp
+import numpy as np
+from array_api_compat import array_namespace
 
-CENTERS_2D = xp.array([[1.0, 1.0], [-1.0, -1.0]])
-CENTERS_3D = xp.array([[1.0, 1.0, 1.0], [-1.0, -1.0, -1.0], [1.0, -1.0, 1.0]])
-CENTERS_4D = xp.array(
+from src import Array
+
+# Problem constants are NumPy (host) arrays; the functions move `centers` to the
+# backend of their input X.
+CENTERS_2D = np.array([[1.0, 1.0], [-1.0, -1.0]])
+CENTERS_3D = np.array([[1.0, 1.0, 1.0], [-1.0, -1.0, -1.0], [1.0, -1.0, 1.0]])
+CENTERS_4D = np.array(
     [
         [1.0, 1.0, 1.0, 1.0],
         [-1.0, -1.0, -1.0, -1.0],
@@ -12,7 +17,7 @@ CENTERS_4D = xp.array(
         [-1.0, 1.0, -1.0, 1.0],
     ]
 )
-CENTERS_5D = xp.array(
+CENTERS_5D = np.array(
     [
         [1.0, 1.0, 1.0, 1.0, 1.0],
         [-1.0, -1.0, -1.0, -1.0, -1.0],
@@ -38,6 +43,8 @@ def shifted_gaussians(
     Returns:
         F: (N, 1) function values at X
     """
+    xp = array_namespace(X)
+    centers = xp.asarray(centers)
     # 1. Expand dimensions to use broadcasting
     # X: (N, D) -> (N, 1, D)
     # centers: (M, D) -> (1, M, D)
@@ -64,6 +71,8 @@ def shifted_gaussians_grad(X: Array, centers: Array, std_dev: float = 0.5) -> Ar
     Returns:
         grad_f_x: (N, 1, D) gradient at each point in X
     """
+    xp = array_namespace(X)
+    centers = xp.asarray(centers)
     # X: (N, D), centers: (M, D)
     # diff shape: (N, M, D)
     diff = X[:, xp.newaxis, :] - centers[xp.newaxis, :, :]

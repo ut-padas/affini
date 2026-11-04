@@ -1,27 +1,35 @@
 """Randomly Rotated Anisotropic Gaussian function and its derivatives."""
 
-from src import Array, xp
+import numpy as np
+from array_api_compat import array_namespace
+
+from src import Array
 
 SEED = 0
 SIGMA_DECAY_EXPONENT = 3
 BETA = 1
 
 
-def _get_random_rotation(d: int, dtype) -> Array:
+def _get_random_rotation(d: int, dtype) -> np.ndarray:
     """
     Creates a random rotation matrix using QR decomposition.
+
+    Problem constants are always generated with NumPy (as a host array), so the
+    function is identical on every backend; callers move it to their backend.
+    A local RandomState reproduces the historical `np.random.seed(SEED)` stream
+    without touching global RNG state.
     """
-    xp.random.seed(SEED)
-    A = xp.random.randn(d, d).astype(dtype)
-    Q, _ = xp.linalg.qr(A)
-    if xp.linalg.det(Q) < 0:
+    rng = np.random.RandomState(SEED)
+    A = rng.randn(d, d).astype(dtype)
+    Q, _ = np.linalg.qr(A)
+    if np.linalg.det(Q) < 0:
         Q[:, 0] = -Q[:, 0]
     return Q
 
 
-def _get_precision_eigenvalues(d: int, dtype, sigma_decay_exponent: int) -> Array:
+def _get_precision_eigenvalues(d: int, dtype, sigma_decay_exponent: int) -> np.ndarray:
     """
-    Constructs the eigenvalues of the Precision Matrix (Sigma^-1).
+    Constructs the eigenvalues of the Precision Matrix (Sigma^-1), as a NumPy array.
 
     Logic:
     1. Define Sigma (Standard Deviations) such that sigma_max = 1.
@@ -30,7 +38,7 @@ def _get_precision_eigenvalues(d: int, dtype, sigma_decay_exponent: int) -> Arra
     """
     # 1. Define Sigmas: Start at 1.0, decay by power law
     # sigma_0 = 1, sigma_1 = 1/2^p, ...
-    indices = xp.arange(d, dtype=dtype) + 1
+    indices = np.arange(d, dtype=dtype) + 1
     sigmas = 1.0 / (indices**sigma_decay_exponent)
 
     # 2. Compute Precision (inverse variance)
@@ -55,14 +63,15 @@ def aniso_gaussian(
     Returns:
         F: (N, 1) function values
     """
+    xp = array_namespace(X)
     N, d = X.shape
     dtype = X.dtype
 
     # Get Precision eigenvalues (Lambda^-1)
-    prec_diag = _get_precision_eigenvalues(d, dtype, sigma_decay_exponent)
+    prec_diag = xp.asarray(_get_precision_eigenvalues(d, dtype, sigma_decay_exponent))
 
     # Create random rotation matrix Q
-    Q = _get_random_rotation(d, dtype)
+    Q = xp.asarray(_get_random_rotation(d, dtype))
 
     # Rotate data: X_rot = X Q
     X_rot = X @ Q  # (N, d)
@@ -88,12 +97,13 @@ def aniso_gaussian_grad(
     Returns:
         G: (N, 1, d) gradients
     """
+    xp = array_namespace(X)
     N, d = X.shape
     dtype = X.dtype
 
     # --- 1. Compute PDF components ---
-    prec_diag = _get_precision_eigenvalues(d, dtype, sigma_decay_exponent)
-    Q = _get_random_rotation(d, dtype)
+    prec_diag = xp.asarray(_get_precision_eigenvalues(d, dtype, sigma_decay_exponent))
+    Q = xp.asarray(_get_random_rotation(d, dtype))
 
     X_rot = X @ Q
     mahalanobis_sq = xp.sum(prec_diag[None, :] * (X_rot**2), axis=1, keepdims=True)
@@ -125,12 +135,13 @@ def aniso_gaussian_hess(
     Returns:
         H: (N, d, d) Hessians
     """
+    xp = array_namespace(X)
     N, d = X.shape
     dtype = X.dtype
 
     # --- 1. Compute PDF components ---
-    prec_diag = _get_precision_eigenvalues(d, dtype, sigma_decay_exponent)
-    Q = _get_random_rotation(d, dtype)
+    prec_diag = xp.asarray(_get_precision_eigenvalues(d, dtype, sigma_decay_exponent))
+    Q = xp.asarray(_get_random_rotation(d, dtype))
 
     X_rot = X @ Q
     mahalanobis_sq = xp.sum(prec_diag[None, :] * (X_rot**2), axis=1, keepdims=True)

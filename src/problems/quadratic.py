@@ -1,6 +1,8 @@
 """Trivial Quadratic function and its derivatives."""
 
-from src import Array, xp
+from array_api_compat import array_namespace
+
+from src import Array
 
 C = 10.0  # Constant term
 A = 0.1  # Quadratic term coefficient
@@ -16,6 +18,7 @@ def quadratic(X: Array) -> Array:
     Returns:
         F: (N, 1) function values at X
     """
+    xp = array_namespace(X)
     N, d = X.shape
     w = xp.ones((d, 1), dtype=X.dtype)
     XTX = xp.sum(X**2, axis=1, keepdims=True)  # (N, 1)
@@ -33,6 +36,7 @@ def quadratic_grad(X: Array) -> Array:
     Returns:
         G: (N,1 d) gradients at X
     """
+    xp = array_namespace(X)
 
     N, d = X.shape
     w = xp.ones((d,), dtype=X.dtype)
@@ -50,6 +54,7 @@ def quadratic_hess(X: Array) -> Array:
     Returns:
         H: (N, d, d) Hessians at X
     """
+    xp = array_namespace(X)
     N, d = X.shape
     H = 2 * A * xp.eye(d, dtype=X.dtype)[None, :, :]  # (1, d, d)
     return xp.repeat(H, N, axis=0)  # (N, d, d)

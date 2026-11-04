@@ -5,9 +5,16 @@ import time
 from typing import Any, Callable, Literal, Optional
 
 import numpy as np
-from mpi4py import MPI
 
-from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _get_mpi_size, _to_host, xp
+from src import (
+    HAS_CUML,
+    IS_CUPY_BACKEND,
+    Array,
+    _get_mpi_rank,
+    _get_mpi_size,
+    _to_host,
+    xp,
+)
 from src.adaptive_clustering_utils import (
     ClusteringConfig,
     CudaTimer,
@@ -23,6 +30,7 @@ from src.adaptive_clustering_utils import (
     split_rejected_clusters,
     uniform_grid_cluster_labels,
 )
+from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 from src.logging_utils import log_mem_stats
 from src.utils import repeats
 
@@ -34,7 +42,7 @@ TINY_EPS = 1e-12
 # --- Custom MPI Tags for Decentralized Work-Stealing ---
 TAG_STATE_BROADCAST = 101
 TAG_STEAL_REQ = 102
-TAG_STEAL_GRANT = 103
+TAG_STEAL_GRANT = 110  # Payload buffers use tags 111 through 114.
 TAG_STEAL_DENY = 104
 TAG_TERM = 105
 
@@ -114,6 +122,40 @@ def _run_local_refinement(
         state_send_buf = np.empty(1, dtype=np.int64)
         state_recv_buf = np.empty(1, dtype=np.int64)
 
+        state_broadcasts_sent = 0
+        state_broadcasts_received = np.zeros(size, dtype=np.int64)
+
+        def deny_idle_requests():
+            # Idle ranks must answer even while waiting for their own response.
+            while comm.Iprobe(
+                source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status
+            ):
+                src = status.Get_source()
+                comm.recv(source=src, tag=TAG_STEAL_REQ)
+                comm.send("IDLE", dest=src, tag=TAG_STEAL_DENY)
+
+        def finish_work_stealing():
+            # Enter only with no local work and no outstanding steal request.
+            # Retire from stealing, but keep answering requests until every rank
+            # has retired. A load snapshot alone cannot detect work in transit.
+            if size == 1:
+                return
+            retirement = comm.Ibarrier()
+            while not retirement.Test():
+                receive_and_update_state()
+                deny_idle_requests()
+                time.sleep(0.001)
+
+            # Every request now has its response and every transfer was consumed.
+            # Blocking state sends can still be buffered. Receive their exact
+            # remaining counts, rather than relying on a momentarily empty probe.
+            sent_counts = comm.allgather(state_broadcasts_sent)
+            for src in range(size):
+                if src != rank:
+                    for _ in range(sent_counts[src] - state_broadcasts_received[src]):
+                        comm.Recv(state_recv_buf, source=src, tag=TAG_STATE_BROADCAST)
+                        state_broadcasts_received[src] += 1
+
         def receive_and_update_state():
             """
             Helper function (async gossip receiver): Check for and process any incoming load updates from other ranks.
@@ -124,19 +166,28 @@ def _run_local_refinement(
                 src = status.Get_source()
                 comm.Recv(state_recv_buf, source=src, tag=TAG_STATE_BROADCAST)
                 global_loads[src] = state_recv_buf[0]
+                state_broadcasts_received[src] += 1
 
         def broadcast_state():
             """
             Helper function: Broadcast our current load to all other ranks.
             """
+            nonlocal state_broadcasts_sent
+            state_broadcasts_sent += 1
             state_send_buf[0] = local_load
             for r in range(size):
                 if r != rank:
                     # 8 bytes is well within the MPI eager limit; this returns instantly.
                     comm.Send(state_send_buf, dest=r, tag=TAG_STATE_BROADCAST)
 
-        # Broadcast initial state
+        # Learn every initial load before deciding whether to retire. Otherwise
+        # an initially empty rank could mistake missing updates for global idle.
         broadcast_state()
+        for src in range(size):
+            if src != rank:
+                comm.Recv(state_recv_buf, source=src, tag=TAG_STATE_BROADCAST)
+                global_loads[src] = state_recv_buf[0]
+                state_broadcasts_received[src] += 1
     else:
 
         def receive_and_update_state():
@@ -171,17 +222,10 @@ def _run_local_refinement(
                     local_load = 0
                     global_loads[rank] = 0
                     broadcast_state()
-                if np.sum(global_loads) == 0:
-                    # Heuristic termination: everyone claims to be empty.
-                    # Drain any pending steal requests (sent before we went idle) so
-                    # the requesting ranks are not stuck in their spin-wait forever.
-                    while comm.Iprobe(
-                        source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status
-                    ):
-                        req_src = status.Get_source()
-                        comm.recv(source=req_src, tag=TAG_STEAL_REQ)
-                        comm.send("TERMINATING", dest=req_src, tag=TAG_STEAL_DENY)
-                    logger.info(f"R{rank:02}: Global loads sum to 0. Terminating.")
+                deny_idle_requests()
+                if np.sum(global_loads) == 0 or level > MAX_LEVELS:
+                    finish_work_stealing()
+                    logger.info(f"R{rank:02}: All ranks retired. Terminating.")
                     is_terminated = True
                     break
 
@@ -204,39 +248,10 @@ def _run_local_refinement(
                         ):
                             receive_and_update_state()
 
-                        # Escape if the target has gone idle/terminated (load -> 0)
-                        if global_loads[target_rank] == 0:
-                            logger.debug(
-                                f"R{rank:02}: Steal target R{target_rank:02} load dropped to 0 "
-                                f"while waiting. Aborting steal."
-                            )
-                            if comm.Iprobe(source=target_rank, tag=TAG_STEAL_DENY):
-                                comm.recv(source=target_rank, tag=TAG_STEAL_DENY)
-                            elif comm.Iprobe(source=target_rank, tag=TAG_STEAL_GRANT):
-                                meta = comm.recv(
-                                    source=target_rank, tag=TAG_STEAL_GRANT
-                                )
-                                _X = np.empty((meta["n_pts"], d), dtype=np.float64)
-                                _F = np.empty((meta["n_pts"], fd), dtype=np.float64)
-                                comm.Recv(
-                                    _X, source=target_rank, tag=TAG_STEAL_GRANT + 1
-                                )
-                                comm.Recv(
-                                    _F, source=target_rank, tag=TAG_STEAL_GRANT + 2
-                                )
-                                if meta["has_g"]:
-                                    _G = np.empty(
-                                        (meta["n_pts"], fd, d), dtype=np.float64
-                                    )
-                                    comm.Recv(
-                                        _G, source=target_rank, tag=TAG_STEAL_GRANT + 3
-                                    )
-                                _s = np.empty(meta["n_clusters"], dtype=np.int64)
-                                comm.Recv(
-                                    _s, source=target_rank, tag=TAG_STEAL_GRANT + 4
-                                )
-                            waiting = False
-                            continue
+                        # A zero-load update is not a reply. The victim must
+                        # explicitly deny the request or grant work, which we keep.
+                        # Answer crossed requests from other idle thieves too.
+                        deny_idle_requests()
 
                         # Check for steal response
                         if comm.Iprobe(source=target_rank, tag=TAG_STEAL_GRANT):
@@ -1085,14 +1100,6 @@ def adaptive_clustering(
                 f"Selected mode {ERROR_EVAL_MODE.value} requires storing affine fit parameters. Overriding STORE_AFFINE_FIT_PER_CLUSTER to True."
             )
 
-    if USE_WORK_STEALING:
-        if MAX_LEVELS <= 100:
-            _safe_MAX_LEVELS = 1000
-            logger.warning(
-                f"Work stealing enabled but MAX_LEVELS is only {MAX_LEVELS}. Overriding MAX_LEVELS to {_safe_MAX_LEVELS} to ensure sufficient stealing opportunities across levels."
-            )
-            MAX_LEVELS = _safe_MAX_LEVELS
-
     config = ClusteringConfig(
         mode=ERROR_EVAL_MODE,
         error_metric=ERROR_METRIC,
@@ -1108,6 +1115,16 @@ def adaptive_clustering(
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
+
+    # With one rank there are no stealing opportunities, so respect the
+    # caller's refinement limit even when USE_WORK_STEALING defaults to True.
+    if USE_WORK_STEALING and size > 1 and MAX_LEVELS <= 100:
+        _safe_MAX_LEVELS = 1000
+        logger.warning(
+            f"Work stealing enabled but MAX_LEVELS is only {MAX_LEVELS}. Overriding MAX_LEVELS to {_safe_MAX_LEVELS} to ensure sufficient stealing opportunities across levels."
+        )
+        MAX_LEVELS = _safe_MAX_LEVELS
+
     _start_time = time.perf_counter()
 
     profiling_stats = {
@@ -1186,7 +1203,7 @@ def adaptive_clustering(
 
             if labels0 is None:
                 if INITIAL_CLUSTERING_METHOD == "kmeans":
-                    if IS_CUPY_BACKEND:
+                    if HAS_CUML:
                         from cuml.cluster import KMeans as cuKMeans
 
                         km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)

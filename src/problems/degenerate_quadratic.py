@@ -1,37 +1,45 @@
 """Degenerate Quadratic function and its derivatives."""
 
-from src import Array, xp
+import numpy as np
+from array_api_compat import array_namespace
+
+from src import Array
 
 SEED = 0
 BETA = 1.0
 
 
-def _get_random_rotation(d: int, dtype) -> Array:
+def _get_random_rotation(d: int, dtype) -> np.ndarray:
     """
     Creates a random rotation matrix using QR decomposition.
+
+    Problem constants are always generated with NumPy (as a host array), so the
+    function is identical on every backend; callers move it to their backend.
+    A local RandomState reproduces the historical `np.random.seed(SEED)` stream
+    without touching global RNG state.
     """
-    xp.random.seed(SEED)
-    A = xp.random.randn(d, d).astype(dtype)
-    Q, _ = xp.linalg.qr(A)
-    if xp.linalg.det(Q) < 0:
+    rng = np.random.RandomState(SEED)
+    A = rng.randn(d, d).astype(dtype)
+    Q, _ = np.linalg.qr(A)
+    if np.linalg.det(Q) < 0:
         Q[:, 0] = -Q[:, 0]
     return Q
 
 
-def _get_params(d: int, dtype) -> Array:
+def _get_params(d: int, dtype) -> np.ndarray:
     """
     Computes the symmetric matrix H = diag(lambda), where the first
     floor(d/2) eigenvalues are 1 and the remaining eigenvalues are 0.
 
     Returns:
-        H: (d, d) quadratic form matrix
+        H: (d, d) quadratic form matrix, as a NumPy (host) array
     """
     # 1. Eigenvalues: 1 for the first, 0 for the rest
-    lambdas = xp.zeros((d,), dtype=dtype)
+    lambdas = np.zeros((d,), dtype=dtype)
     lambdas[0] = 4.0
 
     # 2. Construct H = diag(lambdas)
-    H = xp.diag(lambdas)
+    H = np.diag(lambdas)
     Q = _get_random_rotation(d, dtype)
 
     return Q @ H @ Q.T
@@ -48,8 +56,9 @@ def degenerate_quadratic(X: Array, beta: float = BETA) -> Array:
     Returns:
         F: (N, 1) function values
     """
+    xp = array_namespace(X)
     N, d = X.shape
-    H = _get_params(d, X.dtype)
+    H = xp.asarray(_get_params(d, X.dtype))
 
     # Quadratic term: x^T H x
     quad_term = xp.sum((X @ H) * X, axis=1)
@@ -70,8 +79,9 @@ def degenerate_quadratic_grad(X: Array) -> Array:
     Returns:
         G: (N, 1, d) gradients
     """
+    xp = array_namespace(X)
     N, d = X.shape
-    H = _get_params(d, X.dtype)
+    H = xp.asarray(_get_params(d, X.dtype))
 
     # term: 2 * H * x
     # (N, d) @ (d, d) -> (N, d)
@@ -92,8 +102,9 @@ def degenerate_quadratic_hess(X: Array) -> Array:
     Returns:
         H_vals: (N, d, d) Hessians
     """
+    xp = array_namespace(X)
     N, d = X.shape
-    H = _get_params(d, X.dtype)
+    H = xp.asarray(_get_params(d, X.dtype))
 
     # The Hessian is constant: 2 * H
     H_const = 2.0 * H

@@ -36,7 +36,8 @@ if __name__ == "__main__":
         Y_train = f_train,
         f_fn = rosenbrock,
         mode = SurrogateMode.AFFINE_COV_HESS,
-        TOL = TOL,
+        ATOL = TOL,
+        RTOL = TOL,
         ERROR_METRIC = 'Linf-local',
         NUM_INITIAL_CLUSTERS = N_init_clusters,
         MIN_PTS_PER_CLUSTER = min_ppc,
@@ -48,8 +49,8 @@ if __name__ == "__main__":
 
     # --- Compute errors ---
     X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, DIM))
-    f_test_exact = rosenbrock(X_test)
-    f_test_pred = surrogate.predict(X_test)
+    f_test_pred, _ = surrogate.predict(X_test)  # (predictions, trust-region mask)
+    f_test_exact = rosenbrock(X_test).reshape(f_test_pred.shape)
     ptwise_errs = xp.abs(f_test_exact - f_test_pred).flatten()
     l2_rel_err = xp.linalg.norm(ptwise_errs) / xp.linalg.norm(f_test_exact)
     print(f"L2 Relative Global Error: {l2_rel_err}")

@@ -13,6 +13,16 @@ from matplotlib.patches import Circle, Ellipse
 from src.surrogate import AFINNISurrogate
 from src import Array, _to_device, _to_host, xp
 
+
+def _host_domain(domain) -> tuple[float, float]:
+    """(lo, hi) as Python floats.
+
+    A device (CuPy) `domain` would otherwise make NumPy dispatch to CuPy, e.g.
+    np.linspace(<cupy scalar>, ...) returns a CuPy array, which matplotlib rejects.
+    """
+    lo, hi = (float(_to_host(v)) for v in domain)
+    return lo, hi
+
 _LEVEL_STAT_COL_LABELS: dict[str, str] = {
     "good_clusters": "Good Clusters (Accepted)",
     "clusters_start": "Clusters at Start of Level",
@@ -324,6 +334,10 @@ def plot_adaptive_clustering_results(
         plot_in_log: Whether to render contour color normalization on a log scale.
         plot_f_abs: Whether to take the absolute value of the function for plotting.
     """
+    # Matplotlib needs host arrays; accept device (CuPy) inputs too.
+    centroids, Q = _to_host(centroids), _to_host(Q)
+    domain = _host_domain(domain)
+
     # Get dimensions of X
     d = centroids.shape[1]
     if d != 2:
@@ -525,6 +539,7 @@ def plot_wave_2d_errors(surrogate: AFINNISurrogate, domain, f_fn, img_fpath: Pat
     centers = surrogate.X_src
     Nc, d = centers.shape
     _n = 500
+    domain = _host_domain(domain)
     x = np.linspace(domain[0], domain[1], _n)
     y = np.linspace(domain[0], domain[1], _n)
     X_grid, Y_grid = np.meshgrid(x, y)
@@ -605,6 +620,7 @@ def plot_wave_line_errors(
     q_perp /= np.linalg.norm(q_perp)
 
     # Alpha sweep along the domain
+    domain = _host_domain(domain)
     alpha = np.linspace(domain[0], domain[1], 2000)
 
     # Projection of centers onto q (used to scatter them on the x-axis)
@@ -738,6 +754,7 @@ def plot_near_centers(
     is_not_nn = ~is_nn
 
     # --- Background contour: user-provided function over the grid ---
+    domain = _host_domain(domain)
     x = np.linspace(domain[0], domain[1], n_grid)
     y = np.linspace(domain[0], domain[1], n_grid)
     X_grid, Y_grid = np.meshgrid(x, y)
@@ -816,6 +833,7 @@ def plot_exact_hess_vs_estimated_hess(
     # Compute background
     fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(12, 6))
     n_grid = 500
+    domain = _host_domain(domain)
     x = np.linspace(domain[0], domain[1], n_grid)
     y = np.linspace(domain[0], domain[1], n_grid)
     X_grid, Y_grid = np.meshgrid(x, y)

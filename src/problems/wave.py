@@ -1,15 +1,25 @@
-"""Randomly Rotated Anisotropic Gaussian function and its derivatives."""
+"""Cosine wave along a random direction, and its derivatives."""
 
-from src import Array, xp
+import numpy as np
+from array_api_compat import array_namespace
+
+from src import Array
 
 SEED = 0
 FREQUENCY = 2.0
 BETA = 1.5
 
-def _get_random_direction(d: int, dtype) -> Array:
-    xp.random.seed(SEED)
-    q = xp.random.randn(d).astype(dtype)
-    q = q / xp.linalg.norm(q)
+def _get_random_direction(d: int, dtype) -> np.ndarray:
+    """
+    Random unit direction q, as a NumPy (host) array.
+
+    Generated with NumPy so the function is identical on every backend; a local
+    RandomState reproduces the historical `np.random.seed(SEED)` stream without
+    touching global RNG state.
+    """
+    rng = np.random.RandomState(SEED)
+    q = rng.randn(d).astype(dtype)
+    q = q / np.linalg.norm(q)
     return q
 
 
@@ -26,9 +36,10 @@ def wave(X: Array, frequency: float = FREQUENCY, beta: float = BETA) -> Array:
     Returns:
         F: (N, 1) function values
     """
+    xp = array_namespace(X)
     N, d = X.shape
     dtype = X.dtype
-    q = _get_random_direction(d, dtype)
+    q = xp.asarray(_get_random_direction(d, dtype))
     f = xp.cos(frequency * (X @ q)) + beta
     return xp.reshape(f, (N, 1))
 
@@ -52,8 +63,9 @@ def wave_grad(
     Returns:
         G: (N, d) gradient at each point
     """
+    xp = array_namespace(X)
     N, d = X.shape
-    q = _get_random_direction(d, X.dtype)
+    q = xp.asarray(_get_random_direction(d, X.dtype))
     qTx = X @ q  # (N,)
 
     G = -frequency * xp.sin(frequency * qTx)[:, None] * q
@@ -83,10 +95,11 @@ def wave_hess(
         H: (N, d, d) tensor, where H[i] is the Hessian
            at X[i].
     """
+    xp = array_namespace(X)
     N, d = X.shape
     dtype = X.dtype
 
-    q = _get_random_direction(d, dtype)
+    q = xp.asarray(_get_random_direction(d, dtype))
 
     # q^T x for every point
     qTx = X @ q  # (N,)

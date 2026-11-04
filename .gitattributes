@@ -1,0 +1,4 @@
+# Shell and SLURM scripts must keep LF line endings, or bash fails on CRLF
+# (e.g. after a checkout on Windows / WSL with core.autocrlf enabled).
+*.sh    text eol=lf
+*.slurm text eol=lf

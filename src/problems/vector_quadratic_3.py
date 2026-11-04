@@ -1,8 +1,12 @@
 # A third quadratic which returns identical multi-output.
 
-from src import Array, xp
+import numpy as np
+from array_api_compat import array_namespace
 
-H = xp.diag(xp.array([10, 1]))
+from src import Array
+
+# Problem constant: NumPy (host) array, moved to the backend of X on each call.
+H = np.diag(np.array([10, 1]))
 
 
 def vector_quadratic_3(X: Array, d_out=5) -> Array:
@@ -11,8 +15,10 @@ def vector_quadratic_3(X: Array, d_out=5) -> Array:
     For now assume H1 and H2 are diagonal matrices.
     Takes in X with shape (N, 2) and returns matrix (N, d).
     """
+    xp = array_namespace(X)
+    h = xp.asarray(H)
     N, d_in = X.shape
-    val = xp.sum(X * (H @ X.T).T, axis=1)  # (N,)
+    val = xp.sum(X * (h @ X.T).T, axis=1)  # (N,)
     return xp.repeat(val[:, None], d_out, axis=1)  # (N, d_out)
 
 
@@ -25,7 +31,8 @@ def vector_quadratic_3_grad(X: Array, d_out=5) -> Array:
     - 1: output dimension (d) (one for each output component)
     - 2: input dimension (2)
     """
-    g = 2.0 * (X @ H)  # (N, d_out)
+    xp = array_namespace(X)
+    g = 2.0 * (X @ xp.asarray(H))  # (N, d_out)
     return xp.repeat(g[:, None, :], d_out, axis=1)  # (N, d_out, d_in)
 
 
@@ -34,13 +41,14 @@ def vector_quadratic_3_hess(X: Array, d_out=5) -> Array:
     Computes the Hessian: f''(x) = (2*H1, 2*H2)
     Takes in X with shape (N, 2) and returns tensor (N, d_out, d_in, d_in).
     """
+    xp = array_namespace(X)
     N, d_in = X.shape
-    h = xp.repeat((2.0 * H)[None, :, :], N, axis=0)  # Shape (N, 2, 2)
+    h = xp.repeat((2.0 * xp.asarray(H))[None, :, :], N, axis=0)  # Shape (N, 2, 2)
     return xp.repeat(h[:, None, :, :], d_out, axis=1)  # (N, d, 2, 2)
 
 
 if __name__ == "__main__":
-    X = xp.array([[1.0, 1.0], [2.0, 2.0], [-1.0, -1.0], [-2.0, -2.0]])
+    X = np.array([[1.0, 1.0], [2.0, 2.0], [-1.0, -1.0], [-2.0, -2.0]])
     print("Function values:")
     print(vector_quadratic_3(X))
     print(vector_quadratic_3(X).shape)
