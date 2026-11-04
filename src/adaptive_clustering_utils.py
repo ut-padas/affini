@@ -45,8 +45,30 @@ class SurrogateMode(Enum):
 class ClusteringConfig:
     mode: SurrogateMode
     error_metric: str  # "L2", "Linf-global", "Linf-local"
+    atol: float  # absolute error tolerance for accepting a cluster
+    rtol: float  # relative error tolerance (w.r.t. max |F| over the initial data)
+    min_pts_per_cluster: int = 100
+    q_reg: float = 1e-6  # regularization added when computing the trust-region shape Q
+    max_levels: int = 50  # maximum number of refinement levels
+    batch_size: int = 10_000_000  # max points moved to the device per batch
+    seed: int = 0
+    max_clusters_est: int = 100_000  # initial capacity of the output buffers (all ranks)
+    use_work_stealing: bool = True
+    save_all_gen_training_data: bool = False
     store_hess: bool = False
     store_affine_fits: bool = False
+
+    def __post_init__(self) -> None:
+        if (
+            self.mode
+            in (SurrogateMode.AFFINE_COV_HESS, SurrogateMode.AFFINE_COV_NO_HESS)
+            and not self.store_affine_fits
+        ):
+            self.store_affine_fits = True
+            logger.warning(
+                f"Selected mode {self.mode.value} requires storing affine fit "
+                "parameters. Overriding store_affine_fits to True."
+            )
 
     @property
     def requires_grad_everywhere(self) -> bool:
@@ -599,8 +621,6 @@ def evaluate_cluster_errors(
     aug_sizes: Array,
     aug_ids: Array,
     F_max_global: Array,
-    ATOL: float,
-    RTOL: float
 ) -> tuple[Array, Array, dict[str, Any]]:
     """
     Fits the appropriate surrogate and computes the error metric.
@@ -749,7 +769,7 @@ def evaluate_cluster_errors(
         E_cluster_abs = xp.sqrt(sq_err_cluster / aug_sizes)
 
         # Pass if relative error is good, OR if absolute error is already negligible
-        is_good = (E_cluster_rel < RTOL) | (E_cluster_abs < ATOL)
+        is_good = (E_cluster_rel < config.rtol) | (E_cluster_abs < config.atol)
         return is_good, E_cluster_rel, surrogate_params
     
     elif config.error_metric == "Linf-global":
@@ -772,10 +792,10 @@ def evaluate_cluster_errors(
             )  # (K,)
 
         # Pass if relative error is good, OR if absolute error is already negligible
-        is_good = (E_cluster_rel < RTOL) | (E_cluster_abs < ATOL)
+        is_good = (E_cluster_rel < config.rtol) | (E_cluster_abs < config.atol)
         return is_good, E_cluster_rel, surrogate_params
 
-    is_good = E_cluster < ATOL  # (K,)
+    is_good = E_cluster < config.atol  # (K,)
     return is_good, E_cluster, surrogate_params
 
 
@@ -790,7 +810,6 @@ def compute_accepted_stats(
     g_mus_good: Optional[Array],
     dense_labels_good: Array,
     counts_good: Array,
-    Q_reg: float,
 ) -> tuple[Array, Optional[Array], Array, Optional[Array]]:
     """
     Computes Q (Trust Region shape), H (Hessian), radii, and L_obs for accepted clusters.
@@ -808,8 +827,8 @@ def compute_accepted_stats(
     Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))  # (K, d, d)
     Lambda, U = xp.linalg.eigh(Cov)
 
-    if Q_reg > 0.0:
-        Lambda = xp.maximum(Lambda, Q_reg)
+    if config.q_reg > 0.0:
+        Lambda = xp.maximum(Lambda, config.q_reg)
 
     Lambda_inv = 1.0 / xp.maximum(Lambda, TINY_EPS)  # (K, d)
 
@@ -897,7 +916,6 @@ def split_rejected_clusters(
     f_mus_bad: Array,
     dense_labels_bad: Array,
     counts_bad: Array,
-    MIN_PTS_PER_CLUSTER: int,
     surrogate_params: dict,
     hessian: Optional[Callable]
 ) -> Array:
@@ -976,7 +994,7 @@ def split_rejected_clusters(
             E_bad = xp.linalg.norm(diff_bad, axis=1)  # (N_bad,)
         else:  # AFFINE_COV - TWO-PASS LOCAL FIT
             dist_to_mu = xp.linalg.norm(dx, axis=1)  # (N_bad,)
-            n_tangent = max(d * 2, MIN_PTS_PER_CLUSTER // 4)
+            n_tangent = max(d * 2, config.min_pts_per_cluster // 4)
             tangent_mask = get_n_smallest_per_block(
                 dist_to_mu, dense_labels_bad, n_tangent
             )  # (N_bad,)
@@ -1003,7 +1021,7 @@ def split_rejected_clusters(
             E_bad = xp.linalg.norm(diff_bad, axis=1)  # (N_bad,)
 
         # Find SMALLEST errors (where surrogate == true func)
-        n_est_cov = max(1, MIN_PTS_PER_CLUSTER // 3)
+        n_est_cov = max(1, config.min_pts_per_cluster // 3)
         cov_est_mask = get_n_smallest_per_block(E_bad, dense_labels_bad, n_est_cov)
 
         X_hard = X_bad[cov_est_mask]  # (N_hard, d)

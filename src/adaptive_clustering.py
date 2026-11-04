@@ -66,18 +66,8 @@ def _run_local_refinement(
     f_fn: Optional[Callable],
     g_fn: Optional[Callable],
     oracle_fn: Optional[Callable],
-    ATOL: float,
-    RTOL: float,
-    MIN_PTS_PER_CLUSTER: int,
-    MAX_CLUSTERS_EST: int,
-    SEED: int,
-    Q_REG: float,
-    MAX_LEVELS: int,
-    BATCH_SIZE: int,
-    USE_WORK_STEALING: bool,
     LOG_MEM_STATS: bool,
     PROFILE_TIMING: bool,
-    SAVE_ALL_GEN_CLUSTER_DATA: bool,
     hessian: Optional[Callable],
     rank: int,
     size: int,
@@ -88,6 +78,9 @@ def _run_local_refinement(
     Core local BFS refinement loop for GPU adaptive clustering, run independently
     on each MPI rank. Accepts pre-sorted GPU data for the rank's partition and
     returns finalized output buffers plus counts.
+
+    Algorithm settings (tolerances, limits, seed, work stealing, ...) are read
+    from ``config``; ``config.max_clusters_est`` is the total across all ranks.
     """
     mempool = None
     if IS_CUPY_BACKEND:
@@ -97,7 +90,7 @@ def _run_local_refinement(
 
     # Allocate Output Buffers on CPU (Host) to save VRAM
     buffers, out_cap = allocate_output_buffers_host(
-        MAX_CLUSTERS_EST,
+        max(1, config.max_clusters_est // max(1, size)),
         d,
         fd,
         store_hess=config.store_hess,
@@ -113,7 +106,7 @@ def _run_local_refinement(
     status = MPI.Status()
     local_load = int(CLUSTER_PTS.shape[0])
 
-    if USE_WORK_STEALING:
+    if config.use_work_stealing:
         # Architecture State for Decentralized Work-Stealing
         global_loads = np.zeros(size, dtype=np.int64)
         global_loads[rank] = local_load
@@ -201,14 +194,14 @@ def _run_local_refinement(
         num_clusters = len(CLUSTER_SIZES)
         local_load = int(CLUSTER_PTS.shape[0] if num_clusters > 0 else 0)
 
-        if USE_WORK_STEALING:
+        if config.use_work_stealing:
             with CudaTimer("time_state_update", profiling_stats, PROFILE_TIMING):
                 receive_and_update_state()
             global_loads[rank] = local_load
 
         # --- Phase 3: Idle / Stealing Phase ---
-        if num_clusters == 0 or level > MAX_LEVELS:
-            if not USE_WORK_STEALING:
+        if num_clusters == 0 or level > config.max_levels:
+            if not config.use_work_stealing:
                 logger.info(
                     f"R{rank:02}: No clusters to process or exceeded max levels. Terminating."
                 )
@@ -216,14 +209,14 @@ def _run_local_refinement(
                 break
 
             with CudaTimer("time_idle", profiling_stats, PROFILE_TIMING):
-                # A rank that hit MAX_LEVELS may still hold data but will never process
+                # A rank that hit max_levels may still hold data but will never process
                 # it. Ensure we advertise 0 so the termination condition works correctly.
                 if local_load != 0:
                     local_load = 0
                     global_loads[rank] = 0
                     broadcast_state()
                 deny_idle_requests()
-                if np.sum(global_loads) == 0 or level > MAX_LEVELS:
+                if np.sum(global_loads) == 0 or level > config.max_levels:
                     finish_work_stealing()
                     logger.info(f"R{rank:02}: All ranks retired. Terminating.")
                     is_terminated = True
@@ -389,7 +382,7 @@ def _run_local_refinement(
                 next_level_sizes_buffer = sizes_new
                 next_sizes_cap = new_sizes_cap
 
-        num_batches = level_total_pts // BATCH_SIZE + 1
+        num_batches = level_total_pts // config.batch_size + 1
         start_cluster_idx = 0
         K_good = 0
 
@@ -401,7 +394,7 @@ def _run_local_refinement(
                 f"R{rank:02} L{level:02}: Processing Batch {b + 1}/{num_batches}"
             )
 
-            if USE_WORK_STEALING:
+            if config.use_work_stealing:
                 # --- Mid-Level Work Stealing ---
                 while comm.Iprobe(
                     source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=status
@@ -500,7 +493,7 @@ def _run_local_refinement(
                 with CudaTimer("time_state_update", profiling_stats, PROFILE_TIMING):
                     receive_and_update_state()
 
-            target_aug_count = (b + 1) * BATCH_SIZE
+            target_aug_count = (b + 1) * config.batch_size
             end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
             end_cluster_idx = min(end_cluster_idx + 1, num_clusters)
             if start_cluster_idx >= end_cluster_idx:
@@ -572,8 +565,6 @@ def _run_local_refinement(
                     aug_sizes,
                     aug_ids,
                     F_max_global,
-                    ATOL,
-                    RTOL
                 )
 
             if LOG_MEM_STATS:
@@ -610,7 +601,6 @@ def _run_local_refinement(
                         g_mus[good_idx_local] if g_mus is not None else None,
                         dense_labels_good,
                         good_counts,
-                        Q_REG,
                     )
 
                 with CudaTimer("time_good_d2h", profiling_stats, PROFILE_TIMING):
@@ -692,8 +682,8 @@ def _run_local_refinement(
 
                     # --- Dynamically augment bad clusters before splitting ---
                     target_bad_counts = xp.where(
-                        bad_counts < 2 * MIN_PTS_PER_CLUSTER,
-                        xp.maximum(2 * bad_counts, 2 * MIN_PTS_PER_CLUSTER),
+                        bad_counts < 2 * config.min_pts_per_cluster,
+                        xp.maximum(2 * bad_counts, 2 * config.min_pts_per_cluster),
                         bad_counts,
                     )
 
@@ -745,7 +735,7 @@ def _run_local_refinement(
                     if num_synth > 0:
                         num_generated_pts += num_synth
                         synth_c_ids = aug_dense_labels_bad[is_synth]
-                        rng = xp.random.default_rng(SEED + level + b + rank * 1000)
+                        rng = xp.random.default_rng(config.seed + level + b + rank * 1000)
 
                         bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
                         c_starts_synth = bad_starts[synth_c_ids]
@@ -766,9 +756,9 @@ def _run_local_refinement(
                         alpha = rng.random((num_synth, 1)).astype(xp.float64)
                         X_synth_vals = p1 * alpha + p2 * (1.0 - alpha)
 
-                        if SAVE_ALL_GEN_CLUSTER_DATA is True:
+                        if config.save_all_gen_training_data:
                             save_generated_data(
-                                X_synth_vals, f"train_data_atol_{ATOL}_rtol_{RTOL}_d{d}"
+                                X_synth_vals, f"train_data_atol_{config.atol}_rtol_{config.rtol}_d{d}"
                             )
 
                         X_bad_aug[is_synth] = X_synth_vals
@@ -811,7 +801,6 @@ def _run_local_refinement(
                         f_mus[bad_idx_local],
                         aug_dense_labels_bad,
                         target_bad_counts,
-                        MIN_PTS_PER_CLUSTER,
                         bad_surrogate_params,
                         hessian,
                     )
@@ -905,7 +894,7 @@ def _run_local_refinement(
             total_next_pts = np.sum(next_sizes) if len(next_sizes) > 0 else 0
             local_load = int(total_next_pts)
 
-            if USE_WORK_STEALING:
+            if config.use_work_stealing:
                 global_loads[rank] = local_load
                 broadcast_state()
 
@@ -1090,19 +1079,19 @@ def adaptive_clustering(
     USE_EXISTING_INITIAL_CLUSTERING skips the initial clustering and loads the labels from that
     file if it exists and has one label per row of X; otherwise clustering is done as normal.
     """
-    if ERROR_EVAL_MODE in (
-        SurrogateMode.AFFINE_COV_HESS,
-        SurrogateMode.AFFINE_COV_NO_HESS,
-    ):
-        if not STORE_AFFINE_FIT_PER_CLUSTER:
-            STORE_AFFINE_FIT_PER_CLUSTER = True
-            logger.warning(
-                f"Selected mode {ERROR_EVAL_MODE.value} requires storing affine fit parameters. Overriding STORE_AFFINE_FIT_PER_CLUSTER to True."
-            )
-
     config = ClusteringConfig(
         mode=ERROR_EVAL_MODE,
         error_metric=ERROR_METRIC,
+        atol=ATOL,
+        rtol=RTOL,
+        min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
+        q_reg=Q_REG,
+        max_levels=MAX_LEVELS,
+        batch_size=BATCH_SIZE,
+        seed=SEED,
+        max_clusters_est=MAX_CLUSTERS_EST,
+        use_work_stealing=USE_WORK_STEALING,
+        save_all_gen_training_data=SAVE_ALL_GEN_TRAINING_DATA,
         store_hess=STORE_HESSIAN_PER_CLUSTER,
         store_affine_fits=STORE_AFFINE_FIT_PER_CLUSTER,
     )
@@ -1117,13 +1106,13 @@ def adaptive_clustering(
     size = comm.Get_size()
 
     # With one rank there are no stealing opportunities, so respect the
-    # caller's refinement limit even when USE_WORK_STEALING defaults to True.
-    if USE_WORK_STEALING and size > 1 and MAX_LEVELS <= 100:
-        _safe_MAX_LEVELS = 1000
+    # caller's refinement limit even when use_work_stealing defaults to True.
+    if config.use_work_stealing and size > 1 and config.max_levels <= 100:
+        _safe_max_levels = 1000
         logger.warning(
-            f"Work stealing enabled but MAX_LEVELS is only {MAX_LEVELS}. Overriding MAX_LEVELS to {_safe_MAX_LEVELS} to ensure sufficient stealing opportunities across levels."
+            f"Work stealing enabled but max_levels is only {config.max_levels}. Overriding max_levels to {_safe_max_levels} to ensure sufficient stealing opportunities across levels."
         )
-        MAX_LEVELS = _safe_MAX_LEVELS
+        config.max_levels = _safe_max_levels
 
     _start_time = time.perf_counter()
 
@@ -1159,9 +1148,11 @@ def adaptive_clustering(
     d_bcast, fd_bcast = 0, 0
 
     if rank == 0:
-        if SAVE_ALL_GEN_TRAINING_DATA is True:
+        if config.save_all_gen_training_data:
             _, DIM = X.shape
-            save_generated_data(X, f"train_data_atol_{ATOL}_rtol_{RTOL}_d{DIM}")
+            save_generated_data(
+                X, f"train_data_atol_{config.atol}_rtol_{config.rtol}_d{DIM}"
+            )
 
         with CudaTimer("time_init", profiling_stats, PROFILE_TIMING):
             X0_gpu = xp.asarray(X, dtype=xp.float64)
@@ -1206,13 +1197,13 @@ def adaptive_clustering(
                     if HAS_CUML:
                         from cuml.cluster import KMeans as cuKMeans
 
-                        km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED)
+                        km = cuKMeans(n_clusters=NUM_INITIAL_CLUSTERS, random_state=config.seed)
                         labels0 = km.fit_predict(X0_gpu)
                     else:
                         from sklearn.cluster import KMeans
 
                         km = KMeans(
-                            n_clusters=NUM_INITIAL_CLUSTERS, random_state=SEED, max_iter=2
+                            n_clusters=NUM_INITIAL_CLUSTERS, random_state=config.seed, max_iter=2
                         )
                         labels0 = km.fit_predict(_to_host(X0_gpu))
                     labels0 = _to_host(labels0).astype(np.int64)
@@ -1224,7 +1215,7 @@ def adaptive_clustering(
                         knn_dbscan(
                             X0_gpu,
                             eps=0.5,
-                            min_samples=MIN_PTS_PER_CLUSTER,
+                            min_samples=config.min_pts_per_cluster,
                             device="gpu" if IS_CUPY_BACKEND else "cpu",
                         )
                     ).astype(np.int64)
@@ -1371,12 +1362,12 @@ def adaptive_clustering(
 
     hardware_batch_cap = usable_vram_bytes // max(1, estimated_peak_bytes_per_point)
     dynamic_batch_cap = int(np.clip(hardware_batch_cap, 50_000, 20_000_000))
-    if BATCH_SIZE > dynamic_batch_cap:
+    if config.batch_size > dynamic_batch_cap:
         logger.info(
             "Hardware VRAM scaling: reducing BATCH_SIZE from %s to %s for d=%s, "
             "fd=%s using %.2f GB free / %.2f GB total VRAM and an estimated "
             "%.0f bytes/point peak footprint.",
-            f"{BATCH_SIZE:,}",
+            f"{config.batch_size:,}",
             f"{dynamic_batch_cap:,}",
             d_bcast,
             fd_bcast,
@@ -1384,7 +1375,7 @@ def adaptive_clustering(
             total_vram_bytes / 1e9,
             float(estimated_peak_bytes_per_point),
         )
-        BATCH_SIZE = dynamic_batch_cap
+        config.batch_size = dynamic_batch_cap
 
     buffers, out_count, local_f_evals, local_gen_pts, last_level = (
         _run_local_refinement(
@@ -1400,18 +1391,8 @@ def adaptive_clustering(
             f_fn=f_fn,
             g_fn=g_fn,
             oracle_fn=oracle_fn,
-            ATOL=ATOL,
-            RTOL=RTOL,
-            MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-            MAX_CLUSTERS_EST=max(1, MAX_CLUSTERS_EST // max(1, size)),
-            SEED=SEED,
-            Q_REG=Q_REG,
-            MAX_LEVELS=MAX_LEVELS,
-            BATCH_SIZE=BATCH_SIZE,
-            USE_WORK_STEALING=USE_WORK_STEALING,
             LOG_MEM_STATS=LOG_MEM_STATS,
             PROFILE_TIMING=PROFILE_TIMING,
-            SAVE_ALL_GEN_CLUSTER_DATA=SAVE_ALL_GEN_TRAINING_DATA,
             hessian=HESSIAN,
             rank=rank,
             size=size,
@@ -1490,8 +1471,10 @@ def adaptive_clustering(
         )
 
         # Combine all the files if we are saving
-        if SAVE_ALL_GEN_TRAINING_DATA is True:
-            combine_generated_data(f"train_data_atol_{ATOL}_rtol_{RTOL}_d{d_bcast}")
+        if config.save_all_gen_training_data:
+            combine_generated_data(
+                f"train_data_atol_{config.atol}_rtol_{config.rtol}_d{d_bcast}"
+            )
 
         return merged
     return None
