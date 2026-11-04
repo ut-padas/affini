@@ -1,3 +1,4 @@
+import argparse
 import csv
 import time
 import warnings
@@ -10,20 +11,19 @@ from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Ellipse
 
-import argparse
-from src import RESULTS_DIR, _to_device, _to_host, xp, Array
+from src import RESULTS_DIR, Array, _to_device, _to_host, xp
 from src.adaptive_clustering_utils import SurrogateMode
 from src.logging_utils import setup_logging
-from src.problems.rosenbrock import rosenbrock, rosenbrock_hess
-from src.problems.anisotropic_quadratic import aniso_quadratic, _get_params
+from src.problems.anisotropic_quadratic import _get_params, aniso_quadratic
 from src.problems.isotropic_gaussian import gaussian
-from src.problems.wave import wave
 from src.problems.lorenz96_flowmap import lorenz96_flowmap
+from src.problems.rosenbrock import rosenbrock, rosenbrock_hess
+from src.problems.wave import wave
 from src.surrogate import AFINNISurrogate, compute_error_metrics
 
 setup_logging()
 SEED = 0
-    
+
 
 # ==========================================
 # PLOTTING TEMPLATE
@@ -121,7 +121,8 @@ def plot_adaptive_clustering_results(
             )
         )
 
-    axs[1].set_xlim(domain); axs[1].set_ylim(domain)
+    axs[1].set_xlim(domain)
+    axs[1].set_ylim(domain)
     axs[1].legend(handles=legend_elements, loc="upper right")
     plt.tight_layout()
     plt.suptitle(title, fontsize=11)
@@ -133,13 +134,8 @@ def plot_adaptive_clustering_results(
     print(f"Saved visualization to {img_fpath}")
 
 
-
 def plot_test_points(
-    X_test: np.ndarray,
-    domain: list[float],
-    f_fn: Callable,
-    title: str,
-    img_fpath: Path
+    X_test: np.ndarray, domain: list[float], f_fn: Callable, title: str, img_fpath: Path
 ):
     """
     For the paper, plots the test point distribution (on a scatter plot) with the background contours.
@@ -158,25 +154,35 @@ def plot_test_points(
 
     fig, axs = plt.subplots(figsize=(9, 7.5))
 
-    cs = axs.contourf(
-        X_grid, Y_grid, Z_grid, levels=50, cmap="viridis", norm=cbar_norm
-    )
+    cs = axs.contourf(X_grid, Y_grid, Z_grid, levels=50, cmap="viridis", norm=cbar_norm)
     fig.colorbar(cs, ax=axs)
     axs.set_title(title)
     axs.set_aspect("equal")
 
     N_scatter = 1000
-    axs.scatter(X_test[:N_scatter, 0], X_test[:N_scatter, 1], c="red", s=5, label="Uniform Points")
-    axs.scatter(X_test[-N_scatter:, 0], X_test[-N_scatter:, 1], c="pink", s=5, label="Function Dist. Points")
+    axs.scatter(
+        X_test[:N_scatter, 0],
+        X_test[:N_scatter, 1],
+        c="red",
+        s=5,
+        label="Uniform Points",
+    )
+    axs.scatter(
+        X_test[-N_scatter:, 0],
+        X_test[-N_scatter:, 1],
+        c="pink",
+        s=5,
+        label="Function Dist. Points",
+    )
 
-    axs.set_xlim(domain[0], domain[1]); axs.set_ylim(domain[0], domain[1])
+    axs.set_xlim(domain[0], domain[1])
+    axs.set_ylim(domain[0], domain[1])
     axs.legend(loc="lower right")
 
     img_fpath.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(img_fpath, dpi=300)
     plt.close(fig)
     print(f"Saved test points plot to {img_fpath}")
-
 
 
 # ==========================================
@@ -186,8 +192,8 @@ def halo_sampling(
     surrogate: AFINNISurrogate,
     pts_per_cluster: int,
     gamma: float,
-    left:float,
-    right:float
+    left: float,
+    right: float,
 ) -> Array:
     """
     Each MPI rank generates candidates ONLY for its assigned fraction of clusters,
@@ -204,7 +210,7 @@ def halo_sampling(
     lambda_inv_sqrt = 1.0 / xp.sqrt(xp.maximum(eigenvals, 1e-12))
 
     z = xp.random.randn(Nc, pts_per_cluster, d)
-    z_normalized = z / xp.linalg.norm(z, axis=2)[:,:,None]
+    z_normalized = z / xp.linalg.norm(z, axis=2)[:, :, None]
 
     scaled_z = z_normalized * lambda_inv_sqrt[:, None, :]
     rotated_scaled_z = xp.einsum("nij,npj->npi", eigenvecs, scaled_z)
@@ -222,12 +228,8 @@ def halo_sampling(
     return valid_points
 
 
-
 def cloud_sampling(
-    surrogate: AFINNISurrogate,
-    pts_per_cluster: int,
-    left: float,
-    right: float
+    surrogate: AFINNISurrogate, pts_per_cluster: int, left: float, right: float
 ) -> Array:
 
     Nc, d = surrogate.X_src.shape
@@ -258,12 +260,9 @@ def cloud_sampling(
 
 
 def uniform_sampling(
-    surrogate: AFINNISurrogate,
-    pts_per_cluster: int,
-    left:float,
-    right:float
+    surrogate: AFINNISurrogate, pts_per_cluster: int, left: float, right: float
 ) -> Array:
-    
+
     Nc, d = surrogate.X_src.shape
     N_new = Nc * pts_per_cluster
     X_cand = xp.random.uniform(left, right, size=(N_new, d))
@@ -273,51 +272,54 @@ def uniform_sampling(
 
 
 # Don't need left/right for this because it is convex combinations and these are guaranteed to be in the box
-def chord_sampling(
-    surrogate: AFINNISurrogate,
-    pts_per_cluster: int
-):
+def chord_sampling(surrogate: AFINNISurrogate, pts_per_cluster: int):
     N_c, d = surrogate.X_src.shape
     centroids = surrogate.X_src
 
     # Find five nearest neighbors of each centroid (minus itself)
     # Slow but I don't want to use a library
     diff = centroids[:, None, :] - centroids[None, :, :]
-    sq_dists = xp.einsum('ijk,ijk->ij', diff, diff)
+    sq_dists = xp.einsum("ijk,ijk->ij", diff, diff)
     xp.fill_diagonal(sq_dists, xp.inf)
-    k = 5; idxs = xp.argpartition(sq_dists, k, axis=1)[:, :k]
+    k = 5
+    idxs = xp.argpartition(sq_dists, k, axis=1)[:, :k]
 
     # Sample uniformly between 0 and 4 (these will be the clusters we use to build chords)
     N_sample = pts_per_cluster * N_c
     random_ind = xp.random.randint(0, 5, size=N_sample)
 
     # Build vectors of indices to sample
-    src_cluster_idx = xp.repeat(xp.arange(N_c), pts_per_cluster)    # (N_c * pts_per_cluster)
-    dest_cluster_idx = idxs[src_cluster_idx,random_ind]             # (N_c * pts_per_cluster)
+    src_cluster_idx = xp.repeat(
+        xp.arange(N_c), pts_per_cluster
+    )  # (N_c * pts_per_cluster)
+    dest_cluster_idx = idxs[src_cluster_idx, random_ind]  # (N_c * pts_per_cluster)
 
     # Build new points
     src_cluster = centroids[src_cluster_idx]
     dest_cluster = centroids[dest_cluster_idx]
-    rho = xp.random.uniform(size=N_sample)[:,None]
-    X_cand = rho * src_cluster + (1-rho) * dest_cluster
+    rho = xp.random.uniform(size=N_sample)[:, None]
+    X_cand = rho * src_cluster + (1 - rho) * dest_cluster
 
     ug_mask = surrogate.filter_unguaranteed_local(X_cand, k_coarse=10, batch_size=50000)
     valid_points = X_cand[ug_mask]
     return valid_points
 
 
-
 """
 Rosenbrock test distribution: sample half the points from the valley distribution
     and sample the other half from a uniform distribution.
 """
-def sample_rosenbrock_test_distribution(N_test:int, d:int, left=-2.0, right=3.0):
 
-    N_valley = N_test // 2; N_uniform = N_test - N_valley
+
+def sample_rosenbrock_test_distribution(N_test: int, d: int, left=-2.0, right=3.0):
+
+    N_valley = N_test // 2
+    N_uniform = N_test - N_valley
     uniform_pts = xp.random.uniform(left, right, (N_uniform, d))
 
-    a = 1.0; b = 5.0; mu = 0.5;
-
+    a = 1.0
+    b = 5.0
+    mu = 0.5
     # Use rejection sampling to ensure all points are in the bounding box.
     in_domain = xp.full(N_valley, False)
     valley_pts = xp.zeros((N_valley, d))
@@ -328,15 +330,15 @@ def sample_rosenbrock_test_distribution(N_test:int, d:int, left=-2.0, right=3.0)
         print(f"Iteration {counter}: current points inside: {sum(in_domain)}.")
         counter += 1
         if d == 2:
-            x1 = mu + xp.random.randn(N_out) / xp.sqrt(2*a)
-            x2 = xp.random.randn(N_out) / np.sqrt(2*b) + (x1**2)
+            x1 = mu + xp.random.randn(N_out) / xp.sqrt(2 * a)
+            x2 = xp.random.randn(N_out) / np.sqrt(2 * b) + (x1**2)
             new_points = xp.column_stack((x1, x2))
         elif d == 3:
-            x1 = mu + xp.random.randn(N_out) / xp.sqrt(2*a)
-            x2_mean = (2*b*x1**2 + 2*a*mu)**2 / (2*b + 2*a)
-            x2_var = 1 / (2*b + 2*a)
+            x1 = mu + xp.random.randn(N_out) / xp.sqrt(2 * a)
+            x2_mean = (2 * b * x1**2 + 2 * a * mu) ** 2 / (2 * b + 2 * a)
+            x2_var = 1 / (2 * b + 2 * a)
             x2 = x2_mean + xp.random.randn(N_out) * xp.sqrt(x2_var)
-            x3 = (x2**2) + xp.random.randn(N_out) / xp.sqrt(2*b)
+            x3 = (x2**2) + xp.random.randn(N_out) / xp.sqrt(2 * b)
             new_points = xp.column_stack((x1, x2, x3))
         elif d > 3:
             # This distribution doesn't work well; just use uniform for now.
@@ -348,7 +350,7 @@ def sample_rosenbrock_test_distribution(N_test:int, d:int, left=-2.0, right=3.0)
         else:
             print(f"Error: d={d} is not valid")
             return None
-            
+
         valley_pts[~in_domain] = new_points
         in_domain = verify_in_domain(valley_pts, left, right)
 
@@ -359,14 +361,19 @@ def sample_rosenbrock_test_distribution(N_test:int, d:int, left=-2.0, right=3.0)
 Quadratic test distribution: sample half the points from a Gaussian,
     with covariance equal to the Hessian inverse. Other half comes from uniform distribution.
 """
-def sample_quadratic_test_distribution(N_test:int, d:int, left=-3.0, right=3.0):
 
-    N_valley = N_test // 2; N_uniform = N_test - N_valley
+
+def sample_quadratic_test_distribution(N_test: int, d: int, left=-3.0, right=3.0):
+
+    N_valley = N_test // 2
+    N_uniform = N_test - N_valley
     uniform_pts = xp.random.uniform(left, right, (N_uniform, d))
 
     H = _get_params(d, xp.float64)
     mean = xp.zeros(d)
-    cov = xp.asarray(0.5 * np.linalg.inv(H) / (d**2))  # H is a NumPy matrix; move to the backend
+    cov = xp.asarray(
+        0.5 * np.linalg.inv(H) / (d**2)
+    )  # H is a NumPy matrix; move to the backend
 
     # Use rejection sampling to ensure all points are in the bounding box.
     in_domain = xp.full(N_valley, False)
@@ -385,7 +392,8 @@ def sample_quadratic_test_distribution(N_test:int, d:int, left=-3.0, right=3.0):
 
 
 def verify_in_domain(X, left, right):
-    X_min = xp.min(X, 1); X_max = xp.max(X, 1)
+    X_min = xp.min(X, 1)
+    X_max = xp.max(X, 1)
     out_box_mask = (X_min < left) | (X_max > right)
     return xp.logical_not(out_box_mask)
 
@@ -415,7 +423,7 @@ def generate_new_points(
     X_new = xp.zeros((N_target, d))
     N_current = 0
     pts_per_cluster = max(int(N_target / Nc) + 1, 5)
-    
+
     # Sample batches of points, counting both empty and productive attempts.
     sampling_attempts = 0
     while N_current < N_target:
@@ -429,15 +437,21 @@ def generate_new_points(
             )
         sampling_attempts += 1
         if strategy == "halo":
-            X_new_current = halo_sampling(surrogate, pts_per_cluster, gamma, domain[0], domain[1])
+            X_new_current = halo_sampling(
+                surrogate, pts_per_cluster, gamma, domain[0], domain[1]
+            )
         elif strategy == "uniform":
-            X_new_current = uniform_sampling(surrogate, pts_per_cluster, domain[0], domain[1])
+            X_new_current = uniform_sampling(
+                surrogate, pts_per_cluster, domain[0], domain[1]
+            )
         elif strategy == "chord":
             X_new_current = chord_sampling(surrogate, pts_per_cluster)
         elif strategy == "cloud":
-            X_new_current = cloud_sampling(surrogate, pts_per_cluster, domain[0], domain[1])
+            X_new_current = cloud_sampling(
+                surrogate, pts_per_cluster, domain[0], domain[1]
+            )
         else:
-            print(f"Error: sampling strategy \"{strategy}\" is not recognized.")
+            print(f'Error: sampling strategy "{strategy}" is not recognized.')
             return
 
         if len(X_new_current) == 0:
@@ -455,33 +469,37 @@ def generate_new_points(
             xp.random.shuffle(X_new_current)
             X_new[N_current:] = X_new_current[:N_remaining]
         else:
-            start = N_current; end = N_current + len(X_new_current)
+            start = N_current
+            end = N_current + len(X_new_current)
             X_new[start:end] = X_new_current
         N_current += len(X_new_current)
 
     return X_new
 
 
-def save_halo_points_for_testing_surrogates(X_train, function_name:str, d:int, strategy:str, N:int=50000):
-    numpy_data = np.array(_to_host(X_train))  # host copy: NumPy cannot shuffle a device array
+def save_halo_points_for_testing_surrogates(
+    X_train, function_name: str, d: int, strategy: str, N: int = 50000
+):
+    numpy_data = np.array(
+        _to_host(X_train)
+    )  # host copy: NumPy cannot shuffle a device array
     np.random.shuffle(numpy_data)
     np.save(f"{function_name}_d{d}_{strategy}.npy", numpy_data[:N])
 
 
-
 def run_iterative_refinement(
-    function:str,
-    sampling:str,
-    d:int,
-    tol:float = 0.05,
-    n_iter:int = 5,
-    gamma:float = 1.5,
-    save_halo_pts:bool = False,
+    function: str,
+    sampling: str,
+    d: int,
+    tol: float = 0.05,
+    n_iter: int = 5,
+    gamma: float = 1.5,
+    save_halo_pts: bool = False,
     max_sampling_attempts: int = 100,
 ):
 
     # Hyperparameters
-    N_INITIAL_TRAIN = int(20_000 * (1.3 ** d))
+    N_INITIAL_TRAIN = int(20_000 * (1.3**d))
     N_TEST = 20_000
 
     NUM_INITIAL_CLUSTERS = 20 * d
@@ -493,7 +511,7 @@ def run_iterative_refinement(
 
     # Define parameters based on function selection
     if function == "rosenbrock":
-        DOMAIN = [-2.0, 3.0] 
+        DOMAIN = [-2.0, 3.0]
         f_fn = lambda x: rosenbrock(x, a=100.0)
     elif function == "quadratic":
         DOMAIN = [-3.0, 3.0]
@@ -508,13 +526,16 @@ def run_iterative_refinement(
         DOMAIN = [-3.0, 3.0]
         f_fn = lambda x: gaussian(x)
     else:
-        print(f"Function \"{function}\" not implemented; aborting.")
+        print(f'Function "{function}" not implemented; aborting.')
         return
 
     xp.random.seed(SEED)
 
     OUTPUT_DIR = RESULTS_DIR / "active_learning_halo"
-    csv_path = OUTPUT_DIR / f"halo_metrics_dim{d}_f_{function}_tol{tol}_sampling_{sampling}.csv"
+    csv_path = (
+        OUTPUT_DIR
+        / f"halo_metrics_dim{d}_f_{function}_tol{tol}_sampling_{sampling}.csv"
+    )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(csv_path, mode="w", newline="") as f:
@@ -538,17 +559,24 @@ def run_iterative_refinement(
 
     X_train = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_INITIAL_TRAIN, d))
     p_out_vec = []
-    
+
     # Sample X_test from distribution defined by function
     if function == "rosenbrock":
         X_test = sample_rosenbrock_test_distribution(N_TEST, d, DOMAIN[0], DOMAIN[1])
     elif function == "quadratic":
         X_test = sample_quadratic_test_distribution(N_TEST, d, DOMAIN[0], DOMAIN[1])
     else:
-        print(f"No modified test distribution for selected function; using uniform points.")
+        print(
+            f"No modified test distribution for selected function; using uniform points."
+        )
         X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, d))
-    plot_test_points(_to_host(X_test), DOMAIN, f_fn, "Test Distribution", OUTPUT_DIR / "test_points.png")
-
+    plot_test_points(
+        _to_host(X_test),
+        DOMAIN,
+        f_fn,
+        "Test Distribution",
+        OUTPUT_DIR / "test_points.png",
+    )
 
     ground_truth = f_fn(X_test)
 
@@ -591,7 +619,9 @@ def run_iterative_refinement(
         t_eval = time.perf_counter() - _t_start
 
         p_out = 0.0
-        metrics = compute_error_metrics(preds, ground_truth, ug_mask, atol=tol, rtol=tol)
+        metrics = compute_error_metrics(
+            preds, ground_truth, ug_mask, atol=tol, rtol=tol
+        )
         e_all = metrics["all"]["l2_rel_error"]
         e_in = metrics["in"]["l2_rel_error"]
         e_out = metrics["out"]["l2_rel_error"]
@@ -611,7 +641,12 @@ def run_iterative_refinement(
         # 3. Generate & Filter New Points via new sampling method
         _t_start = time.perf_counter()
         X_new = generate_new_points(
-            surrogate, len(X_train), sampling, 0.4, DOMAIN, gamma,
+            surrogate,
+            len(X_train),
+            sampling,
+            0.4,
+            DOMAIN,
+            gamma,
             max_sampling_attempts=max_sampling_attempts,
         )
 
@@ -666,7 +701,6 @@ def run_iterative_refinement(
     return p_out_vec
 
 
-
 def plot_iterates_p_out(p_out_halo, p_out_cloud, p_out_uniform, p_out_chord):
 
     fig_p_out, ax_p_out = plt.subplots()
@@ -674,17 +708,18 @@ def plot_iterates_p_out(p_out_halo, p_out_cloud, p_out_uniform, p_out_chord):
     fig_queries, ax_queries = plt.subplots()
 
     if p_out_halo is not None:
-        ax_p_out.plot(np.arange(len(p_out_halo)), p_out_halo, '-o', label="Halo")
+        ax_p_out.plot(np.arange(len(p_out_halo)), p_out_halo, "-o", label="Halo")
     if p_out_cloud is not None:
-        ax_p_out.plot(np.arange(len(p_out_cloud)), p_out_cloud, '-o', label="Cloud")
+        ax_p_out.plot(np.arange(len(p_out_cloud)), p_out_cloud, "-o", label="Cloud")
     if p_out_uniform is not None:
-        ax_p_out.plot(np.arange(len(p_out_uniform)), p_out_uniform, '-o', label="Uniform")
+        ax_p_out.plot(
+            np.arange(len(p_out_uniform)), p_out_uniform, "-o", label="Uniform"
+        )
     if p_out_chord is not None:
-        ax_p_out.plot(np.arange(len(p_out_chord)), p_out_chord, '-o', label="Chord")
+        ax_p_out.plot(np.arange(len(p_out_chord)), p_out_chord, "-o", label="Chord")
     OUTPUT_DIR = RESULTS_DIR / "active_learning_halo"
     ax_p_out.legend()
-    fig_p_out.savefig(OUTPUT_DIR/"sampling_comparison.png")
-
+    fig_p_out.savefig(OUTPUT_DIR / "sampling_comparison.png")
 
 
 def plot_halo_various_gamma(p_out_mat, gammavec):
@@ -693,10 +728,10 @@ def plot_halo_various_gamma(p_out_mat, gammavec):
     N_experiment, N_iter = p_out_mat.shape
     xrange = np.arange(N_iter)
     for j in range(N_experiment):
-        ax.plot(xrange, p_out_mat[j], '-o', label=f"$\\gamma={gammavec[j]}$")
+        ax.plot(xrange, p_out_mat[j], "-o", label=f"$\\gamma={gammavec[j]}$")
     OUTPUT_DIR = RESULTS_DIR / "active_learning_halo"
     ax.legend()
-    fig.savefig(OUTPUT_DIR/"halo_gamma_comparison.png")
+    fig.savefig(OUTPUT_DIR / "halo_gamma_comparison.png")
 
 
 def parse_args():
@@ -708,7 +743,9 @@ def parse_args():
     parser.add_argument("--dimension", type=int, default=2)
     parser.add_argument("--n-iter", type=int, default=10)
     parser.add_argument(
-        "--max-sampling-attempts", type=int, default=100,
+        "--max-sampling-attempts",
+        type=int,
+        default=100,
         help="Maximum candidate batches per gap-sampling call, including empty batches.",
     )
     parser.add_argument("--tol", type=float, default=0.05)
@@ -719,10 +756,7 @@ def parse_args():
     return args
 
 
-
-
 if __name__ == "__main__":
-
     args = parse_args()
     d = args.dimension
     function = args.function
@@ -732,14 +766,36 @@ if __name__ == "__main__":
 
     # Experiment 1: comparing sampling schemes
     if exp_num == 1:
-        p_out_halo = run_iterative_refinement(function=function, sampling="halo", d=d, tol=tol, n_iter=n_iter, save_halo_pts=True, max_sampling_attempts=args.max_sampling_attempts)
-        p_out_cloud = run_iterative_refinement(function=function, sampling="cloud", d=d, tol=tol, n_iter=n_iter, max_sampling_attempts=args.max_sampling_attempts)
-        p_out_uniform = run_iterative_refinement(function=function, sampling="uniform", d=d, tol=tol, n_iter= n_iter, max_sampling_attempts=args.max_sampling_attempts)
+        p_out_halo = run_iterative_refinement(
+            function=function,
+            sampling="halo",
+            d=d,
+            tol=tol,
+            n_iter=n_iter,
+            save_halo_pts=True,
+            max_sampling_attempts=args.max_sampling_attempts,
+        )
+        p_out_cloud = run_iterative_refinement(
+            function=function,
+            sampling="cloud",
+            d=d,
+            tol=tol,
+            n_iter=n_iter,
+            max_sampling_attempts=args.max_sampling_attempts,
+        )
+        p_out_uniform = run_iterative_refinement(
+            function=function,
+            sampling="uniform",
+            d=d,
+            tol=tol,
+            n_iter=n_iter,
+            max_sampling_attempts=args.max_sampling_attempts,
+        )
         plot_iterates_p_out(p_out_halo, p_out_cloud, p_out_uniform, None)
 
     # Experiment 2: comparing values of gamma for halo sampling
     elif exp_num == 2:
-        p_out_mat = np.zeros((5, n_iter+1))
+        p_out_mat = np.zeros((5, n_iter + 1))
         gammavec = [1.1, 1.3, 1.5, 1.75, 2.0]
         for j in range(5):
             p_out_mat[j] = run_iterative_refinement(
