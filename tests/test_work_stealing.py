@@ -8,6 +8,7 @@ import pytest
 import src.adaptive_clustering as ac
 import src.work_stealing as ws
 from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
+from src.clusters import ClusterBatch
 
 
 class _Status:
@@ -124,7 +125,7 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
             save_all_gen_training_data=False,
         ),
         evaluator=Evaluator(f_fn=lambda x: np.ones((len(x), 1))),
-        clusters=ws.ClusterBatch.empty(d=1, fd=1),
+        clusters=ClusterBatch.empty(d=1, fd=1),
         F_max_global=np.ones(1),
         comm=comm,
         profiling_stats={"level_stats": []},

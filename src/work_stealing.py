@@ -9,17 +9,17 @@ rank is idle, all ranks retire together through a non-blocking barrier, still
 answering requests until every rank has retired.
 
 The refinement loop only talks to this module through ``WorkStealer`` (or
-``NoWorkStealing`` when stealing is off) and ``ClusterBatch``.
+``NoWorkStealing`` when stealing is off) and ``src.clusters.ClusterBatch``.
 """
 
 import logging
 import time
-from dataclasses import dataclass, field
 
 import numpy as np
 
 from src.adaptive_clustering_utils import CudaTimer
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
+from src.clusters import ClusterBatch
 
 logger = logging.getLogger(__name__)
 
@@ -33,60 +33,6 @@ TAG_STEAL_GRANT = 110  # Payload buffers use tags 111 through 114.
 MIN_LOAD_THRESHOLD = 1_000_000  # Min points to be eligible for stealing
 STEAL_SIZE = 500_000  # Target point count to steal
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
-
-
-@dataclass
-class ClusterBatch:
-    """
-    Clusters stored contiguously in host memory.
-
-    Cluster ``k`` owns rows ``starts[k] : starts[k] + sizes[k]`` of ``X``, ``F``
-    and (if present) ``G``.
-    """
-
-    X: np.ndarray  # (n_pts, d)
-    F: np.ndarray  # (n_pts, fd)
-    G: np.ndarray | None  # (n_pts, fd, d), or None when gradients are not carried
-    sizes: np.ndarray  # (n_clusters,) int64
-    starts: np.ndarray = field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        self.starts = np.r_[0, np.cumsum(self.sizes)[:-1]]
-
-    @classmethod
-    def empty(cls, d: int, fd: int) -> "ClusterBatch":
-        return cls(
-            np.empty((0, d), dtype=np.float64),
-            np.empty((0, fd), dtype=np.float64),
-            None,
-            np.empty(0, dtype=np.int64),
-        )
-
-    @property
-    def n_clusters(self) -> int:
-        return len(self.sizes)
-
-    @property
-    def n_pts(self) -> int:
-        return int(self.X.shape[0])
-
-    @property
-    def d(self) -> int:
-        return int(self.X.shape[1])
-
-    @property
-    def fd(self) -> int:
-        return int(self.F.shape[1])
-
-    def split(self, cluster_idx: int) -> tuple["ClusterBatch", "ClusterBatch"]:
-        """Return (clusters before ``cluster_idx``, clusters from ``cluster_idx`` on)."""
-        pt = int(self.starts[cluster_idx])
-        G_head = self.G[:pt] if self.G is not None else None
-        G_tail = self.G[pt:] if self.G is not None else None
-        return (
-            ClusterBatch(self.X[:pt], self.F[:pt], G_head, self.sizes[:cluster_idx]),
-            ClusterBatch(self.X[pt:], self.F[pt:], G_tail, self.sizes[cluster_idx:]),
-        )
 
 
 def send_clusters(comm, batch: ClusterBatch, dest: int, tag: int = TAG_STEAL_GRANT):

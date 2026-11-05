@@ -12,6 +12,7 @@ def main():
     import src.work_stealing as ws
     from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
     from src.backend import MPI
+    from src.clusters import ClusterBatch
 
     world = MPI.COMM_WORLD
     rank, size = world.Get_rank(), world.Get_size()
@@ -99,7 +100,7 @@ def main():
                         save_all_gen_training_data=False,
                     ),
                     evaluator=Evaluator(f_fn=lambda x: np.ones((len(x), 1))),
-                    clusters=ws.ClusterBatch(
+                    clusters=ClusterBatch(
                         x,
                         np.ones_like(x),
                         np.ones((len(x), 1, 1)) if has_g else None,

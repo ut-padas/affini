@@ -979,7 +979,10 @@ def split_rejected_clusters(
     hessian: Optional[Callable]
 ) -> Array:
     """
-    Computes the splitting direction and returns the sort_order for the next level.
+    Computes each cluster's splitting direction and returns ``sort_order``: a
+    permutation of the rows that keeps every cluster contiguous (in label order)
+    and orders its points by their projection onto the split direction. Combine
+    it with ``median_split_sizes`` to get the two children of every cluster.
     """
     K_bad = len(counts_bad)
     N_bad, d = X_bad.shape
@@ -1159,6 +1162,24 @@ def split_rejected_clusters(
 
     sort_order = xp.lexsort(xp.stack([scores_proj, dense_labels_bad]))  # (N_bad,)
     return sort_order
+
+
+def median_split_sizes(counts: Array) -> Array:
+    """
+    Child sizes for splitting every cluster at its median along the split direction.
+
+    Given points ordered by ``split_rejected_clusters``, a parent with ``n`` points
+    becomes a low-side child of ``n // 2`` points followed by a high-side child of
+    ``n - n // 2``. Returns (2K,) int64 sizes ``[k0_low, k0_high, k1_low, ...]``.
+
+    Note: Algorithm 2 in the paper splits by the sign of the projection instead,
+    which can give children of unequal size.
+    """
+    half = counts // 2
+    sizes = xp.zeros(2 * len(counts), dtype=xp.int64)
+    sizes[0::2] = half
+    sizes[1::2] = counts - half
+    return sizes
 
 
 # -----------------------------------------------------------------------------
