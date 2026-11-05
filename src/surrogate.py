@@ -37,11 +37,10 @@ class AFINNISurrogate:
         self.N_src = 0
         self.X_src = None
         self.f_src = None
-        self.J_src = None
         self.Qs_src = None
-        self.Hs_src = None
-        self.A_fits_src = None
-        self.b_fits_src = None
+        # The local model's own per-leaf parameters, keyed by the columns it declares
+        # (e.g. "A_fit"/"b_fit", or "g" and optionally "H").
+        self.leaf_params: dict[str, Array] = {}
         self.profiling_stats = {}
         self.tree_data = None
 
@@ -50,15 +49,38 @@ class AFINNISurrogate:
 
     def _leaf_params(self) -> dict:
         """The per-cluster arrays ``local_model.evaluate`` reads (see src.local_models)."""
-        named = {
-            "centroids": self.X_src,
-            "f": self.f_src,
-            "g": self.J_src,
-            "H": self.Hs_src,
-            "A_fit": self.A_fits_src,
-            "b_fit": self.b_fits_src,
-        }
-        return {k: xp.asarray(v) for k, v in named.items() if v is not None}
+        return {"centroids": self.X_src, "f": self.f_src, **self.leaf_params}
+
+    def _leaf_param(self, name: str) -> Array | None:
+        return self.leaf_params.get(name)
+
+    def _set_leaf_param(self, name: str, value: Array | None) -> None:
+        if value is None:
+            self.leaf_params.pop(name, None)
+        else:
+            self.leaf_params[name] = value
+
+    # Named views of leaf_params for the current models (None when absent).
+    J_src = property(
+        lambda self: self._leaf_param("g"),
+        lambda self, v: self._set_leaf_param("g", v),
+        doc="(K, fd, d) gradients at the centroids (Taylor models).",
+    )
+    Hs_src = property(
+        lambda self: self._leaf_param("H"),
+        lambda self, v: self._set_leaf_param("H", v),
+        doc="(K, d, d) second-order Taylor Hessians.",
+    )
+    A_fits_src = property(
+        lambda self: self._leaf_param("A_fit"),
+        lambda self, v: self._set_leaf_param("A_fit", v),
+        doc="(K, fd, d) affine least-squares slopes.",
+    )
+    b_fits_src = property(
+        lambda self: self._leaf_param("b_fit"),
+        lambda self, v: self._set_leaf_param("b_fit", v),
+        doc="(K, fd) affine least-squares intercepts.",
+    )
 
     def get_trained_data_as_dict(self) -> dict:
         if not self.trained:
@@ -177,19 +199,16 @@ class AFINNISurrogate:
         # 3. Store Data on all ranks
         self.X_src = xp.asarray(bcast_data["centroids"])
         self.f_src = xp.asarray(bcast_data["f"])
-
-        # Guard optional arrays
-        if "g" in bcast_data and bcast_data["g"] is not None:
-            self.J_src = xp.asarray(bcast_data["g"])
         self.Qs_src = xp.asarray(bcast_data["Q"])
         self.N_src = self.X_src.shape[0]
         self.profiling_stats = bcast_data["profiling_stats"]
 
-        if "H" in bcast_data and bcast_data["H"] is not None:
-            self.Hs_src = xp.asarray(bcast_data["H"])
-        if "A_fit" in bcast_data and bcast_data["A_fit"] is not None:
-            self.A_fits_src = xp.asarray(bcast_data["A_fit"])
-            self.b_fits_src = xp.asarray(bcast_data["b_fit"])
+        # Whatever parameters the local model declared, under their column names.
+        d, fd = self.X_src.shape[1], self.f_src.shape[1]
+        self.leaf_params = {
+            name: xp.asarray(bcast_data[name])
+            for name in self.local_model.columns(d, fd)
+        }
 
         # 4. Build individual KNN index per rank
         self._build_knn_index()
