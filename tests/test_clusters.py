@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from src import xp
-from src.adaptive_clustering_utils import median_split_sizes
 from src.clusters import ClusterBatch, ClusterQueueBuilder
+from src.splitting import median_split_sizes
 
 
 def _parts(rng, sizes, d=2, fd=1, has_g=False):

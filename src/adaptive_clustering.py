@@ -25,9 +25,7 @@ from src.adaptive_clustering_utils import (
     compute_accepted_stats,
     convert_to_2d_array,
     evaluate_cluster_errors,
-    median_split_sizes,
     save_generated_data,
-    split_rejected_clusters,
     uniform_grid_cluster_labels,
 )
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
@@ -35,6 +33,7 @@ from src.clusters import ClusterBatch, ClusterQueueBuilder, ColumnBuffer
 from src.local_models import make_local_model, output_columns
 from src.logging_utils import log_mem_stats
 from src.sampling import augment_clusters, augmentation_targets, make_sampler
+from src.splitting import SplitData, split_strategy_for_mode
 from src.utils import repeats
 from src.work_stealing import (
     make_work_stealer,
@@ -82,6 +81,7 @@ def _run_local_refinement(
     # The function fitted on each cluster, and host-side output columns for the
     # accepted clusters (the shared columns plus the model's parameters).
     model = make_local_model(config)
+    splitter = split_strategy_for_mode(config.mode, config.min_pts_per_cluster)
     if model.needs_centroid_grad and not config.requires_grad_centroids:
         raise ValueError(f"{model.name} needs gradients at the centroids")
     accepted = ColumnBuffer(
@@ -334,28 +334,29 @@ def _run_local_refinement(
                     # ==========================================
                     # MATH PIPELINE STAGE 3
                     # ==========================================
-                    sort_order = split_rejected_clusters(
-                        config,
-                        X_bad_aug,
-                        F_bad_aug,
-                        G_bad_aug,
-                        mus[bad_idx_local],
-                        f_mus[bad_idx_local],
-                        aug_dense_labels_bad,
-                        target_bad_counts,
-                        g_mus[bad_idx_local] if g_mus is not None else None,
-                        evaluator.hessian_fn,
+                    sort_order, child_sizes = splitter.split(
+                        SplitData(
+                            X=X_bad_aug,
+                            F=F_bad_aug,
+                            G=G_bad_aug,
+                            labels=aug_dense_labels_bad,
+                            counts=target_bad_counts,
+                            centroids=mus[bad_idx_local],
+                            f_c=f_mus[bad_idx_local],
+                            g_c=g_mus[bad_idx_local] if g_mus is not None else None,
+                            hessian_fn=evaluator.hessian_fn,
+                        )
                     )
 
                 with CudaTimer("time_bad_d2h", profiling_stats, config.profile_timing):
-                    # Children: each cluster split at its median along the split direction.
+                    # Children: each cluster cut along its split direction.
                     next_level.append(
                         X_bad_aug[sort_order],
                         F_bad_aug[sort_order],
                         G_bad_aug[sort_order]
                         if config.requires_grad_everywhere and G_bad_aug is not None
                         else None,
-                        median_split_sizes(target_bad_counts),
+                        child_sizes,
                     )
 
                 with CudaTimer("time_gc", profiling_stats, config.profile_timing):
@@ -465,6 +466,13 @@ def adaptive_clustering(
     if not config.requires_no_grads and not evaluator.has_grad:
         raise ValueError(
             f"Selected mode {config.mode.value} requires gradient information. Please provide g_fn or oracle_fn."
+        )
+    if (
+        split_strategy_for_mode(config.mode, config.min_pts_per_cluster).needs_hessian_fn
+        and evaluator.hessian_fn is None
+    ):
+        raise ValueError(
+            f"Selected mode {config.mode.value} requires an exact Hessian. Please provide hessian_fn."
         )
 
     comm = MPI.COMM_WORLD

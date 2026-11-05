@@ -29,6 +29,12 @@ TINY_EPS = 1e-12
 # 1. CONFIGURATION & MODES
 # -----------------------------------------------------------------------------
 class SurrogateMode(Enum):
+    """
+    Named presets, each a pair (local model on the leaves, split strategy for
+    rejected clusters): see ``src.local_models.local_model_for_mode`` and
+    ``src.splitting.split_strategy_for_mode``.
+    """
+
     NEAREST_NEIGHBOR = "nearest_neighbor"  #  No grads, f(mu) only, split via X^T X
     AFFINE_COV_NO_HESS = "affine_cov_no_hess"  # No grads, fit A/b, split via X^T X
     TAYLOR_COV_NO_HESS = (
@@ -777,6 +783,21 @@ def evaluate_cluster_errors(
 # -----------------------------------------------------------------------------
 # 5. PIPELINE STAGE 2: ACCEPTED STATS (Q, H, radii)
 # -----------------------------------------------------------------------------
+def lsq_hessian_in_eigenbasis(C: Array, S: Array) -> tuple[Array, Array]:
+    """
+    Least-squares Hessian from gradient residuals, in the eigenbasis of ``C``.
+
+    Solves ``C H + H C = S`` for symmetric ``H`` (``C``: (K, d, d) point covariance,
+    ``S``: (K, d, d) symmetrized gradient-residual moments). Returns ``(U, F)``
+    with ``H = U F U^T``, where ``U`` holds the eigenvectors of ``C``.
+    """
+    dvals, U = xp.linalg.eigh(C)
+    dvals = xp.maximum(dvals, TINY_EPS)
+    Gtilde = U.transpose(0, 2, 1) @ S @ U  # (K, d, d)
+    F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])  # (K, d, d)
+    return U, F_mat
+
+
 def compute_accepted_stats(
     config: ClusteringConfig,
     X_good: Array,
@@ -851,223 +872,12 @@ def compute_accepted_stats(
 
         S_h = E_k + E_k.transpose(0, 2, 1)
 
-        dvals, U_h = xp.linalg.eigh(Cov)
-        dvals = xp.maximum(dvals, TINY_EPS)
-        Gtilde = U_h.transpose(0, 2, 1) @ S_h @ U_h  # (K, d, d)
-        F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])  # (K, d, d)
+        U_h, F_mat = lsq_hessian_in_eigenbasis(Cov, S_h)
         Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
         Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
 
 
     return Qs, Hs, radii
-
-
-# -----------------------------------------------------------------------------
-# 6. PIPELINE STAGE 3: SPLIT REJECTED
-# -----------------------------------------------------------------------------
-def split_rejected_clusters(
-    config: ClusteringConfig,
-    X_bad: Array,
-    F_bad: Array,
-    G_bad: Optional[Array],
-    mus_bad: Array,
-    f_mus_bad: Array,
-    dense_labels_bad: Array,
-    counts_bad: Array,
-    g_mus_bad: Optional[Array],
-    hessian: Optional[Callable]
-) -> Array:
-    """
-    Computes each cluster's splitting direction and returns ``sort_order``: a
-    permutation of the rows that keeps every cluster contiguous (in label order)
-    and orders its points by their projection onto the split direction. Combine
-    it with ``median_split_sizes`` to get the two children of every cluster.
-    """
-    K_bad = len(counts_bad)
-    N_bad, d = X_bad.shape
-    fd = F_bad.shape[1]
-    bad_starts = xp.r_[0, xp.cumsum(counts_bad)[:-1]]
-    dx = X_bad - mus_bad[dense_labels_bad]
-
-    if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_bad is not None:
-        g_mus_exp = g_mus_bad[dense_labels_bad]  # (N_bad, fd, d)
-        f_mus_exp = f_mus_bad[dense_labels_bad]  # (N_bad, fd)
-
-        lin = xp.einsum("nmd,nd->nm", g_mus_exp, dx)
-        diff_bad = F_bad - (f_mus_exp + lin)  # (N_bad, fd)
-
-        sq_err = _reduce_sum_1d(diff_bad**2, bad_starts)  # (K,)
-        sq_val = _reduce_sum_1d(F_bad**2, bad_starts)  # (K,)
-        scores = xp.sqrt(sq_err) / (xp.sqrt(sq_val) + TINY_EPS)
-        active_comps = xp.argmax(scores, axis=1).astype(xp.int32)  # (K,)
-
-        # Covariance and Active-Component Gradient Interaction
-        C, E = run_fused_stats(
-            X_bad,
-            mus_bad,
-            dense_labels_bad,
-            K_bad,
-            d,
-            fd,
-            active_comps,
-            G=G_bad,
-            g_mus=g_mus_bad,
-            calc_E=True,
-        )
-
-        C = 0.5 * (C + C.transpose(0, 2, 1))
-        S = E + E.transpose(0, 2, 1)
-
-        dvals, U = xp.linalg.eigh(C)
-        dvals = xp.maximum(dvals, TINY_EPS)  # (K, d)
-        Gtilde = U.transpose(0, 2, 1) @ S @ U
-        F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])  # (K, d, d)
-        _, V = xp.linalg.eigh(F_mat)
-
-        Z = U @ V  # (K, d, d)
-        M_split = (Z * xp.sqrt(xp.abs(_))[:, None, :]) @ Z.transpose(0, 2, 1)
-        M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))  # (K, d, d)
-
-        CovZ = M_split @ C @ M_split.transpose(0, 2, 1)  # (K, d, d)
-
-    # --- Mode 1 & 3: Covariance Level Curves Split ---
-    elif config.mode in (
-        SurrogateMode.AFFINE_COV_HESS,
-        SurrogateMode.TAYLOR_COV_HESS,
-        SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
-    ):
-        if config.mode == SurrogateMode.TAYLOR_COV_HESS or \
-           config.mode == SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD:
-            g_mus_exp = g_mus_bad[dense_labels_bad]  # (N_bad, fd, d)
-            lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp, dx)  # (N_bad, fd)
-            diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)  # (N_bad, fd)
-            E_bad = xp.linalg.norm(diff_bad, axis=1)  # (N_bad,)
-        else:  # AFFINE_COV - TWO-PASS LOCAL FIT
-            dist_to_mu = xp.linalg.norm(dx, axis=1)  # (N_bad,)
-            n_tangent = max(d * 2, config.min_pts_per_cluster // 4)
-            tangent_mask = get_n_smallest_per_block(
-                dist_to_mu, dense_labels_bad, n_tangent
-            )  # (N_bad,)
-
-            X_core = X_bad[tangent_mask]  # (N_core, d)
-            F_core = F_bad[tangent_mask]  # (N_core, fd)
-            labels_core = dense_labels_bad[tangent_mask]  # (N_core,)
-
-            # Tangent Fitting
-            M_XX, _ = run_fused_stats(
-                X_core, mus_bad, labels_core, K_bad, d, 0, None, calc_E=False
-            )  # (K, d, d)
-            M_XF = run_fused_cross_cov(
-                X_core, F_core, mus_bad, f_mus_bad, labels_core, K_bad, d, fd
-            )  # (K, d, fd)
-
-            A_T_tangent = solve_regularized_covariance_inplace(M_XX, M_XF, d, fd)
-            A_tangent = A_T_tangent.transpose(0, 2, 1)  # (K, fd, d)
-
-            lin_bad = xp.einsum(
-                "nmd,nd->nm", A_tangent[dense_labels_bad], dx
-            )  # (N_bad, fd)
-            diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)  # (N_bad, fd)
-            E_bad = xp.linalg.norm(diff_bad, axis=1)  # (N_bad,)
-
-        # Find SMALLEST errors (where surrogate == true func)
-        n_est_cov = max(1, config.min_pts_per_cluster // 3)
-        cov_est_mask = get_n_smallest_per_block(E_bad, dense_labels_bad, n_est_cov)
-
-        X_hard = X_bad[cov_est_mask]  # (N_hard, d)
-
-        # Hessian Inverse Estimate
-        H_inv, _ = run_fused_stats(
-            X_hard,
-            mus_bad,
-            dense_labels_bad[cov_est_mask],
-            K_bad,
-            d,
-            0,
-            None,
-            calc_E=False,
-        )  # (K, d, d)
-        H_inv = 0.5 * (H_inv + H_inv.transpose(0, 2, 1))
-
-        dvals, U = xp.linalg.eigh(H_inv)
-        dvals_sqrt_inv = 1.0 / xp.sqrt(xp.maximum(xp.abs(dvals), TINY_EPS))
-        M_split = (U * dvals_sqrt_inv[:, None]) @ U.transpose(0, 2, 1)  # (K, d, d)
-        M_split = 0.5 * (M_split + M_split.transpose(0, 2, 1))
-        # M_split is sqrt absolute Hessian.
-
-        C, _ = run_fused_stats(
-            X_bad, mus_bad, dense_labels_bad, K_bad, d, 0, None, calc_E=False
-        )  # (K, d, d)
-        CovZ = M_split @ C @ M_split.transpose(0, 2, 1) # H^{1/2} * X * X^T * H^{1/2}
-
-    # Exact: requires exact Hessian
-    elif config.mode in (
-        SurrogateMode.AFFINE_EXACT_HESS,
-        SurrogateMode.TAYLOR_EXACT_HESS,
-    ):
-        if hessian is None:
-            raise RuntimeError(f"Mode {config.mode} requires the Hessian argument to be defined.")
-
-        H = hessian(mus_bad) # (N, d, d)
-        H_sym = 0.5 * (H + H.transpose(0, 2, 1))
-
-        # Compute matrix square root
-        dvals, U = xp.linalg.eigh(H_sym)
-        dvals_new = xp.sqrt(xp.abs(dvals))
-        M_split = (U * dvals_new[:,None]) @ U.transpose(0, 2, 1)
-        C, _ = run_fused_stats(X_bad, mus_bad, dense_labels_bad, K_bad, d, 0, None, calc_E=False)  # (K, d, d)
-        CovZ = M_split @ C @ M_split.transpose(0, 2, 1) # H^{1/2} * X * X^T * H^{1/2}
-
-        
-    # No Hessian
-    elif config.mode in (
-        SurrogateMode.NEAREST_NEIGHBOR,
-        SurrogateMode.AFFINE_COV_NO_HESS,
-        SurrogateMode.TAYLOR_COV_NO_HESS,
-    ):
-        C, _ = run_fused_stats(
-            X_bad, mus_bad, dense_labels_bad, K_bad, d, 0, None, calc_E=False
-        )  # (K, d, d)
-        CovZ = 0.5 * (C + C.transpose(0, 2, 1))
-        M_split = xp.eye(d, dtype=xp.float64)[None, :, :].repeat(
-            K_bad, axis=0
-        )  # (K, d, d)
-
-    else:
-        raise ValueError(f"Unknown split mode: {config.mode}")
-
-    # --- Apply Split Projection ---
-    _, V_z = xp.linalg.eigh(CovZ)
-    v = V_z[:, :, -1]  # Highest variance eigenvector # (K, d)
-
-    scores_proj = run_fused_split_projection(
-        X_bad, mus_bad, dense_labels_bad, M_split, v
-    )
-
-    if IS_CUPY_BACKEND:
-        del CovZ, V_z, v, M_split
-        cp.get_default_memory_pool().free_all_blocks()
-
-    sort_order = xp.lexsort(xp.stack([scores_proj, dense_labels_bad]))  # (N_bad,)
-    return sort_order
-
-
-def median_split_sizes(counts: Array) -> Array:
-    """
-    Child sizes for splitting every cluster at its median along the split direction.
-
-    Given points ordered by ``split_rejected_clusters``, a parent with ``n`` points
-    becomes a low-side child of ``n // 2`` points followed by a high-side child of
-    ``n - n // 2``. Returns (2K,) int64 sizes ``[k0_low, k0_high, k1_low, ...]``.
-
-    Note: Algorithm 2 in the paper splits by the sign of the projection instead,
-    which can give children of unequal size.
-    """
-    half = counts // 2
-    sizes = xp.zeros(2 * len(counts), dtype=xp.int64)
-    sizes[0::2] = half
-    sizes[1::2] = counts - half
-    return sizes
 
 
 # -----------------------------------------------------------------------------
