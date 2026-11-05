@@ -401,7 +401,7 @@ class NelsonBatchSolver:
 
     def __init__(self, env):
 
-        Exception("ERROR: Nelson batch solver is not implemented yet.")
+        raise ValueError("ERROR: Nelson batch solver is not implemented yet.")
 
         # First, import stuff
         import sys
@@ -1671,15 +1671,15 @@ def setup_argparse():
     ]
     possible_sampling = ["uniform", "modified"]
     if args.experiment not in possible_experiments:
-        Exception(
+        raise ValueError(
             f"ERROR: experiment specified is not one of the implemented test functions.\nPossible options are: {possible_experiments}"
         )
     if args.error_eval_mode not in possible_error_eval_modes:
-        Exception(
+        raise ValueError(
             f"ERROR: error eval. mode specified is not implemented.\nPossible options are: {possible_error_eval_modes}"
         )
     if args.sampling not in possible_sampling:
-        Exception(
+        raise ValueError(
             f"ERROR: sampling strategy specified is not implemented. Possible options are: {possible_sampling}"
         )
 
