@@ -704,11 +704,11 @@ def plot_near_centers(
     n_grid: int = 500,
     n_report: int = 10,
 ):
-    centers = surrogate.X_src      # (Nc, d)
-    Qs = surrogate.Qs_src          # (Nc, d, d)
+    centers = _to_host(surrogate.X_src)  # (Nc, d)
+    Qs = _to_host(surrogate.Qs_src)  # (Nc, d, d)
     Nc, d = centers.shape
 
-    target = np.asarray(target).reshape(1, d)
+    target = np.asarray(_to_host(target)).reshape(1, d)
 
     # --- Coarse step: Euclidean nearest neighbors to target ---
     dists = np.linalg.norm(centers - target, axis=1)

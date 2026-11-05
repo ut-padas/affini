@@ -227,7 +227,8 @@ def conduct_experiment_given_data(
             centroids=_to_host(surrogate.X_src),
             Q=_to_host(surrogate.Qs_src),
             domain=DOMAIN,  # type: ignore
-            f_fn=f_fn,
+            # The contours show a scalar function: the first output component.
+            f_fn=f_fn if F_DIM == 1 else (lambda X: f_fn(X)[:, 0]),
             img_fpath=plot_save_path,
             plot_in_log=CENTROIDS_PLOT_IN_LOG_SCALE,
         )
@@ -256,7 +257,8 @@ def conduct_experiment_given_data(
             json_fpath.stem + "_centers_plot.png"
         )
         target = xp.array([3, -3.5, 2, 3, 4])
-        plot_near_centers(surrogate, target, DOMAIN, f_fn, center_plot_save_path)
+        if target.shape[0] == DIM:
+            plot_near_centers(surrogate, target, DOMAIN, f_fn, center_plot_save_path)
 
         print("Plots complete")
 
@@ -483,8 +485,8 @@ def anisotropic_gaussian_modified_sampling(args) -> Problem:
 
     def sample(dim, n_train, n_test):
         Q = xp.asarray(_get_random_rotation(dim, xp.float64))  # helpers return NumPy
-        Lambda = xp.diag(xp.asarray(_get_precision_eigenvalues(dim, xp.float64, 3)))
-        Ainv = Q @ (Lambda**-1.0) @ Q.T
+        eigvals = xp.asarray(_get_precision_eigenvalues(dim, xp.float64, 3))
+        Ainv = Q @ xp.diag(1.0 / eigvals) @ Q.T
         X_train = xp.random.randn(n_train, dim) @ Ainv
         X_test = xp.random.randn(n_test, dim) @ Ainv
         return X_train, X_test
@@ -526,7 +528,7 @@ def rosenbrock_modified_sampling(args) -> Problem:
         )
 
     return Problem(
-        "rosenbrock",
+        "rosenbrock_modified_sampling",
         partial(rosenbrock, a=100.0),
         partial(rosenbrock_grad, a=100.0),
         domain=(-2.0, 3.0),
@@ -548,10 +550,12 @@ def lorenz96(args) -> Problem:
     def f(x):
         N, d = x.shape
         if IS_CUPY_BACKEND:
-            # For now, just assume that X lives on a GPU.
+            import cupy as cp
+
+            # The batched JAX flow map returns (N, 1, d): one saved time, tf.
             X_jax = jax.dlpack.from_dlpack(x)
             Y_jax = lorenz96_flowmap_jax_batched(X_jax, forcing, tf)
-            return cp.from_dlpack(Y_jax)[:, output_component, 0].reshape(N, 1)
+            return cp.from_dlpack(Y_jax)[:, 0, output_component].reshape(N, 1)
         else:
             f = lorenz96_flowmap(x, forcing, tf)[:, output_component]
             return f.reshape(N, 1)
@@ -681,7 +685,11 @@ def run_problem(
     if problem.sample is None:
         conduct_experiment_generate_uniform_data(**settings)
     else:
-        X_train, X_test = problem.sample(dim, N_TRAIN, N_TEST)
+        # Like the uniform path: rank 0 holds the data, drawn from a fixed seed.
+        X_train, X_test = None, None
+        if _rank == 0:
+            xp.random.seed(SEED)
+            X_train, X_test = problem.sample(dim, N_TRAIN, N_TEST)
         conduct_experiment_given_data(X_train=X_train, X_test=X_test, **settings)
 
     create_summary_dataframe(EXP_DIR)
@@ -702,16 +710,18 @@ def lorenz_trajectories_experiment(
     N_test = 50_000
     forcing = 1
 
-    # Define the function
+    # Define the function: the full Lorenz-96 state after time dt
+    from src.problems.lorenz96_flowmap import lorenz96_flowmap
     from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
 
     def f_fn(X):
-        N, d = X.shape
-        # For now, just assume that X lives on a GPU.
-        X_jax = jax.dlpack.from_dlpack(X)
-        Y_jax = lorenz96_flowmap_jax_batched(X_jax, forcing, dt)
+        if not IS_CUPY_BACKEND:
+            return lorenz96_flowmap(X, forcing, dt)
+        import cupy as cp
+
+        # The batched JAX flow map returns (N, 1, d): one saved time, dt.
+        Y_jax = lorenz96_flowmap_jax_batched(jax.dlpack.from_dlpack(X), forcing, dt)
         return cp.from_dlpack(Y_jax)[:, 0, :]
-        # return cp.from_dlpack(Y_jax)[:,0,0].reshape(N,1)
 
     # Use this function to generate data.
     N_start_train = 20000
@@ -722,17 +732,21 @@ def lorenz_trajectories_experiment(
         N_start_train = max(1, N_train // (N_steps + 1))
     N_train = N_start_train * (N_steps + 1)
     N_test = N_start_test * (N_steps + 1)
-    X_train = xp.zeros((N_start_train * (N_steps + 1), d))
-    X_train[:N_start_train, :] = xp.random.uniform(l, r, size=(N_start_train, d))
-    X_test = xp.zeros((N_start_test * (N_steps + 1), d))
-    X_test[:N_start_test, :] = xp.random.uniform(l, r, size=(N_start_test, d))
-    for j in range(1, N_steps + 1):
-        X_train[(j * N_start_train) : ((j + 1) * N_start_train)] = f_fn(
-            X_train[((j - 1) * N_start_train) : (j * N_start_train)]
-        )
-        X_test[(j * N_start_test) : ((j + 1) * N_start_test)] = f_fn(
-            X_test[((j - 1) * N_start_test) : (j * N_start_test)]
-        )
+    # Like the other experiments: rank 0 holds the data, drawn from a fixed seed.
+    X_train, X_test = None, None
+    if _rank == 0:
+        xp.random.seed(SEED)
+        X_train = xp.zeros((N_start_train * (N_steps + 1), d))
+        X_train[:N_start_train, :] = xp.random.uniform(l, r, size=(N_start_train, d))
+        X_test = xp.zeros((N_start_test * (N_steps + 1), d))
+        X_test[:N_start_test, :] = xp.random.uniform(l, r, size=(N_start_test, d))
+        for j in range(1, N_steps + 1):
+            X_train[(j * N_start_train) : ((j + 1) * N_start_train)] = f_fn(
+                X_train[((j - 1) * N_start_train) : (j * N_start_train)]
+            )
+            X_test[(j * N_start_test) : ((j + 1) * N_start_test)] = f_fn(
+                X_test[((j - 1) * N_start_test) : (j * N_start_test)]
+            )
 
     # Put this into HATANN
     EXP_DIR = SC26_DIR / "lorenz_trajexp"
