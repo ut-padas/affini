@@ -11,8 +11,6 @@ from src import (
     HAS_CUML,
     IS_CUPY_BACKEND,
     Array,
-    _get_mpi_rank,
-    _get_mpi_size,
     _to_host,
     xp,
 )
@@ -20,7 +18,6 @@ from src.adaptive_clustering_utils import (
     ClusteringConfig,
     CudaTimer,
     Evaluator,
-    SurrogateMode,
     cluster_errors,
     combine_generated_data,
     convert_to_2d_array,
@@ -794,147 +791,3 @@ def adaptive_clustering(
 
         return merged
     return None
-
-
-if __name__ == "__main__":
-    import json
-    from functools import partial
-
-    from src import RESULTS_DIR
-    from src.heuristic_parameters import (
-        get_MIN_PTS_PER_CLUSTER,
-        get_N_TRAIN,
-        get_NUM_INITIAL_CLUSTERS,
-    )
-    from src.logging_utils import setup_logging
-    from src.plotter_utils import (
-        plot_adaptive_clustering_results,
-        plot_mpi_level_heatmap,
-        plot_mpi_rank_time_breakdown,
-    )
-    from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
-
-    setup_logging(console_level=logging.DEBUG)
-    _rank = _get_mpi_rank()
-    _size = _get_mpi_size()
-
-    # Create partial Rosenbrock functions (all ranks need these for oracle calls)
-    A_ROSENBROCK = 100.0
-    rosenbrock = partial(rosenbrock, a=A_ROSENBROCK)
-    rosenbrock_grad = partial(rosenbrock_grad, a=A_ROSENBROCK)
-
-    DIM = 2
-    ATOL = 0.0001
-    RTOL = 0.01
-    PROB_LIMS = (-1.0, 3)
-    N_TRAIN = get_N_TRAIN(DIM)
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(DIM)
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(DIM)
-    USE_WORK_STEALING = True
-    ERROR_METRIC = "L2"
-    INITIAL_CLUSTERING_METHOD = "kmeans"
-    ERROR_EVAL_MODE = SurrogateMode.AFFINE_COV_HESS
-
-    OUTPUT_DIR = RESULTS_DIR / "adaptive_clustering_experimental"
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    img_fpath = (
-        OUTPUT_DIR
-        / f"mpi_sz{_size}_rosen{A_ROSENBROCK}_ntrain{N_TRAIN}_dim{DIM}_atol{ATOL}_rtol{RTOL}_err{ERROR_EVAL_MODE.value}_metric{ERROR_METRIC}_init{INITIAL_CLUSTERING_METHOD}_nclust{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}.png"
-    )
-
-    if _rank == 0:
-        xp.random.seed(0)
-        X = xp.random.uniform(PROB_LIMS[0], PROB_LIMS[1], size=(N_TRAIN, DIM))
-    else:
-        X = xp.empty((0, DIM), dtype=xp.float64)
-
-    result = adaptive_clustering(
-        X,
-        ClusteringConfig(
-            mode=ERROR_EVAL_MODE,
-            atol=ATOL,
-            rtol=RTOL,
-            error_metric=ERROR_METRIC,
-            initial_clustering_method=INITIAL_CLUSTERING_METHOD,
-            num_initial_clusters=NUM_INITIAL_CLUSTERS,
-            min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
-            log_mem_stats=True,
-            profile_timing=True,
-            use_work_stealing=USE_WORK_STEALING,
-            max_levels=200,
-        ),
-        Evaluator(f_fn=rosenbrock, g_fn=rosenbrock_grad),
-    )
-
-    if _rank != 0:
-        MPI.Finalize()
-        raise SystemExit(0)
-
-    assert result, "Rank 0 should have the result"
-    n_centroids = result["centroids"].shape[0]
-    print(f"Num clusters found: {n_centroids:,}")
-    print(f"Time taken: {result['profiling_stats']['time_total']:.3f}s")
-
-    # Store json of all profiling stats
-    json_fpath = img_fpath.with_suffix(".json")
-    json_data = {
-        "IS_CUPY_BACKEND": IS_CUPY_BACKEND,
-        "mpi_size": _size,
-        "rosenbrock_a": A_ROSENBROCK,
-        "dim": DIM,
-        "atol": ATOL,
-        "rtol": RTOL,
-        "n_train": N_TRAIN,
-        "num_clusters": n_centroids,
-        "train_time_sec": result["profiling_stats"]["time_total"],
-        "init_time_sec": result["profiling_stats"]["time_init"],
-        "gather_time_sec": result["profiling_stats"]["time_gather"],
-        "num_levels": result["num_levels"],
-        "num_generated_pts": result["num_generated_pts"],
-        "total_f_evals": result["total_f_evals"],
-        "error_metric": ERROR_METRIC,
-        "error_eval_mode": ERROR_EVAL_MODE.value,
-        "initial_clustering_method": INITIAL_CLUSTERING_METHOD,
-        "num_initial_clusters": NUM_INITIAL_CLUSTERS,
-        "min_pts_per_cluster": MIN_PTS_PER_CLUSTER,
-    }
-    with open(json_fpath, "w") as f:
-        json.dump(json_data, f, indent=4)
-    print(f"Saved profiling stats to {json_fpath}")
-
-    if DIM == 2 and n_centroids <= 10_000:
-        title = f"Rosenbrock (a={A_ROSENBROCK}) (Atol={ATOL}, Rtol={RTOL}, ErrMode={ERROR_EVAL_MODE.value}, Metric={ERROR_METRIC}, N_init={NUM_INITIAL_CLUSTERS}, MinPts={MIN_PTS_PER_CLUSTER}, Steal={USE_WORK_STEALING}) (N0={N_TRAIN:,}, N_clusters={n_centroids:,})"
-        plot_adaptive_clustering_results(
-            centroids=_to_host(result["centroids"]),
-            Q=_to_host(result["Q"]),
-            domain=PROB_LIMS,
-            f_fn=rosenbrock,
-            img_fpath=img_fpath,
-            title=title,
-        )
-
-    # Save MPI rank time breakdown plot
-    time_breakdown_path = img_fpath.with_name(
-        img_fpath.stem + "_mpi_time_breakdown.png"
-    )
-    plot_mpi_rank_time_breakdown(result["profiling_stats"], time_breakdown_path)
-
-    # MPI × Level workload heatmap (good_clusters is the primary workload signal)
-    for _heatmap_col in (
-        "good_clusters",
-        "clusters_start",
-        "num_pts_next_level",
-        "runtime_sec",
-    ):
-        _hm_path = img_fpath.with_name(
-            img_fpath.stem + f"_mpi_heatmap_{_heatmap_col}.png"
-        )
-        title = f"MPI x Level Heatmap ({_heatmap_col}) (Train Time={result['profiling_stats']['time_total']:.1f}s) (N_CLUSTERS={n_centroids:,})"
-        plot_mpi_level_heatmap(result, _hm_path, values_col=_heatmap_col, title=title)
-
-    # Save npz file of results
-    npz_fpath = img_fpath.with_suffix(".npz")
-    result = {k: _to_host(v) for k, v in result.items()}
-    xp.savez_compressed(npz_fpath, **result)
-    print(f"Saved results to {npz_fpath}")

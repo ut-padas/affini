@@ -3,7 +3,7 @@ import time
 
 from scipy.stats import qmc
 
-from src import IS_CUPY_BACKEND, Array, _to_host, xp
+from src import Array, _to_host, xp
 
 logger = logging.getLogger(__name__)
 
@@ -102,24 +102,3 @@ class DataSampler:
         X = xp.asarray(sample_scaled, dtype=xp.float64)
         logger.info(f"LHS Sampling Time: {time.perf_counter() - t0:.4f}s")
         return X
-
-
-if __name__ == "__main__":
-    from src.logging_utils import setup_logging
-
-    setup_logging(console_level=logging.DEBUG)
-
-    # Test samplers
-    domain_1d = xp.array([0.0, 1.0])
-    domain_2d = xp.array([[0.0, 1.0], [0.0, 1.0]])
-
-    sampler = DataSampler()
-
-    X_uniform_1d = sampler.sample_uniform(domain_1d, N=5, seed=42)
-    print("Uniform 1D:\n", X_uniform_1d)
-
-    X_grid_2d = sampler.sample_grid(domain_2d, num_points_per_dim=3)
-    print("Grid 2D:\n", X_grid_2d)
-
-    X_lhs_2d = sampler.sample_latin_hypercube(domain_2d, N=5, seed=42)
-    print("LHS 2D:\n", X_lhs_2d)
