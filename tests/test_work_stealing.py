@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import src.adaptive_clustering as ac
+import src.work_stealing as ws
 from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 
 
@@ -32,46 +33,52 @@ class _Comm:
         self.sent = defaultdict(int)
         self.payloads = []
 
+    def Get_rank(self):  # noqa: N802
+        return 0
+
+    def Get_size(self):  # noqa: N802
+        return 2
+
     def Send(self, buf, dest, tag):  # noqa: N802
         self.sent[tag] += 1
 
     def send(self, obj, dest, tag):
         self.sent[tag] += 1
-        if tag == ac.TAG_STEAL_REQ:
+        if tag == ws.TAG_STEAL_REQ:
             assert not self.requested
             self.requested = True
             self.crossed_request = True
 
     def Iprobe(self, source, tag, status=None):  # noqa: N802
-        if tag == ac.TAG_STATE_BROADCAST:
+        if tag == ws.TAG_STATE_BROADCAST:
             return bool(self.states) and (len(self.states) == 2 or self.requested)
-        if tag == ac.TAG_STEAL_REQ:
+        if tag == ws.TAG_STEAL_REQ:
             return self.crossed_request
-        if tag == ac.TAG_STEAL_GRANT:
+        if tag == ws.TAG_STEAL_GRANT:
             self.polls += 1
             return self.grant and self.requested and not self.replied and self.polls > 1
-        if tag == ac.TAG_STEAL_DENY:
+        if tag == ws.TAG_STEAL_DENY:
             return not self.grant and self.requested and not self.replied
         return False
 
     def recv(self, source, tag):
-        if tag == ac.TAG_STEAL_REQ:
+        if tag == ws.TAG_STEAL_REQ:
             self.crossed_request = False
             return 1
         self.replied = True
-        if tag == ac.TAG_STEAL_GRANT:
+        if tag == ws.TAG_STEAL_GRANT:
             return {"n_pts": 3, "n_clusters": 1, "has_g": self.has_g}
-        assert tag == ac.TAG_STEAL_DENY
+        assert tag == ws.TAG_STEAL_DENY
         return "IDLE"
 
     def Recv(self, buf, source, tag):  # noqa: N802
-        if tag == ac.TAG_STATE_BROADCAST:
+        if tag == ws.TAG_STATE_BROADCAST:
             buf[0] = self.states.pop(0)
         else:
             self.payloads.append(tag)
-            if tag == ac.TAG_STEAL_GRANT + 1:
+            if tag == ws.TAG_STEAL_GRANT + 1:
                 buf[:] = np.arange(3)[:, None]
-            elif tag == ac.TAG_STEAL_GRANT + 4:
+            elif tag == ws.TAG_STEAL_GRANT + 4:
                 buf[:] = 3
             else:
                 buf.fill(1)
@@ -98,8 +105,8 @@ class _Comm:
 
 @pytest.mark.parametrize("grant,has_g", [(True, False), (True, True), (False, False)])
 def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_g):
-    monkeypatch.setattr(ac, "MPI", _MPI)
-    monkeypatch.setattr(ac, "MIN_LOAD_THRESHOLD", 1000)
+    monkeypatch.setattr(ws, "MPI", _MPI)
+    monkeypatch.setattr(ws, "MIN_LOAD_THRESHOLD", 1000)
     comm = _Comm(grant, has_g)
     buffers, count, _, _, levels = ac._run_local_refinement(
         config=ClusteringConfig(
@@ -116,23 +123,15 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
             use_work_stealing=True,
             save_all_gen_training_data=False,
         ),
-        CLUSTER_PTS=np.empty((0, 1)),
-        CLUSTER_F=np.empty((0, 1)),
-        CLUSTER_G=None,
-        CLUSTER_SIZES=np.empty(0, dtype=np.int64),
-        CLUSTER_STARTS=np.empty(0, dtype=np.int64),
-        F_max_global=np.ones(1),
-        d=1,
-        fd=1,
         evaluator=Evaluator(f_fn=lambda x: np.ones((len(x), 1))),
-        rank=0,
-        size=2,
-        profiling_stats={"level_stats": []},
+        clusters=ws.ClusterBatch.empty(d=1, fd=1),
+        F_max_global=np.ones(1),
         comm=comm,
+        profiling_stats={"level_stats": []},
     )
     assert not comm.states
     assert count == levels == int(grant)
-    assert comm.sent[ac.TAG_STEAL_DENY] == 2
+    assert comm.sent[ws.TAG_STEAL_DENY] == 2
     if grant:
         assert buffers["counts"][0] == 3
         assert buffers["centroids"][0, 0] == 1
@@ -145,6 +144,7 @@ def test_single_rank_respects_refinement_limit(monkeypatch, stealing, max_levels
     from src.backend import _SerialMPI
 
     monkeypatch.setattr(ac, "MPI", _SerialMPI)
+    monkeypatch.setattr(ws, "MPI", _SerialMPI)
     result = ac.adaptive_clustering(
         ac.xp.asarray(np.linspace(-1, 1, 128).reshape(-1, 1)),
         ClusteringConfig(

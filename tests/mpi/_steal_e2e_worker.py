@@ -34,13 +34,14 @@ N_TRAIN, TOL = 40_000, 0.05
 def main() -> None:
     import src
     import src.adaptive_clustering as ac
+    import src.work_stealing as ws
     from src.problems.rosenbrock import rosenbrock
     from src.surrogate import AFINNISurrogate
 
     real_mpi = ac.MPI
     world = real_mpi.COMM_WORLD
     rank = world.Get_rank()
-    req, grant, deny = ac.TAG_STEAL_REQ, ac.TAG_STEAL_GRANT, ac.TAG_STEAL_DENY
+    req, grant, deny = ws.TAG_STEAL_REQ, ws.TAG_STEAL_GRANT, ws.TAG_STEAL_DENY
     sent_name = {req: "req_sent", grant: "grant_sent", deny: "deny_sent"}
     recv_name = {req: "req_recv", grant: "grant_recv", deny: "deny_recv"}
     counts = dict.fromkeys(
@@ -52,7 +53,7 @@ def main() -> None:
             if "Granted steal to" in record.getMessage():
                 counts["boundary_grants"] += 1
 
-    logger = logging.getLogger("src.adaptive_clustering")
+    logger = logging.getLogger("src.work_stealing")
     logger.setLevel(logging.INFO)
     logger.addHandler(GrantLog())
     logger.propagate = False
@@ -81,8 +82,8 @@ def main() -> None:
             return getattr(real_mpi, name)
 
     ac.MPI = MPIProxy()
-    ac.MIN_LOAD_THRESHOLD = 1_000  # default 1,000,000 never triggers at test size
-    ac.STEAL_SIZE = 2_000  # partial steals leave work on the victim
+    ws.MIN_LOAD_THRESHOLD = 1_000  # default 1,000,000 never triggers at test size
+    ws.STEAL_SIZE = 2_000  # partial steals leave work on the victim
 
     runs, status = [], real_mpi.Status()
     for seed in SEEDS:

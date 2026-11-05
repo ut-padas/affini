@@ -9,13 +9,14 @@ from tests.mpi._mpi_worker import RESULT_PREFIX
 
 def main():
     import src.adaptive_clustering as ac
+    import src.work_stealing as ws
     from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
     from src.backend import MPI
 
     world = MPI.COMM_WORLD
     rank, size = world.Get_rank(), world.Get_size()
     assert size > 1
-    ac.MIN_LOAD_THRESHOLD = 1
+    ws.MIN_LOAD_THRESHOLD = 1
 
     class Comm:
         def __init__(self):
@@ -29,15 +30,15 @@ def main():
             return getattr(world, name)
 
         def Iprobe(self, source, tag, status=None):  # noqa: N802
-            if rank == 0 and tag == ac.TAG_STEAL_REQ and self.first_request_poll:
+            if rank == 0 and tag == ws.TAG_STEAL_REQ and self.first_request_poll:
                 self.first_request_poll = False
                 # Hold batch one until an empty rank has requested work.
-                world.Probe(source=MPI.ANY_SOURCE, tag=ac.TAG_STEAL_REQ)
+                world.Probe(source=MPI.ANY_SOURCE, tag=ws.TAG_STEAL_REQ)
             if (
                 delay_grant
                 and rank != 0
                 and source == 0
-                and tag == ac.TAG_STEAL_GRANT
+                and tag == ws.TAG_STEAL_GRANT
                 and not self.victim_idle
             ):
                 return False
@@ -45,21 +46,21 @@ def main():
 
         def Recv(self, buf, source, tag):  # noqa: N802
             world.Recv(buf, source=source, tag=tag)
-            if tag == ac.TAG_STATE_BROADCAST and source == 0 and buf[0] == 0:
+            if tag == ws.TAG_STATE_BROADCAST and source == 0 and buf[0] == 0:
                 self.victim_idle = True
 
         def send(self, obj, dest, tag):
-            if tag == ac.TAG_STEAL_REQ:
+            if tag == ws.TAG_STEAL_REQ:
                 self.requests += 1
-            elif tag in (ac.TAG_STEAL_DENY, ac.TAG_STEAL_GRANT):
+            elif tag in (ws.TAG_STEAL_DENY, ws.TAG_STEAL_GRANT):
                 self.replies += 1
             return world.send(obj, dest=dest, tag=tag)
 
         def recv(self, source, tag):
             obj = world.recv(source=source, tag=tag)
-            if tag in (ac.TAG_STEAL_DENY, ac.TAG_STEAL_GRANT):
+            if tag in (ws.TAG_STEAL_DENY, ws.TAG_STEAL_GRANT):
                 self.responses += 1
-            if tag == ac.TAG_STEAL_GRANT:
+            if tag == ws.TAG_STEAL_GRANT:
                 self.grants += 1
                 self.delayed_grants += int(source == 0 and self.victim_idle)
             return obj
@@ -97,20 +98,16 @@ def main():
                         use_work_stealing=stealing,
                         save_all_gen_training_data=False,
                     ),
-                    CLUSTER_PTS=x,
-                    CLUSTER_F=np.ones_like(x),
-                    CLUSTER_G=np.ones((len(x), 1, 1)) if has_g else None,
-                    CLUSTER_SIZES=sizes,
-                    CLUSTER_STARTS=np.arange(len(sizes), dtype=np.int64)
-                    * points_per_cluster,
-                    F_max_global=np.ones(1),
-                    d=1,
-                    fd=1,
                     evaluator=Evaluator(f_fn=lambda x: np.ones((len(x), 1))),
-                    rank=rank,
-                    size=size,
-                    profiling_stats={"level_stats": []},
+                    clusters=ws.ClusterBatch(
+                        x,
+                        np.ones_like(x),
+                        np.ones((len(x), 1, 1)) if has_g else None,
+                        sizes,
+                    ),
+                    F_max_global=np.ones(1),
                     comm=comm,
+                    profiling_stats={"level_stats": []},
                 )
                 assert generated == 0
                 results = world.allgather(
