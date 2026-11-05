@@ -28,8 +28,6 @@ from src.plotter_utils import (
 )
 from src.surrogate import AFINNISurrogate, compute_error_metrics
 
-SC26_DIR = RESULTS_DIR / "sc26"
-SC26_DIR.mkdir(parents=True, exist_ok=True)
 TINY_EPS = 1e-12
 SEED = 0
 
@@ -401,7 +399,7 @@ class Problem:
     """
     A test function and how its experiment is set up.
 
-    Results go to ``SC26_DIR / dir_name``. Training and test points are drawn
+    Results go to ``RESULTS_DIR / dir_name``. Training and test points are drawn
     uniformly from ``domain`` (on rank 0), unless ``sample(dim, n_train, n_test)``
     is given, which returns ``(X_train, X_test)``.
     """
@@ -644,7 +642,7 @@ def run_problem(
         print(f"Not implemented yet for dimensions above d={problem.max_dim}.")
         return None
 
-    EXP_DIR = SC26_DIR / problem.dir_name
+    EXP_DIR = RESULTS_DIR / problem.dir_name
     ERROR_METRIC = problem.error_metric
     INITIAL_CLUSTERING_METHOD = "kmeans"
     USE_V2 = True
@@ -749,7 +747,7 @@ def lorenz_trajectories_experiment(
             )
 
     # Put this into HATANN
-    EXP_DIR = SC26_DIR / "lorenz_trajexp"
+    EXP_DIR = RESULTS_DIR / "lorenz_trajexp"
     json_fpath = (
         EXP_DIR / f"dim{d}_dt{dt}_tol{tol}_ntrain{N_start_train * (N_steps+1)}.json"
     )
