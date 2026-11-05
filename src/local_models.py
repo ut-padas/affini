@@ -190,15 +190,20 @@ _AFFINE_MODES = (
 )
 
 
+def local_model_for_mode(mode: SurrogateMode, second_order: bool = False) -> LocalModel:
+    """The local model a ``SurrogateMode`` uses (``second_order`` only affects Taylor)."""
+    if mode == SurrogateMode.NEAREST_NEIGHBOR:
+        return ConstantModel()
+    if mode in _TAYLOR_MODES:
+        return TaylorModel(second_order=second_order)
+    if mode in _AFFINE_MODES:
+        return AffineLSQModel()
+    raise ValueError(f"No local model for mode {mode}")
+
+
 def make_local_model(config: ClusteringConfig) -> LocalModel:
     """The local model used by ``config.mode``."""
-    if config.mode == SurrogateMode.NEAREST_NEIGHBOR:
-        return ConstantModel()
-    if config.mode in _TAYLOR_MODES:
-        return TaylorModel(second_order=config.store_hess)
-    if config.mode in _AFFINE_MODES:
-        return AffineLSQModel()
-    raise ValueError(f"No local model for mode {config.mode}")
+    return local_model_for_mode(config.mode, second_order=config.store_hess)
 
 
 def output_columns(model: LocalModel, d: int, fd: int) -> dict[str, ParamSpec]:

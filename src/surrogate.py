@@ -18,6 +18,7 @@ from src import (
 from src.adaptive_clustering import adaptive_clustering
 from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
+from src.local_models import LocalModel, local_model_for_mode, make_local_model
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class AFINNISurrogate:
     def __init__(self):
         self.trained = False
         self.mode: Optional[SurrogateMode] = None
+        self.local_model: Optional[LocalModel] = None  # the function on each leaf
 
         # Storage for source points (Reference data)
         self.N_src = 0
@@ -47,6 +49,18 @@ class AFINNISurrogate:
 
         self._model_file = None
         self.knn_index = None
+
+    def _leaf_params(self) -> dict:
+        """The per-cluster arrays ``local_model.evaluate`` reads (see src.local_models)."""
+        named = {
+            "centroids": self.X_src,
+            "f": self.f_src,
+            "g": self.J_src,
+            "H": self.Hs_src,
+            "A_fit": self.A_fits_src,
+            "b_fit": self.b_fits_src,
+        }
+        return {k: xp.asarray(v) for k, v in named.items() if v is not None}
 
     def get_trained_data_as_dict(self) -> dict:
         if not self.trained:
@@ -145,6 +159,7 @@ class AFINNISurrogate:
             profile_timing=PROFILE_TIMING,
             save_all_gen_training_data=SAVE_ALL_GEN_TRAINING_DATA,
         )
+        self.local_model = make_local_model(config)
         evaluator = Evaluator(
             f_fn=f_fn, g_fn=g_fn, oracle_fn=oracle_fn, hessian_fn=HESSIAN
         )
@@ -260,6 +275,7 @@ class AFINNISurrogate:
         mode_val = data.get("mode", None)
         if mode_val is not None and mode_val.item() is not None:
             instance.mode = SurrogateMode(mode_val.item())
+            instance.local_model = local_model_for_mode(instance.mode)
 
         instance.N_src = int(data["N_src"])
         instance.X_src = _to_device(data["X_src"])
@@ -426,7 +442,8 @@ class AFINNISurrogate:
             k_coarse = len(self.X_src)
             k_nn = len(self.X_src)
 
-        F_dim = self.f_src.shape[1] if self.f_src.ndim > 1 else 1
+        assert self.local_model is not None, "no local model; was the surrogate trained?"
+        leaf_params = self._leaf_params()
 
         all_predictions = []
         all_ung_masks = []
@@ -436,7 +453,6 @@ class AFINNISurrogate:
         for start_idx in range(0, N, batch_size):
             end_idx = min(start_idx + batch_size, N)
             batch_queries = query_points[start_idx:end_idx]
-            chunk_size = len(batch_queries)
 
             # 1. Phase 1: L2 Coarse Search
             nn_idx_coarse, _ = self._query_knn(batch_queries, k_coarse)
@@ -458,8 +474,6 @@ class AFINNISurrogate:
             nn_idx = xp.take_along_axis(nn_idx_coarse, top_k_local, axis=1)
             dist_sq = xp.take_along_axis(dist_sq_coarse, top_k_local, axis=1)
 
-            centroids = self.X_src[nn_idx]
-            dx = batch_queries[:, None, :] - centroids
 
             # 4. Shepard's Inverse Distance Weighting
             # Weight = 1 / (d^p + eps). Points exactly at the centroid get dominating weight.
@@ -481,60 +495,8 @@ class AFINNISurrogate:
             # Prevent divide-by-zero if strict_trust_region killed all weights
             total_weight = xp.maximum(total_weight, 1e-12)
 
-            # Extract function values for the k_nn neighbors
-            flat_idx = nn_idx.reshape(-1)
-            f_neighbors = xp.asarray(self.f_src)[flat_idx].reshape(
-                chunk_size, k_nn, F_dim
-            )
-
-            # ---------------------------------------------------------------------
-            # 5. Dynamic Mode Routing (Local Model Evaluation)
-            # ---------------------------------------------------------------------
-            if self.mode == SurrogateMode.NEAREST_NEIGHBOR:
-                predictions_k = f_neighbors
-
-            elif self.mode in (
-                SurrogateMode.TAYLOR_LSQ_HESS,
-                SurrogateMode.TAYLOR_COV_HESS,
-                SurrogateMode.TAYLOR_COV_NO_HESS,
-                SurrogateMode.TAYLOR_EXACT_HESS,
-            ):
-                J_neighbors = xp.asarray(self.J_src)[flat_idx].reshape(
-                    chunk_size, k_nn, F_dim, D
-                )
-                linear_term = xp.einsum("nkfd,nkd->nkf", J_neighbors, dx)
-                predictions_k = f_neighbors + linear_term
-
-                if self.Hs_src is not None:
-                    H_neighbors = xp.asarray(self.Hs_src)[flat_idx].reshape(
-                        chunk_size, k_nn, F_dim, D, D
-                    )
-                    quadratic_term = xp.einsum(
-                        "nkc,nkfcd,nkd->nkf", dx, H_neighbors, dx
-                    )
-                    predictions_k += 0.5 * quadratic_term
-
-            elif self.mode in (
-                SurrogateMode.AFFINE_COV_HESS,
-                SurrogateMode.AFFINE_COV_NO_HESS,
-                SurrogateMode.AFFINE_EXACT_HESS,
-                SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
-            ):
-                A_neighbors = xp.asarray(self.A_fits_src)[flat_idx].reshape(
-                    chunk_size, k_nn, F_dim, D
-                )
-                b_neighbors = xp.asarray(self.b_fits_src)[flat_idx].reshape(
-                    chunk_size, k_nn, F_dim
-                )
-
-                # Evaluate the affine model: A*x + b
-                affine_term = xp.einsum("nkfd,nd->nkf", A_neighbors, batch_queries)
-                predictions_k = affine_term + b_neighbors
-
-            else:
-                raise ValueError(
-                    f"Unknown or improperly set SurrogateMode: '{self.mode}'."
-                )
+            # 5. Evaluate each neighbour's local model at the queries: (chunk, k_nn, fd)
+            predictions_k = self.local_model.evaluate(leaf_params, batch_queries, nn_idx)
 
             # 6. Apply Shepard's Weights
             weights_expanded = final_weights[:, :, None]
