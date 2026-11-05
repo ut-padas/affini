@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import src.adaptive_clustering as ac
-from src.adaptive_clustering_utils import ClusteringConfig, SurrogateMode
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 
 
 class _Status:
@@ -103,8 +103,8 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
     comm = _Comm(grant, has_g)
     buffers, count, _, _, levels = ac._run_local_refinement(
         config=ClusteringConfig(
-            SurrogateMode.NEAREST_NEIGHBOR,
-            "Linf-local",
+            mode=SurrogateMode.NEAREST_NEIGHBOR,
+            error_metric="Linf-local",
             atol=0.05,
             rtol=0.05,
             min_pts_per_cluster=1,
@@ -124,12 +124,7 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
         F_max_global=np.ones(1),
         d=1,
         fd=1,
-        f_fn=lambda x: np.ones((len(x), 1)),
-        g_fn=None,
-        oracle_fn=None,
-        LOG_MEM_STATS=False,
-        PROFILE_TIMING=False,
-        hessian=None,
+        evaluator=Evaluator(f_fn=lambda x: np.ones((len(x), 1))),
         rank=0,
         size=2,
         profiling_stats={"level_stats": []},
@@ -152,15 +147,17 @@ def test_single_rank_respects_refinement_limit(monkeypatch, stealing, max_levels
     monkeypatch.setattr(ac, "MPI", _SerialMPI)
     result = ac.adaptive_clustering(
         ac.xp.asarray(np.linspace(-1, 1, 128).reshape(-1, 1)),
-        f_fn=lambda x: x**2,
-        ATOL=1e-4,
-        RTOL=1e-4,
-        ERROR_EVAL_MODE=SurrogateMode.AFFINE_COV_NO_HESS,
-        NUM_INITIAL_CLUSTERS=1,
-        MIN_PTS_PER_CLUSTER=4,
-        MAX_CLUSTERS_EST=100,
-        MAX_LEVELS=max_levels,
-        USE_WORK_STEALING=stealing,
+        ClusteringConfig(
+            mode=SurrogateMode.AFFINE_COV_NO_HESS,
+            atol=1e-4,
+            rtol=1e-4,
+            num_initial_clusters=1,
+            min_pts_per_cluster=4,
+            max_clusters_est=100,
+            max_levels=max_levels,
+            use_work_stealing=stealing,
+        ),
+        Evaluator(f_fn=lambda x: x**2),
     )
     # Levels are numbered from zero, so the existing inclusive limit permits
     # max_levels + 1 passes. The final queued clusters prove the depth cap,

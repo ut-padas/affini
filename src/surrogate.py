@@ -15,7 +15,7 @@ from src import (
     xp,
 )
 from src.adaptive_clustering import adaptive_clustering
-from src.adaptive_clustering_utils import SurrogateMode
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 
 logger = logging.getLogger(__name__)
@@ -148,34 +148,32 @@ class AFINNISurrogate:
         self.mode = mode
 
         # 1. MPI-Distributed Adaptive Clustering
-        results = adaptive_clustering(
-            X=X_train,
-            Y=Y_train,
-            f_fn=f_fn,
-            g_fn=g_fn,
-            oracle_fn=oracle_fn,
-            ATOL=ATOL,
-            RTOL=RTOL,
-            ERROR_EVAL_MODE=self.mode,
-            ERROR_METRIC=ERROR_METRIC,
-            INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-            NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-            MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            SEED=SEED,
-            Q_REG=Q_REG,
-            MAX_LEVELS=MAX_LEVELS,
-            BATCH_SIZE=BATCH_SIZE,
-            PROFILE_TIMING=PROFILE_TIMING,
-            STORE_HESSIAN_PER_CLUSTER=STORE_HESSIAN,
-            STORE_AFFINE_FIT_PER_CLUSTER=STORE_AFFINE_FIT,
-            USE_WORK_STEALING=USE_WORK_STEALING,
-            LOG_MEM_STATS=LOG_MEM_STATS,
-            SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
-            HESSIAN=HESSIAN,
-            SAVE_INITIAL_CLUSTERING=SAVE_INITIAL_CLUSTERING,
-            USE_EXISTING_INITIAL_CLUSTERING=USE_EXISTING_INITIAL_CLUSTERING,
+        config = ClusteringConfig(
+            mode=self.mode,
+            atol=ATOL,
+            rtol=RTOL,
+            error_metric=ERROR_METRIC,
+            initial_clustering_method=INITIAL_CLUSTERING_METHOD,
+            num_initial_clusters=NUM_INITIAL_CLUSTERS,
+            save_initial_clustering=SAVE_INITIAL_CLUSTERING,
+            use_existing_initial_clustering=USE_EXISTING_INITIAL_CLUSTERING,
+            min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
+            q_reg=Q_REG,
+            max_levels=MAX_LEVELS,
+            batch_size=BATCH_SIZE,
+            seed=SEED,
+            max_clusters_est=MAX_CLUSTERS_EST,
+            use_work_stealing=USE_WORK_STEALING,
+            store_hess=STORE_HESSIAN,
+            store_affine_fits=STORE_AFFINE_FIT,
+            log_mem_stats=LOG_MEM_STATS,
+            profile_timing=PROFILE_TIMING,
+            save_all_gen_training_data=SAVE_ALL_GEN_TRAINING_DATA,
         )
+        evaluator = Evaluator(
+            f_fn=f_fn, g_fn=g_fn, oracle_fn=oracle_fn, hessian_fn=HESSIAN
+        )
+        results = adaptive_clustering(X_train, config, evaluator, Y=Y_train)
 
         # 2. Broadcast trained structures to all ranks
         bcast_data = None

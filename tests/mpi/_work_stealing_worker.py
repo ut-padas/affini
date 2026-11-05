@@ -9,7 +9,7 @@ from tests.mpi._mpi_worker import RESULT_PREFIX
 
 def main():
     import src.adaptive_clustering as ac
-    from src.adaptive_clustering_utils import ClusteringConfig, SurrogateMode
+    from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
     from src.backend import MPI
 
     world = MPI.COMM_WORLD
@@ -84,8 +84,8 @@ def main():
                 )
                 buffers, count, _, generated, _ = ac._run_local_refinement(
                     config=ClusteringConfig(
-                        SurrogateMode.NEAREST_NEIGHBOR,
-                        "Linf-local",
+                        mode=SurrogateMode.NEAREST_NEIGHBOR,
+                        error_metric="Linf-local",
                         atol=0.05,
                         rtol=0.05,
                         min_pts_per_cluster=1,
@@ -106,12 +106,7 @@ def main():
                     F_max_global=np.ones(1),
                     d=1,
                     fd=1,
-                    f_fn=lambda x: np.ones((len(x), 1)),
-                    g_fn=None,
-                    oracle_fn=None,
-                    LOG_MEM_STATS=False,
-                    PROFILE_TIMING=False,
-                    hessian=None,
+                    evaluator=Evaluator(f_fn=lambda x: np.ones((len(x), 1))),
                     rank=rank,
                     size=size,
                     profiling_stats={"level_stats": []},

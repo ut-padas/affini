@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 import numpy as np
 
@@ -41,12 +41,23 @@ class SurrogateMode(Enum):
     # TODO: need to make it so that the Hessian of the quadratic is the Hessian we use for clustering.
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ClusteringConfig:
+    """Settings for adaptive_clustering(). All fields are keyword-only."""
+
+    # --- Surrogate and acceptance test ---
     mode: SurrogateMode
-    error_metric: str  # "L2", "Linf-global", "Linf-local"
     atol: float  # absolute error tolerance for accepting a cluster
     rtol: float  # relative error tolerance (w.r.t. max |F| over the initial data)
+    error_metric: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global"
+
+    # --- Initial clustering ---
+    initial_clustering_method: Literal["kmeans", "knndbscan", "uniform_grid"] = "kmeans"
+    num_initial_clusters: int = 100
+    save_initial_clustering: bool = False  # save labels to INITIAL_CLUSTERING_FILE
+    use_existing_initial_clustering: bool = False  # load labels from that file if valid
+
+    # --- Refinement ---
     min_pts_per_cluster: int = 100
     q_reg: float = 1e-6  # regularization added when computing the trust-region shape Q
     max_levels: int = 50  # maximum number of refinement levels
@@ -54,9 +65,15 @@ class ClusteringConfig:
     seed: int = 0
     max_clusters_est: int = 100_000  # initial capacity of the output buffers (all ranks)
     use_work_stealing: bool = True
-    save_all_gen_training_data: bool = False
+
+    # --- Outputs ---
     store_hess: bool = False
     store_affine_fits: bool = False
+
+    # --- Diagnostics ---
+    log_mem_stats: bool = False
+    profile_timing: bool = False
+    save_all_gen_training_data: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -101,6 +118,54 @@ class ClusteringConfig:
             SurrogateMode.AFFINE_COV_HESS,
             SurrogateMode.AFFINE_EXACT_HESS
         )
+
+
+@dataclass
+class Evaluator:
+    """
+    Evaluates the target function, and optionally its Jacobian, and counts evaluations.
+
+    Provide ``f_fn`` (with ``g_fn`` if gradients are needed), or ``oracle_fn``, which
+    returns ``(F, G)`` in one call. When gradients are not needed and ``f_fn`` is
+    available, only ``f_fn`` is called.
+
+    ``hessian_fn`` (optional) returns the exact Hessian, shape (N, d, d); it is
+    required by the *_EXACT_HESS modes and is not included in ``n_evals``.
+    """
+
+    f_fn: Optional[Callable[[Array], Array]] = None
+    g_fn: Optional[Callable[[Array], Array]] = None
+    oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None
+    hessian_fn: Optional[Callable[[Array], Array]] = None
+    n_evals: int = 0  # number of points evaluated so far
+
+    def __post_init__(self) -> None:
+        if self.f_fn is None and self.oracle_fn is None:
+            raise ValueError("Provide f_fn or oracle_fn.")
+
+    @property
+    def has_grad(self) -> bool:
+        """True if gradients can be computed (g_fn or oracle_fn was given)."""
+        return self.oracle_fn is not None or self.g_fn is not None
+
+    def __call__(
+        self, X: Array, need_grad: bool = False
+    ) -> tuple[Array, Optional[Array]]:
+        """
+        Return ``F`` with shape (N, fd) and, if ``need_grad``, ``G`` with shape
+        (N, fd, d); otherwise ``G`` is None.
+        """
+        if need_grad and not self.has_grad:
+            raise ValueError("Gradients requested but no g_fn or oracle_fn was given.")
+        self.n_evals += int(X.shape[0])
+
+        if self.f_fn is not None and not need_grad:
+            return convert_to_2d_array(self.f_fn(X)), None
+        if self.oracle_fn is not None:
+            F, G = self.oracle_fn(X)
+            return convert_to_2d_array(F), (convert_to_3d_array(G) if need_grad else None)
+        assert self.f_fn is not None and self.g_fn is not None
+        return convert_to_2d_array(self.f_fn(X)), convert_to_3d_array(self.g_fn(X))
 
 
 # -----------------------------------------------------------------------------
