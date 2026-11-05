@@ -7,12 +7,15 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 
 import numpy as np
 
 # Adjust imports based on your actual source tree
 from src import IS_CUPY_BACKEND, Array, xp
+
+if TYPE_CHECKING:
+    from src.local_models import LocalModel
 
 if IS_CUPY_BACKEND:
     import cupy as cp
@@ -66,7 +69,11 @@ class ClusteringConfig:
     use_work_stealing: bool = True
 
     # --- Outputs ---
+    # Store a Hessian per accepted cluster and use it in a second-order Taylor
+    # prediction. Only TAYLOR_LSQ_HESS estimates one; elsewhere it is ignored.
     store_hess: bool = False
+    # Deprecated and ignored: what is stored is decided by the local model (affine
+    # modes always store A_fit/b_fit). Kept so existing callers still work.
     store_affine_fits: bool = False
 
     # --- Diagnostics ---
@@ -83,15 +90,11 @@ class ClusteringConfig:
                 f"Unknown sampling method {self.sampling_method!r}; "
                 f"choose one of {sorted(SAMPLERS)}."
             )
-        if (
-            self.mode
-            in (SurrogateMode.AFFINE_COV_HESS, SurrogateMode.AFFINE_COV_NO_HESS)
-            and not self.store_affine_fits
-        ):
-            self.store_affine_fits = True
+        if self.store_hess and self.mode != SurrogateMode.TAYLOR_LSQ_HESS:
+            self.store_hess = False
             logger.warning(
-                f"Selected mode {self.mode.value} requires storing affine fit "
-                "parameters. Overriding store_affine_fits to True."
+                f"store_hess is only supported by {SurrogateMode.TAYLOR_LSQ_HESS.value}; "
+                f"ignoring it for mode {self.mode.value}."
             )
 
     @property
@@ -684,6 +687,7 @@ def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
 # -----------------------------------------------------------------------------
 def evaluate_cluster_errors(
     config: ClusteringConfig,
+    model: "LocalModel",
     X_batch: Array,
     F_batch: Array,
     mus: Array,
@@ -695,64 +699,33 @@ def evaluate_cluster_errors(
     F_max_global: Array,
 ) -> tuple[Array, Array, dict[str, Any]]:
     """
-    Fits the appropriate surrogate and computes the error metric.
-    Returns: (is_good_mask, E_cluster, surrogate_params_dict)
+    Fits ``model`` on every cluster, evaluates it at the cluster's points and
+    computes the error metric.
+    Returns: (is_good_mask, E_cluster, the model's per-cluster parameters)
     """
-    N, d = X_batch.shape
     fd = F_batch.shape[1]
     K_batch = len(aug_sizes)
-    surrogate_params = {}
 
-    dx = X_batch - mus[aug_ids]
+    # Imported here: src.local_models imports this module.
+    from src.local_models import ClusterFitData
 
-    # --- 1. Compute Differences based on Mode ---
-    if config.mode == SurrogateMode.NEAREST_NEIGHBOR:
-        diff = F_batch - f_mus[aug_ids]
-
-    elif config.mode in (
-        SurrogateMode.TAYLOR_LSQ_HESS,
-        SurrogateMode.TAYLOR_COV_HESS,
-        SurrogateMode.TAYLOR_COV_NO_HESS,
-        SurrogateMode.TAYLOR_EXACT_HESS
-    ):
-        assert g_mus is not None
-        lin = xp.einsum("nmd,nd->nm", g_mus[aug_ids], dx)  # (N, fd)
-        diff = F_batch - (f_mus[aug_ids] + lin)
-        surrogate_params = {"g_mus": g_mus}
-
-    elif config.mode in (
-        SurrogateMode.AFFINE_COV_HESS,
-        SurrogateMode.AFFINE_COV_NO_HESS,
-        SurrogateMode.AFFINE_EXACT_HESS,
-        SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
-    ):
-        # Adaptive Tikhonov fitting
-        mean_F = _reduce_sum_1d(F_batch, aug_starts) / aug_sizes[:, None]  # (K, fd)
-
-        # Computation of Covariance and Cross-Covariance
-        auto_cov, _ = run_fused_stats(
-            X_batch, mus, aug_ids, K_batch, d, fd, None, calc_E=False
-        )  # (K, d, d)
-        cross_cov = run_fused_cross_cov(
-            X_batch, F_batch, mus, mean_F, aug_ids, K_batch, d, fd
-        )  # (K, d, fd)
-
-        A_T = solve_regularized_covariance_inplace(auto_cov, cross_cov, d, fd)
-        del auto_cov
-        A = A_T.transpose(0, 2, 1)  # (K, fd, d)
-        b = mean_F - xp.einsum("kfd,kd->kf", A, mus)  # (K, fd)
-
-        lin = xp.einsum("nfd,nd->nf", A[aug_ids], X_batch)  # (N, fd)
-        diff = F_batch - (b[aug_ids] + lin)
-        if config.mode == SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD:
-            assert g_mus is not None
-            surrogate_params = {"A": A, "b": b, "g_mus": g_mus}
-        else:
-            surrogate_params = {"A": A, "b": b}
-            
-
-    else:
-        raise ValueError(f"Unknown mode: {config.mode}")
+    # --- 1. Fit the local model on every cluster and evaluate it at the points ---
+    data = ClusterFitData(
+        X=X_batch,
+        F=F_batch,
+        G=None,
+        labels=aug_ids,
+        starts=aug_starts,
+        sizes=aug_sizes,
+        centroids=mus,
+        f_c=f_mus,
+        g_c=g_mus,
+    )
+    surrogate_params = model.fit(data)
+    F_hat = model.evaluate(
+        {**surrogate_params, "centroids": mus, "f": f_mus}, X_batch, aug_ids
+    )
+    diff = F_batch - F_hat
 
     # --- 2. Evaluate Error Metrics ---
     if config.error_metric == "L2":
@@ -851,42 +824,40 @@ def compute_accepted_stats(
 
     # --- 3. Compute Hessian (If requested) ---
     Hs = None
-    if config.store_hess:
-        if (
-            config.mode == SurrogateMode.TAYLOR_LSQ_HESS
-            and G_good is not None
-            and g_mus_good is not None
-        ):
-            # Accumulate Gradient interaction matrix over all components iteratively to avoid OOM
-            fd = G_good.shape[1]
-            E_k = xp.zeros((K_good, d, d), dtype=xp.float64)
-            for j in range(fd):
-                ac = xp.full(K_good, j, dtype=xp.int32)
-                _, E_j = run_fused_stats(
-                    X_good,
-                    mus_good,
-                    dense_labels_good,
-                    K_good,
-                    d,
-                    fd,
-                    ac,
-                    G=G_good,
-                    g_mus=g_mus_good,
-                    calc_E=True,
-                )
-                E_k += E_j
+    if (
+        config.store_hess
+        and config.mode == SurrogateMode.TAYLOR_LSQ_HESS
+        and G_good is not None
+        and g_mus_good is not None
+    ):
+        # Accumulate Gradient interaction matrix over all components iteratively to avoid OOM
+        fd = G_good.shape[1]
+        E_k = xp.zeros((K_good, d, d), dtype=xp.float64)
+        for j in range(fd):
+            ac = xp.full(K_good, j, dtype=xp.int32)
+            _, E_j = run_fused_stats(
+                X_good,
+                mus_good,
+                dense_labels_good,
+                K_good,
+                d,
+                fd,
+                ac,
+                G=G_good,
+                g_mus=g_mus_good,
+                calc_E=True,
+            )
+            E_k += E_j
 
-            S_h = E_k + E_k.transpose(0, 2, 1)
+        S_h = E_k + E_k.transpose(0, 2, 1)
 
-            dvals, U_h = xp.linalg.eigh(Cov)
-            dvals = xp.maximum(dvals, TINY_EPS)
-            Gtilde = U_h.transpose(0, 2, 1) @ S_h @ U_h  # (K, d, d)
-            F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])  # (K, d, d)
-            Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
-            Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
+        dvals, U_h = xp.linalg.eigh(Cov)
+        dvals = xp.maximum(dvals, TINY_EPS)
+        Gtilde = U_h.transpose(0, 2, 1) @ S_h @ U_h  # (K, d, d)
+        F_mat = Gtilde / (dvals[:, :, None] + dvals[:, None, :])  # (K, d, d)
+        Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
+        Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
 
-        elif config.mode == SurrogateMode.AFFINE_COV_HESS:
-            Hs = xp.linalg.inv(Cov + TINY_EPS * xp.eye(d)[None, :, :])
 
     return Qs, Hs, radii
 
@@ -903,7 +874,7 @@ def split_rejected_clusters(
     f_mus_bad: Array,
     dense_labels_bad: Array,
     counts_bad: Array,
-    surrogate_params: dict,
+    g_mus_bad: Optional[Array],
     hessian: Optional[Callable]
 ) -> Array:
     """
@@ -919,7 +890,7 @@ def split_rejected_clusters(
     dx = X_bad - mus_bad[dense_labels_bad]
 
     if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_bad is not None:
-        g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]  # (N_bad, fd, d)
+        g_mus_exp = g_mus_bad[dense_labels_bad]  # (N_bad, fd, d)
         f_mus_exp = f_mus_bad[dense_labels_bad]  # (N_bad, fd)
 
         lin = xp.einsum("nmd,nd->nm", g_mus_exp, dx)
@@ -940,7 +911,7 @@ def split_rejected_clusters(
             fd,
             active_comps,
             G=G_bad,
-            g_mus=surrogate_params["g_mus"],
+            g_mus=g_mus_bad,
             calc_E=True,
         )
 
@@ -967,7 +938,7 @@ def split_rejected_clusters(
     ):
         if config.mode == SurrogateMode.TAYLOR_COV_HESS or \
            config.mode == SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD:
-            g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]  # (N_bad, fd, d)
+            g_mus_exp = g_mus_bad[dense_labels_bad]  # (N_bad, fd, d)
             lin_bad = xp.einsum("nmd,nd->nm", g_mus_exp, dx)  # (N_bad, fd)
             diff_bad = F_bad - (f_mus_bad[dense_labels_bad] + lin_bad)  # (N_bad, fd)
             E_bad = xp.linalg.norm(diff_bad, axis=1)  # (N_bad,)
@@ -1144,80 +1115,6 @@ def convert_to_3d_array(G: Array) -> Array:
     if G.ndim == 2:
         return G[:, None, :]  # Convert (N, d) to (N, 1, d)
     return G
-
-
-def allocate_output_buffers_host(
-    MAX_CLUSTERS_EST: int,
-    d: int,
-    fd: int,
-    store_hess: bool,
-    store_affine_fit: bool,
-    no_gradient: bool,
-) -> tuple[dict, int]:
-    """
-    Allocates output buffers for centroids, surrogate params, Q, E_cluster, radii, counts, and optionally gradients and Hessians.
-
-    Returns the buffers and the initial capacity.
-    """
-    cap = max(1, int(MAX_CLUSTERS_EST))
-    buffers = {
-        "centroids": np.empty((cap, d), dtype=np.float64),
-        "f": np.empty((cap, fd), dtype=np.float64),
-        "Q": np.empty((cap, d, d), dtype=np.float64),
-        "E_cluster": np.empty((cap,), dtype=np.float64),
-        "radii": np.empty((cap,), dtype=np.float64),
-        "counts": np.empty((cap,), dtype=np.int64),
-    }
-    if not no_gradient:
-        buffers["g"] = np.empty((cap, fd, d), dtype=np.float64)
-    if store_hess:
-        buffers["H"] = np.empty((cap, d, d), dtype=np.float64)
-    if store_affine_fit:
-        buffers["A_fit"] = np.empty((cap, fd, d), dtype=np.float64)
-        buffers["b_fit"] = np.empty((cap, fd), dtype=np.float64)
-    return buffers, cap
-
-
-def adjust_buffer_capacity_host(
-    buffers: dict,
-    current_count: int,
-    current_cap: int,
-    required_total: int,
-    store_hess: bool,
-    store_affine_fit: bool,
-    no_gradient: bool,
-) -> tuple[dict, int]:
-    """
-    Checks if the current buffers have enough capacity for required_total clusters. If not, it doubles the capacity until it does, copying existing data.
-
-    Returns the (possibly new) buffers and the new capacity.
-    """
-    if required_total <= current_cap:
-        return buffers, current_cap
-    new_cap = max(required_total, max(1, current_cap) * 2)
-    d = int(buffers["centroids"].shape[1])
-    fd = int(buffers["f"].shape[1])
-    new_buffers = {
-        "centroids": np.empty((new_cap, d), dtype=np.float64),
-        "f": np.empty((new_cap, fd), dtype=np.float64),
-        "Q": np.empty((new_cap, d, d), dtype=np.float64),
-        "E_cluster": np.empty((new_cap,), dtype=np.float64),
-        "radii": np.empty((new_cap,), dtype=np.float64),
-        "counts": np.empty((new_cap,), dtype=np.int64),
-    }
-    if not no_gradient:
-        new_buffers["g"] = np.empty((new_cap, fd, d), dtype=np.float64)
-    if store_hess:
-        new_buffers["H"] = np.empty((new_cap, d, d), dtype=np.float64)
-    if store_affine_fit:
-        new_buffers["A_fit"] = np.empty((new_cap, fd, d), dtype=np.float64)
-        new_buffers["b_fit"] = np.empty((new_cap, fd), dtype=np.float64)
-
-    if current_count > 0:
-        for k in new_buffers:
-            new_buffers[k][:current_count] = buffers[k][:current_count]
-    del buffers
-    return new_buffers, int(new_cap)
 
 
 def get_prime_factors(n: int) -> list[int]:

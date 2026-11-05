@@ -21,8 +21,6 @@ from src.adaptive_clustering_utils import (
     CudaTimer,
     Evaluator,
     SurrogateMode,
-    adjust_buffer_capacity_host,
-    allocate_output_buffers_host,
     combine_generated_data,
     compute_accepted_stats,
     convert_to_2d_array,
@@ -33,7 +31,8 @@ from src.adaptive_clustering_utils import (
     uniform_grid_cluster_labels,
 )
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
-from src.clusters import ClusterBatch, ClusterQueueBuilder
+from src.clusters import ClusterBatch, ClusterQueueBuilder, ColumnBuffer
+from src.local_models import make_local_model, output_columns
 from src.logging_utils import log_mem_stats
 from src.sampling import augment_clusters, augmentation_targets, make_sampler
 from src.utils import repeats
@@ -80,16 +79,15 @@ def _run_local_refinement(
 
         mempool = cp.get_default_memory_pool()
 
-    # Allocate Output Buffers on CPU (Host) to save VRAM
-    buffers, out_cap = allocate_output_buffers_host(
-        max(1, config.max_clusters_est // max(1, size)),
-        d,
-        fd,
-        store_hess=config.store_hess,
-        store_affine_fit=config.store_affine_fits,
-        no_gradient=config.requires_no_grads,
+    # The function fitted on each cluster, and host-side output columns for the
+    # accepted clusters (the shared columns plus the model's parameters).
+    model = make_local_model(config)
+    if model.needs_centroid_grad and not config.requires_grad_centroids:
+        raise ValueError(f"{model.name} needs gradients at the centroids")
+    accepted = ColumnBuffer(
+        output_columns(model, d, fd),
+        capacity=max(1, config.max_clusters_est // max(1, size)),
     )
-    out_count = 0
     num_generated_pts = 0
     evals_at_start = evaluator.n_evals
     level = 0
@@ -209,6 +207,7 @@ def _run_local_refinement(
                 # ==========================================
                 is_good, E_cluster, surrogate_params = evaluate_cluster_errors(
                     config,
+                    model,
                     X_batch,
                     F_batch,
                     mus,
@@ -257,48 +256,18 @@ def _run_local_refinement(
                     )
 
                 with CudaTimer("time_good_d2h", profiling_stats, config.profile_timing):
-                    end_out = out_count + K_good_batch
-                    buffers, out_cap = adjust_buffer_capacity_host(
-                        buffers,
-                        out_count,
-                        out_cap,
-                        end_out,
-                        config.store_hess,
-                        config.store_affine_fits,
-                        not (
-                            config.requires_grad_everywhere
-                            or config.requires_grad_centroids
-                        ),
-                    )
-
-                    buffers["centroids"][out_count:end_out] = _to_host(
-                        mus[good_idx_local]
-                    )
-                    buffers["f"][out_count:end_out] = _to_host(f_mus[good_idx_local])
-                    buffers["Q"][out_count:end_out] = _to_host(Qs)
-                    buffers["E_cluster"][out_count:end_out] = _to_host(
-                        E_cluster[good_idx_local]
-                    )
-                    buffers["radii"][out_count:end_out] = _to_host(radii)
-                    buffers["counts"][out_count:end_out] = _to_host(
-                        good_counts.astype(xp.int64)
-                    )
-
-                    if config.requires_grad_centroids and g_mus is not None:
-                        buffers["g"][out_count:end_out] = _to_host(
-                            g_mus[good_idx_local]
-                        )
+                    rows = {
+                        "centroids": mus[good_idx_local],
+                        "f": f_mus[good_idx_local],
+                        "Q": Qs,
+                        "E_cluster": E_cluster[good_idx_local],
+                        "radii": radii,
+                        "counts": good_counts.astype(xp.int64),
+                        **{k: v[good_idx_local] for k, v in surrogate_params.items()},
+                    }
                     if Hs is not None:
-                        buffers["H"][out_count:end_out] = _to_host(Hs)
-                    if "A" in surrogate_params and "b" in surrogate_params:
-                        buffers["A_fit"][out_count:end_out] = _to_host(
-                            surrogate_params["A"][good_idx_local]
-                        )
-                        buffers["b_fit"][out_count:end_out] = _to_host(
-                            surrogate_params["b"][good_idx_local]
-                        )
-
-                    out_count = end_out
+                        rows["H"] = Hs  # second-order Taylor term (accepted clusters only)
+                    accepted.append(rows)
 
             # 6. Handle Rejected ("Bad") Clusters -> Split
             with CudaTimer("time_filter", profiling_stats, config.profile_timing):
@@ -365,9 +334,6 @@ def _run_local_refinement(
                     # ==========================================
                     # MATH PIPELINE STAGE 3
                     # ==========================================
-                    bad_surrogate_params = {
-                        k: v[bad_idx_local] for k, v in surrogate_params.items()
-                    }
                     sort_order = split_rejected_clusters(
                         config,
                         X_bad_aug,
@@ -377,7 +343,7 @@ def _run_local_refinement(
                         f_mus[bad_idx_local],
                         aug_dense_labels_bad,
                         target_bad_counts,
-                        bad_surrogate_params,
+                        g_mus[bad_idx_local] if g_mus is not None else None,
                         evaluator.hessian_fn,
                     )
 
@@ -459,7 +425,7 @@ def _run_local_refinement(
         level += 1
 
     total_f_evals = evaluator.n_evals - evals_at_start
-    return buffers, out_count, total_f_evals, num_generated_pts, level
+    return accepted.result(), accepted.n_rows, total_f_evals, num_generated_pts, level
 
 
 # ---------------------------------------------------------------------------
@@ -729,7 +695,7 @@ def adaptive_clustering(
         )
     )
 
-    local_result_host = {k: buffers[k][:out_count] for k in buffers}
+    local_result_host = dict(buffers)
     profiling_stats["num_levels"] = last_level
     profiling_stats["num_generated_pts"] = local_gen_pts
     profiling_stats["total_f_evals"] += local_f_evals

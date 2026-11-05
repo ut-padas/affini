@@ -5,9 +5,11 @@ Host-side containers for queues of clusters.
 it is what the refinement loop processes, what work stealing sends between ranks,
 and what each level hands to the next. ``ClusterQueueBuilder`` accumulates the
 children produced during one level into the next level's ``ClusterBatch``.
+``ColumnBuffer`` accumulates one row of named columns per accepted cluster.
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -145,3 +147,56 @@ def _grown(buf: np.ndarray, capacity: int, n_used: int) -> np.ndarray:
     new = np.empty((capacity, *buf.shape[1:]), dtype=buf.dtype)
     new[:n_used] = buf[:n_used]
     return new
+
+
+@dataclass(frozen=True)
+class ParamSpec:
+    """Shape (excluding the leading row axis) and dtype of one stored column."""
+
+    shape: tuple[int, ...]
+    dtype: Any = np.float64
+
+
+class ColumnBuffer:
+    """
+    Growable host-side columns with one row per accepted cluster.
+
+    ``append`` must receive exactly the declared columns, so a column can never be
+    allocated but left unwritten.
+    """
+
+    def __init__(self, columns: dict[str, ParamSpec], capacity: int):
+        self.columns = dict(columns)
+        cap = max(1, int(capacity))
+        self._data = {
+            name: np.empty((cap, *spec.shape), dtype=spec.dtype)
+            for name, spec in self.columns.items()
+        }
+        self.n_rows = 0
+
+    def append(self, rows: dict[str, Array]) -> None:
+        """Append rows given as {column: array with a leading row axis} (device or host)."""
+        if rows.keys() != self.columns.keys():
+            missing = sorted(self.columns.keys() - rows.keys())
+            extra = sorted(rows.keys() - self.columns.keys())
+            raise KeyError(f"Column mismatch: missing {missing}, unexpected {extra}")
+        host = {name: _to_host(value) for name, value in rows.items()}
+        n_new = {int(v.shape[0]) for v in host.values()}
+        if len(n_new) != 1:
+            raise ValueError(f"Columns have different numbers of rows: {n_new}")
+        end = self.n_rows + n_new.pop()
+
+        cap = next(iter(self._data.values())).shape[0]
+        if end > cap:
+            new_cap = max(end, cap * 2)
+            self._data = {
+                name: _grown(buf, new_cap, self.n_rows)
+                for name, buf in self._data.items()
+            }
+        for name, value in host.items():
+            self._data[name][self.n_rows : end] = value
+        self.n_rows = end
+
+    def result(self) -> dict[str, np.ndarray]:
+        """The filled rows of every column."""
+        return {name: buf[: self.n_rows] for name, buf in self._data.items()}
