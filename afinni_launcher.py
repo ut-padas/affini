@@ -26,9 +26,16 @@ from src.plotter_utils import (
     plot_wave_2d_errors,
     plot_wave_line_errors,
 )
+from src.sampling import SAMPLERS
 from src.surrogate import AFINNISurrogate, compute_error_metrics
 
 TINY_EPS = 1e-12
+DEFAULT_SAMPLING_METHOD = "convex_combination"
+
+
+def _sampling_suffix(sampling_method: str) -> str:
+    """File-name suffix for a non-default sampler (default runs keep their names)."""
+    return "" if sampling_method == DEFAULT_SAMPLING_METHOD else f"_aug{sampling_method}"
 SEED = 0
 
 logger = logging.getLogger(__name__)
@@ -94,6 +101,7 @@ def conduct_experiment_given_data(
     CENTROIDS_PLOT_IN_LOG_SCALE: bool = True,
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
     SAVE_FINAL_CENTROIDS: bool = False,
+    SAMPLING_METHOD: str = DEFAULT_SAMPLING_METHOD,
 ):
 
     if json_fpath.exists():
@@ -133,6 +141,7 @@ def conduct_experiment_given_data(
             SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
             HESSIAN=HESSIAN,
             Q_REG=Q_reg,
+            SAMPLING_METHOD=SAMPLING_METHOD,
         )
         _train_time = time.perf_counter() - _start_train_time
         _TRAINED = True
@@ -205,6 +214,7 @@ def conduct_experiment_given_data(
         "num_initial_clusters": NUM_INITIAL_CLUSTERS,
         "min_pts_per_cluster": MIN_PTS_PER_CLUSTER,
         "use_work_stealing": USE_WORK_STEALING,
+        "sampling_method": SAMPLING_METHOD,
         "error_metrics": error_metrics,
     }
     with open(json_fpath, "w") as jf:
@@ -291,6 +301,7 @@ def conduct_experiment_generate_uniform_data(
     CENTROIDS_PLOT_IN_LOG_SCALE: bool = False,
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
     SAVE_FINAL_CENTROIDS: bool = False,
+    SAMPLING_METHOD: str = DEFAULT_SAMPLING_METHOD,
 ):
 
     if _rank == 0:
@@ -330,6 +341,7 @@ def conduct_experiment_generate_uniform_data(
         CENTROIDS_PLOT_IN_LOG_SCALE,
         SAVE_ALL_GEN_TRAINING_DATA,
         SAVE_FINAL_CENTROIDS,
+        SAMPLING_METHOD=SAMPLING_METHOD,
     )
 
 
@@ -629,6 +641,7 @@ def run_problem(
     Q_reg: float,
     coarse_factor: int,
     N_train: int | None = None,
+    sampling_method: str = DEFAULT_SAMPLING_METHOD,
 ):
     """Train and test one surrogate for ``problem``; skip if the result exists."""
     if problem.only_modes is not None and error_eval_mode not in problem.only_modes:
@@ -654,7 +667,7 @@ def run_problem(
 
     json_fpath = (
         EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}{_sampling_suffix(sampling_method)}.json"
     )
     settings = dict(
         json_fpath=json_fpath,
@@ -678,6 +691,7 @@ def run_problem(
         COARSE_FACTOR=coarse_factor,
         CENTROIDS_PLOT_IN_LOG_SCALE=problem.centroids_plot_in_log_scale,
         SAVE_FINAL_CENTROIDS=problem.save_final_centroids,
+        SAMPLING_METHOD=sampling_method,
     )
     if problem.sample is None:
         conduct_experiment_generate_uniform_data(**settings)
@@ -694,7 +708,14 @@ def run_problem(
 
 
 def lorenz_trajectories_experiment(
-    d, tol, error_eval_mode, dt, Q_reg, coarse_factor, N_train=None
+    d,
+    tol,
+    error_eval_mode,
+    dt,
+    Q_reg,
+    coarse_factor,
+    N_train=None,
+    sampling_method=DEFAULT_SAMPLING_METHOD,
 ):
     """
     Goal: use time step data as training and testing to do experiments.
@@ -748,7 +769,7 @@ def lorenz_trajectories_experiment(
     # Put this into HATANN
     EXP_DIR = RESULTS_DIR / "lorenz_trajexp"
     json_fpath = (
-        EXP_DIR / f"dim{d}_dt{dt}_tol{tol}_ntrain{N_start_train * (N_steps+1)}.json"
+        EXP_DIR / f"dim{d}_dt{dt}_tol{tol}_ntrain{N_start_train * (N_steps+1)}{_sampling_suffix(sampling_method)}.json"
     )
 
     conduct_experiment_given_data(
@@ -771,6 +792,7 @@ def lorenz_trajectories_experiment(
         USE_WORK_STEALING=False,
         Q_reg=Q_reg,
         COARSE_FACTOR=coarse_factor,
+        SAMPLING_METHOD=sampling_method,
     )
 
     create_summary_dataframe(EXP_DIR)
@@ -840,6 +862,13 @@ def setup_argparse():
         type=int,
         default=None,
     )
+    parser.add_argument(
+        "--sampling_method",
+        help="How new points are sampled inside rejected clusters during training "
+        "(--sampling chooses the initial training data instead).",
+        choices=sorted(SAMPLERS),
+        default=DEFAULT_SAMPLING_METHOD,
+    )
 
     return parser.parse_args()
 
@@ -861,14 +890,30 @@ def run_experiment_from_args(args):
         for d in dvec:
             if sampling == "modified" and function_name == "lorenz96":
                 lorenz_trajectories_experiment(
-                    d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train
+                    d,
+                    tol,
+                    error_eval_mode,
+                    args.dt,
+                    Q_reg,
+                    coarse_factor,
+                    N_train,
+                    args.sampling_method,
                 )
                 continue
             if sampling == "modified" and function_name in MODIFIED_SAMPLING:
                 problem = MODIFIED_SAMPLING[function_name](args)
             else:
                 problem = PROBLEMS[function_name](args)
-            run_problem(problem, d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
+            run_problem(
+                problem,
+                d,
+                tol,
+                error_eval_mode,
+                Q_reg,
+                coarse_factor,
+                N_train,
+                args.sampling_method,
+            )
 
 
 if __name__ == "__main__":

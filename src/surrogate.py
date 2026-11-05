@@ -120,6 +120,7 @@ class AFINNISurrogate:
         MAX_CLUSTERS_EST: int = 1_000_000,
         SEED: int = 0,
         Q_REG: float = 1e-6,
+        SAMPLING_METHOD: str = "convex_combination",  # see src.sampling.SAMPLERS
         STORE_HESSIAN: bool = False,
         STORE_AFFINE_FIT: bool = False,
         USE_WORK_STEALING: bool = True,
@@ -154,6 +155,7 @@ class AFINNISurrogate:
             use_existing_initial_clustering=USE_EXISTING_INITIAL_CLUSTERING,
             min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
             q_reg=Q_REG,
+            sampling_method=SAMPLING_METHOD,
             max_levels=MAX_LEVELS,
             batch_size=BATCH_SIZE,
             seed=SEED,

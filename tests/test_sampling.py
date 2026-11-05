@@ -145,3 +145,34 @@ def test_config_rejects_unknown_sampling_method():
         )
     ok = ClusteringConfig(mode=SurrogateMode.NEAREST_NEIGHBOR, atol=1e-3, rtol=1e-3)
     assert ok.sampling_method in SAMPLERS
+
+
+class _CountingSampler(ConvexCombinationSampler):
+    """The convex-combination sampler, counting how often training calls it."""
+
+    name = "counting"
+    calls = 0
+
+    def sample(self, clusters, n_new, rng):
+        type(self).calls += 1
+        return super().sample(clusters, n_new, rng)
+
+
+def test_train_uses_the_requested_sampler(monkeypatch):
+    from src.problems.rosenbrock import rosenbrock
+    from src.surrogate import AFINNISurrogate
+
+    monkeypatch.setitem(SAMPLERS, _CountingSampler.name, _CountingSampler)
+    _CountingSampler.calls = 0
+    X_train = xp.asarray(np.random.default_rng(0).uniform(-2, 2, (5_000, 2)))
+    AFINNISurrogate().train(
+        X_train,
+        f_fn=rosenbrock,
+        ATOL=0.05,
+        RTOL=0.05,
+        NUM_INITIAL_CLUSTERS=4,
+        MIN_PTS_PER_CLUSTER=200,  # small clusters, so rejected ones get augmented
+        USE_WORK_STEALING=False,
+        SAMPLING_METHOD=_CountingSampler.name,
+    )
+    assert _CountingSampler.calls > 0
