@@ -1,5 +1,6 @@
 import logging
 import time
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Union
 
@@ -75,8 +76,6 @@ class AFINNISurrogate:
         oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
         *,
         mode: SurrogateMode = SurrogateMode.AFFINE_COV_HESS,
-        save_model: Optional[Union[bool, str, Path]] = None,
-        load_if_exists: bool = True,
         ATOL: float = 1e-2,
         RTOL: float = 1e-2,
         ERROR_METRIC: Literal["L2", "Linf-local", "Linf-global"] = "Linf-global",
@@ -102,30 +101,6 @@ class AFINNISurrogate:
     ):
         comm = MPI.COMM_WORLD
         rank = _get_mpi_rank()
-
-        model_filepath = None
-        if save_model is not None and save_model is not False:
-            if isinstance(save_model, bool) and save_model:
-                model_filepath = Path.cwd() / "hatann_surrogate.npz"
-            else:
-                model_filepath = Path(save_model)
-                if model_filepath.is_dir():
-                    model_filepath = model_filepath / "hatann_surrogate.npz"
-                elif model_filepath.suffix != ".npz":
-                    model_filepath = model_filepath.with_suffix(".npz")
-
-        if load_if_exists and model_filepath is not None and model_filepath.exists():
-            try:
-                loaded_model = self.load_model(model_filepath)
-                self.__dict__.update(loaded_model.__dict__)
-                if rank == 0:
-                    logger.info(f"Loaded existing model from {model_filepath}")
-                return
-            except Exception as e:
-                if rank == 0:
-                    logger.warning(
-                        f"Failed to load existing model: {e}. Proceeding with training."
-                    )
 
         if oracle_fn is not None:
             if f_fn is not None or g_fn is not None:
@@ -212,10 +187,19 @@ class AFINNISurrogate:
         if rank == 0:
             logger.info(f"Training Time: {time.perf_counter() - t0:.4f}s")
             logger.info(f"Trained Clusters: {self.N_src:,}")
-            if model_filepath is not None:
-                self.save(model_filepath)
 
     def save(self, filepath: Union[str, Path]) -> None:
+        """
+        Deprecated: save the trained model to an ``.npz`` file.
+
+        Saving and loading are being redesigned along with the per-cluster model
+        refactor, and this format will change. ``train()`` no longer saves models.
+        """
+        warnings.warn(
+            "AFINNISurrogate.save() is deprecated; the model file format will change.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if not self.trained:
             raise RuntimeError("Cannot save an untrained model.")
 
@@ -253,6 +237,17 @@ class AFINNISurrogate:
 
     @classmethod
     def load_model(cls, filepath: Union[str, Path]) -> "AFINNISurrogate":
+        """
+        Deprecated: load a model written by ``save()``.
+
+        Saving and loading are being redesigned along with the per-cluster model
+        refactor; files from this format will not be readable afterwards.
+        """
+        warnings.warn(
+            "AFINNISurrogate.load_model() is deprecated; the model file format will change.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         filepath = Path(filepath)
         if not filepath.exists():
             raise FileNotFoundError(f"Model file not found: {filepath}")

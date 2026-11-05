@@ -175,7 +175,6 @@ def main():
             CLUSTERING_MATRIX="Hessian_LSQ",
             IGNORE_GRADIENT=False,
             PROFILE_TIMING=False,
-            save_model=False,
             STORE_HESSIAN=False,
         )
 

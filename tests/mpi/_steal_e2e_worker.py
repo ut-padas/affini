@@ -110,7 +110,6 @@ def main() -> None:
         surrogate.train(
             X,
             f_fn=evaluate,
-            load_if_exists=False,
             ATOL=TOL,
             RTOL=TOL,
             ERROR_METRIC="Linf-local",

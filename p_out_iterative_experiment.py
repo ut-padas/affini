@@ -604,7 +604,6 @@ def run_iterative_refinement(
             MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
             USE_WORK_STEALING=False,
             STORE_AFFINE_FIT=True,
-            save_model=False,
             PROFILE_TIMING=False,
         )
         t_train = time.perf_counter() - _t_start

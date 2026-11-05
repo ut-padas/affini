@@ -119,8 +119,6 @@ def conduct_experiment_given_data(
             f_fn=f_fn,
             g_fn=g_fn,
             mode=ERROR_EVAL_MODE,
-            save_model=None,
-            load_if_exists=True,
             ATOL=TOL,
             RTOL=TOL,
             ERROR_METRIC=ERROR_METRIC,
