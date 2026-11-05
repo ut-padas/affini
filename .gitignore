@@ -234,3 +234,5 @@ media/
 
 # Models
 models/
+# macOS Finder metadata
+.DS_Store
