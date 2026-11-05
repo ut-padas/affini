@@ -23,9 +23,10 @@ from src.adaptive_clustering_utils import (
     SurrogateMode,
     cluster_errors,
     combine_generated_data,
-    compute_accepted_stats,
     convert_to_2d_array,
+    lsq_hessians,
     save_generated_data,
+    trust_region_shapes,
     uniform_grid_cluster_labels,
 )
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
@@ -248,18 +249,26 @@ def _run_local_refinement(
                     good_counts = aug_sizes[good_idx_local]
                     dense_labels_good = repeats(xp.arange(K_good_batch), good_counts)
 
-                    # Shape matrix Q of each accepted cluster (used by the
-                    # trust-region test at inference), and the second-order
-                    # Hessian H when it is stored.
-                    Qs, Hs = compute_accepted_stats(
-                        config,
+                    # Shape matrix Q of each accepted cluster, used by the
+                    # trust-region test at inference.
+                    Qs = trust_region_shapes(
                         X_good,
-                        G_good,
                         mus[good_idx_local],
-                        g_mus[good_idx_local] if g_mus is not None else None,
                         dense_labels_good,
                         good_counts,
+                        config.q_reg,
                     )
+                    # The second-order Taylor term, when the model stores one.
+                    Hs = None
+                    if "H" in accepted.columns:
+                        Hs = lsq_hessians(
+                            X_good,
+                            G_good,
+                            mus[good_idx_local],
+                            g_mus[good_idx_local],
+                            dense_labels_good,
+                            good_counts,
+                        )
 
                 with CudaTimer("time_good_d2h", profiling_stats, config.profile_timing):
                     rows = {

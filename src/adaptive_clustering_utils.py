@@ -753,7 +753,7 @@ def cluster_errors(
 
 
 # -----------------------------------------------------------------------------
-# 5. ACCEPTED-CLUSTER STATS (Q, H)
+# 5. ACCEPTED CLUSTERS: TRUST-REGION SHAPE (Q) AND LSQ HESSIAN (H)
 # -----------------------------------------------------------------------------
 def lsq_hessian_in_eigenbasis(C: Array, S: Array) -> tuple[Array, Array]:
     """
@@ -770,82 +770,72 @@ def lsq_hessian_in_eigenbasis(C: Array, S: Array) -> tuple[Array, Array]:
     return U, F_mat
 
 
-def compute_accepted_stats(
-    config: ClusteringConfig,
-    X_good: Array,
-    G_good: Optional[Array],
-    mus_good: Array,
-    g_mus_good: Optional[Array],
-    dense_labels_good: Array,
-    counts_good: Array,
-) -> tuple[Array, Optional[Array]]:
-    """
-    Computes Q (trust-region shape) and, if stored, H (Hessian) for accepted clusters.
-    """
-    K_good = len(counts_good)
-    N_good, d = X_good.shape
-    good_starts = xp.r_[0, xp.cumsum(counts_good)[:-1]]  # (K,)
-
-    dx = X_good - mus_good[dense_labels_good]  # (N_good, d)
-
-    # --- 1. Compute Q (Inverse Covariance) ---
+def _symmetric_point_covariance(
+    X: Array, centroids: Array, labels: Array, K: int
+) -> Array:
+    """(K, d, d) covariance of each cluster's points about its centroid."""
     Cov, _ = run_fused_stats(
-        X_good, mus_good, dense_labels_good, K_good, d, 0, None, calc_E=False
+        X, centroids, labels, K, X.shape[1], 0, None, calc_E=False
     )
-    Cov = 0.5 * (Cov + Cov.transpose(0, 2, 1))  # (K, d, d)
+    return 0.5 * (Cov + Cov.transpose(0, 2, 1))
+
+
+def trust_region_shapes(
+    X: Array, centroids: Array, labels: Array, counts: Array, q_reg: float
+) -> Array:
+    """
+    Shape matrix Q (K, d, d) of each cluster's trust region.
+
+    Q is the inverse covariance of the cluster's points (eigenvalues clamped
+    below at ``q_reg``), scaled so that the farthest point lies on the boundary:
+    max over the cluster's points of dx^T Q dx is 1. Points are stored
+    contiguously by cluster; ``labels`` gives each point's cluster (0..K-1).
+    """
+    K = len(counts)
+    starts = xp.r_[0, xp.cumsum(counts)[:-1]]  # (K,)
+    dx = X - centroids[labels]  # (N, d)
+
+    Cov = _symmetric_point_covariance(X, centroids, labels, K)
     Lambda, U = xp.linalg.eigh(Cov)
-
-    if config.q_reg > 0.0:
-        Lambda = xp.maximum(Lambda, config.q_reg)
-
+    if q_reg > 0.0:
+        Lambda = xp.maximum(Lambda, q_reg)
     Lambda_inv = 1.0 / xp.maximum(Lambda, TINY_EPS)  # (K, d)
 
-    proj = run_fused_mahalanobis_projection(dx, dense_labels_good, U)  # (N_good, d)
-    dist_sq_mahalanobis = xp.sum(
-        proj**2 * Lambda_inv[dense_labels_good], axis=1
-    )  # (N_good,)
-    max_dist = _reduce_max_1d(dist_sq_mahalanobis, good_starts)  # (K,)
+    proj = run_fused_mahalanobis_projection(dx, labels, U)  # (N, d)
+    dist_sq_mahalanobis = xp.sum(proj**2 * Lambda_inv[labels], axis=1)  # (N,)
+    max_dist = _reduce_max_1d(dist_sq_mahalanobis, starts)  # (K,)
 
     scale_fac = 1.0 / xp.maximum(max_dist, TINY_EPS)
-    Qs = (
+    return (
         U * (scale_fac[:, None] * Lambda_inv)[:, None, :] @ U.transpose(0, 2, 1)
     )  # (K, d, d)
 
-    # --- 2. Compute Hessian (If requested) ---
-    Hs = None
-    if (
-        config.store_hess
-        and config.mode == SurrogateMode.TAYLOR_LSQ_HESS
-        and G_good is not None
-        and g_mus_good is not None
-    ):
-        # Accumulate Gradient interaction matrix over all components iteratively to avoid OOM
-        fd = G_good.shape[1]
-        E_k = xp.zeros((K_good, d, d), dtype=xp.float64)
-        for j in range(fd):
-            ac = xp.full(K_good, j, dtype=xp.int32)
-            _, E_j = run_fused_stats(
-                X_good,
-                mus_good,
-                dense_labels_good,
-                K_good,
-                d,
-                fd,
-                ac,
-                G=G_good,
-                g_mus=g_mus_good,
-                calc_E=True,
-            )
-            E_k += E_j
 
-        S_h = E_k + E_k.transpose(0, 2, 1)
+def lsq_hessians(
+    X: Array, G: Array, centroids: Array, g_c: Array, labels: Array, counts: Array
+) -> Array:
+    """
+    Symmetric Hessian H (K, d, d) of each cluster, fitted by least squares to the
+    gradient residuals ``G - g_c`` (summed over the output components); see
+    ``lsq_hessian_in_eigenbasis``. Used as the second-order Taylor term.
+    """
+    K = len(counts)
+    d, fd = X.shape[1], G.shape[1]
+    Cov = _symmetric_point_covariance(X, centroids, labels, K)
 
-        U_h, F_mat = lsq_hessian_in_eigenbasis(Cov, S_h)
-        Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
-        Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
+    # Accumulate the gradient interaction matrix one component at a time to avoid OOM
+    E_k = xp.zeros((K, d, d), dtype=xp.float64)
+    for j in range(fd):
+        ac = xp.full(K, j, dtype=xp.int32)
+        _, E_j = run_fused_stats(
+            X, centroids, labels, K, d, fd, ac, G=G, g_mus=g_c, calc_E=True
+        )
+        E_k += E_j
+    S_h = E_k + E_k.transpose(0, 2, 1)
 
-
-    return Qs, Hs
+    U_h, F_mat = lsq_hessian_in_eigenbasis(Cov, S_h)
+    Hs = U_h @ F_mat @ U_h.transpose(0, 2, 1)
+    return 0.5 * (Hs + Hs.transpose(0, 2, 1))
 
 
 # -----------------------------------------------------------------------------
