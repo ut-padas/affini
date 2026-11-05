@@ -328,6 +328,7 @@ def _run_local_refinement(
                         sampler,
                         evaluator,
                         rng,
+                        centroids=mus[bad_idx_local],
                     )
                     X_bad_aug, F_bad_aug, G_bad_aug = aug.X, aug.F, aug.G
                     aug_dense_labels_bad = aug.labels

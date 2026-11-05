@@ -10,8 +10,10 @@ samplers (``augmentation_targets`` and ``augment_clusters``).
 Adding a sampling scheme:
     1. Subclass ``Sampler`` and implement ``sample``.
     2. Register it in ``SAMPLERS`` so ``ClusteringConfig.sampling_method`` can name it.
+Samplers receive each cluster's points, counts and centroids (``ClusterPoints``).
 If a scheme needs more information about each cluster (for example a bounding
-convex polytope), add it as an optional field of ``ClusterPoints``.
+convex polytope), add it as an optional field of ``ClusterPoints`` and pass it
+through ``augment_clusters``.
 
 All samplers work on a whole batch of clusters at once, stored contiguously, so
 they can run as single vectorized passes on the GPU.
@@ -150,12 +152,14 @@ def augment_clusters(
     sampler: Sampler,
     evaluator: Evaluator,
     rng,
+    centroids: Array | None = None,
 ) -> AugmentedClusters:
     """
     Grow each cluster from ``counts`` to ``target_counts`` points.
 
     New points are placed by ``sampler`` and evaluated with ``evaluator`` (with
-    gradients if ``G`` is given). In the output, every cluster's block holds its
+    gradients if ``G`` is given). ``centroids`` (K, d), if given, is passed on to
+    the sampler in ``ClusterPoints``. In the output, every cluster's block holds its
     original points followed by its new ones.
     """
     n_clusters = len(counts)
@@ -181,7 +185,8 @@ def augment_clusters(
     if int(xp.sum(is_new)) == 0:
         return AugmentedClusters(X_aug, F_aug, G_aug, labels, None)
 
-    X_new = sampler.sample(ClusterPoints(X, counts), target_counts - counts, rng)
+    clusters = ClusterPoints(X, counts, centroids=centroids)
+    X_new = sampler.sample(clusters, target_counts - counts, rng)
     X_aug[is_new] = X_new
     F_new, G_new = evaluator(X_new, need_grad=G_aug is not None)
     F_aug[is_new] = F_new

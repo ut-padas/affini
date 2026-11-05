@@ -155,6 +155,10 @@ class _CountingSampler(ConvexCombinationSampler):
 
     def sample(self, clusters, n_new, rng):
         type(self).calls += 1
+        # The loop passes each cluster's centroid: the mean of its points.
+        X, counts = _to_host(clusters.X), _to_host(clusters.counts)
+        means = np.add.reduceat(X, _to_host(clusters.starts)) / counts[:, None]
+        np.testing.assert_allclose(_to_host(clusters.centroids), means, rtol=1e-12)
         return super().sample(clusters, n_new, rng)
 
 
