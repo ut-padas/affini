@@ -781,7 +781,7 @@ def evaluate_cluster_errors(
 
 
 # -----------------------------------------------------------------------------
-# 5. PIPELINE STAGE 2: ACCEPTED STATS (Q, H, radii)
+# 5. ACCEPTED-CLUSTER STATS (Q, H)
 # -----------------------------------------------------------------------------
 def lsq_hessian_in_eigenbasis(C: Array, S: Array) -> tuple[Array, Array]:
     """
@@ -806,9 +806,9 @@ def compute_accepted_stats(
     g_mus_good: Optional[Array],
     dense_labels_good: Array,
     counts_good: Array,
-) -> tuple[Array, Optional[Array], Array]:
+) -> tuple[Array, Optional[Array]]:
     """
-    Computes Q (Trust Region shape), H (Hessian), and radii for accepted clusters.
+    Computes Q (trust-region shape) and, if stored, H (Hessian) for accepted clusters.
     """
     K_good = len(counts_good)
     N_good, d = X_good.shape
@@ -839,11 +839,7 @@ def compute_accepted_stats(
         U * (scale_fac[:, None] * Lambda_inv)[:, None, :] @ U.transpose(0, 2, 1)
     )  # (K, d, d)
 
-    # --- 2. Compute Radii ---
-    dist_euclidean = xp.sqrt(xp.sum(dx**2, axis=1))
-    radii = _reduce_max_1d(dist_euclidean, good_starts)  # (K,)
-
-    # --- 3. Compute Hessian (If requested) ---
+    # --- 2. Compute Hessian (If requested) ---
     Hs = None
     if (
         config.store_hess
@@ -877,7 +873,7 @@ def compute_accepted_stats(
         Hs = 0.5 * (Hs + Hs.transpose(0, 2, 1))
 
 
-    return Qs, Hs, radii
+    return Qs, Hs
 
 
 # -----------------------------------------------------------------------------

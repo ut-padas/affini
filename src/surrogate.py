@@ -39,7 +39,6 @@ class AFINNISurrogate:
         self.X_src = None
         self.f_src = None
         self.J_src = None
-        self.trust_radii_src = None
         self.Qs_src = None
         self.Hs_src = None
         self.A_fits_src = None
@@ -71,7 +70,6 @@ class AFINNISurrogate:
             "X_src": self.X_src,
             "f_src": self.f_src,
             "J_src": self.J_src,
-            "trust_radii_src": self.trust_radii_src,
             "Qs_src": self.Qs_src,
             "N_src": self.N_src,
             "profiling_stats": self.profiling_stats,
@@ -184,7 +182,6 @@ class AFINNISurrogate:
         # Guard optional arrays
         if "g" in bcast_data and bcast_data["g"] is not None:
             self.J_src = xp.asarray(bcast_data["g"])
-        self.trust_radii_src = xp.asarray(bcast_data["radii"])
         self.Qs_src = xp.asarray(bcast_data["Q"])
         self.N_src = self.X_src.shape[0]
         self.profiling_stats = bcast_data["profiling_stats"]
@@ -233,7 +230,6 @@ class AFINNISurrogate:
             "X_src": _to_host(self.X_src),
             "f_src": _to_host(self.f_src),
             "J_src": _to_host(self.J_src) if self.J_src is not None else None,
-            "trust_radii_src": _to_host(self.trust_radii_src),
             "Qs_src": _to_host(self.Qs_src),
             "Hs_src": _to_host(self.Hs_src) if self.Hs_src is not None else None,
             "A_fits_src": (
@@ -282,7 +278,6 @@ class AFINNISurrogate:
         instance.f_src = _to_device(data["f_src"])
 
         instance.J_src = _to_device(data["J_src"]) if data["J_src"].shape else None
-        instance.trust_radii_src = _to_device(data["trust_radii_src"])
         instance.Qs_src = _to_device(data["Qs_src"])
         instance.Hs_src = _to_device(data["Hs_src"]) if data["Hs_src"].shape else None
         instance.A_fits_src = (

@@ -221,7 +221,6 @@ def output_columns(model: LocalModel, d: int, fd: int) -> dict[str, ParamSpec]:
         "f": ParamSpec((fd,)),
         "Q": ParamSpec((d, d)),
         "E_cluster": ParamSpec(()),
-        "radii": ParamSpec(()),
         "counts": ParamSpec((), np.int64),
         **model.columns(d, fd),
     }

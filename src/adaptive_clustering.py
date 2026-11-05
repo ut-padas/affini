@@ -241,10 +241,10 @@ def _run_local_refinement(
                     good_counts = aug_sizes[good_idx_local]
                     dense_labels_good = repeats(xp.arange(K_good_batch), good_counts)
 
-                    # Shape matrix Q and radius of each accepted cluster (used by
-                    # the trust-region test at inference), and the second-order
+                    # Shape matrix Q of each accepted cluster (used by the
+                    # trust-region test at inference), and the second-order
                     # Hessian H when it is stored.
-                    Qs, Hs, radii = compute_accepted_stats(
+                    Qs, Hs = compute_accepted_stats(
                         config,
                         X_good,
                         G_good,
@@ -260,7 +260,6 @@ def _run_local_refinement(
                         "f": f_mus[good_idx_local],
                         "Q": Qs,
                         "E_cluster": E_cluster[good_idx_local],
-                        "radii": radii,
                         "counts": good_counts.astype(xp.int64),
                         **{k: v[good_idx_local] for k, v in surrogate_params.items()},
                     }
@@ -452,8 +451,8 @@ def adaptive_clustering(
             count as evaluations either way.
 
     Returns:
-        On rank 0, the merged result dict (centroids, f, Q, E_cluster, radii,
-        counts, and optional g, H, A_fit/b_fit, plus profiling_stats); None on
+        On rank 0, the merged result dict (centroids, f, Q, E_cluster, counts,
+        and optional g, H, A_fit/b_fit, plus profiling_stats); None on
         other ranks.
 
     config.save_initial_clustering saves the initial cluster labels to

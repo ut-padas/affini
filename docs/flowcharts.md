@@ -91,7 +91,7 @@ flowchart TD
             RS2 --> RS3{"i ∈ violating_clusters ?"}:::decision
 
             %% non-violating path
-            RS3 -->|No| RS4["Non-violating cluster:<br/>centroid = centroids[i]<br/>augmented_X = <br/> current_level_clusters[i]<br/>radius, hessian proxy &lt;--  <br/> from augmented_X and <br/> cluster_error_stats[i]<br/>append Cluster → <br/> final_clusters"]:::loopBlock
+            RS3 -->|No| RS4["Non-violating cluster:<br/>centroid = centroids[i]<br/>augmented_X = <br/> current_level_clusters[i]<br/>Q, hessian proxy &lt;--  <br/> from augmented_X and <br/> cluster_error_stats[i]<br/>append Cluster → <br/> final_clusters"]:::loopBlock
 
             %% violating path
             RS3 -->|Yes| RS5["Violating cluster:<br/>work_X = <br/> current_level_clusters[i]<br/>q = randomized_qr_<br/>_gpu(work_X)<br/>median_cut_projection(work_X, <br/> q)→ left/right children arrays"]:::loopBlock

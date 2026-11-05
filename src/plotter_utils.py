@@ -318,13 +318,12 @@ def plot_adaptive_clustering_results(
     to img_fpath.
     The function creates a figure with two subplots:
     1. A contour plot of the function with the final cluster centroids overlaid.
-    2. A contour plot of the function with the final cluster centroids, trust ellipsoids,
-       and circles corresponding to the trust region radii overlaid.
+    2. A contour plot of the function with the final cluster centroids and trust
+       ellipsoids overlaid.
 
     Args:
         centroids: (N, 2) array of cluster centroids,
         Q: (N, 2, 2) array of precision matrices for each cluster,
-        radii: (N,) array of trust region radii for each cluster,
         domain: A tuple (min, max) defining the range of x and y values for the plot.
         f_fn: A callable that takes an (N, 2) array of points and returns an (N,) array
             of function values.

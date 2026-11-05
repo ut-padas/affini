@@ -31,7 +31,6 @@ SEED = 0
 def plot_adaptive_clustering_results(
     centroids: np.ndarray,
     Q: np.ndarray,
-    radii: np.ndarray,
     domain: list[float],
     f_fn: Callable,
     title: str,
@@ -686,7 +685,6 @@ def run_iterative_refinement(
         plot_adaptive_clustering_results(
             centroids=_to_host(surrogate.X_src),
             Q=_to_host(surrogate.Qs_src),
-            radii=_to_host(surrogate.trust_radii_src),
             domain=DOMAIN,
             f_fn=f_fn,
             title=plot_title,
