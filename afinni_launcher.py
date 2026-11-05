@@ -3,6 +3,9 @@ import json
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
@@ -388,212 +391,89 @@ def create_summary_dataframe(exp_dir: Path):
     df.to_csv(exp_dir / "_summary.csv", index=False)
 
 
-### --- BEGIN EXPERIMENT FUNCTIONS --- ###
+### --- PROBLEMS --- ###
 
 
-def anisotropic_quadratic_experiment(
-    dim: int,
-    tol: float,
-    error_eval_mode: SurrogateMode,
-    Q_reg: float,
-    coarse_factor: int,
-    N_train: int | None = None,
-):
+@dataclass(frozen=True)
+class Problem:
+    """
+    A test function and how its experiment is set up.
+
+    Results go to ``SC26_DIR / dir_name``. Training and test points are drawn
+    uniformly from ``domain`` (on rank 0), unless ``sample(dim, n_train, n_test)``
+    is given, which returns ``(X_train, X_test)``.
+    """
+
+    dir_name: str
+    f: Callable
+    g: Callable | None = None
+    hessian: Callable | None = None
+    domain: tuple[float, float] = (-3.0, 3.0)
+    error_metric: Literal["L2", "Linf-global", "Linf-local"] = "Linf-local"
+    n_train: Callable[[int], int] = get_N_TRAIN  # default N_TRAIN for a dimension
+    n_test: Callable[[int], int] = lambda n_train: n_train // 2
+    sample: Callable | None = None
+    centroids_plot_in_log_scale: bool = False
+    save_final_centroids: bool = False
+    only_modes: tuple[SurrogateMode, ...] | None = None  # other modes are skipped
+    max_dim: int | None = None  # higher dimensions are skipped
+
+
+def anisotropic_quadratic(args) -> Problem:
     from src.problems.anisotropic_quadratic_2 import (
         aniso_quadratic,
         aniso_quadratic_grad,
         aniso_quadratic_hess,
     )
 
-    EXP_DIR = SC26_DIR / "anisotropic_quadratic_2"
-
-    F_DIM = 1
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "kmeans"
-    USE_V2 = True
-    USE_WORK_STEALING = True
-
-    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
-    N_TEST = N_TRAIN // 2
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    json_fpath = (
-        EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
-    )
-    conduct_experiment_generate_uniform_data(
-        # Problem-specific
-        json_fpath=json_fpath,
-        DOMAIN=[-3.0, 3.0],
-        F_DIM=F_DIM,
-        DIM=dim,
-        N_TRAIN=N_TRAIN,
-        N_TEST=N_TEST,
-        # Training-specific
-        f_fn=aniso_quadratic,
-        g_fn=aniso_quadratic_grad,
-        HESSIAN=aniso_quadratic_hess,
-        TOL=tol,
-        ERROR_EVAL_MODE=error_eval_mode,
-        ERROR_METRIC=ERROR_METRIC,
-        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        USE_WORK_STEALING=USE_WORK_STEALING,
-        USE_V2=USE_V2,
-        Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor,
+    return Problem(
+        "anisotropic_quadratic_2",
+        aniso_quadratic,
+        aniso_quadratic_grad,
+        aniso_quadratic_hess,
     )
 
-    create_summary_dataframe(EXP_DIR)
 
-    return EXP_DIR
-
-
-def anisotropic_quadratic_modified_sampling(
-    dim: int,
-    tol: float,
-    error_eval_mode: SurrogateMode,
-    Q_reg: float,
-    coarse_factor: int,
-    N_train: int | None = None,
-):
-
+def anisotropic_quadratic_modified_sampling(args) -> Problem:
     from src.problems.anisotropic_quadratic import (
         _get_params,
         aniso_quadratic,
         aniso_quadratic_grad,
     )
 
-    EXP_DIR = SC26_DIR / "anisotropic_quadratic_modified_sampling"
+    def sample(dim, n_train, n_test):
+        # f(x) = beta + x^T H x has its minimum at the origin, so the Gaussian is
+        # centred there with covariance shaped by the curvature (wider along flat
+        # directions).
+        H = xp.asarray(_get_params(dim, xp.float64, 3.0))  # helper returns NumPy
+        mean = xp.zeros(dim, dtype=xp.float64)
+        cov = 0.5 * xp.linalg.inv(H)
+        X_train = xp.random.multivariate_normal(mean, cov, size=n_train)
+        X_test = xp.random.multivariate_normal(mean, cov, size=n_test)
+        return X_train, X_test
 
-    F_DIM = 1
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "kmeans"
-    USE_V2 = True
-    USE_WORK_STEALING = True
-
-    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
-    N_TEST = N_TRAIN // 2
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    json_fpath = (
-        EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+    return Problem(
+        "anisotropic_quadratic_modified_sampling",
+        aniso_quadratic,
+        aniso_quadratic_grad,
+        sample=sample,
+        centroids_plot_in_log_scale=True,
     )
 
-    # Sample initial data from modified distribution
-    # f(x) = beta + x^T H x has its minimum at the origin, so the Gaussian is
-    # centred there with covariance shaped by the curvature (wider along flat directions).
-    decay_exp = 3.0
-    H = xp.asarray(_get_params(dim, xp.float64, decay_exp))  # helper returns NumPy
-    mean = xp.zeros(dim, dtype=xp.float64)
-    cov = 0.5 * xp.linalg.inv(H)
-    X_train = xp.random.multivariate_normal(mean, cov, size=N_TRAIN)
-    X_test = xp.random.multivariate_normal(mean, cov, size=N_TEST)
 
-    conduct_experiment_given_data(
-        # Problem-specific
-        json_fpath=json_fpath,
-        DOMAIN=[-3.0, 3.0],
-        F_DIM=F_DIM,
-        DIM=dim,
-        N_TRAIN=N_TRAIN,
-        N_TEST=N_TEST,
-        X_train=X_train,
-        X_test=X_test,
-        # Training-specific
-        f_fn=aniso_quadratic,
-        g_fn=aniso_quadratic_grad,
-        TOL=tol,
-        ERROR_EVAL_MODE=error_eval_mode,
-        ERROR_METRIC=ERROR_METRIC,
-        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        USE_WORK_STEALING=USE_WORK_STEALING,
-        USE_V2=USE_V2,
-        COARSE_FACTOR=coarse_factor,
-        Q_reg=Q_reg,
-    )
-
-    create_summary_dataframe(EXP_DIR)
-
-    return EXP_DIR
-
-
-def anisotropic_gaussian_experiment(
-    dim: int,
-    tol: float,
-    error_eval_mode: SurrogateMode,
-    Q_reg: float,
-    coarse_factor: int,
-    N_train: int | None = None,
-):
+def anisotropic_gaussian(args) -> Problem:
     from src.problems.anisotropic_gaussian import (
         aniso_gaussian,
         aniso_gaussian_grad,
         aniso_gaussian_hess,
     )
 
-    EXP_DIR = SC26_DIR / "anisotropic_gaussian"
-
-    F_DIM = 1
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "kmeans"
-    USE_V2 = True
-    USE_WORK_STEALING = True
-
-    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
-    N_TEST = N_TRAIN // 2
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    # NUM_INITIAL_CLUSTERS = 2
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    json_fpath = (
-        EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
-    )
-    conduct_experiment_generate_uniform_data(
-        # Problem-specific
-        json_fpath=json_fpath,
-        DOMAIN=[-3.0, 3.0],
-        F_DIM=F_DIM,
-        DIM=dim,
-        N_TRAIN=N_TRAIN,
-        N_TEST=N_TEST,
-        # Training-specific
-        f_fn=aniso_gaussian,
-        g_fn=aniso_gaussian_grad,
-        HESSIAN=aniso_gaussian_hess,
-        TOL=tol,
-        ERROR_EVAL_MODE=error_eval_mode,
-        ERROR_METRIC=ERROR_METRIC,
-        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        USE_WORK_STEALING=USE_WORK_STEALING,
-        USE_V2=USE_V2,
-        CENTROIDS_PLOT_IN_LOG_SCALE=False,
-        Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor,
+    return Problem(
+        "anisotropic_gaussian", aniso_gaussian, aniso_gaussian_grad, aniso_gaussian_hess
     )
 
-    create_summary_dataframe(EXP_DIR)
 
-    return EXP_DIR
-
-
-def anisotropic_gaussian_modified_sampling(
-    dim: int,
-    tol: float,
-    error_eval_mode: SurrogateMode,
-    Q_reg: float,
-    coarse_factor: int,
-    N_train: int | None = None,
-):
+def anisotropic_gaussian_modified_sampling(args) -> Problem:
     from src.problems.anisotropic_gaussian import (
         _get_precision_eigenvalues,
         _get_random_rotation,
@@ -601,237 +481,71 @@ def anisotropic_gaussian_modified_sampling(
         aniso_gaussian_grad,
     )
 
-    EXP_DIR = SC26_DIR / "anisotropic_gaussian_modified_sampling"
+    def sample(dim, n_train, n_test):
+        Q = xp.asarray(_get_random_rotation(dim, xp.float64))  # helpers return NumPy
+        Lambda = xp.diag(xp.asarray(_get_precision_eigenvalues(dim, xp.float64, 3)))
+        Ainv = Q @ (Lambda**-1.0) @ Q.T
+        X_train = xp.random.randn(n_train, dim) @ Ainv
+        X_test = xp.random.randn(n_test, dim) @ Ainv
+        return X_train, X_test
 
-    F_DIM = 1
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "kmeans"
-    USE_V2 = True
-    USE_WORK_STEALING = True
-
-    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
-    N_TEST = N_TRAIN // 2
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    json_fpath = (
-        EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+    return Problem(
+        "anisotropic_gaussian_modified_sampling",
+        aniso_gaussian,
+        aniso_gaussian_grad,
+        sample=sample,
     )
 
-    # Sample initial data from modified distribution
-    decay_exp = 3
-    beta = 1
-    Q = xp.asarray(_get_random_rotation(dim, xp.float64))  # helpers return NumPy
-    Lambda = xp.diag(xp.asarray(_get_precision_eigenvalues(dim, xp.float64, decay_exp)))
-    Ainv = Q @ (Lambda**-1.0) @ Q.T
-    X_train = xp.random.randn(N_TRAIN, dim) @ Ainv
-    X_test = xp.random.randn(N_TEST, dim) @ Ainv
 
-    conduct_experiment_given_data(
-        # Problem-specific
-        json_fpath=json_fpath,
-        DOMAIN=[-3.0, 3.0],
-        F_DIM=F_DIM,
-        DIM=dim,
-        N_TRAIN=N_TRAIN,
-        N_TEST=N_TEST,
-        X_train=X_train,
-        X_test=X_test,
-        # Training-specific
-        f_fn=aniso_gaussian,
-        g_fn=aniso_gaussian_grad,
-        TOL=tol,
-        ERROR_EVAL_MODE=error_eval_mode,
-        ERROR_METRIC=ERROR_METRIC,
-        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        USE_WORK_STEALING=USE_WORK_STEALING,
-        USE_V2=USE_V2,
-        CENTROIDS_PLOT_IN_LOG_SCALE=False,
-        Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor,
-    )
-
-    create_summary_dataframe(EXP_DIR)
-
-    return EXP_DIR
-
-
-def rosenbrock_experiment(
-    dim: int,
-    tol: float,
-    error_eval_mode: SurrogateMode,
-    Q_reg: float,
-    coarse_factor: int,
-    N_train: int | None = None,
-):
-    from functools import partial
-
+def rosenbrock(args) -> Problem:
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess
 
-    EXP_DIR = SC26_DIR / "rosenbrock"
-
-    ROSENBROCK_A = 100.0
-    rosenbrock = partial(rosenbrock, a=ROSENBROCK_A)
-    rosenbrock_grad = partial(rosenbrock_grad, a=ROSENBROCK_A)
-    rosenbrock_hess = partial(rosenbrock_hess, a=ROSENBROCK_A)
-
-    F_DIM = 1
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "kmeans"
-    USE_V2 = True
-    USE_WORK_STEALING = True
-
-    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
-    N_TEST = 50000
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    json_fpath = (
-        EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
-    )
-    conduct_experiment_generate_uniform_data(
-        # Problem-specific
-        json_fpath=json_fpath,
-        DOMAIN=[-2.0, 3.0],
-        F_DIM=F_DIM,
-        DIM=dim,
-        N_TRAIN=N_TRAIN,
-        N_TEST=N_TEST,
-        # Training-specific
-        f_fn=rosenbrock,
-        g_fn=rosenbrock_grad,
-        HESSIAN=rosenbrock_hess,
-        TOL=tol,
-        ERROR_EVAL_MODE=error_eval_mode,
-        ERROR_METRIC=ERROR_METRIC,  # type: ignore
-        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        USE_WORK_STEALING=USE_WORK_STEALING,
-        USE_V2=USE_V2,
-        SAVE_ALL_GEN_TRAINING_DATA=False,
-        SAVE_FINAL_CENTROIDS=False,
-        Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor,
+    return Problem(
+        "rosenbrock",
+        partial(rosenbrock, a=100.0),
+        partial(rosenbrock_grad, a=100.0),
+        partial(rosenbrock_hess, a=100.0),
+        domain=(-2.0, 3.0),
+        n_test=lambda n_train: 50_000,
     )
 
-    create_summary_dataframe(EXP_DIR)
 
-    return EXP_DIR
-
-
-def rosenbrock_experiment_modified_sampling(
-    dim: int,
-    tol: float,
-    error_eval_mode: SurrogateMode,
-    Q_reg: float,
-    coarse_factor: int,
-    N_train: int | None = None,
-):
-    from functools import partial
-
+def rosenbrock_modified_sampling(args) -> Problem:
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
-    EXP_DIR = SC26_DIR / "rosenbrock"
-
-    ROSENBROCK_A = 100.0
-    rosenbrock = partial(rosenbrock, a=ROSENBROCK_A)
-    rosenbrock_grad = partial(rosenbrock_grad, a=ROSENBROCK_A)
-
-    F_DIM = 1
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "kmeans"
-    USE_V2 = True
-    USE_WORK_STEALING = True
-
-    if error_eval_mode != SurrogateMode.AFFINE_COV_HESS:
-        # TODO for each ERROR_EVAL_MODE
-        print(
-            f"Skipping ERROR_EVAL_MODE={error_eval_mode.value} for now. TODO: Add other TOLs for this mode."
+    def sample(dim, n_train, n_test):
+        # Points concentrated around the valley x2 = x1^2.
+        a, b, mu = 1.0, 5.0, 1.0
+        x1_train = xp.random.randn(n_train) / (2 * a) + mu
+        x2_train = xp.random.randn(n_train) / (2 * b) + (x1_train**2)
+        x1_test = xp.random.randn(n_test) / (2 * a) + mu
+        x2_test = xp.random.randn(n_test) / (2 * b) + (x1_test**2)
+        return (
+            xp.column_stack((x1_train, x2_train)),
+            xp.column_stack((x1_test, x2_test)),
         )
-        return
 
-    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
-    N_TEST = N_TRAIN // 2
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    json_fpath = (
-        EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
+    return Problem(
+        "rosenbrock",
+        partial(rosenbrock, a=100.0),
+        partial(rosenbrock_grad, a=100.0),
+        domain=(-2.0, 3.0),
+        sample=sample,
+        centroids_plot_in_log_scale=True,
+        save_final_centroids=True,
+        only_modes=(SurrogateMode.AFFINE_COV_HESS,),
+        max_dim=2,
     )
 
-    # Generate Rosenbrock distribution data
-    if dim > 2:
-        print("Not implemented yet for dimensions other than d=2.")
-        return
-    a = 1.0
-    b = 5.0
-    mu = 1.0
-    x1_train = xp.random.randn(N_TRAIN) / (2 * a) + mu
-    x2_train = xp.random.randn(N_TRAIN) / (2 * b) + (x1_train**2)
-    x1_test = xp.random.randn(N_TEST) / (2 * a) + mu
-    x2_test = xp.random.randn(N_TEST) / (2 * b) + (x1_test**2)
-    X_train = xp.column_stack((x1_train, x2_train))
-    X_test = xp.column_stack((x1_test, x2_test))
 
-    conduct_experiment_given_data(
-        # Problem-specific
-        json_fpath=json_fpath,
-        DOMAIN=[-2.0, 3.0],
-        F_DIM=F_DIM,
-        DIM=dim,
-        N_TRAIN=N_TRAIN,
-        N_TEST=N_TEST,
-        X_train=X_train,
-        X_test=X_test,
-        # Training-specific
-        f_fn=rosenbrock,
-        g_fn=rosenbrock_grad,
-        TOL=tol,
-        ERROR_EVAL_MODE=error_eval_mode,
-        ERROR_METRIC=ERROR_METRIC,  # type: ignore
-        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        USE_WORK_STEALING=USE_WORK_STEALING,
-        USE_V2=USE_V2,
-        SAVE_ALL_GEN_TRAINING_DATA=False,
-        SAVE_FINAL_CENTROIDS=True,
-        Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor,
-    )
-
-    create_summary_dataframe(EXP_DIR)
-
-    return EXP_DIR
-
-
-"""
-Does the experiment for mapping to a single component of the output.
-"""
-
-
-def lorenz96_experiment(
-    dim: int,
-    tol: float,
-    error_eval_mode: SurrogateMode,
-    tf: float,
-    Q_reg: float,
-    coarse_factor: int,
-    forcing: float = 1.0,
-    output_component: int = 0,
-    N_train: int | None = None,
-):
+def lorenz96(args) -> Problem:
+    """The first component of the Lorenz-96 flow map over time ``args.dt``."""
     from src.problems.lorenz96_flowmap import lorenz96_flowmap
     from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
 
-    # Custom oracles to return only the first component
-    def lorenz(x):
+    forcing, tf, output_component = 1.0, args.dt, 0
+
+    def f(x):
         N, d = x.shape
         if IS_CUPY_BACKEND:
             # For now, just assume that X lives on a GPU.
@@ -842,15 +556,98 @@ def lorenz96_experiment(
             f = lorenz96_flowmap(x, forcing, tf)[:, output_component]
             return f.reshape(N, 1)
 
-    EXP_DIR = SC26_DIR / f"lorenz96_dt_{tf}"
-    F_DIM = 1
-    ERROR_METRIC = "Linf-global"
+    return Problem(
+        f"lorenz96_dt_{tf}",
+        f,
+        domain=(-5.0, 5.0),
+        error_metric="Linf-global",
+        n_train=lambda dim: min(get_N_TRAIN(dim), 1000000),
+    )
+
+
+def wave(args) -> Problem:
+    from src.problems.wave import wave, wave_grad, wave_hess
+
+    return Problem("wave", wave, wave_grad, wave_hess, domain=(-5.0, 5.0))
+
+
+def degenerate_quadratic(args) -> Problem:
+    from src.problems.degenerate_quadratic import (
+        degenerate_quadratic,
+        degenerate_quadratic_grad,
+        degenerate_quadratic_hess,
+    )
+
+    return Problem(
+        "degenerate_quadratic",
+        degenerate_quadratic,
+        degenerate_quadratic_grad,
+        degenerate_quadratic_hess,
+    )
+
+
+def indef_degen_quadratic(args) -> Problem:
+    from src.problems.indef_degen_quadratic import (
+        indef_degen_quad,
+        indef_degen_quad_grad,
+        indef_degen_quad_hess,
+    )
+
+    return Problem(
+        "indef_degen_quadratic",
+        indef_degen_quad,
+        indef_degen_quad_grad,
+        indef_degen_quad_hess,
+    )
+
+
+# --experiment name -> the problem it runs. With --sampling modified, the
+# problems in MODIFIED_SAMPLING use that variant instead (the others ignore
+# --sampling), and lorenz96 runs lorenz_trajectories_experiment.
+PROBLEMS = {
+    "anisotropic_quadratic": anisotropic_quadratic,
+    "anisotropic_gaussian": anisotropic_gaussian,
+    "degenerate_quadratic": degenerate_quadratic,
+    "indef_degen_quadratic": indef_degen_quadratic,
+    "rosenbrock": rosenbrock,
+    "lorenz96": lorenz96,
+    "wave": wave,
+}
+MODIFIED_SAMPLING = {
+    "anisotropic_quadratic": anisotropic_quadratic_modified_sampling,
+    "anisotropic_gaussian": anisotropic_gaussian_modified_sampling,
+    "rosenbrock": rosenbrock_modified_sampling,
+}
+
+
+def run_problem(
+    problem: Problem,
+    dim: int,
+    tol: float,
+    error_eval_mode: SurrogateMode,
+    Q_reg: float,
+    coarse_factor: int,
+    N_train: int | None = None,
+):
+    """Train and test one surrogate for ``problem``; skip if the result exists."""
+    if problem.only_modes is not None and error_eval_mode not in problem.only_modes:
+        print(
+            f"Skipping ERROR_EVAL_MODE={error_eval_mode.value}: this sampling is only "
+            f"set up for {[m.value for m in problem.only_modes]}."
+        )
+        return None
+    if problem.max_dim is not None and dim > problem.max_dim:
+        print(f"Not implemented yet for dimensions above d={problem.max_dim}.")
+        return None
+
+    EXP_DIR = SC26_DIR / problem.dir_name
+    ERROR_METRIC = problem.error_metric
     INITIAL_CLUSTERING_METHOD = "kmeans"
     USE_V2 = True
     USE_WORK_STEALING = True
 
-    N_TRAIN = min(get_N_TRAIN(dim), 1000000) if N_train is None else N_train
-    N_TEST = N_TRAIN // 2
+    N_TRAIN = problem.n_train(dim) if N_train is None else N_train
+    N_TEST = problem.n_test(N_TRAIN)
     NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
     MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
 
@@ -858,17 +655,16 @@ def lorenz96_experiment(
         EXP_DIR
         / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
     )
-    conduct_experiment_generate_uniform_data(
-        # Problem-specific
+    settings = dict(
         json_fpath=json_fpath,
-        DOMAIN=[-5.0, 5.0],
-        F_DIM=F_DIM,
+        DOMAIN=list(problem.domain),
+        F_DIM=1,
         DIM=dim,
         N_TRAIN=N_TRAIN,
         N_TEST=N_TEST,
-        # Training-specific
-        f_fn=lorenz,
-        g_fn=None,
+        f_fn=problem.f,
+        g_fn=problem.g,
+        HESSIAN=problem.hessian,
         TOL=tol,
         ERROR_EVAL_MODE=error_eval_mode,
         ERROR_METRIC=ERROR_METRIC,
@@ -879,10 +675,16 @@ def lorenz96_experiment(
         USE_V2=USE_V2,
         Q_reg=Q_reg,
         COARSE_FACTOR=coarse_factor,
+        CENTROIDS_PLOT_IN_LOG_SCALE=problem.centroids_plot_in_log_scale,
+        SAVE_FINAL_CENTROIDS=problem.save_final_centroids,
     )
+    if problem.sample is None:
+        conduct_experiment_generate_uniform_data(**settings)
+    else:
+        X_train, X_test = problem.sample(dim, N_TRAIN, N_TEST)
+        conduct_experiment_given_data(X_train=X_train, X_test=X_test, **settings)
 
     create_summary_dataframe(EXP_DIR)
-
     return EXP_DIR
 
 
@@ -961,190 +763,6 @@ def lorenz_trajectories_experiment(
     )
 
     create_summary_dataframe(EXP_DIR)
-    return EXP_DIR
-
-
-def wave_experiment(
-    dim: int,
-    tol: float,
-    error_eval_mode: SurrogateMode,
-    Q_reg: float,
-    coarse_factor: int,
-    N_train: int | None = None,
-):
-
-    from src.problems.wave import wave, wave_grad, wave_hess
-
-    EXP_DIR = SC26_DIR / "wave"
-
-    wave_fn = lambda x: wave(x)
-    wave_fn_grad = lambda x: wave_grad(x)
-    wave_fn_hess = lambda x: wave_hess(x)
-
-    F_DIM = 1
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "kmeans"
-    USE_V2 = True
-    USE_WORK_STEALING = True
-
-    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
-    N_TEST = N_TRAIN // 2
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    json_fpath = (
-        EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
-    )
-    conduct_experiment_generate_uniform_data(
-        # Problem-specific
-        json_fpath=json_fpath,
-        DOMAIN=[-5.0, 5.0],
-        F_DIM=F_DIM,
-        DIM=dim,
-        N_TRAIN=N_TRAIN,
-        N_TEST=N_TEST,
-        # Training-specific
-        f_fn=wave_fn,
-        g_fn=wave_fn_grad,
-        HESSIAN=wave_fn_hess,
-        TOL=tol,
-        ERROR_EVAL_MODE=error_eval_mode,
-        ERROR_METRIC=ERROR_METRIC,  # type: ignore
-        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        USE_WORK_STEALING=USE_WORK_STEALING,
-        USE_V2=USE_V2,
-        SAVE_ALL_GEN_TRAINING_DATA=False,
-        SAVE_FINAL_CENTROIDS=False,
-        Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor,
-    )
-
-    create_summary_dataframe(EXP_DIR)
-
-    return EXP_DIR
-
-
-def degenerate_quadratic_experiment(
-    dim: int,
-    tol: float,
-    error_eval_mode: SurrogateMode,
-    Q_reg: float,
-    coarse_factor: int,
-    N_train: int | None = None,
-):
-    from src.problems.degenerate_quadratic import (
-        degenerate_quadratic,
-        degenerate_quadratic_grad,
-        degenerate_quadratic_hess,
-    )
-
-    EXP_DIR = SC26_DIR / "degenerate_quadratic"
-
-    F_DIM = 1
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "kmeans"
-    USE_V2 = True
-    USE_WORK_STEALING = True
-
-    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
-    N_TEST = N_TRAIN // 2
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    # NUM_INITIAL_CLUSTERS = 1
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    json_fpath = (
-        EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
-    )
-    conduct_experiment_generate_uniform_data(
-        # Problem-specific
-        json_fpath=json_fpath,
-        DOMAIN=[-3.0, 3.0],
-        F_DIM=F_DIM,
-        DIM=dim,
-        N_TRAIN=N_TRAIN,
-        N_TEST=N_TEST,
-        # Training-specific
-        f_fn=degenerate_quadratic,
-        g_fn=degenerate_quadratic_grad,
-        HESSIAN=degenerate_quadratic_hess,
-        TOL=tol,
-        ERROR_EVAL_MODE=error_eval_mode,
-        ERROR_METRIC=ERROR_METRIC,
-        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        USE_WORK_STEALING=USE_WORK_STEALING,
-        USE_V2=USE_V2,
-        Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor,
-    )
-
-    create_summary_dataframe(EXP_DIR)
-
-    return EXP_DIR
-
-
-def indef_degen_quadratic_experiment(
-    dim: int,
-    tol: float,
-    error_eval_mode: SurrogateMode,
-    Q_reg: float,
-    coarse_factor: int,
-    N_train: int | None = None,
-):
-    from src.problems.indef_degen_quadratic import (
-        indef_degen_quad,
-        indef_degen_quad_grad,
-        indef_degen_quad_hess,
-    )
-
-    EXP_DIR = SC26_DIR / "indef_degen_quadratic"
-
-    F_DIM = 1
-    ERROR_METRIC = "Linf-local"
-    INITIAL_CLUSTERING_METHOD = "kmeans"
-    USE_V2 = True
-    USE_WORK_STEALING = True
-
-    N_TRAIN = get_N_TRAIN(dim) if N_train is None else N_train
-    N_TEST = N_TRAIN // 2
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
-
-    json_fpath = (
-        EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}.json"
-    )
-    conduct_experiment_generate_uniform_data(
-        # Problem-specific
-        json_fpath=json_fpath,
-        DOMAIN=[-3.0, 3.0],
-        F_DIM=F_DIM,
-        DIM=dim,
-        N_TRAIN=N_TRAIN,
-        N_TEST=N_TEST,
-        # Training-specific
-        f_fn=indef_degen_quad,
-        g_fn=indef_degen_quad_grad,
-        HESSIAN=indef_degen_quad_hess,
-        TOL=tol,
-        ERROR_EVAL_MODE=error_eval_mode,
-        ERROR_METRIC=ERROR_METRIC,
-        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        USE_WORK_STEALING=USE_WORK_STEALING,
-        USE_V2=USE_V2,
-        Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor,
-    )
-
-    create_summary_dataframe(EXP_DIR)
-
     return EXP_DIR
 
 
@@ -1279,54 +897,16 @@ def run_experiment_from_args(args):
 
     for tol in tolvec:
         for d in dvec:
-            if function_name == "anisotropic_quadratic":
-                if sampling == "uniform":
-                    anisotropic_quadratic_experiment(
-                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
-                    )
-                elif sampling == "modified":
-                    anisotropic_quadratic_modified_sampling(
-                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
-                    )
-            elif function_name == "anisotropic_gaussian":
-                if sampling == "uniform":
-                    anisotropic_gaussian_experiment(
-                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
-                    )
-                elif sampling == "modified":
-                    anisotropic_gaussian_modified_sampling(
-                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
-                    )
-            elif function_name == "degenerate_quadratic":
-                degenerate_quadratic_experiment(
-                    d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
+            if sampling == "modified" and function_name == "lorenz96":
+                lorenz_trajectories_experiment(
+                    d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train
                 )
-            elif function_name == "indef_degen_quadratic":
-                indef_degen_quadratic_experiment(
-                    d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
-                )
-            elif function_name == "rosenbrock":
-                if sampling == "uniform":
-                    rosenbrock_experiment(
-                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
-                    )
-                elif sampling == "modified":
-                    rosenbrock_experiment_modified_sampling(
-                        d, tol, error_eval_mode, Q_reg, coarse_factor, N_train
-                    )
-            elif function_name == "lorenz96":
-                if sampling == "uniform":
-                    lorenz96_experiment(
-                        d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train
-                    )
-                elif sampling == "modified":
-                    lorenz_trajectories_experiment(
-                        d, tol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train
-                    )
-            elif function_name == "wave":
-                wave_experiment(d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
+                continue
+            if sampling == "modified" and function_name in MODIFIED_SAMPLING:
+                problem = MODIFIED_SAMPLING[function_name](args)
             else:
-                print(f"Function {function_name} not recognized.")
+                problem = PROBLEMS[function_name](args)
+            run_problem(problem, d, tol, error_eval_mode, Q_reg, coarse_factor, N_train)
 
 
 if __name__ == "__main__":
