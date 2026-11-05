@@ -37,8 +37,6 @@ class SurrogateMode(Enum):
     TAYLOR_COV_HESS = "taylor_cov_hess"  # Grads at centroids only, split via X^T H X, where H is estimated from covariance
     TAYLOR_EXACT_HESS = "taylor_exact_hess" # Grads at centroids only, split via X^T H X, where H is given by an exact formula
     TAYLOR_LSQ_HESS = "taylor_lsq_hess"  # Grads everywhere, split via X^T H X, where H is estimated from LSQ fit to gradient residuals
-    QUADRATIC = "quadratic"  # No grads, save as affine_cov_hess but with quadratic fit.
-    # TODO: need to make it so that the Hessian of the quadratic is the Hessian we use for clustering.
 
 
 @dataclass(kw_only=True)
@@ -753,76 +751,6 @@ def evaluate_cluster_errors(
             surrogate_params = {"A": A, "b": b}
             
 
-    elif config.mode == SurrogateMode.QUADRATIC:
-        """
-        Fit model 0.5 * x^T * H * x + w^T * x + b, for H, w, b.
-        Requires at least D = d(d+1) + 1 points, probably more for decent conditioning.
-        """
-
-        # Build the quadratic part
-        D = d**2 + d + 1
-        quadratic_lhs_matrix = xp.empty(N, D)
-        for i in range(d):
-            start = i * d
-            end = (i + 1) * d
-            quadratic_lhs_matrix[:, start:end] = 0.5 * dx[:, i] * dx
-
-        # Build the linear part
-        quadratic_lhs_matrix[:, (d**2) : -1] = dx
-
-        # Build the constant part
-        quadratic_lhs_matrix[:, -1] = xp.ones(N)
-
-        # Compute covariance matrix
-        # I think we can just do this with run_fused_stats (WHY IS IT CALLED THIS?)
-        # Replacing mus with zeros since we include it directly into the covariance.
-        lhsmat, _ = run_fused_stats(
-            quadratic_lhs_matrix,
-            xp.zeros(K_batch),
-            aug_ids,
-            K_batch,
-            D,
-            fd,
-            None,
-            calc_E=False,
-        )
-
-        # Adaptive Tikhonov fitting
-        mean_F = _reduce_sum_1d(F_batch, aug_starts) / aug_sizes[:, None]  # (K, fd)
-
-        rhsvec = run_fused_cross_cov(
-            quadratic_lhs_matrix,
-            F_batch,
-            xp.zeros(K_batch),
-            mean_F,
-            aug_ids,
-            K_batch,
-            D,
-            fd,
-        )
-
-        # Solve linear system
-        tr = xp.trace(lhsmat, axis1=1, axis2=2)  # (K,)
-        lam = xp.maximum(1e-8 * tr, TINY_EPS)
-        reg = lam[:, None, None] * xp.eye(d, dtype=xp.float64)[None, :, :]  # (K, D, D)
-        weights = xp.linalg.solve(lhsmat + reg, rhsvec).T  # (K, fd, D)
-
-        # First d**2 dimensions define the Hessians.
-        H = weights[:, :, : (d**2)].reshape(K_batch, fd, d, d)  # (K, fd, d, d)
-        # Next d dimensions define the gradient.
-        w = weights[:, :, (d**2) : (d**2 + d)]  # (K, fd, d)
-        # Last dimension defines the linear term.
-        b = weights[:, :, -1]  # (K, fd)
-
-        # Compute the surrogate at the training data to measure errors
-        quadratic_term = xp.einsum(
-            "nfd,nfde,nfe->nf", X_batch, H[aug_ids], X_batch
-        )  # (N, fd)
-        linear_term = xp.einsum("nfd,nd->nf", w[aug_ids], X_batch)  # (N, fd)
-        surrogate_val = quadratic_term + linear_term + b[aug_ids]
-        diff = F_batch - surrogate_val
-        surrogate_params = {"H": H, "w": w, "b": b}
-
     else:
         raise ValueError(f"Unknown mode: {config.mode}")
 
@@ -990,16 +918,6 @@ def split_rejected_clusters(
     bad_starts = xp.r_[0, xp.cumsum(counts_bad)[:-1]]
     dx = X_bad - mus_bad[dense_labels_bad]
 
-    if config.mode == SurrogateMode.QUADRATIC:
-        """
-        Use the Hessian matrix of the least squares fit for the splitting direction.
-        What to do about the Hessian?
-        """
-        print(
-            "NOTE: specific split_rejected_clusters for SurrogateMode.QUADRATIC not implemented yet.\n\
-              For now, doing the same thing as the SurrogateMode.*_COV_HESS versions."
-        )
-
     if config.mode == SurrogateMode.TAYLOR_LSQ_HESS and G_bad is not None:
         g_mus_exp = surrogate_params["g_mus"][dense_labels_bad]  # (N_bad, fd, d)
         f_mus_exp = f_mus_bad[dense_labels_bad]  # (N_bad, fd)
@@ -1046,7 +964,6 @@ def split_rejected_clusters(
         SurrogateMode.AFFINE_COV_HESS,
         SurrogateMode.TAYLOR_COV_HESS,
         SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
-        SurrogateMode.QUADRATIC,
     ):
         if config.mode == SurrogateMode.TAYLOR_COV_HESS or \
            config.mode == SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD:
