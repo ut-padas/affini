@@ -21,16 +21,16 @@ from src.adaptive_clustering_utils import (
     CudaTimer,
     Evaluator,
     SurrogateMode,
+    cluster_errors,
     combine_generated_data,
     compute_accepted_stats,
     convert_to_2d_array,
-    evaluate_cluster_errors,
     save_generated_data,
     uniform_grid_cluster_labels,
 )
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 from src.clusters import ClusterBatch, ClusterQueueBuilder, ColumnBuffer
-from src.local_models import make_local_model, output_columns
+from src.local_models import ClusterFitData, make_local_model, output_columns
 from src.logging_utils import log_mem_stats
 from src.sampling import augment_clusters, augmentation_targets, make_sampler
 from src.splitting import SplitData, split_strategy_for_mode
@@ -204,18 +204,25 @@ def _run_local_refinement(
 
                 # Fit the local model on every cluster, evaluate it at the
                 # cluster's points, and accept the clusters within tolerance.
-                is_good, E_cluster, surrogate_params = evaluate_cluster_errors(
-                    config,
-                    model,
+                fit_data = ClusterFitData(
+                    X=X_batch,
+                    F=F_batch,
+                    G=None,
+                    labels=aug_ids,
+                    starts=aug_starts,
+                    sizes=aug_sizes,
+                    centroids=mus,
+                    f_c=f_mus,
+                    g_c=g_mus,
+                )
+                surrogate_params = model.fit(fit_data)
+                F_hat = model.evaluate(
+                    {**surrogate_params, "centroids": mus, "f": f_mus},
                     X_batch,
-                    F_batch,
-                    mus,
-                    f_mus,
-                    g_mus,
-                    aug_starts,
-                    aug_sizes,
                     aug_ids,
-                    F_max_global,
+                )
+                is_good, E_cluster = cluster_errors(
+                    config, F_batch, F_hat, aug_starts, aug_sizes, F_max_global
                 )
 
             if config.log_mem_stats:

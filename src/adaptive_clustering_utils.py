@@ -7,15 +7,12 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
+from typing import Callable, Literal, Optional
 
 import numpy as np
 
 # Adjust imports based on your actual source tree
 from src import IS_CUPY_BACKEND, Array, xp
-
-if TYPE_CHECKING:
-    from src.local_models import LocalModel
 
 if IS_CUPY_BACKEND:
     import cupy as cp
@@ -689,51 +686,26 @@ def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
 
 
 # -----------------------------------------------------------------------------
-# 4. PIPELINE STAGE 1: EVALUATION
+# 4. CLUSTER ERROR METRICS
 # -----------------------------------------------------------------------------
-def evaluate_cluster_errors(
+def cluster_errors(
     config: ClusteringConfig,
-    model: "LocalModel",
-    X_batch: Array,
     F_batch: Array,
-    mus: Array,
-    f_mus: Array,
-    g_mus: Optional[Array],
+    F_hat: Array,
     aug_starts: Array,
     aug_sizes: Array,
-    aug_ids: Array,
     F_max_global: Array,
-) -> tuple[Array, Array, dict[str, Any]]:
+) -> tuple[Array, Array]:
     """
-    Fits ``model`` on every cluster, evaluates it at the cluster's points and
-    computes the error metric.
-    Returns: (is_good_mask, E_cluster, the model's per-cluster parameters)
+    Error of the fitted values ``F_hat`` against the true values ``F_batch`` on
+    each cluster (rows ``aug_starts[k] : aug_starts[k] + aug_sizes[k]``), using
+    ``config.error_metric``, and whether each cluster is within tolerance.
+    Returns: (is_good_mask (K,), E_cluster (K,))
     """
     fd = F_batch.shape[1]
     K_batch = len(aug_sizes)
-
-    # Imported here: src.local_models imports this module.
-    from src.local_models import ClusterFitData
-
-    # --- 1. Fit the local model on every cluster and evaluate it at the points ---
-    data = ClusterFitData(
-        X=X_batch,
-        F=F_batch,
-        G=None,
-        labels=aug_ids,
-        starts=aug_starts,
-        sizes=aug_sizes,
-        centroids=mus,
-        f_c=f_mus,
-        g_c=g_mus,
-    )
-    surrogate_params = model.fit(data)
-    F_hat = model.evaluate(
-        {**surrogate_params, "centroids": mus, "f": f_mus}, X_batch, aug_ids
-    )
     diff = F_batch - F_hat
 
-    # --- 2. Evaluate Error Metrics ---
     if config.error_metric == "L2":
         # Calculate sum of squared errors
         err_pts = xp.sum(diff**2, axis=1)  # (N,)
@@ -751,14 +723,14 @@ def evaluate_cluster_errors(
 
         # Pass if relative error is good, OR if absolute error is already negligible
         is_good = (E_cluster_rel < config.rtol) | (E_cluster_abs < config.atol)
-        return is_good, E_cluster_rel, surrogate_params
-    
+        return is_good, E_cluster_rel
+
     elif config.error_metric == "Linf-global":
         err_pts = xp.max(
             xp.abs(diff) / (F_max_global[None, :] + TINY_EPS), axis=1
         )  # (N,)
         E_cluster = _reduce_max_1d(err_pts, aug_starts)  # (K,)
-        
+
     elif config.error_metric == "Linf-local":
         E_cluster_rel = xp.zeros(K_batch, dtype=xp.float64)
         E_cluster_abs = xp.zeros(K_batch, dtype=xp.float64)
@@ -774,10 +746,10 @@ def evaluate_cluster_errors(
 
         # Pass if relative error is good, OR if absolute error is already negligible
         is_good = (E_cluster_rel < config.rtol) | (E_cluster_abs < config.atol)
-        return is_good, E_cluster_rel, surrogate_params
+        return is_good, E_cluster_rel
 
     is_good = E_cluster < config.atol  # (K,)
-    return is_good, E_cluster, surrogate_params
+    return is_good, E_cluster
 
 
 # -----------------------------------------------------------------------------
