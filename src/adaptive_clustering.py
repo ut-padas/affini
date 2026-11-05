@@ -33,6 +33,7 @@ from src.adaptive_clustering_utils import (
 )
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 from src.logging_utils import log_mem_stats
+from src.sampling import augment_clusters, augmentation_targets, make_sampler
 from src.work_stealing import (
     ClusterBatch,
     make_work_stealer,
@@ -92,6 +93,7 @@ def _run_local_refinement(
     evals_at_start = evaluator.n_evals
     level = 0
 
+    sampler = make_sampler(config.sampling_method)
     stealer = make_work_stealer(
         config.use_work_stealing, comm, d, fd, profiling_stats, config.profile_timing
     )
@@ -363,11 +365,9 @@ def _run_local_refinement(
                     )
                     bad_counts = aug_sizes[bad_idx_local]
 
-                    # --- Dynamically augment bad clusters before splitting ---
-                    target_bad_counts = xp.where(
-                        bad_counts < 2 * config.min_pts_per_cluster,
-                        xp.maximum(2 * bad_counts, 2 * config.min_pts_per_cluster),
-                        bad_counts,
+                    # --- Augment small rejected clusters before splitting ---
+                    target_bad_counts = augmentation_targets(
+                        bad_counts, config.min_pts_per_cluster
                     )
 
                     total_target_pts = int(xp.sum(target_bad_counts))
@@ -388,71 +388,27 @@ def _run_local_refinement(
                         f"expansion={expansion:.2f}x"
                     )
 
-                    X_bad_aug = xp.empty((total_target_pts, d), dtype=xp.float64)
-                    F_bad_aug = xp.empty((total_target_pts, fd), dtype=xp.float64)
-                    G_bad_aug = (
-                        xp.empty((total_target_pts, fd, d), dtype=xp.float64)
-                        if G_bad is not None
-                        else None
+                    rng = xp.random.default_rng(config.seed + level + b + rank * 1000)
+                    aug = augment_clusters(
+                        X_bad,
+                        F_bad,
+                        G_bad,
+                        bad_counts,
+                        target_bad_counts,
+                        sampler,
+                        evaluator,
+                        rng,
                     )
-
-                    target_starts = xp.r_[0, xp.cumsum(target_bad_counts)[:-1]]
-                    aug_dense_labels_bad = repeats(xp.arange(n_bad), target_bad_counts)
-
-                    # Map indices to interleave original and synthetic points correctly
-                    pt_idxs_in_cluster = (
-                        xp.arange(total_target_pts, dtype=xp.int32)
-                        - target_starts[aug_dense_labels_bad]
-                    )
-                    is_orig = pt_idxs_in_cluster < bad_counts[aug_dense_labels_bad]
-
-                    # Copy original points over
-                    X_bad_aug[is_orig] = X_bad
-                    F_bad_aug[is_orig] = F_bad
-                    if G_bad is not None and G_bad_aug is not None:
-                        G_bad_aug[is_orig] = G_bad
-
-                    is_synth = ~is_orig
-                    num_synth = int(xp.sum(is_synth))
-
-                    if num_synth > 0:
-                        num_generated_pts += num_synth
-                        synth_c_ids = aug_dense_labels_bad[is_synth]
-                        rng = xp.random.default_rng(config.seed + level + b + rank * 1000)
-
-                        bad_starts = xp.r_[0, xp.cumsum(bad_counts)[:-1]]
-                        c_starts_synth = bad_starts[synth_c_ids]
-                        c_counts_synth = bad_counts[synth_c_ids]
-
-                        rand1 = (rng.random(num_synth) * c_counts_synth).astype(
-                            xp.int64
-                        )
-                        rand2 = (rng.random(num_synth) * (c_counts_synth - 1)).astype(
-                            xp.int64
-                        ) + 1
-
-                        idx1 = c_starts_synth + rand1
-                        idx2 = c_starts_synth + (rand1 + rand2) % c_counts_synth
-
-                        p1 = X_bad[idx1]
-                        p2 = X_bad[idx2]
-                        alpha = rng.random((num_synth, 1)).astype(xp.float64)
-                        X_synth_vals = p1 * alpha + p2 * (1.0 - alpha)
-
+                    X_bad_aug, F_bad_aug, G_bad_aug = aug.X, aug.F, aug.G
+                    aug_dense_labels_bad = aug.labels
+                    if aug.X_new is not None:
+                        num_generated_pts += int(aug.X_new.shape[0])
                         if config.save_all_gen_training_data:
                             save_generated_data(
-                                X_synth_vals, f"train_data_atol_{config.atol}_rtol_{config.rtol}_d{d}"
+                                aug.X_new,
+                                f"train_data_atol_{config.atol}_rtol_{config.rtol}_d{d}",
                             )
-
-                        X_bad_aug[is_synth] = X_synth_vals
-
-                        # Evaluate F (and G, if carried per point) for synthetic points
-                        F_syn, G_syn = evaluator(
-                            X_synth_vals, need_grad=G_bad_aug is not None
-                        )
-                        F_bad_aug[is_synth] = F_syn
-                        if G_bad_aug is not None:
-                            G_bad_aug[is_synth] = G_syn
+                    del aug
 
                     # ==========================================
                     # MATH PIPELINE STAGE 3

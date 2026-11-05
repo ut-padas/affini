@@ -59,6 +59,7 @@ class ClusteringConfig:
 
     # --- Refinement ---
     min_pts_per_cluster: int = 100
+    sampling_method: str = "convex_combination"  # see src.sampling.SAMPLERS
     q_reg: float = 1e-6  # regularization added when computing the trust-region shape Q
     max_levels: int = 50  # maximum number of refinement levels
     batch_size: int = 10_000_000  # max points moved to the device per batch
@@ -76,6 +77,14 @@ class ClusteringConfig:
     save_all_gen_training_data: bool = False
 
     def __post_init__(self) -> None:
+        # Imported here: src.sampling imports Evaluator from this module.
+        from src.sampling import SAMPLERS
+
+        if self.sampling_method not in SAMPLERS:
+            raise ValueError(
+                f"Unknown sampling method {self.sampling_method!r}; "
+                f"choose one of {sorted(SAMPLERS)}."
+            )
         if (
             self.mode
             in (SurrogateMode.AFFINE_COV_HESS, SurrogateMode.AFFINE_COV_NO_HESS)
