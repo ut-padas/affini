@@ -80,8 +80,6 @@ def _run_local_refinement(
     # accepted clusters (the shared columns plus the model's parameters).
     model = make_local_model(config)
     splitter = split_strategy_for_mode(config.mode, config.min_pts_per_cluster)
-    if model.needs_centroid_grad and not config.requires_grad_centroids:
-        raise ValueError(f"{model.name} needs gradients at the centroids")
     accepted = ColumnBuffer(
         output_columns(model, d, fd),
         capacity=max(1, config.max_clusters_est // max(1, size)),

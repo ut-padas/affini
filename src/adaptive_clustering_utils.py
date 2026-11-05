@@ -100,37 +100,35 @@ class ClusteringConfig:
                 f"ignoring it for mode {self.mode.value}."
             )
 
+    # Which gradients a mode needs follows from its local model and split strategy
+    # (their needs_* flags), so a new mode only has to define those two.
+
+    def _model_and_split(self):
+        # Imported here: both modules import this one.
+        from src.local_models import local_model_for_mode
+        from src.splitting import split_strategy_for_mode
+
+        return (
+            local_model_for_mode(self.mode),
+            split_strategy_for_mode(self.mode, self.min_pts_per_cluster),
+        )
+
     @property
     def requires_grad_everywhere(self) -> bool:
-        """
-        Returns True if the surrogate mode requires gradients at every point.
-        """
-        return self.mode == SurrogateMode.TAYLOR_LSQ_HESS
+        """True if gradients must be evaluated (and carried) at every point."""
+        _, split = self._model_and_split()
+        return split.needs_point_grad
 
     @property
     def requires_grad_centroids(self) -> bool:
-        """
-        Returns True if the surrogate mode requires gradients only at the centroids.
-        """
-        return self.mode in (
-            SurrogateMode.TAYLOR_LSQ_HESS,
-            SurrogateMode.TAYLOR_COV_HESS,
-            SurrogateMode.TAYLOR_COV_NO_HESS,
-            SurrogateMode.TAYLOR_EXACT_HESS,
-            SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD
-        )
+        """True if gradients must be evaluated at the cluster centroids."""
+        model, split = self._model_and_split()
+        return model.needs_centroid_grad or split.needs_centroid_grad
 
     @property
     def requires_no_grads(self) -> bool:
-        """
-        Returns True if the surrogate mode does not require any gradients.
-        """
-        return self.mode in (
-            SurrogateMode.NEAREST_NEIGHBOR,
-            SurrogateMode.AFFINE_COV_NO_HESS,
-            SurrogateMode.AFFINE_COV_HESS,
-            SurrogateMode.AFFINE_EXACT_HESS
-        )
+        """True if the mode needs no gradients at all."""
+        return not (self.requires_grad_everywhere or self.requires_grad_centroids)
 
 
 @dataclass

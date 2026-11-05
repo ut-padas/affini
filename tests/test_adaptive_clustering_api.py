@@ -42,3 +42,31 @@ def test_mode_needing_gradients_without_gradient_raises():
     config = ClusteringConfig(mode=SurrogateMode.TAYLOR_COV_HESS, atol=1e-4, rtol=1e-4)
     with pytest.raises(ValueError, match="requires gradient information"):
         ac.adaptive_clustering(_x(), config, Evaluator(f_fn=lambda x: x**2))
+
+
+# The gradients each mode needs, as the hand-written mode lists gave them before
+# they were derived from the local model and split strategy.
+_GRAD_NEEDS = [
+    # mode, everywhere, centroids, none
+    (SurrogateMode.NEAREST_NEIGHBOR, False, False, True),
+    (SurrogateMode.AFFINE_COV_NO_HESS, False, False, True),
+    (SurrogateMode.TAYLOR_COV_NO_HESS, False, True, False),
+    (SurrogateMode.AFFINE_COV_HESS, False, False, True),
+    (SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD, False, True, False),
+    (SurrogateMode.AFFINE_EXACT_HESS, False, False, True),
+    (SurrogateMode.TAYLOR_COV_HESS, False, True, False),
+    (SurrogateMode.TAYLOR_EXACT_HESS, False, True, False),
+    (SurrogateMode.TAYLOR_LSQ_HESS, True, True, False),
+]
+
+
+@pytest.mark.parametrize("mode,everywhere,centroids,none", _GRAD_NEEDS)
+def test_gradient_needs_follow_model_and_split(mode, everywhere, centroids, none):
+    config = ClusteringConfig(mode=mode, atol=1e-3, rtol=1e-3)
+    assert config.requires_grad_everywhere == everywhere
+    assert config.requires_grad_centroids == centroids
+    assert config.requires_no_grads == none
+
+
+def test_every_mode_is_covered_by_the_gradient_table():
+    assert {row[0] for row in _GRAD_NEEDS} == set(SurrogateMode)

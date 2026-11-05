@@ -135,21 +135,8 @@ class AFINNISurrogate:
         comm = MPI.COMM_WORLD
         rank = _get_mpi_rank()
 
-        if oracle_fn is not None:
-            if f_fn is not None or g_fn is not None:
-                raise ValueError("Cannot specify both oracle_fn and f_fn/g_fn.")
-        else:
-            if (
-                f_fn is None
-                or mode != SurrogateMode.AFFINE_COV_HESS
-                and mode != SurrogateMode.AFFINE_COV_NO_HESS
-                and mode != SurrogateMode.AFFINE_EXACT_HESS
-                and mode != SurrogateMode.NEAREST_NEIGHBOR
-                and g_fn is None
-            ):
-                raise ValueError(
-                    "Must specify oracle_fn or required f_fn/g_fn for the chosen mode."
-                )
+        if oracle_fn is not None and (f_fn is not None or g_fn is not None):
+            raise ValueError("Cannot specify both oracle_fn and f_fn/g_fn.")
 
         t0 = time.perf_counter()
 
@@ -178,6 +165,12 @@ class AFINNISurrogate:
             profile_timing=PROFILE_TIMING,
             save_all_gen_training_data=SAVE_ALL_GEN_TRAINING_DATA,
         )
+        if oracle_fn is None and (
+            f_fn is None or (not config.requires_no_grads and g_fn is None)
+        ):
+            raise ValueError(
+                "Must specify oracle_fn or required f_fn/g_fn for the chosen mode."
+            )
         self.local_model = make_local_model(config)
         evaluator = Evaluator(
             f_fn=f_fn, g_fn=g_fn, oracle_fn=oracle_fn, hessian_fn=HESSIAN
