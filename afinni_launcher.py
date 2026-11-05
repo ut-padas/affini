@@ -773,8 +773,8 @@ def setup_argparse():
     parser.add_argument(
         "--experiment",
         help="The name of the experiment to run.",
-        type=str,
-        default="rosenbrock_dim_scaling",
+        choices=sorted(PROBLEMS),
+        default="rosenbrock",
     )
     parser.add_argument(
         "--tols",
@@ -802,13 +802,13 @@ def setup_argparse():
     parser.add_argument(
         "--error_eval_mode",
         help="The error eval mode to use.",
-        type=str,
-        default="affine_cov_hess",
+        choices=[m.value for m in SurrogateMode],
+        default=SurrogateMode.AFFINE_COV_HESS.value,
     )
     parser.add_argument(
         "--sampling",
         help="The sampling strategy to use for initial points.",
-        type=str,
+        choices=["uniform", "modified"],
         default="uniform",
     )
     parser.add_argument(
@@ -830,44 +830,7 @@ def setup_argparse():
         default=None,
     )
 
-    args = parser.parse_args()
-
-    # Check if specified strings are valid
-    possible_experiments = [
-        "anisotropic_quadratic",
-        "anisotropic_gaussian",
-        "degenerate_quadratic",
-        "indef_degen_quadratic",
-        "rosenbrock",
-        "lorenz96",
-        "wave",
-    ]
-    possible_error_eval_modes = [
-        "affine_cov_hess",
-        "affine_cov_no_hess",
-        "affine_cov_hess_exact_grad",
-        "nearest_neighbor",
-        "taylor_cov_hess",
-        "taylor_cov_no_hess",
-        "taylor_lsq_hess",
-        "taylor_exact_hess",
-        "affine_exact_hess",
-    ]
-    possible_sampling = ["uniform", "modified"]
-    if args.experiment not in possible_experiments:
-        raise ValueError(
-            f"ERROR: experiment specified is not one of the implemented test functions.\nPossible options are: {possible_experiments}"
-        )
-    if args.error_eval_mode not in possible_error_eval_modes:
-        raise ValueError(
-            f"ERROR: error eval. mode specified is not implemented.\nPossible options are: {possible_error_eval_modes}"
-        )
-    if args.sampling not in possible_sampling:
-        raise ValueError(
-            f"ERROR: sampling strategy specified is not implemented. Possible options are: {possible_sampling}"
-        )
-
-    return args
+    return parser.parse_args()
 
 
 def run_experiment_from_args(args):
@@ -881,19 +844,7 @@ def run_experiment_from_args(args):
     coarse_factor = args.coarse_factor
     N_train = args.N_train
 
-    # Pick correct enum for error_eval_mode
-    enum_map = {
-        "affine_cov_hess": SurrogateMode.AFFINE_COV_HESS,
-        "affine_exact_hess": SurrogateMode.AFFINE_EXACT_HESS,
-        "affine_cov_no_hess": SurrogateMode.AFFINE_COV_NO_HESS,
-        "affine_cov_hess_exact_grad": SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD,
-        "nearest_neighbor": SurrogateMode.NEAREST_NEIGHBOR,
-        "taylor_cov_hess": SurrogateMode.TAYLOR_COV_HESS,
-        "taylor_exact_hess": SurrogateMode.TAYLOR_EXACT_HESS,
-        "taylor_cov_no_hess": SurrogateMode.TAYLOR_COV_NO_HESS,
-        "taylor_lsq_hess": SurrogateMode.TAYLOR_LSQ_HESS,
-    }
-    error_eval_mode = enum_map[args.error_eval_mode]
+    error_eval_mode = SurrogateMode(args.error_eval_mode)
 
     for tol in tolvec:
         for d in dvec:
