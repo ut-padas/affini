@@ -56,7 +56,15 @@ class ClusterFitData:
 
 
 class LocalModel(ABC):
-    """The function on one leaf, fitted and evaluated for many clusters at once."""
+    """
+    The form of the approximation f_hat_c used on each leaf cluster c
+    (constant, Taylor, affine least squares, ...).
+
+    An instance holds no per-cluster state: ``fit`` fits K clusters at once and
+    returns their parameters stacked along a leading (K,) axis, and ``evaluate``
+    evaluates each point with the parameters of the cluster it is assigned to,
+    so training and inference stay vectorized over clusters.
+    """
 
     name: str
     needs_centroid_grad: bool = False  # the loop must evaluate grad f at centroids

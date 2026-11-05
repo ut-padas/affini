@@ -202,9 +202,8 @@ def _run_local_refinement(
                     mus, need_grad=config.requires_grad_centroids
                 )
 
-                # ==========================================
-                # MATH PIPELINE STAGE 1
-                # ==========================================
+                # Fit the local model on every cluster, evaluate it at the
+                # cluster's points, and accept the clusters within tolerance.
                 is_good, E_cluster, surrogate_params = evaluate_cluster_errors(
                     config,
                     model,
@@ -242,9 +241,9 @@ def _run_local_refinement(
                     good_counts = aug_sizes[good_idx_local]
                     dense_labels_good = repeats(xp.arange(K_good_batch), good_counts)
 
-                    # ==========================================
-                    # MATH PIPELINE STAGE 2
-                    # ==========================================
+                    # Shape matrix Q and radius of each accepted cluster (used by
+                    # the trust-region test at inference), and the second-order
+                    # Hessian H when it is stored.
                     Qs, Hs, radii = compute_accepted_stats(
                         config,
                         X_good,
@@ -331,9 +330,9 @@ def _run_local_refinement(
                             )
                     del aug
 
-                    # ==========================================
-                    # MATH PIPELINE STAGE 3
-                    # ==========================================
+                    # Cut each rejected cluster in two along its split direction:
+                    # its points are sorted by their projection onto that direction,
+                    # and child_sizes gives the size of each half.
                     sort_order, child_sizes = splitter.split(
                         SplitData(
                             X=X_bad_aug,
