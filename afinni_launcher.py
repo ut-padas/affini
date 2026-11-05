@@ -532,7 +532,6 @@ def rosenbrock_modified_sampling(args) -> Problem:
         domain=(-2.0, 3.0),
         sample=sample,
         centroids_plot_in_log_scale=True,
-        save_final_centroids=True,
         only_modes=(SurrogateMode.AFFINE_COV_HESS,),
         max_dim=2,
     )

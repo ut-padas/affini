@@ -236,3 +236,6 @@ media/
 models/
 # macOS Finder metadata
 .DS_Store
+
+# Arrays saved into the repository root (e.g. by experiment scripts)
+/*.npy

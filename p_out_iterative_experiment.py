@@ -747,6 +747,11 @@ def parse_args():
     )
     parser.add_argument("--tol", type=float, default=0.05)
     parser.add_argument("--exp-num", type=int, default=1)
+    parser.add_argument(
+        "--save-halo-points",
+        action="store_true",
+        help="save the halo-sampled training points to <function>_d<d>_halo.npy",
+    )
     args = parser.parse_args()
     if args.max_sampling_attempts < 1:
         parser.error("--max-sampling-attempts must be at least 1")
@@ -769,7 +774,7 @@ if __name__ == "__main__":
             d=d,
             tol=tol,
             n_iter=n_iter,
-            save_halo_pts=True,
+            save_halo_pts=args.save_halo_points,
             max_sampling_attempts=args.max_sampling_attempts,
         )
         p_out_cloud = run_iterative_refinement(
