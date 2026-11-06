@@ -5,12 +5,22 @@ Every strategy is Hessian-informed two-means with a different estimate of the
 metric ``M = |H|^{1/2}`` (the identity gives standard two-means / PCA): points
 are mapped by ``M``, the leading eigenvector ``v`` of the mapped covariance
 ``M C M`` is the split direction, and each cluster's points are ordered by their
-projection onto it. ``child_sizes`` then decides where each ordered cluster is cut
-(at the median by default).
+projection onto it. ``child_sizes`` then decides where each ordered cluster is cut:
+at the median by default (``cut="median"``, equal halves), or at the centroid
+(``cut="sign"``, the sign of the projection as in Algorithm 2, falling back to the
+median when one side would be empty).
 
 A ``SurrogateMode`` is a pair (local model, split strategy); see
 ``split_strategy_for_mode`` and ``src.local_models.local_model_for_mode``.
-Adding a strategy means subclassing ``SplitStrategy`` and implementing ``metric``.
+
+Adding a strategy means subclassing ``SplitStrategy``, implementing ``metric``
+(or overriding ``split`` entirely), and registering it in ``SPLIT_STRATEGIES``.
+A different cut rule overrides ``child_sizes``, which sees the sorted projection
+scores. Splits are binary: ``split`` must return a permutation that keeps every
+cluster contiguous, and exactly two child sizes per cluster that add up to the
+cluster's size (one of them may be 0; empty children are dropped).
+Strategies declare the data they need with ``needs_point_grad``,
+``needs_centroid_grad`` and ``needs_hessian_fn``.
 """
 
 from abc import ABC, abstractmethod
@@ -19,9 +29,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 from src import IS_CUPY_BACKEND, Array, xp
-from src.adaptive_clustering_utils import (
+from src.modes import SurrogateMode
+from src.numerics import (
     TINY_EPS,
-    SurrogateMode,
     _reduce_sum_1d,
     get_n_smallest_per_block,
     lsq_hessian_in_eigenbasis,
@@ -30,6 +40,7 @@ from src.adaptive_clustering_utils import (
     run_fused_stats,
     solve_regularized_covariance_inplace,
 )
+from src.registry import Registry
 
 if IS_CUPY_BACKEND:
     import cupy as cp
@@ -59,13 +70,33 @@ def median_split_sizes(counts: Array) -> Array:
     ``n - n // 2``. Returns (2K,) int64 sizes ``[k0_low, k0_high, k1_low, ...]``.
 
     Note: Algorithm 2 in the paper splits by the sign of the projection instead,
-    which can give children of unequal size.
+    which can give children of unequal size (``sign_split_sizes``).
     """
     half = counts // 2
     sizes = xp.zeros(2 * len(counts), dtype=xp.int64)
     sizes[0::2] = half
     sizes[1::2] = counts - half
     return sizes
+
+
+def sign_split_sizes(counts: Array, sorted_scores: Array) -> Array:
+    """
+    Child sizes for splitting every cluster by the sign of the projection score
+    (Algorithm 2): the low child holds the points with a negative score. A cluster
+    whose points would all fall on one side is split at the median instead, so
+    every split makes progress. ``sorted_scores`` (N,) are the scores in the order
+    returned by ``SplitStrategy.split`` (ascending within each cluster).
+    """
+    starts = xp.r_[0, xp.cumsum(counts)[:-1]]
+    n_low = _reduce_sum_1d((sorted_scores < 0).astype(xp.int64), starts)
+    n_low = xp.where((n_low == 0) | (n_low == counts), counts // 2, n_low)
+    sizes = xp.zeros(2 * len(counts), dtype=xp.int64)
+    sizes[0::2] = n_low
+    sizes[1::2] = counts - n_low
+    return sizes
+
+
+CUT_RULES = ("median", "sign")
 
 
 class SplitStrategy(ABC):
@@ -75,6 +106,16 @@ class SplitStrategy(ABC):
     needs_point_grad: bool = False  # needs SplitData.G
     needs_centroid_grad: bool = False  # needs SplitData.g_c
     needs_hessian_fn: bool = False  # needs SplitData.hessian_fn
+    cut: Literal["median", "sign"] = "median"
+
+    def __init__(self, cut: Literal["median", "sign"] = "median"):
+        if cut not in CUT_RULES:
+            raise ValueError(f"Unknown cut rule {cut!r}; choose one of {CUT_RULES}.")
+        self.cut = cut
+
+    def settings(self) -> dict:
+        """Constructor arguments, so ``SPLIT_STRATEGIES.create((name, settings))`` rebuilds it."""
+        return {"cut": self.cut}
 
     @abstractmethod
     def metric(self, data: SplitData) -> tuple[Array, Array]:
@@ -99,11 +140,21 @@ class SplitStrategy(ABC):
             del CovZ, V_z, v, M
             cp.get_default_memory_pool().free_all_blocks()
         order = xp.lexsort(xp.stack([scores, data.labels]))  # (N,)
-        return order, self.child_sizes(data.counts)
+        sorted_scores = scores[order] if self.cut != "median" else None
+        return order, self.child_sizes(data.counts, sorted_scores)
 
-    def child_sizes(self, counts: Array) -> Array:
-        """Where each ordered cluster is cut; the median by default."""
+    def child_sizes(self, counts: Array, sorted_scores: Array | None = None) -> Array:
+        """
+        Where each ordered cluster is cut: (2K,) sizes ``[k0_low, k0_high, ...]``.
+        ``sorted_scores`` are the projection scores in split order (None for the
+        median cut, which does not need them).
+        """
+        if self.cut == "sign":
+            return sign_split_sizes(counts, sorted_scores)
         return median_split_sizes(counts)
+
+
+SPLIT_STRATEGIES: Registry[SplitStrategy] = Registry("split strategy", SplitStrategy)
 
 
 def _covariance(data: SplitData) -> Array:
@@ -114,6 +165,7 @@ def _covariance(data: SplitData) -> Array:
     return C  # (K, d, d)
 
 
+@SPLIT_STRATEGIES.register
 class CovarianceSplit(SplitStrategy):
     """Standard two-means via the principal direction of the covariance (M = I)."""
 
@@ -127,6 +179,7 @@ class CovarianceSplit(SplitStrategy):
         return M, CovZ
 
 
+@SPLIT_STRATEGIES.register
 class CovarianceHessianSplit(SplitStrategy):
     """
     Hessian from the covariance of low-Taylor-error points (Algorithm 3).
@@ -141,11 +194,24 @@ class CovarianceHessianSplit(SplitStrategy):
     name = "covariance_hessian"
 
     def __init__(
-        self, gradient: Literal["centroid", "local_lsq"], min_pts_per_cluster: int
+        self,
+        gradient: Literal["centroid", "local_lsq"] = "local_lsq",
+        min_pts_per_cluster: int = 100,
+        cut: Literal["median", "sign"] = "median",
     ):
+        super().__init__(cut)
+        if gradient not in ("centroid", "local_lsq"):
+            raise ValueError(f"gradient must be 'centroid' or 'local_lsq'; got {gradient!r}.")
         self.gradient = gradient
-        self.min_pts_per_cluster = min_pts_per_cluster
+        self.min_pts_per_cluster = int(min_pts_per_cluster)
         self.needs_centroid_grad = gradient == "centroid"
+
+    def settings(self):
+        return {
+            "gradient": self.gradient,
+            "min_pts_per_cluster": self.min_pts_per_cluster,
+            "cut": self.cut,
+        }
 
     def metric(self, data):
         K, d, fd = len(data.counts), data.X.shape[1], data.F.shape[1]
@@ -198,6 +264,7 @@ class CovarianceHessianSplit(SplitStrategy):
         return M, M @ C @ M.transpose(0, 2, 1)
 
 
+@SPLIT_STRATEGIES.register
 class ExactHessianSplit(SplitStrategy):
     """|H|^{1/2} from the exact Hessian at each centroid (``hessian_fn``)."""
 
@@ -215,6 +282,7 @@ class ExactHessianSplit(SplitStrategy):
         return M, M @ C @ M.transpose(0, 2, 1)
 
 
+@SPLIT_STRATEGIES.register
 class GradientLSQHessianSplit(SplitStrategy):
     """
     Hessian from a least-squares fit to the per-point gradient residuals, using

@@ -1,3 +1,9 @@
+"""
+Jacobians of ODE flow maps by forward sensitivities: the state and its d x d
+sensitivity matrix are integrated together, batched over trajectories and
+parallelized over processes through shared memory.
+"""
+
 import logging
 import multiprocessing as mp
 import os
@@ -20,10 +26,15 @@ def _preferred_mp_start_method(requested: str | None = None) -> str:
     ``fork`` is much cheaper on Linux because children inherit the already
     imported modules via copy-on-write.  macOS defaults to ``spawn`` because
     forking a process that may have active native-library threads can be unsafe;
-    users can still opt into another method with ``HATANN_MP_START_METHOD`` or
-    the explicit argument.
+    users can still opt into another method with ``AFINNI_MP_START_METHOD`` or
+    the explicit argument. The old name ``HATANN_MP_START_METHOD`` is still read
+    if ``AFINNI_MP_START_METHOD`` is not set.
     """
-    requested = requested or os.environ.get("HATANN_MP_START_METHOD")
+    requested = (
+        requested
+        or os.environ.get("AFINNI_MP_START_METHOD")
+        or os.environ.get("HATANN_MP_START_METHOD")
+    )
     available = mp.get_all_start_methods()
     if requested:
         if requested not in available:
@@ -187,6 +198,7 @@ def _solve_and_write_chunk(
 
 
 def _worker_wrapper_shm(args):
+    """Top-level (picklable) entry point for pool workers."""
     return _solve_and_write_chunk(*args)
 
 

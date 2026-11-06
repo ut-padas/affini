@@ -5,8 +5,8 @@ These run on every machine. Assertions are relative to what is installed, so
 the same suite passes on a CPU-only laptop and on a GPU/MPI node. To turn
 "whatever is available" into a hard requirement, set the overrides:
 
-    AFINNI_DEVICE=gpu uv run pytest tests/test_backend.py   # must run on the GPU
-    AFINNI_MPI=on     uv run pytest tests/test_backend.py   # mpi4py must load an MPI library
+    AFINNI_DEVICE=gpu uv run pytest tests/integration/test_backend.py   # must run on the GPU
+    AFINNI_MPI=on     uv run pytest tests/integration/test_backend.py   # mpi4py must load an MPI library
 
 The pytest header shows which backends were actually exercised.
 """
@@ -26,7 +26,7 @@ import pytest
 from src import backend
 from tests._smoke import SMOKE_TOL, run_smoke
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Variables that influence detection; stripped so subprocess cases are hermetic.
 _DETECTION_VARS = ("AFINNI_DEVICE", "AFINNI_MPI", *backend._LAUNCHER_SIZE_VARS)

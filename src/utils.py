@@ -1,3 +1,5 @@
+"""Small array helpers used by the refinement loop and samplers."""
+
 import logging
 
 from src import Array, xp

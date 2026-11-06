@@ -125,3 +125,12 @@ def test_work_stealing_end_to_end_leaves_no_messages(mpi_launcher):
     )
     assert result["ok"] is True, result["runs"]
     assert result["grants"] > 0, result["runs"]
+
+
+def test_work_stealing_moves_gradients_and_keeps_second_order_models_exact(mpi_launcher):
+    """Steals of gradient-carrying work are complete and do not change the exact result."""
+    result = _run_worker(
+        [*mpi_launcher, "-n", str(N_RANKS)],
+        module="tests.mpi._grad_steal_worker",
+    )
+    assert result["ok"] is True, result

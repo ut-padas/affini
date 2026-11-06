@@ -9,7 +9,9 @@ samplers (``augmentation_targets`` and ``augment_clusters``).
 
 Adding a sampling scheme:
     1. Subclass ``Sampler`` and implement ``sample``.
-    2. Register it in ``SAMPLERS`` so ``ClusteringConfig.sampling_method`` can name it.
+    2. Register it in ``SAMPLERS`` (``@SAMPLERS.register``) so
+       ``ClusteringConfig.sampling_method`` can name it; settings can be given as
+       ``(name, {...})`` or by passing an instance as ``ClusteringConfig.sampler``.
 Samplers receive each cluster's points, counts and centroids (``ClusterPoints``).
 If a scheme needs more information about each cluster (for example a bounding
 convex polytope), add it as an optional field of ``ClusterPoints`` and pass it
@@ -23,7 +25,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from src import Array, xp
-from src.adaptive_clustering_utils import Evaluator
+from src.evaluation import Evaluator
+from src.registry import ComponentSpec, Registry
 from src.utils import repeats
 
 
@@ -57,6 +60,10 @@ class Sampler(ABC):
 
     name: str
 
+    def settings(self) -> dict:
+        """Constructor arguments, so ``SAMPLERS.create((name, settings))`` rebuilds it."""
+        return {}
+
     @abstractmethod
     def sample(self, clusters: ClusterPoints, n_new: Array, rng) -> Array:
         """
@@ -67,6 +74,10 @@ class Sampler(ABC):
         """
 
 
+SAMPLERS: Registry[Sampler] = Registry("sampling method", Sampler)
+
+
+@SAMPLERS.register
 class ConvexCombinationSampler(Sampler):
     """
     Random convex combinations of two distinct points of the same cluster.
@@ -100,19 +111,9 @@ class ConvexCombinationSampler(Sampler):
         return clusters.X[idx1] * alpha + clusters.X[idx2] * (1.0 - alpha)
 
 
-SAMPLERS: dict[str, type[Sampler]] = {
-    ConvexCombinationSampler.name: ConvexCombinationSampler,
-}
-
-
-def make_sampler(name: str) -> Sampler:
-    """Return a new sampler for ``name`` (see ``SAMPLERS``)."""
-    try:
-        return SAMPLERS[name]()
-    except KeyError:
-        raise ValueError(
-            f"Unknown sampling method {name!r}; choose one of {sorted(SAMPLERS)}."
-        ) from None
+def make_sampler(spec: ComponentSpec) -> Sampler:
+    """Return the sampler for ``spec``: a registered name, ``(name, settings)`` or an instance."""
+    return SAMPLERS.create(spec)
 
 
 def augmentation_targets(counts: Array, min_pts_per_cluster: int) -> Array:
@@ -187,6 +188,12 @@ def augment_clusters(
 
     clusters = ClusterPoints(X, counts, centroids=centroids)
     X_new = sampler.sample(clusters, target_counts - counts, rng)
+    n_new = total - int(X.shape[0])
+    if tuple(X_new.shape) != (n_new, d):
+        raise ValueError(
+            f"Sampler {sampler.name!r} returned shape {tuple(X_new.shape)}; "
+            f"expected ({n_new}, {d})."
+        )
     X_aug[is_new] = X_new
     F_new, G_new = evaluator(X_new, need_grad=G_aug is not None)
     F_aug[is_new] = F_new

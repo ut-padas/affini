@@ -70,7 +70,7 @@ test:
 	uv run --group test pytest
 
 test-mpi:
-	AFINNI_MPI=on uv run --group test pytest tests/mpi tests/test_backend.py
+	AFINNI_MPI=on uv run --group test pytest tests/mpi tests/integration/test_backend.py
 
 paper-experiments:
 	bash run_paper_experiments.sh

@@ -1,5 +1,5 @@
 """
-Heuristic parameters for HATANN.
+Heuristic parameters for AFINNI.
 """
 
 

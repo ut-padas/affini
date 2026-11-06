@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src import xp
+from src import _to_host, xp
 from src.clusters import ClusterBatch, ClusterQueueBuilder
 from src.splitting import median_split_sizes
 
@@ -18,7 +18,7 @@ def _parts(rng, sizes, d=2, fd=1, has_g=False):
 
 def test_median_split_sizes():
     np.testing.assert_array_equal(
-        np.asarray(median_split_sizes(xp.asarray(np.array([5, 4, 1])))),
+        _to_host(median_split_sizes(xp.asarray(np.array([5, 4, 1])))),
         [2, 3, 2, 2, 0, 1],
     )
 
@@ -77,3 +77,38 @@ def test_cluster_batch_split():
     np.testing.assert_array_equal(np.concatenate([head.X, tail.X]), batch.X)
     np.testing.assert_array_equal(np.concatenate([head.G, tail.G]), batch.G)
     np.testing.assert_array_equal(tail.starts, [0, 3])
+
+
+class _FakeMemory:
+    def __init__(self, available, total=0):
+        self.available, self.total = available, total
+
+
+def test_builder_checks_host_memory_on_every_append(monkeypatch):
+    import src.clusters as clusters
+
+    monkeypatch.setattr(clusters, "HOST_MEMORY_RESERVE_MIN", 0)
+    rng = np.random.default_rng(0)
+    builder = ClusterQueueBuilder(2, 1, False, capacity_pts=1000, capacity_clusters=8)
+    builder.append(*_parts(rng, [2, 2]))
+    # Plenty of reserved capacity, but writing 100 rows x 24 bytes needs 2,400 bytes.
+    monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(1_000))
+    with pytest.raises(MemoryError, match="MIN_PTS_PER_CLUSTER"):
+        builder.append(*_parts(rng, [50, 50]))
+    assert builder.n_pts == 4  # the failed append left the queue unchanged
+    monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(10**9))
+    builder.append(*_parts(rng, [50, 50]))
+    assert builder.build().n_pts == 104
+
+
+def test_host_memory_check_keeps_a_reserve(monkeypatch):
+    import src.clusters as clusters
+
+    gib = 2**30
+    monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(10 * gib, 32 * gib))
+    clusters.check_host_memory(6 * gib, "x")  # 10 GiB free - 3.2 GiB reserve = 6.8 GiB usable
+    with pytest.raises(MemoryError, match=r"7\.00 GiB more.*10\.00 GiB is available and 3\.20 GiB"):
+        clusters.check_host_memory(7 * gib, "x")
+    monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(10 * gib, 4 * gib))
+    with pytest.raises(MemoryError):  # small machine: the 2 GiB minimum reserve applies
+        clusters.check_host_memory(int(8.5 * gib), "x")

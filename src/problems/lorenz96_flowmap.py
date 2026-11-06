@@ -1,3 +1,8 @@
+"""
+Lorenz-96 flow map x(0) -> x(tf) and its Jacobian with SciPy, batched over
+trajectories and optionally parallelized over processes through shared memory.
+"""
+
 import multiprocessing as mp
 import os
 from functools import partial
@@ -52,6 +57,7 @@ def _serial_flowmap_solve(
 
 
 def _limit_worker_threads() -> None:
+    """Pin BLAS/OpenMP to one thread per worker, so N processes do not oversubscribe the cores."""
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -60,6 +66,7 @@ def _limit_worker_threads() -> None:
 
 
 def _flowmap_chunk_worker(args):
+    """Solve rows ``start:end`` of the shared input and write them into the shared output."""
     (
         x0_shm_name,
         xf_shm_name,

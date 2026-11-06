@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from src.adaptive_clustering_utils import Evaluator
+from tests._helpers import host
 
 
 def f(x):
@@ -39,15 +40,15 @@ def test_values_without_grad(kwargs):
     F, G = Evaluator(**kwargs)(X)
     assert G is None
     assert F.shape == (6, 1)
-    np.testing.assert_array_equal(F[:, 0], f(X))
+    np.testing.assert_array_equal(host(F)[:, 0], f(X))
 
 
 @pytest.mark.parametrize("kwargs", [{"f_fn": f, "g_fn": g}, {"oracle_fn": oracle}])
 def test_values_with_grad(kwargs):
     F, G = Evaluator(**kwargs)(X, need_grad=True)
     assert F.shape == (6, 1) and G.shape == (6, 1, 2)
-    np.testing.assert_array_equal(F[:, 0], f(X))
-    np.testing.assert_array_equal(G[:, 0, :], g(X))
+    np.testing.assert_array_equal(host(F)[:, 0], f(X))
+    np.testing.assert_array_equal(host(G)[:, 0, :], g(X))
 
 
 def test_grad_without_gradient_source_raises():

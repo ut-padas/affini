@@ -1,3 +1,5 @@
+"""Values, gradients and Hessians of src/problems/anisotropic_quadratic.py against SymPy."""
+
 import unittest
 
 import numpy as np

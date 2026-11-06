@@ -62,6 +62,7 @@ _FALSE = {"0", "off", "false", "no"}
 
 
 def _env_choice(var: str, choices: dict[str, set[str]]) -> str:
+    """Canonical value of an ``auto``-defaulting environment switch; raises on unknown values."""
     raw = os.environ.get(var, "auto").strip().lower() or "auto"
     for canonical, aliases in choices.items():
         if raw == canonical or raw in aliases:
@@ -126,6 +127,7 @@ _LAUNCHER_SIZE_VARS = ("OMPI_COMM_WORLD_SIZE", "PMI_SIZE", "MV2_COMM_WORLD_SIZE"
 
 
 def _launched_with_multiple_ranks() -> bool:
+    """True if a launcher started several ranks, read from its environment without initializing MPI."""
     for var in _LAUNCHER_SIZE_VARS:
         try:
             if int(os.environ.get(var, "1")) > 1:
@@ -299,6 +301,7 @@ def get_mpi() -> Any:
 
 
 def has_mpi() -> bool:
+    """True if real MPI is in use (resolved, and initialized, on first call)."""
     return _resolve_mpi()[1]
 
 
@@ -351,6 +354,7 @@ def backend_info() -> dict[str, Any]:
 
 
 def print_backend_info() -> None:
+    """Print ``backend_info()`` as an aligned table (``python -m src``)."""
     info = backend_info()
     width = max(map(len, info))
     print("AFINNI backend configuration")

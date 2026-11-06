@@ -1,3 +1,5 @@
+"""Values, gradients and Hessians of src/problems/shifted_gaussians.py against SymPy."""
+
 import unittest
 
 import numpy as np

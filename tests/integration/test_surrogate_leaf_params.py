@@ -8,6 +8,7 @@ from src.adaptive_clustering_utils import SurrogateMode
 from src.clusters import ParamSpec
 from src.problems.rosenbrock import rosenbrock
 from src.surrogate import AFINNISurrogate
+from tests._helpers import assert_backend_equal
 
 
 class RenamedAffineModel(lm.LocalModel):
@@ -28,12 +29,13 @@ class RenamedAffineModel(lm.LocalModel):
         return self._affine.evaluate(renamed, X, cluster_ids)
 
 
-def _train_and_predict(X, Q):
+def _train_and_predict(X, Q, local_model=None):
     surrogate = AFINNISurrogate()
     surrogate.train(
         xp.asarray(X),
         f_fn=rosenbrock,
         mode=SurrogateMode.AFFINE_COV_HESS,
+        local_model=local_model,
         ATOL=0.1,
         RTOL=0.1,
         NUM_INITIAL_CLUSTERS=16,
@@ -44,17 +46,15 @@ def _train_and_predict(X, Q):
     return surrogate, _to_host(pred), _to_host(unguaranteed)
 
 
-def test_new_model_columns_reach_predict(monkeypatch):
+def test_new_model_columns_reach_predict():
     rng = np.random.default_rng(0)
     X, Q = rng.uniform(-2, 2, (20_000, 2)), rng.uniform(-2, 2, (2_000, 2))
     _, pred_ref, ung_ref = _train_and_predict(X, Q)
 
-    monkeypatch.setattr(
-        lm, "local_model_for_mode", lambda *a, **k: RenamedAffineModel()
-    )
-    surrogate, pred, ung = _train_and_predict(X, Q)
+    surrogate, pred, ung = _train_and_predict(X, Q, local_model=RenamedAffineModel())
 
     assert set(surrogate.leaf_params) == {"slope", "intercept"}
     assert surrogate.A_fits_src is None  # no "A_fit" column for this model
-    np.testing.assert_array_equal(pred, pred_ref)
+    assert surrogate.local_model.name == "renamed_affine"
+    assert_backend_equal(pred, pred_ref, separate_runs=True)
     np.testing.assert_array_equal(ung, ung_ref)

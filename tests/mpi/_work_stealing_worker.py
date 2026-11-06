@@ -13,6 +13,7 @@ def main():
     from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
     from src.backend import MPI
     from src.clusters import ClusterBatch
+    from src.profiling import Profiler, new_profiling_stats
 
     world = MPI.COMM_WORLD
     rank, size = world.Get_rank(), world.Get_size()
@@ -108,7 +109,7 @@ def main():
                     ),
                     F_max_global=np.ones(1),
                     comm=comm,
-                    profiling_stats={"level_stats": []},
+                    profiler=Profiler(new_profiling_stats(), rank=rank),
                 )
                 assert generated == 0
                 results = world.allgather(

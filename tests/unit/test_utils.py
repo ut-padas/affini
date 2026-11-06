@@ -1,3 +1,5 @@
+"""Tests for src/utils.repeats, including zero repeat counts."""
+
 import unittest
 
 import numpy as np

@@ -9,6 +9,7 @@ import src.adaptive_clustering as ac
 import src.work_stealing as ws
 from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 from src.clusters import ClusterBatch
+from src.profiling import Profiler, new_profiling_stats
 
 
 class _Status:
@@ -22,6 +23,12 @@ class _MPI:
 
 
 class _Comm:
+    """
+    Scripted two-rank communicator: rank 1 announces a load, answers this rank's steal
+    request with a delayed grant (or a denial), sends a crossed request, and leaves a
+    buffered state update that only retirement's exact drain can find.
+    """
+
     def __init__(self, grant, has_g):
         self.grant = grant
         self.has_g = has_g
@@ -109,6 +116,7 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
     monkeypatch.setattr(ws, "MPI", _MPI)
     monkeypatch.setattr(ws, "MIN_LOAD_THRESHOLD", 1000)
     comm = _Comm(grant, has_g)
+    profiler = Profiler(new_profiling_stats(), events=True)
     buffers, count, _, _, levels = ac._run_local_refinement(
         config=ClusteringConfig(
             mode=SurrogateMode.NEAREST_NEIGHBOR,
@@ -128,7 +136,7 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
         clusters=ClusterBatch.empty(d=1, fd=1),
         F_max_global=np.ones(1),
         comm=comm,
-        profiling_stats={"level_stats": []},
+        profiler=profiler,
     )
     assert not comm.states
     assert count == levels == int(grant)
@@ -137,6 +145,11 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
         assert buffers["counts"][0] == 3
         assert buffers["centroids"][0, 0] == 1
         assert len(comm.payloads) == 3 + int(has_g)
+    # The protocol shows up in the event timeline, in order.
+    kinds = [e["kind"] for e in profiler.events if e["kind"].startswith(("steal", "retire"))]
+    reply = "steal_received" if grant else "steal_denied"
+    assert kinds[:2] == ["steal_request", reply] and kinds[-2:] == ["retire_start", "retired"]
+    assert all(e["rank"] == 0 and e["t"] >= 0 for e in profiler.events)
 
 
 @pytest.mark.parametrize("stealing", [False, True])

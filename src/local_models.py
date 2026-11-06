@@ -1,26 +1,39 @@
 """
 The function fitted on each cluster (leaf) of the AFINNI forest.
 
-A ``LocalModel`` owns three things that used to be spread over the code:
+A ``LocalModel`` owns four things:
 
-- ``fit``: fit the model on every cluster of a batch at once;
-- ``evaluate``: evaluate those models at given points, used both for the
-  acceptance test during training and for inference;
-- ``columns``: the per-cluster parameters stored for accepted clusters.
+- ``fit``: fit the model on every cluster of a batch at once. The refinement loop
+  evaluates the fitted model at the cluster's points for the acceptance test.
+- ``finalize`` (optional): extra parameters computed only for *accepted* clusters,
+  after the acceptance test (e.g. the Hessian of a second-order Taylor model).
+  They are used at inference but not by the acceptance test.
+- ``evaluate``: evaluate the models at given points, used both for the acceptance
+  test during training and for inference;
+- ``columns``: every per-cluster parameter stored for accepted clusters, i.e. the
+  keys returned by ``fit`` plus those returned by ``finalize``.
 
 Adding a model (e.g. a local quadratic or kernel ridge regression) means writing
-one subclass; the refinement loop, output buffers and MPI gathering only see the
-columns it declares.
+one subclass and registering it in ``LOCAL_MODELS``; the refinement loop, output
+buffers, MPI gathering, prediction and ``AFINNISurrogate.save``/``load_model``
+only see the columns it declares. A model declares the data it needs with
+``needs_centroid_grad`` (gradients at the centroids, ``ClusterFitData.g_c``) and
+``needs_point_grad`` (gradients at every point, ``ClusterFitData.G``); the loop
+evaluates and carries gradients only when the model or the split strategy needs
+them. ``settings()`` returns the constructor arguments, so a saved model can be
+rebuilt by name.
 
-Performance contract: ``fit`` and ``evaluate`` are fully vectorized over all
-clusters / points in one call, with no Python loops over points or clusters.
-``evaluate`` accepts ``cluster_ids`` of shape (N,) (one cluster per point, in
-training) or (n, k) (k candidate clusters per query, at inference); in the (n, k)
-case ``X`` stays (n, d) and is broadcast, never copied k times.
+Performance contract: ``fit``, ``finalize`` and ``evaluate`` are fully vectorized
+over all clusters / points in one call, with no Python loops over points or
+clusters, and keep arrays on the active backend (``xp``). ``evaluate`` accepts
+``cluster_ids`` of shape (N,) (one cluster per point, in training) or (n, k) (k
+candidate clusters per query, at inference); in the (n, k) case ``X`` stays
+(n, d) and is broadcast, never copied k times.
 
 Besides a model's own parameters, ``evaluate`` may read the columns every
 cluster stores: ``"centroids"`` (K, d) and ``"f"`` (K, fd), the function value at
-the centroid.
+the centroid. Those names, and ``"Q"``, ``"E_cluster"`` and ``"counts"``, are
+reserved (``SHARED_COLUMNS``).
 """
 
 from abc import ABC, abstractmethod
@@ -29,15 +42,17 @@ from dataclasses import dataclass
 import numpy as np
 
 from src import Array, xp
-from src.adaptive_clustering_utils import (
-    ClusteringConfig,
-    SurrogateMode,
+from src.clusters import ParamSpec
+from src.modes import SurrogateMode
+from src.numerics import (
+    TINY_EPS,
     _reduce_sum_1d,
+    _symmetric_point_covariance,
     run_fused_cross_cov,
     run_fused_stats,
     solve_regularized_covariance_inplace,
 )
-from src.clusters import ParamSpec
+from src.registry import Registry
 
 
 @dataclass
@@ -67,15 +82,29 @@ class LocalModel(ABC):
     """
 
     name: str
-    needs_centroid_grad: bool = False  # the loop must evaluate grad f at centroids
+    needs_centroid_grad: bool = False  # fit/evaluate need ClusterFitData.g_c
+    needs_point_grad: bool = False  # fit/finalize need ClusterFitData.G
+
+    def settings(self) -> dict:
+        """Constructor arguments, so ``LOCAL_MODELS.create((name, settings))`` rebuilds it."""
+        return {}
 
     @abstractmethod
     def columns(self, d: int, fd: int) -> dict[str, ParamSpec]:
-        """Per-cluster parameters stored for every accepted cluster."""
+        """Per-cluster parameters stored for every accepted cluster (fit + finalize)."""
 
     @abstractmethod
     def fit(self, data: ClusterFitData) -> dict[str, Array]:
         """Fit every cluster; returns parameters with a leading (K,) axis."""
+
+    def finalize(self, data: ClusterFitData, params: dict[str, Array]) -> dict[str, Array]:
+        """
+        Extra parameters of *accepted* clusters, computed after the acceptance test.
+
+        ``data`` holds only the accepted clusters and ``params`` their ``fit``
+        output. Returns the columns not produced by ``fit`` (none by default).
+        """
+        return {}
 
     @abstractmethod
     def evaluate(self, params: dict[str, Array], X: Array, cluster_ids: Array) -> Array:
@@ -84,10 +113,16 @@ class LocalModel(ABC):
 
         ``cluster_ids`` (N,) with ``X`` (N, d) returns (N, fd); ``cluster_ids``
         (n, k) with ``X`` (n, d) returns (n, k, fd). ``params`` holds this model's
-        parameters plus the shared ``"centroids"`` and ``"f"`` columns.
+        parameters plus the shared ``"centroids"`` and ``"f"`` columns. The
+        acceptance test passes only the ``fit`` output, so columns added by
+        ``finalize`` may be absent.
         """
 
 
+LOCAL_MODELS: Registry[LocalModel] = Registry("local model", LocalModel)
+
+
+@LOCAL_MODELS.register
 class ConstantModel(LocalModel):
     """f_hat(x) = f(c): nearest-neighbor interpolation (``NEAREST_NEIGHBOR``)."""
 
@@ -103,52 +138,108 @@ class ConstantModel(LocalModel):
         return params["f"][cluster_ids]
 
 
+def lsq_hessians(
+    X: Array, G: Array, centroids: Array, g_c: Array, labels: Array, counts: Array
+) -> Array:
+    """
+    Symmetric Hessian H (K, fd, d, d) of every output component of each cluster,
+    fitted by least squares to the gradient residuals ``G - g_c`` of that
+    component: ``C H_j + H_j C = S_j`` (see ``lsq_hessian_in_eigenbasis``), with
+    ``C`` the cluster's point covariance. Used as the second-order Taylor term.
+    """
+    K = len(counts)
+    d, fd = X.shape[1], G.shape[1]
+    Cov = _symmetric_point_covariance(X, centroids, labels, K)
+    dvals, U = xp.linalg.eigh(Cov)
+    dvals = xp.maximum(dvals, TINY_EPS)
+    denom = dvals[:, :, None] + dvals[:, None, :]  # (K, d, d)
+
+    Hs = xp.empty((K, fd, d, d), dtype=xp.float64)
+    # One output component at a time, to keep the gradient interaction small.
+    for j in range(fd):
+        ac = xp.full(K, j, dtype=xp.int32)
+        _, E_j = run_fused_stats(
+            X, centroids, labels, K, d, fd, ac, G=G, g_mus=g_c, calc_E=True
+        )
+        S_j = E_j + E_j.transpose(0, 2, 1)
+        F_mat = (U.transpose(0, 2, 1) @ S_j @ U) / denom  # H_j in the eigenbasis of C
+        H_j = U @ F_mat @ U.transpose(0, 2, 1)
+        Hs[:, j] = 0.5 * (H_j + H_j.transpose(0, 2, 1))
+    return Hs
+
+
+@LOCAL_MODELS.register
 class TaylorModel(LocalModel):
     """
-    f_hat(x) = f(c) + g(c) (x - c)  [+ 0.5 (x - c)^T H (x - c) if ``second_order``].
+    f_hat_j(x) = f_j(c) + g_j(c) (x - c)  [+ 0.5 (x - c)^T H_j (x - c) if ``second_order``].
 
-    Uses the gradient at the centroid (``TAYLOR_*`` modes). The second-order term
-    uses a Hessian ``"H"`` that is only estimated for accepted clusters, so it is
-    not part of the acceptance test; it is added to the stored columns and used at
-    inference.
+    Uses the gradient at the centroid (``TAYLOR_*`` modes). With ``second_order``,
+    every output component ``j`` gets its own Hessian ``H_j``, column ``"H"`` of
+    shape (fd, d, d), fitted to the per-point gradients of accepted clusters in
+    ``finalize``: it is not part of the acceptance test, and it needs gradients at
+    every point.
     """
 
     name = "taylor"
     needs_centroid_grad = True
 
     def __init__(self, second_order: bool = False):
-        self.second_order = second_order
+        self.second_order = bool(second_order)
+
+    @property
+    def needs_point_grad(self) -> bool:
+        return self.second_order
+
+    def settings(self):
+        return {"second_order": self.second_order}
 
     def columns(self, d, fd):
         cols = {"g": ParamSpec((fd, d))}
         if self.second_order:
-            cols["H"] = ParamSpec((d, d))
+            cols["H"] = ParamSpec((fd, d, d))
         return cols
 
     def fit(self, data):
         assert data.g_c is not None, "TaylorModel needs the gradient at the centroids"
         return {"g": data.g_c}
 
+    def finalize(self, data, params):
+        """Per-output Hessians of accepted clusters; needs ``data.G``."""
+        if not self.second_order:
+            return {}
+        if data.G is None:
+            raise RuntimeError("A second-order TaylorModel needs gradients at every point.")
+        return {
+            "H": lsq_hessians(
+                data.X, data.G, data.centroids, data.g_c, data.labels, data.sizes
+            )
+        }
+
     def evaluate(self, params, X, cluster_ids):
+        """First-order prediction, plus the quadratic term when an ``"H"`` column is present."""
         f = params["f"][cluster_ids]
         g = params["g"][cluster_ids]
         c = params["centroids"][cluster_ids]
+        if "H" in params and params["H"].ndim != 4:
+            raise ValueError(
+                f"Taylor Hessians must have shape (K, fd, d, d); got {params['H'].shape}."
+            )
         if cluster_ids.ndim == 1:
             dx = X - c
             out = f + xp.einsum("nmd,nd->nm", g, dx)
             if "H" in params:
-                H = params["H"][cluster_ids][:, None]  # (N, 1, d, d)
+                H = params["H"][cluster_ids]  # (N, fd, d, d)
                 out = out + 0.5 * xp.einsum("nc,nfcd,nd->nf", dx, H, dx)
             return out
         dx = X[:, None, :] - c
         out = f + xp.einsum("nkfd,nkd->nkf", g, dx)
         if "H" in params:
-            n, k = cluster_ids.shape
-            H = params["H"][cluster_ids].reshape(n, k, -1, X.shape[1], X.shape[1])
+            H = params["H"][cluster_ids]  # (n, k, fd, d, d)
             out += 0.5 * xp.einsum("nkc,nkfcd,nkd->nkf", dx, H, dx)
         return out
 
 
+@LOCAL_MODELS.register
 class AffineLSQModel(LocalModel):
     """
     f_hat(x) = A x + b, a least-squares fit to the cluster's points with adaptive
@@ -209,18 +300,29 @@ def local_model_for_mode(mode: SurrogateMode, second_order: bool = False) -> Loc
     raise ValueError(f"No local model for mode {mode}")
 
 
-def make_local_model(config: ClusteringConfig) -> LocalModel:
-    """The local model used by ``config.mode``."""
-    return local_model_for_mode(config.mode, second_order=config.store_hess)
+def make_local_model(config) -> LocalModel:
+    """The local model ``config`` uses (``config.components().local_model``)."""
+    return config.components().local_model
+
+
+# Columns every accepted cluster stores, whatever its model.
+SHARED_COLUMNS = ("centroids", "f", "Q", "E_cluster", "counts")
 
 
 def output_columns(model: LocalModel, d: int, fd: int) -> dict[str, ParamSpec]:
     """Every column stored per accepted cluster: the shared ones plus the model's."""
+    own = model.columns(d, fd)
+    clash = sorted(set(own) & set(SHARED_COLUMNS))
+    if clash:
+        raise ValueError(
+            f"Local model {model.name!r} declares reserved column name(s) {clash}; "
+            f"{list(SHARED_COLUMNS)} are stored for every model."
+        )
     return {
         "centroids": ParamSpec((d,)),
         "f": ParamSpec((fd,)),
         "Q": ParamSpec((d, d)),
         "E_cluster": ParamSpec(()),
         "counts": ParamSpec((), np.int64),
-        **model.columns(d, fd),
+        **own,
     }

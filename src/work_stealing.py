@@ -17,9 +17,9 @@ import time
 
 import numpy as np
 
-from src.adaptive_clustering_utils import CudaTimer
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 from src.clusters import ClusterBatch
+from src.profiling import Profiler
 
 logger = logging.getLogger(__name__)
 
@@ -82,15 +82,12 @@ class WorkStealer:
 
     enabled = True
 
-    def __init__(
-        self, comm, d: int, fd: int, profiling_stats: dict, profile_timing: bool
-    ):
+    def __init__(self, comm, d: int, fd: int, profiler: Profiler):
         self.comm = comm
         self.rank = comm.Get_rank()
         self.size = comm.Get_size()
         self.d, self.fd = d, fd
-        self.profiling_stats = profiling_stats
-        self.profile_timing = profile_timing
+        self.profiler = profiler
 
         self.status = MPI.Status()
         self.local_load = 0
@@ -102,8 +99,8 @@ class WorkStealer:
         self._broadcasts_sent = 0
         self._broadcasts_received = np.zeros(self.size, dtype=np.int64)
 
-    def _timer(self, key: str) -> CudaTimer:
-        return CudaTimer(key, self.profiling_stats, self.profile_timing)
+    def _timer(self, key: str):
+        return self.profiler.phase(key)
 
     # --- Load gossip -------------------------------------------------------
 
@@ -134,6 +131,7 @@ class WorkStealer:
         """Record this rank's load and send it to every other rank."""
         self.set_load(load)
         self._broadcast()
+        self.profiler.event("load", n_pts=int(load))
 
     def _receive_state(self) -> None:
         while self.comm.Iprobe(
@@ -145,6 +143,7 @@ class WorkStealer:
             self._broadcasts_received[src] += 1
 
     def _broadcast(self) -> None:
+        """Send this rank's load to every peer with blocking 8-byte sends (assumes eager delivery)."""
         self._broadcasts_sent += 1
         self._send_buf[0] = self.local_load
         for r in range(self.size):
@@ -188,9 +187,13 @@ class WorkStealer:
                 )
                 queue, gift = queue.split(queue.n_clusters - n_give)
                 send_clusters(self.comm, gift, thief)
+                elapsed = time.perf_counter() - t_send
+                self.profiler.event(
+                    "steal_grant", thief=thief, n_pts=gift.n_pts,
+                    n_clusters=gift.n_clusters, mid_level=batch is not None, dur=elapsed,
+                )  # fmt: skip
                 self.publish_load(queue.n_pts)
 
-                elapsed = time.perf_counter() - t_send
                 kind = "mid-level steal" if batch is not None else "steal"
                 logger.info(
                     f"{where}: Granted {kind} to R{thief:02} | "
@@ -198,8 +201,7 @@ class WorkStealer:
                     f"send={elapsed:.3f}s | "
                     f"remaining pts={queue.n_pts:,} clusters={queue.n_clusters:,}"
                 )
-                if self.profile_timing:
-                    self.profiling_stats["time_mpi_send"] += elapsed
+                self.profiler.add_time("time_mpi_send", elapsed)
             else:
                 if batch is not None and n_open <= 1:
                     reason = "MID_LEVEL_NO_CLUSTERS"
@@ -212,12 +214,13 @@ class WorkStealer:
                         f"STEAL_SIZE (only {queue.n_clusters} cluster(s), need > 1)"
                     )
                 self.comm.send(reason, dest=thief, tag=TAG_STEAL_DENY)
+                self.profiler.event("steal_deny", thief=thief, reason=reason)
                 if batch is None:
                     logger.debug(f"{where}: Denied steal to R{thief:02}: {reason}")
         return queue
 
     def _deny_idle_requests(self) -> None:
-        # Idle ranks must answer even while waiting for their own response.
+        """Deny pending requests; idle ranks must answer even while awaiting their own reply."""
         while self.comm.Iprobe(
             source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=self.status
         ):
@@ -241,7 +244,9 @@ class WorkStealer:
                 self.publish_load(0)
             self._deny_idle_requests()
             if np.sum(self.global_loads) == 0 or level_limit_reached:
+                self.profiler.event("retire_start")
                 self._retire()
+                self.profiler.event("retired")
                 logger.info(f"R{self.rank:02}: All ranks retired. Terminating.")
                 return True, None
 
@@ -255,6 +260,7 @@ class WorkStealer:
                 f"(Load: {self.global_loads[target]:,}) [my load: {self.local_load:,}]"
             )
             self.comm.send(self.rank, dest=target, tag=TAG_STEAL_REQ)
+            self.profiler.event("steal_request", victim=target, victim_load=int(self.global_loads[target]))
             t_wait = time.perf_counter()
             while True:
                 self.poll_state()
@@ -266,21 +272,26 @@ class WorkStealer:
                 if self.comm.Iprobe(source=target, tag=TAG_STEAL_GRANT):
                     t_recv = time.perf_counter()
                     stolen = recv_clusters(self.comm, target, self.d, self.fd)
-                    self.publish_load(stolen.n_pts)
                     waited = time.perf_counter() - t_wait
                     transfer = time.perf_counter() - t_recv
+                    self.profiler.event(
+                        "steal_received", victim=target, n_pts=stolen.n_pts,
+                        n_clusters=stolen.n_clusters, has_g=stolen.G is not None,
+                        waited=waited, dur=transfer,
+                    )  # fmt: skip
+                    self.publish_load(stolen.n_pts)
                     logger.info(
                         f"R{self.rank:02}: Steal OK from R{target:02} | "
                         f"pts={stolen.n_pts:,} clusters={stolen.n_clusters:,} | "
                         f"waited={waited:.3f}s transfer={transfer:.3f}s"
                     )
-                    if self.profile_timing:
-                        self.profiling_stats["time_mpi_recv"] += transfer
+                    self.profiler.add_time("time_mpi_recv", transfer)
                     return False, stolen
 
                 if self.comm.Iprobe(source=target, tag=TAG_STEAL_DENY):
                     reason = self.comm.recv(source=target, tag=TAG_STEAL_DENY)
                     waited = time.perf_counter() - t_wait
+                    self.profiler.event("steal_denied", victim=target, reason=reason, waited=waited)
                     logger.debug(
                         f"R{self.rank:02}: Steal denied by R{target:02} "
                         f"(reason={reason}, waited {waited:.3f}s). Sleeping."
@@ -289,9 +300,13 @@ class WorkStealer:
                     return False, None
 
     def _retire(self) -> None:
-        # Enter only with no local work and no outstanding steal request. Retire
-        # from stealing, but keep answering requests until every rank has
-        # retired. A load snapshot alone cannot detect work in transit.
+        """
+        Leave stealing once every rank has: keep denying requests until a non-blocking
+        barrier completes, then drain exactly the load updates still buffered.
+
+        Enter only with no local work and no outstanding request; a load snapshot
+        alone cannot detect work in transit.
+        """
         if self.size == 1:
             return
         retirement = self.comm.Ibarrier()
@@ -312,12 +327,17 @@ class WorkStealer:
 
 
 class NoWorkStealing:
-    """Drop-in for ``WorkStealer`` when stealing is disabled: every call is a no-op."""
+    """
+    Drop-in for ``WorkStealer`` when stealing is disabled: every call is a no-op,
+    except that a rank which runs out of work waits for the others as recorded idle
+    time, so profiles show what stealing would recover.
+    """
 
     enabled = False
 
-    def __init__(self, rank: int):
-        self.rank = rank
+    def __init__(self, comm, profiler: Profiler):
+        self.comm, self.profiler = comm, profiler
+        self.rank, self.size = comm.Get_rank(), comm.Get_size()
 
     def exchange_initial_loads(self, load: int) -> None:
         pass
@@ -341,16 +361,23 @@ class NoWorkStealing:
         return queue
 
     def idle_step(self, level_limit_reached: bool) -> tuple[bool, ClusterBatch | None]:
+        """Wait (as idle time) until every rank has finished, then retire."""
         logger.info(
             f"R{self.rank:02}: No clusters to process or exceeded max levels. Terminating."
         )
+        if self.size > 1:
+            # Short polled waits: the profiler streams them, so a monitor shows the rank as idle.
+            done = self.comm.Ibarrier()
+            while True:
+                with self.profiler.phase("time_idle"):
+                    if done.Test():
+                        break
+                    time.sleep(0.01)
         return True, None
 
 
-def make_work_stealer(
-    enabled: bool, comm, d: int, fd: int, profiling_stats: dict, profile_timing: bool
-):
+def make_work_stealer(enabled: bool, comm, d: int, fd: int, profiler: Profiler):
     """Return a ``WorkStealer`` if ``enabled``, else a ``NoWorkStealing``."""
     if enabled:
-        return WorkStealer(comm, d, fd, profiling_stats, profile_timing)
-    return NoWorkStealing(comm.Get_rank())
+        return WorkStealer(comm, d, fd, profiler)
+    return NoWorkStealing(comm, profiler)

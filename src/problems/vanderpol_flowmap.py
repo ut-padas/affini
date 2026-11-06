@@ -1,3 +1,5 @@
+"""Van der Pol flow map x(0) -> x(tf) and its Jacobian, batched over trajectories."""
+
 import multiprocessing as mp
 from functools import partial
 

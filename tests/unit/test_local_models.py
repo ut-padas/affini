@@ -9,13 +9,16 @@ from src import _to_host, xp
 from src.adaptive_clustering_utils import ClusteringConfig, SurrogateMode
 from src.clusters import ColumnBuffer, ParamSpec
 from src.local_models import (
+    LOCAL_MODELS,
     AffineLSQModel,
     ClusterFitData,
     ConstantModel,
+    LocalModel,
     TaylorModel,
     make_local_model,
     output_columns,
 )
+from tests._helpers import assert_backend_equal
 
 K, d, fd, n, k = 7, 3, 2, 11, 4
 rng = np.random.default_rng(0)
@@ -23,7 +26,7 @@ PARAMS = {
     "centroids": rng.standard_normal((K, d)),
     "f": rng.standard_normal((K, fd)),
     "g": rng.standard_normal((K, fd, d)),
-    "H": rng.standard_normal((K, d, d)),
+    "H": rng.standard_normal((K, fd, d, d)),  # one Hessian per output component
     "A_fit": rng.standard_normal((K, fd, d)),
     "b_fit": rng.standard_normal((K, fd)),
 }
@@ -36,7 +39,11 @@ def _p(*keys):
 
 
 def _surrogate_reference(kind):
-    """The (query, neighbour) predictions as src/surrogate.py computed them before LocalModel."""
+    """
+    The (query, neighbour) predictions as src/surrogate.py computed them before
+    LocalModel, except that the second-order term now uses one Hessian per output
+    component (the old code reshaped a single (d, d) Hessian per leaf).
+    """
     flat = NN.reshape(-1)
     f_nb = PARAMS["f"][flat].reshape(n, k, fd)
     dx = Q[:, None, :] - PARAMS["centroids"][NN]
@@ -46,7 +53,7 @@ def _surrogate_reference(kind):
         J = PARAMS["g"][flat].reshape(n, k, fd, d)
         out = f_nb + np.einsum("nkfd,nkd->nkf", J, dx)
         if kind == "taylor2":
-            H = PARAMS["H"][flat].reshape(n, k, 1, d, d)
+            H = PARAMS["H"][NN]  # (n, k, fd, d, d): every component has its own H
             out += 0.5 * np.einsum("nkc,nkfcd,nkd->nkf", dx, H, dx)
         return out
     A = PARAMS["A_fit"][flat].reshape(n, k, fd, d)
@@ -65,7 +72,7 @@ def _surrogate_reference(kind):
 def test_inference_path_matches_previous_surrogate(kind, model, keys):
     out = _to_host(model.evaluate(_p(*keys), xp.asarray(Q), xp.asarray(NN)))
     assert out.shape == (n, k, fd)
-    np.testing.assert_array_equal(out, _surrogate_reference(kind))
+    assert_backend_equal(out, _surrogate_reference(kind))
 
 
 @pytest.mark.parametrize(
@@ -89,7 +96,7 @@ def test_training_and_inference_paths_agree(model, keys):
     )
 
 
-def _fit_data(X, F, sizes, g_c=None):
+def _fit_data(X, F, sizes, g_c=None, G=None):
     sizes = np.asarray(sizes)
     labels = np.repeat(np.arange(len(sizes)), sizes)
     starts = np.r_[0, np.cumsum(sizes)[:-1]]
@@ -97,7 +104,7 @@ def _fit_data(X, F, sizes, g_c=None):
     return ClusterFitData(
         X=xp.asarray(X),
         F=xp.asarray(F),
-        G=None,
+        G=None if G is None else xp.asarray(G),
         labels=xp.asarray(labels),
         starts=xp.asarray(starts),
         sizes=xp.asarray(sizes),
@@ -179,3 +186,87 @@ def test_column_buffer_grows_and_checks_columns():
         )
     with pytest.raises(ValueError, match="different numbers of rows"):
         buf.append({"a": np.zeros((2, 2)), "c": np.zeros(1, np.int64)})
+
+
+def test_second_order_finalize_fits_one_hessian_per_output():
+    # Two outputs with opposite and independent curvature, f_j = f_j(c) + g_j.dx
+    # + 1/2 dx^T A_j dx on every cluster. A single Hessian shared by the outputs
+    # (the old behaviour) cannot represent this; per-output Hessians recover it.
+    sizes = [40, 70]
+    A = rng.standard_normal((fd, d, d))
+    A = A + A.transpose(0, 2, 1)
+    A[1] = -A[0] + np.diag(np.arange(1.0, d + 1))
+    X = rng.standard_normal((sum(sizes), d))
+    starts = np.r_[0, np.cumsum(sizes)[:-1]]
+    labels = np.repeat(np.arange(len(sizes)), sizes)
+    centroids = np.add.reduceat(X, starts) / np.asarray(sizes)[:, None]
+    g_c = rng.standard_normal((len(sizes), fd, d))
+    dx = X - centroids[labels]
+    F = np.einsum("nfd,nd->nf", g_c[labels], dx) + 0.5 * np.einsum("nc,fcd,nd->nf", dx, A, dx)
+    G = g_c[labels] + np.einsum("fcd,nd->nfc", A, dx)  # exact gradients
+    data = _fit_data(X, F, sizes, g_c=g_c, G=G)
+    data.centroids, data.f_c = xp.asarray(centroids), xp.zeros((len(sizes), fd))
+
+    model = TaylorModel(second_order=True)
+    assert model.needs_point_grad and model.needs_centroid_grad
+    params = model.fit(data)
+    final = model.finalize(data, params)
+    assert set(params) | set(final) == set(model.columns(d, fd))
+    H = _to_host(final["H"])
+    assert H.shape == (len(sizes), fd, d, d)
+    np.testing.assert_allclose(H, np.broadcast_to(A, H.shape), atol=1e-8)
+
+    leaf = {**params, **final, "centroids": data.centroids, "f": data.f_c}
+    np.testing.assert_allclose(_to_host(model.evaluate(leaf, data.X, data.labels)), F, atol=1e-8)
+
+
+def test_first_order_models_do_not_need_point_gradients():
+    assert not TaylorModel().needs_point_grad
+    assert not AffineLSQModel().needs_point_grad and not ConstantModel().needs_point_grad
+    assert TaylorModel().finalize(None, {}) == {}
+
+
+def test_second_order_finalize_requires_point_gradients():
+    sizes = [5, 6]
+    X, F = rng.standard_normal((11, d)), rng.standard_normal((11, fd))
+    data = _fit_data(X, F, sizes, g_c=rng.standard_normal((2, fd, d)))
+    with pytest.raises(RuntimeError, match="gradients at every point"):
+        TaylorModel(second_order=True).finalize(data, {})
+
+
+def test_evaluate_rejects_a_shared_hessian():
+    params = {**_p("centroids", "f", "g"), "H": xp.asarray(rng.standard_normal((K, d, d)))}
+    with pytest.raises(ValueError, match=r"\(K, fd, d, d\)"):
+        TaylorModel(second_order=True).evaluate(params, xp.asarray(Q), xp.asarray(NN))
+
+
+def test_builtin_models_are_registered_and_rebuildable():
+    for model in (ConstantModel(), TaylorModel(), TaylorModel(True), AffineLSQModel()):
+        assert LOCAL_MODELS[model.name] is type(model)
+        rebuilt = LOCAL_MODELS.create((model.name, model.settings()))
+        assert type(rebuilt) is type(model) and rebuilt.settings() == model.settings()
+
+
+def test_reserved_column_names_are_rejected():
+    class Clashing(LocalModel):
+        name = "clashing"
+
+        def columns(self, d, fd):
+            return {"Q": ParamSpec((d, d))}
+
+        def fit(self, data):
+            return {}
+
+        def evaluate(self, params, X, cluster_ids):
+            return params["f"][cluster_ids]
+
+    with pytest.raises(ValueError, match="reserved column"):
+        output_columns(Clashing(), d, fd)
+
+
+def test_column_buffer_checks_trailing_shapes():
+    buf = ColumnBuffer({"a": ParamSpec((2, 3))}, capacity=4)
+    with pytest.raises(ValueError, match="declared \\(2, 3\\)"):
+        buf.append({"a": np.zeros((1, 3, 2))})
+    with pytest.raises(ValueError, match="declared"):
+        buf.append({"a": np.zeros((1, 2))})  # would silently broadcast otherwise

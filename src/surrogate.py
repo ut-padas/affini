@@ -1,3 +1,11 @@
+"""
+The public surrogate: ``AFINNISurrogate`` trains with ``adaptive_clustering``, stores
+the accepted leaves on every MPI rank, predicts with a two-stage (Euclidean, then
+trust-region) neighbour search, and saves/loads a versioned model file.
+``compute_error_metrics`` scores predictions inside and outside the trust regions.
+"""
+
+import json
 import logging
 import time
 import warnings
@@ -15,11 +23,42 @@ from src import (
     xp,
 )
 from src.adaptive_clustering import adaptive_clustering
-from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
-from src.local_models import LocalModel, local_model_for_mode, make_local_model
+from src.config import ClusteringConfig
+from src.evaluation import Evaluator
+from src.local_models import LOCAL_MODELS, LocalModel, local_model_for_mode
+from src.modes import SurrogateMode
+from src.registry import ComponentSpec, component_spec
 
 logger = logging.getLogger(__name__)
+
+# Version of the file format written by AFINNISurrogate.save(). Files without a
+# version (written before it existed) are still read by load_model().
+MODEL_FORMAT_VERSION = 1
+DEFAULT_MODEL_FILENAME = "afinni_surrogate.npz"
+_LEGACY_MODEL_FILENAME = "hatann_surrogate.npz"  # default name before the rename
+_PARAM_PREFIX = "param:"
+
+_UNSET: Any = object()  # sentinel: argument not passed
+
+
+def _model_path(path: Union[str, Path]) -> Path:
+    """``path`` as an ``.npz`` file path; a directory gets the default file name."""
+    path = Path(path)
+    if path.is_dir():
+        return path / DEFAULT_MODEL_FILENAME
+    return path if path.suffix == ".npz" else path.with_suffix(".npz")
+
+
+def _json_default(obj: Any) -> Any:
+    """Make NumPy scalars/arrays and enums JSON serializable."""
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if hasattr(obj, "value"):
+        return obj.value
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 class AFINNISurrogate:
@@ -41,6 +80,16 @@ class AFINNISurrogate:
         # The local model's own per-leaf parameters, keyed by the columns it declares
         # (e.g. "A_fit"/"b_fit", or "g" and optionally "H").
         self.leaf_params: dict[str, Array] = {}
+        # Per-leaf training diagnostics: the accepted error and the number of points.
+        self.E_cluster_src = None
+        self.counts_src = None
+        # The effective settings and components of the last training run.
+        self.config: dict[str, Any] = {}
+        # False if refinement stopped at MAX_LEVELS with clusters still unresolved;
+        # their region has no leaves (see num_unresolved_clusters / _pts).
+        self.converged: Optional[bool] = None
+        self.num_unresolved_clusters = 0
+        self.num_unresolved_pts = 0
         self.profiling_stats = {}
         self.tree_data = None
 
@@ -69,7 +118,7 @@ class AFINNISurrogate:
     Hs_src = property(
         lambda self: self._leaf_param("H"),
         lambda self, v: self._set_leaf_param("H", v),
-        doc="(K, d, d) second-order Taylor Hessians.",
+        doc="(K, fd, d, d) second-order Taylor Hessians, one per output component.",
     )
     A_fits_src = property(
         lambda self: self._leaf_param("A_fit"),
@@ -98,6 +147,11 @@ class AFINNISurrogate:
             "Hs_src": self.Hs_src,
             "A_fits_src": self.A_fits_src,
             "b_fits_src": self.b_fits_src,
+            "leaf_params": dict(self.leaf_params),
+            "E_cluster_src": self.E_cluster_src,
+            "counts_src": self.counts_src,
+            "config": self.config,
+            "converged": self.converged,
         }
 
     def train(
@@ -109,6 +163,13 @@ class AFINNISurrogate:
         oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
         *,
         mode: SurrogateMode = SurrogateMode.AFFINE_COV_HESS,
+        local_model: ComponentSpec = None,
+        split_strategy: ComponentSpec = None,
+        sampler: ComponentSpec = None,
+        acceptance: ComponentSpec = None,
+        trust_region: ComponentSpec = None,
+        save_model: Optional[Union[bool, str, Path]] = _UNSET,
+        load_if_exists: bool = _UNSET,
         ATOL: float = 1e-2,
         RTOL: float = 1e-2,
         ERROR_METRIC: Literal["L2", "Linf-local", "Linf-global"] = "Linf-global",
@@ -127,25 +188,77 @@ class AFINNISurrogate:
         BATCH_SIZE: int = 10_000_000,
         MAX_LEVELS: int = 50,
         PROFILE_TIMING: bool = False,
+        PROFILE_EVENTS: bool = False,
+        PROFILE_DIR: Optional[Union[str, Path]] = None,
         LOG_MEM_STATS: bool = False,
         SAVE_ALL_GEN_TRAINING_DATA: bool = False,
         HESSIAN: Optional[Callable] = None,
         SAVE_INITIAL_CLUSTERING: bool = False,
         USE_EXISTING_INITIAL_CLUSTERING: bool = False,
     ):
+        """
+        Train the surrogate (collectively on every MPI rank).
+
+        ``mode`` picks a preset pair (local model, split strategy). ``local_model``,
+        ``split_strategy``, ``sampler``, ``acceptance`` and ``trust_region``
+        override single components (an instance, a registered name, or ``(name,
+        settings)``; see ``src.config``); every rank must pass the same specs.
+
+        ``save_model`` / ``load_if_exists`` are deprecated: call ``save()`` and
+        ``load_model()`` instead. They still behave as before: with a path (or
+        True, for ``./afinni_surrogate.npz``) an existing file is loaded instead
+        of training when ``load_if_exists`` (default True), and the trained model
+        is saved there otherwise.
+
+        ``PROFILE_TIMING`` / ``PROFILE_EVENTS`` / ``PROFILE_DIR`` control profiling
+        (see ``src.profiling``); results are in ``profiling_stats`` and can be
+        plotted with ``src.plotting``.
+
+        If refinement stops at ``MAX_LEVELS`` before every cluster is accepted,
+        training still succeeds but ``converged`` is False and a warning is
+        issued; if no cluster at all was accepted, a ``RuntimeError`` is raised.
+        """
         comm = MPI.COMM_WORLD
         rank = _get_mpi_rank()
+
+        model_filepath = None
+        if save_model is not _UNSET or load_if_exists is not _UNSET:
+            warnings.warn(
+                "train(save_model=..., load_if_exists=...) is deprecated; call "
+                "save() after training and AFINNISurrogate.load_model() instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if save_model is not _UNSET and save_model not in (None, False):
+            model_filepath = _model_path(Path.cwd() if save_model is True else save_model)
+        if load_if_exists is _UNSET:
+            load_if_exists = True
+
+        if load_if_exists and model_filepath is not None:
+            existing = model_filepath
+            if not existing.exists() and existing.name == DEFAULT_MODEL_FILENAME:
+                existing = existing.with_name(_LEGACY_MODEL_FILENAME)
+            if existing.exists():
+                try:
+                    loaded = self.load_model(existing)
+                    self.__dict__.update(loaded.__dict__)
+                    if rank == 0:
+                        logger.info(f"Loaded existing model from {existing}")
+                    return
+                except Exception as e:
+                    if rank == 0:
+                        logger.warning(
+                            f"Failed to load existing model: {e}. Proceeding with training."
+                        )
 
         if oracle_fn is not None and (f_fn is not None or g_fn is not None):
             raise ValueError("Cannot specify both oracle_fn and f_fn/g_fn.")
 
         t0 = time.perf_counter()
 
-        self.mode = mode
-
         # 1. MPI-Distributed Adaptive Clustering
         config = ClusteringConfig(
-            mode=self.mode,
+            mode=mode,
             atol=ATOL,
             rtol=RTOL,
             error_metric=ERROR_METRIC,
@@ -165,7 +278,14 @@ class AFINNISurrogate:
             store_affine_fits=STORE_AFFINE_FIT,
             log_mem_stats=LOG_MEM_STATS,
             profile_timing=PROFILE_TIMING,
+            profile_events=PROFILE_EVENTS,
+            profile_dir=None if PROFILE_DIR is None else str(PROFILE_DIR),
             save_all_gen_training_data=SAVE_ALL_GEN_TRAINING_DATA,
+            local_model=local_model,
+            split_strategy=split_strategy,
+            sampler=sampler,
+            acceptance=acceptance,
+            trust_region=trust_region,
         )
         if oracle_fn is None and (
             f_fn is None or (not config.requires_no_grads and g_fn is None)
@@ -173,7 +293,7 @@ class AFINNISurrogate:
             raise ValueError(
                 "Must specify oracle_fn or required f_fn/g_fn for the chosen mode."
             )
-        self.local_model = make_local_model(config)
+        leaf_model = config.components().local_model
         evaluator = Evaluator(
             f_fn=f_fn, g_fn=g_fn, oracle_fn=oracle_fn, hessian_fn=HESSIAN
         )
@@ -191,12 +311,30 @@ class AFINNISurrogate:
 
         bcast_data = comm.bcast(bcast_data, root=0)
 
-        # 3. Store Data on all ranks
+        n_leaves = int(bcast_data["centroids"].shape[0])
+        if n_leaves == 0:
+            raise RuntimeError(
+                f"Training accepted no clusters: refinement stopped at MAX_LEVELS="
+                f"{MAX_LEVELS} with {bcast_data['num_unresolved_clusters']:,} unresolved "
+                f"clusters ({bcast_data['num_unresolved_pts']:,} points). Increase "
+                f"MAX_LEVELS or loosen ATOL/RTOL."
+            )
+
+        # 3. Store Data on all ranks (only now, so a failed run leaves self as it was)
+        self.trained = False
+        self.mode = config.mode
+        self.local_model = leaf_model
+        self.config = config.to_dict()
         self.X_src = xp.asarray(bcast_data["centroids"])
         self.f_src = xp.asarray(bcast_data["f"])
         self.Qs_src = xp.asarray(bcast_data["Q"])
+        self.E_cluster_src = xp.asarray(bcast_data["E_cluster"])
+        self.counts_src = np.asarray(bcast_data["counts"])
         self.N_src = self.X_src.shape[0]
         self.profiling_stats = bcast_data["profiling_stats"]
+        self.converged = bool(bcast_data["converged"])
+        self.num_unresolved_clusters = int(bcast_data["num_unresolved_clusters"])
+        self.num_unresolved_pts = int(bcast_data["num_unresolved_pts"])
 
         # Whatever parameters the local model declared, under their column names.
         d, fd = self.X_src.shape[1], self.f_src.shape[1]
@@ -206,76 +344,151 @@ class AFINNISurrogate:
         }
 
         # 4. Build individual KNN index per rank
+        self.knn_index = None
         self._build_knn_index()
         self.trained = True
 
         if rank == 0:
             logger.info(f"Training Time: {time.perf_counter() - t0:.4f}s")
             logger.info(f"Trained Clusters: {self.N_src:,}")
+            if not self.converged:
+                warnings.warn(
+                    f"Training stopped at MAX_LEVELS={MAX_LEVELS} with "
+                    f"{self.num_unresolved_clusters:,} clusters "
+                    f"({self.num_unresolved_pts:,} points) still above tolerance; "
+                    f"their region has no leaves. See AFINNISurrogate.converged.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            if model_filepath is not None:
+                self.save(model_filepath)
 
-    def save(self, filepath: Union[str, Path]) -> None:
+    def save(self, filepath: Union[str, Path]) -> Path:
         """
-        Deprecated: save the trained model to an ``.npz`` file.
+        Save the trained model to an ``.npz`` file and return its path.
 
-        Saving and loading are being redesigned along with the per-cluster model
-        refactor, and this format will change. ``train()`` no longer saves models.
+        A directory gets the default file name (``afinni_surrogate.npz``); another
+        suffix is replaced by ``.npz``. The file stores a format version, the leaf
+        arrays, every local-model parameter under its column name, the local
+        model's registered name and settings, the effective training
+        configuration and the profiling statistics, all without pickling.
         """
-        warnings.warn(
-            "AFINNISurrogate.save() is deprecated; the model file format will change.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         if not self.trained:
             raise RuntimeError("Cannot save an untrained model.")
 
-        filepath = Path(filepath)
-        if filepath.is_dir():
-            filepath = filepath / "hatann_surrogate.npz"
-        elif filepath.suffix != ".npz":
-            filepath = filepath.with_suffix(".npz")
-
+        filepath = _model_path(filepath)
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
-        save_dict = {
-            "trained": self.trained,
+        metadata = {
+            "format_version": MODEL_FORMAT_VERSION,
             "mode": self.mode.value if self.mode else None,
-            "N_src": self.N_src,
+            "local_model": component_spec(self.local_model),
+            "N_src": int(self.N_src),
+            "d": int(self.X_src.shape[1]),
+            "fd": int(self.f_src.shape[1]),
+            "leaf_params": sorted(self.leaf_params),
+            "config": self.config,
+            "converged": self.converged,
+            "num_unresolved_clusters": self.num_unresolved_clusters,
+            "num_unresolved_pts": self.num_unresolved_pts,
+        }
+        try:
+            metadata_json = json.dumps(metadata, default=_json_default)
+        except TypeError as e:
+            raise TypeError(
+                f"Cannot save: the model's settings or configuration are not JSON "
+                f"serializable ({e}). Give custom components plain settings()."
+            ) from e
+        arrays = {
+            "format_version": np.asarray(MODEL_FORMAT_VERSION),
+            "metadata": np.asarray(metadata_json),
+            "profiling_stats": np.asarray(
+                json.dumps(self.profiling_stats, default=_json_default)
+            ),
             "X_src": _to_host(self.X_src),
             "f_src": _to_host(self.f_src),
-            "J_src": _to_host(self.J_src) if self.J_src is not None else None,
             "Qs_src": _to_host(self.Qs_src),
-            "Hs_src": _to_host(self.Hs_src) if self.Hs_src is not None else None,
-            "A_fits_src": (
-                _to_host(self.A_fits_src) if self.A_fits_src is not None else None
-            ),
-            "b_fits_src": (
-                _to_host(self.b_fits_src) if self.b_fits_src is not None else None
-            ),
-            "profiling_stats": self.profiling_stats,
-            "tree_data": self.tree_data,
+            **{_PARAM_PREFIX + k: _to_host(v) for k, v in self.leaf_params.items()},
         }
+        if self.E_cluster_src is not None:
+            arrays["E_cluster_src"] = _to_host(self.E_cluster_src)
+        if self.counts_src is not None:
+            arrays["counts_src"] = _to_host(self.counts_src)
 
-        np.savez_compressed(str(filepath), **save_dict, allow_pickle=True)
+        np.savez_compressed(str(filepath), **arrays)
         self._model_file = filepath
         logger.info(f"Model saved to {filepath}")
+        return filepath
 
     @classmethod
-    def load_model(cls, filepath: Union[str, Path]) -> "AFINNISurrogate":
+    def load_model(
+        cls, filepath: Union[str, Path], local_model: Optional[LocalModel] = None
+    ) -> "AFINNISurrogate":
         """
-        Deprecated: load a model written by ``save()``.
+        Load a model written by ``save()`` (any format version, including files
+        written before versioning).
 
-        Saving and loading are being redesigned along with the per-cluster model
-        refactor; files from this format will not be readable afterwards.
+        The local model is rebuilt from its registered name and settings, so a
+        custom model's module must be imported (registering it) before loading;
+        alternatively pass the ``local_model`` instance to use.
         """
-        warnings.warn(
-            "AFINNISurrogate.load_model() is deprecated; the model file format will change.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         filepath = Path(filepath)
         if not filepath.exists():
             raise FileNotFoundError(f"Model file not found: {filepath}")
 
+        with np.load(str(filepath), allow_pickle=False) as data:
+            if "format_version" not in data.files:
+                return cls._load_legacy(filepath, local_model)
+            version = int(data["format_version"])
+            if version > MODEL_FORMAT_VERSION:
+                raise ValueError(
+                    f"{filepath} uses model format {version}, newer than the supported "
+                    f"{MODEL_FORMAT_VERSION}; update the code to load it."
+                )
+            meta = json.loads(str(data["metadata"]))
+            arrays = {k: data[k] for k in data.files}
+
+        instance = cls()
+        instance.mode = SurrogateMode(meta["mode"]) if meta["mode"] else None
+        if local_model is None:
+            spec = meta["local_model"]
+            if spec["name"] not in LOCAL_MODELS:
+                raise ValueError(
+                    f"{filepath} was trained with local model {spec['name']!r}, which is "
+                    f"not registered. Import the module that registers it, or pass "
+                    f"local_model= to load_model()."
+                )
+            local_model = LOCAL_MODELS.create((spec["name"], spec["settings"]))
+        instance.local_model = local_model
+        instance.config = meta["config"]
+        instance.converged = meta["converged"]
+        instance.num_unresolved_clusters = int(meta["num_unresolved_clusters"])
+        instance.num_unresolved_pts = int(meta["num_unresolved_pts"])
+        instance.N_src = int(meta["N_src"])
+        instance.X_src = _to_device(arrays["X_src"])
+        instance.f_src = _to_device(arrays["f_src"])
+        instance.Qs_src = _to_device(arrays["Qs_src"])
+        if "E_cluster_src" in arrays:
+            instance.E_cluster_src = _to_device(arrays["E_cluster_src"])
+        if "counts_src" in arrays:
+            instance.counts_src = arrays["counts_src"]
+        instance.leaf_params = {
+            k[len(_PARAM_PREFIX):]: _to_device(v)
+            for k, v in arrays.items()
+            if k.startswith(_PARAM_PREFIX)
+        }
+        instance.profiling_stats = json.loads(str(arrays["profiling_stats"]))
+        instance._check_leaf_params(filepath)
+        instance.trained = True
+        instance._model_file = filepath
+        instance._build_knn_index()
+        return instance
+
+    @classmethod
+    def _load_legacy(
+        cls, filepath: Path, local_model: Optional[LocalModel]
+    ) -> "AFINNISurrogate":
+        """Read a file written before the format was versioned (pickled object arrays)."""
         data = np.load(str(filepath), allow_pickle=True)
         instance = cls()
 
@@ -284,33 +497,65 @@ class AFINNISurrogate:
         mode_val = data.get("mode", None)
         if mode_val is not None and mode_val.item() is not None:
             instance.mode = SurrogateMode(mode_val.item())
-            instance.local_model = local_model_for_mode(instance.mode)
 
         instance.N_src = int(data["N_src"])
         instance.X_src = _to_device(data["X_src"])
         instance.f_src = _to_device(data["f_src"])
+        fd = instance.f_src.shape[1]
 
         instance.J_src = _to_device(data["J_src"]) if data["J_src"].shape else None
         instance.Qs_src = _to_device(data["Qs_src"])
-        instance.Hs_src = _to_device(data["Hs_src"]) if data["Hs_src"].shape else None
+        H = data["Hs_src"] if data["Hs_src"].shape else None
+        if H is not None and H.ndim == 3:
+            # Old files store one (d, d) Hessian per leaf.
+            if fd != 1:
+                raise ValueError(
+                    f"{filepath} stores one Hessian per leaf shared by all {fd} outputs, "
+                    f"which is not a valid second-order model; retrain it."
+                )
+            H = H[:, None]
+        instance.Hs_src = _to_device(H) if H is not None else None
         instance.A_fits_src = (
             _to_device(data["A_fits_src"]) if data["A_fits_src"].shape else None
         )
         instance.b_fits_src = (
             _to_device(data["b_fits_src"]) if data["b_fits_src"].shape else None
         )
+        if local_model is None and instance.mode is not None:
+            local_model = local_model_for_mode(instance.mode, second_order=H is not None)
+        instance.local_model = local_model
 
         _prof = data["profiling_stats"]
         instance.profiling_stats = _prof.item() if _prof.size > 0 else {}
         _td = data["tree_data"]
         instance.tree_data = _td.item() if _td.size > 0 else None
 
+        instance._check_leaf_params(filepath)
         instance._model_file = filepath
         instance._build_knn_index()
 
         return instance
 
+    def _check_leaf_params(self, filepath: Path) -> None:
+        """Every column the local model declares is present with its declared shape."""
+        if self.local_model is None:
+            return
+        d, fd = self.X_src.shape[1], self.f_src.shape[1]
+        for name, spec in self.local_model.columns(d, fd).items():
+            value = self.leaf_params.get(name)
+            if value is None or tuple(value.shape) != (self.N_src, *spec.shape):
+                got = None if value is None else tuple(value.shape)
+                raise ValueError(
+                    f"{filepath}: local model {self.local_model.name!r} needs column "
+                    f"{name!r} of shape {(self.N_src, *spec.shape)}; found {got}."
+                )
+
     def _build_knn_index(self):
+        """
+        Index the leaf centroids for the coarse Euclidean search: cuML when available,
+        else FAISS on the host, exact up to 5,000 leaves and approximate (HNSW) above,
+        so CPU candidate lists can differ from GPU ones on large models.
+        """
         if self.X_src is None:
             return
 
@@ -349,6 +594,7 @@ class AFINNISurrogate:
             logger.info(f"KNN Index built in {time.perf_counter() - t0:.4f}s")
 
     def _query_knn(self, query_points: Array, k: int) -> tuple[Array, Array]:
+        """``(indices, distances)`` of the ``min(k, N_src)`` nearest centroids, on the active backend."""
         if self.knn_index is None:
             self._build_knn_index()
 
@@ -375,8 +621,14 @@ class AFINNISurrogate:
         batch_size: int = 5000,
     ) -> tuple:
         """
-        MPI-Parallel Inference via kNN with Memory-Safe Batching.
-        Rank 0 splits and scatters query points, computes locally, and gathers results.
+        Predict collectively on every rank: rank 0's queries are scattered, predicted
+        locally, and gathered; returns ``(predictions, outside_mask)`` on rank 0 and
+        ``(None, None)`` elsewhere.
+
+        For each query, the ``k_nn * coarse_factor`` nearest centroids are reranked by
+        trust-region distance ``dx^T Q dx``; the best ``k_nn`` leaves' models are blended
+        with inverse-distance weights (``strict_trust_region`` drops leaves with
+        distance > 1). A query is flagged outside when its best candidate is > 1.
         """
         if not self.trained:
             raise RuntimeError("Model not trained.")
@@ -431,8 +683,8 @@ class AFINNISurrogate:
         return_cluster_assignments: bool = False,
     ) -> tuple[Array, Array]:
         """
-        Core localized math function execution on an individual rank's data chunk,
-        processed in batches to prevent Out-Of-Memory (OOM) errors during einsum.
+        Predict this rank's queries in chunks of ``batch_size`` to bound the
+        (chunk, k, fd, d) gathers; see ``predict`` for the method.
         """
         N, D = query_points.shape
         assert (
@@ -441,6 +693,14 @@ class AFINNISurrogate:
             and self.f_src is not None
             and self.Qs_src is not None
         )
+        if N == 0:  # e.g. fewer queries than MPI ranks
+            empty = (
+                xp.empty((0, self.f_src.shape[1]), dtype=self.f_src.dtype),
+                xp.empty((0,), dtype=bool),
+            )
+            if return_cluster_assignments:
+                return (*empty, xp.empty((0, max(1, min(k_nn, self.N_src))), dtype=xp.int64))
+            return empty
 
         # Determine true k values based on available centroids
         if k_nn < len(self.X_src):
@@ -533,9 +793,8 @@ class AFINNISurrogate:
         self, query_points: Array, k_coarse: int = 10, batch_size: int = 50000
     ) -> Array:
         """
-        Fast dedicated method to return only the unguaranteed mask.
-        Bypasses all surrogate prediction math (Affine/Taylor/Shepard).
-        Assumes query_points are already local to the rank.
+        Outside-trust-region mask only, skipping model evaluation; for queries already
+        local to this rank (no MPI scatter).
         """
         assert self.trained and self.X_src is not None and self.Qs_src is not None
         N = query_points.shape[0]
@@ -570,18 +829,10 @@ def compute_error_metrics(
     preds, gt, ug_mask, atol: float, rtol: float, return_ptwise_error_arrays: bool = False
 ) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Array]]:
     """
-    Compute error metrics for the predictions.
-
-    Args:
-        preds: Predicted values (N, F_dim)
-        gt: True values (N, F_dim)
-        ug_mask: Boolean array indicating which points are unguaranteed (N,)
-        atol: Absolute tolerance for determining "good" vs "bad" points among the guaranteed ones.
-        rtol: Relative tolerance for determining "good" vs "bad" points among the guaranteed ones.
-        return_ptwise_error_arrays: If True, also return the pointwise relative error arrays.
-
-    Returns:
-        Dictionary of error metrics.
+    L2/Linf errors over all queries and separately inside/outside the trust regions
+    (``ug_mask`` marks outside), plus the share of inside points within ``rtol`` or
+    ``atol``; a vector point is good only if every component is. Sections with no
+    points report NaN. Optionally also returns the pointwise relative errors.
     """
     TINY_EPS = 1e-12
 

@@ -1,3 +1,8 @@
+"""
+Lorenz-96 flow map in JAX/diffrax, for GPU evaluation. Loose tolerances (1e-3) trade
+accuracy for speed; compare against the SciPy flow map before trusting results.
+"""
+
 import jax
 import jax.numpy as jnp
 from diffrax import diffeqsolve, ODETerm, Dopri5, PIDController
@@ -14,6 +19,7 @@ def lorenz96_jax(t, x, F):
 
 # Define flowmap
 def lorenz96_flowmap_jax(y0, forcing, tf):
+    """State at ``tf`` with shape (1, d): diffrax saves only the final time by default."""
     rhs = ODETerm(lorenz96_jax)
     solver = Dopri5()
     controller = PIDController(rtol=1e-3, atol=1e-3)
