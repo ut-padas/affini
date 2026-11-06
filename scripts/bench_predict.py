@@ -2,30 +2,37 @@
 Time AFINNISurrogate.predict() on a Rosenbrock problem.
 
 Uses only the public train/predict API, so the same script runs on any commit.
-To compare two commits (e.g. before and after a refactor), run it on each with
---save-predictions on the first and --compare on the second:
+To compare two commits (e.g. before and after a refactor), run it from each
+checkout's root with --save-predictions on the first and --compare on the second:
 
-    git checkout <old>; uv run python scripts/bench_predict.py --save-predictions old.npz
-    git checkout <new>; uv run python scripts/bench_predict.py --compare old.npz
+    PYTHONPATH=. python scripts/bench_predict.py --save-predictions old.npz   # old checkout
+    PYTHONPATH=. python scripts/bench_predict.py --compare old.npz            # new checkout
 
-Timings use the median of --repeats calls after one warm-up call; on a GPU the
-device is synchronized around each call.
+--compare exits with status 1 if the leaf count, the predictions (beyond --rtol) or
+the trust masks differ. Timings use the median of --repeats calls after one warm-up
+call; on a GPU the device is synchronized around each call. For a full differential
+check of every mode, use scripts/regression_check.py.
 """
 
 import argparse
 import logging
+import sys
 import time
 from functools import partial
+from pathlib import Path
 
 import numpy as np
 
-from src import IS_CUPY_BACKEND, _to_host, xp
-from src.adaptive_clustering_utils import SurrogateMode
-from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
-from src.surrogate import AFINNISurrogate
+sys.path.insert(0, str(Path.cwd()))  # the checkout being measured
+
+from src import IS_CUPY_BACKEND, _to_host, xp  # noqa: E402
+from src.adaptive_clustering_utils import SurrogateMode  # noqa: E402
+from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess  # noqa: E402
+from src.surrogate import AFINNISurrogate  # noqa: E402
 
 
 def _sync():
+    """Wait for queued GPU work, so timings include it."""
     if IS_CUPY_BACKEND:
         import cupy as cp
 
@@ -48,6 +55,10 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save-predictions", help="write predictions to this .npz")
     parser.add_argument("--compare", help="compare predictions with this .npz")
+    parser.add_argument(
+        "--rtol", type=float, default=0.0,
+        help="allowed relative prediction difference for --compare (0 = identical; use ~1e-12 on GPU)",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
 
@@ -58,6 +69,7 @@ def main():
         or mode == SurrogateMode.AFFINE_COV_HESS_EXACT_GRAD
     )
     g = partial(rosenbrock_grad, a=100.0) if needs_grad else None
+    hess = partial(rosenbrock_hess, a=100.0) if "exact_hess" in mode.value else None
 
     rng = np.random.default_rng(args.seed)
     X = xp.asarray(rng.uniform(-2.0, 3.0, (args.n_train, args.dim)))
@@ -70,6 +82,7 @@ def main():
         f_fn=f,
         g_fn=g,
         mode=mode,
+        HESSIAN=hess,
         ATOL=args.tol,
         RTOL=args.tol,
         SEED=args.seed,
@@ -100,21 +113,32 @@ def main():
     )
 
     if args.save_predictions:
-        np.savez(args.save_predictions, pred=pred, unguaranteed=unguaranteed)
+        np.savez(args.save_predictions, pred=pred, unguaranteed=unguaranteed, n_leaves=surrogate.N_src)
         print(f"saved predictions to {args.save_predictions}")
-    if args.compare:
-        ref = np.load(args.compare)
-        same = np.array_equal(ref["pred"], pred) and np.array_equal(
-            ref["unguaranteed"], unguaranteed
-        )
-        max_diff = (
-            float(np.max(np.abs(ref["pred"] - pred)))
-            if ref["pred"].shape == pred.shape
-            else float("nan")
-        )
-        print(
-            f"compare with {args.compare}: identical={same}  max |diff|={max_diff:.3e}"
-        )
+    if args.compare and not compare(np.load(args.compare), pred, unguaranteed, surrogate.N_src, args.rtol):
+        raise SystemExit(1)
+
+
+def compare(ref, pred, unguaranteed, n_leaves, rtol) -> bool:
+    """Print how the run differs from the saved reference; True if within ``rtol`` and identical masks."""
+    problems = []
+    if "n_leaves" in ref and int(ref["n_leaves"]) != n_leaves:
+        problems.append(f"leaves {int(ref['n_leaves'])} -> {n_leaves}")
+    if ref["pred"].shape != pred.shape:
+        problems.append(f"prediction shape {ref['pred'].shape} -> {pred.shape}")
+    else:
+        if not np.array_equal(np.isfinite(pred), np.isfinite(ref["pred"])):
+            problems.append("non-finite predictions differ")
+        rel = np.abs(ref["pred"] - pred) / np.maximum(np.abs(ref["pred"]), 1e-300)
+        worst = float(np.nanmax(rel)) if rel.size else 0.0
+        print(f"max relative prediction difference: {worst:.3e}")
+        if worst > rtol:
+            problems.append(f"predictions differ by {worst:.3e} > rtol={rtol:g}")
+        n_mask = int(np.sum(ref["unguaranteed"] != unguaranteed))
+        if n_mask:
+            problems.append(f"{n_mask} trust-mask entries differ")
+    print("compare:", "PASS" if not problems else "FAIL: " + "; ".join(problems))
+    return not problems
 
 
 if __name__ == "__main__":

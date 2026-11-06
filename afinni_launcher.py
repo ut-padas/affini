@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 import jax
+import matplotlib.pyplot as plt
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_host, xp
 from src.adaptive_clustering_utils import SurrogateMode
@@ -18,12 +19,13 @@ from src.heuristic_parameters import (
     get_N_TRAIN,
     get_NUM_INITIAL_CLUSTERS,
 )
-from src.plotter_utils import (
+from src.plotting import (
     plot_adaptive_clustering_results,
     plot_cluster_projections_for_wave,
     plot_error_histogram,
     plot_near_centers,
     plot_wave_2d_errors,
+    plot_profile_dashboard,
     plot_wave_line_errors,
 )
 from src.sampling import SAMPLERS
@@ -33,9 +35,29 @@ TINY_EPS = 1e-12
 DEFAULT_SAMPLING_METHOD = "convex_combination"
 
 
+DEFAULT_Q_REG = 1e-6
+DEFAULT_COARSE_FACTOR = 10
+
+
 def _sampling_suffix(sampling_method: str) -> str:
     """File-name suffix for a non-default sampler (default runs keep their names)."""
     return "" if sampling_method == DEFAULT_SAMPLING_METHOD else f"_aug{sampling_method}"
+
+
+def _settings_suffix(sampling_method: str, Q_reg: float, coarse_factor: int) -> str:
+    """
+    File-name suffix for every non-default setting that changes results, so a run with
+    different settings never skips because of an unrelated cached result. Runs with
+    the defaults keep their historical names, so existing results are still found.
+    """
+    suffix = _sampling_suffix(sampling_method)
+    if Q_reg != DEFAULT_Q_REG:
+        suffix += f"_qreg{Q_reg:g}"
+    if coarse_factor != DEFAULT_COARSE_FACTOR:
+        suffix += f"_coarse{coarse_factor}"
+    return suffix
+
+
 SEED = 0
 
 logger = logging.getLogger(__name__)
@@ -122,7 +144,7 @@ def conduct_experiment_given_data(
         # All ranks participate in training
         surrogate.train(
             X_train=X_train,
-            Y_train=None,
+            Y_train=Y_train,
             f_fn=f_fn,
             g_fn=g_fn,
             mode=ERROR_EVAL_MODE,
@@ -215,11 +237,26 @@ def conduct_experiment_given_data(
         "min_pts_per_cluster": MIN_PTS_PER_CLUSTER,
         "use_work_stealing": USE_WORK_STEALING,
         "sampling_method": SAMPLING_METHOD,
+        "Q_reg": Q_reg,
+        "k_neighbours": K_NEIGHBOURS,
+        "coarse_factor": COARSE_FACTOR,
+        "converged": surrogate.converged,
+        "num_unresolved_pts": surrogate.num_unresolved_pts,
+        "config": surrogate.config,  # every effective training setting and component
         "error_metrics": error_metrics,
     }
-    with open(json_fpath, "w") as jf:
-        json.dump(json_data, jf, indent=4)
+    # Write to a temporary file first: an existing JSON means "done" to later runs,
+    # so an interrupted write must not leave a truncated one behind.
+    tmp_fpath = json_fpath.with_suffix(".json.tmp")
+    with open(tmp_fpath, "w") as jf:
+        json.dump(json_data, jf, indent=4, default=str)
+    tmp_fpath.replace(json_fpath)
     print(f"Experiment completed and saved to {json_fpath}")
+
+    profile_fpath = json_fpath.with_name(json_fpath.stem + "_profile.json")
+    with open(profile_fpath, "w") as pf:
+        json.dump(surrogate.profiling_stats, pf, default=float)
+    plt.close(plot_profile_dashboard(surrogate, json_fpath.with_name(json_fpath.stem + "_profile.png")))
 
     plot_save_path = json_fpath.with_name(json_fpath.stem + "_error_histogram.png")
     plot_error_histogram(
@@ -375,6 +412,7 @@ def create_summary_dataframe(exp_dir: Path):
         for key in key_list:
             data_dict[key].append(data[key])
 
+        data_dict["sampling_method"].append(data.get("sampling_method", DEFAULT_SAMPLING_METHOD))
         data_dict["e"].append(data["error_metrics"]["all"]["l2_rel_error"])
         data_dict["e_in"].append(data["error_metrics"]["in"]["l2_rel_error"])
         data_dict["p_out"].append(data["error_metrics"]["perct_out"])
@@ -389,6 +427,7 @@ def create_summary_dataframe(exp_dir: Path):
         "error_eval_mode",
         "error_metric",
         "initial_clustering_method",
+        "sampling_method",
         "N_0",
         "N_test",
         "N",
@@ -667,7 +706,7 @@ def run_problem(
 
     json_fpath = (
         EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}{_sampling_suffix(sampling_method)}.json"
+        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}{_settings_suffix(sampling_method, Q_reg, coarse_factor)}.json"
     )
     settings = dict(
         json_fpath=json_fpath,
@@ -766,10 +805,14 @@ def lorenz_trajectories_experiment(
                 X_test[((j - 1) * N_start_test) : (j * N_start_test)]
             )
 
-    # Put this into HATANN
+    # Put this into AFINNI. The mode and MPI size are only in the name when they
+    # differ from the historical defaults, so existing results are still found.
     EXP_DIR = RESULTS_DIR / "lorenz_trajexp"
-    json_fpath = (
-        EXP_DIR / f"dim{d}_dt{dt}_tol{tol}_ntrain{N_start_train * (N_steps+1)}{_sampling_suffix(sampling_method)}.json"
+    mode_suffix = "" if error_eval_mode == SurrogateMode.AFFINE_COV_HESS else f"_{error_eval_mode.value}"
+    size_suffix = "" if _size == 1 else f"_mpisz{_size}"
+    json_fpath = EXP_DIR / (
+        f"dim{d}_dt{dt}_tol{tol}_ntrain{N_start_train * (N_steps + 1)}{mode_suffix}{size_suffix}"
+        f"{_settings_suffix(sampling_method, Q_reg, coarse_factor)}.json"
     )
 
     conduct_experiment_given_data(
@@ -848,13 +891,13 @@ def setup_argparse():
         "--coarse_factor",
         help="The number of nearest neighbor points to use during inference.",
         type=int,
-        default=10,
+        default=DEFAULT_COARSE_FACTOR,
     )
     parser.add_argument(
         "--Q_reg",
         help="The regularization to use for the trust region construction, using Tikhonov.",
         type=float,
-        default=1e-6,
+        default=DEFAULT_Q_REG,
     )
     parser.add_argument(
         "--N_train",
