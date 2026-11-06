@@ -64,6 +64,9 @@ db.sqlite3-journal
 # Log directory
 .logs/
 
+# Local scratch space: benchmark outputs, monitor streams, temporary scripts
+scratch/
+
 # Flask stuff:
 instance/
 .webassets-cache
