@@ -362,3 +362,38 @@ def test_public_methods_keep_signatures_and_predict_reports_search_stats():
     s.train(xp.asarray(X), f_fn=lambda x: (x**2).sum(1), ATOL=0.05, RTOL=0.05, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40)
     s.predict(xp.asarray(X[:700]), batch_size=300)  # three batches
     assert s.search_stats["queries"] == 700 and s.search_stats["fallback_rows"] >= 0
+
+
+def test_nested_empty_collectives_preserve_the_parent_scope():
+    import src.adaptive_clustering as ac
+
+    def outer():
+        own_scope = ac._PROFILER_SCOPES[-1]
+        ac.run_collective(lambda: None, "inner")
+        assert ac._PROFILER_SCOPES[-1] is own_scope
+
+    ac.run_collective(outer, "outer")
+    assert not ac._PROFILER_SCOPES
+
+
+def test_component_preparation_can_predict_without_corrupting_training_scope(tmp_path, monkeypatch):
+    import src.adaptive_clustering as ac
+    from src.local_models import ConstantModel
+
+    inner = AFINNISurrogate()
+    _train_small(inner, lambda x: xp.ones((len(x), 1)), mode=SurrogateMode.NEAREST_NEIGHBOR)
+
+    class PreparedConstant(ConstantModel):
+        """Predict during component setup, before the outer engine creates its profiler."""
+
+        name = "prepared_constant_scope_test"
+
+        def __init__(self):
+            inner.predict(xp.zeros((1, 2)))
+
+    monkeypatch.setitem(LOCAL_MODELS, PreparedConstant.name, PreparedConstant)
+    outer = AFINNISurrogate()
+    _train_small(outer, lambda x: xp.ones((len(x), 1)), local_model=PreparedConstant.name,
+                 mode=SurrogateMode.NEAREST_NEIGHBOR, PROFILE_DIR=str(tmp_path))
+    assert outer.trained
+    assert not ac._PROFILER_SCOPES

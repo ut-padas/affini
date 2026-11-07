@@ -638,7 +638,8 @@ def run_collective(operation, what: str):
                 comm.Abort(1)
         raise
     finally:
-        _PROFILER_SCOPES.remove(scope)
+        # Equal empty lists still belong to different calls; unwind by stack position.
+        _PROFILER_SCOPES.pop()
 
 
 def _adaptive_clustering(
