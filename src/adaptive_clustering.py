@@ -50,6 +50,8 @@ INITIAL_CLUSTERING_FILE = "initial_clustering_labels.npy"
 # Initial scatter of clusters from rank 0 (payload tags SCATTER_TAG + 1..4); kept
 # well away from the work-stealing tags.
 SCATTER_TAG = 1000
+LOCAL_RESULT_TAG = 2000
+_OPEN_PROFILERS: list = []  # profilers of running operations, for cleanup on failure  # each rank's merged leaves and profile, sent to rank 0
 
 logger = logging.getLogger(__name__)
 TINY_EPS = 1e-12
@@ -589,11 +591,64 @@ def adaptive_clustering(
     Y: Optional[Array] = None,
 ) -> dict[str, Any] | None:
     """
+    Train collectively on every MPI rank (see ``_adaptive_clustering``).
+
+    Failure protocol: in a single process an exception propagates unchanged. Under MPI
+    an exception on any rank, in any phase (initial evaluation and clustering, scatter,
+    refinement, collection), may leave the other ranks blocked in a collective or a
+    receive, so the failing rank logs its diagnostic (rank and traceback) and calls
+    ``MPI_Abort``, which ends every rank of the job with a non-zero status.
+    """
+    return run_collective(lambda: _adaptive_clustering(X, config, evaluator, Y=Y), "training")
+
+
+def run_collective(operation, what: str):
+    """
+    Run a collective ``operation()`` with the MPI failure policy; the single owner of
+    fatal-failure handling for the public collective entry points (``adaptive_clustering``,
+    ``AFINNISurrogate.train`` and ``predict``), so wrappers are never nested.
+
+    In a single process the original exception propagates unchanged. Under MPI an
+    exception on any rank may leave peers blocked in a collective or receive, so no
+    further collective is attempted: the rank logs a best-effort diagnostic (rank,
+    phase, traceback) and calls ``MPI_Abort`` in ``finally``, so a logging error cannot
+    skip it. Only ``Exception`` is handled; ``KeyboardInterrupt``/``SystemExit`` are left
+    to the MPI launcher. A logging handler that blocks forever is out of scope.
+    """
+    comm = MPI.COMM_WORLD
+    try:
+        result = operation()
+        _OPEN_PROFILERS.clear()  # closed normally by the operation itself
+        return result
+    except Exception:
+        # Release profiler streams the failed operation opened; a cleanup error must
+        # neither replace the original exception nor prevent the MPI abort below.
+        while _OPEN_PROFILERS:
+            try:
+                _OPEN_PROFILERS.pop().close()
+            except Exception:
+                pass
+        if comm.Get_size() > 1:
+            try:
+                logger.critical(f"R{comm.Get_rank():02}: {what} failed; aborting all ranks.", exc_info=True)
+            finally:
+                comm.Abort(1)
+        raise
+
+
+def _adaptive_clustering(
+    X: Array,
+    config: ClusteringConfig,
+    evaluator: Evaluator,
+    *,
+    Y: Optional[Array] = None,
+) -> dict[str, Any] | None:
+    """
     Train collectively on every MPI rank; return the merged leaves on rank 0, None elsewhere.
 
     Only rank 0's ``X`` (and ``Y``, a precomputed f(X)) is read; the initial points
     count as evaluations even when ``Y`` is given. ``config`` is copied, so runtime
-    changes (batch-size cap, max_levels raised for work stealing) never reach the
+    changes (the GPU batch-size cap) never reach the
     caller; ``evaluator.n_evals`` keeps counting across calls. The result holds the
     shared columns, the local model's columns, the convergence status and
     ``profiling_stats``. ``use_existing_initial_clustering`` reuses
@@ -628,6 +683,7 @@ def adaptive_clustering(
         stream_dir=config.profile_dir,
         t0=t0,
     )
+    _OPEN_PROFILERS.append(profiler)  # closed by run_collective if this operation fails
     oracle_seconds_at_start = evaluator.seconds
     timer = profiler.phase
 
@@ -813,23 +869,14 @@ def adaptive_clustering(
         "batch_size": int(config.batch_size), "max_levels": int(config.max_levels),
     }  # fmt: skip
 
-    try:
-        buffers, out_count, local_f_evals, local_gen_pts, last_level = _run_local_refinement(
-            config=config,
-            evaluator=evaluator,
-            clusters=local_clusters,
-            F_max_global=F_max_global,
-            comm=comm,
-            profiler=profiler,
-        )
-    except Exception:
-        if size > 1:
-            # Peers would wait forever in a receive or barrier for this rank: end the
-            # whole job (MPI_Abort) after logging which rank failed and why.
-            logger.critical(f"R{rank:02}: refinement failed; aborting all ranks.", exc_info=True)
-            profiler.close()
-            comm.Abort(1)
-        raise
+    buffers, out_count, local_f_evals, local_gen_pts, last_level = _run_local_refinement(
+        config=config,
+        evaluator=evaluator,
+        clusters=local_clusters,
+        F_max_global=F_max_global,
+        comm=comm,
+        profiler=profiler,
+    )
     profiler.event(
         "done", leaves=int(out_count), generated=int(local_gen_pts),
         unresolved_pts=int(profiling_stats["num_unresolved_pts"]),
@@ -853,7 +900,6 @@ def adaptive_clustering(
     local_result_host["_profiling_stats"] = profiling_stats
 
     with timer("time_gather"):
-        LOCAL_RESULT_TAG = 2000
         if rank != 0:
             logger.info(
                 f"R{rank:03}: Sending local results ({out_count:,} clusters) to rank 0."

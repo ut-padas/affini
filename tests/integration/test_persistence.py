@@ -238,3 +238,72 @@ def test_deprecated_save_model_false_and_true(tmp_path, monkeypatch):
 def test_no_deprecation_warning_without_the_old_arguments(recwarn):
     train()
     assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+
+
+def test_failed_retraining_keeps_the_previous_model_usable(monkeypatch):
+    """A failure while building the new kNN index must not destroy the old model."""
+    import src.surrogate as su
+    from src.surrogate import AFINNISurrogate
+
+    X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
+    s = AFINNISurrogate()
+    s.train(xp.asarray(X), f_fn=lambda x: (x**2).sum(1), ATOL=0.05, RTOL=0.05, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40)
+    before = host(s.predict(xp.asarray(X[:50]))[0])
+
+    def failing(_):
+        raise RuntimeError("index construction failed")
+
+    monkeypatch.setattr(su, "_make_knn_index", failing)
+    with pytest.raises(RuntimeError, match="index construction failed"):
+        s.train(xp.asarray(X), f_fn=lambda x: (x**2).sum(1), ATOL=0.02, RTOL=0.02, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40)
+    monkeypatch.undo()
+    np.testing.assert_array_equal(host(s.predict(xp.asarray(X[:50]))[0]), before)
+
+
+@pytest.mark.skipif(xp.__name__.endswith("cupy"), reason="CPU KD-tree")
+def test_kdtree_build_failure_during_retraining_keeps_the_old_model(monkeypatch):
+    """The tree is built before the new model is installed."""
+    import scipy.spatial
+    from src.surrogate import AFINNISurrogate
+
+    X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
+    s = AFINNISurrogate()
+    s.train(X, f_fn=lambda x: (x**2).sum(1), ATOL=0.05, RTOL=0.05, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40)
+    before = s.predict(X[:50])[0]
+
+    def failing(*a, **k):
+        raise MemoryError("tree build failed")
+
+    monkeypatch.setattr(scipy.spatial, "cKDTree", failing)
+    with pytest.raises(MemoryError):
+        s.train(X, f_fn=lambda x: (x**2).sum(1), ATOL=0.02, RTOL=0.02, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40)
+    monkeypatch.undo()
+    np.testing.assert_array_equal(s.predict(X[:50])[0], before)
+
+
+def test_a_failed_training_closes_its_profiler_stream(tmp_path):
+    """The profiler file must not stay open when the oracle raises during training."""
+    from src.adaptive_clustering import _OPEN_PROFILERS
+    from src.surrogate import AFINNISurrogate
+
+    def failing(_x):
+        raise ValueError("oracle failed")
+
+    with pytest.raises(ValueError, match="oracle failed"):
+        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), f_fn=failing, PROFILE_DIR=str(tmp_path))
+    assert not _OPEN_PROFILERS
+
+
+def test_public_methods_keep_signatures_and_predict_reports_search_stats():
+    import inspect
+
+    from src.surrogate import AFINNISurrogate
+
+    assert "X_train" in inspect.signature(AFINNISurrogate.train).parameters
+    assert "k_nn" in inspect.signature(AFINNISurrogate.predict).parameters
+    assert AFINNISurrogate.predict.__doc__ and AFINNISurrogate.train.__doc__
+    X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
+    s = AFINNISurrogate()
+    s.train(xp.asarray(X), f_fn=lambda x: (x**2).sum(1), ATOL=0.05, RTOL=0.05, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40)
+    s.predict(xp.asarray(X[:700]), batch_size=300)  # three batches
+    assert s.search_stats["queries"] == 700 and s.search_stats["fallback_rows"] >= 0

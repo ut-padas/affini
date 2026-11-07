@@ -263,10 +263,14 @@ class Profiler:
     def close(self) -> None:
         """Flush and close the event stream (idempotent)."""
         if self._stream is not None:
-            self._write(self._last)
-            self._last = None
-            self._stream.close()
-            self._stream = None
+            stream, self._stream = self._stream, None
+            try:
+                self._stream = stream  # _write needs it
+                self._write(self._last)
+            finally:
+                # A failing final write must still release the file.
+                self._stream, self._last = None, None
+                stream.close()
 
 
 def read_event_stream(path: str | Path) -> list[dict[str, Any]]:

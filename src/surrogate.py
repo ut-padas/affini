@@ -5,12 +5,13 @@ trust-region) neighbour search, and saves/loads a versioned model file.
 ``compute_error_metrics`` scores predictions inside and outside the trust regions.
 """
 
+import functools
 import json
 import logging
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, ParamSpec, TypeVar, Union
 
 import numpy as np
 
@@ -22,7 +23,7 @@ from src import (
     _to_host,
     xp,
 )
-from src.adaptive_clustering import adaptive_clustering
+from src.adaptive_clustering import _adaptive_clustering, run_collective
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 from src.config import ClusteringConfig
 from src.evaluation import Evaluator
@@ -61,6 +62,38 @@ def _json_default(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _collective(what: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
+    """
+    Run a public collective method under ``run_collective`` (MPI: a failure on any rank
+    aborts the job). ``functools.wraps`` and ``ParamSpec`` keep the method's signature,
+    annotations and docstring for ``help()``, ``inspect`` and static type checkers.
+    """
+
+    def decorate(method: Callable[_P, _R]) -> Callable[_P, _R]:
+        @functools.wraps(method)
+        def guarded(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+            return run_collective(lambda: method(*args, **kwargs), what)
+
+        return guarded
+
+    return decorate
+
+
+def _make_knn_index(centroids: Array):
+    """The exact kNN index of ``src.knn`` for the active backend."""
+    if IS_CUPY_BACKEND:
+        from src.knn import GpuExactKNN
+
+        return GpuExactKNN(_to_device(centroids))
+    from src.knn import CpuExactKNN
+
+    return CpuExactKNN(_to_host(centroids))
+
+
 class AFINNISurrogate:
     """
     Surrogate using Adaptive Clustering + kNN with Ellipsoidal Distance on GPU.
@@ -95,6 +128,7 @@ class AFINNISurrogate:
 
         self._model_file = None
         self.knn_index = None
+        self.search_stats: dict = {}  # last predict's kNN totals on this rank
 
     def _leaf_params(self) -> dict:
         """The per-cluster arrays ``local_model.evaluate`` reads (see src.local_models)."""
@@ -154,6 +188,7 @@ class AFINNISurrogate:
             "converged": self.converged,
         }
 
+    @_collective("train()")
     def train(
         self,
         X_train: Array,
@@ -297,7 +332,8 @@ class AFINNISurrogate:
         evaluator = Evaluator(
             f_fn=f_fn, g_fn=g_fn, oracle_fn=oracle_fn, hessian_fn=HESSIAN
         )
-        results = adaptive_clustering(X_train, config, evaluator, Y=Y_train)
+        # Unguarded engine body: the failure policy is owned by train() (see run_collective).
+        results = _adaptive_clustering(X_train, config, evaluator, Y=Y_train)
 
         # 2. Broadcast trained structures to all ranks
         bcast_data = None
@@ -320,34 +356,33 @@ class AFINNISurrogate:
                 f"MAX_LEVELS or loosen ATOL/RTOL."
             )
 
-        # 3. Store Data on all ranks (only now, so a failed run leaves self as it was)
-        self.trained = False
-        self.mode = config.mode
-        self.local_model = leaf_model
-        self.config = config.to_dict()
-        # Settings the run changed at runtime (GPU batch cap, MPI level limit).
-        self.config["effective"] = bcast_data["profiling_stats"].get("effective_config", {})
-        self.X_src = xp.asarray(bcast_data["centroids"])
-        self.f_src = xp.asarray(bcast_data["f"])
-        self.Qs_src = xp.asarray(bcast_data["Q"])
-        self.E_cluster_src = xp.asarray(bcast_data["E_cluster"])
-        self.counts_src = np.asarray(bcast_data["counts"])
-        self.N_src = self.X_src.shape[0]
-        self.profiling_stats = bcast_data["profiling_stats"]
-        self.converged = bool(bcast_data["converged"])
-        self.num_unresolved_clusters = int(bcast_data["num_unresolved_clusters"])
-        self.num_unresolved_pts = int(bcast_data["num_unresolved_pts"])
-
-        # Whatever parameters the local model declared, under their column names.
-        d, fd = self.X_src.shape[1], self.f_src.shape[1]
-        self.leaf_params = {
-            name: xp.asarray(bcast_data[name])
-            for name in self.local_model.columns(d, fd)
-        }
-
-        # 4. Build individual KNN index per rank
-        self.knn_index = None
-        self._build_knn_index()
+        # 3. Build the new state, including its kNN index, before touching self, so a
+        # failure anywhere here (e.g. index construction) leaves the previous model usable.
+        X_new = xp.asarray(bcast_data["centroids"])
+        f_new = xp.asarray(bcast_data["f"])
+        d, fd = X_new.shape[1], f_new.shape[1]
+        new_state = {
+            "mode": config.mode,
+            "local_model": leaf_model,
+            "config": {**config.to_dict(),
+                       # Settings the run changed at runtime (GPU batch cap).
+                       "effective": bcast_data["profiling_stats"].get("effective_config", {})},
+            "X_src": X_new,
+            "f_src": f_new,
+            "Qs_src": xp.asarray(bcast_data["Q"]),
+            "E_cluster_src": xp.asarray(bcast_data["E_cluster"]),
+            "counts_src": np.asarray(bcast_data["counts"]),
+            "N_src": X_new.shape[0],
+            "profiling_stats": bcast_data["profiling_stats"],
+            "converged": bool(bcast_data["converged"]),
+            "num_unresolved_clusters": int(bcast_data["num_unresolved_clusters"]),
+            "num_unresolved_pts": int(bcast_data["num_unresolved_pts"]),
+            "leaf_params": {name: xp.asarray(bcast_data[name]) for name in leaf_model.columns(d, fd)},
+            "knn_index": _make_knn_index(X_new),  # 4. per-rank kNN index
+        }  # fmt: skip
+        # Install only now that everything has been built.
+        for name, value in new_state.items():
+            setattr(self, name, value)
         self.trained = True
 
         if rank == 0:
@@ -557,16 +592,8 @@ class AFINNISurrogate:
         if self.X_src is None:
             return
         t0 = time.perf_counter()
-        # Keep X_src in the active array backend (device under CuPy).
-        self.X_src = _to_device(self.X_src)
-        if IS_CUPY_BACKEND:
-            from src.knn import GpuExactKNN
-
-            self.knn_index = GpuExactKNN(self.X_src)
-        else:
-            from src.knn import CpuExactKNN
-
-            self.knn_index = CpuExactKNN(_to_host(self.X_src))
+        self.X_src = _to_device(self.X_src)  # keep X_src in the active backend
+        self.knn_index = _make_knn_index(self.X_src)
         if _get_mpi_rank() == 0:
             logger.info(f"KNN Index built in {time.perf_counter() - t0:.4f}s")
 
@@ -577,8 +604,14 @@ class AFINNISurrogate:
         k = min(k, self.N_src)
         queries = _to_device(query_points) if IS_CUPY_BACKEND else _to_host(query_points)
         distances, indices = self.knn_index.kneighbors(queries, k)
+        stats = self.knn_index.last_search_stats
+        for key in ("queries", "fallback_rows"):
+            self.search_stats[key] = self.search_stats.get(key, 0) + stats[key]
+        self.search_stats["candidates"] = stats["candidates"]
+        self.search_stats["strategy"] = stats.get("strategy", "verified")
         return _to_device(indices), _to_device(distances)
 
+    @_collective("predict()")
     def predict(
         self,
         query_points: Optional[Array] = None,
@@ -597,6 +630,8 @@ class AFINNISurrogate:
         with inverse-distance weights (``strict_trust_region`` drops leaves with
         distance > 1). A query is flagged outside when its best candidate is > 1.
         """
+        # Totals over this call's batches on this rank: queries, fallback rows, strategy.
+        self.search_stats = {}
         if not self.trained:
             raise RuntimeError("Model not trained.")
 
