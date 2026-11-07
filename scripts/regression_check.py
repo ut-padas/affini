@@ -148,6 +148,9 @@ def compare(new_prefix, ref_prefix, rtol):
             elif a.dtype == bool:
                 if (a != b).any():
                     failures.append(f"{k}: {int((a != b).sum())} mask entries differ")
+            elif not np.array_equal(np.isfinite(a), np.isfinite(b)) or not np.all(np.isfinite(b)):
+                # NaN compares as "no difference" in the relative error below.
+                failures.append(f"{k}: {int((~np.isfinite(b)).sum())} non-finite values (reference: {int((~np.isfinite(a)).sum())})")
             elif a.size:
                 err = float(np.max(np.abs(a - b) / np.maximum(np.abs(a), 1e-300)))
                 worst = max(worst, err)
