@@ -33,12 +33,15 @@ from src.modes import SurrogateMode
 from src.numerics import (
     TINY_EPS,
     _reduce_sum_1d,
+    centroid_distances,
     get_n_smallest_per_block,
     lsq_hessian_in_eigenbasis,
     run_fused_cross_cov,
     run_fused_split_projection,
     run_fused_stats,
     solve_regularized_covariance_inplace,
+    sort_by_block_then_value,
+    taylor_residual_norms,
 )
 from src.registry import Registry
 
@@ -139,7 +142,7 @@ class SplitStrategy(ABC):
         if IS_CUPY_BACKEND:
             del CovZ, V_z, v, M
             cp.get_default_memory_pool().free_all_blocks()
-        order = xp.lexsort(xp.stack([scores, data.labels]))  # (N,)
+        order = sort_by_block_then_value(scores, data.labels)  # (N,)
         sorted_scores = scores[order] if self.cut != "median" else None
         return order, self.child_sizes(data.counts, sorted_scores)
 
@@ -215,14 +218,13 @@ class CovarianceHessianSplit(SplitStrategy):
 
     def metric(self, data):
         K, d, fd = len(data.counts), data.X.shape[1], data.F.shape[1]
-        dx = data.X - data.centroids[data.labels]
 
         if self.gradient == "centroid":
-            g_mus_exp = data.g_c[data.labels]  # (N, fd, d)
-            lin = xp.einsum("nmd,nd->nm", g_mus_exp, dx)  # (N, fd)
-            diff = data.F - (data.f_c[data.labels] + lin)  # (N, fd)
+            taylor_err = taylor_residual_norms(
+                data.X, data.F, data.centroids, data.f_c, data.labels, data.g_c
+            )  # (N,)
         else:  # two-pass local fit: gradient from the points nearest the centroid
-            dist_to_mu = xp.linalg.norm(dx, axis=1)  # (N,)
+            dist_to_mu = centroid_distances(data.X, data.centroids, data.labels)  # (N,)
             n_tangent = max(d * 2, self.min_pts_per_cluster // 4)
             tangent_mask = get_n_smallest_per_block(dist_to_mu, data.labels, n_tangent)
             X_core = data.X[tangent_mask]
@@ -236,9 +238,9 @@ class CovarianceHessianSplit(SplitStrategy):
             )  # (K, d, fd)
             A_T_tangent = solve_regularized_covariance_inplace(M_XX, M_XF, d, fd)
             A_tangent = A_T_tangent.transpose(0, 2, 1)  # (K, fd, d)
-            lin = xp.einsum("nmd,nd->nm", A_tangent[data.labels], dx)  # (N, fd)
-            diff = data.F - (data.f_c[data.labels] + lin)  # (N, fd)
-        taylor_err = xp.linalg.norm(diff, axis=1)  # (N,)
+            taylor_err = taylor_residual_norms(
+                data.X, data.F, data.centroids, data.f_c, data.labels, A_tangent
+            )  # (N,)
 
         # Points where the Taylor expansion is (nearly) exact trace out a level set.
         n_est_cov = max(1, self.min_pts_per_cluster // 3)

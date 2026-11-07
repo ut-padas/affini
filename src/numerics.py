@@ -207,10 +207,10 @@ void fused_split_projection(
     if (idx >= N) return;
 
     long long k = labels[idx];
-    int mu_offset = k * D;
-    int x_offset = idx * D;
-    int m_offset = k * D * D;
-    int v_offset = k * D;
+    long long mu_offset = k * D;
+    long long x_offset = (long long)idx * D;
+    long long m_offset = k * D * D;
+    long long v_offset = k * D;
 
     double final_score = 0.0;
     for (int i = 0; i < D; i++) {
@@ -239,9 +239,9 @@ void fused_mahalanobis_projection(
     if (idx >= N) return;
 
     long long k = labels[idx];
-    int dx_offset = idx * D;
-    int u_offset = k * D * D;
-    int proj_offset = idx * D;
+    long long dx_offset = (long long)idx * D;
+    long long u_offset = k * D * D;
+    long long proj_offset = (long long)idx * D;
 
     // Match xp.einsum("ni,nij->nj", dx, U[labels]):
     // proj[idx, j] = sum_i dx[idx, i] * U[k, i, j]
@@ -255,7 +255,52 @@ void fused_mahalanobis_projection(
 }
 """
 
+# Per-point norms that would otherwise need (N, d) / (N, fd, d) temporaries:
+# |x - mu[l]| and |F - f_c[l] - A[l] (x - mu[l])| for A (K, fd, d). The offset
+# x - mu is loaded into registers once (up to MAXD dims; beyond that it is re-read).
+_fused_point_norms_kernel_code = r"""
+#define MAXD 128
+extern "C" __global__
+void centroid_distance(const double* X, const double* mus, const long long* labels,
+                       double* out, long long N, int D) {
+    long long i = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= N) return;
+    const double* x = X + i * D;
+    const double* mu = mus + labels[i] * D;
+    double s = 0.0;
+    for (int j = 0; j < D; ++j) { double t = x[j] - mu[j]; s += t * t; }
+    out[i] = sqrt(s);
+}
+
+extern "C" __global__
+void taylor_residual_norm(const double* X, const double* F, const double* mus,
+                          const double* f_c, const long long* labels, const double* A,
+                          double* out, long long N, int D, int FD) {
+    long long i = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= N) return;
+    const long long k = labels[i];
+    const double* x = X + i * D;
+    const double* mu = mus + k * D;
+    double dx[MAXD];
+    const bool cached = D <= MAXD;
+    if (cached) for (int j = 0; j < D; ++j) dx[j] = x[j] - mu[j];
+    double s = 0.0;
+    for (int m = 0; m < FD; ++m) {
+        const double* a = A + (k * FD + m) * D;
+        double lin = 0.0;
+        for (int j = 0; j < D; ++j) lin += a[j] * (cached ? dx[j] : x[j] - mu[j]);
+        double r = F[i * FD + m] - (f_c[k * FD + m] + lin);
+        s += r * r;
+    }
+    out[i] = sqrt(s);
+}
+"""
+
 if IS_CUPY_BACKEND:
+    _mod_point_norms = cp.RawModule(code=_fused_point_norms_kernel_code)
+    _kern_centroid_distance = _mod_point_norms.get_function("centroid_distance")
+    _kern_taylor_residual = _mod_point_norms.get_function("taylor_residual_norm")
+
     _mod_seg_max = cp.RawModule(code=_segmented_max_kernel_code)
     _kern_seg_max = _mod_seg_max.get_function("segmented_max_float64")
 
@@ -318,6 +363,32 @@ def _reduce_sum_1d(vals: Array, starts: Array) -> Array:
     return xp.add.reduceat(vals, starts)
 
 
+def segment_sum(values: Array, labels: Array, K: int) -> Array:
+    """
+    ``out[k] = sum of values[labels == k]`` (zeros for empty k), bit-identical to
+    ``xp.add.at`` but several times faster on NumPy: a CSR 0/1 indicator times the
+    rows adds each cluster's rows sequentially in input order, starting from zero.
+    """
+    if IS_CUPY_BACKEND:
+        out = xp.zeros((K, *values.shape[1:]), dtype=values.dtype)
+        xp.add.at(out, labels, values)
+        return out
+    import scipy.sparse as sp
+
+    n = len(labels)
+    # CSR rows must list columns in input order; labels are usually already sorted.
+    if n < 2 or bool(xp.all(labels[1:] >= labels[:-1])):
+        order = xp.arange(n)
+    else:
+        order = xp.argsort(labels, kind="stable")
+    counts = xp.bincount(labels, minlength=K)
+    indicator = sp.csr_matrix(
+        (xp.ones(n), order, xp.r_[0, xp.cumsum(counts)]), shape=(K, n)
+    )
+    flat = values.reshape(n, -1)
+    return xp.asarray(indicator @ flat).reshape((K, *values.shape[1:]))
+
+
 def run_fused_stats(
     X, mus, labels, K, D, FD, active_comps, G=None, g_mus=None, calc_E=False
 ):
@@ -362,9 +433,7 @@ def run_fused_stats(
         return C_out, E_out
     else:
         dx = X - mus[labels]
-        outer_C = dx[:, :, None] * dx[:, None, :]
-        C_out = xp.zeros((K, D, D), dtype=xp.float64)
-        xp.add.at(C_out, labels, outer_C)
+        C_out = segment_sum(dx[:, :, None] * dx[:, None, :], labels, K)
 
         if calc_E:
             assert G is not None and g_mus is not None
@@ -373,9 +442,7 @@ def run_fused_stats(
             g_x = G[n_idx, active_j, :]
             g_mu = g_mus[labels, active_j, :]
             dg = g_x - g_mu
-            outer_E = dx[:, :, None] * dg[:, None, :]
-            E_out = xp.zeros((K, D, D), dtype=xp.float64)
-            xp.add.at(E_out, labels, outer_E)
+            E_out = segment_sum(dx[:, :, None] * dg[:, None, :], labels, K)
         else:
             E_out = xp.array([], dtype=xp.float64)
         return C_out, E_out
@@ -413,10 +480,7 @@ def run_fused_cross_cov(X, F, mus, f_mus, labels, K, D, FD):
     '''
     dx = X - mus[labels]
     df = F - f_mus[labels]
-    outer = dx[:, :, None] * df[:, None, :]
-    cross_out = xp.zeros((K, D, FD), dtype=xp.float64)
-    xp.add.at(cross_out, labels, outer)
-    return cross_out
+    return segment_sum(dx[:, :, None] * df[:, None, :], labels, K)
 
 
 def solve_regularized_covariance_inplace(auto_cov, cross_cov, D, FD):
@@ -472,6 +536,42 @@ def run_fused_split_projection(X, mus, labels, M_split, v):
     return xp.sum(z * v[labels], axis=1)
 
 
+def centroid_distances(X, mus, labels):
+    """``|x - mu[label]|`` per point; on the GPU without the (N, d) offset array."""
+    if IS_CUPY_BACKEND:
+        N, D = X.shape
+        out = xp.empty((N,), dtype=xp.float64)
+        _kern_centroid_distance(
+            ((N + 255) // 256,), (256,),
+            (xp.ascontiguousarray(X), xp.ascontiguousarray(mus),
+             xp.ascontiguousarray(labels, dtype=xp.int64), out, xp.int64(N), xp.int32(D)),
+        )  # fmt: skip
+        return out
+    return xp.linalg.norm(X - mus[labels], axis=1)
+
+
+def taylor_residual_norms(X, F, mus, f_c, labels, A):
+    """
+    ``|F - f_c[l] - A[l] (x - mu[l])|`` per point for ``A`` (K, fd, d). On the GPU
+    this avoids the (N, d), (N, fd, d) and (N, fd) temporaries of the NumPy form,
+    which at d=100, fd=10 is about 8 KB per point.
+    """
+    if IS_CUPY_BACKEND:
+        N, D = X.shape
+        FD = F.shape[1]
+        out = xp.empty((N,), dtype=xp.float64)
+        _kern_taylor_residual(
+            ((N + 255) // 256,), (256,),
+            (xp.ascontiguousarray(X), xp.ascontiguousarray(F), xp.ascontiguousarray(mus),
+             xp.ascontiguousarray(f_c), xp.ascontiguousarray(labels, dtype=xp.int64),
+             xp.ascontiguousarray(A), out, xp.int64(N), xp.int32(D), xp.int32(FD)),
+        )  # fmt: skip
+        return out
+    dx = X - mus[labels]
+    lin = xp.einsum("nmd,nd->nm", A[labels], dx)
+    return xp.linalg.norm(F - (f_c[labels] + lin), axis=1)
+
+
 def run_fused_mahalanobis_projection(dx, labels, U):
     """
     Computes ``dx @ U[label]`` per point without materializing
@@ -503,11 +603,29 @@ def run_fused_mahalanobis_projection(dx, labels, U):
     return xp.einsum("ni,nij->nj", dx, U[labels])
 
 
+def sort_by_block_then_value(values: Array, blocks: Array) -> Array:
+    """
+    The permutation of ``xp.lexsort((values, blocks))``: a stable sort by value
+    followed by a stable sort by block gives the same order, about 3x faster on both
+    backends (CuPy's argsort is always stable; its lexsort is a slow merge sort).
+    """
+    kind = {} if IS_CUPY_BACKEND else {"kind": "stable"}
+    by_value = xp.argsort(values, **kind)
+    return by_value[xp.argsort(blocks[by_value], **kind)]
+
+
 def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
     """Returns a boolean mask for the n smallest values in each block."""
-    sort_idx = xp.lexsort(xp.stack([values, blocks]))
+    sort_idx = sort_by_block_then_value(values, blocks)
     block_sizes = xp.bincount(blocks)
     block_starts = xp.concatenate((xp.array([0]), xp.cumsum(block_sizes[:-1])))
+    if IS_CUPY_BACKEND:
+        # Rank within the block = sorted position - block start; marking rows in one
+        # pass avoids the six N-length index arrays of the general form below.
+        mask = xp.zeros(len(blocks), dtype=xp.bool_)
+        _mark_n_smallest()(sort_idx, xp.ascontiguousarray(blocks, dtype=xp.int64),
+                           block_starts.astype(xp.int64), xp.int64(n), mask)
+        return mask
 
     offsets = xp.zeros(len(blocks), dtype=xp.int64)
     diffs = xp.diff(block_starts, prepend=0)
@@ -518,6 +636,21 @@ def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
     inv_sort_idx[sort_idx] = xp.arange(len(sort_idx), dtype=sort_idx.dtype)
     sorted_local_indices = inv_sort_idx - local_indices
     return sorted_local_indices < n
+
+
+_MARK_KERNEL = None
+
+
+def _mark_n_smallest():
+    global _MARK_KERNEL
+    if _MARK_KERNEL is None:
+        _MARK_KERNEL = cp.ElementwiseKernel(
+            "int64 order, raw int64 blocks, raw int64 starts, int64 n",
+            "raw bool mask",
+            "if (i - starts[blocks[order]] < n) mask[order] = true;",
+            "afinni_mark_n_smallest",
+        )
+    return _MARK_KERNEL
 
 
 # -----------------------------------------------------------------------------
