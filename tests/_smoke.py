@@ -1,7 +1,7 @@
 """
 Shared end-to-end workload: train + predict a small 2-D Rosenbrock surrogate.
 
-Used by both the in-process backend test (tests/test_backend.py) and the MPI
+Used by both the in-process backend test (tests/integration/test_backend.py) and the MPI
 worker (tests/mpi/_mpi_worker.py), so every configuration - CPU, GPU, serial,
 multi-rank - exercises exactly the same code path and can be compared.
 """
@@ -52,5 +52,4 @@ def run_smoke(
         "n_ranks": src.get_mpi_size(),
         "has_mpi": src.has_mpi(),
         "is_cupy_backend": src.IS_CUPY_BACKEND,
-        "has_cuml": src.HAS_CUML,
     }

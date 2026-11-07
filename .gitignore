@@ -64,6 +64,9 @@ db.sqlite3-journal
 # Log directory
 .logs/
 
+# Local scratch space: benchmark outputs, monitor streams, temporary scripts
+scratch/
+
 # Flask stuff:
 instance/
 .webassets-cache
@@ -234,3 +237,8 @@ media/
 
 # Models
 models/
+# macOS Finder metadata
+.DS_Store
+
+# Arrays saved into the repository root (e.g. by experiment scripts)
+/*.npy

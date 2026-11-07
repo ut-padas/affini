@@ -1,3 +1,8 @@
+"""
+AFINNI package root: the active array module ``xp`` (NumPy or CuPy), backend flags,
+host/device transfer helpers and project paths, shared by every module.
+"""
+
 import logging
 from pathlib import Path
 from typing import Any
@@ -5,7 +10,6 @@ from typing import Any
 from array_api_compat.common._typing import Array
 
 from src.backend import (
-    HAS_CUML,
     IS_CUPY_BACKEND,
     backend_info,
     get_mpi_rank,
@@ -23,6 +27,7 @@ _get_mpi_size = get_mpi_size
 
 
 def __getattr__(name: str) -> Any:
+    """Resolve ``HAS_MPI``/``MPI`` on first use, so importing ``src`` never initializes MPI."""
     # Keep `HAS_MPI` / `MPI` lazy (see src.backend) so `import src` never runs MPI_Init.
     if name in ("HAS_MPI", "MPI"):
         from src import backend
@@ -57,7 +62,6 @@ FIGURES_DIR = PROJECT_DIR / "figures"
 RESULTS_DIR = PROJECT_DIR / "results"
 
 __all__ = [
-    "HAS_CUML",
     "HAS_MPI",
     "IS_CUPY_BACKEND",
     "MPI",

@@ -1,4 +1,4 @@
-"""`python -m src` - print which optional backends (GPU, cuML, MPI) were detected."""
+"""`python -m src` - print which optional backends (GPU, MPI) were detected."""
 
 from src import print_backend_info
 

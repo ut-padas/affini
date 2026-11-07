@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import shlex
 import shutil
 import subprocess
@@ -125,3 +126,33 @@ def test_work_stealing_end_to_end_leaves_no_messages(mpi_launcher):
     )
     assert result["ok"] is True, result["runs"]
     assert result["grants"] > 0, result["runs"]
+
+
+def test_work_stealing_moves_gradients_and_keeps_second_order_models_exact(mpi_launcher):
+    """Steals of gradient-carrying work are complete and do not change the exact result."""
+    result = _run_worker(
+        [*mpi_launcher, "-n", str(N_RANKS)],
+        module="tests.mpi._grad_steal_worker",
+    )
+    assert result["ok"] is True, result
+
+
+@pytest.mark.parametrize(
+    ("phase", "message"),
+    [("root_initial_oracle", "rank 0 (initial evaluation)"),
+     ("root_initial_clustering", "rank 0 (initial clustering)"),
+     ("worker_refinement", "rank 1 (refinement)"),
+     ("worker_collection", "rank 1 (collection)"),
+     ("root_public_result", "rank 0 (public result conversion)"),
+     ("worker_index", "rank 1 (index construction)")],
+)  # fmt: skip
+def test_a_failure_on_one_rank_aborts_the_whole_job(mpi_launcher, phase, message):
+    """In every phase, the failing rank must end the job: peers would otherwise block until an external timeout."""
+    t0 = time.time()
+    proc = subprocess.run(
+        [*mpi_launcher, "-n", str(max(2, N_RANKS)), sys.executable, "-m", "tests.mpi._abort_worker", phase],
+        cwd=REPO_ROOT, env=dict(os.environ), capture_output=True, text=True, timeout=120,
+    )  # fmt: skip
+    assert proc.returncode != 0
+    assert f"injected failure on {message}" in proc.stdout + proc.stderr
+    assert time.time() - t0 < 90  # terminated promptly, not by the subprocess timeout

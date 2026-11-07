@@ -1,3 +1,5 @@
+"""Values, gradients and Hessians of src/problems/rosenbrock.py against SymPy."""
+
 import unittest
 
 import numpy as np

@@ -1,3 +1,5 @@
+"""Values and gradients of src/problems/rastrigin.py against SymPy."""
+
 import unittest
 
 import numpy as np

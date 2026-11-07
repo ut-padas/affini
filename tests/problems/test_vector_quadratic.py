@@ -1,3 +1,5 @@
+"""Values, Jacobians and Hessians of src/problems/vector_quadratic.py against SymPy."""
+
 import unittest
 
 import numpy as np

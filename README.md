@@ -1,25 +1,26 @@
 # `AFINNI` - Adaptive Affine Nearest Neighbor Interpolation
-Code for the `AFINNI` algorithm.
 
-AFINNI runs on **Linux, macOS and Windows**. It always works on the CPU, and can optionally use **MPI** (multiple processes/nodes) and/or an **NVIDIA GPU** (CUDA 12). Whatever is installed is detected at runtime, and everything else falls back automatically.
+`AFINNI` builds fast surrogates of smooth, expensive functions: it adaptively clusters
+samples of the function, refines clusters until a local affine model meets a
+tolerance, and answers queries with the best local model by trust-region distance.
 
-## Quick start
+It runs on **Linux, macOS and Windows**. It always works on the CPU, and can
+optionally use **MPI** (multiple processes/nodes, with work stealing) and/or an
+**NVIDIA GPU** (CUDA 12). Whatever is installed is detected at runtime, and
+everything else falls back automatically.
 
-You need Git and [`uv`](https://docs.astral.sh/uv/getting-started/installation/), a Python package and environment manager. `uv` installs a suitable Python for you if needed.
+## Installation
+
+You need Git and [`uv`](https://docs.astral.sh/uv/getting-started/installation/), a
+Python package and environment manager; `uv` installs a suitable Python if needed.
 
 ```bash
 git clone https://github.com/ut-padas/affini.git
 cd affini
-uv sync                                 # creates .venv: CPU backend + dev tools (pytest, ruff, Jupyter)
-uv run python -m src                    # shows which backends (GPU / MPI) were detected
-uv run python -m examples.example01     # 2-D Rosenbrock surrogate, prints the error and saves a plot
+uv sync                       # CPU backend + dev tools (pytest, ruff, Jupyter)
 ```
 
-Run scripts from the repository root, as modules (`python -m examples.example01`), so that `src` is importable.
-
-## Choosing a backend
-
-Optional backends are uv *extras*. Combine them freely, for example `uv sync --extra gpu --extra mpi`.
+Optional backends are uv *extras*; combine them freely, e.g. `uv sync --extra gpu --extra mpi`.
 
 | You want             | Command                                  | Notes                                                                                                   |
 | -------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -27,125 +28,65 @@ Optional backends are uv *extras*. Combine them freely, for example `uv sync --e
 | CPU + MPI            | `uv sync --extra mpi`                    | Ships its own MPI runtime (MPICH on Linux/macOS, Intel MPI on Windows), so no system install is needed. |
 | NVIDIA GPU (CUDA 12) | `uv sync --extra gpu`                    | Linux and Windows. Only an NVIDIA driver is needed, because the CUDA libraries come from pip.           |
 | GPU + MPI            | `uv sync --extra gpu --extra mpi`        |                                                                                                         |
-| HPC cluster          | `uv sync --extra gpu --extra mpi-system` | Uses the cluster's own MPI. See [HPC clusters](#hpc-clusters).                                          |
+| HPC cluster          | `uv sync --extra gpu --extra mpi-system` | Uses the cluster's own MPI. See [HPC clusters](examples/USAGE.md#hpc-clusters).                        |
 
 > [!IMPORTANT]
-> `uv sync` makes `.venv` match exactly what you request.
-> Running `uv sync` again without `--extra gpu` removes the GPU packages. `uv run` does not remove packages, so extras you installed stay available.
-
-To get a runtime-only environment without the dev tools, add `--no-dev`.
-
-### Platform support
+> `uv sync` makes `.venv` match exactly what you request: running it again without
+> `--extra gpu` removes the GPU packages. `uv run` never removes packages. Add
+> `--no-dev` for a runtime-only environment.
 
 |             | Linux (incl. WSL2) | macOS (Apple Silicon, 14+)           | Windows                                                             |
 | ----------- | ------------------ | ------------------------------------ | ------------------------------------------------------------------- |
-| CPU         | ✅                  | ⚠️ packages available, not yet tested | ✅                                                                   |
-| MPI (`mpi`) | ✅                  | ⚠️ packages available, not yet tested | ✅ Intel MPI (see [Running with MPI](#running-with-mpi))             |
-| GPU (`gpu`) | ✅ CuPy + cuML      | ❌ no CUDA, runs on CPU               | ✅ CuPy only. KMeans/kNN fall back to scikit-learn/FAISS on the CPU. |
+| CPU         | ✅                  | ✅ verified on Apple Silicon          | ✅                                                                   |
+| MPI (`mpi`) | ✅                  | ✅ bundled MPICH                     | ✅ Intel MPI ([note](examples/USAGE.md#running-on-cpu-gpu-and-mpi))  |
+| GPU (`gpu`) | ✅ CuPy             | ❌ no CUDA, runs on CPU               | ✅ CuPy                                                              |
 
-Verified so far: Linux x86_64 (CPU, MPICH), WSL2 and Windows with an NVIDIA laptop GPU (CPU, GPU, MPI), and TACC Vista (GH200, ARM64: CPU, GPU, Open MPI) and Stampede3 (H100, Intel MPI). On WSL2 the NVIDIA driver is installed on the Windows side; the CUDA libraries still come from pip.
+Verified so far: Linux x86_64 (CPU, MPICH), WSL2 and Windows with an NVIDIA laptop GPU
+(CPU, GPU, MPI), TACC Vista (GH200, ARM64: CPU, GPU, Open MPI) and Stampede3 (H100,
+Intel MPI).
 
-### Running with MPI
-
-```bash
-uv run mpiexec -n 4 python afinni_launcher.py --dims 2 --tols 0.1 --experiment rosenbrock
-```
-> [!IMPORTANT]
-> Without `mpiexec`, or when MPI isn't installed, the same code runs as a single rank. If a script is started under `mpiexec` but MPI can't be loaded, AFINNI stops with an error. Otherwise every process would quietly run the whole job as rank 0.
-
-On Windows, Intel MPI installs `mpiexec.exe` into `.venv\Library\bin`, which `uv run` does not put on `PATH`. Add it once per PowerShell session:
-
-```powershell
-$env:PATH = "$PWD\.venv\Library\bin;$env:PATH"
-```
-
-### CPU vs GPU results
-
-Every test problem in `src/problems/` is defined identically on all backends. Their fixed random constants (rotations, directions) always come from NumPy. Sampling, meaning training/test points, the algorithm's synthetic points and KMeans initialisation, uses the active backend's own random generator. The two are not bit-for-bit identical: CPU and GPU runs are statistically equivalent, and each one is reproducible on its own.
-
-### Overriding detection
-
-| Variable        | Values                         | Effect                                                                                                 |
-| --------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `AFINNI_DEVICE` | `auto` (default), `cpu`, `gpu` | `cpu` forces NumPy even when a GPU is present. `gpu` raises an error instead of silently falling back. |
-| `AFINNI_MPI`    | `auto` (default), `off`, `on`  | `off` ignores an installed mpi4py. `on` raises an error if MPI is unavailable.                         |
-
-For example: `AFINNI_DEVICE=cpu uv run python -m examples.example01`.
-
-The same flags are available in code: `from src import IS_CUPY_BACKEND, HAS_CUML, HAS_MPI, xp`. Detection is implemented in [`src/backend.py`](src/backend.py).
-
-## HPC clusters
-
-On a cluster, use the `mpi-system` extra and **not** `mpi`. The pip-bundled MPICH would take priority over the cluster's MPI and its fast interconnect. Installing doesn't need any modules loaded. Running does, because mpi4py binds to the system MPI at runtime.
-
-On TACC (Vista, Stampede3):
+## Quick start
 
 ```bash
-# 1. Once per system, in ~/.bashrc: keep uv's downloads out of the small $HOME quota
-#    (14 GB on Stampede3, 23 GB on Vista; the GPU packages are several GB).
-export UV_CACHE_DIR=$WORK/.cache/uv
-export UV_PYTHON_INSTALL_DIR=$WORK/uv-python
-
-# 2. Get a compute node, and install there (see the notes below)
-idev -p gh -N 1 -n 4 -t 01:00:00           # Vista GH200 node; on Stampede3 use -p h100
-uv sync --extra gpu --extra mpi-system     # `make install-hpc` is the same without the dev tools (no pytest)
-
-# 3. Load the cluster's MPI, then run. Put the `source` line in your SLURM job scripts too.
-source scripts/hpc/tacc.sh
-ibrun .venv/bin/python afinni_launcher.py ...
+uv run python -m src                                  # which backends (GPU / MPI) were detected
+uv run python -m examples.example01                   # 2-D Rosenbrock surrogate: error + plot
+uv run mpiexec -n 8 python -m examples.example03_monitoring   # multi-rank run with work stealing...
+uv run python -m src.monitor scratch/example03_monitoring/stream   # ...watched live from another terminal
 ```
 
-For another cluster, copy [`scripts/hpc/tacc.sh`](scripts/hpc/tacc.sh) to `scripts/hpc/<site>.sh` and change the module lines.
+```python
+from src.surrogate import AFINNISurrogate
+
+surrogate = AFINNISurrogate()
+surrogate.train(X, f_fn=f, ATOL=1e-2, RTOL=1e-2)
+prediction, outside_trust_region = surrogate.predict(X_query)
+```
+
+Run scripts from the repository root, as modules (`python -m examples.example01`), so
+that `src` is importable.
+
+## Documentation
+
+- **[examples/USAGE.md](examples/USAGE.md)**: the user guide. Training and prediction
+  on CPU, GPU and MPI; settings and modes; saving models; profiling; plots; live
+  monitoring; the experiment launcher; swapping parts of the algorithm (local models,
+  split rules, samplers, acceptance tests, trust regions); HPC clusters;
+  troubleshooting; development and testing.
+- **[examples/](examples/)**: runnable examples.
+- **[AGENTS.md](AGENTS.md)**: code conventions and verification steps for contributors
+  (human or AI).
 
 ## Development
 
 ```bash
-uv run pytest                    # tests
-uv run ruff check .              # lint
-uv run ruff format .             # format
-uv sync --all-groups             # also install research/ and visualisation extras (manim, plotly, optuna, ...)
+uv run pytest -m "not mpi"      # tests (see USAGE.md for GPU/MPI and the regression check)
+uv run ruff check .             # lint
+uv run ruff format .            # format
 ```
-
-On Linux and macOS, the [`Makefile`](Makefile) wraps these commands (`make help`). For example, `make dev EXTRAS="gpu mpi"` sets up a full GPU + MPI development environment. Every target runs a single `uv` command, so on Windows run that command directly.
-
-| Dependency group | Contents                                      | Installed by        |
-| ---------------- | --------------------------------------------- | ------------------- |
-| `dev`            | `lint` + `test` + `notebook`                  | `uv sync` (default) |
-| `research`       | extra packages for the scripts in `research/` | `--group research`  |
-| `viz`            | animation/plotting (manim, plotly)            | `--group viz`       |
-
-### Testing backends
-
-`uv run pytest` runs everything that the current install supports. The header line shows which backends were actually exercised, for example `afinni backend: array=NumPy | cuML=no | MPI=...`.
-
-- **[`tests/test_backend.py`](tests/test_backend.py)** checks backend detection, the overrides, the serial MPI stand-in and multiprocessing workers. It also includes an end-to-end smoke test that trains and predicts a small surrogate on whatever backend is active.
-- **[`tests/mpi/`](tests/mpi/)** launches the same smoke test on several ranks and checks that it produces the same model as a serial run. These tests are skipped when MPI isn't installed.
-
-By default, a missing backend is skipped. Set an override to make it required instead:
-
-| Checking  | Command                                                                                                                                  |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| GPU       | `uv sync --extra gpu` then `AFINNI_DEVICE=gpu uv run pytest tests/test_backend.py`                                                       |
-| MPI       | `uv sync --extra mpi` then `AFINNI_MPI=on uv run pytest tests/test_backend.py tests/mpi` (= `make test-mpi`)                             |
-| GPU + MPI | `uv sync --extra gpu --extra mpi` then `AFINNI_DEVICE=gpu AFINNI_MPI=on uv run pytest tests/test_backend.py tests/mpi`                   |
-| HPC       | `AFINNI_DEVICE=gpu AFINNI_MPI=on AFINNI_MPIEXEC=ibrun uv run pytest tests/mpi tests/test_backend.py` on a GPU node, after `source scripts/hpc/tacc.sh`. Allocate at least `AFINNI_MPI_NP` tasks (default 2). |
-
-To exclude the multi-rank tests, add `-m "not mpi"`. To test the GPU on its own, with no MPI involved, use `AFINNI_DEVICE=gpu AFINNI_MPI=off uv run pytest -m "not mpi"`.
-
-## Troubleshooting
-
-| Symptom | Cause and fix |
-|---|---|
-| `error: Failed to spawn: mpiexec` on Windows | Intel MPI's launcher is not on `PATH`. See [Running with MPI](#running-with-mpi). |
-| `AFINNI_DEVICE=gpu was requested but … no usable CUDA device was found` | No NVIDIA GPU or driver is visible to this process. On a cluster you are probably on a login node. Run `uv run python -m src` to see what was detected. |
-| `UserWarning: CUDA path could not be detected` from CuPy | Harmless: the CUDA libraries come from pip. |
-| `OFI EP enable failed` MPI abort (seen when starting Python with Intel MPI on a Stampede3 login node) | Run on a compute node, through the cluster launcher (`ibrun`), after `source scripts/hpc/tacc.sh`. |
-| Scripts that use `multiprocessing` hang or re-run themselves on Windows and macOS | Those platforms start workers by re-importing your script. Put the entry point under `if __name__ == "__main__":`, as in `examples/`. |
 
 ## Roadmap
 
-- [ ] Verify on macOS (Apple Silicon). The packages are available but nobody has run it there yet.
-
+- [x] Verify CPU and MPI on macOS (Apple Silicon).
 - [ ] Rename the `src` package to `afinni` (src layout) and add a `[build-system]`, so it can be installed with `pip install`.
 - [ ] Move `jax`/`diffrax` to an optional extra. `afinni_launcher.py` currently imports `jax` at top level.
 - [ ] Publish `knndbscan` to PyPI. It currently comes only from TestPyPI and Linux.

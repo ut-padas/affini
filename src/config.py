@@ -1,0 +1,232 @@
+"""
+Settings for adaptive clustering, and the components they select.
+
+``ClusteringConfig`` holds every algorithm setting. The pieces of the refinement
+loop that can be swapped are *components*:
+
+=================  ================================  ===================================
+component          base class / registry             default
+=================  ================================  ===================================
+local_model        ``LocalModel`` / LOCAL_MODELS      from ``mode`` (and ``store_hess``)
+split_strategy     ``SplitStrategy`` / SPLIT_STRATEGIES  from ``mode``
+sampler            ``Sampler`` / SAMPLERS             ``sampling_method``
+acceptance         ``AcceptanceCriterion`` / ACCEPTANCE_CRITERIA  ``error_metric``, atol, rtol
+trust_region       ``TrustRegion`` / TRUST_REGIONS    ``CovarianceEllipsoid(q_reg)``
+=================  ================================  ===================================
+
+Each component field accepts an instance, a registered name, or ``(name,
+settings)`` (see ``src.registry``); ``None`` uses the default. A ``SurrogateMode``
+is therefore only a preset pair (local model, split strategy). Components built
+by name receive the matching configuration values (``min_pts_per_cluster``,
+``atol``/``rtol``, ``q_reg``) when their constructor accepts them.
+
+``components()`` resolves the components once per configuration; the data the
+loop must provide (gradients at every point or at the centroids, an exact
+Hessian) follows from the resolved local model and split strategy together.
+Under MPI every rank builds its own configuration, so every rank must be given
+the same component specs.
+"""
+
+import dataclasses
+import logging
+import math
+import numbers
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from src.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion
+from src.local_models import LOCAL_MODELS, LocalModel, local_model_for_mode
+from src.modes import SurrogateMode
+from src.registry import ComponentSpec, component_spec
+from src.sampling import SAMPLERS, Sampler
+from src.splitting import SPLIT_STRATEGIES, SplitStrategy, split_strategy_for_mode
+from src.trust_regions import TRUST_REGIONS, CovarianceEllipsoid, TrustRegion
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Components:
+    """The resolved components of one configuration."""
+
+    local_model: LocalModel
+    split_strategy: SplitStrategy
+    sampler: Sampler
+    acceptance: AcceptanceCriterion
+    trust_region: TrustRegion
+
+    def describe(self) -> dict[str, dict[str, Any]]:
+        """``{component: {"name": ..., "settings": ...}}``, e.g. for saving with a model."""
+        return {f.name: component_spec(getattr(self, f.name)) for f in dataclasses.fields(self)}
+
+
+@dataclass(kw_only=True)
+class ClusteringConfig:
+    """Settings for adaptive_clustering(). All fields are keyword-only."""
+
+    # --- Surrogate and acceptance test ---
+    mode: SurrogateMode
+    atol: float  # absolute error tolerance for accepting a cluster
+    rtol: float  # relative error tolerance (see src.acceptance for each metric)
+    error_metric: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global"
+
+    # --- Initial clustering ---
+    initial_clustering_method: Literal["kmeans", "knndbscan", "uniform_grid"] = "kmeans"
+    num_initial_clusters: int = 100
+    save_initial_clustering: bool = False  # save labels to INITIAL_CLUSTERING_FILE
+    use_existing_initial_clustering: bool = False  # load labels from that file if valid
+
+    # --- Refinement ---
+    min_pts_per_cluster: int = 100
+    sampling_method: str = "convex_combination"  # see src.sampling.SAMPLERS
+    q_reg: float = 1e-6  # regularization added when computing the trust-region shape Q
+    max_levels: int = 50  # maximum number of refinement levels
+    batch_size: int = 10_000_000  # max points moved to the device per batch
+    seed: int = 0
+    max_clusters_est: int = 100_000  # initial capacity of the output buffers (all ranks)
+    use_work_stealing: bool = True
+
+    # --- Outputs ---
+    # Store a Hessian per accepted cluster and use it in a second-order Taylor
+    # prediction. Only TAYLOR_LSQ_HESS estimates one; elsewhere it is ignored.
+    store_hess: bool = False
+    # Deprecated and ignored: what is stored is decided by the local model (affine
+    # modes always store A_fit/b_fit). Kept so existing callers still work.
+    store_affine_fits: bool = False
+
+    # --- Diagnostics (see src.profiling) ---
+    log_mem_stats: bool = False
+    profile_timing: bool = False  # per-phase time totals (synchronizes the GPU)
+    profile_events: bool = False  # also record a timeline of phases, steals and loads
+    profile_dir: str | None = None  # also stream events to <dir>/rank_<r>.jsonl
+    save_all_gen_training_data: bool = False
+
+    # --- Components (None: the default for mode / the settings above) ---
+    local_model: ComponentSpec = None
+    split_strategy: ComponentSpec = None
+    sampler: ComponentSpec = None
+    acceptance: ComponentSpec = None
+    trust_region: ComponentSpec = None
+
+    _components: Components | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        """Validate settings early and drop ``store_hess`` where no model can use it."""
+        self.mode = SurrogateMode(self.mode)
+        for name in ("atol", "rtol", "q_reg"):
+            value = getattr(self, name)
+            if not (isinstance(value, numbers.Real) and math.isfinite(value) and value >= 0):
+                raise ValueError(f"{name} must be a finite number >= 0; got {value!r}.")
+        for name, low in (
+            ("num_initial_clusters", 1),
+            ("min_pts_per_cluster", 1),
+            ("batch_size", 1),
+            ("max_levels", 0),
+            ("max_clusters_est", 1),
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, numbers.Integral) or isinstance(value, bool) or value < low:
+                raise ValueError(f"{name} must be an integer >= {low}; got {value!r}.")
+        if self.sampler is None and self.sampling_method not in SAMPLERS:
+            raise ValueError(
+                f"Unknown sampling method {self.sampling_method!r}; "
+                f"choose one of {sorted(SAMPLERS)}."
+            )
+        if self.acceptance is None and self.error_metric not in ACCEPTANCE_CRITERIA:
+            raise ValueError(
+                f"Unknown error metric {self.error_metric!r}; "
+                f"choose one of {sorted(ACCEPTANCE_CRITERIA)}."
+            )
+        if self.store_hess and self.local_model is not None:
+            self.store_hess = False
+            logger.warning(
+                "store_hess is ignored when local_model is given; configure the model "
+                "instead (e.g. TaylorModel(second_order=True))."
+            )
+        elif self.store_hess and self.mode != SurrogateMode.TAYLOR_LSQ_HESS:
+            self.store_hess = False
+            logger.warning(
+                f"store_hess is only supported by {SurrogateMode.TAYLOR_LSQ_HESS.value}; "
+                f"ignoring it for mode {self.mode.value}."
+            )
+        if (
+            self.acceptance is None
+            and self.error_metric == "Linf-global"
+            and self.atol != self.rtol
+        ):
+            logger.warning(
+                f"error_metric 'Linf-global' accepts a cluster when its error relative to "
+                f"max|F| over the initial data is below atol={self.atol}; rtol={self.rtol} "
+                f"is not used (see src.acceptance)."
+            )
+
+    def components(self) -> Components:
+        """The local model, split strategy, sampler, acceptance criterion and trust region."""
+        if self._components is None:
+            self._components = Components(
+                local_model=(
+                    local_model_for_mode(self.mode, second_order=self.store_hess)
+                    if self.local_model is None
+                    else LOCAL_MODELS.create(self.local_model)
+                ),
+                split_strategy=(
+                    split_strategy_for_mode(self.mode, self.min_pts_per_cluster)
+                    if self.split_strategy is None
+                    else SPLIT_STRATEGIES.create(
+                        self.split_strategy, min_pts_per_cluster=self.min_pts_per_cluster
+                    )
+                ),
+                sampler=SAMPLERS.create(
+                    self.sampling_method if self.sampler is None else self.sampler
+                ),
+                acceptance=ACCEPTANCE_CRITERIA.create(
+                    self.error_metric if self.acceptance is None else self.acceptance,
+                    atol=self.atol,
+                    rtol=self.rtol,
+                ),
+                trust_region=(
+                    CovarianceEllipsoid(self.q_reg)
+                    if self.trust_region is None
+                    else TRUST_REGIONS.create(self.trust_region, q_reg=self.q_reg)
+                ),
+            )
+        return self._components
+
+    # Which data the loop must provide follows from the local model and the split
+    # strategy together (their needs_* flags), so a new mode or component only has
+    # to declare those.
+
+    @property
+    def requires_grad_everywhere(self) -> bool:
+        """True if gradients must be evaluated (and carried) at every point."""
+        c = self.components()
+        return bool(c.split_strategy.needs_point_grad or c.local_model.needs_point_grad)
+
+    @property
+    def requires_grad_centroids(self) -> bool:
+        """True if gradients must be evaluated at the cluster centroids."""
+        c = self.components()
+        return bool(c.local_model.needs_centroid_grad or c.split_strategy.needs_centroid_grad)
+
+    @property
+    def requires_no_grads(self) -> bool:
+        """True if the configuration needs no gradients at all."""
+        return not (self.requires_grad_everywhere or self.requires_grad_centroids)
+
+    @property
+    def requires_hessian_fn(self) -> bool:
+        """True if an exact Hessian function must be provided."""
+        return bool(self.components().split_strategy.needs_hessian_fn)
+
+    def to_dict(self) -> dict[str, Any]:
+        """The settings and resolved components as plain, serializable values."""
+        out = {
+            f.name: getattr(self, f.name)
+            for f in dataclasses.fields(self)
+            if f.init and f.name not in Components.__dataclass_fields__
+        }
+        out["mode"] = self.mode.value
+        out["components"] = self.components().describe()
+        return out

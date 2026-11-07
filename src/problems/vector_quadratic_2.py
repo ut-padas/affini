@@ -1,4 +1,4 @@
-# A second, simpler quadratic for testing purposes
+"""A simple two-output quadratic with axis-aligned, differently scaled Hessians, for tests."""
 
 import numpy as np
 from array_api_compat import array_namespace

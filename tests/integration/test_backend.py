@@ -5,8 +5,8 @@ These run on every machine. Assertions are relative to what is installed, so
 the same suite passes on a CPU-only laptop and on a GPU/MPI node. To turn
 "whatever is available" into a hard requirement, set the overrides:
 
-    AFINNI_DEVICE=gpu uv run pytest tests/test_backend.py   # must run on the GPU
-    AFINNI_MPI=on     uv run pytest tests/test_backend.py   # mpi4py must load an MPI library
+    AFINNI_DEVICE=gpu uv run pytest tests/integration/test_backend.py   # must run on the GPU
+    AFINNI_MPI=on     uv run pytest tests/integration/test_backend.py   # mpi4py must load an MPI library
 
 The pytest header shows which backends were actually exercised.
 """
@@ -26,14 +26,14 @@ import pytest
 from src import backend
 from tests._smoke import SMOKE_TOL, run_smoke
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Variables that influence detection; stripped so subprocess cases are hermetic.
 _DETECTION_VARS = ("AFINNI_DEVICE", "AFINNI_MPI", *backend._LAUNCHER_SIZE_VARS)
 
 _PROBE = (
     "import json, src, src.backend as b; "
-    "print(json.dumps({'cupy': b.IS_CUPY_BACKEND, 'cuml': b.HAS_CUML, "
+    "print(json.dumps({'cupy': b.IS_CUPY_BACKEND, "
     "'xp': b.xp.__name__, 'mpi': b.has_mpi(), 'size': b.get_mpi_size(), "
     "'reason': b._resolve_mpi()[2]}))"
 )
@@ -60,8 +60,6 @@ def _run(env: dict[str, str] | None = None, block_mpi4py: bool = False):
 # --- Flags in this process ---------------------------------------------------
 def test_flags_are_consistent():
     assert (backend.xp.__name__.split(".")[-1] == "cupy") == backend.IS_CUPY_BACKEND
-    if backend.HAS_CUML:
-        assert backend.IS_CUPY_BACKEND, "HAS_CUML must imply the CuPy backend"
     assert backend.get_mpi_size() >= 1
     assert 0 <= backend.get_mpi_rank() < backend.get_mpi_size()
     assert backend.has_mpi() == (not getattr(backend.get_mpi(), "IS_SERIAL_FALLBACK", False))
@@ -81,7 +79,7 @@ def test_requested_backends_are_honoured():
 
 def test_backend_info_reports_everything():
     info = backend.backend_info()
-    for key in ("platform", "is_cupy_backend", "has_cuml", "has_mpi", "mpi", "mpi_size"):
+    for key in ("platform", "is_cupy_backend", "has_mpi", "mpi", "mpi_size"):
         assert key in info
 
 
@@ -89,7 +87,7 @@ def test_backend_info_reports_everything():
 def test_force_cpu():
     proc, r = _run({"AFINNI_DEVICE": "cpu"})
     assert proc.returncode == 0, proc.stderr
-    assert r["cupy"] is False and r["cuml"] is False
+    assert r["cupy"] is False
     assert r["xp"].split(".")[-1] == "numpy"
 
 
@@ -178,7 +176,7 @@ def test_spawn_workers_never_initialise_mpi(monkeypatch):
 
 # --- End-to-end -----------------------------------------------------------------------
 def test_surrogate_smoke():
-    """Train + predict in whatever backend is active (CPU, CPU-without-cuML GPU, or cuML)."""
+    """Train + predict in whatever backend is active (CPU or GPU)."""
     result = run_smoke()
     assert result is not None
     assert result["n_clusters"] > 0

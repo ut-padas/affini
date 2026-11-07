@@ -1,15 +1,16 @@
 """
 This example builds a surrogate for the Rosenbrock function in two dimensions.
-It uses the workflow described in the paper. This example uses no parallelism.
+It uses the workflow described in the paper. It runs as one process, or on several
+MPI ranks (`mpiexec -n 4 python -m examples.example01`), where rank 0 reports.
 """
 
 from pathlib import Path
-from src import xp
+from src import get_mpi_rank, xp
 from src.adaptive_clustering_utils import SurrogateMode
 from src.heuristic_parameters import get_MIN_PTS_PER_CLUSTER, get_N_TRAIN, get_NUM_INITIAL_CLUSTERS
 from src.surrogate import AFINNISurrogate
 from src.problems.rosenbrock import rosenbrock
-from src.plotter_utils import plot_adaptive_clustering_results
+from src.plotting import plot_adaptive_clustering_results
 
 
 if __name__ == "__main__":
@@ -29,7 +30,7 @@ if __name__ == "__main__":
     X_train = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TRAIN, DIM))
     f_train = rosenbrock(X_train)
 
-    # --- Build AFFINI surrogate ---
+    # --- Build AFINNI surrogate ---
     surrogate = AFINNISurrogate()
     surrogate.train(
         X_train = X_train,
@@ -50,6 +51,9 @@ if __name__ == "__main__":
     # --- Compute errors ---
     X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, DIM))
     f_test_pred, _ = surrogate.predict(X_test)  # (predictions, trust-region mask)
+    # Under MPI, predictions come back on rank 0 only; the other ranks are done.
+    if get_mpi_rank() != 0:
+        raise SystemExit(0)
     f_test_exact = rosenbrock(X_test).reshape(f_test_pred.shape)
     ptwise_errs = xp.abs(f_test_exact - f_test_pred).flatten()
     l2_rel_err = xp.linalg.norm(ptwise_errs) / xp.linalg.norm(f_test_exact)

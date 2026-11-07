@@ -1,5 +1,5 @@
 """
-Optional-backend detection for AFINNI: GPU (CuPy / cuML) and MPI (mpi4py).
+Optional-backend detection for AFINNI: GPU (CuPy) and MPI (mpi4py).
 
 Every optional dependency is probed here, once, and exposed through a small set
 of standard flags. The rest of the codebase should only ever consult these
@@ -11,11 +11,6 @@ Flags
 -----
 ``IS_CUPY_BACKEND``
     True when the array backend ``xp`` is CuPy (a usable CUDA device was found).
-``HAS_CUML``
-    True when cuML is installed *and* the CuPy backend is active. cuML is
-    Linux-only, so on e.g. Windows + GPU this is False: KMeans and kNN fall
-    back to scikit-learn / FAISS on the host while everything else stays on
-    the GPU.
 ``HAS_MPI``
     True when mpi4py imported *and* found an MPI library. Resolved lazily on
     first access, so ``import src`` never initializes MPI by itself.
@@ -43,7 +38,6 @@ Run ``python -m src`` to print what was detected.
 from __future__ import annotations
 
 import functools
-import importlib.util
 import logging
 import multiprocessing
 import os
@@ -62,6 +56,7 @@ _FALSE = {"0", "off", "false", "no"}
 
 
 def _env_choice(var: str, choices: dict[str, set[str]]) -> str:
+    """Canonical value of an ``auto``-defaulting environment switch; raises on unknown values."""
     raw = os.environ.get(var, "auto").strip().lower() or "auto"
     for canonical, aliases in choices.items():
         if raw == canonical or raw in aliases:
@@ -71,7 +66,7 @@ def _env_choice(var: str, choices: dict[str, set[str]]) -> str:
 
 
 # =============================================================================
-# GPU: CuPy (array backend) and cuML (GPU KMeans / kNN)
+# GPU: CuPy (array backend; k-means and kNN are custom kernels in src/kmeans.py, src/knn.py)
 # =============================================================================
 DEVICE_MODE = _env_choice(
     "AFINNI_DEVICE", {"auto": set(), "cpu": {"numpy", "host"}, "gpu": {"cuda", "cupy"}}
@@ -100,16 +95,12 @@ IS_CUPY_BACKEND: bool = _cupy is not None
 if DEVICE_MODE == "gpu" and not IS_CUPY_BACKEND:
     raise RuntimeError(f"AFINNI_DEVICE=gpu was requested but {GPU_REASON}.")
 
-# find_spec avoids paying cuML's multi-second import cost at startup.
-HAS_CUML: bool = IS_CUPY_BACKEND and importlib.util.find_spec("cuml") is not None
-
 xp = array_namespace(_cupy.array([0]) if IS_CUPY_BACKEND else np.array([0]))
 
 logger.info(
-    "Array backend: %s (%s); cuML: %s",
+    "Array backend: %s (%s)",
     "CuPy" if IS_CUPY_BACKEND else "NumPy",
     GPU_REASON if IS_CUPY_BACKEND else f"CPU mode - {GPU_REASON}",
-    "yes" if HAS_CUML else "no (scikit-learn / FAISS fallback)",
 )
 
 
@@ -126,6 +117,7 @@ _LAUNCHER_SIZE_VARS = ("OMPI_COMM_WORLD_SIZE", "PMI_SIZE", "MV2_COMM_WORLD_SIZE"
 
 
 def _launched_with_multiple_ranks() -> bool:
+    """True if a launcher started several ranks, read from its environment without initializing MPI."""
     for var in _LAUNCHER_SIZE_VARS:
         try:
             if int(os.environ.get(var, "1")) > 1:
@@ -299,6 +291,7 @@ def get_mpi() -> Any:
 
 
 def has_mpi() -> bool:
+    """True if real MPI is in use (resolved, and initialized, on first call)."""
     return _resolve_mpi()[1]
 
 
@@ -334,7 +327,6 @@ def backend_info() -> dict[str, Any]:
         "device_mode": DEVICE_MODE,
         "is_cupy_backend": IS_CUPY_BACKEND,
         "gpu": GPU_REASON,
-        "has_cuml": HAS_CUML,
         "mpi_mode": MPI_MODE,
         "has_mpi": mpi_ok,
         "mpi": mpi_reason,
@@ -351,6 +343,7 @@ def backend_info() -> dict[str, Any]:
 
 
 def print_backend_info() -> None:
+    """Print ``backend_info()`` as an aligned table (``python -m src``)."""
     info = backend_info()
     width = max(map(len, info))
     print("AFINNI backend configuration")

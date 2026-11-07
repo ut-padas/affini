@@ -1,3 +1,9 @@
+"""
+Gradients of ODE flow maps by the adjoint method: one forward solve, then a backward
+adjoint solve per output, batched over trajectories and parallelized over processes
+through shared memory.
+"""
+
 import logging
 import multiprocessing as mp
 import os
@@ -184,6 +190,7 @@ def _solve_and_write_chunk(
 
 
 def _worker_wrapper_shm(args):
+    """Top-level (picklable) entry point for pool workers."""
     return _solve_and_write_chunk(*args)
 
 

@@ -27,7 +27,7 @@ help:
 	@echo "                     (on TACC, first: source scripts/hpc/tacc.sh)"
 	@echo ""
 	@echo "Other:"
-	@echo "  info             - Show detected backends (GPU / cuML / MPI)  uv run python -m src"
+	@echo "  info             - Show detected backends (GPU / MPI)         uv run python -m src"
 	@echo "  test             - Run pytest"
 	@echo "  test-mpi         - Backend + multi-rank tests, MPI required (needs an MPI extra)"
 	@echo "  format / lint    - ruff format / ruff check"
@@ -70,7 +70,7 @@ test:
 	uv run --group test pytest
 
 test-mpi:
-	AFINNI_MPI=on uv run --group test pytest tests/mpi tests/test_backend.py
+	AFINNI_MPI=on uv run --group test pytest tests/mpi tests/integration/test_backend.py
 
 paper-experiments:
 	bash run_paper_experiments.sh
