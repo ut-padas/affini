@@ -37,8 +37,8 @@ Optional backends are uv *extras*; combine them freely, e.g. `uv sync --extra gp
 
 |             | Linux (incl. WSL2) | macOS (Apple Silicon, 14+)           | Windows                                                             |
 | ----------- | ------------------ | ------------------------------------ | ------------------------------------------------------------------- |
-| CPU         | ✅                  | ⚠️ packages available, not yet tested | ✅                                                                   |
-| MPI (`mpi`) | ✅                  | ⚠️ packages available, not yet tested | ✅ Intel MPI ([note](examples/USAGE.md#running-on-cpu-gpu-and-mpi))  |
+| CPU         | ✅                  | ✅ verified on Apple Silicon          | ✅                                                                   |
+| MPI (`mpi`) | ✅                  | ✅ bundled MPICH                     | ✅ Intel MPI ([note](examples/USAGE.md#running-on-cpu-gpu-and-mpi))  |
 | GPU (`gpu`) | ✅ CuPy             | ❌ no CUDA, runs on CPU               | ✅ CuPy                                                              |
 
 Verified so far: Linux x86_64 (CPU, MPICH), WSL2 and Windows with an NVIDIA laptop GPU
@@ -86,7 +86,7 @@ uv run ruff format .            # format
 
 ## Roadmap
 
-- [x] Verify on macOS (Apple Silicon). The packages are available but nobody has run it there yet.
+- [x] Verify CPU and MPI on macOS (Apple Silicon).
 - [ ] Rename the `src` package to `afinni` (src layout) and add a `[build-system]`, so it can be installed with `pip install`.
 - [ ] Move `jax`/`diffrax` to an optional extra. `afinni_launcher.py` currently imports `jax` at top level.
 - [ ] Publish `knndbscan` to PyPI. It currently comes only from TestPyPI and Linux.
