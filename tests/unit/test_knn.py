@@ -252,3 +252,40 @@ def test_cpu_tree_path_keeps_no_float32_copy_until_unverified_search():
     assert index._points32 is None and index.last_search_stats["strategy"] == "kdtree"
     index.kneighbors_unverified(np.zeros((3, CPU_TREE_MAX_D)), 4)
     assert index._points32 is not None and index.last_search_stats["strategy"] == "unverified"
+
+
+@cpu_only
+def test_tree_sentinels_never_reach_the_scorer_and_overflow_raises(monkeypatch):
+    """SciPy's "no neighbour" (index n, inf) must be rejected before the unchecked scorer."""
+    import src.knn as knn
+
+    real = knn._candidate_d2
+
+    def checked(xp_, q, P, cand):
+        assert int(np.max(cand)) < len(P) and int(np.min(cand)) >= 0
+        return real(xp_, q, P, cand)
+
+    monkeypatch.setattr(knn, "_candidate_d2", checked)
+    # Every requested squared distance overflows: a clear range error, no placeholders.
+    with pytest.raises(ValueError, match="float64 range"):
+        knn.CpuExactKNN(np.array([[0.0], [1.0], [2.0]])).kneighbors(np.array([[1e200]]), 2)
+    # A valid nearest neighbour with an unrepresentable extra candidate is still answered.
+    dist, idx = knn.CpuExactKNN(np.array([[0.0], [1e200]])).kneighbors(np.array([[0.0]]), 1)
+    assert idx.tolist() == [[0]] and dist.tolist() == [[0.0]]
+
+
+@cpu_only
+def test_tree_sentinel_extra_candidate_from_a_test_double():
+    from src.knn import CpuExactKNN
+
+    index = CpuExactKNN(np.array([[0.0], [1.0], [5.0]]))
+
+    class Sentinel:
+        def query(self, q, k, workers):  # one valid neighbour, then "no neighbour" entries
+            return np.array([[0.0] + [np.inf] * (k - 1)]), np.array([[0] + [3] * (k - 1)])
+
+    index._kdtree = Sentinel()
+    _, idx = index.kneighbors(np.array([[0.0]]), 1)
+    assert idx.tolist() == [[0]]
+    with pytest.raises(ValueError, match="float64 range"):
+        index.kneighbors(np.array([[0.0]]), 2)

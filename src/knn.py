@@ -20,7 +20,9 @@ distances keep the smaller leaf index; distances are float64. Strategies:
 ``kneighbors_unverified`` returns the float32 candidates as found (k-means assignment,
 which tolerates float32 ties; see ``src/kmeans.py``). ``last_search_stats`` holds the
 last call's queries, candidate count, fallback rows and strategy. Queries must have
-shape (m, d); wrong shapes are rejected before any native kernel.
+shape (m, d); wrong shapes are rejected before any native kernel. Range policy: inputs
+are finite and every requested neighbour's squared distance must be representable in
+float64; otherwise ``kneighbors`` raises ValueError instead of returning placeholders.
 
 Memory: each index keeps the original float64 points (shared with the caller when
 already contiguous float64; they must not be mutated while indexed). The float32 search
@@ -494,6 +496,15 @@ def _stats(queries, candidates, fallback_rows, strategy: str) -> dict:
     return {"queries": int(queries), "candidates": int(candidates), "fallback_rows": int(fallback_rows), "strategy": strategy}
 
 
+def _require_finite(ok) -> None:
+    """Range policy: every requested neighbour's squared distance must be finite in float64 (else ValueError)."""
+    if not bool(ok.all()):
+        raise ValueError(
+            "kNN distances exceed the float64 range for some queries (squared distance "
+            "overflow); rescale the inputs or reject such queries."
+        )
+
+
 def _check_queries(queries, d: int) -> None:
     """Native kernels have no bounds checks and use d as the row stride: reject wrong shapes first."""
     shape = getattr(queries, "shape", None)
@@ -577,9 +588,18 @@ class CpuExactKNN:
         kk = min(k + 1, n)
         dist, idx = self._kdtree.query(q, k=kk, workers=_cpu_threads())
         dist, idx = dist.reshape(m, kk), idx.reshape(m, kk).astype(np.int64)
+        # SciPy marks "no neighbour" (here: distance overflow) with index n and inf; such
+        # entries must never reach the unchecked scorer. Requested neighbours must be
+        # valid (range policy below); an invalid extra boundary candidate only means
+        # there is no tie to check, so it is scored as +inf.
+        invalid = (idx >= n) | (idx < 0) | ~np.isfinite(dist)
+        _require_finite(~invalid[:, :k])
+        idx = np.where(invalid, 0, idx)
         # Order by the shared strict squared distances (rounded roots can merge unequal
         # squared distances); only rows not already in (d2, index) order are re-sorted.
         dist = _candidate_d2(np, q, self.points64, idx)
+        dist[invalid] = np.inf
+        _require_finite(np.isfinite(dist[:, :k]))
         ties = np.nonzero(np.any(dist[:, 1:] <= dist[:, :-1], axis=1))[0]
         if ties.size:
             ti, td = idx[ties], dist[ties]
@@ -685,6 +705,7 @@ def _verified(index, xp, queries, k):
         # valid permutation of the database) and scan the original points directly.
         flagged = xp.ones(m, dtype=bool)
         _fallback(index, xp, q64, k, flagged, out_d, out_i)
+        _require_finite(xp.isfinite(out_d))
         index.last_search_stats = _stats(m, n, m, "full-scan")
         return out_d, out_i
     d32, cand = index._search32(queries, kk)
@@ -723,6 +744,7 @@ def _verified(index, xp, queries, k):
             ok &= xp.isfinite(bound) & xp.isfinite(outside_min) & (outside_min > dk[:, -1])
         flagged[s : s + rows] = ~ok
     _fallback(index, xp, q64, k, flagged, out_d, out_i)
+    _require_finite(xp.isfinite(out_d))
     index.last_search_stats = _stats(m, kk, flagged.sum(), "verified")
     return out_d, out_i
 

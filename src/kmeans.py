@@ -17,9 +17,10 @@ Scheme (as in cuVS / cuML defaults: k-means|| seeding, Lloyd, ``max_iter=300``,
   (float32 distances, float64 data read in place), so the (points x centres) distance
   matrix is never stored. Accuracy policy: assignments are ``kneighbors_unverified``,
   i.e. exact up to float32 resolution of the centred coordinates; a point almost
-  equidistant from two centres may go to either. That only perturbs the objective at
-  rounding level (tested against float64 inertia on translated data), so the cost of
-  the exact float64 verification used for prediction is not paid here.
+  equidistant from two centres may go to either, which can change the Lloyd trajectory
+  and so the tree; validated by objective checks against float64 inertia on translated
+  data, not as a general bound. The exact float64 verification used for prediction is
+  not paid here.
 - Update: centroid sums in float64 by a deterministic kernel (one block per cluster,
   rows added in a fixed order), so repeated runs give identical clusters; atomics would
   not. Empty clusters keep their previous centre.

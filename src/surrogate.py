@@ -631,7 +631,7 @@ class AFINNISurrogate:
         distance > 1). A query is flagged outside when its best candidate is > 1.
         """
         # Totals over this call's batches on this rank: queries, fallback rows, strategy.
-        self.search_stats = {}
+        self.search_stats = {"queries": 0, "fallback_rows": 0, "candidates": 0, "strategy": None}
         if not self.trained:
             raise RuntimeError("Model not trained.")
 

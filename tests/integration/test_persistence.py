@@ -12,7 +12,7 @@ from src import _to_host, xp
 from src.clusters import ParamSpec
 from src.local_models import LOCAL_MODELS, AffineLSQModel, LocalModel
 from src.modes import SurrogateMode
-from src.surrogate import AFINNISurrogate, MODEL_FORMAT_VERSION
+from src.surrogate import MODEL_FORMAT_VERSION, AFINNISurrogate
 from tests._helpers import assert_backend_equal, host
 
 rng = np.random.default_rng(21)
@@ -264,6 +264,7 @@ def test_failed_retraining_keeps_the_previous_model_usable(monkeypatch):
 def test_kdtree_build_failure_during_retraining_keeps_the_old_model(monkeypatch):
     """The tree is built before the new model is installed."""
     import scipy.spatial
+
     from src.surrogate import AFINNISurrogate
 
     X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
@@ -281,17 +282,71 @@ def test_kdtree_build_failure_during_retraining_keeps_the_old_model(monkeypatch)
     np.testing.assert_array_equal(s.predict(X[:50])[0], before)
 
 
-def test_a_failed_training_closes_its_profiler_stream(tmp_path):
+def _record_profilers(monkeypatch):
+    """Capture every Profiler the engine creates, to check its stream afterwards."""
+    import src.adaptive_clustering as ac
+
+    created = []
+
+    class Recording(ac.Profiler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+    monkeypatch.setattr(ac, "Profiler", Recording)
+    return created
+
+
+def _train_small(s, f, **kw):
+    X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
+    s.train(xp.asarray(X), f_fn=f, ATOL=0.05, RTOL=0.05, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40, **kw)
+
+
+def test_a_failed_training_closes_its_profiler_stream(tmp_path, monkeypatch):
     """The profiler file must not stay open when the oracle raises during training."""
-    from src.adaptive_clustering import _OPEN_PROFILERS
     from src.surrogate import AFINNISurrogate
+
+    created = _record_profilers(monkeypatch)
 
     def failing(_x):
         raise ValueError("oracle failed")
 
     with pytest.raises(ValueError, match="oracle failed"):
         AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), f_fn=failing, PROFILE_DIR=str(tmp_path))
-    assert not _OPEN_PROFILERS
+    assert created and all(p._stream is None for p in created)
+
+
+def test_a_nested_predict_does_not_release_the_outer_profiler(tmp_path, monkeypatch):
+    """A predict() inside an oracle cleans up only its own scope; the outer stream is closed by the outer failure."""
+    from src.surrogate import AFINNISurrogate
+
+    inner = AFINNISurrogate()
+    _train_small(inner, lambda x: (x**2).sum(1))
+    created = _record_profilers(monkeypatch)
+
+    def oracle(x):
+        inner.predict(xp.asarray(x[:5]))
+        raise ValueError("outer oracle failed")
+
+    with pytest.raises(ValueError, match="outer oracle failed"):
+        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), f_fn=oracle, PROFILE_DIR=str(tmp_path))
+    assert created and all(p._stream is None for p in created)
+
+
+def test_an_inner_failure_caught_by_the_oracle_leaves_the_outer_operation_running(tmp_path, monkeypatch):
+    from src.surrogate import AFINNISurrogate
+
+    inner = AFINNISurrogate()
+    _train_small(inner, lambda x: (x**2).sum(1))
+    created = _record_profilers(monkeypatch)
+
+    def oracle(x):
+        with pytest.raises(ValueError):
+            inner.predict(xp.zeros((2, 7)))  # wrong width: the inner call fails and is caught
+        return (x**2).sum(1)
+
+    _train_small(AFINNISurrogate(), oracle, PROFILE_DIR=str(tmp_path))
+    assert created and all(p._stream is None for p in created)
 
 
 def test_public_methods_keep_signatures_and_predict_reports_search_stats():

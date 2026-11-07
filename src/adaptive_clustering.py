@@ -51,7 +51,10 @@ INITIAL_CLUSTERING_FILE = "initial_clustering_labels.npy"
 # well away from the work-stealing tags.
 SCATTER_TAG = 1000
 LOCAL_RESULT_TAG = 2000
-_OPEN_PROFILERS: list = []  # profilers of running operations, for cleanup on failure  # each rank's merged leaves and profile, sent to rank 0
+# One scope (list of profilers) per running run_collective operation, innermost last, so
+# a nested operation (e.g. a predict() inside an oracle) only cleans up its own. A stack
+# per process: concurrent operations from several threads are not supported.
+_PROFILER_SCOPES: list[list] = []  # each rank's merged leaves and profile, sent to rank 0
 
 logger = logging.getLogger(__name__)
 TINY_EPS = 1e-12
@@ -616,16 +619,16 @@ def run_collective(operation, what: str):
     to the MPI launcher. A logging handler that blocks forever is out of scope.
     """
     comm = MPI.COMM_WORLD
+    scope: list = []
+    _PROFILER_SCOPES.append(scope)
     try:
-        result = operation()
-        _OPEN_PROFILERS.clear()  # closed normally by the operation itself
-        return result
+        return operation()  # on success the operation closed its profilers itself
     except Exception:
-        # Release profiler streams the failed operation opened; a cleanup error must
-        # neither replace the original exception nor prevent the MPI abort below.
-        while _OPEN_PROFILERS:
+        # Release the profiler streams this operation opened (not a parent's); a cleanup
+        # error must neither replace the original exception nor prevent the abort below.
+        for profiler in scope:
             try:
-                _OPEN_PROFILERS.pop().close()
+                profiler.close()
             except Exception:
                 pass
         if comm.Get_size() > 1:
@@ -634,6 +637,8 @@ def run_collective(operation, what: str):
             finally:
                 comm.Abort(1)
         raise
+    finally:
+        _PROFILER_SCOPES.remove(scope)
 
 
 def _adaptive_clustering(
@@ -683,7 +688,8 @@ def _adaptive_clustering(
         stream_dir=config.profile_dir,
         t0=t0,
     )
-    _OPEN_PROFILERS.append(profiler)  # closed by run_collective if this operation fails
+    if _PROFILER_SCOPES:  # closed by the enclosing run_collective if the operation fails
+        _PROFILER_SCOPES[-1].append(profiler)
     oracle_seconds_at_start = evaluator.seconds
     timer = profiler.phase
 
