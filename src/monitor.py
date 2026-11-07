@@ -173,7 +173,8 @@ class StreamMonitor:
             ("Rank", "right", 4), ("State", "left", _STATE_WIDTH), ("Level", "right", 5),
             ("Batch", "right", 9), ("Queued pts", "right", 10), ("Load", "left", _BAR_WIDTH),
             ("Clusters", "right", 9), ("Leaves", "right", 9), ("Generated", "right", 9),
-            ("Idle", "right", 4), ("Steals out/in", "right", 17), ("Seen", "right", 8),
+            ("Idle", "right", 4), ("Gave work", "right", 13), ("Got work", "right", 13),
+            ("Last updated", "right", 12),
         ):  # fmt: skip
             table.add_column(
                 col, justify=justify, width=max(width, len(col)) + 2, no_wrap=True, overflow="ellipsis"
@@ -188,7 +189,7 @@ class StreamMonitor:
                 _batch_label(s),
                 fmt_count(s.queue_pts), Text(bar, style="cyan"), f"{s.queue_clusters:,}",
                 f"{s.leaves:,}", fmt_count(s.generated), f"{s.idle_share:.0%}",
-                f"{s.steals_out}/{s.steals_in} ({fmt_count(s.pts_out)}/{fmt_count(s.pts_in)})",
+                _steal_label(s.steals_out, s.pts_out), _steal_label(s.steals_in, s.pts_in),
                 _seen_label(elapsed - s.t_last, s.done),
             )  # fmt: skip
         log = Table.grid(padding=(0, 2))
@@ -208,6 +209,11 @@ def _batch_label(s: RankStatus) -> str:
     if s.batch is None:
         return "-" if s.n_batches is None else f"0/{s.n_batches}"
     return f"{s.batch + 1}/{s.n_batches}" if s.n_batches else str(s.batch + 1)
+
+
+def _steal_label(n: int, pts: int) -> str:
+    """``"<grants> × <points>"``, e.g. ``3× 20.3k pts``; "-" when there were none."""
+    return f"{n}× {fmt_count(pts)} pts" if n else "-"
 
 
 def _seen_label(ago: float, done: bool) -> str:

@@ -24,6 +24,7 @@ time); they are excluded from stacked totals to avoid double counting.
 """
 
 import json
+import os
 import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
@@ -110,6 +111,16 @@ def new_profiling_stats() -> dict[str, Any]:
     }
 
 
+_NVTX = IS_CUPY_BACKEND and os.environ.get("AFINNI_NVTX") == "1"
+
+
+def _nvtx_range(key: str):
+    from cupyx.profiler import time_range
+
+    phase = PHASE_BY_KEY.get(key)
+    return time_range(phase.group if phase else key)
+
+
 class Profiler:
     """
     One rank's profiler. Owns that rank's ``stats`` dict (phase totals and
@@ -157,13 +168,21 @@ class Profiler:
         return time.time() - self.t0
 
     def phase(self, key: str):
-        """Context manager timing phase ``key`` (a no-op when profiling is off)."""
+        """
+        Context manager timing phase ``key`` (a no-op when profiling is off). With
+        ``AFINNI_NVTX=1`` on the GPU it also opens an NVTX range named after the
+        phase, so Nsight Systems timelines are labelled; this adds no synchronization.
+        """
         if not self.enabled:
-            return nullcontext()
+            return _nvtx_range(key) if _NVTX else nullcontext()
         return self._phase(key)
 
     @contextmanager
     def _phase(self, key: str):
+        with _nvtx_range(key) if _NVTX else nullcontext():
+            yield from self._timed_phase(key)
+
+    def _timed_phase(self, key: str):
         if IS_CUPY_BACKEND and self.timing:
             import cupy as cp
 

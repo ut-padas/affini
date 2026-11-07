@@ -69,7 +69,7 @@ The same script runs everywhere; the backend is chosen at import time.
 | `AFINNI_MPI`    | `auto` (default), `off`, `on`  | `off` ignores an installed mpi4py. `on` raises an error if MPI is unavailable.                         |
 
 Set them explicitly for benchmarks. The same information is available in code
-(`from src import IS_CUPY_BACKEND, HAS_CUML, HAS_MPI, xp`); detection lives in
+(`from src import IS_CUPY_BACKEND, HAS_MPI, xp`); detection lives in
 [`src/backend.py`](../src/backend.py).
 
 Without `mpiexec`, or when MPI isn't installed, the same code runs as a single rank.
@@ -118,7 +118,7 @@ a different order.
 |---|---|
 | `mode` | Preset pair (local model, split strategy); see the table below |
 | `ATOL`, `RTOL`, `ERROR_METRIC` | Acceptance test: `"Linf-local"` (relative to the cluster's own max \|f\|, or absolute), `"L2"`, `"Linf-global"` (relative to max \|f\| over the initial data, compared with **ATOL**; RTOL unused). Exact formulas: [`src/acceptance.py`](../src/acceptance.py) |
-| `NUM_INITIAL_CLUSTERS`, `INITIAL_CLUSTERING_METHOD` | Roots of the forest: `"kmeans"`, `"uniform_grid"` or `"knndbscan"` |
+| `NUM_INITIAL_CLUSTERS`, `INITIAL_CLUSTERING_METHOD` | Roots of the forest: `"kmeans"` (custom k-means in `src/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (needs `--group research_internal`, Linux) |
 | `MIN_PTS_PER_CLUSTER` | Rejected clusters are augmented to at least twice this before splitting |
 | `MAX_LEVELS` | Refinement depth limit; reaching it leaves `converged=False` |
 | `SAMPLING_METHOD` | Where new points go when augmenting (`"convex_combination"`) |
@@ -266,8 +266,9 @@ uv run python -m src.monitor scratch/example03_monitoring/no_stealing/stream
 
 Per rank the monitor shows the current phase (or idle / asking for work / retiring /
 done), level, batch progress in the level (`current/planned`), queued points with a
-load bar, clusters, accepted leaves, generated points, idle share, steals out/in
-(count and points), and how long ago the rank last reported (`Seen`, relative to
+load bar, clusters, accepted leaves, generated points, idle share, work given to
+and taken from other ranks (`Gave work` / `Got work`: number of steals and points
+moved), and how long ago the rank last reported (`Last updated`, relative to
 the newest event of any rank), plus recent steals and level ends. Watch for ranks
 that run out of work (idle, "asking R2 for work") and the steal counts and load bars
 changing as work moves.
@@ -455,14 +456,16 @@ For another cluster, copy [`scripts/hpc/tacc.sh`](../scripts/hpc/tacc.sh) to
 Conventions for code, docstrings and verification are in [`AGENTS.md`](../AGENTS.md).
 
 ```bash
-uv sync --all-groups             # also the research/ and visualisation groups
+uv sync --all-groups             # also the research, research_internal, viz and profiling groups
 make help                        # Linux/macOS wrappers, e.g. `make dev EXTRAS="gpu mpi"`
 ```
 
 | Dependency group | Contents                                      | Installed by        |
 | ---------------- | --------------------------------------------- | ------------------- |
 | `dev`            | `lint` + `test` + `notebook`                  | `uv sync` (default) |
-| `research`       | extra packages for the scripts in `research/` | `--group research`  |
+| `research`       | extra packages for the scripts in `research/`, incl. cuML for comparisons | `--group research`  |
+| `research_internal` | `knndbscan` (TestPyPI, Linux) for `INITIAL_CLUSTERING_METHOD="knndbscan"` | `--group research_internal` |
+| `profiling`      | py-spy, line_profiler, viztracer, memray      | `--group profiling` |
 | `viz`            | animation/plotting (manim, plotly)            | `--group viz`       |
 
 Every `Makefile` target runs a single `uv` command, so on Windows run that command directly.
@@ -476,7 +479,7 @@ Every `Makefile` target runs a single `uv` command, so on Windows run that comma
 | Lint / format | `uv run ruff check .`, `uv run ruff format .` |
 
 `uv run pytest` runs everything the current install supports; its header line shows
-which backends were exercised (`afinni backend: array=NumPy | cuML=no | MPI=...`). A
+which backends were exercised (`afinni backend: array=NumPy | MPI=...`). A
 missing backend is skipped unless an override makes it required:
 
 | Checking  | Command |

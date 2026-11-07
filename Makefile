@@ -27,7 +27,7 @@ help:
 	@echo "                     (on TACC, first: source scripts/hpc/tacc.sh)"
 	@echo ""
 	@echo "Other:"
-	@echo "  info             - Show detected backends (GPU / cuML / MPI)  uv run python -m src"
+	@echo "  info             - Show detected backends (GPU / MPI)         uv run python -m src"
 	@echo "  test             - Run pytest"
 	@echo "  test-mpi         - Backend + multi-rank tests, MPI required (needs an MPI extra)"
 	@echo "  format / lint    - ruff format / ruff check"

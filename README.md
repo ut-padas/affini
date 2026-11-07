@@ -39,7 +39,7 @@ Optional backends are uv *extras*; combine them freely, e.g. `uv sync --extra gp
 | ----------- | ------------------ | ------------------------------------ | ------------------------------------------------------------------- |
 | CPU         | ✅                  | ⚠️ packages available, not yet tested | ✅                                                                   |
 | MPI (`mpi`) | ✅                  | ⚠️ packages available, not yet tested | ✅ Intel MPI ([note](examples/USAGE.md#running-on-cpu-gpu-and-mpi))  |
-| GPU (`gpu`) | ✅ CuPy + cuML      | ❌ no CUDA, runs on CPU               | ✅ CuPy only. KMeans/kNN fall back to scikit-learn/FAISS on the CPU. |
+| GPU (`gpu`) | ✅ CuPy             | ❌ no CUDA, runs on CPU               | ✅ CuPy                                                              |
 
 Verified so far: Linux x86_64 (CPU, MPICH), WSL2 and Windows with an NVIDIA laptop GPU
 (CPU, GPU, MPI), TACC Vista (GH200, ARM64: CPU, GPU, Open MPI) and Stampede3 (H100,

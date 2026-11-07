@@ -31,7 +31,9 @@ AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. .venv/bin/python scripts/regressio
 ```
 
 - A refactor must keep `scripts/regression_check.py` bit-identical on CPU. Deliberate
-  numerical changes must be listed and justified separately.
+  numerical changes must be listed and justified separately. Compare against references
+  saved from the current baseline (`--save` on the base commit), not older ones: the
+  custom k-means/kNN deliberately changed results relative to the original PR head.
 - GPU kernels accumulate with `atomicAdd`, so GPU results can differ at rounding level
   between runs. GPU tests compare with a tight tolerance (`tests/_helpers.py`:
   1e-12, or 1e-10 with `separate_runs=True` when comparing two trainings), never
