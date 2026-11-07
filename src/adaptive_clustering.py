@@ -17,7 +17,6 @@ from typing import Any, Optional
 import numpy as np
 
 from src import (
-    HAS_CUML,
     IS_CUPY_BACKEND,
     Array,
     _to_host,
@@ -28,7 +27,9 @@ from src.adaptive_clustering_utils import (
     save_generated_data,
     uniform_grid_cluster_labels,
 )
-from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
+from src.backend import (  # MPI: real mpi4py.MPI, or a single-rank stand-in
+    MPI,
+)
 from src.clusters import ClusterBatch, ClusterQueueBuilder, ColumnBuffer
 from src.config import ClusteringConfig
 from src.evaluation import Evaluator
@@ -53,8 +54,16 @@ SCATTER_TAG = 1000
 logger = logging.getLogger(__name__)
 TINY_EPS = 1e-12
 
-def _check_split(splitter, order, child_sizes, counts, n_rows: int) -> None:
-    """A split must permute every row and cut each cluster into two children."""
+_CHECK_CHUNK = 1 << 22  # rows per gather in the split check (bounds its temporary memory)
+
+
+def _check_split(splitter, order, child_sizes, counts, labels) -> None:
+    """
+    A split must permute every row exactly once, keep each row inside its parent
+    cluster (``labels`` is sorted, so ``labels[order]`` must equal it), and cut each
+    cluster into two children whose sizes add up to the parent's.
+    """
+    n_rows = int(labels.shape[0])
     if order.shape != (n_rows,) or child_sizes.shape != (2 * len(counts),):
         raise ValueError(
             f"Split strategy {splitter.name!r} returned order {tuple(order.shape)} and "
@@ -68,6 +77,26 @@ def _check_split(splitter, order, child_sizes, counts, n_rows: int) -> None:
             f"Split strategy {splitter.name!r} returned child sizes that are negative "
             f"or do not add up to their cluster's size."
         )
+    # ``order`` has n_rows entries, so it is a permutation iff it marks every row;
+    # a boolean mark array (1 byte per row) avoids bincount's large temporaries.
+    marked = xp.zeros(n_rows, dtype=xp.bool_)
+    marked[order] = True
+    same_cluster = all(
+        bool(xp.all(labels[order[s : s + _CHECK_CHUNK]] == labels[s : s + _CHECK_CHUNK]))
+        for s in range(0, n_rows, _CHECK_CHUNK)
+    )
+    if not (bool(xp.all(marked)) and same_cluster):
+        raise ValueError(
+            f"Split strategy {splitter.name!r} returned an order that drops, duplicates "
+            f"or moves rows between clusters."
+        )
+
+
+def _threads_for_rank0(node_ranks: int) -> int:
+    """Threads for work done by rank 0 alone: its own share (``OMP_NUM_THREADS``, default 1 under MPI) times the ranks on its node."""
+    env = os.environ.get("OMP_NUM_THREADS", "")
+    per_rank = int(env) if env.isdigit() else (1 if node_ranks > 1 else os.cpu_count() or 1)
+    return max(1, per_rank * node_ranks)
 
 
 def _run_local_refinement(
@@ -116,7 +145,8 @@ def _run_local_refinement(
     )
     num_generated_pts = 0
     evals_at_start = evaluator.n_evals
-    level = 0
+    level = 0  # this rank's processing rounds; tree depth is tracked per cluster
+    unresolved_clusters = unresolved_pts = 0
 
     sampler = components.sampler
     stealer = make_work_stealer(config.use_work_stealing, comm, d, fd, profiler)
@@ -128,8 +158,10 @@ def _run_local_refinement(
         stealer.set_load(queue.n_pts if num_clusters > 0 else 0)
 
         # --- Phase 3: Idle / Stealing Phase ---
-        if num_clusters == 0 or level > config.max_levels:
-            retired, stolen = stealer.idle_step(level > config.max_levels)
+        # (clusters deeper than max_levels were already set aside, so an empty
+        # queue is the only reason to stop or steal)
+        if num_clusters == 0:
+            retired, stolen = stealer.idle_step(False)
             if retired:
                 break
             if stolen is not None:
@@ -207,6 +239,7 @@ def _run_local_refinement(
 
             with timer("time_slicing"):
                 sizes_cpu = queue.sizes[start_cluster_idx:end_cluster_idx]
+                depth_cpu = queue.depth[start_cluster_idx:end_cluster_idx]
                 starts_local_cpu = queue.starts[start_cluster_idx:end_cluster_idx]
                 slice_start = int(starts_local_cpu[0])
                 slice_end = int(starts_local_cpu[-1] + sizes_cpu[-1])
@@ -306,6 +339,29 @@ def _run_local_refinement(
                         ),
                         good_params,
                     )
+                    E_good = E_cluster[good_idx_local]
+                    if final_params:
+                        # Accepted-only columns change predictions, so re-test the model
+                        # that will actually be deployed; clusters it fails are split.
+                        F_final = model.evaluate(
+                            {**good_params, **final_params, "centroids": mus[good_idx_local],
+                             "f": f_mus[good_idx_local]},
+                            X_good, dense_labels_good,
+                        )  # fmt: skip
+                        still_good, E_good = acceptance(
+                            F_batch[good_mask], F_final, xp.r_[0, xp.cumsum(good_counts)[:-1]],
+                            good_counts, F_max_global,
+                        )  # fmt: skip
+                        if not bool(xp.all(still_good)):
+                            is_good[good_idx_local[~still_good]] = False
+                            keep = xp.nonzero(still_good)[0]
+                            good_idx_local, good_counts, E_good, Qs = (
+                                good_idx_local[keep], good_counts[keep], E_good[keep], Qs[keep]
+                            )
+                            good_params = {k: v[keep] for k, v in good_params.items()}
+                            final_params = {k: v[keep] for k, v in final_params.items()}
+                            K_good -= K_good_batch - len(keep)
+                            K_good_batch = len(keep)
 
                 with timer("time_good_d2h"):
                     accepted.append(
@@ -313,7 +369,7 @@ def _run_local_refinement(
                             "centroids": mus[good_idx_local],
                             "f": f_mus[good_idx_local],
                             "Q": Qs,
-                            "E_cluster": E_cluster[good_idx_local],
+                            "E_cluster": E_good,
                             "counts": good_counts.astype(xp.int64),
                             **good_params,
                             **final_params,
@@ -325,6 +381,7 @@ def _run_local_refinement(
             with timer("time_filter"):
                 bad_idx_local = xp.nonzero(~is_good)[0]
                 n_bad = int(bad_idx_local.shape[0])
+                n_batch_pts = int(X_batch.shape[0])
 
             if n_bad > 0:
                 with timer("time_augment"):
@@ -332,6 +389,9 @@ def _run_local_refinement(
                     X_bad = X_batch[bad_mask]
                     F_bad = F_batch[bad_mask]
                     G_bad = G_batch[bad_mask] if G_batch is not None else None
+                    # The whole batch is not needed past this point: release it before
+                    # augmentation and splitting, which hold the batch's peak memory.
+                    X_batch = F_batch = G_batch = bad_mask = None
                     bad_counts = aug_sizes[bad_idx_local]
 
                     # --- Augment small rejected clusters before splitting ---
@@ -379,7 +439,12 @@ def _run_local_refinement(
                                 aug.X_new,
                                 f"train_data_atol_{config.atol}_rtol_{config.rtol}_d{d}",
                             )
-                    del aug
+                    # The augmented arrays hold copies of the rejected rows.
+                    del aug, X_bad, F_bad, G_bad
+                    if mempool is not None:
+                        # Hand cached blocks back before the split, the batch's largest
+                        # allocation burst (a few cudaFree calls per batch).
+                        mempool.free_all_blocks()
 
                 with timer("time_bad_split"):
                     # Cut each rejected cluster in two along its split direction:
@@ -400,7 +465,7 @@ def _run_local_refinement(
                     )
                     _check_split(
                         splitter, sort_order, child_sizes, target_bad_counts,
-                        int(X_bad_aug.shape[0]),
+                        aug_dense_labels_bad,
                     )  # fmt: skip
 
                 with timer("time_bad_d2h"):
@@ -412,6 +477,7 @@ def _run_local_refinement(
                         if config.requires_grad_everywhere and G_bad_aug is not None
                         else None,
                         child_sizes,
+                        depth=np.repeat(depth_cpu[_to_host(bad_idx_local)] + 1, 2),
                     )
 
                 with timer("time_gc"):
@@ -426,7 +492,7 @@ def _run_local_refinement(
 
             profiler.event(
                 "batch", batch=b, accepted=K_good_batch, rejected=n_bad,
-                n_pts=int(X_batch.shape[0]),
+                n_pts=n_batch_pts,
             )  # fmt: skip
             start_cluster_idx = end_cluster_idx
             with timer("time_gc"):
@@ -437,6 +503,12 @@ def _run_local_refinement(
         # --- Phase 2: The Level Boundary (Transition & Steal Response) ---
         with timer("time_transition"):
             next_queue = next_level.build()
+            # Children deeper than max_levels are never refined: they stay unresolved.
+            too_deep = next_queue.depth > config.max_levels
+            if too_deep.any():
+                unresolved_clusters += int(too_deep.sum())
+                unresolved_pts += int(next_queue.sizes[too_deep].sum())
+                next_queue = next_queue.select(~too_deep)
             if next_queue.n_clusters == 0:
                 logger.info(
                     f"R{rank:02} L{level:02}: No bad clusters to refine, terminating."
@@ -493,13 +565,15 @@ def _run_local_refinement(
     total_f_evals = evaluator.n_evals - evals_at_start
     # Clusters still queued here were never accepted: refinement stopped at
     # max_levels before they met the tolerance.
-    profiling_stats["num_unresolved_clusters"] = int(queue.n_clusters)
-    profiling_stats["num_unresolved_pts"] = int(queue.n_pts)
-    if queue.n_clusters > 0:
+    unresolved_clusters += queue.n_clusters
+    unresolved_pts += queue.n_pts
+    profiling_stats["num_unresolved_clusters"] = unresolved_clusters
+    profiling_stats["num_unresolved_pts"] = unresolved_pts
+    if unresolved_clusters > 0:
         logger.warning(
-            f"R{rank:02}: Stopped at max_levels={config.max_levels} with "
-            f"{queue.n_clusters:,} unresolved clusters ({queue.n_pts:,} points); "
-            f"their region has no accepted leaves."
+            f"R{rank:02}: {unresolved_clusters:,} clusters ({unresolved_pts:,} points) "
+            f"reached max_levels={config.max_levels} unresolved; their region has no "
+            f"accepted leaves."
         )
     return accepted.result(), accepted.n_rows, total_f_evals, num_generated_pts, level
 
@@ -538,15 +612,8 @@ def adaptive_clustering(
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
-
-    # With one rank there are no stealing opportunities, so respect the
-    # caller's refinement limit even when use_work_stealing defaults to True.
-    if config.use_work_stealing and size > 1 and config.max_levels <= 100:
-        _safe_max_levels = 1000
-        logger.warning(
-            f"Work stealing enabled but max_levels is only {config.max_levels}. Overriding max_levels to {_safe_max_levels} to ensure sufficient stealing opportunities across levels."
-        )
-        config.max_levels = _safe_max_levels
+    # Ranks sharing rank 0's node (collective, so every rank calls it).
+    node_ranks = comm.Split_type(MPI.COMM_TYPE_SHARED).Get_size() if size > 1 else 1
 
     _start_time = time.perf_counter()
 
@@ -607,18 +674,18 @@ def adaptive_clustering(
 
             if labels0 is None:
                 if config.initial_clustering_method == "kmeans":
-                    if HAS_CUML:
-                        from cuml.cluster import KMeans as cuKMeans
+                    # Custom k-means (src/kmeans.py), deterministic for a given seed. The
+                    # CPU path keeps the previous two Lloyd iterations, and borrows the
+                    # cores of this node's other MPI ranks, which wait meanwhile.
+                    from src.kmeans import kmeans_labels
 
-                        km = cuKMeans(n_clusters=config.num_initial_clusters, random_state=config.seed)
-                        labels0 = km.fit_predict(X0_gpu)
+                    if IS_CUPY_BACKEND:
+                        labels0 = kmeans_labels(X0_gpu, config.num_initial_clusters, config.seed)
                     else:
-                        from sklearn.cluster import KMeans
-
-                        km = KMeans(
-                            n_clusters=config.num_initial_clusters, random_state=config.seed, max_iter=2
-                        )
-                        labels0 = km.fit_predict(_to_host(X0_gpu))
+                        labels0 = kmeans_labels(
+                            _to_host(X0_gpu), config.num_initial_clusters, config.seed,
+                            max_iter=2, threads=_threads_for_rank0(node_ranks),
+                        )  # fmt: skip
                     labels0 = _to_host(labels0).astype(np.int64)
 
                 elif config.initial_clustering_method == "knndbscan":
@@ -697,6 +764,10 @@ def adaptive_clustering(
     if IS_CUPY_BACKEND:
         import cupy as cp
 
+        # The batch cap below depends on free VRAM, and a different cap changes batch
+        # boundaries (and so the random streams): release cached pool blocks first so
+        # the reading does not depend on what the pool happens to hold.
+        cp.get_default_memory_pool().free_all_blocks()
         free_vram_bytes, total_vram_bytes = cp.cuda.Device().mem_info
         usable_vram_bytes = int(free_vram_bytes * 0.65)
     else:
@@ -737,9 +808,13 @@ def adaptive_clustering(
             float(estimated_peak_bytes_per_point),
         )
         config.batch_size = dynamic_batch_cap
+    # What this run actually used; the caller's (requested) config is unchanged.
+    profiling_stats["effective_config"] = {
+        "batch_size": int(config.batch_size), "max_levels": int(config.max_levels),
+    }  # fmt: skip
 
-    buffers, out_count, local_f_evals, local_gen_pts, last_level = (
-        _run_local_refinement(
+    try:
+        buffers, out_count, local_f_evals, local_gen_pts, last_level = _run_local_refinement(
             config=config,
             evaluator=evaluator,
             clusters=local_clusters,
@@ -747,7 +822,14 @@ def adaptive_clustering(
             comm=comm,
             profiler=profiler,
         )
-    )
+    except Exception:
+        if size > 1:
+            # Peers would wait forever in a receive or barrier for this rank: end the
+            # whole job (MPI_Abort) after logging which rank failed and why.
+            logger.critical(f"R{rank:02}: refinement failed; aborting all ranks.", exc_info=True)
+            profiler.close()
+            comm.Abort(1)
+        raise
     profiler.event(
         "done", leaves=int(out_count), generated=int(local_gen_pts),
         unresolved_pts=int(profiling_stats["num_unresolved_pts"]),
@@ -797,6 +879,7 @@ def adaptive_clustering(
             "N0": all_profiling_stats[0].get("N0", 0),
             "num_levels": max(ps["num_levels"] for ps in all_profiling_stats),
             "num_final_clusters": int(merged["centroids"].shape[0]),
+            "effective_config": all_profiling_stats[0].get("effective_config", {}),
             "level_stats": sorted(
                 [entry for ps in all_profiling_stats for entry in ps["level_stats"]],
                 key=lambda e: (e["level"], e["rank"]),

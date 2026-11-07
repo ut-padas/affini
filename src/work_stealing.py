@@ -27,16 +27,16 @@ logger = logging.getLogger(__name__)
 TAG_STATE_BROADCAST = 101
 TAG_STEAL_REQ = 102
 TAG_STEAL_DENY = 104
-TAG_STEAL_GRANT = 110  # Payload buffers use tags 111 through 114.
+TAG_STEAL_GRANT = 110  # Payload buffers use tags 111 through 115.
 
 # --- Tuning parameters ---
 MIN_LOAD_THRESHOLD = 1_000_000  # Min points to be eligible for stealing
-STEAL_SIZE = 500_000  # Target point count to steal
+STEAL_SIZE = 500_000  # Minimum points per grant (a grant gives about half the open work)
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
 
 
 def send_clusters(comm, batch: ClusterBatch, dest: int, tag: int = TAG_STEAL_GRANT):
-    """Send ``batch`` to ``dest``: a metadata message on ``tag``, then buffers on tag+1..tag+4."""
+    """Send ``batch`` to ``dest``: a metadata message on ``tag``, then buffers on tag+1..tag+5."""
     meta = {
         "n_pts": batch.n_pts,
         "n_clusters": batch.n_clusters,
@@ -48,6 +48,7 @@ def send_clusters(comm, batch: ClusterBatch, dest: int, tag: int = TAG_STEAL_GRA
     if batch.G is not None:
         comm.Send(np.ascontiguousarray(batch.G), dest=dest, tag=tag + 3)
     comm.Send(np.ascontiguousarray(batch.sizes), dest=dest, tag=tag + 4)
+    comm.Send(np.ascontiguousarray(batch.depth, dtype=np.int64), dest=dest, tag=tag + 5)
 
 
 def recv_clusters(
@@ -65,7 +66,9 @@ def recv_clusters(
     if G is not None:
         comm.Recv(G, source=source, tag=tag + 3)
     comm.Recv(sizes, source=source, tag=tag + 4)
-    return ClusterBatch(X, F, G, sizes)
+    depth = np.empty(meta["n_clusters"], dtype=np.int64)
+    comm.Recv(depth, source=source, tag=tag + 5)
+    return ClusterBatch(X, F, G, sizes, depth)
 
 
 class WorkStealer:
@@ -164,7 +167,8 @@ class WorkStealer:
         Answer every pending steal request and return what is left of ``queue``.
 
         Clusters before ``start_cluster`` are already being processed and are never
-        given away. A grant takes clusters from the tail, about STEAL_SIZE points,
+        given away. A grant takes clusters from the tail, about half the unprocessed points
+        (at least STEAL_SIZE),
         and always leaves at least one unprocessed cluster. ``batch`` is the batch
         index for mid-level calls, or None at a level boundary.
         """
@@ -181,10 +185,11 @@ class WorkStealer:
             open_pts = int(np.sum(queue.sizes[start_cluster:])) if n_open > 0 else 0
             if n_open > 1 and open_pts > MIN_LOAD_THRESHOLD:
                 t_send = time.perf_counter()
+                # Give about half of the unprocessed work (at least STEAL_SIZE points),
+                # so a heavily loaded victim sheds its surplus in a few grants.
+                target = max(STEAL_SIZE, open_pts // 2)
                 rev_cumsum = np.cumsum(queue.sizes[start_cluster:][::-1])
-                n_give = min(
-                    int(np.searchsorted(rev_cumsum, STEAL_SIZE)) + 1, n_open - 1
-                )
+                n_give = min(int(np.searchsorted(rev_cumsum, target)) + 1, n_open - 1)
                 queue, gift = queue.split(queue.n_clusters - n_give)
                 send_clusters(self.comm, gift, thief)
                 elapsed = time.perf_counter() - t_send

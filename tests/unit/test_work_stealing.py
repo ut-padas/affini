@@ -144,7 +144,7 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
     if grant:
         assert buffers["counts"][0] == 3
         assert buffers["centroids"][0, 0] == 1
-        assert len(comm.payloads) == 3 + int(has_g)
+        assert len(comm.payloads) == 4 + int(has_g)  # X, F, [G,] sizes, depth
     # The protocol shows up in the event timeline, in order.
     kinds = [e["kind"] for e in profiler.events if e["kind"].startswith(("steal", "retire"))]
     reply = "steal_received" if grant else "steal_denied"
@@ -173,10 +173,10 @@ def test_single_rank_respects_refinement_limit(monkeypatch, stealing, max_levels
         ),
         Evaluator(f_fn=lambda x: x**2),
     )
-    # Levels are numbered from zero, so the existing inclusive limit permits
-    # max_levels + 1 passes. The final queued clusters prove the depth cap,
-    # rather than convergence, stopped this run.
+    # Depths are numbered from zero, so the inclusive limit permits max_levels + 1
+    # levels. Children deeper than that are set aside as unresolved, which proves
+    # the depth cap, rather than convergence, stopped this run.
     assert result["num_levels"] == max_levels + 1
     levels = result["profiling_stats"]["level_stats"]
     assert levels[-1]["level"] == max_levels
-    assert levels[-1]["clusters_level_end"] > 0
+    assert result["converged"] is False and result["num_unresolved_clusters"] > 0

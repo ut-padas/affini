@@ -15,7 +15,7 @@ from typing import Any, Callable, Literal, Optional, Union
 import numpy as np
 
 from src import (
-    HAS_CUML,
+    IS_CUPY_BACKEND,
     Array,
     _get_mpi_rank,
     _to_device,
@@ -325,6 +325,8 @@ class AFINNISurrogate:
         self.mode = config.mode
         self.local_model = leaf_model
         self.config = config.to_dict()
+        # Settings the run changed at runtime (GPU batch cap, MPI level limit).
+        self.config["effective"] = bcast_data["profiling_stats"].get("effective_config", {})
         self.X_src = xp.asarray(bcast_data["centroids"])
         self.f_src = xp.asarray(bcast_data["f"])
         self.Qs_src = xp.asarray(bcast_data["Q"])
@@ -551,45 +553,20 @@ class AFINNISurrogate:
                 )
 
     def _build_knn_index(self):
-        """
-        Index the leaf centroids for the coarse Euclidean search: cuML when available,
-        else FAISS on the host, exact up to 5,000 leaves and approximate (HNSW) above,
-        so CPU candidate lists can differ from GPU ones on large models.
-        """
+        """Index the leaf centroids for the coarse Euclidean search (exact on both backends, see ``src.knn``)."""
         if self.X_src is None:
             return
-
         t0 = time.perf_counter()
-        # Keep X_src in the active array backend (device under CuPy); only the
-        # kNN index itself lives on the host when cuML is unavailable.
+        # Keep X_src in the active array backend (device under CuPy).
         self.X_src = _to_device(self.X_src)
-        if HAS_CUML:
-            from cuml.neighbors import NearestNeighbors as cuMLNearestNeighbors
+        if IS_CUPY_BACKEND:
+            from src.knn import GpuExactKNN
 
-            self.knn_index = cuMLNearestNeighbors(metric="euclidean", algorithm="auto")
-            self.knn_index.fit(self.X_src)
+            self.knn_index = GpuExactKNN(self.X_src)
         else:
-            # CPU backend, or CuPy without cuML (e.g. Windows + GPU): FAISS on host.
-            import faiss
+            from src.knn import CpuExactKNN
 
-            centroids_f32 = np.ascontiguousarray(_to_host(self.X_src), dtype=np.float32)
-            D = self.X_src.shape[1]
-
-            # ANN LOGIC FOR CPU
-            if self.N_src > 5000:
-                # Use HNSW graph for ultra-fast approximate search on large cluster sets
-                # 32 = number of links per node (higher is more accurate but uses more RAM)
-                self.knn_index = faiss.IndexHNSWFlat(D, 32)
-                # efConstruction controls index time vs accuracy trade-off
-                self.knn_index.hnsw.efConstruction = 40
-                self.knn_index.add(centroids_f32)  # type: ignore
-                # efSearch controls query time vs accuracy trade-off
-                self.knn_index.hnsw.efSearch = 32
-            else:
-                # Fallback to exact search for small models
-                self.knn_index = faiss.IndexFlatL2(D)
-                self.knn_index.add(centroids_f32)  # type: ignore
-
+            self.knn_index = CpuExactKNN(_to_host(self.X_src))
         if _get_mpi_rank() == 0:
             logger.info(f"KNN Index built in {time.perf_counter() - t0:.4f}s")
 
@@ -597,20 +574,10 @@ class AFINNISurrogate:
         """``(indices, distances)`` of the ``min(k, N_src)`` nearest centroids, on the active backend."""
         if self.knn_index is None:
             self._build_knn_index()
-
         k = min(k, self.N_src)
-        if HAS_CUML:
-            query_points = _to_device(query_points)
-            distances, indices = self.knn_index.kneighbors(query_points, n_neighbors=k)  # type: ignore
-        else:
-            query_points_f32 = np.ascontiguousarray(_to_host(query_points), dtype=np.float32)
-            distances_sq, indices = self.knn_index.search(query_points_f32, k)  # type: ignore
-            # FAISS returns host arrays; move them to the active backend so
-            # downstream indexing of device-resident X_src/f_src etc. works.
-            indices = _to_device(indices)
-            distances = _to_device(np.sqrt(distances_sq))
-
-        return indices, distances
+        queries = _to_device(query_points) if IS_CUPY_BACKEND else _to_host(query_points)
+        distances, indices = self.knn_index.kneighbors(queries, k)
+        return _to_device(indices), _to_device(distances)
 
     def predict(
         self,
@@ -923,7 +890,7 @@ def compute_error_metrics(
 
     all_l2_rel_error = float(norm_diff_all / (norm_gt_all + TINY_EPS))
     all_l2_abs_error = float(norm_diff_all / xp.sqrt(n_test))
-    all_linf_rel_error = float(norm_diff_all_inf / (norm_gt_all_inf + TINY_EPS)) 
+    all_linf_rel_error = float(norm_diff_all_inf / (norm_gt_all_inf + TINY_EPS))
     all_linf_abs_error = float(norm_diff_all_inf / xp.sqrt(n_test))
     element_rel_error_all = xp.abs(diff_all) / (xp.abs(gt) + TINY_EPS)
     if element_rel_error_all.ndim > 1:

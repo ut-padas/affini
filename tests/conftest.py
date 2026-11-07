@@ -13,7 +13,7 @@ def pytest_report_header(config):
 
     gpu = f"CuPy ({info.get('gpu_name', info['gpu'])})" if info["is_cupy_backend"] else "NumPy"
     return [
-        f"afinni backend: array={gpu} | cuML={'yes' if info['has_cuml'] else 'no'} "
+        f"afinni backend: array={gpu} "
         f"| MPI={info['mpi']} | {info['platform']}, Python {info['python']}",
         f"afinni overrides: AFINNI_DEVICE={info['device_mode']} AFINNI_MPI={info['mpi_mode']}",
     ]

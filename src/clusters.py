@@ -29,17 +29,22 @@ class ClusterBatch:
     Clusters stored contiguously in host memory.
 
     Cluster ``k`` owns rows ``starts[k] : starts[k] + sizes[k]`` of ``X``, ``F``
-    and (if present) ``G``.
+    and (if present) ``G``. ``depth[k]`` is the cluster's depth in its tree (roots
+    are 0); it travels with the cluster when work is stolen, so the depth limit
+    does not depend on which rank processes it.
     """
 
     X: np.ndarray  # (n_pts, d)
     F: np.ndarray  # (n_pts, fd)
     G: np.ndarray | None  # (n_pts, fd, d), or None when gradients are not carried
     sizes: np.ndarray  # (n_clusters,) int64
+    depth: np.ndarray | None = None  # (n_clusters,) int64; None means all roots
     starts: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.starts = np.r_[0, np.cumsum(self.sizes)[:-1]]
+        if self.depth is None:
+            self.depth = np.zeros(len(self.sizes), dtype=np.int64)
 
     @classmethod
     def empty(cls, d: int, fd: int) -> "ClusterBatch":
@@ -72,9 +77,15 @@ class ClusterBatch:
         G_head = self.G[:pt] if self.G is not None else None
         G_tail = self.G[pt:] if self.G is not None else None
         return (
-            ClusterBatch(self.X[:pt], self.F[:pt], G_head, self.sizes[:cluster_idx]),
-            ClusterBatch(self.X[pt:], self.F[pt:], G_tail, self.sizes[cluster_idx:]),
+            ClusterBatch(self.X[:pt], self.F[:pt], G_head, self.sizes[:cluster_idx], self.depth[:cluster_idx]),
+            ClusterBatch(self.X[pt:], self.F[pt:], G_tail, self.sizes[cluster_idx:], self.depth[cluster_idx:]),
         )
+
+    def select(self, keep: np.ndarray) -> "ClusterBatch":
+        """The clusters where ``keep`` (n_clusters,) is True, in order."""
+        rows = np.repeat(keep, self.sizes)
+        G = self.G[rows] if self.G is not None else None
+        return ClusterBatch(self.X[rows], self.F[rows], G, self.sizes[keep], self.depth[keep])
 
 
 # Host RAM kept free for the OS, the GPU driver and other processes: the larger of
@@ -118,13 +129,16 @@ class ClusterQueueBuilder:
         self._F = np.empty((cap_pts, fd), dtype=np.float64)
         self._G = np.empty((cap_pts, fd, d), dtype=np.float64) if has_g else None
         self._sizes = np.empty((cap_clusters,), dtype=np.int64)
+        self._depth = np.empty((cap_clusters,), dtype=np.int64)
         self.n_pts = 0
         self.n_clusters = 0
 
-    def append(self, X: Array, F: Array, G: Array | None, sizes: Array) -> None:
+    def append(
+        self, X: Array, F: Array, G: Array | None, sizes: Array, depth: Array | None = None
+    ) -> None:
         """
         Append clusters given in contiguous order (device or host arrays). ``G`` is
-        stored only if the builder was created with ``has_g``.
+        stored only if the builder was created with ``has_g``; ``depth`` defaults to 0.
         """
         if self._G is not None and G is None:
             raise ValueError("This builder carries gradients, but G was not given.")
@@ -151,6 +165,7 @@ class ClusterQueueBuilder:
         if G_host is not None:
             self._G[self.n_pts : pts_end] = G_host
         self._sizes[self.n_clusters : clusters_end] = sizes_host
+        self._depth[self.n_clusters : clusters_end] = 0 if depth is None else _to_host(depth)
         self.n_pts, self.n_clusters = pts_end, clusters_end
 
     def build(self) -> ClusterBatch:
@@ -161,14 +176,9 @@ class ClusterQueueBuilder:
         F = self._F[: self.n_pts]
         G = self._G[: self.n_pts] if self._G is not None else None
         sizes = self._sizes[: self.n_clusters]
-
+        batch = ClusterBatch(X, F, G, sizes, self._depth[: self.n_clusters])
         nonempty = sizes > 0
-        if not np.all(nonempty):
-            keep = np.repeat(nonempty, sizes)
-            X, F, sizes = X[keep], F[keep], sizes[nonempty]
-            if G is not None:
-                G = G[keep]
-        return ClusterBatch(X, F, G, sizes)
+        return batch if np.all(nonempty) else batch.select(nonempty)
 
     def _row_bytes(self) -> int:
         return 8 * (self.d + self.fd + (self.fd * self.d if self._G is not None else 0))
@@ -184,6 +194,7 @@ class ClusterQueueBuilder:
         if n_clusters > self._sizes.shape[0]:
             cap = max(n_clusters, 2 * self._sizes.shape[0])
             self._sizes = _grown(self._sizes, cap, self.n_clusters)
+            self._depth = _grown(self._depth, cap, self.n_clusters)
 
 
 def _grown(buf: np.ndarray, capacity: int, n_used: int) -> np.ndarray:

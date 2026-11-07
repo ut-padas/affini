@@ -10,7 +10,6 @@ from typing import Any
 from array_api_compat.common._typing import Array
 
 from src.backend import (
-    HAS_CUML,
     IS_CUPY_BACKEND,
     backend_info,
     get_mpi_rank,
@@ -63,7 +62,6 @@ FIGURES_DIR = PROJECT_DIR / "figures"
 RESULTS_DIR = PROJECT_DIR / "results"
 
 __all__ = [
-    "HAS_CUML",
     "HAS_MPI",
     "IS_CUPY_BACKEND",
     "MPI",

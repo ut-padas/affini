@@ -134,3 +134,13 @@ def test_work_stealing_moves_gradients_and_keeps_second_order_models_exact(mpi_l
         module="tests.mpi._grad_steal_worker",
     )
     assert result["ok"] is True, result
+
+
+def test_a_failure_on_one_rank_aborts_the_whole_job(mpi_launcher):
+    """Without an abort, rank 0 would wait for rank 1 until an external timeout."""
+    proc = subprocess.run(
+        [*mpi_launcher, "-n", str(max(2, N_RANKS)), sys.executable, "-m", "tests.mpi._abort_worker"],
+        cwd=REPO_ROOT, env=dict(os.environ), capture_output=True, text=True, timeout=120,
+    )  # fmt: skip
+    assert proc.returncode != 0
+    assert "injected failure on rank 1" in proc.stdout + proc.stderr

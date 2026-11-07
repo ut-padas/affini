@@ -230,21 +230,51 @@ class AffinePlusOffsetModel(LocalModel):
         return out + params["offset"][cluster_ids] if "offset" in params else out
 
 
-def test_finalized_columns_are_stored_but_not_used_for_acceptance(registered):
+def test_finalized_columns_are_stored_and_reach_predict(registered):
     registered(LOCAL_MODELS, AffinePlusOffsetModel)
     base = train(mode=SurrogateMode.AFFINE_COV_HESS)
-    s = train(mode=SurrogateMode.AFFINE_COV_HESS, local_model=("test_affine_plus_offset", {"offset": 2.5}))
-    # Acceptance used fit() only, so the tree is the same as the plain affine model's.
+    # An offset far below the tolerance passes the re-test of the deployed model.
+    s = train(mode=SurrogateMode.AFFINE_COV_HESS, local_model=("test_affine_plus_offset", {"offset": 1e-6}))
     assert s.N_src == base.N_src
     assert set(s.leaf_params) == {"A_fit", "b_fit", "offset"}
     assert host(s.leaf_params["offset"]).shape == (s.N_src, 1)
     for k in (1, 4):
         # The offset is added before Shepard weighting, so equal up to rounding.
-        np.testing.assert_allclose(predict(s, k)[0], predict(base, k)[0] + 2.5, rtol=1e-12)
+        np.testing.assert_allclose(predict(s, k)[0], predict(base, k)[0] + 1e-6, rtol=1e-12)
     assert s.config["components"]["local_model"] == {
         "name": "test_affine_plus_offset",
-        "settings": {"offset": 2.5},
+        "settings": {"offset": 1e-6},
     }
+
+
+def test_deployed_models_are_retested_after_finalize(registered):
+    """A finalize() that breaks predictions must not be accepted on the strength of fit() alone."""
+    registered(LOCAL_MODELS, AffinePlusOffsetModel)
+    with pytest.raises(RuntimeError, match="accepted no clusters"):
+        train(mode=SurrogateMode.AFFINE_COV_HESS, MAX_LEVELS=3,
+              local_model=("test_affine_plus_offset", {"offset": 10.0}))  # fmt: skip
+
+
+class DuplicatingSplit(CovarianceSplit):
+    name = "test_duplicating"
+
+    def split(self, data):
+        order, sizes = super().split(data)
+        order = order.copy()
+        order[1] = order[0]  # one row twice, another lost
+        return order, sizes
+
+
+def test_split_that_duplicates_rows_is_rejected():
+    with pytest.raises(ValueError, match="drops, duplicates"):
+        train(mode=SurrogateMode.AFFINE_COV_HESS, split_strategy=DuplicatingSplit())
+
+
+def test_effective_settings_are_recorded_next_to_requested_ones():
+    s = train(mode=SurrogateMode.AFFINE_COV_HESS, BATCH_SIZE=10**12)
+    assert s.config["batch_size"] == 10**12  # as requested
+    assert s.config["effective"]["batch_size"] < 10**12  # capped to fit memory
+    assert s.config["effective"]["max_levels"] == s.config["max_levels"]
 
 
 class AcceptAll(AcceptanceCriterion):
