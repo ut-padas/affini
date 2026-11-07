@@ -15,7 +15,11 @@ Scheme (as in cuVS / cuML defaults: k-means|| seeding, Lloyd, ``max_iter=300``,
   scikit-learn) picks the k centres among them.
 - Assignment: the fused distance + nearest-neighbour kernel in ``src.knn`` with k=1
   (float32 distances, float64 data read in place), so the (points x centres) distance
-  matrix is never stored.
+  matrix is never stored. Accuracy policy: assignments are ``kneighbors_unverified``,
+  i.e. exact up to float32 resolution of the centred coordinates; a point almost
+  equidistant from two centres may go to either. That only perturbs the objective at
+  rounding level (tested against float64 inertia on translated data), so the cost of
+  the exact float64 verification used for prediction is not paid here.
 - Update: centroid sums in float64 by a deterministic kernel (one block per cluster,
   rows added in a fixed order), so repeated runs give identical clusters; atomics would
   not. Empty clusters keep their previous centre.
@@ -99,7 +103,9 @@ def _nearest(X: Array, C: Array) -> tuple[Array, Array]:
 
     from src.knn import GpuExactKNN
 
-    dist, idx = GpuExactKNN(C).kneighbors(X, 1)
+    # k-means tolerates ties within float32 resolution, so the float64 verification of
+    # the exact search is skipped; GpuExactKNN centres on C and subtracts in float64.
+    dist, idx = GpuExactKNN(C).kneighbors_unverified(X, 1)
     return idx[:, 0], dist[:, 0].astype(cp.float64) ** 2
 
 
@@ -372,7 +378,11 @@ def _cpu_greedy_kmeans_pp(P, w, k, rng):
 def _kmeans_labels_cpu(X, k, seed, max_iter, tol, threads):
     import numba as nb
 
-    X = np.ascontiguousarray(X, dtype=np.float64)
+    # Centre in float64 first: k-means is translation invariant, and the BLAS path's
+    # expanded distances (|x|^2 + |c|^2 - 2 x.c) cancel catastrophically for data far
+    # from the origin (inertia was 935x too large with a 1e8 offset at d=30).
+    X = np.asarray(X, dtype=np.float64)
+    X = np.ascontiguousarray(X - X.mean(axis=0))
     n = X.shape[0]
     rng = np.random.default_rng(seed)
     if threads is None:

@@ -62,3 +62,19 @@ def test_more_clusters_than_distinct_points():
     X = xp.asarray(np.repeat(np.eye(3), 10, axis=0))
     labels = host(kmeans_labels(X, 5, seed=0))
     assert labels.shape == (30,) and labels.min() >= 0 and labels.max() < 5
+
+
+@pytest.mark.parametrize("d", [16, 17, 30])  # CPU direct path, BLAS path
+@pytest.mark.parametrize("offset", [0.0, 1e4, 1e8])
+def test_translation_does_not_change_the_clustering(d, offset):
+    """Expanded distances on uncentred data cancelled at large offsets (inertia 935x too large)."""
+    from src.kmeans import kmeans_labels
+
+    rng = np.random.default_rng(0)
+    centres = rng.uniform(-5, 5, (6, d))
+    X0 = np.concatenate([c + rng.normal(scale=0.05, size=(100, d)) for c in centres])
+    labels = host(kmeans_labels(xp.asarray(X0 + offset), 6, seed=0, max_iter=30))
+    reference = host(kmeans_labels(xp.asarray(X0), 6, seed=0, max_iter=30))
+    # Objective measured with float64 direct distances on the untranslated data.
+    assert _inertia(X0, labels, 6) <= 1.0001 * _inertia(X0, reference, 6)
+    assert len(np.unique(labels)) == 6

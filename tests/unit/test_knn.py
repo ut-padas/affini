@@ -137,3 +137,118 @@ def test_cpu_empty_queries_and_invalid_k():
     assert dist.shape == (0, 2) and idx.shape == (0, 2)
     with pytest.raises(ValueError):
         index.kneighbors(np.zeros((1, 3)), 0)
+
+
+# --- Mixed scales: float32 rounding must never pick a wrong neighbour ----
+def _index(points):
+    from src.knn import CpuExactKNN, GpuExactKNN
+
+    return GpuExactKNN(xp.asarray(points)) if IS_CUPY_BACKEND else CpuExactKNN(points)
+
+
+def test_points_merged_by_float32_rounding_are_still_distinguished():
+    # Centred on the mean (~3.3e8), 0 and 1 round to the same float32 value; the float64
+    # verification must recover the true nearest neighbour (index 1).
+    points = np.array([[0.0], [1.0], [1e9]])
+    dist, idx = _index(points).kneighbors(xp.asarray([[1.0]]) if IS_CUPY_BACKEND else np.array([[1.0]]), 1)
+    assert host(idx).tolist() == [[1]] and float(host(dist)[0, 0]) == 0.0
+
+
+@pytest.mark.parametrize("d", [1, 16, 17, 30])  # around the CPU direct/BLAS boundary
+def test_mixed_scale_clouds_with_outliers_repeats_and_k_above_one(d):
+    rng = np.random.default_rng(d)
+    cloud = rng.normal(scale=1e-3, size=(400, d)) + 5e6  # small gaps, far from the origin
+    outliers = rng.normal(scale=1e9, size=(20, d))
+    repeats = np.repeat(cloud[:5], 3, axis=0)  # exact duplicates: true ties
+    points = np.concatenate([cloud, outliers, repeats])
+    queries = cloud[rng.choice(len(cloud), 50)] + rng.normal(scale=1e-4, size=(50, d))
+    k = 7
+    dist, idx = _index(points).kneighbors(xp.asarray(queries) if IS_CUPY_BACKEND else queries, k)
+    dist, idx = host(dist), host(idx)
+    ref = np.stack([((points - q) ** 2).sum(1) for q in queries])
+    # The float64 reference itself rounds at this offset (gaps 1e-3 at 5e6: about 1e-6
+    # relative), so distances agree to that level; every returned neighbour must be one
+    # of the true k nearest, up to the same rounding (true ties may swap).
+    np.testing.assert_allclose(dist**2, np.sort(ref, axis=1)[:, :k], rtol=1e-4, atol=0)
+    for row, q_idx in zip(ref, idx, strict=True):
+        kth = np.sort(row)[k - 1]
+        assert np.all(row[q_idx] <= kth * (1 + 1e-5))
+    assert len(set(map(tuple, idx))) > 1  # sanity: not a degenerate answer
+
+
+@pytest.mark.parametrize(
+    ("points", "query", "nearest"),
+    [([[0.0], [1.0], [1e9]], 0.500000001, 1), ([[0.0], [1.0], [1e9]], 0.499999999, 0),
+     ([[0.0], [1e-9], [1e9]], 1e-9, 1), ([[0.0], [1.0], [1e17]], 1.0, 1)],
+)  # fmt: skip
+def test_reference_uses_the_original_coordinates(points, query, nearest):
+    """Re-ranking and fallback must use the original points, not centred float64 copies."""
+    q = np.array([[query]])
+    _, idx = _index(np.array(points)).kneighbors(xp.asarray(q) if IS_CUPY_BACKEND else q, 1)
+    assert int(host(idx)[0, 0]) == nearest
+
+
+def test_merged_nearby_leaves_next_to_an_outlier_keep_the_true_neighbour():
+    """31 leaves 1e-9 apart plus an outlier at 1e12."""
+    points = np.concatenate([np.arange(31)[:, None] * 1e-9, [[1e12]]])
+    q = points[30:31]
+    dist, idx = _index(points).kneighbors(xp.asarray(q) if IS_CUPY_BACKEND else q, 10)
+    assert int(host(idx)[0, 0]) == 30 and float(host(dist)[0, 0]) == 0.0
+    assert set(host(idx)[0].tolist()) == set(range(21, 31))
+
+
+@pytest.mark.parametrize(("points", "query", "k", "nearest"), [
+    ("overflow17", None, 1, 2),  # kk == n: fast search bypassed
+    ("spread", [[1e20]], 1, 11),  # kk < n: infinite float32 cutoff must not certify
+])  # fmt: skip
+def test_non_finite_fast_results_are_never_trusted(points, query, k, nearest):
+    """Float32 overflow on finite float64 inputs must fall back, not return a placeholder."""
+    if points == "overflow17":
+        P = np.zeros((3, 17))
+        P[:, 0] = [0.0, 1.0, 1e20]
+        q = P[2:3]
+    else:
+        P = (np.arange(12) * 1e15)[:, None]
+        q = np.array(query)
+    _, idx = _index(P).kneighbors(xp.asarray(q) if IS_CUPY_BACKEND else q, k)
+    assert int(host(idx)[0, 0]) == nearest
+
+
+def test_candidate_rerank_and_fallback_share_one_reduction():
+    """The first neighbour must not depend on k (certified vs fallback rows)."""
+    P = np.zeros((12, 17))
+    P[0] = 1e-8
+    P[0, 0] = P[1, 0] = 1.0
+    P[2:11] = np.arange(12, 21)[:, None]
+    P[11] = 1e15
+    index, q = _index(P), np.zeros((1, 17))
+    firsts = {int(host(index.kneighbors(xp.asarray(q) if IS_CUPY_BACKEND else q, k)[1])[0, 0]) for k in (1, 2, 5, 6)}
+    assert len(firsts) == 1
+
+
+def test_tree_orders_by_squared_distance_not_rounded_root():
+    """Squared distances 1+2e-16 and 1 share a rounded root; index 1 is nearer."""
+    P = np.array([[1.0, 1.5e-8], [1.0, 0.0], [10.0, 0.0]])
+    q = np.zeros((1, 2))
+    lists = [host(_index(P).kneighbors(xp.asarray(q) if IS_CUPY_BACKEND else q, k)[1])[0].tolist() for k in (1, 2, 3)]
+    assert lists == [[1], [1, 0], [1, 0, 2]]
+
+
+@pytest.mark.parametrize("bad", [(1, 18), (1, 16), (17,)])
+def test_wrong_query_shapes_are_rejected_before_native_kernels(bad):
+    """Kernels use the index's d as stride and have no bounds checks."""
+    P = np.zeros((3, 17))
+    q = np.zeros(bad)
+    with pytest.raises(ValueError, match="queries must have shape"):
+        _index(P).kneighbors(xp.asarray(q) if IS_CUPY_BACKEND else q, 1)
+
+
+@cpu_only
+def test_cpu_tree_path_keeps_no_float32_copy_until_unverified_search():
+    from src.knn import CPU_TREE_MAX_D, CpuExactKNN
+
+    index = CpuExactKNN(np.random.default_rng(0).normal(size=(500, CPU_TREE_MAX_D)))
+    index.kneighbors(np.zeros((3, CPU_TREE_MAX_D)), 4)
+    assert index._points32 is None and index.last_search_stats["strategy"] == "kdtree"
+    index.kneighbors_unverified(np.zeros((3, CPU_TREE_MAX_D)), 4)
+    assert index._points32 is not None and index.last_search_stats["strategy"] == "unverified"
