@@ -1,4 +1,0 @@
-[submodule "libs/KIDApy"]
-	path = libs/KIDApy
-	url = git@github.com:blongaker/KIDApy.git
-	branch = pdfac
