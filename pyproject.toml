@@ -16,14 +16,13 @@ classifiers = [
 dependencies = [
     "array-api-compat>=1.12.0",
     "diffrax>=0.7.2",
-    "faiss-cpu>=1.12.0",
     "jax>=0.7.0",
     "matplotlib>=3.10.7",
+    "numba>=0.61.2",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
     "psutil>=6.0.0",
     "rich>=13.7",
-    "scikit-learn>=1.7.2",
     "scipy>=1.16.3",
     "seaborn>=0.13.2",
     "tqdm>=4.67.1",
@@ -54,7 +53,6 @@ mpi-system = [
 # KMeans / kNN. macOS has no CUDA, so this extra installs nothing there.
 gpu = [
     "cupy-cuda12x[ctk]>=13.6.0 ; sys_platform != 'darwin'",
-    "cuml-cu12>=25.10.0 ; sys_platform == 'linux'",
     "nvidia-ml-py>=12.535.0 ; sys_platform != 'darwin'",
 ]
 
@@ -67,13 +65,13 @@ required-environments = [
     "sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
 
+[tool.uv.sources]
+knndbscan = { index = "testpypi" }
+
 [[tool.uv.index]]
 name = "testpypi"
 url = "https://test.pypi.org/simple/"
 explicit = true
-
-[tool.uv.sources]
-knndbscan = { index = "testpypi" }
 
 [tool.ruff]
 line-length = 88
@@ -125,15 +123,28 @@ dev = [
     { include-group = "test" },
     { include-group = "notebook" },
 ]
-# Extra packages used by scripts under research/ (not needed by src/).
+# Extra packages used by scripts under research/ (not needed by src/). cuML, FAISS and
+# scikit-learn are only for comparisons: src/ uses its own k-means and kNN (src/kmeans.py, src/knn.py).
 research = [
-    "knndbscan==0.1.3 ; sys_platform == 'linux'",
-    "numba>=0.61.2",
+    "cuml-cu12>=25.10.0 ; sys_platform == 'linux'",
+    "faiss-cpu>=1.12.0",
     "optuna>=4.7.0",
+    "scikit-learn>=1.7.2",
     "sympy>=1.14.0",
+]
+# Internal research dependencies, from TestPyPI (Linux only): the "knndbscan"
+# initial clustering method.
+research_internal = [
+    "knndbscan==0.1.3 ; sys_platform == 'linux'",
 ]
 viz = [
     "imageio>=2.37.2",
     "manim>=0.19.2",
     "plotly>=6.5.2",
+]
+profiling = [
+    "line-profiler>=4.2",
+    "memray>=1.15",
+    "py-spy>=0.4",
+    "viztracer>=1.0",
 ]
