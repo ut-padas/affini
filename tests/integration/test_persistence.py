@@ -1,6 +1,6 @@
 """
-Saving and loading surrogates: the versioned format, files written before it
-existed and custom local models; also train()'s failure and profiler cleanup.
+Saving and loading surrogates: the versioned format, path resolution, MPI writes
+and custom local models; also train()'s failure and profiler cleanup.
 """
 
 import json
@@ -8,7 +8,7 @@ import json
 import numpy as np
 import pytest
 
-from src import _to_host, xp
+from src import xp
 from src.clusters import ParamSpec
 from src.local_models import LOCAL_MODELS, AffineLSQModel, LocalModel
 from src.adaptive_clustering_utils import ClusteringConfig, Evaluator
@@ -82,7 +82,7 @@ def assert_same_model(a, b, separate_runs=False):
 )
 def test_round_trip_preserves_predictions_and_metadata(tmp_path, mode, kw):
     s = train(mode, **kw)
-    path = s.save(tmp_path / "model")
+    path = s.save_model(tmp_path / "model")
     assert path.suffix == ".npz" and path.exists()
     loaded = AFINNISurrogate.load_model(path)
     assert_same_model(s, loaded)
@@ -96,8 +96,24 @@ def test_round_trip_preserves_predictions_and_metadata(tmp_path, mode, kw):
 
 
 def test_save_into_a_directory_uses_the_default_name(tmp_path):
-    path = train().save(tmp_path)
+    path = train().save_model(tmp_path)
     assert path == tmp_path / "afinni_surrogate.npz"
+
+
+@pytest.mark.parametrize("given", ["model", "model.npz", "model.txt", "."])
+def test_the_path_given_to_save_also_loads(tmp_path, given):
+    s = train()
+    s.save_model(tmp_path / given)
+    assert_same_model(s, AFINNISurrogate.load_model(tmp_path / given))
+
+
+def test_only_rank_0_writes(tmp_path, monkeypatch):
+    import src.surrogate as su
+
+    s = train()
+    monkeypatch.setattr(su, "_get_mpi_rank", lambda: 1)
+    assert s.save_model(tmp_path / "m") == tmp_path / "m.npz"
+    assert not list(tmp_path.iterdir())
 
 
 class ScaledAffine(LocalModel):
@@ -127,7 +143,7 @@ def test_custom_model_columns_and_settings_round_trip(tmp_path):
     LOCAL_MODELS.register(ScaledAffine)
     try:
         s = train(local_model=ScaledAffine(scale=2.0))
-        loaded = AFINNISurrogate.load_model(s.save(tmp_path / "m.npz"))
+        loaded = AFINNISurrogate.load_model(s.save_model(tmp_path / "m.npz"))
         assert set(loaded.leaf_params) == {"W", "c0"}
         assert loaded.local_model.settings() == {"scale": 2.0}
         assert_same_model(s, loaded)
@@ -143,7 +159,7 @@ def test_custom_model_columns_and_settings_round_trip(tmp_path):
 
 def test_loading_rejects_missing_or_misshapen_columns(tmp_path):
     s = train()
-    path = s.save(tmp_path / "m.npz")
+    path = s.save_model(tmp_path / "m.npz")
     with np.load(path) as data:
         arrays = {k: data[k] for k in data.files}
     arrays["param:A_fit"] = arrays["param:A_fit"][:, :, :1]
@@ -156,61 +172,15 @@ def test_loading_rejects_missing_or_misshapen_columns(tmp_path):
         AFINNISurrogate.load_model(tmp_path / "future.npz")
 
 
-def _write_legacy(s, path, shared_hessian=None):
-    """A file in the layout save() wrote before versioning (pickled object arrays)."""
-    H = None
-    if s.Hs_src is not None:
-        H = shared_hessian if shared_hessian is not None else _to_host(s.Hs_src)[:, 0]
-    save_dict = {
-        "trained": True,
-        "mode": s.mode.value,
-        "N_src": s.N_src,
-        "X_src": _to_host(s.X_src),
-        "f_src": _to_host(s.f_src),
-        "J_src": _to_host(s.J_src) if s.J_src is not None else None,
-        "trust_radii_src": np.ones(s.N_src),
-        "Qs_src": _to_host(s.Qs_src),
-        "Hs_src": H,
-        "A_fits_src": _to_host(s.A_fits_src) if s.A_fits_src is not None else None,
-        "b_fits_src": _to_host(s.b_fits_src) if s.b_fits_src is not None else None,
-        "profiling_stats": {"N0": len(X)},
-        "tree_data": None,
-    }
-    np.savez_compressed(str(path), **save_dict, allow_pickle=True)
-
-
-@pytest.mark.parametrize(
-    "mode,kw",
-    [
-        (SurrogateMode.AFFINE_COV_HESS, {}),
-        (SurrogateMode.TAYLOR_COV_HESS, {"g_fn": g}),
-    ],
-)
-def test_files_from_before_versioning_still_load(tmp_path, mode, kw):
-    s = train(mode, **kw)
-    _write_legacy(s, tmp_path / "old.npz")
-    loaded = AFINNISurrogate.load_model(tmp_path / "old.npz")
-    assert_same_model(s, loaded)
-
-
-def test_legacy_scalar_hessians_gain_an_output_axis(tmp_path):
-    s = train(SurrogateMode.TAYLOR_LSQ_HESS, f_fn=lambda x: f(x)[:, :1], g_fn=lambda x: g(x)[:, :1], store_hess=True)
-    _write_legacy(s, tmp_path / "old.npz")
-    loaded = AFINNISurrogate.load_model(tmp_path / "old.npz")
-    assert host(loaded.Hs_src).shape == (s.N_src, 1, 2, 2)
-    assert_same_model(s, loaded)
-
-
-def test_legacy_shared_hessian_with_vector_output_is_refused(tmp_path):
-    s = train(SurrogateMode.TAYLOR_LSQ_HESS, g_fn=g, store_hess=True)
-    _write_legacy(s, tmp_path / "old.npz", shared_hessian=np.zeros((s.N_src, 2, 2)))
-    with pytest.raises(ValueError, match="shared by all 2 outputs"):
+def test_unversioned_files_are_refused(tmp_path):
+    np.savez(tmp_path / "old.npz", X_src=np.zeros((2, 2)), trained=True)
+    with pytest.raises(ValueError, match="no format version"):
         AFINNISurrogate.load_model(tmp_path / "old.npz")
 
 
 def test_files_with_the_old_single_error_column_still_load(tmp_path):
     s = train()
-    with np.load(s.save(tmp_path / "m.npz")) as data:
+    with np.load(s.save_model(tmp_path / "m.npz")) as data:
         arrays = {k: data[k] for k in data.files if not k.startswith("E_cluster_")}
     arrays["E_cluster_src"] = host(s.E_cluster_rel_src).max(axis=1)
     np.savez(tmp_path / "old.npz", **arrays)

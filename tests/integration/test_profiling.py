@@ -177,7 +177,7 @@ def test_events_describe_every_level_and_batch(tmp_path):
 
 def test_profiles_survive_save_and_load(tmp_path):
     s = train(profile_events=True)
-    loaded = AFINNISurrogate.load_model(s.save(tmp_path / "m.npz"))
+    loaded = AFINNISurrogate.load_model(s.save_model(tmp_path / "m.npz"))
     assert loaded.profiling_stats["per_rank"][0]["events"] == json.loads(
         json.dumps(s.profiling_stats["per_rank"][0]["events"])
     )

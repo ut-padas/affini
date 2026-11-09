@@ -28,14 +28,14 @@ from src.adaptive_clustering import _adaptive_clustering, run_collective
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 from src.config import ClusteringConfig
 from src.evaluation import Evaluator
-from src.local_models import LOCAL_MODELS, LocalModel, local_model_for_mode
+from src.local_models import LOCAL_MODELS, LocalModel
 from src.modes import SurrogateMode
 from src.registry import component_spec
 
 logger = logging.getLogger(__name__)
 
-# Version of the file format written by AFINNISurrogate.save(). Files without a
-# version (written before it existed) are still read by load_model().
+# Version of the file format written by AFINNISurrogate.save_model(); load_model()
+# reads every version up to it.
 MODEL_FORMAT_VERSION = 1
 DEFAULT_MODEL_FILENAME = "afinni_surrogate.npz"
 _PARAM_PREFIX = "param:"
@@ -124,9 +124,7 @@ class AFINNISurrogate:
         self.num_unresolved_clusters = 0
         self.num_unresolved_pts = 0
         self.profiling_stats = {}
-        self.tree_data = None
 
-        self._model_file = None
         self.knn_index = None
         self.search_stats: dict = {}  # last predict's kNN totals on this rank
 
@@ -164,30 +162,6 @@ class AFINNISurrogate:
         lambda self, v: self._set_leaf_param("b_fit", v),
         doc="(K, fd) affine least-squares intercepts.",
     )
-
-    def get_trained_data_as_dict(self) -> dict:
-        if not self.trained:
-            raise RuntimeError("Model not trained.")
-
-        return {
-            "mode": self.mode.value if self.mode else None,
-            "X_src": self.X_src,
-            "f_src": self.f_src,
-            "J_src": self.J_src,
-            "Qs_src": self.Qs_src,
-            "N_src": self.N_src,
-            "profiling_stats": self.profiling_stats,
-            "tree_data": self.tree_data,
-            "Hs_src": self.Hs_src,
-            "A_fits_src": self.A_fits_src,
-            "b_fits_src": self.b_fits_src,
-            "leaf_params": dict(self.leaf_params),
-            "E_cluster_abs_src": self.E_cluster_abs_src,
-            "E_cluster_rel_src": self.E_cluster_rel_src,
-            "counts_src": self.counts_src,
-            "config": self.config,
-            "converged": self.converged,
-        }
 
     @_collective("train()")
     def train(
@@ -241,35 +215,28 @@ class AFINNISurrogate:
                 f"max_levels or loosen atol/rtol."
             )
 
-        # 3. Build the new state, including its kNN index, before touching self, so a
-        # failure anywhere here (e.g. index construction) leaves the previous model usable.
-        X_new = xp.asarray(bcast_data["centroids"])
-        f_new = xp.asarray(bcast_data["f"])
-        d, fd = X_new.shape[1], f_new.shape[1]
-        new_state = {
-            "mode": config.mode,
-            "local_model": leaf_model,
-            "config": {**config.to_dict(),
-                       # Settings the run changed at runtime (GPU batch cap).
-                       "effective": bcast_data["profiling_stats"].get("effective_config", {})},
-            "X_src": X_new,
-            "f_src": f_new,
-            "Qs_src": xp.asarray(bcast_data["Q"]),
-            "E_cluster_abs_src": xp.asarray(bcast_data["E_cluster_abs"]),
-            "E_cluster_rel_src": xp.asarray(bcast_data["E_cluster_rel"]),
-            "counts_src": np.asarray(bcast_data["counts"]),
-            "N_src": X_new.shape[0],
-            "profiling_stats": bcast_data["profiling_stats"],
-            "converged": bool(bcast_data["converged"]),
-            "num_unresolved_clusters": int(bcast_data["num_unresolved_clusters"]),
-            "num_unresolved_pts": int(bcast_data["num_unresolved_pts"]),
-            "leaf_params": {name: xp.asarray(bcast_data[name]) for name in leaf_model.columns(d, fd)},
-            "knn_index": _make_knn_index(X_new),  # 4. per-rank kNN index
-        }  # fmt: skip
-        # Install only now that everything has been built.
-        for name, value in new_state.items():
-            setattr(self, name, value)
-        self.trained = True
+        d, fd = bcast_data["centroids"].shape[1], bcast_data["f"].shape[1]
+        self._install(
+            {
+                "mode": config.mode,
+                "local_model": leaf_model,
+                "config": {**config.to_dict(),
+                           # Settings the run changed at runtime (GPU batch cap).
+                           "effective": bcast_data["profiling_stats"].get("effective_config", {})},
+                "X_src": bcast_data["centroids"],
+                "f_src": bcast_data["f"],
+                "Qs_src": bcast_data["Q"],
+                "E_cluster_abs_src": bcast_data["E_cluster_abs"],
+                "E_cluster_rel_src": bcast_data["E_cluster_rel"],
+                "counts_src": bcast_data["counts"],
+                "profiling_stats": bcast_data["profiling_stats"],
+                "converged": bool(bcast_data["converged"]),
+                "num_unresolved_clusters": int(bcast_data["num_unresolved_clusters"]),
+                "num_unresolved_pts": int(bcast_data["num_unresolved_pts"]),
+                "leaf_params": {name: bcast_data[name] for name in leaf_model.columns(d, fd)},
+            },
+            source="training",
+        )  # fmt: skip
 
         if rank == 0:
             logger.info(f"Training Time: {time.perf_counter() - t0:.4f}s")
@@ -284,7 +251,7 @@ class AFINNISurrogate:
                     stacklevel=2,
                 )
 
-    def save(self, filepath: Union[str, Path]) -> Path:
+    def save_model(self, filepath: Union[str, Path]) -> Path:
         """
         Save the trained model to an ``.npz`` file and return its path.
 
@@ -293,11 +260,17 @@ class AFINNISurrogate:
         arrays, every local-model parameter under its column name, the local
         model's registered name and settings, the effective training
         configuration and the profiling statistics, all without pickling.
+
+        Under MPI only rank 0 writes (every rank holds the same model), so it may be
+        called on every rank or on rank 0 alone; the other ranks return the path
+        without waiting for the file.
         """
         if not self.trained:
             raise RuntimeError("Cannot save an untrained model.")
 
         filepath = _model_path(filepath)
+        if _get_mpi_rank() != 0:
+            return filepath
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
         metadata = {
@@ -338,7 +311,6 @@ class AFINNISurrogate:
             arrays["counts_src"] = _to_host(self.counts_src)
 
         np.savez_compressed(str(filepath), **arrays)
-        self._model_file = filepath
         logger.info(f"Model saved to {filepath}")
         return filepath
 
@@ -347,20 +319,24 @@ class AFINNISurrogate:
         cls, filepath: Union[str, Path], local_model: Optional[LocalModel] = None
     ) -> "AFINNISurrogate":
         """
-        Load a model written by ``save()`` (any format version, including files
-        written before versioning).
+        Load a model written by ``save_model()``; ``filepath`` is resolved the same
+        way, so the path given to ``save_model()`` also loads.
 
         The local model is rebuilt from its registered name and settings, so a
         custom model's module must be imported (registering it) before loading;
-        alternatively pass the ``local_model`` instance to use.
+        alternatively pass the ``local_model`` instance to use. Each rank reads the
+        file itself, so under MPI it must be on a filesystem every rank can see.
         """
-        filepath = Path(filepath)
+        filepath = _model_path(filepath)
         if not filepath.exists():
             raise FileNotFoundError(f"Model file not found: {filepath}")
 
         with np.load(str(filepath), allow_pickle=False) as data:
             if "format_version" not in data.files:
-                return cls._load_legacy(filepath, local_model)
+                raise ValueError(
+                    f"{filepath} has no format version: it was written before model "
+                    f"files were versioned, which is no longer supported; retrain it."
+                )
             version = int(data["format_version"])
             if version > MODEL_FORMAT_VERSION:
                 raise ValueError(
@@ -370,8 +346,6 @@ class AFINNISurrogate:
             meta = json.loads(str(data["metadata"]))
             arrays = {k: data[k] for k in data.files}
 
-        instance = cls()
-        instance.mode = SurrogateMode(meta["mode"]) if meta["mode"] else None
         if local_model is None:
             spec = meta["local_model"]
             if spec["name"] not in LOCAL_MODELS:
@@ -381,113 +355,64 @@ class AFINNISurrogate:
                     f"local_model= to load_model()."
                 )
             local_model = LOCAL_MODELS.create((spec["name"], spec["settings"]))
-        instance.local_model = local_model
-        instance.config = meta["config"]
-        instance.converged = meta["converged"]
-        instance.num_unresolved_clusters = int(meta["num_unresolved_clusters"])
-        instance.num_unresolved_pts = int(meta["num_unresolved_pts"])
-        instance.N_src = int(meta["N_src"])
-        instance.X_src = _to_device(arrays["X_src"])
-        instance.f_src = _to_device(arrays["f_src"])
-        instance.Qs_src = _to_device(arrays["Qs_src"])
-        # Older model files store a single E_cluster_src instead; these stay None.
-        for name in ("E_cluster_abs_src", "E_cluster_rel_src"):
-            if name in arrays:
-                setattr(instance, name, _to_device(arrays[name]))
-        if "counts_src" in arrays:
-            instance.counts_src = arrays["counts_src"]
-        instance.leaf_params = {
-            k[len(_PARAM_PREFIX):]: _to_device(v)
-            for k, v in arrays.items()
-            if k.startswith(_PARAM_PREFIX)
-        }
-        instance.profiling_stats = json.loads(str(arrays["profiling_stats"]))
-        instance._check_leaf_params(filepath)
-        instance.trained = True
-        instance._model_file = filepath
-        instance._build_knn_index()
-        return instance
-
-    @classmethod
-    def _load_legacy(
-        cls, filepath: Path, local_model: Optional[LocalModel]
-    ) -> "AFINNISurrogate":
-        """Read a file written before the format was versioned (pickled object arrays)."""
-        data = np.load(str(filepath), allow_pickle=True)
         instance = cls()
-
-        instance.trained = bool(data["trained"])
-
-        mode_val = data.get("mode", None)
-        if mode_val is not None and mode_val.item() is not None:
-            instance.mode = SurrogateMode(mode_val.item())
-
-        instance.N_src = int(data["N_src"])
-        instance.X_src = _to_device(data["X_src"])
-        instance.f_src = _to_device(data["f_src"])
-        fd = instance.f_src.shape[1]
-
-        instance.J_src = _to_device(data["J_src"]) if data["J_src"].shape else None
-        instance.Qs_src = _to_device(data["Qs_src"])
-        H = data["Hs_src"] if data["Hs_src"].shape else None
-        if H is not None and H.ndim == 3:
-            # Old files store one (d, d) Hessian per leaf.
-            if fd != 1:
-                raise ValueError(
-                    f"{filepath} stores one Hessian per leaf shared by all {fd} outputs, "
-                    f"which is not a valid second-order model; retrain it."
-                )
-            H = H[:, None]
-        instance.Hs_src = _to_device(H) if H is not None else None
-        instance.A_fits_src = (
-            _to_device(data["A_fits_src"]) if data["A_fits_src"].shape else None
-        )
-        instance.b_fits_src = (
-            _to_device(data["b_fits_src"]) if data["b_fits_src"].shape else None
-        )
-        if local_model is None and instance.mode is not None:
-            local_model = local_model_for_mode(instance.mode, second_order=H is not None)
-        instance.local_model = local_model
-
-        _prof = data["profiling_stats"]
-        instance.profiling_stats = _prof.item() if _prof.size > 0 else {}
-        _td = data["tree_data"]
-        instance.tree_data = _td.item() if _td.size > 0 else None
-
-        instance._check_leaf_params(filepath)
-        instance._model_file = filepath
-        instance._build_knn_index()
-
+        instance._install(
+            {
+                "mode": SurrogateMode(meta["mode"]) if meta["mode"] else None,
+                "local_model": local_model,
+                "config": meta["config"],
+                "X_src": arrays["X_src"],
+                "f_src": arrays["f_src"],
+                "Qs_src": arrays["Qs_src"],
+                # Files saved before the per-component error columns have neither.
+                "E_cluster_abs_src": arrays.get("E_cluster_abs_src"),
+                "E_cluster_rel_src": arrays.get("E_cluster_rel_src"),
+                "counts_src": arrays.get("counts_src"),
+                "profiling_stats": json.loads(str(arrays["profiling_stats"])),
+                "converged": meta["converged"],
+                "num_unresolved_clusters": int(meta["num_unresolved_clusters"]),
+                "num_unresolved_pts": int(meta["num_unresolved_pts"]),
+                "leaf_params": {k[len(_PARAM_PREFIX):]: v for k, v in arrays.items() if k.startswith(_PARAM_PREFIX)},
+            },
+            source=str(filepath),
+        )  # fmt: skip
         return instance
 
-    def _check_leaf_params(self, filepath: Path) -> None:
-        """Every column the local model declares is present with its declared shape."""
-        if self.local_model is None:
-            return
-        d, fd = self.X_src.shape[1], self.f_src.shape[1]
-        for name, spec in self.local_model.columns(d, fd).items():
-            value = self.leaf_params.get(name)
-            if value is None or tuple(value.shape) != (self.N_src, *spec.shape):
+    def _install(self, state: dict[str, Any], source: str) -> None:
+        """
+        Make ``state`` (every field of a trained model, arrays on either backend) the
+        current model. The local model's columns are checked and the kNN index is
+        built before any attribute changes, so a failure leaves the previous model
+        usable; ``source`` names where the state came from in error messages.
+        """
+        state = dict(state)
+        for name in ("X_src", "f_src", "Qs_src", "E_cluster_abs_src", "E_cluster_rel_src"):
+            if state[name] is not None:
+                state[name] = _to_device(state[name])
+        if state["counts_src"] is not None:
+            state["counts_src"] = np.asarray(_to_host(state["counts_src"]))  # host-side diagnostics
+        state["leaf_params"] = {k: _to_device(v) for k, v in state["leaf_params"].items()}
+        state["N_src"] = n = int(state["X_src"].shape[0])
+        d, fd = state["X_src"].shape[1], state["f_src"].shape[1]
+        local_model = state["local_model"]
+        for name, spec in local_model.columns(d, fd).items():
+            value = state["leaf_params"].get(name)
+            if value is None or tuple(value.shape) != (n, *spec.shape):
                 got = None if value is None else tuple(value.shape)
                 raise ValueError(
-                    f"{filepath}: local model {self.local_model.name!r} needs column "
-                    f"{name!r} of shape {(self.N_src, *spec.shape)}; found {got}."
+                    f"{source}: local model {local_model.name!r} needs column "
+                    f"{name!r} of shape {(n, *spec.shape)}; found {got}."
                 )
-
-    def _build_knn_index(self):
-        """Index the leaf centroids for the coarse Euclidean search (exact on both backends, see ``src.knn``)."""
-        if self.X_src is None:
-            return
         t0 = time.perf_counter()
-        self.X_src = _to_device(self.X_src)  # keep X_src in the active backend
-        self.knn_index = _make_knn_index(self.X_src)
+        state["knn_index"] = _make_knn_index(state["X_src"])
         if _get_mpi_rank() == 0:
             logger.info(f"KNN Index built in {time.perf_counter() - t0:.4f}s")
+        for name, value in state.items():
+            setattr(self, name, value)
+        self.trained = True
 
     def _query_knn(self, query_points: Array, k: int) -> tuple[Array, Array]:
         """``(indices, distances)`` of the ``min(k, N_src)`` nearest centroids, on the active backend."""
-        if self.knn_index is None:
-            self._build_knn_index()
         k = min(k, self.N_src)
         queries = _to_device(query_points) if IS_CUPY_BACKEND else _to_host(query_points)
         distances, indices = self.knn_index.kneighbors(queries, k)

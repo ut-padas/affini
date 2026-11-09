@@ -161,14 +161,16 @@ surrogate.num_unresolved_clusters, surrogate.num_unresolved_pts
 surrogate.config                                       # every effective setting and component
 surrogate.profiling_stats                              # counters, level statistics, profile
 
-path = surrogate.save("results/model")                 # -> results/model.npz (versioned, no pickle)
-loaded = AFINNISurrogate.load_model(path)               # also reads files from older versions
+path = surrogate.save_model("results/model")           # -> results/model.npz (versioned, no pickle)
+loaded = AFINNISurrogate.load_model("results/model")   # the same path forms as save_model
 ```
 
 A partial run (stopped by `max_levels`) warns and reports the unresolved points;
 a run that accepted nothing raises. Models with custom local models load if the
 model's class is registered (import its module first) or passed as
-`load_model(path, local_model=...)`.
+`load_model(path, local_model=...)`. Under MPI, `save_model` writes on rank 0
+only (call it on every rank or just rank 0), and `load_model` reads the file on
+every rank, so it must be on a filesystem they all see.
 
 Scoring predictions: `src.surrogate.compute_error_metrics(preds, truth, outside,
 atol=..., rtol=...)` returns L2/Linf errors overall and inside/outside the trust

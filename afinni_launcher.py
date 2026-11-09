@@ -146,7 +146,6 @@ def conduct_experiment_given_data(
     error_tag = ""
     _TRAINED, _PREDICTED = False, False
     try:
-        model_save_path = json_fpath.with_name(json_fpath.stem + "_surrogate_model.npz")
         if _rank == 0:
             print("\n--- TRAINING ---")
         ATOL, RTOL = TOL, TOL
