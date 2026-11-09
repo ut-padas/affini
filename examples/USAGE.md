@@ -189,7 +189,7 @@ ps["per_rank"][0]["time_oracle"]   # time spent inside your f / g
 Phases, their display groups and colours are defined once in
 [`src/profiling.py`](../src/profiling.py) (`PHASES`); add a phase there and every
 plot and the monitor pick it up. Profiles are saved with the model and, by the
-launcher, as `<result>_profile.json` next to each result.
+launcher, under `profiling_stats` in each result JSON.
 
 ## Plots
 
@@ -234,7 +234,7 @@ import json
 from src import plotting as P
 from src.profiling import read_event_streams
 
-P.plot_profile_dashboard(json.load(open("results/rosenbrock/<run>_profile.json")))
+P.plot_profile_dashboard(json.load(open("results/rosenbrock/<run>.json")))
 P.plot_timeline(read_event_streams("runs/rosen"))
 ```
 

@@ -244,18 +244,14 @@ def conduct_experiment_given_data(
         "num_unresolved_pts": surrogate.num_unresolved_pts,
         "config": surrogate.config,  # every effective training setting and component
         "error_metrics": error_metrics,
+        # Under this key the saved file can be passed straight to the src.plotting profile plots.
+        "profiling_stats": surrogate.profiling_stats,
     }
-    # Write to a temporary file first: an existing JSON means "done" to later runs,
-    # so an interrupted write must not leave a truncated one behind.
-    tmp_fpath = json_fpath.with_suffix(".json.tmp")
-    with open(tmp_fpath, "w") as jf:
-        json.dump(json_data, jf, indent=4, default=str)
-    tmp_fpath.replace(json_fpath)
+    with open(json_fpath, "w") as jf:
+        # Array scalars (NumPy/CuPy) must stay numbers for the plots; anything else unknown is saved as text.
+        json.dump(json_data, jf, indent=4, default=lambda o: float(o) if hasattr(o, "__float__") else str(o))
     print(f"Experiment completed and saved to {json_fpath}")
 
-    profile_fpath = json_fpath.with_name(json_fpath.stem + "_profile.json")
-    with open(profile_fpath, "w") as pf:
-        json.dump(surrogate.profiling_stats, pf, default=float)
     plt.close(plot_profile_dashboard(surrogate, json_fpath.with_name(json_fpath.stem + "_profile.png")))
 
     plot_save_path = json_fpath.with_name(json_fpath.stem + "_error_histogram.png")
