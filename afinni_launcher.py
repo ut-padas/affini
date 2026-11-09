@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_host, xp
 from src.adaptive_clustering_utils import SurrogateMode
+from src.backend import MPI
 from src.heuristic_parameters import (
     get_MIN_PTS_PER_CLUSTER,
     get_N_TRAIN,
@@ -105,7 +106,7 @@ def conduct_experiment_given_data(
     g_fn,
     TOL: float,
     ERROR_EVAL_MODE: SurrogateMode,
-    ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"],
+    ERROR_METRIC: Literal["L2", "Linf"],
     INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan", "uniform_grid"],
     NUM_INITIAL_CLUSTERS: int,
     MIN_PTS_PER_CLUSTER: int,
@@ -124,7 +125,16 @@ def conduct_experiment_given_data(
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
     SAVE_FINAL_CENTROIDS: bool = False,
     SAMPLING_METHOD: str = DEFAULT_SAMPLING_METHOD,
+    SCALE_ATOL_BY_MAX_F: bool = False,
 ):
+    """
+    Train, predict and score one experiment, writing ``json_fpath`` and its plots (rank 0).
+
+    The acceptance test uses ``atol = rtol = TOL``, or with ``SCALE_ATOL_BY_MAX_F``
+    only ``atol = TOL * max|f_j|`` per output component over the training data (the
+    former "Linf-global"). That scaling evaluates ``f`` on the training points here
+    and passes the values on as ``Y_train``, so they are not evaluated twice.
+    """
 
     if json_fpath.exists():
         if _rank == 0:
@@ -139,6 +149,13 @@ def conduct_experiment_given_data(
         model_save_path = json_fpath.with_name(json_fpath.stem + "_surrogate_model.npz")
         if _rank == 0:
             print("\n--- TRAINING ---")
+        ATOL, RTOL = TOL, TOL
+        if SCALE_ATOL_BY_MAX_F:
+            if _rank == 0:
+                Y_train = f_fn(X_train) if Y_train is None else Y_train
+                ATOL = tuple(float(TOL * m) for m in _to_host(xp.max(xp.abs(Y_train.reshape(len(Y_train), -1)), axis=0)))
+            # Only rank 0 holds the data, but every rank must train with the same tolerances.
+            ATOL, RTOL = MPI.COMM_WORLD.bcast(ATOL, root=0), None
         _start_train_time = time.perf_counter()
 
         # All ranks participate in training
@@ -148,8 +165,8 @@ def conduct_experiment_given_data(
             f_fn=f_fn,
             g_fn=g_fn,
             mode=ERROR_EVAL_MODE,
-            ATOL=TOL,
-            RTOL=TOL,
+            ATOL=ATOL,
+            RTOL=RTOL,
             ERROR_METRIC=ERROR_METRIC,
             INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
             NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
@@ -206,8 +223,8 @@ def conduct_experiment_given_data(
     # Compute ground truth and error metrics (Rank 0 only)
     ground_truth = f_fn(X_test)
     error_metrics = compute_error_metrics(
-        atol=TOL,
-        rtol=TOL,
+        atol=ATOL,
+        rtol=RTOL,
         preds=preds,
         gt=ground_truth,
         ug_mask=ung_mask,
@@ -220,6 +237,8 @@ def conduct_experiment_given_data(
         "dim": DIM,
         "f_dim": F_DIM,
         "tol": TOL,
+        "atol": ATOL,
+        "rtol": RTOL,
         "N_0": N_TRAIN,
         "N_test": N_TEST,
         "N_c": surrogate.N_src,
@@ -317,7 +336,7 @@ def conduct_experiment_generate_uniform_data(
     g_fn,
     TOL: float,
     ERROR_EVAL_MODE: SurrogateMode,
-    ERROR_METRIC: Literal["L2", "Linf-global", "Linf-local"],
+    ERROR_METRIC: Literal["L2", "Linf"],
     INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan", "uniform_grid"],
     NUM_INITIAL_CLUSTERS: int,
     MIN_PTS_PER_CLUSTER: int,
@@ -335,6 +354,7 @@ def conduct_experiment_generate_uniform_data(
     SAVE_ALL_GEN_TRAINING_DATA: bool = False,
     SAVE_FINAL_CENTROIDS: bool = False,
     SAMPLING_METHOD: str = DEFAULT_SAMPLING_METHOD,
+    SCALE_ATOL_BY_MAX_F: bool = False,
 ):
 
     if _rank == 0:
@@ -375,6 +395,7 @@ def conduct_experiment_generate_uniform_data(
         SAVE_ALL_GEN_TRAINING_DATA,
         SAVE_FINAL_CENTROIDS,
         SAMPLING_METHOD=SAMPLING_METHOD,
+        SCALE_ATOL_BY_MAX_F=SCALE_ATOL_BY_MAX_F,
     )
 
 
@@ -448,7 +469,8 @@ class Problem:
 
     Results go to ``RESULTS_DIR / dir_name``. Training and test points are drawn
     uniformly from ``domain`` (on rank 0), unless ``sample(dim, n_train, n_test)``
-    is given, which returns ``(X_train, X_test)``.
+    is given, which returns ``(X_train, X_test)``. With ``scale_atol_by_max_f`` the
+    acceptance test is absolute only, scaled by max|f| (see conduct_experiment_given_data).
     """
 
     dir_name: str
@@ -456,7 +478,8 @@ class Problem:
     g: Callable | None = None
     hessian: Callable | None = None
     domain: tuple[float, float] = (-3.0, 3.0)
-    error_metric: Literal["L2", "Linf-global", "Linf-local"] = "Linf-local"
+    error_metric: Literal["L2", "Linf"] = "Linf"
+    scale_atol_by_max_f: bool = False
     n_train: Callable[[int], int] = get_N_TRAIN  # default N_TRAIN for a dimension
     n_test: Callable[[int], int] = lambda n_train: n_train // 2
     sample: Callable | None = None
@@ -608,7 +631,7 @@ def lorenz96(args) -> Problem:
         f"lorenz96_dt_{tf}",
         f,
         domain=(-5.0, 5.0),
-        error_metric="Linf-global",
+        scale_atol_by_max_f=True,
         n_train=lambda dim: min(get_N_TRAIN(dim), 1000000),
     )
 
@@ -727,6 +750,7 @@ def run_problem(
         CENTROIDS_PLOT_IN_LOG_SCALE=problem.centroids_plot_in_log_scale,
         SAVE_FINAL_CENTROIDS=problem.save_final_centroids,
         SAMPLING_METHOD=sampling_method,
+        SCALE_ATOL_BY_MAX_F=problem.scale_atol_by_max_f,
     )
     if problem.sample is None:
         conduct_experiment_generate_uniform_data(**settings)
@@ -824,7 +848,8 @@ def lorenz_trajectories_experiment(
         g_fn=None,
         TOL=tol,
         ERROR_EVAL_MODE=error_eval_mode,
-        ERROR_METRIC="Linf-global",
+        ERROR_METRIC="Linf",
+        SCALE_ATOL_BY_MAX_F=True,
         INITIAL_CLUSTERING_METHOD="kmeans",
         NUM_INITIAL_CLUSTERS=min(get_NUM_INITIAL_CLUSTERS(d), 1000),
         MIN_PTS_PER_CLUSTER=min(get_MIN_PTS_PER_CLUSTER(d), 500),

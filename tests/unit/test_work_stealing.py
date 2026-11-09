@@ -120,7 +120,7 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
     buffers, count, _, _, levels = ac._run_local_refinement(
         config=ClusteringConfig(
             mode=SurrogateMode.NEAREST_NEIGHBOR,
-            error_metric="Linf-local",
+            error_metric="Linf",
             atol=0.05,
             rtol=0.05,
             min_pts_per_cluster=1,
@@ -134,7 +134,6 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
         ),
         evaluator=Evaluator(f_fn=lambda x: np.ones((len(x), 1))),
         clusters=ClusterBatch.empty(d=1, fd=1),
-        F_max_global=np.ones(1),
         comm=comm,
         profiler=profiler,
     )

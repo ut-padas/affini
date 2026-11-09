@@ -108,7 +108,6 @@ def _run_local_refinement(
     config: ClusteringConfig,
     evaluator: Evaluator,
     clusters: ClusterBatch,
-    F_max_global: Array,
     comm: MPI.Intracomm,
     profiler: Profiler,
 ):
@@ -298,9 +297,7 @@ def _run_local_refinement(
                     X_batch,
                     aug_ids,
                 )
-                is_good, E_cluster = acceptance(
-                    F_batch, F_hat, aug_starts, aug_sizes, F_max_global
-                )
+                is_good, E_abs, E_rel = acceptance(F_batch, F_hat, aug_starts, aug_sizes)
                 del F_hat, fit_data
 
             if config.log_mem_stats:
@@ -344,7 +341,7 @@ def _run_local_refinement(
                         ),
                         good_params,
                     )
-                    E_good = E_cluster[good_idx_local]
+                    E_abs_good, E_rel_good = E_abs[good_idx_local], E_rel[good_idx_local]
                     if final_params:
                         # Accepted-only columns change predictions, so re-test the model
                         # that will actually be deployed; clusters it fails are split.
@@ -353,16 +350,16 @@ def _run_local_refinement(
                              "f": f_mus[good_idx_local]},
                             X_good, dense_labels_good,
                         )  # fmt: skip
-                        still_good, E_good = acceptance(
-                            F_batch[good_mask], F_final, xp.r_[0, xp.cumsum(good_counts)[:-1]],
-                            good_counts, F_max_global,
+                        still_good, E_abs_good, E_rel_good = acceptance(
+                            F_batch[good_mask], F_final, xp.r_[0, xp.cumsum(good_counts)[:-1]], good_counts,
                         )  # fmt: skip
                         if not bool(xp.all(still_good)):
                             is_good[good_idx_local[~still_good]] = False
                             keep = xp.nonzero(still_good)[0]
-                            good_idx_local, good_counts, E_good, Qs = (
-                                good_idx_local[keep], good_counts[keep], E_good[keep], Qs[keep]
-                            )
+                            good_idx_local, good_counts, E_abs_good, E_rel_good, Qs = (
+                                good_idx_local[keep], good_counts[keep], E_abs_good[keep],
+                                E_rel_good[keep], Qs[keep],
+                            )  # fmt: skip
                             good_params = {k: v[keep] for k, v in good_params.items()}
                             final_params = {k: v[keep] for k, v in final_params.items()}
                             K_good -= K_good_batch - len(keep)
@@ -374,7 +371,8 @@ def _run_local_refinement(
                             "centroids": mus[good_idx_local],
                             "f": f_mus[good_idx_local],
                             "Q": Qs,
-                            "E_cluster": E_good,
+                            "E_cluster_abs": E_abs_good,
+                            "E_cluster_rel": E_rel_good,
                             "counts": good_counts.astype(xp.int64),
                             **good_params,
                             **final_params,
@@ -442,7 +440,7 @@ def _run_local_refinement(
                         if config.save_all_gen_training_data:
                             save_generated_data(
                                 aug.X_new,
-                                f"train_data_atol_{config.atol}_rtol_{config.rtol}_d{d}",
+                                config.generated_data_name(d),
                             )
                     # The augmented arrays hold copies of the rejected rows.
                     del aug, X_bad, F_bad, G_bad
@@ -694,14 +692,13 @@ def _adaptive_clustering(
     oracle_seconds_at_start = evaluator.seconds
     timer = profiler.phase
 
-    F_max_global_host = None
     d_bcast, fd_bcast = 0, 0
 
     if rank == 0:
         if config.save_all_gen_training_data:
             _, DIM = X.shape
             save_generated_data(
-                X, f"train_data_atol_{config.atol}_rtol_{config.rtol}_d{DIM}"
+                X, config.generated_data_name(DIM)
             )
 
         with timer("time_init"):
@@ -721,8 +718,6 @@ def _adaptive_clustering(
             else:
                 F0_gpu, G0_gpu = evaluator(X0_gpu, need_grad=need_point_grads)
             fd_bcast = F0_gpu.shape[1]
-
-            F_max_global_host = _to_host(xp.max(xp.abs(F0_gpu), axis=0))
 
             labels0 = None
             if config.use_existing_initial_clustering and os.path.exists(INITIAL_CLUSTERING_FILE):
@@ -789,8 +784,9 @@ def _adaptive_clustering(
         )
 
     with timer("time_scatter"):
-        F_max_global_host = comm.bcast(F_max_global_host, root=0)
         d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
+        # Every rank checks, so a tolerance of the wrong length fails before any rank refines.
+        config.components().acceptance.check_output_dim(fd_bcast)
 
         # Rank 0 splits the sorted clusters into one contiguous chunk per rank.
         if rank == 0:
@@ -816,9 +812,6 @@ def _adaptive_clustering(
         else:
             logger.info(f"R{rank:02}: Waiting to receive initial data chunk from R00.")
             local_clusters = recv_clusters(comm, 0, d_bcast, fd_bcast, tag=SCATTER_TAG)
-
-    # KEEP DATA ON THE CPU (Host RAM)
-    F_max_global = xp.asarray(F_max_global_host, dtype=xp.float64)
 
     # Hardware-aware sizing is more appropriate now that the split projection no
     # longer materializes an (N, d, d) tensor. Keep the estimate conservative,
@@ -880,7 +873,6 @@ def _adaptive_clustering(
         config=config,
         evaluator=evaluator,
         clusters=local_clusters,
-        F_max_global=F_max_global,
         comm=comm,
         profiler=profiler,
     )
@@ -974,7 +966,7 @@ def _adaptive_clustering(
         # Combine all the files if we are saving
         if config.save_all_gen_training_data:
             combine_generated_data(
-                f"train_data_atol_{config.atol}_rtol_{config.rtol}_d{d_bcast}"
+                config.generated_data_name(d_bcast)
             )
 
         profiler.close()

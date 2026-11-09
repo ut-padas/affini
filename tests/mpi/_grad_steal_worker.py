@@ -51,7 +51,7 @@ def main() -> None:
     s = AFINNISurrogate()
     s.train(
         X, f_fn=f, g_fn=g, mode=SurrogateMode.TAYLOR_LSQ_HESS, STORE_HESSIAN=True,
-        ATOL=0.01, RTOL=0.01, ERROR_METRIC="Linf-local", NUM_INITIAL_CLUSTERS=1,
+        ATOL=0.01, RTOL=0.01, ERROR_METRIC="Linf", NUM_INITIAL_CLUSTERS=1,
         MIN_PTS_PER_CLUSTER=50, USE_WORK_STEALING=True, PROFILE_EVENTS=True,
     )  # fmt: skip
     world.Barrier()

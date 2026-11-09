@@ -34,7 +34,7 @@ import numbers
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from src.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion
+from src.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion, Tolerance, normalize_tolerance
 from src.local_models import LOCAL_MODELS, LocalModel, local_model_for_mode
 from src.modes import SurrogateMode
 from src.registry import ComponentSpec, component_spec
@@ -66,9 +66,12 @@ class ClusteringConfig:
 
     # --- Surrogate and acceptance test ---
     mode: SurrogateMode
-    atol: float  # absolute error tolerance for accepting a cluster
-    rtol: float  # relative error tolerance (see src.acceptance for each metric)
-    error_metric: Literal["L2", "Linf-global", "Linf-local"] = "Linf-global"
+    # Error tolerances for accepting a cluster: a scalar, one value per output
+    # component, or None (that test never accepts). At least one is required unless
+    # ``acceptance`` brings its own; see src.acceptance for the rule.
+    atol: Tolerance = None
+    rtol: Tolerance = None
+    error_metric: Literal["L2", "Linf"] = "Linf"
 
     # --- Initial clustering ---
     initial_clustering_method: Literal["kmeans", "knndbscan", "uniform_grid"] = "kmeans"
@@ -113,12 +116,16 @@ class ClusteringConfig:
     )
 
     def __post_init__(self) -> None:
-        """Validate settings early and drop ``store_hess`` where no model can use it."""
+        """Validate settings early, normalize the tolerances and drop ``store_hess`` where no model can use it."""
         self.mode = SurrogateMode(self.mode)
-        for name in ("atol", "rtol", "q_reg"):
-            value = getattr(self, name)
-            if not (isinstance(value, numbers.Real) and math.isfinite(value) and value >= 0):
-                raise ValueError(f"{name} must be a finite number >= 0; got {value!r}.")
+        # Normalized to a float or a tuple so to_dict() stays serializable.
+        self.atol = normalize_tolerance("atol", self.atol)
+        self.rtol = normalize_tolerance("rtol", self.rtol)
+        # An instance or (name, settings) acceptance carries its own tolerances.
+        if self.atol is None and self.rtol is None and (self.acceptance is None or isinstance(self.acceptance, str)):
+            raise ValueError("Give atol, rtol or both: an acceptance test needs a tolerance.")
+        if not (isinstance(self.q_reg, numbers.Real) and math.isfinite(self.q_reg) and self.q_reg >= 0):
+            raise ValueError(f"q_reg must be a finite number >= 0; got {self.q_reg!r}.")
         for name, low in (
             ("num_initial_clusters", 1),
             ("min_pts_per_cluster", 1),
@@ -150,16 +157,6 @@ class ClusteringConfig:
             logger.warning(
                 f"store_hess is only supported by {SurrogateMode.TAYLOR_LSQ_HESS.value}; "
                 f"ignoring it for mode {self.mode.value}."
-            )
-        if (
-            self.acceptance is None
-            and self.error_metric == "Linf-global"
-            and self.atol != self.rtol
-        ):
-            logger.warning(
-                f"error_metric 'Linf-global' accepts a cluster when its error relative to "
-                f"max|F| over the initial data is below atol={self.atol}; rtol={self.rtol} "
-                f"is not used (see src.acceptance)."
             )
 
     def components(self) -> Components:
@@ -230,3 +227,11 @@ class ClusteringConfig:
         out["mode"] = self.mode.value
         out["components"] = self.components().describe()
         return out
+
+    def generated_data_name(self, d: int) -> str:
+        """File prefix for ``save_all_gen_training_data``; a per-component tolerance is joined with '-'."""
+        tags = [
+            "none" if t is None else "-".join(f"{v:g}" for v in (t if isinstance(t, tuple) else (t,)))
+            for t in (self.atol, self.rtol)
+        ]
+        return f"train_data_atol_{tags[0]}_rtol_{tags[1]}_d{d}"

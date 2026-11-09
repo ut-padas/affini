@@ -43,7 +43,7 @@ def quad_h(x):
 def train(f, mode=SurrogateMode.AFFINE_COV_HESS, **kw):
     s = AFINNISurrogate()
     opts = dict(
-        mode=mode, ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf-local",
+        mode=mode, ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf",
         NUM_INITIAL_CLUSTERS=8, MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False,
     )  # fmt: skip
     opts.update(kw)
@@ -82,11 +82,11 @@ def test_training_is_deterministic():
 @pytest.mark.parametrize(
     "mode,metric",
     [
-        (SurrogateMode.AFFINE_COV_HESS, "Linf-local"),
+        (SurrogateMode.AFFINE_COV_HESS, "Linf"),
         (SurrogateMode.AFFINE_COV_NO_HESS, "L2"),
-        (SurrogateMode.TAYLOR_COV_HESS, "Linf-global"),
-        (SurrogateMode.AFFINE_EXACT_HESS, "Linf-local"),
-        (SurrogateMode.NEAREST_NEIGHBOR, "Linf-local"),
+        (SurrogateMode.TAYLOR_COV_HESS, "Linf"),
+        (SurrogateMode.AFFINE_EXACT_HESS, "Linf"),
+        (SurrogateMode.NEAREST_NEIGHBOR, "Linf"),
     ],
 )
 def test_work_is_conserved_and_observed_points_are_covered(mode, metric):
@@ -97,11 +97,11 @@ def test_work_is_conserved_and_observed_points_are_covered(mode, metric):
     assert int(host(s.counts_src).sum()) == ps["N0"] + ps["num_generated_pts"] == len(X_TRAIN) + ps["num_generated_pts"]
     # Evaluations: initial points + one centroid per processed cluster + new points.
     assert ps["total_f_evals"] >= ps["N0"] + ps["num_generated_pts"] + s.N_src
-    # Every accepted leaf met the tolerance on its own points (|f| >= 1 here, so
-    # the absolute alternative of Linf-local implies the relative one).
-    assert np.all(np.isfinite(host(s.E_cluster_src)))
-    if metric in ("Linf-local", "Linf-global"):
-        assert np.all(host(s.E_cluster_src) < 0.05)
+    # Every accepted leaf met the tolerance on its own points, in every component.
+    E_abs, E_rel = host(s.E_cluster_abs_src), host(s.E_cluster_rel_src)
+    assert E_abs.shape == E_rel.shape == (s.N_src, 1)
+    assert np.all(np.isfinite(E_abs)) and np.all(np.isfinite(E_rel))
+    assert np.all((E_rel < 0.05) | (E_abs < 0.05))
     # The trust regions contain every training point. The farthest point of each
     # cluster lies on its boundary (q = 1 up to rounding), hence the margin.
     C, Q = host(s.X_src), host(s.Qs_src)
@@ -145,12 +145,12 @@ def test_inputs_and_precomputed_values_paths_agree():
     b = AFINNISurrogate()
     b.train(
         xp.asarray(X_TRAIN), Y_train=Y, f_fn=quad_f, mode=SurrogateMode.AFFINE_COV_HESS, ATOL=0.02, RTOL=0.02,
-        ERROR_METRIC="Linf-local", NUM_INITIAL_CLUSTERS=8, MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False,
+        ERROR_METRIC="Linf", NUM_INITIAL_CLUSTERS=8, MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False,
     )  # fmt: skip
     c = AFINNISurrogate()
     c.train(
         xp.asarray(X_TRAIN), oracle_fn=lambda x: (quad_f(x), quad_g(x)), mode=SurrogateMode.AFFINE_COV_HESS,
-        ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf-local", NUM_INITIAL_CLUSTERS=8, MIN_PTS_PER_CLUSTER=40,
+        ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf", NUM_INITIAL_CLUSTERS=8, MIN_PTS_PER_CLUSTER=40,
         USE_WORK_STEALING=False,
     )  # fmt: skip
     for other in (b, c):

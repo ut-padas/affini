@@ -71,7 +71,7 @@ def cases():
     )  # fmt: skip
     for fd in (1, 2):
         for mode in SurrogateMode:
-            for metric in ("L2", "Linf-local", "Linf-global"):
+            for metric in ("L2", "Linf"):
                 yield f"{fd}_{mode.value}_{metric}", fd, dict(base, mode=mode, ERROR_METRIC=metric)
     mode = SurrogateMode.AFFINE_COV_HESS
     yield "extra_oracle_taylor", 1, dict(base, mode=SurrogateMode.TAYLOR_COV_HESS, _oracle=True)
@@ -80,6 +80,11 @@ def cases():
     yield "extra_tiny_batches", 1, dict(base, mode=mode, BATCH_SIZE=7)
     yield "extra_second_order", 1, dict(base, mode=SurrogateMode.TAYLOR_LSQ_HESS, STORE_HESSIAN=True)
     yield "extra_tight_tol", 1, dict(base, mode=mode, ATOL=0.02, RTOL=0.02, MAX_CLUSTERS_EST=4)
+    # One tolerance only, and one value per output component (newer API: these fail
+    # on older checkouts, which compare() reports as fixed rather than as failures).
+    yield "extra_atol_only", 2, dict(base, mode=mode, ATOL=0.15, RTOL=None)
+    yield "extra_rtol_only", 2, dict(base, mode=mode, ATOL=None, RTOL=0.15)
+    yield "extra_vector_tol", 2, dict(base, mode=mode, ATOL=(0.15, 0.3), RTOL=(0.1, 0.2), ERROR_METRIC="L2")
 
 
 def run(out_prefix):

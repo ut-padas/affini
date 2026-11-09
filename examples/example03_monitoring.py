@@ -33,6 +33,7 @@ import numpy as np  # noqa: E402
 
 import src.work_stealing as ws  # noqa: E402
 from src import PROJECT_DIR, get_mpi_rank, get_mpi_size, xp  # noqa: E402
+from src.backend import MPI  # noqa: E402
 from src.heuristic_parameters import get_MIN_PTS_PER_CLUSTER, get_NUM_INITIAL_CLUSTERS  # noqa: E402
 from src.modes import SurrogateMode  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402
@@ -48,9 +49,9 @@ if __name__ == "__main__":
     p.add_argument("--n-train", type=int, default=2_000_000)
     p.add_argument("--tol", type=float, default=0.007)
     p.add_argument("--init", default="kmeans", choices=["kmeans", "uniform_grid"])
-    # Linf-local refines without end where f is near 0 (Rosenbrock's minimum), so the
-    # demo uses the global metric; see examples/USAGE.md#training-settings.
-    p.add_argument("--metric", default="Linf-global", choices=["Linf-global", "Linf-local", "L2"])
+    # A relative test refines without end where f is near 0 (Rosenbrock's minimum), so
+    # the demo uses only an absolute one, ATOL = tol * max|f| over the training data.
+    p.add_argument("--metric", default="Linf", choices=["Linf", "L2"])
     p.add_argument("--stealing", default="on", choices=["on", "off"], help="MPI work stealing")
     args = p.parse_args()
     stealing = args.stealing == "on"
@@ -61,25 +62,29 @@ if __name__ == "__main__":
     ws.MIN_LOAD_THRESHOLD, ws.STEAL_SIZE = 50_000, 25_000
     f = partial(rosenbrock, a=100.0)
 
-    X_train = Q = None
+    X_train = Y_train = Q = None
     if rank == 0:
         # Other ranks only create their stream files once training starts, after
         # rank 0 joins it, so clearing an old run here cannot race with them.
         shutil.rmtree(STREAM_DIR, ignore_errors=True)
         rng = np.random.default_rng(SEED)
         X_train = xp.asarray(rng.uniform(-2.0, 3.0, (N_TRAIN, DIM)))
+        Y_train = f(X_train)  # passed to train(), so evaluated only once
         Q = xp.asarray(rng.uniform(-2.0, 3.0, (N_TEST, DIM)))
         print(f"Training on {size} rank(s), work stealing {args.stealing}. Watch with:\n"
               f"  uv run python -m src.monitor {Path(STREAM_DIR).relative_to(PROJECT_DIR)}", flush=True)  # fmt: skip
+
+    # Only rank 0 holds the data, but every rank must train with the same tolerance.
+    ATOL = MPI.COMM_WORLD.bcast(TOL * float(xp.max(xp.abs(Y_train))) if rank == 0 else None, root=0)
 
     surrogate = AFINNISurrogate()
     t0 = time.perf_counter()
     surrogate.train(
         X_train if rank == 0 else xp.empty((0, DIM)),
+        Y_train=Y_train,
         f_fn=f,
         mode=SurrogateMode.AFFINE_COV_HESS,
-        ATOL=TOL,
-        RTOL=TOL,
+        ATOL=ATOL,
         ERROR_METRIC=args.metric,
         INITIAL_CLUSTERING_METHOD=args.init,
         NUM_INITIAL_CLUSTERS=get_NUM_INITIAL_CLUSTERS(DIM),

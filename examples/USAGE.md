@@ -34,7 +34,7 @@ X = xp.asarray(np.random.default_rng(0).uniform(-2, 3, (50_000, 2)))
 surrogate = AFINNISurrogate()
 surrogate.train(
     X, f_fn=rosenbrock, mode=SurrogateMode.AFFINE_COV_HESS,
-    ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf-local",
+    ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf",
     NUM_INITIAL_CLUSTERS=25, MIN_PTS_PER_CLUSTER=100,
 )
 Q = xp.asarray(np.random.default_rng(1).uniform(-2, 3, (10_000, 2)))
@@ -117,7 +117,7 @@ a different order.
 | Setting | Meaning |
 |---|---|
 | `mode` | Preset pair (local model, split strategy); see the table below |
-| `ATOL`, `RTOL`, `ERROR_METRIC` | Acceptance test: `"Linf-local"` (relative to the cluster's own max \|f\|, or absolute), `"L2"`, `"Linf-global"` (relative to max \|f\| over the initial data, compared with **ATOL**; RTOL unused). Exact formulas: [`src/acceptance.py`](../src/acceptance.py) |
+| `ATOL`, `RTOL`, `ERROR_METRIC` | Acceptance test: a cluster is accepted when every output component is within `RTOL` relative **or** `ATOL` absolute error, measured as `"Linf"` (max error, relative to the cluster's own max \|f\|) or `"L2"` (relative L2 / RMS). Give at least one tolerance; each is a scalar or one value per output component, and an omitted one never accepts. For an absolute test scaled to the function, pass `ATOL = tol * max\|f\|`. Exact formulas: [`src/acceptance.py`](../src/acceptance.py) |
 | `NUM_INITIAL_CLUSTERS`, `INITIAL_CLUSTERING_METHOD` | Roots of the forest: `"kmeans"` (custom k-means in `src/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (needs `--group research_internal`, Linux) |
 | `MIN_PTS_PER_CLUSTER` | Rejected clusters are augmented to at least twice this before splitting |
 | `MAX_LEVELS` | Refinement depth limit; reaching it leaves `converged=False` |
@@ -150,7 +150,8 @@ would not fit, training stops with a `MemoryError` explaining what to change
 ```python
 surrogate.N_src, surrogate.X_src, surrogate.Qs_src    # leaves: count, centroids, trust shapes
 surrogate.leaf_params                                  # the local model's parameters by name
-surrogate.E_cluster_src, surrogate.counts_src          # accepted error and points per leaf
+surrogate.E_cluster_abs_src, surrogate.E_cluster_rel_src  # accepted errors per leaf and output
+surrogate.counts_src                                   # points per leaf
 surrogate.converged                                    # False if MAX_LEVELS stopped refinement
 surrogate.num_unresolved_clusters, surrogate.num_unresolved_pts
 surrogate.config                                       # every effective setting and component
@@ -166,7 +167,8 @@ model's class is registered (import its module first) or passed as
 `load_model(path, local_model=...)`.
 
 Scoring predictions: `src.surrogate.compute_error_metrics(preds, truth, outside,
-atol, rtol)` returns L2/Linf errors overall and inside/outside the trust regions.
+atol=..., rtol=...)` returns L2/Linf errors overall and inside/outside the trust
+regions, and counts the inside points within tolerance under the same rule as training.
 
 ## Profiling
 
@@ -392,8 +394,8 @@ surrogate.train(X, f_fn=f, local_model=("offset_affine", {"offset": 0.5}))
 Contracts the engine checks (with a clear error):
 
 - **Local model:** `fit` + `finalize` return exactly the declared `columns` with
-  the declared shapes; the names `centroids`, `f`, `Q`, `E_cluster`, `counts`
-  are reserved. `evaluate` may read `params["centroids"]` and `params["f"]`, and
+  the declared shapes; the names `centroids`, `f`, `Q`, `E_cluster_abs`,
+  `E_cluster_rel`, `counts` are reserved. `evaluate` may read `params["centroids"]` and `params["f"]`, and
   must also work without the `finalize` columns: the acceptance test evaluates the
   `fit` output, and only accepted leaves get `finalize` columns.
 - **Sampler:** `sample(clusters, n_new, rng)` returns `sum(n_new)` points grouped by
@@ -403,7 +405,9 @@ Contracts the engine checks (with a clear error):
   direction, `child_sizes(counts, sorted_scores)` to change where clusters are cut,
   or `split(data)` entirely; splits are binary and must keep each cluster's rows
   together and its two child sizes adding up to its size.
-- **Acceptance:** `__call__(F, F_hat, starts, sizes, F_max_global) -> (is_good, E)`.
+- **Acceptance:** `__call__(F, F_hat, starts, sizes) -> (is_good, E_abs, E_rel)`, the
+  errors per cluster and output component (K, fd); `self.accept(E_abs, E_rel)` applies
+  the built-in tolerance rule.
 - **Trust region:** `shapes(X, centroids, labels, counts) -> Q` (K, d, d),
   symmetric positive semi-definite; inference treats `dx^T Q dx > 1` as outside.
 

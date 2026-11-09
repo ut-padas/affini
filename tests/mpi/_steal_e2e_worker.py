@@ -112,7 +112,7 @@ def main() -> None:
             f_fn=evaluate,
             ATOL=TOL,
             RTOL=TOL,
-            ERROR_METRIC="Linf-local",
+            ERROR_METRIC="Linf",
             NUM_INITIAL_CLUSTERS=1,
             BATCH_SIZE=10_000_000,
             PROFILE_TIMING=True,

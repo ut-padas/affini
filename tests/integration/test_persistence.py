@@ -35,7 +35,7 @@ def g(x):
 def train(mode=SurrogateMode.AFFINE_COV_HESS, f_fn=f, **kw):
     s = AFINNISurrogate()
     opts = dict(
-        mode=mode, f_fn=f_fn, ATOL=0.05, RTOL=0.05, ERROR_METRIC="Linf-local",
+        mode=mode, f_fn=f_fn, ATOL=0.05, RTOL=0.05, ERROR_METRIC="Linf",
         NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=32, USE_WORK_STEALING=False,
     )  # fmt: skip
     opts.update(kw)
@@ -81,7 +81,8 @@ def test_round_trip_preserves_predictions_and_metadata(tmp_path, mode, kw):
     assert_same_model(s, loaded)
     assert loaded.config == json.loads(json.dumps(s.config))
     assert loaded.converged is True and loaded.profiling_stats["N0"] == len(X)
-    np.testing.assert_array_equal(host(loaded.E_cluster_src), host(s.E_cluster_src))
+    np.testing.assert_array_equal(host(loaded.E_cluster_abs_src), host(s.E_cluster_abs_src))
+    np.testing.assert_array_equal(host(loaded.E_cluster_rel_src), host(s.E_cluster_rel_src))
     np.testing.assert_array_equal(host(loaded.counts_src), host(s.counts_src))
     with np.load(path, allow_pickle=False) as data:  # no pickled objects in the file
         assert int(data["format_version"]) == MODEL_FORMAT_VERSION
@@ -200,6 +201,17 @@ def test_legacy_shared_hessian_with_vector_output_is_refused(tmp_path):
         AFINNISurrogate.load_model(tmp_path / "old.npz")
 
 
+def test_files_with_the_old_single_error_column_still_load(tmp_path):
+    s = train()
+    with np.load(s.save(tmp_path / "m.npz")) as data:
+        arrays = {k: data[k] for k in data.files if not k.startswith("E_cluster_")}
+    arrays["E_cluster_src"] = host(s.E_cluster_rel_src).max(axis=1)
+    np.savez(tmp_path / "old.npz", **arrays)
+    loaded = AFINNISurrogate.load_model(tmp_path / "old.npz")
+    assert loaded.E_cluster_abs_src is None and loaded.E_cluster_rel_src is None
+    assert_same_model(s, loaded)
+
+
 # --- Deprecated train(save_model=..., load_if_exists=...) -------------------------
 
 
@@ -312,7 +324,7 @@ def test_a_failed_training_closes_its_profiler_stream(tmp_path, monkeypatch):
         raise ValueError("oracle failed")
 
     with pytest.raises(ValueError, match="oracle failed"):
-        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), f_fn=failing, PROFILE_DIR=str(tmp_path))
+        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), f_fn=failing, ATOL=0.05, PROFILE_DIR=str(tmp_path))
     assert created and all(p._stream is None for p in created)
 
 
@@ -329,7 +341,7 @@ def test_a_nested_predict_does_not_release_the_outer_profiler(tmp_path, monkeypa
         raise ValueError("outer oracle failed")
 
     with pytest.raises(ValueError, match="outer oracle failed"):
-        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), f_fn=oracle, PROFILE_DIR=str(tmp_path))
+        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), f_fn=oracle, ATOL=0.05, PROFILE_DIR=str(tmp_path))
     assert created and all(p._stream is None for p in created)
 
 

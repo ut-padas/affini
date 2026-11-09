@@ -21,7 +21,7 @@ def f(x):
 def surrogate():
     s = AFINNISurrogate()
     s.train(
-        xp.asarray(X), f_fn=f, ATOL=0.05, RTOL=0.05, ERROR_METRIC="Linf-local",
+        xp.asarray(X), f_fn=f, ATOL=0.05, RTOL=0.05, ERROR_METRIC="Linf",
         NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=32, USE_WORK_STEALING=False,
     )  # fmt: skip
     return s
@@ -62,6 +62,19 @@ def test_more_neighbours_than_leaves(surrogate):
 def test_k_larger_than_coarse_factor_is_rejected(surrogate):
     with pytest.raises(ValueError, match="coarse_factor"):
         surrogate.predict(xp.asarray(X[:3]), k_nn=11, coarse_factor=10)
+
+
+def test_per_component_tolerances_are_used_and_must_match_the_outputs():
+    s = AFINNISurrogate()
+    opts = dict(f_fn=f, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=32, USE_WORK_STEALING=False)
+    s.train(xp.asarray(X), ATOL=(0.05, 0.01), RTOL=None, **opts)
+    E_abs = host(s.E_cluster_abs_src)
+    assert E_abs.shape == (s.N_src, 2) and np.all(E_abs < [0.05, 0.01])
+    assert s.config["atol"] == (0.05, 0.01) and s.config["rtol"] is None
+    with pytest.raises(ValueError, match="atol has 3 components but the function has 2 outputs"):
+        AFINNISurrogate().train(xp.asarray(X), ATOL=(0.05, 0.05, 0.05), **opts)
+    with pytest.raises(ValueError, match="Give atol, rtol or both"):
+        AFINNISurrogate().train(xp.asarray(X), **opts)
 
 
 def test_untrained_surrogate_refuses_to_predict():

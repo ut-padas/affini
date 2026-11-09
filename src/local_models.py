@@ -32,8 +32,8 @@ candidate clusters per query, at inference); in the (n, k) case ``X`` stays
 
 Besides a model's own parameters, ``evaluate`` may read the columns every
 cluster stores: ``"centroids"`` (K, d) and ``"f"`` (K, fd), the function value at
-the centroid. Those names, and ``"Q"``, ``"E_cluster"`` and ``"counts"``, are
-reserved (``SHARED_COLUMNS``).
+the centroid. Those names, and ``"Q"``, ``"E_cluster_abs"``, ``"E_cluster_rel"`` and
+``"counts"``, are reserved (``SHARED_COLUMNS``).
 """
 
 from abc import ABC, abstractmethod
@@ -306,7 +306,7 @@ def make_local_model(config) -> LocalModel:
 
 
 # Columns every accepted cluster stores, whatever its model.
-SHARED_COLUMNS = ("centroids", "f", "Q", "E_cluster", "counts")
+SHARED_COLUMNS = ("centroids", "f", "Q", "E_cluster_abs", "E_cluster_rel", "counts")
 
 
 def output_columns(model: LocalModel, d: int, fd: int) -> dict[str, ParamSpec]:
@@ -322,7 +322,9 @@ def output_columns(model: LocalModel, d: int, fd: int) -> dict[str, ParamSpec]:
         "centroids": ParamSpec((d,)),
         "f": ParamSpec((fd,)),
         "Q": ParamSpec((d, d)),
-        "E_cluster": ParamSpec(()),
+        # The acceptance criterion's errors per output component (see src.acceptance).
+        "E_cluster_abs": ParamSpec((fd,)),
+        "E_cluster_rel": ParamSpec((fd,)),
         "counts": ParamSpec((), np.int64),
         **own,
     }

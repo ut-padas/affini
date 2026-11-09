@@ -503,7 +503,7 @@ def run_iterative_refinement(
 
     NUM_INITIAL_CLUSTERS = 20 * d
     MIN_PTS_PER_CLUSTER = 50 * d
-    ERROR_METRIC = "Linf-local"
+    ERROR_METRIC = "Linf"
     INITIAL_CLUSTERING_METHOD = "kmeans"
 
     PTS_PER_CLUSTER_CANDIDATE = 10

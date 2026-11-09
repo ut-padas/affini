@@ -29,7 +29,7 @@ def f(x):
 def train(**kw):
     s = AFINNISurrogate()
     s.train(
-        xp.asarray(X), f_fn=f, ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf-local",
+        xp.asarray(X), f_fn=f, ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf",
         NUM_INITIAL_CLUSTERS=8, MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False, **kw,
     )  # fmt: skip
     return s

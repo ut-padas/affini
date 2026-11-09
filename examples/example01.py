@@ -39,7 +39,7 @@ if __name__ == "__main__":
         mode = SurrogateMode.AFFINE_COV_HESS,
         ATOL = TOL,
         RTOL = TOL,
-        ERROR_METRIC = 'Linf-local',
+        ERROR_METRIC = 'Linf',
         NUM_INITIAL_CLUSTERS = N_init_clusters,
         MIN_PTS_PER_CLUSTER = min_ppc,
         SEED = SEED,

@@ -151,7 +151,7 @@ def test_fit_returns_declared_columns():
 def test_every_mode_has_a_model(mode):
     model = make_local_model(ClusteringConfig(mode=mode, atol=1e-3, rtol=1e-3))
     cols = output_columns(model, d, fd)
-    assert {"centroids", "f", "Q", "E_cluster", "counts"} <= cols.keys()
+    assert {"centroids", "f", "Q", "E_cluster_abs", "E_cluster_rel", "counts"} <= cols.keys()
     assert model.needs_centroid_grad == mode.value.startswith("taylor")
 
 

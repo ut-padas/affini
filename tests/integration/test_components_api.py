@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from src import xp
-from src.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion, LinfLocalAcceptance
+from src.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion, LinfAcceptance
 from src.clusters import ParamSpec
 from src.config import ClusteringConfig
 from src.local_models import (
@@ -55,7 +55,7 @@ def g(x):
 def train(**kwargs):
     s = AFINNISurrogate()
     opts = dict(
-        f_fn=f, ATOL=0.05, RTOL=0.05, ERROR_METRIC="Linf-local", NUM_INITIAL_CLUSTERS=8,
+        f_fn=f, ATOL=0.05, RTOL=0.05, ERROR_METRIC="Linf", NUM_INITIAL_CLUSTERS=8,
         MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False,
     )  # fmt: skip
     opts.update(kwargs)
@@ -94,7 +94,7 @@ def test_mode_presets_resolve_to_the_legacy_components(mode):
     assert type(c.split_strategy) is type(legacy_split)
     assert c.split_strategy.settings() == legacy_split.settings()
     assert type(c.sampler) is ConvexCombinationSampler
-    assert type(c.acceptance) is ACCEPTANCE_CRITERIA["Linf-global"]
+    assert type(c.acceptance) is ACCEPTANCE_CRITERIA["Linf"]
     assert isinstance(c.trust_region, CovarianceEllipsoid) and c.trust_region.q_reg == 1e-6
     json.dumps(c.describe())  # serializable
 
@@ -112,7 +112,7 @@ def test_explicit_components_equal_to_the_preset_give_identical_results():
         local_model="affine_lsq",
         split_strategy=("covariance_hessian", {"gradient": "local_lsq"}),
         sampler="convex_combination",
-        acceptance="Linf-local",
+        acceptance="Linf",
         trust_region="covariance_ellipsoid",
     )
     # Two separate runs: bit-identical on CPU; on GPU, atomicAdd accumulation order
@@ -280,8 +280,9 @@ def test_effective_settings_are_recorded_next_to_requested_ones():
 class AcceptAll(AcceptanceCriterion):
     name = "test_accept_all"
 
-    def __call__(self, F, F_hat, starts, sizes, F_max_global):
-        return xp.ones(len(sizes), dtype=bool), xp.zeros(len(sizes))
+    def __call__(self, F, F_hat, starts, sizes):
+        zeros = xp.zeros((len(sizes), F.shape[1]))
+        return xp.ones(len(sizes), dtype=bool), zeros, zeros
 
 
 def test_custom_acceptance_decides_which_clusters_become_leaves():
@@ -379,9 +380,9 @@ def test_store_hess_with_an_explicit_model_is_ignored(caplog):
 def test_builtin_components_are_registered():
     assert {"constant", "taylor", "affine_lsq"} <= set(LOCAL_MODELS)
     assert {"covariance", "covariance_hessian", "exact_hessian", "gradient_lsq_hessian"} <= set(SPLIT_STRATEGIES)
-    assert {"L2", "Linf-local", "Linf-global"} <= set(ACCEPTANCE_CRITERIA)
+    assert {"L2", "Linf"} <= set(ACCEPTANCE_CRITERIA) and "Linf-global" not in ACCEPTANCE_CRITERIA
     assert "covariance_ellipsoid" in TRUST_REGIONS and "convex_combination" in SAMPLERS
-    assert isinstance(ACCEPTANCE_CRITERIA.create("Linf-local", atol=1, rtol=2), LinfLocalAcceptance)
+    assert isinstance(ACCEPTANCE_CRITERIA.create("Linf", atol=1, rtol=2), LinfAcceptance)
     assert isinstance(SPLIT_STRATEGIES.create("covariance_hessian"), CovarianceHessianSplit)
 
 

@@ -23,6 +23,7 @@ from src import (
     _to_host,
     xp,
 )
+from src.acceptance import Tolerance, normalize_tolerance, tolerance_vector
 from src.adaptive_clustering import _adaptive_clustering, run_collective
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 from src.config import ClusteringConfig
@@ -113,8 +114,10 @@ class AFINNISurrogate:
         # The local model's own per-leaf parameters, keyed by the columns it declares
         # (e.g. "A_fit"/"b_fit", or "g" and optionally "H").
         self.leaf_params: dict[str, Array] = {}
-        # Per-leaf training diagnostics: the accepted error and the number of points.
-        self.E_cluster_src = None
+        # Per-leaf training diagnostics: the accepted absolute and relative errors per
+        # output component, (N_src, fd) (see src.acceptance), and the number of points.
+        self.E_cluster_abs_src = None
+        self.E_cluster_rel_src = None
         self.counts_src = None
         # The effective settings and components of the last training run.
         self.config: dict[str, Any] = {}
@@ -182,7 +185,8 @@ class AFINNISurrogate:
             "A_fits_src": self.A_fits_src,
             "b_fits_src": self.b_fits_src,
             "leaf_params": dict(self.leaf_params),
-            "E_cluster_src": self.E_cluster_src,
+            "E_cluster_abs_src": self.E_cluster_abs_src,
+            "E_cluster_rel_src": self.E_cluster_rel_src,
             "counts_src": self.counts_src,
             "config": self.config,
             "converged": self.converged,
@@ -205,9 +209,9 @@ class AFINNISurrogate:
         trust_region: ComponentSpec = None,
         save_model: Optional[Union[bool, str, Path]] = _UNSET,
         load_if_exists: bool = _UNSET,
-        ATOL: float = 1e-2,
-        RTOL: float = 1e-2,
-        ERROR_METRIC: Literal["L2", "Linf-local", "Linf-global"] = "Linf-global",
+        ATOL: Tolerance = None,
+        RTOL: Tolerance = None,
+        ERROR_METRIC: Literal["L2", "Linf"] = "Linf",
         INITIAL_CLUSTERING_METHOD: Literal[
             "kmeans", "knndbscan", "uniform_grid"
         ] = "kmeans",
@@ -238,6 +242,11 @@ class AFINNISurrogate:
         ``split_strategy``, ``sampler``, ``acceptance`` and ``trust_region``
         override single components (an instance, a registered name, or ``(name,
         settings)``; see ``src.config``); every rank must pass the same specs.
+
+        ``ATOL`` and/or ``RTOL`` (at least one) set the acceptance test: each is a
+        scalar or one value per output component, and a cluster is accepted when
+        every component is within ``RTOL`` relative or ``ATOL`` absolute error under
+        ``ERROR_METRIC`` (see ``src.acceptance``).
 
         ``save_model`` / ``load_if_exists`` are deprecated: call ``save()`` and
         ``load_model()`` instead. They still behave as before: with a path (or
@@ -370,7 +379,8 @@ class AFINNISurrogate:
             "X_src": X_new,
             "f_src": f_new,
             "Qs_src": xp.asarray(bcast_data["Q"]),
-            "E_cluster_src": xp.asarray(bcast_data["E_cluster"]),
+            "E_cluster_abs_src": xp.asarray(bcast_data["E_cluster_abs"]),
+            "E_cluster_rel_src": xp.asarray(bcast_data["E_cluster_rel"]),
             "counts_src": np.asarray(bcast_data["counts"]),
             "N_src": X_new.shape[0],
             "profiling_stats": bcast_data["profiling_stats"],
@@ -447,8 +457,9 @@ class AFINNISurrogate:
             "Qs_src": _to_host(self.Qs_src),
             **{_PARAM_PREFIX + k: _to_host(v) for k, v in self.leaf_params.items()},
         }
-        if self.E_cluster_src is not None:
-            arrays["E_cluster_src"] = _to_host(self.E_cluster_src)
+        for name in ("E_cluster_abs_src", "E_cluster_rel_src"):
+            if getattr(self, name) is not None:
+                arrays[name] = _to_host(getattr(self, name))
         if self.counts_src is not None:
             arrays["counts_src"] = _to_host(self.counts_src)
 
@@ -505,8 +516,10 @@ class AFINNISurrogate:
         instance.X_src = _to_device(arrays["X_src"])
         instance.f_src = _to_device(arrays["f_src"])
         instance.Qs_src = _to_device(arrays["Qs_src"])
-        if "E_cluster_src" in arrays:
-            instance.E_cluster_src = _to_device(arrays["E_cluster_src"])
+        # Older model files store a single E_cluster_src instead; these stay None.
+        for name in ("E_cluster_abs_src", "E_cluster_rel_src"):
+            if name in arrays:
+                setattr(instance, name, _to_device(arrays[name]))
         if "counts_src" in arrays:
             instance.counts_src = arrays["counts_src"]
         instance.leaf_params = {
@@ -828,15 +841,24 @@ class AFINNISurrogate:
 
 
 def compute_error_metrics(
-    preds, gt, ug_mask, atol: float, rtol: float, return_ptwise_error_arrays: bool = False
+    preds,
+    gt,
+    ug_mask,
+    atol: Tolerance = None,
+    rtol: Tolerance = None,
+    return_ptwise_error_arrays: bool = False,
 ) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Array]]:
     """
     L2/Linf errors over all queries and separately inside/outside the trust regions
-    (``ug_mask`` marks outside), plus the share of inside points within ``rtol`` or
-    ``atol``; a vector point is good only if every component is. Sections with no
-    points report NaN. Optionally also returns the pointwise relative errors.
+    (``ug_mask`` marks outside), plus the share of inside points that are good: every
+    component within ``rtol`` relative or ``atol`` absolute error (inclusive), with the
+    tolerances given as in training (see ``src.acceptance``). Sections with no points
+    report NaN. Optionally also returns the pointwise relative errors.
     """
     TINY_EPS = 1e-12
+    atol, rtol = normalize_tolerance("atol", atol), normalize_tolerance("rtol", rtol)
+    if atol is None and rtol is None:
+        raise ValueError("Give atol, rtol or both to count the points within tolerance.")
 
     n_test = gt.shape[0]
     n_out = xp.sum(ug_mask)
@@ -861,20 +883,17 @@ def compute_error_metrics(
 
         element_abs_error = xp.abs(diff)
         element_rel_error = xp.abs(diff) / (xp.abs(gt_in) + TINY_EPS)
-        if element_rel_error.ndim > 1:
-            # Vector Case: A point is "good" only if ALL components are good.
-            # Equivalently, the point error is the MAX error across components.
-            ptwise_abs_error = xp.max(element_abs_error, axis=1)  # Shape: (N_in,)
-            ptwise_rel_error = xp.max(element_rel_error, axis=1)  # Shape: (N_in,)
-        else:
-            # Scalar Case: Just take the element-wise relative error.
-            ptwise_abs_error = element_abs_error  # Shape: (N_in,)
-            ptwise_rel_error = element_rel_error  # Shape: (N_in,)
+        # A vector point's reported error is its largest component error.
+        ptwise_rel_error = xp.max(element_rel_error, axis=1) if element_rel_error.ndim > 1 else element_rel_error
 
         in_ptwise_max_rel_error_linf = float(xp.nanmax(ptwise_rel_error))
         in_ptwise_median_rel_error_linf = float(xp.nanmedian(ptwise_rel_error))
 
-        n_in_good = int(xp.sum(xp.logical_or(ptwise_rel_error <= rtol, ptwise_abs_error <= atol)))
+        abs_2d = element_abs_error.reshape(len(element_abs_error), -1)
+        rel_2d = element_rel_error.reshape(abs_2d.shape)
+        fd = abs_2d.shape[1]
+        within = (rel_2d <= tolerance_vector("rtol", rtol, fd)) | (abs_2d <= tolerance_vector("atol", atol, fd))
+        n_in_good = int(xp.sum(xp.all(within, axis=1)))
         n_in_bad = int(n_in - n_in_good)
     else:
         in_l2_rel_error = float("nan")

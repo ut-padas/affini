@@ -88,7 +88,7 @@ def main():
                 buffers, count, _, generated, _ = ac._run_local_refinement(
                     config=ClusteringConfig(
                         mode=SurrogateMode.NEAREST_NEIGHBOR,
-                        error_metric="Linf-local",
+                        error_metric="Linf",
                         atol=0.05,
                         rtol=0.05,
                         min_pts_per_cluster=1,
@@ -107,7 +107,6 @@ def main():
                         np.ones((len(x), 1, 1)) if has_g else None,
                         sizes,
                     ),
-                    F_max_global=np.ones(1),
                     comm=comm,
                     profiler=Profiler(new_profiling_stats(), rank=rank),
                 )

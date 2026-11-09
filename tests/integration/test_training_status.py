@@ -24,7 +24,7 @@ def f(x):
 def train(**kw):
     s = AFINNISurrogate()
     opts = dict(
-        f_fn=f, ATOL=0.01, RTOL=0.01, ERROR_METRIC="Linf-local", NUM_INITIAL_CLUSTERS=8,
+        f_fn=f, ATOL=0.01, RTOL=0.01, ERROR_METRIC="Linf", NUM_INITIAL_CLUSTERS=8,
         MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False,
     )  # fmt: skip
     opts.update(kw)
@@ -66,7 +66,7 @@ def test_failed_retrain_leaves_the_previous_model_intact():
 def test_low_level_result_reports_status(monkeypatch):
     monkeypatch.setattr(ac, "MPI", _SerialMPI)
     cfg = ClusteringConfig(
-        mode=SurrogateMode.AFFINE_COV_HESS, atol=0.01, rtol=0.01, error_metric="Linf-local",
+        mode=SurrogateMode.AFFINE_COV_HESS, atol=0.01, rtol=0.01, error_metric="Linf",
         num_initial_clusters=8, min_pts_per_cluster=40, max_levels=1, use_work_stealing=False,
     )  # fmt: skip
     with warnings.catch_warnings():
