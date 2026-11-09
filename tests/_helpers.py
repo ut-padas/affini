@@ -1,8 +1,11 @@
-"""Helpers shared by tests that run on both the NumPy and the CuPy backend."""
+"""Helpers shared by tests: backend-aware comparisons (NumPy or CuPy) and a training shorthand."""
 
 import numpy as np
 
-from src import IS_CUPY_BACKEND, _to_host
+from src import IS_CUPY_BACKEND, _to_host, xp
+from src.config import ClusteringConfig
+from src.evaluation import Evaluator
+from src.surrogate import AFINNISurrogate
 
 # CuPy reductions/einsum may order floating-point operations differently from
 # NumPy (and from one code path to another), so results agree to rounding only.
@@ -34,3 +37,18 @@ def assert_backend_equal(
         np.testing.assert_allclose(actual, desired, rtol=rtol, atol=atol)
     else:
         np.testing.assert_array_equal(actual, desired)
+
+
+EVALUATOR_FIELDS = ("f_fn", "g_fn", "oracle_fn", "hessian_fn")
+
+
+def train_surrogate(X, surrogate=None, *, Y_train=None, **options):
+    """
+    Train ``surrogate`` (a new ``AFINNISurrogate`` by default) and return it. The
+    ``Evaluator`` fields among ``options`` build the evaluator and the rest the
+    ``ClusteringConfig``, so tests can keep one dict of options per case.
+    """
+    evaluator = Evaluator(**{k: options.pop(k) for k in EVALUATOR_FIELDS if k in options})
+    surrogate = AFINNISurrogate() if surrogate is None else surrogate
+    surrogate.train(xp.asarray(X), ClusteringConfig(**options), evaluator, Y_train=Y_train)
+    return surrogate

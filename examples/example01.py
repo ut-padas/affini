@@ -6,7 +6,7 @@ MPI ranks (`mpiexec -n 4 python -m examples.example01`), where rank 0 reports.
 
 from pathlib import Path
 from src import get_mpi_rank, xp
-from src.adaptive_clustering_utils import SurrogateMode
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 from src.heuristic_parameters import get_MIN_PTS_PER_CLUSTER, get_N_TRAIN, get_NUM_INITIAL_CLUSTERS
 from src.surrogate import AFINNISurrogate
 from src.problems.rosenbrock import rosenbrock
@@ -32,21 +32,18 @@ if __name__ == "__main__":
 
     # --- Build AFINNI surrogate ---
     surrogate = AFINNISurrogate()
-    surrogate.train(
-        X_train = X_train,
-        Y_train = f_train,
-        f_fn = rosenbrock,
+    config = ClusteringConfig(
         mode = SurrogateMode.AFFINE_COV_HESS,
-        ATOL = TOL,
-        RTOL = TOL,
-        ERROR_METRIC = 'Linf',
-        NUM_INITIAL_CLUSTERS = N_init_clusters,
-        MIN_PTS_PER_CLUSTER = min_ppc,
-        SEED = SEED,
-        STORE_AFFINE_FIT = True,
-        USE_WORK_STEALING = True,
-        PROFILE_TIMING = True
+        atol = TOL,
+        rtol = TOL,
+        error_metric = 'Linf',
+        num_initial_clusters = N_init_clusters,
+        min_pts_per_cluster = min_ppc,
+        seed = SEED,
+        use_work_stealing = True,
+        profile_timing = True,
     )
+    surrogate.train(X_train, config, Evaluator(f_fn=rosenbrock), Y_train=f_train)
 
     # --- Compute errors ---
     X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, DIM))

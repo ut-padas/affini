@@ -12,17 +12,17 @@ import pytest
 from src import xp
 from src.modes import SurrogateMode
 from src.surrogate import AFINNISurrogate
-from tests._helpers import host
+from tests._helpers import host, train_surrogate
 
 
 def train(X, f, g, **kw):
     s = AFINNISurrogate()
     opts = dict(
-        mode=SurrogateMode.TAYLOR_LSQ_HESS, STORE_HESSIAN=True, ATOL=10.0, RTOL=10.0,
-        NUM_INITIAL_CLUSTERS=1, MIN_PTS_PER_CLUSTER=8, MAX_CLUSTERS_EST=10, USE_WORK_STEALING=False,
+        mode=SurrogateMode.TAYLOR_LSQ_HESS, store_hess=True, atol=10.0, rtol=10.0,
+        num_initial_clusters=1, min_pts_per_cluster=8, max_clusters_est=10, use_work_stealing=False,
     )  # fmt: skip
     opts.update(kw)
-    s.train(xp.asarray(X), f_fn=f, g_fn=g, **opts)
+    train_surrogate(X, s, f_fn=f, g_fn=g, **opts)
     return s
 
 
@@ -51,7 +51,7 @@ def quad_g(x):
 def test_vector_quadratics_are_reproduced_exactly(k):
     rng = np.random.default_rng(0)
     X = rng.uniform(-1, 1, (2_000, 2))
-    s = train(X, quad_f, quad_g, NUM_INITIAL_CLUSTERS=6, MIN_PTS_PER_CLUSTER=32, MAX_CLUSTERS_EST=64)
+    s = train(X, quad_f, quad_g, num_initial_clusters=6, min_pts_per_cluster=32, max_clusters_est=64)
     H = host(s.Hs_src)
     assert H.shape == (s.N_src, 3, 2, 2)
     np.testing.assert_allclose(H, np.broadcast_to(A, H.shape), atol=1e-9)

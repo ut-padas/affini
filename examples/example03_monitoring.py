@@ -35,6 +35,7 @@ import src.work_stealing as ws  # noqa: E402
 from src import PROJECT_DIR, get_mpi_rank, get_mpi_size, xp  # noqa: E402
 from src.backend import MPI  # noqa: E402
 from src.heuristic_parameters import get_MIN_PTS_PER_CLUSTER, get_NUM_INITIAL_CLUSTERS  # noqa: E402
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator  # noqa: E402
 from src.modes import SurrogateMode  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
@@ -79,23 +80,21 @@ if __name__ == "__main__":
 
     surrogate = AFINNISurrogate()
     t0 = time.perf_counter()
-    surrogate.train(
-        X_train if rank == 0 else xp.empty((0, DIM)),
-        Y_train=Y_train,
-        f_fn=f,
+    config = ClusteringConfig(
         mode=SurrogateMode.AFFINE_COV_HESS,
-        ATOL=ATOL,
-        ERROR_METRIC=args.metric,
-        INITIAL_CLUSTERING_METHOD=args.init,
-        NUM_INITIAL_CLUSTERS=get_NUM_INITIAL_CLUSTERS(DIM),
-        MIN_PTS_PER_CLUSTER=get_MIN_PTS_PER_CLUSTER(DIM),
-        BATCH_SIZE=50_000,  # several batches per level, so mid-level steals can happen
-        SEED=SEED,
-        USE_WORK_STEALING=stealing,
-        MAX_LEVELS=1000,  # the same depth limit with and without stealing
-        PROFILE_TIMING=True,
-        PROFILE_DIR=STREAM_DIR,
+        atol=ATOL,
+        error_metric=args.metric,
+        initial_clustering_method=args.init,
+        num_initial_clusters=get_NUM_INITIAL_CLUSTERS(DIM),
+        min_pts_per_cluster=get_MIN_PTS_PER_CLUSTER(DIM),
+        batch_size=50_000,  # several batches per level, so mid-level steals can happen
+        seed=SEED,
+        use_work_stealing=stealing,
+        max_levels=1000,  # the same depth limit with and without stealing
+        profile_timing=True,
+        profile_dir=STREAM_DIR,
     )
+    surrogate.train(X_train if rank == 0 else xp.empty((0, DIM)), config, Evaluator(f_fn=f), Y_train=Y_train)
     train_time = time.perf_counter() - t0
     pred, outside = surrogate.predict(Q)  # collective; results on rank 0
 

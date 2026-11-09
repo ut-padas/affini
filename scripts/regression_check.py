@@ -34,7 +34,7 @@ import numpy as np
 sys.path.insert(0, str(Path.cwd()))
 
 from src import IS_CUPY_BACKEND, _to_host, xp  # noqa: E402
-from src.adaptive_clustering_utils import SurrogateMode  # noqa: E402
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
 warnings.simplefilter("ignore", DeprecationWarning)
@@ -63,28 +63,28 @@ def problem(fd):
 
 
 def cases():
-    """(name, fd, train kwargs) for every case."""
+    """(name, fd, ClusteringConfig kwargs) for every case."""
     base = dict(
-        ATOL=0.15, RTOL=0.15, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=16,
-        MAX_CLUSTERS_EST=128, MAX_LEVELS=12, BATCH_SIZE=200,
-        USE_WORK_STEALING=False, SAVE_ALL_GEN_TRAINING_DATA=False,
+        atol=0.15, rtol=0.15, num_initial_clusters=4, min_pts_per_cluster=16,
+        max_clusters_est=128, max_levels=12, batch_size=200,
+        use_work_stealing=False, save_all_gen_training_data=False,
     )  # fmt: skip
     for fd in (1, 2):
         for mode in SurrogateMode:
             for metric in ("L2", "Linf"):
-                yield f"{fd}_{mode.value}_{metric}", fd, dict(base, mode=mode, ERROR_METRIC=metric)
+                yield f"{fd}_{mode.value}_{metric}", fd, dict(base, mode=mode, error_metric=metric)
     mode = SurrogateMode.AFFINE_COV_HESS
     yield "extra_oracle_taylor", 1, dict(base, mode=SurrogateMode.TAYLOR_COV_HESS, _oracle=True)
     yield "extra_precomputed_Y", 2, dict(base, mode=mode, _Y=True)
-    yield "extra_uniform_grid", 1, dict(base, mode=mode, INITIAL_CLUSTERING_METHOD="uniform_grid")
-    yield "extra_tiny_batches", 1, dict(base, mode=mode, BATCH_SIZE=7)
-    yield "extra_second_order", 1, dict(base, mode=SurrogateMode.TAYLOR_LSQ_HESS, STORE_HESSIAN=True)
-    yield "extra_tight_tol", 1, dict(base, mode=mode, ATOL=0.02, RTOL=0.02, MAX_CLUSTERS_EST=4)
+    yield "extra_uniform_grid", 1, dict(base, mode=mode, initial_clustering_method="uniform_grid")
+    yield "extra_tiny_batches", 1, dict(base, mode=mode, batch_size=7)
+    yield "extra_second_order", 1, dict(base, mode=SurrogateMode.TAYLOR_LSQ_HESS, store_hess=True)
+    yield "extra_tight_tol", 1, dict(base, mode=mode, atol=0.02, rtol=0.02, max_clusters_est=4)
     # One tolerance only, and one value per output component (newer API: these fail
     # on older checkouts, which compare() reports as fixed rather than as failures).
-    yield "extra_atol_only", 2, dict(base, mode=mode, ATOL=0.15, RTOL=None)
-    yield "extra_rtol_only", 2, dict(base, mode=mode, ATOL=None, RTOL=0.15)
-    yield "extra_vector_tol", 2, dict(base, mode=mode, ATOL=(0.15, 0.3), RTOL=(0.1, 0.2), ERROR_METRIC="L2")
+    yield "extra_atol_only", 2, dict(base, mode=mode, atol=0.15, rtol=None)
+    yield "extra_rtol_only", 2, dict(base, mode=mode, atol=None, rtol=0.15)
+    yield "extra_vector_tol", 2, dict(base, mode=mode, atol=(0.15, 0.3), rtol=(0.1, 0.2), error_metric="L2")
 
 
 def run(out_prefix):
@@ -100,7 +100,7 @@ def run(out_prefix):
         t0 = time.perf_counter()
         try:
             s = AFINNISurrogate()
-            s.train(X, Y_train=f(X) if use_Y else None, HESSIAN=h, **fns, **kwargs)
+            s.train(X, ClusteringConfig(**kwargs), Evaluator(hessian_fn=h, **fns), Y_train=f(X) if use_Y else None)
             train_time = time.perf_counter() - t0
             for attr in LEAF_ARRAYS:
                 v = getattr(s, attr, None)

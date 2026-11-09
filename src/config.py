@@ -32,6 +32,7 @@ import logging
 import math
 import numbers
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 from src.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion, Tolerance, normalize_tolerance
@@ -62,10 +63,15 @@ class Components:
 
 @dataclass(kw_only=True)
 class ClusteringConfig:
-    """Settings for adaptive_clustering(). All fields are keyword-only."""
+    """
+    Every algorithm setting of a training run (``AFINNISurrogate.train`` or
+    ``adaptive_clustering``); the functions to evaluate go in an ``Evaluator``.
+    All fields are keyword-only and only a tolerance (or an ``acceptance`` that
+    brings its own) is required.
+    """
 
     # --- Surrogate and acceptance test ---
-    mode: SurrogateMode
+    mode: SurrogateMode = SurrogateMode.AFFINE_COV_HESS
     # Error tolerances for accepting a cluster: a scalar, one value per output
     # component, or None (that test never accepts). At least one is required unless
     # ``acceptance`` brings its own; see src.acceptance for the rule.
@@ -83,10 +89,12 @@ class ClusteringConfig:
     min_pts_per_cluster: int = 100
     sampling_method: str = "convex_combination"  # see src.sampling.SAMPLERS
     q_reg: float = 1e-6  # regularization added when computing the trust-region shape Q
-    max_levels: int = 50  # maximum number of refinement levels
+    # Maximum number of refinement levels; clusters still unresolved after it leave
+    # their region without leaves and the run reports converged=False.
+    max_levels: int = 50
     batch_size: int = 10_000_000  # max points moved to the device per batch
     seed: int = 0
-    max_clusters_est: int = 100_000  # initial capacity of the output buffers (all ranks)
+    max_clusters_est: int = 1_000_000  # initial capacity of the output buffers (all ranks)
     use_work_stealing: bool = True
 
     # --- Outputs ---
@@ -101,7 +109,7 @@ class ClusteringConfig:
     log_mem_stats: bool = False
     profile_timing: bool = False  # per-phase time totals (synchronizes the GPU)
     profile_events: bool = False  # also record a timeline of phases, steals and loads
-    profile_dir: str | None = None  # also stream events to <dir>/rank_<r>.jsonl
+    profile_dir: str | Path | None = None  # also stream events to <dir>/rank_<r>.jsonl; stored as str
     save_all_gen_training_data: bool = False
 
     # --- Components (None: the default for mode / the settings above) ---
@@ -116,8 +124,10 @@ class ClusteringConfig:
     )
 
     def __post_init__(self) -> None:
-        """Validate settings early, normalize the tolerances and drop ``store_hess`` where no model can use it."""
+        """Validate settings early, normalize the tolerances and profile_dir, and drop ``store_hess`` where no model can use it."""
         self.mode = SurrogateMode(self.mode)
+        if self.profile_dir is not None:
+            self.profile_dir = str(self.profile_dir)
         # Normalized to a float or a tuple so to_dict() stays serializable.
         self.atol = normalize_tolerance("atol", self.atol)
         self.rtol = normalize_tolerance("rtol", self.rtol)

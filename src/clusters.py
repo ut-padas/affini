@@ -103,9 +103,9 @@ def check_host_memory(n_bytes: int, what: str) -> None:
             f"{what} needs {n_bytes / 2**30:.2f} GiB more host memory, but only "
             f"{mem.available / 2**30:.2f} GiB is available and {reserve / 2**30:.2f} GiB "
             f"is kept free for the system. Rejected clusters are augmented "
-            f"to 2 * MIN_PTS_PER_CLUSTER points before splitting, so the queue grows with "
-            f"the number of rejected clusters: loosen ATOL/RTOL, lower MIN_PTS_PER_CLUSTER, "
-            f"cap MAX_LEVELS, or spread the work over more MPI ranks on more nodes."
+            f"to 2 * min_pts_per_cluster points before splitting, so the queue grows with "
+            f"the number of rejected clusters: loosen atol/rtol, lower min_pts_per_cluster, "
+            f"cap max_levels, or spread the work over more MPI ranks on more nodes."
         )
 
 

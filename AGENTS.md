@@ -40,7 +40,7 @@ AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. .venv/bin/python scripts/regressio
   with a loose one that would hide an algorithmic change. Leaf counts and
   evaluation counts must still match exactly.
 - Large runs can exhaust host RAM (queues grow with rejected clusters x
-  2 * MIN_PTS_PER_CLUSTER); watch RSS when trying big N / small tolerances.
+  2 * min_pts_per_cluster); watch RSS when trying big N / small tolerances.
 
 ## Code changes
 

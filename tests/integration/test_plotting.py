@@ -9,10 +9,10 @@ import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
 from src import plotting as P  # noqa: E402
-from src import xp  # noqa: E402
 from src.plotter_utils import plot_mpi_level_heatmap, plot_mpi_rank_time_breakdown  # noqa: E402
 from src.profiling import new_profiling_stats  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
+from tests._helpers import train_surrogate  # noqa: E402
 
 
 def synthetic_profile(n_ranks=3):
@@ -85,11 +85,11 @@ def test_steal_matrix_includes_ranks_without_steals():
 
 def test_plots_from_a_real_training_run(tmp_path):
     s = AFINNISurrogate()
-    s.train(
-        xp.asarray(np.random.default_rng(0).uniform(-1, 1, (2_000, 2))),
-        f_fn=lambda x: (1 + x[:, 0] ** 2 + 4 * x[:, 1] ** 2)[:, None], ATOL=0.02, RTOL=0.02,
-        NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False,
-        PROFILE_TIMING=True, PROFILE_EVENTS=True, PROFILE_DIR=tmp_path / "stream",
+    train_surrogate(
+        np.random.default_rng(0).uniform(-1, 1, (2_000, 2)), s,
+        f_fn=lambda x: (1 + x[:, 0] ** 2 + 4 * x[:, 1] ** 2)[:, None], atol=0.02, rtol=0.02,
+        num_initial_clusters=4, min_pts_per_cluster=40, use_work_stealing=False,
+        profile_timing=True, profile_events=True, profile_dir=tmp_path / "stream",
     )  # fmt: skip
     for plot in (P.plot_rank_time_breakdown, P.plot_level_heatmap, P.plot_level_progress,
                  P.plot_timeline, P.plot_load_over_time, P.plot_profile_dashboard):  # fmt: skip
@@ -108,9 +108,9 @@ def test_missing_data_gives_actionable_errors():
         for k in list(ps):
             if k.startswith("time_") and k != "time_total":
                 ps[k] = 0.0
-    with pytest.raises(ValueError, match="PROFILE_TIMING"):
+    with pytest.raises(ValueError, match="profile_timing"):
         P.plot_rank_time_breakdown(s)
-    with pytest.raises(ValueError, match="PROFILE_EVENTS"):
+    with pytest.raises(ValueError, match="profile_events"):
         P.plot_timeline(s)
 
 

@@ -28,6 +28,7 @@ def main() -> None:
     from src.backend import MPI
     from src.modes import SurrogateMode
     from src.surrogate import AFINNISurrogate
+    from tests._helpers import train_surrogate
 
     xp = src.xp
     world = MPI.COMM_WORLD
@@ -49,10 +50,10 @@ def main() -> None:
     rng = np.random.default_rng(0)
     X = xp.asarray(rng.uniform(-1, 1, (n_train, 3))) if rank == 0 else xp.empty((0, 3))
     s = AFINNISurrogate()
-    s.train(
-        X, f_fn=f, g_fn=g, mode=SurrogateMode.TAYLOR_LSQ_HESS, STORE_HESSIAN=True,
-        ATOL=0.01, RTOL=0.01, ERROR_METRIC="Linf", NUM_INITIAL_CLUSTERS=1,
-        MIN_PTS_PER_CLUSTER=50, USE_WORK_STEALING=True, PROFILE_EVENTS=True,
+    train_surrogate(
+        X, s, f_fn=f, g_fn=g, mode=SurrogateMode.TAYLOR_LSQ_HESS, store_hess=True,
+        atol=0.01, rtol=0.01, error_metric="Linf", num_initial_clusters=1,
+        min_pts_per_cluster=50, use_work_stealing=True, profile_events=True,
     )  # fmt: skip
     world.Barrier()
     stray = bool(world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG))

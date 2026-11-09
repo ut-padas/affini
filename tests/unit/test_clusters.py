@@ -93,7 +93,7 @@ def test_builder_checks_host_memory_on_every_append(monkeypatch):
     builder.append(*_parts(rng, [2, 2]))
     # Plenty of reserved capacity, but writing 100 rows x 24 bytes needs 2,400 bytes.
     monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(1_000))
-    with pytest.raises(MemoryError, match="MIN_PTS_PER_CLUSTER"):
+    with pytest.raises(MemoryError, match="min_pts_per_cluster"):
         builder.append(*_parts(rng, [50, 50]))
     assert builder.n_pts == 4  # the failed append left the queue unchanged
     monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(10**9))

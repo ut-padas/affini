@@ -12,7 +12,7 @@ from src.config import ClusteringConfig
 from src.evaluation import Evaluator
 from src.modes import SurrogateMode
 from src.surrogate import AFINNISurrogate
-from tests._helpers import host
+from tests._helpers import host, train_surrogate
 
 X = np.random.default_rng(5).uniform(-2, 2, (3_000, 2))
 
@@ -24,11 +24,11 @@ def f(x):
 def train(**kw):
     s = AFINNISurrogate()
     opts = dict(
-        f_fn=f, ATOL=0.01, RTOL=0.01, ERROR_METRIC="Linf", NUM_INITIAL_CLUSTERS=8,
-        MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False,
+        f_fn=f, atol=0.01, rtol=0.01, error_metric="Linf", num_initial_clusters=8,
+        min_pts_per_cluster=40, use_work_stealing=False,
     )  # fmt: skip
     opts.update(kw)
-    s.train(xp.asarray(X), **opts)
+    train_surrogate(X, s, **opts)
     return s
 
 
@@ -40,8 +40,8 @@ def test_converged_run_reports_no_unresolved_work():
 
 
 def test_partially_refined_run_warns_and_accounts_for_unresolved_points():
-    with pytest.warns(RuntimeWarning, match="MAX_LEVELS=2"):
-        s = train(MAX_LEVELS=2, ATOL=0.05, RTOL=0.05)
+    with pytest.warns(RuntimeWarning, match="max_levels=2"):
+        s = train(max_levels=2, atol=0.05, rtol=0.05)
     assert s.converged is False and s.N_src > 0
     assert s.num_unresolved_clusters > 0 and s.num_unresolved_pts > 0
     ps = s.profiling_stats
@@ -51,14 +51,14 @@ def test_partially_refined_run_warns_and_accounts_for_unresolved_points():
 
 def test_run_without_any_accepted_cluster_raises():
     with pytest.raises(RuntimeError, match="accepted no clusters"):
-        train(MAX_LEVELS=0, ATOL=1e-9, RTOL=1e-9)
+        train(max_levels=0, atol=1e-9, rtol=1e-9)
 
 
 def test_failed_retrain_leaves_the_previous_model_intact():
     s = train()
     leaves, pred = s.N_src, host(s.predict(xp.asarray(X[:50]))[0])
     with pytest.raises(RuntimeError):
-        s.train(xp.asarray(X), f_fn=f, ATOL=1e-9, RTOL=1e-9, MAX_LEVELS=0, NUM_INITIAL_CLUSTERS=8, USE_WORK_STEALING=False)
+        train_surrogate(X, s, f_fn=f, atol=1e-9, rtol=1e-9, max_levels=0, num_initial_clusters=8, use_work_stealing=False)
     assert s.trained and s.N_src == leaves
     np.testing.assert_array_equal(host(s.predict(xp.asarray(X[:50]))[0]), pred)
 

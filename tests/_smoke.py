@@ -20,6 +20,7 @@ def run_smoke(
     import src
     from src.problems.rosenbrock import rosenbrock
     from src.surrogate import AFINNISurrogate
+    from tests._helpers import train_surrogate
 
     xp = src.xp
     rank = src.get_mpi_rank()
@@ -28,13 +29,13 @@ def run_smoke(
     # Data lives on rank 0 only; adaptive_clustering scatters it to other ranks.
     X = xp.asarray(rng.uniform(-2, 2, (n_train, 2))) if rank == 0 else xp.empty((0, 2))
     surrogate = AFINNISurrogate()
-    surrogate.train(
-        X,
+    train_surrogate(
+        X, surrogate,
         f_fn=rosenbrock,
-        ATOL=tol,
-        RTOL=tol,
-        NUM_INITIAL_CLUSTERS=16,
-        MIN_PTS_PER_CLUSTER=50,
+        atol=tol,
+        rtol=tol,
+        num_initial_clusters=16,
+        min_pts_per_cluster=50,
     )
 
     Q = xp.asarray(rng.uniform(-2, 2, (n_query, 2))) if rank == 0 else None

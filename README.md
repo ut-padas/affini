@@ -55,10 +55,11 @@ uv run python -m src.monitor scratch/example03_monitoring/stream   # ...watched 
 ```
 
 ```python
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator
 from src.surrogate import AFINNISurrogate
 
 surrogate = AFINNISurrogate()
-surrogate.train(X, f_fn=f, ATOL=1e-2, RTOL=1e-2)
+surrogate.train(X, ClusteringConfig(atol=1e-2, rtol=1e-2), Evaluator(f_fn=f))
 prediction, outside_trust_region = surrogate.predict(X_query)
 ```
 

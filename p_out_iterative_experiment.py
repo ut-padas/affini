@@ -12,7 +12,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Ellipse
 
 from src import RESULTS_DIR, Array, _to_device, _to_host, xp
-from src.adaptive_clustering_utils import SurrogateMode
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 from src.logging_utils import setup_logging
 from src.problems.anisotropic_quadratic import _get_params, aniso_quadratic
 from src.problems.isotropic_gaussian import gaussian
@@ -590,21 +590,17 @@ def run_iterative_refinement(
 
         # 1. Train Surrogate
         _t_start = time.perf_counter()
-        surrogate.train(
-            X_train=X_train,
-            f_fn=f_fn,
-            g_fn=None,
+        config = ClusteringConfig(
             mode=SurrogateMode.AFFINE_COV_HESS,
-            ATOL=tol,
-            RTOL=tol,
-            ERROR_METRIC=ERROR_METRIC,
-            INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-            NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-            MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-            USE_WORK_STEALING=False,
-            STORE_AFFINE_FIT=True,
-            PROFILE_TIMING=False,
+            atol=tol,
+            rtol=tol,
+            error_metric=ERROR_METRIC,
+            initial_clustering_method=INITIAL_CLUSTERING_METHOD,
+            num_initial_clusters=NUM_INITIAL_CLUSTERS,
+            min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
+            use_work_stealing=False,
         )
+        surrogate.train(X_train, config, Evaluator(f_fn=f_fn))
         t_train = time.perf_counter() - _t_start
 
         # 2. Evaluate Performance

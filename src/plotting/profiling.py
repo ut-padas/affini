@@ -7,9 +7,9 @@ the ``adaptive_clustering`` result dict, a surrogate, or a dict of event streams
 from ``src.profiling.read_event_streams`` (timeline plots only). Each returns the
 figure and saves it when ``path`` is given.
 
-Data requirements: breakdown plots need ``PROFILE_TIMING=True`` (otherwise phase
-totals are zero); timeline, load and steal plots need ``PROFILE_EVENTS=True`` or
-``PROFILE_DIR``; level plots always work. The ``*_frame`` helpers return the tidy
+Data requirements: breakdown plots need ``profile_timing=True`` (otherwise phase
+totals are zero); timeline, load and steal plots need ``profile_events=True`` or
+``profile_dir``; level plots always work. The ``*_frame`` helpers return the tidy
 ``pandas`` tables behind the plots, for custom analysis.
 """
 
@@ -104,7 +104,7 @@ def steals_frame(source: Any) -> pd.DataFrame:
 
 def _require(df: pd.DataFrame, what: str) -> None:
     if df.empty:
-        raise ValueError(f"No {what} recorded; train with PROFILE_EVENTS=True (or PROFILE_DIR).")
+        raise ValueError(f"No {what} recorded; train with profile_events=True (or profile_dir).")
 
 
 # --- Plots ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ def plot_rank_time_breakdown(
     """
     df = phase_breakdown_frame(source)
     if df.drop(columns=["total", UNTIMED]).to_numpy().sum() == 0:
-        raise ValueError("All phase times are zero; train with PROFILE_TIMING=True.")
+        raise ValueError("All phase times are zero; train with profile_timing=True.")
     parts = df.drop(columns=["total"])
     parts = parts.loc[:, parts.sum() > 0]
     shown = parts.div(parts.sum(axis=1), axis=0) if normalize else parts

@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, str(Path.cwd()))  # the checkout being measured
 
 from src import IS_CUPY_BACKEND, _to_host, xp  # noqa: E402
-from src.adaptive_clustering_utils import SurrogateMode  # noqa: E402
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode  # noqa: E402
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
@@ -77,19 +77,16 @@ def main():
 
     surrogate = AFINNISurrogate()
     t0 = time.perf_counter()
-    surrogate.train(
-        X,
-        f_fn=f,
-        g_fn=g,
+    config = ClusteringConfig(
         mode=mode,
-        HESSIAN=hess,
-        ATOL=args.tol,
-        RTOL=args.tol,
-        SEED=args.seed,
-        MIN_PTS_PER_CLUSTER=int(100 * 1.3**args.dim),
-        NUM_INITIAL_CLUSTERS=int(25 * 1.3**args.dim),
-        USE_WORK_STEALING=False,
+        atol=args.tol,
+        rtol=args.tol,
+        seed=args.seed,
+        min_pts_per_cluster=int(100 * 1.3**args.dim),
+        num_initial_clusters=int(25 * 1.3**args.dim),
+        use_work_stealing=False,
     )
+    surrogate.train(X, config, Evaluator(f_fn=f, g_fn=g, hessian_fn=hess))
     t_train = time.perf_counter() - t0
 
     surrogate.predict(Xq, k_nn=args.k)  # warm-up (kNN index, kernels)

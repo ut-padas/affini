@@ -6,7 +6,6 @@ import time
 import numpy as np
 import pytest
 
-from src import xp
 from src.modes import SurrogateMode
 from src.profiling import (
     ORACLE_TIME_KEY,
@@ -18,6 +17,7 @@ from src.profiling import (
     read_event_streams,
 )
 from src.surrogate import AFINNISurrogate
+from tests._helpers import train_surrogate
 
 X = np.random.default_rng(4).uniform(-1, 1, (3_000, 2))
 
@@ -28,9 +28,9 @@ def f(x):
 
 def train(**kw):
     s = AFINNISurrogate()
-    s.train(
-        xp.asarray(X), f_fn=f, ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf",
-        NUM_INITIAL_CLUSTERS=8, MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False, **kw,
+    train_surrogate(
+        X, s, f_fn=f, atol=0.02, rtol=0.02, error_metric="Linf",
+        num_initial_clusters=8, min_pts_per_cluster=40, use_work_stealing=False, **kw,
     )  # fmt: skip
     return s
 
@@ -149,7 +149,7 @@ def test_profiling_off_by_default_records_levels_only():
 
 
 def test_timing_totals_fit_inside_the_total_time():
-    ps = train(PROFILE_TIMING=True).profiling_stats["per_rank"][0]
+    ps = train(profile_timing=True).profiling_stats["per_rank"][0]
     timed = sum(ps[p.key] for p in PHASES if not p.nested)
     assert 0 < timed <= ps["time_total"] * 1.01
     for key in ("time_init", "time_error_calc", "time_good_Q", "time_augment", "time_bad_split"):
@@ -158,7 +158,7 @@ def test_timing_totals_fit_inside_the_total_time():
 
 
 def test_events_describe_every_level_and_batch(tmp_path):
-    s = train(PROFILE_EVENTS=True, PROFILE_DIR=tmp_path)
+    s = train(profile_events=True, profile_dir=tmp_path)
     ps = s.profiling_stats
     events = ps["per_rank"][0]["events"]
     kinds = [e["kind"] for e in events]
@@ -176,7 +176,7 @@ def test_events_describe_every_level_and_batch(tmp_path):
 
 
 def test_profiles_survive_save_and_load(tmp_path):
-    s = train(PROFILE_EVENTS=True)
+    s = train(profile_events=True)
     loaded = AFINNISurrogate.load_model(s.save(tmp_path / "m.npz"))
     assert loaded.profiling_stats["per_rank"][0]["events"] == json.loads(
         json.dumps(s.profiling_stats["per_rank"][0]["events"])
@@ -185,7 +185,7 @@ def test_profiles_survive_save_and_load(tmp_path):
 
 @pytest.mark.parametrize("mode", [SurrogateMode.AFFINE_COV_HESS])
 def test_profiling_does_not_change_results(mode):
-    a, b = train(), train(PROFILE_TIMING=True, PROFILE_EVENTS=True)
+    a, b = train(), train(profile_timing=True, profile_events=True)
     assert a.N_src == b.N_src
     np.testing.assert_array_equal(np.asarray(a.counts_src), np.asarray(b.counts_src))
 

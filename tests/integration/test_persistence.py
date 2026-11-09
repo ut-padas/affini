@@ -1,6 +1,6 @@
 """
 Saving and loading surrogates: the versioned format, files written before it
-existed, custom local models, and the deprecated train(save_model=...) adapter.
+existed and custom local models; also train()'s failure and profiler cleanup.
 """
 
 import json
@@ -11,6 +11,7 @@ import pytest
 from src import _to_host, xp
 from src.clusters import ParamSpec
 from src.local_models import LOCAL_MODELS, AffineLSQModel, LocalModel
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator
 from src.modes import SurrogateMode
 from src.surrogate import MODEL_FORMAT_VERSION, AFINNISurrogate
 from tests._helpers import assert_backend_equal, host
@@ -32,15 +33,21 @@ def g(x):
     )
 
 
-def train(mode=SurrogateMode.AFFINE_COV_HESS, f_fn=f, **kw):
+def train(mode=SurrogateMode.AFFINE_COV_HESS, f_fn=f, g_fn=None, **kw):
     s = AFINNISurrogate()
     opts = dict(
-        mode=mode, f_fn=f_fn, ATOL=0.05, RTOL=0.05, ERROR_METRIC="Linf",
-        NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=32, USE_WORK_STEALING=False,
+        mode=mode, atol=0.05, rtol=0.05, error_metric="Linf",
+        num_initial_clusters=4, min_pts_per_cluster=32, use_work_stealing=False,
     )  # fmt: skip
     opts.update(kw)
-    s.train(xp.asarray(X), **opts)
+    s.train(xp.asarray(X), ClusteringConfig(**opts), Evaluator(f_fn=f_fn, g_fn=g_fn))
     return s
+
+
+def small_config(atol, **kw):
+    """atol = rtol, and few initial clusters, for the 3000-point quadratics of the retraining and profiler tests."""
+    return ClusteringConfig(**{"mode": SurrogateMode.AFFINE_COV_HESS, "atol": atol, "rtol": atol,
+                               "num_initial_clusters": 4, "min_pts_per_cluster": 40, **kw})
 
 
 def predictions(s):
@@ -70,7 +77,7 @@ def assert_same_model(a, b, separate_runs=False):
         (SurrogateMode.AFFINE_COV_HESS, {}),
         (SurrogateMode.NEAREST_NEIGHBOR, {}),
         (SurrogateMode.TAYLOR_COV_HESS, {"g_fn": g}),
-        (SurrogateMode.TAYLOR_LSQ_HESS, {"g_fn": g, "STORE_HESSIAN": True}),
+        (SurrogateMode.TAYLOR_LSQ_HESS, {"g_fn": g, "store_hess": True}),
     ],
 )
 def test_round_trip_preserves_predictions_and_metadata(tmp_path, mode, kw):
@@ -187,7 +194,7 @@ def test_files_from_before_versioning_still_load(tmp_path, mode, kw):
 
 
 def test_legacy_scalar_hessians_gain_an_output_axis(tmp_path):
-    s = train(SurrogateMode.TAYLOR_LSQ_HESS, f_fn=lambda x: f(x)[:, :1], g_fn=lambda x: g(x)[:, :1], STORE_HESSIAN=True)
+    s = train(SurrogateMode.TAYLOR_LSQ_HESS, f_fn=lambda x: f(x)[:, :1], g_fn=lambda x: g(x)[:, :1], store_hess=True)
     _write_legacy(s, tmp_path / "old.npz")
     loaded = AFINNISurrogate.load_model(tmp_path / "old.npz")
     assert host(loaded.Hs_src).shape == (s.N_src, 1, 2, 2)
@@ -195,7 +202,7 @@ def test_legacy_scalar_hessians_gain_an_output_axis(tmp_path):
 
 
 def test_legacy_shared_hessian_with_vector_output_is_refused(tmp_path):
-    s = train(SurrogateMode.TAYLOR_LSQ_HESS, g_fn=g, STORE_HESSIAN=True)
+    s = train(SurrogateMode.TAYLOR_LSQ_HESS, g_fn=g, store_hess=True)
     _write_legacy(s, tmp_path / "old.npz", shared_hessian=np.zeros((s.N_src, 2, 2)))
     with pytest.raises(ValueError, match="shared by all 2 outputs"):
         AFINNISurrogate.load_model(tmp_path / "old.npz")
@@ -212,46 +219,6 @@ def test_files_with_the_old_single_error_column_still_load(tmp_path):
     assert_same_model(s, loaded)
 
 
-# --- Deprecated train(save_model=..., load_if_exists=...) -------------------------
-
-
-def _forbidden(x):
-    raise AssertionError("the cached model should have been loaded instead of training")
-
-
-def test_deprecated_save_model_saves_then_loads_instead_of_training(tmp_path):
-    path = tmp_path / "cache.npz"
-    with pytest.warns(DeprecationWarning, match="save_model"):
-        s = train(save_model=path)
-    assert path.exists()
-    with pytest.warns(DeprecationWarning):
-        cached = train(f_fn=_forbidden, save_model=path)
-    assert_same_model(s, cached)
-    with pytest.warns(DeprecationWarning):
-        retrained = train(save_model=path, load_if_exists=False)
-    assert_same_model(s, retrained, separate_runs=True)
-
-
-def test_deprecated_save_model_false_and_true(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    with pytest.warns(DeprecationWarning):
-        train(save_model=False)
-    assert not list(tmp_path.iterdir())
-    with pytest.warns(DeprecationWarning):
-        s = train(save_model=True)
-    assert (tmp_path / "afinni_surrogate.npz").exists()
-    # The default file name before the rename is still found.
-    (tmp_path / "afinni_surrogate.npz").rename(tmp_path / "hatann_surrogate.npz")
-    with pytest.warns(DeprecationWarning):
-        cached = train(f_fn=_forbidden, save_model=True)
-    assert_same_model(s, cached)
-
-
-def test_no_deprecation_warning_without_the_old_arguments(recwarn):
-    train()
-    assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
-
-
 def test_failed_retraining_keeps_the_previous_model_usable(monkeypatch):
     """A failure while building the new kNN index must not destroy the old model."""
     import src.surrogate as su
@@ -259,7 +226,7 @@ def test_failed_retraining_keeps_the_previous_model_usable(monkeypatch):
 
     X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
     s = AFINNISurrogate()
-    s.train(xp.asarray(X), f_fn=lambda x: (x**2).sum(1), ATOL=0.05, RTOL=0.05, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40)
+    s.train(xp.asarray(X), small_config(atol=0.05), Evaluator(f_fn=lambda x: (x**2).sum(1)))
     before = host(s.predict(xp.asarray(X[:50]))[0])
 
     def failing(_):
@@ -267,7 +234,7 @@ def test_failed_retraining_keeps_the_previous_model_usable(monkeypatch):
 
     monkeypatch.setattr(su, "_make_knn_index", failing)
     with pytest.raises(RuntimeError, match="index construction failed"):
-        s.train(xp.asarray(X), f_fn=lambda x: (x**2).sum(1), ATOL=0.02, RTOL=0.02, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40)
+        s.train(xp.asarray(X), small_config(atol=0.02), Evaluator(f_fn=lambda x: (x**2).sum(1)))
     monkeypatch.undo()
     np.testing.assert_array_equal(host(s.predict(xp.asarray(X[:50]))[0]), before)
 
@@ -281,7 +248,7 @@ def test_kdtree_build_failure_during_retraining_keeps_the_old_model(monkeypatch)
 
     X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
     s = AFINNISurrogate()
-    s.train(X, f_fn=lambda x: (x**2).sum(1), ATOL=0.05, RTOL=0.05, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40)
+    s.train(X, small_config(atol=0.05), Evaluator(f_fn=lambda x: (x**2).sum(1)))
     before = s.predict(X[:50])[0]
 
     def failing(*a, **k):
@@ -289,7 +256,7 @@ def test_kdtree_build_failure_during_retraining_keeps_the_old_model(monkeypatch)
 
     monkeypatch.setattr(scipy.spatial, "cKDTree", failing)
     with pytest.raises(MemoryError):
-        s.train(X, f_fn=lambda x: (x**2).sum(1), ATOL=0.02, RTOL=0.02, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40)
+        s.train(X, small_config(atol=0.02), Evaluator(f_fn=lambda x: (x**2).sum(1)))
     monkeypatch.undo()
     np.testing.assert_array_equal(s.predict(X[:50])[0], before)
 
@@ -311,7 +278,7 @@ def _record_profilers(monkeypatch):
 
 def _train_small(s, f, **kw):
     X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
-    s.train(xp.asarray(X), f_fn=f, ATOL=0.05, RTOL=0.05, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40, **kw)
+    s.train(xp.asarray(X), small_config(0.05, **kw), Evaluator(f_fn=f))
 
 
 def test_a_failed_training_closes_its_profiler_stream(tmp_path, monkeypatch):
@@ -324,7 +291,7 @@ def test_a_failed_training_closes_its_profiler_stream(tmp_path, monkeypatch):
         raise ValueError("oracle failed")
 
     with pytest.raises(ValueError, match="oracle failed"):
-        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), f_fn=failing, ATOL=0.05, PROFILE_DIR=str(tmp_path))
+        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), small_config(0.05, profile_dir=tmp_path), Evaluator(f_fn=failing))
     assert created and all(p._stream is None for p in created)
 
 
@@ -341,7 +308,7 @@ def test_a_nested_predict_does_not_release_the_outer_profiler(tmp_path, monkeypa
         raise ValueError("outer oracle failed")
 
     with pytest.raises(ValueError, match="outer oracle failed"):
-        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), f_fn=oracle, ATOL=0.05, PROFILE_DIR=str(tmp_path))
+        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), small_config(0.05, profile_dir=tmp_path), Evaluator(f_fn=oracle))
     assert created and all(p._stream is None for p in created)
 
 
@@ -357,7 +324,7 @@ def test_an_inner_failure_caught_by_the_oracle_leaves_the_outer_operation_runnin
             inner.predict(xp.zeros((2, 7)))  # wrong width: the inner call fails and is caught
         return (x**2).sum(1)
 
-    _train_small(AFINNISurrogate(), oracle, PROFILE_DIR=str(tmp_path))
+    _train_small(AFINNISurrogate(), oracle, profile_dir=str(tmp_path))
     assert created and all(p._stream is None for p in created)
 
 
@@ -366,12 +333,12 @@ def test_public_methods_keep_signatures_and_predict_reports_search_stats():
 
     from src.surrogate import AFINNISurrogate
 
-    assert "X_train" in inspect.signature(AFINNISurrogate.train).parameters
+    assert list(inspect.signature(AFINNISurrogate.train).parameters) == ["self", "X_train", "config", "evaluator", "Y_train"]
     assert "k_nn" in inspect.signature(AFINNISurrogate.predict).parameters
     assert AFINNISurrogate.predict.__doc__ and AFINNISurrogate.train.__doc__
     X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
     s = AFINNISurrogate()
-    s.train(xp.asarray(X), f_fn=lambda x: (x**2).sum(1), ATOL=0.05, RTOL=0.05, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40)
+    s.train(xp.asarray(X), small_config(atol=0.05), Evaluator(f_fn=lambda x: (x**2).sum(1)))
     s.predict(xp.asarray(X[:700]), batch_size=300)  # three batches
     assert s.search_stats["queries"] == 700 and s.search_stats["fallback_rows"] >= 0
 
@@ -406,6 +373,6 @@ def test_component_preparation_can_predict_without_corrupting_training_scope(tmp
     monkeypatch.setitem(LOCAL_MODELS, PreparedConstant.name, PreparedConstant)
     outer = AFINNISurrogate()
     _train_small(outer, lambda x: xp.ones((len(x), 1)), local_model=PreparedConstant.name,
-                 mode=SurrogateMode.NEAREST_NEIGHBOR, PROFILE_DIR=str(tmp_path))
+                 mode=SurrogateMode.NEAREST_NEIGHBOR, profile_dir=str(tmp_path))
     assert outer.trained
     assert not ac._PROFILER_SCOPES

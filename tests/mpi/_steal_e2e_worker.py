@@ -37,6 +37,7 @@ def main() -> None:
     import src.work_stealing as ws
     from src.problems.rosenbrock import rosenbrock
     from src.surrogate import AFINNISurrogate
+    from tests._helpers import train_surrogate
 
     real_mpi = ac.MPI
     world = real_mpi.COMM_WORLD
@@ -107,17 +108,17 @@ def main() -> None:
             return rosenbrock(x, a=100.0)
 
         surrogate = AFINNISurrogate()
-        surrogate.train(
-            X,
+        train_surrogate(
+            X, surrogate,
             f_fn=evaluate,
-            ATOL=TOL,
-            RTOL=TOL,
-            ERROR_METRIC="Linf",
-            NUM_INITIAL_CLUSTERS=1,
-            BATCH_SIZE=10_000_000,
-            PROFILE_TIMING=True,
-            MIN_PTS_PER_CLUSTER=169,
-            USE_WORK_STEALING=True,
+            atol=TOL,
+            rtol=TOL,
+            error_metric="Linf",
+            num_initial_clusters=1,
+            batch_size=10_000_000,
+            profile_timing=True,
+            min_pts_per_cluster=169,
+            use_work_stealing=True,
         )
 
         # Everything the protocol sent must have been received by now.

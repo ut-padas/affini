@@ -1,9 +1,9 @@
 """
-Live terminal monitor for a training run started with ``PROFILE_DIR``: per-rank state
+Live terminal monitor for a training run started with ``profile_dir``: per-rank state
 (phase, level, batch), queued work, accepted leaves, idle share and work stealing,
 read from the ranks' JSON-lines event streams (see ``src.profiling``).
 
-    python -m src.monitor <PROFILE_DIR> [--interval 0.5] [--once]
+    python -m src.monitor <profile_dir> [--interval 0.5] [--once]
 
 It only reads files, so it runs from another shell (or node with a shared file
 system) while the job runs, or afterwards to replay the final state, and adds no
@@ -224,7 +224,7 @@ def _seen_label(ago: float, done: bool) -> str:
 def main(argv: list[str] | None = None) -> None:
     """Command-line entry point (see the module docstring)."""
     p = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    p.add_argument("stream_dir", type=Path, help="the PROFILE_DIR given to training")
+    p.add_argument("stream_dir", type=Path, help="the profile_dir given to training")
     p.add_argument("--interval", type=float, default=0.5, help="seconds between refreshes")
     p.add_argument("--once", action="store_true", help="print the current state once and exit")
     args = p.parse_args(argv)

@@ -852,7 +852,7 @@ def _adaptive_clustering(
     dynamic_batch_cap = int(np.clip(hardware_batch_cap, 50_000, 20_000_000))
     if config.batch_size > dynamic_batch_cap:
         logger.info(
-            "Hardware VRAM scaling: reducing BATCH_SIZE from %s to %s for d=%s, "
+            "Hardware VRAM scaling: reducing batch_size from %s to %s for d=%s, "
             "fd=%s using %.2f GB free / %.2f GB total VRAM and an estimated "
             "%.0f bytes/point peak footprint.",
             f"{config.batch_size:,}",

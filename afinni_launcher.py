@@ -13,7 +13,7 @@ import jax
 import matplotlib.pyplot as plt
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_host, xp
-from src.adaptive_clustering_utils import SurrogateMode
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 from src.backend import MPI
 from src.heuristic_parameters import (
     get_MIN_PTS_PER_CLUSTER,
@@ -157,31 +157,25 @@ def conduct_experiment_given_data(
             # Only rank 0 holds the data, but every rank must train with the same tolerances.
             ATOL, RTOL = MPI.COMM_WORLD.bcast(ATOL, root=0), None
         _start_train_time = time.perf_counter()
-
-        # All ranks participate in training
-        surrogate.train(
-            X_train=X_train,
-            Y_train=Y_train,
-            f_fn=f_fn,
-            g_fn=g_fn,
+        config = ClusteringConfig(
             mode=ERROR_EVAL_MODE,
-            ATOL=ATOL,
-            RTOL=RTOL,
-            ERROR_METRIC=ERROR_METRIC,
-            INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-            NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-            MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-            USE_WORK_STEALING=USE_WORK_STEALING,
-            MAX_LEVELS=MAX_LEVELS,
-            MAX_CLUSTERS_EST=MAX_CLUSTERS_EST,
-            LOG_MEM_STATS=True,
-            PROFILE_TIMING=True,
-            STORE_AFFINE_FIT=True,
-            SAVE_ALL_GEN_TRAINING_DATA=SAVE_ALL_GEN_TRAINING_DATA,
-            HESSIAN=HESSIAN,
-            Q_REG=Q_reg,
-            SAMPLING_METHOD=SAMPLING_METHOD,
+            atol=ATOL,
+            rtol=RTOL,
+            error_metric=ERROR_METRIC,
+            initial_clustering_method=INITIAL_CLUSTERING_METHOD,
+            num_initial_clusters=NUM_INITIAL_CLUSTERS,
+            min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
+            use_work_stealing=USE_WORK_STEALING,
+            max_levels=MAX_LEVELS,
+            max_clusters_est=MAX_CLUSTERS_EST,
+            log_mem_stats=True,
+            profile_timing=True,
+            save_all_gen_training_data=SAVE_ALL_GEN_TRAINING_DATA,
+            q_reg=Q_reg,
+            sampling_method=SAMPLING_METHOD,
         )
+        # All ranks participate in training
+        surrogate.train(X_train, config, Evaluator(f_fn=f_fn, g_fn=g_fn, hessian_fn=HESSIAN), Y_train=Y_train)
         _train_time = time.perf_counter() - _start_train_time
         _TRAINED = True
 

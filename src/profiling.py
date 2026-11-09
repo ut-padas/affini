@@ -4,16 +4,16 @@ live per-rank event streams for monitoring.
 
 Three levels of detail, all off by default except the always-cheap level statistics:
 
-- ``timing`` (``PROFILE_TIMING``): accumulate wall time per phase into the existing
+- ``timing`` (``profile_timing``): accumulate wall time per phase into the existing
   ``profiling_stats["time_*"]`` totals; on CuPy the device is synchronized around
   each phase so kernel time is attributed correctly (this slows training).
-- ``events`` (``PROFILE_EVENTS``): also record a timeline: one interval per phase
+- ``events`` (``profile_events``): also record a timeline: one interval per phase
   (with its level and batch), steal requests/grants/denials, load samples and level
   summaries. Times are seconds since a start time shared by all ranks. To keep the
   timeline small, repeats are coalesced: back-to-back intervals of the same phase
   (idle polling, for instance) become one interval, and repeated identical steal
   requests/denials become one event with a ``count``; nested phases are not recorded.
-- ``stream_dir`` (``PROFILE_DIR``): additionally append every event as one JSON line to
+- ``stream_dir`` (``profile_dir``): additionally append every event as one JSON line to
   ``<stream_dir>/rank_<r>.jsonl`` as it happens, so a monitor can follow a running
   (MPI) job by tailing files, with no extra MPI traffic.
 
@@ -286,7 +286,7 @@ def read_event_stream(path: str | Path) -> list[dict[str, Any]]:
 
 
 def read_event_streams(stream_dir: str | Path) -> dict[int, list[dict[str, Any]]]:
-    """Every rank's events from a ``PROFILE_DIR``, keyed by rank."""
+    """Every rank's events from a ``profile_dir``, keyed by rank."""
     out = {}
     for path in sorted(Path(stream_dir).glob("rank_*.jsonl")):
         out[int(path.stem.split("_")[1])] = read_event_stream(path)

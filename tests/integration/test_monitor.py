@@ -5,9 +5,9 @@ import json
 import numpy as np
 from rich.console import Console
 
-from src import xp
 from src.monitor import RankStatus, StreamMonitor, main
 from src.surrogate import AFINNISurrogate
+from tests._helpers import train_surrogate
 
 
 def _write(path, events, tail=""):
@@ -64,10 +64,10 @@ def test_rank_status_reports_unresolved_points_when_done():
 
 def test_monitor_cli_snapshot_after_a_real_run(tmp_path, capsys):
     s = AFINNISurrogate()
-    s.train(
-        xp.asarray(np.random.default_rng(0).uniform(-1, 1, (3_000, 2))),
-        f_fn=lambda x: (1 + x[:, 0] ** 2 + 4 * x[:, 1] ** 2)[:, None], ATOL=0.02, RTOL=0.02,
-        NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False, PROFILE_DIR=tmp_path,
+    train_surrogate(
+        np.random.default_rng(0).uniform(-1, 1, (3_000, 2)), s,
+        f_fn=lambda x: (1 + x[:, 0] ** 2 + 4 * x[:, 1] ** 2)[:, None], atol=0.02, rtol=0.02,
+        num_initial_clusters=4, min_pts_per_cluster=40, use_work_stealing=False, profile_dir=tmp_path,
     )  # fmt: skip
     mon = StreamMonitor(tmp_path)
     mon.poll()

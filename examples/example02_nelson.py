@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from src import _to_device, _to_host, xp
-from src.adaptive_clustering_utils import SurrogateMode
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 from src.heuristic_parameters import get_MIN_PTS_PER_CLUSTER, get_NUM_INITIAL_CLUSTERS
 from src.surrogate import AFINNISurrogate
 
@@ -335,23 +335,20 @@ if __name__ == "__main__":
         surrogate = AFINNISurrogate()
         f_train_component = f_train[:,output][:,None]
         print(f"Beginning training AFINNI surrogate for output {net.species[output]}...")
-        surrogate.train(
-            X_train = X_train,
-            Y_train = f_train_component,
-            f_fn = f_fn,
+        config = ClusteringConfig(
             mode = SurrogateMode.AFFINE_COV_HESS,
-            ATOL = TOL,
-            RTOL = TOL,
-            ERROR_METRIC = 'Linf',
-            NUM_INITIAL_CLUSTERS = N_init_clusters,
-            MIN_PTS_PER_CLUSTER = min_ppc,
-            SEED = SEED,
-            STORE_AFFINE_FIT = True,
-            USE_WORK_STEALING = True,
-            PROFILE_TIMING = True,
-            SAVE_INITIAL_CLUSTERING = True,
-            USE_EXISTING_INITIAL_CLUSTERING = True
+            atol = TOL,
+            rtol = TOL,
+            error_metric = 'Linf',
+            num_initial_clusters = N_init_clusters,
+            min_pts_per_cluster = min_ppc,
+            seed = SEED,
+            use_work_stealing = True,
+            profile_timing = True,
+            save_initial_clustering = True,
+            use_existing_initial_clustering = True,
         )
+        surrogate.train(X_train, config, Evaluator(f_fn=f_fn), Y_train=f_train_component)
 
         print("-----------------------------------------------------------")
         print(f"AFINNI training complete for output {net.species[output]}.")

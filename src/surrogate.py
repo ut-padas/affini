@@ -11,7 +11,7 @@ import logging
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, ParamSpec, TypeVar, Union
+from typing import Any, Callable, Optional, ParamSpec, TypeVar, Union
 
 import numpy as np
 
@@ -30,7 +30,7 @@ from src.config import ClusteringConfig
 from src.evaluation import Evaluator
 from src.local_models import LOCAL_MODELS, LocalModel, local_model_for_mode
 from src.modes import SurrogateMode
-from src.registry import ComponentSpec, component_spec
+from src.registry import component_spec
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +38,7 @@ logger = logging.getLogger(__name__)
 # version (written before it existed) are still read by load_model().
 MODEL_FORMAT_VERSION = 1
 DEFAULT_MODEL_FILENAME = "afinni_surrogate.npz"
-_LEGACY_MODEL_FILENAME = "hatann_surrogate.npz"  # default name before the rename
 _PARAM_PREFIX = "param:"
-
-_UNSET: Any = object()  # sentinel: argument not passed
 
 
 def _model_path(path: Union[str, Path]) -> Path:
@@ -121,7 +118,7 @@ class AFINNISurrogate:
         self.counts_src = None
         # The effective settings and components of the last training run.
         self.config: dict[str, Any] = {}
-        # False if refinement stopped at MAX_LEVELS with clusters still unresolved;
+        # False if refinement stopped at max_levels with clusters still unresolved;
         # their region has no leaves (see num_unresolved_clusters / _pts).
         self.converged: Optional[bool] = None
         self.num_unresolved_clusters = 0
@@ -196,151 +193,30 @@ class AFINNISurrogate:
     def train(
         self,
         X_train: Array,
-        Y_train: Optional[Array] = None,
-        f_fn: Optional[Callable] = None,
-        g_fn: Optional[Callable] = None,
-        oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None,
+        config: ClusteringConfig,
+        evaluator: Evaluator,
         *,
-        mode: SurrogateMode = SurrogateMode.AFFINE_COV_HESS,
-        local_model: ComponentSpec = None,
-        split_strategy: ComponentSpec = None,
-        sampler: ComponentSpec = None,
-        acceptance: ComponentSpec = None,
-        trust_region: ComponentSpec = None,
-        save_model: Optional[Union[bool, str, Path]] = _UNSET,
-        load_if_exists: bool = _UNSET,
-        ATOL: Tolerance = None,
-        RTOL: Tolerance = None,
-        ERROR_METRIC: Literal["L2", "Linf"] = "Linf",
-        INITIAL_CLUSTERING_METHOD: Literal[
-            "kmeans", "knndbscan", "uniform_grid"
-        ] = "kmeans",
-        NUM_INITIAL_CLUSTERS: int = 100,
-        MIN_PTS_PER_CLUSTER: int = 100,
-        MAX_CLUSTERS_EST: int = 1_000_000,
-        SEED: int = 0,
-        Q_REG: float = 1e-6,
-        SAMPLING_METHOD: str = "convex_combination",  # see src.sampling.SAMPLERS
-        STORE_HESSIAN: bool = False,
-        STORE_AFFINE_FIT: bool = False,
-        USE_WORK_STEALING: bool = True,
-        BATCH_SIZE: int = 10_000_000,
-        MAX_LEVELS: int = 50,
-        PROFILE_TIMING: bool = False,
-        PROFILE_EVENTS: bool = False,
-        PROFILE_DIR: Optional[Union[str, Path]] = None,
-        LOG_MEM_STATS: bool = False,
-        SAVE_ALL_GEN_TRAINING_DATA: bool = False,
-        HESSIAN: Optional[Callable] = None,
-        SAVE_INITIAL_CLUSTERING: bool = False,
-        USE_EXISTING_INITIAL_CLUSTERING: bool = False,
-    ):
+        Y_train: Optional[Array] = None,
+    ) -> None:
         """
-        Train the surrogate (collectively on every MPI rank).
+        Train the surrogate collectively on every MPI rank, replacing any previous model.
 
-        ``mode`` picks a preset pair (local model, split strategy). ``local_model``,
-        ``split_strategy``, ``sampler``, ``acceptance`` and ``trust_region``
-        override single components (an instance, a registered name, or ``(name,
-        settings)``; see ``src.config``); every rank must pass the same specs.
+        Every setting, including the components and the tolerances, comes from
+        ``config``; every rank must pass an equivalent one. Only rank 0's ``X_train``
+        and ``Y_train`` (a precomputed f(X_train)) are read. ``evaluator`` may be
+        reused: its ``n_evals`` keeps counting, but ``profiling_stats`` reports only
+        this run's evaluations.
 
-        ``ATOL`` and/or ``RTOL`` (at least one) set the acceptance test: each is a
-        scalar or one value per output component, and a cluster is accepted when
-        every component is within ``RTOL`` relative or ``ATOL`` absolute error under
-        ``ERROR_METRIC`` (see ``src.acceptance``).
-
-        ``save_model`` / ``load_if_exists`` are deprecated: call ``save()`` and
-        ``load_model()`` instead. They still behave as before: with a path (or
-        True, for ``./afinni_surrogate.npz``) an existing file is loaded instead
-        of training when ``load_if_exists`` (default True), and the trained model
-        is saved there otherwise.
-
-        ``PROFILE_TIMING`` / ``PROFILE_EVENTS`` / ``PROFILE_DIR`` control profiling
-        (see ``src.profiling``); results are in ``profiling_stats`` and can be
-        plotted with ``src.plotting``.
-
-        If refinement stops at ``MAX_LEVELS`` before every cluster is accepted,
-        training still succeeds but ``converged`` is False and a warning is
-        issued; if no cluster at all was accepted, a ``RuntimeError`` is raised.
+        If refinement stops at ``config.max_levels`` before every cluster is accepted,
+        training still succeeds but ``converged`` is False and a warning is issued;
+        if no cluster at all was accepted, a ``RuntimeError`` is raised and the
+        previous model is kept.
         """
         comm = MPI.COMM_WORLD
         rank = _get_mpi_rank()
-
-        model_filepath = None
-        if save_model is not _UNSET or load_if_exists is not _UNSET:
-            warnings.warn(
-                "train(save_model=..., load_if_exists=...) is deprecated; call "
-                "save() after training and AFINNISurrogate.load_model() instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if save_model is not _UNSET and save_model not in (None, False):
-            model_filepath = _model_path(Path.cwd() if save_model is True else save_model)
-        if load_if_exists is _UNSET:
-            load_if_exists = True
-
-        if load_if_exists and model_filepath is not None:
-            existing = model_filepath
-            if not existing.exists() and existing.name == DEFAULT_MODEL_FILENAME:
-                existing = existing.with_name(_LEGACY_MODEL_FILENAME)
-            if existing.exists():
-                try:
-                    loaded = self.load_model(existing)
-                    self.__dict__.update(loaded.__dict__)
-                    if rank == 0:
-                        logger.info(f"Loaded existing model from {existing}")
-                    return
-                except Exception as e:
-                    if rank == 0:
-                        logger.warning(
-                            f"Failed to load existing model: {e}. Proceeding with training."
-                        )
-
-        if oracle_fn is not None and (f_fn is not None or g_fn is not None):
-            raise ValueError("Cannot specify both oracle_fn and f_fn/g_fn.")
-
         t0 = time.perf_counter()
 
-        # 1. MPI-Distributed Adaptive Clustering
-        config = ClusteringConfig(
-            mode=mode,
-            atol=ATOL,
-            rtol=RTOL,
-            error_metric=ERROR_METRIC,
-            initial_clustering_method=INITIAL_CLUSTERING_METHOD,
-            num_initial_clusters=NUM_INITIAL_CLUSTERS,
-            save_initial_clustering=SAVE_INITIAL_CLUSTERING,
-            use_existing_initial_clustering=USE_EXISTING_INITIAL_CLUSTERING,
-            min_pts_per_cluster=MIN_PTS_PER_CLUSTER,
-            q_reg=Q_REG,
-            sampling_method=SAMPLING_METHOD,
-            max_levels=MAX_LEVELS,
-            batch_size=BATCH_SIZE,
-            seed=SEED,
-            max_clusters_est=MAX_CLUSTERS_EST,
-            use_work_stealing=USE_WORK_STEALING,
-            store_hess=STORE_HESSIAN,
-            store_affine_fits=STORE_AFFINE_FIT,
-            log_mem_stats=LOG_MEM_STATS,
-            profile_timing=PROFILE_TIMING,
-            profile_events=PROFILE_EVENTS,
-            profile_dir=None if PROFILE_DIR is None else str(PROFILE_DIR),
-            save_all_gen_training_data=SAVE_ALL_GEN_TRAINING_DATA,
-            local_model=local_model,
-            split_strategy=split_strategy,
-            sampler=sampler,
-            acceptance=acceptance,
-            trust_region=trust_region,
-        )
-        if oracle_fn is None and (
-            f_fn is None or (not config.requires_no_grads and g_fn is None)
-        ):
-            raise ValueError(
-                "Must specify oracle_fn or required f_fn/g_fn for the chosen mode."
-            )
         leaf_model = config.components().local_model
-        evaluator = Evaluator(
-            f_fn=f_fn, g_fn=g_fn, oracle_fn=oracle_fn, hessian_fn=HESSIAN
-        )
         # Unguarded engine body: the failure policy is owned by train() (see run_collective).
         results = _adaptive_clustering(X_train, config, evaluator, Y=Y_train)
 
@@ -359,10 +235,10 @@ class AFINNISurrogate:
         n_leaves = int(bcast_data["centroids"].shape[0])
         if n_leaves == 0:
             raise RuntimeError(
-                f"Training accepted no clusters: refinement stopped at MAX_LEVELS="
-                f"{MAX_LEVELS} with {bcast_data['num_unresolved_clusters']:,} unresolved "
+                f"Training accepted no clusters: refinement stopped at max_levels="
+                f"{config.max_levels} with {bcast_data['num_unresolved_clusters']:,} unresolved "
                 f"clusters ({bcast_data['num_unresolved_pts']:,} points). Increase "
-                f"MAX_LEVELS or loosen ATOL/RTOL."
+                f"max_levels or loosen atol/rtol."
             )
 
         # 3. Build the new state, including its kNN index, before touching self, so a
@@ -400,15 +276,13 @@ class AFINNISurrogate:
             logger.info(f"Trained Clusters: {self.N_src:,}")
             if not self.converged:
                 warnings.warn(
-                    f"Training stopped at MAX_LEVELS={MAX_LEVELS} with "
+                    f"Training stopped at max_levels={config.max_levels} with "
                     f"{self.num_unresolved_clusters:,} clusters "
                     f"({self.num_unresolved_pts:,} points) still above tolerance; "
                     f"their region has no leaves. See AFINNISurrogate.converged.",
                     RuntimeWarning,
                     stacklevel=2,
                 )
-            if model_filepath is not None:
-                self.save(model_filepath)
 
     def save(self, filepath: Union[str, Path]) -> Path:
         """

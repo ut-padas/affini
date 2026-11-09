@@ -29,7 +29,7 @@ def main(phase: str) -> None:
     import src.kmeans
     from src.backend import MPI
     from src.problems.rosenbrock import rosenbrock
-    from src.surrogate import AFINNISurrogate
+    from tests._helpers import train_surrogate
 
     rank = MPI.COMM_WORLD.Get_rank()
 
@@ -74,7 +74,7 @@ def main(phase: str) -> None:
         ac.MPI = proxy
 
     X = src.xp.asarray(np.random.default_rng(0).uniform(-2, 2, (20_000, 2))) if rank == 0 else src.xp.empty((0, 2))
-    AFINNISurrogate().train(X, f_fn=f, ATOL=0.01, RTOL=0.01, NUM_INITIAL_CLUSTERS=16, MIN_PTS_PER_CLUSTER=50)
+    train_surrogate(X, f_fn=f, atol=0.01, rtol=0.01, num_initial_clusters=16, min_pts_per_cluster=50)
 
 
 if __name__ == "__main__":

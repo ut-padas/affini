@@ -1,5 +1,7 @@
 """Edge cases of prediction and early validation of the configuration."""
 
+import json
+
 import numpy as np
 import pytest
 
@@ -7,7 +9,7 @@ from src import xp
 from src.config import ClusteringConfig
 from src.modes import SurrogateMode
 from src.surrogate import AFINNISurrogate
-from tests._helpers import assert_backend_equal, host
+from tests._helpers import assert_backend_equal, host, train_surrogate
 
 rng = np.random.default_rng(9)
 X = rng.uniform(-1, 1, (2_000, 2))
@@ -20,9 +22,9 @@ def f(x):
 @pytest.fixture(scope="module")
 def surrogate():
     s = AFINNISurrogate()
-    s.train(
-        xp.asarray(X), f_fn=f, ATOL=0.05, RTOL=0.05, ERROR_METRIC="Linf",
-        NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=32, USE_WORK_STEALING=False,
+    train_surrogate(
+        X, s, f_fn=f, atol=0.05, rtol=0.05, error_metric="Linf",
+        num_initial_clusters=4, min_pts_per_cluster=32, use_work_stealing=False,
     )  # fmt: skip
     return s
 
@@ -66,15 +68,15 @@ def test_k_larger_than_coarse_factor_is_rejected(surrogate):
 
 def test_per_component_tolerances_are_used_and_must_match_the_outputs():
     s = AFINNISurrogate()
-    opts = dict(f_fn=f, NUM_INITIAL_CLUSTERS=4, MIN_PTS_PER_CLUSTER=32, USE_WORK_STEALING=False)
-    s.train(xp.asarray(X), ATOL=(0.05, 0.01), RTOL=None, **opts)
+    opts = dict(f_fn=f, num_initial_clusters=4, min_pts_per_cluster=32, use_work_stealing=False)
+    train_surrogate(X, s, atol=(0.05, 0.01), rtol=None, **opts)
     E_abs = host(s.E_cluster_abs_src)
     assert E_abs.shape == (s.N_src, 2) and np.all(E_abs < [0.05, 0.01])
     assert s.config["atol"] == (0.05, 0.01) and s.config["rtol"] is None
     with pytest.raises(ValueError, match="atol has 3 components but the function has 2 outputs"):
-        AFINNISurrogate().train(xp.asarray(X), ATOL=(0.05, 0.05, 0.05), **opts)
+        train_surrogate(X, atol=(0.05, 0.05, 0.05), **opts)
     with pytest.raises(ValueError, match="Give atol, rtol or both"):
-        AFINNISurrogate().train(xp.asarray(X), **opts)
+        train_surrogate(X, **opts)
 
 
 def test_untrained_surrogate_refuses_to_predict():
@@ -110,3 +112,9 @@ def test_numpy_scalars_and_mode_strings_are_accepted():
         num_initial_clusters=np.int64(4), max_levels=np.int32(3),
     )  # fmt: skip
     assert cfg.mode is SurrogateMode.TAYLOR_COV_HESS
+
+
+def test_config_defaults_match_the_former_train_defaults_and_store_paths_as_text(tmp_path):
+    cfg = ClusteringConfig(atol=0.1, profile_dir=tmp_path)
+    assert cfg.mode is SurrogateMode.AFFINE_COV_HESS and cfg.max_clusters_est == 1_000_000
+    assert cfg.profile_dir == str(tmp_path) and json.dumps(cfg.to_dict())

@@ -35,7 +35,7 @@ from src.splitting import (
 )
 from src.surrogate import AFINNISurrogate
 from src.trust_regions import TRUST_REGIONS, CovarianceEllipsoid, TrustRegion
-from tests._helpers import assert_backend_equal, host
+from tests._helpers import assert_backend_equal, host, train_surrogate
 
 rng = np.random.default_rng(3)
 X_TRAIN = rng.uniform(-1, 1, (3_000, 2))
@@ -55,11 +55,11 @@ def g(x):
 def train(**kwargs):
     s = AFINNISurrogate()
     opts = dict(
-        f_fn=f, ATOL=0.05, RTOL=0.05, ERROR_METRIC="Linf", NUM_INITIAL_CLUSTERS=8,
-        MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False,
+        f_fn=f, atol=0.05, rtol=0.05, error_metric="Linf", num_initial_clusters=8,
+        min_pts_per_cluster=40, use_work_stealing=False,
     )  # fmt: skip
     opts.update(kwargs)
-    s.train(xp.asarray(X_TRAIN), **opts)
+    train_surrogate(X_TRAIN, s, **opts)
     return s
 
 
@@ -167,7 +167,7 @@ def test_a_gradient_model_with_a_gradient_free_split_receives_point_gradients():
         local_model=GradientAffineModel(),
     )  # fmt: skip
     assert cfg.requires_grad_everywhere and not cfg.requires_grad_centroids
-    with pytest.raises(ValueError, match="f_fn/g_fn"):
+    with pytest.raises(ValueError, match="requires gradient information"):
         train(mode=SurrogateMode.AFFINE_COV_NO_HESS, local_model=GradientAffineModel())
 
     GradientAffineModel.seen_G_shapes = []
@@ -251,7 +251,7 @@ def test_deployed_models_are_retested_after_finalize(registered):
     """A finalize() that breaks predictions must not be accepted on the strength of fit() alone."""
     registered(LOCAL_MODELS, AffinePlusOffsetModel)
     with pytest.raises(RuntimeError, match="accepted no clusters"):
-        train(mode=SurrogateMode.AFFINE_COV_HESS, MAX_LEVELS=3,
+        train(mode=SurrogateMode.AFFINE_COV_HESS, max_levels=3,
               local_model=("test_affine_plus_offset", {"offset": 10.0}))  # fmt: skip
 
 
@@ -271,7 +271,7 @@ def test_split_that_duplicates_rows_is_rejected():
 
 
 def test_effective_settings_are_recorded_next_to_requested_ones():
-    s = train(mode=SurrogateMode.AFFINE_COV_HESS, BATCH_SIZE=10**12)
+    s = train(mode=SurrogateMode.AFFINE_COV_HESS, batch_size=10**12)
     assert s.config["batch_size"] == 10**12  # as requested
     assert s.config["effective"]["batch_size"] < 10**12  # capped to fit memory
     assert s.config["effective"]["max_levels"] == s.config["max_levels"]
@@ -329,7 +329,7 @@ class MidpointSampler(ConvexCombinationSampler):
 
 def test_sampler_settings_are_passed_and_recorded(registered):
     registered(SAMPLERS, MidpointSampler)
-    s = train(mode=SurrogateMode.AFFINE_COV_HESS, MIN_PTS_PER_CLUSTER=200, sampler=("test_midpoint", {"weight": 0.25}))
+    s = train(mode=SurrogateMode.AFFINE_COV_HESS, min_pts_per_cluster=200, sampler=("test_midpoint", {"weight": 0.25}))
     assert s.config["components"]["sampler"] == {"name": "test_midpoint", "settings": {"weight": 0.25}}
     assert s.profiling_stats["num_generated_pts"] > 0
 
@@ -352,7 +352,7 @@ class WrongShapeSampler(ConvexCombinationSampler):
 
 def test_sampler_returning_the_wrong_number_of_points_is_rejected():
     with pytest.raises(ValueError, match="test_wrong_shape"):
-        train(mode=SurrogateMode.AFFINE_COV_HESS, MIN_PTS_PER_CLUSTER=200, sampler=WrongShapeSampler())
+        train(mode=SurrogateMode.AFFINE_COV_HESS, min_pts_per_cluster=200, sampler=WrongShapeSampler())
 
 
 class LopsidedSplit(CovarianceSplit):

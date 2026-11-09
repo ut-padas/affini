@@ -1,5 +1,5 @@
 """
-k-means for the initial clustering (``INITIAL_CLUSTERING_METHOD="kmeans"``) on both
+k-means for the initial clustering (``initial_clustering_method="kmeans"``) on both
 backends, replacing cuML's ``KMeans`` (GPU) and scikit-learn's ``KMeans`` (CPU). Runs
 once per training, before refinement, so its memory never overlaps the refinement peak.
 ``kmeans_labels`` dispatches on the active backend; both paths share the algorithm.

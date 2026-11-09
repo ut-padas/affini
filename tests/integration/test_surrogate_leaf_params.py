@@ -8,7 +8,7 @@ from src.adaptive_clustering_utils import SurrogateMode
 from src.clusters import ParamSpec
 from src.problems.rosenbrock import rosenbrock
 from src.surrogate import AFINNISurrogate
-from tests._helpers import assert_backend_equal
+from tests._helpers import assert_backend_equal, train_surrogate
 
 
 class RenamedAffineModel(lm.LocalModel):
@@ -31,16 +31,16 @@ class RenamedAffineModel(lm.LocalModel):
 
 def _train_and_predict(X, Q, local_model=None):
     surrogate = AFINNISurrogate()
-    surrogate.train(
-        xp.asarray(X),
+    train_surrogate(
+        X, surrogate,
         f_fn=rosenbrock,
         mode=SurrogateMode.AFFINE_COV_HESS,
         local_model=local_model,
-        ATOL=0.1,
-        RTOL=0.1,
-        NUM_INITIAL_CLUSTERS=16,
-        MIN_PTS_PER_CLUSTER=50,
-        USE_WORK_STEALING=False,
+        atol=0.1,
+        rtol=0.1,
+        num_initial_clusters=16,
+        min_pts_per_cluster=50,
+        use_work_stealing=False,
     )
     pred, unguaranteed = surrogate.predict(xp.asarray(Q), k_nn=4)[:2]
     return surrogate, _to_host(pred), _to_host(unguaranteed)

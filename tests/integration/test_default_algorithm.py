@@ -11,7 +11,7 @@ import pytest
 from src import xp
 from src.modes import SurrogateMode
 from src.surrogate import AFINNISurrogate
-from tests._helpers import assert_backend_equal, host
+from tests._helpers import assert_backend_equal, host, train_surrogate
 
 rng = np.random.default_rng(11)
 X_TRAIN = rng.uniform(-1, 1, (4_000, 2))
@@ -43,11 +43,11 @@ def quad_h(x):
 def train(f, mode=SurrogateMode.AFFINE_COV_HESS, **kw):
     s = AFINNISurrogate()
     opts = dict(
-        mode=mode, ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf",
-        NUM_INITIAL_CLUSTERS=8, MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False,
+        mode=mode, atol=0.02, rtol=0.02, error_metric="Linf",
+        num_initial_clusters=8, min_pts_per_cluster=40, use_work_stealing=False,
     )  # fmt: skip
     opts.update(kw)
-    s.train(xp.asarray(X_TRAIN), f_fn=f, **opts)
+    train_surrogate(X_TRAIN, s, f_fn=f, **opts)
     return s
 
 
@@ -58,7 +58,7 @@ def train(f, mode=SurrogateMode.AFFINE_COV_HESS, **kw):
 def test_affine_functions_are_reproduced_exactly_everywhere(mode):
     # Every first-order model fits an affine function exactly, so every initial
     # cluster is accepted at level 0 and predictions are exact, even outside.
-    s = train(affine_f, mode, g_fn=affine_g, HESSIAN=lambda x: xp.zeros((len(x), 2, 2)))
+    s = train(affine_f, mode, g_fn=affine_g, hessian_fn=lambda x: xp.zeros((len(x), 2, 2)))
     assert s.N_src == 8 and s.converged
     assert s.profiling_stats["num_generated_pts"] == 0
     Q = 1.5 * X_QUERY  # beyond the training domain too
@@ -90,7 +90,7 @@ def test_training_is_deterministic():
     ],
 )
 def test_work_is_conserved_and_observed_points_are_covered(mode, metric):
-    s = train(quad_f, mode, ERROR_METRIC=metric, g_fn=quad_g, HESSIAN=quad_h, ATOL=0.05, RTOL=0.05)
+    s = train(quad_f, mode, error_metric=metric, g_fn=quad_g, hessian_fn=quad_h, atol=0.05, rtol=0.05)
     ps = s.profiling_stats
     assert s.converged and s.num_unresolved_pts == 0
     # Every original and generated point ends in exactly one accepted leaf.
@@ -119,7 +119,7 @@ def test_trust_regions_are_symmetric_positive_definite():
 
 @pytest.mark.parametrize("tol", [0.05, 0.01])
 def test_in_region_held_out_error_tracks_the_tolerance(tol):
-    s = train(quad_f, ATOL=tol, RTOL=tol)
+    s = train(quad_f, atol=tol, rtol=tol)
     pred, mask = s.predict(xp.asarray(X_QUERY), k_nn=1)
     pred, mask = host(pred), host(mask)
     truth = host(quad_f(xp.asarray(X_QUERY)))
@@ -131,7 +131,7 @@ def test_in_region_held_out_error_tracks_the_tolerance(tol):
 def test_tighter_tolerance_gives_more_leaves_and_lower_error():
     errs, leaves = [], []
     for tol in (0.1, 0.02):
-        s = train(quad_f, ATOL=tol, RTOL=tol)
+        s = train(quad_f, atol=tol, rtol=tol)
         pred, _ = s.predict(xp.asarray(X_QUERY), k_nn=1)
         truth = host(quad_f(xp.asarray(X_QUERY)))
         errs.append(np.linalg.norm(host(pred) - truth) / np.linalg.norm(truth))
@@ -143,15 +143,15 @@ def test_inputs_and_precomputed_values_paths_agree():
     Y = quad_f(xp.asarray(X_TRAIN))
     a = train(quad_f)
     b = AFINNISurrogate()
-    b.train(
-        xp.asarray(X_TRAIN), Y_train=Y, f_fn=quad_f, mode=SurrogateMode.AFFINE_COV_HESS, ATOL=0.02, RTOL=0.02,
-        ERROR_METRIC="Linf", NUM_INITIAL_CLUSTERS=8, MIN_PTS_PER_CLUSTER=40, USE_WORK_STEALING=False,
+    train_surrogate(
+        X_TRAIN, b, Y_train=Y, f_fn=quad_f, mode=SurrogateMode.AFFINE_COV_HESS, atol=0.02, rtol=0.02,
+        error_metric="Linf", num_initial_clusters=8, min_pts_per_cluster=40, use_work_stealing=False,
     )  # fmt: skip
     c = AFINNISurrogate()
-    c.train(
-        xp.asarray(X_TRAIN), oracle_fn=lambda x: (quad_f(x), quad_g(x)), mode=SurrogateMode.AFFINE_COV_HESS,
-        ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf", NUM_INITIAL_CLUSTERS=8, MIN_PTS_PER_CLUSTER=40,
-        USE_WORK_STEALING=False,
+    train_surrogate(
+        X_TRAIN, c, oracle_fn=lambda x: (quad_f(x), quad_g(x)), mode=SurrogateMode.AFFINE_COV_HESS,
+        atol=0.02, rtol=0.02, error_metric="Linf", num_initial_clusters=8, min_pts_per_cluster=40,
+        use_work_stealing=False,
     )  # fmt: skip
     for other in (b, c):
         assert other.N_src == a.N_src

@@ -25,27 +25,31 @@ Run everything from the repository root (scripts as modules, e.g.
 ```python
 import numpy as np
 from src import xp
-from src.modes import SurrogateMode
+from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 from src.problems.rosenbrock import rosenbrock
 from src.surrogate import AFINNISurrogate
 
 X = xp.asarray(np.random.default_rng(0).uniform(-2, 3, (50_000, 2)))
 
-surrogate = AFINNISurrogate()
-surrogate.train(
-    X, f_fn=rosenbrock, mode=SurrogateMode.AFFINE_COV_HESS,
-    ATOL=0.02, RTOL=0.02, ERROR_METRIC="Linf",
-    NUM_INITIAL_CLUSTERS=25, MIN_PTS_PER_CLUSTER=100,
+config = ClusteringConfig(
+    mode=SurrogateMode.AFFINE_COV_HESS, atol=0.02, rtol=0.02, error_metric="Linf",
+    num_initial_clusters=25, min_pts_per_cluster=100,
 )
+surrogate = AFINNISurrogate()
+surrogate.train(X, config, Evaluator(f_fn=rosenbrock))
 Q = xp.asarray(np.random.default_rng(1).uniform(-2, 3, (10_000, 2)))
 pred, outside = surrogate.predict(Q, k_nn=1)   # (N, fd) values, (N,) "outside every trust region"
 ```
 
-- `f_fn(X)` returns `(N,)` or `(N, fd)`; vector outputs are supported throughout.
-- Modes that need gradients take `g_fn` (returning `(N, d)` or `(N, fd, d)`), or a
-  single `oracle_fn` returning `(F, G)`; `*_EXACT_HESS` modes also need `HESSIAN`
-  (returning `(N, d, d)`).
-- `Y_train=f(X)` skips the initial evaluations (they are still counted).
+- `train(X, config, evaluator)` takes every algorithm setting from the
+  `ClusteringConfig` ([Training settings](#training-settings)) and every function
+  from the `Evaluator`.
+- `Evaluator(f_fn=f)`: `f(X)` returns `(N,)` or `(N, fd)`; vector outputs are
+  supported throughout. Modes that need gradients also take `g_fn` (returning
+  `(N, d)` or `(N, fd, d)`), or a single `oracle_fn` returning `(F, G)`;
+  `*_EXACT_HESS` modes also need `hessian_fn` (returning `(N, d, d)`). An evaluator
+  can be reused; `profiling_stats` counts only the run's own evaluations.
+- `train(..., Y_train=f(X))` skips the initial evaluations (they are still counted).
 - `predict(..., k_nn=k)` blends the `k` best leaves by trust-region distance;
   `strict_trust_region=True` ignores leaves whose region does not contain the
   query. `coarse_factor` (default 10) sets how many Euclidean neighbours are reranked.
@@ -89,8 +93,8 @@ Under MPI:
   training data and queries are used (pass `xp.empty((0, d))` / `None` elsewhere);
   `predict` returns results on rank 0 and `(None, None)` on other ranks. Every
   rank ends up with the full model.
-- Work stealing (`USE_WORK_STEALING=True`, the default) moves unprocessed clusters
-  from busy to idle ranks. With more than one rank it raises `MAX_LEVELS` to 1000.
+- Work stealing (`use_work_stealing=True`, the default) moves unprocessed clusters
+  from busy to idle ranks.
 - Rank 0 should do all file writing and printing.
 - Several ranks may share one GPU; on CPU, set `OMP_NUM_THREADS=1` so ranks do not
   oversubscribe the cores.
@@ -99,12 +103,12 @@ Under MPI:
 from src import get_mpi_rank, xp
 rank = get_mpi_rank()
 X = xp.asarray(X_all) if rank == 0 else xp.empty((0, d))
-surrogate.train(X, f_fn=f, ...)
+surrogate.train(X, config, Evaluator(f_fn=f))   # an equivalent config on every rank
 pred, outside = surrogate.predict(Q_all if rank == 0 else None)
 ```
 
 CPU and GPU runs are statistically equivalent but not bit-identical; each is
-reproducible for a fixed `SEED` and rank count. The test problems in
+reproducible for a fixed `seed` and rank count. The test problems in
 `src/problems/` take their fixed constants (rotations, directions) from NumPy on
 every backend, while sampling (training/test points, synthetic points, KMeans
 initialisation) uses the active backend's random generator, and GPU kernels sum in
@@ -112,21 +116,21 @@ a different order.
 
 ## Training settings
 
-`train` keyword arguments (upper case) map to `src.config.ClusteringConfig`.
+Fields of `src.config.ClusteringConfig` (all keyword-only); only a tolerance is required.
 
 | Setting | Meaning |
 |---|---|
-| `mode` | Preset pair (local model, split strategy); see the table below |
-| `ATOL`, `RTOL`, `ERROR_METRIC` | Acceptance test: a cluster is accepted when every output component is within `RTOL` relative **or** `ATOL` absolute error, measured as `"Linf"` (max error, relative to the cluster's own max \|f\|) or `"L2"` (relative L2 / RMS). Give at least one tolerance; each is a scalar or one value per output component, and an omitted one never accepts. For an absolute test scaled to the function, pass `ATOL = tol * max\|f\|`. Exact formulas: [`src/acceptance.py`](../src/acceptance.py) |
-| `NUM_INITIAL_CLUSTERS`, `INITIAL_CLUSTERING_METHOD` | Roots of the forest: `"kmeans"` (custom k-means in `src/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (needs `--group research_internal`, Linux) |
-| `MIN_PTS_PER_CLUSTER` | Rejected clusters are augmented to at least twice this before splitting |
-| `MAX_LEVELS` | Refinement depth limit; reaching it leaves `converged=False` |
-| `SAMPLING_METHOD` | Where new points go when augmenting (`"convex_combination"`) |
-| `Q_REG` | Floor on covariance eigenvalues in the trust-region shape |
-| `STORE_HESSIAN` | Second-order Taylor leaves (TAYLOR_LSQ_HESS only), one Hessian per output |
-| `BATCH_SIZE` | Points moved to the device at once; capped automatically to fit GPU memory |
-| `SEED`, `USE_WORK_STEALING` | Reproducibility, MPI load balancing |
-| `PROFILE_TIMING`, `PROFILE_EVENTS`, `PROFILE_DIR` | See [Profiling](#profiling) |
+| `mode` | Preset pair (local model, split strategy), `AFFINE_COV_HESS` by default; see the table below |
+| `atol`, `rtol`, `error_metric` | Acceptance test: a cluster is accepted when every output component is within `rtol` relative **or** `atol` absolute error, measured as `"Linf"` (max error, relative to the cluster's own max \|f\|) or `"L2"` (relative L2 / RMS). Give at least one tolerance; each is a scalar or one value per output component, and an omitted one never accepts. For an absolute test scaled to the function, pass `atol = tol * max\|f\|`. Exact formulas: [`src/acceptance.py`](../src/acceptance.py) |
+| `num_initial_clusters`, `initial_clustering_method` | Roots of the forest: `"kmeans"` (custom k-means in `src/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (needs `--group research_internal`, Linux) |
+| `min_pts_per_cluster` | Rejected clusters are augmented to at least twice this before splitting |
+| `max_levels` | Refinement depth limit; reaching it leaves `converged=False` |
+| `sampling_method` | Where new points go when augmenting (`"convex_combination"`) |
+| `q_reg` | Floor on covariance eigenvalues in the trust-region shape |
+| `store_hess` | Second-order Taylor leaves (TAYLOR_LSQ_HESS only), one Hessian per output |
+| `batch_size` | Points moved to the device at once; capped automatically to fit GPU memory |
+| `seed`, `use_work_stealing` | Reproducibility, MPI load balancing |
+| `profile_timing`, `profile_events`, `profile_dir` | See [Profiling](#profiling) |
 
 | Mode | Local model | Split metric | Needs |
 |---|---|---|---|
@@ -138,12 +142,12 @@ a different order.
 | `TAYLOR_COV_NO_HESS` | first-order Taylor | covariance | f, g |
 | `TAYLOR_COV_HESS` | first-order Taylor | covariance-estimated \|H\| | f, g |
 | `TAYLOR_EXACT_HESS` | first-order Taylor | exact \|H\| | f, g, Hessian |
-| `TAYLOR_LSQ_HESS` | Taylor (+ second order with `STORE_HESSIAN`) | \|H\| fitted to gradients | f, g at every point |
+| `TAYLOR_LSQ_HESS` | Taylor (+ second order with `store_hess`) | \|H\| fitted to gradients | f, g at every point |
 
-Host memory: queues hold about `rejected clusters x 2 x MIN_PTS_PER_CLUSTER`
+Host memory: queues hold about `rejected clusters x 2 x min_pts_per_cluster`
 points, which grows quickly in high dimension with tight tolerances. If a level
 would not fit, training stops with a `MemoryError` explaining what to change
-(looser tolerance, smaller `MIN_PTS_PER_CLUSTER`, `MAX_LEVELS`, more ranks/nodes).
+(looser tolerance, smaller `min_pts_per_cluster`, `max_levels`, more ranks/nodes).
 
 ## Results, status and saving
 
@@ -152,7 +156,7 @@ surrogate.N_src, surrogate.X_src, surrogate.Qs_src    # leaves: count, centroids
 surrogate.leaf_params                                  # the local model's parameters by name
 surrogate.E_cluster_abs_src, surrogate.E_cluster_rel_src  # accepted errors per leaf and output
 surrogate.counts_src                                   # points per leaf
-surrogate.converged                                    # False if MAX_LEVELS stopped refinement
+surrogate.converged                                    # False if max_levels stopped refinement
 surrogate.num_unresolved_clusters, surrogate.num_unresolved_pts
 surrogate.config                                       # every effective setting and component
 surrogate.profiling_stats                              # counters, level statistics, profile
@@ -161,7 +165,7 @@ path = surrogate.save("results/model")                 # -> results/model.npz (v
 loaded = AFINNISurrogate.load_model(path)               # also reads files from older versions
 ```
 
-A partial run (stopped by `MAX_LEVELS`) warns and reports the unresolved points;
+A partial run (stopped by `max_levels`) warns and reports the unresolved points;
 a run that accepted nothing raises. Models with custom local models load if the
 model's class is registered (import its module first) or passed as
 `load_model(path, local_model=...)`.
@@ -176,12 +180,13 @@ Three levels, all off by default (level statistics are always recorded):
 
 | Flag | Records | Cost |
 |---|---|---|
-| `PROFILE_TIMING=True` | Seconds per phase per rank (`profiling_stats["per_rank"][r]["time_*"]`) | Synchronizes the GPU around each phase |
-| `PROFILE_EVENTS=True` | A timeline: phase intervals with level/batch, steal requests/grants/denials, queue loads, level summaries (`per_rank[r]["events"]`) | Small; repeats are coalesced |
-| `PROFILE_DIR="runs/x"` | The same events, streamed live to `runs/x/rank_<r>.jsonl` | Same as events |
+| `profile_timing=True` | Seconds per phase per rank (`profiling_stats["per_rank"][r]["time_*"]`) | Synchronizes the GPU around each phase |
+| `profile_events=True` | A timeline: phase intervals with level/batch, steal requests/grants/denials, queue loads, level summaries (`per_rank[r]["events"]`) | Small; repeats are coalesced |
+| `profile_dir="runs/x"` | The same events, streamed live to `runs/x/rank_<r>.jsonl` | Same as events |
 
 ```python
-surrogate.train(X, f_fn=f, PROFILE_TIMING=True, PROFILE_EVENTS=True, PROFILE_DIR="runs/rosen")
+config = ClusteringConfig(atol=0.02, profile_timing=True, profile_events=True, profile_dir="runs/rosen")
+surrogate.train(X, config, Evaluator(f_fn=f))
 ps = surrogate.profiling_stats
 ps["time_total"], ps["num_levels"], ps["total_f_evals"], ps["num_generated_pts"]
 ps["level_stats"]          # one dict per (rank, level): clusters, accepted, points, runtime, ...
@@ -205,17 +210,17 @@ below from one multi-rank run.
 from src import plotting as P
 
 P.plot_profile_dashboard(surrogate, "figs/dashboard.png")     # one-page summary
-P.plot_rank_time_breakdown(surrogate, "figs/breakdown.png")   # needs PROFILE_TIMING
+P.plot_rank_time_breakdown(surrogate, "figs/breakdown.png")   # needs profile_timing
 P.plot_level_heatmap(surrogate, "figs/levels.png", value="clusters_start")
 P.plot_level_progress(surrogate, "figs/growth.png")
-P.plot_timeline(surrogate, "figs/timeline.png")               # needs PROFILE_EVENTS / PROFILE_DIR
+P.plot_timeline(surrogate, "figs/timeline.png")               # needs profile_events / profile_dir
 P.plot_load_over_time(surrogate, "figs/load.png")
 P.plot_steal_matrix(surrogate, "figs/steals.png")             # needs steals (MPI)
 ```
 
 | Plot | Shows | Needs |
 |---|---|---|
-| `plot_rank_time_breakdown` | Share (or seconds, `normalize=False`) of each rank's time per phase group, with total time per rank | `PROFILE_TIMING` |
+| `plot_rank_time_breakdown` | Share (or seconds, `normalize=False`) of each rank's time per phase group, with total time per rank | `profile_timing` |
 | `plot_level_heatmap` | One level statistic per level and rank: `clusters_start`, `good_clusters`, `num_pts_next_level`, `generated_pts`, `size_mean`, `runtime_sec`, ... | always |
 | `plot_level_progress` | Accepted vs split clusters per level, points queued and generated | always |
 | `plot_timeline` | Gantt chart per rank coloured by phase, with victim to thief steal arrows | events |
@@ -247,7 +252,7 @@ figure; export it from `src/plotting/__init__.py`.
 
 ## Live monitoring
 
-Train with `PROFILE_DIR`, then watch from another terminal.
+Train with `profile_dir`, then watch from another terminal.
 [`example03_monitoring.py`](example03_monitoring.py) is a ready-made run: 8 MPI
 ranks on the CPU train a 5-D Rosenbrock surrogate (2M points, tol 0.007; about 85 s
 on a 22-core laptop). Ranks finish their own work at different times, and the idle
@@ -285,7 +290,7 @@ and `--metric` change the problem.
 The monitor only reads the stream files, so it adds no MPI traffic and works from a
 login node when the run directory is on a shared file system. The newest idle
 stretch of a rank appears when that rank records its next event. For your own runs,
-pass `PROFILE_DIR="<dir>"` to `train` and point the monitor at that directory.
+set `profile_dir="<dir>"` in the config and point the monitor at that directory.
 
 ## Paper experiments (launcher)
 
@@ -321,22 +326,23 @@ MPI and work stealing, so a new component gets all of those for free.
 |---|---|---|---|
 | Local model | `src.local_models.LocalModel` | `LOCAL_MODELS` | from `mode` |
 | Split strategy | `src.splitting.SplitStrategy` | `SPLIT_STRATEGIES` | from `mode` |
-| Sampler | `src.sampling.Sampler` | `SAMPLERS` | `SAMPLING_METHOD` |
-| Acceptance | `src.acceptance.AcceptanceCriterion` | `ACCEPTANCE_CRITERIA` | `ERROR_METRIC`, `ATOL`, `RTOL` |
-| Trust region | `src.trust_regions.TrustRegion` | `TRUST_REGIONS` | `CovarianceEllipsoid(Q_REG)` |
+| Sampler | `src.sampling.Sampler` | `SAMPLERS` | `sampling_method` |
+| Acceptance | `src.acceptance.AcceptanceCriterion` | `ACCEPTANCE_CRITERIA` | `error_metric`, `atol`, `rtol` |
+| Trust region | `src.trust_regions.TrustRegion` | `TRUST_REGIONS` | `CovarianceEllipsoid(q_reg)` |
 
-Each can be given to `train` (lower-case keyword) or `ClusteringConfig` as an
+Each is a `ClusteringConfig` field and accepts an
 instance, a registered name, or `(name, settings)`:
 
 ```python
 from src.splitting import CovarianceSplit
 
-surrogate.train(
-    X, f_fn=f, mode=SurrogateMode.AFFINE_COV_HESS,
+config = ClusteringConfig(
+    mode=SurrogateMode.AFFINE_COV_HESS,
     split_strategy=CovarianceSplit(cut="sign"),          # instance: the paper's sign cut
     sampler="convex_combination",                         # registered name
     acceptance=("L2", {"atol": 1e-3, "rtol": 1e-2}),      # (name, settings)
 )
+surrogate.train(X, config, Evaluator(f_fn=f))
 ```
 
 Built-in settings: `TaylorModel(second_order=...)`,
@@ -388,7 +394,7 @@ class OffsetAffine(LocalModel):
         return out + params["offset"][cluster_ids] if "offset" in params else out
 
 
-surrogate.train(X, f_fn=f, local_model=("offset_affine", {"offset": 0.5}))
+surrogate.train(X, ClusteringConfig(atol=0.02, local_model=("offset_affine", {"offset": 0.5})), Evaluator(f_fn=f))
 ```
 
 Contracts the engine checks (with a clear error):
@@ -453,7 +459,7 @@ For another cluster, copy [`scripts/hpc/tacc.sh`](../scripts/hpc/tacc.sh) to
 | `OFI EP enable failed` MPI abort (Intel MPI on a Stampede3 login node) | Run on a compute node, through `ibrun`, after `source scripts/hpc/tacc.sh`. |
 | Scripts that use `multiprocessing` hang or re-run themselves on Windows and macOS | Those platforms start workers by re-importing your script; put the entry point under `if __name__ == "__main__":`, as in `examples/`. |
 | `MemoryError: The next level's queue ... needs ... GiB more host memory` | The run would exhaust host RAM; see the host-memory note under [Training settings](#training-settings). |
-| `RuntimeWarning: Training stopped at MAX_LEVELS=...` | Refinement hit the depth limit before every cluster met the tolerance; raise `MAX_LEVELS` or loosen the tolerance (see `surrogate.converged`). |
+| `RuntimeWarning: Training stopped at max_levels=...` | Refinement hit the depth limit before every cluster met the tolerance; raise `max_levels` or loosen the tolerance (see `surrogate.converged`). |
 
 ## Development
 
@@ -468,7 +474,7 @@ make help                        # Linux/macOS wrappers, e.g. `make dev EXTRAS="
 | ---------------- | --------------------------------------------- | ------------------- |
 | `dev`            | `lint` + `test` + `notebook`                  | `uv sync` (default) |
 | `research`       | extra packages for the scripts in `research/`, incl. cuML for comparisons | `--group research`  |
-| `research_internal` | `knndbscan` (TestPyPI, Linux) for `INITIAL_CLUSTERING_METHOD="knndbscan"` | `--group research_internal` |
+| `research_internal` | `knndbscan` (TestPyPI, Linux) for `initial_clustering_method="knndbscan"` | `--group research_internal` |
 | `profiling`      | py-spy, line_profiler, viztracer, memray      | `--group profiling` |
 | `viz`            | animation/plotting (manim, plotly)            | `--group viz`       |
 
