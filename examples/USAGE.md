@@ -299,20 +299,27 @@ set `profile_dir="<dir>"` in the config and point the monitor at that directory.
 ## Paper experiments (launcher)
 
 [`afinni_launcher.py`](../afinni_launcher.py) runs the benchmark problems and writes
-one JSON result per run (plus error histogram, profile JSON and dashboard) under
-`results/<problem>/`.
+one JSON result per run (plus error histogram and profile dashboard; the profile is
+stored in the JSON) under `results/<problem>/`.
 
 ```bash
 uv run python afinni_launcher.py --experiment rosenbrock --dims 2 5 --tols 0.1 0.05
 uv run mpiexec -n 4 python afinni_launcher.py --experiment anisotropic_quadratic --dims 5 \
     --tols 0.02 --error_eval_mode taylor_cov_hess --sampling modified
+uv run python afinni_launcher.py --experiment rosenbrock --dims 2 \
+    --atols none 1e-3 --rtols 0.05 none      # 3 runs: every pair except none/none
 ```
 
 Options: `--experiment` (`rosenbrock`, `anisotropic_quadratic`, `anisotropic_gaussian`,
 `degenerate_quadratic`, `indef_degen_quadratic`, `lorenz96`, `wave`), `--dims`,
-`--tols`, `--error_eval_mode` (a mode value), `--sampling uniform|modified` (initial
-data), `--sampling_method` (augmentation sampler), `--N_train`, `--Q_reg`,
-`--coarse_factor`, `--dt` (Lorenz flow map). An existing result file means "done"
+`--tols` (each run with atol = rtol), or `--atols` / `--rtols` (every combination; a
+scalar applies to every output component, `none` leaves that test out; not allowed
+together with `--tols`), `--error_eval_mode` (a mode value), `--sampling uniform|modified` (initial
+data), `--sampling_method` (augmentation sampler), `--N_train`,
+`--num_initial_clusters`, `--min_pts_per_cluster` (default: the dimension heuristics
+`get_NUM_INITIAL_CLUSTERS` / `get_MIN_PTS_PER_CLUSTER`), `--Q_reg`,
+`--coarse_factor`, `--dt` (Lorenz flow map). For lorenz96, atol is multiplied by
+max|f_j| per output and `--tols` runs atol only. An existing result file means "done"
 and is skipped; non-default settings are part of the file name, so different
 settings never reuse each other's results. `results/<problem>/_summary.csv`
 collects all runs of a problem.

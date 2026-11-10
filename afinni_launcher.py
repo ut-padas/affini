@@ -59,6 +59,36 @@ def _settings_suffix(sampling_method: str, Q_reg: float, coarse_factor: int) -> 
     return suffix
 
 
+def _tolerance_tag(atol: float | None, rtol: float | None, scaled: bool = False) -> str:
+    """
+    File-name part for the tolerances: ``tol{t}`` for exactly what ``--tols t`` runs
+    (atol = rtol = t, or atol only where atol is scaled by max|f|), so existing results
+    are still found; otherwise ``atol{a}_rtol{r}``, with ``none`` for an omitted test.
+    """
+    if atol is not None and rtol == (None if scaled else atol):
+        return f"tol{atol}"
+    return f"atol{'none' if atol is None else atol}_rtol{'none' if rtol is None else rtol}"
+
+
+def tolerance_pairs(
+    tols: list[float], atols: list[float | None] | None, rtols: list[float | None] | None, scaled: bool
+) -> list[tuple[float | None, float | None]]:
+    """
+    The (atol, rtol) pairs to run: every combination of ``atols`` x ``rtols`` (``None``
+    leaves that test out, a missing list means none; the pair without any tolerance is
+    skipped), or, when neither list is given, ``atol = rtol = t`` for each of ``tols``,
+    with atol only where it is scaled by max|f| (``scaled``), as before.
+    """
+    if atols is None and rtols is None:
+        return [(t, None if scaled else t) for t in tols]
+    pairs = [(a, r) for a in (atols or [None]) for r in (rtols or [None])]
+    if (None, None) in pairs:
+        pairs = [p for p in pairs if p != (None, None)]
+        if _rank == 0:
+            print("Skipping atol=none, rtol=none: an acceptance test needs a tolerance.")
+    return pairs
+
+
 SEED = 0
 
 logger = logging.getLogger(__name__)
@@ -104,7 +134,8 @@ def conduct_experiment_given_data(
     X_test,
     f_fn,
     g_fn,
-    TOL: float,
+    ATOL: float | None,
+    RTOL: float | None,
     ERROR_EVAL_MODE: SurrogateMode,
     ERROR_METRIC: Literal["L2", "Linf"],
     INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan", "uniform_grid"],
@@ -130,10 +161,12 @@ def conduct_experiment_given_data(
     """
     Train, predict and score one experiment, writing ``json_fpath`` and its plots (rank 0).
 
-    The acceptance test uses ``atol = rtol = TOL``, or with ``SCALE_ATOL_BY_MAX_F``
-    only ``atol = TOL * max|f_j|`` per output component over the training data (the
-    former "Linf-global"). That scaling evaluates ``f`` on the training points here
-    and passes the values on as ``Y_train``, so they are not evaluated twice.
+    The acceptance test uses ``ATOL`` and ``RTOL`` (scalars applied to every output
+    component; ``None`` leaves that test out). With ``SCALE_ATOL_BY_MAX_F``, ``ATOL``
+    is multiplied by max|f_j| per output component over the training data; that
+    evaluates ``f`` on the training points here and passes the values on as
+    ``Y_train``, so they are not evaluated twice. The JSON records the requested
+    ``atol``/``rtol`` and, when scaled, the per-component ``atol_scaled`` used.
     """
 
     if json_fpath.exists():
@@ -148,17 +181,17 @@ def conduct_experiment_given_data(
     try:
         if _rank == 0:
             print("\n--- TRAINING ---")
-        ATOL, RTOL = TOL, TOL
-        if SCALE_ATOL_BY_MAX_F:
+        atol_used = ATOL
+        if SCALE_ATOL_BY_MAX_F and ATOL is not None:
             if _rank == 0:
                 Y_train = f_fn(X_train) if Y_train is None else Y_train
-                ATOL = tuple(float(TOL * m) for m in _to_host(xp.max(xp.abs(Y_train.reshape(len(Y_train), -1)), axis=0)))
+                atol_used = tuple(float(ATOL * m) for m in _to_host(xp.max(xp.abs(Y_train.reshape(len(Y_train), -1)), axis=0)))
             # Only rank 0 holds the data, but every rank must train with the same tolerances.
-            ATOL, RTOL = MPI.COMM_WORLD.bcast(ATOL, root=0), None
+            atol_used = MPI.COMM_WORLD.bcast(atol_used, root=0)
         _start_train_time = time.perf_counter()
         config = ClusteringConfig(
             mode=ERROR_EVAL_MODE,
-            atol=ATOL,
+            atol=atol_used,
             rtol=RTOL,
             error_metric=ERROR_METRIC,
             initial_clustering_method=INITIAL_CLUSTERING_METHOD,
@@ -183,7 +216,7 @@ def conduct_experiment_given_data(
 
         # Save centroid data if user requests it
         if _rank == 0 and SAVE_FINAL_CENTROIDS is True:
-            xp.save(f"centroids_tol_{TOL}_d{DIM}.npy", surrogate.X_src)
+            xp.save(f"centroids_{_tolerance_tag(ATOL, RTOL, SCALE_ATOL_BY_MAX_F)}_d{DIM}.npy", surrogate.X_src)
 
         _start_predict_time = time.perf_counter()
 
@@ -216,7 +249,7 @@ def conduct_experiment_given_data(
     # Compute ground truth and error metrics (Rank 0 only)
     ground_truth = f_fn(X_test)
     error_metrics = compute_error_metrics(
-        atol=ATOL,
+        atol=atol_used,
         rtol=RTOL,
         preds=preds,
         gt=ground_truth,
@@ -229,9 +262,9 @@ def conduct_experiment_given_data(
         "mpi_size": _size,
         "dim": DIM,
         "f_dim": F_DIM,
-        "tol": TOL,
         "atol": ATOL,
         "rtol": RTOL,
+        **({"atol_scaled": atol_used} if atol_used is not ATOL else {}),
         "N_0": N_TRAIN,
         "N_test": N_TEST,
         "N_c": surrogate.N_src,
@@ -268,7 +301,7 @@ def conduct_experiment_given_data(
 
     plot_save_path = json_fpath.with_name(json_fpath.stem + "_error_histogram.png")
     plot_error_histogram(
-        rtol=TOL,
+        rtol=RTOL,
         ground_truth=ground_truth,
         predictions=preds,
         img_fpath=plot_save_path,
@@ -327,7 +360,8 @@ def conduct_experiment_generate_uniform_data(
     # Training-specific
     f_fn,
     g_fn,
-    TOL: float,
+    ATOL: float | None,
+    RTOL: float | None,
     ERROR_EVAL_MODE: SurrogateMode,
     ERROR_METRIC: Literal["L2", "Linf"],
     INITIAL_CLUSTERING_METHOD: Literal["kmeans", "knndbscan", "uniform_grid"],
@@ -369,7 +403,8 @@ def conduct_experiment_generate_uniform_data(
         X_test,
         f_fn,
         g_fn,
-        TOL,
+        ATOL,
+        RTOL,
         ERROR_EVAL_MODE,
         ERROR_METRIC,
         INITIAL_CLUSTERING_METHOD,
@@ -403,7 +438,6 @@ def create_summary_dataframe(exp_dir: Path):
     json_files = list(exp_dir.glob("*.json"))
     key_list = [
         "dim",
-        "tol",
         "N_0",
         "N_test",
         "N",
@@ -421,23 +455,33 @@ def create_summary_dataframe(exp_dir: Path):
 
         for key in key_list:
             data_dict[key].append(data[key])
+        # Results written before --atols/--rtols store one "tol" (atol = rtol = tol,
+        # or atol only, then recorded with rtol None).
+        atol, rtol = (data["atol"], data["rtol"]) if "tol" not in data else (data["tol"], data.get("rtol", data["tol"]))
+        data_dict["atol"].append(atol)
+        data_dict["rtol"].append(rtol)
 
         data_dict["sampling_method"].append(data.get("sampling_method", DEFAULT_SAMPLING_METHOD))
+        data_dict["num_initial_clusters"].append(data.get("num_initial_clusters"))
+        data_dict["min_pts_per_cluster"].append(data.get("min_pts_per_cluster"))
         data_dict["e"].append(data["error_metrics"]["all"]["l2_rel_error"])
         data_dict["e_in"].append(data["error_metrics"]["in"]["l2_rel_error"])
         data_dict["p_out"].append(data["error_metrics"]["perct_out"])
 
     df = pd.DataFrame(data_dict)
     df = df.sort_values(
-        by=["dim", "tol", "error_eval_mode"], ascending=[True, False, True]
+        by=["dim", "atol", "rtol", "error_eval_mode"], ascending=[True, False, False, True]
     )
     order = [
         "dim",
-        "tol",
+        "atol",
+        "rtol",
         "error_eval_mode",
         "error_metric",
         "initial_clustering_method",
         "sampling_method",
+        "num_initial_clusters",
+        "min_pts_per_cluster",
         "N_0",
         "N_test",
         "N",
@@ -687,14 +731,20 @@ MODIFIED_SAMPLING = {
 def run_problem(
     problem: Problem,
     dim: int,
-    tol: float,
+    atol: float | None,
+    rtol: float | None,
     error_eval_mode: SurrogateMode,
     Q_reg: float,
     coarse_factor: int,
     N_train: int | None = None,
     sampling_method: str = DEFAULT_SAMPLING_METHOD,
+    num_initial_clusters: int | None = None,
+    min_pts_per_cluster: int | None = None,
 ):
-    """Train and test one surrogate for ``problem``; skip if the result exists."""
+    """
+    Train and test one surrogate for ``problem``; skip if the result exists.
+    ``num_initial_clusters`` / ``min_pts_per_cluster`` default to the dimension heuristics.
+    """
     if problem.only_modes is not None and error_eval_mode not in problem.only_modes:
         print(
             f"Skipping ERROR_EVAL_MODE={error_eval_mode.value}: this sampling is only "
@@ -713,12 +763,12 @@ def run_problem(
 
     N_TRAIN = problem.n_train(dim) if N_train is None else N_train
     N_TEST = problem.n_test(N_TRAIN)
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim)
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim)
+    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim) if num_initial_clusters is None else num_initial_clusters
+    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim) if min_pts_per_cluster is None else min_pts_per_cluster
 
     json_fpath = (
         EXP_DIR
-        / f"mpi_sz{_size}_dim{dim}_tol{tol}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}{_settings_suffix(sampling_method, Q_reg, coarse_factor)}.json"
+        / f"mpi_sz{_size}_dim{dim}_{_tolerance_tag(atol, rtol, problem.scale_atol_by_max_f)}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}{_settings_suffix(sampling_method, Q_reg, coarse_factor)}.json"
     )
     settings = dict(
         json_fpath=json_fpath,
@@ -730,7 +780,8 @@ def run_problem(
         f_fn=problem.f,
         g_fn=problem.g,
         HESSIAN=problem.hessian,
-        TOL=tol,
+        ATOL=atol,
+        RTOL=rtol,
         ERROR_EVAL_MODE=error_eval_mode,
         ERROR_METRIC=ERROR_METRIC,
         INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
@@ -761,17 +812,23 @@ def run_problem(
 
 def lorenz_trajectories_experiment(
     d,
-    tol,
+    atol,
+    rtol,
     error_eval_mode,
     dt,
     Q_reg,
     coarse_factor,
     N_train=None,
     sampling_method=DEFAULT_SAMPLING_METHOD,
+    num_initial_clusters=None,
+    min_pts_per_cluster=None,
 ):
     """
     Goal: use time step data as training and testing to do experiments.
-    I.e. use manifolds of solutions as initial data.
+    I.e. use manifolds of solutions as initial data. ``atol`` is scaled by max|f_j|
+    per state component (see conduct_experiment_given_data). ``num_initial_clusters``
+    / ``min_pts_per_cluster`` default to the heuristics capped at 1000 / 500; other
+    values are added to the file name.
     """
     # Parameters for experiment
     l = -5.0
@@ -823,8 +880,14 @@ def lorenz_trajectories_experiment(
     EXP_DIR = RESULTS_DIR / "lorenz_trajexp"
     mode_suffix = "" if error_eval_mode == SurrogateMode.AFFINE_COV_HESS else f"_{error_eval_mode.value}"
     size_suffix = "" if _size == 1 else f"_mpisz{_size}"
+    default_ninit, default_minpts = min(get_NUM_INITIAL_CLUSTERS(d), 1000), min(get_MIN_PTS_PER_CLUSTER(d), 500)
+    num_initial_clusters = default_ninit if num_initial_clusters is None else num_initial_clusters
+    min_pts_per_cluster = default_minpts if min_pts_per_cluster is None else min_pts_per_cluster
+    cluster_suffix = ("" if num_initial_clusters == default_ninit else f"_ninit{num_initial_clusters}") + (
+        "" if min_pts_per_cluster == default_minpts else f"_minpts{min_pts_per_cluster}"
+    )
     json_fpath = EXP_DIR / (
-        f"dim{d}_dt{dt}_tol{tol}_ntrain{N_start_train * (N_steps + 1)}{mode_suffix}{size_suffix}"
+        f"dim{d}_dt{dt}_{_tolerance_tag(atol, rtol, scaled=True)}_ntrain{N_start_train * (N_steps + 1)}{mode_suffix}{size_suffix}{cluster_suffix}"
         f"{_settings_suffix(sampling_method, Q_reg, coarse_factor)}.json"
     )
 
@@ -839,13 +902,14 @@ def lorenz_trajectories_experiment(
         X_test=X_test,
         f_fn=f_fn,
         g_fn=None,
-        TOL=tol,
+        ATOL=atol,
+        RTOL=rtol,
         ERROR_EVAL_MODE=error_eval_mode,
         ERROR_METRIC="Linf",
         SCALE_ATOL_BY_MAX_F=True,
         INITIAL_CLUSTERING_METHOD="kmeans",
-        NUM_INITIAL_CLUSTERS=min(get_NUM_INITIAL_CLUSTERS(d), 1000),
-        MIN_PTS_PER_CLUSTER=min(get_MIN_PTS_PER_CLUSTER(d), 500),
+        NUM_INITIAL_CLUSTERS=num_initial_clusters,
+        MIN_PTS_PER_CLUSTER=min_pts_per_cluster,
         USE_WORK_STEALING=False,
         Q_reg=Q_reg,
         COARSE_FACTOR=coarse_factor,
@@ -856,7 +920,32 @@ def lorenz_trajectories_experiment(
     return EXP_DIR
 
 
-def setup_argparse():
+def _tolerance_value(text: str) -> float | None:
+    """One --atols/--rtols value: a finite number >= 0, or ``none``."""
+    if text.lower() == "none":
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number or 'none'") from None
+    if not (value >= 0 and value != float("inf")):
+        raise argparse.ArgumentTypeError(f"{text!r} must be a finite number >= 0")
+    return value
+
+
+def _positive_int(text: str) -> int:
+    """An integer >= 1, for the cluster-size arguments."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not an integer") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"{text!r} must be >= 1")
+    return value
+
+
+def setup_argparse(argv: list[str] | None = None):
+    """Parse the command line (``argv``, default ``sys.argv``); --tols with --atols/--rtols exits with an error."""
     parser = argparse.ArgumentParser()
 
     # Experiment basics
@@ -868,10 +957,26 @@ def setup_argparse():
     )
     parser.add_argument(
         "--tols",
-        help="The tolerances to use for the experiments.",
+        help="Tolerances to sweep, each used as atol = rtol (default 0.1 0.05; for problems "
+        "that scale atol by max|f|, atol only). Not allowed with --atols/--rtols.",
         type=float,
         nargs="+",
-        default=[0.1, 0.05],
+        default=None,
+    )
+    parser.add_argument(
+        "--atols",
+        help="Absolute tolerances to sweep (scalars, applied to every output component; "
+        "'none' leaves the absolute test out). Every combination with --rtols is run.",
+        type=_tolerance_value,
+        nargs="+",
+        default=None,
+    )
+    parser.add_argument(
+        "--rtols",
+        help="Relative tolerances to sweep, as --atols.",
+        type=_tolerance_value,
+        nargs="+",
+        default=None,
     )
     parser.add_argument(
         "--dims",
@@ -920,6 +1025,19 @@ def setup_argparse():
         default=None,
     )
     parser.add_argument(
+        "--num_initial_clusters",
+        help="Number of initial clusters (default: get_NUM_INITIAL_CLUSTERS(dim)).",
+        type=_positive_int,
+        default=None,
+    )
+    parser.add_argument(
+        "--min_pts_per_cluster",
+        help="Minimum points per cluster; rejected clusters are augmented to twice this "
+        "before splitting (default: get_MIN_PTS_PER_CLUSTER(dim)).",
+        type=_positive_int,
+        default=None,
+    )
+    parser.add_argument(
         "--sampling_method",
         help="How new points are sampled inside rejected clusters during training "
         "(--sampling chooses the initial training data instead).",
@@ -927,13 +1045,18 @@ def setup_argparse():
         default=DEFAULT_SAMPLING_METHOD,
     )
 
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.tols is not None and (args.atols is not None or args.rtols is not None):
+        parser.error("--tols cannot be combined with --atols/--rtols")
+    if args.tols is None:
+        args.tols = [0.1, 0.05]
+    return args
 
 
 def run_experiment_from_args(args):
+    """Run every (atol, rtol) pair from ``tolerance_pairs`` in every dimension of ``--dims``; existing results are skipped."""
 
     # Grab values from dictionary
-    tolvec = args.tols
     dvec = args.dims
     function_name = args.experiment
     sampling = args.sampling
@@ -943,34 +1066,24 @@ def run_experiment_from_args(args):
 
     error_eval_mode = SurrogateMode(args.error_eval_mode)
 
-    for tol in tolvec:
-        for d in dvec:
-            if sampling == "modified" and function_name == "lorenz96":
+    if sampling == "modified" and function_name == "lorenz96":
+        for atol, rtol in tolerance_pairs(args.tols, args.atols, args.rtols, scaled=True):
+            for d in dvec:
                 lorenz_trajectories_experiment(
-                    d,
-                    tol,
-                    error_eval_mode,
-                    args.dt,
-                    Q_reg,
-                    coarse_factor,
-                    N_train,
-                    args.sampling_method,
-                )
-                continue
-            if sampling == "modified" and function_name in MODIFIED_SAMPLING:
-                problem = MODIFIED_SAMPLING[function_name](args)
-            else:
-                problem = PROBLEMS[function_name](args)
+                    d, atol, rtol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train, args.sampling_method,
+                    args.num_initial_clusters, args.min_pts_per_cluster,
+                )  # fmt: skip
+        return
+    if sampling == "modified" and function_name in MODIFIED_SAMPLING:
+        problem = MODIFIED_SAMPLING[function_name](args)
+    else:
+        problem = PROBLEMS[function_name](args)
+    for atol, rtol in tolerance_pairs(args.tols, args.atols, args.rtols, problem.scale_atol_by_max_f):
+        for d in dvec:
             run_problem(
-                problem,
-                d,
-                tol,
-                error_eval_mode,
-                Q_reg,
-                coarse_factor,
-                N_train,
-                args.sampling_method,
-            )
+                problem, d, atol, rtol, error_eval_mode, Q_reg, coarse_factor, N_train, args.sampling_method,
+                args.num_initial_clusters, args.min_pts_per_cluster,
+            )  # fmt: skip
 
 
 if __name__ == "__main__":
