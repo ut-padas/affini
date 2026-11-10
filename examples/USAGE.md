@@ -50,6 +50,8 @@ pred, outside = surrogate.predict(Q, k_nn=1)   # (N, fd) values, (N,) "outside e
   `*_EXACT_HESS` modes also need `hessian_fn` (returning `(N, d, d)`). An evaluator
   can be reused; `profiling_stats` counts only the run's own evaluations.
 - `train(..., Y_train=f(X))` skips the initial evaluations (they are still counted).
+- `train(..., initial_labels=labels)` skips the initial clustering; compute the labels
+  once with `initial_clustering(X, config)` (see [`example02_nelson.py`](example02_nelson.py)).
 - `predict(..., k_nn=k)` blends the `k` best leaves by trust-region distance;
   `strict_trust_region=True` ignores leaves whose region does not contain the
   query. `coarse_factor` (default 10) sets how many Euclidean neighbours are reranked.
@@ -122,7 +124,7 @@ Fields of `src.config.ClusteringConfig` (all keyword-only); only a tolerance is 
 |---|---|
 | `mode` | Preset pair (local model, split strategy), `AFFINE_COV_HESS` by default; see the table below |
 | `atol`, `rtol`, `error_metric` | Acceptance test: a cluster is accepted when every output component is within `rtol` relative **or** `atol` absolute error, measured as `"Linf"` (max error, relative to the cluster's own max \|f\|) or `"L2"` (relative L2 / RMS). Give at least one tolerance; each is a scalar or one value per output component, and an omitted one never accepts. For an absolute test scaled to the function, pass `atol = tol * max\|f\|`. Exact formulas: [`src/acceptance.py`](../src/acceptance.py) |
-| `num_initial_clusters`, `initial_clustering_method` | Roots of the forest: `"kmeans"` (custom k-means in `src/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (needs `--group research_internal`, Linux) |
+| `num_initial_clusters`, `initial_clustering_method` | Roots of the forest: `"kmeans"` (custom k-means in `src/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (needs `--group research_internal`, Linux). `src.adaptive_clustering.initial_clustering(X, config)` returns the labels training starts from; pass them as `train(..., initial_labels=labels)` to reuse one clustering for several trainings on the same points |
 | `min_pts_per_cluster` | Rejected clusters are augmented to at least twice this before splitting |
 | `max_levels` | Refinement depth limit; reaching it leaves `converged=False` |
 | `sampling_method` | Where new points go when augmenting (`"convex_combination"`) |

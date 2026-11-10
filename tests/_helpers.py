@@ -42,7 +42,7 @@ def assert_backend_equal(
 EVALUATOR_FIELDS = ("f_fn", "g_fn", "oracle_fn", "hessian_fn")
 
 
-def train_surrogate(X, surrogate=None, *, Y_train=None, **options):
+def train_surrogate(X, surrogate=None, *, Y_train=None, initial_labels=None, **options):
     """
     Train ``surrogate`` (a new ``AFINNISurrogate`` by default) and return it. The
     ``Evaluator`` fields among ``options`` build the evaluator and the rest the
@@ -50,5 +50,5 @@ def train_surrogate(X, surrogate=None, *, Y_train=None, **options):
     """
     evaluator = Evaluator(**{k: options.pop(k) for k in EVALUATOR_FIELDS if k in options})
     surrogate = AFINNISurrogate() if surrogate is None else surrogate
-    surrogate.train(xp.asarray(X), ClusteringConfig(**options), evaluator, Y_train=Y_train)
+    surrogate.train(xp.asarray(X), ClusteringConfig(**options), evaluator, Y_train=Y_train, initial_labels=initial_labels)
     return surrogate

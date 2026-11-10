@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from src import _to_device, _to_host, xp
+from src.adaptive_clustering import initial_clustering
 from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
 from src.heuristic_parameters import get_MIN_PTS_PER_CLUSTER, get_NUM_INITIAL_CLUSTERS
 from src.surrogate import AFINNISurrogate
@@ -328,6 +329,32 @@ if __name__ == "__main__":
     print("Nelson data loaded.")
 
     # --- Build AFINNI surrogate for each component ---
+    # Every output trains on the same points with the same settings, so they share one
+    # initial clustering. It is cached next to the data (k-means on ~1.2M points takes
+    # minutes) under a name that changes with anything the labels depend on.
+    config = ClusteringConfig(
+        mode = SurrogateMode.AFFINE_COV_HESS,
+        atol = TOL,
+        rtol = TOL,
+        error_metric = 'Linf',
+        num_initial_clusters = N_init_clusters,
+        min_pts_per_cluster = min_ppc,
+        seed = SEED,
+        use_work_stealing = True,
+        profile_timing = True,
+    )
+    labels_path = datapath.with_name(
+        f"{datapath.stem}_initial_labels_{config.initial_clustering_method}_tracers{n_train_tracers}"
+        f"_rows{rows_per_tracer}_shift{n_rows_until_output}_k{N_init_clusters}_seed{SEED}.npy"
+    )
+    if labels_path.exists():
+        initial_labels = np.load(labels_path)
+        print(f"Loaded the initial clustering from {labels_path}.")
+    else:
+        initial_labels = initial_clustering(X_train, config)
+        np.save(labels_path, initial_labels)
+        print(f"Saved the initial clustering to {labels_path}.")
+
     surrogate_dict = dict()
     for output in range(14):
 
@@ -335,20 +362,7 @@ if __name__ == "__main__":
         surrogate = AFINNISurrogate()
         f_train_component = f_train[:,output][:,None]
         print(f"Beginning training AFINNI surrogate for output {net.species[output]}...")
-        config = ClusteringConfig(
-            mode = SurrogateMode.AFFINE_COV_HESS,
-            atol = TOL,
-            rtol = TOL,
-            error_metric = 'Linf',
-            num_initial_clusters = N_init_clusters,
-            min_pts_per_cluster = min_ppc,
-            seed = SEED,
-            use_work_stealing = True,
-            profile_timing = True,
-            save_initial_clustering = True,
-            use_existing_initial_clustering = True,
-        )
-        surrogate.train(X_train, config, Evaluator(f_fn=f_fn), Y_train=f_train_component)
+        surrogate.train(X_train, config, Evaluator(f_fn=f_fn), Y_train=f_train_component, initial_labels=initial_labels)
 
         print("-----------------------------------------------------------")
         print(f"AFINNI training complete for output {net.species[output]}.")

@@ -171,13 +171,17 @@ class AFINNISurrogate:
         evaluator: Evaluator,
         *,
         Y_train: Optional[Array] = None,
+        initial_labels: Optional[Array] = None,
     ) -> None:
         """
         Train the surrogate collectively on every MPI rank, replacing any previous model.
 
         Every setting, including the components and the tolerances, comes from
-        ``config``; every rank must pass an equivalent one. Only rank 0's ``X_train``
-        and ``Y_train`` (a precomputed f(X_train)) are read. ``evaluator`` may be
+        ``config``; every rank must pass an equivalent one. Only rank 0's ``X_train``,
+        ``Y_train`` (a precomputed f(X_train)) and ``initial_labels`` are read.
+        ``initial_labels`` (e.g. from ``src.adaptive_clustering.initial_clustering``,
+        computed once for several trainings on the same points) skip the initial
+        clustering. ``evaluator`` may be
         reused: its ``n_evals`` keeps counting, but ``profiling_stats`` reports only
         this run's evaluations.
 
@@ -192,7 +196,7 @@ class AFINNISurrogate:
 
         leaf_model = config.components().local_model
         # Unguarded engine body: the failure policy is owned by train() (see run_collective).
-        results = _adaptive_clustering(X_train, config, evaluator, Y=Y_train)
+        results = _adaptive_clustering(X_train, config, evaluator, Y=Y_train, initial_labels=initial_labels)
 
         # 2. Broadcast trained structures to all ranks
         bcast_data = None

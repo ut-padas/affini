@@ -82,8 +82,6 @@ class ClusteringConfig:
     # --- Initial clustering ---
     initial_clustering_method: Literal["kmeans", "knndbscan", "uniform_grid"] = "kmeans"
     num_initial_clusters: int = 100
-    save_initial_clustering: bool = False  # save labels to INITIAL_CLUSTERING_FILE
-    use_existing_initial_clustering: bool = False  # load labels from that file if valid
 
     # --- Refinement ---
     min_pts_per_cluster: int = 100

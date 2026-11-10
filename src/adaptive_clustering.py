@@ -1,5 +1,6 @@
 """
-The adaptive clustering engine: initial clustering on rank 0, scatter to MPI ranks,
+The adaptive clustering engine: initial clustering on rank 0 (``initial_clustering``,
+also callable on its own), scatter to MPI ranks,
 the batched fit / accept / augment / split refinement loop on each rank (with work
 stealing between ranks), and the gather of accepted leaves on rank 0.
 
@@ -46,7 +47,6 @@ from src.work_stealing import (
     send_clusters,
 )
 
-INITIAL_CLUSTERING_FILE = "initial_clustering_labels.npy"
 # Initial scatter of clusters from rank 0 (payload tags SCATTER_TAG + 1..4); kept
 # well away from the work-stealing tags.
 SCATTER_TAG = 1000
@@ -102,6 +102,40 @@ def _threads_for_rank0(node_ranks: int) -> int:
     env = os.environ.get("OMP_NUM_THREADS", "")
     per_rank = int(env) if env.isdigit() else (1 if node_ranks > 1 else os.cpu_count() or 1)
     return max(1, per_rank * node_ranks)
+
+
+def initial_clustering(X: Array, config: ClusteringConfig, *, threads: int | None = None) -> np.ndarray:
+    """
+    The (N,) int64 host labels of the initial clustering that training with
+    ``config`` starts from (``initial_clustering_method``, ``num_initial_clusters``,
+    ``seed``); deterministic for a given seed and backend. ``threads`` (CPU k-means
+    only) defaults to ``OMP_NUM_THREADS``, else every core.
+    """
+    method = config.initial_clustering_method
+    if method == "kmeans":
+        # Custom k-means (src/kmeans.py). The CPU path keeps the previous two Lloyd
+        # iterations; training passes the cores of rank 0's node, whose other ranks wait.
+        from src.kmeans import kmeans_labels
+
+        if IS_CUPY_BACKEND:
+            labels = kmeans_labels(xp.asarray(X, dtype=xp.float64), config.num_initial_clusters, config.seed)
+        else:
+            labels = kmeans_labels(
+                np.asarray(_to_host(X), dtype=np.float64), config.num_initial_clusters, config.seed,
+                max_iter=2, threads=_threads_for_rank0(1) if threads is None else threads,
+            )  # fmt: skip
+    elif method == "knndbscan":
+        from knndbscan import knn_dbscan
+
+        labels = knn_dbscan(
+            xp.asarray(X, dtype=xp.float64), eps=0.5, min_samples=config.min_pts_per_cluster,
+            device="gpu" if IS_CUPY_BACKEND else "cpu",
+        )  # fmt: skip
+    elif method == "uniform_grid":
+        labels, _ = uniform_grid_cluster_labels(_to_host(X), config.num_initial_clusters)
+    else:
+        raise ValueError(f"Invalid initial clustering method: {method!r}")
+    return np.asarray(_to_host(labels)).astype(np.int64)
 
 
 def _run_local_refinement(
@@ -590,6 +624,7 @@ def adaptive_clustering(
     evaluator: Evaluator,
     *,
     Y: Optional[Array] = None,
+    initial_labels: Optional[Array] = None,
 ) -> dict[str, Any] | None:
     """
     Train collectively on every MPI rank (see ``_adaptive_clustering``).
@@ -600,7 +635,9 @@ def adaptive_clustering(
     receive, so the failing rank logs its diagnostic (rank and traceback) and calls
     ``MPI_Abort``, which ends every rank of the job with a non-zero status.
     """
-    return run_collective(lambda: _adaptive_clustering(X, config, evaluator, Y=Y), "training")
+    return run_collective(
+        lambda: _adaptive_clustering(X, config, evaluator, Y=Y, initial_labels=initial_labels), "training"
+    )
 
 
 def run_collective(operation, what: str):
@@ -646,17 +683,21 @@ def _adaptive_clustering(
     evaluator: Evaluator,
     *,
     Y: Optional[Array] = None,
+    initial_labels: Optional[Array] = None,
 ) -> dict[str, Any] | None:
     """
     Train collectively on every MPI rank; return the merged leaves on rank 0, None elsewhere.
 
-    Only rank 0's ``X`` (and ``Y``, a precomputed f(X)) is read; the initial points
-    count as evaluations even when ``Y`` is given. ``config`` is copied, so runtime
+    Only rank 0's ``X``, ``Y`` (a precomputed f(X)) and ``initial_labels`` are read;
+    the initial points count as evaluations even when ``Y`` is given.
+    ``initial_labels`` (one non-negative integer per row of ``X``, e.g. from
+    ``initial_clustering``) replaces the initial clustering, which is then recorded
+    as ``profiling_stats["initial_labels_given"]``; they are checked before ``f`` is
+    evaluated. ``config`` is copied, so runtime
     changes (the GPU batch-size cap) never reach the
     caller; ``evaluator.n_evals`` keeps counting across calls. The result holds the
     shared columns, the local model's columns, the convergence status and
-    ``profiling_stats``. ``use_existing_initial_clustering`` reuses
-    ``INITIAL_CLUSTERING_FILE`` only if it has one label per row of ``X``.
+    ``profiling_stats``.
     """
     config = dataclasses.replace(config)  # local copy; the caller's config is untouched
     if not config.requires_no_grads and not evaluator.has_grad:
@@ -705,6 +746,15 @@ def _adaptive_clustering(
             X0_gpu = xp.asarray(X, dtype=xp.float64)
             N0, d_bcast = X0_gpu.shape
             profiling_stats["N0"], profiling_stats["total_f_evals"] = N0, N0
+            if initial_labels is not None:
+                initial_labels = np.asarray(_to_host(initial_labels))
+                valid = initial_labels.shape == (N0,) and np.issubdtype(initial_labels.dtype, np.integer)
+                if not valid or (N0 and initial_labels.min() < 0):
+                    raise ValueError(
+                        f"initial_labels must be {N0} non-negative integers, one per training point; "
+                        f"got shape {initial_labels.shape} and dtype {initial_labels.dtype}."
+                    )
+            profiling_stats["initial_labels_given"] = initial_labels is not None
 
             # Per-point gradients are only carried when the mode uses them at
             # every point; centroid gradients are evaluated during refinement.
@@ -719,57 +769,11 @@ def _adaptive_clustering(
                 F0_gpu, G0_gpu = evaluator(X0_gpu, need_grad=need_point_grads)
             fd_bcast = F0_gpu.shape[1]
 
-            labels0 = None
-            if config.use_existing_initial_clustering and os.path.exists(INITIAL_CLUSTERING_FILE):
-                saved_labels = np.load(INITIAL_CLUSTERING_FILE)
-                if saved_labels.ndim == 1 and saved_labels.shape[0] == N0:
-                    labels0 = saved_labels.astype(np.int64)
-                    logger.info(f"Loaded initial clustering from {INITIAL_CLUSTERING_FILE}.")
-                else:
-                    logger.warning(
-                        f"{INITIAL_CLUSTERING_FILE} has shape {saved_labels.shape}, expected ({N0},). Clustering as normal."
-                    )
-
-            if labels0 is None:
-                if config.initial_clustering_method == "kmeans":
-                    # Custom k-means (src/kmeans.py), deterministic for a given seed. The
-                    # CPU path keeps the previous two Lloyd iterations, and borrows the
-                    # cores of this node's other MPI ranks, which wait meanwhile.
-                    from src.kmeans import kmeans_labels
-
-                    if IS_CUPY_BACKEND:
-                        labels0 = kmeans_labels(X0_gpu, config.num_initial_clusters, config.seed)
-                    else:
-                        labels0 = kmeans_labels(
-                            _to_host(X0_gpu), config.num_initial_clusters, config.seed,
-                            max_iter=2, threads=_threads_for_rank0(node_ranks),
-                        )  # fmt: skip
-                    labels0 = _to_host(labels0).astype(np.int64)
-
-                elif config.initial_clustering_method == "knndbscan":
-                    from knndbscan import knn_dbscan
-
-                    labels0 = _to_host(
-                        knn_dbscan(
-                            X0_gpu,
-                            eps=0.5,
-                            min_samples=config.min_pts_per_cluster,
-                            device="gpu" if IS_CUPY_BACKEND else "cpu",
-                        )
-                    ).astype(np.int64)
-
-                elif config.initial_clustering_method == "uniform_grid":
-                    labels0, _ = uniform_grid_cluster_labels(
-                        _to_host(X0_gpu), config.num_initial_clusters
-                    )
-                    labels0 = labels0.astype(np.int64)
-
-                else:
-                    raise ValueError(f"Invalid: {config.initial_clustering_method}")
-
-                if config.save_initial_clustering:
-                    np.save(INITIAL_CLUSTERING_FILE, labels0)
-                    logger.info(f"Saved initial clustering to {INITIAL_CLUSTERING_FILE}.")
+            labels0 = (
+                initial_clustering(X0_gpu, config, threads=_threads_for_rank0(node_ranks))
+                if initial_labels is None
+                else initial_labels.astype(np.int64)
+            )
 
             sort_idx = np.argsort(labels0)
             labels0_sorted = labels0[sort_idx]
@@ -922,6 +926,7 @@ def _adaptive_clustering(
             "time_total": time.perf_counter() - _start_time,
             "t0": t0,
             "N0": all_profiling_stats[0].get("N0", 0),
+            "initial_labels_given": all_profiling_stats[0].get("initial_labels_given", False),
             "num_levels": max(ps["num_levels"] for ps in all_profiling_stats),
             "num_final_clusters": int(merged["centroids"].shape[0]),
             "effective_config": all_profiling_stats[0].get("effective_config", {}),

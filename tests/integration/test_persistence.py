@@ -303,7 +303,7 @@ def test_public_methods_keep_signatures_and_predict_reports_search_stats():
 
     from src.surrogate import AFINNISurrogate
 
-    assert list(inspect.signature(AFINNISurrogate.train).parameters) == ["self", "X_train", "config", "evaluator", "Y_train"]
+    assert list(inspect.signature(AFINNISurrogate.train).parameters) == ["self", "X_train", "config", "evaluator", "Y_train", "initial_labels"]
     assert "k_nn" in inspect.signature(AFINNISurrogate.predict).parameters
     assert AFINNISurrogate.predict.__doc__ and AFINNISurrogate.train.__doc__
     X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
@@ -346,3 +346,12 @@ def test_component_preparation_can_predict_without_corrupting_training_scope(tmp
                  mode=SurrogateMode.NEAREST_NEIGHBOR, profile_dir=str(tmp_path))
     assert outer.trained
     assert not ac._PROFILER_SCOPES
+
+
+def test_training_writes_no_files_and_the_clustering_cache_flags_are_gone(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    train()
+    assert not list(tmp_path.iterdir())
+    for flag in ("save_initial_clustering", "use_existing_initial_clustering"):
+        with pytest.raises(TypeError, match=flag):
+            ClusteringConfig(atol=0.1, **{flag: True})
