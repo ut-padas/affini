@@ -118,3 +118,8 @@ def test_config_defaults_match_the_former_train_defaults_and_store_paths_as_text
     cfg = ClusteringConfig(atol=0.1, profile_dir=tmp_path)
     assert cfg.mode is SurrogateMode.AFFINE_COV_HESS and cfg.max_clusters_est == 1_000_000
     assert cfg.profile_dir == str(tmp_path) and json.dumps(cfg.to_dict())
+
+
+def test_saving_all_generated_training_data_warns():
+    with pytest.warns(UserWarning, match="saved_training_data"):
+        ClusteringConfig(atol=0.1, save_all_gen_training_data=True)

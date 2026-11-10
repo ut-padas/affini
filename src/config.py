@@ -31,6 +31,7 @@ import dataclasses
 import logging
 import math
 import numbers
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -122,7 +123,7 @@ class ClusteringConfig:
     )
 
     def __post_init__(self) -> None:
-        """Validate settings early, normalize the tolerances and profile_dir, and drop ``store_hess`` where no model can use it."""
+        """Validate settings early, normalize the tolerances and profile_dir, warn about save_all_gen_training_data, and drop ``store_hess`` where no model can use it."""
         self.mode = SurrogateMode(self.mode)
         if self.profile_dir is not None:
             self.profile_dir = str(self.profile_dir)
@@ -165,6 +166,16 @@ class ClusteringConfig:
             logger.warning(
                 f"store_hess is only supported by {SurrogateMode.TAYLOR_LSQ_HESS.value}; "
                 f"ignoring it for mode {self.mode.value}."
+            )
+        if self.save_all_gen_training_data:
+            warnings.warn(
+                "save_all_gen_training_data writes one file per batch into ./saved_training_data/, "
+                "then rank 0 stacks the points (X only, no f values) into ./<name>.npy and deletes "
+                "the whole folder, including files of any other run using it. Run one such job per "
+                "working directory, on a filesystem every MPI rank shares; runs with the same "
+                "tolerances and dimension overwrite each other's output.",
+                UserWarning,
+                stacklevel=3,
             )
 
     def components(self) -> Components:
