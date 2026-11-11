@@ -4628,3 +4628,1305 @@ The important change in priority is that the original audit and self-plane bugs
 are fixed. The next correctness work is stable geometry and stable small-region
 statistics. Broader execution optimizations can then be judged against a numerical
 reference whose sampling and diagnostics survive these cases.
+
+---
+
+## 33. Review of the follow-up fixes, November 11, 2026
+
+### 33.1 Scope and assessment
+
+This review examines implementation commit `6a9a77a` and documentation commit
+`90672cc563ef18b8e2ed149d4f342fc24739580a`, against the previous reviewed state
+`5a47695`. It checks the changes against section 32, reruns its counterexamples,
+and adds tests for the interactions between the revised sampler and inference.
+Only this review document was changed. The numerical probes ran on the CPU.
+
+The fixes are substantial and mostly correct. The previous one-dimensional
+Voronoi failure, cancelled variance, fully immobile minority, oversized batch,
+and zero-width loaded domain counterexamples no longer fail. The shared executor
+still preserves the legacy AFINNI regression results exactly. There is no evidence
+here that the integration needs a different overall architecture.
+
+Two sampling issues still deserve attention before treating Voronoi region mode
+as a reliable numerical reference. First, the stable sampler and nearest-center
+inference disagree in thin multidimensional cells. Second, coordinate recovery
+can move a chain off its original corner while leaving it on a zero-volume face,
+without setting `insufficient_sampling`. The recovery diagnostic also includes
+inactive rows in its statistics, which can conceal movement of the repaired
+cohort. These are reproducible issues, rather than requests for a proof of mixing.
+
+| Previous finding | Result in this revision |
+|---|---|
+| Expanded Voronoi bisectors cancel for close centers | Fixed in the sampler; inference still needs a compatible stable ownership predicate, section 33.2 |
+| B4 raw-moment variance collapses its temperature | Fixed in the reproduced narrow-score case; actual temperature now agrees with the centered reference |
+| Drift statistics cancel on narrow translated clouds | Fixed in the previous cases; small shifts no longer trigger false drift |
+| A minority of chains remains completely unmoved | Recovery now reaches every such chain; detecting movement alone misses residual boundary support, section 33.3 |
+| An oversized region node shares a batch with its predecessor | Fixed; the `[30, 150]` case at capacity 100 now executes as two separate batches |
+| Loaded geometry and leaf identity are unchecked | Substantially improved; basic geometry and metadata checks are present, with one integer-overflow edge case remaining |
+| Comparison accepts a different relative-error floor | Fixed; the script rejects floor `0.1` |
+| Comparison accepts `--no-leaf-bias` | The previous review's interpretation was wrong; ART forces an intercept for degree 1, as explained below |
+
+**Correction to section 32.7:** ART's
+`examples/tree_benchmark_helpers.py:541` sets
+`leaf_include_bias = True if args.leaf_degree == 1 else args.leaf_bias` before
+constructing the model. Therefore, `--no-leaf-bias` does not remove the intercept
+from the degree-1 ART benchmark. The earlier inference from the requested CLI
+configuration to the fitted model was incorrect. The relative-floor mismatch was
+real; the claimed degree-1 bias mismatch was not. The current decision to accept
+that flag is sound.
+
+### 33.2 P1: stable Voronoi sampling still disagrees with root assignment
+
+Relevant code is `Roots.root_of` at `src/region.py:190`, the revised
+`HitAndRunSampler._steps` at line 381, and `RoutingTable.route`.
+
+The sampler now evaluates each bisector using
+
+\[
+\Delta_j=c_j-c_r,\qquad
+n_j=\Delta_j/\|\Delta_j\|,\qquad
+\mathrm{slack}_j=\tfrac12\|\Delta_j\|-n_j^T(u-c_r).
+\]
+
+This repairs the expanded-square cancellation. However, root assignment still
+forms complete squared distances and takes their `argmin`:
+
+\[
+d_j^2=\sum_k(u_k-c_{j,k})^2.
+\]
+
+Direct differences avoid one source of cancellation, but summing squares can
+still erase the component that distinguishes two nearby centers. A large common
+tangential distance can dominate a much smaller difference along the separating
+normal. The result is a false floating-point tie, which the lowest-index rule
+then resolves as if it were a geometric tie.
+
+#### A two-dimensional counterexample with a correctly assigned start
+
+Use the unit-square domain and centers
+
+```python
+separation = 1e-8
+centers = np.array([
+    [0.695 - separation, 0.5],
+    [0.695,              0.5],
+    [0.695 + separation, 0.5],
+])
+seed = np.array([[0.695, 0.9]])
+```
+
+The middle cell is a thin vertical strip. The current `root_of(seed)` correctly
+returns root 1 at this separation. Sample 200 endpoints in that root using seed 2,
+path code 1, `PURPOSE_TRAIN`, `walk_steps=8`, and `max_walk_steps=32`.
+
+All 200 endpoints belong to the middle cell according to an independent
+80-decimal-digit distance calculation on the exact stored binary64 coordinates.
+Nevertheless, `root_of` assigns 21 endpoints to another root. A routing table with
+one leaf per root reproduces those 21 wrong leaf selections. The sampler's
+insufficiency flag is false.
+
+| Center separation | Current start owner | Endpoints truly in middle cell | Endpoints routed elsewhere |
+|---|---:|---:|---:|
+| `1e-6` | 1 | 200 | 0 |
+| `1e-8` | 1 | 200 | 21 |
+| `1e-10` | 0 | 200 | 200 |
+| `1e-12` | 0 | 200 | 200 |
+
+The `1e-8` case is the strongest reproduction because its start already satisfies
+the implementation's own root assignment. The two smaller separations also
+demonstrate incorrect assignment of the initial geometric query; they are not
+needed to establish the sampler-to-inference disagreement.
+
+For this construction, the shared tangential contribution is about `0.16`.
+Differences between the squared normal distances are of order `1e-16` or less at
+separation `1e-8`, and smaller near the cell boundaries. Some disappear when added
+to `0.16`. In one dimension there is no large tangential contribution, which is
+why the newly added one-dimensional regression test passes.
+
+This affects the intended contract between training and prediction. Rows generated
+for a node can later route to a different root and a different fitted model. It
+does not imply that the default box-root benchmark is affected, and this review
+has not measured the frequency of such center configurations in ordinary k-means
+runs. It is still a correctness failure for valid distinct centers in a supported
+root geometry.
+
+#### Recommended repair
+
+Keep the stable sampler formula. Repair ownership so that root selection and
+sampling use compatible geometric comparisons. For a candidate owner `r`, the
+distance difference can be evaluated without the shared tangential term:
+
+\[
+\|u-c_j\|^2-\|u-c_r\|^2
+=\|\Delta_j\|^2-2\Delta_j^T(u-c_r).
+\]
+
+One practical approach is to retain the tiled distance calculation as a fast
+candidate search, then certify the candidate against stable bisectors. Ambiguous
+queries need a stable candidate comparison or a robust fallback, with an explicit
+deterministic rule for true ties. A reference implementation can use higher
+precision to check disputed cases. Production GPU code should isolate ambiguous
+rows rather than transfer every query to the CPU.
+
+Changing every squared-distance expression to the difference formula is not a
+universal exact-arithmetic guarantee. A query almost exactly on a general
+bisector can still require a rounding-error bound and fallback. The immediate
+requirement is to remove the large common tangential term and make the ownership
+contract consistent. Do not merge distinct nearby centers silently or increase
+the feasibility tolerance to conceal disagreements.
+
+Tests should include:
+
+1. The two-dimensional case above, with exact-input high-precision ownership as
+   the reference and an assertion on routed leaf IDs.
+2. Rotations and translations inside normalized coordinates, several dimensions,
+   and both center orderings. True ties should obey the declared index rule;
+   false ties should not be introduced by unrelated coordinate components.
+3. Sampler endpoint ownership, ordinary training assignment, and saved-model
+   routing checked against the same predicate.
+4. CPU/GPU ownership decisions and batch/tile independence. Prediction tolerance
+   alone cannot detect selection of a different leaf with accidentally similar
+   coefficients.
+
+The design's claim that thin cells now stay exact should be narrowed until this
+cross-component test passes. Stable chord geometry has been repaired; complete
+training-to-inference consistency has not.
+
+### 33.3 P2: corner recovery can leave a singular boundary population unflagged
+
+Relevant code is `HitAndRunSampler.sample`, especially the new per-chain recovery
+selection and the final `U != U0` check.
+
+The change from majority-based recovery to recovering every unmoved chain fixes
+the previous defect. The remaining issue is what counts as successful recovery.
+A coordinate walk can change one coordinate while keeping the others exactly at
+the corner values. Such a chain has moved, but it remains on a lower-dimensional
+face of a full-dimensional cell.
+
+The previous 4-D counterexample now returns:
+
+```text
+20 endpoints, walk_steps = max_walk_steps = 8
+endpoints still at the original corner: 0
+endpoints with at least one coordinate exactly zero: 7
+insufficient_sampling: False
+mean over all endpoint coordinates: 0.3873357947006743
+```
+
+This is not an artifact of the test omitting a real ancestor cut. With the
+nonredundant constraint `u0 <= 0.5`, the same seed and node key again leave 7 of 20
+endpoints on a coordinate face and return a false insufficiency flag. The four
+coordinate means are approximately
+`[0.2102801, 0.3865013, 0.4129816, 0.3089469]`, compared with uniform-cell means
+`[0.25, 0.5, 0.5, 0.5]`.
+
+The small-sample mean discrepancy alone would be weak evidence. The persistent
+face population is the decisive observation. Under the continuous uniform law of
+these positive-volume boxes, those faces have zero probability. Seven exact
+boundary endpoints at this scale cannot reasonably be described as rounding of
+ordinary interior samples.
+
+For a coordinate walk in a `d`-dimensional box starting at a corner, a particular
+coordinate remains untouched after `t` independent axis selections with
+probability
+
+\[
+\Pr(\text{coordinate untouched})=(1-1/d)^t.
+\]
+
+At `d=4, t=8`, the probability that at least one coordinate remains untouched is
+
+\[
+4(3/4)^8-6(1/2)^8+4(1/4)^8\approx0.3771.
+\]
+
+Moving at least once therefore does not establish departure from the boundary.
+This is a support problem before any discussion of mixing rates. The current
+20-D tests have the same blind spot if they assert only that each point changed
+and that coordinate means are close to one half. Means can look reasonable while
+many endpoints still lie on faces.
+
+#### Recommended repair
+
+Track whether recovered chains leave the active boundary faces, using geometry
+and scale-aware numerical resolution. Flag or continue chains that remain on an
+inherited zero-volume face. A blanket `1e-9` interior margin would be inappropriate
+for thin cells; this test must distinguish representational uncertainty from a
+macroscopic unvisited coordinate.
+
+For an axis-aligned box, a full coordinate sweep gives a simple bounded recovery:
+each coordinate gets a conditional draw. In that special geometry, the
+conditionals factorize, so one complete sweep from a corner produces independent
+uniform coordinates. More generally, changing the recovery to systematic sweeps
+at least prevents random axis selection from missing a coordinate altogether.
+It does not make a general-polytope walk uniform after one sweep.
+
+An oblique polytope needs a separate fallback policy. At some vertices, every
+coordinate-axis chord is degenerate even though the polytope has positive
+volume. A feasible interior-point computation, such as a bounded Chebyshev-center
+recovery, can address that case at additional cost. Otherwise report insufficient
+sampling. Do not claim that coordinate recovery can escape every convex corner.
+
+Keep the distinction between obtaining an interior start and producing usable
+samples. A repaired start should feed a defined production walk; adaptive recovery
+alone does not establish stationarity. The documentation already acknowledges
+that limitation, and that acknowledgment should remain.
+
+### 33.4 P2: the recovery drift test averages over chains it did not walk
+
+Relevant code is `HitAndRunSampler._drifting` at `src/region.py:450` and its call
+from the recovery `run` closure.
+
+The revised code passes the subset of unmoved chains as `rows` for recovery.
+However, `_drifting` uses `walk` only to decide whether a node has any active rows.
+Its means, centered variances, radius center, sample count, and minimum sample
+size still use all `n_new` rows of the node. During recovery, most of those rows
+may be held fixed.
+
+Consequently, the diagnostic can be dominated by a large unchanged population.
+A simple deterministic test isolates this without relying on a statistical
+fluctuation:
+
+```python
+mid = np.r_[
+    np.linspace(0.1, 0.100001, 4),
+    np.linspace(0.1, 0.9, 96),
+][:, None]
+end = mid.copy()
+end[:4] += 0.8
+walk = np.arange(100) < 4
+```
+
+Calling the current `_drifting` on all 100 rows with that mask returns false.
+Calling it on the four active rows, using their actual count, returns true. The
+active population has moved almost the full domain width. The other 96 endpoints
+did not participate in the recovery step.
+
+This is a synthetic diagnostic test, not a claim that those exact midpoint and
+endpoint arrays were produced by a random walk. It demonstrates the mask/count
+mismatch directly. The real boundary example in section 33.3 separately shows
+that the recovery path can already pass inadequate endpoints.
+
+Compute cohort statistics using the rows actually being diagnosed: masked counts,
+masked means, and masked centered moments. Apply the sample-count threshold to
+that cohort too. If too few chains were repaired for a useful moment diagnostic,
+state that limitation and use the recovery/support policy rather than pretending
+the full node count supplies independent recovery observations.
+
+An aggregate diagnostic over the whole returned cloud can also be useful. It
+answers a different question and should not replace a diagnostic of the repaired
+cohort. Add a test with heterogeneous recovery fractions and an unrelated fixed
+population; adding fixed rows should not make the active cohort's diagnostic
+silently pass.
+
+### 33.5 Lower-priority loaded-grid hardening: positive bins can still overflow
+
+The new loaded-geometry checks reject the previous malformed examples and check
+leaf-to-routing identity. That is a real improvement. One requested invariant
+from section 32.6 remains unchecked: the root-count product must be representable.
+
+`Roots.n_roots` computes `np.prod(self.bins)` in a fixed-width integer type. With
+
+```python
+bins = np.array([2**62 + 1, 4], dtype=np.int64)
+```
+
+the mathematical product is `2**64 + 4`, but the implementation gets 4. A table
+with four root leaves builds and survives `from_arrays`. Routing `[0.5, 0.5]`
+then fails with:
+
+```text
+IndexError: index -9223372036854775806 is out of bounds for axis 0 with size 4
+```
+
+This concerns malformed or externally constructed artifacts, not ordinary grid
+training with sensible parameters. It is lower priority than sections 33.2–33.4.
+Use a Python-integer product for validation, reject counts beyond the supported
+index range, and verify that the root count agrees with the supplied topology
+before constructing large root arrays. Validate any cumulative strides before
+casting them to device index types. A four-row artifact should not trigger an
+enormous allocation merely because its bins claim billions of roots.
+
+### 33.6 Consequences for batched GPU execution and MPI
+
+The correctness fixes should remain. Performance work should preserve the new
+center-difference geometry and centered variance, rather than restoring the
+unstable expanded formulas to recover throughput.
+
+#### Voronoi workspace and repeated geometry
+
+The revised sampler explicitly materializes `D` and `normal` with shape
+`(chains_in_chunk, number_of_roots, dimension)`. The old formulation mostly used
+`chains_in_chunk × number_of_roots` products. The increased memory traffic buys
+correctness, but duplicates the same center differences for every chain belonging
+to a root. `_steps` rebuilds them when another walk segment is invoked.
+
+For `n` chains, `R` centers and dimension `d`, the two persistent float64 tensors
+alone require approximately `16 n R d` bytes. At `n=1024, R=256, d=16`, that is
+64 MiB, before the other arrays. The implementation's new chunk-width estimate
+reduces the chunk in such cases, so this is a cost illustration, not a claim that
+this exact full allocation occurs. The current fixed `CHUNK_ELEMENTS` cap also
+limits the estimate, not the complete device-memory peak or a user-specific
+remaining budget. A minimum chunk of one cannot bound arbitrarily large root
+geometry.
+
+A useful next optimization is grouping chains by owning root and reusing
+`Delta`, normalized normals, and half-distances within each group. For each root,
+evaluate
+
+\[
+\mathrm{slack}=h-(U-c_r)N_r^T,\qquad
+\mathrm{direction}=G N_r^T.
+\]
+
+This preserves subtraction of the owning center before projection. It permits
+matrix products over many chains while storing normals once per root group,
+rather than once per chain. A cache for only the roots present in a batch is an
+option; an unconditional `R × R × d` global cache is not necessary. Root tiling
+can bound both geometry storage and the chain-by-center products.
+
+This is an optimization candidate, not a measured GPU speedup. Many tiny root
+groups may replace useful batched work with launch overhead. Benchmark both large
+groups and many small groups, including sorting/gathering cost. The repaired
+ownership predicate from section 33.2 must also be included in the timing.
+
+#### Centered statistics
+
+The extra centered reduction is justified. Returning to `E[s²] - E[s]²` to save a
+pass would restore a demonstrated numerical failure. If profiling identifies
+these passes as expensive, use a stable segmented count/mean/M2 reduction or
+reuse per-node centered coordinates. Verify its narrow-cloud behavior and its
+batch-size sensitivity. A reduction that changes node decisions through a
+different rounding order needs explicit numerical qualification.
+
+The new B4 temperature matches the previous centered reference:
+`5.80244273635628e-10`, versus `5.802442736356279e-10`. This supports the repair
+of that defect. It does not establish B4 as the fastest split method or turn its
+termination margin into an optimization certificate. Keep B3 as the hard
+incumbent and compare accepted hard SSE, oracle calls, leaf counts, and elapsed
+time. A low `soft_gate_saturated` counter alone is not an optimization benchmark.
+
+#### Batch admission and work stealing
+
+The new region prefix rule is appropriate: admit the largest whole-node prefix
+that fits the point budget, or one oversized node. It repairs the immediate
+admission defect while leaving legacy AFINNI boundaries unchanged. It is still
+an admission estimate, not a guarantee of a fixed device-memory peak. Shared
+sampler scratch, search arrays, resident model state and allocator behavior need
+separate accounting.
+
+The four-rank tests pass, including region prediction/key/status agreement and
+actual steal grants. The current region MPI worker primarily exercises box roots
+and ordinary interior sampling. It does not cover the thin Voronoi or recovery
+cases above. Extend it with a bounded adversarial geometry case after fixing the
+serial predicates; otherwise a shared numerical bug can agree perfectly across
+all ranks.
+
+No new MPI protocol defect was reproduced. The acknowledged stale load estimate
+after a grant remains a scheduling concern. Measure useful donated work, denied
+requests, queue wait time and rank idle time before changing the protocol. GPU
+ranks also need progress measurements around long sampler segments, because
+batch-size tuning alone does not establish how quickly a victim services steals.
+
+#### Inference and experiment order
+
+Compact child-index routing remains the right reference inference path for the
+region model. Ordinary kNN cannot repair disagreement about which root owns a
+point; it would define another predictor. Correct root assignment first, then
+benchmark the existing level-wise traversal against a fused traversal on a fixed
+tree. Separate root selection, traversal and leaf evaluation in the measurements.
+
+On a GPU machine, start with frozen geometry and fixed node inputs so numerical
+differences do not change the workload during a kernel comparison. Then run the
+full adaptive builder. Include box/grid and Voronoi roots, coherent and scattered
+queries, several dimensions and node sizes, peak allocated memory, transfer
+volume, and achieved GPU occupancy or utilization. Follow with multi-rank runs.
+These measurements can distinguish repeated geometry construction, small-kernel
+launch cost, narrow-cell walk cost, and genuine load imbalance.
+
+The ART comparison script now rejects unsupported floors and reports the resolved
+AFINNI model and acceptance components. Two small reporting details remain: the
+ART dictionary still contains requested `leaf_bias=False` even though the
+effective affine model has a bias, and the generic registered AFINNI `sampler`
+entry can say `convex_combination` while region mode actually runs hit-and-run.
+The separate `region.sampling` entry makes the latter recoverable, but neither
+dictionary should be described as entirely resolved runtime behavior. Print an
+explicit effective sampling/model block when saving benchmark provenance.
+
+### 33.7 Verification performed for this review
+
+All test and probe commands explicitly selected CPU/GPU and MPI mode.
+
+| Check | Result |
+|---|---|
+| CPU suite, `-m 'not mpi'`, unrestricted run | 517 passed, 35 skipped, 12 deselected, 52 subtests passed; 45.79 s |
+| Four-rank CPU MPI suite | 12 passed; 33.45 s |
+| Fresh legacy reference from `5a47695` | 45 regression cases, zero run errors |
+| Current legacy regression against that reference, `rtol=0` | 45 cases compared; maximum relative array difference 0 |
+| Earlier near-coincident 1-D sampling case | 0 of 200 ownership disagreements; insufficiency false |
+| Earlier B4 and drift cancellation cases | Temperature repaired; all four reproduced benign shifts unflagged |
+| Earlier oversized admission | Processed node sizes `[[30], [150]]` at capacity 100 |
+| Earlier zero-width loaded domain | Rejected with `ValueError` |
+| Two-dimensional Voronoi ownership at separation `1e-8` | 21 of 200 routed leaf IDs disagree with high-precision ownership |
+| Corner recovery with and without a genuine ancestor cut | 7 of 20 endpoints remain on coordinate faces; insufficiency false |
+| Recovery diagnostic with an active subset | Full population passes; active cohort fails |
+| Loaded overflowing grid | Accepted, then query raises `IndexError` |
+| Comparison floor `0.1` | Rejected before training |
+| Comparison with `--no-leaf-bias`, degree 1, floor `1e-12` | Accepted appropriately; ART source confirms the effective intercept |
+| Explicit GPU suite | Could not collect tests because CuPy is not installed; no GPU correctness or performance claim |
+
+The first sandboxed CPU run had 516 passing tests and one failure in the backend
+subprocess's MPICH initialization. The full rerun outside that restriction passed
+all 517 tests. That initial failure is environmental, not an identified source
+regression. The legacy comparison used a fresh extraction of the immediate
+pre-fix state, rather than reusing the older section 32 reference. Deliberate
+region sampling changes are not claimed to be bit-identical to the prior region
+implementation.
+
+The independent numerical probe is `/tmp/afinni_review_round5_probes.py`, and its
+results are in `/tmp/afinni_review_round5_probes.jsonl`. The old section 32 probe
+was rerun with results in `/tmp/afinni_review_round5_old_probes.jsonl`. Suite,
+comparison and regression logs use the same `/tmp/afinni_review_round5_` prefix.
+These are temporary artifacts; the inputs and numerical reasoning above are
+included here so the findings can become maintained tests.
+
+Recommended order of work:
+
+1. Align Voronoi ownership with stable bisector geometry and add the 2-D routed
+   leaf-ID regression. This is the highest-priority remaining correctness issue.
+2. Make recovery detect residual boundary support and diagnose the active cohort.
+   Preserve explicit insufficient-sampling outcomes when the budget is inadequate.
+3. Add checked grid products and clearer effective benchmark configuration output.
+4. Establish GPU timings and memory peaks for the corrected implementation before
+   selecting root-grouped geometry, fused routing, or further MPI scheduling work.
+
+The existing architectural direction remains suitable for these changes. The
+next work is to make the same geometric region mean the same thing to sampling,
+training assignment and inference, and to make recovery diagnostics describe the
+chains they actually inspected.
+
+---
+
+## 34. Architectural reconsideration from first principles
+
+### 34.1 Conclusion and scope
+
+Approach 3 is a good integration baseline. It is not established as the best
+algorithm for approximation, GPU throughput, oracle efficiency, or inference.
+Those are different optimization problems, and the proposed node-storage schemes
+answer only part of them.
+
+The strongest direction is to retain Approach 3's ownership and persistence
+contracts while relaxing three implementation choices: full carried paths for
+every local descendant, a host round trip at every refinement round, and a fixed
+sequence of uniform top-up followed by affine fitting and B4 splitting. These
+choices make a reference implementation manageable. None is a mathematical
+requirement of ART.
+
+The most useful additional experiments are:
+
+| Candidate | Main change | Expected benefit, subject to measurement |
+|---|---|---|
+| Bounded resident subtree execution | Process compatible descendants locally before spilling or donating them | Less host/device traffic and repeated ancestry copying |
+| Shared-bin hard split search | Build sufficient statistics once per bin, then scan prefixes and suffixes | Remove repeated full-data Gram construction across thresholds |
+| Geometry-dependent sampling | Exact box/rejection sampling where practical; rounded hit-and-run elsewhere | Better-supported samples and less wasted walk work |
+| Local model enrichment before splitting | Try a small number of quadratic directions before creating children | Fewer leaves, oracle calls, constraints and routing steps on smooth curvature |
+| Query-measure-aware refinement | Allocate work by deployed risk and expected use, with explicit exploration | Avoid spending the same effort on every small, rarely queried cell |
+
+The first two primarily change execution. The next three change the approximation
+algorithm and need separate accuracy experiments. Combining them immediately would
+make it impossible to identify what caused an improvement or regression.
+
+This section builds on the earlier architectural discussion in sections 5–16;
+it does not replace the unresolved correctness findings in section 33. Sources
+rechecked include the current `RegionPlan`, shared executor, queue and local-model
+code, and the sibling ART checkout at
+`854924af9ec8555a11db10de6ab75f429a31be2d`, particularly its builder, BFS dispatcher,
+sampling, GPU cohort adapter and prediction code. The AFINNI implementation is
+still the `90672cc` state reviewed in section 33. No new execution algorithm was
+implemented here.
+
+### 34.2 What should the combined method optimize?
+
+Start with the deployed predictor and the intended distribution of queries,
+denoted by `nu`. For a tolerance-normalized error `e(x)`, plausible requirements
+include an integrated loss, a small probability `P_nu[e(x) >= 1]`, or a bound at
+every point in the domain. They require different sampling and refinement
+policies. A finite random audit supports a probability statement, not an
+everywhere bound. Neither Morton ordering nor exhaustive tree coverage changes
+that distinction.
+
+A practical lifecycle objective is
+
+\[
+\min\quad T_{\mathrm{build}}+N_q\,\mathbb E_\nu[t_{\mathrm{predict}}(x)]
+\quad\text{subject to a stated accuracy requirement and memory limits}.
+\]
+
+Model size, update cost and continuity can be further constraints. If queries
+are effectively unlimited, a slower build that produces a smaller or shallower
+model may be worthwhile. For a frequently rebuilt surrogate with few queries,
+the same tradeoff can be wrong.
+
+Break build work into quantities that the design actually changes:
+
+\[
+W= W_f+W_{\mathrm{sample}}+W_{\mathrm{fit}}+W_{\mathrm{split}}
+   +W_{\mathrm{transfer}}+W_{\mathrm{control}}.
+\]
+
+These terms are accounting categories, not necessarily additive elapsed times:
+oracle work, transfers and GPU computation can overlap. Even with ideal
+scheduling, elapsed time is bounded below by the longest dependency chain and by
+the work divided by the capacity of each required resource. A tree has genuine
+dependencies: the child's region, inherited rows and useful sampling policy
+depend on the parent's committed split.
+
+This yields several conclusions without benchmarking:
+
+- Work stealing cannot eliminate the serial dependency along a difficult branch.
+- Fewer oracle calls do not automatically imply faster construction when sampling
+  and split optimization are expensive.
+- A representation that reduces the number of necessary leaves can save work in
+  every stage, rather than just accelerate a particular kernel.
+- Fast processing of a biased or poorly explored sample set is not progress
+  toward a domain-level accuracy requirement.
+- Storage layout, task scheduling, geometry, sampling and approximation order
+  should be separable choices.
+
+AFINNI already supplies efficient segmented data processing and distributed
+ownership. ART supplies explicit geometric coverage, conditional sampling and
+residual-based partition selection. The integrated method should preserve those
+useful ideas without inheriting every scheduling and modeling choice of either
+implementation.
+
+### 34.3 Morton IDs: useful roles, and limits that matter here
+
+#### A path code is an ancestry coordinate
+
+For a node at depth `h` with sentinel path code `p`, write
+
+\[
+p=2^h+b,\qquad 0\le b<2^h.
+\]
+
+Its descendants occupy the abstract binary-path interval
+
+\[
+I(p)=[b\,2^{-h},(b+1)\,2^{-h}).
+\]
+
+This is useful for prefix tests, subtree grouping and ordered storage. It says
+nothing about physical volume. An extremely unbalanced geometric split still
+divides this abstract interval into equal halves. The interval's length is not
+an estimate of query probability, sample cost or region volume.
+
+For example, terminal paths `2, 6, 7` occupy `[0,1/2)`, `[1/2,3/4)`, and
+`[3/4,1)`. They can represent very different physical volumes depending on the
+stored planes. Sorting sentinel integers also groups depths, so it is not a
+general subtree-contiguous traversal order. To obtain that order, use explicit
+tree traversal or depth-normalized path prefixes with a stated ancestor ordering.
+
+Keep three notions separate:
+
+| Identifier/layout | Purpose | Should change when jobs move? |
+|---|---|---|
+| Logical `(root, path)` identity | Provenance, RNG streams, reproducibility | No |
+| Local array index or handle | Fast addressing on one rank/device | Yes, if useful |
+| Final inference ordering | Cache behavior and query traversal | Yes, during compilation |
+
+The current separation is correct. Adding a globally coordinated integer ID
+allocator would make distributed execution harder without improving the
+mathematical tree.
+
+#### Spatial Morton ordering is a different tool
+
+A spatial Morton code interleaves quantized coordinate bits. It is useful for
+building or ordering spatial indices; NVIDIA's tree-construction example uses
+this distinction explicitly. It does not say that neighboring oblique path IDs
+are close in Euclidean space. [NVIDIA, tree construction on the GPU](https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/)
+
+There is also a dimensional limit. A 64-bit spatial code with equal precision
+per coordinate has at most `floor(64/d)` bits per dimension: one bit at `d=40`,
+and no complete bit per coordinate at `d=80`. Longer codes or projected
+coordinates are possible, but add storage/sorting cost or discard geometric
+information. This is not a strong default mechanism for high-dimensional
+surrogate routing.
+
+Reasonable uses here are optional low-dimensional query ordering, coarse spatial
+root construction, and locality experiments. Sorting leaf centroids by a Morton
+code does not permit changing the tree's decision planes while keeping its
+semantics. It also does not make distant memory accesses coalesced merely because
+the integer IDs are consecutive.
+
+The parallel construction of a hierarchy over a known set of objects should not
+be confused with discovering ART's adaptive tree. In ART, the future leaves are
+unknown until sampling, fitting and splitting have run. A fast final layout pass
+can parallelize assembly; it cannot remove those scientific dependencies.
+
+### 34.4 Approaches 1, 2 and 3 solve different storage lifetimes
+
+Approach 1's compact parent/plane records are the best authoritative history.
+Approach 2's ordered level buffers are one convenient way to organize that
+history. Approach 3's complete work items are a good transfer contract. None
+requires using the same representation in host queues, MPI packets, GPU scratch
+and the final predictor.
+
+The important optimization is amortization. For a node with `n` chains, `t` walk
+steps and `h` ancestor constraints, materializing its path costs order `hd`
+coefficient accesses once, whereas evaluating those constraints throughout the
+walk costs order `nthd`. Ignoring latency and constants, the ratio is about
+`1/(nt)`. Gathering a compact ancestry once can be cheap relative to using it
+many times. Following parent pointers inside every walk step would lose that
+advantage.
+
+This explains why the concern about irregular parent access is valid but should
+not decide the whole architecture. It is the placement and frequency of the
+gather that matter. Approach 2's repeated `searchsorted` is not inherently better
+than direct local parent handles; both should stop at a contiguous materialized
+sampler input.
+
+There is a larger saving when a transfer or resident group shares a prefix.
+Consider `b=2^r` frontier nodes below a common depth-`h0` ancestor, with a complete
+relative tree of depth `r`. Explicit paths store
+
+\[
+b(h_0+r)
+\]
+
+plane rows. The union of their ancestor records contains only
+
+\[
+h_0+(b-1)
+\]
+
+rows. With `h0=20`, `b=256`, and `r=8`, this is 7,168 versus 275 rows, a factor of
+26.1 for the plane payload alone. Points, outputs, handles and serialization
+overhead remain, so this is not a 26-fold total-memory or communication claim.
+
+The preferred extension is therefore a bounded block of related nodes:
+
+- Local unresolved jobs reference an immutable ancestry store.
+- A batch materializes the constraints it needs, optionally reusing common
+  prefix products across chains that share a root or ancestor.
+- A migration packet contains the union of required ancestry plus the point
+  blocks and logical keys. The receiver reconstructs local handles.
+- Final inference arrays are built independently of those handles.
+
+This combines all three approaches without remote ancestry fetches. Keep the
+full-path implementation as a reference and retain it for small or unrelated
+packets where compression would cost more than it saves. Exact deduplication is
+safe; approximate removal of an apparently redundant face changes geometry
+unless redundancy is proved.
+
+### 34.5 Execution candidate: bounded resident subtrees over a global frontier
+
+The current shared executor reads a host batch, processes it, writes children to
+a host builder, and revisits them in a later round. That is robust when the
+frontier exceeds VRAM. It forces transfer and allocation work even when several
+generations of a small subtree could stay resident.
+
+For a point payload of `b_point = 8(d+q+g*d*q)` bytes, each additional round that
+exports and reloads a surviving row adds approximately `2*b_point` transfer
+bytes. Summing that over its remaining inherited lifetime can dominate a cheap
+oracle and small affine fits. The exact amount depends on top-up, termination,
+validation and gradient policy; it should be measured from actual row lifetimes.
+
+A better candidate scheduler has a bounded local resident frontier plus a
+host-backed frontier of ready tasks:
+
+```text
+select a group of compatible ready nodes within byte and time budgets
+load their point blocks and materialize their geometry
+repeat while resident capacity and a bounded execution allowance remain:
+    sample/evaluate/fit compatible nodes in batches
+    finalize terminals and append immutable output records
+    refine rejected nodes and retain selected children locally
+    service communication and oracle-completion events
+    expose surplus unstarted children for donation or spill
+flush remaining ready work to the host frontier when necessary
+```
+
+This is a bounded blend of breadth-first and depth-first execution. Pure DFS
+minimizes a live frontier but often starves batched linear algebra. Pure BFS
+exposes parallelism but can maximize memory and transfer traffic. A bounded
+frontier can retain enough sibling work for efficient batches without retaining
+the entire tree level.
+
+Compatible cohorts should reflect actual kernel requirements: feature count,
+output count, sample-count range, geometry class, constraint-count range and
+optimizer state. True depth remains metadata. Two nodes at different depths can
+share a fit kernel even if their samplers need different geometry buckets.
+ART's existing BFS dispatcher already permits cohorts crossing levels, while
+its resident GPU adapter handles selected split work. The combined engine can
+extend that principle across more stages instead of copying ART's object-level
+builder.
+
+There are necessary limits:
+
+1. Resident execution must not hide all ready children from idle ranks. A packet
+   or time allowance should bound how long one rank retains transferable work.
+2. Stealing should remain at clean ownership boundaries. Started optimizer or
+   chain state can stay local; unstarted descendants can be donated.
+3. Byte admission must cover the maximum overlapping stage lifetimes, including
+   pinned transfer buffers, geometry, fit/search workspaces and outputs.
+4. Priority needs an age or fairness component so small awkward jobs do not wait
+   indefinitely for a perfect cohort.
+5. Stable node-based random streams must remain independent of placement. A
+   scheduler change alone should not alter samples or accepted split decisions
+   on the CPU reference path.
+6. Termination must count resident work, pending oracle calls and in-flight
+   transfers. A rank can have no host-queued or currently donatable nodes and
+   still be busy. Estimated transferable seconds must not become the liveness
+   signal.
+
+This can evolve from the present executor. It does not require a new distributed
+runtime, a general property framework, or migration of arbitrary Python objects.
+Use the existing numerical modules, registries and column schemas.
+
+#### Out-of-core requires separate device and host policies
+
+A host-backed queue is out-of-core relative to VRAM, not relative to host RAM.
+Bounded resident execution improves transfer reuse but does not by itself bound
+the global frontier. Likewise, an initial full-array upload and final replicated
+model can exceed device memory even when each refinement batch fits.
+
+If the intended workload exceeds RAM, introduce an explicit spill layer for
+ready point blocks and immutable records. Jobs should refer to logical block
+handles; the executor packs only admitted rows into staging buffers. Splitting
+must account for simultaneous parent, child and packing storage, and prefetch
+must be bounded by credits. Memory mapping alone does not guarantee a bounded
+working set or efficient access when repeated splits scatter rows across files.
+
+Use subtree-related blocks to improve sequential access, but bound their size
+so one skewed subtree cannot monopolize memory. Shared ancestry saves geometry
+bytes; it does not remove point payloads. Replacing all rows by sufficient
+statistics is also insufficient for the general algorithm because later split
+directions and predicates need individual rows. A bounded reservoir plus
+streamed statistics is a different approximation policy and must be tested as
+such. Treat disk spill and sharded final-model assembly as explicit features,
+rather than consequences of adding ART to the present queue.
+
+#### Early parallelism has a price
+
+For a fixed per-leaf sample target `n`, a complete refinement with `L` leaves and
+no discarded evaluations has approximately `nL` sampled oracle values, excluding
+centroid and validation calls. Forcing `R` roots therefore imposes at least `R`
+terminal cells and roughly `nR` sampled values under those assumptions. For an
+affine function that a single root can represent, forced subdivision is pure
+overhead.
+
+Fit the initial root before subdividing for concurrency. If it fails, grow a
+shallow frontier with cheap useful cuts, stopping when available work is enough
+for the devices or when cells already pass. Axis-aligned cuts give cheap exact
+sampling and bounds. A full Cartesian grid grows exponentially if every
+coordinate is divided, whereas a shallow binary partition can create a chosen
+number of cells.
+
+An expensive single node also has parallelism over samples, directions and
+candidate thresholds. For exceptionally large nodes, distributing statistics
+and reducing `p x p` and `p x q` arrays is an alternative to changing the
+partition merely to occupy ranks. That introduces collectives inside a node and
+should be a separate worker-group mode, not mixed casually with independent
+node stealing. Small nodes are unlikely to amortize those collectives.
+
+### 34.6 Sampling candidate: choose the sampler from the geometry
+
+The current choice of one short isotropic chain per new point exposes parallelism,
+but pays a warm-up cost repeatedly and can explore narrow directions poorly.
+The tests in section 33 show why a fixed dimension-only step count is not a
+reliable contract. Existing hit-and-run theory also depends on geometric and
+starting conditions; a stationary uniform distribution does not establish that
+these finite runs are uniform. [Lovasz and Vempala, Hit-and-Run from a Corner](https://faculty.cc.gatech.edu/~vempala/papers/start.pdf)
+
+#### Candidate G1: exact conditional rejection before MCMC
+
+For a frozen region `R`, find a known enclosing proposal region `B` with an exact
+uniform sampler. Draw independently from `B`, retain points satisfying the
+canonical inequalities of `R`, and evaluate the expensive oracle only at retained
+points. In exact arithmetic,
+
+\[
+X\sim U(B),\quad R\subseteq B
+\quad\Longrightarrow\quad X\mid X\in R\sim U(R).
+\]
+
+Acceptance probability is `rho = volume(R)/volume(B)`, and the expected number
+of proposals per accepted point is `1/rho`. This eliminates a mixing question
+when the envelope is good. It also separates cheap geometric work from expensive
+oracle calls.
+
+Useful envelopes include a retained axis-aligned parent box, a box tightened by
+certified coordinate bounds, or a fixed oriented parallelepiped. Bounds derived
+only from observed samples are not enclosing bounds and would silently truncate
+the target. Optimized coordinate bounds require conservative numerical treatment.
+A proposal chosen from a pilot can be frozen before collecting fresh production
+draws; pilot acceptance statistics then choose a sampler without being mistaken
+for a final validation set.
+
+A 2-D example illustrates the tradeoff. Rotate a rectangle of length 1 and width
+`eta` by 45 degrees. Rejection from its tight axis-aligned box has
+
+\[
+\rho=\frac{2\eta}{(1+\eta)^2}.
+\]
+
+| Width `eta` | Expected proposals per accepted point |
+|---:|---:|
+| 0.2 | 3.6 |
+| 0.02 | 26.01 |
+| 0.002 | 251.001 |
+
+An oriented envelope matching the rectangle would accept every proposal. A real
+polytope will not generally have such an exact envelope. The example establishes
+that orientation matters and that rejection can be either excellent or poor;
+it is not a reason to replace every walk with rejection.
+
+Select rejection when its measured geometry cost per accepted point is lower
+than the alternative's cost for an adequately explored point. Cap proposal work
+and fall back explicitly. An empirical acceptance rate is useful for scheduling,
+but is not a proof that a data-derived envelope contains the region.
+
+Axis-aligned descendants of a box deserve a dedicated path: maintain lower and
+upper bounds, sample directly, and fold repeated cuts into those bounds. Their
+sampling geometry stays `O(d)` regardless of tree depth. This is a substantive
+algorithmic advantage of allowing cheap axis splits even when oblique splitting
+is available.
+
+#### Candidate G2: frozen rounding plus several persistent chains
+
+When rejection is poor, use a geometry pilot to estimate a regularized transform,
+freeze that transform for a production segment, and run several chains per node.
+ART already contains a pilot/covariance path and a multi-chain sampler with
+incremental slacks. Those ideas are worth porting into batched array kernels;
+the scalar ART builder is not the required interface.
+
+If `m` points are requested, `b` warm-up steps are needed and `tau` is a chosen
+production spacing, independent restarted chains require roughly `m*b` warm-up
+steps. With `C` persistent chains, the analogous count is roughly `C*b + m*tau`.
+This is a work model, not an equality of statistical quality. Persistent outputs
+are correlated, and `tau` is not automatically a sufficient thinning interval.
+Several chains also provide less raw GPU parallelism than one chain per output.
+
+Batch across nodes to recover occupancy. Preserve multiple starts and test
+geometry-sensitive observables, boundary support and actual failure-region
+discovery. Do not select `C` solely to maximize kernel throughput. Keep the
+pilot, production and statistical claims distinct.
+
+For transformed directions, account for dense transform cost and storage. A
+full `d x d` transform per node may be excessive at high dimension; diagonal or
+low-rank corrections are useful candidates. A coordinate change does not turn
+an arbitrary polytope into a box. All original constraints must still be enforced.
+
+#### Candidate G3: global exploration plus local conditional sampling
+
+For integrated error or violation probability under `nu`, draw a fresh global
+exploration pool from `nu` and route it through a frozen current tree. This gives
+direct information about which leaves queries actually visit and where deployed
+errors occur. Local samplers can supply additional design points for difficult
+cells.
+
+This can reduce unnecessary MCMC work on broad cells and supports risk-weighted
+refinement. It cannot supply every rare leaf efficiently: a cell of probability
+`mu` receives only about `M*mu` points from `M` global draws. Use local conditional
+sampling when quotas would otherwise require excessive global proposals.
+
+Maintain separate roles for model-design samples, refinement observations and a
+final audit. Points used to choose the next split or model are spent. If local
+sampling changes the fitting distribution, importance weighting or a deliberately
+different design objective must be stated. Do not treat a carefully selected
+design set as an iid draw from the deployment measure.
+
+This alternative is attractive when queries occupy a small portion of a large
+box. It is inappropriate as a replacement for an everywhere-accuracy requirement
+unless additional deterministic bounds are available.
+
+### 34.7 Split-search candidate: reuse bin statistics before adding optimizer work
+
+The current B3 implementation repeats a full weighted Gram construction for each
+candidate threshold. For `D` directions, `B` bins, `n` points and `p` features,
+the leading Gram work is approximately
+
+\[
+O\big(D(B-1)np^2\big),
+\]
+
+plus output cross products, candidate solves, sorting and direct finalist checks.
+The zeros in a threshold mask do not make a dense matrix multiplication free.
+
+At the defaults `D=6`, `B=16`, this corresponds to 90 full-data left-Gram passes
+per node. Twenty B4 iterations require 40 child-fit Gram passes, although B4 has
+substantial additional residual, gradient and line-search work. Thus the label
+"cheap hard screen" does not itself establish that B3 is cheaper than B4.
+
+For one direction, sort once and partition into disjoint bins. For bin `j`, form
+
+\[
+G_j=\Phi_j^T\Phi_j,\quad B_j=\Phi_j^T Y_j,\quad
+C_j=\|Y_j\|_F^2,\quad n_j=|\Phi_j|.
+\]
+
+Every threshold candidate then uses prefix aggregates on its left and suffix
+aggregates on its right. The leading data-product cost becomes
+
+\[
+O(Dnp^2),
+\]
+
+with additional `O(DBp^2)` aggregation and `O(DBp^3)` solves. Candidate solves
+remain; the entire method does not become 15 times faster just because one term
+loses that factor. The `p x q` terms and sample ordering also remain.
+
+The same broad reuse principle appears in histogram tree algorithms, but here
+each bin holds matrix sufficient statistics for local regression rather than a
+few scalar gradient sums. That difference changes memory and numerical costs.
+[LightGBM's official description of histogram construction](https://lightgbm.readthedocs.io/en/latest/Features.html)
+
+Implementation options should be compared rather than assumed:
+
+- Form each bin's products from contiguous sorted rows using batched GEMM, then
+  scan the small matrix blocks. This avoids materializing an `n x p x p` tensor.
+- Use a tiled segmented accumulation kernel when many small bins make GEMM
+  inefficient. Its atomic/reduction behavior must satisfy the numerical contract.
+- Keep the present direct-product path for small workloads or difficult cases.
+
+Use direct suffix accumulation instead of `total - prefix` when the right child
+is small. This avoids the worst complementary-subtraction cancellation. It does
+not fix all instability from normal equations or from evaluating a small SSE as
+a difference of large terms. Keep direct residual evaluation for finalists, and
+retain extra candidates when the screening order is numerically uncertain.
+
+For difficult fits, investigate merging QR factors of bin blocks. If
+`Z_j = [Phi_j, Y_j]` has triangular factor `R_j`, a factor for a union of bins can
+be obtained by factoring stacked `R_j` blocks. Prefix and suffix merges then
+reuse row compression without forming a covariance by subtraction. This follows
+the general communication-avoiding QR principle; the proposed threshold-search
+integration still needs implementation and validation.
+[Demmel et al., communication-optimal QR](https://www2.eecs.berkeley.edu/Pubs/TechRpts/2008/EECS-2008-89.html)
+
+Ridge rows, rank deficiency, residual scoring and feature scaling must have
+consistent definitions in that variant. A QR-based screen is not automatically
+cheap when each bin has fewer rows than columns. Small well-conditioned affine
+problems may favor the simpler Gram method.
+
+#### Spend nonlinear refinement where it can matter
+
+B4 should be a bounded optional improvement to a valid hard candidate. A fixed
+20-iteration allowance for every rejected node is unlikely to be optimal across
+all oracles and dimensions. Candidate policies can use measured hard-score
+improvement, solver condition, previous improvement rate and an explicit split
+time allowance to decide whether to continue polishing or to commit the hard
+candidate.
+
+The stopping policy must not claim an unseen reduction in future leaves as a
+known quantity. Estimate that benefit from held-out experiments, and preserve a
+conservative hard incumbent. Compaction of finished optimizer nodes can reduce
+wasted GPU work independently of changing the scientific stopping rule.
+
+Split scoring should also match the purpose of the tree. Tolerance-scaled SSE
+is a useful smooth objective but can still favor average error over a rare
+pointwise failure. For violation-rate targets, test a tail-sensitive or capped
+tolerance-normalized loss on separate selection rows. For multi-output models,
+the relative scales must agree with deployment tolerances. These are algorithm
+variants, not numerically neutral B3 optimizations.
+
+### 34.8 Approximation candidate: enrich a local model before subdividing space
+
+The strongest potential improvement is to stop treating another affine split
+as the only useful response to a failed affine fit.
+
+For a smooth scalar function near `c`,
+
+\[
+f(c+u)=f(c)+g^T u+\tfrac12u^T H u+O(\|u\|^3).
+\]
+
+An affine model repeatedly subdivides to reduce the quadratic remainder. If
+most curvature lies in a few directions, storing those directions can be much
+cheaper than building enough affine cells to imitate them.
+
+Consider the exact one-dimensional function `f(x)=x^2` on `[-1,1]`. The best
+uniform affine approximation on an interval of width `ell` has maximum absolute
+error `ell^2/8`. Any partition into `L` intervals has an interval of width at
+least `2/L`; consequently,
+
+\[
+\|f-\hat f_{\mathrm{piecewise\ affine}}\|_\infty
+\ge \frac{1}{2L^2}.
+\]
+
+Absolute tolerance `1e-4` therefore needs at least 71 affine leaves, even with
+optimal cuts and coefficients. One quadratic model represents the function
+exactly. This is an approximation-class difference that no Morton layout,
+work-stealing policy or more accurate oblique optimizer can remove. The example
+uses absolute error deliberately; pure relative error at a zero requires its
+own floor or absolute tolerance.
+
+A high-dimensional candidate model is
+
+\[
+\hat f_j(x)=b_j+a_j^T u+
+\sum_{k=1}^{r}\gamma_{jk}(v_k^T u)^2,\qquad u=x-c.
+\]
+
+With fixed candidate directions `v_k`, it is linear in the fitted coefficients
+and has `p=d+1+r` features. Shared directions cost `dr` stored values; evaluation
+cost is approximately `O(dq+dr+rq)`. It does not require all `d(d+1)/2` quadratic
+features. A rank-one quadratic ridge function is represented exactly if its
+direction is supplied accurately. A general full-rank quadratic may not benefit
+from a small `r`, and vector-output curvature may require different or additional
+directions.
+
+Directions could come from existing Hessian information, gradient differences,
+or a bounded residual-based search. Direction estimation is real work and must
+be counted. Computing and storing a full dense Hessian merely to discard most
+of it may defeat the purpose at high dimension.
+
+A useful decision sequence is:
+
+```text
+fit and test affine model
+if it fails:
+    try a small, bounded set of enriched features on training data
+    compare richer model with a hard split using separate selection evidence
+    top up if the richer feature space lacks support
+    validate the chosen deployed candidate with fresh data
+    keep the region, or commit the split
+```
+
+Under an ART-like budget `n=kappa*p`, adding `r` features requires approximately
+`kappa*r` extra target rows. Creating two affine children from one target-sized
+parent requires approximately `kappa*(d+1)` additional rows. This is a favorable
+budget comparison when `r` is small, but it assumes adequate independent support,
+reuse without duplication, and a valid enriched model. It excludes validation,
+centroid and direction-estimation calls.
+
+This is an `h/p` adaptation experiment: refine the region or increase the local
+approximation space. A dense quadratic default is still a poor choice at high
+dimension. Limit enrichment ranks, check conditioning, and favor splitting near
+discontinuities or sharp interfaces where a smooth polynomial is inappropriate.
+
+The present registries and leaf-column declarations can support new models.
+However, `RegionPlan` currently sets `p_eff = d + 1`; registering an enriched
+model alone would not update its sample target or support policy. The plan needs
+the model's declared feature/support requirements, separately from the affine
+features used by the split screen. Learned curvature directions also consume
+statistical information: `p=d+1+r` counts linear coefficients with directions
+fixed, not all the freedom used to select those directions. Independent
+selection/validation evidence remains necessary.
+
+Heterogeneous model classes within one tree need an additional representation:
+a model-type tag and per-type parameter stores, followed by query grouping for
+evaluation. That is a concrete extension, not something the current homogeneous
+`LocalModel` artifact already supplies. First test a fixed small enriched class
+for all leaves, then heterogeneous selection if the benefit warrants the added
+storage and dispatch complexity.
+
+Post-build subtree compression is another experiment: replace a completed
+subtree by a richer model only if independent validation supports it. It can
+reduce inference cost without changing how training discovers difficult regions,
+but does not refund the oracle work already spent. The final compressed model
+needs its own untouched audit.
+
+### 34.9 Geometry-aware and query-aware split decisions
+
+The least empirical child SSE is not necessarily the least total future cost.
+A cut can improve the fitted residual while creating a thin child that is
+expensive to sample, a deep high-probability branch, or a badly conditioned local
+design. Conversely, a small difficult cap can deserve refinement even when it
+contains few inherited points.
+
+Keep the hard scientific constraints separate from economic preferences. A
+candidate must satisfy the geometric predicate and support checks. Among valid
+candidates, an experimental objective can trade estimated error against sampling,
+oracle and prediction cost:
+
+\[
+\widehat{\mathcal R}_{\mathrm{children}}
++\lambda_t\widehat{\Delta T}_{\mathrm{build}}
++\lambda_q\widehat{\Delta T}_{\mathrm{queries}}
++\lambda_m\Delta B_{\mathrm{model}}.
+\]
+
+The coefficients have units and should encode a declared resource preference or
+be calibrated on training workloads. An arbitrary sum of SSE, seconds and
+condition numbers would be hard to interpret and easy to tune to a benchmark.
+
+For a frozen tree, expected routing depth obeys a useful identity:
+
+\[
+\mathbb E_\nu[h(X)]
+=\sum_{v\ \mathrm{internal}}\Pr_\nu[X\text{ visits }v].
+\]
+
+Splitting a terminal cell of query mass `mu_v` therefore adds `mu_v` expected
+plane tests per query. This is a better inference-cost signal than its leaf
+count alone. Node-key intervals and inherited sample counts are not substitutes
+for `mu_v` under adaptive region top-up.
+
+For violation probability, the contribution of a leaf is
+`mu_v * P[e(X) >= 1 | X in R_v]`. A priority policy can refine the largest
+estimated contributions per unit cost, with exploration and uncertainty terms
+to avoid neglecting unseen failures. For a strict everywhere target, low mass
+does not justify ignoring a cell. The policy must change with the objective.
+
+A global best-first priority queue is not required. Coarse priority bands and
+compatible GPU cohorts can approximate that policy while preserving parallelism.
+If there is a global oracle budget, allocate explicit budget permits to ranks
+and account for in-flight calls. With schedule-dependent permits, the resulting
+tree may depend on rank timing; deterministic allocation rounds are needed if
+rank-independent budgeted construction is a requirement.
+
+### 34.10 Inference should be compiled separately from training
+
+ART already predicts by traversing split predicates and evaluating a terminal
+model. The current region mode correctly makes that a first-class predictor.
+AFINNI's coarse kNN followed by `Q` reranking implements a different model-selection
+rule. It should remain available for the legacy method and controlled same-model
+comparisons, rather than being inserted automatically after tree routing.
+
+The final model should be compiled from immutable node records into a layout
+chosen for the expected query workload:
+
+- For small query batches, fused per-query traversal avoids repeated host control
+  and temporary active-index arrays.
+- For large batches, route through a shallow prefix, group queries by subtree,
+  and process compact subtree blocks. Restore original query order afterward.
+- For heterogeneous leaf models, group reached leaves by model type before
+  evaluating coefficients.
+- For models too large to replicate, replicate a shallow router and shard lower
+  subtrees. Account for query-routing communication and hot-subtree imbalance.
+
+There is a useful tradeoff inside a small tree block. Speculatively evaluating all
+planes in `b` binary levels costs up to `2^b-1` plane evaluations per query instead
+of `b` along its path, but exposes regular arithmetic. It may pay for a very
+shallow block on some hardware and fail badly for larger blocks or high dimension.
+Compare it on frozen trees; do not assume fewer branches implies less work.
+
+Spatial query sorting is optional. Subtree grouping uses the actual predicates
+and remains meaningful in high dimension, unlike a coarse low-bit Morton code.
+Packing a frequently visited subtree contiguously can help locality without
+changing a single scientific decision.
+
+Dropping `Q` for routed-only affine models removes `O(Ld^2)` coefficient storage.
+That is a stronger asymptotic saving than changing a 64-bit node ID to a smaller
+index. However, hard routing still permits jumps between leaf models. If a
+downstream ODE solver or differentiable application requires continuity, neither
+this layout nor a richer local polynomial supplies it automatically. Use the
+separate continuity-constrained representation experiments in section 28.
+
+### 34.11 Which changes are most likely to win?
+
+| Workload | Leading candidate | Main reason | Main failure mode |
+|---|---|---|---|
+| Cheap oracle, many small affine nodes | Resident cohorts and shared-bin B3 | Transfer, allocation and repeated statistics can dominate | Too many tiny buckets or retained work can hurt occupancy/stealing |
+| Expensive smooth oracle, low-rank curvature | Bounded local enrichment, then splitting | Avoids paying for many affine leaves | Wrong curvature directions, poor support or overfitting |
+| Broad axis-aligned cells | Direct box or conditional rejection sampling | Exact independent draws with little geometric work | Oblique thin cells can make acceptance collapse |
+| Thin rotated polytopes | Frozen rounding and multi-chain sampling; oriented envelopes where available | Addresses anisotropy rather than only increasing step count | Pilot misses geometry; transforms and constraints become expensive |
+| Strongly nonuniform query measure | Global exploration plus risk-weighted local refinement | Targets deployed risk instead of equal effort per leaf | Rare failures are missed without exploration and honest uncertainty |
+| Very large host frontier | Shared ancestry, bounded subtree blocks and explicit spill | Reduces duplicate geometry and resident queue growth | Disk latency or packet assembly dominates |
+| Large inference workload | Fewer/richer leaves and compiled subtree routing | Reduces lifetime cost per query | More expensive leaf evaluation can erase the saving |
+
+There is no evidence yet that one row dominates all others. The question should
+be which combination meets a declared accuracy requirement at the lowest total
+cost on the intended oracle and hardware.
+
+Three complete configurations make useful end-to-end comparisons after the
+individual experiments below:
+
+1. **Reference region tree.** Keep the current affine model, repaired sampler,
+   node budgets, full-path packets and host-backed executor. Run B3 and B4 as
+   separate baselines. This establishes whether additional complexity is needed.
+2. **Execution-focused region tree.** Preserve the reference node inputs and
+   decisions, but use shared ancestry, bounded resident descendants and compiled
+   inference. Add shared-bin B3 only after its numerical differences are
+   characterized. This tests the value of better data movement and reuse.
+3. **Adaptive model and geometry tree.** Fit the root before creating concurrency;
+   use direct box/rejection sampling where valid, rounded chains otherwise; try
+   bounded local enrichment on smooth residuals; use a hard split and optional
+   soft refinement when enrichment fails. Keep immutable node records and the
+   same ownership protocol. This tests whether fewer, better-supported regions
+   beat a faster implementation of many affine regions.
+
+The third is the most interesting research candidate, not a proposed immediate
+default. Its selection budgets must be bounded so that unsuccessful enrichment,
+envelope construction and soft refinement cannot consume unlimited work at one
+node. Only combine components that show a benefit in their separate ablations.
+
+### 34.12 Concrete experiments and decision criteria
+
+Keep the repaired current region mode as the reference. Do not change sampling,
+models, splitting and scheduling in one experiment.
+
+| Experiment | Hold fixed | Vary | Evidence needed to keep it |
+|---|---|---|---|
+| E1: ancestry layout | Tree/jobs, point blocks, numerical kernels | Carried paths, local handles, prefix-deduplicated packets | Lower RSS/MPI bytes or elapsed time without changed node results |
+| E2: resident scheduling | Per-node samples, model, split candidates and budgets | Host round trips versus bounded local descendant execution | Lower transferred bytes and makespan, with no starvation or lost steals |
+| E3: B3 statistics | Directions, threshold positions, ridge and score definitions | Direct products, bin prefix/suffix, optional QR merges | Stable candidate ranking and useful end-to-end speedup, including packing |
+| E4: sampling | Frozen cells and target measure | Exact rejection, current walks, rounded multi-chain walks | Feasibility, support and independent-reference distribution checks per second |
+| E5: local enrichment | Domain, initial observations, error requirement | Affine-only versus bounded quadratic enrichment | Lower oracle/leaf/lifecycle cost at the same audited deployed accuracy |
+| E6: refinement priority | Budget and target measure | Level order versus cost/risk priority bands | Better error-versus-time and error-versus-oracle curves on untouched tests |
+| E7: inference compilation | Exact tree and leaf parameters | Level-wise, fused, grouped subtree traversal | Same leaf IDs/statuses and improved latency/throughput across batch sizes |
+
+Use problem families that separate the hypotheses: affine functions, rank-one
+quadratics, full-rank anisotropic and indefinite quadratics, rotated thin regions,
+localized smooth features, oblique interfaces, vector outputs, and an actual
+application oracle. Include a case where the root already passes; it exposes
+parallelism schemes that manufacture unnecessary work. Include concentrated query
+distributions separately from the uniform-domain experiment.
+
+For E3, arithmetic reordering need not be bit-identical even when the mathematical
+statistics are equivalent. Test ill-conditioned and near-tied candidates, retain
+the existing tight numerical tolerances, and report any changed structural
+decisions. E1/E2 should preserve the reference scientific algorithm; E4/E5/E6
+deliberately change it and require accuracy/budget comparisons instead.
+
+Record measured stage lifetimes, peak device and host bytes, transfer bytes,
+oracle counts and batch sizes, sampler proposal/step counts, split iterations,
+leaf count, query-weighted depth, terminal statuses and independent error metrics.
+Report cold-start and steady-state times separately. A single fast kernel or one
+favorable seed does not establish the winning algorithm.
+
+One GPU under WSL can test kernels, transfers, geometry and inference. CPU MPI
+tests can exercise ownership and termination. Multi-GPU speedup needs multiple
+physical GPUs and appropriate oracle placement; several ranks contending for one
+GPU cannot answer that question.
+
+Suggested implementation order is E3 first for a bounded numerical experiment,
+then E4 on frozen geometries, and E5 for the highest potential oracle reduction.
+Profile before investing in E1/E2: they matter most when path/transfer overhead is
+visible. E7 can proceed on frozen models independently. Add E6 only after the
+target query measure and global-budget semantics are explicit.
+
+### 34.13 Checks performed and limits of the recommendation
+
+Small independent checks were run in
+`/tmp/afinni_architecture_checks.py`, with results in the matching `.jsonl` file.
+They support the algebra, not a claim about GPU performance:
+
+- Per-bin prefix/suffix Gram and cross-product reconstruction was compared with
+  direct products at dimensions 2, 10 and 40, with scalar and vector outputs.
+  Relative Frobenius discrepancies were below `9.2e-16` on these well-conditioned
+  random cases. This does not certify ranking stability near a singular fit.
+- For the three rotated rectangles, 250,000 proposals each gave acceptance rates
+  `0.2779`, `0.03832`, and `0.003852`, consistent with the analytic rates at the
+  sampling precision of the experiment.
+- Direct evaluation of the minimax affine approximation to `x^2` confirmed
+  maximum errors `0.001953125`, `0.0001220703125`, and approximately
+  `9.91867e-5` for 16, 64 and 71 equal intervals.
+- The shared-prefix count and abstract path-interval examples were checked
+  arithmetically.
+
+No implementation files were changed, and the full suites were not repeated for
+this document-only extension. Section 33 records the current code's CPU/MPI
+verification and the unavailable GPU environment. External references above
+support the named Morton, histogram, QR and sampling mechanisms; they do not
+establish performance of the proposed combined system.
+
+The architectural recommendation is to keep Approach 3 as the stable interface
+between numerical work and distributed execution, use Approach 1's compact
+history where repeated ancestry becomes expensive, and use Approach 2's ordering
+where it actually improves a local batch. The larger research opportunity is to
+reduce the work the tree needs to perform: cheaper supported sampling, reused
+split statistics, and an adaptive choice between improving a local model and
+creating more regions.

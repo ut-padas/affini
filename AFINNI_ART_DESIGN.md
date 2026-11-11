@@ -1869,9 +1869,9 @@ the last step (Section 42.5).
 | Internal column table, versioned wire format | `src/clusters.py` (`QUEUE_COLUMNS`), `src/work_stealing.py` | `ClusterBatch.split`/`select`, the queue builder and `send/recv_clusters` iterate over the table. The header carries version, present columns, shapes and dtypes; column `i` goes on `base_tag + 1 + i`, so an AFINNI-mode transfer sends the same array payloads on the same tags as before. The header itself is new, so this is not wire compatibility with an older executable: mixed versions fail on the version check. |
 | One executor, two named plans | `src/adaptive_clustering.py`, `src/region.py` (`RegionPlan`) | The AFINNI batch body is unchanged in order and arithmetic. The region plan supplies `work_sizes`, `bytes_per_point`, `leaf_columns`, `split_columns`, `initial_queue`, `process_batch`. Shared deploy step: `deploy_leaves` in `src/local_models.py` (Q, finalize, re-test), called by both plans. |
 | `algorithm`, `domain`, `RegionSettings` | `src/config.py` | `domain=(lower, upper)` required; `"data_bbox"` is explicit opt-in and recorded. |
-| Roots | `src/region.py` (`Roots`) | `box` (default, ART: no initial clustering), `grid` (shared `uniform_grid_bins`), `voronoi` (centres of the initial clustering; exact nearest-centre assignment, tiled; no face list; hit-and-run bisectors from centre differences `c_j − c_r`, normalized, so thin cells between close centres stay exact). |
+| Roots | `src/region.py` (`Roots`) | `box` (default, ART: no initial clustering), `grid` (shared `uniform_grid_bins`), `voronoi` (centres of the initial clustering; exact nearest-centre assignment, tiled; no face list; hit-and-run bisectors from centre differences `c_j − c_r`, normalized; root assignment re-decides the nearest-distance candidate with the same centre-difference test, so sampling, training and routing agree on thin cells. Points within rounding of a bisector remain ambiguous: there is no error-bounded tie test). |
 | Counter-based RNG | `node_keys`, `counter_uniform`, `counter_uniform_pairs` | splitmix64 of (seed, root, path code, purpose, draw index); the same on NumPy and CuPy. The sampler takes two 32-bit uniforms per hash and both normals of each Box-Muller pair: `ceil(d/2) + 1` hashes per hit-and-run step. |
-| Pre-fit top-up, validation rows, drift and movement checks | `HitAndRunSampler` | Box/grid roots sampled exactly; elsewhere one chain per new point, continued (doubling up to `max_walk_steps`) while its endpoints drift. There is no separate pilot and production segment: the diagnostic decides how long the same returned chains run, which is weaker than Section 33.4's scheme. Every chain that did not move is rerun with coordinate directions on its own stream, through the same drift check; nodes still drifting, with any chain unmoved, or with an infeasible step or endpoint get `insufficient_sampling`. That recovery depends on the first walk's outcome: it is an adaptive repair, not an independent production run. Drift statistics are centred moments. Validation points are a diagnostic. |
+| Pre-fit top-up, validation rows, drift and movement checks | `HitAndRunSampler` | Box/grid roots sampled exactly; elsewhere one chain per new point, continued (doubling up to `max_walk_steps`) while its endpoints drift. There is no separate pilot and production segment: the diagnostic decides how long the same returned chains run, which is weaker than Section 33.4's scheme. Every chain that kept any coordinate at its start value (it has not left the start's face) is rerun with systematic coordinate sweeps on its own stream (at least two sweeps when `max_walk_steps` allows; in a box one sweep is exact), through the same drift check computed on the rerun chains only; nodes still drifting, with any chain still on its start face, or with an infeasible step or endpoint get `insufficient_sampling`. Coordinate moves cannot leave every corner of an oblique polytope; such nodes are flagged, not repaired. That recovery depends on the first walk's outcome: it is an adaptive repair, not an independent production run. Drift statistics are centred moments. Validation points are a diagnostic. |
 | Split predicates | `RegionPlan._split`, `_propose` | `split_search="gap"` (B2), `"bins"` (B3: `n_bins` cuts × `n_directions` directions; each cut's left Gram is a direct batched weighted product, not a prefix sum over bins, and the right Gram a subtraction used only as a screen; the `n_screened` best are recomputed directly), `"soft"` (B4, the default: consistent soft objective, envelope gradient, frozen Armijo, a margin `tr(RᵀH⁻¹R)/n` with `R` from the data residual, hardening, kept only if the direct hard SSE beats B3). B4 is numerically monitored descent with a hard incumbent, not a certified optimum: the margin is an estimate, not an error bound. Each refined node records one termination reason (`soft_gradient_converged`, `soft_line_search_stalled`, `soft_gate_saturated`, `soft_nonfinite`, `soft_iteration_limit`); on the benchmarks of 42.3 nearly every node stops at the iteration limit. `rank_deficient` counts nodes entering B3/B4 whose point covariance has an eigenvalue ratio `λ_min/λ_max ≤ 1e-12` (singular-value ratio `≤ 1e-6`); it is a diagnostic only, not a check of every fit or child, and B2 does not compute it. B4's temperature uses the centred score variance, floored at the scores' rounding resolution. |
 | B1 | `sampling="convex_combination"` | AFINNI's augmentation on (usually Voronoi) roots, `Q` kept, so both predictors run on one tree. |
 | Terminal statuses and fallback leaves | `TERMINAL_REASONS`, `VALIDATION_STATUSES` | `accepted`, `max_depth`, `split_failed`; validation `not_performed`, `passed`, `failed`, `insufficient_sampling`. Every point of the domain has a leaf. |
@@ -2128,6 +2128,28 @@ Follow-up review (its Section 32), also fixed; AFINNI-mode results stay bit-iden
 - **Comparison script:** relative-error floors other than `1e-12` are refused (ART fits an
   intercept for degree-1 leaves whatever `--leaf-bias` says, as region mode does); the
   `CONFIG` line prints the resolved components instead of the request.
+
+Second follow-up (review Section 33), also fixed; AFINNI-mode results stay bit-identical:
+
+- **Voronoi root assignment:** `root_of` compared full squared distances, whose shared
+  tangential part absorbed the normal difference of close centres: in 2-D with centres
+  `1e-8` apart, 21 of 200 samples of the middle cell routed to a neighbour (and at `1e-10`
+  the start itself was misassigned). The nearest-distance candidate is now re-decided with
+  the sampler's centre-difference test; all samples agree with exact rational distances
+  at separations `1e-6` to `1e-12`, for the sampler, `root_of` and routing.
+- **Points left on a face:** a recovered chain could move one coordinate and keep the
+  others at the corner (7 of 20 points on faces in 4-D, unflagged). A chain now counts as
+  recovered only when every coordinate left its start value, and recovery uses
+  systematic sweeps instead of random axes.
+- **Recovery drift on the wrong rows:** the drift statistic used all rows of a node while
+  recovery walked a few, so a fixed majority hid the repaired chains' movement. It now
+  uses the diagnosed chains' own count, means and variances.
+- **Grid root counts:** a loaded grid whose bin product overflows int64 (e.g.
+  `[2^62 + 1, 4]`) now fails validation instead of routing to negative indices.
+- **Comparison provenance:** `CONFIG` starts with an `effective` block (ART's forced
+  intercept, the region sampling actually used) before the requested options.
+- **MPI:** the multi-rank region test also trains Voronoi roots, with and without forced
+  steals, and checks identical trees.
 
 Not changed, by decision: the load a victim publishes after a grant still includes its
 processed prefix and in-flight batch (a scheduling estimate, not a correctness issue);
