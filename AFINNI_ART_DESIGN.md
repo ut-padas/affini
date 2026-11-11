@@ -1872,16 +1872,17 @@ the last step (Section 42.5).
 | Roots | `src/region.py` (`Roots`) | `box` (default, ART: no initial clustering), `grid` (shared `uniform_grid_bins`), `voronoi` (centres of the initial clustering; exact nearest-centre assignment, tiled; no face list; hit-and-run bisectors from centre differences `c_j − c_r`, normalized; root assignment re-decides the nearest-distance candidate with the same centre-difference test, so sampling, training and routing agree on thin cells. Points within rounding of a bisector remain ambiguous: there is no error-bounded tie test). |
 | Counter-based RNG | `node_keys`, `counter_uniform`, `counter_uniform_pairs` | splitmix64 of (seed, root, path code, purpose, draw index); the same on NumPy and CuPy. The sampler takes two 32-bit uniforms per hash and both normals of each Box-Muller pair: `ceil(d/2) + 1` hashes per hit-and-run step. |
 | Pre-fit top-up, validation rows, drift and movement checks | `HitAndRunSampler` | Box/grid roots sampled exactly; elsewhere one chain per new point, continued (doubling up to `max_walk_steps`) while its endpoints drift. There is no separate pilot and production segment: the diagnostic decides how long the same returned chains run, which is weaker than Section 33.4's scheme. Every chain that kept any coordinate at its start value (it has not left the start's face) is rerun with systematic coordinate sweeps on its own stream (at least two sweeps when `max_walk_steps` allows; in a box one sweep is exact), through the same drift check computed on the rerun chains only; nodes still drifting, with any chain still on its start face, or with an infeasible step or endpoint get `insufficient_sampling`. Coordinate moves cannot leave every corner of an oblique polytope; such nodes are flagged, not repaired. That recovery depends on the first walk's outcome: it is an adaptive repair, not an independent production run. Drift statistics are centred moments. Validation points are a diagnostic. |
-| Split predicates | `RegionPlan._split`, `_propose` | `split_search="gap"` (B2), `"bins"` (B3: `n_bins` cuts × `n_directions` directions; each cut's left Gram is a direct batched weighted product, not a prefix sum over bins, and the right Gram a subtraction used only as a screen; the `n_screened` best are recomputed directly), `"soft"` (B4, the default: consistent soft objective, envelope gradient, frozen Armijo, a margin `tr(RᵀH⁻¹R)/n` with `R` from the data residual, hardening, kept only if the direct hard SSE beats B3). B4 is numerically monitored descent with a hard incumbent, not a certified optimum: the margin is an estimate, not an error bound. Each refined node records one termination reason (`soft_gradient_converged`, `soft_line_search_stalled`, `soft_gate_saturated`, `soft_nonfinite`, `soft_iteration_limit`); on the benchmarks of 42.3 nearly every node stops at the iteration limit. `rank_deficient` counts nodes entering B3/B4 whose point covariance has an eigenvalue ratio `λ_min/λ_max ≤ 1e-12` (singular-value ratio `≤ 1e-6`); it is a diagnostic only, not a check of every fit or child, and B2 does not compute it. B4's temperature uses the centred score variance, floored at the scores' rounding resolution. |
+| Split predicates | `RegionPlan._split`, `_propose` | `split_search="gap"` (B2), `"bins"` (B3: `n_bins` cuts × `n_directions` directions; cut positions depend only on a node's count, so per direction each node is sorted once, each bin's Gram is one batched product over its contiguous rows, and both sides of every cut are prefix and suffix sums over bins, the right side summed directly rather than subtracted from the total; one data pass per direction instead of one per cut; the sums are a screen and the `n_screened` best are recomputed directly), `"soft"` (B4, the default: consistent soft objective, envelope gradient, frozen Armijo, a margin `tr(RᵀH⁻¹R)/n` with `R` from the data residual, hardening, kept only if the direct hard SSE beats B3). B4 is numerically monitored descent with a hard incumbent, not a certified optimum: the margin is an estimate, not an error bound. Each refined node records one termination reason (`soft_gradient_converged`, `soft_line_search_stalled`, `soft_gate_saturated`, `soft_nonfinite`, `soft_iteration_limit`); with the original 20 iterations nearly every node stopped at the iteration limit, so the default is now 40 (Section 42.8). `rank_deficient` counts nodes entering B3/B4 whose point covariance has an eigenvalue ratio `λ_min/λ_max ≤ 1e-12` (singular-value ratio `≤ 1e-6`); it is a diagnostic only, not a check of every fit or child, and B2 does not compute it. B4's temperature uses the centred score variance, floored at the scores' rounding resolution. |
 | B1 | `sampling="convex_combination"` | AFINNI's augmentation on (usually Voronoi) roots, `Q` kept, so both predictors run on one tree. |
 | Terminal statuses and fallback leaves | `TERMINAL_REASONS`, `VALIDATION_STATUSES` | `accepted`, `max_depth`, `split_failed`; validation `not_performed`, `passed`, `failed`, `insufficient_sampling`. Every point of the domain has a leaf. |
 | Assembly and routing | `RoutingTable` | Compact node arrays (child indices, planes, leaf rows): routing follows child indices, so any depth up to 62 routes. Building and loading check shapes, finite planes, unique `(root, path_code)` provenance, both children of every split, parents and roots; queries must be `(n, d)` and finite. Older files with packed keys still load. |
 | Predictors, persistence, audit | `src/surrogate.py` | `predict(predictor="knn" \| "route")` (route is the default for region models), `route_leaves`, `route_details` (per query: leaf, outside, terminal reason and validation status), `leaf_status_counts`, `audit` (iid uniform on the domain, Clopper–Pearson bound; non-finite oracle or model values count as violations), model format 2; `store_Q=False` models refuse kNN. Training warns when leaves end with `insufficient_sampling`: `converged` only says that no node is still above tolerance. |
+| Quadratic leaves | `QuadraticLSQModel` (`"quadratic_lsq"`), `LocalModel.n_features` / `features` | ART's degree-2 leaves: full quadratic in node-centred, radius-scaled coordinates, tiny fixed ridge. The region plan takes the sample budget (`multiplier × n_features`) and the split basis from the model; affine trees are unchanged. |
 | `f(c)` only when needed | `needs_centroid_value` on models and split strategies, `config.requires_f_centroids` | The leaf `f` column is NaN when no component reads it. |
 | Pointwise acceptance | `src/acceptance.py` (`"pointwise"`) | ART's `max_pointwise_relative` with `rtol` alone. |
 | Stealing for region work | `WorkStealer(min_load, steal_size, lease_received, work_sizes)`, `progress()` | Region thresholds (a few nodes' worth), receiver lease (`LEASED` denials), and progress points inside B4 so requests are served mid-batch. Published loads, steal eligibility and grant sizes all use the plan's `work_sizes` (points after top-up and validation), so thieves and victims compare one unit. |
 | Experiment harnesses | `scripts/art_comparison.py`, `scripts/afinni_benchmark.py` | ART vs region on ART's benchmarks, scored by ART's own evaluator (ART's configuration, e.g. its fastest CPU sampler `parallel_numba`, recorded in the output); AFINNI mode, base vs branch accuracy and runtime. |
-| Example and benchmark problems | `examples/example04_region_mode.py`, `src/problems/spherical_piecewise.py` | Both modes on four problems (`--problem all` or one): ART's spherical piecewise preset (identical to ART's function in 2–5-D), anisotropic Gaussian, wave, Rosenbrock. Per-problem depth limits (and region rtol 0.02 for wave) give equal relative L2 in one process on one CPU; region mode then needs 3–19x fewer oracle calls and fewer leaves on every problem, AFINNI trains as fast or faster (table in `examples/USAGE.md`). Stages `afinni`, `region`, `compare`; `summary.png` across problems. |
+| Example and benchmark problems | `examples/example04_region_mode.py`, `src/problems/spherical_piecewise.py` | Both modes on four problems (`--problem all` or one): ART's spherical piecewise preset (identical to ART's function in 2–5-D), anisotropic Gaussian, wave, Rosenbrock. Per-problem depth limits (and region rtol 0.02 for wave) give equal relative L2 in one process on one CPU; region mode then needs 3.5–18x fewer oracle calls at similar or lower error and fewer leaves on all but the spherical jump (where it is twice as accurate), AFINNI trains as fast or faster (table in `examples/USAGE.md`). Stages `afinni`, `region`, `compare`; `summary.png` across problems. |
 | Plots | `src/plotting/region.py` | `plot_region_partition`, `plot_region_tree_stats`, `plot_error_maps`, `plot_error_cdf`, `plot_method_comparison`; profile dashboards name the mode and show fallback leaves per level. |
 | Monitor | `src/monitor.py`, `run_start` event | The header names the mode (`AFINNI` or `AFINNI region mode (ART; …)`); region runs report points in fallback leaves instead of queued points. Region stages are timed under the shared phase keys, so profiles break down by phase. |
 | Documentation | `examples/USAGE.md` ("AFINNI region mode (ART)", plots, monitor), `README.md` | |
@@ -1895,8 +1896,10 @@ the last step (Section 42.5).
 - The hit-and-run check compares halfway and final endpoints (coordinates and squared
   radius), plus a movement check (Section 42.7). R̂/ESS diagnostics and projections on
   cut normals (Section 33.4) would be extensions of `_drifting`.
-- B4 uses affine split features `[u, 1]` for every leaf model (Section 9.4 of the
-  review), a temperature `soft_temperature * std(wᵀu)` and one fixed ridge per node.
+- B2–B4 fit children in the leaf model's own basis (`LocalModel.features`: `[u, 1]` for
+  affine leaves, node-centred quadratic monomials for `quadratic_lsq`), as ART fits
+  children in its leaf design; B4 uses a temperature `soft_temperature * std(wᵀu)` and
+  one fixed ridge per node.
 - B1 uses a per-batch random stream for its convex combinations, as AFINNI mode
   does, so only B1 depends on the batch size.
 
@@ -1921,56 +1924,83 @@ the last step (Section 42.5).
   predictions for any rank count, with forced steals, including B4 (10 mid-batch grants
   through `progress()` in a 4-rank run).
 - **ART comparison** (`scripts/art_comparison.py`). ART defaults: tolerance 1e-2 on the
-  pointwise relative error, max depth 10, multiplier 50, affine leaves, the `cpu` soft
-  optimizer, DFS. ART is run twice: with its default sampler (`hit_and_run`, the baseline)
-  and with `--sampler parallel_numba`, its fastest CPU-only configuration (multithreaded,
-  compiled chains; ART's other optimizers need a GPU). Every run is scored on ART's test set
-  of `10000·d` uniform points by ART's own evaluator. Each cell is relative L2 error / share
-  of test points above the tolerance / leaves / oracle queries / build time, one seed, on
-  the same 16-core CPU. The region columns use the current code (batched Grams and the
-  faster sampler of 42.4); ART's code is unchanged since its runs. The review fixes of
-  42.7 leave these trees unchanged (checked on quadratic 2D, plane wave 3D and
-  Rosenbrock 5D) and make B4 10–15% faster.
+  pointwise relative error, max depth 10, multiplier 50, the `cpu` soft optimizer (up to
+  200 iterations per split), DFS. Every run is scored on ART's test set of `10000·d`
+  uniform points by ART's own evaluator. Each cell is relative L2 error / share of test
+  points above the tolerance / leaves / oracle queries / build time, one seed. All cells
+  were re-measured in one session on the same 16-core laptop (on battery, balanced power
+  profile), with the current code: bin-sum B3, B4 with 40 iterations (Section 42.8) and
+  every review fix of 42.7. ART's code is unchanged.
+
+  **Affine leaves** (ART `--leaf-degree 1`, region `affine_lsq`). ART is run with its
+  default sampler (`hit_and_run`, the baseline) and with `--sampler parallel_numba`, its
+  fastest CPU-only configuration (ART's other optimizers need a GPU).
 
 | Problem | ART baseline (`hit_and_run`) | ART fastest CPU (`parallel_numba`) | Region B4 (default) | Region B3 | Region B2 |
 |---|---|---|---|---|---|
-| quadratic 2D | 2.6e-03 / 6.7% / 415 / 62k / 24 s | 2.6e-03 / 7.1% / 401 / 60k / 17 s | 2.4e-03 / 5.6% / 406 / 62k / 1.2 s | 2.3e-03 / 6.3% / 404 / 61k / 0.65 s | 2.0e-03 / 4.9% / 512 / 78k / 0.64 s |
-| quadratic 3D | 3.8e-03 / 28% / 717 / 143k / 55 s | 4.1e-03 / 30% / 715 / 143k / 31 s | 3.7e-03 / 26% / 715 / 144k / 3.4 s | 4.3e-03 / 30% / 752 / 152k / 2 s | 3.5e-03 / 25% / 948 / 191k / 2.1 s |
-| gaussian 2D | 2.4e-03 / 0.06% / 22 / 3k / 0.94 s | 2.6e-03 / 0.005% / 22 / 3k / 0.68 s | 2.9e-03 / 0.29% / 19 / 3k / 0.16 s | 2.3e-03 / 0.04% / 25 / 4k / 0.14 s | 2.3e-03 / 0.04% / 28 / 4k / 0.11 s |
-| gaussian 3D | 2.5e-03 / 0.17% / 139 / 28k / 8 s | 2.8e-03 / 0.31% / 120 / 24k / 2.8 s | 2.6e-03 / 0.27% / 131 / 26k / 0.66 s | 2.6e-03 / 0.3% / 160 / 32k / 0.43 s | 2.4e-03 / 0.19% / 210 / 42k / 0.41 s |
-| plane wave 2D | 0.018 / 39% / 931 / 140k / 60 s | 0.015 / 33% / 882 / 132k / 40 s | 3.3e-03 / 3.3% / 277 / 42k / 0.88 s | 4.1e-03 / 10% / 510 / 78k / 0.74 s | 7.0e-03 / 11% / 976 / 148k / 1.2 s |
-| rosenbrock 2D | 2.6e-03 / 31% / 471 / 71k / 30 s | 2.3e-03 / 28% / 450 / 68k / 20 s | 3.0e-03 / 29% / 342 / 52k / 1.1 s | 2.6e-03 / 32% / 339 / 52k / 0.56 s | 2.2e-03 / 14% / 798 / 121k / 1 s |
-| spherical piecewise 2D | 0.047 / 2.5% / 226 / 34k / 16 s | 0.074 / 2.4% / 148 / 22k / 7.4 s | 0.045 / 0.85% / 251 / 38k / 0.83 s | 0.044 / 1.2% / 222 / 34k / 0.37 s | 0.067 / 13% / 268 / 41k / 0.35 s |
-| spherical piecewise 3D (TACC) | 0.11 / 26% / 333 / 67k / 26 s | 0.11 / 25% / 320 / 64k / 15 s | 0.088 / 13% / 557 / 113k / 2.6 s | 0.1 / 22% / 520 / 105k / 1.4 s | 0.18 / 61% / 812 / 164k / 1.7 s |
-| plane wave 3D (TACC) | 0.14 / 88% / 1,024 / 205k / 93 s | 0.12 / 88% / 1,024 / 205k / 51 s | 0.2 / 68% / 921 / 186k / 4.2 s | 0.1 / 77% / 952 / 192k / 2.5 s | 0.056 / 70% / 1,023 / 207k / 2.2 s |
-| rosenbrock 5D, [-2,3]⁵, offset 1 (TACC) | 0.06 / 89% / 1,024 / 307k / 120 s | 0.063 / 89% / 1,024 / 307k / 51 s | 0.057 / 88% / 1,024 / 309k / 8.8 s | 0.07 / 90% / 1,024 / 309k / 5.2 s | 0.081 / 90% / 1,024 / 309k / 4 s |
-| rosenbrock 20D, [-2,3]²⁰, offset 1 | 0.26 / 97% / 1,024 / 1.08M / 406 s | 0.27 / 97% / 1,024 / 1.08M / 163 s | 0.28 / 97% / 1,024 / 1.08M / 81 s | 0.29 / 97% / 1,024 / 1.08M / 49 s | 0.28 / 97% / 1,024 / 1.08M / 32 s |
+| quadratic 2D | 2.6e-03 / 6.7% / 415 / 62k / 23 s | 2.6e-03 / 7.1% / 401 / 60k / 13 s | 2.2e-03 / 5.4% / 404 / 61k / 1.6 s | 2.3e-03 / 5.2% / 414 / 63k / 0.57 s | 2.0e-03 / 4.9% / 512 / 78k / 0.59 s |
+| quadratic 3D | 3.8e-03 / 28% / 717 / 143k / 46 s | 4.1e-03 / 30% / 715 / 143k / 24 s | 3.9e-03 / 28% / 702 / 142k / 3.7 s | 4.3e-03 / 30% / 752 / 152k / 1.6 s | 3.5e-03 / 25% / 948 / 191k / 1.9 s |
+| gaussian 2D | 2.4e-03 / 0.06% / 22 / 3k / 0.88 s | 2.6e-03 / 0.005% / 22 / 3k / 0.52 s | 3.0e-03 / 0.36% / 18 / 3k / 0.11 s | 2.3e-03 / 0.07% / 25 / 4k / 0.1 s | 2.3e-03 / 0.04% / 28 / 4k / 0.094 s |
+| gaussian 3D | 2.5e-03 / 0.17% / 139 / 28k / 6.8 s | 2.8e-03 / 0.31% / 120 / 24k / 2.3 s | 2.8e-03 / 0.38% / 114 / 23k / 0.58 s | 2.6e-03 / 0.3% / 160 / 32k / 0.37 s | 2.4e-03 / 0.19% / 210 / 42k / 0.42 s |
+| plane wave 2D | 0.018 / 39% / 931 / 140k / 56 s | 0.015 / 33% / 882 / 132k / 32 s | 2.5e-03 / 2.2% / 249 / 38k / 0.95 s | 4.2e-03 / 11% / 501 / 76k / 0.66 s | 7.0e-03 / 11% / 976 / 148k / 1.2 s |
+| rosenbrock 2D | 2.6e-03 / 31% / 471 / 71k / 28 s | 2.3e-03 / 28% / 450 / 68k / 16 s | 2.6e-03 / 29% / 351 / 53k / 1.4 s | 2.6e-03 / 32% / 347 / 53k / 0.49 s | 2.2e-03 / 14% / 798 / 121k / 0.93 s |
+| spherical piecewise 2D | 0.047 / 2.5% / 226 / 34k / 14 s | 0.074 / 2.4% / 148 / 22k / 6 s | 0.056 / 1.2% / 188 / 29k / 0.82 s | 0.045 / 1.3% / 218 / 33k / 0.34 s | 0.067 / 13% / 268 / 41k / 0.34 s |
+| spherical piecewise 3D | 0.11 / 26% / 333 / 67k / 24 s | 0.11 / 25% / 320 / 64k / 12 s | 0.09 / 14% / 502 / 101k / 2.6 s | 0.1 / 22% / 520 / 105k / 1.2 s | 0.18 / 61% / 812 / 164k / 1.6 s |
+| plane wave 3D | 0.14 / 88% / 1,024 / 205k / 75 s | 0.12 / 88% / 1,024 / 205k / 41 s | 0.048 / 55% / 887 / 179k / 4.6 s | 0.1 / 77% / 952 / 192k / 2.1 s | 0.056 / 70% / 1,023 / 207k / 2.1 s |
+| rosenbrock 5D, [-2,3]⁵, offset 1 | 0.06 / 89% / 1,024 / 307k / 98 s | 0.063 / 89% / 1,024 / 307k / 41 s | 0.054 / 87% / 1,024 / 309k / 8.5 s | 0.07 / 90% / 1,024 / 309k / 3.9 s | 0.081 / 90% / 1,024 / 309k / 3.5 s |
+| rosenbrock 20D, [-2,3]²⁰, offset 1 | 0.26 / 97% / 1,024 / 1.08M / 322 s | 0.27 / 97% / 1,024 / 1.08M / 135 s | 0.28 / 97% / 1,024 / 1.08M / 69 s | 0.29 / 97% / 1,024 / 1.08M / 34 s | 0.28 / 97% / 1,024 / 1.08M / 30 s |
 
-  Against ART's fastest CPU configuration, region mode B4 builds 4–46× faster for `d <= 5`
-  (median about 9×) and 2× faster at 20-D, where per-node arithmetic (`n p^2 ~ d^3` under
-  ART's budget) replaces the call overhead that batching saves; B3 and B2 are faster still.
-  Oracle queries and leaves are similar or lower. Accuracy, one seed each, is mixed:
-  - B4 is more accurate than both ART runs on 2-D plane wave (by about 5x), the spherical
-    piecewise problems, 2-D/3-D quadratic and 5-D Rosenbrock, and comparable on 3-D Gaussian
-    and 20-D Rosenbrock;
-  - it is slightly behind on 2-D Gaussian (0.29% above tolerance against 0.005–0.06%) and
-    in L2 on 2-D Rosenbrock (3.0e-3 against 2.3–2.6e-3, with a similar share above
-    tolerance);
-  - on 3-D plane wave its L2 is worse (0.20 against 0.12–0.14) while fewer points are above
-    tolerance (68% against 88%). B4's L2 there has ranged over 0.023, 0.084 and 0.20 in
-    three runs with different random streams, so single-seed results on that problem are
-    not conclusive; B2 is the most accurate on it.
+  Against ART's fastest CPU configuration, region B4 builds 3.9–34× faster for `d <= 5`
+  (median 6.5× over all rows) and 2× faster at 20-D, where per-node arithmetic
+  (`n p^2 ~ d^3` under ART's budget) replaces the per-node call overhead that batching
+  saves. Oracle queries and leaves are similar or lower. Accuracy, one seed each:
+  - B4 is more accurate than both ART runs on 2-D plane wave (L2 6× lower, 2.2% of points
+    above tolerance against 33–39%), 3-D plane wave (0.048 / 55% against 0.12–0.14 / 88%),
+    3-D spherical piecewise (0.09 / 14% against 0.11 / 25%), 2-D quadratic and 5-D Rosenbrock;
+  - comparable on 3-D quadratic, 2-D Rosenbrock and 20-D Rosenbrock; on 2-D spherical
+    piecewise its L2 (0.056) lies between ART's two runs with half their share above
+    tolerance;
+  - behind on the Gaussians: 0.36% (2-D) and 0.38% (3-D) of points above tolerance against
+    ART's 0.005–0.31%, with fewer leaves.
 
-  The faster sampler makes ART 1.3–2.9× faster without changing its accuracy much: most of
-  ART's time is its node-by-node soft optimizer. B4 is the default because it is the
-  closest to ART's method; for speed comparisons B3 is the fairer reference (no soft
-  optimizer, 1.1–2× faster than B4 here, accuracy close to B4 on most rows). B2 (curvature direction at the median)
-  fails on interfaces, as Section 9.5 predicted. Oracle counts include centroid evaluations
-  when the split strategy reads `f(c)` (the default covariance-Hessian metric does).
+  B3 (no soft optimizer) is 1.1–3× faster than B4 and the fairer reference for speed; B4's
+  40 iterations buy most of its advantage on the oblique-interface problems (plane waves).
+  B2 (curvature direction at the median) fails on interfaces, as Section 9.5 predicted.
+  The 3-D plane wave remains stream-sensitive (B4's L2 was 0.023–0.20 across streams with
+  20 iterations). Oracle counts include centroid evaluations when the split strategy reads
+  `f(c)` (the default covariance-Hessian metric does).
 
-- **20-D** (last row): nothing reaches the tolerance with 1,024 affine leaves, so every run
-  fills the depth-10 tree at the same accuracy and the row compares cost only. B4's 79 s
-  split into splitting 49 s and polytope sampling 27 s; the oracle was 0.1 s.
+  **20-D** (last row): nothing reaches the tolerance with 1,024 affine leaves, so every run
+  fills the depth-10 tree at the same accuracy and the row compares cost only.
+
+  **Quadratic leaves** (ART `--leaf-degree 2 --sampler parallel_numba`, region
+  `quadratic_lsq`; both sample `50 × (d+1)(d+2)/2` points per node and fit children in the
+  quadratic basis). The last column repeats region B4 with affine leaves for reference.
+  20-D is omitted (231 coefficients per leaf).
+
+| Problem | ART fastest CPU (`parallel_numba`) | Region B4 | Region B3 | Region B4, affine leaves |
+|---|---|---|---|---|
+| quadratic 2D | 7.6e-16 / 0% / 1 / 300 / 0.46 s | 1.9e-10 / 0% / 1 / 301 / 0.0026 s | 1.9e-10 / 0% / 1 / 301 / 0.06 s | 2.2e-03 / 5.4% / 404 / 61k / 1.6 s |
+| quadratic 3D | 1.3e-15 / 0% / 1 / 500 / 0.47 s | 2.1e-10 / 0% / 1 / 501 / 0.0026 s | 2.1e-10 / 0% / 1 / 501 / 0.059 s | 3.9e-03 / 28% / 702 / 142k / 3.7 s |
+| gaussian 2D | 9.6e-04 / 0.15% / 5 / 2k / 0.55 s | 7.3e-04 / 0% / 6 / 2k / 0.063 s | 8.5e-04 / 0.005% / 5 / 2k / 0.077 s | 3.0e-03 / 0.36% / 18 / 3k / 0.11 s |
+| gaussian 3D | 1.1e-03 / 0.07% / 9 / 4k / 0.61 s | 9.6e-04 / 0.013% / 10 / 5k / 0.15 s | 1.1e-03 / 0.14% / 10 / 5k / 0.11 s | 2.8e-03 / 0.38% / 114 / 23k / 0.58 s |
+| plane wave 2D | 1.8e-03 / 2.3% / 530 / 159k / 18 s | 1.0e-03 / 0.035% / 141 / 43k / 1.1 s | 8.7e-04 / 0.06% / 243 / 73k / 0.62 s | 2.5e-03 / 2.2% / 249 / 38k / 0.95 s |
+| rosenbrock 2D | 8.6e-04 / 1.4% / 245 / 74k / 10 s | 7.4e-04 / 0.44% / 324 / 98k / 2.4 s | 6.1e-04 / 0.74% / 267 / 81k / 0.71 s | 2.6e-03 / 29% / 351 / 53k / 1.4 s |
+| spherical piecewise 2D | 0.028 / 3.1% / 217 / 65k / 11 s | 0.05 / 1.5% / 231 / 70k / 1.8 s | 0.036 / 1.9% / 209 / 63k / 0.57 s | 0.056 / 1.2% / 188 / 29k / 0.82 s |
+| spherical piecewise 3D | 0.077 / 22% / 490 / 245k / 24 s | 0.069 / 18% / 462 / 232k / 6.6 s | 0.081 / 28% / 427 / 214k / 2.5 s | 0.09 / 14% / 502 / 101k / 2.6 s |
+| plane wave 3D | 0.016 / 29% / 951 / 476k / 45 s | 1.2e-03 / 0.19% / 340 / 171k / 4.5 s | 0.075 / 22% / 747 / 375k / 4.2 s | 0.048 / 55% / 887 / 179k / 4.6 s |
+| rosenbrock 5D, [-2,3]⁵, offset 1 | 9.4e-03 / 42% / 1,021 / 1.07M / 65 s | 8.6e-03 / 39% / 1,024 / 1.08M / 46 s | 0.017 / 59% / 1,024 / 1.08M / 16 s | 0.054 / 87% / 1,024 / 309k / 8.5 s |
+
+  With quadratic leaves region B4 is as accurate as ART or more on every row except the L2
+  of 2-D spherical piecewise (0.05 against 0.028, with fewer points above tolerance), and
+  much more accurate on the plane waves: 2-D 141 leaves and 0.035% above tolerance against
+  530 and 2.3%; 3-D 340 leaves, L2 1.2e-3 and 0.19% against 951, 0.016 and 29%. It builds
+  3.6–16× faster for `d <= 3` (the one-leaf quadratics aside) but only 1.4× at 5-D, where
+  B4's per-node work grows with `p^2 = 441`; B3 is 2.9× faster than B4 there, at a lower
+  accuracy (59% above tolerance against 39%). Both methods represent the quadratics exactly with one leaf (region mode's
+  1e-10 ridge leaves an L2 of 2e-10). Against affine leaves, quadratic leaves cut the share
+  above tolerance on every smooth row, e.g. 5-D Rosenbrock 87% → 39% and 3-D plane wave 55% →
+  0.19%, at up to 3.5× more oracle queries (the larger per-node budget).
 
 ### 42.4 Found while implementing
 
@@ -2062,7 +2092,7 @@ Each item below waits for the measurement named with it (Section 39 and Part IV)
 | Ancestry interning, device-resident descendants, host spilling | measured `h/n` overhead, RSS or migration bytes |
 | Distributed assembly, sharded inference | models too large for rank 0 |
 | Cached-face Voronoi chords | Voronoi root faces measured as the sampling bottleneck |
-| Polynomial leaves in region mode | a target where affine leaves need too many nodes |
+| Low-rank quadratic leaves (`d + 1 + r` features along estimated curvature directions) | full quadratic leaves (42.8) need `(d+1)(d+2)/2` coefficients, too many at high dimension |
 | Boundary blending, continuity-constrained fits | an application that needs continuity or Jacobians (Q-H) |
 | Per-node certificates, sequential tests | proven mixing bounds for the sampler (Q-A) |
 | Weights, per-sample ids, global oracle budgets | an experiment that needs them |
@@ -2154,6 +2184,30 @@ Second follow-up (review Section 33), also fixed; AFINNI-mode results stay bit-i
 Not changed, by decision: the load a victim publishes after a grant still includes its
 processed prefix and in-flight batch (a scheduling estimate, not a correctness issue);
 routing stays a level-wise reference implementation until GPU timings exist.
+
+### 42.8 Algorithm changes after the reviews
+
+Three changes from the architectural review (its Section 34), each measured before it was
+kept; AFINNI-mode results stay bit-identical:
+
+- **Bin-sum B3 (its E3).** B3 formed every cut's Gram from all the node's rows: 15 data
+  passes per direction. Cut positions depend only on a node's count, so per direction each
+  node is now sorted once, each of the 16 bins gets one batched product over its contiguous
+  rows, and both sides of every cut are prefix and suffix sums over bins
+  (`_SplitRows.cut_sums`). The right side is summed directly, not subtracted from the total.
+  Splitting at 20-D fell from 29.6 s to 10.8 s (B3 total 88 s → 66 s); trees were identical
+  on spherical piecewise 3-D and Rosenbrock 5-D/20-D and within seed noise elsewhere
+  (rounding of the screen can reorder near-tied candidates).
+- **B4 iterations 20 → 40.** With 20 iterations nearly every node stopped at the limit
+  (`soft_iteration_limit`). A sweep over 0 (B3), 20, 40 and 80 iterations on ten of the
+  benchmarks: 40 gave fewer leaves or lower error on most (2-D plane wave 278 → 249 leaves,
+  L2 3.3e-3 → 2.5e-3; 3-D plane wave L2 0.20 → 0.049; 3-D Gaussian 128 → 114 leaves), for
+  about 35% more build time. 80 helped the plane waves further (3-D L2 0.014) but was mixed
+  elsewhere and cost 2–2.5× the time of 20. ART allows 200.
+- **Quadratic leaves (its E5, in ART's full form).** `quadratic_lsq` and the
+  `LocalModel.n_features` / `features` hooks, so the region plan sizes nodes and fits
+  children in the leaf model's basis (42.1). Measured against ART's degree-2 trees in 42.3.
+  The low-rank variant for high dimension is deferred (42.6).
 
 ---
 

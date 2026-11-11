@@ -203,7 +203,7 @@ Settings are in `region=RegionSettings(...)`:
 | `validation_samples` | fresh points per node on which the deployed model is checked; a diagnostic |
 | `min_side_margin` | a split leaves at least `d + 1 + margin` points on each side |
 | `walk_steps`, `max_walk_steps`, `mixing_z` | hit-and-run steps per new point (box and grid roots are sampled exactly); chains that still drift between their halfway and last step are lengthened up to `max_walk_steps`; chains that did not move are rerun with coordinate directions; a node still drifting, stuck or with an infeasible step is marked `insufficient_sampling` (training warns) |
-| `n_bins`, `n_directions`, `n_screened`, `soft_iters`, `soft_temperature` | the threshold search and the soft optimizer (defaults: 16, 6, 3, 20, 0.1) |
+| `n_bins`, `n_directions`, `n_screened`, `soft_iters`, `soft_temperature` | the threshold search and the soft optimizer (defaults: 16, 6, 3, 40, 0.1) |
 | `steal_min_load`, `steal_size` | work-stealing thresholds in work units: points after top-up and validation (default: a few nodes) |
 
 Each rejected node is split by a hyperplane (see `split_search`), cut where the stored
@@ -218,6 +218,12 @@ surrogate.leaf_status_counts()           # terminal_reason (accepted, max_depth,
 surrogate.route_details(X)               # per query: leaf, outside, terminal_reason, validation_status codes
 surrogate.audit(Evaluator(f_fn=f), 3000) # violations (NaN/inf count as violations) on fresh uniform points, with a binomial upper bound
 ```
+
+Leaves are affine (`local_model="affine_lsq"`, the default) or full quadratics
+(`local_model="quadratic_lsq"`, ART's `--leaf-degree 2`). Each node samples
+`sample_multiplier` times the leaf model's coefficient count, as ART does, and splits fit
+the children in that model's basis. Quadratic leaves need far fewer nodes on smooth
+targets; their `(d+1)(d+2)/2` coefficients suit low dimension.
 
 Random numbers come from streams keyed by node, so a region-mode tree is the same for
 any batch size, rank count and steal schedule. `scripts/art_comparison.py` trains ART
@@ -253,21 +259,22 @@ In 2-D, one process on one CPU (AFINNI / AFINNI region mode (ART); about 30 s fo
 
 | Problem | Relative L2 | % above tol | Leaves | Oracle evaluations | Training time |
 |---|---|---|---|---|---|
-| `spherical_piecewise` (AFINNI 7 levels, region depth 12) | 0.095 / 0.094 | 1.7 / 1.7 | 416 / 329 | 363k / 50k | 0.71 / 0.96 s |
-| `anisotropic_gaussian` (both converge) | 0.0018 / 0.0018 | 0.12 / 0.03 | 222 / 167 | 110k / 25k | 0.14 / 0.53 s |
-| `wave` (both converge; region at rtol 0.02) | 0.0043 / 0.0045 | 3.0 / 3.2 | 805 / 73 | 214k / 11k | 0.35 / 0.35 s |
-| `rosenbrock` (AFINNI converges; region depth 16) | 0.0024 / 0.0023 | 3.0 / 2.6 | 4,235 / 2,165 | 1.1M / 329k | 1.5 / 6.9 s |
+| `spherical_piecewise` (AFINNI 7 levels, region depth 12) | 0.095 / 0.049 | 1.7 / 0.47 | 416 / 433 | 363k / 66k | 0.59 / 1.7 s |
+| `anisotropic_gaussian` (both converge) | 0.0018 / 0.0018 | 0.12 / 0.08 | 222 / 167 | 110k / 25k | 0.11 / 0.69 s |
+| `wave` (both converge; region at rtol 0.02) | 0.0043 / 0.0042 | 3.0 / 3.0 | 805 / 77 | 214k / 12k | 0.30 / 0.36 s |
+| `rosenbrock` (AFINNI converges; region depth 16) | 0.0024 / 0.0028 | 3.0 / 2.9 | 4,235 / 2,069 | 1.1M / 314k | 1.4 / 8.3 s |
 
-At equal L2 error, region mode needs 3-19x fewer oracle evaluations (AFINNI's include its
-84,500 initial points) and fewer leaves on every problem, most of all on the oblique
-`wave`; AFINNI trains as fast or faster, since region mode spends its time optimizing
-splits rather than calling the oracle, so region mode pays off when the oracle is
-expensive. Notes per problem:
+Region mode needs 3.5-18x fewer oracle evaluations (AFINNI's include its 84,500 initial
+points) at a similar or lower error, and fewer leaves on every problem but the spherical
+jump, where it is twice as accurate; most of all it saves on the oblique `wave`. AFINNI
+trains as fast or faster, since region mode spends its time optimizing splits rather than
+calling the oracle, so region mode pays off when the oracle is expensive. Times are on a
+laptop on battery. Notes per problem:
 
 - `spherical_piecewise`: neither mode converges. A cluster straddling the jump fails
   AFINNI's test at every size, so its depth limit stops it and the unresolved clusters
-  leave regions without leaves ("pout"); region mode's 99th-percentile error (about 1.2)
-  comes from the few cells the jump still cuts.
+  leave regions without leaves ("pout"); region mode's remaining error comes from the few
+  cells the jump still cuts.
 - `wave`: converged, region mode is about 2x more accurate (L2 0.0019 at rtol 0.01), so
   it trains at rtol 0.02 to match AFINNI's error.
 - `rosenbrock`: the L2 errors agree for any region depth from 10 on; depth 16 also
