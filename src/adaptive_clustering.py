@@ -35,7 +35,7 @@ from src.backend import (  # MPI: real mpi4py.MPI, or a single-rank stand-in
 from src.clusters import ClusterBatch, ClusterQueueBuilder, ColumnBuffer
 from src.config import ClusteringConfig
 from src.evaluation import Evaluator
-from src.local_models import ClusterFitData, output_columns
+from src.local_models import ClusterFitData, deploy_leaves, output_columns
 from src.logging_utils import log_mem_stats
 from src.numerics import convert_to_2d_array
 from src.profiling import ORACLE_TIME_KEY, Profiler, new_profiling_stats
@@ -358,72 +358,23 @@ def _run_local_refinement(
 
             if K_good_batch > 0:
                 with timer("time_good_Q"):
-                    good_mask = is_good[aug_ids]
-                    X_good = X_batch[good_mask]
-                    G_good = G_batch[good_mask] if G_batch is not None else None
-                    good_counts = aug_sizes[good_idx_local]
-                    dense_labels_good = repeats(xp.arange(K_good_batch), good_counts)
-                    good_params = {k: v[good_idx_local] for k, v in surrogate_params.items()}
-
-                    # Shape matrix Q of each accepted cluster, used by the
-                    # trust-region test at inference.
-                    Qs = trust_region.shapes(
-                        X_good, mus[good_idx_local], dense_labels_good, good_counts
-                    )
-                    # Parameters the model only computes for accepted clusters
-                    # (e.g. the second-order Taylor term).
-                    final_params = model.finalize(
+                    leaves = deploy_leaves(
+                        model, trust_region, acceptance,
                         ClusterFitData(
-                            X=X_good,
-                            F=F_batch[good_mask],
-                            G=G_good,
-                            labels=dense_labels_good,
-                            starts=xp.r_[0, xp.cumsum(good_counts)[:-1]],
-                            sizes=good_counts,
-                            centroids=mus[good_idx_local],
-                            f_c=f_mus[good_idx_local],
-                            g_c=g_mus[good_idx_local] if g_mus is not None else None,
+                            X=X_batch, F=F_batch, G=G_batch, labels=aug_ids, starts=aug_starts,
+                            sizes=aug_sizes, centroids=mus, f_c=f_mus, g_c=g_mus,
                         ),
-                        good_params,
-                    )
-                    E_abs_good, E_rel_good = E_abs[good_idx_local], E_rel[good_idx_local]
-                    if final_params:
-                        # Accepted-only columns change predictions, so re-test the model
-                        # that will actually be deployed; clusters it fails are split.
-                        F_final = model.evaluate(
-                            {**good_params, **final_params, "centroids": mus[good_idx_local],
-                             "f": f_mus[good_idx_local]},
-                            X_good, dense_labels_good,
-                        )  # fmt: skip
-                        still_good, E_abs_good, E_rel_good = acceptance(
-                            F_batch[good_mask], F_final, xp.r_[0, xp.cumsum(good_counts)[:-1]], good_counts,
-                        )  # fmt: skip
-                        if not bool(xp.all(still_good)):
-                            is_good[good_idx_local[~still_good]] = False
-                            keep = xp.nonzero(still_good)[0]
-                            good_idx_local, good_counts, E_abs_good, E_rel_good, Qs = (
-                                good_idx_local[keep], good_counts[keep], E_abs_good[keep],
-                                E_rel_good[keep], Qs[keep],
-                            )  # fmt: skip
-                            good_params = {k: v[keep] for k, v in good_params.items()}
-                            final_params = {k: v[keep] for k, v in final_params.items()}
-                            K_good -= K_good_batch - len(keep)
-                            K_good_batch = len(keep)
+                        good_idx_local, surrogate_params, E_abs, E_rel,
+                    )  # fmt: skip
+                    if int(leaves.failed.shape[0]) > 0:
+                        # Clusters the finalized model fails are split instead.
+                        is_good[leaves.failed] = False
+                        K_good -= int(leaves.failed.shape[0])
+                        K_good_batch -= int(leaves.failed.shape[0])
 
                 with timer("time_good_d2h"):
-                    accepted.append(
-                        {
-                            "centroids": mus[good_idx_local],
-                            "f": f_mus[good_idx_local],
-                            "Q": Qs,
-                            "E_cluster_abs": E_abs_good,
-                            "E_cluster_rel": E_rel_good,
-                            "counts": good_counts.astype(xp.int64),
-                            **good_params,
-                            **final_params,
-                        }
-                    )
-                    del X_good, G_good, good_params, final_params, Qs
+                    accepted.append(leaves.rows)
+                    del leaves
 
             # 6. Handle Rejected ("Bad") Clusters -> Split
             with timer("time_filter"):

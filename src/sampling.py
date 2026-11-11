@@ -13,9 +13,9 @@ Adding a sampling scheme:
        ``ClusteringConfig.sampling_method`` can name it; settings can be given as
        ``(name, {...})`` or by passing an instance as ``ClusteringConfig.sampler``.
 Samplers receive each cluster's points, counts and centroids (``ClusterPoints``).
-If a scheme needs more information about each cluster (for example a bounding
-convex polytope), add it as an optional field of ``ClusterPoints`` and pass it
-through ``augment_clusters``.
+If a scheme needs more information about each cluster, it is an optional field of
+``ClusterPoints`` passed through ``augment_clusters``: region mode's hit-and-run sampler
+(``src.region.HitAndRunSampler``) reads each node's polytope from ``region``.
 
 All samplers work on a whole batch of clusters at once, stored contiguously, so
 they can run as single vectorized passes on the GPU.
@@ -23,6 +23,7 @@ they can run as single vectorized passes on the GPU.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Any
 
 from src import IS_CUPY_BACKEND, Array, xp
 from src.evaluation import Evaluator
@@ -41,6 +42,7 @@ class ClusterPoints:
     X: Array  # (N, d) existing points
     counts: Array  # (K,) points per cluster
     centroids: Array | None = None  # (K, d), if the sampler needs them
+    region: Any = None  # src.region.RegionPoints: each node's polytope and random stream
     starts: Array = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -186,13 +188,15 @@ def augment_clusters(
     evaluator: Evaluator,
     rng,
     centroids: Array | None = None,
+    region: Any = None,
 ) -> AugmentedClusters:
     """
     Grow each cluster from ``counts`` to ``target_counts`` points.
 
     New points are placed by ``sampler`` and evaluated with ``evaluator`` (with
     gradients if ``G`` is given). ``centroids`` (K, d), if given, is passed on to
-    the sampler in ``ClusterPoints``. In the output, every cluster's block holds its
+    the sampler in ``ClusterPoints``, and so is ``region`` (region mode's node geometry).
+    In the output, every cluster's block holds its
     original points followed by its new ones.
     """
     n_clusters = len(counts)
@@ -218,7 +222,7 @@ def augment_clusters(
     if int(xp.sum(is_new)) == 0:
         return AugmentedClusters(X_aug, F_aug, G_aug, labels, None)
 
-    clusters = ClusterPoints(X, counts, centroids=centroids)
+    clusters = ClusterPoints(X, counts, centroids=centroids, region=region)
     X_new = sampler.sample(clusters, target_counts - counts, rng)
     n_new = total - int(X.shape[0])
     if tuple(X_new.shape) != (n_new, d):

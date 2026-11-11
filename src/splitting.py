@@ -19,8 +19,8 @@ A different cut rule overrides ``child_sizes``, which sees the sorted projection
 scores. Splits are binary: ``split`` must return a permutation that keeps every
 cluster contiguous, and exactly two child sizes per cluster that add up to the
 cluster's size (one of them may be 0; empty children are dropped).
-Strategies declare the data they need with ``needs_point_grad``,
-``needs_centroid_grad`` and ``needs_hessian_fn``.
+Strategies declare the data they need with ``needs_centroid_value``,
+``needs_point_grad``, ``needs_centroid_grad`` and ``needs_hessian_fn``.
 """
 
 from abc import ABC, abstractmethod
@@ -106,6 +106,7 @@ class SplitStrategy(ABC):
     """Splits every rejected cluster of a batch into two children."""
 
     name: str
+    needs_centroid_value: bool = False  # needs SplitData.f_c
     needs_point_grad: bool = False  # needs SplitData.G
     needs_centroid_grad: bool = False  # needs SplitData.g_c
     needs_hessian_fn: bool = False  # needs SplitData.hessian_fn
@@ -195,6 +196,7 @@ class CovarianceHessianSplit(SplitStrategy):
     """
 
     name = "covariance_hessian"
+    needs_centroid_value = True  # both gradient paths centre the Taylor residual at f(c)
 
     def __init__(
         self,
@@ -292,6 +294,7 @@ class GradientLSQHessianSplit(SplitStrategy):
     """
 
     name = "gradient_lsq_hessian"
+    needs_centroid_value = True
     needs_point_grad = True
     needs_centroid_grad = True
 

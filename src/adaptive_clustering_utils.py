@@ -129,6 +129,20 @@ def get_prime_factors(n: int) -> list[int]:
     return factors
 
 
+def uniform_grid_bins(extents: np.ndarray, num_cells: int) -> np.ndarray:
+    """
+    (d,) int64 bins per dimension whose product is ``num_cells``: each prime factor,
+    largest first, goes to the dimension with the widest current cell. Shared by the
+    uniform-grid initial clustering of AFINNI mode and the grid roots of region mode, so both cut the same way.
+    """
+    if num_cells < 1:
+        raise ValueError("num_initial_clusters must be >= 1")
+    bins = np.ones(len(extents), dtype=np.int64)
+    for p in sorted(get_prime_factors(num_cells), reverse=True):
+        bins[int(np.argmax(extents / bins))] *= p
+    return bins
+
+
 def uniform_grid_cluster_labels(
     X_host: np.ndarray, num_initial_clusters: int
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -141,16 +155,9 @@ def uniform_grid_cluster_labels(
     - labels: An array of shape (N,) containing the cluster label for each point.
     - bins: An array of shape (d,) containing the number of bins along each dimension. The total number of clusters is the product of the values in bins.
     """
-    if num_initial_clusters < 1:
-        raise ValueError("num_initial_clusters must be >= 1")
-    _, d = X_host.shape
     lower, upper = np.min(X_host, axis=0), np.max(X_host, axis=0)
     extents = np.maximum(upper - lower, TINY_EPS)
-    bins = np.ones(d, dtype=np.int64)
-    for p in sorted(get_prime_factors(num_initial_clusters), reverse=True):
-        split_scores = extents / bins
-        split_dim = int(np.argmax(split_scores))
-        bins[split_dim] *= p
+    bins = uniform_grid_bins(extents, num_initial_clusters)
     rel = (X_host - lower[None, :]) / extents
     rel = np.clip(rel, 0.0, 1.0 - np.finfo(np.float64).eps)
     coords = np.floor(rel * bins[None, :]).astype(np.int64)

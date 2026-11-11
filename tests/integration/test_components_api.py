@@ -87,12 +87,12 @@ def registered():
 
 
 @pytest.mark.parametrize("mode", list(SurrogateMode))
-def test_mode_presets_resolve_to_the_legacy_components(mode):
+def test_mode_presets_resolve_to_their_preset_components(mode):
     c = ClusteringConfig(mode=mode, atol=0.1, rtol=0.1, min_pts_per_cluster=37).components()
     assert type(c.local_model) is type(local_model_for_mode(mode))
-    legacy_split = split_strategy_for_mode(mode, 37)
-    assert type(c.split_strategy) is type(legacy_split)
-    assert c.split_strategy.settings() == legacy_split.settings()
+    preset_split = split_strategy_for_mode(mode, 37)
+    assert type(c.split_strategy) is type(preset_split)
+    assert c.split_strategy.settings() == preset_split.settings()
     assert type(c.sampler) is ConvexCombinationSampler
     assert type(c.acceptance) is ACCEPTANCE_CRITERIA["Linf"]
     assert isinstance(c.trust_region, CovarianceEllipsoid) and c.trust_region.q_reg == 1e-6

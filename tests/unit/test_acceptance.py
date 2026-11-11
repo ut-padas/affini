@@ -139,3 +139,18 @@ def test_cluster_errors_uses_the_configured_criterion():
 def test_unknown_metric_is_rejected_by_the_config():
     with pytest.raises(ValueError, match="Unknown error metric"):
         ClusteringConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=0.1, rtol=0.1, error_metric="Linf-global")
+
+
+def test_pointwise_acceptance_needs_every_point_to_pass():
+    from src.acceptance import PointwiseAcceptance
+
+    F = xp.asarray([[1.0], [100.0], [1.0], [1.0]])
+    F_hat = xp.asarray([[1.005], [100.5], [1.0], [1.02]])
+    good, E_abs, E_rel = PointwiseAcceptance(rtol=0.01)(F, F_hat, xp.asarray([0, 2]), xp.asarray([2, 2]))
+    # Cluster 0: both points within 1% (0.5%, 0.5%); cluster 1: the second point is 2% off.
+    assert host(good).tolist() == [True, False]
+    np.testing.assert_allclose(host(E_rel)[:, 0], [0.005, 0.02])
+    np.testing.assert_allclose(host(E_abs)[:, 0], [0.5, 0.02])
+    # Linf relative to the cluster's max |F| would accept cluster 1 too: 0.02 / 1 vs 0.5 / 100.
+    good_abs, _, _ = PointwiseAcceptance(atol=0.03)(F, F_hat, xp.asarray([0, 2]), xp.asarray([2, 2]))
+    assert host(good_abs).tolist() == [False, True]

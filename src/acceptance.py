@@ -27,6 +27,9 @@ the cluster's points ``i``:
 ``"Linf"``
     ``abs_kj = max_i |e_ij|`` and ``rel_kj = abs_kj / max_i |F_ij|`` (relative to
     the cluster's own largest value of that component).
+``"pointwise"``
+    every point passes on its own: ``|e_ij| < atol_j`` or ``|e_ij| / |F_ij| < rtol_j``
+    (ART's ``max_pointwise_relative`` rule); reports the per-cluster maxima.
 
 All comparisons are strict (``<``). A small epsilon (1e-12) guards each
 denominator. Both errors are returned, (K, fd), and stored per leaf as
@@ -152,6 +155,30 @@ class LinfAcceptance(AcceptanceCriterion):
         local_max_F = xp.stack([_reduce_max_1d(xp.abs(F[:, j]), starts) for j in range(F.shape[1])], axis=1)
         E_rel = E_abs / xp.maximum(local_max_F, TINY_EPS)
         return self.accept(E_abs, E_rel)
+
+
+@ACCEPTANCE_CRITERIA.register
+class PointwiseAcceptance(AcceptanceCriterion):
+    """
+    Every point must pass on every component: ``|e_ij| < atol_j`` or
+    ``|e_ij| / max(|F_ij|, 1e-12) < rtol_j``. With ``rtol`` alone this is ART's
+    ``max_pointwise_relative`` stopping rule, and the same per-point test as
+    ``AFINNISurrogate.audit``. Reports ``abs_kj = max_i |e_ij|`` and
+    ``rel_kj = max_i |e_ij| / max(|F_ij|, 1e-12)``.
+    """
+
+    name = "pointwise"
+
+    def __call__(self, F, F_hat, starts, sizes):
+        fd = F.shape[1]
+        atol, rtol = tolerance_vector("atol", self.atol, fd), tolerance_vector("rtol", self.rtol, fd)
+        err = xp.abs(F - F_hat)
+        rel = err / xp.maximum(xp.abs(F), TINY_EPS)
+        fails = ~((rel < rtol[None, :]) | (err < atol[None, :]))
+        any_fail = _reduce_max_1d(xp.any(fails, axis=1).astype(xp.float64), starts)
+        E_abs = xp.stack([_reduce_max_1d(err[:, j], starts) for j in range(fd)], axis=1)
+        E_rel = xp.stack([_reduce_max_1d(rel[:, j], starts) for j in range(fd)], axis=1)
+        return any_fail == 0, E_abs, E_rel
 
 
 def cluster_errors(

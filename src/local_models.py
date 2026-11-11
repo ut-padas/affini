@@ -17,10 +17,12 @@ Adding a model (e.g. a local quadratic or kernel ridge regression) means writing
 one subclass and registering it in ``LOCAL_MODELS``; the refinement loop, output
 buffers, MPI gathering, prediction and ``AFINNISurrogate.save_model``/``load_model``
 only see the columns it declares. A model declares the data it needs with
+``needs_centroid_value`` (f at the centroids, ``ClusterFitData.f_c``),
 ``needs_centroid_grad`` (gradients at the centroids, ``ClusterFitData.g_c``) and
 ``needs_point_grad`` (gradients at every point, ``ClusterFitData.G``); the loop
 evaluates and carries gradients only when the model or the split strategy needs
-them. ``settings()`` returns the constructor arguments, so a saved model can be
+them. AFINNI mode always evaluates ``f_c`` (it stores it as column ``"f"``);
+region mode evaluates it only when some component declares it. ``settings()`` returns the constructor arguments, so a saved model can be
 rebuilt by name.
 
 Performance contract: ``fit``, ``finalize`` and ``evaluate`` are fully vectorized
@@ -53,6 +55,7 @@ from src.numerics import (
     solve_regularized_covariance_inplace,
 )
 from src.registry import Registry
+from src.utils import repeats
 
 
 @dataclass
@@ -82,6 +85,7 @@ class LocalModel(ABC):
     """
 
     name: str
+    needs_centroid_value: bool = True  # fit/evaluate read ClusterFitData.f_c (column "f")
     needs_centroid_grad: bool = False  # fit/evaluate need ClusterFitData.g_c
     needs_point_grad: bool = False  # fit/finalize need ClusterFitData.G
 
@@ -248,6 +252,7 @@ class AffineLSQModel(LocalModel):
     """
 
     name = "affine_lsq"
+    needs_centroid_value = False
 
     def columns(self, d, fd):
         return {"A_fit": ParamSpec((fd, d)), "b_fit": ParamSpec((fd,))}
@@ -328,3 +333,83 @@ def output_columns(model: LocalModel, d: int, fd: int) -> dict[str, ParamSpec]:
         "counts": ParamSpec((), np.int64),
         **own,
     }
+
+
+@dataclass
+class DeployedLeaves:
+    """Leaf rows for a ``ColumnBuffer`` (shared columns plus the model's) and which clusters they are."""
+
+    idx: Array  # (L,) positions in the batch of the clusters kept as leaves
+    rows: dict[str, Array]  # every column of output_columns, one row per kept cluster
+    failed: Array  # positions that failed the re-test of the finalized model
+
+
+def deploy_leaves(
+    model: LocalModel,
+    trust_region,
+    acceptance,
+    data: ClusterFitData,
+    idx: Array,
+    params: dict[str, Array],
+    E_abs: Array,
+    E_rel: Array,
+    retest: bool = True,
+    store_Q: bool = True,
+) -> DeployedLeaves:
+    """
+    Turn clusters ``idx`` of a fitted batch into deployed leaves: their ``Q``, the model's
+    accepted-only columns (``finalize``) and, when finalize adds columns and ``retest``,
+    a re-test of the model that will actually be deployed; clusters it fails are
+    returned in ``failed`` (the caller splits them) instead of becoming leaves. Without
+    ``retest`` (region-mode fallback leaves) every cluster is kept with its fit errors.
+    Without ``store_Q`` (routed-only region models) no ``"Q"`` is computed or returned.
+    Both algorithm plans call this, in AFINNI's order: preliminary acceptance first,
+    then this.
+    """
+    idx_mask = xp.zeros(len(data.sizes), dtype=bool)
+    idx_mask[idx] = True
+    point_mask = idx_mask[data.labels]
+    X = data.X[point_mask]
+    G = data.G[point_mask] if data.G is not None else None
+    F = data.F[point_mask]
+    counts = data.sizes[idx]
+    labels = repeats(xp.arange(int(idx.shape[0])), counts)
+    starts = xp.r_[0, xp.cumsum(counts)[:-1]]
+    own = {k: v[idx] for k, v in params.items()}
+    centroids, f_c = data.centroids[idx], data.f_c[idx]
+
+    # Shape matrix Q of each leaf, used by the trust-region test at inference.
+    Qs = trust_region.shapes(X, centroids, labels, counts) if store_Q else None
+    # Parameters the model only computes for leaves (e.g. the second-order Taylor term).
+    final = model.finalize(
+        ClusterFitData(
+            X=X, F=F, G=G, labels=labels, starts=starts, sizes=counts, centroids=centroids,
+            f_c=f_c, g_c=data.g_c[idx] if data.g_c is not None else None,
+        ),
+        own,
+    )  # fmt: skip
+    E_abs, E_rel = E_abs[idx], E_rel[idx]
+    failed = idx[:0]
+    if final and retest:
+        # Accepted-only columns change predictions, so re-test the deployed model.
+        F_final = model.evaluate({**own, **final, "centroids": centroids, "f": f_c}, X, labels)
+        still, E_abs, E_rel = acceptance(F, F_final, starts, counts)
+        if not bool(xp.all(still)):
+            keep = xp.nonzero(still)[0]
+            failed = idx[~still]
+            idx, counts, E_abs, E_rel = idx[keep], counts[keep], E_abs[keep], E_rel[keep]
+            Qs = Qs[keep] if Qs is not None else None
+            centroids, f_c = centroids[keep], f_c[keep]
+            own = {k: v[keep] for k, v in own.items()}
+            final = {k: v[keep] for k, v in final.items()}
+    rows = {
+        "centroids": centroids,
+        "f": f_c,
+        **({"Q": Qs} if store_Q else {}),
+        "E_cluster_abs": E_abs,
+        "E_cluster_rel": E_rel,
+        "counts": counts.astype(xp.int64),
+        **own,
+        **final,
+    }
+    return DeployedLeaves(idx, rows, failed)
