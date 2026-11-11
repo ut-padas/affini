@@ -4,6 +4,8 @@ Plotting for AFINNI. Import plots from here; add new ones to the module that fit
 - ``src.plotting.profiling``: training profiles (time per phase and rank, level
   heatmaps, forest growth, timelines, load balance and work stealing, dashboard).
 - ``src.plotting.surrogate``: trained surrogates and their errors.
+- ``src.plotting.region``: region-mode trees (partition, statistics) and comparisons of
+  several surrogates (error maps, error CDFs, metric bars).
 - ``src.plotting.style``: the shared style (``afinni_style``) and ``finish`` (save/close).
 
 Conventions for new plots: accept training outputs directly (see
@@ -26,6 +28,14 @@ from src.plotting.profiling import (
     profile_of,
     steals_frame,
 )
+from src.plotting.region import (
+    plot_error_cdf,
+    plot_error_maps,
+    plot_method_comparison,
+    plot_region_partition,
+    plot_region_tree_stats,
+    pointwise_relative_error,
+)
 from src.plotting.style import afinni_style, finish
 from src.plotting.surrogate import (
     plot_adaptive_clustering_results,
@@ -45,18 +55,24 @@ __all__ = [
     "phase_breakdown_frame",
     "plot_adaptive_clustering_results",
     "plot_cluster_projections_for_wave",
+    "plot_error_cdf",
+    "plot_error_maps",
     "plot_error_histogram",
     "plot_exact_hess_vs_estimated_hess",
     "plot_level_heatmap",
     "plot_level_progress",
     "plot_load_over_time",
+    "plot_method_comparison",
     "plot_near_centers",
     "plot_profile_dashboard",
     "plot_rank_time_breakdown",
+    "plot_region_partition",
+    "plot_region_tree_stats",
     "plot_steal_matrix",
     "plot_timeline",
     "plot_wave_2d_errors",
     "plot_wave_line_errors",
+    "pointwise_relative_error",
     "profile_of",
     "steals_frame",
 ]
