@@ -4065,3 +4065,566 @@ The next decision does not require another general abstraction layer. The curren
 two-mode architecture is sufficient for these fixes and experiments. The strongest
 next evidence would be a corrected sampler/audit pair, adversarial numerical
 coverage, and measured GPU/MPI scaling with the same explicit scientific contracts.
+
+---
+
+## 32. Follow-up review of the fixes, November 11, 2026
+
+This section reviews commit `9c17c1133f69743550272c63cdcc321cb61cdde4`
+and the accompanying design update at
+`5a47695c595a6a7dff74d388c6468b95b4bca552`. The working tree was clean when
+inspection began. The comparison reference is
+`48f59c3`, immediately before these fixes, which includes the earlier
+oversized-batch correction. Earlier review sections remain historical; findings
+listed below as resolved should no longer be treated as open bugs.
+
+Inspected file hashes:
+
+| File | SHA-256 |
+|---|---|
+| `AFINNI_ART_DESIGN.md` | `e14e9b3ee2ec6e1930f49190e1379b606270556f549bf4bd5bc6380edb523fd3` |
+| `src/region.py` | `bb6454e7e7abe426225f8dd679ab8090fe395990360b9d17b3eb4b3d23005c04` |
+| `src/surrogate.py` | `b5efb752bec1e970293d8142ba6dce101be2a8501ae812b609564e25eda61a18` |
+
+### 32.1 Assessment and disposition of the previous findings
+
+The fixes improve both correctness and the accuracy of the design's claims. The
+shared pointwise predicate repairs the false audit result. Compact child indices
+remove the packed-key depth limit and repeated routing searches. The work stealer
+now uses the plan's workload units for donation and publication. The numerical
+descent claim has been narrowed appropriately.
+
+Fresh verification passed 499 CPU unit/integration tests and all 12 four-rank MPI
+tests. All 45 legacy regression cases were bit-identical to a fresh reference from
+`48f59c3`. The previous targeted counterexamples were also rerun.
+
+The next changes should remain focused numerical and contract fixes. There is no
+new evidence here requiring a third algorithm abstraction, a property registry,
+or a replacement MPI protocol.
+
+| Previous finding | Current result | Disposition |
+|---|---|---|
+| Invalid oracle values pass the global audit | NaN and infinity each produce 299 violations, 299 invalid rows and upper bound 1 on 299 points | Resolved for the reproduced failure |
+| Training/audit equality mismatch | Both reject the reproduced equality case | Resolved through the shared predicate |
+| Audit defaults ignore resolved acceptance tolerances | Defaults now read the acceptance component's settings | Resolved in the inspected path |
+| Voronoi owning-center constraint changes the chord | One-center and box walks are bit-identical in the repeated 3-D and 7-D checks | Self-constraint defect resolved; a separate near-center instability remains below |
+| Entire 20-D corner sample remains stationary without a warning | All 1,000 endpoints now move and the short-budget sample is flagged insufficient | Original counterexample resolved; partial immobility remains below |
+| Sparse B1 scoring indexes beyond the node | The reproduced two-row scoring case returns without an exception | Resolved for supported queued tasks in that case |
+| Depth-61/62 trees fail assembly | Both now build; an additional repository test covers depth 62 with 1,024 roots | Packed-key restriction resolved |
+| Loaded topology and query coordinates bypass checks | Loading rebuilds topology; non-finite/misshaped queries are rejected | Substantially improved; domain/root geometry validation remains incomplete |
+| Victim grants use inherited rows while advertised load uses top-up work | Work estimator is shared by grant selection and publication | Unit mismatch resolved; freshness/donatability of load is a separate performance issue |
+| B4 residual margin is described as an exact numerical certificate | Residual comes from data, diagnostics distinguish termination reasons, and the claim is monitored descent | Appropriate correction; stable score variance remains necessary |
+| Candidate memory does not depend on `n_bins` | Estimate now includes candidate-array growth | Improved heuristic; capacity remains unenforced |
+| Benchmark accepts unsupported model/metric combinations | Degree and metric guards added | Partly resolved; bias and relative-floor options still differ |
+
+### 32.2 P1: near-coincident Voronoi centers still produce the wrong region
+
+Source: [`HitAndRunSampler._steps`](src/region.py#L383).
+
+Masking the owning-center column fixes the redundant self-plane. The non-owning
+bisectors still use differences of separately computed dot products and squared
+norms:
+
+\[
+a_j^T g=g^Tc_j-g^Tc_r,
+\qquad
+\operatorname{slack}_j=
+\tfrac12(\|c_j\|^2-\|c_r\|^2)-(u^Tc_j-u^Tc_r).
+\]
+
+When centers are close, both formulas subtract large nearly equal quantities. In
+a thin cell, the actual slack can be much smaller than the rounding error in
+those quantities. The error then enters a division by the already small
+directional coefficient and becomes a large error in the geometric chord.
+
+This is a different failure from the self-plane bug. Removing exact duplicate
+centers does not address distinct centers with small separation.
+
+An executed one-dimensional example uses the unit interval and three centers:
+
+```python
+base, separation = 0.695, 1e-12
+C = np.array([[base - separation], [base], [base + separation]])
+```
+
+The middle center's true cell is approximately
+
+```text
+[0.6949999999995, 0.6950000000004999]
+```
+
+Starting at the middle center, with node seed 2, 8 initial steps, 32 maximum
+steps, and 200 requested endpoints, the current sampler returned:
+
+| Measurement | Result |
+|---|---:|
+| Smallest sampled coordinate | 0.6949645005327146 |
+| Largest sampled coordinate | 0.6950408265998055 |
+| Endpoints whose nearest center is not the assigned middle center | 200 of 200 |
+| `insufficient_sampling` | False |
+
+The sampled interval is tens of millions of times wider than the true cell. This
+is not an inference from a mean test: every returned endpoint was checked with
+the implementation's own direct-distance `root_of` assignment.
+
+The initial chord already exposes the error. For direction `g=+1` at `u=base`,
+the expanded formulas give approximately
+
+```text
+[-2.77561896e-5, 0]
+```
+
+for the displacement interval. A stable expression gives approximately
+
+```text
+[-4.99988939e-13, 4.99988939e-13]
+```
+
+The feasibility guard does not catch the failure. A residual of an unnormalized
+bisector has units proportional to the center separation. The current tolerance
+`1e-9 * (1 + abs(offset))` has a unit-sized floor, even when the normal has norm
+about `1e-12`. A geometrically large violation can therefore have a residual
+smaller than this threshold. "Within rounding" is not an adequate description of
+that allowance.
+
+Use the center difference explicitly. Let
+
+\[
+\Delta_j=c_j-c_r,\qquad v=u-c_r.
+\]
+
+Then the same bisector is
+
+\[
+\Delta_j^Tv\leq\tfrac12\|\Delta_j\|^2,
+\]
+
+and its directional coefficient and slack can be evaluated as
+
+\[
+\Delta_j^Tg,
+\qquad
+\tfrac12\|\Delta_j\|^2-\Delta_j^T(u-c_r).
+\]
+
+For nonzero separation, a useful geometric form divides by `||Delta_j||`:
+
+\[
+n_j^T(u-c_r)\leq\tfrac12\|\Delta_j\|,
+\qquad n_j=\Delta_j/\|\Delta_j\|.
+\]
+
+The residual then has distance units, and a feasibility tolerance can be expressed
+in the same units as the region coordinates. The algebraic identity alone does
+not certify floating-point accuracy, but it avoids the specific large-term
+subtractions responsible for this example.
+
+Form and evaluate those quantities in root/center tiles. A root group can share
+its center-difference matrix, avoiding an all-points by all-centers by dimension
+temporary. No `R^2 d` permanent table is required. Preserve the explicit self-mask
+and duplicate-center policy.
+
+Required protections are:
+
+1. Stable coefficient/slack evaluation for non-owning centers.
+2. A scale-aware feasibility rule invariant under rescaling a half-space row.
+   Multiplying a valid inequality by a positive scalar must not change whether
+   the same point is considered appreciably infeasible.
+3. A post-step or returned-endpoint check against the declared geometry, including
+   the final step. At present feasibility is checked before a step; the last
+   generated endpoint has no subsequent check in that segment.
+4. Reference tests at distinct center separations such as `1e-6`, `1e-8`, `1e-10`
+   and `1e-12`, with comparisons to stable 1-D intervals and low-dimensional
+   direct half-space references.
+
+The direct nearest-center check is useful as an independent ownership diagnostic.
+The endpoint chord-certification idea in section 23 is also applicable: compare
+the proposed endpoints against direct distances, handle ties explicitly, and
+recompute uncertain chords with stable expressions. Merely classifying a sampled
+point after the fact does not repair a biased chord, but it prevents an invalid
+sample from silently entering the wrong node.
+
+Do not repair this by deleting every pair of centers closer than a fixed
+threshold without recording the change. Merging distinct roots changes the
+partition. If a minimum root separation is an intentional supported-domain
+restriction, validate and report it explicitly.
+
+### 32.3 P2: cancellation corrupts B4 temperature and sampler drift statistics
+
+Sources: [`RegionPlan._soft_refine`](src/region.py#L1019) and
+[`HitAndRunSampler._drifting`](src/region.py#L437).
+
+Both paths calculate variance by subtracting raw moments:
+
+\[
+\widehat{\operatorname{Var}}(s)
+=\operatorname{mean}(s^2)-\operatorname{mean}(s)^2.
+\]
+
+That loses relative accuracy when the spread is small compared with the mean.
+The problem appears around spreads of order `sqrt(eps) * abs(mean)`, well before
+the points themselves become indistinguishable in float64. Deep regions in global
+domain coordinates are a natural way to reach that regime.
+
+The executed B4 case used 200 scores
+
+```python
+s = 0.9 + 1e-8 * np.linspace(-1, 1, 200)
+```
+
+and the default temperature multiplier `0.1`. The values are distinct and have a
+well-resolved centered variance. Using the exact reduction path in `_SplitRows`
+gave:
+
+| Quantity | Result |
+|---|---:|
+| Raw-moment variance | -4.440892098500626e-16 |
+| Reference temperature from centered variance | 5.802442736356279e-10 |
+| Actual temperature passed into `_soft_objective` | 1.0000000000000001e-151 |
+| One-iteration termination reason | `soft_gate_saturated` |
+
+The `max(var, 1e-300)` clamp changes a negative rounding result into an effectively
+zero temperature. It therefore converts a smooth, nonconstant gate problem into
+an almost hard gate and then diagnoses the resulting saturation. The B3 incumbent
+still protects the final measured hard score, so this example demonstrates a
+disabled or distorted refinement rather than a proved degradation of the final
+tree's test error.
+
+Changing sample count or operation ordering can make the same raw-moment formula
+return zero or a positive rounding-sized value instead. A test that checks only
+for negative variance will miss the inflated-positive case.
+
+The sampler has the same issue in each coordinate and in its squared-radius
+feature. For 20 points around `0.9` with spread `1e-8`, shifting all halfway
+endpoints by `1e-12` produced `drift=True`. The coordinate mean shift standardized
+with centered endpoint variances is only about `0.000521`, far below the configured
+threshold 4. A 200-point case also flagged a shift with standardized size about
+`0.00172`. This can trigger unnecessary chain extensions or false insufficiency
+statuses in otherwise narrow regions.
+
+Use centered, segmented second moments:
+
+\[
+\mu_k=\frac{1}{n_k}\sum_{i\in k}s_i,
+\qquad
+v_k=\frac{1}{n_k}\sum_{i\in k}(s_i-\mu_k)^2.
+\]
+
+For tiled or streamed statistics, combine count, mean and centered second moment
+with a stable merge formula. Reuse the existing segmented-reduction ownership;
+there is no need for a separate numerical module for these two callers. NumPy's
+documented variance calculation also uses deviations from the mean:
+[NumPy variance documentation](https://numpy.org/doc/stable/reference/generated/numpy.var.html).
+
+After calculating a stable variance, choose a temperature floor from an explicit
+score-resolution or local-width policy. If the scores are numerically constant,
+report that condition and retain the hard incumbent. A floor near `1e-151` has no
+useful relationship to float64 resolution at a score near `0.9`.
+
+Add translation and scale tests. Translating the same score cloud and its
+threshold together should leave the intended score spread and gate memberships
+unchanged up to numerical error. Include a mixed batch of narrow and broad nodes,
+then compare one node alone with that node inside the batch. Run this on GPU as
+well: different reduction orders can change the sign of the cancelled variance.
+
+This repair is a prerequisite for interpreting B4's new termination counters on
+small regions. Otherwise `gate_saturated` can describe an arithmetic artifact of
+temperature selection rather than an optimization property.
+
+### 32.4 P2: recovery detects a stuck majority but misses a large unmoved minority
+
+Source: [`HitAndRunSampler._stuck`](src/region.py#L310).
+
+The new check recovers a node only when fewer than half its walking chains moved.
+That repairs the previous 20-D case, where none moved. A node can still return a
+large singular component at its initial corner while reporting no insufficiency.
+
+An executed 4-D unit-box example used three corner seeds, node seed 0, 20 requested
+points, and `walk_steps=max_walk_steps=8`. The result was:
+
+```text
+unmoved endpoints = 8 of 20
+insufficient_sampling = False
+mean over all coordinates and endpoints = 0.21362382476731817
+```
+
+The true uniform distribution has no atom at that corner. The aggregate mean is
+supporting context; the more direct finding is that 40% of the outputs remain
+exactly at a zero-volume point. Since 60% moved, coordinate recovery is never
+attempted. The aggregate drift check also passes in this case.
+
+For an isotropic walk starting at a corner, the ideal probability of never taking
+a nonzero step over `t` trials is
+
+\[
+\left(1-2^{1-d}\right)^t.
+\]
+
+At `d=4, t=8`, this is about 0.344. The observed unmoved fraction is therefore a
+predictable finite-walk effect, not an implausible random-number accident.
+
+The design now correctly labels the sampler as approximate and its drift result
+as a diagnostic. This finding does not reinstate a demand for a mixing proof.
+It identifies a large, cheap-to-detect exploration failure that the chosen
+majority threshold currently ignores.
+
+Record an unmoved-chain fraction per node. Recover the affected chains or the
+whole node within a stated geometry budget, and flag a remaining fraction above
+an explicit small diagnostic threshold. Avoid treating 49% unmoved as a success
+condition merely because another 51% escaped. An interior-start recovery can be
+more useful than coordinate directions for a rotated polytope whose feasible
+corner cone contains no coordinate axis. Movement remains necessary evidence,
+not evidence of mixing by itself.
+
+If recovery depends on current chain outcomes, its outputs also retain adaptive
+selection effects. A separate production stage after fixing geometry and walk
+length remains the cleaner experiment from sections 22 and 30.4. The new source
+documentation now states the weaker current behavior honestly; keep that
+distinction when reporting validation results.
+
+### 32.5 Capacity warnings do not yet describe actual batch admission
+
+Source: the batch loop in
+[`_run_local_refinement`](src/adaptive_clustering.py#L303).
+
+The candidate-array estimate now depends on `n_bins`, and warnings disclose the
+unsafe floor and oversized-task cases. Those are useful improvements. The source
+and warning still say an oversized cluster is processed alone, which is not
+always what the cumulative-endpoint rule does.
+
+A public-API probe created two grid roots containing 30 and 150 training rows,
+set `batch_size=100`, and recorded calls to `RegionPlan.process_batch`. The
+executor warned that the 150-point node would be processed alone, then called the
+plan once with:
+
+```text
+sizes = [30, 150]
+total admitted rows = 180
+```
+
+The first cumulative endpoint exceeding 100 is included, so the preceding node
+and the oversized node enter the same batch. The same rule can exceed the target
+with two individually admissible nodes: a whole crossing node is included rather
+than deferred.
+
+This does not show an actual GPU out-of-memory event. It shows that a disclosed
+fallback policy is not implemented as stated, and that estimating one oversized
+node's requirement is insufficient to predict the batch peak.
+
+For region mode, choose the largest prefix of pending whole nodes that fits the
+capacity estimate. If the first node alone exceeds the capacity, apply the
+documented oversized-task policy to that node alone. Keep the legacy event order
+and batching contract separate if changing legacy boundaries would change RNG
+streams. Add a test where the oversized node follows a smaller one, not only the
+case where it is the first node.
+
+The warning-only approach can remain an explicitly documented prototype limit
+while GPU profiles are collected. It cannot support a hard memory-bound or full
+out-of-core claim. No disk spilling, streamed initial evaluation or single-node
+streamed fitting was introduced by these fixes.
+
+### 32.6 Loaded topology is checked; loaded geometry still needs validation
+
+Source: [`RoutingTable.from_arrays`](src/region.py#L1280) and
+[`AFINNISurrogate._install`](src/surrogate.py#L424).
+
+The compact topology reconstruction and model leaf-count check are useful and
+should stay. Domain and root objects are still constructed directly from arrays
+without enforcing the geometry contract used during normal configuration.
+
+A focused serialization probe built a valid one-leaf unit-interval table, replaced
+its saved `domain_upper` with `[0]`, then loaded it. Loading succeeded. Routing
+`[[0]]` returned leaf 0 with `outside=False` despite a zero domain width and an
+invalid normalized coordinate.
+
+This is a malformed-artifact case. It was not produced by ordinary training, and
+it does not imply that a valid current save/load round trip fails. It demonstrates
+that "loaded table validated" currently means topology validation, not complete
+validation of the geometry used by routing and audit.
+
+Validate at the common construction boundary:
+
+- Lower and upper bounds are finite one-dimensional vectors of the same
+  nonzero dimension, with every width strictly positive.
+- Grid bins have the domain's dimension and are positive integers, with a root
+  count that can be represented safely.
+- Voronoi centers have matching dimension and finite coordinates. Handle loaded
+  duplicate centers without silently renumbering existing logical root ids.
+- The routing dimension matches the local model's input dimension, and the
+  persisted leaf metadata has the same row count and key ordering as the routed
+  model rows.
+
+The last check is a consistency check across stores. Equal leaf counts alone do
+not establish that the routing table and leaf arrays agree on what leaf row `i`
+means. Use the stored `(root, path_code)` metadata to validate that association.
+This does not require cryptographic integrity or a new persistence framework.
+
+### 32.7 Benchmark option guards still leave two scientific mismatches
+
+Source: [`scripts/art_comparison.py`](scripts/art_comparison.py#L98).
+
+The new guard rejects non-affine degrees and unsupported error metrics. It still
+accepts `--no-leaf-bias` and arbitrary `--relative-error-floor` values. ART uses
+those settings, while region mode still constructs an affine model with an
+intercept and pointwise training with a fixed `1e-12` floor.
+
+The following small command completed successfully during this review:
+
+```bash
+AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. .venv/bin/python \
+  scripts/art_comparison.py \
+  --art-path ../Adaptive-Regression-Trees-ART- --skip-art \
+  --benchmark quadratic --dimension 2 --max-depth 0 \
+  --sample-multiplier 3 --n-test 20 \
+  --no-leaf-bias --relative-error-floor 0.1
+```
+
+`--skip-art` makes this a cheap configuration probe; it is not a fresh timing
+comparison. Its output accepts ART's `leaf_bias=False` and floor `0.1`, while the
+region configuration uses `AffineLSQModel` with `b_fit` and the fixed floor. The
+test-set evaluator uses the requested floor, so both methods would still be
+scored with that floor even though their training stopping rules differ.
+
+Two acceptable policies are:
+
+1. Reject non-default bias/floor combinations in this equivalence-oriented
+   comparison script until region mode supports them.
+2. Support them explicitly in region fitting/acceptance and record any remaining
+   intentional differences between methods.
+
+Printing an accepted argument does not make it a resolved setting for both
+implementations. The `CONFIG` line currently prints `split_strategy=None` when
+the effective strategy is `covariance_hessian`; the later `COMPARE` line is more
+accurate. Print the resolved local-model and acceptance specifications and their
+settings, including intercept policy and relative floor. This matters most when
+automated sweeps produce tables from combinations beyond the defaults.
+
+The default comparison table is not invalidated by this option mismatch if its
+bias and floor are aligned. Its single-seed accuracy and target-failure limits
+remain as described in section 30.12. This review did not rerun the full ART
+benchmark table.
+
+### 32.8 Interpretation of the improved diagnostics and execution paths
+
+The remaining issues below are mostly interpretation or measurement requirements.
+They should not be presented as additional reproduced protocol failures.
+
+The `rank_deficient` counter is calculated from the spatial covariance of a
+rejected node during B3/B4 direction-bank construction. It is a useful diagnostic,
+but it is not a check of every training fit, every candidate child or B2 gap mode.
+A deficient node accepted before splitting never increments it. In exact
+arithmetic spatial full rank relates to rank of affine features with an intercept;
+in floating point a covariance eigenvalue ratio also squares the corresponding
+singular-value ratio. Document what the `1e-12` eigenvalue threshold means. Keep
+the plan's broader fit/child-support validation classified as incomplete until an
+actual check and recovery policy exist.
+
+The new B4 stopping counters are more informative. `soft_gradient_converged` means
+the implementation's predicted first-order improvement at a gate-width scale is
+below its estimated margin. It is not a certified bound on distance to a local
+minimum. The revised docstring largely makes that distinction. Stable temperature
+and variance are needed before those counters can diagnose narrow nodes reliably.
+
+MPI work units now agree, which resolves the previous mismatch. A published
+post-grant load still sums the full retained queue, including the processed prefix
+and current in-flight batch. An idle thief can therefore select a rank with little
+donatable work. Separate ready-tail work, in-flight work and transfer bytes when
+measuring utilization. The existing ownership/retirement protocol need not be
+replaced to make the scheduling estimate more useful.
+
+Likewise, progress points serve requests only for work not already admitted to the
+current batch. The default large batch, sampler/search service latency and initial
+single-root concurrency limits remain performance questions. The four-rank pass
+establishes the tested CPU protocol behavior; it does not substitute for GPU/MPI
+scaling measurements under normal thresholds.
+
+Compact child indices are an appropriate inference representation. The new router
+still has Python level-wise active-query processing and dynamic `nonzero` calls.
+On GPU those operations can impose synchronization and compaction costs. Compare
+this reference with a device traversal kernel on a frozen tree before choosing
+further changes. Use completed-device timing, warm-up and transfer-inclusive
+latency where appropriate, as described in
+[CuPy's performance guide](https://docs.cupy.dev/en/stable/user_guide/performance.html).
+No GPU speed claim follows from this CPU review.
+
+### 32.9 Verification record
+
+All verification used explicit `AFINNI_DEVICE` and `AFINNI_MPI` settings. The CPU
+and MPI suites ran outside the sandbox restriction that prevented MPICH
+initialization during the previous review.
+
+| Verification | Result |
+|---|---|
+| CPU unit/integration suite, `-m 'not mpi'` | 499 passed, 35 skipped, 12 deselected, 52 subtests passed; 53.15 s |
+| Four-rank CPU MPI suite | 12 passed; 46.20 s |
+| Fresh reference from `48f59c3` | All 45 regression cases ran without run errors |
+| Current regression versus that reference, `rtol=0` | PASS; maximum relative array difference exactly 0 |
+| Prior audit NaN/infinity/equality counterexamples | Repaired as reported in section 32.1 |
+| Prior one-center Voronoi equivalence | Maximum paired endpoint difference 0 in both repeated dimensions |
+| Prior 20-D corner case | 1,000 of 1,000 endpoints moved; short-budget sample flagged insufficient |
+| Prior sparse scoring and depth probes | No previous indexing exception; depth 60, 61 and 62 all built |
+| Near-coincident 1-D Voronoi cell | 200 of 200 returned samples assigned to another root; insufficiency flag false |
+| Narrow-score B4 temperature | Approximately `1e-151` used instead of centered reference `5.80244e-10` |
+| Narrow-cloud drift check | False visible-drift flags for tiny shifts with centered standardized size below 0.002 |
+| Partly unmoved 4-D corner sample | 8 of 20 endpoints stayed at the corner; insufficiency flag false |
+| Oversized node after a smaller node | Both processed together as `[30, 150]` with target batch size 100 |
+| Loaded zero-width domain | Accepted; routed a query with `outside=False` |
+| Unsupported bias/floor comparison options | Accepted by the new guard in the recorded configuration probe |
+| GPU backend availability | Explicit GPU import failed: CuPy is not installed |
+
+The main suite commands were the repository's documented CPU and four-rank MPI
+commands. The reference was freshly extracted with `git archive 48f59c3` into
+`/tmp/afinni_review_round4_base48f59c3`; no checkout or implementation file was
+modified to create it. Both checkouts ran `scripts/regression_check.py --save ...`,
+and their saved results were compared with zero tolerance.
+
+The new focused probes are in
+`/tmp/afinni_review_round4_new_probes.py`, with JSON results in the matching
+`.jsonl` file. The prior probes were rerun from
+`/tmp/afinni_implementation_review_checks.py`. Full suite and regression logs use
+the `/tmp/afinni_review_round4_*` prefix. These are temporary review artifacts.
+The central geometric reproduction can be retained independently as a small unit
+test:
+
+```python
+base, separation = 0.695, 1e-12
+centers = np.array([[base - separation], [base], [base + separation]])
+roots = Roots.build("voronoi", 1, 3, centers)
+geo = RegionPoints(
+    np.array([1]), np.array([0]),
+    node_keys(2, np.array([1]), np.array([1])),
+    np.zeros((1, 0, 2)), PURPOSE_TRAIN,
+)
+sampler = HitAndRunSampler(
+    Domain(np.zeros(1), np.ones(1)), roots,
+    walk_steps=8, max_walk_steps=32,
+)
+points = sampler.sample(
+    ClusterPoints(np.array([[base]]), np.array([1]), region=geo),
+    np.array([200]),
+)
+print(np.count_nonzero(roots.root_of(points) != 1), geo.insufficient)
+# Inspected implementation: 200, [False].
+```
+
+This is a sampler-level test using valid distinct centers and a feasible start.
+It does not depend on persuading k-means to generate that particular geometry.
+
+### 32.10 Recommended next steps
+
+1. Fix non-owning Voronoi bisector evaluation and feasibility scaling. Add the
+   near-coincident-center test and direct endpoint ownership/reference checks.
+2. Replace raw-moment variance with centered segmented variance in B4 and the
+   sampler diagnostic. Add narrow translated clouds to the CPU and GPU tests.
+3. Expose and handle partial chain immobility, rather than triggering recovery
+   only for a stuck majority. Keep local validation labeled as diagnostic.
+4. Make the oversized-task batching policy match its warning, complete loaded
+   geometry checks, and finish the comparison script's bias/floor guard.
+5. Establish a correct GPU baseline using the experiment sequence in section
+   31.4. Measure B3/B4, sampling, compact routing, peak memory and MPI utilization
+   before selecting further optimization work.
+
+The important change in priority is that the original audit and self-plane bugs
+are fixed. The next correctness work is stable geometry and stable small-region
+statistics. Broader execution optimizations can then be judged against a numerical
+reference whose sampling and diagnostics survive these cases.
