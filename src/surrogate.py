@@ -449,8 +449,17 @@ class AFINNISurrogate:
                     f"{name!r} of shape {(n, *spec.shape)}; found {got}."
                 )
         routing = state["routing"]
-        if routing is not None and routing.n_leaves != n:
-            raise ValueError(f"{source}: the region tree has {routing.n_leaves} leaves but the model has {n}.")
+        if routing is not None:
+            if routing.n_leaves != n or routing.domain.d != d:
+                raise ValueError(
+                    f"{source}: the region tree has {routing.n_leaves} leaves in {routing.domain.d}-D "
+                    f"but the model has {n} in {d}-D."
+                )
+            # Equal counts are not enough: leaf row i must be the same node in both stores.
+            tree, meta = routing.arrays(), state["region_leaves"]
+            for key, col in (("leaf_root", "root"), ("leaf_path", "path_code")):
+                if col in meta and not np.array_equal(np.asarray(tree[key]), meta[col]):
+                    raise ValueError(f"{source}: the region tree and the leaf metadata disagree on {col!r}.")
         t0 = time.perf_counter()
         state["knn_index"] = _make_knn_index(state["X_src"]) if state["Qs_src"] is not None else None
         if _get_mpi_rank() == 0:

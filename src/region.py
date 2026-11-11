@@ -249,7 +249,6 @@ class HitAndRunSampler(Sampler):
         self._lo, self._hi = roots.bounds()
         if roots.is_voronoi:
             self._C = xp.asarray(roots.centres)
-            self._C2 = xp.sum(self._C**2, axis=1)
 
     def settings(self) -> dict:
         return {"walk_steps": self.walk_steps, "max_walk_steps": self.max_walk_steps, "mixing_z": self.mixing_z}
@@ -263,12 +262,15 @@ class HitAndRunSampler(Sampler):
         chains' endpoints: this is a drift check, not a separate pilot and production run,
         and not a proof of mixing (design Section 33.4).
 
-        Two failures the drift check cannot see are handled explicitly. Chains that did
-        not move (e.g. from seeds in a corner, where an isotropic direction escapes with
-        probability ``2^(1-d)``) are rerun with coordinate directions, which escape corners
-        and leave the uniform law invariant, on a separate random stream. A start or step
-        that violates a face by more than rounding is never silently relaxed. Nodes with
-        either problem remaining are flagged in ``region.insufficient``.
+        Two failures the drift check cannot see are handled explicitly. Every chain that did
+        not move (e.g. from a seed in a corner, where an isotropic direction escapes with
+        probability ``2^(1-d)``) is rerun with coordinate directions, which escape box
+        corners and leave the uniform law invariant, on a separate random stream; a node
+        with any chain still unmoved is flagged. A start, step or returned endpoint that
+        violates a face by more than rounding is never silently relaxed. Nodes with
+        either problem remaining are flagged in ``region.insufficient``. The recovery
+        depends on the first walk's outcome, so it is an adaptive repair, not an
+        independent production run.
         """
         geo: RegionPoints = clusters.region
         d, K = clusters.d, clusters.n_clusters
@@ -297,22 +299,18 @@ class HitAndRunSampler(Sampler):
                     t_end *= 2
 
             U, bad, drift = run(U, walk, bad, coordinate=False)
-            stuck = self._stuck(U0, U, owner, walk, n_new)
-            if bool(xp.any(stuck)):
+            unmoved = walk & ~xp.any(U != U0, axis=1)
+            if bool(xp.any(unmoved)):
+                # Every unmoved chain is rerun, not only nodes where most are stuck: a node
+                # with 40% of its points left on a corner (a zero-volume atom) is as wrong.
                 # The recovery walk must pass the same drift check: moving is not mixing.
-                U, bad, recovery_drift = run(U, walk & stuck[owner], bad, coordinate=True)
-                drift = xp.where(stuck, recovery_drift, drift)
-                stuck = self._stuck(U0, U, owner, walk, n_new)
+                touched = _per_node_sum(unmoved.astype(xp.float64), n_new) > 0
+                U, bad, recovery_drift = run(U, unmoved, bad, coordinate=True)
+                drift = xp.where(touched, recovery_drift | drift, drift)
+            stuck = _per_node_sum((walk & ~xp.any(U != U0, axis=1)).astype(xp.float64), n_new) > 0
             infeasible = _per_node_sum(bad.astype(xp.float64), n_new) > 0
             geo.insufficient = drift | stuck | infeasible
         return self.domain.denormalize(U)
-
-    def _stuck(self, U0: Array, U: Array, owner: Array, walk: Array, n_new: Array) -> Array:
-        """(K,) nodes where most walking chains ended exactly where they started."""
-        moved = xp.any(U != U0, axis=1).astype(xp.float64)
-        n_walk = _per_node_sum(walk.astype(xp.float64), n_new)
-        n_moved = _per_node_sum(moved * walk, n_new)
-        return (n_walk > 0) & (n_moved < 0.5 * n_walk)
 
     def _starts(self, clusters: ClusterPoints, geo: RegionPoints, owner: Array, draw: Array) -> tuple[Array, Array]:
         """
@@ -366,7 +364,7 @@ class HitAndRunSampler(Sampler):
         if int(idx.shape[0]) == 0 or t_to <= t_from:
             return U, bad
         d = clusters.d
-        width = int(geo.constraints.shape[1]) * (d + 1) + (self.roots.n_roots * 2 if self.roots.is_voronoi else 0)
+        width = int(geo.constraints.shape[1]) * (d + 1) + (self.roots.n_roots * (2 * d + 4) if self.roots.is_voronoi else 0)
         chunk = max(1, self.CHUNK_ELEMENTS // max(1, width + 4 * d))
         U, bad = U.copy(), bad.copy()
         for s in range(0, int(idx.shape[0]), chunk):
@@ -392,7 +390,29 @@ class HitAndRunSampler(Sampler):
         if coordinate:
             stream = RegionPoints(geo.root, geo.depth, geo.keys, geo.constraints, geo.purpose + self.RECOVERY_PURPOSE_OFFSET)
         if self.roots.is_voronoi:
-            own = xp.arange(self.roots.n_roots)[None, :] == root[:, None]  # the owning centre's own bisector
+            # Bisector j of the owning centre c_r, from the centre difference D = c_j - c_r:
+            # n^T (u - c_r) <= |D| / 2 with n = D / |D|. Expanding it as differences of dot
+            # products and squared norms of the centres cancels catastrophically for close
+            # centres (a cell of width 1e-12 came out 1e-5 wide); this form keeps the slack
+            # in distance units, so FEASIBILITY_TOL means the same thing for every face.
+            # The owning centre's own row (D = 0) is removed by identity.
+            c_r = self._C[root]
+            own = xp.arange(self.roots.n_roots)[None, :] == root[:, None]
+            D = self._C[None, :, :] - c_r[:, None, :]  # (n, R, d), chunked by _walk
+            norm = xp.linalg.norm(D, axis=2)
+            normal = xp.where(own[:, :, None], 0.0, D / xp.where(own, 1.0, norm)[:, :, None])
+            half = xp.where(own, xp.inf, 0.5 * norm)
+
+        def slacks(U):
+            """Cut and bisector slacks of ``U`` (distance units), and which chains violate one beyond rounding."""
+            cut = b - xp.einsum("nhd,nd->nh", A, U)
+            out = xp.any(cut < -self.FEASIBILITY_TOL * (1.0 + xp.abs(b)), axis=1)
+            vor = None
+            if self.roots.is_voronoi:
+                vor = half - xp.einsum("nrd,nd->nr", normal, U - c_r)
+                out |= xp.any(vor < -self.FEASIBILITY_TOL, axis=1)
+            return cut, vor, out
+
         for t in range(t_from, t_to):
             q = (d + 1) // 2
             r = self._uniforms(stream, owner, draw, self._start_hashes + 1 + t * self._step_hashes, 2 * q + 1)
@@ -414,24 +434,17 @@ class HitAndRunSampler(Sampler):
                     t_lo_face, t_hi_face = xp.where(g == 0, -xp.inf, t_lo_face), xp.where(g == 0, xp.inf, t_hi_face)
                 t_min = xp.max(xp.fmin(t_lo_face, t_hi_face), axis=1)
                 t_max = xp.min(xp.fmax(t_lo_face, t_hi_face), axis=1)
+                cut, vor, infeasible = slacks(U)
+                bad |= infeasible
                 if b.shape[1] > 0:
-                    slack = b - xp.einsum("nhd,nd->nh", A, U)
-                    bad |= xp.any(slack < -self.FEASIBILITY_TOL * (1.0 + xp.abs(b)), axis=1)
-                    t_min, t_max = _chord(xp.einsum("nhd,nd->nh", A, g), slack, t_min, t_max)
-                if self.roots.is_voronoi:
-                    # Bisectors (c_j - c_r)^T u <= (|c_j|^2 - |c_r|^2) / 2 against every other
-                    # centre. The owning centre's own row is 0 <= 0 exactly, but its computed
-                    # coefficient is rounding-sized and nonzero, which would cut the chord:
-                    # it is removed by identity, not by a coefficient threshold.
-                    c_r = self._C[root]
-                    Ag = xp.where(own, 0.0, g @ self._C.T - xp.sum(g * c_r, axis=1, keepdims=True))
-                    offset = 0.5 * (self._C2[None, :] - self._C2[root][:, None])
-                    slack = offset - (U @ self._C.T - xp.sum(U * c_r, axis=1, keepdims=True))
-                    bad |= xp.any(~own & (slack < -self.FEASIBILITY_TOL * (1.0 + xp.abs(offset))), axis=1)
-                    t_min, t_max = _chord(Ag, slack, t_min, t_max)
+                    t_min, t_max = _chord(xp.einsum("nhd,nd->nh", A, g), cut, t_min, t_max)
+                if vor is not None:
+                    t_min, t_max = _chord(xp.einsum("nrd,nd->nr", normal, g), vor, t_min, t_max)
                 bad |= ~(xp.isfinite(t_min) & xp.isfinite(t_max) & (t_min <= t_max))
             step = t_min + (t_max - t_min) * r[:, 2 * q]
             U = U + xp.where(bad, 0.0, step)[:, None] * g  # a failed chain stops where it is
+        with np.errstate(invalid="ignore"):
+            bad |= slacks(U)[2]  # the returned endpoint too, not only each step's start
         return U, bad
 
     def _drifting(self, U_mid: Array, U_end: Array, owner: Array, walk: Array, n_new: Array) -> Array:
@@ -443,14 +456,28 @@ class HitAndRunSampler(Sampler):
             return out
         starts = (xp.cumsum(n_new) - n_new)[nz]
         m = n_new[nz].astype(xp.float64)[:, None]
+        slot = xp.zeros(K, dtype=xp.int64)
+        slot[nz] = xp.arange(int(nz.shape[0]))
+        row_node = slot[owner]
+
+        def mean_of(f):
+            return segment_sum(f, starts) / m
+
+        # The squared radius is taken about the node's halfway mean, not a fixed point: far
+        # from that point a narrow node's radii would all agree to rounding.
+        centre = mean_of(U_mid)[row_node]
 
         def moments(V):
-            f = xp.concatenate([V, xp.sum((V - 0.5) ** 2, axis=1, keepdims=True)], axis=1)
-            mean = segment_sum(f, starts) / m
-            return mean, segment_sum(f**2, starts) / m - mean**2
+            f = xp.concatenate([V, xp.sum((V - centre) ** 2, axis=1, keepdims=True)], axis=1)
+            mean = mean_of(f)
+            # Centred second moments: mean(f^2) - mean^2 cancels for a narrow node far from
+            # the origin and turned rounding-sized shifts into "drift".
+            return mean, mean_of((f - mean[row_node]) ** 2)
 
         (m1, v1), (m2, v2) = moments(U_mid), moments(U_end)
-        z = xp.abs(m2 - m1) / xp.sqrt(xp.maximum((v1 + v2) / m, 1e-300))
+        # Mean differences below the coordinates' rounding resolution are not drift.
+        resolution = 64 * np.finfo(np.float64).eps * (xp.abs(m1) + xp.abs(m2))
+        z = xp.abs(m2 - m1) / xp.sqrt(xp.maximum((v1 + v2) / m, resolution**2 + 1e-300))
         walking = segment_sum(walk.astype(xp.float64), starts) > 0
         out[nz] = walking & (n_new[nz] >= 4) & (xp.max(z, axis=1) > self.mixing_z)
         return out
@@ -1039,11 +1066,16 @@ class RegionPlan:
         lab = rows.labels
         ok0 = xp.isfinite(z0)
         w, z = w0.copy(), xp.where(ok0, z0, 0.0)
-        s0 = plane_scores(rows.U, w[lab])
-        var = rows.reduce(s0**2) / n - (rows.reduce(s0) / n) ** 2
-        T = s_cfg.soft_temperature * xp.sqrt(xp.maximum(var, 1e-300))
-        active = ok0.copy()
         eps = float(np.finfo(np.float64).eps)
+        s0 = plane_scores(rows.U, w[lab])
+        # Centred variance (the raw-moment form cancels to zero or below for a narrow node
+        # far from the origin, which made T ~ 1e-151 and the gates hard), floored at the
+        # scores' rounding resolution.
+        mean = rows.reduce(s0) / n
+        var = rows.reduce((s0 - mean[lab]) ** 2) / n
+        resolution = 64 * eps * xp.maximum(xp.abs(mean), 1e-300)
+        T = s_cfg.soft_temperature * xp.sqrt(xp.maximum(var, resolution**2))
+        active = ok0.copy()
 
         def gate(w_, z_):
             return _soft_gates(rows, w_, z_, T, delta)
@@ -1196,10 +1228,25 @@ class RoutingTable:
         """
         Assemble and check the tree: leaf ``i`` (in leaf-array order) is ``(leaf_root[i],
         leaf_path[i])``; split ``j`` is ``(split_root[j], split_path[j])`` with plane
-        ``(w[j], z[j])``. Checks: valid roots and positive path codes, finite planes of the
-        domain's dimension, unique nodes, both children of every split, a split parent for
-        every non-root node, and a node for every root. Raises ``ValueError`` otherwise.
+        ``(w[j], z[j])``. Checks: a finite domain of positive width, roots of its dimension
+        (positive grid bins; finite, distinct Voronoi centres), valid roots and positive
+        path codes, finite planes of the domain's dimension, unique nodes, both children of
+        every split, a split parent for every non-root node, and a node for every root.
+        Loading goes through here too, so a malformed file fails like a malformed tree.
+        Raises ``ValueError`` otherwise.
         """
+        lo, hi = np.asarray(domain.lower), np.asarray(domain.upper)
+        if lo.ndim != 1 or lo.shape != hi.shape or lo.size == 0 or not (np.all(np.isfinite(lo)) and np.all(np.isfinite(hi))) \
+                or not np.all(hi > lo):  # fmt: skip
+            raise ValueError("Region domain must be finite (d,) bounds with upper > lower.")
+        bins = np.asarray(roots.bins)
+        if bins.shape != lo.shape or not np.issubdtype(bins.dtype, np.integer) or np.any(bins < 1):
+            raise ValueError("Region root bins must be positive integers, one per dimension.")
+        if roots.centres is not None:
+            C = np.asarray(roots.centres)
+            if C.ndim != 2 or C.shape[1] != lo.size or C.shape[0] == 0 or not np.all(np.isfinite(C)) \
+                    or len(np.unique(C, axis=0)) != len(C):  # fmt: skip
+                raise ValueError("Voronoi root centres must be finite, distinct (R, d) points.")
         lr, lp, sr, sp = (np.asarray(_to_host(a), dtype=np.int64).reshape(-1) for a in (leaf_root, leaf_path, split_root, split_path))
         W, Z = np.asarray(_to_host(w), dtype=np.float64), np.asarray(_to_host(z), dtype=np.float64).reshape(-1)
         d, R = domain.d, roots.n_roots

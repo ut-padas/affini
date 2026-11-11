@@ -279,12 +279,12 @@ def test_paired_uniforms_are_open_uniform_and_uncorrelated():
     np.testing.assert_array_equal(u, host(counter_uniform_pairs(keys[0], PURPOSE_TRAIN, xp.arange(100_000))))
 
 
-def _walk(roots, seeds, n_new, d, max_steps=64):
+def _walk(roots, seeds, n_new, d, max_steps=64, walk_steps=8):
     """Hit-and-run in the whole unit cube (one redundant cut u0 <= 1), seeded at ``seeds``."""
     domain = Domain(np.zeros(d), np.ones(d))
     constraints = xp.asarray(np.r_[1.0, np.zeros(d - 1), 1.0][None, None, :])
     geo = RegionPoints(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([2])), constraints, PURPOSE_TRAIN)
-    X = HitAndRunSampler(domain, roots, walk_steps=8, max_walk_steps=max_steps).sample(
+    X = HitAndRunSampler(domain, roots, walk_steps=walk_steps, max_walk_steps=max_steps).sample(
         ClusterPoints(xp.asarray(seeds), xp.asarray([len(seeds)]), region=geo), xp.asarray([n_new])
     )
     return host(X), bool(geo.insufficient[0])
@@ -312,6 +312,56 @@ def test_chains_stuck_in_a_20d_corner_are_recovered_or_flagged():
     X, flagged = _walk(Roots.build("box", d, 1), corner, 400, d, max_steps=4096)
     assert not flagged and np.all(np.any(X != 0.0, axis=1)) and np.all((X >= 0) & (X <= 1))
     np.testing.assert_allclose(X.mean(axis=0), 0.5, atol=0.06)
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_no_endpoint_is_left_on_a_corner_without_a_flag(seed):
+    """A minority of unmoved chains (34% expected at d = 4, 8 steps) is recovered too, or the node flagged."""
+    d = 4
+    domain = Domain(np.zeros(d), np.ones(d))
+    constraints = xp.asarray(np.r_[1.0, np.zeros(d - 1), 1.0][None, None, :])
+    geo = RegionPoints(xp.asarray([0]), xp.asarray([2]), node_keys(seed, xp.asarray([0]), xp.asarray([2])), constraints, PURPOSE_TRAIN)
+    X = host(HitAndRunSampler(domain, Roots.build("box", d, 1), walk_steps=8, max_walk_steps=8).sample(
+        ClusterPoints(xp.zeros((3, d)), xp.asarray([3]), region=geo), xp.asarray([20])
+    ))  # fmt: skip
+    assert bool(geo.insufficient[0]) or not np.any(np.all(X == 0.0, axis=1))
+
+
+@pytest.mark.parametrize("separation", [1e-6, 1e-8, 1e-10, 1e-12])
+def test_close_voronoi_centres_keep_every_sample_in_its_own_thin_cell(separation):
+    """Bisectors from centre differences: expanding them cancelled and put every sample in a neighbour's cell."""
+    base = 0.695
+    roots = Roots.build("voronoi", 1, 3, np.array([[base - separation], [base], [base + separation]]))
+    geo = RegionPoints(xp.asarray([1]), xp.asarray([0]), node_keys(2, xp.asarray([1]), xp.asarray([1])), xp.zeros((1, 0, 2)), PURPOSE_TRAIN)
+    sampler = HitAndRunSampler(Domain(np.zeros(1), np.ones(1)), roots, walk_steps=8, max_walk_steps=32)
+    P = sampler.sample(ClusterPoints(xp.asarray([[base]]), xp.asarray([1]), region=geo), xp.asarray([200]))
+    assert np.all(host(roots.root_of(P)) == 1) and not bool(geo.insufficient[0])
+    np.testing.assert_allclose([host(P).min() - base, host(P).max() - base], [-separation / 2, separation / 2], rtol=0.05)
+
+
+def test_narrow_score_clouds_far_from_the_origin_keep_a_resolved_temperature():
+    """Translating a node far from the origin must not collapse B4's gate temperature (raw moments cancelled)."""
+    from src.config import ClusteringConfig
+    from src.region import RegionPlan, _SplitRows
+
+    cfg = ClusteringConfig(atol=1e-3, algorithm="region", domain=([0, 0], [1, 1]),
+                           region={"split_search": "soft", "soft_iters": 1})  # fmt: skip
+    plan = RegionPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
+    n = 200
+    U = np.c_[0.9 + 1e-8 * np.linspace(-1, 1, n), np.random.default_rng(0).random(n)]
+    Y = np.where(U[:, :1] > 0.9 + 2e-9, 1.0, -1.0)
+    rows = _SplitRows(xp.asarray(U), xp.asarray(Y), xp.asarray(np.c_[U, np.ones(n)]), xp.zeros(n, dtype=xp.int64), xp.asarray([n]))
+    plan._soft_refine(rows, xp.asarray([[1.0, 0.0]]), xp.asarray([0.9]), xp.asarray([np.inf]), None)
+    assert plan.counters["soft_gate_saturated"] == 0
+
+
+def test_drift_ignores_rounding_sized_shifts_of_a_narrow_node():
+    domain, roots = Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1)
+    sampler = HitAndRunSampler(domain, roots, walk_steps=2)
+    U = xp.asarray(0.9 + 1e-8 * np.random.default_rng(0).random((20, 2)))
+    owner, walk = xp.zeros(20, dtype=xp.int64), xp.ones(20, dtype=bool)
+    assert not bool(sampler._drifting(U, U + 1e-12, owner, walk, xp.asarray([20]))[0])
+    assert bool(sampler._drifting(U, U + 1e-8, owner, walk, xp.asarray([20]))[0])
 
 
 def test_threshold_search_skips_nodes_too_small_to_split_beside_valid_ones():
@@ -373,7 +423,7 @@ def test_routing_table_loads_the_packed_key_format():
     np.testing.assert_array_equal(host(RoutingTable.from_arrays(old).route(q)[0]), host(new.route(q)[0]))
 
 
-@pytest.mark.parametrize("broken", ["nan_plane", "bad_shape", "unknown_root"])
+@pytest.mark.parametrize("broken", ["nan_plane", "bad_shape", "unknown_root", "zero_width", "bad_bins"])
 def test_loaded_routing_tables_are_validated(broken):
     domain, roots, tree = _tree()
     a = RoutingTable.build(domain, roots, **tree).arrays()
@@ -382,9 +432,13 @@ def test_loaded_routing_tables_are_validated(broken):
         a["w"][0, 0] = np.nan
     elif broken == "bad_shape":
         a["z"] = a["z"][:1]
-    else:
+    elif broken == "unknown_root":
         a["leaf_root"] = np.asarray(a["leaf_root"]).copy()
         a["leaf_root"][0] = 5
+    elif broken == "zero_width":
+        a["domain_upper"] = np.array([1.0, 0.0])
+    else:
+        a["root_bins"] = np.array([1, 0])
     with pytest.raises(ValueError):
         RoutingTable.from_arrays(a)
 

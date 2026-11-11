@@ -19,10 +19,10 @@ GPU). Compare against that one when timing matters, e.g.::
         --art-path ../Adaptive-Regression-Trees-ART- --benchmark quadratic --dimension 2 \\
         --sampler parallel_numba
 
-Refuses ART leaf degrees other than 1 and error metrics other than
-``max_pointwise_relative``, which region mode does not implement. Prints the resolved
-configurations (one ``CONFIG`` line), then one JSON line per method (prefixed
-``COMPARE``); ART's line records the sampler,
+Refuses ART leaf degrees other than 1, error metrics other than
+``max_pointwise_relative`` and relative-error floors other than 1e-12, which region mode
+does not implement. Prints one JSON line per method (prefixed ``COMPARE``; ART's
+first), then the resolved configurations (one ``CONFIG`` line); ART's line records the sampler,
 optimizer and traversal it ran with. Oracle counts are reported as
 each method counts them: AFINNI's include its centroid evaluations when the split
 strategy needs ``f(c)`` (the default covariance-Hessian split does).
@@ -100,11 +100,14 @@ def main() -> None:
     validate_args(args)
     # Region mode always fits affine leaves to a pointwise relative rule; any other ART
     # setting would compare two different problems.
-    if args.leaf_degree != 1 or args.error_metric != "max_pointwise_relative":
+    # (ART always fits an intercept for degree 1, whatever --leaf-bias says, as region
+    # mode does; its relative-error floor is fixed at 1e-12.)
+    if args.leaf_degree != 1 or args.error_metric != "max_pointwise_relative" or args.relative_error_floor != 1e-12:
         raise SystemExit(
-            f"art_comparison needs --leaf-degree 1 and --error-metric max_pointwise_relative "
-            f"(got {args.leaf_degree} and {args.error_metric!r}): AFINNI's region mode fits "
-            "affine leaves against the pointwise relative tolerance"
+            f"art_comparison needs --leaf-degree 1, --error-metric max_pointwise_relative and "
+            f"--relative-error-floor 1e-12 (got {args.leaf_degree}, {args.error_metric!r}, "
+            f"{args.relative_error_floor}): AFINNI's region mode fits affine leaves with an "
+            "intercept against the pointwise relative tolerance with that floor"
         )
     low, high = BENCHMARK_DEFAULT_INTERVALS[args.benchmark]
     low = low if args.domain_low is None else args.domain_low
@@ -160,13 +163,14 @@ def main() -> None:
                               validation_samples=mine.afinni_validation, walk_steps=mine.afinni_walk_steps,
                               split_search=mine.afinni_search),
     )  # fmt: skip
-    print("CONFIG " + json.dumps({"art": {k: v for k, v in sorted(vars(args).items()) if not callable(v)},
-                                  "afinni_region": config.region.__dict__ | {"split_strategy": mine.afinni_split}},
-                                 default=str), flush=True)  # fmt: skip
     model = AFINNISurrogate()
     t = time.perf_counter()
     model.train(X0, config, Evaluator(f_fn=f))
     seconds = time.perf_counter() - t
+    # The resolved components (local model, acceptance, split strategy and their settings), not the request.
+    print("CONFIG " + json.dumps({"art": {k: v for k, v in sorted(vars(args).items()) if not callable(v)},
+                                  "afinni_region": {"region": config.region.__dict__, **model.config["components"]}},
+                                 default=str), flush=True)  # fmt: skip
     evaluation, frac = evaluate(_RegionModel(model))
     depth = int(max(int(p).bit_length() - 1 for p in model.region_leaves["path_code"]))
     print("COMPARE " + json.dumps({"method": "AFINNI-region", **common, **_summary(

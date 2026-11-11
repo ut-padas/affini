@@ -267,7 +267,7 @@ def _run_local_refinement(
         if largest > config.batch_size:
             logger.warning(
                 f"R{rank:02} L{level:02}: a cluster of {largest:,} points exceeds batch_size="
-                f"{config.batch_size:,}; it is processed alone and may exceed the memory budget"
+                f"{config.batch_size:,}; its batch may exceed the memory budget"
             )
 
         # Children of this level's rejected clusters, collected batch by batch.
@@ -300,10 +300,12 @@ def _run_local_refinement(
         if config.log_mem_stats:
             log_mem_stats(f"R{rank:02} Start: L{level:02} Batching")
 
-        # Batch ends follow the grid (b + 1) * batch_size of cumulative points. A cluster
-        # larger than a whole batch is processed on its own and the grid re-anchored after
-        # it (batch_offset); the loop runs until every queued cluster was processed, so
-        # oversized clusters are never dropped (they once silently were).
+        # AFINNI batches end at the first cluster crossing the grid (b + 1) * batch_size of
+        # cumulative points, so a batch can exceed batch_size by its last cluster; a cluster
+        # that would start a batch beyond the grid is processed alone and the grid
+        # re-anchored after it (batch_offset). Region batches hold whole nodes up to
+        # batch_size (see below). The loop runs until every queued cluster was processed,
+        # so oversized clusters are never dropped (they once silently were).
         batch_offset = 0
         for b in itertools.count():
             if start_cluster_idx >= queue.n_clusters:
@@ -319,14 +321,23 @@ def _run_local_refinement(
             num_clusters = queue.n_clusters
             aug_cumsum_cpu = aug_cumsum_cpu[:num_clusters]
 
-            target_aug_count = (b + 1) * config.batch_size + batch_offset
-            end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
-            end_cluster_idx = min(end_cluster_idx + 1, num_clusters)
             if start_cluster_idx >= num_clusters:
                 break
-            if end_cluster_idx <= start_cluster_idx:
-                batch_offset = int(aug_cumsum_cpu[start_cluster_idx]) - (b + 1) * config.batch_size
-                end_cluster_idx = start_cluster_idx + 1
+            if plan is not None:
+                # Region mode: the longest run of whole nodes that fits batch_size, or one
+                # oversized node alone. Its trees do not depend on batch boundaries.
+                before = int(aug_cumsum_cpu[start_cluster_idx - 1]) if start_cluster_idx else 0
+                end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, before + config.batch_size, side="right"))
+                end_cluster_idx = min(max(end_cluster_idx, start_cluster_idx + 1), num_clusters)
+            else:
+                # AFINNI mode keeps its grid, so its batches (and seeds) stay bit-identical:
+                # the cluster crossing a grid line joins that batch.
+                target_aug_count = (b + 1) * config.batch_size + batch_offset
+                end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
+                end_cluster_idx = min(end_cluster_idx + 1, num_clusters)
+                if end_cluster_idx <= start_cluster_idx:
+                    batch_offset = int(aug_cumsum_cpu[start_cluster_idx]) - (b + 1) * config.batch_size
+                    end_cluster_idx = start_cluster_idx + 1
 
             with timer("time_slicing"):
                 sizes_cpu = queue.sizes[start_cluster_idx:end_cluster_idx]

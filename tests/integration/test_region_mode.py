@@ -113,6 +113,17 @@ def test_routed_predictions_match_the_leaf_models_and_flag_only_the_domain(train
     assert knn_pred.shape == pred.shape
 
 
+def test_loading_rejects_leaf_metadata_that_names_other_nodes(tmp_path, trained):
+    path = trained.save_model(tmp_path)
+    with np.load(path, allow_pickle=False) as f:
+        data = dict(f)
+    key = next(k for k in data if k.endswith("path_code"))
+    data[key] = data[key][::-1].copy()
+    np.savez(path, **data)
+    with pytest.raises(ValueError, match="disagree"):
+        AFINNISurrogate.load_model(path)
+
+
 def test_region_model_save_and_load_round_trip(tmp_path, trained):
     loaded = AFINNISurrogate.load_model(trained.save_model(tmp_path))
     q = np.random.default_rng(5).uniform(-1.2, 1.2, (200, 2))
@@ -260,3 +271,21 @@ def test_training_warns_when_leaves_have_insufficient_sampling(points):
             region=RegionSettings(sample_multiplier=10, walk_steps=2, max_walk_steps=2, mixing_z=1e-9), max_levels=6,
         ))  # fmt: skip
     assert model.leaf_status_counts()["validation_status"]["insufficient_sampling"] > 0
+
+
+def test_region_batches_hold_whole_nodes_within_the_batch_size_or_one_node_alone(points, monkeypatch):
+    """An oversized node never shares a batch, even after a smaller node (the AFINNI grid would admit both)."""
+    from src.region import RegionPlan
+
+    batch_size, seen = 100, []
+    original = RegionPlan.process_batch
+
+    def spy(self, **kwargs):
+        seen.append(self.work_sizes(host(kwargs["sizes"])))
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(RegionPlan, "process_batch", spy)
+    train_surrogate(points, **region_options(batch_size=batch_size, max_levels=6,
+                                             region=RegionSettings(roots="grid", sample_multiplier=10)))  # fmt: skip
+    assert any(len(w) == 1 and w[0] > batch_size for w in seen)  # an oversized node occurred
+    assert all(len(w) == 1 or w.sum() <= batch_size for w in seen)
