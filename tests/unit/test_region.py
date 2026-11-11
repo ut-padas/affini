@@ -501,3 +501,30 @@ def test_routing_rejects_non_finite_or_misshaped_queries(query):
     domain, roots, tree = _tree()
     with pytest.raises(ValueError):
         RoutingTable.build(domain, roots, **tree).route(xp.asarray(query))
+
+
+def test_cut_sums_match_direct_sums_on_both_sides_and_ignore_other_nodes():
+    """Per-bin prefix/suffix sums equal each cut's directly formed Grams, node by node."""
+    from src.region import _SplitRows, sort_by_block_then_value
+
+    rng = np.random.default_rng(5)
+    counts = [12, 9, 12, 20]
+    N = sum(counts)
+    U = xp.asarray(rng.random((N, 3)))
+    Y = xp.asarray(rng.standard_normal((N, 2)))
+    Phi = xp.concatenate([U, xp.ones((N, 1))], axis=1)
+    labels = xp.asarray(np.repeat(np.arange(4), counts))
+    rows = _SplitRows(U, Y, Phi, labels, xp.asarray(counts))
+    s = U[:, 0] - 0.3 * U[:, 1]
+    order = sort_by_block_then_value(s, labels)
+    n = np.array(counts)
+    pos = xp.asarray(np.clip(np.round(np.arange(1, 4)[None, :] * n[:, None] / 4), 2, (n - 2)[:, None]).astype(np.int64))
+    GL, BL, CL, GR, BR, CR = (host(a) for a in rows.cut_sums(order, pos))
+    P, Yh, o, starts = host(Phi), host(Y), host(order), np.r_[0, np.cumsum(counts)[:-1]]
+    for k in range(4):
+        srt = o[starts[k] : starts[k] + counts[k]]
+        for i, cut in enumerate(host(pos)[k]):
+            for side, (G, B, C) in ((srt[:cut], (GL, BL, CL)), (srt[cut:], (GR, BR, CR))):
+                np.testing.assert_allclose(G[k, i], P[side].T @ P[side], rtol=1e-12, atol=1e-13)
+                np.testing.assert_allclose(B[k, i], P[side].T @ Yh[side], rtol=1e-12, atol=1e-13)
+                np.testing.assert_allclose(C[k, i], np.sum(Yh[side] ** 2), rtol=1e-12)

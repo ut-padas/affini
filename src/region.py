@@ -44,7 +44,13 @@ from src.acceptance import tolerance_vector
 from src.adaptive_clustering_utils import uniform_grid_bins
 from src.clusters import ParamSpec
 from src.local_models import ClusterFitData, deploy_leaves, output_columns
-from src.numerics import _reduce_max_1d, _reduce_sum_1d, sort_by_block_then_value
+from src.numerics import (
+    _reduce_max_1d,
+    _reduce_sum_1d,
+    count_groups,
+    grouped_cross,
+    sort_by_block_then_value,
+)
 from src.sampling import ClusterPoints, Sampler, augment_clusters, augmentation_targets
 from src.splitting import SplitData
 from src.utils import repeats
@@ -567,7 +573,7 @@ class _SplitRows:
 
     U: Array  # (N, d) normalized points
     Y: Array  # (N, fd) outputs scaled by each node's tolerance scale
-    Phi: Array  # (N, p) features [u, 1]
+    Phi: Array  # (N, p) the leaf model's split features ([u, 1] for affine leaves)
     labels: Array  # (N,)
     counts: Array  # (k,)
     starts: Array = field(init=False)
@@ -578,11 +584,7 @@ class _SplitRows:
         self.starts = xp.r_[0, xp.cumsum(self.counts)[:-1]]
         tr = segment_sum(xp.sum(self.Phi**2, axis=1), self.starts)
         self.lam = 1e-8 * tr / self.Phi.shape[1] + 1e-300
-        counts = np.asarray(_to_host(self.counts))
-        self.groups = []
-        for c in np.unique(counts):
-            nodes = xp.asarray(np.nonzero(counts == c)[0])
-            self.groups.append((nodes, self.starts[nodes][:, None] + xp.arange(int(c))[None, :]))
+        self.groups = count_groups(self.counts, self.starts)
         self._Phi_g = self.gather(self.Phi)
         self._Y_g = self.gather(self.Y)
 
@@ -595,16 +597,41 @@ class _SplitRows:
 
     def cross(self, A: list[Array], B: list[Array], w: Array | None = None) -> Array:
         """(k, a, b) per-node products ``A_k^T diag(w_k) B_k`` of gathered blocks (``gather``)."""
-        k = int(self.counts.shape[0])
-        out = xp.empty((k, A[0].shape[-1], B[0].shape[-1]))
-        for (nodes, rows), Ag, Bg in zip(self.groups, A, B, strict=True):
-            Aw = Ag if w is None else Ag * w[rows][..., None]
-            out[nodes] = xp.swapaxes(Aw, 1, 2) @ Bg
-        return out
+        return grouped_cross(self.groups, A, B, w)
 
     def gram(self, w: Array | None = None) -> tuple[Array, Array]:
         """The weighted Gram ``Phi^T W Phi`` (k, p, p) and right-hand side ``Phi^T W Y`` (k, p, fd)."""
         return self.cross(self._Phi_g, self._Phi_g, w), self.cross(self._Phi_g, self._Y_g, w)
+
+    def cut_sums(self, order: Array, pos: Array) -> tuple[Array, ...]:
+        """
+        Gram, right-hand side and ``sum |y|^2`` of both sides of every cut: ``(GL, BL, CL,
+        GR, BR, CR)``, each (k, n_cuts, ...), where cut ``i`` of node ``k`` puts the
+        ``pos[k, i]`` lowest rows of ``order`` (rows sorted by score within each node) on
+        the left. Cut positions depend only on a node's count, so a count group shares its
+        bin edges: each bin's sums are one batched product over its contiguous sorted rows,
+        and the sides are prefix and suffix sums over bins. That is one pass over the data
+        instead of one per cut, and the right side is summed directly rather than taken
+        from the node total by subtraction (which cancels near a good fit).
+        """
+        k, m = int(self.counts.shape[0]), int(pos.shape[1])
+        p, fd = self.Phi.shape[1], self.Y.shape[1]
+        out = [xp.empty(shape) for shape in ((k, m, p, p), (k, m, p, fd), (k, m)) * 2]
+        pos_host = np.asarray(_to_host(pos))
+        y2 = xp.sum(self.Y**2, axis=1)
+        for nodes, rows in self.groups:
+            c = int(rows.shape[1])
+            edges = np.r_[0, pos_host[int(_to_host(nodes[0]))], c]
+            sorted_rows = order[rows]  # (g, c): each node's rows by increasing score
+            P, Yg, y2g = self.Phi[sorted_rows], self.Y[sorted_rows], y2[sorted_rows]
+            bins = [(int(a), int(b)) for a, b in zip(edges[:-1], edges[1:], strict=True)]
+            G = xp.stack([xp.swapaxes(P[:, a:b], 1, 2) @ P[:, a:b] for a, b in bins], axis=1)
+            B = xp.stack([xp.swapaxes(P[:, a:b], 1, 2) @ Yg[:, a:b] for a, b in bins], axis=1)
+            C = xp.stack([xp.sum(y2g[:, a:b], axis=1) for a, b in bins], axis=1)
+            for slot, S in zip((0, 1, 2), (G, B, C), strict=True):
+                out[slot][nodes] = xp.cumsum(S, axis=1)[:, :-1]
+                out[slot + 3][nodes] = xp.flip(xp.cumsum(xp.flip(S, axis=1), axis=1), axis=1)[:, 1:]
+        return tuple(out)
 
     def solve(self, G: Array, B: Array) -> Array:
         """Ridge solutions ``(G + lam I)^-1 B`` for (k, ..., p, p) Grams (lam fixed per node)."""
@@ -649,7 +676,8 @@ class RegionPlan:
         self.domain, self.roots = domain, roots
         s = config.region
         self.settings = s
-        self.p_eff = d + 1
+        self.model = config.components().local_model
+        self.p_eff = self.model.n_features(d)  # ART: sample multiplier x the leaf model's features
         self.convex_sampling = s.sampling == "convex_combination"
         self.n_target = 0 if self.convex_sampling else math.ceil(s.sample_multiplier * self.p_eff)
         self.n_val = int(s.validation_samples)
@@ -689,7 +717,7 @@ class RegionPlan:
         charged to the fewest points a node can hold, so small nodes do not undercount.
         """
         d, fd, h = self.d, self.fd, self.config.max_levels + 1
-        p = d + 1
+        p = self.p_eff
         g = fd * d if self.config.requires_grad_everywhere else 0
         search = 0
         if self.settings.split_search != "gap":
@@ -962,7 +990,7 @@ class RegionPlan:
         return xp.linalg.eigh(CovZ)[1], M
 
     def _split_rows(self, data: SplitData, U: Array) -> _SplitRows:
-        """Affine split features and tolerance-scaled outputs, so components combine by their tolerances."""
+        """The leaf model's split features and tolerance-scaled outputs, so components combine by their tolerances."""
         fd = data.F.shape[1]
         acc = self.config.components().acceptance
         atol = xp.maximum(tolerance_vector("atol", acc.atol, fd), 0.0)
@@ -971,7 +999,13 @@ class RegionPlan:
         Fmax = xp.stack([_reduce_max_1d(xp.abs(data.F[:, j]), starts) for j in range(fd)], axis=1)
         scale = xp.maximum(xp.maximum(atol[None, :], rtol[None, :] * Fmax), 1e-300)
         Y = data.F / scale[data.labels]
-        Phi = xp.concatenate([U, xp.ones((int(U.shape[0]), 1))], axis=1)
+        if self.model.centred_features:
+            mean = xp.add.reduceat(U, starts, axis=0) / data.counts[:, None]
+            dU = U - mean[data.labels]
+            radius = xp.sqrt(_reduce_sum_1d(xp.sum(dU**2, axis=1), starts) / data.counts)
+            Phi = self.model.features(dU / xp.where(radius > 0, radius, 1.0)[data.labels][:, None])
+        else:  # affine: [u, 1] on the raw normalized coordinates
+            Phi = self.model.features(U)
         return _SplitRows(U, Y, Phi, data.labels, data.counts)
 
     def _direction_bank(self, rows: _SplitRows, lead, V, M, width, keys) -> Array:
@@ -1003,11 +1037,10 @@ class RegionPlan:
     def _threshold_search(self, rows: _SplitRows, bank: Array) -> tuple[Array, Array, Array]:
         """
         B3: along every bank direction, evaluate ``n_bins - 1`` quantile cut positions
-        with the left side's Gram formed directly for each cut (batched products, no
-        prefix sums), the right side's by subtraction from the node total (a screen), keep
-        the ``n_screened`` best per node, then recompute their SSE directly (``_hard_sse``)
-        and return the best ``(w, z)`` and its SSE. Only cuts between distinct scores that
-        leave ``min_side`` points per side are candidates.
+        from per-bin sums (``_SplitRows.cut_sums``: one data pass per direction), keep the
+        ``n_screened`` best per node as a screen, then recompute their SSE directly
+        (``_hard_sse``) and return the best ``(w, z)`` and its SSE. Only cuts between
+        distinct scores that leave ``min_side`` points per side are candidates.
         """
         k, D, _ = bank.shape
         nb = self.settings.n_bins
@@ -1018,8 +1051,6 @@ class RegionPlan:
         eligible = n >= 2 * self.min_side
         pos = xp.clip(xp.round(b[None, :] * n[:, None] / nb).astype(xp.int64), self.min_side, xp.maximum(n - self.min_side, self.min_side)[:, None])
         pos = xp.clip(pos, 1, xp.maximum(n - 1, 1)[:, None])
-        G_tot, B_tot = rows.gram()
-        C_tot = rows.reduce(xp.sum(rows.Y**2, axis=1))
         screen = xp.full((k, D, nb - 1), xp.inf)
         z_all = xp.full((k, D, nb - 1), xp.nan)
         for j in range(D):
@@ -1028,18 +1059,9 @@ class RegionPlan:
             ss = s[order]
             at = rows.starts[:, None] + pos  # first right-side row of each candidate
             ok = eligible[:, None] & (pos >= self.min_side) & (n[:, None] - pos >= self.min_side) & (ss[at] > ss[at - 1])
-            # Each row's rank along this direction within its node; the left side of cut i
-            # is the rows ranked below pos[:, i]. Each Gram is a batched product over the
-            # node's own rows, so nothing depends on the other nodes of the batch.
-            rank = xp.empty(int(order.shape[0]), dtype=xp.int64)
-            rank[order] = xp.arange(int(order.shape[0])) - rows.starts[rows.labels[order]]
-            y2 = xp.sum(rows.Y**2, axis=1)
-            GL, BL, CL = xp.empty((k, nb - 1) + G_tot.shape[1:]), xp.empty((k, nb - 1) + B_tot.shape[1:]), xp.empty((k, nb - 1))
-            for i in range(nb - 1):
-                left = (rank < pos[rows.labels, i]).astype(xp.float64)
-                GL[:, i], BL[:, i] = rows.gram(left)
-                CL[:, i] = rows.reduce(left * y2)
-            GR, BR, CR = G_tot[:, None] - GL, B_tot[:, None] - BL, C_tot[:, None] - CL
+            # Per node only (batched products over its own sorted rows), so nothing
+            # depends on the other nodes of the batch.
+            GL, BL, CL, GR, BR, CR = rows.cut_sums(order, pos)
             sse = xp.zeros((k, nb - 1))
             for Gs, Bs, Cs in ((GL, BL, CL), (GR, BR, CR)):
                 beta = rows.solve(Gs, Bs)

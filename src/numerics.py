@@ -8,7 +8,9 @@ vectorized passes, using custom CUDA kernels on the CuPy backend and NumPy
 fallbacks otherwise. Nothing here knows about the refinement loop.
 """
 
-from src import IS_CUPY_BACKEND, Array, xp
+import numpy as np
+
+from src import IS_CUPY_BACKEND, Array, _to_host, xp
 
 if IS_CUPY_BACKEND:
     import cupy as cp
@@ -601,6 +603,32 @@ def run_fused_mahalanobis_projection(dx, labels, U):
         return proj_out
 
     return xp.einsum("ni,nij->nj", dx, U[labels])
+
+
+def count_groups(counts: Array, starts: Array) -> list[tuple[Array, Array]]:
+    """
+    Blocks grouped by size: one ``(block ids (g,), row ids (g, c))`` per distinct size
+    ``c``, for blocks stored contiguously from ``starts``. Gathering a group gives a dense
+    (g, c, ...) array, so per-block products are batched matrix products with no padding
+    and no per-row outer products, and a block's arithmetic does not depend on the
+    other blocks in its batch.
+    """
+    host = np.asarray(_to_host(counts))
+    groups = []
+    for c in np.unique(host):
+        ids = xp.asarray(np.nonzero(host == c)[0])
+        groups.append((ids, starts[ids][:, None] + xp.arange(int(c))[None, :]))
+    return groups
+
+
+def grouped_cross(groups: list, A: list[Array], B: list[Array], w: Array | None = None) -> Array:
+    """(k, a, b) per-block products ``A_k^T diag(w_k) B_k`` of ``count_groups``-gathered blocks."""
+    k = sum(int(ids.shape[0]) for ids, _ in groups)
+    out = xp.empty((k, A[0].shape[-1], B[0].shape[-1]))
+    for (ids, rows), Ag, Bg in zip(groups, A, B, strict=True):
+        Aw = Ag if w is None else Ag * w[rows][..., None]
+        out[ids] = xp.swapaxes(Aw, 1, 2) @ Bg
+    return out
 
 
 def sort_by_block_then_value(values: Array, blocks: Array) -> Array:
