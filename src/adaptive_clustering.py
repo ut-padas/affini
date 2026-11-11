@@ -10,6 +10,7 @@ component never has to change it.
 """
 
 import dataclasses
+import itertools
 import logging
 import os
 import time
@@ -257,9 +258,16 @@ def _run_local_refinement(
         if config.log_mem_stats:
             log_mem_stats(f"R{rank:02} Start: L{level:02} Batching")
 
-        for b in range(num_batches):
+        # Batch ends follow the grid (b + 1) * batch_size of cumulative points. A cluster
+        # larger than a whole batch is processed on its own and the grid re-anchored after
+        # it (batch_offset); the loop runs until every queued cluster was processed, so
+        # oversized clusters are never dropped (they once silently were).
+        batch_offset = 0
+        for b in itertools.count():
+            if start_cluster_idx >= queue.n_clusters:
+                break
             logger.info(
-                f"R{rank:02} L{level:02}: Processing Batch {b + 1}/{num_batches}"
+                f"R{rank:02} L{level:02}: Processing Batch {b + 1}/{max(num_batches, b + 1)}"
             )
             profiler.batch = b
 
@@ -269,11 +277,14 @@ def _run_local_refinement(
             num_clusters = queue.n_clusters
             aug_cumsum_cpu = aug_cumsum_cpu[:num_clusters]
 
-            target_aug_count = (b + 1) * config.batch_size
+            target_aug_count = (b + 1) * config.batch_size + batch_offset
             end_cluster_idx = int(np.searchsorted(aug_cumsum_cpu, target_aug_count))
             end_cluster_idx = min(end_cluster_idx + 1, num_clusters)
-            if start_cluster_idx >= end_cluster_idx:
+            if start_cluster_idx >= num_clusters:
                 break
+            if end_cluster_idx <= start_cluster_idx:
+                batch_offset = int(aug_cumsum_cpu[start_cluster_idx]) - (b + 1) * config.batch_size
+                end_cluster_idx = start_cluster_idx + 1
 
             with timer("time_slicing"):
                 sizes_cpu = queue.sizes[start_cluster_idx:end_cluster_idx]

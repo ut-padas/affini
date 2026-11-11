@@ -74,3 +74,19 @@ def test_low_level_result_reports_status(monkeypatch):
         res = ac.adaptive_clustering(xp.asarray(X), cfg, Evaluator(f_fn=f))
     assert res["converged"] is False and res["num_unresolved_clusters"] > 0
     assert res["profiling_stats"]["num_unresolved_pts"] == res["num_unresolved_pts"]
+
+
+def test_batches_never_drop_clusters_larger_than_a_batch():
+    """A cluster bigger than batch_size is processed alone; it used to end the level early."""
+    points = np.random.default_rng(0).uniform(-1, 1, (4000, 2))
+
+    def wavy(x):
+        return (xp.sin(3 * x[:, 0]) * xp.cos(2 * x[:, 1]) + x[:, 0] ** 2)[:, None]
+
+    options = {"f_fn": wavy, "atol": 1e-2, "rtol": 1e-2, "num_initial_clusters": 4, "min_pts_per_cluster": 16,
+               "use_work_stealing": False}  # fmt: skip
+    big = train_surrogate(points, **options)
+    for batch_size in (7, 97):
+        small = train_surrogate(points, batch_size=batch_size, **options)
+        assert small.converged and int(host(small.counts_src).sum()) >= len(points)
+        assert abs(small.N_src - big.N_src) <= 0.05 * big.N_src  # only the per-batch seeds differ
