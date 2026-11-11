@@ -202,9 +202,9 @@ Settings are in `region=RegionSettings(...)`:
 | `sample_multiplier` | every node is topped up to `ceil(multiplier * (d + 1))` training points before it is fitted (ART: 50) |
 | `validation_samples` | fresh points per node on which the deployed model is checked; a diagnostic |
 | `min_side_margin` | a split leaves at least `d + 1 + margin` points on each side |
-| `walk_steps`, `max_walk_steps`, `mixing_z` | hit-and-run steps per new point (box and grid roots are sampled exactly); chains that still drift between their halfway and last step are lengthened up to `max_walk_steps`, otherwise the node is marked `insufficient_sampling` |
+| `walk_steps`, `max_walk_steps`, `mixing_z` | hit-and-run steps per new point (box and grid roots are sampled exactly); chains that still drift between their halfway and last step are lengthened up to `max_walk_steps`; chains that did not move are rerun with coordinate directions; a node still drifting, stuck or with an infeasible step is marked `insufficient_sampling` (training warns) |
 | `n_bins`, `n_directions`, `n_screened`, `soft_iters`, `soft_temperature` | the threshold search and the soft optimizer (defaults: 16, 6, 3, 20, 0.1) |
-| `steal_min_load`, `steal_size` | work-stealing thresholds in points (default: a few nodes) |
+| `steal_min_load`, `steal_size` | work-stealing thresholds in work units: points after top-up and validation (default: a few nodes) |
 
 Each rejected node is split by a hyperplane (see `split_search`), cut where the stored
 predicate reproduces the children exactly. `error_metric="pointwise"` with `rtol` alone is
@@ -215,7 +215,8 @@ leaf, so every point of the domain has a leaf:
 surrogate.predict(X)                     # routed: one leaf per query; outside = outside the domain
 surrogate.predict(X, predictor="knn")    # AFINNI's kNN / trust-region predictor still works
 surrogate.leaf_status_counts()           # terminal_reason (accepted, max_depth, split_failed), validation_status
-surrogate.audit(Evaluator(f_fn=f), 3000) # violation count on fresh uniform points, with a binomial upper bound
+surrogate.route_details(X)               # per query: leaf, outside, terminal_reason, validation_status codes
+surrogate.audit(Evaluator(f_fn=f), 3000) # violations (NaN/inf count as violations) on fresh uniform points, with a binomial upper bound
 ```
 
 Random numbers come from streams keyed by node, so a region-mode tree is the same for

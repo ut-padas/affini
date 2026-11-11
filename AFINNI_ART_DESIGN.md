@@ -1855,29 +1855,31 @@ no validation points, margin 0). The items below still need a sweep.
 
 ## 42. Implementation status (branch `region-mode`, Nov 11, 2026)
 
-Every phase of Section 40 is implemented on the local branch `region-mode` (not pushed,
-not committed). CPU and MPI (1, 2, 4 and 8 ranks, stealing on and off) are verified on a
-16-core laptop; the GPU has not been run and is the last step (Section 42.5). Where the
-code differs from Sections 36–38 it is the simpler version described in 42.2.
+Every phase of Section 40 has a working implementation on branch `region-mode`. This
+does not mean every contract of Sections 33–38 holds: where the code is simpler it is
+described in 42.2, the guarantees actually established are in 42.3, and the open
+resource and sampling contracts are in 42.6 and 42.7. CPU and MPI (1, 2, 4 and 8 ranks,
+stealing on and off) are verified on a 16-core laptop; the GPU has not been run and is
+the last step (Section 42.5).
 
 ### 42.1 What was built
 
 | Plan item | Where | Notes |
 |---|---|---|
-| Internal column table, versioned wire format | `src/clusters.py` (`QUEUE_COLUMNS`), `src/work_stealing.py` | `ClusterBatch.split`/`select`, the queue builder and `send/recv_clusters` iterate over the table. The header carries version, present columns, shapes and dtypes; column `i` goes on `base_tag + 1 + i`, so an AFINNI-mode payload is the old messages on the old tags. |
+| Internal column table, versioned wire format | `src/clusters.py` (`QUEUE_COLUMNS`), `src/work_stealing.py` | `ClusterBatch.split`/`select`, the queue builder and `send/recv_clusters` iterate over the table. The header carries version, present columns, shapes and dtypes; column `i` goes on `base_tag + 1 + i`, so an AFINNI-mode transfer sends the same array payloads on the same tags as before. The header itself is new, so this is not wire compatibility with an older executable: mixed versions fail on the version check. |
 | One executor, two named plans | `src/adaptive_clustering.py`, `src/region.py` (`RegionPlan`) | The AFINNI batch body is unchanged in order and arithmetic. The region plan supplies `work_sizes`, `bytes_per_point`, `leaf_columns`, `split_columns`, `initial_queue`, `process_batch`. Shared deploy step: `deploy_leaves` in `src/local_models.py` (Q, finalize, re-test), called by both plans. |
 | `algorithm`, `domain`, `RegionSettings` | `src/config.py` | `domain=(lower, upper)` required; `"data_bbox"` is explicit opt-in and recorded. |
 | Roots | `src/region.py` (`Roots`) | `box` (default, ART: no initial clustering), `grid` (shared `uniform_grid_bins`), `voronoi` (centres of the initial clustering; exact nearest-centre assignment, tiled; no face list). |
 | Counter-based RNG | `node_keys`, `counter_uniform`, `counter_uniform_pairs` | splitmix64 of (seed, root, path code, purpose, draw index); the same on NumPy and CuPy. The sampler takes two 32-bit uniforms per hash and both normals of each Box-Muller pair: `ceil(d/2) + 1` hashes per hit-and-run step. |
-| Pre-fit top-up, validation rows, pilot/production check | `HitAndRunSampler` | Box/grid roots sampled exactly; elsewhere one chain per new point, continued (doubling up to `max_walk_steps`) while its endpoints drift; `insufficient_sampling` status otherwise. Validation points are a diagnostic. |
-| Split predicates | `RegionPlan._split`, `_propose` | `split_search="gap"` (B2), `"bins"` (B3: `n_bins` cuts × `n_directions` directions, binned per-node prefix statistics, `n_screened` best recomputed directly), `"soft"` (B4, the default: consistent soft objective, envelope gradient, frozen Armijo, finite-precision margin `tr(RᵀH⁻¹R)/n`, stall/converged counters, hardening, kept only if the direct hard SSE beats B3). |
+| Pre-fit top-up, validation rows, drift and movement checks | `HitAndRunSampler` | Box/grid roots sampled exactly; elsewhere one chain per new point, continued (doubling up to `max_walk_steps`) while its endpoints drift. There is no separate pilot and production segment: the diagnostic decides how long the same returned chains run, which is weaker than Section 33.4's scheme. Nodes where fewer than half of the chains moved are rerun once with coordinate directions on their own stream; nodes still drifting, stuck or with an infeasible step get `insufficient_sampling`. Validation points are a diagnostic. |
+| Split predicates | `RegionPlan._split`, `_propose` | `split_search="gap"` (B2), `"bins"` (B3: `n_bins` cuts × `n_directions` directions; each cut's left Gram is a direct batched weighted product, not a prefix sum over bins, and the right Gram a subtraction used only as a screen; the `n_screened` best are recomputed directly), `"soft"` (B4, the default: consistent soft objective, envelope gradient, frozen Armijo, a margin `tr(RᵀH⁻¹R)/n` with `R` from the data residual, hardening, kept only if the direct hard SSE beats B3). B4 is numerically monitored descent with a hard incumbent, not a certified optimum: the margin is an estimate, not an error bound. Each refined node records one termination reason (`soft_gradient_converged`, `soft_line_search_stalled`, `soft_gate_saturated`, `soft_nonfinite`, `soft_iteration_limit`); on the benchmarks of 42.3 nearly every node stops at the iteration limit. `rank_deficient` counts split nodes whose points span fewer than `d` dimensions. |
 | B1 | `sampling="convex_combination"` | AFINNI's augmentation on (usually Voronoi) roots, `Q` kept, so both predictors run on one tree. |
 | Terminal statuses and fallback leaves | `TERMINAL_REASONS`, `VALIDATION_STATUSES` | `accepted`, `max_depth`, `split_failed`; validation `not_performed`, `passed`, `failed`, `insufficient_sampling`. Every point of the domain has a leaf. |
-| Assembly and routing | `RoutingTable` | Checks unique keys, both children of every split, parents, roots; `searchsorted` routing on `(root << shift) \| path_code`. |
-| Predictors, persistence, audit | `src/surrogate.py` | `predict(predictor="knn" \| "route")` (route is the default for region models), `route_leaves`, `leaf_status_counts`, `audit` (iid uniform on the domain, Clopper–Pearson bound), model format 2; `store_Q=False` models refuse kNN. |
+| Assembly and routing | `RoutingTable` | Compact node arrays (child indices, planes, leaf rows): routing follows child indices, so any depth up to 62 routes. Building and loading check shapes, finite planes, unique `(root, path_code)` provenance, both children of every split, parents and roots; queries must be `(n, d)` and finite. Older files with packed keys still load. |
+| Predictors, persistence, audit | `src/surrogate.py` | `predict(predictor="knn" \| "route")` (route is the default for region models), `route_leaves`, `route_details` (per query: leaf, outside, terminal reason and validation status), `leaf_status_counts`, `audit` (iid uniform on the domain, Clopper–Pearson bound; non-finite oracle or model values count as violations), model format 2; `store_Q=False` models refuse kNN. Training warns when leaves end with `insufficient_sampling`: `converged` only says that no node is still above tolerance. |
 | `f(c)` only when needed | `needs_centroid_value` on models and split strategies, `config.requires_f_centroids` | The leaf `f` column is NaN when no component reads it. |
 | Pointwise acceptance | `src/acceptance.py` (`"pointwise"`) | ART's `max_pointwise_relative` with `rtol` alone. |
-| Stealing for region work | `WorkStealer(min_load, steal_size, lease_received)`, `progress()` | Region thresholds (a few nodes' worth), receiver lease (`LEASED` denials), and progress points inside B4 so requests are served mid-batch. |
+| Stealing for region work | `WorkStealer(min_load, steal_size, lease_received, work_sizes)`, `progress()` | Region thresholds (a few nodes' worth), receiver lease (`LEASED` denials), and progress points inside B4 so requests are served mid-batch. Published loads, steal eligibility and grant sizes all use the plan's `work_sizes` (points after top-up and validation), so thieves and victims compare one unit. |
 | Experiment harnesses | `scripts/art_comparison.py`, `scripts/afinni_benchmark.py` | ART vs region on ART's benchmarks, scored by ART's own evaluator (ART's configuration, e.g. its fastest CPU sampler `parallel_numba`, recorded in the output); AFINNI mode, base vs branch accuracy and runtime. |
 | Example and benchmark problems | `examples/example04_region_mode.py`, `src/problems/spherical_piecewise.py` | Both modes on four problems (`--problem all` or one): ART's spherical piecewise preset (identical to ART's function in 2–5-D), anisotropic Gaussian, wave, Rosenbrock. Per-problem depth limits (and region rtol 0.02 for wave) give equal relative L2 in one process on one CPU; region mode then needs 3–19x fewer oracle calls and fewer leaves on every problem, AFINNI trains as fast or faster (table in `examples/USAGE.md`). Stages `afinni`, `region`, `compare`; `summary.png` across problems. |
 | Plots | `src/plotting/region.py` | `plot_region_partition`, `plot_region_tree_stats`, `plot_error_maps`, `plot_error_cdf`, `plot_method_comparison`; profile dashboards name the mode and show fallback leaves per level. |
@@ -1891,8 +1893,8 @@ code differs from Sections 36–38 it is the simpler version described in 42.2.
   no `use`, `origin` or `n_train` columns, and no `retries` column while each node draws
   each purpose once (attempt 0).
 - The hit-and-run check compares halfway and final endpoints (coordinates and squared
-  radius). R̂/ESS diagnostics and projections on cut normals (Section 33.4) would be
-  extensions of `_drifting`.
+  radius), plus a movement check (Section 42.7). R̂/ESS diagnostics and projections on
+  cut normals (Section 33.4) would be extensions of `_drifting`.
 - B4 uses affine split features `[u, 1]` for every leaf model (Section 9.4 of the
   review), a temperature `soft_temperature * std(wᵀu)` and one fixed ridge per node.
 - B1 uses a per-batch random stream for its convex combinations, as AFINNI mode
@@ -1926,7 +1928,9 @@ code differs from Sections 36–38 it is the simpler version described in 42.2.
   of `10000·d` uniform points by ART's own evaluator. Each cell is relative L2 error / share
   of test points above the tolerance / leaves / oracle queries / build time, one seed, on
   the same 16-core CPU. The region columns use the current code (batched Grams and the
-  faster sampler of 42.4); ART's code is unchanged since its runs.
+  faster sampler of 42.4); ART's code is unchanged since its runs. The review fixes of
+  42.7 leave these trees unchanged (checked on quadratic 2D, plane wave 3D and
+  Rosenbrock 5D) and make B4 10–15% faster.
 
 | Problem | ART baseline (`hit_and_run`) | ART fastest CPU (`parallel_numba`) | Region B4 (default) | Region B3 | Region B2 |
 |---|---|---|---|---|---|
@@ -1958,7 +1962,9 @@ code differs from Sections 36–38 it is the simpler version described in 42.2.
     not conclusive; B2 is the most accurate on it.
 
   The faster sampler makes ART 1.3–2.9× faster without changing its accuracy much: most of
-  ART's time is its node-by-node soft optimizer. B2 (curvature direction at the median)
+  ART's time is its node-by-node soft optimizer. B4 is the default because it is the
+  closest to ART's method; for speed comparisons B3 is the fairer reference (no soft
+  optimizer, 1.1–2× faster than B4 here, accuracy close to B4 on most rows). B2 (curvature direction at the median)
   fails on interfaces, as Section 9.5 predicted. Oracle counts include centroid evaluations
   when the split strategy reads `f(c)` (the default covariance-Hessian metric does).
 
@@ -2013,9 +2019,13 @@ Run from the repository root on a CUDA machine with the GPU extra installed.
    Region tests compare predictions with `assert_backend_equal(..., separate_runs=True)`.
    The batch-size independence tests also compare leaf and evaluation counts exactly; on
    the GPU, `atomicAdd` inside the split metric (`run_fused_stats`) can reorder rounding
-   between batch compositions and flip a near-tied B3/B4 candidate. If one of those tests
-   fails, check the difference is one or two nodes and report it; it would mean the GPU
-   guarantee for region trees is "equal to rounding" rather than exact.
+   between batch compositions and flip a near-tied B3/B4 candidate. Prediction tolerance
+   and tree-decision equality are separate contracts, and a different leaf count is a
+   different tree, not one "equal to rounding". If a decision test fails, do not loosen
+   it: record the first divergent decision (node, candidate scores and their margin),
+   check the margin is at rounding level, and then choose and document a policy (for
+   example, deterministic per-node reductions for split statistics, or GPU trees that are
+   reproducible per batch size only).
 3. **AFINNI-mode regression:** save a GPU reference on the base commit (a worktree of
    `015adfd`) and compare:
    `AFINNI_DEVICE=gpu AFINNI_MPI=off PYTHONPATH=. python scripts/regression_check.py --save /tmp/gpu_ref`
@@ -2057,6 +2067,40 @@ Each item below waits for the measurement named with it (Section 39 and Part IV)
 | Per-node certificates, sequential tests | proven mixing bounds for the sampler (Q-A) |
 | Weights, per-sample ids, global oracle budgets | an experiment that needs them |
 | The property system and primitives | a third algorithm (Appendix A) |
+
+### 42.7 Fixes from the second technical review
+
+Found by the technical review (`AFINNI_ART_TECHNICAL_REVIEW.md`) and fixed; none changes an
+AFINNI-mode result (`scripts/regression_check.py` bit-identical on CPU) or the region trees
+of 42.3:
+
+- **Audit:** a NaN or infinite oracle or model value counted as a pass, because the
+  violation test was a `>` comparison. The shared `pointwise_violations` (also used by
+  pointwise acceptance) now counts them as violations; `audit` validates its arguments,
+  takes default tolerances from the trained acceptance settings and reports `n_invalid`.
+- **Voronoi sampling:** a chain in a cell measured the bisector with its own centre
+  (`a = 0`), which made a one-centre Voronoi root unsampleable. Own-centre planes are now
+  masked; duplicate centres are removed when roots are built.
+- **Stuck chains:** a 20-D chain seeded at a corner could stay where it started and pass
+  the drift check, which compares endpoints. Nodes where fewer than half of the chains moved
+  are rerun on a separate stream with coordinate directions; infeasible steps are counted;
+  the node is marked `insufficient_sampling` if either remains.
+- **Sparse B1 nodes:** B3 indexed past a node with fewer than `2 * min_side` points. Such
+  nodes now have no candidate and end as `split_failed`.
+- **Depth and loaded tables:** packed routing keys rejected trees shallower than the
+  documented 62 levels when there were many roots; loaded tables were not validated and NaN
+  queries routed silently. See the routing row of 42.1.
+- **Stealing units:** grants and the load published after them counted inherited points
+  while every other load used `work_sizes`.
+- **B4 diagnostics:** the margin used the normal-equation residual from the sums (which
+  cancels to rounding noise near a good fit), and `soft_converged` counted failed line
+  searches. See the split-predicate row of 42.1. The search also stops halving once every
+  node has stepped.
+- **Memory estimate:** `bytes_per_point` now charges B3/B4's `n_bins`-dependent per-node
+  candidate arrays; the executor warns when the estimate is below the batch floor and when
+  one cluster exceeds the batch size.
+- **Comparison script:** `art_comparison.py` refuses ART leaf degrees other than 1 and
+  metrics other than `max_pointwise_relative`, and prints both resolved configurations.
 
 ---
 
