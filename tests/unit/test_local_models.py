@@ -14,6 +14,7 @@ from src.local_models import (
     ClusterFitData,
     ConstantModel,
     LocalModel,
+    QuadraticLSQModel,
     TaylorModel,
     make_local_model,
     output_columns,
@@ -133,6 +134,27 @@ def test_affine_fit_recovers_an_affine_function():
     np.testing.assert_allclose(_to_host(F_hat), F, atol=1e-5)
 
 
+def test_quadratic_fit_recovers_a_quadratic_per_cluster_far_from_the_origin():
+    """Exact on quadratics, also for small clusters far from the origin (the fit is centred and scaled)."""
+    sizes = [40, 25, 60]
+    labels = np.repeat(np.arange(len(sizes)), sizes)
+    X = 1e3 + 1e-3 * rng.standard_normal((sum(sizes), d))
+    H = rng.standard_normal((len(sizes), fd, d, d))
+    a, b = rng.standard_normal((len(sizes), fd, d)), rng.standard_normal((len(sizes), fd))
+    u = (X - 1e3) / 1e-3
+    F = 1e-3 * (np.einsum("nd,nfde,ne->nf", u, H[labels], u) + np.einsum("nfd,nd->nf", a[labels], u)) + b[labels]
+    model = QuadraticLSQModel()
+    data = _fit_data(X, F, sizes)
+    params = model.fit(data)
+    assert params.keys() == model.columns(d, fd).keys() and model.n_features(d) == (d + 1) * (d + 2) // 2
+    full = {**params, "centroids": data.centroids, "f": data.f_c}
+    np.testing.assert_allclose(_to_host(model.evaluate(full, data.X, data.labels)), F, rtol=0, atol=1e-9)
+    # The kNN layout, (n, k) cluster ids per query, evaluates each candidate cluster.
+    ids = xp.asarray(np.stack([labels, (labels + 1) % 3], axis=1))
+    both = _to_host(model.evaluate(full, data.X, ids))
+    np.testing.assert_allclose(both[:, 0], F, rtol=0, atol=1e-9)
+
+
 def test_fit_returns_declared_columns():
     sizes = [5, 6]
     X, F = rng.standard_normal((11, d)), rng.standard_normal((11, fd))
@@ -241,7 +263,7 @@ def test_evaluate_rejects_a_shared_hessian():
 
 
 def test_builtin_models_are_registered_and_rebuildable():
-    for model in (ConstantModel(), TaylorModel(), TaylorModel(True), AffineLSQModel()):
+    for model in (ConstantModel(), TaylorModel(), TaylorModel(True), AffineLSQModel(), QuadraticLSQModel()):
         assert LOCAL_MODELS[model.name] is type(model)
         rebuilt = LOCAL_MODELS.create((model.name, model.settings()))
         assert type(rebuilt) is type(model) and rebuilt.settings() == model.settings()

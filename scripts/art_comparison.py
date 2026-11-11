@@ -19,7 +19,8 @@ GPU). Compare against that one when timing matters, e.g.::
         --art-path ../Adaptive-Regression-Trees-ART- --benchmark quadratic --dimension 2 \\
         --sampler parallel_numba
 
-Refuses ART leaf degrees other than 1, error metrics other than
+Leaf degree 1 maps to ``affine_lsq`` and degree 2 to ``quadratic_lsq`` (both with an
+intercept). Refuses other degrees, ART leaves without an intercept, error metrics other than
 ``max_pointwise_relative`` and relative-error floors other than 1e-12, which region mode
 does not implement. Prints one JSON line per method (prefixed ``COMPARE``; ART's
 first), then the resolved configurations (one ``CONFIG`` line); ART's line records the sampler,
@@ -79,6 +80,7 @@ def main() -> None:
     own.add_argument("--afinni-validation", type=int, default=0)
     own.add_argument("--afinni-walk-steps", type=int, default=20)
     own.add_argument("--afinni-search", default="soft", choices=("gap", "bins", "soft"))
+    own.add_argument("--afinni-soft-iters", type=int, default=None, help="B4 iterations (default: the mode's)")
     mine, art_argv = own.parse_known_args()
     sys.path.insert(0, str(mine.art_path.resolve()))
 
@@ -100,15 +102,19 @@ def main() -> None:
     validate_args(args)
     # Region mode always fits affine leaves to a pointwise relative rule; any other ART
     # setting would compare two different problems.
-    # (ART always fits an intercept for degree 1, whatever --leaf-bias says, as region
-    # mode does; its relative-error floor is fixed at 1e-12.)
-    if args.leaf_degree != 1 or args.error_metric != "max_pointwise_relative" or args.relative_error_floor != 1e-12:
+    # Degree 1 is affine_lsq, degree 2 quadratic_lsq (both with an intercept: ART always
+    # fits one for degree 1, and for degree 2 unless --no-leaf-bias); region mode's
+    # relative-error floor is fixed at 1e-12.
+    bias = True if args.leaf_degree == 1 else args.leaf_bias
+    if args.leaf_degree not in (1, 2) or not bias or args.error_metric != "max_pointwise_relative" \
+            or args.relative_error_floor != 1e-12:  # fmt: skip
         raise SystemExit(
-            f"art_comparison needs --leaf-degree 1, --error-metric max_pointwise_relative and "
-            f"--relative-error-floor 1e-12 (got {args.leaf_degree}, {args.error_metric!r}, "
-            f"{args.relative_error_floor}): AFINNI's region mode fits affine leaves with an "
-            "intercept against the pointwise relative tolerance with that floor"
+            f"art_comparison needs --leaf-degree 1 or 2 with an intercept, --error-metric "
+            f"max_pointwise_relative and --relative-error-floor 1e-12 (got {args.leaf_degree}, "
+            f"bias={bias}, {args.error_metric!r}, {args.relative_error_floor}): AFINNI's region "
+            "mode fits affine or quadratic leaves against the pointwise relative tolerance with that floor"
         )
+    leaf_model = {1: "affine_lsq", 2: "quadratic_lsq"}[args.leaf_degree]
     low, high = BENCHMARK_DEFAULT_INTERVALS[args.benchmark]
     low = low if args.domain_low is None else args.domain_low
     high = high if args.domain_high is None else args.domain_high
@@ -158,10 +164,11 @@ def main() -> None:
     config = ClusteringConfig(
         algorithm="region", domain=(domain.bounds[:, 0], domain.bounds[:, 1]), rtol=tol, error_metric="pointwise",
         max_levels=args.max_depth, seed=args.seed, use_work_stealing=False, split_strategy=mine.afinni_split,
-        num_initial_clusters=max(1, 2 ** args.dimension), local_model="affine_lsq",
+        num_initial_clusters=max(1, 2 ** args.dimension), local_model=leaf_model,
         region=RegionSettings(roots=mine.afinni_roots, sample_multiplier=args.sample_multiplier,
                               validation_samples=mine.afinni_validation, walk_steps=mine.afinni_walk_steps,
-                              split_search=mine.afinni_search),
+                              split_search=mine.afinni_search,
+                              **({} if mine.afinni_soft_iters is None else {"soft_iters": mine.afinni_soft_iters})),
     )  # fmt: skip
     model = AFINNISurrogate()
     t = time.perf_counter()
@@ -173,9 +180,9 @@ def main() -> None:
     # region mode samples by hit-and-run unless region.sampling says convex_combination,
     # whatever the generic AFINNI sampler component is).
     effective = {
-        "art": {"leaf_degree": 1, "leaf_include_bias": True, "error_metric": args.error_metric,
+        "art": {"leaf_degree": args.leaf_degree, "leaf_include_bias": bias, "error_metric": args.error_metric,
                 "relative_error_floor": args.relative_error_floor, "sampler": args.sampler},
-        "afinni_region": {"leaf_model": "affine with intercept", "sampling": config.region.sampling,
+        "afinni_region": {"leaf_model": leaf_model, "sampling": config.region.sampling,
                           "acceptance": "pointwise", "relative_error_floor": 1e-12,
                           "split_search": config.region.split_search, "roots": config.region.roots},
     }  # fmt: skip

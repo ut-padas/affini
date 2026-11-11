@@ -109,7 +109,9 @@ class RegionSettings:
     n_bins: int = 16
     n_directions: int = 6
     n_screened: int = 3
-    soft_iters: int = 20
+    # 40: on ART's benchmarks 20 stopped nearly every node at the limit, and 40 gave fewer
+    # leaves or lower error on most of them for about 35% more build time (ART allows 200).
+    soft_iters: int = 40
     soft_temperature: float = 0.1  # gate width as a fraction of the node's score spread
     soft_weight_floor: float = 1e-8  # delta in W = delta + (1 - 2 delta) sigma
     # Store the trust-region shape Q per leaf (needed only by predictor="knn"; d^2 per leaf).

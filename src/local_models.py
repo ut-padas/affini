@@ -50,6 +50,8 @@ from src.numerics import (
     TINY_EPS,
     _reduce_sum_1d,
     _symmetric_point_covariance,
+    count_groups,
+    grouped_cross,
     run_fused_cross_cov,
     run_fused_stats,
     solve_regularized_covariance_inplace,
@@ -89,9 +91,22 @@ class LocalModel(ABC):
     needs_centroid_grad: bool = False  # fit/evaluate need ClusterFitData.g_c
     needs_point_grad: bool = False  # fit/finalize need ClusterFitData.G
 
+    # Region mode's split search fits children in ``features``; True means they need
+    # node-centred, radius-scaled coordinates (products of raw coordinates in a small deep
+    # cell are nearly constant columns), False that the raw normalized ``u`` is used.
+    centred_features: bool = False
+
     def settings(self) -> dict:
         """Constructor arguments, so ``LOCAL_MODELS.create((name, settings))`` rebuilds it."""
         return {}
+
+    def n_features(self, d: int) -> int:
+        """Coefficients per output; region mode sizes each node's sample (``multiplier x this``, as ART) and children by it."""
+        return d + 1
+
+    def features(self, Z: Array) -> Array:
+        """The model's basis at ``Z`` (..., d), the space region mode's split search fits children in."""
+        return xp.concatenate([Z, xp.ones(Z.shape[:-1] + (1,))], axis=-1)
 
     @abstractmethod
     def columns(self, d: int, fd: int) -> dict[str, ParamSpec]:
@@ -278,6 +293,52 @@ class AffineLSQModel(LocalModel):
         if cluster_ids.ndim == 1:
             return b + xp.einsum("nfd,nd->nf", A, X)
         return xp.einsum("nkfd,nd->nkf", A, X) + b
+
+
+@LOCAL_MODELS.register
+class QuadraticLSQModel(LocalModel):
+    """
+    f_hat(x) = a full quadratic polynomial (ART's degree-2 leaves, ``(d+1)(d+2)/2``
+    coefficients per output) in ``z = (x - c) / s``, fitted by least squares with a tiny
+    fixed ridge (1e-10 of the Gram's mean diagonal). ``c`` is the cluster centroid and ``s``
+    its RMS radius; they only condition the fit, since the space of quadratics does not
+    change under them. Feature count grows as ``d^2 / 2``: meant for low dimension.
+    """
+
+    name = "quadratic_lsq"
+    needs_centroid_value = False
+    centred_features = True
+
+    def columns(self, d, fd):
+        return {"coef": ParamSpec((fd, self.n_features(d))), "radius": ParamSpec(())}
+
+    def n_features(self, d):
+        return (d + 1) * (d + 2) // 2
+
+    def features(self, Z):
+        d = Z.shape[-1]
+        i, j = np.triu_indices(d)
+        return xp.concatenate([xp.ones(Z.shape[:-1] + (1,)), Z, Z[..., i] * Z[..., j]], axis=-1)
+
+    def fit(self, data):
+        diff = data.X - data.centroids[data.labels]
+        radius = xp.sqrt(_reduce_sum_1d(xp.sum(diff**2, axis=1), data.starts) / data.sizes)
+        radius = xp.where(radius > 0, radius, 1.0)
+        Phi = self.features(diff / radius[data.labels][:, None])
+        groups = count_groups(data.sizes, data.starts)
+        P_g = [Phi[rows] for _, rows in groups]
+        G = grouped_cross(groups, P_g, P_g)
+        B = grouped_cross(groups, P_g, [data.F[rows] for _, rows in groups])
+        p = Phi.shape[1]
+        lam = 1e-10 * xp.trace(G, axis1=1, axis2=2) / p + 1e-300
+        beta = xp.linalg.solve(G + lam[:, None, None] * xp.eye(p), B)  # (K, p, fd)
+        return {"coef": xp.swapaxes(beta, 1, 2), "radius": radius}
+
+    def evaluate(self, params, X, cluster_ids):
+        c, s = params["centroids"][cluster_ids], params["radius"][cluster_ids]
+        Xb = X if cluster_ids.ndim == 1 else X[:, None, :]
+        Phi = self.features((Xb - c) / s[..., None])
+        return xp.einsum("...fp,...p->...f", params["coef"][cluster_ids], Phi)
 
 
 _TAYLOR_MODES = (

@@ -289,3 +289,25 @@ def test_region_batches_hold_whole_nodes_within_the_batch_size_or_one_node_alone
                                              region=RegionSettings(roots="grid", sample_multiplier=10)))  # fmt: skip
     assert any(len(w) == 1 and w[0] > batch_size for w in seen)  # an oversized node occurred
     assert all(len(w) == 1 or w.sum() <= batch_size for w in seen)
+
+
+def test_quadratic_leaves_represent_a_quadratic_with_one_leaf_and_round_trip(points, tmp_path):
+    """ART's degree-2 leaves: the root already fits, with ART's budget of multiplier x (d+1)(d+2)/2 points."""
+
+    def quad(x):
+        return (2.0 + x[:, 0] ** 2 - 0.5 * x[:, 0] * x[:, 1] + x[:, 1])[:, None]
+
+    model = train_surrogate(points, **region_options(f_fn=quad, local_model="quadratic_lsq", rtol=1e-6, atol=1e-6))
+    assert model.N_src == 1 and model.converged
+    q = np.random.default_rng(9).uniform(-1, 1, (500, 2))
+    np.testing.assert_allclose(host(model.predict(q)[0]), host(quad(xp.asarray(q))), rtol=1e-8)
+    loaded = AFINNISurrogate.load_model(model.save_model(tmp_path))
+    assert_backend_equal(loaded.predict(q)[0], model.predict(q)[0])
+
+
+@pytest.mark.parametrize("search", ["bins", "soft"])
+def test_quadratic_leaves_split_in_their_own_basis_and_need_fewer_leaves(points, search):
+    options = region_options(region=RegionSettings(sample_multiplier=10, split_search=search), max_levels=10)
+    affine = train_surrogate(points, **options)
+    quadratic = train_surrogate(points, **{**options, "local_model": "quadratic_lsq"})
+    assert quadratic.converged and quadratic.N_src < affine.N_src / 2
