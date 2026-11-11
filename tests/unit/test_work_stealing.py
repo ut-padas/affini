@@ -75,7 +75,10 @@ class _Comm:
             return 1
         self.replied = True
         if tag == ws.TAG_STEAL_GRANT:
-            return {"n_pts": 3, "n_clusters": 1, "has_g": self.has_g}
+            columns = {"X": ((1,), "<f8"), "F": ((1,), "<f8"), "sizes": ((), "<i8"), "depth": ((), "<i8")}
+            if self.has_g:
+                columns["G"] = ((1, 1), "<f8")
+            return {"version": ws.WIRE_FORMAT_VERSION, "n_pts": 3, "n_clusters": 1, "columns": columns}
         assert tag == ws.TAG_STEAL_DENY
         return "IDLE"
 

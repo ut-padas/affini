@@ -18,7 +18,7 @@ import time
 import numpy as np
 
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
-from src.clusters import ClusterBatch
+from src.clusters import QUEUE_COLUMNS, ClusterBatch
 from src.profiling import Profiler
 
 logger = logging.getLogger(__name__)
@@ -27,48 +27,60 @@ logger = logging.getLogger(__name__)
 TAG_STATE_BROADCAST = 101
 TAG_STEAL_REQ = 102
 TAG_STEAL_DENY = 104
-TAG_STEAL_GRANT = 110  # Payload buffers use tags 111 through 115.
+# A transfer's header goes on its base tag and each present column on base + 1 + its
+# position in QUEUE_COLUMNS (tags 111..118 here); see send_clusters.
+TAG_STEAL_GRANT = 110
 
-# --- Tuning parameters ---
+# --- Tuning parameters (defaults; region mode passes its own, see src.region) ---
 MIN_LOAD_THRESHOLD = 1_000_000  # Min points to be eligible for stealing
 STEAL_SIZE = 500_000  # Minimum points per grant (a grant gives about half the open work)
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
 
+# Version of the cluster transfer format; both ends must agree.
+WIRE_FORMAT_VERSION = 2
+
 
 def send_clusters(comm, batch: ClusterBatch, dest: int, tag: int = TAG_STEAL_GRANT):
-    """Send ``batch`` to ``dest``: a metadata message on ``tag``, then buffers on tag+1..tag+5."""
-    meta = {
+    """
+    Send ``batch`` to ``dest``: a header on ``tag`` (format version, counts, and the
+    trailing shape and dtype of every present column), then each present column on
+    ``tag + 1 + its index in QUEUE_COLUMNS``. Absent columns send nothing, so an AFINNI-mode
+    payload is exactly the old X, F, [G], sizes, depth messages on ``tag + 1..5``.
+    """
+    cols = batch.columns()
+    header = {
+        "version": WIRE_FORMAT_VERSION,
         "n_pts": batch.n_pts,
         "n_clusters": batch.n_clusters,
-        "has_g": batch.G is not None,
+        "columns": {name: (tuple(a.shape[1:]), a.dtype.str) for name, a in cols.items()},
     }
-    comm.send(meta, dest=dest, tag=tag)
-    comm.Send(np.ascontiguousarray(batch.X), dest=dest, tag=tag + 1)
-    comm.Send(np.ascontiguousarray(batch.F), dest=dest, tag=tag + 2)
-    if batch.G is not None:
-        comm.Send(np.ascontiguousarray(batch.G), dest=dest, tag=tag + 3)
-    comm.Send(np.ascontiguousarray(batch.sizes), dest=dest, tag=tag + 4)
-    comm.Send(np.ascontiguousarray(batch.depth, dtype=np.int64), dest=dest, tag=tag + 5)
+    comm.send(header, dest=dest, tag=tag)
+    for offset, col in enumerate(QUEUE_COLUMNS, start=1):
+        if col.name in cols:
+            comm.Send(np.ascontiguousarray(cols[col.name]), dest=dest, tag=tag + offset)
 
 
 def recv_clusters(
     comm, source: int, d: int, fd: int, tag: int = TAG_STEAL_GRANT
 ) -> ClusterBatch:
     """Receive a batch sent with ``send_clusters`` from ``source``."""
-    meta = comm.recv(source=source, tag=tag)
-    n_pts = meta["n_pts"]
-    X = np.empty((n_pts, d), dtype=np.float64)
-    F = np.empty((n_pts, fd), dtype=np.float64)
-    G = np.empty((n_pts, fd, d), dtype=np.float64) if meta["has_g"] else None
-    sizes = np.empty(meta["n_clusters"], dtype=np.int64)
-    comm.Recv(X, source=source, tag=tag + 1)
-    comm.Recv(F, source=source, tag=tag + 2)
-    if G is not None:
-        comm.Recv(G, source=source, tag=tag + 3)
-    comm.Recv(sizes, source=source, tag=tag + 4)
-    depth = np.empty(meta["n_clusters"], dtype=np.int64)
-    comm.Recv(depth, source=source, tag=tag + 5)
-    return ClusterBatch(X, F, G, sizes, depth)
+    header = comm.recv(source=source, tag=tag)
+    if header.get("version") != WIRE_FORMAT_VERSION:
+        raise RuntimeError(
+            f"Cluster transfer from R{source:02} uses format {header.get('version')}; this "
+            f"rank expects {WIRE_FORMAT_VERSION}. Every rank must run the same code."
+        )
+    rows = {"point": header["n_pts"], "cluster": header["n_clusters"]}
+    arrays = {}
+    for offset, col in enumerate(QUEUE_COLUMNS, start=1):
+        if col.name in header["columns"]:
+            trailing, dtype = header["columns"][col.name]
+            buf = np.empty((rows[col.scope], *trailing), dtype=np.dtype(dtype))
+            comm.Recv(buf, source=source, tag=tag + offset)
+            arrays[col.name] = buf
+    if arrays["X"].shape[1:] != (d,) or arrays["F"].shape[1:] != (fd,):
+        raise RuntimeError(f"Received clusters of shape d={arrays['X'].shape[1:]}, fd={arrays['F'].shape[1:]}; expected {d}, {fd}.")
+    return ClusterBatch(**{"G": None, **arrays})
 
 
 class WorkStealer:
@@ -85,8 +97,20 @@ class WorkStealer:
 
     enabled = True
 
-    def __init__(self, comm, d: int, fd: int, profiler: Profiler):
+    def __init__(
+        self, comm, d: int, fd: int, profiler: Profiler, *,
+        min_load: int | None = None, steal_size: int | None = None, lease_received: bool = False,
+    ):  # fmt: skip
+        """
+        ``min_load`` and ``steal_size`` default to the module constants (read at call
+        time). With ``lease_received``, a rank never re-offers clusters it received until
+        it has processed them: their children are new jobs and may be stolen, but the
+        received jobs themselves cannot bounce between idle ranks.
+        """
         self.comm = comm
+        self._min_load, self._steal_size = min_load, steal_size
+        self.lease_received = lease_received
+        self._leased = False
         self.rank = comm.Get_rank()
         self.size = comm.Get_size()
         self.d, self.fd = d, fd
@@ -101,6 +125,14 @@ class WorkStealer:
         # Exact counts, so retirement can drain buffered updates (see _retire).
         self._broadcasts_sent = 0
         self._broadcasts_received = np.zeros(self.size, dtype=np.int64)
+
+    @property
+    def min_load(self) -> int:
+        return MIN_LOAD_THRESHOLD if self._min_load is None else self._min_load
+
+    @property
+    def steal_size(self) -> int:
+        return STEAL_SIZE if self._steal_size is None else self._steal_size
 
     def _timer(self, key: str):
         return self.profiler.phase(key)
@@ -168,26 +200,29 @@ class WorkStealer:
 
         Clusters before ``start_cluster`` are already being processed and are never
         given away. A grant takes clusters from the tail, about half the unprocessed points
-        (at least STEAL_SIZE),
+        (at least ``steal_size``),
         and always leaves at least one unprocessed cluster. ``batch`` is the batch
         index for mid-level calls, or None at a level boundary.
         """
         where = f"R{self.rank:02} L{level:02}" + (
             f" B{batch + 1}" if batch is not None else ""
         )
+        if batch is None:
+            self._leased = False  # a level boundary: the queue now holds new children
         while self.comm.Iprobe(
             source=MPI.ANY_SOURCE, tag=TAG_STEAL_REQ, status=self.status
         ):
             thief = self.status.Get_source()
             self.comm.recv(source=thief, tag=TAG_STEAL_REQ)
 
-            n_open = queue.n_clusters - start_cluster
+            n_open = 0 if self._leased else queue.n_clusters - start_cluster
             open_pts = int(np.sum(queue.sizes[start_cluster:])) if n_open > 0 else 0
-            if n_open > 1 and open_pts > MIN_LOAD_THRESHOLD:
+            min_load = self.min_load
+            if n_open > 1 and open_pts > min_load:
                 t_send = time.perf_counter()
                 # Give about half of the unprocessed work (at least STEAL_SIZE points),
                 # so a heavily loaded victim sheds its surplus in a few grants.
-                target = max(STEAL_SIZE, open_pts // 2)
+                target = max(self.steal_size, open_pts // 2)
                 rev_cumsum = np.cumsum(queue.sizes[start_cluster:][::-1])
                 n_give = min(int(np.searchsorted(rev_cumsum, target)) + 1, n_open - 1)
                 queue, gift = queue.split(queue.n_clusters - n_give)
@@ -208,12 +243,14 @@ class WorkStealer:
                 )
                 self.profiler.add_time("time_mpi_send", elapsed)
             else:
-                if batch is not None and n_open <= 1:
+                if self._leased:
+                    reason = "LEASED (received work is processed before it is offered on)"
+                elif batch is not None and n_open <= 1:
                     reason = "MID_LEVEL_NO_CLUSTERS"
                 elif batch is not None:
-                    reason = f"MID_LEVEL_LOAD ({open_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
-                elif open_pts <= MIN_LOAD_THRESHOLD:
-                    reason = f"LOAD ({open_pts:,} <= threshold {MIN_LOAD_THRESHOLD:,})"
+                    reason = f"MID_LEVEL_LOAD ({open_pts:,} <= threshold {min_load:,})"
+                elif open_pts <= min_load:
+                    reason = f"LOAD ({open_pts:,} <= threshold {min_load:,})"
                 else:
                     reason = (
                         f"STEAL_SIZE (only {queue.n_clusters} cluster(s), need > 1)"
@@ -256,7 +293,7 @@ class WorkStealer:
                 return True, None
 
             target = int(np.argmax(self.global_loads))
-            if self.global_loads[target] < MIN_LOAD_THRESHOLD:
+            if self.global_loads[target] < self.min_load:
                 time.sleep(SLEEP_INTERVAL)
                 return False, None
 
@@ -277,6 +314,7 @@ class WorkStealer:
                 if self.comm.Iprobe(source=target, tag=TAG_STEAL_GRANT):
                     t_recv = time.perf_counter()
                     stolen = recv_clusters(self.comm, target, self.d, self.fd)
+                    self._leased = self.lease_received
                     waited = time.perf_counter() - t_wait
                     transfer = time.perf_counter() - t_recv
                     self.profiler.event(
@@ -381,8 +419,8 @@ class NoWorkStealing:
         return True, None
 
 
-def make_work_stealer(enabled: bool, comm, d: int, fd: int, profiler: Profiler):
-    """Return a ``WorkStealer`` if ``enabled``, else a ``NoWorkStealing``."""
+def make_work_stealer(enabled: bool, comm, d: int, fd: int, profiler: Profiler, **settings):
+    """Return a ``WorkStealer`` (with ``settings``) if ``enabled``, else a ``NoWorkStealing``."""
     if enabled:
-        return WorkStealer(comm, d, fd, profiler)
+        return WorkStealer(comm, d, fd, profiler, **settings)
     return NoWorkStealing(comm, profiler)
