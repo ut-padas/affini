@@ -52,6 +52,7 @@ uv run python -m src                                  # which backends (GPU / MP
 uv run python -m examples.example01                   # 2-D Rosenbrock surrogate: error + plot
 uv run mpiexec -n 8 python -m examples.example03_monitoring   # multi-rank run with work stealing...
 uv run python -m src.monitor scratch/example03_monitoring/stream   # ...watched live from another terminal
+uv run python -m examples.example04_region_mode --problem all   # AFINNI vs AFINNI region mode (ART) on 4 problems
 ```
 
 ```python

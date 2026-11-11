@@ -11,6 +11,7 @@ Run everything from the repository root (scripts as modules, e.g.
 - [Running on CPU, GPU and MPI](#running-on-cpu-gpu-and-mpi)
 - [Training settings](#training-settings)
 - [Results, status and saving](#results-status-and-saving)
+- [AFINNI region mode (ART)](#afinni-region-mode-art)
 - [Profiling](#profiling)
 - [Plots](#plots)
 - [Live monitoring](#live-monitoring)
@@ -123,14 +124,15 @@ Fields of `src.config.ClusteringConfig` (all keyword-only); only a tolerance is 
 | Setting | Meaning |
 |---|---|
 | `mode` | Preset pair (local model, split strategy), `AFFINE_COV_HESS` by default; see the table below |
-| `atol`, `rtol`, `error_metric` | Acceptance test: a cluster is accepted when every output component is within `rtol` relative **or** `atol` absolute error, measured as `"Linf"` (max error, relative to the cluster's own max \|f\|) or `"L2"` (relative L2 / RMS). Give at least one tolerance; each is a scalar or one value per output component, and an omitted one never accepts. For an absolute test scaled to the function, pass `atol = tol * max\|f\|`. Exact formulas: [`src/acceptance.py`](../src/acceptance.py) |
+| `atol`, `rtol`, `error_metric` | Acceptance test: a cluster is accepted when every output component is within `rtol` relative **or** `atol` absolute error, measured as `"Linf"` (max error, relative to the cluster's own max \|f\|), `"L2"` (relative L2 / RMS) or `"pointwise"` (every point on its own: \|e\|/\|f\| < `rtol` or \|e\| < `atol`; ART's stopping rule). Give at least one tolerance; each is a scalar or one value per output component, and an omitted one never accepts. For an absolute test scaled to the function, pass `atol = tol * max\|f\|`. Exact formulas: [`src/acceptance.py`](../src/acceptance.py) |
 | `num_initial_clusters`, `initial_clustering_method` | Roots of the forest: `"kmeans"` (custom k-means in `src/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (needs `--group research_internal`, Linux). `src.adaptive_clustering.initial_clustering(X, config)` returns the labels training starts from; pass them as `train(..., initial_labels=labels)` to reuse one clustering for several trainings on the same points |
 | `min_pts_per_cluster` | Rejected clusters are augmented to at least twice this before splitting |
 | `max_levels` | Refinement depth limit; reaching it leaves `converged=False` |
 | `sampling_method` | Where new points go when augmenting (`"convex_combination"`) |
 | `q_reg` | Floor on covariance eigenvalues in the trust-region shape |
 | `store_hess` | Second-order Taylor leaves (TAYLOR_LSQ_HESS only), one Hessian per output |
-| `batch_size` | Points moved to the device at once; capped automatically to fit GPU memory |
+| `batch_size` | Points moved to the device at once; capped automatically to fit GPU memory. A cluster larger than a batch is processed on its own |
+| `algorithm`, `domain`, `region` | `"afinni"` (default: AFINNI's adaptive clustering) or `"region"`: see [AFINNI region mode (ART)](#afinni-region-mode-art) |
 | `seed`, `use_work_stealing` | Reproducibility, MPI load balancing |
 | `profile_timing`, `profile_events`, `profile_dir` | See [Profiling](#profiling) |
 
@@ -177,6 +179,105 @@ every rank, so it must be on a filesystem they all see.
 Scoring predictions: `src.surrogate.compute_error_metrics(preds, truth, outside,
 atol=..., rtol=...)` returns L2/Linf errors overall and inside/outside the trust
 regions, and counts the inside points within tolerance under the same rule as training.
+
+## AFINNI region mode (ART)
+
+AFINNI has two modes on one engine. `algorithm="afinni"` (the default) is AFINNI's
+adaptive clustering: a forest of clusters, kNN plus trust-region prediction.
+`algorithm="region"` builds an explicit oblique regression tree over a box domain, as
+ART does (Adaptive Regression Trees), on the same batched loop, devices, MPI
+distribution, work stealing, profiling and monitor.
+
+`ClusteringConfig(algorithm="region", domain=(lower, upper), ...)` needs the domain
+explicitly, because it is what routing covers and what `audit` samples. It needs the domain explicitly
+(`domain="data_bbox"` uses the training points' bounding box, and is recorded as such).
+Settings are in `region=RegionSettings(...)`:
+
+| Setting | Meaning |
+|---|---|
+| `roots` | `"box"` (one root, as ART; no initial clustering), `"grid"` (`num_initial_clusters` cells over the domain), or `"voronoi"` (the cells of the initial clustering's centres, for comparisons with AFINNI's forest) |
+| `split_search` | how a rejected node's hyperplane is chosen: `"soft"` (default; threshold search, then ART's soft-oblique optimizer in a consistent form, kept only if its hard fit is better), `"bins"` (threshold search over `n_directions` directions × `n_bins` cuts only), `"gap"` (the split strategy's direction, cut near the median) |
+| `sampling` | `"hit_and_run"` (default), or `"convex_combination"`: AFINNI's convex-combination augmentation, to compare predictors on one tree |
+| `store_Q` | keep the trust-region shape per leaf (needed only by `predictor="knn"`) |
+| `sample_multiplier` | every node is topped up to `ceil(multiplier * (d + 1))` training points before it is fitted (ART: 50) |
+| `validation_samples` | fresh points per node on which the deployed model is checked; a diagnostic |
+| `min_side_margin` | a split leaves at least `d + 1 + margin` points on each side |
+| `walk_steps`, `max_walk_steps`, `mixing_z` | hit-and-run steps per new point (box and grid roots are sampled exactly); chains that still drift between their halfway and last step are lengthened up to `max_walk_steps`, otherwise the node is marked `insufficient_sampling` |
+| `n_bins`, `n_directions`, `n_screened`, `soft_iters`, `soft_temperature` | the threshold search and the soft optimizer (defaults: 16, 6, 3, 20, 0.1) |
+| `steal_min_load`, `steal_size` | work-stealing thresholds in points (default: a few nodes) |
+
+Each rejected node is split by a hyperplane (see `split_search`), cut where the stored
+predicate reproduces the children exactly. `error_metric="pointwise"` with `rtol` alone is
+ART's stopping rule (every point within `rtol`). A node at `max_levels`, or one that cannot be split, keeps its fitted model as a
+leaf, so every point of the domain has a leaf:
+
+```python
+surrogate.predict(X)                     # routed: one leaf per query; outside = outside the domain
+surrogate.predict(X, predictor="knn")    # AFINNI's kNN / trust-region predictor still works
+surrogate.leaf_status_counts()           # terminal_reason (accepted, max_depth, split_failed), validation_status
+surrogate.audit(Evaluator(f_fn=f), 3000) # violation count on fresh uniform points, with a binomial upper bound
+```
+
+Random numbers come from streams keyed by node, so a region-mode tree is the same for
+any batch size, rank count and steal schedule. `scripts/art_comparison.py` trains ART
+and region mode on ART's benchmark problems and scores both on the same test set; pass
+`--sampler parallel_numba` to time against ART's fastest CPU configuration.
+
+### Example: both modes on four benchmark problems
+
+[`example04_region_mode.py`](example04_region_mode.py) compares the two modes on four
+problems, each scored on the same uniform test points:
+
+| `--problem` | What it tests | Domain |
+|---|---|---|
+| `spherical_piecewise` | a jump across a circle (ART's TACC preset, `src/problems/spherical_piecewise.py`) | `[-3, 3]^d` |
+| `anisotropic_gaussian` | smooth, rotated and strongly anisotropic | `[-3, 3]^d` |
+| `wave` | a cosine along an oblique direction | `[-5, 5]^d` |
+| `rosenbrock` | a narrow curved valley whose minimum is 0 (with `atol`) | `[-2, 3]^d` |
+
+Each problem's depth limits (and, for `wave`, region mode's training tolerance) are set so
+both modes reach about the same relative L2 error on one CPU each; leaves, oracle
+evaluations and training time then compare like for like. Both modes are scored with the
+problem's tolerance: a point is above it when `|f - f_hat| > max(atol, rtol |f|)`.
+
+```bash
+uv run python -m examples.example04_region_mode --problem all           # every problem + summary
+uv run python -m examples.example04_region_mode --problem wave          # one problem
+uv run python -m examples.example04_region_mode afinni --problem wave   # one stage (also: region, compare)
+uv run python -m examples.example04_region_mode --list                  # problems and their limits
+uv run python -m src.monitor scratch/example04_region_mode/wave/stream/region   # or .../afinni
+```
+
+In 2-D, one process on one CPU (AFINNI / AFINNI region mode (ART); about 30 s for all four):
+
+| Problem | Relative L2 | % above tol | Leaves | Oracle evaluations | Training time |
+|---|---|---|---|---|---|
+| `spherical_piecewise` (AFINNI 7 levels, region depth 12) | 0.095 / 0.094 | 1.7 / 1.7 | 416 / 329 | 363k / 50k | 0.71 / 0.96 s |
+| `anisotropic_gaussian` (both converge) | 0.0018 / 0.0018 | 0.12 / 0.03 | 222 / 167 | 110k / 25k | 0.14 / 0.53 s |
+| `wave` (both converge; region at rtol 0.02) | 0.0043 / 0.0045 | 3.0 / 3.2 | 805 / 73 | 214k / 11k | 0.35 / 0.35 s |
+| `rosenbrock` (AFINNI converges; region depth 16) | 0.0024 / 0.0023 | 3.0 / 2.6 | 4,235 / 2,165 | 1.1M / 329k | 1.5 / 6.9 s |
+
+At equal L2 error, region mode needs 3-19x fewer oracle evaluations (AFINNI's include its
+84,500 initial points) and fewer leaves on every problem, most of all on the oblique
+`wave`; AFINNI trains as fast or faster, since region mode spends its time optimizing
+splits rather than calling the oracle, so region mode pays off when the oracle is
+expensive. Notes per problem:
+
+- `spherical_piecewise`: neither mode converges. A cluster straddling the jump fails
+  AFINNI's test at every size, so its depth limit stops it and the unresolved clusters
+  leave regions without leaves ("pout"); region mode's 99th-percentile error (about 1.2)
+  comes from the few cells the jump still cuts.
+- `wave`: converged, region mode is about 2x more accurate (L2 0.0019 at rtol 0.01), so
+  it trains at rtol 0.02 to match AFINNI's error.
+- `rosenbrock`: the L2 errors agree for any region depth from 10 on; depth 16 also
+  matches the share above tolerance.
+
+`--afinni-max-levels`, `--region-max-depth` and `--tol` override a problem's settings,
+`--dim` its dimension (the limits are matched in 2-D only) and `--search` region mode's
+split search. The example runs in one process (`AFINNI_MPI` defaults to `off`), so the
+training times compare directly. Outputs go to
+`scratch/example04_region_mode/<problem>/` (both models, `metrics.json`, the plots of
+[Plots](#plots)); `--problem all` also writes `summary.json` and `summary.png`.
 
 ## Profiling
 
@@ -233,6 +334,16 @@ P.plot_steal_matrix(surrogate, "figs/steals.png")             # needs steals (MP
 | `plot_profile_dashboard` | Breakdown, growth, load and steals, whichever are available | any |
 | `plot_adaptive_clustering_results` | 2-D leaves and trust ellipsoids over the function | 2-D problems |
 | `plot_error_histogram` | Pointwise relative errors | predictions |
+| `plot_region_partition` | A region tree's cells coloured by depth, terminal reason and pointwise error, with the split boundaries | 2-D region model |
+| `plot_region_tree_stats` | Leaves per depth by terminal reason, and validation statuses | region model |
+| `plot_error_maps` | Pointwise relative error of several models side by side, with the tolerance contour | 2-D problems |
+| `plot_error_cdf` | Distribution of pointwise relative errors of several models, tolerance marked | predictions |
+| `plot_method_comparison` | Bar panels of errors, pout, leaves, evaluations and time for several methods | metric dicts |
+
+Profile plots work for both modes: titles name the mode, and the forest-growth panels
+show region mode's fallback leaves (nodes stopped at the depth limit) separately.
+[`example04_region_mode.py`](example04_region_mode.py) produces every comparison and
+region plot, for each of its problems.
 
 The tables behind the profile plots are available for your own analysis:
 `P.phase_breakdown_frame`, `P.level_stats_frame`, `P.events_frame`,
@@ -249,8 +360,9 @@ P.plot_profile_dashboard(json.load(open("results/rosenbrock/<run>.json")))
 P.plot_timeline(read_event_streams("runs/rosen"))
 ```
 
-Adding a plot: put it in `src/plotting/profiling.py` (training profiles) or
-`src/plotting/surrogate.py` (surrogates and errors), accept the inputs above via
+Adding a plot: put it in `src/plotting/profiling.py` (training profiles),
+`src/plotting/surrogate.py` (surrogates and errors) or `src/plotting/region.py` (region
+trees and comparisons of several surrogates), accept the inputs above via
 `profile_of`, draw inside `afinni_style()`, take an optional `path` and return the
 figure; export it from `src/plotting/__init__.py`.
 
@@ -290,6 +402,10 @@ depending on `--stealing on|off`. Comparing the two timelines and time breakdown
 shows what work stealing buys: without it, ranks that finish their own share early
 sit idle until the slowest rank is done. `--dim`, `--n-train`, `--tol`, `--init`
 and `--metric` change the problem.
+
+The header names the mode (`AFINNI`, or `AFINNI region mode (ART; <split search>,
+<roots>)`). In region mode, nodes stopped at the depth limit keep a fallback leaf, so
+they are counted as "in fallback leaves", not as queued work.
 
 The monitor only reads the stream files, so it adds no MPI traffic and works from a
 login node when the run directory is on a shared file system. The newest idle
