@@ -157,25 +157,42 @@ class LinfAcceptance(AcceptanceCriterion):
         return self.accept(E_abs, E_rel)
 
 
+def pointwise_violations(F: Array, F_hat: Array, atol: Tolerance, rtol: Tolerance) -> Array:
+    """
+    (N,) True where a point fails on any component: neither ``|e_ij| < atol_j`` nor
+    ``|e_ij| / max(|F_ij|, 1e-12) < rtol_j`` holds (strict, as in training). A non-finite
+    value, true or predicted, is always a violation, so an invalid evaluation can never
+    pass. Shared by ``PointwiseAcceptance`` and ``AFINNISurrogate.audit`` so both test the
+    same event.
+    """
+    fd = F.shape[1]
+    atol, rtol = tolerance_vector("atol", atol, fd), tolerance_vector("rtol", rtol, fd)
+    with np.errstate(invalid="ignore"):
+        err = xp.abs(F - F_hat)
+        rel = err / xp.maximum(xp.abs(F), TINY_EPS)
+        passes = (rel < rtol[None, :]) | (err < atol[None, :])
+    finite = xp.isfinite(F) & xp.isfinite(F_hat)
+    return xp.any(~(passes & finite), axis=1)
+
+
 @ACCEPTANCE_CRITERIA.register
 class PointwiseAcceptance(AcceptanceCriterion):
     """
     Every point must pass on every component: ``|e_ij| < atol_j`` or
     ``|e_ij| / max(|F_ij|, 1e-12) < rtol_j``. With ``rtol`` alone this is ART's
     ``max_pointwise_relative`` stopping rule, and the same per-point test as
-    ``AFINNISurrogate.audit``. Reports ``abs_kj = max_i |e_ij|`` and
-    ``rel_kj = max_i |e_ij| / max(|F_ij|, 1e-12)``.
+    ``AFINNISurrogate.audit`` (``pointwise_violations``). Reports ``abs_kj = max_i |e_ij|``
+    and ``rel_kj = max_i |e_ij| / max(|F_ij|, 1e-12)``.
     """
 
     name = "pointwise"
 
     def __call__(self, F, F_hat, starts, sizes):
         fd = F.shape[1]
-        atol, rtol = tolerance_vector("atol", self.atol, fd), tolerance_vector("rtol", self.rtol, fd)
         err = xp.abs(F - F_hat)
         rel = err / xp.maximum(xp.abs(F), TINY_EPS)
-        fails = ~((rel < rtol[None, :]) | (err < atol[None, :]))
-        any_fail = _reduce_max_1d(xp.any(fails, axis=1).astype(xp.float64), starts)
+        fails = pointwise_violations(F, F_hat, self.atol, self.rtol)
+        any_fail = _reduce_max_1d(fails.astype(xp.float64), starts)
         E_abs = xp.stack([_reduce_max_1d(err[:, j], starts) for j in range(fd)], axis=1)
         E_rel = xp.stack([_reduce_max_1d(rel[:, j], starts) for j in range(fd)], axis=1)
         return any_fail == 0, E_abs, E_rel

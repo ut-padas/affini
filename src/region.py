@@ -165,7 +165,11 @@ class Roots:
             return cls(uniform_grid_bins(np.ones(d), num_cells))
         if centres is None or len(centres) == 0:
             raise ValueError("Voronoi roots need centres.")
-        return cls(np.ones(d, dtype=np.int64), np.asarray(centres, dtype=np.float64))
+        # Duplicate centres would own empty cells under lowest-index ownership while their
+        # closed inequalities coincide; keep the first of each.
+        centres = np.asarray(centres, dtype=np.float64)
+        _, first = np.unique(centres, axis=0, return_index=True)
+        return cls(np.ones(d, dtype=np.int64), centres[np.sort(first)])
 
     @property
     def n_roots(self) -> int:
@@ -252,12 +256,19 @@ class HitAndRunSampler(Sampler):
 
     def sample(self, clusters: ClusterPoints, n_new: Array, rng=None) -> Array:
         """
-        New points, after the pilot/production check: every chain runs ``walk_steps``
-        steps; a node whose endpoints at the halfway step and at the end differ (any
-        coordinate or the squared radius, standardized mean difference above
-        ``mixing_z``) has its chains continued, doubling their length, up to
-        ``max_walk_steps``. Nodes still failing are flagged in ``region.insufficient``.
-        This is a diagnostic of visible drift, not a proof of mixing (design Section 33.4).
+        New points. Every chain runs ``walk_steps`` steps; a node whose endpoints at the
+        halfway step and at the end differ (any coordinate or the squared radius,
+        standardized mean difference above ``mixing_z``) has its chains continued,
+        doubling their length, up to ``max_walk_steps``. The returned points are those same
+        chains' endpoints: this is a drift check, not a separate pilot and production run,
+        and not a proof of mixing (design Section 33.4).
+
+        Two failures the drift check cannot see are handled explicitly. Chains that did
+        not move (e.g. from seeds in a corner, where an isotropic direction escapes with
+        probability ``2^(1-d)``) are rerun with coordinate directions, which escape corners
+        and leave the uniform law invariant, on a separate random stream. A start or step
+        that violates a face by more than rounding is never silently relaxed. Nodes with
+        either problem remaining are flagged in ``region.insufficient``.
         """
         geo: RegionPoints = clusters.region
         d, K = clusters.d, clusters.n_clusters
@@ -269,19 +280,39 @@ class HitAndRunSampler(Sampler):
         draw = xp.arange(n_total, dtype=xp.int64) - (xp.cumsum(n_new) - n_new)[owner]
         U, walk = self._starts(clusters, geo, owner, draw)
         if bool(xp.any(walk)):
-            t_end = self.walk_steps
-            U_mid = self._walk(clusters, geo, owner, draw, U, walk, 0, t_end // 2)
-            U = self._walk(clusters, geo, owner, draw, U_mid, walk, t_end // 2, t_end)
-            while True:
-                drift = self._drifting(U_mid, U, owner, walk, n_new)
-                if not bool(xp.any(drift)) or 2 * t_end > self.max_walk_steps:
-                    break
-                rows = walk & drift[owner]
-                U_mid = U
-                U = self._walk(clusters, geo, owner, draw, U, rows, t_end, 2 * t_end)
-                t_end *= 2
-            geo.insufficient = drift
+            U0 = U
+            bad = xp.zeros(n_total, dtype=bool)
+
+            def run(U, rows, bad, coordinate):
+                """Walk ``rows``, doubling while their node drifts; returns (U, bad, drift)."""
+                t_end = self.walk_steps
+                U_mid, bad = self._walk(clusters, geo, owner, draw, U, rows, 0, t_end // 2, bad, coordinate)
+                U, bad = self._walk(clusters, geo, owner, draw, U_mid, rows, t_end // 2, t_end, bad, coordinate)
+                while True:
+                    drift = self._drifting(U_mid, U, owner, rows, n_new)
+                    if not bool(xp.any(drift)) or 2 * t_end > self.max_walk_steps:
+                        return U, bad, drift
+                    U_mid = U
+                    U, bad = self._walk(clusters, geo, owner, draw, U, rows & drift[owner], t_end, 2 * t_end, bad, coordinate)
+                    t_end *= 2
+
+            U, bad, drift = run(U, walk, bad, coordinate=False)
+            stuck = self._stuck(U0, U, owner, walk, n_new)
+            if bool(xp.any(stuck)):
+                # The recovery walk must pass the same drift check: moving is not mixing.
+                U, bad, recovery_drift = run(U, walk & stuck[owner], bad, coordinate=True)
+                drift = xp.where(stuck, recovery_drift, drift)
+                stuck = self._stuck(U0, U, owner, walk, n_new)
+            infeasible = _per_node_sum(bad.astype(xp.float64), n_new) > 0
+            geo.insufficient = drift | stuck | infeasible
         return self.domain.denormalize(U)
+
+    def _stuck(self, U0: Array, U: Array, owner: Array, walk: Array, n_new: Array) -> Array:
+        """(K,) nodes where most walking chains ended exactly where they started."""
+        moved = xp.any(U != U0, axis=1).astype(xp.float64)
+        n_walk = _per_node_sum(walk.astype(xp.float64), n_new)
+        n_moved = _per_node_sum(moved * walk, n_new)
+        return (n_walk > 0) & (n_moved < 0.5 * n_walk)
 
     def _starts(self, clusters: ClusterPoints, geo: RegionPoints, owner: Array, draw: Array) -> tuple[Array, Array]:
         """
@@ -324,49 +355,84 @@ class HitAndRunSampler(Sampler):
         counter = (draw * block)[:, None] + offset + xp.arange((count + 1) // 2)
         return counter_uniform_pairs(geo.keys[owner][:, None], geo.purpose, counter).reshape(len(owner), -1)[:, :count]
 
-    def _walk(self, clusters, geo, owner, draw, U, rows, t_from: int, t_to: int) -> Array:
-        """``U`` after hit-and-run steps ``t_from .. t_to - 1`` of the chains in ``rows``, in bounded chunks."""
+    def _walk(self, clusters, geo, owner, draw, U, rows, t_from: int, t_to: int, bad: Array,
+              coordinate: bool = False) -> tuple[Array, Array]:  # fmt: skip
+        """
+        ``U`` after hit-and-run steps ``t_from .. t_to - 1`` of the chains in ``rows``, in
+        bounded chunks, and ``bad`` with the chains that met an infeasible face added.
+        ``coordinate`` uses coordinate directions on the separate recovery stream.
+        """
         idx = xp.nonzero(rows)[0]
         if int(idx.shape[0]) == 0 or t_to <= t_from:
-            return U
+            return U, bad
         d = clusters.d
         width = int(geo.constraints.shape[1]) * (d + 1) + (self.roots.n_roots * 2 if self.roots.is_voronoi else 0)
         chunk = max(1, self.CHUNK_ELEMENTS // max(1, width + 4 * d))
-        U = U.copy()
+        U, bad = U.copy(), bad.copy()
         for s in range(0, int(idx.shape[0]), chunk):
             sel = idx[s : s + chunk]
-            U[sel] = self._steps(geo, owner[sel], draw[sel], U[sel], t_from, t_to)
-        return U
+            U[sel], bad_sel = self._steps(geo, owner[sel], draw[sel], U[sel], t_from, t_to, coordinate)
+            bad[sel] = bad[sel] | bad_sel
+        return U, bad
 
-    def _steps(self, geo: RegionPoints, owner: Array, draw: Array, U: Array, t_from: int, t_to: int) -> Array:
+    # Recovery walks draw from purpose + this, so ordinary streams are unchanged.
+    RECOVERY_PURPOSE_OFFSET = 16
+    # A face may be violated by rounding only: relative to the face offset's scale.
+    FEASIBILITY_TOL = 1e-9
+
+    def _steps(self, geo: RegionPoints, owner: Array, draw: Array, U: Array, t_from: int, t_to: int,
+               coordinate: bool = False) -> tuple[Array, Array]:  # fmt: skip
         d = U.shape[1]
         root = geo.root[owner]
         lo, hi = self._lo[root], self._hi[root]
         A = geo.constraints[owner, :, :d]  # (n, h, d)
         b = geo.constraints[owner, :, d]  # (n, h)
+        bad = xp.zeros(int(U.shape[0]), dtype=bool)
+        stream = geo
+        if coordinate:
+            stream = RegionPoints(geo.root, geo.depth, geo.keys, geo.constraints, geo.purpose + self.RECOVERY_PURPOSE_OFFSET)
+        if self.roots.is_voronoi:
+            own = xp.arange(self.roots.n_roots)[None, :] == root[:, None]  # the owning centre's own bisector
         for t in range(t_from, t_to):
             q = (d + 1) // 2
-            r = self._uniforms(geo, owner, draw, self._start_hashes + 1 + t * self._step_hashes, 2 * q + 1)
-            # Box-Muller gives two independent normals per pair (cosine and sine).
-            radius, angle = xp.sqrt(-2.0 * xp.log(r[:, :q])), 2.0 * math.pi * r[:, q : 2 * q]
-            g = xp.concatenate([radius * xp.cos(angle), radius * xp.sin(angle)], axis=1)[:, :d]
-            g /= xp.linalg.norm(g, axis=1, keepdims=True)
+            r = self._uniforms(stream, owner, draw, self._start_hashes + 1 + t * self._step_hashes, 2 * q + 1)
+            if coordinate:
+                axis = xp.minimum((r[:, 0] * d).astype(xp.int64), d - 1)
+                g = (xp.arange(d)[None, :] == axis[:, None]).astype(xp.float64)
+            else:
+                # Box-Muller gives two independent normals per pair (cosine and sine).
+                radius, angle = xp.sqrt(-2.0 * xp.log(r[:, :q])), 2.0 * math.pi * r[:, q : 2 * q]
+                g = xp.concatenate([radius * xp.cos(angle), radius * xp.sin(angle)], axis=1)[:, :d]
+                g /= xp.linalg.norm(g, axis=1, keepdims=True)
             with np.errstate(divide="ignore", invalid="ignore"):
                 # The box faces bound t between (lo - U)/g and (hi - U)/g in either order:
                 # fmin/fmax pick the same values as selecting on the sign of g, in fewer passes.
                 t_lo_face, t_hi_face = (lo - U) / g, (hi - U) / g
+                if coordinate:
+                    # Axes the move does not touch bound nothing; on a face their 0/0 would
+                    # be NaN, which fmin/fmax would turn into an infinite chord end.
+                    t_lo_face, t_hi_face = xp.where(g == 0, -xp.inf, t_lo_face), xp.where(g == 0, xp.inf, t_hi_face)
                 t_min = xp.max(xp.fmin(t_lo_face, t_hi_face), axis=1)
                 t_max = xp.min(xp.fmax(t_lo_face, t_hi_face), axis=1)
                 if b.shape[1] > 0:
-                    t_min, t_max = _chord(xp.einsum("nhd,nd->nh", A, g), b - xp.einsum("nhd,nd->nh", A, U), t_min, t_max)
+                    slack = b - xp.einsum("nhd,nd->nh", A, U)
+                    bad |= xp.any(slack < -self.FEASIBILITY_TOL * (1.0 + xp.abs(b)), axis=1)
+                    t_min, t_max = _chord(xp.einsum("nhd,nd->nh", A, g), slack, t_min, t_max)
                 if self.roots.is_voronoi:
-                    # Bisectors (c_j - c_r)^T u <= (|c_j|^2 - |c_r|^2) / 2 against every other centre.
+                    # Bisectors (c_j - c_r)^T u <= (|c_j|^2 - |c_r|^2) / 2 against every other
+                    # centre. The owning centre's own row is 0 <= 0 exactly, but its computed
+                    # coefficient is rounding-sized and nonzero, which would cut the chord:
+                    # it is removed by identity, not by a coefficient threshold.
                     c_r = self._C[root]
-                    Ag = g @ self._C.T - xp.sum(g * c_r, axis=1, keepdims=True)
-                    slack = 0.5 * (self._C2[None, :] - self._C2[root][:, None]) - (U @ self._C.T - xp.sum(U * c_r, axis=1, keepdims=True))
+                    Ag = xp.where(own, 0.0, g @ self._C.T - xp.sum(g * c_r, axis=1, keepdims=True))
+                    offset = 0.5 * (self._C2[None, :] - self._C2[root][:, None])
+                    slack = offset - (U @ self._C.T - xp.sum(U * c_r, axis=1, keepdims=True))
+                    bad |= xp.any(~own & (slack < -self.FEASIBILITY_TOL * (1.0 + xp.abs(offset))), axis=1)
                     t_min, t_max = _chord(Ag, slack, t_min, t_max)
-            U = U + (t_min + (t_max - t_min) * r[:, 2 * q])[:, None] * g
-        return U
+                bad |= ~(xp.isfinite(t_min) & xp.isfinite(t_max) & (t_min <= t_max))
+            step = t_min + (t_max - t_min) * r[:, 2 * q]
+            U = U + xp.where(bad, 0.0, step)[:, None] * g  # a failed chain stops where it is
+        return U, bad
 
     def _drifting(self, U_mid: Array, U_end: Array, owner: Array, walk: Array, n_new: Array) -> Array:
         """(K,) nodes whose walking chains moved visibly between the halfway and final steps."""
@@ -390,12 +456,22 @@ class HitAndRunSampler(Sampler):
         return out
 
 
+def _per_node_sum(values: Array, n_new: Array) -> Array:
+    """(K,) sums of each node's rows of ``values`` (rows grouped by node, ``n_new`` per node; empty nodes give 0)."""
+    out = xp.zeros(int(n_new.shape[0]))
+    nz = xp.nonzero(n_new > 0)[0]
+    if int(nz.shape[0]):
+        out[nz] = segment_sum(values, (xp.cumsum(n_new) - n_new)[nz])
+    return out
+
+
 def _chord(Ag: Array, slack: Array, t_min: Array, t_max: Array) -> tuple[Array, Array]:
     """
     Intersect the chord ``[t_min, t_max]`` with half-spaces whose slack along the
     direction is ``Ag``. Rounding can leave a point a hair outside a face, so the slack
-    is clamped at 0 and the chord still contains the current point; rows with ``Ag == 0``
-    (padding, or the root's own centre) are skipped.
+    is clamped at 0 and the chord still contains the current point; the caller checks
+    that no slack is negative beyond rounding (``FEASIBILITY_TOL``) and flags the chain
+    otherwise. Rows with ``Ag == 0`` (padding, or the owning Voronoi centre) are skipped.
     """
     ratio = xp.maximum(slack, 0.0) / Ag
     t_max = xp.minimum(t_max, xp.min(xp.where(Ag > 0, ratio, xp.inf), axis=1))
@@ -544,10 +620,12 @@ class RegionPlan:
             "min_load": s.steal_min_load or 4 * node_pts,
             "steal_size": s.steal_size or 2 * node_pts,
             "lease_received": True,
+            "work_sizes": self.work_sizes,  # one work unit for loads, eligibility and grants
         }
         self.counters = {
-            "splits": 0, "split_failed": 0, "soft_improved": 0, "soft_stalled": 0, "soft_converged": 0,
-            "insufficient_sampling": 0,
+            "splits": 0, "split_failed": 0, "rank_deficient": 0, "insufficient_sampling": 0,
+            "soft_improved": 0, "soft_gradient_converged": 0, "soft_line_search_stalled": 0,
+            "soft_gate_saturated": 0, "soft_nonfinite": 0, "soft_iteration_limit": 0,
         }  # fmt: skip
 
     def work_sizes(self, sizes: np.ndarray) -> np.ndarray:
@@ -557,12 +635,21 @@ class RegionPlan:
         return np.maximum(sizes, self.n_target) + self.n_val
 
     def bytes_per_point(self) -> int:
-        """Peak device bytes per processed point (training, validation and split work arrays)."""
+        """
+        Peak device bytes per processed point (training, validation and split work arrays).
+        B3/B4's per-node candidate arrays (``n_bins - 1`` Grams per side, the screen) are
+        charged to the fewest points a node can hold, so small nodes do not undercount.
+        """
         d, fd, h = self.d, self.fd, self.config.max_levels + 1
         p = d + 1
         g = fd * d if self.config.requires_grad_everywhere else 0
-        # Gathered feature and output blocks (one copy of each) for the batched Grams.
-        search = 0 if self.settings.split_search == "gap" else 2 * (p + fd) + 4
+        search = 0
+        if self.settings.split_search != "gap":
+            # Gathered feature and output blocks (one copy of each) for the batched Grams.
+            search = 2 * (p + fd) + 4
+            nb, D = self.settings.n_bins, self.settings.n_directions
+            per_node = 3 * (nb - 1) * (p * p + p * fd + 1) + 2 * D * (nb - 1)
+            search += -(-per_node // max(1, int(self.work_sizes(np.zeros(1, np.int64))[0])))
         return 8 * (4 * d + 3 * fd + 2 * g + 2 * h * (d + 1) + 12 + search)
 
     def leaf_columns(self, model) -> dict[str, ParamSpec]:
@@ -853,7 +940,11 @@ class RegionPlan:
         dU = rows.U - mean[rows.labels]
         dU_g = rows.gather(dU)
         cov = rows.cross(dU_g, dU_g)
-        dirs.append(xp.linalg.eigh(cov)[1][:, :, -1])
+        evals, evecs = xp.linalg.eigh(cov)
+        # Points on a lower-dimensional set (e.g. unmixed samples): the fit is then ridge-
+        # regularized along the missing directions, which is worth seeing in the counters.
+        self.counters["rank_deficient"] += int(xp.sum(evals[:, 0] <= 1e-12 * xp.maximum(evals[:, -1], 1e-300)))
+        dirs.append(evecs[:, :, -1])
         n_rand = max(0, D - len(dirs))
         if n_rand:
             r = counter_uniform(keys[:, None], PURPOSE_DIRECTION, xp.arange(2 * n_rand * d)[None, :])
@@ -874,7 +965,11 @@ class RegionPlan:
         nb = self.settings.n_bins
         b = xp.arange(1, nb)
         n = rows.counts
+        # Only nodes that can keep min_side points on both sides have candidates (sparse B1
+        # nodes may not); every index below stays inside its own node's block.
+        eligible = n >= 2 * self.min_side
         pos = xp.clip(xp.round(b[None, :] * n[:, None] / nb).astype(xp.int64), self.min_side, xp.maximum(n - self.min_side, self.min_side)[:, None])
+        pos = xp.clip(pos, 1, xp.maximum(n - 1, 1)[:, None])
         G_tot, B_tot = rows.gram()
         C_tot = rows.reduce(xp.sum(rows.Y**2, axis=1))
         screen = xp.full((k, D, nb - 1), xp.inf)
@@ -884,7 +979,7 @@ class RegionPlan:
             order = sort_by_block_then_value(s, rows.labels)
             ss = s[order]
             at = rows.starts[:, None] + pos  # first right-side row of each candidate
-            ok = (pos >= self.min_side) & (n[:, None] - pos >= self.min_side) & (ss[at] > ss[at - 1])
+            ok = eligible[:, None] & (pos >= self.min_side) & (n[:, None] - pos >= self.min_side) & (ss[at] > ss[at - 1])
             # Each row's rank along this direction within its node; the left side of cut i
             # is the rows ranked below pos[:, i]. Each Gram is a batched product over the
             # node's own rows, so nothing depends on the other nodes of the batch.
@@ -928,9 +1023,13 @@ class RegionPlan:
         fixed temperature ``T = soft_temperature * std(w^T u)``, floored weights
         ``W_R = delta + (1 - 2 delta) sigma(s)``, ``W_L = delta + (1 - 2 delta) sigma(-s)``,
         and frozen-model Armijo steps. A step is accepted only if its decrease exceeds the
-        inner solve's exact suboptimality ``tr(R^T H^-1 R) / n`` plus rounding; a node stops
-        when no step qualifies (``soft_stalled`` if its gate derivative has saturated,
-        ``soft_converged`` otherwise). The result is hardened (``z`` moved to the first
+        inner solves' estimated suboptimality ``tr(R^T H^-1 R) / n`` (``R`` from the data
+        residual) plus rounding. This is numerically monitored descent, not a certified
+        optimum. Each node's termination is counted once: ``soft_gate_saturated`` (gate
+        derivative vanished), ``soft_gradient_converged`` (even a first-order step of
+        one gate width could not beat the margin), ``soft_line_search_stalled`` (no trial
+        qualified otherwise), ``soft_nonfinite`` (objective or gap not finite) or
+        ``soft_iteration_limit``. The result is hardened (``z`` moved to the first
         right-side score) and kept only if its directly refit hard SSE beats the B3
         incumbent's; otherwise the incumbent is returned.
         """
@@ -958,23 +1057,30 @@ class RegionPlan:
             g_w = g_w - xp.sum(g_w * w, axis=1, keepdims=True) * w  # tangent to |w| = 1
             gn2 = xp.sum(g_w**2, axis=1) + g_z**2
             alpha = T / xp.sqrt(xp.maximum(gn2, 1e-300))  # a first trial moves the gate about one width
+            margin = gap + 64 * eps * (xp.abs(J) + 1e-300)
+            finite = xp.isfinite(J) & xp.isfinite(gap) & xp.isfinite(gn2)
             taken = xp.zeros_like(active)
             for _ in range(12):
+                if not bool(xp.any(active & finite & ~taken)):
+                    break  # every node has stepped; further halvings could not accept anything
                 w_t = _unit(w - alpha[:, None] * g_w)
                 z_t = z - alpha * g_z
                 WLt, WRt, _ = gate(w_t, z_t)
                 Ft = (rows.reduce(WLt * rL + WRt * rR) + pen) / n
-                margin = gap + 64 * eps * (xp.abs(J) + 1e-300)
-                accept = active & ~taken & (Ft <= J - 1e-4 * alpha * gn2) & (J - Ft > margin)
+                accept = active & finite & ~taken & (Ft <= J - 1e-4 * alpha * gn2) & (J - Ft > margin)
                 w = xp.where(accept[:, None], w_t, w)
                 z = xp.where(accept, z_t, z)
                 taken = taken | accept
                 alpha = alpha * 0.5
             stopped = active & ~taken
-            saturated = rows.reduce(sp_sm) / n < 1e-6
-            self.counters["soft_stalled"] += int(xp.sum(stopped & saturated))
-            self.counters["soft_converged"] += int(xp.sum(stopped & ~saturated))
+            saturated = finite & (rows.reduce(sp_sm) / n < 1e-6)
+            flat = finite & ~saturated & (T * xp.sqrt(gn2) <= margin)
+            self.counters["soft_nonfinite"] += int(xp.sum(stopped & ~finite))
+            self.counters["soft_gate_saturated"] += int(xp.sum(stopped & saturated))
+            self.counters["soft_gradient_converged"] += int(xp.sum(stopped & flat))
+            self.counters["soft_line_search_stalled"] += int(xp.sum(stopped & finite & ~saturated & ~flat))
             active = active & taken
+        self.counters["soft_iteration_limit"] += int(xp.sum(active))
 
         # Harden: move z to the first right-side score so the predicate reproduces the cut.
         s = plane_scores(rows.U, w[lab])
@@ -1011,19 +1117,21 @@ def _soft_objective(rows: _SplitRows, w: Array, z: Array, T: Array, delta: float
     (not yet projected to ``|w| = 1``). With ``B`` at its minimizer, the envelope theorem
     leaves only the gate derivative: ``dJ/ds_i = (r_R,i - r_L,i) (1 - 2 delta) sigma sigma' / n``.
     Also returns the frozen residuals and penalty (for line-search trials), the inner
-    solves' exact suboptimality ``sum_s tr(R^T H^-1 R) / n`` and ``sigma(s) sigma(-s)``.
+    solves' suboptimality estimate ``sum_s tr(R^T H^-1 R) / n`` and ``sigma(s) sigma(-s)``.
+    ``R = Phi^T W (Y - Phi B) - lam B`` is formed from the data residual, not as
+    ``Phi^T W Y - (H + lam I) B`` from the sums, which cancels to rounding noise near a fit.
     """
     n = rows.counts.astype(xp.float64)
     lab = rows.labels
     WL, WR, sp_sm = _soft_gates(rows, w, z, T, delta)
     res, pen, gap = [], 0.0, 0.0
-    lamI = rows.lam[:, None, None] * xp.eye(rows.Phi.shape[1])
     for Wt in (WL, WR):
         H, Bs = rows.gram(Wt)
         beta = rows.solve(H, Bs)
-        res.append(xp.sum((rows.Y - xp.einsum("np,npf->nf", rows.Phi, beta[lab])) ** 2, axis=1))
+        E = rows.Y - xp.einsum("np,npf->nf", rows.Phi, beta[lab])
+        res.append(xp.sum(E**2, axis=1))
         pen = pen + rows.lam * xp.sum(beta**2, axis=(1, 2))
-        R = Bs - (H + lamI) @ beta  # residual of the normal equations, from the data sums
+        R = rows.cross(rows._Phi_g, rows.gather(E), Wt) - rows.lam[:, None, None] * beta
         gap = gap + xp.sum(R * rows.solve(H, R), axis=(1, 2)) / n
     rL, rR = res
     J = (rows.reduce(WL * rL + WR * rR) + pen) / n
@@ -1058,78 +1166,111 @@ def _interleave(a: Array, b: Array, first: Array) -> Array:
 @dataclass
 class RoutingTable:
     """
-    The explicit tree, validated: split nodes and leaves keyed by
-    ``root << shift | path_code``, sorted for ``searchsorted`` lookups.
+    The explicit tree, validated and stored as compact node arrays: node ``i`` is a split
+    (children ``child[i]``, plane ``w[i]``, ``z[i]``) or a leaf (row ``node_leaf[i]`` of the
+    leaf arrays), and ``root_node[r]`` is root ``r``'s node. Routing follows child indices,
+    so no logical key is packed into an integer and every depth the path codes allow
+    (``MAX_DEPTH_LIMIT``) routes. The logical identity ``(root, path_code)`` of every node
+    is kept as provenance (``node_root``, ``node_path``), which saving and loading rebuild
+    from, so a loaded table passes the same checks as a trained one.
     """
 
     domain: Domain
     roots: Roots
-    shift: int
-    split_keys: Array  # (S,) int64, sorted
-    w: Array  # (S, d)
-    z: Array  # (S,)
-    leaf_keys: Array  # (L,) int64, sorted
-    leaf_index: Array  # (L,) row of each key in the leaf arrays
+    is_leaf: Array  # (M,) bool
+    child: Array  # (M, 2) int64 node indices, -1 for leaves
+    w: Array  # (M, d), zero rows for leaves
+    z: Array  # (M,)
+    node_leaf: Array  # (M,) leaf row, -1 for splits
+    root_node: Array  # (R,)
+    max_depth: int
+    node_root: np.ndarray  # (M,) provenance
+    node_path: np.ndarray  # (M,) provenance
+
+    @property
+    def n_leaves(self) -> int:
+        return int(np.sum(_to_host(self.is_leaf)))
 
     @classmethod
     def build(cls, domain: Domain, roots: Roots, leaf_root, leaf_path, split_root, split_path, w, z) -> "RoutingTable":
-        """Assemble and check the tree: unique keys, both children of every split, every node reachable."""
-        lr, lp, sr, sp = (np.asarray(_to_host(a), dtype=np.int64) for a in (leaf_root, leaf_path, split_root, split_path))
-        all_paths = np.r_[lp, sp]
-        max_bits = int(all_paths.max()).bit_length() if all_paths.size else 1
-        shift = max_bits + 1
-        if shift + max(1, int(roots.n_roots - 1).bit_length()) > 63:
-            raise ValueError("The tree is too deep for 63-bit node keys.")
-        lk, sk = (lr << shift) | lp, (sr << shift) | sp
-        keys = np.r_[lk, sk]
-        if len(np.unique(keys)) != len(keys):
-            raise ValueError("Region tree has duplicate node keys.")
-        children = np.r_[(sr << shift) | (2 * sp), (sr << shift) | (2 * sp + 1)]
-        if not np.isin(children, keys).all():
-            raise ValueError("A region split is missing one of its children.")
-        all_roots = np.r_[lr, sr]
-        nonroot = all_paths > 1
-        if not np.isin((all_roots[nonroot] << shift) | (all_paths[nonroot] >> 1), sk).all():
+        """
+        Assemble and check the tree: leaf ``i`` (in leaf-array order) is ``(leaf_root[i],
+        leaf_path[i])``; split ``j`` is ``(split_root[j], split_path[j])`` with plane
+        ``(w[j], z[j])``. Checks: valid roots and positive path codes, finite planes of the
+        domain's dimension, unique nodes, both children of every split, a split parent for
+        every non-root node, and a node for every root. Raises ``ValueError`` otherwise.
+        """
+        lr, lp, sr, sp = (np.asarray(_to_host(a), dtype=np.int64).reshape(-1) for a in (leaf_root, leaf_path, split_root, split_path))
+        W, Z = np.asarray(_to_host(w), dtype=np.float64), np.asarray(_to_host(z), dtype=np.float64).reshape(-1)
+        d, R = domain.d, roots.n_roots
+        if len(lr) != len(lp) or len(sr) != len(sp) or W.shape != (len(sr), d) or Z.shape != (len(sr),):
+            raise ValueError("Region tree arrays have inconsistent shapes.")
+        roots_all, paths_all = np.r_[sr, lr], np.r_[sp, lp]
+        if np.any(paths_all < 1) or np.any(roots_all < 0) or np.any(roots_all >= R):
+            raise ValueError("Region tree has a non-positive path code or an out-of-range root.")
+        if not (np.all(np.isfinite(W)) and np.all(np.isfinite(Z))):
+            raise ValueError("Region tree has a non-finite split plane.")
+        index = {}
+        for i, key in enumerate(zip(roots_all.tolist(), paths_all.tolist(), strict=True)):
+            if key in index:
+                raise ValueError("Region tree has duplicate node keys.")
+            index[key] = i
+        S, M = len(sr), len(sr) + len(lr)
+        child = np.full((M, 2), -1, dtype=np.int64)
+        for j, (r, p) in enumerate(zip(sr.tolist(), sp.tolist(), strict=True)):
+            left, right = index.get((r, 2 * p)), index.get((r, 2 * p + 1))
+            if left is None or right is None:
+                raise ValueError("A region split is missing one of its children.")
+            child[j] = (left, right)
+        splits = set(zip(sr.tolist(), sp.tolist(), strict=True))
+        if any(p > 1 and (r, p >> 1) not in splits for r, p in zip(roots_all.tolist(), paths_all.tolist(), strict=True)):
             raise ValueError("A region node's parent is not a split node.")
-        if not np.isin((np.arange(roots.n_roots, dtype=np.int64) << shift) | 1, keys).all():
+        root_node = np.array([index.get((r, 1), -1) for r in range(R)], dtype=np.int64)
+        if np.any(root_node < 0):
             raise ValueError("A region root has no node.")
-        lo, so = np.argsort(lk), np.argsort(sk)
-        return cls(domain, roots, shift, xp.asarray(sk[so]), xp.asarray(_to_host(w))[xp.asarray(so)],
-                   xp.asarray(_to_host(z))[xp.asarray(so)], xp.asarray(lk[lo]), xp.asarray(lo))  # fmt: skip
+        is_leaf = np.r_[np.zeros(S, dtype=bool), np.ones(len(lr), dtype=bool)]
+        node_leaf = np.r_[np.full(S, -1, dtype=np.int64), np.arange(len(lr), dtype=np.int64)]
+        node_w = np.vstack([W, np.zeros((len(lr), d))]) if M else np.zeros((0, d))
+        max_depth = int(max((int(p).bit_length() - 1 for p in paths_all.tolist()), default=0))
+        return cls(domain, roots, xp.asarray(is_leaf), xp.asarray(child), xp.asarray(node_w),
+                   xp.asarray(np.r_[Z, np.zeros(len(lr))]), xp.asarray(node_leaf), xp.asarray(root_node),
+                   max_depth, roots_all, paths_all)  # fmt: skip
 
     def route(self, X: Array) -> tuple[Array, Array]:
         """
         ``(leaf, outside)``: each query's leaf row and whether it lies outside the domain.
-        Outside queries are routed from their nearest domain point (clipped coordinates).
+        Outside queries are routed from their nearest domain point (clipped coordinates)
+        and evaluated at their own coordinates, i.e. extrapolated by that leaf; the audit
+        says nothing about them. Non-finite queries raise ``ValueError``.
         """
-        U = self.domain.normalize(xp.asarray(X, dtype=xp.float64))
+        X = xp.asarray(X, dtype=xp.float64)
+        if X.ndim != 2 or X.shape[1] != self.domain.d:
+            raise ValueError(f"Queries must have shape (n, {self.domain.d}); got {tuple(X.shape)}.")
+        if not bool(xp.all(xp.isfinite(X))):
+            raise ValueError("Queries contain NaN or infinity.")
+        U = self.domain.normalize(X)
         outside = xp.any((U < 0) | (U > 1), axis=1)
         U = xp.clip(U, 0.0, 1.0)
-        key_root = self.roots.root_of(U) << self.shift
-        path = xp.ones(int(U.shape[0]), dtype=xp.int64)
-        n_split = int(self.split_keys.shape[0])
-        for _ in range(self.shift + 1):
-            key = key_root | path
-            pos = xp.minimum(xp.searchsorted(self.split_keys, key), max(n_split - 1, 0))
-            active = (self.split_keys[pos] == key) if n_split else xp.zeros_like(path, dtype=bool)
-            if not bool(xp.any(active)):
+        node = self.root_node[self.roots.root_of(U)]
+        for _ in range(self.max_depth + 1):
+            act = xp.nonzero(~self.is_leaf[node])[0]
+            if int(act.shape[0]) == 0:
                 break
-            act = xp.nonzero(active)[0]
-            side = plane_scores(U[act], self.w[pos[act]]) - self.z[pos[act]] >= 0
-            path[act] = 2 * path[act] + side.astype(xp.int64)
-        key = key_root | path
-        pos = xp.minimum(xp.searchsorted(self.leaf_keys, key), int(self.leaf_keys.shape[0]) - 1)
-        if not bool(xp.all(self.leaf_keys[pos] == key)):
-            raise RuntimeError("Routing reached a node that is neither a split nor a leaf.")
-        return self.leaf_index[pos], outside
+            na = node[act]
+            side = (plane_scores(U[act], self.w[na]) - self.z[na] >= 0).astype(xp.int64)
+            node[act] = self.child[na, side]
+        return self.node_leaf[node], outside
 
     def arrays(self) -> dict[str, np.ndarray]:
-        """The host arrays that ``from_arrays`` rebuilds the table from (for saving)."""
+        """The host arrays that ``from_arrays`` rebuilds the table from (for saving): domain, roots and provenance."""
+        split = ~np.asarray(_to_host(self.is_leaf))
+        leaf_rows = np.asarray(_to_host(self.node_leaf))[~split]
+        order = np.argsort(leaf_rows)  # leaves in leaf-array order
         out = {
             "domain_lower": self.domain.lower, "domain_upper": self.domain.upper, "root_bins": self.roots.bins,
-            "split_keys": _to_host(self.split_keys), "w": _to_host(self.w), "z": _to_host(self.z),
-            "leaf_keys": _to_host(self.leaf_keys), "leaf_index": _to_host(self.leaf_index),
-            "shift": np.asarray(self.shift),
+            "split_root": self.node_root[split], "split_path": self.node_path[split],
+            "w": np.asarray(_to_host(self.w))[split], "z": np.asarray(_to_host(self.z))[split],
+            "leaf_root": self.node_root[~split][order], "leaf_path": self.node_path[~split][order],
         }  # fmt: skip
         if self.roots.is_voronoi:
             out["root_centres"] = self.roots.centres
@@ -1137,10 +1278,17 @@ class RoutingTable:
 
     @classmethod
     def from_arrays(cls, a: dict[str, np.ndarray]) -> "RoutingTable":
+        """Rebuild (and so re-validate) a table from ``arrays()``; also reads the earlier packed-key format."""
         centres = np.asarray(a["root_centres"]) if "root_centres" in a else None
-        return cls(
-            Domain(np.asarray(a["domain_lower"]), np.asarray(a["domain_upper"])),
-            Roots(np.asarray(a["root_bins"]), centres),
-            int(a["shift"]), xp.asarray(a["split_keys"]), xp.asarray(a["w"]), xp.asarray(a["z"]),
-            xp.asarray(a["leaf_keys"]), xp.asarray(a["leaf_index"]),
-        )  # fmt: skip
+        domain = Domain(np.asarray(a["domain_lower"], dtype=np.float64), np.asarray(a["domain_upper"], dtype=np.float64))
+        roots = Roots(np.asarray(a["root_bins"]), centres)
+        if "split_root" in a:
+            return cls.build(domain, roots, a["leaf_root"], a["leaf_path"], a["split_root"], a["split_path"], a["w"], a["z"])
+        # Format written before compact indices: keys root << shift | path_code, sorted.
+        shift = int(a["shift"])
+        mask = (np.int64(1) << shift) - 1
+        sk, lk = np.asarray(a["split_keys"], dtype=np.int64), np.asarray(a["leaf_keys"], dtype=np.int64)
+        leaf_row = np.asarray(a["leaf_index"], dtype=np.int64)
+        lr, lp = np.empty_like(lk), np.empty_like(lk)
+        lr[leaf_row], lp[leaf_row] = lk >> shift, lk & mask
+        return cls.build(domain, roots, lr, lp, sk >> shift, sk & mask, a["w"], a["z"])

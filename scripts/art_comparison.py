@@ -19,7 +19,10 @@ GPU). Compare against that one when timing matters, e.g.::
         --art-path ../Adaptive-Regression-Trees-ART- --benchmark quadratic --dimension 2 \\
         --sampler parallel_numba
 
-Prints one JSON line per method (prefixed ``COMPARE``); ART's line records the sampler,
+Refuses ART leaf degrees other than 1 and error metrics other than
+``max_pointwise_relative``, which region mode does not implement. Prints the resolved
+configurations (one ``CONFIG`` line), then one JSON line per method (prefixed
+``COMPARE``); ART's line records the sampler,
 optimizer and traversal it ran with. Oracle counts are reported as
 each method counts them: AFINNI's include its centroid evaluations when the split
 strategy needs ``f(c)`` (the default covariance-Hessian split does).
@@ -95,6 +98,14 @@ def main() -> None:
     warnings.simplefilter("ignore")
     args = parse_args(art_argv)
     validate_args(args)
+    # Region mode always fits affine leaves to a pointwise relative rule; any other ART
+    # setting would compare two different problems.
+    if args.leaf_degree != 1 or args.error_metric != "max_pointwise_relative":
+        raise SystemExit(
+            f"art_comparison needs --leaf-degree 1 and --error-metric max_pointwise_relative "
+            f"(got {args.leaf_degree} and {args.error_metric!r}): AFINNI's region mode fits "
+            "affine leaves against the pointwise relative tolerance"
+        )
     low, high = BENCHMARK_DEFAULT_INTERVALS[args.benchmark]
     low = low if args.domain_low is None else args.domain_low
     high = high if args.domain_high is None else args.domain_high
@@ -149,6 +160,9 @@ def main() -> None:
                               validation_samples=mine.afinni_validation, walk_steps=mine.afinni_walk_steps,
                               split_search=mine.afinni_search),
     )  # fmt: skip
+    print("CONFIG " + json.dumps({"art": {k: v for k, v in sorted(vars(args).items()) if not callable(v)},
+                                  "afinni_region": config.region.__dict__ | {"split_strategy": mine.afinni_split}},
+                                 default=str), flush=True)  # fmt: skip
     model = AFINNISurrogate()
     t = time.perf_counter()
     model.train(X0, config, Evaluator(f_fn=f))

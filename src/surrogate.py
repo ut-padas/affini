@@ -274,6 +274,18 @@ class AFINNISurrogate:
                     RuntimeWarning,
                     stacklevel=2,
                 )
+            if self.routing is not None:
+                n_weak = self.leaf_status_counts()["validation_status"]["insufficient_sampling"]
+                if n_weak:
+                    # ``converged`` only says no node is still above tolerance; these leaves
+                    # passed on samples that may not cover their region.
+                    warnings.warn(
+                        f"{n_weak:,} region leaves have validation_status='insufficient_sampling' "
+                        "(their samples may not cover the region); see route_details() and "
+                        "leaf_status_counts().",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
 
     def save_model(self, filepath: Union[str, Path]) -> Path:
         """
@@ -436,6 +448,9 @@ class AFINNISurrogate:
                     f"{source}: local model {local_model.name!r} needs column "
                     f"{name!r} of shape {(n, *spec.shape)}; found {got}."
                 )
+        routing = state["routing"]
+        if routing is not None and routing.n_leaves != n:
+            raise ValueError(f"{source}: the region tree has {routing.n_leaves} leaves but the model has {n}.")
         t0 = time.perf_counter()
         state["knn_index"] = _make_knn_index(state["X_src"]) if state["Qs_src"] is not None else None
         if _get_mpi_rank() == 0:
@@ -677,6 +692,20 @@ class AFINNISurrogate:
             raise ValueError("route_leaves needs a region-mode model (algorithm='region').")
         return self.routing.route(xp.asarray(query_points, dtype=xp.float64))[0]
 
+    def route_details(self, query_points: Array) -> dict[str, Array]:
+        """
+        Per query: the leaf row, whether it lies outside the domain, and that leaf's
+        ``terminal_reason`` / ``validation_status`` codes (indices into ``TERMINAL_REASONS``
+        / ``VALIDATION_STATUSES``), so a caller can flag predictions from weak leaves.
+        """
+        if self.routing is None:
+            raise ValueError("route_details needs a region-mode model (algorithm='region').")
+        leaf, outside = self.routing.route(xp.asarray(query_points, dtype=xp.float64))
+        out = {"leaf": leaf, "outside": outside}
+        for col in ("terminal_reason", "validation_status"):
+            out[col] = xp.asarray(self.region_leaves[col])[leaf]
+        return out
+
     def leaf_status_counts(self) -> dict[str, dict[str, int]]:
         """How many leaves end with each terminal reason and validation status (region mode)."""
         out = {}
@@ -698,39 +727,62 @@ class AFINNISurrogate:
         """
         The global accuracy claim for a region-mode model: draw ``n_points`` iid uniform
         points of its domain (independent of training), predict them by routing, and
-        count tolerance violations, ``max_j |f_j - f_hat_j| / max(atol_j, rtol_j |f_j|) > 1``.
+        count tolerance violations with the same row test as pointwise training
+        (``src.acceptance.pointwise_violations``: a point passes only if every component
+        has ``|e| < atol`` or ``|e| / max(|f|, 1e-12) < rtol``).
 
+        A non-finite oracle value or prediction counts as a violation (reported as
+        ``n_invalid`` too): the bounded event is "fails the tolerance or cannot be
+        evaluated", and invalid rows are never dropped, which would change the measure.
         Returns the count and a one-sided ``confidence`` upper bound on the violation
         probability under the uniform measure (Clopper-Pearson; ``1 - (1 - confidence)^(1/n)``
         with no violations: e.g. 299 points bound it below 1% at 95%). The bound is for the
-        frozen model and this measure; it does not bound the error at every point, and
-        auditing again after changing the model needs fresh points (a new ``seed``).
-        Tolerances default to the training ones. Runs on the calling rank only.
+        frozen model and this measure; it does not bound the error at every point, and a
+        model chosen after inspecting audits needs a fresh, reserved audit (a new
+        ``seed`` alone does not undo that selection). Tolerances default to the ones the
+        trained acceptance test used. Runs on the calling rank only.
         """
         if self.routing is None:
             raise ValueError("audit needs a region-mode model (algorithm='region').")
+        if isinstance(n_points, bool) or not isinstance(n_points, (int, np.integer)) or n_points < 1:
+            raise ValueError(f"n_points must be a positive integer; got {n_points!r}.")
+        if not (isinstance(confidence, (int, float)) and np.isfinite(confidence) and 0 < confidence < 1):
+            raise ValueError(f"confidence must be strictly between 0 and 1; got {confidence!r}.")
         from scipy.stats import beta
 
-        atol = normalize_tolerance("atol", atol if atol is not None or rtol is not None else self.config.get("atol"))
-        rtol = normalize_tolerance("rtol", rtol if rtol is not None else self.config.get("rtol"))
+        from src.acceptance import pointwise_violations
+
+        if atol is None and rtol is None:  # the resolved acceptance test's own tolerances
+            trained = self.config.get("components", {}).get("acceptance", {}).get("settings", {})
+            atol, rtol = trained.get("atol", self.config.get("atol")), trained.get("rtol", self.config.get("rtol"))
+        atol, rtol = normalize_tolerance("atol", atol), normalize_tolerance("rtol", rtol)
+        if atol is None and rtol is None:
+            raise ValueError("audit needs atol, rtol or both (the model records none).")
         dom = self.routing.domain
         # A NumPy stream on every backend, so the audit points do not depend on the device.
         U = np.random.default_rng(np.random.SeedSequence([int(seed), 0xA0D17])).random((int(n_points), dom.d))
         X = xp.asarray(dom.lower + U * dom.width)
         F, _ = evaluator(X)
         F_hat, _ = self._predict_route_local(X)
+        if tuple(F.shape) != tuple(F_hat.shape):
+            raise ValueError(f"The oracle returned shape {tuple(F.shape)}; the model predicts {tuple(F_hat.shape)}.")
+        violations = pointwise_violations(F, F_hat, atol, rtol)
+        invalid = ~xp.all(xp.isfinite(F) & xp.isfinite(F_hat), axis=1)
         fd = F.shape[1]
-        scale = xp.maximum(
+        scale = xp.maximum(  # the scaled error, a diagnostic only (failure comes from the predicate)
             xp.maximum(tolerance_vector("atol", atol, fd), 0.0),
-            xp.maximum(tolerance_vector("rtol", rtol, fd), 0.0) * xp.abs(F),
+            xp.maximum(tolerance_vector("rtol", rtol, fd), 0.0) * xp.maximum(xp.abs(F), 1e-12),
         )
-        err = xp.max(xp.abs(F - F_hat) / scale, axis=1)
-        k, n = int(xp.sum(err > 1.0)), int(n_points)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            scaled = xp.max(xp.abs(F - F_hat) / scale, axis=1)
+        k, n = int(xp.sum(violations)), int(n_points)
         upper = 1.0 if k >= n else float(beta.ppf(confidence, k + 1, n - k))
+        finite = scaled[~invalid]
         return {
-            "n_points": n, "n_violations": k, "violation_rate": k / n if n else float("nan"),
-            "upper_bound": upper, "confidence": confidence, "max_scaled_error": float(xp.max(err)) if n else float("nan"),
-            "measure": "uniform on the domain", "seed": int(seed),
+            "n_points": n, "n_violations": k, "n_invalid": int(xp.sum(invalid)), "violation_rate": k / n,
+            "upper_bound": upper, "confidence": confidence,
+            "max_scaled_error": float(xp.max(finite)) if int(finite.shape[0]) else float("nan"),
+            "measure": "uniform on the domain", "seed": int(seed), "atol": atol, "rtol": rtol,
         }  # fmt: skip
 
     def filter_unguaranteed_local(

@@ -182,3 +182,43 @@ def test_single_rank_respects_refinement_limit(monkeypatch, stealing, max_levels
     levels = result["profiling_stats"]["level_stats"]
     assert levels[-1]["level"] == max_levels
     assert result["converged"] is False and result["num_unresolved_clusters"] > 0
+
+
+class _OneRequest:
+    """Rank 0 of two with one pending steal request from rank 1; records what it sends."""
+
+    def __init__(self):
+        self.pending, self.loads, self.header = True, [], None
+
+    def Get_rank(self):  # noqa: N802
+        return 0
+
+    def Get_size(self):  # noqa: N802
+        return 2
+
+    def Iprobe(self, source, tag, status=None):  # noqa: N802
+        return tag == ws.TAG_STEAL_REQ and self.pending
+
+    def recv(self, source, tag):
+        self.pending = False
+
+    def send(self, obj, dest, tag):
+        self.header = obj
+
+    def Send(self, buf, dest, tag):  # noqa: N802
+        if tag == ws.TAG_STATE_BROADCAST:
+            self.loads.append(int(buf[0]))
+
+
+def test_grants_and_published_loads_use_the_plans_work_units(monkeypatch):
+    """With a per-node overhead, a grant takes more small nodes than raw points would, and the load sent after it is in the same units."""
+    monkeypatch.setattr(ws, "MPI", _MPI)
+    sizes = np.array([1] * 7 + [40])
+    queue = ClusterBatch(np.zeros((47, 1)), np.zeros((47, 1)), None, sizes)
+    profiler = Profiler(new_profiling_stats())
+    for work_sizes, n_given, load_after in ((None, 1, 7), (lambda s: s + 100, 4, 4 * 101)):
+        comm = _OneRequest()
+        stealer = ws.WorkStealer(comm, 1, 1, profiler, min_load=0, steal_size=1, work_sizes=work_sizes)
+        left = stealer.serve_requests(queue, 0, level=0)
+        assert comm.header["n_clusters"] == n_given and left.n_clusters == 8 - n_given
+        assert comm.loads == [load_after]

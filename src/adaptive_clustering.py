@@ -260,8 +260,15 @@ def _run_local_refinement(
         )
         level_generated = 0
 
-        level_total_pts = int(np.sum(work_sizes(queue.sizes)))
-        aug_cumsum_cpu = np.cumsum(work_sizes(queue.sizes))
+        level_work = work_sizes(queue.sizes)
+        level_total_pts = int(np.sum(level_work))
+        aug_cumsum_cpu = np.cumsum(level_work)
+        largest = int(np.max(level_work)) if len(level_work) else 0
+        if largest > config.batch_size:
+            logger.warning(
+                f"R{rank:02} L{level:02}: a cluster of {largest:,} points exceeds batch_size="
+                f"{config.batch_size:,}; it is processed alone and may exceed the memory budget"
+            )
 
         # Children of this level's rejected clusters, collected batch by batch.
         next_level = ClusterQueueBuilder(
@@ -942,7 +949,14 @@ def _adaptive_clustering(
 
     hardware_batch_cap = usable_vram_bytes // max(1, estimated_peak_bytes_per_point)
     # AFINNI mode keeps its floor of 50,000 points, so its batches stay bit-identical.
-    dynamic_batch_cap = int(np.clip(hardware_batch_cap, 50_000 if plan is None else 1_000, 20_000_000))
+    batch_floor = 50_000 if plan is None else 1_000
+    if hardware_batch_cap < batch_floor:
+        logger.warning(
+            f"Estimated device memory fits only {hardware_batch_cap:,} points per batch "
+            f"({estimated_peak_bytes_per_point:,.0f} bytes/point); using the floor of "
+            f"{batch_floor:,}, which may run out of memory"
+        )
+    dynamic_batch_cap = int(np.clip(hardware_batch_cap, batch_floor, 20_000_000))
     if config.batch_size > dynamic_batch_cap:
         logger.info(
             "Hardware VRAM scaling: reducing batch_size from %s to %s for d=%s, "

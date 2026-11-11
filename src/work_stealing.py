@@ -100,14 +100,19 @@ class WorkStealer:
     def __init__(
         self, comm, d: int, fd: int, profiler: Profiler, *,
         min_load: int | None = None, steal_size: int | None = None, lease_received: bool = False,
+        work_sizes=None,
     ):  # fmt: skip
         """
         ``min_load`` and ``steal_size`` default to the module constants (read at call
         time). With ``lease_received``, a rank never re-offers clusters it received until
         it has processed them: their children are new jobs and may be stolen, but the
-        received jobs themselves cannot bounce between idle ranks.
+        received jobs themselves cannot bounce between idle ranks. ``work_sizes(sizes)``
+        gives each queued cluster's work in the unit loads are published in (default: its
+        points); eligibility, grant size and the published load all use it, so thieves and
+        victims compare the same quantity.
         """
         self.comm = comm
+        self.work_sizes = work_sizes or (lambda sizes: sizes)
         self._min_load, self._steal_size = min_load, steal_size
         self.lease_received = lease_received
         self._leased = False
@@ -199,8 +204,8 @@ class WorkStealer:
         Answer every pending steal request and return what is left of ``queue``.
 
         Clusters before ``start_cluster`` are already being processed and are never
-        given away. A grant takes clusters from the tail, about half the unprocessed points
-        (at least ``steal_size``),
+        given away. A grant takes clusters from the tail, about half the unprocessed work
+        in ``work_sizes`` units (at least ``steal_size``),
         and always leaves at least one unprocessed cluster. ``batch`` is the batch
         index for mid-level calls, or None at a level boundary.
         """
@@ -216,14 +221,15 @@ class WorkStealer:
             self.comm.recv(source=thief, tag=TAG_STEAL_REQ)
 
             n_open = 0 if self._leased else queue.n_clusters - start_cluster
-            open_pts = int(np.sum(queue.sizes[start_cluster:])) if n_open > 0 else 0
+            open_work = np.asarray(self.work_sizes(queue.sizes[start_cluster:]))
+            open_pts = int(np.sum(open_work)) if n_open > 0 else 0
             min_load = self.min_load
             if n_open > 1 and open_pts > min_load:
                 t_send = time.perf_counter()
-                # Give about half of the unprocessed work (at least STEAL_SIZE points),
+                # Give about half of the unprocessed work (at least STEAL_SIZE units),
                 # so a heavily loaded victim sheds its surplus in a few grants.
                 target = max(self.steal_size, open_pts // 2)
-                rev_cumsum = np.cumsum(queue.sizes[start_cluster:][::-1])
+                rev_cumsum = np.cumsum(open_work[::-1])
                 n_give = min(int(np.searchsorted(rev_cumsum, target)) + 1, n_open - 1)
                 queue, gift = queue.split(queue.n_clusters - n_give)
                 send_clusters(self.comm, gift, thief)
@@ -232,7 +238,7 @@ class WorkStealer:
                     "steal_grant", thief=thief, n_pts=gift.n_pts,
                     n_clusters=gift.n_clusters, mid_level=batch is not None, dur=elapsed,
                 )  # fmt: skip
-                self.publish_load(queue.n_pts)
+                self.publish_load(int(np.sum(self.work_sizes(queue.sizes))))
 
                 kind = "mid-level steal" if batch is not None else "steal"
                 logger.info(
@@ -322,7 +328,7 @@ class WorkStealer:
                         n_clusters=stolen.n_clusters, has_g=stolen.G is not None,
                         waited=waited, dur=transfer,
                     )  # fmt: skip
-                    self.publish_load(stolen.n_pts)
+                    self.publish_load(int(np.sum(self.work_sizes(stolen.sizes))))
                     logger.info(
                         f"R{self.rank:02}: Steal OK from R{target:02} | "
                         f"pts={stolen.n_pts:,} clusters={stolen.n_clusters:,} | "

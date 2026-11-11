@@ -61,6 +61,47 @@ def test_audit_reports_violations_and_a_binomial_bound(trained):
     assert clean["n_violations"] == 0 and clean["upper_bound"] == pytest.approx(1 - 0.05 ** (1 / 299))
 
 
+def test_audit_counts_non_finite_oracle_values_as_violations(trained):
+    def poisoned(x):
+        f = wavy(x)
+        f[::3] = xp.nan
+        f[1::3] = xp.inf
+        return f
+
+    audit = trained.audit(Evaluator(f_fn=poisoned), 300, seed=1, atol=1e9)  # finite rows cannot fail
+    assert audit["n_invalid"] == audit["n_violations"] == 200
+    assert np.isfinite(audit["max_scaled_error"])
+
+
+def test_audit_defaults_to_the_trained_tolerances_and_an_error_at_the_tolerance_fails(trained):
+    from src.acceptance import pointwise_violations
+
+    default = trained.audit(Evaluator(f_fn=wavy), 500, seed=3)
+    explicit = trained.audit(Evaluator(f_fn=wavy), 500, seed=3, atol=1e-2, rtol=1e-2)
+    assert default["n_violations"] == explicit["n_violations"] and default["atol"] == explicit["atol"]
+    F = xp.asarray([[1.0], [1.0]])
+    at_tol = pointwise_violations(F, F + xp.asarray([[0.5], [0.25]]), atol=0.5, rtol=None)
+    np.testing.assert_array_equal(host(at_tol), [True, False])  # strict, as in training
+
+
+@pytest.mark.parametrize("kwargs", [{"n_points": 0}, {"n_points": 2.5}, {"n_points": True},
+                                    {"confidence": 1.0}, {"confidence": float("nan")}])  # fmt: skip
+def test_audit_rejects_invalid_arguments(trained, kwargs):
+    with pytest.raises(ValueError):
+        trained.audit(Evaluator(f_fn=wavy), **{"n_points": 10, **kwargs})
+
+
+def test_route_details_report_each_querys_leaf_status(trained):
+    from src.region import TERMINAL_REASONS, VALIDATION_STATUSES
+
+    q = np.array([[0.3, -0.2], [1.5, 0.0]])
+    details = trained.route_details(q)
+    np.testing.assert_array_equal(host(details["leaf"]), host(trained.route_leaves(q)))
+    np.testing.assert_array_equal(host(details["outside"]), [False, True])
+    assert TERMINAL_REASONS[int(host(details["terminal_reason"])[0])] == "accepted"
+    assert VALIDATION_STATUSES[int(host(details["validation_status"])[0])] == "passed"
+
+
 def test_routed_predictions_match_the_leaf_models_and_flag_only_the_domain(trained):
     q = np.array([[0.3, -0.2], [1.5, 0.0], [-1.0, 1.0]])
     pred, outside = trained.predict(q)
@@ -156,7 +197,8 @@ def test_every_split_search_builds_a_valid_batch_independent_tree(points, search
     counters = big.profiling_stats["region"]
     assert counters["splits"] == big.profiling_stats["num_split_nodes"]
     if search == "soft":
-        assert counters["soft_converged"] + counters["soft_stalled"] + counters["soft_improved"] > 0
+        stops = ("soft_gradient_converged", "soft_line_search_stalled", "soft_gate_saturated", "soft_nonfinite", "soft_iteration_limit")
+        assert sum(counters[c] for c in stops) > 0  # every refined node ends with exactly one reason
 
 
 def step(x):
@@ -208,3 +250,13 @@ def test_routed_only_models_store_no_q_and_refuse_knn(tmp_path, points):
     loaded = AFINNISurrogate.load_model(model.save_model(tmp_path))
     assert loaded.Qs_src is None
     assert_backend_equal(loaded.predict(points[:20])[0], model.predict(points[:20])[0])
+
+
+@pytest.mark.filterwarnings("ignore:Training stopped:RuntimeWarning")
+def test_training_warns_when_leaves_have_insufficient_sampling(points):
+    """``converged`` says nothing about sampling quality: nodes failing the drift check (forced here) are reported."""
+    with pytest.warns(RuntimeWarning, match="insufficient_sampling"):
+        model = train_surrogate(points, **region_options(
+            region=RegionSettings(sample_multiplier=10, walk_steps=2, max_walk_steps=2, mixing_z=1e-9), max_levels=6,
+        ))  # fmt: skip
+    assert model.leaf_status_counts()["validation_status"]["insufficient_sampling"] > 0

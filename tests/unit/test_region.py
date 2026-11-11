@@ -240,6 +240,9 @@ def test_soft_refinement_never_returns_a_worse_hard_split_than_its_incumbent():
     sse, ok = _hard_sse(rows, w, z, plan.min_side)
     assert bool(ok[0]) and float(sse[0]) <= float(sse0[0])
     assert plan.counters["soft_improved"] == 1  # the step in x0 = 0.4 is found
+    reasons = ("soft_gradient_converged", "soft_line_search_stalled", "soft_gate_saturated",
+               "soft_nonfinite", "soft_iteration_limit")  # fmt: skip
+    assert sum(plan.counters[r] for r in reasons) == 1  # one termination reason per refined node
 
 
 def test_drift_check_flags_short_chains_from_packed_seeds_and_extension_clears_it():
@@ -274,3 +277,120 @@ def test_paired_uniforms_are_open_uniform_and_uncorrelated():
     np.testing.assert_allclose(u.var(axis=0), 1 / 12, atol=2e-3)
     assert abs(np.corrcoef(u[:, 0], u[:, 1])[0, 1]) < 0.02
     np.testing.assert_array_equal(u, host(counter_uniform_pairs(keys[0], PURPOSE_TRAIN, xp.arange(100_000))))
+
+
+def _walk(roots, seeds, n_new, d, max_steps=64):
+    """Hit-and-run in the whole unit cube (one redundant cut u0 <= 1), seeded at ``seeds``."""
+    domain = Domain(np.zeros(d), np.ones(d))
+    constraints = xp.asarray(np.r_[1.0, np.zeros(d - 1), 1.0][None, None, :])
+    geo = RegionPoints(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([2])), constraints, PURPOSE_TRAIN)
+    X = HitAndRunSampler(domain, roots, walk_steps=8, max_walk_steps=max_steps).sample(
+        ClusterPoints(xp.asarray(seeds), xp.asarray([len(seeds)]), region=geo), xp.asarray([n_new])
+    )
+    return host(X), bool(geo.insufficient[0])
+
+
+def test_a_one_centre_voronoi_root_walks_exactly_like_the_box():
+    """The cell's own centre gives no bisector, so the walk sees only the box and the cut."""
+    seeds = np.random.default_rng(0).random((4, 2)) * 0.5
+    box, flag_box = _walk(Roots.build("box", 2, 1), seeds, 300, 2)
+    vor, flag_vor = _walk(Roots.build("voronoi", 2, 1, centres=np.array([[0.3, 0.6]])), seeds, 300, 2)
+    np.testing.assert_array_equal(vor, box)
+    assert flag_vor == flag_box
+
+
+def test_duplicate_voronoi_centres_are_dropped_keeping_the_first():
+    roots = Roots.build("voronoi", 2, 3, centres=np.array([[0.2, 0.2], [0.8, 0.8], [0.2, 0.2]]))
+    np.testing.assert_array_equal(roots.centres, [[0.2, 0.2], [0.8, 0.8]])
+
+
+def test_chains_stuck_in_a_20d_corner_are_recovered_or_flagged():
+    """From the corner nearly every random chord has zero length; coordinate moves get out."""
+    d, corner = 20, np.zeros((5, 20))
+    _, flagged = _walk(Roots.build("box", d, 1), corner, 400, d, max_steps=64)
+    assert flagged  # moved but not mixed within the budget: never reported as fine
+    X, flagged = _walk(Roots.build("box", d, 1), corner, 400, d, max_steps=4096)
+    assert not flagged and np.all(np.any(X != 0.0, axis=1)) and np.all((X >= 0) & (X <= 1))
+    np.testing.assert_allclose(X.mean(axis=0), 0.5, atol=0.06)
+
+
+def test_threshold_search_skips_nodes_too_small_to_split_beside_valid_ones():
+    """A sparse node (fewer than 2 * min_side points, as B1 can produce) gets no candidate and no cross-node read."""
+    from src.config import ClusteringConfig
+    from src.region import RegionPlan, _SplitRows
+
+    cfg = ClusteringConfig(atol=1e-3, algorithm="region", domain=([0, 0], [1, 1]), region={"split_search": "bins"})
+    plan = RegionPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
+    big = _rows(np.random.default_rng(3))
+    n_small = 2 * plan.min_side - 1
+    U = xp.concatenate([big.U, xp.asarray(np.random.default_rng(4).random((n_small, 2)))])
+    Y = xp.concatenate([big.Y, xp.ones((n_small, 1))])
+    Phi = xp.concatenate([U, xp.ones((U.shape[0], 1))], axis=1)
+    labels = xp.asarray(np.r_[np.zeros(60), np.ones(n_small)].astype(np.int64))
+    rows = _SplitRows(U, Y, Phi, labels, xp.asarray([60, n_small]))
+    bank = xp.asarray(np.broadcast_to(np.eye(2), (2, 2, 2)).copy())
+    _, z, sse = plan._threshold_search(rows, bank)
+    assert np.isfinite(host(z)[0]) and np.isfinite(host(sse)[0])
+    assert np.isnan(host(z)[1]) and np.isinf(host(sse)[1])
+    alone = _SplitRows(big.U, big.Y, big.Phi, big.labels, big.counts)
+    _, z_alone, _ = plan._threshold_search(alone, bank[:1])
+    assert float(host(z_alone)[0]) == float(host(z)[0])
+
+
+def test_a_62_level_skinny_tree_with_many_roots_routes_to_its_deepest_leaf():
+    """Child indices, not packed keys: full path-code depth even with many roots."""
+    depth = 62
+    domain, roots = Domain(np.zeros(2), np.ones(2)), Roots.build("grid", 2, 1024)
+    # Root 1023 halves u0 repeatedly towards 1: path codes 1, 3, 7, ... (always the right child).
+    split_path = [(1 << (k + 1)) - 1 for k in range(depth)]
+    leaf_path = [p << 1 for p in split_path] + [(split_path[-1] << 1) | 1]
+    lo, hi = (host(b)[1023] for b in roots.bounds())
+    z = [lo[0] + (hi[0] - lo[0]) * (1 - 0.5 ** (k + 1)) for k in range(depth)]
+    others = [r for r in range(1024) if r != 1023]
+    table = RoutingTable.build(
+        domain, roots, leaf_root=others + [1023] * (depth + 1), leaf_path=[1] * 1023 + leaf_path,
+        split_root=[1023] * depth, split_path=split_path, w=np.tile([1.0, 0.0], (depth, 1)), z=np.array(z),
+    )  # fmt: skip
+    q = xp.asarray([[float(hi[0]), float((lo[1] + hi[1]) / 2)]])
+    leaf, outside = table.route(q)
+    assert int(host(leaf)[0]) == table.n_leaves - 1 and not bool(host(outside)[0])
+    again = RoutingTable.from_arrays(table.arrays())
+    assert int(host(again.route(q)[0])[0]) == table.n_leaves - 1
+
+
+def test_routing_table_loads_the_packed_key_format():
+    domain, roots, tree = _tree()
+    shift = 8
+    sk = (np.array(tree["split_root"]) << shift) | np.array(tree["split_path"])
+    lk = (np.array(tree["leaf_root"]) << shift) | np.array(tree["leaf_path"])
+    order = np.argsort(lk)
+    old = {
+        "domain_lower": np.zeros(2), "domain_upper": np.ones(2), "root_bins": roots.bins, "shift": shift,
+        "split_keys": sk, "leaf_keys": lk[order], "leaf_index": order, "w": tree["w"], "z": tree["z"],
+    }  # fmt: skip
+    new = RoutingTable.build(domain, roots, **tree)
+    q = xp.asarray(np.random.default_rng(1).random((200, 2)))
+    np.testing.assert_array_equal(host(RoutingTable.from_arrays(old).route(q)[0]), host(new.route(q)[0]))
+
+
+@pytest.mark.parametrize("broken", ["nan_plane", "bad_shape", "unknown_root"])
+def test_loaded_routing_tables_are_validated(broken):
+    domain, roots, tree = _tree()
+    a = RoutingTable.build(domain, roots, **tree).arrays()
+    if broken == "nan_plane":
+        a["w"] = a["w"].copy()
+        a["w"][0, 0] = np.nan
+    elif broken == "bad_shape":
+        a["z"] = a["z"][:1]
+    else:
+        a["leaf_root"] = np.asarray(a["leaf_root"]).copy()
+        a["leaf_root"][0] = 5
+    with pytest.raises(ValueError):
+        RoutingTable.from_arrays(a)
+
+
+@pytest.mark.parametrize("query", [[[np.nan, 0.5]], [[0.5, np.inf]], [[0.5, 0.5, 0.5]]])
+def test_routing_rejects_non_finite_or_misshaped_queries(query):
+    domain, roots, tree = _tree()
+    with pytest.raises(ValueError):
+        RoutingTable.build(domain, roots, **tree).route(xp.asarray(query))
