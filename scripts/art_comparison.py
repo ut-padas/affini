@@ -168,7 +168,19 @@ def main() -> None:
     model.train(X0, config, Evaluator(f_fn=f))
     seconds = time.perf_counter() - t
     # The resolved components (local model, acceptance, split strategy and their settings), not the request.
-    print("CONFIG " + json.dumps({"art": {k: v for k, v in sorted(vars(args).items()) if not callable(v)},
+    # "effective" states what both methods actually ran where a requested flag or a
+    # registered component name says otherwise (ART forces the intercept for degree 1;
+    # region mode samples by hit-and-run unless region.sampling says convex_combination,
+    # whatever the generic AFINNI sampler component is).
+    effective = {
+        "art": {"leaf_degree": 1, "leaf_include_bias": True, "error_metric": args.error_metric,
+                "relative_error_floor": args.relative_error_floor, "sampler": args.sampler},
+        "afinni_region": {"leaf_model": "affine with intercept", "sampling": config.region.sampling,
+                          "acceptance": "pointwise", "relative_error_floor": 1e-12,
+                          "split_search": config.region.split_search, "roots": config.region.roots},
+    }  # fmt: skip
+    print("CONFIG " + json.dumps({"effective": effective,
+                                  "art_requested": {k: v for k, v in sorted(vars(args).items()) if not callable(v)},
                                   "afinni_region": {"region": config.region.__dict__, **model.config["components"]}},
                                  default=str), flush=True)  # fmt: skip
     evaluation, frac = evaluate(_RegionModel(model))

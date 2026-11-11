@@ -5,8 +5,8 @@ AFINNI_MPI=off, as the reference).
 Region mode draws every random number from a stream keyed by the node, so the tree
 must not depend on the rank count or on which rank processed a node. Rank 0 prints
 the sorted leaf keys, a hash of the predictions on fixed queries and the number of
-steal grants, for stealing off and for stealing forced by tiny thresholds. One box root
-puts all initial work on rank 0, so the other ranks must steal.
+steal grants, for stealing off and for stealing forced by tiny thresholds, with box and
+Voronoi roots. One box root puts all initial work on rank 0, so the other ranks must steal.
 """
 
 import hashlib
@@ -51,12 +51,15 @@ def main() -> None:
         # B4 calls progress() inside its optimizer, so requests are served mid-batch.
         ("soft_no_steal", False, {"split_search": "soft", "soft_iters": 8}),
         ("soft_steal", True, {"split_search": "soft", "soft_iters": 8, **forced}),
+        # Voronoi roots exercise the bisector chords, root assignment and walk recovery.
+        ("voronoi_no_steal", False, {"roots": "voronoi"}),
+        ("voronoi_steal", True, {"roots": "voronoi", **forced}),
     ):
         grants["n"] = 0
         config = ClusteringConfig(
             atol=2e-2, rtol=2e-2, algorithm="region", domain=([-1] * 3, [1] * 3), max_levels=12,
             num_initial_clusters=8, batch_size=2_000, use_work_stealing=stealing,
-            region=RegionSettings(roots="box", sample_multiplier=8, validation_samples=8, **settings),
+            region=RegionSettings(**{"roots": "box", "sample_multiplier": 8, "validation_samples": 8, **settings}),
         )  # fmt: skip
         model = AFINNISurrogate()
         model.train(X, config, Evaluator(f_fn=f))

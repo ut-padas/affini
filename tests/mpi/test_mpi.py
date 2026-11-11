@@ -179,7 +179,8 @@ def test_region_mode_is_independent_of_ranks_and_stealing(mpi_launcher, region_s
     """Node-keyed random streams: the same tree and predictions on any rank count, with or without steals."""
     parallel = _run_worker([*mpi_launcher, "-n", str(N_RANKS)], module="tests.mpi._region_worker")
     for name, ref in (("no_steal", "no_steal"), ("steal", "no_steal"), ("soft_no_steal", "soft_no_steal"),
-                      ("soft_steal", "soft_no_steal")):  # fmt: skip
+                      ("soft_steal", "soft_no_steal"), ("voronoi_no_steal", "voronoi_no_steal"),
+                      ("voronoi_steal", "voronoi_no_steal")):  # fmt: skip
         reference = region_serial[ref]
         for key in ("leaves", "keys_hash", "pred_hash", "evals", "statuses", "outside"):
             assert parallel[name][key] == reference[key], (name, key, parallel[name], reference)

@@ -190,16 +190,25 @@ class Roots:
     def root_of(self, U: Array) -> Array:
         """
         (n,) int64 root of every normalized point: grid points on a cell face go to the
-        upper cell; Voronoi points to the nearest centre by exact squared distance (ties
-        to the lowest index). Training and routing both assign roots through this.
+        upper cell; Voronoi points to the nearest centre (ties to the lowest index).
+        Training, sampling and routing all assign roots through this.
+
+        Voronoi ownership is decided relative to a candidate ``r`` (the smallest squared
+        distance): ``|u - c_j|^2 - |u - c_r|^2 = D_j^T (D_j - 2 (u - c_r))`` with
+        ``D_j = c_j - c_r``, the sampler's bisector test. Full squared distances share
+        the tangential part, which can absorb the normal difference of close centres
+        (2-D centres 1e-8 apart misassigned 21 of 200 in-cell points).
         """
         if self.is_voronoi:
             C = xp.asarray(self.centres)
-            rows = max(1, self.TILE_ELEMENTS // max(1, C.size))
-            out = [
-                xp.argmin(xp.sum((U[s : s + rows, None, :] - C[None]) ** 2, axis=2), axis=1)
-                for s in range(0, int(U.shape[0]), rows)
-            ]
+            rows = max(1, self.TILE_ELEMENTS // max(1, 3 * C.size))
+            out = []
+            for s in range(0, int(U.shape[0]), rows):
+                u = U[s : s + rows]
+                cand = xp.argmin(xp.sum((u[:, None, :] - C[None]) ** 2, axis=2), axis=1)
+                D = C[None] - C[cand][:, None, :]
+                rel = xp.sum(D * (D - 2.0 * (u - C[cand])[:, None, :]), axis=2)  # 0 at the candidate
+                out.append(xp.argmin(rel, axis=1))
             return xp.concatenate(out).astype(xp.int64) if out else xp.zeros(0, dtype=xp.int64)
         bins = xp.asarray(self.bins)
         coords = xp.minimum(xp.floor(U * bins).astype(xp.int64), bins - 1)
@@ -287,7 +296,8 @@ class HitAndRunSampler(Sampler):
 
             def run(U, rows, bad, coordinate):
                 """Walk ``rows``, doubling while their node drifts; returns (U, bad, drift)."""
-                t_end = self.walk_steps
+                # A coordinate recovery runs at least two full sweeps when the budget allows.
+                t_end = min(max(self.walk_steps, 2 * d), self.max_walk_steps) if coordinate else self.walk_steps
                 U_mid, bad = self._walk(clusters, geo, owner, draw, U, rows, 0, t_end // 2, bad, coordinate)
                 U, bad = self._walk(clusters, geo, owner, draw, U_mid, rows, t_end // 2, t_end, bad, coordinate)
                 while True:
@@ -299,15 +309,18 @@ class HitAndRunSampler(Sampler):
                     t_end *= 2
 
             U, bad, drift = run(U, walk, bad, coordinate=False)
-            unmoved = walk & ~xp.any(U != U0, axis=1)
+            # A chain that left any coordinate at its start value has not left the start's
+            # face: a full-dimensional move changes every coordinate with probability 1, so
+            # "moved at all" would accept points still on a zero-volume face of the cell.
+            unmoved = walk & xp.any(U == U0, axis=1)
             if bool(xp.any(unmoved)):
-                # Every unmoved chain is rerun, not only nodes where most are stuck: a node
-                # with 40% of its points left on a corner (a zero-volume atom) is as wrong.
-                # The recovery walk must pass the same drift check: moving is not mixing.
+                # Every such chain is rerun, not only nodes where most are stuck: a node with
+                # 40% of its points on a corner (a zero-volume atom) is as wrong. The recovery
+                # walk must pass the same drift check, on its own chains: moving is not mixing.
                 touched = _per_node_sum(unmoved.astype(xp.float64), n_new) > 0
                 U, bad, recovery_drift = run(U, unmoved, bad, coordinate=True)
                 drift = xp.where(touched, recovery_drift | drift, drift)
-            stuck = _per_node_sum((walk & ~xp.any(U != U0, axis=1)).astype(xp.float64), n_new) > 0
+            stuck = _per_node_sum((walk & xp.any(U == U0, axis=1)).astype(xp.float64), n_new) > 0
             infeasible = _per_node_sum(bad.astype(xp.float64), n_new) > 0
             geo.insufficient = drift | stuck | infeasible
         return self.domain.denormalize(U)
@@ -417,8 +430,10 @@ class HitAndRunSampler(Sampler):
             q = (d + 1) // 2
             r = self._uniforms(stream, owner, draw, self._start_hashes + 1 + t * self._step_hashes, 2 * q + 1)
             if coordinate:
-                axis = xp.minimum((r[:, 0] * d).astype(xp.int64), d - 1)
-                g = (xp.arange(d)[None, :] == axis[:, None]).astype(xp.float64)
+                # Systematic sweeps: every d steps touch every axis, so a chain cannot keep an
+                # untouched corner coordinate (random axes miss one with prob. ~d (1-1/d)^t).
+                g = xp.zeros((int(U.shape[0]), d))
+                g[:, t % d] = 1.0
             else:
                 # Box-Muller gives two independent normals per pair (cosine and sine).
                 radius, angle = xp.sqrt(-2.0 * xp.log(r[:, :q])), 2.0 * math.pi * r[:, q : 2 * q]
@@ -448,20 +463,27 @@ class HitAndRunSampler(Sampler):
         return U, bad
 
     def _drifting(self, U_mid: Array, U_end: Array, owner: Array, walk: Array, n_new: Array) -> Array:
-        """(K,) nodes whose walking chains moved visibly between the halfway and final steps."""
+        """
+        (K,) nodes whose ``walk`` chains moved visibly between the halfway and final steps,
+        from those chains' own count, means and centred variances (at least 4 chains).
+        """
         K = int(n_new.shape[0])
         out = xp.zeros(K, dtype=bool)
         nz = xp.nonzero(n_new > 0)[0]
         if int(nz.shape[0]) == 0:
             return out
         starts = (xp.cumsum(n_new) - n_new)[nz]
-        m = n_new[nz].astype(xp.float64)[:, None]
+        # Statistics of the chains being diagnosed only: a recovery walks a few chains of a
+        # node, and the node's fixed rows would otherwise dilute their movement away.
+        active = walk.astype(xp.float64)[:, None]
+        count = segment_sum(active[:, 0], starts)
+        m = xp.maximum(count, 1.0)[:, None]
         slot = xp.zeros(K, dtype=xp.int64)
         slot[nz] = xp.arange(int(nz.shape[0]))
         row_node = slot[owner]
 
         def mean_of(f):
-            return segment_sum(f, starts) / m
+            return segment_sum(f * active, starts) / m
 
         # The squared radius is taken about the node's halfway mean, not a fixed point: far
         # from that point a narrow node's radii would all agree to rounding.
@@ -478,8 +500,7 @@ class HitAndRunSampler(Sampler):
         # Mean differences below the coordinates' rounding resolution are not drift.
         resolution = 64 * np.finfo(np.float64).eps * (xp.abs(m1) + xp.abs(m2))
         z = xp.abs(m2 - m1) / xp.sqrt(xp.maximum((v1 + v2) / m, resolution**2 + 1e-300))
-        walking = segment_sum(walk.astype(xp.float64), starts) > 0
-        out[nz] = walking & (n_new[nz] >= 4) & (xp.max(z, axis=1) > self.mixing_z)
+        out[nz] = (count >= 4) & (xp.max(z, axis=1) > self.mixing_z)
         return out
 
 
@@ -1242,6 +1263,12 @@ class RoutingTable:
         bins = np.asarray(roots.bins)
         if bins.shape != lo.shape or not np.issubdtype(bins.dtype, np.integer) or np.any(bins < 1):
             raise ValueError("Region root bins must be positive integers, one per dimension.")
+        # Every root must have a node, so a valid table has at most as many roots as nodes;
+        # checked in Python integers, before n_roots' fixed-width product could wrap.
+        n_nodes = len(np.asarray(leaf_root).reshape(-1)) + len(np.asarray(split_root).reshape(-1))
+        n_root_cells = math.prod(int(b) for b in bins) if roots.centres is None else len(roots.centres)
+        if n_root_cells > n_nodes:
+            raise ValueError(f"Region roots ({n_root_cells}) outnumber the tree's nodes ({n_nodes}).")
         if roots.centres is not None:
             C = np.asarray(roots.centres)
             if C.ndim != 2 or C.shape[1] != lo.size or C.shape[0] == 0 or not np.all(np.isfinite(C)) \

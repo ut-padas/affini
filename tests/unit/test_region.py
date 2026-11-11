@@ -307,11 +307,12 @@ def test_duplicate_voronoi_centres_are_dropped_keeping_the_first():
 def test_chains_stuck_in_a_20d_corner_are_recovered_or_flagged():
     """From the corner nearly every random chord has zero length; coordinate moves get out."""
     d, corner = 20, np.zeros((5, 20))
-    _, flagged = _walk(Roots.build("box", d, 1), corner, 400, d, max_steps=64)
-    assert flagged  # moved but not mixed within the budget: never reported as fine
-    X, flagged = _walk(Roots.build("box", d, 1), corner, 400, d, max_steps=4096)
-    assert not flagged and np.all(np.any(X != 0.0, axis=1)) and np.all((X >= 0) & (X <= 1))
-    np.testing.assert_allclose(X.mean(axis=0), 0.5, atol=0.06)
+    X, flagged = _walk(Roots.build("box", d, 1), corner, 400, d, max_steps=16)
+    assert flagged and np.any(X == 0.0)  # a budget shorter than one sweep leaves face points: reported
+    for budget in (64, 4096):  # in a box one full coordinate sweep is already exact
+        X, flagged = _walk(Roots.build("box", d, 1), corner, 400, d, max_steps=budget)
+        assert not flagged and not np.any(X == 0.0) and np.all((X >= 0) & (X <= 1))
+        np.testing.assert_allclose(X.mean(axis=0), 0.5, atol=0.06)
 
 
 @pytest.mark.parametrize("seed", range(8))
@@ -324,7 +325,59 @@ def test_no_endpoint_is_left_on_a_corner_without_a_flag(seed):
     X = host(HitAndRunSampler(domain, Roots.build("box", d, 1), walk_steps=8, max_walk_steps=8).sample(
         ClusterPoints(xp.zeros((3, d)), xp.asarray([3]), region=geo), xp.asarray([20])
     ))  # fmt: skip
-    assert bool(geo.insufficient[0]) or not np.any(np.all(X == 0.0, axis=1))
+    assert bool(geo.insufficient[0]) or not np.any(X == 0.0)  # no corner and no face points either
+
+
+@pytest.mark.parametrize("ancestor_cut", [False, True])
+def test_corner_recovery_leaves_no_point_on_a_face_of_the_cell(ancestor_cut):
+    """4-D corner seeds, 8 steps: random-axis recovery left 7 of 20 points on a coordinate face, unflagged."""
+    d = 4
+    cut = [1.0, 0.0, 0.0, 0.0, 0.5 if ancestor_cut else 1.0]  # u0 <= 0.5 is a real ancestor cut
+    geo = RegionPoints(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([2])),
+                       xp.asarray(np.array(cut)[None, None, :]), PURPOSE_TRAIN)  # fmt: skip
+    X = host(HitAndRunSampler(Domain(np.zeros(d), np.ones(d)), Roots.build("box", d, 1), walk_steps=8, max_walk_steps=8).sample(
+        ClusterPoints(xp.zeros((3, d)), xp.asarray([3]), region=geo), xp.asarray([20])
+    ))  # fmt: skip
+    assert bool(geo.insufficient[0]) or not np.any(X == 0.0)
+
+
+def test_drift_is_measured_on_the_diagnosed_chains_only():
+    """Four recovered chains crossing the domain must not be averaged away by 96 fixed rows."""
+    sampler = HitAndRunSampler(Domain(np.zeros(1), np.ones(1)), Roots.build("box", 1, 1), walk_steps=2)
+    mid = np.r_[np.linspace(0.1, 0.100001, 4), np.linspace(0.1, 0.9, 96)][:, None]
+    end = mid.copy()
+    end[:4] += 0.8
+    walk = xp.asarray(np.arange(100) < 4)
+    assert bool(sampler._drifting(xp.asarray(mid), xp.asarray(end), xp.zeros(100, dtype=xp.int64), walk, xp.asarray([100]))[0])
+
+
+@pytest.mark.parametrize("separation", [1e-6, 1e-8, 1e-10, 1e-12])
+def test_close_voronoi_centres_route_in_cell_samples_to_their_own_root_in_2d(separation):
+    """A shared tangential distance absorbed the normal difference in |u - c|^2: 21 of 200 misrouted at 1e-8."""
+    from fractions import Fraction
+
+    C = np.array([[0.695 - separation, 0.5], [0.695, 0.5], [0.695 + separation, 0.5]])
+    roots = Roots.build("voronoi", 2, 3, C)
+    seed = np.array([[0.695, 0.9]])
+    assert int(host(roots.root_of(xp.asarray(seed)))[0]) == 1
+    geo = RegionPoints(xp.asarray([1]), xp.asarray([0]), node_keys(2, xp.asarray([1]), xp.asarray([1])), xp.zeros((1, 0, 3)), PURPOSE_TRAIN)
+    P = host(HitAndRunSampler(Domain(np.zeros(2), np.ones(2)), roots, walk_steps=8, max_walk_steps=32).sample(
+        ClusterPoints(xp.asarray(seed), xp.asarray([1]), region=geo), xp.asarray([200])
+    ))  # fmt: skip
+    exact = [int(np.argmin([sum((Fraction(float(p[k])) - Fraction(float(c[k]))) ** 2 for k in range(2)) for c in C])) for p in P]
+    assert exact == [1] * 200  # every sample is truly in the middle cell (exact rational arithmetic)
+    np.testing.assert_array_equal(host(roots.root_of(xp.asarray(P))), exact)
+    table = RoutingTable.build(Domain(np.zeros(2), np.ones(2)), roots, leaf_root=[0, 1, 2], leaf_path=[1, 1, 1],
+                               split_root=[], split_path=[], w=np.zeros((0, 2)), z=np.zeros(0))  # fmt: skip
+    np.testing.assert_array_equal(host(table.route(xp.asarray(P))[0]), exact)
+
+
+def test_root_counts_that_overflow_the_index_type_are_rejected():
+    domain = Domain(np.zeros(2), np.ones(2))
+    roots = Roots(np.array([2**62 + 1, 4], dtype=np.int64))
+    with pytest.raises(ValueError, match="outnumber"):
+        RoutingTable.build(domain, roots, leaf_root=[0, 1, 2, 3], leaf_path=[1] * 4,
+                           split_root=[], split_path=[], w=np.zeros((0, 2)), z=np.zeros(0))  # fmt: skip
 
 
 @pytest.mark.parametrize("separation", [1e-6, 1e-8, 1e-10, 1e-12])
