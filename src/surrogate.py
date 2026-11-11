@@ -1,7 +1,10 @@
 """
 The public surrogate: ``AFINNISurrogate`` trains with ``adaptive_clustering``, stores
 the accepted leaves on every MPI rank, predicts with a two-stage (Euclidean, then
-trust-region) neighbour search, and saves/loads a versioned model file.
+trust-region) neighbour search (``predictor="knn"``) or, for a region-mode model, by
+routing each query down the explicit tree (``predictor="route"``, its default), and
+saves/loads a versioned model file. ``audit`` checks a region-mode model on fresh
+uniform points of its domain.
 ``compute_error_metrics`` scores predictions inside and outside the trust regions.
 """
 
@@ -30,15 +33,21 @@ from src.config import ClusteringConfig
 from src.evaluation import Evaluator
 from src.local_models import LOCAL_MODELS, LocalModel
 from src.modes import SurrogateMode
+from src.region import TERMINAL_REASONS, VALIDATION_STATUSES, RoutingTable
 from src.registry import component_spec
 
 logger = logging.getLogger(__name__)
 
 # Version of the file format written by AFINNISurrogate.save_model(); load_model()
 # reads every version up to it.
-MODEL_FORMAT_VERSION = 1
+# Version 2 adds the optional region tree ("route:" arrays, "leaf:" statuses).
+MODEL_FORMAT_VERSION = 2
 DEFAULT_MODEL_FILENAME = "afinni_surrogate.npz"
 _PARAM_PREFIX = "param:"
+_ROUTE_PREFIX = "route:"
+_LEAF_PREFIX = "leaf:"
+# Per-leaf region-mode columns (see src.region), kept apart from the model's parameters.
+REGION_LEAF_COLUMNS = ("root", "path_code", "terminal_reason", "validation_status")
 
 
 def _model_path(path: Union[str, Path]) -> Path:
@@ -127,6 +136,11 @@ class AFINNISurrogate:
 
         self.knn_index = None
         self.search_stats: dict = {}  # last predict's kNN totals on this rank
+        # Region mode: the explicit tree, and per-leaf host arrays named in
+        # REGION_LEAF_COLUMNS (terminal_reason / validation_status index TERMINAL_REASONS /
+        # VALIDATION_STATUSES). None / {} for AFINNI-mode models.
+        self.routing: RoutingTable | None = None
+        self.region_leaves: dict[str, np.ndarray] = {}
 
     def _leaf_params(self) -> dict:
         """The per-cluster arrays ``local_model.evaluate`` reads (see src.local_models)."""
@@ -229,7 +243,7 @@ class AFINNISurrogate:
                            "effective": bcast_data["profiling_stats"].get("effective_config", {})},
                 "X_src": bcast_data["centroids"],
                 "f_src": bcast_data["f"],
-                "Qs_src": bcast_data["Q"],
+                "Qs_src": bcast_data.get("Q"),  # absent for region models with store_Q=False
                 "E_cluster_abs_src": bcast_data["E_cluster_abs"],
                 "E_cluster_rel_src": bcast_data["E_cluster_rel"],
                 "counts_src": bcast_data["counts"],
@@ -238,6 +252,8 @@ class AFINNISurrogate:
                 "num_unresolved_clusters": int(bcast_data["num_unresolved_clusters"]),
                 "num_unresolved_pts": int(bcast_data["num_unresolved_pts"]),
                 "leaf_params": {name: bcast_data[name] for name in leaf_model.columns(d, fd)},
+                "routing": RoutingTable.from_arrays(bcast_data["routing"]) if "routing" in bcast_data else None,
+                "region_leaves": {k: bcast_data[k] for k in REGION_LEAF_COLUMNS if k in bcast_data},
             },
             source="training",
         )  # fmt: skip
@@ -246,11 +262,15 @@ class AFINNISurrogate:
             logger.info(f"Training Time: {time.perf_counter() - t0:.4f}s")
             logger.info(f"Trained Clusters: {self.N_src:,}")
             if not self.converged:
+                where = (
+                    "they keep their fitted model as a leaf (see region_leaves / leaf_status_counts())"
+                    if self.routing is not None else "their region has no leaves"
+                )
                 warnings.warn(
                     f"Training stopped at max_levels={config.max_levels} with "
                     f"{self.num_unresolved_clusters:,} clusters "
                     f"({self.num_unresolved_pts:,} points) still above tolerance; "
-                    f"their region has no leaves. See AFINNISurrogate.converged.",
+                    f"{where}. See AFINNISurrogate.converged.",
                     RuntimeWarning,
                     stacklevel=2,
                 )
@@ -305,8 +325,10 @@ class AFINNISurrogate:
             ),
             "X_src": _to_host(self.X_src),
             "f_src": _to_host(self.f_src),
-            "Qs_src": _to_host(self.Qs_src),
+            **({"Qs_src": _to_host(self.Qs_src)} if self.Qs_src is not None else {}),
             **{_PARAM_PREFIX + k: _to_host(v) for k, v in self.leaf_params.items()},
+            **({_ROUTE_PREFIX + k: v for k, v in self.routing.arrays().items()} if self.routing else {}),
+            **{_LEAF_PREFIX + k: np.asarray(v) for k, v in self.region_leaves.items()},
         }
         for name in ("E_cluster_abs_src", "E_cluster_rel_src"):
             if getattr(self, name) is not None:
@@ -367,7 +389,7 @@ class AFINNISurrogate:
                 "config": meta["config"],
                 "X_src": arrays["X_src"],
                 "f_src": arrays["f_src"],
-                "Qs_src": arrays["Qs_src"],
+                "Qs_src": arrays.get("Qs_src"),
                 # Files saved before the per-component error columns have neither.
                 "E_cluster_abs_src": arrays.get("E_cluster_abs_src"),
                 "E_cluster_rel_src": arrays.get("E_cluster_rel_src"),
@@ -377,6 +399,11 @@ class AFINNISurrogate:
                 "num_unresolved_clusters": int(meta["num_unresolved_clusters"]),
                 "num_unresolved_pts": int(meta["num_unresolved_pts"]),
                 "leaf_params": {k[len(_PARAM_PREFIX):]: v for k, v in arrays.items() if k.startswith(_PARAM_PREFIX)},
+                "routing": (
+                    RoutingTable.from_arrays({k[len(_ROUTE_PREFIX):]: v for k, v in arrays.items() if k.startswith(_ROUTE_PREFIX)})
+                    if any(k.startswith(_ROUTE_PREFIX) for k in arrays) else None
+                ),
+                "region_leaves": {k[len(_LEAF_PREFIX):]: v for k, v in arrays.items() if k.startswith(_LEAF_PREFIX)},
             },
             source=str(filepath),
         )  # fmt: skip
@@ -396,6 +423,8 @@ class AFINNISurrogate:
         if state["counts_src"] is not None:
             state["counts_src"] = np.asarray(_to_host(state["counts_src"]))  # host-side diagnostics
         state["leaf_params"] = {k: _to_device(v) for k, v in state["leaf_params"].items()}
+        state.setdefault("routing", None)
+        state["region_leaves"] = {k: np.asarray(_to_host(v)) for k, v in state.get("region_leaves", {}).items()}
         state["N_src"] = n = int(state["X_src"].shape[0])
         d, fd = state["X_src"].shape[1], state["f_src"].shape[1]
         local_model = state["local_model"]
@@ -408,7 +437,7 @@ class AFINNISurrogate:
                     f"{name!r} of shape {(n, *spec.shape)}; found {got}."
                 )
         t0 = time.perf_counter()
-        state["knn_index"] = _make_knn_index(state["X_src"])
+        state["knn_index"] = _make_knn_index(state["X_src"]) if state["Qs_src"] is not None else None
         if _get_mpi_rank() == 0:
             logger.info(f"KNN Index built in {time.perf_counter() - t0:.4f}s")
         for name, value in state.items():
@@ -435,17 +464,35 @@ class AFINNISurrogate:
         coarse_factor: int = 10,
         strict_trust_region: bool = False,
         batch_size: int = 5000,
+        predictor: str | None = None,
     ) -> tuple:
         """
         Predict collectively on every rank: rank 0's queries are scattered, predicted
         locally, and gathered; returns ``(predictions, outside_mask)`` on rank 0 and
         ``(None, None)`` elsewhere.
 
-        For each query, the ``k_nn * coarse_factor`` nearest centroids are reranked by
-        trust-region distance ``dx^T Q dx``; the best ``k_nn`` leaves' models are blended
-        with inverse-distance weights (``strict_trust_region`` drops leaves with
-        distance > 1). A query is flagged outside when its best candidate is > 1.
+        ``predictor="knn"`` (the default for AFINNI-mode models): the ``k_nn * coarse_factor``
+        nearest centroids are reranked by trust-region distance ``dx^T Q dx``; the best
+        ``k_nn`` leaves' models are blended with inverse-distance weights
+        (``strict_trust_region`` drops leaves with distance > 1). A query is flagged
+        outside when its best candidate is > 1.
+
+        ``predictor="route"`` (the default, and only meaningful choice, for region-mode
+        models): each query is routed down the tree to exactly one leaf, whose model
+        predicts it; "outside" then means outside the domain only (such queries are routed
+        from the nearest domain point). ``k_nn`` and the trust-region options do not apply.
+        A leaf's ``terminal_reason`` and ``validation_status`` are in ``region_leaves``.
         """
+        predictor = predictor or ("route" if self.routing is not None else "knn")
+        if predictor not in ("knn", "route"):
+            raise ValueError(f"predictor must be 'knn' or 'route'; got {predictor!r}.")
+        if predictor == "route" and self.routing is None:
+            raise ValueError("predictor='route' needs a region-mode model (algorithm='region').")
+        if predictor == "knn" and self.trained and self.Qs_src is None:
+            raise ValueError(
+                "predictor='knn' needs the trust-region shapes Q, which this region model did not "
+                "store (region.store_Q=False); use predictor='route'."
+            )
         # Totals over this call's batches on this rank: queries, fallback rows, strategy.
         self.search_stats = {"queries": 0, "fallback_rows": 0, "candidates": 0, "strategy": None}
         if not self.trained:
@@ -472,13 +519,16 @@ class AFINNISurrogate:
         local_queries = xp.asarray(local_queries_host)
 
         # Run mathematical logic independently with batching
-        local_preds, local_mask = self._predict_local(
-            query_points=local_queries,
-            k_nn=k_nn,
-            coarse_factor=coarse_factor,
-            strict_trust_region=strict_trust_region,
-            batch_size=batch_size,
-        )
+        if predictor == "route":
+            local_preds, local_mask = self._predict_route_local(local_queries, batch_size)
+        else:
+            local_preds, local_mask = self._predict_local(
+                query_points=local_queries,
+                k_nn=k_nn,
+                coarse_factor=coarse_factor,
+                strict_trust_region=strict_trust_region,
+                batch_size=batch_size,
+            )
 
         # Bring back to host and merge
         gathered_preds = comm.gather(_to_host(local_preds), root=0)
@@ -606,6 +656,82 @@ class AFINNISurrogate:
             return predictions, unguaranteed_mask, nn_idx_full  # type: ignore
         else:
             return predictions, unguaranteed_mask
+
+    def _predict_route_local(self, query_points: Array, batch_size: int = 5000) -> tuple[Array, Array]:
+        """``(predictions, outside_domain)`` for this rank's queries by routing (see ``predict``)."""
+        fd = self.f_src.shape[1]
+        if query_points.shape[0] == 0:
+            return xp.empty((0, fd), dtype=xp.float64), xp.empty((0,), dtype=bool)
+        leaf_params = self._leaf_params()
+        preds, outs = [], []
+        for s in range(0, int(query_points.shape[0]), batch_size):
+            q = xp.asarray(query_points[s : s + batch_size], dtype=xp.float64)
+            leaf, outside = self.routing.route(q)
+            preds.append(self.local_model.evaluate(leaf_params, q, leaf))
+            outs.append(outside)
+        return xp.concatenate(preds, axis=0), xp.concatenate(outs, axis=0)
+
+    def route_leaves(self, query_points: Array) -> Array:
+        """The (n,) leaf row each query routes to, on this rank (no MPI); region-mode models only."""
+        if self.routing is None:
+            raise ValueError("route_leaves needs a region-mode model (algorithm='region').")
+        return self.routing.route(xp.asarray(query_points, dtype=xp.float64))[0]
+
+    def leaf_status_counts(self) -> dict[str, dict[str, int]]:
+        """How many leaves end with each terminal reason and validation status (region mode)."""
+        out = {}
+        for col, names in (("terminal_reason", TERMINAL_REASONS), ("validation_status", VALIDATION_STATUSES)):
+            counts = np.bincount(self.region_leaves[col].astype(np.int64), minlength=len(names))
+            out[col] = dict(zip(names, map(int, counts), strict=True))
+        return out
+
+    def audit(
+        self,
+        evaluator: Evaluator,
+        n_points: int,
+        *,
+        seed: int = 0,
+        confidence: float = 0.95,
+        atol: Tolerance = None,
+        rtol: Tolerance = None,
+    ) -> dict[str, Any]:
+        """
+        The global accuracy claim for a region-mode model: draw ``n_points`` iid uniform
+        points of its domain (independent of training), predict them by routing, and
+        count tolerance violations, ``max_j |f_j - f_hat_j| / max(atol_j, rtol_j |f_j|) > 1``.
+
+        Returns the count and a one-sided ``confidence`` upper bound on the violation
+        probability under the uniform measure (Clopper-Pearson; ``1 - (1 - confidence)^(1/n)``
+        with no violations: e.g. 299 points bound it below 1% at 95%). The bound is for the
+        frozen model and this measure; it does not bound the error at every point, and
+        auditing again after changing the model needs fresh points (a new ``seed``).
+        Tolerances default to the training ones. Runs on the calling rank only.
+        """
+        if self.routing is None:
+            raise ValueError("audit needs a region-mode model (algorithm='region').")
+        from scipy.stats import beta
+
+        atol = normalize_tolerance("atol", atol if atol is not None or rtol is not None else self.config.get("atol"))
+        rtol = normalize_tolerance("rtol", rtol if rtol is not None else self.config.get("rtol"))
+        dom = self.routing.domain
+        # A NumPy stream on every backend, so the audit points do not depend on the device.
+        U = np.random.default_rng(np.random.SeedSequence([int(seed), 0xA0D17])).random((int(n_points), dom.d))
+        X = xp.asarray(dom.lower + U * dom.width)
+        F, _ = evaluator(X)
+        F_hat, _ = self._predict_route_local(X)
+        fd = F.shape[1]
+        scale = xp.maximum(
+            xp.maximum(tolerance_vector("atol", atol, fd), 0.0),
+            xp.maximum(tolerance_vector("rtol", rtol, fd), 0.0) * xp.abs(F),
+        )
+        err = xp.max(xp.abs(F - F_hat) / scale, axis=1)
+        k, n = int(xp.sum(err > 1.0)), int(n_points)
+        upper = 1.0 if k >= n else float(beta.ppf(confidence, k + 1, n - k))
+        return {
+            "n_points": n, "n_violations": k, "violation_rate": k / n if n else float("nan"),
+            "upper_bound": upper, "confidence": confidence, "max_scaled_error": float(xp.max(err)) if n else float("nan"),
+            "measure": "uniform on the domain", "seed": int(seed),
+        }  # fmt: skip
 
     def filter_unguaranteed_local(
         self, query_points: Array, k_coarse: int = 10, batch_size: int = 50000

@@ -39,6 +39,7 @@ from src.local_models import ClusterFitData, deploy_leaves, output_columns
 from src.logging_utils import log_mem_stats
 from src.numerics import convert_to_2d_array
 from src.profiling import ORACLE_TIME_KEY, Profiler, new_profiling_stats
+from src.region import TERMINAL_REASONS, Domain, RegionPlan, Roots, RoutingTable
 from src.sampling import augment_clusters, augmentation_targets
 from src.splitting import SplitData
 from src.utils import repeats
@@ -98,6 +99,13 @@ def _check_split(splitter, order, child_sizes, counts, labels) -> None:
         )
 
 
+def plan_label(config: ClusteringConfig) -> str:
+    """A short name for the algorithm plan of ``config``, for profiles, plots and the monitor."""
+    if config.algorithm == "region":
+        return f"AFINNI region mode (ART; {config.region.split_search} splits, {config.region.roots} roots)"
+    return "AFINNI"
+
+
 def _threads_for_rank0(node_ranks: int) -> int:
     """Threads for work done by rank 0 alone: its own share (``OMP_NUM_THREADS``, default 1 under MPI) times the ranks on its node."""
     env = os.environ.get("OMP_NUM_THREADS", "")
@@ -145,11 +153,19 @@ def _run_local_refinement(
     clusters: ClusterBatch,
     comm: MPI.Intracomm,
     profiler: Profiler,
+    plan: Optional["RegionPlan"] = None,
 ):
     """
     Core local BFS refinement loop for GPU adaptive clustering, run independently
     on each MPI rank. Takes this rank's pre-sorted clusters (host memory) and
     returns finalized output buffers plus counts.
+
+    This is the executor shared by both algorithm plans: it owns batching, device
+    transfers, queues, work stealing and statistics. Each batch is processed by the
+    AFINNI plan (the inline body below, in the original order and arithmetic, so its
+    results are bit-identical) or, with ``plan``, by
+    ``RegionPlan.process_batch``, whose split records are returned in the buffers under
+    ``"node:<column>"`` keys.
 
     Algorithm settings (tolerances, limits, seed, work stealing, ...) are read
     from ``config``; ``config.max_clusters_est`` is the total across all ranks.
@@ -178,23 +194,39 @@ def _run_local_refinement(
     splitter = components.split_strategy
     acceptance = components.acceptance
     trust_region = components.trust_region
+    capacity = max(1, config.max_clusters_est // max(1, size))
     accepted = ColumnBuffer(
-        output_columns(model, d, fd),
-        capacity=max(1, config.max_clusters_est // max(1, size)),
+        output_columns(model, d, fd) if plan is None else plan.leaf_columns(model), capacity=capacity
     )
+    splits = ColumnBuffer(plan.split_columns(), capacity=capacity) if plan is not None else None
+    if plan is None:
+        def load_of(q: ClusterBatch) -> int:
+            return q.n_pts
+
+        def work_sizes(sizes: np.ndarray) -> np.ndarray:
+            return sizes
+    else:  # a region node's device footprint is its topped-up size, not its queued size
+        work_sizes = plan.work_sizes
+
+        def load_of(q: ClusterBatch) -> int:
+            return int(work_sizes(q.sizes).sum())
     num_generated_pts = 0
     evals_at_start = evaluator.n_evals
     level = 0  # this rank's processing rounds; tree depth is tracked per cluster
     unresolved_clusters = unresolved_pts = 0
 
     sampler = components.sampler
-    stealer = make_work_stealer(config.use_work_stealing, comm, d, fd, profiler)
-    stealer.exchange_initial_loads(queue.n_pts)
+    profiling_stats["plan"] = plan_label(config)
+    profiler.event("run_start", algorithm=config.algorithm, plan=profiling_stats["plan"])
+    stealer = make_work_stealer(
+        config.use_work_stealing, comm, d, fd, profiler, **(plan.steal_settings if plan is not None else {})
+    )
+    stealer.exchange_initial_loads(load_of(queue))
 
     while True:
         num_clusters = queue.n_clusters
         stealer.poll_state()
-        stealer.set_load(queue.n_pts if num_clusters > 0 else 0)
+        stealer.set_load(load_of(queue) if num_clusters > 0 else 0)
 
         # --- Phase 3: Idle / Stealing Phase ---
         # (clusters deeper than max_levels were already set aside, so an empty
@@ -228,8 +260,8 @@ def _run_local_refinement(
         )
         level_generated = 0
 
-        level_total_pts = int(np.sum(queue.sizes))
-        aug_cumsum_cpu = np.cumsum(queue.sizes)
+        level_total_pts = int(np.sum(work_sizes(queue.sizes)))
+        aug_cumsum_cpu = np.cumsum(work_sizes(queue.sizes))
 
         # Children of this level's rejected clusters, collected batch by batch.
         next_level = ClusterQueueBuilder(
@@ -240,11 +272,14 @@ def _run_local_refinement(
             # 2 * count); untouched capacity is only address space.
             capacity_pts=2 * level_total_pts,
             capacity_clusters=2 * num_clusters,
+            # Children carry one more constraint row than the deepest parent.
+            region_rows=None if plan is None else int(queue.depth.max()) + 1,
         )
 
         num_batches = level_total_pts // config.batch_size + 1
         start_cluster_idx = 0
         K_good = 0
+        K_fallback = 0  # region mode: nodes that kept a fallback leaf this level
         if profiler.events is not None:
             # Batches end at cluster boundaries, so count the distinct batch ends
             # (an upper bound if work is stolen mid-level).
@@ -305,6 +340,38 @@ def _run_local_refinement(
                 # Move structural arrays to GPU for the math logic
                 sizes = xp.asarray(sizes_cpu)
                 starts_local_shifted = xp.asarray(starts_local_cpu - slice_start)
+
+            if plan is not None:
+                cut = slice(start_cluster_idx, end_cluster_idx)
+                def progress(batch_end: int = end_cluster_idx, lvl: int = level, bt: int = b) -> None:
+                    """Answer steal requests from inside long split work (B4); never gives this batch away."""
+                    nonlocal queue
+                    queue = stealer.serve_requests(queue, batch_end, lvl, batch=bt)
+                    stealer.poll_state()
+
+                # The plan times its own stages under the shared phase keys.
+                batch_stats = plan.process_batch(
+                    X=pts, F=f_vals, G=g_vals, sizes=sizes, depth=xp.asarray(depth_cpu),
+                    root=xp.asarray(queue.root[cut]), path_code=xp.asarray(queue.path_code[cut]),
+                    constraints=xp.asarray(queue.constraints[cut]), components=components,
+                    evaluator=evaluator, accepted=accepted, splits=splits, next_level=next_level,
+                    progress=progress, timer=timer,
+                )  # fmt: skip
+                K_good += batch_stats["accepted"]
+                num_generated_pts += batch_stats["generated"]
+                level_generated += batch_stats["generated"]
+                unresolved_clusters += batch_stats["fallback_clusters"]
+                K_fallback += batch_stats["fallback_clusters"]
+                unresolved_pts += batch_stats["fallback_pts"]
+                profiler.event(
+                    "batch", batch=b, accepted=batch_stats["accepted"], rejected=batch_stats["rejected"],
+                    n_pts=batch_stats["n_pts"],
+                )  # fmt: skip
+                start_cluster_idx = end_cluster_idx
+                del pts, f_vals, g_vals
+                if mempool is not None:
+                    mempool.free_all_blocks()
+                continue
 
             aug_sizes = sizes
             K_batch = len(sizes)
@@ -514,7 +581,7 @@ def _run_local_refinement(
                 )
 
             # --- Level-Boundary Work Stealing ---
-            stealer.publish_load(next_queue.n_pts)
+            stealer.publish_load(load_of(next_queue))
             queue = stealer.serve_requests(next_queue, 0, level)
 
         if profiling_stats["level_stats"]:
@@ -522,6 +589,7 @@ def _run_local_refinement(
                 {
                     "clusters_level_end": int(len(queue.sizes)),
                     "good_clusters": int(K_good),
+                    "fallback_clusters": int(K_fallback),
                     "num_pts_next_level": int(queue.X.shape[0]),
                     "generated_pts": int(level_generated),
                 }
@@ -568,13 +636,24 @@ def _run_local_refinement(
     unresolved_pts += queue.n_pts
     profiling_stats["num_unresolved_clusters"] = unresolved_clusters
     profiling_stats["num_unresolved_pts"] = unresolved_pts
-    if unresolved_clusters > 0:
+    if unresolved_clusters > 0 and plan is not None:
+        logger.warning(
+            f"R{rank:02}: {unresolved_clusters:,} region nodes ({unresolved_pts:,} points) ended "
+            f"above tolerance (max_levels={config.max_levels} or no valid split); they keep their "
+            f"fitted model as a leaf with terminal_reason != 'accepted'."
+        )
+    elif unresolved_clusters > 0:
         logger.warning(
             f"R{rank:02}: {unresolved_clusters:,} clusters ({unresolved_pts:,} points) "
             f"reached max_levels={config.max_levels} unresolved; their region has no "
             f"accepted leaves."
         )
-    return accepted.result(), accepted.n_rows, total_f_evals, num_generated_pts, level
+    if plan is not None:
+        profiling_stats["region"] = dict(plan.counters)
+    buffers = accepted.result()
+    if splits is not None:
+        buffers.update({f"node:{k}": v for k, v in splits.result().items()})
+    return buffers, accepted.n_rows, total_f_evals, num_generated_pts, level
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +741,9 @@ def _adaptive_clustering(
     ``profiling_stats``.
     """
     config = dataclasses.replace(config)  # local copy; the caller's config is untouched
+    region_mode = config.algorithm == "region"
+    if region_mode and initial_labels is not None:
+        raise ValueError("initial_labels do not apply to algorithm='region': its roots come from region.roots.")
     if not config.requires_no_grads and not evaluator.has_grad:
         raise ValueError(
             f"Selected mode {config.mode.value} requires gradient information. Please provide g_fn or oracle_fn."
@@ -731,23 +813,56 @@ def _adaptive_clustering(
                 F0_gpu, G0_gpu = evaluator(X0_gpu, need_grad=need_point_grads)
             fd_bcast = F0_gpu.shape[1]
 
-            labels0 = (
-                initial_clustering(X0_gpu, config, threads=_threads_for_rank0(node_ranks))
-                if initial_labels is None
-                else initial_labels.astype(np.int64)
+            if region_mode:
+                domain = Domain.resolve(config.domain, _to_host(X0_gpu))
+                labels0 = None
+            else:
+                labels0 = (
+                    initial_clustering(X0_gpu, config, threads=_threads_for_rank0(node_ranks))
+                    if initial_labels is None
+                    else initial_labels.astype(np.int64)
+                )
+
+            if not region_mode:
+                sort_idx = np.argsort(labels0)
+                labels0_sorted = labels0[sort_idx]
+                X0_sorted = _to_host(X0_gpu)[sort_idx]
+                F0_sorted = _to_host(F0_gpu)[sort_idx]
+                G0_sorted = _to_host(G0_gpu)[sort_idx] if G0_gpu is not None else None
+
+                uniq_labels, all_counts = np.unique(labels0_sorted, return_counts=True)
+                counts_chunks = np.array_split(all_counts, size)
+        if not region_mode:
+            logger.info(
+                f"Initial clustering done. Number of clusters: {uniq_labels.shape[0]}."
             )
 
-            sort_idx = np.argsort(labels0)
-            labels0_sorted = labels0[sort_idx]
-            X0_sorted = _to_host(X0_gpu)[sort_idx]
-            F0_sorted = _to_host(F0_gpu)[sort_idx]
-            G0_sorted = _to_host(G0_gpu)[sort_idx] if G0_gpu is not None else None
-
-            uniq_labels, all_counts = np.unique(labels0_sorted, return_counts=True)
-            counts_chunks = np.array_split(all_counts, size)
-        logger.info(
-            f"Initial clustering done. Number of clusters: {uniq_labels.shape[0]}."
-        )
+    plan = None
+    if region_mode:
+        # Every rank builds the same plan; only the domain (from rank 0's points for
+        # "data_bbox") has to be broadcast.
+        bounds = comm.bcast((domain.lower, domain.upper) if rank == 0 else None, root=0)
+        d_r = comm.bcast(d_bcast if rank == 0 else None, root=0)
+        fd_r = comm.bcast(fd_bcast if rank == 0 else None, root=0)
+        domain = Domain(*bounds)
+        centres = None
+        if config.region.roots == "voronoi":
+            # The initial clustering's centres (means of its clusters), in normalized
+            # coordinates; roots are then assigned by exact nearest centre, not by its labels.
+            if rank == 0:
+                labels_v = initial_clustering(X0_gpu, config, threads=_threads_for_rank0(node_ranks))
+                U0 = _to_host(domain.normalize(X0_gpu))
+                inverse = np.unique(labels_v, return_inverse=True)[1]
+                centres = np.zeros((int(inverse.max()) + 1, U0.shape[1]))
+                np.add.at(centres, inverse, U0)
+                centres /= np.bincount(inverse)[:, None]
+            centres = comm.bcast(centres, root=0)
+        roots = Roots.build(config.region.roots, d_r, config.num_initial_clusters, centres)
+        plan = RegionPlan(config, d_r, fd_r, domain, roots)
+        if rank == 0:
+            all_roots = plan.initial_queue(_to_host(X0_gpu), _to_host(F0_gpu), _to_host(G0_gpu) if G0_gpu is not None else None)
+            chunks = np.array_split(np.arange(all_roots.n_clusters), size)
+            logger.info(f"Region roots: {roots.n_roots} ({config.region.roots}), domain {domain.lower} .. {domain.upper}.")
 
     with timer("time_scatter"):
         d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
@@ -755,7 +870,16 @@ def _adaptive_clustering(
         config.components().acceptance.check_output_dim(fd_bcast)
 
         # Rank 0 splits the sorted clusters into one contiguous chunk per rank.
-        if rank == 0:
+        if rank == 0 and region_mode:
+            for r in range(size):
+                keep = np.zeros(all_roots.n_clusters, dtype=bool)
+                keep[chunks[r]] = True
+                chunk = all_roots.select(keep)
+                if r == 0:
+                    local_clusters = chunk
+                else:
+                    send_clusters(comm, chunk, dest=r, tag=SCATTER_TAG)
+        elif rank == 0:
             current_idx = 0
             for r in range(size):
                 num_pts_in_rank = int(np.sum(counts_chunks[r]))
@@ -802,6 +926,8 @@ def _adaptive_clustering(
     # - the current tangent residual path still expands A_tangent[label] to
     #   (N, fd, d), so account for that until it is fused as well.
     base_batch_bytes_per_point = (d_bcast + fd_bcast + 1) * 8
+    if plan is not None:  # the region plan's own footprint, with the same admission rule
+        base_batch_bytes_per_point = plan.bytes_per_point()
     split_augmented_bytes_per_point = (
         3 * d_bcast  # X_aug, dx, selected/source point work
         + fd_bcast * d_bcast
@@ -812,10 +938,11 @@ def _adaptive_clustering(
     estimated_peak_bytes_per_point = (
         base_batch_bytes_per_point
         + augmentation_factor * split_augmented_bytes_per_point
-    )
+    ) if plan is None else base_batch_bytes_per_point
 
     hardware_batch_cap = usable_vram_bytes // max(1, estimated_peak_bytes_per_point)
-    dynamic_batch_cap = int(np.clip(hardware_batch_cap, 50_000, 20_000_000))
+    # AFINNI mode keeps its floor of 50,000 points, so its batches stay bit-identical.
+    dynamic_batch_cap = int(np.clip(hardware_batch_cap, 50_000 if plan is None else 1_000, 20_000_000))
     if config.batch_size > dynamic_batch_cap:
         logger.info(
             "Hardware VRAM scaling: reducing batch_size from %s to %s for d=%s, "
@@ -841,10 +968,14 @@ def _adaptive_clustering(
         clusters=local_clusters,
         comm=comm,
         profiler=profiler,
+        plan=plan,
     )
+    # Region mode leaves no points unresolved: nodes stopped early keep a fallback leaf,
+    # reported separately so the monitor does not show them as queued work.
+    unresolved = 0 if plan is not None else int(profiling_stats["num_unresolved_pts"])
     profiler.event(
-        "done", leaves=int(out_count), generated=int(local_gen_pts),
-        unresolved_pts=int(profiling_stats["num_unresolved_pts"]),
+        "done", leaves=int(out_count), generated=int(local_gen_pts), unresolved_pts=unresolved,
+        fallback_pts=int(profiling_stats["num_unresolved_pts"]) if plan is not None else 0,
     )  # fmt: skip
 
     local_result_host = dict(buffers)
@@ -917,6 +1048,20 @@ def _adaptive_clustering(
         consolidated_profiling["converged"] = (
             consolidated_profiling["num_unresolved_clusters"] == 0
         )
+        consolidated_profiling["plan"] = all_profiling_stats[0].get("plan")
+        if plan is not None:
+            nodes = {k[len("node:"):]: _to_host(merged.pop(k)) for k in list(merged) if k.startswith("node:")}
+            routing = RoutingTable.build(
+                plan.domain, plan.roots, merged["root"], merged["path_code"],
+                nodes["root"], nodes["path_code"], nodes["w"], nodes["z"],
+            )  # fmt: skip
+            merged["routing"] = routing.arrays()
+            reasons = np.bincount(_to_host(merged["terminal_reason"]).astype(np.int64), minlength=len(TERMINAL_REASONS))
+            consolidated_profiling["terminal_reasons"] = dict(zip(TERMINAL_REASONS, map(int, reasons), strict=True))
+            consolidated_profiling["num_split_nodes"] = int(nodes["root"].shape[0])
+            consolidated_profiling["region"] = {
+                k: sum(ps.get("region", {}).get(k, 0) for ps in all_profiling_stats) for k in plan.counters
+            }
 
         merged.update(
             {

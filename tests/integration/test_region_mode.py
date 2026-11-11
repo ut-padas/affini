@@ -1,0 +1,210 @@
+"""Region mode (algorithm="region") through the public AFINNISurrogate API."""
+
+import numpy as np
+import pytest
+
+from src import xp
+from src.config import ClusteringConfig, RegionSettings
+from src.evaluation import Evaluator
+from src.surrogate import AFINNISurrogate
+from tests._helpers import assert_backend_equal, host, train_surrogate
+
+DOMAIN = ([-1.0, -1.0], [1.0, 1.0])
+
+
+def wavy(x):
+    return (xp.sin(3 * x[:, 0]) * xp.cos(2 * x[:, 1]) + x[:, 0] ** 2)[:, None]
+
+
+def region_options(**overrides):
+    options = {
+        "f_fn": wavy, "atol": 1e-2, "rtol": 1e-2, "algorithm": "region", "domain": DOMAIN, "max_levels": 20,
+        "num_initial_clusters": 4, "use_work_stealing": False,
+        "region": RegionSettings(sample_multiplier=10, validation_samples=10),
+    }  # fmt: skip
+    options.update(overrides)
+    return options
+
+
+@pytest.fixture(scope="module")
+def points():
+    return np.random.default_rng(0).uniform(-1, 1, (400, 2))
+
+
+@pytest.fixture(scope="module")
+def trained(points):
+    return train_surrogate(points, **region_options())
+
+
+def test_region_model_converges_and_routes_every_query_to_one_leaf(trained):
+    assert trained.converged and trained.routing is not None
+    counts = trained.leaf_status_counts()
+    assert counts["terminal_reason"]["accepted"] == trained.N_src
+    assert counts["validation_status"]["passed"] == trained.N_src
+    leaves = host(trained.route_leaves(np.random.default_rng(3).uniform(-1, 1, (2000, 2))))
+    assert leaves.min() >= 0 and leaves.max() < trained.N_src
+
+
+def test_region_tree_does_not_depend_on_the_batch_size(points, trained):
+    small = train_surrogate(points, **region_options(batch_size=97))
+    assert small.N_src == trained.N_src
+    assert small.profiling_stats["total_f_evals"] == trained.profiling_stats["total_f_evals"]
+    q = np.random.default_rng(4).uniform(-1, 1, (300, 2))
+    assert_backend_equal(small.predict(q)[0], trained.predict(q)[0], separate_runs=True)
+
+
+def test_audit_reports_violations_and_a_binomial_bound(trained):
+    audit = trained.audit(Evaluator(f_fn=wavy), 2000, seed=1)
+    assert audit["n_points"] == 2000 and 0 <= audit["n_violations"] < 2000 * 0.05
+    assert audit["violation_rate"] <= audit["upper_bound"] < 0.05
+    clean = trained.audit(Evaluator(f_fn=wavy), 299, seed=2, atol=1e9)  # nothing can fail
+    assert clean["n_violations"] == 0 and clean["upper_bound"] == pytest.approx(1 - 0.05 ** (1 / 299))
+
+
+def test_routed_predictions_match_the_leaf_models_and_flag_only_the_domain(trained):
+    q = np.array([[0.3, -0.2], [1.5, 0.0], [-1.0, 1.0]])
+    pred, outside = trained.predict(q)
+    np.testing.assert_array_equal(host(outside), [False, True, False])
+    leaf = trained.route_leaves(q)
+    direct = trained.local_model.evaluate(trained._leaf_params(), xp.asarray(q), leaf)
+    assert_backend_equal(pred, direct)
+    knn_pred, _ = trained.predict(q, predictor="knn")  # Q is stored, so kNN still works
+    assert knn_pred.shape == pred.shape
+
+
+def test_region_model_save_and_load_round_trip(tmp_path, trained):
+    loaded = AFINNISurrogate.load_model(trained.save_model(tmp_path))
+    q = np.random.default_rng(5).uniform(-1.2, 1.2, (200, 2))
+    assert_backend_equal(loaded.predict(q)[0], trained.predict(q)[0])
+    for name, value in trained.region_leaves.items():
+        np.testing.assert_array_equal(loaded.region_leaves[name], value)
+
+
+@pytest.mark.filterwarnings("ignore:Training stopped:RuntimeWarning")
+def test_affine_leaves_with_a_covariance_split_never_evaluate_f_at_centroids(points):
+    """Neither component reads f(c), so every evaluation is a sampled point."""
+    model = train_surrogate(
+        points, **region_options(split_strategy="covariance", local_model="affine_lsq", max_levels=6)
+    )
+    stats = model.profiling_stats
+    assert stats["total_f_evals"] == stats["N0"] + stats["num_generated_pts"]
+    assert np.all(np.isnan(host(model.f_src)))
+
+
+def test_max_levels_leaves_fallback_leaves_with_their_status(points):
+    with pytest.warns(RuntimeWarning, match="keep their fitted model"):
+        model = train_surrogate(points, **region_options(max_levels=1, region=RegionSettings(roots="grid", sample_multiplier=10)))
+    counts = model.leaf_status_counts()
+    assert not model.converged and counts["terminal_reason"]["max_depth"] > 0
+    assert counts["validation_status"]["not_performed"] == model.N_src
+    pred, _ = model.predict(np.zeros((3, 2)))  # every region still has a leaf
+    assert np.all(np.isfinite(host(pred)))
+
+
+@pytest.mark.filterwarnings("ignore:Training stopped:RuntimeWarning")
+def test_region_grid_roots_without_points_are_sampled(points):
+    model = train_surrogate(points[:2], **region_options(domain="data_bbox", region=RegionSettings(roots="grid", sample_multiplier=10)))
+    assert set(host(model.region_leaves["root"]).tolist()) == set(range(4))
+    assert model.config["domain"] == "data_bbox"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"domain": None}, "needs domain"),
+        ({"domain": ([0, 0], [0, 1])}, "lower < upper"),
+        ({"algorithm": "afinni"}, "only apply to algorithm='region'"),
+        ({"region": RegionSettings(sample_multiplier=1)}, "no split could ever be made"),
+    ],
+)
+def test_region_configuration_errors(points, overrides, message):
+    with pytest.raises(ValueError, match=message):
+        train_surrogate(points, **region_options(**overrides))
+
+
+def test_region_rejects_points_outside_the_domain_and_initial_labels(points):
+    with pytest.raises(ValueError, match="outside the domain"):
+        train_surrogate(points * 2, **region_options())
+    with pytest.raises(ValueError, match="initial_labels"):
+        train_surrogate(points, initial_labels=np.zeros(len(points), dtype=np.int64), **region_options())
+
+
+def test_route_predictor_needs_a_region_model(points):
+    afinni = train_surrogate(points, f_fn=wavy, atol=0.05, rtol=0.05, num_initial_clusters=4, min_pts_per_cluster=16, use_work_stealing=False)
+    assert afinni.routing is None
+    with pytest.raises(ValueError, match="region-mode model"):
+        afinni.predict(points[:3], predictor="route")
+
+
+def test_region_settings_validation():
+    with pytest.raises(ValueError, match="roots"):
+        RegionSettings(roots="hexagon")
+    with pytest.raises(ValueError, match="walk_steps"):
+        RegionSettings(walk_steps=0)
+    assert ClusteringConfig(atol=1, algorithm="region", domain=DOMAIN, region={"roots": "grid"}).region.roots == "grid"
+
+
+
+@pytest.mark.parametrize("search", ["gap", "bins", "soft"])
+def test_every_split_search_builds_a_valid_batch_independent_tree(points, search):
+    """B2 (gap), B3 (bins) and B4 (soft) all produce routable trees, unchanged by the batch size."""
+    options = region_options(region=RegionSettings(sample_multiplier=10, split_search=search, soft_iters=5), max_levels=8)
+    big, small = train_surrogate(points, **options), train_surrogate(points, batch_size=97, **options)
+    assert big.N_src == small.N_src and big.profiling_stats["total_f_evals"] == small.profiling_stats["total_f_evals"]
+    q = np.random.default_rng(6).uniform(-1, 1, (500, 2))
+    assert_backend_equal(big.predict(q)[0], small.predict(q)[0], separate_runs=True)
+    counters = big.profiling_stats["region"]
+    assert counters["splits"] == big.profiling_stats["num_split_nodes"]
+    if search == "soft":
+        assert counters["soft_converged"] + counters["soft_stalled"] + counters["soft_improved"] > 0
+
+
+def step(x):
+    """An oblique discontinuity: affine pieces on either side of x0 + 0.5 x1 = 0.2."""
+    return xp.where((x[:, 0] + 0.5 * x[:, 1] > 0.2)[:, None], 1.0 + x[:, :1], -1.0 + x[:, 1:])
+
+
+def test_threshold_search_finds_an_oblique_interface_the_curvature_split_misses(points):
+    """The fit-driven bins search needs far fewer leaves than the median gap cut on a step."""
+    options = region_options(f_fn=step, atol=1e-6, rtol=None, max_levels=8)
+    gap = train_surrogate(points, **{**options, "region": RegionSettings(sample_multiplier=10, split_search="gap")})
+    bins = train_surrogate(points, **{**options, "region": RegionSettings(sample_multiplier=10, split_search="bins")})
+    assert bins.N_src < gap.N_src
+    audit = bins.audit(Evaluator(f_fn=step), 2000, seed=3)
+    assert audit["violation_rate"] < 0.05
+
+
+@pytest.mark.filterwarnings("ignore:Training stopped:RuntimeWarning")
+def test_voronoi_roots_are_the_initial_clustering_cells(points):
+    model = train_surrogate(points, **region_options(region=RegionSettings(roots="voronoi", sample_multiplier=10), max_levels=4))
+    centres = model.routing.roots.centres
+    assert centres.shape == (4, 2)
+    # Every query is routed inside the root of its nearest centre.
+    q = np.random.default_rng(7).uniform(-1, 1, (300, 2))
+    U = (q + 1) / 2
+    nearest = np.argmin(((U[:, None, :] - centres[None]) ** 2).sum(axis=2), axis=1)
+    np.testing.assert_array_equal(host(model.region_leaves["root"])[host(model.route_leaves(q))], nearest)
+
+
+@pytest.mark.filterwarnings("ignore:Training stopped:RuntimeWarning")
+def test_b1_convex_sampling_tree_serves_both_predictors(points):
+    """B1: AFINNI's augmentation on Voronoi roots, Q kept, so kNN and routing use one artifact."""
+    model = train_surrogate(points, **region_options(
+        region=RegionSettings(roots="voronoi", sampling="convex_combination"), min_pts_per_cluster=16, max_levels=10,
+    ))  # fmt: skip
+    q = np.random.default_rng(8).uniform(-1, 1, (300, 2))
+    routed, outside = model.predict(q)
+    knn, _ = model.predict(q, predictor="knn")
+    assert not host(outside).any() and routed.shape == knn.shape
+    with pytest.raises(ValueError, match="validation_samples"):
+        RegionSettings(sampling="convex_combination", validation_samples=5)
+
+
+def test_routed_only_models_store_no_q_and_refuse_knn(tmp_path, points):
+    model = train_surrogate(points, **region_options(region=RegionSettings(sample_multiplier=10, store_Q=False), max_levels=8))
+    assert model.Qs_src is None and model.knn_index is None
+    with pytest.raises(ValueError, match="store_Q=False"):
+        model.predict(points[:3], predictor="knn")
+    loaded = AFINNISurrogate.load_model(model.save_model(tmp_path))
+    assert loaded.Qs_src is None
+    assert_backend_equal(loaded.predict(points[:20])[0], model.predict(points[:20])[0])

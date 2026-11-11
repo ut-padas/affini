@@ -25,7 +25,7 @@ import numpy as np
 
 from src import IS_CUPY_BACKEND, xp
 from src.acceptance import cluster_errors
-from src.config import ClusteringConfig
+from src.config import ClusteringConfig, RegionSettings  # noqa: F401  (re-exported)
 from src.evaluation import Evaluator
 from src.local_models import lsq_hessians
 from src.modes import SurrogateMode

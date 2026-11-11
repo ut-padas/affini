@@ -222,6 +222,25 @@ def plot_level_heatmap(
     return finish(fig, path)
 
 
+def _draw_level_counts(ax, df) -> None:
+    """
+    Stacked clusters per level: accepted leaves, fallback leaves (region mode: nodes that
+    stopped at the depth limit or without a valid split, keeping their fitted model) and
+    split clusters. Profiles without ``fallback_clusters`` (AFINNI-mode runs) have none.
+    """
+    agg = df.assign(fallback=df.get("fallback_clusters", 0)).groupby("level")[["clusters_start", "good_clusters", "fallback"]].sum()
+    split = agg["clusters_start"] - agg["good_clusters"] - agg["fallback"]
+    ax.bar(agg.index, agg["good_clusters"], color="#59a14f", label="accepted (leaves)")
+    bottom = agg["good_clusters"]
+    if agg["fallback"].sum() > 0:
+        ax.bar(agg.index, agg["fallback"], bottom=bottom, color="#edae49", label="fallback leaves (stopped)")
+        bottom = bottom + agg["fallback"]
+    ax.bar(agg.index, split, bottom=bottom, color="#e15759", label="rejected (split)")
+    ax.set_ylabel("Clusters")
+    if agg["clusters_start"].max() > 50 * max(1, agg["clusters_start"].min()):
+        ax.set_yscale("log")
+
+
 def plot_level_progress(source: Any, path: str | Path | None = None) -> plt.Figure:
     """Per level (all ranks): accepted vs. split clusters, and points processed / generated."""
     df = level_stats_frame(source)
@@ -230,16 +249,11 @@ def plot_level_progress(source: Any, path: str | Path | None = None) -> plt.Figu
     if "generated_pts" not in df:  # profiles recorded before this field existed
         df["generated_pts"] = 0
     agg = df.groupby("level").agg(
-        start=("clusters_start", "sum"), accepted=("good_clusters", "sum"),
         next_pts=("num_pts_next_level", "sum"), generated=("generated_pts", "sum"),
     )  # fmt: skip
-    agg["split"] = agg["start"] - agg["accepted"]
     with afinni_style():
         fig, (ax, ax_pts) = plt.subplots(2, 1, sharex=True, figsize=(8, 6))
-        ax.bar(agg.index, agg["accepted"], color="#59a14f", label="accepted (leaves)")
-        ax.bar(agg.index, agg["split"], bottom=agg["accepted"], color="#e15759", label="rejected (split)")
-        ax.set_ylabel("Clusters")
-        ax.set_yscale("log" if agg["start"].max() > 50 * max(1, agg["start"].min()) else "linear")
+        _draw_level_counts(ax, df)
         ax.legend()
         ax.set_title("Forest growth by level")
         ax_pts.plot(agg.index, agg["next_pts"], marker="o", label="points queued for next level")
@@ -355,8 +369,10 @@ def plot_profile_dashboard(source: Any, path: str | Path | None = None) -> plt.F
         for i, name in enumerate(panels):
             ax = fig.add_subplot((len(panels) + 1) // 2, 2, i + 1)
             _dashboard_panel(ax, name, stats)
+        n_ranks = len(_per_rank(stats))
+        ranks = f"{n_ranks} ranks, " if n_ranks > 1 else ""  # a serial run needs no rank count
         fig.suptitle(
-            f"AFINNI training profile — {len(_per_rank(stats))} rank(s), "
+            f"{stats.get('plan') or 'AFINNI'} training profile — {ranks}"
             f"{stats.get('num_final_clusters', 0):,} leaves, {stats.get('time_total', 0):.3g}s",
             fontweight="bold",
         )
@@ -375,13 +391,8 @@ def _dashboard_panel(ax: plt.Axes, name: str, stats: dict) -> None:
         ax.legend(fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5))
         ax.set_title("Time per phase")
     elif name == "levels":
-        df = level_stats_frame(stats).groupby("level")[["clusters_start", "good_clusters"]].sum()
-        ax.bar(df.index, df["good_clusters"], color="#59a14f", label="accepted")
-        ax.bar(df.index, df["clusters_start"] - df["good_clusters"], bottom=df["good_clusters"], color="#e15759", label="split")
+        _draw_level_counts(ax, level_stats_frame(stats))
         ax.set_xlabel("Level")
-        ax.set_ylabel("Clusters")
-        if df["clusters_start"].max() > 50 * max(1, df["clusters_start"].min()):
-            ax.set_yscale("log")
         ax.legend(fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5))
         ax.set_title("Forest growth")
     elif name == "load":

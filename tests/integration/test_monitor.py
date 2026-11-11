@@ -1,8 +1,10 @@
 """The terminal monitor folds live event streams into per-rank status, including partial writes."""
 
 import json
+import warnings
 
 import numpy as np
+import pytest
 from rich.console import Console
 
 from src.monitor import RankStatus, StreamMonitor, main
@@ -107,3 +109,27 @@ def test_batch_progress_and_seen_labels():
     s.apply({"kind": "phase", "phase": "time_idle", "t": 0.2, "dur": 0.1, "level": None, "batch": None})
     assert s.level == 2  # idle time does not erase the last level
     assert _seen_label(3.25, False) == "3.2s ago" and _seen_label(1.0, True) == "-"
+
+
+@pytest.mark.parametrize("region", [False, True])
+def test_monitor_header_names_the_plan_and_region_fallback_points(tmp_path, region):
+    options = {
+        "f_fn": lambda x: (1 + x[:, 0] ** 2 + 4 * x[:, 1] ** 2)[:, None], "atol": 0.02, "rtol": 0.02,
+        "num_initial_clusters": 4, "min_pts_per_cluster": 40, "use_work_stealing": False, "profile_dir": tmp_path,
+    }  # fmt: skip
+    if region:
+        options.update(algorithm="region", domain=([-1, -1], [1, 1]), max_levels=2, region={"sample_multiplier": 10})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        train_surrogate(np.random.default_rng(0).uniform(-1, 1, (3_000, 2)), AFINNISurrogate(), **options)
+    mon = StreamMonitor(tmp_path)
+    mon.poll()
+    status = mon.ranks[0]
+    header = Console(width=300, record=True)
+    header.print(mon.render())
+    out = header.export_text()
+    if region:
+        assert status.plan == "AFINNI region mode (ART; soft splits, box roots)" and status.queue_pts == 0
+        assert status.fallback_pts > 0 and f"Training: {status.plan}" in out and "in fallback leaves" in out
+    else:
+        assert status.plan == "AFINNI" and "Training: AFINNI " in out and "fallback" not in out and "fallback" not in out

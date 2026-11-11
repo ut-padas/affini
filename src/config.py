@@ -25,6 +25,11 @@ loop must provide (gradients at every point or at the centroids, an exact
 Hessian) follows from the resolved local model and split strategy together.
 Under MPI every rank builds its own configuration, so every rank must be given
 the same component specs.
+
+``algorithm`` selects one of two named plans over the same engine: ``"afinni"`` (the
+default, AFINNI's adaptive clustering, bit-identical to earlier versions) or ``"region"``, an
+ART-style region tree on AFINNI's batched loop (``src.region``; settings in
+``RegionSettings``), which needs an explicit ``domain``.
 """
 
 import dataclasses
@@ -63,6 +68,92 @@ class Components:
 
 
 @dataclass(kw_only=True)
+class RegionSettings:
+    """
+    Settings of ``algorithm="region"`` (see ``src.region``).
+
+    Every node is topped up to ``ceil(sample_multiplier * p_eff)`` training points
+    before it is fitted, with ``p_eff = d + 1`` (ART's ``n_node``; ART uses 50). New
+    points are uniform in a box or grid root and hit-and-run endpoints (``walk_steps``
+    steps from a random inherited point) elsewhere. A split must leave
+    ``p_eff + min_side_margin`` points on each side. The experiment variants of the
+    design (B1-B4) are settings of this one plan: B1 = ``sampling="convex_combination"``
+    with ``roots="voronoi"``, B2 = ``split_search="gap"``, B3 = ``"bins"``, B4 = ``"soft"``
+    (the default: on ART's benchmarks it was as accurate as ART or better on most problems,
+    with similar or fewer leaves; see Section 42.3 of AFINNI_ART_DESIGN.md).
+    """
+
+    # "grid": num_initial_clusters cells over the domain; "voronoi": the Voronoi cells of
+    # the initial clustering's centres (initial_clustering_method), clipped to the domain.
+    roots: Literal["box", "grid", "voronoi"] = "box"
+    # "hit_and_run": top every node up inside its polytope before fitting (ART's budget).
+    # "convex_combination": the B1 experiment, AFINNI's convex-combination augmentation
+    # of rejected nodes.
+    sampling: Literal["hit_and_run", "convex_combination"] = "hit_and_run"
+    sample_multiplier: float = 50.0
+    # Fresh points per node on which the deployed model is checked before acceptance; a
+    # diagnostic, not a certificate (the global claim is AFINNISurrogate.audit). 0: none.
+    validation_samples: int = 0
+    min_side_margin: int = 0
+    walk_steps: int = 20
+    # Chains whose endpoints still drift between the halfway and last step (standardized
+    # mean difference > mixing_z) are continued, doubling, up to max_walk_steps (default
+    # 4 * walk_steps); nodes that still drift get validation_status "insufficient_sampling".
+    max_walk_steps: int | None = None
+    mixing_z: float = 4.0
+    # How a rejected node's hyperplane is chosen: "gap" (the split strategy's direction,
+    # cut near the median), "bins" (B3: n_bins - 1 cuts along n_directions directions,
+    # the n_screened best re-checked directly) or "soft" (B4: "bins" then the consistent
+    # soft-oblique optimizer for soft_iters steps, kept only if its hard fit is better).
+    split_search: Literal["gap", "bins", "soft"] = "soft"
+    n_bins: int = 16
+    n_directions: int = 6
+    n_screened: int = 3
+    soft_iters: int = 20
+    soft_temperature: float = 0.1  # gate width as a fraction of the node's score spread
+    soft_weight_floor: float = 1e-8  # delta in W = delta + (1 - 2 delta) sigma
+    # Store the trust-region shape Q per leaf (needed only by predictor="knn"; d^2 per leaf).
+    store_Q: bool = True  # noqa: N815  (named after the leaf column "Q")
+    # Work-stealing thresholds in queued points; None: a few nodes' worth (src.region).
+    steal_min_load: int | None = None
+    steal_size: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the settings."""
+        for name, choices in (
+            ("roots", ("box", "grid", "voronoi")),
+            ("sampling", ("hit_and_run", "convex_combination")),
+            ("split_search", ("gap", "bins", "soft")),
+        ):
+            if getattr(self, name) not in choices:
+                raise ValueError(f"region {name} must be one of {choices}; got {getattr(self, name)!r}.")
+        if self.sampling == "convex_combination" and self.validation_samples:
+            raise ValueError("validation_samples needs sampling='hit_and_run' (fresh points inside each node).")
+        for name, low in (("n_bins", 2), ("n_directions", 1), ("n_screened", 1), ("soft_iters", 0)):
+            value = getattr(self, name)
+            if not isinstance(value, numbers.Integral) or isinstance(value, bool) or value < low:
+                raise ValueError(f"{name} must be an integer >= {low}; got {value!r}.")
+        if not (self.soft_temperature > 0) or not (0 <= self.soft_weight_floor < 0.5):
+            raise ValueError("soft_temperature must be > 0 and soft_weight_floor in [0, 0.5).")
+        if not (isinstance(self.sample_multiplier, numbers.Real) and self.sample_multiplier > 0):
+            raise ValueError(f"sample_multiplier must be > 0; got {self.sample_multiplier!r}.")
+        for name, low in (("validation_samples", 0), ("min_side_margin", 0), ("walk_steps", 1)):
+            value = getattr(self, name)
+            if not isinstance(value, numbers.Integral) or isinstance(value, bool) or value < low:
+                raise ValueError(f"{name} must be an integer >= {low}; got {value!r}.")
+        if self.max_walk_steps is not None and (
+            not isinstance(self.max_walk_steps, numbers.Integral) or self.max_walk_steps < self.walk_steps
+        ):
+            raise ValueError(f"max_walk_steps must be None or an integer >= walk_steps; got {self.max_walk_steps!r}.")
+        if not self.mixing_z > 0:
+            raise ValueError(f"mixing_z must be > 0; got {self.mixing_z!r}.")
+        for name in ("steal_min_load", "steal_size"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, numbers.Integral) or value < 1):
+                raise ValueError(f"{name} must be None or an integer >= 1; got {value!r}.")
+
+
+@dataclass(kw_only=True)
 class ClusteringConfig:
     """
     Every algorithm setting of a training run (``AFINNISurrogate.train`` or
@@ -78,7 +169,7 @@ class ClusteringConfig:
     # ``acceptance`` brings its own; see src.acceptance for the rule.
     atol: Tolerance = None
     rtol: Tolerance = None
-    error_metric: Literal["L2", "Linf"] = "Linf"
+    error_metric: Literal["L2", "Linf", "pointwise"] = "Linf"
 
     # --- Initial clustering ---
     initial_clustering_method: Literal["kmeans", "knndbscan", "uniform_grid"] = "kmeans"
@@ -104,6 +195,13 @@ class ClusteringConfig:
     # modes always store A_fit/b_fit). Kept so existing callers still work.
     store_affine_fits: bool = False
 
+    # --- Algorithm plan (see the module docstring) ---
+    algorithm: Literal["afinni", "region"] = "afinni"
+    # Region mode only: ((lower_1, ..., lower_d), (upper_1, ..., upper_d)), or
+    # "data_bbox" to use the bounding box of the training points (recorded as such).
+    domain: Any = None
+    region: RegionSettings | dict | None = None  # None: RegionSettings() in region mode
+
     # --- Diagnostics (see src.profiling) ---
     log_mem_stats: bool = False
     profile_timing: bool = False  # per-phase time totals (synchronizes the GPU)
@@ -125,6 +223,15 @@ class ClusteringConfig:
     def __post_init__(self) -> None:
         """Validate settings early, normalize the tolerances and profile_dir, warn about save_all_gen_training_data, and drop ``store_hess`` where no model can use it."""
         self.mode = SurrogateMode(self.mode)
+        if self.algorithm not in ("afinni", "region"):
+            raise ValueError(f"algorithm must be 'afinni' or 'region'; got {self.algorithm!r}.")
+        if isinstance(self.region, dict):
+            self.region = RegionSettings(**self.region)
+        if self.algorithm == "region":
+            self.region = self.region or RegionSettings()
+            self.domain = _normalize_domain(self.domain)
+        elif self.domain is not None or self.region is not None:
+            raise ValueError("domain and region only apply to algorithm='region'.")
         if self.profile_dir is not None:
             self.profile_dir = str(self.profile_dir)
         # Normalized to a float or a tuple so to_dict() stays serializable.
@@ -215,6 +322,12 @@ class ClusteringConfig:
     # to declare those.
 
     @property
+    def requires_f_centroids(self) -> bool:
+        """True if some component reads f at the centroids (AFINNI mode always evaluates it)."""
+        c = self.components()
+        return bool(c.local_model.needs_centroid_value or c.split_strategy.needs_centroid_value)
+
+    @property
     def requires_grad_everywhere(self) -> bool:
         """True if gradients must be evaluated (and carried) at every point."""
         c = self.components()
@@ -244,6 +357,7 @@ class ClusteringConfig:
             if f.init and f.name not in Components.__dataclass_fields__
         }
         out["mode"] = self.mode.value
+        out["region"] = dataclasses.asdict(self.region) if self.region is not None else None
         out["components"] = self.components().describe()
         return out
 
@@ -254,3 +368,23 @@ class ClusteringConfig:
             for t in (self.atol, self.rtol)
         ]
         return f"train_data_atol_{tags[0]}_rtol_{tags[1]}_d{d}"
+
+
+def _normalize_domain(domain: Any) -> str | tuple[tuple[float, ...], tuple[float, ...]]:
+    """``"data_bbox"`` or validated ``(lower, upper)`` float tuples with ``lower < upper``."""
+    if isinstance(domain, str):
+        if domain != "data_bbox":
+            raise ValueError(f"domain must be (lower, upper) or 'data_bbox'; got {domain!r}.")
+        return domain
+    if domain is None:
+        raise ValueError(
+            "algorithm='region' needs domain=(lower, upper) bounds, or domain='data_bbox' to "
+            "use the training points' bounding box: the domain is what routing covers and "
+            "what AFINNISurrogate.audit samples, so it is never inferred silently."
+        )
+    import numpy as np
+
+    bounds = np.asarray(domain, dtype=np.float64)
+    if bounds.ndim != 2 or bounds.shape[0] != 2 or not np.all(np.isfinite(bounds)) or not np.all(bounds[0] < bounds[1]):
+        raise ValueError(f"domain must be finite (lower, upper) vectors with lower < upper; got {domain!r}.")
+    return tuple(map(float, bounds[0])), tuple(map(float, bounds[1]))
