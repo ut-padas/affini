@@ -42,6 +42,7 @@ from src.modes import SurrogateMode
 from src.registry import ComponentSpec, component_spec
 from src.sampling import SAMPLERS, Sampler
 from src.splitting import SPLIT_STRATEGIES, SplitStrategy, split_strategy_for_mode
+from src.trees import MAX_DEPTH
 from src.trust_regions import TRUST_REGIONS, CovarianceEllipsoid, TrustRegion
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,10 @@ class ClusteringConfig:
     profile_events: bool = False  # also record a timeline of phases, steals and loads
     profile_dir: str | Path | None = None  # also stream events to <dir>/rank_<r>.jsonl; stored as str
     save_all_gen_training_data: bool = False
+    # Record the binary refinement trees (one per initial cluster; see src.trees).
+    # Requires use_work_stealing=False (stolen clusters would carry their tree
+    # across ranks) and max_levels < src.trees.MAX_DEPTH (Morton ID bits).
+    track_trees: bool = False
 
     # --- Components (None: the default for mode / the settings above) ---
     local_model: ComponentSpec = None
@@ -123,7 +128,7 @@ class ClusteringConfig:
     )
 
     def __post_init__(self) -> None:
-        """Validate settings early, normalize the tolerances and profile_dir, warn about save_all_gen_training_data, and drop ``store_hess`` where no model can use it."""
+        """Validate settings early (including track_trees' limits on work stealing and depth), normalize the tolerances and profile_dir, warn about save_all_gen_training_data, and drop ``store_hess`` where no model can use it."""
         self.mode = SurrogateMode(self.mode)
         if self.profile_dir is not None:
             self.profile_dir = str(self.profile_dir)
@@ -145,6 +150,15 @@ class ClusteringConfig:
             value = getattr(self, name)
             if not isinstance(value, numbers.Integral) or isinstance(value, bool) or value < low:
                 raise ValueError(f"{name} must be an integer >= {low}; got {value!r}.")
+        if self.track_trees and self.use_work_stealing:
+            raise ValueError(
+                "track_trees requires use_work_stealing=False (the default is True)."
+            )
+        if self.track_trees and self.max_levels >= MAX_DEPTH:
+            raise ValueError(
+                f"track_trees requires max_levels < {MAX_DEPTH}: children of the deepest "
+                f"clusters need a Morton ID; got max_levels={self.max_levels}."
+            )
         if self.sampler is None and self.sampling_method not in SAMPLERS:
             raise ValueError(
                 f"Unknown sampling method {self.sampling_method!r}; "

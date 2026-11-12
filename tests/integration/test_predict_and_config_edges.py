@@ -106,6 +106,12 @@ def test_invalid_settings_fail_early(field, value):
         ClusteringConfig(**kw)
 
 
+def test_tree_tracking_requires_work_stealing_off():
+    with pytest.raises(ValueError, match="track_trees requires use_work_stealing=False"):
+        ClusteringConfig(atol=0.1, track_trees=True)
+    assert ClusteringConfig(atol=0.1, track_trees=True, use_work_stealing=False).track_trees
+
+
 def test_numpy_scalars_and_mode_strings_are_accepted():
     cfg = ClusteringConfig(
         mode="taylor_cov_hess", atol=np.float32(0.1), rtol=np.float64(0.1),

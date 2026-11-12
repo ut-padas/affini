@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 import psutil
 
-from src import Array, _to_host
+from src import Array, _to_host, xp
 
 
 @dataclass
@@ -197,9 +197,10 @@ class ClusterQueueBuilder:
             self._depth = _grown(self._depth, cap, self.n_clusters)
 
 
-def _grown(buf: np.ndarray, capacity: int, n_used: int) -> np.ndarray:
-    """A copy of ``buf`` with room for ``capacity`` rows; the first ``n_used`` are kept."""
-    new = np.empty((capacity, *buf.shape[1:]), dtype=buf.dtype)
+def _grown(buf: Array, capacity: int, n_used: int) -> Array:
+    """A copy of ``buf`` with room for ``capacity`` rows, on the same backend (host or device); the first ``n_used`` are kept."""
+    empty = np.empty if isinstance(buf, np.ndarray) else xp.empty
+    new = empty((capacity, *buf.shape[1:]), dtype=buf.dtype)
     new[:n_used] = buf[:n_used]
     return new
 
