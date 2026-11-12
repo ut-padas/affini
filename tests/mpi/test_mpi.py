@@ -137,6 +137,15 @@ def test_work_stealing_moves_gradients_and_keeps_second_order_models_exact(mpi_l
     assert result["ok"] is True, result
 
 
+def test_tree_tracking_merges_every_ranks_forest(mpi_launcher):
+    """Forests grown on several ranks merge into one forest consistent with the leaves on every rank."""
+    # Not compared with a serial run: augmentation seeds depend on the rank.
+    result = _run_worker([*mpi_launcher, "-n", str(N_RANKS)], module="tests.mpi._tree_worker")
+    assert result["n_ranks"] == N_RANKS and result["converged"]
+    assert result["problems"] == [[]] * N_RANKS
+    assert result["n_leaves"] == result["n_leaf_nodes"] == result["n_internal"] + 7  # one more leaf than splits per tree
+
+
 @pytest.mark.parametrize(
     ("phase", "message"),
     [("root_initial_oracle", "rank 0 (initial evaluation)"),

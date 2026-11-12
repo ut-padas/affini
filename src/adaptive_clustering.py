@@ -39,7 +39,8 @@ from src.logging_utils import log_mem_stats
 from src.numerics import convert_to_2d_array
 from src.profiling import ORACLE_TIME_KEY, Profiler, new_profiling_stats
 from src.sampling import augment_clusters, augmentation_targets
-from src.splitting import SplitData
+from src.splitting import Split, SplitData
+from src.trees import BinaryTreeForest, child_morton
 from src.utils import repeats
 from src.work_stealing import (
     make_work_stealer,
@@ -47,7 +48,7 @@ from src.work_stealing import (
     send_clusters,
 )
 
-# Initial scatter of clusters from rank 0 (payload tags SCATTER_TAG + 1..4); kept
+# Initial scatter of clusters from rank 0 (payload tags SCATTER_TAG + 1..8); kept
 # well away from the work-stealing tags.
 SCATTER_TAG = 1000
 LOCAL_RESULT_TAG = 2000
@@ -62,18 +63,24 @@ TINY_EPS = 1e-12
 _CHECK_CHUNK = 1 << 22  # rows per gather in the split check (bounds its temporary memory)
 
 
-def _check_split(splitter, order, child_sizes, counts, labels) -> None:
+def _check_split(splitter, split: Split, counts, labels, d: int) -> None:
     """
     A split must permute every row exactly once, keep each row inside its parent
-    cluster (``labels`` is sorted, so ``labels[order]`` must equal it), and cut each
-    cluster into two children whose sizes add up to the parent's.
+    cluster (``labels`` is sorted, so ``labels[order]`` must equal it), cut each
+    cluster into two children whose sizes add up to the parent's, and give one
+    hyperplane per cluster. Which side of its hyperplane each point lies on is not
+    checked: points at the cut can differ by rounding (see ``SplitStrategy.split``).
     """
-    n_rows = int(labels.shape[0])
-    if order.shape != (n_rows,) or child_sizes.shape != (2 * len(counts),):
+    order, child_sizes = split.order, split.child_sizes
+    n_rows, K = int(labels.shape[0]), len(counts)
+    if (
+        order.shape != (n_rows,) or child_sizes.shape != (2 * K,)
+        or split.W.shape != (K, d) or split.b.shape != (K,)
+    ):
         raise ValueError(
-            f"Split strategy {splitter.name!r} returned order {tuple(order.shape)} and "
-            f"child sizes {tuple(child_sizes.shape)}; expected ({n_rows},) and "
-            f"({2 * len(counts)},)."
+            f"Split strategy {splitter.name!r} returned order {tuple(order.shape)}, "
+            f"child sizes {tuple(child_sizes.shape)}, W {tuple(split.W.shape)} and b "
+            f"{tuple(split.b.shape)}; expected ({n_rows},), ({2 * K},), ({K}, {d}) and ({K},)."
         )
     if not bool(
         xp.all(child_sizes >= 0) & xp.all(child_sizes[0::2] + child_sizes[1::2] == counts)
@@ -95,6 +102,11 @@ def _check_split(splitter, order, child_sizes, counts, labels) -> None:
             f"Split strategy {splitter.name!r} returned an order that drops, duplicates "
             f"or moves rows between clusters."
         )
+
+
+def _add_unresolved_leaves(forest: BinaryTreeForest, tree_fields: dict[str, np.ndarray]) -> None:
+    """Record clusters that were never accepted as leaf nodes without leaf data, so every child slot holds a node."""
+    forest.add_leaves(**tree_fields, leaf=np.full(len(tree_fields["root"]), -1, dtype=np.int64))
 
 
 def _threads_for_rank0(node_ranks: int) -> int:
@@ -148,7 +160,9 @@ def _run_local_refinement(
     """
     Core local BFS refinement loop for GPU adaptive clustering, run independently
     on each MPI rank. Takes this rank's pre-sorted clusters (host memory) and
-    returns finalized output buffers plus counts.
+    returns finalized output buffers plus counts, and with ``config.track_trees``
+    this rank's (unsorted) ``BinaryTreeForest`` (leaf rows index the returned
+    buffers), otherwise None.
 
     Algorithm settings (tolerances, limits, seed, work stealing, ...) are read
     from ``config``; ``config.max_clusters_est`` is the total across all ranks.
@@ -181,6 +195,10 @@ def _run_local_refinement(
         output_columns(model, d, fd),
         capacity=max(1, config.max_clusters_est // max(1, size)),
     )
+    # Every node of this rank's trees: split clusters as internal nodes, accepted
+    # and unresolved ones as leaves. Each queued cluster carries its place in its
+    # tree (ClusterBatch.tree_fields) until it becomes a node.
+    forest = BinaryTreeForest(d) if config.track_trees else None
     num_generated_pts = 0
     evals_at_start = evaluator.n_evals
     level = 0  # this rank's processing rounds; tree depth is tracked per cluster
@@ -239,6 +257,7 @@ def _run_local_refinement(
             # 2 * count); untouched capacity is only address space.
             capacity_pts=2 * level_total_pts,
             capacity_clusters=2 * num_clusters,
+            track_trees=config.track_trees,
         )
 
         num_batches = level_total_pts // config.batch_size + 1
@@ -278,6 +297,7 @@ def _run_local_refinement(
             with timer("time_slicing"):
                 sizes_cpu = queue.sizes[start_cluster_idx:end_cluster_idx]
                 depth_cpu = queue.depth[start_cluster_idx:end_cluster_idx]
+                tree_cpu = queue.tree_fields(slice(start_cluster_idx, end_cluster_idx))
                 starts_local_cpu = queue.starts[start_cluster_idx:end_cluster_idx]
                 slice_start = int(starts_local_cpu[0])
                 slice_end = int(starts_local_cpu[-1] + sizes_cpu[-1])
@@ -400,6 +420,12 @@ def _run_local_refinement(
                             K_good_batch = len(keep)
 
                 with timer("time_good_d2h"):
+                    if forest is not None:
+                        good_host = _to_host(good_idx_local)
+                        forest.add_leaves(
+                            **{k: v[good_host] for k, v in tree_cpu.items()},
+                            leaf=np.arange(accepted.n_rows, accepted.n_rows + len(good_host)),
+                        )
                     accepted.append(
                         {
                             "centroids": mus[good_idx_local],
@@ -487,7 +513,7 @@ def _run_local_refinement(
                     # Cut each rejected cluster in two along its split direction:
                     # its points are sorted by their projection onto that direction,
                     # and child_sizes gives the size of each half.
-                    sort_order, child_sizes = splitter.split(
+                    split = splitter.split(
                         SplitData(
                             X=X_bad_aug,
                             F=F_bad_aug,
@@ -500,12 +526,22 @@ def _run_local_refinement(
                             hessian_fn=evaluator.hessian_fn,
                         )
                     )
-                    _check_split(
-                        splitter, sort_order, child_sizes, target_bad_counts,
-                        aug_dense_labels_bad,
-                    )  # fmt: skip
+                    _check_split(splitter, split, target_bad_counts, aug_dense_labels_bad, d)
+                    sort_order = split.order
 
                 with timer("time_bad_d2h"):
+                    children_tree = {}
+                    if forest is not None:
+                        # Record the hyperplanes; children inherit their rows as parents.
+                        bad_host = _to_host(bad_idx_local)
+                        parent_tree = {k: v[bad_host] for k, v in tree_cpu.items()}
+                        rows = forest.add_splits(split.W, split.b, **parent_tree)
+                        side = np.tile(np.array([0, 1], dtype=np.int64), n_bad)
+                        children_tree = {
+                            "parent": np.repeat(_to_host(rows), 2),
+                            "root": np.repeat(parent_tree["root"], 2),
+                            "morton": child_morton(np.repeat(parent_tree["morton"], 2), side),
+                        }
                     # Children: each cluster cut along its split direction.
                     next_level.append(
                         X_bad_aug[sort_order],
@@ -513,8 +549,9 @@ def _run_local_refinement(
                         G_bad_aug[sort_order]
                         if config.requires_grad_everywhere and G_bad_aug is not None
                         else None,
-                        child_sizes,
+                        split.child_sizes,
                         depth=np.repeat(depth_cpu[_to_host(bad_idx_local)] + 1, 2),
+                        **children_tree,
                     )
 
                 with timer("time_gc"):
@@ -523,6 +560,7 @@ def _run_local_refinement(
                         F_bad_aug,
                         G_bad_aug,
                         sort_order,
+                        split,
                     )
                     if mempool is not None:
                         mempool.free_all_blocks()
@@ -543,6 +581,8 @@ def _run_local_refinement(
             # Children deeper than max_levels are never refined: they stay unresolved.
             too_deep = next_queue.depth > config.max_levels
             if too_deep.any():
+                if forest is not None:
+                    _add_unresolved_leaves(forest, next_queue.tree_fields(too_deep))
                 unresolved_clusters += int(too_deep.sum())
                 unresolved_pts += int(next_queue.sizes[too_deep].sum())
                 next_queue = next_queue.select(~too_deep)
@@ -604,6 +644,8 @@ def _run_local_refinement(
     # max_levels before they met the tolerance.
     unresolved_clusters += queue.n_clusters
     unresolved_pts += queue.n_pts
+    if forest is not None and queue.n_clusters:  # an empty final queue carries no tree fields
+        _add_unresolved_leaves(forest, queue.tree_fields())
     profiling_stats["num_unresolved_clusters"] = unresolved_clusters
     profiling_stats["num_unresolved_pts"] = unresolved_pts
     if unresolved_clusters > 0:
@@ -612,7 +654,7 @@ def _run_local_refinement(
             f"reached max_levels={config.max_levels} unresolved; their region has no "
             f"accepted leaves."
         )
-    return accepted.result(), accepted.n_rows, total_f_evals, num_generated_pts, level
+    return accepted.result(), accepted.n_rows, total_f_evals, num_generated_pts, level, forest
 
 
 # ---------------------------------------------------------------------------
@@ -697,7 +739,9 @@ def _adaptive_clustering(
     changes (the GPU batch-size cap) never reach the
     caller; ``evaluator.n_evals`` keeps counting across calls. The result holds the
     shared columns, the local model's columns, the convergence status and
-    ``profiling_stats``.
+    ``profiling_stats``. With ``config.track_trees`` it also holds ``tree_forest``,
+    a sorted ``BinaryTreeForest`` of every rank's trees whose leaf nodes index the
+    merged leaf columns, with ``root_centroids`` set.
     """
     config = dataclasses.replace(config)  # local copy; the caller's config is untouched
     if not config.requires_no_grads and not evaluator.has_grad:
@@ -783,6 +827,12 @@ def _adaptive_clustering(
 
             uniq_labels, all_counts = np.unique(labels0_sorted, return_counts=True)
             counts_chunks = np.array_split(all_counts, size)
+            # Trees are rooted at the initial clusters, numbered in sorted order;
+            # their means are where traversal of the forest starts.
+            root_centroids = (
+                np.add.reduceat(X0_sorted, np.r_[0, np.cumsum(all_counts)[:-1]]) / all_counts[:, None]
+                if config.track_trees and len(all_counts) else None
+            )
         logger.info(
             f"Initial clustering done. Number of clusters: {uniq_labels.shape[0]}."
         )
@@ -794,15 +844,26 @@ def _adaptive_clustering(
 
         # Rank 0 splits the sorted clusters into one contiguous chunk per rank.
         if rank == 0:
-            current_idx = 0
+            current_idx = first_root = 0
             for r in range(size):
                 num_pts_in_rank = int(np.sum(counts_chunks[r]))
                 end_idx = current_idx + num_pts_in_rank
+                n_roots = len(counts_chunks[r])
+                roots = (
+                    {
+                        "parent": np.full(n_roots, -1, dtype=np.int64),
+                        "root": np.arange(first_root, first_root + n_roots, dtype=np.int64),
+                        "morton": np.zeros(n_roots, dtype=np.int64),
+                    }
+                    if config.track_trees else {}
+                )
+                first_root += n_roots
                 chunk = ClusterBatch(
                     X0_sorted[current_idx:end_idx],
                     F0_sorted[current_idx:end_idx],
                     G0_sorted[current_idx:end_idx] if G0_sorted is not None else None,
                     counts_chunks[r].astype(np.int64),
+                    **roots,
                 )
                 if r == 0:
                     local_clusters = chunk
@@ -873,7 +934,7 @@ def _adaptive_clustering(
         "batch_size": int(config.batch_size), "max_levels": int(config.max_levels),
     }  # fmt: skip
 
-    buffers, out_count, local_f_evals, local_gen_pts, last_level = _run_local_refinement(
+    buffers, out_count, local_f_evals, local_gen_pts, last_level, forest = _run_local_refinement(
         config=config,
         evaluator=evaluator,
         clusters=local_clusters,
@@ -886,6 +947,8 @@ def _adaptive_clustering(
     )  # fmt: skip
 
     local_result_host = dict(buffers)
+    if forest is not None:
+        local_result_host["_forest"] = forest.to_host()
     profiling_stats["num_levels"] = last_level
     profiling_stats["num_generated_pts"] = local_gen_pts
     profiling_stats["total_f_evals"] += local_f_evals
@@ -917,10 +980,33 @@ def _adaptive_clustering(
 
     if rank == 0:
         all_profiling_stats = [r.pop("_profiling_stats") for r in all_results]
+        if config.track_trees:
+            # Each rank numbered its internal rows and its leaves from 0: shift every
+            # reference past the rows of the ranks before it (leaves are merged below
+            # in rank order).
+            forests = [r.pop("_forest") for r in all_results]
+            node_offset = leaf_offset = 0
+            for part, result in zip(forests, all_results):
+                internal, leaves = part["internal_nodes"], part["leaf_nodes"]
+                for table in (internal, leaves):
+                    table["parent"] = np.where(table["parent"] >= 0, table["parent"] + node_offset, -1)
+                leaves["leaf"] = np.where(leaves["leaf"] >= 0, leaves["leaf"] + leaf_offset, -1)
+                node_offset += len(internal["b"])
+                leaf_offset += len(result["centroids"])
+            forest = BinaryTreeForest.sorted_from(
+                {
+                    kind: {k: np.concatenate([f[kind][k] for f in forests]) for k in forests[0][kind]}
+                    for kind in ("internal_nodes", "leaf_nodes")
+                } | {"root_centroids": root_centroids},
+                d_bcast,
+            )
         merged = {
             k: xp.asarray(np.concatenate([r[k] for r in all_results], axis=0))
             for k in all_results[0]
         }
+
+        if config.track_trees:
+            merged["tree_forest"] = forest
 
         consolidated_profiling = {
             "time_total": time.perf_counter() - _start_time,

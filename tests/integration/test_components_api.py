@@ -7,6 +7,7 @@ These tests check the contracts (which data a component receives, which outputs
 reach prediction, that defaults are unchanged), not the accuracy of new components.
 """
 
+import dataclasses
 import json
 
 import numpy as np
@@ -259,10 +260,10 @@ class DuplicatingSplit(CovarianceSplit):
     name = "test_duplicating"
 
     def split(self, data):
-        order, sizes = super().split(data)
-        order = order.copy()
+        split = super().split(data)
+        order = split.order.copy()
         order[1] = order[0]  # one row twice, another lost
-        return order, sizes
+        return dataclasses.replace(split, order=order)
 
 
 def test_split_that_duplicates_rows_is_rejected():

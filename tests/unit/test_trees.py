@@ -1,11 +1,11 @@
-"""Tests for src/trees.py: Morton IDs and the split-hyperplane forest."""
+"""Tests for src/trees.py: Morton IDs and the split-tree forest."""
 
 import numpy as np
 import pytest
 
 from src import xp
 from src.config import ClusteringConfig
-from src.trees import DEPTH_MASK, MAX_DEPTH, BinaryTreeForest, child_morton
+from src.trees import DEPTH_MASK, MAX_DEPTH, BinaryTreeForest, child_morton, side_of
 from tests._helpers import host
 
 
@@ -20,48 +20,54 @@ def test_child_morton_records_path_and_depth():
     assert _child(right, 1) >> 61 == 0b11 and _child(right, 1) & DEPTH_MASK == 2
 
 
+def test_side_is_the_last_path_bit():
+    m = np.array([0, _child(0, 0), _child(0, 1), _child(_child(0, 1), 0), _child(_child(0, 0), 1)])
+    np.testing.assert_array_equal(side_of(m), [0, 0, 1, 0, 1])
+
+
 def test_child_morton_reaches_max_depth_without_overflow():
     m = 0
     for _ in range(MAX_DEPTH):
         m = _child(m, 1)
-    assert m > 0 and m & DEPTH_MASK == MAX_DEPTH
+    assert m > 0 and m & DEPTH_MASK == MAX_DEPTH and int(side_of(np.array([m]))[0]) == 1
     assert (m >> 6) == (1 << MAX_DEPTH) - 1  # every path bit set, none in the depth bits
 
 
 def _grow_forest(rng, n_roots=4, levels=6, d=3):
     """
-    Split clusters level by level, as the refinement loop does, recording each
-    split in a forest (tiny capacity, so it must grow). Returns the forest and the
-    expected per-root preorder of node ids (stored in W[:, 0]).
+    Split clusters level by level, as the refinement loop does: each cluster is
+    split (an internal node), accepted or, at the last level, left unresolved (a
+    leaf node). Tiny capacity, so the tables must grow. Returns the forest and the
+    expected per-root preorder of node ids, stored in ``W[:, 0]`` and ``leaf``.
     """
     forest = BinaryTreeForest(d, capacity=1)
     children = {}  # node id -> [side-0 child id, side-1 child id]
-    first_split = {}  # root -> node id of its first split
-    # Queue entries: (root, parent row, side, morton, parent node id).
-    queue = [(r, -1, 0, 0, None) for r in range(n_roots) if r != 2]  # root 2 is never split
+    first = {}  # root -> id of its top node
+    queue = [(r, -1, 0, None) for r in range(n_roots)]  # (root, parent row, morton, parent id)
     next_id = 0
-    for _ in range(levels):
-        split = [c for c in queue if rng.random() < 0.7]
-        if not split:
+    for level in range(levels + 1):
+        if not queue:
             break
-        k = len(split)
-        ids = np.arange(next_id, next_id + k)
-        next_id += k
-        W = np.zeros((k, d))
-        W[:, 0] = ids
-        root, parent, side, morton, parent_id = (np.array(col) for col in zip(*split))
-        rows = host(forest.append(
-            W, rng.standard_normal(k), parent.astype(np.int64), side.astype(np.int8),
-            root.astype(np.int64), morton.astype(np.int64),
-        ))  # fmt: skip
-        np.testing.assert_array_equal(rows, ids)  # arrival order: rows are the node ids
+        split = rng.random(len(queue)) < (0.7 if level < levels else 0.0)
+        ids = np.arange(next_id, next_id + len(queue))
+        next_id += len(queue)
+        root, parent, morton = (np.array([c[i] for c in queue], dtype=np.int64) for i in range(3))
         for i, nid in enumerate(ids):
-            if parent_id[i] is None:
-                first_split[int(root[i])] = int(nid)
+            pid = queue[i][3]
+            if pid is None:
+                first[int(root[i])] = int(nid)
             else:
-                children.setdefault(int(parent_id[i]), [None, None])[int(side[i])] = int(nid)
+                children.setdefault(pid, [None, None])[int(side_of(morton[i : i + 1])[0])] = int(nid)
+        if (~split).any():
+            forest.add_leaves(parent[~split], root[~split], morton[~split], ids[~split])
+        k = int(split.sum())
+        if not k:
+            break
+        W = np.zeros((k, d))
+        W[:, 0] = ids[split]
+        rows = host(forest.add_splits(W, rng.standard_normal(k), parent[split], root[split], morton[split]))
         queue = [
-            (int(root[i]), int(rows[i]), s, _child(int(morton[i]), s), int(ids[i]))
+            (int(root[split][i]), int(rows[i]), _child(int(morton[split][i]), s), int(ids[split][i]))
             for i in range(k)
             for s in (0, 1)
         ]
@@ -72,58 +78,82 @@ def _grow_forest(rng, n_roots=4, levels=6, d=3):
             if c is not None:
                 yield from preorder(c)
 
-    expected = {r: list(preorder(first_split[r])) for r in sorted(first_split)}
-    return forest, expected
+    return forest, {r: list(preorder(first[r])) for r in sorted(first)}
+
+
+def _ids(table):
+    return host(table["W"][:, 0]).astype(int) if "W" in table else host(table["leaf"])
 
 
 def test_sort_gives_contiguous_trees_in_preorder():
     forest, expected = _grow_forest(np.random.default_rng(0))
-    parent_before, ids_before = host(forest.parent).copy(), host(forest.W[:, 0]).copy()
-    new_row = host(forest.sort())
+    forest.sort()
+    for r, order in expected.items():
+        tree = forest.tree(r)
+        internal, leaves = set(_ids(tree.internal_nodes)), set(_ids(tree.leaf_nodes))
+        assert tree.n_leaves == tree.n_internal + 1 and internal | leaves == set(order)
+        # Each table lists its nodes in the tree's preorder.
+        np.testing.assert_array_equal(_ids(tree.internal_nodes), [i for i in order if i in internal])
+        np.testing.assert_array_equal(_ids(tree.leaf_nodes), [i for i in order if i in leaves])
+    assert list(forest.roots) == list(expected)
 
-    np.testing.assert_array_equal(host(forest.W[:, 0]), np.concatenate(list(expected.values())))
-    np.testing.assert_array_equal(forest.roots, list(expected))
-    np.testing.assert_array_equal(np.diff(forest.tree_starts), [len(v) for v in expected.values()])
-    # new_row maps old rows to new ones, and parents were remapped with it.
-    np.testing.assert_array_equal(host(forest.W[:, 0])[new_row], ids_before)
-    np.testing.assert_array_equal(
-        host(forest.parent)[new_row], np.where(parent_before >= 0, new_row[parent_before], -1)
+
+def test_parents_are_remapped_to_sorted_rows():
+    forest, _ = _grow_forest(np.random.default_rng(1))
+    before = {k: host(v).copy() for k, v in forest.internal_nodes.items()}
+    leaves_before = {k: host(v).copy() for k, v in forest.leaf_nodes.items()}
+    forest.sort()
+    after, leaves_after = forest.internal_nodes, forest.leaf_nodes
+    # Compare by node id: each node's parent must still be the same node.
+    pid = lambda W, p: np.where(p >= 0, W[np.maximum(p, 0), 0], -1)  # noqa: E731
+    by_id = lambda ids, vals: dict(zip(ids.tolist(), vals.tolist()))  # noqa: E731
+    assert by_id(before["W"][:, 0], pid(before["W"], before["parent"])) == by_id(
+        host(after["W"][:, 0]), pid(host(after["W"]), host(after["parent"]))
+    )
+    assert by_id(leaves_before["leaf"], pid(before["W"], leaves_before["parent"])) == by_id(
+        host(leaves_after["leaf"]), pid(host(after["W"]), host(leaves_after["parent"]))
     )
 
 
 def test_single_trees_have_local_parents_consistent_with_morton_ids():
-    forest, expected = _grow_forest(np.random.default_rng(1))
+    forest, expected = _grow_forest(np.random.default_rng(2))
     forest.sort()
-    for r, ids in expected.items():
+    for r in expected:
         tree = forest.tree(r)
-        assert tree.n_nodes == len(ids)
-        np.testing.assert_array_equal(host(tree.W[:, 0]), ids)
-        parent, side, morton = host(tree.parent), host(tree.side), host(tree.morton)
-        assert parent[0] == -1 and morton[0] == 0 and np.all(parent[1:] >= 0)
-        assert np.all(parent[1:] < np.arange(1, len(ids)))  # preorder: parents come first
-        np.testing.assert_array_equal(
-            child_morton(morton[parent[1:]], side[1:]), morton[1:]
-        )
-    assert forest.tree(2).n_nodes == 0  # a root that was accepted without splitting
+        internal = {k: host(v) for k, v in tree.internal_nodes.items()}
+        for table in (internal, {k: host(v) for k, v in tree.leaf_nodes.items()}):
+            has = table["parent"] >= 0
+            np.testing.assert_array_equal(
+                child_morton(internal["morton"][table["parent"][has]], side_of(table["morton"][has])),
+                table["morton"][has],
+            )
+        assert np.all(internal["parent"][1:] < np.arange(1, tree.n_internal))  # parents come first
+    assert forest.tree(10**6).n_leaves == 0  # a root this forest does not have
 
 
 def test_frozen_and_unsorted_states_are_enforced():
     forest = BinaryTreeForest(2)
     with pytest.raises(RuntimeError, match="sort"):
         forest.tree(0)
-    with pytest.raises(ValueError, match="Expected W"):
-        forest.append(np.zeros((2, 3)), np.zeros(2), *(np.zeros(2, dtype=np.int64),) * 4)
-    forest.sort()  # an empty forest sorts to no trees
-    assert forest.tree(0).n_nodes == 0
+    with pytest.raises(ValueError, match="shape"):
+        forest.add_splits(np.zeros((2, 3)), np.zeros(2), *(np.zeros(2, dtype=np.int64),) * 3)
+    forest.add_leaves(*(np.zeros(1, dtype=np.int64),) * 4)  # a root accepted without splitting
+    forest.sort()
+    assert forest.tree(0).n_leaves == 1 and forest.tree(0).n_internal == 0
     with pytest.raises(RuntimeError, match="frozen"):
-        forest.append(np.zeros((1, 2)), np.zeros(1), *(np.zeros(1, dtype=np.int64),) * 4)
+        forest.add_leaves(*(np.zeros(1, dtype=np.int64),) * 4)
 
 
-def test_forest_lives_on_the_active_backend():
-    forest = BinaryTreeForest(2, capacity=1)
-    forest.append(np.ones((3, 2)), np.zeros(3), *(np.full(3, -1, dtype=np.int64),) * 2,
-                  np.zeros(3, dtype=np.int64), np.zeros(3, dtype=np.int64))  # fmt: skip
-    assert isinstance(forest.W, type(xp.empty(0)))
+def test_host_round_trip_keeps_the_sorted_forest():
+    forest, _ = _grow_forest(np.random.default_rng(3), d=2)
+    forest.root_centroids = xp.asarray(np.arange(8.0).reshape(4, 2))
+    forest.sort()
+    again = BinaryTreeForest.sorted_from(forest.to_host(), d=2)
+    for kind in ("internal_nodes", "leaf_nodes"):
+        for k, v in getattr(forest, kind).items():
+            np.testing.assert_array_equal(host(getattr(again, kind)[k]), host(v))
+    np.testing.assert_array_equal(host(again.root_centroids), host(forest.root_centroids))
+    assert isinstance(again.internal_nodes["W"], type(xp.empty(0)))  # on the active backend
 
 
 def test_tree_tracking_limits_depth_to_what_morton_ids_hold():

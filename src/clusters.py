@@ -5,7 +5,8 @@ Host-side containers for queues of clusters.
 it is what the refinement loop processes, what work stealing sends between ranks,
 and what each level hands to the next. ``ClusterQueueBuilder`` accumulates the
 children produced during one level into the next level's ``ClusterBatch``.
-``ColumnBuffer`` accumulates one row of named columns per accepted cluster.
+``ColumnBuffer`` accumulates rows of named columns (one per accepted cluster, or
+per split-tree node on the device).
 
 Queues can outgrow host RAM: every rejected cluster is augmented to at least
 ``2 * min_pts_per_cluster`` points, so a deep level in high dimension holds tens of
@@ -23,6 +24,11 @@ import psutil
 from src import Array, _to_host, xp
 
 
+# Per-cluster positions in the split trees, carried only with track_trees (the
+# side of the parent's hyperplane is the last path bit of the Morton ID).
+TREE_FIELDS = {"parent": np.int64, "root": np.int64, "morton": np.int64}
+
+
 @dataclass
 class ClusterBatch:
     """
@@ -32,6 +38,10 @@ class ClusterBatch:
     and (if present) ``G``. ``depth[k]`` is the cluster's depth in its tree (roots
     are 0); it travels with the cluster when work is stolen, so the depth limit
     does not depend on which rank processes it.
+
+    With ``track_trees`` the clusters also carry their place in the split trees
+    (``TREE_FIELDS``, see ``src.trees``); otherwise those fields are None. An
+    initial cluster has ``parent`` -1 and ``morton`` 0.
     """
 
     X: np.ndarray  # (n_pts, d)
@@ -39,12 +49,28 @@ class ClusterBatch:
     G: np.ndarray | None  # (n_pts, fd, d), or None when gradients are not carried
     sizes: np.ndarray  # (n_clusters,) int64
     depth: np.ndarray | None = None  # (n_clusters,) int64; None means all roots
+    parent: np.ndarray | None = None  # (n_clusters,) int64 forest row of the split that made it
+    root: np.ndarray | None = None  # (n_clusters,) int64 global index of its initial cluster
+    morton: np.ndarray | None = None  # (n_clusters,) int64 Morton ID within its tree
     starts: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.starts = np.r_[0, np.cumsum(self.sizes)[:-1]]
         if self.depth is None:
             self.depth = np.zeros(len(self.sizes), dtype=np.int64)
+        given = [getattr(self, name) is not None for name in TREE_FIELDS]
+        if any(given) and not all(given):
+            raise ValueError(f"Give all of the tree fields {list(TREE_FIELDS)} or none.")
+
+    @property
+    def has_tree(self) -> bool:
+        return self.parent is not None
+
+    def tree_fields(self, index: Any = slice(None)) -> dict[str, np.ndarray]:
+        """``TREE_FIELDS`` indexed by cluster (a slice, mask or indices); empty without tree tracking."""
+        if not self.has_tree:
+            return {}
+        return {name: getattr(self, name)[index] for name in TREE_FIELDS}
 
     @classmethod
     def empty(cls, d: int, fd: int) -> "ClusterBatch":
@@ -76,16 +102,22 @@ class ClusterBatch:
         pt = int(self.starts[cluster_idx])
         G_head = self.G[:pt] if self.G is not None else None
         G_tail = self.G[pt:] if self.G is not None else None
+        head, tail = slice(None, cluster_idx), slice(cluster_idx, None)
         return (
-            ClusterBatch(self.X[:pt], self.F[:pt], G_head, self.sizes[:cluster_idx], self.depth[:cluster_idx]),
-            ClusterBatch(self.X[pt:], self.F[pt:], G_tail, self.sizes[cluster_idx:], self.depth[cluster_idx:]),
-        )
+            ClusterBatch(self.X[:pt], self.F[:pt], G_head, self.sizes[head], self.depth[head],
+                         **self.tree_fields(head)),
+            ClusterBatch(self.X[pt:], self.F[pt:], G_tail, self.sizes[tail], self.depth[tail],
+                         **self.tree_fields(tail)),
+        )  # fmt: skip
 
     def select(self, keep: np.ndarray) -> "ClusterBatch":
         """The clusters where ``keep`` (n_clusters,) is True, in order."""
         rows = np.repeat(keep, self.sizes)
         G = self.G[rows] if self.G is not None else None
-        return ClusterBatch(self.X[rows], self.F[rows], G, self.sizes[keep], self.depth[keep])
+        return ClusterBatch(
+            self.X[rows], self.F[rows], G, self.sizes[keep], self.depth[keep],
+            **self.tree_fields(keep),
+        )  # fmt: skip
 
 
 # Host RAM kept free for the OS, the GPU driver and other processes: the larger of
@@ -121,8 +153,10 @@ class ClusterQueueBuilder:
     """
 
     def __init__(
-        self, d: int, fd: int, has_g: bool, capacity_pts: int, capacity_clusters: int
+        self, d: int, fd: int, has_g: bool, capacity_pts: int, capacity_clusters: int,
+        track_trees: bool = False,
     ):
+        """``track_trees`` makes every ``append`` require the ``TREE_FIELDS``."""
         self.d, self.fd = d, fd
         cap_pts, cap_clusters = max(1, capacity_pts), max(1, capacity_clusters)
         self._X = np.empty((cap_pts, d), dtype=np.float64)
@@ -130,18 +164,31 @@ class ClusterQueueBuilder:
         self._G = np.empty((cap_pts, fd, d), dtype=np.float64) if has_g else None
         self._sizes = np.empty((cap_clusters,), dtype=np.int64)
         self._depth = np.empty((cap_clusters,), dtype=np.int64)
+        self._tree = (
+            {name: np.empty((cap_clusters,), dtype=dt) for name, dt in TREE_FIELDS.items()}
+            if track_trees
+            else None
+        )
         self.n_pts = 0
         self.n_clusters = 0
 
     def append(
-        self, X: Array, F: Array, G: Array | None, sizes: Array, depth: Array | None = None
+        self, X: Array, F: Array, G: Array | None, sizes: Array, depth: Array | None = None,
+        **tree: Array,
     ) -> None:
         """
         Append clusters given in contiguous order (device or host arrays). ``G`` is
         stored only if the builder was created with ``has_g``; ``depth`` defaults to 0.
+        ``tree`` must be exactly the ``TREE_FIELDS`` if the builder tracks trees,
+        and empty otherwise.
         """
         if self._G is not None and G is None:
             raise ValueError("This builder carries gradients, but G was not given.")
+        expected = set(TREE_FIELDS) if self._tree is not None else set()
+        if set(tree) != expected:
+            raise ValueError(
+                f"This builder expects tree fields {sorted(expected)}; got {sorted(tree)}."
+            )
         X_host, F_host = _to_host(X), _to_host(F)
         G_host = _to_host(G) if G is not None and self._G is not None else None
         sizes_host = _to_host(sizes)
@@ -166,6 +213,8 @@ class ClusterQueueBuilder:
             self._G[self.n_pts : pts_end] = G_host
         self._sizes[self.n_clusters : clusters_end] = sizes_host
         self._depth[self.n_clusters : clusters_end] = 0 if depth is None else _to_host(depth)
+        for name, value in tree.items():
+            self._tree[name][self.n_clusters : clusters_end] = _to_host(value)
         self.n_pts, self.n_clusters = pts_end, clusters_end
 
     def build(self) -> ClusterBatch:
@@ -176,7 +225,12 @@ class ClusterQueueBuilder:
         F = self._F[: self.n_pts]
         G = self._G[: self.n_pts] if self._G is not None else None
         sizes = self._sizes[: self.n_clusters]
-        batch = ClusterBatch(X, F, G, sizes, self._depth[: self.n_clusters])
+        tree = (
+            {name: buf[: self.n_clusters] for name, buf in self._tree.items()}
+            if self._tree is not None
+            else {}
+        )
+        batch = ClusterBatch(X, F, G, sizes, self._depth[: self.n_clusters], **tree)
         nonempty = sizes > 0
         return batch if np.all(nonempty) else batch.select(nonempty)
 
@@ -195,6 +249,10 @@ class ClusterQueueBuilder:
             cap = max(n_clusters, 2 * self._sizes.shape[0])
             self._sizes = _grown(self._sizes, cap, self.n_clusters)
             self._depth = _grown(self._depth, cap, self.n_clusters)
+            if self._tree is not None:
+                self._tree = {
+                    name: _grown(buf, cap, self.n_clusters) for name, buf in self._tree.items()
+                }
 
 
 def _grown(buf: Array, capacity: int, n_used: int) -> Array:
@@ -215,17 +273,21 @@ class ParamSpec:
 
 class ColumnBuffer:
     """
-    Growable host-side columns with one row per accepted cluster.
+    Growable columns with one row per record (e.g. per accepted cluster), each
+    column one contiguous array: in host memory, or on the device with
+    ``on_device`` (e.g. the split trees, which the GPU reads).
 
     ``append`` must receive exactly the declared columns, each with the declared
     trailing shape, so a column can never be left unwritten or silently broadcast.
     """
 
-    def __init__(self, columns: dict[str, ParamSpec], capacity: int):
+    def __init__(self, columns: dict[str, ParamSpec], capacity: int, on_device: bool = False):
         self.columns = dict(columns)
         cap = max(1, int(capacity))
+        empty = xp.empty if on_device else np.empty
+        self._to_storage = xp.asarray if on_device else _to_host
         self._data = {
-            name: np.empty((cap, *spec.shape), dtype=spec.dtype)
+            name: empty((cap, *spec.shape), dtype=spec.dtype)
             for name, spec in self.columns.items()
         }
         self.n_rows = 0
@@ -236,7 +298,7 @@ class ColumnBuffer:
             missing = sorted(self.columns.keys() - rows.keys())
             extra = sorted(rows.keys() - self.columns.keys())
             raise KeyError(f"Column mismatch: missing {missing}, unexpected {extra}")
-        host = {name: _to_host(value) for name, value in rows.items()}
+        host = {name: self._to_storage(value) for name, value in rows.items()}
         n_new = {int(v.shape[0]) for v in host.values()}
         if len(n_new) != 1:
             raise ValueError(f"Columns have different numbers of rows: {n_new}")
@@ -259,6 +321,6 @@ class ColumnBuffer:
             self._data[name][self.n_rows : end] = value
         self.n_rows = end
 
-    def result(self) -> dict[str, np.ndarray]:
-        """The filled rows of every column."""
+    def result(self) -> dict[str, Array]:
+        """The filled rows of every column (views, on the buffer's backend)."""
         return {name: buf[: self.n_rows] for name, buf in self._data.items()}

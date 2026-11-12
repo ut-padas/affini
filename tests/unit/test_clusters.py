@@ -4,8 +4,9 @@ import numpy as np
 import pytest
 
 from src import _to_host, xp
-from src.clusters import ClusterBatch, ClusterQueueBuilder
+from src.clusters import ClusterBatch, ClusterQueueBuilder, ColumnBuffer, ParamSpec
 from src.splitting import median_split_sizes
+from tests._helpers import host
 
 
 def _parts(rng, sizes, d=2, fd=1, has_g=False):
@@ -112,3 +113,57 @@ def test_host_memory_check_keeps_a_reserve(monkeypatch):
     monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(10 * gib, 4 * gib))
     with pytest.raises(MemoryError):  # small machine: the 2 GiB minimum reserve applies
         clusters.check_host_memory(int(8.5 * gib), "x")
+
+
+def _tree(n, offset=0):
+    return {
+        "parent": np.arange(n, dtype=np.int64) - 1 + offset,
+        "root": np.full(n, 7 + offset, dtype=np.int64),
+        "morton": np.arange(n, dtype=np.int64) * 64 + offset,
+    }
+
+
+def test_tree_fields_follow_clusters_through_split_select_and_the_builder():
+    rng = np.random.default_rng(2)
+    X, F, _, sizes = _parts(rng, [3, 0, 4, 2])
+    tree = _tree(4)
+    batch = ClusterBatch(X, F, None, sizes, **tree)
+    head, tail = batch.split(2)
+    for name in tree:
+        np.testing.assert_array_equal(head.tree_fields()[name], tree[name][:2])
+        np.testing.assert_array_equal(tail.tree_fields()[name], tree[name][2:])
+
+    builder = ClusterQueueBuilder(2, 1, False, capacity_pts=1, capacity_clusters=1, track_trees=True)
+    builder.append(xp.asarray(X), xp.asarray(F), None, xp.asarray(sizes), **tree)
+    X2, F2, _, sizes2 = _parts(rng, [5])
+    builder.append(X2, F2, None, sizes2, **_tree(1, offset=100))
+    built = builder.build()  # drops the empty cluster with its tree fields
+    expected = {k: np.r_[np.delete(tree[k], 1), _tree(1, offset=100)[k]] for k in tree}
+    for name, value in expected.items():
+        np.testing.assert_array_equal(built.tree_fields()[name], value)
+        assert built.tree_fields()[name].dtype == value.dtype
+
+
+def test_tree_fields_are_all_or_nothing():
+    rng = np.random.default_rng(3)
+    X, F, _, sizes = _parts(rng, [2, 2])
+    with pytest.raises(ValueError, match="all of the tree fields"):
+        ClusterBatch(X, F, None, sizes, parent=np.zeros(2, dtype=np.int64))
+    assert not ClusterBatch(X, F, None, sizes).has_tree
+    tracking = ClusterQueueBuilder(2, 1, False, 4, 2, track_trees=True)
+    with pytest.raises(ValueError, match="tree fields"):
+        tracking.append(X, F, None, sizes)
+    plain = ClusterQueueBuilder(2, 1, False, 4, 2)
+    with pytest.raises(ValueError, match="tree fields"):
+        plain.append(X, F, None, sizes, **_tree(2))
+
+
+@pytest.mark.parametrize("on_device", [False, True])
+def test_column_buffer_grows_on_its_backend(on_device):
+    buf = ColumnBuffer({"v": ParamSpec((2,)), "i": ParamSpec((), np.int64)}, capacity=1, on_device=on_device)
+    for k in range(3):
+        buf.append({"v": np.full((2, 2), k, dtype=float), "i": np.array([k, k])})
+    out = buf.result()
+    assert isinstance(out["v"], type(xp.empty(0)) if on_device else np.ndarray)
+    np.testing.assert_array_equal(host(out["i"]), [0, 0, 1, 1, 2, 2])
+    assert out["i"].dtype == np.int64 and out["v"].shape == (6, 2)

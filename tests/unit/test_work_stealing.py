@@ -75,7 +75,7 @@ class _Comm:
             return 1
         self.replied = True
         if tag == ws.TAG_STEAL_GRANT:
-            return {"n_pts": 3, "n_clusters": 1, "has_g": self.has_g}
+            return {"n_pts": 3, "n_clusters": 1, "has_g": self.has_g, "has_tree": False}
         assert tag == ws.TAG_STEAL_DENY
         return "IDLE"
 
@@ -117,7 +117,7 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
     monkeypatch.setattr(ws, "MIN_LOAD_THRESHOLD", 1000)
     comm = _Comm(grant, has_g)
     profiler = Profiler(new_profiling_stats(), events=True)
-    buffers, count, _, _, levels = ac._run_local_refinement(
+    buffers, count, _, _, levels, _ = ac._run_local_refinement(
         config=ClusteringConfig(
             mode=SurrogateMode.NEAREST_NEIGHBOR,
             error_metric="Linf",

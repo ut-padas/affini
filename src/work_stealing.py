@@ -18,7 +18,7 @@ import time
 import numpy as np
 
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
-from src.clusters import ClusterBatch
+from src.clusters import TREE_FIELDS, ClusterBatch
 from src.profiling import Profiler
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 TAG_STATE_BROADCAST = 101
 TAG_STEAL_REQ = 102
 TAG_STEAL_DENY = 104
-TAG_STEAL_GRANT = 110  # Payload buffers use tags 111 through 115.
+TAG_STEAL_GRANT = 110  # Payload buffers use tags 111 through 115 (118 with tree fields).
 
 # --- Tuning parameters ---
 MIN_LOAD_THRESHOLD = 1_000_000  # Min points to be eligible for stealing
@@ -36,11 +36,12 @@ SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
 
 
 def send_clusters(comm, batch: ClusterBatch, dest: int, tag: int = TAG_STEAL_GRANT):
-    """Send ``batch`` to ``dest``: a metadata message on ``tag``, then buffers on tag+1..tag+5."""
+    """Send ``batch`` to ``dest``: a metadata message on ``tag``, then buffers on tag+1..tag+5 (tag+8 with tree fields)."""
     meta = {
         "n_pts": batch.n_pts,
         "n_clusters": batch.n_clusters,
         "has_g": batch.G is not None,
+        "has_tree": batch.has_tree,
     }
     comm.send(meta, dest=dest, tag=tag)
     comm.Send(np.ascontiguousarray(batch.X), dest=dest, tag=tag + 1)
@@ -49,6 +50,8 @@ def send_clusters(comm, batch: ClusterBatch, dest: int, tag: int = TAG_STEAL_GRA
         comm.Send(np.ascontiguousarray(batch.G), dest=dest, tag=tag + 3)
     comm.Send(np.ascontiguousarray(batch.sizes), dest=dest, tag=tag + 4)
     comm.Send(np.ascontiguousarray(batch.depth, dtype=np.int64), dest=dest, tag=tag + 5)
+    for i, (name, dtype) in enumerate(TREE_FIELDS.items() if batch.has_tree else ()):
+        comm.Send(np.ascontiguousarray(getattr(batch, name), dtype=dtype), dest=dest, tag=tag + 6 + i)
 
 
 def recv_clusters(
@@ -68,7 +71,11 @@ def recv_clusters(
     comm.Recv(sizes, source=source, tag=tag + 4)
     depth = np.empty(meta["n_clusters"], dtype=np.int64)
     comm.Recv(depth, source=source, tag=tag + 5)
-    return ClusterBatch(X, F, G, sizes, depth)
+    tree = {}
+    for i, (name, dtype) in enumerate(TREE_FIELDS.items() if meta["has_tree"] else ()):
+        tree[name] = np.empty(meta["n_clusters"], dtype=dtype)
+        comm.Recv(tree[name], source=source, tag=tag + 6 + i)
+    return ClusterBatch(X, F, G, sizes, depth, **tree)
 
 
 class WorkStealer:

@@ -31,6 +31,7 @@ from src.evaluation import Evaluator
 from src.local_models import LOCAL_MODELS, LocalModel
 from src.modes import SurrogateMode
 from src.registry import component_spec
+from src.trees import BinaryTreeForest
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,10 @@ class AFINNISurrogate:
         self.num_unresolved_clusters = 0
         self.num_unresolved_pts = 0
         self.profiling_stats = {}
+        # With ClusteringConfig.track_trees: the sorted split trees (internal nodes,
+        # leaf nodes indexing the leaf arrays above, and root_centroids; see
+        # src.trees). Not saved by save_model, so a loaded model has none.
+        self.tree_forest: Optional[BinaryTreeForest] = None
 
         self.knn_index = None
         self.search_stats: dict = {}  # last predict's kNN totals on this rank
@@ -207,6 +212,8 @@ class AFINNISurrogate:
                 k: _to_host(v) if isinstance(v, xp.ndarray) else v
                 for k, v in results.items()
             }
+            if config.track_trees:
+                bcast_data["tree_forest"] = results["tree_forest"].to_host()
 
         bcast_data = comm.bcast(bcast_data, root=0)
 
@@ -220,6 +227,10 @@ class AFINNISurrogate:
             )
 
         d, fd = bcast_data["centroids"].shape[1], bcast_data["f"].shape[1]
+        tree_state = (
+            {"tree_forest": BinaryTreeForest.sorted_from(bcast_data["tree_forest"], d)}
+            if config.track_trees else {}
+        )
         self._install(
             {
                 "mode": config.mode,
@@ -238,6 +249,7 @@ class AFINNISurrogate:
                 "num_unresolved_clusters": int(bcast_data["num_unresolved_clusters"]),
                 "num_unresolved_pts": int(bcast_data["num_unresolved_pts"]),
                 "leaf_params": {name: bcast_data[name] for name in leaf_model.columns(d, fd)},
+                **tree_state,
             },
             source="training",
         )  # fmt: skip
@@ -390,6 +402,8 @@ class AFINNISurrogate:
         usable; ``source`` names where the state came from in error messages.
         """
         state = dict(state)
+        # A model without tracked trees (or a loaded one) clears the previous trees.
+        state.setdefault("tree_forest", None)
         for name in ("X_src", "f_src", "Qs_src", "E_cluster_abs_src", "E_cluster_rel_src"):
             if state[name] is not None:
                 state[name] = _to_device(state[name])

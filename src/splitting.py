@@ -16,9 +16,11 @@ A ``SurrogateMode`` is a pair (local model, split strategy); see
 Adding a strategy means subclassing ``SplitStrategy``, implementing ``metric``
 (or overriding ``split`` entirely), and registering it in ``SPLIT_STRATEGIES``.
 A different cut rule overrides ``child_sizes``, which sees the sorted projection
-scores. Splits are binary: ``split`` must return a permutation that keeps every
-cluster contiguous, and exactly two child sizes per cluster that add up to the
-cluster's size (one of them may be 0; empty children are dropped).
+scores. Splits are binary: ``split`` returns a ``Split`` whose permutation keeps
+every cluster contiguous, with exactly two child sizes per cluster that add up to
+the cluster's size (one of them may be 0; empty children are dropped), and the
+hyperplane ``w^T x + b = 0`` that separates the two children (recorded in the
+split trees, ``src.trees``).
 Strategies declare the data they need with ``needs_point_grad``,
 ``needs_centroid_grad`` and ``needs_hessian_fn``.
 """
@@ -62,6 +64,21 @@ class SplitData:
     f_c: Array  # (K, fd) f at the centroids
     g_c: Array | None  # (K, fd, d) gradient at the centroids, if evaluated
     hessian_fn: Callable[[Array], Array] | None = None  # exact Hessian, (K, d, d)
+
+
+@dataclass(frozen=True)
+class Split:
+    """
+    How a batch of K clusters is split. ``order`` (N,) permutes the rows so every
+    cluster stays contiguous (in label order) with its side-0 child first;
+    ``child_sizes`` (2K,) are ``[k0_side0, k0_side1, k1_side0, ...]``. Side 0 holds
+    the points with ``W[k] @ x + b[k] < 0``, side 1 those with ``> 0``.
+    """
+
+    order: Array
+    child_sizes: Array
+    W: Array  # (K, d) hyperplane normals
+    b: Array  # (K,) hyperplane offsets
 
 
 def median_split_sizes(counts: Array) -> Array:
@@ -128,23 +145,37 @@ class SplitStrategy(ABC):
         mapped points, ``M C M``, whose leading eigenvector is the split direction.
         """
 
-    def split(self, data: SplitData) -> tuple[Array, Array]:
+    def split(self, data: SplitData) -> Split:
         """
-        Return ``(order, child_sizes)``: ``order`` permutes the rows so that every
-        cluster stays contiguous (in label order) with its points sorted along its
-        split direction; ``child_sizes`` (2K,) gives the two children of each
-        cluster in that order.
+        Sort every cluster's points by their score ``v^T M (x - mu)`` and cut them
+        with ``child_sizes``. The score is affine in ``x`` (``w = M^T v``), so the
+        cut is the hyperplane ``w^T x + b = 0`` with ``b = -w^T mu - t``, where the
+        threshold ``t`` is the midpoint between the last side-0 score and the first
+        side-1 score. A child with no points gets a plane through the extreme point.
         """
         M, CovZ = self.metric(data)
         _, V_z = xp.linalg.eigh(CovZ)
         v = V_z[:, :, -1]  # highest-variance direction, (K, d)
         scores = run_fused_split_projection(data.X, data.centroids, data.labels, M, v)
+        W = xp.einsum("kji,kj->ki", M, v)  # M^T v: scores are W[k] @ (x - mu_k)
         if IS_CUPY_BACKEND:
             del CovZ, V_z, v, M
             cp.get_default_memory_pool().free_all_blocks()
         order = sort_by_block_then_value(scores, data.labels)  # (N,)
-        sorted_scores = scores[order] if self.cut != "median" else None
-        return order, self.child_sizes(data.counts, sorted_scores)
+        sorted_scores = scores[order]
+        child_sizes = self.child_sizes(
+            data.counts, sorted_scores if self.cut != "median" else None
+        )
+
+        starts = xp.r_[0, xp.cumsum(data.counts)[:-1]]
+        ends = starts + data.counts - 1
+        last_n = max(int(sorted_scores.shape[0]) - 1, 0)
+        cut = starts + child_sizes[0::2]  # first side-1 row of each cluster
+        below = xp.clip(xp.maximum(cut - 1, starts), 0, last_n)
+        above = xp.clip(xp.minimum(cut, ends), 0, last_n)
+        t = 0.5 * (sorted_scores[below] + sorted_scores[above])
+        b = -xp.sum(W * data.centroids, axis=1) - t
+        return Split(order=order, child_sizes=child_sizes, W=W, b=b)
 
     def child_sizes(self, counts: Array, sorted_scores: Array | None = None) -> Array:
         """

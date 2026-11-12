@@ -127,3 +127,22 @@ def test_given_cluster_sizes_are_used_named_and_summarized(tmp_path, monkeypatch
     assert result["config"]["num_initial_clusters"] == 5 and result["config"]["min_pts_per_cluster"] == 60
     summary = pd.read_csv(exp_dir / "_summary.csv")
     assert summary[["num_initial_clusters", "min_pts_per_cluster"]].values.tolist() == [[5, 60]]
+
+
+def test_work_stealing_argument_defaults_per_experiment_and_is_named():
+    assert launcher.setup_argparse([]).work_stealing is None
+    assert launcher.setup_argparse(["--work_stealing", "off"]).work_stealing == "off"
+    with pytest.raises(SystemExit):
+        launcher.setup_argparse(["--work_stealing", "maybe"])
+
+
+def test_work_stealing_off_is_used_and_named(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher, "RESULTS_DIR", tmp_path)
+    exp_dir = launcher.run_problem(
+        launcher.rosenbrock(None), dim=2, atol=0.1, rtol=0.1, error_eval_mode=SurrogateMode.AFFINE_COV_HESS,
+        Q_reg=launcher.DEFAULT_Q_REG, coarse_factor=launcher.DEFAULT_COARSE_FACTOR, N_train=2000,
+        use_work_stealing=False,
+    )  # fmt: skip
+    (result_path,) = exp_dir.glob("*.json")
+    assert "_stealFalse_" in result_path.name
+    assert json.loads(result_path.read_text())["config"]["use_work_stealing"] is False

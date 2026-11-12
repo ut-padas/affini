@@ -52,3 +52,58 @@ def train_surrogate(X, surrogate=None, *, Y_train=None, initial_labels=None, **o
     surrogate = AFINNISurrogate() if surrogate is None else surrogate
     surrogate.train(xp.asarray(X), ClusteringConfig(**options), evaluator, Y_train=Y_train, initial_labels=initial_labels)
     return surrogate
+
+
+def tree_problems(surrogate) -> list[str]:
+    """
+    Inconsistencies in a tree-tracking surrogate's forest (empty if none). Every
+    node must agree with its parent's root and Morton ID and come after its parent
+    (preorder), every child slot (parent, side) must hold exactly one node, the
+    accepted leaf nodes must index each trained leaf once, and every leaf centroid
+    must lie on its side of each ancestor's hyperplane.
+    """
+    from src.trees import child_morton, side_of
+
+    forest = surrogate.tree_forest
+    if forest is None or not forest.is_sorted:
+        return ["no sorted forest"]
+    internal = {k: host(v) for k, v in forest.internal_nodes.items()}
+    leaves = {k: host(v) for k, v in forest.leaf_nodes.items()}
+    n = len(internal["b"])
+    problems = []
+    accepted = leaves["leaf"][leaves["leaf"] >= 0]
+    if sorted(accepted.tolist()) != list(range(surrogate.N_src)):
+        problems.append("accepted leaf nodes do not index every trained leaf exactly once")
+    if host(forest.root_centroids).shape[0] <= max(internal["root"].max(initial=-1), leaves["root"].max(initial=-1)):
+        problems.append("a root has no centroid")
+    for what, table, rows in (("internal", internal, np.arange(n)), ("leaf", leaves, None)):
+        p = table["parent"]
+        has = p >= 0
+        if np.any(p >= n) or (rows is not None and np.any(p[has] >= rows[has])):
+            problems.append(f"{what} parents out of range or after their children")
+            continue
+        if np.any(table["morton"][~has] != 0):
+            problems.append(f"{what} nodes without a parent have a non-root Morton ID")
+        if np.any(table["root"][has] != internal["root"][p[has]]):
+            problems.append(f"{what} nodes and their parents disagree on the root")
+        m = table["morton"][has]
+        if np.any(m != child_morton(internal["morton"][p[has]], side_of(m))):
+            problems.append(f"{what} Morton IDs do not extend their parents'")
+    slots = np.concatenate([
+        2 * t["parent"][t["parent"] >= 0] + side_of(t["morton"][t["parent"] >= 0]) for t in (internal, leaves)
+    ])  # fmt: skip
+    if len(np.unique(slots)) != len(slots) or len(slots) != 2 * n:
+        problems.append(f"{2 * n} child slots but {len(slots)} children ({len(np.unique(slots))} distinct)")
+
+    # Walk every accepted leaf up to its root, checking the side of each ancestor hyperplane.
+    keep = leaves["leaf"] >= 0
+    c = host(surrogate.X_src)[leaves["leaf"][keep]]
+    p, m = leaves["parent"][keep].copy(), leaves["morton"][keep].copy()
+    while np.any(p >= 0):
+        on = p >= 0
+        value = np.einsum("kd,kd->k", internal["W"][p[on]], c[on]) + internal["b"][p[on]]
+        if np.any((value > 0) != (side_of(m[on]) == 1)):
+            problems.append("a leaf centroid lies on the wrong side of an ancestor hyperplane")
+            break
+        m[on], p[on] = internal["morton"][p[on]], internal["parent"][p[on]]
+    return problems

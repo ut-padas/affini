@@ -85,7 +85,7 @@ def main():
                     if rank == 0
                     else np.empty(0, dtype=np.int64)
                 )
-                buffers, count, _, generated, _ = ac._run_local_refinement(
+                buffers, count, _, generated, _, _ = ac._run_local_refinement(
                     config=ClusteringConfig(
                         mode=SurrogateMode.NEAREST_NEIGHBOR,
                         error_metric="Linf",

@@ -38,6 +38,7 @@ DEFAULT_SAMPLING_METHOD = "convex_combination"
 
 DEFAULT_Q_REG = 1e-6
 DEFAULT_COARSE_FACTOR = 10
+DEFAULT_MAX_LEVELS = ClusteringConfig.max_levels  # the library default (50), so the two cannot drift
 
 
 def _sampling_suffix(sampling_method: str) -> str:
@@ -142,7 +143,7 @@ def conduct_experiment_given_data(
     NUM_INITIAL_CLUSTERS: int,
     MIN_PTS_PER_CLUSTER: int,
     MAX_CLUSTERS_EST: int = 100_000,
-    MAX_LEVELS: int = 1000,
+    MAX_LEVELS: int = DEFAULT_MAX_LEVELS,
     USE_WORK_STEALING: bool = True,
     USE_V2=True,
     Y_train=None,
@@ -368,7 +369,7 @@ def conduct_experiment_generate_uniform_data(
     NUM_INITIAL_CLUSTERS: int,
     MIN_PTS_PER_CLUSTER: int,
     MAX_CLUSTERS_EST: int = 100_000,
-    MAX_LEVELS: int = 1000,
+    MAX_LEVELS: int = DEFAULT_MAX_LEVELS,
     USE_WORK_STEALING: bool = True,
     USE_V2=True,
     HESSIAN=None,
@@ -740,10 +741,12 @@ def run_problem(
     sampling_method: str = DEFAULT_SAMPLING_METHOD,
     num_initial_clusters: int | None = None,
     min_pts_per_cluster: int | None = None,
+    use_work_stealing: bool | None = None,
 ):
     """
     Train and test one surrogate for ``problem``; skip if the result exists.
-    ``num_initial_clusters`` / ``min_pts_per_cluster`` default to the dimension heuristics.
+    ``num_initial_clusters`` / ``min_pts_per_cluster`` default to the dimension
+    heuristics, ``use_work_stealing`` to True (it is always in the file name).
     """
     if problem.only_modes is not None and error_eval_mode not in problem.only_modes:
         print(
@@ -759,7 +762,7 @@ def run_problem(
     ERROR_METRIC = problem.error_metric
     INITIAL_CLUSTERING_METHOD = "kmeans"
     USE_V2 = True
-    USE_WORK_STEALING = True
+    USE_WORK_STEALING = True if use_work_stealing is None else use_work_stealing
 
     N_TRAIN = problem.n_train(dim) if N_train is None else N_train
     N_TEST = problem.n_test(N_TRAIN)
@@ -822,13 +825,14 @@ def lorenz_trajectories_experiment(
     sampling_method=DEFAULT_SAMPLING_METHOD,
     num_initial_clusters=None,
     min_pts_per_cluster=None,
+    use_work_stealing=None,
 ):
     """
     Goal: use time step data as training and testing to do experiments.
     I.e. use manifolds of solutions as initial data. ``atol`` is scaled by max|f_j|
     per state component (see conduct_experiment_given_data). ``num_initial_clusters``
-    / ``min_pts_per_cluster`` default to the heuristics capped at 1000 / 500; other
-    values are added to the file name.
+    / ``min_pts_per_cluster`` default to the heuristics capped at 1000 / 500, and
+    ``use_work_stealing`` to False; other values are added to the file name.
     """
     # Parameters for experiment
     l = -5.0
@@ -883,8 +887,11 @@ def lorenz_trajectories_experiment(
     default_ninit, default_minpts = min(get_NUM_INITIAL_CLUSTERS(d), 1000), min(get_MIN_PTS_PER_CLUSTER(d), 500)
     num_initial_clusters = default_ninit if num_initial_clusters is None else num_initial_clusters
     min_pts_per_cluster = default_minpts if min_pts_per_cluster is None else min_pts_per_cluster
-    cluster_suffix = ("" if num_initial_clusters == default_ninit else f"_ninit{num_initial_clusters}") + (
-        "" if min_pts_per_cluster == default_minpts else f"_minpts{min_pts_per_cluster}"
+    use_work_stealing = False if use_work_stealing is None else use_work_stealing
+    cluster_suffix = (
+        ("" if num_initial_clusters == default_ninit else f"_ninit{num_initial_clusters}")
+        + ("" if min_pts_per_cluster == default_minpts else f"_minpts{min_pts_per_cluster}")
+        + ("_stealTrue" if use_work_stealing else "")
     )
     json_fpath = EXP_DIR / (
         f"dim{d}_dt{dt}_{_tolerance_tag(atol, rtol, scaled=True)}_ntrain{N_start_train * (N_steps + 1)}{mode_suffix}{size_suffix}{cluster_suffix}"
@@ -910,7 +917,7 @@ def lorenz_trajectories_experiment(
         INITIAL_CLUSTERING_METHOD="kmeans",
         NUM_INITIAL_CLUSTERS=num_initial_clusters,
         MIN_PTS_PER_CLUSTER=min_pts_per_cluster,
-        USE_WORK_STEALING=False,
+        USE_WORK_STEALING=use_work_stealing,
         Q_reg=Q_reg,
         COARSE_FACTOR=coarse_factor,
         SAMPLING_METHOD=sampling_method,
@@ -1045,6 +1052,14 @@ def setup_argparse(argv: list[str] | None = None):
         default=DEFAULT_SAMPLING_METHOD,
     )
 
+    parser.add_argument(
+        "--work_stealing",
+        help="MPI work stealing between ranks (default: on, except off for the "
+        "Lorenz-96 trajectory experiment).",
+        choices=["on", "off"],
+        default=None,
+    )
+
     args = parser.parse_args(argv)
     if args.tols is not None and (args.atols is not None or args.rtols is not None):
         parser.error("--tols cannot be combined with --atols/--rtols")
@@ -1063,6 +1078,7 @@ def run_experiment_from_args(args):
     Q_reg = args.Q_reg
     coarse_factor = args.coarse_factor
     N_train = args.N_train
+    use_work_stealing = None if args.work_stealing is None else args.work_stealing == "on"
 
     error_eval_mode = SurrogateMode(args.error_eval_mode)
 
@@ -1071,7 +1087,7 @@ def run_experiment_from_args(args):
             for d in dvec:
                 lorenz_trajectories_experiment(
                     d, atol, rtol, error_eval_mode, args.dt, Q_reg, coarse_factor, N_train, args.sampling_method,
-                    args.num_initial_clusters, args.min_pts_per_cluster,
+                    args.num_initial_clusters, args.min_pts_per_cluster, use_work_stealing,
                 )  # fmt: skip
         return
     if sampling == "modified" and function_name in MODIFIED_SAMPLING:
@@ -1082,7 +1098,7 @@ def run_experiment_from_args(args):
         for d in dvec:
             run_problem(
                 problem, d, atol, rtol, error_eval_mode, Q_reg, coarse_factor, N_train, args.sampling_method,
-                args.num_initial_clusters, args.min_pts_per_cluster,
+                args.num_initial_clusters, args.min_pts_per_cluster, use_work_stealing,
             )  # fmt: skip
 
 

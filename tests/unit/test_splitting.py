@@ -65,7 +65,8 @@ STRATEGIES = [
 def test_split_contract(strategy):
     sizes = [1200, 900, 1501]
     data = _data(sizes)
-    order, child = strategy.split(data)
+    split = strategy.split(data)
+    order, child = split.order, split.child_sizes
     order, child = _to_host(order), _to_host(child)
     assert sorted(order.tolist()) == list(range(sum(sizes)))  # a permutation
     labels = _to_host(data.labels)[order]
@@ -86,7 +87,8 @@ def test_split_contract(strategy):
 def test_split_direction_follows_curvature(strategy, axis):
     """Figure 2 of the paper: Hessian-informed splits cut across the high-curvature axis."""
     data = _data([2000])
-    order, child = strategy.split(data)
+    split = strategy.split(data)
+    order, child = split.order, split.child_sizes
     X = _to_host(data.X)[_to_host(order)]
     low, high = X[: int(_to_host(child)[0])], X[int(_to_host(child)[0]) :]
     gap = np.abs(high.mean(axis=0) - low.mean(axis=0)) / X.std(axis=0)
@@ -119,3 +121,20 @@ def test_every_mode_has_a_split_and_its_requirements_hold(mode):
     if split.needs_centroid_grad:
         assert config.requires_grad_centroids
     assert split.needs_hessian_fn == ("exact_hess" in mode.value)
+
+
+@pytest.mark.parametrize("cut", ["median", "sign"])
+@pytest.mark.parametrize("strategy", STRATEGIES, ids=lambda s: f"{s.name}")
+def test_split_hyperplane_separates_the_children(strategy, cut):
+    """Side 0 of each cluster's hyperplane holds exactly its first child, side 1 its second."""
+    strategy = type(strategy)(**{**strategy.settings(), "cut": cut})
+    sizes = [1200, 900, 1501]
+    data = _data(sizes)
+    split = strategy.split(data)
+    order, child, W, b = (_to_host(a) for a in (split.order, split.child_sizes, split.W, split.b))
+    assert W.shape == (3, 2) and b.shape == (3,)
+    X, labels = _to_host(data.X)[order], _to_host(data.labels)[order]
+    value = np.einsum("nd,nd->n", X, W[labels]) + b[labels]
+    starts = np.r_[0, np.cumsum(sizes)[:-1]]
+    side = np.arange(len(X)) >= np.repeat(starts + child[0::2], sizes)
+    np.testing.assert_array_equal(value > 0, side)

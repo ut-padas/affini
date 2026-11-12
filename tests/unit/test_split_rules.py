@@ -46,7 +46,8 @@ def test_split_returns_a_permutation_within_clusters_and_valid_children(cut):
     rng = np.random.default_rng(0)
     sizes = [9, 1, 20, 2]
     data = _split_data(rng, sizes)
-    order, child = CovarianceSplit(cut=cut).split(data)
+    split = CovarianceSplit(cut=cut).split(data)
+    order, child = split.order, split.child_sizes
     order, child, labels = host(order), host(child), host(data.labels)
     assert sorted(order.tolist()) == list(range(sum(sizes)))  # bijection
     np.testing.assert_array_equal(labels[order], labels)  # clusters stay contiguous, in order
@@ -61,7 +62,8 @@ def test_sign_cut_splits_through_the_centroid_along_the_principal_axis():
     # orthogonal to the principal axis of the cluster's covariance.
     rng = np.random.default_rng(1)
     data = _split_data(rng, [31])
-    order, child = CovarianceSplit(cut="sign").split(data)
+    split = CovarianceSplit(cut="sign").split(data)
+    order, child = split.order, split.child_sizes
     X, c = host(data.X)[host(order)], host(data.centroids)[0]
     v = np.linalg.eigh(np.cov((X - c).T, bias=True))[1][:, -1]
     side = (X - c) @ v
