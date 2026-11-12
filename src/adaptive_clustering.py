@@ -535,7 +535,7 @@ def _run_local_refinement(
                         # Record the hyperplanes; children inherit their rows as parents.
                         bad_host = _to_host(bad_idx_local)
                         parent_tree = {k: v[bad_host] for k, v in tree_cpu.items()}
-                        rows = forest.add_splits(split.W, split.b, **parent_tree)
+                        rows = forest.add_splits(split.W, split.b, mus[bad_idx_local], **parent_tree)
                         side = np.tile(np.array([0, 1], dtype=np.int64), n_bad)
                         children_tree = {
                             "parent": np.repeat(_to_host(rows), 2),

@@ -65,7 +65,9 @@ def _grow_forest(rng, n_roots=4, levels=6, d=3):
             break
         W = np.zeros((k, d))
         W[:, 0] = ids[split]
-        rows = host(forest.add_splits(W, rng.standard_normal(k), parent[split], root[split], morton[split]))
+        rows = host(forest.add_splits(
+            W, rng.standard_normal(k), rng.standard_normal((k, d)), parent[split], root[split], morton[split]
+        ))  # fmt: skip
         queue = [
             (int(root[split][i]), int(rows[i]), _child(int(morton[split][i]), s), int(ids[split][i]))
             for i in range(k)
@@ -136,7 +138,7 @@ def test_frozen_and_unsorted_states_are_enforced():
     with pytest.raises(RuntimeError, match="sort"):
         forest.tree(0)
     with pytest.raises(ValueError, match="shape"):
-        forest.add_splits(np.zeros((2, 3)), np.zeros(2), *(np.zeros(2, dtype=np.int64),) * 3)
+        forest.add_splits(np.zeros((2, 3)), np.zeros(2), np.zeros((2, 2)), *(np.zeros(2, dtype=np.int64),) * 3)
     forest.add_leaves(*(np.zeros(1, dtype=np.int64),) * 4)  # a root accepted without splitting
     forest.sort()
     assert forest.tree(0).n_leaves == 1 and forest.tree(0).n_internal == 0

@@ -59,7 +59,7 @@ def tree_problems(surrogate) -> list[str]:
     Inconsistencies in a tree-tracking surrogate's forest (empty if none). Every
     node must agree with its parent's root and Morton ID and come after its parent
     (preorder), every child slot (parent, side) must hold exactly one node, the
-    accepted leaf nodes must index each trained leaf once, and every leaf centroid
+    accepted leaf nodes must index each trained leaf once, and every node's centroid
     must lie on its side of each ancestor's hyperplane.
     """
     from src.trees import child_morton, side_of
@@ -95,15 +95,17 @@ def tree_problems(surrogate) -> list[str]:
     if len(np.unique(slots)) != len(slots) or len(slots) != 2 * n:
         problems.append(f"{2 * n} child slots but {len(slots)} children ({len(np.unique(slots))} distinct)")
 
-    # Walk every accepted leaf up to its root, checking the side of each ancestor hyperplane.
+    # Walk every accepted leaf and every internal node up to its root, checking that
+    # its centroid lies on its side of each ancestor hyperplane.
     keep = leaves["leaf"] >= 0
-    c = host(surrogate.X_src)[leaves["leaf"][keep]]
-    p, m = leaves["parent"][keep].copy(), leaves["morton"][keep].copy()
+    c = np.concatenate([host(surrogate.X_src)[leaves["leaf"][keep]], internal["centroid"]])
+    p = np.concatenate([leaves["parent"][keep], internal["parent"]])
+    m = np.concatenate([leaves["morton"][keep], internal["morton"]])
     while np.any(p >= 0):
         on = p >= 0
         value = np.einsum("kd,kd->k", internal["W"][p[on]], c[on]) + internal["b"][p[on]]
         if np.any((value > 0) != (side_of(m[on]) == 1)):
-            problems.append("a leaf centroid lies on the wrong side of an ancestor hyperplane")
+            problems.append("a centroid lies on the wrong side of an ancestor hyperplane")
             break
         m[on], p[on] = internal["morton"][p[on]], internal["parent"][p[on]]
     return problems

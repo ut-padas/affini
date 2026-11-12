@@ -90,3 +90,32 @@ def test_retraining_without_tracking_clears_the_trees(tracked):
     assert s.tree_forest is not None
     train(surrogate=s)
     assert s.tree_forest is None
+
+
+def test_split_trees_plot_renders_every_node_edge_and_trust_region(tracked, tmp_path):
+    from matplotlib.collections import EllipseCollection, LineCollection, PathCollection
+
+    from src.plotting import plot_split_trees
+
+    path = tmp_path / "trees.png"
+    fig = plot_split_trees(tracked, (-1.0, 1.0), f, path=path)
+    assert path.exists()
+    ax_tree, ax_trust = fig.axes[:2]
+    internal_parent = host(tracked.tree_forest.internal_nodes["parent"])
+    leaf_parent = host(tracked.tree_forest.leaf_nodes["parent"])
+    n_mid = int((internal_parent >= 0).sum())  # internal nodes below the roots
+    (edges,) = [c for c in ax_tree.collections if isinstance(c, LineCollection)]
+    # One edge from every node below a root to its parent (converged: every leaf accepted).
+    assert len(edges.get_segments()) == n_mid + int((leaf_parent >= 0).sum())
+    points = [len(c.get_offsets()) for c in ax_tree.collections if isinstance(c, PathCollection)]
+    assert points == [n_mid, tracked.N_src, N_ROOTS]  # internal nodes, leaves, roots
+    (ellipses,) = [c for c in ax_trust.collections if isinstance(c, EllipseCollection)]
+    assert len(ellipses.get_offsets()) == tracked.N_src
+    assert [len(c.get_offsets()) for c in ax_trust.collections if isinstance(c, PathCollection)] == [tracked.N_src]
+
+
+def test_split_trees_plot_needs_tracked_trees():
+    from src.plotting import plot_split_trees
+
+    with pytest.raises(ValueError, match="track_trees=True"):
+        plot_split_trees(train(), (-1.0, 1.0), f)

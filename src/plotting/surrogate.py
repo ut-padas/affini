@@ -1,6 +1,6 @@
 """
-Plots of trained surrogates: leaves and trust ellipsoids over the function, error
-distributions, and problem-specific views (wave, near-centre and Hessian studies).
+Plots of trained surrogates: leaves and trust ellipsoids over the function, the
+split trees (``track_trees``), error distributions, and problem-specific views (wave, near-centre and Hessian studies).
 
 Put new plots of surrogates or predictions here, and plots of training profiles in
 ``src.plotting.profiling``. Plots should accept host or device arrays, return or save
@@ -14,11 +14,13 @@ from typing import TYPE_CHECKING, Callable
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.collections import EllipseCollection, LineCollection
 from matplotlib.colors import ListedColormap, LogNorm
 from matplotlib.lines import Line2D
-from matplotlib.patches import Circle, Ellipse
+from matplotlib.patches import Circle
 
 from src import Array, _to_device, _to_host, xp
+from src.plotting.style import afinni_style, finish
 
 if TYPE_CHECKING:
     from src.surrogate import AFINNISurrogate
@@ -28,6 +30,25 @@ def _host_domain(domain) -> tuple[float, float]:
     """``(lo, hi)`` as Python floats, so a CuPy ``domain`` cannot make NumPy return CuPy arrays to matplotlib."""
     lo, hi = (float(_to_host(v)) for v in domain)
     return lo, hi
+
+
+def _add_trust_ellipses(ax: plt.Axes, centroids: np.ndarray, Q: np.ndarray) -> EllipseCollection:
+    """Draw each 2-D trust region ``dx^T Q dx = 1`` around its centroid as one collection (fast for many leaves)."""
+    eigvals, eigvecs = np.linalg.eigh(Q)  # ascending: column 1 is the short axis
+    ellipses = EllipseCollection(
+        widths=2.0 / np.sqrt(eigvals[:, 1]),  # full axis lengths of the boundary
+        heights=2.0 / np.sqrt(eigvals[:, 0]),
+        angles=np.degrees(np.arctan2(eigvecs[:, 1, 1], eigvecs[:, 0, 1])),
+        units="xy",
+        offsets=centroids,
+        offset_transform=ax.transData,
+        edgecolors="blue",
+        facecolors="none",
+        linewidths=0.5,
+        alpha=0.7,
+    )
+    ax.add_collection(ellipses)
+    return ellipses
 
 
 def plot_adaptive_clustering_results(
@@ -117,30 +138,7 @@ def plot_adaptive_clustering_results(
         zorder=10,
     )
 
-    # Draw Ellipsoids and Circles
-    for i in range(centroids.shape[0]):
-        _centroid = centroids[i]
-        _Q = Q[i]
-
-        # Eigen-decomposition of Q
-        eigvals, eigvecs = np.linalg.eigh(_Q)
-        order = eigvals.argsort()[::-1]
-        eigvals = eigvals[order]
-        eigvecs = eigvecs[:, order]
-
-        a, b = 2.0 * np.sqrt(1.0 / eigvals)  # 2-sigma lengths
-        angle = np.degrees(np.arctan2(eigvecs[1, 0], eigvecs[0, 0]))
-        ellipse = Ellipse(
-            xy=_centroid,
-            width=a,
-            height=b,
-            angle=angle,
-            edgecolor="blue",
-            facecolor="none",
-            lw=0.5,
-            alpha=0.7,
-        )
-        axs[1].add_patch(ellipse)
+    _add_trust_ellipses(axs[1], centroids, Q)
 
     # Update legend to include ellipses and circles
     legend_elements = [
@@ -582,3 +580,85 @@ def plot_exact_hess_vs_estimated_hess(
 
         
 
+
+
+def plot_split_trees(
+    surrogate: AFINNISurrogate,
+    domain,
+    f_fn: Callable,
+    path: str | Path | None = None,
+    plot_in_log: bool = False,
+    n_grid: int = 400,
+) -> plt.Figure:
+    """
+    Draw the split trees of a surrogate trained with ``track_trees`` over the contours
+    of ``f_fn`` on ``domain`` x ``domain`` (2-D only). Left: root centroids in blue,
+    internal nodes below the roots in orange, accepted leaves as red crosses, and an
+    edge from every node to its parent. Right: the leaves and their trust regions
+    ``dx^T Q dx = 1``. A root's split sits on its root centroid, so it adds no point
+    or edge of its own. Unresolved clusters (dropped at ``max_levels``) have no
+    centroid and are left out.
+    """
+    forest = surrogate.tree_forest
+    if forest is None:
+        raise ValueError(
+            "The surrogate has no split trees: train it with ClusteringConfig(track_trees=True)."
+        )
+    roots = _to_host(forest.root_centroids)
+    if roots.shape[1] != 2:
+        raise ValueError(f"plot_split_trees draws 2-D trees only; got d={roots.shape[1]}.")
+    internal = {k: _to_host(v) for k, v in forest.internal_nodes.items()}
+    leaves = {k: _to_host(v) for k, v in forest.leaf_nodes.items()}
+
+    below_root = internal["parent"] >= 0
+    accepted = leaves["leaf"] >= 0
+    leaf_xy = _to_host(surrogate.X_src)[leaves["leaf"][accepted]]
+    leaf_parent = leaves["parent"][accepted]
+    child_xy = np.concatenate([internal["centroid"][below_root], leaf_xy[leaf_parent >= 0]])
+    parent_rows = np.concatenate([internal["parent"][below_root], leaf_parent[leaf_parent >= 0]])
+    edges = np.stack([internal["centroid"][parent_rows], child_xy], axis=1)  # (n_edges, 2, 2)
+
+    lo, hi = _host_domain(domain)
+    x = np.linspace(lo, hi, n_grid)
+    X_grid, Y_grid = np.meshgrid(x, x)
+    grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
+    Z_grid = _to_host(f_fn(_to_device(grid_pts))).reshape(X_grid.shape)
+    leaf_style = dict(c="red", marker="x", s=22, linewidths=0.9, zorder=4)
+
+    with afinni_style():
+        fig, (ax_tree, ax_trust) = plt.subplots(1, 2, figsize=(15, 7))
+        for ax in (ax_tree, ax_trust):
+            cs = ax.contourf(
+                X_grid, Y_grid, Z_grid, levels=50, cmap="viridis",
+                norm=LogNorm() if plot_in_log else None,
+            )  # fmt: skip
+            ax.set_xlim(lo, hi)
+            ax.set_ylim(lo, hi)
+            ax.set_aspect("equal")
+            ax.grid(False)
+            ax.set_xlabel("x")
+            ax.set_ylabel("y")
+        fig.colorbar(cs, ax=[ax_tree, ax_trust], label="f", shrink=0.85)
+
+        ax_tree.add_collection(LineCollection(edges, colors="white", linewidths=0.6, alpha=0.8, zorder=2))
+        ax_tree.scatter(*internal["centroid"][below_root].T, c="orange", s=16, edgecolors="black",
+                        linewidths=0.3, zorder=3,
+                        label=f"Internal nodes ({int(below_root.sum()):,})")  # fmt: skip
+        ax_tree.scatter(*leaf_xy.T, label=f"Leaves ({len(leaf_xy):,})", **leaf_style)
+        ax_tree.scatter(*roots.T, c="blue", s=25, edgecolors="black", linewidths=0.5, zorder=5,
+                        label=f"Roots ({len(roots):,})")  # fmt: skip
+        ax_tree.set_title("Split trees")
+        ax_tree.legend(loc="upper right", frameon=True)
+
+        leaf_Q = _to_host(surrogate.Qs_src)[leaves["leaf"][accepted]]
+        _add_trust_ellipses(ax_trust, leaf_xy, leaf_Q)
+        ax_trust.scatter(*leaf_xy.T, **leaf_style)
+        ax_trust.set_title("Leaves and trust regions")
+        ax_trust.legend(
+            handles=[
+                Line2D([], [], color="red", marker="x", linestyle="none", label="Leaves"),
+                Line2D([], [], color="blue", lw=0.5, label=r"Trust region $dx^\top Q\, dx = 1$"),
+            ],
+            loc="upper right", frameon=True,
+        )  # fmt: skip
+    return finish(fig, path)

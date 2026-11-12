@@ -33,6 +33,7 @@ from src.plotting.surrogate import (
     plot_error_histogram,
     plot_exact_hess_vs_estimated_hess,
     plot_near_centers,
+    plot_split_trees,
     plot_wave_2d_errors,
     plot_wave_line_errors,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "plot_level_progress",
     "plot_load_over_time",
     "plot_near_centers",
+    "plot_split_trees",
     "plot_profile_dashboard",
     "plot_rank_time_breakdown",
     "plot_steal_matrix",

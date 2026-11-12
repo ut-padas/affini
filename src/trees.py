@@ -45,10 +45,13 @@ LEAF_COLUMNS = {
 
 
 def internal_columns(d: int) -> dict[str, ParamSpec]:
-    """Columns of ``internal_nodes``: the hyperplane, then the node's place in its tree."""
+    """Columns of ``internal_nodes``: the hyperplane, the cluster's centroid, then the node's place in its tree."""
     return {
         "W": ParamSpec((d,)),
         "b": ParamSpec(()),
+        # Mean of the cluster's points when it was split (before augmentation); a
+        # root's split sits at its root centroid.
+        "centroid": ParamSpec((d,)),
         "parent": ParamSpec((), np.int64),  # row in internal_nodes; -1 for a root's split
         "root": ParamSpec((), np.int64),
         "morton": ParamSpec((), np.int64),
@@ -137,14 +140,18 @@ class BinaryTreeForest:
     def n_leaves(self) -> int:
         return int(self.leaf_nodes["leaf"].shape[0])
 
-    def add_splits(self, W: Array, b: Array, parent: Array, root: Array, morton: Array) -> Array:
+    def add_splits(
+        self, W: Array, b: Array, centroid: Array, parent: Array, root: Array, morton: Array
+    ) -> Array:
         """
         Record one internal node per split cluster and return their rows (device
         int64), which become the ``parent`` of the clusters' children.
         """
         self._check_unsorted()
         start = self._internal.n_rows
-        self._internal.append({"W": W, "b": b, "parent": parent, "root": root, "morton": morton})
+        self._internal.append(
+            {"W": W, "b": b, "centroid": centroid, "parent": parent, "root": root, "morton": morton}
+        )
         return xp.arange(start, self._internal.n_rows, dtype=xp.int64)
 
     def add_leaves(self, parent: Array, root: Array, morton: Array, leaf: Array) -> None:
