@@ -1,6 +1,6 @@
 """
 Plots of trained surrogates: leaves and trust ellipsoids over the function, the
-split trees (``track_trees``), error distributions, and problem-specific views (wave, near-centre and Hessian studies).
+binary tree forest (``track_trees``), error distributions, and problem-specific views (wave, near-centre and Hessian studies).
 
 Put new plots of surrogates or predictions here, and plots of training profiles in
 ``src.plotting.profiling``. Plots should accept host or device arrays, return or save
@@ -582,7 +582,7 @@ def plot_exact_hess_vs_estimated_hess(
 
 
 
-def plot_split_trees(
+def plot_binary_tree_forest(
     surrogate: AFINNISurrogate,
     domain,
     f_fn: Callable,
@@ -591,10 +591,11 @@ def plot_split_trees(
     n_grid: int = 400,
 ) -> plt.Figure:
     """
-    Draw the split trees of a surrogate trained with ``track_trees`` over the contours
-    of ``f_fn`` on ``domain`` x ``domain`` (2-D only). Left: root centroids in blue,
-    internal nodes below the roots in orange, accepted leaves as red crosses, and an
-    edge from every node to its parent. Right: the leaves and their trust regions
+    Draw the binary tree forest of a surrogate trained with ``track_trees`` over the
+    contours of ``f_fn`` on ``domain`` x ``domain`` (2-D, single-output functions
+    only; meant for debugging splits on simple functions). Left: root centroids
+    in blue, internal nodes below the roots in orange, accepted leaves as red crosses,
+    and an edge from every node to its parent. Right: the leaves and their trust regions
     ``dx^T Q dx = 1``. A root's split sits on its root centroid, so it adds no point
     or edge of its own. Unresolved clusters (dropped at ``max_levels``) have no
     centroid and are left out.
@@ -602,11 +603,16 @@ def plot_split_trees(
     forest = surrogate.tree_forest
     if forest is None:
         raise ValueError(
-            "The surrogate has no split trees: train it with ClusteringConfig(track_trees=True)."
+            "The surrogate has no binary tree forest: train it with ClusteringConfig(track_trees=True)."
         )
     roots = _to_host(forest.root_centroids)
     if roots.shape[1] != 2:
-        raise ValueError(f"plot_split_trees draws 2-D trees only; got d={roots.shape[1]}.")
+        raise ValueError(f"plot_binary_tree_forest draws 2-D trees only; got d={roots.shape[1]}.")
+    if surrogate.f_src.shape[1] != 1:
+        raise ValueError(
+            f"plot_binary_tree_forest draws the contours of a single-output function only; "
+            f"this surrogate has {surrogate.f_src.shape[1]} outputs."
+        )
     internal = {k: _to_host(v) for k, v in forest.internal_nodes.items()}
     leaves = {k: _to_host(v) for k, v in forest.leaf_nodes.items()}
 
@@ -647,7 +653,7 @@ def plot_split_trees(
         ax_tree.scatter(*leaf_xy.T, label=f"Leaves ({len(leaf_xy):,})", **leaf_style)
         ax_tree.scatter(*roots.T, c="blue", s=25, edgecolors="black", linewidths=0.5, zorder=5,
                         label=f"Roots ({len(roots):,})")  # fmt: skip
-        ax_tree.set_title("Split trees")
+        ax_tree.set_title("Binary tree forest")
         ax_tree.legend(loc="upper right", frameon=True)
 
         leaf_Q = _to_host(surrogate.Qs_src)[leaves["leaf"][accepted]]

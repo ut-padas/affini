@@ -125,7 +125,7 @@ class AFINNISurrogate:
         self.num_unresolved_clusters = 0
         self.num_unresolved_pts = 0
         self.profiling_stats = {}
-        # With ClusteringConfig.track_trees: the sorted split trees (internal nodes,
+        # With ClusteringConfig.track_trees: the sorted binary trees (internal nodes,
         # leaf nodes indexing the leaf arrays above, and root_centroids; see
         # src.trees). Not saved by save_model, so a loaded model has none.
         self.tree_forest: Optional[BinaryTreeForest] = None

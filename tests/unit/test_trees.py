@@ -1,4 +1,4 @@
-"""Tests for src/trees.py: Morton IDs and the split-tree forest."""
+"""Tests for src/trees.py: Morton IDs and the binary tree forest."""
 
 import numpy as np
 import pytest

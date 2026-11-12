@@ -92,13 +92,13 @@ def test_retraining_without_tracking_clears_the_trees(tracked):
     assert s.tree_forest is None
 
 
-def test_split_trees_plot_renders_every_node_edge_and_trust_region(tracked, tmp_path):
+def test_forest_plot_renders_every_node_edge_and_trust_region(tracked, tmp_path):
     from matplotlib.collections import EllipseCollection, LineCollection, PathCollection
 
-    from src.plotting import plot_split_trees
+    from src.plotting import plot_binary_tree_forest
 
     path = tmp_path / "trees.png"
-    fig = plot_split_trees(tracked, (-1.0, 1.0), f, path=path)
+    fig = plot_binary_tree_forest(tracked, (-1.0, 1.0), f, path=path)
     assert path.exists()
     ax_tree, ax_trust = fig.axes[:2]
     internal_parent = host(tracked.tree_forest.internal_nodes["parent"])
@@ -114,8 +114,19 @@ def test_split_trees_plot_renders_every_node_edge_and_trust_region(tracked, tmp_
     assert [len(c.get_offsets()) for c in ax_trust.collections if isinstance(c, PathCollection)] == [tracked.N_src]
 
 
-def test_split_trees_plot_needs_tracked_trees():
-    from src.plotting import plot_split_trees
+def test_forest_plot_needs_tracked_trees():
+    from src.plotting import plot_binary_tree_forest
 
     with pytest.raises(ValueError, match="track_trees=True"):
-        plot_split_trees(train(), (-1.0, 1.0), f)
+        plot_binary_tree_forest(train(), (-1.0, 1.0), f)
+
+
+def test_forest_plot_refuses_multi_output_functions():
+    from src.plotting import plot_binary_tree_forest
+
+    def two_outputs(x):
+        return xp.concatenate([f(x), 2 * f(x)], axis=1)
+
+    s = train(f_fn=two_outputs, track_trees=True)
+    with pytest.raises(ValueError, match="single-output function only; this surrogate has 2 outputs"):
+        plot_binary_tree_forest(s, (-1.0, 1.0), two_outputs)

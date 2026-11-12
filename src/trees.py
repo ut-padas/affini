@@ -1,5 +1,5 @@
 """
-Binary split trees recorded during refinement (``ClusteringConfig.track_trees``).
+Binary trees recorded during refinement (``ClusteringConfig.track_trees``).
 
 Every initial cluster roots one binary tree. Each rejected cluster becomes an
 internal node holding the hyperplane ``w^T x + b = 0`` that split it; its
@@ -97,7 +97,7 @@ class BinaryTree:
 
 class BinaryTreeForest:
     """
-    Every split tree of one rank, as two device tables (``internal_columns``,
+    Every binary tree of one rank, as two device tables (``internal_columns``,
     ``LEAF_COLUMNS``) whose ``parent`` columns refer to rows of ``internal_nodes``.
 
     While unsorted, rows are in arrival order and ``add_splits`` / ``add_leaves``

@@ -6,7 +6,7 @@ it is what the refinement loop processes, what work stealing sends between ranks
 and what each level hands to the next. ``ClusterQueueBuilder`` accumulates the
 children produced during one level into the next level's ``ClusterBatch``.
 ``ColumnBuffer`` accumulates rows of named columns (one per accepted cluster, or
-per split-tree node on the device).
+per binary-tree node on the device).
 
 Queues can outgrow host RAM: every rejected cluster is augmented to at least
 ``2 * min_pts_per_cluster`` points, so a deep level in high dimension holds tens of
@@ -24,7 +24,7 @@ import psutil
 from src import Array, _to_host, xp
 
 
-# Per-cluster positions in the split trees, carried only with track_trees (the
+# Per-cluster positions in the binary trees, carried only with track_trees (the
 # side of the parent's hyperplane is the last path bit of the Morton ID).
 TREE_FIELDS = {"parent": np.int64, "root": np.int64, "morton": np.int64}
 
@@ -39,7 +39,7 @@ class ClusterBatch:
     are 0); it travels with the cluster when work is stolen, so the depth limit
     does not depend on which rank processes it.
 
-    With ``track_trees`` the clusters also carry their place in the split trees
+    With ``track_trees`` the clusters also carry their place in the binary trees
     (``TREE_FIELDS``, see ``src.trees``); otherwise those fields are None. An
     initial cluster has ``parent`` -1 and ``morton`` 0.
     """
@@ -275,7 +275,7 @@ class ColumnBuffer:
     """
     Growable columns with one row per record (e.g. per accepted cluster), each
     column one contiguous array: in host memory, or on the device with
-    ``on_device`` (e.g. the split trees, which the GPU reads).
+    ``on_device`` (e.g. the binary trees, which the GPU reads).
 
     ``append`` must receive exactly the declared columns, each with the declared
     trailing shape, so a column can never be left unwritten or silently broadcast.

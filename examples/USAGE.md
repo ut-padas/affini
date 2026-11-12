@@ -132,7 +132,7 @@ Fields of `src.config.ClusteringConfig` (all keyword-only); only a tolerance is 
 | `store_hess` | Second-order Taylor leaves (TAYLOR_LSQ_HESS only), one Hessian per output |
 | `batch_size` | Points moved to the device at once; capped automatically to fit GPU memory |
 | `seed`, `use_work_stealing` | Reproducibility, MPI load balancing |
-| `track_trees` | Record the split trees, one per initial cluster (needs `use_work_stealing=False`, `max_levels` ≤ 56): `surrogate.tree_forest` is a `src.trees.BinaryTreeForest` with `internal_nodes` (each split's hyperplane `W`, `b` and its `parent`, `root`, `morton`), `leaf_nodes` (`parent`, `root`, `morton` and `leaf`, the row in the leaf arrays, -1 if unresolved) and `root_centroids`, sorted by (root, Morton ID); `tree_forest.tree(r)` gives one tree. Not saved by `save_model` |
+| `track_trees` | Record the binary trees, one per initial cluster (needs `use_work_stealing=False`, `max_levels` ≤ 56): `surrogate.tree_forest` is a `src.trees.BinaryTreeForest` with `internal_nodes` (each split's hyperplane `W`, `b`, the cluster's `centroid` and its `parent`, `root`, `morton`), `leaf_nodes` (`parent`, `root`, `morton` and `leaf`, the row in the leaf arrays, -1 if unresolved) and `root_centroids`, sorted by (root, Morton ID); `tree_forest.tree(r)` gives one tree; `src.plotting.plot_binary_tree_forest` draws a 2-D forest. Not saved by `save_model` |
 | `profile_timing`, `profile_events`, `profile_dir` | See [Profiling](#profiling) |
 
 | Mode | Local model | Split metric | Needs |

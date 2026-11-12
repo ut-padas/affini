@@ -20,7 +20,7 @@ scores. Splits are binary: ``split`` returns a ``Split`` whose permutation keeps
 every cluster contiguous, with exactly two child sizes per cluster that add up to
 the cluster's size (one of them may be 0; empty children are dropped), and the
 hyperplane ``w^T x + b = 0`` that separates the two children (recorded in the
-split trees, ``src.trees``).
+binary trees, ``src.trees``).
 Strategies declare the data they need with ``needs_point_grad``,
 ``needs_centroid_grad`` and ``needs_hessian_fn``.
 """
