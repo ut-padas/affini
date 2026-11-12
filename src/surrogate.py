@@ -28,6 +28,7 @@ from src.adaptive_clustering import _adaptive_clustering, run_collective
 from src.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 from src.config import ClusteringConfig
 from src.evaluation import Evaluator
+from src.knn import make_knn_index
 from src.local_models import LOCAL_MODELS, LocalModel
 from src.modes import SurrogateMode
 from src.registry import component_spec
@@ -80,17 +81,6 @@ def _collective(what: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
         return guarded
 
     return decorate
-
-
-def _make_knn_index(centroids: Array):
-    """The exact kNN index of ``src.knn`` for the active backend."""
-    if IS_CUPY_BACKEND:
-        from src.knn import GpuExactKNN
-
-        return GpuExactKNN(_to_device(centroids))
-    from src.knn import CpuExactKNN
-
-    return CpuExactKNN(_to_host(centroids))
 
 
 class AFINNISurrogate:
@@ -422,7 +412,7 @@ class AFINNISurrogate:
                     f"{name!r} of shape {(n, *spec.shape)}; found {got}."
                 )
         t0 = time.perf_counter()
-        state["knn_index"] = _make_knn_index(state["X_src"])
+        state["knn_index"] = make_knn_index(state["X_src"])
         if _get_mpi_rank() == 0:
             logger.info(f"KNN Index built in {time.perf_counter() - t0:.4f}s")
         for name, value in state.items():

@@ -34,6 +34,7 @@ from src.plotting.surrogate import (
     plot_exact_hess_vs_estimated_hess,
     plot_near_centers,
     plot_binary_tree_forest,
+    plot_tree_traversal,
     plot_wave_2d_errors,
     plot_wave_line_errors,
 )
@@ -53,6 +54,7 @@ __all__ = [
     "plot_load_over_time",
     "plot_near_centers",
     "plot_binary_tree_forest",
+    "plot_tree_traversal",
     "plot_profile_dashboard",
     "plot_rank_time_breakdown",
     "plot_steal_matrix",

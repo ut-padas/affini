@@ -103,7 +103,8 @@ def tree_problems(surrogate) -> list[str]:
     m = np.concatenate([leaves["morton"][keep], internal["morton"]])
     while np.any(p >= 0):
         on = p >= 0
-        value = np.einsum("kd,kd->k", internal["W"][p[on]], c[on]) + internal["b"][p[on]]
+        dx = c[on] - internal["centroid"][p[on]]
+        value = np.einsum("kd,kd->k", internal["W"][p[on]], dx) + internal["b"][p[on]]
         if np.any((value > 0) != (side_of(m[on]) == 1)):
             problems.append("a centroid lies on the wrong side of an ancestor hyperplane")
             break

@@ -162,3 +162,17 @@ def test_tree_tracking_limits_depth_to_what_morton_ids_hold():
     with pytest.raises(ValueError, match="max_levels"):
         ClusteringConfig(atol=0.1, track_trees=True, use_work_stealing=False, max_levels=MAX_DEPTH)
     ClusteringConfig(atol=0.1, track_trees=True, use_work_stealing=False, max_levels=MAX_DEPTH - 1)
+
+
+def test_find_rows_locates_every_node_and_only_those():
+    forest, expected = _grow_forest(np.random.default_rng(4))
+    forest.sort()
+    for kind in ("internal_nodes", "leaf_nodes"):
+        table = getattr(forest, kind)
+        n = len(host(table["root"]))
+        np.testing.assert_array_equal(host(forest.find_rows(kind, table["root"], table["morton"])), np.arange(n))
+    leaves = forest.leaf_nodes
+    # A leaf's Morton ID is not an internal node, and roots this forest lacks find nothing.
+    assert np.all(host(forest.find_rows("internal_nodes", leaves["root"], leaves["morton"])) == -1)
+    missing = xp.asarray(np.array([10**6, -1], dtype=np.int64))
+    assert np.all(host(forest.find_rows("leaf_nodes", missing, xp.zeros(2, dtype=xp.int64))) == -1)

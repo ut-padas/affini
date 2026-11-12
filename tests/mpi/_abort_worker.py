@@ -61,7 +61,7 @@ def main(phase: str) -> None:
         def failing_index(_centroids):
             raise RuntimeError("injected failure on rank 1 (index construction)")
 
-        su._make_knn_index = failing_index
+        su.make_knn_index = failing_index
     if phase == "worker_collection" and rank == 1:
         class _MPI:
             COMM_WORLD = _FailingSendComm(MPI.COMM_WORLD, ac.LOCAL_RESULT_TAG)

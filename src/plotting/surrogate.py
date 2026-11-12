@@ -1,6 +1,7 @@
 """
 Plots of trained surrogates: leaves and trust ellipsoids over the function, the
-binary tree forest (``track_trees``), error distributions, and problem-specific views (wave, near-centre and Hessian studies).
+binary tree forest and its traversal (``track_trees``), error distributions, and
+problem-specific views (wave, near-centre and Hessian studies).
 
 Put new plots of surrogates or predictions here, and plots of training profiles in
 ``src.plotting.profiling``. Plots should accept host or device arrays, return or save
@@ -32,7 +33,9 @@ def _host_domain(domain) -> tuple[float, float]:
     return lo, hi
 
 
-def _add_trust_ellipses(ax: plt.Axes, centroids: np.ndarray, Q: np.ndarray) -> EllipseCollection:
+def _add_trust_ellipses(
+    ax: plt.Axes, centroids: np.ndarray, Q: np.ndarray, color: str = "blue", linewidth: float = 0.5
+) -> EllipseCollection:
     """Draw each 2-D trust region ``dx^T Q dx = 1`` around its centroid as one collection (fast for many leaves)."""
     eigvals, eigvecs = np.linalg.eigh(Q)  # ascending: column 1 is the short axis
     ellipses = EllipseCollection(
@@ -42,9 +45,9 @@ def _add_trust_ellipses(ax: plt.Axes, centroids: np.ndarray, Q: np.ndarray) -> E
         units="xy",
         offsets=centroids,
         offset_transform=ax.transData,
-        edgecolors="blue",
+        edgecolors=color,
         facecolors="none",
-        linewidths=0.5,
+        linewidths=linewidth,
         alpha=0.7,
     )
     ax.add_collection(ellipses)
@@ -582,6 +585,18 @@ def plot_exact_hess_vs_estimated_hess(
 
 
 
+def _forest_2d(surrogate: AFINNISurrogate, plot_name: str):
+    """The surrogate's sorted ``BinaryTreeForest``, after checking there is one and it is 2-D."""
+    forest = surrogate.tree_forest
+    if forest is None:
+        raise ValueError(
+            "The surrogate has no binary tree forest: train it with ClusteringConfig(track_trees=True)."
+        )
+    if forest.d != 2:
+        raise ValueError(f"{plot_name} draws 2-D trees only; got d={forest.d}.")
+    return forest
+
+
 def plot_binary_tree_forest(
     surrogate: AFINNISurrogate,
     domain,
@@ -600,14 +615,8 @@ def plot_binary_tree_forest(
     or edge of its own. Unresolved clusters (dropped at ``max_levels``) have no
     centroid and are left out.
     """
-    forest = surrogate.tree_forest
-    if forest is None:
-        raise ValueError(
-            "The surrogate has no binary tree forest: train it with ClusteringConfig(track_trees=True)."
-        )
+    forest = _forest_2d(surrogate, "plot_binary_tree_forest")
     roots = _to_host(forest.root_centroids)
-    if roots.shape[1] != 2:
-        raise ValueError(f"plot_binary_tree_forest draws 2-D trees only; got d={roots.shape[1]}.")
     if surrogate.f_src.shape[1] != 1:
         raise ValueError(
             f"plot_binary_tree_forest draws the contours of a single-output function only; "
@@ -667,4 +676,85 @@ def plot_binary_tree_forest(
             ],
             loc="upper right", frameon=True,
         )  # fmt: skip
+    return finish(fig, path)
+
+
+def plot_tree_traversal(
+    surrogate: AFINNISurrogate,
+    domain,
+    n_points: int = 9,
+    seed: int = 0,
+    points: Array | None = None,
+    path: str | Path | None = None,
+) -> plt.Figure:
+    """
+    One panel per point (``points``, or ``n_points`` uniform in ``domain`` x ``domain``
+    from ``seed``) showing how ``BinaryTreeForest.find_leaves`` routes it (2-D only):
+    every leaf centroid in gray, the point (black star), the visited centroids from
+    the root (blue) through the internal nodes (orange) to the reached leaf (red),
+    joined level by level, and that leaf's trust region. The path is the reached
+    leaf's chain of ancestors, the nodes a top-down walk visits. A point that
+    reaches an unresolved cluster gets no path.
+    """
+    forest = _forest_2d(surrogate, "plot_tree_traversal")
+    lo, hi = _host_domain(domain)
+    if points is None:
+        points = np.random.default_rng(seed).uniform(lo, hi, (n_points, 2))
+    points = np.asarray(_to_host(points), dtype=np.float64)
+    reached = _to_host(forest.find_leaves(xp.asarray(points)))
+
+    internal = {k: _to_host(v) for k, v in forest.internal_nodes.items()}
+    leaves = {k: _to_host(v) for k, v in forest.leaf_nodes.items()}
+    roots = _to_host(forest.root_centroids)
+    leaf_xy, leaf_Q = _to_host(surrogate.X_src), _to_host(surrogate.Qs_src)
+    accepted = leaves["leaf"] >= 0
+    leaf_row = np.empty(len(leaf_xy), dtype=np.int64)  # trained leaf -> its leaf_nodes row
+    leaf_row[leaves["leaf"][accepted]] = np.nonzero(accepted)[0]
+
+    n_cols = int(np.ceil(np.sqrt(len(points))))
+    n_rows = int(np.ceil(len(points) / n_cols))
+    with afinni_style():
+        fig, axs = plt.subplots(n_rows, n_cols, figsize=(4.2 * n_cols, 4.2 * n_rows), squeeze=False)
+        for ax, x, leaf in zip(axs.flat, points, reached):
+            ax.scatter(*leaf_xy.T, c="0.65", s=3, zorder=1)
+            ax.scatter(*x, c="black", marker="*", s=90, zorder=6)
+            if leaf < 0:
+                ax.set_title(f"({x[0]:.2f}, {x[1]:.2f}): unresolved", fontsize=10)
+            else:
+                row = leaf_row[leaf]
+                chain, p = [], leaves["parent"][row]
+                while p >= 0:  # walk up to the root's split
+                    chain.append(p)
+                    p = internal["parent"][p]
+                # The root's split sits on the root centroid: start there, then the
+                # internal nodes below it, then the leaf.
+                below_root = [r for r in reversed(chain) if internal["parent"][r] >= 0]
+                trail = (
+                    np.vstack([roots[leaves["root"][row]], internal["centroid"][below_root], leaf_xy[leaf]])
+                    if chain else leaf_xy[leaf][None]  # a root accepted unsplit is its own leaf
+                )
+                ax.plot(*trail.T, color="black", linewidth=1.0, zorder=3)
+                ax.scatter(*trail[1:-1].T, c="orange", s=22, edgecolors="black", linewidths=0.3, zorder=4)
+                ax.scatter(*trail[0], c="blue", s=30, edgecolors="black", linewidths=0.5, zorder=5)
+                ax.scatter(*leaf_xy[leaf], c="red", s=30, zorder=5)
+                _add_trust_ellipses(ax, leaf_xy[leaf][None], leaf_Q[leaf][None], color="red", linewidth=1.0)
+                ax.set_title(f"({x[0]:.2f}, {x[1]:.2f}): depth {len(chain)}", fontsize=10)
+            ax.set_xlim(lo, hi)
+            ax.set_ylim(lo, hi)
+            ax.set_aspect("equal")
+            ax.grid(False)
+        for ax in axs.flat[len(points):]:
+            ax.set_visible(False)
+        axs.flat[0].legend(
+            handles=[
+                Line2D([], [], color="black", marker="*", linestyle="none", label="Point"),
+                Line2D([], [], color="blue", marker="o", linestyle="none", label="Root"),
+                Line2D([], [], color="orange", marker="o", linestyle="none", label="Internal nodes"),
+                Line2D([], [], color="red", marker="o", linestyle="none", label="Reached leaf"),
+                Line2D([], [], color="red", lw=1.0, label="Its trust region"),
+                Line2D([], [], color="0.65", marker="o", linestyle="none", label="Other leaves"),
+            ],
+            loc="upper right", frameon=True, fontsize=7,
+        )  # fmt: skip
+        fig.suptitle("Tree traversal (find_leaves)")
     return finish(fig, path)

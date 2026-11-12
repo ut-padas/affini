@@ -134,7 +134,29 @@ def test_split_hyperplane_separates_the_children(strategy, cut):
     order, child, W, b = (_to_host(a) for a in (split.order, split.child_sizes, split.W, split.b))
     assert W.shape == (3, 2) and b.shape == (3,)
     X, labels = _to_host(data.X)[order], _to_host(data.labels)[order]
-    value = np.einsum("nd,nd->n", X, W[labels]) + b[labels]
+    value = np.einsum("nd,nd->n", X - _to_host(data.centroids)[labels], W[labels]) + b[labels]
     starts = np.r_[0, np.cumsum(sizes)[:-1]]
     side = np.arange(len(X)) >= np.repeat(starts + child[0::2], sizes)
     np.testing.assert_array_equal(value > 0, side)
+
+
+def test_centroid_relative_hyperplane_separates_a_small_cluster_far_from_the_origin():
+    """
+    Measured from the centroid, the side test stays on the cluster's scale; the
+    equivalent absolute form w^T x + (b - w^T c) cancels terms of size |w^T c| and
+    misroutes points near the cut (deep clusters are small and far from the origin).
+    """
+    rng = np.random.default_rng(0)
+    n = 2000
+    X = np.array([1e8, -3e7]) + 1e-6 * rng.uniform(-1, 1, (n, 2)) * [1.0, 0.3]
+    c = X.mean(axis=0, keepdims=True)
+    data = SplitData(
+        X=xp.asarray(X), F=xp.zeros((n, 1)), G=None, labels=xp.zeros(n, dtype=xp.int64),
+        counts=xp.asarray([n]), centroids=xp.asarray(c), f_c=xp.zeros((1, 1)), g_c=None,
+    )  # fmt: skip
+    split = CovarianceSplit().split(data)
+    W, b = _to_host(split.W)[0], float(_to_host(split.b)[0])
+    X_sorted = X[_to_host(split.order)]
+    side = np.arange(n) >= int(_to_host(split.child_sizes)[0])
+    np.testing.assert_array_equal((X_sorted - c) @ W + b > 0, side)
+    assert np.any((X_sorted @ W + (b - W @ c[0]) > 0) != side)  # what the centring avoids

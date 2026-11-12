@@ -17,6 +17,8 @@ distances keep the smaller leaf index; distances are float64. Strategies:
   duplicate fast results, go to a float64 direct scan with the same reduction (on the
   device for GPU indexes). If k' covers every point, the scan is used directly.
 
+``make_knn_index`` builds the index for the active backend (leaf centroids for
+prediction, root centroids for ``BinaryTreeForest.find_leaves``).
 ``kneighbors_unverified`` returns the float32 candidates as found (k-means assignment,
 which tolerates float32 ties; see ``src/kmeans.py``). ``last_search_stats`` holds the
 last call's queries, candidate count, fallback rows and strategy. Queries must have
@@ -82,7 +84,7 @@ import os
 
 import numpy as np
 
-from src import Array
+from src import IS_CUPY_BACKEND, Array, _to_device, _to_host
 
 MAX_K = 256  # largest k served by the fused kernel; above it, the blocked exact path
 
@@ -825,3 +827,10 @@ def _direct_float64(Q, P, k):
     finally:
         nb.set_num_threads(previous)
     return np.sqrt(topd), topi
+
+
+def make_knn_index(points: Array) -> GpuExactKNN | CpuExactKNN:
+    """The exact kNN index over ``points`` for the active backend (GPU or CPU)."""
+    if IS_CUPY_BACKEND:
+        return GpuExactKNN(_to_device(points))
+    return CpuExactKNN(_to_host(points))

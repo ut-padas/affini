@@ -132,7 +132,7 @@ Fields of `src.config.ClusteringConfig` (all keyword-only); only a tolerance is 
 | `store_hess` | Second-order Taylor leaves (TAYLOR_LSQ_HESS only), one Hessian per output |
 | `batch_size` | Points moved to the device at once; capped automatically to fit GPU memory |
 | `seed`, `use_work_stealing` | Reproducibility, MPI load balancing |
-| `track_trees` | Record the binary trees, one per initial cluster (needs `use_work_stealing=False`, `max_levels` ≤ 56): `surrogate.tree_forest` is a `src.trees.BinaryTreeForest` with `internal_nodes` (each split's hyperplane `W`, `b`, the cluster's `centroid` and its `parent`, `root`, `morton`), `leaf_nodes` (`parent`, `root`, `morton` and `leaf`, the row in the leaf arrays, -1 if unresolved) and `root_centroids`, sorted by (root, Morton ID); `tree_forest.tree(r)` gives one tree; `src.plotting.plot_binary_tree_forest` draws a 2-D forest. Not saved by `save_model` |
+| `track_trees` | Record the binary trees, one per initial cluster (needs `use_work_stealing=False`, `max_levels` ≤ 56): `surrogate.tree_forest` is a `src.trees.BinaryTreeForest` with `internal_nodes` (each split's hyperplane `W @ (x - centroid) + b = 0`, the cluster's `centroid` and its `parent`, `root`, `morton`), `leaf_nodes` (`parent`, `root`, `morton` and `leaf`, the row in the leaf arrays, -1 if unresolved) and `root_centroids`, sorted by (root, Morton ID); `tree_forest.tree(r)` gives one tree; `src.plotting.plot_binary_tree_forest` draws a 2-D forest. Not saved by `save_model` |
 | `profile_timing`, `profile_events`, `profile_dir` | See [Profiling](#profiling) |
 
 | Mode | Local model | Split metric | Needs |
@@ -423,8 +423,9 @@ Contracts the engine checks (with a clear error):
   direction, `child_sizes(counts, sorted_scores)` to change where clusters are cut,
   or `split(data)` entirely, returning a `Split(order, child_sizes, W, b)`; splits
   are binary and must keep each cluster's rows together, its two child sizes adding
-  up to its size, and give the hyperplane `W[k] @ x + b[k] = 0` separating its first
-  child (`< 0`) from its second (`> 0`), which `track_trees` records.
+  up to its size, and give the hyperplane `W[k] @ (x - centroids[k]) + b[k] = 0`
+  separating its first child (`< 0`) from its second (`> 0`), which `track_trees`
+  records.
 - **Acceptance:** `__call__(F, F_hat, starts, sizes) -> (is_good, E_abs, E_rel)`, the
   errors per cluster and output component (K, fd); `self.accept(E_abs, E_rel)` applies
   the built-in tolerance rule.

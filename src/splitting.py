@@ -19,8 +19,8 @@ A different cut rule overrides ``child_sizes``, which sees the sorted projection
 scores. Splits are binary: ``split`` returns a ``Split`` whose permutation keeps
 every cluster contiguous, with exactly two child sizes per cluster that add up to
 the cluster's size (one of them may be 0; empty children are dropped), and the
-hyperplane ``w^T x + b = 0`` that separates the two children (recorded in the
-binary trees, ``src.trees``).
+hyperplane ``w^T (x - c) + b = 0``, measured from the cluster's centroid ``c``,
+that separates the two children (recorded in the binary trees, ``src.trees``).
 Strategies declare the data they need with ``needs_point_grad``,
 ``needs_centroid_grad`` and ``needs_hessian_fn``.
 """
@@ -72,13 +72,16 @@ class Split:
     How a batch of K clusters is split. ``order`` (N,) permutes the rows so every
     cluster stays contiguous (in label order) with its side-0 child first;
     ``child_sizes`` (2K,) are ``[k0_side0, k0_side1, k1_side0, ...]``. Side 0 holds
-    the points with ``W[k] @ x + b[k] < 0``, side 1 those with ``> 0``.
+    the points with ``W[k] @ (x - c_k) + b[k] < 0``, side 1 those with ``> 0``, where
+    ``c_k`` is ``SplitData.centroids[k]``. Measuring from the centroid keeps both
+    terms on the cluster's own scale; the absolute form ``W x + (b - W c)`` would
+    cancel two large terms for a small cluster far from the origin.
     """
 
     order: Array
     child_sizes: Array
     W: Array  # (K, d) hyperplane normals
-    b: Array  # (K,) hyperplane offsets
+    b: Array  # (K,) hyperplane offsets from the centroids
 
 
 def median_split_sizes(counts: Array) -> Array:
@@ -148,8 +151,8 @@ class SplitStrategy(ABC):
     def split(self, data: SplitData) -> Split:
         """
         Sort every cluster's points by their score ``v^T M (x - mu)`` and cut them
-        with ``child_sizes``. The score is affine in ``x`` (``w = M^T v``), so the
-        cut is the hyperplane ``w^T x + b = 0`` with ``b = -w^T mu - t``, where the
+        with ``child_sizes``. The score is ``w^T (x - mu)`` with ``w = M^T v``, so the
+        cut is the hyperplane ``w^T (x - mu) + b = 0`` with ``b = -t``, where the
         threshold ``t`` is the midpoint between the last side-0 score and the first
         side-1 score. A child with no points gets a plane through the extreme point.
         """
@@ -174,7 +177,7 @@ class SplitStrategy(ABC):
         below = xp.clip(xp.maximum(cut - 1, starts), 0, last_n)
         above = xp.clip(xp.minimum(cut, ends), 0, last_n)
         t = 0.5 * (sorted_scores[below] + sorted_scores[above])
-        b = -xp.sum(W * data.centroids, axis=1) - t
+        b = -t
         return Split(order=order, child_sizes=child_sizes, W=W, b=b)
 
     def child_sizes(self, counts: Array, sorted_scores: Array | None = None) -> Array:

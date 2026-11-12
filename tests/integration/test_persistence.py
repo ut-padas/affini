@@ -202,7 +202,7 @@ def test_failed_retraining_keeps_the_previous_model_usable(monkeypatch):
     def failing(_):
         raise RuntimeError("index construction failed")
 
-    monkeypatch.setattr(su, "_make_knn_index", failing)
+    monkeypatch.setattr(su, "make_knn_index", failing)
     with pytest.raises(RuntimeError, match="index construction failed"):
         s.train(xp.asarray(X), small_config(atol=0.02), Evaluator(f_fn=lambda x: (x**2).sum(1)))
     monkeypatch.undo()

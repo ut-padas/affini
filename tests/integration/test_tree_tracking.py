@@ -1,4 +1,6 @@
-"""Training with ``track_trees``: the recorded split forest and the leaves' place in it."""
+"""Training with ``track_trees``: the recorded binary tree forest and the leaves' place in it."""
+
+from contextlib import nullcontext
 
 import numpy as np
 import pytest
@@ -130,3 +132,80 @@ def test_forest_plot_refuses_multi_output_functions():
     s = train(f_fn=two_outputs, track_trees=True)
     with pytest.raises(ValueError, match="single-output function only; this surrogate has 2 outputs"):
         plot_binary_tree_forest(s, (-1.0, 1.0), two_outputs)
+
+
+def _walk_one_point(forest, x):
+    """Reference for find_leaves: route one point with Python loops and dictionaries."""
+    from src.trees import child_morton
+
+    internal = {k: host(v) for k, v in forest.internal_nodes.items()}
+    leaves = {k: host(v) for k, v in forest.leaf_nodes.items()}
+    node_row = {(r, m): i for i, (r, m) in enumerate(zip(internal["root"], internal["morton"]))}
+    leaf_row = {(r, m): i for i, (r, m) in enumerate(zip(leaves["root"], leaves["morton"]))}
+    root = int(np.argmin(((host(forest.root_centroids) - x) ** 2).sum(axis=1)))
+    morton = 0
+    while (root, morton) in node_row:
+        i = node_row[(root, morton)]
+        side = int(internal["W"][i] @ (x - internal["centroid"][i]) + internal["b"][i] > 0)
+        morton = int(child_morton(np.array([morton]), np.array([side]))[0])
+    return int(leaves["leaf"][leaf_row[(root, morton)]])
+
+
+@pytest.mark.parametrize("max_levels", [50, 4])  # converged, and with unresolved clusters
+def test_find_leaves_matches_a_point_by_point_walk(max_levels):
+    with pytest.warns(RuntimeWarning) if max_levels < 50 else nullcontext():
+        s = train(track_trees=True, max_levels=max_levels)
+    X = np.random.default_rng(5).uniform(-1, 1, (300, 2))
+    got = host(s.tree_forest.find_leaves(xp.asarray(X)))
+    np.testing.assert_array_equal(got, [_walk_one_point(s.tree_forest, x) for x in X])
+    assert (got < 0).any() == (max_levels < 50)  # unresolved clusters are reached only when there are any
+
+
+def test_leaf_centroids_route_to_their_own_leaf_when_the_root_is_right(tracked):
+    """
+    Descending is exact for points inside their cells; choosing the tree by nearest
+    root centroid can differ from the initial clustering, so only leaves whose own
+    root centroid is nearest are expected home.
+    """
+    forest = tracked.tree_forest
+    leaves = {k: host(v) for k, v in forest.leaf_nodes.items()}
+    own_root = np.empty(tracked.N_src, dtype=np.int64)
+    own_root[leaves["leaf"]] = leaves["root"]
+    c = host(tracked.X_src)
+    nearest = np.argmin(((c[:, None] - host(forest.root_centroids)[None]) ** 2).sum(-1), axis=1)
+    home = nearest == own_root
+    assert home.mean() > 0.95
+    got = host(forest.find_leaves(tracked.X_src))
+    np.testing.assert_array_equal(got[home], np.arange(tracked.N_src)[home])
+
+
+def test_find_leaves_checks_its_input(tracked):
+    with pytest.raises(ValueError, match=r"shape \(n, 2\)"):
+        tracked.tree_forest.find_leaves(xp.zeros((3, 5)))
+
+
+def test_traversal_plot_draws_each_points_path_to_the_leaf_it_reaches(tracked, tmp_path):
+    from matplotlib.collections import EllipseCollection
+
+    from src.plotting import plot_tree_traversal
+
+    points = np.random.default_rng(6).uniform(-1, 1, (5, 2))
+    fig = plot_tree_traversal(tracked, (-1.0, 1.0), points=points, path=tmp_path / "walk.png")
+    assert (tmp_path / "walk.png").exists()
+    panels = [ax for ax in fig.axes if ax.get_visible()]
+    assert len(panels) == 5  # a 3 x 2 grid with one panel hidden
+    reached = host(tracked.tree_forest.find_leaves(xp.asarray(points)))
+    for ax, x, leaf in zip(panels, points, reached):
+        (trail,) = ax.get_lines()
+        xy = np.asarray(trail.get_xydata())
+        np.testing.assert_allclose(xy[-1], host(tracked.X_src)[leaf])  # ends at the reached leaf
+        assert ax.get_title().endswith(f"depth {len(xy) - 1}")  # one segment per level
+        (region,) = [c for c in ax.collections if isinstance(c, EllipseCollection)]
+        np.testing.assert_allclose(region.get_offsets()[0], host(tracked.X_src)[leaf])
+
+
+def test_traversal_plot_needs_tracked_trees():
+    from src.plotting import plot_tree_traversal
+
+    with pytest.raises(ValueError, match="track_trees=True"):
+        plot_tree_traversal(train(), (-1.0, 1.0))
