@@ -41,7 +41,7 @@ class QueueColumn:
     trailing: Callable[[int, int, int], tuple[int, ...]]
 
 
-# Every column a queue can carry, in wire order (see src.work_stealing.send_clusters).
+# Every column a queue can carry, in wire order (see src.engine.work_stealing.send_clusters).
 # X, F, sizes and depth are always present; G only when gradients are carried per point;
 # root, path_code and constraints only in region mode (src.region), where constraints are
 # the signed ancestor half-spaces ``a^T u <= b`` stored as rows ``[a | b]`` in the

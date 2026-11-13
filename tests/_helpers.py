@@ -4,14 +4,16 @@ import numpy as np
 
 from src import IS_CUPY_BACKEND, _to_host, xp
 from src.config import ClusteringConfig
-from src.evaluation import Evaluator
+from src.engine.evaluation import Evaluator
 from src.surrogate import AFINNISurrogate
 
 # CuPy reductions/einsum may order floating-point operations differently from
 # NumPy (and from one code path to another), so results agree to rounding only.
 GPU_RTOL = 1e-12
-# Two separate GPU trainings: atomicAdd order differs per run and the differences
-# pass through the least-squares solves, reaching a few 1e-12 on small values.
+# Two GPU trainings that may take different code paths (e.g. batch sizes in AFINNI mode,
+# whose augmentation seed depends on batches): rounding differences pass through the
+# least-squares solves and reach a few 1e-12 on small values. Repeated GPU runs of one
+# configuration are bit-identical (no atomic float sums on the training path).
 GPU_RUNS_RTOL = 1e-10
 
 

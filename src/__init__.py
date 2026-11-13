@@ -9,7 +9,7 @@ from typing import Any
 
 from array_api_compat.common._typing import Array
 
-from src.backend import (
+from src.infra.backend import (
     IS_CUPY_BACKEND,
     backend_info,
     get_mpi_rank,
@@ -28,9 +28,9 @@ _get_mpi_size = get_mpi_size
 
 def __getattr__(name: str) -> Any:
     """Resolve ``HAS_MPI``/``MPI`` on first use, so importing ``src`` never initializes MPI."""
-    # Keep `HAS_MPI` / `MPI` lazy (see src.backend) so `import src` never runs MPI_Init.
+    # Keep `HAS_MPI` / `MPI` lazy (see src.infra.backend) so `import src` never runs MPI_Init.
     if name in ("HAS_MPI", "MPI"):
-        from src import backend
+        from src.infra import backend
 
         return getattr(backend, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

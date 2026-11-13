@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from src import backend
+from src.infra import backend
 from tests.mpi._mpi_worker import RESULT_PREFIX
 
 pytestmark = pytest.mark.mpi

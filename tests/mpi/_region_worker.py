@@ -20,9 +20,9 @@ from tests.mpi._mpi_worker import RESULT_PREFIX
 
 def main() -> None:
     from src import _to_host, xp
-    from src.backend import MPI
+    from src.infra.backend import MPI
     from src.config import ClusteringConfig, RegionSettings
-    from src.evaluation import Evaluator
+    from src.engine.evaluation import Evaluator
     from src.surrogate import AFINNISurrogate
 
     rank = MPI.COMM_WORLD.Get_rank()
@@ -33,7 +33,7 @@ def main() -> None:
             if "Granted" in record.getMessage():
                 grants["n"] += 1
 
-    log = logging.getLogger("src.work_stealing")
+    log = logging.getLogger("src.engine.work_stealing")
     log.setLevel(logging.INFO)
     log.addHandler(GrantLog())
     log.propagate = False

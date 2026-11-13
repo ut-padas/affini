@@ -24,9 +24,9 @@ B = np.array([1.0, -2.0, 0.5])
 
 def main() -> None:
     import src
-    import src.work_stealing as ws
-    from src.backend import MPI
-    from src.modes import SurrogateMode
+    import src.engine.work_stealing as ws
+    from src.infra.backend import MPI
+    from src.components.modes import SurrogateMode
     from src.surrogate import AFINNISurrogate
     from tests._helpers import train_surrogate
 

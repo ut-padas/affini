@@ -43,7 +43,7 @@ def check_primitives(MPI, comm, rank: int, size: int) -> None:  # noqa: N803
 
 def main() -> None:
     import src
-    from src.backend import MPI
+    from src.infra.backend import MPI
     from tests._smoke import run_smoke
 
     comm = MPI.COMM_WORLD

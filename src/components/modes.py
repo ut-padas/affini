@@ -6,8 +6,8 @@ from enum import Enum
 class SurrogateMode(Enum):
     """
     Named presets, each a pair (local model on the leaves, split strategy for
-    rejected clusters): see ``src.local_models.local_model_for_mode`` and
-    ``src.splitting.split_strategy_for_mode``.
+    rejected clusters): see ``src.components.local_models.local_model_for_mode`` and
+    ``src.components.splitting.split_strategy_for_mode``.
     """
 
     NEAREST_NEIGHBOR = "nearest_neighbor"  #  No grads, f(mu) only, split via X^T X

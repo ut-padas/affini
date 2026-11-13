@@ -3,7 +3,8 @@
 import numpy as np
 
 from src import _to_host, xp
-from src.adaptive_clustering_utils import lsq_hessians, trust_region_shapes
+from src.components.local_models import lsq_hessians
+from src.components.trust_regions import trust_region_shapes
 
 rng = np.random.default_rng(0)
 SIZES = np.array([50, 80, 30])

@@ -12,7 +12,7 @@ import pytest
 def experiment(monkeypatch):
     # Importing the script should not replace pytest's logging handlers.
     with monkeypatch.context() as patch:
-        patch.setattr("src.logging_utils.setup_logging", lambda: None)
+        patch.setattr("src.infra.logging_utils.setup_logging", lambda: None)
         module = importlib.import_module("p_out_iterative_experiment")
     monkeypatch.setattr(module, "xp", np)
     return module

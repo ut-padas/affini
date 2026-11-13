@@ -1,11 +1,11 @@
-"""Tests for src/sampling.py: samplers and cluster augmentation."""
+"""Tests for src/components/sampling.py: samplers and cluster augmentation."""
 
 import numpy as np
 import pytest
 
 from src import _to_host, xp
-from src.adaptive_clustering_utils import Evaluator
-from src.sampling import (
+from src.engine.evaluation import Evaluator
+from src.components.sampling import (
     SAMPLERS,
     ClusterPoints,
     ConvexCombinationSampler,
@@ -134,7 +134,8 @@ def test_unknown_sampler_name():
 
 
 def test_config_rejects_unknown_sampling_method():
-    from src.adaptive_clustering_utils import ClusteringConfig, SurrogateMode
+    from src.config import ClusteringConfig
+    from src.components.modes import SurrogateMode
 
     with pytest.raises(ValueError, match="Unknown sampling method"):
         ClusteringConfig(

@@ -13,10 +13,10 @@ import numpy as np
 import pytest
 
 from src import xp
-from src.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion, LinfAcceptance
-from src.clusters import ParamSpec
+from src.components.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion, LinfAcceptance
+from src.engine.clusters import ParamSpec
 from src.config import ClusteringConfig
-from src.local_models import (
+from src.components.local_models import (
     LOCAL_MODELS,
     AffineLSQModel,
     ConstantModel,
@@ -24,9 +24,9 @@ from src.local_models import (
     TaylorModel,
     local_model_for_mode,
 )
-from src.modes import SurrogateMode
-from src.sampling import SAMPLERS, ConvexCombinationSampler
-from src.splitting import (
+from src.components.modes import SurrogateMode
+from src.components.sampling import SAMPLERS, ConvexCombinationSampler
+from src.components.splitting import (
     SPLIT_STRATEGIES,
     CovarianceHessianSplit,
     CovarianceSplit,
@@ -34,7 +34,7 @@ from src.splitting import (
     split_strategy_for_mode,
 )
 from src.surrogate import AFINNISurrogate
-from src.trust_regions import TRUST_REGIONS, CovarianceEllipsoid, TrustRegion
+from src.components.trust_regions import TRUST_REGIONS, CovarianceEllipsoid, TrustRegion
 from tests._helpers import assert_backend_equal, host, train_surrogate
 
 rng = np.random.default_rng(3)

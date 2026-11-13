@@ -13,7 +13,7 @@ Scheme (as in cuVS / cuML defaults: k-means|| seeding, Lloyd, ``max_iter=300``,
   k sequential ones; the candidates are weighted by how many points they are nearest
   to, and greedy k-means++ (best of ``2 + ln k`` D^2-weighted draws per centre, as in
   scikit-learn) picks the k centres among them.
-- Assignment: the fused distance + nearest-neighbour kernel in ``src.knn`` with k=1
+- Assignment: the fused distance + nearest-neighbour kernel in ``src.neighbors.knn`` with k=1
   (float32 distances, float64 data read in place), so the (points x centres) distance
   matrix is never stored. Accuracy policy: assignments are ``kneighbors_unverified``,
   i.e. exact up to float32 resolution of the centred coordinates; a point almost
@@ -73,28 +73,12 @@ import os
 
 import numpy as np
 
-from src import Array
+from src import Array, kernels
 
 CHECK_EVERY = 8  # Lloyd iterations between convergence checks
 SEED_ROUNDS = 5  # k-means|| sampling rounds
 OVERSAMPLING = 2.0  # expected candidates per round, in multiples of k (cuML default)
 
-# One block per cluster; threads stride over dimensions and add the cluster's rows
-# (``order[starts[c]:starts[c+1]]``) in a fixed order, so sums are reproducible.
-_CENTROID_SUM_SRC = r"""
-extern "C" __global__ void centroid_sums(const double* __restrict__ X,
-                                         const long long* __restrict__ order,
-                                         const long long* __restrict__ starts,
-                                         int d, double* __restrict__ sums) {
-    const int c = blockIdx.x;
-    const long long b = starts[c], e = starts[c + 1];
-    for (int t = threadIdx.x; t < d; t += blockDim.x) {
-        double s = 0.0;
-        for (long long r = b; r < e; ++r) s += X[order[r] * d + t];
-        sums[(long long)c * d + t] = s;
-    }
-}
-"""
 _SUM_KERNEL = None
 
 
@@ -102,7 +86,7 @@ def _nearest(X: Array, C: Array) -> tuple[Array, Array]:
     """``(labels, squared distances)`` of every row of ``X`` to its nearest row of ``C``."""
     import cupy as cp
 
-    from src.knn import GpuExactKNN
+    from src.neighbors.knn import GpuExactKNN
 
     # k-means tolerates ties within float32 resolution, so the float64 verification of
     # the exact search is skipped; GpuExactKNN centres on C and subtracts in float64.
@@ -116,7 +100,7 @@ def _centroids(X: Array, labels: Array, previous: Array) -> Array:
 
     global _SUM_KERNEL
     if _SUM_KERNEL is None:
-        _SUM_KERNEL = cp.RawKernel(_CENTROID_SUM_SRC, "centroid_sums")
+        _SUM_KERNEL = cp.RawKernel(kernels.source("kmeans"), "centroid_sums")
     k, d = previous.shape
     order = cp.argsort(labels)  # stable (CuPy), so each cluster's rows keep input order
     counts = cp.bincount(labels, minlength=k)

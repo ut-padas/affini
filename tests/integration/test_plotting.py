@@ -9,8 +9,7 @@ import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
 from src import plotting as P  # noqa: E402
-from src.plotter_utils import plot_mpi_level_heatmap, plot_mpi_rank_time_breakdown  # noqa: E402
-from src.profiling import new_profiling_stats  # noqa: E402
+from src.infra.profiling import new_profiling_stats  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 from tests._helpers import train_surrogate  # noqa: E402
 
@@ -94,7 +93,7 @@ def test_plots_from_a_real_training_run(tmp_path):
     for plot in (P.plot_rank_time_breakdown, P.plot_level_heatmap, P.plot_level_progress,
                  P.plot_timeline, P.plot_load_over_time, P.plot_profile_dashboard):  # fmt: skip
         assert isinstance(plot(s), plt.Figure)
-    from src.profiling import read_event_streams
+    from src.infra.profiling import read_event_streams
 
     assert isinstance(P.plot_timeline(read_event_streams(tmp_path / "stream")), plt.Figure)
     with pytest.raises(ValueError, match="No steals"):
@@ -112,13 +111,6 @@ def test_missing_data_gives_actionable_errors():
         P.plot_rank_time_breakdown(s)
     with pytest.raises(ValueError, match="profile_events"):
         P.plot_timeline(s)
-
-
-def test_legacy_plotter_utils_entry_points(tmp_path):
-    prof = synthetic_profile()
-    plot_mpi_level_heatmap({"profiling_stats": prof}, tmp_path / "h.png", values_col="good_clusters")
-    plot_mpi_rank_time_breakdown(prof, tmp_path / "b.png", top_n_annotate=3)
-    assert (tmp_path / "h.png").exists() and (tmp_path / "b.png").exists()
 
 
 def test_region_and_comparison_plots_render(tmp_path):

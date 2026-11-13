@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from src import xp
-from src.splitting import (
+from src.components.splitting import (
     CovarianceSplit,
     SplitData,
     median_split_sizes,

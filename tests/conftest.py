@@ -5,7 +5,7 @@ def pytest_report_header(config):
     """Show the detected backends at the top of every test run, so a passing
     run also documents *what* it exercised (CPU vs GPU, serial vs MPI)."""
     try:
-        from src import backend
+        from src.infra import backend
 
         info = backend.backend_info()
     except Exception as e:  # e.g. AFINNI_MPI=on without MPI: let the tests report it

@@ -6,8 +6,8 @@ import time
 import numpy as np
 import pytest
 
-from src.modes import SurrogateMode
-from src.profiling import (
+from src.components.modes import SurrogateMode
+from src.infra.profiling import (
     ORACLE_TIME_KEY,
     PHASE_BY_KEY,
     PHASES,

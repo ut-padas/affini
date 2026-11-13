@@ -5,11 +5,13 @@ from collections import defaultdict
 import numpy as np
 import pytest
 
-import src.adaptive_clustering as ac
-import src.work_stealing as ws
-from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
-from src.clusters import ClusterBatch
-from src.profiling import Profiler, new_profiling_stats
+import src.engine.adaptive_clustering as ac
+import src.engine.work_stealing as ws
+from src.config import ClusteringConfig
+from src.engine.evaluation import Evaluator
+from src.components.modes import SurrogateMode
+from src.engine.clusters import ClusterBatch
+from src.infra.profiling import Profiler, new_profiling_stats
 
 
 class _Status:
@@ -157,7 +159,7 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
 @pytest.mark.parametrize("stealing", [False, True])
 @pytest.mark.parametrize("max_levels", [0, 1])
 def test_single_rank_respects_refinement_limit(monkeypatch, stealing, max_levels):
-    from src.backend import _SerialMPI
+    from src.infra.backend import _SerialMPI
 
     monkeypatch.setattr(ac, "MPI", _SerialMPI)
     monkeypatch.setattr(ws, "MPI", _SerialMPI)

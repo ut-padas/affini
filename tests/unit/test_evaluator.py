@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src.adaptive_clustering_utils import Evaluator
+from src.engine.evaluation import Evaluator
 from tests._helpers import host
 
 

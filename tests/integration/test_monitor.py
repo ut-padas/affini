@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from rich.console import Console
 
-from src.monitor import RankStatus, StreamMonitor, main
+from src.infra.monitor import RankStatus, StreamMonitor, main
 from src.surrogate import AFINNISurrogate
 from tests._helpers import train_surrogate
 
@@ -99,7 +99,7 @@ def test_monitor_skips_corrupt_lines(tmp_path):
 
 
 def test_batch_progress_and_seen_labels():
-    from src.monitor import _batch_label, _seen_label
+    from src.infra.monitor import _batch_label, _seen_label
 
     s = RankStatus(0)
     s.apply({"kind": "level_start", "t": 0.0, "level": 2, "n_pts": 10, "n_clusters": 2, "n_batches": 5})

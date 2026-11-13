@@ -1,4 +1,4 @@
-"""Tests for src/local_models.py and clusters.ColumnBuffer."""
+"""Tests for src/components/local_models.py and clusters.ColumnBuffer."""
 
 import logging
 
@@ -6,9 +6,10 @@ import numpy as np
 import pytest
 
 from src import _to_host, xp
-from src.adaptive_clustering_utils import ClusteringConfig, SurrogateMode
-from src.clusters import ColumnBuffer, ParamSpec
-from src.local_models import (
+from src.config import ClusteringConfig
+from src.components.modes import SurrogateMode
+from src.engine.clusters import ColumnBuffer, ParamSpec
+from src.components.local_models import (
     LOCAL_MODELS,
     AffineLSQModel,
     ClusterFitData,
@@ -41,7 +42,7 @@ def _p(*keys):
 
 def _surrogate_reference(kind):
     """
-    The (query, neighbour) predictions as src/surrogate.py computed them before
+    The (query, neighbour) predictions as the surrogate computed them before
     LocalModel, except that the second-order term now uses one Hessian per output
     component (the old code reshaped a single (d, d) Hessian per leaf).
     """

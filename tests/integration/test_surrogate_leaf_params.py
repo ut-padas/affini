@@ -2,10 +2,10 @@
 
 import numpy as np
 
-import src.local_models as lm
+import src.components.local_models as lm
 from src import _to_host, xp
-from src.adaptive_clustering_utils import SurrogateMode
-from src.clusters import ParamSpec
+from src.components.modes import SurrogateMode
+from src.engine.clusters import ParamSpec
 from src.problems.rosenbrock import rosenbrock
 from src.surrogate import AFINNISurrogate
 from tests._helpers import assert_backend_equal, train_surrogate

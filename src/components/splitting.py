@@ -11,7 +11,7 @@ at the median by default (``cut="median"``, equal halves), or at the centroid
 median when one side would be empty).
 
 A ``SurrogateMode`` is a pair (local model, split strategy); see
-``split_strategy_for_mode`` and ``src.local_models.local_model_for_mode``.
+``split_strategy_for_mode`` and ``src.components.local_models.local_model_for_mode``.
 
 Adding a strategy means subclassing ``SplitStrategy``, implementing ``metric``
 (or overriding ``split`` entirely), and registering it in ``SPLIT_STRATEGIES``.
@@ -29,11 +29,13 @@ from dataclasses import dataclass
 from typing import Literal
 
 from src import IS_CUPY_BACKEND, Array, xp
-from src.modes import SurrogateMode
+from src.components.modes import SurrogateMode
 from src.numerics import (
     TINY_EPS,
     _reduce_sum_1d,
     centroid_distances,
+    det_einsum,
+    det_matmul,
     get_n_smallest_per_block,
     lsq_hessian_in_eigenbasis,
     run_fused_cross_cov,
@@ -43,7 +45,7 @@ from src.numerics import (
     sort_by_block_then_value,
     taylor_residual_norms,
 )
-from src.registry import Registry
+from src.components.registry import Registry
 
 if IS_CUPY_BACKEND:
     import cupy as cp
@@ -261,11 +263,11 @@ class CovarianceHessianSplit(SplitStrategy):
 
         dvals, U = xp.linalg.eigh(H_inv)
         dvals_sqrt_inv = 1.0 / xp.sqrt(xp.maximum(xp.abs(dvals), TINY_EPS))
-        M = (U * dvals_sqrt_inv[:, None]) @ U.transpose(0, 2, 1)  # |H|^{1/2}
+        M = det_matmul(U * dvals_sqrt_inv[:, None], U.transpose(0, 2, 1))  # |H|^{1/2}
         M = 0.5 * (M + M.transpose(0, 2, 1))
 
         C = _covariance(data)
-        return M, M @ C @ M.transpose(0, 2, 1)
+        return M, det_matmul(det_matmul(M, C), M.transpose(0, 2, 1))
 
 
 @SPLIT_STRATEGIES.register
@@ -281,9 +283,9 @@ class ExactHessianSplit(SplitStrategy):
         H = data.hessian_fn(data.centroids)  # (K, d, d)
         H_sym = 0.5 * (H + H.transpose(0, 2, 1))
         dvals, U = xp.linalg.eigh(H_sym)
-        M = (U * xp.sqrt(xp.abs(dvals))[:, None]) @ U.transpose(0, 2, 1)
+        M = det_matmul(U * xp.sqrt(xp.abs(dvals))[:, None], U.transpose(0, 2, 1))
         C = _covariance(data)
-        return M, M @ C @ M.transpose(0, 2, 1)
+        return M, det_matmul(det_matmul(M, C), M.transpose(0, 2, 1))
 
 
 @SPLIT_STRATEGIES.register
@@ -307,7 +309,7 @@ class GradientLSQHessianSplit(SplitStrategy):
 
         g_mus_exp = data.g_c[data.labels]  # (N, fd, d)
         f_mus_exp = data.f_c[data.labels]  # (N, fd)
-        lin = xp.einsum("nmd,nd->nm", g_mus_exp, dx)
+        lin = det_einsum("nmd,nd->nm", g_mus_exp, dx)
         diff = data.F - (f_mus_exp + lin)  # (N, fd)
         sq_err = _reduce_sum_1d(diff**2, starts)  # (K,)
         sq_val = _reduce_sum_1d(data.F**2, starts)  # (K,)
@@ -332,10 +334,10 @@ class GradientLSQHessianSplit(SplitStrategy):
 
         U, F_mat = lsq_hessian_in_eigenbasis(C, S)  # H = U F_mat U^T
         evals, V = xp.linalg.eigh(F_mat)
-        Z = U @ V  # (K, d, d)
-        M = (Z * xp.sqrt(xp.abs(evals))[:, None, :]) @ Z.transpose(0, 2, 1)
+        Z = det_matmul(U, V)  # (K, d, d)
+        M = det_matmul(Z * xp.sqrt(xp.abs(evals))[:, None, :], Z.transpose(0, 2, 1))
         M = 0.5 * (M + M.transpose(0, 2, 1))  # |H|^{1/2}
-        return M, M @ C @ M.transpose(0, 2, 1)
+        return M, det_matmul(det_matmul(M, C), M.transpose(0, 2, 1))
 
 
 def split_strategy_for_mode(

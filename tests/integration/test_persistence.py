@@ -9,10 +9,11 @@ import numpy as np
 import pytest
 
 from src import xp
-from src.clusters import ParamSpec
-from src.local_models import LOCAL_MODELS, AffineLSQModel, LocalModel
-from src.adaptive_clustering_utils import ClusteringConfig, Evaluator
-from src.modes import SurrogateMode
+from src.engine.clusters import ParamSpec
+from src.components.local_models import LOCAL_MODELS, AffineLSQModel, LocalModel
+from src.config import ClusteringConfig
+from src.engine.evaluation import Evaluator
+from src.components.modes import SurrogateMode
 from src.surrogate import MODEL_FORMAT_VERSION, AFINNISurrogate
 from tests._helpers import assert_backend_equal, host
 
@@ -108,7 +109,7 @@ def test_the_path_given_to_save_also_loads(tmp_path, given):
 
 
 def test_only_rank_0_writes(tmp_path, monkeypatch):
-    import src.surrogate as su
+    import src.surrogate.model as su
 
     s = train()
     monkeypatch.setattr(su, "_get_mpi_rank", lambda: 1)
@@ -191,7 +192,7 @@ def test_files_with_the_old_single_error_column_still_load(tmp_path):
 
 def test_failed_retraining_keeps_the_previous_model_usable(monkeypatch):
     """A failure while building the new kNN index must not destroy the old model."""
-    import src.surrogate as su
+    import src.surrogate.model as su
     from src.surrogate import AFINNISurrogate
 
     X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
@@ -233,7 +234,7 @@ def test_kdtree_build_failure_during_retraining_keeps_the_old_model(monkeypatch)
 
 def _record_profilers(monkeypatch):
     """Capture every Profiler the engine creates, to check its stream afterwards."""
-    import src.adaptive_clustering as ac
+    import src.engine.adaptive_clustering as ac
 
     created = []
 
@@ -314,7 +315,7 @@ def test_public_methods_keep_signatures_and_predict_reports_search_stats():
 
 
 def test_nested_empty_collectives_preserve_the_parent_scope():
-    import src.adaptive_clustering as ac
+    import src.engine.adaptive_clustering as ac
 
     def outer():
         own_scope = ac._PROFILER_SCOPES[-1]
@@ -326,8 +327,8 @@ def test_nested_empty_collectives_preserve_the_parent_scope():
 
 
 def test_component_preparation_can_predict_without_corrupting_training_scope(tmp_path, monkeypatch):
-    import src.adaptive_clustering as ac
-    from src.local_models import ConstantModel
+    import src.engine.adaptive_clustering as ac
+    from src.components.local_models import ConstantModel
 
     inner = AFINNISurrogate()
     _train_small(inner, lambda x: xp.ones((len(x), 1)), mode=SurrogateMode.NEAREST_NEIGHBOR)

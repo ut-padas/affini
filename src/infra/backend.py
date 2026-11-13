@@ -18,7 +18,7 @@ Flags
     The real ``mpi4py.MPI`` module when ``HAS_MPI``; otherwise a serial
     stand-in with a single rank (rank 0, size 1) that supports the subset of
     the API used by AFINNI. Code can therefore always write
-    ``from src.backend import MPI`` and ``MPI.COMM_WORLD``.
+    ``from src.infra.backend import MPI`` and ``MPI.COMM_WORLD``.
 
 Environment overrides
 ---------------------
@@ -66,7 +66,7 @@ def _env_choice(var: str, choices: dict[str, set[str]]) -> str:
 
 
 # =============================================================================
-# GPU: CuPy (array backend; k-means and kNN are custom kernels in src/kmeans.py, src/knn.py)
+# GPU: CuPy (array backend; k-means and kNN are custom kernels in src/neighbors/kmeans.py, src/neighbors/knn.py)
 # =============================================================================
 DEVICE_MODE = _env_choice(
     "AFINNI_DEVICE", {"auto": set(), "cpu": {"numpy", "host"}, "gpu": {"cuda", "cupy"}}

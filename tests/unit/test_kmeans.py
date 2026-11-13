@@ -1,5 +1,5 @@
 """
-The custom k-means (src/kmeans.py) on the active backend: valid, reproducible labels of
+The custom k-means (src/neighbors/kmeans.py) on the active backend: valid, reproducible labels of
 k-means quality. On the CPU, results must not depend on the thread count (chunk sums
 are added in chunk order); quality is compared with scikit-learn when it is installed
 (it is only in the ``research`` group).
@@ -23,7 +23,7 @@ def _inertia(X, labels, k):
 @pytest.mark.parametrize(("d", "k"), [(5, 40), (30, 25)])  # direct and BLAS paths on the CPU
 def test_labels_are_valid_reproducible_and_of_kmeans_quality(d, k):
     sklearn_cluster = pytest.importorskip("sklearn.cluster")
-    from src.kmeans import kmeans_labels
+    from src.neighbors.kmeans import kmeans_labels
 
     X = np.random.default_rng(0).uniform(-2, 3, (20_000, d))
     a = host(kmeans_labels(xp.asarray(X), k, seed=3))
@@ -37,7 +37,7 @@ def test_labels_are_valid_reproducible_and_of_kmeans_quality(d, k):
 @pytest.mark.skipif(IS_CUPY_BACKEND, reason="CPU threads")
 @pytest.mark.parametrize("d", [5, 30])
 def test_cpu_labels_do_not_depend_on_the_thread_count(d):
-    from src.kmeans import kmeans_labels
+    from src.neighbors.kmeans import kmeans_labels
 
     X = np.random.default_rng(1).normal(size=(50_000, d)) + 100.0
     one = kmeans_labels(X, 30, seed=0, max_iter=3, threads=1)
@@ -46,7 +46,7 @@ def test_cpu_labels_do_not_depend_on_the_thread_count(d):
 
 
 def test_separated_blobs_are_recovered():
-    from src.kmeans import kmeans_labels
+    from src.neighbors.kmeans import kmeans_labels
 
     rng = np.random.default_rng(1)
     centres = rng.uniform(-50, 50, (6, 10))
@@ -57,7 +57,7 @@ def test_separated_blobs_are_recovered():
 
 
 def test_more_clusters_than_distinct_points():
-    from src.kmeans import kmeans_labels
+    from src.neighbors.kmeans import kmeans_labels
 
     X = xp.asarray(np.repeat(np.eye(3), 10, axis=0))
     labels = host(kmeans_labels(X, 5, seed=0))
@@ -68,7 +68,7 @@ def test_more_clusters_than_distinct_points():
 @pytest.mark.parametrize("offset", [0.0, 1e4, 1e8])
 def test_translation_does_not_change_the_clustering(d, offset):
     """Expanded distances on uncentred data cancelled at large offsets (inertia 935x too large)."""
-    from src.kmeans import kmeans_labels
+    from src.neighbors.kmeans import kmeans_labels
 
     rng = np.random.default_rng(0)
     centres = rng.uniform(-5, 5, (6, d))

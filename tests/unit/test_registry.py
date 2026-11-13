@@ -1,8 +1,8 @@
-"""Tests for src/registry.py: registering and building components by name."""
+"""Tests for src/components/registry.py: registering and building components by name."""
 
 import pytest
 
-from src.registry import Registry, component_spec
+from src.components.registry import Registry, component_spec
 
 
 class Base:

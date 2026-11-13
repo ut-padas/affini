@@ -1,6 +1,6 @@
 """
 The built-in acceptance criteria against independently written per-cluster,
-per-component formulas (see the semantics in src/acceptance.py), and how scalar,
+per-component formulas (see the semantics in src/components/acceptance.py), and how scalar,
 per-component and omitted tolerances are interpreted.
 """
 
@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 
 from src import xp
-from src.acceptance import ACCEPTANCE_CRITERIA, cluster_errors
+from src.components.acceptance import ACCEPTANCE_CRITERIA, cluster_errors
 from src.config import ClusteringConfig
-from src.modes import SurrogateMode
+from src.components.modes import SurrogateMode
 from tests._helpers import host
 
 EPS = 1e-12
@@ -142,7 +142,7 @@ def test_unknown_metric_is_rejected_by_the_config():
 
 
 def test_pointwise_acceptance_needs_every_point_to_pass():
-    from src.acceptance import PointwiseAcceptance
+    from src.components.acceptance import PointwiseAcceptance
 
     F = xp.asarray([[1.0], [100.0], [1.0], [1.0]])
     F_hat = xp.asarray([[1.005], [100.5], [1.0], [1.02]])

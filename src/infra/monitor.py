@@ -1,12 +1,12 @@
 """
 Live terminal monitor for a training run started with ``profile_dir``: per-rank state
 (phase, level, batch), queued work, accepted leaves, idle share and work stealing,
-read from the ranks' JSON-lines event streams (see ``src.profiling``). The header names
+read from the ranks' JSON-lines event streams (see ``src.infra.profiling``). The header names
 the algorithm plan (AFINNI, or AFINNI region mode (ART) with its split search and roots); for
 region mode it also counts the points in fallback leaves (nodes stopped at the depth
 limit or without a valid split), which are finished work, not queued work.
 
-    python -m src.monitor <profile_dir> [--interval 0.5] [--once]
+    python -m src.infra.monitor <profile_dir> [--interval 0.5] [--once]
 
 It only reads files, so it runs from another shell (or node with a shared file
 system) while the job runs, or afterwards to replay the final state, and adds no
@@ -29,7 +29,7 @@ from rich.table import Table
 from rich.text import Text
 
 from src.plotting.style import fmt_count
-from src.profiling import PHASE_BY_KEY
+from src.infra.profiling import PHASE_BY_KEY
 
 _LOGGED_KINDS = ("steal_grant", "level_end", "retired", "done")
 # Wide enough for every phase group and "asking R<rank> for work".
@@ -68,7 +68,7 @@ class RankStatus:
         return self.idle_s / total if total else 0.0
 
     def apply(self, e: dict[str, Any]) -> None:
-        """Update from one event (see ``src.profiling`` for the event kinds)."""
+        """Update from one event (see ``src.infra.profiling`` for the event kinds)."""
         kind = e["kind"]
         self.t_last = max(self.t_last, e.get("t", 0.0) + e.get("dur", 0.0))
         if kind == "run_start":

@@ -18,7 +18,7 @@ distances keep the smaller leaf index; distances are float64. Strategies:
   device for GPU indexes). If k' covers every point, the scan is used directly.
 
 ``kneighbors_unverified`` returns the float32 candidates as found (k-means assignment,
-which tolerates float32 ties; see ``src/kmeans.py``). ``last_search_stats`` holds the
+which tolerates float32 ties; see ``src/neighbors/kmeans.py``). ``last_search_stats`` holds the
 last call's queries, candidate count, fallback rows and strategy. Queries must have
 shape (m, d); wrong shapes are rejected before any native kernel. Range policy: inputs
 are finite and every requested neighbour's squared distance must be representable in
@@ -82,7 +82,7 @@ import os
 
 import numpy as np
 
-from src import Array
+from src import Array, kernels
 
 MAX_K = 256  # largest k served by the fused kernel; above it, the blocked exact path
 
@@ -94,138 +94,6 @@ _BM_FOR_K = ((32, 64), (128, 32), (256, 16))
 # then radix selection per row (bounded memory for any k).
 _BLOCK_BYTES = 256 * 2**20
 
-_KERNEL_SRC = r"""
-// Compile-time parameters (prepended): K (neighbours), BM (queries per block),
-// QT (query element type: float, or double read and rounded to float on load, so
-// float64 queries need no float32 copy).
-#define BN 64              // leaves per tile
-#define BK 16              // dimensions per tile step
-#define TM (BM / 16)       // queries per thread (16 x 16 thread grid)
-#define TN 4               // leaves per thread
-#define BIG 3.0e38f        // "no candidate yet"
-#define J ((K + 31) / 32)  // sorted-list slots owned by each lane
-
-extern "C" __global__ void __launch_bounds__(256)
-knn_tiled(const QT* __restrict__ Q,      // (m, d) queries, row-major
-          const double* __restrict__ ctr,// (d,) centre subtracted from queries on load
-          const float* __restrict__ X,   // (n, d) centred leaf centroids, row-major
-          const float* __restrict__ xn,  // (n,) |x|^2
-          int m, int n, int d,
-          float* out_d,                  // (m, K) distances, nearest first
-          long long* out_i) {            // (m, K) leaf indices
-    __shared__ float Qs[BK][BM];         // query tile, transposed for conflict-free reads
-    __shared__ float Xs[BK][BN];         // leaf tile
-    __shared__ float Dt[BM][BN + 1];     // distance tile (+1 avoids bank conflicts)
-    __shared__ float topd[BM][K];        // per-query sorted best distances (without |q|^2)
-    __shared__ int   topi[BM][K];        // and their leaf indices
-
-    const int tid = threadIdx.x, tx = tid % 16, ty = tid / 16;
-    const int lane = tid % 32, warp = tid / 32;
-    const int m0 = blockIdx.x * BM;
-
-    for (int e = tid; e < BM * K; e += 256) { topd[e / K][e % K] = BIG; topi[e / K][e % K] = 0x7fffffff; }
-    __syncthreads();
-
-    for (int n0 = 0; n0 < n; n0 += BN) {
-        // ---- 1. dot products for a BM x BN tile, accumulated in registers ----
-        float acc[TM][TN];
-        #pragma unroll
-        for (int i = 0; i < TM; ++i)
-            #pragma unroll
-            for (int j = 0; j < TN; ++j) acc[i][j] = 0.f;
-
-        for (int k0 = 0; k0 < d; k0 += BK) {
-            for (int e = tid; e < BM * BK; e += 256) {
-                int r = e / BK, c = e % BK, gq = m0 + r, gk = k0 + c;
-                Qs[c][r] = (gq < m && gk < d) ? (float)((double)Q[(long long)gq * d + gk] - ctr[gk]) : 0.f;
-            }
-            for (int e = tid; e < BN * BK; e += 256) {
-                int r = e / BK, c = e % BK, gx = n0 + r, gk = k0 + c;
-                Xs[c][r] = (gx < n && gk < d) ? X[(long long)gx * d + gk] : 0.f;
-            }
-            __syncthreads();
-            #pragma unroll
-            for (int kk = 0; kk < BK; ++kk) {
-                float a[TM], b[TN];
-                #pragma unroll
-                for (int i = 0; i < TM; ++i) a[i] = Qs[kk][ty * TM + i];
-                #pragma unroll
-                for (int j = 0; j < TN; ++j) b[j] = Xs[kk][tx * TN + j];
-                #pragma unroll
-                for (int i = 0; i < TM; ++i)
-                    #pragma unroll
-                    for (int j = 0; j < TN; ++j) acc[i][j] = fmaf(a[i], b[j], acc[i][j]);
-            }
-            __syncthreads();
-        }
-
-        // ---- 2. partial squared distances |x|^2 - 2 q.x into the shared tile ----
-        #pragma unroll
-        for (int i = 0; i < TM; ++i)
-            #pragma unroll
-            for (int j = 0; j < TN; ++j) {
-                int col = n0 + tx * TN + j;
-                Dt[ty * TM + i][tx * TN + j] = col < n ? xn[col] - 2.f * acc[i][j] : BIG;
-            }
-        __syncthreads();
-
-        // ---- 3. selection: each warp handles BM / 8 rows of the tile ----
-        for (int rr = 0; rr < BM / 8; ++rr) {
-            const int r = warp * (BM / 8) + rr;
-            float thr = topd[r][K - 1];
-            #pragma unroll
-            for (int h = 0; h < 2; ++h) {
-                const float v = Dt[r][lane + 32 * h];
-                const int c = n0 + lane + 32 * h;
-                // Lanes whose value beats the current k-th best; usually none.
-                unsigned ball = __ballot_sync(0xffffffff, v < thr);
-                while (ball) {
-                    const int src = __ffs(ball) - 1;
-                    const float vs = __shfl_sync(0xffffffff, v, src);
-                    const int cs = __shfl_sync(0xffffffff, c, src);
-                    if (vs < topd[r][K - 1]) {
-                        // Warp-parallel insertion: lane l owns slots l, l + 32, ... (J of
-                        // them); the insert position is the number of slots <= vs (ties
-                        // keep order). All slots are read before any is written.
-                        float a[J]; int ai[J]; int pos = 0;
-                        #pragma unroll
-                        for (int j = 0; j < J; ++j) {
-                            const int slot = lane + 32 * j;
-                            a[j] = slot < K ? topd[r][slot] : BIG;
-                            ai[j] = slot < K ? topi[r][slot] : 0;
-                            pos += __popc(__ballot_sync(0xffffffff, a[j] <= vs));
-                        }
-                        __syncwarp();
-                        #pragma unroll
-                        for (int j = 0; j < J; ++j) {
-                            const int slot = lane + 32 * j;
-                            if (slot >= pos && slot + 1 < K) { topd[r][slot + 1] = a[j]; topi[r][slot + 1] = ai[j]; }
-                        }
-                        if (lane == 0) { topd[r][pos] = vs; topi[r][pos] = cs; }
-                    }
-                    __syncwarp();
-                    thr = topd[r][K - 1];
-                    ball &= ~(1u << src);
-                    ball &= __ballot_sync(0xffffffff, v < thr);  // drop lanes no longer good enough
-                }
-            }
-        }
-        __syncthreads();
-    }
-
-    // ---- 4. output: add |q|^2 back and take the square root ----
-    for (int e = tid; e < BM * K; e += 256) {
-        const int r = e / K, j = e % K, gq = m0 + r;
-        if (gq < m) {
-            float qn = 0.f;
-            for (int t = 0; t < d; ++t) { const float q = (float)((double)Q[(long long)gq * d + t] - ctr[t]); qn = fmaf(q, q, qn); }
-            out_d[(long long)gq * K + j] = sqrtf(fmaxf(topd[r][j] + qn, 0.f));
-            out_i[(long long)gq * K + j] = topi[r][j];
-        }
-    }
-}
-"""
-
 _KERNELS: dict = {}
 
 
@@ -235,7 +103,7 @@ def _kernel(k: int, bm: int, query_type: str):
 
     key = (k, bm, query_type)
     if key not in _KERNELS:
-        src = f"#define K {k}\n#define BM {bm}\n#define QT {query_type}\n" + _KERNEL_SRC
+        src = f"#define K {k}\n#define BM {bm}\n#define QT {query_type}\n" + kernels.source("knn_tiled")
         _KERNELS[key] = cp.RawKernel(src, "knn_tiled")
     return _KERNELS[key]
 
@@ -301,14 +169,14 @@ class GpuExactKNN:
     def _kneighbors_blocked(self, queries: Array, k: int) -> tuple[Array, Array]:
         """
         Exact kNN for ``k > MAX_K``: float32 distance blocks (one GEMM each), radix
-        selection of each row's k smallest (``_RADIX_SELECT_SRC``), then a sort of just
+        selection of each row's k smallest (``radix_select_k`` in ``kernels/knn_select.cu``), then a sort of just
         those k. Ties at the k-th distance keep the smallest indices.
         """
         import cupy as cp
 
         global _SELECT_KERNEL
         if _SELECT_KERNEL is None:
-            _SELECT_KERNEL = cp.RawKernel(_RADIX_SELECT_SRC, "radix_select_k")
+            _SELECT_KERNEL = cp.RawKernel(kernels.source("knn_select"), "radix_select_k")
         n = int(self.points.shape[0])
         m = int(queries.shape[0])
         out_d = cp.empty((m, k), dtype=cp.float32)
@@ -333,70 +201,6 @@ class GpuExactKNN:
         return out_d, out_i
 
 
-# Radix selection of each row's k smallest values (the idea of cuVS's radix top-k):
-# one block per row. Floats are mapped to order-preserving unsigned keys; four passes
-# over 8-bit digits, each building a 256-bin histogram of the keys that match the
-# prefix found so far, pin down the exact k-th smallest key. A final pass writes every
-# index with a smaller key, plus the first ties (in index order, via a block-wide scan
-# over contiguous per-thread chunks) until k are taken. Output order is unsorted.
-_RADIX_SELECT_SRC = r"""
-__device__ __forceinline__ unsigned int fkey(float v) {
-    unsigned int u = __float_as_uint(v);
-    return (u & 0x80000000u) ? ~u : (u | 0x80000000u);
-}
-
-extern "C" __global__ void __launch_bounds__(256)
-radix_select_k(const float* __restrict__ D, int n, int k, long long* __restrict__ out) {
-    __shared__ unsigned int hist[256];
-    __shared__ unsigned int s_prefix, s_mask;
-    __shared__ int s_remaining;
-    __shared__ int scan_less[256], scan_eq[256];
-    const float* row = D + (long long)blockIdx.x * n;
-    long long* o = out + (long long)blockIdx.x * k;
-    const int tid = threadIdx.x;
-    if (tid == 0) { s_prefix = 0u; s_mask = 0u; s_remaining = k; }
-    __syncthreads();
-
-    for (int shift = 24; shift >= 0; shift -= 8) {
-        hist[tid] = 0u;
-        __syncthreads();
-        const unsigned int prefix = s_prefix, mask = s_mask;
-        for (int c = tid; c < n; c += 256) {
-            const unsigned int key = fkey(row[c]);
-            if ((key & mask) == prefix) atomicAdd(&hist[(key >> shift) & 255u], 1u);
-        }
-        __syncthreads();
-        if (tid == 0) {
-            int rem = s_remaining; unsigned int b = 0;
-            for (; b < 256; ++b) { if ((int)hist[b] >= rem) break; rem -= (int)hist[b]; }
-            s_remaining = rem;                       // how many keys equal to the k-th to take
-            s_prefix = prefix | (b << shift);
-            s_mask = mask | (255u << shift);
-        }
-        __syncthreads();
-    }
-
-    // Contiguous chunk per thread, so a scan gives index-ordered output positions.
-    const unsigned int kth = s_prefix;
-    const int chunk = (n + 255) / 256, c0 = tid * chunk, c1 = min(n, c0 + chunk);
-    int nl = 0, ne = 0;
-    for (int c = c0; c < c1; ++c) { const unsigned int key = fkey(row[c]); nl += key < kth; ne += key == kth; }
-    scan_less[tid] = nl; scan_eq[tid] = ne;
-    __syncthreads();
-    if (tid == 0) {
-        int a = 0, b = 0;
-        for (int t = 0; t < 256; ++t) { int x = scan_less[t], y = scan_eq[t]; scan_less[t] = a; scan_eq[t] = b; a += x; b += y; }
-    }
-    __syncthreads();
-    const int n_less = k - s_remaining;
-    int pl = scan_less[tid], pe = scan_eq[tid];
-    for (int c = c0; c < c1; ++c) {
-        const unsigned int key = fkey(row[c]);
-        if (key < kth) o[pl++] = c;
-        else if (key == kth) { if (pe < s_remaining) o[n_less + pe] = c; ++pe; }
-    }
-}
-"""
 _SELECT_KERNEL = None
 
 
@@ -772,19 +576,6 @@ def _fallback(index, xp, q64, k, flagged, out_d, out_i):
         out_d[f] = xp.sqrt(xp.take_along_axis(d2, order, axis=1))
 
 
-_CAND_D2_SRC = r"""
-extern "C" __global__ void candidate_d2(const double* Q, const double* P, const long long* cand,
-                                        long long m, int kk, int d, double* out) {
-    const long long e = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (e >= m * kk) return;
-    const long long r = e / kk;
-    const double* q = Q + r * d;
-    const double* p = P + cand[e] * d;
-    double s = 0.0;
-    for (int t = 0; t < d; ++t) { const double df = __dsub_rn(q[t], p[t]); s = __dadd_rn(s, __dmul_rn(df, df)); }
-    out[e] = s;  // strict sequential IEEE sum, as the CPU reference
-}
-"""
 _CAND_D2_KERNEL = None
 
 
@@ -804,7 +595,7 @@ def _candidate_d2(xp, q, P, cand):
             nb.set_num_threads(previous)
         return out
     if _CAND_D2_KERNEL is None:
-        _CAND_D2_KERNEL = xp.RawKernel(_CAND_D2_SRC, "candidate_d2")
+        _CAND_D2_KERNEL = xp.RawKernel(kernels.source("knn_select"), "candidate_d2")
     _CAND_D2_KERNEL(((m * kk + 255) // 256,), (256,),
                     (xp.ascontiguousarray(q), P, xp.ascontiguousarray(cand), xp.int64(m), xp.int32(kk),
                      xp.int32(q.shape[1]), out))  # fmt: skip

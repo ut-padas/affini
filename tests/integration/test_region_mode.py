@@ -5,7 +5,7 @@ import pytest
 
 from src import xp
 from src.config import ClusteringConfig, RegionSettings
-from src.evaluation import Evaluator
+from src.engine.evaluation import Evaluator
 from src.surrogate import AFINNISurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
 
@@ -74,7 +74,7 @@ def test_audit_counts_non_finite_oracle_values_as_violations(trained):
 
 
 def test_audit_defaults_to_the_trained_tolerances_and_an_error_at_the_tolerance_fails(trained):
-    from src.acceptance import pointwise_violations
+    from src.components.acceptance import pointwise_violations
 
     default = trained.audit(Evaluator(f_fn=wavy), 500, seed=3)
     explicit = trained.audit(Evaluator(f_fn=wavy), 500, seed=3, atol=1e-2, rtol=1e-2)
@@ -311,3 +311,4 @@ def test_quadratic_leaves_split_in_their_own_basis_and_need_fewer_leaves(points,
     affine = train_surrogate(points, **options)
     quadratic = train_surrogate(points, **{**options, "local_model": "quadratic_lsq"})
     assert quadratic.converged and quadratic.N_src < affine.N_src / 2
+

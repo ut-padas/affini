@@ -6,7 +6,7 @@ sampler, acceptance criterion, trust region) has one ``Registry``. A registry ma
 name to a class, so a component can be chosen by name from the configuration, the
 launcher or a saved model, and an extension only has to register its class::
 
-    from src.sampling import SAMPLERS, Sampler
+    from src.components.sampling import SAMPLERS, Sampler
 
     @SAMPLERS.register
     class MySampler(Sampler):

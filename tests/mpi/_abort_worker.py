@@ -25,9 +25,9 @@ class _FailingSendComm:
 
 def main(phase: str) -> None:
     import src
-    import src.adaptive_clustering as ac
-    import src.kmeans
-    from src.backend import MPI
+    import src.engine.adaptive_clustering as ac
+    import src.neighbors.kmeans
+    from src.infra.backend import MPI
     from src.problems.rosenbrock import rosenbrock
     from tests._helpers import train_surrogate
 
@@ -44,9 +44,9 @@ def main(phase: str) -> None:
         def failing_kmeans(*args, **kwargs):
             raise RuntimeError("injected failure on rank 0 (initial clustering)")
 
-        src.kmeans.kmeans_labels = failing_kmeans
+        src.neighbors.kmeans.kmeans_labels = failing_kmeans
     if phase == "root_public_result" and rank == 0:
-        import src.surrogate as su
+        import src.surrogate.model as su
 
         engine = su._adaptive_clustering
 
@@ -56,7 +56,7 @@ def main(phase: str) -> None:
 
         su._adaptive_clustering = engine_then_fail
     if phase == "worker_index" and rank == 1:
-        import src.surrogate as su
+        import src.surrogate.model as su
 
         def failing_index(_centroids):
             raise RuntimeError("injected failure on rank 1 (index construction)")

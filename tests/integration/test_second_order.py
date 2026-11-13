@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from src import xp
-from src.modes import SurrogateMode
+from src.components.modes import SurrogateMode
 from src.surrogate import AFINNISurrogate
 from tests._helpers import host, train_surrogate
 

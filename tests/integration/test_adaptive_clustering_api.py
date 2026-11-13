@@ -5,8 +5,10 @@ import dataclasses
 import numpy as np
 import pytest
 
-import src.adaptive_clustering as ac
-from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
+import src.engine.adaptive_clustering as ac
+from src.config import ClusteringConfig
+from src.engine.evaluation import Evaluator
+from src.components.modes import SurrogateMode
 
 
 def _x():
@@ -19,7 +21,7 @@ def test_config_is_keyword_only():
 
 
 def test_caller_config_is_not_modified(monkeypatch):
-    from src.backend import _SerialMPI
+    from src.infra.backend import _SerialMPI
 
     monkeypatch.setattr(ac, "MPI", _SerialMPI)
     # A huge batch size is always capped to fit memory inside adaptive_clustering().

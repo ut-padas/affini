@@ -1,5 +1,5 @@
 """
-Exact kNN indexes in src/knn.py (GpuExactKNN, CpuExactKNN) must return exactly the
+Exact kNN indexes in src/neighbors/knn.py (GpuExactKNN, CpuExactKNN) must return exactly the
 nearest leaves, nearest first. Each test pins a lesson learned while building them:
 
 1. Far from the origin: the fast form |q|^2 - 2 q.x + |x|^2 loses the distance to
@@ -60,7 +60,7 @@ def _data(n, m, d, offset, seed):
      (3000, 100, 20, 256), (3000, 100, 20, 257), (2000, 64, 8, 2000)],  # fused -> radix, all leaves
 )  # fmt: skip
 def test_gpu_matches_exact_neighbours(n, m, d, k, offset):
-    from src.knn import GpuExactKNN
+    from src.neighbors.knn import GpuExactKNN
 
     X, Q = _data(n, m, d, offset, n + m + d + k)
     dist, idx = GpuExactKNN(xp.asarray(X)).kneighbors(xp.asarray(Q), k)
@@ -70,7 +70,7 @@ def test_gpu_matches_exact_neighbours(n, m, d, k, offset):
 @gpu_only
 @pytest.mark.parametrize("k", [4, 300])  # fused kernel and radix-select path
 def test_gpu_ties_keep_the_smaller_index(k):
-    from src.knn import GpuExactKNN
+    from src.neighbors.knn import GpuExactKNN
 
     X = xp.asarray(np.repeat(np.eye(3), 400, axis=0) + 1e4)  # hundreds of exact ties, shifted
     _, idx = GpuExactKNN(X).kneighbors(xp.asarray([[1e4 + 1.0, 1e4, 1e4]]), k)
@@ -79,7 +79,7 @@ def test_gpu_ties_keep_the_smaller_index(k):
 
 @gpu_only
 def test_gpu_float64_and_float32_queries_agree():
-    from src.knn import GpuExactKNN
+    from src.neighbors.knn import GpuExactKNN
 
     X, Q = _data(4000, 500, 30, 50.0, 7)
     index = GpuExactKNN(xp.asarray(X))
@@ -90,7 +90,7 @@ def test_gpu_float64_and_float32_queries_agree():
 
 @gpu_only
 def test_gpu_empty_queries_and_invalid_k():
-    from src.knn import GpuExactKNN
+    from src.neighbors.knn import GpuExactKNN
 
     index = GpuExactKNN(xp.asarray(np.eye(3)))
     dist, idx = index.kneighbors(xp.empty((0, 3)), 2)
@@ -108,7 +108,7 @@ def test_gpu_empty_queries_and_invalid_k():
      (2000, 150, 17, 20), (2000, 150, 100, 20), (5000, 64, 20, 300), (500, 40, 50, 500)],  # BLAS tiles
 )  # fmt: skip
 def test_cpu_matches_exact_neighbours(n, m, d, k, offset):
-    from src.knn import CpuExactKNN
+    from src.neighbors.knn import CpuExactKNN
 
     X, Q = _data(n, m, d, offset, n + d + k)
     dist, idx = CpuExactKNN(X).kneighbors(Q, k)
@@ -118,7 +118,7 @@ def test_cpu_matches_exact_neighbours(n, m, d, k, offset):
 @cpu_only
 @pytest.mark.parametrize("d", [3, 40])  # direct path and BLAS-tile path
 def test_cpu_ties_keep_the_smaller_index_for_any_thread_count(monkeypatch, d):
-    from src.knn import CpuExactKNN
+    from src.neighbors.knn import CpuExactKNN
 
     X = np.repeat(np.eye(d), 50, axis=0) + 1e4
     q = X[:1] + 0.0
@@ -130,7 +130,7 @@ def test_cpu_ties_keep_the_smaller_index_for_any_thread_count(monkeypatch, d):
 
 @cpu_only
 def test_cpu_empty_queries_and_invalid_k():
-    from src.knn import CpuExactKNN
+    from src.neighbors.knn import CpuExactKNN
 
     index = CpuExactKNN(np.eye(3))
     dist, idx = index.kneighbors(np.empty((0, 3)), 2)
@@ -141,7 +141,7 @@ def test_cpu_empty_queries_and_invalid_k():
 
 # --- Mixed scales: float32 rounding must never pick a wrong neighbour ----
 def _index(points):
-    from src.knn import CpuExactKNN, GpuExactKNN
+    from src.neighbors.knn import CpuExactKNN, GpuExactKNN
 
     return GpuExactKNN(xp.asarray(points)) if IS_CUPY_BACKEND else CpuExactKNN(points)
 
@@ -245,7 +245,7 @@ def test_wrong_query_shapes_are_rejected_before_native_kernels(bad):
 
 @cpu_only
 def test_cpu_tree_path_keeps_no_float32_copy_until_unverified_search():
-    from src.knn import CPU_TREE_MAX_D, CpuExactKNN
+    from src.neighbors.knn import CPU_TREE_MAX_D, CpuExactKNN
 
     index = CpuExactKNN(np.random.default_rng(0).normal(size=(500, CPU_TREE_MAX_D)))
     index.kneighbors(np.zeros((3, CPU_TREE_MAX_D)), 4)
@@ -257,7 +257,7 @@ def test_cpu_tree_path_keeps_no_float32_copy_until_unverified_search():
 @cpu_only
 def test_tree_sentinels_never_reach_the_scorer_and_overflow_raises(monkeypatch):
     """SciPy's "no neighbour" (index n, inf) must be rejected before the unchecked scorer."""
-    import src.knn as knn
+    import src.neighbors.knn as knn
 
     real = knn._candidate_d2
 
@@ -276,7 +276,7 @@ def test_tree_sentinels_never_reach_the_scorer_and_overflow_raises(monkeypatch):
 
 @cpu_only
 def test_tree_sentinel_extra_candidate_from_a_test_double():
-    from src.knn import CpuExactKNN
+    from src.neighbors.knn import CpuExactKNN
 
     index = CpuExactKNN(np.array([[0.0], [1.0], [5.0]]))
 

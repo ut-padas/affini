@@ -15,7 +15,7 @@ trust_region       ``TrustRegion`` / TRUST_REGIONS    ``CovarianceEllipsoid(q_re
 =================  ================================  ===================================
 
 Each component field accepts an instance, a registered name, or ``(name,
-settings)`` (see ``src.registry``); ``None`` uses the default. A ``SurrogateMode``
+settings)`` (see ``src.components.registry``); ``None`` uses the default. A ``SurrogateMode``
 is therefore only a preset pair (local model, split strategy). Components built
 by name receive the matching configuration values (``min_pts_per_cluster``,
 ``atol``/``rtol``, ``q_reg``) when their constructor accepts them.
@@ -41,13 +41,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from src.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion, Tolerance, normalize_tolerance
-from src.local_models import LOCAL_MODELS, LocalModel, local_model_for_mode
-from src.modes import SurrogateMode
-from src.registry import ComponentSpec, component_spec
-from src.sampling import SAMPLERS, Sampler
-from src.splitting import SPLIT_STRATEGIES, SplitStrategy, split_strategy_for_mode
-from src.trust_regions import TRUST_REGIONS, CovarianceEllipsoid, TrustRegion
+from src.components.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion, Tolerance, normalize_tolerance
+from src.components.local_models import LOCAL_MODELS, LocalModel, local_model_for_mode
+from src.components.modes import SurrogateMode
+from src.components.registry import ComponentSpec, component_spec
+from src.components.sampling import SAMPLERS, Sampler
+from src.components.splitting import SPLIT_STRATEGIES, SplitStrategy, split_strategy_for_mode
+from src.components.trust_regions import TRUST_REGIONS, CovarianceEllipsoid, TrustRegion
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,7 @@ class ClusteringConfig:
     mode: SurrogateMode = SurrogateMode.AFFINE_COV_HESS
     # Error tolerances for accepting a cluster: a scalar, one value per output
     # component, or None (that test never accepts). At least one is required unless
-    # ``acceptance`` brings its own; see src.acceptance for the rule.
+    # ``acceptance`` brings its own; see src.components.acceptance for the rule.
     atol: Tolerance = None
     rtol: Tolerance = None
     error_metric: Literal["L2", "Linf", "pointwise"] = "Linf"
@@ -179,7 +179,7 @@ class ClusteringConfig:
 
     # --- Refinement ---
     min_pts_per_cluster: int = 100
-    sampling_method: str = "convex_combination"  # see src.sampling.SAMPLERS
+    sampling_method: str = "convex_combination"  # see src.components.sampling.SAMPLERS
     q_reg: float = 1e-6  # regularization added when computing the trust-region shape Q
     # Maximum number of refinement levels; clusters still unresolved after it leave
     # their region without leaves and the run reports converged=False.
@@ -204,7 +204,7 @@ class ClusteringConfig:
     domain: Any = None
     region: RegionSettings | dict | None = None  # None: RegionSettings() in region mode
 
-    # --- Diagnostics (see src.profiling) ---
+    # --- Diagnostics (see src.infra.profiling) ---
     log_mem_stats: bool = False
     profile_timing: bool = False  # per-phase time totals (synchronizes the GPU)
     profile_events: bool = False  # also record a timeline of phases, steals and loads
@@ -390,3 +390,33 @@ def _normalize_domain(domain: Any) -> str | tuple[tuple[float, ...], tuple[float
     if bounds.ndim != 2 or bounds.shape[0] != 2 or not np.all(np.isfinite(bounds)) or not np.all(bounds[0] < bounds[1]):
         raise ValueError(f"domain must be finite (lower, upper) vectors with lower < upper; got {domain!r}.")
     return tuple(map(float, bounds[0])), tuple(map(float, bounds[1]))
+
+
+# --- Size heuristics (used by the examples and the launcher) ---------------------
+
+
+def get_N_TRAIN(dim: int, *, base: float = 1.3, factor: int = 50_000) -> int:
+    """
+    Heuristic to determine N_TRAIN based on dimension and tolerance.
+        factor * (base)^dim
+    """
+    N_TRAIN = int(factor * (base**dim))
+    return N_TRAIN
+
+
+def get_NUM_INITIAL_CLUSTERS(dim: int, *, base: float = 1.3, factor: int = 25) -> int:
+    """
+    Heuristic to determine N_INIT_CLUSTERS based on dimension.
+        factor * (base)^dim
+    """
+    N_INIT_CLUSTERS = int(factor * (base**dim))
+    return N_INIT_CLUSTERS
+
+
+def get_MIN_PTS_PER_CLUSTER(dim: int, *, base: float = 1.3, factor: int = 100) -> int:
+    """
+    Heuristic to determine N_MIN_PER_CLUSTER based on dimension.
+        factor * (base)^dim
+    """
+    N_MIN_PER_CLUSTER = int(factor * (base**dim))
+    return N_MIN_PER_CLUSTER

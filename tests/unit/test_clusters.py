@@ -1,11 +1,11 @@
-"""Tests for src/clusters.py and the median split rule."""
+"""Tests for src/engine/clusters.py and the median split rule."""
 
 import numpy as np
 import pytest
 
 from src import _to_host, xp
-from src.clusters import ClusterBatch, ClusterQueueBuilder
-from src.splitting import median_split_sizes
+from src.engine.clusters import ClusterBatch, ClusterQueueBuilder
+from src.components.splitting import median_split_sizes
 
 
 def _parts(rng, sizes, d=2, fd=1, has_g=False):
@@ -85,7 +85,7 @@ class _FakeMemory:
 
 
 def test_builder_checks_host_memory_on_every_append(monkeypatch):
-    import src.clusters as clusters
+    import src.engine.clusters as clusters
 
     monkeypatch.setattr(clusters, "HOST_MEMORY_RESERVE_MIN", 0)
     rng = np.random.default_rng(0)
@@ -102,7 +102,7 @@ def test_builder_checks_host_memory_on_every_append(monkeypatch):
 
 
 def test_host_memory_check_keeps_a_reserve(monkeypatch):
-    import src.clusters as clusters
+    import src.engine.clusters as clusters
 
     gib = 2**30
     monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(10 * gib, 32 * gib))

@@ -43,21 +43,25 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src import Array, xp
-from src.clusters import ParamSpec
-from src.modes import SurrogateMode
+from src import IS_CUPY_BACKEND, Array, xp
+from src.engine.clusters import ParamSpec
+from src.components.modes import SurrogateMode
 from src.numerics import (
     TINY_EPS,
     _reduce_sum_1d,
     _symmetric_point_covariance,
     count_groups,
+    det_einsum,
+    det_matmul,
     grouped_cross,
     run_fused_cross_cov,
     run_fused_stats,
+    segment_cross,
+    spd_solve,
     solve_regularized_covariance_inplace,
 )
-from src.registry import Registry
-from src.utils import repeats
+from src.components.registry import Registry
+from src.numerics import repeats
 
 
 @dataclass
@@ -181,8 +185,8 @@ def lsq_hessians(
             X, centroids, labels, K, d, fd, ac, G=G, g_mus=g_c, calc_E=True
         )
         S_j = E_j + E_j.transpose(0, 2, 1)
-        F_mat = (U.transpose(0, 2, 1) @ S_j @ U) / denom  # H_j in the eigenbasis of C
-        H_j = U @ F_mat @ U.transpose(0, 2, 1)
+        F_mat = det_matmul(det_matmul(U.transpose(0, 2, 1), S_j), U) / denom  # H_j in the eigenbasis of C
+        H_j = det_matmul(det_matmul(U, F_mat), U.transpose(0, 2, 1))
         Hs[:, j] = 0.5 * (H_j + H_j.transpose(0, 2, 1))
     return Hs
 
@@ -245,7 +249,7 @@ class TaylorModel(LocalModel):
             )
         if cluster_ids.ndim == 1:
             dx = X - c
-            out = f + xp.einsum("nmd,nd->nm", g, dx)
+            out = f + det_einsum("nmd,nd->nm", g, dx)
             if "H" in params:
                 H = params["H"][cluster_ids]  # (N, fd, d, d)
                 out = out + 0.5 * xp.einsum("nc,nfcd,nd->nf", dx, H, dx)
@@ -284,14 +288,14 @@ class AffineLSQModel(LocalModel):
         A_T = solve_regularized_covariance_inplace(auto_cov, cross_cov, d, fd)
         del auto_cov
         A = A_T.transpose(0, 2, 1)  # (K, fd, d)
-        b = mean_F - xp.einsum("kfd,kd->kf", A, data.centroids)  # (K, fd)
+        b = mean_F - det_einsum("kfd,kd->kf", A, data.centroids)  # (K, fd)
         return {"A_fit": A, "b_fit": b}
 
     def evaluate(self, params, X, cluster_ids):
         A = params["A_fit"][cluster_ids]
         b = params["b_fit"][cluster_ids]
         if cluster_ids.ndim == 1:
-            return b + xp.einsum("nfd,nd->nf", A, X)
+            return b + det_einsum("nfd,nd->nf", A, X)
         return xp.einsum("nkfd,nd->nkf", A, X) + b
 
 
@@ -325,19 +329,27 @@ class QuadraticLSQModel(LocalModel):
         radius = xp.sqrt(_reduce_sum_1d(xp.sum(diff**2, axis=1), data.starts) / data.sizes)
         radius = xp.where(radius > 0, radius, 1.0)
         Phi = self.features(diff / radius[data.labels][:, None])
-        groups = count_groups(data.sizes, data.starts)
-        P_g = [Phi[rows] for _, rows in groups]
-        G = grouped_cross(groups, P_g, P_g)
-        B = grouped_cross(groups, P_g, [data.F[rows] for _, rows in groups])
+        if IS_CUPY_BACKEND:  # reproducible, batch-independent sums (cuBLAS batching is neither)
+            G = segment_cross(Phi, Phi, data.starts, data.sizes, symmetric=True)
+            B = segment_cross(Phi, data.F, data.starts, data.sizes)
+        else:
+            groups = count_groups(data.sizes, data.starts)
+            P_g = [Phi[rows] for _, rows in groups]
+            G = grouped_cross(groups, P_g, P_g)
+            B = grouped_cross(groups, P_g, [data.F[rows] for _, rows in groups])
         p = Phi.shape[1]
         lam = 1e-10 * xp.trace(G, axis1=1, axis2=2) / p + 1e-300
-        beta = xp.linalg.solve(G + lam[:, None, None] * xp.eye(p), B)  # (K, p, fd)
+        # spd_solve: on the GPU its bits do not depend on the batch (a batched linalg.solve picks its
+        # algorithm by batch count, so cold and warm runs fitted different coefficients); NumPy: linalg.solve
+        beta = spd_solve(G + lam[:, None, None] * xp.eye(p), B)  # (K, p, fd)
         return {"coef": xp.swapaxes(beta, 1, 2), "radius": radius}
 
     def evaluate(self, params, X, cluster_ids):
         c, s = params["centroids"][cluster_ids], params["radius"][cluster_ids]
         Xb = X if cluster_ids.ndim == 1 else X[:, None, :]
         Phi = self.features((Xb - c) / s[..., None])
+        if IS_CUPY_BACKEND and cluster_ids.ndim == 1:  # training: batch-independent bits
+            return det_einsum("nfp,np->nf", params["coef"][cluster_ids], Phi)
         return xp.einsum("...fp,...p->...f", params["coef"][cluster_ids], Phi)
 
 
@@ -388,7 +400,7 @@ def output_columns(model: LocalModel, d: int, fd: int) -> dict[str, ParamSpec]:
         "centroids": ParamSpec((d,)),
         "f": ParamSpec((fd,)),
         "Q": ParamSpec((d, d)),
-        # The acceptance criterion's errors per output component (see src.acceptance).
+        # The acceptance criterion's errors per output component (see src.components.acceptance).
         "E_cluster_abs": ParamSpec((fd,)),
         "E_cluster_rel": ParamSpec((fd,)),
         "counts": ParamSpec((), np.int64),

@@ -1,5 +1,5 @@
 """
-Backend detection (src/backend.py) and an end-to-end smoke test.
+Backend detection (src/infra/backend.py) and an end-to-end smoke test.
 
 These run on every machine. Assertions are relative to what is installed, so
 the same suite passes on a CPU-only laptop and on a GPU/MPI node. To turn
@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src import backend
+from src.infra import backend
 from tests._smoke import SMOKE_TOL, run_smoke
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _DETECTION_VARS = ("AFINNI_DEVICE", "AFINNI_MPI", *backend._LAUNCHER_SIZE_VARS)
 
 _PROBE = (
-    "import json, src, src.backend as b; "
+    "import json, src, src.infra.backend as b; "
     "print(json.dumps({'cupy': b.IS_CUPY_BACKEND, "
     "'xp': b.xp.__name__, 'mpi': b.has_mpi(), 'size': b.get_mpi_size(), "
     "'reason': b._resolve_mpi()[2]}))"
@@ -159,7 +159,7 @@ def test_serial_comm_rejects_point_to_point(method):
 
 # --- Multiprocessing (spawn = default on Windows/macOS) ----------------------------
 def _worker_mpi_state(_):
-    from src import backend as b
+    from src.infra import backend as b
 
     _, has_mpi, reason = b._resolve_mpi()
     return has_mpi, reason

@@ -13,9 +13,11 @@ import jax
 import matplotlib.pyplot as plt
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_host, xp
-from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
-from src.backend import MPI
-from src.heuristic_parameters import (
+from src.config import ClusteringConfig
+from src.engine.evaluation import Evaluator
+from src.components.modes import SurrogateMode
+from src.infra.backend import MPI
+from src.config import (
     get_MIN_PTS_PER_CLUSTER,
     get_N_TRAIN,
     get_NUM_INITIAL_CLUSTERS,
@@ -29,7 +31,7 @@ from src.plotting import (
     plot_profile_dashboard,
     plot_wave_line_errors,
 )
-from src.sampling import SAMPLERS
+from src.components.sampling import SAMPLERS
 from src.surrogate import AFINNISurrogate, compute_error_metrics
 
 TINY_EPS = 1e-12
@@ -1089,7 +1091,7 @@ def run_experiment_from_args(args):
 if __name__ == "__main__":
     import logging
 
-    from src.logging_utils import setup_logging
+    from src.infra.logging_utils import setup_logging
 
     setup_logging(console_level=logging.DEBUG)
 

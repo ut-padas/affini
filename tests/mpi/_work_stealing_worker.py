@@ -8,12 +8,14 @@ from tests.mpi._mpi_worker import RESULT_PREFIX
 
 
 def main():
-    import src.adaptive_clustering as ac
-    import src.work_stealing as ws
-    from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
-    from src.backend import MPI
-    from src.clusters import ClusterBatch
-    from src.profiling import Profiler, new_profiling_stats
+    import src.engine.adaptive_clustering as ac
+    import src.engine.work_stealing as ws
+    from src.config import ClusteringConfig
+    from src.engine.evaluation import Evaluator
+    from src.components.modes import SurrogateMode
+    from src.infra.backend import MPI
+    from src.engine.clusters import ClusterBatch
+    from src.infra.profiling import Profiler, new_profiling_stats
 
     world = MPI.COMM_WORLD
     rank, size = world.Get_rank(), world.Get_size()

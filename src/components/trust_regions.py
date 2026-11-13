@@ -20,9 +20,10 @@ from src.numerics import (
     TINY_EPS,
     _reduce_max_1d,
     _symmetric_point_covariance,
+    det_matmul,
     run_fused_mahalanobis_projection,
 )
-from src.registry import Registry
+from src.components.registry import Registry
 
 
 class TrustRegion(ABC):
@@ -72,7 +73,7 @@ def trust_region_shapes(
 
     scale_fac = 1.0 / xp.maximum(max_dist, TINY_EPS)
     return (
-        U * (scale_fac[:, None] * Lambda_inv)[:, None, :] @ U.transpose(0, 2, 1)
+        det_matmul(U * (scale_fac[:, None] * Lambda_inv)[:, None, :], U.transpose(0, 2, 1))
     )  # (K, d, d)
 
 

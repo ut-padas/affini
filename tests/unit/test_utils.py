@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 
 from src import xp
-from src.utils import repeats
+from src.numerics import repeats
 
 
 class TestRepeats(unittest.TestCase):

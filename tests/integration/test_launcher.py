@@ -14,7 +14,7 @@ import pytest  # noqa: E402
 import afinni_launcher as launcher  # noqa: E402
 from src import plotting as P  # noqa: E402
 from src import xp  # noqa: E402
-from src.adaptive_clustering_utils import SurrogateMode  # noqa: E402
+from src.components.modes import SurrogateMode# noqa: E402
 from tests._helpers import host  # noqa: E402
 
 

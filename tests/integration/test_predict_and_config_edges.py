@@ -7,7 +7,7 @@ import pytest
 
 from src import xp
 from src.config import ClusteringConfig
-from src.modes import SurrogateMode
+from src.components.modes import SurrogateMode
 from src.surrogate import AFINNISurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
 

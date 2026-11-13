@@ -1,13 +1,13 @@
-"""Tests for src/region.py: random streams, roots, polytope sampling, cuts and routing."""
+"""Tests for the src/region package: random streams, roots, polytope sampling, cuts and routing."""
 
 from collections import defaultdict
 
 import numpy as np
 import pytest
 
-import src.work_stealing as ws
+import src.engine.work_stealing as ws
 from src import _to_host, xp
-from src.clusters import ClusterBatch, ClusterQueueBuilder
+from src.engine.clusters import ClusterBatch, ClusterQueueBuilder
 from src.region import (
     PURPOSE_TRAIN,
     PURPOSE_VALIDATION,
@@ -21,7 +21,7 @@ from src.region import (
     node_keys,
     plane_scores,
 )
-from src.sampling import ClusterPoints
+from src.components.sampling import ClusterPoints
 from tests._helpers import host
 
 
@@ -505,7 +505,8 @@ def test_routing_rejects_non_finite_or_misshaped_queries(query):
 
 def test_cut_sums_match_direct_sums_on_both_sides_and_ignore_other_nodes():
     """Per-bin prefix/suffix sums equal each cut's directly formed Grams, node by node."""
-    from src.region import _SplitRows, sort_by_block_then_value
+    from src.numerics import sort_by_block_then_value
+    from src.region import _SplitRows
 
     rng = np.random.default_rng(5)
     counts = [12, 9, 12, 20]
@@ -528,3 +529,102 @@ def test_cut_sums_match_direct_sums_on_both_sides_and_ignore_other_nodes():
                 np.testing.assert_allclose(G[k, i], P[side].T @ P[side], rtol=1e-12, atol=1e-13)
                 np.testing.assert_allclose(B[k, i], P[side].T @ Yh[side], rtol=1e-12, atol=1e-13)
                 np.testing.assert_allclose(C[k, i], np.sum(Yh[side] ** 2), rtol=1e-12)
+
+
+def _split_rows(rng, k=6, c=150, d=3, fd=2):
+    import src.region.split_search as R
+
+    counts = xp.full(k, c, dtype=xp.int64)
+    counts[0] = c + 17
+    N = int(counts.sum())
+    U = xp.asarray(rng.uniform(0, 1, (N, d)))
+    Phi = xp.concatenate([U, xp.ones((N, 1))], axis=1)
+    Y = xp.asarray(rng.standard_normal((N, fd))) + xp.sin(5 * U[:, :1])
+    rows = R._SplitRows(U, Y, Phi, xp.repeat(xp.arange(k), counts), counts)
+    w = R._unit(xp.asarray(rng.standard_normal((k, d))))
+    z = xp.asarray(rng.uniform(0.3, 0.7, k)) * xp.sum(w, axis=1)
+    return rows, w, z, xp.full(k, 0.05)
+
+
+@pytest.mark.skipif(not __import__("src").IS_CUPY_BACKEND, reason="the fused B4 kernels are the GPU path")
+def test_fused_b4_objective_and_step_match_the_generic_formulas(monkeypatch):
+    import src.region.split_search as R
+
+    rows, w, z, T = _split_rows(np.random.default_rng(3))
+    fused = R._soft_objective(rows, w, z, T, 1e-6)
+    monkeypatch.setattr(R, "IS_CUPY_BACKEND", False)  # the generic xp formulas, on the same GPU arrays
+
+    def xp_gates(rows, w, z, T, delta):  # the CPU branch is Numba (host arrays), so the formula itself
+        s = (R.plane_scores(rows.U, w[rows.labels]) - z[rows.labels]) / T[rows.labels]
+        sp, sm = R._sigmoid(s), R._sigmoid(-s)
+        return delta + (1 - 2 * delta) * sm, delta + (1 - 2 * delta) * sp, sp * sm
+
+    monkeypatch.setattr(R, "_soft_gates", xp_gates)
+    generic = R._soft_objective(_split_rows(np.random.default_rng(3))[0], w, z, T, 1e-6)
+    for name, f, g in zip(("J", "g_w", "g_z", "rL", "rR", "pen"), fused[:6], generic[:6], strict=True):
+        np.testing.assert_allclose(host(f), host(g), rtol=1e-11, atol=1e-14, err_msg=name)
+    np.testing.assert_allclose(host(fused[7]), host(generic[7]), rtol=1e-12)
+    # gap is the inner solves' rounding-level suboptimality: compare magnitudes only
+    assert float(xp.max(xp.abs(fused[6]))) < 1e-20 and float(xp.max(xp.abs(generic[6]))) < 1e-20
+    monkeypatch.setattr(R, "IS_CUPY_BACKEND", True)
+    J, g_w, g_z, rL, rR, pen, gap, sp_sum = fused
+    n = rows.counts.astype(xp.float64)
+    w_f, z_f, active, stops = w.copy(), z.copy(), xp.ones(w.shape[0], dtype=bool), xp.zeros(4, dtype=xp.uint64)
+    R._soft_step(rows, w_f, z_f, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n, 1e-6, active, stops, 12)
+    # the sequential halving loop of the CPU path on the same inputs
+    g = g_w - xp.sum(g_w * w, axis=1, keepdims=True) * w
+    gn2 = xp.sum(g**2, axis=1) + g_z**2
+    alpha = T / xp.sqrt(xp.maximum(gn2, 1e-300))
+    margin = gap + 64 * np.finfo(float).eps * (xp.abs(J) + 1e-300)
+    ws, zs, taken = w.copy(), z.copy(), xp.zeros(w.shape[0], dtype=bool)
+    for _ in range(12):
+        w_t, z_t = R._unit(ws - alpha[:, None] * g), zs - alpha * g_z
+        WL, WR, _ = R._soft_gates(rows, w_t, z_t, T, 1e-6)
+        Ft = (rows.reduce(WL * rL + WR * rR) + pen) / n
+        acc = ~taken & (Ft <= J - 1e-4 * alpha * gn2) & (J - Ft > margin)
+        ws, zs, taken, alpha = xp.where(acc[:, None], w_t, ws), xp.where(acc, z_t, zs), taken | acc, alpha * 0.5
+    np.testing.assert_array_equal(host(active), host(taken))
+    np.testing.assert_allclose(host(w_f), host(ws), atol=1e-14)
+    np.testing.assert_allclose(host(z_f), host(zs), atol=1e-14)
+
+
+@pytest.mark.skipif(not __import__("src").IS_CUPY_BACKEND, reason="the fused sampler and RNG kernels are the GPU path")
+def test_fused_hit_and_run_and_uniform_pairs_match_the_generic_path(monkeypatch):
+    import src.region.rng as RNG
+    import src.region.sampling as R
+
+    keys = node_keys(3, xp.arange(5), xp.arange(5) + 7)
+    fused = host(RNG.counter_uniform_pairs(keys[:, None], 2, xp.arange(40)[None, :] * 3 + 11))
+    rng = np.random.default_rng(0)
+    w = rng.standard_normal(5)
+    w /= np.linalg.norm(w)
+    rows = np.stack([np.r_[w, 0.5 * w.sum() + 0.02], np.r_[-w, -(0.5 * w.sum() - 0.02)]])[None]
+    geo = RegionPoints(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([5])),
+                       xp.asarray(rows), PURPOSE_TRAIN)  # fmt: skip
+    sampler = HitAndRunSampler(Domain(np.zeros(5), np.ones(5)), Roots.build("box", 5, 1), walk_steps=20)
+
+    def draw():
+        return host(sampler.sample(ClusterPoints(xp.full((4, 5), 0.5), xp.asarray([4]), region=geo), xp.asarray([2000])))
+
+    X_fused = draw()
+    monkeypatch.setattr(R, "IS_CUPY_BACKEND", False)
+    monkeypatch.setattr(RNG, "IS_CUPY_BACKEND", False)
+    # the generic array-API walk (_steps); the CPU branch of _walk_fused is Numba on host arrays
+    monkeypatch.setattr(R.HitAndRunSampler, "_walk_fused", lambda self, geo, o, dr, U, t0, t1, c: self._steps(geo, o, dr, U, t0, t1, c))
+    np.testing.assert_array_equal(fused, host(RNG.counter_uniform_pairs(keys[:, None], 2, xp.arange(40)[None, :] * 3 + 11)))
+    np.testing.assert_allclose(X_fused, draw(), atol=1e-10)  # same moves; only fused-multiply-add rounding differs
+
+
+def test_soft_gates_match_the_logistic_formula():
+    """The fused gates (CUDA on the GPU, Numba on the CPU) against the plain formula, including s = 0 and large |s|."""
+    import src.region.split_search as R
+
+    rows, w, z, _ = _split_rows(np.random.default_rng(5))
+    T = xp.asarray(np.r_[1e-3, np.full(int(w.shape[0]) - 1, 0.05)])
+    WL, WR, sp_sm = R._soft_gates(rows, w, z, T, 1e-6)
+    s = host((xp.sum(rows.U * w[rows.labels], axis=1) - z[rows.labels]) / T[rows.labels])
+    sp = np.where(s >= 0, 1 / (1 + np.exp(-np.abs(s))), np.exp(-np.abs(s)) / (1 + np.exp(-np.abs(s))))
+    sm = np.where(-s >= 0, 1 / (1 + np.exp(-np.abs(s))), np.exp(-np.abs(s)) / (1 + np.exp(-np.abs(s))))
+    np.testing.assert_allclose(host(WL), 1e-6 + (1 - 2e-6) * sm, rtol=1e-12, atol=1e-15)
+    np.testing.assert_allclose(host(WR), 1e-6 + (1 - 2e-6) * sp, rtol=1e-12, atol=1e-15)
+    np.testing.assert_allclose(host(sp_sm), sp * sm, rtol=1e-12, atol=1e-300)

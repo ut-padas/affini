@@ -5,7 +5,7 @@ import dataclasses
 import numpy as np
 import pytest
 
-import src.adaptive_clustering as ac
+import src.engine.adaptive_clustering as ac
 from src.config import ClusteringConfig
 from tests._helpers import host, train_surrogate
 

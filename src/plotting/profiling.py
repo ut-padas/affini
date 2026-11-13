@@ -4,7 +4,7 @@ and how the forest grows level by level.
 
 Every function accepts what training returns: ``AFINNISurrogate.profiling_stats``,
 the ``adaptive_clustering`` result dict, a surrogate, or a dict of event streams
-from ``src.profiling.read_event_streams`` (timeline plots only). Each returns the
+from ``src.infra.profiling.read_event_streams`` (timeline plots only). Each returns the
 figure and saves it when ``path`` is given.
 
 Data requirements: breakdown plots need ``profile_timing=True`` (otherwise phase
@@ -23,7 +23,7 @@ import pandas as pd
 from matplotlib.patches import Patch
 
 from src.plotting.style import afinni_style, finish, fmt_count
-from src.profiling import PHASE_BY_KEY, group_colors, phase_groups
+from src.infra.profiling import PHASE_BY_KEY, group_colors, phase_groups
 
 UNTIMED = "Other (untimed)"
 _UNTIMED_COLOR = "#e5e5e5"

@@ -1,12 +1,14 @@
-"""Tests for src/splitting.py."""
+"""Tests for src/components/splitting.py."""
 
 import numpy as np
 import pytest
 
-import src.adaptive_clustering as ac
+import src.engine.adaptive_clustering as ac
 from src import _to_host, xp
-from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
-from src.splitting import (
+from src.config import ClusteringConfig
+from src.engine.evaluation import Evaluator
+from src.components.modes import SurrogateMode
+from src.components.splitting import (
     CovarianceHessianSplit,
     CovarianceSplit,
     ExactHessianSplit,

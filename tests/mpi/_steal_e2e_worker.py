@@ -33,8 +33,8 @@ N_TRAIN, TOL = 40_000, 0.05
 
 def main() -> None:
     import src
-    import src.adaptive_clustering as ac
-    import src.work_stealing as ws
+    import src.engine.adaptive_clustering as ac
+    import src.engine.work_stealing as ws
     from src.problems.rosenbrock import rosenbrock
     from src.surrogate import AFINNISurrogate
     from tests._helpers import train_surrogate
@@ -54,7 +54,7 @@ def main() -> None:
             if "Granted steal to" in record.getMessage():
                 counts["boundary_grants"] += 1
 
-    logger = logging.getLogger("src.work_stealing")
+    logger = logging.getLogger("src.engine.work_stealing")
     logger.setLevel(logging.INFO)
     logger.addHandler(GrantLog())
     logger.propagate = False
