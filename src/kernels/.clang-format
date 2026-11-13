@@ -1,0 +1,11 @@
+# Formatting of the CUDA sources (run: uvx --from clang-format==18.1.8 clang-format -i src/kernels/*.cu).
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 110
+AccessModifierOffset: -4
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Always
+DerivePointerAlignment: false
+PointerAlignment: Left
+SpacesBeforeTrailingComments: 2
