@@ -91,6 +91,11 @@ ignore = [
 "test/*.py" = ["N806"]  # Allow mathematical variable names in tests (N, A, JA, minPts)
 "*.pyi" = ["N803"]  # Allow non-standard naming in type stubs
 
+[tool.coverage.run]
+source = ["src"]
+# Paths relative to the checkout, so CPU and GPU data files from different machines combine.
+relative_files = true
+
 [tool.pytest.ini_options]
 addopts = [
     "--cov=src",
