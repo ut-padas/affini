@@ -8,7 +8,7 @@ from tests.mpi._mpi_worker import RESULT_PREFIX
 
 
 def main():
-    import src.engine.adaptive_clustering as ac
+    import src.engine.driver as driver
     import src.engine.work_stealing as ws
     from src.components.modes import SurrogateMode
     from src.config import ClusteringConfig
@@ -87,7 +87,7 @@ def main():
                     if rank == 0
                     else np.empty(0, dtype=np.int64)
                 )
-                buffers, count, _, generated, _ = ac._run_local_refinement(
+                buffers, count, _, generated, _ = driver.refine_rank(
                     config=ClusteringConfig(
                         mode=SurrogateMode.NEAREST_NEIGHBOR,
                         error_metric="Linf",

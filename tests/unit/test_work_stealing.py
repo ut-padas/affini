@@ -5,7 +5,7 @@ from collections import defaultdict
 import numpy as np
 import pytest
 
-import src.engine.adaptive_clustering as ac
+import src.engine.driver as driver
 import src.engine.work_stealing as ws
 from src.components.modes import SurrogateMode
 from src.config import ClusteringConfig
@@ -122,7 +122,7 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
     monkeypatch.setattr(ws, "MIN_LOAD_THRESHOLD", 1000)
     comm = _Comm(grant, has_g)
     profiler = Profiler(new_profiling_stats(), events=True)
-    buffers, count, _, _, levels = ac._run_local_refinement(
+    buffers, count, _, _, levels = driver.refine_rank(
         config=ClusteringConfig(
             mode=SurrogateMode.NEAREST_NEIGHBOR,
             error_metric="Linf",
@@ -161,10 +161,10 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
 def test_single_rank_respects_refinement_limit(monkeypatch, stealing, max_levels):
     from src.infra.backend import _SerialMPI
 
-    monkeypatch.setattr(ac, "MPI", _SerialMPI)
+    monkeypatch.setattr(driver, "MPI", _SerialMPI)
     monkeypatch.setattr(ws, "MPI", _SerialMPI)
-    result = ac.adaptive_clustering(
-        ac.xp.asarray(np.linspace(-1, 1, 128).reshape(-1, 1)),
+    result = driver.refine(
+        driver.xp.asarray(np.linspace(-1, 1, 128).reshape(-1, 1)),
         ClusteringConfig(
             mode=SurrogateMode.AFFINE_COV_NO_HESS,
             atol=1e-4,

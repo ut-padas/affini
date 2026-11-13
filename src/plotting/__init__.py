@@ -4,7 +4,7 @@ Plotting for AFINNI. Import plots from here; add new ones to the module that fit
 - ``src.plotting.profiling``: training profiles (time per phase and rank, level
   heatmaps, forest growth, timelines, load balance and work stealing, dashboard).
 - ``src.plotting.surrogate``: trained surrogates and their errors.
-- ``src.plotting.region``: region-mode trees (partition, statistics) and comparisons of
+- ``src.plotting.art``: ART trees (partition, statistics) and comparisons of
   several surrogates (error maps, error CDFs, metric bars).
 - ``src.plotting.style``: the shared style (``afinni_style``) and ``finish`` (save/close).
 
@@ -14,6 +14,14 @@ and return the figure, so plots work in notebooks, scripts and tests alike. Put 
 data preparation in a ``*_frame`` helper when it is useful on its own.
 """
 
+from src.plotting.art import (
+    plot_art_partition,
+    plot_art_tree_stats,
+    plot_error_cdf,
+    plot_error_maps,
+    plot_method_comparison,
+    pointwise_relative_error,
+)
 from src.plotting.profiling import (
     events_frame,
     level_stats_frame,
@@ -27,14 +35,6 @@ from src.plotting.profiling import (
     plot_timeline,
     profile_of,
     steals_frame,
-)
-from src.plotting.region import (
-    plot_error_cdf,
-    plot_error_maps,
-    plot_method_comparison,
-    plot_region_partition,
-    plot_region_tree_stats,
-    pointwise_relative_error,
 )
 from src.plotting.style import afinni_style, finish
 from src.plotting.surrogate import (
@@ -66,8 +66,8 @@ __all__ = [
     "plot_near_centers",
     "plot_profile_dashboard",
     "plot_rank_time_breakdown",
-    "plot_region_partition",
-    "plot_region_tree_stats",
+    "plot_art_partition",
+    "plot_art_tree_stats",
     "plot_steal_matrix",
     "plot_timeline",
     "plot_wave_2d_errors",

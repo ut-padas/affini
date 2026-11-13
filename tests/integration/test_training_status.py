@@ -5,7 +5,7 @@ import warnings
 import numpy as np
 import pytest
 
-import src.engine.adaptive_clustering as ac
+import src.engine.driver as driver
 from src import xp
 from src.components.modes import SurrogateMode
 from src.config import ClusteringConfig
@@ -64,14 +64,14 @@ def test_failed_retrain_leaves_the_previous_model_intact():
 
 
 def test_low_level_result_reports_status(monkeypatch):
-    monkeypatch.setattr(ac, "MPI", _SerialMPI)
+    monkeypatch.setattr(driver, "MPI", _SerialMPI)
     cfg = ClusteringConfig(
         mode=SurrogateMode.AFFINE_COV_HESS, atol=0.01, rtol=0.01, error_metric="Linf",
         num_initial_clusters=8, min_pts_per_cluster=40, max_levels=1, use_work_stealing=False,
     )  # fmt: skip
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        res = ac.adaptive_clustering(xp.asarray(X), cfg, Evaluator(f_fn=f))
+        res = driver.refine(xp.asarray(X), cfg, Evaluator(f_fn=f))
     assert res["converged"] is False and res["num_unresolved_clusters"] > 0
     assert res["profiling_stats"]["num_unresolved_pts"] == res["num_unresolved_pts"]
 

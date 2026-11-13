@@ -1,4 +1,4 @@
-// Region mode B4 (src/region/split_search.py): soft gates, line-search trials and node selection,
+// ART B4 (src/art/split_search.py): soft gates, line-search trials and node selection,
 // residuals, objective terms, B3 bin sides.
 //
 // One B4 iteration on the GPU (_soft_objective_fused, then _soft_step), all node state in place:
@@ -25,7 +25,7 @@ __device__ void gates(const double* u, const double* w, double z, double T, doub
     *sp_sm = sp * sm;
 }
 
-// One thread per row: W_L, W_R and sigma sigma' at its node's plane (_soft_gates in region.py).
+// One thread per row: W_L, W_R and sigma sigma' at its node's plane (_soft_gates in src/art/split_search.py).
 extern "C" __global__ void soft_gates(const double* U, const long long* lab, const double* w, const double* z,
                                       const double* T, double delta, double* WL, double* WR, double* sp_sm,
                                       long long N, int d) {

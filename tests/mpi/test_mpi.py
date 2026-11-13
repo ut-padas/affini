@@ -109,10 +109,10 @@ def test_multi_rank_agrees_with_serial_in_accuracy(parallel_result, serial_resul
     tree: AFINNI's augmentation stream is seeded with ``seed + level + batch + rank*1000``,
     so which points a rejected cluster gains depends on the rank and batch that process it
     (on 2-8 ranks the smoke model has 235-252 leaves). Changing that seeding would break
-    AFINNI mode's bit-identical results, so this compares accuracy instead: the
+    AFINNI's bit-identical results, so this compares accuracy instead: the
     same error bound, an error no worse than serial's to within 25%, and a leaf count within
-    15% of serial's. Region mode, whose streams are keyed by node, is checked for exact
-    agreement in test_region_mode_is_independent_of_ranks_and_stealing.
+    15% of serial's. ART, whose streams are keyed by node, is checked for exact
+    agreement in test_art_is_independent_of_ranks_and_stealing.
     """
     from tests._smoke import SMOKE_TOL
 
@@ -171,17 +171,17 @@ def test_a_failure_on_one_rank_aborts_the_whole_job(mpi_launcher, phase, message
 
 
 @pytest.fixture(scope="module")
-def region_serial() -> dict:
-    return _run_worker([], {"AFINNI_MPI": "off"}, module="tests.mpi._region_worker")
+def art_serial() -> dict:
+    return _run_worker([], {"AFINNI_MPI": "off"}, module="tests.mpi._art_worker")
 
 
-def test_region_mode_is_independent_of_ranks_and_stealing(mpi_launcher, region_serial):
+def test_art_is_independent_of_ranks_and_stealing(mpi_launcher, art_serial):
     """Node-keyed random streams: the same tree and predictions on any rank count, with or without steals."""
-    parallel = _run_worker([*mpi_launcher, "-n", str(N_RANKS)], module="tests.mpi._region_worker")
+    parallel = _run_worker([*mpi_launcher, "-n", str(N_RANKS)], module="tests.mpi._art_worker")
     for name, ref in (("no_steal", "no_steal"), ("steal", "no_steal"), ("soft_no_steal", "soft_no_steal"),
                       ("soft_steal", "soft_no_steal"), ("voronoi_no_steal", "voronoi_no_steal"),
                       ("voronoi_steal", "voronoi_no_steal")):  # fmt: skip
-        reference = region_serial[ref]
+        reference = art_serial[ref]
         for key in ("leaves", "keys_hash", "pred_hash", "evals", "statuses", "outside"):
             assert parallel[name][key] == reference[key], (name, key, parallel[name], reference)
     assert parallel["no_steal"]["grants"] == 0

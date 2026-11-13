@@ -15,7 +15,7 @@ from src.config import (
     get_NUM_INITIAL_CLUSTERS,
 )
 from src.core.evaluation import Evaluator
-from src.engine.adaptive_clustering import initial_clustering
+from src.engine.driver import initial_clustering
 from src.surrogate import AFINNISurrogate
 
 # KIDApy's modules import each other by bare name (e.g. parser.py does `import pdfac`), so its root must be on sys.path

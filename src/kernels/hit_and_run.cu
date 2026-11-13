@@ -1,4 +1,4 @@
-// Region mode sampling (src/region/sampling.py, HitAndRunSampler._walk_fused): whole hit-and-run walks, one
+// ART sampling (src/art/sampling.py, HitAndRunSampler._walk_fused): whole hit-and-run walks, one
 // thread per chain.
 
 // Whole hit-and-run walks, one thread per chain (``_walk_fused``), mirroring ``_steps``: the direction
@@ -9,7 +9,7 @@
 #define INFINITY __longlong_as_double(0x7ff0000000000000LL)
 __device__ inline double nanmax(double a, double b) { return (isnan(a) || isnan(b)) ? nan("") : fmax(a, b); }
 __device__ inline double nanmin(double a, double b) { return (isnan(a) || isnan(b)) ? nan("") : fmin(a, b); }
-// splitmix64 finalizer: must stay identical to region._mix64, since every uniform of the
+// splitmix64 finalizer: must stay identical to src/art/rng.py _mix64, since every uniform of the
 // walk is a hash of (node key, purpose tag, counter) shared with the NumPy sampler.
 __device__ inline unsigned long long mix64(unsigned long long z) {
     z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;

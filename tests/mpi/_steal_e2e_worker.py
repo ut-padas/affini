@@ -33,13 +33,13 @@ N_TRAIN, TOL = 40_000, 0.05
 
 def main() -> None:
     import src
-    import src.engine.adaptive_clustering as ac
+    import src.engine.driver as driver
     import src.engine.work_stealing as ws
     from src.problems.rosenbrock import rosenbrock
     from src.surrogate import AFINNISurrogate
     from tests._helpers import train_surrogate
 
-    real_mpi = ac.MPI
+    real_mpi = driver.MPI
     world = real_mpi.COMM_WORLD
     rank = world.Get_rank()
     req, grant, deny = ws.TAG_STEAL_REQ, ws.TAG_STEAL_GRANT, ws.TAG_STEAL_DENY
@@ -82,7 +82,7 @@ def main() -> None:
         def __getattr__(self, name):
             return getattr(real_mpi, name)
 
-    ac.MPI = MPIProxy()
+    driver.MPI = MPIProxy()
     ws.MIN_LOAD_THRESHOLD = 1_000  # default 1,000,000 never triggers at test size
     ws.STEAL_SIZE = 2_000  # partial steals leave work on the victim
 

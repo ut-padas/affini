@@ -1,4 +1,4 @@
-"""``RegionPlan``: one region-mode batch from fit and validation to accepted leaves and children."""
+"""``ARTPlan``: one ART batch from fit and validation to accepted leaves and children."""
 
 import contextlib
 import math
@@ -6,6 +6,34 @@ import math
 import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, _to_host, xp
+from src.art.constants import (
+    ACCEPTED,
+    FAILED,
+    INSUFFICIENT_SAMPLING,
+    MAX_DEPTH,
+    MAX_DEPTH_LIMIT,
+    NOT_PERFORMED,
+    PASSED,
+    PURPOSE_DIRECTION,
+    PURPOSE_TRAIN,
+    PURPOSE_VALIDATION,
+    SPLIT_FAILED,
+    TERMINAL_REASONS,
+)
+from src.art.geometry import Domain, Roots, gap_cuts, plane_scores
+from src.art.rng import _normals, counter_uniform, node_keys
+from src.art.routing import RoutingTable
+from src.art.sampling import HitAndRunSampler, NodePolytopes
+from src.art.split_search import (
+    _hard_sse,
+    _interleave,
+    _soft_gates,
+    _soft_objective,
+    _soft_step,
+    _SplitRows,
+    _unit,
+    segment_sum,
+)
 from src.components.acceptance import tolerance_vector
 from src.components.local_models import ClusterFitData, deploy_leaves, output_columns
 from src.components.sampling import (
@@ -24,42 +52,14 @@ from src.numerics import (
     repeats,
     sort_by_block_then_value,
 )
-from src.region.constants import (
-    ACCEPTED,
-    FAILED,
-    INSUFFICIENT_SAMPLING,
-    MAX_DEPTH,
-    MAX_DEPTH_LIMIT,
-    NOT_PERFORMED,
-    PASSED,
-    PURPOSE_DIRECTION,
-    PURPOSE_TRAIN,
-    PURPOSE_VALIDATION,
-    SPLIT_FAILED,
-    TERMINAL_REASONS,
-)
-from src.region.geometry import Domain, Roots, gap_cuts, plane_scores
-from src.region.rng import _normals, counter_uniform, node_keys
-from src.region.routing import RoutingTable
-from src.region.sampling import HitAndRunSampler, RegionPoints
-from src.region.split_search import (
-    _hard_sse,
-    _interleave,
-    _soft_gates,
-    _soft_objective,
-    _soft_step,
-    _SplitRows,
-    _unit,
-    segment_sum,
-)
 
 
 # --- The plan ------------------------------------------------------------------------
-class RegionPlan:
+class ARTPlan:
     """
-    Region mode's members of ``src.core.plan.Plan`` (the shared executor is
-    ``src.engine.refinement._run_local_refinement``). ``counters`` accumulates this rank's
-    split diagnostics (reported as ``profiling_stats["region"]``).
+    ART's members of ``src.core.plan.Plan`` (the shared executor is
+    ``src.engine.refinement.refine_rank``). ``counters`` accumulates this rank's
+    split diagnostics (reported as ``profiling_stats["art"]``).
     """
 
     batch_floor = 1_000
@@ -68,7 +68,7 @@ class RegionPlan:
     def __init__(self, config, d: int, fd: int, domain: Domain, roots: Roots):
         self.config, self.d, self.fd = config, d, fd
         self.domain, self.roots = domain, roots
-        s = config.region
+        s = config.art
         self.settings = s
         self.model = config.components().local_model
         self.p_eff = self.model.n_features(d)  # ART: sample multiplier x the leaf model's features
@@ -78,12 +78,12 @@ class RegionPlan:
         self.min_side = self.p_eff + int(s.min_side_margin)
         if not self.convex_sampling and self.n_target < 2 * self.min_side:
             raise ValueError(
-                f"Region nodes get {self.n_target} training points, fewer than twice the "
+                f"ART nodes get {self.n_target} training points, fewer than twice the "
                 f"minimum side size {self.min_side}: no split could ever be made. Raise "
-                f"region.sample_multiplier or lower region.min_side_margin."
+                f"art.sample_multiplier or lower art.min_side_margin."
             )
         if config.max_levels > MAX_DEPTH_LIMIT:
-            raise ValueError(f"Region mode supports max_levels <= {MAX_DEPTH_LIMIT}; got {config.max_levels}.")
+            raise ValueError(f"ART supports max_levels <= {MAX_DEPTH_LIMIT}; got {config.max_levels}.")
         self.sampler = HitAndRunSampler(domain, roots, s.walk_steps, s.max_walk_steps, s.mixing_z)
         node_pts = max(self.n_target, 2 * config.min_pts_per_cluster) + self.n_val
         self.steal_settings = {
@@ -129,7 +129,7 @@ class RegionPlan:
 
     @property
     def label(self) -> str:
-        return f"AFINNI region mode (ART; {self.settings.split_search} splits, {self.settings.roots} roots)"
+        return f"ART ({self.settings.split_search} splits, {self.settings.roots} roots)"
 
     def leaf_columns(self, model) -> dict[str, ParamSpec]:
         cols = output_columns(model, self.d, self.fd)
@@ -165,7 +165,7 @@ class RegionPlan:
         return min(max(end, start + 1), len(cumsum))
 
     def profile(self) -> dict:
-        return {"region": dict(self.counters)}
+        return {"art": dict(self.counters)}
 
     def merge_results(self, merged: dict, profile: dict, per_rank: list[dict]) -> None:
         """Build the routing table from every rank's split records and total the leaf statuses and counters."""
@@ -178,7 +178,7 @@ class RegionPlan:
         reasons = np.bincount(_to_host(merged["terminal_reason"]).astype(np.int64), minlength=len(TERMINAL_REASONS))
         profile["terminal_reasons"] = dict(zip(TERMINAL_REASONS, map(int, reasons), strict=True))
         profile["num_split_nodes"] = int(nodes["root"].shape[0])
-        profile["region"] = {k: sum(ps.get("region", {}).get(k, 0) for ps in per_rank) for k in self.counters}
+        profile["art"] = {k: sum(ps.get("art", {}).get(k, 0) for ps in per_rank) for k in self.counters}
 
     def initial_queue(self, X: np.ndarray, F: np.ndarray, G: np.ndarray | None, labels: None = None) -> ClusterBatch:
         """Every root as a queued node (possibly with no points), points sorted by root; roots replace labels."""
@@ -215,7 +215,7 @@ class RegionPlan:
         acceptance, trust_region = components.acceptance, components.trust_region
         K = int(sizes.shape[0])
         keys = node_keys(cfg.seed, root, path_code)
-        geo = RegionPoints(root, depth, keys, constraints, PURPOSE_TRAIN)
+        geo = NodePolytopes(root, depth, keys, constraints, PURPOSE_TRAIN)
         stats = {"generated": 0, "fallback_clusters": 0, "fallback_pts": 0}
 
         # 1. Training points: inherited ones, then new ones inside the polytope.
@@ -225,7 +225,7 @@ class RegionPlan:
             n_train = (
                 xp.where(sizes == 0, 2 * self.p_eff, sizes) if self.convex_sampling else xp.maximum(sizes, self.n_target)
             )
-            aug = augment_clusters(X, F, G, sizes, n_train, self.sampler, evaluator, None, region=geo)
+            aug = augment_clusters(X, F, G, sizes, n_train, self.sampler, evaluator, None, polytopes=geo)
             Xt, Ft, Gt, labels = aug.X, aug.F, aug.G, aug.labels
             stats["generated"] += 0 if aug.X_new is None else int(aug.X_new.shape[0])
             starts = xp.r_[0, xp.cumsum(n_train)[:-1]]
@@ -233,8 +233,8 @@ class RegionPlan:
             insufficient = geo.insufficient if geo.insufficient is not None else xp.zeros(K, dtype=bool)
             Xv = Fv = Gv = None
             if self.n_val:
-                geo_v = RegionPoints(root, depth, keys, constraints, PURPOSE_VALIDATION)
-                Xv = self.sampler.sample(ClusterPoints(X, sizes, region=geo_v), xp.full(K, self.n_val))
+                geo_v = NodePolytopes(root, depth, keys, constraints, PURPOSE_VALIDATION)
+                Xv = self.sampler.sample(ClusterPoints(X, sizes, polytopes=geo_v), xp.full(K, self.n_val))
                 Fv, Gv = evaluator(Xv, need_grad=Gt is not None)
                 stats["generated"] += int(Xv.shape[0])
                 insufficient = insufficient | geo_v.insufficient
@@ -350,7 +350,7 @@ class RegionPlan:
             counts = total
         if self.convex_sampling:
             # B1: AFINNI's augmentation (convex combinations, inside the parent's hull and
-            # so inside its polytope), with a per-batch stream as in AFINNI mode.
+            # so inside its polytope), with a per-batch stream as in AFINNI.
             targets = augmentation_targets(counts, self.config.min_pts_per_cluster)
             rng = xp.random.default_rng(int(_to_host(keys[idx[0]])) % 2**63)
             aug = augment_clusters(X, F, G, counts, targets, self.config.components().sampler, evaluator, rng,
@@ -376,7 +376,7 @@ class RegionPlan:
         side = plane_scores(U[order], w[labels]) - z[labels] >= 0
         pos = xp.arange(int(labels.shape[0])) - starts[labels]
         if not bool(xp.all((side == (pos >= cut[labels])) | ~valid[labels])):
-            raise RuntimeError("A region split predicate does not reproduce its children.")
+            raise RuntimeError("An ART split predicate does not reproduce its children.")
         good = xp.nonzero(valid)[0]
         self.counters["splits"] += int(good.shape[0])
         self.counters["split_failed"] += k - int(good.shape[0])

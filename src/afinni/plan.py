@@ -1,5 +1,5 @@
 """
-AFINNI mode as a plan of the shared refinement loop: fit the local model on every cluster of a
+AFINNI as a plan of the shared refinement loop: fit the local model on every cluster of a
 batch, deploy the accepted ones with their trust regions, and augment and bisect the rest.
 
 The batch boundaries (``batch_end``), the random seed per batch, the 50,000-point batch floor
@@ -19,7 +19,7 @@ from src.components.splitting import SplitData
 from src.config import ClusteringConfig
 from src.core.clusters import ClusterBatch, ParamSpec
 from src.core.plan import DeviceBatch
-from src.engine.io import save_generated_data
+from src.infra.io import save_generated_data
 from src.infra.logging_utils import log_mem_stats
 from src.numerics import _reduce_sum_1d, repeats
 
@@ -63,8 +63,8 @@ def _check_split(splitter, order, child_sizes, counts, labels) -> None:
         )
 
 
-class AfinniPlan:
-    """AFINNI mode's members of ``src.core.plan.Plan``; ``rank`` enters the per-batch seed and the logs."""
+class AFINNIPlan:
+    """AFINNI's members of ``src.core.plan.Plan``; ``rank`` enters the per-batch seed and the logs."""
 
     label = "AFINNI"
     steal_settings: dict = {}

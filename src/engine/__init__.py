@@ -1,1 +1,1 @@
-"""The training engine: initial clustering, the refinement loop, batching, MPI orchestration and work stealing."""
+"""The refinement engine both algorithm plans run on: the collective driver (``driver.refine``), one rank's level-by-level batched loop (``refinement.refine_rank``), work stealing, and AFINNI's initial clustering."""

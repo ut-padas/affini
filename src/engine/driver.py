@@ -1,12 +1,14 @@
 """
-The adaptive clustering engine: initial clustering on rank 0 (``initial_clustering``,
-also callable on its own), scatter to MPI ranks,
-the batched fit / accept / augment / split refinement loop on each rank (with work
-stealing between ranks), and the gather of accepted leaves on rank 0.
+The refinement engine's driver: ``refine`` trains either algorithm plan (``AFINNIPlan`` or
+``ARTPlan``, chosen by ``config.algorithm``) collectively on every MPI rank. Rank 0 evaluates
+the training points and builds the initial queue (AFINNI's initial clustering, or ART's
+roots), the queue is scattered to the ranks, each rank runs the batched level-by-level loop
+(``src.engine.refinement.refine_rank``, with work stealing between ranks), and rank 0 gathers
+and merges the leaves.
 
-Scientific choices live in the components of ``ClusteringConfig`` (``src.config``);
-this module owns batching, device transfers, buffers, MPI and profiling, so a new
-component never has to change it.
+Scientific choices live in the plans and the components of ``ClusteringConfig``
+(``src.config``); the engine owns batching, device transfers, buffers, MPI and profiling, so a
+new component never has to change it.
 """
 
 import dataclasses
@@ -17,18 +19,18 @@ from typing import Any, Optional
 import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, _to_host, xp
+from src.afinni import AFINNIPlan
+from src.art import ARTPlan, Domain, Roots
 from src.config import ClusteringConfig
 from src.core.clusters import ClusterBatch
 from src.core.evaluation import Evaluator
-from src.engine.afinni_plan import AfinniPlan
 from src.engine.initial import _threads_for_rank0, initial_clustering
-from src.engine.io import combine_generated_data, save_generated_data
-from src.engine.refinement import _run_local_refinement
+from src.engine.refinement import refine_rank
 from src.engine.work_stealing import recv_clusters, send_clusters
 from src.infra.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in
+from src.infra.io import combine_generated_data, save_generated_data
 from src.infra.profiling import ORACLE_TIME_KEY, Profiler, new_profiling_stats
 from src.numerics import convert_to_2d_array
-from src.region import Domain, RegionPlan, Roots
 
 # Initial scatter of clusters from rank 0 (payload tags SCATTER_TAG + 1..4); kept
 # well away from the work-stealing tags.
@@ -45,7 +47,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Public entry point (MPI-aware)
 # ---------------------------------------------------------------------------
-def adaptive_clustering(
+def refine(
     X: Array,
     config: ClusteringConfig,
     evaluator: Evaluator,
@@ -54,7 +56,7 @@ def adaptive_clustering(
     initial_labels: Optional[Array] = None,
 ) -> dict[str, Any] | None:
     """
-    Train collectively on every MPI rank (see ``_adaptive_clustering``).
+    Train ``config.algorithm`` collectively on every MPI rank (see ``_refine``).
 
     Failure protocol: in a single process an exception propagates unchanged. Under MPI
     an exception on any rank, in any phase (initial evaluation and clustering, scatter,
@@ -63,14 +65,14 @@ def adaptive_clustering(
     ``MPI_Abort``, which ends every rank of the job with a non-zero status.
     """
     return run_collective(
-        lambda: _adaptive_clustering(X, config, evaluator, Y=Y, initial_labels=initial_labels), "training"
+        lambda: _refine(X, config, evaluator, Y=Y, initial_labels=initial_labels), "training"
     )
 
 
 def run_collective(operation, what: str):
     """
     Run a collective ``operation()`` with the MPI failure policy; the single owner of
-    fatal-failure handling for the public collective entry points (``adaptive_clustering``,
+    fatal-failure handling for the public collective entry points (``refine``,
     ``AFINNISurrogate.train`` and ``predict``), so wrappers are never nested.
 
     In a single process the original exception propagates unchanged. Under MPI an
@@ -104,7 +106,7 @@ def run_collective(operation, what: str):
         _PROFILER_SCOPES.pop()
 
 
-def _adaptive_clustering(
+def _refine(
     X: Array,
     config: ClusteringConfig,
     evaluator: Evaluator,
@@ -168,10 +170,10 @@ def _adaptive_clustering(
         "batch_size": int(config.batch_size), "max_levels": int(config.max_levels),
     }  # fmt: skip
 
-    buffers, out_count, local_f_evals, local_gen_pts, last_level = _run_local_refinement(
+    buffers, out_count, local_f_evals, local_gen_pts, last_level = refine_rank(
         config=config, evaluator=evaluator, clusters=local_clusters, comm=comm, profiler=profiler, plan=plan,
     )  # fmt: skip
-    # Region mode leaves no points unresolved: nodes stopped early keep a fallback leaf,
+    # ART leaves no points unresolved: nodes stopped early keep a fallback leaf,
     # reported separately so the monitor does not show them as queued work.
     left = int(profiling_stats["num_unresolved_pts"])
     profiler.event(
@@ -207,8 +209,8 @@ def _adaptive_clustering(
 
 def _check_inputs(config: ClusteringConfig, evaluator: Evaluator, initial_labels) -> None:
     """Reject settings the evaluator cannot serve before any rank evaluates or communicates."""
-    if config.algorithm == "region" and initial_labels is not None:
-        raise ValueError("initial_labels do not apply to algorithm='region': its roots come from region.roots.")
+    if config.algorithm == "art" and initial_labels is not None:
+        raise ValueError("initial_labels do not apply to algorithm='art': its roots come from art.roots.")
     if not config.requires_no_grads and not evaluator.has_grad:
         raise ValueError(
             f"Selected mode {config.mode.value} requires gradient information. Please provide g_fn or oracle_fn."
@@ -223,8 +225,8 @@ def _initial_data(X, Y, initial_labels, config: ClusteringConfig, evaluator: Eva
                   node_ranks: int) -> tuple[Array, Array, Array | None, np.ndarray | None]:  # fmt: skip
     """
     Rank 0: the training points with their values (and per-point gradients when the mode
-    carries them) on the device, and AFINNI mode's initial cluster labels (None in region
-    mode, whose roots come from the plan). The labels are checked before ``f`` is evaluated.
+    carries them) on the device, and AFINNI's initial cluster labels (None in ART,
+    whose roots come from the plan). The labels are checked before ``f`` is evaluated.
     """
     X0 = xp.asarray(X, dtype=xp.float64)
     N0 = X0.shape[0]
@@ -249,7 +251,7 @@ def _initial_data(X, Y, initial_labels, config: ClusteringConfig, evaluator: Eva
     else:
         F0, G0 = evaluator(X0, need_grad=need_point_grads)
     labels = None
-    if config.algorithm != "region":
+    if config.algorithm != "art":
         labels = (
             initial_clustering(X0, config, threads=_threads_for_rank0(node_ranks))
             if initial_labels is None
@@ -260,21 +262,21 @@ def _initial_data(X, Y, initial_labels, config: ClusteringConfig, evaluator: Eva
 
 def _make_plan(config: ClusteringConfig, comm, X0: Array | None, d: int, fd: int, node_ranks: int):
     """
-    The same plan on every rank (collective). Region mode broadcasts the domain (from rank
+    The same plan on every rank (collective). ART broadcasts the domain (from rank
     0's points for ``domain="data_bbox"``) and, for Voronoi roots, the initial clustering's
     centres in normalized coordinates; roots are then assigned by exact nearest centre, not
     by the clustering's labels.
     """
     rank = comm.Get_rank()
-    if config.algorithm != "region":
-        return AfinniPlan(config, d, fd, rank)
+    if config.algorithm != "art":
+        return AFINNIPlan(config, d, fd, rank)
     bounds = None
     if rank == 0:
         domain = Domain.resolve(config.domain, _to_host(X0))
         bounds = (domain.lower, domain.upper)
     domain = Domain(*comm.bcast(bounds, root=0))
     centres = None
-    if config.region.roots == "voronoi":
+    if config.art.roots == "voronoi":
         if rank == 0:
             labels_v = initial_clustering(X0, config, threads=_threads_for_rank0(node_ranks))
             U0 = _to_host(domain.normalize(X0))
@@ -283,10 +285,10 @@ def _make_plan(config: ClusteringConfig, comm, X0: Array | None, d: int, fd: int
             np.add.at(centres, inverse, U0)
             centres /= np.bincount(inverse)[:, None]
         centres = comm.bcast(centres, root=0)
-    roots = Roots.build(config.region.roots, d, config.num_initial_clusters, centres)
+    roots = Roots.build(config.art.roots, d, config.num_initial_clusters, centres)
     if rank == 0:
-        logger.info(f"Region roots: {roots.n_roots} ({config.region.roots}), domain {domain.lower} .. {domain.upper}.")
-    return RegionPlan(config, d, fd, domain, roots)
+        logger.info(f"ART roots: {roots.n_roots} ({config.art.roots}), domain {domain.lower} .. {domain.upper}.")
+    return ARTPlan(config, d, fd, domain, roots)
 
 
 def _scatter(comm, queue: ClusterBatch | None, d: int, fd: int) -> ClusterBatch:

@@ -1,4 +1,4 @@
-"""Leaf statuses, sample purposes and the depth limit shared by the region-mode modules."""
+"""Leaf statuses, sample purposes and the depth limit shared by the ART modules."""
 
 # Leaf statuses, stored as int8 codes (index into these tuples).
 TERMINAL_REASONS = ("accepted", "max_depth", "split_failed")

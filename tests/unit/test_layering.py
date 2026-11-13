@@ -9,7 +9,7 @@ SRC = Path(__file__).resolve().parents[2] / "src"
 LAYERS = {
     "src": 0, "infra": 0, "numerics": 0, "kernels": 0, "core": 0,
     "config": 1, "components": 1, "neighbors": 1,
-    "region": 2,
+    "afinni": 2, "art": 2,
     "engine": 3,
     "surrogate": 4, "plotting": 4, "problems": 4,
 }  # fmt: skip

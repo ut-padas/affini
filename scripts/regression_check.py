@@ -3,7 +3,7 @@ Differential regression check for the training/inference pipeline.
 
 Trains small, fixed problems through the public ``AFINNISurrogate`` API for every
 ``SurrogateMode`` x error metric x output dimension (plus a few extra paths: oracle,
-precomputed Y, uniform-grid roots, second-order Taylor, tiny batches) and region mode
+precomputed Y, uniform-grid roots, second-order Taylor, tiny batches) and ART
 (every split search, root type, sampler, quadratic leaves, fallback leaves), predicts on
 fixed queries, and stores every array a saved model holds, every prediction, trust mask
 and counter.
@@ -41,14 +41,14 @@ sys.path.insert(0, str(Path.cwd()))
 
 from src import IS_CUPY_BACKEND, _get_mpi_rank, _to_host, xp  # noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
-from src.config import ClusteringConfig, RegionSettings  # noqa: E402
+from src.config import ARTSettings, ClusteringConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
 warnings.simplefilter("ignore", DeprecationWarning)
 
 H_SCALAR = np.array([[2.0, 0.2], [0.2, 6.0]])
-REGION_DOMAIN = ([-1.0, -1.0], [1.0, 1.0])
+ART_DOMAIN = ([-1.0, -1.0], [1.0, 1.0])
 
 
 def problem(fd):
@@ -71,7 +71,7 @@ def problem(fd):
 
 
 def wavy(fd):
-    """A function region mode cannot fit with one leaf (the quadratic is exact for quadratic leaves)."""
+    """A function ART cannot fit with one leaf (the quadratic is exact for quadratic leaves)."""
 
     def f(x):
         a = xp.sin(3 * x[:, 0]) * xp.cos(2 * x[:, 1]) + x[:, 0] ** 2
@@ -86,7 +86,7 @@ def model_arrays(s: AFINNISurrogate) -> dict[str, np.ndarray]:
     out.update({f"param:{k}": v for k, v in s.leaf_params.items()})
     if s.routing is not None:
         out.update({f"route:{k}": v for k, v in s.routing.arrays().items()})
-    out.update({f"leaf:{k}": v for k, v in s.region_leaves.items()})
+    out.update({f"leaf:{k}": v for k, v in s.art_leaves.items()})
     return {k: _to_host(v) for k, v in out.items() if v is not None}
 
 
@@ -113,18 +113,18 @@ def cases():
     yield "extra_atol_only", 2, dict(base, mode=mode, atol=0.15, rtol=None)
     yield "extra_rtol_only", 2, dict(base, mode=mode, atol=None, rtol=0.15)
     yield "extra_vector_tol", 2, dict(base, mode=mode, atol=(0.15, 0.3), rtol=(0.1, 0.2), error_metric="L2")
-    region = dict(
-        atol=1e-2, rtol=1e-2, algorithm="region", domain=REGION_DOMAIN, num_initial_clusters=4,
+    art_base = dict(
+        atol=1e-2, rtol=1e-2, algorithm="art", domain=ART_DOMAIN, num_initial_clusters=4,
         max_levels=10, use_work_stealing=False, save_all_gen_training_data=False,
     )  # fmt: skip
     rs = dict(sample_multiplier=10, validation_samples=10)
-    yield "region_soft_box", 1, dict(region, region=RegionSettings(**rs))
-    yield "region_bins_grid", 2, dict(region, region=RegionSettings(**rs, split_search="bins", roots="grid"))
-    yield "region_gap_voronoi", 1, dict(region, region=RegionSettings(**rs, split_search="gap", roots="voronoi"))
-    yield "region_convex_sampling", 1, dict(region, region=RegionSettings(sample_multiplier=10, sampling="convex_combination"))
-    yield "region_quadratic", 1, dict(region, local_model="quadratic_lsq", region=RegionSettings(**rs))
-    yield "region_tiny_batches", 1, dict(region, batch_size=97, region=RegionSettings(**rs, soft_iters=5))
-    yield "region_fallback_leaves", 2, dict(region, max_levels=3, region=RegionSettings(**rs, soft_iters=5))
+    yield "art_soft_box", 1, dict(art_base, art=ARTSettings(**rs))
+    yield "art_bins_grid", 2, dict(art_base, art=ARTSettings(**rs, split_search="bins", roots="grid"))
+    yield "art_gap_voronoi", 1, dict(art_base, art=ARTSettings(**rs, split_search="gap", roots="voronoi"))
+    yield "art_convex_sampling", 1, dict(art_base, art=ARTSettings(sample_multiplier=10, sampling="convex_combination"))
+    yield "art_quadratic", 1, dict(art_base, local_model="quadratic_lsq", art=ARTSettings(**rs))
+    yield "art_tiny_batches", 1, dict(art_base, batch_size=97, art=ARTSettings(**rs, soft_iters=5))
+    yield "art_fallback_leaves", 2, dict(art_base, max_levels=3, art=ARTSettings(**rs, soft_iters=5))
 
 
 def run(out_prefix):
@@ -134,9 +134,9 @@ def run(out_prefix):
     Q = xp.asarray(rng.uniform(-1.2, 1.2, (257, 2)))
     arrays, report = {}, {}
     for name, fd, kwargs in cases():
-        region_mode = kwargs.get("algorithm") == "region"
+        art_mode = kwargs.get("algorithm") == "art"
         f, g, h = problem(fd)
-        if region_mode:
+        if art_mode:
             f = wavy(fd)
         oracle, use_Y = kwargs.pop("_oracle", False), kwargs.pop("_Y", False)
         fns = dict(oracle_fn=lambda x, f=f, g=g: (f(x), g(x))) if oracle else dict(f_fn=f, g_fn=g)
@@ -147,11 +147,11 @@ def run(out_prefix):
             train_time = time.perf_counter() - t0
             for attr, v in model_arrays(s).items():
                 arrays[f"{name}|{attr}"] = v.reshape(len(v), -1) if v.ndim else v
-            if region_mode:
+            if art_mode:
                 pred, mask = s.predict(Q)  # routed down the tree
                 arrays[f"{name}|pred_route"], arrays[f"{name}|mask_route"] = _to_host(pred), _to_host(mask)
-                counters = {**s.profiling_stats.get("region", {}), **s.profiling_stats.get("terminal_reasons", {})}
-                arrays[f"{name}|region_counters"] = np.asarray([counters[k] for k in sorted(counters)], dtype=np.int64)
+                counters = {**s.profiling_stats.get("art", {}), **s.profiling_stats.get("terminal_reasons", {})}
+                arrays[f"{name}|art_counters"] = np.asarray([counters[k] for k in sorted(counters)], dtype=np.int64)
             else:
                 for k, coarse, strict in ((1, 10, False), (4, 10, False), (4, 10, True), (2000, 2000, False)):
                     pred, mask = s.predict(Q, k_nn=k, coarse_factor=coarse, strict_trust_region=strict, batch_size=37)

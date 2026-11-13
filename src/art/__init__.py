@@ -1,10 +1,10 @@
 """
-Region mode (``ClusteringConfig(algorithm="region")``): an ART-style region tree on
-AFINNI's batched refinement loop.
+ART, the adaptive regression tree (``algorithm="art"``), as a plan of the refinement engine
+(``src.engine``): ART's oblique tree of polytopes, built level by level in batches.
 
 Every node of the tree is a convex polytope of the declared box domain: a root cell
 (the whole box, a uniform-grid cell, or the Voronoi cell of a k-means centre) cut by its
-ancestors' hyperplanes. Per batch of nodes, ``RegionPlan.process_batch``:
+ancestors' hyperplanes. Per batch of nodes, ``ARTPlan.process_batch``:
 
 1. tops every node up to ``ceil(sample_multiplier * (d + 1))`` training points inside
    its polytope (``HitAndRunSampler``) and draws ``validation_samples`` fresh points;
@@ -27,27 +27,27 @@ stolen node needs nothing from the rank that created it.
 
 Random numbers come from a counter-based generator keyed by ``(seed, root, path_code,
 purpose, draw index)``: a node's samples and random directions do not depend on the
-batch it is processed in, the number of ranks or the steal schedule, so region-mode
+batch it is processed in, the number of ranks or the steal schedule, so ART
 results are the same for any batch size and rank count (except the B1 variant, whose
-augmentation uses a per-batch stream, as in AFINNI mode). A node draws
+augmentation uses a per-batch stream, as in AFINNI). A node draws
 each purpose once (attempt 0); a second draw would need an attempt index.
 
 Package layout: ``constants`` (statuses, purposes), ``rng`` (counter-based streams), ``geometry``
 (domain, roots, plane predicates), ``sampling`` (hit-and-run), ``split_search`` (batched rows and the
-B4 objective), ``plan`` (``RegionPlan``) and ``routing`` (``RoutingTable``).
+B4 objective), ``plan`` (``ARTPlan``) and ``routing`` (``RoutingTable``).
 """
 
-from src.region.constants import (
+from src.art.constants import (
     PURPOSE_TRAIN,
     PURPOSE_VALIDATION,
     TERMINAL_REASONS,
     VALIDATION_STATUSES,
 )
-from src.region.geometry import Domain, Roots, gap_cuts, plane_scores
-from src.region.plan import RegionPlan
-from src.region.rng import counter_uniform, counter_uniform_pairs, node_keys
-from src.region.routing import RoutingTable
-from src.region.sampling import HitAndRunSampler, RegionPoints
-from src.region.split_search import _hard_sse, _sigmoid, _soft_objective, _SplitRows
+from src.art.geometry import Domain, Roots, gap_cuts, plane_scores
+from src.art.plan import ARTPlan
+from src.art.rng import counter_uniform, counter_uniform_pairs, node_keys
+from src.art.routing import RoutingTable
+from src.art.sampling import HitAndRunSampler, NodePolytopes
+from src.art.split_search import _hard_sse, _sigmoid, _soft_objective, _SplitRows
 
-__all__ = ["Domain", "HitAndRunSampler", "PURPOSE_TRAIN", "PURPOSE_VALIDATION", "RegionPlan", "RegionPoints", "Roots", "RoutingTable", "TERMINAL_REASONS", "VALIDATION_STATUSES", "_SplitRows", "_hard_sse", "_sigmoid", "_soft_objective", "counter_uniform", "counter_uniform_pairs", "gap_cuts", "node_keys", "plane_scores"]
+__all__ = ["Domain", "HitAndRunSampler", "PURPOSE_TRAIN", "PURPOSE_VALIDATION", "ARTPlan", "NodePolytopes", "Roots", "RoutingTable", "TERMINAL_REASONS", "VALIDATION_STATUSES", "_SplitRows", "_hard_sse", "_sigmoid", "_soft_objective", "counter_uniform", "counter_uniform_pairs", "gap_cuts", "node_keys", "plane_scores"]

@@ -21,8 +21,8 @@ only see the columns it declares. A model declares the data it needs with
 ``needs_centroid_grad`` (gradients at the centroids, ``ClusterFitData.g_c``) and
 ``needs_point_grad`` (gradients at every point, ``ClusterFitData.G``); the loop
 evaluates and carries gradients only when the model or the split strategy needs
-them. AFINNI mode always evaluates ``f_c`` (it stores it as column ``"f"``);
-region mode evaluates it only when some component declares it. ``settings()`` returns the constructor arguments, so a saved model can be
+them. AFINNI always evaluates ``f_c`` (it stores it as column ``"f"``);
+ART evaluates it only when some component declares it. ``settings()`` returns the constructor arguments, so a saved model can be
 rebuilt by name.
 
 Performance contract: ``fit``, ``finalize`` and ``evaluate`` are fully vectorized
@@ -95,7 +95,7 @@ class LocalModel(ABC):
     needs_centroid_grad: bool = False  # fit/evaluate need ClusterFitData.g_c
     needs_point_grad: bool = False  # fit/finalize need ClusterFitData.G
 
-    # Region mode's split search fits children in ``features``; True means they need
+    # ART's split search fits children in ``features``; True means they need
     # node-centred, radius-scaled coordinates (products of raw coordinates in a small deep
     # cell are nearly constant columns), False that the raw normalized ``u`` is used.
     centred_features: bool = False
@@ -105,11 +105,11 @@ class LocalModel(ABC):
         return {}
 
     def n_features(self, d: int) -> int:
-        """Coefficients per output; region mode sizes each node's sample (``multiplier x this``, as ART) and children by it."""
+        """Coefficients per output; ART sizes each node's sample (``multiplier x this``, as ART) and children by it."""
         return d + 1
 
     def features(self, Z: Array) -> Array:
-        """The model's basis at ``Z`` (..., d), the space region mode's split search fits children in."""
+        """The model's basis at ``Z`` (..., d), the space ART's split search fits children in."""
         return xp.concatenate([Z, xp.ones(Z.shape[:-1] + (1,))], axis=-1)
 
     @abstractmethod
@@ -434,8 +434,8 @@ def deploy_leaves(
     accepted-only columns (``finalize``) and, when finalize adds columns and ``retest``,
     a re-test of the model that will actually be deployed; clusters it fails are
     returned in ``failed`` (the caller splits them) instead of becoming leaves. Without
-    ``retest`` (region-mode fallback leaves) every cluster is kept with its fit errors.
-    Without ``store_Q`` (routed-only region models) no ``"Q"`` is computed or returned.
+    ``retest`` (ART fallback leaves) every cluster is kept with its fit errors.
+    Without ``store_Q`` (routed-only ART models) no ``"Q"`` is computed or returned.
     Both algorithm plans call this, in AFINNI's order: preliminary acceptance first,
     then this.
     """

@@ -1,4 +1,4 @@
-"""Tests for the src/region package: random streams, roots, polytope sampling, cuts and routing."""
+"""Tests for the src/art package: random streams, roots, polytope sampling, cuts and routing."""
 
 from collections import defaultdict
 
@@ -7,14 +7,12 @@ import pytest
 
 import src.engine.work_stealing as ws
 from src import _to_host, xp
-from src.components.sampling import ClusterPoints
-from src.core.clusters import ClusterBatch, ClusterQueueBuilder
-from src.region import (
+from src.art import (
     PURPOSE_TRAIN,
     PURPOSE_VALIDATION,
     Domain,
     HitAndRunSampler,
-    RegionPoints,
+    NodePolytopes,
     Roots,
     RoutingTable,
     counter_uniform,
@@ -22,6 +20,8 @@ from src.region import (
     node_keys,
     plane_scores,
 )
+from src.components.sampling import ClusterPoints
+from src.core.clusters import ClusterBatch, ClusterQueueBuilder
 from tests._helpers import host
 
 
@@ -55,8 +55,8 @@ def test_hit_and_run_stays_in_the_polytope_and_is_near_uniform():
     w = np.array([1.0, 1.0]) / np.sqrt(2)
     constraints = xp.asarray(np.r_[w, 1 / np.sqrt(2)][None, None, :])
     seeds = xp.asarray([[0.2, 0.2], [0.1, 0.5]])
-    geo = RegionPoints(xp.asarray([0]), xp.asarray([1]), node_keys(0, xp.asarray([0]), xp.asarray([2])), constraints, PURPOSE_TRAIN)
-    X = HitAndRunSampler(domain, roots, walk_steps=30).sample(ClusterPoints(seeds, xp.asarray([2]), region=geo), xp.asarray([20_000]))
+    geo = NodePolytopes(xp.asarray([0]), xp.asarray([1]), node_keys(0, xp.asarray([0]), xp.asarray([2])), constraints, PURPOSE_TRAIN)
+    X = HitAndRunSampler(domain, roots, walk_steps=30).sample(ClusterPoints(seeds, xp.asarray([2]), polytopes=geo), xp.asarray([20_000]))
     assert bool(xp.all(X >= 0)) and bool(xp.all(X <= 1))
     assert float(xp.max(plane_scores(X, xp.asarray(w)[None, :]))) <= 1 / np.sqrt(2) + 1e-12
     np.testing.assert_allclose(_to_host(X.mean(axis=0)), [1 / 3, 1 / 3], atol=0.01)
@@ -65,8 +65,8 @@ def test_hit_and_run_stays_in_the_polytope_and_is_near_uniform():
 def test_depth_zero_sampling_is_exactly_uniform_in_the_root_cell():
     domain, roots = Domain(np.array([-2.0, 0.0]), np.array([2.0, 1.0])), Roots.build("grid", 2, 2)
     lo, hi = roots.bounds()
-    geo = RegionPoints(xp.asarray([1]), xp.asarray([0]), node_keys(0, xp.asarray([1]), xp.asarray([1])), xp.zeros((1, 0, 3)), PURPOSE_TRAIN)
-    X = HitAndRunSampler(domain, roots, 5).sample(ClusterPoints(xp.zeros((0, 2)), xp.asarray([0]), region=geo), xp.asarray([5000]))
+    geo = NodePolytopes(xp.asarray([1]), xp.asarray([0]), node_keys(0, xp.asarray([1]), xp.asarray([1])), xp.zeros((1, 0, 3)), PURPOSE_TRAIN)
+    X = HitAndRunSampler(domain, roots, 5).sample(ClusterPoints(xp.zeros((0, 2)), xp.asarray([0]), polytopes=geo), xp.asarray([5000]))
     U = domain.normalize(X)
     assert bool(xp.all((lo[1] <= U) & (hi[1] >= U)))
 
@@ -114,8 +114,8 @@ def test_routing_table_rejects_inconsistent_trees(broken):
         RoutingTable.build(domain, roots, **tree)
 
 
-def test_builder_pads_constraints_and_split_select_keep_region_columns():
-    builder = ClusterQueueBuilder(2, 1, False, capacity_pts=1, capacity_clusters=1, region_rows=2)
+def test_builder_pads_constraints_and_split_select_keep_art_columns():
+    builder = ClusterQueueBuilder(2, 1, False, capacity_pts=1, capacity_clusters=1, constraint_rows=2)
     builder.append(
         np.ones((3, 2)), np.ones((3, 1)), None, np.array([1, 2]), depth=np.array([1, 1]),
         root=np.array([0, 0]), path_code=np.array([2, 3]), constraints=np.full((2, 1, 3), 7.0),
@@ -125,7 +125,7 @@ def test_builder_pads_constraints_and_split_select_keep_region_columns():
     head, tail = batch.split(1)
     np.testing.assert_array_equal(tail.path_code, [3])
     np.testing.assert_array_equal(batch.select(np.array([False, True])).root, [0])
-    with pytest.raises(ValueError, match="region-mode builder"):
+    with pytest.raises(ValueError, match="ART builder"):
         builder.append(np.ones((1, 2)), np.ones((1, 1)), None, np.array([1]))
 
 
@@ -148,7 +148,7 @@ class _Wire:
         buf[...] = self.buffers[tag].pop(0)
 
 
-def test_wire_format_round_trips_region_columns_on_table_offsets():
+def test_wire_format_round_trips_art_columns_on_table_offsets():
     rng = np.random.default_rng(0)
     batch = ClusterBatch(
         rng.random((5, 2)), rng.random((5, 1)), None, np.array([2, 3]), np.array([3, 3]),
@@ -167,7 +167,7 @@ def test_wire_format_round_trips_region_columns_on_table_offsets():
 
 def test_batched_grams_match_direct_sums_and_ignore_other_nodes():
     """Grams are per-node batched products, equal to the direct sums and bitwise batch-independent."""
-    from src.region import _SplitRows
+    from src.art import _SplitRows
 
     rng = np.random.default_rng(0)
     counts = [7, 5, 7, 9]  # two nodes share a count group, two are alone in theirs
@@ -190,7 +190,7 @@ def test_batched_grams_match_direct_sums_and_ignore_other_nodes():
 
 
 def _rows(rng, n=60, d=2):
-    from src.region import _SplitRows
+    from src.art import _SplitRows
 
     U = xp.asarray(rng.random((n, d)))
     Y = xp.asarray(np.where(host(U)[:, :1] > 0.4, 1.0, -1.0) + 0.1 * rng.standard_normal((n, 1)))
@@ -200,7 +200,7 @@ def _rows(rng, n=60, d=2):
 
 def test_soft_objective_gradient_matches_finite_differences():
     """The envelope-theorem gradient of J = min_B F, checked against central differences."""
-    from src.region import _soft_objective
+    from src.art import _soft_objective
 
     rows = _rows(np.random.default_rng(1))
     w, z, T = xp.asarray([[0.8, 0.6]]), xp.asarray([0.45]), xp.asarray([0.08])
@@ -218,7 +218,7 @@ def test_soft_objective_gradient_matches_finite_differences():
 
 
 def test_sigmoid_is_stable_at_extreme_arguments():
-    from src.region import _sigmoid
+    from src.art import _sigmoid
 
     s = xp.asarray([-1e4, -40.0, 0.0, 40.0, 1e4])
     out = host(_sigmoid(s))
@@ -227,12 +227,12 @@ def test_sigmoid_is_stable_at_extreme_arguments():
 
 
 def test_soft_refinement_never_returns_a_worse_hard_split_than_its_incumbent():
+    from src.art import ARTPlan, _hard_sse
     from src.config import ClusteringConfig
-    from src.region import RegionPlan, _hard_sse
 
-    cfg = ClusteringConfig(atol=1e-3, algorithm="region", domain=([0, 0], [1, 1]),
-                           region={"sample_multiplier": 10, "split_search": "soft"})  # fmt: skip
-    plan = RegionPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
+    cfg = ClusteringConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]),
+                           art={"sample_multiplier": 10, "split_search": "soft"})  # fmt: skip
+    plan = ARTPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
     rows = _rows(np.random.default_rng(2))
     w0, z0 = xp.asarray([[0.0, 1.0]]), xp.asarray([0.5])  # a poor incumbent: the wrong axis
     sse0, _ = _hard_sse(rows, w0, z0, plan.min_side)
@@ -253,9 +253,9 @@ def test_drift_check_flags_short_chains_from_packed_seeds_and_extension_clears_i
     keys = node_keys(0, xp.asarray([0]), xp.asarray([2]))
 
     def run(max_steps):
-        geo = RegionPoints(xp.asarray([0]), xp.asarray([1]), keys, constraints, PURPOSE_TRAIN)
+        geo = NodePolytopes(xp.asarray([0]), xp.asarray([1]), keys, constraints, PURPOSE_TRAIN)
         X = HitAndRunSampler(domain, roots, walk_steps=2, max_walk_steps=max_steps).sample(
-            ClusterPoints(seeds, xp.asarray([5]), region=geo), xp.asarray([400])
+            ClusterPoints(seeds, xp.asarray([5]), polytopes=geo), xp.asarray([400])
         )
         return X, bool(geo.insufficient[0])
 
@@ -268,7 +268,7 @@ def test_drift_check_flags_short_chains_from_packed_seeds_and_extension_clears_i
 
 def test_paired_uniforms_are_open_uniform_and_uncorrelated():
     """One hash gives two uniforms (high and low 32 bits): both uniform, independent of each other."""
-    from src.region import counter_uniform_pairs
+    from src.art import counter_uniform_pairs
 
     keys = node_keys(1, xp.asarray([0]), xp.asarray([5]))
     u = host(counter_uniform_pairs(keys[0], PURPOSE_TRAIN, xp.arange(100_000)))
@@ -283,9 +283,9 @@ def _walk(roots, seeds, n_new, d, max_steps=64, walk_steps=8):
     """Hit-and-run in the whole unit cube (one redundant cut u0 <= 1), seeded at ``seeds``."""
     domain = Domain(np.zeros(d), np.ones(d))
     constraints = xp.asarray(np.r_[1.0, np.zeros(d - 1), 1.0][None, None, :])
-    geo = RegionPoints(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([2])), constraints, PURPOSE_TRAIN)
+    geo = NodePolytopes(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([2])), constraints, PURPOSE_TRAIN)
     X = HitAndRunSampler(domain, roots, walk_steps=walk_steps, max_walk_steps=max_steps).sample(
-        ClusterPoints(xp.asarray(seeds), xp.asarray([len(seeds)]), region=geo), xp.asarray([n_new])
+        ClusterPoints(xp.asarray(seeds), xp.asarray([len(seeds)]), polytopes=geo), xp.asarray([n_new])
     )
     return host(X), bool(geo.insufficient[0])
 
@@ -321,9 +321,9 @@ def test_no_endpoint_is_left_on_a_corner_without_a_flag(seed):
     d = 4
     domain = Domain(np.zeros(d), np.ones(d))
     constraints = xp.asarray(np.r_[1.0, np.zeros(d - 1), 1.0][None, None, :])
-    geo = RegionPoints(xp.asarray([0]), xp.asarray([2]), node_keys(seed, xp.asarray([0]), xp.asarray([2])), constraints, PURPOSE_TRAIN)
+    geo = NodePolytopes(xp.asarray([0]), xp.asarray([2]), node_keys(seed, xp.asarray([0]), xp.asarray([2])), constraints, PURPOSE_TRAIN)
     X = host(HitAndRunSampler(domain, Roots.build("box", d, 1), walk_steps=8, max_walk_steps=8).sample(
-        ClusterPoints(xp.zeros((3, d)), xp.asarray([3]), region=geo), xp.asarray([20])
+        ClusterPoints(xp.zeros((3, d)), xp.asarray([3]), polytopes=geo), xp.asarray([20])
     ))  # fmt: skip
     assert bool(geo.insufficient[0]) or not np.any(X == 0.0)  # no corner and no face points either
 
@@ -333,10 +333,10 @@ def test_corner_recovery_leaves_no_point_on_a_face_of_the_cell(ancestor_cut):
     """4-D corner seeds, 8 steps: random-axis recovery left 7 of 20 points on a coordinate face, unflagged."""
     d = 4
     cut = [1.0, 0.0, 0.0, 0.0, 0.5 if ancestor_cut else 1.0]  # u0 <= 0.5 is a real ancestor cut
-    geo = RegionPoints(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([2])),
+    geo = NodePolytopes(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([2])),
                        xp.asarray(np.array(cut)[None, None, :]), PURPOSE_TRAIN)  # fmt: skip
     X = host(HitAndRunSampler(Domain(np.zeros(d), np.ones(d)), Roots.build("box", d, 1), walk_steps=8, max_walk_steps=8).sample(
-        ClusterPoints(xp.zeros((3, d)), xp.asarray([3]), region=geo), xp.asarray([20])
+        ClusterPoints(xp.zeros((3, d)), xp.asarray([3]), polytopes=geo), xp.asarray([20])
     ))  # fmt: skip
     assert bool(geo.insufficient[0]) or not np.any(X == 0.0)
 
@@ -360,9 +360,9 @@ def test_close_voronoi_centres_route_in_cell_samples_to_their_own_root_in_2d(sep
     roots = Roots.build("voronoi", 2, 3, C)
     seed = np.array([[0.695, 0.9]])
     assert int(host(roots.root_of(xp.asarray(seed)))[0]) == 1
-    geo = RegionPoints(xp.asarray([1]), xp.asarray([0]), node_keys(2, xp.asarray([1]), xp.asarray([1])), xp.zeros((1, 0, 3)), PURPOSE_TRAIN)
+    geo = NodePolytopes(xp.asarray([1]), xp.asarray([0]), node_keys(2, xp.asarray([1]), xp.asarray([1])), xp.zeros((1, 0, 3)), PURPOSE_TRAIN)
     P = host(HitAndRunSampler(Domain(np.zeros(2), np.ones(2)), roots, walk_steps=8, max_walk_steps=32).sample(
-        ClusterPoints(xp.asarray(seed), xp.asarray([1]), region=geo), xp.asarray([200])
+        ClusterPoints(xp.asarray(seed), xp.asarray([1]), polytopes=geo), xp.asarray([200])
     ))  # fmt: skip
     exact = [int(np.argmin([sum((Fraction(float(p[k])) - Fraction(float(c[k]))) ** 2 for k in range(2)) for c in C])) for p in P]
     assert exact == [1] * 200  # every sample is truly in the middle cell (exact rational arithmetic)
@@ -385,21 +385,21 @@ def test_close_voronoi_centres_keep_every_sample_in_its_own_thin_cell(separation
     """Bisectors from centre differences: expanding them cancelled and put every sample in a neighbour's cell."""
     base = 0.695
     roots = Roots.build("voronoi", 1, 3, np.array([[base - separation], [base], [base + separation]]))
-    geo = RegionPoints(xp.asarray([1]), xp.asarray([0]), node_keys(2, xp.asarray([1]), xp.asarray([1])), xp.zeros((1, 0, 2)), PURPOSE_TRAIN)
+    geo = NodePolytopes(xp.asarray([1]), xp.asarray([0]), node_keys(2, xp.asarray([1]), xp.asarray([1])), xp.zeros((1, 0, 2)), PURPOSE_TRAIN)
     sampler = HitAndRunSampler(Domain(np.zeros(1), np.ones(1)), roots, walk_steps=8, max_walk_steps=32)
-    P = sampler.sample(ClusterPoints(xp.asarray([[base]]), xp.asarray([1]), region=geo), xp.asarray([200]))
+    P = sampler.sample(ClusterPoints(xp.asarray([[base]]), xp.asarray([1]), polytopes=geo), xp.asarray([200]))
     assert np.all(host(roots.root_of(P)) == 1) and not bool(geo.insufficient[0])
     np.testing.assert_allclose([host(P).min() - base, host(P).max() - base], [-separation / 2, separation / 2], rtol=0.05)
 
 
 def test_narrow_score_clouds_far_from_the_origin_keep_a_resolved_temperature():
     """Translating a node far from the origin must not collapse B4's gate temperature (raw moments cancelled)."""
+    from src.art import ARTPlan, _SplitRows
     from src.config import ClusteringConfig
-    from src.region import RegionPlan, _SplitRows
 
-    cfg = ClusteringConfig(atol=1e-3, algorithm="region", domain=([0, 0], [1, 1]),
-                           region={"split_search": "soft", "soft_iters": 1})  # fmt: skip
-    plan = RegionPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
+    cfg = ClusteringConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]),
+                           art={"split_search": "soft", "soft_iters": 1})  # fmt: skip
+    plan = ARTPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
     n = 200
     U = np.c_[0.9 + 1e-8 * np.linspace(-1, 1, n), np.random.default_rng(0).random(n)]
     Y = np.where(U[:, :1] > 0.9 + 2e-9, 1.0, -1.0)
@@ -419,11 +419,11 @@ def test_drift_ignores_rounding_sized_shifts_of_a_narrow_node():
 
 def test_threshold_search_skips_nodes_too_small_to_split_beside_valid_ones():
     """A sparse node (fewer than 2 * min_side points, as B1 can produce) gets no candidate and no cross-node read."""
+    from src.art import ARTPlan, _SplitRows
     from src.config import ClusteringConfig
-    from src.region import RegionPlan, _SplitRows
 
-    cfg = ClusteringConfig(atol=1e-3, algorithm="region", domain=([0, 0], [1, 1]), region={"split_search": "bins"})
-    plan = RegionPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
+    cfg = ClusteringConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]), art={"split_search": "bins"})
+    plan = ARTPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
     big = _rows(np.random.default_rng(3))
     n_small = 2 * plan.min_side - 1
     U = xp.concatenate([big.U, xp.asarray(np.random.default_rng(4).random((n_small, 2)))])
@@ -505,8 +505,8 @@ def test_routing_rejects_non_finite_or_misshaped_queries(query):
 
 def test_cut_sums_match_direct_sums_on_both_sides_and_ignore_other_nodes():
     """Per-bin prefix/suffix sums equal each cut's directly formed Grams, node by node."""
+    from src.art import _SplitRows
     from src.numerics import sort_by_block_then_value
-    from src.region import _SplitRows
 
     rng = np.random.default_rng(5)
     counts = [12, 9, 12, 20]
@@ -532,7 +532,7 @@ def test_cut_sums_match_direct_sums_on_both_sides_and_ignore_other_nodes():
 
 
 def _split_rows(rng, k=6, c=150, d=3, fd=2):
-    import src.region.split_search as split_search
+    import src.art.split_search as split_search
 
     counts = xp.full(k, c, dtype=xp.int64)
     counts[0] = c + 17
@@ -548,7 +548,7 @@ def _split_rows(rng, k=6, c=150, d=3, fd=2):
 
 @pytest.mark.skipif(not __import__("src").IS_CUPY_BACKEND, reason="the fused B4 kernels are the GPU path")
 def test_fused_b4_objective_and_step_match_the_generic_formulas(monkeypatch):
-    import src.region.split_search as split_search
+    import src.art.split_search as split_search
 
     rows, w, z, T = _split_rows(np.random.default_rng(3))
     fused = split_search._soft_objective(rows, w, z, T, 1e-6)
@@ -590,34 +590,34 @@ def test_fused_b4_objective_and_step_match_the_generic_formulas(monkeypatch):
 
 @pytest.mark.skipif(not __import__("src").IS_CUPY_BACKEND, reason="the fused sampler and RNG kernels are the GPU path")
 def test_fused_hit_and_run_and_uniform_pairs_match_the_generic_path(monkeypatch):
-    import src.region.rng as region_rng
-    import src.region.sampling as region_sampling
+    import src.art.rng as art_rng
+    import src.art.sampling as art_sampling
 
     keys = node_keys(3, xp.arange(5), xp.arange(5) + 7)
-    fused = host(region_rng.counter_uniform_pairs(keys[:, None], 2, xp.arange(40)[None, :] * 3 + 11))
+    fused = host(art_rng.counter_uniform_pairs(keys[:, None], 2, xp.arange(40)[None, :] * 3 + 11))
     rng = np.random.default_rng(0)
     w = rng.standard_normal(5)
     w /= np.linalg.norm(w)
     rows = np.stack([np.r_[w, 0.5 * w.sum() + 0.02], np.r_[-w, -(0.5 * w.sum() - 0.02)]])[None]
-    geo = RegionPoints(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([5])),
+    geo = NodePolytopes(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([5])),
                        xp.asarray(rows), PURPOSE_TRAIN)  # fmt: skip
     sampler = HitAndRunSampler(Domain(np.zeros(5), np.ones(5)), Roots.build("box", 5, 1), walk_steps=20)
 
     def draw():
-        return host(sampler.sample(ClusterPoints(xp.full((4, 5), 0.5), xp.asarray([4]), region=geo), xp.asarray([2000])))
+        return host(sampler.sample(ClusterPoints(xp.full((4, 5), 0.5), xp.asarray([4]), polytopes=geo), xp.asarray([2000])))
 
     X_fused = draw()
-    monkeypatch.setattr(region_sampling, "IS_CUPY_BACKEND", False)
-    monkeypatch.setattr(region_rng, "IS_CUPY_BACKEND", False)
+    monkeypatch.setattr(art_sampling, "IS_CUPY_BACKEND", False)
+    monkeypatch.setattr(art_rng, "IS_CUPY_BACKEND", False)
     # the generic array-API walk (_steps); the CPU branch of _walk_fused is Numba on host arrays
-    monkeypatch.setattr(region_sampling.HitAndRunSampler, "_walk_fused", lambda self, geo, o, dr, U, t0, t1, c: self._steps(geo, o, dr, U, t0, t1, c))
-    np.testing.assert_array_equal(fused, host(region_rng.counter_uniform_pairs(keys[:, None], 2, xp.arange(40)[None, :] * 3 + 11)))
+    monkeypatch.setattr(art_sampling.HitAndRunSampler, "_walk_fused", lambda self, geo, o, dr, U, t0, t1, c: self._steps(geo, o, dr, U, t0, t1, c))
+    np.testing.assert_array_equal(fused, host(art_rng.counter_uniform_pairs(keys[:, None], 2, xp.arange(40)[None, :] * 3 + 11)))
     np.testing.assert_allclose(X_fused, draw(), atol=1e-10)  # same moves; only fused-multiply-add rounding differs
 
 
 def test_soft_gates_match_the_logistic_formula():
     """The fused gates (CUDA on the GPU, Numba on the CPU) against the plain formula, including s = 0 and large |s|."""
-    import src.region.split_search as split_search
+    import src.art.split_search as split_search
 
     rows, w, z, _ = _split_rows(np.random.default_rng(5))
     T = xp.asarray(np.r_[1e-3, np.full(int(w.shape[0]) - 1, 0.05)])

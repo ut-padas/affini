@@ -26,7 +26,7 @@ def run_smoke(
     rank = src.get_mpi_rank()
     rng = np.random.default_rng(seed)
 
-    # Data lives on rank 0 only; adaptive_clustering scatters it to other ranks.
+    # Data lives on rank 0 only; refine scatters it to other ranks.
     X = xp.asarray(rng.uniform(-2, 2, (n_train, 2))) if rank == 0 else xp.empty((0, 2))
     surrogate = AFINNISurrogate()
     train_surrogate(

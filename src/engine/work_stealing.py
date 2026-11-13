@@ -33,7 +33,7 @@ TAG_STEAL_DENY = 104
 # position in QUEUE_COLUMNS (tags 111..118 here); see send_clusters.
 TAG_STEAL_GRANT = 110
 
-# --- Tuning parameters (defaults; region mode passes its own, see src.region) ---
+# --- Tuning parameters (defaults; ART passes its own, see src.art) ---
 MIN_LOAD_THRESHOLD = 1_000_000  # Min points to be eligible for stealing
 STEAL_SIZE = 500_000  # Minimum points per grant (a grant gives about half the open work)
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
@@ -46,7 +46,7 @@ def send_clusters(comm, batch: ClusterBatch, dest: int, tag: int = TAG_STEAL_GRA
     """
     Send ``batch`` to ``dest``: a header on ``tag`` (format version, counts, and the
     trailing shape and dtype of every present column), then each present column on
-    ``tag + 1 + its index in QUEUE_COLUMNS``. Absent columns send nothing, so an AFINNI-mode
+    ``tag + 1 + its index in QUEUE_COLUMNS``. Absent columns send nothing, so an AFINNI
     payload is exactly the old X, F, [G], sizes, depth messages on ``tag + 1..5``.
     """
     cols = batch.columns()

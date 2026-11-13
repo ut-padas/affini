@@ -14,8 +14,8 @@ Adding a sampling scheme:
        ``(name, {...})`` or by passing an instance as ``ClusteringConfig.sampler``.
 Samplers receive each cluster's points, counts and centroids (``ClusterPoints``).
 If a scheme needs more information about each cluster, it is an optional field of
-``ClusterPoints`` passed through ``augment_clusters``: region mode's hit-and-run sampler
-(``src.region.HitAndRunSampler``) reads each node's polytope from ``region``.
+``ClusterPoints`` passed through ``augment_clusters``: ART's hit-and-run sampler
+(``src.art.HitAndRunSampler``) reads each node's polytope from ``polytopes``.
 
 All samplers work on a whole batch of clusters at once, stored contiguously, so
 they can run as single vectorized passes on the GPU.
@@ -42,7 +42,7 @@ class ClusterPoints:
     X: Array  # (N, d) existing points
     counts: Array  # (K,) points per cluster
     centroids: Array | None = None  # (K, d), if the sampler needs them
-    region: Any = None  # src.region.RegionPoints: each node's polytope and random stream
+    polytopes: Any = None  # src.art.NodePolytopes: each node's polytope and random stream
     starts: Array = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -188,14 +188,14 @@ def augment_clusters(
     evaluator: Evaluator,
     rng,
     centroids: Array | None = None,
-    region: Any = None,
+    polytopes: Any = None,
 ) -> AugmentedClusters:
     """
     Grow each cluster from ``counts`` to ``target_counts`` points.
 
     New points are placed by ``sampler`` and evaluated with ``evaluator`` (with
     gradients if ``G`` is given). ``centroids`` (K, d), if given, is passed on to
-    the sampler in ``ClusterPoints``, and so is ``region`` (region mode's node geometry).
+    the sampler in ``ClusterPoints``, and so is ``polytopes`` (ART's node geometry).
     In the output, every cluster's block holds its
     original points followed by its new ones.
     """
@@ -222,7 +222,7 @@ def augment_clusters(
     if int(xp.sum(is_new)) == 0:
         return AugmentedClusters(X_aug, F_aug, G_aug, labels, None)
 
-    clusters = ClusterPoints(X, counts, centroids=centroids, region=region)
+    clusters = ClusterPoints(X, counts, centroids=centroids, polytopes=polytopes)
     X_new = sampler.sample(clusters, target_counts - counts, rng)
     n_new = total - int(X.shape[0])
     if tuple(X_new.shape) != (n_new, d):

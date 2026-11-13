@@ -4,8 +4,8 @@ The contract between the refinement loop (``src.engine.refinement``) and an algo
 The loop owns everything both algorithms share: queues, batching by device memory, host to
 device transfers, work stealing, level statistics and profiling. A plan owns what differs:
 its output columns, how much device memory a queued cluster takes, where a batch may end, and
-what happens to one batch (``process_batch``). Two plans implement it: ``AfinniPlan``
-(``src.engine.afinni_plan``) and ``RegionPlan`` (``src.region.plan``).
+what happens to one batch (``process_batch``). Two plans implement it: ``AFINNIPlan``
+(``src.afinni.plan``) and ``ARTPlan`` (``src.art.plan``).
 """
 
 from collections.abc import Callable
@@ -58,7 +58,7 @@ Timer = Callable[[str], AbstractContextManager[Any]]
 class Plan(Protocol):
     """
     What the refinement loop (and, for ``initial_queue`` and ``merge_results``, the driver
-    ``src.engine.adaptive_clustering``) asks of an algorithm plan. ``tests/unit/test_plans.py``
+    ``src.engine.driver``) asks of an algorithm plan. ``tests/unit/test_plans.py``
     checks that both plans provide every member.
     """
 

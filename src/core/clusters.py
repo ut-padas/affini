@@ -31,7 +31,7 @@ class QueueColumn:
 
     ``scope="point"`` columns have one row per point, ``"cluster"`` columns one row per
     cluster. ``trailing(d, fd, h)`` is the shape after the leading axis, where ``h`` is the
-    number of constraint rows a region-mode cluster carries. The position of a column in
+    number of constraint rows an ART cluster carries. The position of a column in
     ``QUEUE_COLUMNS`` is its MPI tag offset, so columns are only ever appended.
     """
 
@@ -43,7 +43,7 @@ class QueueColumn:
 
 # Every column a queue can carry, in wire order (see src.engine.work_stealing.send_clusters).
 # X, F, sizes and depth are always present; G only when gradients are carried per point;
-# root, path_code and constraints only in region mode (src.region), where constraints are
+# root, path_code and constraints only in ART (src.art), where constraints are
 # the signed ancestor half-spaces ``a^T u <= b`` stored as rows ``[a | b]`` in the
 # normalized coordinates of the domain, zero-padded (``0 <= 0``) to a common ``h``.
 QUEUE_COLUMNS: tuple[QueueColumn, ...] = (
@@ -56,7 +56,7 @@ QUEUE_COLUMNS: tuple[QueueColumn, ...] = (
     QueueColumn("path_code", "cluster", np.int64, lambda d, fd, h: ()),
     QueueColumn("constraints", "cluster", np.float64, lambda d, fd, h: (h, d + 1)),
 )
-REGION_COLUMNS = ("root", "path_code", "constraints")
+ART_COLUMNS = ("root", "path_code", "constraints")
 
 
 @dataclass
@@ -67,7 +67,7 @@ class ClusterBatch:
     Cluster ``k`` owns rows ``starts[k] : starts[k] + sizes[k]`` of every point column
     (``X``, ``F`` and, if present, ``G``). ``depth[k]`` is the cluster's depth in its tree
     (roots are 0); it travels with the cluster when work is stolen, so the depth limit
-    does not depend on which rank processes it. Region mode adds the node identity
+    does not depend on which rank processes it. ART adds the node identity
     ``(root, path_code)`` and the ancestor ``constraints``, which also travel, so a stolen
     cluster needs nothing from its victim's history.
     """
@@ -77,9 +77,9 @@ class ClusterBatch:
     G: np.ndarray | None  # (n_pts, fd, d), or None when gradients are not carried
     sizes: np.ndarray  # (n_clusters,) int64
     depth: np.ndarray | None = None  # (n_clusters,) int64; None means all roots
-    root: np.ndarray | None = None  # (n_clusters,) int64, region mode
-    path_code: np.ndarray | None = None  # (n_clusters,) int64, region mode (root = 1)
-    constraints: np.ndarray | None = None  # (n_clusters, h, d + 1), region mode
+    root: np.ndarray | None = None  # (n_clusters,) int64, ART
+    path_code: np.ndarray | None = None  # (n_clusters,) int64, ART (root = 1)
+    constraints: np.ndarray | None = None  # (n_clusters, h, d + 1), ART
     starts: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -113,7 +113,7 @@ class ClusterBatch:
         return int(self.F.shape[1])
 
     @property
-    def is_region(self) -> bool:
+    def is_art(self) -> bool:
         return self.root is not None
 
     def columns(self) -> dict[str, np.ndarray]:
@@ -169,20 +169,20 @@ class ClusterQueueBuilder:
     written in place instead of concatenated at the end. Capacity beyond what is
     written is never touched, so a generous initial capacity costs address space,
     not RAM, and avoids the grow-and-copy that would hold two buffers at once.
-    ``region_rows`` (region mode) adds the node identity and ``region_rows`` constraint
+    ``constraint_rows`` (ART) adds the node identity and ``constraint_rows`` constraint
     rows per cluster; shorter constraint blocks are zero-padded, which adds ``0 <= 0``.
     """
 
     def __init__(
         self, d: int, fd: int, has_g: bool, capacity_pts: int, capacity_clusters: int,
-        *, region_rows: int | None = None,
+        *, constraint_rows: int | None = None,
     ):  # fmt: skip
         self.d, self.fd = d, fd
-        self.region_rows = region_rows
-        h = region_rows or 0
+        self.constraint_rows = constraint_rows
+        h = constraint_rows or 0
         present = {"X", "F", "sizes", "depth"} | ({"G"} if has_g else set())
-        if region_rows is not None:
-            present |= set(REGION_COLUMNS)
+        if constraint_rows is not None:
+            present |= set(ART_COLUMNS)
         self._columns = [c for c in QUEUE_COLUMNS if c.name in present]
         caps = {"point": max(1, capacity_pts), "cluster": max(1, capacity_clusters)}
         self._buf = {
@@ -198,23 +198,23 @@ class ClusterQueueBuilder:
         """
         Append clusters given in contiguous order (device or host arrays). ``G`` is
         stored only if the builder was created with ``has_g``; ``depth`` defaults to 0.
-        A region-mode builder requires ``root``, ``path_code`` and ``constraints``.
+        A ART builder requires ``root``, ``path_code`` and ``constraints``.
         """
         if "G" in self._buf and G is None:
             raise ValueError("This builder carries gradients, but G was not given.")
-        region = {"root": root, "path_code": path_code, "constraints": constraints}
-        if self.region_rows is not None and any(v is None for v in region.values()):
-            raise ValueError("A region-mode builder needs root, path_code and constraints.")
+        art_columns = {"root": root, "path_code": path_code, "constraints": constraints}
+        if self.constraint_rows is not None and any(v is None for v in art_columns.values()):
+            raise ValueError("A ART builder needs root, path_code and constraints.")
         sizes_host = _to_host(sizes)
         values = {"X": _to_host(X), "F": _to_host(F), "sizes": sizes_host}
         if "G" in self._buf:
             values["G"] = _to_host(G)
-        if self.region_rows is not None:
-            values.update({k: _to_host(v) for k, v in region.items()})
+        if self.constraint_rows is not None:
+            values.update({k: _to_host(v) for k, v in art_columns.items()})
             c = values["constraints"]
-            if c.shape[1] > self.region_rows:
+            if c.shape[1] > self.constraint_rows:
                 raise ValueError(
-                    f"Clusters carry {c.shape[1]} constraint rows; this builder holds {self.region_rows}."
+                    f"Clusters carry {c.shape[1]} constraint rows; this builder holds {self.constraint_rows}."
                 )
         n_new = int(values["X"].shape[0])
         if int(sizes_host.sum()) != n_new or len(values["F"]) != n_new:
@@ -256,7 +256,7 @@ class ClusterQueueBuilder:
 
     def _row_bytes(self) -> int:
         return sum(
-            int(np.prod(c.trailing(self.d, self.fd, self.region_rows or 0))) * np.dtype(c.dtype).itemsize
+            int(np.prod(c.trailing(self.d, self.fd, self.constraint_rows or 0))) * np.dtype(c.dtype).itemsize
             for c in self._columns
             if c.scope == "point"
         )

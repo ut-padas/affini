@@ -25,7 +25,7 @@ class _FailingSendComm:
 
 def main(phase: str) -> None:
     import src
-    import src.engine.adaptive_clustering as ac
+    import src.engine.driver as driver
     import src.neighbors.kmeans
     from src.infra.backend import MPI
     from src.problems.rosenbrock import rosenbrock
@@ -48,13 +48,13 @@ def main(phase: str) -> None:
     if phase == "root_public_result" and rank == 0:
         import src.surrogate.model as su
 
-        engine = su._adaptive_clustering
+        engine = su._refine
 
         def engine_then_fail(*args, **kwargs):
             engine(*args, **kwargs)
             raise RuntimeError("injected failure on rank 0 (public result conversion)")
 
-        su._adaptive_clustering = engine_then_fail
+        su._refine = engine_then_fail
     if phase == "worker_index" and rank == 1:
         import src.surrogate.model as su
 
@@ -64,14 +64,14 @@ def main(phase: str) -> None:
         su._make_knn_index = failing_index
     if phase == "worker_collection" and rank == 1:
         class _MPI:
-            COMM_WORLD = _FailingSendComm(MPI.COMM_WORLD, ac.LOCAL_RESULT_TAG)
+            COMM_WORLD = _FailingSendComm(MPI.COMM_WORLD, driver.LOCAL_RESULT_TAG)
 
             def __getattr__(self, name):
                 return getattr(MPI, name)
 
         proxy = _MPI()
         proxy.COMM_TYPE_SHARED = MPI.COMM_TYPE_SHARED
-        ac.MPI = proxy
+        driver.MPI = proxy
 
     X = src.xp.asarray(np.random.default_rng(0).uniform(-2, 2, (20_000, 2))) if rank == 0 else src.xp.empty((0, 2))
     train_surrogate(X, f_fn=f, atol=0.01, rtol=0.01, num_initial_clusters=16, min_pts_per_cluster=50)

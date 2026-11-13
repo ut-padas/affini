@@ -294,7 +294,7 @@ def read_event_streams(stream_dir: str | Path) -> dict[int, list[dict[str, Any]]
 
 
 def fmt_count(value: float) -> str:
-    """Compact count label (950, 12.3k, 4.1M), shared by the live monitor and the profiling and region plots."""
+    """Compact count label (950, 12.3k, 4.1M), shared by the live monitor and the profiling and ART plots."""
     for div, suffix in ((1e9, "G"), (1e6, "M"), (1e3, "k")):
         if abs(value) >= div:
             return f"{value / div:.3g}{suffix}"

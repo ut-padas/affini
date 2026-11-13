@@ -3,7 +3,7 @@ Plots of training profiles: where time goes per rank, how work moves between ran
 and how the forest grows level by level.
 
 Every function accepts what training returns: ``AFINNISurrogate.profiling_stats``,
-the ``adaptive_clustering`` result dict, a surrogate, or a dict of event streams
+the ``refine`` result dict, a surrogate, or a dict of event streams
 from ``src.infra.profiling.read_event_streams`` (timeline plots only). Each returns the
 figure and saves it when ``path`` is given.
 
@@ -224,9 +224,9 @@ def plot_level_heatmap(
 
 def _draw_level_counts(ax, df) -> None:
     """
-    Stacked clusters per level: accepted leaves, fallback leaves (region mode: nodes that
+    Stacked clusters per level: accepted leaves, fallback leaves (ART: nodes that
     stopped at the depth limit or without a valid split, keeping their fitted model) and
-    split clusters. Profiles without ``fallback_clusters`` (AFINNI-mode runs) have none.
+    split clusters. Profiles without ``fallback_clusters`` (AFINNI runs) have none.
     """
     agg = df.assign(fallback=df.get("fallback_clusters", 0)).groupby("level")[["clusters_start", "good_clusters", "fallback"]].sum()
     split = agg["clusters_start"] - agg["good_clusters"] - agg["fallback"]

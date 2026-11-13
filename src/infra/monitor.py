@@ -2,8 +2,8 @@
 Live terminal monitor for a training run started with ``profile_dir``: per-rank state
 (phase, level, batch), queued work, accepted leaves, idle share and work stealing,
 read from the ranks' JSON-lines event streams (see ``src.infra.profiling``). The header names
-the algorithm plan (AFINNI, or AFINNI region mode (ART) with its split search and roots); for
-region mode it also counts the points in fallback leaves (nodes stopped at the depth
+the algorithm plan (AFINNI, or ART with its split search and roots); for
+ART it also counts the points in fallback leaves (nodes stopped at the depth
 limit or without a valid split), which are finished work, not queued work.
 
     python -m src.infra.monitor <profile_dir> [--interval 0.5] [--once]
@@ -58,8 +58,8 @@ class RankStatus:
     pts_in: int = 0
     done: bool = False
     plan: str | None = None  # from the "run_start" event
-    region: bool = False  # the run is region mode (algorithm="region")
-    fallback_pts: int = 0  # region mode: points of nodes that kept a fallback leaf
+    art: bool = False  # the run is ART (algorithm="art"): its stopped nodes are fallback leaves
+    fallback_pts: int = 0  # ART: points of nodes that kept a fallback leaf
 
     @property
     def idle_share(self) -> float:
@@ -71,7 +71,7 @@ class RankStatus:
         kind = e["kind"]
         self.t_last = max(self.t_last, e.get("t", 0.0) + e.get("dur", 0.0))
         if kind == "run_start":
-            self.plan, self.region = e.get("plan"), e.get("algorithm") == "region"
+            self.plan, self.art = e.get("plan"), e.get("algorithm") == "art"
         elif kind == "phase":
             phase = PHASE_BY_KEY.get(e["phase"])
             if e["phase"] == "time_idle":
@@ -168,13 +168,13 @@ class StreamMonitor:
         elapsed = max((s.t_last for s in ranks), default=0.0)
         n_done = sum(s.done for s in ranks)
         plan = next((s.plan for s in ranks if s.plan), "AFINNI")
-        region = any(s.region for s in ranks)
+        art = any(s.art for s in ranks)
         summary = Text.assemble(
             (f"Training: {plan}  ", "bold"),
             f"{elapsed:7.1f}s   ranks done {n_done}/{len(ranks)}   ",
             f"leaves {sum(s.leaves for s in ranks):,}   ",
             f"queued {fmt_count(sum(s.queue_pts for s in ranks))} pts   ",
-            f"in fallback leaves {fmt_count(sum(s.fallback_pts for s in ranks))} pts   " if region else "",
+            f"in fallback leaves {fmt_count(sum(s.fallback_pts for s in ranks))} pts   " if art else "",
             f"steals {sum(s.steals_out for s in ranks)}   events {self.n_events:,}",
         )
         # Fixed widths (+2 for cell padding): content-sized columns would resize

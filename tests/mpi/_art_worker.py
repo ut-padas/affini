@@ -1,8 +1,8 @@
 """
-Region-mode training under MPI, launched by tests/mpi/test_mpi.py (and serially, with
+ART training under MPI, launched by tests/mpi/test_mpi.py (and serially, with
 AFINNI_MPI=off, as the reference).
 
-Region mode draws every random number from a stream keyed by the node, so the tree
+ART draws every random number from a stream keyed by the node, so the tree
 must not depend on the rank count or on which rank processed a node. Rank 0 prints
 the sorted leaf keys, a hash of the predictions on fixed queries and the number of
 steal grants, for stealing off and for stealing forced by tiny thresholds, with box and
@@ -20,7 +20,7 @@ from tests.mpi._mpi_worker import RESULT_PREFIX
 
 def main() -> None:
     from src import _to_host, xp
-    from src.config import ClusteringConfig, RegionSettings
+    from src.config import ARTSettings, ClusteringConfig
     from src.core.evaluation import Evaluator
     from src.infra.backend import MPI
     from src.surrogate import AFINNISurrogate
@@ -57,16 +57,16 @@ def main() -> None:
     ):
         grants["n"] = 0
         config = ClusteringConfig(
-            atol=2e-2, rtol=2e-2, algorithm="region", domain=([-1] * 3, [1] * 3), max_levels=12,
+            atol=2e-2, rtol=2e-2, algorithm="art", domain=([-1] * 3, [1] * 3), max_levels=12,
             num_initial_clusters=8, batch_size=2_000, use_work_stealing=stealing,
-            region=RegionSettings(**{"roots": "box", "sample_multiplier": 8, "validation_samples": 8, **settings}),
+            art=ARTSettings(**{"roots": "box", "sample_multiplier": 8, "validation_samples": 8, **settings}),
         )  # fmt: skip
         model = AFINNISurrogate()
         model.train(X, config, Evaluator(f_fn=f))
         pred, outside = model.predict(queries)
         total_grants = MPI.COMM_WORLD.allreduce(grants["n"])
         if rank == 0:
-            keys = sorted(zip(model.region_leaves["root"].tolist(), model.region_leaves["path_code"].tolist(), strict=True))
+            keys = sorted(zip(model.art_leaves["root"].tolist(), model.art_leaves["path_code"].tolist(), strict=True))
             runs[name] = {
                 "leaves": int(model.N_src),
                 "keys_hash": hashlib.sha256(json.dumps(keys).encode()).hexdigest(),

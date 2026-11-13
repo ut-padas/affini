@@ -26,10 +26,10 @@ Hessian) follows from the resolved local model and split strategy together.
 Under MPI every rank builds its own configuration, so every rank must be given
 the same component specs.
 
-``algorithm`` selects one of two named plans over the same engine: ``"afinni"`` (the
-default, AFINNI's adaptive clustering, bit-identical to earlier versions) or ``"region"``, an
-ART-style region tree on AFINNI's batched loop (``src.region``; settings in
-``RegionSettings``), which needs an explicit ``domain``.
+``algorithm`` selects one of two algorithm plans over the same refinement engine
+(``src.engine``): ``"afinni"`` (the default, AFINNI's adaptive clustering, bit-identical to
+earlier versions) or ``"art"``, ART's adaptive regression tree (``src.art``; settings in
+``ARTSettings``), which needs an explicit ``domain``.
 """
 
 import dataclasses
@@ -77,9 +77,9 @@ class Components:
 
 
 @dataclass(kw_only=True)
-class RegionSettings:
+class ARTSettings:
     """
-    Settings of ``algorithm="region"`` (see ``src.region``).
+    Settings of ``algorithm="art"`` (see ``src.art``).
 
     Every node is topped up to ``ceil(sample_multiplier * p_eff)`` training points
     before it is fitted, with ``p_eff = d + 1`` (ART's ``n_node``; ART uses 50). New
@@ -125,7 +125,7 @@ class RegionSettings:
     soft_weight_floor: float = 1e-8  # delta in W = delta + (1 - 2 delta) sigma
     # Store the trust-region shape Q per leaf (needed only by predictor="knn"; d^2 per leaf).
     store_Q: bool = True  # noqa: N815  (named after the leaf column "Q")
-    # Work-stealing thresholds in queued points; None: a few nodes' worth (src.region).
+    # Work-stealing thresholds in queued points; None: a few nodes' worth (src.art).
     steal_min_load: int | None = None
     steal_size: int | None = None
 
@@ -137,7 +137,7 @@ class RegionSettings:
             ("split_search", ("gap", "bins", "soft")),
         ):
             if getattr(self, name) not in choices:
-                raise ValueError(f"region {name} must be one of {choices}; got {getattr(self, name)!r}.")
+                raise ValueError(f"ARTSettings.{name} must be one of {choices}; got {getattr(self, name)!r}.")
         if self.sampling == "convex_combination" and self.validation_samples:
             raise ValueError("validation_samples needs sampling='hit_and_run' (fresh points inside each node).")
         for name, low in (("n_bins", 2), ("n_directions", 1), ("n_screened", 1), ("soft_iters", 0)):
@@ -168,7 +168,7 @@ class RegionSettings:
 class ClusteringConfig:
     """
     Every algorithm setting of a training run (``AFINNISurrogate.train`` or
-    ``adaptive_clustering``); the functions to evaluate go in an ``Evaluator``.
+    ``refine``); the functions to evaluate go in an ``Evaluator``.
     All fields are keyword-only and only a tolerance (or an ``acceptance`` that
     brings its own) is required.
     """
@@ -207,11 +207,11 @@ class ClusteringConfig:
     store_affine_fits: bool = False
 
     # --- Algorithm plan (see the module docstring) ---
-    algorithm: Literal["afinni", "region"] = "afinni"
-    # Region mode only: ((lower_1, ..., lower_d), (upper_1, ..., upper_d)), or
+    algorithm: Literal["afinni", "art"] = "afinni"
+    # ART only: ((lower_1, ..., lower_d), (upper_1, ..., upper_d)), or
     # "data_bbox" to use the bounding box of the training points (recorded as such).
     domain: Any = None
-    region: RegionSettings | dict | None = None  # None: RegionSettings() in region mode
+    art: ARTSettings | dict | None = None  # None: ARTSettings() when algorithm='art'
 
     # --- Diagnostics (see src.infra.profiling) ---
     log_mem_stats: bool = False
@@ -234,15 +234,15 @@ class ClusteringConfig:
     def __post_init__(self) -> None:
         """Validate settings early, normalize the tolerances and profile_dir, warn about save_all_gen_training_data, and drop ``store_hess`` where no model can use it."""
         self.mode = SurrogateMode(self.mode)
-        if self.algorithm not in ("afinni", "region"):
-            raise ValueError(f"algorithm must be 'afinni' or 'region'; got {self.algorithm!r}.")
-        if isinstance(self.region, dict):
-            self.region = RegionSettings(**self.region)
-        if self.algorithm == "region":
-            self.region = self.region or RegionSettings()
+        if self.algorithm not in ("afinni", "art"):
+            raise ValueError(f"algorithm must be 'afinni' or 'art'; got {self.algorithm!r}.")
+        if isinstance(self.art, dict):
+            self.art = ARTSettings(**self.art)
+        if self.algorithm == "art":
+            self.art = self.art or ARTSettings()
             self.domain = _normalize_domain(self.domain)
-        elif self.domain is not None or self.region is not None:
-            raise ValueError("domain and region only apply to algorithm='region'.")
+        elif self.domain is not None or self.art is not None:
+            raise ValueError("domain and art only apply to algorithm='art'.")
         if self.profile_dir is not None:
             self.profile_dir = str(self.profile_dir)
         # Normalized to a float or a tuple so to_dict() stays serializable.
@@ -334,7 +334,7 @@ class ClusteringConfig:
 
     @property
     def requires_f_centroids(self) -> bool:
-        """True if some component reads f at the centroids (AFINNI mode always evaluates it)."""
+        """True if some component reads f at the centroids (AFINNI always evaluates it)."""
         c = self.components()
         return bool(c.local_model.needs_centroid_value or c.split_strategy.needs_centroid_value)
 
@@ -368,7 +368,7 @@ class ClusteringConfig:
             if f.init and f.name not in Components.__dataclass_fields__
         }
         out["mode"] = self.mode.value
-        out["region"] = dataclasses.asdict(self.region) if self.region is not None else None
+        out["art"] = dataclasses.asdict(self.art) if self.art is not None else None
         out["components"] = self.components().describe()
         return out
 
@@ -389,7 +389,7 @@ def _normalize_domain(domain: Any) -> str | tuple[tuple[float, ...], tuple[float
         return domain
     if domain is None:
         raise ValueError(
-            "algorithm='region' needs domain=(lower, upper) bounds, or domain='data_bbox' to "
+            "algorithm='art' needs domain=(lower, upper) bounds, or domain='data_bbox' to "
             "use the training points' bounding box: the domain is what routing covers and "
             "what AFINNISurrogate.audit samples, so it is never inferred silently."
         )

@@ -234,16 +234,16 @@ def test_kdtree_build_failure_during_retraining_keeps_the_old_model(monkeypatch)
 
 def _record_profilers(monkeypatch):
     """Capture every Profiler the engine creates, to check its stream afterwards."""
-    import src.engine.adaptive_clustering as ac
+    import src.engine.driver as driver
 
     created = []
 
-    class Recording(ac.Profiler):
+    class Recording(driver.Profiler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             created.append(self)
 
-    monkeypatch.setattr(ac, "Profiler", Recording)
+    monkeypatch.setattr(driver, "Profiler", Recording)
     return created
 
 
@@ -315,19 +315,19 @@ def test_public_methods_keep_signatures_and_predict_reports_search_stats():
 
 
 def test_nested_empty_collectives_preserve_the_parent_scope():
-    import src.engine.adaptive_clustering as ac
+    import src.engine.driver as driver
 
     def outer():
-        own_scope = ac._PROFILER_SCOPES[-1]
-        ac.run_collective(lambda: None, "inner")
-        assert ac._PROFILER_SCOPES[-1] is own_scope
+        own_scope = driver._PROFILER_SCOPES[-1]
+        driver.run_collective(lambda: None, "inner")
+        assert driver._PROFILER_SCOPES[-1] is own_scope
 
-    ac.run_collective(outer, "outer")
-    assert not ac._PROFILER_SCOPES
+    driver.run_collective(outer, "outer")
+    assert not driver._PROFILER_SCOPES
 
 
 def test_component_preparation_can_predict_without_corrupting_training_scope(tmp_path, monkeypatch):
-    import src.engine.adaptive_clustering as ac
+    import src.engine.driver as driver
     from src.components.local_models import ConstantModel
 
     inner = AFINNISurrogate()
@@ -346,7 +346,7 @@ def test_component_preparation_can_predict_without_corrupting_training_scope(tmp
     _train_small(outer, lambda x: xp.ones((len(x), 1)), local_model=PreparedConstant.name,
                  mode=SurrogateMode.NEAREST_NEIGHBOR, profile_dir=str(tmp_path))
     assert outer.trained
-    assert not ac._PROFILER_SCOPES
+    assert not driver._PROFILER_SCOPES
 
 
 def test_training_writes_no_files_and_the_clustering_cache_flags_are_gone(tmp_path, monkeypatch):

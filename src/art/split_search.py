@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, _to_host, kernels, xp
+from src.art.geometry import plane_scores
 from src.numerics import (
     _reduce_sum_1d,
     count_groups,
@@ -15,7 +16,6 @@ from src.numerics import (
     spd_solve,
     spd_solve_factored,
 )
-from src.region.geometry import plane_scores
 
 
 @dataclass
@@ -213,7 +213,7 @@ def _soft_kernel(name: str, n_threads: int, *args) -> None:
     """Launch one of the B4 kernels over ``n_threads`` threads (the module is compiled on first use)."""
     global _SOFT_MODULE
     if _SOFT_MODULE is None:
-        _SOFT_MODULE = kernels.module("region_b4")
+        _SOFT_MODULE = kernels.module("art_b4")
     if n_threads:
         args = tuple(xp.ascontiguousarray(a) if isinstance(a, xp.ndarray) else a for a in args)
         _SOFT_MODULE.get_function(name)(((n_threads + 255) // 256,), (256,), args)

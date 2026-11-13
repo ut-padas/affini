@@ -1,5 +1,5 @@
 """
-Accuracy and runtime of AFINNI mode on fixed problems, for comparing two
+Accuracy and runtime of AFINNI on fixed problems, for comparing two
 checkouts (``PYTHONPATH`` selects which one runs).
 
 It only uses the public API that older commits also have, so the same file can run

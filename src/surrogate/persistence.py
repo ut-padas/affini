@@ -7,7 +7,7 @@ import numpy as np
 
 # Version of the file format written by AFINNISurrogate.save_model(); load_model()
 # reads every version up to it.
-# Version 2 adds the optional region tree ("route:" arrays, "leaf:" statuses).
+# Version 2 adds the optional ART tree ("route:" arrays, "leaf:" statuses).
 MODEL_FORMAT_VERSION = 2
 
 

@@ -4,6 +4,13 @@
 samples of the function, refines clusters until a local affine model meets a
 tolerance, and answers queries with the best local model by trust-region distance.
 
+The repository implements two algorithms on one **refinement engine** (`src/engine/`):
+**AFINNI**, the adaptive clustering above (`algorithm="afinni"`, the default), and
+**ART**, adaptive regression trees: an oblique tree of polytopes over a box domain,
+queried by routing (`algorithm="art"`). The engine runs either one breadth-first, level by
+level, streaming the queued nodes from host memory to the CPU or GPU in batches, across
+MPI ranks with work stealing.
+
 It runs on **Linux, macOS and Windows**. It always works on the CPU, and can
 optionally use **MPI** (multiple processes/nodes, with work stealing) and/or an
 **NVIDIA GPU** (CUDA 12). Whatever is installed is detected at runtime, and
@@ -52,7 +59,7 @@ uv run python -m src                                  # which backends (GPU / MP
 uv run python -m examples.example01                   # 2-D Rosenbrock surrogate: error + plot
 uv run mpiexec -n 8 python -m examples.example03_monitoring   # multi-rank run with work stealing...
 uv run python -m src.infra.monitor scratch/example03_monitoring/stream   # ...watched live from another terminal
-uv run python -m examples.example04_region_mode --problem all   # AFINNI vs AFINNI region mode (ART) on 4 problems
+uv run python -m examples.example04_art --problem all   # AFINNI vs ART on 4 problems
 ```
 
 ```python
@@ -85,14 +92,14 @@ that `src` is importable.
 
 | Layer | Packages / modules |
 |---|---|
-| infrastructure, maths, shared types | `infra/` (backend detection, profiling, monitor, logging), `numerics/` (`segments`, `linalg`, `stats`, `grid`), `kernels/` (`.cu` sources), `core/` (`clusters`: queues and output columns; `evaluation`: the oracle `Evaluator`; `plan`: the contract between the refinement loop and an algorithm plan) |
+| infrastructure, maths, shared types | `infra/` (backend detection, profiling, monitor, logging, `io` for generated data), `numerics/` (`segments`, `linalg`, `stats`, `grid`), `kernels/` (`.cu` sources), `core/` (`clusters`: queues and output columns; `evaluation`: the oracle `Evaluator`; `plan`: the contract between the refinement loop and an algorithm plan) |
 | settings, components | `config.py` (settings and size heuristics), `components/` (registry, modes, local models, splitting, acceptance, trust regions, sampling), `neighbors/` (kNN, k-means) |
-| region mode | `region/` (`constants`, `rng`, `geometry`, `sampling`, `split_search`, `plan`, `routing`) |
-| engine | `engine/` (`initial`, `refinement` (the loop shared by both plans), `afinni_plan`, `adaptive_clustering` driver, `work_stealing`, `io`) |
+| algorithms | `afinni/` (`plan`: `AFINNIPlan`), `art/` (`ARTPlan` in `plan`; `constants`, `rng`, `geometry`, `sampling`, `split_search`, `routing`) |
+| engine | `engine/` (`driver`: `refine`, collective training; `refinement`: `refine_rank`, the loop shared by both plans; `initial`, `work_stealing`) |
 | public API | `surrogate/` (`model`, `persistence`, `metrics`); also `plotting/`, `problems/` |
 
 Package `__init__` files re-export the names other modules import, so callers do not depend
-on the file a name lives in (`from src.region import RegionPlan`). CUDA kernel sources live in
+on the file a name lives in (`from src.art import ARTPlan`). CUDA kernel sources live in
 `src/kernels/*.cu` and are compiled at runtime (no build step).
 
 ## Development

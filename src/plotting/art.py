@@ -1,9 +1,9 @@
 """
-Plots for region-mode models (``algorithm="region"``) and for comparing surrogates.
+Plots for ART models (``algorithm="art"``) and for comparing surrogates.
 
-- ``plot_region_partition``: a 2-D region tree's cells, coloured by depth, by terminal
+- ``plot_art_partition``: a 2-D ART tree's cells, coloured by depth, by terminal
   reason and (with ``f_fn``) by pointwise relative error, with the cell boundaries.
-- ``plot_region_tree_stats``: leaves per depth stacked by terminal reason, and the
+- ``plot_art_tree_stats``: leaves per depth stacked by terminal reason, and the
   validation statuses.
 - ``plot_error_maps``: pointwise relative error over a 2-D domain for several models side
   by side, with the tolerance contour.
@@ -11,8 +11,8 @@ Plots for region-mode models (``algorithm="region"``) and for comparing surrogat
 - ``plot_method_comparison``: bar panels of scalar metrics (errors, leaves, evaluations,
   time) for several methods.
 
-Predictions are passed as callables ``X -> (n, fd)``, so an AFINNI-mode model (kNN predictor)
-and a region-mode model (routed) are compared on exactly the same points.
+Predictions are passed as callables ``X -> (n, fd)``, so an AFINNI model (kNN predictor)
+and an ART model (routed) are compared on exactly the same points.
 """
 
 import textwrap
@@ -23,9 +23,9 @@ import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap, LogNorm
 
 from src import _to_host, xp
+from src.art import TERMINAL_REASONS, VALIDATION_STATUSES
 from src.infra.profiling import fmt_count
 from src.plotting.style import afinni_style, finish
-from src.region import TERMINAL_REASONS, VALIDATION_STATUSES
 
 REASON_COLOURS = ("#4c9a6a", "#d1495b", "#edae49")  # accepted, max_depth, split_failed
 STATUS_COLOURS = ("#9e9e9e", "#4c9a6a", "#d1495b", "#7b5ea7")
@@ -54,22 +54,22 @@ def _boundaries(ids: np.ndarray) -> np.ndarray:
     return edge
 
 
-def plot_region_partition(surrogate, path=None, *, f_fn: Callable | None = None, tol: float | None = None,
+def plot_art_partition(surrogate, path=None, *, f_fn: Callable | None = None, tol: float | None = None,
                           resolution: int = 400, title: str | None = None) -> plt.Figure:  # fmt: skip
     """
-    The cells of a 2-D region model over its domain: depth of the routed leaf, its
+    The cells of a 2-D ART model over its domain: depth of the routed leaf, its
     terminal reason, and (with ``f_fn``) the pointwise relative error with ``tol``
     contoured. Boundaries are drawn where neighbouring grid points route to different
     leaves, i.e. along the stored split planes.
     """
     if surrogate.routing is None or surrogate.X_src.shape[1] != 2:
-        raise ValueError("plot_region_partition needs a 2-D region-mode model.")
+        raise ValueError("plot_art_partition needs a 2-D ART model.")
     dom = surrogate.routing.domain
     XX, YY, P = _grid(dom.lower, dom.upper, resolution)
     leaf = np.asarray(_to_host(surrogate.route_leaves(xp.asarray(P)))).reshape(XX.shape)
-    paths = surrogate.region_leaves["path_code"]
+    paths = surrogate.art_leaves["path_code"]
     depth = np.array([int(p).bit_length() - 1 for p in paths])[leaf]
-    reason = surrogate.region_leaves["terminal_reason"].astype(int)[leaf]
+    reason = surrogate.art_leaves["terminal_reason"].astype(int)[leaf]
     edges = _boundaries(leaf)
     extent = (dom.lower[0], dom.upper[0], dom.lower[1], dom.upper[1])
     n_panels = 3 if f_fn is not None else 2
@@ -106,12 +106,12 @@ def plot_region_partition(surrogate, path=None, *, f_fn: Callable | None = None,
     return finish(fig, path)
 
 
-def plot_region_tree_stats(surrogate, path=None, title: str | None = None) -> plt.Figure:
+def plot_art_tree_stats(surrogate, path=None, title: str | None = None) -> plt.Figure:
     """Leaves per depth, stacked by terminal reason, and the leaves' validation statuses."""
     if surrogate.routing is None:
-        raise ValueError("plot_region_tree_stats needs a region-mode model.")
-    depth = np.array([int(p).bit_length() - 1 for p in surrogate.region_leaves["path_code"]])
-    reason = surrogate.region_leaves["terminal_reason"].astype(int)
+        raise ValueError("plot_art_tree_stats needs an ART model.")
+    depth = np.array([int(p).bit_length() - 1 for p in surrogate.art_leaves["path_code"]])
+    reason = surrogate.art_leaves["terminal_reason"].astype(int)
     levels = np.arange(depth.max() + 1)
     with afinni_style():
         fig, (ax, ax2) = plt.subplots(1, 2, figsize=(11, 4), gridspec_kw={"width_ratios": [3, 1.3]})

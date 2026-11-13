@@ -1,9 +1,9 @@
 """
-The public surrogate: ``AFINNISurrogate`` trains with ``adaptive_clustering``, stores
+The public surrogate: ``AFINNISurrogate`` trains with ``refine``, stores
 the accepted leaves on every MPI rank, predicts with a two-stage (Euclidean, then
-trust-region) neighbour search (``predictor="knn"``) or, for a region-mode model, by
+trust-region) neighbour search (``predictor="knn"``) or, for an ART model, by
 routing each query down the explicit tree (``predictor="route"``, its default), and
-saves/loads a versioned model file. ``audit`` checks a region-mode model on fresh
+saves/loads a versioned model file. ``audit`` checks an ART model on fresh
 uniform points of its domain.
 ``compute_error_metrics`` scores predictions inside and outside the trust regions.
 """
@@ -26,17 +26,17 @@ from src import (
     _to_host,
     xp,
 )
+from src.art import TERMINAL_REASONS, VALIDATION_STATUSES, RoutingTable
 from src.components.acceptance import Tolerance, normalize_tolerance, tolerance_vector
 from src.components.local_models import LOCAL_MODELS, LocalModel
 from src.components.modes import SurrogateMode
 from src.components.registry import component_spec
 from src.config import ClusteringConfig
 from src.core.evaluation import Evaluator
-from src.engine.adaptive_clustering import _adaptive_clustering, run_collective
+from src.engine.driver import _refine, run_collective
 from src.infra.backend import (
     MPI,  # real mpi4py.MPI, or a single-rank stand-in without MPI
 )
-from src.region import TERMINAL_REASONS, VALIDATION_STATUSES, RoutingTable
 from src.surrogate.persistence import (
     _LEAF_PREFIX,
     _PARAM_PREFIX,
@@ -48,8 +48,8 @@ from src.surrogate.persistence import (
 
 logger = logging.getLogger(__name__)
 
-# Per-leaf region-mode columns (see src.region), kept apart from the model's parameters.
-REGION_LEAF_COLUMNS = ("root", "path_code", "terminal_reason", "validation_status")
+# Per-leaf ART columns (see src.art), kept apart from the model's parameters.
+ART_LEAF_COLUMNS = ("root", "path_code", "terminal_reason", "validation_status")
 
 
 _P = ParamSpec("_P")
@@ -119,11 +119,11 @@ class AFINNISurrogate:
 
         self.knn_index = None
         self.search_stats: dict = {}  # last predict's kNN totals on this rank
-        # Region mode: the explicit tree, and per-leaf host arrays named in
-        # REGION_LEAF_COLUMNS (terminal_reason / validation_status index TERMINAL_REASONS /
-        # VALIDATION_STATUSES). None / {} for AFINNI-mode models.
+        # ART: the explicit tree, and per-leaf host arrays named in
+        # ART_LEAF_COLUMNS (terminal_reason / validation_status index TERMINAL_REASONS /
+        # VALIDATION_STATUSES). None / {} for AFINNI models.
         self.routing: RoutingTable | None = None
-        self.region_leaves: dict[str, np.ndarray] = {}
+        self.art_leaves: dict[str, np.ndarray] = {}
 
     def _leaf_params(self) -> dict:
         """The per-cluster arrays ``local_model.evaluate`` reads (see src.components.local_models)."""
@@ -193,7 +193,7 @@ class AFINNISurrogate:
 
         leaf_model = config.components().local_model
         # Unguarded engine body: the failure policy is owned by train() (see run_collective).
-        results = _adaptive_clustering(X_train, config, evaluator, Y=Y_train, initial_labels=initial_labels)
+        results = _refine(X_train, config, evaluator, Y=Y_train, initial_labels=initial_labels)
 
         # 2. Broadcast trained structures to all ranks
         bcast_data = None
@@ -226,7 +226,7 @@ class AFINNISurrogate:
                            "effective": bcast_data["profiling_stats"].get("effective_config", {})},
                 "X_src": bcast_data["centroids"],
                 "f_src": bcast_data["f"],
-                "Qs_src": bcast_data.get("Q"),  # absent for region models with store_Q=False
+                "Qs_src": bcast_data.get("Q"),  # absent for ART models with store_Q=False
                 "E_cluster_abs_src": bcast_data["E_cluster_abs"],
                 "E_cluster_rel_src": bcast_data["E_cluster_rel"],
                 "counts_src": bcast_data["counts"],
@@ -236,7 +236,7 @@ class AFINNISurrogate:
                 "num_unresolved_pts": int(bcast_data["num_unresolved_pts"]),
                 "leaf_params": {name: bcast_data[name] for name in leaf_model.columns(d, fd)},
                 "routing": RoutingTable.from_arrays(bcast_data["routing"]) if "routing" in bcast_data else None,
-                "region_leaves": {k: bcast_data[k] for k in REGION_LEAF_COLUMNS if k in bcast_data},
+                "art_leaves": {k: bcast_data[k] for k in ART_LEAF_COLUMNS if k in bcast_data},
             },
             source="training",
         )  # fmt: skip
@@ -246,7 +246,7 @@ class AFINNISurrogate:
             logger.info(f"Trained Clusters: {self.N_src:,}")
             if not self.converged:
                 where = (
-                    "they keep their fitted model as a leaf (see region_leaves / leaf_status_counts())"
+                    "they keep their fitted model as a leaf (see art_leaves / leaf_status_counts())"
                     if self.routing is not None else "their region has no leaves"
                 )
                 warnings.warn(
@@ -263,7 +263,7 @@ class AFINNISurrogate:
                     # ``converged`` only says no node is still above tolerance; these leaves
                     # passed on samples that may not cover their region.
                     warnings.warn(
-                        f"{n_weak:,} region leaves have validation_status='insufficient_sampling' "
+                        f"{n_weak:,} ART leaves have validation_status='insufficient_sampling' "
                         "(their samples may not cover the region); see route_details() and "
                         "leaf_status_counts().",
                         RuntimeWarning,
@@ -323,7 +323,7 @@ class AFINNISurrogate:
             **({"Qs_src": _to_host(self.Qs_src)} if self.Qs_src is not None else {}),
             **{_PARAM_PREFIX + k: _to_host(v) for k, v in self.leaf_params.items()},
             **({_ROUTE_PREFIX + k: v for k, v in self.routing.arrays().items()} if self.routing else {}),
-            **{_LEAF_PREFIX + k: np.asarray(v) for k, v in self.region_leaves.items()},
+            **{_LEAF_PREFIX + k: np.asarray(v) for k, v in self.art_leaves.items()},
         }
         for name in ("E_cluster_abs_src", "E_cluster_rel_src"):
             if getattr(self, name) is not None:
@@ -398,7 +398,7 @@ class AFINNISurrogate:
                     RoutingTable.from_arrays({k[len(_ROUTE_PREFIX):]: v for k, v in arrays.items() if k.startswith(_ROUTE_PREFIX)})
                     if any(k.startswith(_ROUTE_PREFIX) for k in arrays) else None
                 ),
-                "region_leaves": {k[len(_LEAF_PREFIX):]: v for k, v in arrays.items() if k.startswith(_LEAF_PREFIX)},
+                "art_leaves": {k[len(_LEAF_PREFIX):]: v for k, v in arrays.items() if k.startswith(_LEAF_PREFIX)},
             },
             source=str(filepath),
         )  # fmt: skip
@@ -419,7 +419,7 @@ class AFINNISurrogate:
             state["counts_src"] = np.asarray(_to_host(state["counts_src"]))  # host-side diagnostics
         state["leaf_params"] = {k: _to_device(v) for k, v in state["leaf_params"].items()}
         state.setdefault("routing", None)
-        state["region_leaves"] = {k: np.asarray(_to_host(v)) for k, v in state.get("region_leaves", {}).items()}
+        state["art_leaves"] = {k: np.asarray(_to_host(v)) for k, v in state.get("art_leaves", {}).items()}
         state["N_src"] = n = int(state["X_src"].shape[0])
         d, fd = state["X_src"].shape[1], state["f_src"].shape[1]
         local_model = state["local_model"]
@@ -435,14 +435,14 @@ class AFINNISurrogate:
         if routing is not None:
             if routing.n_leaves != n or routing.domain.d != d:
                 raise ValueError(
-                    f"{source}: the region tree has {routing.n_leaves} leaves in {routing.domain.d}-D "
+                    f"{source}: the ART tree has {routing.n_leaves} leaves in {routing.domain.d}-D "
                     f"but the model has {n} in {d}-D."
                 )
             # Equal counts are not enough: leaf row i must be the same node in both stores.
-            tree, meta = routing.arrays(), state["region_leaves"]
+            tree, meta = routing.arrays(), state["art_leaves"]
             for key, col in (("leaf_root", "root"), ("leaf_path", "path_code")):
                 if col in meta and not np.array_equal(np.asarray(tree[key]), meta[col]):
-                    raise ValueError(f"{source}: the region tree and the leaf metadata disagree on {col!r}.")
+                    raise ValueError(f"{source}: the ART tree and the leaf metadata disagree on {col!r}.")
         t0 = time.perf_counter()
         state["knn_index"] = _make_knn_index(state["X_src"]) if state["Qs_src"] is not None else None
         if _get_mpi_rank() == 0:
@@ -478,27 +478,27 @@ class AFINNISurrogate:
         locally, and gathered; returns ``(predictions, outside_mask)`` on rank 0 and
         ``(None, None)`` elsewhere.
 
-        ``predictor="knn"`` (the default for AFINNI-mode models): the ``k_nn * coarse_factor``
+        ``predictor="knn"`` (the default for AFINNI models): the ``k_nn * coarse_factor``
         nearest centroids are reranked by trust-region distance ``dx^T Q dx``; the best
         ``k_nn`` leaves' models are blended with inverse-distance weights
         (``strict_trust_region`` drops leaves with distance > 1). A query is flagged
         outside when its best candidate is > 1.
 
-        ``predictor="route"`` (the default, and only meaningful choice, for region-mode
+        ``predictor="route"`` (the default, and only meaningful choice, for ART
         models): each query is routed down the tree to exactly one leaf, whose model
         predicts it; "outside" then means outside the domain only (such queries are routed
         from the nearest domain point). ``k_nn`` and the trust-region options do not apply.
-        A leaf's ``terminal_reason`` and ``validation_status`` are in ``region_leaves``.
+        A leaf's ``terminal_reason`` and ``validation_status`` are in ``art_leaves``.
         """
         predictor = predictor or ("route" if self.routing is not None else "knn")
         if predictor not in ("knn", "route"):
             raise ValueError(f"predictor must be 'knn' or 'route'; got {predictor!r}.")
         if predictor == "route" and self.routing is None:
-            raise ValueError("predictor='route' needs a region-mode model (algorithm='region').")
+            raise ValueError("predictor='route' needs an ART model (algorithm='art').")
         if predictor == "knn" and self.trained and self.Qs_src is None:
             raise ValueError(
-                "predictor='knn' needs the trust-region shapes Q, which this region model did not "
-                "store (region.store_Q=False); use predictor='route'."
+                "predictor='knn' needs the trust-region shapes Q, which this ART model did not "
+                "store (art.store_Q=False); use predictor='route'."
             )
         # Totals over this call's batches on this rank: queries, fallback rows, strategy.
         self.search_stats = {"queries": 0, "fallback_rows": 0, "candidates": 0, "strategy": None}
@@ -679,9 +679,9 @@ class AFINNISurrogate:
         return xp.concatenate(preds, axis=0), xp.concatenate(outs, axis=0)
 
     def route_leaves(self, query_points: Array) -> Array:
-        """The (n,) leaf row each query routes to, on this rank (no MPI); region-mode models only."""
+        """The (n,) leaf row each query routes to, on this rank (no MPI); ART models only."""
         if self.routing is None:
-            raise ValueError("route_leaves needs a region-mode model (algorithm='region').")
+            raise ValueError("route_leaves needs an ART model (algorithm='art').")
         return self.routing.route(xp.asarray(query_points, dtype=xp.float64))[0]
 
     def route_details(self, query_points: Array) -> dict[str, Array]:
@@ -691,18 +691,18 @@ class AFINNISurrogate:
         / ``VALIDATION_STATUSES``), so a caller can flag predictions from weak leaves.
         """
         if self.routing is None:
-            raise ValueError("route_details needs a region-mode model (algorithm='region').")
+            raise ValueError("route_details needs an ART model (algorithm='art').")
         leaf, outside = self.routing.route(xp.asarray(query_points, dtype=xp.float64))
         out = {"leaf": leaf, "outside": outside}
         for col in ("terminal_reason", "validation_status"):
-            out[col] = xp.asarray(self.region_leaves[col])[leaf]
+            out[col] = xp.asarray(self.art_leaves[col])[leaf]
         return out
 
     def leaf_status_counts(self) -> dict[str, dict[str, int]]:
-        """How many leaves end with each terminal reason and validation status (region mode)."""
+        """How many leaves end with each terminal reason and validation status (ART)."""
         out = {}
         for col, names in (("terminal_reason", TERMINAL_REASONS), ("validation_status", VALIDATION_STATUSES)):
-            counts = np.bincount(self.region_leaves[col].astype(np.int64), minlength=len(names))
+            counts = np.bincount(self.art_leaves[col].astype(np.int64), minlength=len(names))
             out[col] = dict(zip(names, map(int, counts), strict=True))
         return out
 
@@ -717,7 +717,7 @@ class AFINNISurrogate:
         rtol: Tolerance = None,
     ) -> dict[str, Any]:
         """
-        The global accuracy claim for a region-mode model: draw ``n_points`` iid uniform
+        The global accuracy claim for an ART model: draw ``n_points`` iid uniform
         points of its domain (independent of training), predict them by routing, and
         count tolerance violations with the same row test as pointwise training
         (``src.components.acceptance.pointwise_violations``: a point passes only if every component
@@ -735,7 +735,7 @@ class AFINNISurrogate:
         trained acceptance test used. Runs on the calling rank only.
         """
         if self.routing is None:
-            raise ValueError("audit needs a region-mode model (algorithm='region').")
+            raise ValueError("audit needs an ART model (algorithm='art').")
         if isinstance(n_points, bool) or not isinstance(n_points, (int, np.integer)) or n_points < 1:
             raise ValueError(f"n_points must be a positive integer; got {n_points!r}.")
         if not (isinstance(confidence, (int, float)) and np.isfinite(confidence) and 0 < confidence < 1):

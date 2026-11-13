@@ -8,11 +8,11 @@ from dataclasses import dataclass
 import numpy as np
 
 from src import IS_CUPY_BACKEND, xp
+from src.afinni import AFINNIPlan
 from src.config import ClusteringConfig
 from src.core.clusters import ClusterBatch, ClusterQueueBuilder, ColumnBuffer
 from src.core.evaluation import Evaluator
 from src.core.plan import DeviceBatch, Plan
-from src.engine.afinni_plan import AfinniPlan
 from src.engine.work_stealing import make_work_stealer
 from src.infra.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in
 from src.infra.logging_utils import log_mem_stats
@@ -36,7 +36,7 @@ class _Refinement:
     rank: int
     mempool: object
     generated: int = 0
-    unresolved_clusters: int = 0  # AFINNI: never accepted; region: kept as fallback leaves
+    unresolved_clusters: int = 0  # AFINNI: never accepted; ART: kept as fallback leaves
     unresolved_pts: int = 0
 
     def load_of(self, queue: ClusterBatch) -> int:
@@ -44,7 +44,7 @@ class _Refinement:
         return int(self.plan.work_sizes(queue.sizes).sum())
 
 
-def _run_local_refinement(
+def refine_rank(
     config: ClusteringConfig,
     evaluator: Evaluator,
     clusters: ClusterBatch,
@@ -53,13 +53,13 @@ def _run_local_refinement(
     plan: Plan | None = None,
 ):
     """
-    Core local BFS refinement loop for GPU adaptive clustering, run independently
-    on each MPI rank. Takes this rank's pre-sorted clusters (host memory) and
-    returns finalized output buffers plus counts.
+    One rank's breadth-first refinement: level by level, the queued clusters (host memory)
+    go to the device in batches until none is left. Returns the finalized output buffers
+    plus counts.
 
-    This is the executor shared by both algorithm plans (``src.core.plan``): it owns
+    This is the loop shared by both algorithm plans (``src.core.plan``): it owns
     batching, device transfers, queues, work stealing and statistics, and each batch
-    goes to ``plan.process_batch``. Without ``plan`` it runs ``AfinniPlan``. A plan's
+    goes to ``plan.process_batch``. Without ``plan`` it runs ``AFINNIPlan``. A plan's
     split records are returned in the buffers under ``"node:<column>"`` keys.
 
     Algorithm settings (tolerances, limits, seed, work stealing, ...) are read
@@ -71,7 +71,7 @@ def _run_local_refinement(
     """
     rank, size = comm.Get_rank(), comm.Get_size()
     d, fd = clusters.d, clusters.fd
-    plan = plan if plan is not None else AfinniPlan(config, d, fd, rank)
+    plan = plan if plan is not None else AFINNIPlan(config, d, fd, rank)
     mempool = None
     if IS_CUPY_BACKEND:
         import cupy as cp
@@ -120,7 +120,7 @@ def _run_local_refinement(
     profiler.stats["num_unresolved_pts"] = run.unresolved_pts
     if run.unresolved_clusters > 0 and plan.keeps_fallback_leaves:
         logger.warning(
-            f"R{rank:02}: {run.unresolved_clusters:,} region nodes ({run.unresolved_pts:,} points) ended "
+            f"R{rank:02}: {run.unresolved_clusters:,} ART nodes ({run.unresolved_pts:,} points) ended "
             f"above tolerance (max_levels={config.max_levels} or no valid split); they keep their "
             f"fitted model as a leaf with terminal_reason != 'accepted'."
         )
@@ -173,7 +173,7 @@ def _refine_level(run: _Refinement, queue: ClusterBatch, level: int) -> ClusterB
         # Children rarely exceed twice the parents' points (augmentation targets
         # 2 * count); untouched capacity is only address space.
         capacity_pts=2 * level_total_pts, capacity_clusters=2 * num_clusters,
-        region_rows=plan.constraint_rows(queue),
+        constraint_rows=plan.constraint_rows(queue),
     )  # fmt: skip
 
     num_batches = level_total_pts // config.batch_size + 1

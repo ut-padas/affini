@@ -113,15 +113,15 @@ def test_missing_data_gives_actionable_errors():
         P.plot_timeline(s)
 
 
-def test_region_and_comparison_plots_render(tmp_path):
-    """Region partition and tree statistics, error maps, error CDF and metric bars, from a real model."""
+def test_art_and_comparison_plots_render(tmp_path):
+    """ART partition and tree statistics, error maps, error CDF and metric bars, from a real model."""
     from src import xp
     from src.problems.spherical_piecewise import spherical_piecewise
 
     X = np.random.default_rng(0).uniform(-3, 3, (150, 2))
-    region = train_surrogate(
-        X, f_fn=spherical_piecewise, rtol=1e-2, error_metric="pointwise", algorithm="region",
-        domain=([-3, -3], [3, 3]), max_levels=5, use_work_stealing=False, region={"sample_multiplier": 10},
+    art = train_surrogate(
+        X, f_fn=spherical_piecewise, rtol=1e-2, error_metric="pointwise", algorithm="art",
+        domain=([-3, -3], [3, 3]), max_levels=5, use_work_stealing=False, art={"sample_multiplier": 10},
     )  # fmt: skip
     afinni = train_surrogate(
         X, f_fn=spherical_piecewise, rtol=0.05, num_initial_clusters=4, min_pts_per_cluster=20, max_levels=4,
@@ -129,21 +129,21 @@ def test_region_and_comparison_plots_render(tmp_path):
     )  # fmt: skip
     Xq = xp.asarray(np.random.default_rng(1).uniform(-3, 3, (500, 2)))
     truth = spherical_piecewise(Xq)
-    err = P.pointwise_relative_error(truth, region._predict_route_local(Xq)[0])
+    err = P.pointwise_relative_error(truth, art._predict_route_local(Xq)[0])
     assert err.shape == (500,) and np.all(err >= 0)
     paths = {name: tmp_path / f"{name}.png" for name in ("partition", "stats", "maps", "cdf", "bars")}
-    P.plot_region_partition(region, paths["partition"], f_fn=spherical_piecewise, tol=1e-2, resolution=60)
-    P.plot_region_tree_stats(region, paths["stats"])
+    P.plot_art_partition(art, paths["partition"], f_fn=spherical_piecewise, tol=1e-2, resolution=60)
+    P.plot_art_tree_stats(art, paths["stats"])
     P.plot_error_maps({"afinni": lambda q: afinni._predict_local(q, 1, 10, False)[0],
-                       "region": lambda q: region._predict_route_local(q)[0]},
+                       "art": lambda q: art._predict_route_local(q)[0]},
                       spherical_piecewise, (-3, -3), (3, 3), paths["maps"], tol=1e-2, resolution=40)  # fmt: skip
-    P.plot_error_cdf({"region": err}, paths["cdf"], tol=1e-2)
+    P.plot_error_cdf({"art": err}, paths["cdf"], tol=1e-2)
     P.plot_method_comparison({"a": {"leaves": 10, "relative_l2": 0.1}, "b": {"leaves": 20, "relative_l2": 0.05}},
                              paths["bars"])  # fmt: skip
     assert all(p.stat().st_size > 0 for p in paths.values())
     plt.close("all")
-    with pytest.raises(ValueError, match="region-mode model"):
-        P.plot_region_tree_stats(afinni)
+    with pytest.raises(ValueError, match="ART model"):
+        P.plot_art_tree_stats(afinni)
 
 
 def test_spherical_piecewise_matches_art_preset_values():

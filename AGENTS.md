@@ -33,14 +33,14 @@ AFINNI_DEVICE=cpu AFINNI_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin
   .venv/bin/python scripts/regression_check.py --save /tmp/new2 --compare /tmp/ref2
 ```
 
-- A refactor must keep `scripts/regression_check.py` bit-identical on CPU (AFINNI and region
-  mode cases; on one rank and, for changes to scatter or merge, on two). Deliberate
+- A refactor must keep `scripts/regression_check.py` bit-identical on CPU (AFINNI and ART
+  cases; on one rank and, for changes to scatter or merge, on two). Deliberate
   numerical changes must be listed and justified separately. Compare against references
   saved from the current baseline (`--save` on the base commit), not older ones: the
   custom k-means/kNN deliberately changed results relative to the original PR head.
 - GPU training sums are deterministic and per segment (`segment_cross`, `_reduce_sum_1d`,
   `det_matmul`, `spd_solve` in `src/numerics/`): repeated GPU runs are bit-identical
-  and region trees do not depend on the batch size. Do not reintroduce `atomicAdd`
+  and ART trees do not depend on the batch size. Do not reintroduce `atomicAdd`
   float sums, CuPy's float `add.reduceat` (it subtracts prefix sums) or cuBLAS-batched
   products (algorithm chosen by batch count) on the training path. GPU results still
   differ from CPU results at rounding level: GPU tests compare with a tight tolerance
@@ -72,9 +72,22 @@ its "Code layout" section before adding a module; put new code in the package th
 concern, and import only from the same or a lower layer.
 
 - Package `__init__` files re-export the names other modules import, so import from the package
-  (`from src.region import RegionPlan`), not from the file a name happens to live in.
+  (`from src.art import ARTPlan`), not from the file a name happens to live in.
 - Tests that monkeypatch a module-level name must patch the module that *uses* it (e.g.
-  `src.region.split_search.IS_CUPY_BACKEND`, not `src.region`), or the patch silently misses.
+  `src.art.split_search.IS_CUPY_BACKEND`, not `src.art`), or the patch silently misses.
+
+Names (use them in code, docstrings, messages and docs):
+
+- **AFINNI** (`algorithm="afinni"`, `src/afinni/`, `AFINNIPlan`) is the adaptive-clustering
+  algorithm; the project and `AFINNISurrogate` share the name.
+- **ART** (`algorithm="art"`, `src/art/`, `ARTPlan`, `ARTSettings`, `config.art`) is the
+  adaptive regression tree. Do not call it "region mode": "region" is geometry only (a node's
+  polytope is `NodePolytopes`, its rows `constraint_rows`), and "trust region" is AFINNI's.
+  The external code `scripts/art_comparison.py` runs is "the reference ART"; ours is
+  "AFINNI's ART" where the two must be told apart.
+- **The refinement engine** (`src/engine/`) runs either plan: `driver.refine` (collective
+  training), `refinement.refine_rank` (one rank's level-by-level loop), `work_stealing`.
+  Plan-specific behaviour goes in the plan, behind `src/core/plan.py`, not in the engine.
 
 ## Code changes
 

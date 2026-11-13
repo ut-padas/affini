@@ -1,4 +1,4 @@
-"""Uniform-grid factorization shared by AFINNI's grid initial clustering and region mode's grid roots."""
+"""Uniform-grid factorization shared by AFINNI's grid initial clustering and ART's grid roots."""
 
 import numpy as np
 
@@ -26,7 +26,7 @@ def uniform_grid_bins(extents: np.ndarray, num_cells: int) -> np.ndarray:
     """
     (d,) int64 bins per dimension whose product is ``num_cells``: each prime factor,
     largest first, goes to the dimension with the widest current cell. Shared by the
-    uniform-grid initial clustering of AFINNI mode and the grid roots of region mode, so both cut the same way.
+    uniform-grid initial clustering of AFINNI and the grid roots of ART, so both cut the same way.
     """
     if num_cells < 1:
         raise ValueError("num_initial_clusters must be >= 1")

@@ -5,19 +5,19 @@ from dataclasses import dataclass
 import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, kernels, xp
+from src.art.geometry import Domain, Roots
+from src.art.rng import _GOLDEN, _MIX1, _MIX2, counter_uniform_pairs
+from src.art.split_search import segment_sum
 from src.components.sampling import ClusterPoints, Sampler
 from src.numerics import (
     det_einsum,
     repeats,
 )
-from src.region.geometry import Domain, Roots
-from src.region.rng import _GOLDEN, _MIX1, _MIX2, counter_uniform_pairs
-from src.region.split_search import segment_sum
 
 
 # --- Sampling inside polytopes -------------------------------------------------------
 @dataclass
-class RegionPoints:
+class NodePolytopes:
     """Per-node geometry and random stream of a batch, for ``HitAndRunSampler``."""
 
     root: Array  # (K,) int64
@@ -38,7 +38,7 @@ class HitAndRunSampler(Sampler):
     endpoints are conditionally independent but share their starts' bias, so they are
     approximately, not exactly, uniform. Voronoi bisectors are evaluated against every
     centre at each step, so the chord is exact without a stored face list. Not registered
-    in ``SAMPLERS``: it needs ``ClusterPoints.region``, which only region mode provides.
+    in ``SAMPLERS``: it needs ``ClusterPoints.polytopes``, which only ART provides.
     Randomness comes from the node keys, not from ``rng``.
     """
 
@@ -73,11 +73,11 @@ class HitAndRunSampler(Sampler):
         corners and leave the uniform law invariant, on a separate random stream; a node
         with any chain still unmoved is flagged. A start, step or returned endpoint that
         violates a face by more than rounding is never silently relaxed. Nodes with
-        either problem remaining are flagged in ``region.insufficient``. The recovery
+        either problem remaining are flagged in ``polytopes.insufficient``. The recovery
         depends on the first walk's outcome, so it is an adaptive repair, not an
         independent production run.
         """
-        geo: RegionPoints = clusters.region
+        geo: NodePolytopes = clusters.polytopes
         d, K = clusters.d, clusters.n_clusters
         geo.insufficient = xp.zeros(K, dtype=bool)
         n_total = int(xp.sum(n_new))
@@ -121,7 +121,7 @@ class HitAndRunSampler(Sampler):
             geo.insufficient = drift | stuck | infeasible
         return self.domain.denormalize(U)
 
-    def _starts(self, clusters: ClusterPoints, geo: RegionPoints, owner: Array, draw: Array) -> tuple[Array, Array]:
+    def _starts(self, clusters: ClusterPoints, geo: NodePolytopes, owner: Array, draw: Array) -> tuple[Array, Array]:
         """
         Normalized start points, and which of them walk: exact uniform points of a box
         root cell (final as they are), otherwise a uniformly chosen inherited point (a
@@ -152,7 +152,7 @@ class HitAndRunSampler(Sampler):
     def _step_hashes(self) -> int:
         return (self.domain.d + 1) // 2 + 1  # ceil(d/2) Box-Muller pairs, then the chord position
 
-    def _uniforms(self, geo: RegionPoints, owner: Array, draw: Array, offset: int, count: int) -> Array:
+    def _uniforms(self, geo: NodePolytopes, owner: Array, draw: Array, offset: int, count: int) -> Array:
         """
         (n, count) uniforms of each new point's stream, from ``ceil(count / 2)`` hashes at
         hash ``offset``; the per-point layout (start, pick, then each step) is fixed by
@@ -192,7 +192,7 @@ class HitAndRunSampler(Sampler):
     # A face may be violated by rounding only: relative to the face offset's scale.
     FEASIBILITY_TOL = 1e-9
 
-    def _steps(self, geo: RegionPoints, owner: Array, draw: Array, U: Array, t_from: int, t_to: int,
+    def _steps(self, geo: NodePolytopes, owner: Array, draw: Array, U: Array, t_from: int, t_to: int,
                coordinate: bool = False) -> tuple[Array, Array]:  # fmt: skip
         d = U.shape[1]
         root = geo.root[owner]
@@ -202,7 +202,7 @@ class HitAndRunSampler(Sampler):
         bad = xp.zeros(int(U.shape[0]), dtype=bool)
         stream = geo
         if coordinate:
-            stream = RegionPoints(geo.root, geo.depth, geo.keys, geo.constraints, geo.purpose + self.RECOVERY_PURPOSE_OFFSET)
+            stream = NodePolytopes(geo.root, geo.depth, geo.keys, geo.constraints, geo.purpose + self.RECOVERY_PURPOSE_OFFSET)
         if self.roots.is_voronoi:
             # Bisector j of the owning centre c_r, from the centre difference D = c_j - c_r:
             # n^T (u - c_r) <= |D| / 2 with n = D / |D|. Expanding it as differences of dot
@@ -263,7 +263,7 @@ class HitAndRunSampler(Sampler):
             bad |= slacks(U)[2]  # the returned endpoint too, not only each step's start
         return U, bad
 
-    def _walk_fused(self, geo: RegionPoints, owner: Array, draw: Array, U: Array, t_from: int, t_to: int,
+    def _walk_fused(self, geo: NodePolytopes, owner: Array, draw: Array, U: Array, t_from: int, t_to: int,
                     coordinate: bool) -> tuple[Array, Array]:  # fmt: skip
         """
         ``_steps`` on the GPU for whole walks: one thread per chain runs steps ``t_from ..

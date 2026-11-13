@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
-from matplotlib.patches import Circle, Ellipse
+from matplotlib.patches import Ellipse
 
 from src import RESULTS_DIR, Array, _to_device, _to_host, xp
 from src.components.modes import SurrogateMode
@@ -19,7 +19,7 @@ from src.infra.logging_utils import setup_logging
 from src.problems.anisotropic_quadratic import _get_params, aniso_quadratic
 from src.problems.isotropic_gaussian import gaussian
 from src.problems.lorenz96_flowmap import lorenz96_flowmap
-from src.problems.rosenbrock import rosenbrock, rosenbrock_hess
+from src.problems.rosenbrock import rosenbrock
 from src.problems.wave import wave
 from src.surrogate import AFINNISurrogate, compute_error_metrics
 

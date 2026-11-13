@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-import src.engine.adaptive_clustering as ac
+import src.engine.driver as driver
 from src import _to_host, xp
 from src.components.modes import SurrogateMode
 from src.components.splitting import (
@@ -109,7 +109,7 @@ def test_exact_hessian_mode_without_hessian_fn_fails_up_front():
         mode=SurrogateMode.AFFINE_EXACT_HESS, atol=1e-3, rtol=1e-3
     )
     with pytest.raises(ValueError, match="requires an exact Hessian"):
-        ac.adaptive_clustering(xp.asarray(np.zeros((10, 2))), config, Evaluator(f_fn=f))
+        driver.refine(xp.asarray(np.zeros((10, 2))), config, Evaluator(f_fn=f))
 
 
 @pytest.mark.parametrize("mode", list(SurrogateMode))
