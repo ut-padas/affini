@@ -36,9 +36,11 @@ from src.region.constants import (
     PURPOSE_TRAIN,
     PURPOSE_VALIDATION,
     SPLIT_FAILED,
+    TERMINAL_REASONS,
 )
 from src.region.geometry import Domain, Roots, gap_cuts, plane_scores
 from src.region.rng import _normals, counter_uniform, node_keys
+from src.region.routing import RoutingTable
 from src.region.sampling import HitAndRunSampler, RegionPoints
 from src.region.split_search import (
     _hard_sse,
@@ -165,8 +167,21 @@ class RegionPlan:
     def profile(self) -> dict:
         return {"region": dict(self.counters)}
 
-    def initial_queue(self, X: np.ndarray, F: np.ndarray, G: np.ndarray | None) -> ClusterBatch:
-        """Every root as a queued node (possibly with no points), points sorted by root."""
+    def merge_results(self, merged: dict, profile: dict, per_rank: list[dict]) -> None:
+        """Build the routing table from every rank's split records and total the leaf statuses and counters."""
+        nodes = {k[len("node:"):]: _to_host(merged.pop(k)) for k in list(merged) if k.startswith("node:")}
+        routing = RoutingTable.build(
+            self.domain, self.roots, merged["root"], merged["path_code"],
+            nodes["root"], nodes["path_code"], nodes["w"], nodes["z"],
+        )  # fmt: skip
+        merged["routing"] = routing.arrays()
+        reasons = np.bincount(_to_host(merged["terminal_reason"]).astype(np.int64), minlength=len(TERMINAL_REASONS))
+        profile["terminal_reasons"] = dict(zip(TERMINAL_REASONS, map(int, reasons), strict=True))
+        profile["num_split_nodes"] = int(nodes["root"].shape[0])
+        profile["region"] = {k: sum(ps.get("region", {}).get(k, 0) for ps in per_rank) for k in self.counters}
+
+    def initial_queue(self, X: np.ndarray, F: np.ndarray, G: np.ndarray | None, labels: None = None) -> ClusterBatch:
+        """Every root as a queued node (possibly with no points), points sorted by root; roots replace labels."""
         root = _to_host(self.roots.root_of(self.domain.normalize(xp.asarray(X)))).astype(np.int64)
         order = np.argsort(root, kind="stable")
         R = self.roots.n_roots

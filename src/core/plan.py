@@ -57,14 +57,19 @@ Timer = Callable[[str], AbstractContextManager[Any]]
 
 class Plan(Protocol):
     """
-    What the refinement loop asks of an algorithm plan. ``tests/unit/test_plans.py`` checks
-    that both plans provide every member.
+    What the refinement loop (and, for ``initial_queue`` and ``merge_results``, the driver
+    ``src.engine.adaptive_clustering``) asks of an algorithm plan. ``tests/unit/test_plans.py``
+    checks that both plans provide every member.
     """
 
     label: str  # a short name for profiles, plots and the monitor
     steal_settings: dict[str, Any]  # keyword arguments for make_work_stealer
     batch_floor: int  # fewest points a batch may be capped to when device memory is short
     keeps_fallback_leaves: bool  # clusters stopped above tolerance still become (fallback) leaves
+
+    def initial_queue(self, X: np.ndarray, F: np.ndarray, G: np.ndarray | None,
+                      labels: np.ndarray | None = None) -> ClusterBatch:  # fmt: skip
+        """Rank 0's whole initial queue from the training points (host arrays) and, for AFINNI, their labels."""
 
     def leaf_columns(self, model) -> dict[str, ParamSpec]:
         """Columns of one accepted leaf."""
@@ -94,3 +99,10 @@ class Plan(Protocol):
 
     def profile(self) -> dict[str, Any]:
         """Entries this plan adds to the rank's ``profiling_stats`` at the end of refinement."""
+
+    def merge_results(self, merged: dict[str, Any], profile: dict[str, Any], per_rank: list[dict[str, Any]]) -> None:
+        """
+        On rank 0 after the gather: turn the plan's own buffers in ``merged`` into model
+        arrays and add its totals to the consolidated ``profile`` (``per_rank`` holds each
+        rank's ``profiling_stats``).
+        """

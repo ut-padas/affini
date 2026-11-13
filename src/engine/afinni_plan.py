@@ -81,6 +81,13 @@ class AfinniPlan:
 
             self.mempool = cp.get_default_memory_pool()
 
+    def initial_queue(self, X: np.ndarray, F: np.ndarray, G: np.ndarray | None, labels: np.ndarray) -> ClusterBatch:
+        """The initial clusters (one per label), points sorted by label."""
+        sort_idx = np.argsort(labels)
+        counts = np.unique(labels[sort_idx], return_counts=True)[1]
+        logger.info(f"Initial clustering done. Number of clusters: {counts.shape[0]}.")
+        return ClusterBatch(X[sort_idx], F[sort_idx], G[sort_idx] if G is not None else None, counts.astype(np.int64))
+
     def leaf_columns(self, model) -> dict[str, ParamSpec]:
         return output_columns(model, self.d, self.fd)
 
@@ -332,3 +339,6 @@ class AfinniPlan:
 
     def profile(self) -> dict:
         return {}
+
+    def merge_results(self, merged: dict, profile: dict, per_rank: list[dict]) -> None:
+        return None

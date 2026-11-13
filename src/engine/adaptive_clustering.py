@@ -28,7 +28,7 @@ from src.engine.work_stealing import recv_clusters, send_clusters
 from src.infra.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in
 from src.infra.profiling import ORACLE_TIME_KEY, Profiler, new_profiling_stats
 from src.numerics import convert_to_2d_array
-from src.region import TERMINAL_REASONS, Domain, RegionPlan, Roots, RoutingTable
+from src.region import Domain, RegionPlan, Roots
 
 # Initial scatter of clusters from rank 0 (payload tags SCATTER_TAG + 1..4); kept
 # well away from the work-stealing tags.
@@ -120,15 +120,94 @@ def _adaptive_clustering(
     ``initial_labels`` (one non-negative integer per row of ``X``, e.g. from
     ``initial_clustering``) replaces the initial clustering, which is then recorded
     as ``profiling_stats["initial_labels_given"]``; they are checked before ``f`` is
-    evaluated. ``config`` is copied, so runtime
-    changes (the GPU batch-size cap) never reach the
-    caller; ``evaluator.n_evals`` keeps counting across calls. The result holds the
-    shared columns, the local model's columns, the convergence status and
+    evaluated. ``config`` is copied, so runtime changes (the GPU batch-size cap) never
+    reach the caller; ``evaluator.n_evals`` keeps counting across calls. The result holds
+    the shared columns, the local model's columns, the convergence status and
     ``profiling_stats``.
     """
     config = dataclasses.replace(config)  # local copy; the caller's config is untouched
-    region_mode = config.algorithm == "region"
-    if region_mode and initial_labels is not None:
+    _check_inputs(config, evaluator, initial_labels)
+    comm = MPI.COMM_WORLD
+    rank, size = comm.Get_rank(), comm.Get_size()
+    # Ranks sharing rank 0's node (collective, so every rank calls it).
+    node_ranks = comm.Split_type(MPI.COMM_TYPE_SHARED).Get_size() if size > 1 else 1
+    start_time = time.perf_counter()
+    # A start time shared by all ranks, so event times are comparable across ranks.
+    t0 = comm.bcast(time.time() if rank == 0 else None, root=0)
+    profiling_stats = new_profiling_stats()
+    profiler = Profiler(
+        profiling_stats, rank=rank, timing=config.profile_timing, events=config.profile_events,
+        stream_dir=config.profile_dir, t0=t0,
+    )  # fmt: skip
+    if _PROFILER_SCOPES:  # closed by the enclosing run_collective if the operation fails
+        _PROFILER_SCOPES[-1].append(profiler)
+    oracle_seconds_at_start = evaluator.seconds
+
+    data = None
+    if rank == 0:
+        if config.save_all_gen_training_data:
+            save_generated_data(X, config.generated_data_name(X.shape[1]))
+        with profiler.phase("time_init"):
+            data = _initial_data(X, Y, initial_labels, config, evaluator, profiling_stats, node_ranks)
+    d, fd = comm.bcast((data[0].shape[1], data[1].shape[1]) if rank == 0 else None, root=0)
+    # Every rank checks, so a tolerance of the wrong length fails before any rank refines.
+    config.components().acceptance.check_output_dim(fd)
+    plan = _make_plan(config, comm, data[0] if rank == 0 else None, d, fd, node_ranks)
+
+    with profiler.phase("time_scatter"):
+        queue = plan.initial_queue(*(_to_host(a) if a is not None else None for a in data[:3]), data[3]) if rank == 0 else None
+        local_clusters = _scatter(comm, queue, d, fd)
+        del queue
+    # Rank 0's device copies of the training data stay alive through the free-memory reading,
+    # so the cap (and with it the batch boundaries) is the same as when they were kept for the
+    # whole run; afterwards they only cost memory.
+    _cap_batch_size(config, plan, d, fd)
+    del data
+    # What this run actually used; the caller's (requested) config is unchanged.
+    profiling_stats["effective_config"] = {
+        "batch_size": int(config.batch_size), "max_levels": int(config.max_levels),
+    }  # fmt: skip
+
+    buffers, out_count, local_f_evals, local_gen_pts, last_level = _run_local_refinement(
+        config=config, evaluator=evaluator, clusters=local_clusters, comm=comm, profiler=profiler, plan=plan,
+    )  # fmt: skip
+    # Region mode leaves no points unresolved: nodes stopped early keep a fallback leaf,
+    # reported separately so the monitor does not show them as queued work.
+    left = int(profiling_stats["num_unresolved_pts"])
+    profiler.event(
+        "done", leaves=int(out_count), generated=int(local_gen_pts),
+        unresolved_pts=0 if plan.keeps_fallback_leaves else left, fallback_pts=left if plan.keeps_fallback_leaves else 0,
+    )  # fmt: skip
+    profiling_stats["num_levels"] = last_level
+    profiling_stats["num_generated_pts"] = local_gen_pts
+    profiling_stats["total_f_evals"] += local_f_evals
+    profiling_stats["num_final_clusters"] = out_count
+    profiling_stats["time_total"] = time.perf_counter() - start_time
+    profiling_stats[ORACLE_TIME_KEY] = evaluator.seconds - oracle_seconds_at_start
+    active_time = sum(profiling_stats.get(k, 0.0) for k in ["time_state_update", "time_mpi_send", "time_mpi_recv"])
+    profiling_stats["time_idle"] = max(0.0, profiling_stats.get("time_idle", 0.0) - active_time)
+    local_result = {**buffers, "_profiling_stats": profiling_stats}
+
+    with profiler.phase("time_gather"):
+        if rank != 0:
+            logger.info(f"R{rank:03}: Sending local results ({out_count:,} clusters) to rank 0.")
+            comm.send(local_result, dest=0, tag=LOCAL_RESULT_TAG)
+        else:
+            logger.info("R00: Merging results from all ranks.")
+            all_results = [local_result] + [comm.recv(source=r, tag=LOCAL_RESULT_TAG) for r in range(1, size)]
+            logger.info(f"R00: Received local results from {size:,} ranks.")
+    merged = None
+    if rank == 0:
+        merged = _merge_results(all_results, plan, start_time, t0)
+        if config.save_all_gen_training_data:
+            combine_generated_data(config.generated_data_name(d))
+    profiler.close()
+    return merged
+
+
+def _check_inputs(config: ClusteringConfig, evaluator: Evaluator, initial_labels) -> None:
+    """Reject settings the evaluator cannot serve before any rank evaluates or communicates."""
+    if config.algorithm == "region" and initial_labels is not None:
         raise ValueError("initial_labels do not apply to algorithm='region': its roots come from region.roots.")
     if not config.requires_no_grads and not evaluator.has_grad:
         raise ValueError(
@@ -139,324 +218,159 @@ def _adaptive_clustering(
             f"Selected mode {config.mode.value} requires an exact Hessian. Please provide hessian_fn."
         )
 
-    comm = MPI.COMM_WORLD
+
+def _initial_data(X, Y, initial_labels, config: ClusteringConfig, evaluator: Evaluator, profiling_stats: dict,
+                  node_ranks: int) -> tuple[Array, Array, Array | None, np.ndarray | None]:  # fmt: skip
+    """
+    Rank 0: the training points with their values (and per-point gradients when the mode
+    carries them) on the device, and AFINNI mode's initial cluster labels (None in region
+    mode, whose roots come from the plan). The labels are checked before ``f`` is evaluated.
+    """
+    X0 = xp.asarray(X, dtype=xp.float64)
+    N0 = X0.shape[0]
+    profiling_stats["N0"], profiling_stats["total_f_evals"] = N0, N0
+    if initial_labels is not None:
+        initial_labels = np.asarray(_to_host(initial_labels))
+        valid = initial_labels.shape == (N0,) and np.issubdtype(initial_labels.dtype, np.integer)
+        if not valid or (N0 and initial_labels.min() < 0):
+            raise ValueError(
+                f"initial_labels must be {N0} non-negative integers, one per training point; "
+                f"got shape {initial_labels.shape} and dtype {initial_labels.dtype}."
+            )
+    profiling_stats["initial_labels_given"] = initial_labels is not None
+
+    # Per-point gradients are only carried when the mode uses them at every point;
+    # centroid gradients are evaluated during refinement. The N0 initial points always
+    # count as evaluations, even with Y.
+    need_point_grads = config.requires_grad_everywhere
+    if Y is not None:
+        F0 = convert_to_2d_array(xp.asarray(Y, dtype=xp.float64))
+        G0 = evaluator(X0, need_grad=True)[1] if need_point_grads else None
+    else:
+        F0, G0 = evaluator(X0, need_grad=need_point_grads)
+    labels = None
+    if config.algorithm != "region":
+        labels = (
+            initial_clustering(X0, config, threads=_threads_for_rank0(node_ranks))
+            if initial_labels is None
+            else initial_labels.astype(np.int64)
+        )
+    return X0, F0, G0, labels
+
+
+def _make_plan(config: ClusteringConfig, comm, X0: Array | None, d: int, fd: int, node_ranks: int):
+    """
+    The same plan on every rank (collective). Region mode broadcasts the domain (from rank
+    0's points for ``domain="data_bbox"``) and, for Voronoi roots, the initial clustering's
+    centres in normalized coordinates; roots are then assigned by exact nearest centre, not
+    by the clustering's labels.
+    """
     rank = comm.Get_rank()
-    size = comm.Get_size()
-    # Ranks sharing rank 0's node (collective, so every rank calls it).
-    node_ranks = comm.Split_type(MPI.COMM_TYPE_SHARED).Get_size() if size > 1 else 1
-
-    _start_time = time.perf_counter()
-
-    # A start time shared by all ranks, so event times are comparable across ranks.
-    t0 = comm.bcast(time.time() if rank == 0 else None, root=0)
-    profiling_stats = new_profiling_stats()
-    profiler = Profiler(
-        profiling_stats,
-        rank=rank,
-        timing=config.profile_timing,
-        events=config.profile_events,
-        stream_dir=config.profile_dir,
-        t0=t0,
-    )
-    if _PROFILER_SCOPES:  # closed by the enclosing run_collective if the operation fails
-        _PROFILER_SCOPES[-1].append(profiler)
-    oracle_seconds_at_start = evaluator.seconds
-    timer = profiler.phase
-
-    d_bcast, fd_bcast = 0, 0
-
+    if config.algorithm != "region":
+        return AfinniPlan(config, d, fd, rank)
+    bounds = None
     if rank == 0:
-        if config.save_all_gen_training_data:
-            _, DIM = X.shape
-            save_generated_data(
-                X, config.generated_data_name(DIM)
-            )
-
-        with timer("time_init"):
-            X0_gpu = xp.asarray(X, dtype=xp.float64)
-            N0, d_bcast = X0_gpu.shape
-            profiling_stats["N0"], profiling_stats["total_f_evals"] = N0, N0
-            if initial_labels is not None:
-                initial_labels = np.asarray(_to_host(initial_labels))
-                valid = initial_labels.shape == (N0,) and np.issubdtype(initial_labels.dtype, np.integer)
-                if not valid or (N0 and initial_labels.min() < 0):
-                    raise ValueError(
-                        f"initial_labels must be {N0} non-negative integers, one per training point; "
-                        f"got shape {initial_labels.shape} and dtype {initial_labels.dtype}."
-                    )
-            profiling_stats["initial_labels_given"] = initial_labels is not None
-
-            # Per-point gradients are only carried when the mode uses them at
-            # every point; centroid gradients are evaluated during refinement.
-            # The N0 initial points always count as evaluations, even with Y.
-            need_point_grads = config.requires_grad_everywhere
-            if Y is not None:
-                F0_gpu = convert_to_2d_array(xp.asarray(Y, dtype=xp.float64))
-                G0_gpu = (
-                    evaluator(X0_gpu, need_grad=True)[1] if need_point_grads else None
-                )
-            else:
-                F0_gpu, G0_gpu = evaluator(X0_gpu, need_grad=need_point_grads)
-            fd_bcast = F0_gpu.shape[1]
-
-            if region_mode:
-                domain = Domain.resolve(config.domain, _to_host(X0_gpu))
-                labels0 = None
-            else:
-                labels0 = (
-                    initial_clustering(X0_gpu, config, threads=_threads_for_rank0(node_ranks))
-                    if initial_labels is None
-                    else initial_labels.astype(np.int64)
-                )
-
-            if not region_mode:
-                sort_idx = np.argsort(labels0)
-                labels0_sorted = labels0[sort_idx]
-                X0_sorted = _to_host(X0_gpu)[sort_idx]
-                F0_sorted = _to_host(F0_gpu)[sort_idx]
-                G0_sorted = _to_host(G0_gpu)[sort_idx] if G0_gpu is not None else None
-
-                uniq_labels, all_counts = np.unique(labels0_sorted, return_counts=True)
-                counts_chunks = np.array_split(all_counts, size)
-        if not region_mode:
-            logger.info(
-                f"Initial clustering done. Number of clusters: {uniq_labels.shape[0]}."
-            )
-
-    plan = None
-    if region_mode:
-        # Every rank builds the same plan; only the domain (from rank 0's points for
-        # "data_bbox") has to be broadcast.
-        bounds = comm.bcast((domain.lower, domain.upper) if rank == 0 else None, root=0)
-        d_r = comm.bcast(d_bcast if rank == 0 else None, root=0)
-        fd_r = comm.bcast(fd_bcast if rank == 0 else None, root=0)
-        domain = Domain(*bounds)
-        centres = None
-        if config.region.roots == "voronoi":
-            # The initial clustering's centres (means of its clusters), in normalized
-            # coordinates; roots are then assigned by exact nearest centre, not by its labels.
-            if rank == 0:
-                labels_v = initial_clustering(X0_gpu, config, threads=_threads_for_rank0(node_ranks))
-                U0 = _to_host(domain.normalize(X0_gpu))
-                inverse = np.unique(labels_v, return_inverse=True)[1]
-                centres = np.zeros((int(inverse.max()) + 1, U0.shape[1]))
-                np.add.at(centres, inverse, U0)
-                centres /= np.bincount(inverse)[:, None]
-            centres = comm.bcast(centres, root=0)
-        roots = Roots.build(config.region.roots, d_r, config.num_initial_clusters, centres)
-        plan = RegionPlan(config, d_r, fd_r, domain, roots)
+        domain = Domain.resolve(config.domain, _to_host(X0))
+        bounds = (domain.lower, domain.upper)
+    domain = Domain(*comm.bcast(bounds, root=0))
+    centres = None
+    if config.region.roots == "voronoi":
         if rank == 0:
-            all_roots = plan.initial_queue(_to_host(X0_gpu), _to_host(F0_gpu), _to_host(G0_gpu) if G0_gpu is not None else None)
-            chunks = np.array_split(np.arange(all_roots.n_clusters), size)
-            logger.info(f"Region roots: {roots.n_roots} ({config.region.roots}), domain {domain.lower} .. {domain.upper}.")
+            labels_v = initial_clustering(X0, config, threads=_threads_for_rank0(node_ranks))
+            U0 = _to_host(domain.normalize(X0))
+            inverse = np.unique(labels_v, return_inverse=True)[1]
+            centres = np.zeros((int(inverse.max()) + 1, U0.shape[1]))
+            np.add.at(centres, inverse, U0)
+            centres /= np.bincount(inverse)[:, None]
+        centres = comm.bcast(centres, root=0)
+    roots = Roots.build(config.region.roots, d, config.num_initial_clusters, centres)
+    if rank == 0:
+        logger.info(f"Region roots: {roots.n_roots} ({config.region.roots}), domain {domain.lower} .. {domain.upper}.")
+    return RegionPlan(config, d, fd, domain, roots)
 
-    with timer("time_scatter"):
-        d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
-        # Every rank checks, so a tolerance of the wrong length fails before any rank refines.
-        config.components().acceptance.check_output_dim(fd_bcast)
-        if plan is None:
-            plan = AfinniPlan(config, d_bcast, fd_bcast, rank)
 
-        # Rank 0 splits the sorted clusters into one contiguous chunk per rank.
-        if rank == 0 and region_mode:
-            for r in range(size):
-                keep = np.zeros(all_roots.n_clusters, dtype=bool)
-                keep[chunks[r]] = True
-                chunk = all_roots.select(keep)
-                if r == 0:
-                    local_clusters = chunk
-                else:
-                    send_clusters(comm, chunk, dest=r, tag=SCATTER_TAG)
-        elif rank == 0:
-            current_idx = 0
-            for r in range(size):
-                num_pts_in_rank = int(np.sum(counts_chunks[r]))
-                end_idx = current_idx + num_pts_in_rank
-                chunk = ClusterBatch(
-                    X0_sorted[current_idx:end_idx],
-                    F0_sorted[current_idx:end_idx],
-                    G0_sorted[current_idx:end_idx] if G0_sorted is not None else None,
-                    counts_chunks[r].astype(np.int64),
-                )
-                if r == 0:
-                    local_clusters = chunk
-                else:
-                    logger.info(
-                        f"R00: Sending initial data chunk to R{r:02} | "
-                        f"pts={chunk.n_pts:,} clusters={chunk.n_clusters:,}"
-                    )
-                    send_clusters(comm, chunk, dest=r, tag=SCATTER_TAG)
-                current_idx = end_idx
+def _scatter(comm, queue: ClusterBatch | None, d: int, fd: int) -> ClusterBatch:
+    """Rank 0 cuts its whole initial ``queue`` into one contiguous run of clusters per rank (views, not copies)."""
+    rank, size = comm.Get_rank(), comm.Get_size()
+    if rank != 0:
+        logger.info(f"R{rank:02}: Waiting to receive initial data chunk from R00.")
+        return recv_clusters(comm, 0, d, fd, tag=SCATTER_TAG)
+    counts = [len(c) for c in np.array_split(np.arange(queue.n_clusters), size)]
+    rest, local = queue, None
+    for r, count in enumerate(counts):
+        if count < rest.n_clusters:
+            chunk, rest = rest.split(count)
+        else:  # the last chunk, then empty ones (with the same columns) for ranks beyond the clusters
+            chunk, rest = rest, rest.select(np.zeros(rest.n_clusters, dtype=bool))
+        if r == 0:
+            local = chunk
         else:
-            logger.info(f"R{rank:02}: Waiting to receive initial data chunk from R00.")
-            local_clusters = recv_clusters(comm, 0, d_bcast, fd_bcast, tag=SCATTER_TAG)
+            logger.info(f"R00: Sending initial data chunk to R{r:02} | pts={chunk.n_pts:,} clusters={chunk.n_clusters:,}")
+            send_clusters(comm, chunk, dest=r, tag=SCATTER_TAG)
+    return local
 
-    # Hardware-aware sizing is more appropriate now that the split projection no
-    # longer materializes an (N, d, d) tensor. Keep the estimate conservative,
-    # though: a rejected batch can still be augmented to roughly 2x its original
-    # size and carries several live per-point work arrays during splitting.
+
+def _cap_batch_size(config: ClusteringConfig, plan, d: int, fd: int) -> None:
+    """
+    Lower ``config.batch_size`` to what 65% of the free device memory holds at the plan's
+    ``bytes_per_point``, but not below ``plan.batch_floor``. The cap sets batch boundaries,
+    and with them the random streams, so it must be computed the same way every run.
+    """
     if IS_CUPY_BACKEND:
         import cupy as cp
 
-        # The batch cap below depends on free VRAM, and a different cap changes batch
-        # boundaries (and so the random streams): release cached pool blocks first so
-        # the reading does not depend on what the pool happens to hold.
+        # Release cached pool blocks first, so the reading does not depend on what the
+        # pool happens to hold.
         cp.get_default_memory_pool().free_all_blocks()
         free_vram_bytes, total_vram_bytes = cp.cuda.Device().mem_info
         usable_vram_bytes = int(free_vram_bytes * 0.65)
     else:
         free_vram_bytes = total_vram_bytes = 32 * 1024**3
         usable_vram_bytes = free_vram_bytes
-
-    estimated_peak_bytes_per_point = plan.bytes_per_point()
-    hardware_batch_cap = usable_vram_bytes // max(1, estimated_peak_bytes_per_point)
-    batch_floor = plan.batch_floor
-    if hardware_batch_cap < batch_floor:
+    bytes_per_point = plan.bytes_per_point()
+    hardware_batch_cap = usable_vram_bytes // max(1, bytes_per_point)
+    if hardware_batch_cap < plan.batch_floor:
         logger.warning(
             f"Estimated device memory fits only {hardware_batch_cap:,} points per batch "
-            f"({estimated_peak_bytes_per_point:,.0f} bytes/point); using the floor of "
-            f"{batch_floor:,}, which may run out of memory"
+            f"({bytes_per_point:,.0f} bytes/point); using the floor of "
+            f"{plan.batch_floor:,}, which may run out of memory"
         )
-    dynamic_batch_cap = int(np.clip(hardware_batch_cap, batch_floor, 20_000_000))
+    dynamic_batch_cap = int(np.clip(hardware_batch_cap, plan.batch_floor, 20_000_000))
     if config.batch_size > dynamic_batch_cap:
         logger.info(
-            "Hardware VRAM scaling: reducing batch_size from %s to %s for d=%s, "
-            "fd=%s using %.2f GB free / %.2f GB total VRAM and an estimated "
-            "%.0f bytes/point peak footprint.",
-            f"{config.batch_size:,}",
-            f"{dynamic_batch_cap:,}",
-            d_bcast,
-            fd_bcast,
-            free_vram_bytes / 1e9,
-            total_vram_bytes / 1e9,
-            float(estimated_peak_bytes_per_point),
+            f"Hardware VRAM scaling: reducing batch_size from {config.batch_size:,} to {dynamic_batch_cap:,} "
+            f"for d={d}, fd={fd} using {free_vram_bytes / 1e9:.2f} GB free / {total_vram_bytes / 1e9:.2f} GB "
+            f"total VRAM and an estimated {float(bytes_per_point):.0f} bytes/point peak footprint."
         )
         config.batch_size = dynamic_batch_cap
-    # What this run actually used; the caller's (requested) config is unchanged.
-    profiling_stats["effective_config"] = {
-        "batch_size": int(config.batch_size), "max_levels": int(config.max_levels),
-    }  # fmt: skip
 
-    buffers, out_count, local_f_evals, local_gen_pts, last_level = _run_local_refinement(
-        config=config,
-        evaluator=evaluator,
-        clusters=local_clusters,
-        comm=comm,
-        profiler=profiler,
-        plan=plan,
-    )
-    # Region mode leaves no points unresolved: nodes stopped early keep a fallback leaf,
-    # reported separately so the monitor does not show them as queued work.
-    unresolved = 0 if plan.keeps_fallback_leaves else int(profiling_stats["num_unresolved_pts"])
-    profiler.event(
-        "done", leaves=int(out_count), generated=int(local_gen_pts), unresolved_pts=unresolved,
-        fallback_pts=int(profiling_stats["num_unresolved_pts"]) if plan.keeps_fallback_leaves else 0,
-    )  # fmt: skip
 
-    local_result_host = dict(buffers)
-    profiling_stats["num_levels"] = last_level
-    profiling_stats["num_generated_pts"] = local_gen_pts
-    profiling_stats["total_f_evals"] += local_f_evals
-    profiling_stats["num_final_clusters"] = out_count
-    profiling_stats["time_total"] = time.perf_counter() - _start_time
-    profiling_stats[ORACLE_TIME_KEY] = evaluator.seconds - oracle_seconds_at_start
-
-    active_time = sum(
-        profiling_stats.get(k, 0.0)
-        for k in ["time_state_update", "time_mpi_send", "time_mpi_recv"]
-    )
-    profiling_stats["time_idle"] = max(
-        0.0, profiling_stats.get("time_idle", 0.0) - active_time
-    )
-    local_result_host["_profiling_stats"] = profiling_stats
-
-    with timer("time_gather"):
-        if rank != 0:
-            logger.info(
-                f"R{rank:03}: Sending local results ({out_count:,} clusters) to rank 0."
-            )
-            comm.send(local_result_host, dest=0, tag=LOCAL_RESULT_TAG)
-        else:
-            logger.info("R00: Merging results from all ranks.")
-            all_results = [local_result_host]
-            for r in range(1, size):
-                all_results.append(comm.recv(source=r, tag=LOCAL_RESULT_TAG))
-            logger.info(f"R00: Received local results from {size:,} ranks.")
-
-    if rank == 0:
-        all_profiling_stats = [r.pop("_profiling_stats") for r in all_results]
-        merged = {
-            k: xp.asarray(np.concatenate([r[k] for r in all_results], axis=0))
-            for k in all_results[0]
-        }
-
-        consolidated_profiling = {
-            "time_total": time.perf_counter() - _start_time,
-            "t0": t0,
-            "N0": all_profiling_stats[0].get("N0", 0),
-            "initial_labels_given": all_profiling_stats[0].get("initial_labels_given", False),
-            "num_levels": max(ps["num_levels"] for ps in all_profiling_stats),
-            "num_final_clusters": int(merged["centroids"].shape[0]),
-            "effective_config": all_profiling_stats[0].get("effective_config", {}),
-            "level_stats": sorted(
-                [entry for ps in all_profiling_stats for entry in ps["level_stats"]],
-                key=lambda e: (e["level"], e["rank"]),
-            ),
-            "per_rank": all_profiling_stats,
-        }
-
-        for k in [
-            k
-            for k in all_profiling_stats[0]
-            if k.startswith("time_") and k != "time_total"
-        ]:
-            consolidated_profiling[k] = sum(
-                ps.get(k, 0.0) for ps in all_profiling_stats
-            )
-        for k in [
-            "num_generated_pts",
-            "total_f_evals",
-            "num_unresolved_clusters",
-            "num_unresolved_pts",
-        ]:
-            consolidated_profiling[k] = sum(ps.get(k, 0) for ps in all_profiling_stats)
-        consolidated_profiling["converged"] = (
-            consolidated_profiling["num_unresolved_clusters"] == 0
+def _merge_results(all_results: list[dict], plan, start_time: float, t0: float) -> dict[str, Any]:
+    """Rank 0: concatenate every rank's leaves (rank order) and consolidate their profiles."""
+    per_rank = [r.pop("_profiling_stats") for r in all_results]
+    merged = {k: xp.asarray(np.concatenate([r[k] for r in all_results], axis=0)) for k in all_results[0]}
+    profile = {
+        "time_total": time.perf_counter() - start_time,
+        "t0": t0,
+        "N0": per_rank[0].get("N0", 0),
+        "initial_labels_given": per_rank[0].get("initial_labels_given", False),
+        "num_levels": max(ps["num_levels"] for ps in per_rank),
+        "num_final_clusters": int(merged["centroids"].shape[0]),
+        "effective_config": per_rank[0].get("effective_config", {}),
+        "level_stats": sorted([e for ps in per_rank for e in ps["level_stats"]], key=lambda e: (e["level"], e["rank"])),
+        "per_rank": per_rank,
+    }
+    for k in [k for k in per_rank[0] if k.startswith("time_") and k != "time_total"]:
+        profile[k] = sum(ps.get(k, 0.0) for ps in per_rank)
+    for k in ["num_generated_pts", "total_f_evals", "num_unresolved_clusters", "num_unresolved_pts"]:
+        profile[k] = sum(ps.get(k, 0) for ps in per_rank)
+    profile["converged"] = profile["num_unresolved_clusters"] == 0
+    profile["plan"] = per_rank[0].get("plan")
+    plan.merge_results(merged, profile, per_rank)
+    merged.update({
+        k: profile[k] for k in (
+            "num_levels", "num_generated_pts", "total_f_evals", "converged", "num_unresolved_clusters", "num_unresolved_pts",
         )
-        consolidated_profiling["plan"] = all_profiling_stats[0].get("plan")
-        if isinstance(plan, RegionPlan):
-            nodes = {k[len("node:"):]: _to_host(merged.pop(k)) for k in list(merged) if k.startswith("node:")}
-            routing = RoutingTable.build(
-                plan.domain, plan.roots, merged["root"], merged["path_code"],
-                nodes["root"], nodes["path_code"], nodes["w"], nodes["z"],
-            )  # fmt: skip
-            merged["routing"] = routing.arrays()
-            reasons = np.bincount(_to_host(merged["terminal_reason"]).astype(np.int64), minlength=len(TERMINAL_REASONS))
-            consolidated_profiling["terminal_reasons"] = dict(zip(TERMINAL_REASONS, map(int, reasons), strict=True))
-            consolidated_profiling["num_split_nodes"] = int(nodes["root"].shape[0])
-            consolidated_profiling["region"] = {
-                k: sum(ps.get("region", {}).get(k, 0) for ps in all_profiling_stats) for k in plan.counters
-            }
-
-        merged.update(
-            {
-                "num_levels": consolidated_profiling["num_levels"],
-                "num_generated_pts": consolidated_profiling["num_generated_pts"],
-                "total_f_evals": consolidated_profiling["total_f_evals"],
-                "converged": consolidated_profiling["converged"],
-                "num_unresolved_clusters": consolidated_profiling["num_unresolved_clusters"],
-                "num_unresolved_pts": consolidated_profiling["num_unresolved_pts"],
-                "profiling_stats": consolidated_profiling,
-            }
-        )
-
-        # Combine all the files if we are saving
-        if config.save_all_gen_training_data:
-            combine_generated_data(
-                config.generated_data_name(d_bcast)
-            )
-
-        profiler.close()
-        return merged
-    profiler.close()
-    return None
+    })  # fmt: skip
+    merged["profiling_stats"] = profile
+    return merged
