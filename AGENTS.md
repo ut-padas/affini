@@ -74,7 +74,9 @@ AFINNI_DEVICE=cpu AFINNI_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin
 [README.md](README.md) has the project overview, installation, quick start, the documentation
 index and the **code layout** of `src/` (which package owns what, and the import layers). Read
 its "Code layout" section before adding a module; put new code in the package that owns the
-concern, and import only from the same or a lower layer.
+concern, and import only from the same or a lower layer. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+shows how a run moves through the engine and the plans, and the contracts between them.
+Documentation other than README.md and AGENTS.md lives in `docs/`.
 
 - Package `__init__` files re-export the names other modules import, so import from the package
   (`from src.art import ARTPlan`), not from the file a name happens to live in.

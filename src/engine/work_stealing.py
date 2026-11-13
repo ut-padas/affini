@@ -1,8 +1,9 @@
 """
-Decentralized work stealing between MPI ranks for adaptive clustering.
+Decentralized work stealing between MPI ranks, for either algorithm plan.
 
-Each rank refines its own queue of clusters. Ranks gossip their load (number of
-queued points) to every other rank. A rank that runs out of work asks the most
+Each rank refines its own queue of nodes. Ranks gossip their load (queued work in the
+plan's unit: points for AFINNI, points after top-up and validation for ART) to every
+other rank. A rank that runs out of work asks the most
 loaded rank for some; the victim answers every request with either a grant
 (clusters taken from the unprocessed tail of its queue) or a denial. Once every
 rank is idle, all ranks retire together through a non-blocking barrier, still

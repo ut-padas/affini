@@ -115,6 +115,8 @@ Run scripts from the repository root, as modules
 
 ## Documentation
 
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: how a training run and a prediction move
+  through the code, the contracts between the parts, and where to extend it.
 - **[docs/USAGE.md](docs/USAGE.md)**: the user guide. Training and prediction
   on CPU, GPU and MPI; settings and modes; ART; saving models; profiling; plots; live
   monitoring; the experiment launcher; swapping parts of the algorithm (local models,
