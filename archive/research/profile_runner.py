@@ -11,7 +11,7 @@ from ics_files.ics26_experiments import (
     get_N_MIN_PER_CLUSTER,
     get_N_TRAIN,
 )
-from src.logging_utils import setup_logging
+from src.infra.logging_utils import setup_logging
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
 

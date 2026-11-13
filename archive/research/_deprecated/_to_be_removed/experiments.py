@@ -14,7 +14,7 @@ from _experiments._deprecated._to_be_removed.ics_deprecated.surrogate import (
     DataSampler,
     HATANNSurrogate,
 )
-from src.logging_utils import log_mem_stats
+from src.infra.logging_utils import log_mem_stats
 from src.problems.affine import AFFINE_DATA_DIM, AFFINE_F_DIM, affine, affine_grad
 from src.problems.borehole import borehole, borehole_grad
 from src.problems.dixon_price import dixon_price, dixon_price_grad
@@ -24,7 +24,7 @@ from src.problems.six_hump_camelback import (
     six_hump_camelback_grad,
     six_hump_camelback_hess,
 )
-from src.utils import get_matrix_2_norm
+from src.numerics import get_matrix_2_norm
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +309,7 @@ def run_experiment(
 
 if __name__ == "__main__":
     from src import IS_CUPY_BACKEND
-    from src.logging_utils import setup_logging
+    from src.infra.logging_utils import setup_logging
 
     if IS_CUPY_BACKEND:
         mempool = cp.get_default_memory_pool()

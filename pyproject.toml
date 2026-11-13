@@ -34,7 +34,7 @@ dependencies = [
 # "Source" = "TODO"
 
 # Optional runtime backends. Combine freely, e.g. `uv sync --extra gpu --extra mpi`.
-# Backend detection & fallbacks live in src/backend.py (`uv run python -m src`).
+# Backend detection & fallbacks live in src/infra/backend.py (`uv run python -m src`).
 [project.optional-dependencies]
 # MPI for local machines: mpi4py + an MPI runtime shipped as a wheel (no system MPI needed).
 mpi = [
@@ -124,7 +124,7 @@ dev = [
     { include-group = "notebook" },
 ]
 # Extra packages used by scripts under research/ (not needed by src/). cuML, FAISS and
-# scikit-learn are only for comparisons: src/ uses its own k-means and kNN (src/kmeans.py, src/knn.py).
+# scikit-learn are only for comparisons: src/ uses its own k-means and kNN (src/neighbors/kmeans.py, src/neighbors/knn.py).
 research = [
     "cuml-cu12>=25.10.0 ; sys_platform == 'linux'",
     "faiss-cpu>=1.12.0",

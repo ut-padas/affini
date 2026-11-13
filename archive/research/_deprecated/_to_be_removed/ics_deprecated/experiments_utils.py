@@ -13,7 +13,7 @@ from _experiments._deprecated._to_be_removed.ics_deprecated.surrogate import (
     HATANNSurrogate,
 )
 from src import IS_CUPY_BACKEND, RESULTS_DIR, Array, xp
-from src.logging_utils import capture_evaluations
+from src.infra.logging_utils import capture_evaluations
 
 ICS26_DIR = RESULTS_DIR / "ics26"
 ICS26_DIR.mkdir(parents=True, exist_ok=True)

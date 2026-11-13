@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from src.adaptive_clustering import adaptive_clustering
+from src.engine.adaptive_clustering import adaptive_clustering
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 import numpy as np
 from sklearn.cluster import KMeans

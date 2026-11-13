@@ -43,7 +43,7 @@ def generate_training_data_along_trajectories(seed, f, N_train, N_timesteps):
 
 if __name__ == "__main__":
     # Chaining together multiple time steps.
-    from src.logging_utils import setup_logging
+    from src.infra.logging_utils import setup_logging
 
     setup_logging()
 

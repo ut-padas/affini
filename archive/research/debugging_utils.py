@@ -1,6 +1,6 @@
 from src import IS_CUPY_BACKEND, Array, xp, _to_host
 from typing import Callable
-from src.adaptive_clustering_utils import \
+from src.engine.adaptive_clustering_utils import \
     get_n_smallest_per_block, \
     run_fused_stats, \
     run_fused_cross_cov, \

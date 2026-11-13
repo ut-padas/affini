@@ -7,7 +7,7 @@ import numpy as np
 from mpi4py import MPI
 
 from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _get_mpi_size, _to_host, xp
-from src.adaptive_clustering_utils import (
+from src.engine.adaptive_clustering_utils import (
     ClusteringConfig,
     CudaTimer,
     SurrogateMode,
@@ -20,8 +20,8 @@ from src.adaptive_clustering_utils import (
     split_rejected_clusters,
     uniform_grid_cluster_labels,
 )
-from src.logging_utils import log_mem_stats
-from src.utils import repeats
+from src.infra.logging_utils import log_mem_stats
+from src.numerics import repeats
 
 logger = logging.getLogger(__name__)
 TINY_EPS = 1e-12
@@ -1254,8 +1254,8 @@ if __name__ == "__main__":
     from functools import partial
 
     from src import RESULTS_DIR
-    from src.logging_utils import setup_logging
-    from src.plotter_utils import (
+    from src.infra.logging_utils import setup_logging
+    from src.plotting import (
         plot_adaptive_clustering_results,
         plot_mpi_level_heatmap,
         plot_mpi_rank_time_breakdown,

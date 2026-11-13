@@ -3,7 +3,7 @@ Fast PCA-based 2-means clustering using optimal 1D projections.
 References:
 - ./docs/Two-Means PCA.pdf
 
-Not used by AFINNI (src/splitting.py does the splits); kept for
+Not used by AFINNI (src/components/splitting.py does the splits); kept for
 research/benchmark_two_means_vs_kmeans.py.
 """
 

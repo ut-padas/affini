@@ -5,7 +5,7 @@ from mpi4py import MPI
 
 from _experiments.ics_deprecated.surrogate import HATANNSurrogate
 from src import RESULTS_DIR, _get_mpi_rank, _to_device, _to_host, xp
-from src.logging_utils import setup_logging
+from src.infra.logging_utils import setup_logging
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
 setup_logging()

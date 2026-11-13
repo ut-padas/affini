@@ -674,7 +674,7 @@ if __name__ == "__main__":
 
     from src import FIGURES_DIR, _get_mpi_rank
     from src.data_sampler import DataSampler
-    from src.logging_utils import setup_logging
+    from src.infra.logging_utils import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG, file_output=True)

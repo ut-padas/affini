@@ -10,7 +10,7 @@ from _experiments._deprecated._to_be_removed.ics_deprecated.experiments_utils im
     create_summary_dataframe,
     del_all_error_files_in_dir,
 )
-from src.logging_utils import consolidate_evaluations
+from src.infra.logging_utils import consolidate_evaluations
 from src.problems.anisotropic_gaussian import aniso_gaussian, aniso_gaussian_grad
 from src.problems.anisotropic_quadratic import aniso_quadratic, aniso_quadratic_grad
 from src.problems.lorenz96_flowmap import (
@@ -894,7 +894,7 @@ def vanderpol_experiment() -> Path:
 
 if __name__ == "__main__":
     from src import IS_CUPY_BACKEND
-    from src.logging_utils import setup_logging
+    from src.infra.logging_utils import setup_logging
 
     setup_logging()
 

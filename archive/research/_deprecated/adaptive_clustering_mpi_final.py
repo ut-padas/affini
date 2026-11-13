@@ -20,8 +20,8 @@ from mpi4py import MPI
 from sklearn.cluster import KMeans
 
 from src import IS_CUPY_BACKEND, Array, _get_mpi_rank, _to_device, _to_host, xp
-from src.logging_utils import log_mem_stats
-from src.utils import repeats
+from src.infra.logging_utils import log_mem_stats
+from src.numerics import repeats
 
 logger = logging.getLogger(__name__)
 
@@ -1310,7 +1310,7 @@ if __name__ == "__main__":
     from functools import partial
 
     from src import FIGURES_DIR
-    from src.logging_utils import setup_logging
+    from src.infra.logging_utils import setup_logging
     from src.problems.rosenbrock import rosenbrock, rosenbrock_grad
 
     setup_logging(console_level=logging.DEBUG)
