@@ -6,9 +6,6 @@ import numpy as np
 import pytest
 
 from src import _to_host, xp
-from src.config import ClusteringConfig
-from src.components.modes import SurrogateMode
-from src.core.clusters import ColumnBuffer, ParamSpec
 from src.components.local_models import (
     LOCAL_MODELS,
     AffineLSQModel,
@@ -20,6 +17,9 @@ from src.components.local_models import (
     make_local_model,
     output_columns,
 )
+from src.components.modes import SurrogateMode
+from src.config import ClusteringConfig
+from src.core.clusters import ColumnBuffer, ParamSpec
 from tests._helpers import assert_backend_equal
 
 K, d, fd, n, k = 7, 3, 2, 11, 4

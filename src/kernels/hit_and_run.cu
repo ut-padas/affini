@@ -1,5 +1,5 @@
-// Region mode sampling (src/region.HitAndRunSampler._walk_fused): whole hit-and-run walks, one thread per
-// chain.
+// Region mode sampling (src/region/sampling.py, HitAndRunSampler._walk_fused): whole hit-and-run walks, one
+// thread per chain.
 
 // Whole hit-and-run walks, one thread per chain (``_walk_fused``), mirroring ``_steps``: the direction
 // from the same uniforms, the box chord, the carried-constraint and Voronoi-bisector chords

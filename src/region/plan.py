@@ -20,6 +20,7 @@ from src.numerics import (
     _reduce_sum_1d,
     det_einsum,
     det_matmul,
+    repeats,
     sort_by_block_then_value,
 )
 from src.region.constants import (
@@ -48,7 +49,6 @@ from src.region.split_search import (
     _unit,
     segment_sum,
 )
-from src.numerics import repeats
 
 
 # --- The plan ------------------------------------------------------------------------

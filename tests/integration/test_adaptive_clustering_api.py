@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 
 import src.engine.adaptive_clustering as ac
+from src.components.modes import SurrogateMode
 from src.config import ClusteringConfig
 from src.core.evaluation import Evaluator
-from src.components.modes import SurrogateMode
 
 
 def _x():

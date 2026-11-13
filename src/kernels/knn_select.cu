@@ -1,4 +1,5 @@
-// src/knn.py helpers: per-row radix selection of the k smallest distances and candidate distances in float64.
+// src/neighbors/knn.py helpers: per-row radix selection of the k smallest distances and candidate distances
+// in float64.
 
 // Radix selection of each row's k smallest values (the idea of cuVS's radix top-k):
 // one block per row. Floats are mapped to order-preserving unsigned keys; four passes

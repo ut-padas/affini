@@ -1,4 +1,5 @@
-// Exact kNN candidate kernel for src/knn.py; K, BM and QT are #defined by the loader before this text.
+// Exact kNN candidate kernel for src/neighbors/knn.py; K, BM and QT are #defined by the loader before this
+// text.
 
 // Compile-time parameters (prepended): K (neighbours), BM (queries per block),
 // QT (query element type: float, or double read and rounded to float on load, so

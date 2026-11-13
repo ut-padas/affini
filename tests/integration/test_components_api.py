@@ -13,9 +13,11 @@ import numpy as np
 import pytest
 
 from src import xp
-from src.components.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion, LinfAcceptance
-from src.core.clusters import ParamSpec
-from src.config import ClusteringConfig
+from src.components.acceptance import (
+    ACCEPTANCE_CRITERIA,
+    AcceptanceCriterion,
+    LinfAcceptance,
+)
 from src.components.local_models import (
     LOCAL_MODELS,
     AffineLSQModel,
@@ -33,8 +35,10 @@ from src.components.splitting import (
     GradientLSQHessianSplit,
     split_strategy_for_mode,
 )
-from src.surrogate import AFINNISurrogate
 from src.components.trust_regions import TRUST_REGIONS, CovarianceEllipsoid, TrustRegion
+from src.config import ClusteringConfig
+from src.core.clusters import ParamSpec
+from src.surrogate import AFINNISurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
 
 rng = np.random.default_rng(3)

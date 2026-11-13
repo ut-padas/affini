@@ -31,8 +31,8 @@ from src.components.local_models import LOCAL_MODELS, LocalModel
 from src.components.modes import SurrogateMode
 from src.components.registry import component_spec
 from src.config import ClusteringConfig
-from src.engine.adaptive_clustering import _adaptive_clustering, run_collective
 from src.core.evaluation import Evaluator
+from src.engine.adaptive_clustering import _adaptive_clustering, run_collective
 from src.infra.backend import (
     MPI,  # real mpi4py.MPI, or a single-rank stand-in without MPI
 )
@@ -50,10 +50,6 @@ logger = logging.getLogger(__name__)
 
 # Per-leaf region-mode columns (see src.region), kept apart from the model's parameters.
 REGION_LEAF_COLUMNS = ("root", "path_code", "terminal_reason", "validation_status")
-
-
-
-
 
 
 _P = ParamSpec("_P")

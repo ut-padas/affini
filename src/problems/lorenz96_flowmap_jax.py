@@ -5,7 +5,7 @@ accuracy for speed; compare against the SciPy flow map before trusting results.
 
 import jax
 import jax.numpy as jnp
-from diffrax import diffeqsolve, ODETerm, Dopri5, PIDController
+from diffrax import Dopri5, ODETerm, PIDController, diffeqsolve
 
 
 # Definition of Lorenz system

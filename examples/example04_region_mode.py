@@ -61,14 +61,15 @@ from typing import cast  # noqa: E402
 import numpy as np  # noqa: E402
 
 from src import PROJECT_DIR, _to_host, xp  # noqa: E402
-from src.config import ClusteringConfig, RegionSettings  # noqa: E402
-from src.core.evaluation import Evaluator  # noqa: E402
-from src.config import (  # noqa: E402
+from src.components.modes import SurrogateMode  # noqa: E402
+from src.config import (  # noqa: E402  # noqa: E402
+    ClusteringConfig,
+    RegionSettings,
     get_MIN_PTS_PER_CLUSTER,
     get_N_TRAIN,
     get_NUM_INITIAL_CLUSTERS,
 )
-from src.components.modes import SurrogateMode  # noqa: E402
+from src.core.evaluation import Evaluator  # noqa: E402
 from src.problems.anisotropic_gaussian import aniso_gaussian  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402
 from src.problems.spherical_piecewise import spherical_piecewise  # noqa: E402

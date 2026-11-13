@@ -9,8 +9,8 @@ import pytest
 
 from src import xp
 from src.components.acceptance import ACCEPTANCE_CRITERIA, cluster_errors
-from src.config import ClusteringConfig
 from src.components.modes import SurrogateMode
+from src.config import ClusteringConfig
 from tests._helpers import host
 
 EPS = 1e-12

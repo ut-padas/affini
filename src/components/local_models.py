@@ -44,8 +44,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, xp
-from src.core.clusters import ParamSpec
 from src.components.modes import SurrogateMode
+from src.components.registry import Registry
+from src.core.clusters import ParamSpec
 from src.numerics import (
     TINY_EPS,
     _reduce_sum_1d,
@@ -54,14 +55,13 @@ from src.numerics import (
     det_einsum,
     det_matmul,
     grouped_cross,
+    repeats,
     run_fused_cross_cov,
     run_fused_stats,
     segment_cross,
-    spd_solve,
     solve_regularized_covariance_inplace,
+    spd_solve,
 )
-from src.components.registry import Registry
-from src.numerics import repeats
 
 
 @dataclass

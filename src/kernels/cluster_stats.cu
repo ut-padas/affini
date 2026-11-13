@@ -1,4 +1,5 @@
-// Per-cluster helpers of src/numerics.py: segmented max, split and trust-region projections, point norms.
+// Per-cluster helpers of src/numerics/segments.py and stats.py: segmented max, split and trust-region
+// projections, point norms.
 
 // One thread per segment: the maximum of vals[starts[k] : starts[k + 1]] (the last segment
 // ends at num_vals), scanned in order. Segments must be non-empty.

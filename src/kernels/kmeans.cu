@@ -1,4 +1,4 @@
-// Per-cluster coordinate sums for src/kmeans.py.
+// Per-cluster coordinate sums for src/neighbors/kmeans.py.
 
 // One block per cluster; threads stride over dimensions and add the cluster's rows
 // (``order[starts[c]:starts[c+1]]``) in a fixed order, so sums are reproducible.

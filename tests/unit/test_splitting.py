@@ -5,8 +5,6 @@ import pytest
 
 import src.engine.adaptive_clustering as ac
 from src import _to_host, xp
-from src.config import ClusteringConfig
-from src.core.evaluation import Evaluator
 from src.components.modes import SurrogateMode
 from src.components.splitting import (
     CovarianceHessianSplit,
@@ -16,6 +14,8 @@ from src.components.splitting import (
     SplitData,
     split_strategy_for_mode,
 )
+from src.config import ClusteringConfig
+from src.core.evaluation import Evaluator
 
 # f(x, y) = 0.01 x^2 + 100 y^2 on points that are long in x but short in y.
 HESS = np.diag([0.02, 200.0])

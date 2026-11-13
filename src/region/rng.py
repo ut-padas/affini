@@ -58,7 +58,7 @@ def _uniform_pairs_kernel():
     if _UNIFORM_PAIRS is None:
         import cupy as cp
 
-        mix = "z = (z ^ (z >> 30)) * 0x{:X}ULL; z = (z ^ (z >> 27)) * 0x{:X}ULL; z = z ^ (z >> 31);".format(_MIX1, _MIX2)
+        mix = f"z = (z ^ (z >> 30)) * 0x{_MIX1:X}ULL; z = (z ^ (z >> 27)) * 0x{_MIX2:X}ULL; z = z ^ (z >> 31);"
         _UNIFORM_PAIRS = cp.ElementwiseKernel(
             "uint64 key, uint64 ctr, uint64 tag", "raw float64 out",
             f"unsigned long long z = ctr + tag; {mix} z = key ^ z; {mix}"

@@ -30,6 +30,7 @@ from typing import Literal
 
 from src import IS_CUPY_BACKEND, Array, xp
 from src.components.modes import SurrogateMode
+from src.components.registry import Registry
 from src.numerics import (
     TINY_EPS,
     _reduce_sum_1d,
@@ -45,7 +46,6 @@ from src.numerics import (
     sort_by_block_then_value,
     taylor_residual_norms,
 )
-from src.components.registry import Registry
 
 if IS_CUPY_BACKEND:
     import cupy as cp

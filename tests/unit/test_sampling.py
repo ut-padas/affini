@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from src import _to_host, xp
-from src.core.evaluation import Evaluator
 from src.components.sampling import (
     SAMPLERS,
     ClusterPoints,
@@ -13,6 +12,7 @@ from src.components.sampling import (
     augmentation_targets,
     make_sampler,
 )
+from src.core.evaluation import Evaluator
 
 # Three well-separated 2-D clusters (sizes 1, 4, 6), cluster k centred at (100k, 100k).
 COUNTS = np.array([1, 4, 6])
@@ -134,8 +134,8 @@ def test_unknown_sampler_name():
 
 
 def test_config_rejects_unknown_sampling_method():
-    from src.config import ClusteringConfig
     from src.components.modes import SurrogateMode
+    from src.config import ClusteringConfig
 
     with pytest.raises(ValueError, match="Unknown sampling method"):
         ClusteringConfig(

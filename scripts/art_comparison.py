@@ -47,9 +47,9 @@ import numpy as np
 sys.path.insert(0, str(Path.cwd()))
 
 from src import _to_host, xp  # noqa: E402
-from src.infra.backend import MPI  # noqa: E402
 from src.config import ClusteringConfig, RegionSettings  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
+from src.infra.backend import MPI  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
 

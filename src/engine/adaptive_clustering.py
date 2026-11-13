@@ -16,25 +16,15 @@ from typing import Any, Optional
 
 import numpy as np
 
-from src import (
-    IS_CUPY_BACKEND,
-    Array,
-    _to_host,
-    xp,
-)
+from src import IS_CUPY_BACKEND, Array, _to_host, xp
 from src.config import ClusteringConfig
 from src.core.clusters import ClusterBatch
 from src.core.evaluation import Evaluator
 from src.engine.initial import _threads_for_rank0, initial_clustering
 from src.engine.io import combine_generated_data, save_generated_data
 from src.engine.refinement import _run_local_refinement
-from src.engine.work_stealing import (
-    recv_clusters,
-    send_clusters,
-)
-from src.infra.backend import (  # MPI: real mpi4py.MPI, or a single-rank stand-in
-    MPI,
-)
+from src.engine.work_stealing import recv_clusters, send_clusters
+from src.infra.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in
 from src.infra.profiling import ORACLE_TIME_KEY, Profiler, new_profiling_stats
 from src.numerics import convert_to_2d_array
 from src.region import TERMINAL_REASONS, Domain, RegionPlan, Roots, RoutingTable
@@ -42,25 +32,13 @@ from src.region import TERMINAL_REASONS, Domain, RegionPlan, Roots, RoutingTable
 # Initial scatter of clusters from rank 0 (payload tags SCATTER_TAG + 1..4); kept
 # well away from the work-stealing tags.
 SCATTER_TAG = 1000
-LOCAL_RESULT_TAG = 2000
+LOCAL_RESULT_TAG = 2000  # each rank's merged leaves and profile, sent to rank 0
 # One scope (list of profilers) per running run_collective operation, innermost last, so
 # a nested operation (e.g. a predict() inside an oracle) only cleans up its own. A stack
 # per process: concurrent operations from several threads are not supported.
-_PROFILER_SCOPES: list[list] = []  # each rank's merged leaves and profile, sent to rank 0
+_PROFILER_SCOPES: list[list] = []
 
 logger = logging.getLogger(__name__)
-TINY_EPS = 1e-12
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -330,8 +308,10 @@ def _adaptive_clustering(
     # Approximate live storage during AFFINE_COV_HESS rejected-cluster handling:
     # - base batch X/F/labels
     # - augmented X/F/labels, dx, residual work arrays, split scores/sort buffers
-    # - the current tangent residual path still expands A_tangent[label] to
-    #   (N, fd, d), so account for that until it is fused as well.
+    # - the (N, fd, d) A_tangent[label] temporary of the NumPy Taylor residual
+    #   (``taylor_residual_norms``). The CuPy kernel is fused, so this term is
+    #   conservative on the GPU; it is kept because a smaller estimate would change
+    #   batch sizes, and with them the results.
     base_batch_bytes_per_point = (d_bcast + fd_bcast + 1) * 8
     if plan is not None:  # the region plan's own footprint, with the same admission rule
         base_batch_bytes_per_point = plan.bytes_per_point()

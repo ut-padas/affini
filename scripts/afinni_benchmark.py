@@ -29,9 +29,9 @@ import numpy as np
 sys.path.insert(0, str(Path.cwd()))
 
 from src import xp  # noqa: E402
-from src.config import ClusteringConfig# noqa: E402
-from src.core.evaluation import Evaluator# noqa: E402
-from src.components.modes import SurrogateMode# noqa: E402
+from src.components.modes import SurrogateMode  # noqa: E402
+from src.config import ClusteringConfig  # noqa: E402
+from src.core.evaluation import Evaluator  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
 from src.problems.anisotropic_gaussian import aniso_gaussian  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402

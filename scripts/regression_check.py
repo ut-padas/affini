@@ -34,9 +34,9 @@ import numpy as np
 sys.path.insert(0, str(Path.cwd()))
 
 from src import IS_CUPY_BACKEND, _to_host, xp  # noqa: E402
-from src.config import ClusteringConfig# noqa: E402
-from src.core.evaluation import Evaluator# noqa: E402
-from src.components.modes import SurrogateMode# noqa: E402
+from src.components.modes import SurrogateMode  # noqa: E402
+from src.config import ClusteringConfig  # noqa: E402
+from src.core.evaluation import Evaluator  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
 warnings.simplefilter("ignore", DeprecationWarning)

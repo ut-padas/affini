@@ -8,12 +8,7 @@ from typing import Optional
 
 import numpy as np
 
-from src import (
-    IS_CUPY_BACKEND,
-    Array,
-    _to_host,
-    xp,
-)
+from src import IS_CUPY_BACKEND, Array, _to_host, xp
 from src.components.local_models import ClusterFitData, deploy_leaves, output_columns
 from src.components.sampling import augment_clusters, augmentation_targets
 from src.components.splitting import SplitData
@@ -21,12 +16,8 @@ from src.config import ClusteringConfig
 from src.core.clusters import ClusterBatch, ClusterQueueBuilder, ColumnBuffer
 from src.core.evaluation import Evaluator
 from src.engine.io import save_generated_data
-from src.engine.work_stealing import (
-    make_work_stealer,
-)
-from src.infra.backend import (  # MPI: real mpi4py.MPI, or a single-rank stand-in
-    MPI,
-)
+from src.engine.work_stealing import make_work_stealer
+from src.infra.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in
 from src.infra.logging_utils import log_mem_stats
 from src.infra.profiling import Profiler
 from src.numerics import _reduce_sum_1d, repeats
@@ -77,7 +68,6 @@ def _check_split(splitter, order, child_sizes, counts, labels) -> None:
             f"Split strategy {splitter.name!r} returned an order that drops, duplicates "
             f"or moves rows between clusters."
         )
-
 
 
 @dataclass
@@ -308,10 +298,9 @@ def _run_local_refinement(
     returns finalized output buffers plus counts.
 
     This is the executor shared by both algorithm plans: it owns batching, device
-    transfers, queues, work stealing and statistics. Each batch is processed by the
-    AFINNI plan (the inline body below, in the original order and arithmetic, so its
-    results are bit-identical) or, with ``plan``, by
-    ``RegionPlan.process_batch``, whose split records are returned in the buffers under
+    transfers, queues, work stealing and statistics. Each batch is processed by
+    ``_afinni_batch`` (AFINNI mode, in the original order and arithmetic, so its
+    results are bit-identical) or, with ``plan``, by ``RegionPlan.process_batch``, whose split records are returned in the buffers under
     ``"node:<column>"`` keys.
 
     Algorithm settings (tolerances, limits, seed, work stealing, ...) are read

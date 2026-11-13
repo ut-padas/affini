@@ -48,8 +48,8 @@ from collections.abc import Sequence
 import numpy as np
 
 from src import Array, _to_host, xp
-from src.numerics import TINY_EPS, _reduce_max_1d, _reduce_sum_1d
 from src.components.registry import Registry
+from src.numerics import TINY_EPS, _reduce_max_1d, _reduce_sum_1d
 
 Tolerance = float | Sequence[float] | Array | None
 

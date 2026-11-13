@@ -10,11 +10,11 @@ from tests.mpi._mpi_worker import RESULT_PREFIX
 def main():
     import src.engine.adaptive_clustering as ac
     import src.engine.work_stealing as ws
-    from src.config import ClusteringConfig
-    from src.core.evaluation import Evaluator
     from src.components.modes import SurrogateMode
-    from src.infra.backend import MPI
+    from src.config import ClusteringConfig
     from src.core.clusters import ClusterBatch
+    from src.core.evaluation import Evaluator
+    from src.infra.backend import MPI
     from src.infra.profiling import Profiler, new_profiling_stats
 
     world = MPI.COMM_WORLD

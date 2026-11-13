@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from src import _to_host, xp
-from src.core.clusters import ClusterBatch, ClusterQueueBuilder
 from src.components.splitting import median_split_sizes
+from src.core.clusters import ClusterBatch, ClusterQueueBuilder
 
 
 def _parts(rng, sizes, d=2, fd=1, has_g=False):

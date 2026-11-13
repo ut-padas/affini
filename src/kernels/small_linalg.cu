@@ -1,5 +1,5 @@
-// Small batched dense algebra for src/numerics: SPD solves, products with a fixed inner order, the affine-fit
-// Cholesky.
+// Small batched dense algebra for src/numerics/linalg.py: SPD solves, products with a fixed inner order, the
+// affine-fit Cholesky.
 
 // Cholesky A = L L^T in place, column by column (lower triangle only). One thread per system
 // suits the p <= ~30 systems of training. Returns false for a non-SPD (or NaN) pivot.

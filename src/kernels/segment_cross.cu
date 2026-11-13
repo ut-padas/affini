@@ -1,5 +1,5 @@
-// Deterministic segmented sums and cross products for src/numerics.segment_cross (untiled, shared-memory
-// tiled, chunk reduction).
+// Deterministic segmented sums and cross products for segment_cross in src/numerics/segments.py
+// (untiled, shared-memory tiled, chunk reduction).
 
 // Deterministic segmented cross products (see ``segment_cross``). Output entry (r, c) of
 // segment k is a sequential sum over fixed SEGMENT_CHUNK-row chunks counted from the

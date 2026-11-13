@@ -16,6 +16,7 @@ symmetric positive semi-definite (K, d, d) matrices) and register it in
 from abc import ABC, abstractmethod
 
 from src import Array, xp
+from src.components.registry import Registry
 from src.numerics import (
     TINY_EPS,
     _reduce_max_1d,
@@ -23,7 +24,6 @@ from src.numerics import (
     det_matmul,
     run_fused_mahalanobis_projection,
 )
-from src.components.registry import Registry
 
 
 class TrustRegion(ABC):

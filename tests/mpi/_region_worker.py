@@ -20,9 +20,9 @@ from tests.mpi._mpi_worker import RESULT_PREFIX
 
 def main() -> None:
     from src import _to_host, xp
-    from src.infra.backend import MPI
     from src.config import ClusteringConfig, RegionSettings
     from src.core.evaluation import Evaluator
+    from src.infra.backend import MPI
     from src.surrogate import AFINNISurrogate
 
     rank = MPI.COMM_WORLD.Get_rank()

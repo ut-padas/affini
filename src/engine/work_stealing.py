@@ -17,8 +17,10 @@ import time
 
 import numpy as np
 
-from src.infra.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
 from src.core.clusters import QUEUE_COLUMNS, ClusterBatch
+from src.infra.backend import (
+    MPI,  # real mpi4py.MPI, or a single-rank stand-in without MPI
+)
 from src.infra.profiling import Profiler
 
 logger = logging.getLogger(__name__)

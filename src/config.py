@@ -41,12 +41,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from src.components.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion, Tolerance, normalize_tolerance
+from src.components.acceptance import (
+    ACCEPTANCE_CRITERIA,
+    AcceptanceCriterion,
+    Tolerance,
+    normalize_tolerance,
+)
 from src.components.local_models import LOCAL_MODELS, LocalModel, local_model_for_mode
 from src.components.modes import SurrogateMode
 from src.components.registry import ComponentSpec, component_spec
 from src.components.sampling import SAMPLERS, Sampler
-from src.components.splitting import SPLIT_STRATEGIES, SplitStrategy, split_strategy_for_mode
+from src.components.splitting import (
+    SPLIT_STRATEGIES,
+    SplitStrategy,
+    split_strategy_for_mode,
+)
 from src.components.trust_regions import TRUST_REGIONS, CovarianceEllipsoid, TrustRegion
 
 logger = logging.getLogger(__name__)

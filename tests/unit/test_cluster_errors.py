@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 
 from src import _to_host, xp
-from src.config import ClusteringConfig
-from src.components.modes import SurrogateMode
 from src.components.acceptance import cluster_errors
+from src.components.modes import SurrogateMode
+from src.config import ClusteringConfig
 
 # Two clusters of 2 points with fd = 2: cluster 0 is fitted exactly, cluster 1
 # is off by 0.5 in the first component of its second point.

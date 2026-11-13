@@ -1,5 +1,5 @@
-// Region mode B4 (src/region.py): soft gates, line-search trials and node selection, residuals, objective
-// terms, B3 bin sides.
+// Region mode B4 (src/region/split_search.py): soft gates, line-search trials and node selection,
+// residuals, objective terms, B3 bin sides.
 //
 // One B4 iteration on the GPU (_soft_objective_fused, then _soft_step), all node state in place:
 //   soft_gates -> segment_cross (both children's Grams) -> spd_solve -> soft_residuals

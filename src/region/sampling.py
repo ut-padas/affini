@@ -8,11 +8,11 @@ from src import IS_CUPY_BACKEND, Array, kernels, xp
 from src.components.sampling import ClusterPoints, Sampler
 from src.numerics import (
     det_einsum,
+    repeats,
 )
 from src.region.geometry import Domain, Roots
 from src.region.rng import _GOLDEN, _MIX1, _MIX2, counter_uniform_pairs
 from src.region.split_search import segment_sum
-from src.numerics import repeats
 
 
 # --- Sampling inside polytopes -------------------------------------------------------

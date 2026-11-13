@@ -13,25 +13,25 @@ import jax
 import matplotlib.pyplot as plt
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_host, xp
-from src.config import ClusteringConfig
-from src.core.evaluation import Evaluator
 from src.components.modes import SurrogateMode
-from src.infra.backend import MPI
+from src.components.sampling import SAMPLERS
 from src.config import (
+    ClusteringConfig,
     get_MIN_PTS_PER_CLUSTER,
     get_N_TRAIN,
     get_NUM_INITIAL_CLUSTERS,
 )
+from src.core.evaluation import Evaluator
+from src.infra.backend import MPI
 from src.plotting import (
     plot_adaptive_clustering_results,
     plot_cluster_projections_for_wave,
     plot_error_histogram,
     plot_near_centers,
-    plot_wave_2d_errors,
     plot_profile_dashboard,
+    plot_wave_2d_errors,
     plot_wave_line_errors,
 )
-from src.components.sampling import SAMPLERS
 from src.surrogate import AFINNISurrogate, compute_error_metrics
 
 TINY_EPS = 1e-12

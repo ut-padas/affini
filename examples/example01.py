@@ -5,15 +5,19 @@ MPI ranks (`mpiexec -n 4 python -m examples.example01`), where rank 0 reports.
 """
 
 from pathlib import Path
-from src import get_mpi_rank, xp
-from src.config import ClusteringConfig
-from src.core.evaluation import Evaluator
-from src.components.modes import SurrogateMode
-from src.config import get_MIN_PTS_PER_CLUSTER, get_N_TRAIN, get_NUM_INITIAL_CLUSTERS
-from src.surrogate import AFINNISurrogate
-from src.problems.rosenbrock import rosenbrock
-from src.plotting import plot_adaptive_clustering_results
 
+from src import get_mpi_rank, xp
+from src.components.modes import SurrogateMode
+from src.config import (
+    ClusteringConfig,
+    get_MIN_PTS_PER_CLUSTER,
+    get_N_TRAIN,
+    get_NUM_INITIAL_CLUSTERS,
+)
+from src.core.evaluation import Evaluator
+from src.plotting import plot_adaptive_clustering_results
+from src.problems.rosenbrock import rosenbrock
+from src.surrogate import AFINNISurrogate
 
 if __name__ == "__main__":
 
