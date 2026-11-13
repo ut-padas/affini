@@ -1,7 +1,7 @@
 """
 Settings for adaptive clustering, and the components they select.
 
-``ClusteringConfig`` holds every algorithm setting. The pieces of the refinement
+``TrainingConfig`` holds every algorithm setting. The pieces of the refinement
 loop that can be swapped are *components*:
 
 =================  ================================  ===================================
@@ -165,7 +165,7 @@ class ARTSettings:
 
 
 @dataclass(kw_only=True)
-class ClusteringConfig:
+class TrainingConfig:
     """
     Every algorithm setting of a training run (``AFINNISurrogate.train`` or
     ``refine``); the functions to evaluate go in an ``Evaluator``.

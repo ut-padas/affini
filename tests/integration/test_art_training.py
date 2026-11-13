@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from src import xp
-from src.config import ARTSettings, ClusteringConfig
+from src.config import ARTSettings, TrainingConfig
 from src.core.evaluation import Evaluator
 from src.surrogate import AFINNISurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
@@ -193,7 +193,7 @@ def test_art_settings_validation():
         ARTSettings(roots="hexagon")
     with pytest.raises(ValueError, match="walk_steps"):
         ARTSettings(walk_steps=0)
-    assert ClusteringConfig(atol=1, algorithm="art", domain=DOMAIN, art={"roots": "grid"}).art.roots == "grid"
+    assert TrainingConfig(atol=1, algorithm="art", domain=DOMAIN, art={"roots": "grid"}).art.roots == "grid"
 
 
 

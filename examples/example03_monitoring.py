@@ -35,7 +35,7 @@ import src.engine.work_stealing as ws  # noqa: E402
 from src import PROJECT_DIR, get_mpi_rank, get_mpi_size, xp  # noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
 from src.config import (  # noqa: E402
-    ClusteringConfig,  # noqa: E402
+    TrainingConfig,  # noqa: E402
     get_MIN_PTS_PER_CLUSTER,
     get_NUM_INITIAL_CLUSTERS,
 )
@@ -84,7 +84,7 @@ if __name__ == "__main__":
 
     surrogate = AFINNISurrogate()
     t0 = time.perf_counter()
-    config = ClusteringConfig(
+    config = TrainingConfig(
         mode=SurrogateMode.AFFINE_COV_HESS,
         atol=ATOL,
         error_metric=args.metric,

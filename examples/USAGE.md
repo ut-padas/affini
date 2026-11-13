@@ -26,13 +26,13 @@ Run everything from the repository root (scripts as modules, e.g.
 ```python
 import numpy as np
 from src import xp
-from src.engine import ClusteringConfig, Evaluator, SurrogateMode
+from src.engine import TrainingConfig, Evaluator, SurrogateMode
 from src.problems.rosenbrock import rosenbrock
 from src.surrogate import AFINNISurrogate
 
 X = xp.asarray(np.random.default_rng(0).uniform(-2, 3, (50_000, 2)))
 
-config = ClusteringConfig(
+config = TrainingConfig(
     mode=SurrogateMode.AFFINE_COV_HESS, atol=0.02, rtol=0.02, error_metric="Linf",
     num_initial_clusters=25, min_pts_per_cluster=100,
 )
@@ -43,7 +43,7 @@ pred, outside = surrogate.predict(Q, k_nn=1)   # (N, fd) values, (N,) "outside e
 ```
 
 - `train(X, config, evaluator)` takes every algorithm setting from the
-  `ClusteringConfig` ([Training settings](#training-settings)) and every function
+  `TrainingConfig` ([Training settings](#training-settings)) and every function
   from the `Evaluator`.
 - `Evaluator(f_fn=f)`: `f(X)` returns `(N,)` or `(N, fd)`; vector outputs are
   supported throughout. Modes that need gradients also take `g_fn` (returning
@@ -119,7 +119,7 @@ a different order.
 
 ## Training settings
 
-Fields of `src.config.ClusteringConfig` (all keyword-only); only a tolerance is required.
+Fields of `src.config.TrainingConfig` (all keyword-only); only a tolerance is required.
 
 | Setting | Meaning |
 |---|---|
@@ -188,7 +188,7 @@ prediction. `algorithm="art"` is ART: an explicit oblique regression tree over a
 domain, built on the same engine (batched level-by-level loop, devices, MPI distribution,
 work stealing, profiling and monitor).
 
-`ClusteringConfig(algorithm="art", domain=(lower, upper), ...)` needs the domain
+`TrainingConfig(algorithm="art", domain=(lower, upper), ...)` needs the domain
 explicitly, because it is what routing covers and what `audit` samples
 (`domain="data_bbox"` uses the training points' bounding box, and is recorded as such).
 Settings are in `art=ARTSettings(...)`:
@@ -305,7 +305,7 @@ Three levels, all off by default (level statistics are always recorded):
 | `profile_dir="runs/x"` | The same events, streamed live to `runs/x/rank_<r>.jsonl` | Same as events |
 
 ```python
-config = ClusteringConfig(atol=0.02, profile_timing=True, profile_events=True, profile_dir="runs/rosen")
+config = TrainingConfig(atol=0.02, profile_timing=True, profile_events=True, profile_dir="runs/rosen")
 surrogate.train(X, config, Evaluator(f_fn=f))
 ps = surrogate.profiling_stats
 ps["time_total"], ps["num_levels"], ps["total_f_evals"], ps["num_generated_pts"]
@@ -472,13 +472,13 @@ MPI and work stealing, so a new component gets all of those for free.
 | Acceptance | `src.components.acceptance.AcceptanceCriterion` | `ACCEPTANCE_CRITERIA` | `error_metric`, `atol`, `rtol` |
 | Trust region | `src.components.trust_regions.TrustRegion` | `TRUST_REGIONS` | `CovarianceEllipsoid(q_reg)` |
 
-Each is a `ClusteringConfig` field and accepts an
+Each is a `TrainingConfig` field and accepts an
 instance, a registered name, or `(name, settings)`:
 
 ```python
 from src.components.splitting import CovarianceSplit
 
-config = ClusteringConfig(
+config = TrainingConfig(
     mode=SurrogateMode.AFFINE_COV_HESS,
     split_strategy=CovarianceSplit(cut="sign"),          # instance: the paper's sign cut
     sampler="convex_combination",                         # registered name
@@ -536,7 +536,7 @@ class OffsetAffine(LocalModel):
         return out + params["offset"][cluster_ids] if "offset" in params else out
 
 
-surrogate.train(X, ClusteringConfig(atol=0.02, local_model=("offset_affine", {"offset": 0.5})), Evaluator(f_fn=f))
+surrogate.train(X, TrainingConfig(atol=0.02, local_model=("offset_affine", {"offset": 0.5})), Evaluator(f_fn=f))
 ```
 
 Contracts the engine checks (with a clear error):

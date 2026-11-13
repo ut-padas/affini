@@ -1,7 +1,7 @@
 """
 The component API: modes are presets, and each component (local model, split
 strategy, sampler, acceptance criterion, trust region) can be replaced through
-``ClusteringConfig`` / ``AFINNISurrogate.train`` without editing the engine.
+``TrainingConfig`` / ``AFINNISurrogate.train`` without editing the engine.
 
 These tests check the contracts (which data a component receives, which outputs
 reach prediction, that defaults are unchanged), not the accuracy of new components.
@@ -36,7 +36,7 @@ from src.components.splitting import (
     split_strategy_for_mode,
 )
 from src.components.trust_regions import TRUST_REGIONS, CovarianceEllipsoid, TrustRegion
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.clusters import ParamSpec
 from src.surrogate import AFINNISurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
@@ -92,7 +92,7 @@ def registered():
 
 @pytest.mark.parametrize("mode", list(SurrogateMode))
 def test_mode_presets_resolve_to_their_preset_components(mode):
-    c = ClusteringConfig(mode=mode, atol=0.1, rtol=0.1, min_pts_per_cluster=37).components()
+    c = TrainingConfig(mode=mode, atol=0.1, rtol=0.1, min_pts_per_cluster=37).components()
     assert type(c.local_model) is type(local_model_for_mode(mode))
     preset_split = split_strategy_for_mode(mode, 37)
     assert type(c.split_strategy) is type(preset_split)
@@ -104,7 +104,7 @@ def test_mode_presets_resolve_to_their_preset_components(mode):
 
 
 def test_components_are_resolved_once_per_config():
-    cfg = ClusteringConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=0.1, rtol=0.1)
+    cfg = TrainingConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=0.1, rtol=0.1)
     assert cfg.components() is cfg.components()
     assert cfg.components().local_model is cfg.components().local_model
 
@@ -128,7 +128,7 @@ def test_explicit_components_equal_to_the_preset_give_identical_results():
 
 
 def test_component_settings_come_from_the_configuration():
-    cfg = ClusteringConfig(
+    cfg = TrainingConfig(
         mode=SurrogateMode.AFFINE_COV_HESS, atol=0.2, rtol=0.3, q_reg=1e-4,
         min_pts_per_cluster=55, split_strategy="covariance_hessian",
         acceptance="L2", trust_region="covariance_ellipsoid",
@@ -141,11 +141,11 @@ def test_component_settings_come_from_the_configuration():
 
 def test_unknown_or_invalid_components_fail_early():
     with pytest.raises(ValueError, match="Unknown local model"):
-        ClusteringConfig(
+        TrainingConfig(
             mode=SurrogateMode.AFFINE_COV_HESS, atol=0.1, rtol=0.1, local_model="nope"
         ).components()
     with pytest.raises(TypeError, match="split strategy spec"):
-        ClusteringConfig(
+        TrainingConfig(
             mode=SurrogateMode.AFFINE_COV_HESS, atol=0.1, rtol=0.1, split_strategy=3.5
         ).components()
 
@@ -166,7 +166,7 @@ class GradientAffineModel(AffineLSQModel):
 
 
 def test_a_gradient_model_with_a_gradient_free_split_receives_point_gradients():
-    cfg = ClusteringConfig(
+    cfg = TrainingConfig(
         mode=SurrogateMode.AFFINE_COV_NO_HESS, atol=0.1, rtol=0.1,
         local_model=GradientAffineModel(),
     )  # fmt: skip
@@ -182,7 +182,7 @@ def test_a_gradient_model_with_a_gradient_free_split_receives_point_gradients():
 
 
 def test_a_gradient_free_model_with_a_gradient_split_requires_point_gradients():
-    cfg = ClusteringConfig(
+    cfg = TrainingConfig(
         mode=SurrogateMode.NEAREST_NEIGHBOR, atol=0.1, rtol=0.1,
         local_model=ConstantModel(), split_strategy=GradientLSQHessianSplit(),
     )  # fmt: skip
@@ -374,7 +374,7 @@ def test_split_with_inconsistent_child_sizes_is_rejected():
 
 
 def test_store_hess_with_an_explicit_model_is_ignored(caplog):
-    cfg = ClusteringConfig(
+    cfg = TrainingConfig(
         mode=SurrogateMode.TAYLOR_LSQ_HESS, atol=0.1, rtol=0.1, store_hess=True,
         local_model=TaylorModel(second_order=False),
     )  # fmt: skip
@@ -391,7 +391,7 @@ def test_builtin_components_are_registered():
 
 
 def test_config_to_dict_is_serializable():
-    cfg = ClusteringConfig(mode=SurrogateMode.TAYLOR_COV_HESS, atol=0.1, rtol=0.1)
+    cfg = TrainingConfig(mode=SurrogateMode.TAYLOR_COV_HESS, atol=0.1, rtol=0.1)
     d = cfg.to_dict()
     json.dumps(d)
     assert d["mode"] == "taylor_cov_hess" and d["components"]["local_model"]["name"] == "taylor"

@@ -16,7 +16,7 @@ from src import IS_CUPY_BACKEND, _to_host, xp
 from src.components.local_models import ClusterFitData, deploy_leaves, output_columns
 from src.components.sampling import augment_clusters, augmentation_targets
 from src.components.splitting import SplitData
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.clusters import ClusterBatch, ParamSpec
 from src.core.plan import DeviceBatch
 from src.infra.io import save_generated_data
@@ -72,7 +72,7 @@ class AFINNIPlan:
     batch_floor = 50_000
     keeps_fallback_leaves = False  # clusters still above tolerance at max_levels are unresolved
 
-    def __init__(self, config: ClusteringConfig, d: int, fd: int, rank: int):
+    def __init__(self, config: TrainingConfig, d: int, fd: int, rank: int):
         self.config, self.d, self.fd, self.rank = config, d, fd, rank
         self._grid_offset = 0
         self.mempool = None

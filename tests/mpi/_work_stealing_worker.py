@@ -11,7 +11,7 @@ def main():
     import src.engine.driver as driver
     import src.engine.work_stealing as ws
     from src.components.modes import SurrogateMode
-    from src.config import ClusteringConfig
+    from src.config import TrainingConfig
     from src.core.clusters import ClusterBatch
     from src.core.evaluation import Evaluator
     from src.infra.backend import MPI
@@ -88,7 +88,7 @@ def main():
                     else np.empty(0, dtype=np.int64)
                 )
                 buffers, count, _, generated, _ = driver.refine_rank(
-                    config=ClusteringConfig(
+                    config=TrainingConfig(
                         mode=SurrogateMode.NEAREST_NEIGHBOR,
                         error_metric="Linf",
                         atol=0.05,

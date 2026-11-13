@@ -10,7 +10,7 @@ import numpy as np
 from src import _to_device, _to_host, xp
 from src.components.modes import SurrogateMode
 from src.config import (
-    ClusteringConfig,
+    TrainingConfig,
     get_MIN_PTS_PER_CLUSTER,
     get_NUM_INITIAL_CLUSTERS,
 )
@@ -337,7 +337,7 @@ if __name__ == "__main__":
     # Every output trains on the same points with the same settings, so they share one
     # initial clustering. It is cached next to the data (k-means on ~1.2M points takes
     # minutes) under a name that changes with anything the labels depend on.
-    config = ClusteringConfig(
+    config = TrainingConfig(
         mode = SurrogateMode.AFFINE_COV_HESS,
         atol = TOL,
         rtol = TOL,

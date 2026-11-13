@@ -9,7 +9,7 @@ from pathlib import Path
 from src import get_mpi_rank, xp
 from src.components.modes import SurrogateMode
 from src.config import (
-    ClusteringConfig,
+    TrainingConfig,
     get_MIN_PTS_PER_CLUSTER,
     get_N_TRAIN,
     get_NUM_INITIAL_CLUSTERS,
@@ -38,7 +38,7 @@ if __name__ == "__main__":
 
     # --- Build AFINNI surrogate ---
     surrogate = AFINNISurrogate()
-    config = ClusteringConfig(
+    config = TrainingConfig(
         mode = SurrogateMode.AFFINE_COV_HESS,
         atol = TOL,
         rtol = TOL,

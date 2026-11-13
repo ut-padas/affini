@@ -9,7 +9,7 @@ import numpy as np
 
 from src import IS_CUPY_BACKEND, xp
 from src.afinni import AFINNIPlan
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.clusters import ClusterBatch, ClusterQueueBuilder, ColumnBuffer
 from src.core.evaluation import Evaluator
 from src.core.plan import DeviceBatch, Plan
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class _Refinement:
     """What every level of one rank's refinement shares: settings, plan, outputs, stealer and running totals."""
 
-    config: ClusteringConfig
+    config: TrainingConfig
     plan: Plan
     components: object
     evaluator: Evaluator
@@ -45,7 +45,7 @@ class _Refinement:
 
 
 def refine_rank(
-    config: ClusteringConfig,
+    config: TrainingConfig,
     evaluator: Evaluator,
     clusters: ClusterBatch,
     comm: MPI.Intracomm,

@@ -20,7 +20,7 @@ from tests.mpi._mpi_worker import RESULT_PREFIX
 
 def main() -> None:
     from src import _to_host, xp
-    from src.config import ARTSettings, ClusteringConfig
+    from src.config import ARTSettings, TrainingConfig
     from src.core.evaluation import Evaluator
     from src.infra.backend import MPI
     from src.surrogate import AFINNISurrogate
@@ -56,7 +56,7 @@ def main() -> None:
         ("voronoi_steal", True, {"roots": "voronoi", **forced}),
     ):
         grants["n"] = 0
-        config = ClusteringConfig(
+        config = TrainingConfig(
             atol=2e-2, rtol=2e-2, algorithm="art", domain=([-1] * 3, [1] * 3), max_levels=12,
             num_initial_clusters=8, batch_size=2_000, use_work_stealing=stealing,
             art=ARTSettings(**{"roots": "box", "sample_multiplier": 8, "validation_samples": 8, **settings}),

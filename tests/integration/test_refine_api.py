@@ -7,7 +7,7 @@ import pytest
 
 import src.engine.driver as driver
 from src.components.modes import SurrogateMode
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
 
 
@@ -17,7 +17,7 @@ def _x():
 
 def test_config_is_keyword_only():
     with pytest.raises(TypeError):
-        ClusteringConfig(SurrogateMode.NEAREST_NEIGHBOR, 1e-3, 1e-3)  # type: ignore[misc]
+        TrainingConfig(SurrogateMode.NEAREST_NEIGHBOR, 1e-3, 1e-3)  # type: ignore[misc]
 
 
 def test_caller_config_is_not_modified(monkeypatch):
@@ -25,7 +25,7 @@ def test_caller_config_is_not_modified(monkeypatch):
 
     monkeypatch.setattr(driver, "MPI", _SerialMPI)
     # A huge batch size is always capped to fit memory inside refine().
-    config = ClusteringConfig(
+    config = TrainingConfig(
         mode=SurrogateMode.AFFINE_COV_NO_HESS,
         atol=1e-4,
         rtol=1e-4,
@@ -41,7 +41,7 @@ def test_caller_config_is_not_modified(monkeypatch):
 
 
 def test_mode_needing_gradients_without_gradient_raises():
-    config = ClusteringConfig(mode=SurrogateMode.TAYLOR_COV_HESS, atol=1e-4, rtol=1e-4)
+    config = TrainingConfig(mode=SurrogateMode.TAYLOR_COV_HESS, atol=1e-4, rtol=1e-4)
     with pytest.raises(ValueError, match="requires gradient information"):
         driver.refine(_x(), config, Evaluator(f_fn=lambda x: x**2))
 
@@ -64,7 +64,7 @@ _GRAD_NEEDS = [
 
 @pytest.mark.parametrize("mode,everywhere,centroids,none", _GRAD_NEEDS)
 def test_gradient_needs_follow_model_and_split(mode, everywhere, centroids, none):
-    config = ClusteringConfig(mode=mode, atol=1e-3, rtol=1e-3)
+    config = TrainingConfig(mode=mode, atol=1e-3, rtol=1e-3)
     assert config.requires_grad_everywhere == everywhere
     assert config.requires_grad_centroids == centroids
     assert config.requires_no_grads == none

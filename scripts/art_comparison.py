@@ -48,7 +48,7 @@ import numpy as np
 sys.path.insert(0, str(Path.cwd()))
 
 from src import _to_host, xp  # noqa: E402
-from src.config import ARTSettings, ClusteringConfig  # noqa: E402
+from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
@@ -176,15 +176,15 @@ def main() -> None:
 
     n_root = math.ceil(args.sample_multiplier * (args.dimension + 1))
     X0 = uniform(n_root, np.random.default_rng(args.seed))
-    config = ClusteringConfig(
+    config = TrainingConfig(
         algorithm="art", domain=(domain.bounds[:, 0], domain.bounds[:, 1]), rtol=tol, error_metric="pointwise",
         max_levels=args.max_depth, seed=args.seed, use_work_stealing=mine.afinni_work_stealing,
         split_strategy=mine.afinni_split,
         num_initial_clusters=max(1, 2 ** args.dimension), local_model=leaf_model,
         art=ARTSettings(roots=mine.afinni_roots, sample_multiplier=args.sample_multiplier,
-                              validation_samples=mine.afinni_validation, walk_steps=mine.afinni_walk_steps,
-                              split_search=mine.afinni_search,
-                              **({} if mine.afinni_soft_iters is None else {"soft_iters": mine.afinni_soft_iters})),
+                        validation_samples=mine.afinni_validation, walk_steps=mine.afinni_walk_steps,
+                        split_search=mine.afinni_search,
+                        **({} if mine.afinni_soft_iters is None else {"soft_iters": mine.afinni_soft_iters})),
     )  # fmt: skip
     model = AFINNISurrogate()
     comm.Barrier()

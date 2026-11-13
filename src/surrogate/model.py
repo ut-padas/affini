@@ -31,7 +31,7 @@ from src.components.acceptance import Tolerance, normalize_tolerance, tolerance_
 from src.components.local_models import LOCAL_MODELS, LocalModel
 from src.components.modes import SurrogateMode
 from src.components.registry import component_spec
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
 from src.engine.driver import _refine, run_collective
 from src.infra.backend import (
@@ -164,7 +164,7 @@ class AFINNISurrogate:
     def train(
         self,
         X_train: Array,
-        config: ClusteringConfig,
+        config: TrainingConfig,
         evaluator: Evaluator,
         *,
         Y_train: Optional[Array] = None,

@@ -10,7 +10,7 @@ import pytest
 from src import xp
 from src.components.acceptance import ACCEPTANCE_CRITERIA, cluster_errors
 from src.components.modes import SurrogateMode
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from tests._helpers import host
 
 EPS = 1e-12
@@ -114,7 +114,7 @@ def test_invalid_tolerances_are_rejected(atol, rtol, match):
     with pytest.raises(ValueError, match=match):
         ACCEPTANCE_CRITERIA.create("Linf", atol=atol, rtol=rtol)
     with pytest.raises(ValueError, match=match):
-        ClusteringConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=atol, rtol=rtol)
+        TrainingConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=atol, rtol=rtol)
 
 
 def test_a_tolerance_of_the_wrong_length_is_rejected():
@@ -124,13 +124,13 @@ def test_a_tolerance_of_the_wrong_length_is_rejected():
 
 
 def test_config_stores_tolerances_in_serializable_form():
-    cfg = ClusteringConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=np.array([0.1, 0.2]), rtol=None)
+    cfg = TrainingConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=np.array([0.1, 0.2]), rtol=None)
     assert cfg.atol == (0.1, 0.2) and cfg.rtol is None
     assert cfg.components().acceptance.settings() == {"atol": (0.1, 0.2), "rtol": None}
 
 
 def test_cluster_errors_uses_the_configured_criterion():
-    cfg = ClusteringConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=0.05, rtol=0.05, error_metric="L2")
+    cfg = TrainingConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=0.05, rtol=0.05, error_metric="L2")
     good, e_abs, e_rel = cluster_errors(cfg, xp.asarray(F), xp.asarray(F_HAT), xp.asarray(STARTS), xp.asarray(SIZES))
     np.testing.assert_array_equal(host(good), reference_good("L2", 0.05, 0.05))
     np.testing.assert_allclose(host(e_rel), reference_errors("L2")[1], rtol=1e-12)
@@ -138,7 +138,7 @@ def test_cluster_errors_uses_the_configured_criterion():
 
 def test_unknown_metric_is_rejected_by_the_config():
     with pytest.raises(ValueError, match="Unknown error metric"):
-        ClusteringConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=0.1, rtol=0.1, error_metric="Linf-global")
+        TrainingConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=0.1, rtol=0.1, error_metric="Linf-global")
 
 
 def test_pointwise_acceptance_needs_every_point_to_pass():

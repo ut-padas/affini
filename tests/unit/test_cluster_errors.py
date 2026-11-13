@@ -6,7 +6,7 @@ import pytest
 from src import _to_host, xp
 from src.components.acceptance import cluster_errors
 from src.components.modes import SurrogateMode
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 
 # Two clusters of 2 points with fd = 2: cluster 0 is fitted exactly, cluster 1
 # is off by 0.5 in the first component of its second point.
@@ -17,7 +17,7 @@ STARTS, SIZES = np.array([0, 2]), np.array([2, 2])
 
 
 def _errors(metric, atol, rtol):
-    config = ClusteringConfig(
+    config = TrainingConfig(
         mode=SurrogateMode.AFFINE_COV_HESS, atol=atol, rtol=rtol, error_metric=metric
     )
     out = cluster_errors(config, xp.asarray(F), xp.asarray(F_HAT), xp.asarray(STARTS), xp.asarray(SIZES))

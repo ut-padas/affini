@@ -7,14 +7,14 @@ import pytest
 
 from src.afinni import AFINNIPlan
 from src.art import ARTPlan, Domain, Roots
-from src.config import ARTSettings, ClusteringConfig
+from src.config import ARTSettings, TrainingConfig
 from src.core.clusters import ClusterBatch
 from src.core.plan import Plan
 
 
 def _plans():
-    afinni = AFINNIPlan(ClusteringConfig(atol=0.1), 2, 1, rank=0)
-    cfg = ClusteringConfig(atol=0.1, algorithm="art", domain=([0.0, 0.0], [1.0, 1.0]), art=ARTSettings(sample_multiplier=10))
+    afinni = AFINNIPlan(TrainingConfig(atol=0.1), 2, 1, rank=0)
+    cfg = TrainingConfig(atol=0.1, algorithm="art", domain=([0.0, 0.0], [1.0, 1.0]), art=ARTSettings(sample_multiplier=10))
     art = ARTPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
     return {"afinni": afinni, "art": art}
 
@@ -47,7 +47,7 @@ def test_batch_ends_cover_the_queue_once_in_order_and_are_never_empty(name):
 
 def test_afinni_batch_grid_admits_the_crossing_cluster_and_reanchors_behind_the_grid():
     """AFINNI's original rule: a batch ends after the cluster that crosses (index + 1) * batch_size."""
-    plan = AFINNIPlan(ClusteringConfig(atol=0.1), 2, 1, rank=0)
+    plan = AFINNIPlan(TrainingConfig(atol=0.1), 2, 1, rank=0)
     cumsum = np.cumsum([30, 30, 200, 10, 10])  # 30, 60, 260, 270, 280
     assert plan.batch_end(cumsum, 0, 0, 50) == 2  # 60 crosses 50: the crossing cluster joins
     assert plan.batch_end(cumsum, 2, 1, 50) == 3  # the oversized cluster crosses 100 alone

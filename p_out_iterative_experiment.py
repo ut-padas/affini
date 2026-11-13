@@ -13,7 +13,7 @@ from matplotlib.patches import Ellipse
 
 from src import RESULTS_DIR, Array, _to_device, _to_host, xp
 from src.components.modes import SurrogateMode
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
 from src.infra.logging_utils import setup_logging
 from src.problems.anisotropic_quadratic import _get_params, aniso_quadratic
@@ -592,7 +592,7 @@ def run_iterative_refinement(
 
         # 1. Train Surrogate
         _t_start = time.perf_counter()
-        config = ClusteringConfig(
+        config = TrainingConfig(
             mode=SurrogateMode.AFFINE_COV_HESS,
             atol=tol,
             rtol=tol,

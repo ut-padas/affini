@@ -16,7 +16,7 @@ from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_
 from src.components.modes import SurrogateMode
 from src.components.sampling import SAMPLERS
 from src.config import (
-    ClusteringConfig,
+    TrainingConfig,
     get_MIN_PTS_PER_CLUSTER,
     get_N_TRAIN,
     get_NUM_INITIAL_CLUSTERS,
@@ -191,7 +191,7 @@ def conduct_experiment_given_data(
             # Only rank 0 holds the data, but every rank must train with the same tolerances.
             atol_used = MPI.COMM_WORLD.bcast(atol_used, root=0)
         _start_train_time = time.perf_counter()
-        config = ClusteringConfig(
+        config = TrainingConfig(
             mode=ERROR_EVAL_MODE,
             atol=atol_used,
             rtol=RTOL,

@@ -5,7 +5,7 @@ import os
 import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, _to_host, xp
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.numerics import TINY_EPS, uniform_grid_bins
 
 
@@ -39,7 +39,7 @@ def _threads_for_rank0(node_ranks: int) -> int:
     return max(1, per_rank * node_ranks)
 
 
-def initial_clustering(X: Array, config: ClusteringConfig, *, threads: int | None = None) -> np.ndarray:
+def initial_clustering(X: Array, config: TrainingConfig, *, threads: int | None = None) -> np.ndarray:
     """
     The (N,) int64 host labels of the initial clustering that training with
     ``config`` starts from (``initial_clustering_method``, ``num_initial_clusters``,

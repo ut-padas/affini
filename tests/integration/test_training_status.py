@@ -8,7 +8,7 @@ import pytest
 import src.engine.driver as driver
 from src import xp
 from src.components.modes import SurrogateMode
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
 from src.infra.backend import _SerialMPI
 from src.surrogate import AFINNISurrogate
@@ -65,7 +65,7 @@ def test_failed_retrain_leaves_the_previous_model_intact():
 
 def test_low_level_result_reports_status(monkeypatch):
     monkeypatch.setattr(driver, "MPI", _SerialMPI)
-    cfg = ClusteringConfig(
+    cfg = TrainingConfig(
         mode=SurrogateMode.AFFINE_COV_HESS, atol=0.01, rtol=0.01, error_metric="Linf",
         num_initial_clusters=8, min_pts_per_cluster=40, max_levels=1, use_work_stealing=False,
     )  # fmt: skip

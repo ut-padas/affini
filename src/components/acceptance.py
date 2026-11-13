@@ -18,7 +18,7 @@ tolerance never accepts, so ``rtol`` alone is a purely relative test and ``atol`
 alone a purely absolute one. To scale an absolute tolerance by the function's
 magnitude, pass e.g. ``atol = tol * max|F_j|`` per component.
 
-Built-in criteria (``ClusteringConfig.error_metric``), with ``e = F - F_hat`` over
+Built-in criteria (``TrainingConfig.error_metric``), with ``e = F - F_hat`` over
 the cluster's points ``i``:
 
 ``"L2"``

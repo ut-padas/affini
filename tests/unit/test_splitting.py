@@ -14,7 +14,7 @@ from src.components.splitting import (
     SplitData,
     split_strategy_for_mode,
 )
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
 
 # f(x, y) = 0.01 x^2 + 100 y^2 on points that are long in x but short in y.
@@ -105,7 +105,7 @@ def test_missing_inputs_raise():
 
 
 def test_exact_hessian_mode_without_hessian_fn_fails_up_front():
-    config = ClusteringConfig(
+    config = TrainingConfig(
         mode=SurrogateMode.AFFINE_EXACT_HESS, atol=1e-3, rtol=1e-3
     )
     with pytest.raises(ValueError, match="requires an exact Hessian"):
@@ -114,7 +114,7 @@ def test_exact_hessian_mode_without_hessian_fn_fails_up_front():
 
 @pytest.mark.parametrize("mode", list(SurrogateMode))
 def test_every_mode_has_a_split_and_its_requirements_hold(mode):
-    config = ClusteringConfig(mode=mode, atol=1e-3, rtol=1e-3)
+    config = TrainingConfig(mode=mode, atol=1e-3, rtol=1e-3)
     split = split_strategy_for_mode(mode, config.min_pts_per_cluster)
     if split.needs_point_grad:
         assert config.requires_grad_everywhere

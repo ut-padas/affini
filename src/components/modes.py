@@ -1,4 +1,4 @@
-"""Named presets for ``ClusteringConfig.mode``."""
+"""Named presets for ``TrainingConfig.mode``."""
 
 from enum import Enum
 

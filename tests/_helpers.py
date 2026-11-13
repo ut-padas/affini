@@ -3,7 +3,7 @@
 import numpy as np
 
 from src import IS_CUPY_BACKEND, _to_host, xp
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
 from src.surrogate import AFINNISurrogate
 
@@ -48,9 +48,9 @@ def train_surrogate(X, surrogate=None, *, Y_train=None, initial_labels=None, **o
     """
     Train ``surrogate`` (a new ``AFINNISurrogate`` by default) and return it. The
     ``Evaluator`` fields among ``options`` build the evaluator and the rest the
-    ``ClusteringConfig``, so tests can keep one dict of options per case.
+    ``TrainingConfig``, so tests can keep one dict of options per case.
     """
     evaluator = Evaluator(**{k: options.pop(k) for k in EVALUATOR_FIELDS if k in options})
     surrogate = AFINNISurrogate() if surrogate is None else surrogate
-    surrogate.train(xp.asarray(X), ClusteringConfig(**options), evaluator, Y_train=Y_train, initial_labels=initial_labels)
+    surrogate.train(xp.asarray(X), TrainingConfig(**options), evaluator, Y_train=Y_train, initial_labels=initial_labels)
     return surrogate

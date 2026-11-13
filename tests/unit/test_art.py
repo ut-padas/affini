@@ -228,10 +228,10 @@ def test_sigmoid_is_stable_at_extreme_arguments():
 
 def test_soft_refinement_never_returns_a_worse_hard_split_than_its_incumbent():
     from src.art import ARTPlan, _hard_sse
-    from src.config import ClusteringConfig
+    from src.config import TrainingConfig
 
-    cfg = ClusteringConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]),
-                           art={"sample_multiplier": 10, "split_search": "soft"})  # fmt: skip
+    cfg = TrainingConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]),
+                         art={"sample_multiplier": 10, "split_search": "soft"})  # fmt: skip
     plan = ARTPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
     rows = _rows(np.random.default_rng(2))
     w0, z0 = xp.asarray([[0.0, 1.0]]), xp.asarray([0.5])  # a poor incumbent: the wrong axis
@@ -334,7 +334,7 @@ def test_corner_recovery_leaves_no_point_on_a_face_of_the_cell(ancestor_cut):
     d = 4
     cut = [1.0, 0.0, 0.0, 0.0, 0.5 if ancestor_cut else 1.0]  # u0 <= 0.5 is a real ancestor cut
     geo = NodePolytopes(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([2])),
-                       xp.asarray(np.array(cut)[None, None, :]), PURPOSE_TRAIN)  # fmt: skip
+                        xp.asarray(np.array(cut)[None, None, :]), PURPOSE_TRAIN)  # fmt: skip
     X = host(HitAndRunSampler(Domain(np.zeros(d), np.ones(d)), Roots.build("box", d, 1), walk_steps=8, max_walk_steps=8).sample(
         ClusterPoints(xp.zeros((3, d)), xp.asarray([3]), polytopes=geo), xp.asarray([20])
     ))  # fmt: skip
@@ -395,10 +395,10 @@ def test_close_voronoi_centres_keep_every_sample_in_its_own_thin_cell(separation
 def test_narrow_score_clouds_far_from_the_origin_keep_a_resolved_temperature():
     """Translating a node far from the origin must not collapse B4's gate temperature (raw moments cancelled)."""
     from src.art import ARTPlan, _SplitRows
-    from src.config import ClusteringConfig
+    from src.config import TrainingConfig
 
-    cfg = ClusteringConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]),
-                           art={"split_search": "soft", "soft_iters": 1})  # fmt: skip
+    cfg = TrainingConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]),
+                         art={"split_search": "soft", "soft_iters": 1})  # fmt: skip
     plan = ARTPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
     n = 200
     U = np.c_[0.9 + 1e-8 * np.linspace(-1, 1, n), np.random.default_rng(0).random(n)]
@@ -420,9 +420,9 @@ def test_drift_ignores_rounding_sized_shifts_of_a_narrow_node():
 def test_threshold_search_skips_nodes_too_small_to_split_beside_valid_ones():
     """A sparse node (fewer than 2 * min_side points, as B1 can produce) gets no candidate and no cross-node read."""
     from src.art import ARTPlan, _SplitRows
-    from src.config import ClusteringConfig
+    from src.config import TrainingConfig
 
-    cfg = ClusteringConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]), art={"split_search": "bins"})
+    cfg = TrainingConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]), art={"split_search": "bins"})
     plan = ARTPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
     big = _rows(np.random.default_rng(3))
     n_small = 2 * plan.min_side - 1
@@ -600,7 +600,7 @@ def test_fused_hit_and_run_and_uniform_pairs_match_the_generic_path(monkeypatch)
     w /= np.linalg.norm(w)
     rows = np.stack([np.r_[w, 0.5 * w.sum() + 0.02], np.r_[-w, -(0.5 * w.sum() - 0.02)]])[None]
     geo = NodePolytopes(xp.asarray([0]), xp.asarray([2]), node_keys(0, xp.asarray([0]), xp.asarray([5])),
-                       xp.asarray(rows), PURPOSE_TRAIN)  # fmt: skip
+                        xp.asarray(rows), PURPOSE_TRAIN)  # fmt: skip
     sampler = HitAndRunSampler(Domain(np.zeros(5), np.ones(5)), Roots.build("box", 5, 1), walk_steps=20)
 
     def draw():

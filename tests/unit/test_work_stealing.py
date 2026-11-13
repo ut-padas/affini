@@ -8,7 +8,7 @@ import pytest
 import src.engine.driver as driver
 import src.engine.work_stealing as ws
 from src.components.modes import SurrogateMode
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.clusters import ClusterBatch
 from src.core.evaluation import Evaluator
 from src.infra.profiling import Profiler, new_profiling_stats
@@ -123,7 +123,7 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
     comm = _Comm(grant, has_g)
     profiler = Profiler(new_profiling_stats(), events=True)
     buffers, count, _, _, levels = driver.refine_rank(
-        config=ClusteringConfig(
+        config=TrainingConfig(
             mode=SurrogateMode.NEAREST_NEIGHBOR,
             error_metric="Linf",
             atol=0.05,
@@ -165,7 +165,7 @@ def test_single_rank_respects_refinement_limit(monkeypatch, stealing, max_levels
     monkeypatch.setattr(ws, "MPI", _SerialMPI)
     result = driver.refine(
         driver.xp.asarray(np.linspace(-1, 1, 128).reshape(-1, 1)),
-        ClusteringConfig(
+        TrainingConfig(
             mode=SurrogateMode.AFFINE_COV_NO_HESS,
             atol=1e-4,
             rtol=1e-4,

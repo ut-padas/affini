@@ -6,7 +6,7 @@ roots), the queue is scattered to the ranks, each rank runs the batched level-by
 (``src.engine.refinement.refine_rank``, with work stealing between ranks), and rank 0 gathers
 and merges the leaves.
 
-Scientific choices live in the plans and the components of ``ClusteringConfig``
+Scientific choices live in the plans and the components of ``TrainingConfig``
 (``src.config``); the engine owns batching, device transfers, buffers, MPI and profiling, so a
 new component never has to change it.
 """
@@ -21,7 +21,7 @@ import numpy as np
 from src import IS_CUPY_BACKEND, Array, _to_host, xp
 from src.afinni import AFINNIPlan
 from src.art import ARTPlan, Domain, Roots
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.clusters import ClusterBatch
 from src.core.evaluation import Evaluator
 from src.engine.initial import _threads_for_rank0, initial_clustering
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 def refine(
     X: Array,
-    config: ClusteringConfig,
+    config: TrainingConfig,
     evaluator: Evaluator,
     *,
     Y: Optional[Array] = None,
@@ -108,7 +108,7 @@ def run_collective(operation, what: str):
 
 def _refine(
     X: Array,
-    config: ClusteringConfig,
+    config: TrainingConfig,
     evaluator: Evaluator,
     *,
     Y: Optional[Array] = None,
@@ -207,7 +207,7 @@ def _refine(
     return merged
 
 
-def _check_inputs(config: ClusteringConfig, evaluator: Evaluator, initial_labels) -> None:
+def _check_inputs(config: TrainingConfig, evaluator: Evaluator, initial_labels) -> None:
     """Reject settings the evaluator cannot serve before any rank evaluates or communicates."""
     if config.algorithm == "art" and initial_labels is not None:
         raise ValueError("initial_labels do not apply to algorithm='art': its roots come from art.roots.")
@@ -221,7 +221,7 @@ def _check_inputs(config: ClusteringConfig, evaluator: Evaluator, initial_labels
         )
 
 
-def _initial_data(X, Y, initial_labels, config: ClusteringConfig, evaluator: Evaluator, profiling_stats: dict,
+def _initial_data(X, Y, initial_labels, config: TrainingConfig, evaluator: Evaluator, profiling_stats: dict,
                   node_ranks: int) -> tuple[Array, Array, Array | None, np.ndarray | None]:  # fmt: skip
     """
     Rank 0: the training points with their values (and per-point gradients when the mode
@@ -260,7 +260,7 @@ def _initial_data(X, Y, initial_labels, config: ClusteringConfig, evaluator: Eva
     return X0, F0, G0, labels
 
 
-def _make_plan(config: ClusteringConfig, comm, X0: Array | None, d: int, fd: int, node_ranks: int):
+def _make_plan(config: TrainingConfig, comm, X0: Array | None, d: int, fd: int, node_ranks: int):
     """
     The same plan on every rank (collective). ART broadcasts the domain (from rank
     0's points for ``domain="data_bbox"``) and, for Voronoi roots, the initial clustering's
@@ -312,7 +312,7 @@ def _scatter(comm, queue: ClusterBatch | None, d: int, fd: int) -> ClusterBatch:
     return local
 
 
-def _cap_batch_size(config: ClusteringConfig, plan, d: int, fd: int) -> None:
+def _cap_batch_size(config: TrainingConfig, plan, d: int, fd: int) -> None:
     """
     Lower ``config.batch_size`` to what 65% of the free device memory holds at the plan's
     ``bytes_per_point``, but not below ``plan.batch_floor``. The cap sets batch boundaries,

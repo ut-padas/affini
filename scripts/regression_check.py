@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path.cwd()))
 
 from src import IS_CUPY_BACKEND, _get_mpi_rank, _to_host, xp  # noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
-from src.config import ARTSettings, ClusteringConfig  # noqa: E402
+from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
@@ -91,7 +91,7 @@ def model_arrays(s: AFINNISurrogate) -> dict[str, np.ndarray]:
 
 
 def cases():
-    """(name, fd, ClusteringConfig kwargs) for every case."""
+    """(name, fd, TrainingConfig kwargs) for every case."""
     base = dict(
         atol=0.15, rtol=0.15, num_initial_clusters=4, min_pts_per_cluster=16,
         max_clusters_est=128, max_levels=12, batch_size=200,
@@ -143,7 +143,7 @@ def run(out_prefix):
         t0 = time.perf_counter()
         try:
             s = AFINNISurrogate()
-            s.train(X, ClusteringConfig(**kwargs), Evaluator(hessian_fn=h, **fns), Y_train=f(X) if use_Y else None)
+            s.train(X, TrainingConfig(**kwargs), Evaluator(hessian_fn=h, **fns), Y_train=f(X) if use_Y else None)
             train_time = time.perf_counter() - t0
             for attr, v in model_arrays(s).items():
                 arrays[f"{name}|{attr}"] = v.reshape(len(v), -1) if v.ndim else v

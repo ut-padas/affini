@@ -7,7 +7,7 @@ import pytest
 
 from src import xp
 from src.components.modes import SurrogateMode
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.surrogate import AFINNISurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
 
@@ -103,11 +103,11 @@ def test_invalid_settings_fail_early(field, value):
     kw = dict(mode=SurrogateMode.AFFINE_COV_HESS, atol=0.1, rtol=0.1)
     kw[field] = value
     with pytest.raises(ValueError, match=field):
-        ClusteringConfig(**kw)
+        TrainingConfig(**kw)
 
 
 def test_numpy_scalars_and_mode_strings_are_accepted():
-    cfg = ClusteringConfig(
+    cfg = TrainingConfig(
         mode="taylor_cov_hess", atol=np.float32(0.1), rtol=np.float64(0.1),
         num_initial_clusters=np.int64(4), max_levels=np.int32(3),
     )  # fmt: skip
@@ -115,11 +115,11 @@ def test_numpy_scalars_and_mode_strings_are_accepted():
 
 
 def test_config_defaults_match_the_former_train_defaults_and_store_paths_as_text(tmp_path):
-    cfg = ClusteringConfig(atol=0.1, profile_dir=tmp_path)
+    cfg = TrainingConfig(atol=0.1, profile_dir=tmp_path)
     assert cfg.mode is SurrogateMode.AFFINE_COV_HESS and cfg.max_clusters_est == 1_000_000
     assert cfg.profile_dir == str(tmp_path) and json.dumps(cfg.to_dict())
 
 
 def test_saving_all_generated_training_data_warns():
     with pytest.warns(UserWarning, match="saved_training_data"):
-        ClusteringConfig(atol=0.1, save_all_gen_training_data=True)
+        TrainingConfig(atol=0.1, save_all_gen_training_data=True)

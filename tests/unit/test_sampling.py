@@ -135,16 +135,16 @@ def test_unknown_sampler_name():
 
 def test_config_rejects_unknown_sampling_method():
     from src.components.modes import SurrogateMode
-    from src.config import ClusteringConfig
+    from src.config import TrainingConfig
 
     with pytest.raises(ValueError, match="Unknown sampling method"):
-        ClusteringConfig(
+        TrainingConfig(
             mode=SurrogateMode.NEAREST_NEIGHBOR,
             atol=1e-3,
             rtol=1e-3,
             sampling_method="typo",
         )
-    ok = ClusteringConfig(mode=SurrogateMode.NEAREST_NEIGHBOR, atol=1e-3, rtol=1e-3)
+    ok = TrainingConfig(mode=SurrogateMode.NEAREST_NEIGHBOR, atol=1e-3, rtol=1e-3)
     assert ok.sampling_method in SAMPLERS
 
 

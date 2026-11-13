@@ -55,7 +55,7 @@ def _boundaries(ids: np.ndarray) -> np.ndarray:
 
 
 def plot_art_partition(surrogate, path=None, *, f_fn: Callable | None = None, tol: float | None = None,
-                          resolution: int = 400, title: str | None = None) -> plt.Figure:  # fmt: skip
+                       resolution: int = 400, title: str | None = None) -> plt.Figure:  # fmt: skip
     """
     The cells of a 2-D ART model over its domain: depth of the routed leaf, its
     terminal reason, and (with ``f_fn``) the pointwise relative error with ``tol``

@@ -63,11 +63,11 @@ uv run python -m examples.example04_art --problem all   # AFINNI vs ART on 4 pro
 ```
 
 ```python
-from src.engine import ClusteringConfig, Evaluator
+from src.engine import TrainingConfig, Evaluator
 from src.surrogate import AFINNISurrogate
 
 surrogate = AFINNISurrogate()
-surrogate.train(X, ClusteringConfig(atol=1e-2, rtol=1e-2), Evaluator(f_fn=f))
+surrogate.train(X, TrainingConfig(atol=1e-2, rtol=1e-2), Evaluator(f_fn=f))
 prediction, outside_trust_region = surrogate.predict(X_query)
 ```
 

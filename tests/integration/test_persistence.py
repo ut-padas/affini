@@ -11,7 +11,7 @@ import pytest
 from src import xp
 from src.components.local_models import LOCAL_MODELS, AffineLSQModel, LocalModel
 from src.components.modes import SurrogateMode
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.clusters import ParamSpec
 from src.core.evaluation import Evaluator
 from src.surrogate import MODEL_FORMAT_VERSION, AFINNISurrogate
@@ -41,14 +41,14 @@ def train(mode=SurrogateMode.AFFINE_COV_HESS, f_fn=f, g_fn=None, **kw):
         num_initial_clusters=4, min_pts_per_cluster=32, use_work_stealing=False,
     )  # fmt: skip
     opts.update(kw)
-    s.train(xp.asarray(X), ClusteringConfig(**opts), Evaluator(f_fn=f_fn, g_fn=g_fn))
+    s.train(xp.asarray(X), TrainingConfig(**opts), Evaluator(f_fn=f_fn, g_fn=g_fn))
     return s
 
 
 def small_config(atol, **kw):
     """atol = rtol, and few initial clusters, for the 3000-point quadratics of the retraining and profiler tests."""
-    return ClusteringConfig(**{"mode": SurrogateMode.AFFINE_COV_HESS, "atol": atol, "rtol": atol,
-                               "num_initial_clusters": 4, "min_pts_per_cluster": 40, **kw})
+    return TrainingConfig(**{"mode": SurrogateMode.AFFINE_COV_HESS, "atol": atol, "rtol": atol,
+                          "num_initial_clusters": 4, "min_pts_per_cluster": 40, **kw})
 
 
 def predictions(s):
@@ -355,4 +355,4 @@ def test_training_writes_no_files_and_the_clustering_cache_flags_are_gone(tmp_pa
     assert not list(tmp_path.iterdir())
     for flag in ("save_initial_clustering", "use_existing_initial_clustering"):
         with pytest.raises(TypeError, match=flag):
-            ClusteringConfig(atol=0.1, **{flag: True})
+            TrainingConfig(atol=0.1, **{flag: True})

@@ -10,8 +10,8 @@ samplers (``augmentation_targets`` and ``augment_clusters``).
 Adding a sampling scheme:
     1. Subclass ``Sampler`` and implement ``sample``.
     2. Register it in ``SAMPLERS`` (``@SAMPLERS.register``) so
-       ``ClusteringConfig.sampling_method`` can name it; settings can be given as
-       ``(name, {...})`` or by passing an instance as ``ClusteringConfig.sampler``.
+       ``TrainingConfig.sampling_method`` can name it; settings can be given as
+       ``(name, {...})`` or by passing an instance as ``TrainingConfig.sampler``.
 Samplers receive each cluster's points, counts and centroids (``ClusterPoints``).
 If a scheme needs more information about each cluster, it is an optional field of
 ``ClusterPoints`` passed through ``augment_clusters``: ART's hit-and-run sampler

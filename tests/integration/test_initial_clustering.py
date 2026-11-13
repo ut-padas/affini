@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import src.engine.driver as driver
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from tests._helpers import host, train_surrogate
 
 X = np.random.default_rng(4).uniform(-1, 1, (3_000, 2))
@@ -30,21 +30,21 @@ def test_labels_equal_those_training_starts_from(monkeypatch, method):
     train_surrogate(X, f_fn=f, **options)
     monkeypatch.undo()
 
-    labels = driver.initial_clustering(X, ClusteringConfig(**options))
+    labels = driver.initial_clustering(X, TrainingConfig(**options))
     assert len(used) == 1 and labels.dtype == np.int64 and labels.shape == (len(X),)
     np.testing.assert_array_equal(labels, used[0])
     assert len(np.unique(labels)) > 1
 
 
 def test_unknown_method_is_rejected():
-    config = dataclasses.replace(ClusteringConfig(atol=0.1), initial_clustering_method="spectral")
+    config = dataclasses.replace(TrainingConfig(atol=0.1), initial_clustering_method="spectral")
     with pytest.raises(ValueError, match="spectral"):
         driver.initial_clustering(X, config)
 
 
 def test_given_labels_give_the_same_model_without_clustering_again(monkeypatch):
     computed = train_surrogate(X, f_fn=f, **OPTIONS)
-    labels = driver.initial_clustering(X, ClusteringConfig(**OPTIONS))
+    labels = driver.initial_clustering(X, TrainingConfig(**OPTIONS))
 
     def forbidden(*args, **kwargs):
         raise AssertionError("initial_clustering must not run when labels are given")

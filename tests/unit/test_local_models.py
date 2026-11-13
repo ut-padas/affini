@@ -18,7 +18,7 @@ from src.components.local_models import (
     output_columns,
 )
 from src.components.modes import SurrogateMode
-from src.config import ClusteringConfig
+from src.config import TrainingConfig
 from src.core.clusters import ColumnBuffer, ParamSpec
 from tests._helpers import assert_backend_equal
 
@@ -172,7 +172,7 @@ def test_fit_returns_declared_columns():
 
 @pytest.mark.parametrize("mode", list(SurrogateMode))
 def test_every_mode_has_a_model(mode):
-    model = make_local_model(ClusteringConfig(mode=mode, atol=1e-3, rtol=1e-3))
+    model = make_local_model(TrainingConfig(mode=mode, atol=1e-3, rtol=1e-3))
     cols = output_columns(model, d, fd)
     assert {"centroids", "f", "Q", "E_cluster_abs", "E_cluster_rel", "counts"} <= cols.keys()
     assert model.needs_centroid_grad == mode.value.startswith("taylor")
@@ -180,11 +180,11 @@ def test_every_mode_has_a_model(mode):
 
 def test_store_hess_is_ignored_outside_taylor_lsq(caplog):
     with caplog.at_level(logging.WARNING):
-        cfg = ClusteringConfig(
+        cfg = TrainingConfig(
             mode=SurrogateMode.TAYLOR_COV_HESS, atol=1e-3, rtol=1e-3, store_hess=True
         )
     assert cfg.store_hess is False and "ignoring it" in caplog.text
-    lsq = ClusteringConfig(
+    lsq = TrainingConfig(
         mode=SurrogateMode.TAYLOR_LSQ_HESS, atol=1e-3, rtol=1e-3, store_hess=True
     )
     assert "H" in output_columns(make_local_model(lsq), d, fd)

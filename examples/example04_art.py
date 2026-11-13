@@ -64,7 +64,7 @@ from src import PROJECT_DIR, _to_host, xp  # noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
 from src.config import (  # noqa: E402  # noqa: E402
     ARTSettings,
-    ClusteringConfig,
+    TrainingConfig,
     get_MIN_PTS_PER_CLUSTER,
     get_N_TRAIN,
     get_NUM_INITIAL_CLUSTERS,
@@ -110,7 +110,7 @@ PROBLEMS = {
 }
 
 
-def configs(name: str, args) -> dict[str, tuple[ClusteringConfig, int]]:
+def configs(name: str, args) -> dict[str, tuple[TrainingConfig, int]]:
     """Each mode's configuration for problem ``name`` and its number of initial training points."""
     prob, d = PROBLEMS[name], args.dim
     stream = OUT_DIR / name / "stream"
@@ -119,14 +119,14 @@ def configs(name: str, args) -> dict[str, tuple[ClusteringConfig, int]]:
         {"afinni": args.tol, "art": args.tol}  # fmt: skip
     lower, upper = np.full(d, prob.domain[0]), np.full(d, prob.domain[1])
     return {
-        "afinni": (ClusteringConfig(
+        "afinni": (TrainingConfig(
             mode=SurrogateMode.AFFINE_COV_HESS, error_metric="Linf", rtol=rtol["afinni"],
             max_levels=args.afinni_max_levels or prob.afinni_max_levels,
             num_initial_clusters=get_NUM_INITIAL_CLUSTERS(d), min_pts_per_cluster=get_MIN_PTS_PER_CLUSTER(d),
             profile_dir=stream / "afinni", **common,
         ), get_N_TRAIN(d)),  # fmt: skip
         # ART's exact box root starts from one node's worth of uniform points.
-        "art": (ClusteringConfig(
+        "art": (TrainingConfig(
             algorithm="art", domain=(lower, upper), error_metric="pointwise", rtol=rtol["art"],
             max_levels=args.art_max_depth or prob.art_max_depth, art=ARTSettings(split_search=args.search),
             profile_dir=stream / "art", **common,
@@ -229,7 +229,7 @@ def compare(name: str, args) -> dict:
     if d == 2:
         lower, upper = np.full(d, prob.domain[0]), np.full(d, prob.domain[1])
         P.plot_art_partition(art, plots / "art_partition.png", f_fn=prob.f, tol=rtol,
-                                title=f"ART tree on {name}")  # fmt: skip
+                             title=f"ART tree on {name}")  # fmt: skip
         P.plot_error_maps(
             {
                 f"{names['afinni']} (kNN + trust region)": lambda X: afinni._predict_local(X, 1, 10, False)[0],
