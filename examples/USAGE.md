@@ -5,7 +5,7 @@ plot and monitor runs, how to swap parts of the algorithm, and how to check your
 changes. Installation and backend setup are in the [README](../README.md).
 
 Run everything from the repository root (scripts as modules, e.g.
-`python -m examples.example01`), so that `src` is importable.
+`python -m examples.example01_rosenbrock_afinni`), so that `src` is importable.
 
 - [Train and predict](#train-and-predict)
 - [Running on CPU, GPU and MPI](#running-on-cpu-gpu-and-mpi)
@@ -52,11 +52,11 @@ pred, outside = surrogate.predict(Q, k_nn=1)   # (N, fd) values, (N,) "outside e
   can be reused; `profiling_stats` counts only the run's own evaluations.
 - `train(..., Y_train=f(X))` skips the initial evaluations (they are still counted).
 - `train(..., initial_labels=labels)` skips the initial clustering; compute the labels
-  once with `initial_clustering(X, config)` (see [`example02_nelson.py`](example02_nelson.py)).
+  once with `initial_clustering(X, config)` (see [`example02_nelson_afinni.py`](example02_nelson_afinni.py)).
 - `predict(..., k_nn=k)` blends the `k` best leaves by trust-region distance;
   `strict_trust_region=True` ignores leaves whose region does not contain the
   query. `coarse_factor` (default 10) sets how many Euclidean neighbours are reranked.
-- [`example01.py`](example01.py) is a complete 2-D example with a plot.
+- [`example01_rosenbrock_afinni.py`](example01_rosenbrock_afinni.py) is a complete 2-D example with a plot.
 
 ## Running on CPU, GPU and MPI
 
@@ -64,10 +64,10 @@ The same script runs everywhere; the backend is chosen at import time.
 
 | Run on | Command |
 |---|---|
-| One CPU process | `AFINNI_DEVICE=cpu AFINNI_MPI=off uv run python -m examples.example01` |
-| One GPU | `AFINNI_DEVICE=gpu AFINNI_MPI=off uv run python -m examples.example01` |
-| N CPU ranks | `AFINNI_DEVICE=cpu uv run mpiexec -n 4 python -m examples.example01` |
-| N ranks sharing / owning GPUs | `AFINNI_DEVICE=gpu uv run mpiexec -n 4 python -m examples.example01` |
+| One CPU process | `AFINNI_DEVICE=cpu AFINNI_MPI=off uv run python -m examples.example01_rosenbrock_afinni` |
+| One GPU | `AFINNI_DEVICE=gpu AFINNI_MPI=off uv run python -m examples.example01_rosenbrock_afinni` |
+| N CPU ranks | `AFINNI_DEVICE=cpu uv run mpiexec -n 4 python -m examples.example01_rosenbrock_afinni` |
+| N ranks sharing / owning GPUs | `AFINNI_DEVICE=gpu uv run mpiexec -n 4 python -m examples.example01_rosenbrock_afinni` |
 | TACC | `source scripts/hpc/tacc.sh; ibrun .venv/bin/python afinni_launcher.py ...` |
 
 | Variable        | Values                         | Effect                                                                                                 |
@@ -233,13 +233,26 @@ reference ART code and this ART on the reference's benchmark problems and scores
 same test set; pass `--sampler parallel_numba` to time against the reference's fastest CPU
 configuration, and add `--traversal bfs --optimizer cupy_batched_cholesky` for its fastest GPU
 configuration. `--skip-art` / `--skip-afinni` run one side only; this ART alone also runs
-under `mpiexec`. GPU results are in Sections 42.9-42.10 of `AFINNI_ART_DESIGN.md`: on the GPU,
+under `mpiexec`. On the GPU,
 this ART's soft split search is 1-30x faster than the reference's GPU configuration, and faster than this
 ART on the CPU whenever the CPU training takes more than about 1.5 s.
 
-### Example: both algorithms on four benchmark problems
+### Example: ART on its own
 
-[`example04_art.py`](example04_art.py) compares the two algorithms on four
+[`example04_wave_art.py`](example04_wave_art.py) walks through one ART model on an oblique cosine
+(`wave`, `[-5, 5]^d`): the configuration, training from one node's worth of uniform points,
+routed prediction and the outside-domain flag, leaf statuses and `route_details`, `audit`,
+and a save/load round trip, with the tree's plots.
+
+```bash
+uv run python -m examples.example04_wave_art                              # 2-D, soft split search
+uv run python -m examples.example04_wave_art --search bins --roots grid   # other split search and roots
+uv run python -m examples.example04_wave_art --dim 3 --max-depth 16
+```
+
+### Example: AFINNI and ART on four benchmark problems
+
+[`example05_afinni_vs_art.py`](example05_afinni_vs_art.py) compares the two algorithms on four
 problems, each scored on the same uniform test points:
 
 | `--problem` | What it tests | Domain |
@@ -255,11 +268,11 @@ evaluations and training time then compare like for like. Both are scored with t
 problem's tolerance: a point is above it when `|f - f_hat| > max(atol, rtol |f|)`.
 
 ```bash
-uv run python -m examples.example04_art --problem all           # every problem + summary
-uv run python -m examples.example04_art --problem wave          # one problem
-uv run python -m examples.example04_art afinni --problem wave   # one stage (also: art, compare)
-uv run python -m examples.example04_art --list                  # problems and their limits
-uv run python -m src.infra.monitor scratch/example04_art/wave/stream/art   # or .../afinni
+uv run python -m examples.example05_afinni_vs_art --problem all           # every problem + summary
+uv run python -m examples.example05_afinni_vs_art --problem wave          # one problem
+uv run python -m examples.example05_afinni_vs_art afinni --problem wave   # one stage (also: art, compare)
+uv run python -m examples.example05_afinni_vs_art --list                  # problems and their limits
+uv run python -m src.infra.monitor scratch/example05_afinni_vs_art/wave/stream/art   # or .../afinni
 ```
 
 In 2-D, one process on one CPU (AFINNI / ART; about 30 s for all four):
@@ -291,7 +304,7 @@ laptop on battery. Notes per problem:
 `--dim` its dimension (the limits are matched in 2-D only) and `--search` ART's
 split search. The example runs in one process (`AFINNI_MPI` defaults to `off`), so the
 training times compare directly. Outputs go to
-`scratch/example04_art/<problem>/` (both models, `metrics.json`, the plots of
+`scratch/example05_afinni_vs_art/<problem>/` (both models, `metrics.json`, the plots of
 [Plots](#plots)); `--problem all` also writes `summary.json` and `summary.png`.
 
 ## Profiling
@@ -323,7 +336,7 @@ launcher, under `profiling_stats` in each result JSON.
 All plots live in [`src/plotting/`](../src/plotting/) and accept a surrogate, its
 `profiling_stats`, a saved profile JSON loaded with `json.load`, or (timeline plots)
 the event streams. Each returns the figure and saves it when given a path.
-[`example03_monitoring.py`](example03_monitoring.py) produces every profile plot
+[`example03_monitoring_afinni.py`](example03_monitoring_afinni.py) produces every profile plot
 below from one multi-rank run.
 
 ```python
@@ -357,8 +370,8 @@ P.plot_steal_matrix(surrogate, "figs/steals.png")             # needs steals (MP
 
 Profile plots work for both algorithms: titles name the plan, and the forest-growth panels
 show ART's fallback leaves (nodes stopped at the depth limit) separately.
-[`example04_art.py`](example04_art.py) produces every comparison and
-ART plot, for each of its problems.
+[`example04_wave_art.py`](example04_wave_art.py) draws the ART plots of one model and
+[`example05_afinni_vs_art.py`](example05_afinni_vs_art.py) every comparison plot, for each of its problems.
 
 The tables behind the profile plots are available for your own analysis:
 `P.phase_breakdown_frame`, `P.level_stats_frame`, `P.events_frame`,
@@ -384,22 +397,22 @@ figure; export it from `src/plotting/__init__.py`.
 ## Live monitoring
 
 Train with `profile_dir`, then watch from another terminal.
-[`example03_monitoring.py`](example03_monitoring.py) is a ready-made run: 8 MPI
+[`example03_monitoring_afinni.py`](example03_monitoring_afinni.py) is a ready-made run: 8 MPI
 ranks on the CPU train a 5-D Rosenbrock surrogate (2M points, tol 0.007; about 85 s
 on a 22-core laptop). Ranks finish their own work at different times, and the idle
 ones steal from the busy ones (~60 steals).
 
 ```bash
 # terminal 1: train (8 ranks, CPU)
-uv run mpiexec -n 8 python -m examples.example03_monitoring
+uv run mpiexec -n 8 python -m examples.example03_monitoring_afinni
 # terminal 2: live view; exits when every rank is done
-uv run python -m src.infra.monitor scratch/example03_monitoring/stealing/stream
+uv run python -m src.infra.monitor scratch/example03_monitoring_afinni/stealing/stream
 # afterwards (or any time): one snapshot
-uv run python -m src.infra.monitor scratch/example03_monitoring/stealing/stream --once
+uv run python -m src.infra.monitor scratch/example03_monitoring_afinni/stealing/stream --once
 
 # the same run without work stealing, for comparison
-uv run mpiexec -n 8 python -m examples.example03_monitoring --stealing off
-uv run python -m src.infra.monitor scratch/example03_monitoring/no_stealing/stream
+uv run mpiexec -n 8 python -m examples.example03_monitoring_afinni --stealing off
+uv run python -m src.infra.monitor scratch/example03_monitoring_afinni/no_stealing/stream
 ```
 
 Per rank the monitor shows the current phase (or idle / asking for work / retiring /
@@ -412,7 +425,7 @@ that run out of work (idle, "asking R2 for work") and the steal counts and load 
 changing as work moves.
 
 At the end the example writes `profile.json` and every profile plot (see
-[Plots](#plots)) to `scratch/example03_monitoring/stealing/` or `.../no_stealing/`,
+[Plots](#plots)) to `scratch/example03_monitoring_afinni/stealing/` or `.../no_stealing/`,
 depending on `--stealing on|off`. Comparing the two timelines and time breakdowns
 shows what work stealing buys: without it, ranks that finish their own share early
 sit idle until the slowest rank is done. `--dim`, `--n-train`, `--tol`, `--init`

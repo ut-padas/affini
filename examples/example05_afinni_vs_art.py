@@ -1,29 +1,29 @@
 """
-AFINNI against ART (an oblique adaptive regression tree) on several benchmark
-problems, each scored on the same independent uniform test points:
+AFINNI against ART on four benchmark problems, each scored on the same independent uniform
+test points (``example04_wave_art.py`` introduces ART on its own):
 
 =====================  ==========================================================  ==========
 problem                what it tests                                               domain
 =====================  ==========================================================  ==========
-spherical_piecewise    a jump across a circle (ART's TACC preset)                  [-3, 3]^d
+spherical_piecewise    a jump across a circle (reference ART's TACC preset)        [-3, 3]^d
 anisotropic_gaussian   smooth, rotated and strongly anisotropic                    [-3, 3]^d
 wave                   a cosine along an oblique direction                         [-5, 5]^d
 rosenbrock             a narrow curved valley whose minimum is 0 (needs atol)      [-2, 3]^d
 =====================  ==========================================================  ==========
 
 Each problem's depth limits (``Problem.afinni_max_levels``, ``Problem.art_max_depth``)
-are chosen so the two modes reach about the same relative L2 error in 2-D on one CPU each,
+are chosen so the two approaches reach about the same relative L2 error in 2-D on one CPU each,
 so leaves, oracle evaluations and training time compare like for like (``PROBLEMS`` records
-the measured match). Each mode trains in its own stage, then ``compare`` loads the saved
+the measured match). Each approach trains in its own stage, then ``compare`` loads the saved
 models, evaluates them and draws the plots:
 
-    uv run python -m examples.example04_art --problem all            # every problem
-    uv run python -m examples.example04_art --problem wave           # one problem
-    uv run python -m examples.example04_art afinni --problem wave    # one stage of one
-    uv run python -m examples.example04_art compare --problem wave
-    uv run python -m examples.example04_art --list                   # the problems
+    uv run python -m examples.example05_afinni_vs_art --problem all            # every problem
+    uv run python -m examples.example05_afinni_vs_art --problem wave           # one problem
+    uv run python -m examples.example05_afinni_vs_art afinni --problem wave    # one stage of one
+    uv run python -m examples.example05_afinni_vs_art compare --problem wave
+    uv run python -m examples.example05_afinni_vs_art --list                   # the problems
     # live view of a training stage, from another terminal:
-    uv run python -m src.infra.monitor scratch/example04_art/wave/stream/art   # or .../afinni
+    uv run python -m src.infra.monitor scratch/example05_afinni_vs_art/wave/stream/art   # or .../afinni
 
 Everything runs in one process on one CPU (``AFINNI_MPI`` defaults to ``off`` here), so
 training times compare directly. ``--afinni-max-levels`` and
@@ -34,9 +34,9 @@ ART uses the reference ART's settings (``ceil(50 (d + 1))`` points per node, aff
 pointwise stopping rule, the consistent soft-oblique splitter); a node at its depth limit
 keeps its fitted model. AFINNI uses its default mode (``AFFINE_COV_HESS``, Linf test). A
 test point counts as above tolerance when ``|f - f_hat| > max(atol, rtol |f|)``, the rule
-both modes train with.
+both approaches train with.
 
-Outputs, under ``scratch/example04_art/<problem>``: both models with their
+Outputs, under ``scratch/example05_afinni_vs_art/<problem>``: both models with their
 training times, ``metrics.json``, and in ``plots/`` the error distributions, a metric
 comparison, the ART tree's statistics and each run's profile dashboard; in 2-D also the
 ART partition, side-by-side error maps and AFINNI's trust ellipsoids. With
@@ -62,7 +62,7 @@ import numpy as np  # noqa: E402
 
 from src import PROJECT_DIR, _to_host, xp  # noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
-from src.config import (  # noqa: E402  # noqa: E402
+from src.config import (  # noqa: E402
     ARTSettings,
     TrainingConfig,
     get_MIN_PTS_PER_CLUSTER,
@@ -76,27 +76,27 @@ from src.problems.spherical_piecewise import spherical_piecewise  # noqa: E402
 from src.problems.wave import wave  # noqa: E402
 from src.surrogate import AFINNISurrogate, compute_error_metrics  # noqa: E402
 
-OUT_DIR = PROJECT_DIR / "scratch" / "example04_art"
+OUT_DIR = PROJECT_DIR / "scratch" / "example05_afinni_vs_art"
 SEED = 0
 METHODS = ("afinni", "art")
 
 
 @dataclass(frozen=True)
 class Problem:
-    """A benchmark and the depth limits at which both modes reach about the same relative L2 error."""
+    """A benchmark and the depth limits at which both approaches reach about the same relative L2 error."""
 
     f: Callable
     domain: tuple[float, float]
     afinni_max_levels: int
     art_max_depth: int
     atol: float | None = None  # needed where f reaches 0, where a relative test never passes
-    rtol: float = 1e-2  # the tolerance both modes are scored with (and train with, by default)
+    rtol: float = 1e-2  # the tolerance both approaches are scored with (and train with, by default)
     art_rtol: float | None = None  # ART's training rtol, when it must differ to match L2
     note: str = ""
 
 
 # Matched in 2-D on 20,000 test points, one CPU each; note = relative L2 and % of points
-# above tolerance, AFINNI / ART. Where a mode converges before its limit, the
+# above tolerance, AFINNI / ART. Where an approach converges before its limit, the
 # limit is not what stops it ("50" for AFINNI means uncapped in practice).
 PROBLEMS = {
     "spherical_piecewise": Problem(spherical_piecewise, (-3.0, 3.0), 7, 12,
@@ -111,7 +111,7 @@ PROBLEMS = {
 
 
 def configs(name: str, args) -> dict[str, tuple[TrainingConfig, int]]:
-    """Each mode's configuration for problem ``name`` and its number of initial training points."""
+    """Each approach's configuration for problem ``name`` and its number of initial training points."""
     prob, d = PROBLEMS[name], args.dim
     stream = OUT_DIR / name / "stream"
     common = {"seed": SEED, "use_work_stealing": False, "profile_timing": True, "atol": prob.atol}
@@ -135,7 +135,7 @@ def configs(name: str, args) -> dict[str, tuple[TrainingConfig, int]]:
 
 
 def train(name: str, method: str, args) -> None:
-    """Train one mode and save it with its wall time."""
+    """Train one approach and save it with its wall time."""
     config, n = configs(name, args)[method]
     prob = PROBLEMS[name]
     X = xp.asarray(np.random.default_rng(SEED).uniform(*prob.domain, (n, args.dim)))
@@ -187,7 +187,7 @@ def compare(name: str, args) -> dict:
             raise SystemExit(f"[{name}] {method} was trained with dim={run['dim']}; rerun its stage.")
         models[method], runs[method] = AFINNISurrogate.load_model(out / f"{method}_model"), run
     afinni, art = models["afinni"], models["art"]
-    # Both modes are scored with the problem's tolerance, whatever they trained with.
+    # Both approaches are scored with the problem's tolerance, whatever they trained with.
     atol, rtol = prob.atol, prob.rtol if args.tol is None else args.tol
     X_test = xp.asarray(np.random.default_rng(SEED + 1).uniform(*prob.domain, (10_000 * d, d)))
     truth = prob.f(X_test)
@@ -281,7 +281,7 @@ if __name__ == "__main__":
     p.add_argument("--problem", default="all", choices=("all", *PROBLEMS), help="one problem, or all of them")
     p.add_argument("--list", action="store_true", help="list the problems and exit")
     p.add_argument("--dim", type=int, default=2)
-    p.add_argument("--tol", type=float, default=None, help="rtol for both modes (default: the problem's)")
+    p.add_argument("--tol", type=float, default=None, help="rtol for both approaches (default: the problem's)")
     p.add_argument("--search", default="soft", choices=("gap", "bins", "soft"), help="ART split search")
     p.add_argument("--art-max-depth", type=int, default=None, help="override the problem's ART depth limit")
     p.add_argument("--afinni-max-levels", type=int, default=None, help="override the problem's AFINNI depth limit")

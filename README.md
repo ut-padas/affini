@@ -1,17 +1,32 @@
-# `AFINNI` - Adaptive Affine Nearest Neighbor Interpolation
+# Adaptive surrogates of expensive functions: AFINNI and ART
 
-`AFINNI` builds fast surrogates of smooth, expensive functions: it adaptively clusters
-samples of the function, refines clusters until a local affine model meets a
-tolerance, and answers queries with the best local model by trust-region distance.
+This repository builds fast surrogates of smooth, expensive functions from as few evaluations
+of the function as possible. It provides two approaches; both refine a set of local models
+(affine or quadratic) until each meets a tolerance, and differ in how they divide the input
+space and how a query finds its model. Choose one with `TrainingConfig(algorithm=...)`.
 
-The repository implements two algorithms on one **refinement engine** (`src/engine/`):
-**AFINNI**, the adaptive clustering above (`algorithm="afinni"`, the default), and
-**ART**, adaptive regression trees: an oblique tree of polytopes over a box domain,
-queried by routing (`algorithm="art"`). The engine runs either one breadth-first, level by
-level, streaming the queued nodes from host memory to the CPU or GPU in batches, across
-MPI ranks with work stealing.
+### AFINNI: adaptive affine nearest-neighbour interpolation
 
-It runs on **Linux, macOS and Windows**. It always works on the CPU, and can
+`algorithm="afinni"` (the default). The training points are clustered, and every cluster whose
+local model misses the tolerance is augmented and bisected along a curvature-informed
+direction, giving a forest of accepted clusters. Each accepted cluster carries a trust
+ellipsoid; a query is answered by the nearest leaf in trust-region distance, and flagged when
+it lies outside every trust region. Suited to fast training from a given sample.
+
+### ART: adaptive regression trees
+
+`algorithm="art"`. An oblique binary tree of convex polytopes over an explicit box domain:
+every node is topped up with fresh points inside its polytope, and every node whose model
+misses the tolerance is cut by an optimized hyperplane. A query is routed down the tree, so
+every point of the domain has exactly one leaf. Suited to expensive functions: fewer
+evaluations for the same error, and a model that covers the whole domain.
+
+Both run on one **refinement engine** (`src/engine/`): the partition is refined breadth-first,
+level by level, with the queued nodes kept in host memory and streamed to the CPU or GPU in
+batches, distributed across MPI ranks with work stealing. Local models, acceptance tests,
+devices, MPI, profiling, the live monitor and model files are shared.
+
+The code runs on **Linux, macOS and Windows**. It always works on the CPU, and can
 optionally use **MPI** (multiple processes/nodes, with work stealing) and/or an
 **NVIDIA GPU** (CUDA 12). Whatever is installed is detected at runtime, and
 everything else falls back automatically.
@@ -55,33 +70,60 @@ Intel MPI).
 ## Quick start
 
 ```bash
-uv run python -m src                                  # which backends (GPU / MPI) were detected
-uv run python -m examples.example01                   # 2-D Rosenbrock surrogate: error + plot
-uv run mpiexec -n 8 python -m examples.example03_monitoring   # multi-rank run with work stealing...
-uv run python -m src.infra.monitor scratch/example03_monitoring/stream   # ...watched live from another terminal
-uv run python -m examples.example04_art --problem all   # AFINNI vs ART on 4 problems
+uv run python -m src                                               # which backends (GPU / MPI) were detected
+uv run python -m examples.example01_rosenbrock_afinni              # 2-D Rosenbrock surrogate: error + plot
+uv run mpiexec -n 8 python -m examples.example03_monitoring_afinni  # multi-rank run with work stealing...
+uv run python -m src.infra.monitor scratch/example03_monitoring_afinni/stealing/stream  # ...watched live
+uv run python -m examples.example04_wave_art                       # ART on its own: train, route, audit, save
+uv run python -m examples.example05_afinni_vs_art --problem all    # AFINNI vs ART on 4 problems
 ```
 
 ```python
-from src.engine import TrainingConfig, Evaluator
+import numpy as np
+
+from src import xp
+from src.config import TrainingConfig
+from src.core.evaluation import Evaluator
 from src.surrogate import AFINNISurrogate
 
-surrogate = AFINNISurrogate()
-surrogate.train(X, TrainingConfig(atol=1e-2, rtol=1e-2), Evaluator(f_fn=f))
-prediction, outside_trust_region = surrogate.predict(X_query)
+
+def f(x):  # (N, d) -> (N, fd); x is a NumPy or CuPy array, matching the backend
+    return (xp.sin(3 * x[:, 0]) * xp.cos(2 * x[:, 1]) + x[:, 0] ** 2)[:, None]
+
+
+rng = np.random.default_rng(0)
+X, X_query = rng.uniform(-1, 1, (2_000, 2)), rng.uniform(-1, 1, (500, 2))
+
+# AFINNI: adaptive clustering, predicted by the nearest leaf in trust-region distance
+afinni = AFINNISurrogate()
+afinni.train(X, TrainingConfig(atol=1e-2, rtol=1e-2), Evaluator(f_fn=f))
+prediction, outside_trust_region = afinni.predict(X_query)
+
+# ART: an oblique regression tree over an explicit box domain, predicted by routing
+art = AFINNISurrogate()
+art.train(X, TrainingConfig(algorithm="art", domain=([-1, -1], [1, 1]), atol=1e-2, rtol=1e-2, max_levels=16),
+          Evaluator(f_fn=f))
+prediction, outside_domain = art.predict(X_query)
 ```
 
-Run scripts from the repository root, as modules (`python -m examples.example01`), so
-that `src` is importable.
+ART needs its `domain` explicitly: it is what routing covers. Its settings (split search,
+roots, sampling) are in `art=ARTSettings(...)`; see
+[ART in USAGE.md](examples/USAGE.md#art-adaptive-regression-trees).
+
+Run scripts from the repository root, as modules
+(`python -m examples.example01_rosenbrock_afinni`), so that `src` is importable.
 
 ## Documentation
 
 - **[examples/USAGE.md](examples/USAGE.md)**: the user guide. Training and prediction
-  on CPU, GPU and MPI; settings and modes; saving models; profiling; plots; live
+  on CPU, GPU and MPI; settings and modes; ART; saving models; profiling; plots; live
   monitoring; the experiment launcher; swapping parts of the algorithm (local models,
   split rules, samplers, acceptance tests, trust regions); HPC clusters;
   troubleshooting; development and testing.
-- **[examples/](examples/)**: runnable examples.
+- **[examples/](examples/)**: runnable examples; `example04_wave_art.py` introduces ART and
+  `example05_afinni_vs_art.py` compares AFINNI and ART on four problems.
+- **[AFINNI_ART_DESIGN.md](AFINNI_ART_DESIGN.md)**: the mathematics of both approaches, the
+  refinement engine, and the design and implementation log.
 - **[AGENTS.md](AGENTS.md)**: code conventions and verification steps for contributors
   (human or AI).
 

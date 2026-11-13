@@ -4,13 +4,13 @@ surrogate (2M points, tol 0.007: about 85 s and ~60 work steals on a 22-core lap
 while streaming profiling events, which ``src.infra.monitor`` displays from another terminal.
 
     # terminal 1: train (add --stealing off to compare without work stealing)
-    uv run mpiexec -n 8 python -m examples.example03_monitoring
+    uv run mpiexec -n 8 python -m examples.example03_monitoring_afinni
     # terminal 2: watch (exits when every rank is done; add --once for a snapshot)
-    uv run python -m src.infra.monitor scratch/example03_monitoring/stealing/stream
+    uv run python -m src.infra.monitor scratch/example03_monitoring_afinni/stealing/stream
 
 Afterwards, rank 0 saves the profile and every profile plot (dashboard, time
 breakdown, level heatmaps, forest growth, timeline, load, steals) next to the stream,
-under ``scratch/example03_monitoring/stealing`` or ``.../no_stealing``, so runs with
+under ``scratch/example03_monitoring_afinni/stealing`` or ``.../no_stealing``, so runs with
 and without work stealing can be compared side by side.
 Steal thresholds are lowered so work stealing is visible at this size; production
 runs keep the defaults.
@@ -44,7 +44,7 @@ from src.infra.backend import MPI  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
-BASE_DIR = PROJECT_DIR / "scratch" / "example03_monitoring"
+BASE_DIR = PROJECT_DIR / "scratch" / "example03_monitoring_afinni"
 N_TEST, SEED = 50_000, 0
 
 

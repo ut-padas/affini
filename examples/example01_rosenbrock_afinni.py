@@ -1,7 +1,7 @@
 """
 This example builds a surrogate for the Rosenbrock function in two dimensions.
 It uses the workflow described in the paper. It runs as one process, or on several
-MPI ranks (`mpiexec -n 4 python -m examples.example01`), where rank 0 reports.
+MPI ranks (`mpiexec -n 4 python -m examples.example01_rosenbrock_afinni`), where rank 0 reports.
 """
 
 from pathlib import Path
