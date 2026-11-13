@@ -53,7 +53,7 @@ fi
 
 # Fail early (on the login/compute node) rather than deep inside a job.
 if [[ -x .venv/bin/python ]]; then
-    .venv/bin/python -c "import src.backend as b; b.get_mpi(); print('[afinni] MPI:', b._resolve_mpi()[2])" \
+    .venv/bin/python -c "import src.infra.backend as b; b.get_mpi(); print('[afinni] MPI:', b._resolve_mpi()[2])" \
         || echo "[afinni] warning: AFINNI could not initialise; run 'make install-hpc' first." >&2
 fi
 echo "[afinni] Ready. Launch MPI jobs with e.g.:  ibrun .venv/bin/python afinni_launcher.py ..."

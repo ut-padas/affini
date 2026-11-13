@@ -29,8 +29,10 @@ import numpy as np
 sys.path.insert(0, str(Path.cwd()))
 
 from src import xp  # noqa: E402
-from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode  # noqa: E402
-from src.backend import MPI  # noqa: E402
+from src.config import ClusteringConfig# noqa: E402
+from src.engine.evaluation import Evaluator# noqa: E402
+from src.components.modes import SurrogateMode# noqa: E402
+from src.infra.backend import MPI  # noqa: E402
 from src.problems.anisotropic_gaussian import aniso_gaussian  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402
 from src.problems.vector_quadratic import vector_quadratic  # noqa: E402

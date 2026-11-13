@@ -1,12 +1,12 @@
 """
 Watch a multi-rank training run live: 8 MPI ranks on the CPU train a 5-D Rosenbrock
 surrogate (2M points, tol 0.007: about 85 s and ~60 work steals on a 22-core laptop)
-while streaming profiling events, which ``src.monitor`` displays from another terminal.
+while streaming profiling events, which ``src.infra.monitor`` displays from another terminal.
 
     # terminal 1: train (add --stealing off to compare without work stealing)
     uv run mpiexec -n 8 python -m examples.example03_monitoring
     # terminal 2: watch (exits when every rank is done; add --once for a snapshot)
-    uv run python -m src.monitor scratch/example03_monitoring/stealing/stream
+    uv run python -m src.infra.monitor scratch/example03_monitoring/stealing/stream
 
 Afterwards, rank 0 saves the profile and every profile plot (dashboard, time
 breakdown, level heatmaps, forest growth, timeline, load, steals) next to the stream,
@@ -31,12 +31,13 @@ from pathlib import Path  # noqa: E402
 
 import numpy as np  # noqa: E402
 
-import src.work_stealing as ws  # noqa: E402
+import src.engine.work_stealing as ws  # noqa: E402
 from src import PROJECT_DIR, get_mpi_rank, get_mpi_size, xp  # noqa: E402
-from src.backend import MPI  # noqa: E402
-from src.heuristic_parameters import get_MIN_PTS_PER_CLUSTER, get_NUM_INITIAL_CLUSTERS  # noqa: E402
-from src.adaptive_clustering_utils import ClusteringConfig, Evaluator  # noqa: E402
-from src.modes import SurrogateMode  # noqa: E402
+from src.infra.backend import MPI  # noqa: E402
+from src.config import get_MIN_PTS_PER_CLUSTER, get_NUM_INITIAL_CLUSTERS  # noqa: E402
+from src.config import ClusteringConfig# noqa: E402
+from src.engine.evaluation import Evaluator# noqa: E402
+from src.components.modes import SurrogateMode  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
@@ -73,7 +74,7 @@ if __name__ == "__main__":
         Y_train = f(X_train)  # passed to train(), so evaluated only once
         Q = xp.asarray(rng.uniform(-2.0, 3.0, (N_TEST, DIM)))
         print(f"Training on {size} rank(s), work stealing {args.stealing}. Watch with:\n"
-              f"  uv run python -m src.monitor {Path(STREAM_DIR).relative_to(PROJECT_DIR)}", flush=True)  # fmt: skip
+              f"  uv run python -m src.infra.monitor {Path(STREAM_DIR).relative_to(PROJECT_DIR)}", flush=True)  # fmt: skip
 
     # Only rank 0 holds the data, but every rank must train with the same tolerance.
     ATOL = MPI.COMM_WORLD.bcast(TOL * float(xp.max(xp.abs(Y_train))) if rank == 0 else None, root=0)

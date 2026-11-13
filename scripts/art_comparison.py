@@ -19,6 +19,11 @@ GPU). Compare against that one when timing matters, e.g.::
         --art-path ../Adaptive-Regression-Trees-ART- --benchmark quadratic --dimension 2 \\
         --sampler parallel_numba
 
+ART's fastest GPU configuration is ``--traversal bfs --optimizer cupy_batched_cholesky``
+(resident batched soft optimizer; sampling, oracle and node fits stay on the CPU).
+``--skip-art`` / ``--skip-region`` run one side only. Region mode alone also runs under
+``mpiexec`` (``--skip-art``; ``--afinni-work-stealing`` enables stealing); rank 0 prints.
+
 Leaf degree 1 maps to ``affine_lsq`` and degree 2 to ``quadratic_lsq`` (both with an
 intercept). Refuses other degrees, ART leaves without an intercept, error metrics other than
 ``max_pointwise_relative`` and relative-error floors other than 1e-12, which region mode
@@ -42,8 +47,9 @@ import numpy as np
 sys.path.insert(0, str(Path.cwd()))
 
 from src import _to_host, xp  # noqa: E402
+from src.infra.backend import MPI  # noqa: E402
 from src.config import ClusteringConfig, RegionSettings  # noqa: E402
-from src.evaluation import Evaluator  # noqa: E402
+from src.engine.evaluation import Evaluator  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
 
@@ -75,6 +81,8 @@ def main() -> None:
     own = argparse.ArgumentParser(description=__doc__, add_help=False)
     own.add_argument("--art-path", type=Path, required=True)
     own.add_argument("--skip-art", action="store_true")
+    own.add_argument("--skip-region", action="store_true")
+    own.add_argument("--afinni-work-stealing", action="store_true", help="region mode under mpiexec")
     own.add_argument("--afinni-split", default=None, help="AFINNI split strategy (default: the mode's)")
     own.add_argument("--afinni-roots", default="box", choices=("box", "grid", "voronoi"))
     own.add_argument("--afinni-validation", type=int, default=0)
@@ -139,6 +147,9 @@ def main() -> None:
         return evaluation, float(np.mean(rel > tol))
 
     common = {"benchmark": args.benchmark, "dimension": args.dimension, "tolerance": tol, "n_test": n_test}
+    comm = MPI.COMM_WORLD
+    if comm.Get_size() > 1 and not mine.skip_art:
+        raise SystemExit("ART runs in one process: pass --skip-art under mpiexec")
     if not mine.skip_art:
         t = time.perf_counter()
         run = build_tree_benchmark(args, domain, target)
@@ -155,6 +166,8 @@ def main() -> None:
             {"frac_gt_tol": frac, "terminal_reasons": statuses,
              "art_config": {"sampler": args.sampler, "optimizer": args.optimizer, "traversal": args.traversal}},
         )}), flush=True)  # fmt: skip
+    if mine.skip_region:
+        return
 
     def f(x):
         return xp.asarray(np.asarray(target(np.asarray(_to_host(x))), dtype=np.float64).reshape(-1, 1))
@@ -163,7 +176,8 @@ def main() -> None:
     X0 = uniform(n_root, np.random.default_rng(args.seed))
     config = ClusteringConfig(
         algorithm="region", domain=(domain.bounds[:, 0], domain.bounds[:, 1]), rtol=tol, error_metric="pointwise",
-        max_levels=args.max_depth, seed=args.seed, use_work_stealing=False, split_strategy=mine.afinni_split,
+        max_levels=args.max_depth, seed=args.seed, use_work_stealing=mine.afinni_work_stealing,
+        split_strategy=mine.afinni_split,
         num_initial_clusters=max(1, 2 ** args.dimension), local_model=leaf_model,
         region=RegionSettings(roots=mine.afinni_roots, sample_multiplier=args.sample_multiplier,
                               validation_samples=mine.afinni_validation, walk_steps=mine.afinni_walk_steps,
@@ -171,9 +185,12 @@ def main() -> None:
                               **({} if mine.afinni_soft_iters is None else {"soft_iters": mine.afinni_soft_iters})),
     )  # fmt: skip
     model = AFINNISurrogate()
+    comm.Barrier()
     t = time.perf_counter()
     model.train(X0, config, Evaluator(f_fn=f))
     seconds = time.perf_counter() - t
+    if comm.Get_rank() != 0:
+        return
     # The resolved components (local model, acceptance, split strategy and their settings), not the request.
     # "effective" states what both methods actually ran where a requested flag or a
     # registered component name says otherwise (ART forces the intercept for degree 1;

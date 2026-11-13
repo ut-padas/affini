@@ -8,9 +8,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from src import _to_device, _to_host, xp
-from src.adaptive_clustering import initial_clustering
-from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
-from src.heuristic_parameters import get_MIN_PTS_PER_CLUSTER, get_NUM_INITIAL_CLUSTERS
+from src.engine.adaptive_clustering import initial_clustering
+from src.config import ClusteringConfig
+from src.engine.evaluation import Evaluator
+from src.components.modes import SurrogateMode
+from src.config import get_MIN_PTS_PER_CLUSTER, get_NUM_INITIAL_CLUSTERS
 from src.surrogate import AFINNISurrogate
 
 # KIDApy's modules import each other by bare name (e.g. parser.py does `import pdfac`), so its root must be on sys.path

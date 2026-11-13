@@ -23,7 +23,7 @@ models, evaluates them and draws the plots:
     uv run python -m examples.example04_region_mode compare --problem wave
     uv run python -m examples.example04_region_mode --list                   # the problems
     # live view of a training stage, from another terminal:
-    uv run python -m src.monitor scratch/example04_region_mode/wave/stream/region   # or .../afinni
+    uv run python -m src.infra.monitor scratch/example04_region_mode/wave/stream/region   # or .../afinni
 
 Everything runs in one process on one CPU (``AFINNI_MPI`` defaults to ``off`` here), so
 training times compare directly. ``--afinni-max-levels`` and
@@ -62,13 +62,13 @@ import numpy as np  # noqa: E402
 
 from src import PROJECT_DIR, _to_host, xp  # noqa: E402
 from src.config import ClusteringConfig, RegionSettings  # noqa: E402
-from src.evaluation import Evaluator  # noqa: E402
-from src.heuristic_parameters import (  # noqa: E402
+from src.engine.evaluation import Evaluator  # noqa: E402
+from src.config import (  # noqa: E402
     get_MIN_PTS_PER_CLUSTER,
     get_N_TRAIN,
     get_NUM_INITIAL_CLUSTERS,
 )
-from src.modes import SurrogateMode  # noqa: E402
+from src.components.modes import SurrogateMode  # noqa: E402
 from src.problems.anisotropic_gaussian import aniso_gaussian  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402
 from src.problems.spherical_piecewise import spherical_piecewise  # noqa: E402
