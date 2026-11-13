@@ -7,7 +7,7 @@
 # targets also removes packages that the new target does not include.
 
 .PHONY: help dev dev-all install-cpu install-mpi install-gpu install-gpu-mpi install-hpc \
-        info format lint test test-mpi coverage-cpu coverage-gpu coverage paper-experiments
+        info format lint test test-mpi coverage-cpu coverage-gpu coverage-mpi coverage paper-experiments
 
 EXTRAS ?=
 _EXTRA_FLAGS := $(foreach e,$(EXTRAS),--extra $(e))
@@ -32,6 +32,7 @@ help:
 	@echo "  test-mpi         - Backend + multi-rank tests, MPI required (needs an MPI extra)"
 	@echo "  coverage-cpu     - CPU suite with coverage data in .coverage.cpu"
 	@echo "  coverage-gpu     - GPU suite with coverage data in .coverage.gpu (CUDA machine)"
+	@echo "  coverage-mpi     - multi-rank suite, measured inside every rank (.coverage.mpi.*)"
 	@echo "  coverage         - Combine the .coverage.* files present; report and htmlcov/"
 	@echo "  format / lint    - ruff format / ruff check"
 	@echo "  paper-experiments- Run run_paper_experiments.sh"
@@ -75,13 +76,20 @@ test:
 test-mpi:
 	AFINNI_MPI=on uv run --group test pytest tests/mpi tests/integration/test_backend.py
 
-# The CuPy branches (custom kernels and their launchers) only run in the GPU suite, so measure
-# both suites and combine: coverage-cpu here, coverage-gpu on a CUDA machine, then coverage.
+# The CuPy branches (custom kernels and their launchers) only run in the GPU suite, and work
+# stealing, scatter and gather only on several ranks, so measure each suite and combine:
+# coverage-cpu, coverage-mpi, coverage-gpu on a CUDA machine, then coverage.
 coverage-cpu:
 	COVERAGE_FILE=.coverage.cpu AFINNI_DEVICE=cpu AFINNI_MPI=off uv run --group test pytest -q -m "not mpi" -o addopts="" --cov=src --cov-report=
 
 coverage-gpu:
 	COVERAGE_FILE=.coverage.gpu AFINNI_DEVICE=gpu AFINNI_MPI=off uv run --group test pytest -q -m "not mpi" -o addopts="" --cov=src --cov-report=
+
+# The MPI tests start their ranks through mpiexec; coverage's subprocess patch (pyproject.toml)
+# measures every rank, and parallel mode gives each process its own data file.
+coverage-mpi:
+	COVERAGE_FILE=.coverage.mpi AFINNI_DEVICE=cpu AFINNI_MPI=on AFINNI_MPI_NP=4 PATH="$(CURDIR)/.venv/bin:$$PATH" \
+		uv run --group test coverage run --parallel-mode -m pytest -q tests/mpi -o addopts=""
 
 coverage:
 	uv run --group test coverage combine --keep

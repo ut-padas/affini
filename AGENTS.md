@@ -48,9 +48,10 @@ AFINNI_DEVICE=cpu AFINNI_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin
   trainings), never with a loose one that would hide an algorithmic change. Leaf counts
   and evaluation counts must still match exactly.
 - The GPU suite passes completely; treat any GPU failure as new.
-- The CuPy branches (kernel launchers in `numerics/`, `neighbors/`, `art/`) only run in the GPU
-  suite, so CPU coverage alone understates them: `make coverage-cpu`, `make coverage-gpu` on a
-  CUDA machine, then `make coverage` combines both. `tests/unit/test_kernel_sources.py` checks
+- Coverage needs three suites: the CuPy branches (kernel launchers in `numerics/`, `neighbors/`,
+  `art/`) run only in the GPU suite, and work stealing, scatter and gather only on several ranks.
+  `make coverage-cpu`, `make coverage-mpi` (measured inside every rank through coverage's
+  subprocess patch), `make coverage-gpu` on a CUDA machine, then `make coverage` combines them. `tests/unit/test_kernel_sources.py` checks
   on any machine that every `__global__` kernel has a Python launcher and every launched name
   exists in `src/kernels/*.cu`.
 - Profiling on GPU: `AFINNI_NVTX=1` emits one NVTX range per phase; profile with

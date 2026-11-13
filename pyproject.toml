@@ -93,8 +93,10 @@ ignore = [
 
 [tool.coverage.run]
 source = ["src"]
-# Paths relative to the checkout, so CPU and GPU data files from different machines combine.
+# Paths relative to the checkout, so CPU, GPU and MPI data files from different machines combine.
 relative_files = true
+# Measure Python subprocesses too: the MPI tests start their ranks through mpiexec.
+patch = ["subprocess"]
 
 [tool.pytest.ini_options]
 addopts = [
