@@ -13,7 +13,7 @@ later.
 | [II. ART](#part-ii-art-adaptive-regression-trees) | Problem, polytope geometry, sampling, soft oblique and hinge splitters, builder, GPU cohorts, known weaknesses |
 | [III. Comparison](#part-iii-afinni-and-art-compared) | Side-by-side comparison, and the observation that AFINNI's split is already a hyperplane |
 | [IV. Integration](#part-iv-bringing-art-into-afinni) | Requirements, three approaches (1: global ids and parent links, 2: per-level buffers and path codes, 3: the combined plan), evaluation for GPU/MPI/work stealing, unbalanced splits, batched ART components, staged experiments |
-| [V. Minimal plan](#part-v-minimal-implementation-plan-afinni-and-art-only) | Implementation status in Section 42. Two named plans (`afinni`, `region`) over one executor, fixed columns and wire format, the two pipelines, file-by-file changes, what is deferred, implementation order, resolved questions and what still needs measurement |
+| [V. Minimal plan](#part-v-minimal-implementation-plan-afinni-and-art-only) | Implementation status in Section 42 (GPU results in 42.9, GPU determinism and performance in 42.10, kernel sources in 42.11, review outcomes in 42.12–42.13, code layout in 42.14). Two named plans (`afinni`, `region`) over one executor, fixed columns and wire format, the two pipelines, file-by-file changes, what is deferred, implementation order, resolved questions and what still needs measurement |
 | [Appendix A](#appendix-a-deferred-a-pysph-style-property-system) | Deferred: PySPH-style property system, primitives and illustrative examples |
 
 **Revision (Nov 10, 2026).** Revised after the technical review in
@@ -49,6 +49,14 @@ revision and its answers to Q-A to Q-I):
 **Third revision (Nov 11, 2026):** the whole plan is implemented on branch
 `region-mode`; Section 42 records what was built, the CPU/MPI verification, the ART
 comparison, the GPU test plan and what is deliberately deferred.
+
+**GPU verification (Nov 11, 2026):** the GPU test plan has been run on a second machine;
+Section 42.9 records its results, two GPU fixes, the GPU determinism finding, the
+CPU/GPU/MPI comparison against ART's fastest GPU configuration and an Nsight profile.
+Section 42.10 makes every GPU training reduction deterministic and removes B4's and the
+sampler's launch floor (fused kernels, CUDA graph replay), with no memory increase, and
+re-measures the comparison; Section 42.11 moves the CUDA sources into `src/kernels/*.cu`,
+removes dead kernels and documents and formats them.
 
 Review sections are cited as "review §n".
 
@@ -105,7 +113,7 @@ leaves {c_k, f(c_k), model params, Q_k}  ─► inference: kNN + trust-region re
 The forest (one tree per initial cluster) is conceptual: interior nodes are never
 stored; only the accepted leaves are (Section 9).
 
-## 3. Local models (`src/local_models.py`)
+## 3. Local models (`src/components/local_models.py`)
 
 Each leaf `k` carries a model `f̂_k`. All models are fitted for every cluster of a batch
 at once (vectorized over clusters, no Python loops).
@@ -146,7 +154,7 @@ With `Σ = UΛUᵀ` and `B = Uᵀ(D + Dᵀ)U`, the solution is `H = U H̃ Uᵀ` 
 (`finalize`), and the deployed model is re-tested: clusters that fail with the quadratic
 term are sent back to be split.
 
-## 4. Acceptance (`src/acceptance.py`)
+## 4. Acceptance (`src/components/acceptance.py`)
 
 For cluster `k` and output component `j`, with residuals `e_ij = F_ij − F̂_ij` over the
 cluster's own points:
@@ -166,7 +174,7 @@ $$
 accepts). The errors `E_cluster_abs`, `E_cluster_rel` (shape `(K, fd)`) are stored with
 each leaf. The test is on training points, so it is optimistic.
 
-## 5. Splitting: curvature-informed spectral bisection (`src/splitting.py`)
+## 5. Splitting: curvature-informed spectral bisection (`src/components/splitting.py`)
 
 A rejected cluster is split in two. Every strategy is a two-means relaxation in a metric
 `M ≈ |H|^{1/2}`, where `|H| = U|D|Uᵀ` is the spectral absolute value of the Hessian
@@ -214,7 +222,7 @@ which costs `O(N d²)`. Computing `a = Mv` once per cluster and then `aᵀ(x −
 `O(K d² + N d)` (review §10.9). This changes floating-point results, so it belongs in
 the new geometric mode only.
 
-## 6. Augmentation (`src/sampling.py`)
+## 6. Augmentation (`src/components/sampling.py`)
 
 Rejected clusters that are too small to estimate a model, a Hessian and a split are
 topped up **before** splitting:
@@ -233,7 +241,7 @@ the region the leaf is later asked to answer for (a known cause of out-of-region
 Order matters: **fit and test first, then augment rejected clusters, then split.** A
 small cluster can be accepted on few points.
 
-## 7. Trust ellipsoids (`src/trust_regions.py`)
+## 7. Trust ellipsoids (`src/components/trust_regions.py`)
 
 For each accepted cluster, with `Σ = Σ_i Δx_iΔx_iᵀ`:
 
@@ -245,7 +253,7 @@ $$
 The region `{x : (x−c)ᵀQ(x−c) ≤ 1}` contains every observed point of the cluster. It is
 an empirical coverage region, not an error certificate.
 
-## 8. The training loop (`src/adaptive_clustering.py`)
+## 8. The training loop (`src/engine/adaptive_clustering.py`)
 
 ```text
 rank 0: F0 = f(X0); labels = kmeans(X0, K0); sort by label; scatter clusters to ranks
@@ -286,7 +294,7 @@ gather leaves + profiles on rank 0; broadcast the model to every rank
 **Key defaults** (`ClusteringConfig`): Linf metric, `num_initial_clusters=100`,
 `min_pts_per_cluster=100`, `max_levels=50`, `batch_size=10M` points, `q_reg=1e-6`,
 `seed=0`, work stealing on. Dimension heuristics used in experiments:
-`N0 ≈ 50,000·1.3ᵈ`, `K0 ≈ 25·1.3ᵈ`, `min_pts ≈ 100·1.3ᵈ` (`src/heuristic_parameters.py`).
+`N0 ≈ 50,000·1.3ᵈ`, `K0 ≈ 25·1.3ᵈ`, `min_pts ≈ 100·1.3ᵈ` (`src/config.py`).
 
 **Termination and status.** Depth travels with each cluster (`ClusterBatch.depth`), so
 the `max_levels` limit does not depend on which rank processes a cluster. Clusters that
@@ -340,7 +348,7 @@ at every level is therefore sorted by (root, path from the root).
 
 ```text
 for each query x (batched):
-    candidates = k_nn · coarse_factor nearest centroids (Euclidean, exact kNN in src/knn.py)
+    candidates = k_nn · coarse_factor nearest centroids (Euclidean, exact kNN in src/neighbors/knn.py)
     q_j = (x − c_j)ᵀ Q_j (x − c_j) for each candidate          # trust-region distance
     keep the k_nn smallest q_j
     weights w_j = 1 / (q_j² + 1e-12)        # Shepard, p = 4 on distance √q
@@ -350,7 +358,7 @@ for each query x (batched):
 
 With `k_nn=1` this is the manuscript's one-leaf rule. Euclidean preselection can miss
 the leaf that is best in its own metric; `coarse_factor` controls recall.
-`strict_trust_region` zeroes weights of candidates with `q_j > 1`. `src/knn.py`
+`strict_trust_region` zeroes weights of candidates with `q_j > 1`. `src/neighbors/knn.py`
 implements an exact search with a float32 candidate pass, error-bounded verification,
 and a float64 fallback (KD-tree on CPU for low `d`, a fused tiled top-k CUDA kernel on
 GPU).
@@ -370,9 +378,9 @@ GPU).
   logs rank, phase and traceback and calls `MPI_Abort`. Nested collective calls (e.g. a
   `predict()` inside an oracle) clean up only their own profiler scope.
 - **Profiling.** Per-phase timings, an optional event timeline, and per-rank JSON-lines
-  streams that `python -m src.monitor` tails live without MPI traffic.
+  streams that `python -m src.infra.monitor` tails live without MPI traffic.
 
-## 12. Work stealing (`src/work_stealing.py`)
+## 12. Work stealing (`src/engine/work_stealing.py`)
 
 Static partitioning is insufficient because refinement work is adaptive: some regions
 generate many more levels and points than others.
@@ -409,7 +417,7 @@ ownership stays in the execution layer, not in scientific components. Any new pe
 state (Part IV) must be added to the migration payload. That is why Part V puts every
 column in one internal table, which the payload code iterates over.
 
-## 13. Component API (`src/config.py`, `src/registry.py`)
+## 13. Component API (`src/config.py`, `src/components/registry.py`)
 
 The five swappable components each have a base class and a registry:
 
@@ -1639,7 +1647,7 @@ Outputs:
 
 ### 37.1 AFINNI plan: today's order, unchanged
 
-This is the order in `src/adaptive_clustering.py`, which the AFINNI plan must keep,
+This is the order in `src/engine/adaptive_clustering.py`, which the AFINNI plan must keep,
 together with its batching, reductions and RNG calls:
 
 ```text
@@ -1741,17 +1749,17 @@ needs its own candidate-evaluation budget and is not part of version one.
 | File | Change |
 |---|---|
 | `src/config.py` | `algorithm` and `domain` fields; a `RegionSettings` group: `roots` (`box`, `grid`, `voronoi`), `sample_multiplier`, `validation_samples`, `audit_samples`, `min_side_margin`, `split_search` (`gap`, `bins`, `soft`), `n_bins`, `n_directions`, `soft_iters`, sampler settings (`n_chains`, `pilot_block`, `geometry_budget`), region steal thresholds; `requires_f_centroids` union next to the existing `requires_grad_*`; validation that region components are compatible |
-| `src/clusters.py` | the internal column table; `ClusterBatch`, `ClusterQueueBuilder`, `split`, `select` iterate over it; training-first row order and the training/validation views; `NodeRecords` (append-only, rank-local) |
-| `src/work_stealing.py` | `send_clusters`/`recv_clusters` iterate over the table: schema header, then `base_tag + offset` per present column (Section 36). Region-mode thresholds; receiver lease (no re-offering before processing). Request/grant/retire logic unchanged |
+| `src/engine/clusters.py` | the internal column table; `ClusterBatch`, `ClusterQueueBuilder`, `split`, `select` iterate over it; training-first row order and the training/validation views; `NodeRecords` (append-only, rank-local) |
+| `src/engine/work_stealing.py` | `send_clusters`/`recv_clusters` iterate over the table: schema header, then `base_tag + offset` per present column (Section 36). Region-mode thresholds; receiver lease (no re-offering before processing). Request/grant/retire logic unchanged |
 | `src/region.py` (new) | domain and normalization; root construction (`box`; `grid` from `uniform_grid_cluster_labels` keeping bounds; `voronoi` from k-means centres); gap-threshold predicate and membership check; constraint inheritance; the region plan methods (Section 37.3); terminal records; assembly and validation of node records; the router |
-| `src/splitting.py` | split strategies return `SplitResult(order, child_sizes, w, z, valid)`; AFINNI's strategies leave `w, z` empty. New: `GapThresholdSplit` (B1/B2), `ThresholdSearchSplit` (B3, with direct recomputation of leading candidates), soft refinement (B4, later). `needs_centroid_value` on every strategy |
-| `src/local_models.py` | `needs_centroid_value` flag next to the existing gradient flags |
-| `src/sampling.py` | `HitAndRunSampler` (batched, several chains per node, slack updates, box as coordinate bounds, pilot/production segments, tiled Voronoi chords); a budget rule per mode (a function, not a component registry) |
-| `src/acceptance.py` | `PointwiseViolation` criterion (optional; also used for the global audit) |
+| `src/components/splitting.py` | split strategies return `SplitResult(order, child_sizes, w, z, valid)`; AFINNI's strategies leave `w, z` empty. New: `GapThresholdSplit` (B1/B2), `ThresholdSearchSplit` (B3, with direct recomputation of leading candidates), soft refinement (B4, later). `needs_centroid_value` on every strategy |
+| `src/components/local_models.py` | `needs_centroid_value` flag next to the existing gradient flags |
+| `src/components/sampling.py` | `HitAndRunSampler` (batched, several chains per node, slack updates, box as coordinate bounds, pilot/production segments, tiled Voronoi chords); a budget rule per mode (a function, not a component registry) |
+| `src/components/acceptance.py` | `PointwiseViolation` criterion (optional; also used for the global audit) |
 | `src/numerics.py` | `a = Mv` projection for region mode; binned prefix statistics for threshold search; an explicit-status solver with fixed regularization and residual output (B4) |
-| `src/adaptive_clustering.py` | becomes the executor: the AFINNI plan is today's loop body; the region plan's methods are called at the same points (Section 37.3); collecting and gathering `NodeRecords` |
+| `src/engine/adaptive_clustering.py` | becomes the executor: the AFINNI plan is today's loop body; the region plan's methods are called at the same points (Section 37.3); collecting and gathering `NodeRecords` |
 | `src/surrogate.py` | `predict(..., predictor="knn" \| "route")` with structured statuses for `route`; persist the resolved plan and default predictor; a model saved without `Q` defaults to routing and rejects an explicit `predictor="knn"`; save/load node records (bumps `MODEL_FORMAT_VERSION`); an `audit()` that runs the global audit (Section 33.5) |
-| `src/kmeans.py` | return the centres (and the CPU centring offset) for Voronoi roots |
+| `src/neighbors/kmeans.py` | return the centres (and the CPU centring offset) for Voronoi roots |
 
 The `Predictor` and `SampleBudget` "registries" proposed earlier are replaced by a
 `predictor=` option and a budget rule chosen by the mode. They can become components
@@ -1859,15 +1867,15 @@ Every phase of Section 40 has a working implementation on branch `region-mode`. 
 does not mean every contract of Sections 33–38 holds: where the code is simpler it is
 described in 42.2, the guarantees actually established are in 42.3, and the open
 resource and sampling contracts are in 42.6 and 42.7. CPU and MPI (1, 2, 4 and 8 ranks,
-stealing on and off) are verified on a 16-core laptop; the GPU has not been run and is
-the last step (Section 42.5).
+stealing on and off) are verified on a 16-core laptop; the GPU plan of Section 42.5 has
+since been run on a second machine (Section 42.9).
 
 ### 42.1 What was built
 
 | Plan item | Where | Notes |
 |---|---|---|
-| Internal column table, versioned wire format | `src/clusters.py` (`QUEUE_COLUMNS`), `src/work_stealing.py` | `ClusterBatch.split`/`select`, the queue builder and `send/recv_clusters` iterate over the table. The header carries version, present columns, shapes and dtypes; column `i` goes on `base_tag + 1 + i`, so an AFINNI-mode transfer sends the same array payloads on the same tags as before. The header itself is new, so this is not wire compatibility with an older executable: mixed versions fail on the version check. |
-| One executor, two named plans | `src/adaptive_clustering.py`, `src/region.py` (`RegionPlan`) | The AFINNI batch body is unchanged in order and arithmetic. The region plan supplies `work_sizes`, `bytes_per_point`, `leaf_columns`, `split_columns`, `initial_queue`, `process_batch`. Shared deploy step: `deploy_leaves` in `src/local_models.py` (Q, finalize, re-test), called by both plans. |
+| Internal column table, versioned wire format | `src/engine/clusters.py` (`QUEUE_COLUMNS`), `src/engine/work_stealing.py` | `ClusterBatch.split`/`select`, the queue builder and `send/recv_clusters` iterate over the table. The header carries version, present columns, shapes and dtypes; column `i` goes on `base_tag + 1 + i`, so an AFINNI-mode transfer sends the same array payloads on the same tags as before. The header itself is new, so this is not wire compatibility with an older executable: mixed versions fail on the version check. |
+| One executor, two named plans | `src/engine/adaptive_clustering.py`, `src/region.py` (`RegionPlan`) | The AFINNI batch body is unchanged in order and arithmetic. The region plan supplies `work_sizes`, `bytes_per_point`, `leaf_columns`, `split_columns`, `initial_queue`, `process_batch`. Shared deploy step: `deploy_leaves` in `src/components/local_models.py` (Q, finalize, re-test), called by both plans. |
 | `algorithm`, `domain`, `RegionSettings` | `src/config.py` | `domain=(lower, upper)` required; `"data_bbox"` is explicit opt-in and recorded. |
 | Roots | `src/region.py` (`Roots`) | `box` (default, ART: no initial clustering), `grid` (shared `uniform_grid_bins`), `voronoi` (centres of the initial clustering; exact nearest-centre assignment, tiled; no face list; hit-and-run bisectors from centre differences `c_j − c_r`, normalized; root assignment re-decides the nearest-distance candidate with the same centre-difference test, so sampling, training and routing agree on thin cells. Points within rounding of a bisector remain ambiguous: there is no error-bounded tie test). |
 | Counter-based RNG | `node_keys`, `counter_uniform`, `counter_uniform_pairs` | splitmix64 of (seed, root, path code, purpose, draw index); the same on NumPy and CuPy. The sampler takes two 32-bit uniforms per hash and both normals of each Box-Muller pair: `ceil(d/2) + 1` hashes per hit-and-run step. |
@@ -1879,12 +1887,12 @@ the last step (Section 42.5).
 | Predictors, persistence, audit | `src/surrogate.py` | `predict(predictor="knn" \| "route")` (route is the default for region models), `route_leaves`, `route_details` (per query: leaf, outside, terminal reason and validation status), `leaf_status_counts`, `audit` (iid uniform on the domain, Clopper–Pearson bound; non-finite oracle or model values count as violations), model format 2; `store_Q=False` models refuse kNN. Training warns when leaves end with `insufficient_sampling`: `converged` only says that no node is still above tolerance. |
 | Quadratic leaves | `QuadraticLSQModel` (`"quadratic_lsq"`), `LocalModel.n_features` / `features` | ART's degree-2 leaves: full quadratic in node-centred, radius-scaled coordinates, tiny fixed ridge. The region plan takes the sample budget (`multiplier × n_features`) and the split basis from the model; affine trees are unchanged. |
 | `f(c)` only when needed | `needs_centroid_value` on models and split strategies, `config.requires_f_centroids` | The leaf `f` column is NaN when no component reads it. |
-| Pointwise acceptance | `src/acceptance.py` (`"pointwise"`) | ART's `max_pointwise_relative` with `rtol` alone. |
+| Pointwise acceptance | `src/components/acceptance.py` (`"pointwise"`) | ART's `max_pointwise_relative` with `rtol` alone. |
 | Stealing for region work | `WorkStealer(min_load, steal_size, lease_received, work_sizes)`, `progress()` | Region thresholds (a few nodes' worth), receiver lease (`LEASED` denials), and progress points inside B4 so requests are served mid-batch. Published loads, steal eligibility and grant sizes all use the plan's `work_sizes` (points after top-up and validation), so thieves and victims compare one unit. |
 | Experiment harnesses | `scripts/art_comparison.py`, `scripts/afinni_benchmark.py` | ART vs region on ART's benchmarks, scored by ART's own evaluator (ART's configuration, e.g. its fastest CPU sampler `parallel_numba`, recorded in the output); AFINNI mode, base vs branch accuracy and runtime. |
 | Example and benchmark problems | `examples/example04_region_mode.py`, `src/problems/spherical_piecewise.py` | Both modes on four problems (`--problem all` or one): ART's spherical piecewise preset (identical to ART's function in 2–5-D), anisotropic Gaussian, wave, Rosenbrock. Per-problem depth limits (and region rtol 0.02 for wave) give equal relative L2 in one process on one CPU; region mode then needs 3.5–18x fewer oracle calls at similar or lower error and fewer leaves on all but the spherical jump (where it is twice as accurate), AFINNI trains as fast or faster (table in `examples/USAGE.md`). Stages `afinni`, `region`, `compare`; `summary.png` across problems. |
 | Plots | `src/plotting/region.py` | `plot_region_partition`, `plot_region_tree_stats`, `plot_error_maps`, `plot_error_cdf`, `plot_method_comparison`; profile dashboards name the mode and show fallback leaves per level. |
-| Monitor | `src/monitor.py`, `run_start` event | The header names the mode (`AFINNI` or `AFINNI region mode (ART; …)`); region runs report points in fallback leaves instead of queued points. Region stages are timed under the shared phase keys, so profiles break down by phase. |
+| Monitor | `src/infra/monitor.py`, `run_start` event | The header names the mode (`AFINNI` or `AFINNI region mode (ART; …)`); region runs report points in fallback leaves instead of queued points. Region stages are timed under the shared phase keys, so profiles break down by phase. |
 | Documentation | `examples/USAGE.md` ("AFINNI region mode (ART)", plots, monitor), `README.md` | |
 
 ### 42.2 Simplifications against Sections 36–38
@@ -2039,7 +2047,7 @@ the last step (Section 42.5).
   training tolerance and within 25% of serial, leaf count within 15%. Region mode keeps
   its exact multi-rank check.
 
-### 42.5 GPU test plan (to run last)
+### 42.5 GPU test plan (results in 42.9)
 
 Run from the repository root on a CUDA machine with the GPU extra installed.
 
@@ -2208,6 +2216,737 @@ kept; AFINNI-mode results stay bit-identical:
   `LocalModel.n_features` / `features` hooks, so the region plan sizes nodes and fits
   children in the leaf model's basis (42.1). Measured against ART's degree-2 trees in 42.3.
   The low-rank variant for high dimension is deferred (42.6).
+
+### 42.9 GPU verification (Nov 11, 2026)
+
+The GPU test plan of 42.5, run on a second machine: WSL2 (Ubuntu) on a Windows laptop,
+NVIDIA RTX 2000 Ada Laptop GPU (8 GB), 22 logical CPUs, 31 GB RAM; Python 3.13, NumPy
+2.2.6, CuPy 14.2.0, Numba 0.64, Nsight Systems 2026.5; ART at `854924a` (unchanged),
+`affini` at `68ebb53` plus the two fixes below. CPU and MPI numbers in this section were
+re-measured on the same machine, so every comparison is on one host. Each table cell is
+relative L2 / share of test points above the tolerance / leaves / oracle queries / build
+time, one seed, scored by ART's evaluator on `10000·d` points as in 42.3. Times are cold
+(one process per run, CUDA/Numba caches warm on disk).
+
+**Status of the 42.5 plan.**
+
+| Step | Result |
+|---|---|
+| 1. Backends | `python -m src` reports CuPy 14.2.0 on the RTX 2000 Ada. |
+| 2. Unit/integration tests (GPU) | First run: 28 failed, 14 errors. Two region-mode GPU bugs (below), now fixed: 519 passed, 15 failed, 31 skipped. The 15: 11 `test_acceptance` L2 cases (pre-existing: they fail identically on base `015adfd`; GPU L2 errors differ from the NumPy reference by a relative 1.02e-12 against a 1e-12 tolerance) and the 4 batch-size independence tests, which fail because GPU region trees are not reproducible at all (determinism, below). CPU suite: 530 passed; `tests/mpi` at 4 ranks: 12 passed. **Since 42.10: all 542 GPU tests pass** (both groups of failures had the same root cause). |
+| 3. AFINNI-mode regression | `regression_check.py --rtol 1e-12` against a GPU reference saved on `015adfd`: 44 of 45 cases pass; only `extra_tiny_batches` differs (the 42.4 bug fix). Two branch runs agree to 3.1e-13. |
+| 4. AFINNI-mode accuracy and runtime | `afinni_benchmark.py`, base and branch alternating: leaves, evaluations, `pout`, in-tolerance share and errors identical on all three problems. Medians (s, base / branch, 2–5 alternating runs): Rosenbrock d=4 1.42–1.62 / 1.54–1.67, vector quadratic d=6 3.53–3.58 / 3.59–3.61, anisotropic Gaussian d=4 0.78–0.81 / 0.76–0.90. The ranges overlap; Rosenbrock's branch median is about 7% higher on average, which more repeats would have to confirm. |
+| 5. Region mode against CPU | Tables below. Metrics agree statistically (5 seeds), not bit for bit; GPU time does not scale with batch size at ART's problem sizes but is a nearly constant 9–16 s for B4 (profiling, below). |
+| 6. GPU-only code paths | Exercised by the suite and the matrix; no out-of-memory error. Peak VRAM (whole device, `nvidia-smi` at 10 Hz): 1.6 GB for Rosenbrock 5-D with quadratic leaves and B4, 1.8 GB for Rosenbrock 20-D affine B4. |
+| 7. MPI with a GPU | Only one GPU: 2 ranks sharing it complete a region training with stealing (quadratic 2-D: 379 leaves, L2 2.3e-3, inside the GPU spread). This checks the code path, not scaling (Section 33.7). |
+| 8. Example 04 | Table below. The CPU table of `examples/USAGE.md` is reproduced exactly on this machine; GPU results differ (AFINNI by its batch-dependent seed, region by GPU nondeterminism). |
+| ART's CUDA tests | 370 passed, 2 skipped (`Non-default stream behavior requires actual CUDA`, the tests' own condition) once a C++ compiler is installed; without one, 117 CPU emulation checks skip. |
+
+**Fixed: region mode did not run on the GPU.**
+- `RoutingTable.build` counted the tree's nodes with `np.asarray` on the device arrays it
+  receives from assembly. CuPy refuses implicit conversion, so every region training
+  failed at the final assembly on the GPU (30 test failures/errors). Keys are now copied
+  to the host first.
+- `RegionPlan.work_sizes` passed host sizes into the device `augmentation_targets`, so B1
+  (`sampling="convex_combination"`) failed on the GPU.
+
+Both are host/device conversions only; CPU and MPI results are unchanged (all suites pass).
+
+**GPU region trees are not reproducible, even within one process** (resolved in 42.10; this paragraph records the first run). Three identical
+trainings of quadratic 2-D (affine leaves) in one process:
+
+| Search | CPU: leaves (3 runs) | GPU: leaves (3 runs) | GPU tree topology |
+|---|---|---|---|
+| B2 (`gap`) | 512, 512, 512 | 495, 495, 495 | same in all three runs, different from CPU |
+| B3 (`bins`) | 414, 414, 414 | 462, 462, 451 | three different trees |
+| B4 (`soft`) | 404, 404, 404 | 375, 377, 370 | three different trees |
+
+Cause, measured op by op (20–50 repeated calls on identical inputs): `run_fused_stats`
+accumulates with `atomicAdd` and changes the last bits of 1,273 of 1,600 outputs from call
+to call. It provides the covariance-Hessian split metric (the direction every B2–B4 search
+starts from) and the affine leaf fit; B3/B4 then pick among near-tied candidates, so
+rounding flips decisions, and B4's descent amplifies them. A large 1-D float `cumsum`
+(CUB scan) and `add.at` are also not reproducible, but region mode only scans
+small or integer arrays. Batched `matmul`/`einsum` (the grouped Grams), `linalg.solve`,
+`add.reduceat`, `sum` and the sorts are bit-reproducible. The 42.5 contract ("GPU trees
+equal to rounding, same decisions") therefore does not hold, and the MPI tree-identity
+test cannot be run on the GPU. **Policy decision (taken in 42.10: deterministic reductions, no speed cost):** either give region mode a
+deterministic per-node reduction for its statistics (e.g. `grouped_cross`, which is
+already deterministic), or declare GPU region trees reproducible only in distribution
+and change the GPU versions of the batch-independence tests accordingly.
+
+**ART on the GPU against ART on the CPU (affine leaves).** ART's fastest CPU
+configuration is DFS with `--sampler parallel_numba` and the `cpu` optimizer (42.3); its
+fastest GPU configuration is `BFS_GPU_TREE_PRESET`: `--traversal bfs --optimizer
+cupy_batched_cholesky` (a resident batched soft optimizer over cohorts of 20 nodes;
+sampling, oracle calls, node fits and stopping stay on the CPU). The middle column
+separates the effect of BFS ordering from that of the GPU.
+
+| Problem | ART fastest CPU (DFS, `cpu` optimizer) | ART CPU, BFS | ART fastest GPU (BFS, `cupy_batched_cholesky`) |
+|---|---|---|---|
+| quadratic 2D | 2.6e-03 / 7.1% / 401 / 60k / 22 s | 2.6e-03 / 6.1% / 418 / 63k / 22 s | 2.6e-03 / 6.6% / 418 / 63k / 9.4 s |
+| quadratic 3D | 4.1e-03 / 30% / 715 / 143k / 42 s | 4.0e-03 / 30% / 708 / 142k / 40 s | 4.0e-03 / 29% / 770 / 154k / 17 s |
+| gaussian 2D | 2.6e-03 / 0.005% / 22 / 3k / 1 s | 2.6e-03 / 0.085% / 21 / 3k / 0.89 s | 2.5e-03 / 0.07% / 20 / 3k / 0.99 s |
+| gaussian 3D | 2.8e-03 / 0.31% / 120 / 24k / 4.2 s | 2.5e-03 / 0.23% / 135 / 27k / 4.1 s | 2.6e-03 / 0.16% / 131 / 26k / 3.1 s |
+| plane wave 2D | 0.015 / 33% / 882 / 132k / 54 s | 0.025 / 40% / 836 / 125k / 49 s | 0.011 / 29% / 842 / 126k / 18 s |
+| rosenbrock 2D | 2.3e-03 / 28% / 450 / 68k / 26 s | 2.4e-03 / 29% / 448 / 67k / 26 s | 2.4e-03 / 31% / 457 / 69k / 12 s |
+| spherical piecewise 2D | 0.074 / 2.4% / 148 / 22k / 9.8 s | 0.041 / 2.5% / 271 / 41k / 19 s | 0.035 / 2.4% / 235 / 35k / 8.6 s |
+| spherical piecewise 3D | 0.11 / 25% / 320 / 64k / 19 s | 0.1 / 26% / 342 / 68k / 20 s | 0.11 / 25% / 334 / 67k / 13 s |
+| plane wave 3D | 0.12 / 88% / 1,024 / 205k / 65 s | 0.13 / 87% / 1,024 / 205k / 67 s | 0.16 / 87% / 1,024 / 205k / 29 s |
+| rosenbrock 5D, [-2,3]⁵, offset 1 | 0.063 / 89% / 1,024 / 307k / 65 s | 0.063 / 89% / 1,024 / 307k / 66 s | 0.062 / 89% / 1,024 / 307k / 26 s |
+| rosenbrock 20D, [-2,3]²⁰, offset 1 | 0.27 / 97% / 1,024 / 1.08M / 207 s | 0.27 / 97% / 1,024 / 1.08M / 181 s | 0.27 / 97% / 1,024 / 1.08M / 175 s |
+
+**Region mode: CPU, GPU and MPI (affine leaves).**
+
+| Problem | Region B4, CPU | Region B4, GPU | Region B4, 4 MPI ranks (CPU, stealing) | Region B3, CPU | Region B3, GPU |
+|---|---|---|---|---|---|
+| quadratic 2D | 2.2e-03 / 5.4% / 404 / 61k / 2.2 s | 2.4e-03 / 6.4% / 372 / 57k / 12 s | 2.2e-03 / 5.4% / 404 / 61k / 2.7 s | 2.3e-03 / 5.2% / 414 / 63k / 0.78 s | 2.2e-03 / 4.3% / 445 / 68k / 2.6 s |
+| quadratic 3D | 3.9e-03 / 28% / 702 / 142k / 5.1 s | 3.9e-03 / 28% / 709 / 143k / 9.1 s | 3.9e-03 / 28% / 702 / 142k / 4.3 s | 4.3e-03 / 30% / 752 / 152k / 2.3 s | 4.3e-03 / 31% / 766 / 155k / 2.3 s |
+| gaussian 2D | 3.0e-03 / 0.36% / 18 / 3k / 0.23 s | 3.4e-03 / 0.68% / 15 / 2k / 3.9 s | 3.0e-03 / 0.36% / 18 / 3k / 0.51 s | 2.3e-03 / 0.07% / 25 / 4k / 0.22 s | 2.4e-03 / 0.02% / 24 / 4k / 1.4 s |
+| gaussian 3D | 2.8e-03 / 0.38% / 114 / 23k / 0.9 s | 2.7e-03 / 0.22% / 119 / 24k / 7 s | 2.8e-03 / 0.38% / 114 / 23k / 1.2 s | 2.6e-03 / 0.3% / 160 / 32k / 0.58 s | 2.5e-03 / 0.19% / 165 / 33k / 2 s |
+| plane wave 2D | 2.5e-03 / 2.2% / 249 / 38k / 1.4 s | 2.0e-03 / 4.4% / 238 / 36k / 10 s | 2.5e-03 / 2.2% / 249 / 38k / 1.8 s | 4.2e-03 / 11% / 501 / 76k / 0.95 s | 9.5e-03 / 16% / 501 / 76k / 2.4 s |
+| rosenbrock 2D | 2.6e-03 / 29% / 351 / 53k / 1.9 s | 3.0e-03 / 28% / 349 / 53k / 12 s | 2.6e-03 / 29% / 351 / 53k / 2 s | 2.6e-03 / 32% / 347 / 53k / 0.71 s | 3.0e-03 / 33% / 348 / 53k / 2 s |
+| spherical piecewise 2D | 0.056 / 1.2% / 188 / 29k / 1.2 s | 0.05 / 0.93% / 197 / 30k / 16 s | 0.056 / 1.2% / 188 / 29k / 1.6 s | 0.045 / 1.3% / 218 / 33k / 0.52 s | 0.046 / 1.1% / 251 / 38k / 2.5 s |
+| spherical piecewise 3D | 0.09 / 14% / 502 / 101k / 3.4 s | 0.083 / 13% / 558 / 113k / 8.3 s | 0.09 / 14% / 502 / 101k / 2.9 s | 0.1 / 22% / 520 / 105k / 1.6 s | 0.086 / 19% / 590 / 119k / 2.1 s |
+| plane wave 3D | 0.048 / 55% / 887 / 179k / 6.1 s | 0.037 / 52% / 918 / 185k / 9.2 s | 0.048 / 55% / 887 / 179k / 4.1 s | 0.1 / 77% / 952 / 192k / 2.8 s | 0.15 / 74% / 896 / 181k / 2.1 s |
+| rosenbrock 5D, [-2,3]⁵, offset 1 | 0.054 / 87% / 1,024 / 309k / 11 s | 0.054 / 88% / 1,024 / 309k / 9.3 s | 0.054 / 87% / 1,024 / 309k / 6 s | 0.07 / 90% / 1,024 / 309k / 5.2 s | 0.07 / 90% / 1,024 / 309k / 2.4 s |
+| rosenbrock 20D, [-2,3]²⁰, offset 1 | 0.28 / 97% / 1,024 / 1.08M / 100 s | 0.29 / 97% / 1,024 / 1.08M / 16 s | 0.28 / 97% / 1,024 / 1.08M / 52 s | 0.29 / 97% / 1,024 / 1.08M / 48 s | 0.29 / 97% / 1,024 / 1.08M / 6.6 s |
+
+Region B4 and B3 on the CPU reproduce the 42.3 trees exactly on this machine (same leaves
+and queries in every row; the times here are about 1.3× those of 42.3, ART's too), and 4
+MPI ranks with stealing build the identical tree on every row. Plane wave 2-D B3 gives
+the same leaf and query counts on both backends with different errors: by the oracle
+identity of Section 33.5 equal leaf counts imply equal queries, and the trees differ.
+
+**Quadratic leaves** (`--leaf-degree 2`, region `quadratic_lsq`).
+
+| Problem | ART fastest CPU | ART fastest GPU | Region B4, CPU | Region B4, GPU | Region B4, 4 MPI ranks | Region B3, CPU | Region B3, GPU |
+|---|---|---|---|---|---|---|---|
+| quadratic 2D | 7.6e-16 / 0% / 1 / 300 / 0.95 s | 7.6e-16 / 0% / 1 / 300 / 0.99 s | 1.9e-10 / 0% / 1 / 301 / 0.0077 s | 1.9e-10 / 0% / 1 / 301 / 0.4 s | 1.9e-10 / 0% / 1 / 301 / 0.35 s | 1.9e-10 / 0% / 1 / 301 / 0.18 s | 1.9e-10 / 0% / 1 / 301 / 0.3 s |
+| quadratic 3D | 1.3e-15 / 0% / 1 / 500 / 0.78 s | 1.3e-15 / 0% / 1 / 500 / 0.98 s | 2.1e-10 / 0% / 1 / 501 / 0.0047 s | 2.1e-10 / 0% / 1 / 501 / 0.33 s | 2.1e-10 / 0% / 1 / 501 / 0.3 s | 2.1e-10 / 0% / 1 / 501 / 0.16 s | 2.1e-10 / 0% / 1 / 501 / 0.26 s |
+| gaussian 2D | 9.6e-04 / 0.15% / 5 / 2k / 0.97 s | 9.5e-04 / 0.15% / 5 / 2k / 1.2 s | 7.3e-04 / 0% / 6 / 2k / 0.15 s | 7.9e-04 / 0.09% / 5 / 2k / 2.2 s | 7.3e-04 / 0% / 6 / 2k / 0.49 s | 8.5e-04 / 0.005% / 5 / 2k / 0.18 s | 8.1e-04 / 0.095% / 5 / 2k / 0.97 s |
+| gaussian 3D | 1.1e-03 / 0.07% / 9 / 4k / 1.1 s | 9.2e-04 / 0.02% / 16 / 8k / 1.5 s | 9.6e-04 / 0.013% / 10 / 5k / 0.27 s | 1.0e-03 / 0.02% / 9 / 5k / 4 s | 9.6e-04 / 0.013% / 10 / 5k / 0.55 s | 1.1e-03 / 0.14% / 10 / 5k / 0.23 s | 1.1e-03 / 0.14% / 10 / 5k / 1.3 s |
+| plane wave 2D | 1.8e-03 / 2.3% / 530 / 159k / 31 s | 1.4e-03 / 1.9% / 508 / 152k / 13 s | 1.0e-03 / 0.035% / 141 / 43k / 1.6 s | 1.1e-03 / 0.04% / 130 / 39k / 11 s | 1.0e-03 / 0.035% / 141 / 43k / 1.8 s | 8.7e-04 / 0.06% / 243 / 73k / 0.94 s | 7.3e-04 / 0.085% / 261 / 79k / 2 s |
+| rosenbrock 2D | 8.6e-04 / 1.4% / 245 / 74k / 17 s | 9.2e-04 / 1.5% / 250 / 75k / 6.9 s | 7.4e-04 / 0.44% / 324 / 98k / 3.2 s | 7.3e-04 / 0.38% / 282 / 85k / 12 s | 7.4e-04 / 0.44% / 324 / 98k / 1.9 s | 6.1e-04 / 0.74% / 267 / 81k / 1 s | 9.9e-04 / 0.69% / 268 / 81k / 2 s |
+| spherical piecewise 2D | 0.028 / 3.1% / 217 / 65k / 19 s | 0.033 / 3.2% / 232 / 70k / 9.1 s | 0.05 / 1.5% / 231 / 70k / 2.6 s | 0.049 / 1.2% / 187 / 56k / 10 s | 0.05 / 1.5% / 231 / 70k / 1.7 s | 0.036 / 1.9% / 209 / 63k / 0.81 s | 0.036 / 1.3% / 227 / 69k / 1.9 s |
+| spherical piecewise 3D | 0.077 / 22% / 490 / 245k / 39 s | 0.072 / 19% / 508 / 254k / 20 s | 0.069 / 18% / 462 / 232k / 9 s | 0.075 / 19% / 422 / 212k / 9.7 s | 0.069 / 18% / 462 / 232k / 4.2 s | 0.081 / 28% / 427 / 214k / 3.2 s | 0.079 / 24% / 466 / 234k / 2.7 s |
+| plane wave 3D | 0.016 / 29% / 951 / 476k / 73 s | 0.028 / 39% / 921 / 460k / 24 s | 1.2e-03 / 0.19% / 340 / 171k / 6.5 s | 1.2e-03 / 0.38% / 373 / 187k / 9.3 s | 1.2e-03 / 0.19% / 340 / 171k / 3.5 s | 0.075 / 22% / 747 / 375k / 5.6 s | 6.0e-03 / 8.5% / 730 / 366k / 2.5 s |
+| rosenbrock 5D, [-2,3]⁵, offset 1 | 9.4e-03 / 42% / 1,021 / 1.07M / 116 s | 9.7e-03 / 43% / 1,019 / 1.07M / 35 s | 8.6e-03 / 39% / 1,024 / 1.08M / 58 s | 9.5e-03 / 42% / 1,023 / 1.08M / 12 s | 8.6e-03 / 39% / 1,024 / 1.08M / 22 s | 0.017 / 59% / 1,024 / 1.08M / 22 s | 0.016 / 58% / 1,024 / 1.08M / 3.5 s |
+
+ART's CPU BFS run (not shown) is close to both ART columns; the largest difference is
+2-D plane wave (430 leaves against 530 and 508), ART's most stream-sensitive row. MPI is
+again identical to serial on every row.
+
+**Is the GPU the same algorithm? Five seeds** (seeds 1–5, affine leaves; mean ± standard
+deviation of L2 / % above tolerance / leaves):
+
+| Problem | ART CPU (DFS) | ART CPU (BFS) | ART GPU (BFS) | Region B4 CPU | Region B4 GPU |
+|---|---|---|---|---|---|
+| quadratic 2D | 2.39e-3 ± 2.1e-4 / 6.59 ± 0.36% / 407 ± 14 | 2.53e-3 ± 9.6e-5 / 6.63 ± 0.89% / 400 ± 16 | 2.49e-3 ± 1.2e-4 / 6.53 ± 0.79% / 412 ± 14 | 2.30e-3 ± 1.9e-4 / 5.44 ± 0.60% / 385 ± 16 | 2.37e-3 ± 1.2e-4 / 5.79 ± 0.90% / 382 ± 8 |
+| gaussian 3D | 2.62e-3 ± 1.1e-4 / 0.22 ± 0.06% / 131 ± 11 | 2.56e-3 ± 8.0e-5 / 0.19 ± 0.03% / 137 ± 8 | 2.59e-3 ± 6.3e-5 / 0.21 ± 0.07% / 138 ± 6 | 2.64e-3 ± 1.5e-4 / 0.26 ± 0.10% / 129 ± 14 | 2.64e-3 ± 8.6e-5 / 0.28 ± 0.10% / 131 ± 9 |
+| rosenbrock 2D | 2.48e-3 ± 1.3e-4 / 29.5 ± 1.3% / 437 ± 11 | 2.53e-3 ± 1.8e-4 / 29.9 ± 1.1% / 432 ± 12 | 2.50e-3 ± 2.4e-4 / 30.4 ± 1.4% / 446 ± 8 | 2.60e-3 ± 8.5e-5 / 28.5 ± 1.7% / 345 ± 12 | 2.67e-3 ± 2.5e-4 / 28.3 ± 3.0% / 344 ± 16 |
+| spherical piecewise 2D | 0.051 ± 0.014 / 2.64 ± 0.34% / 207 ± 41 | 0.043 ± 0.004 / 2.75 ± 0.26% / 228 ± 38 | 0.044 ± 0.006 / 2.91 ± 0.58% / 223 ± 38 | 0.053 ± 0.008 / 1.35 ± 0.38% / 204 ± 13 | 0.051 ± 0.010 / 1.35 ± 0.50% / 204 ± 11 |
+
+Every GPU mean lies within one standard deviation of its CPU counterpart, for ART and for
+region mode, so both GPU variants are the same algorithm statistically. Neither is the
+same bit for bit: ART's BFS and DFS draw random numbers in different orders and its GPU
+optimizer rounds differently, and region mode's GPU statistics are not reproducible.
+Single-seed differences in the large tables (e.g. 3-D quadratic, 708 vs 770 ART leaves) are
+of the size of this spread. ART's own MPI does not exist; region mode's 4-rank trees are
+identical to serial, so its CPU/MPI equivalence is exact.
+
+**Time: region mode on the GPU against ART's best GPU configuration.**
+
+| Problem (affine) | ART fastest CPU | ART fastest GPU | Region B4 CPU | Region B4 GPU | Region B3 GPU | Region B4 MPI-4 | ART GPU / region B4 GPU | region B4 CPU / GPU |
+|---|---|---|---|---|---|---|---|---|
+| quadratic 2D | 21.8 s | 9.39 s | 2.19 s | 11.9 s | 2.56 s | 2.74 s | 0.79× | 0.18× |
+| quadratic 3D | 41.7 s | 17.0 s | 5.09 s | 9.06 s | 2.30 s | 4.34 s | 1.9× | 0.56× |
+| gaussian 2D | 1.02 s | 0.99 s | 0.23 s | 3.90 s | 1.45 s | 0.51 s | 0.25× | 0.06× |
+| gaussian 3D | 4.15 s | 3.05 s | 0.90 s | 6.96 s | 2.00 s | 1.23 s | 0.44× | 0.13× |
+| plane wave 2D | 53.8 s | 18.1 s | 1.42 s | 10.0 s | 2.41 s | 1.76 s | 1.8× | 0.14× |
+| rosenbrock 2D | 26.3 s | 11.8 s | 1.92 s | 11.7 s | 2.04 s | 2.03 s | 1.0× | 0.16× |
+| spherical piecewise 2D | 9.80 s | 8.61 s | 1.17 s | 16.1 s | 2.49 s | 1.59 s | 0.54× | 0.07× |
+| spherical piecewise 3D | 19.2 s | 12.7 s | 3.39 s | 8.25 s | 2.10 s | 2.95 s | 1.5× | 0.41× |
+| plane wave 3D | 65.2 s | 29.3 s | 6.05 s | 9.22 s | 2.08 s | 4.10 s | 3.2× | 0.66× |
+| rosenbrock 5D | 64.5 s | 26.0 s | 11.0 s | 9.34 s | 2.41 s | 5.96 s | 2.8× | 1.2× |
+| rosenbrock 20D | 207 s | 175 s | 99.8 s | 15.6 s | 6.55 s | 51.7 s | **11×** | **6.4×** |
+
+| Problem (quadratic) | ART fastest CPU | ART fastest GPU | Region B4 CPU | Region B4 GPU | Region B3 GPU | Region B4 MPI-4 | ART GPU / region B4 GPU | region B4 CPU / GPU |
+|---|---|---|---|---|---|---|---|---|
+| plane wave 2D | 31.3 s | 12.9 s | 1.58 s | 11.5 s | 2.04 s | 1.83 s | 1.1× | 0.14× |
+| rosenbrock 2D | 17.4 s | 6.85 s | 3.24 s | 11.6 s | 2.03 s | 1.92 s | 0.59× | 0.28× |
+| spherical piecewise 2D | 18.6 s | 9.15 s | 2.56 s | 9.96 s | 1.91 s | 1.69 s | 0.92× | 0.26× |
+| spherical piecewise 3D | 38.8 s | 20.3 s | 8.98 s | 9.67 s | 2.68 s | 4.20 s | 2.1× | 0.93× |
+| plane wave 3D | 73.1 s | 23.9 s | 6.55 s | 9.29 s | 2.53 s | 3.51 s | 2.6× | 0.70× |
+| rosenbrock 5D | 116 s | 34.9 s | 58.1 s | 11.8 s | 3.52 s | 22.5 s | **3.0×** | **4.9×** |
+
+(The one-leaf and Gaussian quadratic rows take under 4.1 s everywhere and are omitted.)
+
+- **ART:** the GPU optimizer gives ART 1.1–3.3× over its best CPU configuration for
+  `d <= 5` (none on the 2-D Gaussian), but only 1.2× at 20-D, where its sampling,
+  oracle calls and node fits, still on the CPU, dominate.
+- **Region mode against ART, both on the GPU:** region B4 is faster on every row with
+  enough work, 1.1–3.2× for `d <= 5` and 11× at 20-D, at the accuracies of 42.3 (e.g.
+  3-D plane wave with quadratic leaves: 0.38% above tolerance against ART's 39%, in 9.3 s
+  against 24 s). On the smallest trees (the Gaussians, and 2-D quadratic, Rosenbrock and
+  spherical piecewise) it takes 0.25–1.0× ART's GPU time, i.e. it is slower or at parity,
+  because of a fixed launch cost (below).
+- **Region mode, GPU against CPU:** the GPU only wins once a level carries enough rows:
+  B4 breaks even at `d = 5` (1.2× affine, 4.9× quadratic) and is 6.4× faster at 20-D; B3
+  breaks even near 3-D and is 2.2× (5-D affine), 6.1× (5-D quadratic) and 7.3× (20-D)
+  faster. For `d <= 3`, region B4 on the CPU (one process, or 4 MPI ranks from 3-D on)
+  is the fastest B4 configuration measured, 2–13× faster than ART's GPU run.
+- **MPI:** 4 CPU ranks give 1.2–2.6× over serial on rows with more than about 3 s of
+  serial work (identical trees); below 1 s, startup dominates.
+
+**Why region mode is slow on the GPU at small sizes (Nsight Systems).** Warm trainings,
+`AFINNI_NVTX=1`, `nsys profile --trace=cuda,nvtx,osrt` restricted by
+`cudaProfilerStart/Stop` to the second (warm) training:
+
+| Run (affine, B4) | Wall | Kernel launches | GPU busy (sum of kernels) | Mean kernel | `cuLaunchKernel` API | Split (B2–B4) | Sampling | Fit + deploy |
+|---|---|---|---|---|---|---|---|---|
+| quadratic 2D (CPU: 2.1 s warm) | 11.8 s | 421,325 | 2.45 s (21%) | 5.8 µs | 3.6 s | 10.9 s (92%) | 0.79 s | 0.07 s |
+| rosenbrock 20D (CPU: about 100 s) | 19.1 s | 363,591 | 9.49 s (50%) | 26 µs | 4.3 s | 13.7 s (72%) | 5.0 s | 0.19 s |
+
+- The number of launches is set by the control flow, not by the data: about 10 levels ×
+  40 B4 iterations × about 1,000 small CuPy operations per iteration (the objective's
+  two Grams, solves and residuals, then up to 12 sequential line-search trials of about
+  50 elementwise and segmented operations each). With roughly 25–30 µs of Python, CuPy
+  and driver time per operation, that is a floor of about 10 s per training at any size.
+- At ART's budgets a level is small: at quadratic 2-D the largest level holds 103 nodes
+  and 15,450 rows, in one count group (nodes are topped up to exactly 150 points, so
+  `_SplitRows` grouping is not fragmented). A kernel on 15k rows runs 3–6 µs, so the GPU
+  idles about 80% of the time. NumPy does the same operations on the CPU in 1–5 µs
+  each, so the CPU wins until a level carries tens of thousands of rows with `p` of
+  10–20.
+- Host synchronizations are frequent but cheap: 6,482 device-to-host copies (the
+  `bool(xp.any(...))` loop tests and `int(xp.sum(...))` counters of `_soft_refine`), 17 ms
+  of `cudaStreamSynchronize`. They do prevent the host from running ahead of the GPU.
+- At 20-D the same number of launches carries 4.5× more work each, so the GPU is busy half
+  the time and wins 6.4×. The 4.5 s `cudaMemcpyAsync` API time there is the host waiting
+  for queued kernels at a synchronization point, not transfer volume.
+
+What would remove the floor, in expected order of benefit (all implemented in 42.10, with item 5 replaced by making the small kernels cheap; each needs
+its own CPU/GPU decision check):
+1. Evaluate all line-search trials at once: one fused gate kernel for every step size
+   (a `(12, N)` slab) and one segmented reduction, then the largest accepted step per
+   node. This removes about 600 launches and up to 12 host tests per B4 iteration.
+2. Fuse `_soft_gates`/`_sigmoid` (about 10 elementwise operations) and the weighted
+   residual sums into one `ElementwiseKernel` or `cupy.fuse` function.
+3. Keep `_soft_refine`'s counters on the device and test `any(active)` every few
+   iterations instead of every trial.
+4. Once 1–3 make shapes static per level, capture one B4 iteration as a CUDA graph.
+5. Dispatch small levels to the host: below a row threshold, run the level with NumPy.
+   This needs the same decisions on both backends, so it depends on the determinism
+   policy above.
+6. The hit-and-run sampler has the same pattern (5.0 s at 20-D for one walk step's
+   handful of operations per iteration); a fused step kernel is the analogue of 2.
+
+**Example 04 on this machine** (2-D, one process; L2 / % above tolerance / leaves /
+evaluations / training time):
+
+| Problem | AFINNI CPU | AFINNI GPU | Region CPU | Region GPU |
+|---|---|---|---|---|
+| `spherical_piecewise` | 0.095 / 1.7 / 416 / 363k / 0.96 s | 0.098 / 1.8 / 413 / 343k / 0.94 s | 0.049 / 0.46 / 433 / 66k / 2.6 s | 0.04 / 0.85 / 370 / 56k / 12 s |
+| `anisotropic_gaussian` | 0.0018 / 0.11 / 222 / 110k / 0.3 s | 0.0018 / 0.22 / 213 / 109k / 0.49 s | 0.0018 / 0.08 / 167 / 25k / 1.1 s | 0.0019 / 0.1 / 166 / 25k / 10 s |
+| `wave` | 0.0043 / 3 / 805 / 214k / 0.57 s | 0.0033 / 2.4 / 757 / 195k / 0.5 s | 0.0042 / 3 / 77 / 12k / 0.57 s | 0.0042 / 2.9 / 68 / 10k / 8.7 s |
+| `rosenbrock` | 0.0024 / 3 / 4,235 / 1.1M / 1.9 s | 0.0021 / 3 / 4,312 / 1.1M / 1.1 s | 0.0028 / 2.9 / 2,069 / 314k / 12 s | 0.0026 / 1.7 / 2,381 / 362k / 20 s |
+
+The CPU columns equal the table in `examples/USAGE.md` (leaves and evaluations exactly).
+On the GPU, AFINNI mode is about as fast and as accurate; region mode reaches the same
+accuracy class with different trees and pays the launch floor.
+
+**Reproducing.** `scripts/art_comparison.py` gained `--skip-region`, and region mode alone
+now runs under `mpiexec` (`--skip-art`, `--afinni-work-stealing`; rank 0 prints). Each
+cell is one call, e.g. ART's fastest GPU configuration and region B4 on the GPU:
+
+```bash
+AFINNI_DEVICE=gpu AFINNI_MPI=off PYTHONPATH=. python scripts/art_comparison.py \
+    --art-path ../Adaptive-Regression-Trees-ART- --benchmark plane_wave --dimension 3 \
+    --sampler parallel_numba --traversal bfs --optimizer cupy_batched_cholesky
+AFINNI_DEVICE=cpu AFINNI_MPI=on PYTHONPATH=. mpiexec -n 4 python scripts/art_comparison.py \
+    --art-path ../Adaptive-Regression-Trees-ART- --benchmark plane_wave --dimension 3 \
+    --sampler parallel_numba --skip-art --afinni-work-stealing
+```
+
+**Still open after this run** (see 42.10 for what is now resolved). The determinism policy above (it blocks 42.5's
+decision-equality contract and GPU MPI identity tests); the 11 pre-existing GPU L2
+acceptance mismatches (a tolerance or reduction-order question for AFINNI mode, not
+region mode); the launch-floor optimizations; multi-GPU scaling (needs one GPU per rank).
+
+### 42.10 Deterministic GPU reductions and the B4/sampler launch floor (Nov 11, 2026)
+
+Same machine and software as 42.9. Two changes: every floating-point reduction on the
+GPU training path is now deterministic and per segment, and B4 and the sampler run as a
+handful of fused kernels. Every NumPy branch is untouched, so CPU results stay
+bit-identical to HEAD; GPU results changed at rounding level only.
+
+**Why GPU trees were irreproducible: three causes, found by tracing the first
+divergent split** between two batch sizes (probe scripts in `/tmp/gpu_bench`:
+compare every stored `(root, path_code, w, z)`, then every intermediate of the
+covariance-Hessian metric per node):
+
+| Cause | Effect | Measured |
+|---|---|---|
+| `run_fused_stats` summed with `atomicAdd` (and GPU `segment_sum`, behind `run_fused_cross_cov`, used `add.at`) | different bits on every call | 1,273 of 1,600 outputs changed between identical calls |
+| **CuPy's float `add.reduceat` subtracts prefix sums** (`cumsum[end] - cumsum[start]`) | a segment's sum depends on, and loses precision to, every row *before* it in the batch; the float prefix scan also varies between runs | the same 37-row segment gave different sums for 10 of 11 preceding-data sizes; this is also the cause of the 11 "pre-existing" L2 acceptance failures of 42.9 (relative 1.02e-12) |
+| cuBLAS-batched `matmul`/`einsum` (`M C M^T`, `G β`, constraint and bisector products, `Φ β`) | algorithm, and so rounding, chosen by batch count | node 0's product changed between stacks of 1 and 2 matrices |
+
+Sums, `linalg.solve`, `eigh`, sorts and elementwise kernels were verified to be
+batch-independent and reproducible; integer sums (exact) stay on `add.reduceat`.
+
+**The fix, without a speed cost** (`src/numerics.py`; each has a NumPy branch that is the
+original expression):
+
+| Building block | GPU form | Speed against what it replaces |
+|---|---|---|
+| `segment_cross(A, B, starts, counts, w, a_off, b_off, symmetric)` | one thread per (256-row chunk counted from the segment's own start, output entry), sequential sums, then one thread per (segment, entry) summing the chunks in order; optional centring, weights, a column of ones, `S` weight vectors in one launch | atomic stats kernel: slower at 1e4 rows (0.39 against 0.15 ms: launch overhead), **2–34× faster** from 1e6 rows (e.g. 1e7 rows, K = 100, d = 2: 52 → 1.5 ms; 2e5 rows, d = 80: 69 → 19 ms); cuBLAS grouped Grams: 0.87 → 0.15 ms (512 nodes, p = 3), 7.1 → 5.0 ms (p = 21) |
+| `_reduce_sum_1d` (floats) | `segment_cross` with a column of ones | replaces the prefix-difference `add.reduceat` |
+| `det_matmul`, `det_einsum` | one thread per output entry, sequential inner sum | same order of time for the `d`/`p`-sized products of training |
+| `spd_solve` | one thread per SPD system: Cholesky of the lower triangle and two triangular solves; NaN for a non-positive-definite system | one kernel instead of a dozen and ~0.4 ms per batched `linalg.solve` |
+
+`run_fused_stats` and `run_fused_cross_cov` use `segment_cross` on the GPU; the atomic
+stats kernel is gone. Their labels must be sorted, as every batch layout is
+(`_segments_of` finds the segments by binary search with no host synchronization; a
+sortedness check or `bincount` would each cost a round trip per call, which was measurable
+on small AFINNI runs).
+
+**Contracts after the change.**
+
+| Check | Result |
+|---|---|
+| GPU run to run | bit-identical trees (tree fingerprints of 3 identical trainings per search, quadratic 2-D: B2, B3, B4) |
+| GPU batch size | every common split bit-identical between the default batch and `batch_size=97` (B2, B3, B4); the 4 batch-independence tests now pass |
+| CPU, AFINNI mode | `regression_check.py` against HEAD: 45 cases, max difference 0 |
+| CPU, region mode | tree fingerprints identical to HEAD on 7 configurations (affine/quadratic, B2/B3/B4) |
+| GPU, AFINNI mode | against HEAD's GPU reference: 45 cases within 8.9e-13, identical decisions; against base `015adfd`: only `extra_tiny_batches` (42.4) |
+| Test suites | GPU 542 passed, 0 failed (was 519 / 15); CPU 535 passed; `tests/mpi` at 4 ranks 12 passed |
+| ART on the GPU | already deterministic: 3 runs of `cupy_batched_cholesky` BFS on quadratic 2-D, Gaussian 3-D and plane wave 2-D gave bit-identical L2 (its only atomics are `atomicExch` on failure flags) |
+
+GPU and CPU trees still differ from each other at rounding level (fused multiply-adds,
+summation order); equivalence across backends remains statistical (42.9, five seeds).
+
+**AFINNI mode (non-region) on the GPU, at a scale where time matters.** Large cases built
+for this check (`/tmp/gpu_bench/afinni_big.py`: `N` uniform points in `[-1,1]^d`,
+`atol = rtol = tol`, K0 = 200, min_pts 100, 40 levels), HEAD against the new code
+alternating, two rounds each:
+
+| Case | Evaluations / leaves | HEAD | New | |
+|---|---|---|---|---|
+| anisotropic Gaussian d=6, N = 1M, tol 1e-3 (`AFFINE_COV_NO_HESS`) | 143M / 855k | 29.6, 30.1 s | 26.3, 25.4 s | **1.15×** |
+| Rosenbrock d=6, N = 500k, tol 1e-2 (`AFFINE_COV_HESS`) | 331M / 2.08M | 71.4, 70.1 s | 61.7, 60.1 s | **1.16×** |
+| vector quadratic d=8, N = 500k, tol 1e-2 | 327M / 2.04M | 97.5, 93.6 s | 82.2, 78.8 s | **1.19×** |
+
+Leaves, evaluations, `pout` and the in-tolerance share are identical; errors agree to
+1e-12 relative; peak host RSS unchanged (6.4 / 14.3 / 16.0 GB); peak VRAM 2.7–3.8 GB.
+Re-checked with the final code (tiled `segment_cross` included), one more alternating
+round: 34.2 → 28.5 s, 85.4 → 70.4 s, 112.7 → 90.1 s (1.20–1.25×; both checkouts ran slower
+in that session, laptop clocks), identical results and peak memory. The
+small `afinni_benchmark.py` cases (0.8–3.5 s) are within noise of HEAD after the host
+synchronization was removed (medians: Rosenbrock d=4 1.63 → 1.53 s, vector quadratic d=6
+3.49 → 3.13 s, anisotropic Gaussian d=4 0.83 → 0.83 s). CPU timings are unchanged (same code).
+
+**B4 and the sampler as fused kernels** (`src/region.py`, GPU branches only):
+
+1. **All 12 line-search trials at once.** `soft_node_prep` (gradient projection, step
+   `alpha`, margin, and every trial plane once per node), `soft_trial_terms` (the frozen
+   loss integrand of every trial for every row) and one segmented sum, then
+   `soft_node_select` takes each node's first trial that passes the Armijo and margin
+   tests. That is exactly the sequential halving loop's step: on test data the same nodes
+   step and the planes agree to 2e-16.
+2. **Fused gates and objective.** `soft_gates` evaluates score, stable logistic and floors
+   in one pass; `_soft_objective_fused` shares each segmented product, solve and residual
+   pass between both children (`segment_cross` with two weight vectors) and gets
+   `J`, the gradient and the saturation sums from one reduction of `soft_row_terms`.
+   Against the generic formulas on the same data: J, gradient, residuals and penalty agree
+   to 1e-13 (the inner-solve gap is rounding noise by construction, about 1e-29 against J ≈ 1).
+3. **Counters on the device**, read once per B4 call instead of four host reads per iteration.
+4. **CUDA graph replay** (`_ReplayedStep`, `RegionSettings.cuda_graphs`, default on): the
+   first iteration runs eagerly on its own stream, the second is captured with every
+   buffer allocated during capture pinned for the graph's lifetime, and later iterations
+   are one graph launch. Trees are identical with and without graphs (test
+   `test_cuda_graph_replay_builds_the_same_tree_as_eager_iterations`); every capture
+   succeeded on the benchmarks (20 of 20 on 3-D plane wave). Gain: 1.2 → 0.9 s on
+   quadratic 2-D; none once the GPU is busy (Rosenbrock 5-D quadratic: 3.6 s either way).
+5. **Small SPD solves** through `spd_solve` (above).
+6. **Hit-and-run step** as one `hr_step` kernel per step (direction, box chord, carried
+   constraint and Voronoi bisector chords, feasibility, move), with `np.max`'s NaN
+   propagation; with the same random stream it reproduces the NumPy sampler point by point
+   to 4.4e-12 (slabs in 2-, 5- and 20-D, a Voronoi cell). The counter RNG
+   (`counter_uniform_pairs`) is one elementwise kernel and bit-identical to NumPy's.
+
+Effect on one warm training (Nsight Systems):
+
+| Run (affine, B4) | Wall | Kernel launches | GPU busy | B4 ("Split rejected") | Sampling |
+|---|---|---|---|---|---|
+| quadratic 2-D, 42.9 | 11.8 s | 421,325 | 21% | 10.9 s | 0.79 s |
+| quadratic 2-D, now | 1.17 s | 24,213 | 9% (tiny kernels) | 0.83 s | 0.23 s |
+| Rosenbrock 20-D, 42.9 | 19.1 s | 363,591 | 50% | 13.7 s | 5.0 s |
+| Rosenbrock 20-D, now | 5.4 s | 34,908 | 35% | 3.3 s | 1.7 s |
+
+Warm trainings, tree fingerprints included (`/tmp/gpu_bench/gpu_baseline.sh`; GPU only,
+first column after the determinism fix, before the fused kernels):
+
+| Configuration | After determinism fix | Now |
+|---|---|---|
+| quadratic 2-D affine, B2 / B3 / B4 | 0.80 / 1.07 / 10.5–13.3 s | 0.37 / 0.68 / 0.85–0.92 s (CPU: 0.62 / 0.59 / 2.1 s) |
+| Gaussian 2-D affine, B4 | — | 0.31–0.34 s (CPU 0.19 s; cold GPU process 0.99 s) |
+| Gaussian 3-D affine, B4 | 5.6 s | 0.81 s |
+| plane wave 3-D quadratic, B3 / B4 | 1.45 / 8.2 s | 0.86–1.05 / 1.13–1.19 s |
+| Rosenbrock 5-D quadratic, B4 | 11.6 s | 3.4–3.5 s |
+| Rosenbrock 20-D affine, B3 / B4 | 4.6 / 11.6 s | 2.9 / 5.0–5.1 s |
+
+**The ART comparison with the new GPU code** (cold, one process per run, as in 42.9; ART,
+region CPU and region MPI columns unchanged from 42.9, region GPU re-measured):
+
+| Problem (affine) | ART fastest CPU | ART fastest GPU | Region B4 CPU | Region B4 MPI-4 | Region B4 GPU | Region B3 GPU | ART GPU / region B4 GPU | region B4 CPU / GPU |
+|---|---|---|---|---|---|---|---|---|
+| quadratic 2D | 21.8 s | 9.39 s | 2.19 s | 2.74 s | 1.48 s | 1.45 s | 6.3× | 1.5× |
+| quadratic 3D | 41.7 s | 17.0 s | 5.09 s | 4.34 s | 1.74 s | 1.55 s | 9.8× | 2.9× |
+| gaussian 2D | 1.02 s | 0.99 s | 0.23 s | 0.51 s | 0.99 s | 0.90 s | 1.0× | 0.23× |
+| gaussian 3D | 4.15 s | 3.05 s | 0.90 s | 1.23 s | 1.60 s | 1.24 s | 1.9× | 0.56× |
+| plane wave 2D | 53.8 s | 18.1 s | 1.42 s | 1.76 s | 1.63 s | 1.35 s | 11× | 0.87× |
+| rosenbrock 2D | 26.3 s | 11.8 s | 1.92 s | 2.03 s | 1.57 s | 1.23 s | 7.5× | 1.2× |
+| spherical piecewise 2D | 9.80 s | 8.61 s | 1.17 s | 1.59 s | 1.87 s | 1.35 s | 4.6× | 0.63× |
+| spherical piecewise 3D | 19.2 s | 12.7 s | 3.39 s | 2.95 s | 1.67 s | 1.30 s | 7.6× | 2.0× |
+| plane wave 3D | 65.2 s | 29.3 s | 6.05 s | 4.10 s | 1.77 s | 1.42 s | 17× | 3.4× |
+| rosenbrock 5D | 64.5 s | 26.0 s | 11.0 s | 5.96 s | 2.00 s | 1.60 s | 13× | 5.5× |
+| rosenbrock 20D | 207 s | 175 s | 99.8 s | 51.7 s | 5.84 s | 3.63 s | **30×** | **17×** |
+
+| Problem (quadratic) | ART fastest CPU | ART fastest GPU | Region B4 CPU | Region B4 MPI-4 | Region B4 GPU | Region B3 GPU | ART GPU / region B4 GPU | region B4 CPU / GPU |
+|---|---|---|---|---|---|---|---|---|
+| gaussian 2D | 0.97 s | 1.22 s | 0.15 s | 0.49 s | 0.71 s | 0.64 s | 1.7× | 0.21× |
+| gaussian 3D | 1.12 s | 1.48 s | 0.27 s | 0.55 s | 1.03 s | 0.75 s | 1.4× | 0.26× |
+| plane wave 2D | 31.3 s | 12.9 s | 1.58 s | 1.83 s | 1.62 s | 1.27 s | 8.0× | 0.98× |
+| rosenbrock 2D | 17.4 s | 6.85 s | 3.24 s | 1.92 s | 1.70 s | 1.23 s | 4.0× | 1.9× |
+| spherical piecewise 2D | 18.6 s | 9.15 s | 2.56 s | 1.69 s | 1.58 s | 1.34 s | 5.8× | 1.6× |
+| spherical piecewise 3D | 38.8 s | 20.3 s | 8.98 s | 4.20 s | 1.94 s | 1.60 s | 10× | 4.6× |
+| plane wave 3D | 73.1 s | 23.9 s | 6.55 s | 3.51 s | 1.98 s | 1.49 s | 12× | 3.3× |
+| rosenbrock 5D | 116 s | 34.9 s | 58.1 s | 22.5 s | 4.32 s | 2.59 s | 8.1× | 13× |
+
+Accuracy of the new GPU trees (full cells in `/tmp/gpu_bench/region_gpu_v2_*.jsonl`)
+stays in the CPU/GPU spread of 42.9, e.g. affine 3-D plane wave 0.041 / 53% / 897 leaves
+(CPU 0.048 / 55% / 887), quadratic 3-D plane wave 1.2e-3 / 0.27% / 367 (CPU 1.2e-3 / 0.19% /
+340), Rosenbrock 5-D quadratic 9.9e-3 / 43% / 1,023 (CPU 8.6e-3 / 39% / 1,024).
+
+- **Region mode against ART, both on the GPU:** region B4 is now as fast or faster on every
+  row: 1.0–30× with affine leaves and 1.4–12× with quadratic leaves, the large factors at
+  the larger trees (20-D: 175 s against 5.8 s).
+- **Region mode, GPU against CPU:** the GPU wins on every row whose CPU training takes
+  more than about 1.5 s (1.2–17×); it still loses on the smaller ones (the Gaussians, the
+  one-leaf quadratics, 2-D plane wave and affine 2-D spherical piecewise), whose whole CPU
+  training takes 0.15–1.6 s. There a cold GPU process pays about 0.65 s of fixed cost
+  (module loading, kernels from the disk cache, graph capture): Gaussian 2-D affine B4 is
+  0.99 s cold and 0.31–0.34 s warm on the GPU, 0.19 s on the CPU; quadratic 2-D affine B4
+  is 0.85–0.92 s warm on the GPU against 2.1 s on the CPU.
+
+**Memory: no increase anywhere.** Peak CuPy pool bytes *in use* (an allocator wrapper
+recording `used_bytes()` after every allocation; the pool's cache is excluded) and peak host
+RSS, before → after:
+
+| Case | Peak VRAM in use | Peak host RSS |
+|---|---|---|
+| AFINNI anisotropic Gaussian d=6 | 2.769 → 2.769 GB | 6.36 → 6.36 GB |
+| AFINNI Rosenbrock d=6 | 3.257 → 3.257 GB | 14.30 → 14.26 GB |
+| AFINNI vector quadratic d=8 | 3.349 → 3.349 GB | 16.01 → 15.98 GB |
+| Region Rosenbrock 20-D affine B4 | 1.12 → 1.12 GB | — |
+| Region Rosenbrock 5-D quadratic B4 | 0.644 → 0.536 GB | — |
+| Region plane wave 3-D quadratic B4 | 0.061 → 0.037 GB | — |
+
+("Before" for region mode is HEAD with the two one-line GPU fixes of 42.9, since HEAD
+cannot finish a region training on the GPU.) Region memory fell because the fused kernels
+no longer materialize `beta[labels]`, per-trial gates and planes, or per-chain copies of the
+node constraints. The remaining tables were re-checked after each later change: every one
+kept the same trees and the same peak.
+
+**Follow-up: kernel efficiency at high dimension.** After the launch floor, 20-D B4 and the
+sampler were GPU-bound (Nsight's NVTX GPU projection equal to wall time), so each step below
+cuts FP64 work, which this laptop GPU has little of. Each was kept only after an
+interleaved A/B (three alternating runs against a snapshot of the previous state) showed a
+gain with identical trees and identical peak memory:
+
+| Change | Rosenbrock 20-D B4 | Rosenbrock 5-D quadratic B4 | Other |
+|---|---|---|---|
+| `hr_walk`: a whole walk per chain in one launch, uniforms hashed in the kernel (bit-identical to `counter_uniform_pairs`), node constraints and root bounds read in place, no chunking | sampling phase 1.73 → 1.36 s (Nsight) | — | 2-D sampling 0.23 → 0.17 s; NumPy-sampler agreement unchanged (4e-12) |
+| `segment_cross_tiled`: one block per chunk, rows loaded once into shared memory (offset- and weight-adjusted) for every output entry; the same sums in the same order (35 of 35 cases bit-identical to the untiled kernel); used from 8 entries | 5.22 → 4.22 s (with the next row) | 3.91 → 3.01 s | — |
+| `soft_trial_terms`: one thread per row, `w_t^T u = inv_m (w^T u - a_m g^T u)`, so two dot products per row instead of twelve | (in the row above) | (in the row above) | — |
+| `bin_sides`: B3's prefix and suffix sums over bins written by one kernel (no `cumsum`/`flip` temporaries) | 4.06 s | — | 20-D B3 2.62 → 2.28 s |
+| per-dimension `MAXD` builds of `hr_walk` | no gain | no gain | reverted |
+
+20-D B4 is now 4.0 s warm (11.6 s after the determinism fix, 15.6 s cold in 42.9) with the
+GPU busy 66% of the time; the largest kernels are `hr_walk` (22%), the two `segment_cross`
+kernels (30%) and `soft_trial_terms` (13%).
+
+**Cold start.** A cold process costs about 1.3 s before training (importing CuPy and creating
+the CUDA context, outside AFINNI) plus about 0.65 s more on its first training than on a warm
+one. Of the 0.65 s, 0.37 s is CuPy loading 218 distinct kernels from its on-disk compile cache
+(about 1.7 ms each, mostly CuPy's own elementwise and reduction kernels), and the rest is
+first-use library handles (cuSOLVER for `eigh`), pool growth and graph capture. None of it
+grows with the problem, so it matters only for trainings that take about a second; it was
+documented rather than engineered around.
+
+**Still open.** `hr_walk` runs one chain per thread (a warp per chain would parallelize the
+`h x d` constraint loops at high dimension); `spd_solve` runs one system per thread (a warp per
+system for `p >= 16`); the cold-start cost above; multi-GPU scaling (one GPU per rank).
+Per-node validation and audit claims are unchanged by any of this.
+
+### 42.11 Kernel sources, cleanup and documentation (Nov 11, 2026)
+
+**CUDA sources moved out of the Python modules.** Every `RawModule`/`RawKernel` source that
+was a string in `src/numerics.py`, `src/region.py`, `src/neighbors/knn.py` and `src/neighbors/kmeans.py` now lives
+in `src/kernels/`, one file per area:
+
+| File | Kernels | Callers |
+|---|---|---|
+| `segment_cross.cu` | `segment_cross_partial`, `segment_cross_tiled`, `segment_cross_reduce` | `numerics.segment_cross` (and through it the stats, cross products, segmented sums) |
+| `small_linalg.cu` | `spd_solve`, `det_matmul`, `fused_affine_fit_regularize`, `batched_inplace_cholesky_solve` | `numerics` |
+| `cluster_stats.cu` | segmented max, split and Mahalanobis projections, centroid distances, Taylor residual norms | `numerics` |
+| `region_b4.cu` | `soft_gates`, `soft_trial_terms`, `soft_node_prep`, `soft_node_select`, `soft_residuals`, `soft_row_terms`, `bin_sides` | `region` (B3/B4) |
+| `hit_and_run.cu` | `hr_walk` | `region.HitAndRunSampler._walk_fused` |
+| `knn_tiled.cu`, `knn_select.cu` | `knn_tiled` (K, BM, QT `#define`d by the loader), `radix_select_k`, `candidate_d2` | `knn` |
+| `kmeans.cu` | `centroid_sums` | `kmeans` |
+
+`src/kernels/__init__.py` provides `source(name)` (the text) and `module(name, options)` (a
+cached `cupy.RawModule`). The kernels are still compiled at runtime by NVRTC; CuPy caches the
+binaries in `~/.cupy/kernel_cache`, keyed by source, options and GPU architecture, so a
+process recompiles a file only after it changes. Precompiled cubin/fatbin files were
+considered and rejected: they would need `nvcc` and one binary per architecture (or PTX
+JIT, which compiles again) to save about 25–35 ms per process, since only 15–20 of the
+~218 kernels a training loads are ours (the rest are CuPy's own). The short CuPy
+`ElementwiseKernel` bodies (uniform pairs, convex combinations, the n-smallest mark) stay
+inline: they are single expressions generated around CuPy's indexing, not compilation units.
+The project has no `[build-system]`; if one is added, `src/kernels/*.cu` must ship as package
+data.
+
+**Dead code removed.** The atomic `fused_cross_cov` kernel had no caller left (the CuPy path
+of `run_fused_cross_cov` uses `segment_cross`; the old launch survived only inside a
+commented-out string block, with a note that it was wrong for `fd > 1`). The kernel, its
+`get_function` and that block are gone; every other kernel has a caller, checked by
+matching each `__global__` name against the Python sources. The atomic stats kernel was
+already removed in 42.10.
+
+**Formatting and documentation.** The `.cu` files are formatted by clang-format 18.1.8
+(`uvx --from clang-format==18.1.8 clang-format -i src/kernels/*.cu`, config in
+`src/kernels/.clang-format`: Google base, 4-space indent, 110 columns). Their comments follow
+a new "CUDA documentation style" section in `AGENTS.md`: a one-line file header naming the
+callers; for each kernel the thread mapping and the contract (ordering and determinism,
+in-place outputs, failure values) rather than a parameter list; numbered comments for the
+major phases of non-trivial kernels that say why they are done that way; and an explicit
+comment wherever an invariant could be "optimized" away (the fixed summation order that keeps
+`segment_cross_tiled` bit-identical to the untiled kernel, `ldexp` for exact halvings, NaN
+propagation that `fmax` would drop, the `_rn` intrinsics that forbid fused multiply-adds, the
+splitmix64 constants shared with the NumPy sampler).
+
+**Verification after the move, the cleanup and the reformatting.** Kernel sources changed only
+in whitespace and comments, so results must be bit-identical: the hit-and-run sampler's output
+on the four reference geometries is identical to the pre-move output; tree fingerprints and
+peak VRAM equal the snapshot taken before the move (quadratic 2-D B4, Rosenbrock 20-D B4,
+3-D plane wave quadratic B3); `regression_check.py` passes against the previous GPU reference
+and is bit-identical to HEAD on the CPU; GPU 542, CPU 535 and `tests/mpi` 12 tests pass.
+
+**Stress test and a rejected admission change.** An affine Rosenbrock at d = 32 with
+rtol 1e-3 (every node splits to the depth limit) was run at depths 10–14: 1,024 → 16,384
+leaves, 1.7M → 27M oracle calls, 11.7 → 125.6 s, host RSS 1.3 → 6.2 GB, and peak VRAM in use
+*falling* from 1.33 to 1.05 GB on the 8 GB card. The cause is `RegionPlan.bytes_per_point`
+charging each node's carried constraints (`h (d+1)`) to every point, about 7.9 KB per point
+at depth 14 against about 1.2 KB of real per-point arrays, so batches stay small. Charging
+them per node instead built the bit-identical tree (d = 32, depth 12) with 5.2 GB in use,
+but in 113 s instead of 33 s: under WSL a nearly full card (7.9 of 8.2 GB including CuPy's
+cache) is paged to host memory by the driver. The change was reverted; the docstring records
+why. On a card with headroom (e.g. a 96 GB H200) the per-node charge is worth re-measuring,
+with an explicit cap on the fraction of the card it may fill.
+
+**Portability to other GPUs (e.g. TACC Vista, Grace Hopper H200, 96 GB).** Nothing above is
+tied to the RTX 2000 Ada: NVRTC compiles every `.cu` file for the GPU it runs on, no kernel uses
+architecture-specific intrinsics or hard-coded SM counts, block sizes (128/256) and the at most
+40 KB shared tile fit every recent architecture, and determinism comes from fixed summation
+orders, not from the hardware (trees are reproducible per machine and toolkit, statistically
+equal across machines). What changes is which costs dominate:
+
+- FP64 throughput is far higher on an H200 than on this laptop, so the kernels that bound large
+  runs here (`soft_trial_terms`, `hr_walk`, `segment_cross_tiled`) should take a smaller share
+  there and host-side costs (Python, synchronizations, launches, oracle) a larger one. How much
+  faster they run is not predicted from peak ratios (memory bandwidth, dependency chains,
+  occupancy and transcendental throughput also bound them); it has to be measured on the target.
+- 96 GB and no WSL: the paging slowdown above should not occur, so the per-node admission charge
+  is worth re-measuring there with a cap on the fraction of the card it may fill.
+- Grace Hopper's NVLink-C2C (about 900 GB/s) makes the per-level host-device queue transfers and
+  a CPU-side oracle much cheaper than over a laptop's PCIe link.
+- The tuning constants (256-row chunks, `SEGMENT_TILED_MIN_E = 8`, 32-row tiles) were chosen on
+  22 SMs; an H200 has 132. They are correct anywhere, but an interleaved A/B on the target may
+  choose other values.
+
+**Line-search trials in two groups.** Over 163,800 node-iterations (8-D, depth 12) the
+accepted trial was 0–3 in 98% of cases, yet all 12 were evaluated. Trials now run in two
+groups (0–3, then 4–11), and `soft_trial_terms` skips nodes that are inactive, not finite or
+already stepped; `soft_node_select` keeps a per-node `stepped` flag and classifies stopped
+nodes only after the last group. The chosen step is unchanged (the first passing trial; the
+per-column sums are the same), so trees are bit-identical. Interleaved A/B against the
+previous state: Rosenbrock 5-D quadratic 2.48 → 2.34 s, Rosenbrock 20-D 3.69 → 3.46 s,
+8-D affine depth 12 4.04 → 3.63 s (−6 to −10%), quadratic 2-D within noise; identical tree
+fingerprints and peak VRAM; GPU suite 542 passed.
+
+### 42.12 Second GPU review: measured outcomes (Nov 12, 2026)
+
+An external review of 42.10–42.11 questioned the ranking of the remaining GPU work and pointed
+at paths the d <= 32 tests never exercised. Each of its suggestions was measured; exact changes
+are verified by a bit-for-bit comparison of every leaf column (keys, statuses, parameters), the
+integer counters and predictions at 20,000 query points (which depend on every split plane and
+leaf model), not only the tree fingerprint, plus alternating timed runs against a snapshot and
+peak VRAM in use.
+
+| Step | Finding | Outcome |
+|---|---|---|
+| Line-search trial groups (42.11) | measured 6–10% end to end, against the 15–20% first estimated; the review's bound (about 13%) was closer | kept |
+| B4 objective work on finished nodes | row-weighted share of objective work on nodes that had stopped: 1.3% (quadratic 2-D), 0.0% (Rosenbrock 5-D quadratic, 20-D, 8-D depth 12); nodes almost always run all 40 iterations | not implemented |
+| Reuse each child's Cholesky factor for both B4 solves (`spd_factor`, `spd_solve_factored`) | bit-identical; 1–5% at p <= 21, more as p grows | kept |
+| One tile load for both children's Grams (`segment_cross_tiled_multi`) | bit-identical, but 2–12% slower (50-D: 21.7 → 24.4 s): keeping the bits means applying the weight in the inner loop, an extra FP64 multiply per row that costs more than the saved loads | removed |
+| Tiled Grams above 2,048 entries | the tiled kernel served at most 2,048 output entries (p <= 63 for a symmetric Gram); beyond, the untiled kernel was 3.3–3.7× slower per entry. Entry groups (`blockIdx.y`) lift the cap; each entry keeps its row order (56 of 56 cases bit-identical, up to p = 129) | kept |
+| Cooperative SPD factorization (`spd_factor_coop`, from p = 32) | one block per system; each entry keeps its sequential inner sum, so the factor is bit-identical; solves 2.5–9× faster (p = 51: 3.24 → 0.95 ms, p = 100: 20.5 → 2.3 ms for 256 systems) | kept |
+
+Frozen-input microbenchmark (`/tmp/gpu_bench/highdim_micro.py`: 128 nodes of 50 p rows, two
+weight sets) of the Gram, before → after the entry groups: p = 63 17.8 → 17.8 ms, p = 64
+65.4 → 19.7 ms, p = 100 247 → 69 ms, p = 129 530 → 163 ms.
+
+End to end (alternating runs, bit-identical everywhere, peak VRAM unchanged or lower):
+
+| Case | Coefficients | Before → after |
+|---|---|---|
+| Rosenbrock 10-D, quadratic leaves | 66 | 39.5 → 17.4 s (2.27×) |
+| Rosenbrock 50-D, affine | 51 | 22.7 → 21.0 s |
+| quadratic 2-D, Rosenbrock 5-D quadratic, 20-D, 3-D plane wave, 8-D depth 12 | 3–21 | unchanged (paths not reached) |
+
+GPU suite: 542 passed. The review's main point held: performance at higher dimension and
+larger feature sets cannot be extrapolated from d <= 32 runs, and the largest win of this round
+came from a path those runs never reached. Remaining, in order: an event-based CPU-oracle/GPU
+pipeline within an explicit memory budget, exact reuse of slack computations in `hr_walk`, and
+host-step fusion and multi-iteration graphs, ranked by the profile at that point.
+
+### 42.13 Third review: reproducibility, sampler reuse, and what custom code earns its place (Nov 12, 2026)
+
+A third external report (frozen-input probes and complete-model comparisons on this laptop)
+led to two exact changes and an audit of the custom GPU code. Timings here were measured with the laptop
+on a weaker charger (GPU capped near 35 W instead of 75 W), so they are 15–30% slower in
+absolute terms than 42.10–42.12; only relative changes from interleaved A/B runs are reported.
+
+**Quadratic-leaf reproducibility.** Two identical trainings of the 10-D quadratic model (66
+coefficients) gave different leaf coefficients (up to 2.1e-10) and predictions (relative
+7.8e-15) while planes, keys, statuses and counters matched: a cold run and a warm run see
+different free VRAM, so different batch caps and batch compositions, and the quadratic leaf fit
+still called CuPy's batched `linalg.solve`, whose algorithm depends on the batch count. It now
+calls `spd_solve` (NumPy branch: the same `linalg.solve`, so CPU bits are unchanged). Cold and
+warm models are now bit-identical (before: predictions differed), at the same speed and peak.
+
+**Exact sampler reuse** (`hit_and_run.cu`): each Box-Muller pair's radius and angle are computed
+once, and the slacks computed for the chord also serve the step's feasibility check (the
+endpoint check is kept). Same expressions in the same order, so the sampler's output is
+bit-identical. A/B: 50-D −5%, 8-D depth 12 −4%, 20-D about −4%, smaller cases unchanged; the
+code got shorter.
+
+**What custom code earns its place.** Every GPU change of 42.10–42.13 was reviewed against one
+rule. A change that exists for *correctness* (results independent of batch composition and
+repeatable run to run) is kept regardless of speed: the library routines it replaces (cuBLAS and
+cuSOLVER batched products and solves, CuPy's float `add.reduceat`) choose algorithms by batch
+count or subtract prefix sums, which breaks that contract. A change that exists only for
+*speed* must give at least 5% end to end on at least one workload class that matters (large,
+deep or high-dimensional trees), with no regression beyond noise elsewhere, and the gain is
+weighed against what the change adds to maintain: lines, new invariants a later edit could
+break, and new failure modes. A flat percentage alone would treat a 6% gain from a 15-line
+kernel the same as a 25% gain on one-second runs from 60 lines with a delicate invariant.
+
+| Change | Measured benefit | Decision |
+|---|---|---|
+| `segment_cross`, `_reduce_sum_1d`, `det_matmul`, `spd_solve`, quadratic-fit `spd_solve` | determinism (libraries break it); also faster | kept |
+| Fused B4 kernels | about 7× on B4 | kept |
+| Fused sampler (`hr_walk`) and RNG kernel | sampling about 3× | kept |
+| Tiled Gram and entry groups | 19–23%; 3.3× above 63 coefficients | kept |
+| Cooperative factorization | 2.27× end to end, 10-D quadratic | kept |
+| `bin_sides` | −13% on B3 at 20-D, about 15 lines | kept |
+| Line-search trial groups | −6 to −10% on 2–4 s runs; re-checked on long runs (bit-identical, same peak): 8-D depth 14 13.6 → 11.9 s, depth 15 22.5 → 20.7 s, depth 16 42.7 → 40.3 s (2.3 s, 5.5%); 32-D depth 13 72.8 → 71.5 s | kept: passes the threshold on long low-dimensional deep trees, neutral elsewhere |
+| Sampler reuse | −4 to −5%, shorter code | kept |
+| Cholesky reuse (`spd_factor`, `spd_solve_factored`) | 1–5% at p <= 21 | kept: the cooperative path needs the factor/solve split |
+| CUDA graph replay (`_ReplayedStep`, `RegionSettings.cuda_graphs`, its test) | short runs: 3.19 → 3.62 s without it (8-D depth 12, medians of 3), 0.43 s; long runs: no gain (8-D depth 14 11.25 vs 11.49 s, 32-D depth 13 68.8 vs 68.8 s) and 17–34% *more* peak VRAM with it (0.932 → 1.245 GB, 0.945 → 1.098 GB: buffers pinned for the graph's lifetime) | **removed**: below the AGENTS.md threshold (`max(2 s, min(5%, 10 s))`) on every workload, and costs memory |
+| `SEGMENT_TILED_MIN_E` 32 → 8 (42.11) | neutral | reverted to 32 |
+| Shared tile loads for both children (42.12) | 2–12% slower | removed |
+| Four iterations per submission (review prototype) | −2.4% deep tree, +2.8% at 50-D | not adopted |
+| Skipping finished nodes in the objective | 0–1.3% of work avoidable | not implemented |
+
+The threshold was then refined (AGENTS.md "Performance changes"): a speed change must save
+`max(2 s, min(5% of t, 10 s))` on a workload that matters with baseline time `t`, because a user
+notices absolute time and a flat percentage misjudges both ends. Graph replay is the worked
+example: 13% on 3-second runs (0.4 s, invisible), nothing on 11–70 s runs, and more memory.
+
+**CPU (Numba, already a core dependency).** The GPU lessons that keep results unchanged were
+already in the NumPy path (early line-search exit, slack reuse, one Box-Muller radius per pair).
+The remaining CPU cost was NumPy's many small temporaries. A profile of region B4 on Rosenbrock
+5-D quadratic (60 s) put 27% in per-node Grams (`grouped_cross`), 27% in the gates
+(`_soft_gates`/`_sigmoid`) and 23% in the sampler (`_steps`). Results of porting each, judged by
+the AGENTS.md threshold with alternating runs on the 75 W charger:
+
+| Port | Result | Decision |
+|---|---|---|
+| Gates as a *parallel* Numba loop (22 threads) | 58.0 → 66.7 s (+15%); limiting BLAS to one thread did not help, one Numba thread made it fast: the cost is starting a parallel region on each of ~2,500 mostly small calls | rejected |
+| Gates as a *serial* Numba loop (`_cpu_soft_gates`) | 60.0 → 47.6 s (−21%), bit-identical to NumPy at 5-D (dot products summed in the same order), identical for 1 and 22 threads | kept |
+| Sampler as a serial Numba twin of `hr_walk` (`_cpu_hr_walk`, same counter-stream uniforms) | 50.4 → 42.3 s (−16%); points agree with the NumPy sampler to <= 5e-12 and with the GPU sampler to <= 2.4e-12; trees change at rounding level (accepted), accuracy within tree-to-tree spread (L2 / above-tol / leaves, NumPy → Numba: plane wave 3-D quadratic 1.20e-3 / 0.2% / 340 → 1.08e-3 / 0.4% / 328, Rosenbrock 5-D quadratic 8.59e-3 / 39.5% → 8.83e-3 / 39.6%, spherical 3-D 9.01e-2 / 13.7% → 8.74e-2 / 13.4%, quadratic 2-D identical) | kept |
+| Per-node Grams as a serial Numba loop (upper triangle only) | 0.23–0.76× of NumPy's BLAS batched matmul (p = 6, 21, 66) | rejected: BLAS wins |
+
+Together: Rosenbrock 5-D quadratic CPU region B4 about 60 s → 41 s. Cost: about 0.14 GB of fixed
+RSS (Numba and its compiler, independent of problem size; already paid when the CPU k-means or
+kNN paths load Numba) and about 0.5 s of first-call start-up per process. Both kernels use
+`error_model="numpy"`: Numba otherwise follows Python and raises on division by zero, which the
+walk relies on (IEEE infinities for chord ends). CPU region trees are therefore no longer
+bit-identical to the earlier NumPy-only code (sampler sums run in a different order); AFINNI
+mode is unaffected (`regression_check.py` bit-identical to HEAD on the CPU).
+
+**Also found:** `Roots.bounds()` fails above 64 dimensions (NumPy's `unravel_index` accepts at
+most 64 axes); claims above 64-D need that path fixed first. The sampler's drift-check "host
+time" is mostly waiting for the preceding walk, not removable overhead. CPU-only oracle time is
+2.8–8.8% of wall time on these benchmarks, so overlapping it with GPU work would gain at most
+about 1.03–1.10× here; it is worth building only for an oracle whose measured cost is larger.
+
+### 42.14 Reorganization of `src/` (Nov 12, 2026)
+
+`src/` had 27 flat modules mixing six roles, `region.py` at 1,756 lines and a 530-line
+`_run_local_refinement`. It is now layered packages (README.md "Code layout"):
+
+| Package | Contents (former module) |
+|---|---|
+| `infra/` | `backend`, `profiling`, `monitor`, `logging_utils` |
+| `numerics/` | `segments`, `linalg`, `stats` (from `numerics.py`; `__init__` re-exports every name) |
+| `components/` | `registry`, `modes`, `local_models`, `splitting`, `acceptance`, `trust_regions`, `sampling` |
+| `neighbors/` | `knn`, `kmeans` |
+| `region/` | `constants`, `rng`, `geometry`, `sampling`, `split_search`, `plan`, `routing` (from `region.py`) |
+| `engine/` | `initial` (initial clustering, grid labels), `refinement` (`_run_local_refinement`, `_afinni_batch`), `adaptive_clustering` (driver), `clusters`, `evaluation`, `work_stealing`, `io` |
+| `surrogate/` | `model`, `persistence`, `metrics` (from `surrogate.py`) |
+
+`config.py` stays a module (a `config/` package would import `components`, which import the
+presets, which would re-enter the package: a cycle), and gains the size heuristics of
+`heuristic_parameters.py`. Removed: the `plotter_utils.py` and `adaptive_clustering_utils.py`
+compatibility shims (every importer now uses the owning module), the unused `CudaTimer`, and
+`utils.py` (its scan-based `repeats` replaced the `xp.repeat` wrapper of the same name in
+`numerics`). Import paths users rely on (`src.surrogate`, `src.config`, `src.problems`,
+`from src import xp`) are unchanged. The AFINNI batch step of the refinement loop is now the
+function `_afinni_batch`, which takes ownership of the batch arrays: the caller used to keep a
+reference through augmentation and splitting, so releasing them early lowered peak VRAM on the
+anisotropic Gaussian d=6 case from 2.769 to 2.305 GB (same model, same time within noise).
+Tests that patched internals now patch the module that uses the name.
+
+Every step was checked before the next: CPU, GPU and MPI suites (534 / 541 / 12; one legacy
+shim test removed), `regression_check.py` bit-identical to HEAD on the CPU and exactly equal to
+the pre-reorganization GPU reference, and bit-for-bit model dumps of region mode on the CPU
+(Rosenbrock 5-D quadratic) and GPU (8-D depth 14) identical to the pre-reorganization code.
+
+**Probe and benchmark scripts.** The scripts used in 42.9–42.11 are scratch files in
+`/tmp/gpu_bench/`, not part of the repository: the ART matrix driver (`run_matrix.sh`,
+`tables.py`, `seeds.py`), the region-only driver (`prof_driver.py`, `det_check.sh`,
+`gpu_baseline.sh`, `ab.sh` for interleaved A/B against a snapshot), the determinism probes
+(`det_ops.py`, `det_batch*.py`, `det_offset.py`, `first_divergence.py`, `trace_metric.py`),
+the kernel cross-checks (`segcross_bits.py`, `check_b4.py`, `sampler_xcheck.py`), the large
+AFINNI cases (`afinni_big.py`), the peak-memory allocator wrapper (`peakmem.py`) and the Nsight
+drivers (`nsys_run.sh`, `nvtx_wrap.py`). The probes that guard a contract became tests
+(`tests/unit/test_numerics.py`, `tests/unit/test_region.py`,
+`test_cuda_graph_replay_builds_the_same_tree_as_eager_iterations`); the rest can be promoted to
+`scripts/` if they are wanted long term.
 
 ---
 

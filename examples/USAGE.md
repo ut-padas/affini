@@ -26,7 +26,7 @@ Run everything from the repository root (scripts as modules, e.g.
 ```python
 import numpy as np
 from src import xp
-from src.adaptive_clustering_utils import ClusteringConfig, Evaluator, SurrogateMode
+from src.engine import ClusteringConfig, Evaluator, SurrogateMode
 from src.problems.rosenbrock import rosenbrock
 from src.surrogate import AFINNISurrogate
 
@@ -77,7 +77,7 @@ The same script runs everywhere; the backend is chosen at import time.
 
 Set them explicitly for benchmarks. The same information is available in code
 (`from src import IS_CUPY_BACKEND, HAS_MPI, xp`); detection lives in
-[`src/backend.py`](../src/backend.py).
+[`src/infra/backend.py`](../src/infra/backend.py).
 
 Without `mpiexec`, or when MPI isn't installed, the same code runs as a single rank.
 If a script is started under `mpiexec` but MPI can't be loaded, AFINNI stops with an
@@ -124,8 +124,8 @@ Fields of `src.config.ClusteringConfig` (all keyword-only); only a tolerance is 
 | Setting | Meaning |
 |---|---|
 | `mode` | Preset pair (local model, split strategy), `AFFINE_COV_HESS` by default; see the table below |
-| `atol`, `rtol`, `error_metric` | Acceptance test: a cluster is accepted when every output component is within `rtol` relative **or** `atol` absolute error, measured as `"Linf"` (max error, relative to the cluster's own max \|f\|), `"L2"` (relative L2 / RMS) or `"pointwise"` (every point on its own: \|e\|/\|f\| < `rtol` or \|e\| < `atol`; ART's stopping rule). Give at least one tolerance; each is a scalar or one value per output component, and an omitted one never accepts. For an absolute test scaled to the function, pass `atol = tol * max\|f\|`. Exact formulas: [`src/acceptance.py`](../src/acceptance.py) |
-| `num_initial_clusters`, `initial_clustering_method` | Roots of the forest: `"kmeans"` (custom k-means in `src/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (needs `--group research_internal`, Linux). `src.adaptive_clustering.initial_clustering(X, config)` returns the labels training starts from; pass them as `train(..., initial_labels=labels)` to reuse one clustering for several trainings on the same points |
+| `atol`, `rtol`, `error_metric` | Acceptance test: a cluster is accepted when every output component is within `rtol` relative **or** `atol` absolute error, measured as `"Linf"` (max error, relative to the cluster's own max \|f\|), `"L2"` (relative L2 / RMS) or `"pointwise"` (every point on its own: \|e\|/\|f\| < `rtol` or \|e\| < `atol`; ART's stopping rule). Give at least one tolerance; each is a scalar or one value per output component, and an omitted one never accepts. For an absolute test scaled to the function, pass `atol = tol * max\|f\|`. Exact formulas: [`src/components/acceptance.py`](../src/components/acceptance.py) |
+| `num_initial_clusters`, `initial_clustering_method` | Roots of the forest: `"kmeans"` (custom k-means in `src/neighbors/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (needs `--group research_internal`, Linux). `src.engine.adaptive_clustering.initial_clustering(X, config)` returns the labels training starts from; pass them as `train(..., initial_labels=labels)` to reuse one clustering for several trainings on the same points |
 | `min_pts_per_cluster` | Rejected clusters are augmented to at least twice this before splitting |
 | `max_levels` | Refinement depth limit; reaching it leaves `converged=False` |
 | `sampling_method` | Where new points go when augmenting (`"convex_combination"`) |
@@ -225,10 +225,17 @@ Leaves are affine (`local_model="affine_lsq"`, the default) or full quadratics
 the children in that model's basis. Quadratic leaves need far fewer nodes on smooth
 targets; their `(d+1)(d+2)/2` coefficients suit low dimension.
 
-Random numbers come from streams keyed by node, so a region-mode tree is the same for
-any batch size, rank count and steal schedule. `scripts/art_comparison.py` trains ART
+Random numbers come from streams keyed by node and every training reduction sums each
+node on its own, so a region-mode tree is the same for any batch size, rank count and
+steal schedule, and the same in every run on one backend (CPU and GPU trees differ only at
+rounding level). `scripts/art_comparison.py` trains ART
 and region mode on ART's benchmark problems and scores both on the same test set; pass
-`--sampler parallel_numba` to time against ART's fastest CPU configuration.
+`--sampler parallel_numba` to time against ART's fastest CPU configuration, and add
+`--traversal bfs --optimizer cupy_batched_cholesky` for its fastest GPU configuration.
+`--skip-art` / `--skip-region` run one side only; region mode alone also runs under
+`mpiexec`. GPU results are in Sections 42.9-42.10 of `AFINNI_ART_DESIGN.md`: on the GPU,
+region B4 is 1-30x faster than ART's GPU configuration and beats region mode on the CPU
+whenever the CPU training takes more than about 1.5 s.
 
 ### Example: both modes on four benchmark problems
 
@@ -252,7 +259,7 @@ uv run python -m examples.example04_region_mode --problem all           # every 
 uv run python -m examples.example04_region_mode --problem wave          # one problem
 uv run python -m examples.example04_region_mode afinni --problem wave   # one stage (also: region, compare)
 uv run python -m examples.example04_region_mode --list                  # problems and their limits
-uv run python -m src.monitor scratch/example04_region_mode/wave/stream/region   # or .../afinni
+uv run python -m src.infra.monitor scratch/example04_region_mode/wave/stream/region   # or .../afinni
 ```
 
 In 2-D, one process on one CPU (AFINNI / AFINNI region mode (ART); about 30 s for all four):
@@ -307,7 +314,7 @@ ps["per_rank"][0]["time_oracle"]   # time spent inside your f / g
 ```
 
 Phases, their display groups and colours are defined once in
-[`src/profiling.py`](../src/profiling.py) (`PHASES`); add a phase there and every
+[`src/infra/profiling.py`](../src/infra/profiling.py) (`PHASES`); add a phase there and every
 plot and the monitor pick it up. Profiles are saved with the model and, by the
 launcher, under `profiling_stats` in each result JSON.
 
@@ -362,7 +369,7 @@ To plot a finished run from its files:
 ```python
 import json
 from src import plotting as P
-from src.profiling import read_event_streams
+from src.infra.profiling import read_event_streams
 
 P.plot_profile_dashboard(json.load(open("results/rosenbrock/<run>.json")))
 P.plot_timeline(read_event_streams("runs/rosen"))
@@ -386,13 +393,13 @@ ones steal from the busy ones (~60 steals).
 # terminal 1: train (8 ranks, CPU)
 uv run mpiexec -n 8 python -m examples.example03_monitoring
 # terminal 2: live view; exits when every rank is done
-uv run python -m src.monitor scratch/example03_monitoring/stealing/stream
+uv run python -m src.infra.monitor scratch/example03_monitoring/stealing/stream
 # afterwards (or any time): one snapshot
-uv run python -m src.monitor scratch/example03_monitoring/stealing/stream --once
+uv run python -m src.infra.monitor scratch/example03_monitoring/stealing/stream --once
 
 # the same run without work stealing, for comparison
 uv run mpiexec -n 8 python -m examples.example03_monitoring --stealing off
-uv run python -m src.monitor scratch/example03_monitoring/no_stealing/stream
+uv run python -m src.infra.monitor scratch/example03_monitoring/no_stealing/stream
 ```
 
 Per rank the monitor shows the current phase (or idle / asking for work / retiring /
@@ -459,17 +466,17 @@ MPI and work stealing, so a new component gets all of those for free.
 
 | Component | Base class | Registry | Default |
 |---|---|---|---|
-| Local model | `src.local_models.LocalModel` | `LOCAL_MODELS` | from `mode` |
-| Split strategy | `src.splitting.SplitStrategy` | `SPLIT_STRATEGIES` | from `mode` |
-| Sampler | `src.sampling.Sampler` | `SAMPLERS` | `sampling_method` |
-| Acceptance | `src.acceptance.AcceptanceCriterion` | `ACCEPTANCE_CRITERIA` | `error_metric`, `atol`, `rtol` |
-| Trust region | `src.trust_regions.TrustRegion` | `TRUST_REGIONS` | `CovarianceEllipsoid(q_reg)` |
+| Local model | `src.components.local_models.LocalModel` | `LOCAL_MODELS` | from `mode` |
+| Split strategy | `src.components.splitting.SplitStrategy` | `SPLIT_STRATEGIES` | from `mode` |
+| Sampler | `src.components.sampling.Sampler` | `SAMPLERS` | `sampling_method` |
+| Acceptance | `src.components.acceptance.AcceptanceCriterion` | `ACCEPTANCE_CRITERIA` | `error_metric`, `atol`, `rtol` |
+| Trust region | `src.components.trust_regions.TrustRegion` | `TRUST_REGIONS` | `CovarianceEllipsoid(q_reg)` |
 
 Each is a `ClusteringConfig` field and accepts an
 instance, a registered name, or `(name, settings)`:
 
 ```python
-from src.splitting import CovarianceSplit
+from src.components.splitting import CovarianceSplit
 
 config = ClusteringConfig(
     mode=SurrogateMode.AFFINE_COV_HESS,
@@ -496,8 +503,8 @@ or clusters, so they run on the GPU too.
 
 ```python
 from src import xp
-from src.clusters import ParamSpec
-from src.local_models import LOCAL_MODELS, AffineLSQModel, LocalModel
+from src.engine.clusters import ParamSpec
+from src.components.local_models import LOCAL_MODELS, AffineLSQModel, LocalModel
 
 
 @LOCAL_MODELS.register

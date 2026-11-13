@@ -51,12 +51,12 @@ Intel MPI).
 uv run python -m src                                  # which backends (GPU / MPI) were detected
 uv run python -m examples.example01                   # 2-D Rosenbrock surrogate: error + plot
 uv run mpiexec -n 8 python -m examples.example03_monitoring   # multi-rank run with work stealing...
-uv run python -m src.monitor scratch/example03_monitoring/stream   # ...watched live from another terminal
+uv run python -m src.infra.monitor scratch/example03_monitoring/stream   # ...watched live from another terminal
 uv run python -m examples.example04_region_mode --problem all   # AFINNI vs AFINNI region mode (ART) on 4 problems
 ```
 
 ```python
-from src.adaptive_clustering_utils import ClusteringConfig, Evaluator
+from src.engine import ClusteringConfig, Evaluator
 from src.surrogate import AFINNISurrogate
 
 surrogate = AFINNISurrogate()
@@ -77,6 +77,21 @@ that `src` is importable.
 - **[examples/](examples/)**: runnable examples.
 - **[AGENTS.md](AGENTS.md)**: code conventions and verification steps for contributors
   (human or AI).
+
+## Code layout
+
+`src/` is layered: each layer imports only from itself or the layers above it in this table.
+
+| Layer | Packages / modules |
+|---|---|
+| infrastructure, maths | `infra/` (backend detection, profiling, monitor, logging), `numerics/` (`segments`, `linalg`, `stats`), `kernels/` (`.cu` sources) |
+| settings, components | `config.py` (settings and size heuristics), `components/` (registry, modes, local models, splitting, acceptance, trust regions, sampling), `neighbors/` (kNN, k-means) |
+| algorithms | `region/` (`constants`, `rng`, `geometry`, `sampling`, `split_search`, `plan`, `routing`), `engine/` (`initial`, `refinement`, `adaptive_clustering` driver, `clusters`, `evaluation`, `work_stealing`, `io`) |
+| public API | `surrogate/` (`model`, `persistence`, `metrics`); also `plotting/`, `problems/` |
+
+Package `__init__` files re-export the names other modules import, so callers do not depend
+on the file a name lives in (`from src.region import RegionPlan`). CUDA kernel sources live in
+`src/kernels/*.cu` and are compiled at runtime (no build step).
 
 ## Development
 

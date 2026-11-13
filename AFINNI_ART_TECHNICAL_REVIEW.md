@@ -78,9 +78,9 @@ architecture. The remaining implementation gaps and deeper answers are in sectio
 
 ### 2.1 AFINNI is a sample-refinement engine with a separate model-selection rule
 
-The principal implementation points are [adaptive_clustering.py](src/adaptive_clustering.py),
-[splitting.py](src/splitting.py), [sampling.py](src/sampling.py),
-[local_models.py](src/local_models.py), and [surrogate.py](src/surrogate.py).
+The principal implementation points are [adaptive_clustering.py](src/engine/adaptive_clustering.py),
+[splitting.py](src/components/splitting.py), [sampling.py](src/components/sampling.py),
+[local_models.py](src/components/local_models.py), and [surrogate.py](src/surrogate.py).
 
 The engine stores contiguous points grouped into clusters. It fits and tests a batch,
 stores accepted leaf models, augments rejected clusters, splits those clusters, and
@@ -472,7 +472,7 @@ count, with enough excess tasks to tolerate imbalance. Do not hard-code the old
 ### 6.4 Reuse the existing grid option, but retain its geometry
 
 AFINNI already has `uniform_grid_cluster_labels` in
-[adaptive_clustering_utils.py](src/adaptive_clustering_utils.py). It factors the
+[adaptive_clustering_utils.py](src/engine/). It factors the
 requested cluster count across dimensions and assigns points to bins. It can supply
 a useful additional root baseline before implementing a new partitioner.
 
@@ -1106,7 +1106,7 @@ resident arrays, factor buffers and iteration state. Migrating it mid-iteration 
 possible, but would greatly complicate the first implementation. Ready-node migration
 preserves the useful existing rule that each job has one processing owner.
 
-The existing [work-stealing implementation](src/work_stealing.py) already handles
+The existing [work-stealing implementation](src/engine/work_stealing.py) already handles
 explicit grants/denials, crossed requests and retirement. Preserve those invariants.
 Generic properties change the wire payload and its version, even if the request/grant
 state machine remains the same. Calling that change "no protocol change" is too loose.
@@ -1934,13 +1934,13 @@ revision context when sharing the review.
 
 | Topic | Source |
 |---|---|
-| AFINNI refinement, batch cap and RNG | [src/adaptive_clustering.py](src/adaptive_clustering.py), [pinned source](https://github.com/ut-padas/affini/blob/015adfd4a34b1b5ac5f8c67d9fa38a18a5c8bae7/src/adaptive_clustering.py) |
-| Queues and output columns | [src/clusters.py](src/clusters.py) |
-| Splits, samples and model contracts | [src/splitting.py](src/splitting.py), [src/sampling.py](src/sampling.py), [src/local_models.py](src/local_models.py) |
-| Numerical kernels and existing grid roots | [src/numerics.py](src/numerics.py), [src/adaptive_clustering_utils.py](src/adaptive_clustering_utils.py) |
-| Acceptance and prediction | [src/acceptance.py](src/acceptance.py), [src/surrogate.py](src/surrogate.py), [src/knn.py](src/knn.py) |
-| Initial cluster geometry | [src/kmeans.py](src/kmeans.py) |
-| Migration and retirement | [src/work_stealing.py](src/work_stealing.py) |
+| AFINNI refinement, batch cap and RNG | [src/engine/adaptive_clustering.py](src/engine/adaptive_clustering.py), [pinned source](https://github.com/ut-padas/affini/blob/015adfd4a34b1b5ac5f8c67d9fa38a18a5c8bae7/src/engine/adaptive_clustering.py) |
+| Queues and output columns | [src/engine/clusters.py](src/engine/clusters.py) |
+| Splits, samples and model contracts | [src/components/splitting.py](src/components/splitting.py), [src/components/sampling.py](src/components/sampling.py), [src/components/local_models.py](src/components/local_models.py) |
+| Numerical kernels and existing grid roots | [src/numerics.py](src/numerics.py), [src/engine/](src/engine/) |
+| Acceptance and prediction | [src/components/acceptance.py](src/components/acceptance.py), [src/surrogate.py](src/surrogate.py), [src/neighbors/knn.py](src/neighbors/knn.py) |
+| Initial cluster geometry | [src/neighbors/kmeans.py](src/neighbors/kmeans.py) |
+| Migration and retirement | [src/engine/work_stealing.py](src/engine/work_stealing.py) |
 | ART builder and stopping | [art/builder.py](../Adaptive-Regression-Trees-ART-/art/builder.py), [pinned source](https://github.com/PranksterComet/Adaptive-Regression-Trees-ART-/blob/854924af9ec8555a11db10de6ab75f429a31be2d/art/builder.py) |
 | ART geometry and prediction | [art/domain.py](../Adaptive-Regression-Trees-ART-/art/domain.py), [art/tree.py](../Adaptive-Regression-Trees-ART-/art/tree.py) |
 | ART objective and model solves | [art/objectives.py](../Adaptive-Regression-Trees-ART-/art/objectives.py), [art/models.py](../Adaptive-Regression-Trees-ART-/art/models.py) |
@@ -3076,8 +3076,8 @@ AFINNI working tree. Relevant SHA-256 identifiers are:
 | `AFINNI_ART_DESIGN.md` | `558041a21a38d94f790203f5211dde3cd76cf77c21cc717854119485848c7843` |
 | `src/region.py` | `8b13ee6c9f1a92c55b7e09aa15d2156c345e1ee78c712284bca4a602dde4f283` |
 | `src/surrogate.py` | `09615c1e767fb2496ed8e53b729ae165ee1b7470f6a44b8568486cd6f44724c7` |
-| `src/adaptive_clustering.py` | `cce64acf03410edeb9a205db9342efdea7e9a81cab933477bfd32c7648eefdab` |
-| `src/work_stealing.py` | `42b0039360c13e795c582d6805715062bfc53a74a08ddf55e95cc7327127af63` |
+| `src/engine/adaptive_clustering.py` | `cce64acf03410edeb9a205db9342efdea7e9a81cab933477bfd32c7648eefdab` |
+| `src/engine/work_stealing.py` | `42b0039360c13e795c582d6805715062bfc53a74a08ddf55e95cc7327127af63` |
 
 ### 30.1 Assessment
 
@@ -3547,7 +3547,7 @@ time. These practices are described in [CuPy's performance guide](https://docs.c
 
 Relevant source: [`RegionPlan.bytes_per_point`](src/region.py#L559),
 [`work_sizes`](src/region.py#L553), and the hardware cap in
-[`_adaptive_clustering`](src/adaptive_clustering.py#L908).
+[`_adaptive_clustering`](src/engine/adaptive_clustering.py#L908).
 
 The new estimate accounts for several important per-point terms and is much better
 than reusing the old AFINNI formula. It is still a heuristic. In particular:
@@ -3595,8 +3595,8 @@ and grow-and-copy lifetimes as well as point columns.
 
 ### 30.10 MPI work accounting needs one shared unit
 
-Relevant source: [`_run_local_refinement`](src/adaptive_clustering.py#L194) and
-[`WorkStealer.serve_requests`](src/work_stealing.py#L193).
+Relevant source: [`_run_local_refinement`](src/engine/adaptive_clustering.py#L194) and
+[`WorkStealer.serve_requests`](src/engine/work_stealing.py#L193).
 
 The executor estimates region load with
 
@@ -3900,7 +3900,7 @@ Invalid audit:
 ```python
 import numpy as np
 from src.config import RegionSettings
-from src.evaluation import Evaluator
+from src.engine.evaluation import Evaluator
 from tests._helpers import train_surrogate
 
 X = np.random.default_rng(4).random((30, 2))
@@ -3926,7 +3926,7 @@ import numpy as np
 from src.region import (
     Domain, Roots, RegionPoints, HitAndRunSampler, node_keys, PURPOSE_TRAIN,
 )
-from src.sampling import ClusterPoints
+from src.components.sampling import ClusterPoints
 
 d = 20
 geo = RegionPoints(
@@ -4385,7 +4385,7 @@ distinction when reporting validation results.
 ### 32.5 Capacity warnings do not yet describe actual batch admission
 
 Source: the batch loop in
-[`_run_local_refinement`](src/adaptive_clustering.py#L303).
+[`_run_local_refinement`](src/engine/adaptive_clustering.py#L303).
 
 The candidate-array estimate now depends on `n_bins`, and warnings disclose the
 unsafe floor and oversized-task cases. Those are useful improvements. The source
