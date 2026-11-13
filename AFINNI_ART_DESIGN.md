@@ -13,7 +13,7 @@ later.
 | [II. ART](#part-ii-art-adaptive-regression-trees) | Problem, polytope geometry, sampling, soft oblique and hinge splitters, builder, GPU cohorts, known weaknesses |
 | [III. Comparison](#part-iii-afinni-and-art-compared) | Side-by-side comparison, and the observation that AFINNI's split is already a hyperplane |
 | [IV. Integration](#part-iv-bringing-art-into-afinni) | Requirements, three approaches (1: global ids and parent links, 2: per-level buffers and path codes, 3: the combined plan), evaluation for GPU/MPI/work stealing, unbalanced splits, batched ART components, staged experiments |
-| [V. Minimal plan](#part-v-minimal-implementation-plan-afinni-and-art-only) | Implementation status in Section 42 (GPU results in 42.9, GPU determinism and performance in 42.10, kernel sources in 42.11, review outcomes in 42.12–42.13, code layout in 42.14, layers and the plan contract in 42.15, names in 42.16). Two named plans (`afinni`, `region`) over one executor, fixed columns and wire format, the two pipelines, file-by-file changes, what is deferred, implementation order, resolved questions and what still needs measurement |
+| [V. Minimal plan](#part-v-minimal-implementation-plan-afinni-and-art-only) | Implementation status in Section 42 (GPU results in 42.9, GPU determinism and performance in 42.10, kernel sources in 42.11, review outcomes in 42.12–42.13, code layout in 42.14, layers and the plan contract in 42.15, names in 42.16, AFINNI's batch stages in 42.17). Two named plans (`afinni`, `region`) over one executor, fixed columns and wire format, the two pipelines, file-by-file changes, what is deferred, implementation order, resolved questions and what still needs measurement |
 | [Appendix A](#appendix-a-deferred-a-pysph-style-property-system) | Deferred: PySPH-style property system, primitives and illustrative examples |
 
 **Revision (Nov 10, 2026).** Revised after the technical review in
@@ -3128,6 +3128,27 @@ now means geometry only: a node's polytope, the region a query falls in, AFINNI'
 way) is bit-identical to the commit before on 1, 2 and 4 ranks. A model saved by the code
 before the rename loads with the code after it, with identical predictions: the file's arrays
 are keyed `route:` and `leaf:`, and its stored configuration is informational.
+
+### 42.17 AFINNI's batch in four stages (Nov 13, 2026)
+
+`AFINNIPlan.process_batch` (199 lines, carried over unchanged in 42.15) is now a 42-line
+sequence of the same four stages `ARTPlan.process_batch` has, each a method:
+
+| Stage | Method | Timer phases |
+|---|---|---|
+| 1. fit every cluster and screen it with the acceptance test | `_fit_and_accept` | `time_error_calc` |
+| 2. deploy the accepted clusters as leaves (a failed re-test rejects a cluster) | `_deploy` | `time_filter`, `time_good_Q`, `time_good_d2h` |
+| 3. augment the rejected clusters | `_augment_rejected` | `time_augment` |
+| 4. bisect them into the next level's children | `_split_rejected` | `time_bad_split`, `time_bad_d2h` |
+
+State passes through the carriers the components already use: one `ClusterFitData` for stages
+1–2 (the deploy step used to rebuild an identical one) and the `SplitData` that stage 3 returns
+for stage 4. Stage 3 releases the batch's points from the `ClusterFitData` before it augments,
+at the same point as before, so peak memory is unchanged; `test_afinni_batch_releases_its_points_before_splitting`
+checks it with a weak reference to the batch's `X` (it fails if the release is removed). The
+arithmetic, the per-batch seed and the order of the oracle calls are unchanged:
+`regression_check.py` is bit-identical to the previous commit on 1 and 2 ranks; CPU 543 and MPI
+12 passed.
 
 ---
 

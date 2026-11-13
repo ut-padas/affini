@@ -141,200 +141,144 @@ class AFINNIPlan:
         """
         Fit the local model on every cluster, append the accepted ones (with their trust
         regions) to ``accepted``, and augment and split the rejected ones into ``next_level``.
+        Each stage releases what the next does not need: the batch's points are dropped before
+        augmentation and splitting, which hold the batch's peak memory.
         """
-        config, d, rank, mempool = self.config, self.d, self.rank, self.mempool
-        level, b, num_batches = batch.level, batch.index, batch.n_batches
-        sizes, starts = batch.sizes, batch.starts
-        depth_cpu = batch.queue.depth[batch.cut]
-        model, splitter, acceptance = components.local_model, components.split_strategy, components.acceptance
-        trust_region, sampler = components.trust_region, components.sampler
+        depth = batch.queue.depth[batch.cut]
+        X, F, G = batch.take()
+        n_pts = int(X.shape[0])
+        # 1. Fit and screen every cluster; ``fit`` then holds the only references to the points.
+        fit, params, is_good, E_abs, E_rel = self._fit_and_accept(X, F, G, batch, components, evaluator, timer)
+        del X, F, G
+        if self.config.log_mem_stats:
+            log_mem_stats(f" R{self.rank:02} L{batch.level:02} B{batch.index:02}/{batch.n_batches:02}: After Error Metrics")
+
+        # 2. Deploy the accepted clusters as leaves; a cluster its finalized model fails is rejected.
+        n_good = self._deploy(fit, params, is_good, E_abs, E_rel, components, accepted, timer)
+
+        with timer("time_filter"):
+            bad_idx = xp.nonzero(~is_good)[0]
+            n_bad = int(bad_idx.shape[0])
         generated = 0
-        aug_sizes = sizes
-        K_batch = len(sizes)
-
-        X_batch, F_batch, G_batch = batch.take()  # this method now holds the only references
-
-        aug_starts = starts
-        aug_ids = repeats(xp.arange(K_batch), sizes)
-
-        with timer("time_error_calc"):
-            mus = _reduce_sum_1d(X_batch, aug_starts) / aug_sizes[:, None]
-
-            f_mus, g_mus = evaluator(
-                mus, need_grad=config.requires_grad_centroids
-            )
-
-            # Fit the local model on every cluster, evaluate it at the
-            # cluster's points, and accept the clusters within tolerance.
-            fit_data = ClusterFitData(
-                X=X_batch,
-                F=F_batch,
-                G=G_batch,
-                labels=aug_ids,
-                starts=aug_starts,
-                sizes=aug_sizes,
-                centroids=mus,
-                f_c=f_mus,
-                g_c=g_mus,
-            )
-            surrogate_params = model.fit(fit_data)
-            F_hat = model.evaluate(
-                {**surrogate_params, "centroids": mus, "f": f_mus},
-                X_batch,
-                aug_ids,
-            )
-            is_good, E_abs, E_rel = acceptance(F_batch, F_hat, aug_starts, aug_sizes)
-            del F_hat, fit_data
-
-        if config.log_mem_stats:
-            log_mem_stats(
-                f" R{rank:02} L{level:02} B{b:02}/{num_batches:02}: After Error Metrics"
-            )
-
-        # 5. Handle Accepted ("Good") Clusters
-        with timer("time_filter"):
-            good_idx_local = xp.nonzero(is_good)[0]
-            K_good_batch = int(good_idx_local.shape[0])
-
-        if K_good_batch > 0:
-            with timer("time_good_Q"):
-                leaves = deploy_leaves(
-                    model, trust_region, acceptance,
-                    ClusterFitData(
-                        X=X_batch, F=F_batch, G=G_batch, labels=aug_ids, starts=aug_starts,
-                        sizes=aug_sizes, centroids=mus, f_c=f_mus, g_c=g_mus,
-                    ),
-                    good_idx_local, surrogate_params, E_abs, E_rel,
-                )  # fmt: skip
-                if int(leaves.failed.shape[0]) > 0:
-                    # Clusters the finalized model fails are split instead.
-                    is_good[leaves.failed] = False
-                    K_good_batch -= int(leaves.failed.shape[0])
-
-            with timer("time_good_d2h"):
-                accepted.append(leaves.rows)
-                del leaves
-
-        # 6. Handle Rejected ("Bad") Clusters -> Split
-        with timer("time_filter"):
-            bad_idx_local = xp.nonzero(~is_good)[0]
-            n_bad = int(bad_idx_local.shape[0])
-            n_batch_pts = int(X_batch.shape[0])
-
         if n_bad > 0:
-            with timer("time_augment"):
-                bad_mask = (~is_good)[aug_ids]
-                X_bad = X_batch[bad_mask]
-                F_bad = F_batch[bad_mask]
-                G_bad = G_batch[bad_mask] if G_batch is not None else None
-                # The whole batch is not needed past this point: release it before
-                # augmentation and splitting, which hold the batch's peak memory.
-                X_batch = F_batch = G_batch = bad_mask = None
-                bad_counts = aug_sizes[bad_idx_local]
-
-                # --- Augment small rejected clusters before splitting ---
-                target_bad_counts = augmentation_targets(
-                    bad_counts, config.min_pts_per_cluster
-                )
-
-                total_target_pts = int(xp.sum(target_bad_counts))
-                total_bad_input_pts = int(xp.sum(bad_counts))
-                planned_synth_pts = total_target_pts - total_bad_input_pts
-                bad_count_min = int(xp.min(bad_counts))
-                bad_count_mean = float(xp.mean(bad_counts))
-                bad_count_max = int(xp.max(bad_counts))
-                expansion = total_target_pts / max(total_bad_input_pts, 1)
-
-                logger.info(
-                    f"R{rank:02} L{level:02} B{b + 1}: rejected-cluster augmentation plan | "
-                    f"bad_clusters={n_bad:,} "
-                    f"input_pts={total_bad_input_pts:,} "
-                    f"bad_count[min/mean/max]={bad_count_min:,}/{bad_count_mean:,.1f}/{bad_count_max:,} "
-                    f"target_pts={total_target_pts:,} "
-                    f"synthetic_pts={planned_synth_pts:,} "
-                    f"expansion={expansion:.2f}x"
-                )
-
-                rng = xp.random.default_rng(config.seed + level + b + rank * 1000)
-                aug = augment_clusters(
-                    X_bad,
-                    F_bad,
-                    G_bad,
-                    bad_counts,
-                    target_bad_counts,
-                    sampler,
-                    evaluator,
-                    rng,
-                    centroids=mus[bad_idx_local],
-                )
-                X_bad_aug, F_bad_aug, G_bad_aug = aug.X, aug.F, aug.G
-                aug_dense_labels_bad = aug.labels
-                if aug.X_new is not None:
-                    generated += int(aug.X_new.shape[0])
-                    if config.save_all_gen_training_data:
-                        save_generated_data(
-                            aug.X_new,
-                            config.generated_data_name(d),
-                        )
-                # The augmented arrays hold copies of the rejected rows.
-                del aug, X_bad, F_bad, G_bad
-                if mempool is not None:
-                    # Hand cached blocks back before the split, the batch's largest
-                    # allocation burst (a few cudaFree calls per batch).
-                    mempool.free_all_blocks()
-
-            with timer("time_bad_split"):
-                # Cut each rejected cluster in two along its split direction:
-                # its points are sorted by their projection onto that direction,
-                # and child_sizes gives the size of each half.
-                sort_order, child_sizes = splitter.split(
-                    SplitData(
-                        X=X_bad_aug,
-                        F=F_bad_aug,
-                        G=G_bad_aug,
-                        labels=aug_dense_labels_bad,
-                        counts=target_bad_counts,
-                        centroids=mus[bad_idx_local],
-                        f_c=f_mus[bad_idx_local],
-                        g_c=g_mus[bad_idx_local] if g_mus is not None else None,
-                        hessian_fn=evaluator.hessian_fn,
-                    )
-                )
-                _check_split(
-                    splitter, sort_order, child_sizes, target_bad_counts,
-                    aug_dense_labels_bad,
-                )  # fmt: skip
-
-            with timer("time_bad_d2h"):
-                # Children: each cluster cut along its split direction.
-                next_level.append(
-                    X_bad_aug[sort_order],
-                    F_bad_aug[sort_order],
-                    G_bad_aug[sort_order]
-                    if config.requires_grad_everywhere and G_bad_aug is not None
-                    else None,
-                    child_sizes,
-                    depth=np.repeat(depth_cpu[_to_host(bad_idx_local)] + 1, 2),
-                )
-
+            # 3. Augment the rejected clusters (this releases the batch's points), then
+            # 4. bisect each into two children of the next level.
+            data, generated = self._augment_rejected(fit, is_good, bad_idx, batch, components, evaluator, timer)
+            self._split_rejected(data, bad_idx, depth, components.split_strategy, next_level, timer)
             with timer("time_gc"):
-                del (
-                    X_bad_aug,
-                    F_bad_aug,
-                    G_bad_aug,
-                    sort_order,
-                )
-                if mempool is not None:
-                    mempool.free_all_blocks()
+                del data
+                if self.mempool is not None:
+                    self.mempool.free_all_blocks()
 
         with timer("time_gc"):
-            del X_batch, F_batch, G_batch
-            if mempool is not None:
-                mempool.free_all_blocks()
+            del fit
+            if self.mempool is not None:
+                self.mempool.free_all_blocks()
         return {
-            "accepted": K_good_batch, "rejected": n_bad, "generated": generated,
-            "fallback_clusters": 0, "fallback_pts": 0, "n_pts": n_batch_pts,
+            "accepted": n_good, "rejected": n_bad, "generated": generated,
+            "fallback_clusters": 0, "fallback_pts": 0, "n_pts": n_pts,
         }  # fmt: skip
+
+    def _fit_and_accept(self, X, F, G, batch: DeviceBatch, components, evaluator, timer):
+        """
+        Fit the local model on every cluster at its points (with ``f`` and, if the mode needs
+        it, the gradient at the centroid) and screen it with the acceptance test. Returns the
+        fit data, the model's parameters and the acceptance result ``(is_good, E_abs, E_rel)``.
+        """
+        model, acceptance = components.local_model, components.acceptance
+        sizes, starts = batch.sizes, batch.starts
+        labels = repeats(xp.arange(len(sizes)), sizes)
+        with timer("time_error_calc"):
+            mus = _reduce_sum_1d(X, starts) / sizes[:, None]
+            f_mus, g_mus = evaluator(mus, need_grad=self.config.requires_grad_centroids)
+            fit = ClusterFitData(X=X, F=F, G=G, labels=labels, starts=starts, sizes=sizes,
+                                 centroids=mus, f_c=f_mus, g_c=g_mus)  # fmt: skip
+            params = model.fit(fit)
+            F_hat = model.evaluate({**params, "centroids": mus, "f": f_mus}, X, labels)
+            is_good, E_abs, E_rel = acceptance(F, F_hat, starts, sizes)
+        return fit, params, is_good, E_abs, E_rel
+
+    def _deploy(self, fit: ClusterFitData, params, is_good, E_abs, E_rel, components, accepted, timer) -> int:
+        """
+        Append the accepted clusters (finalized model, trust region) to ``accepted`` and return
+        how many there are. A cluster whose finalized model fails the re-test is marked
+        rejected in ``is_good`` (in place), so it is split instead.
+        """
+        with timer("time_filter"):
+            good_idx = xp.nonzero(is_good)[0]
+            n_good = int(good_idx.shape[0])
+        if n_good == 0:
+            return 0
+        with timer("time_good_Q"):
+            leaves = deploy_leaves(components.local_model, components.trust_region, components.acceptance,
+                                   fit, good_idx, params, E_abs, E_rel)  # fmt: skip
+            if int(leaves.failed.shape[0]) > 0:
+                is_good[leaves.failed] = False
+                n_good -= int(leaves.failed.shape[0])
+        with timer("time_good_d2h"):
+            accepted.append(leaves.rows)
+        return n_good
+
+    def _augment_rejected(self, fit: ClusterFitData, is_good, bad_idx, batch: DeviceBatch, components, evaluator,
+                          timer) -> tuple[SplitData, int]:  # fmt: skip
+        """
+        Grow every rejected cluster to ``augmentation_targets`` points and return them as the
+        split's input with the number of new points. Releases the batch's points from ``fit``
+        first: from here on only the rejected rows are needed.
+        """
+        config = self.config
+        with timer("time_augment"):
+            bad_mask = (~is_good)[fit.labels]
+            X_bad, F_bad = fit.X[bad_mask], fit.F[bad_mask]
+            G_bad = fit.G[bad_mask] if fit.G is not None else None
+            fit.X = fit.F = fit.G = None
+            del bad_mask
+            counts = fit.sizes[bad_idx]
+            targets = augmentation_targets(counts, config.min_pts_per_cluster)
+
+            n_in, n_target = int(xp.sum(counts)), int(xp.sum(targets))
+            logger.info(
+                f"R{self.rank:02} L{batch.level:02} B{batch.index + 1}: rejected-cluster augmentation plan | "
+                f"bad_clusters={int(bad_idx.shape[0]):,} input_pts={n_in:,} "
+                f"bad_count[min/mean/max]={int(xp.min(counts)):,}/{float(xp.mean(counts)):,.1f}/{int(xp.max(counts)):,} "
+                f"target_pts={n_target:,} synthetic_pts={n_target - n_in:,} expansion={n_target / max(n_in, 1):.2f}x"
+            )  # fmt: skip
+
+            # One stream per (level, batch, rank): part of what fixes AFINNI's trees.
+            rng = xp.random.default_rng(config.seed + batch.level + batch.index + self.rank * 1000)
+            aug = augment_clusters(X_bad, F_bad, G_bad, counts, targets, components.sampler, evaluator, rng,
+                                   centroids=fit.centroids[bad_idx])  # fmt: skip
+            generated = 0
+            if aug.X_new is not None:
+                generated = int(aug.X_new.shape[0])
+                if config.save_all_gen_training_data:
+                    save_generated_data(aug.X_new, config.generated_data_name(self.d))
+            data = SplitData(
+                X=aug.X, F=aug.F, G=aug.G, labels=aug.labels, counts=targets, centroids=fit.centroids[bad_idx],
+                f_c=fit.f_c[bad_idx], g_c=fit.g_c[bad_idx] if fit.g_c is not None else None,
+                hessian_fn=evaluator.hessian_fn,
+            )  # fmt: skip
+            # The augmented arrays hold copies of the rejected rows.
+            del aug, X_bad, F_bad, G_bad
+            if self.mempool is not None:
+                # Hand cached blocks back before the split, the batch's largest allocation
+                # burst (a few cudaFree calls per batch).
+                self.mempool.free_all_blocks()
+        return data, generated
+
+    def _split_rejected(self, data: SplitData, bad_idx, depth: np.ndarray, splitter, next_level, timer) -> None:
+        """
+        Cut each rejected cluster in two along its split direction (its points sorted by their
+        projection, ``child_sizes`` the size of each half) and append the children, one level
+        deeper, to ``next_level``.
+        """
+        with timer("time_bad_split"):
+            order, child_sizes = splitter.split(data)
+            _check_split(splitter, order, child_sizes, data.counts, data.labels)
+        with timer("time_bad_d2h"):
+            G = data.G[order] if self.config.requires_grad_everywhere and data.G is not None else None
+            next_level.append(data.X[order], data.F[order], G, child_sizes,
+                              depth=np.repeat(depth[_to_host(bad_idx)] + 1, 2))  # fmt: skip
 
     def profile(self) -> dict:
         return {}

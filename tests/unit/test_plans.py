@@ -64,3 +64,46 @@ def test_art_batches_hold_whole_nodes_within_the_batch_size():
     cumsum = np.cumsum(work)
     end = plan.batch_end(cumsum, 0, 0, int(2 * work[0]))
     assert end == 2 and cumsum[end - 1] <= 2 * work[0]
+
+
+def test_afinni_batch_releases_its_points_before_splitting():
+    """Augmentation and splitting hold a batch's peak memory, so the batch's own points must be gone by then."""
+    import contextlib
+    import dataclasses
+    import weakref
+
+    from src import xp
+    from src.core.clusters import ClusterQueueBuilder, ColumnBuffer
+    from src.core.evaluation import Evaluator
+    from src.core.plan import DeviceBatch
+
+    config = TrainingConfig(atol=1e-4, rtol=1e-4, min_pts_per_cluster=8)
+    plan = AFINNIPlan(config, 2, 1, rank=0)
+    sizes = np.full(4, 30, dtype=np.int64)
+    X = xp.asarray(np.random.default_rng(0).uniform(-1, 1, (int(sizes.sum()), 2)))
+    alive = weakref.ref(X)
+    real = config.components().split_strategy
+    seen = []
+
+    class Spy:
+        name = real.name
+
+        def split(self, data):
+            seen.append(alive() is None)
+            return real.split(data)
+
+    components = dataclasses.replace(config.components(), split_strategy=Spy())
+    evaluator = Evaluator(f_fn=lambda x: xp.sin(4 * x[:, :1]) * xp.cos(3 * x[:, 1:]))
+    batch = DeviceBatch(
+        X=X, F=evaluator(X)[0], G=None, sizes=xp.asarray(sizes), starts=xp.asarray(np.r_[0, np.cumsum(sizes)[:-1]]),
+        queue=ClusterBatch(np.zeros((0, 2)), np.zeros((0, 1)), None, sizes), cut=slice(0, 4), level=0, index=0,
+        n_batches=1, progress=lambda: None,
+    )  # fmt: skip
+    del X
+    stats = plan.process_batch(
+        batch, components=components, evaluator=evaluator,
+        accepted=ColumnBuffer(plan.leaf_columns(components.local_model), capacity=8), splits=None,
+        next_level=ClusterQueueBuilder(2, 1, has_g=False, capacity_pts=1024, capacity_clusters=16),
+        timer=lambda key: contextlib.nullcontext(),
+    )  # fmt: skip
+    assert stats["rejected"] == 4 and seen == [True]
