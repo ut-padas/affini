@@ -28,9 +28,13 @@ AFINNI_DEVICE=cpu AFINNI_MPI=on AFINNI_MPI_NP=4 PATH=$PWD/.venv/bin:$PATH \
 AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. .venv/bin/python scripts/regression_check.py \
   --save /tmp/new --compare /tmp/ref          # CPU refactors must be bit-identical
 # on GPU add --rtol 1e-12 (decisions must still match exactly)
+# the same check on 2 ranks covers the scatter of initial clusters and the merge of leaves
+AFINNI_DEVICE=cpu AFINNI_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin/mpiexec -n 2 \
+  .venv/bin/python scripts/regression_check.py --save /tmp/new2 --compare /tmp/ref2
 ```
 
-- A refactor must keep `scripts/regression_check.py` bit-identical on CPU. Deliberate
+- A refactor must keep `scripts/regression_check.py` bit-identical on CPU (AFINNI and region
+  mode cases; on one rank and, for changes to scatter or merge, on two). Deliberate
   numerical changes must be listed and justified separately. Compare against references
   saved from the current baseline (`--save` on the base commit), not older ones: the
   custom k-means/kNN deliberately changed results relative to the original PR head.

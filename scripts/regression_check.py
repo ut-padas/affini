@@ -3,8 +3,14 @@ Differential regression check for the training/inference pipeline.
 
 Trains small, fixed problems through the public ``AFINNISurrogate`` API for every
 ``SurrogateMode`` x error metric x output dimension (plus a few extra paths: oracle,
-precomputed Y, uniform-grid roots, second-order Taylor, tiny batches), predicts on
-fixed queries, and stores every leaf array, prediction, trust mask and counter.
+precomputed Y, uniform-grid roots, second-order Taylor, tiny batches) and region mode
+(every split search, root type, sampler, quadratic leaves, fallback leaves), predicts on
+fixed queries, and stores every array a saved model holds, every prediction, trust mask
+and counter.
+
+Under ``mpiexec`` every rank trains and rank 0 writes and compares, so the same check
+covers the scatter of the initial clusters and the merge of the leaves (cases do not
+use work stealing, whose timing would change the tree between runs).
 
 It only uses arguments that also exist on older commits, so the same file can be run
 on two checkouts and compared:
@@ -33,16 +39,16 @@ import numpy as np
 
 sys.path.insert(0, str(Path.cwd()))
 
-from src import IS_CUPY_BACKEND, _to_host, xp  # noqa: E402
+from src import IS_CUPY_BACKEND, _get_mpi_rank, _to_host, xp  # noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
-from src.config import ClusteringConfig  # noqa: E402
+from src.config import ClusteringConfig, RegionSettings  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
 warnings.simplefilter("ignore", DeprecationWarning)
 
 H_SCALAR = np.array([[2.0, 0.2], [0.2, 6.0]])
-LEAF_ARRAYS = ("X_src", "f_src", "Qs_src", "J_src", "Hs_src", "A_fits_src", "b_fits_src")
+REGION_DOMAIN = ([-1.0, -1.0], [1.0, 1.0])
 
 
 def problem(fd):
@@ -62,6 +68,26 @@ def problem(fd):
         return xp.tile(xp.asarray(H_SCALAR), (len(x), 1, 1))
 
     return f, g, h
+
+
+def wavy(fd):
+    """A function region mode cannot fit with one leaf (the quadratic is exact for quadratic leaves)."""
+
+    def f(x):
+        a = xp.sin(3 * x[:, 0]) * xp.cos(2 * x[:, 1]) + x[:, 0] ** 2
+        return a[:, None] if fd == 1 else xp.stack((a, xp.cos(2 * x[:, 0] + x[:, 1])), axis=1)
+
+    return f
+
+
+def model_arrays(s: AFINNISurrogate) -> dict[str, np.ndarray]:
+    """Every numeric array ``save_model`` would write (leaves, local-model parameters, routing, leaf status)."""
+    out = {k: getattr(s, k) for k in ("X_src", "f_src", "Qs_src", "E_cluster_abs_src", "E_cluster_rel_src", "counts_src")}
+    out.update({f"param:{k}": v for k, v in s.leaf_params.items()})
+    if s.routing is not None:
+        out.update({f"route:{k}": v for k, v in s.routing.arrays().items()})
+    out.update({f"leaf:{k}": v for k, v in s.region_leaves.items()})
+    return {k: _to_host(v) for k, v in out.items() if v is not None}
 
 
 def cases():
@@ -87,6 +113,18 @@ def cases():
     yield "extra_atol_only", 2, dict(base, mode=mode, atol=0.15, rtol=None)
     yield "extra_rtol_only", 2, dict(base, mode=mode, atol=None, rtol=0.15)
     yield "extra_vector_tol", 2, dict(base, mode=mode, atol=(0.15, 0.3), rtol=(0.1, 0.2), error_metric="L2")
+    region = dict(
+        atol=1e-2, rtol=1e-2, algorithm="region", domain=REGION_DOMAIN, num_initial_clusters=4,
+        max_levels=10, use_work_stealing=False, save_all_gen_training_data=False,
+    )  # fmt: skip
+    rs = dict(sample_multiplier=10, validation_samples=10)
+    yield "region_soft_box", 1, dict(region, region=RegionSettings(**rs))
+    yield "region_bins_grid", 2, dict(region, region=RegionSettings(**rs, split_search="bins", roots="grid"))
+    yield "region_gap_voronoi", 1, dict(region, region=RegionSettings(**rs, split_search="gap", roots="voronoi"))
+    yield "region_convex_sampling", 1, dict(region, region=RegionSettings(sample_multiplier=10, sampling="convex_combination"))
+    yield "region_quadratic", 1, dict(region, local_model="quadratic_lsq", region=RegionSettings(**rs))
+    yield "region_tiny_batches", 1, dict(region, batch_size=97, region=RegionSettings(**rs, soft_iters=5))
+    yield "region_fallback_leaves", 2, dict(region, max_levels=3, region=RegionSettings(**rs, soft_iters=5))
 
 
 def run(out_prefix):
@@ -96,23 +134,29 @@ def run(out_prefix):
     Q = xp.asarray(rng.uniform(-1.2, 1.2, (257, 2)))
     arrays, report = {}, {}
     for name, fd, kwargs in cases():
+        region_mode = kwargs.get("algorithm") == "region"
         f, g, h = problem(fd)
+        if region_mode:
+            f = wavy(fd)
         oracle, use_Y = kwargs.pop("_oracle", False), kwargs.pop("_Y", False)
-        fns = dict(oracle_fn=lambda x: (f(x), g(x))) if oracle else dict(f_fn=f, g_fn=g)
+        fns = dict(oracle_fn=lambda x, f=f, g=g: (f(x), g(x))) if oracle else dict(f_fn=f, g_fn=g)
         t0 = time.perf_counter()
         try:
             s = AFINNISurrogate()
             s.train(X, ClusteringConfig(**kwargs), Evaluator(hessian_fn=h, **fns), Y_train=f(X) if use_Y else None)
             train_time = time.perf_counter() - t0
-            for attr in LEAF_ARRAYS:
-                v = getattr(s, attr, None)
-                if v is not None:
-                    v = _to_host(v)
-                    arrays[f"{name}|{attr}"] = v.reshape(len(v), -1)
-            for k, coarse, strict in ((1, 10, False), (4, 10, False), (4, 10, True), (2000, 2000, False)):
-                pred, mask = s.predict(Q, k_nn=k, coarse_factor=coarse, strict_trust_region=strict, batch_size=37)
-                arrays[f"{name}|pred_{k}_{strict}"] = _to_host(pred)
-                arrays[f"{name}|mask_{k}_{strict}"] = _to_host(mask)
+            for attr, v in model_arrays(s).items():
+                arrays[f"{name}|{attr}"] = v.reshape(len(v), -1) if v.ndim else v
+            if region_mode:
+                pred, mask = s.predict(Q)  # routed down the tree
+                arrays[f"{name}|pred_route"], arrays[f"{name}|mask_route"] = _to_host(pred), _to_host(mask)
+                counters = {**s.profiling_stats.get("region", {}), **s.profiling_stats.get("terminal_reasons", {})}
+                arrays[f"{name}|region_counters"] = np.asarray([counters[k] for k in sorted(counters)], dtype=np.int64)
+            else:
+                for k, coarse, strict in ((1, 10, False), (4, 10, False), (4, 10, True), (2000, 2000, False)):
+                    pred, mask = s.predict(Q, k_nn=k, coarse_factor=coarse, strict_trust_region=strict, batch_size=37)
+                    arrays[f"{name}|pred_{k}_{strict}"] = _to_host(pred)
+                    arrays[f"{name}|mask_{k}_{strict}"] = _to_host(mask)
             ps = s.profiling_stats
             report[name] = dict(
                 leaves=int(s.N_src), evals=int(ps["total_f_evals"]),
@@ -120,8 +164,10 @@ def run(out_prefix):
             )  # fmt: skip
         except Exception as e:  # recorded, so a baseline failure is visible
             report[name] = dict(error=f"{type(e).__name__}: {e}")
-    np.savez(out_prefix + ".npz", **arrays)
     meta = dict(backend="cupy" if IS_CUPY_BACKEND else "numpy", cases=report)
+    if _get_mpi_rank() != 0:  # every rank holds the same model; rank 0 writes
+        return meta
+    np.savez(out_prefix + ".npz", **arrays)
     Path(out_prefix + ".json").write_text(json.dumps(meta, indent=2))
     n_err = sum("error" in r for r in report.values())
     print(f"ran {len(report)} cases ({n_err} errors) on {meta['backend']} -> {out_prefix}.npz/.json")
@@ -152,9 +198,9 @@ def compare(new_prefix, ref_prefix, rtol):
             a, b = ra[k], na[k]
             if a.shape != b.shape:
                 failures.append(f"{k}: shape {a.shape} -> {b.shape}")
-            elif a.dtype == bool:
+            elif a.dtype == bool or a.dtype.kind in "iu":  # masks, counters, keys and statuses: exact
                 if (a != b).any():
-                    failures.append(f"{k}: {int((a != b).sum())} mask entries differ")
+                    failures.append(f"{k}: {int((a != b).sum())} entries differ")
             elif not np.array_equal(np.isfinite(a), np.isfinite(b)) or not np.all(np.isfinite(b)):
                 # NaN compares as "no difference" in the relative error below.
                 failures.append(f"{k}: {int((~np.isfinite(b)).sum())} non-finite values (reference: {int((~np.isfinite(a)).sum())})")
@@ -179,7 +225,7 @@ def main():
     p.add_argument("--rtol", type=float, default=0.0, help="allowed relative array difference")
     args = p.parse_args()
     run(args.save)
-    if args.compare and not compare(args.save, args.compare, args.rtol):
+    if _get_mpi_rank() == 0 and args.compare and not compare(args.save, args.compare, args.rtol):
         raise SystemExit(1)
 
 
