@@ -234,7 +234,7 @@ same test set; pass `--sampler parallel_numba` to time against the reference's f
 configuration, and add `--traversal bfs --optimizer cupy_batched_cholesky` for its fastest GPU
 configuration. `--skip-art` / `--skip-afinni` run one side only; this ART alone also runs
 under `mpiexec`. GPU results are in Sections 42.9-42.10 of `AFINNI_ART_DESIGN.md`: on the GPU,
-this ART's B4 is 1-30x faster than the reference's GPU configuration, and faster than this
+this ART's soft split search is 1-30x faster than the reference's GPU configuration, and faster than this
 ART on the CPU whenever the CPU training takes more than about 1.5 s.
 
 ### Example: both algorithms on four benchmark problems

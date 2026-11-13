@@ -89,7 +89,7 @@ def main() -> None:
     own.add_argument("--afinni-validation", type=int, default=0)
     own.add_argument("--afinni-walk-steps", type=int, default=20)
     own.add_argument("--afinni-search", default="soft", choices=("gap", "bins", "soft"))
-    own.add_argument("--afinni-soft-iters", type=int, default=None, help="B4 iterations (default: the mode's)")
+    own.add_argument("--afinni-soft-iters", type=int, default=None, help="soft split search iterations (default: ARTSettings.soft_iters)")
     mine, art_argv = own.parse_known_args()
     sys.path.insert(0, str(mine.art_path.resolve()))
 

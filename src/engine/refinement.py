@@ -203,7 +203,7 @@ def _refine_level(run: _Refinement, queue: ClusterBatch, level: int) -> ClusterB
         end = plan.batch_end(cumsum, start, b, config.batch_size)
 
         def progress(batch_end: int = end, lvl: int = level, bt: int = b) -> None:
-            """Answer steal requests from inside long split work (B4); never gives this batch away."""
+            """Answer steal requests from inside long split work (the soft split search); never gives this batch away."""
             nonlocal queue
             queue = run.stealer.serve_requests(queue, batch_end, lvl, batch=bt)
             run.stealer.poll_state()

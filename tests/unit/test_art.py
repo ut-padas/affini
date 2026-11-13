@@ -393,7 +393,7 @@ def test_close_voronoi_centres_keep_every_sample_in_its_own_thin_cell(separation
 
 
 def test_narrow_score_clouds_far_from_the_origin_keep_a_resolved_temperature():
-    """Translating a node far from the origin must not collapse B4's gate temperature (raw moments cancelled)."""
+    """Translating a node far from the origin must not collapse the soft search's gate temperature (raw moments cancelled)."""
     from src.art import ARTPlan, _SplitRows
     from src.config import TrainingConfig
 
@@ -418,7 +418,7 @@ def test_drift_ignores_rounding_sized_shifts_of_a_narrow_node():
 
 
 def test_threshold_search_skips_nodes_too_small_to_split_beside_valid_ones():
-    """A sparse node (fewer than 2 * min_side points, as B1 can produce) gets no candidate and no cross-node read."""
+    """A sparse node (fewer than 2 * min_side points, as convex-combination sampling can produce) gets no candidate and no cross-node read."""
     from src.art import ARTPlan, _SplitRows
     from src.config import TrainingConfig
 
@@ -546,8 +546,8 @@ def _split_rows(rng, k=6, c=150, d=3, fd=2):
     return rows, w, z, xp.full(k, 0.05)
 
 
-@pytest.mark.skipif(not __import__("src").IS_CUPY_BACKEND, reason="the fused B4 kernels are the GPU path")
-def test_fused_b4_objective_and_step_match_the_generic_formulas(monkeypatch):
+@pytest.mark.skipif(not __import__("src").IS_CUPY_BACKEND, reason="the fused soft-search kernels are the GPU path")
+def test_fused_soft_objective_and_step_match_the_generic_formulas(monkeypatch):
     import src.art.split_search as split_search
 
     rows, w, z, T = _split_rows(np.random.default_rng(3))

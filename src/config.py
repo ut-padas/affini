@@ -85,19 +85,17 @@ class ARTSettings:
     before it is fitted, with ``p_eff = d + 1`` (ART's ``n_node``; ART uses 50). New
     points are uniform in a box or grid root and hit-and-run endpoints (``walk_steps``
     steps from a random inherited point) elsewhere. A split must leave
-    ``p_eff + min_side_margin`` points on each side. The experiment variants of the
-    design (B1-B4) are settings of this one plan: B1 = ``sampling="convex_combination"``
-    with ``roots="voronoi"``, B2 = ``split_search="gap"``, B3 = ``"bins"``, B4 = ``"soft"``
-    (the default: on ART's benchmarks it was as accurate as ART or better on most problems,
-    with similar or fewer leaves; see Section 42.3 of AFINNI_ART_DESIGN.md).
+    ``p_eff + min_side_margin`` points on each side. The default split search, ``"soft"``,
+    was as accurate as the reference ART or better on most of its benchmarks, with similar
+    or fewer leaves (Section 42.3 of AFINNI_ART_DESIGN.md).
     """
 
     # "grid": num_initial_clusters cells over the domain; "voronoi": the Voronoi cells of
     # the initial clustering's centres (initial_clustering_method), clipped to the domain.
     roots: Literal["box", "grid", "voronoi"] = "box"
     # "hit_and_run": top every node up inside its polytope before fitting (ART's budget).
-    # "convex_combination": the B1 experiment, AFINNI's convex-combination augmentation
-    # of rejected nodes.
+    # "convex_combination": AFINNI's convex-combination augmentation of rejected nodes,
+    # so one tree can be compared under both predictors (kNN and routing).
     sampling: Literal["hit_and_run", "convex_combination"] = "hit_and_run"
     sample_multiplier: float = 50.0
     # Fresh points per node on which the deployed model is checked before acceptance; a
@@ -111,8 +109,8 @@ class ARTSettings:
     max_walk_steps: int | None = None
     mixing_z: float = 4.0
     # How a rejected node's hyperplane is chosen: "gap" (the split strategy's direction,
-    # cut near the median), "bins" (B3: n_bins - 1 cuts along n_directions directions,
-    # the n_screened best re-checked directly) or "soft" (B4: "bins" then the consistent
+    # cut near the median), "bins" (n_bins - 1 cuts along n_directions directions, the
+    # n_screened best re-checked directly) or "soft" ("bins", then the consistent
     # soft-oblique optimizer for soft_iters steps, kept only if its hard fit is better).
     split_search: Literal["gap", "bins", "soft"] = "soft"
     n_bins: int = 16

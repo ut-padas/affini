@@ -199,7 +199,7 @@ def test_art_settings_validation():
 
 @pytest.mark.parametrize("search", ["gap", "bins", "soft"])
 def test_every_split_search_builds_a_valid_batch_independent_tree(points, search):
-    """B2 (gap), B3 (bins) and B4 (soft) all produce routable trees, unchanged by the batch size."""
+    """The gap, bins and soft split searches all produce routable trees, unchanged by the batch size."""
     options = art_options(art=ARTSettings(sample_multiplier=10, split_search=search, soft_iters=5), max_levels=8)
     big, small = train_surrogate(points, **options), train_surrogate(points, batch_size=97, **options)
     assert big.N_src == small.N_src and big.profiling_stats["total_f_evals"] == small.profiling_stats["total_f_evals"]
@@ -241,7 +241,7 @@ def test_voronoi_roots_are_the_initial_clustering_cells(points):
 
 @pytest.mark.filterwarnings("ignore:Training stopped:RuntimeWarning")
 def test_b1_convex_sampling_tree_serves_both_predictors(points):
-    """B1: AFINNI's augmentation on Voronoi roots, Q kept, so kNN and routing use one artifact."""
+    """Convex-combination sampling (AFINNI's augmentation) on Voronoi roots, Q kept, so kNN and routing use one artifact."""
     model = train_surrogate(points, **art_options(
         art=ARTSettings(roots="voronoi", sampling="convex_combination"), min_pts_per_cluster=16, max_levels=10,
     ))  # fmt: skip

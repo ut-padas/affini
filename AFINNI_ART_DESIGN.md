@@ -2701,7 +2701,7 @@ in `src/kernels/`, one file per area:
 | `segment_cross.cu` | `segment_cross_partial`, `segment_cross_tiled`, `segment_cross_reduce` | `numerics.segment_cross` (and through it the stats, cross products, segmented sums) |
 | `small_linalg.cu` | `spd_solve`, `det_matmul`, `fused_affine_fit_regularize`, `batched_inplace_cholesky_solve` | `numerics` |
 | `cluster_stats.cu` | segmented max, split and Mahalanobis projections, centroid distances, Taylor residual norms | `numerics` |
-| `art_b4.cu` | `soft_gates`, `soft_trial_terms`, `soft_node_prep`, `soft_node_select`, `soft_residuals`, `soft_row_terms`, `bin_sides` | `region` (B3/B4) |
+| `art_split_search.cu` | `soft_gates`, `soft_trial_terms`, `soft_node_prep`, `soft_node_select`, `soft_residuals`, `soft_row_terms`, `bin_sides` | `region` (B3/B4) |
 | `hit_and_run.cu` | `hr_walk` | `region.HitAndRunSampler._walk_fused` |
 | `knn_tiled.cu`, `knn_select.cu` | `knn_tiled` (K, BM, QT `#define`d by the loader), `radix_select_k`, `candidate_d2` | `knn` |
 | `kmeans.cu` | `centroid_sums` | `kmeans` |
@@ -3088,11 +3088,30 @@ were written with; their file paths point at the current files.
 | `src/engine/io.py` | `src/infra/io.py` | `AFINNIPlan`, below the engine, writes generated data |
 | `AFINNISurrogate.region_leaves`, `profiling_stats["region"]` | `art_leaves`, `profiling_stats["art"]` | |
 | `plot_region_partition`, `plot_region_tree_stats`, `plotting/region.py` | `plot_art_partition`, `plot_art_tree_stats`, `plotting/art.py` | |
-| `region_b4.cu` | `art_b4.cu` | comment-only otherwise; CuPy recompiles it once |
+| `region_b4.cu` | `art_split_search.cu` | named after its caller, `src/art/split_search.py` (it also holds the bins search's `bin_sides`); comment-only otherwise, so CuPy recompiles it once |
 | plan label `AFINNI region mode (ART; soft splits, box roots)` | `ART (soft splits, box roots)` | shown by the monitor and in profiles |
 | `RegionPoints`, `ClusterPoints.region`, `region_rows` | `NodePolytopes`, `ClusterPoints.polytopes`, `constraint_rows` | geometry, not the algorithm |
 | `example04_region_mode.py` (`region` stage, `--region-max-depth`) | `example04_art.py` (`art` stage, `--art-max-depth`) | |
 | `art_comparison.py --skip-region`, method `AFINNI-region` | `--skip-afinni`, method `AFINNI-ART` | |
+
+**Experiment labels stay in this document.** B0–B4 (Section 34) name the rungs of the staged
+experiments, not code. They map to settings, and the code, tests and scripts use only the
+settings' names (the split searches, the sampler), never the labels:
+
+| Label | Setting |
+|---|---|
+| B0 | `algorithm="afinni"` |
+| B1 | `algorithm="art"`, `art=ARTSettings(sampling="convex_combination", roots="voronoi")`: AFINNI's augmentation, one tree for both predictors |
+| B2 | `split_search="gap"`: the split strategy's direction, cut near the median |
+| B3 | `split_search="bins"`: threshold search over a bank of directions |
+| B4 | `split_search="soft"` (default): the bins search polished by the consistent soft-oblique optimizer |
+| R | the reference ART (`scripts/art_comparison.py`) |
+
+Earlier sections of this log use the labels as written; in the code the same things are "the
+gap / bins / soft split search" and "convex-combination sampling". With them went
+`_soft_kernel` (it also launches the bins search's `bin_sides`), now `_split_kernel`, and the
+test `test_fused_b4_objective_and_step_match_the_generic_formulas`, now
+`test_fused_soft_objective_and_step_match_the_generic_formulas`.
 
 **Vocabulary.** *AFINNI* is the adaptive-clustering algorithm (the project and `AFINNISurrogate`
 share the name). *ART* is the adaptive regression tree as implemented here; the external code

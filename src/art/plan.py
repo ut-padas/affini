@@ -107,7 +107,7 @@ class ARTPlan:
     def bytes_per_point(self) -> int:
         """
         Peak device bytes per processed point (training, validation and split work arrays).
-        B3/B4's per-node candidate arrays (``n_bins - 1`` Grams per side, the screen) are
+        The bins and soft searches' per-node candidate arrays (``n_bins - 1`` Grams per side, the screen) are
         charged to the fewest points a node can hold, so small nodes do not undercount.
         Carried constraints are charged per point (``2 h (d+1)``), which overestimates deep
         trees several times over. That is kept on purpose: charging them per node (d = 32,
@@ -220,7 +220,7 @@ class ARTPlan:
 
         # 1. Training points: inherited ones, then new ones inside the polytope.
         with timer("time_augment"):
-            # B1 keeps each node's points, except that an empty root (possible for grid or
+            # Convex-combination sampling keeps each node's points, except that an empty root (possible for grid or
             # Voronoi cells) is sampled up to 2 * p_eff points so it can be fitted.
             n_train = (
                 xp.where(sizes == 0, 2 * self.p_eff, sizes) if self.convex_sampling else xp.maximum(sizes, self.n_target)
@@ -325,7 +325,7 @@ class ARTPlan:
         """
         Split nodes ``idx`` on their training points plus their (now spent) validation
         points; return the nodes whose split was invalid and the number of new oracle
-        points (B1's augmentation). Validation points of a failed node may train its
+        points (convex-combination augmentation). Validation points of a failed node may train its
         children, but never validate them.
         """
         d = self.d
@@ -349,7 +349,7 @@ class ARTPlan:
             G = _interleave(G, Gv[v_rows], is_train) if G is not None else None
             counts = total
         if self.convex_sampling:
-            # B1: AFINNI's augmentation (convex combinations, inside the parent's hull and
+            # Convex-combination sampling: AFINNI's augmentation (convex combinations, inside the parent's hull and
             # so inside its polytope), with a per-batch stream as in AFINNI.
             targets = augmentation_targets(counts, self.config.min_pts_per_cluster)
             rng = xp.random.default_rng(int(_to_host(keys[idx[0]])) % 2**63)
@@ -470,7 +470,7 @@ class ARTPlan:
 
     def _threshold_search(self, rows: _SplitRows, bank: Array) -> tuple[Array, Array, Array]:
         """
-        B3: along every bank direction, evaluate ``n_bins - 1`` quantile cut positions
+        The bins search: along every bank direction, evaluate ``n_bins - 1`` quantile cut positions
         from per-bin sums (``_SplitRows.cut_sums``: one data pass per direction), keep the
         ``n_screened`` best per node as a screen, then recompute their SSE directly
         (``_hard_sse``) and return the best ``(w, z)`` and its SSE. Only cuts between
@@ -480,8 +480,8 @@ class ARTPlan:
         nb = self.settings.n_bins
         b = xp.arange(1, nb)
         n = rows.counts
-        # Only nodes that can keep min_side points on both sides have candidates (sparse B1
-        # nodes may not); every index below stays inside its own node's block.
+        # Only nodes that can keep min_side points on both sides have candidates (sparse nodes
+        # of convex-combination sampling may not); every index below stays inside its own node's block.
         eligible = n >= 2 * self.min_side
         pos = xp.clip(xp.round(b[None, :] * n[:, None] / nb).astype(xp.int64), self.min_side, xp.maximum(n - self.min_side, self.min_side)[:, None])
         pos = xp.clip(pos, 1, xp.maximum(n - 1, 1)[:, None])
@@ -522,7 +522,7 @@ class ARTPlan:
 
     def _soft_refine(self, rows: _SplitRows, w0: Array, z0: Array, sse0: Array, progress) -> tuple[Array, Array]:
         """
-        B4: polish each B3 plane by projected gradient descent on the consistent soft
+        The soft search: polish each bins-search plane by projected gradient descent on the consistent soft
         objective ``J(w, z) = min_B F`` (Section 33.3 of the design), with a fixed ridge, a
         fixed temperature ``T = soft_temperature * std(w^T u)``, floored weights
         ``W_R = delta + (1 - 2 delta) sigma(s)``, ``W_L = delta + (1 - 2 delta) sigma(-s)``,
@@ -534,7 +534,7 @@ class ARTPlan:
         one gate width could not beat the margin), ``soft_line_search_stalled`` (no trial
         qualified otherwise), ``soft_nonfinite`` (objective or gap not finite) or
         ``soft_iteration_limit``. The result is hardened (``z`` moved to the first
-        right-side score) and kept only if its directly refit hard SSE beats the B3
+        right-side score) and kept only if its directly refit hard SSE beats the bins-search
         incumbent's; otherwise the incumbent is returned.
         """
         s_cfg = self.settings

@@ -1,13 +1,13 @@
-// ART B4 (src/art/split_search.py): soft gates, line-search trials and node selection,
-// residuals, objective terms, B3 bin sides.
+// ART split search (src/art/split_search.py): the soft search's gates, line-search trials and
+// node selection, residuals and objective terms, and the bins search's bin sides.
 //
-// One B4 iteration on the GPU (_soft_objective_fused, then _soft_step), all node state in place:
+// One soft-search iteration on the GPU (_soft_objective_fused, then _soft_step), all node state in place:
 //   soft_gates -> segment_cross (both children's Grams) -> spd_solve -> soft_residuals
 //   -> soft_row_terms -> segmented sum (J, gradient)            [objective]
 //   soft_node_prep -> (soft_trial_terms -> segmented sum -> soft_node_select) x 2 trial groups
 // The sequence has no host reads; one synchronization per iteration checks for active nodes.
 
-// GPU forms of the B4 gate and trial loss: the score w^T u, the stable logistic of
+// GPU forms of the soft search's gate and trial loss: the score w^T u, the stable logistic of
 // _sigmoid and the floors evaluated in one pass per row (and per line-search trial).
 __device__ void gates(const double* u, const double* w, double z, double T, double delta, int d, double* WL,
                       double* WR, double* sp_sm) {

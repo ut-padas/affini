@@ -1,4 +1,4 @@
-"""Per-node split search arithmetic: the batched rows, hard SSE and the B4 soft-oblique objective and step."""
+"""Per-node split search arithmetic: the batched rows, the bins search's cut sums, hard SSE and the soft search's objective and step."""
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -98,7 +98,7 @@ class _SplitRows:
             for S in (G, B, C.reshape(k, m + 1)):
                 L, R = xp.empty((k, m) + S.shape[2:]), xp.empty((k, m) + S.shape[2:])
                 X = int(np.prod(S.shape[2:], dtype=np.int64))
-                _soft_kernel("bin_sides", k * X, S, L, R, np.int64(k), np.int32(m), np.int64(X))
+                _split_kernel("bin_sides", k * X, S, L, R, np.int64(k), np.int32(m), np.int64(X))
                 sides.append((L, R))
             return tuple(s[0] for s in sides) + tuple(s[1] for s in sides)
         out = [xp.empty(shape) for shape in ((k, m, p, p), (k, m, p, fd), (k, m)) * 2]
@@ -162,7 +162,7 @@ def _soft_gates(rows: _SplitRows, w: Array, z: Array, T: Array, delta: float) ->
     """Floored soft memberships ``(W_L, W_R)`` and ``sigma(s) sigma(-s)``, with ``s = (w^T u - z) / T``."""
     if IS_CUPY_BACKEND:  # one fused pass instead of about a dozen elementwise kernels
         WL, WR, sp_sm = (xp.empty(int(rows.U.shape[0])) for _ in range(3))
-        _soft_kernel("soft_gates", int(rows.U.shape[0]),
+        _split_kernel("soft_gates", int(rows.U.shape[0]),
                      rows.U, rows.labels, w, z, T, np.float64(delta), WL, WR, sp_sm, np.int64(rows.U.shape[0]),
                      np.int32(rows.U.shape[1]))  # fmt: skip
         return WL, WR, sp_sm
@@ -179,7 +179,7 @@ def _cpu_soft_gates():
     """
     ``_soft_gates`` on the CPU as one serial Numba pass over the rows (compiled on first use): the
     score, the stable logistic of ``_sigmoid`` and the floors without about ten temporaries.
-    Serial on purpose: B4 makes thousands of calls, many on small batches, and a parallel region's
+    Serial on purpose: the soft search makes thousands of calls, many on small batches, and a parallel region's
     start-up made the whole training 13% slower, while the serial loop made it 19% faster.
     """
     global _CPU_SOFT_GATES
@@ -206,22 +206,22 @@ def _cpu_soft_gates():
     return _CPU_SOFT_GATES
 
 
-_SOFT_MODULE = None
+_SPLIT_MODULE = None
 
 
-def _soft_kernel(name: str, n_threads: int, *args) -> None:
-    """Launch one of the B4 kernels over ``n_threads`` threads (the module is compiled on first use)."""
-    global _SOFT_MODULE
-    if _SOFT_MODULE is None:
-        _SOFT_MODULE = kernels.module("art_b4")
+def _split_kernel(name: str, n_threads: int, *args) -> None:
+    """Launch one of the split-search kernels (``src/kernels/art_split_search.cu``) over ``n_threads`` threads; compiled on first use."""
+    global _SPLIT_MODULE
+    if _SPLIT_MODULE is None:
+        _SPLIT_MODULE = kernels.module("art_split_search")
     if n_threads:
         args = tuple(xp.ascontiguousarray(a) if isinstance(a, xp.ndarray) else a for a in args)
-        _SOFT_MODULE.get_function(name)(((n_threads + 255) // 256,), (256,), args)
+        _SPLIT_MODULE.get_function(name)(((n_threads + 255) // 256,), (256,), args)
 
 
 def _soft_step(rows: _SplitRows, w, z, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n, delta, active, stops, trials: int):
     """
-    One B4 descent step on the GPU in three node-level kernels and one segmented sum: project
+    One soft-search descent step on the GPU in three node-level kernels and one segmented sum: project
     the gradient and set ``alpha = T / |g|``; evaluate the frozen loss of every halving
     ``alpha 2^-m`` (m < ``trials``) at once; let each node take its first trial that passes
     the Armijo and margin tests, which is the step the sequential halving loop on the CPU
@@ -235,18 +235,18 @@ def _soft_step(rows: _SplitRows, w, z, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T,
     finite = xp.empty(k, dtype=xp.bool_)
     inv_t, z_t = xp.empty((k, trials)), xp.empty((k, trials))
     eps = float(np.finfo(np.float64).eps)
-    _soft_kernel("soft_node_prep", k, w, g_w, z, g_z, J, gap, T, active, gn2, alpha, margin, finite, inv_t, z_t,
+    _split_kernel("soft_node_prep", k, w, g_w, z, g_z, J, gap, T, active, gn2, alpha, margin, finite, inv_t, z_t,
                  np.int32(k), np.int32(d), np.int32(trials), np.float64(eps))  # fmt: skip
     # Trials in two groups, the second only for nodes still waiting (most step by trial 3).
     stepped = xp.zeros(k, dtype=xp.bool_)
     groups = [(0, min(4, trials))] + ([(4, trials - 4)] if trials > 4 else [])
     for gi, (m0, mt) in enumerate(groups):
         terms = xp.empty((N, mt))
-        _soft_kernel("soft_trial_terms", N, rows.U, rows.labels, w, g_w, inv_t, z_t, alpha, T, np.float64(delta),
+        _split_kernel("soft_trial_terms", N, rows.U, rows.labels, w, g_w, inv_t, z_t, alpha, T, np.float64(delta),
                      rL, rR, active, finite, stepped, terms, np.int64(N), np.int32(d), np.int32(trials),
                      np.int32(m0), np.int32(mt))  # fmt: skip
         S = rows.reduce(terms)  # (k, mt)
-        _soft_kernel("soft_node_select", k, w, z, g_w, inv_t, z_t, S, pen, n, J, gn2, alpha, margin, finite,
+        _split_kernel("soft_node_select", k, w, z, g_w, inv_t, z_t, S, pen, n, J, gn2, alpha, margin, finite,
                      sp_sum, T, active, stepped, stops, np.int32(k), np.int32(d), np.int32(trials), np.int32(m0),
                      np.int32(mt), np.int32(int(gi == len(groups) - 1)))  # fmt: skip
 
@@ -299,13 +299,13 @@ def _soft_objective_fused(rows: _SplitRows, w: Array, z: Array, T: Array, delta:
     L = spd_factor(H)  # each child's system is factored once and used for both solves
     beta = spd_solve_factored(L, Bs)
     E, r = xp.empty((2, N, fd)), xp.empty((2, N))
-    _soft_kernel("soft_residuals", 2 * N, rows.Phi, rows.Y, rows.labels, beta, E, r, np.int64(N), np.int32(p),
+    _split_kernel("soft_residuals", 2 * N, rows.Phi, rows.Y, rows.labels, beta, E, r, np.int64(N), np.int32(p),
                  np.int32(fd), np.int32(k))  # fmt: skip
     pen = rows.lam * xp.sum(beta**2, axis=(0, 2, 3))
     R = segment_cross(rows.Phi, E, rows.starts, rows.counts, W, layout=rows._layout) - rows.lam[None, :, None, None] * beta
     gap = xp.sum(R * spd_solve_factored(L, R), axis=(0, 2, 3)) / n
     terms = xp.empty((N, d + 3))
-    _soft_kernel("soft_row_terms", N, rows.U, rows.labels, WL, WR, sp_sm, r, T, n, np.float64(delta), terms,
+    _split_kernel("soft_row_terms", N, rows.U, rows.labels, WL, WR, sp_sm, r, T, n, np.float64(delta), terms,
                  np.int64(N), np.int32(d))  # fmt: skip
     S = rows.reduce(terms)  # (k, d + 3)
     J = (S[:, 0] + pen) / n

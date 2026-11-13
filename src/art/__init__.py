@@ -8,8 +8,8 @@ ancestors' hyperplanes. Per batch of nodes, ``ARTPlan.process_batch``:
 
 1. tops every node up to ``ceil(sample_multiplier * (d + 1))`` training points inside
    its polytope (``HitAndRunSampler``) and draws ``validation_samples`` fresh points;
-   the B1 variant (``sampling="convex_combination"``) instead keeps AFINNI's
-   convex-combination augmentation of rejected nodes;
+   with ``sampling="convex_combination"`` it instead keeps AFINNI's convex-combination
+   augmentation of rejected nodes;
 2. fits the local model on the training points and screens it with the acceptance test;
 3. deploys the screened models (``Q`` if stored, finalize, re-test) and checks them on
    the validation points;
@@ -28,13 +28,13 @@ stolen node needs nothing from the rank that created it.
 Random numbers come from a counter-based generator keyed by ``(seed, root, path_code,
 purpose, draw index)``: a node's samples and random directions do not depend on the
 batch it is processed in, the number of ranks or the steal schedule, so ART
-results are the same for any batch size and rank count (except the B1 variant, whose
-augmentation uses a per-batch stream, as in AFINNI). A node draws
+results are the same for any batch size and rank count (except with
+``sampling="convex_combination"``, whose augmentation uses a per-batch stream, as in AFINNI). A node draws
 each purpose once (attempt 0); a second draw would need an attempt index.
 
 Package layout: ``constants`` (statuses, purposes), ``rng`` (counter-based streams), ``geometry``
 (domain, roots, plane predicates), ``sampling`` (hit-and-run), ``split_search`` (batched rows and the
-B4 objective), ``plan`` (``ARTPlan``) and ``routing`` (``RoutingTable``).
+soft objective), ``plan`` (``ARTPlan``) and ``routing`` (``RoutingTable``).
 """
 
 from src.art.constants import (

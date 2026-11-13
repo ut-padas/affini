@@ -48,7 +48,7 @@ def main() -> None:
     for name, stealing, settings in (
         ("no_steal", False, {}),
         ("steal", True, forced),
-        # B4 calls progress() inside its optimizer, so requests are served mid-batch.
+        # The soft split search calls progress() inside its optimizer, so requests are served mid-batch.
         ("soft_no_steal", False, {"split_search": "soft", "soft_iters": 8}),
         ("soft_steal", True, {"split_search": "soft", "soft_iters": 8, **forced}),
         # Voronoi roots exercise the bisector chords, root assignment and walk recovery.
