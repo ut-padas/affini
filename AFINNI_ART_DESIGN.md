@@ -13,7 +13,7 @@ later.
 | [II. ART](#part-ii-art-adaptive-regression-trees) | Problem, polytope geometry, sampling, soft oblique and hinge splitters, builder, GPU cohorts, known weaknesses |
 | [III. Comparison](#part-iii-afinni-and-art-compared) | Side-by-side comparison, and the observation that AFINNI's split is already a hyperplane |
 | [IV. Integration](#part-iv-bringing-art-into-afinni) | Requirements, three approaches (1: global ids and parent links, 2: per-level buffers and path codes, 3: the combined plan), evaluation for GPU/MPI/work stealing, unbalanced splits, batched ART components, staged experiments |
-| [V. Minimal plan](#part-v-minimal-implementation-plan-afinni-and-art-only) | Implementation status in Section 42 (GPU results in 42.9, GPU determinism and performance in 42.10, kernel sources in 42.11, review outcomes in 42.12–42.13, code layout in 42.14, layers and the plan contract in 42.15). Two named plans (`afinni`, `region`) over one executor, fixed columns and wire format, the two pipelines, file-by-file changes, what is deferred, implementation order, resolved questions and what still needs measurement |
+| [V. Minimal plan](#part-v-minimal-implementation-plan-afinni-and-art-only) | Implementation status in Section 42 (GPU results in 42.9, GPU determinism and performance in 42.10, kernel sources in 42.11, review outcomes in 42.12–42.13, code layout in 42.14, layers and the plan contract in 42.15, names in 42.16). Two named plans (`afinni`, `region`) over one executor, fixed columns and wire format, the two pipelines, file-by-file changes, what is deferred, implementation order, resolved questions and what still needs measurement |
 | [Appendix A](#appendix-a-deferred-a-pysph-style-property-system) | Deferred: PySPH-style property system, primitives and illustrative examples |
 
 **Revision (Nov 10, 2026).** Revised after the technical review in
@@ -253,7 +253,7 @@ $$
 The region `{x : (x−c)ᵀQ(x−c) ≤ 1}` contains every observed point of the cluster. It is
 an empirical coverage region, not an error certificate.
 
-## 8. The training loop (`src/engine/adaptive_clustering.py`)
+## 8. The training loop (`src/engine/driver.py`)
 
 ```text
 rank 0: F0 = f(X0); labels = kmeans(X0, K0); sort by label; scatter clusters to ranks
@@ -1647,7 +1647,7 @@ Outputs:
 
 ### 37.1 AFINNI plan: today's order, unchanged
 
-This is the order in `src/engine/adaptive_clustering.py`, which the AFINNI plan must keep,
+This is the order in `src/engine/driver.py`, which the AFINNI plan must keep,
 together with its batching, reductions and RNG calls:
 
 ```text
@@ -1757,7 +1757,7 @@ needs its own candidate-evaluation budget and is not part of version one.
 | `src/components/sampling.py` | `HitAndRunSampler` (batched, several chains per node, slack updates, box as coordinate bounds, pilot/production segments, tiled Voronoi chords); a budget rule per mode (a function, not a component registry) |
 | `src/components/acceptance.py` | `PointwiseViolation` criterion (optional; also used for the global audit) |
 | `src/numerics.py` | `a = Mv` projection for region mode; binned prefix statistics for threshold search; an explicit-status solver with fixed regularization and residual output (B4) |
-| `src/engine/adaptive_clustering.py` | becomes the executor: the AFINNI plan is today's loop body; the region plan's methods are called at the same points (Section 37.3); collecting and gathering `NodeRecords` |
+| `src/engine/driver.py` | becomes the executor: the AFINNI plan is today's loop body; the region plan's methods are called at the same points (Section 37.3); collecting and gathering `NodeRecords` |
 | `src/surrogate.py` | `predict(..., predictor="knn" \| "route")` with structured statuses for `route`; persist the resolved plan and default predictor; a model saved without `Q` defaults to routing and rejects an explicit `predictor="knn"`; save/load node records (bumps `MODEL_FORMAT_VERSION`); an `audit()` that runs the global audit (Section 33.5) |
 | `src/neighbors/kmeans.py` | return the centres (and the CPU centring offset) for Voronoi roots |
 
@@ -1875,7 +1875,7 @@ since been run on a second machine (Section 42.9).
 | Plan item | Where | Notes |
 |---|---|---|
 | Internal column table, versioned wire format | `src/core/clusters.py` (`QUEUE_COLUMNS`), `src/engine/work_stealing.py` | `ClusterBatch.split`/`select`, the queue builder and `send/recv_clusters` iterate over the table. The header carries version, present columns, shapes and dtypes; column `i` goes on `base_tag + 1 + i`, so an AFINNI-mode transfer sends the same array payloads on the same tags as before. The header itself is new, so this is not wire compatibility with an older executable: mixed versions fail on the version check. |
-| One executor, two named plans | `src/engine/refinement.py` (executor), `src/core/plan.py` (contract), `src/engine/afinni_plan.py` (`AfinniPlan`), `src/region/plan.py` (`RegionPlan`) | Both plans implement one `Plan` protocol (42.15): `label`, `steal_settings`, `batch_floor`, `keeps_fallback_leaves`, `initial_queue`, `leaf_columns`, `split_columns`, `work_sizes`, `bytes_per_point`, `constraint_rows`, `batch_end`, `process_batch`, `profile`, `merge_results`. The AFINNI batch body is unchanged in order and arithmetic. Shared deploy step: `deploy_leaves` in `src/components/local_models.py` (Q, finalize, re-test), called by both plans. |
+| One executor, two named plans | `src/engine/refinement.py` (executor), `src/core/plan.py` (contract), `src/afinni/plan.py` (`AFINNIPlan`), `src/art/plan.py` (`ARTPlan`) | Both plans implement one `Plan` protocol (42.15): `label`, `steal_settings`, `batch_floor`, `keeps_fallback_leaves`, `initial_queue`, `leaf_columns`, `split_columns`, `work_sizes`, `bytes_per_point`, `constraint_rows`, `batch_end`, `process_batch`, `profile`, `merge_results`. The AFINNI batch body is unchanged in order and arithmetic. Shared deploy step: `deploy_leaves` in `src/components/local_models.py` (Q, finalize, re-test), called by both plans. |
 | `algorithm`, `domain`, `RegionSettings` | `src/config.py` | `domain=(lower, upper)` required; `"data_bbox"` is explicit opt-in and recorded. |
 | Roots | `src/region.py` (`Roots`) | `box` (default, ART: no initial clustering), `grid` (shared `uniform_grid_bins`), `voronoi` (centres of the initial clustering; exact nearest-centre assignment, tiled; no face list; hit-and-run bisectors from centre differences `c_j − c_r`, normalized; root assignment re-decides the nearest-distance candidate with the same centre-difference test, so sampling, training and routing agree on thin cells. Points within rounding of a bisector remain ambiguous: there is no error-bounded tie test). |
 | Counter-based RNG | `node_keys`, `counter_uniform`, `counter_uniform_pairs` | splitmix64 of (seed, root, path code, purpose, draw index); the same on NumPy and CuPy. The sampler takes two 32-bit uniforms per hash and both normals of each Box-Muller pair: `ceil(d/2) + 1` hashes per hit-and-run step. |
@@ -1890,8 +1890,8 @@ since been run on a second machine (Section 42.9).
 | Pointwise acceptance | `src/components/acceptance.py` (`"pointwise"`) | ART's `max_pointwise_relative` with `rtol` alone. |
 | Stealing for region work | `WorkStealer(min_load, steal_size, lease_received, work_sizes)`, `progress()` | Region thresholds (a few nodes' worth), receiver lease (`LEASED` denials), and progress points inside B4 so requests are served mid-batch. Published loads, steal eligibility and grant sizes all use the plan's `work_sizes` (points after top-up and validation), so thieves and victims compare one unit. |
 | Experiment harnesses | `scripts/art_comparison.py`, `scripts/afinni_benchmark.py` | ART vs region on ART's benchmarks, scored by ART's own evaluator (ART's configuration, e.g. its fastest CPU sampler `parallel_numba`, recorded in the output); AFINNI mode, base vs branch accuracy and runtime. |
-| Example and benchmark problems | `examples/example04_region_mode.py`, `src/problems/spherical_piecewise.py` | Both modes on four problems (`--problem all` or one): ART's spherical piecewise preset (identical to ART's function in 2–5-D), anisotropic Gaussian, wave, Rosenbrock. Per-problem depth limits (and region rtol 0.02 for wave) give equal relative L2 in one process on one CPU; region mode then needs 3.5–18x fewer oracle calls at similar or lower error and fewer leaves on all but the spherical jump (where it is twice as accurate), AFINNI trains as fast or faster (table in `examples/USAGE.md`). Stages `afinni`, `region`, `compare`; `summary.png` across problems. |
-| Plots | `src/plotting/region.py` | `plot_region_partition`, `plot_region_tree_stats`, `plot_error_maps`, `plot_error_cdf`, `plot_method_comparison`; profile dashboards name the mode and show fallback leaves per level. |
+| Example and benchmark problems | `examples/example04_art.py`, `src/problems/spherical_piecewise.py` | Both modes on four problems (`--problem all` or one): ART's spherical piecewise preset (identical to ART's function in 2–5-D), anisotropic Gaussian, wave, Rosenbrock. Per-problem depth limits (and region rtol 0.02 for wave) give equal relative L2 in one process on one CPU; region mode then needs 3.5–18x fewer oracle calls at similar or lower error and fewer leaves on all but the spherical jump (where it is twice as accurate), AFINNI trains as fast or faster (table in `examples/USAGE.md`). Stages `afinni`, `region`, `compare`; `summary.png` across problems. |
+| Plots | `src/plotting/art.py` | `plot_region_partition`, `plot_region_tree_stats`, `plot_error_maps`, `plot_error_cdf`, `plot_method_comparison`; profile dashboards name the mode and show fallback leaves per level. |
 | Monitor | `src/infra/monitor.py`, `run_start` event | The header names the mode (`AFINNI` or `AFINNI region mode (ART; …)`); region runs report points in fallback leaves instead of queued points. Region stages are timed under the shared phase keys, so profiles break down by phase. |
 | Documentation | `examples/USAGE.md` ("AFINNI region mode (ART)", plots, monitor), `README.md` | |
 
@@ -2701,7 +2701,7 @@ in `src/kernels/`, one file per area:
 | `segment_cross.cu` | `segment_cross_partial`, `segment_cross_tiled`, `segment_cross_reduce` | `numerics.segment_cross` (and through it the stats, cross products, segmented sums) |
 | `small_linalg.cu` | `spd_solve`, `det_matmul`, `fused_affine_fit_regularize`, `batched_inplace_cholesky_solve` | `numerics` |
 | `cluster_stats.cu` | segmented max, split and Mahalanobis projections, centroid distances, Taylor residual norms | `numerics` |
-| `region_b4.cu` | `soft_gates`, `soft_trial_terms`, `soft_node_prep`, `soft_node_select`, `soft_residuals`, `soft_row_terms`, `bin_sides` | `region` (B3/B4) |
+| `art_b4.cu` | `soft_gates`, `soft_trial_terms`, `soft_node_prep`, `soft_node_select`, `soft_residuals`, `soft_row_terms`, `bin_sides` | `region` (B3/B4) |
 | `hit_and_run.cu` | `hr_walk` | `region.HitAndRunSampler._walk_fused` |
 | `knn_tiled.cu`, `knn_select.cu` | `knn_tiled` (K, BM, QT `#define`d by the loader), `radix_select_k`, `candidate_d2` | `knn` |
 | `kmeans.cu` | `centroid_sums` | `kmeans` |
@@ -2944,7 +2944,7 @@ the pre-reorganization GPU reference, and bit-for-bit model dumps of region mode
 the kernel cross-checks (`segcross_bits.py`, `check_b4.py`, `sampler_xcheck.py`), the large
 AFINNI cases (`afinni_big.py`), the peak-memory allocator wrapper (`peakmem.py`) and the Nsight
 drivers (`nsys_run.sh`, `nvtx_wrap.py`). The probes that guard a contract became tests
-(`tests/unit/test_numerics.py`, `tests/unit/test_region.py`,
+(`tests/unit/test_numerics.py`, `tests/unit/test_art.py`,
 `test_cuda_graph_replay_builds_the_same_tree_as_eager_iterations`); the rest can be promoted to
 `scripts/` if they are wanted long term.
 
@@ -3067,6 +3067,48 @@ private names used as an API (`_to_host` in 11 modules, `_reduce_sum_1d`, region
 `_sigmoid`/`_hard_sse`), CPU coverage of the GPU paths (`numerics` 50%, `neighbors` 56% on the CPU;
 only the GPU suite reaches the CuPy branches), and a short current-architecture entry point
 separate from this log are still open.
+
+### 42.16 Names: AFINNI, ART and the refinement engine (Nov 12, 2026)
+
+Parts I and II call the two algorithms AFINNI and ART, but the code had grown its own working
+names: ART was "region mode" (`algorithm="region"`, `src/region/`, `RegionPlan`), and the
+shared driver kept AFINNI's names (`adaptive_clustering()`, `ClusteringConfig`) although it now
+runs both. The code now uses the names of this document. Region mode was never merged to
+`main`, so the rename has no compatibility aliases. Sections up to 42.15 keep the names they
+were written with; their file paths point at the current files.
+
+| Was | Now | Note |
+|---|---|---|
+| `algorithm="region"`, `config.region`, `RegionSettings` | `algorithm="art"`, `config.art`, `ARTSettings` | public API |
+| `src/region/` (`RegionPlan`) | `src/art/` (`ARTPlan`) | |
+| `src/engine/afinni_plan.py` (`AfinniPlan`) | `src/afinni/` (`AFINNIPlan`) | both algorithms in one layer below the engine; acronyms stay upper-case, as in `AFINNISurrogate` |
+| `src/engine/adaptive_clustering.py`, `adaptive_clustering()` | `src/engine/driver.py`, `refine()` | the collective entry point of either plan |
+| `_run_local_refinement` | `refinement.refine_rank` | one rank's level-by-level loop |
+| `ClusteringConfig` | `TrainingConfig` | it configures a training run of either algorithm; settings keep their names |
+| `src/engine/io.py` | `src/infra/io.py` | `AFINNIPlan`, below the engine, writes generated data |
+| `AFINNISurrogate.region_leaves`, `profiling_stats["region"]` | `art_leaves`, `profiling_stats["art"]` | |
+| `plot_region_partition`, `plot_region_tree_stats`, `plotting/region.py` | `plot_art_partition`, `plot_art_tree_stats`, `plotting/art.py` | |
+| `region_b4.cu` | `art_b4.cu` | comment-only otherwise; CuPy recompiles it once |
+| plan label `AFINNI region mode (ART; soft splits, box roots)` | `ART (soft splits, box roots)` | shown by the monitor and in profiles |
+| `RegionPoints`, `ClusterPoints.region`, `region_rows` | `NodePolytopes`, `ClusterPoints.polytopes`, `constraint_rows` | geometry, not the algorithm |
+| `example04_region_mode.py` (`region` stage, `--region-max-depth`) | `example04_art.py` (`art` stage, `--art-max-depth`) | |
+| `art_comparison.py --skip-region`, method `AFINNI-region` | `--skip-afinni`, method `AFINNI-ART` | |
+
+**Vocabulary.** *AFINNI* is the adaptive-clustering algorithm (the project and `AFINNISurrogate`
+share the name). *ART* is the adaptive regression tree as implemented here; the external code
+`scripts/art_comparison.py` runs is *the reference ART*, and where both appear ours is
+*AFINNI's ART*. *The refinement engine* (`src/engine/`) is what both run on: the collective
+driver, the breadth-first batched loop over a host-resident frontier, MPI scatter and gather,
+and work stealing. A proper name for the engine was considered (Canopy, Grove) and not taken:
+every other package is named for its role, and AFINNI is already the project's name. "Region"
+now means geometry only: a node's polytope, the region a query falls in, AFINNI's trust regions.
+`AGENTS.md` ("Names") records these rules.
+
+**Verification.** CPU 542 and MPI 12 passed after each of the two renames;
+`regression_check.py` (its cases renamed `region_*` → `art_*`, the references mapped the same
+way) is bit-identical to the commit before on 1, 2 and 4 ranks. A model saved by the code
+before the rename loads with the code after it, with identical predictions: the file's arrays
+are keyed `route:` and `leaf:`, and its stored configuration is informational.
 
 ---
 
