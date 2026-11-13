@@ -36,7 +36,7 @@ from src import PROJECT_DIR, get_mpi_rank, get_mpi_size, xp  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
 from src.config import get_MIN_PTS_PER_CLUSTER, get_NUM_INITIAL_CLUSTERS  # noqa: E402
 from src.config import ClusteringConfig# noqa: E402
-from src.engine.evaluation import Evaluator# noqa: E402
+from src.core.evaluation import Evaluator# noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402

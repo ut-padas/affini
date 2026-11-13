@@ -22,7 +22,7 @@ def main() -> None:
     from src import _to_host, xp
     from src.infra.backend import MPI
     from src.config import ClusteringConfig, RegionSettings
-    from src.engine.evaluation import Evaluator
+    from src.core.evaluation import Evaluator
     from src.surrogate import AFINNISurrogate
 
     rank = MPI.COMM_WORLD.Get_rank()

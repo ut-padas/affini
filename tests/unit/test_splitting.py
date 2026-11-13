@@ -6,7 +6,7 @@ import pytest
 import src.engine.adaptive_clustering as ac
 from src import _to_host, xp
 from src.config import ClusteringConfig
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.components.modes import SurrogateMode
 from src.components.splitting import (
     CovarianceHessianSplit,

@@ -80,13 +80,15 @@ that `src` is importable.
 
 ## Code layout
 
-`src/` is layered: each layer imports only from itself or the layers above it in this table.
+`src/` is layered: each layer imports only from itself or the layers above it in this table
+(`tests/unit/test_layering.py` enforces it).
 
 | Layer | Packages / modules |
 |---|---|
-| infrastructure, maths | `infra/` (backend detection, profiling, monitor, logging), `numerics/` (`segments`, `linalg`, `stats`), `kernels/` (`.cu` sources) |
+| infrastructure, maths, shared types | `infra/` (backend detection, profiling, monitor, logging), `numerics/` (`segments`, `linalg`, `stats`, `grid`), `kernels/` (`.cu` sources), `core/` (`clusters`: queues and output columns; `evaluation`: the oracle `Evaluator`) |
 | settings, components | `config.py` (settings and size heuristics), `components/` (registry, modes, local models, splitting, acceptance, trust regions, sampling), `neighbors/` (kNN, k-means) |
-| algorithms | `region/` (`constants`, `rng`, `geometry`, `sampling`, `split_search`, `plan`, `routing`), `engine/` (`initial`, `refinement`, `adaptive_clustering` driver, `clusters`, `evaluation`, `work_stealing`, `io`) |
+| region mode | `region/` (`constants`, `rng`, `geometry`, `sampling`, `split_search`, `plan`, `routing`) |
+| engine | `engine/` (`initial`, `refinement`, `adaptive_clustering` driver, `work_stealing`, `io`) |
 | public API | `surrogate/` (`model`, `persistence`, `metrics`); also `plotting/`, `problems/` |
 
 Package `__init__` files re-export the names other modules import, so callers do not depend

@@ -14,7 +14,7 @@ from src.components.sampling import (
     augmentation_targets,
 )
 from src.components.splitting import SplitData
-from src.engine.clusters import ParamSpec
+from src.core.clusters import ParamSpec
 from src.numerics import (
     _reduce_max_1d,
     _reduce_sum_1d,
@@ -144,7 +144,7 @@ class RegionPlan:
 
     def initial_queue(self, X: np.ndarray, F: np.ndarray, G: np.ndarray | None):
         """Every root as a queued node (possibly with no points), points sorted by root."""
-        from src.engine.clusters import ClusterBatch
+        from src.core.clusters import ClusterBatch
 
         root = _to_host(self.roots.root_of(self.domain.normalize(xp.asarray(X)))).astype(np.int64)
         order = np.argsort(root, kind="stable")

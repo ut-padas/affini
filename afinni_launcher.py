@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_host, xp
 from src.config import ClusteringConfig
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.components.modes import SurrogateMode
 from src.infra.backend import MPI
 from src.config import (

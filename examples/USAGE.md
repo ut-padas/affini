@@ -503,7 +503,7 @@ or clusters, so they run on the GPU too.
 
 ```python
 from src import xp
-from src.engine.clusters import ParamSpec
+from src.core.clusters import ParamSpec
 from src.components.local_models import LOCAL_MODELS, AffineLSQModel, LocalModel
 
 

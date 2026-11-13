@@ -7,7 +7,7 @@ import pytest
 
 import src.engine.work_stealing as ws
 from src import _to_host, xp
-from src.engine.clusters import ClusterBatch, ClusterQueueBuilder
+from src.core.clusters import ClusterBatch, ClusterQueueBuilder
 from src.region import (
     PURPOSE_TRAIN,
     PURPOSE_VALIDATION,

@@ -7,7 +7,7 @@ MPI ranks (`mpiexec -n 4 python -m examples.example01`), where rank 0 reports.
 from pathlib import Path
 from src import get_mpi_rank, xp
 from src.config import ClusteringConfig
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.components.modes import SurrogateMode
 from src.config import get_MIN_PTS_PER_CLUSTER, get_N_TRAIN, get_NUM_INITIAL_CLUSTERS
 from src.surrogate import AFINNISurrogate

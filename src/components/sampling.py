@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src import IS_CUPY_BACKEND, Array, xp
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.components.registry import ComponentSpec, Registry
 from src.numerics import repeats
 

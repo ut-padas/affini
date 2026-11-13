@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from src import _to_host, xp
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.components.sampling import (
     SAMPLERS,
     ClusterPoints,

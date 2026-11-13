@@ -28,8 +28,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from src.plotting.style import fmt_count
-from src.infra.profiling import PHASE_BY_KEY
+from src.infra.profiling import PHASE_BY_KEY, fmt_count
 
 _LOGGED_KINDS = ("steal_grant", "level_end", "retired", "done")
 # Wide enough for every phase group and "asking R<rank> for work".

@@ -62,7 +62,7 @@ import numpy as np  # noqa: E402
 
 from src import PROJECT_DIR, _to_host, xp  # noqa: E402
 from src.config import ClusteringConfig, RegionSettings  # noqa: E402
-from src.engine.evaluation import Evaluator  # noqa: E402
+from src.core.evaluation import Evaluator  # noqa: E402
 from src.config import (  # noqa: E402
     get_MIN_PTS_PER_CLUSTER,
     get_N_TRAIN,

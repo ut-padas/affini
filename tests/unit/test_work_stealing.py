@@ -8,9 +8,9 @@ import pytest
 import src.engine.adaptive_clustering as ac
 import src.engine.work_stealing as ws
 from src.config import ClusteringConfig
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.components.modes import SurrogateMode
-from src.engine.clusters import ClusterBatch
+from src.core.clusters import ClusterBatch
 from src.infra.profiling import Profiler, new_profiling_stats
 
 

@@ -44,11 +44,3 @@ def finish(fig: plt.Figure, path: str | Path | None = None, close: bool = False)
     if close:
         plt.close(fig)
     return fig
-
-
-def fmt_count(value: float) -> str:
-    """Compact count label: 950, 12.3k, 4.1M."""
-    for div, suffix in ((1e9, "G"), (1e6, "M"), (1e3, "k")):
-        if abs(value) >= div:
-            return f"{value / div:.3g}{suffix}"
-    return f"{value:.3g}" if value != int(value) else f"{int(value)}"

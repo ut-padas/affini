@@ -6,43 +6,7 @@ import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, _to_host, xp
 from src.config import ClusteringConfig
-from src.numerics import TINY_EPS
-
-
-def get_prime_factors(n: int) -> list[int]:
-    """
-    Returns the prime factors of n as a list.
-    For example, get_prime_factors(12) returns [2, 2, 3].
-    """
-    if n < 2:
-        return []
-    factors: list[int] = []
-    while n % 2 == 0:
-        factors.append(2)
-        n //= 2
-    p = 3
-    while p * p <= n:
-        while n % p == 0:
-            factors.append(p)
-            n //= p
-        p += 2
-    if n > 1:
-        factors.append(n)
-    return factors
-
-
-def uniform_grid_bins(extents: np.ndarray, num_cells: int) -> np.ndarray:
-    """
-    (d,) int64 bins per dimension whose product is ``num_cells``: each prime factor,
-    largest first, goes to the dimension with the widest current cell. Shared by the
-    uniform-grid initial clustering of AFINNI mode and the grid roots of region mode, so both cut the same way.
-    """
-    if num_cells < 1:
-        raise ValueError("num_initial_clusters must be >= 1")
-    bins = np.ones(len(extents), dtype=np.int64)
-    for p in sorted(get_prime_factors(num_cells), reverse=True):
-        bins[int(np.argmax(extents / bins))] *= p
-    return bins
+from src.numerics import TINY_EPS, uniform_grid_bins
 
 
 def uniform_grid_cluster_labels(

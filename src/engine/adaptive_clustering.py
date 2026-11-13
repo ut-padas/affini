@@ -23,8 +23,8 @@ from src import (
     xp,
 )
 from src.config import ClusteringConfig
-from src.engine.clusters import ClusterBatch
-from src.engine.evaluation import Evaluator
+from src.core.clusters import ClusterBatch
+from src.core.evaluation import Evaluator
 from src.engine.initial import _threads_for_rank0, initial_clustering
 from src.engine.io import combine_generated_data, save_generated_data
 from src.engine.refinement import _run_local_refinement

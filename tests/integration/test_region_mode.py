@@ -5,7 +5,7 @@ import pytest
 
 from src import xp
 from src.config import ClusteringConfig, RegionSettings
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.surrogate import AFINNISurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
 

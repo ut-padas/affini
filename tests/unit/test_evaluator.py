@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from tests._helpers import host
 
 

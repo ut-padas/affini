@@ -5,10 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from src import Array, xp
-from src.engine.initial import uniform_grid_bins
-from src.numerics import (
-    sort_by_block_then_value,
-)
+from src.numerics import sort_by_block_then_value, uniform_grid_bins
 
 
 # --- Domain and roots ----------------------------------------------------------------

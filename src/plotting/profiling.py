@@ -22,8 +22,8 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Patch
 
-from src.plotting.style import afinni_style, finish, fmt_count
-from src.infra.profiling import PHASE_BY_KEY, group_colors, phase_groups
+from src.infra.profiling import PHASE_BY_KEY, fmt_count, group_colors, phase_groups
+from src.plotting.style import afinni_style, finish
 
 UNTIMED = "Other (untimed)"
 _UNTIMED_COLOR = "#e5e5e5"

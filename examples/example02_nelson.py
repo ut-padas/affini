@@ -10,7 +10,7 @@ import numpy as np
 from src import _to_device, _to_host, xp
 from src.engine.adaptive_clustering import initial_clustering
 from src.config import ClusteringConfig
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.components.modes import SurrogateMode
 from src.config import get_MIN_PTS_PER_CLUSTER, get_NUM_INITIAL_CLUSTERS
 from src.surrogate import AFINNISurrogate

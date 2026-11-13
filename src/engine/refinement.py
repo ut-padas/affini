@@ -18,8 +18,8 @@ from src.components.local_models import ClusterFitData, deploy_leaves, output_co
 from src.components.sampling import augment_clusters, augmentation_targets
 from src.components.splitting import SplitData
 from src.config import ClusteringConfig
-from src.engine.clusters import ClusterBatch, ClusterQueueBuilder, ColumnBuffer
-from src.engine.evaluation import Evaluator
+from src.core.clusters import ClusterBatch, ClusterQueueBuilder, ColumnBuffer
+from src.core.evaluation import Evaluator
 from src.engine.io import save_generated_data
 from src.engine.work_stealing import (
     make_work_stealer,

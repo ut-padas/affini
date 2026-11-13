@@ -1749,7 +1749,7 @@ needs its own candidate-evaluation budget and is not part of version one.
 | File | Change |
 |---|---|
 | `src/config.py` | `algorithm` and `domain` fields; a `RegionSettings` group: `roots` (`box`, `grid`, `voronoi`), `sample_multiplier`, `validation_samples`, `audit_samples`, `min_side_margin`, `split_search` (`gap`, `bins`, `soft`), `n_bins`, `n_directions`, `soft_iters`, sampler settings (`n_chains`, `pilot_block`, `geometry_budget`), region steal thresholds; `requires_f_centroids` union next to the existing `requires_grad_*`; validation that region components are compatible |
-| `src/engine/clusters.py` | the internal column table; `ClusterBatch`, `ClusterQueueBuilder`, `split`, `select` iterate over it; training-first row order and the training/validation views; `NodeRecords` (append-only, rank-local) |
+| `src/core/clusters.py` | the internal column table; `ClusterBatch`, `ClusterQueueBuilder`, `split`, `select` iterate over it; training-first row order and the training/validation views; `NodeRecords` (append-only, rank-local) |
 | `src/engine/work_stealing.py` | `send_clusters`/`recv_clusters` iterate over the table: schema header, then `base_tag + offset` per present column (Section 36). Region-mode thresholds; receiver lease (no re-offering before processing). Request/grant/retire logic unchanged |
 | `src/region.py` (new) | domain and normalization; root construction (`box`; `grid` from `uniform_grid_cluster_labels` keeping bounds; `voronoi` from k-means centres); gap-threshold predicate and membership check; constraint inheritance; the region plan methods (Section 37.3); terminal records; assembly and validation of node records; the router |
 | `src/components/splitting.py` | split strategies return `SplitResult(order, child_sizes, w, z, valid)`; AFINNI's strategies leave `w, z` empty. New: `GapThresholdSplit` (B1/B2), `ThresholdSearchSplit` (B3, with direct recomputation of leading candidates), soft refinement (B4, later). `needs_centroid_value` on every strategy |
@@ -1874,7 +1874,7 @@ since been run on a second machine (Section 42.9).
 
 | Plan item | Where | Notes |
 |---|---|---|
-| Internal column table, versioned wire format | `src/engine/clusters.py` (`QUEUE_COLUMNS`), `src/engine/work_stealing.py` | `ClusterBatch.split`/`select`, the queue builder and `send/recv_clusters` iterate over the table. The header carries version, present columns, shapes and dtypes; column `i` goes on `base_tag + 1 + i`, so an AFINNI-mode transfer sends the same array payloads on the same tags as before. The header itself is new, so this is not wire compatibility with an older executable: mixed versions fail on the version check. |
+| Internal column table, versioned wire format | `src/core/clusters.py` (`QUEUE_COLUMNS`), `src/engine/work_stealing.py` | `ClusterBatch.split`/`select`, the queue builder and `send/recv_clusters` iterate over the table. The header carries version, present columns, shapes and dtypes; column `i` goes on `base_tag + 1 + i`, so an AFINNI-mode transfer sends the same array payloads on the same tags as before. The header itself is new, so this is not wire compatibility with an older executable: mixed versions fail on the version check. |
 | One executor, two named plans | `src/engine/adaptive_clustering.py`, `src/region.py` (`RegionPlan`) | The AFINNI batch body is unchanged in order and arithmetic. The region plan supplies `work_sizes`, `bytes_per_point`, `leaf_columns`, `split_columns`, `initial_queue`, `process_batch`. Shared deploy step: `deploy_leaves` in `src/components/local_models.py` (Q, finalize, re-test), called by both plans. |
 | `algorithm`, `domain`, `RegionSettings` | `src/config.py` | `domain=(lower, upper)` required; `"data_bbox"` is explicit opt-in and recorded. |
 | Roots | `src/region.py` (`Roots`) | `box` (default, ART: no initial clustering), `grid` (shared `uniform_grid_bins`), `voronoi` (centres of the initial clustering; exact nearest-centre assignment, tiled; no face list; hit-and-run bisectors from centre differences `c_j − c_r`, normalized; root assignment re-decides the nearest-distance candidate with the same centre-difference test, so sampling, training and routing agree on thin cells. Points within rounding of a bisector remain ambiguous: there is no error-bounded tie test). |
@@ -2935,6 +2935,14 @@ Every step was checked before the next: CPU, GPU and MPI suites (534 / 541 / 12;
 shim test removed), `regression_check.py` bit-identical to HEAD on the CPU and exactly equal to
 the pre-reorganization GPU reference, and bit-for-bit model dumps of region mode on the CPU
 (Rosenbrock 5-D quadratic) and GPU (8-D depth 14) identical to the pre-reorganization code.
+
+**Follow-up: strict layers.** Five imports still pointed up the table: `components` and
+`region` imported `engine.clusters`, `engine.evaluation` and `engine.initial.uniform_grid_bins`,
+and `infra.monitor` imported `plotting.style.fmt_count`. `clusters` and `evaluation` moved to a
+new bottom-layer package `core/`, the grid factorization to `numerics/grid.py` and `fmt_count`
+to `infra/profiling.py`; region and engine became separate layers (engine uses region, region
+never imports engine). `tests/unit/test_layering.py` checks every import, including those inside
+functions, against the README table. Pure moves: `regression_check.py` is bit-identical on the CPU.
 
 **Probe and benchmark scripts.** The scripts used in 42.9–42.11 are scratch files in
 `/tmp/gpu_bench/`, not part of the repository: the ART matrix driver (`run_matrix.sh`,

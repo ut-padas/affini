@@ -44,7 +44,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, xp
-from src.engine.clusters import ParamSpec
+from src.core.clusters import ParamSpec
 from src.components.modes import SurrogateMode
 from src.numerics import (
     TINY_EPS,

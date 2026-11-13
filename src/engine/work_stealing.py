@@ -9,7 +9,7 @@ rank is idle, all ranks retire together through a non-blocking barrier, still
 answering requests until every rank has retired.
 
 The refinement loop only talks to this module through ``WorkStealer`` (or
-``NoWorkStealing`` when stealing is off) and ``src.engine.clusters.ClusterBatch``.
+``NoWorkStealing`` when stealing is off) and ``src.core.clusters.ClusterBatch``.
 """
 
 import logging
@@ -18,7 +18,7 @@ import time
 import numpy as np
 
 from src.infra.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in without MPI
-from src.engine.clusters import QUEUE_COLUMNS, ClusterBatch
+from src.core.clusters import QUEUE_COLUMNS, ClusterBatch
 from src.infra.profiling import Profiler
 
 logger = logging.getLogger(__name__)

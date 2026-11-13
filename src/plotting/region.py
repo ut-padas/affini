@@ -23,7 +23,8 @@ import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap, LogNorm
 
 from src import _to_host, xp
-from src.plotting.style import afinni_style, finish, fmt_count
+from src.infra.profiling import fmt_count
+from src.plotting.style import afinni_style, finish
 from src.region import TERMINAL_REASONS, VALIDATION_STATUSES
 
 REASON_COLOURS = ("#4c9a6a", "#d1495b", "#edae49")  # accepted, max_depth, split_failed

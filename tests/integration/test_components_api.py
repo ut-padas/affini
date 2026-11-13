@@ -14,7 +14,7 @@ import pytest
 
 from src import xp
 from src.components.acceptance import ACCEPTANCE_CRITERIA, AcceptanceCriterion, LinfAcceptance
-from src.engine.clusters import ParamSpec
+from src.core.clusters import ParamSpec
 from src.config import ClusteringConfig
 from src.components.local_models import (
     LOCAL_MODELS,

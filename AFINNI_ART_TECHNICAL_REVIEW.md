@@ -1935,7 +1935,7 @@ revision context when sharing the review.
 | Topic | Source |
 |---|---|
 | AFINNI refinement, batch cap and RNG | [src/engine/adaptive_clustering.py](src/engine/adaptive_clustering.py), [pinned source](https://github.com/ut-padas/affini/blob/015adfd4a34b1b5ac5f8c67d9fa38a18a5c8bae7/src/engine/adaptive_clustering.py) |
-| Queues and output columns | [src/engine/clusters.py](src/engine/clusters.py) |
+| Queues and output columns | [src/core/clusters.py](src/core/clusters.py) |
 | Splits, samples and model contracts | [src/components/splitting.py](src/components/splitting.py), [src/components/sampling.py](src/components/sampling.py), [src/components/local_models.py](src/components/local_models.py) |
 | Numerical kernels and existing grid roots | [src/numerics.py](src/numerics.py), [src/engine/](src/engine/) |
 | Acceptance and prediction | [src/components/acceptance.py](src/components/acceptance.py), [src/surrogate.py](src/surrogate.py), [src/neighbors/knn.py](src/neighbors/knn.py) |
@@ -3900,7 +3900,7 @@ Invalid audit:
 ```python
 import numpy as np
 from src.config import RegionSettings
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from tests._helpers import train_surrogate
 
 X = np.random.default_rng(4).random((30, 2))

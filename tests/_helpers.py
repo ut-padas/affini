@@ -4,7 +4,7 @@ import numpy as np
 
 from src import IS_CUPY_BACKEND, _to_host, xp
 from src.config import ClusteringConfig
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.surrogate import AFINNISurrogate
 
 # CuPy reductions/einsum may order floating-point operations differently from

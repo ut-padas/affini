@@ -32,7 +32,7 @@ from src.components.modes import SurrogateMode
 from src.components.registry import component_spec
 from src.config import ClusteringConfig
 from src.engine.adaptive_clustering import _adaptive_clustering, run_collective
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.infra.backend import (
     MPI,  # real mpi4py.MPI, or a single-rank stand-in without MPI
 )

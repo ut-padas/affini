@@ -8,7 +8,7 @@ import pytest
 from src import _to_host, xp
 from src.config import ClusteringConfig
 from src.components.modes import SurrogateMode
-from src.engine.clusters import ColumnBuffer, ParamSpec
+from src.core.clusters import ColumnBuffer, ParamSpec
 from src.components.local_models import (
     LOCAL_MODELS,
     AffineLSQModel,

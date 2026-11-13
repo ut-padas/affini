@@ -9,7 +9,7 @@ import src.engine.adaptive_clustering as ac
 from src import xp
 from src.infra.backend import _SerialMPI
 from src.config import ClusteringConfig
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.components.modes import SurrogateMode
 from src.surrogate import AFINNISurrogate
 from tests._helpers import host, train_surrogate

@@ -9,10 +9,10 @@ import numpy as np
 import pytest
 
 from src import xp
-from src.engine.clusters import ParamSpec
+from src.core.clusters import ParamSpec
 from src.components.local_models import LOCAL_MODELS, AffineLSQModel, LocalModel
 from src.config import ClusteringConfig
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.components.modes import SurrogateMode
 from src.surrogate import MODEL_FORMAT_VERSION, AFINNISurrogate
 from tests._helpers import assert_backend_equal, host

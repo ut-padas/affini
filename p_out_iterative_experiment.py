@@ -13,7 +13,7 @@ from matplotlib.patches import Circle, Ellipse
 
 from src import RESULTS_DIR, Array, _to_device, _to_host, xp
 from src.config import ClusteringConfig
-from src.engine.evaluation import Evaluator
+from src.core.evaluation import Evaluator
 from src.components.modes import SurrogateMode
 from src.infra.logging_utils import setup_logging
 from src.problems.anisotropic_quadratic import _get_params, aniso_quadratic
