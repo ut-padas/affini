@@ -461,7 +461,7 @@ scalar applies to every output component, `none` leaves that test out; not allow
 together with `--tols`), `--error_eval_mode` (a mode value), `--sampling uniform|modified` (initial
 data), `--sampling_method` (augmentation sampler), `--N_train`,
 `--num_initial_clusters`, `--min_pts_per_cluster` (default: the dimension heuristics
-`get_NUM_INITIAL_CLUSTERS` / `get_MIN_PTS_PER_CLUSTER`), `--Q_reg`,
+`default_num_initial_clusters` / `default_min_pts_per_cluster`), `--Q_reg`,
 `--coarse_factor`, `--dt` (Lorenz flow map). For lorenz96, atol is multiplied by
 max|f_j| per output and `--tols` runs atol only. An existing result file means "done"
 and is skipped; non-default settings are part of the file name, so different

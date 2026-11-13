@@ -3,7 +3,6 @@
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Optional
 
 from src import Array
 from src.numerics import convert_to_2d_array, convert_to_3d_array
@@ -22,10 +21,10 @@ class Evaluator:
     required by the *_EXACT_HESS modes and is not included in ``n_evals``.
     """
 
-    f_fn: Optional[Callable[[Array], Array]] = None
-    g_fn: Optional[Callable[[Array], Array]] = None
-    oracle_fn: Optional[Callable[[Array], tuple[Array, Array]]] = None
-    hessian_fn: Optional[Callable[[Array], Array]] = None
+    f_fn: Callable[[Array], Array] | None = None
+    g_fn: Callable[[Array], Array] | None = None
+    oracle_fn: Callable[[Array], tuple[Array, Array]] | None = None
+    hessian_fn: Callable[[Array], Array] | None = None
     n_evals: int = 0  # number of points evaluated so far
     # Wall time spent in the user's callables. Device work they launch
     # asynchronously is only counted once it is synchronized.
@@ -42,7 +41,7 @@ class Evaluator:
 
     def __call__(
         self, X: Array, need_grad: bool = False
-    ) -> tuple[Array, Optional[Array]]:
+    ) -> tuple[Array, Array | None]:
         """
         Return ``F`` with shape (N, fd) and, if ``need_grad``, ``G`` with shape
         (N, fd, d); otherwise ``G`` is None.
@@ -56,7 +55,7 @@ class Evaluator:
         finally:
             self.seconds += time.perf_counter() - start
 
-    def _evaluate(self, X: Array, need_grad: bool) -> tuple[Array, Optional[Array]]:
+    def _evaluate(self, X: Array, need_grad: bool) -> tuple[Array, Array | None]:
         if self.f_fn is not None and not need_grad:
             return convert_to_2d_array(self.f_fn(X)), None
         if self.oracle_fn is not None:

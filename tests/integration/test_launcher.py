@@ -12,8 +12,10 @@ import pandas as pd  # noqa: E402
 import pytest  # noqa: E402
 
 import afinni_launcher as launcher  # noqa: E402
-from src import plotting as P  # noqa: E402
-from src import xp  # noqa: E402
+from src import (
+    plotting,
+    xp,  # noqa: E402
+)
 from src.components.modes import SurrogateMode  # noqa: E402
 from tests._helpers import host  # noqa: E402
 
@@ -31,12 +33,12 @@ def test_result_json_holds_the_profile_and_feeds_the_summary(tmp_path, monkeypat
     assert isinstance(result["profiling_stats"]["time_total"], float)  # array scalars saved as numbers, not text
 
     assert result_path.name.startswith("mpi_sz1_dim2_tol0.1_")  # --tols names are unchanged
-    heuristic = f"_ninit{launcher.get_NUM_INITIAL_CLUSTERS(2)}_minpts{launcher.get_MIN_PTS_PER_CLUSTER(2)}_"
+    heuristic = f"_ninit{launcher.default_num_initial_clusters(2)}_minpts{launcher.default_min_pts_per_cluster(2)}_"
     assert heuristic in result_path.name  # the defaults without --num_initial_clusters / --min_pts_per_cluster
     summary = pd.read_csv(exp_dir / "_summary.csv")
     assert summary[["dim", "atol", "rtol", "N_c"]].values.tolist() == [[2, 0.1, 0.1, result["N_c"]]]
 
-    assert isinstance(P.plot_profile_dashboard(result), plt.Figure)
+    assert isinstance(plotting.plot_profile_dashboard(result), plt.Figure)
 
 
 def test_scaled_atol_is_tol_times_max_f_per_component(tmp_path):

@@ -17,9 +17,9 @@ from src.components.modes import SurrogateMode
 from src.components.sampling import SAMPLERS
 from src.config import (
     TrainingConfig,
-    get_MIN_PTS_PER_CLUSTER,
-    get_N_TRAIN,
-    get_NUM_INITIAL_CLUSTERS,
+    default_min_pts_per_cluster,
+    default_n_train,
+    default_num_initial_clusters,
 )
 from src.core.evaluation import Evaluator
 from src.infra.backend import MPI
@@ -452,7 +452,7 @@ def create_summary_dataframe(exp_dir: Path):
     ]
     data_dict = defaultdict(list)
     for jf in json_files:
-        with open(jf, "r") as f:
+        with open(jf) as f:
             data = json.load(f)
 
         for key in key_list:
@@ -519,7 +519,7 @@ class Problem:
     domain: tuple[float, float] = (-3.0, 3.0)
     error_metric: Literal["L2", "Linf"] = "Linf"
     scale_atol_by_max_f: bool = False
-    n_train: Callable[[int], int] = get_N_TRAIN  # default N_TRAIN for a dimension
+    n_train: Callable[[int], int] = default_n_train  # default N_TRAIN for a dimension
     n_test: Callable[[int], int] = lambda n_train: n_train // 2
     sample: Callable | None = None
     centroids_plot_in_log_scale: bool = False
@@ -671,7 +671,7 @@ def lorenz96(args) -> Problem:
         f,
         domain=(-5.0, 5.0),
         scale_atol_by_max_f=True,
-        n_train=lambda dim: min(get_N_TRAIN(dim), 1000000),
+        n_train=lambda dim: min(default_n_train(dim), 1000000),
     )
 
 
@@ -765,39 +765,39 @@ def run_problem(
 
     N_TRAIN = problem.n_train(dim) if N_train is None else N_train
     N_TEST = problem.n_test(N_TRAIN)
-    NUM_INITIAL_CLUSTERS = get_NUM_INITIAL_CLUSTERS(dim) if num_initial_clusters is None else num_initial_clusters
-    MIN_PTS_PER_CLUSTER = get_MIN_PTS_PER_CLUSTER(dim) if min_pts_per_cluster is None else min_pts_per_cluster
+    NUM_INITIAL_CLUSTERS = default_num_initial_clusters(dim) if num_initial_clusters is None else num_initial_clusters
+    MIN_PTS_PER_CLUSTER = default_min_pts_per_cluster(dim) if min_pts_per_cluster is None else min_pts_per_cluster
 
     json_fpath = (
         EXP_DIR
         / f"mpi_sz{_size}_dim{dim}_{_tolerance_tag(atol, rtol, problem.scale_atol_by_max_f)}_ntrain{N_TRAIN}_{error_eval_mode.value}_{ERROR_METRIC}_{INITIAL_CLUSTERING_METHOD}_ninit{NUM_INITIAL_CLUSTERS}_minpts{MIN_PTS_PER_CLUSTER}_steal{USE_WORK_STEALING}_v2{USE_V2}{_settings_suffix(sampling_method, Q_reg, coarse_factor)}.json"
     )
-    settings = dict(
-        json_fpath=json_fpath,
-        DOMAIN=list(problem.domain),
-        F_DIM=1,
-        DIM=dim,
-        N_TRAIN=N_TRAIN,
-        N_TEST=N_TEST,
-        f_fn=problem.f,
-        g_fn=problem.g,
-        HESSIAN=problem.hessian,
-        ATOL=atol,
-        RTOL=rtol,
-        ERROR_EVAL_MODE=error_eval_mode,
-        ERROR_METRIC=ERROR_METRIC,
-        INITIAL_CLUSTERING_METHOD=INITIAL_CLUSTERING_METHOD,
-        NUM_INITIAL_CLUSTERS=NUM_INITIAL_CLUSTERS,
-        MIN_PTS_PER_CLUSTER=MIN_PTS_PER_CLUSTER,
-        USE_WORK_STEALING=USE_WORK_STEALING,
-        USE_V2=USE_V2,
-        Q_reg=Q_reg,
-        COARSE_FACTOR=coarse_factor,
-        CENTROIDS_PLOT_IN_LOG_SCALE=problem.centroids_plot_in_log_scale,
-        SAVE_FINAL_CENTROIDS=problem.save_final_centroids,
-        SAMPLING_METHOD=sampling_method,
-        SCALE_ATOL_BY_MAX_F=problem.scale_atol_by_max_f,
-    )
+    settings = {
+        "json_fpath": json_fpath,
+        "DOMAIN": list(problem.domain),
+        "F_DIM": 1,
+        "DIM": dim,
+        "N_TRAIN": N_TRAIN,
+        "N_TEST": N_TEST,
+        "f_fn": problem.f,
+        "g_fn": problem.g,
+        "HESSIAN": problem.hessian,
+        "ATOL": atol,
+        "RTOL": rtol,
+        "ERROR_EVAL_MODE": error_eval_mode,
+        "ERROR_METRIC": ERROR_METRIC,
+        "INITIAL_CLUSTERING_METHOD": INITIAL_CLUSTERING_METHOD,
+        "NUM_INITIAL_CLUSTERS": NUM_INITIAL_CLUSTERS,
+        "MIN_PTS_PER_CLUSTER": MIN_PTS_PER_CLUSTER,
+        "USE_WORK_STEALING": USE_WORK_STEALING,
+        "USE_V2": USE_V2,
+        "Q_reg": Q_reg,
+        "COARSE_FACTOR": coarse_factor,
+        "CENTROIDS_PLOT_IN_LOG_SCALE": problem.centroids_plot_in_log_scale,
+        "SAVE_FINAL_CENTROIDS": problem.save_final_centroids,
+        "SAMPLING_METHOD": sampling_method,
+        "SCALE_ATOL_BY_MAX_F": problem.scale_atol_by_max_f,
+    }
     if problem.sample is None:
         conduct_experiment_generate_uniform_data(**settings)
     else:
@@ -833,9 +833,8 @@ def lorenz_trajectories_experiment(
     values are added to the file name.
     """
     # Parameters for experiment
-    l = -5.0
-    r = 5.0
-    domain = [l, r]
+    lower, upper = -5.0, 5.0
+    domain = [lower, upper]
     N_test = 50_000
     forcing = 1
 
@@ -866,9 +865,9 @@ def lorenz_trajectories_experiment(
     if _rank == 0:
         xp.random.seed(SEED)
         X_train = xp.zeros((N_start_train * (N_steps + 1), d))
-        X_train[:N_start_train, :] = xp.random.uniform(l, r, size=(N_start_train, d))
+        X_train[:N_start_train, :] = xp.random.uniform(lower, upper, size=(N_start_train, d))
         X_test = xp.zeros((N_start_test * (N_steps + 1), d))
-        X_test[:N_start_test, :] = xp.random.uniform(l, r, size=(N_start_test, d))
+        X_test[:N_start_test, :] = xp.random.uniform(lower, upper, size=(N_start_test, d))
         for j in range(1, N_steps + 1):
             X_train[(j * N_start_train) : ((j + 1) * N_start_train)] = f_fn(
                 X_train[((j - 1) * N_start_train) : (j * N_start_train)]
@@ -882,7 +881,7 @@ def lorenz_trajectories_experiment(
     EXP_DIR = RESULTS_DIR / "lorenz_trajexp"
     mode_suffix = "" if error_eval_mode == SurrogateMode.AFFINE_COV_HESS else f"_{error_eval_mode.value}"
     size_suffix = "" if _size == 1 else f"_mpisz{_size}"
-    default_ninit, default_minpts = min(get_NUM_INITIAL_CLUSTERS(d), 1000), min(get_MIN_PTS_PER_CLUSTER(d), 500)
+    default_ninit, default_minpts = min(default_num_initial_clusters(d), 1000), min(default_min_pts_per_cluster(d), 500)
     num_initial_clusters = default_ninit if num_initial_clusters is None else num_initial_clusters
     min_pts_per_cluster = default_minpts if min_pts_per_cluster is None else min_pts_per_cluster
     cluster_suffix = ("" if num_initial_clusters == default_ninit else f"_ninit{num_initial_clusters}") + (
@@ -1028,14 +1027,14 @@ def setup_argparse(argv: list[str] | None = None):
     )
     parser.add_argument(
         "--num_initial_clusters",
-        help="Number of initial clusters (default: get_NUM_INITIAL_CLUSTERS(dim)).",
+        help="Number of initial clusters (default: default_num_initial_clusters(dim)).",
         type=_positive_int,
         default=None,
     )
     parser.add_argument(
         "--min_pts_per_cluster",
         help="Minimum points per cluster; rejected clusters are augmented to twice this "
-        "before splitting (default: get_MIN_PTS_PER_CLUSTER(dim)).",
+        "before splitting (default: default_min_pts_per_cluster(dim)).",
         type=_positive_int,
         default=None,
     )

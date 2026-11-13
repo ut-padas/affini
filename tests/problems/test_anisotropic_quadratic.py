@@ -29,8 +29,7 @@ def _sympy_aniso_quadratic_f_g_h(
     x = sp.symbols(f"x0:{n_dim}")
 
     # Create random rotation matrix Q using the same seed and method as implementation
-    np.random.seed(SEED)
-    A = np.random.randn(n_dim, n_dim).astype(np.float64)
+    A = np.random.RandomState(SEED).randn(n_dim, n_dim).astype(np.float64)
     Q, _ = np.linalg.qr(A)
     if np.linalg.det(Q) < 0:
         Q[:, 0] = -Q[:, 0]

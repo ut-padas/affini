@@ -288,7 +288,7 @@ def plot_timeline(
             ax.broken_barh(list(zip(grp["t"], grp["dur"], strict=True)), (rank - 0.4, 0.8), color=colors.get(group, "#999999"), linewidth=0)
         if show_steals:
             for s in steals_frame(ev).itertuples():
-                ax.annotate("", xy=(s.t, s.thief), xytext=(s.t, s.victim), arrowprops=dict(arrowstyle="->", color="black", lw=0.8))
+                ax.annotate("", xy=(s.t, s.thief), xytext=(s.t, s.victim), arrowprops={"arrowstyle": "->", "color": "black", "lw": 0.8})
         ax.set_yticks(ranks)
         ax.set_ylabel("MPI rank")
         ax.set_xlabel("Time since start (s)")

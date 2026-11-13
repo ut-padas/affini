@@ -13,8 +13,9 @@ import json
 import logging
 import time
 import warnings
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional, ParamSpec, TypeVar, Union
+from typing import Any, ParamSpec, TypeVar
 
 import numpy as np
 
@@ -92,8 +93,8 @@ class AFINNISurrogate:
 
     def __init__(self):
         self.trained = False
-        self.mode: Optional[SurrogateMode] = None
-        self.local_model: Optional[LocalModel] = None  # the function on each leaf
+        self.mode: SurrogateMode | None = None
+        self.local_model: LocalModel | None = None  # the function on each leaf
 
         # Storage for source points (Reference data)
         self.N_src = 0
@@ -112,7 +113,7 @@ class AFINNISurrogate:
         self.config: dict[str, Any] = {}
         # False if refinement stopped at max_levels with clusters still unresolved;
         # their region has no leaves (see num_unresolved_clusters / _pts).
-        self.converged: Optional[bool] = None
+        self.converged: bool | None = None
         self.num_unresolved_clusters = 0
         self.num_unresolved_pts = 0
         self.profiling_stats = {}
@@ -167,8 +168,8 @@ class AFINNISurrogate:
         config: TrainingConfig,
         evaluator: Evaluator,
         *,
-        Y_train: Optional[Array] = None,
-        initial_labels: Optional[Array] = None,
+        Y_train: Array | None = None,
+        initial_labels: Array | None = None,
     ) -> None:
         """
         Train the surrogate collectively on every MPI rank, replacing any previous model.
@@ -270,7 +271,7 @@ class AFINNISurrogate:
                         stacklevel=2,
                     )
 
-    def save_model(self, filepath: Union[str, Path]) -> Path:
+    def save_model(self, filepath: str | Path) -> Path:
         """
         Save the trained model to an ``.npz`` file and return its path.
 
@@ -337,7 +338,7 @@ class AFINNISurrogate:
 
     @classmethod
     def load_model(
-        cls, filepath: Union[str, Path], local_model: Optional[LocalModel] = None
+        cls, filepath: str | Path, local_model: LocalModel | None = None
     ) -> "AFINNISurrogate":
         """
         Load a model written by ``save_model()``; ``filepath`` is resolved the same
@@ -466,7 +467,7 @@ class AFINNISurrogate:
     @_collective("predict()")
     def predict(
         self,
-        query_points: Optional[Array] = None,
+        query_points: Array | None = None,
         k_nn: int = 1,
         coarse_factor: int = 10,
         strict_trust_region: bool = False,

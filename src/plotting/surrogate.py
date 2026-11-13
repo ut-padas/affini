@@ -9,14 +9,15 @@ a figure, and use ``src.plotting.style`` for a consistent look.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import ListedColormap, LogNorm
 from matplotlib.lines import Line2D
-from matplotlib.patches import Circle, Ellipse
+from matplotlib.patches import Ellipse
 
 from src import Array, to_device, to_host, xp
 
@@ -301,7 +302,7 @@ def plot_wave_2d_errors(surrogate: AFINNISurrogate, domain, f_fn, img_fpath: Pat
     axs[1,1].set_xlabel("x")
     axs[1,1].set_ylabel("y")
     axs[1,1].set_aspect("equal")
-    
+
     plt.tight_layout()
 
     plt.suptitle(f"$f(x) = cos(2q^\\top x)$, $N_c={Nc}$", fontsize=11)
@@ -327,7 +328,8 @@ def plot_wave_line_errors(
     # Random direction and its orthogonal complement (2D only)
     from src.problems.wave import get_random_direction
     q = get_random_direction(d, centers.dtype)
-    e = np.zeros(d); e[0] = 1
+    e = np.zeros(d)
+    e[0] = 1
     q_perp = e - np.dot(q, e) * q
     q_perp /= np.linalg.norm(q_perp)
 
@@ -441,7 +443,7 @@ def plot_near_centers(
     topk_centers = centers[topk_idx]
 
     print(f"Smallest {n_report} values of x^T Q x (value, centroid location):")
-    for rank, (val, loc) in enumerate(zip(topk_vals, topk_centers), start=1):
+    for rank, (val, loc) in enumerate(zip(topk_vals, topk_centers, strict=True), start=1):
         loc_str = ", ".join(f"{c:.5f}" for c in loc)
         print(f"  {rank}: {val:.5f}  @ ({loc_str})")
 
@@ -479,7 +481,6 @@ def plot_near_centers(
     fig.colorbar(cs, ax=ax)
 
     # --- Ellipses x^T Q x = 1 for the top-k candidates (centered at each candidate) ---
-    ellipse_label_added = False
     for idx in topk_idx:
         c_i = centers[idx]
         Q_i = Qs[idx]
@@ -560,9 +561,9 @@ def plot_exact_hess_vs_estimated_hess(
     fig.colorbar(cs, ax=axs[1])
 
     # Plot centroids on each axis
-    centers1 = est_hess_surrogate.X_src; centers2 = exact_hess_surrogate.X_src
-    Nc1, d1 = centers1.shape; Nc2, d2 = centers2.shape
-    assert d1 == 2; assert d2 == 2;
+    centers1, centers2 = est_hess_surrogate.X_src, exact_hess_surrogate.X_src
+    assert centers1.shape[1] == 2 and centers2.shape[1] == 2
+    Nc1, Nc2 = centers1.shape[0], centers2.shape[0]
     axs[0].scatter(centers1[:, 0], centers1[:, 1], c="red", s=20, label="Centers", marker='^')
     axs[1].scatter(centers2[:, 0], centers2[:, 1], c="red", s=20, label="Centers", marker='o')
 
@@ -580,5 +581,5 @@ def plot_exact_hess_vs_estimated_hess(
     plt.close(fig)
     print(f"Saved figure to {img_fpath}")
 
-        
+
 

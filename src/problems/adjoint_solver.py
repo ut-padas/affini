@@ -4,6 +4,7 @@ adjoint solve per output, batched over trajectories and parallelized over proces
 through shared memory.
 """
 
+import contextlib
 import logging
 import multiprocessing as mp
 import os
@@ -65,8 +66,6 @@ def batched_adjoint_solve(X0, rhs, DfDx, tf, c):
     if X0.shape[0] == 0:
         return None, None
 
-    # We assume numpy for the solver internals
-    xp = np
     n_trajectories, n_equations = X0.shape
 
     # 1. Forward solve (save entire state)
@@ -181,11 +180,9 @@ def _solve_and_write_chunk(
 
     except Exception as e:
         # Print to stderr carefully
-        try:
+        with contextlib.suppress(Exception):
             sys.stderr.write(f"Worker Error: {e}\n")
             traceback.print_exc(file=sys.stderr)
-        except:
-            pass
         return False
 
 
@@ -315,20 +312,14 @@ def parallel_adjoint_solver(
         # 5. Cleanup Shared Memory
         # Close and unlink locally.
         # The workers have already closed their handles in _solve_and_write_chunk.
-        try:
+        with contextlib.suppress(Exception):
             shm_x0.close()
             shm_x0.unlink()
-        except:
-            pass
 
-        try:
+        with contextlib.suppress(Exception):
             shm_xf.close()
             shm_xf.unlink()
-        except:
-            pass
 
-        try:
+        with contextlib.suppress(Exception):
             shm_sf.close()
             shm_sf.unlink()
-        except:
-            pass

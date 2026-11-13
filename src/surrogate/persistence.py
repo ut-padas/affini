@@ -1,7 +1,7 @@
 """Saving and loading trained surrogates: the file format version, file naming and JSON encoding of settings."""
 
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 import numpy as np
 
@@ -23,7 +23,7 @@ ROUTE_PREFIX = "route:"
 LEAF_PREFIX = "leaf:"
 
 
-def model_path(path: Union[str, Path]) -> Path:
+def model_path(path: str | Path) -> Path:
     """``path`` as an ``.npz`` file path; a directory gets the default file name."""
     path = Path(path)
     if path.is_dir():

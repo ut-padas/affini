@@ -76,6 +76,8 @@ explicit = true
 [tool.ruff]
 line-length = 88
 target-version = "py313"
+# Archived research code: kept for reference, not maintained or imported.
+extend-exclude = ["archive"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "B", "A", "C4", "PIE", "T20", "UP", "NPY", "SIM"]

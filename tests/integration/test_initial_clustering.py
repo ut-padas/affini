@@ -10,7 +10,7 @@ from src.config import TrainingConfig
 from tests._helpers import host, train_surrogate
 
 X = np.random.default_rng(4).uniform(-1, 1, (3_000, 2))
-OPTIONS = dict(atol=0.05, rtol=0.05, num_initial_clusters=9, min_pts_per_cluster=40, use_work_stealing=False, seed=5)
+OPTIONS = {"atol": 0.05, "rtol": 0.05, "num_initial_clusters": 9, "min_pts_per_cluster": 40, "use_work_stealing": False, "seed": 5}
 
 
 def f(x):

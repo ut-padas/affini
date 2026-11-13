@@ -68,7 +68,7 @@ def test_k_larger_than_coarse_factor_is_rejected(surrogate):
 
 def test_per_component_tolerances_are_used_and_must_match_the_outputs():
     s = AFINNISurrogate()
-    opts = dict(f_fn=f, num_initial_clusters=4, min_pts_per_cluster=32, use_work_stealing=False)
+    opts = {"f_fn": f, "num_initial_clusters": 4, "min_pts_per_cluster": 32, "use_work_stealing": False}
     train_surrogate(X, s, atol=(0.05, 0.01), rtol=None, **opts)
     E_abs = host(s.E_cluster_abs_src)
     assert E_abs.shape == (s.N_src, 2) and np.all(E_abs < [0.05, 0.01])
@@ -100,7 +100,7 @@ def test_untrained_surrogate_refuses_to_predict():
     ],
 )
 def test_invalid_settings_fail_early(field, value):
-    kw = dict(mode=SurrogateMode.AFFINE_COV_HESS, atol=0.1, rtol=0.1)
+    kw = {"mode": SurrogateMode.AFFINE_COV_HESS, "atol": 0.1, "rtol": 0.1}
     kw[field] = value
     with pytest.raises(ValueError, match=field):
         TrainingConfig(**kw)

@@ -154,7 +154,8 @@ class Profiler:
         if stream_dir is not None:
             path = Path(stream_dir)
             path.mkdir(parents=True, exist_ok=True)
-            self._stream = open(path / f"rank_{rank:03d}.jsonl", "w", buffering=1)
+            # Held for the profiler's lifetime and closed by close(), so not a context manager.
+            self._stream = open(path / f"rank_{rank:03d}.jsonl", "w", buffering=1)  # noqa: SIM115
 
     @property
     def enabled(self) -> bool:

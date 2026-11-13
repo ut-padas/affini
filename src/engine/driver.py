@@ -11,10 +11,11 @@ Scientific choices live in the plans and the components of ``TrainingConfig``
 new component never has to change it.
 """
 
+import contextlib
 import dataclasses
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -52,8 +53,8 @@ def refine(
     config: TrainingConfig,
     evaluator: Evaluator,
     *,
-    Y: Optional[Array] = None,
-    initial_labels: Optional[Array] = None,
+    Y: Array | None = None,
+    initial_labels: Array | None = None,
 ) -> dict[str, Any] | None:
     """
     Train ``config.algorithm`` collectively on every MPI rank (see ``refine_unguarded``).
@@ -91,10 +92,8 @@ def run_collective(operation, what: str):
         # Release the profiler streams this operation opened (not a parent's); a cleanup
         # error must neither replace the original exception nor prevent the abort below.
         for profiler in scope:
-            try:
+            with contextlib.suppress(Exception):
                 profiler.close()
-            except Exception:
-                pass
         if comm.Get_size() > 1:
             try:
                 logger.critical(f"R{comm.Get_rank():02}: {what} failed; aborting all ranks.", exc_info=True)
@@ -111,8 +110,8 @@ def refine_unguarded(
     config: TrainingConfig,
     evaluator: Evaluator,
     *,
-    Y: Optional[Array] = None,
-    initial_labels: Optional[Array] = None,
+    Y: Array | None = None,
+    initial_labels: Array | None = None,
 ) -> dict[str, Any] | None:
     """
     Train collectively on every MPI rank; return the merged leaves on rank 0, None elsewhere.

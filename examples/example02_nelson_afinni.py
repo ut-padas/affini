@@ -11,8 +11,8 @@ from src import to_device, to_host, xp
 from src.components.modes import SurrogateMode
 from src.config import (
     TrainingConfig,
-    get_MIN_PTS_PER_CLUSTER,
-    get_NUM_INITIAL_CLUSTERS,
+    default_min_pts_per_cluster,
+    default_num_initial_clusters,
 )
 from src.core.evaluation import Evaluator
 from src.engine.driver import initial_clustering
@@ -22,8 +22,8 @@ from src.surrogate import AFINNISurrogate
 KIDAPY_ROOT = Path(__file__).resolve().parent.parent / "libs" / "KIDApy"
 sys.path.insert(0, str(KIDAPY_ROOT))
 
-from parser import Network
-from solver import QuadraticSolver
+from parser import Network  # noqa: E402  (KIDApy is importable only after the sys.path insert)
+from solver import QuadraticSolver  # noqa: E402
 
 NETWORK_PATH    = KIDAPY_ROOT / "networks" / "nelson" / "gas_reactions.in"
 
@@ -45,7 +45,7 @@ net.drop_passive_species()
 
 def params_to_env(p):
     """One row of params -> the env dict the network expects."""
-    env = dict(zip(ENV_COLS, map(float, p)))
+    env = dict(zip(ENV_COLS, map(float, p), strict=True))
     env["Tcap_2body"] = True
     for band in ("uv1", "uv3", "uv4"):
         env[band] = max(env[band], BAND_FLOOR)
@@ -243,7 +243,7 @@ def rollout(surrogates, X_true_list, n_rows_until_output=5):
     """
     X_true_list = [np.asarray(to_host(X)) for X in X_true_list]
     rows_list = [np.arange(0, len(X), n_rows_until_output) for X in X_true_list]
-    X_roll_list = [np.array(X[rows]) for X, rows in zip(X_true_list, rows_list)]
+    X_roll_list = [np.array(X[rows]) for X, rows in zip(X_true_list, rows_list, strict=True)]
     trust_list = [np.ones(len(rows) - 1, dtype=bool) for rows in rows_list]
     n_steps_all = np.array([len(rows) for rows in rows_list])
 
@@ -306,7 +306,7 @@ def rollout_final_relative_error(surrogates, X_true_list, rows_list, X_roll_list
     """
     cols = list(surrogates)
     errors = []
-    for X_true, rows, X_roll in zip(X_true_list, rows_list, X_roll_list):
+    for X_true, rows, X_roll in zip(X_true_list, rows_list, X_roll_list, strict=True):
         true = np.asarray(to_host(X_true))[rows[-1], cols]
         errors.append(np.linalg.norm(X_roll[-1, cols] - true) / np.linalg.norm(true))
     return np.array(errors)
@@ -318,8 +318,8 @@ if __name__ == "__main__":
     SEED = 67
     DIM = 21
     TOL = 0.02
-    N_init_clusters = get_NUM_INITIAL_CLUSTERS(DIM)
-    min_ppc = get_MIN_PTS_PER_CLUSTER(DIM)
+    N_init_clusters = default_num_initial_clusters(DIM)
+    min_ppc = default_min_pts_per_cluster(DIM)
     dt = 250.0 * YEAR
     n_workers = 144 # number of available cores on node
 
@@ -360,7 +360,7 @@ if __name__ == "__main__":
         np.save(labels_path, initial_labels)
         print(f"Saved the initial clustering to {labels_path}.")
 
-    surrogate_dict = dict()
+    surrogate_dict = {}
     for output in range(14):
 
         f_fn = partial(nelson_flow_map_wrapper, output=output, dt=dt, n_workers=n_workers)
@@ -396,7 +396,7 @@ if __name__ == "__main__":
     print(f"  Mean: {final_errors.mean():.3e}")
     print(f"  Max:  {final_errors.max():.3e} (tracer {final_errors.argmax()})")
 
-    for t, (X_t, time_t) in enumerate(zip(X_test, t_test)):
+    for t, (X_t, time_t) in enumerate(zip(X_test, t_test, strict=True)):
         rollout_rows, X_rollout = rollout_rows_list[t], X_rollout_list[t]
 
         fig, ax = plt.subplots(figsize=(16, 8))
@@ -409,7 +409,7 @@ if __name__ == "__main__":
         ax.plot([], [], color="k", linestyle="none", marker="o", markersize=10, markerfacecolor="none", markeredgewidth=1.5, alpha=0.7, label="Surrogate")
         ax.set_xlabel("Time along test tracer [kyr]", fontsize=16)
         ax.set_ylabel("log10 abundance", fontsize=20)
-        ax.set_title(f"AFINNI on Nelson flow map", fontsize=24)
+        ax.set_title("AFINNI on Nelson flow map", fontsize=24)
         ax.tick_params(labelsize=14)
         ax.grid(True, color="#e5e4df", linewidth=0.8)
         ax.spines[["top", "right"]].set_visible(False)

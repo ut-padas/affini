@@ -22,14 +22,12 @@ rank.
 
 import inspect
 from collections.abc import Iterator, Mapping, MutableMapping
-from typing import Any, Generic, TypeVar
-
-T = TypeVar("T")
+from typing import Any
 
 ComponentSpec = Any  # instance | str | tuple[str, Mapping[str, Any]]
 
 
-class Registry(MutableMapping, Generic[T]):
+class Registry[T](MutableMapping):
     """Name -> class mapping for one kind of component (a ``MutableMapping``)."""
 
     def __init__(self, kind: str, base: type):

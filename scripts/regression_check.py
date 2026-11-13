@@ -92,11 +92,11 @@ def model_arrays(s: AFINNISurrogate) -> dict[str, np.ndarray]:
 
 def cases():
     """(name, fd, TrainingConfig kwargs) for every case."""
-    base = dict(
-        atol=0.15, rtol=0.15, num_initial_clusters=4, min_pts_per_cluster=16,
-        max_clusters_est=128, max_levels=12, batch_size=200,
-        use_work_stealing=False, save_all_gen_training_data=False,
-    )  # fmt: skip
+    base = {
+        "atol": 0.15, "rtol": 0.15, "num_initial_clusters": 4, "min_pts_per_cluster": 16,
+        "max_clusters_est": 128, "max_levels": 12, "batch_size": 200,
+        "use_work_stealing": False, "save_all_gen_training_data": False,
+    }  # fmt: skip
     for fd in (1, 2):
         for mode in SurrogateMode:
             for metric in ("L2", "Linf"):
@@ -113,11 +113,11 @@ def cases():
     yield "extra_atol_only", 2, dict(base, mode=mode, atol=0.15, rtol=None)
     yield "extra_rtol_only", 2, dict(base, mode=mode, atol=None, rtol=0.15)
     yield "extra_vector_tol", 2, dict(base, mode=mode, atol=(0.15, 0.3), rtol=(0.1, 0.2), error_metric="L2")
-    art_base = dict(
-        atol=1e-2, rtol=1e-2, algorithm="art", domain=ART_DOMAIN, num_initial_clusters=4,
-        max_levels=10, use_work_stealing=False, save_all_gen_training_data=False,
-    )  # fmt: skip
-    rs = dict(sample_multiplier=10, validation_samples=10)
+    art_base = {
+        "atol": 1e-2, "rtol": 1e-2, "algorithm": "art", "domain": ART_DOMAIN, "num_initial_clusters": 4,
+        "max_levels": 10, "use_work_stealing": False, "save_all_gen_training_data": False,
+    }  # fmt: skip
+    rs = {"sample_multiplier": 10, "validation_samples": 10}
     yield "art_soft_box", 1, dict(art_base, art=ARTSettings(**rs))
     yield "art_bins_grid", 2, dict(art_base, art=ARTSettings(**rs, split_search="bins", roots="grid"))
     yield "art_gap_voronoi", 1, dict(art_base, art=ARTSettings(**rs, split_search="gap", roots="voronoi"))
@@ -139,7 +139,7 @@ def run(out_prefix):
         if art_mode:
             f = wavy(fd)
         oracle, use_Y = kwargs.pop("_oracle", False), kwargs.pop("_Y", False)
-        fns = dict(oracle_fn=lambda x, f=f, g=g: (f(x), g(x))) if oracle else dict(f_fn=f, g_fn=g)
+        fns = {"oracle_fn": lambda x, f=f, g=g: (f(x), g(x))} if oracle else {"f_fn": f, "g_fn": g}
         t0 = time.perf_counter()
         try:
             s = AFINNISurrogate()
@@ -158,13 +158,13 @@ def run(out_prefix):
                     arrays[f"{name}|pred_{k}_{strict}"] = to_host(pred)
                     arrays[f"{name}|mask_{k}_{strict}"] = to_host(mask)
             ps = s.profiling_stats
-            report[name] = dict(
-                leaves=int(s.N_src), evals=int(ps["total_f_evals"]),
-                generated=int(ps["num_generated_pts"]), train_s=round(train_time, 4),
-            )  # fmt: skip
+            report[name] = {
+                "leaves": int(s.N_src), "evals": int(ps["total_f_evals"]),
+                "generated": int(ps["num_generated_pts"]), "train_s": round(train_time, 4),
+            }  # fmt: skip
         except Exception as e:  # recorded, so a baseline failure is visible
-            report[name] = dict(error=f"{type(e).__name__}: {e}")
-    meta = dict(backend="cupy" if IS_CUPY_BACKEND else "numpy", cases=report)
+            report[name] = {"error": f"{type(e).__name__}: {e}"}
+    meta = {"backend": "cupy" if IS_CUPY_BACKEND else "numpy", "cases": report}
     if get_mpi_rank() != 0:  # every rank holds the same model; rank 0 writes
         return meta
     np.savez(out_prefix + ".npz", **arrays)

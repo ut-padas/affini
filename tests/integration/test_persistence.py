@@ -36,10 +36,10 @@ def g(x):
 
 def train(mode=SurrogateMode.AFFINE_COV_HESS, f_fn=f, g_fn=None, **kw):
     s = AFINNISurrogate()
-    opts = dict(
-        mode=mode, atol=0.05, rtol=0.05, error_metric="Linf",
-        num_initial_clusters=4, min_pts_per_cluster=32, use_work_stealing=False,
-    )  # fmt: skip
+    opts = {
+        "mode": mode, "atol": 0.05, "rtol": 0.05, "error_metric": "Linf",
+        "num_initial_clusters": 4, "min_pts_per_cluster": 32, "use_work_stealing": False,
+    }  # fmt: skip
     opts.update(kw)
     s.train(xp.asarray(X), TrainingConfig(**opts), Evaluator(f_fn=f_fn, g_fn=g_fn))
     return s

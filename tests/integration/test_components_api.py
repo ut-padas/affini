@@ -58,10 +58,10 @@ def g(x):
 
 def train(**kwargs):
     s = AFINNISurrogate()
-    opts = dict(
-        f_fn=f, atol=0.05, rtol=0.05, error_metric="Linf", num_initial_clusters=8,
-        min_pts_per_cluster=40, use_work_stealing=False,
-    )  # fmt: skip
+    opts = {
+        "f_fn": f, "atol": 0.05, "rtol": 0.05, "error_metric": "Linf", "num_initial_clusters": 8,
+        "min_pts_per_cluster": 40, "use_work_stealing": False,
+    }  # fmt: skip
     opts.update(kwargs)
     train_surrogate(X_TRAIN, s, **opts)
     return s
@@ -158,10 +158,10 @@ class GradientAffineModel(AffineLSQModel):
 
     name = "test_gradient_affine"
     needs_point_grad = True
-    seen_G_shapes: list = []
+    seen_g_shapes: list = []
 
     def fit(self, data):
-        type(self).seen_G_shapes.append(None if data.G is None else tuple(data.G.shape))
+        type(self).seen_g_shapes.append(None if data.G is None else tuple(data.G.shape))
         return super().fit(data)
 
 
@@ -174,10 +174,10 @@ def test_a_gradient_model_with_a_gradient_free_split_receives_point_gradients():
     with pytest.raises(ValueError, match="requires gradient information"):
         train(mode=SurrogateMode.AFFINE_COV_NO_HESS, local_model=GradientAffineModel())
 
-    GradientAffineModel.seen_G_shapes = []
+    GradientAffineModel.seen_g_shapes = []
     s = train(mode=SurrogateMode.AFFINE_COV_NO_HESS, local_model=GradientAffineModel(), g_fn=g)
-    assert GradientAffineModel.seen_G_shapes
-    assert all(shape is not None and shape[1:] == (1, 2) for shape in GradientAffineModel.seen_G_shapes)
+    assert GradientAffineModel.seen_g_shapes
+    assert all(shape is not None and shape[1:] == (1, 2) for shape in GradientAffineModel.seen_g_shapes)
     assert s.N_src > 0
 
 

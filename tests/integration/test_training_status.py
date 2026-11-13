@@ -23,10 +23,10 @@ def f(x):
 
 def train(**kw):
     s = AFINNISurrogate()
-    opts = dict(
-        f_fn=f, atol=0.01, rtol=0.01, error_metric="Linf", num_initial_clusters=8,
-        min_pts_per_cluster=40, use_work_stealing=False,
-    )  # fmt: skip
+    opts = {
+        "f_fn": f, "atol": 0.01, "rtol": 0.01, "error_metric": "Linf", "num_initial_clusters": 8,
+        "min_pts_per_cluster": 40, "use_work_stealing": False,
+    }  # fmt: skip
     opts.update(kw)
     train_surrogate(X, s, **opts)
     return s

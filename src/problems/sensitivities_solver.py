@@ -4,6 +4,7 @@ sensitivity matrix are integrated together, batched over trajectories and
 parallelized over processes through shared memory.
 """
 
+import contextlib
 import logging
 import multiprocessing as mp
 import os
@@ -189,11 +190,9 @@ def _solve_and_write_chunk(
 
     except Exception as e:
         # Print to stderr carefully
-        try:
+        with contextlib.suppress(Exception):
             sys.stderr.write(f"Worker Error: {e}\n")
             traceback.print_exc(file=sys.stderr)
-        except:
-            pass
         return False
 
 
@@ -333,20 +332,14 @@ def parallel_sensitivities_solver(
         # 5. Cleanup Shared Memory
         # Close and unlink locally.
         # The workers have already closed their handles in _solve_and_write_chunk.
-        try:
+        with contextlib.suppress(Exception):
             shm_x0.close()
             shm_x0.unlink()
-        except:
-            pass
 
-        try:
+        with contextlib.suppress(Exception):
             shm_xf.close()
             shm_xf.unlink()
-        except:
-            pass
 
-        try:
+        with contextlib.suppress(Exception):
             shm_sf.close()
             shm_sf.unlink()
-        except:
-            pass

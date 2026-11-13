@@ -77,9 +77,8 @@ def test_repeated_phases_and_denials_are_coalesced_but_nested_phases_skipped():
     stats = new_profiling_stats()
     p = Profiler(stats, events=True)
     for _ in range(50):
-        with p.phase("time_idle"):
-            with p.phase("time_state_update"):  # nested: totals only
-                pass
+        with p.phase("time_idle"), p.phase("time_state_update"):  # nested: totals only
+            pass
         p.event("steal_denied", victim=0, reason="IDLE")
     kinds = [(e["kind"], e.get("phase")) for e in stats["events"]]
     # Alternating idle/denial events cannot merge with each other...

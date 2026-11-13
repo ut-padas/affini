@@ -42,10 +42,10 @@ def quad_h(x):
 
 def train(f, mode=SurrogateMode.AFFINE_COV_HESS, **kw):
     s = AFINNISurrogate()
-    opts = dict(
-        mode=mode, atol=0.02, rtol=0.02, error_metric="Linf",
-        num_initial_clusters=8, min_pts_per_cluster=40, use_work_stealing=False,
-    )  # fmt: skip
+    opts = {
+        "mode": mode, "atol": 0.02, "rtol": 0.02, "error_metric": "Linf",
+        "num_initial_clusters": 8, "min_pts_per_cluster": 40, "use_work_stealing": False,
+    }  # fmt: skip
     opts.update(kw)
     train_surrogate(X_TRAIN, s, f_fn=f, **opts)
     return s

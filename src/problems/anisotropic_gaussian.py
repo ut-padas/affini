@@ -16,8 +16,8 @@ def get_random_rotation(d: int, dtype) -> np.ndarray:
 
     Problem constants are always generated with NumPy (as a host array), so the
     function is identical on every backend; callers move it to their backend.
-    A local RandomState reproduces the historical `np.random.seed(SEED)` stream
-    without touching global RNG state.
+    The rotation is part of the problem's definition: a local ``RandomState(SEED)`` gives the
+    same matrix in every process and run without touching NumPy's global random state.
     """
     rng = np.random.RandomState(SEED)
     A = rng.randn(d, d).astype(dtype)

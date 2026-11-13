@@ -2,8 +2,9 @@ import argparse
 import csv
 import time
 import warnings
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
-from typing import Callable, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,8 +37,8 @@ def plot_adaptive_clustering_results(
     domain: list[float],
     f_fn: Callable,
     title: str,
-    X_new: Optional[Array] = None,
-    img_fpath: Optional[Path] = None,
+    X_new: Array | None = None,
+    img_fpath: Path | None = None,
 ):
     if centroids.shape[1] != 2:
         return
@@ -484,7 +485,7 @@ def save_halo_points_for_testing_surrogates(
     numpy_data = np.array(
         to_host(X_train)
     )  # host copy: NumPy cannot shuffle a device array
-    np.random.shuffle(numpy_data)
+    np.random.default_rng().shuffle(numpy_data)
     np.save(f"{function_name}_d{d}_{strategy}.npy", numpy_data[:N])
 
 
@@ -508,24 +509,22 @@ def run_iterative_refinement(
     ERROR_METRIC = "Linf"
     INITIAL_CLUSTERING_METHOD = "kmeans"
 
-    PTS_PER_CLUSTER_CANDIDATE = 10
-
     # Define parameters based on function selection
     if function == "rosenbrock":
         DOMAIN = [-2.0, 3.0]
-        f_fn = lambda x: rosenbrock(x, a=100.0)
+        f_fn = partial(rosenbrock, a=100.0)
     elif function == "quadratic":
         DOMAIN = [-3.0, 3.0]
-        f_fn = lambda x: aniso_quadratic(x)
+        f_fn = aniso_quadratic
     elif function == "lorenz96":
         DOMAIN = [-5.0, 5.0]
-        f_fn = lambda x: lorenz96_flowmap(x)
+        f_fn = lorenz96_flowmap
     elif function == "wave":
         DOMAIN = [-4.0, 4.0]
-        f_fn = lambda x: wave(x)
+        f_fn = wave
     elif function == "gaussian":
         DOMAIN = [-3.0, 3.0]
-        f_fn = lambda x: gaussian(x)
+        f_fn = gaussian
     else:
         print(f'Function "{function}" not implemented; aborting.')
         return
@@ -568,7 +567,7 @@ def run_iterative_refinement(
         X_test = sample_quadratic_test_distribution(N_TEST, d, DOMAIN[0], DOMAIN[1])
     else:
         print(
-            f"No modified test distribution for selected function; using uniform points."
+            "No modified test distribution for selected function; using uniform points."
         )
         X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, d))
     plot_test_points(
@@ -628,11 +627,6 @@ def run_iterative_refinement(
 
         print(f"--> RESULTS: P_out = {p_out:.2f}% | e = {e_all:.4e}")
 
-        dynamic_pts_per_cluster = PTS_PER_CLUSTER_CANDIDATE
-        if N_c > 10000:
-            dynamic_pts_per_cluster = max(
-                10, int(PTS_PER_CLUSTER_CANDIDATE * (10000 / N_c))
-            )
 
         # 3. Generate & Filter New Points via new sampling method
         _t_start = time.perf_counter()

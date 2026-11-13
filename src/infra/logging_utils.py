@@ -4,7 +4,6 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import psutil
 from tqdm import tqdm
@@ -244,7 +243,7 @@ def consolidate_evaluations(
     output_path: Path,
     remove_duplicates: bool = True,
     delete_individual_files_after: bool = False,
-) -> Optional[Path]:
+) -> Path | None:
     """
     Consolidate multiple NPZ evaluation files into a single file.
 

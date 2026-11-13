@@ -10,9 +10,9 @@ from src import get_mpi_rank, xp
 from src.components.modes import SurrogateMode
 from src.config import (
     TrainingConfig,
-    get_MIN_PTS_PER_CLUSTER,
-    get_N_TRAIN,
-    get_NUM_INITIAL_CLUSTERS,
+    default_min_pts_per_cluster,
+    default_n_train,
+    default_num_initial_clusters,
 )
 from src.core.evaluation import Evaluator
 from src.plotting import plot_adaptive_clustering_results
@@ -24,12 +24,12 @@ if __name__ == "__main__":
     # Parameters for training
     SEED = 67
     DIM = 2
-    N_TRAIN = get_N_TRAIN(DIM)
+    N_TRAIN = default_n_train(DIM)
     N_TEST = N_TRAIN // 2
     DOMAIN = xp.array([-2.0, 3.0])
     TOL = 0.02
-    N_init_clusters = get_NUM_INITIAL_CLUSTERS(DIM)
-    min_ppc = get_MIN_PTS_PER_CLUSTER(DIM)
+    N_init_clusters = default_num_initial_clusters(DIM)
+    min_ppc = default_min_pts_per_cluster(DIM)
 
     # --- Generate initial data ---
     xp.random.seed(SEED)

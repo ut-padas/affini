@@ -130,8 +130,6 @@ class TestVectorQuadraticSympyDerivatives(unittest.TestCase):
 
     def test_diagonal_pattern_verification(self):
         """Test that the diagonal pattern matches expected values."""
-        n_dim = 4
-
         # Create test point
         X = np.array([[0.5, -0.3, 1.2, -0.8]], dtype=np.float64)
 

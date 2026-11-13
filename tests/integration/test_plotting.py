@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
-from src import plotting as P  # noqa: E402
+from src import plotting
 from src.infra.profiling import new_profiling_stats  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 from tests._helpers import train_surrogate  # noqa: E402
@@ -50,26 +50,26 @@ def _close_figures():
 
 def test_tables_hold_the_profile_numbers():
     prof = synthetic_profile()
-    bd = P.phase_breakdown_frame(prof)
+    bd = plotting.phase_breakdown_frame(prof)
     assert bd.loc[1, "Fit + error"] == 3.0 and bd.loc[2, "Idle"] == 1.0
     assert "Work stealing" in bd and bd["Work stealing"].sum() == 0.0  # nested phases excluded
     assert np.allclose(bd.drop(columns=["total"]).sum(axis=1), 10.0)  # untimed fills the gap
-    steals = P.steals_frame(prof)
+    steals = plotting.steals_frame(prof)
     assert steals[["victim", "thief", "n_pts"]].values.tolist() == [[0, 1, 300], [0, 2, 200]]
-    assert len(P.level_stats_frame(prof)) == 12
-    assert P.events_frame(prof)["t"].is_monotonic_increasing
+    assert len(plotting.level_stats_frame(prof)) == 12
+    assert plotting.events_frame(prof)["t"].is_monotonic_increasing
 
 
 @pytest.mark.parametrize(
     "plot",
     [
-        P.plot_rank_time_breakdown,
-        P.plot_level_heatmap,
-        P.plot_level_progress,
-        P.plot_timeline,
-        P.plot_load_over_time,
-        P.plot_steal_matrix,
-        P.plot_profile_dashboard,
+        plotting.plot_rank_time_breakdown,
+        plotting.plot_level_heatmap,
+        plotting.plot_level_progress,
+        plotting.plot_timeline,
+        plotting.plot_load_over_time,
+        plotting.plot_steal_matrix,
+        plotting.plot_profile_dashboard,
     ],
 )
 def test_every_profile_plot_renders_and_saves(plot, tmp_path):
@@ -78,7 +78,7 @@ def test_every_profile_plot_renders_and_saves(plot, tmp_path):
 
 
 def test_steal_matrix_includes_ranks_without_steals():
-    fig = P.plot_steal_matrix(synthetic_profile(n_ranks=5))
+    fig = plotting.plot_steal_matrix(synthetic_profile(n_ranks=5))
     assert len(fig.axes[0].get_xticks()) == 5
 
 
@@ -90,14 +90,14 @@ def test_plots_from_a_real_training_run(tmp_path):
         num_initial_clusters=4, min_pts_per_cluster=40, use_work_stealing=False,
         profile_timing=True, profile_events=True, profile_dir=tmp_path / "stream",
     )  # fmt: skip
-    for plot in (P.plot_rank_time_breakdown, P.plot_level_heatmap, P.plot_level_progress,
-                 P.plot_timeline, P.plot_load_over_time, P.plot_profile_dashboard):  # fmt: skip
+    for plot in (plotting.plot_rank_time_breakdown, plotting.plot_level_heatmap, plotting.plot_level_progress,
+                 plotting.plot_timeline, plotting.plot_load_over_time, plotting.plot_profile_dashboard):  # fmt: skip
         assert isinstance(plot(s), plt.Figure)
     from src.infra.profiling import read_event_streams
 
-    assert isinstance(P.plot_timeline(read_event_streams(tmp_path / "stream")), plt.Figure)
+    assert isinstance(plotting.plot_timeline(read_event_streams(tmp_path / "stream")), plt.Figure)
     with pytest.raises(ValueError, match="No steals"):
-        P.plot_steal_matrix(s)  # single rank: nothing to show, with a clear message
+        plotting.plot_steal_matrix(s)  # single rank: nothing to show, with a clear message
 
 
 def test_missing_data_gives_actionable_errors():
@@ -108,9 +108,9 @@ def test_missing_data_gives_actionable_errors():
             if k.startswith("time_") and k != "time_total":
                 ps[k] = 0.0
     with pytest.raises(ValueError, match="profile_timing"):
-        P.plot_rank_time_breakdown(s)
+        plotting.plot_rank_time_breakdown(s)
     with pytest.raises(ValueError, match="profile_events"):
-        P.plot_timeline(s)
+        plotting.plot_timeline(s)
 
 
 def test_art_and_comparison_plots_render(tmp_path):
@@ -129,21 +129,21 @@ def test_art_and_comparison_plots_render(tmp_path):
     )  # fmt: skip
     Xq = xp.asarray(np.random.default_rng(1).uniform(-3, 3, (500, 2)))
     truth = spherical_piecewise(Xq)
-    err = P.pointwise_relative_error(truth, art.predict_route_local(Xq)[0])
+    err = plotting.pointwise_relative_error(truth, art.predict_route_local(Xq)[0])
     assert err.shape == (500,) and np.all(err >= 0)
     paths = {name: tmp_path / f"{name}.png" for name in ("partition", "stats", "maps", "cdf", "bars")}
-    P.plot_art_partition(art, paths["partition"], f_fn=spherical_piecewise, tol=1e-2, resolution=60)
-    P.plot_art_tree_stats(art, paths["stats"])
-    P.plot_error_maps({"afinni": lambda q: afinni.predict_local(q, 1, 10, False)[0],
+    plotting.plot_art_partition(art, paths["partition"], f_fn=spherical_piecewise, tol=1e-2, resolution=60)
+    plotting.plot_art_tree_stats(art, paths["stats"])
+    plotting.plot_error_maps({"afinni": lambda q: afinni.predict_local(q, 1, 10, False)[0],
                        "art": lambda q: art.predict_route_local(q)[0]},
                       spherical_piecewise, (-3, -3), (3, 3), paths["maps"], tol=1e-2, resolution=40)  # fmt: skip
-    P.plot_error_cdf({"art": err}, paths["cdf"], tol=1e-2)
-    P.plot_method_comparison({"a": {"leaves": 10, "relative_l2": 0.1}, "b": {"leaves": 20, "relative_l2": 0.05}},
+    plotting.plot_error_cdf({"art": err}, paths["cdf"], tol=1e-2)
+    plotting.plot_method_comparison({"a": {"leaves": 10, "relative_l2": 0.1}, "b": {"leaves": 20, "relative_l2": 0.05}},
                              paths["bars"])  # fmt: skip
     assert all(p.stat().st_size > 0 for p in paths.values())
     plt.close("all")
     with pytest.raises(ValueError, match="ART model"):
-        P.plot_art_tree_stats(afinni)
+        plotting.plot_art_tree_stats(afinni)
 
 
 def test_spherical_piecewise_matches_art_preset_values():

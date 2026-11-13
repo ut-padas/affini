@@ -36,8 +36,8 @@ from src import PROJECT_DIR, get_mpi_rank, get_mpi_size, xp  # noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
 from src.config import (  # noqa: E402
     TrainingConfig,  # noqa: E402
-    get_MIN_PTS_PER_CLUSTER,
-    get_NUM_INITIAL_CLUSTERS,
+    default_min_pts_per_cluster,
+    default_num_initial_clusters,
 )
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
@@ -89,8 +89,8 @@ if __name__ == "__main__":
         atol=ATOL,
         error_metric=args.metric,
         initial_clustering_method=args.init,
-        num_initial_clusters=get_NUM_INITIAL_CLUSTERS(DIM),
-        min_pts_per_cluster=get_MIN_PTS_PER_CLUSTER(DIM),
+        num_initial_clusters=default_num_initial_clusters(DIM),
+        min_pts_per_cluster=default_min_pts_per_cluster(DIM),
         batch_size=50_000,  # several batches per level, so mid-level steals can happen
         seed=SEED,
         use_work_stealing=stealing,
@@ -103,12 +103,12 @@ if __name__ == "__main__":
     pred, outside = surrogate.predict(Q)  # collective; results on rank 0
 
     if rank == 0:
-        from src import plotting as P
+        from src import plotting
 
         truth = f(Q).reshape(pred.shape)
         err = float(xp.linalg.norm(pred - truth) / xp.linalg.norm(truth))
         ps = surrogate.profiling_stats
-        steals = len(P.steals_frame(ps))
+        steals = len(plotting.steals_frame(ps))
         print(
             f"Trained in {train_time:.1f}s: {surrogate.N_src:,} leaves, {ps['num_levels']} levels, "
             f"{ps['total_f_evals']:,} evaluations, {steals} steals; held-out relative L2 error {err:.2e} "
@@ -117,15 +117,15 @@ if __name__ == "__main__":
         (OUT_DIR / "profile.json").write_text(json.dumps(ps, default=float))
         # Every profile plot (see docs/USAGE.md#plots); the steal plot needs steals.
         plots = OUT_DIR / "plots"
-        P.plot_profile_dashboard(ps, plots / "dashboard.png")
-        P.plot_rank_time_breakdown(ps, plots / "time_breakdown.png")
-        P.plot_level_heatmap(ps, plots / "level_heatmap_clusters.png", value="clusters_start")
-        P.plot_level_heatmap(ps, plots / "level_heatmap_runtime.png", value="runtime_sec", cmap="Blues")
-        P.plot_level_progress(ps, plots / "forest_growth.png")
-        P.plot_timeline(ps, plots / "timeline.png")
-        P.plot_load_over_time(ps, plots / "load_over_time.png")
+        plotting.plot_profile_dashboard(ps, plots / "dashboard.png")
+        plotting.plot_rank_time_breakdown(ps, plots / "time_breakdown.png")
+        plotting.plot_level_heatmap(ps, plots / "level_heatmap_clusters.png", value="clusters_start")
+        plotting.plot_level_heatmap(ps, plots / "level_heatmap_runtime.png", value="runtime_sec", cmap="Blues")
+        plotting.plot_level_progress(ps, plots / "forest_growth.png")
+        plotting.plot_timeline(ps, plots / "timeline.png")
+        plotting.plot_load_over_time(ps, plots / "load_over_time.png")
         if steals:
-            P.plot_steal_matrix(ps, plots / "steal_matrix.png")
+            plotting.plot_steal_matrix(ps, plots / "steal_matrix.png")
         print(f"Saved {OUT_DIR / 'profile.json'} and the plots in {plots}")
         print(f"SUMMARY ranks={size} dim={DIM} n={N_TRAIN} tol={TOL} init={args.init} metric={args.metric} stealing={args.stealing} "
               f"train_s={train_time:.1f} steals={steals} leaves={surrogate.N_src}", flush=True)

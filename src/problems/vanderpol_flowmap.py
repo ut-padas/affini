@@ -1,13 +1,12 @@
 """Van der Pol flow map x(0) -> x(tf) and its Jacobian, batched over trajectories."""
 
-import multiprocessing as mp
 from functools import partial
 
 import numpy as np
 from scipy.integrate import solve_ivp
 
 # Assumes these modules exist in your project structure
-from src import IS_CUPY_BACKEND, Array, to_device, to_host, xp
+from src import Array, to_device, to_host
 from src.problems.adjoint_solver import parallel_adjoint_solver
 from src.problems.sensitivities_solver import parallel_sensitivities_solver
 from src.problems.vanderpol import vanderpol, vanderpol_grad

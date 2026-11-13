@@ -65,9 +65,9 @@ from src.components.modes import SurrogateMode  # noqa: E402
 from src.config import (  # noqa: E402
     ARTSettings,
     TrainingConfig,
-    get_MIN_PTS_PER_CLUSTER,
-    get_N_TRAIN,
-    get_NUM_INITIAL_CLUSTERS,
+    default_min_pts_per_cluster,
+    default_n_train,
+    default_num_initial_clusters,
 )
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.problems.anisotropic_gaussian import aniso_gaussian  # noqa: E402
@@ -122,9 +122,9 @@ def configs(name: str, args) -> dict[str, tuple[TrainingConfig, int]]:
         "afinni": (TrainingConfig(
             mode=SurrogateMode.AFFINE_COV_HESS, error_metric="Linf", rtol=rtol["afinni"],
             max_levels=args.afinni_max_levels or prob.afinni_max_levels,
-            num_initial_clusters=get_NUM_INITIAL_CLUSTERS(d), min_pts_per_cluster=get_MIN_PTS_PER_CLUSTER(d),
+            num_initial_clusters=default_num_initial_clusters(d), min_pts_per_cluster=default_min_pts_per_cluster(d),
             profile_dir=stream / "afinni", **common,
-        ), get_N_TRAIN(d)),  # fmt: skip
+        ), default_n_train(d)),  # fmt: skip
         # ART's exact box root starts from one node's worth of uniform points.
         "art": (TrainingConfig(
             algorithm="art", domain=(lower, upper), error_metric="pointwise", rtol=rtol["art"],
@@ -177,7 +177,7 @@ def metrics(truth, pred, outside, atol, rtol, model: AFINNISurrogate, run: dict)
 
 def compare(name: str, args) -> dict:
     """Load both saved models of ``name``, score them on one test set, print the table and draw the plots."""
-    from src import plotting as P  # noqa: N812  (as in example 03)
+    from src import plotting
 
     prob, d, out = PROBLEMS[name], args.dim, OUT_DIR / name
     models, runs = {}, {}
@@ -217,27 +217,27 @@ def compare(name: str, args) -> dict:
 
     plots = out / "plots"
     errors = {
-        names["afinni"]: P.pointwise_relative_error(truth, pred_a),
-        names["art"]: P.pointwise_relative_error(truth, pred_r),
+        names["afinni"]: plotting.pointwise_relative_error(truth, pred_a),
+        names["art"]: plotting.pointwise_relative_error(truth, pred_r),
     }
     title = f"{name}, d={d}, {tol}"
-    P.plot_error_cdf(errors, plots / "error_cdf.png", tol=rtol, title=title)
-    P.plot_method_comparison(results, plots / "method_comparison.png", title=title)
-    P.plot_art_tree_stats(art, plots / "art_tree_stats.png", title=f"ART tree, {name}")
+    plotting.plot_error_cdf(errors, plots / "error_cdf.png", tol=rtol, title=title)
+    plotting.plot_method_comparison(results, plots / "method_comparison.png", title=title)
+    plotting.plot_art_tree_stats(art, plots / "art_tree_stats.png", title=f"ART tree, {name}")
     for method, model in models.items():
-        P.plot_profile_dashboard(model.profiling_stats, plots / f"profile_{method}.png")
+        plotting.plot_profile_dashboard(model.profiling_stats, plots / f"profile_{method}.png")
     if d == 2:
         lower, upper = np.full(d, prob.domain[0]), np.full(d, prob.domain[1])
-        P.plot_art_partition(art, plots / "art_partition.png", f_fn=prob.f, tol=rtol,
+        plotting.plot_art_partition(art, plots / "art_partition.png", f_fn=prob.f, tol=rtol,
                              title=f"ART tree on {name}")  # fmt: skip
-        P.plot_error_maps(
+        plotting.plot_error_maps(
             {
                 f"{names['afinni']} (kNN + trust region)": lambda X: afinni.predict_local(X, 1, 10, False)[0],
                 f"{names['art']} (routed)": lambda X: art.predict_route_local(X)[0],
             },
             prob.f, lower, upper, plots / "error_maps.png", tol=rtol, title=f"Pointwise relative error, {name}",
         )  # fmt: skip
-        P.plot_adaptive_clustering_results(
+        plotting.plot_adaptive_clustering_results(
             centroids=afinni.X_src, Q=afinni.Qs_src, domain=prob.domain, f_fn=prob.f,
             img_fpath=plots / "afinni_clusters.png", title=f"AFINNI leaves, {name}",
         )  # fmt: skip

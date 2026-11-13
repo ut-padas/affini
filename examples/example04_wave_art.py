@@ -34,7 +34,7 @@ SEED = 0
 
 def main(args) -> None:
     """Train, predict, inspect, audit and save one ART model."""
-    from src import plotting as P  # noqa: N812
+    from src import plotting
 
     d = args.dim
     rng = np.random.default_rng(SEED)
@@ -82,10 +82,10 @@ def main(args) -> None:
 
     # 7. Plots.
     plots = OUT_DIR / "plots"
-    P.plot_art_tree_stats(model, plots / "art_tree_stats.png", title=f"ART tree, wave, d={d}")
-    P.plot_profile_dashboard(stats, plots / "profile.png")
+    plotting.plot_art_tree_stats(model, plots / "art_tree_stats.png", title=f"ART tree, wave, d={d}")
+    plotting.plot_profile_dashboard(stats, plots / "profile.png")
     if d == 2:
-        P.plot_art_partition(model, plots / "art_partition.png", f_fn=wave, tol=config.rtol, title="ART tree on wave")
+        plotting.plot_art_partition(model, plots / "art_partition.png", f_fn=wave, tol=config.rtol, title="ART tree on wave")
     print(f"Plots in {plots.relative_to(PROJECT_DIR)}")
 
 
