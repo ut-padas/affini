@@ -13,7 +13,7 @@ later.
 | [II. ART](#part-ii-art-adaptive-regression-trees) | Problem, polytope geometry, sampling, soft oblique and hinge splitters, builder, GPU cohorts, known weaknesses |
 | [III. Comparison](#part-iii-afinni-and-art-compared) | Side-by-side comparison, and the observation that AFINNI's split is already a hyperplane |
 | [IV. Integration](#part-iv-bringing-art-into-afinni) | Requirements, three approaches (1: global ids and parent links, 2: per-level buffers and path codes, 3: the combined plan), evaluation for GPU/MPI/work stealing, unbalanced splits, batched ART components, staged experiments |
-| [V. Minimal plan](#part-v-minimal-implementation-plan-afinni-and-art-only) | Implementation status in Section 42 (GPU results in 42.9, GPU determinism and performance in 42.10, kernel sources in 42.11, review outcomes in 42.12–42.13, code layout in 42.14). Two named plans (`afinni`, `region`) over one executor, fixed columns and wire format, the two pipelines, file-by-file changes, what is deferred, implementation order, resolved questions and what still needs measurement |
+| [V. Minimal plan](#part-v-minimal-implementation-plan-afinni-and-art-only) | Implementation status in Section 42 (GPU results in 42.9, GPU determinism and performance in 42.10, kernel sources in 42.11, review outcomes in 42.12–42.13, code layout in 42.14, layers and the plan contract in 42.15). Two named plans (`afinni`, `region`) over one executor, fixed columns and wire format, the two pipelines, file-by-file changes, what is deferred, implementation order, resolved questions and what still needs measurement |
 | [Appendix A](#appendix-a-deferred-a-pysph-style-property-system) | Deferred: PySPH-style property system, primitives and illustrative examples |
 
 **Revision (Nov 10, 2026).** Revised after the technical review in
@@ -1875,7 +1875,7 @@ since been run on a second machine (Section 42.9).
 | Plan item | Where | Notes |
 |---|---|---|
 | Internal column table, versioned wire format | `src/core/clusters.py` (`QUEUE_COLUMNS`), `src/engine/work_stealing.py` | `ClusterBatch.split`/`select`, the queue builder and `send/recv_clusters` iterate over the table. The header carries version, present columns, shapes and dtypes; column `i` goes on `base_tag + 1 + i`, so an AFINNI-mode transfer sends the same array payloads on the same tags as before. The header itself is new, so this is not wire compatibility with an older executable: mixed versions fail on the version check. |
-| One executor, two named plans | `src/engine/adaptive_clustering.py`, `src/region.py` (`RegionPlan`) | The AFINNI batch body is unchanged in order and arithmetic. The region plan supplies `work_sizes`, `bytes_per_point`, `leaf_columns`, `split_columns`, `initial_queue`, `process_batch`. Shared deploy step: `deploy_leaves` in `src/components/local_models.py` (Q, finalize, re-test), called by both plans. |
+| One executor, two named plans | `src/engine/refinement.py` (executor), `src/core/plan.py` (contract), `src/engine/afinni_plan.py` (`AfinniPlan`), `src/region/plan.py` (`RegionPlan`) | Both plans implement one `Plan` protocol (42.15): `label`, `steal_settings`, `batch_floor`, `keeps_fallback_leaves`, `initial_queue`, `leaf_columns`, `split_columns`, `work_sizes`, `bytes_per_point`, `constraint_rows`, `batch_end`, `process_batch`, `profile`, `merge_results`. The AFINNI batch body is unchanged in order and arithmetic. Shared deploy step: `deploy_leaves` in `src/components/local_models.py` (Q, finalize, re-test), called by both plans. |
 | `algorithm`, `domain`, `RegionSettings` | `src/config.py` | `domain=(lower, upper)` required; `"data_bbox"` is explicit opt-in and recorded. |
 | Roots | `src/region.py` (`Roots`) | `box` (default, ART: no initial clustering), `grid` (shared `uniform_grid_bins`), `voronoi` (centres of the initial clustering; exact nearest-centre assignment, tiled; no face list; hit-and-run bisectors from centre differences `c_j − c_r`, normalized; root assignment re-decides the nearest-distance candidate with the same centre-difference test, so sampling, training and routing agree on thin cells. Points within rounding of a bisector remain ambiguous: there is no error-bounded tie test). |
 | Counter-based RNG | `node_keys`, `counter_uniform`, `counter_uniform_pairs` | splitmix64 of (seed, root, path code, purpose, draw index); the same on NumPy and CuPy. The sampler takes two 32-bit uniforms per hash and both normals of each Box-Muller pair: `ceil(d/2) + 1` hashes per hit-and-run step. |
@@ -2936,14 +2936,6 @@ shim test removed), `regression_check.py` bit-identical to HEAD on the CPU and e
 the pre-reorganization GPU reference, and bit-for-bit model dumps of region mode on the CPU
 (Rosenbrock 5-D quadratic) and GPU (8-D depth 14) identical to the pre-reorganization code.
 
-**Follow-up: strict layers.** Five imports still pointed up the table: `components` and
-`region` imported `engine.clusters`, `engine.evaluation` and `engine.initial.uniform_grid_bins`,
-and `infra.monitor` imported `plotting.style.fmt_count`. `clusters` and `evaluation` moved to a
-new bottom-layer package `core/`, the grid factorization to `numerics/grid.py` and `fmt_count`
-to `infra/profiling.py`; region and engine became separate layers (engine uses region, region
-never imports engine). `tests/unit/test_layering.py` checks every import, including those inside
-functions, against the README table. Pure moves: `regression_check.py` is bit-identical on the CPU.
-
 **Probe and benchmark scripts.** The scripts used in 42.9–42.11 are scratch files in
 `/tmp/gpu_bench/`, not part of the repository: the ART matrix driver (`run_matrix.sh`,
 `tables.py`, `seeds.py`), the region-only driver (`prof_driver.py`, `det_check.sh`,
@@ -2955,6 +2947,126 @@ drivers (`nsys_run.sh`, `nvtx_wrap.py`). The probes that guard a contract became
 (`tests/unit/test_numerics.py`, `tests/unit/test_region.py`,
 `test_cuda_graph_replay_builds_the_same_tree_as_eager_iterations`); the rest can be promoted to
 `scripts/` if they are wanted long term.
+
+### 42.15 Strict layers, one plan contract and a phased driver (Nov 12, 2026)
+
+A read of the reorganized code (42.14) listed seven follow-ups: upward imports, reorganization
+leftovers, two long orchestration functions, an AFINNI plan that was a function plus branches
+rather than an object, private names used across modules, GPU paths that CPU test runs never
+execute, and documentation that is hard to start from. The first four are done here, each as a
+pure refactor: no change of order or arithmetic, gated by a regression check extended first so
+that it covers what the refactor touches.
+
+**Strict layers.** Five imports still pointed up the README table: `components` and `region`
+imported `engine.clusters`, `engine.evaluation` and `engine.initial.uniform_grid_bins`, and
+`infra.monitor` imported `plotting.style.fmt_count`.
+
+| Moved | From | To | Why there |
+|---|---|---|---|
+| `ClusterBatch`, `ClusterQueueBuilder`, `ColumnBuffer`, `ParamSpec` | `engine/clusters.py` | `core/clusters.py` | depends only on `src`; used by components, region and engine |
+| `Evaluator` | `engine/evaluation.py` | `core/evaluation.py` | depends only on `numerics`; used by config, components and engine |
+| `uniform_grid_bins`, `get_prime_factors` | `engine/initial.py` | `numerics/grid.py` | shared by AFINNI's grid initial clustering and region mode's grid roots |
+| `fmt_count` | `plotting/style.py` | `infra/profiling.py` | its callers (monitor, profiling and region plots) all display profiling data |
+
+`core/` is a new bottom-layer package, and region and engine are now separate layers (engine
+uses region, region never imports engine). `tests/unit/test_layering.py` parses every module of
+`src/` (imports inside functions included) against the README table; on the previous commit it
+fails with exactly these five imports. User scripts import `Evaluator` from `src.core.evaluation`.
+
+**Leftovers of the move.** The first comment line of every `.cu` file named a removed flat
+module (`src/numerics.py`, `src/knn.py`, ...) instead of the module that loads it; runs of up to
+13 blank lines, a comment attached to the wrong constant (`_PROFILER_SCOPES` instead of
+`LOCAL_RESULT_TAG`), an unused `TINY_EPS`, and a docstring that still called the AFINNI batch
+"the inline body below" were removed or corrected; imports were sorted where the move had left
+them unsorted. One stale comment mattered more than the others: the batch estimate's note said
+the `(N, fd, d)` Taylor-residual temporary "is not fused yet", but on the GPU it is. The note now
+says the term is conservative there and kept, because a smaller estimate would change batch
+sizes and with them the trees. An apparent format drift (30 → 41 files `ruff format` would
+change) was not one: the same never-formatted modules were split into more files, and the
+project does not format to the configured 88 columns, so nothing was reformatted.
+
+**The regression check covers region mode and MPI.** `scripts/regression_check.py` trained
+only AFINNI mode and compared seven named leaf attributes, so a refactor of the loop shared by
+both plans had no exact gate for region mode. It now has 52 cases and compares every array a
+saved model holds (all local-model parameters, the routing table, leaf statuses), the routed
+predictions and the region counters, with integer arrays compared exactly:
+
+| Case | What it reaches |
+|---|---|
+| `region_soft_box` | B4 soft search, one box root, validation samples |
+| `region_bins_grid` | B3 bins, grid roots, `fd = 2` |
+| `region_gap_voronoi` | B2 gap cuts, Voronoi roots (the initial clustering's centres) |
+| `region_convex_sampling` | the convex-combination sampler (no validation points) |
+| `region_quadratic` | quadratic leaves in their own basis |
+| `region_tiny_batches` | `batch_size = 97`: batch boundaries inside a level |
+| `region_fallback_leaves` | `max_levels = 3`: nodes kept as fallback leaves, `fd = 2` |
+
+Under `mpiexec` every rank trains and rank 0 writes and compares, so the same file checks the
+scatter and the merge; the cases use no work stealing, whose timing would change the trees.
+All 52 cases are bit-identical run to run on one rank and on two. References for 42.15 were
+saved from `c8a6ff6` (the commit before the plan work) on 1, 2 and 4 ranks.
+
+**One contract for both plans.** The refinement loop branched on `plan is None` in about ten
+places, and the driver in five more. `src/core/plan.py` now states the contract as a `Plan`
+protocol plus the `DeviceBatch` the loop hands over; `tests/unit/test_plans.py` checks both plans
+against every member and signature, and both batch-boundary rules on hand-worked examples.
+
+| Member | `AfinniPlan` (`engine/afinni_plan.py`) | `RegionPlan` (`region/plan.py`) |
+|---|---|---|
+| `initial_queue` | points sorted by initial label | points sorted by root, every root queued |
+| `leaf_columns`, `split_columns` | `output_columns(...)`, none | plus root, path code, terminal reason, validation status; split records |
+| `work_sizes`, `steal_settings` | queued sizes, defaults | topped-up size plus validation points, leases |
+| `constraint_rows` | none | deepest parent's depth + 1 |
+| `batch_end` | the AFINNI grid: a batch ends after the cluster crossing `(b + 1) * batch_size`, re-anchored behind an oversized cluster | whole nodes up to `batch_size`, or one oversized node alone |
+| `bytes_per_point`, `batch_floor` | the AFINNI estimate (moved from the driver), 50,000 | 42.11's estimate, 1,000 |
+| `process_batch` | the former `_afinni_batch`, verbatim | stages 1–4 of 42.1 |
+| `profile`, `merge_results` | nothing | split counters; routing table, terminal reasons and counter totals (moved from the driver) |
+
+`DeviceBatch.take()` hands the point arrays to the plan, as `_BatchArrays` did, so the loop keeps
+no reference through augmentation and splitting and peak memory is unchanged. A plan reads
+per-node columns from `queue[cut]` before its first `progress()` call, because a steal answered
+there hands later nodes away. Everything that fixes AFINNI's batch compositions moved without
+change: the grid and its offset (reset by the level's first batch), the seed
+`seed + level + b + 1000 rank`, the 50,000 floor and the estimate.
+
+**The driver and the loop in phases.**
+
+| Function | Before | After |
+|---|---|---|
+| `_adaptive_clustering` | 374 lines: checks, rank-0 evaluation, initial clustering, roots, scatter, batch cap, refinement, gather, merge | 99 lines over `_check_inputs`, `_initial_data`, `_make_plan`, `_scatter`, `_cap_batch_size`, `_merge_results` (largest 37 lines) |
+| `_run_local_refinement` | 340 lines with both plans' branches | 91 lines (setup, idle and stealing, totals) over `_refine_level` (121) and `_run_batch` (23) |
+
+`_make_plan` keeps every MPI call in the engine (the broadcast domain and Voronoi centres), so
+`RegionPlan` stays free of communication. `_scatter` is now one path: both modes already gave
+each rank a contiguous run of clusters, so rank 0 cuts its queue with `ClusterBatch.split`
+(views; region mode used to copy every chunk with `select`) and gives ranks beyond the last
+cluster empty chunks with the same columns. Rank 0's device copies of the training data are
+released right after the free-memory reading instead of at the end of training: the reading,
+and so the batch cap and the trees, is unchanged, and rank 0 needs less device memory during
+refinement.
+
+**What changes besides structure.** Only logs and profiling timestamps: AFINNI's `batch` event
+is emitted by the loop after the batch instead of just before its final cleanup, and the
+end-of-level log line reports the clusters at the level's start, not the count left after
+mid-level steals. The loop also releases the memory pool after every AFINNI batch (the batch
+already released it at its end, so the second call finds nothing to free).
+
+**Verification.** After every commit: CPU 542 passed (2 layering and 6 plan tests added), MPI 12
+passed, and `regression_check.py` bit-identical to `c8a6ff6` on 1, 2 and 4 ranks (on 4, region
+mode's single box root leaves three ranks with empty chunks, the new path of `_scatter`). The GPU
+suite and a GPU regression run were not repeated on this machine, which has no GPU. The kernel
+sources changed only in comments, which CuPy's cache keys on, so each changed file compiles once
+more. To verify on a GPU, save a reference on `c8a6ff6` and compare the head with `--rtol 1e-12`
+(decisions exact), as in 42.5.
+
+**Remaining.** `AfinniPlan.process_batch` (199 lines) moved verbatim and is the largest function
+left; splitting it into the numbered stages `RegionPlan.process_batch` already has (fit and
+accept, deploy, augment, split) is the natural next step, gated by the same check.
+`_refine_level` (121 lines) is mostly level statistics and logging. Of the seven follow-ups,
+private names used as an API (`_to_host` in 11 modules, `_reduce_sum_1d`, region's re-exported
+`_sigmoid`/`_hard_sse`), CPU coverage of the GPU paths (`numerics` 50%, `neighbors` 56% on the CPU;
+only the GPU suite reaches the CuPy branches), and a short current-architecture entry point
+separate from this log are still open.
 
 ---
 
