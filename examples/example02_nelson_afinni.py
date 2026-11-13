@@ -7,7 +7,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src import _to_device, _to_host, xp
+from src import to_device, to_host, xp
 from src.components.modes import SurrogateMode
 from src.config import (
     TrainingConfig,
@@ -133,13 +133,13 @@ def nelson_flow_map_wrapper(X, output=3, dt=250.0 * YEAR, n_workers=8):
     array, shape (M, 1)
         log10 of the output abundance (floored at LOG_FLOOR).
     """
-    X = np.asarray(_to_host(X), dtype=np.float64)
+    X = np.asarray(to_host(X), dtype=np.float64)
     N = len(net.species)
     if X.ndim != 2 or X.shape[1] != N + len(ENV_COLS):
         raise ValueError(f"X must have shape (M, {N + len(ENV_COLS)}); got {X.shape}")
     X = 10.0 ** X
     final = nelson_flow_map(X[:, :N], X[:, N:], dt=dt, n_workers=n_workers)
-    return _to_device(to_log(final[:, [output]]))
+    return to_device(to_log(final[:, [output]]))
 
 
 # Column layout of the collapse-chemistry output files (see the dataset's README)
@@ -241,7 +241,7 @@ def rollout(surrogates, X_true_list, n_rows_until_output=5):
     trust_list : list of np.ndarray, shape (n_steps_t - 1,), bool
         Whether each step was inside the trust region of every surrogate.
     """
-    X_true_list = [np.asarray(_to_host(X)) for X in X_true_list]
+    X_true_list = [np.asarray(to_host(X)) for X in X_true_list]
     rows_list = [np.arange(0, len(X), n_rows_until_output) for X in X_true_list]
     X_roll_list = [np.array(X[rows]) for X, rows in zip(X_true_list, rows_list)]
     trust_list = [np.ones(len(rows) - 1, dtype=bool) for rows in rows_list]
@@ -253,9 +253,9 @@ def rollout(surrogates, X_true_list, n_rows_until_output=5):
         x_new = np.stack([X_roll_list[t][k] for t in active])
         for col, surrogate in surrogates.items():
             pred, ung = surrogate.predict(x_prev)
-            x_new[:, col] = _to_host(pred).ravel()
+            x_new[:, col] = to_host(pred).ravel()
             for i, t in enumerate(active):
-                trust_list[t][k - 1] &= not bool(_to_host(ung).ravel()[i])
+                trust_list[t][k - 1] &= not bool(to_host(ung).ravel()[i])
         for i, t in enumerate(active):
             X_roll_list[t][k] = x_new[i]
 
@@ -288,11 +288,11 @@ def one_step_l2_relative_error(surrogates, X_test, f_test):
         The same ratio over all surrogate species together.
     """
     X = xp.concatenate([xp.asarray(x) for x in X_test], axis=0)
-    F = np.concatenate([np.asarray(_to_host(f)) for f in f_test], axis=0)
+    F = np.concatenate([np.asarray(to_host(f)) for f in f_test], axis=0)
     errors, num_sq, den_sq = {}, 0.0, 0.0
     for col, surrogate in surrogates.items():
         pred, _ = surrogate.predict(X)
-        diff = np.asarray(_to_host(pred), dtype=np.float64).ravel() - F[:, col]
+        diff = np.asarray(to_host(pred), dtype=np.float64).ravel() - F[:, col]
         errors[col] = np.linalg.norm(diff) / np.linalg.norm(F[:, col])
         num_sq += np.sum(diff ** 2)
         den_sq += np.sum(F[:, col] ** 2)
@@ -307,7 +307,7 @@ def rollout_final_relative_error(surrogates, X_true_list, rows_list, X_roll_list
     cols = list(surrogates)
     errors = []
     for X_true, rows, X_roll in zip(X_true_list, rows_list, X_roll_list):
-        true = np.asarray(_to_host(X_true))[rows[-1], cols]
+        true = np.asarray(to_host(X_true))[rows[-1], cols]
         errors.append(np.linalg.norm(X_roll[-1, cols] - true) / np.linalg.norm(true))
     return np.array(errors)
 

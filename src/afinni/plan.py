@@ -11,7 +11,7 @@ import logging
 
 import numpy as np
 
-from src import IS_CUPY_BACKEND, _to_host, xp
+from src import IS_CUPY_BACKEND, to_host, xp
 from src.components.local_models import ClusterFitData, deploy_leaves, output_columns
 from src.components.sampling import augment_clusters, augmentation_targets
 from src.components.splitting import SplitData
@@ -20,7 +20,7 @@ from src.core.clusters import ClusterBatch, ParamSpec
 from src.core.plan import DeviceBatch
 from src.infra.io import save_generated_data
 from src.infra.logging_utils import log_mem_stats
-from src.numerics import _reduce_sum_1d, repeats
+from src.numerics import reduce_sum_1d, repeats
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +189,7 @@ class AFINNIPlan:
         sizes, starts = batch.sizes, batch.starts
         labels = repeats(xp.arange(len(sizes)), sizes)
         with timer("time_error_calc"):
-            mus = _reduce_sum_1d(X, starts) / sizes[:, None]
+            mus = reduce_sum_1d(X, starts) / sizes[:, None]
             f_mus, g_mus = evaluator(mus, need_grad=self.config.requires_grad_centroids)
             fit = ClusterFitData(X=X, F=F, G=G, labels=labels, starts=starts, sizes=sizes,
                                  centroids=mus, f_c=f_mus, g_c=g_mus)  # fmt: skip
@@ -278,7 +278,7 @@ class AFINNIPlan:
         with timer("time_bad_d2h"):
             G = data.G[order] if self.config.requires_grad_everywhere and data.G is not None else None
             next_level.append(data.X[order], data.F[order], G, child_sizes,
-                              depth=np.repeat(depth[_to_host(bad_idx)] + 1, 2))  # fmt: skip
+                              depth=np.repeat(depth[to_host(bad_idx)] + 1, 2))  # fmt: skip
 
     def profile(self) -> dict:
         return {}

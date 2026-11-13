@@ -48,6 +48,6 @@ from src.art.plan import ARTPlan
 from src.art.rng import counter_uniform, counter_uniform_pairs, node_keys
 from src.art.routing import RoutingTable
 from src.art.sampling import HitAndRunSampler, NodePolytopes
-from src.art.split_search import _hard_sse, _sigmoid, _soft_objective, _SplitRows
+from src.art.split_search import SplitRows, hard_sse, sigmoid, soft_objective
 
-__all__ = ["Domain", "HitAndRunSampler", "PURPOSE_TRAIN", "PURPOSE_VALIDATION", "ARTPlan", "NodePolytopes", "Roots", "RoutingTable", "TERMINAL_REASONS", "VALIDATION_STATUSES", "_SplitRows", "_hard_sse", "_sigmoid", "_soft_objective", "counter_uniform", "counter_uniform_pairs", "gap_cuts", "node_keys", "plane_scores"]
+__all__ = ["Domain", "HitAndRunSampler", "PURPOSE_TRAIN", "PURPOSE_VALIDATION", "ARTPlan", "NodePolytopes", "Roots", "RoutingTable", "TERMINAL_REASONS", "VALIDATION_STATUSES", "SplitRows", "hard_sse", "sigmoid", "soft_objective", "counter_uniform", "counter_uniform_pairs", "gap_cuts", "node_keys", "plane_scores"]

@@ -107,7 +107,7 @@ def test_routed_predictions_match_the_leaf_models_and_flag_only_the_domain(train
     pred, outside = trained.predict(q)
     np.testing.assert_array_equal(host(outside), [False, True, False])
     leaf = trained.route_leaves(q)
-    direct = trained.local_model.evaluate(trained._leaf_params(), xp.asarray(q), leaf)
+    direct = trained.local_model.evaluate(trained.model_params(), xp.asarray(q), leaf)
     assert_backend_equal(pred, direct)
     knn_pred, _ = trained.predict(q, predictor="knn")  # Q is stored, so kNN still works
     assert knn_pred.shape == pred.shape

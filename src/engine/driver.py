@@ -18,13 +18,13 @@ from typing import Any, Optional
 
 import numpy as np
 
-from src import IS_CUPY_BACKEND, Array, _to_host, xp
+from src import IS_CUPY_BACKEND, Array, to_host, xp
 from src.afinni import AFINNIPlan
 from src.art import ARTPlan, Domain, Roots
 from src.config import TrainingConfig
 from src.core.clusters import ClusterBatch
 from src.core.evaluation import Evaluator
-from src.engine.initial import _threads_for_rank0, initial_clustering
+from src.engine.initial import initial_clustering, threads_for_rank0
 from src.engine.refinement import refine_rank
 from src.engine.work_stealing import recv_clusters, send_clusters
 from src.infra.backend import MPI  # real mpi4py.MPI, or a single-rank stand-in
@@ -56,7 +56,7 @@ def refine(
     initial_labels: Optional[Array] = None,
 ) -> dict[str, Any] | None:
     """
-    Train ``config.algorithm`` collectively on every MPI rank (see ``_refine``).
+    Train ``config.algorithm`` collectively on every MPI rank (see ``refine_unguarded``).
 
     Failure protocol: in a single process an exception propagates unchanged. Under MPI
     an exception on any rank, in any phase (initial evaluation and clustering, scatter,
@@ -65,7 +65,7 @@ def refine(
     ``MPI_Abort``, which ends every rank of the job with a non-zero status.
     """
     return run_collective(
-        lambda: _refine(X, config, evaluator, Y=Y, initial_labels=initial_labels), "training"
+        lambda: refine_unguarded(X, config, evaluator, Y=Y, initial_labels=initial_labels), "training"
     )
 
 
@@ -106,7 +106,7 @@ def run_collective(operation, what: str):
         _PROFILER_SCOPES.pop()
 
 
-def _refine(
+def refine_unguarded(
     X: Array,
     config: TrainingConfig,
     evaluator: Evaluator,
@@ -157,7 +157,7 @@ def _refine(
     plan = _make_plan(config, comm, data[0] if rank == 0 else None, d, fd, node_ranks)
 
     with profiler.phase("time_scatter"):
-        queue = plan.initial_queue(*(_to_host(a) if a is not None else None for a in data[:3]), data[3]) if rank == 0 else None
+        queue = plan.initial_queue(*(to_host(a) if a is not None else None for a in data[:3]), data[3]) if rank == 0 else None
         local_clusters = _scatter(comm, queue, d, fd)
         del queue
     # The cap is read with rank 0's training data still on the device: releasing it first
@@ -232,7 +232,7 @@ def _initial_data(X, Y, initial_labels, config: TrainingConfig, evaluator: Evalu
     N0 = X0.shape[0]
     profiling_stats["N0"], profiling_stats["total_f_evals"] = N0, N0
     if initial_labels is not None:
-        initial_labels = np.asarray(_to_host(initial_labels))
+        initial_labels = np.asarray(to_host(initial_labels))
         valid = initial_labels.shape == (N0,) and np.issubdtype(initial_labels.dtype, np.integer)
         if not valid or (N0 and initial_labels.min() < 0):
             raise ValueError(
@@ -253,7 +253,7 @@ def _initial_data(X, Y, initial_labels, config: TrainingConfig, evaluator: Evalu
     labels = None
     if config.algorithm != "art":
         labels = (
-            initial_clustering(X0, config, threads=_threads_for_rank0(node_ranks))
+            initial_clustering(X0, config, threads=threads_for_rank0(node_ranks))
             if initial_labels is None
             else initial_labels.astype(np.int64)
         )
@@ -272,14 +272,14 @@ def _make_plan(config: TrainingConfig, comm, X0: Array | None, d: int, fd: int, 
         return AFINNIPlan(config, d, fd, rank)
     bounds = None
     if rank == 0:
-        domain = Domain.resolve(config.domain, _to_host(X0))
+        domain = Domain.resolve(config.domain, to_host(X0))
         bounds = (domain.lower, domain.upper)
     domain = Domain(*comm.bcast(bounds, root=0))
     centres = None
     if config.art.roots == "voronoi":
         if rank == 0:
-            labels_v = initial_clustering(X0, config, threads=_threads_for_rank0(node_ranks))
-            U0 = _to_host(domain.normalize(X0))
+            labels_v = initial_clustering(X0, config, threads=threads_for_rank0(node_ranks))
+            U0 = to_host(domain.normalize(X0))
             inverse = np.unique(labels_v, return_inverse=True)[1]
             centres = np.zeros((int(inverse.max()) + 1, U0.shape[1]))
             np.add.at(centres, inverse, U0)

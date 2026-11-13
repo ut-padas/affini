@@ -60,7 +60,7 @@ from typing import cast  # noqa: E402
 
 import numpy as np  # noqa: E402
 
-from src import PROJECT_DIR, _to_host, xp  # noqa: E402
+from src import PROJECT_DIR, to_host, xp  # noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
 from src.config import (  # noqa: E402
     ARTSettings,
@@ -157,7 +157,7 @@ def metrics(truth, pred, outside, atol, rtol, model: AFINNISurrogate, run: dict)
     """The comparison metrics of one model on the shared test set (host floats)."""
     from src.plotting import pointwise_relative_error
 
-    t, p = np.asarray(_to_host(truth)), np.asarray(_to_host(pred))
+    t, p = np.asarray(to_host(truth)), np.asarray(to_host(pred))
     err = pointwise_relative_error(t, p)
     above = np.any(np.abs(p - t) > np.maximum(atol or 0.0, rtol * np.abs(t)), axis=1)
     summary = cast(dict, compute_error_metrics(pred, truth, outside, atol=atol, rtol=rtol))
@@ -192,8 +192,8 @@ def compare(name: str, args) -> dict:
     X_test = xp.asarray(np.random.default_rng(SEED + 1).uniform(*prob.domain, (10_000 * d, d)))
     truth = prob.f(X_test)
     # Local (non-collective) prediction: both models are complete on this process.
-    pred_a, out_a = afinni._predict_local(X_test, 1, 10, False)
-    pred_r, out_r = art._predict_route_local(X_test)
+    pred_a, out_a = afinni.predict_local(X_test, 1, 10, False)
+    pred_r, out_r = art.predict_route_local(X_test)
     names = {"afinni": "AFINNI", "art": f"ART ({args.search} splits)"}
     results = {
         names["afinni"]: metrics(truth, pred_a, out_a, atol, rtol, afinni, runs["afinni"]),
@@ -232,8 +232,8 @@ def compare(name: str, args) -> dict:
                              title=f"ART tree on {name}")  # fmt: skip
         P.plot_error_maps(
             {
-                f"{names['afinni']} (kNN + trust region)": lambda X: afinni._predict_local(X, 1, 10, False)[0],
-                f"{names['art']} (routed)": lambda X: art._predict_route_local(X)[0],
+                f"{names['afinni']} (kNN + trust region)": lambda X: afinni.predict_local(X, 1, 10, False)[0],
+                f"{names['art']} (routed)": lambda X: art.predict_route_local(X)[0],
             },
             prob.f, lower, upper, plots / "error_maps.png", tol=rtol, title=f"Pointwise relative error, {name}",
         )  # fmt: skip

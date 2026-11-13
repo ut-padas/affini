@@ -21,9 +21,9 @@ import numpy as np
 from src import (
     IS_CUPY_BACKEND,
     Array,
-    _get_mpi_rank,
-    _to_device,
-    _to_host,
+    get_mpi_rank,
+    to_device,
+    to_host,
     xp,
 )
 from src.art import TERMINAL_REASONS, VALIDATION_STATUSES, RoutingTable
@@ -33,17 +33,17 @@ from src.components.modes import SurrogateMode
 from src.components.registry import component_spec
 from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
-from src.engine.driver import _refine, run_collective
+from src.engine.driver import refine_unguarded, run_collective
 from src.infra.backend import (
     MPI,  # real mpi4py.MPI, or a single-rank stand-in without MPI
 )
 from src.surrogate.persistence import (
-    _LEAF_PREFIX,
-    _PARAM_PREFIX,
-    _ROUTE_PREFIX,
+    LEAF_PREFIX,
     MODEL_FORMAT_VERSION,
-    _json_default,
-    _model_path,
+    PARAM_PREFIX,
+    ROUTE_PREFIX,
+    json_default,
+    model_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,10 +78,10 @@ def _make_knn_index(centroids: Array):
     if IS_CUPY_BACKEND:
         from src.neighbors.knn import GpuExactKNN
 
-        return GpuExactKNN(_to_device(centroids))
+        return GpuExactKNN(to_device(centroids))
     from src.neighbors.knn import CpuExactKNN
 
-    return CpuExactKNN(_to_host(centroids))
+    return CpuExactKNN(to_host(centroids))
 
 
 class AFINNISurrogate:
@@ -125,7 +125,7 @@ class AFINNISurrogate:
         self.routing: RoutingTable | None = None
         self.art_leaves: dict[str, np.ndarray] = {}
 
-    def _leaf_params(self) -> dict:
+    def model_params(self) -> dict:
         """The per-cluster arrays ``local_model.evaluate`` reads (see src.components.local_models)."""
         return {"centroids": self.X_src, "f": self.f_src, **self.leaf_params}
 
@@ -188,12 +188,12 @@ class AFINNISurrogate:
         previous model is kept.
         """
         comm = MPI.COMM_WORLD
-        rank = _get_mpi_rank()
+        rank = get_mpi_rank()
         t0 = time.perf_counter()
 
         leaf_model = config.components().local_model
         # Unguarded engine body: the failure policy is owned by train() (see run_collective).
-        results = _refine(X_train, config, evaluator, Y=Y_train, initial_labels=initial_labels)
+        results = refine_unguarded(X_train, config, evaluator, Y=Y_train, initial_labels=initial_labels)
 
         # 2. Broadcast trained structures to all ranks
         bcast_data = None
@@ -201,7 +201,7 @@ class AFINNISurrogate:
             assert results is not None
             # Push to host memory to safely pickle/broadcast over MPI
             bcast_data = {
-                k: _to_host(v) if isinstance(v, xp.ndarray) else v
+                k: to_host(v) if isinstance(v, xp.ndarray) else v
                 for k, v in results.items()
             }
 
@@ -287,8 +287,8 @@ class AFINNISurrogate:
         if not self.trained:
             raise RuntimeError("Cannot save an untrained model.")
 
-        filepath = _model_path(filepath)
-        if _get_mpi_rank() != 0:
+        filepath = model_path(filepath)
+        if get_mpi_rank() != 0:
             return filepath
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
@@ -306,7 +306,7 @@ class AFINNISurrogate:
             "num_unresolved_pts": self.num_unresolved_pts,
         }
         try:
-            metadata_json = json.dumps(metadata, default=_json_default)
+            metadata_json = json.dumps(metadata, default=json_default)
         except TypeError as e:
             raise TypeError(
                 f"Cannot save: the model's settings or configuration are not JSON "
@@ -316,20 +316,20 @@ class AFINNISurrogate:
             "format_version": np.asarray(MODEL_FORMAT_VERSION),
             "metadata": np.asarray(metadata_json),
             "profiling_stats": np.asarray(
-                json.dumps(self.profiling_stats, default=_json_default)
+                json.dumps(self.profiling_stats, default=json_default)
             ),
-            "X_src": _to_host(self.X_src),
-            "f_src": _to_host(self.f_src),
-            **({"Qs_src": _to_host(self.Qs_src)} if self.Qs_src is not None else {}),
-            **{_PARAM_PREFIX + k: _to_host(v) for k, v in self.leaf_params.items()},
-            **({_ROUTE_PREFIX + k: v for k, v in self.routing.arrays().items()} if self.routing else {}),
-            **{_LEAF_PREFIX + k: np.asarray(v) for k, v in self.art_leaves.items()},
+            "X_src": to_host(self.X_src),
+            "f_src": to_host(self.f_src),
+            **({"Qs_src": to_host(self.Qs_src)} if self.Qs_src is not None else {}),
+            **{PARAM_PREFIX + k: to_host(v) for k, v in self.leaf_params.items()},
+            **({ROUTE_PREFIX + k: v for k, v in self.routing.arrays().items()} if self.routing else {}),
+            **{LEAF_PREFIX + k: np.asarray(v) for k, v in self.art_leaves.items()},
         }
         for name in ("E_cluster_abs_src", "E_cluster_rel_src"):
             if getattr(self, name) is not None:
-                arrays[name] = _to_host(getattr(self, name))
+                arrays[name] = to_host(getattr(self, name))
         if self.counts_src is not None:
-            arrays["counts_src"] = _to_host(self.counts_src)
+            arrays["counts_src"] = to_host(self.counts_src)
 
         np.savez_compressed(str(filepath), **arrays)
         logger.info(f"Model saved to {filepath}")
@@ -348,7 +348,7 @@ class AFINNISurrogate:
         alternatively pass the ``local_model`` instance to use. Each rank reads the
         file itself, so under MPI it must be on a filesystem every rank can see.
         """
-        filepath = _model_path(filepath)
+        filepath = model_path(filepath)
         if not filepath.exists():
             raise FileNotFoundError(f"Model file not found: {filepath}")
 
@@ -393,12 +393,12 @@ class AFINNISurrogate:
                 "converged": meta["converged"],
                 "num_unresolved_clusters": int(meta["num_unresolved_clusters"]),
                 "num_unresolved_pts": int(meta["num_unresolved_pts"]),
-                "leaf_params": {k[len(_PARAM_PREFIX):]: v for k, v in arrays.items() if k.startswith(_PARAM_PREFIX)},
+                "leaf_params": {k[len(PARAM_PREFIX):]: v for k, v in arrays.items() if k.startswith(PARAM_PREFIX)},
                 "routing": (
-                    RoutingTable.from_arrays({k[len(_ROUTE_PREFIX):]: v for k, v in arrays.items() if k.startswith(_ROUTE_PREFIX)})
-                    if any(k.startswith(_ROUTE_PREFIX) for k in arrays) else None
+                    RoutingTable.from_arrays({k[len(ROUTE_PREFIX):]: v for k, v in arrays.items() if k.startswith(ROUTE_PREFIX)})
+                    if any(k.startswith(ROUTE_PREFIX) for k in arrays) else None
                 ),
-                "art_leaves": {k[len(_LEAF_PREFIX):]: v for k, v in arrays.items() if k.startswith(_LEAF_PREFIX)},
+                "art_leaves": {k[len(LEAF_PREFIX):]: v for k, v in arrays.items() if k.startswith(LEAF_PREFIX)},
             },
             source=str(filepath),
         )  # fmt: skip
@@ -414,12 +414,12 @@ class AFINNISurrogate:
         state = dict(state)
         for name in ("X_src", "f_src", "Qs_src", "E_cluster_abs_src", "E_cluster_rel_src"):
             if state[name] is not None:
-                state[name] = _to_device(state[name])
+                state[name] = to_device(state[name])
         if state["counts_src"] is not None:
-            state["counts_src"] = np.asarray(_to_host(state["counts_src"]))  # host-side diagnostics
-        state["leaf_params"] = {k: _to_device(v) for k, v in state["leaf_params"].items()}
+            state["counts_src"] = np.asarray(to_host(state["counts_src"]))  # host-side diagnostics
+        state["leaf_params"] = {k: to_device(v) for k, v in state["leaf_params"].items()}
         state.setdefault("routing", None)
-        state["art_leaves"] = {k: np.asarray(_to_host(v)) for k, v in state.get("art_leaves", {}).items()}
+        state["art_leaves"] = {k: np.asarray(to_host(v)) for k, v in state.get("art_leaves", {}).items()}
         state["N_src"] = n = int(state["X_src"].shape[0])
         d, fd = state["X_src"].shape[1], state["f_src"].shape[1]
         local_model = state["local_model"]
@@ -445,7 +445,7 @@ class AFINNISurrogate:
                     raise ValueError(f"{source}: the ART tree and the leaf metadata disagree on {col!r}.")
         t0 = time.perf_counter()
         state["knn_index"] = _make_knn_index(state["X_src"]) if state["Qs_src"] is not None else None
-        if _get_mpi_rank() == 0:
+        if get_mpi_rank() == 0:
             logger.info(f"KNN Index built in {time.perf_counter() - t0:.4f}s")
         for name, value in state.items():
             setattr(self, name, value)
@@ -454,14 +454,14 @@ class AFINNISurrogate:
     def _query_knn(self, query_points: Array, k: int) -> tuple[Array, Array]:
         """``(indices, distances)`` of the ``min(k, N_src)`` nearest centroids, on the active backend."""
         k = min(k, self.N_src)
-        queries = _to_device(query_points) if IS_CUPY_BACKEND else _to_host(query_points)
+        queries = to_device(query_points) if IS_CUPY_BACKEND else to_host(query_points)
         distances, indices = self.knn_index.kneighbors(queries, k)
         stats = self.knn_index.last_search_stats
         for key in ("queries", "fallback_rows"):
             self.search_stats[key] = self.search_stats.get(key, 0) + stats[key]
         self.search_stats["candidates"] = stats["candidates"]
         self.search_stats["strategy"] = stats.get("strategy", "verified")
-        return _to_device(indices), _to_device(distances)
+        return to_device(indices), to_device(distances)
 
     @_collective("predict()")
     def predict(
@@ -518,7 +518,7 @@ class AFINNISurrogate:
         if rank == 0:
             if query_points is None:
                 raise ValueError("query_points must be provided on rank 0.")
-            query_host = _to_host(query_points)
+            query_host = to_host(query_points)
             chunks = np.array_split(query_host, size)
 
         # Scatter evenly across ranks
@@ -527,9 +527,9 @@ class AFINNISurrogate:
 
         # Run mathematical logic independently with batching
         if predictor == "route":
-            local_preds, local_mask = self._predict_route_local(local_queries, batch_size)
+            local_preds, local_mask = self.predict_route_local(local_queries, batch_size)
         else:
-            local_preds, local_mask = self._predict_local(
+            local_preds, local_mask = self.predict_local(
                 query_points=local_queries,
                 k_nn=k_nn,
                 coarse_factor=coarse_factor,
@@ -538,8 +538,8 @@ class AFINNISurrogate:
             )
 
         # Bring back to host and merge
-        gathered_preds = comm.gather(_to_host(local_preds), root=0)
-        gathered_masks = comm.gather(_to_host(local_mask), root=0)
+        gathered_preds = comm.gather(to_host(local_preds), root=0)
+        gathered_masks = comm.gather(to_host(local_mask), root=0)
 
         if rank == 0:
             return xp.asarray(np.concatenate(gathered_preds)), xp.asarray(
@@ -548,7 +548,7 @@ class AFINNISurrogate:
 
         return None, None
 
-    def _predict_local(
+    def predict_local(
         self,
         query_points: Array,
         k_nn: int,
@@ -586,7 +586,7 @@ class AFINNISurrogate:
             k_nn = len(self.X_src)
 
         assert self.local_model is not None, "no local model; was the surrogate trained?"
-        leaf_params = self._leaf_params()
+        leaf_params = self.model_params()
 
         all_predictions = []
         all_ung_masks = []
@@ -664,12 +664,12 @@ class AFINNISurrogate:
         else:
             return predictions, unguaranteed_mask
 
-    def _predict_route_local(self, query_points: Array, batch_size: int = 5000) -> tuple[Array, Array]:
+    def predict_route_local(self, query_points: Array, batch_size: int = 5000) -> tuple[Array, Array]:
         """``(predictions, outside_domain)`` for this rank's queries by routing (see ``predict``)."""
         fd = self.f_src.shape[1]
         if query_points.shape[0] == 0:
             return xp.empty((0, fd), dtype=xp.float64), xp.empty((0,), dtype=bool)
-        leaf_params = self._leaf_params()
+        leaf_params = self.model_params()
         preds, outs = [], []
         for s in range(0, int(query_points.shape[0]), batch_size):
             q = xp.asarray(query_points[s : s + batch_size], dtype=xp.float64)
@@ -755,7 +755,7 @@ class AFINNISurrogate:
         U = np.random.default_rng(np.random.SeedSequence([int(seed), 0xA0D17])).random((int(n_points), dom.d))
         X = xp.asarray(dom.lower + U * dom.width)
         F, _ = evaluator(X)
-        F_hat, _ = self._predict_route_local(X)
+        F_hat, _ = self.predict_route_local(X)
         if tuple(F.shape) != tuple(F_hat.shape):
             raise ValueError(f"The oracle returned shape {tuple(F.shape)}; the model predicts {tuple(F_hat.shape)}.")
         violations = pointwise_violations(F, F_hat, atol, rtol)

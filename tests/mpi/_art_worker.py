@@ -19,7 +19,7 @@ from tests.mpi._mpi_worker import RESULT_PREFIX
 
 
 def main() -> None:
-    from src import _to_host, xp
+    from src import to_host, xp
     from src.config import ARTSettings, TrainingConfig
     from src.core.evaluation import Evaluator
     from src.infra.backend import MPI
@@ -70,10 +70,10 @@ def main() -> None:
             runs[name] = {
                 "leaves": int(model.N_src),
                 "keys_hash": hashlib.sha256(json.dumps(keys).encode()).hexdigest(),
-                "pred_hash": hashlib.sha256(np.ascontiguousarray(_to_host(pred)).tobytes()).hexdigest(),
+                "pred_hash": hashlib.sha256(np.ascontiguousarray(to_host(pred)).tobytes()).hexdigest(),
                 "evals": int(model.profiling_stats["total_f_evals"]),
                 "statuses": model.leaf_status_counts(),
-                "outside": int(_to_host(outside).sum()),
+                "outside": int(to_host(outside).sum()),
                 "grants": int(total_grants),
             }
     if rank == 0:

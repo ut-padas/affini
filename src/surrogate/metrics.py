@@ -4,7 +4,7 @@ from typing import Any
 
 from src import (
     Array,
-    _to_host,
+    to_host,
     xp,
 )
 from src.components.acceptance import Tolerance, normalize_tolerance, tolerance_vector
@@ -167,7 +167,7 @@ def compute_error_metrics(
         return error_metrics
     else:
         return error_metrics, {
-            "all": _to_host(ptwise_rel_error_all),
-            "in": _to_host(ptwise_rel_error),
-            "out": _to_host(ptwise_rel_error_out),
+            "all": to_host(ptwise_rel_error_all),
+            "in": to_host(ptwise_rel_error),
+            "out": to_host(ptwise_rel_error_out),
         }

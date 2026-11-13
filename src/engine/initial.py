@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from src import IS_CUPY_BACKEND, Array, _to_host, xp
+from src import IS_CUPY_BACKEND, Array, to_host, xp
 from src.config import TrainingConfig
 from src.numerics import TINY_EPS, uniform_grid_bins
 
@@ -32,7 +32,7 @@ def uniform_grid_cluster_labels(
     return labels.astype(np.int64), bins
 
 
-def _threads_for_rank0(node_ranks: int) -> int:
+def threads_for_rank0(node_ranks: int) -> int:
     """Threads for work done by rank 0 alone: its own share (``OMP_NUM_THREADS``, default 1 under MPI) times the ranks on its node."""
     env = os.environ.get("OMP_NUM_THREADS", "")
     per_rank = int(env) if env.isdigit() else (1 if node_ranks > 1 else os.cpu_count() or 1)
@@ -56,8 +56,8 @@ def initial_clustering(X: Array, config: TrainingConfig, *, threads: int | None 
             labels = kmeans_labels(xp.asarray(X, dtype=xp.float64), config.num_initial_clusters, config.seed)
         else:
             labels = kmeans_labels(
-                np.asarray(_to_host(X), dtype=np.float64), config.num_initial_clusters, config.seed,
-                max_iter=2, threads=_threads_for_rank0(1) if threads is None else threads,
+                np.asarray(to_host(X), dtype=np.float64), config.num_initial_clusters, config.seed,
+                max_iter=2, threads=threads_for_rank0(1) if threads is None else threads,
             )  # fmt: skip
     elif method == "knndbscan":
         from knndbscan import knn_dbscan
@@ -67,7 +67,7 @@ def initial_clustering(X: Array, config: TrainingConfig, *, threads: int | None 
             device="gpu" if IS_CUPY_BACKEND else "cpu",
         )  # fmt: skip
     elif method == "uniform_grid":
-        labels, _ = uniform_grid_cluster_labels(_to_host(X), config.num_initial_clusters)
+        labels, _ = uniform_grid_cluster_labels(to_host(X), config.num_initial_clusters)
     else:
         raise ValueError(f"Invalid initial clustering method: {method!r}")
-    return np.asarray(_to_host(labels)).astype(np.int64)
+    return np.asarray(to_host(labels)).astype(np.int64)

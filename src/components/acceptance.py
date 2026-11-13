@@ -47,9 +47,9 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from src import Array, _to_host, xp
+from src import Array, to_host, xp
 from src.components.registry import Registry
-from src.numerics import TINY_EPS, _reduce_max_1d, _reduce_sum_1d
+from src.numerics import TINY_EPS, reduce_max_1d, reduce_sum_1d
 
 Tolerance = float | Sequence[float] | Array | None
 
@@ -62,7 +62,7 @@ def normalize_tolerance(name: str, value: Tolerance) -> float | tuple[float, ...
         values = np.array([value], dtype=np.float64)
         scalar = True
     else:
-        values = np.asarray(_to_host(value), dtype=np.float64)
+        values = np.asarray(to_host(value), dtype=np.float64)
         scalar = values.ndim == 0
         if values.ndim > 1 or values.size == 0:
             raise ValueError(f"{name} must be a number or a 1-D sequence of numbers; got {value!r}.")
@@ -136,8 +136,8 @@ class L2Acceptance(AcceptanceCriterion):
     def __call__(self, F, F_hat, starts, sizes):
         diff = F - F_hat
         # Per-component loop keeps each reduction 1-D, so a single output reduces exactly like a scalar function.
-        sq_err = xp.stack([_reduce_sum_1d(diff[:, j] ** 2, starts) for j in range(F.shape[1])], axis=1)
-        sq_val = xp.stack([_reduce_sum_1d(F[:, j] ** 2, starts) for j in range(F.shape[1])], axis=1)
+        sq_err = xp.stack([reduce_sum_1d(diff[:, j] ** 2, starts) for j in range(F.shape[1])], axis=1)
+        sq_val = xp.stack([reduce_sum_1d(F[:, j] ** 2, starts) for j in range(F.shape[1])], axis=1)
         E_rel = xp.sqrt(sq_err) / (xp.sqrt(sq_val) + TINY_EPS)
         E_abs = xp.sqrt(sq_err / sizes[:, None])
         return self.accept(E_abs, E_rel)
@@ -151,8 +151,8 @@ class LinfAcceptance(AcceptanceCriterion):
 
     def __call__(self, F, F_hat, starts, sizes):
         diff = F - F_hat
-        E_abs = xp.stack([_reduce_max_1d(xp.abs(diff[:, j]), starts) for j in range(F.shape[1])], axis=1)
-        local_max_F = xp.stack([_reduce_max_1d(xp.abs(F[:, j]), starts) for j in range(F.shape[1])], axis=1)
+        E_abs = xp.stack([reduce_max_1d(xp.abs(diff[:, j]), starts) for j in range(F.shape[1])], axis=1)
+        local_max_F = xp.stack([reduce_max_1d(xp.abs(F[:, j]), starts) for j in range(F.shape[1])], axis=1)
         E_rel = E_abs / xp.maximum(local_max_F, TINY_EPS)
         return self.accept(E_abs, E_rel)
 
@@ -192,9 +192,9 @@ class PointwiseAcceptance(AcceptanceCriterion):
         err = xp.abs(F - F_hat)
         rel = err / xp.maximum(xp.abs(F), TINY_EPS)
         fails = pointwise_violations(F, F_hat, self.atol, self.rtol)
-        any_fail = _reduce_max_1d(fails.astype(xp.float64), starts)
-        E_abs = xp.stack([_reduce_max_1d(err[:, j], starts) for j in range(fd)], axis=1)
-        E_rel = xp.stack([_reduce_max_1d(rel[:, j], starts) for j in range(fd)], axis=1)
+        any_fail = reduce_max_1d(fails.astype(xp.float64), starts)
+        E_abs = xp.stack([reduce_max_1d(err[:, j], starts) for j in range(fd)], axis=1)
+        E_rel = xp.stack([reduce_max_1d(rel[:, j], starts) for j in range(fd)], axis=1)
         return any_fail == 0, E_abs, E_rel
 
 

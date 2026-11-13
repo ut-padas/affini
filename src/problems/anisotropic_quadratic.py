@@ -10,7 +10,7 @@ DECAY_EXPONENT = 3.0
 BETA = 1.0
 
 
-def _get_random_rotation(d: int, dtype) -> np.ndarray:
+def get_random_rotation(d: int, dtype) -> np.ndarray:
     """
     Creates a random rotation matrix using QR decomposition.
 
@@ -43,7 +43,7 @@ def _get_params(
     lambdas = np.power(indices, -decay_exponent)
 
     # 2. Rotation: Q
-    Q = _get_random_rotation(d, dtype)
+    Q = get_random_rotation(d, dtype)
 
     # 3. Construct H = Q @ diag(lambdas) @ Q.T
     H = (Q * lambdas[None, :]) @ Q.T

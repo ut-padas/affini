@@ -1,4 +1,4 @@
-"""Enforce the layer order of README.md "Code layout": a module imports only from its own layer or lower ones."""
+"""Enforce the layer order of README.md "Code layout" and keep cross-module imports to public names."""
 
 import ast
 from pathlib import Path
@@ -49,4 +49,15 @@ def test_no_module_imports_a_higher_layer():
         for part in _imported_parts(ast.parse(path.read_text(), filename=str(path))):
             if LAYERS[part] > LAYERS[own]:
                 violations.append(f"{path.relative_to(SRC.parent)} ({own}) imports src.{part}")
+    assert not violations, "\n".join(violations)
+
+
+def test_no_module_imports_a_private_name_from_another():
+    """A name another module imports is part of its API, so it has no leading underscore (tests may still reach in)."""
+    violations = []
+    for path in sorted(SRC.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and (node.module or "").split(".")[0] == "src":
+                violations += [f"{path.relative_to(SRC.parent)} imports {a.name} from {node.module}"
+                               for a in node.names if a.name.startswith("_")]  # fmt: skip
     assert not violations, "\n".join(violations)

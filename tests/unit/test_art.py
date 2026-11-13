@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import src.engine.work_stealing as ws
-from src import _to_host, xp
+from src import to_host, xp
 from src.art import (
     PURPOSE_TRAIN,
     PURPOSE_VALIDATION,
@@ -27,10 +27,10 @@ from tests._helpers import host
 
 def test_counter_uniform_is_deterministic_open_and_stream_separated():
     keys = node_keys(3, xp.asarray([0, 0, 1]), xp.asarray([1, 2, 1]))
-    assert len(set(_to_host(keys).tolist())) == 3
+    assert len(set(to_host(keys).tolist())) == 3
     counter = xp.arange(100_000)
     u = counter_uniform(keys[0], PURPOSE_TRAIN, counter)
-    np.testing.assert_array_equal(_to_host(u), _to_host(counter_uniform(keys[0], PURPOSE_TRAIN, counter)))
+    np.testing.assert_array_equal(to_host(u), to_host(counter_uniform(keys[0], PURPOSE_TRAIN, counter)))
     assert float(u.min()) > 0 and float(u.max()) < 1
     assert abs(float(u.mean()) - 0.5) < 5e-3 and abs(float(u.var()) - 1 / 12) < 2e-3
     other = counter_uniform(keys[0], PURPOSE_VALIDATION, counter)
@@ -46,7 +46,7 @@ def test_grid_roots_cover_the_unit_cube_and_assign_faces_upward():
     assert bool(xp.all((lo[r] <= U) & (hi[r] >= U)))
     # A point on an interior face belongs to the upper cell; the domain's upper face to the last.
     on_face, above = xp.asarray([[0.5, 0.1], [1.0, 1.0]]), xp.asarray([[0.5 + 1e-9, 0.1], [1.0 - 1e-9, 1.0 - 1e-9]])
-    np.testing.assert_array_equal(_to_host(roots.root_of(on_face)), _to_host(roots.root_of(above)))
+    np.testing.assert_array_equal(to_host(roots.root_of(on_face)), to_host(roots.root_of(above)))
 
 
 def test_hit_and_run_stays_in_the_polytope_and_is_near_uniform():
@@ -59,7 +59,7 @@ def test_hit_and_run_stays_in_the_polytope_and_is_near_uniform():
     X = HitAndRunSampler(domain, roots, walk_steps=30).sample(ClusterPoints(seeds, xp.asarray([2]), polytopes=geo), xp.asarray([20_000]))
     assert bool(xp.all(X >= 0)) and bool(xp.all(X <= 1))
     assert float(xp.max(plane_scores(X, xp.asarray(w)[None, :]))) <= 1 / np.sqrt(2) + 1e-12
-    np.testing.assert_allclose(_to_host(X.mean(axis=0)), [1 / 3, 1 / 3], atol=0.01)
+    np.testing.assert_allclose(to_host(X.mean(axis=0)), [1 / 3, 1 / 3], atol=0.01)
 
 
 def test_depth_zero_sampling_is_exactly_uniform_in_the_root_cell():
@@ -95,10 +95,10 @@ def test_routing_follows_the_stored_predicates():
     domain, roots, tree = _tree()
     table = RoutingTable.build(domain, roots, **tree)
     leaf, outside = table.route(xp.asarray([[0.1, 0.9], [0.7, 0.1], [0.7, 0.9], [0.5, 0.25], [1.5, 0.9]]))
-    np.testing.assert_array_equal(_to_host(leaf), [0, 1, 2, 2, 2])  # boundary goes right
-    np.testing.assert_array_equal(_to_host(outside), [False, False, False, False, True])
+    np.testing.assert_array_equal(to_host(leaf), [0, 1, 2, 2, 2])  # boundary goes right
+    np.testing.assert_array_equal(to_host(outside), [False, False, False, False, True])
     again = RoutingTable.from_arrays(table.arrays())
-    np.testing.assert_array_equal(_to_host(again.route(xp.asarray([[0.7, 0.1]]))[0]), [1])
+    np.testing.assert_array_equal(to_host(again.route(xp.asarray([[0.7, 0.1]]))[0]), [1])
 
 
 @pytest.mark.parametrize("broken", ["missing_child", "duplicate", "orphan"])
@@ -167,7 +167,7 @@ def test_wire_format_round_trips_art_columns_on_table_offsets():
 
 def test_batched_grams_match_direct_sums_and_ignore_other_nodes():
     """Grams are per-node batched products, equal to the direct sums and bitwise batch-independent."""
-    from src.art import _SplitRows
+    from src.art import SplitRows
 
     rng = np.random.default_rng(0)
     counts = [7, 5, 7, 9]  # two nodes share a count group, two are alone in theirs
@@ -175,7 +175,7 @@ def test_batched_grams_match_direct_sums_and_ignore_other_nodes():
     Y = xp.asarray(rng.standard_normal((sum(counts), 2)))
     Phi = xp.concatenate([U, xp.ones((sum(counts), 1))], axis=1)
     labels = xp.asarray(np.repeat(np.arange(4), counts))
-    rows = _SplitRows(U, Y, Phi, labels, xp.asarray(counts))
+    rows = SplitRows(U, Y, Phi, labels, xp.asarray(counts))
     w = xp.asarray(rng.random(sum(counts)))
     G, B = rows.gram(w)
     P, Yh, Wh, lab = host(Phi), host(Y), host(w), host(labels)
@@ -185,49 +185,49 @@ def test_batched_grams_match_direct_sums_and_ignore_other_nodes():
         np.testing.assert_allclose(host(B[k]), (P[m] * Wh[m, None]).T @ Yh[m], rtol=1e-13)
     # The last node alone gives bitwise the same Gram as inside the batch.
     m = lab == 3
-    alone = _SplitRows(U[m], Y[m], Phi[m], xp.zeros(9, dtype=xp.int64), xp.asarray([9]))
+    alone = SplitRows(U[m], Y[m], Phi[m], xp.zeros(9, dtype=xp.int64), xp.asarray([9]))
     np.testing.assert_array_equal(host(alone.gram(w[m])[0][0]), host(G[3]))
 
 
 def _rows(rng, n=60, d=2):
-    from src.art import _SplitRows
+    from src.art import SplitRows
 
     U = xp.asarray(rng.random((n, d)))
     Y = xp.asarray(np.where(host(U)[:, :1] > 0.4, 1.0, -1.0) + 0.1 * rng.standard_normal((n, 1)))
     Phi = xp.concatenate([U, xp.ones((n, 1))], axis=1)
-    return _SplitRows(U, Y, Phi, xp.zeros(n, dtype=xp.int64), xp.asarray([n]))
+    return SplitRows(U, Y, Phi, xp.zeros(n, dtype=xp.int64), xp.asarray([n]))
 
 
 def test_soft_objective_gradient_matches_finite_differences():
     """The envelope-theorem gradient of J = min_B F, checked against central differences."""
-    from src.art import _soft_objective
+    from src.art import soft_objective
 
     rows = _rows(np.random.default_rng(1))
     w, z, T = xp.asarray([[0.8, 0.6]]), xp.asarray([0.45]), xp.asarray([0.08])
-    _, g_w, g_z, *_ = _soft_objective(rows, w, z, T, 1e-3)
+    _, g_w, g_z, *_ = soft_objective(rows, w, z, T, 1e-3)
     h = 1e-6
     fd = []
     for i in range(3):
         e = np.zeros(3)
         e[i] = h
         e = xp.asarray(e)
-        Jp = _soft_objective(rows, w + e[None, :2], z + e[2], T, 1e-3)[0]
-        Jm = _soft_objective(rows, w - e[None, :2], z - e[2], T, 1e-3)[0]
+        Jp = soft_objective(rows, w + e[None, :2], z + e[2], T, 1e-3)[0]
+        Jm = soft_objective(rows, w - e[None, :2], z - e[2], T, 1e-3)[0]
         fd.append(float((Jp - Jm)[0]) / (2 * h))
     np.testing.assert_allclose([*host(g_w)[0], float(host(g_z)[0])], fd, rtol=1e-5, atol=1e-9)
 
 
 def test_sigmoid_is_stable_at_extreme_arguments():
-    from src.art import _sigmoid
+    from src.art import sigmoid
 
     s = xp.asarray([-1e4, -40.0, 0.0, 40.0, 1e4])
-    out = host(_sigmoid(s))
+    out = host(sigmoid(s))
     assert np.all(np.isfinite(out)) and out[2] == 0.5 and out[0] == 0.0 and out[-1] == 1.0
-    np.testing.assert_allclose(out + host(_sigmoid(-s)), 1.0)
+    np.testing.assert_allclose(out + host(sigmoid(-s)), 1.0)
 
 
 def test_soft_refinement_never_returns_a_worse_hard_split_than_its_incumbent():
-    from src.art import ARTPlan, _hard_sse
+    from src.art import ARTPlan, hard_sse
     from src.config import TrainingConfig
 
     cfg = TrainingConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]),
@@ -235,9 +235,9 @@ def test_soft_refinement_never_returns_a_worse_hard_split_than_its_incumbent():
     plan = ARTPlan(cfg, 2, 1, Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1))
     rows = _rows(np.random.default_rng(2))
     w0, z0 = xp.asarray([[0.0, 1.0]]), xp.asarray([0.5])  # a poor incumbent: the wrong axis
-    sse0, _ = _hard_sse(rows, w0, z0, plan.min_side)
+    sse0, _ = hard_sse(rows, w0, z0, plan.min_side)
     w, z = plan._soft_refine(rows, w0, z0, sse0, None)
-    sse, ok = _hard_sse(rows, w, z, plan.min_side)
+    sse, ok = hard_sse(rows, w, z, plan.min_side)
     assert bool(ok[0]) and float(sse[0]) <= float(sse0[0])
     assert plan.counters["soft_improved"] == 1  # the step in x0 = 0.4 is found
     reasons = ("soft_gradient_converged", "soft_line_search_stalled", "soft_gate_saturated",
@@ -394,7 +394,7 @@ def test_close_voronoi_centres_keep_every_sample_in_its_own_thin_cell(separation
 
 def test_narrow_score_clouds_far_from_the_origin_keep_a_resolved_temperature():
     """Translating a node far from the origin must not collapse the soft search's gate temperature (raw moments cancelled)."""
-    from src.art import ARTPlan, _SplitRows
+    from src.art import ARTPlan, SplitRows
     from src.config import TrainingConfig
 
     cfg = TrainingConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]),
@@ -403,7 +403,7 @@ def test_narrow_score_clouds_far_from_the_origin_keep_a_resolved_temperature():
     n = 200
     U = np.c_[0.9 + 1e-8 * np.linspace(-1, 1, n), np.random.default_rng(0).random(n)]
     Y = np.where(U[:, :1] > 0.9 + 2e-9, 1.0, -1.0)
-    rows = _SplitRows(xp.asarray(U), xp.asarray(Y), xp.asarray(np.c_[U, np.ones(n)]), xp.zeros(n, dtype=xp.int64), xp.asarray([n]))
+    rows = SplitRows(xp.asarray(U), xp.asarray(Y), xp.asarray(np.c_[U, np.ones(n)]), xp.zeros(n, dtype=xp.int64), xp.asarray([n]))
     plan._soft_refine(rows, xp.asarray([[1.0, 0.0]]), xp.asarray([0.9]), xp.asarray([np.inf]), None)
     assert plan.counters["soft_gate_saturated"] == 0
 
@@ -419,7 +419,7 @@ def test_drift_ignores_rounding_sized_shifts_of_a_narrow_node():
 
 def test_threshold_search_skips_nodes_too_small_to_split_beside_valid_ones():
     """A sparse node (fewer than 2 * min_side points, as convex-combination sampling can produce) gets no candidate and no cross-node read."""
-    from src.art import ARTPlan, _SplitRows
+    from src.art import ARTPlan, SplitRows
     from src.config import TrainingConfig
 
     cfg = TrainingConfig(atol=1e-3, algorithm="art", domain=([0, 0], [1, 1]), art={"split_search": "bins"})
@@ -430,12 +430,12 @@ def test_threshold_search_skips_nodes_too_small_to_split_beside_valid_ones():
     Y = xp.concatenate([big.Y, xp.ones((n_small, 1))])
     Phi = xp.concatenate([U, xp.ones((U.shape[0], 1))], axis=1)
     labels = xp.asarray(np.r_[np.zeros(60), np.ones(n_small)].astype(np.int64))
-    rows = _SplitRows(U, Y, Phi, labels, xp.asarray([60, n_small]))
+    rows = SplitRows(U, Y, Phi, labels, xp.asarray([60, n_small]))
     bank = xp.asarray(np.broadcast_to(np.eye(2), (2, 2, 2)).copy())
     _, z, sse = plan._threshold_search(rows, bank)
     assert np.isfinite(host(z)[0]) and np.isfinite(host(sse)[0])
     assert np.isnan(host(z)[1]) and np.isinf(host(sse)[1])
-    alone = _SplitRows(big.U, big.Y, big.Phi, big.labels, big.counts)
+    alone = SplitRows(big.U, big.Y, big.Phi, big.labels, big.counts)
     _, z_alone, _ = plan._threshold_search(alone, bank[:1])
     assert float(host(z_alone)[0]) == float(host(z)[0])
 
@@ -505,7 +505,7 @@ def test_routing_rejects_non_finite_or_misshaped_queries(query):
 
 def test_cut_sums_match_direct_sums_on_both_sides_and_ignore_other_nodes():
     """Per-bin prefix/suffix sums equal each cut's directly formed Grams, node by node."""
-    from src.art import _SplitRows
+    from src.art import SplitRows
     from src.numerics import sort_by_block_then_value
 
     rng = np.random.default_rng(5)
@@ -515,7 +515,7 @@ def test_cut_sums_match_direct_sums_on_both_sides_and_ignore_other_nodes():
     Y = xp.asarray(rng.standard_normal((N, 2)))
     Phi = xp.concatenate([U, xp.ones((N, 1))], axis=1)
     labels = xp.asarray(np.repeat(np.arange(4), counts))
-    rows = _SplitRows(U, Y, Phi, labels, xp.asarray(counts))
+    rows = SplitRows(U, Y, Phi, labels, xp.asarray(counts))
     s = U[:, 0] - 0.3 * U[:, 1]
     order = sort_by_block_then_value(s, labels)
     n = np.array(counts)
@@ -540,8 +540,8 @@ def _split_rows(rng, k=6, c=150, d=3, fd=2):
     U = xp.asarray(rng.uniform(0, 1, (N, d)))
     Phi = xp.concatenate([U, xp.ones((N, 1))], axis=1)
     Y = xp.asarray(rng.standard_normal((N, fd))) + xp.sin(5 * U[:, :1])
-    rows = split_search._SplitRows(U, Y, Phi, xp.repeat(xp.arange(k), counts), counts)
-    w = split_search._unit(xp.asarray(rng.standard_normal((k, d))))
+    rows = split_search.SplitRows(U, Y, Phi, xp.repeat(xp.arange(k), counts), counts)
+    w = split_search.unit_rows(xp.asarray(rng.standard_normal((k, d))))
     z = xp.asarray(rng.uniform(0.3, 0.7, k)) * xp.sum(w, axis=1)
     return rows, w, z, xp.full(k, 0.05)
 
@@ -551,16 +551,16 @@ def test_fused_soft_objective_and_step_match_the_generic_formulas(monkeypatch):
     import src.art.split_search as split_search
 
     rows, w, z, T = _split_rows(np.random.default_rng(3))
-    fused = split_search._soft_objective(rows, w, z, T, 1e-6)
+    fused = split_search.soft_objective(rows, w, z, T, 1e-6)
     monkeypatch.setattr(split_search, "IS_CUPY_BACKEND", False)  # the generic xp formulas, on the same GPU arrays
 
     def xp_gates(rows, w, z, T, delta):  # the CPU branch is Numba (host arrays), so the formula itself
         s = (split_search.plane_scores(rows.U, w[rows.labels]) - z[rows.labels]) / T[rows.labels]
-        sp, sm = split_search._sigmoid(s), split_search._sigmoid(-s)
+        sp, sm = split_search.sigmoid(s), split_search.sigmoid(-s)
         return delta + (1 - 2 * delta) * sm, delta + (1 - 2 * delta) * sp, sp * sm
 
-    monkeypatch.setattr(split_search, "_soft_gates", xp_gates)
-    generic = split_search._soft_objective(_split_rows(np.random.default_rng(3))[0], w, z, T, 1e-6)
+    monkeypatch.setattr(split_search, "soft_gates", xp_gates)
+    generic = split_search.soft_objective(_split_rows(np.random.default_rng(3))[0], w, z, T, 1e-6)
     for name, f, g in zip(("J", "g_w", "g_z", "rL", "rR", "pen"), fused[:6], generic[:6], strict=True):
         np.testing.assert_allclose(host(f), host(g), rtol=1e-11, atol=1e-14, err_msg=name)
     np.testing.assert_allclose(host(fused[7]), host(generic[7]), rtol=1e-12)
@@ -570,7 +570,7 @@ def test_fused_soft_objective_and_step_match_the_generic_formulas(monkeypatch):
     J, g_w, g_z, rL, rR, pen, gap, sp_sum = fused
     n = rows.counts.astype(xp.float64)
     w_f, z_f, active, stops = w.copy(), z.copy(), xp.ones(w.shape[0], dtype=bool), xp.zeros(4, dtype=xp.uint64)
-    split_search._soft_step(rows, w_f, z_f, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n, 1e-6, active, stops, 12)
+    split_search.soft_step(rows, w_f, z_f, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n, 1e-6, active, stops, 12)
     # the sequential halving loop of the CPU path on the same inputs
     g = g_w - xp.sum(g_w * w, axis=1, keepdims=True) * w
     gn2 = xp.sum(g**2, axis=1) + g_z**2
@@ -578,8 +578,8 @@ def test_fused_soft_objective_and_step_match_the_generic_formulas(monkeypatch):
     margin = gap + 64 * np.finfo(float).eps * (xp.abs(J) + 1e-300)
     ws, zs, taken = w.copy(), z.copy(), xp.zeros(w.shape[0], dtype=bool)
     for _ in range(12):
-        w_t, z_t = split_search._unit(ws - alpha[:, None] * g), zs - alpha * g_z
-        WL, WR, _ = split_search._soft_gates(rows, w_t, z_t, T, 1e-6)
+        w_t, z_t = split_search.unit_rows(ws - alpha[:, None] * g), zs - alpha * g_z
+        WL, WR, _ = split_search.soft_gates(rows, w_t, z_t, T, 1e-6)
         Ft = (rows.reduce(WL * rL + WR * rR) + pen) / n
         acc = ~taken & (Ft <= J - 1e-4 * alpha * gn2) & (J - Ft > margin)
         ws, zs, taken, alpha = xp.where(acc[:, None], w_t, ws), xp.where(acc, z_t, zs), taken | acc, alpha * 0.5
@@ -621,7 +621,7 @@ def test_soft_gates_match_the_logistic_formula():
 
     rows, w, z, _ = _split_rows(np.random.default_rng(5))
     T = xp.asarray(np.r_[1e-3, np.full(int(w.shape[0]) - 1, 0.05)])
-    WL, WR, sp_sm = split_search._soft_gates(rows, w, z, T, 1e-6)
+    WL, WR, sp_sm = split_search.soft_gates(rows, w, z, T, 1e-6)
     s = host((xp.sum(rows.U * w[rows.labels], axis=1) - z[rows.labels]) / T[rows.labels])
     sp = np.where(s >= 0, 1 / (1 + np.exp(-np.abs(s))), np.exp(-np.abs(s)) / (1 + np.exp(-np.abs(s))))
     sm = np.where(-s >= 0, 1 / (1 + np.exp(-np.abs(s))), np.exp(-np.abs(s)) / (1 + np.exp(-np.abs(s))))

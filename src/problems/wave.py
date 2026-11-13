@@ -9,7 +9,7 @@ SEED = 0
 FREQUENCY = 2.0
 BETA = 1.5
 
-def _get_random_direction(d: int, dtype) -> np.ndarray:
+def get_random_direction(d: int, dtype) -> np.ndarray:
     """
     Random unit direction q, as a NumPy (host) array.
 
@@ -39,7 +39,7 @@ def wave(X: Array, frequency: float = FREQUENCY, beta: float = BETA) -> Array:
     xp = array_namespace(X)
     N, d = X.shape
     dtype = X.dtype
-    q = xp.asarray(_get_random_direction(d, dtype))
+    q = xp.asarray(get_random_direction(d, dtype))
     f = xp.cos(frequency * (X @ q)) + beta
     return xp.reshape(f, (N, 1))
 
@@ -65,7 +65,7 @@ def wave_grad(
     """
     xp = array_namespace(X)
     N, d = X.shape
-    q = xp.asarray(_get_random_direction(d, X.dtype))
+    q = xp.asarray(get_random_direction(d, X.dtype))
     qTx = X @ q  # (N,)
 
     G = -frequency * xp.sin(frequency * qTx)[:, None] * q
@@ -99,7 +99,7 @@ def wave_hess(
     N, d = X.shape
     dtype = X.dtype
 
-    q = xp.asarray(_get_random_direction(d, dtype))
+    q = xp.asarray(get_random_direction(d, dtype))
 
     # q^T x for every point
     qTx = X @ q  # (N,)

@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap, LogNorm
 
-from src import _to_host, xp
+from src import to_host, xp
 from src.art import TERMINAL_REASONS, VALIDATION_STATUSES
 from src.infra.profiling import fmt_count
 from src.plotting.style import afinni_style, finish
@@ -33,7 +33,7 @@ STATUS_COLOURS = ("#9e9e9e", "#4c9a6a", "#d1495b", "#7b5ea7")
 
 def pointwise_relative_error(truth, pred, floor: float = 1e-12) -> np.ndarray:
     """(n,) worst-component ``|pred - truth| / max(|truth|, floor)`` on the host (the reference ART's definition)."""
-    truth, pred = np.asarray(_to_host(truth)), np.asarray(_to_host(pred))
+    truth, pred = np.asarray(to_host(truth)), np.asarray(to_host(pred))
     rel = np.abs(pred - truth) / np.maximum(np.abs(truth), floor)
     return rel.max(axis=1) if rel.ndim > 1 else rel
 
@@ -66,7 +66,7 @@ def plot_art_partition(surrogate, path=None, *, f_fn: Callable | None = None, to
         raise ValueError("plot_art_partition needs a 2-D ART model.")
     dom = surrogate.routing.domain
     XX, YY, P = _grid(dom.lower, dom.upper, resolution)
-    leaf = np.asarray(_to_host(surrogate.route_leaves(xp.asarray(P)))).reshape(XX.shape)
+    leaf = np.asarray(to_host(surrogate.route_leaves(xp.asarray(P)))).reshape(XX.shape)
     paths = surrogate.art_leaves["path_code"]
     depth = np.array([int(p).bit_length() - 1 for p in paths])[leaf]
     reason = surrogate.art_leaves["terminal_reason"].astype(int)[leaf]
@@ -86,7 +86,7 @@ def plot_art_partition(surrogate, path=None, *, f_fn: Callable | None = None, to
         axes[1].legend(handles, [f"{r} ({counts[r]})" for r in TERMINAL_REASONS], loc="upper right", fontsize=8)
         axes[1].set_title("Terminal reason")
         if f_fn is not None:
-            pred = surrogate.local_model.evaluate(surrogate._leaf_params(), xp.asarray(P), xp.asarray(leaf.ravel()))
+            pred = surrogate.local_model.evaluate(surrogate.model_params(), xp.asarray(P), xp.asarray(leaf.ravel()))
             err = pointwise_relative_error(f_fn(xp.asarray(P)), pred).reshape(XX.shape)
             im = axes[2].imshow(np.maximum(err, 1e-12), origin="lower", extent=extent, aspect="auto",
                                 norm=LogNorm(vmin=max(1e-8, float(err[err > 0].min()) if np.any(err > 0) else 1e-8)),

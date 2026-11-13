@@ -10,10 +10,10 @@ from src.problems.anisotropic_quadratic import (
     DECAY_EXPONENT,
     SEED,
     _get_params,
-    _get_random_rotation,
     aniso_quadratic,
     aniso_quadratic_grad,
     aniso_quadratic_hess,
+    get_random_rotation,
 )
 
 
@@ -131,7 +131,7 @@ class TestAnisoQuadraticSympyDerivatives(unittest.TestCase):
 
         # Import the actual function to test
 
-        Q = _get_random_rotation(n_dim, np.float64)
+        Q = get_random_rotation(n_dim, np.float64)
 
         # Test orthogonality: Q^T @ Q should be identity
         identity_test = Q.T @ Q

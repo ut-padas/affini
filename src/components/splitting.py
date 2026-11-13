@@ -33,12 +33,12 @@ from src.components.modes import SurrogateMode
 from src.components.registry import Registry
 from src.numerics import (
     TINY_EPS,
-    _reduce_sum_1d,
     centroid_distances,
     det_einsum,
     det_matmul,
     get_n_smallest_per_block,
     lsq_hessian_in_eigenbasis,
+    reduce_sum_1d,
     run_fused_cross_cov,
     run_fused_split_projection,
     run_fused_stats,
@@ -93,7 +93,7 @@ def sign_split_sizes(counts: Array, sorted_scores: Array) -> Array:
     returned by ``SplitStrategy.split`` (ascending within each cluster).
     """
     starts = xp.r_[0, xp.cumsum(counts)[:-1]]
-    n_low = _reduce_sum_1d((sorted_scores < 0).astype(xp.int64), starts)
+    n_low = reduce_sum_1d((sorted_scores < 0).astype(xp.int64), starts)
     n_low = xp.where((n_low == 0) | (n_low == counts), counts // 2, n_low)
     sizes = xp.zeros(2 * len(counts), dtype=xp.int64)
     sizes[0::2] = n_low
@@ -311,8 +311,8 @@ class GradientLSQHessianSplit(SplitStrategy):
         f_mus_exp = data.f_c[data.labels]  # (N, fd)
         lin = det_einsum("nmd,nd->nm", g_mus_exp, dx)
         diff = data.F - (f_mus_exp + lin)  # (N, fd)
-        sq_err = _reduce_sum_1d(diff**2, starts)  # (K,)
-        sq_val = _reduce_sum_1d(data.F**2, starts)  # (K,)
+        sq_err = reduce_sum_1d(diff**2, starts)  # (K,)
+        sq_val = reduce_sum_1d(data.F**2, starts)  # (K,)
         scores = xp.sqrt(sq_err) / (xp.sqrt(sq_val) + TINY_EPS)
         active_comps = xp.argmax(scores, axis=1).astype(xp.int32)  # (K,)
 

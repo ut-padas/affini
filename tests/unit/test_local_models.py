@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pytest
 
-from src import _to_host, xp
+from src import to_host, xp
 from src.components.local_models import (
     LOCAL_MODELS,
     AffineLSQModel,
@@ -71,7 +71,7 @@ def _surrogate_reference(kind):
     ],
 )
 def test_inference_path_matches_previous_surrogate(kind, model, keys):
-    out = _to_host(model.evaluate(_p(*keys), xp.asarray(Q), xp.asarray(NN)))
+    out = to_host(model.evaluate(_p(*keys), xp.asarray(Q), xp.asarray(NN)))
     assert out.shape == (n, k, fd)
     assert_backend_equal(out, _surrogate_reference(kind))
 
@@ -93,7 +93,7 @@ def test_training_and_inference_paths_agree(model, keys):
     )
     grid = model.evaluate(params, xp.asarray(Q), xp.asarray(NN))
     np.testing.assert_allclose(
-        _to_host(pairs).reshape(n, k, fd), _to_host(grid), rtol=1e-12, atol=1e-12
+        to_host(pairs).reshape(n, k, fd), to_host(grid), rtol=1e-12, atol=1e-12
     )
 
 
@@ -126,12 +126,12 @@ def test_affine_fit_recovers_an_affine_function():
     data = _fit_data(X, F, sizes)
     params = model.fit(data)
     assert params.keys() == model.columns(d, fd).keys()
-    np.testing.assert_allclose(_to_host(params["A_fit"]), A_true, atol=1e-5)
-    np.testing.assert_allclose(_to_host(params["b_fit"]), b_true, atol=1e-5)
+    np.testing.assert_allclose(to_host(params["A_fit"]), A_true, atol=1e-5)
+    np.testing.assert_allclose(to_host(params["b_fit"]), b_true, atol=1e-5)
     F_hat = model.evaluate(
         {**params, "centroids": data.centroids, "f": data.f_c}, data.X, data.labels
     )
-    np.testing.assert_allclose(_to_host(F_hat), F, atol=1e-5)
+    np.testing.assert_allclose(to_host(F_hat), F, atol=1e-5)
 
 
 def test_quadratic_fit_recovers_a_quadratic_per_cluster_far_from_the_origin():
@@ -148,10 +148,10 @@ def test_quadratic_fit_recovers_a_quadratic_per_cluster_far_from_the_origin():
     params = model.fit(data)
     assert params.keys() == model.columns(d, fd).keys() and model.n_features(d) == (d + 1) * (d + 2) // 2
     full = {**params, "centroids": data.centroids, "f": data.f_c}
-    np.testing.assert_allclose(_to_host(model.evaluate(full, data.X, data.labels)), F, rtol=0, atol=1e-9)
+    np.testing.assert_allclose(to_host(model.evaluate(full, data.X, data.labels)), F, rtol=0, atol=1e-9)
     # The kNN layout, (n, k) cluster ids per query, evaluates each candidate cluster.
     ids = xp.asarray(np.stack([labels, (labels + 1) % 3], axis=1))
-    both = _to_host(model.evaluate(full, data.X, ids))
+    both = to_host(model.evaluate(full, data.X, ids))
     np.testing.assert_allclose(both[:, 0], F, rtol=0, atol=1e-9)
 
 
@@ -162,7 +162,7 @@ def test_fit_returns_declared_columns():
     assert ConstantModel().fit(_fit_data(X, F, sizes)) == {}
     taylor = TaylorModel().fit(_fit_data(X, F, sizes, g_c))
     assert taylor.keys() == TaylorModel().columns(d, fd).keys()
-    np.testing.assert_array_equal(_to_host(taylor["g"]), g_c)
+    np.testing.assert_array_equal(to_host(taylor["g"]), g_c)
     # The second-order Hessian is only estimated for accepted clusters, so fit omits it.
     assert set(TaylorModel(True).columns(d, fd)) - set(
         TaylorModel(True).fit(_fit_data(X, F, sizes, g_c))
@@ -234,12 +234,12 @@ def test_second_order_finalize_fits_one_hessian_per_output():
     params = model.fit(data)
     final = model.finalize(data, params)
     assert set(params) | set(final) == set(model.columns(d, fd))
-    H = _to_host(final["H"])
+    H = to_host(final["H"])
     assert H.shape == (len(sizes), fd, d, d)
     np.testing.assert_allclose(H, np.broadcast_to(A, H.shape), atol=1e-8)
 
     leaf = {**params, **final, "centroids": data.centroids, "f": data.f_c}
-    np.testing.assert_allclose(_to_host(model.evaluate(leaf, data.X, data.labels)), F, atol=1e-8)
+    np.testing.assert_allclose(to_host(model.evaluate(leaf, data.X, data.labels)), F, atol=1e-8)
 
 
 def test_first_order_models_do_not_need_point_gradients():

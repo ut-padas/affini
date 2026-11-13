@@ -134,7 +134,7 @@ def main() -> None:
         per_rank = world.allgather((dict(counts), stray))
         if rank == 0:
             total = {k: sum(c[k] for c, _ in per_rank) for k in counts}
-            centroids = np.asarray(src._to_host(surrogate.X_src))
+            centroids = np.asarray(src.to_host(surrogate.X_src))
             stats = surrogate.profiling_stats.get("per_rank", [])
             accepted = sum(
                 e.get("good_clusters", 0)

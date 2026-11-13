@@ -11,7 +11,7 @@ from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Ellipse
 
-from src import RESULTS_DIR, Array, _to_device, _to_host, xp
+from src import RESULTS_DIR, Array, to_device, to_host, xp
 from src.components.modes import SurrogateMode
 from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
@@ -48,7 +48,7 @@ def plot_adaptive_clustering_results(
     X_grid, Y_grid = np.meshgrid(x, y)
 
     grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
-    Z_grid = _to_host(f_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+    Z_grid = to_host(f_fn(to_device(grid_pts)).reshape(X_grid.shape))
     cbar_norm = LogNorm()
 
     fig, axs = plt.subplots(1, 2, figsize=(12, 5))
@@ -106,7 +106,7 @@ def plot_adaptive_clustering_results(
     ]
 
     if X_new is not None and len(X_new) > 0:
-        X_new_host = _to_host(X_new)
+        X_new_host = to_host(X_new)
         axs[1].scatter(
             X_new_host[:, 0], X_new_host[:, 1], c="black", s=5, alpha=0.8, zorder=5
         )
@@ -150,7 +150,7 @@ def plot_test_points(
     X_grid, Y_grid = np.meshgrid(x, y)
 
     grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
-    Z_grid = _to_host(f_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+    Z_grid = to_host(f_fn(to_device(grid_pts)).reshape(X_grid.shape))
     cbar_norm = LogNorm()
 
     fig, axs = plt.subplots(figsize=(9, 7.5))
@@ -482,7 +482,7 @@ def save_halo_points_for_testing_surrogates(
     X_train, function_name: str, d: int, strategy: str, N: int = 50000
 ):
     numpy_data = np.array(
-        _to_host(X_train)
+        to_host(X_train)
     )  # host copy: NumPy cannot shuffle a device array
     np.random.shuffle(numpy_data)
     np.save(f"{function_name}_d{d}_{strategy}.npy", numpy_data[:N])
@@ -572,7 +572,7 @@ def run_iterative_refinement(
         )
         X_test = xp.random.uniform(DOMAIN[0], DOMAIN[1], size=(N_TEST, d))
     plot_test_points(
-        _to_host(X_test),
+        to_host(X_test),
         DOMAIN,
         f_fn,
         "Test Distribution",
@@ -681,8 +681,8 @@ def run_iterative_refinement(
         )
         img_path = OUTPUT_DIR / f"halo_iter_{iteration}.png"
         plot_adaptive_clustering_results(
-            centroids=_to_host(surrogate.X_src),
-            Q=_to_host(surrogate.Qs_src),
+            centroids=to_host(surrogate.X_src),
+            Q=to_host(surrogate.Qs_src),
             domain=DOMAIN,
             f_fn=f_fn,
             title=plot_title,

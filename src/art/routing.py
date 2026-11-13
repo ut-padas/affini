@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src import Array, _to_host, xp
+from src import Array, to_host, xp
 from src.art.geometry import Domain, Roots, plane_scores
 
 
@@ -35,7 +35,7 @@ class RoutingTable:
 
     @property
     def n_leaves(self) -> int:
-        return int(np.sum(_to_host(self.is_leaf)))
+        return int(np.sum(to_host(self.is_leaf)))
 
     @classmethod
     def build(cls, domain: Domain, roots: Roots, leaf_root, leaf_path, split_root, split_path, w, z) -> "RoutingTable":
@@ -56,7 +56,7 @@ class RoutingTable:
         bins = np.asarray(roots.bins)
         if bins.shape != lo.shape or not np.issubdtype(bins.dtype, np.integer) or np.any(bins < 1):
             raise ValueError("ART root bins must be positive integers, one per dimension.")
-        lr, lp, sr, sp = (np.asarray(_to_host(a), dtype=np.int64).reshape(-1) for a in (leaf_root, leaf_path, split_root, split_path))
+        lr, lp, sr, sp = (np.asarray(to_host(a), dtype=np.int64).reshape(-1) for a in (leaf_root, leaf_path, split_root, split_path))
         # Every root must have a node, so a valid table has at most as many roots as nodes;
         # checked in Python integers, before n_roots' fixed-width product could wrap.
         n_nodes = len(lr) + len(sr)
@@ -68,7 +68,7 @@ class RoutingTable:
             if C.ndim != 2 or C.shape[1] != lo.size or C.shape[0] == 0 or not np.all(np.isfinite(C)) \
                     or len(np.unique(C, axis=0)) != len(C):  # fmt: skip
                 raise ValueError("Voronoi root centres must be finite, distinct (R, d) points.")
-        W, Z = np.asarray(_to_host(w), dtype=np.float64), np.asarray(_to_host(z), dtype=np.float64).reshape(-1)
+        W, Z = np.asarray(to_host(w), dtype=np.float64), np.asarray(to_host(z), dtype=np.float64).reshape(-1)
         d, R = domain.d, roots.n_roots
         if len(lr) != len(lp) or len(sr) != len(sp) or W.shape != (len(sr), d) or Z.shape != (len(sr),):
             raise ValueError("ART tree arrays have inconsistent shapes.")
@@ -130,13 +130,13 @@ class RoutingTable:
 
     def arrays(self) -> dict[str, np.ndarray]:
         """The host arrays that ``from_arrays`` rebuilds the table from (for saving): domain, roots and provenance."""
-        split = ~np.asarray(_to_host(self.is_leaf))
-        leaf_rows = np.asarray(_to_host(self.node_leaf))[~split]
+        split = ~np.asarray(to_host(self.is_leaf))
+        leaf_rows = np.asarray(to_host(self.node_leaf))[~split]
         order = np.argsort(leaf_rows)  # leaves in leaf-array order
         out = {
             "domain_lower": self.domain.lower, "domain_upper": self.domain.upper, "root_bins": self.roots.bins,
             "split_root": self.node_root[split], "split_path": self.node_path[split],
-            "w": np.asarray(_to_host(self.w))[split], "z": np.asarray(_to_host(self.z))[split],
+            "w": np.asarray(to_host(self.w))[split], "z": np.asarray(to_host(self.z))[split],
             "leaf_root": self.node_root[~split][order], "leaf_path": self.node_path[~split][order],
         }  # fmt: skip
         if self.roots.is_voronoi:

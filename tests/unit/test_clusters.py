@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src import _to_host, xp
+from src import to_host, xp
 from src.components.splitting import median_split_sizes
 from src.core.clusters import ClusterBatch, ClusterQueueBuilder
 
@@ -18,7 +18,7 @@ def _parts(rng, sizes, d=2, fd=1, has_g=False):
 
 def test_median_split_sizes():
     np.testing.assert_array_equal(
-        _to_host(median_split_sizes(xp.asarray(np.array([5, 4, 1])))),
+        to_host(median_split_sizes(xp.asarray(np.array([5, 4, 1])))),
         [2, 3, 2, 2, 0, 1],
     )
 

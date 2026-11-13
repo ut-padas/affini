@@ -68,7 +68,7 @@ def main() -> None:
     grants = [e for e in events if e["kind"] == "steal_grant"]
     received = [e for e in events if e["kind"] == "steal_received"]
     truth = Q @ B + 0.5 * np.einsum("nc,cd,nd->n", Q, A, Q)
-    err = float(np.max(np.abs(np.asarray(src._to_host(pred)).ravel() - truth)))
+    err = float(np.max(np.abs(np.asarray(src.to_host(pred)).ravel() - truth)))
     accepted = int(np.asarray(s.counts_src).sum())
     result = {
         "grants": len(grants),

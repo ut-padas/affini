@@ -129,13 +129,13 @@ def test_art_and_comparison_plots_render(tmp_path):
     )  # fmt: skip
     Xq = xp.asarray(np.random.default_rng(1).uniform(-3, 3, (500, 2)))
     truth = spherical_piecewise(Xq)
-    err = P.pointwise_relative_error(truth, art._predict_route_local(Xq)[0])
+    err = P.pointwise_relative_error(truth, art.predict_route_local(Xq)[0])
     assert err.shape == (500,) and np.all(err >= 0)
     paths = {name: tmp_path / f"{name}.png" for name in ("partition", "stats", "maps", "cdf", "bars")}
     P.plot_art_partition(art, paths["partition"], f_fn=spherical_piecewise, tol=1e-2, resolution=60)
     P.plot_art_tree_stats(art, paths["stats"])
-    P.plot_error_maps({"afinni": lambda q: afinni._predict_local(q, 1, 10, False)[0],
-                       "art": lambda q: art._predict_route_local(q)[0]},
+    P.plot_error_maps({"afinni": lambda q: afinni.predict_local(q, 1, 10, False)[0],
+                       "art": lambda q: art.predict_route_local(q)[0]},
                       spherical_piecewise, (-3, -3), (3, 3), paths["maps"], tol=1e-2, resolution=40)  # fmt: skip
     P.plot_error_cdf({"art": err}, paths["cdf"], tol=1e-2)
     P.plot_method_comparison({"a": {"leaves": 10, "relative_l2": 0.1}, "b": {"leaves": 20, "relative_l2": 0.05}},

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src import _to_host, xp
+from src import to_host, xp
 from src.components.acceptance import cluster_errors
 from src.components.modes import SurrogateMode
 from src.config import TrainingConfig
@@ -21,7 +21,7 @@ def _errors(metric, atol, rtol):
         mode=SurrogateMode.AFFINE_COV_HESS, atol=atol, rtol=rtol, error_metric=metric
     )
     out = cluster_errors(config, xp.asarray(F), xp.asarray(F_HAT), xp.asarray(STARTS), xp.asarray(SIZES))
-    return tuple(_to_host(a) for a in out)
+    return tuple(to_host(a) for a in out)
 
 
 @pytest.mark.parametrize(

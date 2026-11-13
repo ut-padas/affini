@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import src.engine.driver as driver
-from src import _to_host, xp
+from src import to_host, xp
 from src.components.modes import SurrogateMode
 from src.components.splitting import (
     CovarianceHessianSplit,
@@ -68,9 +68,9 @@ def test_split_contract(strategy):
     sizes = [1200, 900, 1501]
     data = _data(sizes)
     order, child = strategy.split(data)
-    order, child = _to_host(order), _to_host(child)
+    order, child = to_host(order), to_host(child)
     assert sorted(order.tolist()) == list(range(sum(sizes)))  # a permutation
-    labels = _to_host(data.labels)[order]
+    labels = to_host(data.labels)[order]
     assert np.all(np.diff(labels) >= 0)  # clusters stay contiguous, in label order
     np.testing.assert_array_equal(child, [600, 600, 450, 450, 750, 751])
 
@@ -89,8 +89,8 @@ def test_split_direction_follows_curvature(strategy, axis):
     """Figure 2 of the paper: Hessian-informed splits cut across the high-curvature axis."""
     data = _data([2000])
     order, child = strategy.split(data)
-    X = _to_host(data.X)[_to_host(order)]
-    low, high = X[: int(_to_host(child)[0])], X[int(_to_host(child)[0]) :]
+    X = to_host(data.X)[to_host(order)]
+    low, high = X[: int(to_host(child)[0])], X[int(to_host(child)[0]) :]
     gap = np.abs(high.mean(axis=0) - low.mean(axis=0)) / X.std(axis=0)
     assert gap[axis] > 1.5 and gap[1 - axis] < 0.2, gap
 

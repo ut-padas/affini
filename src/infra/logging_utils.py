@@ -9,7 +9,7 @@ from typing import Optional
 import psutil
 from tqdm import tqdm
 
-from src import _get_mpi_rank, _get_mpi_size
+from src import get_mpi_rank, get_mpi_size
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +64,8 @@ def setup_logging(
     # Default format: timestamp - logger name - level - message
     format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-    mpi_rank = _get_mpi_rank()
-    mpi_size = _get_mpi_size()
+    mpi_rank = get_mpi_rank()
+    mpi_size = get_mpi_size()
     _is_rank0 = mpi_rank == 0
 
     # Get the root logger (parent of all loggers)

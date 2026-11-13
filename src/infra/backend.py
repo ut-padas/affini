@@ -132,7 +132,7 @@ def _in_multiprocessing_worker() -> bool:
     True inside a ``multiprocessing`` child (spawn/fork/forkserver pool worker).
 
     Spawned workers (the default on Windows/macOS) re-import the entry script, so
-    module-level ``_get_mpi_size()`` calls there would otherwise run MPI_Init in
+    module-level ``get_mpi_size()`` calls there would otherwise run MPI_Init in
     every worker with the parent's launcher environment - which can hang or crash
     under ``mpiexec``. Workers never communicate over MPI, so they get the serial
     stand-in.

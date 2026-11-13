@@ -43,8 +43,8 @@ def run_smoke(
     if rank != 0:
         return None
 
-    pred_h = np.asarray(src._to_host(pred), dtype=np.float64)
-    f_true = np.asarray(src._to_host(rosenbrock(Q)), dtype=np.float64).reshape(pred_h.shape)
+    pred_h = np.asarray(src.to_host(pred), dtype=np.float64)
+    f_true = np.asarray(src.to_host(rosenbrock(Q)), dtype=np.float64).reshape(pred_h.shape)
     max_rel_err = float(np.abs(pred_h - f_true).max() / np.abs(f_true).max())
 
     return {

@@ -80,8 +80,8 @@ def test_segment_cross_matches_per_segment_products_with_weights_offsets_and_emp
 
 @pytest.mark.skipif(not IS_CUPY_BACKEND, reason="NumPy sums are sequential already")
 def test_gpu_segment_sums_do_not_depend_on_the_rest_of_the_batch():
-    """CuPy's add.reduceat subtracts prefix sums; segment_cross and _reduce_sum_1d must not."""
-    from src.numerics import _reduce_sum_1d, segment_cross
+    """CuPy's add.reduceat subtracts prefix sums; segment_cross and reduce_sum_1d must not."""
+    from src.numerics import reduce_sum_1d, segment_cross
 
     rng = np.random.default_rng(2)
     seg = rng.normal(size=(37, 4)) * 10 ** rng.uniform(-3, 3, (37, 1))
@@ -90,7 +90,7 @@ def test_gpu_segment_sums_do_not_depend_on_the_rest_of_the_batch():
         X = np.vstack([rng.normal(size=(before, 4)) * 1e3, seg, rng.normal(size=(5, 4))])
         starts, counts = xp.asarray([0, before, before + 37]), xp.asarray([before, 37, 5])
         c = host(segment_cross(xp.asarray(X), xp.asarray(X), starts, counts, symmetric=True)[1])
-        s = host(_reduce_sum_1d(xp.asarray(X), starts)[1])
+        s = host(reduce_sum_1d(xp.asarray(X), starts)[1])
         ref_cross = c if ref_cross is None else ref_cross
         ref_sum = s if ref_sum is None else ref_sum
         np.testing.assert_array_equal(c, ref_cross)

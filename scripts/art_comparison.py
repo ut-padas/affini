@@ -47,7 +47,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path.cwd()))
 
-from src import _to_host, xp  # noqa: E402
+from src import to_host, xp  # noqa: E402
 from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
@@ -61,8 +61,8 @@ class _AFINNIARTModel:
         self.model = model
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        pred, _ = self.model._predict_route_local(xp.asarray(X, dtype=xp.float64), batch_size=100_000)
-        return np.asarray(_to_host(pred))[:, 0]
+        pred, _ = self.model.predict_route_local(xp.asarray(X, dtype=xp.float64), batch_size=100_000)
+        return np.asarray(to_host(pred))[:, 0]
 
 
 def _summary(evaluation, leaves: int, depth: int, queries: int, seconds: float, extra: dict) -> dict:
@@ -172,7 +172,7 @@ def main() -> None:
         return
 
     def f(x):
-        return xp.asarray(np.asarray(target(np.asarray(_to_host(x))), dtype=np.float64).reshape(-1, 1))
+        return xp.asarray(np.asarray(target(np.asarray(to_host(x))), dtype=np.float64).reshape(-1, 1))
 
     n_root = math.ceil(args.sample_multiplier * (args.dimension + 1))
     X0 = uniform(n_root, np.random.default_rng(args.seed))

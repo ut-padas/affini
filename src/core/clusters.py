@@ -21,7 +21,7 @@ from typing import Any, Literal
 import numpy as np
 import psutil
 
-from src import Array, _to_host
+from src import Array, to_host
 
 
 @dataclass(frozen=True)
@@ -205,12 +205,12 @@ class ClusterQueueBuilder:
         art_columns = {"root": root, "path_code": path_code, "constraints": constraints}
         if self.constraint_rows is not None and any(v is None for v in art_columns.values()):
             raise ValueError("A ART builder needs root, path_code and constraints.")
-        sizes_host = _to_host(sizes)
-        values = {"X": _to_host(X), "F": _to_host(F), "sizes": sizes_host}
+        sizes_host = to_host(sizes)
+        values = {"X": to_host(X), "F": to_host(F), "sizes": sizes_host}
         if "G" in self._buf:
-            values["G"] = _to_host(G)
+            values["G"] = to_host(G)
         if self.constraint_rows is not None:
-            values.update({k: _to_host(v) for k, v in art_columns.items()})
+            values.update({k: to_host(v) for k, v in art_columns.items()})
             c = values["constraints"]
             if c.shape[1] > self.constraint_rows:
                 raise ValueError(
@@ -236,7 +236,7 @@ class ClusterQueueBuilder:
         for c in self._columns:
             lo, hi = bounds[c.scope]
             if c.name == "depth":
-                self._buf["depth"][lo:hi] = 0 if depth is None else _to_host(depth)
+                self._buf["depth"][lo:hi] = 0 if depth is None else to_host(depth)
             elif c.name == "constraints":
                 block = values["constraints"]
                 self._buf["constraints"][lo:hi, : block.shape[1]] = block
@@ -311,7 +311,7 @@ class ColumnBuffer:
             missing = sorted(self.columns.keys() - rows.keys())
             extra = sorted(rows.keys() - self.columns.keys())
             raise KeyError(f"Column mismatch: missing {missing}, unexpected {extra}")
-        host = {name: _to_host(value) for name, value in rows.items()}
+        host = {name: to_host(value) for name, value in rows.items()}
         n_new = {int(v.shape[0]) for v in host.values()}
         if len(n_new) != 1:
             raise ValueError(f"Columns have different numbers of rows: {n_new}")

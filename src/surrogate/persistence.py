@@ -14,16 +14,16 @@ MODEL_FORMAT_VERSION = 2
 DEFAULT_MODEL_FILENAME = "afinni_surrogate.npz"
 
 
-_PARAM_PREFIX = "param:"
+PARAM_PREFIX = "param:"
 
 
-_ROUTE_PREFIX = "route:"
+ROUTE_PREFIX = "route:"
 
 
-_LEAF_PREFIX = "leaf:"
+LEAF_PREFIX = "leaf:"
 
 
-def _model_path(path: Union[str, Path]) -> Path:
+def model_path(path: Union[str, Path]) -> Path:
     """``path`` as an ``.npz`` file path; a directory gets the default file name."""
     path = Path(path)
     if path.is_dir():
@@ -31,7 +31,7 @@ def _model_path(path: Union[str, Path]) -> Path:
     return path if path.suffix == ".npz" else path.with_suffix(".npz")
 
 
-def _json_default(obj: Any) -> Any:
+def json_default(obj: Any) -> Any:
     """Make NumPy scalars/arrays and enums JSON serializable."""
     if isinstance(obj, np.generic):
         return obj.item()

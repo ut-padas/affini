@@ -12,7 +12,7 @@ from typing import Literal
 import jax
 import matplotlib.pyplot as plt
 
-from src import IS_CUPY_BACKEND, RESULTS_DIR, _get_mpi_rank, _get_mpi_size, _to_host, xp
+from src import IS_CUPY_BACKEND, RESULTS_DIR, get_mpi_rank, get_mpi_size, to_host, xp
 from src.components.modes import SurrogateMode
 from src.components.sampling import SAMPLERS
 from src.config import (
@@ -94,8 +94,8 @@ def tolerance_pairs(
 SEED = 0
 
 logger = logging.getLogger(__name__)
-_size = _get_mpi_size()
-_rank = _get_mpi_rank()
+_size = get_mpi_size()
+_rank = get_mpi_rank()
 
 
 def cap_initial_augmentation_budget(
@@ -187,7 +187,7 @@ def conduct_experiment_given_data(
         if SCALE_ATOL_BY_MAX_F and ATOL is not None:
             if _rank == 0:
                 Y_train = f_fn(X_train) if Y_train is None else Y_train
-                atol_used = tuple(float(ATOL * m) for m in _to_host(xp.max(xp.abs(Y_train.reshape(len(Y_train), -1)), axis=0)))
+                atol_used = tuple(float(ATOL * m) for m in to_host(xp.max(xp.abs(Y_train.reshape(len(Y_train), -1)), axis=0)))
             # Only rank 0 holds the data, but every rank must train with the same tolerances.
             atol_used = MPI.COMM_WORLD.bcast(atol_used, root=0)
         _start_train_time = time.perf_counter()
@@ -312,8 +312,8 @@ def conduct_experiment_given_data(
     if DIM == 2 and surrogate.N_src <= 100_000:
         plot_save_path = json_fpath.with_name(json_fpath.stem + "_centroid_plot.png")
         plot_adaptive_clustering_results(
-            centroids=_to_host(surrogate.X_src),
-            Q=_to_host(surrogate.Qs_src),
+            centroids=to_host(surrogate.X_src),
+            Q=to_host(surrogate.Qs_src),
             domain=DOMAIN,  # type: ignore
             # The contours show a scalar function: the first output component.
             f_fn=f_fn if F_DIM == 1 else (lambda X: f_fn(X)[:, 0]),
@@ -327,7 +327,7 @@ def conduct_experiment_given_data(
             json_fpath.stem + "_projection_plot.png"
         )
         plot_cluster_projections_for_wave(
-            _to_host(surrogate.X_src), proj_plot_save_path, DIM
+            to_host(surrogate.X_src), proj_plot_save_path, DIM
         )
 
         if DIM == 2:
@@ -585,13 +585,13 @@ def anisotropic_gaussian(args) -> Problem:
 def anisotropic_gaussian_modified_sampling(args) -> Problem:
     from src.problems.anisotropic_gaussian import (
         _get_precision_eigenvalues,
-        _get_random_rotation,
         aniso_gaussian,
         aniso_gaussian_grad,
+        get_random_rotation,
     )
 
     def sample(dim, n_train, n_test):
-        Q = xp.asarray(_get_random_rotation(dim, xp.float64))  # helpers return NumPy
+        Q = xp.asarray(get_random_rotation(dim, xp.float64))  # helpers return NumPy
         eigvals = xp.asarray(_get_precision_eigenvalues(dim, xp.float64, 3))
         Ainv = Q @ xp.diag(1.0 / eigvals) @ Q.T
         X_train = xp.random.randn(n_train, dim) @ Ainv

@@ -6,27 +6,27 @@ from src import IS_CUPY_BACKEND, Array, xp
 
 # --- Counter-based random numbers --------------------------------------------------
 
-_GOLDEN = 0x9E3779B97F4A7C15
-_MIX1, _MIX2 = 0xBF58476D1CE4E5B9, 0x94D049BB133111EB
+GOLDEN = 0x9E3779B97F4A7C15
+MIX1, MIX2 = 0xBF58476D1CE4E5B9, 0x94D049BB133111EB
 
 
 def _mix64(z: Array) -> Array:
     """The splitmix64 finalizer on uint64 arrays (wrapping arithmetic, same on NumPy and CuPy)."""
-    z = (z ^ (z >> xp.uint64(30))) * xp.uint64(_MIX1)
-    z = (z ^ (z >> xp.uint64(27))) * xp.uint64(_MIX2)
+    z = (z ^ (z >> xp.uint64(30))) * xp.uint64(MIX1)
+    z = (z ^ (z >> xp.uint64(27))) * xp.uint64(MIX2)
     return z ^ (z >> xp.uint64(31))
 
 
 def node_keys(seed: int, root: Array, path_code: Array) -> Array:
     """(K,) uint64 stream keys, one per node; children's keys are unrelated to their parent's."""
-    base = xp.uint64((int(seed) * _GOLDEN + 1) % 2**64)
-    k = _mix64(base + xp.asarray(root).astype(xp.uint64) * xp.uint64(_GOLDEN))
+    base = xp.uint64((int(seed) * GOLDEN + 1) % 2**64)
+    k = _mix64(base + xp.asarray(root).astype(xp.uint64) * xp.uint64(GOLDEN))
     return _mix64(k ^ xp.asarray(path_code).astype(xp.uint64))
 
 
 def counter_uniform(keys: Array, purpose: int, counter: Array) -> Array:
     """Uniform draws in the open interval (0, 1): one per ``(keys[i], purpose, counter[i])``, broadcast."""
-    tag = xp.uint64((purpose << 56) + _GOLDEN % 2**56)
+    tag = xp.uint64((purpose << 56) + GOLDEN % 2**56)
     z = _mix64(keys ^ _mix64(xp.asarray(counter).astype(xp.uint64) + tag))
     return ((z >> xp.uint64(11)).astype(xp.float64) + 0.5) * 2.0**-53
 
@@ -37,7 +37,7 @@ def counter_uniform_pairs(keys: Array, purpose: int, counter: Array) -> Array:
     bits of one hash: shape ``counter.shape + (2,)``. Half the hashing of ``counter_uniform``,
     at 2^-32 resolution, which hit-and-run directions and chord positions do not resolve.
     """
-    tag = xp.uint64((purpose << 56) + _GOLDEN % 2**56)
+    tag = xp.uint64((purpose << 56) + GOLDEN % 2**56)
     if IS_CUPY_BACKEND:  # one fused pass; integer hashing and exact conversions, so the same bits
         keys, counter = xp.broadcast_arrays(xp.asarray(keys).astype(xp.uint64), xp.asarray(counter).astype(xp.uint64))
         out = xp.empty(counter.shape + (2,))
@@ -58,7 +58,7 @@ def _uniform_pairs_kernel():
     if _UNIFORM_PAIRS is None:
         import cupy as cp
 
-        mix = f"z = (z ^ (z >> 30)) * 0x{_MIX1:X}ULL; z = (z ^ (z >> 27)) * 0x{_MIX2:X}ULL; z = z ^ (z >> 31);"
+        mix = f"z = (z ^ (z >> 30)) * 0x{MIX1:X}ULL; z = (z ^ (z >> 27)) * 0x{MIX2:X}ULL; z = z ^ (z >> 31);"
         _UNIFORM_PAIRS = cp.ElementwiseKernel(
             "uint64 key, uint64 ctr, uint64 tag", "raw float64 out",
             f"unsigned long long z = ctr + tag; {mix} z = key ^ z; {mix}"
@@ -69,6 +69,6 @@ def _uniform_pairs_kernel():
     return _UNIFORM_PAIRS
 
 
-def _normals(u1: Array, u2: Array) -> Array:
+def box_muller(u1: Array, u2: Array) -> Array:
     """Standard normals from two arrays of open-interval uniforms (Box-Muller)."""
     return xp.sqrt(-2.0 * xp.log(u1)) * xp.cos(2.0 * math.pi * u2)

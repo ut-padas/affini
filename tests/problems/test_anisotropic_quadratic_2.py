@@ -15,10 +15,10 @@ from src.problems.anisotropic_quadratic_2 import (
     DECAY_BASE,
     SEED,
     _get_params,
-    _get_random_rotation,
     aniso_quadratic,
     aniso_quadratic_grad,
     aniso_quadratic_hess,
+    get_random_rotation,
 )
 
 
@@ -84,7 +84,7 @@ class TestAnisoQuadratic2(unittest.TestCase):
                 np.testing.assert_allclose(h_impl, h_sym, rtol=1e-12, atol=1e-14)
 
     def test_rotation_matrix_properties(self):
-        Q = _get_random_rotation(3, np.float64)
+        Q = get_random_rotation(3, np.float64)
         np.testing.assert_allclose(Q.T @ Q, np.eye(3), rtol=1e-10, atol=1e-12)
         self.assertAlmostEqual(np.linalg.det(Q), 1.0, places=10)
 

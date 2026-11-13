@@ -1,21 +1,21 @@
 // ART split search (src/art/split_search.py): the soft search's gates, line-search trials and
 // node selection, residuals and objective terms, and the bins search's bin sides.
 //
-// One soft-search iteration on the GPU (_soft_objective_fused, then _soft_step), all node state in place:
+// One soft-search iteration on the GPU (_soft_objective_fused, then soft_step), all node state in place:
 //   soft_gates -> segment_cross (both children's Grams) -> spd_solve -> soft_residuals
 //   -> soft_row_terms -> segmented sum (J, gradient)            [objective]
 //   soft_node_prep -> (soft_trial_terms -> segmented sum -> soft_node_select) x 2 trial groups
 // The sequence has no host reads; one synchronization per iteration checks for active nodes.
 
 // GPU forms of the soft search's gate and trial loss: the score w^T u, the stable logistic of
-// _sigmoid and the floors evaluated in one pass per row (and per line-search trial).
+// sigmoid and the floors evaluated in one pass per row (and per line-search trial).
 __device__ void gates(const double* u, const double* w, double z, double T, double delta, int d, double* WL,
                       double* WR, double* sp_sm) {
     double s = 0.0;
     for (int j = 0; j < d; ++j) s += u[j] * w[j];
     s = (s - z) / T;
     // Stable logistic: exp(-|s|) never overflows, and sigma(s), sigma(-s) come from the same
-    // e. The sign tests mirror _sigmoid(s) and _sigmoid(-s) in NumPy (at s = 0 both are 0.5).
+    // e. The sign tests mirror sigmoid(s) and sigmoid(-s) in NumPy (at s = 0 both are 0.5).
     double e = exp(-fabs(s));
     double big = 1.0 / (1.0 + e), small = e / (1.0 + e);
     double sp = s >= 0 ? big : small, sm = -s >= 0 ? big : small;
@@ -25,7 +25,7 @@ __device__ void gates(const double* u, const double* w, double z, double T, doub
     *sp_sm = sp * sm;
 }
 
-// One thread per row: W_L, W_R and sigma sigma' at its node's plane (_soft_gates in src/art/split_search.py).
+// One thread per row: W_L, W_R and sigma sigma' at its node's plane (soft_gates in src/art/split_search.py).
 extern "C" __global__ void soft_gates(const double* U, const long long* lab, const double* w, const double* z,
                                       const double* T, double delta, double* WL, double* WR, double* sp_sm,
                                       long long N, int d) {
@@ -36,7 +36,7 @@ extern "C" __global__ void soft_gates(const double* U, const long long* lab, con
 }
 
 // Trial m of a node: alpha 2^-m (exact), w_t = unit(w - a g_w) (NaN if the norm is 0 or not
-// finite, as _unit), z_t = z - a g_z. Returns 1 / |w - a g_w| and z_t; w_t_j = (w_j - a g_j) * inv.
+// finite, as unit_rows), z_t = z - a g_z. Returns 1 / |w - a g_w| and z_t; w_t_j = (w_j - a g_j) * inv.
 __device__ double trial_plane(const double* w, const double* g, double z, double gz, double alpha, int m,
                               int d, double* zt) {
     double a = ldexp(alpha, -m), s = 0.0;  // ldexp: alpha * 2^-m exactly, as repeated halving

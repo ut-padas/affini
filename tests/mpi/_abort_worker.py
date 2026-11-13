@@ -48,13 +48,13 @@ def main(phase: str) -> None:
     if phase == "root_public_result" and rank == 0:
         import src.surrogate.model as su
 
-        engine = su._refine
+        engine = su.refine_unguarded
 
         def engine_then_fail(*args, **kwargs):
             engine(*args, **kwargs)
             raise RuntimeError("injected failure on rank 0 (public result conversion)")
 
-        su._refine = engine_then_fail
+        su.refine_unguarded = engine_then_fail
     if phase == "worker_index" and rank == 1:
         import src.surrogate.model as su
 

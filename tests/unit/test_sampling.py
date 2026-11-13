@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src import _to_host, xp
+from src import to_host, xp
 from src.components.sampling import (
     SAMPLERS,
     ClusterPoints,
@@ -31,7 +31,7 @@ def test_sampler_contract(name):
     """Every registered sampler: right shape, grouped by cluster, inside its cluster."""
     sampler = make_sampler(name)
     n_new = np.array([3, 0, 5])
-    new = _to_host(
+    new = to_host(
         sampler.sample(_clusters(), xp.asarray(n_new), xp.random.default_rng(1))
     )
     assert new.shape == (n_new.sum(), 2)
@@ -51,7 +51,7 @@ def test_sampler_is_reproducible_and_handles_no_points(name):
     n_new = xp.asarray(np.array([2, 2, 2]))
     a = sampler.sample(_clusters(), n_new, xp.random.default_rng(7))
     b = sampler.sample(_clusters(), n_new, xp.random.default_rng(7))
-    np.testing.assert_array_equal(_to_host(a), _to_host(b))
+    np.testing.assert_array_equal(to_host(a), to_host(b))
 
     none = sampler.sample(
         _clusters(), xp.zeros(3, dtype=xp.int64), xp.random.default_rng(7)
@@ -63,13 +63,13 @@ def test_convex_combination_single_point_cluster_reuses_its_point():
     new = ConvexCombinationSampler().sample(
         _clusters(), xp.asarray(np.array([4, 0, 0])), xp.random.default_rng(3)
     )
-    np.testing.assert_allclose(_to_host(new), np.repeat(X[:1], 4, axis=0))
+    np.testing.assert_allclose(to_host(new), np.repeat(X[:1], 4, axis=0))
 
 
 def test_augmentation_targets():
     counts = xp.asarray(np.array([1, 50, 150, 200, 500]))
     np.testing.assert_array_equal(
-        _to_host(augmentation_targets(counts, min_pts_per_cluster=100)),
+        to_host(augmentation_targets(counts, min_pts_per_cluster=100)),
         [200, 200, 300, 200, 500],
     )
 
@@ -94,7 +94,7 @@ def test_augment_clusters_layout_and_evaluation(with_grad):
         evaluator,
         xp.random.default_rng(0),
     )
-    Xa, labels = _to_host(aug.X), _to_host(aug.labels)
+    Xa, labels = to_host(aug.X), to_host(aug.labels)
     np.testing.assert_array_equal(labels, np.repeat([0, 1, 2], [3, 4, 8]))
     # Each block starts with that cluster's original points, in order.
     for k, (s_out, s_in) in enumerate(
@@ -105,9 +105,9 @@ def test_augment_clusters_layout_and_evaluation(with_grad):
         )
     assert aug.X_new.shape == (int((np.array([3, 4, 8]) - COUNTS).sum()), 2)
     # Function values (and gradients) are correct for every row, new ones included.
-    np.testing.assert_allclose(_to_host(aug.F), _to_host(f(aug.X)))
+    np.testing.assert_allclose(to_host(aug.F), to_host(f(aug.X)))
     if with_grad:
-        np.testing.assert_allclose(_to_host(aug.G), _to_host(g(aug.X)))
+        np.testing.assert_allclose(to_host(aug.G), to_host(g(aug.X)))
     else:
         assert aug.G is None
     assert evaluator.n_evals == aug.X_new.shape[0]
@@ -125,7 +125,7 @@ def test_augment_clusters_without_new_points():
         xp.random.default_rng(0),
     )
     assert aug.X_new is None
-    np.testing.assert_array_equal(_to_host(aug.X), X)
+    np.testing.assert_array_equal(to_host(aug.X), X)
 
 
 def test_unknown_sampler_name():
@@ -157,9 +157,9 @@ class _CountingSampler(ConvexCombinationSampler):
     def sample(self, clusters, n_new, rng):
         type(self).calls += 1
         # The loop passes each cluster's centroid: the mean of its points.
-        X, counts = _to_host(clusters.X), _to_host(clusters.counts)
-        means = np.add.reduceat(X, _to_host(clusters.starts)) / counts[:, None]
-        np.testing.assert_allclose(_to_host(clusters.centroids), means, rtol=1e-12)
+        X, counts = to_host(clusters.X), to_host(clusters.counts)
+        means = np.add.reduceat(X, to_host(clusters.starts)) / counts[:, None]
+        np.testing.assert_allclose(to_host(clusters.centroids), means, rtol=1e-12)
         return super().sample(clusters, n_new, rng)
 
 

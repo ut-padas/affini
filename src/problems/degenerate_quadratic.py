@@ -9,7 +9,7 @@ SEED = 0
 BETA = 1.0
 
 
-def _get_random_rotation(d: int, dtype) -> np.ndarray:
+def get_random_rotation(d: int, dtype) -> np.ndarray:
     """
     Creates a random rotation matrix using QR decomposition.
 
@@ -40,7 +40,7 @@ def _get_params(d: int, dtype) -> np.ndarray:
 
     # 2. Construct H = diag(lambdas)
     H = np.diag(lambdas)
-    Q = _get_random_rotation(d, dtype)
+    Q = get_random_rotation(d, dtype)
 
     return Q @ H @ Q.T
 

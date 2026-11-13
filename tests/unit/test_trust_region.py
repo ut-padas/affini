@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from src import _to_host, xp
+from src import to_host, xp
 from src.components.local_models import lsq_hessians
 from src.components.trust_regions import trust_region_shapes
 
@@ -19,7 +19,7 @@ CENTROIDS = np.add.reduceat(X, STARTS) / SIZES[:, None]
 
 
 def test_farthest_point_lies_on_the_trust_region_boundary():
-    Q = _to_host(
+    Q = to_host(
         trust_region_shapes(
             xp.asarray(X),
             xp.asarray(CENTROIDS),
@@ -42,7 +42,7 @@ def test_lsq_hessians_recover_a_quadratic():
     A = A + A.T
     G = (X @ A)[:, None, :]  # (N, 1, d)
     g_c = (CENTROIDS @ A)[:, None, :]
-    H = _to_host(
+    H = to_host(
         lsq_hessians(
             xp.asarray(X),
             xp.asarray(G),

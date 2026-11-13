@@ -10,7 +10,7 @@ SIGMA_DECAY_EXPONENT = 3
 BETA = 1
 
 
-def _get_random_rotation(d: int, dtype) -> np.ndarray:
+def get_random_rotation(d: int, dtype) -> np.ndarray:
     """
     Creates a random rotation matrix using QR decomposition.
 
@@ -71,7 +71,7 @@ def aniso_gaussian(
     prec_diag = xp.asarray(_get_precision_eigenvalues(d, dtype, sigma_decay_exponent))
 
     # Create random rotation matrix Q
-    Q = xp.asarray(_get_random_rotation(d, dtype))
+    Q = xp.asarray(get_random_rotation(d, dtype))
 
     # Rotate data: X_rot = X Q
     X_rot = X @ Q  # (N, d)
@@ -103,7 +103,7 @@ def aniso_gaussian_grad(
 
     # --- 1. Compute PDF components ---
     prec_diag = xp.asarray(_get_precision_eigenvalues(d, dtype, sigma_decay_exponent))
-    Q = xp.asarray(_get_random_rotation(d, dtype))
+    Q = xp.asarray(get_random_rotation(d, dtype))
 
     X_rot = X @ Q
     mahalanobis_sq = xp.sum(prec_diag[None, :] * (X_rot**2), axis=1, keepdims=True)
@@ -141,7 +141,7 @@ def aniso_gaussian_hess(
 
     # --- 1. Compute PDF components ---
     prec_diag = xp.asarray(_get_precision_eigenvalues(d, dtype, sigma_decay_exponent))
-    Q = xp.asarray(_get_random_rotation(d, dtype))
+    Q = xp.asarray(get_random_rotation(d, dtype))
 
     X_rot = X @ Q
     mahalanobis_sq = xp.sum(prec_diag[None, :] * (X_rot**2), axis=1, keepdims=True)

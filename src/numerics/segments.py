@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from src import IS_CUPY_BACKEND, Array, _to_host, kernels, xp
+from src import IS_CUPY_BACKEND, Array, kernels, to_host, xp
 
 if IS_CUPY_BACKEND:  # sources in src/kernels/*.cu
     import cupy as cp
@@ -67,7 +67,7 @@ def repeats(values: Array, repeats: Array) -> Array:
     return valid_values[segment_ids]
 
 
-def _reduce_max_1d(vals: Array, starts: Array) -> Array:
+def reduce_max_1d(vals: Array, starts: Array) -> Array:
     """Segmented maximum reduction for contiguous blocks."""
     if IS_CUPY_BACKEND:
         K = starts.shape[0]
@@ -94,7 +94,7 @@ def _reduce_max_1d(vals: Array, starts: Array) -> Array:
         return xp.maximum.reduceat(vals, starts)
 
 
-def _reduce_sum_1d(vals: Array, starts: Array) -> Array:
+def reduce_sum_1d(vals: Array, starts: Array) -> Array:
     """
     Sums of the contiguous row blocks starting at ``starts`` (any trailing shape; blocks
     must be non-empty). NumPy: ``add.reduceat``. CuPy, floating point: ``segment_cross``'s
@@ -122,7 +122,7 @@ def segment_sum(values: Array, labels: Array, K: int) -> Array:
     if IS_CUPY_BACKEND:  # any label order: a stable sort makes the blocks contiguous
         labels = xp.asarray(labels).astype(xp.int64, copy=False)
         order = xp.argsort(labels)  # CuPy's argsort is stable
-        starts, counts = _segments_of(labels[order], K)
+        starts, counts = segments_of(labels[order], K)
         flat = values[order].reshape(values.shape[0], -1).astype(xp.float64, copy=False)
         out = segment_cross(flat, None, starts, counts)[:, :, 0]
         return out.reshape((K, *values.shape[1:])).astype(values.dtype, copy=False)
@@ -142,7 +142,7 @@ def segment_sum(values: Array, labels: Array, K: int) -> Array:
     return xp.asarray(indicator @ flat).reshape((K, *values.shape[1:]))
 
 
-def _segments_of(labels: Array, K: int) -> tuple[Array, Array]:
+def segments_of(labels: Array, K: int) -> tuple[Array, Array]:
     """
     ``(starts, counts)`` of the K label blocks of *sorted* labels, the batch layout
     (``repeat(arange(K), sizes)`` or an order-preserving subset of it) that every training
@@ -261,7 +261,7 @@ def count_groups(counts: Array, starts: Array) -> list[tuple[Array, Array]]:
     and no per-row outer products, and a block's arithmetic does not depend on the
     other blocks in its batch.
     """
-    host = np.asarray(_to_host(counts))
+    host = np.asarray(to_host(counts))
     groups = []
     for c in np.unique(host):
         ids = xp.asarray(np.nonzero(host == c)[0])

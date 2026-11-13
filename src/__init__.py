@@ -21,10 +21,6 @@ from src.infra.backend import (
 
 logger = logging.getLogger(__name__)
 
-# Historical names used throughout the codebase.
-_get_mpi_rank = get_mpi_rank
-_get_mpi_size = get_mpi_size
-
 
 def __getattr__(name: str) -> Any:
     """Resolve ``HAS_MPI``/``MPI`` on first use, so importing ``src`` never initializes MPI."""
@@ -36,10 +32,8 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def _to_host(arr: Array | Any) -> Array | Any:
-    """Move array to host (NumPy) if it's on device (CuPy)."""
-
-    # If not an array, return as is
+def to_host(arr: Array | Any) -> Array | Any:
+    """A NumPy copy of a CuPy array; NumPy arrays and non-arrays are returned as they are."""
     if not hasattr(arr, "shape") or not hasattr(arr, "dtype"):
         return arr
 
@@ -48,8 +42,8 @@ def _to_host(arr: Array | Any) -> Array | Any:
     return arr
 
 
-def _to_device(arr: Array | Any) -> Array | Any:
-    """Move array to device (CuPy) if available, else keep as NumPy."""
+def to_device(arr: Array | Any) -> Array | Any:
+    """The array on the active backend (CuPy when ``xp`` is CuPy); non-arrays are returned as they are."""
     if not hasattr(arr, "shape") or not hasattr(arr, "dtype"):
         return arr
     return xp.asarray(arr)
@@ -62,21 +56,19 @@ FIGURES_DIR = PROJECT_DIR / "figures"
 RESULTS_DIR = PROJECT_DIR / "results"
 
 __all__ = [
-    "HAS_MPI",
-    "IS_CUPY_BACKEND",
-    "MPI",
     "Array",
-    "FIGURES_DIR",
-    "PROJECT_DIR",
-    "RESULTS_DIR",
-    "_get_mpi_rank",
-    "_get_mpi_size",
-    "_to_device",
-    "_to_host",
     "backend_info",
+    "FIGURES_DIR",
     "get_mpi_rank",
     "get_mpi_size",
+    "HAS_MPI",
     "has_mpi",
+    "IS_CUPY_BACKEND",
+    "MPI",
     "print_backend_info",
+    "PROJECT_DIR",
+    "RESULTS_DIR",
+    "to_device",
+    "to_host",
     "xp",
 ]

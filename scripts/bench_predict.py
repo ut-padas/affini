@@ -25,7 +25,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path.cwd()))  # the checkout being measured
 
-from src import IS_CUPY_BACKEND, _to_host, xp  # noqa: E402
+from src import IS_CUPY_BACKEND, to_host, xp  # noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
 from src.config import TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
@@ -100,7 +100,7 @@ def main():
         _sync()
         times.append(time.perf_counter() - t)
 
-    pred, unguaranteed = _to_host(pred), _to_host(unguaranteed)
+    pred, unguaranteed = to_host(pred), to_host(unguaranteed)
     print(
         f"backend={'cupy' if IS_CUPY_BACKEND else 'numpy'} mode={mode.value} d={args.dim} "
         f"N_train={args.n_train:,} N_c={surrogate.N_src:,} N_query={args.n_query:,} k={args.k}"

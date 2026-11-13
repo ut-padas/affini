@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from src import IS_CUPY_BACKEND, _to_host, xp
+from src import IS_CUPY_BACKEND, to_host, xp
 from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
 from src.surrogate import AFINNISurrogate
@@ -19,7 +19,7 @@ GPU_RUNS_RTOL = 1e-10
 
 def host(a):
     """``a`` as a NumPy array, whatever the backend."""
-    return np.asarray(_to_host(a))
+    return np.asarray(to_host(a))
 
 
 def assert_backend_equal(

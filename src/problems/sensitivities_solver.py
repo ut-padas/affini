@@ -19,7 +19,7 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 
-def _preferred_mp_start_method(requested: str | None = None) -> str:
+def preferred_mp_start_method(requested: str | None = None) -> str:
     """
     Pick a multiprocessing start method for heavy numerical worker pools.
 
@@ -308,7 +308,7 @@ def parallel_sensitivities_solver(
             f"Solver: {N:,} trajectories, {num_workers} workers (N/Worker: {(N // num_workers):,})."
         )
 
-        start_method = _preferred_mp_start_method(MP_START_METHOD)
+        start_method = preferred_mp_start_method(MP_START_METHOD)
         logging.info(f"Sensitivity solver multiprocessing start method: {start_method}")
         ctx = mp.get_context(start_method)
         with ctx.Pool(processes=num_workers) as pool:

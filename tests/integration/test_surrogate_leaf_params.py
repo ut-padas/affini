@@ -3,7 +3,7 @@
 import numpy as np
 
 import src.components.local_models as lm
-from src import _to_host, xp
+from src import to_host, xp
 from src.components.modes import SurrogateMode
 from src.core.clusters import ParamSpec
 from src.problems.rosenbrock import rosenbrock
@@ -43,7 +43,7 @@ def _train_and_predict(X, Q, local_model=None):
         use_work_stealing=False,
     )
     pred, unguaranteed = surrogate.predict(xp.asarray(Q), k_nn=4)[:2]
-    return surrogate, _to_host(pred), _to_host(unguaranteed)
+    return surrogate, to_host(pred), to_host(unguaranteed)
 
 
 def test_new_model_columns_reach_predict():

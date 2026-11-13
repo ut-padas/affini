@@ -6,7 +6,7 @@ import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, kernels, xp
 from src.art.geometry import Domain, Roots
-from src.art.rng import _GOLDEN, _MIX1, _MIX2, counter_uniform_pairs
+from src.art.rng import GOLDEN, MIX1, MIX2, counter_uniform_pairs
 from src.art.split_search import segment_sum
 from src.components.sampling import ClusterPoints, Sampler
 from src.numerics import (
@@ -284,7 +284,7 @@ class HitAndRunSampler(Sampler):
                            np.ascontiguousarray(self._lo, dtype=np.float64), np.ascontiguousarray(self._hi, dtype=np.float64),
                            C, d, int(cons.shape[1]), self.roots.n_roots if self.roots.is_voronoi else 0, (d + 1) // 2,
                            int(coordinate), t_from, t_to, self._start_hashes + 1 + self.max_walk_steps * self._step_hashes,
-                           self._start_hashes + 1, np.uint64((purpose << 56) + _GOLDEN % 2**56), self.FEASIBILITY_TOL)  # fmt: skip
+                           self._start_hashes + 1, np.uint64((purpose << 56) + GOLDEN % 2**56), self.FEASIBILITY_TOL)  # fmt: skip
         elif n:
             _hr_kernel()(((n + 127) // 128,), (128,), (
                 U, bad, owner.astype(xp.int64), draw.astype(xp.int64), geo.keys.astype(xp.uint64), cons, root,
@@ -292,7 +292,7 @@ class HitAndRunSampler(Sampler):
                 np.int64(n), np.int32(d), np.int32(cons.shape[1]), np.int32(self.roots.n_roots if self.roots.is_voronoi else 0),
                 np.int32((d + 1) // 2), np.int32(int(coordinate)), np.int32(t_from), np.int32(t_to),
                 np.int64(self._start_hashes + 1 + self.max_walk_steps * self._step_hashes), np.int64(self._start_hashes + 1),
-                np.uint64((purpose << 56) + _GOLDEN % 2**56), np.float64(self.FEASIBILITY_TOL)))  # fmt: skip
+                np.uint64((purpose << 56) + GOLDEN % 2**56), np.float64(self.FEASIBILITY_TOL)))  # fmt: skip
         return U, bad
 
     def _drifting(self, U_mid: Array, U_end: Array, owner: Array, walk: Array, n_new: Array) -> Array:
@@ -362,7 +362,7 @@ def _cpu_hr_walk():
     if _CPU_HR_WALK is None:
         import numba as nb
 
-        m1, m2 = np.uint64(_MIX1), np.uint64(_MIX2)
+        m1, m2 = np.uint64(MIX1), np.uint64(MIX2)
 
         @nb.njit(cache=True, error_model="numpy")  # IEEE inf/NaN on division by zero, as NumPy and CUDA
         def mix(z):  # pragma: no cover - compiled

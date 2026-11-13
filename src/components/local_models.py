@@ -49,18 +49,18 @@ from src.components.registry import Registry
 from src.core.clusters import ParamSpec
 from src.numerics import (
     TINY_EPS,
-    _reduce_sum_1d,
-    _symmetric_point_covariance,
     count_groups,
     det_einsum,
     det_matmul,
     grouped_cross,
+    reduce_sum_1d,
     repeats,
     run_fused_cross_cov,
     run_fused_stats,
     segment_cross,
     solve_regularized_covariance_inplace,
     spd_solve,
+    symmetric_point_covariance,
 )
 
 
@@ -172,7 +172,7 @@ def lsq_hessians(
     """
     K = len(counts)
     d, fd = X.shape[1], G.shape[1]
-    Cov = _symmetric_point_covariance(X, centroids, labels, K)
+    Cov = symmetric_point_covariance(X, centroids, labels, K)
     dvals, U = xp.linalg.eigh(Cov)
     dvals = xp.maximum(dvals, TINY_EPS)
     denom = dvals[:, :, None] + dvals[:, None, :]  # (K, d, d)
@@ -278,7 +278,7 @@ class AffineLSQModel(LocalModel):
 
     def fit(self, data):
         K, (_, d), fd = len(data.sizes), data.X.shape, data.F.shape[1]
-        mean_F = _reduce_sum_1d(data.F, data.starts) / data.sizes[:, None]  # (K, fd)
+        mean_F = reduce_sum_1d(data.F, data.starts) / data.sizes[:, None]  # (K, fd)
         auto_cov, _ = run_fused_stats(
             data.X, data.centroids, data.labels, K, d, fd, None, calc_E=False
         )  # (K, d, d)
@@ -326,7 +326,7 @@ class QuadraticLSQModel(LocalModel):
 
     def fit(self, data):
         diff = data.X - data.centroids[data.labels]
-        radius = xp.sqrt(_reduce_sum_1d(xp.sum(diff**2, axis=1), data.starts) / data.sizes)
+        radius = xp.sqrt(reduce_sum_1d(xp.sum(diff**2, axis=1), data.starts) / data.sizes)
         radius = xp.where(radius > 0, radius, 1.0)
         Phi = self.features(diff / radius[data.labels][:, None])
         if IS_CUPY_BACKEND:  # reproducible, batch-independent sums (cuBLAS batching is neither)

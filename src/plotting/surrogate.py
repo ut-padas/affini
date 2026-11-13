@@ -18,7 +18,7 @@ from matplotlib.colors import ListedColormap, LogNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Ellipse
 
-from src import Array, _to_device, _to_host, xp
+from src import Array, to_device, to_host, xp
 
 if TYPE_CHECKING:
     from src.surrogate import AFINNISurrogate
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 def _host_domain(domain) -> tuple[float, float]:
     """``(lo, hi)`` as Python floats, so a CuPy ``domain`` cannot make NumPy return CuPy arrays to matplotlib."""
-    lo, hi = (float(_to_host(v)) for v in domain)
+    lo, hi = (float(to_host(v)) for v in domain)
     return lo, hi
 
 
@@ -45,7 +45,7 @@ def plot_adaptive_clustering_results(
     (left) and their trust ellipsoids ``dx^T Q dx = 1`` (right).
     """
     # Matplotlib needs host arrays; accept device (CuPy) inputs too.
-    centroids, Q = _to_host(centroids), _to_host(Q)
+    centroids, Q = to_host(centroids), to_host(Q)
     domain = _host_domain(domain)
 
     # Get dimensions of X
@@ -64,7 +64,7 @@ def plot_adaptive_clustering_results(
 
     # Evaluate function on grid
     grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
-    Z_grid = _to_host(f_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+    Z_grid = to_host(f_fn(to_device(grid_pts)).reshape(X_grid.shape))
     if plot_f_abs:
         Z_grid = np.abs(Z_grid)
     cbar_norm = LogNorm() if plot_in_log else None
@@ -200,7 +200,7 @@ def plot_error_histogram(
     plt.figure(figsize=(10, 6))
 
     # Extract data to CPU for plotting
-    data_to_plot = _to_host(ptwise_rel_error)
+    data_to_plot = to_host(ptwise_rel_error)
     plt.hist(data_to_plot.flatten(), bins=50, log=True)
 
     if rtol is not None:
@@ -224,8 +224,8 @@ def plot_error_histogram(
 
 def plot_cluster_projections_for_wave(clusters: Array, img_fpath: Path, dim: int):
     """Save centroids projected on the wave problem's direction q against their distance from span(q)."""
-    from src.problems.wave import _get_random_direction
-    q = _to_host(_get_random_direction(dim, clusters.dtype))
+    from src.problems.wave import get_random_direction
+    q = to_host(get_random_direction(dim, clusters.dtype))
     q = q / np.linalg.norm(q)
 
     # Project onto span(q) and span(q)^(perp)
@@ -256,12 +256,12 @@ def plot_wave_2d_errors(surrogate: AFINNISurrogate, domain, f_fn, img_fpath: Pat
     X_grid, Y_grid = np.meshgrid(x, y)
     # Evaluate function on grid
     grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
-    exact = _to_host(f_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+    exact = to_host(f_fn(to_device(grid_pts)).reshape(X_grid.shape))
     # Evaluate surrogate
     coarse_factor = 50
     output = surrogate.predict(grid_pts, coarse_factor=coarse_factor)
-    approx = _to_host(output[0]).reshape(X_grid.shape)
-    trust = _to_host(output[1]).reshape(X_grid.shape)
+    approx = to_host(output[0]).reshape(X_grid.shape)
+    trust = to_host(output[1]).reshape(X_grid.shape)
 
     # Compute error
     error = np.abs(exact - approx) + 1e-12
@@ -325,8 +325,8 @@ def plot_wave_line_errors(
     Nc, d = centers.shape
 
     # Random direction and its orthogonal complement (2D only)
-    from src.problems.wave import _get_random_direction
-    q = _get_random_direction(d, centers.dtype)
+    from src.problems.wave import get_random_direction
+    q = get_random_direction(d, centers.dtype)
     e = np.zeros(d); e[0] = 1
     q_perp = e - np.dot(q, e) * q
     q_perp /= np.linalg.norm(q_perp)
@@ -359,11 +359,11 @@ def plot_wave_line_errors(
             continue
 
         # Evaluate exact function
-        exact = _to_host(f_fn(_to_device(pts_valid)))
+        exact = to_host(f_fn(to_device(pts_valid)))
 
         # Evaluate surrogate
         output = surrogate.predict(pts_valid, coarse_factor=coarse_factor)
-        approx = _to_host(output[0])
+        approx = to_host(output[0])
 
         # Compute error
         error = np.abs(exact - approx) + 1e-12
@@ -418,11 +418,11 @@ def plot_near_centers(
     n_report: int = 10,
 ):
     """Save the leaves the two-stage search considers for ``target`` and print the closest ones."""
-    centers = _to_host(surrogate.X_src)  # (Nc, d)
-    Qs = _to_host(surrogate.Qs_src)  # (Nc, d, d)
+    centers = to_host(surrogate.X_src)  # (Nc, d)
+    Qs = to_host(surrogate.Qs_src)  # (Nc, d, d)
     Nc, d = centers.shape
 
-    target = np.asarray(_to_host(target)).reshape(1, d)
+    target = np.asarray(to_host(target)).reshape(1, d)
 
     # --- Coarse step: Euclidean nearest neighbors to target ---
     dists = np.linalg.norm(centers - target, axis=1)
@@ -472,7 +472,7 @@ def plot_near_centers(
     y = np.linspace(domain[0], domain[1], n_grid)
     X_grid, Y_grid = np.meshgrid(x, y)
     grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
-    field = _to_host(bg_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+    field = to_host(bg_fn(to_device(grid_pts)).reshape(X_grid.shape))
 
     fig, ax = plt.subplots(figsize=(8, 8))
     cs = ax.contourf(X_grid, Y_grid, field, levels=20, cmap="viridis", alpha=0.7)
@@ -552,7 +552,7 @@ def plot_exact_hess_vs_estimated_hess(
     y = np.linspace(domain[0], domain[1], n_grid)
     X_grid, Y_grid = np.meshgrid(x, y)
     grid_pts = np.vstack([X_grid.ravel(), Y_grid.ravel()]).T
-    field = _to_host(bg_fn(_to_device(grid_pts)).reshape(X_grid.shape))
+    field = to_host(bg_fn(to_device(grid_pts)).reshape(X_grid.shape))
     # Color background on each axis
     cs = axs[0].contourf(X_grid, Y_grid, field, levels=20, cmap="viridis")
     fig.colorbar(cs, ax=axs[0])

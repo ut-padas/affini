@@ -4,7 +4,7 @@ import numpy as np
 from array_api_compat import array_namespace
 
 from src import Array
-from src.problems.anisotropic_quadratic import _get_random_rotation
+from src.problems.anisotropic_quadratic import get_random_rotation
 
 # Default hyperparameters matching the anisotropic case
 SEED = 0
@@ -37,7 +37,7 @@ def _get_indefinite_params(
     lambdas = lambdas * signs
 
     # 4. Rotation: Reuse the random orthogonal rotation logic
-    Q = _get_random_rotation(d, dtype)
+    Q = get_random_rotation(d, dtype)
 
     # 5. Construct H = Q @ diag(lambdas) @ Q.T
     H = (Q * lambdas[None, :]) @ Q.T

@@ -7,7 +7,7 @@ import numpy as np
 from scipy.integrate import solve_ivp
 
 # Assumes these modules exist in your project structure
-from src import IS_CUPY_BACKEND, Array, _to_device, _to_host, xp
+from src import IS_CUPY_BACKEND, Array, to_device, to_host, xp
 from src.problems.adjoint_solver import parallel_adjoint_solver
 from src.problems.sensitivities_solver import parallel_sensitivities_solver
 from src.problems.vanderpol import vanderpol, vanderpol_grad
@@ -29,7 +29,7 @@ def vanderpol_flowmap(X0: Array, mu: float = 5.0, tf: float = 5.0) -> Array:
     Returns:
         XF: (N, d) data matrix of states at time tf.
     """
-    X0_np = _to_host(X0)
+    X0_np = to_host(X0)
     n_trajectories = X0_np.shape[0]
     d = 2
     X0_flat = X0_np.ravel()
@@ -53,7 +53,7 @@ def vanderpol_flowmap(X0: Array, mu: float = 5.0, tf: float = 5.0) -> Array:
     # Reshape result: sol.y is (n_vars, 1) -> transpose -> (1, n_vars) -> reshape
     XF = sol.y.T.reshape(n_trajectories, d)
 
-    return _to_device(XF)
+    return to_device(XF)
 
 
 def vanderpol_flowmap_grad(X0: Array, mu: float = 5.0, tf: float = 5.0) -> Array:
@@ -70,7 +70,7 @@ def vanderpol_flowmap_grad(X0: Array, mu: float = 5.0, tf: float = 5.0) -> Array
     Returns:
         DXF: (N, d, d) Jacobian matrices d(x_tf)/d(x_0).
     """
-    X0_np = _to_host(X0)
+    X0_np = to_host(X0)
     N, d = X0_np.shape
 
     # KEY FIX: Use partial instead of lambda.
@@ -82,7 +82,7 @@ def vanderpol_flowmap_grad(X0: Array, mu: float = 5.0, tf: float = 5.0) -> Array
     # We only need the sensitivities (index 1), ignoring the flowmap state (index 0)
     _, DXF = parallel_sensitivities_solver(rhs, jac, X0_np, tf)
 
-    return _to_device(DXF)
+    return to_device(DXF)
 
 
 def vanderpol_flowmap_oracle(X0: Array, mu: float = 5.0, tf: float = 5.0) -> Array:
@@ -99,7 +99,7 @@ def vanderpol_flowmap_oracle(X0: Array, mu: float = 5.0, tf: float = 5.0) -> Arr
     Returns:
         DXF: (N, d, d) Jacobian matrices d(x_tf)/d(x_0).
     """
-    X0_np = _to_host(X0)
+    X0_np = to_host(X0)
     N, d = X0_np.shape
 
     # KEY FIX: Use partial instead of lambda.
@@ -111,7 +111,7 @@ def vanderpol_flowmap_oracle(X0: Array, mu: float = 5.0, tf: float = 5.0) -> Arr
     # We only need the sensitivities (index 1), ignoring the flowmap state (index 0)
     XF, DXF = parallel_sensitivities_solver(rhs, jac, X0_np, tf)
 
-    return _to_device(XF), _to_device(DXF)
+    return to_device(XF), to_device(DXF)
 
 
 def vanderpol_flowmap_oracle_first_component(
@@ -128,7 +128,7 @@ def vanderpol_flowmap_oracle_first_component(
     Returns:
         Tuple (XF, DXF).
     """
-    X0_np = _to_host(X0)
+    X0_np = to_host(X0)
     N, d = X0_np.shape
 
     # Use partial for picklability
@@ -138,4 +138,4 @@ def vanderpol_flowmap_oracle_first_component(
     e1 = np.eye(d)[0]
     XF, DXF = parallel_adjoint_solver(rhs, jac, X0_np, tf, e1)
 
-    return _to_device(XF), _to_device(DXF)
+    return to_device(XF), to_device(DXF)

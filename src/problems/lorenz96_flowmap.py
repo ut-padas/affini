@@ -11,11 +11,11 @@ from multiprocessing.shared_memory import SharedMemory
 import numpy as np
 from scipy.integrate import solve_ivp
 
-from src import Array, _to_device, _to_host
+from src import Array, to_device, to_host
 from src.problems.lorenz96 import lorenz96, lorenz96_grad
 from src.problems.sensitivities_solver import (
-    _preferred_mp_start_method,
     parallel_sensitivities_solver,
+    preferred_mp_start_method,
 )
 
 
@@ -143,7 +143,7 @@ def _parallel_flowmap_solve(
                 )
             )
 
-        ctx = mp.get_context(_preferred_mp_start_method(mp_start_method))
+        ctx = mp.get_context(preferred_mp_start_method(mp_start_method))
         with ctx.Pool(processes=workers) as pool:
             results = pool.map(_flowmap_chunk_worker, tasks)
         if not all(results):
@@ -216,8 +216,8 @@ def lorenz96_flowmap(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> Array:
     Returns:
         XF: (N, d) data matrix of states at time tf.
     """
-    X0_np = _to_host(X0)
-    return _to_device(_serial_flowmap_solve(X0_np, forcing, tf))
+    X0_np = to_host(X0)
+    return to_device(_serial_flowmap_solve(X0_np, forcing, tf))
 
 
 def lorenz96_flowmap_auto(
@@ -237,11 +237,11 @@ def lorenz96_flowmap_auto(
     Uses the serial batched SciPy solve for small calls and shared-memory
     multiprocessing for large calls.
     """
-    X0_np = _to_host(X0)
+    X0_np = to_host(X0)
     if _lorenz96_flowmap_parallel_policy(
         X0_np, min_state_variables=min_state_variables
     ):
-        return _to_device(
+        return to_device(
             _parallel_flowmap_solve(
                 X0_np,
                 forcing,
@@ -252,7 +252,7 @@ def lorenz96_flowmap_auto(
                 atol=atol,
             )
         )
-    return _to_device(_serial_flowmap_solve(X0_np, forcing, tf, rtol=rtol, atol=atol))
+    return to_device(_serial_flowmap_solve(X0_np, forcing, tf, rtol=rtol, atol=atol))
 
 
 def lorenz96_flowmap_grad(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> Array:
@@ -269,13 +269,13 @@ def lorenz96_flowmap_grad(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> A
     Returns:
         DXF: (N, d, d) Jacobian matrices d(x_tf)/d(x_0).
     """
-    X0_np = _to_host(X0)
+    X0_np = to_host(X0)
     rhs = partial(lorenz96, forcing=forcing)
 
     # We only need the sensitivities (index 1), ignoring the flowmap state (index 0)
     _, DXF = parallel_sensitivities_solver(rhs, lorenz96_grad, X0_np, tf)
 
-    return _to_device(DXF)
+    return to_device(DXF)
 
 
 def _parallel_flowmap_grad_solve(
@@ -328,11 +328,11 @@ def lorenz96_flowmap_grad_auto(
     Small batches stay in one serial batched sensitivity solve to avoid process
     overhead.  Large batches use the shared-memory multiprocessing solver.
     """
-    X0_np = _to_host(X0)
+    X0_np = to_host(X0)
     if _lorenz96_sensitivity_parallel_policy(
         X0_np, min_augmented_variables=min_augmented_variables
     ):
-        return _to_device(
+        return to_device(
             _parallel_flowmap_grad_solve(
                 X0_np,
                 forcing,
@@ -356,4 +356,4 @@ def lorenz96_flowmap_grad_auto(
         RTOL=rtol,
         ATOL=atol,
     )
-    return _to_device(DXF)
+    return to_device(DXF)

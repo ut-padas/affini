@@ -21,7 +21,7 @@ import math
 
 import numpy as np
 
-from src import PROJECT_DIR, _to_host, xp
+from src import PROJECT_DIR, to_host, xp
 from src.config import ARTSettings, TrainingConfig
 from src.core.evaluation import Evaluator
 from src.problems.wave import wave
@@ -59,15 +59,15 @@ def main(args) -> None:
     pred, outside = model.predict(X_test)
     errors = compute_error_metrics(pred, wave(X_test), outside, atol=config.atol, rtol=config.rtol)
     print(f"Test: relative L2 {errors['all']['l2_rel_error']:.2e} on {X_test.shape[0]:,} uniform points, "
-          f"{int(_to_host(outside).sum())} outside the domain")  # fmt: skip
+          f"{int(to_host(outside).sum())} outside the domain")  # fmt: skip
     _, flagged = model.predict(xp.asarray([[UPPER + 1.0] * d]))
-    print(f"A point beyond the box is flagged outside: {bool(_to_host(flagged)[0])}")
+    print(f"A point beyond the box is flagged outside: {bool(to_host(flagged)[0])}")
 
     # 4. Leaves: why each one stopped, and whether its validation points passed.
     counts = model.leaf_status_counts()
     print(f"Leaves by terminal reason {counts['terminal_reason']}, by validation {counts['validation_status']}")
     details = model.route_details(X_test[:3])
-    print(f"Leaf rows of the first three test points: {_to_host(details['leaf']).tolist()}")
+    print(f"Leaf rows of the first three test points: {to_host(details['leaf']).tolist()}")
 
     # 5. Audit: violations on fresh uniform points, with a binomial upper bound on their rate.
     audit = model.audit(Evaluator(f_fn=wave), 3_000, seed=SEED + 1)
@@ -77,7 +77,7 @@ def main(args) -> None:
     # 6. Save and reload: the routing tree and leaf statuses are part of the model file.
     path = model.save_model(OUT_DIR / "art_model")
     reloaded = AFINNISurrogate.load_model(path)
-    same = bool(np.array_equal(_to_host(reloaded.predict(X_test)[0]), _to_host(pred)))
+    same = bool(np.array_equal(to_host(reloaded.predict(X_test)[0]), to_host(pred)))
     print(f"Saved {path.relative_to(PROJECT_DIR)}; reloaded predictions identical: {same}")
 
     # 7. Plots.

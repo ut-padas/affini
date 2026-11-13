@@ -39,7 +39,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path.cwd()))
 
-from src import IS_CUPY_BACKEND, _get_mpi_rank, _to_host, xp  # noqa: E402
+from src import IS_CUPY_BACKEND, get_mpi_rank, to_host, xp  # noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
 from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
@@ -87,7 +87,7 @@ def model_arrays(s: AFINNISurrogate) -> dict[str, np.ndarray]:
     if s.routing is not None:
         out.update({f"route:{k}": v for k, v in s.routing.arrays().items()})
     out.update({f"leaf:{k}": v for k, v in s.art_leaves.items()})
-    return {k: _to_host(v) for k, v in out.items() if v is not None}
+    return {k: to_host(v) for k, v in out.items() if v is not None}
 
 
 def cases():
@@ -149,14 +149,14 @@ def run(out_prefix):
                 arrays[f"{name}|{attr}"] = v.reshape(len(v), -1) if v.ndim else v
             if art_mode:
                 pred, mask = s.predict(Q)  # routed down the tree
-                arrays[f"{name}|pred_route"], arrays[f"{name}|mask_route"] = _to_host(pred), _to_host(mask)
+                arrays[f"{name}|pred_route"], arrays[f"{name}|mask_route"] = to_host(pred), to_host(mask)
                 counters = {**s.profiling_stats.get("art", {}), **s.profiling_stats.get("terminal_reasons", {})}
                 arrays[f"{name}|art_counters"] = np.asarray([counters[k] for k in sorted(counters)], dtype=np.int64)
             else:
                 for k, coarse, strict in ((1, 10, False), (4, 10, False), (4, 10, True), (2000, 2000, False)):
                     pred, mask = s.predict(Q, k_nn=k, coarse_factor=coarse, strict_trust_region=strict, batch_size=37)
-                    arrays[f"{name}|pred_{k}_{strict}"] = _to_host(pred)
-                    arrays[f"{name}|mask_{k}_{strict}"] = _to_host(mask)
+                    arrays[f"{name}|pred_{k}_{strict}"] = to_host(pred)
+                    arrays[f"{name}|mask_{k}_{strict}"] = to_host(mask)
             ps = s.profiling_stats
             report[name] = dict(
                 leaves=int(s.N_src), evals=int(ps["total_f_evals"]),
@@ -165,7 +165,7 @@ def run(out_prefix):
         except Exception as e:  # recorded, so a baseline failure is visible
             report[name] = dict(error=f"{type(e).__name__}: {e}")
     meta = dict(backend="cupy" if IS_CUPY_BACKEND else "numpy", cases=report)
-    if _get_mpi_rank() != 0:  # every rank holds the same model; rank 0 writes
+    if get_mpi_rank() != 0:  # every rank holds the same model; rank 0 writes
         return meta
     np.savez(out_prefix + ".npz", **arrays)
     Path(out_prefix + ".json").write_text(json.dumps(meta, indent=2))
@@ -225,7 +225,7 @@ def main():
     p.add_argument("--rtol", type=float, default=0.0, help="allowed relative array difference")
     args = p.parse_args()
     run(args.save)
-    if _get_mpi_rank() == 0 and args.compare and not compare(args.save, args.compare, args.rtol):
+    if get_mpi_rank() == 0 and args.compare and not compare(args.save, args.compare, args.rtol):
         raise SystemExit(1)
 
 

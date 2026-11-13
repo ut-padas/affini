@@ -23,11 +23,11 @@ from src.numerics.linalg import (
     spd_solve_factored,
 )
 from src.numerics.segments import (
-    _reduce_max_1d,
-    _reduce_sum_1d,
     count_groups,
     get_n_smallest_per_block,
     grouped_cross,
+    reduce_max_1d,
+    reduce_sum_1d,
     repeats,
     segment_cross,
     segment_layout,
@@ -35,7 +35,6 @@ from src.numerics.segments import (
     sort_by_block_then_value,
 )
 from src.numerics.stats import (
-    _symmetric_point_covariance,
     centroid_distances,
     convert_to_2d_array,
     convert_to_3d_array,
@@ -43,7 +42,8 @@ from src.numerics.stats import (
     run_fused_mahalanobis_projection,
     run_fused_split_projection,
     run_fused_stats,
+    symmetric_point_covariance,
     taylor_residual_norms,
 )
 
-__all__ = ["TINY_EPS", "_reduce_max_1d", "_reduce_sum_1d", "_symmetric_point_covariance", "centroid_distances", "convert_to_2d_array", "convert_to_3d_array", "count_groups", "det_einsum", "det_matmul", "get_n_smallest_per_block", "get_prime_factors", "grouped_cross", "lsq_hessian_in_eigenbasis", "repeats", "run_fused_cross_cov", "run_fused_mahalanobis_projection", "run_fused_split_projection", "run_fused_stats", "segment_cross", "segment_layout", "segment_sum", "solve_regularized_covariance_inplace", "sort_by_block_then_value", "spd_factor", "spd_solve", "spd_solve_factored", "taylor_residual_norms", "uniform_grid_bins"]
+__all__ = ["TINY_EPS", "centroid_distances", "convert_to_2d_array", "convert_to_3d_array", "count_groups", "det_einsum", "det_matmul", "get_n_smallest_per_block", "get_prime_factors", "grouped_cross", "lsq_hessian_in_eigenbasis", "reduce_max_1d", "reduce_sum_1d", "repeats", "run_fused_cross_cov", "run_fused_mahalanobis_projection", "run_fused_split_projection", "run_fused_stats", "segment_cross", "segment_layout", "segment_sum", "solve_regularized_covariance_inplace", "sort_by_block_then_value", "spd_factor", "spd_solve", "spd_solve_factored", "symmetric_point_covariance", "taylor_residual_norms", "uniform_grid_bins"]

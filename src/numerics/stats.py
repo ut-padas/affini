@@ -2,7 +2,7 @@
 
 
 from src import IS_CUPY_BACKEND, Array, kernels, xp
-from src.numerics.segments import _segments_of, segment_cross, segment_sum
+from src.numerics.segments import segment_cross, segment_sum, segments_of
 
 if IS_CUPY_BACKEND:
     pass
@@ -21,10 +21,10 @@ def run_fused_stats(
     """
     Accumulates Covariance (C) and Gradient Interaction (E) matrices. On CuPy through
     ``segment_cross``, so the sums are reproducible and independent of the batch; there
-    the labels must be sorted (``_segments_of``), as every batch layout is.
+    the labels must be sorted (``segments_of``), as every batch layout is.
     """
     if IS_CUPY_BACKEND:  # labels sorted, as every batch stores its clusters contiguously
-        starts, counts = _segments_of(labels, K)
+        starts, counts = segments_of(labels, K)
         C_out = segment_cross(X, X, starts, counts, a_off=mus, b_off=mus, symmetric=True)
         if not calc_E:
             return C_out, xp.array([], dtype=xp.float64)
@@ -52,7 +52,7 @@ def run_fused_stats(
 def run_fused_cross_cov(X, F, mus, f_mus, labels, K, D, FD):
     """Accumulates Cross-Covariance matrix (dx * df^T); on CuPy through ``segment_cross`` (reproducible; sorted labels)."""
     if IS_CUPY_BACKEND:  # labels sorted, as every batch stores its clusters contiguously
-        starts, counts = _segments_of(labels, K)
+        starts, counts = segments_of(labels, K)
         return segment_cross(X, F, starts, counts, a_off=mus, b_off=f_mus)
 
     dx = X - mus[labels]
@@ -159,7 +159,7 @@ def run_fused_mahalanobis_projection(dx, labels, U):
     return xp.einsum("ni,nij->nj", dx, U[labels])
 
 
-def _symmetric_point_covariance(
+def symmetric_point_covariance(
     X: Array, centroids: Array, labels: Array, K: int
 ) -> Array:
     """(K, d, d) covariance of each cluster's points about its centroid."""

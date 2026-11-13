@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src import _to_host
+from src import to_host
 from src.problems.lorenz96 import lorenz96, lorenz96_grad
 from src.problems.lorenz96_flowmap import lorenz96_flowmap, lorenz96_flowmap_grad
 from src.problems.vanderpol import vanderpol, vanderpol_grad
@@ -19,7 +19,7 @@ def _fd_jacobian(fn, X, h=1e-6):
     for j in range(X.shape[1]):
         E = np.zeros_like(X)
         E[:, j] = h
-        cols.append((_to_host(fn(X + E)) - _to_host(fn(X - E))) / (2 * h))
+        cols.append((to_host(fn(X + E)) - to_host(fn(X - E))) / (2 * h))
     return np.stack(cols, axis=-1)
 
 
@@ -57,7 +57,7 @@ def test_vanderpol_grad_matches_finite_differences():
 def test_short_flow_map_step_follows_the_vector_field(flowmap, rhs, kwargs, d):
     X = rng.uniform(-2, 2, (4, d))
     tf = 1e-4
-    Y = _to_host(flowmap(X, tf=tf, **kwargs))
+    Y = to_host(flowmap(X, tf=tf, **kwargs))
     # x(tf) = x0 + tf f(x0) + O(tf^2)
     np.testing.assert_allclose((Y - X) / tf, rhs(X, **kwargs), rtol=1e-3, atol=1e-3)
 
@@ -73,7 +73,7 @@ def test_flow_map_grad_matches_finite_differences(flowmap, grad, kwargs, d):
     X = rng.uniform(-2, 2, (3, d))
     f = lambda Z: flowmap(Z, **kwargs)  # noqa: E731
     np.testing.assert_allclose(
-        _to_host(grad(X, **kwargs)), _fd_jacobian(f, X, h=1e-5), rtol=1e-3, atol=1e-4
+        to_host(grad(X, **kwargs)), _fd_jacobian(f, X, h=1e-5), rtol=1e-3, atol=1e-4
     )
 
 
@@ -87,5 +87,5 @@ def test_jax_lorenz96_flow_map_agrees_with_scipy():
     assert Y_jax.shape == (6, 1, 5)  # (N, saved times, d): only tf is saved
     # The JAX solve uses rtol = atol = 1e-3.
     np.testing.assert_allclose(
-        Y_jax[:, 0, :], _to_host(lorenz96_flowmap(X, 1.0, 0.1)), atol=1e-2
+        Y_jax[:, 0, :], to_host(lorenz96_flowmap(X, 1.0, 0.1)), atol=1e-2
     )

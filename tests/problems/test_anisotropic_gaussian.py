@@ -10,10 +10,10 @@ from src.problems.anisotropic_gaussian import (
     SEED,
     SIGMA_DECAY_EXPONENT,
     _get_precision_eigenvalues,
-    _get_random_rotation,
     aniso_gaussian,
     aniso_gaussian_grad,
     aniso_gaussian_hess,
+    get_random_rotation,
 )
 
 
@@ -133,7 +133,7 @@ class TestAnisoGaussianSympyDerivatives(unittest.TestCase):
         """Test that the rotation matrix has proper orthogonal properties."""
         n_dim = 3
 
-        Q = _get_random_rotation(n_dim, np.float64)
+        Q = get_random_rotation(n_dim, np.float64)
 
         # Test orthogonality: Q^T @ Q should be identity
         identity_test = Q.T @ Q

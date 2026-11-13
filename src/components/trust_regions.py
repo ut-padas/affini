@@ -19,10 +19,10 @@ from src import Array, xp
 from src.components.registry import Registry
 from src.numerics import (
     TINY_EPS,
-    _reduce_max_1d,
-    _symmetric_point_covariance,
     det_matmul,
+    reduce_max_1d,
     run_fused_mahalanobis_projection,
+    symmetric_point_covariance,
 )
 
 
@@ -61,7 +61,7 @@ def trust_region_shapes(
     starts = xp.r_[0, xp.cumsum(counts)[:-1]]  # (K,)
     dx = X - centroids[labels]  # (N, d)
 
-    Cov = _symmetric_point_covariance(X, centroids, labels, K)
+    Cov = symmetric_point_covariance(X, centroids, labels, K)
     Lambda, U = xp.linalg.eigh(Cov)
     if q_reg > 0.0:
         Lambda = xp.maximum(Lambda, q_reg)
@@ -69,7 +69,7 @@ def trust_region_shapes(
 
     proj = run_fused_mahalanobis_projection(dx, labels, U)  # (N, d)
     dist_sq_mahalanobis = xp.sum(proj**2 * Lambda_inv[labels], axis=1)  # (N,)
-    max_dist = _reduce_max_1d(dist_sq_mahalanobis, starts)  # (K,)
+    max_dist = reduce_max_1d(dist_sq_mahalanobis, starts)  # (K,)
 
     scale_fac = 1.0 / xp.maximum(max_dist, TINY_EPS)
     return (

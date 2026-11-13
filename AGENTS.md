@@ -38,7 +38,7 @@ AFINNI_DEVICE=cpu AFINNI_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin
   numerical changes must be listed and justified separately. Compare against references
   saved from the current baseline (`--save` on the base commit), not older ones, which may
   predate deliberate numerical changes.
-- GPU training sums are deterministic and per segment (`segment_cross`, `_reduce_sum_1d`,
+- GPU training sums are deterministic and per segment (`segment_cross`, `reduce_sum_1d`,
   `det_matmul`, `spd_solve` in `src/numerics/`): repeated GPU runs are bit-identical
   and ART trees do not depend on the batch size. Do not reintroduce `atomicAdd`
   float sums, CuPy's float `add.reduceat` (it subtracts prefix sums) or cuBLAS-batched
@@ -93,6 +93,9 @@ Names (use them in code, docstrings, messages and docs):
 - Before adding a helper, search for an existing one and reuse or extend it. Do not
   add small single-use functions, and do not duplicate logic that a module already
   owns (e.g. new components go through the registries in `src/components/registry.py`).
+- A name another module imports or calls is part of its module's API: no leading underscore.
+  `_name` stays inside its module (and its class); tests may still reach in.
+  `tests/unit/test_layering.py` rejects `src` imports of underscore names.
 - When existing code gains new behaviour, rename the function, its docstring and
   related identifiers to describe what it now does, and update every caller, test
   and doc. Do not keep a name that only fits the old behaviour.

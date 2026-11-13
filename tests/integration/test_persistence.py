@@ -112,7 +112,7 @@ def test_only_rank_0_writes(tmp_path, monkeypatch):
     import src.surrogate.model as su
 
     s = train()
-    monkeypatch.setattr(su, "_get_mpi_rank", lambda: 1)
+    monkeypatch.setattr(su, "get_mpi_rank", lambda: 1)
     assert s.save_model(tmp_path / "m") == tmp_path / "m.npz"
     assert not list(tmp_path.iterdir())
 

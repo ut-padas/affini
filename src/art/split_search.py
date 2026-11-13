@@ -3,13 +3,13 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from src import IS_CUPY_BACKEND, Array, _to_host, kernels, xp
+from src import IS_CUPY_BACKEND, Array, kernels, to_host, xp
 from src.art.geometry import plane_scores
 from src.numerics import (
-    _reduce_sum_1d,
     count_groups,
     det_einsum,
     grouped_cross,
+    reduce_sum_1d,
     segment_cross,
     segment_layout,
     spd_factor,
@@ -19,7 +19,7 @@ from src.numerics import (
 
 
 @dataclass
-class _SplitRows:
+class SplitRows:
     """
     The rows of the nodes being split, with their affine split features (training views
     only). No per-point outer product is ever formed, which would cost ``N p^2`` memory
@@ -102,11 +102,11 @@ class _SplitRows:
                 sides.append((L, R))
             return tuple(s[0] for s in sides) + tuple(s[1] for s in sides)
         out = [xp.empty(shape) for shape in ((k, m, p, p), (k, m, p, fd), (k, m)) * 2]
-        pos_host = np.asarray(_to_host(pos))
+        pos_host = np.asarray(to_host(pos))
         y2 = xp.sum(self.Y**2, axis=1)
         for nodes, rows in self.groups:
             c = int(rows.shape[1])
-            edges = np.r_[0, pos_host[int(_to_host(nodes[0]))], c]
+            edges = np.r_[0, pos_host[int(to_host(nodes[0]))], c]
             sorted_rows = order[rows]  # (g, c): each node's rows by increasing score
             P, Yg, y2g = self.Phi[sorted_rows], self.Y[sorted_rows], y2[sorted_rows]
             bins = [(int(a), int(b)) for a, b in zip(edges[:-1], edges[1:], strict=True)]
@@ -125,7 +125,7 @@ class _SplitRows:
         return spd_solve(G + lam * xp.eye(p), B)  # SPD: lam > 0 and the weights are floored
 
 
-def _hard_sse(rows: _SplitRows, w: Array, z: Array, min_side: int) -> tuple[Array, Array]:
+def hard_sse(rows: SplitRows, w: Array, z: Array, min_side: int) -> tuple[Array, Array]:
     """
     Direct residual sum of squares of the two hard children ``w^T u < z`` / ``>= z``,
     each refit on its own rows (both Grams formed directly, no complementary
@@ -148,17 +148,17 @@ def _hard_sse(rows: _SplitRows, w: Array, z: Array, min_side: int) -> tuple[Arra
 def segment_sum(a: Array, starts: Array) -> Array:
     """
     Sums of the row blocks ``a[starts[i]:starts[i + 1]]`` (the last runs to the end), for any
-    number of trailing axes: ``_reduce_sum_1d`` (exact per block on CuPy too), and on NumPy
+    number of trailing axes: ``reduce_sum_1d`` (exact per block on CuPy too), and on NumPy
     2-D ``add.reduceat`` for multi-axis input, the form the CPU trees were built with.
     """
     if a.ndim == 1:
-        return _reduce_sum_1d(a.astype(xp.float64), starts)
+        return reduce_sum_1d(a.astype(xp.float64), starts)
     if IS_CUPY_BACKEND:
-        return _reduce_sum_1d(a, starts)
+        return reduce_sum_1d(a, starts)
     return xp.add.reduceat(a.reshape(a.shape[0], -1), starts, axis=0).reshape(-1, *a.shape[1:])
 
 
-def _soft_gates(rows: _SplitRows, w: Array, z: Array, T: Array, delta: float) -> tuple[Array, Array, Array]:
+def soft_gates(rows: SplitRows, w: Array, z: Array, T: Array, delta: float) -> tuple[Array, Array, Array]:
     """Floored soft memberships ``(W_L, W_R)`` and ``sigma(s) sigma(-s)``, with ``s = (w^T u - z) / T``."""
     if IS_CUPY_BACKEND:  # one fused pass instead of about a dozen elementwise kernels
         WL, WR, sp_sm = (xp.empty(int(rows.U.shape[0])) for _ in range(3))
@@ -177,8 +177,8 @@ _CPU_SOFT_GATES = None
 
 def _cpu_soft_gates():
     """
-    ``_soft_gates`` on the CPU as one serial Numba pass over the rows (compiled on first use): the
-    score, the stable logistic of ``_sigmoid`` and the floors without about ten temporaries.
+    ``soft_gates`` on the CPU as one serial Numba pass over the rows (compiled on first use): the
+    score, the stable logistic of ``sigmoid`` and the floors without about ten temporaries.
     Serial on purpose: the soft search makes thousands of calls, many on small batches, and
     starting a parallel region per call costs more than the serial loop saves.
     """
@@ -219,7 +219,7 @@ def _split_kernel(name: str, n_threads: int, *args) -> None:
         _SPLIT_MODULE.get_function(name)(((n_threads + 255) // 256,), (256,), args)
 
 
-def _soft_step(rows: _SplitRows, w, z, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n, delta, active, stops, trials: int):
+def soft_step(rows: SplitRows, w, z, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n, delta, active, stops, trials: int):
     """
     One soft-search descent step on the GPU in three node-level kernels and one segmented sum: project
     the gradient and set ``alpha = T / |g|``; evaluate the frozen loss of every halving
@@ -251,7 +251,7 @@ def _soft_step(rows: _SplitRows, w, z, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T,
                      np.int32(mt), np.int32(int(gi == len(groups) - 1)))  # fmt: skip
 
 
-def _soft_objective(rows: _SplitRows, w: Array, z: Array, T: Array, delta: float):
+def soft_objective(rows: SplitRows, w: Array, z: Array, T: Array, delta: float):
     """
     The consistent soft objective ``J = min_B F`` per node and its gradient in ``(w, z)``
     (not yet projected to ``|w| = 1``). With ``B`` at its minimizer, the envelope theorem
@@ -266,7 +266,7 @@ def _soft_objective(rows: _SplitRows, w: Array, z: Array, T: Array, delta: float
         return _soft_objective_fused(rows, w, z, T, delta)
     n = rows.counts.astype(xp.float64)
     lab = rows.labels
-    WL, WR, sp_sm = _soft_gates(rows, w, z, T, delta)
+    WL, WR, sp_sm = soft_gates(rows, w, z, T, delta)
     res, pen, gap = [], 0.0, 0.0
     for Wt in (WL, WR):
         H, Bs = rows.gram(Wt)
@@ -282,16 +282,16 @@ def _soft_objective(rows: _SplitRows, w: Array, z: Array, T: Array, delta: float
     return J, rows.reduce(a[:, None] * rows.U), -rows.reduce(a), rL, rR, pen, gap, rows.reduce(sp_sm)
 
 
-def _soft_objective_fused(rows: _SplitRows, w: Array, z: Array, T: Array, delta: float):
+def _soft_objective_fused(rows: SplitRows, w: Array, z: Array, T: Array, delta: float):
     """
-    ``_soft_objective`` on the GPU in about 20 launches instead of about 100: both children
+    ``soft_objective`` on the GPU in about 20 launches instead of about 100: both children
     share each segmented product, solve and residual pass, and every per-node sum of the
     objective and gradient comes from one reduction of ``soft_row_terms``.
     """
     n = rows.counts.astype(xp.float64)
     N, (k, d), fd = int(rows.U.shape[0]), w.shape, rows.Y.shape[1]
     p = rows.Phi.shape[1]
-    WL, WR, sp_sm = _soft_gates(rows, w, z, T, delta)
+    WL, WR, sp_sm = soft_gates(rows, w, z, T, delta)
     W = xp.stack([WL, WR])  # (2, N)
     H = segment_cross(rows.Phi, rows.Phi, rows.starts, rows.counts, W, symmetric=True, layout=rows._layout)
     Bs = segment_cross(rows.Phi, rows.Y, rows.starts, rows.counts, W, layout=rows._layout)  # (2, k, p, fd)
@@ -312,20 +312,20 @@ def _soft_objective_fused(rows: _SplitRows, w: Array, z: Array, T: Array, delta:
     return J, S[:, 1 : d + 1], -S[:, d + 1], r[0], r[1], pen, gap, S[:, d + 2]
 
 
-def _unit(a: Array) -> Array:
+def unit_rows(a: Array) -> Array:
     """Rows of ``a`` scaled to unit length; zero or non-finite rows become NaN (an invalid split)."""
     norm = xp.linalg.norm(a, axis=-1, keepdims=True)
     ok = xp.isfinite(norm) & (norm > 0)
     return xp.where(ok, a / xp.where(ok, norm, 1.0), xp.nan)
 
 
-def _sigmoid(s: Array) -> Array:
+def sigmoid(s: Array) -> Array:
     """The logistic function without overflow for large ``|s|`` and without clipping."""
     e = xp.exp(-xp.abs(s))
     return xp.where(s >= 0, 1.0 / (1.0 + e), e / (1.0 + e))
 
 
-def _interleave(a: Array, b: Array, first: Array) -> Array:
+def interleave(a: Array, b: Array, first: Array) -> Array:
     """Rows of ``a`` where ``first`` is True and rows of ``b`` elsewhere, in order."""
     out = xp.empty((int(first.shape[0]), *a.shape[1:]), dtype=a.dtype)
     out[first] = a
