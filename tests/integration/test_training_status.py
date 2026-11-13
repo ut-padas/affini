@@ -77,7 +77,7 @@ def test_low_level_result_reports_status(monkeypatch):
 
 
 def test_batches_never_drop_clusters_larger_than_a_batch():
-    """A cluster bigger than batch_size is processed alone; it used to end the level early."""
+    """A cluster bigger than batch_size is processed alone, and the level still processes every cluster."""
     points = np.random.default_rng(0).uniform(-1, 1, (4000, 2))
 
     def wavy(x):

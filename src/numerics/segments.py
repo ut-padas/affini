@@ -177,9 +177,9 @@ def segment_cross(
     CuPy: one thread per (256-row chunk, output entry) sums its chunk sequentially, then
     one thread per (segment, entry) sums the chunks in order. No atomics and no per-row
     outer products: the bits are the same between runs and do not depend on the other
-    segments of the batch, and it is faster than the atomicAdd kernel it replaces
+    segments of the batch, and it is faster than an atomicAdd kernel
     (2-30x at 1e6-1e7 rows) and than cuBLAS-batched grouped products for p <= 21.
-    NumPy (reference and tests only; NumPy callers keep their bit-identical paths): a
+    NumPy (reference and tests only; NumPy callers use their own exact paths): a
     per-row outer product reduced with ``add.reduceat``.
     """
     K, P, Q = int(counts.shape[0]), A.shape[1], 1 if B is None else B.shape[-1]

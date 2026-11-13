@@ -30,7 +30,7 @@ __device__ bool infeasible(const double* u, const double* cons, int h, int d, co
         if (rr == vroot) continue;  // the owning centre's own bisector does not exist
         // Bisector of centres c_r, c_j in distance units: n.(u - c_r) <= |c_j - c_r| / 2 with
         // n = (c_j - c_r) / |c_j - c_r|. Formed from the centre difference, not from dot products
-        // and squared norms, which cancel for close centres (design 42.7).
+        // and squared norms, which cancel for close centres.
         const double* cj = C + (long long)rr * d;
         double nrm = 0.0, s = 0.0;
         for (int j = 0; j < d; ++j) {
@@ -88,7 +88,7 @@ extern "C" __global__ void hr_walk(double* U, bool* bad, const long long* owner,
                 g[p] = radius * cos(angle);
                 if (q + p < d) g[q + p] = radius * sin(angle);
             }
-            double nn = 0.0;  // summed in coordinate order, as before
+            double nn = 0.0;  // summed in coordinate order: another order changes the sampler's bits
             for (int j = 0; j < d; ++j) nn += g[j] * g[j];
             nn = sqrt(nn);
             for (int j = 0; j < d; ++j) g[j] /= nn;

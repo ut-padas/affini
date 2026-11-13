@@ -7,7 +7,7 @@ test size, so the thresholds are lowered here. For each of a few seeds this
 trains the Rosenbrock smoke surrogate with work stealing on and checks that:
 
 - every steal request received exactly one reply, and every grant and denial was
-  consumed (an unconsumed message used to kill ranks at MPI_Finalize);
+  consumed (an unconsumed message kills ranks at MPI_Finalize);
 - nothing is still in flight once all ranks have finished;
 - accepted cluster totals are consistent and centroids are unique.
 

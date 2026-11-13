@@ -65,7 +65,7 @@ class HitAndRunSampler(Sampler):
         standardized mean difference above ``mixing_z``) has its chains continued,
         doubling their length, up to ``max_walk_steps``. The returned points are those same
         chains' endpoints: this is a drift check, not a separate pilot and production run,
-        and not a proof of mixing (design Section 33.4).
+        and not a proof of mixing.
 
         Two failures the drift check cannot see are handled explicitly. Every chain that did
         not move (e.g. from a seed in a corner, where an isotropic direction escapes with

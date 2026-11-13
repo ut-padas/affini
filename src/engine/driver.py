@@ -160,9 +160,9 @@ def _refine(
         queue = plan.initial_queue(*(_to_host(a) if a is not None else None for a in data[:3]), data[3]) if rank == 0 else None
         local_clusters = _scatter(comm, queue, d, fd)
         del queue
-    # Rank 0's device copies of the training data stay alive through the free-memory reading,
-    # so the cap (and with it the batch boundaries) is the same as when they were kept for the
-    # whole run; afterwards they only cost memory.
+    # The cap is read with rank 0's training data still on the device: releasing it first
+    # would raise the cap on large runs and so change batch boundaries and trees. Afterwards
+    # it only costs memory.
     _cap_batch_size(config, plan, d, fd)
     del data
     # What this run actually used; the caller's (requested) config is unchanged.

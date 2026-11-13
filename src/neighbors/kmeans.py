@@ -27,12 +27,11 @@ Scheme (as in cuVS / cuML defaults: k-means|| seeding, Lloyd, ``max_iter=300``,
 - Convergence: total squared centre shift <= ``tol`` x mean feature variance, checked
   every ``CHECK_EVERY`` iterations (each check waits for the device).
 
-Measured on an RTX 2000 Ada laptop GPU against cuML 26.06 at cuML's iteration counts:
-4.5-7.2x faster for 200k-2M points, d = 5-100, k = 92-500, with inertia within 0.1% in
-four of five cases and 0.7% higher in one. Results differ from cuML's (different
-seeding), so trees built from them differ but are statistically equivalent.
+Performance: several times faster than cuML's k-means at its iteration counts, with
+comparable inertia. Results differ from cuML's (different seeding), so trees built from
+them differ but are statistically equivalent.
 
-CPU path (Numba + BLAS; the pipeline calls it with ``max_iter=2`` as before):
+CPU path (Numba + BLAS; the pipeline calls it with ``max_iter=2``):
 
 - Seeding: the same k-means||, with each round lowering every point's distance to its
   nearest candidate in place on the float64 data (a compiled kernel) and recording
@@ -45,9 +44,8 @@ CPU path (Numba + BLAS; the pipeline calls it with ``max_iter=2`` as before):
   centre shift is below ``tol``; a final assignment makes labels match the centres.
 - Threads: ``threads`` if given (rank 0 borrows its node's idle MPI ranks' cores),
   else ``OMP_NUM_THREADS``, else all cores.
-- Measured against scikit-learn 1.7 at 2-3 iterations: 1.4-2.3x faster on one thread
-  and 2.7-8.6x on eight, for 200k-2M points, d = 5-100, k = 92-500, with inertia within
-  -0.95% to +0.14% of scikit-learn's.
+- Performance: faster than scikit-learn's k-means at the pipeline's few iterations, on
+  one thread and more so on several, with comparable inertia.
 - Caveat: run to full convergence it can need more iterations than scikit-learn (300
   vs 221 in one 5-D test, from the different seeding), although each iteration is as
   fast or faster; the pipeline only runs a few iterations.

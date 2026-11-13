@@ -87,7 +87,7 @@ def registered():
         del registry[name]
 
 
-# --- Defaults: modes are presets of the same components as before -------------
+# --- Defaults: every mode is a preset of registered components ----------------
 
 
 @pytest.mark.parametrize("mode", list(SurrogateMode))

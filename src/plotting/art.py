@@ -32,7 +32,7 @@ STATUS_COLOURS = ("#9e9e9e", "#4c9a6a", "#d1495b", "#7b5ea7")
 
 
 def pointwise_relative_error(truth, pred, floor: float = 1e-12) -> np.ndarray:
-    """(n,) worst-component ``|pred - truth| / max(|truth|, floor)`` on the host (ART's definition)."""
+    """(n,) worst-component ``|pred - truth| / max(|truth|, floor)`` on the host (the reference ART's definition)."""
     truth, pred = np.asarray(_to_host(truth)), np.asarray(_to_host(pred))
     rel = np.abs(pred - truth) / np.maximum(np.abs(truth), floor)
     return rel.max(axis=1) if rel.ndim > 1 else rel

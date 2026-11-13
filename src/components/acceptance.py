@@ -29,7 +29,7 @@ the cluster's points ``i``:
     the cluster's own largest value of that component).
 ``"pointwise"``
     every point passes on its own: ``|e_ij| < atol_j`` or ``|e_ij| / |F_ij| < rtol_j``
-    (ART's ``max_pointwise_relative`` rule); reports the per-cluster maxima.
+    (the reference ART's ``max_pointwise_relative`` rule); reports the per-cluster maxima.
 
 All comparisons are strict (``<``). A small epsilon (1e-12) guards each
 denominator. Both errors are returned, (K, fd), and stored per leaf as
@@ -135,7 +135,7 @@ class L2Acceptance(AcceptanceCriterion):
 
     def __call__(self, F, F_hat, starts, sizes):
         diff = F - F_hat
-        # Per-component loop keeps each reduction 1-D, so a single output reduces exactly as before.
+        # Per-component loop keeps each reduction 1-D, so a single output reduces exactly like a scalar function.
         sq_err = xp.stack([_reduce_sum_1d(diff[:, j] ** 2, starts) for j in range(F.shape[1])], axis=1)
         sq_val = xp.stack([_reduce_sum_1d(F[:, j] ** 2, starts) for j in range(F.shape[1])], axis=1)
         E_rel = xp.sqrt(sq_err) / (xp.sqrt(sq_val) + TINY_EPS)
@@ -179,7 +179,7 @@ def pointwise_violations(F: Array, F_hat: Array, atol: Tolerance, rtol: Toleranc
 class PointwiseAcceptance(AcceptanceCriterion):
     """
     Every point must pass on every component: ``|e_ij| < atol_j`` or
-    ``|e_ij| / max(|F_ij|, 1e-12) < rtol_j``. With ``rtol`` alone this is ART's
+    ``|e_ij| / max(|F_ij|, 1e-12) < rtol_j``. With ``rtol`` alone this is the reference ART's
     ``max_pointwise_relative`` stopping rule, and the same per-point test as
     ``AFINNISurrogate.audit`` (``pointwise_violations``). Reports ``abs_kj = max_i |e_ij|``
     and ``rel_kj = max_i |e_ij| / max(|F_ij|, 1e-12)``.

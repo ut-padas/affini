@@ -122,7 +122,7 @@ def solve_regularized_covariance_inplace(auto_cov, cross_cov, D, FD):
     """
     Solves ``(auto_cov + lambda I) X = cross_cov`` while minimizing peak GPU
     allocations. On CuPy, both inputs are overwritten in-place and ``cross_cov``
-    becomes the solution. NumPy keeps the original vectorized fallback.
+    becomes the solution. NumPy uses a vectorized solve.
     """
     if IS_CUPY_BACKEND:
         K = int(auto_cov.shape[0])

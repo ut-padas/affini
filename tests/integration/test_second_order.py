@@ -1,9 +1,8 @@
 """
 Second-order Taylor surrogates (TAYLOR_LSQ_HESS with STORE_HESSIAN) end to end.
 
-Every output component has its own Hessian. Previously one Hessian, summed over
-the outputs, was applied to all of them, which silently gave wrong predictions for
-vector-valued functions (e.g. f = [x^2, -x^2] predicted ~0).
+Every output component has its own Hessian: one Hessian summed over the outputs would give
+wrong predictions for vector-valued functions (e.g. f = [x^2, -x^2] would predict ~0).
 """
 
 import numpy as np

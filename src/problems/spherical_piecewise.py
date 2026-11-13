@@ -1,8 +1,8 @@
 """
-ART's spherical piecewise-affine benchmark: one affine function inside a sphere, another
+The reference ART's spherical piecewise-affine benchmark: one affine function inside a sphere, another
 outside, so the target jumps across a curved interface.
 
-The constants are ART's recorded TACC preset (``tasmanian/oracle_presets.json`` and
+The constants are the reference ART's recorded TACC preset (``tasmanian/oracle_presets.json`` and
 ``examples/benchmark_functions.py`` in the ART repository): domain ``[-3, 3]^d``, sphere
 at the origin with the radius that holds 50% of the box's volume, output offset 4.15,
 and the inside branch including the sphere itself. Supported for ``d = 2..5``.

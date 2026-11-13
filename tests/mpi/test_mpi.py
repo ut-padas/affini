@@ -108,8 +108,8 @@ def test_multi_rank_agrees_with_serial_in_accuracy(parallel_result, serial_resul
     Distributing the work must not change the model's quality. It does change the exact
     tree: AFINNI's augmentation stream is seeded with ``seed + level + batch + rank*1000``,
     so which points a rejected cluster gains depends on the rank and batch that process it
-    (on 2-8 ranks the smoke model has 235-252 leaves). Changing that seeding would break
-    AFINNI's bit-identical results, so this compares accuracy instead: the
+    (on 2-8 ranks the smoke model has 235-252 leaves). That seeding defines AFINNI's results,
+    so this compares accuracy instead: the
     same error bound, an error no worse than serial's to within 25%, and a leaf count within
     15% of serial's. ART, whose streams are keyed by node, is checked for exact
     agreement in test_art_is_independent_of_ranks_and_stealing.

@@ -27,8 +27,7 @@ Under MPI every rank builds its own configuration, so every rank must be given
 the same component specs.
 
 ``algorithm`` selects one of two algorithm plans over the same refinement engine
-(``src.engine``): ``"afinni"`` (the default, AFINNI's adaptive clustering, bit-identical to
-earlier versions) or ``"art"``, ART's adaptive regression tree (``src.art``; settings in
+(``src.engine``): ``"afinni"`` (the default, AFINNI's adaptive clustering) or ``"art"``, ART's adaptive regression tree (``src.art``; settings in
 ``ARTSettings``), which needs an explicit ``domain``.
 """
 
@@ -82,12 +81,10 @@ class ARTSettings:
     Settings of ``algorithm="art"`` (see ``src.art``).
 
     Every node is topped up to ``ceil(sample_multiplier * p_eff)`` training points
-    before it is fitted, with ``p_eff = d + 1`` (ART's ``n_node``; ART uses 50). New
+    before it is fitted, with ``p_eff = d + 1`` (the reference ART's ``n_node``; it uses 50). New
     points are uniform in a box or grid root and hit-and-run endpoints (``walk_steps``
     steps from a random inherited point) elsewhere. A split must leave
-    ``p_eff + min_side_margin`` points on each side. The default split search, ``"soft"``,
-    was as accurate as the reference ART or better on most of its benchmarks, with similar
-    or fewer leaves (Section 42.3 of AFINNI_ART_DESIGN.md).
+    ``p_eff + min_side_margin`` points on each side.
     """
 
     # "grid": num_initial_clusters cells over the domain; "voronoi": the Voronoi cells of
@@ -116,8 +113,8 @@ class ARTSettings:
     n_bins: int = 16
     n_directions: int = 6
     n_screened: int = 3
-    # 40: on ART's benchmarks 20 stopped nearly every node at the limit, and 40 gave fewer
-    # leaves or lower error on most of them for about 35% more build time (ART allows 200).
+    # 40: at 20 nearly every node stops at the iteration limit; 40 gives fewer leaves or
+    # lower error for about 35% more build time (the reference ART allows 200).
     soft_iters: int = 40
     soft_temperature: float = 0.1  # gate width as a fraction of the node's score spread
     soft_weight_floor: float = 1e-8  # delta in W = delta + (1 - 2 delta) sigma

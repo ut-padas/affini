@@ -42,9 +42,8 @@ def _p(*keys):
 
 def _surrogate_reference(kind):
     """
-    The (query, neighbour) predictions as the surrogate computed them before
-    LocalModel, except that the second-order term now uses one Hessian per output
-    component (the old code reshaped a single (d, d) Hessian per leaf).
+    The (query, neighbour) predictions computed directly from the leaf columns, independent
+    of LocalModel, with one Hessian per output component in the second-order term.
     """
     flat = NN.reshape(-1)
     f_nb = PARAMS["f"][flat].reshape(n, k, fd)

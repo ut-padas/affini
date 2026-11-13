@@ -110,10 +110,9 @@ class ARTPlan:
         The bins and soft searches' per-node candidate arrays (``n_bins - 1`` Grams per side, the screen) are
         charged to the fewest points a node can hold, so small nodes do not undercount.
         Carried constraints are charged per point (``2 h (d+1)``), which overestimates deep
-        trees several times over. That is kept on purpose: charging them per node (d = 32,
-        depth 12: 5.2 GB in use instead of 1.2 GB) built the same tree 3.4x slower on an
-        8 GB laptop GPU under WSL, where a nearly full card is paged to host memory
-        (design 42.11).
+        trees several times over, on purpose: charging them per node admits batches that
+        nearly fill the card, and a driver that pages a full card to host memory (as under
+        WSL) builds the same tree several times slower.
         """
         d, fd, h = self.d, self.fd, self.config.max_levels + 1
         p = self.p_eff
@@ -523,7 +522,7 @@ class ARTPlan:
     def _soft_refine(self, rows: _SplitRows, w0: Array, z0: Array, sse0: Array, progress) -> tuple[Array, Array]:
         """
         The soft search: polish each bins-search plane by projected gradient descent on the consistent soft
-        objective ``J(w, z) = min_B F`` (Section 33.3 of the design), with a fixed ridge, a
+        objective ``J(w, z) = min_B F``, with a fixed ridge, a
         fixed temperature ``T = soft_temperature * std(w^T u)``, floored weights
         ``W_R = delta + (1 - 2 delta) sigma(s)``, ``W_L = delta + (1 - 2 delta) sigma(-s)``,
         and frozen-model Armijo steps. A step is accepted only if its decrease exceeds the

@@ -187,7 +187,7 @@ def _refine_level(run: _Refinement, queue: ClusterBatch, level: int) -> ClusterB
         log_mem_stats(f"R{rank:02} Start: L{level:02} Batching")
 
     # The plan chooses where each batch ends; the loop runs until every queued cluster was
-    # processed, so oversized clusters are never dropped (they once silently were).
+    # processed, so oversized clusters are never dropped.
     start, good, fallback, level_generated = 0, 0, 0, 0
     for b in itertools.count():
         if start >= queue.n_clusters:

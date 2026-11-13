@@ -75,7 +75,7 @@ extern "C" __global__ void soft_trial_terms(const double* U, const long long* la
         ug += u[j] * gk[j];
     }
     // 2. Frozen-model loss integrand of every trial: the children's residuals rL, rR stay fixed
-    //    (majorization argument, design Section 20), only the gates move.
+    //    (a majorization argument), only the gates move.
     double Tk = T[k], l = rL[i], r = rR[i];
     for (int mm = 0; mm < Mt; ++mm) {
         int m = m0 + mm;

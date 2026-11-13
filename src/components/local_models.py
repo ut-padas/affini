@@ -105,7 +105,7 @@ class LocalModel(ABC):
         return {}
 
     def n_features(self, d: int) -> int:
-        """Coefficients per output; ART sizes each node's sample (``multiplier x this``, as ART) and children by it."""
+        """Coefficients per output; ART sizes each node's sample (``multiplier x this``, as in the reference ART) and children by it."""
         return d + 1
 
     def features(self, Z: Array) -> Array:

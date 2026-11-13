@@ -36,8 +36,8 @@ AFINNI_DEVICE=cpu AFINNI_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin
 - A refactor must keep `scripts/regression_check.py` bit-identical on CPU (AFINNI and ART
   cases; on one rank and, for changes to scatter or merge, on two). Deliberate
   numerical changes must be listed and justified separately. Compare against references
-  saved from the current baseline (`--save` on the base commit), not older ones: the
-  custom k-means/kNN deliberately changed results relative to the original PR head.
+  saved from the current baseline (`--save` on the base commit), not older ones, which may
+  predate deliberate numerical changes.
 - GPU training sums are deterministic and per segment (`segment_cross`, `_reduce_sum_1d`,
   `det_matmul`, `spd_solve` in `src/numerics/`): repeated GPU runs are bit-identical
   and ART trees do not depend on the batch size. Do not reintroduce `atomicAdd`
@@ -47,8 +47,7 @@ AFINNI_DEVICE=cpu AFINNI_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin
   (`tests/_helpers.py`: 1e-12, or 1e-10 with `separate_runs=True` when comparing two
   trainings), never with a loose one that would hide an algorithmic change. Leaf counts
   and evaluation counts must still match exactly.
-- The GPU suite passes completely (AFINNI_ART_DESIGN.md Sections 42.9-42.10); treat any
-  GPU failure as new.
+- The GPU suite passes completely; treat any GPU failure as new.
 - Profiling on GPU: `AFINNI_NVTX=1` emits one NVTX range per phase; profile with
   `nsys profile --trace=cuda,nvtx,osrt` (installed at `/usr/local/bin/nsys`).
   `py-spy`, `viztracer` and `kernprof` are in `.venv/bin`. ART's CUDA tests
@@ -81,7 +80,7 @@ Names (use them in code, docstrings, messages and docs):
 - **AFINNI** (`algorithm="afinni"`, `src/afinni/`, `AFINNIPlan`) is the adaptive-clustering
   algorithm; the project and `AFINNISurrogate` share the name.
 - **ART** (`algorithm="art"`, `src/art/`, `ARTPlan`, `ARTSettings`, `config.art`) is the
-  adaptive regression tree. Do not call it "region mode": "region" is geometry only (a node's
+  adaptive regression tree. "Region" is geometry only (a node's
   polytope is `NodePolytopes`, its rows `constraint_rows`), and "trust region" is AFINNI's.
   The external code `scripts/art_comparison.py` runs is "the reference ART"; ours is
   "AFINNI's ART" where the two must be told apart.
@@ -137,7 +136,7 @@ edit can break, and new failure modes; they must buy a measured improvement that
 Why: what a user notices is the absolute time saved, which a fixed percentage misjudges at both
 ends (10% of 3 s is invisible, 3% of 1000 s is 30 s). An optimization not measured on the
 workloads that matter tends to optimize the wrong case while its complexity stays forever, and a
-single noisy round misleads (AFINNI_ART_DESIGN.md Section 42.13).
+single noisy round misleads.
 
 ## Code documentation style
 
@@ -190,6 +189,45 @@ order = xp.lexsort(xp.stack([scores, labels]))  # sort the scores
 
 # Good: explain the decision, not the call
 order = xp.lexsort(xp.stack([scores, labels]))  # keeps clusters contiguous so children can be cut by position
+```
+
+### Committed documentation stands on its own
+
+Working names, experiment labels and progress notes are fine while prototyping. Before
+committing, rewrite every comment, docstring, message and current-state doc (README, USAGE,
+AGENTS) so that it describes the code as it is, in technical terms, readable without knowing
+how it was built. The history belongs in commit messages and the design doc's log.
+
+- No working or experiment names: write `split_search="soft"`, not "B4"; "ART", not
+  "region mode".
+- No change narrative: "previously", "used to", "now", "as before", "the kernel it replaces",
+  "renamed from", "kept so results stay bit-identical to earlier versions".
+- No pointers to log entries or reviews ("design 42.11", "review §29"): state the reason
+  itself. Cite a stable source (a paper, a library's documentation) only for what the
+  comment cannot hold, such as a derivation.
+- No one-off measurements as decoration ("3.4x slower on an 8 GB laptop under WSL"). Keep a
+  number only when it justifies a constant or a limit, and give the condition it depends on.
+- When a reason really depends on a past state, make it self-contained: name the alternative
+  and why it fails, so the comment is true without the history.
+
+```python
+# Bad: needs the design log and the project's past to make sense
+# B4 polish; kept on purpose (design 42.11): per-node charging was 3.4x slower on the laptop.
+# Good: the reason, standalone
+# Constraints are charged per point, on purpose: charging them per node admits batches that
+# nearly fill the card, and a driver that pages a full card to host memory is several times slower.
+
+
+# Bad
+# so batches (and seeds) stay bit-identical to the original arithmetic
+# Good
+# part of AFINNI's batch boundaries, which fix the trees; changing it changes the results
+
+
+# Bad
+"""A cluster bigger than batch_size is processed alone; it used to end the level early."""
+# Good
+"""A cluster bigger than batch_size is processed alone, and the level still processes every cluster."""
 ```
 
 

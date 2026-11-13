@@ -53,10 +53,8 @@ memory, so the (queries x leaves) distance matrix is never stored.
   matrix product each, then per-row radix selection of the k smallest (cuVS "radix
   top-k" idea) and a sort of only those k.
 
-Measured on an RTX 2000 Ada laptop GPU against cuML 26.06 (float32 both, identical
-recall): 1.3-2.1x faster for d = 5-100, k = 10-64, up to 1.1M leaves, with equal or
-slightly lower memory; 1.1-1.8x for k = 100-200, parity at k = 256 (fused kernel), and
-1.5-2.8x for k = 300-1000 (radix-select path).
+Performance: on par with or faster than cuML's brute-force kNN at equal recall, for
+d = 5-100 and k up to 1000, with equal or slightly lower memory.
 
 This is an independent, simplified reimplementation of ideas from the following
 sources (no code copied); cuVS is Apache-2.0, FAISS is MIT. Permalinks are to the
@@ -212,8 +210,8 @@ _SELECT_KERNEL = None
 #   differences directly (no cancellation, vectorizable inner loop over d).
 # - larger d: float32 BLAS tiles of dot products, then a parallel per-query update
 #   of a sorted top-k list that rejects almost every value with one comparison.
-# FAISS's approximate HNSW index, previously used above 5,000 leaves, lost recall at
-# high dimension (0.56 at d=100), so the CPU search is now always exact.
+# The CPU search is always exact: an approximate index (FAISS HNSW) loses recall at high
+# dimension (0.56 at d=100).
 # Permalinks to the FAISS sources that were read:
 #   https://github.com/facebookresearch/faiss/blob/277b3c76b7a1507915eb8f5010dcb367cbc95494/faiss/utils/distances.cpp
 #   https://github.com/facebookresearch/faiss/blob/277b3c76b7a1507915eb8f5010dcb367cbc95494/faiss/utils/Heap.h

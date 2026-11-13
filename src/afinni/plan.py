@@ -3,9 +3,8 @@ AFINNI as a plan of the shared refinement loop: fit the local model on every clu
 batch, deploy the accepted ones with their trust regions, and augment and bisect the rest.
 
 The batch boundaries (``batch_end``), the random seed per batch, the 50,000-point batch floor
-and the memory estimate are AFINNI's original arithmetic: changing any of them changes batch
-compositions and with them the trees, so ``scripts/regression_check.py`` must stay
-bit-identical across refactors of this module.
+and the memory estimate fix AFINNI's batch compositions and with them its trees: changing any
+of them changes the results, which ``scripts/regression_check.py`` detects.
 """
 
 import logging
@@ -68,7 +67,7 @@ class AFINNIPlan:
 
     label = "AFINNI"
     steal_settings: dict = {}
-    # The batch cap never goes below 50,000 points, so batches (and seeds) stay bit-identical.
+    # The batch cap never goes below 50,000 points (part of the batch boundaries, see above).
     batch_floor = 50_000
     keeps_fallback_leaves = False  # clusters still above tolerance at max_levels are unresolved
 
@@ -104,7 +103,7 @@ class AFINNIPlan:
         X/F/labels, dx, residual work arrays, split scores and sort buffers, including the
         (N, fd, d) ``A_tangent[label]`` temporary of the NumPy Taylor residual
         (``taylor_residual_norms``). The CuPy kernel is fused, so that term is conservative
-        on the GPU; it is kept because a smaller estimate would change batch sizes, and
+        on the GPU; it is not tightened, because a smaller estimate would change batch sizes, and
         with them the results.
         """
         d, fd = self.d, self.fd

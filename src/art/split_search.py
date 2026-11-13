@@ -179,8 +179,8 @@ def _cpu_soft_gates():
     """
     ``_soft_gates`` on the CPU as one serial Numba pass over the rows (compiled on first use): the
     score, the stable logistic of ``_sigmoid`` and the floors without about ten temporaries.
-    Serial on purpose: the soft search makes thousands of calls, many on small batches, and a parallel region's
-    start-up made the whole training 13% slower, while the serial loop made it 19% faster.
+    Serial on purpose: the soft search makes thousands of calls, many on small batches, and
+    starting a parallel region per call costs more than the serial loop saves.
     """
     global _CPU_SOFT_GATES
     if _CPU_SOFT_GATES is None:
