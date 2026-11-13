@@ -79,8 +79,8 @@ architecture. The remaining implementation gaps and deeper answers are in sectio
 ### 2.1 AFINNI is a sample-refinement engine with a separate model-selection rule
 
 The principal implementation points are [adaptive_clustering.py](src/engine/adaptive_clustering.py),
-[splitting.py](src/components/splitting.py), [sampling.py](src/components/sampling.py),
-[local_models.py](src/components/local_models.py), and [surrogate.py](src/surrogate.py).
+[splitting.py](../src/components/splitting.py), [sampling.py](../src/components/sampling.py),
+[local_models.py](../src/components/local_models.py), and [surrogate.py](src/surrogate.py).
 
 The engine stores contiguous points grouped into clusters. It fits and tests a batch,
 stores accepted leaf models, augments rejected clusters, splits those clusters, and
@@ -105,21 +105,21 @@ limits. Retaining the existing loop does not automatically solve them.
 
 ### 2.2 ART is region-based adaptive approximation with expensive split selection
 
-ART's [builder](../Adaptive-Regression-Trees-ART-/art/builder.py) constructs a tree of
+ART's [builder](../../Adaptive-Regression-Trees-ART-/art/builder.py) constructs a tree of
 convex regions. Children inherit the parent samples that fall on their side of a split.
 Each child is topped up to its budget before its own fit and stopping decision.
 Oversized inherited sets are subsampled. A finite-depth or failed-split node remains a
 leaf with a model and a diagnostic status.
 
-Its [soft objective](../Adaptive-Regression-Trees-ART-/art/objectives.py) fits two
+Its [soft objective](../../Adaptive-Regression-Trees-ART-/art/objectives.py) fits two
 weighted local models for a sigmoid gate and adjusts an oblique separating plane.
-Its [sampling code](../Adaptive-Regression-Trees-ART-/art/sampling.py) uses exact box
+Its [sampling code](../../Adaptive-Regression-Trees-ART-/art/sampling.py) uses exact box
 sampling at suitable roots and hit-and-run in child polytopes. Geometry pilots do
 not query the oracle.
 
 ART already has more GPU structure than a simple per-node Python implementation.
-The [batched optimizer](../Adaptive-Regression-Trees-ART-/art/_cuda_batched_optimizer.py)
-and [batched Cholesky workspace](../Adaptive-Regression-Trees-ART-/art/_cuda_batched_cholesky.py)
+The [batched optimizer](../../Adaptive-Regression-Trees-ART-/art/_cuda_batched_optimizer.py)
+and [batched Cholesky workspace](../../Adaptive-Regression-Trees-ART-/art/_cuda_batched_cholesky.py)
 keep features and numerical buffers in fixed GPU slots, reuse capacity, and compact
 active pointer lists. They are worth borrowing from. However, that path assumes
 equally sized node datasets; its builder still performs sampling and node fits on
@@ -127,7 +127,7 @@ the CPU. It is not a replacement for AFINNI's distributed queue.
 
 ### 2.3 ART's inference is already hard routing
 
-In [art/tree.py](../Adaptive-Regression-Trees-ART-/art/tree.py), `SplitNode.route`
+In [art/tree.py](../../Adaptive-Regression-Trees-ART-/art/tree.py), `SplitNode.route`
 goes right when `w @ x - z >= 0`. `RegressionTree.predict` keeps a stack of nodes
 and query-index subsets. At each split it partitions the current subset; at a leaf it
 evaluates that leaf's model. It does not evaluate a sigmoid at inference, test all
@@ -472,7 +472,7 @@ count, with enough excess tasks to tolerate imbalance. Do not hard-code the old
 ### 6.4 Reuse the existing grid option, but retain its geometry
 
 AFINNI already has `uniform_grid_cluster_labels` in
-[adaptive_clustering_utils.py](src/engine/). It factors the
+[adaptive_clustering_utils.py](../src/engine). It factors the
 requested cluster count across dimensions and assigns points to bins. It can supply
 a useful additional root baseline before implementing a new partitioner.
 
@@ -1106,7 +1106,7 @@ resident arrays, factor buffers and iteration state. Migrating it mid-iteration 
 possible, but would greatly complicate the first implementation. Ready-node migration
 preserves the useful existing rule that each job has one processing owner.
 
-The existing [work-stealing implementation](src/engine/work_stealing.py) already handles
+The existing [work-stealing implementation](../src/engine/work_stealing.py) already handles
 explicit grants/denials, crossed requests and retirement. Preserve those invariants.
 Generic properties change the wire payload and its version, even if the request/grant
 state machine remains the same. Calling that change "no protocol change" is too loose.
@@ -1935,18 +1935,18 @@ revision context when sharing the review.
 | Topic | Source |
 |---|---|
 | AFINNI refinement, batch cap and RNG | [src/engine/adaptive_clustering.py](src/engine/adaptive_clustering.py), [pinned source](https://github.com/ut-padas/affini/blob/015adfd4a34b1b5ac5f8c67d9fa38a18a5c8bae7/src/engine/adaptive_clustering.py) |
-| Queues and output columns | [src/core/clusters.py](src/core/clusters.py) |
-| Splits, samples and model contracts | [src/components/splitting.py](src/components/splitting.py), [src/components/sampling.py](src/components/sampling.py), [src/components/local_models.py](src/components/local_models.py) |
-| Numerical kernels and existing grid roots | [src/numerics.py](src/numerics.py), [src/engine/](src/engine/) |
-| Acceptance and prediction | [src/components/acceptance.py](src/components/acceptance.py), [src/surrogate.py](src/surrogate.py), [src/neighbors/knn.py](src/neighbors/knn.py) |
-| Initial cluster geometry | [src/neighbors/kmeans.py](src/neighbors/kmeans.py) |
-| Migration and retirement | [src/engine/work_stealing.py](src/engine/work_stealing.py) |
-| ART builder and stopping | [art/builder.py](../Adaptive-Regression-Trees-ART-/art/builder.py), [pinned source](https://github.com/PranksterComet/Adaptive-Regression-Trees-ART-/blob/854924af9ec8555a11db10de6ab75f429a31be2d/art/builder.py) |
-| ART geometry and prediction | [art/domain.py](../Adaptive-Regression-Trees-ART-/art/domain.py), [art/tree.py](../Adaptive-Regression-Trees-ART-/art/tree.py) |
-| ART objective and model solves | [art/objectives.py](../Adaptive-Regression-Trees-ART-/art/objectives.py), [art/models.py](../Adaptive-Regression-Trees-ART-/art/models.py) |
-| ART sampling and pilots | [art/sampling.py](../Adaptive-Regression-Trees-ART-/art/sampling.py), the builder's `_sample_region` |
-| ART GPU cohorts | [art/_cuda_batched_builder.py](../Adaptive-Regression-Trees-ART-/art/_cuda_batched_builder.py), [art/_cuda_batched_optimizer.py](../Adaptive-Regression-Trees-ART-/art/_cuda_batched_optimizer.py), [art/_cuda_batched_cholesky.py](../Adaptive-Regression-Trees-ART-/art/_cuda_batched_cholesky.py) |
-| ART's own research caveats | [art/agents.md](../Adaptive-Regression-Trees-ART-/art/agents.md) |
+| Queues and output columns | [src/core/clusters.py](../src/core/clusters.py) |
+| Splits, samples and model contracts | [src/components/splitting.py](../src/components/splitting.py), [src/components/sampling.py](../src/components/sampling.py), [src/components/local_models.py](../src/components/local_models.py) |
+| Numerical kernels and existing grid roots | [src/numerics.py](src/numerics.py), [src/engine/](../src/engine) |
+| Acceptance and prediction | [src/components/acceptance.py](../src/components/acceptance.py), [src/surrogate.py](src/surrogate.py), [src/neighbors/knn.py](../src/neighbors/knn.py) |
+| Initial cluster geometry | [src/neighbors/kmeans.py](../src/neighbors/kmeans.py) |
+| Migration and retirement | [src/engine/work_stealing.py](../src/engine/work_stealing.py) |
+| ART builder and stopping | [art/builder.py](../../Adaptive-Regression-Trees-ART-/art/builder.py), [pinned source](https://github.com/PranksterComet/Adaptive-Regression-Trees-ART-/blob/854924af9ec8555a11db10de6ab75f429a31be2d/art/builder.py) |
+| ART geometry and prediction | [art/domain.py](../../Adaptive-Regression-Trees-ART-/art/domain.py), [art/tree.py](../../Adaptive-Regression-Trees-ART-/art/tree.py) |
+| ART objective and model solves | [art/objectives.py](../../Adaptive-Regression-Trees-ART-/art/objectives.py), [art/models.py](../../Adaptive-Regression-Trees-ART-/art/models.py) |
+| ART sampling and pilots | [art/sampling.py](../../Adaptive-Regression-Trees-ART-/art/sampling.py), the builder's `_sample_region` |
+| ART GPU cohorts | [art/_cuda_batched_builder.py](../../Adaptive-Regression-Trees-ART-/art/_cuda_batched_builder.py), [art/_cuda_batched_optimizer.py](../../Adaptive-Regression-Trees-ART-/art/_cuda_batched_optimizer.py), [art/_cuda_batched_cholesky.py](../../Adaptive-Regression-Trees-ART-/art/_cuda_batched_cholesky.py) |
+| ART's own research caveats | [art/agents.md](../../Adaptive-Regression-Trees-ART-/art/agents.md) |
 
 The external primary references used for the specific systems/sampling points are
 linked next to those claims. Their role is limited. The proposed scheduler, hybrid
@@ -3596,7 +3596,7 @@ and grow-and-copy lifetimes as well as point columns.
 ### 30.10 MPI work accounting needs one shared unit
 
 Relevant source: [`_run_local_refinement`](src/engine/adaptive_clustering.py#L194) and
-[`WorkStealer.serve_requests`](src/engine/work_stealing.py#L193).
+[`WorkStealer.serve_requests`](../src/engine/work_stealing.py#L193).
 
 The executor estimates region load with
 
@@ -4461,7 +4461,7 @@ This does not require cryptographic integrity or a new persistence framework.
 
 ### 32.7 Benchmark option guards still leave two scientific mismatches
 
-Source: [`scripts/art_comparison.py`](scripts/art_comparison.py#L98).
+Source: [`scripts/art_comparison.py`](../scripts/art_comparison.py#L98).
 
 The new guard rejects non-affine degrees and unsupported error metrics. It still
 accepts `--no-leaf-bias` and arbitrary `--relative-error-floor` values. ART uses

@@ -50,7 +50,7 @@ Optional backends are uv *extras*; combine them freely, e.g. `uv sync --extra gp
 | CPU + MPI            | `uv sync --extra mpi`                    | Ships its own MPI runtime (MPICH on Linux/macOS, Intel MPI on Windows), so no system install is needed. |
 | NVIDIA GPU (CUDA 12) | `uv sync --extra gpu`                    | Linux and Windows. Only an NVIDIA driver is needed, because the CUDA libraries come from pip.           |
 | GPU + MPI            | `uv sync --extra gpu --extra mpi`        |                                                                                                         |
-| HPC cluster          | `uv sync --extra gpu --extra mpi-system` | Uses the cluster's own MPI. See [HPC clusters](examples/USAGE.md#hpc-clusters).                        |
+| HPC cluster          | `uv sync --extra gpu --extra mpi-system` | Uses the cluster's own MPI. See [HPC clusters](docs/USAGE.md#hpc-clusters).                        |
 
 > [!IMPORTANT]
 > `uv sync` makes `.venv` match exactly what you request: running it again without
@@ -60,7 +60,7 @@ Optional backends are uv *extras*; combine them freely, e.g. `uv sync --extra gp
 |             | Linux (incl. WSL2) | macOS (Apple Silicon, 14+)           | Windows                                                             |
 | ----------- | ------------------ | ------------------------------------ | ------------------------------------------------------------------- |
 | CPU         | ✅                  | ✅ verified on Apple Silicon          | ✅                                                                   |
-| MPI (`mpi`) | ✅                  | ✅ bundled MPICH                     | ✅ Intel MPI ([note](examples/USAGE.md#running-on-cpu-gpu-and-mpi))  |
+| MPI (`mpi`) | ✅                  | ✅ bundled MPICH                     | ✅ Intel MPI ([note](docs/USAGE.md#running-on-cpu-gpu-and-mpi))  |
 | GPU (`gpu`) | ✅ CuPy             | ❌ no CUDA, runs on CPU               | ✅ CuPy                                                              |
 
 Verified so far: Linux x86_64 (CPU, MPICH), WSL2 and Windows with an NVIDIA laptop GPU
@@ -108,21 +108,21 @@ prediction, outside_domain = art.predict(X_query)
 
 ART needs its `domain` explicitly: it is what routing covers. Its settings (split search,
 roots, sampling) are in `art=ARTSettings(...)`; see
-[ART in USAGE.md](examples/USAGE.md#art-adaptive-regression-trees).
+[ART in USAGE.md](docs/USAGE.md#art-adaptive-regression-trees).
 
 Run scripts from the repository root, as modules
 (`python -m examples.example01_rosenbrock_afinni`), so that `src` is importable.
 
 ## Documentation
 
-- **[examples/USAGE.md](examples/USAGE.md)**: the user guide. Training and prediction
+- **[docs/USAGE.md](docs/USAGE.md)**: the user guide. Training and prediction
   on CPU, GPU and MPI; settings and modes; ART; saving models; profiling; plots; live
   monitoring; the experiment launcher; swapping parts of the algorithm (local models,
   split rules, samplers, acceptance tests, trust regions); HPC clusters;
   troubleshooting; development and testing.
-- **[examples/](examples/)**: runnable examples; `example04_wave_art.py` introduces ART and
+- **[examples/](examples)**: runnable examples; `example04_wave_art.py` introduces ART and
   `example05_afinni_vs_art.py` compares AFINNI and ART on four problems.
-- **[AFINNI_ART_DESIGN.md](AFINNI_ART_DESIGN.md)**: the mathematics of both approaches, the
+- **[docs/AFINNI_ART_DESIGN.md](docs/AFINNI_ART_DESIGN.md)**: the mathematics of both approaches, the
   refinement engine, and the design and implementation log.
 - **[AGENTS.md](AGENTS.md)**: code conventions and verification steps for contributors
   (human or AI).
@@ -147,7 +147,7 @@ on the file a name lives in (`from src.art import ARTPlan`). CUDA kernel sources
 ## Development
 
 ```bash
-uv run pytest -m "not mpi"      # tests (see USAGE.md for GPU/MPI and the regression check)
+uv run pytest -m "not mpi"      # tests (see docs/USAGE.md for GPU/MPI and the regression check)
 uv run ruff check .             # lint
 uv run ruff format .            # format
 ```

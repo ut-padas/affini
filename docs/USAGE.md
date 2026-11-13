@@ -52,11 +52,11 @@ pred, outside = surrogate.predict(Q, k_nn=1)   # (N, fd) values, (N,) "outside e
   can be reused; `profiling_stats` counts only the run's own evaluations.
 - `train(..., Y_train=f(X))` skips the initial evaluations (they are still counted).
 - `train(..., initial_labels=labels)` skips the initial clustering; compute the labels
-  once with `initial_clustering(X, config)` (see [`example02_nelson_afinni.py`](example02_nelson_afinni.py)).
+  once with `initial_clustering(X, config)` (see [`example02_nelson_afinni.py`](../examples/example02_nelson_afinni.py)).
 - `predict(..., k_nn=k)` blends the `k` best leaves by trust-region distance;
   `strict_trust_region=True` ignores leaves whose region does not contain the
   query. `coarse_factor` (default 10) sets how many Euclidean neighbours are reranked.
-- [`example01_rosenbrock_afinni.py`](example01_rosenbrock_afinni.py) is a complete 2-D example with a plot.
+- [`example01_rosenbrock_afinni.py`](../examples/example01_rosenbrock_afinni.py) is a complete 2-D example with a plot.
 
 ## Running on CPU, GPU and MPI
 
@@ -239,7 +239,7 @@ ART on the CPU whenever the CPU training takes more than about 1.5 s.
 
 ### Example: ART on its own
 
-[`example04_wave_art.py`](example04_wave_art.py) walks through one ART model on an oblique cosine
+[`example04_wave_art.py`](../examples/example04_wave_art.py) walks through one ART model on an oblique cosine
 (`wave`, `[-5, 5]^d`): the configuration, training from one node's worth of uniform points,
 routed prediction and the outside-domain flag, leaf statuses and `route_details`, `audit`,
 and a save/load round trip, with the tree's plots.
@@ -252,7 +252,7 @@ uv run python -m examples.example04_wave_art --dim 3 --max-depth 16
 
 ### Example: AFINNI and ART on four benchmark problems
 
-[`example05_afinni_vs_art.py`](example05_afinni_vs_art.py) compares the two algorithms on four
+[`example05_afinni_vs_art.py`](../examples/example05_afinni_vs_art.py) compares the two algorithms on four
 problems, each scored on the same uniform test points:
 
 | `--problem` | What it tests | Domain |
@@ -333,10 +333,10 @@ launcher, under `profiling_stats` in each result JSON.
 
 ## Plots
 
-All plots live in [`src/plotting/`](../src/plotting/) and accept a surrogate, its
+All plots live in [`src/plotting/`](../src/plotting) and accept a surrogate, its
 `profiling_stats`, a saved profile JSON loaded with `json.load`, or (timeline plots)
 the event streams. Each returns the figure and saves it when given a path.
-[`example03_monitoring_afinni.py`](example03_monitoring_afinni.py) produces every profile plot
+[`example03_monitoring_afinni.py`](../examples/example03_monitoring_afinni.py) produces every profile plot
 below from one multi-rank run.
 
 ```python
@@ -370,8 +370,8 @@ P.plot_steal_matrix(surrogate, "figs/steals.png")             # needs steals (MP
 
 Profile plots work for both algorithms: titles name the plan, and the forest-growth panels
 show ART's fallback leaves (nodes stopped at the depth limit) separately.
-[`example04_wave_art.py`](example04_wave_art.py) draws the ART plots of one model and
-[`example05_afinni_vs_art.py`](example05_afinni_vs_art.py) every comparison plot, for each of its problems.
+[`example04_wave_art.py`](../examples/example04_wave_art.py) draws the ART plots of one model and
+[`example05_afinni_vs_art.py`](../examples/example05_afinni_vs_art.py) every comparison plot, for each of its problems.
 
 The tables behind the profile plots are available for your own analysis:
 `P.phase_breakdown_frame`, `P.level_stats_frame`, `P.events_frame`,
@@ -397,7 +397,7 @@ figure; export it from `src/plotting/__init__.py`.
 ## Live monitoring
 
 Train with `profile_dir`, then watch from another terminal.
-[`example03_monitoring_afinni.py`](example03_monitoring_afinni.py) is a ready-made run: 8 MPI
+[`example03_monitoring_afinni.py`](../examples/example03_monitoring_afinni.py) is a ready-made run: 8 MPI
 ranks on the CPU train a 5-D Rosenbrock surrogate (2M points, tol 0.007; about 85 s
 on a 22-core laptop). Ranks finish their own work at different times, and the idle
 ones steal from the busy ones (~60 steals).

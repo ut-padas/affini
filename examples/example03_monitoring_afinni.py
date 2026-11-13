@@ -115,7 +115,7 @@ if __name__ == "__main__":
             f"({float(xp.mean(outside)):.1%} of queries outside every trust region)."
         )
         (OUT_DIR / "profile.json").write_text(json.dumps(ps, default=float))
-        # Every profile plot (see examples/USAGE.md#plots); the steal plot needs steals.
+        # Every profile plot (see docs/USAGE.md#plots); the steal plot needs steals.
         plots = OUT_DIR / "plots"
         P.plot_profile_dashboard(ps, plots / "dashboard.png")
         P.plot_rank_time_breakdown(ps, plots / "time_breakdown.png")

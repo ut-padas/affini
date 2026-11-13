@@ -1890,10 +1890,10 @@ since been run on a second machine (Section 42.9).
 | Pointwise acceptance | `src/components/acceptance.py` (`"pointwise"`) | ART's `max_pointwise_relative` with `rtol` alone. |
 | Stealing for region work | `WorkStealer(min_load, steal_size, lease_received, work_sizes)`, `progress()` | Region thresholds (a few nodes' worth), receiver lease (`LEASED` denials), and progress points inside B4 so requests are served mid-batch. Published loads, steal eligibility and grant sizes all use the plan's `work_sizes` (points after top-up and validation), so thieves and victims compare one unit. |
 | Experiment harnesses | `scripts/art_comparison.py`, `scripts/afinni_benchmark.py` | ART vs region on ART's benchmarks, scored by ART's own evaluator (ART's configuration, e.g. its fastest CPU sampler `parallel_numba`, recorded in the output); AFINNI mode, base vs branch accuracy and runtime. |
-| Example and benchmark problems | `examples/example05_afinni_vs_art.py` (and `examples/example04_wave_art.py` for ART alone), `src/problems/spherical_piecewise.py` | Both modes on four problems (`--problem all` or one): ART's spherical piecewise preset (identical to ART's function in 2–5-D), anisotropic Gaussian, wave, Rosenbrock. Per-problem depth limits (and region rtol 0.02 for wave) give equal relative L2 in one process on one CPU; region mode then needs 3.5–18x fewer oracle calls at similar or lower error and fewer leaves on all but the spherical jump (where it is twice as accurate), AFINNI trains as fast or faster (table in `examples/USAGE.md`). Stages `afinni`, `region`, `compare`; `summary.png` across problems. |
+| Example and benchmark problems | `examples/example05_afinni_vs_art.py` (and `examples/example04_wave_art.py` for ART alone), `src/problems/spherical_piecewise.py` | Both modes on four problems (`--problem all` or one): ART's spherical piecewise preset (identical to ART's function in 2–5-D), anisotropic Gaussian, wave, Rosenbrock. Per-problem depth limits (and region rtol 0.02 for wave) give equal relative L2 in one process on one CPU; region mode then needs 3.5–18x fewer oracle calls at similar or lower error and fewer leaves on all but the spherical jump (where it is twice as accurate), AFINNI trains as fast or faster (table in `docs/USAGE.md`). Stages `afinni`, `region`, `compare`; `summary.png` across problems. |
 | Plots | `src/plotting/art.py` | `plot_region_partition`, `plot_region_tree_stats`, `plot_error_maps`, `plot_error_cdf`, `plot_method_comparison`; profile dashboards name the mode and show fallback leaves per level. |
 | Monitor | `src/infra/monitor.py`, `run_start` event | The header names the mode (`AFINNI` or `AFINNI region mode (ART; …)`); region runs report points in fallback leaves instead of queued points. Region stages are timed under the shared phase keys, so profiles break down by phase. |
-| Documentation | `examples/USAGE.md` ("AFINNI region mode (ART)", plots, monitor), `README.md` | |
+| Documentation | `docs/USAGE.md` ("AFINNI region mode (ART)", plots, monitor), `README.md` | |
 
 ### 42.2 Simplifications against Sections 36–38
 
@@ -2086,7 +2086,7 @@ Run from the repository root on a CUDA machine with the GPU extra installed.
    already verified on CPU.
 8. **Example 04 on the GPU:** `AFINNI_DEVICE=gpu uv run python -m
    examples.example04_region_mode --problem all`; the table should match the CPU table in
-   `examples/USAGE.md` to rounding (leaf and evaluation counts may differ slightly for
+   `docs/USAGE.md` to rounding (leaf and evaluation counts may differ slightly for
    AFINNI, whose seed depends on batch boundaries set by the VRAM cap).
 
 ### 42.6 Deliberately deferred (not unfinished)
@@ -2239,7 +2239,7 @@ time, one seed, scored by ART's evaluator on `10000·d` points as in 42.3. Times
 | 5. Region mode against CPU | Tables below. Metrics agree statistically (5 seeds), not bit for bit; GPU time does not scale with batch size at ART's problem sizes but is a nearly constant 9–16 s for B4 (profiling, below). |
 | 6. GPU-only code paths | Exercised by the suite and the matrix; no out-of-memory error. Peak VRAM (whole device, `nvidia-smi` at 10 Hz): 1.6 GB for Rosenbrock 5-D with quadratic leaves and B4, 1.8 GB for Rosenbrock 20-D affine B4. |
 | 7. MPI with a GPU | Only one GPU: 2 ranks sharing it complete a region training with stealing (quadratic 2-D: 379 leaves, L2 2.3e-3, inside the GPU spread). This checks the code path, not scaling (Section 33.7). |
-| 8. Example 04 | Table below. The CPU table of `examples/USAGE.md` is reproduced exactly on this machine; GPU results differ (AFINNI by its batch-dependent seed, region by GPU nondeterminism). |
+| 8. Example 04 | Table below. The CPU table of `docs/USAGE.md` is reproduced exactly on this machine; GPU results differ (AFINNI by its batch-dependent seed, region by GPU nondeterminism). |
 | ART's CUDA tests | 370 passed, 2 skipped (`Non-default stream behavior requires actual CUDA`, the tests' own condition) once a C++ compiler is installed; without one, 117 CPU emulation checks skip. |
 
 **Fixed: region mode did not run on the GPU.**
@@ -2452,7 +2452,7 @@ evaluations / training time):
 | `wave` | 0.0043 / 3 / 805 / 214k / 0.57 s | 0.0033 / 2.4 / 757 / 195k / 0.5 s | 0.0042 / 3 / 77 / 12k / 0.57 s | 0.0042 / 2.9 / 68 / 10k / 8.7 s |
 | `rosenbrock` | 0.0024 / 3 / 4,235 / 1.1M / 1.9 s | 0.0021 / 3 / 4,312 / 1.1M / 1.1 s | 0.0028 / 2.9 / 2,069 / 314k / 12 s | 0.0026 / 1.7 / 2,381 / 362k / 20 s |
 
-The CPU columns equal the table in `examples/USAGE.md` (leaves and evaluations exactly).
+The CPU columns equal the table in `docs/USAGE.md` (leaves and evaluations exactly).
 On the GPU, AFINNI mode is about as fast and as accurate; region mode reaches the same
 accuracy class with different trees and pays the launch floor.
 
