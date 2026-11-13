@@ -280,9 +280,9 @@ def test_region_batches_hold_whole_nodes_within_the_batch_size_or_one_node_alone
     batch_size, seen = 100, []
     original = RegionPlan.process_batch
 
-    def spy(self, **kwargs):
-        seen.append(self.work_sizes(host(kwargs["sizes"])))
-        return original(self, **kwargs)
+    def spy(self, batch, **kwargs):
+        seen.append(self.work_sizes(host(batch.sizes)))
+        return original(self, batch, **kwargs)
 
     monkeypatch.setattr(RegionPlan, "process_batch", spy)
     train_surrogate(points, **region_options(batch_size=batch_size, max_levels=6,

@@ -20,6 +20,7 @@ from src import IS_CUPY_BACKEND, Array, _to_host, xp
 from src.config import ClusteringConfig
 from src.core.clusters import ClusterBatch
 from src.core.evaluation import Evaluator
+from src.engine.afinni_plan import AfinniPlan
 from src.engine.initial import _threads_for_rank0, initial_clustering
 from src.engine.io import combine_generated_data, save_generated_data
 from src.engine.refinement import _run_local_refinement
@@ -253,6 +254,8 @@ def _adaptive_clustering(
         d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
         # Every rank checks, so a tolerance of the wrong length fails before any rank refines.
         config.components().acceptance.check_output_dim(fd_bcast)
+        if plan is None:
+            plan = AfinniPlan(config, d_bcast, fd_bcast, rank)
 
         # Rank 0 splits the sorted clusters into one contiguous chunk per rank.
         if rank == 0 and region_mode:
@@ -305,31 +308,9 @@ def _adaptive_clustering(
         free_vram_bytes = total_vram_bytes = 32 * 1024**3
         usable_vram_bytes = free_vram_bytes
 
-    # Approximate live storage during AFFINE_COV_HESS rejected-cluster handling:
-    # - base batch X/F/labels
-    # - augmented X/F/labels, dx, residual work arrays, split scores/sort buffers
-    # - the (N, fd, d) A_tangent[label] temporary of the NumPy Taylor residual
-    #   (``taylor_residual_norms``). The CuPy kernel is fused, so this term is
-    #   conservative on the GPU; it is kept because a smaller estimate would change
-    #   batch sizes, and with them the results.
-    base_batch_bytes_per_point = (d_bcast + fd_bcast + 1) * 8
-    if plan is not None:  # the region plan's own footprint, with the same admission rule
-        base_batch_bytes_per_point = plan.bytes_per_point()
-    split_augmented_bytes_per_point = (
-        3 * d_bcast  # X_aug, dx, selected/source point work
-        + fd_bcast * d_bcast
-        + 3 * fd_bcast
-        + 8  # labels, masks, scalar work arrays, sort/scores
-    ) * 8
-    augmentation_factor = 2
-    estimated_peak_bytes_per_point = (
-        base_batch_bytes_per_point
-        + augmentation_factor * split_augmented_bytes_per_point
-    ) if plan is None else base_batch_bytes_per_point
-
+    estimated_peak_bytes_per_point = plan.bytes_per_point()
     hardware_batch_cap = usable_vram_bytes // max(1, estimated_peak_bytes_per_point)
-    # AFINNI mode keeps its floor of 50,000 points, so its batches stay bit-identical.
-    batch_floor = 50_000 if plan is None else 1_000
+    batch_floor = plan.batch_floor
     if hardware_batch_cap < batch_floor:
         logger.warning(
             f"Estimated device memory fits only {hardware_batch_cap:,} points per batch "
@@ -366,10 +347,10 @@ def _adaptive_clustering(
     )
     # Region mode leaves no points unresolved: nodes stopped early keep a fallback leaf,
     # reported separately so the monitor does not show them as queued work.
-    unresolved = 0 if plan is not None else int(profiling_stats["num_unresolved_pts"])
+    unresolved = 0 if plan.keeps_fallback_leaves else int(profiling_stats["num_unresolved_pts"])
     profiler.event(
         "done", leaves=int(out_count), generated=int(local_gen_pts), unresolved_pts=unresolved,
-        fallback_pts=int(profiling_stats["num_unresolved_pts"]) if plan is not None else 0,
+        fallback_pts=int(profiling_stats["num_unresolved_pts"]) if plan.keeps_fallback_leaves else 0,
     )  # fmt: skip
 
     local_result_host = dict(buffers)
@@ -443,7 +424,7 @@ def _adaptive_clustering(
             consolidated_profiling["num_unresolved_clusters"] == 0
         )
         consolidated_profiling["plan"] = all_profiling_stats[0].get("plan")
-        if plan is not None:
+        if isinstance(plan, RegionPlan):
             nodes = {k[len("node:"):]: _to_host(merged.pop(k)) for k in list(merged) if k.startswith("node:")}
             routing = RoutingTable.build(
                 plan.domain, plan.roots, merged["root"], merged["path_code"],

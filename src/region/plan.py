@@ -14,7 +14,8 @@ from src.components.sampling import (
     augmentation_targets,
 )
 from src.components.splitting import SplitData
-from src.core.clusters import ParamSpec
+from src.core.clusters import ClusterBatch, ParamSpec
+from src.core.plan import DeviceBatch
 from src.numerics import (
     _reduce_max_1d,
     _reduce_sum_1d,
@@ -54,11 +55,13 @@ from src.region.split_search import (
 # --- The plan ------------------------------------------------------------------------
 class RegionPlan:
     """
-    The region algorithm's plan methods over the shared executor
-    (``src.engine.refinement._run_local_refinement``): batch sizing, steal settings,
-    output columns and ``process_batch``. ``counters`` accumulates this rank's split
-    diagnostics (reported as ``profiling_stats["region"]``).
+    Region mode's members of ``src.core.plan.Plan`` (the shared executor is
+    ``src.engine.refinement._run_local_refinement``). ``counters`` accumulates this rank's
+    split diagnostics (reported as ``profiling_stats["region"]``).
     """
+
+    batch_floor = 1_000
+    keeps_fallback_leaves = True  # a node stopped above tolerance keeps its model, terminal_reason != accepted
 
     def __init__(self, config, d: int, fd: int, domain: Domain, roots: Roots):
         self.config, self.d, self.fd = config, d, fd
@@ -122,6 +125,10 @@ class RegionPlan:
             search += -(-per_node // max(1, int(self.work_sizes(np.zeros(1, np.int64))[0])))
         return 8 * (4 * d + 3 * fd + 2 * g + 2 * h * (d + 1) + 12 + search)
 
+    @property
+    def label(self) -> str:
+        return f"AFINNI region mode (ART; {self.settings.split_search} splits, {self.settings.roots} roots)"
+
     def leaf_columns(self, model) -> dict[str, ParamSpec]:
         cols = output_columns(model, self.d, self.fd)
         if not self.settings.store_Q:
@@ -142,10 +149,24 @@ class RegionPlan:
             "z": ParamSpec(()),
         }
 
-    def initial_queue(self, X: np.ndarray, F: np.ndarray, G: np.ndarray | None):
-        """Every root as a queued node (possibly with no points), points sorted by root."""
-        from src.core.clusters import ClusterBatch
+    def constraint_rows(self, queue: ClusterBatch) -> int:
+        """Children carry one more constraint row than the deepest parent."""
+        return int(queue.depth.max()) + 1
 
+    def batch_end(self, cumsum: np.ndarray, start: int, index: int, batch_size: int) -> int:
+        """
+        The longest run of whole nodes that fits ``batch_size``, or one oversized node alone,
+        so the trees do not depend on batch boundaries.
+        """
+        before = int(cumsum[start - 1]) if start else 0
+        end = int(np.searchsorted(cumsum, before + batch_size, side="right"))
+        return min(max(end, start + 1), len(cumsum))
+
+    def profile(self) -> dict:
+        return {"region": dict(self.counters)}
+
+    def initial_queue(self, X: np.ndarray, F: np.ndarray, G: np.ndarray | None) -> ClusterBatch:
+        """Every root as a queued node (possibly with no points), points sorted by root."""
         root = _to_host(self.roots.root_of(self.domain.normalize(xp.asarray(X)))).astype(np.int64)
         order = np.argsort(root, kind="stable")
         R = self.roots.n_roots
@@ -156,20 +177,25 @@ class RegionPlan:
             constraints=np.zeros((R, 0, self.d + 1)),
         )  # fmt: skip
 
-    def process_batch(self, *, X, F, G, sizes, depth, root, path_code, constraints, components, evaluator,
-                      accepted, splits, next_level, progress=None, timer=None) -> dict[str, int]:  # fmt: skip
+    def process_batch(self, batch: DeviceBatch, *, components, evaluator, accepted, splits, next_level,
+                      timer=None) -> dict[str, int]:  # fmt: skip
         """
         Top up, fit, deploy, validate and split one batch of nodes (see the module
         docstring), appending leaves to ``accepted``, split records to ``splits`` and
-        children to ``next_level``. ``progress()``, if given, is called between bounded
-        chunks of long split work so steal requests are answered meanwhile. ``timer(key)``
-        (the executor's profiler phases) times each stage under the shared phase keys:
-        sampling as ``time_augment``, statistics and fit as ``time_error_calc``, deploying
-        leaves as ``time_good_Q``, splitting as ``time_bad_split``. Returns counts for the
-        executor's statistics.
+        children to ``next_level``. ``batch.progress()`` is called between bounded chunks
+        of long split work so steal requests are answered meanwhile. ``timer(key)`` (the
+        executor's profiler phases) times each stage under the shared phase keys: sampling
+        as ``time_augment``, statistics and fit as ``time_error_calc``, deploying leaves as
+        ``time_good_Q``, splitting as ``time_bad_split``.
         """
         timer = timer or (lambda key: contextlib.nullcontext())
         cfg = self.config
+        # Per-node columns before the first progress() call, which may hand later nodes away.
+        q, cut = batch.queue, batch.cut
+        depth, root, path_code = xp.asarray(q.depth[cut]), xp.asarray(q.root[cut]), xp.asarray(q.path_code[cut])
+        constraints, progress = xp.asarray(q.constraints[cut]), batch.progress
+        sizes = batch.sizes
+        X, F, G = batch.take()
         model = components.local_model
         acceptance, trust_region = components.acceptance, components.trust_region
         K = int(sizes.shape[0])

@@ -85,10 +85,10 @@ that `src` is importable.
 
 | Layer | Packages / modules |
 |---|---|
-| infrastructure, maths, shared types | `infra/` (backend detection, profiling, monitor, logging), `numerics/` (`segments`, `linalg`, `stats`, `grid`), `kernels/` (`.cu` sources), `core/` (`clusters`: queues and output columns; `evaluation`: the oracle `Evaluator`) |
+| infrastructure, maths, shared types | `infra/` (backend detection, profiling, monitor, logging), `numerics/` (`segments`, `linalg`, `stats`, `grid`), `kernels/` (`.cu` sources), `core/` (`clusters`: queues and output columns; `evaluation`: the oracle `Evaluator`; `plan`: the contract between the refinement loop and an algorithm plan) |
 | settings, components | `config.py` (settings and size heuristics), `components/` (registry, modes, local models, splitting, acceptance, trust regions, sampling), `neighbors/` (kNN, k-means) |
 | region mode | `region/` (`constants`, `rng`, `geometry`, `sampling`, `split_search`, `plan`, `routing`) |
-| engine | `engine/` (`initial`, `refinement`, `adaptive_clustering` driver, `work_stealing`, `io`) |
+| engine | `engine/` (`initial`, `refinement` (the loop shared by both plans), `afinni_plan`, `adaptive_clustering` driver, `work_stealing`, `io`) |
 | public API | `surrogate/` (`model`, `persistence`, `metrics`); also `plotting/`, `problems/` |
 
 Package `__init__` files re-export the names other modules import, so callers do not depend
