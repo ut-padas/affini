@@ -76,7 +76,8 @@ index and the **code layout** of `src/` (which package owns what, and the import
 its "Code layout" section before adding a module; put new code in the package that owns the
 concern, and import only from the same or a lower layer. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 shows how a run moves through the engine and the plans, and the contracts between them.
-Documentation other than README.md and AGENTS.md lives in `docs/`.
+Documentation other than README.md and AGENTS.md lives in `docs/`; `docs/report/` holds the
+technical companion (see "The technical companion" below).
 
 - Package `__init__` files re-export the names other modules import, so import from the package
   (`from src.art import ARTPlan`), not from the file a name happens to live in.
@@ -241,6 +242,63 @@ how it was built. The history belongs in commit messages and the design doc's lo
 """A cluster bigger than batch_size is processed alone, and the level still processes every cluster."""
 ```
 
+
+## The technical companion (`docs/report/`)
+
+`docs/report/adaptive-surrogates.typ` explains AFINNI, ART and the refinement engine to a
+reader who has read neither the manuscript nor the code. It must be rigorous enough to check
+against both and intuitive enough to follow without them: every idea is given as a picture, in
+words and in symbols, and the picture and the formal statement must say the same thing, so that
+each checks the other.
+
+How a section explains, in this order:
+
+1. `question`: the problem the section solves, asked before any answer.
+2. The picture: `scene` (one picture beside its words), `filmstrip` or `board` (a process in
+   time, or a comparison), or `step` (pseudocode with the lines in `focus` beside what they do).
+3. Plain words: what the picture shows, then its name. Name a term after showing it.
+4. Symbols: `translate` (words beside notation), then `definition`, `lemma`, `theorem`,
+   `proposition` or `invariant`, with a `proof` sketch.
+5. `takeaway`: the section's idea in one sentence.
+
+- One running example throughout: the same function, domain and tolerance in every picture, for
+  both algorithms.
+- Notation follows the AFINNI manuscript (`T` for the trust matrix, `kappa` candidates,
+  `N_min`, `alpha_tol`, `r_tol`, children `C_-1`, `C_1`); ART reuses it and adds only what it
+  needs (`Omega_C`, the plane `(a, z)`, the path code `pi`). Give the code's name where it
+  differs (`Q`, `normal`, `offset`); `docs/ARCHITECTURE.md` has the full table from the companion's
+  symbols to the code's names, and a rename on either side updates it.
+- Write each algorithm once, as data (`ln`, `require`, `ensure`), show it in full in an
+  `algorithm`, and again in `step`s with `focus` instead of writing "see line 7".
+- State where the code differs from the manuscript in an `implementation` callout, and a limit
+  of a method in a `pitfall`. Do not claim more than the tests or the figure script check.
+- Colours mean one thing everywhere: a cluster's colour is its own in every panel; a dark cross
+  is an accepted centre and a red one a rejected centre; error maps are pale within the
+  tolerance and blue or red beyond it. Name a colour in the text with `swatch`.
+
+How it is built:
+
+- Typst 0.15 (a system install, not from `uv`); fletcher is fetched from `@preview` on the
+  first compile. `make report-figures` writes the panels and `example.json`, then `make report`
+  the PDF. Commit the sources, the SVGs, `example.json`, `steal_run.json` and the PDF together.
+- `docs/report/companion/` is a copy of the standalone Typst package `companion` (read its
+  README). A generic building block goes in the package; anything about AFINNI or ART stays in
+  `adaptive-surrogates.typ`.
+- `figures/make_figures.py` computes every data panel from real runs through the public API,
+  never by hand. It records the runs by wrapping the plans' stage methods, rebuilds the trees,
+  the fits, the Hessian estimate and the inference rule from their definitions, and stops unless
+  they match the library. Small schematics are fletcher diagrams in the `.typ`.
+- Every number the text quotes, and every panel colour, comes from `figures/example.json`
+  (`#ex.compare.afinni.leaves`); none is typed into the prose.
+- The work-stealing panels show one recorded run (`figures/steal_run.json`), because steal
+  timing differs between runs. `make report-steals` records it again and checks that the tree
+  equals the one built without stealing. Everything else is byte-identical between runs: a fixed
+  SVG hash salt, and no dates in the SVGs or the PDF.
+- When a change alters what the companion states (a formula, a default, an invariant, a stage),
+  update it and rebuild the figures and the PDF in the same change. `make report-figures` stops
+  when a replay no longer matches the library, which is the signal that the text needs a look.
+- Render the pages you changed to PNG (`typst compile --format png`) and look at each one
+  before committing.
 
 ## CUDA documentation style
 

@@ -83,6 +83,47 @@ A plan's `process_batch` runs four stages on its batch:
   or denial; a grant takes nodes from the unprocessed tail of the victim's queue, never from
   its current batch.
 
+## Notation: from the companion to the code
+
+The technical companion ([report/adaptive-surrogates.typ](report/adaptive-surrogates.typ)) writes
+the mathematics with the AFINNI manuscript's single-letter symbols; the code uses descriptive
+names, and the docstring or comment where a name is defined gives its symbol. Paths are under
+`src/`.
+
+| Symbol | Meaning | Name in the code | Where |
+|---|---|---|---|
+| f, f̂, d | the function (oracle), the surrogate, the input dimension | `Evaluator`; `AFINNISurrogate.predict`; `d` | `core/evaluation.py`, `surrogate/model.py` |
+| X₀, N | the initial points and their number | `train(X_train, ...)`; `profiling_stats["N0"]` | `surrogate/model.py`, `engine/driver.py` |
+| C, X_C | a cluster (AFINNI) or node (ART), its points | a queued cluster: rows `starts[k] : starts[k] + sizes[k]` of `X`, `F` | `core/clusters.py` (`ClusterBatch`) |
+| c, f(c) | a cluster's centre (the mean of its points), f there | `centroids` (`mus` in the plans), `f_c`; for the leaves `X_src`, `f_src` (leaf columns `"centroids"`, `"f"`) | `components/local_models.py` (`ClusterFitData`), `surrogate/model.py` |
+| (w, b) | the local affine model f̂(x) = wᵀ(x − c) + b | leaf columns `"A_fit"` (one row wᵀ per output) and `"b_fit"` = b − wᵀc (the intercept at the origin); `AffineLSQModel` | `components/local_models.py` |
+| e_a, e_r | a cluster's absolute and relative error | `E_abs`, `E_rel`; leaf columns `"E_cluster_abs"`, `"E_cluster_rel"` | `components/acceptance.py` |
+| α_tol, r_tol | the absolute and relative tolerances | `atol`, `rtol` | `config.py` (`TrainingConfig`) |
+| N_init, N_min | initial clusters; minimum points per cluster | `num_initial_clusters`, `min_pts_per_cluster` | `config.py` |
+| H, abs(H)^½ | the Hessian; the split metric | `M`, the first value of `SplitStrategy.metric` | `components/splitting.py` |
+| Σ | the scatter matrix Σ (x − c)(x − c)ᵀ | `Cov`, `C` (called an unnormalized covariance) | `numerics/stats.py` (`run_fused_stats`), `components/trust_regions.py` |
+| ĝ | the least-squares gradient at c, from the max(2d, ⌊N_min/4⌋) nearest points | `grad_lsq`, `n_gradient_pts` | `components/splitting.py` (`CovarianceHessianSplit`) |
+| N_cov | the points with the smallest Taylor error, which trace the level set | `n_est_cov` | `components/splitting.py` (`CovarianceHessianSplit`) |
+| x̃ᵢ, u₁, sᵢ | the stretched points, the split direction, the scores | `M (x − c)`; `v`, the leading eigenvector of `CovZ`; `scores` | `components/splitting.py` (`SplitStrategy.split`) |
+| C₋₁, C₁ | the two children of a split | AFINNI: the low and the high half (`child_sizes`); ART: left, aᵀu < z (path code 2π), and right (2π + 1) | `components/splitting.py`, `art/plan.py` (`ARTPlan._split`) |
+| T, γ, α | the trust-region matrix, its eigenvalue floor, the farthest point's scaled distance | `Q` (leaf column), `Qs_src`; `q_reg`; `max_dist` | `components/trust_regions.py`, `config.py` |
+| κ, dᵢ, ν | Euclidean candidates, trust-region distance, the answering leaf | `k_nn * coarse_factor` (`k_coarse`); `dist_sq`; `nn_idx[:, 0]` | `surrogate/model.py` (`predict`, `predict_local`) |
+| 𝒮, N_c | the leaves, their number | the `accepted` buffer during training; `N_src` and the `*_src` arrays | `engine/refinement.py`, `surrogate/model.py` |
+| u | coordinates of the domain, in [0, 1]^d | `U`, `Domain.normalize` | `art/geometry.py` |
+| Ω_C = {u : A u ≤ z} | an ART node's region | the root cell and `constraints`, rows `[a \| z]` of the ancestors' planes; `NodePolytopes` | `core/clusters.py` (`QUEUE_COLUMNS`), `art/sampling.py` |
+| (a, z) | an ART split plane, unit normal and offset; aᵀu ≥ z is the right child | `normal`, `offset` (`RoutingTable`, split records); `w`, `z` in the split search, its kernels and the model file's routing arrays | `art/routing.py`, `art/plan.py`, `art/split_search.py` |
+| π | the path code | `path_code` | `core/clusters.py`, `art/routing.py` |
+| n = ⌈m p⌉, p, m | points per node, coefficients per output, the multiplier | `ARTPlan.n_target`, `ARTPlan.n_coefficients`, `sample_multiplier` | `art/plan.py`, `config.py` (`ARTSettings`) |
+| τ, g | hit-and-run steps, a step's direction | `walk_steps`; `g` | `config.py`, `art/sampling.py` (`HitAndRunSampler`) |
+| n_dir, n_bins | search directions; cuts per direction plus one | `n_directions`, `n_bins` | `config.py`, `art/plan.py` (`_direction_bank`, `_bins_search`) |
+| yᵢ, φᵢ | a node's values in units of the tolerance, its features | `SplitRows.Y`, `SplitRows.Phi` | `art/split_search.py` |
+| SSE, J_h | the hard and soft split objectives | `hard_sse`, `soft_objective` | `art/split_search.py` |
+| h, δ, λ | gate width, weight floor, ridge | `T` (`soft_temperature` times the std of the scores), `delta` (`soft_weight_floor`), `SplitRows.lam` | `art/plan.py` (`_soft_refine`), `art/split_search.py`, `config.py` |
+| W₋₁, W₁, B₋₁, B₁ | the children's soft weights and coefficients | `WL`, `WR`; `beta` | `art/split_search.py` |
+| η | the audit's confidence | `confidence` | `surrogate/model.py` (`audit`) |
+| P, wᵢ, L | the ranks, a rank's load, the loads it knows | `comm.Get_size()`, `WorkStealer.local_load`, `WorkStealer.global_loads` | `engine/work_stealing.py` |
+| w_*, w_s | share threshold, steal size | `min_load` (`MIN_LOAD_THRESHOLD`, `steal_min_load`), `steal_size` (`STEAL_SIZE`) | `engine/work_stealing.py`, `config.py` |
+
 ## Extending
 
 - **A component** (local model, split strategy, sampler, acceptance test, trust region):

@@ -35,6 +35,9 @@ help:
 	@echo "  coverage-mpi     - multi-rank suite, measured inside every rank (.coverage.mpi.*)"
 	@echo "  coverage         - Combine the .coverage.* files present; report and htmlcov/"
 	@echo "  format / lint    - ruff format / ruff check"
+	@echo "  report           - Compile the technical companion to docs/report/adaptive-surrogates.pdf (needs typst)"
+	@echo "  report-figures   - Regenerate the companion's panels and numbers (docs/report/figures/)"
+	@echo "  report-steals    - Record the companion's 4-rank work-stealing run again (needs an MPI extra)"
 	@echo "  paper-experiments- Run run_paper_experiments.sh"
 
 # --- Research & development --------------------------------------------------
@@ -95,6 +98,16 @@ coverage:
 	uv run --group test coverage combine --keep
 	uv run --group test coverage report --precision=1 --skip-covered
 	uv run --group test coverage html
+
+# The technical companion (docs/report/). Its panels are the CPU results of real runs.
+report:
+	typst compile docs/report/adaptive-surrogates.typ docs/report/adaptive-surrogates.pdf
+
+report-figures:
+	AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. uv run python docs/report/figures/make_figures.py
+
+report-steals:
+	AFINNI_DEVICE=cpu AFINNI_MPI=on PYTHONPATH=. uv run mpiexec -n 4 python docs/report/figures/make_figures.py --record-steals
 
 paper-experiments:
 	bash run_paper_experiments.sh

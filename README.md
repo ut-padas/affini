@@ -115,6 +115,9 @@ Run scripts from the repository root, as modules
 
 ## Documentation
 
+- **[docs/report/adaptive-surrogates.pdf](docs/report/adaptive-surrogates.pdf)**: the technical
+  companion. It explains AFINNI, ART and the refinement engine on one running example, each idea
+  as a picture, in words and as a formal statement. Start here to understand the methods.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: how a training run and a prediction move
   through the code, the contracts between the parts, and where to extend it.
 - **[docs/USAGE.md](docs/USAGE.md)**: the user guide. Training and prediction

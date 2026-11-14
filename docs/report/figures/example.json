@@ -1,0 +1,284 @@
+{
+  "alpha": 1.0,
+  "N0": 600,
+  "seed": 1,
+  "kappa": 10,
+  "domain": {
+    "lower": [
+      -2.0,
+      -1.0
+    ],
+    "upper": [
+      2.0,
+      3.0
+    ]
+  },
+  "settings": {
+    "afinni": {
+      "atol": 1.0,
+      "num_initial_clusters": 4,
+      "min_pts_per_cluster": 24,
+      "max_levels": 12
+    },
+    "art": {
+      "sample_multiplier": 20,
+      "node_points": 60,
+      "max_levels": 12
+    }
+  },
+  "colours": {
+    "palette": [
+      "#c0392b",
+      "#e1a800",
+      "#2e7d32",
+      "#1f5fa8",
+      "#6d3b0f",
+      "#ef7d1a",
+      "#6a1b9a",
+      "#d81b8a",
+      "#00838f",
+      "#7cb342",
+      "#5c6bc0",
+      "#a1887f",
+      "#f06292",
+      "#26a69a",
+      "#8d6e63",
+      "#3949ab"
+    ],
+    "grey": "#8a8a8a",
+    "light": "#d6d6d6",
+    "dark": "#424242",
+    "red": "#c0392b",
+    "blue": "#1f5fa8",
+    "gold": "#e1a800",
+    "green": "#2e7d32",
+    "pink": "#d81b8a",
+    "cyan": "#00a6c7",
+    "ranks": [
+      "#1f5fa8",
+      "#ef7d1a",
+      "#2e7d32",
+      "#6a1b9a"
+    ],
+    "residual_mid": "#f2f2f2",
+    "error": [
+      "#f4f8fc",
+      "#d6e6f5",
+      "#aecde9",
+      "#7fb0db",
+      "#f0a79e",
+      "#c0392b"
+    ]
+  },
+  "afinni": {
+    "levels": [
+      {
+        "clusters": 4,
+        "accepted": 0,
+        "points": 600,
+        "worst_error": 11.59
+      },
+      {
+        "clusters": 8,
+        "accepted": 3,
+        "points": 600,
+        "worst_error": 6.12
+      },
+      {
+        "clusters": 10,
+        "accepted": 3,
+        "points": 380,
+        "worst_error": 4.68
+      },
+      {
+        "clusters": 14,
+        "accepted": 8,
+        "points": 528,
+        "worst_error": 2.4
+      },
+      {
+        "clusters": 12,
+        "accepted": 11,
+        "points": 470,
+        "worst_error": 1.41
+      },
+      {
+        "clusters": 2,
+        "accepted": 2,
+        "points": 80,
+        "worst_error": 0.55
+      }
+    ],
+    "n_levels": 6,
+    "split": {
+      "level": 1,
+      "points": 71,
+      "plain_error": 2.82,
+      "hessian_error": 1.13,
+      "parent_error": 2.87,
+      "angle": 86,
+      "n_grad": 6,
+      "n_cov": 8,
+      "rejected": 23,
+      "hessian_wins": 21
+    },
+    "augment": {
+      "level": 3,
+      "before": 41,
+      "after": 82,
+      "new": 41
+    },
+    "trust_points": 82,
+    "queries": {
+      "A": {
+        "nu": 5,
+        "euclid": 26,
+        "d_nu": 0.54,
+        "inside": 2,
+        "outside": false,
+        "pred": 10.65,
+        "f": 10.97
+      },
+      "B": {
+        "nu": 9,
+        "euclid": 9,
+        "d_nu": 0.0,
+        "inside": 2,
+        "outside": false,
+        "pred": 0.28,
+        "f": 0.13
+      },
+      "C": {
+        "nu": 8,
+        "euclid": 8,
+        "d_nu": 1.59,
+        "inside": 0,
+        "outside": true,
+        "pred": 7.18,
+        "f": 9.74
+      }
+    }
+  },
+  "art": {
+    "levels": [
+      {
+        "nodes": 1,
+        "accepted": 0,
+        "new_points": 0
+      },
+      {
+        "nodes": 2,
+        "accepted": 0,
+        "new_points": 60
+      },
+      {
+        "nodes": 4,
+        "accepted": 0,
+        "new_points": 120
+      },
+      {
+        "nodes": 8,
+        "accepted": 4,
+        "new_points": 240
+      },
+      {
+        "nodes": 8,
+        "accepted": 4,
+        "new_points": 240
+      },
+      {
+        "nodes": 8,
+        "accepted": 7,
+        "new_points": 240
+      },
+      {
+        "nodes": 2,
+        "accepted": 2,
+        "new_points": 60
+      }
+    ],
+    "depth": 6,
+    "sampling": {
+      "path": "11111",
+      "depth": 4,
+      "rows": 4,
+      "inherited": 26,
+      "new": 34
+    },
+    "split": {
+      "path": "111",
+      "depth": 2,
+      "points": 60,
+      "directions": 6,
+      "sse_parent": 2.21,
+      "sse_bins": 0.508,
+      "sse_final": 0.32,
+      "gain_percent": 37,
+      "improved": 7,
+      "searched": 16,
+      "left": 8,
+      "right": 52,
+      "n_bins": 16,
+      "soft_iters": 40,
+      "temperature": 0.1
+    },
+    "route": {
+      "depth": 6,
+      "path": "1100100",
+      "sides": [
+        1,
+        0,
+        0,
+        1,
+        0,
+        0
+      ]
+    },
+    "audit": {
+      "points": 2000,
+      "violations": 24,
+      "rate_percent": 1.2,
+      "bound_percent": 1.7,
+      "confidence_percent": 95
+    }
+  },
+  "compare": {
+    "afinni": {
+      "leaves": 27,
+      "evals": 1189,
+      "generated": 539,
+      "max_error": 3.44,
+      "within_percent": 98.4,
+      "outside_percent": 1.5,
+      "within_inside_percent": 99.1,
+      "depth": 5
+    },
+    "art": {
+      "leaves": 17,
+      "evals": 1053,
+      "generated": 960,
+      "max_error": 2.35,
+      "within_percent": 99.1,
+      "outside_percent": 0.0,
+      "within_inside_percent": 99.1,
+      "depth": 6
+    },
+    "slice_x2": 2.0,
+    "grid": 240,
+    "flagged_on_line": 0
+  },
+  "steal": {
+    "leaves": 283,
+    "leaves_per_rank": [
+      56,
+      32,
+      93,
+      102
+    ],
+    "steals": 13,
+    "ranks": 4,
+    "atol": 0.05,
+    "batch_size": 240,
+    "depth": 12
+  }
+}

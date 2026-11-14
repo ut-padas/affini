@@ -1,0 +1,84 @@
+manuscript:
+  type: article
+  title: "AFINNI: Adaptive Affine Nearest Neighbor Interpolation in High Dimensions"
+  date: 2026
+  note: Manuscript in preparation
+
+art:
+  type: repository
+  title: "Adaptive Regression Trees (ART): reference implementation"
+  date: 2026
+  note: The code that `scripts/art_comparison.py` compares against
+
+ding2004:
+  type: article
+  title: K-means clustering via principal component analysis
+  author: ["Ding, Chris", "He, Xiaofeng"]
+  date: 2004
+  parent:
+    type: proceedings
+    title: Proceedings of the 21st International Conference on Machine Learning (ICML)
+
+todd2016:
+  type: book
+  title: Minimum-Volume Ellipsoids
+  author: ["Todd, Michael J."]
+  date: 2016
+  publisher: Society for Industrial and Applied Mathematics
+
+smith1984:
+  type: article
+  title: Efficient Monte Carlo procedures for generating points uniformly distributed over bounded regions
+  author: ["Smith, Robert L."]
+  date: 1984
+  page-range: 1296-1308
+  parent:
+    type: periodical
+    title: Operations Research
+    volume: 32
+    issue: 6
+
+lovasz2003:
+  type: article
+  title: Hit-and-run is fast and fun
+  author: ["Lovász, László", "Vempala, Santosh"]
+  date: 2003
+  parent:
+    type: periodical
+    title: Microsoft Research technical report MSR-TR-2003-05
+
+golub1973:
+  type: article
+  title: The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate
+  author: ["Golub, Gene H.", "Pereyra, Victor"]
+  date: 1973
+  page-range: 413-432
+  parent:
+    type: periodical
+    title: SIAM Journal on Numerical Analysis
+    volume: 10
+    issue: 2
+
+blumofe1999:
+  type: article
+  title: Scheduling multithreaded computations by work stealing
+  author: ["Blumofe, Robert D.", "Leiserson, Charles E."]
+  date: 1999
+  page-range: 720-748
+  parent:
+    type: periodical
+    title: Journal of the ACM
+    volume: 46
+    issue: 5
+
+clopper1934:
+  type: article
+  title: The use of confidence or fiducial limits illustrated in the case of the binomial
+  author: ["Clopper, C. J.", "Pearson, E. S."]
+  date: 1934
+  page-range: 404-413
+  parent:
+    type: periodical
+    title: Biometrika
+    volume: 26
+    issue: 4
