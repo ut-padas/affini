@@ -24,6 +24,7 @@ dependencies = [
     { name = "array-api-compat" },
     { name = "diffrax" },
     { name = "jax" },
+    { name = "knndbscan" },
     { name = "matplotlib" },
     { name = "numba", version = "0.63.0b1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
     { name = "numba", version = "0.64.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or sys_platform == 'emscripten' or sys_platform == 'win32'" },
@@ -83,9 +84,6 @@ research = [
     { name = "scikit-learn" },
     { name = "sympy" },
 ]
-research-internal = [
-    { name = "knndbscan", marker = "sys_platform == 'linux'" },
-]
 test = [
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -104,6 +102,7 @@ requires-dist = [
     { name = "diffrax", specifier = ">=0.7.2" },
     { name = "impi-rt", marker = "sys_platform == 'win32' and extra == 'mpi'", specifier = ">=2021.14.0" },
     { name = "jax", specifier = ">=0.7.0" },
+    { name = "knndbscan", specifier = ">=0.3", index = "https://test.pypi.org/simple/" },
     { name = "matplotlib", specifier = ">=3.10.7" },
     { name = "mpi4py", marker = "extra == 'mpi'", specifier = ">=4.1.1" },
     { name = "mpi4py", marker = "extra == 'mpi-system'", specifier = ">=4.1.1" },
@@ -149,7 +148,6 @@ research = [
     { name = "scikit-learn", specifier = ">=1.7.2" },
     { name = "sympy", specifier = ">=1.14.0" },
 ]
-research-internal = [{ name = "knndbscan", marker = "sys_platform == 'linux'", specifier = "==0.1.3", index = "https://test.pypi.org/simple/" }]
 test = [
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
@@ -1498,17 +1496,20 @@ wheels = [
 
 [[package]]
 name = "knndbscan"
-version = "0.1.3"
+version = "0.3.0"
 source = { registry = "https://test.pypi.org/simple/" }
 dependencies = [
-    { name = "matplotlib" },
     { name = "numpy" },
-    { name = "pip" },
     { name = "scikit-learn" },
 ]
-sdist = { url = "https://test-files.pythonhosted.org/packages/93/d7/dc7278b1ad93795a93448fa1537e74edc5eb0df6cb21786c2362ce442d7c/knndbscan-0.1.3.tar.gz", hash = "sha256:846a77e81e901c37602b692b9187d38e794dcad613ba9035bd3908ce56fb777f", size = 20672, upload-time = "2026-02-18T21:45:33.053Z" }
+sdist = { url = "https://test-files.pythonhosted.org/packages/ad/2b/dadc1f81ca91a4838177ad30a4140887319d9ff8ce74d960d045b18fc796/knndbscan-0.3.0.tar.gz", hash = "sha256:9dd6de570abec06adb2c2039213f76a1b7d8031cc64f4e1e48a349256bcb13ad", size = 1135393, upload-time = "2026-11-14T14:59:17.615Z" }
 wheels = [
-    { url = "https://test-files.pythonhosted.org/packages/16/b4/2aed35155c9f5d22511a9cb5eeabf8d7357c4eb955b803fad4c0b19b72b2/knndbscan-0.1.3-cp313-cp313-manylinux_2_39_x86_64.whl", hash = "sha256:52a5c4cbabc88901ee687c62459a8a3059e8672ad2b5535c8544875d80c0b7b7", size = 7600564, upload-time = "2026-02-18T21:45:31.508Z" },
+    { url = "https://test-files.pythonhosted.org/packages/5f/74/0071f39f775f826e816230fbd1117a729d83160e04bda6114fc80f3d6227/knndbscan-0.3.0-py3-none-macosx_26_0_arm64.whl", hash = "sha256:154175f3696ae93da0a5aa8d6bcf4499c5a000f67ea2092a98804c4dc819de25", size = 297109, upload-time = "2026-11-14T14:59:09.074Z" },
+    { url = "https://test-files.pythonhosted.org/packages/27/f1/61081b5a10ade38df5585a1445abfc7b904e547b09cd0d8536e2cdb26d63/knndbscan-0.3.0-py3-none-macosx_26_0_x86_64.whl", hash = "sha256:58d3b048d62f1fe71f4c74b01b17c54ace37cff169dadc629286d75c48d5c856", size = 326728, upload-time = "2026-11-14T14:59:10.703Z" },
+    { url = "https://test-files.pythonhosted.org/packages/39/a7/2c7af8d5a58ca97268240d28a3eee8e835913aefc3d7d1f3d4a2d806975c/knndbscan-0.3.0-py3-none-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:8e562910f533840d66d751a6f0907cb1a1e291dd6c0fe44be233ddfebebbd6ba", size = 165489, upload-time = "2026-11-14T14:59:11.975Z" },
+    { url = "https://test-files.pythonhosted.org/packages/d4/a4/4edf18ab6e2e6d46851bf543df65179108c480fc19ca9d61a07d1c373d1b/knndbscan-0.3.0-py3-none-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:710f76eb5c666eef5da95b4224f07e059c04eacb7db936fc5d55bc8879874e05", size = 174191, upload-time = "2026-11-14T14:59:13.337Z" },
+    { url = "https://test-files.pythonhosted.org/packages/fb/8b/0e5c1eca18879922027016972aea70fcab51da5baad694811606bc9acf12/knndbscan-0.3.0-py3-none-win_amd64.whl", hash = "sha256:196caa62f95264fa5d702f7cedc8b7387a6160b9dc0701b9f533ffe0e5528917", size = 703122, upload-time = "2026-11-14T14:59:14.72Z" },
+    { url = "https://test-files.pythonhosted.org/packages/d5/c3/4119c1f083e9f96e70d3b4ef0306af6476badf1ab718a0487c2535669612/knndbscan-0.3.0-py3-none-win_arm64.whl", hash = "sha256:d3d9601fe8ef4e2ea4f1e33338cccb48f359da9a91e6ec70c99200a7e49c55f0", size = 879767, upload-time = "2026-11-14T14:59:15.968Z" },
 ]
 
 [[package]]
@@ -2981,15 +2982,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fc/96/d6b82e8b8c06ad143b66b12e0b31051e4bf489b4fabca1f390a14fe1ebde/pillow-13.0.0-cp315-cp315t-win32.whl", hash = "sha256:c50c80e3591e5cf9a8dfa6007d4f10732f02e32263850999286e56ccd650cfb2", size = 6517200, upload-time = "2026-10-16T22:17:42.886Z" },
     { url = "https://files.pythonhosted.org/packages/60/d4/0062e6005e9b270b165015aafd343364ac378ec5a685431ea42baad33357/pillow-13.0.0-cp315-cp315t-win_amd64.whl", hash = "sha256:adb3c2124c68e480f4632d06cb7caa3b48a51678475f483b4edb1c6dee29ea43", size = 7287488, upload-time = "2026-10-16T22:17:45.56Z" },
     { url = "https://files.pythonhosted.org/packages/e4/81/b8eb349746be7bce47dd95337c6634e84910af91b59aaa9159c034c614fa/pillow-13.0.0-cp315-cp315t-win_arm64.whl", hash = "sha256:4a25756244bdcce3b50580baadf320fa48297f0eeb8e114ba64139a40d4d0fc8", size = 2698073, upload-time = "2026-10-16T22:17:47.556Z" },
-]
-
-[[package]]
-name = "pip"
-version = "26.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/53/c7/f8d9e2e0e7c1ed8a22a10eeb3b5bf7860bc07d8446c7a978a882c5c8214b/pip-26.3.tar.gz", hash = "sha256:6c36ae7da8695be67e3cd9f7d87919667ced53f57ce2ede75d89b5912ed2bc4c", size = 1934348, upload-time = "2026-11-02T20:34:27.738Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/07/25/ee8c38ae72d66b844ce8eb9711ba905dba21ca1a8a0c960057c41cd23337/pip-26.3-py3-none-any.whl", hash = "sha256:f3b60b20ffaadd4415ed7957212a38ac63fa4c5fa375bd0f4a797777940fad13", size = 1950951, upload-time = "2026-11-02T20:34:25.728Z" },
 ]
 
 [[package]]

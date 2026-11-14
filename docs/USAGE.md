@@ -125,7 +125,7 @@ Fields of `src.config.TrainingConfig` (all keyword-only); only a tolerance is re
 |---|---|
 | `mode` | Preset pair (local model, split strategy), `AFFINE_COV_HESS` by default; see the table below |
 | `atol`, `rtol`, `error_metric` | Acceptance test: a cluster is accepted when every output component is within `rtol` relative **or** `atol` absolute error, measured as `"Linf"` (max error, relative to the cluster's own max \|f\|), `"L2"` (relative L2 / RMS) or `"pointwise"` (every point on its own: \|e\|/\|f\| < `rtol` or \|e\| < `atol`; ART's stopping rule). Give at least one tolerance; each is a scalar or one value per output component, and an omitted one never accepts. For an absolute test scaled to the function, pass `atol = tol * max\|f\|`. Exact formulas: [`src/components/acceptance.py`](../src/components/acceptance.py) |
-| `num_initial_clusters`, `initial_clustering_method` | Roots of the forest: `"kmeans"` (custom k-means in `src/neighbors/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (needs `--group research_internal`, Linux). `src.engine.driver.initial_clustering(X, config)` returns the labels training starts from; pass them as `train(..., initial_labels=labels)` to reuse one clustering for several trainings on the same points |
+| `num_initial_clusters`, `initial_clustering_method` | Roots of the forest: `"kmeans"` (custom k-means in `src/neighbors/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (kNN-DBSCAN from the `knndbscan` package). `src.engine.driver.initial_clustering(X, config)` returns the labels training starts from; pass them as `train(..., initial_labels=labels)` to reuse one clustering for several trainings on the same points |
 | `min_pts_per_cluster` | Rejected clusters are augmented to at least twice this before splitting |
 | `max_levels` | Refinement depth limit; reaching it leaves `converged=False` |
 | `sampling_method` | Where new points go when augmenting (`"convex_combination"`) |
@@ -621,7 +621,7 @@ For another cluster, copy [`scripts/hpc/tacc.sh`](../scripts/hpc/tacc.sh) to
 Conventions for code, docstrings and verification are in [`AGENTS.md`](../AGENTS.md).
 
 ```bash
-uv sync --all-groups             # also the research, research_internal, viz and profiling groups
+uv sync --all-groups             # also the research, viz and profiling groups
 make help                        # Linux/macOS wrappers, e.g. `make dev EXTRAS="gpu mpi"`
 ```
 
@@ -629,7 +629,6 @@ make help                        # Linux/macOS wrappers, e.g. `make dev EXTRAS="
 | ---------------- | --------------------------------------------- | ------------------- |
 | `dev`            | `lint` + `test` + `notebook`                  | `uv sync` (default) |
 | `research`       | extra packages for the scripts in `research/`, incl. cuML for comparisons | `--group research`  |
-| `research_internal` | `knndbscan` (TestPyPI, Linux) for `initial_clustering_method="knndbscan"` | `--group research_internal` |
 | `profiling`      | py-spy, line_profiler, viztracer, memray      | `--group profiling` |
 | `viz`            | animation/plotting (manim, plotly)            | `--group viz`       |
 

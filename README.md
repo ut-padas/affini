@@ -162,6 +162,7 @@ uv run ruff format .            # format
 - [x] Verify CPU and MPI on macOS (Apple Silicon).
 - [ ] Rename the `src` package to `afinni` (src layout) and add a `[build-system]`, so it can be installed with `pip install`.
 - [ ] Move `jax`/`diffrax` to an optional extra. `afinni_launcher.py` currently imports `jax` at top level.
-- [ ] Publish `knndbscan` to PyPI. It currently comes only from TestPyPI and Linux.
+- [ ] Publish `knndbscan` to PyPI. It is a core dependency but comes only from TestPyPI, so `afinni`
+  cannot be published to PyPI before it.
 - [ ] Set up GitHub Actions: `{ubuntu, macos, windows} × {cpu, mpi}` running `uv lock --check`, pytest and `mpiexec -n 2`.
 - [ ] Publish `afinni` to PyPI.
