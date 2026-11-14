@@ -35,7 +35,9 @@ from src.utils import repeats
 # between neighbouring points, so points normally lie strictly inside every face;
 # only ties at a cut put points on a plane, where re-expressing it from the cluster's
 # centroid rounds at the scale of the ancestor that made the cut (up to the domain),
-# not of the cluster.
+# not of the cluster. docs/region_tolerance.md proves this bound for d up to ~1,500
+# and states the one open assumption: the split's scores and the stored plane must
+# round alike (a conditioning factor of the split metric).
 REGION_RTOL = 1e-12
 
 
