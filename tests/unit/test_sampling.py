@@ -8,6 +8,7 @@ from src.adaptive_clustering_utils import Evaluator
 from src.sampling import (
     SAMPLERS,
     ClusterPoints,
+    ClusterRegions,
     ConvexCombinationSampler,
     augment_clusters,
     augmentation_targets,
@@ -180,3 +181,35 @@ def test_train_uses_the_requested_sampler(monkeypatch):
         sampling_method=_CountingSampler.name,
     )
     assert _CountingSampler.calls > 0
+
+
+def _unit_square_regions():
+    """One cluster at (0.25, 0.5) in the unit square, cut by x0 <= 0.5, and one root cluster (no planes)."""
+    planes = np.array([[[1.0, 0.0, -0.25]], [[0.0, 0.0, -1.0]]])  # x0 - 0.25 <= 0.25; padding
+    return ClusterRegions(
+        origins=xp.asarray(np.array([[0.25, 0.5], [0.5, 0.5]])), planes=xp.asarray(planes),
+        depth=xp.asarray(np.array([1, 0])), domain=xp.asarray(np.array([[0.0, 0.0], [1.0, 1.0]])),
+    )  # fmt: skip
+
+
+def test_regions_contain_points_inside_the_box_and_every_plane():
+    regions = _unit_square_regions()
+    eps = 1e-12 * np.sqrt(2)
+    points = np.array([
+        [0.1, 0.9], [0.5, 0.2], [0.5 + eps / 2, 0.2], [0.6, 0.2], [0.1, 1.0 + 2 * eps],  # cluster 0
+        [0.9, 0.9], [1.0 + eps / 2, 0.0], [-0.1, 0.5],  # cluster 1: the whole box
+    ])  # fmt: skip
+    labels = xp.asarray(np.array([0, 0, 0, 0, 0, 1, 1, 1]))
+    inside = _to_host(regions.contains(xp.asarray(points), labels))
+    np.testing.assert_array_equal(inside, [True, True, True, False, False, True, True, False])
+
+
+def test_augment_clusters_requires_regions_for_a_sampler_that_needs_them():
+    class RegionSampler(ConvexCombinationSampler):
+        needs_regions = True
+
+    with pytest.raises(ValueError, match="needs the clusters' regions"):
+        augment_clusters(
+            xp.asarray(X), xp.asarray(X[:, :1]), None, xp.asarray(COUNTS), xp.asarray(2 * COUNTS),
+            RegionSampler(), Evaluator(f_fn=lambda x: x[:, :1]), xp.random.default_rng(0),
+        )  # fmt: skip

@@ -133,6 +133,7 @@ Fields of `src.config.ClusteringConfig` (all keyword-only); only a tolerance is 
 | `batch_size` | Points moved to the device at once; capped automatically to fit GPU memory |
 | `seed`, `use_work_stealing` | Reproducibility, MPI load balancing |
 | `track_trees` | Record the binary trees, one per initial cluster (needs `use_work_stealing=False`, `max_levels` ≤ 56): `surrogate.tree_forest` is a `src.trees.BinaryTreeForest` with `internal_nodes` (each split's hyperplane `W @ (x - centroid) + b = 0`, the cluster's `centroid` and its `parent`, `root`, `morton`), `leaf_nodes` (`parent`, `root`, `morton` and `leaf`, the row in the leaf arrays, -1 if unresolved) and `root_centroids`, sorted by (root, Morton ID); `tree_forest.tree(r)` gives one tree; `src.plotting.plot_binary_tree_forest` draws a 2-D forest. Not saved by `save_model` |
+| `domain` | `(lower, upper)` box that bounds every cluster's region, for a sampler with `needs_regions`; `None` uses the training points' bounding box, and a given box must contain every point |
 | `profile_timing`, `profile_events`, `profile_dir` | See [Profiling](#profiling) |
 
 | Mode | Local model | Split metric | Needs |
@@ -418,7 +419,16 @@ Contracts the engine checks (with a clear error):
   `fit` output, and only accepted leaves get `finalize` columns.
 - **Sampler:** `sample(clusters, n_new, rng)` returns `sum(n_new)` points grouped by
   cluster; `clusters` holds `X`, `counts`, `starts`, `centroids`; use only `rng`
-  for randomness.
+  for randomness. A sampler that sets `needs_regions = True` also gets
+  `clusters.regions` (`src.sampling.ClusterRegions`), each cluster's convex region:
+  the `domain` box cut by one half-space per ancestor, as rows `(a, beta)` of
+  `planes` (K, D, d+1) meaning `a @ (x - origins[k]) + beta <= 0`, with unit
+  normals, nearest ancestor first, and rows from `depth[k]` on padding that always
+  holds (`BinaryTreeForest.ancestor_planes`). Such a sampler needs
+  `track_trees=True` (so no work stealing) and a single initial cluster
+  (`num_initial_clusters=1`), whose cell is the domain box; under MPI, ranks other
+  than 0 then stay idle. `regions.contains(X, labels)` checks points with a slack
+  of `1e-12` times the domain diagonal.
 - **Split strategy:** implement `metric(data) -> (M, M C M)` to change the split
   direction, `child_sizes(counts, sorted_scores)` to change where clusters are cut,
   or `split(data)` entirely, returning a `Split(order, child_sizes, W, b)`; splits

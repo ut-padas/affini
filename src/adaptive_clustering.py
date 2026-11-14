@@ -38,7 +38,7 @@ from src.local_models import ClusterFitData, output_columns
 from src.logging_utils import log_mem_stats
 from src.numerics import convert_to_2d_array
 from src.profiling import ORACLE_TIME_KEY, Profiler, new_profiling_stats
-from src.sampling import augment_clusters, augmentation_targets
+from src.sampling import ClusterRegions, augment_clusters, augmentation_targets
 from src.splitting import Split, SplitData
 from src.trees import BinaryTreeForest, child_morton
 from src.utils import repeats
@@ -156,13 +156,15 @@ def _run_local_refinement(
     clusters: ClusterBatch,
     comm: MPI.Intracomm,
     profiler: Profiler,
+    domain: np.ndarray | None = None,
 ):
     """
     Core local BFS refinement loop for GPU adaptive clustering, run independently
     on each MPI rank. Takes this rank's pre-sorted clusters (host memory) and
     returns finalized output buffers plus counts, and with ``config.track_trees``
     this rank's (unsorted) ``BinaryTreeForest`` (leaf rows index the returned
-    buffers), otherwise None.
+    buffers), otherwise None. ``domain`` (2, d) bounds the regions given to a
+    sampler with ``needs_regions``.
 
     Algorithm settings (tolerances, limits, seed, work stealing, ...) are read
     from ``config``; ``config.max_clusters_est`` is the total across all ranks.
@@ -205,6 +207,7 @@ def _run_local_refinement(
     unresolved_clusters = unresolved_pts = 0
 
     sampler = components.sampler
+    domain = xp.asarray(domain, dtype=xp.float64) if sampler.needs_regions else None
     stealer = make_work_stealer(config.use_work_stealing, comm, d, fd, profiler)
     stealer.exchange_initial_loads(queue.n_pts)
 
@@ -480,6 +483,15 @@ def _run_local_refinement(
                         f"expansion={expansion:.2f}x"
                     )
 
+                    regions = None
+                    if sampler.needs_regions and planned_synth_pts > 0:
+                        bad_host = _to_host(bad_idx_local)
+                        mus_bad = mus[bad_idx_local]
+                        planes, plane_depth = forest.ancestor_planes(
+                            tree_cpu["parent"][bad_host], tree_cpu["morton"][bad_host], mus_bad
+                        )
+                        regions = ClusterRegions(mus_bad, planes, plane_depth, domain)
+
                     rng = xp.random.default_rng(config.seed + level + b + rank * 1000)
                     aug = augment_clusters(
                         X_bad,
@@ -491,6 +503,7 @@ def _run_local_refinement(
                         evaluator,
                         rng,
                         centroids=mus[bad_idx_local],
+                        regions=regions,
                     )
                     X_bad_aug, F_bad_aug, G_bad_aug = aug.X, aug.F, aug.G
                     aug_dense_labels_bad = aug.labels
@@ -503,7 +516,7 @@ def _run_local_refinement(
                                 config.generated_data_name(d),
                             )
                     # The augmented arrays hold copies of the rejected rows.
-                    del aug, X_bad, F_bad, G_bad
+                    del aug, X_bad, F_bad, G_bad, regions
                     if mempool is not None:
                         # Hand cached blocks back before the split, the batch's largest
                         # allocation burst (a few cudaFree calls per batch).
@@ -752,6 +765,19 @@ def _adaptive_clustering(
         raise ValueError(
             f"Selected mode {config.mode.value} requires an exact Hessian. Please provide hessian_fn."
         )
+    if config.requires_regions:
+        # A region is the domain box cut by the ancestors' hyperplanes, so it needs
+        # the trees and a single root (the box is its cell; other roots' cells are
+        # not stored). Without work stealing, which tracking forbids, one root keeps
+        # every rank but rank 0 idle.
+        name = config.components().sampler.name
+        if not config.track_trees:
+            raise ValueError(f"Sampler {name!r} needs the clusters' regions: set track_trees=True.")
+        if initial_labels is None and config.num_initial_clusters != 1:
+            raise ValueError(
+                f"Sampler {name!r} needs the clusters' regions, which start from one root (the "
+                f"domain box): set num_initial_clusters=1; got {config.num_initial_clusters}."
+            )
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -778,6 +804,7 @@ def _adaptive_clustering(
     timer = profiler.phase
 
     d_bcast, fd_bcast = 0, 0
+    domain = None  # (2, d) host box bounding the clusters' regions, if the sampler needs them
 
     if rank == 0:
         if config.save_all_gen_training_data:
@@ -799,6 +826,30 @@ def _adaptive_clustering(
                         f"got shape {initial_labels.shape} and dtype {initial_labels.dtype}."
                     )
             profiling_stats["initial_labels_given"] = initial_labels is not None
+            if config.requires_regions:
+                # Checked before f is evaluated, like the labels.
+                X0_host = np.asarray(_to_host(X0_gpu))
+                if config.domain is None:
+                    domain = np.stack([X0_host.min(axis=0), X0_host.max(axis=0)])
+                    if not np.all(domain[0] < domain[1]):
+                        raise ValueError(
+                            "The training points' bounding box is flat in some dimension, so it "
+                            "cannot serve as the domain: set ClusteringConfig.domain."
+                        )
+                else:
+                    domain = np.array(config.domain, dtype=np.float64)
+                    if domain.shape != (2, d_bcast):
+                        raise ValueError(f"domain has dimension {domain.shape[1]}; the points have {d_bcast}.")
+                    outside = np.any((X0_host < domain[0]) | (X0_host > domain[1]), axis=1)
+                    if outside.any():
+                        raise ValueError(
+                            f"{int(outside.sum())} training points lie outside the domain {config.domain}."
+                        )
+                if initial_labels is not None and len(np.unique(initial_labels)) != 1:
+                    raise ValueError(
+                        "The sampler needs the clusters' regions, which start from one root: "
+                        "initial_labels must hold a single label."
+                    )
 
             # Per-point gradients are only carried when the mode uses them at
             # every point; centroid gradients are evaluated during refinement.
@@ -836,9 +887,19 @@ def _adaptive_clustering(
         logger.info(
             f"Initial clustering done. Number of clusters: {uniq_labels.shape[0]}."
         )
+        if config.requires_regions and len(uniq_labels) != 1:
+            raise ValueError(
+                f"The sampler needs the clusters' regions, which start from one root, but the "
+                f"initial clustering made {len(uniq_labels)} clusters."
+            )
+        if size > len(uniq_labels) and not config.use_work_stealing:
+            logger.warning(
+                f"{size} ranks but only {len(uniq_labels)} initial clusters and no work stealing: "
+                f"{size - len(uniq_labels)} ranks will stay idle."
+            )
 
     with timer("time_scatter"):
-        d_bcast, fd_bcast = comm.bcast((d_bcast, fd_bcast), root=0)
+        d_bcast, fd_bcast, domain = comm.bcast((d_bcast, fd_bcast, domain), root=0)
         # Every rank checks, so a tolerance of the wrong length fails before any rank refines.
         config.components().acceptance.check_output_dim(fd_bcast)
 
@@ -940,6 +1001,7 @@ def _adaptive_clustering(
         clusters=local_clusters,
         comm=comm,
         profiler=profiler,
+        domain=domain,
     )
     profiler.event(
         "done", leaves=int(out_count), generated=int(local_gen_pts),

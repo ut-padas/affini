@@ -115,6 +115,11 @@ class ClusteringConfig:
     # Requires use_work_stealing=False (stolen clusters would carry their tree
     # across ranks) and max_levels < src.trees.MAX_DEPTH (Morton ID bits).
     track_trees: bool = False
+    # The box (lower, upper) that bounds every cluster's region, for samplers with
+    # needs_regions (src.sampling.ClusterRegions). None: the bounding box of the
+    # training points. A given box must contain every training point. Stored as
+    # two tuples of floats.
+    domain: tuple[tuple[float, ...], tuple[float, ...]] | None = None
 
     # --- Components (None: the default for mode / the settings above) ---
     local_model: ComponentSpec = None
@@ -128,7 +133,7 @@ class ClusteringConfig:
     )
 
     def __post_init__(self) -> None:
-        """Validate settings early (including track_trees' limits on work stealing and depth), normalize the tolerances and profile_dir, warn about save_all_gen_training_data, and drop ``store_hess`` where no model can use it."""
+        """Validate settings early (including track_trees' limits on work stealing and depth), normalize the tolerances, profile_dir and domain, warn about save_all_gen_training_data, and drop ``store_hess`` where no model can use it."""
         self.mode = SurrogateMode(self.mode)
         if self.profile_dir is not None:
             self.profile_dir = str(self.profile_dir)
@@ -159,6 +164,22 @@ class ClusteringConfig:
                 f"track_trees requires max_levels < {MAX_DEPTH}: children of the deepest "
                 f"clusters need a Morton ID; got max_levels={self.max_levels}."
             )
+        if self.domain is not None:
+            try:
+                lower, upper = (tuple(float(v) for v in bound) for bound in self.domain)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"domain must be (lower, upper), two sequences of numbers; got {self.domain!r}."
+                ) from None
+            if (
+                len(lower) != len(upper)
+                or not lower
+                or not all(lo < hi for lo, hi in zip(lower, upper, strict=True))
+            ):
+                raise ValueError(
+                    f"domain needs lower < upper in every dimension, with equal lengths; got {self.domain!r}."
+                )
+            self.domain = (lower, upper)
         if self.sampler is None and self.sampling_method not in SAMPLERS:
             raise ValueError(
                 f"Unknown sampling method {self.sampling_method!r}; "
@@ -249,6 +270,14 @@ class ClusteringConfig:
     def requires_hessian_fn(self) -> bool:
         """True if an exact Hessian function must be provided."""
         return bool(self.components().split_strategy.needs_hessian_fn)
+
+    @property
+    def requires_regions(self) -> bool:
+        """
+        True if the sampler needs each cluster's region; training then requires
+        ``track_trees`` and a single initial cluster, whose cell is the domain box.
+        """
+        return bool(self.components().sampler.needs_regions)
 
     def to_dict(self) -> dict[str, Any]:
         """The settings and resolved components as plain, serializable values."""
