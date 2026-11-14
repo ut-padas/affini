@@ -22,6 +22,9 @@ run) as two tables of contiguous device arrays, ``internal_nodes`` and
 (root, Morton ID), so each tree is one contiguous block of each, which ``tree``
 returns as a ``BinaryTree``. ``find_leaves`` routes points top-down to their leaf,
 locating each node by its Morton ID (``find_rows``), so no child pointers are stored.
+``ancestor_planes`` walks the other way, following ``parent`` rows up from a batch
+of clusters to collect the half-spaces that bound each one's region; it works on
+the unsorted forest, so samplers can use it during training.
 """
 
 from dataclasses import dataclass
@@ -274,6 +277,67 @@ class BinaryTreeForest:
             hi = xp.where(right, hi, mid)
         found = (lo < end) & (mortons[xp.minimum(lo, last)] == morton)
         return xp.where(found, lo, -1)
+
+    def ancestor_planes(self, parent: Array, morton: Array, origins: Array) -> tuple[Array, Array]:
+        """
+        The half-spaces that bound K clusters, gathered from their ancestors' splits.
+
+        A cluster's region is the domain (its root's cell) intersected with one
+        half-space per ancestor: the side of that ancestor's hyperplane it descends
+        from. ``parent``/``morton`` (K,) are the clusters' tree fields
+        (``ClusterBatch.tree_fields``) and ``origins`` (K, d) their centroids.
+        Returns ``planes`` (K, D, d+1) float64 on the device, D the deepest of the
+        clusters, and ``depth`` (K,) int64, the number of real rows of each:
+
+        - Row ``planes[k, j] = (a, beta)`` is the constraint
+          ``a @ (x - origins[k]) + beta <= 0``. ``a`` is the ancestor's normal,
+          scaled to unit length and flipped for side 1, so ``beta`` is the signed
+          distance from ``origins[k]`` to that face (negative inside).
+        - Rows are ordered nearest ancestor first (j = 0 is the split that made the
+          cluster), usually the tightest faces, so a rejection test can stop early.
+        - Rows ``j >= depth[k]`` are padding, ``(0, ..., 0, -1)``, which every
+          point satisfies, so a kernel may loop over all D rows without branching.
+
+        Measuring from each cluster's own centroid keeps ``beta`` on the cluster's
+        scale; the stored form is measured from the ancestor's centroid (see
+        ``internal_columns``). The planes are exact up to rounding: a point on a
+        cut, or within rounding of it, can evaluate slightly positive, so checks
+        of existing points need a tolerance (``src.sampling.ClusterRegions.contains``).
+
+        Walks ``parent`` pointers, so it works while the forest is still unsorted
+        (during training) and after sorting; every ancestor must be in this
+        forest, which holds without work stealing. One gather per depth level,
+        vectorized over the clusters.
+        """
+        parent = xp.asarray(parent, dtype=xp.int64)
+        morton = xp.asarray(morton, dtype=xp.int64)
+        origins = xp.asarray(origins, dtype=xp.float64)
+        K, d = int(parent.shape[0]), self.d
+        depth = morton & DEPTH_MASK
+        D = int(depth.max()) if K else 0
+        planes = xp.zeros((K, D, d + 1), dtype=xp.float64)
+        planes[:, :, d] = -1.0
+
+        nodes = self.internal_nodes
+        W, b, c = nodes["W"], nodes["b"], nodes["centroid"]
+        node, path = parent.copy(), morton.copy()
+        steps = xp.zeros(K, dtype=xp.int64)
+        for j in range(D):
+            live = xp.nonzero(node >= 0)[0]
+            steps[live] += 1
+            p = node[live]
+            sign = 1.0 - 2.0 * side_of(path[live]).astype(xp.float64)  # side 1 flips to "<= 0"
+            norm = xp.linalg.norm(W[p], axis=1)
+            # A zero normal (a degenerate split) keeps the stored predicate b < 0 / > 0.
+            scale = sign / xp.where(norm > 0, norm, 1.0)
+            planes[live, j, :d] = W[p] * scale[:, None]
+            planes[live, j, d] = (b[p] + xp.sum(W[p] * (origins[live] - c[p]), axis=1)) * scale
+            path[live], node[live] = nodes["morton"][p], nodes["parent"][p]
+        # Each cluster crossed one ancestor per level of its depth and then reached
+        # its root; anything else means the tree fields and the forest disagree.
+        if K and not (bool(xp.all(node < 0)) and bool(xp.all(steps == depth))):
+            raise RuntimeError("Ancestor chains do not match the depths in the Morton IDs.")
+        return planes, depth
 
     def find_leaves(self, X: Array) -> Array:
         """

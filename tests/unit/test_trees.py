@@ -176,3 +176,61 @@ def test_find_rows_locates_every_node_and_only_those():
     assert np.all(host(forest.find_rows("internal_nodes", leaves["root"], leaves["morton"])) == -1)
     missing = xp.asarray(np.array([10**6, -1], dtype=np.int64))
     assert np.all(host(forest.find_rows("leaf_nodes", missing, xp.zeros(2, dtype=xp.int64))) == -1)
+
+
+def _two_split_forest():
+    """
+    A 2-D tree: the root is cut by x0 = 0 (measured from (0, 0)), and its side-1
+    child by 2 (x1 - 1) = 0 (measured from (1, 1)). Returns the forest and the
+    child's Morton ID.
+    """
+    forest = BinaryTreeForest(2)
+    right = _child(0, 1)
+    forest.add_splits(
+        np.array([[1.0, 0.0], [0.0, 2.0]]), np.zeros(2), np.array([[0.0, 0.0], [1.0, 1.0]]),
+        np.array([-1, 0]), np.zeros(2, dtype=np.int64), np.array([0, right]),
+    )  # fmt: skip
+    return forest, right
+
+
+def test_ancestor_planes_are_unit_signed_and_nearest_first():
+    forest, right = _two_split_forest()
+    # Clusters: below the second cut (depth 2), left of the first cut (depth 1), the root (depth 0).
+    parent = np.array([1, 0, -1])
+    morton = np.array([_child(right, 0), _child(0, 0), 0])
+    origins = np.array([[1.0, 0.5], [-1.0, 0.0], [0.0, 0.0]])
+    planes, depth = forest.ancestor_planes(parent, morton, origins)
+    np.testing.assert_array_equal(host(depth), [2, 1, 0])
+    padding = [0.0, 0.0, -1.0]
+    expected = np.array([
+        [[0.0, 1.0, -0.5], [-1.0, 0.0, -1.0]],  # x1 <= 1 (side 0), then x0 >= 0 (side 1, flipped)
+        [[1.0, 0.0, -1.0], padding],  # x0 <= 0
+        [padding, padding],
+    ])  # fmt: skip
+    np.testing.assert_allclose(host(planes), expected, rtol=0, atol=1e-15)
+
+
+def test_ancestor_planes_handle_an_empty_batch_and_roots_only():
+    forest, _ = _two_split_forest()
+    planes, depth = forest.ancestor_planes(np.empty(0, np.int64), np.empty(0, np.int64), np.empty((0, 2)))
+    assert planes.shape == (0, 0, 3) and depth.shape == (0,)
+    planes, depth = forest.ancestor_planes(np.array([-1]), np.array([0]), np.zeros((1, 2)))
+    assert planes.shape == (1, 0, 3) and host(depth).tolist() == [0]
+
+
+def test_ancestor_planes_reject_tree_fields_that_disagree_with_the_forest():
+    forest, right = _two_split_forest()
+    with pytest.raises(RuntimeError, match="Ancestor chains"):  # a depth-1 Morton ID under a depth-1 node
+        forest.ancestor_planes(np.array([1]), np.array([right]), np.zeros((1, 2)))
+    with pytest.raises(RuntimeError, match="Ancestor chains"):  # a depth-2 Morton ID under the root's split
+        forest.ancestor_planes(np.array([0]), np.array([_child(right, 0)]), np.zeros((1, 2)))
+
+
+def test_ancestor_planes_follow_every_leaf_of_a_sorted_forest():
+    forest, _ = _grow_forest(np.random.default_rng(5))
+    forest.sort()
+    leaves = forest.leaf_nodes
+    origins = xp.zeros((len(host(leaves["leaf"])), forest.d))
+    planes, depth = forest.ancestor_planes(leaves["parent"], leaves["morton"], origins)
+    np.testing.assert_array_equal(host(depth), host(leaves["morton"]) & DEPTH_MASK)
+    assert planes.shape == (len(origins), int(host(depth).max()), forest.d + 1)
