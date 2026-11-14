@@ -23,7 +23,9 @@ class NodePolytopes:
     root: Array  # (K,) int64
     depth: Array  # (K,) int64
     keys: Array  # (K,) uint64 stream keys
-    constraints: Array  # (K, h, d + 1) half-spaces [a | b], a^T u <= b, zero-padded
+    # (K, h, d + 1) ancestor half-spaces as rows [a | z] meaning a^T u <= z, zero-padded: the
+    # rows of (A, z) in the companion's region {u : A u <= z}, inside the root cell.
+    constraints: Array
     purpose: int
     insufficient: Array | None = None  # (K,) set by the sampler: chains failed the drift check
 
@@ -33,7 +35,8 @@ class HitAndRunSampler(Sampler):
     Points inside each node's polytope (root cell plus ancestor half-spaces).
 
     A box or grid root is sampled exactly (uniform). Otherwise each new point is the
-    endpoint of its own hit-and-run chain of ``walk_steps`` steps, started at a uniformly
+    endpoint of its own hit-and-run chain of ``walk_steps`` steps (``tau`` in the companion,
+    ``g`` its random directions), started at a uniformly
     chosen inherited point (a Voronoi root without points starts at its centre):
     endpoints are conditionally independent but share their starts' bias, so they are
     approximately, not exactly, uniform. Voronoi bisectors are evaluated against every

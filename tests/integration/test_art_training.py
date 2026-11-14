@@ -217,7 +217,7 @@ def step(x):
     return xp.where((x[:, 0] + 0.5 * x[:, 1] > 0.2)[:, None], 1.0 + x[:, :1], -1.0 + x[:, 1:])
 
 
-def test_threshold_search_finds_an_oblique_interface_the_curvature_split_misses(points):
+def test_bins_search_finds_an_oblique_interface_the_curvature_split_misses(points):
     """The fit-driven bins search needs far fewer leaves than the median gap cut on a step."""
     options = art_options(f_fn=step, atol=1e-6, rtol=None, max_levels=8)
     gap = train_surrogate(points, **{**options, "art": ARTSettings(sample_multiplier=10, split_search="gap")})

@@ -35,8 +35,8 @@ TAG_STEAL_DENY = 104
 TAG_STEAL_GRANT = 110
 
 # --- Tuning parameters (defaults; ART passes its own, see src.art) ---
-MIN_LOAD_THRESHOLD = 1_000_000  # Min points to be eligible for stealing
-STEAL_SIZE = 500_000  # Minimum points per grant (a grant gives about half the open work)
+MIN_LOAD_THRESHOLD = 1_000_000  # Min points to be eligible for stealing (w_* in the companion)
+STEAL_SIZE = 500_000  # Minimum points per grant, w_s (a grant gives about half the open work)
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
 
 # Version of the cluster transfer format; both ends must agree.
@@ -48,7 +48,7 @@ def send_clusters(comm, batch: ClusterBatch, dest: int, tag: int = TAG_STEAL_GRA
     Send ``batch`` to ``dest``: a header on ``tag`` (format version, counts, and the
     trailing shape and dtype of every present column), then each present column on
     ``tag + 1 + its index in QUEUE_COLUMNS``. Absent columns send nothing, so an AFINNI
-    payload is exactly the old X, F, [G], sizes, depth messages on ``tag + 1..5``.
+    payload is the X, F, [G], sizes and depth messages on ``tag + 1..5``.
     """
     cols = batch.columns()
     header = {
@@ -125,6 +125,7 @@ class WorkStealer:
         self.profiler = profiler
 
         self.status = MPI.Status()
+        # This rank's load (w_i in the companion) and the loads it knows of every rank (L).
         self.local_load = 0
         self.global_loads = np.zeros(self.size, dtype=np.int64)
         # Pre-allocated 1-element buffers for C-level MPI load updates.

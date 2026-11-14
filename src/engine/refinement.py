@@ -29,7 +29,7 @@ class _Refinement:
     plan: Plan
     components: object
     evaluator: Evaluator
-    accepted: ColumnBuffer
+    accepted: ColumnBuffer  # the leaves (S in the companion), one row each
     splits: ColumnBuffer | None
     stealer: object
     profiler: Profiler
@@ -60,7 +60,7 @@ def refine_rank(
     This is the loop shared by both algorithm plans (``src.core.plan``): it owns
     batching, device transfers, queues, work stealing and statistics, and each batch
     goes to ``plan.process_batch``. Without ``plan`` it runs ``AFINNIPlan``. A plan's
-    split records are returned in the buffers under ``"node:<column>"`` keys.
+    split records are returned in the buffers under ``"split:<column>"`` keys.
 
     Algorithm settings (tolerances, limits, seed, work stealing, ...) are read
     from ``config``; ``config.max_clusters_est`` is the total across all ranks.
@@ -127,13 +127,13 @@ def refine_rank(
     elif run.unresolved_clusters > 0:
         logger.warning(
             f"R{rank:02}: {run.unresolved_clusters:,} clusters ({run.unresolved_pts:,} points) "
-            f"reached max_levels={config.max_levels} unresolved; their region has no "
-            f"accepted leaves."
+            f"reached max_levels={config.max_levels} unresolved; no accepted leaf holds "
+            f"their points."
         )
     profiler.stats.update(plan.profile())
     buffers = run.accepted.result()
     if run.splits is not None:
-        buffers.update({f"node:{k}": v for k, v in run.splits.result().items()})
+        buffers.update({f"split:{k}": v for k, v in run.splits.result().items()})
     return buffers, run.accepted.n_rows, total_f_evals, run.generated, level
 
 

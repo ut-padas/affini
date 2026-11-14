@@ -1,4 +1,14 @@
-"""Per-node split search arithmetic: the batched rows, the bins search's cut sums, hard SSE and the soft search's objective and step."""
+"""
+Per-node split search arithmetic: the batched rows, the bins search's cut sums, hard SSE and the
+soft search's objective and step.
+
+The arrays keep the short names of the formulas and of the kernels in
+``src/kernels/art_split_search.cu``: ``w`` (k, d) is each node's plane normal and ``z`` (k,)
+its offset (the plane ``(a, z)`` of the companion), ``T`` (k,) the soft gate's width (``h``),
+``delta`` the weight floor, ``lam`` the fixed ridge (``lambda``), ``beta`` the children's
+coefficients (``B_-1``, ``B_1``), and ``WL``, ``WR`` the soft weights of the left and right
+child (``W_-1``, ``W_1``).
+"""
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -30,13 +40,13 @@ class SplitRows:
     rounding) by batch count.
     """
 
-    U: Array  # (N, d) normalized points
-    Y: Array  # (N, fd) outputs scaled by each node's tolerance scale
-    Phi: Array  # (N, p) the leaf model's split features ([u, 1] for affine leaves)
+    U: Array  # (N, d) normalized points u
+    Y: Array  # (N, fd) outputs scaled by each node's tolerance scale (y_i in the companion)
+    Phi: Array  # (N, p) the leaf model's split features (phi_i: [u, 1] for affine leaves)
     labels: Array  # (N,)
     counts: Array  # (k,)
     starts: Array = field(init=False)
-    lam: Array = field(init=False)  # (k,) fixed ridge per node
+    lam: Array = field(init=False)  # (k,) fixed ridge per node (lambda in the companion)
     groups: list = field(init=False)  # NumPy: (node ids (g,), row ids (g, c)) per distinct count c
 
     def __post_init__(self) -> None:
@@ -127,8 +137,8 @@ class SplitRows:
 
 def hard_sse(rows: SplitRows, w: Array, z: Array, min_side: int) -> tuple[Array, Array]:
     """
-    Direct residual sum of squares of the two hard children ``w^T u < z`` / ``>= z``,
-    each refit on its own rows (both Grams formed directly, no complementary
+    Direct residual sum of squares of the two hard children ``w^T u < z`` / ``>= z`` (the hard
+    objective ``SSE(a, z)`` of the companion), each refit on its own rows (both Grams formed directly, no complementary
     subtraction), and whether both sides keep ``min_side`` points. Used to rank final
     candidates: the prefix-statistic SSE is only a screen (it cancels badly near a good fit).
     """
@@ -253,7 +263,8 @@ def soft_step(rows: SplitRows, w, z, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n
 
 def soft_objective(rows: SplitRows, w: Array, z: Array, T: Array, delta: float):
     """
-    The consistent soft objective ``J = min_B F`` per node and its gradient in ``(w, z)``
+    The consistent soft objective ``J = min_B F`` per node (``J_h`` in the companion) and its
+    gradient in ``(w, z)``
     (not yet projected to ``|w| = 1``). With ``B`` at its minimizer, the envelope theorem
     leaves only the gate derivative: ``dJ/ds_i = (r_R,i - r_L,i) (1 - 2 delta) sigma sigma' / n``.
     Also returns the frozen residuals and penalty (for line-search trials), the inner

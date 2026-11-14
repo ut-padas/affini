@@ -1,14 +1,18 @@
 """
-How rejected clusters are split in two (Section 2.1, Algorithms 2 and 3).
+How rejected clusters are split in two (the AFINNI manuscript's Section 2.1, Algorithms 2
+and 3).
 
 Every strategy is Hessian-informed two-means with a different estimate of the
-metric ``M = |H|^{1/2}`` (the identity gives standard two-means / PCA): points
-are mapped by ``M``, the leading eigenvector ``v`` of the mapped covariance
-``M C M`` is the split direction, and each cluster's points are ordered by their
-projection onto it. ``child_sizes`` then decides where each ordered cluster is cut:
-at the median by default (``cut="median"``, equal halves), or at the centroid
-(``cut="sign"``, the sign of the projection as in Algorithm 2, falling back to the
-median when one side would be empty).
+metric ``M = |H|^{1/2}`` (``abs(H)^(1/2)`` in the companion; the identity gives standard
+two-means / PCA): points are mapped by ``M`` (the companion's ``x~_i = |H|^{1/2} (x_i - c)``),
+the leading eigenvector ``v`` (``u_1``) of the mapped covariance ``M C M`` (``CovZ``, with
+``C`` the scatter matrix of the cluster's points) is the split direction, and each
+cluster's points are ordered by their projection onto it (the scores ``s_i``).
+``child_sizes`` then decides where each ordered cluster is cut: at the median by default
+(``cut="median"``, equal halves), or at the centroid (``cut="sign"``, the sign of the
+projection as in the manuscript's Algorithm 2, falling back to the median when one side
+would be empty). Of each cluster's two children the low one comes first (``C_-1`` in the
+companion), then the high one (``C_1``).
 
 A ``SurrogateMode`` is a pair (local model, split strategy); see
 ``split_strategy_for_mode`` and ``src.components.local_models.local_model_for_mode``.
@@ -74,7 +78,7 @@ def median_split_sizes(counts: Array) -> Array:
     becomes a low-side child of ``n // 2`` points followed by a high-side child of
     ``n - n // 2``. Returns (2K,) int64 sizes ``[k0_low, k0_high, k1_low, ...]``.
 
-    Note: Algorithm 2 in the paper splits by the sign of the projection instead,
+    Note: the manuscript's Algorithm 2 splits by the sign of the projection instead,
     which can give children of unequal size (``sign_split_sizes``).
     """
     half = counts // 2
@@ -87,7 +91,7 @@ def median_split_sizes(counts: Array) -> Array:
 def sign_split_sizes(counts: Array, sorted_scores: Array) -> Array:
     """
     Child sizes for splitting every cluster by the sign of the projection score
-    (Algorithm 2): the low child holds the points with a negative score. A cluster
+    (the manuscript's Algorithm 2): the low child holds the points with a negative score. A cluster
     whose points would all fall on one side is split at the median instead, so
     every split makes progress. ``sorted_scores`` (N,) are the scores in the order
     returned by ``SplitStrategy.split`` (ascending within each cluster).
@@ -188,13 +192,14 @@ class CovarianceSplit(SplitStrategy):
 @SPLIT_STRATEGIES.register
 class CovarianceHessianSplit(SplitStrategy):
     """
-    Hessian from the covariance of low-Taylor-error points (Algorithm 3).
+    Hessian from the covariance of low-Taylor-error points (the manuscript's Algorithm 3).
 
     The Taylor expansion at each centroid uses either the gradient at the centroid
-    (``gradient="centroid"``) or a least-squares gradient fitted on the points
-    nearest the centroid (``gradient="local_lsq"``). The ``min_pts_per_cluster // 3``
-    points with the smallest Taylor error estimate the level set, and the inverse
-    of their covariance is used as |H| (Theorem 2.2).
+    (``gradient="centroid"``) or a least-squares gradient (``g^`` in the companion) fitted on
+    the ``max(2 d, min_pts_per_cluster // 4)`` points nearest the centroid
+    (``gradient="local_lsq"``). The ``min_pts_per_cluster // 3`` points with the smallest
+    Taylor error (``N_cov`` in the companion) estimate the level set, and the inverse
+    of their scatter matrix is used as |H| (the manuscript's Theorem 2.2).
     """
 
     name = "covariance_hessian"
@@ -228,26 +233,26 @@ class CovarianceHessianSplit(SplitStrategy):
                 data.X, data.F, data.centroids, data.f_c, data.labels, data.g_c
             )  # (N,)
         else:  # two-pass local fit: gradient from the points nearest the centroid
-            dist_to_mu = centroid_distances(data.X, data.centroids, data.labels)  # (N,)
-            n_tangent = max(d * 2, self.min_pts_per_cluster // 4)
-            tangent_mask = get_n_smallest_per_block(dist_to_mu, data.labels, n_tangent)
-            X_core = data.X[tangent_mask]
-            F_core = data.F[tangent_mask]
-            labels_core = data.labels[tangent_mask]
+            dist_to_c = centroid_distances(data.X, data.centroids, data.labels)  # (N,)
+            n_gradient_pts = max(d * 2, self.min_pts_per_cluster // 4)
+            gradient_pts = get_n_smallest_per_block(dist_to_c, data.labels, n_gradient_pts)
+            X_core = data.X[gradient_pts]
+            F_core = data.F[gradient_pts]
+            labels_core = data.labels[gradient_pts]
             M_XX, _ = run_fused_stats(
                 X_core, data.centroids, labels_core, K, d, 0, None, calc_E=False
             )  # (K, d, d)
             M_XF = run_fused_cross_cov(
                 X_core, F_core, data.centroids, data.f_c, labels_core, K, d, fd
             )  # (K, d, fd)
-            A_T_tangent = solve_regularized_covariance_inplace(M_XX, M_XF, d, fd)
-            A_tangent = A_T_tangent.transpose(0, 2, 1)  # (K, fd, d)
+            grad_lsq_T = solve_regularized_covariance_inplace(M_XX, M_XF, d, fd)
+            grad_lsq = grad_lsq_T.transpose(0, 2, 1)  # (K, fd, d), g^ in the companion
             taylor_err = taylor_residual_norms(
-                data.X, data.F, data.centroids, data.f_c, data.labels, A_tangent
+                data.X, data.F, data.centroids, data.f_c, data.labels, grad_lsq
             )  # (N,)
 
         # Points where the Taylor expansion is (nearly) exact trace out a level set.
-        n_est_cov = max(1, self.min_pts_per_cluster // 3)
+        n_est_cov = max(1, self.min_pts_per_cluster // 3)  # N_cov in the companion
         level_set = get_n_smallest_per_block(taylor_err, data.labels, n_est_cov)
         H_inv, _ = run_fused_stats(
             data.X[level_set],

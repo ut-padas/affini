@@ -11,7 +11,8 @@ from src.numerics import convert_to_2d_array, convert_to_3d_array
 @dataclass
 class Evaluator:
     """
-    Evaluates the target function, and optionally its Jacobian, and counts evaluations.
+    Evaluates the target function (the oracle ``f`` of the companion), and optionally its
+    Jacobian, and counts evaluations.
 
     Provide ``f_fn`` (with ``g_fn`` if gradients are needed), or ``oracle_fn``, which
     returns ``(F, G)`` in one call. When gradients are not needed and ``f_fn`` is

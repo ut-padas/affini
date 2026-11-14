@@ -9,7 +9,7 @@ predict by routing, inspect its leaves, audit it on fresh points, and save and r
 The function is a cosine along an oblique direction on ``[-5, 5]^d`` (``src.problems.wave``).
 ART starts from ``ceil(50 (d + 1))`` uniform points, one node's worth: every node is topped up
 with fresh points inside its polytope before it is fitted, and a node whose affine model misses
-the tolerance is cut by a hyperplane. ``example05_afinni_vs_art.py`` compares ART with AFINNI
+the tolerance is cut by a plane. ``example05_afinni_vs_art.py`` compares ART with AFINNI
 on four problems.
 
 Outputs, under ``scratch/example04_wave_art``: the model file and, in ``plots/``, the tree's
@@ -92,7 +92,7 @@ def main(args) -> None:
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=(__doc__ or "").strip().splitlines()[0])
     p.add_argument("--dim", type=int, default=2)
-    p.add_argument("--search", default="soft", choices=("gap", "bins", "soft"), help="how a node's hyperplane is chosen")
+    p.add_argument("--search", default="soft", choices=("gap", "bins", "soft"), help="how a node's plane is chosen")
     p.add_argument("--roots", default="box", choices=("box", "grid", "voronoi"), help="the tree's root cells")
     p.add_argument("--max-depth", type=int, default=14, help="depth limit; deeper nodes keep their model as a leaf")
     main(p.parse_args())

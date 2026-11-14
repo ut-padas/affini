@@ -196,17 +196,17 @@ Settings are in `art=ARTSettings(...)`:
 | Setting | Meaning |
 |---|---|
 | `roots` | `"box"` (one root, as in the reference ART; no initial clustering), `"grid"` (`num_initial_clusters` cells over the domain), or `"voronoi"` (the cells of the initial clustering's centres, for comparisons with AFINNI's forest) |
-| `split_search` | how a rejected node's hyperplane is chosen: `"soft"` (default; threshold search, then the reference ART's soft-oblique optimizer in a consistent form, kept only if its hard fit is better), `"bins"` (threshold search over `n_directions` directions × `n_bins` cuts only), `"gap"` (the split strategy's direction, cut near the median) |
+| `split_search` | how a rejected node's plane is chosen: `"soft"` (default; the bins search, then the reference ART's soft-oblique optimizer in a consistent form, kept only if its hard fit is better), `"bins"` (the bins search over `n_directions` directions × `n_bins` cuts only), `"gap"` (the split strategy's direction, cut near the median) |
 | `sampling` | `"hit_and_run"` (default), or `"convex_combination"`: AFINNI's convex-combination augmentation, to compare predictors on one tree |
 | `store_Q` | keep the trust-region shape per leaf (needed only by `predictor="knn"`) |
 | `sample_multiplier` | every node is topped up to `ceil(multiplier * (d + 1))` training points before it is fitted (reference ART: 50) |
 | `validation_samples` | fresh points per node on which the deployed model is checked; a diagnostic |
 | `min_side_margin` | a split leaves at least `d + 1 + margin` points on each side |
 | `walk_steps`, `max_walk_steps`, `mixing_z` | hit-and-run steps per new point (box and grid roots are sampled exactly); chains that still drift between their halfway and last step are lengthened up to `max_walk_steps`; chains that did not move are rerun with coordinate directions; a node still drifting, stuck or with an infeasible step is marked `insufficient_sampling` (training warns) |
-| `n_bins`, `n_directions`, `n_screened`, `soft_iters`, `soft_temperature` | the threshold search and the soft optimizer (defaults: 16, 6, 3, 40, 0.1) |
+| `n_bins`, `n_directions`, `n_screened`, `soft_iters`, `soft_temperature` | the bins search and the soft optimizer (defaults: 16, 6, 3, 40, 0.1) |
 | `steal_min_load`, `steal_size` | work-stealing thresholds in work units: points after top-up and validation (default: a few nodes) |
 
-Each rejected node is split by a hyperplane (see `split_search`), cut where the stored
+Each rejected node is split by a plane (see `split_search`), cut where the stored
 predicate reproduces the children exactly. `error_metric="pointwise"` with `rtol` alone is
 ART's stopping rule (every point within `rtol`). A node at `max_levels`, or one that cannot be split, keeps its fitted model as a
 leaf, so every point of the domain has a leaf:

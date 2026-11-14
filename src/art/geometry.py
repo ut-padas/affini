@@ -1,4 +1,4 @@
-"""The routing domain, the root cells (box, grid, Voronoi) and the hyperplane predicates training and routing share."""
+"""The routing domain, the root cells (box, grid, Voronoi) and the plane predicates training and routing share."""
 
 from dataclasses import dataclass
 
@@ -25,6 +25,7 @@ class Domain:
         return self.upper - self.lower
 
     def normalize(self, X: Array) -> Array:
+        """The coordinates ``u`` in ``[0, 1]^d`` of the domain, in which every ART plane and region is stated."""
         return (X - xp.asarray(self.lower)) / xp.asarray(self.width)
 
     def denormalize(self, U: Array) -> Array:
@@ -120,19 +121,22 @@ class Roots:
         return xp.sum(coords * strides, axis=1)
 
 
-# --- Hyperplane predicates -----------------------------------------------------------
-def plane_scores(U: Array, W: Array) -> Array:
-    """``w_i^T u_i`` row by row; training and routing both call this, so they classify identically."""
-    return xp.sum(U * W, axis=1)
+# --- Plane predicates ----------------------------------------------------------------
+def plane_scores(U: Array, normals: Array) -> Array:
+    """
+    ``a_i^T u_i`` row by row, with ``a_i`` the unit normal of point ``i``'s plane (``a`` in the
+    companion); training and routing both call this, so they classify identically.
+    """
+    return xp.sum(U * normals, axis=1)
 
 
 def gap_cuts(sorted_scores: Array, labels: Array, counts: Array, min_side: int) -> tuple[Array, Array, Array]:
     """
-    Per cluster, the cut position nearest the median such that both sides keep
+    Per node, the cut position nearest the median such that both sides keep
     ``min_side`` points and the cut falls between two *distinct* scores, so the
-    predicate ``score >= z`` with ``z`` the first right-side score reproduces the cut
-    exactly. ``sorted_scores`` and ``labels`` are in split order (ascending within each
-    cluster). Returns ``(valid, position, z)``, each (K,).
+    predicate ``score >= z`` with the offset ``z`` the first right-side score reproduces the
+    cut exactly. ``sorted_scores`` and ``labels`` are in split order (ascending within each
+    node). Returns ``(valid, position, z)``, each (K,).
     """
     starts = xp.r_[0, xp.cumsum(counts)[:-1]]
     pos = xp.arange(int(labels.shape[0]), dtype=xp.int64) - starts[labels]

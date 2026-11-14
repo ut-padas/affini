@@ -43,7 +43,7 @@ A plan's `process_batch` runs four stages on its batch:
 | 1. points | the batch's own points | each node topped up inside its polytope; validation points drawn if `validation_samples` > 0 |
 | 2. fit and accept | local model per cluster, acceptance test | local model per node, acceptance test |
 | 3. deploy | accepted clusters with trust regions | accepted nodes, checked on their validation points if drawn |
-| 4. refine the rest | augment, then bisect along a curvature-informed direction | cut by a hyperplane from the split search; nodes that cannot split keep a fallback leaf |
+| 4. refine the rest | augment, then bisect along a curvature-informed direction | cut by a plane from the split search; nodes that cannot split keep a fallback leaf |
 
 ## Prediction
 

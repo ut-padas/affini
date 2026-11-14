@@ -101,8 +101,8 @@ class AFINNIPlan:
         Approximate live storage during AFFINE_COV_HESS rejected-cluster handling: the base
         batch X/F/labels, plus twice (augmentation doubles a rejected cluster) the augmented
         X/F/labels, dx, residual work arrays, split scores and sort buffers, including the
-        (N, fd, d) ``A_tangent[label]`` temporary of the NumPy Taylor residual
-        (``taylor_residual_norms``). The CuPy kernel is fused, so that term is conservative
+        (N, fd, d) per-point gradient temporary of the NumPy Taylor residual
+        (``A[labels]`` in ``taylor_residual_norms``). The CuPy kernel is fused, so that term is conservative
         on the GPU; it is not tightened, because a smaller estimate would change batch sizes, and
         with them the results.
         """
@@ -182,8 +182,9 @@ class AFINNIPlan:
     def _fit_and_accept(self, X, F, G, batch: DeviceBatch, components, evaluator, timer):
         """
         Fit the local model on every cluster at its points (with ``f`` and, if the mode needs
-        it, the gradient at the centroid) and screen it with the acceptance test. Returns the
-        fit data, the model's parameters and the acceptance result ``(is_good, E_abs, E_rel)``.
+        it, the gradient at the centroid ``c``, ``mus`` here) and screen it with the acceptance
+        test. Returns the fit data, the model's parameters and the acceptance result
+        ``(is_good, E_abs, E_rel)``, the errors ``e_a`` and ``e_r`` of the companion.
         """
         model, acceptance = components.local_model, components.acceptance
         sizes, starts = batch.sizes, batch.starts
@@ -270,7 +271,8 @@ class AFINNIPlan:
         """
         Cut each rejected cluster in two along its split direction (its points sorted by their
         projection, ``child_sizes`` the size of each half) and append the children, one level
-        deeper, to ``next_level``.
+        deeper, to ``next_level``: the low half (``C_-1`` in the companion), then the high half
+        (``C_1``), next to each other.
         """
         with timer("time_bad_split"):
             order, child_sizes = splitter.split(data)

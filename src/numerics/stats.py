@@ -19,7 +19,9 @@ def run_fused_stats(
     X, mus, labels, K, D, FD, active_comps, G=None, g_mus=None, calc_E=False
 ):
     """
-    Accumulates Covariance (C) and Gradient Interaction (E) matrices. On CuPy through
+    Accumulates Covariance (C) and Gradient Interaction (E) matrices per cluster. Both are
+    sums over the cluster's points, not means: C is the scatter matrix
+    ``sum (x - c)(x - c)^T`` (``Sigma`` in the companion). On CuPy through
     ``segment_cross``, so the sums are reproducible and independent of the batch; there
     the labels must be sorted (``segments_of``), as every batch layout is.
     """
@@ -162,7 +164,7 @@ def run_fused_mahalanobis_projection(dx, labels, U):
 def symmetric_point_covariance(
     X: Array, centroids: Array, labels: Array, K: int
 ) -> Array:
-    """(K, d, d) covariance of each cluster's points about its centroid."""
+    """(K, d, d) unnormalized covariance (the scatter matrix, a sum) of each cluster's points about its centroid."""
     Cov, _ = run_fused_stats(
         X, centroids, labels, K, X.shape[1], 0, None, calc_E=False
     )

@@ -7,12 +7,13 @@ evaluates it at the cluster's own points (``F_hat``) and asks an
 the others are augmented and split.
 
 Every built-in criterion measures, per cluster ``k`` and output component ``j``,
-an absolute error ``abs_kj`` and a relative error ``rel_kj``, and accepts the
-cluster if **every** component passes either test:
+an absolute error ``abs_kj`` and a relative error ``rel_kj`` (``E_abs`` and ``E_rel`` in
+the code, ``e_a`` and ``e_r`` in the companion), and accepts the cluster if **every**
+component passes either test:
 
     rel_kj < rtol_j  or  abs_kj < atol_j   for all j
 
-``atol`` and ``rtol`` are each a scalar (used for every component), a sequence of
+``atol`` and ``rtol`` (``alpha_tol`` and ``r_tol`` in the companion) are each a scalar (used for every component), a sequence of
 one value per component, or ``None``; at least one must be given. An omitted
 tolerance never accepts, so ``rtol`` alone is a purely relative test and ``atol``
 alone a purely absolute one. To scale an absolute tolerance by the function's

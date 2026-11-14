@@ -87,8 +87,9 @@ def _make_knn_index(centroids: Array):
 
 class AFINNISurrogate:
     """
-    Surrogate using Adaptive Clustering + kNN with Ellipsoidal Distance on GPU.
-    Supports MPI-parallelized training and inference.
+    A surrogate made of leaves with local models, trained by either plan (AFINNI or ART) on
+    CPU or GPU and across MPI ranks. AFINNI leaves answer a query through their trust regions
+    (``predictor="knn"``), an ART tree routes it to its leaf (``predictor="route"``).
     """
 
     def __init__(self):
@@ -96,23 +97,27 @@ class AFINNISurrogate:
         self.mode: SurrogateMode | None = None
         self.local_model: LocalModel | None = None  # the function on each leaf
 
-        # Storage for source points (Reference data)
+        # The leaves, one row each (the set S of the companion): N_src leaves (N_c), their
+        # centres X_src (c), f at the centres f_src (f(c)), and the trust-region matrices
+        # Qs_src (T, column "Q"; None for an ART model trained with store_Q=False).
         self.N_src = 0
         self.X_src = None
         self.f_src = None
         self.Qs_src = None
         # The local model's own per-leaf parameters, keyed by the columns it declares
-        # (e.g. "A_fit"/"b_fit", or "g" and optionally "H").
+        # (e.g. "A_fit"/"b_fit", or "g" and optionally "H"; see AffineLSQModel for how
+        # "A_fit"/"b_fit" relate to the companion's (w, b)).
         self.leaf_params: dict[str, Array] = {}
         # Per-leaf training diagnostics: the accepted absolute and relative errors per
-        # output component, (N_src, fd) (see src.components.acceptance), and the number of points.
+        # output component (e_a, e_r), (N_src, fd) (see src.components.acceptance), and the
+        # number of points.
         self.E_cluster_abs_src = None
         self.E_cluster_rel_src = None
         self.counts_src = None
         # The effective settings and components of the last training run.
         self.config: dict[str, Any] = {}
-        # False if refinement stopped at max_levels with clusters still unresolved;
-        # their region has no leaves (see num_unresolved_clusters / _pts).
+        # False if refinement stopped at max_levels with clusters still unresolved; no
+        # leaf holds their points (see num_unresolved_clusters / _pts).
         self.converged: bool | None = None
         self.num_unresolved_clusters = 0
         self.num_unresolved_pts = 0
@@ -173,6 +178,7 @@ class AFINNISurrogate:
     ) -> None:
         """
         Train the surrogate collectively on every MPI rank, replacing any previous model.
+        ``X_train`` holds the initial points (``X_0`` in the companion).
 
         Every setting, including the components and the tolerances, comes from
         ``config``; every rank must pass an equivalent one. Only rank 0's ``X_train``,
@@ -248,7 +254,7 @@ class AFINNISurrogate:
             if not self.converged:
                 where = (
                     "they keep their fitted model as a leaf (see art_leaves / leaf_status_counts())"
-                    if self.routing is not None else "their region has no leaves"
+                    if self.routing is not None else "no leaf holds their points"
                 )
                 warnings.warn(
                     f"Training stopped at max_levels={config.max_levels} with "
@@ -480,10 +486,10 @@ class AFINNISurrogate:
         ``(None, None)`` elsewhere.
 
         ``predictor="knn"`` (the default for AFINNI models): the ``k_nn * coarse_factor``
-        nearest centroids are reranked by trust-region distance ``dx^T Q dx``; the best
-        ``k_nn`` leaves' models are blended with inverse-distance weights
-        (``strict_trust_region`` drops leaves with distance > 1). A query is flagged
-        outside when its best candidate is > 1.
+        nearest centroids (``kappa`` candidates in the companion) are reranked by trust-region
+        distance ``dx^T Q dx`` (``d_i``); the best ``k_nn`` leaves' models are blended with
+        weights ``1 / d_i^2`` (``strict_trust_region`` drops leaves with distance > 1). A
+        query is flagged outside when its best candidate (the leaf ``nu``) is > 1.
 
         ``predictor="route"`` (the default, and only meaningful choice, for ART
         models): each query is routed down the tree to exactly one leaf, whose model
@@ -590,7 +596,7 @@ class AFINNISurrogate:
         leaf_params = self.model_params()
 
         all_predictions = []
-        all_ung_masks = []
+        all_outside = []
         all_nn_idx = []
 
         # Process queries in Memory-Safe Batches
@@ -611,7 +617,7 @@ class AFINNISurrogate:
                 "nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse
             )
 
-            # 3. Phase 2: Refine to top k_nn based on true Trust Region distance
+            # 3. Phase 2: Refine to top k_nn based on true Trust Region distance (d_i)
             sorted_local_indices = xp.argsort(dist_sq_coarse, axis=1)
             top_k_local = sorted_local_indices[:, :k_nn]
 
@@ -620,7 +626,8 @@ class AFINNISurrogate:
 
 
             # 4. Shepard's Inverse Distance Weighting
-            # Weight = 1 / (d^p + eps). Points exactly at the centroid get dominating weight.
+            # Weight = 1 / (dist_sq^(p/2) + eps): with p = 4 this is 1 / d_i^2, d_i = dist_sq the
+            # companion's trust-region distance. Points exactly at the centroid get dominating weight.
             p = 4.0
             base_weights = 1.0 / (xp.power(dist_sq, p / 2) + 1e-12)
 
@@ -633,8 +640,8 @@ class AFINNISurrogate:
 
             total_weight = xp.sum(final_weights, axis=1)
 
-            # A point is unguaranteed if its CLOSEST centroid is outside the trust region (d_sq > 1.0)
-            unguaranteed_mask = xp.min(dist_sq, axis=1) > 1.0
+            # A query is flagged outside if even its best leaf's trust region excludes it (d_sq > 1.0)
+            outside = xp.min(dist_sq, axis=1) > 1.0
 
             # Prevent divide-by-zero if strict_trust_region killed all weights
             total_weight = xp.maximum(total_weight, 1e-12)
@@ -651,19 +658,19 @@ class AFINNISurrogate:
 
             # Store chunk results
             all_predictions.append(batch_predictions)
-            all_ung_masks.append(unguaranteed_mask)
+            all_outside.append(outside)
             if return_cluster_assignments:
                 all_nn_idx.append(nn_idx)
 
         # Reconstruct the full arrays
         predictions = xp.concatenate(all_predictions, axis=0)
-        unguaranteed_mask = xp.concatenate(all_ung_masks, axis=0)
+        outside = xp.concatenate(all_outside, axis=0)
 
         if return_cluster_assignments:
             nn_idx_full = xp.concatenate(all_nn_idx, axis=0)
-            return predictions, unguaranteed_mask, nn_idx_full  # type: ignore
+            return predictions, outside, nn_idx_full  # type: ignore
         else:
-            return predictions, unguaranteed_mask
+            return predictions, outside
 
     def predict_route_local(self, query_points: Array, batch_size: int = 5000) -> tuple[Array, Array]:
         """``(predictions, outside_domain)`` for this rank's queries by routing (see ``predict``)."""
@@ -727,9 +734,10 @@ class AFINNISurrogate:
         A non-finite oracle value or prediction counts as a violation (reported as
         ``n_invalid`` too): the bounded event is "fails the tolerance or cannot be
         evaluated", and invalid rows are never dropped, which would change the measure.
-        Returns the count and a one-sided ``confidence`` upper bound on the violation
-        probability under the uniform measure (Clopper-Pearson; ``1 - (1 - confidence)^(1/n)``
-        with no violations: e.g. 299 points bound it below 1% at 95%). The bound is for the
+        Returns the count and a one-sided ``confidence`` (``eta`` in the companion) upper
+        bound on the violation probability under the uniform measure (Clopper-Pearson;
+        ``1 - (1 - confidence)^(1/n)`` with no violations: e.g. 299 points bound it below 1%
+        at 95%). The bound is for the
         frozen model and this measure; it does not bound the error at every point, and a
         model chosen after inspecting audits needs a fresh, reserved audit (a new
         ``seed`` alone does not undo that selection). Tolerances default to the ones the
@@ -782,15 +790,16 @@ class AFINNISurrogate:
         self, query_points: Array, k_coarse: int = 10, batch_size: int = 50000
     ) -> Array:
         """
-        Outside-trust-region mask only, skipping model evaluation; for queries already
-        local to this rank (no MPI scatter).
+        Outside-trust-region mask only (``predict``'s flag), skipping model evaluation; for
+        queries already local to this rank (no MPI scatter). "Unguaranteed" means outside every
+        trust region, not that the inside answers are guaranteed.
         """
         assert self.trained and self.X_src is not None and self.Qs_src is not None
         N = query_points.shape[0]
         if N == 0:
             return xp.array([], dtype=bool)
 
-        all_ung_masks = []
+        all_outside = []
         for start_idx in range(0, N, batch_size):
             end_idx = min(start_idx + batch_size, N)
             batch_queries = query_points[start_idx:end_idx]
@@ -807,10 +816,10 @@ class AFINNISurrogate:
                 "nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse
             )
 
-            # 3. Mask: Point is unguaranteed if its closest Mahalanobis distance > 1.0
-            unguaranteed_mask = xp.min(dist_sq_coarse, axis=1) > 1.0
-            all_ung_masks.append(unguaranteed_mask)
+            # 3. Mask: a query is outside if its closest Mahalanobis distance is > 1.0
+            outside = xp.min(dist_sq_coarse, axis=1) > 1.0
+            all_outside.append(outside)
 
-        return xp.concatenate(all_ung_masks, axis=0)
+        return xp.concatenate(all_outside, axis=0)
 
 

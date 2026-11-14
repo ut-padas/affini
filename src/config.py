@@ -80,11 +80,13 @@ class ARTSettings:
     """
     Settings of ``algorithm="art"`` (see ``src.art``).
 
-    Every node is topped up to ``ceil(sample_multiplier * p_eff)`` training points
-    before it is fitted, with ``p_eff = d + 1`` (the reference ART's ``n_node``; it uses 50). New
+    Every node is topped up to ``ceil(sample_multiplier * p)`` training points before it is
+    fitted (``n = ceil(m p)`` in the companion, ``m`` the ``sample_multiplier``), with ``p`` the
+    leaf model's coefficients per output, ``d + 1`` for an affine leaf (``ARTPlan.n_coefficients``;
+    the reference ART's ``n_node``, and its multiplier is 50). New
     points are uniform in a box or grid root and hit-and-run endpoints (``walk_steps``
     steps from a random inherited point) elsewhere. A split must leave
-    ``p_eff + min_side_margin`` points on each side.
+    ``p + min_side_margin`` points on each side.
     """
 
     # "grid": num_initial_clusters cells over the domain; "voronoi": the Voronoi cells of
@@ -94,21 +96,22 @@ class ARTSettings:
     # "convex_combination": AFINNI's convex-combination augmentation of rejected nodes,
     # so one tree can be compared under both predictors (kNN and routing).
     sampling: Literal["hit_and_run", "convex_combination"] = "hit_and_run"
-    sample_multiplier: float = 50.0
+    sample_multiplier: float = 50.0  # m in the companion
     # Fresh points per node on which the deployed model is checked before acceptance; a
     # diagnostic, not a certificate (the global claim is AFINNISurrogate.audit). 0: none.
     validation_samples: int = 0
     min_side_margin: int = 0
-    walk_steps: int = 20
+    walk_steps: int = 20  # hit-and-run steps per chain, tau in the companion
     # Chains whose endpoints still drift between the halfway and last step (standardized
     # mean difference > mixing_z) are continued, doubling, up to max_walk_steps (default
     # 4 * walk_steps); nodes that still drift get validation_status "insufficient_sampling".
     max_walk_steps: int | None = None
     mixing_z: float = 4.0
-    # How a rejected node's hyperplane is chosen: "gap" (the split strategy's direction,
-    # cut near the median), "bins" (n_bins - 1 cuts along n_directions directions, the
-    # n_screened best re-checked directly) or "soft" ("bins", then the consistent
-    # soft-oblique optimizer for soft_iters steps, kept only if its hard fit is better).
+    # How a rejected node's plane is chosen: "gap" (the split strategy's direction,
+    # cut near the median), "bins" (the bins search: n_bins - 1 cuts along n_directions
+    # directions, n_dir in the companion, the n_screened best re-checked directly) or "soft"
+    # ("bins", then the consistent soft-oblique optimizer for soft_iters steps, kept only if
+    # its hard fit is better).
     split_search: Literal["gap", "bins", "soft"] = "soft"
     n_bins: int = 16
     n_directions: int = 6
@@ -116,11 +119,14 @@ class ARTSettings:
     # 40: at 20 nearly every node stops at the iteration limit; 40 gives fewer leaves or
     # lower error for about 35% more build time (the reference ART allows 200).
     soft_iters: int = 40
-    soft_temperature: float = 0.1  # gate width as a fraction of the node's score spread
+    # The soft gate's width (h in the companion) as a fraction of the std of the node's scores.
+    soft_temperature: float = 0.1
     soft_weight_floor: float = 1e-8  # delta in W = delta + (1 - 2 delta) sigma
-    # Store the trust-region shape Q per leaf (needed only by predictor="knn"; d^2 per leaf).
+    # Store the trust-region matrix Q per leaf (T in the companion; needed only by
+    # predictor="knn"; d^2 per leaf).
     store_Q: bool = True  # noqa: N815  (named after the leaf column "Q")
-    # Work-stealing thresholds in queued points; None: a few nodes' worth (src.art).
+    # Work-stealing threshold and grant size in queued points (w_* and w_s in the companion);
+    # None: a few nodes' worth (src.art).
     steal_min_load: int | None = None
     steal_size: int | None = None
 
@@ -170,23 +176,25 @@ class TrainingConfig:
 
     # --- Surrogate and acceptance test ---
     mode: SurrogateMode = SurrogateMode.AFFINE_COV_HESS
-    # Error tolerances for accepting a cluster: a scalar, one value per output
-    # component, or None (that test never accepts). At least one is required unless
-    # ``acceptance`` brings its own; see src.components.acceptance for the rule.
+    # Error tolerances for accepting a cluster (alpha_tol and r_tol in the companion): a
+    # scalar, one value per output component, or None (that test never accepts). At least
+    # one is required unless ``acceptance`` brings its own; see src.components.acceptance.
     atol: Tolerance = None
     rtol: Tolerance = None
     error_metric: Literal["L2", "Linf", "pointwise"] = "Linf"
 
     # --- Initial clustering ---
     initial_clustering_method: Literal["kmeans", "knndbscan", "uniform_grid"] = "kmeans"
-    num_initial_clusters: int = 100
+    num_initial_clusters: int = 100  # N_init in the companion
 
     # --- Refinement ---
+    # N_min in the companion: a rejected cluster is augmented to at least 2 * N_min points.
     min_pts_per_cluster: int = 100
     sampling_method: str = "convex_combination"  # see src.components.sampling.SAMPLERS
-    q_reg: float = 1e-6  # regularization added when computing the trust-region shape Q
+    # Floor on the covariance eigenvalues of the trust-region matrix Q (gamma and T in the companion).
+    q_reg: float = 1e-6
     # Maximum number of refinement levels; clusters still unresolved after it leave
-    # their region without leaves and the run reports converged=False.
+    # their points without a leaf and the run reports converged=False.
     max_levels: int = 50
     batch_size: int = 10_000_000  # max points moved to the device per batch
     seed: int = 0

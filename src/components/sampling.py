@@ -88,7 +88,8 @@ class ConvexCombinationSampler(Sampler):
     from the cluster and ``a ~ U(0, 1)``. Cheap and fully vectorized, and new points
     stay inside the cluster's convex hull. The points are not uniform over the
     hull (they concentrate towards its interior) and never fill the gap between
-    the hull and the cluster's Voronoi cell. See Section 2.3 / Algorithm 4.
+    the hull and the cluster's Voronoi cell. See the AFINNI manuscript's Section 2.3 /
+    Algorithm 4.
     """
 
     name = "convex_combination"

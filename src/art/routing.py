@@ -13,8 +13,10 @@ from src.art.geometry import Domain, Roots, plane_scores
 class RoutingTable:
     """
     The explicit tree, validated and stored as compact node arrays: node ``i`` is a split
-    (children ``child[i]``, plane ``w[i]``, ``z[i]``) or a leaf (row ``node_leaf[i]`` of the
-    leaf arrays), and ``root_node[r]`` is root ``r``'s node. Routing follows child indices,
+    (children ``child[i]`` = (left, right), plane ``normal[i]``, ``offset[i]``: the plane
+    ``(a, z)`` of the companion, whose side ``normal^T u >= offset`` is the right child) or a
+    leaf (row ``node_leaf[i]`` of the leaf arrays), and ``root_node[r]`` is root ``r``'s node.
+    Routing follows child indices,
     so no logical key is packed into an integer and every depth the path codes allow
     (``MAX_DEPTH_LIMIT``) routes. The logical identity ``(root, path_code)`` of every node
     is kept as provenance (``node_root``, ``node_path``), which saving and loading rebuild
@@ -25,8 +27,8 @@ class RoutingTable:
     roots: Roots
     is_leaf: Array  # (M,) bool
     child: Array  # (M, 2) int64 node indices, -1 for leaves
-    w: Array  # (M, d), zero rows for leaves
-    z: Array  # (M,)
+    normal: Array  # (M, d) unit plane normals, zero rows for leaves
+    offset: Array  # (M,)
     node_leaf: Array  # (M,) leaf row, -1 for splits
     root_node: Array  # (R,)
     max_depth: int
@@ -38,11 +40,11 @@ class RoutingTable:
         return int(np.sum(to_host(self.is_leaf)))
 
     @classmethod
-    def build(cls, domain: Domain, roots: Roots, leaf_root, leaf_path, split_root, split_path, w, z) -> "RoutingTable":
+    def build(cls, domain: Domain, roots: Roots, leaf_root, leaf_path, split_root, split_path, normal, offset) -> "RoutingTable":
         """
         Assemble and check the tree: leaf ``i`` (in leaf-array order) is ``(leaf_root[i],
         leaf_path[i])``; split ``j`` is ``(split_root[j], split_path[j])`` with plane
-        ``(w[j], z[j])``. Checks: a finite domain of positive width, roots of its dimension
+        ``(normal[j], offset[j])``. Checks: a finite domain of positive width, roots of its dimension
         (positive grid bins; finite, distinct Voronoi centres), valid roots and positive
         path codes, finite planes of the domain's dimension, unique nodes, both children of
         every split, a split parent for every non-root node, and a node for every root.
@@ -68,7 +70,7 @@ class RoutingTable:
             if C.ndim != 2 or C.shape[1] != lo.size or C.shape[0] == 0 or not np.all(np.isfinite(C)) \
                     or len(np.unique(C, axis=0)) != len(C):  # fmt: skip
                 raise ValueError("Voronoi root centres must be finite, distinct (R, d) points.")
-        W, Z = np.asarray(to_host(w), dtype=np.float64), np.asarray(to_host(z), dtype=np.float64).reshape(-1)
+        W, Z = np.asarray(to_host(normal), dtype=np.float64), np.asarray(to_host(offset), dtype=np.float64).reshape(-1)
         d, R = domain.d, roots.n_roots
         if len(lr) != len(lp) or len(sr) != len(sp) or W.shape != (len(sr), d) or Z.shape != (len(sr),):
             raise ValueError("ART tree arrays have inconsistent shapes.")
@@ -124,19 +126,23 @@ class RoutingTable:
             if int(act.shape[0]) == 0:
                 break
             na = node[act]
-            side = (plane_scores(U[act], self.w[na]) - self.z[na] >= 0).astype(xp.int64)
+            side = (plane_scores(U[act], self.normal[na]) - self.offset[na] >= 0).astype(xp.int64)
             node[act] = self.child[na, side]
         return self.node_leaf[node], outside
 
     def arrays(self) -> dict[str, np.ndarray]:
-        """The host arrays that ``from_arrays`` rebuilds the table from (for saving): domain, roots and provenance."""
+        """
+        The host arrays that ``from_arrays`` rebuilds the table from (for saving): domain, roots and
+        provenance. The split planes are stored under the keys ``"w"`` (normals) and ``"z"``
+        (offsets), the model file's format.
+        """
         split = ~np.asarray(to_host(self.is_leaf))
         leaf_rows = np.asarray(to_host(self.node_leaf))[~split]
         order = np.argsort(leaf_rows)  # leaves in leaf-array order
         out = {
             "domain_lower": self.domain.lower, "domain_upper": self.domain.upper, "root_bins": self.roots.bins,
             "split_root": self.node_root[split], "split_path": self.node_path[split],
-            "w": np.asarray(to_host(self.w))[split], "z": np.asarray(to_host(self.z))[split],
+            "w": np.asarray(to_host(self.normal))[split], "z": np.asarray(to_host(self.offset))[split],
             "leaf_root": self.node_root[~split][order], "leaf_path": self.node_path[~split][order],
         }  # fmt: skip
         if self.roots.is_voronoi:

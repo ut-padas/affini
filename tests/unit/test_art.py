@@ -87,7 +87,7 @@ def _tree():
     domain, roots = Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1)
     return domain, roots, {
         "leaf_root": [0, 0, 0], "leaf_path": [2, 6, 7], "split_root": [0, 0], "split_path": [1, 3],
-        "w": np.array([[1.0, 0.0], [0.0, 1.0]]), "z": np.array([0.5, 0.25]),
+        "normal": np.array([[1.0, 0.0], [0.0, 1.0]]), "offset": np.array([0.5, 0.25]),
     }
 
 
@@ -368,7 +368,7 @@ def test_close_voronoi_centres_route_in_cell_samples_to_their_own_root_in_2d(sep
     assert exact == [1] * 200  # every sample is truly in the middle cell (exact rational arithmetic)
     np.testing.assert_array_equal(host(roots.root_of(xp.asarray(P))), exact)
     table = RoutingTable.build(Domain(np.zeros(2), np.ones(2)), roots, leaf_root=[0, 1, 2], leaf_path=[1, 1, 1],
-                               split_root=[], split_path=[], w=np.zeros((0, 2)), z=np.zeros(0))  # fmt: skip
+                               split_root=[], split_path=[], normal=np.zeros((0, 2)), offset=np.zeros(0))  # fmt: skip
     np.testing.assert_array_equal(host(table.route(xp.asarray(P))[0]), exact)
 
 
@@ -377,7 +377,7 @@ def test_root_counts_that_overflow_the_index_type_are_rejected():
     roots = Roots(np.array([2**62 + 1, 4], dtype=np.int64))
     with pytest.raises(ValueError, match="outnumber"):
         RoutingTable.build(domain, roots, leaf_root=[0, 1, 2, 3], leaf_path=[1] * 4,
-                           split_root=[], split_path=[], w=np.zeros((0, 2)), z=np.zeros(0))  # fmt: skip
+                           split_root=[], split_path=[], normal=np.zeros((0, 2)), offset=np.zeros(0))  # fmt: skip
 
 
 @pytest.mark.parametrize("separation", [1e-6, 1e-8, 1e-10, 1e-12])
@@ -417,7 +417,7 @@ def test_drift_ignores_rounding_sized_shifts_of_a_narrow_node():
     assert bool(sampler._drifting(U, U + 1e-8, owner, walk, xp.asarray([20]))[0])
 
 
-def test_threshold_search_skips_nodes_too_small_to_split_beside_valid_ones():
+def test_bins_search_skips_nodes_too_small_to_split_beside_valid_ones():
     """A sparse node (fewer than 2 * min_side points, as convex-combination sampling can produce) gets no candidate and no cross-node read."""
     from src.art import ARTPlan, SplitRows
     from src.config import TrainingConfig
@@ -432,11 +432,11 @@ def test_threshold_search_skips_nodes_too_small_to_split_beside_valid_ones():
     labels = xp.asarray(np.r_[np.zeros(60), np.ones(n_small)].astype(np.int64))
     rows = SplitRows(U, Y, Phi, labels, xp.asarray([60, n_small]))
     bank = xp.asarray(np.broadcast_to(np.eye(2), (2, 2, 2)).copy())
-    _, z, sse = plan._threshold_search(rows, bank)
+    _, z, sse = plan._bins_search(rows, bank)
     assert np.isfinite(host(z)[0]) and np.isfinite(host(sse)[0])
     assert np.isnan(host(z)[1]) and np.isinf(host(sse)[1])
     alone = SplitRows(big.U, big.Y, big.Phi, big.labels, big.counts)
-    _, z_alone, _ = plan._threshold_search(alone, bank[:1])
+    _, z_alone, _ = plan._bins_search(alone, bank[:1])
     assert float(host(z_alone)[0]) == float(host(z)[0])
 
 
@@ -452,7 +452,7 @@ def test_a_62_level_skinny_tree_with_many_roots_routes_to_its_deepest_leaf():
     others = [r for r in range(1024) if r != 1023]
     table = RoutingTable.build(
         domain, roots, leaf_root=others + [1023] * (depth + 1), leaf_path=[1] * 1023 + leaf_path,
-        split_root=[1023] * depth, split_path=split_path, w=np.tile([1.0, 0.0], (depth, 1)), z=np.array(z),
+        split_root=[1023] * depth, split_path=split_path, normal=np.tile([1.0, 0.0], (depth, 1)), offset=np.array(z),
     )  # fmt: skip
     q = xp.asarray([[float(hi[0]), float((lo[1] + hi[1]) / 2)]])
     leaf, outside = table.route(q)
@@ -469,7 +469,7 @@ def test_routing_table_loads_the_packed_key_format():
     order = np.argsort(lk)
     old = {
         "domain_lower": np.zeros(2), "domain_upper": np.ones(2), "root_bins": roots.bins, "shift": shift,
-        "split_keys": sk, "leaf_keys": lk[order], "leaf_index": order, "w": tree["w"], "z": tree["z"],
+        "split_keys": sk, "leaf_keys": lk[order], "leaf_index": order, "w": tree["normal"], "z": tree["offset"],
     }  # fmt: skip
     new = RoutingTable.build(domain, roots, **tree)
     q = xp.asarray(np.random.default_rng(1).random((200, 2)))

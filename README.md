@@ -17,7 +17,7 @@ it lies outside every trust region. Suited to fast training from a given sample.
 
 `algorithm="art"`. An oblique binary tree of convex polytopes over an explicit box domain:
 every node is topped up with fresh points inside its polytope, and every node whose model
-misses the tolerance is cut by an optimized hyperplane. A query is routed down the tree, so
+misses the tolerance is cut by an optimized plane. A query is routed down the tree, so
 every point of the domain has exactly one leaf. Suited to expensive functions: fewer
 evaluations for the same error, and a model that covers the whole domain.
 

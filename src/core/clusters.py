@@ -44,8 +44,9 @@ class QueueColumn:
 # Every column a queue can carry, in wire order (see src.engine.work_stealing.send_clusters).
 # X, F, sizes and depth are always present; G only when gradients are carried per point;
 # root, path_code and constraints only in ART (src.art), where constraints are
-# the signed ancestor half-spaces ``a^T u <= b`` stored as rows ``[a | b]`` in the
-# normalized coordinates of the domain, zero-padded (``0 <= 0``) to a common ``h``.
+# the signed ancestor half-spaces ``a^T u <= z`` stored as rows ``[a | z]`` in the
+# normalized coordinates of the domain (the rows of ``(A, z)`` in the companion's region
+# ``{u : A u <= z}``), zero-padded (``0 <= 0``) to a common ``h``.
 QUEUE_COLUMNS: tuple[QueueColumn, ...] = (
     QueueColumn("X", "point", np.float64, lambda d, fd, h: (d,)),
     QueueColumn("F", "point", np.float64, lambda d, fd, h: (fd,)),
@@ -64,7 +65,7 @@ class ClusterBatch:
     """
     Clusters stored contiguously in host memory.
 
-    Cluster ``k`` owns rows ``starts[k] : starts[k] + sizes[k]`` of every point column
+    Cluster ``k`` (a cluster or node ``C`` of the companion, its points ``X_C``) owns rows ``starts[k] : starts[k] + sizes[k]`` of every point column
     (``X``, ``F`` and, if present, ``G``). ``depth[k]`` is the cluster's depth in its tree
     (roots are 0); it travels with the cluster when work is stolen, so the depth limit
     does not depend on which rank processes it. ART adds the node identity
@@ -78,7 +79,7 @@ class ClusterBatch:
     sizes: np.ndarray  # (n_clusters,) int64
     depth: np.ndarray | None = None  # (n_clusters,) int64; None means all roots
     root: np.ndarray | None = None  # (n_clusters,) int64, ART
-    path_code: np.ndarray | None = None  # (n_clusters,) int64, ART (root = 1)
+    path_code: np.ndarray | None = None  # (n_clusters,) int64, ART: pi in the companion (root = 1)
     constraints: np.ndarray | None = None  # (n_clusters, h, d + 1), ART
     starts: np.ndarray = field(init=False, repr=False)
 

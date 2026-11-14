@@ -1,8 +1,9 @@
 """
 Trust regions of accepted clusters.
 
-Every accepted cluster stores a shape matrix ``Q`` (d, d). At inference a query
-``x`` is inside cluster ``c``'s trust region when ``(x - c)^T Q (x - c) <= 1``;
+Every accepted cluster stores a shape matrix ``Q`` (d, d), the trust-region matrix ``T`` of
+the companion. At inference a query ``x`` is inside the trust region of the cluster with
+centroid ``c`` when ``(x - c)^T Q (x - c) <= 1``;
 ``Q`` also ranks the candidate clusters of a query (smallest value first). The
 default ``CovarianceEllipsoid`` scales the inverse covariance of the cluster's
 points so that the farthest point lies on the boundary: the region contains every
@@ -54,7 +55,10 @@ def trust_region_shapes(
 
     Q is the inverse covariance of the cluster's points (eigenvalues clamped
     below at ``q_reg``), scaled so that the farthest point lies on the boundary:
-    max over the cluster's points of dx^T Q dx is 1. Points are stored
+    max over the cluster's points of dx^T Q dx is 1. In the companion's notation (its
+    trust-ellipsoid algorithm) ``Cov``, the unnormalized covariance, is the scatter matrix
+    ``Sigma``, ``q_reg`` is ``gamma``, ``max_dist`` is ``alpha`` and ``Q`` is
+    ``T = Sigma^-1 / alpha``. Points are stored
     contiguously by cluster; ``labels`` gives each point's cluster (0..K-1).
     """
     K = len(counts)

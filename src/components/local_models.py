@@ -74,7 +74,7 @@ class ClusterFitData:
     labels: Array  # (N,) cluster index of every point
     starts: Array  # (K,) first row of every cluster
     sizes: Array  # (K,) points per cluster
-    centroids: Array  # (K, d)
+    centroids: Array  # (K, d) the cluster centres c (means of their points)
     f_c: Array  # (K, fd) f at the centroids
     g_c: Array | None  # (K, fd, d) gradient at the centroids, if evaluated
 
@@ -266,8 +266,10 @@ class TaylorModel(LocalModel):
 class AffineLSQModel(LocalModel):
     """
     f_hat(x) = A x + b, a least-squares fit to the cluster's points with adaptive
-    Tikhonov regularization (``AFFINE_*`` modes; Equation (3) in the paper, with
-    the intercept in absolute rather than centered coordinates).
+    Tikhonov regularization (``AFFINE_*`` modes; Equation (3) of the AFINNI manuscript, the
+    companion's ``f_hat(x) = w^T (x - c) + b``). Column ``"A_fit"`` (fd, d) holds one row
+    ``w^T`` per output component; column ``"b_fit"`` is the intercept at the origin, not at
+    the centroid: ``b_fit = b - w^T c``, with the companion's ``b`` the fit's value at ``c``.
     """
 
     name = "affine_lsq"
@@ -383,7 +385,8 @@ def make_local_model(config) -> LocalModel:
     return config.components().local_model
 
 
-# Columns every accepted cluster stores, whatever its model.
+# Columns every accepted cluster stores, whatever its model: "Q" is the trust-region matrix
+# (T in the companion), "E_cluster_abs" / "E_cluster_rel" the errors e_a / e_r.
 SHARED_COLUMNS = ("centroids", "f", "Q", "E_cluster_abs", "E_cluster_rel", "counts")
 
 

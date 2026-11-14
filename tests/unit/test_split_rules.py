@@ -57,7 +57,7 @@ def test_split_returns_a_permutation_within_clusters_and_valid_children(cut):
 
 
 def test_sign_cut_splits_through_the_centroid_along_the_principal_axis():
-    # The children lie on either side of the hyperplane through the centroid
+    # The children lie on either side of the plane through the centroid
     # orthogonal to the principal axis of the cluster's covariance.
     rng = np.random.default_rng(1)
     data = _split_data(rng, [31])

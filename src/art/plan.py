@@ -60,6 +60,10 @@ class ARTPlan:
     ART's members of ``src.core.plan.Plan`` (the shared executor is
     ``src.engine.refinement.refine_rank``). ``counters`` accumulates this rank's
     split diagnostics (reported as ``profiling_stats["art"]``).
+
+    In the split methods, ``w`` (k, d) holds each plane's unit normal and ``z`` (k,) its
+    offset, the plane ``(a, z)`` of the companion, as in ``src.art.split_search``; the split
+    records store them as ``normal`` and ``offset``.
     """
 
     batch_floor = 1_000
@@ -71,11 +75,13 @@ class ARTPlan:
         s = config.art
         self.settings = s
         self.model = config.components().local_model
-        self.p_eff = self.model.n_features(d)  # ART: sample multiplier x the leaf model's features
+        # p in the companion: coefficients of one output's leaf model (d + 1 for an affine leaf).
+        self.n_coefficients = self.model.n_features(d)
         self.convex_sampling = s.sampling == "convex_combination"
-        self.n_target = 0 if self.convex_sampling else math.ceil(s.sample_multiplier * self.p_eff)
+        # Every node's training budget, n = ceil(m p) in the companion (m: sample_multiplier).
+        self.n_target = 0 if self.convex_sampling else math.ceil(s.sample_multiplier * self.n_coefficients)
         self.n_val = int(s.validation_samples)
-        self.min_side = self.p_eff + int(s.min_side_margin)
+        self.min_side = self.n_coefficients + int(s.min_side_margin)
         if not self.convex_sampling and self.n_target < 2 * self.min_side:
             raise ValueError(
                 f"ART nodes get {self.n_target} training points, fewer than twice the "
@@ -115,7 +121,7 @@ class ARTPlan:
         WSL) builds the same tree several times slower.
         """
         d, fd, h = self.d, self.fd, self.config.max_levels + 1
-        p = self.p_eff
+        p = self.n_coefficients
         g = fd * d if self.config.requires_grad_everywhere else 0
         search = 0
         if self.settings.split_search != "gap":
@@ -143,11 +149,12 @@ class ARTPlan:
         }
 
     def split_columns(self) -> dict[str, ParamSpec]:
+        """A split record: the node ``(root, path_code)`` and its plane ``(a, z)``, the unit ``normal`` and ``offset``."""
         return {
             "root": ParamSpec((), np.int64),
             "path_code": ParamSpec((), np.int64),
-            "w": ParamSpec((self.d,)),
-            "z": ParamSpec(()),
+            "normal": ParamSpec((self.d,)),
+            "offset": ParamSpec(()),
         }
 
     def constraint_rows(self, queue: ClusterBatch) -> int:
@@ -168,10 +175,10 @@ class ARTPlan:
 
     def merge_results(self, merged: dict, profile: dict, per_rank: list[dict]) -> None:
         """Build the routing table from every rank's split records and total the leaf statuses and counters."""
-        nodes = {k[len("node:"):]: to_host(merged.pop(k)) for k in list(merged) if k.startswith("node:")}
+        nodes = {k[len("split:"):]: to_host(merged.pop(k)) for k in list(merged) if k.startswith("split:")}
         routing = RoutingTable.build(
             self.domain, self.roots, merged["root"], merged["path_code"],
-            nodes["root"], nodes["path_code"], nodes["w"], nodes["z"],
+            nodes["root"], nodes["path_code"], nodes["normal"], nodes["offset"],
         )  # fmt: skip
         merged["routing"] = routing.arrays()
         reasons = np.bincount(to_host(merged["terminal_reason"]).astype(np.int64), minlength=len(TERMINAL_REASONS))
@@ -220,9 +227,9 @@ class ARTPlan:
         # 1. Training points: inherited ones, then new ones inside the polytope.
         with timer("time_augment"):
             # Convex-combination sampling keeps each node's points, except that an empty root (possible for grid or
-            # Voronoi cells) is sampled up to 2 * p_eff points so it can be fitted.
+            # Voronoi cells) is sampled up to 2 * n_coefficients points so it can be fitted.
             n_train = (
-                xp.where(sizes == 0, 2 * self.p_eff, sizes) if self.convex_sampling else xp.maximum(sizes, self.n_target)
+                xp.where(sizes == 0, 2 * self.n_coefficients, sizes) if self.convex_sampling else xp.maximum(sizes, self.n_target)
             )
             aug = augment_clusters(X, F, G, sizes, n_train, self.sampler, evaluator, None, polytopes=geo)
             Xt, Ft, Gt, labels = aug.X, aug.F, aug.G, aug.labels
@@ -241,7 +248,7 @@ class ARTPlan:
 
         # 2. Statistics and fit on the training points only.
         with timer("time_error_calc"):
-            mus = reduce_sum_1d(Xt, starts) / n_train[:, None]
+            mus = reduce_sum_1d(Xt, starts) / n_train[:, None]  # the node centres c
             if cfg.requires_f_centroids or cfg.requires_grad_centroids:
                 f_mus, g_mus = evaluator(mus, need_grad=cfg.requires_grad_centroids)
             else:  # no component reads f(c): column "f" is NaN rather than an oracle call
@@ -325,7 +332,9 @@ class ARTPlan:
         Split nodes ``idx`` on their training points plus their (now spent) validation
         points; return the nodes whose split was invalid and the number of new oracle
         points (convex-combination augmentation). Validation points of a failed node may train its
-        children, but never validate them.
+        children, but never validate them. Node ``pi`` gets the children ``2 pi`` (left,
+        ``w^T u < z``, ``C_-1`` in the companion) and ``2 pi + 1`` (right, ``C_1``), appended in
+        that order.
         """
         d = self.d
         k = int(idx.shape[0])
@@ -383,7 +392,7 @@ class ARTPlan:
             keep = valid[labels][order]
             child_sizes = xp.stack([cut[good], counts[good] - cut[good]], axis=1).ravel()
             node, pc = idx[good], path_code[idx[good]]
-            row = xp.concatenate([w[good], z[good][:, None]], axis=1)  # left: w^T u <= z
+            row = xp.concatenate([w[good], z[good][:, None]], axis=1)  # left: w^T u <= z; right: -row
             parent_c = constraints[node]
             children_c = xp.stack([
                 xp.concatenate([parent_c, row[:, None, :]], axis=1),
@@ -395,11 +404,11 @@ class ARTPlan:
                 depth=xp.repeat(depth[node] + 1, 2), root=xp.repeat(root[node], 2),
                 path_code=xp.stack([2 * pc, 2 * pc + 1], axis=1).ravel(), constraints=children_c,
             )  # fmt: skip
-            splits.append({"root": root[node], "path_code": pc, "w": w[good], "z": z[good]})
+            splits.append({"root": root[node], "path_code": pc, "normal": w[good], "offset": z[good]})
         return idx[~valid], n_generated
 
     def _propose(self, data: SplitData, U: Array, components, keys: Array, progress) -> tuple[Array, Array]:
-        """Hyperplanes ``(w, z)`` in ``u`` for every node of ``data`` (invalid ones are caught by the caller)."""
+        """Planes ``(w, z)`` in ``u`` for every node of ``data`` (invalid ones are caught by the caller)."""
         mode = self.settings.split_search
         V, M = self._metric_basis(data, components.split_strategy)
         width = xp.asarray(self.domain.width)
@@ -411,7 +420,7 @@ class ARTPlan:
             return lead, xp.where(ok, z, xp.nan)
         rows = self._split_rows(data, U)
         bank = self._direction_bank(rows, lead, V, M, width, keys)
-        w, z, sse = self._threshold_search(rows, bank)
+        w, z, sse = self._bins_search(rows, bank)
         if mode == "soft":
             if progress is not None:
                 progress()
@@ -446,7 +455,7 @@ class ARTPlan:
         """
         (k, D, d) unit candidate normals in ``u``: the split strategy's leading direction,
         its next eigenvectors, the leading covariance direction of the points, and
-        node-keyed random directions to fill ``n_directions``.
+        node-keyed random directions to fill ``n_directions`` (``n_dir`` in the companion).
         """
         D, d = self.settings.n_directions, self.d
         dirs = [lead]
@@ -467,13 +476,14 @@ class ARTPlan:
             dirs.extend(unit_rows(g[:, i]) for i in range(n_rand))
         return xp.stack(dirs[:D], axis=1)
 
-    def _threshold_search(self, rows: SplitRows, bank: Array) -> tuple[Array, Array, Array]:
+    def _bins_search(self, rows: SplitRows, bank: Array) -> tuple[Array, Array, Array]:
         """
         The bins search: along every bank direction, evaluate ``n_bins - 1`` quantile cut positions
         from per-bin sums (``SplitRows.cut_sums``: one data pass per direction), keep the
         ``n_screened`` best per node as a screen, then recompute their SSE directly
         (``hard_sse``) and return the best ``(w, z)`` and its SSE. Only cuts between
-        distinct scores that leave ``min_side`` points per side are candidates.
+        distinct scores that leave ``min_side`` points per side are candidates. The SSE is
+        the hard objective ``SSE(a, z)`` of the companion.
         """
         k, D, _ = bank.shape
         nb = self.settings.n_bins
@@ -522,9 +532,10 @@ class ARTPlan:
     def _soft_refine(self, rows: SplitRows, w0: Array, z0: Array, sse0: Array, progress) -> tuple[Array, Array]:
         """
         The soft search: polish each bins-search plane by projected gradient descent on the consistent soft
-        objective ``J(w, z) = min_B F``, with a fixed ridge, a
-        fixed temperature ``T = soft_temperature * std(w^T u)``, floored weights
-        ``W_R = delta + (1 - 2 delta) sigma(s)``, ``W_L = delta + (1 - 2 delta) sigma(-s)``,
+        objective ``J(w, z) = min_B F`` (``J_h`` in the companion), with a fixed ridge, a
+        fixed gate width ``T = soft_temperature * std(w^T u)`` (``h`` in the companion), floored
+        weights ``W_R = delta + (1 - 2 delta) sigma(s)``, ``W_L = delta + (1 - 2 delta) sigma(-s)``
+        (``W_1`` and ``W_-1``) with ``s = (w^T u - z) / T``,
         and frozen-model Armijo steps. A step is accepted only if its decrease exceeds the
         inner solves' estimated suboptimality ``tr(R^T H^-1 R) / n`` (``R`` from the data
         residual) plus rounding. This is numerically monitored descent, not a certified

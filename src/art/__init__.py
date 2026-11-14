@@ -2,28 +2,32 @@
 ART, the adaptive regression tree (``algorithm="art"``), as a plan of the refinement engine
 (``src.engine``): ART's oblique tree of polytopes, built level by level in batches.
 
-Every node of the tree is a convex polytope of the declared box domain: a root cell
-(the whole box, a uniform-grid cell, or the Voronoi cell of a k-means centre) cut by its
-ancestors' hyperplanes. Per batch of nodes, ``ARTPlan.process_batch``:
+Every node of the tree is a convex polytope of the declared box domain (its region
+``Omega_C`` in the companion): a root cell (the whole box, a uniform-grid cell, or the Voronoi
+cell of a k-means centre) cut by its ancestors' planes. Per batch of nodes,
+``ARTPlan.process_batch``:
 
-1. tops every node up to ``ceil(sample_multiplier * (d + 1))`` training points inside
-   its polytope (``HitAndRunSampler``) and draws ``validation_samples`` fresh points;
+1. tops every node up to ``ceil(sample_multiplier * p)`` training points (``n = ceil(m p)`` in
+   the companion, with ``p = d + 1`` coefficients of an affine leaf) inside its polytope (``HitAndRunSampler``) and draws ``validation_samples`` fresh points;
    with ``sampling="convex_combination"`` it instead keeps AFINNI's convex-combination
    augmentation of rejected nodes;
 2. fits the local model on the training points and screens it with the acceptance test;
 3. deploys the screened models (``Q`` if stored, finalize, re-test) and checks them on
    the validation points;
-4. splits every rejected node by a hyperplane (``split_search``: ``"gap"`` along the
-   split strategy's direction, ``"bins"`` a threshold search over a bank of directions,
+4. splits every rejected node by a plane (``split_search``: ``"gap"`` along the
+   split strategy's direction, ``"bins"`` the bins search over a bank of directions,
    ``"soft"`` that search polished by the consistent soft-oblique optimizer), cut so the
    stored predicate reproduces the children exactly; a node that cannot be split, or is
    at ``max_levels``, keeps its fitted model as a terminal leaf with a status.
 
 Geometry lives in normalized coordinates ``u = (x - lower) / (upper - lower)`` of the
-domain; every predicate is ``w^T u - z >= 0`` (right child) with ``|w| = 1``, evaluated
-by ``plane_scores`` both in training and in ``route``. Children carry their ancestors'
-half-spaces (``constraints``), their node key ``(root, path_code)`` and depth, so a
-stolen node needs nothing from the rank that created it.
+domain; every predicate is ``a^T u - z >= 0`` (right child) for a plane with unit normal ``a``
+and offset ``z`` (``(a, z)`` in the companion; ``normal`` and ``offset`` in ``RoutingTable``
+and the split records, ``w`` and ``z`` in the split search's arrays, its kernels and the model
+file), evaluated by ``plane_scores`` both in training and in ``route``. Children carry their
+ancestors' half-spaces (``constraints``), their node key ``(root, path_code)`` (``pi`` in the
+companion: the root is 1, the children of ``pi`` are ``2 pi`` on the left and ``2 pi + 1`` on
+the right) and depth, so a stolen node needs nothing from the rank that created it.
 
 Random numbers come from a counter-based generator keyed by ``(seed, root, path_code,
 purpose, draw index)``: a node's samples and random directions do not depend on the
