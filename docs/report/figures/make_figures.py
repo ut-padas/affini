@@ -20,6 +20,7 @@ under ``mpiexec -n 4``.
 import argparse
 import json
 import logging
+import re
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,7 +32,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib import patheffects  # noqa: E402
 from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap  # noqa: E402
-from matplotlib.patches import Ellipse, FancyArrowPatch, Polygon  # noqa: E402
+from matplotlib.patches import Ellipse, FancyArrowPatch, Polygon, Rectangle  # noqa: E402
 from matplotlib.path import Path as MPath  # noqa: E402
 from matplotlib.patheffects import withStroke  # noqa: E402
 from matplotlib.transforms import Bbox  # noqa: E402
@@ -45,6 +46,8 @@ from src.art.split_search import SplitRows, hard_sse, soft_gates, soft_objective
 from src.components.splitting import SPLIT_STRATEGIES, SplitData  # noqa: E402
 from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
+from src.kernels import source as kernel_source  # noqa: E402
+from src.numerics.segments import SEGMENT_CHUNK  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
 warnings.simplefilter("ignore")
@@ -64,6 +67,7 @@ ART_MULTIPLIER = 20  # points per node = ART_MULTIPLIER * (d + 1)
 ART_SETTINGS = {"atol": ALPHA, "rtol": None, "max_levels": 12}
 KAPPA = 10  # Euclidean candidates at inference
 AUDIT_POINTS = 2000
+FOREST_ROOTS = 4  # the grid-root run of the locational-code section
 # The 4-rank run of the work-stealing panels: a tighter tolerance and small batches, so the
 # tree is large enough, and its levels have enough batches, for steals to happen.
 STEAL = {"atol": 0.05, "batch_size": 240, "steal_min_load": 240, "steal_size": 120, "max_levels": 20, "ranks": 4}
@@ -1026,30 +1030,79 @@ def art_levels(nodes: list[Node]) -> dict:
     return {"levels": out, "depth": depth}
 
 
-def art_sampling(nodes: list[Node]) -> dict:
-    """One deep node: its polytope and the planes that bound it, its points, and a hit-and-run chain."""
+def lineage_of(nodes: list[Node], n: Node) -> list[int]:
+    """The node, then its ancestors up to the root, as indices."""
+    out = [nodes.index(n)]
+    while nodes[out[-1]].parent is not None:
+        out.append(nodes[out[-1]].parent)
+    return out
+
+
+def domain_box(ax) -> None:
+    ax.add_patch(plt.Rectangle(LOWER, *WIDTH, fc="none", ec=DARK, lw=1.2, zorder=5))
+
+
+def polytope_node(nodes: list[Node]) -> Node:
+    """The deep node whose polytope has the most corners: the one the region figures follow."""
     deep = [n for n in nodes if n.level >= 2 and len(n.X) > n.inherited]
-    node = max(deep, key=lambda n: (len(n.polygon), len(n.X) - n.inherited))
-    lineage = [nodes.index(node)]  # the node, then its ancestors up to the root
-    while nodes[lineage[-1]].parent is not None:
-        lineage.append(nodes[lineage[-1]].parent)
+    return max(deep, key=lambda n: (len(n.polygon), len(n.X) - n.inherited))
+
+
+def ancestor_planes(ax, nodes: list[Node], lineage: list[int], polygon: np.ndarray, kept: bool = False) -> None:
+    """
+    The planes of ``lineage`` (root first, as indices; the last entry is the node itself), each
+    numbered by its depth + 1 in its own colour, at the spot on the plane clearest of
+    ``polygon`` inside the box; with ``kept``, an arrow from the plane into the side the node keeps.
+    """
+    centre = polygon.mean(axis=0)
+    for j, (a, child) in enumerate(zip(lineage[:-1], lineage[1:], strict=True)):
+        w, z = nodes[a].plane
+        colour = PALETTE[(j + 3) % len(PALETTE)]
+        normal = (w / WIDTH) / np.linalg.norm(w / WIDTH)
+        u = (centre - LOWER) / WIDTH
+        foot = LOWER + (u + (z - w @ u) * w / (w @ w)) * WIDTH
+        cut_line(ax, foot, normal, colour=colour, lw=0.9, ls="-", zorder=3)
+        along = np.array([-normal[1], normal[0]])
+        spots = [foot + t * along for t in np.linspace(-6, 6, 241)]
+        spots = [q for q in spots if np.all(q > LOWER + 0.06 * WIDTH) and np.all(q < UPPER - 0.06 * WIDTH)]
+        spot = max(spots, key=lambda q: min(np.linalg.norm(polygon - q, axis=1).min(), 1.2))
+        ax.text(*spot, str(j + 1), ha="center", va="center", fontsize=7, weight="bold", color=colour, zorder=6,
+                bbox={"fc": "white", "ec": "none", "pad": 0.6, "alpha": 0.9})  # fmt: skip
+        if kept:  # the left child (even code) keeps a^T u <= z, the right one a^T u >= z
+            inward = normal if nodes[child].code % 2 else -normal
+            arrow(ax, spot + 0.09 * WIDTH[0] * along, spot + 0.09 * WIDTH[0] * along + 0.16 * WIDTH[0] * inward,
+                  colour=colour, lw=1.0)  # fmt: skip
+
+
+def art_sampling(nodes: list[Node]) -> dict:
+    """
+    One deep node: its polytope, the domain box and the numbered ancestor planes that bound
+    it, and its points. Then a hit-and-run chain in the widest deep region, chosen so that
+    consecutive directions differ clearly and every step can be seen.
+    """
+    node = polytope_node(nodes)
+    lineage = lineage_of(nodes, node)
 
     def polytope(ax):
         ax.add_patch(Polygon(node.polygon, closed=True, fc=node.colour, ec="none", alpha=0.45, zorder=2))
         ax.add_patch(Polygon(node.polygon, closed=True, fc="none", ec=DARK, lw=0.9, zorder=2))
-        for j, a in enumerate(lineage[:0:-1]):
-            w, z = nodes[a].plane
-            cut_line(ax, LOWER + (w * z / (w @ w)) * WIDTH, w / WIDTH, colour=PALETTE[(j + 3) % len(PALETTE)], lw=0.9,
-                     ls="-", zorder=3)  # fmt: skip
+        domain_box(ax)
+        ancestor_planes(ax, nodes, lineage[::-1], node.polygon)
         ax.scatter(*node.X[: node.inherited].T, s=7, c=DARK, lw=0, zorder=4)
         ax.scatter(*node.X[node.inherited :].T, s=7, c=PINK, lw=0, zorder=4)
 
     panel("art-polytope", polytope)
 
-    # A chain as the sampler walks it (a direction uniform on the sphere, then a uniform point
+    # A chain as the sampler walks it (a direction uniform on the circle, then a uniform point
     # of the chord), drawn with its own random numbers: the library's are keyed by node and draw.
+    # The widest deep region shows the chords best.
+    def area(poly: np.ndarray) -> float:
+        x, y = poly[:, 0], poly[:, 1]
+        return 0.5 * abs((x * np.roll(y, -1) - np.roll(x, -1) * y).sum())
+
+    walk_node = max((n for n in nodes if n.level >= 2 and n.inherited), key=lambda n: area(n.polygon))
     A, b = [[1, 0], [-1, 0], [0, 1], [0, -1]], [UPPER[0], -LOWER[0], UPPER[1], -LOWER[1]]
-    for child in lineage[:-1]:  # one half-plane per ancestor, in x: normal . x <= offset
+    for child in lineage_of(nodes, walk_node)[:-1]:  # one half-plane per ancestor, in x: normal . x <= offset
         w, z = nodes[nodes[child].parent].plane
         normal, offset = w / WIDTH, z + (w / WIDTH) @ LOWER
         sign = -1.0 if nodes[child].code & 1 else 1.0
@@ -1058,43 +1111,111 @@ def art_sampling(nodes: list[Node]) -> dict:
     A, b = np.array(A), np.array(b)
 
     def chain(rng) -> list:
-        x = node.X[rng.integers(node.inherited)]
+        x = walk_node.X[rng.integers(walk_node.inherited)]
         steps = []
-        for _ in range(5):
+        for _ in range(4):
             g = rng.normal(size=2)
             g /= np.linalg.norm(g)
             ratio = (b - A @ x) / (A @ g)
             t_min, t_max = ratio[A @ g < 0].max(), ratio[A @ g > 0].min()
             new = x + (t_min + (t_max - t_min) * rng.uniform()) * g
-            steps.append((x + t_min * g, x + t_max * g, x, new))
+            steps.append((x + t_min * g, x + t_max * g, x, new, g))
             x = new
         return steps
 
-    # The first chain, by seed, whose points stay apart, so that each point and arrow of the
-    # picture can be told from the others, and which ends far from its start, as the text says.
-    diameter = np.ptp(node.polygon, axis=0).max()
-    for k in range(100):
-        steps = chain(np.random.default_rng(SEED + k))
-        visited = np.array([steps[0][2]] + [s[3] for s in steps])
-        gaps = np.linalg.norm(visited[:, None] - visited[None], axis=2)[np.triu_indices(len(visited), 1)]
-        if gaps.min() > 0.045 * diameter and np.linalg.norm(visited[-1] - visited[0]) > 0.5 * diameter:
-            break
-    else:
-        raise SystemExit("No hit-and-run chain for the picture has distinct points and ends far from its start.")
+    # Among the first 400 seeds, the chain whose consecutive directions differ most (the
+    # smallest turn between two steps is largest), with steps long enough to see.
+    diameter = np.ptp(walk_node.polygon, axis=0).max()
+
+    def score(steps) -> float:
+        turns = [np.degrees(np.arccos(min(1.0, abs(s1[4] @ s2[4])))) for s1, s2 in zip(steps, steps[1:], strict=False)]
+        lengths = [np.linalg.norm(s[3] - s[2]) for s in steps]
+        return min(turns) if min(lengths) > 0.12 * diameter else -1.0
+
+    steps = max((chain(np.random.default_rng(SEED + k)) for k in range(400)), key=score)
+    if score(steps) < 30:
+        raise SystemExit("No hit-and-run chain for the picture turns clearly at every step.")
 
     def walk(ax):
-        ax.add_patch(Polygon(node.polygon, closed=True, fc=node.colour, ec="none", alpha=0.3, zorder=2))
-        ax.add_patch(Polygon(node.polygon, closed=True, fc="none", ec=DARK, lw=0.9, zorder=2))
-        for j, (lo, hi, a, c) in enumerate(steps):
+        ax.add_patch(Polygon(walk_node.polygon, closed=True, fc=walk_node.colour, ec="none", alpha=0.3, zorder=2))
+        ax.add_patch(Polygon(walk_node.polygon, closed=True, fc="none", ec=DARK, lw=0.9, zorder=2))
+        domain_box(ax)
+        for j, (lo, hi, a, c, _) in enumerate(steps):
             last = j == len(steps) - 1
-            ax.plot(*zip(lo, hi, strict=True), color=GREY, lw=0.7, ls=":", zorder=3)
-            arrow(ax, a, c, colour=DARK, lw=0.8, scale=6)
-            ax.scatter(*c, s=30 if last else 9, c=PINK if last else "white", edgecolors=DARK, lw=0.6, zorder=6)
+            ax.plot(*zip(lo, hi, strict=True), color=GREY, lw=0.8, ls=":", zorder=3)
+            arrow(ax, a, c, colour=DARK, lw=0.9, scale=7)
+            ax.scatter(*c, s=30 if last else 10, c=PINK if last else "white", edgecolors=DARK, lw=0.6, zorder=6)
+            mid = (a + c) / 2
+            ax.text(*mid, str(j + 1), fontsize=6.5, color=DARK, weight="bold", ha="center", va="center", zorder=7,
+                    bbox={"fc": "white", "ec": "none", "pad": 0.4, "alpha": 0.85})  # fmt: skip
         ax.scatter(*steps[0][2], s=26, c=DARK, lw=0, zorder=6)
 
-    panel("art-hit-and-run", walk, view=node.polygon, pad=0.1)
+    panel("art-hit-and-run", walk, view=walk_node.polygon, pad=0.1)
     return {"sampling": {"code": format(node.code, "b"), "depth": node.level, "rows": len(lineage) - 1,
-                         "inherited": node.inherited, "new": len(node.X) - node.inherited}}  # fmt: skip
+                         "inherited": node.inherited, "new": len(node.X) - node.inherited,
+                         "walk_steps": len(steps), "walk_min_turn": round(score(steps))}}  # fmt: skip
+
+
+def art_carry(nodes: list[Node]) -> dict:
+    """
+    The block of rows a node carries, depth by depth down to the polytope figure's node: one
+    frame per node on the path, with the planes so far and the side each keeps. The rows are
+    checked against the polygons: every corner of a node satisfies all of its rows.
+    """
+    node = polytope_node(nodes)
+    path = lineage_of(nodes, node)[::-1]
+    rows = []
+    for parent, child in zip(path[:-1], path[1:], strict=True):
+        w, z = nodes[parent].plane
+        sign = -1.0 if nodes[child].code % 2 else 1.0  # right child: -a^T u <= -z
+        rows.append(sign * np.r_[w, z])
+    for depth, i in enumerate(path):
+        U = (nodes[i].polygon - LOWER) / WIDTH
+        for r in rows[:depth]:
+            if np.any(U @ r[:-1] - r[-1] > 1e-9):
+                raise SystemExit("A carried row does not hold on its node's polytope.")
+    for depth, i in enumerate(path):
+        n = nodes[i]
+
+        def frame(ax, n=n, depth=depth):
+            ax.add_patch(Polygon(n.polygon, closed=True, fc=n.colour, ec="none", alpha=0.45, zorder=2))
+            ax.add_patch(Polygon(n.polygon, closed=True, fc="none", ec=DARK, lw=0.9, zorder=2))
+            domain_box(ax)
+            ancestor_planes(ax, nodes, path[: depth + 1], n.polygon, kept=True)
+
+        panel(f"art-carry-{depth}", frame, size=(1.6, 1.6))
+    return {"carry": {"codes": [format(nodes[i].code, "b") for i in path],
+                      "colours": [nodes[i].colour for i in path],
+                      "plane_colours": [PALETTE[(j + 3) % len(PALETTE)] for j in range(len(rows))],
+                      # the nodes queued at each depth: the k of that level's (k, h, d + 1) block array
+                      "level_nodes": [sum(n.level == t for n in nodes) for t in range(len(path))],
+                      "rows": [[round(float(v), 2) for v in r] for r in rows]}}  # fmt: skip
+
+
+def route_passes(s: AFINNISurrogate, nodes: list[Node], n_queries: int = 8) -> dict:
+    """
+    Routing as the library runs it, pass by pass, for a few uniform queries: each pass moves
+    every query not yet at a leaf one level down. Stops unless the queries end in the
+    library's leaves.
+    """
+    by_code = {n.code: n for n in nodes}
+    rng = np.random.default_rng(SEED)
+    q = LOWER + rng.random((n_queries, 2)) * WIDTH
+    u = (q - LOWER) / WIDTH
+    code = np.ones(n_queries, dtype=np.int64)
+    passes = [code.copy()]
+    while not all(by_code[int(c)].leaf for c in code):
+        for i, c in enumerate(code):
+            n = by_code[int(c)]
+            if not n.leaf:
+                w, z = n.plane
+                code[i] = 2 * c + int(u[i] @ w - z >= 0)
+        passes.append(code.copy())
+    leaves = np.asarray(to_host(s.route_leaves(q)))
+    if not np.array_equal(np.asarray(s.art_leaves["locational_code"])[leaves], code):
+        raise SystemExit("The library routes the example queries to other leaves.")
+    return {"passes": {"codes": [[format(int(c), "b") for c in row] for row in passes],
+                       "leaf": [[bool(by_code[int(c)].leaf) for c in row] for row in passes]}}  # fmt: skip
 
 
 def art_split(nodes: list[Node], searches: dict, plan: ARTPlan) -> dict:
@@ -1143,11 +1264,29 @@ def art_split(nodes: list[Node], searches: dict, plan: ARTPlan) -> dict:
         outline(ax)
         residual_points(ax, X, affine_fit(X, F)[2], size=9)
 
+    # AFINNI's cut of the same points, for comparison: along its Hessian-informed direction
+    # (the first direction of the bank, the red arrow), at the median score, by count.
+    lead = rec.bank[0]
+    ranked = np.argsort(rec.U @ lead, kind="stable")
+    half = len(ranked) // 2
+    afinni_low = np.zeros(len(X), dtype=bool)
+    afinni_low[ranked[:half]] = True
+    scores_sorted = (rec.U @ lead)[ranked]
+    z_afinni = 0.5 * (scores_sorted[half - 1] + scores_sorted[half])
+
+    def worst(mask) -> float:
+        """The larger of the two children's worst errors, in units of the tolerance."""
+        return max(float(np.abs(affine_fit(X[m], F[m])[2]).max()) / ALPHA for m in (mask, ~mask))
+
+    def mse(mask) -> float:
+        return sum(float(np.sum(affine_fit(X[m], F[m])[2] ** 2)) for m in (mask, ~mask)) / ALPHA**2 / len(X)
+
     def after(ax):
         outline(ax)
         for side in (right, ~right):
             residual_points(ax, X[side], affine_fit(X[side], F[side])[2], size=9)
         cut_line(ax, x_point(w, z), x_normal(w), colour=DARK, lw=1.2, ls="-")
+        cut_line(ax, x_point(lead, z_afinni), x_normal(lead), colour=RED, lw=1.1, ls=(0, (3, 2)))
 
     def candidates(ax):
         outline(ax)
@@ -1202,14 +1341,18 @@ def art_split(nodes: list[Node], searches: dict, plan: ARTPlan) -> dict:
                       "gain_percent": round(100 * gains[code]), "improved": sum(g > 1e-12 for g in gains.values()),
                       "searched": len(gains), "left": int((~right).sum()), "right": int(right.sum()),
                       "n_bins": settings.n_bins, "soft_iters": settings.soft_iters,
-                      "temperature": settings.soft_temperature}}  # fmt: skip
+                      "temperature": settings.soft_temperature,
+                      "art_worst": round(worst(right), 2), "afinni_worst": round(worst(afinni_low), 2),
+                      "art_mse": round(mse(right), 3), "afinni_mse": round(mse(afinni_low), 3)}}  # fmt: skip
 
 
 def locational_code_panels(nodes: list[Node]) -> dict:
     """
-    Naming a node: one frame per depth along the route to the deepest leaf, each showing the
-    region chosen so far and the plane that cut its parent (the code gains one bit per cut);
-    and a Morton (Z-order) quadtree next to ART's oblique partition, for comparison.
+    Naming a node. One figure follows the route to the deepest leaf in the tree (top) and in
+    the domain (bottom, one frame per depth, each showing the cut that adds that depth's bit).
+    Three panels then set the locational code beside a Morton code: a Morton code decodes to
+    its box, an ART code to a route whose shape needs the stored planes, and the levels a
+    64-bit code holds as the dimension grows.
     """
     deepest = max((n for n in nodes if n.leaf), key=lambda n: (n.level, -n.code))
     route = [nodes.index(deepest)]
@@ -1217,58 +1360,143 @@ def locational_code_panels(nodes: list[Node]) -> dict:
         route.append(nodes[route[-1]].parent)
     route = route[::-1]
     leaves = [n for n in nodes if n.leaf]
-    frames = []
+    pos = tree_layout(nodes)
+    mono = {"family": "DejaVu Sans Mono"}
+
+    def code_text(ax, x, y, code: str, size=6.5, **kw) -> None:
+        """
+        A code with its last bit, the latest turn, in red; the root's lone 1 is the place-holder
+        bit, not a turn, and stays dark. Monospace, so a red copy padded with spaces overlays it.
+        """
+        if len(code) == 1:
+            ax.text(x, y, code, fontsize=size, color=DARK, weight="bold", fontdict=mono, **kw)
+            return
+        ax.text(x, y, code[:-1] + " ", fontsize=size, color=DARK, fontdict=mono, **kw)
+        ax.text(x, y, " " * (len(code) - 1) + code[-1], fontsize=size, color=RED, weight="bold", fontdict=mono, **kw)
+
+    # 1. The walk: the tree with the route, and one frame per depth below it.
+    fig = plt.figure(figsize=(6.8, 3.7))
+    tree_ax = fig.add_axes([0.02, 0.34, 0.96, 0.64])
+    for i, n in enumerate(nodes):
+        for c in n.children:
+            on = i in route and c in route
+            tree_ax.plot(*zip(pos[i], pos[c], strict=True), color=RED if on else LIGHT, lw=2.0 if on else 0.7,
+                         zorder=2 if on else 1)  # fmt: skip
+            if on:
+                mx, my = (pos[i][0] + pos[c][0]) / 2, (pos[i][1] + pos[c][1]) / 2
+                side = nodes[c].code & 1
+                tree_ax.text(mx + (0.35 if side else -0.35), my, str(side), ha="center", va="center", fontsize=7,
+                             color=RED, weight="bold", fontdict=mono)  # fmt: skip
+    for i, n in enumerate(nodes):
+        here = i in route
+        tree_ax.scatter(*pos[i], s=34 if here else 12, c=(RED if n is deepest else BLUE) if here else LIGHT,
+                        edgecolors=DARK if here else GREY, lw=0.6, zorder=3)  # fmt: skip
+        if here:  # the label goes on the side away from the node's sibling, which is free
+            sibling = next((j for j, m in enumerate(nodes) if m.code == (n.code ^ 1) and n.parent is not None
+                            and m.parent == n.parent), None)  # fmt: skip
+            left = sibling is not None and pos[sibling][0] > pos[i][0]
+            code_text(tree_ax, pos[i][0] + (-0.55 if left else 0.55), pos[i][1], format(n.code, "b"),
+                      ha="right" if left else "left", va="center")  # fmt: skip
+    xs = [p[0] for p in pos.values()]
+    tree_ax.set_xlim(min(xs) - 0.8, max(xs) + 0.8)
+    tree_ax.set_ylim(-max(n.level for n in nodes) - 0.5, 0.6)
+    tree_ax.axis("off")
+    tree_ax.text(min(xs) - 0.6, 0.2, "0 = side $a^\\top u < z$\n1 = side $a^\\top u \\geq z$", fontsize=6.3,
+                 color=DARK, va="top", linespacing=1.3)  # fmt: skip
+
+    k = len(route)
+    width = 0.96 / k
     for depth, i in enumerate(route):
         n = nodes[i]
-
-        def frame(ax, n=n, depth=depth):
-            for leaf in leaves:
-                ax.add_patch(Polygon(leaf.polygon, closed=True, fc="none", ec=GREY, lw=0.35, alpha=0.6, zorder=1))
-            if n.parent is not None:  # the parent's region, and the plane that cut it
-                p = nodes[n.parent]
-                ax.add_patch(Polygon(p.polygon, closed=True, fc=LIGHT, ec="none", alpha=0.7, zorder=1))
-                w, z = p.plane
-                cut_line(ax, LOWER + (w * z / (w @ w)) * WIDTH, w / WIDTH, colour=DARK, lw=1.1, ls="-", zorder=3)
-            ax.add_patch(Polygon(n.polygon, closed=True, fc=RED if n is deepest else BLUE, ec=DARK, lw=0.9,
-                                 alpha=0.55, zorder=2))  # fmt: skip
-            ax.scatter(*deepest.polygon.mean(axis=0), s=12, c="black", zorder=6)
-
-        name = f"locational-code-{depth}"
-        panel(name, frame, size=(1.6, 1.6), back=False)
-        frames.append(format(n.code, "b"))
-
-    # Morton codes on a quadtree: each level appends one bit per coordinate (interleaved).
-    def morton(ax):
-        q = 4  # 4 x 4 cells, 2 bits per coordinate
-        for gx in range(q + 1):
-            ax.plot([LOWER[0] + gx * WIDTH[0] / q] * 2, [LOWER[1], UPPER[1]], color=GREY, lw=0.6, zorder=1)
-            ax.plot([LOWER[0], UPPER[0]], [LOWER[1] + gx * WIDTH[1] / q] * 2, color=GREY, lw=0.6, zorder=1)
-        centres, codes = [], []
-        for iy in range(q):
-            for ix in range(q):
-                code = 0
-                for b in range(2):  # interleave: y bit, then x bit, from the most significant
-                    code = (code << 2) | (((iy >> (1 - b)) & 1) << 1) | ((ix >> (1 - b)) & 1)
-                codes.append(code)
-                centres.append(LOWER + (np.array([ix, iy]) + 0.5) * WIDTH / q)
-        order = np.argsort(codes)
-        pts = np.array(centres)[order]
-        ax.plot(*pts.T, color=BLUE, lw=0.9, zorder=2)
-        for c, code in zip(centres, codes, strict=True):
-            ax.text(*c, format(code, "04b"), ha="center", va="center", fontsize=5.6, color=DARK, zorder=3,
-                    bbox={"fc": "white", "ec": "none", "pad": 0.4, "alpha": 0.85})  # fmt: skip
-
-    def oblique(ax):
+        ax = fig.add_axes([0.02 + depth * width + 0.006, 0.06, width - 0.012, (width - 0.012) * 6.8 / 3.7])
+        box_axes(ax, pad=0.0)
         for leaf in leaves:
-            ax.add_patch(Polygon(leaf.polygon, closed=True, fc=leaf.colour, ec="white", lw=0.8, alpha=0.45, zorder=1))
-        ax.add_patch(Polygon(deepest.polygon, closed=True, fc="none", ec=RED, lw=1.4, zorder=3))
+            ax.add_patch(Polygon(leaf.polygon, closed=True, fc="none", ec=GREY, lw=0.25, alpha=0.5, zorder=1))
+        if n.parent is not None:
+            p = nodes[n.parent]
+            ax.add_patch(Polygon(p.polygon, closed=True, fc=LIGHT, ec="none", alpha=0.8, zorder=1))
+            w, z = p.plane
+            normal = (w / WIDTH) / np.linalg.norm(w / WIDTH)
+            u = (p.polygon.mean(axis=0) - LOWER) / WIDTH
+            foot = LOWER + (u + (z - w @ u) * w / (w @ w)) * WIDTH  # the parent's centre moved onto its plane
+            cut_line(ax, foot, normal, colour=DARK, lw=1.0, ls="-", zorder=4)
+            reach = 0.16 * np.ptp(p.polygon, axis=0).max()
+            for sgn, bit in ((-1, "0"), (1, "1")):
+                ax.text(*(foot + sgn * reach * normal), bit, ha="center", va="center", fontsize=6.5, weight="bold",
+                        color=RED if int(bit) == (n.code & 1) else GREY, fontdict=mono, zorder=6)  # fmt: skip
+        ax.add_patch(Polygon(n.polygon, closed=True, fc=RED if n is deepest else BLUE, ec=DARK, lw=0.7, alpha=0.5,
+                             zorder=2))  # fmt: skip
+        ax.scatter(*deepest.polygon.mean(axis=0), s=6, c="black", zorder=7)
+        code_text(ax, 0.5, -0.16, format(n.code, "b"), size=6.0, ha="center", va="top", transform=ax.transAxes)
+    save(fig, "locational-code-walk")
 
-    panel("morton-quadtree", morton, size=(2.0, 2.0), back=False)
-    panel("morton-oblique", oblique, size=(2.0, 2.0), back=False)
-    return {"locational_code": {"codes": frames, "depth": deepest.level, "leaf": format(deepest.code, "b"),
-                                "value": deepest.code, "parent": format(deepest.code >> 1, "b"),
-                                "sibling": format(deepest.code ^ 1, "b"), "children": [format(2 * deepest.code, "b"),
-                                format(2 * deepest.code + 1, "b")], "max_depth": MAX_DEPTH_LIMIT}}  # fmt: skip
+    # 2. A Morton code decodes to its box.
+    def morton(ax):
+        ax.add_patch(plt.Rectangle(LOWER, *WIDTH, fc="white", ec=DARK, lw=0.8, zorder=1))
+        half = WIDTH / 2
+        ax.plot([LOWER[0] + half[0]] * 2, [LOWER[1], UPPER[1]], color=DARK, lw=0.8, zorder=2)
+        ax.plot([LOWER[0], UPPER[0]], [LOWER[1] + half[1]] * 2, color=DARK, lw=0.8, zorder=2)
+        for qy in (0, 1):
+            for qx in (0, 1):
+                corner = LOWER + np.array([qx, qy]) * half
+                if (qy, qx) == (1, 0):  # the quadrant split again
+                    for t in (0.5,):
+                        ax.plot([corner[0] + t * half[0]] * 2, [corner[1], corner[1] + half[1]], color=GREY, lw=0.6, zorder=2)
+                        ax.plot([corner[0], corner[0] + half[0]], [corner[1] + t * half[1]] * 2, color=GREY, lw=0.6, zorder=2)
+                    for sy in (0, 1):
+                        for sx in (0, 1):
+                            c2 = corner + (np.array([sx, sy]) + 0.5) * half / 2
+                            hit = (sy, sx) == (0, 1)
+                            if hit:
+                                ax.add_patch(plt.Rectangle(corner + np.array([sx, sy]) * half / 2, *(half / 2), fc=RED,
+                                                           alpha=0.5, ec=DARK, lw=0.8, zorder=1))  # fmt: skip
+                            ax.text(*c2, f"{sy}{sx}", ha="center", va="center", fontsize=6.5, fontdict=mono,
+                                    color=DARK, weight="bold" if hit else "normal", zorder=3)  # fmt: skip
+                else:
+                    ax.text(*(corner + half / 2), f"{qy}{qx}", ha="center", va="center", fontsize=8, fontdict=mono,
+                            color=DARK, zorder=3)  # fmt: skip
+
+    panel("morton-code", morton, size=(1.9, 1.9), back=False)
+
+    # 3. An ART code gives the turns; the stored planes give the shape.
+    def art_leaf(ax):
+        for leaf in leaves:
+            ax.add_patch(Polygon(leaf.polygon, closed=True, fc="none", ec=LIGHT, lw=0.4, zorder=1))
+        centre = deepest.polygon.mean(axis=0)
+        for j, a in enumerate(route[:-1]):
+            w, z = nodes[a].plane
+            colour = PALETTE[(j + 3) % len(PALETTE)]
+            cut_line(ax, LOWER + (w * z / (w @ w)) * WIDTH, w / WIDTH, colour=colour, lw=0.9, ls="-", zorder=3)
+            # Number the cut by its depth, on its line, just outside the leaf.
+            u = (centre - LOWER) / WIDTH
+            foot = LOWER + (u + (z - w @ u) * w / (w @ w)) * WIDTH
+            normal = (w / WIDTH) / np.linalg.norm(w / WIDTH)
+            along = np.array([-normal[1], normal[0]])
+            spot = foot + 0.55 * along + 0.12 * np.sign((foot - centre) @ normal) * normal
+            ax.text(*spot, str(j + 1), ha="center", va="center", fontsize=6.5, weight="bold", color=colour, zorder=5,
+                    bbox={"fc": "white", "ec": "none", "pad": 0.5, "alpha": 0.85})  # fmt: skip
+        ax.add_patch(Polygon(deepest.polygon, closed=True, fc=RED, alpha=0.5, ec=DARK, lw=0.8, zorder=2))
+
+    panel("morton-art", art_leaf, size=(1.9, 1.9), back=False)
+
+    # 4. Levels that fit in a 64-bit code: d bits per level for Morton, one for the locational code.
+    dims = np.arange(1, 41)
+    fig, ax = plt.subplots(figsize=(2.3, 1.9))
+    ax.plot(dims, 63 // dims, color=BLUE, lw=1.4, drawstyle="steps-mid", label="Morton: $d$ bits a level")
+    ax.plot(dims, np.full_like(dims, MAX_DEPTH_LIMIT), color=RED, lw=1.4, label="locational: 1 bit a cut")
+    ax.set_xlabel("dimension $d$", fontsize=6.5, labelpad=1)
+    ax.set_ylabel("levels in 64 bits", fontsize=6.5, labelpad=1)
+    ax.set_ylim(0, 70)
+    ax.tick_params(labelsize=5.8, length=2, pad=1)
+    ax.legend(fontsize=5.8, frameon=False, loc="center right")
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    save(fig, "code-capacity")
+    return {"locational_code": {"codes": [format(nodes[i].code, "b") for i in route], "depth": deepest.level,
+                                "leaf": format(deepest.code, "b"), "value": deepest.code,
+                                "parent": format(deepest.code >> 1, "b"), "sibling": format(deepest.code ^ 1, "b"),
+                                "children": [format(2 * deepest.code, "b"), format(2 * deepest.code + 1, "b")],
+                                "max_depth": MAX_DEPTH_LIMIT, "morton_levels_d40": 63 // 40}}  # fmt: skip
 
 
 def art_route(s: AFINNISurrogate, nodes: list[Node]) -> dict:
@@ -1332,6 +1560,34 @@ def compare(afinni: AFINNISurrogate, art: AFINNISurrogate, afinni_nodes: list[No
 
     panel("error-afinni", error_afinni, back=False)
     panel("error-art", error_art, back=False)
+
+    # The key under both maps: the error bands, then each mark drawn as the maps draw it.
+    fig, ax = plt.subplots(figsize=(5.1, 0.66))
+    cells = len(ERROR_LEVELS) - 1
+    x0, cw = 0.05, 0.55
+    for i in range(cells):
+        ax.add_patch(Rectangle((x0 + i * cw, 0.42), cw, 0.26, fc=ERROR_CMAP(i), ec="none"))
+    ax.add_patch(Rectangle((x0, 0.42), cells * cw, 0.26, fc="none", ec=GREY, lw=0.5))
+    for i, v in enumerate(ERROR_LEVELS[:-1]):
+        ax.text(x0 + i * cw, 0.37, f"{v:g}", ha="center", va="top", fontsize=6.5, color=DARK)
+    tol = ERROR_LEVELS.index(1.0)
+    ax.plot([x0 + tol * cw] * 2, [0.38, 0.72], color=DARK, lw=0.8)
+    ax.text(x0 + tol * cw / 2, 0.76, "within the tolerance", ha="center", va="bottom", fontsize=6.5, color=BLUE)
+    ax.text(x0 + (tol + cells) * cw / 2, 0.76, "beyond it", ha="center", va="bottom", fontsize=6.5, color=RED)
+    ax.text(x0 + cells * cw / 2, 0.06, "$|f - \\hat{f}| \\,/\\, \\alpha_{tol}$", ha="center", va="top", fontsize=7,
+            color=DARK)  # fmt: skip
+    mx, tx = 3.95, 4.25
+    cross(ax, (mx, 0.86), DARK, size=12, lw=1.0)
+    ax.text(tx, 0.86, "AFINNI: a leaf's centre", va="center", fontsize=6.5, color=DARK)
+    ax.add_patch(Rectangle((mx - 0.13, 0.42), 0.26, 0.2, fc="none", ec=DARK, lw=0.5, hatch="//////"))
+    ax.text(tx, 0.52, "AFINNI: outside every trust region", va="center", fontsize=6.5, color=DARK)
+    ax.add_patch(Polygon([(mx - 0.15, 0.08), (mx + 0.05, 0.1), (mx + 0.15, 0.26), (mx - 0.1, 0.3)], closed=True,
+                         fc=ERROR_CMAP(0), ec=DARK, lw=0.45))  # fmt: skip
+    ax.text(tx, 0.19, "ART: a leaf's region", va="center", fontsize=6.5, color=DARK)
+    ax.set_xlim(0, 6.85)
+    ax.set_ylim(-0.12, 1.0)
+    ax.axis("off")
+    save(fig, "error-map-key")
 
     # A line across the valley: f, each surrogate, and the band of width alpha around f.
     x2 = 2.0
@@ -1419,6 +1675,65 @@ def record_steals() -> None:
     print(f"recorded {data['leaves']} leaves, {counts} per rank; the tree equals the one built without stealing")
 
 
+def art_forest_panel() -> dict:
+    """
+    ART with several roots: the running example trained with ``roots="grid"``. Every root
+    cell grows its own tree numbered from 1, so the same locational code names a node in
+    several trees; the panel marks one such code in two roots.
+    """
+    s = AFINNISurrogate()
+    s.train(art_initial_points(), art_config(num_initial_clusters=FOREST_ROOTS,
+                                             art=ARTSettings(sample_multiplier=ART_MULTIPLIER, roots="grid")),
+            Evaluator(f_fn=f_xp))  # fmt: skip
+    a = {k: to_host(v) for k, v in s.routing.arrays().items()}
+    bins = np.asarray(a["root_bins"])
+    planes = {(int(r), int(c)): (np.asarray(w), float(z)) for r, c, w, z in
+              zip(a["split_root"], a["split_locational_code"], a["normal"], a["offset"], strict=True)}  # fmt: skip
+
+    def root_cell(r: int) -> np.ndarray:
+        """Root r's grid cell, row-major over the bins as Roots.root_of numbers them."""
+        cell = np.array([r // bins[1], r % bins[1]])
+        lo, hi = LOWER + cell / bins * WIDTH, LOWER + (cell + 1) / bins * WIDTH
+        return np.array([lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]])
+
+    def region(r: int, code: int) -> np.ndarray:
+        poly = root_cell(r)
+        for shift in range(code.bit_length() - 2, -1, -1):  # from the root down, one bit per level
+            poly = clip(poly, *planes[(r, code >> (shift + 1))], keep_right=bool((code >> shift) & 1))
+        return poly
+
+    nodes = {(int(r), int(c)) for r, c in zip(a["leaf_root"], a["leaf_locational_code"], strict=True)} | set(planes)
+    by_code: dict[int, list[int]] = {}
+    for r, c in nodes:
+        by_code.setdefault(c, []).append(r)
+    shared = max((c for c, rs in by_code.items() if len(rs) >= 2), key=lambda c: (c.bit_length(), len(by_code[c]), -c))
+    pair = sorted(by_code[shared])[:2]
+    tints = [BLUE, GOLD, GREEN, PINK]
+
+    def draw(ax):
+        for r, c in zip(a["leaf_root"], a["leaf_locational_code"], strict=True):
+            ax.add_patch(Polygon(region(int(r), int(c)), closed=True, fc=tints[int(r) % len(tints)], ec="white", lw=0.6,
+                                 alpha=0.35, zorder=1))  # fmt: skip
+        for r in range(int(np.prod(bins))):
+            cell = root_cell(r)
+            ax.add_patch(Polygon(cell, closed=True, fc="none", ec=DARK, lw=1.4, zorder=3))
+            ax.text(*(cell[3] + np.array([0.04, -0.04]) * WIDTH), f"root {r}", ha="left", va="top", fontsize=6.2,
+                    color=DARK, weight="bold", zorder=5, bbox={"fc": "white", "ec": "none", "pad": 0.6, "alpha": 0.8})  # fmt: skip
+        for r in pair:
+            poly = region(r, shared)
+            ax.add_patch(Polygon(poly, closed=True, fc=RED, ec=DARK, lw=1.0, alpha=0.6, zorder=4))
+            x, y = poly[:, 0], poly[:, 1]
+            cross = x * np.roll(y, -1) - np.roll(x, -1) * y  # shoelace terms: the area centroid, inside a thin region
+            centre = np.array([((x + np.roll(x, -1)) * cross).sum(), ((y + np.roll(y, -1)) * cross).sum()]) / (3 * cross.sum())
+            ax.text(*centre, f"({r}, {format(shared, 'b')})", ha="center", va="center", fontsize=6.3,
+                    color="black", weight="bold", zorder=6, fontdict={"family": "DejaVu Sans Mono"},
+                    bbox={"fc": "white", "ec": "none", "pad": 0.7, "alpha": 0.85})  # fmt: skip
+
+    panel("art-forest", draw, back=False)
+    return {"forest": {"roots": int(np.prod(bins)), "leaves": int(s.N_src), "code": format(shared, "b"),
+                       "pair": pair, "trees_with_code": len(by_code[shared])}}  # fmt: skip
+
+
 def steal_panels() -> dict:
     """The recorded 4-rank run: who was working when, and which rank built which leaf."""
     run = json.loads((OUT / "steal_run.json").read_text())
@@ -1483,7 +1798,10 @@ def main() -> None:
         "alpha": ALPHA, "N0": N0, "seed": SEED, "kappa": KAPPA,
         "domain": {"lower": LOWER.tolist(), "upper": UPPER.tolist()},
         # Library defaults the text quotes, read from TrainingConfig so a change shows up here.
-        "defaults": {"q_reg_exponent": int(round(np.log10(TrainingConfig(atol=1.0).q_reg)))},
+        "defaults": {"q_reg_exponent": int(round(np.log10(TrainingConfig(atol=1.0).q_reg))),
+                     "segment_chunk": SEGMENT_CHUNK, "n_directions": ARTSettings().n_directions,
+                     "n_screened": ARTSettings().n_screened,
+                     "walk_max_d": int(re.search(r"#define MAXD (\d+)", kernel_source("hit_and_run")).group(1))},
         "settings": {"afinni": {k: v for k, v in AFINNI_SETTINGS.items() if v is not None},
                      "art": {"sample_multiplier": ART_MULTIPLIER, "node_points": ART_MULTIPLIER * 3,
                              "max_levels": ART_SETTINGS["max_levels"]}},
@@ -1497,7 +1815,8 @@ def main() -> None:
     residual_key()
     numbers["afinni"] |= queue_layout(forest, levels)
     numbers["art"] = art_levels(tree) | art_sampling(tree) | art_split(tree, searches, art_plan) | art_route(art, tree)
-    numbers["art"] |= locational_code_panels(tree)
+    numbers["art"] |= locational_code_panels(tree) | art_forest_panel()
+    numbers["art"] |= art_carry(tree) | route_passes(art, tree)
     numbers["compare"] = compare(afinni, art, forest, tree)
     # The library's own accuracy claim for the ART model: fresh uniform points, a one-sided bound.
     audit = art.audit(Evaluator(f_fn=f_xp), AUDIT_POINTS, seed=SEED)

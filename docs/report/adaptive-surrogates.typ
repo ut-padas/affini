@@ -439,7 +439,7 @@ points, and look at how far it is from $f$ at those same points.
 )
 #figure(stack(spacing: 2pt, error-strip, align(center, error-key(width: 34%))), kind: image,
   caption: [The clusters still in the queue at each level, coloured by the error of their
-    models (key below), with the worst error of each level. Accepted clusters leave the
+    models, with the worst error of each level. Accepted clusters leave the
     picture; the rest are cut and fitted again. After #ex.afinni.n_levels levels nothing is
     left.]) <fig:errors>
 
@@ -509,11 +509,12 @@ depends on $f$.
   (panel("afinni-split-error"), [a rejected cluster: \ the error of its model]),
   (panel("afinni-split-plain"), [cut across the longest direction: \ children's worst error #ex.afinni.split.plain_error]),
   (panel("afinni-split-hessian"), [Hessian-informed cut: \ children's worst error #ex.afinni.split.hessian_error]),
-  caption: [One rejected cluster of level #ex.afinni.split.level, with #ex.afinni.split.points
-    points and worst error #ex.afinni.split.parent_error. Its error forms stripes: $f$ bends
-    _across_ the cluster and hardly at all along it. A cut across the longest direction
-    leaves both children with the full bend. A cut across the bend, #ex.afinni.split.angle
-    degrees away, leaves children that are nearly flat. Colours as in @sec:reading.],
+  caption: [One rejected cluster of level #ex.afinni.split.level, with
+    #ex.afinni.split.points points and worst error #ex.afinni.split.parent_error, cut two ways.
+    Colours as in @sec:reading. *Left.* The error of the cluster's model forms stripes: $f$
+    bends _across_ the cluster and hardly at all along it. *Middle.* A cut across the longest
+    direction leaves both children with the full bend. *Right.* A cut across the bend,
+    #ex.afinni.split.angle degrees away, leaves children that are nearly flat.],
 ) <fig:split>
 
 The stripes of the left frame are the level sets of the error, and the error is the
@@ -804,7 +805,7 @@ The name has four jobs, and each rules something out.
   columns: 4,
   ([Local], [Any rank computes a child's name from its parent's alone, with no message to
     anyone.]),
-  ([Stable], [The name is the same whichever rank, batch or run builds the node: it seeds the
+  ([Stable], [The name is the same whichever rank, batch or run builds the node. It seeds the
     node's random numbers (@inv:rng).]),
   ([Arithmetic], [Parent, children and depth follow from the name, without a lookup.]),
   ([Small], [One machine integer, carried with every queued node.]),
@@ -815,33 +816,24 @@ The name has four jobs, and each rules something out.
   ([A global counter #text(fill: red)[✗]], [Numbering nodes $0, 1, 2, dots$ as they are created
     needs one counter shared by every rank, a message per node, and the numbers depend on the
     order of processing, so they are neither local nor stable.]),
-  ([Coordinates #text(fill: red)[✗]], [A centre or a corner is a floating-point vector: not
-    small, not exact, and it says nothing about the parent.]),
-  ([A spatial Morton code #text(fill: red)[✗]], [Local, stable and arithmetic, but only for
-    cells that are boxes halved at their midpoints; see below.]),
+  ([Coordinates #text(fill: red)[✗]], [A centre or a corner is a floating-point vector. It is
+    not small, not exact, and it says nothing about the parent.]),
+  ([A Morton code #text(fill: red)[✗]], [It is local, stable and arithmetic, but it names only
+    boxes cut at their midpoints (@sec:morton).]),
   ([The locational code #text(fill: rgb("#2e7d32"))[✓]], [The route from the root, one bit per cut.
     It meets all four.]),
 )
 
-#let bitlabel(code) = {
-  let head = code.slice(0, code.len() - 1)
-  let last = code.slice(code.len() - 1)
-  [#raw(head)#text(fill: red, weight: "bold", raw(last))]
-}
-#board(
-  columns: 4,
-  (panel("locational-code-0"), [#raw(ex.art.locational_code.codes.at(0)): the root]),
-  ..range(1, ex.art.locational_code.codes.len()).map(k => {
-    let code = ex.art.locational_code.codes.at(k)
-    (panel("locational-code-" + str(k)), [#bitlabel(code): #if code.ends-with("1") [right] else [left] of the plane])
-  }),
-)
+#figure(panel("locational-code-walk"), caption: [One point (black) on its way to its leaf. *Top.* The
+  tree, with the point's route in red. Each step down adds one bit to the code, and the latest
+  bit is red. *Bottom.* The same steps in the domain. Each frame shows the parent's region
+  (grey), the plane that cut it, and the side the point is on (blue, the leaf in red).])
+  <fig:walk>
 
-The frames follow one point (black) down the tree of @fig:tree. The root is named $1$. Each
-cut appends one bit: $0$ if the point's region is on the side $a^top u < z$ of the plane (left),
-$1$ if it is on the side $a^top u >= z$ (right). After #ex.art.locational_code.depth cuts the point's
-leaf is named #raw(ex.art.locational_code.leaf). The name _is_ the route: read it left to right and
-it says which way to turn at every split.
+The root's code is $1$. Every cut appends one bit to a node's code: $0$ for the side
+$a^top u < z$ of the plane and $1$ for the side $a^top u >= z$. The point in @fig:walk
+takes #ex.art.locational_code.depth turns, so its leaf's code is
+#raw(ex.art.locational_code.leaf). Reading the code from left to right replays the turns.
 
 #definition(title: [locational code])[
   The root has locational code $pi = 1$. A node with locational code $pi$ has children $2 pi$
@@ -849,8 +841,21 @@ it says which way to turn at every split.
   its root and its locational code, $(r, pi)$.
 ] <def:locational-code>
 
-Because every name is built by appending bits, everything about a node's place in the tree
-is a one-instruction operation on its integer:
+#scene(side: left, width: 34%, panel("art-forest"))[
+  The running example has one root, so $r$ never changes there. With `roots="grid"` or
+  `"voronoi"`, ART grows one tree per root cell instead, and each tree numbers its own
+  nodes from $1$. The picture shows the same example with #ex.art.forest.roots grid roots.
+  The code #raw(ex.art.forest.code) names a node in all #ex.art.forest.trees_with_code
+  trees, and two of them are marked. Only the pair $(r, pi)$ tells them apart.
+
+  The pair is needed in three places. The routing table stores each plane under $(r, pi)$
+  and checks that no pair repeats. A stolen node carries both, so the thief knows which tree
+  it extends. And $(r, pi)$ seeds the node's random numbers: with $pi$ alone, the nodes
+  #raw(ex.art.forest.code) of different trees would draw the same numbers and place their
+  samples in the same relative positions.
+]
+
+Every question about a node's place in the tree is a bit operation on its code:
 
 #block(breakable: false, table(
   columns: (auto, auto, auto),
@@ -865,54 +870,67 @@ is a one-instruction operation on its integer:
   [is $pi'$ an ancestor of $pi$?], [$pi$'s bits begin with $pi'$'s], [#raw(ex.art.locational_code.codes.at(3)) is; #raw(ex.art.locational_code.sibling) is not],
 ))
 
-The leading $1$, the _place-holder bit_, is what makes this work: without it, $0$, $00$ and
-$000$ would be the same integer. With it, every route has its own number, and these are exactly the numbers of a
-binary heap: $1$; $2, 3$; $4, dots, 7$; one row per depth.
+The leading $1$ is the _place-holder bit_. Without it the codes $0$, $00$ and $000$ would be
+the same integer. With it every route has its own number, and the numbers run
+$1$; $2, 3$; $4, dots, 7$, one row per depth, as in a binary heap.
 
 #note(title: [The standard terms])[
-  A code that records a node's route from the root is a _locational code_: introduced for
-  quadtrees as a base-4 code, one digit per subdivision @gargantini1982, it is the standard
-  term in the spatial-data-structure literature @samet2006, and the one this report uses;
-  ART's is binary, one digit per cut. The leading $1$ is Warren and Salmon's _place-holder
-  bit_, prepended "to distinguish the higher level internal nodes of the tree from the
-  lowest level body nodes"; their root, too, is the key $1$ @warren1993. The code calls
-  $pi$ `locational_code`.
+  A code that records a node's route from the root is a _locational code_. Gargantini
+  introduced it for quadtrees as a base-4 code with one digit per subdivision
+  @gargantini1982, and it is the standard term in the spatial-data-structure literature
+  @samet2006. ART's locational code is binary, with one digit per cut. The leading $1$ is
+  Warren and Salmon's _place-holder bit_, which they add "to distinguish the higher level
+  internal nodes of the tree from the lowest level body nodes"; their root is also the key
+  $1$ @warren1993. The code calls $pi$ `locational_code`.
 ]
 
-=== The relative it is not: the Morton code
+=== Locational codes and Morton codes <sec:morton>
+
+A _Morton code_ is the locational code of a quadtree, the tree that cuts every box into four
+equal quarters. It also appends bits as it goes down, two per level in two dimensions, one
+for each coordinate. Because every cut is at a known place, the bits also give the cell's
+position.
 
 #filmstrip(
   arrows: false,
-  (panel("morton-quadtree", width: 82%), [a quadtree with Morton codes: two bits per level,
-    one per coordinate; the curve visits the cells in code order]),
-  (panel("morton-oblique", width: 82%), [ART's leaves: oblique cuts at chosen offsets; the
-    outlined leaf, #raw(ex.art.locational_code.leaf), is no quadtree cell]),
-)
+  (panel("morton-code", width: 92%), [Morton code #raw("1001"): quarter #raw("10"), then its
+    quarter #raw("01")]),
+  (panel("morton-art", width: 92%), [ART code #raw(ex.art.locational_code.leaf): six turns;
+    the shape needs the six planes]),
+  (panel("code-capacity", width: 100%), [levels that fit in a 64-bit code]),
+  caption: [What a code says about a cell. *Left.* The Morton code
+    #raw("1001") picks the top-left quarter (#raw("10")) and then its bottom-right quarter
+    (#raw("01")). The code alone gives the box. *Middle.* ART's leaf
+    #raw(ex.art.locational_code.leaf) and the planes of its six ancestors, numbered by depth.
+    Its code records which side of each plane the leaf is on, but not where the planes are.
+    *Right.* How deep a tree a 64-bit code can name as the dimension grows.],
+) <fig:morton>
 
-A _Morton code_ (Z-order) names the cells of a quadtree the same way: at every level it
-appends which half of the cell the child is, one bit per coordinate, interleaved. It shares
-the locational code's best properties: the code of an ancestor is a prefix, the code fits in one
-integer, and it is computed locally. It has one more: because every cut halves a box at its
-midpoint, the bits _are_ the geometry. Read a Morton code and you know the box; nothing else
-needs to be stored.
+The two codes share three properties. An ancestor's code is a prefix of its descendant's
+code, the code fits in one integer, and a child's code follows from its parent's alone.
 
-That extra property is exactly what ART cannot have. ART's best cut is an oblique plane at
-an offset chosen from the data (@sec:plane): no string of bits can describe it, so its
-cells are not boxes and have no Morton code. Forcing axis-aligned midpoint cuts to get one
-would give up the fit the split search buys. The Morton code also spends $d$ bits per level,
-so a 64-bit code has room for only $floor(64 slash d)$ levels: one level at $d = 40$. The
-locational code spends one bit per level whatever the dimension.
+A Morton code has one more property that ART cannot use. Its cuts are always at the middle
+of an axis, so the code determines the cell. ART cuts along oblique planes at offsets chosen
+from the data (@sec:plane), and a string of side bits cannot give their position. ART
+therefore stores the planes separately. The routing table holds each split node's plane
+$(a, z)$ once, under that node's locational code, and the leaf's shape is the intersection
+of its ancestors' half-spaces.
 
-Warren and Salmon's tree code shows the two halves joined: their keys are Morton codes
-with a place-holder bit, so a key both names an octree cell and locates it @warren1993.
-ART keeps the naming half of the idea and stores the geometry separately: the locational
-code names the node, and each split node's plane $(a, z)$ is recorded once, in the routing
-table, under its parent's locational code.
+Dimension sets a second limit. A Morton code spends $d$ bits per level, so a 64-bit code
+holds $floor(63 slash d)$ levels after the place-holder bit, and only
+#ex.art.locational_code.morton_levels_d40 at $d = 40$. A locational code spends one bit per
+cut in any dimension, which allows trees #ex.art.locational_code.max_depth levels deep.
+
+Warren and Salmon's tree code uses the Morton code with a place-holder bit, so one key both
+names an octree cell and locates it @warren1993. ART keeps only the naming part.
 
 #implementation(title: [In the code])[
-  - `locational_code` is an `int64` column of every queued node (`src/core/clusters.py`),
-    carried by work stealing with the node, and `(root, locational_code)` seeds the node's
-    random numbers (`node_keys` in `src/art/rng.py`).
+  - `root` and `locational_code` are two `int64` columns of every queued node
+    (`src/core/clusters.py`), and `node_keys(seed, root, locational_code)` in
+    `src/art/rng.py` hashes them into the node's random-number key. They stay separate on
+    purpose. Packing them into one integer, `root << shift | code`, would take bits from the
+    code and lower the depth limit as the number of roots grows. Two columns cost 8 bytes per
+    queued node and keep the full depth for any number of roots.
   - A positive `int64` has 63 bits and the place-holder bit takes one, so routes fit up to depth
     #ex.art.locational_code.max_depth (`MAX_DEPTH_LIMIT`), the deepest ART tree allowed.
   - Codes are sparse, $2^"depth"$ wide but few in use, so they are keys, never array
@@ -920,10 +938,10 @@ table, under its parent's locational code.
     index, and routing follows those, one array lookup per level (@sec:plane).
 ]
 
-#takeaway[A node's name is its route from the root, one bit per cut: computed by anyone,
-  the same everywhere, and parent, children and depth are bit operations. Morton codes do
-  the same for boxes and encode their geometry too; ART's cuts are oblique, so it keeps the
-  name and stores each plane once.]
+#takeaway[A node's locational code is its route from the root, one bit per cut. Any rank
+  can compute it, and parent, children and depth are bit operations on it. A Morton code
+  also gives a cell's position because its cuts are fixed; ART's cuts are chosen from the
+  data, so ART stores each plane once next to the code.]
 
 
 == A fixed budget of points in every node
@@ -941,19 +959,22 @@ small region.
 
 #story()
 #step([A region is the box and its ancestors' planes], code: art-code, focus: ("in", 2), window: 0, width: 35%, panel("art-polytope"))[
-  The node with locational code #ex.art.sampling.code, at depth #ex.art.sampling.depth: its
-  region (shaded) is bounded by the box and by the #ex.art.sampling.rows planes of its
-  ancestors (lines), one row of $(A, bold(z))$ each. It inherited #ex.art.sampling.inherited
-  points (dark) and needs #ex.art.sampling.new new ones (pink), anywhere in the region,
-  including next to its boundary.
+  The node with locational code #ex.art.sampling.code is at depth #ex.art.sampling.depth.
+  Its region (shaded) is bounded by the domain box (dark outline) and by the
+  #ex.art.sampling.rows planes of its ancestors, numbered by depth. Each plane is one row of
+  $(A, bold(z))$, and so is each face of the box; here the box's top face closes the region.
+  The node inherited #ex.art.sampling.inherited points (dark) and needs
+  #ex.art.sampling.new new ones (pink), anywhere in the region, including next to its
+  boundary.
 ]
 
 #step([Hit-and-run: a random walk that stays inside], code: hitrun-code, focus: (2, 3, 4), width: 35%, panel("art-hit-and-run"))[
-  Drawing uniformly in a polytope is done by walking. From a point inside (dark), choose a
-  random direction; the region cuts the line through the point in a chord (dotted); jump
-  to a uniform point of the chord. Each step only needs the two ends of the chord, which
-  come from one product $A g$. After a few steps the walker (pink) has forgotten where it
-  started.
+  To draw uniformly in a polytope, ART walks. The walk starts at an inherited point (dark),
+  and each numbered step does three things. It picks a random direction $g$. It finds the
+  chord, the part of the line through the current point along $g$ that lies inside the
+  region (dotted). It then jumps to a uniform point of that chord. The ends of the chord
+  come from one product $A g$. After a few steps the walker (pink) no longer depends on
+  where it started.
 ]
 
 #proposition(title: [hit-and-run samples uniformly, @smith1984])[
@@ -988,8 +1009,9 @@ small region.
   - A root box is sampled exactly, without a walk.
   - `validation_samples` draws a second, independent set of points in every node, on which
     an accepted model is checked again before it becomes a leaf.
-  - On a GPU the whole walk of every chain of a batch runs in one kernel
-    (`src/kernels/hit_and_run.cu`), one thread per chain.
+  - On a GPU every chain of a batch walks in the same kernel launch
+    (`src/kernels/hit_and_run.cu`), one thread per chain: one launch per half of the walk,
+    and one more for each doubling.
 ]
 
 #takeaway[An ART node owns a polytope, the box cut by its ancestors' planes, and is
@@ -1016,13 +1038,22 @@ best, which is what the children's least-squares fits will minimize.
   arrows: false,
   (panel("art-split-before"), [a rejected node: the error of its one model]),
   (panel("art-split-candidates"), [candidate directions; the best cut found (dashed), then refined (solid)]),
-  (panel("art-split-after"), [the errors of the two children's models]),
-  caption: [The split search on the node with locational code #ex.art.split.code, with
-    #ex.art.split.points points. One model leaves a mean squared error of
-    #ex.art.split.sse_parent (in units of $atol^2$). The search tries cuts along
+  (panel("art-split-after"), [the children's errors after ART's cut (solid); AFINNI's cut (dashed)]),
+  caption: [The split search on the node with locational code
+    #ex.art.split.code, which has #ex.art.split.points points. Error colours as in
+    @sec:reading. *Left.* One model leaves a mean squared error of #ex.art.split.sse_parent,
+    in units of $atol^2$. *Middle.* The search tries cuts along
     #ex.art.split.directions directions (arrows; the red one is AFINNI's Hessian-informed
-    direction) and finds a plane with error #ex.art.split.sse_bins\; the soft search turns
-    and shifts it to reach #ex.art.split.sse_final. Error colours as in @sec:reading.],
+    direction) and finds a plane with error #ex.art.split.sse_bins (dashed). The soft search
+    turns and shifts it to reach #ex.art.split.sse_final (solid). *Right.* The errors of the
+    two children's models after ART's cut (solid). The #swatch(red, shape: "dashed") red dashed
+    line is where AFINNI would cut the same points: along its Hessian-informed direction, at
+    the median. With one affine model on each side, ART's children have a largest error of
+    #ex.art.split.art_worst $atol$ and a mean squared error of #ex.art.split.art_mse, against
+    #ex.art.split.afinni_worst $atol$ and #ex.art.split.afinni_mse for AFINNI's. The node,
+    its points and the fits are the same, so only the cut differs: AFINNI fixes the cut before
+    fitting, and ART chooses it by how well the children fit. ART minimizes the squared error,
+    so its smaller largest error here is a consequence, not a guarantee.],
 ) <fig:search>
 
 == A coarse search, then a smooth one
@@ -1178,15 +1209,17 @@ weights, floor and ridge appear in the fit and in the objective.
   short where $f$ curves and long where it is nearly straight: that is the adaptivity.
 ]
 
-#filmstrip(
-  arrows: false,
-  (panel("error-afinni", width: 68%), [AFINNI: #ex.compare.afinni.leaves leaves]),
-  (panel("error-art", width: 68%), [ART: #ex.compare.art.leaves leaves]),
-  caption: [The error $abs(f - fh) slash atol$ over the whole domain, on a
-    #ex.compare.grid $times$ #ex.compare.grid grid: #swatch(rgb(col.error.at(0))) pale to
-    #swatch(rgb(col.error.at(3))) blue within the tolerance, #swatch(rgb(col.error.at(4)))
-    to #swatch(rgb(col.error.at(5))) red beyond it. Left, AFINNI's centres (crosses) and,
-    hatched, the queries flagged as outside every trust region. Right, ART's leaves.],
+#figure(
+  stack(spacing: 6pt,
+    filmstrip(
+      arrows: false,
+      (panel("error-afinni", width: 68%), [AFINNI: #ex.compare.afinni.leaves leaves]),
+      (panel("error-art", width: 68%), [ART: #ex.compare.art.leaves leaves]),
+    ),
+    align(center, panel("error-map-key", width: 78%))),
+  kind: image,
+  caption: [The error of each surrogate over the whole domain, on a #ex.compare.grid
+    $times$ #ex.compare.grid grid.],
 ) <fig:error>
 
 #table(
@@ -1242,24 +1275,101 @@ measure; it does not bound the error at any particular point.
 #takeaway[Both meet the tolerance on almost all of the domain with a few dozen affine
   pieces; AFINNI flags where it has no data, ART covers everything and can be audited.]
 
-= Batches, memory and reproducible sums <sec:batches>
+= Batches, kernels and reproducible sums <sec:batches>
 
 #question[The engine handles thousands of clusters at once on a GPU. How, without a loop
   over clusters, and without results that change from run to run?]
 
-By keeping the layout of @fig:queue all the way down. A batch is three arrays, the points
-`X`, the values `F`, and the cluster sizes, with every cluster a run of consecutive rows.
-Every step of @alg:afinni and @alg:art is then one of two kinds of array operation.
+// Schematic rows of a batch: one cell per point, coloured by its cluster (three clusters of
+// sizes 5, 3 and 6, the palette's 2nd to 4th colours), with chunks of two rows.
+#let gpu-colours = ex.colours.palette.slice(1, 4).map(rgb)
+#let gpu-sizes = (5, 3, 6)
+#let cw = 1.45em
+#let cell(c, body: none) = box(width: cw, height: cw, fill: c, stroke: 0.6pt + white,
+  align(center + horizon, text(7.5pt, fill: white, weight: "bold", body)))
+#let plain(body) = box(width: cw, height: 1em, align(center + horizon, text(7.5pt, body)))
+#let span(n, body, stroke: none) = box(width: n * cw, inset: (x: 1.2pt), box(width: 100%,
+  stroke: stroke, inset: (y: 2pt), align(center, text(7.5pt, body))))
+#let row-label(body) = align(right + horizon, text(7.5pt, body))
+#let cluster-cells(values: none, shade: none) = stack(dir: ltr, ..range(3).map(k => {
+  let n = gpu-sizes.at(k)
+  stack(dir: ltr, ..range(n).map(i => {
+    let c = gpu-colours.at(k)
+    if shade != none { c = if i < shade.at(k) { c.lighten(45%) } else { c } }
+    cell(c, body: if values != none { str(values.at(k).at(i)) })
+  }))
+}))
+
+#let batch-picture = grid(
+  columns: (auto, auto),
+  column-gutter: 0.5em,
+  row-gutter: 0.35em,
+  row-label[`X`, `F`], cluster-cells(),
+  row-label[`labels`], stack(dir: ltr, ..range(3).map(k => stack(dir: ltr, ..range(gpu-sizes.at(k)).map(_ => plain(str(k)))))),
+  row-label[`counts`, `starts`], stack(dir: ltr, ..range(3).map(k => span(gpu-sizes.at(k),
+    [#gpu-sizes.at(k), #gpu-sizes.slice(0, k).sum(default: 0)]))),
+  row-label[chunks], stack(dir: ltr,
+    ..((2, 2, 1), (2, 1), (2, 2, 2)).enumerate().map(((k, cs)) => stack(dir: ltr, ..cs.map(n =>
+      span(n, [], stroke: (left: 0.7pt + gpu-colours.at(k), right: 0.7pt + gpu-colours.at(k),
+        bottom: 0.7pt + gpu-colours.at(k))))))),
+  row-label[partials], stack(dir: ltr, ..((2, 2, 1, 2, 1, 2, 2, 2)).enumerate().map(((j, n)) =>
+    span(n, $p_#j$))),
+  row-label[sums], stack(dir: ltr,
+    span(5, $p_0 + p_1 + p_2$), span(3, $p_3 + p_4$), span(6, $p_5 + p_6 + p_7$)),
+)
+
+#scene(side: left, width: 56%, batch-picture)[
+  A batch is the points `X`, their values `F`, and one row per cluster, with every cluster
+  a run of consecutive rows (@fig:queue). The cluster sizes `counts` and their running
+  sums `starts` say where each run begins, and `labels`, each row's cluster, comes from a
+  cumulative sum of start markers, without a sort. To sum over clusters, every run is cut
+  into chunks of #ex.defaults.segment_chunk rows (two in the picture), _counted from the
+  run's own first row_. One thread adds up one entry over one chunk in row order, and a
+  second pass adds each cluster's chunks in order. This is a _segmented reduction_
+  (`segment_cross`), and one launch serves every cluster of the batch.
+]
+
+Almost every step of @alg:afinni and @alg:art is one of four kinds of array operation on
+this layout.
 
 #cards(
   columns: 2,
-  ([Segmented reductions], [A sum, maximum or scatter matrix over the rows of each
-    cluster: centroids, $Sigma$, the errors $e_a$. One pass over the rows produces one
-    result per cluster.]),
-  ([Small batched solves], [A $d times d$ or $p times p$ problem per cluster: the
-    least-squares fit, an eigendecomposition for the cut or the trust ellipsoid. All
-    clusters are solved together.]),
+  ([Per row], [Projections, residuals, distances to a centre. One thread per row reads its
+    cluster's matrix or plane in place, through `labels`, instead of a copy per row.]),
+  ([Segmented reductions], [Sums, scatter matrices and maxima over each cluster's rows:
+    centroids, $Sigma$, the normal equations, the largest error.]),
+  ([Small batched solves], [A $p times p$ system or a $d times d$ product per cluster,
+    one thread per system, or a batched eigendecomposition.]),
+  ([Sorts within clusters], [A stable sort by value, then a stable sort by cluster: every
+    cluster's rows end up in order, still in one run.]),
 )
+
+#block(breakable: false, table(
+  columns: (1.25fr, 1fr, 1.45fr),
+  inset: (x: 5pt, y: 4.5pt),
+  align: left + horizon,
+  table.header[Step][Kind][Kernel or library call],
+  table.cell(colspan: 3, fill: luma(245))[*AFINNI* (`src/afinni/plan.py`, `src/components/`)],
+  [centres, means, $Sigma$, the fit's normal equations], [segmented sums], [`segment_cross`; tiled through shared memory when the result has many entries],
+  [the fit, the products with $absH^(1 slash 2)$], [small solves], [`batched_inplace_cholesky_solve`, `spd_solve`, `det_matmul`],
+  [errors $e_a$, split scores, Mahalanobis distances], [per row], [`fused_split_projection`, `fused_mahalanobis_projection`, `taylor_residual_norm`],
+  [largest error, trust radius], [segmented maxima], [`segmented_max_float64`, one thread per cluster],
+  [cut direction, Hessian estimate, trust ellipsoid], [eigendecompositions], [CuPy's batched `eigh` (cuSOLVER)],
+  [the median cut, the points nearest each centre], [sorts within clusters], [two stable `argsort`s over the whole batch],
+  [new points (@sec:augment)], [per new coordinate], [one element-wise kernel],
+  table.cell(colspan: 3, fill: luma(245))[*ART* (`src/art/`)],
+  [hit-and-run in every rejected node], [per chain], [`hr_walk`, one thread per chain],
+  [cut statistics for every bin], [segmented sums], [`segment_cross` over (node, bin) runs, then `bin_sides`, `spd_solve`],
+  [soft search], [per row and per node, repeated], [`soft_gates`, `soft_residuals`, `soft_row_terms`, `soft_node_prep`, `soft_trial_terms`, `soft_node_select`],
+  [children, their codes and regions], [per node], [index arithmetic and one gather],
+))
+
+The project's own kernels live in `src/kernels/*.cu`, one file per area, and are compiled
+when first used. Each exists for one of three reasons: a library routine would sum in an
+order that depends on the batch (@sec:same-bits), a chain of library calls would build a
+temporary of one matrix per row, or many small launches would cost more than the work.
+
+Batches exist because a level may not fit on the device.
 
 #block(breakable: false, table(
   columns: (1fr, 1.3fr),
@@ -1267,12 +1377,262 @@ Every step of @alg:afinni and @alg:art is then one of two kinds of array operati
   align: left + horizon,
   table.header[Constraint][What the engine does],
   [the points of a level can exceed the device's memory], [keeps the queue in host memory and moves one batch at a time to the device],
-  [a batch holds as many whole clusters as fit], [caps `batch_size` (points) at 65% of the free device memory divided by `plan.bytes_per_point()`],
+  [a batch holds as many whole clusters as fit], [caps `batch_size` (points) at 65% of the free device memory divided by `plan.bytes_per_point()`; a larger cluster runs alone],
   [a batch's points must be released as early as possible], [hands them to the plan (`DeviceBatch.take`), which frees them before it augments and cuts],
   [the host can run out of memory too], [checks the available memory before the queue grows, and raises `MemoryError` with advice],
 ))
 
-== The same bits every time
+== What the layout makes easy
+
+=== A median for the price of a sort
+
+#scene(side: left, width: 52%, grid(
+  columns: (auto, auto),
+  column-gutter: 0.5em,
+  row-gutter: 0.6em,
+  row-label[scores], cluster-cells(values: ((7, 2, 9, 4, 5), (6, 1, 3), (8, 3, 5, 2, 9, 6))),
+  row-label[sorted], cluster-cells(values: ((2, 4, 5, 7, 9), (1, 3, 6), (2, 3, 5, 6, 8, 9))),
+  row-label[cut], cluster-cells(values: ((2, 4, 5, 7, 9), (1, 3, 6), (2, 3, 5, 6, 8, 9)), shade: (2, 1, 3)),
+))[
+  AFINNI cuts every rejected cluster at the median of its scores along the cut direction
+  (@sec:split). Sorting the whole batch by score and then, stably, by cluster puts every
+  cluster's rows in order of score while keeping each cluster in its own run (middle). The
+  median then needs no search: the first $floor(n slash 2)$ rows of a run are $Cm$ (pale)
+  and the rest are $Cp$. The children are already runs of consecutive rows, so one gather
+  `X[order]` writes the next level in the layout this section began with.
+]
+
+Two passes of CuPy's stable `argsort` replace a lexicographic sort, which CuPy implements
+as a slower merge sort. ART reuses the same sort for its children and then checks that
+its stored plane puts every row on the side the position says, so that routing a training
+point later reproduces the split exactly (`ARTPlan._split`).
+
+=== A node's region travels with it
+
+#let carry = ex.art.carry
+// One carried row as three cells, a_1, a_2 | z, in its plane's colour.
+#let carry-num(v, c) = box(width: 2.5em, height: 1.2em, fill: rgb(c).lighten(78%), stroke: 0.5pt + rgb(c),
+  align(center + horizon, text(6.5pt, str(v))))
+#let carry-row(r, c) = stack(dir: ltr, carry-num(r.at(0), c), carry-num(r.at(1), c), h(2pt), carry-num(r.at(2), c))
+#let carry-block(depth) = stack(spacing: 3pt,
+  if depth == 0 { box(height: 1.2em, align(horizon, text(7pt, fill: grey)[no rows])) } else {
+    stack(spacing: 0pt, ..range(depth).map(j => carry-row(carry.rows.at(j), carry.plane_colours.at(j))))
+  },
+  block(above: 5pt, text(7pt, fill: grey)[level $#depth$: $(#carry.level_nodes.at(depth), #depth, 3)$]))
+
+To sample a rejected ART node, hit-and-run needs its polytope $Omega_C$: the root's box cut
+by every plane on the path from the root (@sec:regions). The GPU never looks these planes
+up in a tree. Every queued node _carries_ them, as a block of rows $[a^top | z]$, one per
+ancestor, each meaning $a^top u <= z$.
+
+#figure(
+  filmstrip(..range(carry.codes.len()).map(t => (panel("art-carry-" + str(t)), [
+    $pi = #carry.codes.at(t)$ #v(2pt) #carry-block(t)]))),
+  kind: image,
+  caption: [The deep node of @sec:regions and its ancestors, from the root down. Each node
+    carries one row per numbered plane, the cells $a_1, a_2 | z$ in the plane's colour; the
+    arrow marks the side it keeps. A child copies its parent's rows and appends the new
+    plane, as it is for a left child ($a^top u <= z$) and negated for a right child
+    ($-a^top u <= -z$). Below each block, the shape $(k, h, d + 1)$ of its level's whole
+    array in this run: $k$ nodes, $h$ rows each, $d + 1 = 3$ numbers per row. Rows are in
+    the unit coordinates $u$.],
+) <fig:carry>
+
+So a node's block is its parent's block plus one row. For a batch of $k$ split nodes this is
+one gather of the parents' blocks and one concatenation. The rest of a child's identity is
+index arithmetic too: its locational code is $2 pi$ or $2 pi + 1$, its root is its
+parent's, and its random numbers are keyed by $(r, pi)$ (@inv:rng). There is no tree to
+walk and no counter shared between nodes.
+
+#let owner-picture = {
+  let chains = (3, 2, 3)
+  // A node's block: h = 2 rows of d + 1 = 3 numbers, the last (z) set apart.
+  let num(k) = box(width: 0.9em, height: 0.9em, fill: gpu-colours.at(k).lighten(55%), stroke: 0.5pt + white)
+  let block(k) = stack(spacing: 0pt, ..range(2).map(_ => stack(dir: ltr, num(k), num(k), h(2pt), num(k))))
+  grid(
+    columns: (auto, ..chains.map(_ => auto)),
+    column-gutter: 0.9em,
+    row-gutter: 0.4em,
+    align: center + horizon,
+    row-label[chains (threads)], ..range(3).map(k => stack(dir: ltr, ..range(chains.at(k)).map(_ => cell(gpu-colours.at(k))))),
+    row-label[`owner`], ..range(3).map(k => stack(dir: ltr, ..range(chains.at(k)).map(_ => plain(str(k))))),
+    [], ..range(3).map(_ => text(9pt)[↓]),
+    row-label[blocks, $h times (d + 1)$], ..range(3).map(k => block(k)),
+    row-label[node], ..range(3).map(k => text(7pt)[$#k$]),
+  )
+}
+
+#scene(side: left, width: 52%, owner-picture)[
+  On the device, the blocks of a batch form one array of shape $(k, h, d + 1)$: $k$ nodes
+  in the batch (three in the picture), $h$ rows per node, one per ancestor plane, so $h$
+  is the nodes' depth (two here), and $d + 1$ numbers per row, the normal $a$ and the
+  offset $z$. @fig:carry shows $k$ and $h$ growing level by level. The `hr_walk` kernel runs one thread per chain, and a chain's `owner` is its node's row in that
+  array, so each thread reads its node's block in place. The chains of one node are
+  consecutive threads and read the same block, which the cache then serves to all of them.
+  Every node of a level has the same depth, so every thread loops over the same number of
+  rows $h$, and the threads of a warp stay in step.
+]
+
+A batch with nodes of different depths would still work: a shorter block is padded with
+rows $0 <= 0$, which cut no chord. Carrying the planes has a cost, though: a node at depth
+$h$ holds $h (d + 1)$ numbers of planes, as much memory as $h$ of its points, and every child
+copies them again. The alternative, one shared table of planes that every node indexes by
+its ancestors' codes ($pi$, $floor(pi slash 2)$, $floor(pi slash 4)$, ...), would store
+each plane once. Its price is that a stolen node would need the table too, and every step of
+every chain would gather planes from scattered places in memory.
+
+=== Every candidate cut in one pass
+
+#let bins-picture = {
+  let A = (2, 2, 2, 2)
+  let B = (2, 1, 1, 2)
+  let shade(k, b) = if calc.even(b) { gpu-colours.at(k) } else { gpu-colours.at(k).lighten(45%) }
+  let strip(k, bins) = stack(dir: ltr, ..bins.enumerate().map(((b, n)) =>
+    stack(dir: ltr, ..range(n).map(_ => cell(shade(k, b))))))
+  let sums(k, bins) = stack(dir: ltr, ..bins.enumerate().map(((b, n)) => span(n, $S_#(b + 1)$,
+    stroke: (bottom: 0.7pt + gpu-colours.at(k)))))
+  let side(n, body, fill) = box(width: n * cw, inset: (x: 1pt), box(width: 100%, fill: fill, inset: (y: 2.5pt),
+    align(center, text(7pt, body))))
+  grid(
+    columns: (auto, auto),
+    column-gutter: 0.5em,
+    row-gutter: 0.45em,
+    align: left + horizon,
+    row-label[sorted rows], stack(dir: ltr, strip(0, A), h(0.6em), strip(1, B)),
+    row-label[bin sums], stack(dir: ltr, sums(0, A), h(0.6em), sums(1, B)),
+    row-label[cut 1], stack(dir: ltr, side(2, $L = S_1$, luma(225)), side(6, $R = S_2 + S_3 + S_4$, luma(245))),
+    row-label[cut 2], stack(dir: ltr, side(4, $S_1 + S_2$, luma(225)), side(4, $S_3 + S_4$, luma(245))),
+    row-label[cut 3], stack(dir: ltr, side(6, $S_1 + S_2 + S_3$, luma(225)), side(2, $S_4$, luma(245))),
+  )
+}
+
+#scene(side: left, width: 54%, bins-picture)[
+  The bins search (@sec:plane) tries $n_"bins" - 1$ cuts along each of
+  #ex.defaults.n_directions directions, for every node of the batch. Along one direction,
+  the batch is sorted by node and score, and each node's rows are split into $n_"bins"$ bins
+  of nearly equal count (four in the picture). A bin's boundaries depend only on the node's
+  point count, so every (node, bin) pair is again a run of consecutive rows. One segmented
+  reduction over the $k dot n_"bins"$ runs gives every bin's least-squares sums $S_b$: the
+  products $Phi^top Phi$, $Phi^top y$ and $y^top y$ of its rows.
+]
+
+A cut between bins $j$ and $j + 1$ (the bottom rows of the picture, for the first node)
+leaves bins $1, ..., j$ on the left and the rest on the right, so its two fits need only the sums $L_j = S_1 + dots.c + S_j$ and
+$R_j = S_(j + 1) + dots.c + S_(n_"bins")$. The kernel `bin_sides` runs one thread per
+(node, entry) of the sums and walks the bins twice, left to right for every $L_j$ and right
+to left for every $R_j$. It sums the right side directly, never as the total minus $L_j$,
+which would cancel digits when one side is small. Each cut then costs one small solve per
+side (`spd_solve`), whatever the number of points.
+
+=== A search that stays on the device
+
+The soft search (@sec:plane) is iterative: at most #ex.art.split.soft_iters steps, each a
+gradient step and a backtracking line search. A sequential line search halves the step
+until it is good enough, with a decision on the host after every trial. Instead,
+`soft_trial_terms` evaluates the first four halvings of every node at once, and the rest
+only for nodes that none of those satisfied. `soft_node_select` takes, per node, the first
+that passes, as the sequential loop would. Every node advances, stops or records
+why it stopped on the device. The host reads one flag per step, to end the loop early when
+every node has stopped.
+
+== Where it is still hard
+
+#block(breakable: false, table(
+  columns: (1fr, 1.5fr, 1.3fr),
+  inset: (x: 5pt, y: 4.5pt),
+  align: left + horizon,
+  table.header[Problem][Why][What could help],
+  [*Uneven clusters*], [`segmented_max_float64` gives a cluster one thread, however many rows
+    it has. In `hr_walk` a thread's work grows with steps $times$ planes $times d$, so one
+    deep node at high dimension holds up the whole launch.], [chunk large clusters, as
+    `segment_cross` already does; one warp per chain at high $d$],
+  [*Sequential steps*], [The soft search, the doubling of drifting hit-and-run chains
+    (@alg:hitrun) and the walk down an ART tree are each a loop of launches, with one
+    host read per pass to decide whether to go on.], [checking the stop flag every few
+    steps instead of every step],
+  [*The host in the loop*], [The queue lives in host memory, every batch is copied in and
+    its children out, and nothing overlaps the copies with work. A batch has dozens of
+    small host reads, mostly the sizes of masks.], [pinned host memory; copying the next
+    batch in while the current one runs],
+  [*Carried planes*], [Charged per point when the batch size is chosen, so deep ART levels
+    run in smaller batches. Beyond $d = #ex.defaults.walk_max_d$ dimensions `hr_walk`
+    does not fit, and a slower path of array operations takes over.], [a shared plane
+    table and per-node indices],
+  [*AFINNI's random streams*], [One stream per batch, so new points depend on which
+    clusters share a batch (@prop:determinism).], [keying streams by cluster, as ART keys
+    them by node],
+  [*AFINNI's trust test*], [`predict` gathers the trust matrices of all $kappa$ candidates
+    of every query, $kappa d^2$ numbers per query.], [one kernel that evaluates the
+    quadratic forms in place],
+))
+
+== Answering queries
+
+Prediction runs on chunks of queries, a few thousand at a time, so that its temporaries fit
+the device whatever the number of queries.
+
+*AFINNI* answers a chunk in four array steps. A nearest-neighbour search finds each query's
+$kappa$ nearest leaf centres: a tiled kernel compares the queries with the centres in
+float32, and the candidates it keeps are ranked again by exact float64 distances. Then the
+trust matrices of all $kappa$ candidates are gathered, $kappa d^2$ numbers per query, and
+one batched product gives every distance $d_i$ (@sec:trust). A sort over the $kappa$
+candidates keeps the $k$ best, and their models are evaluated and weighted. Every step is
+the same work for every query, so nothing diverges. The nearest-neighbour search, like the
+$k$-means of the initial clustering, is the project's own CuPy code rather than cuML: cuML
+ships for Linux only, while the GPU backend also runs on Windows, and these kernels rank
+neighbours by exact float64 distances and give the same clusters on every run.
+
+*ART* must send every query down the tree (@sec:plane), and queries reach leaves at
+different depths. The obvious kernel gives each thread one query and lets it walk from the
+root to its leaf. The 32 threads of a warp execute together, so a warp then runs as long as
+its deepest query, with the lanes of finished queries idle, and every step reads the planes
+of 32 different nodes.
+
+#let passes = ex.art.passes
+#let route-cell(code, leaf) = box(width: 3.5em, height: 1.25em, fill: if leaf { luma(232) } else { white },
+  stroke: 0.5pt + if leaf { luma(200) } else { dark }, align(center + horizon,
+  text(7pt, fill: if leaf { grey } else { black }, raw(code))))
+#let n-passes = passes.codes.len()
+
+#figure(
+  grid(
+    columns: (auto, ..passes.codes.at(0).map(_ => auto), auto),
+    column-gutter: 2pt,
+    row-gutter: 2pt,
+    align: center + horizon,
+    [], ..range(passes.codes.at(0).len()).map(i => text(7pt)[query #(i + 1)]), text(7pt)[moved],
+    ..range(n-passes).map(t => (
+      text(7pt)[#if t == 0 [start] else [pass #t]],
+      ..passes.codes.at(t).zip(passes.leaf.at(t)).map(((c, l)) => route-cell(c, l)),
+      text(7pt)[#if t == 0 [] else [#passes.leaf.at(t - 1).filter(l => not l).len()]],
+    )).flatten(),
+  ),
+  kind: image,
+  caption: [Eight uniform queries of the running example, routed as the library routes
+    them. Each row is one pass and shows every query's node by its locational code. A pass
+    moves only the queries not yet at a leaf (white), one level down; a query at a leaf
+    (grey) has left the pass. The last column counts the queries a pass moved.],
+) <fig:passes>
+
+The code routes _level by level_ instead (`RoutingTable.route`). Each pass first compacts
+the queries that are not yet at a leaf into a dense list, then runs one thread per listed
+query: gather its node's plane, take one dot product, compare with the offset, and gather
+the child. Every thread of a pass executes the same instructions, and finished queries
+take no lanes, so there is no branch divergence. What remains:
+
+- *Scattered reads.* Queries in one warp sit in different nodes, so the planes they read are
+  not adjacent in memory. The table of planes is small, $M$ rows of $d + 1$ numbers for $M$
+  nodes, and is served from the cache.
+- *One pass per level.* A pass costs a few launches and one host read, the size of the
+  compacted list. The last passes of a deep tree move few queries (@fig:passes), and there
+  launch overhead dominates.
+
+A query costs $O(d)$ per level of its path. A single kernel in which each thread walks its
+query to the leaf would remove the host reads and the launches per level, at the price of
+the idle lanes above; for trees of similar depth everywhere that price is small, and it is
+an open option.
+
+== The same bits every time <sec:same-bits>
 
 Floating-point addition is not associative. A sum computed by many GPU threads in
 whatever order they finish differs from run to run in its last bits, and a last bit can
@@ -1283,14 +1643,20 @@ decide whether a cluster passes its tolerance, and so the shape of the whole tre
   cluster it belongs to. On the GPU, a cluster's rows are summed sequentially in chunks
   counted from its own first row, and the chunks are then added in order
   (`segment_cross`, `reduce_sum_1d`, `det_matmul`, `spd_solve` in `src/numerics/`). No
-  thread adds into a shared total, and no library routine chooses its algorithm by the
-  size of the batch.
+  thread adds into a shared floating-point total, and no batched library product or solve,
+  whose algorithm can change with the size of the batch, is used.
 ] <inv:sums>
+
+The one library routine left on the training path is the batched symmetric
+eigendecomposition. The tests train ART with a batch size of 97 and with the default, on
+both backends, and require the same number of leaves, the same number of evaluations and
+the same predictions to within $10^(-10)$.
+
 
 #proposition(title: [what does not change the result])[
   + Repeated runs in one process on the same backend give bit-identical models.
-  + An ART tree, as the set of its planes by locational code, does not depend on the batch size,
-    the number of ranks or the schedule of steals.
+  + An ART tree with hit-and-run sampling, as the set of its planes by locational code, does
+    not depend on the batch size, the number of ranks or the schedule of steals.
   + An AFINNI forest is fixed by the seed, the batch size and the number of ranks, when
     work stealing is off.
 ] <prop:determinism>
@@ -1355,8 +1721,9 @@ victim, with work to spare.
 ))[
   Each rank publishes its load, the points waiting in its queue, to all others at every
   level boundary and after every steal: an 8-byte message, never waited for. A thief asks the rank it believes
-  is the busiest. The victim looks at requests only _between batches_, so it is never
-  interrupted in the middle of one, and answers every request with a grant or a denial.
+  is the busiest. The victim looks at requests between batches, and ART also during its
+  soft search. It never gives away the batch it is working on, and it answers every
+  request with a grant or a denial.
   A grant is followed by the clusters themselves: whole clusters from the _tail_ of the
   victim's queue, the ones it would have reached last.
 ]

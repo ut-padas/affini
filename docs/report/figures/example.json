@@ -14,7 +14,11 @@
     ]
   },
   "defaults": {
-    "q_reg_exponent": -6
+    "q_reg_exponent": -6,
+    "segment_chunk": 256,
+    "n_directions": 6,
+    "n_screened": 3,
+    "walk_max_d": 256
   },
   "settings": {
     "afinni": {
@@ -220,7 +224,9 @@
       "depth": 4,
       "rows": 4,
       "inherited": 26,
-      "new": 34
+      "new": 34,
+      "walk_steps": 4,
+      "walk_min_turn": 72
     },
     "split": {
       "code": "111",
@@ -237,7 +243,11 @@
       "right": 52,
       "n_bins": 16,
       "soft_iters": 40,
-      "temperature": 0.1
+      "temperature": 0.1,
+      "art_worst": 1.2,
+      "afinni_worst": 5.3,
+      "art_mse": 0.32,
+      "afinni_mse": 1.416
     },
     "route": {
       "depth": 6,
@@ -270,7 +280,215 @@
         "11001000",
         "11001001"
       ],
-      "max_depth": 62
+      "max_depth": 62,
+      "morton_levels_d40": 1
+    },
+    "forest": {
+      "roots": 4,
+      "leaves": 17,
+      "code": "100",
+      "pair": [
+        0,
+        1
+      ],
+      "trees_with_code": 4
+    },
+    "carry": {
+      "codes": [
+        "1",
+        "11",
+        "111",
+        "1111",
+        "11111"
+      ],
+      "colours": [
+        "#c0392b",
+        "#6d3b0f",
+        "#7cb342",
+        "#c0392b",
+        "#1f5fa8"
+      ],
+      "plane_colours": [
+        "#1f5fa8",
+        "#6d3b0f",
+        "#ef7d1a",
+        "#6a1b9a"
+      ],
+      "level_nodes": [
+        1,
+        2,
+        4,
+        8,
+        8
+      ],
+      "rows": [
+        [
+          0.96,
+          -0.27,
+          0.68
+        ],
+        [
+          0.93,
+          0.37,
+          0.51
+        ],
+        [
+          -0.97,
+          -0.26,
+          -0.23
+        ],
+        [
+          0.79,
+          -0.61,
+          -0.08
+        ]
+      ]
+    },
+    "passes": {
+      "codes": [
+        [
+          "1",
+          "1",
+          "1",
+          "1",
+          "1",
+          "1",
+          "1",
+          "1"
+        ],
+        [
+          "11",
+          "11",
+          "11",
+          "10",
+          "11",
+          "11",
+          "11",
+          "11"
+        ],
+        [
+          "110",
+          "111",
+          "111",
+          "101",
+          "110",
+          "110",
+          "110",
+          "111"
+        ],
+        [
+          "1101",
+          "1111",
+          "1111",
+          "1011",
+          "1100",
+          "1100",
+          "1100",
+          "1111"
+        ],
+        [
+          "11010",
+          "11111",
+          "11110",
+          "1011",
+          "11000",
+          "11001",
+          "11001",
+          "11110"
+        ],
+        [
+          "110101",
+          "111111",
+          "111100",
+          "1011",
+          "11000",
+          "110010",
+          "110011",
+          "111100"
+        ],
+        [
+          "110101",
+          "111111",
+          "111100",
+          "1011",
+          "11000",
+          "1100101",
+          "110011",
+          "111100"
+        ]
+      ],
+      "leaf": [
+        [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false
+        ],
+        [
+          false,
+          false,
+          false,
+          true,
+          true,
+          false,
+          false,
+          false
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      ]
     },
     "audit": {
       "points": 2000,
