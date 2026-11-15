@@ -6,7 +6,7 @@ import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, to_host, xp
 from src.config import TrainingConfig
-from src.numerics import TINY_EPS, uniform_grid_bins
+from src.numerics import TINY_EPS, grid_strides, uniform_grid_bins
 
 
 def uniform_grid_cluster_labels(
@@ -28,8 +28,7 @@ def uniform_grid_cluster_labels(
     rel = np.clip(rel, 0.0, 1.0 - np.finfo(np.float64).eps)
     coords = np.floor(rel * bins[None, :]).astype(np.int64)
     coords = np.minimum(coords, bins[None, :] - 1)
-    labels = np.ravel_multi_index(coords.T, dims=tuple(int(b) for b in bins))
-    return labels.astype(np.int64), bins
+    return coords @ grid_strides(bins), bins
 
 
 def threads_for_rank0(node_ranks: int) -> int:

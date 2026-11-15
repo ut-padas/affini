@@ -147,3 +147,24 @@ def test_fused_stats_on_sorted_labels_with_empty_clusters_match_the_reference():
         m = labels == k
         np.testing.assert_allclose(C[k], (X[m] - mus[k]).T @ (X[m] - mus[k]), rtol=1e-12, atol=1e-12)
         np.testing.assert_allclose(XF[k], (X[m] - mus[k]).T @ (F[m] - f_mus[k]), rtol=1e-12, atol=1e-12)
+
+
+def test_grid_cell_numbering_matches_numpy_and_works_beyond_64_dimensions():
+    from src.engine.initial import uniform_grid_cluster_labels
+    from src.numerics import grid_cell_coords, grid_strides
+
+    bins = np.array([3, 1, 4, 2])
+    cells = np.arange(int(np.prod(bins)))
+    coords = grid_cell_coords(cells, bins)
+    np.testing.assert_array_equal(coords, np.stack(np.unravel_index(cells, tuple(bins)), axis=1))
+    np.testing.assert_array_equal(coords @ grid_strides(bins), cells)
+    # NumPy's own index helpers refuse shapes of more than 64 dimensions; these do not.
+    wide = np.ones(70, dtype=np.int64)
+    wide[[5, 60]] = (3, 2)
+    every = np.arange(6)
+    np.testing.assert_array_equal(grid_cell_coords(every, wide) @ grid_strides(wide), every)
+    X = np.random.default_rng(0).random((500, 70))
+    labels, bins70 = uniform_grid_cluster_labels(X, 6)
+    assert len(bins70) == 70 and int(np.prod(bins70)) == 6
+    assert set(labels.tolist()) <= set(range(6)) and labels.dtype == np.int64
+

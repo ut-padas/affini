@@ -313,3 +313,15 @@ def test_quadratic_leaves_split_in_their_own_basis_and_need_fewer_leaves(points,
     quadratic = train_surrogate(points, **{**options, "local_model": "quadratic_lsq"})
     assert quadratic.converged and quadratic.N_src < affine.N_src / 2
 
+
+def test_art_trains_and_routes_beyond_numpys_64_dimensions():
+    d = 70
+    domain = (-np.ones(d), np.ones(d))
+    s = train_surrogate(np.random.default_rng(0).uniform(-1, 1, (200, d)), f_fn=lambda x: x[:, :1] + 2 * x[:, 1:2],
+                        atol=1e-4, rtol=0.0, algorithm="art", domain=domain, num_initial_clusters=4, max_levels=1,
+                        use_work_stealing=False, art=ARTSettings(roots="grid", sample_multiplier=2))  # fmt: skip
+    assert s.converged and s.N_src == 4
+    q = np.random.default_rng(1).uniform(-1, 1, (50, d))
+    # the affine fit's ridge (1e-8 times the covariance trace) leaves an error near 1e-6 in 70-D
+    np.testing.assert_allclose(host(s.predict(q)[0])[:, 0], q[:, 0] + 2 * q[:, 1], atol=1e-4)
+

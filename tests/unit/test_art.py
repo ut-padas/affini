@@ -49,6 +49,21 @@ def test_grid_roots_cover_the_unit_cube_and_assign_faces_upward():
     np.testing.assert_array_equal(to_host(roots.root_of(on_face)), to_host(roots.root_of(above)))
 
 
+@pytest.mark.parametrize("kind", ["box", "grid"])
+def test_roots_and_plans_work_beyond_numpys_64_dimensions(kind):
+    d = 70
+    roots = Roots.build(kind, d, 6)
+    lo, hi = roots.bounds()
+    U = xp.asarray(np.random.default_rng(0).random((400, d)))
+    r = roots.root_of(U)
+    assert lo.shape == (roots.n_roots, d) and bool(xp.all((lo[r] <= U) & (hi[r] >= U)))
+    from src.art import ARTPlan
+    from src.config import ARTSettings, TrainingConfig
+
+    cfg = TrainingConfig(algorithm="art", atol=1e-2, domain=(np.zeros(d), np.ones(d)), art=ARTSettings(roots=kind))
+    ARTPlan(cfg, d, 1, Domain(np.zeros(d), np.ones(d)), roots)
+
+
 def test_hit_and_run_stays_in_the_polytope_and_is_near_uniform():
     """Lower triangle u0 + u1 <= 1 of the unit square: mean (1/3, 1/3)."""
     domain, roots = Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1)

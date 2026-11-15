@@ -5,7 +5,12 @@ from dataclasses import dataclass
 import numpy as np
 
 from src import Array, xp
-from src.numerics import sort_by_block_then_value, uniform_grid_bins
+from src.numerics import (
+    grid_cell_coords,
+    grid_strides,
+    sort_by_block_then_value,
+    uniform_grid_bins,
+)
 
 
 # --- Domain and roots ----------------------------------------------------------------
@@ -88,7 +93,7 @@ class Roots:
         if self.is_voronoi:
             R, d = self.centres.shape
             return xp.zeros((R, d)), xp.ones((R, d))
-        coords = np.stack(np.unravel_index(np.arange(self.n_roots), tuple(int(b) for b in self.bins)), axis=1)
+        coords = grid_cell_coords(np.arange(self.n_roots), self.bins)
         return xp.asarray(coords / self.bins), xp.asarray((coords + 1) / self.bins)
 
     def root_of(self, U: Array) -> Array:
@@ -117,7 +122,7 @@ class Roots:
         bins = xp.asarray(self.bins)
         coords = xp.minimum(xp.floor(U * bins).astype(xp.int64), bins - 1)
         coords = xp.maximum(coords, 0)
-        strides = xp.asarray(np.r_[np.cumprod(self.bins[::-1])[::-1][1:], 1].astype(np.int64))
+        strides = xp.asarray(grid_strides(self.bins))
         return xp.sum(coords * strides, axis=1)
 
 

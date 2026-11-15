@@ -1,4 +1,4 @@
-"""Uniform-grid factorization shared by AFINNI's grid initial clustering and ART's grid roots."""
+"""Uniform-grid factorization and cell numbering shared by AFINNI's grid initial clustering and ART's grid roots."""
 
 import numpy as np
 
@@ -34,3 +34,20 @@ def uniform_grid_bins(extents: np.ndarray, num_cells: int) -> np.ndarray:
     for p in sorted(get_prime_factors(num_cells), reverse=True):
         bins[int(np.argmax(extents / bins))] *= p
     return bins
+
+
+def grid_strides(bins: np.ndarray) -> np.ndarray:
+    """
+    (d,) int64 row-major strides of a grid with ``bins`` cells per dimension: cell
+    ``coords @ grid_strides(bins)`` is the number ``np.ravel_multi_index`` gives. Computed
+    directly because NumPy's index helpers take the grid's shape as an array shape, which
+    NumPy limits to 64 dimensions.
+    """
+    bins = np.asarray(bins, dtype=np.int64)
+    return np.r_[np.cumprod(bins[::-1])[::-1][1:], 1].astype(np.int64)
+
+
+def grid_cell_coords(cells: np.ndarray, bins: np.ndarray) -> np.ndarray:
+    """(n, d) int64 coordinates of the row-major cell numbers ``cells``: the inverse of ``grid_strides``."""
+    bins = np.asarray(bins, dtype=np.int64)
+    return (np.asarray(cells, dtype=np.int64)[:, None] // grid_strides(bins)[None, :]) % bins[None, :]
