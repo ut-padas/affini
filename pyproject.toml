@@ -50,8 +50,8 @@ mpi-system = [
     "mpi4py>=4.1.1",
 ]
 # NVIDIA GPU, CUDA 12. CUDA libraries come from pip ([ctk]); only a driver is required.
-# cuML is Linux-only: on Windows the code falls back to scikit-learn / FAISS for
-# KMeans / kNN. macOS has no CUDA, so this extra installs nothing there.
+# k-means and kNN are the project's own CuPy kernels (src/neighbors/), so Linux and Windows
+# need nothing more. macOS has no CUDA, so this extra installs nothing there.
 gpu = [
     "cupy-cuda12x[ctk]>=13.6.0 ; sys_platform != 'darwin'",
     "nvidia-ml-py>=12.535.0 ; sys_platform != 'darwin'",

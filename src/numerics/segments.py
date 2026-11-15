@@ -46,8 +46,7 @@ def repeats(values: Array, repeats: Array) -> Array:
 
     total_size = int(offsets[-1])
 
-    # 2. Create the output array
-    # We use -1 as a placeholder to identify start positions
+    # 2. Create the output array: 1 at each segment's first position, 0 elsewhere
     indices = xp.zeros(total_size, dtype=xp.int32)
 
     # 3. Mark the start of each segment
@@ -116,8 +115,9 @@ def segment_sum(values: Array, labels: Array, K: int) -> Array:
     ``out[k] = sum of values[labels == k]`` (zeros for empty k). On NumPy bit-identical to
     ``xp.add.at`` but several times faster: a CSR 0/1 indicator times the rows adds each
     cluster's rows sequentially in input order, starting from zero. On CuPy the rows are
-    grouped by a stable sort and summed with ``add.reduceat`` (a segmented reduction with
-    a fixed order), not with ``add.at``, whose atomic order changes the bits between runs.
+    grouped by a stable sort and summed by ``segment_cross`` (a fixed order per cluster), not
+    with ``add.at``, whose atomic order changes the bits between runs, nor with
+    ``add.reduceat``, which subtracts prefix sums.
     """
     if IS_CUPY_BACKEND:  # any label order: a stable sort makes the blocks contiguous
         labels = xp.asarray(labels).astype(xp.int64, copy=False)

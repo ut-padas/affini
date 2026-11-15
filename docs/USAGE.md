@@ -110,8 +110,11 @@ surrogate.train(X, config, Evaluator(f_fn=f))   # an equivalent config on every 
 pred, outside = surrogate.predict(Q_all if rank == 0 else None)
 ```
 
-CPU and GPU runs are statistically equivalent but not bit-identical; each is
-reproducible for a fixed `seed` and rank count. The test problems in
+CPU and GPU runs are statistically equivalent but not bit-identical. On one backend, an
+ART run with hit-and-run sampling (the default) is reproducible for a fixed `seed`,
+whatever the batch size, rank count or steals; an AFINNI run is reproducible for a fixed
+`seed`, batch size and rank count with work stealing off, since its random streams are
+per batch and a steal changes which clusters share one. The test problems in
 `src/problems/` take their fixed constants (rotations, directions) from NumPy on
 every backend, while sampling (training/test points, synthetic points, KMeans
 initialisation) uses the active backend's random generator, and GPU kernels sum in
@@ -127,9 +130,9 @@ Fields of `src.config.TrainingConfig` (all keyword-only); only a tolerance is re
 | `atol`, `rtol`, `error_metric` | Acceptance test: a cluster is accepted when every output component is within `rtol` relative **or** `atol` absolute error, measured as `"Linf"` (max error, relative to the cluster's own max \|f\|), `"L2"` (relative L2 / RMS) or `"pointwise"` (every point on its own: \|e\|/\|f\| < `rtol` or \|e\| < `atol`; ART's stopping rule). Give at least one tolerance; each is a scalar or one value per output component, and an omitted one never accepts. For an absolute test scaled to the function, pass `atol = tol * max\|f\|`. Exact formulas: [`src/components/acceptance.py`](../src/components/acceptance.py) |
 | `num_initial_clusters`, `initial_clustering_method` | Roots of the forest: `"kmeans"` (custom k-means in `src/neighbors/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (kNN-DBSCAN from the `knndbscan` package). `src.engine.driver.initial_clustering(X, config)` returns the labels training starts from; pass them as `train(..., initial_labels=labels)` to reuse one clustering for several trainings on the same points |
 | `min_pts_per_cluster` | Rejected clusters are augmented to at least twice this before splitting |
-| `max_levels` | Refinement depth limit; reaching it leaves `converged=False` |
+| `max_levels` | Deepest level fitted (depths 0 to `max_levels`); clusters unresolved there leave `converged=False` |
 | `sampling_method` | Where new points go when augmenting (`"convex_combination"`) |
-| `q_reg` | Floor on covariance eigenvalues in the trust-region shape |
+| `q_reg` | Floor on the eigenvalues of each cluster's scatter matrix (unnormalized, so `q_reg / n` on the covariance) before it is inverted into the trust matrix |
 | `store_hess` | Second-order Taylor leaves (TAYLOR_LSQ_HESS only), one Hessian per output |
 | `batch_size` | Points moved to the device at once; capped automatically to fit GPU memory. A cluster larger than a batch is processed on its own |
 | `algorithm`, `domain`, `art` | `"afinni"` (default: AFINNI's adaptive clustering) or `"art"`: see [ART](#art-adaptive-regression-trees) |
@@ -227,9 +230,9 @@ Leaves are affine (`local_model="affine_lsq"`, the default) or full quadratics
 the children in that model's basis. Quadratic leaves need far fewer nodes on smooth
 targets; their `(d+1)(d+2)/2` coefficients suit low dimension.
 
-Random numbers come from streams keyed by node and every training reduction sums each
-node on its own, so an ART tree is the same for any batch size, rank count and
-steal schedule, and the same in every run on one backend (CPU and GPU trees differ only at
+With hit-and-run sampling (the default), random numbers come from streams keyed by node
+and every training reduction sums each node on its own, so an ART tree is the same for any
+batch size, rank count and steal schedule, and the same in every run on one backend (CPU and GPU trees differ only at
 rounding level). `scripts/art_comparison.py` trains the
 reference ART code and this ART on the reference's benchmark problems and scores both on the
 same test set; pass `--sampler parallel_numba` to time against the reference's fastest CPU

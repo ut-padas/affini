@@ -101,7 +101,7 @@ def refine_rank(
         # Clusters deeper than max_levels were already set aside, so an empty queue is the
         # only reason to stop or steal.
         if queue.n_clusters == 0:
-            retired, stolen = run.stealer.idle_step(False)
+            retired, stolen = run.stealer.idle_step()
             if retired:
                 break
             if stolen is not None:

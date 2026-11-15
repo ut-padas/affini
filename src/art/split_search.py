@@ -231,9 +231,11 @@ def _split_kernel(name: str, n_threads: int, *args) -> None:
 
 def soft_step(rows: SplitRows, w, z, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n, delta, active, stops, trials: int):
     """
-    One soft-search descent step on the GPU in three node-level kernels and one segmented sum: project
-    the gradient and set ``alpha = T / |g|``; evaluate the frozen loss of every halving
-    ``alpha 2^-m`` (m < ``trials``) at once; let each node take its first trial that passes
+    One soft-search descent step on the GPU: ``soft_node_prep`` projects the gradient and sets
+    ``alpha = T / |g|``; then, for the first four halvings ``alpha 2^-m`` and again for the rest
+    (m < ``trials``, only for nodes still waiting), ``soft_trial_terms`` and a segmented sum
+    evaluate the frozen loss of every trial at once, and ``soft_node_select`` lets each node
+    take its first trial that passes
     the Armijo and margin tests, which is the step the sequential halving loop on the CPU
     takes, and count why the others stopped. Updates ``w``, ``z``, ``active`` and ``stops``
     in place with no host synchronization.

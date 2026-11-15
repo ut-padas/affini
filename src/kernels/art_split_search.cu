@@ -122,7 +122,7 @@ extern "C" __global__ void soft_node_prep(const double* w, double* g_w, const do
 // stepped takes its first trial that passes the Armijo and margin tests. Trials run in groups
 // so that later halvings are evaluated only for nodes still waiting (98% of steps are taken by
 // trial 3); the chosen step is the sequential halving loop's. After the last group (final),
-// nodes that never stepped are classified and active is updated. stops (int64, 4) counts
+// nodes that never stepped are classified and active is updated. stops (uint64, 4) counts
 // nonfinite / saturated / converged / stalled.
 extern "C" __global__ void soft_node_select(double* w, double* z, const double* g_w, const double* inv_t,
                                             const double* z_t, const double* S, const double* pen,

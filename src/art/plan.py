@@ -201,9 +201,8 @@ class ARTPlan:
     def process_batch(self, batch: DeviceBatch, *, components, evaluator, accepted, splits, next_level,
                       timer=None) -> dict[str, int]:  # fmt: skip
         """
-        Top up, fit, deploy, validate and split one batch of nodes (see the module
-        docstring), appending leaves to ``accepted``, split records to ``splits`` and
-        children to ``next_level``. ``batch.progress()`` is called between bounded chunks
+        Top up, fit, deploy, validate and split one batch of nodes, appending leaves to
+        ``accepted``, split records to ``splits`` and children to ``next_level``. ``batch.progress()`` is called between bounded chunks
         of long split work so steal requests are answered meanwhile. ``timer(key)`` (the
         executor's profiler phases) times each stage under the shared phase keys: sampling
         as ``time_augment``, statistics and fit as ``time_error_calc``, deploying leaves as

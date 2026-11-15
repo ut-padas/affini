@@ -94,7 +94,7 @@ class WorkStealer:
     Call order from the refinement loop:
       - ``exchange_initial_loads`` once, before refining;
       - ``poll_state`` / ``set_load`` at the top of each iteration;
-      - ``idle_step`` whenever the queue is empty (or the level limit is hit);
+      - ``idle_step`` whenever the queue is empty;
       - ``serve_requests`` between batches and at each level boundary,
         after ``publish_load`` with the new queue size at the boundary.
     """
@@ -283,7 +283,7 @@ class WorkStealer:
 
     # --- Thief side and retirement -----------------------------------------
 
-    def idle_step(self, level_limit_reached: bool) -> tuple[bool, ClusterBatch | None]:
+    def idle_step(self) -> tuple[bool, ClusterBatch | None]:
         """
         One idle iteration, for a rank with nothing (more) to refine.
 
@@ -291,12 +291,11 @@ class WorkStealer:
         finished, and ``stolen`` is the work received from another rank, if any.
         """
         with self._timer("time_idle"):
-            # A rank that hit max_levels may still hold data but will never process
-            # it. Advertise 0 so the termination condition works correctly.
+            # An idle rank holds no work: advertise 0 so the others can see when all are done.
             if self.local_load != 0:
                 self.publish_load(0)
             self._deny_idle_requests()
-            if np.sum(self.global_loads) == 0 or level_limit_reached:
+            if np.sum(self.global_loads) == 0:
                 self.profiler.event("retire_start")
                 self._retire()
                 self.profiler.event("retired")
@@ -414,11 +413,9 @@ class NoWorkStealing:
     ) -> ClusterBatch:
         return queue
 
-    def idle_step(self, level_limit_reached: bool) -> tuple[bool, ClusterBatch | None]:
+    def idle_step(self) -> tuple[bool, ClusterBatch | None]:
         """Wait (as idle time) until every rank has finished, then retire."""
-        logger.info(
-            f"R{self.rank:02}: No clusters to process or exceeded max levels. Terminating."
-        )
+        logger.info(f"R{self.rank:02}: No clusters to process. Terminating.")
         if self.size > 1:
             # Short polled waits: the profiler streams them, so a monitor shows the rank as idle.
             done = self.comm.Ibarrier()

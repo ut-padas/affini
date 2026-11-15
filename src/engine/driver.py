@@ -33,8 +33,9 @@ from src.infra.io import combine_generated_data, save_generated_data
 from src.infra.profiling import ORACLE_TIME_KEY, Profiler, new_profiling_stats
 from src.numerics import convert_to_2d_array
 
-# Initial scatter of clusters from rank 0 (payload tags SCATTER_TAG + 1..4); kept
-# well away from the work-stealing tags.
+# Initial scatter of clusters from rank 0: a header on SCATTER_TAG and one message per
+# present queue column on SCATTER_TAG + 1 + its position in QUEUE_COLUMNS (see
+# send_clusters); kept well away from the work-stealing tags.
 SCATTER_TAG = 1000
 LOCAL_RESULT_TAG = 2000  # each rank's merged leaves and profile, sent to rank 0
 # One scope (list of profilers) per running run_collective operation, innermost last, so

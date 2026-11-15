@@ -191,10 +191,11 @@ class TrainingConfig:
     # N_min in the companion: a rejected cluster is augmented to at least 2 * N_min points.
     min_pts_per_cluster: int = 100
     sampling_method: str = "convex_combination"  # see src.components.sampling.SAMPLERS
-    # Floor on the covariance eigenvalues of the trust matrix (gamma and T in the companion).
+    # Floor on the eigenvalues of each cluster's scatter matrix (unnormalized, so q_reg / n on
+    # the covariance) before it is inverted into the trust matrix (gamma and T in the companion).
     q_reg: float = 1e-6
-    # Maximum number of refinement levels; clusters still unresolved after it leave
-    # their points without a leaf and the run reports converged=False.
+    # Deepest level fitted: depths 0 to max_levels are fitted (max_levels + 1 levels); clusters
+    # still unresolved there leave their points without a leaf and the run reports converged=False.
     max_levels: int = 50
     batch_size: int = 10_000_000  # max points moved to the device per batch
     seed: int = 0

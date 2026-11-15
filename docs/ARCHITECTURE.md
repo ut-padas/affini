@@ -71,7 +71,8 @@ A plan's `process_batch` runs four stages on its batch:
 
 - **Determinism.** Training reductions sum in a fixed order per segment (`src/numerics/`,
   `src/kernels/`), so repeated runs give the same bits and an ART tree does not depend on batch
-  size, rank count or steal schedule (its random streams are keyed by node). AFINNI's batch
+  size, rank count or steal schedule (its random streams are keyed by node; the optional
+  `sampling="convex_combination"` draws from a per-batch stream instead). AFINNI's batch
   boundaries and per-batch seed define its trees; `scripts/regression_check.py` detects any
   change.
 - **Memory.** The batch size is capped from the free device memory and the plan's
