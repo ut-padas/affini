@@ -14,7 +14,7 @@ from src.components.sampling import (
 )
 from src.core.evaluation import Evaluator
 
-# Three well-separated 2-D clusters (sizes 1, 4, 6), cluster k centred at (100k, 100k).
+# Three well-separated 2-D clusters (counts 1, 4, 6), cluster k centred at (100k, 100k).
 COUNTS = np.array([1, 4, 6])
 _rng = np.random.default_rng(0)
 X = np.concatenate(
@@ -36,11 +36,11 @@ def test_sampler_contract(name):
     )
     assert new.shape == (n_new.sum(), 2)
 
-    owner = np.repeat(np.arange(len(COUNTS)), n_new)
+    labels = np.repeat(np.arange(len(COUNTS)), n_new)
     starts = np.r_[0, np.cumsum(COUNTS)[:-1]]
     for k in range(len(COUNTS)):
         pts = X[starts[k] : starts[k] + COUNTS[k]]
-        mine = new[owner == k]
+        mine = new[labels == k]
         assert np.all(mine >= pts.min(axis=0) - 1e-12)
         assert np.all(mine <= pts.max(axis=0) + 1e-12)
 

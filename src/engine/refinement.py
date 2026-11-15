@@ -41,7 +41,7 @@ class _Refinement:
 
     def load_of(self, queue: ClusterBatch) -> int:
         """A queue's work in the plan's unit (device points), for load reports and stealing."""
-        return int(self.plan.work_sizes(queue.sizes).sum())
+        return int(self.plan.work_sizes(queue.counts).sum())
 
 
 def refine_rank(
@@ -152,12 +152,12 @@ def _refine_level(run: _Refinement, queue: ClusterBatch, level: int) -> ClusterB
         log_mem_stats(f"R{rank:02} Start: L{level:02}")
     level_stats.append({
         "rank": rank, "level": int(level), "clusters_start": int(num_clusters),
-        "size_min": int(float(np.min(queue.sizes))), "size_mean": float(np.mean(queue.sizes)),
-        "size_median": int(float(np.median(queue.sizes))), "size_max": int(float(np.max(queue.sizes))),
+        "size_min": int(float(np.min(queue.counts))), "size_mean": float(np.mean(queue.counts)),
+        "size_median": int(float(np.median(queue.counts))), "size_max": int(float(np.max(queue.counts))),
         "t_start": profiler.now(),
     })  # fmt: skip
 
-    level_work = plan.work_sizes(queue.sizes)
+    level_work = plan.work_sizes(queue.counts)
     level_total_pts = int(np.sum(level_work))
     cumsum = np.cumsum(level_work)
     largest = int(np.max(level_work)) if len(level_work) else 0
@@ -223,7 +223,7 @@ def _refine_level(run: _Refinement, queue: ClusterBatch, level: int) -> ClusterB
         too_deep = next_queue.depth > config.max_levels
         if too_deep.any():
             run.unresolved_clusters += int(too_deep.sum())
-            run.unresolved_pts += int(next_queue.sizes[too_deep].sum())
+            run.unresolved_pts += int(next_queue.counts[too_deep].sum())
             next_queue = next_queue.select(~too_deep)
         if next_queue.n_clusters == 0:
             logger.info(f"R{rank:02} L{level:02}: No bad clusters to refine, terminating.")
@@ -232,7 +232,7 @@ def _refine_level(run: _Refinement, queue: ClusterBatch, level: int) -> ClusterB
         queue = run.stealer.serve_requests(next_queue, 0, level)
 
     level_stats[-1].update({
-        "clusters_level_end": int(len(queue.sizes)), "good_clusters": int(good),
+        "clusters_level_end": int(len(queue.counts)), "good_clusters": int(good),
         "fallback_clusters": int(fallback), "num_pts_next_level": int(queue.X.shape[0]),
         "generated_pts": int(level_generated),
     })  # fmt: skip
@@ -244,14 +244,14 @@ def _refine_level(run: _Refinement, queue: ClusterBatch, level: int) -> ClusterB
         del next_level, next_queue
 
     logger.info(
-        f"R{rank:02} L{level:02}: Clusters (start): {num_clusters:,}, Clusters (end): {len(queue.sizes):,}, "
+        f"R{rank:02} L{level:02}: Clusters (start): {num_clusters:,}, Clusters (end): {len(queue.counts):,}, "
         f"Good Clusters: {good:,}, Num Pts (next level): {queue.X.shape[0]:,}"
     )
-    if len(queue.sizes) > 0:
+    if len(queue.counts) > 0:
         logger.info(
-            f"R{rank:02} L{level:02}: Cluster Sizes - min: {int(queue.sizes.min())}, "
-            f"mean: {queue.sizes.mean():.1f}, median: {int(np.median(queue.sizes))}, "
-            f"max: {int(queue.sizes.max())}"
+            f"R{rank:02} L{level:02}: Cluster Sizes - min: {int(queue.counts.min())}, "
+            f"mean: {queue.counts.mean():.1f}, median: {int(np.median(queue.counts))}, "
+            f"max: {int(queue.counts.max())}"
         )
     level_runtime = time.perf_counter() - t_level
     logger.info(f"Runtime - R{rank:02} L{level:02}: {level_runtime:.3f}s")
@@ -264,13 +264,13 @@ def _run_batch(run: _Refinement, queue: ClusterBatch, cut: slice, next_level: Cl
                index: int, n_batches: int, progress) -> dict[str, int]:  # fmt: skip
     """Move ``queue[cut]`` to the device, hand it to the plan, and report the batch."""
     with run.profiler.phase("time_slicing"):
-        sizes_cpu = queue.sizes[cut]
+        counts_cpu = queue.counts[cut]
         starts_cpu = queue.starts[cut]
-        lo, hi = int(starts_cpu[0]), int(starts_cpu[-1] + sizes_cpu[-1])
+        lo, hi = int(starts_cpu[0]), int(starts_cpu[-1] + counts_cpu[-1])
         batch = DeviceBatch(
             X=xp.asarray(queue.X[lo:hi]), F=xp.asarray(queue.F[lo:hi]),
             G=xp.asarray(queue.G[lo:hi]) if queue.G is not None else None,
-            sizes=xp.asarray(sizes_cpu), starts=xp.asarray(starts_cpu - lo),
+            counts=xp.asarray(counts_cpu), starts=xp.asarray(starts_cpu - lo),
             queue=queue, cut=cut, level=level, index=index, n_batches=n_batches, progress=progress,
         )  # fmt: skip
     # The plan times its own stages under the shared phase keys.

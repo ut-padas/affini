@@ -145,7 +145,7 @@ def segment_sum(values: Array, labels: Array, K: int) -> Array:
 def segments_of(labels: Array, K: int) -> tuple[Array, Array]:
     """
     ``(starts, counts)`` of the K label blocks of *sorted* labels, the batch layout
-    (``repeat(arange(K), sizes)`` or an order-preserving subset of it) that every training
+    (``repeat(arange(K), counts)`` or an order-preserving subset of it) that every training
     caller passes. Found by binary search, with no host synchronization: this runs a few
     times per batch, and a sortedness check or ``bincount`` (which reads ``max`` on the
     host) would each cost a round trip. Unsorted labels give wrong segments.

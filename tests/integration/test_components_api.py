@@ -227,7 +227,7 @@ class AffinePlusOffsetModel(LocalModel):
         return self._affine.fit(data)
 
     def finalize(self, data, params):
-        return {"offset": xp.full((len(data.sizes), data.F.shape[1]), self.offset)}
+        return {"offset": xp.full((len(data.counts), data.F.shape[1]), self.offset)}
 
     def evaluate(self, params, X, cluster_ids):
         out = self._affine.evaluate(params, X, cluster_ids)
@@ -263,10 +263,10 @@ class DuplicatingSplit(CovarianceSplit):
     name = "test_duplicating"
 
     def split(self, data):
-        order, sizes = super().split(data)
+        order, child_counts = super().split(data)
         order = order.copy()
         order[1] = order[0]  # one row twice, another lost
-        return order, sizes
+        return order, child_counts
 
 
 def test_split_that_duplicates_rows_is_rejected():
@@ -284,9 +284,9 @@ def test_effective_settings_are_recorded_next_to_requested_ones():
 class AcceptAll(AcceptanceCriterion):
     name = "test_accept_all"
 
-    def __call__(self, F, F_hat, starts, sizes):
-        zeros = xp.zeros((len(sizes), F.shape[1]))
-        return xp.ones(len(sizes), dtype=bool), zeros, zeros
+    def __call__(self, F, F_hat, starts, counts):
+        zeros = xp.zeros((len(counts), F.shape[1]))
+        return xp.ones(len(counts), dtype=bool), zeros, zeros
 
 
 def test_custom_acceptance_decides_which_clusters_become_leaves():
@@ -362,13 +362,13 @@ def test_sampler_returning_the_wrong_number_of_points_is_rejected():
 class LopsidedSplit(CovarianceSplit):
     name = "test_lopsided"
 
-    def child_sizes(self, counts, sorted_scores=None):
-        sizes = super().child_sizes(counts, sorted_scores)
-        sizes[0] += 1  # first child too large
-        return sizes
+    def child_counts(self, counts, sorted_scores=None):
+        child_counts = super().child_counts(counts, sorted_scores)
+        child_counts[0] += 1  # first child too large
+        return child_counts
 
 
-def test_split_with_inconsistent_child_sizes_is_rejected():
+def test_split_with_inconsistent_child_counts_is_rejected():
     with pytest.raises(ValueError, match="test_lopsided"):
         train(mode=SurrogateMode.AFFINE_COV_HESS, split_strategy=LopsidedSplit())
 

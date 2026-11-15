@@ -110,7 +110,7 @@ class AcceptanceCriterion(ABC):
 
     @abstractmethod
     def __call__(
-        self, F: Array, F_hat: Array, starts: Array, sizes: Array
+        self, F: Array, F_hat: Array, starts: Array, counts: Array
     ) -> tuple[Array, Array, Array]:
         """
         Return ``(is_good, E_abs, E_rel)``: whether each cluster is accepted (K,), and
@@ -119,7 +119,7 @@ class AcceptanceCriterion(ABC):
 
         ``F`` and ``F_hat`` are (N, fd), the true and fitted values at the batch's
         points, stored contiguously by cluster (cluster ``k`` owns rows
-        ``starts[k] : starts[k] + sizes[k]``).
+        ``starts[k] : starts[k] + counts[k]``).
         """
 
 
@@ -134,13 +134,13 @@ class L2Acceptance(AcceptanceCriterion):
 
     name = "L2"
 
-    def __call__(self, F, F_hat, starts, sizes):
+    def __call__(self, F, F_hat, starts, counts):
         diff = F - F_hat
         # Per-component loop keeps each reduction 1-D, so a single output reduces exactly like a scalar function.
         sq_err = xp.stack([reduce_sum_1d(diff[:, j] ** 2, starts) for j in range(F.shape[1])], axis=1)
         sq_val = xp.stack([reduce_sum_1d(F[:, j] ** 2, starts) for j in range(F.shape[1])], axis=1)
         E_rel = xp.sqrt(sq_err) / (xp.sqrt(sq_val) + TINY_EPS)
-        E_abs = xp.sqrt(sq_err / sizes[:, None])
+        E_abs = xp.sqrt(sq_err / counts[:, None])
         return self.accept(E_abs, E_rel)
 
 
@@ -150,7 +150,7 @@ class LinfAcceptance(AcceptanceCriterion):
 
     name = "Linf"
 
-    def __call__(self, F, F_hat, starts, sizes):
+    def __call__(self, F, F_hat, starts, counts):
         diff = F - F_hat
         E_abs = xp.stack([reduce_max_1d(xp.abs(diff[:, j]), starts) for j in range(F.shape[1])], axis=1)
         local_max_F = xp.stack([reduce_max_1d(xp.abs(F[:, j]), starts) for j in range(F.shape[1])], axis=1)
@@ -188,7 +188,7 @@ class PointwiseAcceptance(AcceptanceCriterion):
 
     name = "pointwise"
 
-    def __call__(self, F, F_hat, starts, sizes):
+    def __call__(self, F, F_hat, starts, counts):
         fd = F.shape[1]
         err = xp.abs(F - F_hat)
         rel = err / xp.maximum(xp.abs(F), TINY_EPS)
@@ -204,8 +204,8 @@ def cluster_errors(
     F_batch: Array,
     F_hat: Array,
     aug_starts: Array,
-    aug_sizes: Array,
+    aug_counts: Array,
 ) -> tuple[Array, Array, Array]:
-    """The configured criterion's ``(is_good, E_abs, E_rel)`` for each cluster (rows ``aug_starts[k] : + aug_sizes[k]``)."""
+    """The configured criterion's ``(is_good, E_abs, E_rel)`` for each cluster (rows ``aug_starts[k] : + aug_counts[k]``)."""
     criterion = config.components().acceptance
-    return criterion(F_batch, F_hat, aug_starts, aug_sizes)
+    return criterion(F_batch, F_hat, aug_starts, aug_counts)

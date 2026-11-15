@@ -47,7 +47,8 @@ __device__ bool infeasible(const double* u, const double* cons, int h, int d, co
 // One thread per chain: steps t_from .. t_to - 1, then the endpoint check. bad[i] is set when
 // a step starts on, or the walk ends on, a violated face (beyond tol), or a chord is empty or
 // not finite; a bad chain stops where it is. Uniforms of step t are hashes q + 1 .. of the
-// chain's counter block, exactly as HitAndRunSampler._uniforms draws them.
+// chain's counter block, exactly as HitAndRunSampler._uniforms draws them. owner[i] is the
+// chain's node within the batch (``labels`` in Python).
 extern "C" __global__ void hr_walk(double* U, bool* bad, const long long* owner, const long long* draw,
                                    const unsigned long long* keys, const double* cons_all,
                                    const long long* root, const double* lo_all, const double* hi_all,

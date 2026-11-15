@@ -62,7 +62,7 @@ A plan's `process_batch` runs four stages on its batch:
 
 | Container | Where | Holds |
 |---|---|---|
-| `ClusterBatch` | host, `src/core/clusters.py` | a rank's queue: point columns (`X`, `F`, `G`) and node columns (`sizes`, `depth`; ART adds `root`, `locational_code`, `constraints`), in the order of `QUEUE_COLUMNS`, which is also the MPI wire format |
+| `ClusterBatch` | host, `src/core/clusters.py` | a rank's queue: point columns (`X`, `F`, `G`) and node columns (`counts`, `depth`; ART adds `root`, `locational_code`, `constraints`), in the order of `QUEUE_COLUMNS`, which is also the MPI wire format |
 | `DeviceBatch` | device, `src/core/plan.py` | one batch handed to the plan; `take()` passes ownership of the points, so the plan can release them before augmentation and splitting |
 | `ColumnBuffer` | host, `src/core/clusters.py` | accepted leaves (and ART's split records), one row per node |
 | model file | `.npz`, `src/surrogate/persistence.py` | leaves, local-model parameters, ART's routing table and leaf statuses, settings as JSON; one format version, the code's own (older files are refused, not converted) |
@@ -95,7 +95,7 @@ names, and the docstring or comment where a name is defined gives its symbol. Pa
 |---|---|---|---|
 | f, f̂, d | the function (oracle), the surrogate, the input dimension | `Evaluator`; `AFINNISurrogate.predict`; `d` | `core/evaluation.py`, `surrogate/model.py` |
 | X₀, N | the initial points and their number | `train(X_train, ...)`; `profiling_stats["N0"]` | `surrogate/model.py`, `engine/driver.py` |
-| C, X_C | a cluster (AFINNI) or node (ART), its points | a queued cluster: rows `starts[k] : starts[k] + sizes[k]` of `X`, `F` | `core/clusters.py` (`ClusterBatch`) |
+| C, X_C | a cluster (AFINNI) or node (ART), its points | a queued cluster: rows `starts[k] : starts[k] + counts[k]` of `X`, `F` | `core/clusters.py` (`ClusterBatch`) |
 | c, f(c) | a cluster's centre (the mean of its points), f there | `centroids` (`mus` in the plans), `f_c`; for the leaves `X_src`, `f_src` (leaf columns `"centroids"`, `"f"`) | `components/local_models.py` (`ClusterFitData`), `surrogate/model.py` |
 | (w, b) | the local affine model f̂(x) = wᵀ(x − c) + b | leaf columns `"A_fit"` (one row wᵀ per output) and `"b_fit"` = b − wᵀc (the intercept at the origin); `AffineLSQModel` | `components/local_models.py` |
 | e_a, e_r | a cluster's absolute and relative error | `E_abs`, `E_rel`; leaf columns `"E_cluster_abs"`, `"E_cluster_rel"` | `components/acceptance.py` |
@@ -106,7 +106,7 @@ names, and the docstring or comment where a name is defined gives its symbol. Pa
 | ĝ | the least-squares gradient at c, from the max(2d, ⌊N_min/4⌋) nearest points | `grad_lsq`, `n_gradient_pts` | `components/splitting.py` (`CovarianceHessianSplit`) |
 | N_cov | the points with the smallest Taylor error, which trace the level set | `n_est_cov` | `components/splitting.py` (`CovarianceHessianSplit`) |
 | x̃ᵢ, u₁, sᵢ | the stretched points, the split direction, the scores | `M (x − c)`; `v`, the leading eigenvector of `CovZ`; `scores` | `components/splitting.py` (`SplitStrategy.split`) |
-| C₋₁, C₁ | the two children of a split | AFINNI: the low and the high half (`child_sizes`); ART: left, aᵀu < z (locational code 2π), and right (2π + 1) | `components/splitting.py`, `art/plan.py` (`ARTPlan._split`) |
+| C₋₁, C₁ | the two children of a split | left C₋₁, then right C₁. AFINNI: the low-score and the high-score half (`child_counts`); ART: aᵀu < z (locational code 2π) and aᵀu ≥ z (2π + 1) | `components/splitting.py`, `art/plan.py` (`ARTPlan._split`) |
 | T, γ, α | the trust-region matrix, its eigenvalue floor, the farthest point's scaled distance | `trust_matrix` (leaf column), `trust_matrices_src`; `q_reg`; `max_dist` | `components/trust_regions.py`, `config.py` |
 | κ, dᵢ, ν | Euclidean candidates, trust-region distance, the answering leaf | `k_nn * coarse_factor` (`k_coarse`); `dist_sq`; `nn_idx[:, 0]` | `surrogate/model.py` (`predict`, `predict_local`) |
 | 𝒮, N_c | the leaves, their number | the `accepted` buffer during training; `N_src` and the `*_src` arrays | `engine/refinement.py`, `surrogate/model.py` |

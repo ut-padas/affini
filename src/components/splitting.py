@@ -8,21 +8,21 @@ two-means / PCA): points are mapped by ``M`` (the companion's ``x~_i = |H|^{1/2}
 the leading eigenvector ``v`` (``u_1``) of the mapped covariance ``M C M`` (``CovZ``, with
 ``C`` the scatter matrix of the cluster's points) is the split direction, and each
 cluster's points are ordered by their projection onto it (the scores ``s_i``).
-``child_sizes`` then decides where each ordered cluster is cut: at the median by default
+``child_counts`` then decides where each ordered cluster is cut: at the median by default
 (``cut="median"``, equal halves), or at the centroid (``cut="sign"``, the sign of the
 projection as in the manuscript's Algorithm 2, falling back to the median when one side
-would be empty). Of each cluster's two children the low one comes first (``C_-1`` in the
-companion), then the high one (``C_1``).
+would be empty). Of each cluster's two children the left one (low scores, ``C_-1`` in the
+companion) comes first, then the right one (high scores, ``C_1``).
 
 A ``SurrogateMode`` is a pair (local model, split strategy); see
 ``split_strategy_for_mode`` and ``src.components.local_models.local_model_for_mode``.
 
 Adding a strategy means subclassing ``SplitStrategy``, implementing ``metric``
 (or overriding ``split`` entirely), and registering it in ``SPLIT_STRATEGIES``.
-A different cut rule overrides ``child_sizes``, which sees the sorted projection
+A different cut rule overrides ``child_counts``, which sees the sorted projection
 scores. Splits are binary: ``split`` must return a permutation that keeps every
-cluster contiguous, and exactly two child sizes per cluster that add up to the
-cluster's size (one of them may be 0; empty children are dropped).
+cluster contiguous, and exactly two child counts per cluster that add up to the
+cluster's count (one of them may be 0; empty children are dropped).
 Strategies declare the data they need with ``needs_centroid_value``,
 ``needs_point_grad``, ``needs_centroid_grad`` and ``needs_hessian_fn``.
 """
@@ -70,28 +70,28 @@ class SplitData:
     hessian_fn: Callable[[Array], Array] | None = None  # exact Hessian, (K, d, d)
 
 
-def median_split_sizes(counts: Array) -> Array:
+def median_split_counts(counts: Array) -> Array:
     """
-    Child sizes for splitting every cluster at its median along the split direction.
+    Child counts for splitting every cluster at its median along the split direction.
 
     Given points ordered by ``SplitStrategy.split``, a parent with ``n`` points
-    becomes a low-side child of ``n // 2`` points followed by a high-side child of
-    ``n - n // 2``. Returns (2K,) int64 sizes ``[k0_low, k0_high, k1_low, ...]``.
+    becomes a left (low-score) child of ``n // 2`` points followed by a right (high-score)
+    child of ``n - n // 2``. Returns (2K,) int64 counts ``[k0_left, k0_right, k1_left, ...]``.
 
     Note: the manuscript's Algorithm 2 splits by the sign of the projection instead,
-    which can give children of unequal size (``sign_split_sizes``).
+    which can give children of unequal count (``sign_split_counts``).
     """
     half = counts // 2
-    sizes = xp.zeros(2 * len(counts), dtype=xp.int64)
-    sizes[0::2] = half
-    sizes[1::2] = counts - half
-    return sizes
+    child_counts = xp.zeros(2 * len(counts), dtype=xp.int64)
+    child_counts[0::2] = half
+    child_counts[1::2] = counts - half
+    return child_counts
 
 
-def sign_split_sizes(counts: Array, sorted_scores: Array) -> Array:
+def sign_split_counts(counts: Array, sorted_scores: Array) -> Array:
     """
-    Child sizes for splitting every cluster by the sign of the projection score
-    (the manuscript's Algorithm 2): the low child holds the points with a negative score. A cluster
+    Child counts for splitting every cluster by the sign of the projection score
+    (the manuscript's Algorithm 2): the left child holds the points with a negative score. A cluster
     whose points would all fall on one side is split at the median instead, so
     every split makes progress. ``sorted_scores`` (N,) are the scores in the order
     returned by ``SplitStrategy.split`` (ascending within each cluster).
@@ -99,10 +99,10 @@ def sign_split_sizes(counts: Array, sorted_scores: Array) -> Array:
     starts = xp.r_[0, xp.cumsum(counts)[:-1]]
     n_low = reduce_sum_1d((sorted_scores < 0).astype(xp.int64), starts)
     n_low = xp.where((n_low == 0) | (n_low == counts), counts // 2, n_low)
-    sizes = xp.zeros(2 * len(counts), dtype=xp.int64)
-    sizes[0::2] = n_low
-    sizes[1::2] = counts - n_low
-    return sizes
+    child_counts = xp.zeros(2 * len(counts), dtype=xp.int64)
+    child_counts[0::2] = n_low
+    child_counts[1::2] = counts - n_low
+    return child_counts
 
 
 CUT_RULES = ("median", "sign")
@@ -137,9 +137,9 @@ class SplitStrategy(ABC):
 
     def split(self, data: SplitData) -> tuple[Array, Array]:
         """
-        Return ``(order, child_sizes)``: ``order`` permutes the rows so that every
+        Return ``(order, child_counts)``: ``order`` permutes the rows so that every
         cluster stays contiguous (in label order) with its points sorted along its
-        split direction; ``child_sizes`` (2K,) gives the two children of each
+        split direction; ``child_counts`` (2K,) gives the left and right child of each
         cluster in that order.
         """
         M, CovZ = self.metric(data)
@@ -151,17 +151,17 @@ class SplitStrategy(ABC):
             cp.get_default_memory_pool().free_all_blocks()
         order = sort_by_block_then_value(scores, data.labels)  # (N,)
         sorted_scores = scores[order] if self.cut != "median" else None
-        return order, self.child_sizes(data.counts, sorted_scores)
+        return order, self.child_counts(data.counts, sorted_scores)
 
-    def child_sizes(self, counts: Array, sorted_scores: Array | None = None) -> Array:
+    def child_counts(self, counts: Array, sorted_scores: Array | None = None) -> Array:
         """
-        Where each ordered cluster is cut: (2K,) sizes ``[k0_low, k0_high, ...]``.
+        Where each ordered cluster is cut: (2K,) counts ``[k0_left, k0_right, ...]``.
         ``sorted_scores`` are the projection scores in split order (None for the
         median cut, which does not need them).
         """
         if self.cut == "sign":
-            return sign_split_sizes(counts, sorted_scores)
-        return median_split_sizes(counts)
+            return sign_split_counts(counts, sorted_scores)
+        return median_split_counts(counts)
 
 
 SPLIT_STRATEGIES: Registry[SplitStrategy] = Registry("split strategy", SplitStrategy)

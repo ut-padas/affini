@@ -36,7 +36,7 @@ class DeviceBatch:
     X: Array | None
     F: Array | None
     G: Array | None
-    sizes: Array  # (K,) points per cluster, on the device
+    counts: Array  # (K,) points per cluster, on the device
     starts: Array  # (K,) first row of each cluster in X, on the device
     queue: ClusterBatch
     cut: slice
@@ -77,7 +77,7 @@ class Plan(Protocol):
     def split_columns(self) -> dict[str, ParamSpec] | None:
         """Columns of one split record, or None if the plan keeps no tree."""
 
-    def work_sizes(self, sizes: np.ndarray) -> np.ndarray:
+    def work_sizes(self, counts: np.ndarray) -> np.ndarray:
         """Device points each queued cluster will occupy (the unit of batching and stealing)."""
 
     def bytes_per_point(self) -> int:

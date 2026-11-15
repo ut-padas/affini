@@ -49,7 +49,7 @@ def send_clusters(comm, batch: ClusterBatch, dest: int, tag: int = TAG_STEAL_GRA
     Send ``batch`` to ``dest``: a header on ``tag`` (format version, counts, and the
     trailing shape and dtype of every present column), then each present column on
     ``tag + 1 + its index in QUEUE_COLUMNS``. Absent columns send nothing, so an AFINNI
-    payload is the X, F, [G], sizes and depth messages on ``tag + 1..5``.
+    payload is the X, F, [G], counts and depth messages on ``tag + 1..5``.
     """
     cols = batch.columns()
     header = {
@@ -110,13 +110,13 @@ class WorkStealer:
         ``min_load`` and ``steal_size`` default to the module constants (read at call
         time). With ``lease_received``, a rank never re-offers clusters it received until
         it has processed them: their children are new jobs and may be stolen, but the
-        received jobs themselves cannot bounce between idle ranks. ``work_sizes(sizes)``
+        received jobs themselves cannot bounce between idle ranks. ``work_sizes(counts)``
         gives each queued cluster's work in the unit loads are published in (default: its
         points); eligibility, grant size and the published load all use it, so thieves and
         victims compare the same quantity.
         """
         self.comm = comm
-        self.work_sizes = work_sizes or (lambda sizes: sizes)
+        self.work_sizes = work_sizes or (lambda counts: counts)
         self._min_load, self._steal_size = min_load, steal_size
         self.lease_received = lease_received
         self._leased = False
@@ -226,7 +226,7 @@ class WorkStealer:
             self.comm.recv(source=thief, tag=TAG_STEAL_REQ)
 
             n_open = 0 if self._leased else queue.n_clusters - start_cluster
-            open_work = np.asarray(self.work_sizes(queue.sizes[start_cluster:]))
+            open_work = np.asarray(self.work_sizes(queue.counts[start_cluster:]))
             open_pts = int(np.sum(open_work)) if n_open > 0 else 0
             min_load = self.min_load
             if n_open > 1 and open_pts > min_load:
@@ -243,7 +243,7 @@ class WorkStealer:
                     "steal_grant", thief=thief, n_pts=gift.n_pts,
                     n_clusters=gift.n_clusters, mid_level=batch is not None, dur=elapsed,
                 )  # fmt: skip
-                self.publish_load(int(np.sum(self.work_sizes(queue.sizes))))
+                self.publish_load(int(np.sum(self.work_sizes(queue.counts))))
 
                 kind = "mid-level steal" if batch is not None else "steal"
                 logger.info(
@@ -332,7 +332,7 @@ class WorkStealer:
                         n_clusters=stolen.n_clusters, has_g=stolen.G is not None,
                         waited=waited, dur=transfer,
                     )  # fmt: skip
-                    self.publish_load(int(np.sum(self.work_sizes(stolen.sizes))))
+                    self.publish_load(int(np.sum(self.work_sizes(stolen.counts))))
                     logger.info(
                         f"R{self.rank:02}: Steal OK from R{target:02} | "
                         f"pts={stolen.n_pts:,} clusters={stolen.n_clusters:,} | "

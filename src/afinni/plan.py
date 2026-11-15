@@ -27,25 +27,25 @@ logger = logging.getLogger(__name__)
 _CHECK_CHUNK = 1 << 22  # rows per gather in the split check (bounds its temporary memory)
 
 
-def _check_split(splitter, order, child_sizes, counts, labels) -> None:
+def _check_split(splitter, order, child_counts, counts, labels) -> None:
     """
     A split must permute every row exactly once, keep each row inside its parent
     cluster (``labels`` is sorted, so ``labels[order]`` must equal it), and cut each
-    cluster into two children whose sizes add up to the parent's.
+    cluster into a left and a right child whose counts add up to the parent's.
     """
     n_rows = int(labels.shape[0])
-    if order.shape != (n_rows,) or child_sizes.shape != (2 * len(counts),):
+    if order.shape != (n_rows,) or child_counts.shape != (2 * len(counts),):
         raise ValueError(
             f"Split strategy {splitter.name!r} returned order {tuple(order.shape)} and "
-            f"child sizes {tuple(child_sizes.shape)}; expected ({n_rows},) and "
+            f"child counts {tuple(child_counts.shape)}; expected ({n_rows},) and "
             f"({2 * len(counts)},)."
         )
     if not bool(
-        xp.all(child_sizes >= 0) & xp.all(child_sizes[0::2] + child_sizes[1::2] == counts)
+        xp.all(child_counts >= 0) & xp.all(child_counts[0::2] + child_counts[1::2] == counts)
     ):
         raise ValueError(
-            f"Split strategy {splitter.name!r} returned child sizes that are negative "
-            f"or do not add up to their cluster's size."
+            f"Split strategy {splitter.name!r} returned child counts that are negative "
+            f"or do not add up to their cluster's count."
         )
     # ``order`` has n_rows entries, so it is a permutation iff it marks every row;
     # a boolean mark array (1 byte per row) avoids bincount's large temporaries.
@@ -93,8 +93,8 @@ class AFINNIPlan:
     def split_columns(self) -> None:
         return None
 
-    def work_sizes(self, sizes: np.ndarray) -> np.ndarray:
-        return sizes
+    def work_sizes(self, counts: np.ndarray) -> np.ndarray:
+        return counts
 
     def bytes_per_point(self) -> int:
         """
@@ -187,16 +187,16 @@ class AFINNIPlan:
         ``(is_good, E_abs, E_rel)``, the errors ``e_a`` and ``e_r`` of the companion.
         """
         model, acceptance = components.local_model, components.acceptance
-        sizes, starts = batch.sizes, batch.starts
-        labels = repeats(xp.arange(len(sizes)), sizes)
+        counts, starts = batch.counts, batch.starts
+        labels = repeats(xp.arange(len(counts)), counts)
         with timer("time_error_calc"):
-            mus = reduce_sum_1d(X, starts) / sizes[:, None]
+            mus = reduce_sum_1d(X, starts) / counts[:, None]
             f_mus, g_mus = evaluator(mus, need_grad=self.config.requires_grad_centroids)
-            fit = ClusterFitData(X=X, F=F, G=G, labels=labels, starts=starts, sizes=sizes,
+            fit = ClusterFitData(X=X, F=F, G=G, labels=labels, starts=starts, counts=counts,
                                  centroids=mus, f_c=f_mus, g_c=g_mus)  # fmt: skip
             params = model.fit(fit)
             F_hat = model.evaluate({**params, "centroids": mus, "f": f_mus}, X, labels)
-            is_good, E_abs, E_rel = acceptance(F, F_hat, starts, sizes)
+            is_good, E_abs, E_rel = acceptance(F, F_hat, starts, counts)
         return fit, params, is_good, E_abs, E_rel
 
     def _deploy(self, fit: ClusterFitData, params, is_good, E_abs, E_rel, components, accepted, timer) -> int:
@@ -234,7 +234,7 @@ class AFINNIPlan:
             G_bad = fit.G[bad_mask] if fit.G is not None else None
             fit.X = fit.F = fit.G = None
             del bad_mask
-            counts = fit.sizes[bad_idx]
+            counts = fit.counts[bad_idx]
             targets = augmentation_targets(counts, config.min_pts_per_cluster)
 
             n_in, n_target = int(xp.sum(counts)), int(xp.sum(targets))
@@ -270,16 +270,16 @@ class AFINNIPlan:
     def _split_rejected(self, data: SplitData, bad_idx, depth: np.ndarray, splitter, next_level, timer) -> None:
         """
         Cut each rejected cluster in two along its split direction (its points sorted by their
-        projection, ``child_sizes`` the size of each half) and append the children, one level
-        deeper, to ``next_level``: the low half (``C_-1`` in the companion), then the high half
-        (``C_1``), next to each other.
+        projection, ``child_counts`` the points in each half) and append the children, one level
+        deeper, to ``next_level``: the left half (low scores, ``C_-1`` in the companion), then
+        the right half (high scores, ``C_1``), next to each other.
         """
         with timer("time_bad_split"):
-            order, child_sizes = splitter.split(data)
-            _check_split(splitter, order, child_sizes, data.counts, data.labels)
+            order, child_counts = splitter.split(data)
+            _check_split(splitter, order, child_counts, data.counts, data.labels)
         with timer("time_bad_d2h"):
             G = data.G[order] if self.config.requires_grad_everywhere and data.G is not None else None
-            next_level.append(data.X[order], data.F[order], G, child_sizes,
+            next_level.append(data.X[order], data.F[order], G, child_counts,
                               depth=np.repeat(depth[to_host(bad_idx)] + 1, 2))  # fmt: skip
 
     def profile(self) -> dict:

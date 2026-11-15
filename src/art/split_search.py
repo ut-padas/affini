@@ -3,8 +3,8 @@ Per-node split search arithmetic: the batched rows, the bins search's cut sums, 
 soft search's objective and step.
 
 The arrays keep the short names of the formulas and of the kernels in
-``src/kernels/art_split_search.cu``: ``w`` (k, d) is each node's plane normal and ``z`` (k,)
-its offset (the plane ``(a, z)`` of the companion), ``T`` (k,) the soft gate's width (``h``),
+``src/kernels/art_split_search.cu``: ``w`` (K, d) is each node's plane normal and ``z`` (K,)
+its offset (the plane ``(a, z)`` of the companion), ``T`` (K,) the soft gate's width (``h``),
 ``delta`` the weight floor, ``lam`` the fixed ridge (``lambda``), ``beta`` the children's
 coefficients (``B_-1``, ``B_1``), and ``WL``, ``WR`` the soft weights of the left and right
 child (``W_-1``, ``W_1``).
@@ -44,9 +44,9 @@ class SplitRows:
     Y: Array  # (N, fd) outputs scaled by each node's tolerance scale (y_i in the companion)
     Phi: Array  # (N, p) the leaf model's split features (phi_i: [u, 1] for affine leaves)
     labels: Array  # (N,)
-    counts: Array  # (k,)
+    counts: Array  # (K,) points per node
     starts: Array = field(init=False)
-    lam: Array = field(init=False)  # (k,) fixed ridge per node (lambda in the companion)
+    lam: Array = field(init=False)  # (K,) fixed ridge per node (lambda in the companion)
     groups: list = field(init=False)  # NumPy: (node ids (g,), row ids (g, c)) per distinct count c
 
     def __post_init__(self) -> None:
@@ -68,7 +68,7 @@ class SplitRows:
         return segment_sum(a, self.starts)
 
     def cross(self, A: Array, B: Array, w: Array | None = None) -> Array:
-        """(k, a, b) per-node products ``A_k^T diag(w_k) B_k`` of row arrays (N, a), (N, b)."""
+        """(K, a, b) per-node products ``A_k^T diag(w_k) B_k`` of row arrays (N, a), (N, b)."""
         if IS_CUPY_BACKEND:
             return segment_cross(A, B, self.starts, self.counts, w, symmetric=A is B, layout=self._layout)
         Ab = self._blocks.get(id(A)) or [A[rows] for _, rows in self.groups]
@@ -78,13 +78,13 @@ class SplitRows:
         return grouped_cross(self.groups, Ab, Bb, w)
 
     def gram(self, w: Array | None = None) -> tuple[Array, Array]:
-        """The weighted Gram ``Phi^T W Phi`` (k, p, p) and right-hand side ``Phi^T W Y`` (k, p, fd)."""
+        """The weighted Gram ``Phi^T W Phi`` (K, p, p) and right-hand side ``Phi^T W Y`` (K, p, fd)."""
         return self.cross(self.Phi, self.Phi, w), self.cross(self.Phi, self.Y, w)
 
     def cut_sums(self, order: Array, pos: Array) -> tuple[Array, ...]:
         """
         Gram, right-hand side and ``sum |y|^2`` of both sides of every cut: ``(GL, BL, CL,
-        GR, BR, CR)``, each (k, n_cuts, ...), where cut ``i`` of node ``k`` puts the
+        GR, BR, CR)``, each (K, n_cuts, ...), where cut ``i`` of node ``k`` puts the
         ``pos[k, i]`` lowest rows of ``order`` (rows sorted by score within each node) on
         the left. Cut positions depend only on a node's count, so a count group shares its
         bin edges: each bin's sums are one batched product over its contiguous sorted rows,
@@ -92,26 +92,26 @@ class SplitRows:
         instead of one per cut, and the right side is summed directly rather than taken
         from the node total by subtraction (which cancels near a good fit).
         """
-        k, m = int(self.counts.shape[0]), int(pos.shape[1])
+        K, m = int(self.counts.shape[0]), int(pos.shape[1])
         p, fd = self.Phi.shape[1], self.Y.shape[1]
         if IS_CUPY_BACKEND:
             # Every (node, bin) is a contiguous run of the score-sorted rows: one call each.
-            edges = xp.concatenate([xp.zeros((k, 1), dtype=xp.int64), pos.astype(xp.int64),
+            edges = xp.concatenate([xp.zeros((K, 1), dtype=xp.int64), pos.astype(xp.int64),
                                     self.counts.astype(xp.int64)[:, None]], axis=1)  # fmt: skip
             b_starts = (self.starts[:, None] + edges[:, :-1]).reshape(-1)
             b_counts = xp.diff(edges, axis=1).reshape(-1)
             P, Ys = self.Phi[order], self.Y[order]
-            G = segment_cross(P, P, b_starts, b_counts, symmetric=True).reshape(k, m + 1, p, p)
-            B = segment_cross(P, Ys, b_starts, b_counts).reshape(k, m + 1, p, fd)
+            G = segment_cross(P, P, b_starts, b_counts, symmetric=True).reshape(K, m + 1, p, p)
+            B = segment_cross(P, Ys, b_starts, b_counts).reshape(K, m + 1, p, fd)
             C = xp.trace(segment_cross(Ys, Ys, b_starts, b_counts, symmetric=True), axis1=1, axis2=2)
             sides = []
-            for S in (G, B, C.reshape(k, m + 1)):
-                L, R = xp.empty((k, m) + S.shape[2:]), xp.empty((k, m) + S.shape[2:])
+            for S in (G, B, C.reshape(K, m + 1)):
+                L, R = xp.empty((K, m) + S.shape[2:]), xp.empty((K, m) + S.shape[2:])
                 X = int(np.prod(S.shape[2:], dtype=np.int64))
-                _split_kernel("bin_sides", k * X, S, L, R, np.int64(k), np.int32(m), np.int64(X))
+                _split_kernel("bin_sides", K * X, S, L, R, np.int64(K), np.int32(m), np.int64(X))
                 sides.append((L, R))
             return tuple(s[0] for s in sides) + tuple(s[1] for s in sides)
-        out = [xp.empty(shape) for shape in ((k, m, p, p), (k, m, p, fd), (k, m)) * 2]
+        out = [xp.empty(shape) for shape in ((K, m, p, p), (K, m, p, fd), (K, m)) * 2]
         pos_host = np.asarray(to_host(pos))
         y2 = xp.sum(self.Y**2, axis=1)
         for nodes, rows in self.groups:
@@ -129,7 +129,7 @@ class SplitRows:
         return tuple(out)
 
     def solve(self, G: Array, B: Array) -> Array:
-        """Ridge solutions ``(G + lam I)^-1 B`` for (k, ..., p, p) Grams (lam fixed per node)."""
+        """Ridge solutions ``(G + lam I)^-1 B`` for (K, ..., p, p) Grams (lam fixed per node)."""
         p = G.shape[-1]
         lam = self.lam.reshape((-1,) + (1,) * (G.ndim - 1))
         return spd_solve(G + lam * xp.eye(p), B)  # SPD: lam > 0 and the weights are floored
@@ -149,7 +149,7 @@ def hard_sse(rows: SplitRows, w: Array, z: Array, min_side: int) -> tuple[Array,
     sse = xp.zeros(int(rows.counts.shape[0]))
     for mask in (1.0 - right, right):
         G, B = rows.gram(mask)
-        beta = rows.solve(G, B)  # (k, p, fd)
+        beta = rows.solve(G, B)  # (K, p, fd)
         res = rows.Y - det_einsum("np,npf->nf", rows.Phi, beta[rows.labels])
         sse = sse + rows.reduce(mask * xp.sum(res**2, axis=1))
     return xp.where(ok, sse, xp.inf), ok

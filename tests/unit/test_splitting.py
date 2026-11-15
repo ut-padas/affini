@@ -29,24 +29,24 @@ def g(X):
     return np.stack([0.02 * X[:, 0], 200.0 * X[:, 1]], axis=1)[:, None, :]
 
 
-def _data(sizes, seed=0, with_g=True):
+def _data(counts, seed=0, with_g=True):
     rng = np.random.default_rng(seed)
-    sizes = np.asarray(sizes)
+    counts = np.asarray(counts)
     X = np.concatenate(
         [
             rng.uniform([-2, -0.5], [2, 0.5], (n, 2)) + 10 * k
-            for k, n in enumerate(sizes)
+            for k, n in enumerate(counts)
         ]
     )
-    labels = np.repeat(np.arange(len(sizes)), sizes)
-    starts = np.r_[0, np.cumsum(sizes)[:-1]]
-    centroids = np.add.reduceat(X, starts) / sizes[:, None]
+    labels = np.repeat(np.arange(len(counts)), counts)
+    starts = np.r_[0, np.cumsum(counts)[:-1]]
+    centroids = np.add.reduceat(X, starts) / counts[:, None]
     return SplitData(
         X=xp.asarray(X),
         F=xp.asarray(f(X)),
         G=xp.asarray(g(X)) if with_g else None,
         labels=xp.asarray(labels),
-        counts=xp.asarray(sizes),
+        counts=xp.asarray(counts),
         centroids=xp.asarray(centroids),
         f_c=xp.asarray(f(centroids)),
         g_c=xp.asarray(g(centroids)),
@@ -65,11 +65,11 @@ STRATEGIES = [
 
 @pytest.mark.parametrize("strategy", STRATEGIES, ids=lambda s: f"{s.name}")
 def test_split_contract(strategy):
-    sizes = [1200, 900, 1501]
-    data = _data(sizes)
+    counts = [1200, 900, 1501]
+    data = _data(counts)
     order, child = strategy.split(data)
     order, child = to_host(order), to_host(child)
-    assert sorted(order.tolist()) == list(range(sum(sizes)))  # a permutation
+    assert sorted(order.tolist()) == list(range(sum(counts)))  # a permutation
     labels = to_host(data.labels)[order]
     assert np.all(np.diff(labels) >= 0)  # clusters stay contiguous, in label order
     np.testing.assert_array_equal(child, [600, 600, 450, 450, 750, 751])

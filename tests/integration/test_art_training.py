@@ -282,7 +282,7 @@ def test_art_batches_hold_whole_nodes_within_the_batch_size_or_one_node_alone(po
     original = ARTPlan.process_batch
 
     def spy(self, batch, **kwargs):
-        seen.append(self.work_sizes(host(batch.sizes)))
+        seen.append(self.work_sizes(host(batch.counts)))
         return original(self, batch, **kwargs)
 
     monkeypatch.setattr(ARTPlan, "process_batch", spy)

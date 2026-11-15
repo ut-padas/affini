@@ -97,18 +97,18 @@ def test_training_and_inference_paths_agree(model, keys):
     )
 
 
-def _fit_data(X, F, sizes, g_c=None, G=None):
-    sizes = np.asarray(sizes)
-    labels = np.repeat(np.arange(len(sizes)), sizes)
-    starts = np.r_[0, np.cumsum(sizes)[:-1]]
-    centroids = np.add.reduceat(X, starts) / sizes[:, None]
+def _fit_data(X, F, counts, g_c=None, G=None):
+    counts = np.asarray(counts)
+    labels = np.repeat(np.arange(len(counts)), counts)
+    starts = np.r_[0, np.cumsum(counts)[:-1]]
+    centroids = np.add.reduceat(X, starts) / counts[:, None]
     return ClusterFitData(
         X=xp.asarray(X),
         F=xp.asarray(F),
         G=None if G is None else xp.asarray(G),
         labels=xp.asarray(labels),
         starts=xp.asarray(starts),
-        sizes=xp.asarray(sizes),
+        counts=xp.asarray(counts),
         centroids=xp.asarray(centroids),
         f_c=xp.asarray(F[starts]),
         g_c=None if g_c is None else xp.asarray(g_c),
@@ -116,14 +116,14 @@ def _fit_data(X, F, sizes, g_c=None, G=None):
 
 
 def test_affine_fit_recovers_an_affine_function():
-    sizes = [40, 25, 60]
-    X = rng.standard_normal((sum(sizes), d))
-    A_true = rng.standard_normal((len(sizes), fd, d))
-    b_true = rng.standard_normal((len(sizes), fd))
-    labels = np.repeat(np.arange(len(sizes)), sizes)
+    counts = [40, 25, 60]
+    X = rng.standard_normal((sum(counts), d))
+    A_true = rng.standard_normal((len(counts), fd, d))
+    b_true = rng.standard_normal((len(counts), fd))
+    labels = np.repeat(np.arange(len(counts)), counts)
     F = np.einsum("nfd,nd->nf", A_true[labels], X) + b_true[labels]
     model = AffineLSQModel()
-    data = _fit_data(X, F, sizes)
+    data = _fit_data(X, F, counts)
     params = model.fit(data)
     assert params.keys() == model.columns(d, fd).keys()
     np.testing.assert_allclose(to_host(params["A_fit"]), A_true, atol=1e-5)
@@ -136,15 +136,15 @@ def test_affine_fit_recovers_an_affine_function():
 
 def test_quadratic_fit_recovers_a_quadratic_per_cluster_far_from_the_origin():
     """Exact on quadratics, also for small clusters far from the origin (the fit is centred and scaled)."""
-    sizes = [40, 25, 60]
-    labels = np.repeat(np.arange(len(sizes)), sizes)
-    X = 1e3 + 1e-3 * rng.standard_normal((sum(sizes), d))
-    H = rng.standard_normal((len(sizes), fd, d, d))
-    a, b = rng.standard_normal((len(sizes), fd, d)), rng.standard_normal((len(sizes), fd))
+    counts = [40, 25, 60]
+    labels = np.repeat(np.arange(len(counts)), counts)
+    X = 1e3 + 1e-3 * rng.standard_normal((sum(counts), d))
+    H = rng.standard_normal((len(counts), fd, d, d))
+    a, b = rng.standard_normal((len(counts), fd, d)), rng.standard_normal((len(counts), fd))
     u = (X - 1e3) / 1e-3
     F = 1e-3 * (np.einsum("nd,nfde,ne->nf", u, H[labels], u) + np.einsum("nfd,nd->nf", a[labels], u)) + b[labels]
     model = QuadraticLSQModel()
-    data = _fit_data(X, F, sizes)
+    data = _fit_data(X, F, counts)
     params = model.fit(data)
     assert params.keys() == model.columns(d, fd).keys() and model.n_features(d) == (d + 1) * (d + 2) // 2
     full = {**params, "centroids": data.centroids, "f": data.f_c}
@@ -156,16 +156,16 @@ def test_quadratic_fit_recovers_a_quadratic_per_cluster_far_from_the_origin():
 
 
 def test_fit_returns_declared_columns():
-    sizes = [5, 6]
+    counts = [5, 6]
     X, F = rng.standard_normal((11, d)), rng.standard_normal((11, fd))
     g_c = rng.standard_normal((2, fd, d))
-    assert ConstantModel().fit(_fit_data(X, F, sizes)) == {}
-    taylor = TaylorModel().fit(_fit_data(X, F, sizes, g_c))
+    assert ConstantModel().fit(_fit_data(X, F, counts)) == {}
+    taylor = TaylorModel().fit(_fit_data(X, F, counts, g_c))
     assert taylor.keys() == TaylorModel().columns(d, fd).keys()
     np.testing.assert_array_equal(to_host(taylor["g"]), g_c)
     # The second-order Hessian is only estimated for accepted clusters, so fit omits it.
     assert set(TaylorModel(True).columns(d, fd)) - set(
-        TaylorModel(True).fit(_fit_data(X, F, sizes, g_c))
+        TaylorModel(True).fit(_fit_data(X, F, counts, g_c))
     ) == {"H"}
 
 
@@ -214,20 +214,20 @@ def test_second_order_finalize_fits_one_hessian_per_output():
     # Two outputs with opposite and independent curvature, f_j = f_j(c) + g_j.dx
     # + 1/2 dx^T A_j dx on every cluster. A single Hessian shared by the outputs
     # (the old behaviour) cannot represent this; per-output Hessians recover it.
-    sizes = [40, 70]
+    counts = [40, 70]
     A = rng.standard_normal((fd, d, d))
     A = A + A.transpose(0, 2, 1)
     A[1] = -A[0] + np.diag(np.arange(1.0, d + 1))
-    X = rng.standard_normal((sum(sizes), d))
-    starts = np.r_[0, np.cumsum(sizes)[:-1]]
-    labels = np.repeat(np.arange(len(sizes)), sizes)
-    centroids = np.add.reduceat(X, starts) / np.asarray(sizes)[:, None]
-    g_c = rng.standard_normal((len(sizes), fd, d))
+    X = rng.standard_normal((sum(counts), d))
+    starts = np.r_[0, np.cumsum(counts)[:-1]]
+    labels = np.repeat(np.arange(len(counts)), counts)
+    centroids = np.add.reduceat(X, starts) / np.asarray(counts)[:, None]
+    g_c = rng.standard_normal((len(counts), fd, d))
     dx = X - centroids[labels]
     F = np.einsum("nfd,nd->nf", g_c[labels], dx) + 0.5 * np.einsum("nc,fcd,nd->nf", dx, A, dx)
     G = g_c[labels] + np.einsum("fcd,nd->nfc", A, dx)  # exact gradients
-    data = _fit_data(X, F, sizes, g_c=g_c, G=G)
-    data.centroids, data.f_c = xp.asarray(centroids), xp.zeros((len(sizes), fd))
+    data = _fit_data(X, F, counts, g_c=g_c, G=G)
+    data.centroids, data.f_c = xp.asarray(centroids), xp.zeros((len(counts), fd))
 
     model = TaylorModel(second_order=True)
     assert model.needs_point_grad and model.needs_centroid_grad
@@ -235,7 +235,7 @@ def test_second_order_finalize_fits_one_hessian_per_output():
     final = model.finalize(data, params)
     assert set(params) | set(final) == set(model.columns(d, fd))
     H = to_host(final["H"])
-    assert H.shape == (len(sizes), fd, d, d)
+    assert H.shape == (len(counts), fd, d, d)
     np.testing.assert_allclose(H, np.broadcast_to(A, H.shape), atol=1e-8)
 
     leaf = {**params, **final, "centroids": data.centroids, "f": data.f_c}
@@ -249,9 +249,9 @@ def test_first_order_models_do_not_need_point_gradients():
 
 
 def test_second_order_finalize_requires_point_gradients():
-    sizes = [5, 6]
+    counts = [5, 6]
     X, F = rng.standard_normal((11, d)), rng.standard_normal((11, fd))
-    data = _fit_data(X, F, sizes, g_c=rng.standard_normal((2, fd, d)))
+    data = _fit_data(X, F, counts, g_c=rng.standard_normal((2, fd, d)))
     with pytest.raises(RuntimeError, match="gradients at every point"):
         TaylorModel(second_order=True).finalize(data, {})
 

@@ -15,18 +15,18 @@ from tests._helpers import host
 
 EPS = 1e-12
 rng = np.random.default_rng(7)
-SIZES = np.array([4, 7, 1, 5])
-STARTS = np.r_[0, np.cumsum(SIZES)[:-1]]
-N, FD = int(SIZES.sum()), 3
+COUNTS = np.array([4, 7, 1, 5])
+STARTS = np.r_[0, np.cumsum(COUNTS)[:-1]]
+N, FD = int(COUNTS.sum()), 3
 F = rng.standard_normal((N, FD)) * np.array([1.0, 100.0, 0.01])
-F[STARTS[1] : STARTS[1] + SIZES[1], 2] = 0.0  # a component that is zero on one cluster
+F[STARTS[1] : STARTS[1] + COUNTS[1], 2] = 0.0  # a component that is zero on one cluster
 F_HAT = F + rng.standard_normal((N, FD)) * np.array([0.05, 2.0, 1e-4])
 
 
 def reference_errors(metric):
     """(K, FD) absolute and relative errors, one cluster and component at a time."""
-    e_abs, e_rel = np.zeros((len(SIZES), FD)), np.zeros((len(SIZES), FD))
-    for k, (s, n) in enumerate(zip(STARTS, SIZES, strict=True)):
+    e_abs, e_rel = np.zeros((len(COUNTS), FD)), np.zeros((len(COUNTS), FD))
+    for k, (s, n) in enumerate(zip(STARTS, COUNTS, strict=True)):
         for j in range(FD):
             f, e = F[s : s + n, j], F[s : s + n, j] - F_HAT[s : s + n, j]
             if metric == "L2":
@@ -48,7 +48,7 @@ def reference_good(metric, atol, rtol):
 
 def run(metric, atol, rtol):
     crit = ACCEPTANCE_CRITERIA.create(metric, atol=atol, rtol=rtol)
-    good, e_abs, e_rel = crit(xp.asarray(F), xp.asarray(F_HAT), xp.asarray(STARTS), xp.asarray(SIZES))
+    good, e_abs, e_rel = crit(xp.asarray(F), xp.asarray(F_HAT), xp.asarray(STARTS), xp.asarray(COUNTS))
     return host(good), host(e_abs), host(e_rel)
 
 
@@ -100,7 +100,7 @@ def test_comparisons_are_strict(metric):
 
 def test_an_omitted_tolerance_never_accepts():
     # F_HAT == F: every error is 0, so only an omitted atol (-inf, not 0) can reject it.
-    exact = xp.asarray(F), xp.asarray(F), xp.asarray(STARTS), xp.asarray(SIZES)
+    exact = xp.asarray(F), xp.asarray(F), xp.asarray(STARTS), xp.asarray(COUNTS)
     assert host(ACCEPTANCE_CRITERIA.create("Linf", atol=1e-300, rtol=0.0)(*exact)[0]).all()
     assert not host(ACCEPTANCE_CRITERIA.create("Linf", atol=None, rtol=0.0)(*exact)[0]).any()
 
@@ -131,7 +131,7 @@ def test_config_stores_tolerances_in_serializable_form():
 
 def test_cluster_errors_uses_the_configured_criterion():
     cfg = TrainingConfig(mode=SurrogateMode.AFFINE_COV_HESS, atol=0.05, rtol=0.05, error_metric="L2")
-    good, e_abs, e_rel = cluster_errors(cfg, xp.asarray(F), xp.asarray(F_HAT), xp.asarray(STARTS), xp.asarray(SIZES))
+    good, e_abs, e_rel = cluster_errors(cfg, xp.asarray(F), xp.asarray(F_HAT), xp.asarray(STARTS), xp.asarray(COUNTS))
     np.testing.assert_array_equal(host(good), reference_good("L2", 0.05, 0.05))
     np.testing.assert_allclose(host(e_rel), reference_errors("L2")[1], rtol=1e-12)
 

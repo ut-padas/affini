@@ -546,7 +546,7 @@ class OffsetAffine(LocalModel):
         return self._affine.fit(data)
 
     def finalize(self, data, params):   # optional: accepted clusters only
-        return {"offset": xp.full((len(data.sizes), data.F.shape[1]), self.offset)}
+        return {"offset": xp.full((len(data.counts), data.F.shape[1]), self.offset)}
 
     def evaluate(self, params, X, cluster_ids):   # cluster_ids (N,) or (n, k)
         out = self._affine.evaluate(params, X, cluster_ids)
@@ -568,10 +568,10 @@ Contracts the engine checks (with a clear error):
   cluster; `clusters` holds `X`, `counts`, `starts`, `centroids`; use only `rng`
   for randomness.
 - **Split strategy:** implement `metric(data) -> (M, M C M)` to change the split
-  direction, `child_sizes(counts, sorted_scores)` to change where clusters are cut,
+  direction, `child_counts(counts, sorted_scores)` to change where clusters are cut,
   or `split(data)` entirely; splits are binary and must keep each cluster's rows
-  together and its two child sizes adding up to its size.
-- **Acceptance:** `__call__(F, F_hat, starts, sizes) -> (is_good, E_abs, E_rel)`, the
+  together and its two child counts (left, then right) adding up to its count.
+- **Acceptance:** `__call__(F, F_hat, starts, counts) -> (is_good, E_abs, E_rel)`, the
   errors per cluster and output component (K, fd); `self.accept(E_abs, E_rel)` applies
   the built-in tolerance rule.
 - **Trust region:** `shapes(X, centroids, labels, counts) -> trust_matrices` (K, d, d),

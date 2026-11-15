@@ -4,21 +4,21 @@ import numpy as np
 import pytest
 
 from src import to_host, xp
-from src.components.splitting import median_split_sizes
+from src.components.splitting import median_split_counts
 from src.core.clusters import ClusterBatch, ClusterQueueBuilder
 
 
-def _parts(rng, sizes, d=2, fd=1, has_g=False):
-    n = int(np.sum(sizes))
+def _parts(rng, counts, d=2, fd=1, has_g=False):
+    n = int(np.sum(counts))
     X = rng.standard_normal((n, d))
     F = rng.standard_normal((n, fd))
     G = rng.standard_normal((n, fd, d)) if has_g else None
-    return X, F, G, np.asarray(sizes, dtype=np.int64)
+    return X, F, G, np.asarray(counts, dtype=np.int64)
 
 
-def test_median_split_sizes():
+def test_median_split_counts():
     np.testing.assert_array_equal(
-        to_host(median_split_sizes(xp.asarray(np.array([5, 4, 1])))),
+        to_host(median_split_counts(xp.asarray(np.array([5, 4, 1])))),
         [2, 3, 2, 2, 0, 1],
     )
 
@@ -29,18 +29,18 @@ def test_builder_concatenates_and_grows(has_g):
     # Start far too small so both point and cluster buffers must grow several times.
     builder = ClusterQueueBuilder(2, 1, has_g, capacity_pts=1, capacity_clusters=1)
     parts = [_parts(rng, s, has_g=has_g) for s in ([3, 4], [5], [2, 2, 6])]
-    for X, F, G, sizes in parts:
+    for X, F, G, counts in parts:
         builder.append(
             xp.asarray(X),
             xp.asarray(F),
             None if G is None else xp.asarray(G),
-            xp.asarray(sizes),
+            xp.asarray(counts),
         )
 
     batch = builder.build()
     np.testing.assert_array_equal(batch.X, np.concatenate([p[0] for p in parts]))
     np.testing.assert_array_equal(batch.F, np.concatenate([p[1] for p in parts]))
-    np.testing.assert_array_equal(batch.sizes, [3, 4, 5, 2, 2, 6])
+    np.testing.assert_array_equal(batch.counts, [3, 4, 5, 2, 2, 6])
     np.testing.assert_array_equal(batch.starts, [0, 3, 7, 12, 14, 16])
     if has_g:
         np.testing.assert_array_equal(batch.G, np.concatenate([p[2] for p in parts]))
@@ -56,7 +56,7 @@ def test_builder_drops_empty_clusters_and_ignores_g_without_has_g():
     )
     builder.append(X, F, G, np.array([0, 3, 0, 2]))
     batch = builder.build()
-    np.testing.assert_array_equal(batch.sizes, [3, 2])
+    np.testing.assert_array_equal(batch.counts, [3, 2])
     np.testing.assert_array_equal(batch.X, X)
     assert batch.G is None
 
@@ -72,8 +72,8 @@ def test_cluster_batch_split():
     rng = np.random.default_rng(2)
     batch = ClusterBatch(*_parts(rng, [2, 3, 4], has_g=True))
     head, tail = batch.split(1)
-    np.testing.assert_array_equal(head.sizes, [2])
-    np.testing.assert_array_equal(tail.sizes, [3, 4])
+    np.testing.assert_array_equal(head.counts, [2])
+    np.testing.assert_array_equal(tail.counts, [3, 4])
     np.testing.assert_array_equal(np.concatenate([head.X, tail.X]), batch.X)
     np.testing.assert_array_equal(np.concatenate([head.G, tail.G]), batch.G)
     np.testing.assert_array_equal(tail.starts, [0, 3])

@@ -427,9 +427,9 @@ def test_drift_ignores_rounding_sized_shifts_of_a_narrow_node():
     domain, roots = Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1)
     sampler = HitAndRunSampler(domain, roots, walk_steps=2)
     U = xp.asarray(0.9 + 1e-8 * np.random.default_rng(0).random((20, 2)))
-    owner, walk = xp.zeros(20, dtype=xp.int64), xp.ones(20, dtype=bool)
-    assert not bool(sampler._drifting(U, U + 1e-12, owner, walk, xp.asarray([20]))[0])
-    assert bool(sampler._drifting(U, U + 1e-8, owner, walk, xp.asarray([20]))[0])
+    labels, walk = xp.zeros(20, dtype=xp.int64), xp.ones(20, dtype=bool)
+    assert not bool(sampler._drifting(U, U + 1e-12, labels, walk, xp.asarray([20]))[0])
+    assert bool(sampler._drifting(U, U + 1e-8, labels, walk, xp.asarray([20]))[0])
 
 
 def test_bins_search_skips_nodes_too_small_to_split_beside_valid_ones():

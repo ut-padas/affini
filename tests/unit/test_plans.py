@@ -34,15 +34,15 @@ def test_plan_provides_every_member_of_the_contract(name):
 @pytest.mark.parametrize("name", ["afinni", "art"])
 def test_batch_ends_cover_the_queue_once_in_order_and_are_never_empty(name):
     plan = _plans()[name]
-    sizes = np.array([5, 40, 3, 3, 120, 7, 7, 7, 1])
-    cumsum = np.cumsum(plan.work_sizes(sizes))
+    counts = np.array([5, 40, 3, 3, 120, 7, 7, 7, 1])
+    cumsum = np.cumsum(plan.work_sizes(counts))
     start, index, ends = 0, 0, []
-    while start < len(sizes):
+    while start < len(counts):
         end = plan.batch_end(cumsum, start, index, 50)
-        assert start < end <= len(sizes)
+        assert start < end <= len(counts)
         ends.append(end)
         start, index = end, index + 1
-    assert ends[-1] == len(sizes)
+    assert ends[-1] == len(counts)
 
 
 def test_afinni_batch_grid_admits_the_crossing_cluster_and_reanchors_behind_the_grid():
@@ -60,7 +60,7 @@ def test_afinni_batch_grid_admits_the_crossing_cluster_and_reanchors_behind_the_
 def test_art_batches_hold_whole_nodes_within_the_batch_size():
     plan = _plans()["art"]
     queue = ClusterBatch(np.zeros((0, 2)), np.zeros((0, 1)), None, np.zeros(4, dtype=np.int64))
-    work = plan.work_sizes(queue.sizes)
+    work = plan.work_sizes(queue.counts)
     cumsum = np.cumsum(work)
     end = plan.batch_end(cumsum, 0, 0, int(2 * work[0]))
     assert end == 2 and cumsum[end - 1] <= 2 * work[0]
@@ -79,8 +79,8 @@ def test_afinni_batch_releases_its_points_before_splitting():
 
     config = TrainingConfig(atol=1e-4, rtol=1e-4, min_pts_per_cluster=8)
     plan = AFINNIPlan(config, 2, 1, rank=0)
-    sizes = np.full(4, 30, dtype=np.int64)
-    X = xp.asarray(np.random.default_rng(0).uniform(-1, 1, (int(sizes.sum()), 2)))
+    counts = np.full(4, 30, dtype=np.int64)
+    X = xp.asarray(np.random.default_rng(0).uniform(-1, 1, (int(counts.sum()), 2)))
     alive = weakref.ref(X)
     real = config.components().split_strategy
     seen = []
@@ -95,8 +95,8 @@ def test_afinni_batch_releases_its_points_before_splitting():
     components = dataclasses.replace(config.components(), split_strategy=Spy())
     evaluator = Evaluator(f_fn=lambda x: xp.sin(4 * x[:, :1]) * xp.cos(3 * x[:, 1:]))
     batch = DeviceBatch(
-        X=X, F=evaluator(X)[0], G=None, sizes=xp.asarray(sizes), starts=xp.asarray(np.r_[0, np.cumsum(sizes)[:-1]]),
-        queue=ClusterBatch(np.zeros((0, 2)), np.zeros((0, 1)), None, sizes), cut=slice(0, 4), level=0, index=0,
+        X=X, F=evaluator(X)[0], G=None, counts=xp.asarray(counts), starts=xp.asarray(np.r_[0, np.cumsum(counts)[:-1]]),
+        queue=ClusterBatch(np.zeros((0, 2)), np.zeros((0, 1)), None, counts), cut=slice(0, 4), level=0, index=0,
         n_batches=1, progress=lambda: None,
     )  # fmt: skip
     del X

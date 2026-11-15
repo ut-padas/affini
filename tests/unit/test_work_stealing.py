@@ -77,7 +77,7 @@ class _Comm:
             return 1
         self.replied = True
         if tag == ws.TAG_STEAL_GRANT:
-            columns = {"X": ((1,), "<f8"), "F": ((1,), "<f8"), "sizes": ((), "<i8"), "depth": ((), "<i8")}
+            columns = {"X": ((1,), "<f8"), "F": ((1,), "<f8"), "counts": ((), "<i8"), "depth": ((), "<i8")}
             if self.has_g:
                 columns["G"] = ((1, 1), "<f8")
             return {"version": ws.WIRE_FORMAT_VERSION, "n_pts": 3, "n_clusters": 1, "columns": columns}
@@ -148,7 +148,7 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
     if grant:
         assert buffers["counts"][0] == 3
         assert buffers["centroids"][0, 0] == 1
-        assert len(comm.payloads) == 4 + int(has_g)  # X, F, [G,] sizes, depth
+        assert len(comm.payloads) == 4 + int(has_g)  # X, F, [G,] counts, depth
     # The protocol shows up in the event timeline, in order.
     kinds = [e["kind"] for e in profiler.events if e["kind"].startswith(("steal", "retire"))]
     reply = "steal_received" if grant else "steal_denied"
@@ -215,8 +215,8 @@ class _OneRequest:
 def test_grants_and_published_loads_use_the_plans_work_units(monkeypatch):
     """With a per-node overhead, a grant takes more small nodes than raw points would, and the load sent after it is in the same units."""
     monkeypatch.setattr(ws, "MPI", _MPI)
-    sizes = np.array([1] * 7 + [40])
-    queue = ClusterBatch(np.zeros((47, 1)), np.zeros((47, 1)), None, sizes)
+    counts = np.array([1] * 7 + [40])
+    queue = ClusterBatch(np.zeros((47, 1)), np.zeros((47, 1)), None, counts)
     profiler = Profiler(new_profiling_stats())
     for work_sizes, n_given, load_after in ((None, 1, 7), (lambda s: s + 100, 4, 4 * 101)):
         comm = _OneRequest()

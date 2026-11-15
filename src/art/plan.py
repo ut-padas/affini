@@ -61,7 +61,7 @@ class ARTPlan:
     ``src.engine.refinement.refine_rank``). ``counters`` accumulates this rank's
     split diagnostics (reported as ``profiling_stats["art"]``).
 
-    In the split methods, ``w`` (k, d) holds each plane's unit normal and ``z`` (k,) its
+    In the split methods, ``w`` (K, d) holds each plane's unit normal and ``z`` (K,) its
     offset, the plane ``(a, z)`` of the companion, as in ``src.art.split_search``; the split
     records store them as ``normal`` and ``offset``.
     """
@@ -104,11 +104,11 @@ class ARTPlan:
             "soft_gate_saturated": 0, "soft_nonfinite": 0, "soft_iteration_limit": 0,
         }  # fmt: skip
 
-    def work_sizes(self, sizes: np.ndarray) -> np.ndarray:
+    def work_sizes(self, counts: np.ndarray) -> np.ndarray:
         """Points each queued node will occupy on the device: after top-up (or augmentation) and validation."""
         if self.convex_sampling:
-            return np.asarray(to_host(augmentation_targets(xp.asarray(sizes), self.config.min_pts_per_cluster)))
-        return np.maximum(sizes, self.n_target) + self.n_val
+            return np.asarray(to_host(augmentation_targets(xp.asarray(counts), self.config.min_pts_per_cluster)))
+        return np.maximum(counts, self.n_target) + self.n_val
 
     def bytes_per_point(self) -> int:
         """
@@ -214,11 +214,11 @@ class ARTPlan:
         q, cut = batch.queue, batch.cut
         depth, root, locational_code = xp.asarray(q.depth[cut]), xp.asarray(q.root[cut]), xp.asarray(q.locational_code[cut])
         constraints, progress = xp.asarray(q.constraints[cut]), batch.progress
-        sizes = batch.sizes
+        counts = batch.counts
         X, F, G = batch.take()
         model = components.local_model
         acceptance, trust_region = components.acceptance, components.trust_region
-        K = int(sizes.shape[0])
+        K = int(counts.shape[0])
         keys = node_keys(cfg.seed, root, locational_code)
         geo = NodePolytopes(root, depth, keys, constraints, PURPOSE_TRAIN)
         stats = {"generated": 0, "fallback_clusters": 0, "fallback_pts": 0}
@@ -228,9 +228,9 @@ class ARTPlan:
             # Convex-combination sampling keeps each node's points, except that an empty root (possible for grid or
             # Voronoi cells) is sampled up to 2 * n_coefficients points so it can be fitted.
             n_train = (
-                xp.where(sizes == 0, 2 * self.n_coefficients, sizes) if self.convex_sampling else xp.maximum(sizes, self.n_target)
+                xp.where(counts == 0, 2 * self.n_coefficients, counts) if self.convex_sampling else xp.maximum(counts, self.n_target)
             )
-            aug = augment_clusters(X, F, G, sizes, n_train, self.sampler, evaluator, None, polytopes=geo)
+            aug = augment_clusters(X, F, G, counts, n_train, self.sampler, evaluator, None, polytopes=geo)
             Xt, Ft, Gt, labels = aug.X, aug.F, aug.G, aug.labels
             stats["generated"] += 0 if aug.X_new is None else int(aug.X_new.shape[0])
             starts = xp.r_[0, xp.cumsum(n_train)[:-1]]
@@ -239,7 +239,7 @@ class ARTPlan:
             Xv = Fv = Gv = None
             if self.n_val:
                 geo_v = NodePolytopes(root, depth, keys, constraints, PURPOSE_VALIDATION)
-                Xv = self.sampler.sample(ClusterPoints(X, sizes, polytopes=geo_v), xp.full(K, self.n_val))
+                Xv = self.sampler.sample(ClusterPoints(X, counts, polytopes=geo_v), xp.full(K, self.n_val))
                 Fv, Gv = evaluator(Xv, need_grad=Gt is not None)
                 stats["generated"] += int(Xv.shape[0])
                 insufficient = insufficient | geo_v.insufficient
@@ -252,7 +252,7 @@ class ARTPlan:
                 f_mus, g_mus = evaluator(mus, need_grad=cfg.requires_grad_centroids)
             else:  # no component reads f(c): column "f" is NaN rather than an oracle call
                 f_mus, g_mus = xp.full((K, self.fd), xp.nan), None
-            fit = ClusterFitData(X=Xt, F=Ft, G=Gt, labels=labels, starts=starts, sizes=n_train,
+            fit = ClusterFitData(X=Xt, F=Ft, G=Gt, labels=labels, starts=starts, counts=n_train,
                                  centroids=mus, f_c=f_mus, g_c=g_mus)  # fmt: skip
             params = model.fit(fit)
             F_hat = model.evaluate({**params, "centroids": mus, "f": f_mus}, Xt, labels)
@@ -310,8 +310,8 @@ class ARTPlan:
         rows = (leaves.idx[:, None] * self.n_val + xp.arange(self.n_val)).ravel()
         labels = repeats(xp.arange(L), xp.full(L, self.n_val))
         F_hat = model.evaluate(leaves.rows, Xv[rows], labels)
-        sizes = xp.full(L, self.n_val, dtype=xp.int64)
-        ok, _, _ = components.acceptance(Fv[rows], F_hat, xp.arange(L) * self.n_val, sizes)
+        counts = xp.full(L, self.n_val, dtype=xp.int64)
+        ok, _, _ = components.acceptance(Fv[rows], F_hat, xp.arange(L) * self.n_val, counts)
         return ok
 
     def _append_leaves(self, accepted, leaves, root, locational_code, reason: int, status_v) -> None:
@@ -336,11 +336,11 @@ class ARTPlan:
         that order.
         """
         d = self.d
-        k = int(idx.shape[0])
-        sel = xp.zeros(int(fit.sizes.shape[0]), dtype=bool)
+        K = int(idx.shape[0])
+        sel = xp.zeros(int(fit.counts.shape[0]), dtype=bool)
         sel[idx] = True
         train_rows = sel[fit.labels]
-        counts = fit.sizes[idx]
+        counts = fit.counts[idx]
         X, F = fit.X[train_rows], fit.F[train_rows]
         G = fit.G[train_rows] if fit.G is not None else None
         n_generated = 0
@@ -348,7 +348,7 @@ class ARTPlan:
             # Interleave per node: its training points, then its validation points.
             v_rows = (idx[:, None] * self.n_val + xp.arange(self.n_val)).ravel()
             total = counts + self.n_val
-            labels = repeats(xp.arange(k), total)
+            labels = repeats(xp.arange(K), total)
             pos = xp.arange(int(xp.sum(total))) - (xp.cumsum(total) - total)[labels]
             is_train = pos < counts[labels]
             X = interleave(X, Xv[v_rows], is_train)
@@ -365,7 +365,7 @@ class ARTPlan:
             X, F, G, labels, counts = aug.X, aug.F, aug.G, aug.labels, targets
             n_generated = 0 if aug.X_new is None else int(aug.X_new.shape[0])
         elif not self.n_val:
-            labels = repeats(xp.arange(k), counts)
+            labels = repeats(xp.arange(K), counts)
         data = SplitData(X=X, F=F, G=G, labels=labels, counts=counts, centroids=fit.centroids[idx],
                          f_c=fit.f_c[idx], g_c=fit.g_c[idx] if fit.g_c is not None else None,
                          hessian_fn=evaluator.hessian_fn)  # fmt: skip
@@ -386,10 +386,10 @@ class ARTPlan:
             raise RuntimeError("An ART split predicate does not reproduce its children.")
         good = xp.nonzero(valid)[0]
         self.counters["splits"] += int(good.shape[0])
-        self.counters["split_failed"] += k - int(good.shape[0])
+        self.counters["split_failed"] += K - int(good.shape[0])
         if int(good.shape[0]) > 0:
             keep = valid[labels][order]
-            child_sizes = xp.stack([cut[good], counts[good] - cut[good]], axis=1).ravel()
+            child_counts = xp.stack([cut[good], counts[good] - cut[good]], axis=1).ravel()
             node, code = idx[good], locational_code[idx[good]]
             row = xp.concatenate([w[good], z[good][:, None]], axis=1)  # left: w^T u <= z; right: -row
             parent_c = constraints[node]
@@ -399,7 +399,7 @@ class ARTPlan:
             ], axis=1).reshape(2 * int(good.shape[0]), -1, d + 1)  # fmt: skip
             rows_sorted = order[keep]
             next_level.append(
-                X[rows_sorted], F[rows_sorted], G[rows_sorted] if G is not None else None, child_sizes,
+                X[rows_sorted], F[rows_sorted], G[rows_sorted] if G is not None else None, child_counts,
                 depth=xp.repeat(depth[node] + 1, 2), root=xp.repeat(root[node], 2),
                 locational_code=xp.stack([2 * code, 2 * code + 1], axis=1).ravel(), constraints=children_c,
             )  # fmt: skip
@@ -452,7 +452,7 @@ class ARTPlan:
 
     def _direction_bank(self, rows: SplitRows, lead, V, M, width, keys) -> Array:
         """
-        (k, D, d) unit candidate normals in ``u``: the split strategy's leading direction,
+        (K, D, d) unit candidate normals in ``u``: the split strategy's leading direction,
         its next eigenvectors, the leading covariance direction of the points, and
         node-keyed random directions to fill ``n_directions`` (``n_dir`` in the companion).
         """
@@ -484,7 +484,7 @@ class ARTPlan:
         distinct scores that leave ``min_side`` points per side are candidates. The SSE is
         the hard objective ``SSE(a, z)`` of the companion.
         """
-        k, D, _ = bank.shape
+        K, D, _ = bank.shape
         nb = self.settings.n_bins
         b = xp.arange(1, nb)
         n = rows.counts
@@ -493,8 +493,8 @@ class ARTPlan:
         eligible = n >= 2 * self.min_side
         pos = xp.clip(xp.round(b[None, :] * n[:, None] / nb).astype(xp.int64), self.min_side, xp.maximum(n - self.min_side, self.min_side)[:, None])
         pos = xp.clip(pos, 1, xp.maximum(n - 1, 1)[:, None])
-        screen = xp.full((k, D, nb - 1), xp.inf)
-        z_all = xp.full((k, D, nb - 1), xp.nan)
+        screen = xp.full((K, D, nb - 1), xp.inf)
+        z_all = xp.full((K, D, nb - 1), xp.nan)
         for j in range(D):
             s = plane_scores(rows.U, bank[rows.labels, j])
             order = sort_by_block_then_value(s, rows.labels)
@@ -504,23 +504,23 @@ class ARTPlan:
             # Per node only (batched products over its own sorted rows), so nothing
             # depends on the other nodes of the batch.
             GL, BL, CL, GR, BR, CR = rows.cut_sums(order, pos)
-            sse = xp.zeros((k, nb - 1))
+            sse = xp.zeros((K, nb - 1))
             for Gs, Bs, Cs in ((GL, BL, CL), (GR, BR, CR)):
                 beta = rows.solve(Gs, Bs)
                 sse = sse + Cs - 2 * xp.sum(beta * Bs, axis=(2, 3)) + xp.sum(beta * det_matmul(Gs, beta), axis=(2, 3))
             screen[:, j] = xp.where(ok, sse, xp.inf)
             z_all[:, j] = ss[at]
-        flat = screen.reshape(k, -1)
+        flat = screen.reshape(K, -1)
         n_keep = min(self.settings.n_screened, flat.shape[1])
-        best_w, best_z = bank[:, 0], xp.full(k, xp.nan)
-        best_sse = xp.full(k, xp.inf)
+        best_w, best_z = bank[:, 0], xp.full(K, xp.nan)
+        best_sse = xp.full(K, xp.inf)
         cand = xp.argsort(flat, axis=1)[:, :n_keep]
         for t in range(n_keep):
             c = cand[:, t]
             j, i = c // (nb - 1), c % (nb - 1)
-            w = bank[xp.arange(k), j]
-            z = z_all[xp.arange(k), j, i]
-            z = xp.where(xp.isfinite(flat[xp.arange(k), c]), z, xp.nan)
+            w = bank[xp.arange(K), j]
+            z = z_all[xp.arange(K), j, i]
+            z = xp.where(xp.isfinite(flat[xp.arange(K), c]), z, xp.nan)
             sse, _ = hard_sse(rows, w, xp.where(xp.isfinite(z), z, xp.inf), self.min_side)
             better = sse < best_sse
             best_w = xp.where(better[:, None], w, best_w)

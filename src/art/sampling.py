@@ -86,9 +86,9 @@ class HitAndRunSampler(Sampler):
         n_total = int(xp.sum(n_new))
         if n_total == 0:
             return xp.empty((0, d), dtype=xp.float64)
-        owner = repeats(xp.arange(K), n_new)
-        draw = xp.arange(n_total, dtype=xp.int64) - (xp.cumsum(n_new) - n_new)[owner]
-        U, walk = self._starts(clusters, geo, owner, draw)
+        labels = repeats(xp.arange(K), n_new)
+        draw = xp.arange(n_total, dtype=xp.int64) - (xp.cumsum(n_new) - n_new)[labels]
+        U, walk = self._starts(clusters, geo, labels, draw)
         if bool(xp.any(walk)):
             U0 = U
             bad = xp.zeros(n_total, dtype=bool)
@@ -97,14 +97,14 @@ class HitAndRunSampler(Sampler):
                 """Walk ``rows``, doubling while their node drifts; returns (U, bad, drift)."""
                 # A coordinate recovery runs at least two full sweeps when the budget allows.
                 t_end = min(max(self.walk_steps, 2 * d), self.max_walk_steps) if coordinate else self.walk_steps
-                U_mid, bad = self._walk(clusters, geo, owner, draw, U, rows, 0, t_end // 2, bad, coordinate)
-                U, bad = self._walk(clusters, geo, owner, draw, U_mid, rows, t_end // 2, t_end, bad, coordinate)
+                U_mid, bad = self._walk(clusters, geo, labels, draw, U, rows, 0, t_end // 2, bad, coordinate)
+                U, bad = self._walk(clusters, geo, labels, draw, U_mid, rows, t_end // 2, t_end, bad, coordinate)
                 while True:
-                    drift = self._drifting(U_mid, U, owner, rows, n_new)
+                    drift = self._drifting(U_mid, U, labels, rows, n_new)
                     if not bool(xp.any(drift)) or 2 * t_end > self.max_walk_steps:
                         return U, bad, drift
                     U_mid = U
-                    U, bad = self._walk(clusters, geo, owner, draw, U, rows & drift[owner], t_end, 2 * t_end, bad, coordinate)
+                    U, bad = self._walk(clusters, geo, labels, draw, U, rows & drift[labels], t_end, 2 * t_end, bad, coordinate)
                     t_end *= 2
 
             U, bad, drift = run(U, walk, bad, coordinate=False)
@@ -124,24 +124,24 @@ class HitAndRunSampler(Sampler):
             geo.insufficient = drift | stuck | infeasible
         return self.domain.denormalize(U)
 
-    def _starts(self, clusters: ClusterPoints, geo: NodePolytopes, owner: Array, draw: Array) -> tuple[Array, Array]:
+    def _starts(self, clusters: ClusterPoints, geo: NodePolytopes, labels: Array, draw: Array) -> tuple[Array, Array]:
         """
         Normalized start points, and which of them walk: exact uniform points of a box
         root cell (final as they are), otherwise a uniformly chosen inherited point (a
         Voronoi root without points starts at its centre, which lies in its own cell).
         """
         d = clusters.d
-        root = geo.root[owner]
+        root = geo.root[labels]
         lo, hi = self._lo[root], self._hi[root]
-        U = lo + (hi - lo) * self._uniforms(geo, owner, draw, 0, d)  # hashes [0, ceil(d/2))
-        walk = (geo.depth[owner] > 0) | self.roots.is_voronoi
+        U = lo + (hi - lo) * self._uniforms(geo, labels, draw, 0, d)  # hashes [0, ceil(d/2))
+        walk = (geo.depth[labels] > 0) | self.roots.is_voronoi
         if not bool(xp.any(walk)):
             return U, walk
-        counts = clusters.counts[owner]
-        pick = xp.minimum((self._uniforms(geo, owner, draw, self._start_hashes, 1)[:, 0] * counts).astype(xp.int64),
+        counts = clusters.counts[labels]
+        pick = xp.minimum((self._uniforms(geo, labels, draw, self._start_hashes, 1)[:, 0] * counts).astype(xp.int64),
                           xp.maximum(counts - 1, 0))  # fmt: skip
         has_seed = counts > 0
-        seeds = self.domain.normalize(clusters.X[xp.where(has_seed, clusters.starts[owner] + pick, 0)]) \
+        seeds = self.domain.normalize(clusters.X[xp.where(has_seed, clusters.starts[labels] + pick, 0)]) \
             if clusters.X.shape[0] else U
         if self.roots.is_voronoi:
             seeds = xp.where(has_seed[:, None], seeds, self._C[root])
@@ -155,7 +155,7 @@ class HitAndRunSampler(Sampler):
     def _step_hashes(self) -> int:
         return (self.domain.d + 1) // 2 + 1  # ceil(d/2) Box-Muller pairs, then the chord position
 
-    def _uniforms(self, geo: NodePolytopes, owner: Array, draw: Array, offset: int, count: int) -> Array:
+    def _uniforms(self, geo: NodePolytopes, labels: Array, draw: Array, offset: int, count: int) -> Array:
         """
         (n, count) uniforms of each new point's stream, from ``ceil(count / 2)`` hashes at
         hash ``offset``; the per-point layout (start, pick, then each step) is fixed by
@@ -163,9 +163,9 @@ class HitAndRunSampler(Sampler):
         """
         block = self._start_hashes + 1 + self.max_walk_steps * self._step_hashes
         counter = (draw * block)[:, None] + offset + xp.arange((count + 1) // 2)
-        return counter_uniform_pairs(geo.keys[owner][:, None], geo.purpose, counter).reshape(len(owner), -1)[:, :count]
+        return counter_uniform_pairs(geo.keys[labels][:, None], geo.purpose, counter).reshape(len(labels), -1)[:, :count]
 
-    def _walk(self, clusters, geo, owner, draw, U, rows, t_from: int, t_to: int, bad: Array,
+    def _walk(self, clusters, geo, labels, draw, U, rows, t_from: int, t_to: int, bad: Array,
               coordinate: bool = False) -> tuple[Array, Array]:  # fmt: skip
         """
         ``U`` after hit-and-run steps ``t_from .. t_to - 1`` of the chains in ``rows``, in
@@ -178,7 +178,7 @@ class HitAndRunSampler(Sampler):
         d = clusters.d
         if d <= 256 or not IS_CUPY_BACKEND:  # one fused walk per chain (CUDA or Numba); memory O(d), no chunking
             U, bad = U.copy(), bad.copy()
-            U_sel, bad_sel = self._walk_fused(geo, owner[idx], draw[idx], U[idx], t_from, t_to, coordinate)
+            U_sel, bad_sel = self._walk_fused(geo, labels[idx], draw[idx], U[idx], t_from, t_to, coordinate)
             U[idx], bad[idx] = U_sel, bad[idx] | bad_sel
             return U, bad
         width = int(geo.constraints.shape[1]) * (d + 1) + (self.roots.n_roots * (2 * d + 4) if self.roots.is_voronoi else 0)
@@ -186,7 +186,7 @@ class HitAndRunSampler(Sampler):
         U, bad = U.copy(), bad.copy()
         for s in range(0, int(idx.shape[0]), chunk):
             sel = idx[s : s + chunk]
-            U[sel], bad_sel = self._steps(geo, owner[sel], draw[sel], U[sel], t_from, t_to, coordinate)
+            U[sel], bad_sel = self._steps(geo, labels[sel], draw[sel], U[sel], t_from, t_to, coordinate)
             bad[sel] = bad[sel] | bad_sel
         return U, bad
 
@@ -195,13 +195,13 @@ class HitAndRunSampler(Sampler):
     # A face may be violated by rounding only: relative to the face offset's scale.
     FEASIBILITY_TOL = 1e-9
 
-    def _steps(self, geo: NodePolytopes, owner: Array, draw: Array, U: Array, t_from: int, t_to: int,
+    def _steps(self, geo: NodePolytopes, labels: Array, draw: Array, U: Array, t_from: int, t_to: int,
                coordinate: bool = False) -> tuple[Array, Array]:  # fmt: skip
         d = U.shape[1]
-        root = geo.root[owner]
+        root = geo.root[labels]
         lo, hi = self._lo[root], self._hi[root]
-        A = geo.constraints[owner, :, :d]  # (n, h, d)
-        b = geo.constraints[owner, :, d]  # (n, h)
+        A = geo.constraints[labels, :, :d]  # (n, h, d)
+        b = geo.constraints[labels, :, d]  # (n, h)
         bad = xp.zeros(int(U.shape[0]), dtype=bool)
         stream = geo
         if coordinate:
@@ -232,7 +232,7 @@ class HitAndRunSampler(Sampler):
 
         for t in range(t_from, t_to):
             q = (d + 1) // 2
-            r = self._uniforms(stream, owner, draw, self._start_hashes + 1 + t * self._step_hashes, 2 * q + 1)
+            r = self._uniforms(stream, labels, draw, self._start_hashes + 1 + t * self._step_hashes, 2 * q + 1)
             if coordinate:
                 # Systematic sweeps: every d steps touch every axis, so a chain cannot keep an
                 # untouched corner coordinate (random axes miss one with prob. ~d (1-1/d)^t).
@@ -266,7 +266,7 @@ class HitAndRunSampler(Sampler):
             bad |= slacks(U)[2]  # the returned endpoint too, not only each step's start
         return U, bad
 
-    def _walk_fused(self, geo: NodePolytopes, owner: Array, draw: Array, U: Array, t_from: int, t_to: int,
+    def _walk_fused(self, geo: NodePolytopes, labels: Array, draw: Array, U: Array, t_from: int, t_to: int,
                     coordinate: bool) -> tuple[Array, Array]:  # fmt: skip
         """
         ``_steps`` on the GPU for whole walks: one thread per chain runs steps ``t_from ..
@@ -278,19 +278,19 @@ class HitAndRunSampler(Sampler):
         n, d = (int(x) for x in U.shape)
         purpose = geo.purpose + (self.RECOVERY_PURPOSE_OFFSET if coordinate else 0)
         cons = xp.ascontiguousarray(geo.constraints, dtype=xp.float64)  # (K, h, d + 1)
-        root = geo.root[owner].astype(xp.int64)
+        root = geo.root[labels].astype(xp.int64)
         C = xp.ascontiguousarray(self._C, dtype=xp.float64) if self.roots.is_voronoi else xp.zeros((1, d))  # unused if R = 0
         U = xp.ascontiguousarray(U, dtype=xp.float64).copy()
         bad = xp.zeros(n, dtype=bool)
         if n and not IS_CUPY_BACKEND:  # the same walk as a serial Numba loop
-            _cpu_hr_walk()(U, bad, owner.astype(np.int64), draw.astype(np.int64), geo.keys.astype(np.uint64), cons, root,
+            _cpu_hr_walk()(U, bad, labels.astype(np.int64), draw.astype(np.int64), geo.keys.astype(np.uint64), cons, root,
                            np.ascontiguousarray(self._lo, dtype=np.float64), np.ascontiguousarray(self._hi, dtype=np.float64),
                            C, d, int(cons.shape[1]), self.roots.n_roots if self.roots.is_voronoi else 0, (d + 1) // 2,
                            int(coordinate), t_from, t_to, self._start_hashes + 1 + self.max_walk_steps * self._step_hashes,
                            self._start_hashes + 1, np.uint64((purpose << 56) + GOLDEN % 2**56), self.FEASIBILITY_TOL)  # fmt: skip
         elif n:
             _hr_kernel()(((n + 127) // 128,), (128,), (
-                U, bad, owner.astype(xp.int64), draw.astype(xp.int64), geo.keys.astype(xp.uint64), cons, root,
+                U, bad, labels.astype(xp.int64), draw.astype(xp.int64), geo.keys.astype(xp.uint64), cons, root,
                 xp.ascontiguousarray(self._lo, dtype=xp.float64), xp.ascontiguousarray(self._hi, dtype=xp.float64), C,
                 np.int64(n), np.int32(d), np.int32(cons.shape[1]), np.int32(self.roots.n_roots if self.roots.is_voronoi else 0),
                 np.int32((d + 1) // 2), np.int32(int(coordinate)), np.int32(t_from), np.int32(t_to),
@@ -298,7 +298,7 @@ class HitAndRunSampler(Sampler):
                 np.uint64((purpose << 56) + GOLDEN % 2**56), np.float64(self.FEASIBILITY_TOL)))  # fmt: skip
         return U, bad
 
-    def _drifting(self, U_mid: Array, U_end: Array, owner: Array, walk: Array, n_new: Array) -> Array:
+    def _drifting(self, U_mid: Array, U_end: Array, labels: Array, walk: Array, n_new: Array) -> Array:
         """
         (K,) nodes whose ``walk`` chains moved visibly between the halfway and final steps,
         from those chains' own count, means and centred variances (at least 4 chains).
@@ -316,7 +316,7 @@ class HitAndRunSampler(Sampler):
         m = xp.maximum(count, 1.0)[:, None]
         slot = xp.zeros(K, dtype=xp.int64)
         slot[nz] = xp.arange(int(nz.shape[0]))
-        row_node = slot[owner]
+        row_node = slot[labels]
 
         def mean_of(f):
             return segment_sum(f * active, starts) / m
@@ -374,13 +374,13 @@ def _cpu_hr_walk():
             return z ^ (z >> np.uint64(31))
 
         @nb.njit(cache=True, error_model="numpy")  # IEEE inf/NaN on division by zero, as NumPy and CUDA
-        def walk(U, bad, owner, draw, keys, cons_all, root, lo_all, hi_all, C, d, h, R, q, coordinate, t_from, t_to,
+        def walk(U, bad, labels, draw, keys, cons_all, root, lo_all, hi_all, C, d, h, R, q, coordinate, t_from, t_to,
                  block, base, tag, tol):  # pragma: no cover - compiled  # fmt: skip
             g = np.empty(d)
             r = np.empty(2 * q + 2)
             for i in range(U.shape[0]):
                 u = U[i]
-                k, rt = owner[i], root[i]
+                k, rt = labels[i], root[i]
                 cons, lo, hi = cons_all[k], lo_all[rt], hi_all[rt]
                 bd = False
                 for t in range(t_from, t_to):

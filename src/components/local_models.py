@@ -73,7 +73,7 @@ class ClusterFitData:
     G: Array | None  # (N, fd, d) gradients, when carried per point
     labels: Array  # (N,) cluster index of every point
     starts: Array  # (K,) first row of every cluster
-    sizes: Array  # (K,) points per cluster
+    counts: Array  # (K,) points per cluster
     centroids: Array  # (K, d) the cluster centres c (means of their points)
     f_c: Array  # (K, fd) f at the centroids
     g_c: Array | None  # (K, fd, d) gradient at the centroids, if evaluated
@@ -234,7 +234,7 @@ class TaylorModel(LocalModel):
             raise RuntimeError("A second-order TaylorModel needs gradients at every point.")
         return {
             "H": lsq_hessians(
-                data.X, data.G, data.centroids, data.g_c, data.labels, data.sizes
+                data.X, data.G, data.centroids, data.g_c, data.labels, data.counts
             )
         }
 
@@ -279,8 +279,8 @@ class AffineLSQModel(LocalModel):
         return {"A_fit": ParamSpec((fd, d)), "b_fit": ParamSpec((fd,))}
 
     def fit(self, data):
-        K, (_, d), fd = len(data.sizes), data.X.shape, data.F.shape[1]
-        mean_F = reduce_sum_1d(data.F, data.starts) / data.sizes[:, None]  # (K, fd)
+        K, (_, d), fd = len(data.counts), data.X.shape, data.F.shape[1]
+        mean_F = reduce_sum_1d(data.F, data.starts) / data.counts[:, None]  # (K, fd)
         auto_cov, _ = run_fused_stats(
             data.X, data.centroids, data.labels, K, d, fd, None, calc_E=False
         )  # (K, d, d)
@@ -328,14 +328,14 @@ class QuadraticLSQModel(LocalModel):
 
     def fit(self, data):
         diff = data.X - data.centroids[data.labels]
-        radius = xp.sqrt(reduce_sum_1d(xp.sum(diff**2, axis=1), data.starts) / data.sizes)
+        radius = xp.sqrt(reduce_sum_1d(xp.sum(diff**2, axis=1), data.starts) / data.counts)
         radius = xp.where(radius > 0, radius, 1.0)
         Phi = self.features(diff / radius[data.labels][:, None])
         if IS_CUPY_BACKEND:  # reproducible, batch-independent sums (cuBLAS batching is neither)
-            G = segment_cross(Phi, Phi, data.starts, data.sizes, symmetric=True)
-            B = segment_cross(Phi, data.F, data.starts, data.sizes)
+            G = segment_cross(Phi, Phi, data.starts, data.counts, symmetric=True)
+            B = segment_cross(Phi, data.F, data.starts, data.counts)
         else:
-            groups = count_groups(data.sizes, data.starts)
+            groups = count_groups(data.counts, data.starts)
             P_g = [Phi[rows] for _, rows in groups]
             G = grouped_cross(groups, P_g, P_g)
             B = grouped_cross(groups, P_g, [data.F[rows] for _, rows in groups])
@@ -443,13 +443,13 @@ def deploy_leaves(
     Both algorithm plans call this, in AFINNI's order: preliminary acceptance first,
     then this.
     """
-    idx_mask = xp.zeros(len(data.sizes), dtype=bool)
+    idx_mask = xp.zeros(len(data.counts), dtype=bool)
     idx_mask[idx] = True
     point_mask = idx_mask[data.labels]
     X = data.X[point_mask]
     G = data.G[point_mask] if data.G is not None else None
     F = data.F[point_mask]
-    counts = data.sizes[idx]
+    counts = data.counts[idx]
     labels = repeats(xp.arange(int(idx.shape[0])), counts)
     starts = xp.r_[0, xp.cumsum(counts)[:-1]]
     own = {k: v[idx] for k, v in params.items()}
@@ -460,7 +460,7 @@ def deploy_leaves(
     # Parameters the model only computes for leaves (e.g. the second-order Taylor term).
     final = model.finalize(
         ClusterFitData(
-            X=X, F=F, G=G, labels=labels, starts=starts, sizes=counts, centroids=centroids,
+            X=X, F=F, G=G, labels=labels, starts=starts, counts=counts, centroids=centroids,
             f_c=f_c, g_c=data.g_c[idx] if data.g_c is not None else None,
         ),
         own,

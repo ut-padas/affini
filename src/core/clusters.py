@@ -42,7 +42,7 @@ class QueueColumn:
 
 
 # Every column a queue can carry, in wire order (see src.engine.work_stealing.send_clusters).
-# X, F, sizes and depth are always present; G only when gradients are carried per point;
+# X, F, counts and depth are always present; G only when gradients are carried per point;
 # root, locational_code and constraints only in ART (src.art), where constraints are
 # the signed ancestor half-spaces ``a^T u <= z`` stored as rows ``[a | z]`` in the
 # normalized coordinates of the domain (the rows of ``(A, z)`` in the companion's region
@@ -51,7 +51,7 @@ QUEUE_COLUMNS: tuple[QueueColumn, ...] = (
     QueueColumn("X", "point", np.float64, lambda d, fd, h: (d,)),
     QueueColumn("F", "point", np.float64, lambda d, fd, h: (fd,)),
     QueueColumn("G", "point", np.float64, lambda d, fd, h: (fd, d)),
-    QueueColumn("sizes", "cluster", np.int64, lambda d, fd, h: ()),
+    QueueColumn("counts", "cluster", np.int64, lambda d, fd, h: ()),
     QueueColumn("depth", "cluster", np.int64, lambda d, fd, h: ()),
     QueueColumn("root", "cluster", np.int64, lambda d, fd, h: ()),
     QueueColumn("locational_code", "cluster", np.int64, lambda d, fd, h: ()),
@@ -65,7 +65,7 @@ class ClusterBatch:
     """
     Clusters stored contiguously in host memory.
 
-    Cluster ``k`` (a cluster or node ``C`` of the companion, its points ``X_C``) owns rows ``starts[k] : starts[k] + sizes[k]`` of every point column
+    Cluster ``k`` (a cluster or node ``C`` of the companion, its points ``X_C``) owns rows ``starts[k] : starts[k] + counts[k]`` of every point column
     (``X``, ``F`` and, if present, ``G``). ``depth[k]`` is the cluster's depth in its tree
     (roots are 0); it travels with the cluster when work is stolen, so the depth limit
     does not depend on which rank processes it. ART adds the node identity
@@ -76,7 +76,7 @@ class ClusterBatch:
     X: np.ndarray  # (n_pts, d)
     F: np.ndarray  # (n_pts, fd)
     G: np.ndarray | None  # (n_pts, fd, d), or None when gradients are not carried
-    sizes: np.ndarray  # (n_clusters,) int64
+    counts: np.ndarray  # (n_clusters,) int64
     depth: np.ndarray | None = None  # (n_clusters,) int64; None means all roots
     root: np.ndarray | None = None  # (n_clusters,) int64, ART
     locational_code: np.ndarray | None = None  # (n_clusters,) int64, ART: pi in the companion (root = 1)
@@ -84,9 +84,9 @@ class ClusterBatch:
     starts: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.starts = np.r_[0, np.cumsum(self.sizes)[:-1]]
+        self.starts = np.r_[0, np.cumsum(self.counts)[:-1]]
         if self.depth is None:
-            self.depth = np.zeros(len(self.sizes), dtype=np.int64)
+            self.depth = np.zeros(len(self.counts), dtype=np.int64)
 
     @classmethod
     def empty(cls, d: int, fd: int) -> "ClusterBatch":
@@ -99,7 +99,7 @@ class ClusterBatch:
 
     @property
     def n_clusters(self) -> int:
-        return len(self.sizes)
+        return len(self.counts)
 
     @property
     def n_pts(self) -> int:
@@ -137,7 +137,7 @@ class ClusterBatch:
 
     def select(self, keep: np.ndarray) -> "ClusterBatch":
         """The clusters where ``keep`` (n_clusters,) is True, in order."""
-        return self._take(np.repeat(keep, self.sizes), keep)
+        return self._take(np.repeat(keep, self.counts), keep)
 
 
 # Host RAM kept free for the OS, the GPU driver and other processes: the larger of
@@ -181,7 +181,7 @@ class ClusterQueueBuilder:
         self.d, self.fd = d, fd
         self.constraint_rows = constraint_rows
         h = constraint_rows or 0
-        present = {"X", "F", "sizes", "depth"} | ({"G"} if has_g else set())
+        present = {"X", "F", "counts", "depth"} | ({"G"} if has_g else set())
         if constraint_rows is not None:
             present |= set(ART_COLUMNS)
         self._columns = [c for c in QUEUE_COLUMNS if c.name in present]
@@ -193,7 +193,7 @@ class ClusterQueueBuilder:
         self.n_clusters = 0
 
     def append(
-        self, X: Array, F: Array, G: Array | None, sizes: Array, depth: Array | None = None,
+        self, X: Array, F: Array, G: Array | None, counts: Array, depth: Array | None = None,
         *, root: Array | None = None, locational_code: Array | None = None, constraints: Array | None = None,
     ) -> None:  # fmt: skip
         """
@@ -206,8 +206,8 @@ class ClusterQueueBuilder:
         art_columns = {"root": root, "locational_code": locational_code, "constraints": constraints}
         if self.constraint_rows is not None and any(v is None for v in art_columns.values()):
             raise ValueError("An ART builder needs root, locational_code and constraints.")
-        sizes_host = to_host(sizes)
-        values = {"X": to_host(X), "F": to_host(F), "sizes": sizes_host}
+        counts_host = to_host(counts)
+        values = {"X": to_host(X), "F": to_host(F), "counts": counts_host}
         if "G" in self._buf:
             values["G"] = to_host(G)
         if self.constraint_rows is not None:
@@ -218,14 +218,14 @@ class ClusterQueueBuilder:
                     f"Clusters carry {c.shape[1]} constraint rows; this builder holds {self.constraint_rows}."
                 )
         n_new = int(values["X"].shape[0])
-        if int(sizes_host.sum()) != n_new or len(values["F"]) != n_new:
+        if int(counts_host.sum()) != n_new or len(values["F"]) != n_new:
             raise ValueError(
-                f"Cluster sizes add up to {int(sizes_host.sum())}, but X has "
+                f"Cluster counts add up to {int(counts_host.sum())}, but X has "
                 f"{n_new} rows and F has {len(values['F'])}."
             )
 
         pts_end = self.n_pts + n_new
-        clusters_end = self.n_clusters + int(sizes_host.shape[0])
+        clusters_end = self.n_clusters + int(counts_host.shape[0])
         # Rows written into reserved capacity become resident too, so check every
         # append (plus the copy if the buffers must grow), not only growth.
         grow = pts_end > self._buf["X"].shape[0]
@@ -252,7 +252,7 @@ class ClusterQueueBuilder:
             return ClusterBatch.empty(self.d, self.fd)
         ends = {"point": self.n_pts, "cluster": self.n_clusters}
         batch = ClusterBatch(**{"G": None, **{c.name: self._buf[c.name][: ends[c.scope]] for c in self._columns}})
-        nonempty = batch.sizes > 0
+        nonempty = batch.counts > 0
         return batch if np.all(nonempty) else batch.select(nonempty)
 
     def _row_bytes(self) -> int:

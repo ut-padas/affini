@@ -13,14 +13,14 @@ from src.config import TrainingConfig
 F = np.array([[1.0, 2.0], [3.0, 4.0], [2.0, 1.0], [4.0, -2.0]])
 F_HAT = F.copy()
 F_HAT[3, 0] += 0.5
-STARTS, SIZES = np.array([0, 2]), np.array([2, 2])
+STARTS, COUNTS = np.array([0, 2]), np.array([2, 2])
 
 
 def _errors(metric, atol, rtol):
     config = TrainingConfig(
         mode=SurrogateMode.AFFINE_COV_HESS, atol=atol, rtol=rtol, error_metric=metric
     )
-    out = cluster_errors(config, xp.asarray(F), xp.asarray(F_HAT), xp.asarray(STARTS), xp.asarray(SIZES))
+    out = cluster_errors(config, xp.asarray(F), xp.asarray(F_HAT), xp.asarray(STARTS), xp.asarray(COUNTS))
     return tuple(to_host(a) for a in out)
 
 

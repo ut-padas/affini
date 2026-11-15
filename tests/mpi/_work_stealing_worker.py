@@ -82,7 +82,7 @@ def main():
                     if rank == 0
                     else np.empty((0, 1))
                 )
-                sizes = (
+                counts = (
                     np.full(8, points_per_cluster, dtype=np.int64)
                     if rank == 0
                     else np.empty(0, dtype=np.int64)
@@ -107,7 +107,7 @@ def main():
                         x,
                         np.ones_like(x),
                         np.ones((len(x), 1, 1)) if has_g else None,
-                        sizes,
+                        counts,
                     ),
                     comm=comm,
                     profiler=Profiler(new_profiling_stats(), rank=rank),
