@@ -65,7 +65,11 @@
       "#1f5fa8",
       "#ef7d1a",
       "#2e7d32",
-      "#6a1b9a"
+      "#6a1b9a",
+      "#c0392b",
+      "#00838f",
+      "#e1a800",
+      "#d81b8a"
     ],
     "residual_mid": "#f2f2f2",
     "error": [
@@ -247,7 +251,13 @@
       "art_worst": 1.2,
       "afinni_worst": 5.3,
       "art_mse": 0.32,
-      "afinni_mse": 1.416
+      "afinni_mse": 1.416,
+      "bins": {
+        "n_bins": 16,
+        "per_bin": 3.8,
+        "chosen_cut": 4,
+        "chosen_error": 0.508
+      }
     },
     "route": {
       "depth": 6,
@@ -305,14 +315,14 @@
         "#c0392b",
         "#6d3b0f",
         "#7cb342",
-        "#c0392b",
+        "#e1a800",
         "#1f5fa8"
       ],
       "plane_colours": [
-        "#1f5fa8",
+        "#c0392b",
         "#6d3b0f",
-        "#ef7d1a",
-        "#6a1b9a"
+        "#7cb342",
+        "#e1a800"
       ],
       "level_nodes": [
         1,
@@ -341,6 +351,45 @@
           0.79,
           -0.61,
           -0.08
+        ]
+      ]
+    },
+    "queue_blocks": {
+      "shapes": [
+        [
+          1,
+          0,
+          1
+        ],
+        [
+          2,
+          1,
+          2
+        ],
+        [
+          4,
+          2,
+          4
+        ],
+        [
+          8,
+          3,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ],
+        [
+          8,
+          5,
+          1
+        ],
+        [
+          2,
+          6,
+          0
         ]
       ]
     },
@@ -524,17 +573,84 @@
     "flagged_on_line": 0
   },
   "steal": {
-    "leaves": 283,
+    "leaves": 1462,
     "leaves_per_rank": [
-      56,
-      32,
-      93,
-      102
+      329,
+      179,
+      289,
+      233,
+      96,
+      336
     ],
-    "steals": 13,
-    "ranks": 4,
-    "atol": 0.05,
+    "steals": 21,
+    "ranks": 6,
+    "atol": 0.01,
     "batch_size": 240,
-    "depth": 12
+    "depth": 17,
+    "runs": {
+      "root_static": {
+        "wall": "7.21",
+        "speedup": "1.0",
+        "wall_range": "7.17\u20137.38",
+        "idle_percent": 83,
+        "leaves_per_rank": [
+          1462,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "grants": 0
+      },
+      "root_steal": {
+        "wall": "1.95",
+        "speedup": "3.7",
+        "wall_range": "1.94\u20131.96",
+        "idle_percent": 16,
+        "leaves_per_rank": [
+          329,
+          179,
+          289,
+          233,
+          96,
+          336
+        ],
+        "grants": 21
+      },
+      "grid_static": {
+        "wall": "2.08",
+        "speedup": "3.5",
+        "wall_range": "2.05\u20132.17",
+        "idle_percent": 26,
+        "leaves_per_rank": [
+          326,
+          208,
+          163,
+          233,
+          319,
+          205
+        ],
+        "grants": 0
+      },
+      "grid_steal": {
+        "wall": "1.77",
+        "speedup": "4.1",
+        "wall_range": "1.77\u20132.15",
+        "idle_percent": 8,
+        "leaves_per_rank": [
+          185,
+          286,
+          304,
+          228,
+          150,
+          301
+        ],
+        "grants": 7
+      }
+    },
+    "grid_leaves": 1454,
+    "repeats": 3,
+    "cpus": 6
   }
 }

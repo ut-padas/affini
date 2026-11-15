@@ -37,7 +37,7 @@ help:
 	@echo "  format / lint    - ruff format / ruff check"
 	@echo "  report           - Compile the technical companion to docs/report/adaptive-surrogates.pdf (needs typst)"
 	@echo "  report-figures   - Regenerate the companion's panels and numbers (docs/report/figures/)"
-	@echo "  report-steals    - Record the companion's 4-rank work-stealing run again (needs an MPI extra)"
+	@echo "  report-steals    - Record the companion's 6-rank work-stealing runs again (needs an MPI extra)"
 	@echo "  paper-experiments- Run run_paper_experiments.sh"
 
 # --- Research & development --------------------------------------------------
@@ -106,8 +106,12 @@ report:
 report-figures:
 	AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. uv run python docs/report/figures/make_figures.py
 
+# STEAL_CPUS pins the ranks to cores of one speed (on a hybrid CPU, its performance cores),
+# e.g. make report-steals STEAL_CPUS=0-5; the companion's run used six such cores.
+STEAL_CPUS ?=
 report-steals:
-	AFINNI_DEVICE=cpu AFINNI_MPI=on PYTHONPATH=. uv run mpiexec -n 4 python docs/report/figures/make_figures.py --record-steals
+	AFINNI_DEVICE=cpu AFINNI_MPI=on PYTHONPATH=. OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 \
+		$(if $(STEAL_CPUS),taskset -c $(STEAL_CPUS)) uv run mpiexec -n 6 python docs/report/figures/make_figures.py --record-steals
 
 paper-experiments:
 	bash run_paper_experiments.sh

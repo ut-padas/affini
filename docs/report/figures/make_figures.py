@@ -20,6 +20,7 @@ under ``mpiexec -n 4``.
 import argparse
 import json
 import logging
+import os
 import re
 import warnings
 from dataclasses import dataclass, field
@@ -41,12 +42,14 @@ import src.art.plan as art_plan_module  # noqa: E402
 from src import IS_CUPY_BACKEND, get_mpi_rank, to_host  # noqa: E402
 from src.afinni.plan import AFINNIPlan  # noqa: E402
 from src.art.constants import MAX_DEPTH_LIMIT  # noqa: E402
+from src.art.geometry import plane_scores  # noqa: E402
 from src.art.plan import ARTPlan  # noqa: E402
 from src.art.split_search import SplitRows, hard_sse, soft_gates, soft_objective  # noqa: E402
 from src.components.splitting import SPLIT_STRATEGIES, SplitData  # noqa: E402
 from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.kernels import source as kernel_source  # noqa: E402
+from src.numerics import grid_cell_coords  # noqa: E402
 from src.numerics.segments import SEGMENT_CHUNK  # noqa: E402
 from src.surrogate import AFINNISurrogate  # noqa: E402
 
@@ -70,14 +73,15 @@ AUDIT_POINTS = 2000
 FOREST_ROOTS = 4  # the grid-root run of the locational-code section
 # The 4-rank run of the work-stealing panels: a tighter tolerance and small batches, so the
 # tree is large enough, and its levels have enough batches, for steals to happen.
-STEAL = {"atol": 0.05, "batch_size": 240, "steal_min_load": 240, "steal_size": 120, "max_levels": 20, "ranks": 4}
+STEAL = {"atol": 0.01, "batch_size": 240, "steal_min_load": 240, "steal_size": 120, "max_levels": 20, "ranks": 6,
+         "repeats": 3}
 
 # ----------------------------------------------------------------------------- style
 PALETTE = ["#c0392b", "#e1a800", "#2e7d32", "#1f5fa8", "#6d3b0f", "#ef7d1a", "#6a1b9a", "#d81b8a",
            "#00838f", "#7cb342", "#5c6bc0", "#a1887f", "#f06292", "#26a69a", "#8d6e63", "#3949ab"]  # fmt: skip
 GREY, LIGHT, DARK, RED, BLUE, GOLD, GREEN = "#8a8a8a", "#d6d6d6", "#424242", "#c0392b", "#1f5fa8", "#e1a800", "#2e7d32"
 PINK, CYAN = "#d81b8a", "#00a6c7"
-RANKS = ["#1f5fa8", "#ef7d1a", "#2e7d32", "#6a1b9a"]
+RANKS = ["#1f5fa8", "#ef7d1a", "#2e7d32", "#6a1b9a", "#c0392b", "#00838f", "#e1a800", "#d81b8a"]
 # Level sets of f, light where f is small: the background of every map of the domain.
 BACKGROUND = LinearSegmentedColormap.from_list("level", ["#ffffff", "#e9edf3", "#c3cad6"])
 # Signed error of a local model in units of the tolerance: white inside it, saturated beyond.
@@ -142,12 +146,24 @@ class Node:
 
 
 def colour_nodes(nodes: list[Node]) -> None:
-    """A colour per node, numbered within its level in queue order, so siblings always differ."""
+    """
+    A colour per node, numbered within its level in queue order, so siblings always differ,
+    and skipping its ancestors' colours, so the planes along any path (each drawn in the
+    colour of the node that made it) differ too.
+    """
     seen: dict[int, int] = {}
+    previous: dict[int, str] = {}
     for n in nodes:
         k = seen.get(n.level, 0)
         seen[n.level] = k + 1
-        n.colour = PALETTE[(k + 3 * n.level) % len(PALETTE)]
+        taken, a = {previous.get(n.level)}, n.parent
+        while a is not None:
+            taken.add(nodes[a].colour)
+            a = nodes[a].parent
+        start = k + 3 * n.level
+        n.colour = next(PALETTE[(start + t) % len(PALETTE)] for t in range(len(PALETTE))
+                        if PALETTE[(start + t) % len(PALETTE)] not in taken)  # fmt: skip
+        previous[n.level] = n.colour
 
 
 def tree_layout(nodes: list[Node]) -> dict[int, tuple[float, float]]:
@@ -248,7 +264,7 @@ class Level:
     """One AFINNI level (a single batch in the example): its clusters and what became of them."""
 
     X: np.ndarray | None  # points of every queued cluster, cluster by cluster
-    sizes: np.ndarray | None
+    counts: np.ndarray | None
     centroids: np.ndarray
     good: np.ndarray  # accepted, after the deployed-model re-test
     split: SplitData | None = None  # the rejected clusters after augmentation (host copies)
@@ -264,16 +280,16 @@ def record_afinni() -> tuple[AFINNISurrogate, list[Level], np.ndarray]:
     def process_batch(self, batch, **kw):
         if batch.index != 0:
             raise SystemExit("The example must fit one batch per level.")
-        X, sizes = to_host(batch.X).copy(), to_host(batch.sizes).copy()
+        X, counts = to_host(batch.X).copy(), to_host(batch.counts).copy()
         out = pb(self, batch, **kw)
         lv = levels[-1]
-        lv.X, lv.sizes, lv.good = X, sizes, to_host(lv.good).copy()
+        lv.X, lv.counts, lv.good = X, counts, to_host(lv.good).copy()
         return out
 
     def fit_and_accept(self, X, F, G, batch, components, evaluator, timer):
         out = fit(self, X, F, G, batch, components, evaluator, timer)
         # is_good is kept by reference: the deploy stage may still reject a cluster in place.
-        levels.append(Level(X=None, sizes=None, centroids=to_host(out[0].centroids).copy(), good=out[2]))
+        levels.append(Level(X=None, counts=None, centroids=to_host(out[0].centroids).copy(), good=out[2]))
         return out
 
     def split_rejected(self, data, bad_idx, depth, splitter, next_level, timer):
@@ -308,13 +324,13 @@ def afinni_forest(levels: list[Level]) -> list[Node]:
     nodes: list[Node] = []
     queue: list[int] = []
     for k, lv in enumerate(levels):
-        starts = np.r_[0, np.cumsum(lv.sizes)[:-1]]
+        starts = np.r_[0, np.cumsum(lv.counts)[:-1]]
         if k == 0:
-            for s0, n in zip(starts, lv.sizes, strict=True):
+            for s0, n in zip(starts, lv.counts, strict=True):
                 nodes.append(Node(0, None, lv.X[s0 : s0 + n]))
                 queue.append(len(nodes) - 1)
         for c, nid in enumerate(queue):
-            if not np.array_equal(nodes[nid].X, lv.X[starts[c] : starts[c] + lv.sizes[c]]):
+            if not np.array_equal(nodes[nid].X, lv.X[starts[c] : starts[c] + lv.counts[c]]):
                 raise SystemExit("The rebuilt AFINNI forest does not match the recorded queue.")
             nodes[nid].leaf, nodes[nid].centroid = bool(lv.good[c]), lv.centroids[c]
         rejected = [nid for c, nid in enumerate(queue) if not lv.good[c]]
@@ -371,12 +387,12 @@ def record_art() -> tuple[AFINNISurrogate, dict, dict, ARTPlan]:
         if not plans:
             plans.append(self)
         current["codes"] = to_host(batch.queue.locational_code[batch.cut]).tolist()
-        current["sizes"] = to_host(batch.sizes).tolist()
+        current["inherited"] = to_host(batch.counts).tolist()
         return pb(self, batch, **kw)
 
     def fit_data(**kw):
-        X, starts, sizes = to_host(kw["X"]), to_host(kw["starts"]), to_host(kw["sizes"])
-        for code, inherited, s0, n in zip(current["codes"], current["sizes"], starts, sizes, strict=True):
+        X, starts, counts = to_host(kw["X"]), to_host(kw["starts"]), to_host(kw["counts"])
+        for code, inherited, s0, n in zip(current["codes"], current["inherited"], starts, counts, strict=True):
             points[code] = (X[s0 : s0 + n].copy(), int(inherited))
         return cfd(**kw)
 
@@ -604,7 +620,7 @@ def afinni_levels(nodes: list[Node], levels: list[Level]) -> dict:
         if not lv.good.all():  # the report shows the errors of the levels that still reject clusters
             panel(f"afinni-error-{k}", errors)
         worst = [float(np.abs(affine_fit(n.X, f_np(n.X))[2]).max()) for n in nodes if n.level == k]
-        out.append({"clusters": int(len(lv.sizes)), "accepted": int(lv.good.sum()), "points": int(lv.sizes.sum()),
+        out.append({"clusters": int(len(lv.counts)), "accepted": int(lv.good.sum()), "points": int(lv.counts.sum()),
                     "worst_error": round(max(worst), 2)})  # fmt: skip
     return {"levels": out, "n_levels": len(levels)}
 
@@ -618,9 +634,9 @@ def check_affine_fit(s: AFINNISurrogate, nodes: list[Node]) -> None:
             raise SystemExit("The restated affine fit differs from the library's leaf model.")
 
 
-def child_error(X: np.ndarray, order: np.ndarray, sizes: np.ndarray) -> float:
+def child_error(X: np.ndarray, order: np.ndarray, child_counts: np.ndarray) -> float:
     """The larger of the two children's worst errors, each child fitted on its own points."""
-    halves = (X[order[: sizes[0]]], X[order[sizes[0] :]])
+    halves = (X[order[: child_counts[0]]], X[order[child_counts[0] :]])
     return max(float(np.abs(affine_fit(h, f_np(h))[2]).max()) for h in halves)
 
 
@@ -639,8 +655,8 @@ def afinni_split(levels: list[Level]) -> dict:
     def direction(strategy, data: SplitData):
         M, C = (to_host(a)[0] for a in strategy.metric(data))
         a = M @ np.linalg.eigh(C)[1][:, -1]
-        order, sizes = (to_host(v) for v in strategy.split(data))
-        return a / np.linalg.norm(a), order, sizes
+        order, child_counts = (to_host(v) for v in strategy.split(data))
+        return a / np.linalg.norm(a), order, child_counts
 
     # Every rejected cluster under both cuts; the panels show the one where they differ most.
     table = []
@@ -679,11 +695,11 @@ def afinni_split(levels: list[Level]) -> dict:
     ev, evec = np.linalg.eigh(H_true)
     H_abs = evec @ np.diag(np.abs(ev)) @ evec.T
 
-    def halves(ax, a, order, sizes):
+    def halves(ax, a, order, child_counts):
         s = (X - c) @ a
-        tau = 0.5 * (np.sort(s)[sizes[0] - 1] + np.sort(s)[sizes[0]])
-        ax.scatter(*X[order[: sizes[0]]].T, s=5, c=PINK, lw=0, zorder=3)
-        ax.scatter(*X[order[sizes[0] :]].T, s=5, c=CYAN, lw=0, zorder=3)
+        tau = 0.5 * (np.sort(s)[child_counts[0] - 1] + np.sort(s)[child_counts[0]])
+        ax.scatter(*X[order[: child_counts[0]]].T, s=5, c=PINK, lw=0, zorder=3)
+        ax.scatter(*X[order[child_counts[0] :]].T, s=5, c=CYAN, lw=0, zorder=3)
         cut_line(ax, c + tau * a, a)
         arrow(ax, c, c + 0.55 * a)
         cross(ax, c, RED, size=60)
@@ -711,7 +727,7 @@ def afinni_split(levels: list[Level]) -> dict:
     panel("afinni-hess-levelset", level_set_panel, view=view)
 
     # Augmentation: the rejected cluster that received the most new points (originals come first).
-    grown = [(int(lv_.split.counts[jj] - lv_.sizes[~lv_.good][jj]), kk, jj) for kk, lv_ in enumerate(levels)
+    grown = [(int(lv_.split.counts[jj] - lv_.counts[~lv_.good][jj]), kk, jj) for kk, lv_ in enumerate(levels)
              if lv_.split is not None for jj in range(len(lv_.split.counts))]  # fmt: skip
     n_new, ka, ja = max(grown)
     Xa = levels[ka].split.X[levels[ka].split.labels == ja]
@@ -820,7 +836,7 @@ def afinni_trust(s: AFINNISurrogate, nodes: list[Node]) -> dict:
 def queue_strips(nodes: list[Node], levels: list[Level]) -> None:
     """Each level's queue as one strip: clusters stored back to back, children next to each other."""
     fig, ax = plt.subplots(figsize=(6.2, 0.36 * len(levels) + 0.3))
-    total = max(int(lv.sizes.sum()) for lv in levels)
+    total = max(int(lv.counts.sum()) for lv in levels)
     left: dict[int, tuple[float, float]] = {}
     for k in range(len(levels)):
         x = 0.0
@@ -853,8 +869,8 @@ def queue_layout(nodes: list[Node], levels: list[Level], level: int = 2, batch_s
     order is the rebuilt forest's, which ``afinni_forest`` checked against the recorded queue.
     """
     here = [i for i, n in enumerate(nodes) if n.level == level]
-    sizes = np.array([len(nodes[i].X) for i in here])
-    cumsum = np.cumsum(sizes)
+    counts = np.array([len(nodes[i].X) for i in here])
+    cumsum = np.cumsum(counts)
     starts = np.r_[0, cumsum[:-1]]
 
     def batch_ends(cum: np.ndarray) -> list[int]:
@@ -897,14 +913,14 @@ def queue_layout(nodes: list[Node], levels: list[Level], level: int = 2, batch_s
     # 1. Level `level`: clusters back to back; each rejected one labelled with its rank j among the rejected.
     for k, (i, x0) in enumerate(zip(here, starts, strict=True)):
         j = rejected.index(i) if i in rejected else None
-        block(x0, y_top, sizes[k], nodes[i], str(k) if j is None else f"{k}\n", fade=nodes[i].leaf)
+        block(x0, y_top, counts[k], nodes[i], str(k) if j is None else f"{k}\n", fade=nodes[i].leaf)
         if j is not None:
-            ax.text(x0 + sizes[k] / 2, y_top - 0.11, f"j={j}", ha="center", va="center", fontsize=5.0, zorder=5,
+            ax.text(x0 + counts[k] / 2, y_top - 0.11, f"j={j}", ha="center", va="center", fontsize=5.0, zorder=5,
                     color=ink(nodes[i].colour))  # fmt: skip
 
     # 2. Its rows: one cluster magnified, a run of consecutive rows of X and F.
-    k_show = int(np.argmax(sizes))
-    x0, w0 = int(starts[k_show]), int(sizes[k_show])
+    k_show = int(np.argmax(counts))
+    x0, w0 = int(starts[k_show]), int(counts[k_show])
     zh = 0.22
     rows = [x0, x0 + 1, x0 + 2, None, x0 + w0 - 2, x0 + w0 - 1]
     cell = 0.055 * total
@@ -920,7 +936,7 @@ def queue_layout(nodes: list[Node], levels: list[Level], level: int = 2, batch_s
     for xa, xb in ((x0, zx), (x0 + w0, zx + len(rows) * cell)):
         ax.plot([xa, xb], [y_top + h / 2, y_zoom - zh / 2], color=GREY, lw=0.5, ls=(0, (2, 2)), zorder=1)
     ax.text(zx + len(rows) * cell + 0.015 * total, y_zoom, f"cluster {k_show}: rows {x0} to {x0 + w0 - 1} of X and F,\n"
-            f"starts[{k_show}] = {x0}, sizes[{k_show}] = {w0}", ha="left", va="center", fontsize=5.8, color=DARK)  # fmt: skip
+            f"starts[{k_show}] = {x0}, counts[{k_show}] = {w0}", ha="left", va="center", fontsize=5.8, color=DARK)  # fmt: skip
 
     # 3. Batches: whole clusters, each ending at the first cluster that crosses the next multiple of batch_size.
     for g in range(1, int(cumsum[-1] // batch_size) + 1):
@@ -945,7 +961,7 @@ def queue_layout(nodes: list[Node], levels: list[Level], level: int = 2, batch_s
         for side, c in enumerate(nodes[i].children):
             w = len(nodes[c].X)
             block(x, y_bot, w, nodes[c], f"{2 * j + side}", new=child_new[c])
-            ax.plot([starts[k] + sizes[k] * (0.3 + 0.4 * side), x + w / 2], [y_top - h / 2, y_bot + h / 2],
+            ax.plot([starts[k] + counts[k] * (0.3 + 0.4 * side), x + w / 2], [y_top - h / 2, y_bot + h / 2],
                     color=nodes[i].colour, lw=0.9, alpha=0.85, zorder=1)  # fmt: skip
             x += w
     # The next level's batches, cut the same way, below its row; then its tail, below them.
@@ -1051,13 +1067,13 @@ def polytope_node(nodes: list[Node]) -> Node:
 def ancestor_planes(ax, nodes: list[Node], lineage: list[int], polygon: np.ndarray, kept: bool = False) -> None:
     """
     The planes of ``lineage`` (root first, as indices; the last entry is the node itself), each
-    numbered by its depth + 1 in its own colour, at the spot on the plane clearest of
+    numbered by its depth + 1 in the colour of the node it split, at the spot on the plane clearest of
     ``polygon`` inside the box; with ``kept``, an arrow from the plane into the side the node keeps.
     """
     centre = polygon.mean(axis=0)
     for j, (a, child) in enumerate(zip(lineage[:-1], lineage[1:], strict=True)):
         w, z = nodes[a].plane
-        colour = PALETTE[(j + 3) % len(PALETTE)]
+        colour = nodes[a].colour  # a plane is drawn in the colour of the node it split
         normal = (w / WIDTH) / np.linalg.norm(w / WIDTH)
         u = (centre - LOWER) / WIDTH
         foot = LOWER + (u + (z - w @ u) * w / (w @ w)) * WIDTH
@@ -1186,10 +1202,67 @@ def art_carry(nodes: list[Node]) -> dict:
         panel(f"art-carry-{depth}", frame, size=(1.6, 1.6))
     return {"carry": {"codes": [format(nodes[i].code, "b") for i in path],
                       "colours": [nodes[i].colour for i in path],
-                      "plane_colours": [PALETTE[(j + 3) % len(PALETTE)] for j in range(len(rows))],
+                      "plane_colours": [nodes[i].colour for i in path[:-1]],
                       # the nodes queued at each depth: the k of that level's (k, h, d + 1) block array
                       "level_nodes": [sum(n.level == t for n in nodes) for t in range(len(path))],
                       "rows": [[round(float(v), 2) for v in r] for r in rows]}}  # fmt: skip
+
+
+def art_queue_blocks(nodes: list[Node]) -> dict:
+    """
+    ART's queue level by level, as the planes it carries: every node is its block of rows, one
+    row per ancestor plane in the colour of the node that made it (hatched where the row is
+    negated, for a right child). A rejected node (outlined) writes two children whose blocks
+    are its own plus one row; an accepted one leaves for the leaves, and its block with it.
+    """
+    from matplotlib.patches import Rectangle
+
+    levels = sorted({n.level for n in nodes})
+    cell, gap, row_gap = 1.0, 1.1, 2.6
+    width = 3 * cell  # d + 1 = 3 numbers per row
+    pos: dict[int, tuple[float, float]] = {}  # node -> (x of its left edge, y of its top)
+    y = 0.0
+    shapes = []
+    for lv in levels:
+        here = [i for i, n in enumerate(nodes) if n.level == lv]
+        for k, i in enumerate(here):
+            pos[i] = (k * (width + gap), y)
+        shapes.append([len(here), lv, sum(not nodes[i].leaf for i in here)])
+        y -= max(lv, 0.6) * cell + row_gap
+    fig_w = max(len([n for n in nodes if n.level == lv]) for lv in levels) * (width + gap)
+    fig, ax = plt.subplots(figsize=(6.6, 0.33 * -y))
+    for i, n in enumerate(nodes):
+        x, yt = pos[i]
+        path = lineage_of(nodes, n)[::-1]  # root first
+        alpha = 0.35 if n.leaf else 1.0
+        if n.level == 0:
+            ax.add_patch(Rectangle((x, yt - 0.6 * cell), width, 0.6 * cell, fc="white", ec=GREY, lw=0.6, ls="--"))
+            ax.text(x + width + 0.4, yt - 0.3 * cell, "no rows: the box only", ha="left", va="center", fontsize=5.5,
+                    color=GREY)  # fmt: skip
+        for j in range(n.level):  # row j: the plane of ancestor path[j], negated if the path turned right there
+            colour = nodes[path[j]].colour
+            right = bool(nodes[path[j + 1]].code & 1)
+            ax.add_patch(Rectangle((x, yt - (j + 1) * cell), width, cell, fc=colour, ec="white", lw=0.5, alpha=alpha,
+                                   hatch="////" if right else None))  # fmt: skip
+        h = max(n.level, 0.6) * cell
+        if not n.leaf:
+            ax.add_patch(Rectangle((x, yt - h), width, h, fc="none", ec=DARK, lw=1.3, zorder=4))
+            for c in n.children:
+                cx, cy = pos[c]
+                ax.plot([x + width / 2, cx + width / 2], [yt - h, cy], color=n.colour, lw=0.8, zorder=1)
+        ax.text(x + width / 2, yt + 0.25 * cell, format(n.code, "b"), ha="center", va="bottom", fontsize=4.6,
+                color=DARK if not n.leaf else GREY)  # fmt: skip
+    for (K, lv, rejected), lvy in zip(shapes, sorted({pos[i][1] for i in pos}, reverse=True), strict=True):
+        ax.text(-1.2, lvy - max(lv, 0.6) * cell / 2, f"level {lv}", ha="right", va="center", fontsize=6.5, color=DARK)
+        ax.text(fig_w + 0.6, lvy - max(lv, 0.6) * cell / 2, f"({K}, {lv}, 3)   {K - rejected} accepted",
+                ha="left", va="center", fontsize=6, color=DARK)  # fmt: skip
+    ax.text(fig_w + 0.6, 0.9, "(K, h, d + 1)", ha="left", va="bottom", fontsize=6, color=DARK, weight="bold")
+    ax.set_xlim(-6.5, fig_w + 11)
+    ax.set_ylim(y + row_gap - 0.4, 1.4)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    save(fig, "art-queue-blocks")
+    return {"queue_blocks": {"shapes": shapes}}
 
 
 def route_passes(s: AFINNISurrogate, nodes: list[Node], n_queries: int = 8) -> dict:
@@ -1311,6 +1384,53 @@ def art_split(nodes: list[Node], searches: dict, plan: ARTPlan) -> dict:
                        ("art-split-gates", gates)):  # fmt: skip
         panel(name, draw, view=node.polygon, pad=0.12)
 
+    # The bins search along the direction it chose: the node's rows sorted by score and cut into
+    # n_bins bins of nearly equal count, at the positions ARTPlan._bins_search uses; every bin
+    # boundary is a candidate cut, and each cut's error comes from the two fits it leaves.
+    nb, m = settings.n_bins, plan.min_side
+    s_b = to_host(plane_scores(rec.U, np.broadcast_to(w_b, rec.U.shape)))  # the library's scores, to the bit
+    n_pts = len(s_b)
+    pos = np.clip(np.round(np.arange(1, nb) * n_pts / nb).astype(np.int64), m, max(n_pts - m, m))
+    pos = np.clip(pos, 1, max(n_pts - 1, 1))
+    z_cuts = np.sort(s_b)[pos]
+    cut_err = np.array([sse(rec, w_b, v) for v in z_cuts]) / n_pts
+    chosen = int(np.argmin(np.abs(z_cuts - z_b)))
+    if not (np.isclose(z_cuts[chosen], z_b) and np.isclose(cut_err[chosen], sse_b / n_pts)):
+        raise SystemExit("The bins search's plane is not one of the recomputed bin boundaries.")
+    rank = np.empty(n_pts, dtype=np.int64)
+    rank[np.argsort(s_b, kind="stable")] = np.arange(n_pts)
+    bin_of = np.searchsorted(pos, rank, side="right")
+
+    def bins_points(ax):
+        outline(ax)
+        inside = Polygon(node.polygon, closed=True, transform=ax.transData)
+        normal = x_normal(w_b)
+        along = 10.0 * np.array([-normal[1], normal[0]])
+        for j, v in enumerate(z_cuts):  # every bin boundary, clipped to the node
+            q = x_point(w_b, v)
+            line, = ax.plot(*np.array([q - along, q + along]).T, color=GOLD if j == chosen else GREY,
+                            lw=1.3 if j == chosen else 0.45, ls="--" if j == chosen else "-", zorder=2)  # fmt: skip
+            line.set_clip_path(inside)
+        left = bin_of < chosen + 1  # the chosen cut's two sides, as the children C_-1 and C_1
+        ax.scatter(*X[left].T, s=10, c=PINK, lw=0, zorder=3)
+        ax.scatter(*X[~left].T, s=10, c=CYAN, lw=0, zorder=3)
+
+    panel("art-bins-points", bins_points, view=node.polygon, pad=0.12)
+    fig, ax = plt.subplots(figsize=(2.6, 2.2))
+    ax.bar(np.arange(1, nb), cut_err, color=[GOLD if j == chosen else LIGHT for j in range(nb - 1)], width=0.75)
+    one_model = float(np.sum(affine_fit(X, F)[2] ** 2)) / ALPHA**2 / n_pts
+    ax.axhline(one_model, color=DARK, lw=0.8, ls="--")
+    ax.text(0.6, one_model * 0.97, "one model for the node", ha="left", va="top", fontsize=6.5, color=DARK)
+    ax.set_xticks(np.arange(1, nb, 2))
+    ax.tick_params(labelsize=6.5, length=2, pad=1)
+    ax.set_xlabel("cut between bins $j$ and $j + 1$", fontsize=7, labelpad=1)
+    ax.set_ylabel("mean squared error", fontsize=7, labelpad=1)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    save(fig, "art-bins-errors")
+    bins_numbers = {"n_bins": nb, "per_bin": round(n_pts / nb, 1), "chosen_cut": chosen + 1,
+                    "chosen_error": round(float(cut_err[chosen]), 3)}  # fmt: skip
+
     # Both objectives along the final normal, as functions of the offset: the hard one is a
     # staircase with a step at every point, the soft one a smooth curve an optimizer can descend.
     zs = np.linspace(*np.quantile(score, [0.04, 0.96]), 400)
@@ -1343,7 +1463,8 @@ def art_split(nodes: list[Node], searches: dict, plan: ARTPlan) -> dict:
                       "n_bins": settings.n_bins, "soft_iters": settings.soft_iters,
                       "temperature": settings.soft_temperature,
                       "art_worst": round(worst(right), 2), "afinni_worst": round(worst(afinni_low), 2),
-                      "art_mse": round(mse(right), 3), "afinni_mse": round(mse(afinni_low), 3)}}  # fmt: skip
+                      "art_mse": round(mse(right), 3), "afinni_mse": round(mse(afinni_low), 3),
+                      "bins": bins_numbers}}  # fmt: skip
 
 
 def locational_code_panels(nodes: list[Node]) -> dict:
@@ -1630,49 +1751,92 @@ def compare(afinni: AFINNISurrogate, art: AFINNISurrogate, afinni_nodes: list[No
 
 
 # ----------------------------------------------------------------------------- work stealing
-def record_steals() -> None:
-    """Under ``mpiexec -n 4``: train ART with work stealing, check its tree against a run without, store the run."""
+# The recorded runs: one root or one grid root per rank, each with and without stealing.
+STEAL_RUNS = {"root_static": (1, False), "root_steal": (1, True), "grid_static": (STEAL["ranks"], False),
+              "grid_steal": (STEAL["ranks"], True)}  # fmt: skip
 
-    def train(stealing: bool) -> AFINNISurrogate:
+
+def record_steals() -> None:
+    """
+    Under ``mpiexec -n 4``: train ART four times (a single root or one grid root per rank, each
+    with and without work stealing) after one warm-up training, so that no recorded run pays
+    for compiling the CPU kernels; check that stealing leaves each tree unchanged, and store
+    the runs.
+    """
+
+    def train(roots: int, stealing: bool) -> AFINNISurrogate:
         s = AFINNISurrogate()
         s.train(art_initial_points(), art_config(
             atol=STEAL["atol"], max_levels=STEAL["max_levels"], batch_size=STEAL["batch_size"],
-            use_work_stealing=stealing, profile_events=True,
+            num_initial_clusters=roots, use_work_stealing=stealing, profile_events=True,
             art=ARTSettings(sample_multiplier=ART_MULTIPLIER, steal_min_load=STEAL["steal_min_load"],
-                            steal_size=STEAL["steal_size"])), Evaluator(f_fn=f_xp))  # fmt: skip
+                            steal_size=STEAL["steal_size"], roots="grid" if roots > 1 else "box")),
+                Evaluator(f_fn=f_xp))  # fmt: skip
         return s
 
-    s = train(True)
-    reference = train(False)  # collective too: without stealing, every rank but 0 idles
+    train(1, True)  # warm-up: compiles every kernel on every rank
+    # Every configuration several times, interleaved; the median run is the one recorded.
+    tries = {name: [] for name in STEAL_RUNS}
+    for _ in range(STEAL["repeats"]):
+        for name, spec in STEAL_RUNS.items():  # collective: every rank trains each
+            tries[name].append(train(*spec))
     if get_mpi_rank() != 0:
         return
-    stats = s.profiling_stats
-    if len(stats["per_rank"]) != STEAL["ranks"]:
+    if any(len(m.profiling_stats["per_rank"]) != STEAL["ranks"] for ms in tries.values() for m in ms):
         raise SystemExit(f"Run under mpiexec -n {STEAL['ranks']}.")
-    def keyed(model: AFINNISurrogate) -> tuple[dict, np.ndarray]:
-        """Every split plane by its node's locational code, and the sorted leaf codes: the tree, whatever the row order."""
-        a = {k: to_host(v) for k, v in model.routing.arrays().items()}
-        planes = {int(code): (w.tobytes(), float(z))
-                  for code, w, z in zip(a["split_locational_code"], a["normal"], a["offset"], strict=True)}
-        return planes, np.sort(a["leaf_locational_code"])
+    if not all(m.converged for ms in tries.values() for m in ms):
+        raise SystemExit("A recorded run stopped at max_levels; raise STEAL['max_levels'].")
+    walls = {name: [steal_metrics([r["events"] for r in m.profiling_stats["per_rank"]])["wall"]
+                    for m in ms] for name, ms in tries.items()}  # fmt: skip
+    models = {name: ms[int(np.argsort(walls[name])[len(ms) // 2])] for name, ms in tries.items()}
 
-    tree = {k: to_host(v) for k, v in s.routing.arrays().items()}
-    (planes, leaves), (planes_ref, leaves_ref) = keyed(s), keyed(reference)
-    if planes != planes_ref or not np.array_equal(leaves, leaves_ref):
-        raise SystemExit("The tree built with work stealing differs from the one built without.")
-    counts = [int(r["num_final_clusters"]) for r in stats["per_rank"]]
+    def keyed(model: AFINNISurrogate) -> tuple[dict, list]:
+        """Every split plane by its node's (root, locational code), and the sorted leaves: the tree, whatever the row order."""
+        a = {k: to_host(v) for k, v in model.routing.arrays().items()}
+        planes = {(int(r), int(c)): (w.tobytes(), float(z)) for r, c, w, z in
+                  zip(a["split_root"], a["split_locational_code"], a["normal"], a["offset"], strict=True)}  # fmt: skip
+        return planes, sorted(zip(a["leaf_root"].tolist(), a["leaf_locational_code"].tolist(), strict=True))
+
+    for kind in ("root", "grid"):
+        trees_seen = [keyed(m) for name in (f"{kind}_steal", f"{kind}_static") for m in tries[name]]
+        if any(t != trees_seen[0] for t in trees_seen):
+            raise SystemExit(f"The {kind} trees differ between runs, with and without work stealing.")
     keep = ("kind", "t", "dur", "phase", "level", "victim", "thief", "n_pts", "n_clusters", "rank", "batch")
     kinds = ("run_start", "done", "steal_grant", "steal_received")
-    events = [[{k: (round(v, 4) if isinstance(v, float) else v) for k, v in e.items() if k in keep}
-               for e in r["events"] if e["kind"] in kinds or e.get("phase") == "time_idle"]
-              for r in stats["per_rank"]]  # fmt: skip
-    data = {"settings": STEAL, "leaves": int(s.N_src), "leaves_per_rank": counts,
-            # Leaves are gathered in rank order, so the first counts[0] leaves were built by rank 0.
-            "leaf_locational_codes": np.asarray(s.art_leaves["locational_code"]).tolist(),
-            "split_locational_codes": tree["split_locational_code"].tolist(), "w": tree["normal"].tolist(), "z": tree["offset"].tolist(),
-            "events": events}  # fmt: skip
-    (OUT / "steal_run.json").write_text(json.dumps(data) + "\n")
-    print(f"recorded {data['leaves']} leaves, {counts} per rank; the tree equals the one built without stealing")
+    runs, trees = {}, {}
+    for name, m in models.items():
+        stats = m.profiling_stats
+        a = {k: to_host(v) for k, v in m.routing.arrays().items()}
+        runs[name] = {
+            "walls": [round(w, 4) for w in walls[name]],
+            "leaves_per_rank": [int(r["num_final_clusters"]) for r in stats["per_rank"]],
+            # Leaves are gathered in rank order, so the first leaves_per_rank[0] were built by rank 0.
+            "leaves": [[int(r), int(c)] for r, c in zip(a["leaf_root"], a["leaf_locational_code"], strict=True)],
+            "events": [[{k: (round(v, 4) if isinstance(v, float) else v) for k, v in e.items() if k in keep}
+                        for e in r["events"] if e["kind"] in kinds or e.get("phase") == "time_idle"]
+                       for r in stats["per_rank"]],
+        }  # fmt: skip
+        trees[name.split("_")[0]] = {"bins": a["root_bins"].tolist(), "split": [
+            [int(r), int(c), w.tolist(), float(z)]
+            for r, c, w, z in zip(a["split_root"], a["split_locational_code"], a["normal"], a["offset"], strict=True)]}
+    # The CPUs the ranks ran on: timings are only comparable on cores of one speed.
+    cpus = sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else []
+    (OUT / "steal_run.json").write_text(json.dumps({"settings": STEAL, "cpus": cpus, "runs": runs, "trees": trees}) + "\n")
+    print("recorded", {k: v["leaves_per_rank"] for k, v in runs.items()}, "; stealing leaves both trees unchanged")
+
+
+def forest_region(planes: dict, bins: np.ndarray, r: int, code: int) -> np.ndarray:
+    """
+    The polygon (x coordinates) of node ``code`` of root ``r``: root r's grid cell, row-major
+    over ``bins`` as ``Roots.root_of`` numbers them, cut by the planes ``planes[(r, code)]``
+    of its ancestors from the root down.
+    """
+    lo_u, hi_u = grid_cell_coords(np.array([r]), bins)[0] / bins, (grid_cell_coords(np.array([r]), bins)[0] + 1) / bins
+    lo, hi = LOWER + lo_u * WIDTH, LOWER + hi_u * WIDTH
+    poly = np.array([lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]])
+    for shift in range(code.bit_length() - 2, -1, -1):  # one bit per level
+        poly = clip(poly, *planes[(r, code >> (shift + 1))], keep_right=bool((code >> shift) & 1))
+    return poly
 
 
 def art_forest_panel() -> dict:
@@ -1691,16 +1855,10 @@ def art_forest_panel() -> dict:
               zip(a["split_root"], a["split_locational_code"], a["normal"], a["offset"], strict=True)}  # fmt: skip
 
     def root_cell(r: int) -> np.ndarray:
-        """Root r's grid cell, row-major over the bins as Roots.root_of numbers them."""
-        cell = np.array([r // bins[1], r % bins[1]])
-        lo, hi = LOWER + cell / bins * WIDTH, LOWER + (cell + 1) / bins * WIDTH
-        return np.array([lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]])
+        return forest_region(planes, bins, r, 1)
 
     def region(r: int, code: int) -> np.ndarray:
-        poly = root_cell(r)
-        for shift in range(code.bit_length() - 2, -1, -1):  # from the root down, one bit per level
-            poly = clip(poly, *planes[(r, code >> (shift + 1))], keep_right=bool((code >> shift) & 1))
-        return poly
+        return forest_region(planes, bins, r, code)
 
     nodes = {(int(r), int(c)) for r, c in zip(a["leaf_root"], a["leaf_locational_code"], strict=True)} | set(planes)
     by_code: dict[int, list[int]] = {}
@@ -1734,49 +1892,87 @@ def art_forest_panel() -> dict:
                        "pair": pair, "trees_with_code": len(by_code[shared])}}  # fmt: skip
 
 
-def steal_panels() -> dict:
-    """The recorded 4-rank run: who was working when, and which rank built which leaf."""
-    run = json.loads((OUT / "steal_run.json").read_text())
-    events, P = run["events"], run["settings"]["ranks"]
+def steal_metrics(events: list) -> dict:
+    """Wall time and, per rank, the time it worked: from its start to its end, minus its idle phases."""
+    start = min(e["t"] for ev in events for e in ev if e["kind"] == "run_start")
     end = max(e["t"] for ev in events for e in ev if e["kind"] == "done")
-    fig, ax = plt.subplots(figsize=(6.2, 1.2))
-    for r, ev in enumerate(events):
-        ax.add_patch(plt.Rectangle((0, r - 0.3), end, 0.6, fc=RANKS[r], ec="none", zorder=1))
-        for e in ev:
-            if e.get("phase") == "time_idle":
-                ax.add_patch(plt.Rectangle((e["t"], r - 0.3), e["dur"], 0.6, fc="#eeeeee", ec="none", zorder=2))
-    received = [e for ev in events for e in ev if e["kind"] == "steal_received"]
-    for e in received:
-        a, b = e["victim"], e["rank"]
-        arrow(ax, (e["t"], a + (0.3 if b > a else -0.3)), (e["t"], b - (0.3 if b > a else -0.3)), colour=DARK, lw=0.7, scale=5)
-    ax.set_yticks(range(P), [f"rank {r}" for r in range(P)], fontsize=6.5)
-    ax.set_ylim(P - 0.45, -0.55)
-    ax.set_xlim(0, end)
-    ax.set_xlabel("time (s)", fontsize=6.5, labelpad=1)
-    ax.tick_params(labelsize=5.5, length=2, pad=1)
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
+    busy = []
+    for ev in events:
+        own_start = min(e["t"] for e in ev if e["kind"] == "run_start")
+        own_end = max(e["t"] for e in ev if e["kind"] == "done")
+        idle = sum(e["dur"] for e in ev if e.get("phase") == "time_idle")
+        busy.append(own_end - own_start - idle)
+    wall = end - start
+    return {"wall": wall, "busy": busy, "idle_percent": 100 * (1 - sum(busy) / (len(events) * wall))}
+
+
+def steal_panels() -> dict:
+    """The recorded runs: who was working when, which rank built which leaf, and what stealing changed."""
+    data = json.loads((OUT / "steal_run.json").read_text())
+    runs, P = data["runs"], data["settings"]["ranks"]
+    names = list(STEAL_RUNS)
+    metrics = {n: steal_metrics(runs[n]["events"]) for n in names}
+    titles = {"root_steal": "one root, stealing", "root_static": "one root, no stealing",
+              "grid_steal": f"{P} roots, stealing", "grid_static": f"{P} roots, no stealing"}  # fmt: skip
+
+    # The single-root run without stealing on its own time axis (it would squeeze the others);
+    # the other three on one shared axis, so they compare directly.
+    slow = max(names, key=lambda m: metrics[m]["wall"])
+    shared_end = max(metrics[m]["wall"] for m in names if m != slow)
+    fig, axes = plt.subplots(len(names), 1, figsize=(6.2, 0.16 * P * len(names) + 0.5), gridspec_kw={"hspace": 0.75})
+    for ax, n in zip(axes, names, strict=True):
+        end = metrics[n]["wall"] if n == slow else shared_end
+        events = runs[n]["events"]
+        t0 = min(e["t"] for ev in events for e in ev if e["kind"] == "run_start")
+        for r, ev in enumerate(events):
+            own_end = max(e["t"] for e in ev if e["kind"] == "done") - t0
+            ax.add_patch(plt.Rectangle((0, r - 0.32), own_end, 0.64, fc=RANKS[r], ec="none", zorder=1))
+            for e in ev:
+                if e.get("phase") == "time_idle":
+                    ax.add_patch(plt.Rectangle((e["t"] - t0, r - 0.32), e["dur"], 0.64, fc="#eeeeee", ec="none", zorder=2))
+        for e in (e for ev in events for e in ev if e["kind"] == "steal_received"):
+            a_, b_ = e["victim"], e["rank"]
+            arrow(ax, (e["t"] - t0, a_ + (0.32 if b_ > a_ else -0.32)), (e["t"] - t0, b_ - (0.32 if b_ > a_ else -0.32)),
+                  colour=DARK, lw=0.6, scale=4)  # fmt: skip
+        ax.set_yticks(range(P), [f"rank {r}" for r in range(P)], fontsize=4.8)
+        ax.set_ylim(P - 0.5, -0.6)
+        ax.set_xlim(0, end)
+        ax.set_title(f"{titles[n]}: {metrics[n]['wall']:.2f} s, {metrics[n]['idle_percent']:.0f}% idle",
+                     fontsize=6.5, loc="left", pad=2, color=DARK)  # fmt: skip
+        ax.tick_params(labelsize=5.5, length=2, pad=1)
+        for side in ("top", "right", "left"):
+            ax.spines[side].set_visible(False)
+        ax.set_xlabel("time (s)", fontsize=5.5, labelpad=0)
     save(fig, "steal-timeline")
 
-    planes = {int(code): (np.array(w), z)
-              for code, w, z in zip(run["split_locational_codes"], run["w"], run["z"], strict=True)}
-    owner = np.repeat(np.arange(P), run["leaves_per_rank"])  # leaves are gathered in rank order
-    box = np.array([LOWER, [UPPER[0], LOWER[1]], UPPER, [LOWER[0], UPPER[1]]])
+    trees = {}
+    for kind, t in data["trees"].items():
+        trees[kind] = ({(r, c): (np.array(w), z) for r, c, w, z in t["split"]}, np.array(t["bins"]))
+    for n in names:
+        planes, bins = trees[n.split("_")[0]]
+        owner = np.repeat(np.arange(P), runs[n]["leaves_per_rank"])
 
-    def polygon(code: int) -> np.ndarray:
-        poly = box
-        for shift in range(code.bit_length() - 2, -1, -1):  # from the root down: one bit per level
-            poly = clip(poly, *planes[code >> (shift + 1)], keep_right=bool((code >> shift) & 1))
-        return poly
+        def owners(ax, n=n, planes=planes, bins=bins, owner=owner):
+            for (r, code), k in zip(runs[n]["leaves"], owner, strict=True):
+                ax.add_patch(Polygon(forest_region(planes, bins, r, code), closed=True, fc=RANKS[k], ec="white",
+                                     lw=0.3, alpha=0.8, zorder=1))  # fmt: skip
 
-    def owners(ax):
-        for code, r in zip(run["leaf_locational_codes"], owner, strict=True):
-            ax.add_patch(Polygon(polygon(code), closed=True, fc=RANKS[r], ec="white", lw=0.3, alpha=0.8, zorder=1))
+        panel(f"steal-owners-{n.replace('_', '-')}", owners, back=False)
 
-    panel("steal-owners", owners, back=False)
-    return {"leaves": run["leaves"], "leaves_per_rank": run["leaves_per_rank"], "steals": len(received),
-            "ranks": P, "atol": run["settings"]["atol"], "batch_size": run["settings"]["batch_size"],
-            "depth": max(p.bit_length() - 1 for p in run["leaf_locational_codes"])}  # fmt: skip
+    base = metrics["root_static"]["wall"]
+    # Formatted here, so the table shows 3.0, not 3: the numbers are quoted as recorded.
+    table = {n: {"wall": f"{metrics[n]['wall']:.2f}", "speedup": f"{base / metrics[n]['wall']:.1f}",
+                 "wall_range": f"{min(runs[n]['walls']):.2f}–{max(runs[n]['walls']):.2f}",
+                 "idle_percent": round(metrics[n]["idle_percent"]), "leaves_per_rank": runs[n]["leaves_per_rank"],
+                 "grants": sum(e["kind"] == "steal_received" for ev in runs[n]["events"] for e in ev)}
+             for n in names}  # fmt: skip
+    one = runs["root_steal"]
+    return {"leaves": sum(one["leaves_per_rank"]), "leaves_per_rank": one["leaves_per_rank"],
+            "steals": table["root_steal"]["grants"], "ranks": P, "atol": data["settings"]["atol"],
+            "batch_size": data["settings"]["batch_size"],
+            "depth": max(c.bit_length() - 1 for _, c in one["leaves"]), "runs": table,
+            "grid_leaves": sum(runs["grid_steal"]["leaves_per_rank"]), "repeats": data["settings"]["repeats"],
+            "cpus": len(data["cpus"])}  # fmt: skip
 
 
 def main() -> None:
@@ -1816,7 +2012,7 @@ def main() -> None:
     numbers["afinni"] |= queue_layout(forest, levels)
     numbers["art"] = art_levels(tree) | art_sampling(tree) | art_split(tree, searches, art_plan) | art_route(art, tree)
     numbers["art"] |= locational_code_panels(tree) | art_forest_panel()
-    numbers["art"] |= art_carry(tree) | route_passes(art, tree)
+    numbers["art"] |= art_carry(tree) | art_queue_blocks(tree) | route_passes(art, tree)
     numbers["compare"] = compare(afinni, art, forest, tree)
     # The library's own accuracy claim for the ART model: fresh uniform points, a one-sided bound.
     audit = art.audit(Evaluator(f_fn=f_xp), AUDIT_POINTS, seed=SEED)

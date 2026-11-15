@@ -4506,7 +4506,7 @@ L 128.952 1.44
    <g id="line2d_1">
     <path d="M 125.425174 -1 
 L 87.7482 131.392 
-" clip-path="url(#p820f91a44d)" style="fill: none; stroke: #1f5fa8; stroke-width: 0.9; stroke-linecap: square"/>
+" clip-path="url(#p820f91a44d)" style="fill: none; stroke: #c0392b; stroke-width: 0.9; stroke-linecap: square"/>
    </g>
    <g id="line2d_2">
     <path d="M 20.838399 -1 
@@ -4516,12 +4516,12 @@ L 73.875837 131.392
    <g id="line2d_3">
     <path d="M 36.511119 131.392 
 L 1.311593 -1 
-" clip-path="url(#p820f91a44d)" style="fill: none; stroke: #ef7d1a; stroke-width: 0.9; stroke-linecap: square"/>
+" clip-path="url(#p820f91a44d)" style="fill: none; stroke: #7cb342; stroke-width: 0.9; stroke-linecap: square"/>
    </g>
    <g id="line2d_4">
     <path d="M 90.419751 -1 
 L -1 118.163517 
-" clip-path="url(#p820f91a44d)" style="fill: none; stroke: #6a1b9a; stroke-width: 0.9; stroke-linecap: square"/>
+" clip-path="url(#p820f91a44d)" style="fill: none; stroke: #e1a800; stroke-width: 0.9; stroke-linecap: square"/>
    </g>
    <g id="PathCollection_1">
     <defs>
@@ -4636,7 +4636,7 @@ z
 " style="fill: #ffffff; opacity: 0.9"/>
     </g>
     <!-- 1 -->
-    <g style="fill: #1f5fa8" transform="translate(114.659278 30.091224) scale(0.07 -0.07)">
+    <g style="fill: #c0392b" transform="translate(114.659278 30.091224) scale(0.07 -0.07)">
      <defs>
       <path id="DejaVuSans-Bold-14" d="M 750 831 
 L 1813 831 
@@ -4704,7 +4704,7 @@ z
 " style="fill: #ffffff; opacity: 0.9"/>
     </g>
     <!-- 3 -->
-    <g style="fill: #ef7d1a" transform="translate(30.272515 118.905177) scale(0.07 -0.07)">
+    <g style="fill: #7cb342" transform="translate(30.272515 118.905177) scale(0.07 -0.07)">
      <defs>
       <path id="DejaVuSans-Bold-16" d="M 2981 2516 
 Q 3453 2394 3698 2092 
@@ -4752,7 +4752,7 @@ z
 " style="fill: #ffffff; opacity: 0.9"/>
     </g>
     <!-- 4 -->
-    <g style="fill: #6a1b9a" transform="translate(76.472279 15.824293) scale(0.07 -0.07)">
+    <g style="fill: #e1a800" transform="translate(76.472279 15.824293) scale(0.07 -0.07)">
      <defs>
       <path id="DejaVuSans-Bold-17" d="M 2356 3675 
 L 1038 1722 

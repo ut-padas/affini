@@ -268,7 +268,8 @@ objects are the same.
 #translate(
   [the function, its surrogate, the input dimension], [$f$, $fh$, $d$],
   [the initial points and their number], [$X_0$, $N$ #h(0.3em) (`X_train`)],
-  [a cluster, its points, its centre], [$C$, $X_C$, $c$],
+  [a cluster, its points, its centre. The engine's unit of work in both algorithms; in ART every cluster is a _node_ of the tree, which adds a region and a code], [$C$, $X_C$, $c$],
+  [a cluster's two children: the left one below the cut, the right one on or above it], [$Cm$, $Cp$ #h(0.3em) (ART's codes $2 pi$, $2 pi + 1$)],
   [the local model of a cluster], [$fh(x) = w^top (x - c) + b$ #h(0.3em) (`A_fit`, and `b_fit` $= b - w^top c$)],
   [the absolute and relative tolerances], [$atol$, $rtol$ #h(0.3em) (`atol`, `rtol`)],
   [the number of initial clusters; the minimum number of points in a cluster], [$Ninit$, $Nmin$ #h(0.3em) (`num_initial_clusters`, `min_pts_per_cluster`)],
@@ -281,6 +282,15 @@ objects are the same.
   [ART: a node's locational code], [$pi$ #h(0.3em) (`locational_code`)],
   [ART: the points a node is fitted on: the multiplier $m$ times the number of coefficients $p$ of an affine model], [$n = ceil(m p)$, $p = d + 1$ #h(0.3em) ($m$ is `sample_multiplier`)],
   [the MPI ranks, and the work of rank $i$], [$P$, $w_i$],
+)
+
+A batch stores its clusters' points back to back, one point per row, and three arrays
+describe the layout. Every section uses these names, and so does the code.
+
+#translate(
+  [the number of clusters in a batch], [$K$ #h(0.3em) (`K`)],
+  [the points of each cluster, and the row where each cluster starts], [`counts`, `starts` #h(0.3em) ($K$ entries each)],
+  [each row's cluster, numbered $0, ..., K - 1$ within the batch], [`labels` #h(0.3em) (one entry per row)],
 )
 
 #takeaway[Fit an affine model, test it against the tolerance, cut where it fails: AFINNI
@@ -1320,8 +1330,8 @@ measure; it does not bound the error at any particular point.
 
 #scene(side: left, width: 56%, batch-picture)[
   A batch is the points `X`, their values `F`, and one row per cluster, with every cluster
-  a run of consecutive rows (@fig:queue). The cluster sizes `counts` and their running
-  sums `starts` say where each run begins, and `labels`, each row's cluster, comes from a
+  a run of consecutive rows (@fig:queue). The points per cluster, `counts`, and their
+  running sums, `starts`, say where each run begins, and `labels`, each row's cluster, comes from a
   cumulative sum of start markers, without a sort. To sum over clusters, every run is cut
   into chunks of #ex.defaults.segment_chunk rows (two in the picture), _counted from the
   run's own first row_. One thread adds up one entry over one chunk in row order, and a
@@ -1414,37 +1424,44 @@ point later reproduces the split exactly (`ARTPlan._split`).
 #let carry-num(v, c) = box(width: 2.5em, height: 1.2em, fill: rgb(c).lighten(78%), stroke: 0.5pt + rgb(c),
   align(center + horizon, text(6.5pt, str(v))))
 #let carry-row(r, c) = stack(dir: ltr, carry-num(r.at(0), c), carry-num(r.at(1), c), h(2pt), carry-num(r.at(2), c))
-#let carry-block(depth) = stack(spacing: 3pt,
-  if depth == 0 { box(height: 1.2em, align(horizon, text(7pt, fill: grey)[no rows])) } else {
-    stack(spacing: 0pt, ..range(depth).map(j => carry-row(carry.rows.at(j), carry.plane_colours.at(j))))
-  },
-  block(above: 5pt, text(7pt, fill: grey)[level $#depth$: $(#carry.level_nodes.at(depth), #depth, 3)$]))
+#let carry-block(depth) = if depth == 0 { box(height: 1.2em, align(horizon, text(7pt, fill: grey)[no rows])) } else {
+  stack(spacing: 0pt, ..range(depth).map(j => carry-row(carry.rows.at(j), carry.plane_colours.at(j))))
+}
+#let qb = ex.art.queue_blocks.shapes
 
 To sample a rejected ART node, hit-and-run needs its polytope $Omega_C$: the root's box cut
-by every plane on the path from the root (@sec:regions). The GPU never looks these planes
-up in a tree. Every queued node _carries_ them, as a block of rows $[a^top | z]$, one per
-ancestor, each meaning $a^top u <= z$.
+by every ancestor's plane (@sec:regions). The GPU never looks these planes up in a tree.
+Every node _carries_ them, as a block of rows $[a^top | z]$, one per ancestor, each meaning
+$a^top u <= z$.
+
+#figure(panel("art-queue-blocks"), caption: [ART's queue in the running example, level by
+  level, as the planes its nodes carry. Each node (labelled by its locational code) is a
+  block with one row per ancestor plane, in the colour of the node that made the plane; a
+  hatched row is negated, because the node lies on the plane's right side. A rejected node
+  (outlined) writes two children whose blocks are its own plus one row. An accepted node
+  (pale) leaves for the leaves, and its block is dropped with it. At the right, the shape of
+  each level's array and how many of its nodes were accepted.]) <fig:queue-blocks>
+
+Read down the figure: $h$ is the level, and $K$ at the next level is twice the number of
+nodes rejected at this one, so $K$ grows only while nodes are rejected
+(#qb.map(r => str(r.at(0))).join(", ") here). For a batch, the children's blocks are one
+gather of the parents' blocks and one concatenation. The rest of a child's identity is index
+arithmetic too: its code is $2 pi$ or $2 pi + 1$, its root is its parent's, and its random
+numbers are keyed by $(r, pi)$ (@inv:rng). @fig:carry follows one node down, with the
+numbers in its rows and the planes they are.
 
 #figure(
   filmstrip(..range(carry.codes.len()).map(t => (panel("art-carry-" + str(t)), [
     $pi = #carry.codes.at(t)$ #v(2pt) #carry-block(t)]))),
   kind: image,
-  caption: [The deep node of @sec:regions and its ancestors, from the root down. Each node
-    carries one row per numbered plane, the cells $a_1, a_2 | z$ in the plane's colour; the
-    arrow marks the side it keeps. A child copies its parent's rows and appends the new
-    plane, as it is for a left child ($a^top u <= z$) and negated for a right child
-    ($-a^top u <= -z$). Below each block, the shape $(k, h, d + 1)$ of its level's whole
-    array in this run: $k$ nodes, $h$ rows each, $d + 1 = 3$ numbers per row. Rows are in
-    the unit coordinates $u$.],
+  caption: [Node #carry.codes.at(-1) of @fig:queue-blocks and its ancestors, from the root
+    down. Each frame shades the node; each numbered plane is drawn in the colour of the node
+    it split, and its arrow marks the side the node keeps. Under each frame, the node's
+    block: one row $a_1, a_2 | z$ per plane, in the unit coordinates $u$, negated for a right
+    child ($-a^top u <= -z$).],
 ) <fig:carry>
 
-So a node's block is its parent's block plus one row. For a batch of $k$ split nodes this is
-one gather of the parents' blocks and one concatenation. The rest of a child's identity is
-index arithmetic too: its locational code is $2 pi$ or $2 pi + 1$, its root is its
-parent's, and its random numbers are keyed by $(r, pi)$ (@inv:rng). There is no tree to
-walk and no counter shared between nodes.
-
-#let owner-picture = {
+#let labels-picture = {
   let chains = (3, 2, 3)
   // A node's block: h = 2 rows of d + 1 = 3 numbers, the last (z) set apart.
   let num(k) = box(width: 0.9em, height: 0.9em, fill: gpu-colours.at(k).lighten(55%), stroke: 0.5pt + white)
@@ -1455,85 +1472,131 @@ walk and no counter shared between nodes.
     row-gutter: 0.4em,
     align: center + horizon,
     row-label[chains (threads)], ..range(3).map(k => stack(dir: ltr, ..range(chains.at(k)).map(_ => cell(gpu-colours.at(k))))),
-    row-label[`owner`], ..range(3).map(k => stack(dir: ltr, ..range(chains.at(k)).map(_ => plain(str(k))))),
+    row-label[`labels`], ..range(3).map(k => stack(dir: ltr, ..range(chains.at(k)).map(_ => plain(str(k))))),
     [], ..range(3).map(_ => text(9pt)[↓]),
     row-label[blocks, $h times (d + 1)$], ..range(3).map(k => block(k)),
     row-label[node], ..range(3).map(k => text(7pt)[$#k$]),
   )
 }
 
-#scene(side: left, width: 52%, owner-picture)[
-  On the device, the blocks of a batch form one array of shape $(k, h, d + 1)$: $k$ nodes
-  in the batch (three in the picture), $h$ rows per node, one per ancestor plane, so $h$
-  is the nodes' depth (two here), and $d + 1$ numbers per row, the normal $a$ and the
-  offset $z$. @fig:carry shows $k$ and $h$ growing level by level. The `hr_walk` kernel runs one thread per chain, and a chain's `owner` is its node's row in that
-  array, so each thread reads its node's block in place. The chains of one node are
-  consecutive threads and read the same block, which the cache then serves to all of them.
-  Every node of a level has the same depth, so every thread loops over the same number of
-  rows $h$, and the threads of a warp stay in step.
+#scene(side: left, width: 52%, labels-picture)[
+  On the device, a batch's blocks form one array of shape $(K, h, d + 1)$: $K$ nodes (three
+  here), $h$ rows each (two here), and $d + 1$ numbers per row, the normal $a$ and the
+  offset $z$. The `hr_walk` kernel runs one thread per chain, one chain per new point, and a
+  chain's label is its node's row in that array, so each thread reads its node's block in
+  place. The chains of one node are consecutive threads and read the same block, which the
+  cache then serves to all of them, and every node has the same $h$, so the threads of a
+  warp loop in step.
 ]
 
-A batch with nodes of different depths would still work: a shorter block is padded with
-rows $0 <= 0$, which cut no chord. Carrying the planes has a cost, though: a node at depth
-$h$ holds $h (d + 1)$ numbers of planes, as much memory as $h$ of its points, and every child
-copies them again. The alternative, one shared table of planes that every node indexes by
-its ancestors' codes ($pi$, $floor(pi slash 2)$, $floor(pi slash 4)$, ...), would store
-each plane once. Its price is that a stolen node would need the table too, and every step of
-every chain would gather planes from scattered places in memory.
+A queue holds one level, and even a stolen queue comes from one level of one rank, so the
+nodes of a batch always share their depth. (The kernel would accept mixed depths, padding a
+short block with rows $0 <= 0$, which cut no chord, but the engine never forms such a
+batch.) Carrying the planes costs $h (d + 1)$ numbers per node, copied again by every
+child. One shared table of planes, indexed by the ancestors' codes ($pi$, $floor(pi slash 2)$,
+$floor(pi slash 4)$, ...), would store each plane once; its price is that a stolen node
+would need the table too, and every chain step would gather planes from scattered places in
+memory.
 
 === Every candidate cut in one pass
 
-#let bins-picture = {
-  let A = (2, 2, 2, 2)
-  let B = (2, 1, 1, 2)
-  let shade(k, b) = if calc.even(b) { gpu-colours.at(k) } else { gpu-colours.at(k).lighten(45%) }
-  let strip(k, bins) = stack(dir: ltr, ..bins.enumerate().map(((b, n)) =>
-    stack(dir: ltr, ..range(n).map(_ => cell(shade(k, b))))))
-  let sums(k, bins) = stack(dir: ltr, ..bins.enumerate().map(((b, n)) => span(n, $S_#(b + 1)$,
-    stroke: (bottom: 0.7pt + gpu-colours.at(k)))))
-  let side(n, body, fill) = box(width: n * cw, inset: (x: 1pt), box(width: 100%, fill: fill, inset: (y: 2.5pt),
-    align(center, text(7pt, body))))
+#let bins = ex.art.split.bins
+The bins search (@sec:plane) scores $n_"bins" - 1$ cuts along each of
+#ex.defaults.n_directions directions in every node. Refitting each candidate from its
+points would read every point once per cut.
+
+#figure(
+  filmstrip(arrows: false,
+    (panel("art-bins-points"), [#bins.n_bins bins along one direction: every boundary is a candidate]),
+    (panel("art-bins-errors"), [the error each cut leaves; the chosen one in gold])),
+  kind: image,
+  caption: [The bins search on the node of @fig:search, along the direction it chose.
+    *Left.* The node's #ex.art.split.points points, sorted by score and split into
+    #bins.n_bins bins of about #bins.per_bin points. Every boundary between bins (grey) is a
+    candidate cut. The chosen one (gold, dashed, as in @fig:search) leaves the pink points on
+    the left and the cyan ones on the right. *Right.* The mean squared error of the two fits
+    each cut leaves, in units of $atol^2$; cut #bins.chosen_cut leaves #bins.chosen_error.
+    The dashed line is one model for the whole node.],
+) <fig:bins>
+
+#let slide-picture = {
+  let bin(b, fill) = box(width: 3.2em, height: 1.5em, fill: fill, stroke: 0.6pt + white,
+    align(center + horizon, text(7.5pt, $S_#b$)))
+  let row(j) = stack(dir: ltr, ..range(1, 5).map(b => {
+    let c = if b <= j { pink.lighten(55%) } else { cyan.lighten(60%) }
+    if b == j + 1 { stack(dir: ltr, box(width: 1.6pt, height: 1.5em, fill: dark), bin(b, c)) } else { bin(b, c) }
+  }))
   grid(
-    columns: (auto, auto),
-    column-gutter: 0.5em,
-    row-gutter: 0.45em,
-    align: left + horizon,
-    row-label[sorted rows], stack(dir: ltr, strip(0, A), h(0.6em), strip(1, B)),
-    row-label[bin sums], stack(dir: ltr, sums(0, A), h(0.6em), sums(1, B)),
-    row-label[cut 1], stack(dir: ltr, side(2, $L = S_1$, luma(225)), side(6, $R = S_2 + S_3 + S_4$, luma(245))),
-    row-label[cut 2], stack(dir: ltr, side(4, $S_1 + S_2$, luma(225)), side(4, $S_3 + S_4$, luma(245))),
-    row-label[cut 3], stack(dir: ltr, side(6, $S_1 + S_2 + S_3$, luma(225)), side(2, $S_4$, luma(245))),
+    columns: (auto, auto, auto),
+    column-gutter: 0.7em,
+    row-gutter: 0.5em,
+    align: (right + horizon, left + horizon, left + horizon),
+    text(7.5pt)[bins], stack(dir: ltr, ..range(1, 5).map(b => bin(b, luma(230)))), [],
+    ..range(1, 4).map(j => (text(7.5pt)[cut #j], row(j),
+      text(7.5pt)[$L_#j = #range(1, j + 1).map(b => $S_#b$).join($+$)$, #h(0.3em)
+        $R_#j = #range(j + 1, 5).map(b => $S_#b$).join($+$)$])).flatten(),
   )
 }
 
-#scene(side: left, width: 54%, bins-picture)[
-  The bins search (@sec:plane) tries $n_"bins" - 1$ cuts along each of
-  #ex.defaults.n_directions directions, for every node of the batch. Along one direction,
-  the batch is sorted by node and score, and each node's rows are split into $n_"bins"$ bins
-  of nearly equal count (four in the picture). A bin's boundaries depend only on the node's
-  point count, so every (node, bin) pair is again a run of consecutive rows. One segmented
-  reduction over the $k dot n_"bins"$ runs gives every bin's least-squares sums $S_b$: the
-  products $Phi^top Phi$, $Phi^top y$ and $y^top y$ of its rows.
+#scene(side: left, width: 56%, slide-picture)[
+  After the sort, each bin's rows sit next to each other. One segmented reduction over the
+  $K dot n_"bins"$ (node, bin) runs gives every bin's least-squares sums $S_b$, the products
+  $Phi^top Phi$, $Phi^top y$ and $y^top y$ of its rows, in one pass over the points. A cut
+  then only decides which whole bins go left: its two fits need the sums $L_j$ and $R_j$
+  and one small $p times p$ solve each, whatever the number of points.
 ]
 
-A cut between bins $j$ and $j + 1$ (the bottom rows of the picture, for the first node)
-leaves bins $1, ..., j$ on the left and the rest on the right, so its two fits need only the sums $L_j = S_1 + dots.c + S_j$ and
-$R_j = S_(j + 1) + dots.c + S_(n_"bins")$. The kernel `bin_sides` runs one thread per
-(node, entry) of the sums and walks the bins twice, left to right for every $L_j$ and right
-to left for every $R_j$. It sums the right side directly, never as the total minus $L_j$,
-which would cancel digits when one side is small. Each cut then costs one small solve per
-side (`spd_solve`), whatever the number of points.
+The kernel `bin_sides` builds every $L_j$ in one walk over the bins from left to right and
+every $R_j$ in one walk from right to left, one thread per (node, entry of the sums). It sums
+the right side directly, never as the total minus $L_j$, which would cancel digits when one
+side is small.
 
 === A search that stays on the device
 
-The soft search (@sec:plane) is iterative: at most #ex.art.split.soft_iters steps, each a
-gradient step and a backtracking line search. A sequential line search halves the step
-until it is good enough, with a decision on the host after every trial. Instead,
-`soft_trial_terms` evaluates the first four halvings of every node at once, and the rest
-only for nodes that none of those satisfied. `soft_node_select` takes, per node, the first
-that passes, as the sequential loop would. Every node advances, stops or records
-why it stopped on the device. The host reads one flag per step, to end the loop early when
-every node has stopped.
+// One step of the soft search for five nodes: the halving m each node takes (schematic).
+#let ls-takes = (0, 1, 0, 2, 5)
+#let ls-cell(kind) = box(width: 1.7em, height: 1.3em, stroke: 0.5pt + if kind == "none" { luma(228) } else { white },
+  fill: if kind == "taken" { rgb(col.gold) } else if kind == "tried" { luma(200) } else if kind == "extra" { luma(236) } else { white })
+#let ls-grid(kind) = stack(spacing: 0pt, ..range(5).map(i => stack(dir: ltr, ..range(12).map(m => ls-cell(kind(i, m))))))
+#let ls-mark(cols, body) = box(width: cols * 1.7em, stroke: (top: 0.6pt + dark, left: 0.6pt + dark, right: 0.6pt + dark),
+  inset: (top: 2pt), align(center, text(6.5pt, body)))
+#let ls-picture = {
+  let last = calc.max(..ls-takes)
+  let cpu(i, m) = if m > last { "none" } else if m < ls-takes.at(i) { "tried" } else if m == ls-takes.at(i) { "taken" } else { "extra" }
+  let gpu(i, m) = {
+    let t = ls-takes.at(i)
+    if m < 4 { if m < t { "tried" } else if m == t { "taken" } else { "extra" } }
+    else if t < 4 { "none" } else if m < t { "tried" } else if m == t { "taken" } else { "extra" }
+  }
+  grid(
+    columns: (auto, auto),
+    column-gutter: 0.6em,
+    row-gutter: 0.35em,
+    align: (right + horizon, left + horizon),
+    [], stack(dir: ltr, ..range(12).map(m => box(width: 1.7em, align(center, text(6.5pt, $#m$))))),
+    text(7pt)[CPU], ls-grid(cpu),
+    text(7pt)[host checks], stack(dir: ltr, ..range(12).map(m => box(width: 1.7em, align(center,
+      text(7pt, fill: rgb(col.red), if m <= calc.max(..ls-takes) [◆] else [])))) ),
+    [], v(0.4em),
+    [], stack(dir: ltr, ls-mark(4)[launch 1: all nodes], ls-mark(8)[launch 2: waiting nodes only]),
+    text(7pt)[GPU], ls-grid(gpu),
+  )
+}
+
+#figure(ls-picture, kind: image, caption: [One step of the soft search for five nodes (rows),
+  schematic. Column $m$ is the trial step $alpha 2^(-m)$; #swatch(rgb(col.gold), shape: "dot")
+  gold is the step a node takes, dark grey the trials before it, light grey trials evaluated
+  but not needed. The CPU tries one halving at a time for all nodes and asks the host
+  (#text(fill: rgb(col.red))[◆]) whether any node still waits. The GPU evaluates the first four
+  halvings of every node in one launch, and the other eight only for nodes still waiting.])
+  <fig:line-search>
+
+The soft search (@sec:plane) runs at most #ex.art.split.soft_iters steps, and each step tries
+the step sizes $alpha$, $alpha slash 2$, $alpha slash 4$, ... until one lowers the objective
+enough. On the GPU, `soft_trial_terms` evaluates them in two launches (@fig:line-search), and
+`soft_node_select` takes each node's first passing trial, the step the CPU's loop takes.
+Nodes advance, or record why they stopped, on the device; the host reads one flag per step,
+to end the loop when every node has stopped.
 
 == Where it is still hard
 
@@ -1568,69 +1631,90 @@ every node has stopped.
 
 == Answering queries
 
-Prediction runs on chunks of queries, a few thousand at a time, so that its temporaries fit
-the device whatever the number of queries.
+Prediction runs on chunks of a few thousand queries, so that its temporaries fit the device
+whatever the number of queries.
 
-*AFINNI* answers a chunk in four array steps. A nearest-neighbour search finds each query's
-$kappa$ nearest leaf centres: a tiled kernel compares the queries with the centres in
-float32, and the candidates it keeps are ranked again by exact float64 distances. Then the
-trust matrices of all $kappa$ candidates are gathered, $kappa d^2$ numbers per query, and
-one batched product gives every distance $d_i$ (@sec:trust). A sort over the $kappa$
-candidates keeps the $k$ best, and their models are evaluated and weighted. Every step is
-the same work for every query, so nothing diverges. The nearest-neighbour search, like the
-$k$-means of the initial clustering, is the project's own CuPy code rather than cuML: cuML
-ships for Linux only, while the GPU backend also runs on Windows, and these kernels rank
-neighbours by exact float64 distances and give the same clusters on every run.
+=== AFINNI: the same work for every query
 
-*ART* must send every query down the tree (@sec:plane), and queries reach leaves at
-different depths. The obvious kernel gives each thread one query and lets it walk from the
-root to its leaf. The 32 threads of a warp execute together, so a warp then runs as long as
-its deepest query, with the lanes of finished queries idle, and every step reads the planes
-of 32 different nodes.
+// A chunk of six queries as it moves through AFINNI's prediction: one row per query (its own
+// colour), every array as wide as one query's share of it.
+#let q-colours = ex.colours.palette.slice(1, 9).map(c => rgb(c).lighten(50%))
+#let q-array(cols, label, shape) = stack(spacing: 3pt,
+  box(height: 1.6em, align(bottom + center, text(6.5pt, label))),
+  stack(spacing: 0pt, ..range(6).map(i => stack(dir: ltr, ..range(cols).map(_ =>
+    box(width: 0.72em, height: 0.72em, fill: q-colours.at(i), stroke: 0.4pt + white))))),
+  text(6.5pt, shape))
+#let q-step(body) = box(width: 4.4em, align(center, stack(spacing: 2pt, text(6pt, body), text(10pt)[→])))
+#let afinni-pipeline = grid(columns: 11, column-gutter: 3pt, align: center + horizon,
+  q-array(2, [queries], $Q times d$), q-step[$kappa$ nearest centres],
+  q-array(4, [candidates], $Q times kappa$), q-step[gather their $T$],
+  q-array(8, [trust matrices], $Q times kappa times d^2$), q-step[one product],
+  q-array(4, [distances $d_i$], $Q times kappa$), q-step[sort, keep $k$],
+  q-array(2, [nearest], $Q times k$), q-step[evaluate, weight],
+  q-array(1, [$fh$], $Q times f_d$))
+
+#figure(afinni-pipeline, kind: image, caption: [AFINNI's prediction for a chunk of $Q$
+  queries (six here, one colour each). Every array has one row per query, and every step
+  does the same work for every row, so the whole chunk moves through each step at once.])
+  <fig:afinni-pipeline>
+
+Nothing in @fig:afinni-pipeline depends on another query, and no query takes a branch the
+others do not, so the threads of a warp stay in step. The nearest-centre search is a tiled
+float32 kernel whose candidates are ranked again by exact float64 distances. It and the
+$k$-means of the initial clustering are the project's own CuPy code: cuML ships for Linux
+only, while the GPU backend also runs on Windows, and these kernels are exact and give the
+same result on every run. The gathered trust matrices, $kappa d^2$ numbers per query, are
+the largest array of the chain.
+
+=== ART: one level per pass
 
 #let passes = ex.art.passes
-#let route-cell(code, leaf) = box(width: 3.5em, height: 1.25em, fill: if leaf { luma(232) } else { white },
+#let route-cell(code, leaf) = box(width: 3.2em, height: 1.25em, fill: if leaf { luma(232) } else { white },
   stroke: 0.5pt + if leaf { luma(200) } else { dark }, align(center + horizon,
-  text(7pt, fill: if leaf { grey } else { black }, raw(code))))
+  text(6.5pt, fill: if leaf { grey } else { black }, raw(code))))
+#let lane(q) = box(width: 1.25em, height: 1.25em, fill: q-colours.at(q), stroke: 0.5pt + white,
+  align(center + horizon, text(6.5pt)[#(q + 1)]))
 #let n-passes = passes.codes.len()
 
 #figure(
   grid(
-    columns: (auto, ..passes.codes.at(0).map(_ => auto), auto),
+    columns: (auto, ..passes.codes.at(0).map(_ => auto), 1.2em, auto),
     column-gutter: 2pt,
     row-gutter: 2pt,
-    align: center + horizon,
-    [], ..range(passes.codes.at(0).len()).map(i => text(7pt)[query #(i + 1)]), text(7pt)[moved],
+    align: (x, y) => if x == passes.codes.at(0).len() + 2 { left + horizon } else { center + horizon },
+    [], ..range(passes.codes.at(0).len()).map(i => box(width: 3.2em, fill: q-colours.at(i), inset: (y: 2pt),
+      align(center, text(6.5pt)[query #(i + 1)]))), [], text(6.5pt)[threads of the pass],
     ..range(n-passes).map(t => (
-      text(7pt)[#if t == 0 [start] else [pass #t]],
+      text(6.5pt)[#if t == 0 [start] else [pass #t]],
       ..passes.codes.at(t).zip(passes.leaf.at(t)).map(((c, l)) => route-cell(c, l)),
-      text(7pt)[#if t == 0 [] else [#passes.leaf.at(t - 1).filter(l => not l).len()]],
+      [],
+      if t == 0 [] else {
+        stack(dir: ltr, ..passes.leaf.at(t - 1).enumerate().filter(((i, l)) => not l).map(((i, l)) => lane(i)))
+      },
     )).flatten(),
   ),
   kind: image,
   caption: [Eight uniform queries of the running example, routed as the library routes
-    them. Each row is one pass and shows every query's node by its locational code. A pass
-    moves only the queries not yet at a leaf (white), one level down; a query at a leaf
-    (grey) has left the pass. The last column counts the queries a pass moved.],
+    them. Each row is one pass and shows every query's node by its locational code; a query
+    at a leaf (grey) is done. *Right.* The threads of each pass: the queries not yet at a
+    leaf, compacted into a dense list, one thread each.],
 ) <fig:passes>
 
-The code routes _level by level_ instead (`RoutingTable.route`). Each pass first compacts
-the queries that are not yet at a leaf into a dense list, then runs one thread per listed
-query: gather its node's plane, take one dot product, compare with the offset, and gather
-the child. Every thread of a pass executes the same instructions, and finished queries
-take no lanes, so there is no branch divergence. What remains:
+Queries reach leaves at different depths. If each thread walked its query down to its leaf, a
+warp would run as long as its deepest query, with the lanes of finished queries idle.
+`RoutingTable.route` instead moves every unfinished query one level per pass. It first
+compacts them into a dense list (@fig:passes, right); then one thread per listed query reads
+its node's plane, takes one dot product and moves to a child. Every thread of a pass runs the
+same instructions, and finished queries take no thread. A query costs $O(d)$ per level of its
+path. Two costs remain:
 
-- *Scattered reads.* Queries in one warp sit in different nodes, so the planes they read are
-  not adjacent in memory. The table of planes is small, $M$ rows of $d + 1$ numbers for $M$
-  nodes, and is served from the cache.
-- *One pass per level.* A pass costs a few launches and one host read, the size of the
-  compacted list. The last passes of a deep tree move few queries (@fig:passes), and there
-  launch overhead dominates.
-
-A query costs $O(d)$ per level of its path. A single kernel in which each thread walks its
-query to the leaf would remove the host reads and the launches per level, at the price of
-the idle lanes above; for trees of similar depth everywhere that price is small, and it is
-an open option.
+- *Scattered reads.* The queries of a warp sit in different nodes, so the planes they read
+  are not adjacent in memory. The table of planes is small, $d + 1$ numbers per node, and
+  stays in the cache.
+- *One pass per level.* Each pass costs a few launches and one host read, the length of the
+  list. The last passes move few queries, and there the launches dominate. One kernel that
+  walks each query to its leaf would remove them, at the price of the idle lanes; for trees
+  of even depth that price is small, and it is an open option.
 
 == The same bits every time <sec:same-bits>
 
@@ -1741,30 +1825,59 @@ victim, with work to spare.
     non-blocking barrier and keeps answering requests until all have joined.
 ] <inv:steal>
 
-== One recorded run
+== Four recorded runs
 
-Stealing depends on timing, so its picture is of one recorded run: ART on the running
-example with a tighter tolerance, $atol = #ex.steal.atol$, on #ex.steal.ranks ranks. ART
-starts from a single root, so rank 0 holds all the work at first and every other rank
-must steal.
+#let sr = ex.steal.runs
+#let run-names = (root_static: [one root, no stealing], root_steal: [one root, stealing],
+  grid_static: [#ex.steal.ranks roots, no stealing], grid_steal: [#ex.steal.ranks roots, stealing])
+Stealing depends on timing, so its pictures are of recorded runs: ART on the running example
+with a tighter tolerance, $atol = #ex.steal.atol$, on #ex.steal.ranks ranks, started in two
+ways and each run without and with stealing. With one root, rank 0 holds all the work at
+first. With #ex.steal.ranks grid roots, one per rank, every rank starts with its own cell of
+the domain, the usual way to share work without stealing. Each configuration ran
+#ex.steal.repeats times, interleaved and after a warm-up run, each rank on a core of its own
+of the same speed; the pictures show the run with the median wall time.
 
-#figure(panel("steal-timeline"), caption: [Who was working when. A rank's bar is coloured
-  while it has nodes and pale while it is idle; each arrow is a grant, from the victim
-  to the thief. Rank 0 builds the first levels alone (including the one-time compilation
-  of the CPU kernels); once its queue is long enough to share, the other ranks take work
-  from it and, later, from each other: #ex.steal.steals grants in all.]) <fig:timeline>
+#figure(panel("steal-timeline"), caption: [Who was working when, in the four runs. The slow first
+  run has its own time axis; the other three share one. A rank's bar is coloured while it has nodes and pale while it is idle; each
+  arrow is a grant, from the victim to the thief. Above each run, its wall time and the share
+  of the ranks' time spent idle.]) <fig:timeline>
 
-#scene(side: left, width: 36%, panel("steal-owners"))[
-  The same run as a map: each of the #ex.steal.leaves leaves, coloured by the rank that
-  built it (#ex.steal.leaves_per_rank.map(str).join(", ") leaves per rank). A stolen
-  node takes its whole subtree with it, so each rank's leaves form patches of the
-  domain.
+#figure(
+  board(columns: 4, ..run-names.pairs().map(((n, label)) =>
+    (panel("steal-owners-" + n.replace("_", "-")), label))),
+  kind: image,
+  caption: [Which rank built each leaf, in the same four runs. A stolen node takes its whole
+    subtree with it, so a rank's leaves form patches of the domain.],
+) <fig:owners>
 
-  The tree itself is the one a single process builds. By @prop:determinism every node's
-  points and plane depend only on its key, so it does not matter which rank processed it;
-  the recording script checks that every plane of this tree, by locational code, is bit-identical
-  to the tree built with stealing switched off.
-]
+#block(breakable: false, text(9.5pt, table(
+  columns: (auto, auto, auto, auto, auto, auto, 1fr, auto),
+  inset: (x: 5pt, y: 4.5pt),
+  align: (left + horizon, right + horizon, center + horizon, right + horizon, right + horizon, right + horizon, center + horizon, right + horizon),
+  table.header[Run][Wall time][#ex.steal.repeats runs][Speedup][Idle][Leaves][Leaves per rank][Grants],
+  ..run-names.pairs().map(((n, label)) => {
+    let r = sr.at(n)
+    (label, [#r.wall s], [#r.wall_range s], [#r.speedup×], [#r.idle_percent%], [#r.leaves_per_rank.sum()],
+      [#r.leaves_per_rank.map(str).join(", ")], [#r.grants])
+  }).flatten(),
+)))
+
+With one root and no stealing, ranks 1 to #(ex.steal.ranks - 1) never get work: rank 0
+builds all #ex.steal.leaves leaves alone, and #sr.root_static.idle_percent% of the ranks'
+time is idle. Stealing spreads the same tree over all ranks and makes the run
+#sr.root_steal.speedup times faster. With one root per rank, every rank starts working at
+once, but the cells are not equally hard: the ranks whose cells need fewer levels finish
+early and wait, #sr.grid_static.idle_percent% of the ranks' time. Stealing hands them the
+unstarted nodes of the busy ranks; idle time falls to #sr.grid_steal.idle_percent%, and the
+same tree is built in #sr.grid_steal.wall s instead of #sr.grid_static.wall s.
+
+How much stealing gains depends on how uneven the start is: on this function, whose valley
+crosses every cell, a static split is only mildly uneven, and the gain is modest; when the
+work starts in one place, it is several-fold. An adaptive tree cannot know in advance which
+region will need more levels, and stealing makes the run time nearly independent of how the
+work starts. In each pair the tree is the same: the recording script checks every plane, by
+root and locational code, bit for bit (@prop:determinism).
 
 #implementation(title: [In the code])[
   - The threshold $w_*$ and the steal size $w_s$ are counted in points: AFINNI grants
