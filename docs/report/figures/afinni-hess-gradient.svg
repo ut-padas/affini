@@ -4217,16 +4217,16 @@ z
     </g>
    </g>
    <g id="PathCollection_3">
-    <defs>
-     <path id="m1b89044b50" d="M -2.54951 2.54951 
-L 2.54951 -2.54951 
-M -2.54951 -2.54951 
-L 2.54951 2.54951 
-" style="stroke: #c0392b; stroke-width: 1.2"/>
-    </defs>
-    <g clip-path="url(#p94ba7d0c38)">
-     <use xlink:href="#m1b89044b50" x="62.36967" y="65.196" style="fill: #c0392b; stroke: #c0392b; stroke-width: 1.2"/>
-    </g>
+    <path d="M 58.496687 69.068983 
+L 66.242654 61.323017 
+M 58.496687 61.323017 
+L 66.242654 69.068983 
+" clip-path="url(#p94ba7d0c38)" style="fill: #c0392b; stroke: #ffffff; stroke-width: 4.2"/>
+    <path d="M 58.496687 69.068983 
+L 66.242654 61.323017 
+M 58.496687 61.323017 
+L 66.242654 69.068983 
+" clip-path="url(#p94ba7d0c38)" style="fill: #c0392b; stroke: #c0392b; stroke-width: 2"/>
    </g>
   </g>
  </g>

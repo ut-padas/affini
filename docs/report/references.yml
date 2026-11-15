@@ -82,3 +82,35 @@ clopper1934:
     title: Biometrika
     volume: 26
     issue: 4
+
+warren1993:
+  type: article
+  title: A parallel hashed oct-tree N-body algorithm
+  author: ["Warren, Michael S.", "Salmon, John K."]
+  date: 1993
+  page-range: 12-21
+  serial-number:
+    doi: "10.1145/169627.169640"
+  parent:
+    type: proceedings
+    title: "Proceedings of Supercomputing '93"
+    publisher: ACM/IEEE
+
+gargantini1982:
+  type: article
+  title: An effective way to represent quadtrees
+  author: ["Gargantini, Irene"]
+  date: 1982
+  page-range: 905-910
+  parent:
+    type: periodical
+    title: Communications of the ACM
+    volume: 25
+    issue: 12
+
+samet2006:
+  type: book
+  title: Foundations of Multidimensional and Metric Data Structures
+  author: ["Samet, Hanan"]
+  date: 2006
+  publisher: Morgan Kaufmann

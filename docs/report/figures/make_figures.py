@@ -29,6 +29,7 @@ import matplotlib
 matplotlib.use("svg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
+from matplotlib import patheffects  # noqa: E402
 from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap  # noqa: E402
 from matplotlib.patches import Ellipse, FancyArrowPatch, Polygon  # noqa: E402
 from matplotlib.path import Path as MPath  # noqa: E402
@@ -38,6 +39,7 @@ from matplotlib.transforms import Bbox  # noqa: E402
 import src.art.plan as art_plan_module  # noqa: E402
 from src import IS_CUPY_BACKEND, get_mpi_rank, to_host  # noqa: E402
 from src.afinni.plan import AFINNIPlan  # noqa: E402
+from src.art.constants import MAX_DEPTH_LIMIT  # noqa: E402
 from src.art.plan import ARTPlan  # noqa: E402
 from src.art.split_search import SplitRows, hard_sse, soft_gates, soft_objective  # noqa: E402
 from src.components.splitting import SPLIT_STRATEGIES, SplitData  # noqa: E402
@@ -128,7 +130,7 @@ class Node:
     leaf: bool = False
     children: list[int] = field(default_factory=list)
     centroid: np.ndarray | None = None
-    path: int = 1  # ART's path code
+    code: int = 1  # ART's locational code
     polygon: np.ndarray | None = None  # ART's polytope, as its vertices
     plane: tuple[np.ndarray, float] | None = None  # ART's split, in normalized coordinates
     inherited: int = 0  # ART: how many of X came from the parent
@@ -217,7 +219,7 @@ def draw_tree(ax, nodes: list[Node], upto: int | None = None, path: tuple[int, .
     ax.set_xlim(min(xs) - 0.8, max(xs) + 0.8)
     ax.set_ylim(-max(n.level for n in nodes) - (1.3 if labels else 0.6), 0.75)
     ax.axis("off")
-    if labels:  # path codes, clear of every node, edge and other code
+    if labels:  # locational codes, clear of every node, edge and other code
         ax.figure.set_dpi(72)
         px = ax.transData.transform
         paths = [MPath(px([pos[i], pos[c]])) for i, n in enumerate(nodes) for c in n.children]
@@ -233,7 +235,7 @@ def draw_tree(ax, nodes: list[Node], upto: int | None = None, path: tuple[int, .
             else:
                 offsets = [(0, 5.5, "center", "bottom"), (out * 4, 4, side[out], "bottom"),
                            (out * 6, 0, side[out], "center"), (-out * 4, 4, side[-out], "bottom")]  # fmt: skip
-            place_text(ax, format(n.path, "b"), pos[i], offsets, paths, boxes, fontsize=6, color=DARK, zorder=4)
+            place_text(ax, format(n.code, "b"), pos[i], offsets, paths, boxes, fontsize=6, color=DARK, zorder=4)
 
 
 # ----------------------------------------------------------------------------- AFINNI run
@@ -354,8 +356,8 @@ def art_initial_points() -> np.ndarray:
 
 def record_art() -> tuple[AFINNISurrogate, dict, dict, ARTPlan]:
     """Train ART on the running example, recording each node's points and each split search."""
-    points: dict[int, tuple[np.ndarray, int]] = {}  # path code -> (training points, inherited count)
-    searches: dict[int, SplitRecord] = {}  # path code -> its node's split search
+    points: dict[int, tuple[np.ndarray, int]] = {}  # locational code -> (training points, inherited count)
+    searches: dict[int, SplitRecord] = {}  # locational code -> its node's split search
     plans: list[ARTPlan] = []
     pb, cfd, split_fn = ARTPlan.process_batch, art_plan_module.ClusterFitData, ARTPlan._split
     bank_fn, bins_fn, soft_fn = ARTPlan._direction_bank, ARTPlan._bins_search, ARTPlan._soft_refine
@@ -364,20 +366,20 @@ def record_art() -> tuple[AFINNISurrogate, dict, dict, ARTPlan]:
     def process_batch(self, batch, **kw):
         if not plans:
             plans.append(self)
-        current["paths"] = to_host(batch.queue.path_code[batch.cut]).tolist()
+        current["codes"] = to_host(batch.queue.locational_code[batch.cut]).tolist()
         current["sizes"] = to_host(batch.sizes).tolist()
         return pb(self, batch, **kw)
 
     def fit_data(**kw):
         X, starts, sizes = to_host(kw["X"]), to_host(kw["starts"]), to_host(kw["sizes"])
-        for path, inherited, s0, n in zip(current["paths"], current["sizes"], starts, sizes, strict=True):
-            points[path] = (X[s0 : s0 + n].copy(), int(inherited))
+        for code, inherited, s0, n in zip(current["codes"], current["sizes"], starts, sizes, strict=True):
+            points[code] = (X[s0 : s0 + n].copy(), int(inherited))
         return cfd(**kw)
 
-    def split(self, idx, fit, Xv, Fv, Gv, components, evaluator, keys, depth, root, path_code, *rest):
+    def split(self, idx, fit, Xv, Fv, Gv, components, evaluator, keys, depth, root, locational_code, *rest):
         # The j-th block of rows of the split search belongs to the j-th node of idx.
-        current["split_paths"] = [int(p) for p in to_host(path_code)[to_host(idx)]]
-        return split_fn(self, idx, fit, Xv, Fv, Gv, components, evaluator, keys, depth, root, path_code, *rest)
+        current["split_codes"] = [int(p) for p in to_host(locational_code)[to_host(idx)]]
+        return split_fn(self, idx, fit, Xv, Fv, Gv, components, evaluator, keys, depth, root, locational_code, *rest)
 
     def direction_bank(self, rows, lead, V, M, width, keys):
         bank = bank_fn(self, rows, lead, V, M, width, keys)
@@ -387,16 +389,16 @@ def record_art() -> tuple[AFINNISurrogate, dict, dict, ARTPlan]:
     def bins_search(self, rows, bank):
         w, z, sse = bins_fn(self, rows, bank)
         U, Y, Phi, starts, counts = (to_host(a) for a in (rows.U, rows.Y, rows.Phi, rows.starts, rows.counts))
-        for j, (path, s0, n) in enumerate(zip(current["split_paths"], starts, counts, strict=True)):
+        for j, (code, s0, n) in enumerate(zip(current["split_codes"], starts, counts, strict=True)):
             sl = slice(s0, s0 + n)
-            searches[path] = SplitRecord(U[sl].copy(), Y[sl].copy(), Phi[sl].copy(), current["bank"][j],
+            searches[code] = SplitRecord(U[sl].copy(), Y[sl].copy(), Phi[sl].copy(), current["bank"][j],
                                          (to_host(w)[j].copy(), float(to_host(z)[j]), float(to_host(sse)[j])))  # fmt: skip
         return w, z, sse
 
     def soft_refine(self, rows, w0, z0, sse0, progress):
         w, z = soft_fn(self, rows, w0, z0, sse0, progress)
-        for j, path in enumerate(current["split_paths"]):
-            searches[path].final = (to_host(w)[j].copy(), float(to_host(z)[j]))
+        for j, code in enumerate(current["split_codes"]):
+            searches[code].final = (to_host(w)[j].copy(), float(to_host(z)[j]))
         return w, z
 
     ARTPlan.process_batch, art_plan_module.ClusterFitData, ARTPlan._split = process_batch, fit_data, split
@@ -429,17 +431,17 @@ def clip(polygon: np.ndarray, a: np.ndarray, z: float, keep_right: bool) -> np.n
 def art_tree(s: AFINNISurrogate, points: dict) -> list[Node]:
     """ART's tree from the model's routing table, with every node's polytope and recorded points."""
     r = s.routing
-    is_leaf, w, z, paths = (to_host(getattr(r, k)) for k in ("is_leaf", "normal", "offset", "node_path"))
-    order = np.argsort([int(p) for p in paths], kind="stable")  # breadth first: a parent before its children
-    index = {int(paths[i]): k for k, i in enumerate(order)}
+    is_leaf, w, z, codes = (to_host(getattr(r, k)) for k in ("is_leaf", "normal", "offset", "node_locational_code"))
+    order = np.argsort([int(p) for p in codes], kind="stable")  # breadth first: a parent before its children
+    index = {int(codes[i]): k for k, i in enumerate(order)}
     box = np.array([LOWER, [UPPER[0], LOWER[1]], UPPER, [LOWER[0], UPPER[1]]])
     nodes: list[Node] = []
     for i in order:
-        path = int(paths[i])
-        parent = index.get(path >> 1) if path > 1 else None
-        polygon = box if parent is None else clip(nodes[parent].polygon, *nodes[parent].plane, keep_right=bool(path & 1))
-        X, inherited = points[path]
-        nodes.append(Node(path.bit_length() - 1, parent, X, bool(is_leaf[i]), path=path, polygon=polygon,
+        code = int(codes[i])
+        parent = index.get(code >> 1) if code > 1 else None
+        polygon = box if parent is None else clip(nodes[parent].polygon, *nodes[parent].plane, keep_right=bool(code & 1))
+        X, inherited = points[code]
+        nodes.append(Node(code.bit_length() - 1, parent, X, bool(is_leaf[i]), code=code, polygon=polygon,
                           plane=None if is_leaf[i] else (w[i], float(z[i])), inherited=inherited,
                           centroid=X.mean(axis=0)))  # fmt: skip
         if parent is not None:
@@ -449,7 +451,7 @@ def art_tree(s: AFINNISurrogate, points: dict) -> list[Node]:
             p = nodes[n.parent]
             # The first right-hand point defines z, so it sits on the plane up to rounding.
             score = ((n.X - LOWER) / WIDTH) @ p.plane[0] - p.plane[1]
-            if not np.all(score >= -1e-12 if n.path & 1 else score < 1e-12):
+            if not np.all(score >= -1e-12 if n.code & 1 else score < 1e-12):
                 raise SystemExit("A recorded ART node's points are not on its side of its parent's plane.")
     colour_nodes(nodes)
     return nodes
@@ -516,12 +518,43 @@ def arrow(ax, a, b, colour=DARK, lw=0.9, scale=7, zorder=5) -> None:
                                  shrinkB=0, zorder=zorder))  # fmt: skip
 
 
+def cross(ax, xy, colour, size=46, lw=2.0, zorder=6) -> None:
+    """A cluster centre: a bold cross with a white halo, so it stands out on any points beneath it."""
+    xy = np.atleast_2d(xy)
+    ax.scatter(*xy.T, s=size, c=colour, marker="x", lw=lw, zorder=zorder,
+               path_effects=[patheffects.withStroke(linewidth=lw + 2.2, foreground="white")])  # fmt: skip
+
+
 def residual_points(ax, X, e, size=4.0) -> None:
     """Points coloured by their signed error in units of the tolerance; those beyond it are ringed."""
     over = np.abs(e) > ALPHA
     ax.scatter(*X[~over].T, s=size, c=e[~over] / ALPHA, cmap=RESIDUAL, vmin=-2, vmax=2, lw=0, zorder=3)
     ax.scatter(*X[over].T, s=size + 3, c=e[over] / ALPHA, cmap=RESIDUAL, vmin=-2, vmax=2, edgecolors=DARK, lw=0.35,
                zorder=4)  # fmt: skip
+
+
+def residual_key() -> None:
+    """
+    The colour key of every error map: f - f_hat in units of the tolerance, and the ring
+    that marks a point beyond it. Narrow, so its text stays legible where it is printed
+    small, beside a storyboard step.
+    """
+    fig, ax = plt.subplots(figsize=(2.5, 0.85))
+    grad = np.linspace(-2, 2, 400)[None, :]
+    ax.imshow(grad, extent=(-2, 2, 0, 0.3), cmap=RESIDUAL, vmin=-2, vmax=2, aspect="auto", zorder=1)
+    for v in (-1, 1):  # the tolerance: between these marks a point is within it
+        ax.plot([v, v], [-0.05, 0.35], color=DARK, lw=0.8, zorder=2)
+    for v, t in ((-2, "−2"), (-1, "−1"), (0, "0"), (1, "+1"), (2, "+2")):
+        ax.text(v, -0.09, t, ha="center", va="top", fontsize=6.5, color=DARK)
+    ax.text(-2, 0.4, "model too high", ha="left", va="bottom", fontsize=6.5, color=BLUE)
+    ax.text(2, 0.4, "model too low", ha="right", va="bottom", fontsize=6.5, color=RED)
+    ax.text(0, -0.5, "$f - \\hat{f}$ in units of $\\alpha_{tol}$;", ha="right", va="top", fontsize=6.5, color=DARK)
+    ax.scatter([0.22], [-0.66], s=14, c=[RESIDUAL(0.95)], edgecolors=DARK, lw=0.5, zorder=3)
+    ax.text(0.36, -0.5, "ringed: beyond it", ha="left", va="top", fontsize=6.5, color=DARK)
+    ax.set_xlim(-2.15, 2.15)
+    ax.set_ylim(-0.95, 0.72)
+    ax.axis("off")
+    save(fig, "residual-key")
 
 
 def hull_edges(ax, X: np.ndarray) -> None:
@@ -553,7 +586,7 @@ def afinni_levels(nodes: list[Node], levels: list[Level]) -> dict:
                 ax.scatter(*n.X.T, s=2.5, c=n.colour, alpha=0.28, lw=0, zorder=2)
             elif n.level == k:
                 ax.scatter(*n.X.T, s=3.5, c=n.colour, lw=0, zorder=3)
-                ax.scatter(*n.centroid, s=18, c=DARK if n.leaf else RED, marker="x", lw=1.1, zorder=4)
+                cross(ax, n.centroid, DARK if n.leaf else RED)
         draw_tree(at, nodes, k)
         fig.tight_layout(pad=0.2, w_pad=0.4)
         save(fig, f"afinni-level-{k}")
@@ -562,7 +595,7 @@ def afinni_levels(nodes: list[Node], levels: list[Level]) -> dict:
             for n in nodes:
                 if n.level == k:
                     residual_points(ax, n.X, affine_fit(n.X, f_np(n.X))[2])
-                    ax.scatter(*n.centroid, s=18, c=DARK if n.leaf else RED, marker="x", lw=1.1, zorder=5)
+                    cross(ax, n.centroid, DARK if n.leaf else RED)
 
         if not lv.good.all():  # the report shows the errors of the levels that still reject clusters
             panel(f"afinni-error-{k}", errors)
@@ -649,12 +682,12 @@ def afinni_split(levels: list[Level]) -> dict:
         ax.scatter(*X[order[sizes[0] :]].T, s=5, c=CYAN, lw=0, zorder=3)
         cut_line(ax, c + tau * a, a)
         arrow(ax, c, c + 0.55 * a)
-        ax.scatter(*c, s=26, c=RED, marker="x", lw=1.2, zorder=6)
+        cross(ax, c, RED, size=60)
 
     def marked(ax, rows, colour):
         ax.scatter(*X.T, s=5, c="white", edgecolors=GREY, lw=0.3, zorder=2)
         ax.scatter(*X[rows].T, s=9, c=colour, lw=0, zorder=3)
-        ax.scatter(*c, s=26, c=RED, marker="x", lw=1.2, zorder=6)
+        cross(ax, c, RED, size=60)
 
     inv, dx = np.linalg.inv(Sigma), X[level_set] - c
     shape = inv / np.max(np.einsum("ij,jk,ik->i", dx, inv, dx))
@@ -711,12 +744,12 @@ def afinni_trust(s: AFINNISurrogate, nodes: list[Node]) -> dict:
         ax.scatter(*P.T, s=5, c=leaves[k].colour, lw=0, zorder=3)
         ax.scatter(*P[np.argmax(dist)], s=26, facecolors="none", edgecolors=RED, lw=1.1, zorder=5)
         ellipse(ax, C[k], T[k], DARK, lw=1.0)
-        ax.scatter(*C[k], s=26, c=DARK, marker="x", lw=1.2, zorder=5)  # dark: an accepted centre
+        cross(ax, C[k], DARK, size=60)  # dark: an accepted centre
 
     def every(ax):
         for kk, n in enumerate(leaves):
             ellipse(ax, C[kk], T[kk], n.colour, lw=0.8)
-            ax.scatter(*C[kk], s=8, c=n.colour, marker="x", lw=0.8, zorder=4)
+            cross(ax, C[kk], n.colour, size=24, lw=1.3, zorder=4)
 
     panel("afinni-trust-one", one, view=corners, pad=0.1)
     panel("afinni-trust-all", every)
@@ -758,9 +791,9 @@ def afinni_trust(s: AFINNISurrogate, nodes: list[Node]) -> dict:
             ellipse(ax, C[r["nu"]], T[r["nu"]], leaves[r["nu"]].colour, lw=1.6)
             if r["euclid"] != r["nu"]:
                 ax.plot(*zip(q, C[r["euclid"]], strict=True), color=GREY, lw=0.9, ls=":", zorder=5)
-                ax.scatter(*C[r["euclid"]], s=14, c=GREY, marker="x", lw=1.0, zorder=6)
+                cross(ax, C[r["euclid"]], GREY, size=30, lw=1.5)
             ax.plot(*zip(q, C[r["nu"]], strict=True), color=RED if r["outside"] else DARK, lw=0.9, zorder=5)
-            ax.scatter(*C[r["nu"]], s=16, c=leaves[r["nu"]].colour, marker="x", lw=1.2, zorder=6)
+            cross(ax, C[r["nu"]], leaves[r["nu"]].colour, size=36, lw=1.7)
             ax.scatter(*q, s=20, c=RED if r["outside"] else "black", zorder=7)
         # The letters keep clear of the highlighted ellipses, the lines and the marks; a white
         # halo lifts them off the faded ellipses they may still cross.
@@ -792,9 +825,9 @@ def queue_strips(nodes: list[Node], levels: list[Level]) -> None:
                 continue
             w = len(n.X)
             ax.add_patch(plt.Rectangle((x, -k - 0.32), w, 0.64, fc=n.colour, ec="white", lw=0.8,
-                                       alpha=0.5 if n.leaf else 1.0))  # fmt: skip
+                                       alpha=0.3 if n.leaf else 1.0))  # fmt: skip
             if not n.leaf:
-                ax.add_patch(plt.Rectangle((x, -k - 0.32), w, 0.64, fc="none", ec=RED, lw=0.9, zorder=3))
+                ax.add_patch(plt.Rectangle((x, -k - 0.32), w, 0.64, fc="none", ec="black", lw=1.4, zorder=3))
             left[i] = (x, w)
             if n.parent is not None:
                 px, pw = left[n.parent]
@@ -805,6 +838,155 @@ def queue_strips(nodes: list[Node], levels: list[Level]) -> None:
     ax.set_ylim(-len(levels) + 0.45, 0.55)
     ax.axis("off")
     save(fig, "queue-strips")
+
+
+def queue_layout(nodes: list[Node], levels: list[Level], level: int = 2, batch_size: int = 130) -> dict:
+    """
+    One level's queue as it is stored, and the next level it produces: a cluster is a run
+    of rows, a batch a run of whole clusters (cut by the library's ``AFINNIPlan.batch_end``
+    for a small ``batch_size``), and the j-th rejected cluster's two children are entries
+    2j and 2j + 1 of the next level, grown by the points augmentation added. The children's
+    order is the rebuilt forest's, which ``afinni_forest`` checked against the recorded queue.
+    """
+    here = [i for i, n in enumerate(nodes) if n.level == level]
+    sizes = np.array([len(nodes[i].X) for i in here])
+    cumsum = np.cumsum(sizes)
+    starts = np.r_[0, cumsum[:-1]]
+
+    def batch_ends(cum: np.ndarray) -> list[int]:
+        cutter = object.__new__(AFINNIPlan)  # batch_end needs only its grid offset
+        ends, start, index = [], 0, 0
+        while start < len(cum):
+            end = cutter.batch_end(cum, start, index, batch_size)
+            ends.append(end)
+            start, index = end, index + 1
+        return ends
+
+    ends = batch_ends(cumsum)
+    rejected = [i for i in here if not nodes[i].leaf]
+    children = [c for i in rejected for c in nodes[i].children]
+    child_sizes = np.array([len(nodes[c].X) for c in children])
+    # A child's new points: rows its parent did not have before augmentation.
+    parent_rows = {i: {tuple(r) for r in nodes[i].X} for i in rejected}
+    child_new = {c: sum(tuple(r) not in parent_rows[nodes[c].parent] for r in nodes[c].X) for c in children}
+    total = max(int(cumsum[-1]), int(child_sizes.sum()))
+
+    fig, ax = plt.subplots(figsize=(6.8, 3.55))
+    y_zoom, y_br, y_top, y_bot, h = 2.05, 1.5, 1.0, -0.55, 0.44
+
+    def ink(colour: str) -> str:
+        """Black or white, whichever reads on the fill."""
+        r, g, b = matplotlib.colors.to_rgb(colour)
+        return "black" if 0.299 * r + 0.587 * g + 0.114 * b > 0.5 else "white"
+
+    def block(x, y, w, n, label, fade=False, new=0):
+        ax.add_patch(plt.Rectangle((x, y - h / 2), w, h, fc=n.colour, ec="white", lw=0.8, alpha=0.3 if fade else 1.0,
+                                   zorder=2))  # fmt: skip
+        if new:  # the share of new points, hatched at the block's end
+            ax.add_patch(plt.Rectangle((x + w - new, y - h / 2), new, h, fc="none", ec="white", lw=0, hatch="////",
+                                       zorder=3))  # fmt: skip
+        if not n.leaf and not fade:
+            ax.add_patch(plt.Rectangle((x, y - h / 2), w, h, fc="none", ec="black", lw=1.4, zorder=4))
+        ax.text(x + w / 2, y + (0.07 if "\n" in label else 0), label, ha="center", va="center", fontsize=6.3, zorder=5,
+                color=DARK if fade else ink(n.colour), linespacing=1.1)  # fmt: skip
+
+    # 1. Level `level`: clusters back to back; each rejected one labelled with its rank j among the rejected.
+    for k, (i, x0) in enumerate(zip(here, starts, strict=True)):
+        j = rejected.index(i) if i in rejected else None
+        block(x0, y_top, sizes[k], nodes[i], str(k) if j is None else f"{k}\n", fade=nodes[i].leaf)
+        if j is not None:
+            ax.text(x0 + sizes[k] / 2, y_top - 0.11, f"j={j}", ha="center", va="center", fontsize=5.0, zorder=5,
+                    color=ink(nodes[i].colour))  # fmt: skip
+
+    # 2. Its rows: one cluster magnified, a run of consecutive rows of X and F.
+    k_show = int(np.argmax(sizes))
+    x0, w0 = int(starts[k_show]), int(sizes[k_show])
+    zh = 0.22
+    rows = [x0, x0 + 1, x0 + 2, None, x0 + w0 - 2, x0 + w0 - 1]
+    cell = 0.055 * total
+    zx = x0 + w0 / 2 - len(rows) * cell / 2
+    colour = nodes[here[k_show]].colour
+    for r, row in enumerate(rows):
+        cx = zx + r * cell
+        if row is None:
+            ax.text(cx + cell / 2, y_zoom, "…", ha="center", va="center", fontsize=7, color=DARK)
+            continue
+        ax.add_patch(plt.Rectangle((cx, y_zoom - zh / 2), cell, zh, fc=colour, ec="white", lw=0.8, zorder=3))
+        ax.text(cx + cell / 2, y_zoom, str(row), ha="center", va="center", fontsize=5.4, zorder=4, color=ink(colour))
+    for xa, xb in ((x0, zx), (x0 + w0, zx + len(rows) * cell)):
+        ax.plot([xa, xb], [y_top + h / 2, y_zoom - zh / 2], color=GREY, lw=0.5, ls=(0, (2, 2)), zorder=1)
+    ax.text(zx + len(rows) * cell + 0.015 * total, y_zoom, f"cluster {k_show}: rows {x0} to {x0 + w0 - 1} of X and F,\n"
+            f"starts[{k_show}] = {x0}, sizes[{k_show}] = {w0}", ha="left", va="center", fontsize=5.8, color=DARK)  # fmt: skip
+
+    # 3. Batches: whole clusters, each ending at the first cluster that crosses the next multiple of batch_size.
+    for g in range(1, int(cumsum[-1] // batch_size) + 1):
+        # Above the clusters only, ending in a mark on the row: the line must not hide a label.
+        ax.plot([g * batch_size] * 2, [y_top + h / 2 + 0.02, y_br + 0.02], color=BLUE, lw=0.8, ls=":", zorder=5)
+        ax.plot(g * batch_size, y_top + h / 2 + 0.03, marker="v", ms=3.2, color=BLUE, zorder=6)
+    lo = 0
+    for b, end in enumerate(ends):
+        a, z = starts[lo], cumsum[end - 1]
+        ax.annotate("", (a + 1, y_br), (z - 1, y_br),
+                    arrowprops={"arrowstyle": "|-|", "color": BLUE, "lw": 0.8, "mutation_scale": 2.5})  # fmt: skip
+        ax.text((a + z) / 2, y_br + 0.06, f"batch {b}", ha="center", va="bottom", fontsize=6.0, color=BLUE)
+        lo = end
+    note = cumsum[-1] + 0.02 * total  # the notes column, right of the level's queue
+    ax.text(note, y_br, "batches run one after another;\none ends at the first cluster\npast a mark (every batch_size points)",
+            ha="left", va="center", fontsize=5.6, color=BLUE, linespacing=1.15)  # fmt: skip
+
+    # 4. The next level: the j-th rejected cluster's children at 2j and 2j + 1, joined to their parent.
+    x = 0.0
+    for j, i in enumerate(rejected):
+        k = here.index(i)
+        for side, c in enumerate(nodes[i].children):
+            w = len(nodes[c].X)
+            block(x, y_bot, w, nodes[c], f"{2 * j + side}", new=child_new[c])
+            ax.plot([starts[k] + sizes[k] * (0.3 + 0.4 * side), x + w / 2], [y_top - h / 2, y_bot + h / 2],
+                    color=nodes[i].colour, lw=0.9, alpha=0.85, zorder=1)  # fmt: skip
+            x += w
+    # The next level's batches, cut the same way, below its row; then its tail, below them.
+    child_cum = np.cumsum(child_sizes)
+    child_ends = batch_ends(child_cum)
+    y_br3 = y_bot - h / 2 - 0.2
+    for g in range(1, int(child_cum[-1] // batch_size) + 1):
+        ax.plot([g * batch_size] * 2, [y_br3 - 0.02, y_bot - h / 2 - 0.02], color=BLUE, lw=0.8, ls=":", zorder=5)
+        ax.plot(g * batch_size, y_bot - h / 2 - 0.03, marker="^", ms=3.2, color=BLUE, zorder=6)
+    lo = 0
+    child_starts = np.r_[0, child_cum[:-1]]
+    for b, end in enumerate(child_ends):
+        a, z = child_starts[lo], child_cum[end - 1]
+        ax.annotate("", (a + 1, y_br3), (z - 1, y_br3),
+                    arrowprops={"arrowstyle": "|-|", "color": BLUE, "lw": 0.8, "mutation_scale": 2.5})  # fmt: skip
+        ax.text((a + z) / 2, y_br3 - 0.06, f"batch {b}", ha="center", va="top", fontsize=6.0, color=BLUE)
+        lo = end
+    tail = child_sizes[-2:].sum()
+    y_tail = y_br3 - 0.42
+    ax.annotate("", (x - tail, y_tail), (x, y_tail),
+                arrowprops={"arrowstyle": "|-|", "color": RED, "lw": 0.8, "mutation_scale": 2.5})  # fmt: skip
+    ax.text(x - tail - 0.012 * total, y_tail, "tail: the last clusters to start;\nan idle rank may take them",
+            ha="right", va="center", fontsize=5.8, color=RED, linespacing=1.15)  # fmt: skip
+    # Right of the last split line, so the note crosses none.
+    ax.text(x + 0.015 * total, (y_top + y_bot) / 2, "the $j$-th rejected cluster\nwrites its two children\nas entries $2j$ and $2j{+}1$",
+            ha="left", va="center", fontsize=5.8, color=DARK, linespacing=1.15)  # fmt: skip
+    ax.add_patch(plt.Rectangle((x + 0.015 * total, y_bot - 0.09), 0.035 * total, 0.18, fc=GREY, ec="white", lw=0,
+                               hatch="////", zorder=3))  # fmt: skip
+    ax.text(x + 0.06 * total, y_bot, "new points,\nadded before\nthe cut", ha="left", va="center", fontsize=5.6,
+            color=DARK, linespacing=1.15)  # fmt: skip
+
+    for y, name, n in ((y_top, f"level {level}", int(cumsum[-1])), (y_bot, f"level {level + 1}", int(child_sizes.sum()))):
+        ax.text(-0.015 * total, y, f"{name}\n{n} points", ha="right", va="center", fontsize=6.3, color=DARK)
+    accepted = [k for k, i in enumerate(here) if nodes[i].leaf]
+    ax.text(cumsum[-1] + 0.015 * total, y_top, f"accepted: {', '.join(map(str, accepted))}\nto the leaves $\\mathcal{{S}}$",
+            ha="left", va="center", fontsize=6.0, color=DARK)  # fmt: skip
+    ax.set_xlim(-0.12 * total, total * 1.24)
+    ax.set_ylim(y_bot - h / 2 - 0.75, y_zoom + zh / 2 + 0.08)
+    ax.axis("off")
+    save(fig, "queue-layout")
+    return {"layout": {"level": level, "clusters": len(here), "rejected": len(rejected), "points": int(cumsum[-1]),
+                       "next_points": int(child_sizes.sum()), "new_points": int(sum(child_new.values())),
+                       "batch_size": batch_size, "batches": len(ends), "next_batches": len(batch_ends(np.cumsum(child_sizes))),
+                       "shown_cluster": k_show, "first_accepted": accepted[0],
+                       "first_after": rejected.index(next(i for i in rejected if here.index(i) > accepted[0]))}}  # fmt: skip
 
 
 # ----------------------------------------------------------------------------- ART panels
@@ -870,7 +1052,7 @@ def art_sampling(nodes: list[Node]) -> dict:
     for child in lineage[:-1]:  # one half-plane per ancestor, in x: normal . x <= offset
         w, z = nodes[nodes[child].parent].plane
         normal, offset = w / WIDTH, z + (w / WIDTH) @ LOWER
-        sign = -1.0 if nodes[child].path & 1 else 1.0
+        sign = -1.0 if nodes[child].code & 1 else 1.0
         A.append(sign * normal)
         b.append(sign * offset)
     A, b = np.array(A), np.array(b)
@@ -911,14 +1093,14 @@ def art_sampling(nodes: list[Node]) -> dict:
         ax.scatter(*steps[0][2], s=26, c=DARK, lw=0, zorder=6)
 
     panel("art-hit-and-run", walk, view=node.polygon, pad=0.1)
-    return {"sampling": {"path": format(node.path, "b"), "depth": node.level, "rows": len(lineage) - 1,
+    return {"sampling": {"code": format(node.code, "b"), "depth": node.level, "rows": len(lineage) - 1,
                          "inherited": node.inherited, "new": len(node.X) - node.inherited}}  # fmt: skip
 
 
 def art_split(nodes: list[Node], searches: dict, plan: ARTPlan) -> dict:
     """One node's split search: the error pattern before and after, the candidates, the two objectives."""
     settings = plan.settings
-    by_path = {n.path: n for n in nodes}
+    by_code = {n.code: n for n in nodes}
 
     def rows_of(rec: SplitRecord) -> SplitRows:
         return SplitRows(rec.U, rec.Y, rec.Phi, np.zeros(len(rec.U), dtype=np.int64), np.array([len(rec.U)]))
@@ -927,17 +1109,17 @@ def art_split(nodes: list[Node], searches: dict, plan: ARTPlan) -> dict:
         return float(hard_sse(rows_of(rec), np.asarray(w)[None], np.array([z]), plan.min_side)[0][0])
 
     # One recorded search per node the plan tried to split, and one for every split node of the tree.
-    split_paths = {n.path for n in nodes if n.plane is not None}
-    if len(searches) != plan.counters["splits"] + plan.counters["split_failed"] or not split_paths <= searches.keys():
+    split_codes = {n.code for n in nodes if n.plane is not None}
+    if len(searches) != plan.counters["splits"] + plan.counters["split_failed"] or not split_codes <= searches.keys():
         raise SystemExit("The recorded split searches are not one per split node of the tree.")
-    for path, rec in searches.items():  # the recorded planes are the ones stored in the tree
-        plane = by_path[path].plane
+    for code, rec in searches.items():  # the recorded planes are the ones stored in the tree
+        plane = by_code[code].plane
         if plane is not None and not (np.allclose(plane[0], rec.final[0]) and np.isclose(plane[1], rec.final[1])):
             raise SystemExit("A recorded split search does not end at the plane stored in the tree.")
-    gains = {path: 1 - sse(rec, *rec.final) / rec.bins[2] for path, rec in searches.items()
-             if by_path[path].plane is not None}  # fmt: skip
-    path = max(gains, key=lambda p: (round(gains[p], 6), -p))
-    rec, node = searches[path], by_path[path]
+    gains = {code: 1 - sse(rec, *rec.final) / rec.bins[2] for code, rec in searches.items()
+             if by_code[code].plane is not None}  # fmt: skip
+    code = max(gains, key=lambda p: (round(gains[p], 6), -p))
+    rec, node = searches[code], by_code[code]
     X = LOWER + rec.U * WIDTH
     F = f_np(X)
     w, z = rec.final
@@ -1014,25 +1196,91 @@ def art_split(nodes: list[Node], searches: dict, plan: ARTPlan) -> dict:
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     save(fig, "art-objective")
-    return {"split": {"path": format(path, "b"), "depth": node.level, "points": n, "directions": int(len(rec.bank)),
+    return {"split": {"code": format(code, "b"), "depth": node.level, "points": n, "directions": int(len(rec.bank)),
                       "sse_parent": round(float(np.sum(affine_fit(X, F)[2] ** 2)) / ALPHA**2 / n, 2),
                       "sse_bins": round(sse_b / n, 3), "sse_final": round(sse(rec, w, z) / n, 3),
-                      "gain_percent": round(100 * gains[path]), "improved": sum(g > 1e-12 for g in gains.values()),
+                      "gain_percent": round(100 * gains[code]), "improved": sum(g > 1e-12 for g in gains.values()),
                       "searched": len(gains), "left": int((~right).sum()), "right": int(right.sum()),
                       "n_bins": settings.n_bins, "soft_iters": settings.soft_iters,
                       "temperature": settings.soft_temperature}}  # fmt: skip
 
 
+def locational_code_panels(nodes: list[Node]) -> dict:
+    """
+    Naming a node: one frame per depth along the route to the deepest leaf, each showing the
+    region chosen so far and the plane that cut its parent (the code gains one bit per cut);
+    and a Morton (Z-order) quadtree next to ART's oblique partition, for comparison.
+    """
+    deepest = max((n for n in nodes if n.leaf), key=lambda n: (n.level, -n.code))
+    route = [nodes.index(deepest)]
+    while nodes[route[-1]].parent is not None:
+        route.append(nodes[route[-1]].parent)
+    route = route[::-1]
+    leaves = [n for n in nodes if n.leaf]
+    frames = []
+    for depth, i in enumerate(route):
+        n = nodes[i]
+
+        def frame(ax, n=n, depth=depth):
+            for leaf in leaves:
+                ax.add_patch(Polygon(leaf.polygon, closed=True, fc="none", ec=GREY, lw=0.35, alpha=0.6, zorder=1))
+            if n.parent is not None:  # the parent's region, and the plane that cut it
+                p = nodes[n.parent]
+                ax.add_patch(Polygon(p.polygon, closed=True, fc=LIGHT, ec="none", alpha=0.7, zorder=1))
+                w, z = p.plane
+                cut_line(ax, LOWER + (w * z / (w @ w)) * WIDTH, w / WIDTH, colour=DARK, lw=1.1, ls="-", zorder=3)
+            ax.add_patch(Polygon(n.polygon, closed=True, fc=RED if n is deepest else BLUE, ec=DARK, lw=0.9,
+                                 alpha=0.55, zorder=2))  # fmt: skip
+            ax.scatter(*deepest.polygon.mean(axis=0), s=12, c="black", zorder=6)
+
+        name = f"locational-code-{depth}"
+        panel(name, frame, size=(1.6, 1.6), back=False)
+        frames.append(format(n.code, "b"))
+
+    # Morton codes on a quadtree: each level appends one bit per coordinate (interleaved).
+    def morton(ax):
+        q = 4  # 4 x 4 cells, 2 bits per coordinate
+        for gx in range(q + 1):
+            ax.plot([LOWER[0] + gx * WIDTH[0] / q] * 2, [LOWER[1], UPPER[1]], color=GREY, lw=0.6, zorder=1)
+            ax.plot([LOWER[0], UPPER[0]], [LOWER[1] + gx * WIDTH[1] / q] * 2, color=GREY, lw=0.6, zorder=1)
+        centres, codes = [], []
+        for iy in range(q):
+            for ix in range(q):
+                code = 0
+                for b in range(2):  # interleave: y bit, then x bit, from the most significant
+                    code = (code << 2) | (((iy >> (1 - b)) & 1) << 1) | ((ix >> (1 - b)) & 1)
+                codes.append(code)
+                centres.append(LOWER + (np.array([ix, iy]) + 0.5) * WIDTH / q)
+        order = np.argsort(codes)
+        pts = np.array(centres)[order]
+        ax.plot(*pts.T, color=BLUE, lw=0.9, zorder=2)
+        for c, code in zip(centres, codes, strict=True):
+            ax.text(*c, format(code, "04b"), ha="center", va="center", fontsize=5.6, color=DARK, zorder=3,
+                    bbox={"fc": "white", "ec": "none", "pad": 0.4, "alpha": 0.85})  # fmt: skip
+
+    def oblique(ax):
+        for leaf in leaves:
+            ax.add_patch(Polygon(leaf.polygon, closed=True, fc=leaf.colour, ec="white", lw=0.8, alpha=0.45, zorder=1))
+        ax.add_patch(Polygon(deepest.polygon, closed=True, fc="none", ec=RED, lw=1.4, zorder=3))
+
+    panel("morton-quadtree", morton, size=(2.0, 2.0), back=False)
+    panel("morton-oblique", oblique, size=(2.0, 2.0), back=False)
+    return {"locational_code": {"codes": frames, "depth": deepest.level, "leaf": format(deepest.code, "b"),
+                                "value": deepest.code, "parent": format(deepest.code >> 1, "b"),
+                                "sibling": format(deepest.code ^ 1, "b"), "children": [format(2 * deepest.code, "b"),
+                                format(2 * deepest.code + 1, "b")], "max_depth": MAX_DEPTH_LIMIT}}  # fmt: skip
+
+
 def art_route(s: AFINNISurrogate, nodes: list[Node]) -> dict:
     """One query on its way down: the polytope it is in at each depth, and its path in the tree."""
-    deepest = max((n for n in nodes if n.leaf), key=lambda n: (n.level, -n.path))
+    deepest = max((n for n in nodes if n.leaf), key=lambda n: (n.level, -n.code))
     q = deepest.polygon.mean(axis=0)
     path = [nodes.index(deepest)]
     while nodes[path[-1]].parent is not None:
         path.append(nodes[path[-1]].parent)
     path = path[::-1]
     leaf = int(to_host(s.route_leaves(q[None]))[0])
-    if int(s.art_leaves["path_code"][leaf]) != deepest.path:
+    if int(s.art_leaves["locational_code"][leaf]) != deepest.code:
         raise SystemExit("The library routes the example query to another leaf.")
 
     fig, (ax, at) = plt.subplots(1, 2, figsize=(4.7, 2.2), gridspec_kw={"width_ratios": [1, 1.25]})
@@ -1050,7 +1298,7 @@ def art_route(s: AFINNISurrogate, nodes: list[Node]) -> dict:
     fig.tight_layout(pad=0.2, w_pad=0.4)
     save(fig, "art-route")
     u = (q - LOWER) / WIDTH
-    return {"route": {"depth": deepest.level, "path": format(deepest.path, "b"),
+    return {"route": {"depth": deepest.level, "code": format(deepest.code, "b"),
                       "sides": [int(u @ nodes[i].plane[0] - nodes[i].plane[1] >= 0) for i in path[:-1]]}}  # fmt: skip
 
 
@@ -1073,7 +1321,7 @@ def compare(afinni: AFINNISurrogate, art: AFINNISurrogate, afinni_nodes: list[No
         outside = oa.reshape(n, n).astype(float)
         ax.contourf(G0, G1, outside, levels=[0.5, 1.5], colors="none", hatches=["//////"], zorder=2)
         ax.contour(G0, G1, outside, levels=[0.5], colors=DARK, linewidths=0.5, zorder=3)
-        ax.scatter(*to_host(afinni.X_src).T, s=5, c=DARK, marker="x", lw=0.6, zorder=4)
+        cross(ax, to_host(afinni.X_src), DARK, size=12, lw=1.0, zorder=4)
 
     def error_art(ax):
         ax.imshow(er.reshape(n, n), origin="lower", extent=extent, cmap=ERROR_CMAP, norm=norm, zorder=1,
@@ -1146,10 +1394,11 @@ def record_steals() -> None:
     if len(stats["per_rank"]) != STEAL["ranks"]:
         raise SystemExit(f"Run under mpiexec -n {STEAL['ranks']}.")
     def keyed(model: AFINNISurrogate) -> tuple[dict, np.ndarray]:
-        """Every split plane by its node's path code, and the sorted leaf codes: the tree, whatever the row order."""
+        """Every split plane by its node's locational code, and the sorted leaf codes: the tree, whatever the row order."""
         a = {k: to_host(v) for k, v in model.routing.arrays().items()}
-        planes = {int(path): (w.tobytes(), float(z)) for path, w, z in zip(a["split_path"], a["w"], a["z"], strict=True)}
-        return planes, np.sort(a["leaf_path"])
+        planes = {int(code): (w.tobytes(), float(z))
+                  for code, w, z in zip(a["split_locational_code"], a["w"], a["z"], strict=True)}
+        return planes, np.sort(a["leaf_locational_code"])
 
     tree = {k: to_host(v) for k, v in s.routing.arrays().items()}
     (planes, leaves), (planes_ref, leaves_ref) = keyed(s), keyed(reference)
@@ -1163,8 +1412,8 @@ def record_steals() -> None:
               for r in stats["per_rank"]]  # fmt: skip
     data = {"settings": STEAL, "leaves": int(s.N_src), "leaves_per_rank": counts,
             # Leaves are gathered in rank order, so the first counts[0] leaves were built by rank 0.
-            "leaf_paths": np.asarray(s.art_leaves["path_code"]).tolist(),
-            "split_paths": tree["split_path"].tolist(), "w": tree["w"].tolist(), "z": tree["z"].tolist(),
+            "leaf_locational_codes": np.asarray(s.art_leaves["locational_code"]).tolist(),
+            "split_locational_codes": tree["split_locational_code"].tolist(), "w": tree["w"].tolist(), "z": tree["z"].tolist(),
             "events": events}  # fmt: skip
     (OUT / "steal_run.json").write_text(json.dumps(data) + "\n")
     print(f"recorded {data['leaves']} leaves, {counts} per rank; the tree equals the one built without stealing")
@@ -1194,24 +1443,25 @@ def steal_panels() -> dict:
         ax.spines[side].set_visible(False)
     save(fig, "steal-timeline")
 
-    planes = {int(path): (np.array(w), z) for path, w, z in zip(run["split_paths"], run["w"], run["z"], strict=True)}
+    planes = {int(code): (np.array(w), z)
+              for code, w, z in zip(run["split_locational_codes"], run["w"], run["z"], strict=True)}
     owner = np.repeat(np.arange(P), run["leaves_per_rank"])  # leaves are gathered in rank order
     box = np.array([LOWER, [UPPER[0], LOWER[1]], UPPER, [LOWER[0], UPPER[1]]])
 
-    def polygon(path: int) -> np.ndarray:
+    def polygon(code: int) -> np.ndarray:
         poly = box
-        for shift in range(path.bit_length() - 2, -1, -1):  # from the root down: one bit per level
-            poly = clip(poly, *planes[path >> (shift + 1)], keep_right=bool((path >> shift) & 1))
+        for shift in range(code.bit_length() - 2, -1, -1):  # from the root down: one bit per level
+            poly = clip(poly, *planes[code >> (shift + 1)], keep_right=bool((code >> shift) & 1))
         return poly
 
     def owners(ax):
-        for path, r in zip(run["leaf_paths"], owner, strict=True):
-            ax.add_patch(Polygon(polygon(path), closed=True, fc=RANKS[r], ec="white", lw=0.3, alpha=0.8, zorder=1))
+        for code, r in zip(run["leaf_locational_codes"], owner, strict=True):
+            ax.add_patch(Polygon(polygon(code), closed=True, fc=RANKS[r], ec="white", lw=0.3, alpha=0.8, zorder=1))
 
     panel("steal-owners", owners, back=False)
     return {"leaves": run["leaves"], "leaves_per_rank": run["leaves_per_rank"], "steals": len(received),
             "ranks": P, "atol": run["settings"]["atol"], "batch_size": run["settings"]["batch_size"],
-            "depth": max(p.bit_length() - 1 for p in run["leaf_paths"])}  # fmt: skip
+            "depth": max(p.bit_length() - 1 for p in run["leaf_locational_codes"])}  # fmt: skip
 
 
 def main() -> None:
@@ -1232,6 +1482,8 @@ def main() -> None:
     numbers = {
         "alpha": ALPHA, "N0": N0, "seed": SEED, "kappa": KAPPA,
         "domain": {"lower": LOWER.tolist(), "upper": UPPER.tolist()},
+        # Library defaults the text quotes, read from TrainingConfig so a change shows up here.
+        "defaults": {"q_reg_exponent": int(round(np.log10(TrainingConfig(atol=1.0).q_reg)))},
         "settings": {"afinni": {k: v for k, v in AFINNI_SETTINGS.items() if v is not None},
                      "art": {"sample_multiplier": ART_MULTIPLIER, "node_points": ART_MULTIPLIER * 3,
                              "max_levels": ART_SETTINGS["max_levels"]}},
@@ -1242,7 +1494,10 @@ def main() -> None:
     panel("example", lambda ax: None)
     numbers["afinni"] = afinni_levels(forest, levels) | afinni_split(levels) | afinni_trust(afinni, forest)
     queue_strips(forest, levels)
+    residual_key()
+    numbers["afinni"] |= queue_layout(forest, levels)
     numbers["art"] = art_levels(tree) | art_sampling(tree) | art_split(tree, searches, art_plan) | art_route(art, tree)
+    numbers["art"] |= locational_code_panels(tree)
     numbers["compare"] = compare(afinni, art, forest, tree)
     # The library's own accuracy claim for the ART model: fresh uniform points, a one-sided bound.
     audit = art.audit(Evaluator(f_fn=f_xp), AUDIT_POINTS, seed=SEED)

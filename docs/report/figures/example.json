@@ -13,6 +13,9 @@
       3.0
     ]
   },
+  "defaults": {
+    "q_reg_exponent": -6
+  },
   "settings": {
     "afinni": {
       "atol": 1.0,
@@ -157,6 +160,20 @@
         "pred": 7.18,
         "f": 9.74
       }
+    },
+    "layout": {
+      "level": 2,
+      "clusters": 10,
+      "rejected": 7,
+      "points": 380,
+      "next_points": 528,
+      "new_points": 264,
+      "batch_size": 130,
+      "batches": 3,
+      "next_batches": 4,
+      "shown_cluster": 4,
+      "first_accepted": 2,
+      "first_after": 2
     }
   },
   "art": {
@@ -199,14 +216,14 @@
     ],
     "depth": 6,
     "sampling": {
-      "path": "11111",
+      "code": "11111",
       "depth": 4,
       "rows": 4,
       "inherited": 26,
       "new": 34
     },
     "split": {
-      "path": "111",
+      "code": "111",
       "depth": 2,
       "points": 60,
       "directions": 6,
@@ -224,7 +241,7 @@
     },
     "route": {
       "depth": 6,
-      "path": "1100100",
+      "code": "1100100",
       "sides": [
         1,
         0,
@@ -233,6 +250,27 @@
         0,
         0
       ]
+    },
+    "locational_code": {
+      "codes": [
+        "1",
+        "11",
+        "110",
+        "1100",
+        "11001",
+        "110010",
+        "1100100"
+      ],
+      "depth": 6,
+      "leaf": "1100100",
+      "value": 100,
+      "parent": "110010",
+      "sibling": "1100101",
+      "children": [
+        "11001000",
+        "11001001"
+      ],
+      "max_depth": 62
     },
     "audit": {
       "points": 2000,

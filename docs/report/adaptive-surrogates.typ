@@ -42,6 +42,8 @@
 #let cyan = rgb(col.cyan)
 #let grey = rgb(col.grey)
 #let panel(name, width: 100%) = image("figures/" + name + ".svg", width: width)
+// The colour key of every map of a model's errors.
+#let error-key(width: 100%) = panel("residual-key", width: width)
 // A picture keeps its caption on its own page (the template lets figures break, for algorithms).
 #show figure.where(kind: image): set block(breakable: false)
 #let small(body) = text(8pt, body)
@@ -135,7 +137,7 @@
 #let inference-code = (label: <alg:inference>, lines: inference)
 
 #let art = (
-  require[a batch of nodes $C$: region $Omega_C$, inherited points, path code $pi$; budget $n$],
+  require[a batch of nodes $C$: region $Omega_C$, inherited points, locational code $pi$; budget $n$],
   ensure[leaves $(pi, (w, b))$; split records $(pi, a, z)$; two children per split node],
   ln(0, [*parallel for* each node $C$]),
   ln(1, [draw new points in $Omega_C$ until $C$ has $n$; evaluate $f$ at the new ones], note: [@alg:hitrun]),
@@ -147,7 +149,7 @@
   ln(1, [*if* a side would hold fewer than $p$ points: $C$ becomes a leaf], note: [`split_failed`]),
   ln(1, [$Cm <- {x in C : a^top u(x) < z}$, #h(0.3em) $Cp <- {x in C : a^top u(x) >= z}$]),
   ln(1, [their regions: $Omega_C$ with the row $a^top u <= z$, or $a^top u >= z$, added]),
-  ln(1, [their path codes: $2 pi$ and $2 pi + 1$; record $(pi, a, z)$]),
+  ln(1, [their locational codes: $2 pi$ and $2 pi + 1$; record $(pi, a, z)$]),
 )
 #let art-code = (label: <alg:art>, lines: art)
 
@@ -244,7 +246,7 @@ never needs to know the domain. ART suits a known domain on which every point mu
 answer. In the code both are _plans_ of one _refinement engine_ (@sec:engine), chosen by
 `TrainingConfig(algorithm="afinni")` or `"art"`.
 
-== How to read this companion
+== How to read this companion <sec:reading>
 
 Each idea appears three times: as a *picture* of the running example, in plain *words*, and
 in *symbols*, as a definition, lemma or theorem in a tinted box. The pictures and the
@@ -274,9 +276,10 @@ objects are the same.
   [$H$; #h(0.2em) $H = U D U^top$; #h(0.2em) $absH = U abs(D) U^top$],
   [the trust region of a leaf], [$(x - c)^top T (x - c) <= 1$ #h(0.3em) ($T$ is `trust_matrix` in the code)],
   [the leaves and their number], [$cal(S)$, $N_c$],
-  [ART: a node's region, in coordinates $u in [0, 1]^d$ of the domain], [$Omega_C = {u : A u <= bold(z)}$],
-  [ART: a split plane; the side $a^top u >= z$ is the child $Cp$], [$(a, z)$, $norm(a) = 1$ #h(0.3em) (`normal`, `offset` in the code)],
-  [ART: a node's path code, and its number of points], [$pi$, #h(0.2em) $n = ceil(m p)$ with $p = d + 1$],
+  [ART: a split plane, its unit normal and offset; the side $a^top u >= z$ is the child $Cp$], [$(a, z)$, $norm(a) = 1$ #h(0.3em) (`normal`, `offset` in the code)],
+  [ART: a node's region, in coordinates $u in [0, 1]^d$ of the domain. Each ancestor's plane adds one row: $plus.minus a^top$ to $A$ and $plus.minus z$ to $bold(z)$, the sign choosing the node's side; the box's faces are rows too], [$Omega_C = {u : A u <= bold(z)}$],
+  [ART: a node's locational code], [$pi$ #h(0.3em) (`locational_code`)],
+  [ART: the points a node is fitted on: the multiplier $m$ times the number of coefficients $p$ of an affine model], [$n = ceil(m p)$, $p = d + 1$ #h(0.3em) ($m$ is `sample_multiplier`)],
   [the MPI ranks, and the work of rank $i$], [$P$, $w_i$],
 )
 
@@ -330,15 +333,36 @@ batch may end, how much memory a point needs, and what to do with one batch.
 
 #figure(panel("queue-strips"), caption: [The queue of every AFINNI level of the running
   example, as it is stored: each cluster's points back to back, in one array. Accepted
-  clusters (pale) leave for the leaves; each rejected cluster (outlined red) is replaced in
+  clusters (pale) leave for the leaves; each rejected cluster (outlined black) is replaced in
   the next level by its two children, next to each other. Some rows grow: a small rejected
   cluster is given new points before it is cut (@sec:augment).]) <fig:queue>
 
-#translate(
-  [a cluster is a run of consecutive rows], [rows `starts[k]` to `starts[k] + sizes[k]` of `X`, `F`],
-  [a batch is a run of consecutive clusters], [`plan.batch_end(...)` chooses where it ends],
-  [the children of a cluster are adjacent], [children $2 j$ and $2 j + 1$ of the next queue belong to the $j$-th cluster cut at this level],
-)
+#figure(panel("queue-layout"), caption: [One level of @fig:queue up close, as it is stored:
+  level #ex.afinni.layout.level cut into batches, and the next level its rejected clusters
+  write, larger and so in more batches (@sec:augment explains the new points, @sec:mpi the
+  tail).]) <fig:layout>
+
+Note that $j$ counts the _rejected_ clusters only. Cluster #ex.afinni.layout.first_accepted
+was accepted and has no children, so children $2 j$ and $2 j + 1$ of the next level belong to
+the $j$-th rejected cluster, not to cluster $j$.
+
+The queue also grows. Level #(ex.afinni.layout.level + 1) holds #ex.afinni.layout.next_points
+points against #ex.afinni.layout.points: the children keep all of their parents' points, and
+#ex.afinni.layout.new_points of them are new, added to rejected clusters too small to cut. The
+engine therefore never sizes a level in advance. The next level's queue is a host buffer that
+starts at twice the current level's points and doubles when it fills, after checking that
+the machine has the memory, and the next level simply runs in more batches
+(#ex.afinni.layout.next_batches instead of #ex.afinni.layout.batches here). Only one batch
+is ever on the device (@sec:batches).
+
+Three properties follow from this layout, and the engine relies on each of them. Every step
+of a batch is an operation on consecutive rows, with no lookup. A batch can be cut anywhere
+between clusters, and since the batches of a level run one after another, the clusters at
+the end of the queue are the last to start: a block of them can be handed to an idle
+process before this rank reaches them, which is how idle ranks take work from busy ones
+(work stealing, @sec:mpi). And because
+children are written in the order their parents were processed, the order is kept from
+level to level:
 
 #invariant(title: [queue order])[
   Batches are taken in queue order, rejected clusters are cut in queue order, and each
@@ -357,7 +381,7 @@ that both provide every member of the `Plan` protocol in `src/core/plan.py`.
   table.header[][AFINNI (`AFINNIPlan`)][ART (`ARTPlan`)],
   [initial queue], [the $Ninit$ clusters of the initial sample], [the roots: the domain, or a grid or Voronoi cells of it],
   [points of a cluster], [its own, plus new ones if it is small and rejected], [topped up to $n$ inside its polytope before fitting],
-  [extra columns], [none], [root, path code $pi$, the rows of $Omega_C$],
+  [extra columns], [none], [root, locational code $pi$, the rows of $Omega_C$],
   [cut], [Hessian-informed, at the median], [searched plane $(a, z)$, recorded],
   [at the depth limit], [the cluster is dropped and reported], [the node becomes a leaf, flagged],
   [after the run], [nothing], [assembles and checks the tree],
@@ -389,10 +413,11 @@ points, and look at how far it is from $f$ at those same points.
   `AFINNIPlan.process_batch` in `src/afinni/plan.py`.], pseudocode(afinni)) <alg:afinni>
 
 #story()
-#step([Level 0: no cluster passes], code: afinni-code, focus: (1, 2, 3, 4), window: 1, width: 36%, panel("afinni-error-0"))[
+#step([Level 0: no cluster passes], code: afinni-code, focus: (1, 2, 3, 4), window: 1, width: 36%,
+  stack(spacing: 4pt, panel("afinni-error-0"), error-key()))[
   The #ex.afinni.levels.at(0).clusters initial clusters, with every point coloured by the
-  error of its cluster's model. Each cluster shows the same pattern: the model is too low
-  at the rim and too high in the middle, or the reverse. That bowl is the part of $f$ an
+  error of its cluster's model (colours as in @sec:reading). Each cluster shows the same
+  pattern: the model is too low at the rim and too high in the middle, or the reverse. That bowl is the part of $f$ an
   affine model cannot follow, its curvature. The worst error is
   #ex.afinni.levels.at(0).worst_error, far above $atol = #ex.alpha$, so all
   #ex.afinni.levels.at(0).clusters clusters are rejected (red crosses).
@@ -405,17 +430,18 @@ points, and look at how far it is from $f$ at those same points.
   retire as leaves. The others, where $f$ bends most, are cut again.
 ]
 
-#filmstrip(
+#let error-strip = filmstrip(
   (panel("afinni-error-0"), [level 0: #ex.afinni.levels.at(0).worst_error]),
   (panel("afinni-error-1"), [level 1: #ex.afinni.levels.at(1).worst_error]),
   (panel("afinni-error-2"), [level 2: #ex.afinni.levels.at(2).worst_error]),
   (panel("afinni-error-3"), [level 3: #ex.afinni.levels.at(3).worst_error]),
   (panel("afinni-error-4"), [level 4: #ex.afinni.levels.at(4).worst_error]),
+)
+#figure(stack(spacing: 2pt, error-strip, align(center, error-key(width: 34%))), kind: image,
   caption: [The clusters still in the queue at each level, coloured by the error of their
-    models in units of the tolerance, with the worst error of each level. Accepted clusters
-    leave the picture; the rest are cut and fitted again. After #ex.afinni.n_levels levels
-    nothing is left.],
-) <fig:errors>
+    models (key below), with the worst error of each level. Accepted clusters leave the
+    picture; the rest are cut and fitted again. After #ex.afinni.n_levels levels nothing is
+    left.]) <fig:errors>
 
 The same run, seen as clusters and as the forest they form:
 
@@ -487,7 +513,7 @@ depends on $f$.
     points and worst error #ex.afinni.split.parent_error. Its error forms stripes: $f$ bends
     _across_ the cluster and hardly at all along it. A cut across the longest direction
     leaves both children with the full bend. A cut across the bend, #ex.afinni.split.angle
-    degrees away, leaves children that are nearly flat.],
+    degrees away, leaves children that are nearly flat. Colours as in @sec:reading.],
 ) <fig:split>
 
 The stripes of the left frame are the level sets of the error, and the error is the
@@ -517,6 +543,10 @@ same pattern the pictures show: the points where the Taylor expansion is nearly 
 in a small sublevel set of the remainder around $c$, which is an ellipsoid with the shape
 of $absH^(-1)$. Their scatter matrix is therefore proportional to $absH^(-1)$.
 
+#algorithm(caption: [Hessian estimate and Hessian-informed split of one rejected cluster
+  (the manuscript's Algorithms 2 and 3): `CovarianceHessianSplit` in
+  `src/components/splitting.py`.], pseudocode(splitting)) <alg:split>
+
 #story()
 #step([A gradient from the nearest points], code: split-code, focus: (1,), window: 1, width: 36%, panel("afinni-hess-gradient"))[
   The Taylor expansion needs $nabla f(c)$. It is fitted by least squares to the
@@ -539,10 +569,6 @@ of $absH^(-1)$. Their scatter matrix is therefore proportional to $absH^(-1)$.
   (cyan).
 ]
 
-#algorithm(caption: [Hessian estimate and Hessian-informed split of one rejected cluster
-  (the manuscript's Algorithms 2 and 3): `CovarianceHessianSplit` in
-  `src/components/splitting.py`.], pseudocode(splitting)) <alg:split>
-
 #theorem(title: [the scatter of a level set estimates the Hessian, @manuscript])[
   Let $f$ be a convex, non-degenerate quadratic with Hessian $H$, and let
   $E_epsilon = {x : abs(f(x) - hat(f)_c (x)) <= epsilon}$, with $hat(f)_c$ the Taylor
@@ -557,9 +583,36 @@ On the example the Hessian-informed cut left the children with a smaller worst e
 the cut across the longest direction in #ex.afinni.split.hessian_wins of the
 #ex.afinni.split.rejected clusters that were split.
 
+#note(title: [How many points each fit uses, and why])[
+  Both fits trade a well-conditioned solve against staying close to $c$. The lower bounds
+  follow from the fits; the fractions of $Nmin$ are set empirically.
+  - *Gradient: the $max(2 d, floor(Nmin slash 4))$ points nearest to $c$.* $hat(g)$ has $d$
+    unknowns, so it needs at least $d$ points not lying in a subspace, and twice that keeps
+    the solve well conditioned when some of them nearly do. More points cost accuracy: $f$
+    is exact, so the fit's only error is the Taylor remainder $1/2 (x - c)^top H (x - c)$,
+    which moves the fitted gradient by $O(norm(H) r)$ for points within distance $r$ of $c$.
+    Hence the _nearest_ points, and few of them. $floor(Nmin slash 4)$ takes more of them
+    when clusters are large, where they are still close to $c$.
+  - *Level set: the $N_"cov" = floor(Nmin slash 3)$ points with the smallest Taylor error.*
+    @thm:hessian bounds the error of $hat(Sigma)^(-1)$ by $sqrt((d + v) slash n)$: about $d$
+    points at the least, and more help. But more points come from a wider set $E_epsilon$,
+    whose shape the higher-order terms of $f$ and the error of $hat(g)$ distort. A third of
+    $Nmin$ balances the two when $Nmin$ is well above $d$.
+  - *Both stay local.* A cluster is cut only once it holds at least $2 Nmin$ points
+    (@sec:augment), so the gradient uses at most an eighth of it and the level set at most a
+    sixth.
+]
+
+#pitfall(title: [A level set smaller than the dimension])[
+  $N_"cov" = floor(Nmin slash 3)$ has no floor in $d$: with the default $Nmin = 100$ it is
+  33 points, so for $d > 33$ the level set cannot span every direction and $Sigma$ is
+  singular. The code floors its eigenvalues at $10^(-12)$, which gives the directions the
+  level set never reached the largest weight in $absH^(1 slash 2)$ instead of none. Raise
+  `min_pts_per_cluster` with the dimension (`default_min_pts_per_cluster` gives
+  $100 dot 1.3^d$) to stay clear of it.
+]
+
 #implementation(title: [In the code])[
-  - The gradient uses the $max(2 d, floor(Nmin slash 4))$ nearest points, the level set
-    $N_"cov" = floor(Nmin slash 3)$ points.
   - The cut is at the _median_ of the scores by default, so the two children have equal
     size and the forest stays balanced. `cut="sign"` cuts at $s_i = 0$ as in the
     manuscript's Algorithm 2.
@@ -609,6 +662,9 @@ the cut across the longest direction in #ex.afinni.split.hessian_wins of the
 AFINNI keeps no tree and no boundaries, only the leaves. Each leaf knows where its model
 was tested: at its own points. So each leaf carries a region that contains them.
 
+#algorithm(caption: [The trust ellipsoid of an accepted cluster (the manuscript's Algorithm 5): `CovarianceEllipsoid` in
+  `src/components/trust_regions.py`. $gamma$ is `q_reg`.], pseudocode(trust)) <alg:trust>
+
 #story()
 #step([An ellipsoid around a leaf's points], code: trust-code, focus: (1, 2, 3, 4), width: 36%, panel("afinni-trust-one"))[
   The scatter matrix $Sigma$ of the leaf's #ex.afinni.trust_points points gives the shape:
@@ -617,9 +673,6 @@ was tested: at its own points. So each leaf carries a region that contains them.
   takes puts the farthest point (ringed) exactly on the boundary and every other point
   inside.
 ]
-
-#algorithm(caption: [The trust ellipsoid of an accepted cluster (the manuscript's Algorithm 5): `CovarianceEllipsoid` in
-  `src/components/trust_regions.py`. $gamma$ is `q_reg`.], pseudocode(trust)) <alg:trust>
 
 #lemma(title: [the trust region contains the leaf's points])[
   With $T$ from @alg:trust, $(x_i - c)^top T (x_i - c) <= 1$ for every point $x_i$ of the
@@ -631,9 +684,26 @@ was tested: at its own points. So each leaf carries a region that contains them.
   largest numerator.
 ]
 
+#note(title: [Why the floor $gamma$])[
+  $Sigma^(-1)$ exists only if the leaf's points spread in every direction. They need not:
+  fewer than $d + 1$ points, or points that lie on a line or a plane (a thin slab left by
+  repeated cuts, or augmented points on a segment between two others) give $Sigma$ a zero
+  eigenvalue. The ellipsoid would then have zero width across that direction, every query
+  off the points' subspace would have an infinite trust-region distance and be flagged,
+  and the inversion itself would be unstable. Flooring the eigenvalues at $gamma$ gives
+  the ellipsoid a minimum half-width $sqrt(gamma alpha)$ in every direction and caps how
+  elongated it can be, while leaving well-spread leaves untouched. In the code $gamma$ is `q_reg`, by default
+  $10^(#ex.defaults.q_reg_exponent)$. It floors the eigenvalues of the scatter $Sigma$, a sum
+  over the points, in squared units of $x$: a small absolute length, not relative to the
+  leaf's size.
+]
+
 A minimum-volume enclosing ellipsoid @todd2016 would be tighter, but needs an iterative
 optimization per leaf; this one is a single eigendecomposition, batched over all accepted
 clusters.
+
+#algorithm(caption: [Inference (the manuscript's Algorithm 6): `AFINNISurrogate.predict`
+  with `predictor="knn"`.], pseudocode(inference)) <alg:inference>
 
 #scene(side: left, width: 40%, panel("afinni-inference"))[
   The ellipsoids do two jobs at inference. They are a _metric_: the distance from a query
@@ -649,13 +719,13 @@ clusters.
   answers, and the answer is returned _flagged_ (red).
 ]
 
-#algorithm(caption: [Inference (the manuscript's Algorithm 6): `AFINNISurrogate.predict`
-  with `predictor="knn"`.], pseudocode(inference)) <alg:inference>
-
 Searching all $N_c$ leaves in their own metrics would cost $O(N_c d^2)$ per query. The
 search is therefore done in two stages: an exact Euclidean search for $kappa$ candidates
-(`src/neighbors/knn.py`), then the $kappa$ trust-region distances. $kappa$ should grow with
-the dimension and with the anisotropy of the leaves; the manuscript uses $kappa = 2 d^2$.
+(`src/neighbors/knn.py`), then the $kappa$ trust-region distances. The first stage can miss
+the right leaf: a long ellipsoid's centre can be far from a query its ellipsoid contains (query
+A in the picture). So $kappa$ should grow with the dimension and with how elongated the
+leaves are, and it is set empirically, for example $kappa = 2 d^2$; too small a $kappa$
+shows up as queries flagged outside although a leaf contains them.
 
 #implementation(title: [In the code])[
   `predict(X, k_nn=1, coarse_factor=10)` searches $kappa =$ `k_nn * coarse_factor`
@@ -670,9 +740,9 @@ the dimension and with the anisotropy of the leaves; the manuscript uses $kappa 
   Inside a trust region the model was tested at the leaf's points, not everywhere. The
   flag says "no leaf has data near here"; its absence does not bound the error. In high
   dimension the ellipsoids cover a vanishing share of a box, so the flag is informative
-  only if the sample lies where the queries will. The manuscript's _iterative refinement_
-  uses the flag as a sampling rule: draw new initial points, keep those outside every
-  trust region, and train again.
+  only if the sample lies where the queries will. The flag can also guide sampling
+  (_iterative refinement_): draw new initial points, keep those outside every trust
+  region, and train again.
 ]
 
 #takeaway[A leaf answers for the ellipsoid that contains its points; a query is answered
@@ -689,14 +759,14 @@ adaptive regression tree @art. It needs what AFINNI does not, a domain, given as
 (`domain=(lower, upper)`); all its geometry is done in the coordinates $u in [0, 1]^d$ of
 that box.
 
-#definition(title: [regions, planes and path codes])[
+#definition(title: [regions, planes and locational codes])[
   The root's _region_ is the domain, $Omega = [0, 1]^d$ in $u$. A node $C$ that is split
   by the plane $(a, z)$, $norm(a) = 1$, has the children
   $ Omega_(Cm) = Omega_C inter {u : a^top u <= z}, quad Omega_(Cp) = Omega_C inter {u : a^top u >= z} , $
   and a point with $a^top u = z$ belongs to $Cp$. A region is therefore a convex polytope
   ${u : A u <= bold(z)}$: the box, and one row $plus.minus (a, z)$ of $(A, bold(z))$ for every
-  ancestor. The _path code_ of
-  the root is $pi = 1$, and the children of node $pi$ are $2 pi$ (for $Cm$) and $2 pi + 1$
+  ancestor. The _locational code_
+  of the root is $pi = 1$, and the children of node $pi$ are $2 pi$ (for $Cm$) and $2 pi + 1$
   (for $Cp$): one binary digit per level.
 ] <def:region>
 
@@ -722,6 +792,140 @@ depths up to #ex.art.depth, after #ex.compare.art.evals evaluations of $f$.
   `src/art/plan.py`. The notes in code type are the leaf's recorded `terminal_reason`.],
   pseudocode(art)) <alg:art>
 
+== Naming a node: the locational code <sec:locational-code>
+
+#question[A node is created on one rank, may be stolen by another, and is merged on a
+  third. How should it be named, so that anyone can work out its name, its parent's and its
+  children's, without asking anyone?]
+
+The name has four jobs, and each rules something out.
+
+#cards(
+  columns: 4,
+  ([Local], [Any rank computes a child's name from its parent's alone, with no message to
+    anyone.]),
+  ([Stable], [The name is the same whichever rank, batch or run builds the node: it seeds the
+    node's random numbers (@inv:rng).]),
+  ([Arithmetic], [Parent, children and depth follow from the name, without a lookup.]),
+  ([Small], [One machine integer, carried with every queued node.]),
+)
+
+#cards(
+  columns: 2,
+  ([A global counter #text(fill: red)[✗]], [Numbering nodes $0, 1, 2, dots$ as they are created
+    needs one counter shared by every rank, a message per node, and the numbers depend on the
+    order of processing, so they are neither local nor stable.]),
+  ([Coordinates #text(fill: red)[✗]], [A centre or a corner is a floating-point vector: not
+    small, not exact, and it says nothing about the parent.]),
+  ([A spatial Morton code #text(fill: red)[✗]], [Local, stable and arithmetic, but only for
+    cells that are boxes halved at their midpoints; see below.]),
+  ([The locational code #text(fill: rgb("#2e7d32"))[✓]], [The route from the root, one bit per cut.
+    It meets all four.]),
+)
+
+#let bitlabel(code) = {
+  let head = code.slice(0, code.len() - 1)
+  let last = code.slice(code.len() - 1)
+  [#raw(head)#text(fill: red, weight: "bold", raw(last))]
+}
+#board(
+  columns: 4,
+  (panel("locational-code-0"), [#raw(ex.art.locational_code.codes.at(0)): the root]),
+  ..range(1, ex.art.locational_code.codes.len()).map(k => {
+    let code = ex.art.locational_code.codes.at(k)
+    (panel("locational-code-" + str(k)), [#bitlabel(code): #if code.ends-with("1") [right] else [left] of the plane])
+  }),
+)
+
+The frames follow one point (black) down the tree of @fig:tree. The root is named $1$. Each
+cut appends one bit: $0$ if the point's region is on the side $a^top u < z$ of the plane (left),
+$1$ if it is on the side $a^top u >= z$ (right). After #ex.art.locational_code.depth cuts the point's
+leaf is named #raw(ex.art.locational_code.leaf). The name _is_ the route: read it left to right and
+it says which way to turn at every split.
+
+#definition(title: [locational code])[
+  The root has locational code $pi = 1$. A node with locational code $pi$ has children $2 pi$
+  (the side $a^top u < z$) and $2 pi + 1$ (the side $a^top u >= z$). A node is identified by
+  its root and its locational code, $(r, pi)$.
+] <def:locational-code>
+
+Because every name is built by appending bits, everything about a node's place in the tree
+is a one-instruction operation on its integer:
+
+#block(breakable: false, table(
+  columns: (auto, auto, auto),
+  inset: (x: 7pt, y: 5pt),
+  align: (left, left, left),
+  table.header[Question][Arithmetic][For #raw(ex.art.locational_code.leaf)],
+  [its parent], [drop the last bit: $floor(pi slash 2)$, `pi >> 1`], [#raw(ex.art.locational_code.parent)],
+  [which side of the parent's plane], [the last bit: $pi mod 2$], [#raw(ex.art.locational_code.leaf.slice(-1)) (#if ex.art.locational_code.leaf.ends-with("1") [right] else [left])],
+  [its children], [append a bit: $2 pi$, $2 pi + 1$], [#raw(ex.art.locational_code.children.at(0)), #raw(ex.art.locational_code.children.at(1))],
+  [its sibling], [flip the last bit: $pi xor 1$], [#raw(ex.art.locational_code.sibling)],
+  [its depth], [bits after the place-holder bit: $floor(log_2 pi)$], [#ex.art.locational_code.depth],
+  [is $pi'$ an ancestor of $pi$?], [$pi$'s bits begin with $pi'$'s], [#raw(ex.art.locational_code.codes.at(3)) is; #raw(ex.art.locational_code.sibling) is not],
+))
+
+The leading $1$, the _place-holder bit_, is what makes this work: without it, $0$, $00$ and
+$000$ would be the same integer. With it, every route has its own number, and these are exactly the numbers of a
+binary heap: $1$; $2, 3$; $4, dots, 7$; one row per depth.
+
+#note(title: [The standard terms])[
+  A code that records a node's route from the root is a _locational code_: introduced for
+  quadtrees as a base-4 code, one digit per subdivision @gargantini1982, it is the standard
+  term in the spatial-data-structure literature @samet2006, and the one this report uses;
+  ART's is binary, one digit per cut. The leading $1$ is Warren and Salmon's _place-holder
+  bit_, prepended "to distinguish the higher level internal nodes of the tree from the
+  lowest level body nodes"; their root, too, is the key $1$ @warren1993. The code calls
+  $pi$ `locational_code`.
+]
+
+=== The relative it is not: the Morton code
+
+#filmstrip(
+  arrows: false,
+  (panel("morton-quadtree", width: 82%), [a quadtree with Morton codes: two bits per level,
+    one per coordinate; the curve visits the cells in code order]),
+  (panel("morton-oblique", width: 82%), [ART's leaves: oblique cuts at chosen offsets; the
+    outlined leaf, #raw(ex.art.locational_code.leaf), is no quadtree cell]),
+)
+
+A _Morton code_ (Z-order) names the cells of a quadtree the same way: at every level it
+appends which half of the cell the child is, one bit per coordinate, interleaved. It shares
+the locational code's best properties: the code of an ancestor is a prefix, the code fits in one
+integer, and it is computed locally. It has one more: because every cut halves a box at its
+midpoint, the bits _are_ the geometry. Read a Morton code and you know the box; nothing else
+needs to be stored.
+
+That extra property is exactly what ART cannot have. ART's best cut is an oblique plane at
+an offset chosen from the data (@sec:plane): no string of bits can describe it, so its
+cells are not boxes and have no Morton code. Forcing axis-aligned midpoint cuts to get one
+would give up the fit the split search buys. The Morton code also spends $d$ bits per level,
+so a 64-bit code has room for only $floor(64 slash d)$ levels: one level at $d = 40$. The
+locational code spends one bit per level whatever the dimension.
+
+Warren and Salmon's tree code shows the two halves joined: their keys are Morton codes
+with a place-holder bit, so a key both names an octree cell and locates it @warren1993.
+ART keeps the naming half of the idea and stores the geometry separately: the locational
+code names the node, and each split node's plane $(a, z)$ is recorded once, in the routing
+table, under its parent's locational code.
+
+#implementation(title: [In the code])[
+  - `locational_code` is an `int64` column of every queued node (`src/core/clusters.py`),
+    carried by work stealing with the node, and `(root, locational_code)` seeds the node's
+    random numbers (`node_keys` in `src/art/rng.py`).
+  - A positive `int64` has 63 bits and the place-holder bit takes one, so routes fit up to depth
+    #ex.art.locational_code.max_depth (`MAX_DEPTH_LIMIT`), the deepest ART tree allowed.
+  - Codes are sparse, $2^"depth"$ wide but few in use, so they are keys, never array
+    positions. When the tree is assembled, the routing table gives every node a compact
+    index, and routing follows those, one array lookup per level (@sec:plane).
+]
+
+#takeaway[A node's name is its route from the root, one bit per cut: computed by anyone,
+  the same everywhere, and parent, children and depth are bit operations. Morton codes do
+  the same for boxes and encode their geometry too; ART's cuts are oblique, so it keeps the
+  name and stores each plane once.]
+
+
 == A fixed budget of points in every node
 
 A node is fitted on $n = ceil(m p)$ points, where $p = d + 1$ is the number of
@@ -731,9 +935,13 @@ side, which cost nothing, and draws the rest uniformly in its own region. A node
 the tree is thus fitted and tested on as many points as the root, concentrated in its
 small region.
 
+#algorithm(caption: [Hit-and-run in a polytope @smith1984 @lovasz2003:
+  `HitAndRunSampler` in `src/art/sampling.py`. One chain per new point, started at a
+  random inherited point.], pseudocode(hitrun)) <alg:hitrun>
+
 #story()
 #step([A region is the box and its ancestors' planes], code: art-code, focus: ("in", 2), window: 0, width: 35%, panel("art-polytope"))[
-  The node with path code #ex.art.sampling.path, at depth #ex.art.sampling.depth: its
+  The node with locational code #ex.art.sampling.code, at depth #ex.art.sampling.depth: its
   region (shaded) is bounded by the box and by the #ex.art.sampling.rows planes of its
   ancestors (lines), one row of $(A, bold(z))$ each. It inherited #ex.art.sampling.inherited
   points (dark) and needs #ex.art.sampling.new new ones (pink), anywhere in the region,
@@ -747,10 +955,6 @@ small region.
   come from one product $A g$. After a few steps the walker (pink) has forgotten where it
   started.
 ]
-
-#algorithm(caption: [Hit-and-run in a polytope @smith1984 @lovasz2003:
-  `HitAndRunSampler` in `src/art/sampling.py`. One chain per new point, started at a
-  random inherited point.], pseudocode(hitrun)) <alg:hitrun>
 
 #proposition(title: [hit-and-run samples uniformly, @smith1984])[
   The uniform distribution on a bounded convex region with interior is the unique
@@ -770,8 +974,8 @@ small region.
 ]
 
 #invariant(title: [random numbers belong to nodes])[
-  Every random number ART draws is a hash of the run's seed, the node's root and path
-  code, the purpose of the draw and a counter (`src/art/rng.py`). No generator is
+  Every random number ART draws is a hash of the run's seed, the node's root and
+  locational code, the purpose of the draw and a counter (`src/art/rng.py`). No generator is
   advanced from batch to batch. The points a node draws, and so its fit and its plane, are
   therefore the same whatever batch the node is in, whichever rank processes it, and
   whenever it is stolen (@sec:mpi).
@@ -813,18 +1017,22 @@ best, which is what the children's least-squares fits will minimize.
   (panel("art-split-before"), [a rejected node: the error of its one model]),
   (panel("art-split-candidates"), [candidate directions; the best cut found (dashed), then refined (solid)]),
   (panel("art-split-after"), [the errors of the two children's models]),
-  caption: [The split search on the node with path code #ex.art.split.path, with
+  caption: [The split search on the node with locational code #ex.art.split.code, with
     #ex.art.split.points points. One model leaves a mean squared error of
     #ex.art.split.sse_parent (in units of $atol^2$). The search tries cuts along
     #ex.art.split.directions directions (arrows; the red one is AFINNI's Hessian-informed
-    direction) and finds a plane with error #ex.art.split.sse_bins; the soft search turns
-    and shifts it to reach #ex.art.split.sse_final.],
+    direction) and finds a plane with error #ex.art.split.sse_bins\; the soft search turns
+    and shifts it to reach #ex.art.split.sse_final. Error colours as in @sec:reading.],
 ) <fig:search>
 
 == A coarse search, then a smooth one
 
 The hard objective is a staircase: it changes only when the plane crosses a point, and
 has no useful gradient. ART handles it in two stages.
+
+#algorithm(caption: [ART's split search: `_bins_search` and `_soft_refine` in
+  `src/art/plan.py`, on the primitives of `src/art/split_search.py`.],
+  pseudocode(search)) <alg:search>
 
 #story()
 #step([Many cuts along a few directions], code: search-code, focus: (1, 2, 3, 4), window: 0, width: 38%, panel("art-split-candidates"))[
@@ -918,24 +1126,20 @@ weights, floor and ridge appear in the fit and in the objective.
     vector-valued $f$ a component is weighted by how far it is from _its_ tolerance.
 ]
 
-#algorithm(caption: [ART's split search: `_bins_search` and `_soft_refine` in
-  `src/art/plan.py`, on the primitives of `src/art/split_search.py`.],
-  pseudocode(search)) <alg:search>
-
 == From a tree to an answer
 
 #scene(width: 62%, panel("art-route"))[
   A query is _routed_: start at the root, and at every split node evaluate
   $a^top u - z$ and go right if it is non-negative. The picture follows one query (black
   dot) through the nested regions it falls in, down to its leaf at depth
-  #ex.art.route.depth; the path code of the leaf, #ex.art.route.path, is the record of the
+  #ex.art.route.depth\; the locational code of the leaf, #ex.art.route.code, is the record of the
   turns taken. The leaf's model gives the answer.
 ]
 
 #figure(panel("art-tree"), caption: [The tree of the running example with its
-  path codes in binary. A node's code is its parent's with one digit appended, 0 for the
-  side $a^top u < z$ and 1 for the side $a^top u >= z$; the number of digits after the
-  leading 1 is the depth.]) <fig:tree>
+  locational codes in binary. A node's code is its parent's with one digit appended, 0 for
+  the side $a^top u < z$ and 1 for the side $a^top u >= z$; the number of digits after the
+  place-holder bit, the leading 1, is the depth.]) <fig:tree>
 
 #theorem(title: [the leaves partition the domain])[
   Every point of the domain is routed to exactly one leaf, and it lies in that leaf's
@@ -1085,7 +1289,7 @@ decide whether a cluster passes its tolerance, and so the shape of the whole tre
 
 #proposition(title: [what does not change the result])[
   + Repeated runs in one process on the same backend give bit-identical models.
-  + An ART tree, as the set of its planes by path code, does not depend on the batch size,
+  + An ART tree, as the set of its planes by locational code, does not depend on the batch size,
     the number of ranks or the schedule of steals.
   + An AFINNI forest is fixed by the seed, the batch size and the number of ranks, when
     work stealing is off.
@@ -1123,6 +1327,10 @@ clusters are accepted early runs dry while another is many levels deep.
 So idle ranks _steal_ @blumofe1999. The roles are a thief, with an empty queue, and a
 victim, with work to spare.
 
+#algorithm(caption: [Decentralized work stealing, run by every rank $i$ (the manuscript's
+  Algorithm 7): `WorkStealer` in `src/engine/work_stealing.py`.],
+  pseudocode(steal)) <alg:steal>
+
 #scene(width: 46%, diagram(
   // Labels sit close above their own arrow, and the rows are far enough apart that each
   // label is nearer its arrow than the arrow above it.
@@ -1153,10 +1361,6 @@ victim, with work to spare.
   victim's queue, the ones it would have reached last.
 ]
 
-#algorithm(caption: [Decentralized work stealing, run by every rank $i$ (the manuscript's
-  Algorithm 7): `WorkStealer` in `src/engine/work_stealing.py`.],
-  pseudocode(steal)) <alg:steal>
-
 #invariant(title: [the stealing protocol])[
   + *One reply.* Every request receives exactly one grant or denial. A thief waits for
     that explicit reply and for nothing else, so a stale view of the loads can delay it
@@ -1164,7 +1368,7 @@ victim, with work to spare.
   + *Only unstarted work.* A grant takes whole clusters from behind the current batch and
     always leaves the victim at least one. A cluster is processed by exactly one rank.
   + *A cluster travels complete.* A stolen cluster carries its points, values, depth and,
-    for ART, its root, path code and the rows of its region. The thief needs nothing else from
+    for ART, its root, locational code and the rows of its region. The thief needs nothing else from
     the victim, then or later.
   + *Nobody leaves early.* A rank retires only when every rank is idle: it joins a
     non-blocking barrier and keeps answering requests until all have joined.
@@ -1191,7 +1395,7 @@ must steal.
 
   The tree itself is the one a single process builds. By @prop:determinism every node's
   points and plane depend only on its key, so it does not matter which rank processed it;
-  the recording script checks that every plane of this tree, by path code, is bit-identical
+  the recording script checks that every plane of this tree, by locational code, is bit-identical
   to the tree built with stealing switched off.
 ]
 
