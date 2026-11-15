@@ -65,7 +65,7 @@ A plan's `process_batch` runs four stages on its batch:
 | `ClusterBatch` | host, `src/core/clusters.py` | a rank's queue: point columns (`X`, `F`, `G`) and node columns (`sizes`, `depth`; ART adds `root`, `locational_code`, `constraints`), in the order of `QUEUE_COLUMNS`, which is also the MPI wire format |
 | `DeviceBatch` | device, `src/core/plan.py` | one batch handed to the plan; `take()` passes ownership of the points, so the plan can release them before augmentation and splitting |
 | `ColumnBuffer` | host, `src/core/clusters.py` | accepted leaves (and ART's split records), one row per node |
-| model file | `.npz`, `src/surrogate/persistence.py` | leaves, local-model parameters, ART's routing table and leaf statuses, settings as JSON; versioned |
+| model file | `.npz`, `src/surrogate/persistence.py` | leaves, local-model parameters, ART's routing table and leaf statuses, settings as JSON; one format version, the code's own (older files are refused, not converted) |
 
 ## Contracts
 

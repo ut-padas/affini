@@ -134,9 +134,8 @@ class RoutingTable:
 
     def arrays(self) -> dict[str, np.ndarray]:
         """
-        The host arrays that ``from_arrays`` rebuilds the table from (for saving): domain, roots and
-        provenance. The split planes are stored under the keys ``"w"`` (normals) and ``"z"``
-        (offsets), the model file's format.
+        The host arrays that ``from_arrays`` rebuilds the table from (for saving): domain, roots,
+        the split planes and every node's root and locational code.
         """
         split = ~np.asarray(to_host(self.is_leaf))
         leaf_rows = np.asarray(to_host(self.node_leaf))[~split]
@@ -144,7 +143,7 @@ class RoutingTable:
         out = {
             "domain_lower": self.domain.lower, "domain_upper": self.domain.upper, "root_bins": self.roots.bins,
             "split_root": self.node_root[split], "split_locational_code": self.node_locational_code[split],
-            "w": np.asarray(to_host(self.normal))[split], "z": np.asarray(to_host(self.offset))[split],
+            "normal": np.asarray(to_host(self.normal))[split], "offset": np.asarray(to_host(self.offset))[split],
             "leaf_root": self.node_root[~split][order],
             "leaf_locational_code": self.node_locational_code[~split][order],
         }  # fmt: skip
@@ -154,18 +153,9 @@ class RoutingTable:
 
     @classmethod
     def from_arrays(cls, a: dict[str, np.ndarray]) -> "RoutingTable":
-        """Rebuild (and so re-validate) a table from ``arrays()``; also reads the earlier packed-key format."""
+        """Rebuild (and so re-validate) a table from ``arrays()``."""
         centres = np.asarray(a["root_centres"]) if "root_centres" in a else None
         domain = Domain(np.asarray(a["domain_lower"], dtype=np.float64), np.asarray(a["domain_upper"], dtype=np.float64))
         roots = Roots(np.asarray(a["root_bins"]), centres)
-        if "split_root" in a:
-            return cls.build(domain, roots, a["leaf_root"], a["leaf_locational_code"], a["split_root"],
-                             a["split_locational_code"], a["w"], a["z"])
-        # Format written before compact indices: keys root << shift | locational code, sorted.
-        shift = int(a["shift"])
-        mask = (np.int64(1) << shift) - 1
-        sk, lk = np.asarray(a["split_keys"], dtype=np.int64), np.asarray(a["leaf_keys"], dtype=np.int64)
-        leaf_row = np.asarray(a["leaf_index"], dtype=np.int64)
-        lr, lc = np.empty_like(lk), np.empty_like(lk)
-        lr[leaf_row], lc[leaf_row] = lk >> shift, lk & mask
-        return cls.build(domain, roots, lr, lc, sk >> shift, sk & mask, a["w"], a["z"])
+        return cls.build(domain, roots, a["leaf_root"], a["leaf_locational_code"], a["split_root"],
+                         a["split_locational_code"], a["normal"], a["offset"])

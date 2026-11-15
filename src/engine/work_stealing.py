@@ -39,10 +39,9 @@ MIN_LOAD_THRESHOLD = 1_000_000  # Min points to be eligible for stealing (w_* in
 STEAL_SIZE = 500_000  # Minimum points per grant, w_s (a grant gives about half the open work)
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
 
-# Version of the cluster transfer format; both ends must agree. The header names the columns,
-# so renaming a column changes the format: a receiver would silently drop a column it knows
-# by another name.
-WIRE_FORMAT_VERSION = 3
+# Version of the cluster transfer format; both ends must agree, which they do when every rank
+# runs the same code. Increment it when a column is added, renamed or reordered.
+WIRE_FORMAT_VERSION = 1
 
 
 def send_clusters(comm, batch: ClusterBatch, dest: int, tag: int = TAG_STEAL_GRANT):

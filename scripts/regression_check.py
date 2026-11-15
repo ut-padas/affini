@@ -49,17 +49,6 @@ warnings.simplefilter("ignore", DeprecationWarning)
 
 H_SCALAR = np.array([[2.0, 0.2], [0.2, 6.0]])
 ART_DOMAIN = ([-1.0, -1.0], [1.0, 1.0])
-# Arrays that checkouts before model format 4 call by another name (as attribute and in
-# their reference files), mapped to this checkout's name, so both compare as one array: the
-# trust matrices (renamed in format 3) and the ART locational codes (renamed in format 4).
-RENAMED_ARRAYS = {
-    "Qs_src": "trust_matrices_src",
-    "leaf:path_code": "leaf:locational_code",
-    "route:leaf_path": "route:leaf_locational_code",
-    "route:split_path": "route:split_locational_code",
-}
-
-
 def problem(fd):
     """A quadratic (fd=1) or two quadratics with different signs/scales (fd=2)."""
 
@@ -92,7 +81,7 @@ def wavy(fd):
 def model_arrays(s: AFINNISurrogate) -> dict[str, np.ndarray]:
     """Every numeric array ``save_model`` would write (leaves, local-model parameters, routing, leaf status)."""
     out = {k: getattr(s, k) for k in ("X_src", "f_src", "E_cluster_abs_src", "E_cluster_rel_src", "counts_src")}
-    out["trust_matrices_src"] = getattr(s, "trust_matrices_src", getattr(s, "Qs_src", None))
+    out["trust_matrices_src"] = s.trust_matrices_src
     out.update({f"param:{k}": v for k, v in s.leaf_params.items()})
     if s.routing is not None:
         out.update({f"route:{k}": v for k, v in s.routing.arrays().items()})
@@ -189,7 +178,7 @@ def compare(new_prefix, ref_prefix, rtol):
     new, ref = (json.loads(Path(p + ".json").read_text())["cases"] for p in (new_prefix, ref_prefix))
     na, ra = np.load(new_prefix + ".npz"), np.load(ref_prefix + ".npz")
     failures, fixed, worst = [], [], 0.0
-    pairs, renamed = 0, 0  # array pairs compared, and how many of them under a renamed name
+    pairs = 0  # array pairs compared
     for name, r in ref.items():
         n = new.get(name, {"error": "case missing"})
         if "error" in r:
@@ -203,13 +192,11 @@ def compare(new_prefix, ref_prefix, rtol):
             if n[key] != r[key]:
                 failures.append(f"{name}: {key} {r[key]} -> {n[key]}")
         for k in (k for k in ra.files if k.startswith(name + "|")):
-            array = k.partition("|")[2]
-            new_k = f"{name}|{RENAMED_ARRAYS.get(array, array)}"
-            if new_k not in na.files:
+            if k not in na.files:
                 failures.append(f"{k}: missing")
                 continue
-            pairs, renamed = pairs + 1, renamed + (new_k != k)
-            a, b = ra[k], na[new_k]
+            pairs += 1
+            a, b = ra[k], na[k]
             if a.shape != b.shape:
                 failures.append(f"{k}: shape {a.shape} -> {b.shape}")
             elif a.dtype == bool or a.dtype.kind in "iu":  # masks, counters, keys and statuses: exact
@@ -223,7 +210,7 @@ def compare(new_prefix, ref_prefix, rtol):
                 worst = max(worst, err)
                 if err > rtol:
                     failures.append(f"{k}: max relative difference {err:.3e} > {rtol:g}")
-    print(f"compared {len(ref)} cases, {pairs} array pairs ({renamed} under a renamed name); "
+    print(f"compared {len(ref)} cases, {pairs} array pairs; "
           f"max relative array difference {worst:.3e}")
     if fixed:
         print(f"fixed (failed on reference, run now): {len(fixed)}: {', '.join(fixed)}")

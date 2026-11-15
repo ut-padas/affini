@@ -170,7 +170,9 @@ loaded = AFINNISurrogate.load_model("results/model")   # the same path forms as 
 ```
 
 A partial run (stopped by `max_levels`) warns and reports the unresolved points;
-a run that accepted nothing raises. Models with custom local models load if the
+a run that accepted nothing raises. A model file records its format version, and
+`load_model` reads only the version the code writes: retrain a model saved by code with
+another format. Models with custom local models load if the
 model's class is registered (import its module first) or passed as
 `load_model(path, local_model=...)`. Under MPI, `save_model` writes on rank 0
 only (call it on every rank or just rank 0), and `load_model` reads the file on

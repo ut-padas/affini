@@ -45,7 +45,6 @@ from src.surrogate.persistence import (
     ROUTE_PREFIX,
     json_default,
     model_path,
-    rename_old_format_keys,
 )
 
 logger = logging.getLogger(__name__)
@@ -364,22 +363,15 @@ class AFINNISurrogate:
             raise FileNotFoundError(f"Model file not found: {filepath}")
 
         with np.load(str(filepath), allow_pickle=False) as data:
-            if "format_version" not in data.files:
+            version = int(data["format_version"]) if "format_version" in data.files else None
+            if version != MODEL_FORMAT_VERSION:
                 raise ValueError(
-                    f"{filepath} has no format version: it was written before model "
-                    f"files were versioned, which is no longer supported; retrain it."
-                )
-            version = int(data["format_version"])
-            if version > MODEL_FORMAT_VERSION:
-                raise ValueError(
-                    f"{filepath} uses model format {version}, newer than the supported "
-                    f"{MODEL_FORMAT_VERSION}; update the code to load it."
+                    f"{filepath} uses model format {version}; this code reads format "
+                    f"{MODEL_FORMAT_VERSION} only. Retrain the model with this code."
                 )
             meta = json.loads(str(data["metadata"]))
             arrays = {k: data[k] for k in data.files}
-        arrays, meta, profiling_stats = rename_old_format_keys(
-            version, arrays, meta, json.loads(str(arrays["profiling_stats"]))
-        )
+        profiling_stats = json.loads(str(arrays["profiling_stats"]))
 
         if local_model is None:
             spec = meta["local_model"]

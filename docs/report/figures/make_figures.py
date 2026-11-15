@@ -1397,7 +1397,7 @@ def record_steals() -> None:
         """Every split plane by its node's locational code, and the sorted leaf codes: the tree, whatever the row order."""
         a = {k: to_host(v) for k, v in model.routing.arrays().items()}
         planes = {int(code): (w.tobytes(), float(z))
-                  for code, w, z in zip(a["split_locational_code"], a["w"], a["z"], strict=True)}
+                  for code, w, z in zip(a["split_locational_code"], a["normal"], a["offset"], strict=True)}
         return planes, np.sort(a["leaf_locational_code"])
 
     tree = {k: to_host(v) for k, v in s.routing.arrays().items()}
@@ -1413,7 +1413,7 @@ def record_steals() -> None:
     data = {"settings": STEAL, "leaves": int(s.N_src), "leaves_per_rank": counts,
             # Leaves are gathered in rank order, so the first counts[0] leaves were built by rank 0.
             "leaf_locational_codes": np.asarray(s.art_leaves["locational_code"]).tolist(),
-            "split_locational_codes": tree["split_locational_code"].tolist(), "w": tree["w"].tolist(), "z": tree["z"].tolist(),
+            "split_locational_codes": tree["split_locational_code"].tolist(), "w": tree["normal"].tolist(), "z": tree["offset"].tolist(),
             "events": events}  # fmt: skip
     (OUT / "steal_run.json").write_text(json.dumps(data) + "\n")
     print(f"recorded {data['leaves']} leaves, {counts} per rank; the tree equals the one built without stealing")

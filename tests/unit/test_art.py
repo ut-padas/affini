@@ -160,8 +160,8 @@ def test_wire_format_round_trips_art_columns_on_table_offsets():
     got = ws.recv_clusters(wire, 0, 2, 1, tag=500)
     for name, value in batch.columns().items():
         np.testing.assert_array_equal(got.columns()[name], value)
-    wire.objects[500]["version"] = 1
-    with pytest.raises(RuntimeError, match="format 1"):
+    wire.objects[500]["version"] = ws.WIRE_FORMAT_VERSION + 1
+    with pytest.raises(RuntimeError, match=f"format {ws.WIRE_FORMAT_VERSION + 1}"):
         ws.recv_clusters(wire, 0, 2, 1, tag=500)
 
 
@@ -461,30 +461,15 @@ def test_a_62_level_skinny_tree_with_many_roots_routes_to_its_deepest_leaf():
     assert int(host(again.route(q)[0])[0]) == table.n_leaves - 1
 
 
-def test_routing_table_loads_the_packed_key_format():
-    domain, roots, tree = _tree()
-    shift = 8
-    sk = (np.array(tree["split_root"]) << shift) | np.array(tree["split_locational_code"])
-    lk = (np.array(tree["leaf_root"]) << shift) | np.array(tree["leaf_locational_code"])
-    order = np.argsort(lk)
-    old = {
-        "domain_lower": np.zeros(2), "domain_upper": np.ones(2), "root_bins": roots.bins, "shift": shift,
-        "split_keys": sk, "leaf_keys": lk[order], "leaf_index": order, "w": tree["normal"], "z": tree["offset"],
-    }  # fmt: skip
-    new = RoutingTable.build(domain, roots, **tree)
-    q = xp.asarray(np.random.default_rng(1).random((200, 2)))
-    np.testing.assert_array_equal(host(RoutingTable.from_arrays(old).route(q)[0]), host(new.route(q)[0]))
-
-
 @pytest.mark.parametrize("broken", ["nan_plane", "bad_shape", "unknown_root", "zero_width", "bad_bins"])
 def test_loaded_routing_tables_are_validated(broken):
     domain, roots, tree = _tree()
     a = RoutingTable.build(domain, roots, **tree).arrays()
     if broken == "nan_plane":
-        a["w"] = a["w"].copy()
-        a["w"][0, 0] = np.nan
+        a["normal"] = a["normal"].copy()
+        a["normal"][0, 0] = np.nan
     elif broken == "bad_shape":
-        a["z"] = a["z"][:1]
+        a["offset"] = a["offset"][:1]
     elif broken == "unknown_root":
         a["leaf_root"] = np.asarray(a["leaf_root"]).copy()
         a["leaf_root"][0] = 5
