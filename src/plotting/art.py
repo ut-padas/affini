@@ -67,8 +67,8 @@ def plot_art_partition(surrogate, path=None, *, f_fn: Callable | None = None, to
     dom = surrogate.routing.domain
     XX, YY, P = _grid(dom.lower, dom.upper, resolution)
     leaf = np.asarray(to_host(surrogate.route_leaves(xp.asarray(P)))).reshape(XX.shape)
-    paths = surrogate.art_leaves["path_code"]
-    depth = np.array([int(p).bit_length() - 1 for p in paths])[leaf]
+    codes = surrogate.art_leaves["locational_code"]
+    depth = np.array([int(p).bit_length() - 1 for p in codes])[leaf]
     reason = surrogate.art_leaves["terminal_reason"].astype(int)[leaf]
     edges = _boundaries(leaf)
     extent = (dom.lower[0], dom.upper[0], dom.lower[1], dom.upper[1])
@@ -110,7 +110,7 @@ def plot_art_tree_stats(surrogate, path=None, title: str | None = None) -> plt.F
     """Leaves per depth, stacked by terminal reason, and the leaves' validation statuses."""
     if surrogate.routing is None:
         raise ValueError("plot_art_tree_stats needs an ART model.")
-    depth = np.array([int(p).bit_length() - 1 for p in surrogate.art_leaves["path_code"]])
+    depth = np.array([int(p).bit_length() - 1 for p in surrogate.art_leaves["locational_code"]])
     reason = surrogate.art_leaves["terminal_reason"].astype(int)
     levels = np.arange(depth.max() + 1)
     with afinni_style():

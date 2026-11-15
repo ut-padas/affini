@@ -17,11 +17,11 @@ def _mix64(z: Array) -> Array:
     return z ^ (z >> xp.uint64(31))
 
 
-def node_keys(seed: int, root: Array, path_code: Array) -> Array:
+def node_keys(seed: int, root: Array, locational_code: Array) -> Array:
     """(K,) uint64 stream keys, one per node; children's keys are unrelated to their parent's."""
     base = xp.uint64((int(seed) * GOLDEN + 1) % 2**64)
     k = _mix64(base + xp.asarray(root).astype(xp.uint64) * xp.uint64(GOLDEN))
-    return _mix64(k ^ xp.asarray(path_code).astype(xp.uint64))
+    return _mix64(k ^ xp.asarray(locational_code).astype(xp.uint64))
 
 
 def counter_uniform(keys: Array, purpose: int, counter: Array) -> Array:

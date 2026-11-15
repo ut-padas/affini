@@ -25,12 +25,14 @@ domain; every predicate is ``a^T u - z >= 0`` (right child) for a plane with uni
 and offset ``z`` (``(a, z)`` in the companion; ``normal`` and ``offset`` in ``RoutingTable``
 and the split records, ``w`` and ``z`` in the split search's arrays, its kernels and the model
 file), evaluated by ``plane_scores`` both in training and in ``route``. Children carry their
-ancestors' half-spaces (``constraints``), their node key ``(root, path_code)`` (``pi`` in the
-companion: the root is 1, the children of ``pi`` are ``2 pi`` on the left and ``2 pi + 1`` on
-the right) and depth, so a stolen node needs nothing from the rank that created it.
+ancestors' half-spaces (``constraints``), their node key ``(root, locational_code)`` and depth,
+so a stolen node needs nothing from the rank that created it. The locational code (``pi`` in
+the companion) is the node's route from its root, one bit per cut, behind a leading
+place-holder bit: the root is 1, the children of ``pi`` are ``2 pi`` on the left and
+``2 pi + 1`` on the right.
 
-Random numbers come from a counter-based generator keyed by ``(seed, root, path_code,
-purpose, draw index)``: a node's samples and random directions do not depend on the
+Random numbers come from a counter-based generator keyed by ``(seed, root,
+locational_code, purpose, draw index)``: a node's samples and random directions do not depend on the
 batch it is processed in, the number of ranks or the steal schedule, so ART
 results are the same for any batch size and rank count (except with
 ``sampling="convex_combination"``, whose augmentation uses a per-batch stream, as in AFINNI). A node draws

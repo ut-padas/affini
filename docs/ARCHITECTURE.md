@@ -62,7 +62,7 @@ A plan's `process_batch` runs four stages on its batch:
 
 | Container | Where | Holds |
 |---|---|---|
-| `ClusterBatch` | host, `src/core/clusters.py` | a rank's queue: point columns (`X`, `F`, `G`) and node columns (`sizes`, `depth`; ART adds `root`, `path_code`, `constraints`), in the order of `QUEUE_COLUMNS`, which is also the MPI wire format |
+| `ClusterBatch` | host, `src/core/clusters.py` | a rank's queue: point columns (`X`, `F`, `G`) and node columns (`sizes`, `depth`; ART adds `root`, `locational_code`, `constraints`), in the order of `QUEUE_COLUMNS`, which is also the MPI wire format |
 | `DeviceBatch` | device, `src/core/plan.py` | one batch handed to the plan; `take()` passes ownership of the points, so the plan can release them before augmentation and splitting |
 | `ColumnBuffer` | host, `src/core/clusters.py` | accepted leaves (and ART's split records), one row per node |
 | model file | `.npz`, `src/surrogate/persistence.py` | leaves, local-model parameters, ART's routing table and leaf statuses, settings as JSON; versioned |
@@ -105,14 +105,14 @@ names, and the docstring or comment where a name is defined gives its symbol. Pa
 | ĝ | the least-squares gradient at c, from the max(2d, ⌊N_min/4⌋) nearest points | `grad_lsq`, `n_gradient_pts` | `components/splitting.py` (`CovarianceHessianSplit`) |
 | N_cov | the points with the smallest Taylor error, which trace the level set | `n_est_cov` | `components/splitting.py` (`CovarianceHessianSplit`) |
 | x̃ᵢ, u₁, sᵢ | the stretched points, the split direction, the scores | `M (x − c)`; `v`, the leading eigenvector of `CovZ`; `scores` | `components/splitting.py` (`SplitStrategy.split`) |
-| C₋₁, C₁ | the two children of a split | AFINNI: the low and the high half (`child_sizes`); ART: left, aᵀu < z (path code 2π), and right (2π + 1) | `components/splitting.py`, `art/plan.py` (`ARTPlan._split`) |
+| C₋₁, C₁ | the two children of a split | AFINNI: the low and the high half (`child_sizes`); ART: left, aᵀu < z (locational code 2π), and right (2π + 1) | `components/splitting.py`, `art/plan.py` (`ARTPlan._split`) |
 | T, γ, α | the trust-region matrix, its eigenvalue floor, the farthest point's scaled distance | `trust_matrix` (leaf column), `trust_matrices_src`; `q_reg`; `max_dist` | `components/trust_regions.py`, `config.py` |
 | κ, dᵢ, ν | Euclidean candidates, trust-region distance, the answering leaf | `k_nn * coarse_factor` (`k_coarse`); `dist_sq`; `nn_idx[:, 0]` | `surrogate/model.py` (`predict`, `predict_local`) |
 | 𝒮, N_c | the leaves, their number | the `accepted` buffer during training; `N_src` and the `*_src` arrays | `engine/refinement.py`, `surrogate/model.py` |
 | u | coordinates of the domain, in [0, 1]^d | `U`, `Domain.normalize` | `art/geometry.py` |
 | Ω_C = {u : A u ≤ z} | an ART node's region | the root cell and `constraints`, rows `[a \| z]` of the ancestors' planes; `NodePolytopes` | `core/clusters.py` (`QUEUE_COLUMNS`), `art/sampling.py` |
 | (a, z) | an ART split plane, unit normal and offset; aᵀu ≥ z is the right child | `normal`, `offset` (`RoutingTable`, split records); `w`, `z` in the split search, its kernels and the model file's routing arrays | `art/routing.py`, `art/plan.py`, `art/split_search.py` |
-| π | the path code | `path_code` | `core/clusters.py`, `art/routing.py` |
+| π | the locational code (the route from the root, one bit per cut, behind a leading place-holder bit 1) | `locational_code` | `core/clusters.py`, `art/routing.py` |
 | n = ⌈m p⌉, p, m | points per node, coefficients per output, the multiplier | `ARTPlan.n_target`, `ARTPlan.n_coefficients`, `sample_multiplier` | `art/plan.py`, `config.py` (`ARTSettings`) |
 | τ, g | hit-and-run steps, a step's direction | `walk_steps`; `g` | `config.py`, `art/sampling.py` (`HitAndRunSampler`) |
 | n_dir, n_bins | search directions; cuts per direction plus one | `n_directions`, `n_bins` | `config.py`, `art/plan.py` (`_direction_bank`, `_bins_search`) |

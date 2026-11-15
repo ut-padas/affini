@@ -16,11 +16,11 @@ class RoutingTable:
     (children ``child[i]`` = (left, right), plane ``normal[i]``, ``offset[i]``: the plane
     ``(a, z)`` of the companion, whose side ``normal^T u >= offset`` is the right child) or a
     leaf (row ``node_leaf[i]`` of the leaf arrays), and ``root_node[r]`` is root ``r``'s node.
-    Routing follows child indices,
-    so no logical key is packed into an integer and every depth the path codes allow
-    (``MAX_DEPTH_LIMIT``) routes. The logical identity ``(root, path_code)`` of every node
-    is kept as provenance (``node_root``, ``node_path``), which saving and loading rebuild
-    from, so a loaded table passes the same checks as a trained one.
+    Routing follows child indices, so no logical key is packed into an integer and every
+    depth the locational codes allow (``MAX_DEPTH_LIMIT``) routes. The logical identity
+    ``(root, locational_code)`` of every node is kept as provenance (``node_root``,
+    ``node_locational_code``), which saving and loading rebuild from, so a loaded table
+    passes the same checks as a trained one.
     """
 
     domain: Domain
@@ -33,21 +33,22 @@ class RoutingTable:
     root_node: Array  # (R,)
     max_depth: int
     node_root: np.ndarray  # (M,) provenance
-    node_path: np.ndarray  # (M,) provenance
+    node_locational_code: np.ndarray  # (M,) provenance
 
     @property
     def n_leaves(self) -> int:
         return int(np.sum(to_host(self.is_leaf)))
 
     @classmethod
-    def build(cls, domain: Domain, roots: Roots, leaf_root, leaf_path, split_root, split_path, normal, offset) -> "RoutingTable":
+    def build(cls, domain: Domain, roots: Roots, leaf_root, leaf_locational_code, split_root, split_locational_code,
+              normal, offset) -> "RoutingTable":
         """
         Assemble and check the tree: leaf ``i`` (in leaf-array order) is ``(leaf_root[i],
-        leaf_path[i])``; split ``j`` is ``(split_root[j], split_path[j])`` with plane
-        ``(normal[j], offset[j])``. Checks: a finite domain of positive width, roots of its dimension
-        (positive grid bins; finite, distinct Voronoi centres), valid roots and positive
-        path codes, finite planes of the domain's dimension, unique nodes, both children of
-        every split, a split parent for every non-root node, and a node for every root.
+        leaf_locational_code[i])``; split ``j`` is ``(split_root[j], split_locational_code[j])``
+        with plane ``(normal[j], offset[j])``. Checks: a finite domain of positive width, roots
+        of its dimension (positive grid bins; finite, distinct Voronoi centres), valid roots and
+        positive locational codes, finite planes of the domain's dimension, unique nodes, both
+        children of every split, a split parent for every non-root node, and a node for every root.
         Loading goes through here too, so a malformed file fails like a malformed tree.
         Raises ``ValueError`` otherwise.
         """
@@ -58,7 +59,8 @@ class RoutingTable:
         bins = np.asarray(roots.bins)
         if bins.shape != lo.shape or not np.issubdtype(bins.dtype, np.integer) or np.any(bins < 1):
             raise ValueError("ART root bins must be positive integers, one per dimension.")
-        lr, lp, sr, sp = (np.asarray(to_host(a), dtype=np.int64).reshape(-1) for a in (leaf_root, leaf_path, split_root, split_path))
+        lr, lc, sr, sc = (np.asarray(to_host(a), dtype=np.int64).reshape(-1)
+                          for a in (leaf_root, leaf_locational_code, split_root, split_locational_code))
         # Every root must have a node, so a valid table has at most as many roots as nodes;
         # checked in Python integers, before n_roots' fixed-width product could wrap.
         n_nodes = len(lr) + len(sr)
@@ -72,27 +74,27 @@ class RoutingTable:
                 raise ValueError("Voronoi root centres must be finite, distinct (R, d) points.")
         W, Z = np.asarray(to_host(normal), dtype=np.float64), np.asarray(to_host(offset), dtype=np.float64).reshape(-1)
         d, R = domain.d, roots.n_roots
-        if len(lr) != len(lp) or len(sr) != len(sp) or W.shape != (len(sr), d) or Z.shape != (len(sr),):
+        if len(lr) != len(lc) or len(sr) != len(sc) or W.shape != (len(sr), d) or Z.shape != (len(sr),):
             raise ValueError("ART tree arrays have inconsistent shapes.")
-        roots_all, paths_all = np.r_[sr, lr], np.r_[sp, lp]
-        if np.any(paths_all < 1) or np.any(roots_all < 0) or np.any(roots_all >= R):
-            raise ValueError("ART tree has a non-positive path code or an out-of-range root.")
+        roots_all, codes_all = np.r_[sr, lr], np.r_[sc, lc]
+        if np.any(codes_all < 1) or np.any(roots_all < 0) or np.any(roots_all >= R):
+            raise ValueError("ART tree has a non-positive locational code or an out-of-range root.")
         if not (np.all(np.isfinite(W)) and np.all(np.isfinite(Z))):
             raise ValueError("ART tree has a non-finite split plane.")
         index = {}
-        for i, key in enumerate(zip(roots_all.tolist(), paths_all.tolist(), strict=True)):
+        for i, key in enumerate(zip(roots_all.tolist(), codes_all.tolist(), strict=True)):
             if key in index:
                 raise ValueError("ART tree has duplicate node keys.")
             index[key] = i
         S, M = len(sr), len(sr) + len(lr)
         child = np.full((M, 2), -1, dtype=np.int64)
-        for j, (r, p) in enumerate(zip(sr.tolist(), sp.tolist(), strict=True)):
+        for j, (r, p) in enumerate(zip(sr.tolist(), sc.tolist(), strict=True)):
             left, right = index.get((r, 2 * p)), index.get((r, 2 * p + 1))
             if left is None or right is None:
                 raise ValueError("An ART split is missing one of its children.")
             child[j] = (left, right)
-        splits = set(zip(sr.tolist(), sp.tolist(), strict=True))
-        if any(p > 1 and (r, p >> 1) not in splits for r, p in zip(roots_all.tolist(), paths_all.tolist(), strict=True)):
+        splits = set(zip(sr.tolist(), sc.tolist(), strict=True))
+        if any(p > 1 and (r, p >> 1) not in splits for r, p in zip(roots_all.tolist(), codes_all.tolist(), strict=True)):
             raise ValueError("A ART node's parent is not a split node.")
         root_node = np.array([index.get((r, 1), -1) for r in range(R)], dtype=np.int64)
         if np.any(root_node < 0):
@@ -100,10 +102,10 @@ class RoutingTable:
         is_leaf = np.r_[np.zeros(S, dtype=bool), np.ones(len(lr), dtype=bool)]
         node_leaf = np.r_[np.full(S, -1, dtype=np.int64), np.arange(len(lr), dtype=np.int64)]
         node_w = np.vstack([W, np.zeros((len(lr), d))]) if M else np.zeros((0, d))
-        max_depth = int(max((int(p).bit_length() - 1 for p in paths_all.tolist()), default=0))
+        max_depth = int(max((int(p).bit_length() - 1 for p in codes_all.tolist()), default=0))
         return cls(domain, roots, xp.asarray(is_leaf), xp.asarray(child), xp.asarray(node_w),
                    xp.asarray(np.r_[Z, np.zeros(len(lr))]), xp.asarray(node_leaf), xp.asarray(root_node),
-                   max_depth, roots_all, paths_all)  # fmt: skip
+                   max_depth, roots_all, codes_all)  # fmt: skip
 
     def route(self, X: Array) -> tuple[Array, Array]:
         """
@@ -141,9 +143,10 @@ class RoutingTable:
         order = np.argsort(leaf_rows)  # leaves in leaf-array order
         out = {
             "domain_lower": self.domain.lower, "domain_upper": self.domain.upper, "root_bins": self.roots.bins,
-            "split_root": self.node_root[split], "split_path": self.node_path[split],
+            "split_root": self.node_root[split], "split_locational_code": self.node_locational_code[split],
             "w": np.asarray(to_host(self.normal))[split], "z": np.asarray(to_host(self.offset))[split],
-            "leaf_root": self.node_root[~split][order], "leaf_path": self.node_path[~split][order],
+            "leaf_root": self.node_root[~split][order],
+            "leaf_locational_code": self.node_locational_code[~split][order],
         }  # fmt: skip
         if self.roots.is_voronoi:
             out["root_centres"] = self.roots.centres
@@ -156,12 +159,13 @@ class RoutingTable:
         domain = Domain(np.asarray(a["domain_lower"], dtype=np.float64), np.asarray(a["domain_upper"], dtype=np.float64))
         roots = Roots(np.asarray(a["root_bins"]), centres)
         if "split_root" in a:
-            return cls.build(domain, roots, a["leaf_root"], a["leaf_path"], a["split_root"], a["split_path"], a["w"], a["z"])
-        # Format written before compact indices: keys root << shift | path_code, sorted.
+            return cls.build(domain, roots, a["leaf_root"], a["leaf_locational_code"], a["split_root"],
+                             a["split_locational_code"], a["w"], a["z"])
+        # Format written before compact indices: keys root << shift | locational code, sorted.
         shift = int(a["shift"])
         mask = (np.int64(1) << shift) - 1
         sk, lk = np.asarray(a["split_keys"], dtype=np.int64), np.asarray(a["leaf_keys"], dtype=np.int64)
         leaf_row = np.asarray(a["leaf_index"], dtype=np.int64)
-        lr, lp = np.empty_like(lk), np.empty_like(lk)
-        lr[leaf_row], lp[leaf_row] = lk >> shift, lk & mask
-        return cls.build(domain, roots, lr, lp, sk >> shift, sk & mask, a["w"], a["z"])
+        lr, lc = np.empty_like(lk), np.empty_like(lk)
+        lr[leaf_row], lc[leaf_row] = lk >> shift, lk & mask
+        return cls.build(domain, roots, lr, lc, sk >> shift, sk & mask, a["w"], a["z"])

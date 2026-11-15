@@ -86,7 +86,7 @@ def _tree():
     """Root (box) split at u0 = 0.5; its right child split at u1 = 0.25."""
     domain, roots = Domain(np.zeros(2), np.ones(2)), Roots.build("box", 2, 1)
     return domain, roots, {
-        "leaf_root": [0, 0, 0], "leaf_path": [2, 6, 7], "split_root": [0, 0], "split_path": [1, 3],
+        "leaf_root": [0, 0, 0], "leaf_locational_code": [2, 6, 7], "split_root": [0, 0], "split_locational_code": [1, 3],
         "normal": np.array([[1.0, 0.0], [0.0, 1.0]]), "offset": np.array([0.5, 0.25]),
     }
 
@@ -105,11 +105,11 @@ def test_routing_follows_the_stored_predicates():
 def test_routing_table_rejects_inconsistent_trees(broken):
     domain, roots, tree = _tree()
     if broken == "missing_child":
-        tree["leaf_root"], tree["leaf_path"] = [0, 0], [2, 6]
+        tree["leaf_root"], tree["leaf_locational_code"] = [0, 0], [2, 6]
     elif broken == "duplicate":
-        tree["leaf_root"], tree["leaf_path"] = [0, 0, 0, 0], [2, 6, 7, 7]
+        tree["leaf_root"], tree["leaf_locational_code"] = [0, 0, 0, 0], [2, 6, 7, 7]
     else:
-        tree["leaf_root"], tree["leaf_path"] = [0, 0, 0, 0], [2, 6, 7, 9]
+        tree["leaf_root"], tree["leaf_locational_code"] = [0, 0, 0, 0], [2, 6, 7, 9]
     with pytest.raises(ValueError):
         RoutingTable.build(domain, roots, **tree)
 
@@ -118,12 +118,12 @@ def test_builder_pads_constraints_and_split_select_keep_art_columns():
     builder = ClusterQueueBuilder(2, 1, False, capacity_pts=1, capacity_clusters=1, constraint_rows=2)
     builder.append(
         np.ones((3, 2)), np.ones((3, 1)), None, np.array([1, 2]), depth=np.array([1, 1]),
-        root=np.array([0, 0]), path_code=np.array([2, 3]), constraints=np.full((2, 1, 3), 7.0),
+        root=np.array([0, 0]), locational_code=np.array([2, 3]), constraints=np.full((2, 1, 3), 7.0),
     )  # fmt: skip
     batch = builder.build()
     assert batch.constraints.shape == (2, 2, 3) and np.all(batch.constraints[:, 1] == 0)
     head, tail = batch.split(1)
-    np.testing.assert_array_equal(tail.path_code, [3])
+    np.testing.assert_array_equal(tail.locational_code, [3])
     np.testing.assert_array_equal(batch.select(np.array([False, True])).root, [0])
     with pytest.raises(ValueError, match="ART builder"):
         builder.append(np.ones((1, 2)), np.ones((1, 1)), None, np.array([1]))
@@ -152,7 +152,7 @@ def test_wire_format_round_trips_art_columns_on_table_offsets():
     rng = np.random.default_rng(0)
     batch = ClusterBatch(
         rng.random((5, 2)), rng.random((5, 1)), None, np.array([2, 3]), np.array([3, 3]),
-        root=np.array([1, 4]), path_code=np.array([9, 12]), constraints=rng.random((2, 3, 3)),
+        root=np.array([1, 4]), locational_code=np.array([9, 12]), constraints=rng.random((2, 3, 3)),
     )  # fmt: skip
     wire = _Wire()
     ws.send_clusters(wire, batch, dest=1, tag=500)
@@ -367,8 +367,8 @@ def test_close_voronoi_centres_route_in_cell_samples_to_their_own_root_in_2d(sep
     exact = [int(np.argmin([sum((Fraction(float(p[k])) - Fraction(float(c[k]))) ** 2 for k in range(2)) for c in C])) for p in P]
     assert exact == [1] * 200  # every sample is truly in the middle cell (exact rational arithmetic)
     np.testing.assert_array_equal(host(roots.root_of(xp.asarray(P))), exact)
-    table = RoutingTable.build(Domain(np.zeros(2), np.ones(2)), roots, leaf_root=[0, 1, 2], leaf_path=[1, 1, 1],
-                               split_root=[], split_path=[], normal=np.zeros((0, 2)), offset=np.zeros(0))  # fmt: skip
+    table = RoutingTable.build(Domain(np.zeros(2), np.ones(2)), roots, leaf_root=[0, 1, 2], leaf_locational_code=[1, 1, 1],
+                               split_root=[], split_locational_code=[], normal=np.zeros((0, 2)), offset=np.zeros(0))  # fmt: skip
     np.testing.assert_array_equal(host(table.route(xp.asarray(P))[0]), exact)
 
 
@@ -376,8 +376,8 @@ def test_root_counts_that_overflow_the_index_type_are_rejected():
     domain = Domain(np.zeros(2), np.ones(2))
     roots = Roots(np.array([2**62 + 1, 4], dtype=np.int64))
     with pytest.raises(ValueError, match="outnumber"):
-        RoutingTable.build(domain, roots, leaf_root=[0, 1, 2, 3], leaf_path=[1] * 4,
-                           split_root=[], split_path=[], normal=np.zeros((0, 2)), offset=np.zeros(0))  # fmt: skip
+        RoutingTable.build(domain, roots, leaf_root=[0, 1, 2, 3], leaf_locational_code=[1] * 4,
+                           split_root=[], split_locational_code=[], normal=np.zeros((0, 2)), offset=np.zeros(0))  # fmt: skip
 
 
 @pytest.mark.parametrize("separation", [1e-6, 1e-8, 1e-10, 1e-12])
@@ -441,18 +441,18 @@ def test_bins_search_skips_nodes_too_small_to_split_beside_valid_ones():
 
 
 def test_a_62_level_skinny_tree_with_many_roots_routes_to_its_deepest_leaf():
-    """Child indices, not packed keys: full path-code depth even with many roots."""
+    """Child indices, not packed keys: full locational-code depth even with many roots."""
     depth = 62
     domain, roots = Domain(np.zeros(2), np.ones(2)), Roots.build("grid", 2, 1024)
-    # Root 1023 halves u0 repeatedly towards 1: path codes 1, 3, 7, ... (always the right child).
-    split_path = [(1 << (k + 1)) - 1 for k in range(depth)]
-    leaf_path = [p << 1 for p in split_path] + [(split_path[-1] << 1) | 1]
+    # Root 1023 halves u0 repeatedly towards 1: locational codes 1, 3, 7, ... (always the right child).
+    split_codes = [(1 << (k + 1)) - 1 for k in range(depth)]
+    leaf_codes = [p << 1 for p in split_codes] + [(split_codes[-1] << 1) | 1]
     lo, hi = (host(b)[1023] for b in roots.bounds())
     z = [lo[0] + (hi[0] - lo[0]) * (1 - 0.5 ** (k + 1)) for k in range(depth)]
     others = [r for r in range(1024) if r != 1023]
     table = RoutingTable.build(
-        domain, roots, leaf_root=others + [1023] * (depth + 1), leaf_path=[1] * 1023 + leaf_path,
-        split_root=[1023] * depth, split_path=split_path, normal=np.tile([1.0, 0.0], (depth, 1)), offset=np.array(z),
+        domain, roots, leaf_root=others + [1023] * (depth + 1), leaf_locational_code=[1] * 1023 + leaf_codes,
+        split_root=[1023] * depth, split_locational_code=split_codes, normal=np.tile([1.0, 0.0], (depth, 1)), offset=np.array(z),
     )  # fmt: skip
     q = xp.asarray([[float(hi[0]), float((lo[1] + hi[1]) / 2)]])
     leaf, outside = table.route(q)
@@ -464,8 +464,8 @@ def test_a_62_level_skinny_tree_with_many_roots_routes_to_its_deepest_leaf():
 def test_routing_table_loads_the_packed_key_format():
     domain, roots, tree = _tree()
     shift = 8
-    sk = (np.array(tree["split_root"]) << shift) | np.array(tree["split_path"])
-    lk = (np.array(tree["leaf_root"]) << shift) | np.array(tree["leaf_path"])
+    sk = (np.array(tree["split_root"]) << shift) | np.array(tree["split_locational_code"])
+    lk = (np.array(tree["leaf_root"]) << shift) | np.array(tree["leaf_locational_code"])
     order = np.argsort(lk)
     old = {
         "domain_lower": np.zeros(2), "domain_upper": np.ones(2), "root_bins": roots.bins, "shift": shift,

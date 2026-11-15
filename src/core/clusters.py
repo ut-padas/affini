@@ -43,7 +43,7 @@ class QueueColumn:
 
 # Every column a queue can carry, in wire order (see src.engine.work_stealing.send_clusters).
 # X, F, sizes and depth are always present; G only when gradients are carried per point;
-# root, path_code and constraints only in ART (src.art), where constraints are
+# root, locational_code and constraints only in ART (src.art), where constraints are
 # the signed ancestor half-spaces ``a^T u <= z`` stored as rows ``[a | z]`` in the
 # normalized coordinates of the domain (the rows of ``(A, z)`` in the companion's region
 # ``{u : A u <= z}``), zero-padded (``0 <= 0``) to a common ``h``.
@@ -54,10 +54,10 @@ QUEUE_COLUMNS: tuple[QueueColumn, ...] = (
     QueueColumn("sizes", "cluster", np.int64, lambda d, fd, h: ()),
     QueueColumn("depth", "cluster", np.int64, lambda d, fd, h: ()),
     QueueColumn("root", "cluster", np.int64, lambda d, fd, h: ()),
-    QueueColumn("path_code", "cluster", np.int64, lambda d, fd, h: ()),
+    QueueColumn("locational_code", "cluster", np.int64, lambda d, fd, h: ()),
     QueueColumn("constraints", "cluster", np.float64, lambda d, fd, h: (h, d + 1)),
 )
-ART_COLUMNS = ("root", "path_code", "constraints")
+ART_COLUMNS = ("root", "locational_code", "constraints")
 
 
 @dataclass
@@ -69,8 +69,8 @@ class ClusterBatch:
     (``X``, ``F`` and, if present, ``G``). ``depth[k]`` is the cluster's depth in its tree
     (roots are 0); it travels with the cluster when work is stolen, so the depth limit
     does not depend on which rank processes it. ART adds the node identity
-    ``(root, path_code)`` and the ancestor ``constraints``, which also travel, so a stolen
-    cluster needs nothing from its victim's history.
+    ``(root, locational_code)`` and the ancestor ``constraints``, which also travel, so a
+    stolen cluster needs nothing from its victim's history.
     """
 
     X: np.ndarray  # (n_pts, d)
@@ -79,7 +79,7 @@ class ClusterBatch:
     sizes: np.ndarray  # (n_clusters,) int64
     depth: np.ndarray | None = None  # (n_clusters,) int64; None means all roots
     root: np.ndarray | None = None  # (n_clusters,) int64, ART
-    path_code: np.ndarray | None = None  # (n_clusters,) int64, ART: pi in the companion (root = 1)
+    locational_code: np.ndarray | None = None  # (n_clusters,) int64, ART: pi in the companion (root = 1)
     constraints: np.ndarray | None = None  # (n_clusters, h, d + 1), ART
     starts: np.ndarray = field(init=False, repr=False)
 
@@ -194,18 +194,18 @@ class ClusterQueueBuilder:
 
     def append(
         self, X: Array, F: Array, G: Array | None, sizes: Array, depth: Array | None = None,
-        *, root: Array | None = None, path_code: Array | None = None, constraints: Array | None = None,
+        *, root: Array | None = None, locational_code: Array | None = None, constraints: Array | None = None,
     ) -> None:  # fmt: skip
         """
         Append clusters given in contiguous order (device or host arrays). ``G`` is
         stored only if the builder was created with ``has_g``; ``depth`` defaults to 0.
-        A ART builder requires ``root``, ``path_code`` and ``constraints``.
+        An ART builder requires ``root``, ``locational_code`` and ``constraints``.
         """
         if "G" in self._buf and G is None:
             raise ValueError("This builder carries gradients, but G was not given.")
-        art_columns = {"root": root, "path_code": path_code, "constraints": constraints}
+        art_columns = {"root": root, "locational_code": locational_code, "constraints": constraints}
         if self.constraint_rows is not None and any(v is None for v in art_columns.values()):
-            raise ValueError("A ART builder needs root, path_code and constraints.")
+            raise ValueError("An ART builder needs root, locational_code and constraints.")
         sizes_host = to_host(sizes)
         values = {"X": to_host(X), "F": to_host(F), "sizes": sizes_host}
         if "G" in self._buf:

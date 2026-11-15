@@ -66,7 +66,7 @@ def main() -> None:
         pred, outside = model.predict(queries)
         total_grants = MPI.COMM_WORLD.allreduce(grants["n"])
         if rank == 0:
-            keys = sorted(zip(model.art_leaves["root"].tolist(), model.art_leaves["path_code"].tolist(), strict=True))
+            keys = sorted(zip(model.art_leaves["root"].tolist(), model.art_leaves["locational_code"].tolist(), strict=True))
             runs[name] = {
                 "leaves": int(model.N_src),
                 "keys_hash": hashlib.sha256(json.dumps(keys).encode()).hexdigest(),

@@ -265,7 +265,7 @@ How a section explains, in this order:
   both algorithms.
 - Notation follows the AFINNI manuscript (`T` for the trust matrix, `kappa` candidates,
   `N_min`, `alpha_tol`, `r_tol`, children `C_-1`, `C_1`); ART reuses it and adds only what it
-  needs (`Omega_C`, the plane `(a, z)`, the path code `pi`). Give the code's name where it
+  needs (`Omega_C`, the plane `(a, z)`, the locational code `pi`). Give the code's name where it
   differs (`trust_matrix`, `normal`, `offset`); `docs/ARCHITECTURE.md` has the full table from the companion's
   symbols to the code's names, and a rename on either side updates it.
 - Write each algorithm once, as data (`ln`, `require`, `ensure`), show it in full in an

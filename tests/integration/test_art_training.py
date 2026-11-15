@@ -117,7 +117,7 @@ def test_loading_rejects_leaf_metadata_that_names_other_nodes(tmp_path, trained)
     path = trained.save_model(tmp_path)
     with np.load(path, allow_pickle=False) as f:
         data = dict(f)
-    key = next(k for k in data if k.endswith("path_code"))
+    key = "leaf:locational_code"
     data[key] = data[key][::-1].copy()
     np.savez(path, **data)
     with pytest.raises(ValueError, match="disagree"):

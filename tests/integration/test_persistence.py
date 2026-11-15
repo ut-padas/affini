@@ -190,37 +190,88 @@ def test_files_with_the_old_single_error_column_still_load(tmp_path):
     assert_same_model(s, loaded)
 
 
-def write_as_format_2(path, out):
-    """Rewrite model file ``path`` to ``out`` with the version-2 names: ``Qs_src``, ``store_Q``, ``time_good_Q``."""
+# The locational-code arrays under the names of format versions 2 and 3.
+LOCATIONAL_CODE_NAMES_BEFORE_V4 = {
+    "leaf:locational_code": "leaf:path_code",
+    "route:leaf_locational_code": "route:leaf_path",
+    "route:split_locational_code": "route:split_path",
+}
+
+
+def write_as_format(path, out, version):
+    """
+    Rewrite model file ``path`` to ``out`` as format ``version``: the locational codes under
+    their version-3 names and, for version 2, ``Qs_src``, ``store_Q`` and ``time_good_Q``.
+    """
     with np.load(path) as data:
         arrays = {k: data[k] for k in data.files}
-    arrays["Qs_src"] = arrays.pop("trust_matrices_src")
-    meta = json.loads(str(arrays["metadata"]))
-    if meta["config"]["art"] is not None:
-        meta["config"]["art"]["store_Q"] = meta["config"]["art"].pop("store_trust_matrix")
-    arrays["metadata"] = np.asarray(json.dumps(meta))
-    stats = str(arrays["profiling_stats"])
-    arrays["profiling_stats"] = np.asarray(stats.replace('"time_good_trust_matrix"', '"time_good_Q"'))
-    arrays["format_version"] = np.asarray(2)
+    arrays = {LOCATIONAL_CODE_NAMES_BEFORE_V4.get(k, k): v for k, v in arrays.items()}
+    if version == 2:
+        arrays["Qs_src"] = arrays.pop("trust_matrices_src")
+        meta = json.loads(str(arrays["metadata"]))
+        if meta["config"]["art"] is not None:
+            meta["config"]["art"]["store_Q"] = meta["config"]["art"].pop("store_trust_matrix")
+        arrays["metadata"] = np.asarray(json.dumps(meta))
+        stats = str(arrays["profiling_stats"])
+        arrays["profiling_stats"] = np.asarray(stats.replace('"time_good_trust_matrix"', '"time_good_Q"'))
+    arrays["format_version"] = np.asarray(version)
     np.savez(out, **arrays)
+
+
+def train_art_or_afinni(algorithm):
+    art = {"algorithm": "art", "domain": ([-1.0, -1.0], [1.0, 1.0]), "art": ARTSettings(sample_multiplier=10)}
+    return train(**(art if algorithm == "art" else {}))
+
+
+def assert_same_tree(a, b):
+    """Same routing arrays (by name), leaf columns and routed predictions."""
+    assert (a.routing is None) == (b.routing is None)
+    if a.routing is None:
+        return
+    ta, tb = a.routing.arrays(), b.routing.arrays()
+    assert list(ta) == list(tb)
+    for k in ta:
+        np.testing.assert_array_equal(ta[k], tb[k])
+    assert list(a.art_leaves) == list(b.art_leaves)
+    for k in a.art_leaves:
+        np.testing.assert_array_equal(a.art_leaves[k], b.art_leaves[k])
+    np.testing.assert_array_equal(*(host(m.predict(xp.asarray(Q), predictor="route")[0]) for m in (a, b)))
 
 
 @pytest.mark.parametrize("algorithm", ["afinni", "art"])
 def test_files_of_format_2_load_under_the_trust_matrix_names(tmp_path, algorithm):
-    art = {"algorithm": "art", "domain": ([-1.0, -1.0], [1.0, 1.0]), "art": ARTSettings(sample_multiplier=10)}
-    s = train(**(art if algorithm == "art" else {}))
-    write_as_format_2(s.save_model(tmp_path / "m.npz"), tmp_path / "old.npz")
+    s = train_art_or_afinni(algorithm)
+    write_as_format(s.save_model(tmp_path / "m.npz"), tmp_path / "old.npz", 2)
     with np.load(tmp_path / "old.npz") as data:
         assert "Qs_src" in data.files and "trust_matrices_src" not in data.files
         assert '"time_good_Q"' in str(data["profiling_stats"])
+        assert ("route:leaf_path" in data.files) == (algorithm == "art")
     loaded = AFINNISurrogate.load_model(tmp_path / "old.npz")
     np.testing.assert_array_equal(host(loaded.trust_matrices_src), host(s.trust_matrices_src))
     assert_same_model(s, loaded)
+    assert_same_tree(s, loaded)
     knn = [host(m.predict(xp.asarray(Q), k_nn=4, predictor="knn")[0]) for m in (s, loaded)]
     np.testing.assert_array_equal(*knn)
     assert loaded.config == json.loads(json.dumps(s.config))
     assert loaded.profiling_stats == json.loads(json.dumps(s.profiling_stats))
     assert loaded.profiling_stats["time_good_trust_matrix"] == s.profiling_stats["time_good_trust_matrix"]
+
+
+@pytest.mark.parametrize("algorithm", ["afinni", "art"])
+def test_files_of_format_3_load_under_the_locational_code_names(tmp_path, algorithm):
+    s = train_art_or_afinni(algorithm)
+    write_as_format(s.save_model(tmp_path / "m.npz"), tmp_path / "old.npz", 3)
+    with np.load(tmp_path / "old.npz") as data:
+        old_names = {"leaf:path_code", "route:leaf_path", "route:split_path"}
+        assert (old_names <= set(data.files)) == (algorithm == "art")
+        assert not any(k.endswith("locational_code") for k in data.files)
+    loaded = AFINNISurrogate.load_model(tmp_path / "old.npz")
+    assert_same_model(s, loaded)
+    assert_same_tree(s, loaded)
+    assert loaded.config == json.loads(json.dumps(s.config))
+    assert loaded.profiling_stats == json.loads(json.dumps(s.profiling_stats))
+    if algorithm == "art":
+        assert "locational_code" in loaded.art_leaves and "leaf_locational_code" in loaded.routing.arrays()
 
 
 def test_failed_retraining_keeps_the_previous_model_usable(monkeypatch):

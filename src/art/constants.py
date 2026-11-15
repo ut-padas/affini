@@ -7,4 +7,4 @@ ACCEPTED, MAX_DEPTH, SPLIT_FAILED = 0, 1, 2
 NOT_PERFORMED, PASSED, FAILED, INSUFFICIENT_SAMPLING = 0, 1, 2, 3
 
 PURPOSE_TRAIN, PURPOSE_VALIDATION, PURPOSE_DIRECTION = 1, 2, 3
-MAX_DEPTH_LIMIT = 62  # path codes are positive int64 with a leading sentinel bit
+MAX_DEPTH_LIMIT = 62  # locational codes are positive int64 behind a leading place-holder bit

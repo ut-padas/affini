@@ -210,7 +210,7 @@ def main() -> None:
                                   "afinni_art": {"art": config.art.__dict__, **model.config["components"]}},
                                  default=str), flush=True)  # fmt: skip
     evaluation, frac = evaluate(_AFINNIARTModel(model))
-    depth = int(max(int(p).bit_length() - 1 for p in model.art_leaves["path_code"]))
+    depth = int(max(int(p).bit_length() - 1 for p in model.art_leaves["locational_code"]))
     print("COMPARE " + json.dumps({"method": "AFINNI-ART", **common, **_summary(
         evaluation, int(model.N_src), depth, int(model.profiling_stats["total_f_evals"]), seconds,
         {"frac_gt_tol": frac, "terminal_reasons": model.leaf_status_counts()["terminal_reason"],

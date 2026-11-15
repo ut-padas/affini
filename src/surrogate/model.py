@@ -45,13 +45,13 @@ from src.surrogate.persistence import (
     ROUTE_PREFIX,
     json_default,
     model_path,
-    rename_keys_before_v3,
+    rename_old_format_keys,
 )
 
 logger = logging.getLogger(__name__)
 
 # Per-leaf ART columns (see src.art), kept apart from the model's parameters.
-ART_LEAF_COLUMNS = ("root", "path_code", "terminal_reason", "validation_status")
+ART_LEAF_COLUMNS = ("root", "locational_code", "terminal_reason", "validation_status")
 
 
 _P = ParamSpec("_P")
@@ -377,7 +377,7 @@ class AFINNISurrogate:
                 )
             meta = json.loads(str(data["metadata"]))
             arrays = {k: data[k] for k in data.files}
-        arrays, meta, profiling_stats = rename_keys_before_v3(
+        arrays, meta, profiling_stats = rename_old_format_keys(
             version, arrays, meta, json.loads(str(arrays["profiling_stats"]))
         )
 
@@ -454,7 +454,7 @@ class AFINNISurrogate:
                 )
             # Equal counts are not enough: leaf row i must be the same node in both stores.
             tree, meta = routing.arrays(), state["art_leaves"]
-            for key, col in (("leaf_root", "root"), ("leaf_path", "path_code")):
+            for key, col in (("leaf_root", "root"), ("leaf_locational_code", "locational_code")):
                 if col in meta and not np.array_equal(np.asarray(tree[key]), meta[col]):
                     raise ValueError(f"{source}: the ART tree and the leaf metadata disagree on {col!r}.")
         t0 = time.perf_counter()

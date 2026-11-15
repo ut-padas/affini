@@ -143,16 +143,16 @@ class ARTPlan:
         return {
             **cols,
             "root": ParamSpec((), np.int64),
-            "path_code": ParamSpec((), np.int64),
+            "locational_code": ParamSpec((), np.int64),
             "terminal_reason": ParamSpec((), np.int8),
             "validation_status": ParamSpec((), np.int8),
         }
 
     def split_columns(self) -> dict[str, ParamSpec]:
-        """A split record: the node ``(root, path_code)`` and its plane ``(a, z)``, the unit ``normal`` and ``offset``."""
+        """A split record: the node ``(root, locational_code)`` and its plane ``(a, z)``, the unit ``normal`` and ``offset``."""
         return {
             "root": ParamSpec((), np.int64),
-            "path_code": ParamSpec((), np.int64),
+            "locational_code": ParamSpec((), np.int64),
             "normal": ParamSpec((self.d,)),
             "offset": ParamSpec(()),
         }
@@ -177,8 +177,8 @@ class ARTPlan:
         """Build the routing table from every rank's split records and total the leaf statuses and counters."""
         nodes = {k[len("split:"):]: to_host(merged.pop(k)) for k in list(merged) if k.startswith("split:")}
         routing = RoutingTable.build(
-            self.domain, self.roots, merged["root"], merged["path_code"],
-            nodes["root"], nodes["path_code"], nodes["normal"], nodes["offset"],
+            self.domain, self.roots, merged["root"], merged["locational_code"],
+            nodes["root"], nodes["locational_code"], nodes["normal"], nodes["offset"],
         )  # fmt: skip
         merged["routing"] = routing.arrays()
         reasons = np.bincount(to_host(merged["terminal_reason"]).astype(np.int64), minlength=len(TERMINAL_REASONS))
@@ -194,7 +194,7 @@ class ARTPlan:
         return ClusterBatch(
             X[order], F[order], G[order] if G is not None else None,
             np.bincount(root, minlength=R).astype(np.int64),
-            root=np.arange(R, dtype=np.int64), path_code=np.ones(R, dtype=np.int64),
+            root=np.arange(R, dtype=np.int64), locational_code=np.ones(R, dtype=np.int64),
             constraints=np.zeros((R, 0, self.d + 1)),
         )  # fmt: skip
 
@@ -213,14 +213,14 @@ class ARTPlan:
         cfg = self.config
         # Per-node columns before the first progress() call, which may hand later nodes away.
         q, cut = batch.queue, batch.cut
-        depth, root, path_code = xp.asarray(q.depth[cut]), xp.asarray(q.root[cut]), xp.asarray(q.path_code[cut])
+        depth, root, locational_code = xp.asarray(q.depth[cut]), xp.asarray(q.root[cut]), xp.asarray(q.locational_code[cut])
         constraints, progress = xp.asarray(q.constraints[cut]), batch.progress
         sizes = batch.sizes
         X, F, G = batch.take()
         model = components.local_model
         acceptance, trust_region = components.acceptance, components.trust_region
         K = int(sizes.shape[0])
-        keys = node_keys(cfg.seed, root, path_code)
+        keys = node_keys(cfg.seed, root, locational_code)
         geo = NodePolytopes(root, depth, keys, constraints, PURPOSE_TRAIN)
         stats = {"generated": 0, "fallback_clusters": 0, "fallback_pts": 0}
 
@@ -276,7 +276,7 @@ class ARTPlan:
                     keep = xp.nonzero(ok)[0]
                     leaves.idx, leaves.rows = leaves.idx[keep], {k: v[keep] for k, v in leaves.rows.items()}
                 status_v = xp.where(insufficient, INSUFFICIENT_SAMPLING, status_v).astype(xp.int8)
-                self._append_leaves(accepted, leaves, root, path_code, ACCEPTED, status_v)
+                self._append_leaves(accepted, leaves, root, locational_code, ACCEPTED, status_v)
                 is_leaf[leaves.idx] = True
 
         # 4. Split the rejected nodes; those that cannot split keep their model as a leaf.
@@ -287,7 +287,7 @@ class ARTPlan:
         if int(to_split.shape[0]) > 0:
             with timer("time_bad_split"):
                 failed_split, n_gen = self._split(
-                    to_split, fit, Xv, Fv, Gv, components, evaluator, keys, depth, root, path_code,
+                    to_split, fit, Xv, Fv, Gv, components, evaluator, keys, depth, root, locational_code,
                     constraints, splits, next_level, progress,
                 )  # fmt: skip
             stats["generated"] += n_gen
@@ -297,7 +297,7 @@ class ARTPlan:
                 with timer("time_good_trust_matrix"):
                     leaves = deploy_leaves(model, trust_region, acceptance, fit, idx, params, E_abs, E_rel,
                                            retest=False, store_trust_matrix=store_trust_matrix)  # fmt: skip
-                self._append_leaves(accepted, leaves, root, path_code, reason, status_v)
+                self._append_leaves(accepted, leaves, root, locational_code, reason, status_v)
                 stats["fallback_clusters"] += int(idx.shape[0])
                 stats["fallback_pts"] += int(xp.sum(n_train[idx]))
         stats.update(
@@ -315,18 +315,18 @@ class ARTPlan:
         ok, _, _ = components.acceptance(Fv[rows], F_hat, xp.arange(L) * self.n_val, sizes)
         return ok
 
-    def _append_leaves(self, accepted, leaves, root, path_code, reason: int, status_v) -> None:
+    def _append_leaves(self, accepted, leaves, root, locational_code, reason: int, status_v) -> None:
         idx = leaves.idx
         accepted.append({
             **leaves.rows,
-            "root": root[idx], "path_code": path_code[idx],
+            "root": root[idx], "locational_code": locational_code[idx],
             "terminal_reason": xp.full(int(idx.shape[0]), reason, dtype=xp.int8),
             "validation_status": status_v[idx],
         })  # fmt: skip
 
     # --- Splitting -------------------------------------------------------------------
 
-    def _split(self, idx, fit, Xv, Fv, Gv, components, evaluator, keys, depth, root, path_code, constraints,
+    def _split(self, idx, fit, Xv, Fv, Gv, components, evaluator, keys, depth, root, locational_code, constraints,
                splits, next_level, progress) -> tuple[Array, int]:  # fmt: skip
         """
         Split nodes ``idx`` on their training points plus their (now spent) validation
@@ -391,7 +391,7 @@ class ARTPlan:
         if int(good.shape[0]) > 0:
             keep = valid[labels][order]
             child_sizes = xp.stack([cut[good], counts[good] - cut[good]], axis=1).ravel()
-            node, pc = idx[good], path_code[idx[good]]
+            node, code = idx[good], locational_code[idx[good]]
             row = xp.concatenate([w[good], z[good][:, None]], axis=1)  # left: w^T u <= z; right: -row
             parent_c = constraints[node]
             children_c = xp.stack([
@@ -402,9 +402,9 @@ class ARTPlan:
             next_level.append(
                 X[rows_sorted], F[rows_sorted], G[rows_sorted] if G is not None else None, child_sizes,
                 depth=xp.repeat(depth[node] + 1, 2), root=xp.repeat(root[node], 2),
-                path_code=xp.stack([2 * pc, 2 * pc + 1], axis=1).ravel(), constraints=children_c,
+                locational_code=xp.stack([2 * code, 2 * code + 1], axis=1).ravel(), constraints=children_c,
             )  # fmt: skip
-            splits.append({"root": root[node], "path_code": pc, "normal": w[good], "offset": z[good]})
+            splits.append({"root": root[node], "locational_code": code, "normal": w[good], "offset": z[good]})
         return idx[~valid], n_generated
 
     def _propose(self, data: SplitData, U: Array, components, keys: Array, progress) -> tuple[Array, Array]:
