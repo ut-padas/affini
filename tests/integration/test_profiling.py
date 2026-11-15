@@ -151,7 +151,7 @@ def test_timing_totals_fit_inside_the_total_time():
     ps = train(profile_timing=True).profiling_stats["per_rank"][0]
     timed = sum(ps[p.key] for p in PHASES if not p.nested)
     assert 0 < timed <= ps["time_total"] * 1.01
-    for key in ("time_init", "time_error_calc", "time_good_Q", "time_augment", "time_bad_split"):
+    for key in ("time_init", "time_error_calc", "time_good_trust_matrix", "time_augment", "time_bad_split"):
         assert ps[key] > 0, key
     assert 0 < ps[ORACLE_TIME_KEY] < ps["time_total"]
 

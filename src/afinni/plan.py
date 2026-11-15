@@ -210,7 +210,7 @@ class AFINNIPlan:
             n_good = int(good_idx.shape[0])
         if n_good == 0:
             return 0
-        with timer("time_good_Q"):
+        with timer("time_good_trust_matrix"):
             leaves = deploy_leaves(components.local_model, components.trust_region, components.acceptance,
                                    fit, good_idx, params, E_abs, E_rel)  # fmt: skip
             if int(leaves.failed.shape[0]) > 0:

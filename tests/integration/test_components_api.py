@@ -122,7 +122,7 @@ def test_explicit_components_equal_to_the_preset_give_identical_results():
     # Two separate runs: bit-identical on CPU; on GPU, atomicAdd accumulation order
     # varies between runs, so equal to rounding (decisions identical).
     assert explicit.N_src == preset.N_src
-    for name in ("X_src", "Qs_src", "A_fits_src", "b_fits_src"):
+    for name in ("X_src", "trust_matrices_src", "A_fits_src", "b_fits_src"):
         assert_backend_equal(getattr(explicit, name), getattr(preset, name), separate_runs=True)
     assert_backend_equal(predict(explicit)[0], predict(preset)[0], separate_runs=True)
 
@@ -309,7 +309,7 @@ class ScaledIdentity(TrustRegion):
 def test_custom_trust_region_shapes_are_used(registered):
     registered(TRUST_REGIONS, ScaledIdentity)
     s = train(mode=SurrogateMode.AFFINE_COV_HESS, trust_region=("test_scaled_identity", {"scale": 9.0}))
-    np.testing.assert_array_equal(host(s.Qs_src), np.tile(9.0 * np.eye(2), (s.N_src, 1, 1)))
+    np.testing.assert_array_equal(host(s.trust_matrices_src), np.tile(9.0 * np.eye(2), (s.N_src, 1, 1)))
     # Inside means within distance 1/3 of some candidate centroid.
     _, mask = predict(s)
     d_min = np.min(np.linalg.norm(X_QUERY[:, None] - host(s.X_src)[None], axis=2), axis=1)

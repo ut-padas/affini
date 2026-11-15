@@ -51,7 +51,7 @@ PHASES: tuple[Phase, ...] = (
     Phase("time_slicing", "H2D: batch transfer", "#a0cbe8"),
     Phase("time_error_calc", "Fit + error", "#f28e2b"),
     Phase("time_filter", "Fit + error", "#f28e2b"),
-    Phase("time_good_Q", "Trust regions + finalize", "#59a14f"),
+    Phase("time_good_trust_matrix", "Trust regions + finalize", "#59a14f"),
     Phase("time_good_d2h", "D2H: accepted leaves", "#8cd17d"),
     Phase("time_augment", "Augment points", "#ffbe7d"),
     Phase("time_bad_split", "Split rejected", "#e15759"),

@@ -313,7 +313,7 @@ def conduct_experiment_given_data(
         plot_save_path = json_fpath.with_name(json_fpath.stem + "_centroid_plot.png")
         plot_adaptive_clustering_results(
             centroids=to_host(surrogate.X_src),
-            Q=to_host(surrogate.Qs_src),
+            trust_matrices=to_host(surrogate.trust_matrices_src),
             domain=DOMAIN,  # type: ignore
             # The contours show a scalar function: the first output component.
             f_fn=f_fn if F_DIM == 1 else (lambda X: f_fn(X)[:, 0]),

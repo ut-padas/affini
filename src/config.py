@@ -122,9 +122,9 @@ class ARTSettings:
     # The soft gate's width (h in the companion) as a fraction of the std of the node's scores.
     soft_temperature: float = 0.1
     soft_weight_floor: float = 1e-8  # delta in W = delta + (1 - 2 delta) sigma
-    # Store the trust-region matrix Q per leaf (T in the companion; needed only by
-    # predictor="knn"; d^2 per leaf).
-    store_Q: bool = True  # noqa: N815  (named after the leaf column "Q")
+    # Store the trust matrix per leaf (T in the companion; needed only by predictor="knn";
+    # d^2 per leaf).
+    store_trust_matrix: bool = True
     # Work-stealing threshold and grant size in queued points (w_* and w_s in the companion);
     # None: a few nodes' worth (src.art).
     steal_min_load: int | None = None
@@ -191,7 +191,7 @@ class TrainingConfig:
     # N_min in the companion: a rejected cluster is augmented to at least 2 * N_min points.
     min_pts_per_cluster: int = 100
     sampling_method: str = "convex_combination"  # see src.components.sampling.SAMPLERS
-    # Floor on the covariance eigenvalues of the trust-region matrix Q (gamma and T in the companion).
+    # Floor on the covariance eigenvalues of the trust matrix (gamma and T in the companion).
     q_reg: float = 1e-6
     # Maximum number of refinement levels; clusters still unresolved after it leave
     # their points without a leaf and the run reports converged=False.

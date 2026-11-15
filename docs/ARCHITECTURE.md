@@ -48,7 +48,7 @@ A plan's `process_batch` runs four stages on its batch:
 ## Prediction
 
 - **AFINNI** (`predictor="knn"`): exact kNN over the leaf centroids (`src/neighbors/knn.py`); the
-  `k_nn * coarse_factor` nearest are re-ranked by trust-region distance `dx^T Q dx`, and the best
+  `k_nn * coarse_factor` nearest are re-ranked by trust-region distance `dx^T trust_matrix dx`, and the best
   `k_nn` leaves' models are blended. A query whose best candidate lies at distance > 1 is flagged
   outside.
 - **ART** (`predictor="route"`): `RoutingTable.route` (`src/art/routing.py`) walks each query down
@@ -106,7 +106,7 @@ names, and the docstring or comment where a name is defined gives its symbol. Pa
 | N_cov | the points with the smallest Taylor error, which trace the level set | `n_est_cov` | `components/splitting.py` (`CovarianceHessianSplit`) |
 | x̃ᵢ, u₁, sᵢ | the stretched points, the split direction, the scores | `M (x − c)`; `v`, the leading eigenvector of `CovZ`; `scores` | `components/splitting.py` (`SplitStrategy.split`) |
 | C₋₁, C₁ | the two children of a split | AFINNI: the low and the high half (`child_sizes`); ART: left, aᵀu < z (path code 2π), and right (2π + 1) | `components/splitting.py`, `art/plan.py` (`ARTPlan._split`) |
-| T, γ, α | the trust-region matrix, its eigenvalue floor, the farthest point's scaled distance | `Q` (leaf column), `Qs_src`; `q_reg`; `max_dist` | `components/trust_regions.py`, `config.py` |
+| T, γ, α | the trust-region matrix, its eigenvalue floor, the farthest point's scaled distance | `trust_matrix` (leaf column), `trust_matrices_src`; `q_reg`; `max_dist` | `components/trust_regions.py`, `config.py` |
 | κ, dᵢ, ν | Euclidean candidates, trust-region distance, the answering leaf | `k_nn * coarse_factor` (`k_coarse`); `dist_sq`; `nn_idx[:, 0]` | `surrogate/model.py` (`predict`, `predict_local`) |
 | 𝒮, N_c | the leaves, their number | the `accepted` buffer during training; `N_src` and the `*_src` arrays | `engine/refinement.py`, `surrogate/model.py` |
 | u | coordinates of the domain, in [0, 1]^d | `U`, `Domain.normalize` | `art/geometry.py` |

@@ -184,7 +184,7 @@ def trust_region_shapes(...):
 
 # Good
 def trust_region_shapes(...):
-    """Scale each Q so the farthest training point lies on dx^T Q dx = 1; inference treats > 1 as outside."""
+    """Scale each trust matrix so the farthest training point lies on dx^T trust_matrix dx = 1; inference treats > 1 as outside."""
 
 
 # Bad
@@ -266,7 +266,7 @@ How a section explains, in this order:
 - Notation follows the AFINNI manuscript (`T` for the trust matrix, `kappa` candidates,
   `N_min`, `alpha_tol`, `r_tol`, children `C_-1`, `C_1`); ART reuses it and adds only what it
   needs (`Omega_C`, the plane `(a, z)`, the path code `pi`). Give the code's name where it
-  differs (`Q`, `normal`, `offset`); `docs/ARCHITECTURE.md` has the full table from the companion's
+  differs (`trust_matrix`, `normal`, `offset`); `docs/ARCHITECTURE.md` has the full table from the companion's
   symbols to the code's names, and a rename on either side updates it.
 - Write each algorithm once, as data (`ln`, `require`, `ensure`), show it in full in an
   `algorithm`, and again in `step`s with `focus` instead of writing "see line 7".

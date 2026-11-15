@@ -238,7 +238,7 @@ def compare(name: str, args) -> dict:
             prob.f, lower, upper, plots / "error_maps.png", tol=rtol, title=f"Pointwise relative error, {name}",
         )  # fmt: skip
         plotting.plot_adaptive_clustering_results(
-            centroids=afinni.X_src, Q=afinni.Qs_src, domain=prob.domain, f_fn=prob.f,
+            centroids=afinni.X_src, trust_matrices=afinni.trust_matrices_src, domain=prob.domain, f_fn=prob.f,
             img_fpath=plots / "afinni_clusters.png", title=f"AFINNI leaves, {name}",
         )  # fmt: skip
     print(f"[{name}] saved metrics, models and plots under {out.relative_to(PROJECT_DIR)}")

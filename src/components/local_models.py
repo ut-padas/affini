@@ -34,7 +34,7 @@ candidate clusters per query, at inference); in the (n, k) case ``X`` stays
 
 Besides a model's own parameters, ``evaluate`` may read the columns every
 cluster stores: ``"centroids"`` (K, d) and ``"f"`` (K, fd), the function value at
-the centroid. Those names, and ``"Q"``, ``"E_cluster_abs"``, ``"E_cluster_rel"`` and
+the centroid. Those names, and ``"trust_matrix"``, ``"E_cluster_abs"``, ``"E_cluster_rel"`` and
 ``"counts"``, are reserved (``SHARED_COLUMNS``).
 """
 
@@ -385,9 +385,9 @@ def make_local_model(config) -> LocalModel:
     return config.components().local_model
 
 
-# Columns every accepted cluster stores, whatever its model: "Q" is the trust-region matrix
+# Columns every accepted cluster stores, whatever its model: "trust_matrix" is the trust-region matrix
 # (T in the companion), "E_cluster_abs" / "E_cluster_rel" the errors e_a / e_r.
-SHARED_COLUMNS = ("centroids", "f", "Q", "E_cluster_abs", "E_cluster_rel", "counts")
+SHARED_COLUMNS = ("centroids", "f", "trust_matrix", "E_cluster_abs", "E_cluster_rel", "counts")
 
 
 def output_columns(model: LocalModel, d: int, fd: int) -> dict[str, ParamSpec]:
@@ -402,7 +402,7 @@ def output_columns(model: LocalModel, d: int, fd: int) -> dict[str, ParamSpec]:
     return {
         "centroids": ParamSpec((d,)),
         "f": ParamSpec((fd,)),
-        "Q": ParamSpec((d, d)),
+        "trust_matrix": ParamSpec((d, d)),
         # The acceptance criterion's errors per output component (see src.components.acceptance).
         "E_cluster_abs": ParamSpec((fd,)),
         "E_cluster_rel": ParamSpec((fd,)),
@@ -430,15 +430,16 @@ def deploy_leaves(
     E_abs: Array,
     E_rel: Array,
     retest: bool = True,
-    store_Q: bool = True,
+    store_trust_matrix: bool = True,
 ) -> DeployedLeaves:
     """
-    Turn clusters ``idx`` of a fitted batch into deployed leaves: their ``Q``, the model's
+    Turn clusters ``idx`` of a fitted batch into deployed leaves: their ``trust_matrix``, the model's
     accepted-only columns (``finalize``) and, when finalize adds columns and ``retest``,
     a re-test of the model that will actually be deployed; clusters it fails are
     returned in ``failed`` (the caller splits them) instead of becoming leaves. Without
     ``retest`` (ART fallback leaves) every cluster is kept with its fit errors.
-    Without ``store_Q`` (routed-only ART models) no ``"Q"`` is computed or returned.
+    Without ``store_trust_matrix`` (routed-only ART models) no ``"trust_matrix"`` is computed or
+    returned.
     Both algorithm plans call this, in AFINNI's order: preliminary acceptance first,
     then this.
     """
@@ -454,8 +455,8 @@ def deploy_leaves(
     own = {k: v[idx] for k, v in params.items()}
     centroids, f_c = data.centroids[idx], data.f_c[idx]
 
-    # Shape matrix Q of each leaf, used by the trust-region test at inference.
-    Qs = trust_region.shapes(X, centroids, labels, counts) if store_Q else None
+    # Trust matrix of each leaf, used by the trust-region test at inference.
+    trust_matrices = trust_region.shapes(X, centroids, labels, counts) if store_trust_matrix else None
     # Parameters the model only computes for leaves (e.g. the second-order Taylor term).
     final = model.finalize(
         ClusterFitData(
@@ -474,14 +475,14 @@ def deploy_leaves(
             keep = xp.nonzero(still)[0]
             failed = idx[~still]
             idx, counts, E_abs, E_rel = idx[keep], counts[keep], E_abs[keep], E_rel[keep]
-            Qs = Qs[keep] if Qs is not None else None
+            trust_matrices = trust_matrices[keep] if trust_matrices is not None else None
             centroids, f_c = centroids[keep], f_c[keep]
             own = {k: v[keep] for k, v in own.items()}
             final = {k: v[keep] for k, v in final.items()}
     rows = {
         "centroids": centroids,
         "f": f_c,
-        **({"Q": Qs} if store_Q else {}),
+        **({"trust_matrix": trust_matrices} if store_trust_matrix else {}),
         "E_cluster_abs": E_abs,
         "E_cluster_rel": E_rel,
         "counts": counts.astype(xp.int64),

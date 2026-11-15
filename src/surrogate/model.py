@@ -45,6 +45,7 @@ from src.surrogate.persistence import (
     ROUTE_PREFIX,
     json_default,
     model_path,
+    rename_keys_before_v3,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,12 +99,13 @@ class AFINNISurrogate:
         self.local_model: LocalModel | None = None  # the function on each leaf
 
         # The leaves, one row each (the set S of the companion): N_src leaves (N_c), their
-        # centres X_src (c), f at the centres f_src (f(c)), and the trust-region matrices
-        # Qs_src (T, column "Q"; None for an ART model trained with store_Q=False).
+        # centres X_src (c), f at the centres f_src (f(c)), and the trust matrices
+        # trust_matrices_src (T, column "trust_matrix"; None for an ART model trained with
+        # store_trust_matrix=False).
         self.N_src = 0
         self.X_src = None
         self.f_src = None
-        self.Qs_src = None
+        self.trust_matrices_src = None
         # The local model's own per-leaf parameters, keyed by the columns it declares
         # (e.g. "A_fit"/"b_fit", or "g" and optionally "H"; see AffineLSQModel for how
         # "A_fit"/"b_fit" relate to the companion's (w, b)).
@@ -233,7 +235,8 @@ class AFINNISurrogate:
                            "effective": bcast_data["profiling_stats"].get("effective_config", {})},
                 "X_src": bcast_data["centroids"],
                 "f_src": bcast_data["f"],
-                "Qs_src": bcast_data.get("Q"),  # absent for ART models with store_Q=False
+                # absent for ART models with store_trust_matrix=False
+                "trust_matrices_src": bcast_data.get("trust_matrix"),
                 "E_cluster_abs_src": bcast_data["E_cluster_abs"],
                 "E_cluster_rel_src": bcast_data["E_cluster_rel"],
                 "counts_src": bcast_data["counts"],
@@ -327,7 +330,8 @@ class AFINNISurrogate:
             ),
             "X_src": to_host(self.X_src),
             "f_src": to_host(self.f_src),
-            **({"Qs_src": to_host(self.Qs_src)} if self.Qs_src is not None else {}),
+            **({"trust_matrices_src": to_host(self.trust_matrices_src)}
+               if self.trust_matrices_src is not None else {}),
             **{PARAM_PREFIX + k: to_host(v) for k, v in self.leaf_params.items()},
             **({ROUTE_PREFIX + k: v for k, v in self.routing.arrays().items()} if self.routing else {}),
             **{LEAF_PREFIX + k: np.asarray(v) for k, v in self.art_leaves.items()},
@@ -373,6 +377,9 @@ class AFINNISurrogate:
                 )
             meta = json.loads(str(data["metadata"]))
             arrays = {k: data[k] for k in data.files}
+        arrays, meta, profiling_stats = rename_keys_before_v3(
+            version, arrays, meta, json.loads(str(arrays["profiling_stats"]))
+        )
 
         if local_model is None:
             spec = meta["local_model"]
@@ -391,12 +398,12 @@ class AFINNISurrogate:
                 "config": meta["config"],
                 "X_src": arrays["X_src"],
                 "f_src": arrays["f_src"],
-                "Qs_src": arrays.get("Qs_src"),
+                "trust_matrices_src": arrays.get("trust_matrices_src"),
                 # Files saved before the per-component error columns have neither.
                 "E_cluster_abs_src": arrays.get("E_cluster_abs_src"),
                 "E_cluster_rel_src": arrays.get("E_cluster_rel_src"),
                 "counts_src": arrays.get("counts_src"),
-                "profiling_stats": json.loads(str(arrays["profiling_stats"])),
+                "profiling_stats": profiling_stats,
                 "converged": meta["converged"],
                 "num_unresolved_clusters": int(meta["num_unresolved_clusters"]),
                 "num_unresolved_pts": int(meta["num_unresolved_pts"]),
@@ -419,7 +426,7 @@ class AFINNISurrogate:
         usable; ``source`` names where the state came from in error messages.
         """
         state = dict(state)
-        for name in ("X_src", "f_src", "Qs_src", "E_cluster_abs_src", "E_cluster_rel_src"):
+        for name in ("X_src", "f_src", "trust_matrices_src", "E_cluster_abs_src", "E_cluster_rel_src"):
             if state[name] is not None:
                 state[name] = to_device(state[name])
         if state["counts_src"] is not None:
@@ -451,7 +458,9 @@ class AFINNISurrogate:
                 if col in meta and not np.array_equal(np.asarray(tree[key]), meta[col]):
                     raise ValueError(f"{source}: the ART tree and the leaf metadata disagree on {col!r}.")
         t0 = time.perf_counter()
-        state["knn_index"] = _make_knn_index(state["X_src"]) if state["Qs_src"] is not None else None
+        state["knn_index"] = (
+            _make_knn_index(state["X_src"]) if state["trust_matrices_src"] is not None else None
+        )
         if get_mpi_rank() == 0:
             logger.info(f"KNN Index built in {time.perf_counter() - t0:.4f}s")
         for name, value in state.items():
@@ -487,7 +496,7 @@ class AFINNISurrogate:
 
         ``predictor="knn"`` (the default for AFINNI models): the ``k_nn * coarse_factor``
         nearest centroids (``kappa`` candidates in the companion) are reranked by trust-region
-        distance ``dx^T Q dx`` (``d_i``); the best ``k_nn`` leaves' models are blended with
+        distance ``dx^T trust_matrix dx`` (``d_i``); the best ``k_nn`` leaves' models are blended with
         weights ``1 / d_i^2`` (``strict_trust_region`` drops leaves with distance > 1). A
         query is flagged outside when its best candidate (the leaf ``nu``) is > 1.
 
@@ -502,10 +511,10 @@ class AFINNISurrogate:
             raise ValueError(f"predictor must be 'knn' or 'route'; got {predictor!r}.")
         if predictor == "route" and self.routing is None:
             raise ValueError("predictor='route' needs an ART model (algorithm='art').")
-        if predictor == "knn" and self.trained and self.Qs_src is None:
+        if predictor == "knn" and self.trained and self.trust_matrices_src is None:
             raise ValueError(
-                "predictor='knn' needs the trust-region shapes Q, which this ART model did not "
-                "store (art.store_Q=False); use predictor='route'."
+                "predictor='knn' needs the trust matrices, which this ART model did not "
+                "store (art.store_trust_matrix=False); use predictor='route'."
             )
         # Totals over this call's batches on this rank: queries, fallback rows, strategy.
         self.search_stats = {"queries": 0, "fallback_rows": 0, "candidates": 0, "strategy": None}
@@ -573,7 +582,7 @@ class AFINNISurrogate:
             self.trained
             and self.X_src is not None
             and self.f_src is not None
-            and self.Qs_src is not None
+            and self.trust_matrices_src is not None
         )
         if N == 0:  # e.g. fewer queries than MPI ranks
             empty = (
@@ -608,13 +617,13 @@ class AFINNISurrogate:
             nn_idx_coarse, _ = self._query_knn(batch_queries, k_coarse)
 
             # 2. Extract coarse candidate properties
-            Qs_coarse = self.Qs_src[nn_idx_coarse]
+            trust_matrices_coarse = self.trust_matrices_src[nn_idx_coarse]
             centroids_coarse = self.X_src[nn_idx_coarse]
             dx_coarse = batch_queries[:, None, :] - centroids_coarse
 
             # Compute Mahalanobis distance squared for all coarse candidates
             dist_sq_coarse = xp.einsum(
-                "nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse
+                "nki,nkij,nkj->nk", dx_coarse, trust_matrices_coarse, dx_coarse
             )
 
             # 3. Phase 2: Refine to top k_nn based on true Trust Region distance (d_i)
@@ -794,7 +803,7 @@ class AFINNISurrogate:
         queries already local to this rank (no MPI scatter). "Unguaranteed" means outside every
         trust region, not that the inside answers are guaranteed.
         """
-        assert self.trained and self.X_src is not None and self.Qs_src is not None
+        assert self.trained and self.X_src is not None and self.trust_matrices_src is not None
         N = query_points.shape[0]
         if N == 0:
             return xp.array([], dtype=bool)
@@ -807,13 +816,13 @@ class AFINNISurrogate:
             # 1. Coarse KNN Search
             nn_idx_coarse, _ = self._query_knn(batch_queries, k_coarse)
 
-            # 2. Extract Qs and compute Mahalanobis Distance
-            Qs_coarse = self.Qs_src[nn_idx_coarse]
+            # 2. The candidates' trust matrices and their Mahalanobis distances
+            trust_matrices_coarse = self.trust_matrices_src[nn_idx_coarse]
             centroids_coarse = self.X_src[nn_idx_coarse]
             dx_coarse = batch_queries[:, None, :] - centroids_coarse
 
             dist_sq_coarse = xp.einsum(
-                "nki,nkij,nkj->nk", dx_coarse, Qs_coarse, dx_coarse
+                "nki,nkij,nkj->nk", dx_coarse, trust_matrices_coarse, dx_coarse
             )
 
             # 3. Mask: a query is outside if its closest Mahalanobis distance is > 1.0

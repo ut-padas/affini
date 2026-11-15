@@ -91,7 +91,7 @@ def test_retries_use_new_candidates_and_remain_reproducible(
 ):
     model = SimpleNamespace(
         X_src=np.zeros((1, 2)),
-        Qs_src=np.eye(2)[None, :, :],
+        trust_matrices_src=np.eye(2)[None, :, :],
         filter_unguaranteed_local=lambda points, **kwargs: np.ones(
             len(points), dtype=bool
         ),

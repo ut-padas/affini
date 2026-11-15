@@ -33,7 +33,7 @@ SEED = 0
 # ==========================================
 def plot_adaptive_clustering_results(
     centroids: np.ndarray,
-    Q: np.ndarray,
+    trust_matrices: np.ndarray,
     domain: list[float],
     f_fn: Callable,
     title: str,
@@ -71,8 +71,7 @@ def plot_adaptive_clustering_results(
 
     for i in range(centroids.shape[0]):
         _centroid = centroids[i]
-        _Q = Q[i]
-        eigvals, eigvecs = np.linalg.eigh(_Q)
+        eigvals, eigvecs = np.linalg.eigh(trust_matrices[i])
         order = eigvals.argsort()[::-1]
         eigvals = eigvals[order]
         eigvecs = eigvecs[:, order]
@@ -205,10 +204,10 @@ def halo_sampling(
     Nc, d = surrogate.X_src.shape
 
     centroids = surrogate.X_src
-    Qs = surrogate.Qs_src
+    trust_matrices = surrogate.trust_matrices_src
 
     # 2. Generate candidates only for MY clusters
-    eigenvals, eigenvecs = xp.linalg.eigh(Qs)
+    eigenvals, eigenvecs = xp.linalg.eigh(trust_matrices)
     lambda_inv_sqrt = 1.0 / xp.sqrt(xp.maximum(eigenvals, 1e-12))
 
     z = xp.random.randn(Nc, pts_per_cluster, d)
@@ -237,10 +236,10 @@ def cloud_sampling(
     Nc, d = surrogate.X_src.shape
 
     centroids = surrogate.X_src
-    Qs = surrogate.Qs_src
+    trust_matrices = surrogate.trust_matrices_src
 
     # 2. Generate candidates only for MY clusters
-    eigenvals, eigenvecs = xp.linalg.eigh(Qs)
+    eigenvals, eigenvecs = xp.linalg.eigh(trust_matrices)
     lambda_inv_sqrt = 1.0 / xp.sqrt(xp.maximum(eigenvals, 1e-12))
 
     z = xp.random.randn(Nc, pts_per_cluster, d)
@@ -676,7 +675,7 @@ def run_iterative_refinement(
         img_path = OUTPUT_DIR / f"halo_iter_{iteration}.png"
         plot_adaptive_clustering_results(
             centroids=to_host(surrogate.X_src),
-            Q=to_host(surrogate.Qs_src),
+            trust_matrices=to_host(surrogate.trust_matrices_src),
             domain=DOMAIN,
             f_fn=f_fn,
             title=plot_title,

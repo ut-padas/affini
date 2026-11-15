@@ -156,7 +156,7 @@ would not fit, training stops with a `MemoryError` explaining what to change
 ## Results, status and saving
 
 ```python
-surrogate.N_src, surrogate.X_src, surrogate.Qs_src    # leaves: count, centroids, trust shapes
+surrogate.N_src, surrogate.X_src, surrogate.trust_matrices_src  # leaves: count, centroids, trust matrices
 surrogate.leaf_params                                  # the local model's parameters by name
 surrogate.E_cluster_abs_src, surrogate.E_cluster_rel_src  # accepted errors per leaf and output
 surrogate.counts_src                                   # points per leaf
@@ -198,7 +198,7 @@ Settings are in `art=ARTSettings(...)`:
 | `roots` | `"box"` (one root, as in the reference ART; no initial clustering), `"grid"` (`num_initial_clusters` cells over the domain), or `"voronoi"` (the cells of the initial clustering's centres, for comparisons with AFINNI's forest) |
 | `split_search` | how a rejected node's plane is chosen: `"soft"` (default; the bins search, then the reference ART's soft-oblique optimizer in a consistent form, kept only if its hard fit is better), `"bins"` (the bins search over `n_directions` directions × `n_bins` cuts only), `"gap"` (the split strategy's direction, cut near the median) |
 | `sampling` | `"hit_and_run"` (default), or `"convex_combination"`: AFINNI's convex-combination augmentation, to compare predictors on one tree |
-| `store_Q` | keep the trust-region shape per leaf (needed only by `predictor="knn"`) |
+| `store_trust_matrix` | keep the trust matrix per leaf (needed only by `predictor="knn"`) |
 | `sample_multiplier` | every node is topped up to `ceil(multiplier * (d + 1))` training points before it is fitted (reference ART: 50) |
 | `validation_samples` | fresh points per node on which the deployed model is checked; a diagnostic |
 | `min_side_margin` | a split leaves at least `d + 1 + margin` points on each side |
@@ -555,7 +555,7 @@ surrogate.train(X, TrainingConfig(atol=0.02, local_model=("offset_affine", {"off
 Contracts the engine checks (with a clear error):
 
 - **Local model:** `fit` + `finalize` return exactly the declared `columns` with
-  the declared shapes; the names `centroids`, `f`, `Q`, `E_cluster_abs`,
+  the declared shapes; the names `centroids`, `f`, `trust_matrix`, `E_cluster_abs`,
   `E_cluster_rel`, `counts` are reserved. `evaluate` may read `params["centroids"]` and `params["f"]`, and
   must also work without the `finalize` columns: the acceptance test evaluates the
   `fit` output, and only accepted leaves get `finalize` columns.
@@ -569,8 +569,8 @@ Contracts the engine checks (with a clear error):
 - **Acceptance:** `__call__(F, F_hat, starts, sizes) -> (is_good, E_abs, E_rel)`, the
   errors per cluster and output component (K, fd); `self.accept(E_abs, E_rel)` applies
   the built-in tolerance rule.
-- **Trust region:** `shapes(X, centroids, labels, counts) -> Q` (K, d, d),
-  symmetric positive semi-definite; inference treats `dx^T Q dx > 1` as outside.
+- **Trust region:** `shapes(X, centroids, labels, counts) -> trust_matrices` (K, d, d),
+  symmetric positive semi-definite; inference treats `dx^T trust_matrix dx > 1` as outside.
 
 Under MPI every rank builds its own components, so pass the same specs on every
 rank (import the module that registers a custom class everywhere). The tests in

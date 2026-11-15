@@ -65,7 +65,7 @@ if __name__ == "__main__":
     # --- Plot clusters ---
     plot_adaptive_clustering_results(
         centroids = surrogate.X_src,
-        Q = surrogate.Qs_src,
+        trust_matrices = surrogate.trust_matrices_src,
         domain = DOMAIN,
         f_fn = rosenbrock,
         img_fpath = Path("rosenbrock_adaptive_clustering_results.png"),

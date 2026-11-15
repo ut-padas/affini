@@ -697,7 +697,7 @@ def afinni_split(levels: list[Level]) -> dict:
 
 def afinni_trust(s: AFINNISurrogate, nodes: list[Node]) -> dict:
     """One leaf's trust ellipse, every leaf's, and three queries at inference."""
-    C, T = to_host(s.X_src), to_host(s.Qs_src)
+    C, T = to_host(s.X_src), to_host(s.trust_matrices_src)
     leaves = [n for n in nodes if n.leaf]
     k = int(np.argmax([len(n.X) for n in leaves]))
     P = leaves[k].X

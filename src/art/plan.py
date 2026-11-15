@@ -138,8 +138,8 @@ class ARTPlan:
 
     def leaf_columns(self, model) -> dict[str, ParamSpec]:
         cols = output_columns(model, self.d, self.fd)
-        if not self.settings.store_Q:
-            del cols["Q"]
+        if not self.settings.store_trust_matrix:
+            del cols["trust_matrix"]
         return {
             **cols,
             "root": ParamSpec((), np.int64),
@@ -207,7 +207,7 @@ class ARTPlan:
         of long split work so steal requests are answered meanwhile. ``timer(key)`` (the
         executor's profiler phases) times each stage under the shared phase keys: sampling
         as ``time_augment``, statistics and fit as ``time_error_calc``, deploying leaves as
-        ``time_good_Q``, splitting as ``time_bad_split``.
+        ``time_good_trust_matrix``, splitting as ``time_bad_split``.
         """
         timer = timer or (lambda key: contextlib.nullcontext())
         cfg = self.config
@@ -261,15 +261,15 @@ class ARTPlan:
             del F_hat
 
         # 3. Deploy the screened models, then check them on the validation points.
-        with timer("time_good_Q"):
-            store_Q = self.settings.store_Q
+        with timer("time_good_trust_matrix"):
+            store_trust_matrix = self.settings.store_trust_matrix
             is_leaf = xp.zeros(K, dtype=bool)
             status_v = xp.full(K, NOT_PERFORMED, dtype=xp.int8)
             good_idx = xp.nonzero(good)[0]
             # Set after validation below: a node whose chains drifted is reported as such
             # whatever its validation said, since its points need not represent its cell.
             if int(good_idx.shape[0]) > 0:
-                leaves = deploy_leaves(model, trust_region, acceptance, fit, good_idx, params, E_abs, E_rel, store_Q=store_Q)
+                leaves = deploy_leaves(model, trust_region, acceptance, fit, good_idx, params, E_abs, E_rel, store_trust_matrix=store_trust_matrix)
                 if self.n_val and int(leaves.idx.shape[0]) > 0:
                     ok = self._validate(model, leaves, Xv, Fv, components)
                     status_v[leaves.idx] = xp.where(ok, PASSED, FAILED).astype(xp.int8)
@@ -294,9 +294,9 @@ class ARTPlan:
         status_v = xp.where(insufficient, INSUFFICIENT_SAMPLING, status_v).astype(xp.int8)
         for idx, reason in ((xp.nonzero(fallback)[0], MAX_DEPTH), (failed_split, SPLIT_FAILED)):
             if int(idx.shape[0]) > 0:
-                with timer("time_good_Q"):
+                with timer("time_good_trust_matrix"):
                     leaves = deploy_leaves(model, trust_region, acceptance, fit, idx, params, E_abs, E_rel,
-                                           retest=False, store_Q=store_Q)  # fmt: skip
+                                           retest=False, store_trust_matrix=store_trust_matrix)  # fmt: skip
                 self._append_leaves(accepted, leaves, root, path_code, reason, status_v)
                 stats["fallback_clusters"] += int(idx.shape[0])
                 stats["fallback_pts"] += int(xp.sum(n_train[idx]))

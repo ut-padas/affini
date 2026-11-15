@@ -1,10 +1,10 @@
 """
 Trust regions of accepted clusters.
 
-Every accepted cluster stores a shape matrix ``Q`` (d, d), the trust-region matrix ``T`` of
-the companion. At inference a query ``x`` is inside the trust region of the cluster with
-centroid ``c`` when ``(x - c)^T Q (x - c) <= 1``;
-``Q`` also ranks the candidate clusters of a query (smallest value first). The
+Every accepted cluster stores its trust matrix (leaf column ``"trust_matrix"``, (d, d)), the
+trust-region matrix ``T`` of the companion. At inference a query ``x`` is inside the trust region of the cluster
+with centroid ``c`` when ``(x - c)^T trust_matrix (x - c) <= 1``; the same quadratic form
+also ranks the candidate clusters of a query (smallest value first). The
 default ``CovarianceEllipsoid`` scales the inverse covariance of the cluster's
 points so that the farthest point lies on the boundary: the region contains every
 observed point, but it is an empirical coverage region, not an error certificate.
@@ -28,7 +28,7 @@ from src.numerics import (
 
 
 class TrustRegion(ABC):
-    """Builds the trust-region shape matrix ``Q`` of every accepted cluster."""
+    """Builds the trust matrix of every accepted cluster."""
 
     name: str
 
@@ -38,7 +38,7 @@ class TrustRegion(ABC):
     @abstractmethod
     def shapes(self, X: Array, centroids: Array, labels: Array, counts: Array) -> Array:
         """
-        Return ``Q`` (K, d, d) for a batch of accepted clusters. ``X`` (N, d) holds
+        Return the trust matrices (K, d, d) of a batch of accepted clusters. ``X`` (N, d) holds
         their points contiguously by cluster, ``labels`` (N,) each point's cluster
         (0..K-1), ``counts`` (K,) the points per cluster.
         """
@@ -51,14 +51,14 @@ def trust_region_shapes(
     X: Array, centroids: Array, labels: Array, counts: Array, q_reg: float
 ) -> Array:
     """
-    Shape matrix Q (K, d, d) of each cluster's trust region.
+    Trust matrix (K, d, d) of each cluster's trust region.
 
-    Q is the inverse covariance of the cluster's points (eigenvalues clamped
+    It is the inverse covariance of the cluster's points (eigenvalues clamped
     below at ``q_reg``), scaled so that the farthest point lies on the boundary:
-    max over the cluster's points of dx^T Q dx is 1. In the companion's notation (its
+    max over the cluster's points of dx^T trust_matrix dx is 1. In the companion's notation (its
     trust-ellipsoid algorithm) ``Cov``, the unnormalized covariance, is the scatter matrix
-    ``Sigma``, ``q_reg`` is ``gamma``, ``max_dist`` is ``alpha`` and ``Q`` is
-    ``T = Sigma^-1 / alpha``. Points are stored
+    ``Sigma``, ``q_reg`` is ``gamma``, ``max_dist`` is ``alpha`` and the trust
+    matrix is ``T = Sigma^-1 / alpha``. Points are stored
     contiguously by cluster; ``labels`` gives each point's cluster (0..K-1).
     """
     K = len(counts)

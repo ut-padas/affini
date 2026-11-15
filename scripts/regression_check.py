@@ -49,6 +49,9 @@ warnings.simplefilter("ignore", DeprecationWarning)
 
 H_SCALAR = np.array([[2.0, 0.2], [0.2, 6.0]])
 ART_DOMAIN = ([-1.0, -1.0], [1.0, 1.0])
+# Arrays that checkouts before model format 3 call by another name (as attribute and in
+# their reference files), mapped to this checkout's name, so both compare as one array.
+RENAMED_ARRAYS = {"Qs_src": "trust_matrices_src"}
 
 
 def problem(fd):
@@ -82,7 +85,8 @@ def wavy(fd):
 
 def model_arrays(s: AFINNISurrogate) -> dict[str, np.ndarray]:
     """Every numeric array ``save_model`` would write (leaves, local-model parameters, routing, leaf status)."""
-    out = {k: getattr(s, k) for k in ("X_src", "f_src", "Qs_src", "E_cluster_abs_src", "E_cluster_rel_src", "counts_src")}
+    out = {k: getattr(s, k) for k in ("X_src", "f_src", "E_cluster_abs_src", "E_cluster_rel_src", "counts_src")}
+    out["trust_matrices_src"] = getattr(s, "trust_matrices_src", getattr(s, "Qs_src", None))
     out.update({f"param:{k}": v for k, v in s.leaf_params.items()})
     if s.routing is not None:
         out.update({f"route:{k}": v for k, v in s.routing.arrays().items()})
@@ -192,10 +196,12 @@ def compare(new_prefix, ref_prefix, rtol):
             if n[key] != r[key]:
                 failures.append(f"{name}: {key} {r[key]} -> {n[key]}")
         for k in (k for k in ra.files if k.startswith(name + "|")):
-            if k not in na.files:
+            array = k.partition("|")[2]
+            new_k = f"{name}|{RENAMED_ARRAYS.get(array, array)}"
+            if new_k not in na.files:
                 failures.append(f"{k}: missing")
                 continue
-            a, b = ra[k], na[k]
+            a, b = ra[k], na[new_k]
             if a.shape != b.shape:
                 failures.append(f"{k}: shape {a.shape} -> {b.shape}")
             elif a.dtype == bool or a.dtype.kind in "iu":  # masks, counters, keys and statuses: exact

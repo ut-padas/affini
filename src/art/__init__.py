@@ -12,7 +12,7 @@ cell of a k-means centre) cut by its ancestors' planes. Per batch of nodes,
    with ``sampling="convex_combination"`` it instead keeps AFINNI's convex-combination
    augmentation of rejected nodes;
 2. fits the local model on the training points and screens it with the acceptance test;
-3. deploys the screened models (``Q`` if stored, finalize, re-test) and checks them on
+3. deploys the screened models (``trust_matrix`` if stored, finalize, re-test) and checks them on
    the validation points;
 4. splits every rejected node by a plane (``split_search``: ``"gap"`` along the
    split strategy's direction, ``"bins"`` the bins search over a bank of directions,

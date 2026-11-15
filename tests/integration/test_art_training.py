@@ -109,7 +109,7 @@ def test_routed_predictions_match_the_leaf_models_and_flag_only_the_domain(train
     leaf = trained.route_leaves(q)
     direct = trained.local_model.evaluate(trained.model_params(), xp.asarray(q), leaf)
     assert_backend_equal(pred, direct)
-    knn_pred, _ = trained.predict(q, predictor="knn")  # Q is stored, so kNN still works
+    knn_pred, _ = trained.predict(q, predictor="knn")  # the trust matrices are stored, so kNN still works
     assert knn_pred.shape == pred.shape
 
 
@@ -241,7 +241,7 @@ def test_voronoi_roots_are_the_initial_clustering_cells(points):
 
 @pytest.mark.filterwarnings("ignore:Training stopped:RuntimeWarning")
 def test_b1_convex_sampling_tree_serves_both_predictors(points):
-    """Convex-combination sampling (AFINNI's augmentation) on Voronoi roots, Q kept, so kNN and routing use one artifact."""
+    """Convex-combination sampling (AFINNI's augmentation) on Voronoi roots, trust matrices kept, so kNN and routing use one artifact."""
     model = train_surrogate(points, **art_options(
         art=ARTSettings(roots="voronoi", sampling="convex_combination"), min_pts_per_cluster=16, max_levels=10,
     ))  # fmt: skip
@@ -253,13 +253,14 @@ def test_b1_convex_sampling_tree_serves_both_predictors(points):
         ARTSettings(sampling="convex_combination", validation_samples=5)
 
 
-def test_routed_only_models_store_no_q_and_refuse_knn(tmp_path, points):
-    model = train_surrogate(points, **art_options(art=ARTSettings(sample_multiplier=10, store_Q=False), max_levels=8))
-    assert model.Qs_src is None and model.knn_index is None
-    with pytest.raises(ValueError, match="store_Q=False"):
+def test_routed_only_models_store_no_trust_matrix_and_refuse_knn(tmp_path, points):
+    art = ARTSettings(sample_multiplier=10, store_trust_matrix=False)
+    model = train_surrogate(points, **art_options(art=art, max_levels=8))
+    assert model.trust_matrices_src is None and model.knn_index is None
+    with pytest.raises(ValueError, match="store_trust_matrix=False"):
         model.predict(points[:3], predictor="knn")
     loaded = AFINNISurrogate.load_model(model.save_model(tmp_path))
-    assert loaded.Qs_src is None
+    assert loaded.trust_matrices_src is None
     assert_backend_equal(loaded.predict(points[:20])[0], model.predict(points[:20])[0])
 
 

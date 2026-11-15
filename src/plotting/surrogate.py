@@ -33,7 +33,7 @@ def _host_domain(domain) -> tuple[float, float]:
 
 def plot_adaptive_clustering_results(
     centroids: np.ndarray,
-    Q: np.ndarray,
+    trust_matrices: np.ndarray,
     domain: tuple[float, float],
     f_fn: Callable,
     img_fpath: Path,
@@ -43,10 +43,10 @@ def plot_adaptive_clustering_results(
 ):
     """
     Save a 2-D figure of ``f_fn`` over ``domain`` x ``domain`` with the leaf centroids
-    (left) and their trust ellipsoids ``dx^T Q dx = 1`` (right).
+    (left) and their trust ellipsoids ``dx^T trust_matrix dx = 1`` (right).
     """
     # Matplotlib needs host arrays; accept device (CuPy) inputs too.
-    centroids, Q = to_host(centroids), to_host(Q)
+    centroids, trust_matrices = to_host(centroids), to_host(trust_matrices)
     domain = _host_domain(domain)
 
     # Get dimensions of X
@@ -121,10 +121,8 @@ def plot_adaptive_clustering_results(
     # Draw Ellipsoids and Circles
     for i in range(centroids.shape[0]):
         _centroid = centroids[i]
-        _Q = Q[i]
-
-        # Eigen-decomposition of Q
-        eigvals, eigvecs = np.linalg.eigh(_Q)
+        # Eigen-decomposition of the leaf's trust matrix
+        eigvals, eigvecs = np.linalg.eigh(trust_matrices[i])
         order = eigvals.argsort()[::-1]
         eigvals = eigvals[order]
         eigvecs = eigvecs[:, order]
@@ -421,7 +419,7 @@ def plot_near_centers(
 ):
     """Save the leaves the two-stage search considers for ``target`` and print the closest ones."""
     centers = to_host(surrogate.X_src)  # (Nc, d)
-    Qs = to_host(surrogate.Qs_src)  # (Nc, d, d)
+    trust_matrices = to_host(surrogate.trust_matrices_src)  # (Nc, d, d)
     Nc, d = centers.shape
 
     target = np.asarray(to_host(target)).reshape(1, d)
@@ -430,10 +428,10 @@ def plot_near_centers(
     dists = np.linalg.norm(centers - target, axis=1)
     nn_idx = np.argsort(dists)[:coarse_factor]
 
-    # --- Fine step: anisotropic quadratic form x^T Q x per candidate ---
+    # --- Fine step: anisotropic quadratic form dx^T trust_matrix dx per candidate ---
     diffs = target - centers[nn_idx]         # (coarse_factor, d)
-    Q_candidates = Qs[nn_idx]                # (coarse_factor, d, d)
-    quad_vals = np.einsum("ni,nij,nj->n", diffs, Q_candidates, diffs)
+    trust_matrices_candidates = trust_matrices[nn_idx]  # (coarse_factor, d, d)
+    quad_vals = np.einsum("ni,nij,nj->n", diffs, trust_matrices_candidates, diffs)
 
     # --- Print smallest n_report quadratic-form values, with centroid locations ---
     sort_order = np.argsort(quad_vals)
@@ -442,7 +440,7 @@ def plot_near_centers(
     topk_vals = quad_vals[topk_local]
     topk_centers = centers[topk_idx]
 
-    print(f"Smallest {n_report} values of x^T Q x (value, centroid location):")
+    print(f"Smallest {n_report} values of x^T T x (value, centroid location):")
     for rank, (val, loc) in enumerate(zip(topk_vals, topk_centers, strict=True), start=1):
         loc_str = ", ".join(f"{c:.5f}" for c in loc)
         print(f"  {rank}: {val:.5f}  @ ({loc_str})")
@@ -480,12 +478,11 @@ def plot_near_centers(
     cs = ax.contourf(X_grid, Y_grid, field, levels=20, cmap="viridis", alpha=0.7)
     fig.colorbar(cs, ax=ax)
 
-    # --- Ellipses x^T Q x = 1 for the top-k candidates (centered at each candidate) ---
+    # --- Ellipses x^T T x = 1 for the top-k candidates (centered at each candidate) ---
     for idx in topk_idx:
         c_i = centers[idx]
-        Q_i = Qs[idx]
         diff_grid = grid_pts - c_i
-        quad_field = np.einsum("ni,ij,nj->n", diff_grid, Q_i, diff_grid).reshape(X_grid.shape)
+        quad_field = np.einsum("ni,ij,nj->n", diff_grid, trust_matrices[idx], diff_grid).reshape(X_grid.shape)
         ax.contour(
             X_grid, Y_grid, quad_field,
             levels=[1.0],
@@ -495,7 +492,7 @@ def plot_near_centers(
             zorder=3.5,
         )
     # Dummy line for a single legend entry (contour objects don't auto-label)
-    ax.plot([], [], color="red", linestyle="dotted", linewidth=1.0, label=r"$x^\top Q x = 1$")
+    ax.plot([], [], color="red", linestyle="dotted", linewidth=1.0, label=r"$x^\top T x = 1$")
 
     # Centers not among the coarse_factor nearest neighbors
     ax.scatter(
@@ -507,7 +504,7 @@ def plot_near_centers(
         centers[is_other_nn, 0], centers[is_other_nn, 1],
         c="red", s=20, label=f"{coarse_factor}-NN candidates", zorder=2,
     )
-    # Top-k smallest x^T Q x candidates (excluding the selected one)
+    # Top-k smallest x^T T x candidates (excluding the selected one)
     ax.scatter(
         centers[is_topk_rest, 0], centers[is_topk_rest, 1],
         c="blue", s=35, edgecolors="black", linewidths=0.5,

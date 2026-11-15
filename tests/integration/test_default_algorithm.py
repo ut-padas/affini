@@ -75,7 +75,7 @@ def test_training_is_deterministic():
     # runs, so equal to rounding with the same tree.
     a, b = train(quad_f), train(quad_f)
     assert a.N_src == b.N_src
-    for name in ("X_src", "f_src", "Qs_src", "A_fits_src", "b_fits_src"):
+    for name in ("X_src", "f_src", "trust_matrices_src", "A_fits_src", "b_fits_src"):
         assert_backend_equal(getattr(a, name), getattr(b, name), separate_runs=True)
 
 
@@ -104,17 +104,17 @@ def test_work_is_conserved_and_observed_points_are_covered(mode, metric):
     assert np.all((E_rel < 0.05) | (E_abs < 0.05))
     # The trust regions contain every training point. The farthest point of each
     # cluster lies on its boundary (q = 1 up to rounding), hence the margin.
-    C, Q = host(s.X_src), host(s.Qs_src)
+    C, trust_matrices = host(s.X_src), host(s.trust_matrices_src)
     dx = X_TRAIN[:, None, :] - C[None]
-    q = np.einsum("nki,kij,nkj->nk", dx, Q, dx)
+    q = np.einsum("nki,kij,nkj->nk", dx, trust_matrices, dx)
     assert np.all(q.min(axis=1) <= 1 + 1e-9)
 
 
 def test_trust_regions_are_symmetric_positive_definite():
     s = train(quad_f)
-    Q = host(s.Qs_src)
-    np.testing.assert_allclose(Q, Q.transpose(0, 2, 1), atol=1e-12)
-    assert np.all(np.linalg.eigvalsh(Q) > 0)
+    trust_matrices = host(s.trust_matrices_src)
+    np.testing.assert_allclose(trust_matrices, trust_matrices.transpose(0, 2, 1), atol=1e-12)
+    assert np.all(np.linalg.eigvalsh(trust_matrices) > 0)
 
 
 @pytest.mark.parametrize("tol", [0.05, 0.01])

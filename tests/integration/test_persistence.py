@@ -11,7 +11,7 @@ import pytest
 from src import xp
 from src.components.local_models import LOCAL_MODELS, AffineLSQModel, LocalModel
 from src.components.modes import SurrogateMode
-from src.config import TrainingConfig
+from src.config import ARTSettings, TrainingConfig
 from src.core.clusters import ParamSpec
 from src.core.evaluation import Evaluator
 from src.surrogate import MODEL_FORMAT_VERSION, AFINNISurrogate
@@ -188,6 +188,39 @@ def test_files_with_the_old_single_error_column_still_load(tmp_path):
     loaded = AFINNISurrogate.load_model(tmp_path / "old.npz")
     assert loaded.E_cluster_abs_src is None and loaded.E_cluster_rel_src is None
     assert_same_model(s, loaded)
+
+
+def write_as_format_2(path, out):
+    """Rewrite model file ``path`` to ``out`` with the version-2 names: ``Qs_src``, ``store_Q``, ``time_good_Q``."""
+    with np.load(path) as data:
+        arrays = {k: data[k] for k in data.files}
+    arrays["Qs_src"] = arrays.pop("trust_matrices_src")
+    meta = json.loads(str(arrays["metadata"]))
+    if meta["config"]["art"] is not None:
+        meta["config"]["art"]["store_Q"] = meta["config"]["art"].pop("store_trust_matrix")
+    arrays["metadata"] = np.asarray(json.dumps(meta))
+    stats = str(arrays["profiling_stats"])
+    arrays["profiling_stats"] = np.asarray(stats.replace('"time_good_trust_matrix"', '"time_good_Q"'))
+    arrays["format_version"] = np.asarray(2)
+    np.savez(out, **arrays)
+
+
+@pytest.mark.parametrize("algorithm", ["afinni", "art"])
+def test_files_of_format_2_load_under_the_trust_matrix_names(tmp_path, algorithm):
+    art = {"algorithm": "art", "domain": ([-1.0, -1.0], [1.0, 1.0]), "art": ARTSettings(sample_multiplier=10)}
+    s = train(**(art if algorithm == "art" else {}))
+    write_as_format_2(s.save_model(tmp_path / "m.npz"), tmp_path / "old.npz")
+    with np.load(tmp_path / "old.npz") as data:
+        assert "Qs_src" in data.files and "trust_matrices_src" not in data.files
+        assert '"time_good_Q"' in str(data["profiling_stats"])
+    loaded = AFINNISurrogate.load_model(tmp_path / "old.npz")
+    np.testing.assert_array_equal(host(loaded.trust_matrices_src), host(s.trust_matrices_src))
+    assert_same_model(s, loaded)
+    knn = [host(m.predict(xp.asarray(Q), k_nn=4, predictor="knn")[0]) for m in (s, loaded)]
+    np.testing.assert_array_equal(*knn)
+    assert loaded.config == json.loads(json.dumps(s.config))
+    assert loaded.profiling_stats == json.loads(json.dumps(s.profiling_stats))
+    assert loaded.profiling_stats["time_good_trust_matrix"] == s.profiling_stats["time_good_trust_matrix"]
 
 
 def test_failed_retraining_keeps_the_previous_model_usable(monkeypatch):

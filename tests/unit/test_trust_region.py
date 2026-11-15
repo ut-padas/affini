@@ -19,7 +19,7 @@ CENTROIDS = np.add.reduceat(X, STARTS) / SIZES[:, None]
 
 
 def test_farthest_point_lies_on_the_trust_region_boundary():
-    Q = to_host(
+    trust_matrices = to_host(
         trust_region_shapes(
             xp.asarray(X),
             xp.asarray(CENTROIDS),
@@ -28,12 +28,12 @@ def test_farthest_point_lies_on_the_trust_region_boundary():
             q_reg=0.0,
         )
     )
-    assert Q.shape == (len(SIZES), D, D)
-    np.testing.assert_allclose(Q, Q.transpose(0, 2, 1), atol=1e-12)
+    assert trust_matrices.shape == (len(SIZES), D, D)
+    np.testing.assert_allclose(trust_matrices, trust_matrices.transpose(0, 2, 1), atol=1e-12)
     dx = X - CENTROIDS[LABELS]
-    r = np.einsum("nc,ncd,nd->n", dx, Q[LABELS], dx)  # dx^T Q dx per point
+    r = np.einsum("nc,ncd,nd->n", dx, trust_matrices[LABELS], dx)  # dx^T T dx per point
     np.testing.assert_allclose(np.maximum.reduceat(r, STARTS), 1.0, rtol=1e-10)
-    assert np.all(np.linalg.eigvalsh(Q) > 0)
+    assert np.all(np.linalg.eigvalsh(trust_matrices) > 0)
 
 
 def test_lsq_hessians_recover_a_quadratic():
