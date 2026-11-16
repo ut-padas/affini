@@ -146,6 +146,29 @@ def test_art_and_comparison_plots_render(tmp_path):
         plotting.plot_art_tree_stats(afinni)
 
 
+def test_surrogate_plots_render_from_a_trained_model(tmp_path):
+    """The launcher's 2-D plots take the model's leaves as they are, device arrays included."""
+    from src import xp
+    from src.problems.wave import get_random_direction
+
+    q = xp.asarray(get_random_direction(2, np.float64))
+
+    def wave(x):
+        return xp.cos(2 * x @ q)[:, None]
+
+    s = train_surrogate(
+        np.random.default_rng(0).uniform(-1, 1, (2_000, 2)), f_fn=wave, atol=0.05, rtol=0.05,
+        num_initial_clusters=4, min_pts_per_cluster=40, use_work_stealing=False,
+    )  # fmt: skip
+    paths = [tmp_path / f"{name}.png" for name in ("errors", "lines", "hessians", "projections")]
+    plotting.plot_wave_2d_errors(s, (-1.0, 1.0), wave, paths[0])
+    plotting.plot_wave_line_errors(s, (-1.0, 1.0), wave, paths[1], betas=(0.0, 0.5))
+    plotting.plot_exact_hess_vs_estimated_hess(s, s, wave, (-1.0, 1.0), paths[2])
+    plotting.plot_cluster_projections_for_wave(s.X_src, paths[3], 2)
+    assert all(p.stat().st_size > 0 for p in paths)
+    plt.close("all")
+
+
 def test_spherical_piecewise_matches_art_preset_values():
     from src.problems.spherical_piecewise import OFFSET, RADII, spherical_piecewise
 

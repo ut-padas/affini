@@ -226,6 +226,7 @@ def plot_cluster_projections_for_wave(clusters: Array, img_fpath: Path, dim: int
     from src.problems.wave import get_random_direction
     q = to_host(get_random_direction(dim, clusters.dtype))
     q = q / np.linalg.norm(q)
+    clusters = to_host(clusters)
 
     # Project onto span(q) and span(q)^(perp)
     q_proj = clusters @ q
@@ -246,7 +247,7 @@ def plot_wave_2d_errors(surrogate: AFINNISurrogate, domain, f_fn, img_fpath: Pat
     """Save the 2-D wave function, the surrogate and their error side by side."""
 
     # Generate grid of points
-    centers = surrogate.X_src
+    centers = to_host(surrogate.X_src)
     Nc, d = centers.shape
     _n = 500
     domain = _host_domain(domain)
@@ -320,7 +321,7 @@ def plot_wave_line_errors(
     betas=(0.0, 1.0, 2.0, 3.0),
 ):
     """Save errors along lines parallel to the wave direction, offset by each beta along its normal."""
-    centers = surrogate.X_src
+    centers = to_host(surrogate.X_src)
     Nc, d = centers.shape
 
     # Random direction and its orthogonal complement (2D only)
@@ -558,7 +559,7 @@ def plot_exact_hess_vs_estimated_hess(
     fig.colorbar(cs, ax=axs[1])
 
     # Plot centroids on each axis
-    centers1, centers2 = est_hess_surrogate.X_src, exact_hess_surrogate.X_src
+    centers1, centers2 = to_host(est_hess_surrogate.X_src), to_host(exact_hess_surrogate.X_src)
     assert centers1.shape[1] == 2 and centers2.shape[1] == 2
     Nc1, Nc2 = centers1.shape[0], centers2.shape[0]
     axs[0].scatter(centers1[:, 0], centers1[:, 1], c="red", s=20, label="Centers", marker='^')
