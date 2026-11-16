@@ -1622,9 +1622,9 @@ to end the loop when every node has stopped.
     host read per pass to decide whether to go on.], [checking the stop flag every few
     steps instead of every step],
   [*The host in the loop*], [The queue lives in host memory, every batch is copied in and
-    its children out, and nothing overlaps the copies with work. A batch has dozens of
-    small host reads, mostly the sizes of masks.], [pinned host memory; copying the next
-    batch in while the current one runs],
+    its children out (both through page-locked buffers), and nothing overlaps the copies
+    with work. A batch has dozens of small host reads, mostly the sizes of masks.], [copying
+    the next batch in while the current one runs],
   [*Carried planes*], [Charged per point when the batch size is chosen, so deep ART levels
     run in smaller batches. Beyond $d = #ex.defaults.walk_max_d$ dimensions `hr_walk`
     does not fit, and a slower path of array operations takes over.], [a shared plane
