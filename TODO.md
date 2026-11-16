@@ -129,7 +129,15 @@ The project is developed and tested on Python 3.13 (`.python-version`).
 
 ## Verification still to run
 
-- [ ] On the GPU machine: the GPU suite and the GPU regression check against the current
+Settled on an RTX 2000 Ada laptop GPU (CuPy 14.2, CUDA 12.9 runtime) at `0b91ae2`: the GPU suite
+passes except the two kNN-DBSCAN tests, whose GPU path in the `knndbscan` package needs cuML,
+which the `gpu` extra does not install (AFINNI's own k-means and kNN do not use it).
+`regression_check.py` on the GPU is bit-identical to `c8a6ff6` (its successor `b67c1a8`, which
+only adds the ART cases, with the case and array names mapped to the current ones) on 1 and 2
+ranks, and repeated GPU runs are bit-identical. `test_walks_above_256_dimensions_do_not_depend_on_the_chunk_size`
+runs the chunked CuPy walk above 256 dimensions.
+
+- [x] On the GPU machine: the GPU suite and the GPU regression check against the current
   tree. The naming pass changed code paths shared by CPU and GPU (`src/components/splitting.py`,
   `src/art/plan.py`, `src/art/routing.py`, `src/surrogate/model.py`); the CPU checks passed
   bit-identical. The trust-matrix rename (`Q` to `trust_matrix`) changed shared code in
@@ -137,14 +145,14 @@ The project is developed and tested on Python 3.13 (`.python-version`).
   `src/surrogate/model.py`, `src/surrogate/persistence.py`, `src/infra/profiling.py` (the
   phase key, which also looks up the NVTX range) and `src/plotting/surrogate.py`, and only docstrings in
   `src/components/trust_regions.py`; no kernel, CuPy-only branch or kernel-argument list.
-- [ ] GPU suite after the grid-numbering change (`grid_strides`, `grid_cell_coords` in
+- [x] GPU suite after the grid-numbering change (`grid_strides`, `grid_cell_coords` in
   `src/numerics/grid.py`, used by `Roots.bounds`, `Roots.root_of` and the grid initial
   clustering, so ART and the grid clustering run beyond 64 dimensions). The helpers run on the
   host and only their int64 results reach the device; CPU 1- and 2-rank regression checks are
   bit-identical.
-- [ ] A 2-rank GPU regression comparison against the last GPU-verified commit (CPU 2-rank is
+- [x] A 2-rank GPU regression comparison against the last GPU-verified commit (CPU 2-rank is
   bit-identical).
-- [ ] GPU suite and GPU regression check after the batch-layout vocabulary pass (`sizes` to
+- [x] GPU suite and GPU regression check after the batch-layout vocabulary pass (`sizes` to
   `counts` in `ClusterBatch`, `QUEUE_COLUMNS`, `DeviceBatch`, `ClusterFitData`, the acceptance
   criteria and `child_counts`; `owner` to `labels` in `HitAndRunSampler`; `k` to `K` in
   `ARTPlan._split`, `ARTPlan._bins_search` and `SplitRows.cut_sums`). CPU 1- and 2-rank checks
