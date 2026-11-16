@@ -52,6 +52,31 @@ def test_batch_size_does_not_change_predictions(surrogate):
         np.testing.assert_array_equal(host(other[1]), host(a[1]))
 
 
+def test_default_knn_chunks_bound_the_trust_matrix_gather(monkeypatch, surrogate):
+    import src.surrogate.model as model
+
+    assert model.knn_chunk_size(10, 2) == 5000 and model.knn_chunk_size(10, 73) == 5000
+    assert model.knn_chunk_size(50, 100) == (2 << 30) // (8 * 50 * 100 * 100)
+    assert model.knn_chunk_size(10, 100, preferred=50_000) == (2 << 30) // (8 * 10 * 100 * 100)
+    Q = xp.asarray(rng.uniform(-1, 1, (101, 2)))
+    whole = surrogate.predict(Q, k_nn=4)
+    sizes = []
+    original = model.knn_chunk_size
+
+    def recording(*args, **kwargs):
+        sizes.append(original(*args, **kwargs))
+        return sizes[-1]
+
+    monkeypatch.setattr(model, "knn_chunk_size", recording)
+    k_coarse = min(4 * 10, surrogate.N_src)  # k_nn * coarse_factor, clipped to the leaves
+    monkeypatch.setattr(model, "KNN_GATHER_BYTES", 8 * k_coarse * 2 * 2 * 7)  # 7 queries
+    chunked = surrogate.predict(Q, k_nn=4)
+    assert sizes == [7]
+    assert_backend_equal(chunked[0], whole[0])
+    np.testing.assert_array_equal(host(chunked[1]), host(whole[1]))
+    np.testing.assert_array_equal(host(surrogate.filter_unguaranteed_local(Q, k_coarse=k_coarse)), host(whole[1]))
+
+
 def test_more_neighbours_than_leaves(surrogate):
     Q = xp.asarray(rng.uniform(-1, 1, (20, 2)))
     n = surrogate.N_src
