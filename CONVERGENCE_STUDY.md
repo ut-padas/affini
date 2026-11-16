@@ -30,6 +30,9 @@ Everything new is under `studies/convergence/` (its `output/` is git-ignored):
 | `paper/run_case.py` | one `afinni_launcher.py` run with results redirected and an optional seed; records wall time and peak RSS |
 | `paper/run_iterative.py` | one run of `p_out_iterative_experiment.py` (Figure 9) |
 | `paper/collect_paper.py` | paper-vs-re-run table, checks A1-A6, slopes, plots |
+| `paper/run_manuscript.sh` | **every manuscript experiment with the current code**, then a record of the results (see [Recording the results](#recording-the-results)) |
+| `paper/record_results.py` | writes a record: the numbers, the commit, the machine and the libraries |
+| `results/` | the records, one folder per recording, listed in `results/INDEX.md` (tracked in git) |
 | `art/run_art.sh` | **Part B top level** |
 | `art/art_cases.py` | Part B run matrix |
 | `art/run_art_case.py` | one side of `scripts/art_comparison.py` (imported, not copied), saved as JSON with RMSE, max abs error, all quantiles, wall time, peak RSS |
@@ -111,6 +114,36 @@ D4 is confirmed if the GPU trees match the paper: Rosenbrock #20 `N` about 1.39e
 and 3.46e-2 (Rosenbrock #22). Each run saves `runs/<tag>.npz` and `.log`.
 
 ---
+
+## Recording the results
+
+The manuscript's numbers are now re-measured with the current code, and every set of results is
+kept with what produced it, so that later numbers can be compared with earlier ones.
+
+```bash
+MACHINE="GH200 node" studies/convergence/paper/run_manuscript.sh
+```
+
+- **What it runs:** every experiment of the manuscript on the GPU, at the L tier: Table 1 at all
+  dimensions with and without Hessian splits, Table 2, Table 3, the Figure 8 and Figure 9 runs, the
+  MPI runs and the seed replicates (172 cases). Not the 10-candidate diagnostic (`conv_k10`), and
+  not Table 4's other methods. Options of `run_paper.sh` given after it override the defaults.
+- **Before it starts:** it refuses a working tree with modified tracked files, so the recorded
+  commit is the code that ran (`ALLOW_DIRTY=1` overrides). `MACHINE` is a neutral description of
+  the hardware; no host name is recorded.
+- **Resuming:** finished cases are skipped, so an interrupted run continues with the same command.
+  The record is rewritten from whatever has finished at the end of each invocation.
+- **The record:** `studies/convergence/results/<date>_<commit>_<machine>/`, meant to be committed:
+
+| File | Contents |
+|---|---|
+| `RESULTS.md` | the provenance, then every number, one table per manuscript table |
+| `manuscript_results.csv` | one row per number the manuscript reports: the value measured (seed 0), the seed replicates' range, and the paper's value and the relative difference beside it |
+| `provenance.json` | the commit the runs started at (and a warning if they started at several, or with modified files), the `uv.lock` blob, CPU, cores, RAM, OS, GPU, driver, CUDA runtime, Python, library and MPI versions |
+| `slopes.csv`, `checks.csv`, `cost.csv` | convergence slopes, accuracy checks, wall time and peak memory per case |
+
+`results/INDEX.md` lists every record with its date, commit, machine and how many of the reported
+numbers it measured.
 
 ## Part A: the AFINNI manuscript
 
