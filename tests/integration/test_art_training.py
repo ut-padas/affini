@@ -325,3 +325,16 @@ def test_art_trains_and_routes_beyond_numpys_64_dimensions():
     # the affine fit's ridge (1e-8 times the covariance trace) leaves an error near 1e-6 in 70-D
     np.testing.assert_allclose(host(s.predict(q)[0])[:, 0], q[:, 0] + 2 * q[:, 1], atol=1e-4)
 
+
+def test_training_at_d100_starts_with_the_default_leaf_capacity():
+    """The default max_clusters_est (a hint of 1,000,000 leaves) must not reserve 8 d^2 MB for the trust matrices."""
+    d = 100
+    a = np.random.default_rng(0).standard_normal(d)
+    model = AFINNISurrogate()
+    model.train(
+        np.random.default_rng(1).uniform(-1, 1, (10 * (d + 1), d)),
+        TrainingConfig(algorithm="art", domain=(-np.ones(d), np.ones(d)), atol=1e-3, rtol=None, max_levels=0,
+                       use_work_stealing=False, art={"sample_multiplier": 10}),
+        Evaluator(f_fn=lambda x: (1 + x @ xp.asarray(a))[:, None]),
+    )  # fmt: skip
+    assert TrainingConfig(atol=1).max_clusters_est == 1_000_000 and model.N_src == 1

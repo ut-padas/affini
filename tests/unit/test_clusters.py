@@ -112,3 +112,15 @@ def test_host_memory_check_keeps_a_reserve(monkeypatch):
     monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(10 * gib, 4 * gib))
     with pytest.raises(MemoryError):  # small machine: the 2 GiB minimum reserve applies
         clusters.check_host_memory(int(8.5 * gib), "x")
+
+
+def test_leaf_buffer_checks_host_memory_before_it_grows(monkeypatch):
+    import src.core.clusters as clusters
+
+    monkeypatch.setattr(clusters, "HOST_MEMORY_RESERVE_MIN", 0)
+    buf = clusters.ColumnBuffer({"a": clusters.ParamSpec((10,))}, capacity=2)
+    buf.append({"a": np.zeros((2, 10))})
+    monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(200))  # 3 rows need 240 bytes
+    with pytest.raises(MemoryError, match="leaf buffer"):
+        buf.append({"a": np.ones((1, 10))})
+    assert buf.n_rows == 2

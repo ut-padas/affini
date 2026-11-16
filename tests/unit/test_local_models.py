@@ -292,3 +292,14 @@ def test_column_buffer_checks_trailing_shapes():
         buf.append({"a": np.zeros((1, 3, 2))})
     with pytest.raises(ValueError, match="declared"):
         buf.append({"a": np.zeros((1, 2))})  # would silently broadcast otherwise
+
+
+def test_column_buffer_reserves_at_most_its_byte_cap_and_grows_to_hold_every_row(monkeypatch):
+    monkeypatch.setattr(ColumnBuffer, "INITIAL_RESERVE_BYTES", 3 * 8 * 7)  # three rows of 7 doubles
+    buf = ColumnBuffer({"Q": ParamSpec((2, 3)), "n": ParamSpec((), np.int64)}, capacity=10**12)
+    assert buf.row_bytes == 56 and len(buf._data["Q"]) == 3
+    rows = np.random.default_rng(0).random((11, 2, 3))
+    for a, b in ((0, 2), (2, 3), (3, 11)):
+        buf.append({"Q": rows[a:b], "n": np.arange(a, b)})
+    np.testing.assert_array_equal(buf.result()["Q"], rows)
+    np.testing.assert_array_equal(buf.result()["n"], np.arange(11))

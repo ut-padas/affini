@@ -295,11 +295,23 @@ class ColumnBuffer:
 
     ``append`` must receive exactly the declared columns, each with the declared
     trailing shape, so a column can never be left unwritten or silently broadcast.
+    ``capacity`` is a hint: the initial reservation is capped at ``INITIAL_RESERVE_BYTES``
+    and the columns double when full, after checking the host memory the copy needs.
     """
+
+    # Unwritten rows cost address space, not RAM, but Linux's default overcommit refuses one
+    # allocation larger than RAM plus swap: a (1,000,000, d, d) trust-matrix column is 80 GB at
+    # d = 100. Below about 2 KiB per row (AFINNI and ART up to d of about 15) the cap is not reached
+    # and the hint is reserved whole.
+    INITIAL_RESERVE_BYTES = 2 << 30
 
     def __init__(self, columns: dict[str, ParamSpec], capacity: int):
         self.columns = dict(columns)
-        cap = max(1, int(capacity))
+        self.row_bytes = sum(
+            int(np.prod(spec.shape, dtype=np.int64)) * np.dtype(spec.dtype).itemsize
+            for spec in self.columns.values()
+        )
+        cap = max(1, min(int(capacity), self.INITIAL_RESERVE_BYTES // max(1, self.row_bytes)))
         self._data = {
             name: np.empty((cap, *spec.shape), dtype=spec.dtype)
             for name, spec in self.columns.items()
@@ -327,6 +339,7 @@ class ColumnBuffer:
         cap = next(iter(self._data.values())).shape[0]
         if end > cap:
             new_cap = max(end, cap * 2)
+            check_host_memory(end * self.row_bytes, "The leaf buffer")
             self._data = {
                 name: _grown(buf, new_cap, self.n_rows)
                 for name, buf in self._data.items()

@@ -199,7 +199,7 @@ class TrainingConfig:
     max_levels: int = 50
     batch_size: int = 10_000_000  # max points moved to the device per batch
     seed: int = 0
-    max_clusters_est: int = 1_000_000  # initial capacity of the output buffers (all ranks)
+    max_clusters_est: int = 1_000_000  # initial capacity of the output buffers (all ranks), capped by bytes; they grow on demand
     use_work_stealing: bool = True
 
     # --- Outputs ---
