@@ -160,14 +160,14 @@ def tree_depth(model) -> int | None:
     return int(np.max(np.floor(np.log2(np.asarray(codes, dtype=np.float64)))))
 
 
-def score(model, problem, d: int, n_test: int, atol: float, predict_batch: int) -> dict:
-    """Test errors on the fixed test set, relative to the problem's scale (std of f)."""
+def score(model, problem, d: int, n_test: int, atol: float, predict_batch: int, coarse_factor: int) -> dict:
+    """Test errors on the fixed test set, relative to the problem's scale (std of f); ``coarse_factor`` applies to AFINNI's kNN prediction only."""
     from src import to_host
     from studies.high_dim.problems import scoring_set
 
     Xq, Fq, scale = scoring_set(problem, d, n_test)
     t = time.perf_counter()
-    pred, outside = model.predict(Xq, batch_size=predict_batch)
+    pred, outside = model.predict(Xq, coarse_factor=coarse_factor, batch_size=predict_batch)
     t_predict = time.perf_counter() - t
     pred, outside = np.asarray(to_host(pred)), np.asarray(to_host(outside)).astype(bool)
     err = np.max(np.abs(pred - Fq), axis=1)
@@ -223,6 +223,8 @@ def main(argv=None) -> int:
     parser.add_argument("--max-levels", type=int, default=None)
     parser.add_argument("--predict-bytes", type=float, default=5e8,
                         help="bound on the kNN gather per prediction chunk (k_coarse d^2 doubles per query)")  # fmt: skip
+    parser.add_argument("--coarse-factor", type=int, default=50,
+                        help="AFINNI's kNN candidates per query (kappa); fewer miss elongated trust regions")  # fmt: skip
     args = parser.parse_args(argv)
 
     for var in ("AFINNI_DEVICE", "AFINNI_MPI"):
@@ -252,7 +254,7 @@ def main(argv=None) -> int:
     atol = args.tol * scale
     record = {
         "variant": variant.name, "algorithm": variant.algorithm, "leaf": variant.leaf, "problem": problem.name,
-        "exact": variant.leaf in problem.exact_for, "d": d, "tol": args.tol, "atol": atol, "scale": scale,
+        "exact": variant.leaf in problem.exact_for, "d": d, "tol": args.tol, "atol": atol, "coarse_factor": args.coarse_factor, "scale": scale,
         "device": "gpu" if IS_CUPY_BACKEND else "cpu", "seed": args.seed, "library_min_pts": args.library_min_pts,
         "n_coefficients": n_coefficients(variant.leaf, d), "status": "running", "started": time.time(),
     }  # fmt: skip
@@ -283,9 +285,9 @@ def main(argv=None) -> int:
         model.train(xp.asarray(X0), config, Evaluator(f_fn=problem.f))
         record.update(summarize(model, time.perf_counter() - t))
         stage = "predict"
-        k_coarse = 10  # predict's default k_nn * coarse_factor
+        k_coarse = args.coarse_factor  # k_nn * coarse_factor with predict's k_nn = 1
         predict_batch = int(max(16, min(5000, args.predict_bytes // (8 * k_coarse * d * d))))
-        record.update(score(model, problem, d, args.n_test, atol, predict_batch))
+        record.update(score(model, problem, d, args.n_test, atol, predict_batch, args.coarse_factor))
         signal.setitimer(signal.ITIMER_REAL, 0)
         record["status"] = "ok"
         record["reached"] = bool(record["converged"])

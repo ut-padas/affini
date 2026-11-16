@@ -1096,7 +1096,9 @@ Scripts in `studies/high_dim/`. Nothing in this section was run on a GPU.
   Study settings that differ from library defaults, recorded in every result's `config`:
   `min_pts_per_cluster = max(100, 3(d+1))` (B1; `--library-min-pts` restores 100);
   `max_clusters_est = 20,000` (B5; the buffers grow on demand); ART `store_trust_matrix=False`;
-  `max_levels = 40`; work stealing off; `profile_timing=True`.
+  `max_levels = 40`; work stealing off; `profile_timing=True`. AFINNI predicts with
+  `coarse_factor = 50` (`--coarse-factor`, recorded as the run's `coarse_factor`; the library
+  default is 10), since fewer candidates miss elongated trust regions and inflate `frac_outside`.
 - **Matrix** (`sweep.py`): d ∈ {20, 40, 60, 80, 100, 120, 160, 200, 250, 300}. The tolerance ladder
   is 1, 0.3, 0.1, 0.03, 0.01, 0.003, 0.001; where the leaf is exact it continues with 1e-4 … 1e-9
   to find the floor. At each d the ladder runs from coarse to fine and stops at the first
