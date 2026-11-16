@@ -35,6 +35,10 @@ Everything new is under `studies/convergence/` (its `output/` is git-ignored):
 | `art/run_art_case.py` | one side of `scripts/art_comparison.py` (imported, not copied), saved as JSON with RMSE, max abs error, all quantiles, wall time, peak RSS |
 | `art/exact_checks.py` | the exact-agreement sub-tests (root fit, thin-box fit) |
 | `art/collect_art.py` | paired tables, slopes, checks B1-B8, plots |
+| `bisect/run_at.sh` | one launcher case at any commit, extracted with `git archive` (see [Where the differences come from](#where-the-differences-come-from)) |
+| `bisect/capture_launcher.py` | runs that commit's own launcher unchanged and saves its test points, predictions, out-of-region mask, ground truth, leaf centres and trust matrices |
+| `bisect/era_old.py` | one case through the pre-November API, for settings the old launchers hard-code (acceptance metric) |
+| `bisect/score.py` | scores saved runs with one metric; re-scores `p_o` for other candidate counts and against the exact union of all trust regions |
 
 ## Quick start
 
@@ -68,6 +72,43 @@ per run, `0` = none). Output layout: `OUT/results/...` (JSON), `OUT/logs/<case>.
 `OUT/done/<case>.done` (a rerun skips done cases; delete a marker to redo one),
 `OUT/provenance.txt` (both commits, Python, backend, GPU), `OUT/report/` (tables, plots).
 On SLURM, wrap one tier or group per job; the done-markers make resubmission safe.
+
+**What to run first on the GPU.** (1) Part A `--max-tier S` as above: Table 1's d=2 rows now run
+with 50 candidates, as the paper did (D1), plus group `conv_k10` with the script's 10. (2) The
+paper-era GPU check below (seconds per run), which decides D4 and possibly D3. Then M, L and Part B.
+
+**Paper-era runs on the GPU** (D4: were the Rosenbrock and Gaussian rows GPU runs, before or after
+`e37c315`? D3: does the old GPU path give the paper's `e_nh`?). Each old commit gets its own locked
+environment (cupy, cuml-cu12 25.10, faiss-cpu, jax with CUDA):
+
+```bash
+export BISECT_DIR=~/afinni-bisect DEVICE=gpu CAP=0 FAISS_SHIM=   # no CPU stand-ins on the GPU
+for c in 91ddd97 a6844cb; do
+  mkdir -p $BISECT_DIR/$c && git archive $c | tar -x -C $BISECT_DIR/$c && (cd $BISECT_DIR/$c && uv sync)
+done
+R=studies/convergence/bisect/run_at.sh
+P=$BISECT_DIR/91ddd97/.venv/bin/python   # paper-era code, Tikhonov trust regions
+for t in 0.1 0.005; do
+  PYTHON=$P $R 91ddd97 gpu_r$t -- --experiment rosenbrock --dims 2 --tols $t --error_eval_mode affine_cov_hess --coarse_factor 50
+  PYTHON=$P $R 91ddd97 gpu_g$t -- --experiment anisotropic_gaussian --dims 2 --tols $t --error_eval_mode affine_cov_hess --coarse_factor 50
+done
+PYTHON=$P $R 91ddd97 gpu_g5d0.1 -- --experiment anisotropic_gaussian --dims 5 --tols 0.1 --error_eval_mode affine_cov_hess --coarse_factor 50
+PYTHON=$P $R 91ddd97 gpu_w0.005nh -- --experiment wave --dims 2 --tols 0.005 --error_eval_mode affine_cov_no_hess --coarse_factor 10
+PYTHON=$P $R 91ddd97 gpu_r0.02nh -- --experiment rosenbrock --dims 2 --tols 0.02 --error_eval_mode affine_cov_no_hess --coarse_factor 10
+P=$BISECT_DIR/a6844cb/.venv/bin/python   # shrinkage trust regions; its launcher passes kappa = d^2
+for t in 0.1 0.02 0.005; do
+  PYTHON=$P $R a6844cb gpu_r${t}_shrink --launcher experiments.py -- --experiment rosenbrock --dims 2 --tols $t --error_eval_mode affine_cov_hess
+done
+PYTHON=$P $R a6844cb gpu_r0.02nh_shrink --launcher experiments.py -- --experiment rosenbrock --dims 2 --tols 0.02 --error_eval_mode affine_cov_no_hess
+.venv/bin/python studies/convergence/bisect/score.py $BISECT_DIR/runs/gpu_*.npz --kappas 10,50
+```
+
+The commits before `d7ec052` pick the GPU whenever `cupy` imports (they ignore `AFINNI_DEVICE`).
+D4 is confirmed if the GPU trees match the paper: Rosenbrock #20 `N` about 1.39e5, `N_c` 344,
+`e_in` 3.4e-2, and #24 `N_c` 8,446; Gaussian `N_c` 48 / 359 (#10 / #14) and 173 at d=5 (#15). The
+`p_o` column printed as `p_o_k10` for the `a6844cb` runs should then give the paper's Rosenbrock
+1.59 / 1.45 / 2.36%. D3 is explained only if the no-Hessian runs give `e` near 8.26e-3 (Wave #39)
+and 3.46e-2 (Rosenbrock #22). Each run saves `runs/<tag>.npz` and `.log`.
 
 ---
 
@@ -182,7 +223,7 @@ numbers came from it):
 | Quadratic spectrum | `Lambda_ii = i^-3` | `anisotropic_quadratic_2`: `Lambda_ii = 5^-i` |
 | Lorenz-96 acceptance | rtol = atol | absolute only, `atol = tol * max|f|` over the training data (was `Linf-global`) |
 | Lorenz-96 horizon | not stated in the active text (commented table: `t_H = 0.05`) | `--dt 0.1` (passed explicitly) |
-| `kappa` | `2 d^2` (8 for d=2) | `--coarse_factor` 10 / 50 / 200; Table 2 and Figure 8 with the default 10 |
+| `kappa` | `2 d^2` (8 for d=2) | `--coarse_factor` 10 / 50 / 200 in the script; Table 2 and Figure 8 with the default 10. **Table 1's d=2 rows were measured with 50** (see below); the study now runs d=2 with 50 and keeps 10 as group `conv_k10` |
 | Figure 9 "Gaussian" | anisotropic Gaussian, wave on `[-5, 5]^d`, Rosenbrock tested uniformly | `p_out_iterative_experiment.py`: isotropic Gaussian, wave on `[-4, 4]^d`, Rosenbrock with its own test distribution, `20000 * 1.3^d` initial points |
 | Lorenz-96 on GPU | JAX/diffrax (rtol = atol = 1e-3) | the same; on CPU SciPy RK45 (rtol 1e-6): the two flow maps differ by about 1e-3 |
 
@@ -192,7 +233,7 @@ the paper's numbers predate them, so leaf and evaluation counts are not expected
 | Commit | Change | Effect on the re-run |
 |---|---|---|
 | `3fb78af` | test-problem constants (rotation `Q` of the quadratic and Gaussian, wave direction `q`) drawn with NumPy on every backend; problems no longer reseed the global RNG on each call | on the GPU the quadratic, Gaussian and wave are *different instances* (different rotation) than in the paper; also the random streams after each `f` call change |
-| `15c2721` | own k-means\|\| + Lloyd and exact neighbour search replace cuML/scikit-learn | different initial clusters, so different trees |
+| `15c2721`, `0edf0e6` | own k-means\|\| + Lloyd and exact neighbour search replace cuML/scikit-learn (`15c2721` adds them, `0edf0e6` trains with them) | different initial clusters, so different trees (on the CPU from `0edf0e6`; Wave #39: `N_c` 1,177 -> 1,167) |
 | `7a1a973` | `Linf-local`/`Linf-global` merged into `Linf`; Lorenz uses `e < tol * max|f|` instead of `e / (max|f| + 1e-12) < tol` | Lorenz decisions at rounding level |
 | `7186c93` | a cluster larger than a batch no longer ends the level early (clusters were silently dropped and the run still reported converged) | large GPU runs with small batch caps may now have more leaves than the paper |
 | `7dc1c0a` and the GPU determinism work | fixed-order segmented sums replace atomics and batched cuBLAS | GPU results change at rounding level; decisions near the tolerance may flip |
@@ -428,17 +469,14 @@ Table 1 rows for Gaussian, Rosenbrock and Wave d=2, with and without Hessian spl
   pass: slopes -1.28 (paper -1.31), -1.06 (-1.06), -1.39 (-1.45) for Gaussian, Rosenbrock, Wave,
   all steeper than the theoretical -1.
 - `p_o` (and hence `e`) is higher than the paper at tight tolerances: Wave #38/#39 2.4% / 7.5% vs
-  0.10% / 0.18%, Rosenbrock #21-24 about 1.7-2x. The paper-era code (`91ddd97`, extracted with
-  `git archive`, run on the CPU with an exact brute-force stand-in for `faiss`) gives the same:
-  Wave tol 0.005 `N_c` 1,177 (the paper's value exactly), `N` 3.03e5, but `p_o` 7.57%; Rosenbrock
-  tol 0.1 `N_c` 344 (exactly), `p_o` 1.95% vs 1.59%. So the `p_o` gap is not a regression on this
-  branch: the paper's `p_o` came from its GPU inference path (cuML neighbours, GPU instances), and
-  only the GPU re-run can confirm it.
+  0.10% / 0.18%, Rosenbrock #21-24 about 1.7-2x. These runs used the script's `--coarse_factor 10`;
+  the paper's d=2 rows were measured with 50, which reproduces them (see
+  [Where the differences come from](#where-the-differences-come-from), D1). Not a regression.
 - `e_nh` (no Hessian) is 2-5x *lower* than the paper's in every row (e.g. Rosenbrock #22: 5.3e-3
-  vs 3.46e-2), with 2-8x more leaves than the Hessian runs. The current `affine_cov_no_hess`
-  baseline is much better than the paper's. Consequently A2 fails on Rosenbrock #24 and Wave
-  #38-39, where the Hessian run's higher `p_o` makes its global `e` exceed the no-Hessian `e`
-  (its `e_in` is still lower: 1.04e-3 vs 1.31e-3 at Rosenbrock #24).
+  vs 3.46e-2), with 2-8x more leaves than the Hessian runs; the paper-era code gives the same (D3).
+  With `--coarse_factor 10`, A2 fails on Rosenbrock #24 and Wave #38-39, where the Hessian run's
+  higher `p_o` makes its global `e` exceed the no-Hessian `e`; with 50 the Hessian run's `e` falls
+  to its `e_in` (Wave #39 1.06e-3, Rosenbrock #24 1.05e-3) and A2 passes on every d=2 row.
 
 **Part B (CPU).**
 
@@ -470,6 +508,129 @@ Table 1 rows for Gaussian, Rosenbrock and Wave d=2, with and without Hessian spl
   show whether real trees get there (look for B2, B4, B5 failures growing as the tolerance
   tightens).
 
+## Differences from the manuscript
+
+From the CPU re-runs at d = 2 (Gaussian, Rosenbrock, Wave, rows 10-14, 20-24, 35-39; the d >= 5
+rows await the GPU). "Now" is `f60eb2b` with the script's settings unless stated.
+
+| # | Difference | Size | Rows | Cause (details below) |
+|---|---|---|---|---|
+| D1 | `p_o` higher | Wave 2.43% vs 0.10% (#38), 7.50% vs 0.18% (#39), 0.61% vs 0.05% (#37); Rosenbrock 2.5-4.7% vs 1.5-2.4% (#21-24) | 37-39, 21-24 | Wave: setting, the paper used `kappa` = 50 candidates where the script records 10; Rosenbrock: `kappa` and the trust regions of the time (D4) |
+| D2 | overall `e` higher | Wave 4.4e-3 vs 2.09e-3 (#38), 4.1e-3 vs 1.05e-3 (#39); Rosenbrock #24 1.7e-3 vs 1.2e-3 | 38, 39, 24 | follows from D1 (points outside every trust region are predicted by a far leaf) |
+| D3 | `e_nh` 2-5x lower, so "Hessian splits beat no Hessian" (A2) fails with `kappa` = 10 | e.g. Wave #39 1.60e-3 vs 8.26e-3, Rosenbrock #22 5.3e-3 vs 3.46e-2 | all of 10-14, 20-24, 35-39 | not reproduced by any code state or setting tried; the paper's `e_nh` runs are not in the repository |
+| D4 | Rosenbrock and Gaussian d=2 trees not the paper's | Rosenbrock #20: `N` 1.47e5 vs 1.39e5, `e_in` 2.8e-2 vs 3.4e-2 (`N_c` 344 both); #24 `N_c` 8,633 vs 8,446; Gaussian `N_c` 49 / 388 vs 48 / 359 (#10 / #14) | 10-14, 20-24 | the paper's runs were not the CPU code path; most likely the paper-era GPU path (unconfirmed) |
+| D5 | small tree changes since the paper era | Wave #39 `N_c` 1,177 -> 1,167, `N` 303,333 -> 300,528 | all | deliberate: own k-means replaces scikit-learn (`0edf0e6`); within noise |
+| D6 | Rosenbrock test set 50,000 points, not 42,250 (`N_0 / 2`) | `p_o` 1.94% vs 1.99%, `e` unchanged at #24 | 20-24 | change of the launcher (`36d2992`); the first 42,250 points are the paper-era ones |
+| D7 | settings that differ between text and code | see the table in "How this repo reproduces it" | Table 2, Figure 9, quadratic, Lorenz | settings and text; decisions 4-6 |
+
+Agree within noise: `N`, `N_c` and `e_in` on every d=2 row except Rosenbrock #22's `e_in` (27% below
+the paper, D4), the slopes, A1 and A5.
+With `kappa` = 50 the current code also matches the Wave `p_o` and `e`: #37 0.045% / 4.30e-3
+(paper 0.05 / 4.22e-3), #38 0.073% / 2.04e-3 (0.10 / 2.09e-3), #39 0.22% / 1.06e-3 (0.18 / 1.05e-3).
+
+## Where the differences come from
+
+**Method.** `studies/convergence/bisect/run_at.sh COMMIT TAG -- <launcher flags>` extracts a commit
+with `git archive` (nothing is checked out) and runs *that commit's own launcher* unchanged
+through `capture_launcher.py`, which wraps `AFINNISurrogate.train/predict` and
+`compute_error_metrics` and saves the scored test points, predictions, out-of-region mask, ground
+truth, leaf centres and trust matrices. `score.py` then scores every commit with the manuscript's
+definitions (`p_o`, `e_in`, `e`) and re-scores `p_o` for other candidate counts and against the
+exact union of all ellipsoids (`p_o*`, the best any candidate rule can do with those trust
+regions). All runs: CPU, one at a time under the resource cap, 2-15 s each (about 35 runs).
+
+**Test points.** Every era draws them the same way: NumPy seed 0, `X_train` then `X_test`, both
+uniform, `N_test = N_0 / 2`; Rosenbrock uses 50,000 from `36d2992` (2026-11-03), whose first
+42,250 are the old ones. Checked bitwise: the Wave and Rosenbrock test points and ground truth of
+`91ddd97` and `f60eb2b` are identical, so the comparisons below separate model changes from metric
+changes. The metric definitions (`compute_error_metrics`) did not change either: each launcher's
+own `p_o` and `e` equal `score.py`'s.
+
+**Stand-ins on this machine.** Commits before `d7ec052` import `faiss` and `cupy` unconditionally.
+`faiss` is replaced by an exact brute-force search in float32 (`IndexFlatL2`: same as faiss's exact
+index up to ties; `IndexHNSWFlat`, used by the paper-era CPU path above 5,000 leaves, becomes exact,
+so for Rosenbrock #23-24 the old CPU `p_o` would be slightly higher with real faiss, not lower).
+`cupy` is an import-only stub whose `is_available()` is False, so those commits run on NumPy and
+scikit-learn, as they would on a machine without a GPU. Neither touches training.
+
+**D1, D2: the candidate count, a setting.** Inference looks for the trust region containing `x`
+only among the `kappa` centres nearest to `x` in L2 (every era; `predict(coarse_factor=...)`). AFINNI's
+trust regions are long thin ellipsoids along the level sets (the wave's fronts, Rosenbrock's
+valley), so the containing ellipsoid's centre is often not among the 10 nearest:
+
+| Run (CPU) | `kappa` 4 | 10 | 20 | 50 | exact union `p_o*` | paper |
+|---|---|---|---|---|---|---|
+| Wave #39, `91ddd97` | 23.5% | 7.57% | 1.73% | **0.180%** | 0.166% | 0.18% |
+| Wave #39, `f60eb2b` | | 7.50% | 1.61% | 0.218% | 0.213% | 0.18% |
+| Rosenbrock #24, `91ddd97` | 11.5% | 4.27% | 2.63% | 2.07% | 1.96% | 2.36% |
+| Rosenbrock #20 / #22 / #24, `f60eb2b` | | 1.84 / 2.55 / 4.65% | 0.61 / 1.36 / 2.66% | 0.06 / 0.71 / 1.99% | 0.06 / 0.52 / 1.85% | 1.59 / 1.45 / 2.36% |
+
+The paper-era code `91ddd97` (2026-10-08, "Added bash file that runs experiments") with
+`--coarse_factor 50` reproduces Wave #38 and #39 to the printed digits: `N` 176,987 / 303,333,
+`N_c` 678 / 1,177, `p_o` 0.099% / 0.180%, `e_in` 2.086e-3 / 1.047e-3, `e` 2.089e-3 / 1.053e-3 (paper
+1.77e5 / 3.03e5, 678 / 1,177, 0.10 / 0.18, 2.09e-3 / 1.05e-3, 2.09e-3 / 1.05e-3). With 10 (what
+`run_paper_experiments.sh` passes for d=2) the same tree gives 7.57%. So the Wave rows were run on
+a CPU path (the GPU draws other data, another wave direction and other k-means clusters) with 50
+candidates. No commit is involved: `p_o` at `kappa` = 10 is the same at every commit where the tree
+is the same (7.572% at `91ddd97`, `935f7ae`, `a071e41`, `15c2721`; 7.503% at `0edf0e6`, `736a4d9`,
+`015adfd`, `f60eb2b`). Earlier launchers used other counts: `coarse_factor=DIM**2` (4 at d=2) from
+`a4f9302` (2026-09-22) to `3b6d729` (2026-10-04, which added `--coarse_factor`, default 10).
+*Classification:* change of settings (the script and the text, `2 d^2` = 8, misstate what the
+table used). *Fix:* done in the study: `cases.py` runs d=2 with 50 and keeps the script's 10 as
+group `conv_k10`; `run_paper_experiments.sh` (tracked, not edited here) should pass 50 for d=2,
+and the manuscript should state the `kappa` it used. The underlying limit stays: even at 50,
+`p_o - p_o*` is 0.01-0.2 points at d=2 and grows with d (Gaussian d=5 #15 at `91ddd97`: `p_o*`
+0.010%, `kappa` 50 0.62%, 200 0.20%). A membership search that cannot miss (e.g. candidates within
+`1 / sqrt(lambda_min(T))` of `x`, which bounds every ellipsoid that can contain it) would make `p_o`
+independent of `kappa`; it changes predictions, not training, and would be a deliberate numerical
+change to decide and list.
+
+**D4: the Rosenbrock and Gaussian rows came from another code path.** The CPU tree for Rosenbrock
+#20 is the same from May to November: `25ad31f` (2026-05-18), `a6844cb` (2026-10-04), `91ddd97` all
+give `N_c` 344, `N` 146,812, `e_in` 2.83e-2 (paper: 344, 1.39e5, 3.40e-2), and #24 gives 8,633 leaves
+at `91ddd97` (paper 8,446). The CPU Gaussian rows differ too (`N_c` 49 / 388 vs 48 / 359). Rosenbrock
+has no random instance, so the only things that differ on a GPU are CuPy's random stream for the
+data and cuML's k-means (300 Lloyd iterations; scikit-learn ran `max_iter=2` on the CPU). Their `p_o`
+fits the trust regions of the time: until `e37c315` (2026-10-04, "Changed shrinkage to Tikhonov to
+regularize the trust regions") each covariance was shrunk 5% towards `trace/d * I`, which fattens
+thin ellipsoids. Rescoring the CPU trees of `a6844cb` with 10 candidates gives 1.52 / 1.68 / 2.66%
+at #20 / #22 / #24 (paper 1.59 / 1.45 / 2.36), the flat profile of the table, which no single `kappa` gives
+with the Tikhonov-regularized regions of `e37c315` onwards (now, at 20: 0.61 / 1.36 / 2.66%). The Rosenbrock rows also already appear, with
+their `e_nh`, in the manuscript's older commented-out table, where the Wave rows still lack `e_nh`.
+*Classification:* most likely a GPU run of the shrinkage era (before `e37c315`) with 10 candidates;
+not a bug and not a later change. The Gaussian d=5 row #15 also differs on the CPU (`91ddd97`:
+`N_c` 415 vs 173), as expected if the d=5 rows ran on the GPU (CuPy-drawn rotation). *Confirm* with
+the paper-era GPU runs below; *fix:* none needed in the code; re-measure these rows with the current
+code and settings (the study does) and report those.
+
+**D3: `e_nh`, unexplained.** The paper-era script has no `e_nh` runs. No state tried reproduces the
+column: Wave #39 without Hessian gives `e` = 1.62e-3 / 1.64e-3 at `91ddd97` (`kappa` 10 / 50), 1.60e-3
+now, 1.23e-3 at `a6844cb` (whose launcher used `K_0` = 1000 for the wave), 2.09e-3 with `Linf-global`
+and 4.67e-3 with `L2` acceptance (paper 8.26e-3); Rosenbrock #22 gives 6.5e-3 at `a6844cb` (paper
+3.46e-2). At `91ddd97` the split for `M = I` is the principal axis of the cluster covariance, and
+the current code's `e_nh` agrees with that commit's within 3%. The paper's `e_nh` exceeds the tolerance at tight tolerances (Wave #39 8.3e-3 > 5e-3,
+Rosenbrock #22 3.5e-2 > 2e-2), which a converged `Linf-local` run cannot produce inside its trust
+regions, so those runs were probably unconverged, used another acceptance rule, or ran elsewhere
+(the paper-era GPU run below tests the last). *Classification:* unknown; not a change of the code between 2026-10-04 and now. *Fix:* re-measure `e_nh` with the current code (group `conv_nh`) and restate the claim
+as "fewer leaves for the same `e_in`" (2-8x here), unless the GPU run reproduces the old column.
+
+**D5: tree changes since the paper era.** Bisected on Wave #39 (first-parent of
+`refinement-engine`; the modularity branch's commits `711c69b`..`736a4d9` are on it, merged into
+`main` by PR #5, `1088e53`, 2026-11-06): `N`, `N_c`, `p_o` bit-identical from `91ddd97` through the
+merge of `feat/cross-platform-backends` (`935f7ae`, 2026-11-04), `a071e41` and `15c2721`; they change
+at `0edf0e6` (2026-11-06, "Integrate custom search and enforce depth-aware refinement"), whose
+message states that the initial clustering algorithm changes (own k-means|| + Lloyd instead of
+scikit-learn), and stay the same through `736a4d9`, `015adfd` and `f60eb2b`. *Classification:*
+deliberate change of a component; within noise. `3fb78af` (problem instances drawn without
+reseeding the global RNG) does not change the CPU tree here.
+
+**D6:** `36d2992` (2026-11-03, "Added N_train as a command line argument") set Rosenbrock's test set
+to 50,000 points; scored on the paper-era 42,250, #24 gives `p_o` 1.94% and `e` 1.04e-3 instead of
+1.99% and 1.05e-3. Change of test-set size, negligible; nothing to fix.
+
+**What only the GPU can settle.** D4 (and D3 if the old `e_nh` came from the GPU) need the
+paper-era code on a GPU; see "Paper-era runs on the GPU" under Quick start.
+
 ## Known gaps and risks
 
 - **AFINNI's host-memory guard is system-wide.** Before each level it checks the machine's
@@ -484,8 +645,12 @@ Table 1 rows for Gaussian, Rosenbrock and Wave d=2, with and without Hessian spl
   accuracy side is checked); Table 5's D=10 run progression (memory).
 - **Instances differ on the GPU** (`3fb78af`): exact agreement with the paper's counts is not
   expected for the quadratic, Gaussian and wave; on the CPU the problems are the paper-era
-  NumPy instances, but the paper ran on GPUs. Compare GPU re-runs to the paper with the noise
-  rule and A1-A6, not bits.
+  NumPy instances. The paper mixed platforms: the Wave d=2 rows reproduce exactly on the CPU
+  (D1), the Rosenbrock and Gaussian rows do not (D4). Compare GPU re-runs to the paper with the
+  noise rule and A1-A6, not bits.
+- **`p_o` depends on the candidate count** at every d (D1): compare it with the paper only at the
+  paper's `kappa`, and read `p_o*` (`bisect/score.py`) for the coverage of the trust regions
+  themselves.
 - **Paper-era settings unknown**: which `coarse_factor` and caps Table 2 used, and the Lorenz
   horizon in the text. The study uses the script's and caption's values; decide if they fail.
 - **Lorenz-96 GPU** needs `jax[cuda12]`; otherwise it runs on the CPU with SciPy, a slightly
@@ -509,13 +674,17 @@ Table 1 rows for Gaussian, Rosenbrock and Wave d=2, with and without Hessian spl
    ridge 0 with an rcond-based solver choice). Any change alters AFINNI's ART trees (and, if
    shared, AFINNI's): a deliberate numerical change to list and justify. Running Part B first
    shows how much it matters on the real problems.
-2. **The `e_nh` column.** The current no-Hessian baseline is 2-5x more accurate than the paper's
-   (d=2 rows). Decide whether the paper's `e_nh` came from different code or settings (worth a
-   look at how `M = I` was run then), and whether the paper's claim "Hessian splits beat no
-   Hessian" should be restated as "fewer leaves for the same `e_in`" (true here: 2-8x fewer).
-3. **`p_o` vs the paper.** CPU runs, current and paper-era, give up to 40x the paper's `p_o` at tight
-   tolerances with the same `N_c`. If the GPU re-run also does, the paper's `p_o` and `e` columns
-   need re-measuring; if not, the GPU inference path (neighbour search) is what to examine.
+2. **The `e_nh` column (D3).** The no-Hessian baseline is 2-5x more accurate than the paper's, in
+   the paper-era code as now; no code state or setting tried reproduces the column, and the
+   paper-era script has no `e_nh` runs. Unless the paper-era GPU run reproduces it, re-measure
+   `e_nh` and restate "Hessian splits beat no Hessian" as "fewer leaves for the same `e_in`" (2-8x
+   fewer here). With `kappa` = 50, A2 (`e <= 1.25 e_nh`) passes on every d=2 row, though on
+   Gaussian #12-14 `e_nh` is still 5-16% below the Hessian run's `e`.
+3. **`kappa` (D1).** The d=2 rows were measured with 50 candidates, not the script's 10 or the
+   text's `2 d^2` = 8: fix `run_paper_experiments.sh` and the text. Decide also whether inference
+   should find the containing trust region exactly (a search bounded by `1 / sqrt(lambda_min(T))`
+   instead of the `kappa` nearest centres), which makes `p_o` independent of `kappa`; a deliberate
+   change of predictions (training unchanged).
 4. **Table 2 settings.** The caption's caps (`K_0 <= 1000`, `M <= 500`) versus the paper-era
    code's `cap_initial_augmentation_budget` (`K_0` down to 16, `M` up to 31,250), and
    `coarse_factor` 10 (script) versus `2 d^2` (text) for d up to 80. The study uses the caption

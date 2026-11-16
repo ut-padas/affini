@@ -2,7 +2,7 @@
 # Part A: re-run the AFINNI manuscript's experiments (see CONVERGENCE_STUDY.md, Part A).
 #
 #   studies/convergence/paper/run_paper.sh [--smoke] [--device gpu|cpu] [--max-tier S|M|L]
-#       [--groups conv,conv_nh,lorenz_dims,rosen_weak,wave_exact,iterative,mpi,seeds]
+#       [--groups conv,conv_nh,conv_k10,lorenz_dims,rosen_weak,wave_exact,iterative,mpi,seeds]
 #       [--seeds 0,1,2] [--nps 1,2,4,8] [--mpi-device cpu|gpu] [--lorenz-device auto|cpu|gpu]
 #       [--only CASE_REGEX] [--out DIR] [--dry-run]
 #

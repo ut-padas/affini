@@ -18,15 +18,18 @@ import re
 
 from paper_values import _CONVERGENCE, _LORENZ_DIMS, _ROSEN_WEAK, _WAVE_EXACT
 
-GROUPS = ("conv", "conv_nh", "lorenz_dims", "rosen_weak", "wave_exact", "iterative", "mpi", "seeds")
+GROUPS = ("conv", "conv_nh", "conv_k10", "lorenz_dims", "rosen_weak", "wave_exact", "iterative", "mpi", "seeds")
 TIERS = {"S": 0, "M": 1, "L": 2}
 EXPERIMENT = {
     "anisotropic_quadratic_2": "anisotropic_quadratic", "anisotropic_gaussian": "anisotropic_gaussian",
     "rosenbrock": "rosenbrock", "lorenz96_dt_0.1": "lorenz96", "wave": "wave",
 }  # fmt: skip
-# --coarse_factor per (problem, d) as run_paper_experiments.sh passes it (kappa candidates; the
-# manuscript's rule is kappa = 2 d^2, i.e. 8 / 50 / 200).
-COARSE = {2: 10, 5: 50, 10: 200}
+# --coarse_factor (kappa candidates) per d. run_paper_experiments.sh passes 10 / 50 / 200 and the
+# manuscript states kappa = 2 d^2 (8 / 50 / 200), but Table 1's d=2 rows were measured with 50: the
+# paper-era code (91ddd97) reproduces Wave rows #38-39 (N, N_c, p_o, e_in, e) to the printed digits
+# with 50, and with 10 gives 24-42x the printed p_o (CONVERGENCE_STUDY.md, "Where the differences
+# come from"). Group conv_k10 reruns the d=2 rows with the script's 10.
+COARSE = {2: 50, 5: 50, 10: 200}
 
 
 def tier(evaluations: float) -> str:
@@ -53,6 +56,9 @@ def full_matrix(seeds: list[int], nps: list[int]) -> list[tuple]:
         # Hessian run's (expect more evaluations).
         rows.append((f"conv_nh_{name}", "conv_nh", tier(N), 1, 0, "launcher",
                      launcher_args(problem, d, "affine_cov_no_hess", COARSE[d], [tol])))  # fmt: skip
+        if d == 2:
+            rows.append((f"conv_k10_{name}", "conv_k10", tier(N), 1, 0, "launcher",
+                         launcher_args(problem, d, "affine_cov_hess", 10, [tol])))  # fmt: skip
         if tier(N) == "S":
             for s in seeds:
                 if s != 0:
