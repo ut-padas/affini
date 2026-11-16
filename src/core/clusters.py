@@ -21,7 +21,7 @@ from typing import Any, Literal
 import numpy as np
 import psutil
 
-from src import Array, to_host
+from src import Array, copy_to_host, to_host
 
 
 @dataclass(frozen=True)
@@ -207,9 +207,9 @@ class ClusterQueueBuilder:
         if self.constraint_rows is not None and any(v is None for v in art_columns.values()):
             raise ValueError("An ART builder needs root, locational_code and constraints.")
         counts_host = to_host(counts)
-        values = {"X": to_host(X), "F": to_host(F), "counts": counts_host}
+        values = {"X": X, "F": F, "counts": counts_host}  # point columns are downloaded into the buffers below
         if "G" in self._buf:
-            values["G"] = to_host(G)
+            values["G"] = G
         if self.constraint_rows is not None:
             values.update({k: to_host(v) for k, v in art_columns.items()})
             c = values["constraints"]
@@ -243,7 +243,7 @@ class ClusterQueueBuilder:
                 self._buf["constraints"][lo:hi, : block.shape[1]] = block
                 self._buf["constraints"][lo:hi, block.shape[1] :] = 0.0
             else:
-                self._buf[c.name][lo:hi] = values[c.name]
+                copy_to_host(values[c.name], self._buf[c.name][lo:hi])
         self.n_pts, self.n_clusters = pts_end, clusters_end
 
     def build(self) -> ClusterBatch:
@@ -324,11 +324,10 @@ class ColumnBuffer:
             missing = sorted(self.columns.keys() - rows.keys())
             extra = sorted(rows.keys() - self.columns.keys())
             raise KeyError(f"Column mismatch: missing {missing}, unexpected {extra}")
-        host = {name: to_host(value) for name, value in rows.items()}
-        n_new = {int(v.shape[0]) for v in host.values()}
+        n_new = {int(v.shape[0]) for v in rows.values()}
         if len(n_new) != 1:
             raise ValueError(f"Columns have different numbers of rows: {n_new}")
-        for name, value in host.items():
+        for name, value in rows.items():
             if tuple(value.shape[1:]) != self.columns[name].shape:
                 raise ValueError(
                     f"Column {name!r} has rows of shape {tuple(value.shape[1:])}; "
@@ -344,8 +343,8 @@ class ColumnBuffer:
                 name: _grown(buf, new_cap, self.n_rows)
                 for name, buf in self._data.items()
             }
-        for name, value in host.items():
-            self._data[name][self.n_rows : end] = value
+        for name, value in rows.items():
+            copy_to_host(value, self._data[name][self.n_rows : end])
         self.n_rows = end
 
     def result(self) -> dict[str, np.ndarray]:
