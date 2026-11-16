@@ -681,7 +681,10 @@ paper-era code on a GPU; see "Paper-era runs on the GPU" under Quick start.
    fewer here). With `kappa` = 50, A2 (`e <= 1.25 e_nh`) passes on every d=2 row, though on
    Gaussian #12-14 `e_nh` is still 5-16% below the Hessian run's `e`.
 3. **`kappa` (D1).** The d=2 rows were measured with 50 candidates, not the script's 10 or the
-   text's `2 d^2` = 8: fix `run_paper_experiments.sh` and the text. Decide also whether inference
+   text's `2 d^2` = 8. Table 1 now uses `kappa = max(50, 2 d^2)` (50 / 50 / 200 at d = 2 / 5 /
+   10, every value the paper used) in `run_paper_experiments.sh` and in the study; the text
+   should state the same rule. Table 2 keeps 10: at d = 80 the rule would gather about 120 MB of
+   trust matrices per query. Decide also whether inference
    should find the containing trust region exactly (a search bounded by `1 / sqrt(lambda_min(T))`
    instead of the `kappa` nearest centres), which makes `p_o` independent of `kappa`; a deliberate
    change of predictions (training unchanged).

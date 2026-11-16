@@ -24,12 +24,16 @@ EXPERIMENT = {
     "anisotropic_quadratic_2": "anisotropic_quadratic", "anisotropic_gaussian": "anisotropic_gaussian",
     "rosenbrock": "rosenbrock", "lorenz96_dt_0.1": "lorenz96", "wave": "wave",
 }  # fmt: skip
-# --coarse_factor (kappa candidates) per d. run_paper_experiments.sh passes 10 / 50 / 200 and the
-# manuscript states kappa = 2 d^2 (8 / 50 / 200), but Table 1's d=2 rows were measured with 50: the
-# paper-era code (91ddd97) reproduces Wave rows #38-39 (N, N_c, p_o, e_in, e) to the printed digits
-# with 50, and with 10 gives 24-42x the printed p_o (CONVERGENCE_STUDY.md, "Where the differences
-# come from"). Group conv_k10 reruns the d=2 rows with the script's 10.
-COARSE = {2: 50, 5: 50, 10: 200}
+# --coarse_factor (kappa candidates) per d for Table 1: max(50, 2 d^2), as run_paper_experiments.sh
+# passes it (50 / 50 / 200). The paper-era code (91ddd97) reproduces Wave rows #38-39 (N, N_c, p_o,
+# e_in, e) to the printed digits with 50 at d = 2, and with 10 gives 24-42x the printed p_o
+# (CONVERGENCE_STUDY.md, "Where the differences come from"). Group conv_k10 reruns the d = 2 rows
+# with 10. Table 2 (Lorenz-96 up to d = 80) and the exact-gradient Wave runs keep the launcher's 10.
+def coarse_factor(d: int) -> int:
+    return max(50, 2 * d * d)
+
+
+COARSE = {d: coarse_factor(d) for d in (2, 5, 10)}
 
 
 def tier(evaluations: float) -> str:
