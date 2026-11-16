@@ -234,7 +234,8 @@ Each is ranked in Section 2 by the d at which it bites.
   default, so its scatter is singular for d > 33, and the eigenvalue floor then gives the
   unexplored directions the largest split weight (noted in `TODO.md`). ART takes its lead
   direction from the same metric (`art/plan.py:413-414,429-432`).
-- **M9. The fit ridge biases thin and high-dimensional nodes.** Affine fits add
+- **M9. The fit ridge biases thin and high-dimensional nodes** (ART: resolved, it fits without a
+  ridge as the reference does, `ARTSettings.leaf_fit="lstsq"`; AFINNI keeps it). Affine fits add
   `max(1e-8 tr(Cov), 1e-12)` to the covariance (`src/numerics/linalg.py:121-139`,
   `src/kernels/small_linalg.cu:120-131`; the Tikhonov term of the AFINNI manuscript's Eq. 3).
   Quadratic fits add `1e-10 tr(G)/p` in radius-scaled features

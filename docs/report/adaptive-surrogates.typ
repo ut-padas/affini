@@ -1017,6 +1017,12 @@ small region.
     of the domain, or the Voronoi cells of the initial clustering's centres. More roots
     give the ranks independent work from the first level on.
   - A root box is sampled exactly, without a walk.
+  - Every ART fit, of a node and in the plane search, is plain least squares with
+    $lambda = 0$, as in the reference ART (`leaf_fit="lstsq"`): a Cholesky solve of the
+    normal equations where their reciprocal condition number is at least $10^(-10)$, and QR
+    on the node's points where it is not. AFINNI's ridge (`leaf_fit="tikhonov"`) would shrink
+    the slope across a node of aspect ratio $r$ by about $10^(-8) r^2$, which deep, thin
+    nodes reach.
   - `validation_samples` draws a second, independent set of points in every node, on which
     an accepted model is checked again before it becomes a leaf.
   - On a GPU every chain of a batch walks in the same kernel launch
@@ -1103,7 +1109,7 @@ has no useful gradient. ART handles it in two stages.
 
 #definition(title: [the soft objective])[
   With weights $W_1 (s) = delta + (1 - 2 delta) sigma(s)$ and $W_(-1) (s) = delta + (1 - 2 delta) sigma(-s)$,
-  $s_i = (a^top u_i - z) slash h$, a small floor $delta$ and a fixed ridge $lambda$,
+  $s_i = (a^top u_i - z) slash h$, a small floor $delta$ and a fixed ridge $lambda >= 0$,
   $ J_h (a, z) = min_(B_(-1), B_1) 1/n [ sum_i sum_(k = plus.minus 1) W_k (s_i) (y_i - B_k^top phi_i)^2 + lambda (norm(B_(-1))^2 + norm(B_1)^2) ] , $ <eq:soft>
   where $phi_i = (u_i, 1)$ and $B_k$ are the coefficients of the two models.
 ] <def:soft>
@@ -1120,7 +1126,9 @@ closed-form solution, so only the plane is optimized: this is _variable projecti
 
 #proof[
   $J_h$ is a minimum over $B$ of a function that is differentiable in $(a, z)$, and the
-  minimizer is unique because of the ridge. By the envelope theorem the derivative of the
+  minimizer is unique: every weight is at least $delta > 0$, so each weighted Gram is
+  positive definite once the node's $phi_i$ span $RR^p$ (and for any points if $lambda > 0$).
+  By the envelope theorem the derivative of the
   minimum is the partial derivative at the minimizer: only the weights depend on
   $(a, z)$.
 ]

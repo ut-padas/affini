@@ -524,8 +524,10 @@ Table 1 rows for Gaussian, Rosenbrock and Wave d=2, with and without Hessian spl
   same training error and decision, and evaluates `f` only at the given points plus one centroid;
   NumPy `lstsq` matches the reference to 1e-15. The exactly representable quadratic is accepted
   at the root by both (AFINNI error 7e-10, reference 9e-15).
-- **Thin box: AFINNI's ART fails to reproduce an exactly affine function on thin nodes; the
-  reference reproduces it to 1e-14 at every aspect ratio.** Max relative error of AFINNI's leaf:
+- **Thin box (with `leaf_fit="tikhonov"`, which was ART's fit when this ran): AFINNI's ART fails
+  to reproduce an exactly affine function on thin nodes; the reference reproduces it to 1e-14 at
+  every aspect ratio.** With the default `leaf_fit="lstsq"` both pass. Max relative error of
+  AFINNI's leaf with the ridge:
 
   | aspect ratio | 1 | 10 | 100 | 1e3 | 1e4 |
   |---|---|---|---|---|---|
@@ -757,13 +759,13 @@ leaves.
 
 ## Decisions for you
 
-1. **AFINNI's ART leaf regularization (Part B finding).** The Tikhonov term (`1e-8 * trace`, from the
-   AFINNI manuscript's Eq. 3) and the quadratic ridge make AFINNI's ART leaves inexact on thin
-   nodes, unlike the reference's unregularized fits. Decide whether ART leaves should keep it,
-   scale it by the smallest rather than the summed eigenvalue, or drop it (the reference uses
-   ridge 0 with an rcond-based solver choice). Any change alters AFINNI's ART trees (and, if
-   shared, AFINNI's): a deliberate numerical change to list and justify. Running Part B first
-   shows how much it matters on the real problems.
+1. **AFINNI's ART leaf regularization (Part B finding): decided, ART fits as the reference does.**
+   `ARTSettings.leaf_fit="lstsq"` (the default) drops the ridge in every ART fit, leaves and
+   split search, and solves by Cholesky where the Gram's 1-norm reciprocal condition number is
+   at least 1e-10, else by QR on the node's rows (`lstsq_auto`). AFINNI keeps Eq. 3's ridge and is
+   bit-identical; `leaf_fit="tikhonov"` restores the ridge for ART. With it the thin-box check
+   passes at every aspect ratio. The remaining differences in how ART splits a node (start,
+   gate width, optimizer, minimum side, retries) are being ported from the reference next.
 2. **The `e_nh` column (D3).** The no-Hessian baseline is 2-5x more accurate than the paper's, in
    the paper-era code as now; no code state or setting tried reproduces the column, and the
    paper-era script has no `e_nh` runs, and the paper-era GPU path gives today's values too.

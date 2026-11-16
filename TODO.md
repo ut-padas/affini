@@ -102,8 +102,9 @@ The project is developed and tested on Python 3.13 (`.python-version`).
   1e-15. With `atol` below about 1e-5 at high `d`, nodes are rejected that a plain
   least-squares fit would accept. Decide whether the ridge should scale with `atol`, shrink
   with the point count, or apply only when the covariance is near singular (a deliberate
-  numerical change). `tests/integration/test_art_training.py` (70-D test) uses `atol=1e-4`
-  because of it.
+  numerical change). ART does not use it by default: `ARTSettings.leaf_fit="lstsq"` fits without
+  a ridge, as the reference ART does (`tests/integration/test_art_training.py` checks it exact to
+  1e-9 at d = 70).
 
 ## Documentation that disagrees with the code
 
@@ -166,6 +167,16 @@ runs the chunked CuPy walk above 256 dimensions.
   `soft_step` and `_soft_objective_fused` (`src/art/split_search.py`, with their `(k, ...)`
   shape comments), and every kernel parameter in `src/kernels/*.cu` (`hr_walk`'s `owner`,
   documented there as Python's `labels`).
+
+- [ ] GPU suite, and a GPU regression check against the commit before it, after ART's
+  `leaf_fit="lstsq"` (the reference ART's fit: no ridge, Cholesky where the reciprocal condition
+  number is >= 1e-10, QR on the node's rows otherwise). On the GPU, AFINNI cases must stay
+  bit-identical, and ART cases must agree with the CPU's new values at the usual tolerance.
+  CuPy-only paths it adds: `lstsq_auto` (`src/numerics/linalg.py`: `spd_solve` of the Gram and
+  of the identity for the condition number, then the host QR/SVD fallback writing into a CuPy
+  `X`), the affine leaf's centred rows `data.X - data.centroids[data.labels]` (in
+  `AffineLSQModel.fit`), and the split search's `spd_solve` with `lam = 0`, where a singular
+  Gram must come back as NaN and lose its cut, as on the CPU.
 
 ## Technical companion (`docs/report/`)
 

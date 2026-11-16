@@ -119,6 +119,47 @@ def test_det_matmul_and_spd_solve_match_numpy_and_ignore_the_stack_size():
         not IS_CUPY_BACKEND  # fmt: skip  (an indefinite system is an invalid fit on the GPU)
 
 
+def test_a_singular_system_gets_nan_and_leaves_the_others_unchanged():
+    """Both backends: an exactly singular system is an invalid fit (NaN), not an error for the stack."""
+    from src.numerics import spd_solve
+
+    rng = np.random.default_rng(5)
+    M = rng.normal(size=(4, 3, 6))
+    S = M @ np.swapaxes(M, 1, 2)
+    S[2] = 0.0
+    B = rng.normal(size=(4, 3, 2))
+    sol = host(spd_solve(xp.asarray(S), xp.asarray(B)))
+    assert np.all(np.isnan(sol[2]))
+    keep = [0, 1, 3]
+    np.testing.assert_array_equal(sol[keep], host(spd_solve(xp.asarray(S[keep]), xp.asarray(B[keep]))))
+
+
+def test_lstsq_auto_is_exact_on_thin_and_rank_deficient_systems(monkeypatch):
+    """Cholesky where the Gram is well conditioned; QR on the rows (min-norm, like lstsq) elsewhere."""
+    import scipy.linalg
+
+    from src.numerics import LSTSQ_RCOND_THRESHOLD, lstsq_auto
+
+    rng = np.random.default_rng(6)
+    counts = np.array([30, 40, 50])
+    starts = np.r_[0, np.cumsum(counts)[:-1]]
+    A = rng.uniform(-1, 1, (counts.sum(), 3))
+    A[30:70, 1] *= 1e-3  # aspect 1e3: rcond about 1e-6, the Cholesky path
+    A[70:, 1] = 2.0 * A[70:, 0]  # rank deficient: the QR fallback
+    w = rng.normal(size=(3, 2))
+    Y = A @ w
+    G = np.stack([A[a : a + c].T @ A[a : a + c] for a, c in zip(starts, counts, strict=True)])
+    B = np.stack([A[a : a + c].T @ Y[a : a + c] for a, c in zip(starts, counts, strict=True)])
+    fallbacks = []
+    original = scipy.linalg.lstsq
+    monkeypatch.setattr(scipy.linalg, "lstsq", lambda *a, **k: fallbacks.append(k["lapack_driver"]) or original(*a, **k))
+    X = host(lstsq_auto(*(xp.asarray(v) for v in (G, B, A, Y, starts, counts))))
+    assert fallbacks == ["gelsy"] and LSTSQ_RCOND_THRESHOLD == 1e-10
+    np.testing.assert_allclose(X[0], w, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(X[1], w, rtol=0, atol=1e-9)
+    np.testing.assert_allclose(X[2], np.linalg.lstsq(A[70:], Y[70:], rcond=None)[0], rtol=0, atol=1e-12)
+
+
 def test_sort_by_block_then_value_matches_lexsort_with_ties():
     from src.numerics import sort_by_block_then_value
 

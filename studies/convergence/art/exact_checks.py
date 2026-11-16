@@ -9,11 +9,11 @@ must give the same leaf model to rounding, the same training error and the same 
 decision. A NumPy least-squares fit in the reference's basis is the third opinion.
 
 A second check, ``slab``, fits an exactly affine target on one thin box (aspect ratio 1 to
-1e4) with both codes' leaf models. Both should reproduce it to rounding. AFINNI's leaf fits are
-regularized (``affine_lsq``: Tikhonov ``1e-8 * trace`` of the scatter matrix; ``quadratic_lsq``:
-a ridge of ``1e-10`` of the Gram's mean diagonal) and the reference's are not (``--ridge 0``), so
-AFINNI's error grows like ``1e-8 * aspect^2``; deep ART nodes are thin, so this is where the two
-codes' accuracy can part at tight tolerances.
+1e4) with both codes' leaf models. Both should reproduce it to rounding: AFINNI's ART fits
+without a ridge by default, as the reference does (``ARTSettings.leaf_fit="lstsq"``, the
+reference's ``--ridge 0`` with its ``auto`` solver). With ``leaf_fit="tikhonov"`` (``affine_lsq``:
+``1e-8 * trace`` of the scatter matrix; ``quadratic_lsq``: ``1e-10`` of the Gram's mean
+diagonal) the error grows like ``1e-8 * aspect^2``, and deep ART nodes are thin.
 
 Usage: ``exact_checks.py --art-path P --out-json F [--smoke]``; prints one line per case and
 exits non-zero when a case fails. Root pass criteria: max |prediction difference| on 10,000

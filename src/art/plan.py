@@ -448,7 +448,7 @@ class ARTPlan:
             Phi = self.model.features(dU / xp.where(radius > 0, radius, 1.0)[data.labels][:, None])
         else:  # affine: [u, 1] on the raw normalized coordinates
             Phi = self.model.features(U)
-        return SplitRows(U, Y, Phi, data.labels, data.counts)
+        return SplitRows(U, Y, Phi, data.labels, data.counts, ridge=1e-8 if self.settings.leaf_fit == "tikhonov" else 0.0)
 
     def _direction_bank(self, rows: SplitRows, lead, V, M, width, keys) -> Array:
         """
@@ -464,8 +464,9 @@ class ARTPlan:
         dU = rows.U - mean[rows.labels]
         cov = rows.cross(dU, dU)
         evals, evecs = xp.linalg.eigh(cov)
-        # Points on a lower-dimensional set (e.g. unmixed samples): the fit is then ridge-
-        # regularized along the missing directions, which is worth seeing in the counters.
+        # Points on a lower-dimensional set (e.g. unmixed samples): the fit is then the
+        # minimum-norm (lstsq) or ridge-regularized (tikhonov) one along the missing directions,
+        # which is worth seeing in the counters.
         self.counters["rank_deficient"] += int(xp.sum(evals[:, 0] <= 1e-12 * xp.maximum(evals[:, -1], 1e-300)))
         dirs.append(evecs[:, :, -1])
         n_rand = max(0, D - len(dirs))
@@ -531,7 +532,8 @@ class ARTPlan:
     def _soft_refine(self, rows: SplitRows, w0: Array, z0: Array, sse0: Array, progress) -> tuple[Array, Array]:
         """
         The soft search: polish each bins-search plane by projected gradient descent on the consistent soft
-        objective ``J(w, z) = min_B F`` (``J_h`` in the companion), with a fixed ridge, a
+        objective ``J(w, z) = min_B F`` (``J_h`` in the companion), with a fixed ridge (0 for
+        ``leaf_fit="lstsq"``), a
         fixed gate width ``T = soft_temperature * std(w^T u)`` (``h`` in the companion), floored
         weights ``W_R = delta + (1 - 2 delta) sigma(s)``, ``W_L = delta + (1 - 2 delta) sigma(-s)``
         (``W_1`` and ``W_-1``) with ``s = (w^T u - z) / T``,

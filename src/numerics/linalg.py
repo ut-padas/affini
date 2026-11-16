@@ -1,8 +1,10 @@
 """Small batched dense algebra: SPD factor and solves, products with a fixed inner order, regularized fits."""
 
+import contextlib
+
 import numpy as np
 
-from src import IS_CUPY_BACKEND, Array, kernels, xp
+from src import IS_CUPY_BACKEND, Array, kernels, to_host, xp
 
 if IS_CUPY_BACKEND:
     pass
@@ -58,7 +60,7 @@ def spd_solve(A: Array, B: Array) -> Array:
     if IS_CUPY_BACKEND and A.shape[-1] >= SPD_COOP_MIN_P:
         return spd_solve_factored(spd_factor(A), B)
     if not IS_CUPY_BACKEND:
-        return xp.linalg.solve(A, B)
+        return solve_or_nan(A, B)
     p, q = A.shape[-1], B.shape[-1]
     lead = A.shape[:-2]
     L = xp.array(A, dtype=xp.float64, order="C", copy=True)
@@ -67,6 +69,26 @@ def spd_solve(A: Array, B: Array) -> Array:
     if nb:
         _kern_spd_solve(((nb + 127) // 128,), (128,), (L, X, np.int64(nb), np.int32(p), np.int32(q)))
     return X
+
+
+def solve_or_nan(A: Array, B: Array) -> Array:
+    """
+    NumPy's stacked ``solve``, with an all-NaN solution for an exactly singular system instead of
+    an exception for the whole stack (the CuPy kernels' failure value); other systems keep the
+    bits of one stacked call, since LAPACK solves each system on its own.
+    """
+    try:
+        return np.linalg.solve(A, B)
+    except np.linalg.LinAlgError:
+        pass
+    lead = A.shape[:-2]
+    A3 = A.reshape(-1, *A.shape[-2:])
+    B3 = np.broadcast_to(B, (*lead, *B.shape[-2:])).reshape(-1, *B.shape[-2:])
+    X = np.full(B3.shape, np.nan)
+    for k in range(A3.shape[0]):
+        with contextlib.suppress(np.linalg.LinAlgError):
+            X[k] = np.linalg.solve(A3[k], B3[k])
+    return X.reshape(*lead, *B.shape[-2:])
 
 
 def spd_factor(A: Array) -> Array:
@@ -90,7 +112,7 @@ def spd_factor(A: Array) -> Array:
 def spd_solve_factored(L: Array, B: Array) -> Array:
     """``A^-1 B`` from ``L = spd_factor(A)``; bit-identical to ``spd_solve(A, B)`` on both backends."""
     if not IS_CUPY_BACKEND:
-        return xp.linalg.solve(L, B)
+        return solve_or_nan(L, B)
     p, q = L.shape[-1], B.shape[-1]
     lead = L.shape[:-2]
     X = xp.array(xp.broadcast_to(B, (*lead, p, q)), dtype=xp.float64, order="C", copy=True)
@@ -137,6 +159,55 @@ def solve_regularized_covariance_inplace(auto_cov, cross_cov, D, FD):
     lam = xp.maximum(1e-8 * tr, TINY_EPS)
     reg = lam[:, None, None] * xp.eye(D, dtype=xp.float64)[None, :, :]
     return xp.linalg.solve(auto_cov + reg, cross_cov)
+
+
+# The reference ART's auto_rcond_threshold: a normal-equations Cholesky solution is kept when the
+# 1-norm reciprocal condition number of the Gram is at least this, else the rows are refitted by QR.
+LSTSQ_RCOND_THRESHOLD = 1e-10
+
+
+def lstsq_auto(G: Array, B: Array, design: Array, rhs: Array, starts: Array, counts: Array) -> Array:
+    """
+    Unregularized least squares for K stacked systems, as the reference ART's ``ridge=0``,
+    ``solver="auto"``: ``G_k^-1 B_k`` by Cholesky of the normal equations wherever the Gram's
+    1-norm reciprocal condition number is at least ``LSTSQ_RCOND_THRESHOLD``; elsewhere (and
+    where the Cholesky fails) system ``k`` is solved from its own rows ``design[starts[k] :
+    starts[k] + counts[k]]`` (right-hand side ``rhs``) by QR (LAPACK ``gelsy``), then by SVD
+    (``gelsd``) if QR fails or is not finite. ``G`` (K, p, p) and ``B`` (K, p, q) must be the
+    normal equations of those rows.
+
+    The condition number is computed exactly from the Cholesky inverse, where LAPACK's ``dpocon``
+    (the reference's) estimates it; they differ only for systems near the threshold. The QR and
+    SVD fallbacks run on the host (one LAPACK call per system, in cluster order), so they are
+    deterministic on both backends; they are meant for the few ill-conditioned systems.
+    """
+    from scipy import linalg as sla
+
+    K, p = int(G.shape[0]), int(G.shape[-1])
+    X = spd_solve(G, B)
+    if K == 0:
+        return X
+    inv = spd_solve(G, xp.broadcast_to(xp.eye(p), (K, p, p)))
+    norm_1 = xp.max(xp.sum(xp.abs(G), axis=-2), axis=-1)
+    norm_1_inv = xp.max(xp.sum(xp.abs(inv), axis=-2), axis=-1)
+    rcond = 1.0 / (norm_1 * norm_1_inv)
+    ok = xp.isfinite(rcond) & (rcond >= LSTSQ_RCOND_THRESHOLD) & xp.all(xp.isfinite(X), axis=(1, 2))
+    bad = np.flatnonzero(~np.asarray(to_host(ok)))
+    if bad.size == 0:
+        return X
+    starts_h, counts_h = np.asarray(to_host(starts)), np.asarray(to_host(counts))
+    for k in bad.tolist():  # the few ill-conditioned systems, in cluster order
+        rows = slice(int(starts_h[k]), int(starts_h[k] + counts_h[k]))
+        A_k = np.asarray(to_host(design[rows]), dtype=np.float64)
+        y_k = np.asarray(to_host(rhs[rows]), dtype=np.float64)
+        try:
+            sol = sla.lstsq(A_k, y_k, lapack_driver="gelsy", check_finite=False)[0]
+            if not np.all(np.isfinite(sol)):
+                raise sla.LinAlgError("QR solution is not finite")
+        except (sla.LinAlgError, ValueError):
+            sol = sla.lstsq(A_k, y_k, lapack_driver="gelsd", check_finite=False)[0]
+        X[k] = xp.asarray(sol.reshape(p, -1))
+    return X
 
 
 def lsq_hessian_in_eigenbasis(C: Array, S: Array) -> tuple[Array, Array]:
