@@ -31,7 +31,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # the repository root, for src.plotting
-from cases import COARSE  # noqa: E402
+from cases import group_coarse_factor  # noqa: E402
 from paper_values import PAPER_NOTES, records  # noqa: E402
 
 BLUE, ORANGE, INK, MUTED = "#2a78d6", "#eb6834", "#0b0b0b", "#52514e"
@@ -83,10 +83,7 @@ def same_tol(run: dict, rec: dict) -> bool:
 def matching(runs: list[dict], rec: dict, mode: str | None = None) -> list[dict]:
     """The single-rank runs with the record's settings (every seed)."""
     mode = mode or rec["mode"]
-    if rec["group"] == "lorenz_dims" or (rec["group"] == "wave_exact" and mode.endswith("exact_grad")):
-        coarse = 10
-    else:
-        coarse = COARSE[rec["dim"]]
+    coarse = group_coarse_factor(rec["group"], rec["dim"])
     out = []
     for r in runs:
         if r["problem"] != rec["problem"] or r["dim"] != rec["dim"] or r["mode"] != mode or r["mpi_size"] != 1:

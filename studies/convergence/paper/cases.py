@@ -36,6 +36,15 @@ def coarse_factor(d: int) -> int:
 COARSE = {d: coarse_factor(d) for d in (2, 5, 10)}
 
 
+def group_coarse_factor(group: str, d: int) -> int:
+    """
+    The coarse_factor a group's cases run with, which collect_paper.py also matches runs by: the
+    launcher's 10 for Table 2, COARSE[d] for everything else (Figure 8's exact-gradient runs too,
+    since its LSQ column is Table 1b's Wave d = 5 runs).
+    """
+    return 10 if group == "lorenz_dims" else COARSE[d]
+
+
 def lorenz_dims_sizes(d: int) -> tuple[int, int, int]:
     """
     Table 2's (N_0, K_0, M) at dimension d, as the code that produced the table set them
@@ -86,7 +95,7 @@ def full_matrix(seeds: list[int], nps: list[int]) -> list[tuple]:
     for _row, d, N, *_ in _LORENZ_DIMS:
         n0, k0, m = lorenz_dims_sizes(d)
         rows.append((f"lorenz_dims_d{d}", "lorenz_dims", tier(N), 1, 0, "launcher", launcher_args(
-            "lorenz96_dt_0.1", d, "affine_cov_hess", 10, [0.1],
+            "lorenz96_dt_0.1", d, "affine_cov_hess", group_coarse_factor("lorenz_dims", d), [0.1],
             ["--N_train", str(n0), "--num_initial_clusters", str(k0), "--min_pts_per_cluster", str(m)])))  # fmt: skip
     for atol, n0, nc, *_ in _ROSEN_WEAK:
         # Absolute test only (rtol off); N is not reported, about 500 evaluations per leaf in Table 1b.
@@ -99,7 +108,7 @@ def full_matrix(seeds: list[int], nps: list[int]) -> list[tuple]:
         # which the candidates miss the containing leaf of most flagged points (p_o 5-43% against an
         # exact 0.2-1.2%); training does not depend on it.
         rows.append((f"wave_exact_tol{tol}", "wave_exact", tier(370 * nc), 1, 0, "launcher",
-                     launcher_args("wave", 5, "affine_cov_hess_exact_grad", COARSE[5], [tol])))  # fmt: skip
+                     launcher_args("wave", 5, "affine_cov_hess_exact_grad", group_coarse_factor("wave_exact", 5), [tol])))  # fmt: skip
     for fn in ("gaussian", "quadratic", "rosenbrock", "wave"):
         rows.append((f"iterative_{fn}_d2", "iterative", "S", 1, 0, "iterative",
                      ["--function", fn, "--dimension", "2", "--tol", "0.05", "--n-iter", "10"]))  # fmt: skip
