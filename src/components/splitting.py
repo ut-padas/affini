@@ -41,6 +41,7 @@ from src.numerics import (
     det_einsum,
     det_matmul,
     get_n_smallest_per_block,
+    leading_eigvec,
     lsq_hessian_in_eigenbasis,
     reduce_sum_1d,
     run_fused_cross_cov,
@@ -143,11 +144,10 @@ class SplitStrategy(ABC):
         cluster in that order.
         """
         M, CovZ = self.metric(data)
-        _, V_z = xp.linalg.eigh(CovZ)
-        v = V_z[:, :, -1]  # highest-variance direction, (K, d)
+        v = leading_eigvec(CovZ)  # highest-variance direction, (K, d)
         scores = run_fused_split_projection(data.X, data.centroids, data.labels, M, v)
         if IS_CUPY_BACKEND:
-            del CovZ, V_z, v, M
+            del CovZ, v, M
             cp.get_default_memory_pool().free_all_blocks()
         order = sort_by_block_then_value(scores, data.labels)  # (N,)
         sorted_scores = scores[order] if self.cut != "median" else None

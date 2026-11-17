@@ -110,28 +110,34 @@
       {
         "clusters": 12,
         "accepted": 11,
-        "points": 470,
-        "worst_error": 1.41
+        "points": 460,
+        "worst_error": 1.69
+      },
+      {
+        "clusters": 2,
+        "accepted": 1,
+        "points": 80,
+        "worst_error": 1.33
       },
       {
         "clusters": 2,
         "accepted": 2,
         "points": 80,
-        "worst_error": 0.55
+        "worst_error": 0.58
       }
     ],
-    "n_levels": 6,
+    "n_levels": 7,
     "split": {
       "level": 1,
-      "points": 71,
+      "points": 70,
       "plain_error": 2.82,
-      "hessian_error": 1.13,
-      "parent_error": 2.87,
-      "angle": 86,
+      "hessian_error": 1.15,
+      "parent_error": 2.84,
+      "angle": 85,
       "n_grad": 6,
       "n_cov": 8,
-      "rejected": 23,
-      "hessian_wins": 21
+      "rejected": 24,
+      "hessian_wins": 20
     },
     "augment": {
       "level": 3,
@@ -144,29 +150,29 @@
       "A": {
         "nu": 5,
         "euclid": 26,
-        "d_nu": 0.54,
+        "d_nu": 0.58,
         "inside": 2,
         "outside": false,
-        "pred": 10.65,
-        "f": 10.97
+        "pred": 8.91,
+        "f": 8.99
       },
       "B": {
-        "nu": 9,
-        "euclid": 9,
+        "nu": 4,
+        "euclid": 4,
         "d_nu": 0.0,
         "inside": 2,
         "outside": false,
-        "pred": 0.28,
-        "f": 0.13
+        "pred": 2.04,
+        "f": 1.73
       },
       "C": {
-        "nu": 8,
-        "euclid": 8,
-        "d_nu": 1.59,
+        "nu": 24,
+        "euclid": 23,
+        "d_nu": 1.81,
         "inside": 0,
         "outside": true,
-        "pred": 7.18,
-        "f": 9.74
+        "pred": 19.53,
+        "f": 20.14
       }
     },
     "layout": {
@@ -549,14 +555,14 @@
   },
   "compare": {
     "afinni": {
-      "leaves": 27,
-      "evals": 1189,
-      "generated": 539,
-      "max_error": 3.44,
-      "within_percent": 98.4,
-      "outside_percent": 1.5,
-      "within_inside_percent": 99.1,
-      "depth": 5
+      "leaves": 28,
+      "evals": 1226,
+      "generated": 574,
+      "max_error": 3.37,
+      "within_percent": 97.9,
+      "outside_percent": 2.7,
+      "within_inside_percent": 98.9,
+      "depth": 6
     },
     "art": {
       "leaves": 17,
@@ -570,7 +576,8 @@
     },
     "slice_x2": 2.0,
     "grid": 240,
-    "flagged_on_line": 0
+    "flagged_on_line": 24,
+    "slice_points": 600
   },
   "steal": {
     "leaves": 1365,

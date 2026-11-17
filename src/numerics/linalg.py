@@ -48,6 +48,45 @@ def det_matmul(A: Array, B: Array) -> Array:
     return out
 
 
+# leading_eigvec: 2**10 = 1,024 power steps leave an angle of about (lambda2 / lambda1)**1024 to the
+# leading eigenvector: below 3e-3 degrees for lambda2 / lambda1 <= 0.99, and AFINNI's split matrices
+# (4,000 recorded per d at d = 20, 60, 100) had at most 0.9934. A nearly degenerate pair still gives
+# a unit vector in the span of the top two eigenvectors (within 2e-15), along which the variance is
+# within a factor lambda2 / lambda1 of the largest: an equally valid split direction. The steps
+# v <- C v / |C v| afterwards apply C itself, whose rounding the squarings compound.
+LEADING_EIGVEC_SQUARINGS = 10
+LEADING_EIGVEC_REFINE_STEPS = 3
+
+
+def leading_eigvec(C: Array) -> Array:
+    """
+    (K, d) unit eigenvectors of the largest eigenvalue of symmetric positive semidefinite ``C``
+    (K, d, d): ``LEADING_EIGVEC_SQUARINGS`` squarings ``P <- P P / max|P P|`` (a power iteration of
+    ``2**LEADING_EIGVEC_SQUARINGS`` steps), the column of ``P`` at its largest diagonal entry,
+    ``LEADING_EIGVEC_REFINE_STEPS`` steps ``v <- C v / |C v|``, and the sign that makes the
+    first largest-magnitude component positive. A zero matrix gives the first coordinate axis.
+    Products are ``det_matmul`` and the scalings maxima, so a matrix's bits do not depend on the
+    rest of the stack; both backends run the same steps.
+    """
+    K, d = int(C.shape[0]), int(C.shape[-1])
+    P = C / xp.maximum(xp.max(xp.abs(C), axis=(1, 2)), TINY_EPS)[:, None, None]
+    for _ in range(LEADING_EIGVEC_SQUARINGS):
+        P = det_matmul(P, P)
+        P = P / xp.maximum(xp.max(xp.abs(P), axis=(1, 2)), TINY_EPS)[:, None, None]
+    j = xp.argmax(xp.diagonal(P, axis1=1, axis2=2), axis=1)
+    v = xp.take_along_axis(P, xp.broadcast_to(j[:, None, None], (K, d, 1)), axis=2)  # (K, d, 1)
+    axis = xp.zeros((K, d, 1))
+    axis[:, 0] = 1.0
+    for step in range(LEADING_EIGVEC_REFINE_STEPS + 1):
+        if step:
+            v = det_matmul(C, v)
+        n2 = det_matmul(v.transpose(0, 2, 1), v)  # (K, 1, 1)
+        v = xp.where(n2 > 0, v / xp.sqrt(xp.where(n2 > 0, n2, 1.0)), axis)
+    v = v[:, :, 0]
+    i = xp.argmax(xp.abs(v), axis=1)
+    return v * xp.where(xp.take_along_axis(v, i[:, None], axis=1) < 0, -1.0, 1.0)
+
+
 def spd_solve(A: Array, B: Array) -> Array:
     """
     ``A^-1 B`` for stacks of small symmetric positive definite systems ``(..., p, p)``,

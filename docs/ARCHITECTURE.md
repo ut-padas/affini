@@ -105,7 +105,7 @@ names, and the docstring or comment where a name is defined gives its symbol. Pa
 | Σ | the scatter matrix Σ (x − c)(x − c)ᵀ | `Cov`, `C` (called an unnormalized covariance) | `numerics/stats.py` (`run_fused_stats`), `components/trust_regions.py` |
 | ĝ | the least-squares gradient at c, from the max(2d, ⌊N_min/4⌋) nearest points | `grad_lsq`, `n_gradient_pts` | `components/splitting.py` (`CovarianceHessianSplit`) |
 | N_cov | the points with the smallest Taylor error, which trace the level set | `n_est_cov` | `components/splitting.py` (`CovarianceHessianSplit`) |
-| x̃ᵢ, u₁, sᵢ | the stretched points, the split direction, the scores | `M (x − c)`; `v`, the leading eigenvector of `CovZ`; `scores` | `components/splitting.py` (`SplitStrategy.split`) |
+| x̃ᵢ, u₁, sᵢ | the stretched points, the split direction, the scores | `M (x − c)`; `v`, the leading eigenvector of `CovZ` (`leading_eigvec`); `scores` | `components/splitting.py` (`SplitStrategy.split`) |
 | C₋₁, C₁ | the two children of a split | left C₋₁, then right C₁. AFINNI: the low-score and the high-score half (`child_counts`); ART: aᵀu < z (locational code 2π) and aᵀu ≥ z (2π + 1) | `components/splitting.py`, `art/plan.py` (`ARTPlan._split`) |
 | T, γ, α | the trust-region matrix, its eigenvalue floor, the farthest point's scaled distance | `trust_matrix` (leaf column), `trust_matrices_src`; `q_reg`; `max_dist` | `components/trust_regions.py`, `config.py` |
 | κ, dᵢ, ν | Euclidean candidates, trust-region distance, the answering leaf | `k_nn * coarse_factor` (`k_coarse`); `dist_sq`; `nn_idx[:, 0]` | `surrogate/model.py` (`predict`, `predict_local`) |

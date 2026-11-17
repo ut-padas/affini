@@ -632,6 +632,16 @@ the cut across the longest direction in #ex.afinni.split.hessian_wins of the
     and the points are not uniform on a level set. In practice the estimate recovers the
     dominant directions, which is what the cut needs. Where an exact gradient or Hessian
     is available, the modes `AFFINE_COV_HESS_EXACT_GRAD` and `AFFINE_EXACT_HESS` use it.
+  - Only $u_1$ is needed, so no eigendecomposition is formed: `leading_eigvec`
+    (`src/numerics/linalg.py`) squares the normalized matrix ten times (a power iteration of
+    $2^(10) = 1024$ steps), takes the column at the largest diagonal entry, applies the matrix
+    itself three times and fixes the sign so that the largest component is positive. Both
+    backends run these steps with the same products (`det_matmul`), so a cluster's direction
+    does not depend on its batch. The angle to the exact $u_1$ is about
+    $(lambda_2 slash lambda_1)^(1024)$, below $3 dot 10^(-3)$ degrees when
+    $lambda_2 slash lambda_1 <= 0.99$. A nearly tied pair gives a unit vector in the plane of
+    the two leading eigenvectors, along which the stretched points' scatter is within a factor
+    $lambda_2 slash lambda_1$ of the largest: as good a cut direction as $u_1$.
 ]
 
 == Enough points to estimate anything <sec:augment>
@@ -1226,6 +1236,9 @@ weights, floor and ridge appear in the fit and in the objective.
   affine model. Both surrogates are piecewise affine and stay inside the band almost
   everywhere; both have small jumps where one leaf hands over to the next. The pieces are
   short where $f$ curves and long where it is nearly straight: that is the adaptivity.
+  #swatch(red) Red dots under AFINNI's curve mark where the line leaves every trust region,
+  #ex.compare.flagged_on_line of its #ex.compare.slice_points points: there AFINNI's answer
+  is flagged.
 ]
 
 #figure(
@@ -1373,7 +1386,8 @@ this layout.
   [the fit, the products with $absH^(1 slash 2)$], [small solves], [`batched_inplace_cholesky_solve`, `spd_solve`, `det_matmul`],
   [errors $e_a$, split scores, Mahalanobis distances], [per row], [`fused_split_projection`, `fused_mahalanobis_projection`, `taylor_residual_norm`],
   [largest error, trust radius], [segmented maxima], [`segmented_max_float64`, one thread per cluster],
-  [cut direction, Hessian estimate, trust ellipsoid], [eigendecompositions], [CuPy's batched `eigh` (cuSOLVER)],
+  [cut direction], [repeated squaring], [`det_matmul` (`leading_eigvec`)],
+  [Hessian estimate, trust ellipsoid], [eigendecompositions], [CuPy's batched `eigh` (cuSOLVER)],
   [the median cut, the points nearest each centre], [sorts within clusters], [two stable `argsort`s over the whole batch],
   [new points (@sec:augment)], [per new coordinate], [one element-wise kernel],
   table.cell(colspan: 3, fill: luma(245))[*ART* (`src/art/`)],

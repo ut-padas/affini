@@ -209,3 +209,60 @@ def test_grid_cell_numbering_matches_numpy_and_works_beyond_64_dimensions():
     assert len(bins70) == 70 and int(np.prod(bins70)) == 6
     assert set(labels.tolist()) <= set(range(6)) and labels.dtype == np.int64
 
+
+def _spd_with_gap(rng, K, d, ratio):
+    """K random SPD matrices with eigenvalues 1, ``ratio`` and the rest in [0.01, 0.5); their eigenvectors."""
+    Q = np.linalg.qr(rng.standard_normal((K, d, d)))[0]
+    lam = np.sort(rng.uniform(0.01, 0.5, (K, d)), axis=1)
+    lam[:, -1], lam[:, -2] = 1.0, ratio
+    return Q @ (lam[:, :, None] * np.swapaxes(Q, 1, 2)), Q
+
+
+@pytest.mark.parametrize("d", [2, 20, 100])
+def test_leading_eigvec_finds_the_leading_eigenvector_of_a_separated_pair(d):
+    from src.numerics import leading_eigvec
+
+    C, Q = _spd_with_gap(np.random.default_rng(d), 64, d, 0.9)
+    v = host(leading_eigvec(xp.asarray(C)))
+    np.testing.assert_allclose(np.linalg.norm(v, axis=1), 1.0, rtol=1e-14)
+    assert np.all(np.abs(np.sum(v * Q[:, :, -1], axis=1)) > 1 - 1e-14)
+    i = np.argmax(np.abs(v), axis=1)
+    assert np.all(v[np.arange(len(v)), i] > 0)  # the sign rule
+    w = host(leading_eigvec(xp.asarray(_spd_with_gap(np.random.default_rng(1), 32, d, 0.99)[0])))
+    w_ref = np.linalg.eigh(_spd_with_gap(np.random.default_rng(1), 32, d, 0.99)[0])[1][:, :, -1]
+    assert np.all(np.abs(np.sum(w * w_ref, axis=1)) > np.cos(np.radians(0.01)))  # within 0.01 degrees at a 1% gap
+
+
+def test_leading_eigvec_of_a_near_degenerate_pair_lies_in_the_top_two_eigenspace():
+    from src.numerics import leading_eigvec
+
+    for ratio in (0.9999, 1.0):
+        C, Q = _spd_with_gap(np.random.default_rng(3), 64, 20, ratio)
+        v = host(leading_eigvec(xp.asarray(C)))
+        top2 = Q[:, :, -2:]
+        outside = v - np.einsum("kij,kj->ki", top2, np.einsum("kij,ki->kj", top2, v))
+        assert np.linalg.norm(outside, axis=1).max() < 1e-12
+    zero = host(leading_eigvec(xp.zeros((2, 3, 3))))
+    np.testing.assert_array_equal(zero, [[1.0, 0.0, 0.0]] * 2)
+
+
+def test_leading_eigvec_bits_do_not_depend_on_the_stack():
+    from src.numerics import leading_eigvec
+
+    C = xp.asarray(_spd_with_gap(np.random.default_rng(5), 64, 12, 0.95)[0])
+    whole = host(leading_eigvec(C))
+    for n in (1, 7, 64):
+        part = host(leading_eigvec(C[:n][::-1].copy()))[::-1]
+        np.testing.assert_array_equal(part, whole[:n])
+
+
+@pytest.mark.skipif(not IS_CUPY_BACKEND, reason="compares the CuPy path with the NumPy one")
+def test_leading_eigvec_on_the_gpu_matches_the_cpu(monkeypatch):
+    import src.numerics.linalg as linalg
+
+    C = _spd_with_gap(np.random.default_rng(7), 64, 30, 0.95)[0]
+    gpu = host(linalg.leading_eigvec(xp.asarray(C)))
+    monkeypatch.setattr(linalg, "xp", np)
+    monkeypatch.setattr(linalg, "IS_CUPY_BACKEND", False)
+    cpu = linalg.leading_eigvec(C)
+    np.testing.assert_allclose(gpu, cpu, rtol=0, atol=1e-12)

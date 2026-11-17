@@ -49,7 +49,7 @@ from src.components.splitting import SPLIT_STRATEGIES, SplitData  # noqa: E402
 from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.kernels import source as kernel_source  # noqa: E402
-from src.numerics import grid_cell_coords  # noqa: E402
+from src.numerics import grid_cell_coords, leading_eigvec  # noqa: E402
 from src.numerics.segments import SEGMENT_CHUNK  # noqa: E402
 from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
@@ -654,7 +654,7 @@ def afinni_split(levels: list[Level]) -> dict:
 
     def direction(strategy, data: SplitData):
         M, C = (to_host(a)[0] for a in strategy.metric(data))
-        a = M @ np.linalg.eigh(C)[1][:, -1]
+        a = M @ to_host(leading_eigvec(C[None]))[0]  # the library's u_1, with its sign, so the halves match its cut
         order, child_counts = (to_host(v) for v in strategy.split(data))
         return a / np.linalg.norm(a), order, child_counts
 
@@ -1747,7 +1747,7 @@ def compare(afinni: AdaptiveSurrogate, art: AdaptiveSurrogate, afinni_nodes: lis
                 "depth": max(nd.level for nd in nodes)}  # fmt: skip
 
     return {"afinni": summary(ea, oa, afinni, afinni_nodes), "art": summary(er, orr, art, art_nodes),
-            "slice_x2": x2, "grid": n, "flagged_on_line": int(flagged.sum())}  # fmt: skip
+            "slice_x2": x2, "grid": n, "flagged_on_line": int(flagged.sum()), "slice_points": int(t.size)}  # fmt: skip
 
 
 # ----------------------------------------------------------------------------- work stealing

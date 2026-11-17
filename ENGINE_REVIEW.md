@@ -500,6 +500,21 @@ tail together.
   threshold.
 - **Bit-identical.** Yes, both algorithms, if the inner-sum orders are kept (GPU only; CPU
   unaffected).
+- **Measured** (Nsight on a laptop RTX 2000 Ada, Rosenbrock tol 0.3 with the high-dimensional
+  study's settings, levels capped so a run takes under a minute). None of the kernels named above
+  is where the time goes at d = 60 to 100:
+
+  | run | largest costs (share of GPU kernel time) | named kernels |
+  |---|---|---|
+  | AFINNI, d = 60 / 100 | the split's batched `eigh` (cuSOLVER `syevj` / `syevbj` and its rotations): 68% / 87% | `batched_inplace_cholesky_solve` 4.0% / 1.9%; `cluster_stats`' `MAXD 128` not reached |
+  | ART affine, d = 60 / 100 | the split search 60% / 71% (its weighted Grams, `segment_cross_tiled`, more than half of it); `hr_walk` 29% / 18% | `spd_solve_factored` outside the split 2.7% / 6.2%; `hr_walk`'s `MAXD 256` not reached |
+
+  Of the two `eigh` calls in AFINNI's split, the one on `CovZ` used only the leading eigenvector.
+  `leading_eigvec` (repeated squaring with `det_matmul`, the same steps on both backends) replaced
+  it, a deliberate numerical change of AFINNI's trees: the split stage took 24.8 -> 14.1 s at
+  d = 100 (5 levels), 3.8 -> 2.7 s at d = 60, 1.9 -> 1.3 s at d = 20 and 2.4 -> 2.1 s at d = 4,
+  with leaf counts, evaluations and test errors within the spread over 3 seeds. The metric's
+  `eigh`, which needs every eigenpair, remains: about half of the former `eigh` time.
 
 ### S7. Host-device traffic on the GPU
 
