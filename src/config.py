@@ -116,9 +116,10 @@ class ARTSettings:
     n_bins: int = 16
     n_directions: int = 6
     n_screened: int = 3
-    # 40: at 20 nearly every node stops at the iteration limit; 40 gives fewer leaves or
-    # lower error for about 35% more build time (the reference ART allows 200).
-    soft_iters: int = 40
+    # The reference ART's iteration cap. Against 40, on its benchmark problems at d >= 3, it builds
+    # 5-30% fewer leaves for the same test error (4x fewer on a 5-D plane wave), and so fewer
+    # oracle calls, for about 2-3x the training time where the trees are about the same size.
+    soft_iters: int = 200
     # The soft gate's width (h in the companion) as a fraction of the std of the node's scores.
     soft_temperature: float = 0.1
     soft_weight_floor: float = 1e-8  # delta in W = delta + (1 - 2 delta) sigma

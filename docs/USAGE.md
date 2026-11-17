@@ -208,7 +208,7 @@ Settings are in `art=ARTSettings(...)`:
 | `validation_samples` | fresh points per node on which the deployed model is checked; a diagnostic |
 | `min_side_margin` | a split leaves at least `d + 1 + margin` points on each side |
 | `walk_steps`, `max_walk_steps`, `mixing_z` | hit-and-run steps per new point (box and grid roots are sampled exactly); chains that still drift between their halfway and last step are lengthened up to `max_walk_steps`; chains that did not move are rerun with coordinate directions; a node still drifting, stuck or with an infeasible step is marked `insufficient_sampling` (training warns) |
-| `n_bins`, `n_directions`, `n_screened`, `soft_iters`, `soft_temperature` | the bins search and the soft optimizer (defaults: 16, 6, 3, 40, 0.1) |
+| `n_bins`, `n_directions`, `n_screened`, `soft_iters`, `soft_temperature` | the bins search and the soft optimizer (defaults: 16, 6, 3, 200, 0.1) |
 | `steal_min_load`, `steal_size` | work-stealing thresholds in work units: points after top-up and validation (default: a few nodes) |
 
 Each rejected node is split by a plane (see `split_search`), cut where the stored

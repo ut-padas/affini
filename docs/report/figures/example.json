@@ -246,7 +246,7 @@
       "left": 8,
       "right": 52,
       "n_bins": 16,
-      "soft_iters": 40,
+      "soft_iters": 200,
       "temperature": 0.1,
       "art_worst": 1.2,
       "afinni_worst": 5.3,
@@ -295,7 +295,7 @@
     },
     "forest": {
       "roots": 4,
-      "leaves": 17,
+      "leaves": 16,
       "code": "100",
       "pair": [
         0,
@@ -573,28 +573,28 @@
     "flagged_on_line": 0
   },
   "steal": {
-    "leaves": 1480,
+    "leaves": 1365,
     "leaves_per_rank": [
-      294,
-      292,
-      300,
-      234,
-      191,
-      169
+      334,
+      219,
+      262,
+      167,
+      261,
+      122
     ],
-    "steals": 16,
+    "steals": 17,
     "ranks": 6,
     "atol": 0.01,
     "batch_size": 240,
     "depth": 15,
     "runs": {
       "root_static": {
-        "wall": "6.83",
+        "wall": "24.42",
         "speedup": "1.0",
-        "wall_range": "6.81\u20136.96",
+        "wall_range": "24.37\u201325.03",
         "idle_percent": 83,
         "leaves_per_rank": [
-          1480,
+          1365,
           0,
           0,
           0,
@@ -604,52 +604,52 @@
         "grants": 0
       },
       "root_steal": {
-        "wall": "1.76",
-        "speedup": "3.9",
-        "wall_range": "1.68\u20131.76",
-        "idle_percent": 20,
+        "wall": "5.51",
+        "speedup": "4.4",
+        "wall_range": "5.50\u20135.61",
+        "idle_percent": 9,
         "leaves_per_rank": [
-          294,
-          292,
-          300,
-          234,
-          191,
-          169
+          334,
+          219,
+          262,
+          167,
+          261,
+          122
         ],
-        "grants": 16
+        "grants": 17
       },
       "grid_static": {
-        "wall": "1.74",
-        "speedup": "3.9",
-        "wall_range": "1.73\u20131.75",
-        "idle_percent": 25,
+        "wall": "7.18",
+        "speedup": "3.4",
+        "wall_range": "6.77\u20137.47",
+        "idle_percent": 26,
         "leaves_per_rank": [
-          321,
-          203,
-          165,
-          232,
-          309,
-          208
+          295,
+          193,
+          167,
+          228,
+          314,
+          188
         ],
         "grants": 0
       },
       "grid_steal": {
-        "wall": "1.53",
-        "speedup": "4.5",
-        "wall_range": "1.52\u20131.54",
-        "idle_percent": 11,
+        "wall": "6.23",
+        "speedup": "3.9",
+        "wall_range": "6.22\u20136.39",
+        "idle_percent": 5,
         "leaves_per_rank": [
-          170,
-          309,
-          288,
-          269,
-          160,
-          242
+          189,
+          274,
+          264,
+          210,
+          153,
+          295
         ],
-        "grants": 9
+        "grants": 15
       }
     },
-    "grid_leaves": 1438,
+    "grid_leaves": 1385,
     "repeats": 3,
     "cpus": 6
   }

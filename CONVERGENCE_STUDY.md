@@ -399,7 +399,7 @@ search with the same 200-iteration cap (`--library-soft-iters 200`). Groups:
 | Group | Runs | Purpose |
 |---|---|---|
 | `conv` | 130 (problem, d, degree, tol) cells x 3 seeds = 390 runs per code (S 300, M 60, L 30) | the convergence curves |
-| `library_default` | this library's side only, seed 1, its default 40 soft iterations | the shipped default against the same reference runs |
+| `library_default` | this library's side only, seed 1, its default soft iterations (`ARTSettings.soft_iters`, 200 since the comparison below; 40 before) | the shipped default against the same reference runs |
 | `depth` | spherical piecewise, 4 d x 6 depths x 3 seeds x 2 codes | a discontinuous target: convergence of the share above tol with depth |
 | `exact_target` | quadratic leaves on the quadratic, d=2, 3, 5 | must stop at the root, error ~ 1e-10 |
 | `mpi` | this library's ART, Rosenbrock d=3, P = 1, 2, 4 with stealing | identical tree on any rank count |

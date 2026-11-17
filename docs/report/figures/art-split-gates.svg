@@ -4598,18 +4598,18 @@ z
     </g>
    </g>
    <g id="line2d_1">
-    <path d="M 62.752082 131.392 
-L 27.551619 -1 
+    <path d="M 62.754207 131.392 
+L 27.550844 -1 
 " clip-path="url(#p820f91a44d)" style="fill: none; stroke: #424242; stroke-width: 1.2; stroke-linecap: square"/>
    </g>
    <g id="line2d_2">
-    <path d="M 61.582803 131.392 
-L 26.382341 -1 
+    <path d="M 61.584922 131.392 
+L 26.38156 -1 
 " clip-path="url(#p820f91a44d)" style="fill: none; stroke-dasharray: 0.6,0.99; stroke-dashoffset: 0; stroke: #8a8a8a; stroke-width: 0.6"/>
    </g>
    <g id="line2d_3">
-    <path d="M 63.92136 131.392 
-L 28.720898 -1 
+    <path d="M 63.923492 131.392 
+L 28.720129 -1 
 " clip-path="url(#p820f91a44d)" style="fill: none; stroke-dasharray: 0.6,0.99; stroke-dashoffset: 0; stroke: #8a8a8a; stroke-width: 0.6"/>
    </g>
   </g>

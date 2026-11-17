@@ -10,8 +10,8 @@ relative to the results directory and ``args`` go to art_comparison.py after ``-
 Matched settings (group ``conv``): same target, domain, test set (``10000 d`` uniform points,
 seed 19), seed, leaf degree, pointwise relative tolerance (floor 1e-12), ``--max-depth``, sample
 multiplier 50 and soft-oblique split search with the same iteration cap (``--library-soft-iters
-200``, the reference's ``--max-iters``). Group ``library_default`` reruns this library's side with its
-own default (40 iterations). Problems follow the reference's recorded cluster presets
+200``, the reference's ``--max-iters``, pinned so the match does not depend on the default). Group
+``library_default`` reruns this library's side with its own default (``ARTSettings.soft_iters``). Problems follow the reference's recorded cluster presets
 (``tasmanian/oracle_presets.json``): offsets keep |f| away from 0, where a pointwise relative
 tolerance cannot be met by any leaf.
 
