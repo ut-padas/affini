@@ -62,7 +62,8 @@ def load_runs(results: Path) -> list[dict]:
             "N_0": data["N_0"], "mpi_size": data["mpi_size"], "coarse_factor": data["coarse_factor"],
             "num_initial_clusters": data["num_initial_clusters"], "min_pts_per_cluster": data["min_pts_per_cluster"],
             "gpu": data["IS_CUPY_BACKEND"], "N": data["N"], "N_c": data["N_c"], "p_o": m["perct_out"],
-            "p_o_exact": data.get("perct_out_exact", float("nan")),
+            # null when the launcher skipped the exact pass (--exact_outside_max_dim)
+            "p_o_exact": float("nan") if data.get("perct_out_exact") is None else data["perct_out_exact"],
             "e_in": m["in"]["l2_rel_error"], "e": m["all"]["l2_rel_error"],
             "p_in_good": 100.0 * m["n_in_good"] / n_in if n_in else float("nan"),
             "converged": data["converged"], "unresolved": data["num_unresolved_pts"],

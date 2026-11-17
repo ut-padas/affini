@@ -6,7 +6,8 @@
 #
 # Defaults: --device gpu, --max-tier L, the manuscript's groups (conv, conv_nh, lorenz_dims,
 # rosen_weak, wave_exact, iterative, mpi, seeds; not the conv_k10 diagnostic), --out
-# $STUDY_OUT/manuscript. Options given here override them. The tree must have no modified tracked
+# $STUDY_OUT/manuscript, --exact-outside-max-d 40 (p_o_exact blank above d = 40; pass none to run it
+# everywhere). Options given here override them. The tree must have no modified tracked
 # files, so the recorded commit describes the code that ran (ALLOW_DIRTY=1 to override). Rerunning
 # skips finished cases, so an interrupted run continues; the record is written at the end of each
 # invocation, from whatever has finished.
@@ -23,6 +24,6 @@ for ((i = 1; i <= $#; i++)); do
     [[ "${!i}" == --out ]] && { j=$((i + 1)); OUT="${!j}"; }
 done
 "$STUDY_DIR/paper/run_paper.sh" --device gpu --max-tier L \
-    --groups conv,conv_nh,lorenz_dims,rosen_weak,wave_exact,iterative,mpi,seeds --out "$OUT" --no-plots "$@"
+    --groups conv,conv_nh,lorenz_dims,rosen_weak,wave_exact,iterative,mpi,seeds --out "$OUT" --no-plots --exact-outside-max-d 40 "$@"
 [[ " $* " == *" --dry-run "* ]] && exit 0
 "$PYTHON" "$STUDY_DIR/paper/record_results.py" --out "$OUT" --machine "$MACHINE"

@@ -93,6 +93,11 @@ def tolerance_pairs(
 SEED = 0
 # --no-plots: the diagnostic figures each case saves beside its JSON (record runs read only the JSON)
 SAVE_PLOTS = True
+# --exact_outside_max_dim: above this d the exact-outside pass (p_o_exact) is skipped and recorded as
+# null. On the GPU it tests every flagged query against every leaf, so its cost grows with
+# flagged queries x leaves x d: on Table 2's Lorenz-96 runs (500,000 test points) about 30 min at
+# d = 80 on a GH200, and over 30 min already at d = 40 on an 8 GB laptop GPU.
+EXACT_OUTSIDE_MAX_DIM: int | None = None
 
 logger = logging.getLogger(__name__)
 _size = get_mpi_size()
@@ -234,12 +239,14 @@ def conduct_experiment_given_data(
         _predict_time = time.perf_counter() - _start_predict_time
         # p_o without the candidates' blind spot (a containing leaf whose centre is not among the
         # coarse_factor nearest): reported beside the paper's p_o, which used the candidates only.
-        _start_exact_time = time.perf_counter()
-        _, ung_mask_exact = surrogate.predict(
-            query_points=X_test, k_nn=K_NEIGHBOURS, strict_trust_region=False,
-            coarse_factor=COARSE_FACTOR, exact_outside=True,
-        )  # fmt: skip
-        _predict_exact_time = time.perf_counter() - _start_exact_time
+        ung_mask_exact, _predict_exact_time = None, None
+        if EXACT_OUTSIDE_MAX_DIM is None or DIM <= EXACT_OUTSIDE_MAX_DIM:
+            _start_exact_time = time.perf_counter()
+            _, ung_mask_exact = surrogate.predict(
+                query_points=X_test, k_nn=K_NEIGHBOURS, strict_trust_region=False,
+                coarse_factor=COARSE_FACTOR, exact_outside=True,
+            )  # fmt: skip
+            _predict_exact_time = time.perf_counter() - _start_exact_time
         _PREDICTED = True
 
     except Exception as e:
@@ -282,7 +289,8 @@ def conduct_experiment_given_data(
         "Train_time_s": _train_time,
         "Pred_time_s": _predict_time,
         "Pred_exact_time_s": _predict_exact_time,
-        "perct_out_exact": float(100.0 * xp.mean(ung_mask_exact)),
+        "perct_out_exact": None if ung_mask_exact is None else float(100.0 * xp.mean(ung_mask_exact)),
+        "exact_outside_max_dim": EXACT_OUTSIDE_MAX_DIM,
         "N_levels_max": surrogate.profiling_stats.get("num_levels", None),
         "num_generated_pts": surrogate.profiling_stats.get("num_generated_pts", None),
         "N": surrogate.profiling_stats.get("total_f_evals", None),
@@ -1001,6 +1009,10 @@ def setup_argparse(argv: list[str] | None = None):
         "--no_plots", action="store_true", help="skip the diagnostic figures saved beside each result JSON",
     )
     parser.add_argument(
+        "--exact_outside_max_dim", type=int, default=None,
+        help="skip the exact-outside pass (p_o_exact, recorded as null) above this dimension; default: never skip",
+    )  # fmt: skip
+    parser.add_argument(
         "--coarse_factor",
         help="The number of nearest neighbor points to use during inference.",
         type=int,
@@ -1049,8 +1061,9 @@ def setup_argparse(argv: list[str] | None = None):
 
 def run_experiment_from_args(args):
     """Run every (atol, rtol) pair from ``tolerance_pairs`` in every dimension of ``--dims``; existing results are skipped."""
-    global SAVE_PLOTS
+    global SAVE_PLOTS, EXACT_OUTSIDE_MAX_DIM
     SAVE_PLOTS = not args.no_plots
+    EXACT_OUTSIDE_MAX_DIM = args.exact_outside_max_dim
 
     # Grab values from dictionary
     dvec = args.dims

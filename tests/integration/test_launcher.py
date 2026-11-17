@@ -129,3 +129,23 @@ def test_given_cluster_sizes_are_used_named_and_summarized(tmp_path, monkeypatch
     assert result["config"]["num_initial_clusters"] == 5 and result["config"]["min_pts_per_cluster"] == 60
     summary = pd.read_csv(exp_dir / "_summary.csv")
     assert summary[["num_initial_clusters", "min_pts_per_cluster"]].values.tolist() == [[5, 60]]
+
+
+def test_the_exact_outside_pass_is_skipped_above_its_dimension_cap(tmp_path, monkeypatch):
+    assert launcher.setup_argparse([]).exact_outside_max_dim is None
+    assert launcher.setup_argparse(["--exact_outside_max_dim", "40"]).exact_outside_max_dim == 40
+    results = {}
+    for cap in (None, 2, 1):
+        monkeypatch.setattr(launcher, "RESULTS_DIR", tmp_path / str(cap))
+        monkeypatch.setattr(launcher, "EXACT_OUTSIDE_MAX_DIM", cap)
+        exp_dir = launcher.run_problem(
+            launcher.rosenbrock(None), dim=2, atol=0.1, rtol=0.1, error_eval_mode=SurrogateMode.AFFINE_COV_HESS,
+            Q_reg=launcher.DEFAULT_Q_REG, coarse_factor=launcher.DEFAULT_COARSE_FACTOR, N_train=2000,
+        )  # fmt: skip
+        (result_path,) = exp_dir.glob("*.json")
+        results[cap] = json.loads(result_path.read_text())
+    for cap in (None, 2):  # d <= cap runs the pass
+        assert isinstance(results[cap]["perct_out_exact"], float) and isinstance(results[cap]["Pred_exact_time_s"], float)
+    skipped = results[1]
+    assert skipped["perct_out_exact"] is None and skipped["Pred_exact_time_s"] is None
+    assert skipped["exact_outside_max_dim"] == 1 and skipped["N_c"] == results[None]["N_c"]

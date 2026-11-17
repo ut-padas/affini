@@ -306,7 +306,12 @@ queues grow with rejected clusters x `2 M`).
 The launcher also reports `p_o_exact` (`perct_out_exact` in each result), the share of test points
 outside every trust region from `predict(exact_outside=True)`; it does not depend on the candidate
 count. The record prints it next to the manuscript's `p_o`, unjudged: the paper has no such number,
-and its `p_o` used the candidates only.
+and its `p_o` used the candidates only. Its GPU search tests every flagged query against every leaf,
+so its cost grows with flagged queries x leaves x d: on Table 2's Lorenz-96 runs it takes 0.2 s at
+d = 20, 143 s at d = 40 and about 30 min at d = 80 on a GH200, against 3 s at d = 20 and over 30 min
+at d = 40 on an 8 GB laptop GPU. `run_manuscript.sh` therefore skips it above d = 40
+(`--exact-outside-max-d 40`, passed to the launcher as `--exact_outside_max_dim`), and the record
+leaves `p_o_exact` blank there; `--exact-outside-max-d none` runs it in every case.
 
 The manuscript's Lorenz rows used a JAX/diffrax flow map in float32 at rtol = atol = 1e-3. The
 re-run uses the library's batched ensemble integrator (`integrate_ensemble` in
