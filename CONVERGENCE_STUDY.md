@@ -821,8 +821,10 @@ leaves.
    split search, and solves by Cholesky where the Gram's 1-norm reciprocal condition number is
    at least 1e-10, else by QR on the node's rows (`lstsq_auto`). AFINNI keeps Eq. 3's ridge and is
    bit-identical; `leaf_fit="tikhonov"` restores the ridge for ART. With it the thin-box check
-   passes at every aspect ratio. The remaining differences in how ART splits a node (start,
-   gate width, optimizer, minimum side, retries) are being ported from the reference next.
+   passes at every aspect ratio. The split search stays this library's (the bins screen, then the
+   soft polish, 200 iterations as the reference allows): where the reference finishes, it reaches
+   the reference's accuracy with as many or fewer leaves ("Split search" and "Soft iterations"
+   above). The reference's start, gate width, minimum side and retries are not ported.
 2. **The `e_nh` column (D3).** The no-Hessian baseline is 2-5x more accurate than the paper's, in
    the paper-era code as now; no code state or setting tried reproduces the column, and the
    paper-era script has no `e_nh` runs, and the paper-era GPU path gives today's values too.
