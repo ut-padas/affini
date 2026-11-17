@@ -49,7 +49,7 @@ Optional backends are uv *extras*; combine them freely, e.g. `uv sync --extra gp
 | -------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | CPU only             | `uv sync`                                | All platforms.                                                                                          |
 | CPU + MPI            | `uv sync --extra mpi`                    | Ships its own MPI runtime (MPICH on Linux/macOS, Intel MPI on Windows), so no system install is needed. |
-| NVIDIA GPU (CUDA 12) | `uv sync --extra gpu`                    | Linux and Windows. Only an NVIDIA driver is needed, because the CUDA libraries come from pip.           |
+| NVIDIA GPU (CUDA 12) | `uv sync --extra gpu`                    | Linux and Windows. Only an NVIDIA driver is needed, because the CUDA libraries come from pip. On Linux it also installs JAX's CUDA build (the Lorenz-96 flow map). |
 | GPU + MPI            | `uv sync --extra gpu --extra mpi`        |                                                                                                         |
 | HPC cluster          | `uv sync --extra gpu --extra mpi-system` | Uses the cluster's own MPI. See [HPC clusters](docs/USAGE.md#hpc-clusters).                        |
 

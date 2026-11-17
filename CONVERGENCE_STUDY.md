@@ -303,9 +303,10 @@ the Hessian runs of the same row. Each run records `wall_s` and `peak_rss_gib_ra
 `OUT/report/cost.csv`; run S first and extrapolate. Watch `free -g` on M/L runs (AGENTS.md:
 queues grow with rejected clusters x `2 M`).
 
-Lorenz-96 on the GPU needs a JAX with CUDA (`uv pip install "jax[cuda12]"`); with the default
-CPU-only `jaxlib`, `run_paper.sh` runs the Lorenz cases on the CPU and says so
-(`--lorenz-device` overrides).
+Lorenz-96 on the GPU uses JAX's CUDA build, which the `gpu` extra installs on Linux
+(`uv sync --extra gpu`); with a CPU-only `jaxlib` (other platforms, or an environment without
+the extra), `run_paper.sh` runs the Lorenz cases on the CPU and says so (`--lorenz-device`
+overrides).
 
 ### Collecting and judging (Part A)
 
@@ -802,8 +803,8 @@ leaves.
   themselves.
 - **Paper-era settings unknown**: which `coarse_factor` and caps Table 2 used, and the Lorenz
   horizon in the text. The study uses the script's and caption's values; decide if they fail.
-- **Lorenz-96 GPU** needs `jax[cuda12]`; otherwise it runs on the CPU with SciPy, a slightly
-  different (more accurate) flow map.
+- **Lorenz-96 GPU** needs JAX's CUDA build (in the `gpu` extra on Linux); otherwise it runs on the
+  CPU with SciPy, a slightly different (more accurate) flow map.
 - **Batch-size dependence**: AFINNI's trees depend on the GPU batch cap; a 16 GB GPU and the
   paper's 96 GB H100 give statistically, not bitwise, equal trees.
 - **Reference sampler and optimizer variants** (`parallel_numba`, CUDA optimizers) give different
@@ -844,8 +845,8 @@ leaves.
    code's `cap_initial_augmentation_budget` (`K_0` down to 16, `M` up to 31,250), and
    `coarse_factor` 10 (script) versus `2 d^2` (text) for d up to 80. The study uses the caption
    and the script; switch if Table 2 does not reproduce.
-5. **Lorenz-96 on the GPU**: install `jax[cuda12]` (the paper's JAX flow map, rtol 1e-3) or accept
-   the CPU SciPy flow map (rtol 1e-6) for those rows.
+5. **Lorenz-96 on the GPU: decided.** The `gpu` extra installs `jax[cuda12]` on Linux, so the
+   Lorenz rows run the paper's JAX flow map (rtol 1e-3) on the GPU.
 6. **Paper text vs code** (fix the text or the code): quadratic spectrum `i^-3` (text) vs `5^-i`
    (code); "rtol = atol in every experiment" vs Lorenz's absolute `tol * max|f|`; Figure 9's
    isotropic Gaussian, wave domain `[-4, 4]` and Rosenbrock test distribution; the

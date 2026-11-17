@@ -49,6 +49,11 @@ from typing import Any
 import numpy as np
 from array_api_compat import array_namespace
 
+# JAX (the Lorenz-96 flow map) would otherwise reserve 75% of the GPU when it first runs, and the
+# refinement engine sizes its batches from the memory still free: let JAX allocate on demand. Set
+# here, before any JAX computation, so that every entry point that imports the library gets it.
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+
 logger = logging.getLogger(__name__)
 
 _TRUE = {"1", "on", "true", "yes"}

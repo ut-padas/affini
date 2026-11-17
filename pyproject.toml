@@ -55,6 +55,8 @@ mpi-system = [
 gpu = [
     "cupy-cuda12x[ctk]>=13.6.0 ; sys_platform != 'darwin'",
     "nvidia-ml-py>=12.535.0 ; sys_platform != 'darwin'",
+    # JAX's CUDA build for the Lorenz-96 flow map (the manuscript's experiments); Linux only.
+    "jax[cuda12]>=0.7.0 ; sys_platform == 'linux'",
 ]
 
 [tool.uv]
