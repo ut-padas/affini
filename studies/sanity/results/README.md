@@ -8,7 +8,7 @@ label). The machine's full record (`RESULTS.md`, libraries, run settings) stayed
 
 | Record | Commit | Holds |
 |---|---|---|
-| `2026-11-17_b4bac64_gh200-node-96-gb-hbm` | `b4bac64` | every group but mpi, taken before Table 2 d = 80 and Table 3 #3-4 finished |
+| `2026-11-17_b4bac64_gh200-node-96-gb-hbm` | `b4bac64` | every group; the mpi group at tol 0.05 only (its tol 0.005 cases were stopped) |
 | `2026-11-17_d2537a9_gh200-node-96-gb-hbm` | `d2537a9` | Table 2 with the paper-era cluster sizes |
 | `2026-11-17_ffbd39e_gh200-node-96-gb-hbm` | `ffbd39e` | Figure 8's exact-gradient runs with 50 candidates |
 

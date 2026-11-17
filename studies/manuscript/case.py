@@ -30,6 +30,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 1
+ENVIRONMENT = ("SURROGATE_DEVICE", "SURROGATE_MPI", "OMP_NUM_THREADS", "NUMBA_NUM_THREADS", "OPENBLAS_NUM_THREADS")
 
 
 def functions(name: str):
@@ -100,7 +101,8 @@ def provenance() -> dict:
         "commit": git("rev-parse", "HEAD"), "tracked_changes": bool(git("status", "--porcelain", "--untracked-files=no")),
         "python": platform.python_version(), "libraries": libs, "machine": platform.machine(), "cpu": cpu,
         "cores": os.cpu_count(), "ram_gib": psutil.virtual_memory().total / 2**30, "gpu": gpu,
-        "environment": {k: v for k, v in os.environ.items() if k.startswith(("SURROGATE_", "OMP_", "NUMBA_NUM_THREADS"))},
+        # The settings that change a run, by name: a wildcard would also catch variables holding paths.
+        "environment": {k: os.environ[k] for k in ENVIRONMENT if k in os.environ},
     }  # fmt: skip
 
 

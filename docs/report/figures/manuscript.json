@@ -5,7 +5,7 @@
    "commit": "b4bac64",
    "recorded": "2026-11-17",
    "machine": "GH200 node (96 GB HBM)",
-   "gpu_runs": "169 of 169"
+   "gpu_runs": "172 of 176"
   },
   {
    "name": "2026-11-17_d2537a9_gh200-node-96-gb-hbm",
@@ -1975,19 +1975,19 @@
      "cells": [
       "145.0",
       "1,600,889",
-      "–",
-      "–",
-      "–",
-      "–",
-      "–"
+      "237,336",
+      "9.69%",
+      "1.18E-2",
+      "1.54E-2",
+      "96.1%"
      ],
      "marks": [
       null,
       null,
       null,
+      "better",
       null,
-      null,
-      null,
+      "better",
       null
      ]
     },
@@ -1995,19 +1995,19 @@
      "cells": [
       "72.5",
       "9,061,035",
-      "–",
-      "–",
-      "–",
-      "–",
-      "–"
+      "1,051,125",
+      "9.86%",
+      "6.09E-3",
+      "8.20E-3",
+      "95.7%"
      ],
      "marks": [
       null,
       null,
       null,
+      "better",
       null,
-      null,
-      null,
+      "better",
       null
      ]
     }
@@ -2018,7 +2018,11 @@
    "differences": [
     {
      "mark": "better",
-     "text": "$p_o$ 0.33–0.37× the manuscript's (atol 579.8, atol 289.9)"
+     "text": "$p_o$ 0.33–0.41× the manuscript's (atol 579.8, atol 289.9, atol 145.0, atol 72.5)"
+    },
+    {
+     "mark": "better",
+     "text": "$e$ 0.74–0.78× the manuscript's (atol 145.0, atol 72.5)"
     }
    ]
   },

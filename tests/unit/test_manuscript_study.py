@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from studies.manuscript import case as case_module
 from studies.manuscript import collect, run, spec
 from studies.manuscript.case import run_case
 
@@ -42,6 +43,7 @@ def test_a_case_records_both_searches_and_the_exact_one_flags_no_more(tmp_path):
     assert r["exact"]["p_o"] <= r["candidates"]["p_o"]
     assert r["level_stats"] and all("points_start" in lv and "host_rss_gib" in lv for lv in r["level_stats"])
     assert r["provenance"]["commit"] and r["memory"]["host_peak_gib"] > 0
+    assert set(r["provenance"]["environment"]) <= set(case_module.ENVIRONMENT)  # no variable that could hold a path
 
     lorenz = spec.Case("lorenz96", 5, "hessian", 0, 2000, 8, 60, tol=0.1)
     r = run_case(lorenz.as_dict(), tmp_path / "l.json", n_test=2000)

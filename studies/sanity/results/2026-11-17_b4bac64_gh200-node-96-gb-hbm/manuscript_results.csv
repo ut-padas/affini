@@ -328,6 +328,12 @@ Table 2,4,p_o,87.337
 Table 2,4,p_o_exact,19.830000000000002
 Table 2,4,e_in,0.2031237512627621
 Table 2,4,e,0.24866313586238564
+Table 2,5,N,294183728
+Table 2,5,N_c,363951
+Table 2,5,p_o,99.9954
+Table 2,5,p_o_exact,99.8074
+Table 2,5,e_in,0.35805744282590585
+Table 2,5,e,1.9769547496446755
 Table 3,1,N_c,6453
 Table 3,1,p_o,5.086
 Table 3,1,p_o_exact,3.95
@@ -340,6 +346,18 @@ Table 3,2,p_o_exact,2.282
 Table 3,2,e_in,0.023917175655180284
 Table 3,2,e,0.02866720889239927
 Table 3,2,p_in_good,95.64984463730848
+Table 3,3,N_c,237336
+Table 3,3,p_o,9.686
+Table 3,3,p_o_exact,1.8079999999999998
+Table 3,3,e_in,0.011825934824163336
+Table 3,3,e,0.015350247799930722
+Table 3,3,p_in_good,96.07148393383086
+Table 3,4,N_c,1051125
+Table 3,4,p_o,9.86
+Table 3,4,p_o_exact,1.1560000000000001
+Table 3,4,e_in,0.0060947837291024315
+Table 3,4,e,0.008199111955695232
+Table 3,4,p_in_good,95.7288662081207
 "Figure 8 table, LSQ gradient, rtol 0.1",,N_c,4546
 "Figure 8 table, LSQ gradient, rtol 0.1",,p_o,0.5655925794253579
 "Figure 8 table, LSQ gradient, rtol 0.1",,p_o_exact,0.24024218135591394
