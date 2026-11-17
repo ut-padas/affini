@@ -218,8 +218,9 @@ __marimo__/
 # VS Code Settings
 .vscode/
 
-# Results Directory
+# Results Directory (the convergence study's records are tracked)
 results/
+!studies/convergence/results/
 
 # Profiling data
 *.prof

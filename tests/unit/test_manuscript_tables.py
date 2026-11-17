@@ -44,8 +44,12 @@ def test_a_record_of_the_manuscripts_own_values_reproduces_its_tables(tmp_path):
     assert abouts == [{"name": "record", "commit": "0123456", "recorded": "2026-11-17", "machine": "test node", "gpu_runs": "1 of 1"}]
     by_key = {t["key"]: t for t in mt.tables(values, walls)}
     assert all(t["sources"] == ([] if t["key"] == "table-5" else [0]) for t in by_key.values())
+    def cells(rows):
+        return [r.get("cells", r.get("group")) for r in rows]
+
     for key in ("table-1a", "table-1b", "table-2", "table-3", "figure-8"):
-        assert by_key[key]["rerun"] == by_key[key]["paper"], key
+        assert cells(by_key[key]["rerun"]) == cells(by_key[key]["paper"]), key
+        assert by_key[key]["differences"] == [] and not any(m for r in by_key[key]["rerun"] for m in r.get("marks", []))
     for paper, rerun in zip(by_key["table-4"]["paper"], by_key["table-4"]["rerun"], strict=True):
         if "cells" in paper and paper["cells"][1] == "AFINNI":
             assert rerun["cells"][:4] == paper["cells"][:4] and rerun["cells"][4] == mt.MISSING
@@ -76,7 +80,9 @@ def test_a_later_record_replaces_the_tables_it_holds_and_is_named_as_their_sourc
     assert by_key["table-2"]["sources"] == [1] and by_key["table-1a"]["sources"] == [0]
     first = by_key["table-2"]["rerun"][0]["cells"]
     assert first[3] == mt.count(2 * pv._LORENZ_DIMS[0][3])  # N_c from the supplementary record
-    assert by_key["table-1b"]["rerun"] == by_key["table-1b"]["paper"]  # untouched by the second record
+    assert [r.get("cells") for r in by_key["table-1b"]["rerun"]] == [r.get("cells") for r in by_key["table-1b"]["paper"]]
+    # doubling every Table 2 number: worse for counts and errors, beyond the 25% band
+    assert {d["mark"] for d in by_key["table-2"]["differences"]} == {"worse"}
 
 
 def test_table2_is_sized_as_the_code_that_produced_it_and_says_so():
@@ -91,3 +97,13 @@ def test_cells_follow_the_manuscripts_formats():
     assert [mt.sci(2.32e5), mt.sci(7.43e-2), mt.sci(3e-2, 1), mt.sci(None)] == ["2.32E5", "7.43E-2", "3E-2", mt.MISSING]
     assert [mt.count(5772), mt.count(1.25e5), mt.pct(0.0), mt.pct(16.9), mt.pct(20.0, "%")] == ["5,772", "1.25E5", "0.00", "16.9", "20.0%"]
     assert [mt.tol(0.05), mt.tol(0.005)] == ["0.05", "5E-3"]
+
+
+def test_a_difference_beyond_the_noise_band_is_marked_better_or_worse():
+    assert mt.compare("e", 1.0, 1.2) is None and mt.compare("e", 1.0, 1.3) == "worse"
+    assert mt.compare("N_c", 100, 70) == "better"
+    assert mt.compare("p_o", 0.3, 1.2) is None and mt.compare("p_o", 10.0, 2.0) == "better"  # 1-point floor
+    assert mt.compare("p_in_good", 50.0, 96.7) == "better" and mt.compare("e", 1.0, None) is None
+    lines = mt.differences([("#1", "e", 1.0, 2.0, "worse"), ("#2", "e", 1.0, 3.0, "worse"), ("#3", "N", 10.0, 2.0, "better")])
+    assert lines == [{"mark": "worse", "text": "$e$ 2–3× the manuscript's (#1, #2)"},
+                     {"mark": "better", "text": "$N$ 0.2× the manuscript's (#3)"}]

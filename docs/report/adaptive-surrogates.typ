@@ -2123,21 +2123,148 @@ design decisions behind them.
 #show: appendix
 #pagebreak(weak: true)
 
-= The manuscript's tables, re-run <sec:manuscript-tables>
-
 // Written by figures/manuscript_tables.py: the manuscript's numbers from
-// studies/convergence/paper/paper_values.py, the re-run's from a committed record of
-// studies/convergence/paper/run_manuscript.sh.
+// studies/convergence/paper/paper_values.py, the re-run's from committed records of
+// studies/convergence/paper/run_manuscript.sh, and Appendix A's size rule from cases.py.
 #let ms = json("figures/manuscript.json")
+
+= Experimental setup <sec:study-config>
+
+// The study this appendix specifies is being built in studies/manuscript; until then the
+// sanity check of Appendix B runs on studies/convergence/paper.
+
+This appendix specifies every experiment of the paper completely: the functions, the accuracy
+target, the algorithm's settings, the quantities reported and how they are aggregated. One rule
+fixes each setting in every experiment, unless the experiment varies that setting. Everything here
+is produced by one command from the repository (@sec:study-reproduce).
+
+== Test functions
+
+#block(breakable: false, table(
+  columns: (auto, 1fr, auto, auto),
+  inset: (x: 5pt, y: 4pt),
+  align: left + horizon,
+  table.header[Function][$f(x)$][Domain][$d$],
+  [Quadratic], [$1 + x^top Q Lambda Q^top x$, $Lambda = "diag"(5^(-1), ..., 5^(-d))$], [$[-3, 3]^d$], [2, 5, 10],
+  [Gaussian], [$1 + exp(-1/2 x^top Q D Q^top x)$, $D = "diag"(1^3, 2^3, ..., d^3)$], [$[-3, 3]^d$], [2, 5, 10],
+  [Rosenbrock], [$sum_(i=1)^(d-1) 100 (x_(i+1) - x_i^2)^2 + (1 - x_i)^2$], [$[-2, 3]^d$], [2, 5, 10],
+  [Wave], [$3/2 + cos(2 q^top x)$, $|q| = 1$], [$[-5, 5]^d$], [2, 5, 10],
+  [Lorenz-96], [$x_1(t = 0.1)$ for $dot(x)_j = (x_(j+1) - x_(j-2)) x_(j-1) - x_j + 1$, indices cyclic, $x(0) = x$], [$[-5, 5]^d$], [5, 10, 20, 40, 80],
+))
+
+$Q$ is a random rotation (the orthogonal factor of a matrix of standard normal entries, with
+determinant $+1$) and $q$ a random unit vector, both drawn once from a fixed seed: they are part of
+the function, not of the experiment. The Lorenz-96 flow map is integrated per point by the
+Dormand-Prince 5(4) pair in float64 with step control at $r_"tol" = a_"tol" = 10^(-6)$, so its
+error is far below every accuracy target of the experiments.
+
+== Accuracy target and reported quantities
+
+A surrogate value $hat(f)(x)$ is within the tolerance $"tol"$ when every output component $k$
+satisfies $|hat(f)_k - f_k| <= a_"tol"$ or $|hat(f)_k - f_k| <= r_"tol" |f_k|$, with
+$a_"tol" = r_"tol" = "tol"$. For Lorenz-96 the test is absolute only, at
+$a_"tol" = "tol" dot max|f|$ over the training sample. The tolerances are
+$"tol" = 0.1, 0.05, 0.02, 0.01, 0.005$.
+
+#block(breakable: false, table(
+  columns: (auto, 1fr),
+  inset: (x: 5pt, y: 4pt),
+  align: left + horizon,
+  table.header[Quantity][Definition],
+  [$N$], [evaluations of $f$ during training, including the initial sample],
+  [$N_c$], [leaves of the trained surrogate],
+  [$p_o$], [percentage of test points outside the trust region of every leaf, found by the exact search (@sec:exact-flag)],
+  [$e_"in"$, $e$], [relative $L^2$ error $norm(hat(f) - f) \/ norm(f)$ over the test points inside a trust region, and over all of them],
+  [$e_"nh"$], [$e$ of the same run without Hessian-informed splits],
+  [$p_"in,good"$], [percentage of the test points inside a trust region that are within the tolerance],
+))
+
+Each run also records the candidate search's own $p_o$ and errors (@sec:study-settings), the
+$L^infinity$ errors, the distribution of each point's error in units of its tolerance, its times
+and memory, and per level the clusters, points, time and memory.
+
+== Algorithm settings <sec:study-settings>
+
+#block(breakable: false, table(
+  columns: (auto, 1fr),
+  inset: (x: 5pt, y: 4pt),
+  align: left + horizon,
+  table.header[Setting][Value],
+  [Initial sample], [$N_0 = min(floor(5 dot 10^4 dot 1.3^d), 10^6)$ points uniform in the domain],
+  [Initial clusters, cluster size], [$M = min(floor(100 dot 1.3^d), floor(N_0 \/ 32))$ and $K_0 = min(floor(25 dot 1.3^d), floor(N_0 \/ (2 M)))$, so that the $K_0$ initial clusters, each topped up to $2M$ points before a split, fit in the sample; $k$-means initial clusters],
+  [Splitting], [Hessian-informed, from the Hessian estimated from function values; augmentation by convex combinations; no limit on the number of levels],
+  [Trust regions], [from each leaf's point scatter, its eigenvalues floored at $10^(-6)$ (`q_reg`)],
+  [Inference], [the leaf nearest in its trust metric ($k_"nn" = 1$) among the $kappa = 50$ nearest centres; a query that none of them contains is completed by the exact search, which finds every containing leaf],
+  [Test points], [$10^5$ points uniform in the domain, one fixed set per function and dimension],
+  [Seeds], [0, 1, 2, 3, 4: the initial sample and the training's random choices change, the function and the test points do not],
+))
+
+#block(breakable: false)[
+  #set text(9pt)
+  #table(
+    columns: 4,
+    inset: (x: 8pt, y: 3pt),
+    align: center + horizon,
+    table.header[$d$][$N_0$][$K_0$][$M$],
+    ..ms.sizes.map(r => (r.d, r.N_0, r.K_0, r.M).map(v => {
+      let t = str(v)
+      // thousands separators, as the tables print counts
+      let n = t.len()
+      range(n).map(i => (if i > 0 and calc.rem(n - i, 3) == 0 { "," } else { "" }) + t.at(i)).join()
+    })).flatten(),
+  )
+  #v(-0.4em)
+  Sizes by dimension, from the rules above.
+]
+
+== Experiments
+
+#block(breakable: false, table(
+  columns: (auto, 1fr),
+  inset: (x: 5pt, y: 4pt),
+  align: left + horizon,
+  table.header[Experiment][Runs],
+  [Convergence], [every function of the table at every $d$ and tolerance, with and without Hessian-informed splits ($e_"nh"$)],
+  [Dimension], [Lorenz-96 at $d = 5, 10, 20, 40, 80$ and $"tol" = 0.1$],
+  [Absolute tolerance], [Rosenbrock at $d = 5$ with the absolute test only, $a_"tol" = 579.8 dot 2^(-k)$ and $N_0 = 5 dot 10^4 dot 2^(5k\/2)$ for $k = 0, 1, 2, 3$, so that $N_0 prop a_"tol"^(-5\/2)$],
+  [Gradient], [Wave at $d = 5$ with the exact gradient in place of the estimated one, at every tolerance],
+  [Run progression], [Rosenbrock at $d = 10$ and $"tol" = 0.05$, level by level],
+  [Distributed], [Rosenbrock at $d = 5$, $N_0 = 10^5$, $"tol" = 0.05$ and $0.005$, on $P = 1, 2, 4, ..., 128$ CPU ranks of one node, with and without work stealing, seeds 0, 1, 2],
+  [Iterative refinement], [Gaussian, Quadratic, Rosenbrock and Wave at $d = 2$ and $"tol" = 0.05$: ten rounds, each adding $0.4 N_0$ points drawn uniformly outside every trust region, with candidates drawn in batches sized by the outside share observed so far],
+))
+
+Tables report the median over the seeds, and the data files give every seed. A case that does
+not fit in the memory or the time of the machine is reported as not run, and its cells are empty.
+
+== Reproducing the experiments <sec:study-reproduce>
+
+The repository's locked environment (`uv sync --locked`) installs every dependency. One command
+plans the experiments with their projected time and memory, runs them, cheapest first, each in its
+own process, and resumes where it stopped; a case that runs out of memory or time is recorded with
+the reason and the others continue. A second command collects every run into data files, one row
+per case and seed with every quantity above and its settings and provenance (commit, machine,
+library versions), and builds the paper's tables from them.
+
+#pagebreak(weak: true)
+
+= Sanity check: the overhauled code against the manuscript <sec:manuscript-tables>
+
+#pitfall(title: [Internal])[To be removed once verified.]
 #let ms-cell(r, c) = if r.at("strong", default: false) { strong(c) } else { c }
+// A re-run cell beyond the record's noise band from the manuscript's: green where it is better,
+// red where it is worse; the list under the table names the same cells.
+#let ms-better = rgb("#1b7a35")
+#let ms-worse = rgb("#b42318")
+#let ms-fill = (better: rgb("#e3f1e5"), worse: rgb("#fbe4e2"))
+#let ms-cells(r) = r.cells.enumerate().map(((k, c)) => {
+  let mark = r.at("marks", default: ()).at(k, default: none)
+  if mark == none { ms-cell(r, c) } else { table.cell(fill: ms-fill.at(mark), ms-cell(r, c)) }
+})
 // The re-run side names the records its values come from (a supplementary record can replace the
 // main one's values for a few groups).
 #let ms-side-head(t) = (
   [manuscript],
-  if t.sources.len() == 0 [re-run (none recorded)] else [re-run (#t.sources.map(i => {
-    let r = ms.records.at(i)
-    [#r.machine, #raw(r.commit)]
-  }).join("; "))],
+  if t.sources.len() == 0 [re-run (none recorded)] else [re-run (#t.sources.map(i => raw(ms.records.at(i).commit)).join(", "))],
 )
 // One table per manuscript table: its columns once for the manuscript and once for the re-run,
 // side by side in one grid, so that a row's two versions stay on one line and the table breaks
@@ -2150,7 +2277,7 @@ design decisions behind them.
   let line(r) = if "group" in r {
     (table.cell(colspan: n, align: left, eval(r.group, mode: "markup")),)
   } else {
-    r.cells.map(c => ms-cell(r, c))
+    ms-cells(r)
   }
   block(above: 1.4em, below: 0.6em, sticky: true)[
     #text(9pt)[#strong(t.title) #h(0.5em) #text(fill: luma(110), raw(t.label))]
@@ -2197,26 +2324,57 @@ design decisions behind them.
       grid-of(("rerun",))
     }
   })
-  block(above: 0.5em, below: 1.2em, text(8.5pt, eval(t.caption, mode: "markup")))
+  block(above: 0.5em, below: 0.4em, text(8.5pt, eval(t.caption, mode: "markup")))
+  if t.sources.len() > 0 {
+    set text(8.5pt)
+    block(above: 0.4em, below: 1.2em, if t.differences.len() == 0 [
+      - No major differences: every re-run number is within the noise band of the manuscript's.
+    ] else {
+      list(..t.differences.map(d => text(fill: if d.mark == "better" { ms-better } else { ms-worse })[
+        #if d.mark == "better" [*Better:*] else [*Worse:*] #eval(d.text, mode: "markup")
+      ]))
+    })
+  } else { v(0.8em) }
 }
 
-Every table of the AFINNI manuscript @manuscript, on the left as the manuscript prints it and on
-the right with the numbers this code measures when it re-runs the same experiments
-(`studies/convergence/paper/run_manuscript.sh`, described in `CONVERGENCE_STUDY.md`). Both sides use
-one format per column, so a cell can be compared digit by digit with the one beside it. A re-run
+The code behind the manuscript has since been rewritten: one refinement engine for both plans,
+new GPU kernels with deterministic sums, a float64 ODE integrator in place of the JAX float32 flow
+map, new trust-region regularization and new data structures throughout. This appendix checks that
+the rewrite still computes what the manuscript reports. It is a sanity check, not a reproduction to
+the digit: two implementations that draw random numbers differently and round differently cannot
+agree exactly, but a gross error (a wrong formula, a broken stage, a lost leaf) shows as a
+difference far beyond the run-to-run noise.
+
+Every table of the manuscript is shown on the left as the manuscript prints it and on the right as
+this code measures it, rerunning the same experiments (`studies/convergence/paper/run_manuscript.sh`,
+described in `CONVERGENCE_STUDY.md`). Where the re-run's settings had to differ from the text to
+reproduce a table, a note above it says so. Both sides use one format per column, so a cell can
+be compared digit by digit with the one beside it. A re-run
 value is the seed-0 run's; a "–" is a number the re-run does not have: an experiment outside the
-re-run matrix, a case that has not run or did not finish, or a quantity the case does not record.
+re-run matrix, a case that has not run or did not finish, or a quantity the case does not record. A
+re-run cell is shaded where it differs from the manuscript's by more than the record's noise band
+(25% for counts, errors and times; 1 point or 30% for percentages, whichever is larger):
+#text(fill: ms-better)[green] where the re-run is better, #text(fill: ms-worse)[red] where it is
+worse, lower being better for every quantity but $p_"in,good"$. The list under each table names
+those cells, regressions first, as the ratio of the re-run's number to the manuscript's.
 #if ms.records.len() == 0 [
   No re-run has been recorded yet, so every re-run cell is "–".
 ] else [
-  The re-run numbers come from the records #ms.records.map(r => [`studies/convergence/results/#r.name/`
+  The re-run numbers come from the records #ms.records.map(r => [#raw("studies/convergence/results/" + r.name + "/")
   (commit #raw(r.commit), recorded on #r.recorded on a #r.machine, #r.gpu_runs runs on the GPU)]).join([; ]),
-  a later one replacing an earlier one's values for the cases it holds; each table names the records
-  behind its re-run side. A record's `RESULTS.md` gives the machine, the libraries and the run
-  settings, and its `manuscript_results.csv` the seed replicates' range of every number.
+  a later one replacing an earlier one's values for the cases it holds; each table's re-run side names
+  the commits of the records behind it. `studies/convergence/results/README.md` describes them.
 ]
 
 #for t in ms.tables { ms-table(t) }
+
+*Verdict.* No table shows a gross error. Where the re-run differs from the manuscript beyond the
+noise band, the difference comes from a setting (Table 2's cluster sizes and Figure 8's candidate
+count, matched in the re-run), from a function instance drawn differently (the Gaussian's
+rotation), from seed-to-seed noise larger than the band (the Gaussian at $d = 5$), or from the
+known difference of the runs without Hessian splits, which this code makes more accurate than
+the manuscript's (`CONVERGENCE_STUDY.md`, D3). The Quadratic at $d = 10$ spends more evaluations than
+the manuscript at the two loosest tolerances for the same or a smaller error.
 
 The manuscript's values are printed as it prints them, typos included. The inconsistencies found
 between its tables are:

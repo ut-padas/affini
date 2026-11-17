@@ -1,0 +1,26 @@
+table,row,quantity,value
+"Figure 8 table, exact gradient, rtol 0.1",,N_c,1628
+"Figure 8 table, exact gradient, rtol 0.1",,p_o,0.1852989022117363
+"Figure 8 table, exact gradient, rtol 0.1",,p_o_exact,0.17452571022268187
+"Figure 8 table, exact gradient, rtol 0.1",,e_in,0.02347071043718279
+"Figure 8 table, exact gradient, rtol 0.1",,e,0.023544921676362466
+"Figure 8 table, exact gradient, rtol 0.05",,N_c,2305
+"Figure 8 table, exact gradient, rtol 0.05",,p_o,0.33720090925740387
+"Figure 8 table, exact gradient, rtol 0.05",,p_o_exact,0.2585566077373065
+"Figure 8 table, exact gradient, rtol 0.05",,e_in,0.012762218380164713
+"Figure 8 table, exact gradient, rtol 0.05",,e,0.01289635435569774
+"Figure 8 table, exact gradient, rtol 0.02",,N_c,3629
+"Figure 8 table, exact gradient, rtol 0.02",,p_o,0.9911336629930082
+"Figure 8 table, exact gradient, rtol 0.02",,p_o_exact,0.507417342684464
+"Figure 8 table, exact gradient, rtol 0.02",,e_in,0.005207671418165863
+"Figure 8 table, exact gradient, rtol 0.02",,e,0.00654625269299186
+"Figure 8 table, exact gradient, rtol 0.01",,N_c,5111
+"Figure 8 table, exact gradient, rtol 0.01",,p_o,2.4121176863492884
+"Figure 8 table, exact gradient, rtol 0.01",,p_o_exact,0.8241491871626644
+"Figure 8 table, exact gradient, rtol 0.01",,e_in,0.0026707713361460834
+"Figure 8 table, exact gradient, rtol 0.01",,e,0.0091349197223096
+"Figure 8 table, exact gradient, rtol 0.005",,N_c,7127
+"Figure 8 table, exact gradient, rtol 0.005",,p_o,5.605291791905024
+"Figure 8 table, exact gradient, rtol 0.005",,p_o_exact,1.26261810111718
+"Figure 8 table, exact gradient, rtol 0.005",,e_in,0.001652191790687889
+"Figure 8 table, exact gradient, rtol 0.005",,e,0.025413087081422443
