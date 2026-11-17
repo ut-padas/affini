@@ -747,7 +747,8 @@ search is therefore done in two stages: an exact Euclidean search for $kappa$ ca
 the right leaf: a long ellipsoid's centre can be far from a query its ellipsoid contains (query
 A in the picture). So $kappa$ should grow with the dimension and with how elongated the
 leaves are, and it is set empirically, for example $kappa = 2 d^2$; too small a $kappa$
-shows up as queries flagged outside although a leaf contains them.
+shows up as queries flagged outside although a leaf contains them. @sec:exact-flag makes the flag
+exact without searching every leaf.
 
 #implementation(title: [In the code])[
   `predict(X, k_nn=1, coarse_factor=10)` searches $kappa =$ `k_nn * coarse_factor`
@@ -767,8 +768,126 @@ shows up as queries flagged outside although a leaf contains them.
   region, and train again.
 ]
 
+#let ef = ex.afinni.exact_flag
+
+== Is a flagged query really outside? <sec:exact-flag>
+
+#question[The candidates are the $kappa$ centres nearest to the query. If none of their
+  ellipsoids contains it, could a leaf farther away still contain it, and can that be ruled
+  out without measuring the query's distance to every leaf?]
+
+#scene(side: left, width: 40%, panel("afinni-flag-miss"))[
+  It can happen. Here $kappa = #ef.kappa$: the query (black dot) has the nearest centre (grey
+  cross) right beside it, but that leaf's ellipse does not contain it, so the candidates flag
+  it (#swatch(red, shape: "dot") red ring). A long ellipse does contain it, at
+  $d = #ef.d_leaf$, but its centre is only the #ef.leaf_rank\th nearest. Over a grid of
+  #ef.grid queries, one candidate flags #ef.flagged_percent% of the domain while only
+  #ef.exact_percent% lies outside every ellipse. Here $kappa = #ex.kappa$ finds every
+  containing leaf (#ex.compare.afinni.outside_percent% flagged either way), but no
+  Euclidean $kappa$ guarantees it: the longer the leaves, the farther from its centre an
+  ellipse reaches.
+]
+
+Measuring $d_i$ for every leaf costs $N_c d^2$ per flagged query. Instead, each leaf is
+ruled out by the cheapest test that can rule it out, and none of the tests can rule out a
+leaf that contains the query.
+
+#scene(side: right, width: 40%, panel("afinni-flag-box"))[
+  Every ellipse lies in an axis-aligned box, its _bounding box_, and a query outside the box
+  is outside the ellipse: $d$ comparisons, usually stopped by the first. The ball of radius
+  $1 slash sqrt(lambda_min)$ around a leaf also holds its ellipse, but a long leaf's ball is
+  long in every direction. For the highlighted leaf the ellipse has area
+  #ef.long_leaf.ellipse_area, its box #ef.long_leaf.box_area and its ball (dashed)
+  #ef.long_leaf.ball_area. Over the domain a query lies in #ef.per_query.ellipses ellipses
+  on average, in #ef.per_query.boxes boxes and in #ef.per_query.balls balls. A needle in $d$
+  dimensions is about $1 slash sqrt(d)$ of its length wide on each axis, so the box gains on
+  the ball as $d$ grows.
+]
+
+#lemma(title: [the bounding box of a trust region])[
+  Every $x$ with $(x - c)^top T (x - c) <= 1$ satisfies $abs(x_k - c_k) <= sqrt((T^(-1))_(k k))$
+  on every axis $k$, and each bound is reached at one point of the ellipsoid.
+] <lem:box>
+
+#proof[
+  Write $x - c = T^(-1 slash 2) y$ with $norm(y) <= 1$. By Cauchy–Schwarz,
+  $x_k - c_k = (T^(-1 slash 2) e_k)^top y <= norm(T^(-1 slash 2) e_k) = sqrt(e_k^top T^(-1) e_k)$,
+  with equality for $y$ along $T^(-1 slash 2) e_k$.
+]
+
+A query inside a leaf's box still need not be inside its ellipse. Before the $d^2$ form, a
+second test of $d$ operations uses the ellipse's longest and shortest axes.
+
+#lemma(title: [a lower bound from the extreme axes])[
+  With $lambda_min$, $lambda_max$ the extreme eigenvalues of $T$ and $u$ the unit eigenvector of
+  $lambda_max$,
+  $ (x - c)^top T (x - c) >= lambda_min norm(x - c)^2 + (lambda_max - lambda_min) (u^top (x - c))^2 . $
+] <lem:bound>
+
+#proof[
+  In $T$'s eigenbasis the form is $sum_j lambda_j y_j^2$ with $sum_j y_j^2 = norm(x - c)^2$:
+  every $lambda_j >= lambda_min$, and the coordinate along $u$ carries $lambda_max$.
+]
+
+#figure(filmstrip(
+  ..ef.tree.levels.map(l => (panel("afinni-flag-tree-" + str(l.depth)),
+    [depth #l.depth: in #l.entered of #l.tested tested])),
+), kind: image, caption: [One query's walk down the tree of the leaves' boxes (buckets of
+  #ef.tree.bucket leaves, to show four levels; the code uses 16). At each depth the query is
+  tested only against the boxes whose parent it entered: it enters the #swatch(dark) dark
+  boxes, falls outside the #swatch(red) red ones, and their subtrees are skipped; the
+  #swatch(rgb(col.light)) pale boxes are never tested.]) <fig:flag-tree>
+
+The boxes are gathered in a tree. Each node holds the union of its leaves' boxes, so a query
+outside a node's box is outside every leaf below it, and the whole subtree is skipped. In
+@fig:flag-tree the query tests #ef.tree.tested of the #ef.tree.nodes nodes and reaches only
+#ef.tree.tested_leaves of the #ef.tree.leaves leaves.
+
+#translate(
+  [a leaf's bounding box: its half-width on axis $k$], [$h_k = sqrt((T^(-1))_(k k))$],
+  [a node's box: the union of its leaves' boxes], [$[min_i (c_i - h_i), max_i (c_i + h_i)]$],
+  [a leaf is tested only if the query is in its box and in its node's], [$abs(x_k - c_(i,k)) <= h_(i,k)$ for all $k$],
+)
+
+#proposition(title: [the search is exact])[
+  The walk returns exactly the leaves whose trust region contains the query.
+] <prop:exact-flag>
+
+#proof[
+  A subtree is skipped only when the query lies outside the union of its leaves' boxes, so,
+  by @lem:box, outside their trust regions. A leaf is skipped only when the query is outside
+  its box, or when the bound of @lem:bound exceeds 1, so its own form does too. Every other
+  leaf is decided by its form.
+]
+
+#implementation(title: [In the code])[
+  - `predict(..., exact_outside=True)` (`src/neighbors/containment.py`) runs the search for
+    the queries the candidates flag; the other queries keep their answers bit for bit. A
+    flagged query that a leaf contains is answered by its containing leaves, nearest first,
+    as if they had been candidates.
+  - The eigenvalues come from one batched `eigh` per model and are lowered by their rounding
+    error before the boxes and the bound are formed, so rounding can only widen a box. Nothing
+    is stored with the model: the index is built at the first such call.
+  - A node is split at the median of the axis whose two children have the smallest boxes
+    relative to it (overlapping children make a query enter both), and a query compares a
+    node's sides from the narrowest, where it is most likely to fall outside.
+  - On the CPU the walk runs in parallel over the queries (Numba,
+    `src/neighbors/containment_cpu.py`). On the GPU one kernel tests every (query, leaf) pair
+    with @lem:bound before the form (`contained_mask`).
+  - The launcher reports the exact share as `perct_out_exact`, beside the manuscript's
+    $p_o$, which used the candidates only.
+]
+
+#pitfall(title: [The cost follows the flagged queries])[
+  The search runs only for flagged queries, so it costs little where the queries lie near the
+  training data. Far from it, at high dimension, most queries are flagged, long leaves' boxes
+  overlap there, and the walk visits a large part of the tree: proving that a query is outside
+  every trust region is the expensive answer.
+]
+
 #takeaway[A leaf answers for the ellipsoid that contains its points; a query is answered
-  by the leaf nearest in the leaves' own metrics, and flagged if it is inside none.]
+  by the leaf nearest in the leaves' own metrics, and flagged if it is inside none. A walk down
+  a tree of the leaves' bounding boxes makes that flag exact.]
 
 = ART: a region for every node <sec:regions>
 
@@ -1264,6 +1383,7 @@ weights, floor and ridge appear in the fit and in the objective.
   [of which at new points, besides the centres],[#ex.compare.afinni.generated], [#ex.compare.art.generated],
   [share of the domain within the tolerance], [#ex.compare.afinni.within_percent%], [#ex.compare.art.within_percent%],
   [share of the domain flagged], [#ex.compare.afinni.outside_percent%], [#ex.compare.art.outside_percent%],
+  [the same, with the exact search (@sec:exact-flag)], [#ex.compare.afinni.outside_exact_percent%], [--],
   [largest error on the grid, in units of $atol$], [#ex.compare.afinni.max_error], [#ex.compare.art.max_error],
 )
 
@@ -1388,6 +1508,7 @@ this layout.
   [largest error, trust radius], [segmented maxima], [`segmented_max_float64`, one thread per cluster],
   [cut direction], [repeated squaring], [`det_matmul` (`leading_eigvec`)],
   [Hessian estimate, trust ellipsoid], [eigendecompositions], [CuPy's batched `eigh` (cuSOLVER)],
+  [exact outside flag (@sec:exact-flag)], [per (query, leaf) pair], [`contained_mask`, one thread per pair],
   [the median cut, the points nearest each centre], [sorts within clusters], [two stable `argsort`s over the whole batch],
   [new points (@sec:augment)], [per new coordinate], [one element-wise kernel],
   table.cell(colspan: 3, fill: luma(245))[*ART* (`src/art/`)],
@@ -1689,6 +1810,11 @@ only, while the GPU backend also runs on Windows, and these kernels are exact an
 same result on every run. The gathered trust matrices, $kappa d^2$ numbers per query, are
 the largest array of the chain.
 
+The exact outside flag (@sec:exact-flag) is the exception: how much work a query needs
+depends on where it lies, which on a GPU makes the threads of a warp diverge. The GPU
+therefore tests every (flagged query, leaf) pair in one kernel, which needs no tree and keeps
+the warps in step, while the CPU walks the tree.
+
 === ART: one level per pass
 
 #let passes = ex.art.passes
@@ -1971,6 +2097,7 @@ evaluator = Evaluator(f_fn=f)                    # f maps (N, d) points to (N, f
 afinni = AdaptiveSurrogate()                     # AFINNI: from a sample X0
 afinni.train(X0, TrainingConfig(atol={atol}, num_initial_clusters={n_init}, min_pts_per_cluster={n_min}), evaluator)
 values, outside = afinni.predict(queries, k_nn=1, coarse_factor={kappa})
+values, outside = afinni.predict(queries, exact_outside=True)  # flag exact for any kappa
 
 art = AdaptiveSurrogate()                        # ART: on a domain
 art.train(X0, TrainingConfig(atol={atol}, algorithm="art", domain=(lower, upper),

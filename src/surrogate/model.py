@@ -38,6 +38,7 @@ from src.engine.driver import refine_unguarded, run_collective
 from src.infra.backend import (
     MPI,  # real mpi4py.MPI, or a single-rank stand-in without MPI
 )
+from src.neighbors import TrustRegionContainment, best_containing
 from src.surrogate.persistence import (
     LEAF_PREFIX,
     MODEL_FORMAT_VERSION,
@@ -139,6 +140,8 @@ class AdaptiveSurrogate:
         self.profiling_stats = {}
 
         self.knn_index = None
+        # Built on the first predict(exact_outside=True) and reset with the leaves (_install).
+        self.containment: TrustRegionContainment | None = None
         self.search_stats: dict = {}  # last predict's kNN totals on this rank
         # ART: the explicit tree, and per-leaf host arrays named in
         # ART_LEAF_COLUMNS (terminal_reason / validation_status index TERMINAL_REASONS /
@@ -467,6 +470,7 @@ class AdaptiveSurrogate:
         state["knn_index"] = (
             _make_knn_index(state["X_src"]) if state["trust_matrices_src"] is not None else None
         )
+        state["containment"] = None
         if get_mpi_rank() == 0:
             logger.info(f"KNN Index built in {time.perf_counter() - t0:.4f}s")
         for name, value in state.items():
@@ -494,6 +498,7 @@ class AdaptiveSurrogate:
         strict_trust_region: bool = False,
         batch_size: int | None = None,
         predictor: str | None = None,
+        exact_outside: bool = False,
     ) -> tuple:
         """
         Predict collectively on every rank: rank 0's queries are scattered, predicted
@@ -506,6 +511,15 @@ class AdaptiveSurrogate:
         weights ``1 / d_i^2`` (``strict_trust_region`` drops leaves with distance > 1). A
         query is flagged outside when its best candidate (the leaf ``nu``) is > 1.
         ``batch_size`` (queries per chunk) defaults to ``knn_chunk_size``.
+
+        A long ellipsoid whose centre is not among the candidates can still contain a query,
+        so the flag depends on ``coarse_factor``. ``exact_outside=True`` searches every leaf
+        for the flagged queries (``src.neighbors.containment``): a query is then flagged only
+        if no trust region contains it, and a flagged query that one does contain is answered
+        by its containing leaves (the ``k_nn`` nearest in their metrics, ahead of the
+        candidates). Rows the first pass does not flag keep their bits. It costs one float32
+        pass over all centres per flagged query, so little while few are flagged; report
+        ``p_o`` with it, so that it does not depend on ``coarse_factor``.
 
         ``predictor="route"`` (the default, and only meaningful choice, for ART
         models): each query is routed down the tree to exactly one leaf, whose model
@@ -558,6 +572,7 @@ class AdaptiveSurrogate:
                 coarse_factor=coarse_factor,
                 strict_trust_region=strict_trust_region,
                 batch_size=batch_size,
+                exact_outside=exact_outside,
             )
 
         # Bring back to host and merge
@@ -579,10 +594,12 @@ class AdaptiveSurrogate:
         strict_trust_region: bool,
         batch_size: int | None = None,
         return_cluster_assignments: bool = False,
+        exact_outside: bool = False,
     ) -> tuple[Array, Array]:
         """
         Predict this rank's queries in chunks of ``batch_size`` (default ``knn_chunk_size``)
-        to bound the (chunk, k_coarse, d, d) trust-matrix gather; see ``predict`` for the method.
+        to bound the (chunk, k_coarse, d, d) trust-matrix gather; see ``predict`` for the method
+        and ``exact_outside``.
         """
         N, D = query_points.shape
         assert (
@@ -640,7 +657,8 @@ class AdaptiveSurrogate:
 
             nn_idx = xp.take_along_axis(nn_idx_coarse, top_k_local, axis=1)
             dist_sq = xp.take_along_axis(dist_sq_coarse, top_k_local, axis=1)
-
+            if exact_outside:
+                nn_idx, dist_sq = self._with_containing_leaves(batch_queries, nn_idx, dist_sq)
 
             # 4. Shepard's Inverse Distance Weighting
             # Weight = 1 / (dist_sq^(p/2) + eps): with p = 4 this is 1 / d_i^2, d_i = dist_sq the
@@ -803,14 +821,44 @@ class AdaptiveSurrogate:
             "measure": "uniform on the domain", "seed": int(seed), "atol": atol, "rtol": rtol,
         }  # fmt: skip
 
+    def containment_index(self) -> TrustRegionContainment:
+        """The exact containment search over this model's leaves, built on first use."""
+        if self.containment is None:
+            assert self.X_src is not None and self.trust_matrices_src is not None
+            self.containment = TrustRegionContainment(self.X_src, self.trust_matrices_src)
+        return self.containment
+
+    def _with_containing_leaves(self, queries: Array, nn_idx: Array, dist_sq: Array) -> tuple[Array, Array]:
+        """
+        ``nn_idx`` and ``dist_sq`` (rows, k) with each flagged row's (best distance > 1)
+        containing leaves ahead of its candidates, nearest first; the other rows unchanged.
+        """
+        flagged = xp.flatnonzero(xp.min(dist_sq, axis=1) > 1.0)
+        if flagged.shape[0] == 0:
+            return nn_idx, dist_sq
+        k = nn_idx.shape[1]
+        rows, leaves, d = self.containment_index().containing(queries[flagged])
+        if rows.shape[0] == 0:
+            return nn_idx, dist_sq
+        new_i, new_d = best_containing(rows, leaves, d, int(flagged.shape[0]), k)
+        # Containing leaves have distance <= 1 and every candidate of a flagged row > 1, so a
+        # stable sort puts them first; the inf padding goes last.
+        cat_d = xp.concatenate([new_d, dist_sq[flagged]], axis=1)
+        cat_i = xp.concatenate([new_i, nn_idx[flagged]], axis=1)
+        top = xp.argsort(cat_d, axis=1, **({} if IS_CUPY_BACKEND else {"kind": "stable"}))[:, :k]
+        nn_idx, dist_sq = nn_idx.copy(), dist_sq.copy()
+        nn_idx[flagged] = xp.take_along_axis(cat_i, top, axis=1)
+        dist_sq[flagged] = xp.take_along_axis(cat_d, top, axis=1)
+        return nn_idx, dist_sq
+
     def filter_unguaranteed_local(
-        self, query_points: Array, k_coarse: int = 10, batch_size: int | None = None
+        self, query_points: Array, k_coarse: int = 10, batch_size: int | None = None, exact_outside: bool = False
     ) -> Array:
         """
         Outside-trust-region mask only (``predict``'s flag), skipping model evaluation; for
         queries already local to this rank (no MPI scatter). "Unguaranteed" means outside every
         trust region, not that the inside answers are guaranteed. ``batch_size`` defaults to
-        ``knn_chunk_size`` with 50,000 queries where they fit.
+        ``knn_chunk_size`` with 50,000 queries where they fit. ``exact_outside`` as in ``predict``.
         """
         assert self.trained and self.X_src is not None and self.trust_matrices_src is not None
         N = query_points.shape[0]
@@ -837,6 +885,10 @@ class AdaptiveSurrogate:
 
             # 3. Mask: a query is outside if its closest Mahalanobis distance is > 1.0
             outside = xp.min(dist_sq_coarse, axis=1) > 1.0
+            if exact_outside and bool(xp.any(outside)):
+                flagged = xp.flatnonzero(outside)
+                rows, _, _ = self.containment_index().containing(batch_queries[flagged])
+                outside[flagged[rows]] = False
             all_outside.append(outside)
 
         return xp.concatenate(all_outside, axis=0)

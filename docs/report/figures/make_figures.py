@@ -49,6 +49,7 @@ from src.components.splitting import SPLIT_STRATEGIES, SplitData  # noqa: E402
 from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.kernels import source as kernel_source  # noqa: E402
+from src.neighbors import build_box_tree  # noqa: E402
 from src.numerics import grid_cell_coords, leading_eigvec  # noqa: E402
 from src.numerics.segments import SEGMENT_CHUNK  # noqa: E402
 from src.surrogate import AdaptiveSurrogate  # noqa: E402
@@ -69,6 +70,9 @@ AFINNI_SETTINGS = {"atol": ALPHA, "rtol": None, "num_initial_clusters": 4, "min_
 ART_MULTIPLIER = 20  # points per node = ART_MULTIPLIER * (d + 1)
 ART_SETTINGS = {"atol": ALPHA, "rtol": None, "max_levels": 12}
 KAPPA = 10  # Euclidean candidates at inference
+# Leaves per bucket of the box tree drawn in the exact-flag panels: the example's few leaves need
+# small buckets to show several levels (the library uses CPU_BUCKET).
+FIG_BUCKET = 2
 AUDIT_POINTS = 2000
 FOREST_ROOTS = 4  # the grid-root run of the locational-code section
 # The 4-rank run of the work-stealing panels: a tighter tolerance and small batches, so the
@@ -831,6 +835,116 @@ def afinni_trust(s: AdaptiveSurrogate, nodes: list[Node]) -> dict:
 
     panel("afinni-inference", inference, size=(2.7, 2.7))
     return {"trust_points": int(len(P)), "queries": found}
+
+
+def afinni_exact_flag(s: AdaptiveSurrogate, nodes: list[Node]) -> dict:
+    """
+    The exact outside flag: a query the candidates flag although a farther leaf contains it, the
+    leaves' bounding boxes against their balls, and one query's walk down the box tree. Every
+    containment is recomputed over all leaves and checked against the library's.
+    """
+    C, T = to_host(s.X_src), to_host(s.trust_matrices_src)
+    leaves = [n for n in nodes if n.leaf]
+    grid = domain_grid(80)
+    D = np.einsum("qnd,nde,qne->qn", grid[:, None] - C[None], T, grid[:, None] - C[None])
+    inside = D.min(axis=1) <= 1
+    for kappa in range(1, KAPPA + 1):  # the fewest candidates with a query they flag although a leaf contains it
+        out = np.ravel(to_host(s.predict(grid, k_nn=1, coarse_factor=kappa)[1])).astype(bool)
+        if np.any(out & inside):
+            break
+    exact = np.ravel(to_host(s.predict(grid, k_nn=1, coarse_factor=kappa, exact_outside=True)[1])).astype(bool)
+    if not np.array_equal(exact, ~inside):
+        raise SystemExit("The library's exact outside flag disagrees with the search over every leaf.")
+    E = np.linalg.norm(grid[:, None] - C[None], axis=2)
+    rank = np.argsort(np.argsort(E, axis=1, kind="stable"), axis=1, kind="stable")  # Euclidean rank of every leaf
+    nu = np.argmin(np.where(D <= 1, D, np.inf), axis=1)
+    miss = np.flatnonzero(out & inside)
+    clear = miss[D[miss, nu[miss]] <= 0.8]  # well inside its leaf, so the picture is unambiguous
+    pool = clear if clear.size else miss
+    q_i = int(pool[np.argmax(rank[pool, nu[pool]])])  # the containing leaf farthest down the Euclidean order
+    q, leaf = grid[q_i], int(nu[q_i])
+    cand = np.argsort(E[q_i], kind="stable")[:kappa]
+    # Boxes and balls: half-width sqrt((T^-1)_kk) on axis k, radius 1 / sqrt(lambda_min).
+    half = np.sqrt(np.einsum("nkk->nk", np.linalg.inv(T)))
+    radius = 1.0 / np.sqrt(np.linalg.eigvalsh(T)[:, 0])
+    in_box = np.all(np.abs(grid[:, None] - C[None]) <= half[None], axis=2)
+    in_ball = np.linalg.norm(grid[:, None] - C[None], axis=2) <= radius[None]
+    if np.any((D <= 1) & ~in_box) or np.any((D <= 1) & ~in_ball):
+        raise SystemExit("A trust ellipse leaves its bounding box or its ball.")
+    # The leaf whose ball most exceeds its box, among those whose ball the panel shows whole.
+    fits = np.all((C - radius[:, None] >= LOWER - 0.04 * WIDTH) & (C + radius[:, None] <= UPPER + 0.04 * WIDTH), axis=1)
+    ratio = np.where(fits if fits.any() else True, radius**2 / np.prod(half, axis=1), -np.inf)
+    long_leaf = int(np.argmax(ratio))
+
+    # The tree over the boxes, and one query's walk: a node is tested when its parent's box
+    # contains the query, entered when its own box does.
+    tree = build_box_tree(C, C - half, C + half, FIG_BUCKET)
+    left, n_nodes = tree["left"], len(tree["left"])
+    depth, tested, entered = np.zeros(n_nodes, int), np.zeros(n_nodes, bool), np.zeros(n_nodes, bool)
+    tested[0] = True
+    for nd in range(n_nodes):  # children are numbered after their parents
+        if tested[nd]:
+            entered[nd] = bool(np.all((q >= tree["node_lo"][nd]) & (q <= tree["node_hi"][nd])))
+        if left[nd] >= 0:
+            depth[left[nd]] = depth[left[nd] + 1] = depth[nd] + 1
+            tested[left[nd]] = tested[left[nd] + 1] = entered[nd]
+    buckets = (left < 0) & entered
+    tested_leaves = sum(int(tree["end"][b] - tree["start"][b]) for b in np.flatnonzero(buckets))
+    shown = list(range(1, depth.max() + 1))[:4]
+
+    def miss_panel(ax):
+        for kk, n in enumerate(leaves):
+            ellipse(ax, C[kk], T[kk], n.colour, lw=0.5, alpha=0.35)
+        ellipse(ax, C[leaf], T[leaf], leaves[leaf].colour, lw=1.6)
+        for c in cand:
+            ax.plot(*zip(q, C[c], strict=True), color=GREY, lw=0.9, ls=":", zorder=5)
+            cross(ax, C[c], GREY, size=30, lw=1.5)
+        ax.plot(*zip(q, C[leaf], strict=True), color=DARK, lw=0.9, zorder=5)
+        cross(ax, C[leaf], leaves[leaf].colour, size=36, lw=1.7)
+        ax.scatter(*q, s=34, facecolors="none", edgecolors=RED, lw=1.1, zorder=7)  # flagged by the candidates
+        ax.scatter(*q, s=12, c="black", zorder=8)  # answered by the containing leaf
+
+    def box_panel(ax):
+        for kk, n in enumerate(leaves):
+            ellipse(ax, C[kk], T[kk], n.colour, lw=0.5, alpha=0.5)
+            ax.add_patch(Rectangle(C[kk] - half[kk], *(2 * half[kk]), fc="none", ec=n.colour, lw=0.4, alpha=0.5))
+        c, h = C[long_leaf], half[long_leaf]
+        ellipse(ax, c, T[long_leaf], leaves[long_leaf].colour, lw=1.6)
+        ax.add_patch(Rectangle(c - h, *(2 * h), fc="none", ec=leaves[long_leaf].colour, lw=1.3, zorder=4))
+        ax.add_patch(Ellipse(c, 2 * radius[long_leaf], 2 * radius[long_leaf], fc="none", ec=DARK, lw=0.9, ls="--",
+                             zorder=4))  # fmt: skip
+
+    def level_panel(k):
+        def draw(ax):
+            for kk, n in enumerate(leaves):
+                ellipse(ax, C[kk], T[kk], n.colour, lw=0.4, alpha=0.3)
+            for nd in np.flatnonzero(depth == k):
+                lo, hi = tree["node_lo"][nd], tree["node_hi"][nd]
+                colour, lw = (DARK, 1.2) if entered[nd] else ((RED, 0.8) if tested[nd] else (LIGHT, 0.6))
+                ax.add_patch(Rectangle(lo, *(hi - lo), fc="none", ec=colour, lw=lw, zorder=4 if tested[nd] else 3))
+            ax.scatter(*q, s=14, c="black", zorder=8)
+        return draw
+
+    panel("afinni-flag-miss", miss_panel, size=(2.5, 2.5))
+    panel("afinni-flag-box", box_panel, size=(2.5, 2.5))
+    for k in shown:
+        panel(f"afinni-flag-tree-{k}", level_panel(k), size=(1.7, 1.7))
+    level_counts = [{"depth": int(k), "nodes": int(np.sum(depth == k)), "tested": int(np.sum(tested & (depth == k))),
+                     "entered": int(np.sum(entered & (depth == k)))} for k in shown]  # fmt: skip
+    return {"exact_flag": {
+        "kappa": int(kappa), "leaf_rank": int(rank[q_i, leaf]) + 1, "d_leaf": round(float(D[q_i, leaf]), 2),
+        "grid": int(len(grid)), "missed": int(miss.size),
+        "flagged_percent": round(100 * float(out.mean()), 1), "exact_percent": round(100 * float(exact.mean()), 1),
+        "per_query": {"ellipses": round(float((D <= 1).sum(axis=1).mean()), 2),
+                      "boxes": round(float(in_box.sum(axis=1).mean()), 2),
+                      "balls": round(float(in_ball.sum(axis=1).mean()), 2)},
+        "long_leaf": {"radius": round(float(radius[long_leaf]), 2), "half": [round(float(v), 2) for v in half[long_leaf]],
+                      "box_area": round(float(4 * np.prod(half[long_leaf])), 2),
+                      "ball_area": round(float(np.pi * radius[long_leaf] ** 2), 2),
+                      "ellipse_area": round(float(np.pi / np.sqrt(np.linalg.det(T[long_leaf]))), 2)},
+        "tree": {"bucket": FIG_BUCKET, "nodes": int(n_nodes), "leaves": int(len(C)), "levels": level_counts,
+                 "tested": int(tested.sum()), "entered": int(entered.sum()), "tested_leaves": int(tested_leaves)},
+    }}  # fmt: skip
 
 
 def queue_strips(nodes: list[Node], levels: list[Level]) -> None:
@@ -1659,6 +1773,7 @@ def compare(afinni: AdaptiveSurrogate, art: AdaptiveSurrogate, afinni_nodes: lis
     G0, G1 = grid[:, 0].reshape(n, n), grid[:, 1].reshape(n, n)
     truth = f_np(grid)
     pa, oa = (np.ravel(to_host(v)) for v in afinni.predict(grid, k_nn=1, coarse_factor=KAPPA))
+    oa_exact = np.ravel(to_host(afinni.predict(grid, k_nn=1, coarse_factor=KAPPA, exact_outside=True)[1]))
     pr, orr = (np.ravel(to_host(v)) for v in art.predict(grid))
     ea, er = np.abs(pa - truth) / ALPHA, np.abs(pr - truth) / ALPHA
     extent = (LOWER[0], UPPER[0], LOWER[1], UPPER[1])
@@ -1746,7 +1861,8 @@ def compare(afinni: AdaptiveSurrogate, art: AdaptiveSurrogate, afinni_nodes: lis
                 "within_inside_percent": round(100 * float(np.mean(err[inside] <= 1)), 1),
                 "depth": max(nd.level for nd in nodes)}  # fmt: skip
 
-    return {"afinni": summary(ea, oa, afinni, afinni_nodes), "art": summary(er, orr, art, art_nodes),
+    return {"afinni": summary(ea, oa, afinni, afinni_nodes) | {"outside_exact_percent": round(100 * float(np.mean(oa_exact)), 1)},
+            "art": summary(er, orr, art, art_nodes),
             "slice_x2": x2, "grid": n, "flagged_on_line": int(flagged.sum()), "slice_points": int(t.size)}  # fmt: skip
 
 
@@ -2007,6 +2123,7 @@ def main() -> None:
     }  # fmt: skip
     panel("example", lambda ax: None)
     numbers["afinni"] = afinni_levels(forest, levels) | afinni_split(levels) | afinni_trust(afinni, forest)
+    numbers["afinni"] |= afinni_exact_flag(afinni, forest)
     queue_strips(forest, levels)
     residual_key()
     numbers["afinni"] |= queue_layout(forest, levels)

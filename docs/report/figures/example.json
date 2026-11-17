@@ -175,6 +175,64 @@
         "f": 20.14
       }
     },
+    "exact_flag": {
+      "kappa": 1,
+      "leaf_rank": 10,
+      "d_leaf": 0.77,
+      "grid": 6400,
+      "missed": 1444,
+      "flagged_percent": 25.2,
+      "exact_percent": 2.6,
+      "per_query": {
+        "ellipses": 1.46,
+        "boxes": 2.19,
+        "balls": 3.46
+      },
+      "long_leaf": {
+        "radius": 0.57,
+        "half": [
+          0.19,
+          0.57
+        ],
+        "box_area": 0.43,
+        "ball_area": 1.03,
+        "ellipse_area": 0.3
+      },
+      "tree": {
+        "bucket": 2,
+        "nodes": 31,
+        "leaves": 28,
+        "levels": [
+          {
+            "depth": 1,
+            "nodes": 2,
+            "tested": 2,
+            "entered": 2
+          },
+          {
+            "depth": 2,
+            "nodes": 4,
+            "tested": 4,
+            "entered": 3
+          },
+          {
+            "depth": 3,
+            "nodes": 8,
+            "tested": 6,
+            "entered": 4
+          },
+          {
+            "depth": 4,
+            "nodes": 16,
+            "tested": 8,
+            "entered": 4
+          }
+        ],
+        "tested": 21,
+        "entered": 14,
+        "tested_leaves": 6
+      }
+    },
     "layout": {
       "level": 2,
       "clusters": 10,
@@ -562,7 +620,8 @@
       "within_percent": 97.9,
       "outside_percent": 2.7,
       "within_inside_percent": 98.9,
-      "depth": 6
+      "depth": 6,
+      "outside_exact_percent": 2.7
     },
     "art": {
       "leaves": 17,

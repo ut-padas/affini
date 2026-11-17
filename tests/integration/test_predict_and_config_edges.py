@@ -77,6 +77,41 @@ def test_default_knn_chunks_bound_the_trust_matrix_gather(monkeypatch, surrogate
     np.testing.assert_array_equal(host(surrogate.filter_unguaranteed_local(Q, k_coarse=k_coarse)), host(whole[1]))
 
 
+def _brute_outside(surrogate, Q):
+    C, T = host(surrogate.X_src), host(surrogate.trust_matrices_src)
+    dx = Q[:, None, :] - C[None, :, :]
+    d = np.einsum("qni,nij,qnj->qn", dx, T, dx)
+    return d.min(axis=1) > 1.0, d
+
+
+def test_the_exact_outside_flag_does_not_depend_on_the_candidates(surrogate):
+    Q = rng.uniform(-1.3, 1.3, (400, 2))
+    outside, d = _brute_outside(surrogate, Q)
+    default = host(surrogate.predict(xp.asarray(Q), k_nn=1, coarse_factor=1)[1])
+    assert default.sum() > outside.sum()  # one candidate misses containing leaves
+    for coarse in (1, 3, 10):
+        exact = host(surrogate.predict(xp.asarray(Q), k_nn=1, coarse_factor=coarse, exact_outside=True)[1])
+        np.testing.assert_array_equal(exact, outside)
+    np.testing.assert_array_equal(host(surrogate.filter_unguaranteed_local(xp.asarray(Q), k_coarse=1, exact_outside=True)), outside)
+
+
+@pytest.mark.parametrize("k_nn", [1, 2])
+def test_the_exact_flag_changes_only_flagged_rows_and_answers_them_from_a_containing_leaf(surrogate, k_nn):
+    Q = np.random.default_rng(1).uniform(-1.3, 1.3, (4000, 2))
+    coarse = k_nn  # k_nn^2 candidates: few, so that the first pass misses containing leaves
+    pred, mask = (host(a) for a in surrogate.predict(xp.asarray(Q), k_nn=k_nn, coarse_factor=coarse))
+    pred_x, mask_x = (host(a) for a in surrogate.predict(xp.asarray(Q), k_nn=k_nn, coarse_factor=coarse, exact_outside=True))
+    np.testing.assert_array_equal(pred_x[~mask], pred[~mask])  # unflagged rows keep their bits
+    np.testing.assert_array_equal(mask_x[~mask], False)
+    found = mask & ~mask_x
+    assert found.any()
+    if k_nn == 1:  # answered by the containing leaf nearest in its own metric
+        _, d = _brute_outside(surrogate, Q[found])
+        nu = np.argmin(d, axis=1)
+        own = surrogate.local_model.evaluate(surrogate.model_params(), xp.asarray(Q[found]), xp.asarray(nu[:, None]))
+        np.testing.assert_allclose(pred_x[found], host(own)[:, 0], rtol=1e-12, atol=1e-12)
+
+
 def test_more_neighbours_than_leaves(surrogate):
     Q = xp.asarray(rng.uniform(-1, 1, (20, 2)))
     n = surrogate.N_src

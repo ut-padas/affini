@@ -106,6 +106,22 @@ The project is developed and tested on Python 3.13 (`.python-version`).
   a ridge, as the reference ART does (`tests/integration/test_art_training.py` checks it exact to
   1e-9 at d = 70).
 
+- [ ] Speed up `predict(exact_outside=True)` on the GPU the way the CPU was. The CPU walks a
+  tree of leaf bounding boxes (`src/neighbors/containment_cpu.py`), which at d = 10 visits about
+  7% of the leaves (55x faster than testing every pair); the GPU still tests every
+  (flagged query, leaf) pair in `contained_mask`. Measure first, on a large model (about 10^5
+  leaves, d = 10-60): the kernel's time per flagged query against the CPU tree's, with
+  training-like and uniform queries. Candidates, cheapest first:
+  - add each leaf's box test, in float32 rounded outward, before the bound in the kernel (most
+    pairs then stop after a few coordinates);
+  - order the flagged queries along a Morton curve, so that a warp's queries share cached leaves;
+  - a linear BVH (Karras 2012: built in parallel from Morton codes of the centres, traversed one
+    thread per query), with the CPU tree's union boxes and narrowest-axis-first tests.
+  On the CPU, space-filling-curve order of the queries and float32 boxes rounded outward are
+  untried. A space-partitioning index (cells listing the leaves whose box crosses them) would
+  answer most uniform queries from an empty cell, but needle-shaped leaves would be listed in
+  many cells: more memory than the leaves themselves, so not pursued.
+
 ## Documentation that disagrees with the code
 
 - [x] `docs/USAGE.md` says runs are reproducible "for a fixed `seed` and rank count". True
@@ -198,6 +214,11 @@ runs the chunked CuPy walk above 256 dimensions.
   and its fit to 4e-13 (Cholesky on both backends, rcond 5.7e-2), its error is 82 times the
   tolerance on both, and no split-search solve returns NaN on either; the split search returns
   planes of opposite sign that also differ by about 1e-4, so the children's codes swap.
+
+- [ ] GPU suite after `predict(exact_outside=True)` (`src/neighbors/containment.py`): the
+  `contained_mask` kernel (`src/kernels/containment.cu`) and the CuPy paths of
+  `TrustRegionContainment` (batched `eigh`, the transposed centres, `nonzero` on the mask) have
+  not run on a GPU. `tests/unit/test_containment.py` checks them against brute force there.
 
 ## Technical companion (`docs/report/`)
 

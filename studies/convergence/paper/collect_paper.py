@@ -34,6 +34,9 @@ from paper_values import PAPER_NOTES, records  # noqa: E402
 BLUE, ORANGE, INK, MUTED = "#2a78d6", "#eb6834", "#0b0b0b", "#52514e"
 COUNT_FLOOR = math.log(1.25)
 QUANTITIES = ("N", "N_c", "p_o", "e_in", "e", "e_nh", "p_in_good")
+# Not in the manuscript, reported next to its p_o: the share outside every trust region found by
+# predict(exact_outside=True), which does not depend on the candidate count (coarse_factor).
+EXTRA_QUANTITIES = ("p_o_exact",)
 
 
 def load_runs(results: Path) -> list[dict]:
@@ -56,6 +59,7 @@ def load_runs(results: Path) -> list[dict]:
             "N_0": data["N_0"], "mpi_size": data["mpi_size"], "coarse_factor": data["coarse_factor"],
             "num_initial_clusters": data["num_initial_clusters"], "min_pts_per_cluster": data["min_pts_per_cluster"],
             "gpu": data["IS_CUPY_BACKEND"], "N": data["N"], "N_c": data["N_c"], "p_o": m["perct_out"],
+            "p_o_exact": data.get("perct_out_exact", float("nan")),
             "e_in": m["in"]["l2_rel_error"], "e": m["all"]["l2_rel_error"],
             "p_in_good": 100.0 * m["n_in_good"] / n_in if n_in else float("nan"),
             "converged": data["converged"], "unresolved": data["num_unresolved_pts"],
@@ -169,6 +173,14 @@ def compare(runs: list[dict]) -> tuple[list[dict], dict]:
                 "n_seeds": len(values), "seed_min": min(values) if values else None,
                 "seed_max": max(values) if values else None, "rel_diff": rel, "band": band, "verdict": v,
             })  # fmt: skip
+            if q == "p_o":  # the exact share beside it, not judged: the paper has no such number
+                for extra in EXTRA_QUANTITIES:
+                    values = [r[extra] for r in hits]
+                    seed0 = next((r[extra] for r in hits if r["seed"] == 0), None)
+                    rows.append({**rows[-1], "quantity": extra, "paper": None, "rerun_seed0": seed0,
+                                 "n_seeds": len(values), "seed_min": min(values) if values else None,
+                                 "seed_max": max(values) if values else None, "rel_diff": None, "band": None,
+                                 "verdict": "not judged"})  # fmt: skip
     return rows, matched
 
 

@@ -1,6 +1,9 @@
 """
 Lorenz-96 flow map in JAX/diffrax, for GPU evaluation. Loose tolerances (1e-3) trade
-accuracy for speed; compare against the SciPy flow map before trusting results.
+accuracy for speed; compare against the SciPy flow map before trusting results. It runs in
+JAX's default float32 (jax_enable_x64 is off), as the manuscript's runs did: the solver's
+tolerances are about 10^4 times coarser than float32 rounding, and float64 would slow consumer
+GPUs, whose float64 rate is a small fraction of their float32 rate.
 """
 
 import jax

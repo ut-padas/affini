@@ -56,6 +56,12 @@ pred, outside = surrogate.predict(Q, k_nn=1)   # (N, fd) values, (N,) "outside e
 - `predict(..., k_nn=k)` blends the `k` best leaves by trust-region distance;
   `strict_trust_region=True` ignores leaves whose region does not contain the
   query. `coarse_factor` (default 10) sets how many Euclidean neighbours are reranked.
+- `predict(..., exact_outside=True)` makes the outside flag exact: the queries the
+  `coarse_factor` candidates flag are searched against every leaf (a bounding-box tree on the
+  CPU, one fused kernel on the GPU), so a query is flagged only if no trust region contains
+  it, and one that a farther leaf contains is answered by that leaf. Unflagged queries keep
+  their answers; the search costs time in proportion to the flagged queries. Report `p_o`
+  with it, so that it does not depend on `coarse_factor`.
 - [`example01_rosenbrock_afinni.py`](../examples/example01_rosenbrock_afinni.py) is a complete 2-D example with a plot.
 
 ## Running on CPU, GPU and MPI

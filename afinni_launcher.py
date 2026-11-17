@@ -231,6 +231,14 @@ def conduct_experiment_given_data(
             coarse_factor=COARSE_FACTOR,
         )
         _predict_time = time.perf_counter() - _start_predict_time
+        # p_o without the candidates' blind spot (a containing leaf whose centre is not among the
+        # coarse_factor nearest): reported beside the paper's p_o, which used the candidates only.
+        _start_exact_time = time.perf_counter()
+        _, ung_mask_exact = surrogate.predict(
+            query_points=X_test, k_nn=K_NEIGHBOURS, strict_trust_region=False,
+            coarse_factor=COARSE_FACTOR, exact_outside=True,
+        )  # fmt: skip
+        _predict_exact_time = time.perf_counter() - _start_exact_time
         _PREDICTED = True
 
     except Exception as e:
@@ -272,6 +280,8 @@ def conduct_experiment_given_data(
         "N_c": surrogate.N_src,
         "Train_time_s": _train_time,
         "Pred_time_s": _predict_time,
+        "Pred_exact_time_s": _predict_exact_time,
+        "perct_out_exact": float(100.0 * xp.mean(ung_mask_exact)),
         "N_levels_max": surrogate.profiling_stats.get("num_levels", None),
         "num_generated_pts": surrogate.profiling_stats.get("num_generated_pts", None),
         "N": surrogate.profiling_stats.get("total_f_evals", None),

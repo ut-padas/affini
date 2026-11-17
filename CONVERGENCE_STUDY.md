@@ -303,6 +303,14 @@ the Hessian runs of the same row. Each run records `wall_s` and `peak_rss_gib_ra
 `OUT/report/cost.csv`; run S first and extrapolate. Watch `free -g` on M/L runs (AGENTS.md:
 queues grow with rejected clusters x `2 M`).
 
+The launcher also reports `p_o_exact` (`perct_out_exact` in each result), the share of test points
+outside every trust region from `predict(exact_outside=True)`; it does not depend on the candidate
+count. The record prints it next to the manuscript's `p_o`, unjudged: the paper has no such number,
+and its `p_o` used the candidates only.
+
+The JAX flow map runs in float32, as the manuscript's runs did (no commit enabled `jax_enable_x64`);
+its tolerances (1e-3) are about 10^4 times coarser than float32 rounding.
+
 Lorenz-96 on the GPU uses JAX's CUDA build, which the `gpu` extra installs on Linux
 (`uv sync --extra gpu`); with a CPU-only `jaxlib` (other platforms, or an environment without
 the extra), `run_paper.sh` runs the Lorenz cases on the CPU and says so (`--lorenz-device`
