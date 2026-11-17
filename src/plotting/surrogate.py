@@ -9,7 +9,7 @@ a figure, and use ``src.plotting.style`` for a consistent look.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,7 +19,8 @@ from matplotlib.colors import ListedColormap, LogNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Ellipse
 
-from src import Array, to_device, to_host, xp
+from src import Array, to_device, to_host
+from src.plotting.style import finish, plot_style
 
 if TYPE_CHECKING:
     from src.surrogate import AdaptiveSurrogate
@@ -173,52 +174,147 @@ def plot_adaptive_clustering_results(
     print(f"Saved figure to {img_fpath}")
 
 
-def plot_error_histogram(
-    ground_truth: Array, predictions: Array, img_fpath: Path, rtol: float | None
-):
-    """Save a log-log histogram of pointwise relative errors (worst output component per point); ``rtol`` (if given) is marked with the share of points within it."""
-    TINY_EPS = 1e-12
-    img_title = img_fpath.stem
+# Cases ordered by d or tolerance take steps of one blue ramp, light to dark; the shares of the test
+# points take the first four categorical slots in their fixed order, each with its own marker.
+CASE_RAMP = ("#86b6ef", "#6da7ec", "#5598e7", "#3987e5", "#2a78d6", "#256abf", "#1c5cab", "#184f95",
+             "#104281", "#0d366b")  # fmt: skip
+INK, MUTED = "#0b0b0b", "#52514e"
+SHARE_STYLES = {
+    "trusted, within tolerance": ("#2a78d6", "o"),
+    "trusted, beyond tolerance": ("#eb6834", "s"),
+    "flagged, inside a leaf": ("#1baf7a", "^"),
+    "flagged, outside every leaf": ("#eda100", "D"),
+    "flagged": ("#1baf7a", "^"),
+}
 
-    # 1. Compute Element-wise Relative Error
-    # Shape: (N, m) for vectors, (N,) for scalars
-    element_rel_error = xp.abs(predictions - ground_truth) / (
-        xp.abs(ground_truth) + TINY_EPS
-    )
 
-    # 2. Reduce to Point-wise Max (Worst Component)
-    # If vector (ndim > 1), take max over components (axis=1)
-    # This aligns with the "Pointwise Relative Error" definition where a point
-    # is only good if ALL its components are good.
-    if element_rel_error.ndim > 1:
-        ptwise_rel_error = xp.max(element_rel_error, axis=1)
+def _case_labels(results: Sequence[Mapping]) -> list[str]:
+    """``d = 5`` when the cases differ in d, ``tol = 0.1`` when in tolerance, both when in both."""
+    dims = [r["dim"] for r in results]
+    tols = [r["atol"] if r.get("atol") is not None else r.get("rtol") for r in results]
+    parts = [[] for _ in results]
+    if len(set(dims)) > 1 or len(results) == 1:
+        for p, d in zip(parts, dims, strict=True):
+            p.append(f"d = {d}")
+    if len(set(tols)) > 1 or len(results) == 1:
+        for p, tol in zip(parts, tols, strict=True):
+            p.append(f"tol = {tol:g}")
+    return [", ".join(p) or f"case {i}" for i, p in enumerate(parts)]
+
+
+def _test_point_shares(result: Mapping) -> dict[str, float]:
+    """Percentages of the test points by trust and tolerance; flagged points split by the exact flag when recorded."""
+    m = result["error_metrics"]
+    shares = {"trusted, within tolerance": m["perct_in_good"], "trusted, beyond tolerance": m["perct_in_bad"]}
+    exact = result.get("perct_out_exact")
+    if exact is None:
+        shares["flagged"] = m["perct_out"]
     else:
-        ptwise_rel_error = element_rel_error
+        shares["flagged, inside a leaf"] = max(m["perct_out"] - exact, 0.0)
+        shares["flagged, outside every leaf"] = exact
+    return shares
 
-    # 3. Plotting
-    plt.figure(figsize=(10, 6))
 
-    # Extract data to CPU for plotting
-    data_to_plot = to_host(ptwise_rel_error)
-    plt.hist(data_to_plot.flatten(), bins=50, log=True)
+def _draw_ratio_survival(ax, counts, edges, label: str, **line) -> None:
+    """
+    Share of points (%) whose tolerance ratio is at least x, from its histogram, labelled with the
+    point count; nothing for no points. The curve starts at the second edge: the first bin also holds
+    every ratio below the range, so the share at the first edge is 100% by construction.
+    """
+    counts = np.asarray(counts, float)
+    n = int(counts.sum())
+    if n == 0:
+        return
+    share = 100.0 * np.cumsum(counts[::-1])[::-1] / n
+    x, share = np.asarray(edges[1:-1]), share[1:]
+    keep = share > 0
+    ax.plot(x[keep], share[keep], label=f"{label} (n = {n:,})", **line)
 
-    if rtol is not None:
-        perct_within_tol = 100.0 * xp.sum(ptwise_rel_error <= rtol) / ptwise_rel_error.shape[0]
-        plt.axvline(
-            x=rtol,
-            color="r",
-            linestyle="--",
-            label=f"RTOL={rtol} (Good Points={perct_within_tol:.2f}%)",
-        )
-        plt.legend()
 
-    plt.ylabel("Frequency (log scale)")
-    plt.xlabel(r"Pointwise Max Relative Error (log scale)")
-    plt.title(img_title)
-    plt.xscale("log")
-    plt.grid(True, which="both", linestyle="--", linewidth=0.5)
-    plt.savefig(img_fpath, dpi=300)
-    plt.close()
+def _ratio_axes(ax, title: str) -> None:
+    ax.axvline(1.0, color=MUTED, linestyle="--", linewidth=1)
+    ax.annotate("tolerance", (1.0, 1.0), xycoords=("data", "axes fraction"), xytext=(4, -4), textcoords="offset points",
+                ha="left", va="top", fontsize=8, color=MUTED)  # fmt: skip
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("error / tolerance  (the acceptance test passes at <= 1)")
+    ax.set_ylabel("points with at least this error (%)")
+    ax.set_title(title, loc="left")
+
+
+def _draw_shares(ax, results: Sequence[Mapping], labels: list[str]) -> None:
+    """One row per case: each share of the test points as a marker on a log axis (zero shares are omitted)."""
+    seen = set()
+    for row, result in enumerate(results):
+        for name, value in _test_point_shares(result).items():
+            if value > 0:
+                colour, marker = SHARE_STYLES[name]
+                ax.plot(value, row, marker, color=colour, ms=8, mec="white", mew=1.0,
+                        label=None if name in seen else name)  # fmt: skip
+                seen.add(name)
+    ax.set_yticks(range(len(results)), labels)
+    ax.set_ylim(len(results) - 0.5, -0.5)
+    ax.set_xscale("log")
+    ax.set_xlim(right=150)
+    ax.set_xlabel("share of the test points (%)")
+    ax.set_title("Where the test points fall", loc="left")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.28), ncol=2, fontsize=8)
+
+
+def _draw_count(ax, results: Sequence[Mapping], labels: list[str], key: str, title: str) -> None:
+    values = [float(r[key]) if r.get(key) is not None else np.nan for r in results]
+    ax.plot(range(len(values)), values, "-", color=MUTED, linewidth=1, zorder=1)
+    for i, v in enumerate(values):
+        ax.plot(i, v, "o", color=CASE_RAMP[_ramp_index(i, len(values))], ms=8, mec="white", mew=1.0, zorder=2)
+    ax.set_xticks(range(len(values)), labels, rotation=30, ha="right")
+    ax.set_yscale("log")
+    ax.set_title(title, loc="left")
+
+
+def _ramp_index(i: int, n: int) -> int:
+    return round(i * (len(CASE_RAMP) - 1) / max(n - 1, 1)) if n > 1 else 4
+
+
+def plot_error_summary(results: Sequence[Mapping], path=None, *, title: str | None = None) -> plt.Figure:
+    """
+    The errors of one or more launcher results (their JSON dicts), in units of the tolerance: for
+    each case the share of trusted and of flagged test points whose error is at least x tolerances
+    (from ``error_metrics["tolerance_ratio"]``), where the test points fall (trusted within or beyond
+    tolerance, flagged inside a leaf or outside every leaf), and, for several cases, the leaves N_c
+    and oracle evaluations N. Cases are drawn in the given order, labelled by what differs (d or
+    tolerance). Results without the histogram still get the share and count panels.
+    """
+    results = list(results)
+    labels = _case_labels(results)
+    hist = [r["error_metrics"].get("tolerance_ratio") for r in results]
+    with plot_style():
+        if len(results) == 1:
+            fig, (ax_dist, ax_share) = plt.subplots(1, 2, figsize=(11, 3.8), width_ratios=(1.4, 1))
+            if hist[0] is not None:
+                for key, name, (colour, _) in (("in", "trusted", SHARE_STYLES["trusted, within tolerance"]),
+                                               ("out", "flagged", SHARE_STYLES["trusted, beyond tolerance"])):  # fmt: skip
+                    _draw_ratio_survival(ax_dist, hist[0][key], hist[0]["edges"], name, color=colour, linewidth=2)
+                ax_dist.legend(loc="lower left")
+            _ratio_axes(ax_dist, "Error distribution")
+        else:
+            fig = plt.figure(figsize=(13, 8))
+            grid = fig.add_gridspec(2, 6)
+            ax_in, ax_out = fig.add_subplot(grid[0, :3]), fig.add_subplot(grid[0, 3:])
+            ax_share = fig.add_subplot(grid[1, :2])
+            ax_nc, ax_n = fig.add_subplot(grid[1, 2:4]), fig.add_subplot(grid[1, 4:])
+            for ax, key, name in ((ax_in, "in", "Trusted points"), (ax_out, "out", "Flagged points")):
+                for i, (h, label) in enumerate(zip(hist, labels, strict=True)):
+                    if h is not None:
+                        _draw_ratio_survival(ax, h[key], h["edges"], label,
+                                             color=CASE_RAMP[_ramp_index(i, len(results))], linewidth=2)  # fmt: skip
+                _ratio_axes(ax, name)
+                ax.legend(loc="lower left")
+            _draw_count(ax_nc, results, labels, "N_c", "Leaves N_c")
+            _draw_count(ax_n, results, labels, "N", "Oracle evaluations N")
+        _draw_shares(ax_share, results, labels)
+        if title:
+            fig.suptitle(title, x=0.01, ha="left", fontweight="bold")
+    return finish(fig, path)
 
 
 def plot_cluster_projections_for_wave(clusters: Array, img_fpath: Path, dim: int):

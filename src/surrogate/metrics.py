@@ -2,12 +2,49 @@
 
 from typing import Any
 
+import numpy as np
+
 from src import (
     Array,
     to_host,
     xp,
 )
 from src.components.acceptance import Tolerance, normalize_tolerance, tolerance_vector
+
+TINY_EPS = 1e-12
+# Bins of the tolerance ratio stored with every result: 8 per decade from 1e-6 to 1e3. A ratio below
+# or above the range is counted in the first or last bin, a NaN one (a NaN prediction) in the last.
+TOLERANCE_RATIO_EDGES = np.logspace(-6, 3, 9 * 8 + 1)
+
+
+def tolerance_ratio(preds: Array, gt: Array, atol: Tolerance, rtol: Tolerance) -> Array:
+    """
+    Each point's error in units of its tolerance: over the output components, the largest
+    min(|error| / atol, relative error / rtol), with a missing tolerance never accepting. A point
+    passes the acceptance test of ``compute_error_metrics`` (and of training) when this is <= 1, up
+    to the rounding of the division; 3 means three tolerances off.
+    """
+    atol, rtol = normalize_tolerance("atol", atol), normalize_tolerance("rtol", rtol)
+    err = xp.abs(preds - gt).reshape(gt.shape[0], -1)
+    rel = err / (xp.abs(gt).reshape(err.shape) + TINY_EPS)
+    fd = err.shape[1]
+
+    def in_units(e, name, tol):
+        tv = tolerance_vector(name, tol, fd)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            r = e / tv
+        # an omitted tolerance (-inf) never accepts; a zero one accepts only an exact value
+        return xp.where(tv < 0, xp.inf, xp.where(e == 0, 0.0, r))
+
+    r = xp.minimum(in_units(err, "atol", atol), in_units(rel, "rtol", rtol))
+    return xp.max(xp.where(xp.isnan(r), xp.inf, r), axis=1)
+
+
+def tolerance_ratio_counts(ratio: Array) -> list[int]:
+    """Counts of ``ratio`` in the bins of ``TOLERANCE_RATIO_EDGES`` (a list, so it can be stored as JSON)."""
+    r = np.nan_to_num(to_host(ratio), nan=np.inf)
+    r = np.clip(r, TOLERANCE_RATIO_EDGES[0], TOLERANCE_RATIO_EDGES[-1])
+    return np.histogram(r, TOLERANCE_RATIO_EDGES)[0].tolist()
 
 
 def compute_error_metrics(
@@ -23,9 +60,10 @@ def compute_error_metrics(
     (``ug_mask`` marks outside), plus the share of inside points that are good: every
     component within ``rtol`` relative or ``atol`` absolute error (inclusive), with the
     tolerances given as in training (see ``src.components.acceptance``). Sections with no points
-    report NaN. Optionally also returns the pointwise relative errors.
+    report NaN. ``tolerance_ratio`` holds the histogram of ``tolerance_ratio`` inside and outside
+    (``src.plotting.plot_error_summary`` draws it). Optionally also returns the pointwise relative
+    errors.
     """
-    TINY_EPS = 1e-12
     atol, rtol = normalize_tolerance("atol", atol), normalize_tolerance("rtol", rtol)
     if atol is None and rtol is None:
         raise ValueError("Give atol, rtol or both to count the points within tolerance.")
@@ -129,6 +167,8 @@ def compute_error_metrics(
     perct_in_good = float(100.0 * n_in_good / n_test)
     perct_in_bad = float(100.0 * n_in_bad / n_test)
 
+    ratio = tolerance_ratio(preds, gt, atol, rtol)
+    ratio_in, ratio_out = ratio[good_idx], ratio[ug_mask]
     # Create error metrics dictionary
     error_metrics = {
         "n_test": int(n_test),
@@ -161,6 +201,13 @@ def compute_error_metrics(
             "linf_abs_error": out_linf_abs_error,
             "ptwise_max_rel_error_linf": out_ptwise_max_rel_error_linf,
             "ptwise_median_rel_error_linf": out_ptwise_median_rel_error_linf,
+        },
+        "tolerance_ratio": {
+            "edges": TOLERANCE_RATIO_EDGES.tolist(),
+            "in": tolerance_ratio_counts(ratio_in),
+            "out": tolerance_ratio_counts(ratio_out),
+            "max_in": float(xp.max(ratio_in)) if n_in > 0 else float("nan"),
+            "max_out": float(xp.max(ratio_out)) if n_out > 0 else float("nan"),
         },
     }
     if not return_ptwise_error_arrays:

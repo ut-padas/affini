@@ -25,7 +25,7 @@ from src.infra.backend import MPI
 from src.plotting import (
     plot_adaptive_clustering_results,
     plot_cluster_projections_for_wave,
-    plot_error_histogram,
+    plot_error_summary,
     plot_near_centers,
     plot_profile_dashboard,
     plot_wave_2d_errors,
@@ -314,13 +314,8 @@ def conduct_experiment_given_data(
 
     plt.close(plot_profile_dashboard(surrogate, json_fpath.with_name(json_fpath.stem + "_profile.png")))
 
-    plot_save_path = json_fpath.with_name(json_fpath.stem + "_error_histogram.png")
-    plot_error_histogram(
-        rtol=RTOL,
-        ground_truth=ground_truth,
-        predictions=preds,
-        img_fpath=plot_save_path,
-    )
+    plt.close(plot_error_summary([json_data], json_fpath.with_name(json_fpath.stem + "_errors.png"),
+                                 title=f"{json_fpath.parent.name}: d = {DIM}"))  # fmt: skip
 
     if DIM == 2 and surrogate.N_src <= 100_000:
         plot_save_path = json_fpath.with_name(json_fpath.stem + "_centroid_plot.png")
