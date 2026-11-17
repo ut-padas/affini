@@ -168,15 +168,36 @@ runs the chunked CuPy walk above 256 dimensions.
   shape comments), and every kernel parameter in `src/kernels/*.cu` (`hr_walk`'s `owner`,
   documented there as Python's `labels`).
 
-- [ ] GPU suite, and a GPU regression check against the commit before it, after ART's
+- [x] GPU suite, and a GPU regression check against the commit before it, after ART's
   `leaf_fit="lstsq"` (the reference ART's fit: no ridge, Cholesky where the reciprocal condition
   number is >= 1e-10, QR on the node's rows otherwise). On the GPU, AFINNI cases must stay
-  bit-identical, and ART cases must agree with the CPU's new values at the usual tolerance.
+  bit-identical; ART must be bit-identical between repeated GPU runs and the same on 1 and 2
+  GPU ranks (its small regression trees are not required to equal the CPU's, see below).
   CuPy-only paths it adds: `lstsq_auto` (`src/numerics/linalg.py`: `spd_solve` of the Gram and
   of the identity for the condition number, then the host QR/SVD fallback writing into a CuPy
   `X`), the affine leaf's centred rows `data.X - data.centroids[data.labels]` (in
   `AffineLSQModel.fit`), and the split search's `spd_solve` with `lam = 0`, where a singular
   Gram must come back as NaN and lose its cut, as on the CPU.
+  Done on the laptop GPU at `a161574`: GPU suite 576 passed (the cuML skips aside); MPI tests on
+  GPU ranks pass; AFINNI cases bit-identical to a GPU reference saved on `daeee85`, 1 and 2 ranks;
+  repeated GPU runs bit-identical; 1 and 2 GPU ranks give the same ART models (leaves sorted by
+  node). ART's small regression trees differ between GPU and CPU by decisions flipped at rounding
+  level, before and after the change (leaves, CPU / GPU):
+
+  | case | `daeee85` | `a161574` |
+  |---|---|---|
+  | `art_soft_box` | 341 / 337 | 333 / 349 |
+  | `art_bins_grid` | 407 / 422 | 405 / 421 |
+  | `art_gap_voronoi` | 423 / 438 | 423 / 438 |
+  | `art_convex_sampling` | 268 / 245 | 260 / 260 |
+  | `art_quadratic` | 62 / 62 | 63 / 64 |
+  | `art_tiny_batches` | 330 / 307 | 328 / 316 |
+  | `art_fallback_leaves` | 8 / 8 | 8 / 8 |
+
+  In `art_quadratic` the trees part at the root, at both commits: the root's rows agree to 3e-14
+  and its fit to 4e-13 (Cholesky on both backends, rcond 5.7e-2), its error is 82 times the
+  tolerance on both, and no split-search solve returns NaN on either; the split search returns
+  planes of opposite sign that also differ by about 1e-4, so the children's codes swap.
 
 ## Technical companion (`docs/report/`)
 
