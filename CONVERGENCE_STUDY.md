@@ -508,6 +508,31 @@ This library's default of 40 soft iterations against the 200 matched to the refe
 leaves at d >= 3 (822 vs 627 at Gaussian d = 4, tol 0.01; 9,408 vs 7,255 at Rosenbrock d = 4), 4.3x
 more at plane wave d = 5 (17,059 vs 3,947, and slower: 103 vs 72 s), about the same at d = 2.
 
+### Soft iterations: 40 against 200 (this library's ART)
+
+Behind the default `ARTSettings.soft_iters = 200` (the reference ART's cap). The library's side
+only, seed 1, on the CPU at `e9879eb`, with the comparison's problems (d = 2-5, converged trees)
+and, for d = 10-100, depth-capped trees, where both settings build trees of equal size and the
+test error at equal leaves and evaluations compares the planes. Test error is comparable in every
+converged cell, and oracle calls follow the leaves.
+
+| regime | leaves, 200 / 40 | build time, 200 / 40 |
+|---|---|---|
+| trees under about 50 leaves, any problem | 0.9-1.1 | about 1 |
+| Gaussian, quadratic, Rosenbrock at d = 2 | 0.91-1.07 | 1.2-2.4 |
+| Gaussian d = 3-5, tol 0.05-0.005 | 0.69-1.0 | 1-2 |
+| quadratic d = 3-5, tol 0.1-0.02 | 0.76-0.92 | about 2 |
+| Rosenbrock d = 3-4, affine leaves, tol 0.1-0.02 | 0.80-0.96 | 2.5-3.3 |
+| Rosenbrock d = 3-4, quadratic leaves | 0.85-0.95, and 14-22% lower test error | 3-3.3 |
+| plane wave d = 3, tol 0.05-0.002 | 0.23-0.45 | 0.9-1.1 |
+| plane wave d = 5, tol 0.1 and 0.05 | 0.22-0.23 (36,077 -> 7,876 at 0.05) | 0.5-0.7 |
+| d = 10-100, depth-capped: anisotropic quadratic | equal; test error x 0.40-0.52 at d = 20-100 | 1.5-4 |
+| d = 10-100, depth-capped: Gaussian, Rosenbrock, plane wave | equal; test error within 2% (trees far from resolved) | 1.5-4 |
+
+On a laptop GPU, 200 iterations cost 2.1-2.4x the build time for 0.3-65% fewer leaves on
+Rosenbrock d = 3, 4, plane wave d = 5 and Gaussian d = 4. Plane wave d = 8, Rosenbrock d = 5 with
+quadratic leaves and Rastrigin d = 3 did not finish within 15 minutes on the CPU at either setting.
+
 ## Smoke tests run here
 
 All on this machine's CPU (16 cores, no GPU), `SURROGATE_DEVICE=cpu`, outputs in the session scratch
