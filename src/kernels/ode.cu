@@ -2,8 +2,9 @@
 // explicit embedded Runge-Kutta pairs with SciPy's RK45 step-size control.
 
 #define ODE_MAX_STAGES 7
-#define ODE_MAX_COMPONENTS_PER_LANE 32  // components one lane carries: ceil(d / L)
-#define ODE_MAX_STEPS 1000000           // a trajectory that needs more steps returns NaN
+#define ODE_MAX_COMPONENTS_PER_LANE 32                       // components one lane carries: ceil(d / L)
+#define ODE_MAX_STEPS 1000000                                // a trajectory that needs more steps returns NaN
+#define INFINITY __longlong_as_double(0x7ff0000000000000LL)  // NVRTC has no <math.h> macros
 
 // One right-hand side per problem: component j of dx/dt at the state x (all d components, in shared
 // memory). Adding a problem = one such function and one pair of entry points at the end of the file.

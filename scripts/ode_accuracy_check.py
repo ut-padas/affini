@@ -11,7 +11,8 @@ ratio is 1 and |ours - RK45| is rounding, amplified only where the flow is chaot
 Part 2 (regimes): max |ours - RK45| / (atol + rtol |y|) and NaN rows over 288 regimes (state size
 0.01 to 500, forcing 1 to 32, horizon 1e-3 to 10, tolerance 1e-3 to 1e-10). Where the flow is
 chaotic (horizon 10 at forcing >= 8, states >= 50) rounding grows to O(1), for SciPy's own solvers
-too; elsewhere the ratio stays far below 1. The SciPy references run on 6 CPU processes.
+too; forcing 32 is chaotic enough by horizon 1 to reach a few tenths of a 1e-10 tolerance. Elsewhere
+the ratio stays far below 1. The SciPy references run on 6 CPU processes.
 """
 
 import itertools
