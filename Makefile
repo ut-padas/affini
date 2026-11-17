@@ -38,6 +38,7 @@ help:
 	@echo "  report           - Compile the technical companion to docs/report/adaptive-surrogates.pdf (needs typst)"
 	@echo "  report-figures   - Regenerate the companion's panels and numbers (docs/report/figures/)"
 	@echo "  report-steals    - Record the companion's 6-rank work-stealing runs again (needs an MPI extra)"
+	@echo "  study-smoke / study-plan / study-run / study-status / study-collect - The manuscript study (MACHINE=<profile>)"
 	@echo "  report-tables    - Rewrite the companion appendix's manuscript tables (RECORD=\"<main record> [<supplementary> ...]\")"
 
 # --- Research & development --------------------------------------------------
@@ -112,6 +113,15 @@ STEAL_CPUS ?=
 report-steals:
 	SURROGATE_DEVICE=cpu SURROGATE_MPI=on PYTHONPATH=. OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 \
 		$(if $(STEAL_CPUS),taskset -c $(STEAL_CPUS)) uv run mpiexec -n 6 python docs/report/figures/make_figures.py --record-steals
+
+# The manuscript study (studies/manuscript/README.md): MACHINE is a profile in studies/manuscript/machines.
+MACHINE ?= studies/manuscript/machines/workstation.toml
+study-smoke:
+	uv run python -m studies.manuscript.run run --smoke --seeds 0 --machine $(MACHINE)
+study-plan study-run study-status:
+	uv run python -m studies.manuscript.run $(subst study-,,$@) --machine $(MACHINE)
+study-collect:
+	uv run python -m studies.manuscript.collect
 
 # The appendix's manuscript tables: the paper's numbers, and committed records' (none: every re-run
 # cell "–"). RECORD lists record directories, the main record first; a later one replaces its values.

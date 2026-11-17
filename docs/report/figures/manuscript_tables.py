@@ -26,6 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "studies" / "sanity" / "paper"))
+sys.path.insert(0, str(ROOT))
 import paper_values as pv  # noqa: E402
 from cases import group_coarse_factor, lorenz_dims_sizes  # noqa: E402
 from collect_paper import verdict  # noqa: E402
@@ -316,8 +317,10 @@ def main() -> None:
                         help="a record directory written by record_results.py; repeat it, the main record first")  # fmt: skip
     a = parser.parse_args()
     values, walls, abouts = read_records(a.record)
-    # The sizes Appendix A proposes for every problem: Table 2's rule (lorenz_dims_sizes) at each d.
-    sizes = [dict(zip(("d", "N_0", "K_0", "M"), (d, *lorenz_dims_sizes(d)), strict=True)) for d in (2, 5, 10, 20, 40, 80)]
+    # Appendix A's size table, from the manuscript study's own rule.
+    from studies.manuscript.spec import sizes as study_sizes
+
+    sizes = [dict(zip(("d", "N_0", "K_0", "M"), (d, *study_sizes(d)), strict=True)) for d in (2, 5, 10, 20, 40, 80)]
     data = {"records": abouts, "tables": tables(values, walls), "notes": pv.PAPER_NOTES, "sizes": sizes}
     OUT.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
     print(f"wrote {OUT} ({len(abouts)} records, {len(values)} values)")

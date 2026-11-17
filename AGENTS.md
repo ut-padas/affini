@@ -80,6 +80,12 @@ shows how a run moves through the engine and the plans, and the contracts betwee
 Documentation other than README.md and AGENTS.md lives in `docs/`; `docs/report/` holds the
 technical companion (see "The technical companion" below).
 
+`studies/manuscript/` runs the paper's experiments from one specification (`spec.py`, the
+companion's Appendix A as code); its README is the runbook for reproducing the paper. Change a
+setting there, never in a driver script. `studies/sanity/` compares this code with the earlier
+draft's numbers and with the reference ART, and is deleted once that comparison is verified: do
+not build on it.
+
 - Package `__init__` files re-export the names other modules import, so import from the package
   (`from src.art import ARTPlan`), not from the file a name happens to live in.
 - Tests that monkeypatch a module-level name must patch the module that *uses* it (e.g.

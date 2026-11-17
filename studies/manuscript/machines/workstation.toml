@@ -1,0 +1,6 @@
+# Any single machine: the library picks the GPU when CuPy finds one. Host memory defaults to 90% of
+# this machine's RAM; the bundled MPICH launches the distributed cases (up to this machine's cores).
+device = "auto"
+mpi_launcher = ["mpiexec"]
+case_timeout_h = 4.0
+results = "studies/manuscript/output"

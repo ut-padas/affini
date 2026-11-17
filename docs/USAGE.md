@@ -451,6 +451,13 @@ login node when the run directory is on a shared file system. The newest idle
 stretch of a rank appears when that rank records its next event. For your own runs,
 set `profile_dir="<dir>"` in the config and point the monitor at that directory.
 
+## The paper's experiments
+
+[`studies/manuscript`](../studies/manuscript/README.md) runs every experiment of the AFINNI paper
+from one specification: `python -m studies.manuscript.run run --machine <profile>` on any machine,
+resumable, with cases that do not fit recorded as skipped, then `python -m studies.manuscript.collect`
+for the data files and tables. Its README is the runbook.
+
 ## The earlier draft's launcher
 
 [`studies/sanity/afinni_launcher.py`](../studies/sanity/afinni_launcher.py) is the experiment

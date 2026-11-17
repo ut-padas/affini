@@ -123,11 +123,13 @@ Run scripts from the repository root, as modules
   through the code, the contracts between the parts, and where to extend it.
 - **[docs/USAGE.md](docs/USAGE.md)**: the user guide. Training and prediction
   on CPU, GPU and MPI; settings and modes; ART; saving models; profiling; plots; live
-  monitoring; the experiment launcher; swapping parts of the algorithm (local models,
+  monitoring; swapping parts of the algorithm (local models,
   split rules, samplers, acceptance tests, trust regions); HPC clusters;
   troubleshooting; development and testing.
 - **[examples/](examples)**: runnable examples; `example04_wave_art.py` introduces ART and
   `example05_afinni_vs_art.py` compares AFINNI and ART on four problems.
+- **[studies/manuscript/](studies/manuscript/README.md)**: the paper's experiments, reproducible
+  on any machine with one command (plan, run, collect into data files and tables).
 - **[docs/AFINNI_ART_DESIGN.md](docs/AFINNI_ART_DESIGN.md)**: the mathematics of both approaches, the
   refinement engine, and the design and implementation log.
 - **[AGENTS.md](AGENTS.md)**: code conventions and verification steps for contributors

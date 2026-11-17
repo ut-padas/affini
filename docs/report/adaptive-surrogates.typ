@@ -2130,8 +2130,7 @@ design decisions behind them.
 
 = Experimental setup <sec:study-config>
 
-// The study this appendix specifies is being built in studies/manuscript; until then the
-// sanity check of Appendix B runs on studies/sanity/paper.
+// studies/manuscript/spec.py is this appendix as code: a change to one is a change to the other.
 
 This appendix specifies every experiment of the paper completely: the functions, the accuracy
 target, the algorithm's settings, the quantities reported and how they are aggregated. One rule
@@ -2214,7 +2213,7 @@ and memory, and per level the clusters, points, time and memory.
     })).flatten(),
   )
   #v(-0.4em)
-  Sizes by dimension, from the rules above.
+  Sizes by dimension, from the rules above (`studies/manuscript/spec.py`, `sizes`).
 ]
 
 == Experiments
@@ -2224,7 +2223,7 @@ and memory, and per level the clusters, points, time and memory.
   inset: (x: 5pt, y: 4pt),
   align: left + horizon,
   table.header[Experiment][Runs],
-  [Convergence], [every function of the table at every $d$ and tolerance, with and without Hessian-informed splits ($e_"nh"$)],
+  [Convergence], [the Quadratic, Gaussian, Rosenbrock and Wave at $d = 2, 5, 10$ and Lorenz-96 at $d = 5$, at every tolerance, with and without Hessian-informed splits ($e_"nh"$)],
   [Dimension], [Lorenz-96 at $d = 5, 10, 20, 40, 80$ and $"tol" = 0.1$],
   [Absolute tolerance], [Rosenbrock at $d = 5$ with the absolute test only, $a_"tol" = 579.8 dot 2^(-k)$ and $N_0 = 5 dot 10^4 dot 2^(5k\/2)$ for $k = 0, 1, 2, 3$, so that $N_0 prop a_"tol"^(-5\/2)$],
   [Gradient], [Wave at $d = 5$ with the exact gradient in place of the estimated one, at every tolerance],
@@ -2238,12 +2237,22 @@ not fit in the memory or the time of the machine is reported as not run, and its
 
 == Reproducing the experiments <sec:study-reproduce>
 
-The repository's locked environment (`uv sync --locked`) installs every dependency. One command
-plans the experiments with their projected time and memory, runs them, cheapest first, each in its
-own process, and resumes where it stopped; a case that runs out of memory or time is recorded with
-the reason and the others continue. A second command collects every run into data files, one row
-per case and seed with every quantity above and its settings and provenance (commit, machine,
-library versions), and builds the paper's tables from them.
+The repository's locked environment (`uv sync --locked`) installs every dependency, and
+`studies/manuscript` runs the experiments on any machine:
+
+#raw(block: true, lang: "bash", "M=studies/manuscript/machines/workstation.toml   # or a cluster's profile
+python -m studies.manuscript.run run --smoke --machine $M --seeds 0   # checks the machine in minutes
+python -m studies.manuscript.run plan --machine $M                    # every case, with projected cost
+python -m studies.manuscript.run run --machine $M                     # resumable
+python -m studies.manuscript.collect                                  # data files and tables")
+
+Each case runs in its own process. Before it runs, its time and memory are projected from the
+cases already measured, and a case projected over the machine's limits, or one whose series
+already ran out of memory or time at a looser tolerance, is recorded as skipped with the reason;
+a case that fails is recorded with the reason and the others continue. Collecting writes one row
+per case with every quantity above, its settings and its provenance (commit, machine, library
+versions), and builds the tables from those rows: each table cell is the median over seeds, with
+the minimum, maximum and number of seeds beside it.
 
 #pagebreak(weak: true)
 

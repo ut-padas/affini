@@ -1,0 +1,7 @@
+# A Vista Grace-Grace CPU node: the distributed experiment, up to 128 ranks with ibrun.
+device = "cpu"
+distributed_device = "cpu"
+mpi_launcher = ["ibrun"]
+max_ranks = 144
+case_timeout_h = 4.0
+results = "studies/manuscript/output"

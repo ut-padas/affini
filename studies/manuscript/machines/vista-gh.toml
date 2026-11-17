@@ -1,0 +1,6 @@
+# A Vista GH200 node (one GPU): every case except the distributed experiment. Host memory defaults
+# to 90% of the node's RAM, read at run time. Run inside a job (vista.sbatch).
+device = "gpu"
+mpi_launcher = ["ibrun"]
+case_timeout_h = 4.0
+results = "studies/manuscript/output"
