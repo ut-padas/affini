@@ -4,7 +4,7 @@
 #   studies/convergence/paper/run_paper.sh [--smoke] [--device gpu|cpu] [--max-tier S|M|L]
 #       [--groups conv,conv_nh,conv_k10,lorenz_dims,rosen_weak,wave_exact,iterative,mpi,seeds]
 #       [--seeds 0,1,2] [--nps 1,2,4,8] [--mpi-device cpu|gpu] [--lorenz-device auto|cpu|gpu]
-#       [--only CASE_REGEX] [--out DIR] [--dry-run]
+#       [--only CASE_REGEX] [--out DIR] [--dry-run] [--no-plots]
 #
 # Defaults: --device gpu (cpu with --smoke), --max-tier S, every group, --mpi-device cpu (the
 # manuscript's MPI runs were on Grace CPU nodes).
@@ -16,7 +16,7 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 
-SMOKE=0 DEVICE="" MAX_TIER=S RUN_GROUPS="" SEEDS="0,1,2" NPS="1,2,4,8" MPI_DEVICE=cpu LORENZ_DEVICE=auto DRY=0 OUT="" ONLY=""
+SMOKE=0 DEVICE="" MAX_TIER=S RUN_GROUPS="" SEEDS="0,1,2" NPS="1,2,4,8" MPI_DEVICE=cpu LORENZ_DEVICE=auto DRY=0 OUT="" ONLY="" NO_PLOTS=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --smoke) SMOKE=1 ;;
@@ -30,6 +30,7 @@ while [[ $# -gt 0 ]]; do
         --out) OUT="$2"; shift ;;
         --only) ONLY="$2"; shift ;;
         --dry-run) DRY=1 ;;
+        --no-plots) NO_PLOTS=1 ;;  # the launcher's diagnostic figures (records read only the JSON)
         -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
         *) log "unknown argument $1"; exit 2 ;;
     esac
@@ -67,7 +68,7 @@ while IFS=$'\t' read -r case_id group tier np seed kind args_rest; do
     if [[ "$kind" == iterative ]]; then
         cmd=("$PYTHON" "$STUDY_DIR/paper/run_iterative.py" --results "$OUT/results/iterative" "${args[@]}")
     else
-        cmd=("$PYTHON" "$STUDY_DIR/paper/run_case.py" --results "$OUT/results/seed_$seed" --seed "$seed" --case "$case_id" -- "${args[@]}")
+        cmd=("$PYTHON" "$STUDY_DIR/paper/run_case.py" --results "$OUT/results/seed_$seed" --seed "$seed" --case "$case_id" -- "${args[@]}" $([[ $NO_PLOTS == 1 ]] && echo --no_plots))
     fi
     mpi=off
     if [[ "$np" -gt 1 ]]; then

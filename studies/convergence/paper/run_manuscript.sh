@@ -23,6 +23,6 @@ for ((i = 1; i <= $#; i++)); do
     [[ "${!i}" == --out ]] && { j=$((i + 1)); OUT="${!j}"; }
 done
 "$STUDY_DIR/paper/run_paper.sh" --device gpu --max-tier L \
-    --groups conv,conv_nh,lorenz_dims,rosen_weak,wave_exact,iterative,mpi,seeds --out "$OUT" "$@"
+    --groups conv,conv_nh,lorenz_dims,rosen_weak,wave_exact,iterative,mpi,seeds --out "$OUT" --no-plots "$@"
 [[ " $* " == *" --dry-run "* ]] && exit 0
 "$PYTHON" "$STUDY_DIR/paper/record_results.py" --out "$OUT" --machine "$MACHINE"

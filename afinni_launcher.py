@@ -91,6 +91,8 @@ def tolerance_pairs(
 
 
 SEED = 0
+# --no-plots: the diagnostic figures each case saves beside its JSON (record runs read only the JSON)
+SAVE_PLOTS = True
 
 logger = logging.getLogger(__name__)
 _size = get_mpi_size()
@@ -307,6 +309,8 @@ def conduct_experiment_given_data(
         # Array scalars (NumPy/CuPy) must stay numbers for the plots; anything else unknown is saved as text.
         json.dump(json_data, jf, indent=4, default=lambda o: float(o) if hasattr(o, "__float__") else str(o))
     print(f"Experiment completed and saved to {json_fpath}")
+    if not SAVE_PLOTS:
+        return
 
     plt.close(plot_profile_dashboard(surrogate, json_fpath.with_name(json_fpath.stem + "_profile.png")))
 
@@ -999,6 +1003,9 @@ def setup_argparse(argv: list[str] | None = None):
         default="uniform",
     )
     parser.add_argument(
+        "--no_plots", action="store_true", help="skip the diagnostic figures saved beside each result JSON",
+    )
+    parser.add_argument(
         "--coarse_factor",
         help="The number of nearest neighbor points to use during inference.",
         type=int,
@@ -1047,6 +1054,8 @@ def setup_argparse(argv: list[str] | None = None):
 
 def run_experiment_from_args(args):
     """Run every (atol, rtol) pair from ``tolerance_pairs`` in every dimension of ``--dims``; existing results are skipped."""
+    global SAVE_PLOTS
+    SAVE_PLOTS = not args.no_plots
 
     # Grab values from dictionary
     dvec = args.dims
