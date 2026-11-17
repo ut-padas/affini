@@ -45,16 +45,9 @@ if [[ $DRY == 0 ]]; then
     [[ "$MPI_DEVICE" != "$DEVICE" ]] && check_device "$MPI_DEVICE"
 fi
 
-# Lorenz-96 on the GPU goes through JAX (jax.dlpack); a CPU-only jaxlib cannot take CuPy arrays, so
-# "auto" falls back to the CPU (SciPy RK45, rtol 1e-6) unless JAX sees a GPU. The two flow maps differ
-# at about 1e-3 (diffrax runs at rtol = atol = 1e-3), which matters at tol 5e-3.
-if [[ "$LORENZ_DEVICE" == auto ]]; then
-    LORENZ_DEVICE="$DEVICE"
-    if [[ "$DEVICE" == gpu ]] && ! "$PYTHON" -c "import jax; assert any(d.platform == 'gpu' for d in jax.devices())" 2>/dev/null; then
-        LORENZ_DEVICE=cpu
-        log "JAX has no GPU backend (install jax[cuda12] into the venv to run Lorenz-96 on the GPU); Lorenz-96 runs on the CPU"
-    fi
-fi
+# Lorenz-96 runs the batched ensemble integrator on either backend (the same algorithm, float64,
+# rtol = atol = 1e-6); "auto" follows --device.
+[[ "$LORENZ_DEVICE" == auto ]] && LORENZ_DEVICE="$DEVICE"
 
 CASE_ARGS=(--max-tier "$MAX_TIER" --seeds "$SEEDS" --nps "$NPS")
 [[ $SMOKE == 1 ]] && CASE_ARGS=(--smoke --nps "$NPS")

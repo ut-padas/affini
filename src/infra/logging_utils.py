@@ -121,8 +121,6 @@ def setup_logging(
             "absl",
             "cupy",
             "faiss",
-            "jax",
-            "jaxlib",
             "matplotlib",
             "numba",
             "numpy",

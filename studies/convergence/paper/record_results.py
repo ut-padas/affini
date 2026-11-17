@@ -36,7 +36,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 DEST = ROOT / "studies" / "convergence" / "results"
 QUANTITIES = ("N", "N_c", "p_o", "p_o_exact", "e_in", "e", "e_nh", "p_in_good")
-LIBRARIES = ("numpy", "scipy", "numba", "llvmlite", "cupy-cuda12x", "cupy", "mpi4py", "jax", "jaxlib",
+LIBRARIES = ("numpy", "scipy", "numba", "llvmlite", "cupy-cuda12x", "cupy", "mpi4py",
              "psutil", "matplotlib", "knndbscan", "nvidia-ml-py")  # fmt: skip
 
 

@@ -42,12 +42,11 @@ and Python.
 - [ ] Choose a licence (PyPI needs one).
 - [ ] Dependency policy: lower bounds only, no upper caps; floors found by testing with
   `--resolution lowest-direct`, not copied from the lock.
-- [ ] Slim the core dependencies: `jax` and `diffrax` (one problem module and
-  `afinni_launcher.py`) to an extra; `matplotlib` and `pandas` (`src/plotting/`) to a
+- [ ] Slim the core dependencies: `matplotlib` and `pandas` (`src/plotting/`) to a
   `plot` extra; drop `seaborn` (not imported anywhere in `src/`).
 - [ ] Widen `requires-python` to `>=3.10` (tested: 3.10 to 3.15 pass the CPU and MPI suites
   with bit-identical regression results). Needs `class Registry[T]` in
-  `src/components/registry.py` replaced by `Generic[T]`, and the floors `jax>=0.6.2`,
+  `src/components/registry.py` replaced by `Generic[T]`, and the floor
   `scipy>=1.15.3`.
 - [ ] CI (`.github/workflows/ci.yml`): lint and `uv lock --check`; CPU tests on Linux
   x86_64 and arm64, macOS and Windows; MPI tests with the bundled MPICH; the differential
