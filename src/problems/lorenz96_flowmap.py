@@ -1,59 +1,22 @@
 """
-Lorenz-96 flow map x(0) -> x(tf) and its Jacobian with SciPy, batched over
-trajectories and optionally parallelized over processes through shared memory.
+Lorenz-96 flow map x(0) -> x(tf) (the batched ensemble integrator, both backends) and its Jacobian
+(SciPy sensitivities, parallelized over processes through shared memory).
 """
 
-import multiprocessing as mp
 import os
 from functools import partial
-from multiprocessing.shared_memory import SharedMemory
 
 import numpy as np
-from scipy.integrate import solve_ivp
 
 from src import Array, to_device, to_host
+from src.numerics import integrate_ensemble
 from src.problems.lorenz96 import lorenz96, lorenz96_grad
 from src.problems.sensitivities_solver import (
     parallel_sensitivities_solver,
-    preferred_mp_start_method,
 )
 
-
-def _serial_flowmap_solve(
-    X0_np: np.ndarray,
-    forcing: float,
-    tf: float,
-    *,
-    rtol: float = 1e-6,
-    atol: float | None = None,
-) -> np.ndarray:
-    """
-    One batched SciPy solve over all trajectories.
-    """
-    n_trajectories, d = X0_np.shape
-
-    def batched_ode_rhs(t, x_flat):
-        x_batch = x_flat.reshape(n_trajectories, d)
-        dxdt_batch = lorenz96(x_batch, forcing=forcing)
-        return dxdt_batch.ravel()
-
-    solve_kwargs = {
-        "method": "RK45",
-        "t_eval": [tf],
-        "rtol": rtol,
-    }
-    if atol is not None:
-        solve_kwargs["atol"] = atol
-
-    sol = solve_ivp(
-        batched_ode_rhs,
-        [0, tf],
-        X0_np.ravel(),
-        **solve_kwargs,
-    )
-    if not sol.success:
-        raise RuntimeError(f"Lorenz96 flowmap solve_ivp failed: {sol.message}")
-    return sol.y.T.reshape(n_trajectories, d)
+# The flow map's tolerances: about 1e-6 relative accuracy, far below every study tolerance.
+LORENZ96_RTOL = LORENZ96_ATOL = 1e-6
 
 
 def _limit_worker_threads() -> None:
@@ -63,100 +26,6 @@ def _limit_worker_threads() -> None:
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
     os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
-
-
-def _flowmap_chunk_worker(args):
-    """Solve rows ``start:end`` of the shared input and write them into the shared output."""
-    (
-        x0_shm_name,
-        xf_shm_name,
-        shape,
-        dtype,
-        start,
-        end,
-        forcing,
-        tf,
-        rtol,
-        atol,
-    ) = args
-    _limit_worker_threads()
-
-    shm_x0 = SharedMemory(name=x0_shm_name)
-    shm_xf = SharedMemory(name=xf_shm_name)
-    try:
-        X0_all = np.ndarray(shape, dtype=dtype, buffer=shm_x0.buf)
-        XF_all = np.ndarray(shape, dtype=dtype, buffer=shm_xf.buf)
-        XF_all[start:end] = _serial_flowmap_solve(
-            X0_all[start:end],
-            forcing,
-            tf,
-            rtol=rtol,
-            atol=atol,
-        )
-        return True
-    finally:
-        shm_x0.close()
-        shm_xf.close()
-
-
-def _parallel_flowmap_solve(
-    X0_np: np.ndarray,
-    forcing: float,
-    tf: float,
-    *,
-    workers: int | None = None,
-    mp_start_method: str | None = None,
-    rtol: float = 1e-6,
-    atol: float | None = None,
-) -> np.ndarray:
-    """
-    Chunk the state-only Lorenz96 flowmap across worker processes.
-    Workers write into shared memory to avoid returning large arrays through
-    multiprocessing pipes.
-    """
-    if workers is None:
-        workers = _lorenz96_num_workers()
-
-    shm_x0 = SharedMemory(create=True, size=X0_np.nbytes)
-    shm_xf = SharedMemory(create=True, size=X0_np.nbytes)
-    try:
-        X0_shared = np.ndarray(X0_np.shape, dtype=X0_np.dtype, buffer=shm_x0.buf)
-        X0_shared[:] = X0_np
-
-        n_trajectories = X0_np.shape[0]
-        chunk_size = (n_trajectories + workers - 1) // workers
-        tasks = []
-        for start in range(0, n_trajectories, chunk_size):
-            end = min(start + chunk_size, n_trajectories)
-            tasks.append(
-                (
-                    shm_x0.name,
-                    shm_xf.name,
-                    X0_np.shape,
-                    X0_np.dtype,
-                    start,
-                    end,
-                    forcing,
-                    tf,
-                    rtol,
-                    atol,
-                )
-            )
-
-        ctx = mp.get_context(preferred_mp_start_method(mp_start_method))
-        with ctx.Pool(processes=workers) as pool:
-            results = pool.map(_flowmap_chunk_worker, tasks)
-        if not all(results):
-            raise RuntimeError("Some Lorenz96 flowmap workers failed.")
-
-        return np.ndarray(X0_np.shape, dtype=X0_np.dtype, buffer=shm_xf.buf).copy()
-    finally:
-        for shm in (shm_x0, shm_xf):
-            try:
-                shm.close()
-                shm.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def _lorenz96_sensitivity_parallel_policy(
@@ -176,22 +45,6 @@ def _lorenz96_sensitivity_parallel_policy(
     return N * d * (d + 1) >= min_augmented_variables
 
 
-def _lorenz96_flowmap_parallel_policy(
-    X0_np: np.ndarray,
-    *,
-    min_state_variables: int = 20_000_000,
-) -> bool:
-    """
-    Decide whether the state-only flowmap is large enough to chunk.
-
-    Your standalone benchmark showed multiprocessing starts paying off around
-    tens of millions of state variables, with 4 workers generally better than
-    using more workers blindly.
-    """
-    N, d = X0_np.shape
-    return N * d >= min_state_variables
-
-
 def _lorenz96_num_workers(default: int = 64) -> int:
     """
     Worker count for Lorenz96 multiprocessing paths.
@@ -202,57 +55,11 @@ def _lorenz96_num_workers(default: int = 64) -> int:
 
 def lorenz96_flowmap(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> Array:
     """
-    Computes the flowmap of the Lorenz96 system.
-
-    This function runs in a single process using scipy.integrate.solve_ivp.
-    It relies on vectorization for batch efficiency. For massive batches,
-    consider a parallel approach similar to the gradient functions.
-
-    Args:
-        X0: (N, d) data matrix of initial states.
-        forcing: Forcing term 'F'.
-        tf: Final integration time.
-
-    Returns:
-        XF: (N, d) data matrix of states at time tf.
+    (N, d) Lorenz-96 states at time ``tf`` from the rows of ``X0``, in float64 on the active backend:
+    Dormand-Prince 5(4) per trajectory at rtol = atol = 1e-6 (``integrate_ensemble``), so a row's value
+    does not depend on the other rows of the call.
     """
-    X0_np = to_host(X0)
-    return to_device(_serial_flowmap_solve(X0_np, forcing, tf))
-
-
-def lorenz96_flowmap_auto(
-    X0: Array,
-    forcing: float = 1.0,
-    tf: float = 0.1,
-    *,
-    workers: int | None = None,
-    min_state_variables: int = 20_000_000,
-    mp_start_method: str | None = None,
-    rtol: float = 1e-6,
-    atol: float | None = None,
-) -> Array:
-    """
-    Hybrid state-only flowmap.
-
-    Uses the serial batched SciPy solve for small calls and shared-memory
-    multiprocessing for large calls.
-    """
-    X0_np = to_host(X0)
-    if _lorenz96_flowmap_parallel_policy(
-        X0_np, min_state_variables=min_state_variables
-    ):
-        return to_device(
-            _parallel_flowmap_solve(
-                X0_np,
-                forcing,
-                tf,
-                workers=workers,
-                mp_start_method=mp_start_method,
-                rtol=rtol,
-                atol=atol,
-            )
-        )
-    return to_device(_serial_flowmap_solve(X0_np, forcing, tf, rtol=rtol, atol=atol))
+    return integrate_ensemble("lorenz96", X0, tf, [forcing], LORENZ96_RTOL, LORENZ96_ATOL)
 
 
 def lorenz96_flowmap_grad(X0: Array, forcing: float = 1.0, tf: float = 0.1) -> Array:

@@ -9,7 +9,6 @@ from functools import partial
 from pathlib import Path
 from typing import Literal
 
-import jax
 import matplotlib.pyplot as plt
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, get_mpi_rank, get_mpi_size, to_host, xp
@@ -659,22 +658,11 @@ def rosenbrock_modified_sampling(args) -> Problem:
 def lorenz96(args) -> Problem:
     """The first component of the Lorenz-96 flow map over time ``args.dt``."""
     from src.problems.lorenz96_flowmap import lorenz96_flowmap
-    from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
 
     forcing, tf, output_component = 1.0, args.dt, 0
 
     def f(x):
-        N, d = x.shape
-        if IS_CUPY_BACKEND:
-            import cupy as cp
-
-            # The batched JAX flow map returns (N, 1, d): one saved time, tf.
-            X_jax = jax.dlpack.from_dlpack(x)
-            Y_jax = lorenz96_flowmap_jax_batched(X_jax, forcing, tf)
-            return cp.from_dlpack(Y_jax)[:, 0, output_component].reshape(N, 1)
-        else:
-            f = lorenz96_flowmap(x, forcing, tf)[:, output_component]
-            return f.reshape(N, 1)
+        return lorenz96_flowmap(x, forcing, tf)[:, output_component : output_component + 1]
 
     return Problem(
         f"lorenz96_dt_{tf}",
@@ -850,16 +838,9 @@ def lorenz_trajectories_experiment(
 
     # Define the function: the full Lorenz-96 state after time dt
     from src.problems.lorenz96_flowmap import lorenz96_flowmap
-    from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
 
     def f_fn(X):
-        if not IS_CUPY_BACKEND:
-            return lorenz96_flowmap(X, forcing, dt)
-        import cupy as cp
-
-        # The batched JAX flow map returns (N, 1, d): one saved time, dt.
-        Y_jax = lorenz96_flowmap_jax_batched(jax.dlpack.from_dlpack(X), forcing, dt)
-        return cp.from_dlpack(Y_jax)[:, 0, :]
+        return lorenz96_flowmap(X, forcing, dt)
 
     # Use this function to generate data.
     N_start_train = 20000
