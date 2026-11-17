@@ -1,5 +1,5 @@
 // Batched ensemble integration of autonomous ODEs for src/numerics/ode.py (integrate_ensemble):
-// explicit embedded Runge-Kutta pairs with the standard step-size control.
+// explicit embedded Runge-Kutta pairs with SciPy's RK45 step-size control.
 
 #define ODE_MAX_STAGES 7
 #define ODE_MAX_COMPONENTS_PER_LANE 32  // components one lane carries: ceil(d / L)
@@ -71,7 +71,7 @@ __device__ void ensemble_rk(RHS rhs, const double* __restrict__ X0, double* __re
         }
     }
     double d0 = sqrt(group_sum<L>(sy) / d), d1 = sqrt(group_sum<L>(sf) / d);
-    double h0 = (d0 < 1e-5 || d1 < 1e-5) ? 1e-6 : 0.01 * d0 / d1;
+    double h0 = fmin((d0 < 1e-5 || d1 < 1e-5) ? 1e-6 : 0.01 * d0 / d1, t1);
     for (int m = 0; m < m_count; ++m) {
         int j = lane + L * m;
         if (j < d) x[j] = y[m] + h0 * k[0][m];
@@ -91,11 +91,21 @@ __device__ void ensemble_rk(RHS rhs, const double* __restrict__ X0, double* __re
     double h1 = dm <= 1e-15 ? fmax(1e-6, h0 * 1e-3) : pow(0.01 / dm, 1.0 / order);
     double h = fmin(fmin(100.0 * h0, h1), t1);
 
-    // 3. Steps: stages, the embedded error, and the step-size update (safety 0.9, factor in [0.2, 10]).
+    // 3. Steps: stages, the embedded error, and the step-size update, each rule as in SciPy's RK45 (safety
+    // 0.9, factor in [0.2, 10], no growth right after a rejection, failure below ten ulps of t), so a
+    // trajectory takes SciPy's steps up to rounding.
     double t = 0.0;
     long long steps = 0;
-    bool failed = false;
+    bool failed = false, rejected = false;
     while (t < t1) {
+        const double min_step = 10.0 * (nextafter(t, INFINITY) - t);
+        if (h < min_step) {
+            if (rejected) {
+                failed = true;
+                break;
+            }
+            h = min_step;
+        }
         bool last = t + h >= t1;
         if (last) h = t1 - t;  // the last step lands exactly on t1
         for (int i = 1; i < s; ++i) {
@@ -133,7 +143,7 @@ __device__ void ensemble_rk(RHS rhs, const double* __restrict__ X0, double* __re
             failed = true;
             break;
         }
-        if (err <= 1.0) {
+        if (err < 1.0) {
             t = last ? t1 : t + h;
             for (int m = 0; m < m_count; ++m) {
                 y[m] = yn[m];
@@ -151,9 +161,12 @@ __device__ void ensemble_rk(RHS rhs, const double* __restrict__ X0, double* __re
                 }
                 group_sync<L>();
             }
-            h *= fmin(10.0, fmax(0.2, 0.9 * pow(fmax(err, 1e-300), -1.0 / order)));
+            const double factor = err == 0.0 ? 10.0 : fmin(10.0, 0.9 * pow(err, -1.0 / order));
+            h *= rejected ? fmin(1.0, factor) : factor;
+            rejected = false;
         } else {
-            h *= fmax(0.2, 0.9 * pow(err, -1.0 / order));  // a rejected step never grows
+            h *= fmax(0.2, 0.9 * pow(err, -1.0 / order));
+            rejected = true;
         }
     }
 

@@ -312,7 +312,11 @@ The manuscript's Lorenz rows used a JAX/diffrax flow map in float32 at rtol = at
 re-run uses the library's batched ensemble integrator (`integrate_ensemble` in
 `src/numerics/ode.py`): Dormand-Prince 5(4) per trajectory in float64 at rtol = atol = 1e-6, the
 same algorithm on the GPU and the CPU, each trajectory with its own step, so a point's value does
-not depend on its batch. At tol 0.02 (Lorenz-96 d = 5) the float32 map's error made AFINNI split on
+not depend on its batch. Its step control is SciPy's RK45's, so each trajectory takes the steps of
+`solve_ivp(method="RK45")` on that trajectory alone and has its error (`tests/unit/test_ode.py`
+checks this from states of size 0.01 to 500, forcing 1 to 8, horizons 1e-3 to 10 and tolerances 1e-3
+to 1e-12). Lorenz-96 is not stiff in this range: LSODA's stiffness detection stays on its explicit
+method, and Radau needs three times RK45's function evaluations plus Jacobians. At tol 0.02 (Lorenz-96 d = 5) the float32 map's error made AFINNI split on
 noise (398,767 leaves on the GPU); the float64 map gives 1,154, as row 32's 1,327.
 
 ### Collecting and judging (Part A)

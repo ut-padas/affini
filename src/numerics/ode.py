@@ -26,11 +26,11 @@ class ButcherTableau:
     fsal: bool
 
 
-# Dormand & Prince (1980), the 5(4) pair of Hairer, Norsett & Wanner, Solving ODEs I, Table II.5.2.
+# Dormand & Prince (1980), the 5(4) pair of Hairer, Norsett & Wanner, Solving ODEs I, Table II.5.2,
+# with SciPy's RK45 coefficients: e = b - b_hat is written from its own fractions, not computed as a
+# difference, so the error estimate has the same bits as SciPy's.
 _b5 = np.array([35 / 384, 0.0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0.0])
-_b4 = np.array(
-    [5179 / 57600, 0.0, 7571 / 16695, 393 / 640, -92097 / 339200, 187 / 2100, 1 / 40]
-)
+_e5 = np.array([71 / 57600, 0.0, -71 / 16695, 71 / 1920, -17253 / 339200, 22 / 525, -1 / 40])
 DOPRI5 = ButcherTableau(
     A=np.array([
         [0, 0, 0, 0, 0, 0, 0],
@@ -41,7 +41,7 @@ DOPRI5 = ButcherTableau(
         [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656, 0, 0],
         [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0],
     ]),
-    b=_b5, e=_b5 - _b4, order=5, fsal=True,
+    b=_b5, e=_e5, order=5, fsal=True,
 )  # fmt: skip
 
 # Components one GPU lane carries (ODE_MAX_COMPONENTS_PER_LANE in ode.cu): up to this d a trajectory
@@ -70,8 +70,8 @@ def _trajectory_cpu(
 ):  # pragma: no cover - compiled
     """
     The CPU twin of ``ensemble_rk`` in ode.cu for one trajectory: advances ``y`` in place to ``t1``
-    with the same initial-step rule, error norm and step-size control, components in order; returns
-    False when the trajectory fails. Inlined into each cached entry point below, where ``rhs`` becomes
+    with SciPy's RK45 step control (``solve_ivp(method="RK45")``: its initial step, error norm,
+    factors and minimum step), components in order; returns False when the trajectory fails. Inlined into each cached entry point below, where ``rhs`` becomes
     that entry point's global right-hand side.
     """
     d = y.shape[0]
@@ -87,7 +87,7 @@ def _trajectory_cpu(
         sy += _scaled_sq(y[j], sc)
         sf += _scaled_sq(k[0, j], sc)
     d0, d1 = np.sqrt(sy / d), np.sqrt(sf / d)
-    h0 = 1e-6 if (d0 < 1e-5 or d1 < 1e-5) else 0.01 * d0 / d1
+    h0 = min(1e-6 if (d0 < 1e-5 or d1 < 1e-5) else 0.01 * d0 / d1, t1)
     for j in range(d):
         x[j] = y[j] + h0 * k[0, j]
     sd = 0.0
@@ -97,8 +97,14 @@ def _trajectory_cpu(
     dm = max(d1, d2)
     h1 = max(1e-6, h0 * 1e-3) if dm <= 1e-15 else (0.01 / dm) ** (1.0 / order)
     h = min(min(100.0 * h0, h1), t1)
-    t, steps, failed = 0.0, 0, False
+    t, steps, failed, rejected = 0.0, 0, False, False
     while t < t1:
+        min_step = 10.0 * (np.nextafter(t, np.inf) - t)
+        if h < min_step:
+            if rejected:  # the step shrank below ten ulps of t: give up, as SciPy does
+                failed = True
+                break
+            h = min_step
         last = t + h >= t1
         if last:
             h = t1 - t
@@ -123,7 +129,7 @@ def _trajectory_cpu(
         if err != err or steps > 1_000_000:
             failed = True
             break
-        if err <= 1.0:
+        if err < 1.0:
             t = t1 if last else t + h
             for j in range(d):
                 y[j] = yn[j]
@@ -132,9 +138,12 @@ def _trajectory_cpu(
             if not fsal:
                 for j in range(d):
                     k[0, j] = rhs(y, j, d, params)
-            h *= min(10.0, max(0.2, 0.9 * max(err, 1e-300) ** (-1.0 / order)))
+            factor = 10.0 if err == 0.0 else min(10.0, 0.9 * err ** (-1.0 / order))
+            h *= min(1.0, factor) if rejected else factor  # no growth right after a rejection
+            rejected = False
         else:
             h *= max(0.2, 0.9 * err ** (-1.0 / order))
+            rejected = True
     return not failed
 
 
@@ -172,10 +181,12 @@ def integrate_ensemble(rhs: str, X0: Array, t1: float, params, rtol: float, atol
                        tableau: ButcherTableau = DOPRI5) -> Array:  # fmt: skip
     """
     (N, d) states at ``t1`` of the N trajectories of x' = rhs(x) starting at the rows of ``X0`` at t = 0,
-    in float64. Each trajectory has its own adaptive step (Hairer's initial step, the error norm over
-    its d components, safety 0.9, step factors in [0.2, 10]) and its last step lands exactly on ``t1``,
-    so its value does not depend on the other rows. A trajectory that fails (non-finite error, more
-    than 10^6 steps) comes back as NaN. On the GPU d is at most 32 x 32.
+    in float64. Each trajectory has its own adaptive step, controlled exactly as SciPy's
+    ``solve_ivp(method="RK45")`` controls one (Hairer's initial step, the RMS error norm over its d
+    components, safety 0.9, factors in [0.2, 10], no growth right after a rejection), and its last step
+    lands exactly on ``t1``; with DOPRI5 a row therefore equals SciPy's RK45 solve of that row alone
+    up to rounding, and does not depend on the other rows. A trajectory that fails (non-finite error, a
+    step below ten ulps of t, more than 10^6 steps) comes back as NaN. On the GPU d is at most 32 x 32.
     """
     params = np.asarray(params, dtype=np.float64).reshape(-1)
     X0 = xp.ascontiguousarray(xp.asarray(X0, dtype=xp.float64))
