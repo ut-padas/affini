@@ -20,9 +20,31 @@ python -m studies.manuscript.collect                                  # data fil
 ```
 
 (`make study-smoke`, `study-plan`, `study-run`, `study-status` and `study-collect` run the same,
-with `MACHINE=<profile>`.) On Vista, `sbatch -p gh studies/manuscript/machines/vista.sbatch gh` runs
-every GPU case and `sbatch -p gg ... gg` the distributed experiment; resubmit the same command to
-continue.
+with `MACHINE=<profile>`.)
+
+## On Vista
+
+Once, on a compute node (docs/USAGE.md, "HPC clusters", has the cache settings for `$WORK`):
+
+```bash
+idev -p gh -N 1 -n 1 -t 01:00:00
+uv sync --locked --extra gpu --extra mpi-system
+```
+
+Then, from the repository root, check both node types (minutes), then submit the study:
+
+```bash
+sbatch -p gh -N 1 -n 1   -t 00:30:00 studies/manuscript/machines/vista.sbatch gh-smoke
+sbatch -p gg -N 1 -n 4   -t 00:30:00 studies/manuscript/machines/vista.sbatch gg-smoke
+sbatch -p gh -N 1 -n 1   -t 48:00:00 studies/manuscript/machines/vista.sbatch gh    # every GPU case
+sbatch -p gg -N 1 -n 128 -t 48:00:00 studies/manuscript/machines/vista.sbatch gg    # the distributed experiment
+```
+
+A job that reaches its time limit leaves its finished cases in place: resubmit the same command
+until `status` shows nothing pending. The distributed experiment runs on a Grace-Grace (CPU) node
+with one thread per rank, the single-rank case too, so its times compare ranks, not thread pools.
+The two jobs write to the same results folder, and `collect` at the end of each builds the tables
+from everything finished.
 
 ## How it runs
 

@@ -122,3 +122,16 @@ def test_a_smoke_run_goes_through_the_runner_end_to_end(tmp_path):
               "--only", r"^(gaussian_d2_tol0\.1_hessian|wave_d5_tol0\.1_exact_gradient)"])  # fmt: skip
     results = sorted(Path(tmp_path / "out" / "cases").glob("*.json"))
     assert len(results) == 2 and all(json.loads(p.read_text())["status"] == "done" for p in results)
+
+
+def test_every_distributed_case_runs_on_cpu_ranks_with_one_thread_each(tmp_path):
+    one = spec.Case("rosenbrock", 5, "hessian", 0, *spec.sizes(5, 10**5), tol=0.05, experiments=("distributed",))
+    eight = spec.Case("rosenbrock", 5, "hessian", 0, *spec.sizes(5, 10**5), tol=0.05, ranks=8, experiments=("distributed",))
+    gpu = spec.Case("rosenbrock", 5, "hessian", 0, *spec.sizes(5), tol=0.05, experiments=("convergence",))
+    machine = {**MACHINE, "device": "gpu", "max_ranks": 128}
+    for case in (one, eight):
+        cmd, env = run.command(case, machine, tmp_path / "x.json")
+        assert env["SURROGATE_DEVICE"] == "cpu" and env["OMP_NUM_THREADS"] == env["NUMBA_NUM_THREADS"] == "1"
+    assert run.command(eight, machine, tmp_path / "x.json")[0][:3] == ["mpiexec", "-n", "8"]
+    cmd, env = run.command(gpu, machine, tmp_path / "x.json")
+    assert env["SURROGATE_DEVICE"] == "gpu" and cmd[0] == sys.executable and env["SURROGATE_MPI"] == "off"

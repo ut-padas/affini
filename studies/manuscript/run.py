@@ -160,7 +160,12 @@ def decide(case: Case, machine: dict, by_key: dict, all_cases: list[Case], force
 
 
 def command(case: Case, machine: dict, out: Path) -> tuple[list[str], dict]:
-    """The command and environment of one case: CPU ranks for the distributed experiment, the machine's device otherwise."""
+    """
+    The command and environment of one case: CPU ranks for the distributed experiment, the machine's
+    device otherwise. Every distributed case, the single-rank one too, gets one thread per rank, so
+    its times measure what ranks and work stealing buy and not the thread pools: with the defaults,
+    one rank would use every core and P ranks would oversubscribe them.
+    """
     cmd = [sys.executable, "-m", "studies.manuscript.case", "--case", json.dumps(case.as_dict()), "--out", str(out)]
     if machine["exact_max_dim"] is not None:
         cmd += ["--exact-max-dim", str(machine["exact_max_dim"])]
@@ -169,10 +174,10 @@ def command(case: Case, machine: dict, out: Path) -> tuple[list[str], dict]:
     cpu = "distributed" in case.experiments
     env = {**os.environ, "PYTHONPATH": str(ROOT), "SURROGATE_DEVICE": machine["distributed_device"] if cpu else machine["device"],
            "SURROGATE_MPI": "on" if case.ranks > 1 else "off"}  # fmt: skip
+    if cpu:
+        env |= {"OMP_NUM_THREADS": "1", "NUMBA_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"}
     if case.ranks > 1:
         cmd = [*machine["mpi_launcher"], "-n", str(case.ranks), *cmd]
-        env.setdefault("OMP_NUM_THREADS", "1")
-        env.setdefault("NUMBA_NUM_THREADS", "1")
     return cmd, env
 
 
