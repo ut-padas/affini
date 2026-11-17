@@ -10,7 +10,9 @@ Usage: ``collect_paper.py --out OUT`` (the ``--out`` of run_paper.sh). Writes to
 - ``checks.csv`` / ``checks.md``: the pass/fail accuracy checks (CONVERGENCE_STUDY.md, Part A).
 - ``slopes.csv``: fitted log-log slopes of e_in against N_c, paper and re-run, beside -2/d.
 - ``runs.csv``: every run found, flattened; ``cost.csv``: wall time and rank 0's peak memory per case;
-  ``*.png``: the plots.
+  ``*.png``: the plots, among them ``errors_<problem>_..._by_d.png`` and ``..._by_tol.png``: the
+  errors in units of the tolerance, where the test points fall, leaves and evaluations, across d at
+  each tolerance and across tolerances at each d (seed 0, one rank; ``plot_error_summary``).
 
 The noise band of a quantity is max(3 sigma, floor): sigma is the standard deviation of log(value)
 over the seed replicates (when there are at least two), the floor 25% for N, N_c, e_in, e and e_nh
@@ -28,6 +30,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # the repository root, for src.plotting
 from cases import COARSE  # noqa: E402
 from paper_values import PAPER_NOTES, records  # noqa: E402
 
@@ -301,6 +304,7 @@ def plots(matched: dict, runs: list[dict], iterative: Path, out: Path) -> None:
             fig.tight_layout()
             fig.savefig(out / name, dpi=130)
             plt.close(fig)
+    error_summaries(runs, iterative.parent, out)
     csvs = sorted(iterative.glob("active_learning_halo/halo_metrics_*_sampling_uniform.csv"))
     if csvs:
         fig, ax = plt.subplots(figsize=(5, 3.4))
@@ -318,6 +322,33 @@ def plots(matched: dict, runs: list[dict], iterative: Path, out: Path) -> None:
         fig.tight_layout()
         fig.savefig(out / "iterative_p_out.png", dpi=130)
         plt.close(fig)
+
+
+def error_summaries(runs: list[dict], results: Path, out: Path) -> None:
+    """One ``plot_error_summary`` per problem, mode and candidate count: across d at each tolerance, across tolerances at each d."""
+    import matplotlib.pyplot as plt
+
+    from src.plotting import plot_error_summary
+
+    families = defaultdict(list)
+    for r in runs:
+        if r["seed"] == 0 and r["mpi_size"] == 1:
+            families[(r["problem"], r["mode"], r["coarse_factor"])].append(r)
+    for (problem, mode, coarse), family in sorted(families.items()):
+        tol_of = {id(r): r["atol"] if r["atol"] is not None else r["rtol"] for r in family}
+        sweeps = defaultdict(list)
+        for r in family:
+            sweeps[("tol", tol_of[id(r)])].append(r)
+            sweeps[("d", r["dim"])].append(r)
+        for (fixed, value), cases in sorted(sweeps.items(), key=str):
+            if len(cases) < 2:
+                continue
+            by = "d" if fixed == "tol" else "tol"
+            cases.sort(key=lambda r: r["dim"] if by == "d" else -tol_of[id(r)])
+            name = f"errors_{problem}_{mode}_k{coarse}_{fixed}{value:g}_by_{by}.png"
+            title = f"{problem} ({mode}, {coarse} candidates), {fixed} = {value:g}"
+            data = [json.loads((results / r["file"]).read_text()) for r in cases]
+            plt.close(plot_error_summary(data, out / name, title=title))
 
 
 def main() -> None:

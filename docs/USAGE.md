@@ -372,7 +372,7 @@ P.plot_steal_matrix(surrogate, "figs/steals.png")             # needs steals (MP
 | `plot_steal_matrix` | Points (or `value="n_clusters"`) moved from each victim to each thief | events, steals |
 | `plot_profile_dashboard` | Breakdown, growth, load and steals, whichever are available | any |
 | `plot_adaptive_clustering_results` | 2-D leaves and trust ellipsoids over the function | 2-D problems |
-| `plot_error_histogram` | Pointwise relative errors | predictions |
+| `plot_error_summary` | For one or more launcher results: the share of trusted and of flagged test points whose error is at least x tolerances, where the test points fall (within or beyond tolerance, flagged inside a leaf or outside every leaf), and across several cases the leaves and evaluations | result JSONs (`error_metrics["tolerance_ratio"]`) |
 | `plot_art_partition` | A ART tree's cells coloured by depth, terminal reason and pointwise error, with the split boundaries | 2-D ART model |
 | `plot_art_tree_stats` | Leaves per depth by terminal reason, and validation statuses | ART model |
 | `plot_error_maps` | Pointwise relative error of several models side by side, with the tolerance contour | 2-D problems |

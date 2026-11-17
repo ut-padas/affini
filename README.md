@@ -49,7 +49,7 @@ Optional backends are uv *extras*; combine them freely, e.g. `uv sync --extra gp
 | -------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | CPU only             | `uv sync`                                | All platforms.                                                                                          |
 | CPU + MPI            | `uv sync --extra mpi`                    | Ships its own MPI runtime (MPICH on Linux/macOS, Intel MPI on Windows), so no system install is needed. |
-| NVIDIA GPU (CUDA 12) | `uv sync --extra gpu`                    | Linux and Windows. Only an NVIDIA driver is needed, because the CUDA libraries come from pip. On Linux it also installs JAX's CUDA build (the Lorenz-96 flow map). |
+| NVIDIA GPU (CUDA 12) | `uv sync --extra gpu`                    | Linux and Windows. Only an NVIDIA driver is needed, because the CUDA libraries come from pip. |
 | GPU + MPI            | `uv sync --extra gpu --extra mpi`        |                                                                                                         |
 | HPC cluster          | `uv sync --extra gpu --extra mpi-system` | Uses the cluster's own MPI. See [HPC clusters](docs/USAGE.md#hpc-clusters).                        |
 
@@ -162,7 +162,6 @@ uv run ruff format .            # format
 
 - [x] Verify CPU and MPI on macOS (Apple Silicon).
 - [ ] Rename the `src` package to `adaptive_surrogates` (src layout) and add a `[build-system]`, so it can be installed with `pip install adaptive-surrogates`.
-- [ ] Move `jax`/`diffrax` to an optional extra. `afinni_launcher.py` currently imports `jax` at top level.
 - [ ] Publish `knndbscan` to PyPI. It is a core dependency but comes only from TestPyPI, so `adaptive-surrogates`
   cannot be published to PyPI before it.
 - [ ] Set up GitHub Actions: `{ubuntu, macos, windows} × {cpu, mpi}` running `uv lock --check`, pytest and `mpiexec -n 2`.

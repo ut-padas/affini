@@ -75,17 +75,3 @@ def test_flow_map_grad_matches_finite_differences(flowmap, grad, kwargs, d):
     np.testing.assert_allclose(
         to_host(grad(X, **kwargs)), _fd_jacobian(f, X, h=1e-5), rtol=1e-3, atol=1e-4
     )
-
-
-def test_jax_lorenz96_flow_map_agrees_with_scipy():
-    jax = pytest.importorskip("jax")
-    pytest.importorskip("diffrax")
-    from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
-
-    X = rng.uniform(-5, 5, (6, 5))
-    Y_jax = np.asarray(lorenz96_flowmap_jax_batched(jax.numpy.asarray(X), 1.0, 0.1))
-    assert Y_jax.shape == (6, 1, 5)  # (N, saved times, d): only tf is saved
-    # The JAX solve uses rtol = atol = 1e-3.
-    np.testing.assert_allclose(
-        Y_jax[:, 0, :], to_host(lorenz96_flowmap(X, 1.0, 0.1)), atol=1e-2
-    )

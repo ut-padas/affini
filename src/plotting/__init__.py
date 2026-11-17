@@ -40,7 +40,7 @@ from src.plotting.style import finish, plot_style
 from src.plotting.surrogate import (
     plot_adaptive_clustering_results,
     plot_cluster_projections_for_wave,
-    plot_error_histogram,
+    plot_error_summary,
     plot_exact_hess_vs_estimated_hess,
     plot_near_centers,
     plot_wave_2d_errors,
@@ -57,7 +57,7 @@ __all__ = [
     "plot_cluster_projections_for_wave",
     "plot_error_cdf",
     "plot_error_maps",
-    "plot_error_histogram",
+    "plot_error_summary",
     "plot_exact_hess_vs_estimated_hess",
     "plot_level_heatmap",
     "plot_level_progress",

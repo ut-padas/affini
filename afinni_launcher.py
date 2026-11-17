@@ -9,7 +9,6 @@ from functools import partial
 from pathlib import Path
 from typing import Literal
 
-import jax
 import matplotlib.pyplot as plt
 
 from src import IS_CUPY_BACKEND, RESULTS_DIR, get_mpi_rank, get_mpi_size, to_host, xp
@@ -26,7 +25,7 @@ from src.infra.backend import MPI
 from src.plotting import (
     plot_adaptive_clustering_results,
     plot_cluster_projections_for_wave,
-    plot_error_histogram,
+    plot_error_summary,
     plot_near_centers,
     plot_profile_dashboard,
     plot_wave_2d_errors,
@@ -92,6 +91,8 @@ def tolerance_pairs(
 
 
 SEED = 0
+# --no-plots: the diagnostic figures each case saves beside its JSON (record runs read only the JSON)
+SAVE_PLOTS = True
 
 logger = logging.getLogger(__name__)
 _size = get_mpi_size()
@@ -308,16 +309,13 @@ def conduct_experiment_given_data(
         # Array scalars (NumPy/CuPy) must stay numbers for the plots; anything else unknown is saved as text.
         json.dump(json_data, jf, indent=4, default=lambda o: float(o) if hasattr(o, "__float__") else str(o))
     print(f"Experiment completed and saved to {json_fpath}")
+    if not SAVE_PLOTS:
+        return
 
     plt.close(plot_profile_dashboard(surrogate, json_fpath.with_name(json_fpath.stem + "_profile.png")))
 
-    plot_save_path = json_fpath.with_name(json_fpath.stem + "_error_histogram.png")
-    plot_error_histogram(
-        rtol=RTOL,
-        ground_truth=ground_truth,
-        predictions=preds,
-        img_fpath=plot_save_path,
-    )
+    plt.close(plot_error_summary([json_data], json_fpath.with_name(json_fpath.stem + "_errors.png"),
+                                 title=f"{json_fpath.parent.name}: d = {DIM}"))  # fmt: skip
 
     if DIM == 2 and surrogate.N_src <= 100_000:
         plot_save_path = json_fpath.with_name(json_fpath.stem + "_centroid_plot.png")
@@ -659,22 +657,11 @@ def rosenbrock_modified_sampling(args) -> Problem:
 def lorenz96(args) -> Problem:
     """The first component of the Lorenz-96 flow map over time ``args.dt``."""
     from src.problems.lorenz96_flowmap import lorenz96_flowmap
-    from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
 
     forcing, tf, output_component = 1.0, args.dt, 0
 
     def f(x):
-        N, d = x.shape
-        if IS_CUPY_BACKEND:
-            import cupy as cp
-
-            # The batched JAX flow map returns (N, 1, d): one saved time, tf.
-            X_jax = jax.dlpack.from_dlpack(x)
-            Y_jax = lorenz96_flowmap_jax_batched(X_jax, forcing, tf)
-            return cp.from_dlpack(Y_jax)[:, 0, output_component].reshape(N, 1)
-        else:
-            f = lorenz96_flowmap(x, forcing, tf)[:, output_component]
-            return f.reshape(N, 1)
+        return lorenz96_flowmap(x, forcing, tf)[:, output_component : output_component + 1]
 
     return Problem(
         f"lorenz96_dt_{tf}",
@@ -850,16 +837,9 @@ def lorenz_trajectories_experiment(
 
     # Define the function: the full Lorenz-96 state after time dt
     from src.problems.lorenz96_flowmap import lorenz96_flowmap
-    from src.problems.lorenz96_flowmap_jax import lorenz96_flowmap_jax_batched
 
     def f_fn(X):
-        if not IS_CUPY_BACKEND:
-            return lorenz96_flowmap(X, forcing, dt)
-        import cupy as cp
-
-        # The batched JAX flow map returns (N, 1, d): one saved time, dt.
-        Y_jax = lorenz96_flowmap_jax_batched(jax.dlpack.from_dlpack(X), forcing, dt)
-        return cp.from_dlpack(Y_jax)[:, 0, :]
+        return lorenz96_flowmap(X, forcing, dt)
 
     # Use this function to generate data.
     N_start_train = 20000
@@ -1018,6 +998,9 @@ def setup_argparse(argv: list[str] | None = None):
         default="uniform",
     )
     parser.add_argument(
+        "--no_plots", action="store_true", help="skip the diagnostic figures saved beside each result JSON",
+    )
+    parser.add_argument(
         "--coarse_factor",
         help="The number of nearest neighbor points to use during inference.",
         type=int,
@@ -1066,6 +1049,8 @@ def setup_argparse(argv: list[str] | None = None):
 
 def run_experiment_from_args(args):
     """Run every (atol, rtol) pair from ``tolerance_pairs`` in every dimension of ``--dims``; existing results are skipped."""
+    global SAVE_PLOTS
+    SAVE_PLOTS = not args.no_plots
 
     # Grab values from dictionary
     dvec = args.dims

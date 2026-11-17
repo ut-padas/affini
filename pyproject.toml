@@ -15,8 +15,6 @@ classifiers = [
 # Core = the CPU-only install. Must have wheels on Linux, macOS and Windows.
 dependencies = [
     "array-api-compat>=1.12.0",
-    "diffrax>=0.7.2",
-    "jax>=0.7.0",
     "knndbscan>=0.3",  # initial_clustering_method="knndbscan"; from TestPyPI (see [tool.uv.sources])
     "matplotlib>=3.10.7",
     "numba>=0.61.2",
@@ -55,8 +53,6 @@ mpi-system = [
 gpu = [
     "cupy-cuda12x[ctk]>=13.6.0 ; sys_platform != 'darwin'",
     "nvidia-ml-py>=12.535.0 ; sys_platform != 'darwin'",
-    # JAX's CUDA build for the Lorenz-96 flow map (the manuscript's experiments); Linux only.
-    "jax[cuda12]>=0.7.0 ; sys_platform == 'linux'",
 ]
 
 [tool.uv]

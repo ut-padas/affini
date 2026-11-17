@@ -258,7 +258,7 @@ numbers came from it):
 | Lorenz-96 horizon | not stated in the active text (commented table: `t_H = 0.05`) | `--dt 0.1` (passed explicitly) |
 | `kappa` | `2 d^2` (8 for d=2) | `--coarse_factor` 10 / 50 / 200 in the script; Table 2 and Figure 8 with the default 10. **Table 1's d=2 rows were measured with 50** (see below); the study now runs d=2 with 50 and keeps 10 as group `conv_k10` |
 | Figure 9 "Gaussian" | anisotropic Gaussian, wave on `[-5, 5]^d`, Rosenbrock tested uniformly | `p_out_iterative_experiment.py`: isotropic Gaussian, wave on `[-4, 4]^d`, Rosenbrock with its own test distribution, `20000 * 1.3^d` initial points |
-| Lorenz-96 on GPU | JAX/diffrax (rtol = atol = 1e-3) | the same; on CPU SciPy RK45 (rtol 1e-6): the two flow maps differ by about 1e-3 |
+| Lorenz-96 flow map | JAX/diffrax in float32 (rtol = atol = 1e-3) | the batched ensemble integrator (`integrate_ensemble`, Dormand-Prince 5(4), float64, rtol = atol = 1e-6), the same algorithm on GPU and CPU; a deliberate change at the level of the ODE tolerance (the float32 map's error reaches about 3e-4 relative) |
 
 **Deliberate numerical changes since the paper era** (from `git log` after `91ddd97`, 2026-10-08;
 the paper's numbers predate them, so leaf and evaluation counts are not expected to match bits):
@@ -308,13 +308,16 @@ outside every trust region from `predict(exact_outside=True)`; it does not depen
 count. The record prints it next to the manuscript's `p_o`, unjudged: the paper has no such number,
 and its `p_o` used the candidates only.
 
-The JAX flow map runs in float32, as the manuscript's runs did (no commit enabled `jax_enable_x64`);
-its tolerances (1e-3) are about 10^4 times coarser than float32 rounding.
-
-Lorenz-96 on the GPU uses JAX's CUDA build, which the `gpu` extra installs on Linux
-(`uv sync --extra gpu`); with a CPU-only `jaxlib` (other platforms, or an environment without
-the extra), `run_paper.sh` runs the Lorenz cases on the CPU and says so (`--lorenz-device`
-overrides).
+The manuscript's Lorenz rows used a JAX/diffrax flow map in float32 at rtol = atol = 1e-3. The
+re-run uses the library's batched ensemble integrator (`integrate_ensemble` in
+`src/numerics/ode.py`): Dormand-Prince 5(4) per trajectory in float64 at rtol = atol = 1e-6, the
+same algorithm on the GPU and the CPU, each trajectory with its own step, so a point's value does
+not depend on its batch. Its step control is SciPy's RK45's, so each trajectory takes the steps of
+`solve_ivp(method="RK45")` on that trajectory alone and has its error (`tests/unit/test_ode.py`
+checks this from states of size 0.01 to 500, forcing 1 to 8, horizons 1e-3 to 10 and tolerances 1e-3
+to 1e-12). Lorenz-96 is not stiff in this range: LSODA's stiffness detection stays on its explicit
+method, and Radau needs three times RK45's function evaluations plus Jacobians. At tol 0.02 (Lorenz-96 d = 5) the float32 map's error made AFINNI split on
+noise (398,767 leaves on the GPU); the float64 map gives 1,154, as row 32's 1,327.
 
 ### Collecting and judging (Part A)
 
@@ -811,8 +814,7 @@ leaves.
   themselves.
 - **Paper-era settings unknown**: which `coarse_factor` and caps Table 2 used, and the Lorenz
   horizon in the text. The study uses the script's and caption's values; decide if they fail.
-- **Lorenz-96 GPU** needs JAX's CUDA build (in the `gpu` extra on Linux); otherwise it runs on the
-  CPU with SciPy, a slightly different (more accurate) flow map.
+- **Lorenz-96** runs the same float64 integrator on either backend (`--lorenz-device` picks it).
 - **Batch-size dependence**: AFINNI's trees depend on the GPU batch cap; a 16 GB GPU and the
   paper's 96 GB H100 give statistically, not bitwise, equal trees.
 - **Reference sampler and optimizer variants** (`parallel_numba`, CUDA optimizers) give different
@@ -853,8 +855,8 @@ leaves.
    code's `cap_initial_augmentation_budget` (`K_0` down to 16, `M` up to 31,250), and
    `coarse_factor` 10 (script) versus `2 d^2` (text) for d up to 80. The study uses the caption
    and the script; switch if Table 2 does not reproduce.
-5. **Lorenz-96 on the GPU: decided.** The `gpu` extra installs `jax[cuda12]` on Linux, so the
-   Lorenz rows run the paper's JAX flow map (rtol 1e-3) on the GPU.
+5. **Lorenz-96 flow map: decided.** The library's float64 ensemble integrator at rtol = atol =
+   1e-6 on both backends replaces the paper's JAX float32 map (rtol 1e-3); JAX is no dependency.
 6. **Paper text vs code** (fix the text or the code): quadratic spectrum `i^-3` (text) vs `5^-i`
    (code); "rtol = atol in every experiment" vs Lorenz's absolute `tol * max|f|`; Figure 9's
    isotropic Gaussian, wave domain `[-4, 4]` and Rosenbrock test distribution; the
