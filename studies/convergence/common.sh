@@ -29,7 +29,9 @@ log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 # run_logged <done-marker> <log-file> <command...>
 # Skips when the marker exists (a finished run); otherwise runs the command with the timeout,
 # appends stdout+stderr to the log, and writes the marker only on success. Failures are logged
-# and counted but never stop the sweep, so one crashing case cannot hide the others.
+# and counted but never stop the sweep, so one crashing case cannot hide the others. The command
+# reads an empty stdin: the drivers loop over a case list on stdin, and a command that reads it
+# (mpiexec forwards stdin to rank 0) would consume the remaining cases and end the sweep silently.
 FAILED_RUNS=0
 run_logged() {
     local marker="$1" logfile="$2"; shift 2
@@ -42,9 +44,9 @@ run_logged() {
         echo "### $*"
     } >>"$logfile"
     if [[ "$RUN_TIMEOUT" == "0" ]]; then
-        "$@" >>"$logfile" 2>&1; status=$?
+        "$@" </dev/null >>"$logfile" 2>&1; status=$?
     else
-        timeout --signal=TERM --kill-after=60 "$RUN_TIMEOUT" "$@" >>"$logfile" 2>&1; status=$?
+        timeout --signal=TERM --kill-after=60 "$RUN_TIMEOUT" "$@" </dev/null >>"$logfile" 2>&1; status=$?
     fi
     echo "### exit=$status after $((SECONDS - t0)) s" >>"$logfile"
     if [[ $status -eq 0 ]]; then
