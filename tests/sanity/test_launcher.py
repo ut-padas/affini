@@ -6,12 +6,12 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import afinni_launcher as launcher  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import pytest  # noqa: E402
 
-import afinni_launcher as launcher  # noqa: E402
 from src import (
     plotting,
     xp,  # noqa: E402

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Every experiment of the AFINNI manuscript with the current code, then a tracked record of the
-# numbers with their provenance (record_results.py; CONVERGENCE_STUDY.md, "Recording the results").
+# numbers with their provenance (record_results.py; studies/sanity/README.md, "Recording the results").
 #
-#   MACHINE="GH200 node" studies/convergence/paper/run_manuscript.sh [run_paper.sh options]
+#   MACHINE="GH200 node" studies/sanity/paper/run_manuscript.sh [run_paper.sh options]
 #
 # Defaults: --device gpu, --max-tier L, the manuscript's groups (conv, conv_nh, lorenz_dims,
 # rosen_weak, wave_exact, iterative, mpi, seeds; not the conv_k10 diagnostic), --out

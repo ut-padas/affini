@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Part B: the reference ART vs this library's ART on the reference's problems (CONVERGENCE_STUDY.md, Part B).
+# Part B: the reference ART vs this library's ART on the reference's problems (studies/sanity/README.md, Part B).
 #
-#   studies/convergence/art/run_art.sh [--smoke] [--device cpu|gpu] [--ref-device cpu|gpu]
+#   studies/sanity/art/run_art.sh [--smoke] [--device cpu|gpu] [--ref-device cpu|gpu]
 #       [--ref-sampler hit_and_run|parallel_numba] [--max-tier S|M|L]
 #       [--groups conv,library_default,depth,exact_target,mpi,repeat,gpu_vs_cpu] [--seeds 1,2,3]
 #       [--nps 1,2,4] [--only CASE_REGEX] [--no-exact] [--out DIR] [--dry-run]
@@ -11,7 +11,7 @@
 # fastest GPU configuration (--traversal bfs --optimizer cupy_batched_cholesky; sampling, oracle
 # and leaf fits stay on its CPU). Results: $OUT/results/<group>/<case>.<side>.json, logs in
 # $OUT/logs, the root-fit and slab checks in $OUT/results/exact_checks.json. Rerunning skips
-# finished runs. Finish with $PYTHON studies/convergence/art/collect_art.py --out $OUT.
+# finished runs. Finish with $PYTHON studies/sanity/art/collect_art.py --out $OUT.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 

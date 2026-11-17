@@ -218,9 +218,9 @@ __marimo__/
 # VS Code Settings
 .vscode/
 
-# Results Directory (the convergence study's records are tracked)
+# Results Directory (the sanity study's records are tracked)
 results/
-!studies/convergence/results/
+!studies/sanity/results/
 
 # Profiling data
 *.prof

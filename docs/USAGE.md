@@ -74,7 +74,7 @@ The same script runs everywhere; the backend is chosen at import time.
 | One GPU | `SURROGATE_DEVICE=gpu SURROGATE_MPI=off uv run python -m examples.example01_rosenbrock_afinni` |
 | N CPU ranks | `SURROGATE_DEVICE=cpu uv run mpiexec -n 4 python -m examples.example01_rosenbrock_afinni` |
 | N ranks sharing / owning GPUs | `SURROGATE_DEVICE=gpu uv run mpiexec -n 4 python -m examples.example01_rosenbrock_afinni` |
-| TACC | `source scripts/hpc/tacc.sh; ibrun .venv/bin/python afinni_launcher.py ...` |
+| TACC | `source scripts/hpc/tacc.sh; ibrun .venv/bin/python -m examples.example01_rosenbrock_afinni` |
 
 | Variable        | Values                         | Effect                                                                                                 |
 | --------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
@@ -451,17 +451,19 @@ login node when the run directory is on a shared file system. The newest idle
 stretch of a rank appears when that rank records its next event. For your own runs,
 set `profile_dir="<dir>"` in the config and point the monitor at that directory.
 
-## Paper experiments (launcher)
+## The earlier draft's launcher
 
-[`afinni_launcher.py`](../afinni_launcher.py) runs the benchmark problems and writes
-one JSON result per run (plus error histogram and profile dashboard; the profile is
-stored in the JSON) under `results/<problem>/`.
+[`studies/sanity/afinni_launcher.py`](../studies/sanity/afinni_launcher.py) is the experiment
+driver of the paper's earlier draft, kept for the sanity check in `studies/sanity` and removed with
+it. It runs the benchmark problems and writes one JSON result per run (plus error histogram and
+profile dashboard; the profile is stored in the JSON) under `results/<problem>/`. Run it from the
+repository root with `PYTHONPATH=.`.
 
 ```bash
-uv run python afinni_launcher.py --experiment rosenbrock --dims 2 5 --tols 0.1 0.05
-uv run mpiexec -n 4 python afinni_launcher.py --experiment anisotropic_quadratic --dims 5 \
+uv run python studies/sanity/afinni_launcher.py --experiment rosenbrock --dims 2 5 --tols 0.1 0.05
+uv run mpiexec -n 4 python studies/sanity/afinni_launcher.py --experiment anisotropic_quadratic --dims 5 \
     --tols 0.02 --error_eval_mode taylor_cov_hess --sampling modified
-uv run python afinni_launcher.py --experiment rosenbrock --dims 2 \
+uv run python studies/sanity/afinni_launcher.py --experiment rosenbrock --dims 2 \
     --atols none 1e-3 --rtols 0.05 none      # 3 runs: every pair except none/none
 ```
 
@@ -609,7 +611,7 @@ uv sync --extra gpu --extra mpi-system     # `make install-hpc` is the same with
 
 # 3. Load the cluster's MPI, then run. Put the `source` line in your SLURM job scripts too.
 source scripts/hpc/tacc.sh
-ibrun .venv/bin/python afinni_launcher.py ...
+ibrun .venv/bin/python -m examples.example01_rosenbrock_afinni
 ```
 
 For another cluster, copy [`scripts/hpc/tacc.sh`](../scripts/hpc/tacc.sh) to

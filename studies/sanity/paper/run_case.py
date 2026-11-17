@@ -4,7 +4,7 @@ repository's ``results/``, optionally with another seed.
 
 Usage (from the repository root, PYTHONPATH=.)::
 
-    SURROGATE_DEVICE=gpu SURROGATE_MPI=off python studies/convergence/paper/run_case.py \\
+    SURROGATE_DEVICE=gpu SURROGATE_MPI=off python studies/sanity/paper/run_case.py \\
         --results OUT/results/seed_0 [--seed 0] -- --experiment rosenbrock --dims 2 --tols 0.1
 
 Everything after ``--`` is the launcher's own command line, so a case means exactly what the

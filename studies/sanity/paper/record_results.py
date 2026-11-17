@@ -3,7 +3,7 @@ Record the manuscript's numbers as the current code measures them, with everythi
 reproduce them: the commit, the machine, the libraries.
 
 Usage: ``record_results.py --out OUT --machine "GH200 node"`` after ``collect_paper.py --out OUT``
-(``run_manuscript.sh`` runs both). Writes ``studies/convergence/results/<date>_<commit>_<machine>/``:
+(``run_manuscript.sh`` runs both). Writes ``studies/sanity/results/<date>_<commit>_<machine>/``:
 
 - ``manuscript_results.csv``: one row per number the manuscript reports (table, row, problem, d,
   tolerance, quantity): the value measured here (seed 0), the seed replicates' range, and the
@@ -14,7 +14,7 @@ Usage: ``record_results.py --out OUT --machine "GH200 node"`` after ``collect_pa
   hash of ``uv.lock``, and the run-time settings;
 - ``RESULTS.md``: the provenance and the numbers, one table per manuscript table.
 
-It also adds the record to ``studies/convergence/results/INDEX.md``. The machine is described only
+It also adds the record to ``studies/sanity/results/INDEX.md``. The machine is described only
 by ``--machine`` and the hardware it reports; no host name is written.
 """
 
@@ -34,7 +34,7 @@ from importlib import metadata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-DEST = ROOT / "studies" / "convergence" / "results"
+DEST = ROOT / "studies" / "sanity" / "results"
 QUANTITIES = ("N", "N_c", "p_o", "p_o_exact", "e_in", "e", "e_nh", "p_in_good")
 LIBRARIES = ("numpy", "scipy", "numba", "llvmlite", "cupy-cuda12x", "cupy", "mpi4py",
              "psutil", "matplotlib", "knndbscan", "nvidia-ml-py")  # fmt: skip

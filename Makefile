@@ -7,7 +7,7 @@
 # targets also removes packages that the new target does not include.
 
 .PHONY: help dev dev-all install-cpu install-mpi install-gpu install-gpu-mpi install-hpc \
-        info format lint test test-mpi coverage-cpu coverage-gpu coverage-mpi coverage paper-experiments
+        info format lint test test-mpi coverage-cpu coverage-gpu coverage-mpi coverage
 
 EXTRAS ?=
 _EXTRA_FLAGS := $(foreach e,$(EXTRAS),--extra $(e))
@@ -39,7 +39,6 @@ help:
 	@echo "  report-figures   - Regenerate the companion's panels and numbers (docs/report/figures/)"
 	@echo "  report-steals    - Record the companion's 6-rank work-stealing runs again (needs an MPI extra)"
 	@echo "  report-tables    - Rewrite the companion appendix's manuscript tables (RECORD=\"<main record> [<supplementary> ...]\")"
-	@echo "  paper-experiments- Run run_paper_experiments.sh"
 
 # --- Research & development --------------------------------------------------
 dev:
@@ -120,5 +119,3 @@ RECORD ?=
 report-tables:
 	PYTHONPATH=. uv run python docs/report/figures/manuscript_tables.py $(foreach r,$(RECORD),--record $(r))
 
-paper-experiments:
-	bash run_paper_experiments.sh

@@ -5,7 +5,7 @@ One run of the manuscript's iterative-refinement experiment (Figure 9, uniform r
 The experiment script fixes its own sizes: 20,000 * 1.3^d initial points, 20 d initial clusters,
 50 d points per cluster, 40% new points per iteration, 20,000 test points. Its "gaussian" is the
 isotropic Gaussian and its wave domain is [-4, 4] (the manuscript describes the anisotropic
-Gaussian and [-5, 5]); see CONVERGENCE_STUDY.md.
+Gaussian and [-5, 5]); see studies/sanity/README.md.
 """
 
 import argparse

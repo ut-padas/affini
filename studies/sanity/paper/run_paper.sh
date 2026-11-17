@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Part A: re-run the AFINNI manuscript's experiments (see CONVERGENCE_STUDY.md, Part A).
+# Part A: re-run the AFINNI manuscript's experiments (see studies/sanity/README.md, Part A).
 #
-#   studies/convergence/paper/run_paper.sh [--smoke] [--device gpu|cpu] [--max-tier S|M|L]
+#   studies/sanity/paper/run_paper.sh [--smoke] [--device gpu|cpu] [--max-tier S|M|L]
 #       [--groups conv,conv_nh,conv_k10,lorenz_dims,rosen_weak,wave_exact,iterative,mpi,seeds]
 #       [--seeds 0,1,2] [--nps 1,2,4,8] [--mpi-device cpu|gpu] [--lorenz-device auto|cpu|gpu]
 #       [--only CASE_REGEX] [--out DIR] [--dry-run] [--no-plots] [--exact-outside-max-d D|none]
@@ -14,7 +14,7 @@
 # Results: $OUT/results/seed_<s>/<problem>/*.json (the launcher's files; iterative runs under
 # $OUT/results/iterative), logs in $OUT/logs, done-markers in $OUT/done. Rerunning skips finished
 # cases, so an interrupted sweep continues where it stopped. Finish with
-#   $PYTHON studies/convergence/paper/collect_paper.py --out $OUT
+#   $PYTHON studies/sanity/paper/collect_paper.py --out $OUT
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 

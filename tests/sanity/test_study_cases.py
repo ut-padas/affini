@@ -1,9 +1,9 @@
-"""The manuscript study's run matrix (studies/convergence/paper/cases.py)."""
+"""The manuscript study's run matrix (studies/sanity/paper/cases.py)."""
 
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "studies" / "convergence" / "paper"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "studies" / "sanity" / "paper"))
 import cases  # noqa: E402
 
 

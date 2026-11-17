@@ -10,7 +10,7 @@ Usage: ``collect_art.py --out OUT`` (the ``--out`` of run_art.sh). Writes to ``O
   with this library / reference ratios.
 - ``slopes.csv``: per code the log-log slope of relative L2 error and of the 99th-percentile
   pointwise relative error against leaves, with standard errors and the theoretical slope.
-- ``checks.csv`` / ``.md``: checks B1-B8 (CONVERGENCE_STUDY.md, Part B) as pass / WARN / FAIL.
+- ``checks.csv`` / ``.md``: checks B1-B8 (studies/sanity/README.md, Part B) as pass / WARN / FAIL.
 - ``err_vs_leaves_<problem>_deg<k>.png``, ``frac_vs_tol_<problem>_deg<k>.png``, ``depth_sweep.png``.
 """
 

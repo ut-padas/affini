@@ -19,7 +19,7 @@ repository. The heavy runs are left to you; what was run here (CPU only) is in
 
 ## Files
 
-Everything new is under `studies/convergence/` (its `output/` is git-ignored):
+Everything new is under `studies/sanity/` (its `output/` is git-ignored):
 
 | File | Role |
 |---|---|
@@ -50,21 +50,21 @@ cd ~/github-repos/affini            # the repository root; scripts use .venv/bin
 uv sync --extra gpu --extra mpi       # GPU machine; on a cluster with its own MPI: --extra mpi-system and the cluster's setup script in scripts/hpc/
 
 # tiny end-to-end versions (CPU, about 70 s and 45 s; each includes one 2-rank MPI run)
-studies/convergence/paper/run_paper.sh --smoke
-studies/convergence/art/run_art.sh --smoke
+studies/sanity/paper/run_paper.sh --smoke
+studies/sanity/art/run_art.sh --smoke
 
 # Part A, cheapest tier first, on the GPU; then M and L on bigger hardware
-studies/convergence/paper/run_paper.sh --device gpu --max-tier S
-studies/convergence/paper/run_paper.sh --device gpu --max-tier M
-studies/convergence/paper/run_paper.sh --device gpu --max-tier L      # HPC node, >= 128 GB host RAM
+studies/sanity/paper/run_paper.sh --device gpu --max-tier S
+studies/sanity/paper/run_paper.sh --device gpu --max-tier M
+studies/sanity/paper/run_paper.sh --device gpu --max-tier L      # HPC node, >= 128 GB host RAM
 
 # Part B
-studies/convergence/art/run_art.sh --device gpu --ref-device gpu --max-tier S
-studies/convergence/art/run_art.sh --device gpu --ref-device gpu --max-tier M
+studies/sanity/art/run_art.sh --device gpu --ref-device gpu --max-tier S
+studies/sanity/art/run_art.sh --device gpu --ref-device gpu --max-tier M
 
 # rebuild the reports at any time (also run at the end of each sweep)
-.venv/bin/python studies/convergence/paper/collect_paper.py --out studies/convergence/output/paper
-.venv/bin/python studies/convergence/art/collect_art.py --out studies/convergence/output/art
+.venv/bin/python studies/sanity/paper/collect_paper.py --out studies/sanity/output/paper
+.venv/bin/python studies/sanity/art/collect_art.py --out studies/sanity/output/art
 ```
 
 Common options: `--groups a,b`, `--only REGEX` (case ids), `--out DIR`, `--dry-run` (print the
@@ -89,7 +89,7 @@ export BISECT_DIR=~/afinni-bisect DEVICE=gpu CAP=0 FAISS_SHIM=   # no CPU stand-
 for c in 91ddd97 a6844cb; do
   mkdir -p $BISECT_DIR/$c && git archive $c | tar -x -C $BISECT_DIR/$c && (cd $BISECT_DIR/$c && uv sync)
 done
-R=studies/convergence/bisect/run_at.sh
+R=studies/sanity/bisect/run_at.sh
 P=$BISECT_DIR/91ddd97/.venv/bin/python   # paper-era code, Tikhonov trust regions
 for t in 0.1 0.005; do
   PYTHON=$P $R 91ddd97 gpu_r$t -- --experiment rosenbrock --dims 2 --tols $t --error_eval_mode affine_cov_hess --coarse_factor 50
@@ -103,7 +103,7 @@ for t in 0.1 0.02 0.005; do
   PYTHON=$P $R a6844cb gpu_r${t}_shrink --launcher experiments.py -- --experiment rosenbrock --dims 2 --tols $t --error_eval_mode affine_cov_hess
 done
 PYTHON=$P $R a6844cb gpu_r0.02nh_shrink --launcher experiments.py -- --experiment rosenbrock --dims 2 --tols 0.02 --error_eval_mode affine_cov_no_hess
-.venv/bin/python studies/convergence/bisect/score.py $BISECT_DIR/runs/gpu_*.npz --kappas 10,50
+.venv/bin/python studies/sanity/bisect/score.py $BISECT_DIR/runs/gpu_*.npz --kappas 10,50
 ```
 
 The commits before `d7ec052` pick the GPU whenever `cupy` imports (they ignore `SURROGATE_DEVICE`).
@@ -121,7 +121,7 @@ The manuscript's numbers are now re-measured with the current code, and every se
 kept with what produced it, so that later numbers can be compared with earlier ones.
 
 ```bash
-MACHINE="GH200 node" studies/convergence/paper/run_manuscript.sh
+MACHINE="GH200 node" studies/sanity/paper/run_manuscript.sh
 ```
 
 - **What it runs:** every experiment of the manuscript on the GPU, at the L tier: Table 1 at all
@@ -133,7 +133,7 @@ MACHINE="GH200 node" studies/convergence/paper/run_manuscript.sh
   the hardware; no host name is recorded.
 - **Resuming:** finished cases are skipped, so an interrupted run continues with the same command.
   The record is rewritten from whatever has finished at the end of each invocation.
-- **The record:** `studies/convergence/results/<date>_<commit>_<machine>/`, meant to be committed:
+- **The record:** `studies/sanity/results/<date>_<commit>_<machine>/`, meant to be committed:
 
 | File | Contents |
 |---|---|
@@ -648,7 +648,7 @@ With `kappa` = 50 the current code also matches the Wave `p_o` and `e`: #37 0.04
 
 ## Where the differences come from
 
-**Method.** `studies/convergence/bisect/run_at.sh COMMIT TAG -- <launcher flags>` extracts a commit
+**Method.** `studies/sanity/bisect/run_at.sh COMMIT TAG -- <launcher flags>` extracts a commit
 with `git archive` (nothing is checked out) and runs *that commit's own launcher* unchanged
 through `capture_launcher.py`, which wraps `AdaptiveSurrogate.train/predict` and
 `compute_error_metrics` and saves the scored test points, predictions, out-of-region mask, ground
@@ -757,11 +757,11 @@ to 50,000 points; scored on the paper-era 42,250, #24 gives `p_o` 1.94% and `e` 
 These runs confirm D4 and exclude the GPU as the source of D3. Each paper-era commit ran on one
 GH200 (CUDA runtime 12.9) in its own locked environment: `uv sync` of a `git archive` extraction of
 `91ddd97` and of `a6844cb`. Both install on aarch64, with cuml-cu12 25.10 and CuPy 13.6.0. Each case
-runs that commit's own launcher unchanged; the scripts come from `studies/convergence/bisect/`:
+runs that commit's own launcher unchanged; the scripts come from `studies/sanity/bisect/`:
 
 ```bash
 export BISECT_DIR=<extractions and runs> DEVICE=gpu CAP=0 FAISS_SHIM=
-R=studies/convergence/bisect/run_at.sh
+R=studies/sanity/bisect/run_at.sh
 P=$BISECT_DIR/91ddd97/.venv/bin/python
 for t in 0.1 0.005; do
   PYTHON=$P $R 91ddd97 gpu_r$t -- --experiment rosenbrock --dims 2 --tols $t --error_eval_mode affine_cov_hess --coarse_factor 50
@@ -775,7 +775,7 @@ for t in 0.1 0.02 0.005; do
   PYTHON=$P $R a6844cb gpu_r${t}_shrink --launcher experiments.py -- --experiment rosenbrock --dims 2 --tols $t --error_eval_mode affine_cov_hess
 done
 PYTHON=$P $R a6844cb gpu_r0.02nh_shrink --launcher experiments.py -- --experiment rosenbrock --dims 2 --tols 0.02 --error_eval_mode affine_cov_no_hess
-python studies/convergence/bisect/score.py $BISECT_DIR/runs/gpu_*.npz --kappas 10,50
+python studies/sanity/bisect/score.py $BISECT_DIR/runs/gpu_*.npz --kappas 10,50
 ```
 
 **D4.** `p_o` (%) at the candidate count whose value agrees with the paper:

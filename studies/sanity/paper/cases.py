@@ -27,7 +27,7 @@ EXPERIMENT = {
 # --coarse_factor (kappa candidates) per d for Table 1: max(50, 2 d^2), as run_paper_experiments.sh
 # passes it (50 / 50 / 200). The paper-era code (91ddd97) reproduces Wave rows #38-39 (N, N_c, p_o,
 # e_in, e) to the printed digits with 50 at d = 2, and with 10 gives 24-42x the printed p_o
-# (CONVERGENCE_STUDY.md, "Where the differences come from"). Group conv_k10 reruns the d = 2 rows
+# (studies/sanity/README.md, "Where the differences come from"). Group conv_k10 reruns the d = 2 rows
 # with 10. Table 2 (Lorenz-96 up to d = 80) keeps the launcher's 10.
 def coarse_factor(d: int) -> int:
     return max(50, 2 * d * d)

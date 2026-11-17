@@ -7,7 +7,7 @@
 #   PYTHON        interpreter (default: $REPO_ROOT/.venv/bin/python)
 #   MPIEXEC       MPI launcher (default: $REPO_ROOT/.venv/bin/mpiexec, else mpiexec on PATH);
 #                 on a cluster set it to e.g. "ibrun" or "srun --mpi=pmix"
-#   STUDY_OUT     where results/ and logs/ go (default: $REPO_ROOT/studies/convergence/output)
+#   STUDY_OUT     where results/ and logs/ go (default: $REPO_ROOT/studies/sanity/output)
 #   RUN_TIMEOUT   per-run wall-clock limit for `timeout` (default 6h; "0" disables it)
 
 STUDY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +21,9 @@ STUDY_OUT="${STUDY_OUT:-$STUDY_DIR/output}"
 RUN_TIMEOUT="${RUN_TIMEOUT:-6h}"
 
 # Thread pools: one rank per core under MPI, all cores otherwise (callers may export their own).
-export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+# The repository root for src, and this folder for the earlier draft's launcher (afinni_launcher.py)
+# and iterative-refinement experiment, which the paper cases import.
+export PYTHONPATH="$REPO_ROOT:$STUDY_DIR${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }

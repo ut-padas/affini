@@ -13,7 +13,7 @@ rename below breaks something, which is why it is listed rather than done.
   Breaks user configs and the keys of saved config JSON. Do it with the packaging work below.
 - [ ] Rename `AdaptiveSurrogate.filter_unguaranteed_local` to a name that says what it
   returns, e.g. `outside_trust_regions_local`: a trust region is not a guarantee. Used by
-  `p_out_iterative_experiment.py` and its test. Do it with the packaging work below.
+  `studies/sanity/p_out_iterative_experiment.py` and its test. Do it with the packaging work below.
 - [ ] Rename `w`, `z`, `T` in the split search (`src/art/split_search.py`,
   `ARTPlan._soft_refine`) to `normal`, `offset`, `gate_width`. This touches GPU-only lines
   (the `soft_step` call, `_soft_objective_fused`) and kernel-argument lists, so run the GPU

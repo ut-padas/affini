@@ -1,11 +1,11 @@
 """
 The companion's appendix tables: every table of the AFINNI manuscript as it prints it, and the same
-tables with the numbers of recorded re-runs (``studies/convergence/paper/record_results.py``).
+tables with the numbers of recorded re-runs (``studies/sanity/paper/record_results.py``).
 
     PYTHONPATH=. python docs/report/figures/manuscript_tables.py [--record <record> ...]
 
 Writes ``figures/manuscript.json``, which the appendix reads. The manuscript's numbers come from
-``studies/convergence/paper/paper_values.py``; a re-run number is a record's seed-0 value, a later
+``studies/sanity/paper/paper_values.py``; a re-run number is a record's seed-0 value, a later
 ``--record`` replacing an earlier one's values where it has them (a supplementary record of a few
 groups after the main one), and a cell no record has is "–". Each table names the records its
 re-run values come from. Cells are written as formatted text, one format per column for both
@@ -25,7 +25,7 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "studies" / "convergence" / "paper"))
+sys.path.insert(0, str(ROOT / "studies" / "sanity" / "paper"))
 import paper_values as pv  # noqa: E402
 from cases import group_coarse_factor, lorenz_dims_sizes  # noqa: E402
 from collect_paper import verdict  # noqa: E402
@@ -213,7 +213,7 @@ def tables(values: dict, walls: dict) -> list[dict]:
                  + "; ".join(f"$d = {d}$: $K_0 = $ {k0:,}, $M = $ {m:,}" for d, _, k0, m in
                              ((d, *lorenz_dims_sizes(d)) for _, d, *_ in pv._LORENZ_DIMS))
                  + ". The caption's $K_0 <= 1000$, $M <= 500$ do not reproduce the table "
-                   "(`CONVERGENCE_STUDY.md`, Table 2).",
+                   "(`studies/sanity/README.md`, Table 2).",
          "caption": "Lorenz96 dimension scaling at fixed $r_\"tol\" = 0.1$. Parameters are scaled as "
                     "$N_\"init\" = min(5 dot 10^4 dot 1.3^d, 10^6)$, $K_\"init\" = min(25 dot 1.3^d, 1000)$, and "
                     "$M = min(100 dot 1.3^d, 500)$ to maintain domain coverage while respecting memory limits.",

@@ -2124,14 +2124,14 @@ design decisions behind them.
 #pagebreak(weak: true)
 
 // Written by figures/manuscript_tables.py: the manuscript's numbers from
-// studies/convergence/paper/paper_values.py, the re-run's from committed records of
-// studies/convergence/paper/run_manuscript.sh, and Appendix A's size rule from cases.py.
+// studies/sanity/paper/paper_values.py, the re-run's from committed records of
+// studies/sanity/paper/run_manuscript.sh, and Appendix A's size rule from cases.py.
 #let ms = json("figures/manuscript.json")
 
 = Experimental setup <sec:study-config>
 
 // The study this appendix specifies is being built in studies/manuscript; until then the
-// sanity check of Appendix B runs on studies/convergence/paper.
+// sanity check of Appendix B runs on studies/sanity/paper.
 
 This appendix specifies every experiment of the paper completely: the functions, the accuracy
 target, the algorithm's settings, the quantities reported and how they are aggregated. One rule
@@ -2346,8 +2346,8 @@ agree exactly, but a gross error (a wrong formula, a broken stage, a lost leaf) 
 difference far beyond the run-to-run noise.
 
 Every table of the manuscript is shown on the left as the manuscript prints it and on the right as
-this code measures it, rerunning the same experiments (`studies/convergence/paper/run_manuscript.sh`,
-described in `CONVERGENCE_STUDY.md`). Where the re-run's settings had to differ from the text to
+this code measures it, rerunning the same experiments (`studies/sanity/paper/run_manuscript.sh`,
+described in `studies/sanity/README.md`). Where the re-run's settings had to differ from the text to
 reproduce a table, a note above it says so. Both sides use one format per column, so a cell can
 be compared digit by digit with the one beside it. A re-run
 value is the seed-0 run's; a "–" is a number the re-run does not have: an experiment outside the
@@ -2360,10 +2360,10 @@ those cells, regressions first, as the ratio of the re-run's number to the manus
 #if ms.records.len() == 0 [
   No re-run has been recorded yet, so every re-run cell is "–".
 ] else [
-  The re-run numbers come from the records #ms.records.map(r => [#raw("studies/convergence/results/" + r.name + "/")
+  The re-run numbers come from the records #ms.records.map(r => [#raw("studies/sanity/results/" + r.name + "/")
   (commit #raw(r.commit), recorded on #r.recorded on a #r.machine, #r.gpu_runs runs on the GPU)]).join([; ]),
   a later one replacing an earlier one's values for the cases it holds; each table's re-run side names
-  the commits of the records behind it. `studies/convergence/results/README.md` describes them.
+  the commits of the records behind it. `studies/sanity/results/README.md` describes them.
 ]
 
 #for t in ms.tables { ms-table(t) }
@@ -2373,7 +2373,7 @@ noise band, the difference comes from a setting (Table 2's cluster sizes and Fig
 count, matched in the re-run), from a function instance drawn differently (the Gaussian's
 rotation), from seed-to-seed noise larger than the band (the Gaussian at $d = 5$), or from the
 known difference of the runs without Hessian splits, which this code makes more accurate than
-the manuscript's (`CONVERGENCE_STUDY.md`, D3). The Quadratic at $d = 10$ spends more evaluations than
+the manuscript's (`studies/sanity/README.md`, D3). The Quadratic at $d = 10$ spends more evaluations than
 the manuscript at the two loosest tolerances for the same or a smaller error.
 
 The manuscript's values are printed as it prints them, typos included. The inconsistencies found

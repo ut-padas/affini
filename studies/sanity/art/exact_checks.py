@@ -33,7 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
-# problem name -> reference benchmark arguments (the study's problems, CONVERGENCE_STUDY.md Part B)
+# problem name -> reference benchmark arguments (the study's problems, studies/sanity/README.md Part B)
 PROBLEMS = {
     "quadratic": ["--benchmark", "quadratic", "--offset", "1"],
     "gaussian": ["--benchmark", "gaussian"],

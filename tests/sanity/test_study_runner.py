@@ -1,9 +1,9 @@
-"""The convergence-study drivers' case runner (studies/convergence/common.sh, run_logged)."""
+"""The convergence-study drivers' case runner (studies/sanity/common.sh, run_logged)."""
 
 import subprocess
 from pathlib import Path
 
-COMMON = Path(__file__).resolve().parents[2] / "studies" / "convergence" / "common.sh"
+COMMON = Path(__file__).resolve().parents[2] / "studies" / "sanity" / "common.sh"
 
 
 def test_a_case_that_reads_stdin_does_not_consume_the_remaining_cases(tmp_path):

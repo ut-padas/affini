@@ -746,8 +746,8 @@ that checks, at least:
 - **accuracy**: test errors against the tolerance (max, RMS, 99th percentile, share of uniform test
   points within tolerance), not only the training-sample acceptance;
 - **convergence and order of convergence** on the convergence study's problems
-  (`CONVERGENCE_STUDY.md`: Part A, the AFINNI manuscript's experiments, `studies/convergence/paper/`;
-  Part B, the reference ART against this library's ART, `studies/convergence/art/`, including
+  (`studies/sanity/README.md`: Part A, the AFINNI manuscript's experiments, `studies/sanity/paper/`;
+  Part B, the reference ART against this library's ART, `studies/sanity/art/`, including
   `exact_checks.py`), and on the high-dimensional study's problems (Section 5);
 - **the theoretical estimate** the change rests on (a bias bound, a mixing bound, a rate);
 - **cost**: leaves, evaluations, wall time and peak memory against the current method;

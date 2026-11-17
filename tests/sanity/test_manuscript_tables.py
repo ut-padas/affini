@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "docs" / "report" / "figures"))
-sys.path.insert(0, str(ROOT / "studies" / "convergence" / "paper"))
+sys.path.insert(0, str(ROOT / "studies" / "sanity" / "paper"))
 
 import cases  # noqa: E402
 import manuscript_tables as mt  # noqa: E402

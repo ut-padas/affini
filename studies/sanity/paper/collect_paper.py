@@ -7,7 +7,7 @@ Usage: ``collect_paper.py --out OUT`` (the ``--out`` of run_paper.sh). Writes to
 - ``comparison.csv`` / ``comparison.md``: one row per reported number: paper value, re-run value
   (seed 0), the seed replicates' spread, relative difference and a verdict (``same`` within the
   noise band, ``differs`` outside it, ``missing``).
-- ``checks.csv`` / ``checks.md``: the pass/fail accuracy checks (CONVERGENCE_STUDY.md, Part A).
+- ``checks.csv`` / ``checks.md``: the pass/fail accuracy checks (studies/sanity/README.md, Part A).
 - ``slopes.csv``: fitted log-log slopes of e_in against N_c, paper and re-run, beside -2/d.
 - ``runs.csv``: every run found, flattened; ``cost.csv``: wall time and rank 0's peak memory per case;
   ``*.png``: the plots, among them ``errors_<problem>_..._by_d.png`` and ``..._by_tol.png``: the

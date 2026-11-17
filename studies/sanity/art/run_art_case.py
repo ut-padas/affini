@@ -4,7 +4,7 @@ result as JSON.
 
 Usage (from the repository root, PYTHONPATH=.)::
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off python studies/convergence/art/run_art_case.py \\
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off python studies/sanity/art/run_art_case.py \\
         --side reference|library --art-path ../Adaptive-Regression-Trees-ART- --out-json R.json \\
         -- --benchmark rosenbrock --dimension 2 --offset 1 --error-tolerance 0.05 --max-depth 20
 

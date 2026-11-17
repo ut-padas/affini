@@ -2,7 +2,7 @@
 
 The records behind the technical companion's Appendix B (the rewritten code against the earlier
 draft's numbers). Each folder holds the numbers a GH200 node recorded with
-`studies/convergence/paper/run_manuscript.sh`, as printed there: `manuscript_results.csv` (table, row,
+`studies/sanity/paper/run_manuscript.sh`, as printed there: `manuscript_results.csv` (table, row,
 quantity, seed-0 value), `cost.csv` (case wall times) and `provenance.json` (commit, date, machine
 label). The machine's full record (`RESULTS.md`, libraries, run settings) stayed on that machine.
 
@@ -14,6 +14,6 @@ label). The machine's full record (`RESULTS.md`, libraries, run settings) stayed
 
 Rebuild the appendix's tables from them, the main record first:
 
-    make report-tables RECORD="studies/convergence/results/2026-11-17_b4bac64_gh200-node-96-gb-hbm \
-      studies/convergence/results/2026-11-17_d2537a9_gh200-node-96-gb-hbm \
-      studies/convergence/results/2026-11-17_ffbd39e_gh200-node-96-gb-hbm" && make report
+    make report-tables RECORD="studies/sanity/results/2026-11-17_b4bac64_gh200-node-96-gb-hbm \
+      studies/sanity/results/2026-11-17_d2537a9_gh200-node-96-gb-hbm \
+      studies/sanity/results/2026-11-17_ffbd39e_gh200-node-96-gb-hbm" && make report

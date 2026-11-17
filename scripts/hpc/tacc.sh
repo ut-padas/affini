@@ -56,4 +56,4 @@ if [[ -x .venv/bin/python ]]; then
     .venv/bin/python -c "import src.infra.backend as b; b.get_mpi(); print('[adaptive-surrogates] MPI:', b._resolve_mpi()[2])" \
         || echo "[adaptive-surrogates] warning: the library could not initialise; run 'make install-hpc' first." >&2
 fi
-echo "[adaptive-surrogates] Ready. Launch MPI jobs with e.g.:  ibrun .venv/bin/python afinni_launcher.py ..."
+echo "[adaptive-surrogates] Ready. Launch MPI jobs with e.g.:  ibrun .venv/bin/python -m examples.example01_rosenbrock_afinni"
