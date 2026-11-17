@@ -1,4 +1,4 @@
-# Using AFINNI
+# Using the adaptive surrogates library
 
 How to train and query surrogates on one CPU, a GPU and MPI ranks, how to profile,
 plot and monitor runs, how to swap parts of the algorithm, and how to check your
@@ -28,7 +28,7 @@ import numpy as np
 from src import xp
 from src.engine import TrainingConfig, Evaluator, SurrogateMode
 from src.problems.rosenbrock import rosenbrock
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 
 X = xp.asarray(np.random.default_rng(0).uniform(-2, 3, (50_000, 2)))
 
@@ -36,7 +36,7 @@ config = TrainingConfig(
     mode=SurrogateMode.AFFINE_COV_HESS, atol=0.02, rtol=0.02, error_metric="Linf",
     num_initial_clusters=25, min_pts_per_cluster=100,
 )
-surrogate = AFINNISurrogate()
+surrogate = AdaptiveSurrogate()
 surrogate.train(X, config, Evaluator(f_fn=rosenbrock))
 Q = xp.asarray(np.random.default_rng(1).uniform(-2, 3, (10_000, 2)))
 pred, outside = surrogate.predict(Q, k_nn=1)   # (N, fd) values, (N,) "outside every trust region"
@@ -64,23 +64,23 @@ The same script runs everywhere; the backend is chosen at import time.
 
 | Run on | Command |
 |---|---|
-| One CPU process | `AFINNI_DEVICE=cpu AFINNI_MPI=off uv run python -m examples.example01_rosenbrock_afinni` |
-| One GPU | `AFINNI_DEVICE=gpu AFINNI_MPI=off uv run python -m examples.example01_rosenbrock_afinni` |
-| N CPU ranks | `AFINNI_DEVICE=cpu uv run mpiexec -n 4 python -m examples.example01_rosenbrock_afinni` |
-| N ranks sharing / owning GPUs | `AFINNI_DEVICE=gpu uv run mpiexec -n 4 python -m examples.example01_rosenbrock_afinni` |
+| One CPU process | `SURROGATE_DEVICE=cpu SURROGATE_MPI=off uv run python -m examples.example01_rosenbrock_afinni` |
+| One GPU | `SURROGATE_DEVICE=gpu SURROGATE_MPI=off uv run python -m examples.example01_rosenbrock_afinni` |
+| N CPU ranks | `SURROGATE_DEVICE=cpu uv run mpiexec -n 4 python -m examples.example01_rosenbrock_afinni` |
+| N ranks sharing / owning GPUs | `SURROGATE_DEVICE=gpu uv run mpiexec -n 4 python -m examples.example01_rosenbrock_afinni` |
 | TACC | `source scripts/hpc/tacc.sh; ibrun .venv/bin/python afinni_launcher.py ...` |
 
 | Variable        | Values                         | Effect                                                                                                 |
 | --------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `AFINNI_DEVICE` | `auto` (default), `cpu`, `gpu` | `cpu` forces NumPy even when a GPU is present. `gpu` raises an error instead of silently falling back. |
-| `AFINNI_MPI`    | `auto` (default), `off`, `on`  | `off` ignores an installed mpi4py. `on` raises an error if MPI is unavailable.                         |
+| `SURROGATE_DEVICE` | `auto` (default), `cpu`, `gpu` | `cpu` forces NumPy even when a GPU is present. `gpu` raises an error instead of silently falling back. |
+| `SURROGATE_MPI`    | `auto` (default), `off`, `on`  | `off` ignores an installed mpi4py. `on` raises an error if MPI is unavailable.                         |
 
 Set them explicitly for benchmarks. The same information is available in code
 (`from src import IS_CUPY_BACKEND, HAS_MPI, xp`); detection lives in
 [`src/infra/backend.py`](../src/infra/backend.py).
 
 Without `mpiexec`, or when MPI isn't installed, the same code runs as a single rank.
-If a script is started under `mpiexec` but MPI can't be loaded, AFINNI stops with an
+If a script is started under `mpiexec` but MPI can't be loaded, the library stops with an
 error rather than letting every process quietly run the whole job as rank 0.
 
 On Windows, Intel MPI installs `mpiexec.exe` into `.venv\Library\bin`, which `uv run`
@@ -169,7 +169,7 @@ surrogate.config                                       # every effective setting
 surrogate.profiling_stats                              # counters, level statistics, profile
 
 path = surrogate.save_model("results/model")           # -> results/model.npz (versioned, no pickle)
-loaded = AFINNISurrogate.load_model("results/model")   # the same path forms as save_model
+loaded = AdaptiveSurrogate.load_model("results/model")   # the same path forms as save_model
 ```
 
 A partial run (stopped by `max_levels`) warns and reports the unresolved points;
@@ -307,7 +307,7 @@ laptop on battery. Notes per problem:
 
 `--afinni-max-levels`, `--art-max-depth` and `--tol` override a problem's settings,
 `--dim` its dimension (the limits are matched in 2-D only) and `--search` ART's
-split search. The example runs in one process (`AFINNI_MPI` defaults to `off`), so the
+split search. The example runs in one process (`SURROGATE_MPI` defaults to `off`), so the
 training times compare directly. Outputs go to
 `scratch/example05_afinni_vs_art/<problem>/` (both models, `metrics.json`, the plots of
 [Plots](#plots)); `--problem all` also writes `summary.json` and `summary.png`.
@@ -396,7 +396,7 @@ P.plot_timeline(read_event_streams("runs/rosen"))
 Adding a plot: put it in `src/plotting/profiling.py` (training profiles),
 `src/plotting/surrogate.py` (surrogates and errors) or `src/plotting/art.py` (ART
 trees and comparisons of several surrogates), accept the inputs above via
-`profile_of`, draw inside `afinni_style()`, take an optional `path` and return the
+`profile_of`, draw inside `plot_style()`, take an optional `path` and return the
 figure; export it from `src/plotting/__init__.py`.
 
 ## Live monitoring
@@ -614,7 +614,7 @@ For another cluster, copy [`scripts/hpc/tacc.sh`](../scripts/hpc/tacc.sh) to
 | Symptom | Cause and fix |
 |---|---|
 | `error: Failed to spawn: mpiexec` on Windows | Intel MPI's launcher is not on `PATH`; see [Running on CPU, GPU and MPI](#running-on-cpu-gpu-and-mpi). |
-| `AFINNI_DEVICE=gpu was requested but … no usable CUDA device was found` | No NVIDIA GPU or driver is visible to this process (on a cluster, probably a login node). `uv run python -m src` shows what was detected. |
+| `SURROGATE_DEVICE=gpu was requested but … no usable CUDA device was found` | No NVIDIA GPU or driver is visible to this process (on a cluster, probably a login node). `uv run python -m src` shows what was detected. |
 | `UserWarning: CUDA path could not be detected` from CuPy | Harmless: the CUDA libraries come from pip. |
 | `OFI EP enable failed` MPI abort (Intel MPI on a Stampede3 login node) | Run on a compute node, through `ibrun`, after `source scripts/hpc/tacc.sh`. |
 | Scripts that use `multiprocessing` hang or re-run themselves on Windows and macOS | Those platforms start workers by re-importing your script; put the entry point under `if __name__ == "__main__":`, as in `examples/`. |
@@ -641,22 +641,22 @@ Every `Makefile` target runs a single `uv` command, so on Windows run that comma
 
 | Task | Command |
 |---|---|
-| Tests on CPU | `AFINNI_DEVICE=cpu AFINNI_MPI=off uv run pytest -q --no-cov -m "not mpi"` |
-| Tests on GPU | `AFINNI_DEVICE=gpu AFINNI_MPI=off uv run pytest -q --no-cov -m "not mpi"` |
-| Multi-rank tests | `AFINNI_MPI=on AFINNI_MPI_NP=4 uv run pytest tests/mpi -o addopts='' -q` |
+| Tests on CPU | `SURROGATE_DEVICE=cpu SURROGATE_MPI=off uv run pytest -q --no-cov -m "not mpi"` |
+| Tests on GPU | `SURROGATE_DEVICE=gpu SURROGATE_MPI=off uv run pytest -q --no-cov -m "not mpi"` |
+| Multi-rank tests | `SURROGATE_MPI=on SURROGATE_MPI_NP=4 uv run pytest tests/mpi -o addopts='' -q` |
 | One area | `uv run pytest tests/unit`, `tests/integration`, `tests/problems` |
 | Lint / format | `uv run ruff check .`, `uv run ruff format .` |
 
 `uv run pytest` runs everything the current install supports; its header line shows
-which backends were exercised (`afinni backend: array=NumPy | MPI=...`). A
+which backends were exercised (`surrogate backend: array=NumPy | MPI=...`). A
 missing backend is skipped unless an override makes it required:
 
 | Checking  | Command |
 | --------- | ------- |
-| GPU       | `AFINNI_DEVICE=gpu uv run pytest tests/integration/test_backend.py` |
-| MPI       | `AFINNI_MPI=on uv run pytest tests/integration/test_backend.py tests/mpi` (= `make test-mpi`) |
-| GPU + MPI | `AFINNI_DEVICE=gpu AFINNI_MPI=on uv run pytest tests/integration/test_backend.py tests/mpi` |
-| HPC       | `AFINNI_DEVICE=gpu AFINNI_MPI=on AFINNI_MPIEXEC=ibrun uv run pytest tests/mpi tests/integration/test_backend.py` on a GPU node after `source scripts/hpc/tacc.sh`, with at least `AFINNI_MPI_NP` tasks (default 2) |
+| GPU       | `SURROGATE_DEVICE=gpu uv run pytest tests/integration/test_backend.py` |
+| MPI       | `SURROGATE_MPI=on uv run pytest tests/integration/test_backend.py tests/mpi` (= `make test-mpi`) |
+| GPU + MPI | `SURROGATE_DEVICE=gpu SURROGATE_MPI=on uv run pytest tests/integration/test_backend.py tests/mpi` |
+| HPC       | `SURROGATE_DEVICE=gpu SURROGATE_MPI=on SURROGATE_MPIEXEC=ibrun uv run pytest tests/mpi tests/integration/test_backend.py` on a GPU node after `source scripts/hpc/tacc.sh`, with at least `SURROGATE_MPI_NP` tasks (default 2) |
 
 Test layout: `tests/unit` (one component, no full training), `tests/integration`
 (training and prediction through the public API), `tests/mpi` (real multi-rank
@@ -670,11 +670,11 @@ example a `git worktree` of `main`):
 
 ```bash
 git worktree add ../affini-main main
-(cd ../affini-main && AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. \
+(cd ../affini-main && SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. \
     python "$OLDPWD/scripts/regression_check.py" --save /tmp/ref)
-AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. python scripts/regression_check.py \
+SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. python scripts/regression_check.py \
     --save /tmp/new --compare /tmp/ref            # must be bit-identical on CPU
-# on a GPU: AFINNI_DEVICE=gpu ... --rtol 1e-12     (leaf and evaluation counts still exact)
+# on a GPU: SURROGATE_DEVICE=gpu ... --rtol 1e-12     (leaf and evaluation counts still exact)
 ```
 
 `regression_check.py` trains every mode, metric and output dimension plus extra

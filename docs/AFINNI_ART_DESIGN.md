@@ -344,7 +344,7 @@ order, each parent appends its two children consecutively (low-score child first
 `build()`/`select()` drop clusters without reordering. Without work stealing, the queue
 at every level is therefore sorted by (root, path from the root).
 
-## 10. Inference (`AFINNISurrogate.predict`)
+## 10. Inference (`AdaptiveSurrogate.predict`)
 
 ```text
 for each query x (batched):

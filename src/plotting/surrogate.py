@@ -22,7 +22,7 @@ from matplotlib.patches import Ellipse
 from src import Array, to_device, to_host, xp
 
 if TYPE_CHECKING:
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
 
 
 def _host_domain(domain) -> tuple[float, float]:
@@ -243,7 +243,7 @@ def plot_cluster_projections_for_wave(clusters: Array, img_fpath: Path, dim: int
     plt.close()
 
 
-def plot_wave_2d_errors(surrogate: AFINNISurrogate, domain, f_fn, img_fpath: Path):
+def plot_wave_2d_errors(surrogate: AdaptiveSurrogate, domain, f_fn, img_fpath: Path):
     """Save the 2-D wave function, the surrogate and their error side by side."""
 
     # Generate grid of points
@@ -313,7 +313,7 @@ def plot_wave_2d_errors(surrogate: AFINNISurrogate, domain, f_fn, img_fpath: Pat
 
 
 def plot_wave_line_errors(
-    surrogate: AFINNISurrogate,
+    surrogate: AdaptiveSurrogate,
     domain,
     f_fn,
     img_fpath: Path,
@@ -409,7 +409,7 @@ def plot_wave_line_errors(
 
 
 def plot_near_centers(
-    surrogate: AFINNISurrogate,
+    surrogate: AdaptiveSurrogate,
     target,
     domain,
     bg_fn,
@@ -537,8 +537,8 @@ def plot_near_centers(
 
 
 def plot_exact_hess_vs_estimated_hess(
-        est_hess_surrogate: AFINNISurrogate,
-        exact_hess_surrogate: AFINNISurrogate,
+        est_hess_surrogate: AdaptiveSurrogate,
+        exact_hess_surrogate: AdaptiveSurrogate,
         bg_fn, domain, img_fpath
     ):
     """Save the leaves of two surrogates trained with estimated and exact Hessians side by side."""

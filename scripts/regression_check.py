@@ -1,7 +1,7 @@
 """
 Differential regression check for the training/inference pipeline.
 
-Trains small, fixed problems through the public ``AFINNISurrogate`` API for every
+Trains small, fixed problems through the public ``AdaptiveSurrogate`` API for every
 ``SurrogateMode`` x error metric x output dimension (plus a few extra paths: oracle,
 precomputed Y, uniform-grid roots, second-order Taylor, tiny batches) and ART
 (every split search, root type, sampler, quadratic leaves, fallback leaves), predicts on
@@ -16,9 +16,12 @@ It only uses arguments that also exist on older commits, so the same file can be
 on two checkouts and compared:
 
     # from the old checkout (or a git worktree of it)
-    AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. python /path/to/regression_check.py --save old
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. python /path/to/regression_check.py --save old
     # from the new checkout
-    AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. python scripts/regression_check.py --save new --compare old
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. python scripts/regression_check.py --save new --compare old
+
+A checkout that reads ``AFINNI_DEVICE`` / ``AFINNI_MPI`` needs those set as well, or it falls back to
+its own backend detection; setting both pairs in both commands is always safe.
 
 ``--compare`` exits non-zero if any case that ran on the reference fails now, if any
 counter (leaves, evaluations, generated points) or trust mask differs, or if any array
@@ -43,7 +46,11 @@ from src import IS_CUPY_BACKEND, get_mpi_rank, to_host, xp  # noqa: E402
 from src.components.modes import SurrogateMode  # noqa: E402
 from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
-from src.surrogate import AFINNISurrogate  # noqa: E402
+
+try:
+    from src.surrogate import AdaptiveSurrogate  # noqa: E402
+except ImportError:  # a checkout that names the class AFINNISurrogate: this file also runs on those
+    from src.surrogate import AFINNISurrogate as AdaptiveSurrogate  # noqa: E402
 
 warnings.simplefilter("ignore", DeprecationWarning)
 
@@ -78,7 +85,7 @@ def wavy(fd):
     return f
 
 
-def model_arrays(s: AFINNISurrogate) -> dict[str, np.ndarray]:
+def model_arrays(s: AdaptiveSurrogate) -> dict[str, np.ndarray]:
     """Every numeric array ``save_model`` would write (leaves, local-model parameters, routing, leaf status)."""
     out = {k: getattr(s, k) for k in ("X_src", "f_src", "E_cluster_abs_src", "E_cluster_rel_src", "counts_src")}
     out["trust_matrices_src"] = s.trust_matrices_src
@@ -141,7 +148,7 @@ def run(out_prefix):
         fns = {"oracle_fn": lambda x, f=f, g=g: (f(x), g(x))} if oracle else {"f_fn": f, "g_fn": g}
         t0 = time.perf_counter()
         try:
-            s = AFINNISurrogate()
+            s = AdaptiveSurrogate()
             s.train(X, TrainingConfig(**kwargs), Evaluator(hessian_fn=h, **fns), Y_train=f(X) if use_Y else None)
             train_time = time.perf_counter() - t0
             for attr, v in model_arrays(s).items():

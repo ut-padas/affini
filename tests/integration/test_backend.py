@@ -5,8 +5,8 @@ These run on every machine. Assertions are relative to what is installed, so
 the same suite passes on a CPU-only laptop and on a GPU/MPI node. To turn
 "whatever is available" into a hard requirement, set the overrides:
 
-    AFINNI_DEVICE=gpu uv run pytest tests/integration/test_backend.py   # must run on the GPU
-    AFINNI_MPI=on     uv run pytest tests/integration/test_backend.py   # mpi4py must load an MPI library
+    SURROGATE_DEVICE=gpu uv run pytest tests/integration/test_backend.py   # must run on the GPU
+    SURROGATE_MPI=on     uv run pytest tests/integration/test_backend.py   # mpi4py must load an MPI library
 
 The pytest header shows which backends were actually exercised.
 """
@@ -29,7 +29,7 @@ from tests._smoke import SMOKE_TOL, run_smoke
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Variables that influence detection; stripped so subprocess cases are hermetic.
-_DETECTION_VARS = ("AFINNI_DEVICE", "AFINNI_MPI", *backend._LAUNCHER_SIZE_VARS)
+_DETECTION_VARS = ("SURROGATE_DEVICE", "SURROGATE_MPI", *backend._LAUNCHER_SIZE_VARS)
 
 _PROBE = (
     "import json, src, src.infra.backend as b; "
@@ -85,7 +85,7 @@ def test_backend_info_reports_everything():
 
 # --- Environment overrides (fresh interpreter per case) -----------------------
 def test_force_cpu():
-    proc, r = _run({"AFINNI_DEVICE": "cpu"})
+    proc, r = _run({"SURROGATE_DEVICE": "cpu"})
     assert proc.returncode == 0, proc.stderr
     assert r["cupy"] is False
     assert r["xp"].split(".")[-1] == "numpy"
@@ -93,16 +93,16 @@ def test_force_cpu():
 
 def test_force_gpu_matches_hardware():
     if backend.DEVICE_MODE == "cpu":
-        pytest.skip("AFINNI_DEVICE=cpu hides whether a GPU is present")
-    proc, _ = _run({"AFINNI_DEVICE": "gpu"})
+        pytest.skip("SURROGATE_DEVICE=cpu hides whether a GPU is present")
+    proc, _ = _run({"SURROGATE_DEVICE": "gpu"})
     if backend.IS_CUPY_BACKEND:
         assert proc.returncode == 0, proc.stderr
     else:
         assert proc.returncode != 0
-        assert "AFINNI_DEVICE=gpu was requested" in proc.stderr
+        assert "SURROGATE_DEVICE=gpu was requested" in proc.stderr
 
 
-@pytest.mark.parametrize("var", ["AFINNI_DEVICE", "AFINNI_MPI"])
+@pytest.mark.parametrize("var", ["SURROGATE_DEVICE", "SURROGATE_MPI"])
 def test_invalid_override_is_rejected(var):
     proc, _ = _run({var: "bogus"})
     assert proc.returncode != 0
@@ -110,10 +110,10 @@ def test_invalid_override_is_rejected(var):
 
 
 def test_mpi_off_uses_serial_stand_in():
-    proc, r = _run({"AFINNI_MPI": "off"})
+    proc, r = _run({"SURROGATE_MPI": "off"})
     assert proc.returncode == 0, proc.stderr
     assert r["mpi"] is False and r["size"] == 1
-    assert "AFINNI_MPI=off" in r["reason"]
+    assert "SURROGATE_MPI=off" in r["reason"]
 
 
 def test_without_mpi4py_falls_back_to_serial():
@@ -123,9 +123,9 @@ def test_without_mpi4py_falls_back_to_serial():
 
 
 def test_without_mpi4py_mpi_on_fails_loudly():
-    proc, _ = _run({"AFINNI_MPI": "on"}, block_mpi4py=True)
+    proc, _ = _run({"SURROGATE_MPI": "on"}, block_mpi4py=True)
     assert proc.returncode != 0
-    assert "AFINNI_MPI=on was requested" in proc.stderr
+    assert "SURROGATE_MPI=on was requested" in proc.stderr
 
 
 @pytest.mark.parametrize("launcher_var", backend._LAUNCHER_SIZE_VARS)
@@ -166,8 +166,8 @@ def _worker_mpi_state(_):
 
 
 def test_spawn_workers_never_initialise_mpi(monkeypatch):
-    # The worker must decide on its own (AFINNI_MPI=off would short-circuit first).
-    monkeypatch.setenv("AFINNI_MPI", "auto")
+    # The worker must decide on its own (SURROGATE_MPI=off would short-circuit first).
+    monkeypatch.setenv("SURROGATE_MPI", "auto")
     with mp.get_context("spawn").Pool(1) as pool:
         has_mpi, reason = pool.map(_worker_mpi_state, [0])[0]
     assert has_mpi is False

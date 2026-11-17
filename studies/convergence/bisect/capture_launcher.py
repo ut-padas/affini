@@ -7,7 +7,7 @@ stand-in's directory) on PYTHONPATH:
     python capture_launcher.py --out run.npz --launcher afinni_launcher.py -- \\
         --experiment wave --dims 2 --tols 0.005 --error_eval_mode affine_cov_hess
 
-`AFINNISurrogate.train`/`predict` and `compute_error_metrics` are wrapped before the launcher is
+`AdaptiveSurrogate.train`/`predict` and `compute_error_metrics` are wrapped before the launcher is
 imported (the launcher binds `compute_error_metrics` at import, so it gets the wrapper), so the run
 means exactly what the same flags meant at that commit: its data generation, settings, candidate
 count, inference rule and metric. Saved: the test points, predictions, out-of-trust-region mask
@@ -36,7 +36,7 @@ a = p.parse_args(own)
 import src.surrogate as S  # noqa: E402
 
 cap: dict = {}
-orig_train, orig_predict, orig_metrics = S.AFINNISurrogate.train, S.AFINNISurrogate.predict, S.compute_error_metrics
+orig_train, orig_predict, orig_metrics = S.AdaptiveSurrogate.train, S.AdaptiveSurrogate.predict, S.compute_error_metrics
 
 
 def host(x):
@@ -74,7 +74,7 @@ def metrics(*args, **kw):
     return r
 
 
-S.AFINNISurrogate.train, S.AFINNISurrogate.predict, S.compute_error_metrics = train, predict, metrics
+S.AdaptiveSurrogate.train, S.AdaptiveSurrogate.predict, S.compute_error_metrics = train, predict, metrics
 sys.argv = [a.launcher, *rest]
 try:
     runpy.run_path(a.launcher, run_name="__main__")

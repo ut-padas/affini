@@ -1,5 +1,5 @@
 """
-The public surrogate: ``AFINNISurrogate`` trains with ``refine``, stores
+The public surrogate: ``AdaptiveSurrogate`` trains with ``refine``, stores
 the accepted leaves on every MPI rank, predicts with a two-stage (Euclidean, then
 trust-region) neighbour search (``predictor="knn"``) or, for an ART model, by
 routing each query down the explicit tree (``predictor="route"``, its default), and
@@ -99,7 +99,7 @@ def _make_knn_index(centroids: Array):
     return CpuExactKNN(to_host(centroids))
 
 
-class AFINNISurrogate:
+class AdaptiveSurrogate:
     """
     A surrogate made of leaves with local models, trained by either plan (AFINNI or ART) on
     CPU or GPU and across MPI ranks. AFINNI leaves answer a query through their trust regions
@@ -276,7 +276,7 @@ class AFINNISurrogate:
                     f"Training stopped at max_levels={config.max_levels} with "
                     f"{self.num_unresolved_clusters:,} clusters "
                     f"({self.num_unresolved_pts:,} points) still above tolerance; "
-                    f"{where}. See AFINNISurrogate.converged.",
+                    f"{where}. See AdaptiveSurrogate.converged.",
                     RuntimeWarning,
                     stacklevel=2,
                 )
@@ -297,7 +297,7 @@ class AFINNISurrogate:
         """
         Save the trained model to an ``.npz`` file and return its path.
 
-        A directory gets the default file name (``afinni_surrogate.npz``); another
+        A directory gets the default file name (``adaptive_surrogate.npz``); another
         suffix is replaced by ``.npz``. The file stores a format version, the leaf
         arrays, every local-model parameter under its column name, the local
         model's registered name and settings, the effective training
@@ -362,7 +362,7 @@ class AFINNISurrogate:
     @classmethod
     def load_model(
         cls, filepath: str | Path, local_model: LocalModel | None = None
-    ) -> "AFINNISurrogate":
+    ) -> "AdaptiveSurrogate":
         """
         Load a model written by ``save_model()``; ``filepath`` is resolved the same
         way, so the path given to ``save_model()`` also loads.

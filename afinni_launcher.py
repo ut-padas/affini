@@ -32,7 +32,7 @@ from src.plotting import (
     plot_wave_2d_errors,
     plot_wave_line_errors,
 )
-from src.surrogate import AFINNISurrogate, compute_error_metrics
+from src.surrogate import AdaptiveSurrogate, compute_error_metrics
 
 TINY_EPS = 1e-12
 DEFAULT_SAMPLING_METHOD = "convex_combination"
@@ -177,7 +177,7 @@ def conduct_experiment_given_data(
         return
     json_fpath.parent.mkdir(parents=True, exist_ok=True)
 
-    surrogate = AFINNISurrogate()
+    surrogate = AdaptiveSurrogate()
     error_tag = ""
     _TRAINED, _PREDICTED = False, False
     try:
@@ -876,7 +876,7 @@ def lorenz_trajectories_experiment(
                 X_test[((j - 1) * N_start_test) : (j * N_start_test)]
             )
 
-    # Put this into AFINNI. The mode and MPI size are only in the name when they
+    # Put this into the library. The mode and MPI size are only in the name when they
     # differ from the historical defaults, so existing results are still found.
     EXP_DIR = RESULTS_DIR / "lorenz_trajexp"
     mode_suffix = "" if error_eval_mode == SurrogateMode.AFFINE_COV_HESS else f"_{error_eval_mode.value}"

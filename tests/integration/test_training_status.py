@@ -11,7 +11,7 @@ from src.components.modes import SurrogateMode
 from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
 from src.infra.backend import _SerialMPI
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 from tests._helpers import host, train_surrogate
 
 X = np.random.default_rng(5).uniform(-2, 2, (3_000, 2))
@@ -22,7 +22,7 @@ def f(x):
 
 
 def train(**kw):
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     opts = {
         "f_fn": f, "atol": 0.01, "rtol": 0.01, "error_metric": "Linf", "num_initial_clusters": 8,
         "min_pts_per_cluster": 40, "use_work_stealing": False,

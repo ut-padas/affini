@@ -8,7 +8,7 @@ import pytest
 from rich.console import Console
 
 from src.infra.monitor import RankStatus, StreamMonitor, main
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 from tests._helpers import train_surrogate
 
 
@@ -65,7 +65,7 @@ def test_rank_status_reports_unresolved_points_when_done():
 
 
 def test_monitor_cli_snapshot_after_a_real_run(tmp_path, capsys):
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     train_surrogate(
         np.random.default_rng(0).uniform(-1, 1, (3_000, 2)), s,
         f_fn=lambda x: (1 + x[:, 0] ** 2 + 4 * x[:, 1] ** 2)[:, None], atol=0.02, rtol=0.02,
@@ -121,7 +121,7 @@ def test_monitor_header_names_the_plan_and_art_fallback_points(tmp_path, art):
         options.update(algorithm="art", domain=([-1, -1], [1, 1]), max_levels=2, art={"sample_multiplier": 10})
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        train_surrogate(np.random.default_rng(0).uniform(-1, 1, (3_000, 2)), AFINNISurrogate(), **options)
+        train_surrogate(np.random.default_rng(0).uniform(-1, 1, (3_000, 2)), AdaptiveSurrogate(), **options)
     mon = StreamMonitor(tmp_path)
     mon.poll()
     status = mon.ranks[0]

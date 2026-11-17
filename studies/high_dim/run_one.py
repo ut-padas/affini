@@ -5,7 +5,7 @@ one dimension and tolerance, score it on the fixed test set, and write one JSON 
 Run it through ``sweep.py``, which gives every run a fresh process, a time limit and a result
 file. Directly (from the repository root)::
 
-    AFINNI_DEVICE=gpu AFINNI_MPI=off .venv/bin/python -m studies.high_dim.run_one \
+    SURROGATE_DEVICE=gpu SURROGATE_MPI=off .venv/bin/python -m studies.high_dim.run_one \
         --variant art_affine --problem rosenbrock --d 40 --tol 0.1 --out /tmp/run.json
 
 The record is written before training starts (``status: "running"``) and replaced at the
@@ -227,7 +227,7 @@ def main(argv=None) -> int:
                         help="AFINNI's kNN candidates per query (kappa); fewer miss elongated trust regions")  # fmt: skip
     args = parser.parse_args(argv)
 
-    for var in ("AFINNI_DEVICE", "AFINNI_MPI"):
+    for var in ("SURROGATE_DEVICE", "SURROGATE_MPI"):
         if var not in os.environ:
             print(f"Set {var} explicitly (AGENTS.md): a missing GPU or MPI must not pass silently.", file=sys.stderr)
             return 2
@@ -238,7 +238,7 @@ def main(argv=None) -> int:
 
     from src import IS_CUPY_BACKEND, xp
     from src.core.evaluation import Evaluator
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
     from studies.high_dim.problems import scoring_set, uniform_points
     from studies.high_dim.settings import (
         MAX_LEVELS,
@@ -279,7 +279,7 @@ def main(argv=None) -> int:
         record["config"] = json.loads(json.dumps(config.to_dict(), default=str))
         X0 = uniform_points(n_initial_points(variant, d, args.library_min_pts), d, seed=1000 + args.seed)
         record["n0"] = int(X0.shape[0])
-        model = AFINNISurrogate()
+        model = AdaptiveSurrogate()
         stage = "train"
         t = time.perf_counter()
         model.train(xp.asarray(X0), config, Evaluator(f_fn=problem.f))

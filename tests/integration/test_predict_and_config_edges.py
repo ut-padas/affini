@@ -8,7 +8,7 @@ import pytest
 from src import xp
 from src.components.modes import SurrogateMode
 from src.config import TrainingConfig
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
 
 rng = np.random.default_rng(9)
@@ -21,7 +21,7 @@ def f(x):
 
 @pytest.fixture(scope="module")
 def surrogate():
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     train_surrogate(
         X, s, f_fn=f, atol=0.05, rtol=0.05, error_metric="Linf",
         num_initial_clusters=4, min_pts_per_cluster=32, use_work_stealing=False,
@@ -92,7 +92,7 @@ def test_k_larger_than_coarse_factor_is_rejected(surrogate):
 
 
 def test_per_component_tolerances_are_used_and_must_match_the_outputs():
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     opts = {"f_fn": f, "num_initial_clusters": 4, "min_pts_per_cluster": 32, "use_work_stealing": False}
     train_surrogate(X, s, atol=(0.05, 0.01), rtol=None, **opts)
     E_abs = host(s.E_cluster_abs_src)
@@ -106,7 +106,7 @@ def test_per_component_tolerances_are_used_and_must_match_the_outputs():
 
 def test_untrained_surrogate_refuses_to_predict():
     with pytest.raises(RuntimeError, match="not trained"):
-        AFINNISurrogate().predict(xp.asarray(X[:3]))
+        AdaptiveSurrogate().predict(xp.asarray(X[:3]))
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,7 @@
 #               GPU with the commit's own environment
 #   PYTHON      interpreter (default: this repo's .venv); for a paper-era GPU run, the extraction's
 #               own `uv sync` venv, which has cupy, cuml-cu12 and faiss-cpu
-#   DEVICE      cpu (default) or gpu: sets AFINNI_DEVICE. Commits before d7ec052 ignore it and use the
+#   DEVICE      cpu (default) or gpu: sets SURROGATE_DEVICE. Commits before d7ec052 ignore it and use the
 #               GPU whenever cupy imports, so on a CPU-only run keep cupy out of the environment.
 #   CAP         1 (default): run under a systemd scope (6 GB, 4 cores, nice 10, 900 s timeout); 0: plain
 set -euo pipefail
@@ -33,7 +33,7 @@ cd "$root"
 cap=()
 [[ $CAP == 1 ]] && cap=(systemd-run --user --scope -q -p MemoryMax=6G -p CPUQuota=400% nice -n 10 timeout 900)
 OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-AFINNI_DEVICE=$DEVICE AFINNI_MPI=off PYTHONPATH="$root${FAISS_SHIM:+:$FAISS_SHIM}" MPLBACKEND=Agg \
+SURROGATE_DEVICE=$DEVICE SURROGATE_MPI=off PYTHONPATH="$root${FAISS_SHIM:+:$FAISS_SHIM}" MPLBACKEND=Agg \
   "${cap[@]}" "$PYTHON" "$here/capture_launcher.py" --out "$BISECT_DIR/runs/$tag.npz" \
   --launcher "$launcher" -- "$@" >"$BISECT_DIR/runs/$tag.log" 2>&1 || { echo "FAILED $tag (see $BISECT_DIR/runs/$tag.log)"; tail -5 "$BISECT_DIR/runs/$tag.log"; exit 1; }
 grep '^RESULT' "$BISECT_DIR/runs/$tag.log"

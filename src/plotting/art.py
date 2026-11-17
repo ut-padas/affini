@@ -25,7 +25,7 @@ from matplotlib.colors import BoundaryNorm, ListedColormap, LogNorm
 from src import to_host, xp
 from src.art import TERMINAL_REASONS, VALIDATION_STATUSES
 from src.infra.profiling import fmt_count
-from src.plotting.style import afinni_style, finish
+from src.plotting.style import finish, plot_style
 
 REASON_COLOURS = ("#4c9a6a", "#d1495b", "#edae49")  # accepted, max_depth, split_failed
 STATUS_COLOURS = ("#9e9e9e", "#4c9a6a", "#d1495b", "#7b5ea7")
@@ -73,7 +73,7 @@ def plot_art_partition(surrogate, path=None, *, f_fn: Callable | None = None, to
     edges = _boundaries(leaf)
     extent = (dom.lower[0], dom.upper[0], dom.lower[1], dom.upper[1])
     n_panels = 3 if f_fn is not None else 2
-    with afinni_style():
+    with plot_style():
         fig, axes = plt.subplots(1, n_panels, figsize=(5.2 * n_panels, 4.6))
         im = axes[0].imshow(depth, origin="lower", extent=extent, cmap="viridis", aspect="auto")
         fig.colorbar(im, ax=axes[0], label="leaf depth")
@@ -113,7 +113,7 @@ def plot_art_tree_stats(surrogate, path=None, title: str | None = None) -> plt.F
     depth = np.array([int(p).bit_length() - 1 for p in surrogate.art_leaves["locational_code"]])
     reason = surrogate.art_leaves["terminal_reason"].astype(int)
     levels = np.arange(depth.max() + 1)
-    with afinni_style():
+    with plot_style():
         fig, (ax, ax2) = plt.subplots(1, 2, figsize=(11, 4), gridspec_kw={"width_ratios": [3, 1.3]})
         bottom = np.zeros(len(levels))
         for code, (name, colour) in enumerate(zip(TERMINAL_REASONS, REASON_COLOURS, strict=True)):
@@ -147,7 +147,7 @@ def plot_error_maps(models: Mapping[str, Callable], f_fn: Callable, lower, upper
     norm = LogNorm(vmin=max(1e-8, float(positive.min()) if positive.size else 1e-8),
                    vmax=max(1e-6, float(positive.max()) if positive.size else 1.0))  # fmt: skip
     extent = (lower[0], upper[0], lower[1], upper[1])
-    with afinni_style():
+    with plot_style():
         fig, axes = plt.subplots(1, len(errs), figsize=(5.0 * len(errs) + 1.0, 4.4), squeeze=False)
         for ax, (label, err) in zip(axes[0], errs.items(), strict=True):
             im = ax.imshow(np.maximum(err, norm.vmin), origin="lower", extent=extent, norm=norm, cmap="magma",
@@ -169,7 +169,7 @@ def plot_error_maps(models: Mapping[str, Callable], f_fn: Callable, lower, upper
 def plot_error_cdf(errors: Mapping[str, np.ndarray], path=None, *, tol: float | None = None,
                    title: str | None = None) -> plt.Figure:  # fmt: skip
     """Empirical CDF of each ``{label: pointwise relative errors}`` on a log axis, with ``tol`` marked."""
-    with afinni_style():
+    with plot_style():
         fig, ax = plt.subplots(figsize=(6.4, 4.2))
         for label, err in errors.items():
             e = np.sort(np.maximum(np.asarray(err, float), 1e-16))
@@ -203,7 +203,7 @@ def plot_method_comparison(metrics: Mapping[str, Mapping[str, float]], path=None
     keys = [k for k in keys if any(k in m for m in metrics.values())]
     labels = list(metrics)
     colours = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-    with afinni_style():
+    with plot_style():
         fig, axes = plt.subplots(1, len(keys), figsize=(2.3 * len(keys) + 0.5, 3.4), squeeze=False)
         for ax, key in zip(axes[0], keys, strict=True):
             name, log = COMPARISON_METRICS.get(key, (key, False))

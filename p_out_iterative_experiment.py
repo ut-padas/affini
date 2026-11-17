@@ -22,7 +22,7 @@ from src.problems.isotropic_gaussian import gaussian
 from src.problems.lorenz96_flowmap import lorenz96_flowmap
 from src.problems.rosenbrock import rosenbrock
 from src.problems.wave import wave
-from src.surrogate import AFINNISurrogate, compute_error_metrics
+from src.surrogate import AdaptiveSurrogate, compute_error_metrics
 
 setup_logging()
 SEED = 0
@@ -190,7 +190,7 @@ def plot_test_points(
 # MANIFOLD INFLATION & FILTERING
 # ==========================================
 def halo_sampling(
-    surrogate: AFINNISurrogate,
+    surrogate: AdaptiveSurrogate,
     pts_per_cluster: int,
     gamma: float,
     left: float,
@@ -230,7 +230,7 @@ def halo_sampling(
 
 
 def cloud_sampling(
-    surrogate: AFINNISurrogate, pts_per_cluster: int, left: float, right: float
+    surrogate: AdaptiveSurrogate, pts_per_cluster: int, left: float, right: float
 ) -> Array:
 
     Nc, d = surrogate.X_src.shape
@@ -261,7 +261,7 @@ def cloud_sampling(
 
 
 def uniform_sampling(
-    surrogate: AFINNISurrogate, pts_per_cluster: int, left: float, right: float
+    surrogate: AdaptiveSurrogate, pts_per_cluster: int, left: float, right: float
 ) -> Array:
 
     Nc, d = surrogate.X_src.shape
@@ -273,7 +273,7 @@ def uniform_sampling(
 
 
 # Don't need left/right for this because it is convex combinations and these are guaranteed to be in the box
-def chord_sampling(surrogate: AFINNISurrogate, pts_per_cluster: int):
+def chord_sampling(surrogate: AdaptiveSurrogate, pts_per_cluster: int):
     N_c, d = surrogate.X_src.shape
     centroids = surrogate.X_src
 
@@ -400,7 +400,7 @@ def verify_in_domain(X, left, right):
 
 
 def generate_new_points(
-    surrogate: AFINNISurrogate,
+    surrogate: AdaptiveSurrogate,
     N_train: int,
     strategy: str,
     pct_to_add: float,
@@ -579,7 +579,7 @@ def run_iterative_refinement(
 
     ground_truth = f_fn(X_test)
 
-    surrogate = AFINNISurrogate()
+    surrogate = AdaptiveSurrogate()
 
     for iteration in range(n_iter + 1):
         t_train, t_gen_filter, t_eval = 0.0, 0.0, 0.0

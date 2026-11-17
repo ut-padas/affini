@@ -36,7 +36,7 @@ def main() -> None:
     import src.engine.driver as driver
     import src.engine.work_stealing as ws
     from src.problems.rosenbrock import rosenbrock
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
     from tests._helpers import train_surrogate
 
     real_mpi = driver.MPI
@@ -107,7 +107,7 @@ def main() -> None:
                 boundary_request_queued = True
             return rosenbrock(x, a=100.0)
 
-        surrogate = AFINNISurrogate()
+        surrogate = AdaptiveSurrogate()
         train_surrogate(
             X, surrogate,
             f_fn=evaluate,

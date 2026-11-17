@@ -16,7 +16,7 @@ in whatever configuration they select. Its defaults are the ``hit_and_run`` samp
 ``--sampler parallel_numba`` (multithreaded compiled chains; its other optimizers need a
 GPU). Compare against that one when timing matters, e.g.::
 
-    AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. python scripts/art_comparison.py \\
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. python scripts/art_comparison.py \\
         --art-path ../Adaptive-Regression-Trees-ART- --benchmark quadratic --dimension 2 \\
         --sampler parallel_numba
 
@@ -52,13 +52,13 @@ from src import to_host, xp  # noqa: E402
 from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
-from src.surrogate import AFINNISurrogate  # noqa: E402
+from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
 
 class _LibraryARTModel:
     """The reference ART's evaluator only needs ``predict``; route on the active backend, return host values."""
 
-    def __init__(self, model: AFINNISurrogate):
+    def __init__(self, model: AdaptiveSurrogate):
         self.model = model
 
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -187,7 +187,7 @@ def main() -> None:
                         split_search=mine.library_search,
                         **({} if mine.library_soft_iters is None else {"soft_iters": mine.library_soft_iters})),
     )  # fmt: skip
-    model = AFINNISurrogate()
+    model = AdaptiveSurrogate()
     comm.Barrier()
     t = time.perf_counter()
     model.train(X0, config, Evaluator(f_fn=f))

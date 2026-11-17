@@ -1,5 +1,5 @@
 """
-AFINNI package root: the active array module ``xp`` (NumPy or CuPy), backend flags,
+Package root: the active array module ``xp`` (NumPy or CuPy), backend flags,
 host/device transfer helpers and project paths, shared by every module.
 """
 

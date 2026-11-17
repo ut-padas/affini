@@ -8,12 +8,12 @@ def pytest_report_header(config):
         from src.infra import backend
 
         info = backend.backend_info()
-    except Exception as e:  # e.g. AFINNI_MPI=on without MPI: let the tests report it
-        return [f"afinni backend: detection failed - {type(e).__name__}: {e}"]
+    except Exception as e:  # e.g. SURROGATE_MPI=on without MPI: let the tests report it
+        return [f"surrogate backend: detection failed - {type(e).__name__}: {e}"]
 
     gpu = f"CuPy ({info.get('gpu_name', info['gpu'])})" if info["is_cupy_backend"] else "NumPy"
     return [
-        f"afinni backend: array={gpu} "
+        f"surrogate backend: array={gpu} "
         f"| MPI={info['mpi']} | {info['platform']}, Python {info['python']}",
-        f"afinni overrides: AFINNI_DEVICE={info['device_mode']} AFINNI_MPI={info['mpi_mode']}",
+        f"surrogate overrides: SURROGATE_DEVICE={info['device_mode']} SURROGATE_MPI={info['mpi_mode']}",
     ]

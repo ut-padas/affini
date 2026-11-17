@@ -5,7 +5,7 @@ term-by-term estimate of what the code allocates, for comparison with the study'
 measurements. Optionally (``--root-fit``) the error of one global least-squares fit, which
 predicts the coarsest tolerance at which a single node is accepted.
 
-    AFINNI_DEVICE=cpu AFINNI_MPI=off .venv/bin/python -m studies.high_dim.predict_limits \
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off .venv/bin/python -m studies.high_dim.predict_limits \
         --out studies/high_dim/results/predicted.csv
 
 Columns (bytes unless noted):

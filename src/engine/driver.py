@@ -75,7 +75,7 @@ def run_collective(operation, what: str):
     """
     Run a collective ``operation()`` with the MPI failure policy; the single owner of
     fatal-failure handling for the public collective entry points (``refine``,
-    ``AFINNISurrogate.train`` and ``predict``), so wrappers are never nested.
+    ``AdaptiveSurrogate.train`` and ``predict``), so wrappers are never nested.
 
     In a single process the original exception propagates unchanged. Under MPI an
     exception on any rank may leave peers blocked in a collective or receive, so no

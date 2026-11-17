@@ -82,9 +82,11 @@ def mpi_library() -> str:
 def run_settings(out: Path) -> dict:
     """The commits and settings each ``run_paper.sh`` invocation recorded when it started."""
     text = (out / "provenance.txt").read_text() if (out / "provenance.txt").exists() else ""
-    commits = sorted(set(re.findall(r"^afinni: ([0-9a-f]{40})", text, re.M)))
-    dirty = sorted({int(n) for n in re.findall(r"^afinni_dirty: (\d+)", text, re.M)})
-    env = sorted(set(re.findall(r"^(AFINNI_DEVICE=\S* AFINNI_MPI=\S*)", text, re.M)))
+    # Output directories written by checkouts of the study older than the "repo" keys and the
+    # SURROGATE_ variables name them "afinni" and AFINNI_; both are read, so such runs record too.
+    commits = sorted(set(re.findall(r"^(?:repo|afinni): ([0-9a-f]{40})", text, re.M)))
+    dirty = sorted({int(n) for n in re.findall(r"^(?:repo|afinni)_dirty: (\d+)", text, re.M)})
+    env = sorted(set(re.findall(r"^((?:SURROGATE|AFINNI)_DEVICE=\S* (?:SURROGATE|AFINNI)_MPI=\S*)", text, re.M)))
     starts = re.findall(r"^date: (\S+)", text, re.M)
     return {"commits": commits, "modified_tracked_files": dirty, "environment": env,
             "first_start": starts[0] if starts else "", "last_start": starts[-1] if starts else ""}  # fmt: skip

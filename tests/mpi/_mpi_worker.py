@@ -3,7 +3,7 @@ MPI worker launched by tests/mpi/test_mpi.py as
 
     <launcher> -n N python -m tests.mpi._mpi_worker
 
-Every rank checks the communication primitives AFINNI relies on, then runs the
+Every rank checks the communication primitives the library relies on, then runs the
 shared smoke workload. Rank 0 prints one machine-readable result line.
 """
 
@@ -11,7 +11,7 @@ import json
 
 import numpy as np
 
-RESULT_PREFIX = "AFINNI_RESULT "
+RESULT_PREFIX = "SURROGATE_RESULT "
 
 
 def check_primitives(MPI, comm, rank: int, size: int) -> None:  # noqa: N803

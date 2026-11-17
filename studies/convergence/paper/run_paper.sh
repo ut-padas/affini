@@ -83,11 +83,11 @@ while IFS=$'\t' read -r case_id group tier np seed kind args_rest; do
         cmd=($MPIEXEC -n "$np" "${cmd[@]}")
     fi
     if [[ $DRY == 1 ]]; then
-        echo "[$tier] AFINNI_DEVICE=$dev AFINNI_MPI=$mpi ${cmd[*]}"
+        echo "[$tier] SURROGATE_DEVICE=$dev SURROGATE_MPI=$mpi ${cmd[*]}"
         continue
     fi
-    # Run from the AFINNI root: the launcher and the iterative script write side files to the CWD.
-    (FAILED_RUNS=0; cd "$AFINNI_ROOT" && AFINNI_DEVICE="$dev" AFINNI_MPI="$mpi" \
+    # Run from the repository root: the launcher and the iterative script write side files to the CWD.
+    (FAILED_RUNS=0; cd "$REPO_ROOT" && SURROGATE_DEVICE="$dev" SURROGATE_MPI="$mpi" \
         run_logged "$OUT/done/$case_id.done" "$OUT/logs/$case_id.log" "${cmd[@]}"
      exit $FAILED_RUNS) || FAILED_RUNS=$((FAILED_RUNS + 1))
 done < <("$PYTHON" "$STUDY_DIR/paper/cases.py" "${CASE_ARGS[@]}")

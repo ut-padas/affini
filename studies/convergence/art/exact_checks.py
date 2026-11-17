@@ -72,7 +72,7 @@ def run_case(problem, d, degree, tol, art_path: Path) -> dict:
     from src import to_host, xp
     from src.config import ARTSettings, TrainingConfig
     from src.core.evaluation import Evaluator
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
 
     argv = [*PROBLEMS[problem], "--dimension", str(d), "--leaf-degree", str(degree), "--error-tolerance", str(tol),
             "--max-depth", "0", "--store-samples"]  # fmt: skip
@@ -99,7 +99,7 @@ def run_case(problem, d, degree, tol, art_path: Path) -> dict:
         max_levels=0, seed=args.seed, local_model={1: "affine_lsq", 2: "quadratic_lsq"}[degree],
         art=ARTSettings(sample_multiplier=args.sample_multiplier),
     )  # fmt: skip
-    model = AFINNISurrogate()
+    model = AdaptiveSurrogate()
     model.train(xp.asarray(X), config, Evaluator(f_fn=f))
 
     def library_predict(Z):
@@ -146,7 +146,7 @@ def run_slab(width: float, degree: int) -> dict:
     from src import to_host, xp
     from src.config import ARTSettings, TrainingConfig
     from src.core.evaluation import Evaluator
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
 
     lo, hi = np.zeros(2), np.array([1.0, width])
     p = 3 if degree == 1 else 6
@@ -161,7 +161,7 @@ def run_slab(width: float, degree: int) -> dict:
         algorithm="art", domain=(tuple(lo), tuple(hi)), rtol=1e-6, error_metric="pointwise", max_levels=0,
         local_model={1: "affine_lsq", 2: "quadratic_lsq"}[degree], art=ARTSettings(),
     )  # fmt: skip
-    model = AFINNISurrogate()
+    model = AdaptiveSurrogate()
     model.train(xp.asarray(X), config, Evaluator(f_fn=lambda x: xp.asarray(g(np.asarray(to_host(x))).reshape(-1, 1))))
     p_af = np.asarray(to_host(model.predict_route_local(xp.asarray(Xt))[0]))[:, 0]
     e_ref = float(np.max(np.abs(ref.predict(Xt) - g(Xt)) / np.abs(g(Xt))))

@@ -1,5 +1,5 @@
 """
-One d=2 Table 1 case with the pre-modularity API (`src.surrogate.AFINNISurrogate.train(X_train=...,
+One d=2 Table 1 case with the pre-modularity API (`src.surrogate.AdaptiveSurrogate.train(X_train=...,
 TOL=..., ...)`, commits up to the merge 935f7ae), with the settings of that era's launcher.
 
 Run from the root of an extracted commit (PYTHONPATH=<that root>:<faiss shim dir>):
@@ -33,7 +33,7 @@ a = p.parse_args()
 
 from src import xp  # noqa: E402
 from src.adaptive_clustering_utils import SurrogateMode  # noqa: E402
-from src.surrogate import AFINNISurrogate  # noqa: E402
+from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
 d = 2
 if a.problem == "wave":
@@ -63,10 +63,10 @@ kw = dict(X_train=X, f_fn=f, g_fn=g, mode=SurrogateMode(a.mode), TOL=a.tol, ERRO
           INITIAL_CLUSTERING_METHOD="kmeans", NUM_INITIAL_CLUSTERS=int(25 * 1.3**d),
           MIN_PTS_PER_CLUSTER=int(100 * 1.3**d), USE_WORK_STEALING=True, MAX_LEVELS=1000,
           MAX_CLUSTERS_EST=100_000, STORE_AFFINE_FIT=True, Q_REG=1e-6, USE_V2=True)  # fmt: skip
-params = inspect.signature(AFINNISurrogate.train).parameters
+params = inspect.signature(AdaptiveSurrogate.train).parameters
 dropped = sorted(k for k in kw if k not in params)
 kw = {k: v for k, v in kw.items() if k in params}
-s = AFINNISurrogate()
+s = AdaptiveSurrogate()
 t = time.perf_counter()
 s.train(**kw)
 t_train = time.perf_counter() - t

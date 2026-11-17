@@ -11,14 +11,14 @@ rename below breaks something, which is why it is listed rather than done.
 
 - [ ] Rename `ARTSettings.soft_temperature` to `soft_gate_width` (`h` in the companion).
   Breaks user configs and the keys of saved config JSON. Do it with the packaging work below.
-- [ ] Rename `AFINNISurrogate.filter_unguaranteed_local` to a name that says what it
+- [ ] Rename `AdaptiveSurrogate.filter_unguaranteed_local` to a name that says what it
   returns, e.g. `outside_trust_regions_local`: a trust region is not a guarantee. Used by
   `p_out_iterative_experiment.py` and its test. Do it with the packaging work below.
 - [ ] Rename `w`, `z`, `T` in the split search (`src/art/split_search.py`,
   `ARTPlan._soft_refine`) to `normal`, `offset`, `gate_width`. This touches GPU-only lines
   (the `soft_step` call, `_soft_objective_fused`) and kernel-argument lists, so run the GPU
   suite and the GPU regression check when doing it.
-- [ ] Decide whether to rename the `AFINNISurrogate` leaf attributes (`X_src`, `f_src`,
+- [ ] Decide whether to rename the `AdaptiveSurrogate` leaf attributes (`X_src`, `f_src`,
   `N_src`, `A_fits_src`, `b_fits_src`, `E_cluster_*_src`, `counts_src`, `J_src`,
   `Hs_src`), e.g. to `centres`, `n_leaves` (as `trust_matrices_src` already is). They are also the keys of saved
   model files, so `load_model` would need a key map for old files. Current recommendation:
@@ -31,10 +31,10 @@ rename below breaks something, which is why it is listed rather than done.
 ## Packaging, CI and releases
 
 Modelled on `knndbscan` (its `pyproject.toml`, `.github/workflows/`, `CHANGELOG.md`,
-`docs/RELEASING.md`). AFINNI is pure Python, so one `py3-none-any` wheel serves every OS
+`docs/RELEASING.md`). The library is pure Python, so one `py3-none-any` wheel serves every OS
 and Python.
 
-- [ ] Make it a package: move `src/` to `src/afinni/` and rename every `from src...`
+- [ ] Make it a package: move `src/` to `src/adaptive_surrogates/` and rename every `from src...`
   import; add a `[build-system]` (`uv_build`); ship `src/kernels/*.cu` as package data;
   read `__version__` from the installed metadata; exclude `archive/`, `review_artifacts/`,
   `research/` and `scratch/` from the source archive. `scripts/regression_check.py` must
@@ -81,7 +81,7 @@ The project is developed and tested on Python 3.13 (`.python-version`).
 ## knndbscan
 
 - [ ] Publish `knndbscan` to PyPI (it is on TestPyPI only), then drop the TestPyPI index
-  from `pyproject.toml`. It is a core dependency, so this blocks publishing `afinni`.
+  from `pyproject.toml`. It is a core dependency, so this blocks publishing `adaptive-surrogates`.
 - [ ] Make kNN-DBSCAN's `eps` a setting: `src/engine/initial.py` fixes it at 0.5, which joins
   uniformly spread points into one cluster.
 
@@ -132,7 +132,7 @@ The project is developed and tested on Python 3.13 (`.python-version`).
 
 Settled on an RTX 2000 Ada laptop GPU (CuPy 14.2, CUDA 12.9 runtime) at `0b91ae2`: the GPU suite
 passes except the two kNN-DBSCAN tests, whose GPU path in the `knndbscan` package needs cuML,
-which the `gpu` extra does not install (AFINNI's own k-means and kNN do not use it).
+which the `gpu` extra does not install (the library's own k-means and kNN do not use it).
 `regression_check.py` on the GPU is bit-identical to `c8a6ff6` (its successor `b67c1a8`, which
 only adds the ART cases, with the case and array names mapped to the current ones) on 1 and 2
 ranks, and repeated GPU runs are bit-identical. `test_walks_above_256_dimensions_do_not_depend_on_the_chunk_size`

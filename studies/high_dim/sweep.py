@@ -110,9 +110,9 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.smoke:
         args.dims, args.tols, args.exact_tols, args.time_limit, args.n_test = "4,8", "1.0,0.3", "1e-6", 90.0, 2000
-    for var in ("AFINNI_DEVICE", "AFINNI_MPI"):
+    for var in ("SURROGATE_DEVICE", "SURROGATE_MPI"):
         if var not in os.environ:
-            print(f"Set {var} explicitly (AGENTS.md), e.g. AFINNI_DEVICE=gpu AFINNI_MPI=off.", file=sys.stderr)
+            print(f"Set {var} explicitly (AGENTS.md), e.g. SURROGATE_DEVICE=gpu SURROGATE_MPI=off.", file=sys.stderr)
             return 2
 
     problems, variants = args.problems.split(","), args.variants.split(",")
@@ -128,7 +128,7 @@ def main(argv=None) -> int:
     out = Path(args.out)
     (out / "runs").mkdir(parents=True, exist_ok=True)
     manifest = vars(args) | {
-        "device": os.environ["AFINNI_DEVICE"], "mpi": os.environ["AFINNI_MPI"], "started": time.time(),
+        "device": os.environ["SURROGATE_DEVICE"], "mpi": os.environ["SURROGATE_MPI"], "started": time.time(),
     }  # fmt: skip
     (out / f"manifest_{int(time.time())}.json").write_text(json.dumps(manifest, indent=1))
 

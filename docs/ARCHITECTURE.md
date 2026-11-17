@@ -21,7 +21,7 @@ strategies, acceptance tests, trust regions and samplers, each a registry of nam
 ## A training run
 
 ```
-AFINNISurrogate.train                                    src/surrogate/model.py
+AdaptiveSurrogate.train                                    src/surrogate/model.py
 └── driver.refine_unguarded         every rank           src/engine/driver.py
     ├── _initial_data               rank 0: f at the training points; AFINNI's initial clustering
     ├── _make_plan                  AFINNIPlan, or ARTPlan with the broadcast domain and roots
@@ -93,7 +93,7 @@ names, and the docstring or comment where a name is defined gives its symbol. Pa
 
 | Symbol | Meaning | Name in the code | Where |
 |---|---|---|---|
-| f, f̂, d | the function (oracle), the surrogate, the input dimension | `Evaluator`; `AFINNISurrogate.predict`; `d` | `core/evaluation.py`, `surrogate/model.py` |
+| f, f̂, d | the function (oracle), the surrogate, the input dimension | `Evaluator`; `AdaptiveSurrogate.predict`; `d` | `core/evaluation.py`, `surrogate/model.py` |
 | X₀, N | the initial points and their number | `train(X_train, ...)`; `profiling_stats["N0"]` | `surrogate/model.py`, `engine/driver.py` |
 | C, X_C | a cluster (AFINNI) or node (ART), its points | a queued cluster: rows `starts[k] : starts[k] + counts[k]` of `X`, `F` | `core/clusters.py` (`ClusterBatch`) |
 | c, f(c) | a cluster's centre (the mean of its points), f there | `centroids` (`mus` in the plans), `f_c`; for the leaves `X_src`, `f_src` (leaf columns `"centroids"`, `"f"`) | `components/local_models.py` (`ClusterFitData`), `surrogate/model.py` |

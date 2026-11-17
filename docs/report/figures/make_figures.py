@@ -2,10 +2,10 @@
 
 Usage, from the repository root (``make report-figures``):
 
-    AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. .venv/bin/python docs/report/figures/make_figures.py
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/report/figures/make_figures.py
 
 Every data panel comes from real training runs on the running example, through the public
-``AFINNISurrogate`` API. The script records each level of the runs by wrapping stage methods
+``AdaptiveSurrogate`` API. The script records each level of the runs by wrapping stage methods
 of the two plans (the wrappers change no result), rebuilds the trees from the records, and
 stops unless what it rebuilt is exactly the trained model. Every number the report quotes
 is written to example.json, which the report reads, so the text, the panels and the diagrams
@@ -51,7 +51,7 @@ from src.core.evaluation import Evaluator  # noqa: E402
 from src.kernels import source as kernel_source  # noqa: E402
 from src.numerics import grid_cell_coords  # noqa: E402
 from src.numerics.segments import SEGMENT_CHUNK  # noqa: E402
-from src.surrogate import AFINNISurrogate  # noqa: E402
+from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
 warnings.simplefilter("ignore")
 logging.disable(logging.WARNING)
@@ -272,7 +272,7 @@ class Level:
     order: np.ndarray | None = None
 
 
-def record_afinni() -> tuple[AFINNISurrogate, list[Level], np.ndarray]:
+def record_afinni() -> tuple[AdaptiveSurrogate, list[Level], np.ndarray]:
     """Train AFINNI on the running example, recording every level through the plan's stages."""
     levels: list[Level] = []
     pb, fit, split = AFINNIPlan.process_batch, AFINNIPlan._fit_and_accept, AFINNIPlan._split_rejected
@@ -304,7 +304,7 @@ def record_afinni() -> tuple[AFINNISurrogate, list[Level], np.ndarray]:
         process_batch, fit_and_accept, split_rejected)  # fmt: skip
     try:
         X0 = np.random.default_rng(SEED).uniform(LOWER, UPPER, (N0, 2))
-        s = AFINNISurrogate()
+        s = AdaptiveSurrogate()
         s.train(X0, TrainingConfig(**AFINNI_SETTINGS, use_work_stealing=False, seed=SEED), Evaluator(f_fn=f_xp))
     finally:
         AFINNIPlan.process_batch, AFINNIPlan._fit_and_accept, AFINNIPlan._split_rejected = pb, fit, split
@@ -374,7 +374,7 @@ def art_initial_points() -> np.ndarray:
     return np.random.default_rng(SEED).uniform(LOWER, UPPER, (ART_MULTIPLIER * 3, 2))
 
 
-def record_art() -> tuple[AFINNISurrogate, dict, dict, ARTPlan]:
+def record_art() -> tuple[AdaptiveSurrogate, dict, dict, ARTPlan]:
     """Train ART on the running example, recording each node's points and each split search."""
     points: dict[int, tuple[np.ndarray, int]] = {}  # locational code -> (training points, inherited count)
     searches: dict[int, SplitRecord] = {}  # locational code -> its node's split search
@@ -424,7 +424,7 @@ def record_art() -> tuple[AFINNISurrogate, dict, dict, ARTPlan]:
     ARTPlan.process_batch, art_plan_module.ClusterFitData, ARTPlan._split = process_batch, fit_data, split
     ARTPlan._direction_bank, ARTPlan._bins_search, ARTPlan._soft_refine = direction_bank, bins_search, soft_refine
     try:
-        s = AFINNISurrogate()
+        s = AdaptiveSurrogate()
         s.train(art_initial_points(), art_config(), Evaluator(f_fn=f_xp))
     finally:
         ARTPlan.process_batch, art_plan_module.ClusterFitData, ARTPlan._split = pb, cfd, split_fn
@@ -448,7 +448,7 @@ def clip(polygon: np.ndarray, a: np.ndarray, z: float, keep_right: bool) -> np.n
     return np.array(out)
 
 
-def art_tree(s: AFINNISurrogate, points: dict) -> list[Node]:
+def art_tree(s: AdaptiveSurrogate, points: dict) -> list[Node]:
     """ART's tree from the model's routing table, with every node's polytope and recorded points."""
     r = s.routing
     is_leaf, w, z, codes = (to_host(getattr(r, k)) for k in ("is_leaf", "normal", "offset", "node_locational_code"))
@@ -625,7 +625,7 @@ def afinni_levels(nodes: list[Node], levels: list[Level]) -> dict:
     return {"levels": out, "n_levels": len(levels)}
 
 
-def check_affine_fit(s: AFINNISurrogate, nodes: list[Node]) -> None:
+def check_affine_fit(s: AdaptiveSurrogate, nodes: list[Node]) -> None:
     """The restated fit must be the library's: compare slope and centroid value on every leaf."""
     A, b, C = to_host(s.A_fits_src), to_host(s.b_fits_src), to_host(s.X_src)
     for k, n in enumerate(n for n in nodes if n.leaf):
@@ -748,7 +748,7 @@ def afinni_split(levels: list[Level]) -> dict:
     }  # fmt: skip
 
 
-def afinni_trust(s: AFINNISurrogate, nodes: list[Node]) -> dict:
+def afinni_trust(s: AdaptiveSurrogate, nodes: list[Node]) -> dict:
     """One leaf's trust ellipse, every leaf's, and three queries at inference."""
     C, T = to_host(s.X_src), to_host(s.trust_matrices_src)
     leaves = [n for n in nodes if n.leaf]
@@ -1265,7 +1265,7 @@ def art_queue_blocks(nodes: list[Node]) -> dict:
     return {"queue_blocks": {"shapes": shapes}}
 
 
-def route_passes(s: AFINNISurrogate, nodes: list[Node], n_queries: int = 8) -> dict:
+def route_passes(s: AdaptiveSurrogate, nodes: list[Node], n_queries: int = 8) -> dict:
     """
     Routing as the library runs it, pass by pass, for a few uniform queries: each pass moves
     every query not yet at a leaf one level down. Stops unless the queries end in the
@@ -1620,7 +1620,7 @@ def locational_code_panels(nodes: list[Node]) -> dict:
                                 "max_depth": MAX_DEPTH_LIMIT, "morton_levels_d40": 63 // 40}}  # fmt: skip
 
 
-def art_route(s: AFINNISurrogate, nodes: list[Node]) -> dict:
+def art_route(s: AdaptiveSurrogate, nodes: list[Node]) -> dict:
     """One query on its way down: the polytope it is in at each depth, and its path in the tree."""
     deepest = max((n for n in nodes if n.leaf), key=lambda n: (n.level, -n.code))
     q = deepest.polygon.mean(axis=0)
@@ -1652,7 +1652,7 @@ def art_route(s: AFINNISurrogate, nodes: list[Node]) -> dict:
 
 
 # ----------------------------------------------------------------------------- both
-def compare(afinni: AFINNISurrogate, art: AFINNISurrogate, afinni_nodes: list[Node], art_nodes: list[Node]) -> dict:
+def compare(afinni: AdaptiveSurrogate, art: AdaptiveSurrogate, afinni_nodes: list[Node], art_nodes: list[Node]) -> dict:
     """Both surrogates against f: along one line, and as error maps of the domain."""
     n = 240
     grid = domain_grid(n)
@@ -1764,8 +1764,8 @@ def record_steals() -> None:
     the runs.
     """
 
-    def train(roots: int, stealing: bool) -> AFINNISurrogate:
-        s = AFINNISurrogate()
+    def train(roots: int, stealing: bool) -> AdaptiveSurrogate:
+        s = AdaptiveSurrogate()
         s.train(art_initial_points(), art_config(
             atol=STEAL["atol"], max_levels=STEAL["max_levels"], batch_size=STEAL["batch_size"],
             num_initial_clusters=roots, use_work_stealing=stealing, profile_events=True,
@@ -1790,7 +1790,7 @@ def record_steals() -> None:
                     for m in ms] for name, ms in tries.items()}  # fmt: skip
     models = {name: ms[int(np.argsort(walls[name])[len(ms) // 2])] for name, ms in tries.items()}
 
-    def keyed(model: AFINNISurrogate) -> tuple[dict, list]:
+    def keyed(model: AdaptiveSurrogate) -> tuple[dict, list]:
         """Every split plane by its node's (root, locational code), and the sorted leaves: the tree, whatever the row order."""
         a = {k: to_host(v) for k, v in model.routing.arrays().items()}
         planes = {(int(r), int(c)): (w.tobytes(), float(z)) for r, c, w, z in
@@ -1845,7 +1845,7 @@ def art_forest_panel() -> dict:
     cell grows its own tree numbered from 1, so the same locational code names a node in
     several trees; the panel marks one such code in two roots.
     """
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     s.train(art_initial_points(), art_config(num_initial_clusters=FOREST_ROOTS,
                                              art=ARTSettings(sample_multiplier=ART_MULTIPLIER, roots="grid")),
             Evaluator(f_fn=f_xp))  # fmt: skip
@@ -1980,7 +1980,7 @@ def main() -> None:
     parser.add_argument("--record-steals", action="store_true", help="record steal_run.json (run under mpiexec -n 4)")
     args = parser.parse_args()
     if IS_CUPY_BACKEND:
-        raise SystemExit("Run with AFINNI_DEVICE=cpu: the panels and their numbers are the CPU results.")
+        raise SystemExit("Run with SURROGATE_DEVICE=cpu: the panels and their numbers are the CPU results.")
     if args.record_steals:
         record_steals()
         return

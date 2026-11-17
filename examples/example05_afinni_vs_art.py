@@ -25,7 +25,7 @@ models, evaluates them and draws the plots:
     # live view of a training stage, from another terminal:
     uv run python -m src.infra.monitor scratch/example05_afinni_vs_art/wave/stream/art   # or .../afinni
 
-Everything runs in one process on one CPU (``AFINNI_MPI`` defaults to ``off`` here), so
+Everything runs in one process on one CPU (``SURROGATE_MPI`` defaults to ``off`` here), so
 training times compare directly. ``--afinni-max-levels`` and
 ``--art-max-depth`` override a problem's limits, ``--dim`` and ``--tol`` its setup
 (other dimensions and tolerances need their own limits for a matched comparison).
@@ -47,7 +47,7 @@ problem.
 import os
 
 # Before importing src: a single-process comparison (training times on one CPU each).
-os.environ.setdefault("AFINNI_MPI", "off")
+os.environ.setdefault("SURROGATE_MPI", "off")
 
 import argparse  # noqa: E402
 import json  # noqa: E402
@@ -74,7 +74,7 @@ from src.problems.anisotropic_gaussian import aniso_gaussian  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402
 from src.problems.spherical_piecewise import spherical_piecewise  # noqa: E402
 from src.problems.wave import wave  # noqa: E402
-from src.surrogate import AFINNISurrogate, compute_error_metrics  # noqa: E402
+from src.surrogate import AdaptiveSurrogate, compute_error_metrics  # noqa: E402
 
 OUT_DIR = PROJECT_DIR / "scratch" / "example05_afinni_vs_art"
 SEED = 0
@@ -139,7 +139,7 @@ def train(name: str, method: str, args) -> None:
     config, n = configs(name, args)[method]
     prob = PROBLEMS[name]
     X = xp.asarray(np.random.default_rng(SEED).uniform(*prob.domain, (n, args.dim)))
-    model = AFINNISurrogate()
+    model = AdaptiveSurrogate()
     t0 = time.perf_counter()
     model.train(X, config, Evaluator(f_fn=prob.f))
     seconds = time.perf_counter() - t0
@@ -153,7 +153,7 @@ def train(name: str, method: str, args) -> None:
           f"{seconds:.2f} s, max_levels={config.max_levels}")  # fmt: skip
 
 
-def metrics(truth, pred, outside, atol, rtol, model: AFINNISurrogate, run: dict) -> dict:
+def metrics(truth, pred, outside, atol, rtol, model: AdaptiveSurrogate, run: dict) -> dict:
     """The comparison metrics of one model on the shared test set (host floats)."""
     from src.plotting import pointwise_relative_error
 
@@ -185,7 +185,7 @@ def compare(name: str, args) -> dict:
         run = json.loads((out / f"{method}_run.json").read_text())
         if run["dim"] != d:
             raise SystemExit(f"[{name}] {method} was trained with dim={run['dim']}; rerun its stage.")
-        models[method], runs[method] = AFINNISurrogate.load_model(out / f"{method}_model"), run
+        models[method], runs[method] = AdaptiveSurrogate.load_model(out / f"{method}_model"), run
     afinni, art = models["afinni"], models["art"]
     # Both approaches are scored with the problem's tolerance, whatever they trained with.
     atol, rtol = prob.atol, prob.rtol if args.tol is None else args.tol
@@ -249,7 +249,7 @@ def summarize(all_results: dict[str, dict]) -> None:
     """``summary.json`` and one grouped bar panel per metric across the problems."""
     import matplotlib.pyplot as plt
 
-    from src.plotting.style import afinni_style, finish
+    from src.plotting.style import finish, plot_style
 
     (OUT_DIR / "summary.json").write_text(json.dumps(all_results, indent=2))
     panels = (
@@ -259,7 +259,7 @@ def summarize(all_results: dict[str, dict]) -> None:
     problems = list(all_results)
     methods = list(next(iter(all_results.values())))
     width = 0.8 / len(methods)
-    with afinni_style():
+    with plot_style():
         fig, axes = plt.subplots(1, len(panels), figsize=(3.4 * len(panels), 3.8))
         for ax, (key, label, log) in zip(axes, panels, strict=True):
             for j, m in enumerate(methods):

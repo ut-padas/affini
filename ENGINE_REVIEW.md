@@ -242,8 +242,8 @@ Each is ranked in Section 2 by the d at which it bites.
   (`src/components/local_models.py:343-346`). The relative slope shrinkage along direction i is
   about `1e-8 Σ_j σ_j² / σ_i²`: about `1e-8 d` for a round node, growing as `A²` with aspect ratio
   `A` (as `A⁴` for the quadratic `z_s²` features).
-  - **Measured (convergence study, thin box, exactly affine f):** max relative error of AFINNI's
-    ART leaf 1.2e-8 at aspect ratio 1, 2.9e-7 at 10, 2.8e-5 at 100, 2.8e-3 at 1e3, 0.14 at 1e4
+  - **Measured (convergence study, thin box, exactly affine f):** max relative error of this
+    library's ART leaf 1.2e-8 at aspect ratio 1, 2.9e-7 at 10, 2.8e-5 at 100, 2.8e-3 at 1e3, 0.14 at 1e4
     (quadratic leaf: 3.5e-10 to 1.7e-3); the reference ART, which fits without a ridge,
     reproduces the function to about 1e-14 at every aspect ratio. Such nodes are rejected where
     the reference accepts them; at tolerances ≥ 1e-3 this matters from aspect ratios of about 300
@@ -272,7 +272,7 @@ Each is ranked in Section 2 by the d at which it bites.
   two points of the same cluster (`src/components/sampling.py:82-90`), which stay inside the
   cluster's hull, and acceptance tests only the cluster's points. In high d the hull is a
   vanishing part of the cell a query lands in. ART's points are uniform in the node, it can check
-  fresh `validation_samples` (default 0, `config.py:102`), and `AFINNISurrogate.audit`
+  fresh `validation_samples` (default 0, `config.py:102`), and `AdaptiveSurrogate.audit`
   (`model.py:718`) gives a global claim for ART models only.
   - **Measured at d = 8 (smoke run):** AFINNI on Rosenbrock at tol 0.3 converged, but only 54% of
     uniform test points were within tolerance (ART: 99.7%).
@@ -494,7 +494,7 @@ tail together.
   `src/art/sampling.py:179-191`.
 - **Benefit.** Speed at d > 100 and for quadratic p; to be measured on a CUDA machine on the
   study's d = 100 to 300 runs. Only worth it where the kernel shows up in an Nsight profile
-  (`AFINNI_NVTX=1`).
+  (`SURROGATE_NVTX=1`).
 - **Risk.** Every entry must keep its sequential inner sum in the same order, or bits change; the
   `spd_factor_coop` comment states the pattern. Kernel tests must cover both sides of each
   threshold.
@@ -732,7 +732,7 @@ that checks, at least:
   points within tolerance), not only the training-sample acceptance;
 - **convergence and order of convergence** on the convergence study's problems
   (`CONVERGENCE_STUDY.md`: Part A, the AFINNI manuscript's experiments, `studies/convergence/paper/`;
-  Part B, the reference ART against AFINNI's ART, `studies/convergence/art/`, including
+  Part B, the reference ART against this library's ART, `studies/convergence/art/`, including
   `exact_checks.py`), and on the high-dimensional study's problems (Section 5);
 - **the theoretical estimate** the change rests on (a bias bound, a mixing bound, a rate);
 - **cost**: leaves, evaluations, wall time and peak memory against the current method;
@@ -873,7 +873,7 @@ that checks, at least:
 - **What.** Test AFINNI's accepted clusters on fresh points drawn uniformly in the region a query
   would be routed to (its trust region, or its cell), not only on its own points; for ART, a
   default `validation_samples > 0`. Report the share of uniform test points within tolerance with
-  every run, and keep `AFINNISurrogate.audit` as the global claim (ART).
+  every run, and keep `AdaptiveSurrogate.audit` as the global claim (ART).
 - **Why.** AFINNI's points are convex combinations inside the cluster's hull, a vanishing part of
   the cell in high d (M13); measured: converged at d = 8, tol 0.3, with 54% of test points within
   tolerance (ART 99.7%). For both algorithms, acceptance is a maximum over n samples, a statement
@@ -1176,7 +1176,7 @@ On the GPU machine, from the repository root, with `uv sync --extra gpu` done:
 
 ```bash
 studies/high_dim/run_study.sh --dry-run          # list the matrix
-studies/high_dim/run_study.sh                    # full sweep: AFINNI_DEVICE=gpu AFINNI_MPI=off by default
+studies/high_dim/run_study.sh                    # full sweep: SURROGATE_DEVICE=gpu SURROGATE_MPI=off by default
 # first pass (recommended): fewer dims and a shorter limit, then widen; reruns resume
 DIMS=20,60,100 TIME_LIMIT=900 studies/high_dim/run_study.sh
 VARIANTS=art_affine_m10,art_quad_m4 studies/high_dim/run_study.sh     # the exploratory variants
@@ -1187,9 +1187,9 @@ studies/high_dim/run_study.sh --smoke            # CPU, d = 4 and 8, a few minut
 Pieces separately:
 
 ```bash
-AFINNI_DEVICE=cpu AFINNI_MPI=off .venv/bin/python -m studies.high_dim.predict_limits --out results/predicted.csv [--root-fit]
-AFINNI_DEVICE=gpu AFINNI_MPI=off .venv/bin/python -m studies.high_dim.run_one --variant art_affine --problem rosenbrock --d 40 --tol 0.3 --out /tmp/r.json --time-limit 900
-AFINNI_DEVICE=gpu AFINNI_MPI=off .venv/bin/python -m studies.high_dim.hit_and_run_mixing --dims 10,50,100,200 --taus 20,80,320,dd
+SURROGATE_DEVICE=cpu SURROGATE_MPI=off .venv/bin/python -m studies.high_dim.predict_limits --out results/predicted.csv [--root-fit]
+SURROGATE_DEVICE=gpu SURROGATE_MPI=off .venv/bin/python -m studies.high_dim.run_one --variant art_affine --problem rosenbrock --d 40 --tol 0.3 --out /tmp/r.json --time-limit 900
+SURROGATE_DEVICE=gpu SURROGATE_MPI=off .venv/bin/python -m studies.high_dim.hit_and_run_mixing --dims 10,50,100,200 --taus 20,80,320,dd
 .venv/bin/python -m studies.high_dim.collect --results studies/high_dim/results
 ```
 

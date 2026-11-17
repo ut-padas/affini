@@ -16,7 +16,7 @@ from src.config import (
 )
 from src.core.evaluation import Evaluator
 from src.engine.driver import initial_clustering
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 
 # KIDApy's modules import each other by bare name (e.g. parser.py does `import pdfac`), so its root must be on sys.path
 KIDAPY_ROOT = Path(__file__).resolve().parent.parent / "libs" / "KIDApy"
@@ -225,7 +225,7 @@ def rollout(surrogates, X_true_list, n_rows_until_output=5):
 
     Parameters
     ----------
-    surrogates : dict of int -> AFINNISurrogate
+    surrogates : dict of int -> AdaptiveSurrogate
         Maps a species column (in net.species order) to the surrogate that predicts it.
     X_true_list : list of arrays, shape (n_rows_t, 21)
         The true trajectory of each tracer. Lengths may differ.
@@ -273,7 +273,7 @@ def one_step_l2_relative_error(surrogates, X_test, f_test):
 
     Parameters
     ----------
-    surrogates : dict of int -> AFINNISurrogate
+    surrogates : dict of int -> AdaptiveSurrogate
         Maps a species column (in net.species order) to the surrogate that predicts it.
     X_test : list of arrays, shape (M_t, 21)
         Test inputs, one array per test tracer.
@@ -364,7 +364,7 @@ if __name__ == "__main__":
     for output in range(14):
 
         f_fn = partial(nelson_flow_map_wrapper, output=output, dt=dt, n_workers=n_workers)
-        surrogate = AFINNISurrogate()
+        surrogate = AdaptiveSurrogate()
         f_train_component = f_train[:,output][:,None]
         print(f"Beginning training AFINNI surrogate for output {net.species[output]}...")
         surrogate.train(X_train, config, Evaluator(f_fn=f_fn), Y_train=f_train_component, initial_labels=initial_labels)

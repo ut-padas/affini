@@ -1,5 +1,5 @@
 """
-Time AFINNISurrogate.predict() on a Rosenbrock problem.
+Time AdaptiveSurrogate.predict() on a Rosenbrock problem.
 
 Uses only the public train/predict API, so the same script runs on any commit.
 To compare two commits (e.g. before and after a refactor), run it from each
@@ -30,7 +30,7 @@ from src.components.modes import SurrogateMode  # noqa: E402
 from src.config import TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.problems.rosenbrock import rosenbrock, rosenbrock_grad, rosenbrock_hess  # noqa: E402
-from src.surrogate import AFINNISurrogate  # noqa: E402
+from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
 
 def _sync():
@@ -77,7 +77,7 @@ def main():
     X = xp.asarray(rng.uniform(-2.0, 3.0, (args.n_train, args.dim)))
     Xq = xp.asarray(rng.uniform(-2.0, 3.0, (args.n_query, args.dim)))
 
-    surrogate = AFINNISurrogate()
+    surrogate = AdaptiveSurrogate()
     t0 = time.perf_counter()
     config = TrainingConfig(
         mode=mode,

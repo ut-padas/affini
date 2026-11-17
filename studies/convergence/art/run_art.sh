@@ -62,7 +62,7 @@ if [[ $EXACT == 1 && $DRY == 0 ]]; then
     exact_args=(--art-path "$ART_ROOT" --out-json "$OUT/results/exact_checks.json")
     [[ $SMOKE == 1 ]] && exact_args+=(--smoke)
     # exact_checks.py exits non-zero when a check fails; the failure is a finding, so record it as done.
-    (FAILED_RUNS=0; cd "$AFINNI_ROOT" && AFINNI_DEVICE="$DEVICE" AFINNI_MPI=off \
+    (FAILED_RUNS=0; cd "$REPO_ROOT" && SURROGATE_DEVICE="$DEVICE" SURROGATE_MPI=off \
         run_logged "$OUT/done/exact_checks.done" "$OUT/logs/exact_checks.log" \
         bash -c '"$@"; s=$?; [[ $s -le 1 ]]' _ "$PYTHON" "$STUDY_DIR/art/exact_checks.py" "${exact_args[@]}")
 fi
@@ -74,7 +74,7 @@ while IFS=$'\t' read -r case_id group tier side np device out_json args_rest; do
     dev="$DEVICE"
     [[ "$device" == cpu ]] && dev=cpu
     extra=()
-    [[ "$side" == reference ]] && { dev=cpu; extra=("${REF_ARGS[@]}"); }  # the reference ignores AFINNI_DEVICE
+    [[ "$side" == reference ]] && { dev=cpu; extra=("${REF_ARGS[@]}"); }  # the reference ignores SURROGATE_DEVICE
     name="$(basename "$out_json" .json)"
     cmd=("$PYTHON" "$STUDY_DIR/art/run_art_case.py" --side "$side" --art-path "$ART_ROOT"
          --out-json "$OUT/results/$out_json" --case "$case_id" -- "${args[@]}" "${extra[@]}")
@@ -85,10 +85,10 @@ while IFS=$'\t' read -r case_id group tier side np device out_json args_rest; do
         cmd=($MPIEXEC -n "$np" "${cmd[@]}")
     fi
     if [[ $DRY == 1 ]]; then
-        echo "[$tier] AFINNI_DEVICE=$dev AFINNI_MPI=$mpi ${cmd[*]}"
+        echo "[$tier] SURROGATE_DEVICE=$dev SURROGATE_MPI=$mpi ${cmd[*]}"
         continue
     fi
-    (FAILED_RUNS=0; cd "$AFINNI_ROOT" && AFINNI_DEVICE="$dev" AFINNI_MPI="$mpi" \
+    (FAILED_RUNS=0; cd "$REPO_ROOT" && SURROGATE_DEVICE="$dev" SURROGATE_MPI="$mpi" \
         run_logged "$OUT/done/$group.$name.done" "$OUT/logs/$group/$name.log" "${cmd[@]}"
      exit $FAILED_RUNS) || FAILED_RUNS=$((FAILED_RUNS + 1))
 done < <("$PYTHON" "$STUDY_DIR/art/art_cases.py" "${CASE_ARGS[@]}")

@@ -244,7 +244,8 @@ points come from and how the cut is chosen.
 AFINNI suits a sample that already exists, such as the states a simulation visited: it
 never needs to know the domain. ART suits a known domain on which every point must get an
 answer. In the code both are _plans_ of one _refinement engine_ (@sec:engine), chosen by
-`TrainingConfig(algorithm="afinni")` or `"art"`.
+`TrainingConfig(algorithm="afinni")` or `"art"`, and both are trained and queried through one
+class, `AdaptiveSurrogate`.
 
 == How to read this companion <sec:reading>
 
@@ -713,7 +714,7 @@ A minimum-volume enclosing ellipsoid @todd2016 would be tighter, but needs an it
 optimization per leaf; this one is a single eigendecomposition, batched over all accepted
 clusters.
 
-#algorithm(caption: [Inference (the manuscript's Algorithm 6): `AFINNISurrogate.predict`
+#algorithm(caption: [Inference (the manuscript's Algorithm 6): `AdaptiveSurrogate.predict`
   with `predictor="knn"`.], pseudocode(inference)) <alg:inference>
 
 #scene(side: left, width: 40%, panel("afinni-inference"))[
@@ -1949,15 +1950,15 @@ if any of them disagrees with the library.
 #raw(block: true, lang: "python", ```
 from src.config import ARTSettings, TrainingConfig
 from src.core.evaluation import Evaluator
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 
 evaluator = Evaluator(f_fn=f)                    # f maps (N, d) points to (N, fd) values
 
-afinni = AFINNISurrogate()                       # AFINNI: from a sample X0
+afinni = AdaptiveSurrogate()                     # AFINNI: from a sample X0
 afinni.train(X0, TrainingConfig(atol={atol}, num_initial_clusters={n_init}, min_pts_per_cluster={n_min}), evaluator)
 values, outside = afinni.predict(queries, k_nn=1, coarse_factor={kappa})
 
-art = AFINNISurrogate()                          # ART: on a domain
+art = AdaptiveSurrogate()                        # ART: on a domain
 art.train(X0, TrainingConfig(atol={atol}, algorithm="art", domain=(lower, upper),
                              art=ARTSettings(sample_multiplier={m})), evaluator)
 values, outside = art.predict(queries)           # routed down the tree
@@ -1971,7 +1972,7 @@ report = art.audit(evaluator, n_points={audit})     # share of the domain beyond
   .replace("{audit}", str(ex.art.audit.points)))
 
 These are the main settings of the running example (it also fixes `seed` and `max_levels`). The backend is chosen by the environment:
-`AFINNI_DEVICE=cpu|gpu|auto` and `AFINNI_MPI=off|on|auto`; under `mpiexec`, `train` and
+`SURROGATE_DEVICE=cpu|gpu|auto` and `SURROGATE_MPI=off|on|auto`; under `mpiexec`, `train` and
 `predict` are collective. `docs/USAGE.md` lists every setting, `docs/ARCHITECTURE.md` maps
 the stages above to the modules of `src/`, and `docs/AFINNI_ART_DESIGN.md` records the
 design decisions behind them.

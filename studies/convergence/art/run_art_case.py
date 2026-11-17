@@ -2,9 +2,9 @@
 Run one side of ``scripts/art_comparison.py`` (the reference ART or this library's ART) and save its
 result as JSON.
 
-Usage (from the AFINNI root, PYTHONPATH=.)::
+Usage (from the repository root, PYTHONPATH=.)::
 
-    AFINNI_DEVICE=cpu AFINNI_MPI=off python studies/convergence/art/run_art_case.py \\
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off python studies/convergence/art/run_art_case.py \\
         --side reference|library --art-path ../Adaptive-Regression-Trees-ART- --out-json R.json \\
         -- --benchmark rosenbrock --dimension 2 --offset 1 --error-tolerance 0.05 --max-depth 20
 
@@ -103,7 +103,7 @@ def main() -> None:
         "case": mine.case, "side": mine.side, "argv": argv[split + 1 :], "result": compare[0],
         "config": config[0] if config else None, "wall_s": wall, "mpi_size": size,
         "library_gpu": bool(IS_CUPY_BACKEND), "peak_rss_gib_rank0": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20,
-        "env": {k: os.environ.get(k) for k in ("AFINNI_DEVICE", "AFINNI_MPI", "OMP_NUM_THREADS", "NUMBA_NUM_THREADS")},
+        "env": {k: os.environ.get(k) for k in ("SURROGATE_DEVICE", "SURROGATE_MPI", "OMP_NUM_THREADS", "NUMBA_NUM_THREADS")},
     }  # fmt: skip
     mine.out_json.parent.mkdir(parents=True, exist_ok=True)
     tmp = mine.out_json.with_suffix(".tmp")

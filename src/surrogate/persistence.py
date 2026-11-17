@@ -5,13 +5,13 @@ from typing import Any
 
 import numpy as np
 
-# Version of the file format written by AFINNISurrogate.save_model(). load_model() reads only
+# Version of the file format written by AdaptiveSurrogate.save_model(). load_model() reads only
 # this version: until the project is published there are no old files to keep reading, so a
 # change of layout increments it and older files are refused (retrain them).
 MODEL_FORMAT_VERSION = 1
 
 
-DEFAULT_MODEL_FILENAME = "afinni_surrogate.npz"
+DEFAULT_MODEL_FILENAME = "adaptive_surrogate.npz"
 
 
 PARAM_PREFIX = "param:"

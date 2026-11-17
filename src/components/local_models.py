@@ -1,5 +1,5 @@
 """
-The function fitted on each cluster (leaf) of the AFINNI forest.
+The function fitted on each cluster (leaf) of either plan, AFINNI or ART.
 
 A ``LocalModel`` owns four things:
 
@@ -15,7 +15,7 @@ A ``LocalModel`` owns four things:
 
 Adding a model (e.g. a local quadratic or kernel ridge regression) means writing
 one subclass and registering it in ``LOCAL_MODELS``; the refinement loop, output
-buffers, MPI gathering, prediction and ``AFINNISurrogate.save_model``/``load_model``
+buffers, MPI gathering, prediction and ``AdaptiveSurrogate.save_model``/``load_model``
 only see the columns it declares. A model declares the data it needs with
 ``needs_centroid_value`` (f at the centroids, ``ClusterFitData.f_c``),
 ``needs_centroid_grad`` (gradients at the centroids, ``ClusterFitData.g_c``) and

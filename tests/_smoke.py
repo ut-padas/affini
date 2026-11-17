@@ -19,7 +19,7 @@ def run_smoke(
     """Run the workload. Returns a result dict on rank 0, ``None`` on other ranks."""
     import src
     from src.problems.rosenbrock import rosenbrock
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
     from tests._helpers import train_surrogate
 
     xp = src.xp
@@ -28,7 +28,7 @@ def run_smoke(
 
     # Data lives on rank 0 only; refine scatters it to other ranks.
     X = xp.asarray(rng.uniform(-2, 2, (n_train, 2))) if rank == 0 else xp.empty((0, 2))
-    surrogate = AFINNISurrogate()
+    surrogate = AdaptiveSurrogate()
     train_surrogate(
         X, surrogate,
         f_fn=rosenbrock,

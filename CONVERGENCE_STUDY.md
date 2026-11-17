@@ -1,6 +1,6 @@
-# Accuracy and convergence study: AFINNI paper re-run, reference ART vs AFINNI's ART
+# Accuracy and convergence study: AFINNI paper re-run, reference ART vs this library's ART
 
-Prepared on 2026-11-16 against AFINNI `refinement-engine` @ `f60eb2b` and the reference ART
+Prepared on 2026-11-16 against this repository's `refinement-engine` @ `f60eb2b` and the reference ART
 `main` @ `854924a` (2026-11-10, "BFS traversal, Multithreaded numba sampler, Batched GPU
 optimizer"; `git pull --ff-only` reported "Already up to date"). Nothing was committed in either
 repository. The heavy runs are left to you; what was run here (CPU only) is in
@@ -13,7 +13,7 @@ repository. The heavy runs are left to you; what was run here (CPU only) is in
   number with the re-run. The test is accuracy: errors against tolerance, convergence slopes and
   trust-region coverage must meet the paper's claims. Leaf and evaluation counts may move where
   the code changed on purpose.
-- **B.** Run a convergence study of the reference ART and AFINNI's ART (`algorithm="art"`) on the
+- **B.** Run a convergence study of the reference ART and this library's ART (`algorithm="art"`) on the
   reference's problems under matched settings, and decide whether they agree:
   accuracy-vs-cost curves, convergence rates and tolerance compliance, not bit-identical trees.
 
@@ -46,7 +46,7 @@ Everything new is under `studies/convergence/` (its `output/` is git-ignored):
 ## Quick start
 
 ```bash
-cd ~/github-repos/affini            # the AFINNI root; scripts use .venv/bin/python
+cd ~/github-repos/affini            # the repository root; scripts use .venv/bin/python
 uv sync --extra gpu --extra mpi       # GPU machine; on a cluster with its own MPI: --extra mpi-system and the cluster's setup script in scripts/hpc/
 
 # tiny end-to-end versions (CPU, about 70 s and 45 s; each includes one 2-rank MPI run)
@@ -68,8 +68,8 @@ studies/convergence/art/run_art.sh --device gpu --ref-device gpu --max-tier M
 ```
 
 Common options: `--groups a,b`, `--only REGEX` (case ids), `--out DIR`, `--dry-run` (print the
-commands with their `AFINNI_DEVICE`/`AFINNI_MPI`), `--seeds`, `--nps`. Every command sets
-`AFINNI_DEVICE` and `AFINNI_MPI` explicitly. Environment overrides: `ART_ROOT`, `PYTHON`,
+commands with their `SURROGATE_DEVICE`/`SURROGATE_MPI`), `--seeds`, `--nps`. Every command sets
+`SURROGATE_DEVICE` and `SURROGATE_MPI` explicitly. Environment overrides: `ART_ROOT`, `PYTHON`,
 `MPIEXEC` (e.g. `MPIEXEC=ibrun` or `"srun --mpi=pmix"`), `STUDY_OUT`, `RUN_TIMEOUT` (default 6h
 per run, `0` = none). Output layout: `OUT/results/...` (JSON), `OUT/logs/<case>.log`,
 `OUT/done/<case>.done` (a rerun skips done cases; delete a marker to redo one),
@@ -106,7 +106,7 @@ PYTHON=$P $R a6844cb gpu_r0.02nh_shrink --launcher experiments.py -- --experimen
 .venv/bin/python studies/convergence/bisect/score.py $BISECT_DIR/runs/gpu_*.npz --kappas 10,50
 ```
 
-The commits before `d7ec052` pick the GPU whenever `cupy` imports (they ignore `AFINNI_DEVICE`).
+The commits before `d7ec052` pick the GPU whenever `cupy` imports (they ignore `SURROGATE_DEVICE`).
 D4 is confirmed if the GPU trees match the paper: Rosenbrock #20 `N` about 1.39e5, `N_c` 344,
 `e_in` 3.4e-2, and #24 `N_c` 8,446; Gaussian `N_c` 48 / 359 (#10 / #14) and 173 at d=5 (#15). The
 `p_o` column printed as `p_o_k10` for the `a6844cb` runs should then give the paper's Rosenbrock
@@ -232,7 +232,7 @@ from rows 40-44; row 36's `e` = 8.82e-2 and row 2's `e_nh` = 0.64 are probably t
 
 `run_paper_experiments.sh` (`make paper-experiments`) covers Table 1 (Hessian runs only), Table 2
 and Figure 8, through `afinni_launcher.py`. On this branch the launcher works with the current
-API (`TrainingConfig`, `Evaluator`, `AFINNISurrogate.train/predict`, results as JSON with every
+API (`TrainingConfig`, `Evaluator`, `AdaptiveSurrogate.train/predict`, results as JSON with every
 effective setting). The study calls the launcher's own functions (`run_case.py` only redirects
 `RESULTS_DIR` and the seed) so a case means exactly what the same flags mean to the launcher.
 Gaps it fills:
@@ -478,7 +478,7 @@ tests are exact:
 
 ## Smoke tests run here
 
-All on this machine's CPU (16 cores, no GPU), `AFINNI_DEVICE=cpu`, outputs in the session scratch
+All on this machine's CPU (16 cores, no GPU), `SURROGATE_DEVICE=cpu`, outputs in the session scratch
 directory. The final smoke runs ran one at a time under
 `systemd-run --user --scope -p MemoryMax=6G -p CPUQuota=400% nice -n 10 timeout 600` with
 `OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=2` (the machine was shared with other jobs); the d=2
@@ -491,7 +491,7 @@ full-size runs, the full exact checks and the paper-era comparison ran earlier w
 | `paper/run_paper.sh --smoke` (11 cases: every group except `mpi`, tiny sizes) | all 11 ran, 66 s, peak RSS 0.6 GB; collector built every table and plot (all paper rows `missing`, as they must be at tiny sizes) |
 | Part A `mpi` smoke (`mpiexec -n 2`, earlier in the session) | ran and was collected; a later repeat failed only because the host was out of memory (the library's own guard, see Known gaps) |
 | `art/run_art.sh --smoke` (exact checks + 18 runs: 6 problems x 2 codes, spherical depth, exact target, this library's ART on 1 and 2 ranks) | all ran, 43 s, peak RSS 0.25 GB; checks: 29 pass, 12 missing (slopes need >= 3 tolerances), 2 FAIL (the thin-box finding below) |
-| `--dry-run` of both full matrices | Part A 172 runs, Part B 1070 runs (with `--device gpu`), commands and `AFINNI_DEVICE`/`AFINNI_MPI` as intended |
+| `--dry-run` of both full matrices | Part A 172 runs, Part B 1070 runs (with `--device gpu`), commands and `SURROGATE_DEVICE`/`SURROGATE_MPI` as intended |
 
 **Part A at full paper size, d = 2 only (CPU, seeds 0 and 1, 3-35 s per run, < 0.9 GB).** All 15
 Table 1 rows for Gaussian, Rosenbrock and Wave d=2, with and without Hessian splits:
@@ -567,7 +567,7 @@ With `kappa` = 50 the current code also matches the Wave `p_o` and `e`: #37 0.04
 
 **Method.** `studies/convergence/bisect/run_at.sh COMMIT TAG -- <launcher flags>` extracts a commit
 with `git archive` (nothing is checked out) and runs *that commit's own launcher* unchanged
-through `capture_launcher.py`, which wraps `AFINNISurrogate.train/predict` and
+through `capture_launcher.py`, which wraps `AdaptiveSurrogate.train/predict` and
 `compute_error_metrics` and saves the scored test points, predictions, out-of-region mask, ground
 truth, leaf centres and trust matrices. `score.py` then scores every commit with the manuscript's
 definitions (`p_o`, `e_in`, `e`) and re-scores `p_o` for other candidate counts and against the
@@ -725,7 +725,7 @@ leaves.
 
 ## Known gaps and risks
 
-- **AFINNI's host-memory guard is system-wide.** Before each level it checks the machine's
+- **The library's host-memory guard is system-wide.** Before each level it checks the machine's
   available memory and keeps 3 GB free; on a machine shared with other jobs even tiny runs stop
   with `MemoryError: ... only 0.3 GiB is available` (seen here twice). On WSL give the VM enough
   memory (`.wslconfig`), and run one sweep at a time. To protect a shared desktop, wrap a sweep in
@@ -759,7 +759,7 @@ leaves.
 
 ## Decisions for you
 
-1. **AFINNI's ART leaf regularization (Part B finding): decided, ART fits as the reference does.**
+1. **This library's ART leaf regularization (Part B finding): decided, ART fits as the reference does.**
    `ARTSettings.leaf_fit="lstsq"` (the default) drops the ridge in every ART fit, leaves and
    split search, and solves by Cholesky where the Gram's 1-norm reciprocal condition number is
    at least 1e-10, else by QR on the node's rows (`lstsq_auto`). AFINNI keeps Eq. 3's ridge and is

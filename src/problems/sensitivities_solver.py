@@ -27,13 +27,13 @@ def preferred_mp_start_method(requested: str | None = None) -> str:
     ``fork`` is much cheaper on Linux because children inherit the already
     imported modules via copy-on-write.  macOS defaults to ``spawn`` because
     forking a process that may have active native-library threads can be unsafe;
-    users can still opt into another method with ``AFINNI_MP_START_METHOD`` or
+    users can still opt into another method with ``SURROGATE_MP_START_METHOD`` or
     the explicit argument. The old name ``HATANN_MP_START_METHOD`` is still read
-    if ``AFINNI_MP_START_METHOD`` is not set.
+    if ``SURROGATE_MP_START_METHOD`` is not set.
     """
     requested = (
         requested
-        or os.environ.get("AFINNI_MP_START_METHOD")
+        or os.environ.get("SURROGATE_MP_START_METHOD")
         or os.environ.get("HATANN_MP_START_METHOD")
     )
     available = mp.get_all_start_methods()

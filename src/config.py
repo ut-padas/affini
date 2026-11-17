@@ -98,7 +98,7 @@ class ARTSettings:
     sampling: Literal["hit_and_run", "convex_combination"] = "hit_and_run"
     sample_multiplier: float = 50.0  # m in the companion
     # Fresh points per node on which the deployed model is checked before acceptance; a
-    # diagnostic, not a certificate (the global claim is AFINNISurrogate.audit). 0: none.
+    # diagnostic, not a certificate (the global claim is AdaptiveSurrogate.audit). 0: none.
     validation_samples: int = 0
     min_side_margin: int = 0
     walk_steps: int = 20  # hit-and-run steps per chain, tau in the companion
@@ -176,7 +176,7 @@ class ARTSettings:
 @dataclass(kw_only=True)
 class TrainingConfig:
     """
-    Every algorithm setting of a training run (``AFINNISurrogate.train`` or
+    Every algorithm setting of a training run (``AdaptiveSurrogate.train`` or
     ``refine``); the functions to evaluate go in an ``Evaluator``.
     All fields are keyword-only and only a tolerance (or an ``acceptance`` that
     brings its own) is required.
@@ -407,7 +407,7 @@ def _normalize_domain(domain: Any) -> str | tuple[tuple[float, ...], tuple[float
         raise ValueError(
             "algorithm='art' needs domain=(lower, upper) bounds, or domain='data_bbox' to "
             "use the training points' bounding box: the domain is what routing covers and "
-            "what AFINNISurrogate.audit samples, so it is never inferred silently."
+            "what AdaptiveSurrogate.audit samples, so it is never inferred silently."
         )
     import numpy as np
 

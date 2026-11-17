@@ -14,7 +14,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 
 : "${MACHINE:?set MACHINE to a neutral description of the machine, e.g. MACHINE=\"GH200 node\"}"
-if [[ "${ALLOW_DIRTY:-0}" != 1 ]] && [[ -n "$(git -C "$AFINNI_ROOT" status --porcelain --untracked-files=no)" ]]; then
+if [[ "${ALLOW_DIRTY:-0}" != 1 ]] && [[ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ]]; then
     log "error: modified tracked files; commit them first so the recorded commit describes the code (ALLOW_DIRTY=1 overrides)"
     exit 2
 fi

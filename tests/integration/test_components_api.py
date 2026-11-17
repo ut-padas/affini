@@ -1,7 +1,7 @@
 """
 The component API: modes are presets, and each component (local model, split
 strategy, sampler, acceptance criterion, trust region) can be replaced through
-``TrainingConfig`` / ``AFINNISurrogate.train`` without editing the engine.
+``TrainingConfig`` / ``AdaptiveSurrogate.train`` without editing the engine.
 
 These tests check the contracts (which data a component receives, which outputs
 reach prediction, that defaults are unchanged), not the accuracy of new components.
@@ -38,7 +38,7 @@ from src.components.splitting import (
 from src.components.trust_regions import TRUST_REGIONS, CovarianceEllipsoid, TrustRegion
 from src.config import TrainingConfig
 from src.core.clusters import ParamSpec
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
 
 rng = np.random.default_rng(3)
@@ -57,7 +57,7 @@ def g(x):
 
 
 def train(**kwargs):
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     opts = {
         "f_fn": f, "atol": 0.05, "rtol": 0.05, "error_metric": "Linf", "num_initial_clusters": 8,
         "min_pts_per_cluster": 40, "use_work_stealing": False,

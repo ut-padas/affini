@@ -1,15 +1,16 @@
 # AGENTS.md
 
-Guidance for coding agents working in this repository (AFINNI: adaptive clustering
-surrogates with CPU/GPU backends, MPI and work stealing).
+Guidance for coding agents working in this repository (adaptive surrogates of expensive
+functions: the AFINNI and ART plans on one refinement engine, with CPU/GPU backends, MPI and work
+stealing).
 
 ## Environment
 
 - Python environment: `.venv/` (managed by `uv`; see `Makefile` for install targets).
-- Backend selection: `AFINNI_DEVICE=cpu|gpu|auto`, `AFINNI_MPI=off|on|auto`.
+- Backend selection: `SURROGATE_DEVICE=cpu|gpu|auto`, `SURROGATE_MPI=off|on|auto`.
   Always set them explicitly in tests and benchmarks, so a missing GPU/MPI cannot
   produce a misleading pass.
-- MPI launcher: `.venv/bin/mpiexec` (bundled MPICH); MPI tests use `AFINNI_MPI_NP` ranks.
+- MPI launcher: `.venv/bin/mpiexec` (bundled MPICH); MPI tests use `SURROGATE_MPI_NP` ranks.
 
 ## Verification
 
@@ -17,19 +18,19 @@ Run from the repository root:
 
 ```bash
 # Unit/integration tests, CPU and GPU (both must pass)
-AFINNI_DEVICE=cpu AFINNI_MPI=off .venv/bin/python -m pytest -q --no-cov -m "not mpi"
-AFINNI_DEVICE=gpu AFINNI_MPI=off .venv/bin/python -m pytest -q --no-cov -m "not mpi"
+SURROGATE_DEVICE=cpu SURROGATE_MPI=off .venv/bin/python -m pytest -q --no-cov -m "not mpi"
+SURROGATE_DEVICE=gpu SURROGATE_MPI=off .venv/bin/python -m pytest -q --no-cov -m "not mpi"
 
 # Multi-rank tests (they launch their own mpiexec; never run pytest inside mpiexec)
-AFINNI_DEVICE=cpu AFINNI_MPI=on AFINNI_MPI_NP=4 PATH=$PWD/.venv/bin:$PATH \
+SURROGATE_DEVICE=cpu SURROGATE_MPI=on SURROGATE_MPI_NP=4 PATH=$PWD/.venv/bin:$PATH \
   .venv/bin/python -m pytest tests/mpi -o addopts='' -q
 
 # Differential regression check against a reference run of another checkout
-AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. .venv/bin/python scripts/regression_check.py \
+SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python scripts/regression_check.py \
   --save /tmp/new --compare /tmp/ref          # CPU refactors must be bit-identical
 # on GPU add --rtol 1e-12 (decisions must still match exactly)
 # the same check on 2 ranks covers the scatter of initial clusters and the merge of leaves
-AFINNI_DEVICE=cpu AFINNI_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin/mpiexec -n 2 \
+SURROGATE_DEVICE=cpu SURROGATE_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin/mpiexec -n 2 \
   .venv/bin/python scripts/regression_check.py --save /tmp/new2 --compare /tmp/ref2
 ```
 
@@ -54,7 +55,7 @@ AFINNI_DEVICE=cpu AFINNI_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin
   subprocess patch), `make coverage-gpu` on a CUDA machine, then `make coverage` combines them. `tests/unit/test_kernel_sources.py` checks
   on any machine that every `__global__` kernel has a Python launcher and every launched name
   exists in `src/kernels/*.cu`.
-- Profiling on GPU: `AFINNI_NVTX=1` emits one NVTX range per phase; profile with
+- Profiling on GPU: `SURROGATE_NVTX=1` emits one NVTX range per phase; profile with
   `nsys profile --trace=cuda,nvtx,osrt` (installed at `/usr/local/bin/nsys`).
   `py-spy`, `viztracer` and `kernprof` are in `.venv/bin`. ART's CUDA tests
   (`../Adaptive-Regression-Trees-ART-/tests/test_cuda_*.py`, run with this venv) need
@@ -86,13 +87,21 @@ technical companion (see "The technical companion" below).
 
 Names (use them in code, docstrings, messages and docs):
 
+- **The library** is "adaptive surrogates" (the README's title; the planned package name is
+  `adaptive_surrogates`). Its public class is **`AdaptiveSurrogate`** (`src/surrogate/`), which
+  trains and predicts with either plan; "the library" is the word for the project in prose.
+  Project-wide environment variables start with `SURROGATE_` (`SURROGATE_DEVICE`,
+  `SURROGATE_MPI`, `SURROGATE_MPI_NP`, `SURROGATE_NVTX`, `SURROGATE_MPIEXEC`,
+  `SURROGATE_MP_START_METHOD`).
 - **AFINNI** (`algorithm="afinni"`, `src/afinni/`, `AFINNIPlan`) is the adaptive-clustering
-  algorithm; the project and `AFINNISurrogate` share the name.
+  algorithm, one of the two plans; it is not the name of the project. Use `afinni` / `AFINNI`
+  only for what belongs to that plan.
 - **ART** (`algorithm="art"`, `src/art/`, `ARTPlan`, `ARTSettings`, `config.art`) is the
   adaptive regression tree. "Region" is geometry only (a node's
   polytope is `NodePolytopes`, its rows `constraint_rows`), and "trust region" is AFINNI's.
   The external code `scripts/art_comparison.py` runs is "the reference ART"; ours is
-  "AFINNI's ART" where the two must be told apart.
+  "this library's ART" where the two must be told apart (side labels `reference` and
+  `library` in the comparison study).
 - **The refinement engine** (`src/engine/`) runs either plan: `driver.refine` (collective
   training), `refinement.refine_rank` (one rank's level-by-level loop), `work_stealing`.
   Plan-specific behaviour goes in the plan, behind `src/core/plan.py`, not in the engine.

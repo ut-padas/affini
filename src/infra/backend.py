@@ -1,5 +1,5 @@
 """
-Optional-backend detection for AFINNI: GPU (CuPy) and MPI (mpi4py).
+Optional-backend detection for the library: GPU (CuPy) and MPI (mpi4py).
 
 Every optional dependency is probed here, once, and exposed through a small set
 of standard flags. The rest of the codebase should only ever consult these
@@ -17,15 +17,15 @@ Flags
 ``MPI``
     The real ``mpi4py.MPI`` module when ``HAS_MPI``; otherwise a serial
     stand-in with a single rank (rank 0, size 1) that supports the subset of
-    the API used by AFINNI. Code can therefore always write
+    the API used by the library. Code can therefore always write
     ``from src.infra.backend import MPI`` and ``MPI.COMM_WORLD``.
 
 Environment overrides
 ---------------------
-``AFINNI_DEVICE`` = ``auto`` (default) | ``cpu`` | ``gpu``
+``SURROGATE_DEVICE`` = ``auto`` (default) | ``cpu`` | ``gpu``
     ``cpu`` forces NumPy even when a GPU is present; ``gpu`` fails loudly if
     CuPy cannot use a GPU instead of silently falling back.
-``AFINNI_MPI`` = ``auto`` (default) | ``off`` | ``on``
+``SURROGATE_MPI`` = ``auto`` (default) | ``off`` | ``on``
     ``off`` uses the serial stand-in even if mpi4py is installed; ``on`` fails
     loudly if MPI is unavailable.
 
@@ -69,14 +69,14 @@ def _env_choice(var: str, choices: dict[str, set[str]]) -> str:
 # GPU: CuPy (array backend; k-means and kNN are custom kernels in src/neighbors/kmeans.py, src/neighbors/knn.py)
 # =============================================================================
 DEVICE_MODE = _env_choice(
-    "AFINNI_DEVICE", {"auto": set(), "cpu": {"numpy", "host"}, "gpu": {"cuda", "cupy"}}
+    "SURROGATE_DEVICE", {"auto": set(), "cpu": {"numpy", "host"}, "gpu": {"cuda", "cupy"}}
 )
 
 
 def _detect_cupy() -> tuple[Any, str]:
     """Return ``(cupy_module_or_None, human_readable_reason)``."""
     if DEVICE_MODE == "cpu":
-        return None, "disabled via AFINNI_DEVICE=cpu"
+        return None, "disabled via SURROGATE_DEVICE=cpu"
     try:
         import cupy
     except Exception as e:  # ImportError, or broken CUDA libs raising on import
@@ -93,7 +93,7 @@ _cupy, GPU_REASON = _detect_cupy()
 IS_CUPY_BACKEND: bool = _cupy is not None
 
 if DEVICE_MODE == "gpu" and not IS_CUPY_BACKEND:
-    raise RuntimeError(f"AFINNI_DEVICE=gpu was requested but {GPU_REASON}.")
+    raise RuntimeError(f"SURROGATE_DEVICE=gpu was requested but {GPU_REASON}.")
 
 xp = array_namespace(_cupy.array([0]) if IS_CUPY_BACKEND else np.array([0]))
 
@@ -107,7 +107,7 @@ logger.info(
 # =============================================================================
 # MPI: mpi4py, or a single-rank serial stand-in
 # =============================================================================
-MPI_MODE = _env_choice("AFINNI_MPI", {"auto": set(), "off": _FALSE, "on": _TRUE})
+MPI_MODE = _env_choice("SURROGATE_MPI", {"auto": set(), "off": _FALSE, "on": _TRUE})
 
 # Environment variables set by common MPI launchers (Open MPI, MPICH/Hydra,
 # Intel MPI, MVAPICH). If one says we are part of a multi-rank job but MPI is
@@ -159,7 +159,7 @@ class _SerialComm:
     Stand-in for ``MPI.COMM_WORLD`` in a single-process run: rank 0 of size 1.
 
     Collectives are the identity (the root is the only member). Point-to-point
-    messages are impossible because there is no peer; AFINNI's algorithms only
+    messages are impossible because there is no peer; the library's algorithms only
     address *other* ranks, so with one rank they are never reached, and calling
     one here indicates a bug, hence the explicit error.
     """
@@ -256,7 +256,7 @@ class _SerialMPI:
 def _resolve_mpi() -> tuple[Any, bool, str]:
     """Return ``(MPI_module, has_mpi, reason)``. Imports mpi4py at most once."""
     if MPI_MODE == "off":
-        return _SerialMPI, False, "disabled via AFINNI_MPI=off"
+        return _SerialMPI, False, "disabled via SURROGATE_MPI=off"
     if _in_multiprocessing_worker():
         return _SerialMPI, False, "multiprocessing worker (MPI never used in workers)"
 
@@ -274,7 +274,7 @@ def _resolve_mpi() -> tuple[Any, bool, str]:
         return _MPI, True, f"mpi4py with {lib}"
 
     if MPI_MODE == "on":
-        raise RuntimeError(f"AFINNI_MPI=on was requested but {reason}.")
+        raise RuntimeError(f"SURROGATE_MPI=on was requested but {reason}.")
     if _launched_with_multiple_ranks():
         raise RuntimeError(
             f"This process was started by an MPI launcher with more than one rank, "
@@ -346,6 +346,6 @@ def print_backend_info() -> None:
     """Print ``backend_info()`` as an aligned table (``python -m src``)."""
     info = backend_info()
     width = max(map(len, info))
-    print("AFINNI backend configuration")
+    print("Backend configuration")
     for key, value in info.items():
         print(f"  {key:<{width}} : {value}")

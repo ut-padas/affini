@@ -10,7 +10,7 @@ import pytest  # noqa: E402
 
 from src import plotting
 from src.infra.profiling import new_profiling_stats  # noqa: E402
-from src.surrogate import AFINNISurrogate  # noqa: E402
+from src.surrogate import AdaptiveSurrogate  # noqa: E402
 from tests._helpers import train_surrogate  # noqa: E402
 
 
@@ -83,7 +83,7 @@ def test_steal_matrix_includes_ranks_without_steals():
 
 
 def test_plots_from_a_real_training_run(tmp_path):
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     train_surrogate(
         np.random.default_rng(0).uniform(-1, 1, (2_000, 2)), s,
         f_fn=lambda x: (1 + x[:, 0] ** 2 + 4 * x[:, 1] ** 2)[:, None], atol=0.02, rtol=0.02,

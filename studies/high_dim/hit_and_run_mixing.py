@@ -18,7 +18,7 @@ d and chain length tau, for nodes cut by ``--depth`` random planes through the c
 - ``flagged``: the share of nodes the drift check marks ``insufficient_sampling`` with the
   default doubling (``max_walk_steps = 4 tau``).
 
-    AFINNI_DEVICE=cpu AFINNI_MPI=off .venv/bin/python -m studies.high_dim.hit_and_run_mixing --dims 10,50,100
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off .venv/bin/python -m studies.high_dim.hit_and_run_mixing --dims 10,50,100
 
 It calls the sampler's private ``_starts`` to know where each chain began, as a test would.
 """

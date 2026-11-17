@@ -15,7 +15,7 @@ X = np.random.default_rng(4).uniform(-1, 1, (3_000, 2))
 OPTIONS = {"atol": 0.05, "rtol": 0.05, "num_initial_clusters": 9, "min_pts_per_cluster": 40, "use_work_stealing": False, "seed": 5}
 needs_knndbscan = pytest.mark.skipif(find_spec("knndbscan") is None, reason="needs the knndbscan package")
 # On the GPU backend initial_clustering asks knndbscan for its GPU neighbour search, which needs
-# cuML; the gpu extra does not install it (AFINNI's own k-means and kNN do not use it).
+# cuML; the gpu extra does not install it (the library's own k-means and kNN do not use it).
 needs_knndbscan_device = pytest.mark.skipif(
     IS_CUPY_BACKEND and find_spec("cuml") is None,
     reason="knndbscan's GPU neighbour search needs cuML (pip install knndbscan[gpu]), which the gpu extra does not install",

@@ -163,7 +163,7 @@ def pointwise_violations(F: Array, F_hat: Array, atol: Tolerance, rtol: Toleranc
     (N,) True where a point fails on any component: neither ``|e_ij| < atol_j`` nor
     ``|e_ij| / max(|F_ij|, 1e-12) < rtol_j`` holds (strict, as in training). A non-finite
     value, true or predicted, is always a violation, so an invalid evaluation can never
-    pass. Shared by ``PointwiseAcceptance`` and ``AFINNISurrogate.audit`` so both test the
+    pass. Shared by ``PointwiseAcceptance`` and ``AdaptiveSurrogate.audit`` so both test the
     same event.
     """
     fd = F.shape[1]
@@ -182,7 +182,7 @@ class PointwiseAcceptance(AcceptanceCriterion):
     Every point must pass on every component: ``|e_ij| < atol_j`` or
     ``|e_ij| / max(|F_ij|, 1e-12) < rtol_j``. With ``rtol`` alone this is the reference ART's
     ``max_pointwise_relative`` stopping rule, and the same per-point test as
-    ``AFINNISurrogate.audit`` (``pointwise_violations``). Reports ``abs_kj = max_i |e_ij|``
+    ``AdaptiveSurrogate.audit`` (``pointwise_violations``). Reports ``abs_kj = max_i |e_ij|``
     and ``rel_kj = max_i |e_ij| / max(|F_ij|, 1e-12)``.
     """
 
