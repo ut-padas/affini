@@ -144,6 +144,11 @@ MACHINE="GH200 node" studies/convergence/paper/run_manuscript.sh
 
 `results/INDEX.md` lists every record with its date, commit, machine and how many of the reported
 numbers it measured.
+The technical companion's appendix (`docs/report/`) shows every manuscript table as printed beside
+the same table as the records measure it: `make report-tables RECORD="<main record>
+[<supplementary record> ...]"`, then `make report`. A supplementary record re-runs a few groups at a
+later commit (for example `--groups lorenz_dims` after a change to Table 2's settings) and replaces
+the main record's values for them.
 
 ## Part A: the AFINNI manuscript
 
@@ -240,10 +245,14 @@ Gaps it fills:
 - **`e_nh` column**: not in the script; group `conv_nh` runs every Table 1 row with
   `--error_eval_mode affine_cov_no_hess`.
 - **Table 2** as scripted (`--dims 5 10 20 40 80 --tols 0.1`) uses the uncapped heuristics
-  `K_0 = 25 1.3^d`, `M = 100 1.3^d` (3e10 clusters at d=80) and would fail; group `lorenz_dims`
-  passes the caption's caps per dimension. The paper-era code (`91ddd97`) capped them
-  differently, with `cap_initial_augmentation_budget` (`K_0 = 16`, `M = 31,250` at d=80);
-  **decision needed** if the caption's values do not reproduce Table 2.
+  `K_0 = 25 1.3^d`, `M = 100 1.3^d` (3e10 clusters at d=80) and would fail. Group `lorenz_dims`
+  passes the sizes of the code that produced the table (`91ddd97`, `cap_initial_augmentation_budget`;
+  `cases.py` `lorenz_dims_sizes`): `M` lowered until 16 clusters of `2 M` points fit in `N_0`, then
+  `K_0` until `K_0` clusters do, so (`K_0`, `M`) = (92, 371), (250, 1,378), (26, 19,004),
+  (16, 31,250), (16, 31,250) at d = 5, 10, 20, 40, 80. These reproduce the table's `N_c` within 5%
+  and keep `e_in` under 1.1 tol at d = 10-40 (GH200 study, A40 GPU). The caption's caps
+  (`K_0 <= 1000`, `M <= 500`) do not: at d = 40 they give 130,969 leaves, `p_o` = 87% and
+  `e_in` = 0.203 against the table's 1,775, 0.3% and 0.061. The caption is listed for correction.
 - **Table 3, Figure 9, MPI**: not scripted; groups `rosen_weak`, `iterative`, `mpi`.
 - **Seeds**: the launcher has one seed (0); group `seeds` reruns the S-tier rows with seeds 1, 2
   (training/test data and `TrainingConfig.seed`) to measure the noise the verdicts use.
@@ -817,8 +826,9 @@ leaves.
 - **`p_o` depends on the candidate count** at every d (D1): compare it with the paper only at the
   paper's `kappa`, and read `p_o*` (`bisect/score.py`) for the coverage of the trust regions
   themselves.
-- **Paper-era settings unknown**: which `coarse_factor` and caps Table 2 used, and the Lorenz
-  horizon in the text. The study uses the script's and caption's values; decide if they fail.
+- **Paper-era settings**: Table 2's cluster sizes are the paper-era code's (they reproduce the
+  table; see "Gaps it fills"); its `coarse_factor` and the Lorenz horizon in the text are not
+  known, and the study uses the script's values.
 - **Lorenz-96** runs the same float64 integrator on either backend (`--lorenz-device` picks it).
 - **Batch-size dependence**: AFINNI's trees depend on the GPU batch cap; a 16 GB GPU and the
   paper's 96 GB H100 give statistically, not bitwise, equal trees.
@@ -856,15 +866,16 @@ leaves.
    should find the containing trust region exactly (a search bounded by `1 / sqrt(lambda_min(T))`
    instead of the `kappa` nearest centres), which makes `p_o` independent of `kappa`; a deliberate
    change of predictions (training unchanged).
-4. **Table 2 settings.** The caption's caps (`K_0 <= 1000`, `M <= 500`) versus the paper-era
-   code's `cap_initial_augmentation_budget` (`K_0` down to 16, `M` up to 31,250), and
-   `coarse_factor` 10 (script) versus `2 d^2` (text) for d up to 80. The study uses the caption
-   and the script; switch if Table 2 does not reproduce.
+4. **Table 2 settings: decided.** The paper-era code's sizes (`cap_initial_augmentation_budget`:
+   `K_0` down to 16, `M` up to 31,250), which reproduce the table; the caption's caps
+   (`K_0 <= 1000`, `M <= 500`) do not, and the caption is to be corrected in the paper text.
+   `coarse_factor` stays the script's 10 (the text says `2 d^2`).
 5. **Lorenz-96 flow map: decided.** The library's float64 ensemble integrator at rtol = atol =
    1e-6 on both backends replaces the paper's JAX float32 map (rtol 1e-3); JAX is no dependency.
 6. **Paper text vs code** (fix the text or the code): quadratic spectrum `i^-3` (text) vs `5^-i`
    (code); "rtol = atol in every experiment" vs Lorenz's absolute `tol * max|f|`; Figure 9's
-   isotropic Gaussian, wave domain `[-4, 4]` and Rosenbrock test distribution; the
-   typos and the Table 1b / Table 4 Lorenz mismatch listed above.
+   isotropic Gaussian, wave domain `[-4, 4]` and Rosenbrock test distribution; Table 2's caption,
+   whose `K_0 <= 1000`, `M <= 500` are not the sizes the table was run with; the typos and the
+   Table 1b / Table 4 Lorenz mismatch listed above.
 7. **Pass thresholds.** The 25% noise floor, `1.1 tol` for A1, and the B-check bands are my
    proposals; adjust them before reading the results as final.

@@ -83,3 +83,11 @@
   ]
   body
 }
+
+// Everything after `#show: appendix` is an appendix: its sections are lettered (A, A.1) and
+// referred to as "Appendix A".
+#let appendix(body) = {
+  counter(heading).update(0)
+  set heading(numbering: "A.1", supplement: [Appendix])
+  body
+}

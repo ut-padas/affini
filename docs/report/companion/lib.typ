@@ -7,7 +7,7 @@
 // See README.md for every primitive and how they combine.
 
 #import "src/theme.typ": default-theme, theme
-#import "src/report.typ": report
+#import "src/report.typ": appendix, report
 #import "src/environments.typ": (
   algorithm, callout, definition, implementation, invariant, lemma, note, pitfall, proof,
   proposition, theorem,

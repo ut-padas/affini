@@ -108,6 +108,11 @@ Pseudocode is data, so one algorithm can be drawn in full and again in focus:
 #takeaway[The idea in one line.]
 ```
 
+### Appendices
+
+`#show: appendix` makes every later section an appendix: lettered (A, A.1) and referred to as
+"Appendix A". Place it after the main text, before or after the bibliography.
+
 ## Theme
 
 `default-theme` (in `src/theme.typ`) names every colour the primitives use: `accent`,

@@ -289,7 +289,8 @@ How it is built:
 
 - Typst 0.15 (a system install, not from `uv`); fletcher is fetched from `@preview` on the
   first compile. `make report-figures` writes the panels and `example.json`, then `make report`
-  the PDF. Commit the sources, the SVGs, `example.json`, `steal_run.json` and the PDF together.
+  the PDF. Commit the sources, the SVGs, `example.json`, `steal_run.json`, `manuscript.json` and
+  the PDF together.
 - `docs/report/companion/` is a copy of the standalone Typst package `companion` (read its
   README). A generic building block goes in the package; anything about AFINNI or ART stays in
   `adaptive-surrogates.typ`.
@@ -299,6 +300,13 @@ How it is built:
   they match the library. Small schematics are fletcher diagrams in the `.typ`.
 - Every number the text quotes, and every panel colour, comes from `figures/example.json`
   (`#ex.compare.afinni.leaves`); none is typed into the prose.
+- The appendix shows each manuscript table as printed beside the same table as committed records
+  re-measure it. `make report-tables RECORD="<main record> [<supplementary record> ...]"` writes
+  them to `figures/manuscript.json` (`figures/manuscript_tables.py`, from `paper_values.py` and
+  the records, a later record replacing an earlier one's values); without a record every re-run
+  cell is "–". Where the re-run's settings differ from the manuscript's text, the table says so in
+  a note above it. A new record, or a new transcribed table, regenerates it and the PDF in the same
+  change.
 - The work-stealing panels show one recorded run (`figures/steal_run.json`), because steal
   timing differs between runs. `make report-steals` records it again and checks that the tree
   equals the one built without stealing. Everything else is byte-identical between runs: a fixed

@@ -90,13 +90,46 @@ _WAVE_EXACT = [
     (0.005, (368482, 57.8, 3.55e-3, 7.01e-2), (42626, 16.9, 2.75e-3, 1.60e-2)),
 ]
 
-# Table 4 (comparison.tex, tab:other_surrogates): the AFINNI rows only; the other methods
-# (Forest, GPR, Kernel, NN, SG) need libraries this repository does not ship.
-_COMPARISON = [
-    (1, ROSEN, 2, 0.05, 7.5e2, 1.6e-2),
-    (9, ROSEN, 5, 0.05, 1.0e5, 4.0e-2),
-    (18, LORENZ, 5, 0.05, 7.8e2, 1.9e-2),
-]
+# Table 4 (comparison.tex, tab:other_surrogates), inference on 50,000 uniform points: row, problem, d,
+# method, N_c, e, inference time (s). "NN Uni." / "NN AF." train the network on uniform / AFINNI points.
+_OTHER_SURROGATES = [
+    (1, ROSEN, 2, "AFINNI", 7.5e2, 1.6e-2, 3e-2), (2, ROSEN, 2, "Forest", 2.6e5, 1.8e-2, 8e-2),
+    (3, ROSEN, 2, "GPR", 7.5e2, 1.2e-1, 6e-2), (4, ROSEN, 2, "GPR", 6.0e4, 1.5e-2, 7e-1),
+    (5, ROSEN, 2, "Kernel", 7.5e2, 1.1e-2, 2e-1), (6, ROSEN, 2, "NN Uni.", 1.7e5, 1.8e-1, 9e-2),
+    (7, ROSEN, 2, "NN AF.", 7.8e2, 1.3e-2, 9e-2), (8, ROSEN, 2, "SG", 2.7e2, 1.3e-3, 2e-2),
+    (9, ROSEN, 5, "AFINNI", 1.0e5, 4.0e-2, 3e-2), (10, ROSEN, 5, "Forest", 9.8e6, 5.2e-2, 2e0),
+    (11, ROSEN, 5, "GPR", 3.0e4, 7.9e-2, 3e-1), (12, ROSEN, 5, "GPR", 6.0e4, 5.7e-2, 7e-1),
+    (13, ROSEN, 5, "Kernel", 5.0e4, 4.5e-2, 3e-1), (14, ROSEN, 5, "Kernel", 1.0e5, 4.5e-2, 3e-1),
+    (15, ROSEN, 5, "NN Uni.", 3.7e7, 4.5e0, 1e-1), (16, ROSEN, 5, "NN AF.", 1.0e5, 3.1e-2, 1e-1),
+    (17, ROSEN, 5, "SG", 2.0e3, 1.6e-3, 2e-1), (18, LORENZ, 5, "AFINNI", 7.8e2, 1.9e-2, 1e-2),
+    (19, LORENZ, 5, "Forest", 1.0e5, 4.3e-2, 1e-1), (20, LORENZ, 5, "GPR", 7.8e2, 5.8e-2, 1e-1),
+    (21, LORENZ, 5, "Kernel", 7.8e2, 4.8e-3, 2e-1), (22, LORENZ, 5, "SG", 5.1e3, 1.4e-3, 5e-1),
+]  # fmt: skip
+# Its AFINNI rows, the only ones re-run: the other methods need libraries this repository does not
+# ship. rtol 0.05, from the text.
+_COMPARISON = [(row, problem, d, 0.05, Nc, e) for row, problem, d, method, Nc, e, _ in _OTHER_SURROGATES
+               if method == "AFINNI"]  # fmt: skip
+
+# Table 5 (scalability.tex, tab:run_progression), Rosenbrock d = 10 on a GH200, not in the re-run
+# matrix: level, clusters, points (millions), time (s), device and host memory (GB). Level 11 is the
+# peak the table marks in bold.
+_RUN_PROGRESSION = [
+    (0, 344, 0.69, 0.29, 2.3, 24.5), (5, 11_000, 20.20, 3.86, 10.1, 44.3),
+    (8, 73_086, 106.70, 23.26, 52.5, 127.1), (11, 189_954, 184.10, 62.97, 99.8, 220.6),
+    (14, 158_058, 119.20, 43.42, 97.2, 219.4), (17, 75_224, 50.90, 23.25, 98.4, 197.7),
+    (35, 2, 0.00, 0.15, 90.9, 184.0),
+]  # fmt: skip
+RUN_PROGRESSION_PEAK_LEVEL = 11
+
+# Table 6 (scalability.tex, tab:mpi_scaling_results), Rosenbrock d = 5 at rtol 5E-3 on Grace CPU
+# ranks: ranks P, N_0, static and dynamic (work stealing) time (s), speedup. P >= 256 is the table's
+# "scale-out (weak scaling)" part.
+_MPI_SCALING = [
+    (1, 1e5, 1520.0, 1480.0, 1.02), (2, 1e5, 981.0, 887.0, 1.11), (4, 1e5, 594.0, 396.0, 1.50),
+    (8, 1e5, 318.0, 256.0, 1.24), (16, 1e5, 277.0, 173.0, 1.60), (32, 1e5, 213.0, 135.0, 1.58),
+    (64, 1e5, 115.0, 71.2, 1.62), (128, 1e5, 73.0, 67.5, 1.08), (256, 1e5, 71.2, 63.5, 1.12),
+    (512, 1e6, 102.0, 76.0, 1.34), (1024, 1e7, 216.0, 133.0, 1.62),
+]  # fmt: skip
 
 # Section "Scaling with tolerance" (scalability.tex, fig:runtime_scalability_vs_rtol and
 # fig:predict_scalability_vs_rtol): Rosenbrock d = 5 on one GH200; speed, informational only.

@@ -5,7 +5,7 @@ Prints tab-separated lines ``case_id  group  tier  nprocs  seed  kind  args...``
 `run_paper.sh` executes: ``kind`` is ``launcher`` (args go to ``afinni_launcher.py`` through
 `run_case.py`) or ``iterative`` (args go to `run_iterative.py`). Settings follow
 ``run_paper_experiments.sh`` where it has the experiment, and the manuscript's text where it does
-not (Table 2's capped cluster sizes, Table 3, the e_nh column, the iterative-refinement figure,
+not (Table 2's cluster sizes, Table 3, the e_nh column, the iterative-refinement figure,
 MPI). Tiers bound the cost by the paper's evaluation count N: S <= 1e7 (minutes on one GPU,
 a few GB), M <= 1e8 (up to about an hour, tens of GB of host RAM), L above (an HPC node with
 >= 128 GB of host RAM; the paper used a GH200 with 480 GB).
@@ -34,6 +34,21 @@ def coarse_factor(d: int) -> int:
 
 
 COARSE = {d: coarse_factor(d) for d in (2, 5, 10)}
+
+
+def lorenz_dims_sizes(d: int) -> tuple[int, int, int]:
+    """
+    Table 2's (N_0, K_0, M) at dimension d, as the code that produced the table set them
+    (91ddd97, cap_initial_augmentation_budget with its 16-cluster floor): N_0 = min(5e4 1.3^d, 1e6),
+    then M = 100 1.3^d is lowered until 16 clusters of 2 M points fit in N_0, and K_0 = 25 1.3^d
+    until K_0 clusters do. These reproduce the table's N_c within 5% at d = 10, 20 and 40; the
+    caption's K_0 = min(25 1.3^d, 1000), M = min(100 1.3^d, 500) gives about 77x the leaves and
+    87% p_o at d = 40.
+    """
+    n0 = min(int(5e4 * 1.3**d), 10**6)
+    m = min(int(100 * 1.3**d), max(2, n0 // (2 * 16)))
+    k0 = min(int(25 * 1.3**d), max(1, n0 // (2 * m)))
+    return n0, k0, m
 
 
 def tier(evaluations: float) -> str:
@@ -69,8 +84,7 @@ def full_matrix(seeds: list[int], nps: list[int]) -> list[tuple]:
                     rows.append((f"seed{s}_{name}", "seeds", "S", 1, s, "launcher",
                                  launcher_args(problem, d, "affine_cov_hess", COARSE[d], [tol])))  # fmt: skip
     for _row, d, N, *_ in _LORENZ_DIMS:
-        # Table 2's caption: N_0 = min(5e4 1.3^d, 1e6), K_0 = min(25 1.3^d, 1000), M = min(100 1.3^d, 500).
-        n0, k0, m = min(int(5e4 * 1.3**d), 10**6), min(int(25 * 1.3**d), 1000), min(int(100 * 1.3**d), 500)
+        n0, k0, m = lorenz_dims_sizes(d)
         rows.append((f"lorenz_dims_d{d}", "lorenz_dims", tier(N), 1, 0, "launcher", launcher_args(
             "lorenz96_dt_0.1", d, "affine_cov_hess", 10, [0.1],
             ["--N_train", str(n0), "--num_initial_clusters", str(k0), "--min_pts_per_cluster", str(m)])))  # fmt: skip

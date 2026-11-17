@@ -2119,3 +2119,106 @@ the stages above to the modules of `src/`, and `docs/AFINNI_ART_DESIGN.md` recor
 design decisions behind them.
 
 #bibliography("references.yml", title: [References])
+
+#show: appendix
+#pagebreak(weak: true)
+
+= The manuscript's tables, re-run <sec:manuscript-tables>
+
+// Written by figures/manuscript_tables.py: the manuscript's numbers from
+// studies/convergence/paper/paper_values.py, the re-run's from a committed record of
+// studies/convergence/paper/run_manuscript.sh.
+#let ms = json("figures/manuscript.json")
+#let ms-cell(r, c) = if r.at("strong", default: false) { strong(c) } else { c }
+// The re-run side names the records its values come from (a supplementary record can replace the
+// main one's values for a few groups).
+#let ms-side-head(t) = (
+  [manuscript],
+  if t.sources.len() == 0 [re-run (none recorded)] else [re-run (#t.sources.map(i => {
+    let r = ms.records.at(i)
+    [#r.machine, #raw(r.commit)]
+  }).join("; "))],
+)
+// One table per manuscript table: its columns once for the manuscript and once for the re-run,
+// side by side in one grid, so that a row's two versions stay on one line and the table breaks
+// across pages as a whole; both sides share the column widths. A table too wide for that is
+// shown twice, the re-run below.
+#let ms-table(t) = {
+  let n = t.header.len()
+  let head = t.header.map(h => eval(h, mode: "markup"))
+  let groups = t.at("groups", default: ())
+  let line(r) = if "group" in r {
+    (table.cell(colspan: n, align: left, eval(r.group, mode: "markup")),)
+  } else {
+    r.cells.map(c => ms-cell(r, c))
+  }
+  block(above: 1.4em, below: 0.6em, sticky: true)[
+    #text(9pt)[#strong(t.title) #h(0.5em) #text(fill: luma(110), raw(t.label))]
+  ]
+  if "note" in t {
+    block(sticky: true, implementation(title: [How the re-run differs], text(9pt, eval(t.note, mode: "markup"))))
+  }
+  layout(size => {
+    // Widths at 8pt; a table slightly too wide for both sides gets a smaller type, down to 6.8pt.
+    let rows = (t.paper + t.rerun).filter(r => "cells" in r)
+    let natural = range(n).map(i => calc.max(
+      measure(text(8pt, head.at(i))).width,
+      ..rows.map(r => measure(text(8pt, ms-cell(r, r.cells.at(i)))).width),
+    ))
+    let pad = 6pt
+    let gap = 14pt
+    let scale = calc.min(1.0, (size.width - gap - 2 * n * pad) / (2 * natural.sum()))
+    let side-by-side = scale >= 0.85
+    let s = if side-by-side { scale } else { 1.0 }
+    let widths = natural.map(w => w * s + pad)
+    let grid-of(sides) = {
+      let k = sides.len()
+      let cols = if k == 2 { widths + (gap,) + widths } else { widths }
+      let joined(parts) = if k == 2 { parts.at(0) + ([],) + parts.at(1) } else { parts.at(0) }
+      set text(8pt * s)
+      table(
+        columns: cols,
+        inset: (x: 3pt, y: 2.6pt),
+        align: center + horizon,
+        stroke: (x, y) => if k == 2 and x == n { none } else if y <= 1 + int(groups.len() > 0) {
+          (bottom: 0.6pt)
+        } else { (bottom: 0.3pt + luma(205)) },
+        table.header(
+          ..joined(sides.map(side => (table.cell(colspan: n, text(9pt, ms-side-head(t).at(if side == "paper" { 0 } else { 1 }))),))),
+          ..if groups.len() > 0 { joined(sides.map(_ => groups.map(((g, span)) => table.cell(colspan: span, g)))) },
+          ..joined(sides.map(_ => head)),
+        ),
+        ..range(t.paper.len()).map(i => joined(sides.map(side => line(t.at(side).at(i))))).flatten(),
+      )
+    }
+    if side-by-side { grid-of(("paper", "rerun")) } else {
+      grid-of(("paper",))
+      v(0.4em)
+      grid-of(("rerun",))
+    }
+  })
+  block(above: 0.5em, below: 1.2em, text(8.5pt, eval(t.caption, mode: "markup")))
+}
+
+Every table of the AFINNI manuscript @manuscript, on the left as the manuscript prints it and on
+the right with the numbers this code measures when it re-runs the same experiments
+(`studies/convergence/paper/run_manuscript.sh`, described in `CONVERGENCE_STUDY.md`). Both sides use
+one format per column, so a cell can be compared digit by digit with the one beside it. A re-run
+value is the seed-0 run's; a "–" is a number the re-run does not have: an experiment outside the
+re-run matrix, a case that has not run or did not finish, or a quantity the case does not record.
+#if ms.records.len() == 0 [
+  No re-run has been recorded yet, so every re-run cell is "–".
+] else [
+  The re-run numbers come from the records #ms.records.map(r => [`studies/convergence/results/#r.name/`
+  (commit #raw(r.commit), recorded on #r.recorded on a #r.machine, #r.gpu_runs runs on the GPU)]).join([; ]),
+  a later one replacing an earlier one's values for the cases it holds; each table names the records
+  behind its re-run side. A record's `RESULTS.md` gives the machine, the libraries and the run
+  settings, and its `manuscript_results.csv` the seed replicates' range of every number.
+]
+
+#for t in ms.tables { ms-table(t) }
+
+The manuscript's values are printed as it prints them, typos included. The inconsistencies found
+between its tables are:
+
+#text(9pt)[#for n in ms.notes [- #n \ ]]
