@@ -171,6 +171,7 @@ def test_surrogate_plots_render_from_a_trained_model(tmp_path):
 
 def test_error_summary_renders_one_or_several_results(tmp_path):
     """From metrics as the launcher stores them; results without the histogram keep the other panels."""
+    from src import xp
     from src.surrogate import compute_error_metrics
 
     rng = np.random.default_rng(0)
@@ -179,7 +180,7 @@ def test_error_summary_renders_one_or_several_results(tmp_path):
         gt = rng.normal(size=(5_000, 1))
         pred = gt + rng.normal(scale=0.01 * d, size=gt.shape)
         mask = rng.uniform(size=5_000) < 0.02
-        m = compute_error_metrics(pred, gt, mask, atol=0.05, rtol=0.05)
+        m = compute_error_metrics(xp.asarray(pred), xp.asarray(gt), xp.asarray(mask), atol=0.05, rtol=0.05)
         results.append({"dim": d, "atol": 0.05, "rtol": 0.05, "N_c": 10 * d, "N": 1_000 * d,
                         "perct_out_exact": m["perct_out"] / 2, "error_metrics": m})  # fmt: skip
     old = {**results[0], "error_metrics": {k: v for k, v in results[0]["error_metrics"].items() if k != "tolerance_ratio"}}
