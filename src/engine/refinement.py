@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 
 import numpy as np
+import psutil
 
 from src import IS_CUPY_BACKEND, xp
 from src.afinni import AFINNIPlan
@@ -150,10 +151,16 @@ def _refine_level(run: _Refinement, queue: ClusterBatch, level: int) -> ClusterB
     profiler.level, profiler.batch = int(level), None
     if config.log_mem_stats:
         log_mem_stats(f"R{rank:02} Start: L{level:02}")
+    # Memory as the level starts: the process's resident set and, on CuPy, the bytes the memory
+    # pool has handed out. Both are bookkeeping reads (no device synchronization), so they cost
+    # nothing measurable per level.
     level_stats.append({
         "rank": rank, "level": int(level), "clusters_start": int(num_clusters),
+        "points_start": int(np.sum(queue.counts)),
         "size_min": int(float(np.min(queue.counts))), "size_mean": float(np.mean(queue.counts)),
         "size_median": int(float(np.median(queue.counts))), "size_max": int(float(np.max(queue.counts))),
+        "host_rss_gib": psutil.Process().memory_info().rss / 2**30,
+        "device_pool_gib": xp.get_default_memory_pool().used_bytes() / 2**30 if IS_CUPY_BACKEND else 0.0,
         "t_start": profiler.now(),
     })  # fmt: skip
 

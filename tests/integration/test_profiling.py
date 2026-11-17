@@ -143,6 +143,8 @@ def test_profiling_off_by_default_records_levels_only():
     ps = s.profiling_stats
     assert all("events" not in r for r in ps["per_rank"])
     assert ps["level_stats"] and all("t_start" in e and "t_end" in e for e in ps["level_stats"])
+    # each level records its points and memory as it starts
+    assert all(e["points_start"] >= e["clusters_start"] and e["host_rss_gib"] > 0 for e in ps["level_stats"])
     assert sum(e["good_clusters"] for e in ps["level_stats"]) == s.N_src
     assert all(ps[p.key] == 0.0 for p in PHASES)
 
