@@ -28,7 +28,7 @@ EXPERIMENT = {
 # passes it (50 / 50 / 200). The paper-era code (91ddd97) reproduces Wave rows #38-39 (N, N_c, p_o,
 # e_in, e) to the printed digits with 50 at d = 2, and with 10 gives 24-42x the printed p_o
 # (CONVERGENCE_STUDY.md, "Where the differences come from"). Group conv_k10 reruns the d = 2 rows
-# with 10. Table 2 (Lorenz-96 up to d = 80) and the exact-gradient Wave runs keep the launcher's 10.
+# with 10. Table 2 (Lorenz-96 up to d = 80) keeps the launcher's 10.
 def coarse_factor(d: int) -> int:
     return max(50, 2 * d * d)
 
@@ -94,9 +94,12 @@ def full_matrix(seeds: list[int], nps: list[int]) -> list[tuple]:
             "rosenbrock", 5, "affine_cov_hess", 50, None,
             ["--atols", str(atol), "--rtols", "none", "--N_train", str(n0)])))  # fmt: skip
     for tol, _lsq, (nc, *_rest) in _WAVE_EXACT:
-        # run_paper_experiments.sh runs this with the launcher's default coarse_factor (10).
+        # Figure 8 sets these beside its LSQ column, which is Table 1b's Wave d = 5 runs, so they get
+        # the same coarse_factor (50). run_paper_experiments.sh ran them with the launcher's 10, at
+        # which the candidates miss the containing leaf of most flagged points (p_o 5-43% against an
+        # exact 0.2-1.2%); training does not depend on it.
         rows.append((f"wave_exact_tol{tol}", "wave_exact", tier(370 * nc), 1, 0, "launcher",
-                     launcher_args("wave", 5, "affine_cov_hess_exact_grad", 10, [tol])))  # fmt: skip
+                     launcher_args("wave", 5, "affine_cov_hess_exact_grad", COARSE[5], [tol])))  # fmt: skip
     for fn in ("gaussian", "quadratic", "rosenbrock", "wave"):
         rows.append((f"iterative_{fn}_d2", "iterative", "S", 1, 0, "iterative",
                      ["--function", fn, "--dimension", "2", "--tol", "0.05", "--n-iter", "10"]))  # fmt: skip
