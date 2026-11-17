@@ -1,18 +1,18 @@
 """
-Run one side of ``scripts/art_comparison.py`` (the reference ART or AFINNI's ART) and save its
+Run one side of ``scripts/art_comparison.py`` (the reference ART or this library's ART) and save its
 result as JSON.
 
 Usage (from the AFINNI root, PYTHONPATH=.)::
 
     AFINNI_DEVICE=cpu AFINNI_MPI=off python studies/convergence/art/run_art_case.py \\
-        --side art|afinni --art-path ../Adaptive-Regression-Trees-ART- --out-json R.json \\
+        --side reference|library --art-path ../Adaptive-Regression-Trees-ART- --out-json R.json \\
         -- --benchmark rosenbrock --dimension 2 --offset 1 --error-tolerance 0.05 --max-depth 20
 
 Everything after ``--`` goes to art_comparison.py unchanged (its own flags and the reference's
 benchmark flags), so both sides of a case see the same target, domain, test set and settings.
 The comparison's summary is extended with the reference evaluator's RMSE, maximum absolute
 error and full pointwise-relative quantiles; the JSON also records the wall time, rank 0's peak
-resident memory, the device and the MPI size. AFINNI's side may run under mpiexec; rank 0 writes.
+resident memory, the device and the MPI size. This library's side may run under mpiexec; rank 0 writes.
 An existing ``--out-json`` is not rerun.
 """
 
@@ -68,10 +68,10 @@ def load_art_comparison():
 def main() -> None:
     argv = sys.argv[1:]
     if "--" not in argv:
-        raise SystemExit("usage: run_art_case.py --side art|afinni --art-path P --out-json F -- <art_comparison args>")
+        raise SystemExit("usage: run_art_case.py --side reference|library --art-path P --out-json F -- <art_comparison args>")
     split = argv.index("--")
     own = argparse.ArgumentParser()
-    own.add_argument("--side", choices=("art", "afinni"), required=True)
+    own.add_argument("--side", choices=("reference", "library"), required=True)
     own.add_argument("--art-path", type=Path, required=True)
     own.add_argument("--out-json", type=Path, required=True)
     own.add_argument("--case", default=None)
@@ -84,7 +84,7 @@ def main() -> None:
     from src.infra.backend import MPI
 
     rank, size = MPI.COMM_WORLD.Get_rank(), MPI.COMM_WORLD.Get_size()
-    skip = "--skip-afinni" if mine.side == "art" else "--skip-art"
+    skip = "--skip-library" if mine.side == "reference" else "--skip-reference"
     sys.argv = ["art_comparison.py", "--art-path", str(mine.art_path), skip, *argv[split + 1 :]]
     tee = _Tee(sys.stdout)
     t = time.perf_counter()
@@ -102,7 +102,7 @@ def main() -> None:
     record = {
         "case": mine.case, "side": mine.side, "argv": argv[split + 1 :], "result": compare[0],
         "config": config[0] if config else None, "wall_s": wall, "mpi_size": size,
-        "afinni_gpu": bool(IS_CUPY_BACKEND), "peak_rss_gib_rank0": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20,
+        "library_gpu": bool(IS_CUPY_BACKEND), "peak_rss_gib_rank0": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20,
         "env": {k: os.environ.get(k) for k in ("AFINNI_DEVICE", "AFINNI_MPI", "OMP_NUM_THREADS", "NUMBA_NUM_THREADS")},
     }  # fmt: skip
     mine.out_json.parent.mkdir(parents=True, exist_ok=True)

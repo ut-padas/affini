@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Part B: the reference ART vs AFINNI's ART on the reference's problems (CONVERGENCE_STUDY.md, Part B).
+# Part B: the reference ART vs this library's ART on the reference's problems (CONVERGENCE_STUDY.md, Part B).
 #
 #   studies/convergence/art/run_art.sh [--smoke] [--device cpu|gpu] [--ref-device cpu|gpu]
 #       [--ref-sampler hit_and_run|parallel_numba] [--max-tier S|M|L]
-#       [--groups conv,afinni_default,depth,exact_target,mpi,repeat,gpu_vs_cpu] [--seeds 1,2,3]
+#       [--groups conv,library_default,depth,exact_target,mpi,repeat,gpu_vs_cpu] [--seeds 1,2,3]
 #       [--nps 1,2,4] [--only CASE_REGEX] [--no-exact] [--out DIR] [--dry-run]
 #
-# Defaults: --device gpu (cpu with --smoke) for AFINNI's side; --ref-device cpu; the reference's
+# Defaults: --device gpu (cpu with --smoke) for this library's side; --ref-device cpu; the reference's
 # default sampler (hit_and_run); --max-tier S. --ref-device gpu runs the reference with its
 # fastest GPU configuration (--traversal bfs --optimizer cupy_batched_cholesky; sampling, oracle
 # and leaf fits stay on its CPU). Results: $OUT/results/<group>/<case>.<side>.json, logs in
@@ -56,7 +56,7 @@ if [[ $DRY == 0 ]]; then
     record_provenance "$OUT"
     echo "reference: device=$REF_DEVICE extra=${REF_ARGS[*]:-none}" >>"$OUT/provenance.txt"
 fi
-log "Part B -> $OUT (AFINNI's ART on $DEVICE, reference on $REF_DEVICE ${REF_ARGS[*]:-}, max tier $MAX_TIER, smoke=$SMOKE)"
+log "Part B -> $OUT (this library's ART on $DEVICE, reference on $REF_DEVICE ${REF_ARGS[*]:-}, max tier $MAX_TIER, smoke=$SMOKE)"
 
 if [[ $EXACT == 1 && $DRY == 0 ]]; then
     exact_args=(--art-path "$ART_ROOT" --out-json "$OUT/results/exact_checks.json")
@@ -74,7 +74,7 @@ while IFS=$'\t' read -r case_id group tier side np device out_json args_rest; do
     dev="$DEVICE"
     [[ "$device" == cpu ]] && dev=cpu
     extra=()
-    [[ "$side" == art ]] && { dev=cpu; extra=("${REF_ARGS[@]}"); }  # the reference ignores AFINNI_DEVICE
+    [[ "$side" == reference ]] && { dev=cpu; extra=("${REF_ARGS[@]}"); }  # the reference ignores AFINNI_DEVICE
     name="$(basename "$out_json" .json)"
     cmd=("$PYTHON" "$STUDY_DIR/art/run_art_case.py" --side "$side" --art-path "$ART_ROOT"
          --out-json "$OUT/results/$out_json" --case "$case_id" -- "${args[@]}" "${extra[@]}")

@@ -336,7 +336,7 @@ regression to investigate; counts that differ while A1-A5 pass are consistent wi
 
 ---
 
-## Part B: the reference ART vs AFINNI's ART
+## Part B: the reference ART vs this library's ART
 
 ### What the reference repository contains (`854924a`)
 
@@ -367,7 +367,7 @@ regression to investigate; counts that differ while A1-A5 pass are consistent wi
 
 `scripts/art_comparison.py` still works with this commit (checked here on 7 problems, both sides).
 It builds the reference's target, domain and test set once and scores both codes with the
-reference's evaluator; AFINNI's ART gets affine (`affine_lsq`) or quadratic (`quadratic_lsq`)
+reference's evaluator; this library's ART gets affine (`affine_lsq`) or quadratic (`quadratic_lsq`)
 leaves, the pointwise relative rule with floor 1e-12, `--max-depth` levels, multiplier 50, a box
 root with `ceil(50 (d+1))` uniform points and the soft split search. `run_art_case.py` imports it,
 runs one side per process (so each side can have its own device, timeout and done-marker) and
@@ -394,17 +394,17 @@ tree's random numbers and, for quadratic/Gaussian, the rotation; both codes alwa
 instance, so comparisons are paired). Matched settings: same target, domain, test set, seed,
 leaf degree, tolerance semantics (max pointwise relative error on the node's samples, floor
 1e-12), max depth, sample multiplier 50 (`n = ceil(50 p)` points per node), soft-oblique split
-search with the same 200-iteration cap (`--afinni-soft-iters 200`). Groups:
+search with the same 200-iteration cap (`--library-soft-iters 200`). Groups:
 
 | Group | Runs | Purpose |
 |---|---|---|
 | `conv` | 130 (problem, d, degree, tol) cells x 3 seeds = 390 runs per code (S 300, M 60, L 30) | the convergence curves |
-| `afinni_default` | AFINNI side only, seed 1, its default 40 soft iterations | the shipped default against the same reference runs |
+| `library_default` | this library's side only, seed 1, its default 40 soft iterations | the shipped default against the same reference runs |
 | `depth` | spherical piecewise, 4 d x 6 depths x 3 seeds x 2 codes | a discontinuous target: convergence of the share above tol with depth |
 | `exact_target` | quadratic leaves on the quadratic, d=2, 3, 5 | must stop at the root, error ~ 1e-10 |
-| `mpi` | AFINNI's ART, Rosenbrock d=3, P = 1, 2, 4 with stealing | identical tree on any rank count |
+| `mpi` | this library's ART, Rosenbrock d=3, P = 1, 2, 4 with stealing | identical tree on any rank count |
 | `repeat` | two cases rerun, both codes | run-to-run determinism of each code |
-| `gpu_vs_cpu` | 3 AFINNI cases also on the CPU (only with `--device gpu`) | GPU vs CPU agreement |
+| `gpu_vs_cpu` | 3 cases of this library's ART also on the CPU (only with `--device gpu`) | GPU vs CPU agreement |
 
 Plus `exact_checks.py` (always run first), see below. Recorded per run: leaves, oracle queries,
 depth, test relative L2, RMSE, max absolute error, max / median / q95 / q99 pointwise relative
@@ -413,10 +413,10 @@ build and wall time, peak RSS.
 
 **Cost.** The reference on the CPU is the slow side (one core for the default `hit_and_run`
 sampler and `cpu` optimizer, DFS). Measured here (CPU, d = 2): about 50 ms per reference leaf
-(quadratic d=2, tol 0.02: 134 leaves in 7.1 s; AFINNI's ART 127 leaves in 3.3 s), under 0.3 GB
+(quadratic d=2, tol 0.02: 134 leaves in 7.1 s; this library's ART 127 leaves in 3.3 s), under 0.3 GB
 per run. Rosenbrock d=3 at tol 0.05, depth 20 had not finished after 11 minutes on one core
 (it was stopped when the session ended): M and L cells take hours on the reference's CPU path. Use `--ref-sampler parallel_numba` (threads)
-on CPU nodes and `--ref-device gpu` (BFS + `cupy_batched_cholesky`) on the GPU machine; AFINNI's
+on CPU nodes and `--ref-device gpu` (BFS + `cupy_batched_cholesky`) on the GPU machine; this library's
 ART is GPU-batched (`--device gpu`). Memory stays small (< 2 GB) except d=8 plane waves and
 L-tier Rastrigin. Run `--max-tier S` first; `OUT/report/runs.csv` has `build_s`, `wall_s` and
 `peak_rss_gib` per run for extrapolation (time roughly proportional to leaves).
@@ -424,36 +424,36 @@ L-tier Rastrigin. Run `--max-tier S` first; `OUT/report/runs.csv` has `build_s`,
 ### What differences are expected, and what would indicate a bug
 
 Expected (not bugs): different trees and leaf counts (different random generators: the reference
-uses per-node `default_rng` seeds, AFINNI's ART counter-based streams keyed by node; the
-reference tunes a temperature per node from nearest-neighbour distances, AFINNI's ART uses 0.1 x
-the std of the node's scores; AFINNI starts the soft search from a covariance-Hessian/bins
+uses per-node `default_rng` seeds, this library's ART counter-based streams keyed by node; the
+reference tunes a temperature per node from nearest-neighbour distances, this library's ART uses 0.1 x
+the std of the node's scores; this library's ART starts the soft search from a covariance-Hessian/bins
 direction; side-size rules differ: `min_side_fraction 0.05` vs `p + min_side_margin`); evaluation
-counts that include AFINNI's centroid evaluations (one per split node with the covariance-Hessian
+counts that include this library's centroid evaluations (one per split node with the covariance-Hessian
 split); a non-zero share of test points above the tolerance in *both* codes (the stopping test
 is on the node's samples, not a certificate); depth-limited leaves on the spherical interface in
 both codes; timings.
 
-AFINNI's leaf fits are regularized and the reference's are not: `affine_lsq` adds Tikhonov
+This library's leaf fits are regularized and the reference's are not: `affine_lsq` adds Tikhonov
 `1e-8 * trace` of the node's scatter matrix, `quadratic_lsq` a ridge of `1e-10` of the Gram's
 mean diagonal. On a cube this biases the fit by about 1e-8 relative (harmless), but it grows like
 `1e-8 * aspect^2` on thin nodes, and repeated parallel cuts make thin nodes (plane waves,
 Rosenbrock's valley). The thin-box check below shows the effect. A systematic accuracy gap that
 grows at tight tolerances on those problems would trace to it.
 
-Indicators of a bug in AFINNI's ART (the checks of `collect_art.py`; medians over seeds):
+Indicators of a bug in this library's ART (the checks of `collect_art.py`; medians over seeds):
 
 | Check | Criterion |
 |---|---|
-| B1 | share of test points above tol (AFINNI) `<= max(2 x reference, reference + 0.5%)`; B1b: AFINNI `q99 > 1.2 tol` where the reference has `q99 <= tol` |
-| B2 | leaves AFINNI / reference in [0.5, 2] (WARN), [1/3, 3] (FAIL outside) at equal tolerance |
-| B3 | slopes of log(rel L2) and log(q99) vs log(leaves) agree: `|s_AFINNI - s_ref| <= 2 sqrt(se_A^2 + se_R^2) + 0.15`; both are also listed beside the theory `-(k+1)/d` (`-(k+1)` for the rank-1 plane wave) |
-| B4 | relative L2 at the same leaf count (each code's fit, at the reference's median leaf count) AFINNI / reference `<= 2` (FAIL above, WARN below 0.5) |
-| B5 | depth-limited leaf share AFINNI `<=` reference + 5% |
+| B1 | share of test points above tol (this library) `<= max(2 x reference, reference + 0.5%)`; B1b: this library's `q99 > 1.2 tol` where the reference has `q99 <= tol` |
+| B2 | leaves this library / reference in [0.5, 2] (WARN), [1/3, 3] (FAIL outside) at equal tolerance |
+| B3 | slopes of log(rel L2) and log(q99) vs log(leaves) agree: `|s_lib - s_ref| <= 2 sqrt(se_lib^2 + se_ref^2) + 0.15`; both are also listed beside the theory `-(k+1)/d` (`-(k+1)` for the rank-1 plane wave) |
+| B4 | relative L2 at the same leaf count (each code's fit, at the reference's median leaf count) this library / reference `<= 2` (FAIL above, WARN below 0.5) |
+| B5 | depth-limited leaf share of this library `<=` reference + 5% |
 | B6 | exact sub-tests (below) and `exact_target`: 1 leaf, max relative error `<= 1e-6` |
-| B7 | AFINNI's ART: identical leaves, evaluations and every metric on 1, 2, 4 ranks with stealing |
-| B8 | each code reproduces its own run (same seed); B8b AFINNI GPU vs CPU: same leaves and evaluations, errors within 1e-8 (WARN if only the errors differ) |
+| B7 | this library's ART: identical leaves, evaluations and every metric on 1, 2, 4 ranks with stealing |
+| B8 | each code reproduces its own run (same seed); B8b this library's ART GPU vs CPU: same leaves and evaluations, errors within 1e-8 (WARN if only the errors differ) |
 
-A failure of B1, B3 or B4 with B2 in range means AFINNI's ART converges, but to the wrong
+A failure of B1, B3 or B4 with B2 in range means this library's ART converges, but to the wrong
 accuracy or at the wrong rate; B2 alone out of range with B1, B3, B4 passing means a different
 but equally accurate cost (a split-search difference, worth reporting, not a correctness bug).
 
@@ -464,10 +464,10 @@ no 1-D or axis-aligned case removes that (both codes still search splits stochas
 tests are exact:
 
 1. **Root fit.** The reference builds the root only (`--max-depth 0 --store-samples`); its root
-   sample (`ceil(50 p)` points) is given to AFINNI's ART with `max_levels=0` (exactly `n` points:
+   sample (`ceil(50 p)` points) is given to this library's ART with `max_levels=0` (exactly `n` points:
    no top-up). Both must give the same leaf model (max prediction difference on 10,000 test
    points `<= 1e-6` relative, the ridges allow about 1e-8), the same training error, the same
-   accept/reject decision, and AFINNI must evaluate `f` only at those points (+1 centroid). NumPy
+   accept/reject decision, and this library's ART must evaluate `f` only at those points (+1 centroid). NumPy
    `lstsq` is the third opinion. Problems: all six, d = 2, 3, 5, degrees 1 and 2, plus an exactly
    representable case.
 2. **Thin box.** An exactly affine target `f = 2 + x_0 + x_1 / w` on `[0,1] x [0,w]`,
@@ -489,8 +489,8 @@ full-size runs, the full exact checks and the paper-era comparison ran earlier w
 | Run | Outcome |
 |---|---|
 | `paper/run_paper.sh --smoke` (11 cases: every group except `mpi`, tiny sizes) | all 11 ran, 66 s, peak RSS 0.6 GB; collector built every table and plot (all paper rows `missing`, as they must be at tiny sizes) |
-| Part A `mpi` smoke (`mpiexec -n 2`, earlier in the session) | ran and was collected; a later repeat failed only because the host was out of memory (AFINNI's own guard, see Known gaps) |
-| `art/run_art.sh --smoke` (exact checks + 18 runs: 6 problems x 2 codes, spherical depth, exact target, AFINNI's ART on 1 and 2 ranks) | all ran, 43 s, peak RSS 0.25 GB; checks: 29 pass, 12 missing (slopes need >= 3 tolerances), 2 FAIL (the thin-box finding below) |
+| Part A `mpi` smoke (`mpiexec -n 2`, earlier in the session) | ran and was collected; a later repeat failed only because the host was out of memory (the library's own guard, see Known gaps) |
+| `art/run_art.sh --smoke` (exact checks + 18 runs: 6 problems x 2 codes, spherical depth, exact target, this library's ART on 1 and 2 ranks) | all ran, 43 s, peak RSS 0.25 GB; checks: 29 pass, 12 missing (slopes need >= 3 tolerances), 2 FAIL (the thin-box finding below) |
 | `--dry-run` of both full matrices | Part A 172 runs, Part B 1070 runs (with `--device gpu`), commands and `AFINNI_DEVICE`/`AFINNI_MPI` as intended |
 
 **Part A at full paper size, d = 2 only (CPU, seeds 0 and 1, 3-35 s per run, < 0.9 GB).** All 15
@@ -516,18 +516,18 @@ Table 1 rows for Gaussian, Rosenbrock and Wave d=2, with and without Hessian spl
 - `scripts/art_comparison.py` works with the reference at `854924a` for every problem of the
   matrix (6 benchmarks + spherical piecewise, degrees 1 and 2, 1 and 2 ranks).
 - Small converged cases agree closely, e.g. quadratic d=2 tol 0.02: reference 134 leaves, rel L2
-  4.24e-3, q99 0.0145, 0.14% of test points above tol; AFINNI's ART 127 leaves, 4.16e-3, 0.0142,
+  4.24e-3, q99 0.0145, 0.14% of test points above tol; this library's ART 127 leaves, 4.16e-3, 0.0142,
   0.11%. Gaussian d=2 tol 0.02: 15 vs 13 leaves, 4.06e-3 vs 4.01e-3.
-- B7: AFINNI's ART gave the identical tree and metrics on 1 and 2 ranks with work stealing.
-- Exact root fit (`exact_checks.py`, full set): 37/37 pass. AFINNI's root model matches the
+- B7: this library's ART gave the identical tree and metrics on 1 and 2 ranks with work stealing.
+- Exact root fit (`exact_checks.py`, full set): 37/37 pass. This library's root model matches the
   reference to 1e-10 (quadratic leaves) and 1e-9-3e-8 (affine leaves, the Tikhonov term), with the
   same training error and decision, and evaluates `f` only at the given points plus one centroid;
   NumPy `lstsq` matches the reference to 1e-15. The exactly representable quadratic is accepted
-  at the root by both (AFINNI error 7e-10, reference 9e-15).
-- **Thin box (with `leaf_fit="tikhonov"`, which was ART's fit when this ran): AFINNI's ART fails
+  at the root by both (this library's error 7e-10, the reference's 9e-15).
+- **Thin box (with `leaf_fit="tikhonov"`, which was ART's fit when this ran): this library's ART fails
   to reproduce an exactly affine function on thin nodes; the reference reproduces it to 1e-14 at
   every aspect ratio.** With the default `leaf_fit="lstsq"` both pass. Max relative error of
-  AFINNI's leaf with the ridge:
+  this library's leaf with the ridge:
 
   | aspect ratio | 1 | 10 | 100 | 1e3 | 1e4 |
   |---|---|---|---|---|---|

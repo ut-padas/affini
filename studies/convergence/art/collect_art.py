@@ -1,13 +1,13 @@
 """
 Collect Part B: tables, convergence slopes, pass/fail checks and plots comparing the reference
-ART with AFINNI's ART.
+ART with this library's ART.
 
 Usage: ``collect_art.py --out OUT`` (the ``--out`` of run_art.sh). Writes to ``OUT/report/``:
 
 - ``runs.csv``: every run, flattened.
 - ``paired.csv`` / ``.md``: per (problem, d, degree, tol) the median over seeds of both codes'
   leaves, evaluations, errors, share of test points above the tolerance and depth-limited leaves,
-  with AFINNI / reference ratios.
+  with this library / reference ratios.
 - ``slopes.csv``: per code the log-log slope of relative L2 error and of the 99th-percentile
   pointwise relative error against leaves, with standard errors and the theoretical slope.
 - ``checks.csv`` / ``.md``: checks B1-B8 (CONVERGENCE_STUDY.md, Part B) as pass / WARN / FAIL.
@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 
 BLUE, ORANGE, INK, MUTED = "#2a78d6", "#eb6834", "#0b0b0b", "#52514e"
-SIDES = {"art": "reference ART", "afinni": "AFINNI's ART"}
+SIDES = {"reference": "reference ART", "library": "this library's ART"}
 COMPARED = ("leaves", "oracle_queries", "max_depth", "test_relative_l2", "test_rmse", "test_max_absolute_error",
             "max_pointwise_rel", "q99", "frac_pointwise_rel_gt_tol")  # fmt: skip
 
@@ -45,7 +45,7 @@ def load(results: Path) -> list[dict]:
             "tag": ".".join(path.stem.split(".")[2:]), "argv": " ".join(argv), "problem": flag(argv, "--benchmark"),
             "dim": int(flag(argv, "--dimension")), "degree": int(flag(argv, "--leaf-degree", 1)),
             "tol": float(flag(argv, "--error-tolerance")), "depth_limit": int(flag(argv, "--max-depth", 10)),
-            "seed": int(flag(argv, "--seed", 1)), "mpi_size": rec["mpi_size"], "afinni_gpu": rec["afinni_gpu"],
+            "seed": int(flag(argv, "--seed", 1)), "mpi_size": rec["mpi_size"], "library_gpu": rec["library_gpu"],
             **{k: r.get(k) for k in COMPARED}, "median_pointwise_rel": r.get("median_pointwise_rel"),
             "depth_limited_leaves": reasons.get("max_depth", 0),
             "depth_limited_share": reasons.get("max_depth", 0) / leaves if leaves else float("nan"),
@@ -104,13 +104,13 @@ def paired(runs):
     rows = []
     for (problem, d, degree, tol), by in sorted(cells.items()):
         row = {"problem": problem, "dim": d, "degree": degree, "tol": tol,
-               "seeds": min(len(by["art"]), len(by["afinni"]))}  # fmt: skip
-        for side in ("art", "afinni"):
+               "seeds": min(len(by["reference"]), len(by["library"]))}  # fmt: skip
+        for side in ("reference", "library"):
             for k in ("leaves", "oracle_queries", "test_relative_l2", "q99", "max_pointwise_rel",
                       "frac_pointwise_rel_gt_tol", "depth_limited_share", "build_s"):  # fmt: skip
                 row[f"{side}_{k}"] = median(r[k] for r in by[side])
         for k in ("leaves", "oracle_queries", "test_relative_l2", "q99"):
-            a, b = row[f"afinni_{k}"], row[f"art_{k}"]
+            a, b = row[f"library_{k}"], row[f"reference_{k}"]
             row[f"ratio_{k}"] = a / b if b and not math.isnan(a) else float("nan")
         rows.append(row)
     return rows
@@ -155,22 +155,22 @@ def checks(runs, pairs, slope_rows, exact_path: Path):
         if p["seeds"] == 0:
             add(ref, "B1/B2/B5 paired checks", float("nan"), float("nan"), "missing", "one code has no run")
             continue
-        fa, fr = p["afinni_frac_pointwise_rel_gt_tol"], p["art_frac_pointwise_rel_gt_tol"]
+        fa, fr = p["library_frac_pointwise_rel_gt_tol"], p["reference_frac_pointwise_rel_gt_tol"]
         limit = max(2 * fr, fr + 0.005)
-        add(ref, "B1 share above tol (AFINNI) <= max(2 ref, ref + 0.5%)", fa, limit, "pass" if fa <= limit else "FAIL")
-        q_a, q_r = p["afinni_q99"], p["art_q99"]
+        add(ref, "B1 share above tol (this library's ART) <= max(2 ref, ref + 0.5%)", fa, limit, "pass" if fa <= limit else "FAIL")
+        q_a, q_r = p["library_q99"], p["reference_q99"]
         if q_r <= p["tol"] and q_a > 1.2 * p["tol"]:
             add(ref, "B1b q99 <= 1.2 tol where the reference has q99 <= tol", q_a, 1.2 * p["tol"], "FAIL")
         ratio = p["ratio_leaves"]
         res = "pass" if 0.5 <= ratio <= 2 else "WARN" if 1 / 3 <= ratio <= 3 else "FAIL"
-        add(ref, "B2 leaves AFINNI / reference in [0.5, 2] (FAIL outside [1/3, 3])", ratio, 2.0, res)
-        sa, sr = p["afinni_depth_limited_share"], p["art_depth_limited_share"]
-        add(ref, "B5 depth-limited leaf share AFINNI <= reference + 5%", sa, sr + 0.05, "pass" if sa <= sr + 0.05 else "FAIL")
+        add(ref, "B2 leaves this library's ART / reference in [0.5, 2] (FAIL outside [1/3, 3])", ratio, 2.0, res)
+        sa, sr = p["library_depth_limited_share"], p["reference_depth_limited_share"]
+        add(ref, "B5 depth-limited leaf share this library's ART <= reference + 5%", sa, sr + 0.05, "pass" if sa <= sr + 0.05 else "FAIL")
     by = {(s["problem"], s["dim"], s["degree"], s["side"]): s for s in slope_rows}
     for (problem, d, degree, side), s in sorted(by.items()):
-        if side != "afinni" or (problem, d, degree, "art") not in by:
+        if side != "library" or (problem, d, degree, "reference") not in by:
             continue
-        r = by[(problem, d, degree, "art")]
+        r = by[(problem, d, degree, "reference")]
         ref = f"{problem} d={d} deg={degree}"
         for metric in ("relL2", "q99"):
             sa, sr = s[f"slope_{metric}"], r[f"slope_{metric}"]
@@ -178,17 +178,17 @@ def checks(runs, pairs, slope_rows, exact_path: Path):
                 add(ref, f"B3 slope({metric}) agreement", float("nan"), float("nan"), "missing", "fewer than 3 points")
                 continue
             band = 2 * math.hypot(s[f"se_{metric}"], r[f"se_{metric}"]) + 0.15
-            add(ref, f"B3 |slope({metric}) AFINNI - reference| <= 2 se + 0.15", sa - sr, band,
-                "pass" if abs(sa - sr) <= band else "FAIL", f"AFINNI {sa:.2f}, reference {sr:.2f}, theory {s['theory']:.2f}")  # fmt: skip
+            add(ref, f"B3 |slope({metric}) this library's ART - reference| <= 2 se + 0.15", sa - sr, band,
+                "pass" if abs(sa - sr) <= band else "FAIL", f"this library's ART {sa:.2f}, reference {sr:.2f}, theory {s['theory']:.2f}")  # fmt: skip
         # B4: error at the same leaf count, from each code's own fit at the reference's median leaf count.
         rs = [x for x in runs if x["group"] == "conv" and not x["tag"] and x["problem"] == problem and x["dim"] == d
-              and x["degree"] == degree and x["side"] == "art"]  # fmt: skip
+              and x["degree"] == degree and x["side"] == "reference"]  # fmt: skip
         if rs and not math.isnan(s["slope_relL2"]) and not math.isnan(r["slope_relL2"]):
             L = math.log(median(x["leaves"] for x in rs))
             ratio = math.exp((s["slope_relL2"] * L + s["intercept_relL2"]) - (r["slope_relL2"] * L + r["intercept_relL2"]))
             res = "pass" if 0.5 <= ratio <= 2 else "FAIL" if ratio > 2 else "WARN"
-            add(ref, "B4 relL2 at equal leaves, AFINNI / reference in [0.5, 2]", ratio, 2.0, res,
-                "WARN: AFINNI better by > 2x, worth a look" if res == "WARN" else "")  # fmt: skip
+            add(ref, "B4 relL2 at equal leaves, this library's ART / reference in [0.5, 2]", ratio, 2.0, res,
+                "WARN: this library's ART better by > 2x, worth a look" if res == "WARN" else "")  # fmt: skip
     for r in runs:
         if r["group"] == "exact_target":
             ok = r["leaves"] == 1 and (r["max_pointwise_rel"] or 1) <= 1e-6
@@ -197,8 +197,8 @@ def checks(runs, pairs, slope_rows, exact_path: Path):
     if exact_path.exists():
         for e in json.loads(exact_path.read_text()):
             if e.get("check") == "slab":
-                for side in ("ref", "afinni"):
-                    add(f"slab aspect {e['aspect']:g} deg={e['degree']} {SIDES['art' if side == 'ref' else 'afinni']}",
+                for side in ("reference", "library"):
+                    add(f"slab aspect {e['aspect']:g} deg={e['degree']} {SIDES[side]}",
                         "B6 exactly affine target on a thin box: max rel err <= 1e-6", e[f"max_rel_err_{side}"], 1e-6,
                         "pass" if e[f"result_{side}"] == "pass" else "FAIL")  # fmt: skip
             else:
@@ -215,7 +215,7 @@ def checks(runs, pairs, slope_rows, exact_path: Path):
             if r is base:
                 continue
             ok, why = same_result(base, r)
-            add(f"{case} np={p}", "B7 AFINNI's ART identical on any rank count (with stealing)", r["leaves"], base["leaves"],
+            add(f"{case} np={p}", "B7 this library's ART identical on any rank count (with stealing)", r["leaves"], base["leaves"],
                 "pass" if ok else "FAIL", why)  # fmt: skip
     index = {(r["side"], r["argv"]): r for r in runs if r["group"] == "conv" and not r["tag"]}
     for r in runs:
@@ -227,7 +227,7 @@ def checks(runs, pairs, slope_rows, exact_path: Path):
         if r["group"] == "gpu_vs_cpu" and twin:
             exact = twin["leaves"] == r["leaves"] and twin["oracle_queries"] == r["oracle_queries"]
             ok, why = same_result(twin, r, rtol=1e-8)
-            add(f"{r['case']}", "B8b AFINNI's ART GPU vs CPU: same leaves and evaluations, errors to 1e-8",
+            add(f"{r['case']}", "B8b this library's ART GPU vs CPU: same leaves and evaluations, errors to 1e-8",
                 twin["leaves"], r["leaves"], "pass" if exact and ok else "WARN" if exact else "FAIL", why)  # fmt: skip
     return out
 
@@ -240,7 +240,7 @@ def plots(runs, out: Path) -> None:
 
     plt.rcParams.update({"axes.edgecolor": MUTED, "axes.labelcolor": INK, "xtick.color": MUTED, "ytick.color": MUTED,
                          "axes.grid": True, "grid.color": "#e4e3df", "grid.linewidth": 0.6, "font.size": 9})  # fmt: skip
-    colors = {"art": BLUE, "afinni": ORANGE}
+    colors = {"reference": BLUE, "library": ORANGE}
     conv = [r for r in runs if r["group"] == "conv" and not r["tag"]]
     for problem, degree in sorted({(r["problem"], r["degree"]) for r in conv}):
         rs = [r for r in conv if r["problem"] == problem and r["degree"] == degree]
@@ -248,7 +248,7 @@ def plots(runs, out: Path) -> None:
         for kind in ("err_vs_leaves", "frac_vs_tol"):
             fig, axes = plt.subplots(1, len(dims), figsize=(3.3 * len(dims), 2.9), squeeze=False)
             for ax, d in zip(axes[0], dims):
-                for side in ("art", "afinni"):
+                for side in ("reference", "library"):
                     pts = [r for r in rs if r["dim"] == d and r["side"] == side]
                     if kind == "err_vs_leaves":
                         ax.plot([r["leaves"] for r in pts], [r["test_relative_l2"] for r in pts], "o", color=colors[side],
@@ -264,7 +264,7 @@ def plots(runs, out: Path) -> None:
                             ax.plot(*zip(*meds), "o-", color=colors[side], ms=4, lw=1.5, label=SIDES[side])
                 if kind == "err_vs_leaves":
                     xs = [r["leaves"] for r in rs if r["dim"] == d]
-                    ys = [r["test_relative_l2"] for r in rs if r["dim"] == d and r["side"] == "art"]
+                    ys = [r["test_relative_l2"] for r in rs if r["dim"] == d and r["side"] == "reference"]
                     if xs and ys:
                         x0, x1 = min(xs), max(xs)
                         y0 = max(ys)
@@ -288,7 +288,7 @@ def plots(runs, out: Path) -> None:
         dims = sorted({r["dim"] for r in depth})
         fig, axes = plt.subplots(1, len(dims), figsize=(3.3 * len(dims), 2.9), squeeze=False)
         for ax, d in zip(axes[0], dims):
-            for side in ("art", "afinni"):
+            for side in ("reference", "library"):
                 pts = [r for r in depth if r["dim"] == d and r["side"] == side]
                 ax.plot([r["leaves"] for r in pts], [r["frac_pointwise_rel_gt_tol"] for r in pts], "o", color=colors[side],
                         ms=4, label=SIDES[side])  # fmt: skip

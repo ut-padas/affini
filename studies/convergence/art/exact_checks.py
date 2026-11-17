@@ -4,12 +4,12 @@ Exact-agreement check of the two ART codes where one is meaningful: the root fit
 Below the root the trees cannot be compared bit for bit: the codes draw their samples from
 different generators and search splits differently. At the root both fit the same model class
 to points in the same box, so feeding the reference's own root sample (``--store-samples``,
-``--max-depth 0``) to AFINNI's ART (``max_levels=0``, exactly ``ceil(m p)`` points, so no top-up)
+``--max-depth 0``) to this library's ART (``max_levels=0``, exactly ``ceil(m p)`` points, so no top-up)
 must give the same leaf model to rounding, the same training error and the same accept/reject
 decision. A NumPy least-squares fit in the reference's basis is the third opinion.
 
 A second check, ``slab``, fits an exactly affine target on one thin box (aspect ratio 1 to
-1e4) with both codes' leaf models. Both should reproduce it to rounding: AFINNI's ART fits
+1e4) with both codes' leaf models. Both should reproduce it to rounding: this library's ART fits
 without a ridge by default, as the reference does (``ARTSettings.leaf_fit="lstsq"``, the
 reference's ``--ridge 0`` with its ``auto`` solver). With ``leaf_fit="tikhonov"`` (``affine_lsq``:
 ``1e-8 * trace`` of the scatter matrix; ``quadratic_lsq``: ``1e-10`` of the Gram's mean
@@ -17,10 +17,10 @@ diagonal) the error grows like ``1e-8 * aspect^2``, and deep ART nodes are thin.
 
 Usage: ``exact_checks.py --art-path P --out-json F [--smoke]``; prints one line per case and
 exits non-zero when a case fails. Root pass criteria: max |prediction difference| on 10,000
-uniform test points <= 1e-6 * max |prediction| (the ridges bias AFINNI's fit by about 1e-8 on a
-cube), both codes' training max pointwise relative errors equal to 1e-6 relative, the same
-decision unless the error is within 1e-6 of the tolerance, and AFINNI evaluating f only at the
-given points (plus at most one centroid). Slab pass criterion: max pointwise relative error <= 1e-6
+uniform test points <= 1e-6 * max |prediction| (room for ``leaf_fit="tikhonov"``, whose ridges bias
+the fit by about 1e-8 on a cube), both codes' training max pointwise relative errors equal to 1e-6 relative, the same
+decision unless the error is within 1e-6 of the tolerance, and this library's ART evaluating f only
+at the given points (plus at most one centroid). Slab pass criterion: max pointwise relative error <= 1e-6
 for each code separately; a failure there is reported per code.
 """
 
@@ -102,12 +102,12 @@ def run_case(problem, d, degree, tol, art_path: Path) -> dict:
     model = AFINNISurrogate()
     model.train(xp.asarray(X), config, Evaluator(f_fn=f))
 
-    def afinni_predict(Z):
+    def library_predict(Z):
         return np.asarray(to_host(model.predict_route_local(xp.asarray(Z))[0]))[:, 0]
 
     rng = np.random.default_rng(args.test_seed)
     Xt = rng.uniform(low, high, size=(10_000, d))
-    p_ref, p_af = run.tree.predict(Xt), afinni_predict(Xt)
+    p_ref, p_af = run.tree.predict(Xt), library_predict(Xt)
     if degree == 1:
         A, At = np.hstack([np.ones((len(X), 1)), X]), np.hstack([np.ones((len(Xt), 1)), Xt])
         p_np = At @ np.linalg.lstsq(A, y, rcond=None)[0]
@@ -117,7 +117,7 @@ def run_case(problem, d, degree, tol, art_path: Path) -> dict:
     def train_err(pred):
         return float(np.max(np.abs(pred - y) / np.maximum(np.abs(y), args.relative_error_floor)))
 
-    e_ref, e_af = train_err(run.tree.predict(X)), train_err(afinni_predict(X))
+    e_ref, e_af = train_err(run.tree.predict(X)), train_err(library_predict(X))
     scale = float(np.max(np.abs(p_ref)))
     reasons = model.leaf_status_counts()["terminal_reason"]
     accepted_af = reasons.get("accepted", 0) == 1
@@ -128,8 +128,8 @@ def run_case(problem, d, degree, tol, art_path: Path) -> dict:
         "problem": problem, "dim": d, "degree": degree, "tol": tol, "n_root": len(X),
         "pred_diff_rel": float(np.max(np.abs(p_ref - p_af))) / scale,
         "numpy_diff_rel": None if p_np is None else float(np.max(np.abs(p_ref - p_np))) / scale,
-        "train_err_ref": e_ref, "train_err_afinni": e_af, "accepted_ref": accepted_ref, "accepted_afinni": accepted_af,
-        "ref_status": str(root.status), "afinni_reasons": reasons, "afinni_evals": evals,
+        "train_err_reference": e_ref, "train_err_library": e_af, "accepted_reference": accepted_ref, "accepted_library": accepted_af,
+        "ref_status": str(root.status), "library_reasons": reasons, "library_evals": evals,
     }  # fmt: skip
     ok = (out["pred_diff_rel"] <= 1e-6 and math.isclose(e_ref, e_af, rel_tol=1e-6, abs_tol=1e-8)
           and (accepted_ref == accepted_af or near_tol) and evals <= len(X) + 1)  # fmt: skip
@@ -166,9 +166,9 @@ def run_slab(width: float, degree: int) -> dict:
     p_af = np.asarray(to_host(model.predict_route_local(xp.asarray(Xt))[0]))[:, 0]
     e_ref = float(np.max(np.abs(ref.predict(Xt) - g(Xt)) / np.abs(g(Xt))))
     e_af = float(np.max(np.abs(p_af - g(Xt)) / np.abs(g(Xt))))
-    out = {"check": "slab", "aspect": 1.0 / width, "degree": degree, "max_rel_err_ref": e_ref, "max_rel_err_afinni": e_af,
-           "result_ref": "pass" if e_ref <= 1e-6 else "FAIL", "result_afinni": "pass" if e_af <= 1e-6 else "FAIL"}  # fmt: skip
-    out["result"] = "pass" if out["result_ref"] == out["result_afinni"] == "pass" else "FAIL"
+    out = {"check": "slab", "aspect": 1.0 / width, "degree": degree, "max_rel_err_reference": e_ref, "max_rel_err_library": e_af,
+           "result_reference": "pass" if e_ref <= 1e-6 else "FAIL", "result_library": "pass" if e_af <= 1e-6 else "FAIL"}  # fmt: skip
+    out["result"] = "pass" if out["result_reference"] == out["result_library"] == "pass" else "FAIL"
     return out
 
 
