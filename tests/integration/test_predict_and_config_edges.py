@@ -104,7 +104,12 @@ def test_the_exact_flag_changes_only_flagged_rows_and_answers_them_from_a_contai
     np.testing.assert_array_equal(pred_x[~mask], pred[~mask])  # unflagged rows keep their bits
     np.testing.assert_array_equal(mask_x[~mask], False)
     found = mask & ~mask_x
-    assert found.any()
+    outside, _ = _brute_outside(surrogate, Q)
+    np.testing.assert_array_equal(mask_x, outside)
+    # rows to answer exist only where the first pass missed a containing leaf (with k_nn^2 candidates
+    # it need not: the tree, and so the misses, differ between backends)
+    assert found.any() == bool((mask & ~outside).any())
+    assert found.any() or k_nn > 1
     if k_nn == 1:  # answered by the containing leaf nearest in its own metric
         _, d = _brute_outside(surrogate, Q[found])
         nu = np.argmin(d, axis=1)
