@@ -16,7 +16,7 @@ from src.infra.profiling import (
     read_event_stream,
     read_event_streams,
 )
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 from tests._helpers import train_surrogate
 
 X = np.random.default_rng(4).uniform(-1, 1, (3_000, 2))
@@ -27,7 +27,7 @@ def f(x):
 
 
 def train(**kw):
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     train_surrogate(
         X, s, f_fn=f, atol=0.02, rtol=0.02, error_metric="Linf",
         num_initial_clusters=8, min_pts_per_cluster=40, use_work_stealing=False, **kw,
@@ -176,7 +176,7 @@ def test_events_describe_every_level_and_batch(tmp_path):
 
 def test_profiles_survive_save_and_load(tmp_path):
     s = train(profile_events=True)
-    loaded = AFINNISurrogate.load_model(s.save_model(tmp_path / "m.npz"))
+    loaded = AdaptiveSurrogate.load_model(s.save_model(tmp_path / "m.npz"))
     assert loaded.profiling_stats["per_rank"][0]["events"] == json.loads(
         json.dumps(s.profiling_stats["per_rank"][0]["events"])
     )

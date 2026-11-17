@@ -27,7 +27,7 @@ def main() -> None:
     import src.engine.work_stealing as ws
     from src.components.modes import SurrogateMode
     from src.infra.backend import MPI
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
     from tests._helpers import train_surrogate
 
     xp = src.xp
@@ -49,7 +49,7 @@ def main() -> None:
 
     rng = np.random.default_rng(0)
     X = xp.asarray(rng.uniform(-1, 1, (n_train, 3))) if rank == 0 else xp.empty((0, 3))
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     train_surrogate(
         X, s, f_fn=f, g_fn=g, mode=SurrogateMode.TAYLOR_LSQ_HESS, store_hess=True,
         atol=0.01, rtol=0.01, error_metric="Linf", num_initial_clusters=1,

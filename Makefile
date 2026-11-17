@@ -77,21 +77,21 @@ test:
 	uv run --group test pytest
 
 test-mpi:
-	AFINNI_MPI=on uv run --group test pytest tests/mpi tests/integration/test_backend.py
+	SURROGATE_MPI=on uv run --group test pytest tests/mpi tests/integration/test_backend.py
 
 # The CuPy branches (custom kernels and their launchers) only run in the GPU suite, and work
 # stealing, scatter and gather only on several ranks, so measure each suite and combine:
 # coverage-cpu, coverage-mpi, coverage-gpu on a CUDA machine, then coverage.
 coverage-cpu:
-	COVERAGE_FILE=.coverage.cpu AFINNI_DEVICE=cpu AFINNI_MPI=off uv run --group test pytest -q -m "not mpi" -o addopts="" --cov=src --cov-report=
+	COVERAGE_FILE=.coverage.cpu SURROGATE_DEVICE=cpu SURROGATE_MPI=off uv run --group test pytest -q -m "not mpi" -o addopts="" --cov=src --cov-report=
 
 coverage-gpu:
-	COVERAGE_FILE=.coverage.gpu AFINNI_DEVICE=gpu AFINNI_MPI=off uv run --group test pytest -q -m "not mpi" -o addopts="" --cov=src --cov-report=
+	COVERAGE_FILE=.coverage.gpu SURROGATE_DEVICE=gpu SURROGATE_MPI=off uv run --group test pytest -q -m "not mpi" -o addopts="" --cov=src --cov-report=
 
 # The MPI tests start their ranks through mpiexec; coverage's subprocess patch (pyproject.toml)
 # measures every rank, and parallel mode gives each process its own data file.
 coverage-mpi:
-	COVERAGE_FILE=.coverage.mpi AFINNI_DEVICE=cpu AFINNI_MPI=on AFINNI_MPI_NP=4 PATH="$(CURDIR)/.venv/bin:$$PATH" \
+	COVERAGE_FILE=.coverage.mpi SURROGATE_DEVICE=cpu SURROGATE_MPI=on SURROGATE_MPI_NP=4 PATH="$(CURDIR)/.venv/bin:$$PATH" \
 		uv run --group test coverage run --parallel-mode -m pytest -q tests/mpi -o addopts=""
 
 coverage:
@@ -104,13 +104,13 @@ report:
 	typst compile docs/report/adaptive-surrogates.typ docs/report/adaptive-surrogates.pdf
 
 report-figures:
-	AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. uv run python docs/report/figures/make_figures.py
+	SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. uv run python docs/report/figures/make_figures.py
 
 # STEAL_CPUS pins the ranks to cores of one speed (on a hybrid CPU, its performance cores),
 # e.g. make report-steals STEAL_CPUS=0-5; the companion's run used six such cores.
 STEAL_CPUS ?=
 report-steals:
-	AFINNI_DEVICE=cpu AFINNI_MPI=on PYTHONPATH=. OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 \
+	SURROGATE_DEVICE=cpu SURROGATE_MPI=on PYTHONPATH=. OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 \
 		$(if $(STEAL_CPUS),taskset -c $(STEAL_CPUS)) uv run mpiexec -n 6 python docs/report/figures/make_figures.py --record-steals
 
 paper-experiments:

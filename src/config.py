@@ -98,7 +98,7 @@ class ARTSettings:
     sampling: Literal["hit_and_run", "convex_combination"] = "hit_and_run"
     sample_multiplier: float = 50.0  # m in the companion
     # Fresh points per node on which the deployed model is checked before acceptance; a
-    # diagnostic, not a certificate (the global claim is AFINNISurrogate.audit). 0: none.
+    # diagnostic, not a certificate (the global claim is AdaptiveSurrogate.audit). 0: none.
     validation_samples: int = 0
     min_side_margin: int = 0
     walk_steps: int = 20  # hit-and-run steps per chain, tau in the companion
@@ -122,6 +122,13 @@ class ARTSettings:
     # The soft gate's width (h in the companion) as a fraction of the std of the node's scores.
     soft_temperature: float = 0.1
     soft_weight_floor: float = 1e-8  # delta in W = delta + (1 - 2 delta) sigma
+    # How every ART fit solves its least squares: "lstsq", as the reference ART does (no ridge;
+    # Cholesky of the normal equations where their reciprocal condition is >= 1e-10, else QR
+    # on the node's rows, then SVD; split-search fits without a ridge too), or "tikhonov",
+    # AFINNI's fit with its ridge (1e-8 tr(Sigma) for affine leaves, 1e-10 of the mean diagonal
+    # for quadratic ones, 1e-8 of the mean diagonal in the split search), which biases a thin
+    # node's slope by about 1e-8 * aspect^2.
+    leaf_fit: Literal["lstsq", "tikhonov"] = "lstsq"
     # Store the trust matrix per leaf (T in the companion; needed only by predictor="knn";
     # d^2 per leaf).
     store_trust_matrix: bool = True
@@ -136,6 +143,7 @@ class ARTSettings:
             ("roots", ("box", "grid", "voronoi")),
             ("sampling", ("hit_and_run", "convex_combination")),
             ("split_search", ("gap", "bins", "soft")),
+            ("leaf_fit", ("lstsq", "tikhonov")),
         ):
             if getattr(self, name) not in choices:
                 raise ValueError(f"ARTSettings.{name} must be one of {choices}; got {getattr(self, name)!r}.")
@@ -168,7 +176,7 @@ class ARTSettings:
 @dataclass(kw_only=True)
 class TrainingConfig:
     """
-    Every algorithm setting of a training run (``AFINNISurrogate.train`` or
+    Every algorithm setting of a training run (``AdaptiveSurrogate.train`` or
     ``refine``); the functions to evaluate go in an ``Evaluator``.
     All fields are keyword-only and only a tolerance (or an ``acceptance`` that
     brings its own) is required.
@@ -199,7 +207,7 @@ class TrainingConfig:
     max_levels: int = 50
     batch_size: int = 10_000_000  # max points moved to the device per batch
     seed: int = 0
-    max_clusters_est: int = 1_000_000  # initial capacity of the output buffers (all ranks)
+    max_clusters_est: int = 1_000_000  # initial capacity of the output buffers (all ranks), capped by bytes; they grow on demand
     use_work_stealing: bool = True
 
     # --- Outputs ---
@@ -300,15 +308,19 @@ class TrainingConfig:
                 stacklevel=3,
             )
 
+    def _local_model(self) -> LocalModel:
+        """The configured local model; an ART run's least-squares leaves solve as ``art.leaf_fit`` says."""
+        model = (local_model_for_mode(self.mode, second_order=self.store_hess) if self.local_model is None
+                 else LOCAL_MODELS.create(self.local_model))  # fmt: skip
+        if self.algorithm == "art" and hasattr(model, "fit_method"):
+            model = LOCAL_MODELS.create((model.name, {**model.settings(), "fit": self.art.leaf_fit}))
+        return model
+
     def components(self) -> Components:
         """The local model, split strategy, sampler, acceptance criterion and trust region."""
         if self._components is None:
             self._components = Components(
-                local_model=(
-                    local_model_for_mode(self.mode, second_order=self.store_hess)
-                    if self.local_model is None
-                    else LOCAL_MODELS.create(self.local_model)
-                ),
+                local_model=self._local_model(),
                 split_strategy=(
                     split_strategy_for_mode(self.mode, self.min_pts_per_cluster)
                     if self.split_strategy is None
@@ -395,7 +407,7 @@ def _normalize_domain(domain: Any) -> str | tuple[tuple[float, ...], tuple[float
         raise ValueError(
             "algorithm='art' needs domain=(lower, upper) bounds, or domain='data_bbox' to "
             "use the training points' bounding box: the domain is what routing covers and "
-            "what AFINNISurrogate.audit samples, so it is never inferred silently."
+            "what AdaptiveSurrogate.audit samples, so it is never inferred silently."
         )
     import numpy as np
 

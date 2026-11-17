@@ -1,4 +1,4 @@
-"""AFINNISurrogate stores and predicts with whatever columns the local model declares."""
+"""AdaptiveSurrogate stores and predicts with whatever columns the local model declares."""
 
 import numpy as np
 
@@ -7,7 +7,7 @@ from src import to_host, xp
 from src.components.modes import SurrogateMode
 from src.core.clusters import ParamSpec
 from src.problems.rosenbrock import rosenbrock
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 from tests._helpers import assert_backend_equal, train_surrogate
 
 
@@ -30,7 +30,7 @@ class RenamedAffineModel(lm.LocalModel):
 
 
 def _train_and_predict(X, Q, local_model=None):
-    surrogate = AFINNISurrogate()
+    surrogate = AdaptiveSurrogate()
     train_surrogate(
         X, surrogate,
         f_fn=rosenbrock,

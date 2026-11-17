@@ -3,11 +3,11 @@ Multi-rank tests: launch tests/mpi/_mpi_worker.py under a real MPI launcher.
 
 Skipped when no MPI is available (CPU-only install). Make them mandatory with
 
-    AFINNI_MPI=on uv run pytest tests/mpi
+    SURROGATE_MPI=on uv run pytest tests/mpi
 
 Configuration (environment):
-    AFINNI_MPIEXEC   launcher command, default "mpiexec" (e.g. "ibrun", "srun")
-    AFINNI_MPI_NP    number of ranks, default 2
+    SURROGATE_MPIEXEC   launcher command, default "mpiexec" (e.g. "ibrun", "srun")
+    SURROGATE_MPI_NP    number of ranks, default 2
 """
 
 from __future__ import annotations
@@ -30,11 +30,11 @@ pytestmark = pytest.mark.mpi
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TIMEOUT_S = 600
-N_RANKS = int(os.environ.get("AFINNI_MPI_NP", "2"))
+N_RANKS = int(os.environ.get("SURROGATE_MPI_NP", "2"))
 
 
 def _launcher() -> list[str]:
-    cmd = shlex.split(os.environ.get("AFINNI_MPIEXEC", "mpiexec"))
+    cmd = shlex.split(os.environ.get("SURROGATE_MPIEXEC", "mpiexec"))
     # Prefer the launcher shipped inside the venv (the `mpi` extra) when present.
     # MPICH (Linux/macOS) installs it next to python; Intel MPI's impi-rt
     # (Windows) uses the conda layout, i.e. .venv\Library\bin.
@@ -54,10 +54,10 @@ def mpi_launcher() -> list[str]:
     if not backend.has_mpi():
         problem = f"MPI unavailable: {backend._resolve_mpi()[2]}"
     elif not _launcher():
-        problem = f"MPI launcher {os.environ.get('AFINNI_MPIEXEC', 'mpiexec')!r} not found on PATH"
+        problem = f"MPI launcher {os.environ.get('SURROGATE_MPIEXEC', 'mpiexec')!r} not found on PATH"
     if problem:
         if strict:
-            pytest.fail(f"AFINNI_MPI=on but {problem}")
+            pytest.fail(f"SURROGATE_MPI=on but {problem}")
         pytest.skip(problem)
     return _launcher()
 
@@ -89,7 +89,7 @@ def _run_worker(
 @pytest.fixture(scope="module")
 def serial_result() -> dict:
     """Reference run in a single process with MPI disabled."""
-    return _run_worker([], {"AFINNI_MPI": "off"})
+    return _run_worker([], {"SURROGATE_MPI": "off"})
 
 
 @pytest.fixture(scope="module")
@@ -172,7 +172,7 @@ def test_a_failure_on_one_rank_aborts_the_whole_job(mpi_launcher, phase, message
 
 @pytest.fixture(scope="module")
 def art_serial() -> dict:
-    return _run_worker([], {"AFINNI_MPI": "off"}, module="tests.mpi._art_worker")
+    return _run_worker([], {"SURROGATE_MPI": "off"}, module="tests.mpi._art_worker")
 
 
 def test_art_is_independent_of_ranks_and_stealing(mpi_launcher, art_serial):

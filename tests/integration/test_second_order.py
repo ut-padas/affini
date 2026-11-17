@@ -10,12 +10,12 @@ import pytest
 
 from src import xp
 from src.components.modes import SurrogateMode
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 from tests._helpers import host, train_surrogate
 
 
 def train(X, f, g, **kw):
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     opts = {
         "mode": SurrogateMode.TAYLOR_LSQ_HESS, "store_hess": True, "atol": 10.0, "rtol": 10.0,
         "num_initial_clusters": 1, "min_pts_per_cluster": 8, "max_clusters_est": 10, "use_work_stealing": False,

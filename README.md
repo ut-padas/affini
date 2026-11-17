@@ -3,7 +3,8 @@
 This repository builds fast surrogates of smooth, expensive functions from as few evaluations
 of the function as possible. It provides two approaches; both refine a set of local models
 (affine or quadratic) until each meets a tolerance, and differ in how they divide the input
-space and how a query finds its model. Choose one with `TrainingConfig(algorithm=...)`.
+space and how a query finds its model. Choose one with `TrainingConfig(algorithm=...)`; both
+are trained and queried through one class, `AdaptiveSurrogate`.
 
 ### AFINNI: adaptive affine nearest-neighbour interpolation
 
@@ -84,7 +85,7 @@ import numpy as np
 from src import xp
 from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 
 
 def f(x):  # (N, d) -> (N, fd); x is a NumPy or CuPy array, matching the backend
@@ -95,12 +96,12 @@ rng = np.random.default_rng(0)
 X, X_query = rng.uniform(-1, 1, (2_000, 2)), rng.uniform(-1, 1, (500, 2))
 
 # AFINNI: adaptive clustering, predicted by the nearest leaf in trust-region distance
-afinni = AFINNISurrogate()
+afinni = AdaptiveSurrogate()
 afinni.train(X, TrainingConfig(atol=1e-2, rtol=1e-2), Evaluator(f_fn=f))
 prediction, outside_trust_region = afinni.predict(X_query)
 
 # ART: an oblique regression tree over an explicit box domain, predicted by routing
-art = AFINNISurrogate()
+art = AdaptiveSurrogate()
 art.train(X, TrainingConfig(algorithm="art", domain=([-1, -1], [1, 1]), atol=1e-2, rtol=1e-2, max_levels=16),
           Evaluator(f_fn=f))
 prediction, outside_domain = art.predict(X_query)
@@ -160,9 +161,9 @@ uv run ruff format .            # format
 ## Roadmap
 
 - [x] Verify CPU and MPI on macOS (Apple Silicon).
-- [ ] Rename the `src` package to `afinni` (src layout) and add a `[build-system]`, so it can be installed with `pip install`.
+- [ ] Rename the `src` package to `adaptive_surrogates` (src layout) and add a `[build-system]`, so it can be installed with `pip install adaptive-surrogates`.
 - [ ] Move `jax`/`diffrax` to an optional extra. `afinni_launcher.py` currently imports `jax` at top level.
-- [ ] Publish `knndbscan` to PyPI. It is a core dependency but comes only from TestPyPI, so `afinni`
+- [ ] Publish `knndbscan` to PyPI. It is a core dependency but comes only from TestPyPI, so `adaptive-surrogates`
   cannot be published to PyPI before it.
 - [ ] Set up GitHub Actions: `{ubuntu, macos, windows} × {cpu, mpi}` running `uv lock --check`, pytest and `mpiexec -n 2`.
-- [ ] Publish `afinni` to PyPI.
+- [ ] Publish `adaptive-surrogates` to PyPI.

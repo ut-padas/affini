@@ -8,7 +8,7 @@ import pytest
 from src import xp
 from src.components.modes import SurrogateMode
 from src.config import TrainingConfig
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
 
 rng = np.random.default_rng(9)
@@ -21,7 +21,7 @@ def f(x):
 
 @pytest.fixture(scope="module")
 def surrogate():
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     train_surrogate(
         X, s, f_fn=f, atol=0.05, rtol=0.05, error_metric="Linf",
         num_initial_clusters=4, min_pts_per_cluster=32, use_work_stealing=False,
@@ -52,6 +52,31 @@ def test_batch_size_does_not_change_predictions(surrogate):
         np.testing.assert_array_equal(host(other[1]), host(a[1]))
 
 
+def test_default_knn_chunks_bound_the_trust_matrix_gather(monkeypatch, surrogate):
+    import src.surrogate.model as model
+
+    assert model.knn_chunk_size(10, 2) == 5000 and model.knn_chunk_size(10, 73) == 5000
+    assert model.knn_chunk_size(50, 100) == (2 << 30) // (8 * 50 * 100 * 100)
+    assert model.knn_chunk_size(10, 100, preferred=50_000) == (2 << 30) // (8 * 10 * 100 * 100)
+    Q = xp.asarray(rng.uniform(-1, 1, (101, 2)))
+    whole = surrogate.predict(Q, k_nn=4)
+    sizes = []
+    original = model.knn_chunk_size
+
+    def recording(*args, **kwargs):
+        sizes.append(original(*args, **kwargs))
+        return sizes[-1]
+
+    monkeypatch.setattr(model, "knn_chunk_size", recording)
+    k_coarse = min(4 * 10, surrogate.N_src)  # k_nn * coarse_factor, clipped to the leaves
+    monkeypatch.setattr(model, "KNN_GATHER_BYTES", 8 * k_coarse * 2 * 2 * 7)  # 7 queries
+    chunked = surrogate.predict(Q, k_nn=4)
+    assert sizes == [7]
+    assert_backend_equal(chunked[0], whole[0])
+    np.testing.assert_array_equal(host(chunked[1]), host(whole[1]))
+    np.testing.assert_array_equal(host(surrogate.filter_unguaranteed_local(Q, k_coarse=k_coarse)), host(whole[1]))
+
+
 def test_more_neighbours_than_leaves(surrogate):
     Q = xp.asarray(rng.uniform(-1, 1, (20, 2)))
     n = surrogate.N_src
@@ -67,7 +92,7 @@ def test_k_larger_than_coarse_factor_is_rejected(surrogate):
 
 
 def test_per_component_tolerances_are_used_and_must_match_the_outputs():
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     opts = {"f_fn": f, "num_initial_clusters": 4, "min_pts_per_cluster": 32, "use_work_stealing": False}
     train_surrogate(X, s, atol=(0.05, 0.01), rtol=None, **opts)
     E_abs = host(s.E_cluster_abs_src)
@@ -81,7 +106,7 @@ def test_per_component_tolerances_are_used_and_must_match_the_outputs():
 
 def test_untrained_surrogate_refuses_to_predict():
     with pytest.raises(RuntimeError, match="not trained"):
-        AFINNISurrogate().predict(xp.asarray(X[:3]))
+        AdaptiveSurrogate().predict(xp.asarray(X[:3]))
 
 
 @pytest.mark.parametrize(

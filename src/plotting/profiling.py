@@ -2,7 +2,7 @@
 Plots of training profiles: where time goes per rank, how work moves between ranks,
 and how the forest grows level by level.
 
-Every function accepts what training returns: ``AFINNISurrogate.profiling_stats``,
+Every function accepts what training returns: ``AdaptiveSurrogate.profiling_stats``,
 the ``refine`` result dict, a surrogate, or a dict of event streams
 from ``src.infra.profiling.read_event_streams`` (timeline plots only). Each returns the
 figure and saves it when ``path`` is given.
@@ -23,7 +23,7 @@ import pandas as pd
 from matplotlib.patches import Patch
 
 from src.infra.profiling import PHASE_BY_KEY, fmt_count, group_colors, phase_groups
-from src.plotting.style import afinni_style, finish
+from src.plotting.style import finish, plot_style
 
 UNTIMED = "Other (untimed)"
 _UNTIMED_COLOR = "#e5e5e5"
@@ -132,7 +132,7 @@ def plot_rank_time_breakdown(
     shown = parts.div(parts.sum(axis=1), axis=0) if normalize else parts
     colors = {**group_colors(), UNTIMED: _UNTIMED_COLOR}
     n = len(df)
-    with afinni_style():
+    with plot_style():
         fig, (ax, ax_tot) = plt.subplots(
             2, 1, sharex=True, figsize=figsize or (max(9.0, 0.6 * n + 4), 7.5),
             gridspec_kw={"height_ratios": [4, 1]},
@@ -196,7 +196,7 @@ def plot_level_heatmap(
     n_lvl, n_rank = data.shape
     annotate = (n_lvl * n_rank <= 800) if annotate is None else annotate
     stats = profile_of(source)
-    with afinni_style():
+    with plot_style():
         fig, ax = plt.subplots(figsize=(max(5.0, 0.62 * n_rank + 2.5), max(4.0, 0.32 * n_lvl + 1.5)))
         im = ax.imshow(masked, aspect="auto", cmap=cmap, interpolation="nearest")
         ax.set_facecolor("white")
@@ -251,7 +251,7 @@ def plot_level_progress(source: Any, path: str | Path | None = None) -> plt.Figu
     agg = df.groupby("level").agg(
         next_pts=("num_pts_next_level", "sum"), generated=("generated_pts", "sum"),
     )  # fmt: skip
-    with afinni_style():
+    with plot_style():
         fig, (ax, ax_pts) = plt.subplots(2, 1, sharex=True, figsize=(8, 6))
         _draw_level_counts(ax, df)
         ax.legend()
@@ -279,7 +279,7 @@ def plot_timeline(
     phases = phases[phases["dur"] >= min_dur]
     colors = group_colors()
     ranks = sorted(ev["rank"].unique())
-    with afinni_style():
+    with plot_style():
         fig, ax = plt.subplots(figsize=(11, max(2.5, 0.45 * len(ranks) + 1.5)))
         used = set()
         for (rank, key), grp in phases.groupby(["rank", "phase"]):
@@ -307,7 +307,7 @@ def plot_load_over_time(source: Any, path: str | Path | None = None) -> plt.Figu
     _require(ev, "events")
     loads = ev[ev["kind"].isin(["load", "level_start"])].dropna(subset=["n_pts"])
     _require(loads, "load samples")
-    with afinni_style():
+    with plot_style():
         fig, ax = plt.subplots(figsize=(10, 4.5))
         cmap = plt.get_cmap("tab20")
         for i, (rank, grp) in enumerate(loads.groupby("rank")):
@@ -329,7 +329,7 @@ def plot_steal_matrix(source: Any, path: str | Path | None = None, value: str = 
     _require(steals, "steals")
     mat = _steal_matrix(source, steals, value)
     n = len(mat)
-    with afinni_style():
+    with plot_style():
         fig, ax = plt.subplots(figsize=(max(4.5, 0.5 * n + 2.5), max(4.0, 0.5 * n + 1.5)))
         im = ax.imshow(np.ma.masked_equal(mat, 0), cmap="Blues")
         ax.grid(False)
@@ -364,7 +364,7 @@ def plot_profile_dashboard(source: Any, path: str | Path | None = None) -> plt.F
         ("breakdown", has_timing), ("levels", True), ("load", has_events),
         ("steals", has_events and not steals_frame(stats).empty),
     ) if ok]  # fmt: skip
-    with afinni_style():
+    with plot_style():
         fig = plt.figure(figsize=(14, 4.2 * ((len(panels) + 1) // 2)))
         for i, name in enumerate(panels):
             ax = fig.add_subplot((len(panels) + 1) // 2, 2, i + 1)

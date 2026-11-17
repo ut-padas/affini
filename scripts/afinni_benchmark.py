@@ -6,8 +6,10 @@ It only uses the public API that older commits also have, so the same file can r
 on a base commit and on a branch::
 
     # in each checkout (a git worktree for the base), with the same interpreter:
-    AFINNI_DEVICE=cpu AFINNI_MPI=off PYTHONPATH=. python scripts/afinni_benchmark.py
-    AFINNI_DEVICE=cpu AFINNI_MPI=on PYTHONPATH=. mpiexec -n 4 python scripts/afinni_benchmark.py --stealing
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. python scripts/afinni_benchmark.py
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=on PYTHONPATH=. mpiexec -n 4 python scripts/afinni_benchmark.py --stealing
+
+A checkout that reads ``AFINNI_DEVICE`` / ``AFINNI_MPI`` needs those set as well.
 
 Prints one ``BENCH`` JSON line on rank 0 with, per problem, the leaf and evaluation
 counts, the share of test points outside the trust regions (``pout``), the share inside
@@ -36,7 +38,12 @@ from src.infra.backend import MPI  # noqa: E402
 from src.problems.anisotropic_gaussian import aniso_gaussian  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402
 from src.problems.vector_quadratic import vector_quadratic  # noqa: E402
-from src.surrogate import AFINNISurrogate, compute_error_metrics  # noqa: E402
+from src.surrogate import compute_error_metrics  # noqa: E402
+
+try:
+    from src.surrogate import AdaptiveSurrogate  # noqa: E402
+except ImportError:  # a checkout that names the class AFINNISurrogate: this file also runs on those
+    from src.surrogate import AFINNISurrogate as AdaptiveSurrogate  # noqa: E402
 
 # name, function, dimension, training points, tolerance, mode
 CASES = (
@@ -67,7 +74,7 @@ def main() -> None:
                 atol=tol, rtol=tol, mode=mode, num_initial_clusters=50, min_pts_per_cluster=50,
                 max_levels=30, use_work_stealing=args.stealing, seed=0,
             )  # fmt: skip
-            model = AFINNISurrogate()
+            model = AdaptiveSurrogate()
             MPI.COMM_WORLD.Barrier()
             t = time.perf_counter()
             model.train(X, config, Evaluator(f_fn=f))

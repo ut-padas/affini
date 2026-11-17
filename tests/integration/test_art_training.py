@@ -1,4 +1,4 @@
-"""ART (algorithm="art") through the public AFINNISurrogate API."""
+"""ART (algorithm="art") through the public AdaptiveSurrogate API."""
 
 import numpy as np
 import pytest
@@ -6,7 +6,7 @@ import pytest
 from src import xp
 from src.config import ARTSettings, TrainingConfig
 from src.core.evaluation import Evaluator
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
 
 DOMAIN = ([-1.0, -1.0], [1.0, 1.0])
@@ -121,11 +121,11 @@ def test_loading_rejects_leaf_metadata_that_names_other_nodes(tmp_path, trained)
     data[key] = data[key][::-1].copy()
     np.savez(path, **data)
     with pytest.raises(ValueError, match="disagree"):
-        AFINNISurrogate.load_model(path)
+        AdaptiveSurrogate.load_model(path)
 
 
 def test_art_model_save_and_load_round_trip(tmp_path, trained):
-    loaded = AFINNISurrogate.load_model(trained.save_model(tmp_path))
+    loaded = AdaptiveSurrogate.load_model(trained.save_model(tmp_path))
     q = np.random.default_rng(5).uniform(-1.2, 1.2, (200, 2))
     assert_backend_equal(loaded.predict(q)[0], trained.predict(q)[0])
     for name, value in trained.art_leaves.items():
@@ -259,7 +259,7 @@ def test_routed_only_models_store_no_trust_matrix_and_refuse_knn(tmp_path, point
     assert model.trust_matrices_src is None and model.knn_index is None
     with pytest.raises(ValueError, match="store_trust_matrix=False"):
         model.predict(points[:3], predictor="knn")
-    loaded = AFINNISurrogate.load_model(model.save_model(tmp_path))
+    loaded = AdaptiveSurrogate.load_model(model.save_model(tmp_path))
     assert loaded.trust_matrices_src is None
     assert_backend_equal(loaded.predict(points[:20])[0], model.predict(points[:20])[0])
 
@@ -302,7 +302,7 @@ def test_quadratic_leaves_represent_a_quadratic_with_one_leaf_and_round_trip(poi
     assert model.N_src == 1 and model.converged
     q = np.random.default_rng(9).uniform(-1, 1, (500, 2))
     np.testing.assert_allclose(host(model.predict(q)[0]), host(quad(xp.asarray(q))), rtol=1e-8)
-    loaded = AFINNISurrogate.load_model(model.save_model(tmp_path))
+    loaded = AdaptiveSurrogate.load_model(model.save_model(tmp_path))
     assert_backend_equal(loaded.predict(q)[0], model.predict(q)[0])
 
 
@@ -318,10 +318,23 @@ def test_art_trains_and_routes_beyond_numpys_64_dimensions():
     d = 70
     domain = (-np.ones(d), np.ones(d))
     s = train_surrogate(np.random.default_rng(0).uniform(-1, 1, (200, d)), f_fn=lambda x: x[:, :1] + 2 * x[:, 1:2],
-                        atol=1e-4, rtol=0.0, algorithm="art", domain=domain, num_initial_clusters=4, max_levels=1,
+                        atol=1e-9, rtol=0.0, algorithm="art", domain=domain, num_initial_clusters=4, max_levels=1,
                         use_work_stealing=False, art=ARTSettings(roots="grid", sample_multiplier=2))  # fmt: skip
     assert s.converged and s.N_src == 4
     q = np.random.default_rng(1).uniform(-1, 1, (50, d))
-    # the affine fit's ridge (1e-8 times the covariance trace) leaves an error near 1e-6 in 70-D
-    np.testing.assert_allclose(host(s.predict(q)[0])[:, 0], q[:, 0] + 2 * q[:, 1], atol=1e-4)
+    # leaf_fit="lstsq" is exact here; AFINNI's ridge (1e-8 times the covariance trace) would leave about 1e-6 in 70-D
+    np.testing.assert_allclose(host(s.predict(q)[0])[:, 0], q[:, 0] + 2 * q[:, 1], atol=1e-9)
 
+
+def test_training_at_d100_starts_with_the_default_leaf_capacity():
+    """The default max_clusters_est (a hint of 1,000,000 leaves) must not reserve 8 d^2 MB for the trust matrices."""
+    d = 100
+    a = np.random.default_rng(0).standard_normal(d)
+    model = AdaptiveSurrogate()
+    model.train(
+        np.random.default_rng(1).uniform(-1, 1, (10 * (d + 1), d)),
+        TrainingConfig(algorithm="art", domain=(-np.ones(d), np.ones(d)), atol=1e-3, rtol=None, max_levels=0,
+                       use_work_stealing=False, art={"sample_multiplier": 10}),
+        Evaluator(f_fn=lambda x: (1 + x @ xp.asarray(a))[:, None]),
+    )  # fmt: skip
+    assert TrainingConfig(atol=1).max_clusters_est == 1_000_000 and model.N_src == 1

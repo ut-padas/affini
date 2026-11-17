@@ -1,4 +1,4 @@
-"""Shared matplotlib style and figure helpers, so every AFINNI plot looks the same."""
+"""Shared matplotlib style and figure helpers, so every plot of the library looks the same."""
 
 from contextlib import contextmanager
 from pathlib import Path
@@ -29,7 +29,7 @@ STYLE = {
 
 
 @contextmanager
-def afinni_style():
+def plot_style():
     """Temporarily apply ``STYLE`` (restores the caller's rcParams afterwards)."""
     with mpl.rc_context(STYLE):
         yield

@@ -1,6 +1,6 @@
 """
 Behavioural and numerical checks of the default training algorithm (fit, test,
-augment rejected clusters, split) through the public AFINNISurrogate API.
+augment rejected clusters, split) through the public AdaptiveSurrogate API.
 """
 
 import warnings
@@ -10,7 +10,7 @@ import pytest
 
 from src import xp
 from src.components.modes import SurrogateMode
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 from tests._helpers import assert_backend_equal, host, train_surrogate
 
 rng = np.random.default_rng(11)
@@ -41,7 +41,7 @@ def quad_h(x):
 
 
 def train(f, mode=SurrogateMode.AFFINE_COV_HESS, **kw):
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     opts = {
         "mode": mode, "atol": 0.02, "rtol": 0.02, "error_metric": "Linf",
         "num_initial_clusters": 8, "min_pts_per_cluster": 40, "use_work_stealing": False,
@@ -142,12 +142,12 @@ def test_tighter_tolerance_gives_more_leaves_and_lower_error():
 def test_inputs_and_precomputed_values_paths_agree():
     Y = quad_f(xp.asarray(X_TRAIN))
     a = train(quad_f)
-    b = AFINNISurrogate()
+    b = AdaptiveSurrogate()
     train_surrogate(
         X_TRAIN, b, Y_train=Y, f_fn=quad_f, mode=SurrogateMode.AFFINE_COV_HESS, atol=0.02, rtol=0.02,
         error_metric="Linf", num_initial_clusters=8, min_pts_per_cluster=40, use_work_stealing=False,
     )  # fmt: skip
-    c = AFINNISurrogate()
+    c = AdaptiveSurrogate()
     train_surrogate(
         X_TRAIN, c, oracle_fn=lambda x: (quad_f(x), quad_g(x)), mode=SurrogateMode.AFFINE_COV_HESS,
         atol=0.02, rtol=0.02, error_metric="Linf", num_initial_clusters=8, min_pts_per_cluster=40,

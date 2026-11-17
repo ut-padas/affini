@@ -7,19 +7,26 @@ import numpy as np
 import pytest
 
 import src.engine.driver as driver
+from src import IS_CUPY_BACKEND
 from src.config import TrainingConfig
 from tests._helpers import host, train_surrogate
 
 X = np.random.default_rng(4).uniform(-1, 1, (3_000, 2))
 OPTIONS = {"atol": 0.05, "rtol": 0.05, "num_initial_clusters": 9, "min_pts_per_cluster": 40, "use_work_stealing": False, "seed": 5}
 needs_knndbscan = pytest.mark.skipif(find_spec("knndbscan") is None, reason="needs the knndbscan package")
+# On the GPU backend initial_clustering asks knndbscan for its GPU neighbour search, which needs
+# cuML; the gpu extra does not install it (the library's own k-means and kNN do not use it).
+needs_knndbscan_device = pytest.mark.skipif(
+    IS_CUPY_BACKEND and find_spec("cuml") is None,
+    reason="knndbscan's GPU neighbour search needs cuML (pip install knndbscan[gpu]), which the gpu extra does not install",
+)
 
 
 def f(x):
     return 1 + x[:, 0] ** 2 + 3 * x[:, 1] ** 2
 
 
-@pytest.mark.parametrize("method", ["kmeans", "uniform_grid", pytest.param("knndbscan", marks=needs_knndbscan)])
+@pytest.mark.parametrize("method", ["kmeans", "uniform_grid", pytest.param("knndbscan", marks=[needs_knndbscan, needs_knndbscan_device])])
 def test_labels_equal_those_training_starts_from(monkeypatch, method):
     options = {**OPTIONS, "initial_clustering_method": method}
     used, original = [], driver.initial_clustering
@@ -40,6 +47,7 @@ def test_labels_equal_those_training_starts_from(monkeypatch, method):
 
 
 @needs_knndbscan
+@needs_knndbscan_device
 def test_knndbscan_separates_blobs_farther_apart_than_eps():
     rng = np.random.default_rng(7)
     blobs = np.concatenate([rng.normal(0.0, 0.05, (400, 2)), rng.normal(3.0, 0.05, (400, 2))])

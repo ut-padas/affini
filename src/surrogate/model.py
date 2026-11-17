@@ -1,5 +1,5 @@
 """
-The public surrogate: ``AFINNISurrogate`` trains with ``refine``, stores
+The public surrogate: ``AdaptiveSurrogate`` trains with ``refine``, stores
 the accepted leaves on every MPI rank, predicts with a two-stage (Euclidean, then
 trust-region) neighbour search (``predictor="knn"``) or, for an ART model, by
 routing each query down the explicit tree (``predictor="route"``, its default), and
@@ -74,6 +74,20 @@ def _collective(what: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
     return decorate
 
 
+ROUTE_CHUNK = 5000  # queries per routed chunk (ART); routing gathers only (d + 1) per query and level
+# Bytes of the (chunk, k_coarse, d, d) trust-matrix gather in kNN prediction, its largest array.
+# 5,000 queries stay within it while k_coarse d^2 <= 53,687 (d up to 73 with 10 candidates, up to 32
+# with 50), so low-dimensional prediction keeps its chunks. CuPy's einsum is not chunk-invariant
+# (its contraction path depends on the shape), so on the GPU a smaller chunk can change a
+# prediction at rounding level; NumPy's is per query.
+KNN_GATHER_BYTES = 2 << 30
+
+
+def knn_chunk_size(k_coarse: int, d: int, preferred: int = 5000) -> int:
+    """Queries per kNN prediction chunk: ``preferred``, or fewer so the trust-matrix gather fits ``KNN_GATHER_BYTES``."""
+    return int(max(1, min(preferred, KNN_GATHER_BYTES // (8 * max(1, k_coarse) * d * d))))
+
+
 def _make_knn_index(centroids: Array):
     """The exact kNN index of ``src.neighbors.knn`` for the active backend."""
     if IS_CUPY_BACKEND:
@@ -85,7 +99,7 @@ def _make_knn_index(centroids: Array):
     return CpuExactKNN(to_host(centroids))
 
 
-class AFINNISurrogate:
+class AdaptiveSurrogate:
     """
     A surrogate made of leaves with local models, trained by either plan (AFINNI or ART) on
     CPU or GPU and across MPI ranks. AFINNI leaves answer a query through their trust regions
@@ -262,7 +276,7 @@ class AFINNISurrogate:
                     f"Training stopped at max_levels={config.max_levels} with "
                     f"{self.num_unresolved_clusters:,} clusters "
                     f"({self.num_unresolved_pts:,} points) still above tolerance; "
-                    f"{where}. See AFINNISurrogate.converged.",
+                    f"{where}. See AdaptiveSurrogate.converged.",
                     RuntimeWarning,
                     stacklevel=2,
                 )
@@ -283,7 +297,7 @@ class AFINNISurrogate:
         """
         Save the trained model to an ``.npz`` file and return its path.
 
-        A directory gets the default file name (``afinni_surrogate.npz``); another
+        A directory gets the default file name (``adaptive_surrogate.npz``); another
         suffix is replaced by ``.npz``. The file stores a format version, the leaf
         arrays, every local-model parameter under its column name, the local
         model's registered name and settings, the effective training
@@ -348,7 +362,7 @@ class AFINNISurrogate:
     @classmethod
     def load_model(
         cls, filepath: str | Path, local_model: LocalModel | None = None
-    ) -> "AFINNISurrogate":
+    ) -> "AdaptiveSurrogate":
         """
         Load a model written by ``save_model()``; ``filepath`` is resolved the same
         way, so the path given to ``save_model()`` also loads.
@@ -478,7 +492,7 @@ class AFINNISurrogate:
         k_nn: int = 1,
         coarse_factor: int = 10,
         strict_trust_region: bool = False,
-        batch_size: int = 5000,
+        batch_size: int | None = None,
         predictor: str | None = None,
     ) -> tuple:
         """
@@ -491,6 +505,7 @@ class AFINNISurrogate:
         distance ``dx^T trust_matrix dx`` (``d_i``); the best ``k_nn`` leaves' models are blended with
         weights ``1 / d_i^2`` (``strict_trust_region`` drops leaves with distance > 1). A
         query is flagged outside when its best candidate (the leaf ``nu``) is > 1.
+        ``batch_size`` (queries per chunk) defaults to ``knn_chunk_size``.
 
         ``predictor="route"`` (the default, and only meaningful choice, for ART
         models): each query is routed down the tree to exactly one leaf, whose model
@@ -535,7 +550,7 @@ class AFINNISurrogate:
 
         # Run mathematical logic independently with batching
         if predictor == "route":
-            local_preds, local_mask = self.predict_route_local(local_queries, batch_size)
+            local_preds, local_mask = self.predict_route_local(local_queries, batch_size or ROUTE_CHUNK)
         else:
             local_preds, local_mask = self.predict_local(
                 query_points=local_queries,
@@ -562,12 +577,12 @@ class AFINNISurrogate:
         k_nn: int,
         coarse_factor: int,
         strict_trust_region: bool,
-        batch_size: int = 5000,
+        batch_size: int | None = None,
         return_cluster_assignments: bool = False,
     ) -> tuple[Array, Array]:
         """
-        Predict this rank's queries in chunks of ``batch_size`` to bound the
-        (chunk, k, fd, d) gathers; see ``predict`` for the method.
+        Predict this rank's queries in chunks of ``batch_size`` (default ``knn_chunk_size``)
+        to bound the (chunk, k_coarse, d, d) trust-matrix gather; see ``predict`` for the method.
         """
         N, D = query_points.shape
         assert (
@@ -595,6 +610,7 @@ class AFINNISurrogate:
 
         assert self.local_model is not None, "no local model; was the surrogate trained?"
         leaf_params = self.model_params()
+        batch_size = batch_size or knn_chunk_size(k_coarse, D)
 
         all_predictions = []
         all_outside = []
@@ -673,7 +689,7 @@ class AFINNISurrogate:
         else:
             return predictions, outside
 
-    def predict_route_local(self, query_points: Array, batch_size: int = 5000) -> tuple[Array, Array]:
+    def predict_route_local(self, query_points: Array, batch_size: int = ROUTE_CHUNK) -> tuple[Array, Array]:
         """``(predictions, outside_domain)`` for this rank's queries by routing (see ``predict``)."""
         fd = self.f_src.shape[1]
         if query_points.shape[0] == 0:
@@ -788,17 +804,19 @@ class AFINNISurrogate:
         }  # fmt: skip
 
     def filter_unguaranteed_local(
-        self, query_points: Array, k_coarse: int = 10, batch_size: int = 50000
+        self, query_points: Array, k_coarse: int = 10, batch_size: int | None = None
     ) -> Array:
         """
         Outside-trust-region mask only (``predict``'s flag), skipping model evaluation; for
         queries already local to this rank (no MPI scatter). "Unguaranteed" means outside every
-        trust region, not that the inside answers are guaranteed.
+        trust region, not that the inside answers are guaranteed. ``batch_size`` defaults to
+        ``knn_chunk_size`` with 50,000 queries where they fit.
         """
         assert self.trained and self.X_src is not None and self.trust_matrices_src is not None
         N = query_points.shape[0]
         if N == 0:
             return xp.array([], dtype=bool)
+        batch_size = batch_size or knn_chunk_size(k_coarse, query_points.shape[1], preferred=50_000)
 
         all_outside = []
         for start_idx in range(0, N, batch_size):

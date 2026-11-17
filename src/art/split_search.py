@@ -5,7 +5,8 @@ soft search's objective and step.
 The arrays keep the short names of the formulas and of the kernels in
 ``src/kernels/art_split_search.cu``: ``w`` (K, d) is each node's plane normal and ``z`` (K,)
 its offset (the plane ``(a, z)`` of the companion), ``T`` (K,) the soft gate's width (``h``),
-``delta`` the weight floor, ``lam`` the fixed ridge (``lambda``), ``beta`` the children's
+``delta`` the weight floor, ``lam`` the fixed ridge (``lambda``; 0 unless
+``ARTSettings.leaf_fit="tikhonov"``), ``beta`` the children's
 coefficients (``B_-1``, ``B_1``), and ``WL``, ``WR`` the soft weights of the left and right
 child (``W_-1``, ``W_1``).
 """
@@ -45,6 +46,7 @@ class SplitRows:
     Phi: Array  # (N, p) the leaf model's split features (phi_i: [u, 1] for affine leaves)
     labels: Array  # (N,)
     counts: Array  # (K,) points per node
+    ridge: float = 1e-8  # lambda as a fraction of each node's mean Gram diagonal; 0: no ridge (ARTSettings.leaf_fit)
     starts: Array = field(init=False)
     lam: Array = field(init=False)  # (K,) fixed ridge per node (lambda in the companion)
     groups: list = field(init=False)  # NumPy: (node ids (g,), row ids (g, c)) per distinct count c
@@ -52,7 +54,7 @@ class SplitRows:
     def __post_init__(self) -> None:
         self.starts = xp.r_[0, xp.cumsum(self.counts)[:-1]]
         tr = segment_sum(xp.sum(self.Phi**2, axis=1), self.starts)
-        self.lam = 1e-8 * tr / self.Phi.shape[1] + 1e-300
+        self.lam = self.ridge * tr / self.Phi.shape[1] + (1e-300 if self.ridge > 0 else 0.0)
         self.groups = [] if IS_CUPY_BACKEND else count_groups(self.counts, self.starts)
         self._blocks = {id(a): [a[rows] for _, rows in self.groups] for a in (self.Phi, self.Y)}
         if IS_CUPY_BACKEND:  # the kernels index with int64 labels; the chunk layout is shared by every sum
@@ -129,10 +131,14 @@ class SplitRows:
         return tuple(out)
 
     def solve(self, G: Array, B: Array) -> Array:
-        """Ridge solutions ``(G + lam I)^-1 B`` for (K, ..., p, p) Grams (lam fixed per node)."""
+        """
+        Ridge solutions ``(G + lam I)^-1 B`` for (K, ..., p, p) Grams (lam fixed per node). Without a
+        ridge, a Gram of fewer than ``p`` independent rows gets NaN coefficients, so its cut is
+        never chosen; ``min_side`` already rejects such a side.
+        """
         p = G.shape[-1]
         lam = self.lam.reshape((-1,) + (1,) * (G.ndim - 1))
-        return spd_solve(G + lam * xp.eye(p), B)  # SPD: lam > 0 and the weights are floored
+        return spd_solve(G + lam * xp.eye(p), B)
 
 
 def hard_sse(rows: SplitRows, w: Array, z: Array, min_side: int) -> tuple[Array, Array]:

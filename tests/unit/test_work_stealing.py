@@ -156,6 +156,23 @@ def test_late_steal_response_preserves_work_and_retires(monkeypatch, grant, has_
     assert all(e["rank"] == 0 and e["t"] >= 0 for e in profiler.events)
 
 
+def test_a_thief_sleeps_between_polls_while_its_reply_is_outstanding(monkeypatch):
+    """The scripted grant arrives on the second poll; the wait before it must not spin."""
+    monkeypatch.setattr(ws, "MPI", _MPI)
+    monkeypatch.setattr(ws, "MIN_LOAD_THRESHOLD", 1000)
+    comm = _Comm(grant=True, has_g=False)
+    waiting = []
+    monkeypatch.setattr(ws.time, "sleep", lambda s: waiting.append(s) if comm.requested and not comm.replied else None)
+    driver.refine_rank(
+        config=TrainingConfig(mode=SurrogateMode.NEAREST_NEIGHBOR, error_metric="Linf", atol=0.05, rtol=0.05,
+                              min_pts_per_cluster=1, max_levels=1000, batch_size=100, seed=0, max_clusters_est=10,
+                              use_work_stealing=True, save_all_gen_training_data=False),
+        evaluator=Evaluator(f_fn=lambda x: np.ones((len(x), 1))), clusters=ClusterBatch.empty(d=1, fd=1),
+        comm=comm, profiler=Profiler(new_profiling_stats()),
+    )  # fmt: skip
+    assert comm.replied and waiting == [ws.REPLY_POLL_INTERVAL]
+
+
 @pytest.mark.parametrize("stealing", [False, True])
 @pytest.mark.parametrize("max_levels", [0, 1])
 def test_single_rank_respects_refinement_limit(monkeypatch, stealing, max_levels):

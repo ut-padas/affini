@@ -1,7 +1,7 @@
 [project]
 name = "afinni"
 version = "0.1.0"
-description = "AFINNI: Adaptive affine nearest neighbor interpolation"
+description = "Adaptive surrogates of expensive functions: AFINNI and ART"
 readme = "README.md"
 requires-python = ">=3.13"
 classifiers = [

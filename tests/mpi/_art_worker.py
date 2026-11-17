@@ -1,6 +1,6 @@
 """
 ART training under MPI, launched by tests/mpi/test_mpi.py (and serially, with
-AFINNI_MPI=off, as the reference).
+SURROGATE_MPI=off, as the reference).
 
 ART draws every random number from a stream keyed by the node, so the tree
 must not depend on the rank count or on which rank processed a node. Rank 0 prints
@@ -23,7 +23,7 @@ def main() -> None:
     from src.config import ARTSettings, TrainingConfig
     from src.core.evaluation import Evaluator
     from src.infra.backend import MPI
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
 
     rank = MPI.COMM_WORLD.Get_rank()
     grants = {"n": 0}
@@ -61,7 +61,7 @@ def main() -> None:
             num_initial_clusters=8, batch_size=2_000, use_work_stealing=stealing,
             art=ARTSettings(**{"roots": "box", "sample_multiplier": 8, "validation_samples": 8, **settings}),
         )  # fmt: skip
-        model = AFINNISurrogate()
+        model = AdaptiveSurrogate()
         model.train(X, config, Evaluator(f_fn=f))
         pred, outside = model.predict(queries)
         total_grants = MPI.COMM_WORLD.allreduce(grants["n"])

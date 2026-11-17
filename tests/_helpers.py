@@ -5,7 +5,7 @@ import numpy as np
 from src import IS_CUPY_BACKEND, to_host, xp
 from src.config import TrainingConfig
 from src.core.evaluation import Evaluator
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 
 # CuPy reductions/einsum may order floating-point operations differently from
 # NumPy (and from one code path to another), so results agree to rounding only.
@@ -46,11 +46,11 @@ EVALUATOR_FIELDS = ("f_fn", "g_fn", "oracle_fn", "hessian_fn")
 
 def train_surrogate(X, surrogate=None, *, Y_train=None, initial_labels=None, **options):
     """
-    Train ``surrogate`` (a new ``AFINNISurrogate`` by default) and return it. The
+    Train ``surrogate`` (a new ``AdaptiveSurrogate`` by default) and return it. The
     ``Evaluator`` fields among ``options`` build the evaluator and the rest the
     ``TrainingConfig``, so tests can keep one dict of options per case.
     """
     evaluator = Evaluator(**{k: options.pop(k) for k in EVALUATOR_FIELDS if k in options})
-    surrogate = AFINNISurrogate() if surrogate is None else surrogate
+    surrogate = AdaptiveSurrogate() if surrogate is None else surrogate
     surrogate.train(xp.asarray(X), TrainingConfig(**options), evaluator, Y_train=Y_train, initial_labels=initial_labels)
     return surrogate

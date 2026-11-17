@@ -14,7 +14,7 @@ from src.components.modes import SurrogateMode
 from src.config import TrainingConfig
 from src.core.clusters import ParamSpec
 from src.core.evaluation import Evaluator
-from src.surrogate import MODEL_FORMAT_VERSION, AFINNISurrogate
+from src.surrogate import MODEL_FORMAT_VERSION, AdaptiveSurrogate
 from tests._helpers import assert_backend_equal, host
 
 rng = np.random.default_rng(21)
@@ -35,7 +35,7 @@ def g(x):
 
 
 def train(mode=SurrogateMode.AFFINE_COV_HESS, f_fn=f, g_fn=None, **kw):
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     opts = {
         "mode": mode, "atol": 0.05, "rtol": 0.05, "error_metric": "Linf",
         "num_initial_clusters": 4, "min_pts_per_cluster": 32, "use_work_stealing": False,
@@ -85,7 +85,7 @@ def test_round_trip_preserves_predictions_and_metadata(tmp_path, mode, kw):
     s = train(mode, **kw)
     path = s.save_model(tmp_path / "model")
     assert path.suffix == ".npz" and path.exists()
-    loaded = AFINNISurrogate.load_model(path)
+    loaded = AdaptiveSurrogate.load_model(path)
     assert_same_model(s, loaded)
     assert loaded.config == json.loads(json.dumps(s.config))
     assert loaded.converged is True and loaded.profiling_stats["N0"] == len(X)
@@ -98,14 +98,14 @@ def test_round_trip_preserves_predictions_and_metadata(tmp_path, mode, kw):
 
 def test_save_into_a_directory_uses_the_default_name(tmp_path):
     path = train().save_model(tmp_path)
-    assert path == tmp_path / "afinni_surrogate.npz"
+    assert path == tmp_path / "adaptive_surrogate.npz"
 
 
 @pytest.mark.parametrize("given", ["model", "model.npz", "model.txt", "."])
 def test_the_path_given_to_save_also_loads(tmp_path, given):
     s = train()
     s.save_model(tmp_path / given)
-    assert_same_model(s, AFINNISurrogate.load_model(tmp_path / given))
+    assert_same_model(s, AdaptiveSurrogate.load_model(tmp_path / given))
 
 
 def test_only_rank_0_writes(tmp_path, monkeypatch):
@@ -144,7 +144,7 @@ def test_custom_model_columns_and_settings_round_trip(tmp_path):
     LOCAL_MODELS.register(ScaledAffine)
     try:
         s = train(local_model=ScaledAffine(scale=2.0))
-        loaded = AFINNISurrogate.load_model(s.save_model(tmp_path / "m.npz"))
+        loaded = AdaptiveSurrogate.load_model(s.save_model(tmp_path / "m.npz"))
         assert set(loaded.leaf_params) == {"W", "c0"}
         assert loaded.local_model.settings() == {"scale": 2.0}
         assert_same_model(s, loaded)
@@ -153,8 +153,8 @@ def test_custom_model_columns_and_settings_round_trip(tmp_path):
 
     # Unregistered: a clear error, or pass the instance explicitly.
     with pytest.raises(ValueError, match="not registered"):
-        AFINNISurrogate.load_model(tmp_path / "m.npz")
-    loaded = AFINNISurrogate.load_model(tmp_path / "m.npz", local_model=ScaledAffine(scale=2.0))
+        AdaptiveSurrogate.load_model(tmp_path / "m.npz")
+    loaded = AdaptiveSurrogate.load_model(tmp_path / "m.npz", local_model=ScaledAffine(scale=2.0))
     assert_same_model(s, loaded)
 
 
@@ -166,26 +166,26 @@ def test_loading_rejects_missing_or_misshapen_columns(tmp_path):
     arrays["param:A_fit"] = arrays["param:A_fit"][:, :, :1]
     np.savez(tmp_path / "bad.npz", **arrays)
     with pytest.raises(ValueError, match="'A_fit'"):
-        AFINNISurrogate.load_model(tmp_path / "bad.npz")
+        AdaptiveSurrogate.load_model(tmp_path / "bad.npz")
     arrays["format_version"] = np.asarray(MODEL_FORMAT_VERSION + 1)
     np.savez(tmp_path / "future.npz", **arrays)
     with pytest.raises(ValueError, match="reads format"):
-        AFINNISurrogate.load_model(tmp_path / "future.npz")
+        AdaptiveSurrogate.load_model(tmp_path / "future.npz")
 
 
 def test_unversioned_files_are_refused(tmp_path):
     np.savez(tmp_path / "old.npz", X_src=np.zeros((2, 2)), trained=True)
     with pytest.raises(ValueError, match="model format None"):
-        AFINNISurrogate.load_model(tmp_path / "old.npz")
+        AdaptiveSurrogate.load_model(tmp_path / "old.npz")
 
 
 def test_failed_retraining_keeps_the_previous_model_usable(monkeypatch):
     """A failure while building the new kNN index must not destroy the old model."""
     import src.surrogate.model as su
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
 
     X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     s.train(xp.asarray(X), small_config(atol=0.05), Evaluator(f_fn=lambda x: (x**2).sum(1)))
     before = host(s.predict(xp.asarray(X[:50]))[0])
 
@@ -204,10 +204,10 @@ def test_kdtree_build_failure_during_retraining_keeps_the_old_model(monkeypatch)
     """The tree is built before the new model is installed."""
     import scipy.spatial
 
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
 
     X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     s.train(X, small_config(atol=0.05), Evaluator(f_fn=lambda x: (x**2).sum(1)))
     before = s.predict(X[:50])[0]
 
@@ -243,7 +243,7 @@ def _train_small(s, f, **kw):
 
 def test_a_failed_training_closes_its_profiler_stream(tmp_path, monkeypatch):
     """The profiler file must not stay open when the oracle raises during training."""
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
 
     created = _record_profilers(monkeypatch)
 
@@ -251,15 +251,15 @@ def test_a_failed_training_closes_its_profiler_stream(tmp_path, monkeypatch):
         raise ValueError("oracle failed")
 
     with pytest.raises(ValueError, match="oracle failed"):
-        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), small_config(0.05, profile_dir=tmp_path), Evaluator(f_fn=failing))
+        AdaptiveSurrogate().train(xp.asarray(np.zeros((100, 2))), small_config(0.05, profile_dir=tmp_path), Evaluator(f_fn=failing))
     assert created and all(p._stream is None for p in created)
 
 
 def test_a_nested_predict_does_not_release_the_outer_profiler(tmp_path, monkeypatch):
     """A predict() inside an oracle cleans up only its own scope; the outer stream is closed by the outer failure."""
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
 
-    inner = AFINNISurrogate()
+    inner = AdaptiveSurrogate()
     _train_small(inner, lambda x: (x**2).sum(1))
     created = _record_profilers(monkeypatch)
 
@@ -268,14 +268,14 @@ def test_a_nested_predict_does_not_release_the_outer_profiler(tmp_path, monkeypa
         raise ValueError("outer oracle failed")
 
     with pytest.raises(ValueError, match="outer oracle failed"):
-        AFINNISurrogate().train(xp.asarray(np.zeros((100, 2))), small_config(0.05, profile_dir=tmp_path), Evaluator(f_fn=oracle))
+        AdaptiveSurrogate().train(xp.asarray(np.zeros((100, 2))), small_config(0.05, profile_dir=tmp_path), Evaluator(f_fn=oracle))
     assert created and all(p._stream is None for p in created)
 
 
 def test_an_inner_failure_caught_by_the_oracle_leaves_the_outer_operation_running(tmp_path, monkeypatch):
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
 
-    inner = AFINNISurrogate()
+    inner = AdaptiveSurrogate()
     _train_small(inner, lambda x: (x**2).sum(1))
     created = _record_profilers(monkeypatch)
 
@@ -284,20 +284,20 @@ def test_an_inner_failure_caught_by_the_oracle_leaves_the_outer_operation_runnin
             inner.predict(xp.zeros((2, 7)))  # wrong width: the inner call fails and is caught
         return (x**2).sum(1)
 
-    _train_small(AFINNISurrogate(), oracle, profile_dir=str(tmp_path))
+    _train_small(AdaptiveSurrogate(), oracle, profile_dir=str(tmp_path))
     assert created and all(p._stream is None for p in created)
 
 
 def test_public_methods_keep_signatures_and_predict_reports_search_stats():
     import inspect
 
-    from src.surrogate import AFINNISurrogate
+    from src.surrogate import AdaptiveSurrogate
 
-    assert list(inspect.signature(AFINNISurrogate.train).parameters) == ["self", "X_train", "config", "evaluator", "Y_train", "initial_labels"]
-    assert "k_nn" in inspect.signature(AFINNISurrogate.predict).parameters
-    assert AFINNISurrogate.predict.__doc__ and AFINNISurrogate.train.__doc__
+    assert list(inspect.signature(AdaptiveSurrogate.train).parameters) == ["self", "X_train", "config", "evaluator", "Y_train", "initial_labels"]
+    assert "k_nn" in inspect.signature(AdaptiveSurrogate.predict).parameters
+    assert AdaptiveSurrogate.predict.__doc__ and AdaptiveSurrogate.train.__doc__
     X = np.random.default_rng(0).uniform(-1, 1, (3000, 2))
-    s = AFINNISurrogate()
+    s = AdaptiveSurrogate()
     s.train(xp.asarray(X), small_config(atol=0.05), Evaluator(f_fn=lambda x: (x**2).sum(1)))
     s.predict(xp.asarray(X[:700]), batch_size=300)  # three batches
     assert s.search_stats["queries"] == 700 and s.search_stats["fallback_rows"] >= 0
@@ -319,7 +319,7 @@ def test_component_preparation_can_predict_without_corrupting_training_scope(tmp
     import src.engine.driver as driver
     from src.components.local_models import ConstantModel
 
-    inner = AFINNISurrogate()
+    inner = AdaptiveSurrogate()
     _train_small(inner, lambda x: xp.ones((len(x), 1)), mode=SurrogateMode.NEAREST_NEIGHBOR)
 
     class PreparedConstant(ConstantModel):
@@ -331,7 +331,7 @@ def test_component_preparation_can_predict_without_corrupting_training_scope(tmp
             inner.predict(xp.zeros((1, 2)))
 
     monkeypatch.setitem(LOCAL_MODELS, PreparedConstant.name, PreparedConstant)
-    outer = AFINNISurrogate()
+    outer = AdaptiveSurrogate()
     _train_small(outer, lambda x: xp.ones((len(x), 1)), local_model=PreparedConstant.name,
                  mode=SurrogateMode.NEAREST_NEIGHBOR, profile_dir=str(tmp_path))
     assert outer.trained

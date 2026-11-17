@@ -1,5 +1,5 @@
 """
-CUDA sources of AFINNI's GPU kernels, one ``.cu`` file per area, compiled at runtime by
+CUDA sources of the library's GPU kernels, one ``.cu`` file per area, compiled at runtime by
 NVRTC through CuPy. CuPy caches each compiled binary on disk (``~/.cupy/kernel_cache``)
 keyed by the source text, the options and the GPU architecture, so a process only
 recompiles a file after it changes; there is no build step and no per-architecture binary.

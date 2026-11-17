@@ -112,3 +112,53 @@ def test_host_memory_check_keeps_a_reserve(monkeypatch):
     monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(10 * gib, 4 * gib))
     with pytest.raises(MemoryError):  # small machine: the 2 GiB minimum reserve applies
         clusters.check_host_memory(int(8.5 * gib), "x")
+
+
+def test_leaf_buffer_checks_host_memory_before_it_grows(monkeypatch):
+    import src.core.clusters as clusters
+
+    monkeypatch.setattr(clusters, "HOST_MEMORY_RESERVE_MIN", 0)
+    buf = clusters.ColumnBuffer({"a": clusters.ParamSpec((10,))}, capacity=2)
+    buf.append({"a": np.zeros((2, 10))})
+    monkeypatch.setattr(clusters.psutil, "virtual_memory", lambda: _FakeMemory(200))  # 3 rows need 240 bytes
+    with pytest.raises(MemoryError, match="leaf buffer"):
+        buf.append({"a": np.ones((1, 10))})
+    assert buf.n_rows == 2
+
+
+def test_downloads_larger_than_the_pinned_buffer_arrive_bit_for_bit(monkeypatch):
+    import src
+
+    monkeypatch.setattr(src, "PINNED_STAGING_BYTES", 8 * 7)  # 7 doubles per piece
+    monkeypatch.setattr(src, "_pinned_staging", None)
+    rng = np.random.default_rng(3)
+    X = rng.standard_normal((53, 3))
+    for arr, out in (
+        (xp.asarray(X), np.empty((53, 3))),  # 159 values: 23 pieces, the last one short
+        (xp.asarray(X.T.copy()).T, np.empty((53, 3))),  # not contiguous on the device
+        (xp.asarray(X[:, 0].astype(np.int32)), np.empty(53, dtype=np.int64)),  # dtype differs: plain copy
+    ):
+        src.copy_to_host(arr, out)
+        np.testing.assert_array_equal(out, to_host(arr).astype(out.dtype))
+        assert (src._pinned_staging is not None) == src.IS_CUPY_BACKEND  # the pinned path ran on the GPU
+    builder = ClusterQueueBuilder(3, 1, False, capacity_pts=10, capacity_clusters=2)
+    builder.append(xp.asarray(X), xp.asarray(X[:, :1]), None, xp.asarray([20, 33]))
+    batch = builder.build()
+    np.testing.assert_array_equal(batch.X, X)
+    np.testing.assert_array_equal(batch.F, X[:, :1])
+    leaves = src.core.clusters.ColumnBuffer({"c": src.core.clusters.ParamSpec((3,))}, capacity=4)
+    leaves.append({"c": xp.asarray(X)})
+    np.testing.assert_array_equal(leaves.result()["c"], X)
+
+
+def test_training_releases_the_pinned_staging_buffer(monkeypatch):
+    import src
+    import src.engine.driver as driver
+    from tests._helpers import train_surrogate
+
+    held = []
+    monkeypatch.setattr(driver, "release_pinned_staging", lambda: (held.append(src._pinned_staging is not None),
+                                                                   src.release_pinned_staging()))  # fmt: skip
+    train_surrogate(np.random.default_rng(0).uniform(-1, 1, (500, 2)), f_fn=lambda x: (1 + x[:, :1] ** 2),
+                    atol=0.05, rtol=0.05, num_initial_clusters=2, min_pts_per_cluster=20, use_work_stealing=False)  # fmt: skip
+    assert held == [src.IS_CUPY_BACKEND] and src._pinned_staging is None

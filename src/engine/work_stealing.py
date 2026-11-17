@@ -38,6 +38,9 @@ TAG_STEAL_GRANT = 110
 MIN_LOAD_THRESHOLD = 1_000_000  # Min points to be eligible for stealing (w_* in the companion)
 STEAL_SIZE = 500_000  # Minimum points per grant, w_s (a grant gives about half the open work)
 SLEEP_INTERVAL = 0.05  # Seconds to sleep when idle or after failed steal
+# Seconds between polls while a thief waits for its grant or denial: short next to a victim's
+# batch, which is when replies come, and it frees the core a spinning wait would hold.
+REPLY_POLL_INTERVAL = 0.001
 
 # Version of the cluster transfer format; both ends must agree, which they do when every rank
 # runs the same code. Increment it when a column is added, renamed or reordered.
@@ -351,6 +354,7 @@ class WorkStealer:
                     )
                     time.sleep(SLEEP_INTERVAL)
                     return False, None
+                time.sleep(REPLY_POLL_INTERVAL)
 
     def _retire(self) -> None:
         """

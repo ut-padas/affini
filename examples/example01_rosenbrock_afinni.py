@@ -17,7 +17,7 @@ from src.config import (
 from src.core.evaluation import Evaluator
 from src.plotting import plot_adaptive_clustering_results
 from src.problems.rosenbrock import rosenbrock
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 
 if __name__ == "__main__":
 
@@ -37,7 +37,7 @@ if __name__ == "__main__":
     f_train = rosenbrock(X_train)
 
     # --- Build AFINNI surrogate ---
-    surrogate = AFINNISurrogate()
+    surrogate = AdaptiveSurrogate()
     config = TrainingConfig(
         mode = SurrogateMode.AFFINE_COV_HESS,
         atol = TOL,

@@ -244,7 +244,8 @@ points come from and how the cut is chosen.
 AFINNI suits a sample that already exists, such as the states a simulation visited: it
 never needs to know the domain. ART suits a known domain on which every point must get an
 answer. In the code both are _plans_ of one _refinement engine_ (@sec:engine), chosen by
-`TrainingConfig(algorithm="afinni")` or `"art"`.
+`TrainingConfig(algorithm="afinni")` or `"art"`, and both are trained and queried through one
+class, `AdaptiveSurrogate`.
 
 == How to read this companion <sec:reading>
 
@@ -713,7 +714,7 @@ A minimum-volume enclosing ellipsoid @todd2016 would be tighter, but needs an it
 optimization per leaf; this one is a single eigendecomposition, batched over all accepted
 clusters.
 
-#algorithm(caption: [Inference (the manuscript's Algorithm 6): `AFINNISurrogate.predict`
+#algorithm(caption: [Inference (the manuscript's Algorithm 6): `AdaptiveSurrogate.predict`
   with `predictor="knn"`.], pseudocode(inference)) <alg:inference>
 
 #scene(side: left, width: 40%, panel("afinni-inference"))[
@@ -1017,6 +1018,12 @@ small region.
     of the domain, or the Voronoi cells of the initial clustering's centres. More roots
     give the ranks independent work from the first level on.
   - A root box is sampled exactly, without a walk.
+  - Every ART fit, of a node and in the plane search, is plain least squares with
+    $lambda = 0$, as in the reference ART (`leaf_fit="lstsq"`): a Cholesky solve of the
+    normal equations where their reciprocal condition number is at least $10^(-10)$, and QR
+    on the node's points where it is not. AFINNI's ridge (`leaf_fit="tikhonov"`) would shrink
+    the slope across a node of aspect ratio $r$ by about $10^(-8) r^2$, which deep, thin
+    nodes reach.
   - `validation_samples` draws a second, independent set of points in every node, on which
     an accepted model is checked again before it becomes a leaf.
   - On a GPU every chain of a batch walks in the same kernel launch
@@ -1103,7 +1110,7 @@ has no useful gradient. ART handles it in two stages.
 
 #definition(title: [the soft objective])[
   With weights $W_1 (s) = delta + (1 - 2 delta) sigma(s)$ and $W_(-1) (s) = delta + (1 - 2 delta) sigma(-s)$,
-  $s_i = (a^top u_i - z) slash h$, a small floor $delta$ and a fixed ridge $lambda$,
+  $s_i = (a^top u_i - z) slash h$, a small floor $delta$ and a fixed ridge $lambda >= 0$,
   $ J_h (a, z) = min_(B_(-1), B_1) 1/n [ sum_i sum_(k = plus.minus 1) W_k (s_i) (y_i - B_k^top phi_i)^2 + lambda (norm(B_(-1))^2 + norm(B_1)^2) ] , $ <eq:soft>
   where $phi_i = (u_i, 1)$ and $B_k$ are the coefficients of the two models.
 ] <def:soft>
@@ -1120,7 +1127,9 @@ closed-form solution, so only the plane is optimized: this is _variable projecti
 
 #proof[
   $J_h$ is a minimum over $B$ of a function that is differentiable in $(a, z)$, and the
-  minimizer is unique because of the ridge. By the envelope theorem the derivative of the
+  minimizer is unique: every weight is at least $delta > 0$, so each weighted Gram is
+  positive definite once the node's $phi_i$ span $RR^p$ (and for any points if $lambda > 0$).
+  By the envelope theorem the derivative of the
   minimum is the partial derivative at the minimizer: only the weights depend on
   $(a, z)$.
 ]
@@ -1614,9 +1623,9 @@ to end the loop when every node has stopped.
     host read per pass to decide whether to go on.], [checking the stop flag every few
     steps instead of every step],
   [*The host in the loop*], [The queue lives in host memory, every batch is copied in and
-    its children out, and nothing overlaps the copies with work. A batch has dozens of
-    small host reads, mostly the sizes of masks.], [pinned host memory; copying the next
-    batch in while the current one runs],
+    its children out (both through page-locked buffers), and nothing overlaps the copies
+    with work. A batch has dozens of small host reads, mostly the sizes of masks.], [copying
+    the next batch in while the current one runs],
   [*Carried planes*], [Charged per point when the batch size is chosen, so deep ART levels
     run in smaller batches. Beyond $d = #ex.defaults.walk_max_d$ dimensions `hr_walk`
     does not fit, and a slower path of array operations takes over.], [a shared plane
@@ -1941,15 +1950,15 @@ if any of them disagrees with the library.
 #raw(block: true, lang: "python", ```
 from src.config import ARTSettings, TrainingConfig
 from src.core.evaluation import Evaluator
-from src.surrogate import AFINNISurrogate
+from src.surrogate import AdaptiveSurrogate
 
 evaluator = Evaluator(f_fn=f)                    # f maps (N, d) points to (N, fd) values
 
-afinni = AFINNISurrogate()                       # AFINNI: from a sample X0
+afinni = AdaptiveSurrogate()                     # AFINNI: from a sample X0
 afinni.train(X0, TrainingConfig(atol={atol}, num_initial_clusters={n_init}, min_pts_per_cluster={n_min}), evaluator)
 values, outside = afinni.predict(queries, k_nn=1, coarse_factor={kappa})
 
-art = AFINNISurrogate()                          # ART: on a domain
+art = AdaptiveSurrogate()                        # ART: on a domain
 art.train(X0, TrainingConfig(atol={atol}, algorithm="art", domain=(lower, upper),
                              art=ARTSettings(sample_multiplier={m})), evaluator)
 values, outside = art.predict(queries)           # routed down the tree
@@ -1963,7 +1972,7 @@ report = art.audit(evaluator, n_points={audit})     # share of the domain beyond
   .replace("{audit}", str(ex.art.audit.points)))
 
 These are the main settings of the running example (it also fixes `seed` and `max_levels`). The backend is chosen by the environment:
-`AFINNI_DEVICE=cpu|gpu|auto` and `AFINNI_MPI=off|on|auto`; under `mpiexec`, `train` and
+`SURROGATE_DEVICE=cpu|gpu|auto` and `SURROGATE_MPI=off|on|auto`; under `mpiexec`, `train` and
 `predict` are collective. `docs/USAGE.md` lists every setting, `docs/ARCHITECTURE.md` maps
 the stages above to the modules of `src/`, and `docs/AFINNI_ART_DESIGN.md` records the
 design decisions behind them.

@@ -134,6 +134,45 @@ def test_affine_fit_recovers_an_affine_function():
     np.testing.assert_allclose(to_host(F_hat), F, atol=1e-5)
 
 
+@pytest.mark.parametrize("aspect", [1e4, 1e7])
+def test_lstsq_fit_is_exact_across_a_thin_cluster_where_the_ridge_biases_it(aspect):
+    """The ridge 1e-8 tr(Sigma) shrinks the thin direction's slope by about 1e-8 aspect^2; lstsq does not."""
+    counts = [200]
+    X = rng.uniform(-1, 1, (200, 2)) * [1.0, 1.0 / aspect]
+    F = (X @ [[2.0], [3.0]]) + 1.0
+    lstsq = to_host(AffineLSQModel(fit="lstsq").fit(_fit_data(X, F, counts))["A_fit"])[0, 0]
+    ridge = to_host(AffineLSQModel().fit(_fit_data(X, F, counts))["A_fit"])[0, 0]
+    np.testing.assert_allclose(lstsq, [2.0, 3.0], rtol=1e-12 * aspect, atol=0)
+    assert abs(ridge[1] - 3.0) > 0.5  # the thin direction's slope is mostly lost
+
+
+def test_lstsq_quadratic_fit_matches_the_tikhonov_fit_on_a_well_conditioned_cluster():
+    counts = [80, 60]
+    X = rng.standard_normal((140, d))
+    F = rng.standard_normal((140, fd))
+    lstsq = to_host(QuadraticLSQModel(fit="lstsq").fit(_fit_data(X, F, counts))["coef"])
+    np.testing.assert_allclose(lstsq, to_host(QuadraticLSQModel().fit(_fit_data(X, F, counts))["coef"]), rtol=1e-7, atol=1e-9)
+    assert QuadraticLSQModel(fit="lstsq").settings() == {"fit": "lstsq"}
+    with pytest.raises(ValueError, match="fit must be one of"):
+        AffineLSQModel(fit="ridge")
+
+
+def test_art_leaves_fit_as_leaf_fit_says_and_afinni_keeps_its_ridge():
+    from src.config import ARTSettings
+
+    box = (np.zeros(2), np.ones(2))
+    for local_model in ("affine_lsq", ("quadratic_lsq", {})):
+        art = TrainingConfig(algorithm="art", atol=1e-2, domain=box, local_model=local_model)
+        assert art.components().local_model.fit_method == "lstsq"
+        ridge = TrainingConfig(algorithm="art", atol=1e-2, domain=box, local_model=local_model,
+                               art=ARTSettings(leaf_fit="tikhonov"))  # fmt: skip
+        assert ridge.components().local_model.fit_method == "tikhonov"
+    afinni = TrainingConfig(mode=SurrogateMode.AFFINE_COV_NO_HESS, atol=1e-2, rtol=1e-2)
+    assert afinni.components().local_model.fit_method == "tikhonov"
+    with pytest.raises(ValueError, match="leaf_fit"):
+        ARTSettings(leaf_fit="ridge")
+
+
 def test_quadratic_fit_recovers_a_quadratic_per_cluster_far_from_the_origin():
     """Exact on quadratics, also for small clusters far from the origin (the fit is centred and scaled)."""
     counts = [40, 25, 60]
@@ -263,7 +302,8 @@ def test_evaluate_rejects_a_shared_hessian():
 
 
 def test_builtin_models_are_registered_and_rebuildable():
-    for model in (ConstantModel(), TaylorModel(), TaylorModel(True), AffineLSQModel(), QuadraticLSQModel()):
+    for model in (ConstantModel(), TaylorModel(), TaylorModel(True), AffineLSQModel(), AffineLSQModel(fit="lstsq"),
+                  QuadraticLSQModel(), QuadraticLSQModel(fit="lstsq")):
         assert LOCAL_MODELS[model.name] is type(model)
         rebuilt = LOCAL_MODELS.create((model.name, model.settings()))
         assert type(rebuilt) is type(model) and rebuilt.settings() == model.settings()
@@ -292,3 +332,14 @@ def test_column_buffer_checks_trailing_shapes():
         buf.append({"a": np.zeros((1, 3, 2))})
     with pytest.raises(ValueError, match="declared"):
         buf.append({"a": np.zeros((1, 2))})  # would silently broadcast otherwise
+
+
+def test_column_buffer_reserves_at_most_its_byte_cap_and_grows_to_hold_every_row(monkeypatch):
+    monkeypatch.setattr(ColumnBuffer, "INITIAL_RESERVE_BYTES", 3 * 8 * 7)  # three rows of 7 doubles
+    buf = ColumnBuffer({"Q": ParamSpec((2, 3)), "n": ParamSpec((), np.int64)}, capacity=10**12)
+    assert buf.row_bytes == 56 and len(buf._data["Q"]) == 3
+    rows = np.random.default_rng(0).random((11, 2, 3))
+    for a, b in ((0, 2), (2, 3), (3, 11)):
+        buf.append({"Q": rows[a:b], "n": np.arange(a, b)})
+    np.testing.assert_array_equal(buf.result()["Q"], rows)
+    np.testing.assert_array_equal(buf.result()["n"], np.arange(11))

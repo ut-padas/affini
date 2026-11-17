@@ -615,6 +615,25 @@ def test_fused_hit_and_run_and_uniform_pairs_match_the_generic_path(monkeypatch)
     np.testing.assert_allclose(X_fused, draw(), atol=1e-10)  # same moves; only fused-multiply-add rounding differs
 
 
+def test_walks_above_256_dimensions_do_not_depend_on_the_chunk_size(monkeypatch):
+    """Above the CUDA walk's 256-dimension limit CuPy walks chains in chunks; each chain keeps its own stream."""
+    d = 300
+    cut = np.r_[1.0, np.zeros(d - 1), 0.5]  # u0 <= 0.5
+    seeds = np.random.default_rng(2).random((4, d)) * np.r_[0.5, np.ones(d - 1)]
+
+    def draw():
+        geo = NodePolytopes(xp.asarray([0]), xp.asarray([2]), node_keys(1, xp.asarray([0]), xp.asarray([2])),
+                            xp.asarray(cut[None, None, :]), PURPOSE_TRAIN)  # fmt: skip
+        sampler = HitAndRunSampler(Domain(np.zeros(d), np.ones(d)), Roots.build("box", d, 1), walk_steps=8)
+        return host(sampler.sample(ClusterPoints(xp.asarray(seeds), xp.asarray([4]), polytopes=geo), xp.asarray([300])))
+
+    whole = draw()
+    monkeypatch.setattr(HitAndRunSampler, "CHUNK_ELEMENTS", 20_000)  # about 13 chains per chunk at d = 300
+    np.testing.assert_array_equal(draw(), whole)
+    assert np.all((whole >= 0) & (whole <= 1)) and np.all(whole[:, 0] <= 0.5)
+    assert not np.any((whole[:, None, :] == seeds[None]).all(axis=2))  # every point left its start
+
+
 def test_soft_gates_match_the_logistic_formula():
     """The fused gates (CUDA on the GPU, Numba on the CPU) against the plain formula, including s = 0 and large |s|."""
     import src.art.split_search as split_search

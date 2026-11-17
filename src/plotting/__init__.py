@@ -1,15 +1,15 @@
 """
-Plotting for AFINNI. Import plots from here; add new ones to the module that fits:
+Plotting for both plans, AFINNI and ART. Import plots from here; add new ones to the module that fits:
 
 - ``src.plotting.profiling``: training profiles (time per phase and rank, level
   heatmaps, forest growth, timelines, load balance and work stealing, dashboard).
 - ``src.plotting.surrogate``: trained surrogates and their errors.
 - ``src.plotting.art``: ART trees (partition, statistics) and comparisons of
   several surrogates (error maps, error CDFs, metric bars).
-- ``src.plotting.style``: the shared style (``afinni_style``) and ``finish`` (save/close).
+- ``src.plotting.style``: the shared style (``plot_style``) and ``finish`` (save/close).
 
 Conventions for new plots: accept training outputs directly (see
-``profiling.profile_of``), draw inside ``afinni_style()``, take an optional ``path``,
+``profiling.profile_of``), draw inside ``plot_style()``, take an optional ``path``,
 and return the figure, so plots work in notebooks, scripts and tests alike. Put the
 data preparation in a ``*_frame`` helper when it is useful on its own.
 """
@@ -36,7 +36,7 @@ from src.plotting.profiling import (
     profile_of,
     steals_frame,
 )
-from src.plotting.style import afinni_style, finish
+from src.plotting.style import finish, plot_style
 from src.plotting.surrogate import (
     plot_adaptive_clustering_results,
     plot_cluster_projections_for_wave,
@@ -48,7 +48,7 @@ from src.plotting.surrogate import (
 )
 
 __all__ = [
-    "afinni_style",
+    "plot_style",
     "events_frame",
     "finish",
     "level_stats_frame",

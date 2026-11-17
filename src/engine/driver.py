@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from src import IS_CUPY_BACKEND, Array, to_host, xp
+from src import IS_CUPY_BACKEND, Array, release_pinned_staging, to_host, xp
 from src.afinni import AFINNIPlan
 from src.art import ARTPlan, Domain, Roots
 from src.config import TrainingConfig
@@ -75,7 +75,7 @@ def run_collective(operation, what: str):
     """
     Run a collective ``operation()`` with the MPI failure policy; the single owner of
     fatal-failure handling for the public collective entry points (``refine``,
-    ``AFINNISurrogate.train`` and ``predict``), so wrappers are never nested.
+    ``AdaptiveSurrogate.train`` and ``predict``), so wrappers are never nested.
 
     In a single process the original exception propagates unchanged. Under MPI an
     exception on any rank may leave peers blocked in a collective or receive, so no
@@ -173,6 +173,7 @@ def refine_unguarded(
     buffers, out_count, local_f_evals, local_gen_pts, last_level = refine_rank(
         config=config, evaluator=evaluator, clusters=local_clusters, comm=comm, profiler=profiler, plan=plan,
     )  # fmt: skip
+    release_pinned_staging()  # the leaves and queues are on the host now
     # ART leaves no points unresolved: nodes stopped early keep a fallback leaf,
     # reported separately so the monitor does not show them as queued work.
     left = int(profiling_stats["num_unresolved_pts"])

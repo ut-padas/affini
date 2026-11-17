@@ -25,7 +25,7 @@ from src import PROJECT_DIR, to_host, xp
 from src.config import ARTSettings, TrainingConfig
 from src.core.evaluation import Evaluator
 from src.problems.wave import wave
-from src.surrogate import AFINNISurrogate, compute_error_metrics
+from src.surrogate import AdaptiveSurrogate, compute_error_metrics
 
 OUT_DIR = PROJECT_DIR / "scratch" / "example04_wave_art"
 LOWER, UPPER = -5.0, 5.0
@@ -48,7 +48,7 @@ def main(args) -> None:
 
     # 2. Train from one node's worth of uniform points.
     X = xp.asarray(rng.uniform(LOWER, UPPER, (math.ceil(50 * (d + 1)), d)))
-    model = AFINNISurrogate()
+    model = AdaptiveSurrogate()
     model.train(X, config, Evaluator(f_fn=wave))
     stats = model.profiling_stats
     print(f"Trained: {model.N_src:,} leaves, {stats['total_f_evals']:,} evaluations, depth "
@@ -76,7 +76,7 @@ def main(args) -> None:
 
     # 6. Save and reload: the routing tree and leaf statuses are part of the model file.
     path = model.save_model(OUT_DIR / "art_model")
-    reloaded = AFINNISurrogate.load_model(path)
+    reloaded = AdaptiveSurrogate.load_model(path)
     same = bool(np.array_equal(to_host(reloaded.predict(X_test)[0]), to_host(pred)))
     print(f"Saved {path.relative_to(PROJECT_DIR)}; reloaded predictions identical: {same}")
 

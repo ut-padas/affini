@@ -111,7 +111,7 @@ def new_profiling_stats() -> dict[str, Any]:
     }
 
 
-_NVTX = IS_CUPY_BACKEND and os.environ.get("AFINNI_NVTX") == "1"
+_NVTX = IS_CUPY_BACKEND and os.environ.get("SURROGATE_NVTX") == "1"
 
 
 def _nvtx_range(key: str):
@@ -171,7 +171,7 @@ class Profiler:
     def phase(self, key: str):
         """
         Context manager timing phase ``key`` (a no-op when profiling is off). With
-        ``AFINNI_NVTX=1`` on the GPU it also opens an NVTX range named after the
+        ``SURROGATE_NVTX=1`` on the GPU it also opens an NVTX range named after the
         phase, so Nsight Systems timelines are labelled; this adds no synchronization.
         """
         if not self.enabled:

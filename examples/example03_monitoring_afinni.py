@@ -19,7 +19,7 @@ runs keep the defaults.
 import os
 
 # Before importing src: run on the CPU, one thread per rank.
-os.environ.setdefault("AFINNI_DEVICE", "cpu")
+os.environ.setdefault("SURROGATE_DEVICE", "cpu")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import argparse  # noqa: E402
@@ -42,7 +42,7 @@ from src.config import (  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
 from src.problems.rosenbrock import rosenbrock  # noqa: E402
-from src.surrogate import AFINNISurrogate  # noqa: E402
+from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
 BASE_DIR = PROJECT_DIR / "scratch" / "example03_monitoring_afinni"
 N_TEST, SEED = 50_000, 0
@@ -82,7 +82,7 @@ if __name__ == "__main__":
     # Only rank 0 holds the data, but every rank must train with the same tolerance.
     ATOL = MPI.COMM_WORLD.bcast(TOL * float(xp.max(xp.abs(Y_train))) if rank == 0 else None, root=0)
 
-    surrogate = AFINNISurrogate()
+    surrogate = AdaptiveSurrogate()
     t0 = time.perf_counter()
     config = TrainingConfig(
         mode=SurrogateMode.AFFINE_COV_HESS,

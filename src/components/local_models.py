@@ -1,5 +1,5 @@
 """
-The function fitted on each cluster (leaf) of the AFINNI forest.
+The function fitted on each cluster (leaf) of either plan, AFINNI or ART.
 
 A ``LocalModel`` owns four things:
 
@@ -15,7 +15,7 @@ A ``LocalModel`` owns four things:
 
 Adding a model (e.g. a local quadratic or kernel ridge regression) means writing
 one subclass and registering it in ``LOCAL_MODELS``; the refinement loop, output
-buffers, MPI gathering, prediction and ``AFINNISurrogate.save_model``/``load_model``
+buffers, MPI gathering, prediction and ``AdaptiveSurrogate.save_model``/``load_model``
 only see the columns it declares. A model declares the data it needs with
 ``needs_centroid_value`` (f at the centroids, ``ClusterFitData.f_c``),
 ``needs_centroid_grad`` (gradients at the centroids, ``ClusterFitData.g_c``) and
@@ -53,6 +53,7 @@ from src.numerics import (
     det_einsum,
     det_matmul,
     grouped_cross,
+    lstsq_auto,
     reduce_sum_1d,
     repeats,
     run_fused_cross_cov,
@@ -143,6 +144,17 @@ class LocalModel(ABC):
 
 
 LOCAL_MODELS: Registry[LocalModel] = Registry("local model", LocalModel)
+
+# How the least-squares models solve: "tikhonov" with their fixed ridge, by Cholesky (AFINNI);
+# "lstsq" without one, as the reference ART does (``lstsq_auto``). ART selects it through
+# ``ARTSettings.leaf_fit``.
+FIT_METHODS = ("tikhonov", "lstsq")
+
+
+def check_fit_method(fit: str) -> str:
+    if fit not in FIT_METHODS:
+        raise ValueError(f"fit must be one of {FIT_METHODS}; got {fit!r}.")
+    return fit
 
 
 @LOCAL_MODELS.register
@@ -265,15 +277,23 @@ class TaylorModel(LocalModel):
 @LOCAL_MODELS.register
 class AffineLSQModel(LocalModel):
     """
-    f_hat(x) = A x + b, a least-squares fit to the cluster's points with adaptive
-    Tikhonov regularization (``AFFINE_*`` modes; Equation (3) of the AFINNI manuscript, the
-    companion's ``f_hat(x) = w^T (x - c) + b``). Column ``"A_fit"`` (fd, d) holds one row
-    ``w^T`` per output component; column ``"b_fit"`` is the intercept at the origin, not at
-    the centroid: ``b_fit = b - w^T c``, with the companion's ``b`` the fit's value at ``c``.
+    f_hat(x) = A x + b, a least-squares fit to the cluster's points (``AFFINE_*`` modes; the
+    companion's ``f_hat(x) = w^T (x - c) + b``). ``fit="tikhonov"`` adds the adaptive ridge
+    ``1e-8 tr(Sigma)`` of Equation (3) of the AFINNI manuscript, which biases the slope across
+    a thin cluster by about ``1e-8 * aspect^2``; ``fit="lstsq"`` solves without it
+    (``lstsq_auto``). Column ``"A_fit"`` (fd, d) holds one row ``w^T`` per output component;
+    column ``"b_fit"`` is the intercept at the origin, not at the centroid: ``b_fit = b - w^T c``,
+    with the companion's ``b`` the fit's value at ``c``.
     """
 
     name = "affine_lsq"
     needs_centroid_value = False
+
+    def __init__(self, fit: str = "tikhonov"):
+        self.fit_method = check_fit_method(fit)
+
+    def settings(self):
+        return {"fit": self.fit_method}
 
     def columns(self, d, fd):
         return {"A_fit": ParamSpec((fd, d)), "b_fit": ParamSpec((fd,))}
@@ -287,7 +307,12 @@ class AffineLSQModel(LocalModel):
         cross_cov = run_fused_cross_cov(
             data.X, data.F, data.centroids, mean_F, data.labels, K, d, fd
         )  # (K, d, fd)
-        A_T = solve_regularized_covariance_inplace(auto_cov, cross_cov, d, fd)
+        if self.fit_method == "lstsq":  # centred rows: the scatter and cross products are their normal equations
+            dX = data.X - data.centroids[data.labels]
+            dF = data.F - mean_F[data.labels]
+            A_T = lstsq_auto(auto_cov, cross_cov, dX, dF, data.starts, data.counts)
+        else:
+            A_T = solve_regularized_covariance_inplace(auto_cov, cross_cov, d, fd)
         del auto_cov
         A = A_T.transpose(0, 2, 1)  # (K, fd, d)
         b = mean_F - det_einsum("kfd,kd->kf", A, data.centroids)  # (K, fd)
@@ -305,15 +330,22 @@ class AffineLSQModel(LocalModel):
 class QuadraticLSQModel(LocalModel):
     """
     f_hat(x) = a full quadratic polynomial (ART's degree-2 leaves, ``(d+1)(d+2)/2``
-    coefficients per output) in ``z = (x - c) / s``, fitted by least squares with a tiny
-    fixed ridge (1e-10 of the Gram's mean diagonal). ``c`` is the cluster centroid and ``s``
-    its RMS radius; they only condition the fit, since the space of quadratics does not
-    change under them. Feature count grows as ``d^2 / 2``: meant for low dimension.
+    coefficients per output) in ``z = (x - c) / s``, fitted by least squares: ``fit="tikhonov"``
+    with a tiny fixed ridge (1e-10 of the Gram's mean diagonal), ``fit="lstsq"`` without one
+    (``lstsq_auto``). ``c`` is the cluster centroid and ``s`` its RMS radius; they only
+    condition the fit, since the space of quadratics does not change under them. Feature count
+    grows as ``d^2 / 2``: meant for low dimension.
     """
 
     name = "quadratic_lsq"
     needs_centroid_value = False
     centred_features = True
+
+    def __init__(self, fit: str = "tikhonov"):
+        self.fit_method = check_fit_method(fit)
+
+    def settings(self):
+        return {"fit": self.fit_method}
 
     def columns(self, d, fd):
         return {"coef": ParamSpec((fd, self.n_features(d))), "radius": ParamSpec(())}
@@ -340,6 +372,8 @@ class QuadraticLSQModel(LocalModel):
             G = grouped_cross(groups, P_g, P_g)
             B = grouped_cross(groups, P_g, [data.F[rows] for _, rows in groups])
         p = Phi.shape[1]
+        if self.fit_method == "lstsq":
+            return {"coef": xp.swapaxes(lstsq_auto(G, B, Phi, data.F, data.starts, data.counts), 1, 2), "radius": radius}
         lam = 1e-10 * xp.trace(G, axis1=1, axis2=2) / p + 1e-300
         # spd_solve: on the GPU its bits do not depend on the batch (a batched linalg.solve picks its
         # algorithm by batch count, so cold and warm runs fitted different coefficients); NumPy: linalg.solve

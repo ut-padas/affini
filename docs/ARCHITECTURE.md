@@ -21,7 +21,7 @@ strategies, acceptance tests, trust regions and samplers, each a registry of nam
 ## A training run
 
 ```
-AFINNISurrogate.train                                    src/surrogate/model.py
+AdaptiveSurrogate.train                                    src/surrogate/model.py
 └── driver.refine_unguarded         every rank           src/engine/driver.py
     ├── _initial_data               rank 0: f at the training points; AFINNI's initial clustering
     ├── _make_plan                  AFINNIPlan, or ARTPlan with the broadcast domain and roots
@@ -93,7 +93,7 @@ names, and the docstring or comment where a name is defined gives its symbol. Pa
 
 | Symbol | Meaning | Name in the code | Where |
 |---|---|---|---|
-| f, f̂, d | the function (oracle), the surrogate, the input dimension | `Evaluator`; `AFINNISurrogate.predict`; `d` | `core/evaluation.py`, `surrogate/model.py` |
+| f, f̂, d | the function (oracle), the surrogate, the input dimension | `Evaluator`; `AdaptiveSurrogate.predict`; `d` | `core/evaluation.py`, `surrogate/model.py` |
 | X₀, N | the initial points and their number | `train(X_train, ...)`; `profiling_stats["N0"]` | `surrogate/model.py`, `engine/driver.py` |
 | C, X_C | a cluster (AFINNI) or node (ART), its points | a queued cluster: rows `starts[k] : starts[k] + counts[k]` of `X`, `F` | `core/clusters.py` (`ClusterBatch`) |
 | c, f(c) | a cluster's centre (the mean of its points), f there | `centroids` (`mus` in the plans), `f_c`; for the leaves `X_src`, `f_src` (leaf columns `"centroids"`, `"f"`) | `components/local_models.py` (`ClusterFitData`), `surrogate/model.py` |
@@ -119,7 +119,7 @@ names, and the docstring or comment where a name is defined gives its symbol. Pa
 | n_dir, n_bins | search directions; cuts per direction plus one | `n_directions`, `n_bins` | `config.py`, `art/plan.py` (`_direction_bank`, `_bins_search`) |
 | yᵢ, φᵢ | a node's values in units of the tolerance, its features | `SplitRows.Y`, `SplitRows.Phi` | `art/split_search.py` |
 | SSE, J_h | the hard and soft split objectives | `hard_sse`, `soft_objective` | `art/split_search.py` |
-| h, δ, λ | gate width, weight floor, ridge | `T` (`soft_temperature` times the std of the scores), `delta` (`soft_weight_floor`), `SplitRows.lam` | `art/plan.py` (`_soft_refine`), `art/split_search.py`, `config.py` |
+| h, δ, λ | gate width, weight floor, ridge | `T` (`soft_temperature` times the std of the scores), `delta` (`soft_weight_floor`), `SplitRows.lam` (0 unless `leaf_fit="tikhonov"`) | `art/plan.py` (`_soft_refine`), `art/split_search.py`, `config.py` |
 | W₋₁, W₁, B₋₁, B₁ | the children's soft weights and coefficients | `WL`, `WR`; `beta` | `art/split_search.py` |
 | η | the audit's confidence | `confidence` | `surrogate/model.py` (`audit`) |
 | P, wᵢ, L | the ranks, a rank's load, the loads it knows | `comm.Get_size()`, `WorkStealer.local_load`, `WorkStealer.global_loads` | `engine/work_stealing.py` |

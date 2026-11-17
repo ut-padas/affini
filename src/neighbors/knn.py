@@ -1,6 +1,6 @@
 """
 Exact k-nearest-neighbour search over the leaf centroids, used by
-``AFINNISurrogate.predict``: ``GpuExactKNN`` (CUDA, replaces cuML's NearestNeighbors)
+``AdaptiveSurrogate.predict``: ``GpuExactKNN`` (CUDA, replaces cuML's NearestNeighbors)
 and ``CpuExactKNN`` (Numba + BLAS, replaces FAISS).
 
 Contract of ``kneighbors``: neighbours are chosen by squared distances of the
@@ -294,7 +294,7 @@ def _cpu_kernels():
 
 
 def _stats(queries, candidates, fallback_rows, strategy: str) -> dict:
-    """``last_search_stats`` record (summed per predict call in ``AFINNISurrogate.search_stats``)."""
+    """``last_search_stats`` record (summed per predict call in ``AdaptiveSurrogate.search_stats``)."""
     return {"queries": int(queries), "candidates": int(candidates), "fallback_rows": int(fallback_rows), "strategy": strategy}
 
 
