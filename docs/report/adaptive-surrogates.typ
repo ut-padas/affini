@@ -2339,8 +2339,10 @@ the minimum, maximum and number of seeds beside it.
     block(above: 0.4em, below: 1.2em, if t.differences.len() == 0 [
       - No major differences: every re-run number is within the noise band of the manuscript's.
     ] else {
-      list(..t.differences.map(d => text(fill: if d.mark == "better" { ms-better } else { ms-worse })[
-        #if d.mark == "better" [*Better:*] else [*Worse:*] #eval(d.text, mode: "markup")
+      list(..t.differences.map(d => [
+        #text(fill: if d.mark == "better" { ms-better } else { ms-worse })[
+          #if d.mark == "better" [*Better:*] else [*Worse:*] #eval(d.text, mode: "markup")]
+        #block(above: 0.25em, below: 0.35em, text(fill: luma(70))[_Cause:_ #eval(d.at("cause", default: "Not analysed."), mode: "markup")])
       ]))
     })
   } else { v(0.8em) }
@@ -2365,7 +2367,9 @@ re-run cell is shaded where it differs from the manuscript's by more than the re
 (25% for counts, errors and times; 1 point or 30% for percentages, whichever is larger):
 #text(fill: ms-better)[green] where the re-run is better, #text(fill: ms-worse)[red] where it is
 worse, lower being better for every quantity but $p_"in,good"$. The list under each table names
-those cells, regressions first, as the ratio of the re-run's number to the manuscript's.
+those cells, regressions first, as the ratio of the re-run's number to the manuscript's, each with
+its cause as far as it has been traced ("not traced" where it has not; D1-D7 refer to
+`studies/sanity/README.md`).
 #if ms.records.len() == 0 [
   No re-run has been recorded yet, so every re-run cell is "–".
 ] else [

@@ -718,43 +718,53 @@
    "differences": [
     {
      "mark": "worse",
-     "text": "$N$ 1.4–1.7× the manuscript's (\\#6, \\#7, \\#17, \\#19)"
+     "text": "$N$ 1.4–1.7× the manuscript's (\\#6, \\#7, \\#17, \\#19)",
+     "cause": "\\#6, \\#7 (Quadratic $d = 10$): more evaluations at the two loosest tolerances for an equal or smaller $e$, and fewer at \\#8, \\#9: the series converges along a different path. Not traced to one change. \\#17, \\#19: the Gaussian note under $N_c$."
     },
     {
      "mark": "worse",
-     "text": "$N_c$ 1.3–1.8× the manuscript's (\\#6, \\#7, \\#15, \\#17, \\#19)"
+     "text": "$N_c$ 1.3–1.8× the manuscript's (\\#6, \\#7, \\#15, \\#17, \\#19)",
+     "cause": "\\#6, \\#7: as for $N$. \\#15, \\#17, \\#19 (Gaussian $d = 5$): the function is not the manuscript's. Its rotation is drawn with NumPy from a fixed seed, while the draft's GPU runs drew it with CuPy, so the two tables describe two rotated Gaussians (`studies/sanity/README.md`, D4); its trees also vary strongly between seeds."
     },
     {
      "mark": "worse",
-     "text": "$e$ 2.2× the manuscript's (\\#15)"
+     "text": "$e$ 2.2× the manuscript's (\\#15)",
+     "cause": "\\#15 (Gaussian $d = 5$): within the seed spread; over ten seeds the re-run's $e$ at this row brackets the manuscript's (GH200 seed study). $e$ is set by the few points flagged outside, so it varies more than $e_\"in\"$."
     },
     {
      "mark": "worse",
-     "text": "$e_\"in\"$ 1.4–2.2× the manuscript's (\\#16, \\#19)"
+     "text": "$e_\"in\"$ 1.4–2.2× the manuscript's (\\#16, \\#19)",
+     "cause": "\\#16, \\#19 (Gaussian $d = 5$): $e_\"in\"$ lies orders of magnitude below the tolerance on both sides; the different instance and the seed noise move it. No loss of accuracy against the target."
     },
     {
      "mark": "better",
-     "text": "$N_c$ 0.23–0.8× the manuscript's (\\#1, \\#3, \\#4, \\#5, \\#9)"
+     "text": "$N_c$ 0.23–0.8× the manuscript's (\\#1, \\#3, \\#4, \\#5, \\#9)",
+     "cause": "Smaller trees for an equal or smaller error (Quadratic $d = 5$ and \\#9). Not traced to one change: the training code changed in several places since the draft, among them the initial clustering (README, D5)."
     },
     {
      "mark": "better",
-     "text": "$e_\"nh\"$ 0.03–0.79× the manuscript's (\\#1, \\#2, \\#3, \\#4, \\#5, \\#6, \\#7, \\#10, \\#11, \\#12, \\#13, \\#14, \\#15, \\#16, \\#17, \\#18, \\#19)"
+     "text": "$e_\"nh\"$ 0.03–0.79× the manuscript's (\\#1, \\#2, \\#3, \\#4, \\#5, \\#6, \\#7, \\#10, \\#11, \\#12, \\#13, \\#14, \\#15, \\#16, \\#17, \\#18, \\#19)",
+     "cause": "The runs without Hessian splits are more accurate than the draft's in every row (README, D3). No code state or setting tried reproduces the draft's $e_\"nh\"$, and its runs are not in the repository. It is why the check that Hessian splits are not worse (A2) fails at \\#15 and \\#17."
     },
     {
      "mark": "better",
-     "text": "$N$ 0.23–0.52× the manuscript's (\\#3, \\#4, \\#5, \\#9)"
+     "text": "$N$ 0.23–0.52× the manuscript's (\\#3, \\#4, \\#5, \\#9)",
+     "cause": "As for $N_c$: smaller trees cost fewer evaluations."
     },
     {
      "mark": "better",
-     "text": "$p_o$ 0.023–0.42× the manuscript's (\\#3, \\#4, \\#5, \\#7, \\#8, \\#9)"
+     "text": "$p_o$ 0.023–0.42× the manuscript's (\\#3, \\#4, \\#5, \\#7, \\#8, \\#9)",
+     "cause": "Fewer points flagged outside, with the draft's own candidate counts (50 at $d = 5$, 200 at $d = 10$). Not traced: the trees and the trust regions' regularization changed since the draft (README, D4, D5)."
     },
     {
      "mark": "better",
-     "text": "$e_\"in\"$ 0.61–0.78× the manuscript's (\\#3, \\#4, \\#5, \\#7, \\#8, \\#9, \\#15, \\#17)"
+     "text": "$e_\"in\"$ 0.61–0.78× the manuscript's (\\#3, \\#4, \\#5, \\#7, \\#8, \\#9, \\#15, \\#17)",
+     "cause": "Not traced; it comes with the smaller trees above, and at \\#15, \\#17 with the Gaussian's different instance."
     },
     {
      "mark": "better",
-     "text": "$e$ 0.24–0.56× the manuscript's (\\#3, \\#4, \\#5, \\#7, \\#8, \\#9, \\#18, \\#19)"
+     "text": "$e$ 0.24–0.56× the manuscript's (\\#3, \\#4, \\#5, \\#7, \\#8, \\#9, \\#18, \\#19)",
+     "cause": "Follows the smaller $p_o$: fewer points are predicted by a far leaf (README, D2). \\#18, \\#19: the Gaussian's instance and seed noise, as above."
     }
    ]
   },
@@ -1663,31 +1673,38 @@
    "differences": [
     {
      "mark": "worse",
-     "text": "$e$ 1.4× the manuscript's (\\#42)"
+     "text": "$e$ 1.4× the manuscript's (\\#42)",
+     "cause": "\\#42 (Wave $d = 5$): $e$ is set by the points the candidate search flags outside, most of which lie inside some trust region (the exact search flags far fewer), while $e_\"in\"$ is better than the manuscript's. The search misses the leaf; the surrogate is not less accurate. Figure 8 shows the same."
     },
     {
      "mark": "better",
-     "text": "$p_o$ 0.019–0.64× the manuscript's (\\#20, \\#21, \\#25, \\#26, \\#40, \\#41)"
+     "text": "$p_o$ 0.019–0.64× the manuscript's (\\#20, \\#21, \\#25, \\#26, \\#40, \\#41)",
+     "cause": "\\#20, \\#21 (Rosenbrock $d = 2$): the draft scored its $d = 2$ rows with 10 candidates, the re-run with 50 (README, D1, D4). \\#25, \\#26 (Rosenbrock $d = 5$) and \\#40, \\#41 (Wave $d = 5$): not traced."
     },
     {
      "mark": "better",
-     "text": "$e_\"in\"$ 0.61–0.78× the manuscript's (\\#21, \\#40, \\#41, \\#42)"
+     "text": "$e_\"in\"$ 0.61–0.78× the manuscript's (\\#21, \\#40, \\#41, \\#42)",
+     "cause": "Not traced; at \\#40-42 it comes with the smaller Wave trees (below)."
     },
     {
      "mark": "better",
-     "text": "$e$ 0.11–0.63× the manuscript's (\\#21, \\#36, \\#40)"
+     "text": "$e$ 0.11–0.63× the manuscript's (\\#21, \\#36, \\#40)",
+     "cause": "\\#21: the candidate count (README, D1, D2). \\#36: an artefact: the manuscript's $e$ there is almost certainly a typo (see the inconsistencies at the end). \\#40: follows the smaller $p_o$."
     },
     {
      "mark": "better",
-     "text": "$e_\"nh\"$ 0.15–0.6× the manuscript's (\\#21, \\#22, \\#23, \\#24, \\#35, \\#36, \\#37, \\#38, \\#39, \\#40, \\#41, \\#42, \\#43)"
+     "text": "$e_\"nh\"$ 0.15–0.6× the manuscript's (\\#21, \\#22, \\#23, \\#24, \\#35, \\#36, \\#37, \\#38, \\#39, \\#40, \\#41, \\#42, \\#43)",
+     "cause": "As in Table 1a: the runs without Hessian splits are more accurate than the draft's (README, D3)."
     },
     {
      "mark": "better",
-     "text": "$N$ 0.4–0.62× the manuscript's (\\#40, \\#41, \\#42, \\#43, \\#44)"
+     "text": "$N$ 0.4–0.62× the manuscript's (\\#40, \\#41, \\#42, \\#43, \\#44)",
+     "cause": "Wave $d = 5$: the re-run's trees are much smaller for an equal or smaller $e_\"in\"$, and Figure 8's exact-gradient runs show the same. Not traced: the draft-era code could not be installed to check it."
     },
     {
      "mark": "better",
-     "text": "$N_c$ 0.29–0.45× the manuscript's (\\#40, \\#41, \\#42, \\#43, \\#44)"
+     "text": "$N_c$ 0.29–0.45× the manuscript's (\\#40, \\#41, \\#42, \\#43, \\#44)",
+     "cause": "As for $N$."
     }
    ]
   },
@@ -2018,11 +2035,13 @@
    "differences": [
     {
      "mark": "better",
-     "text": "$p_o$ 0.33–0.41× the manuscript's (atol 579.8, atol 289.9, atol 145.0, atol 72.5)"
+     "text": "$p_o$ 0.33–0.41× the manuscript's (atol 579.8, atol 289.9, atol 145.0, atol 72.5)",
+     "cause": "The draft's settings for this table are not in its script. The re-run predicts with 50 candidates, and $p_o$ falls as the candidate count grows (README, D1); most likely the draft used fewer."
     },
     {
      "mark": "better",
-     "text": "$e$ 0.74–0.78× the manuscript's (atol 145.0, atol 72.5)"
+     "text": "$e$ 0.74–0.78× the manuscript's (atol 145.0, atol 72.5)",
+     "cause": "Follows the smaller $p_o$ (README, D2)."
     }
    ]
   },
@@ -2253,23 +2272,28 @@
    "differences": [
     {
      "mark": "worse",
-     "text": "$e$ 1.4–1.6× the manuscript's (LSQ 0.02, exact 0.005)"
+     "text": "$e$ 1.4–1.6× the manuscript's (LSQ 0.02, exact 0.005)",
+     "cause": "LSQ 0.02 is Table 1b's \\#42 (see there). Exact 0.005: at the smallest tolerance 50 candidates still miss some containing leaves; with 200 the GH200 study measured an $e$ below the manuscript's."
     },
     {
      "mark": "better",
-     "text": "$N_c$ 0.16–0.45× the manuscript's (LSQ 0.1, exact 0.1, LSQ 0.05, exact 0.05, LSQ 0.02, exact 0.02, LSQ 0.01, exact 0.01, LSQ 0.005, exact 0.005)"
+     "text": "$N_c$ 0.16–0.45× the manuscript's (LSQ 0.1, exact 0.1, LSQ 0.05, exact 0.05, LSQ 0.02, exact 0.02, LSQ 0.01, exact 0.01, LSQ 0.005, exact 0.005)",
+     "cause": "Both gradients give much smaller trees than the draft, the exact one most. Not traced: the draft-era code could not be installed to check it."
     },
     {
      "mark": "better",
-     "text": "$p_o$ 0.09–0.64× the manuscript's (LSQ 0.1, exact 0.1, LSQ 0.05, exact 0.05, exact 0.02, exact 0.01, exact 0.005)"
+     "text": "$p_o$ 0.09–0.64× the manuscript's (LSQ 0.1, exact 0.1, LSQ 0.05, exact 0.05, exact 0.02, exact 0.01, exact 0.005)",
+     "cause": "LSQ: as Table 1b \\#40, \\#41. Exact gradient: the re-run predicts with 50 candidates, the draft's script with the launcher's 10 (the note above the table)."
     },
     {
      "mark": "better",
-     "text": "$e_\"in\"$ 0.55–0.75× the manuscript's (LSQ 0.1, exact 0.1, LSQ 0.05, exact 0.05, LSQ 0.02, exact 0.02, exact 0.01, exact 0.005)"
+     "text": "$e_\"in\"$ 0.55–0.75× the manuscript's (LSQ 0.1, exact 0.1, LSQ 0.05, exact 0.05, LSQ 0.02, exact 0.02, exact 0.01, exact 0.005)",
+     "cause": "Exact gradient: more candidates also give inside points a closer leaf (the GH200 study measured $e_\"in\"$ falling from 10 to 50 candidates on the same trees). LSQ: not traced."
     },
     {
      "mark": "better",
-     "text": "$e$ 0.51–0.63× the manuscript's (LSQ 0.1, exact 0.1, exact 0.05, exact 0.02, exact 0.01)"
+     "text": "$e$ 0.51–0.63× the manuscript's (LSQ 0.1, exact 0.1, exact 0.05, exact 0.02, exact 0.01)",
+     "cause": "Follows the smaller $p_o$ (README, D2)."
     }
    ]
   },
@@ -2863,15 +2887,18 @@
    "differences": [
     {
      "mark": "worse",
-     "text": "$e$ 1.5× the manuscript's (\\#18)"
+     "text": "$e$ 1.5× the manuscript's (\\#18)",
+     "cause": "\\#18 (Lorenz-96): Table 4's row is not Table 1b \\#31's run; it matches older rows the draft commented out (see the inconsistencies at the end). Against Table 1b \\#31 the re-run is within the noise band. Its values also come from a float64 integrator in place of the draft's float32 flow map."
     },
     {
      "mark": "better",
-     "text": "$e$ 0.61× the manuscript's (\\#1)"
+     "text": "$e$ 0.61× the manuscript's (\\#1)",
+     "cause": "\\#1 is the run of Table 1b \\#21 (see there)."
     },
     {
      "mark": "better",
-     "text": "$N_c$ 0.38× the manuscript's (\\#18)"
+     "text": "$N_c$ 0.38× the manuscript's (\\#18)",
+     "cause": "\\#18: as for its $e$."
     }
    ]
   },

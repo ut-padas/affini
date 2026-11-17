@@ -115,7 +115,80 @@ def read_records(records: list[Path]) -> tuple[dict, dict, list[dict]]:
     return values, walls, abouts
 
 
-def differences(found: list[tuple[str, str, float, float, str]]) -> list[dict]:
+# Why a table's re-run differs from the manuscript, by (table, quantity, better or worse): the lab's
+# analysis of each difference the colouring finds, with the evidence's location. A difference with
+# no entry here reads "not analysed", so a new record cannot silently inherit a stale explanation.
+CAUSES = {
+    ("table-1a", "N", "worse"): "\\#6, \\#7 (Quadratic $d = 10$): more evaluations at the two loosest "
+        "tolerances for an equal or smaller $e$, and fewer at \\#8, \\#9: the series converges along a "
+        "different path. Not traced to one change. \\#17, \\#19: the Gaussian note under $N_c$.",
+    ("table-1a", "N_c", "worse"): "\\#6, \\#7: as for $N$. \\#15, \\#17, \\#19 (Gaussian $d = 5$): the "
+        "function is not the manuscript's. Its rotation is drawn with NumPy from a fixed seed, while the "
+        "draft's GPU runs drew it with CuPy, so the two tables describe two rotated Gaussians "
+        "(`studies/sanity/README.md`, D4); its trees also vary strongly between seeds.",
+    ("table-1a", "e", "worse"): "\\#15 (Gaussian $d = 5$): within the seed spread; over ten seeds the "
+        "re-run's $e$ at this row brackets the manuscript's (GH200 seed study). $e$ is set by the few "
+        "points flagged outside, so it varies more than $e_\"in\"$.",
+    ("table-1a", "e_in", "worse"): "\\#16, \\#19 (Gaussian $d = 5$): $e_\"in\"$ lies orders of magnitude "
+        "below the tolerance on both sides; the different instance and the seed noise move it. No loss of "
+        "accuracy against the target.",
+    ("table-1a", "N_c", "better"): "Smaller trees for an equal or smaller error (Quadratic $d = 5$ and "
+        "\\#9). Not traced to one change: the training code changed in several places since the draft, "
+        "among them the initial clustering (README, D5).",
+    ("table-1a", "e_nh", "better"): "The runs without Hessian splits are more accurate than the draft's in "
+        "every row (README, D3). No code state or setting tried reproduces the draft's $e_\"nh\"$, and its "
+        "runs are not in the repository. It is why the check that Hessian splits are not worse (A2) fails "
+        "at \\#15 and \\#17.",
+    ("table-1a", "N", "better"): "As for $N_c$: smaller trees cost fewer evaluations.",
+    ("table-1a", "p_o", "better"): "Fewer points flagged outside, with the draft's own candidate counts "
+        "(50 at $d = 5$, 200 at $d = 10$). Not traced: the trees and the trust regions' regularization "
+        "changed since the draft (README, D4, D5).",
+    ("table-1a", "e_in", "better"): "Not traced; it comes with the smaller trees above, and at \\#15, \\#17 "
+        "with the Gaussian's different instance.",
+    ("table-1a", "e", "better"): "Follows the smaller $p_o$: fewer points are predicted by a far leaf "
+        "(README, D2). \\#18, \\#19: the Gaussian's instance and seed noise, as above.",
+    ("table-1b", "e", "worse"): "\\#42 (Wave $d = 5$): $e$ is set by the points the candidate search flags "
+        "outside, most of which lie inside some trust region (the exact search flags far fewer), while "
+        "$e_\"in\"$ is better than the manuscript's. The search misses the leaf; the surrogate is not less "
+        "accurate. Figure 8 shows the same.",
+    ("table-1b", "p_o", "better"): "\\#20, \\#21 (Rosenbrock $d = 2$): the draft scored its $d = 2$ rows with "
+        "10 candidates, the re-run with 50 (README, D1, D4). \\#25, \\#26 (Rosenbrock $d = 5$) and \\#40, "
+        "\\#41 (Wave $d = 5$): not traced.",
+    ("table-1b", "e_in", "better"): "Not traced; at \\#40-42 it comes with the smaller Wave trees (below).",
+    ("table-1b", "e", "better"): "\\#21: the candidate count (README, D1, D2). \\#36: an artefact: the "
+        "manuscript's $e$ there is almost certainly a typo (see the inconsistencies at the end). \\#40: "
+        "follows the smaller $p_o$.",
+    ("table-1b", "e_nh", "better"): "As in Table 1a: the runs without Hessian splits are more accurate than "
+        "the draft's (README, D3).",
+    ("table-1b", "N", "better"): "Wave $d = 5$: the re-run's trees are much smaller for an equal or smaller "
+        "$e_\"in\"$, and Figure 8's exact-gradient runs show the same. Not traced: the draft-era code could not "
+        "be installed to check it.",
+    ("table-1b", "N_c", "better"): "As for $N$.",
+    ("table-3", "p_o", "better"): "The draft's settings for this table are not in its script. The re-run "
+        "predicts with 50 candidates, and $p_o$ falls as the candidate count grows (README, D1); most "
+        "likely the draft used fewer.",
+    ("table-3", "e", "better"): "Follows the smaller $p_o$ (README, D2).",
+    ("figure-8", "e", "worse"): "LSQ 0.02 is Table 1b's \\#42 (see there). Exact 0.005: at the smallest "
+        "tolerance 50 candidates still miss some containing leaves; with 200 the GH200 study measured an "
+        "$e$ below the manuscript's.",
+    ("figure-8", "N_c", "better"): "Both gradients give much smaller trees than the draft, the exact one "
+        "most. Not traced: the draft-era code could not be installed to check it.",
+    ("figure-8", "p_o", "better"): "LSQ: as Table 1b \\#40, \\#41. Exact gradient: the re-run predicts "
+        "with 50 candidates, the draft's script with the launcher's 10 (the note above the table).",
+    ("figure-8", "e_in", "better"): "Exact gradient: more candidates also give inside points a closer "
+        "leaf (the GH200 study measured $e_\"in\"$ falling from 10 to 50 candidates on the same trees). LSQ: "
+        "not traced.",
+    ("figure-8", "e", "better"): "Follows the smaller $p_o$ (README, D2).",
+    ("table-4", "e", "worse"): "\\#18 (Lorenz-96): Table 4's row is not Table 1b \\#31's run; it matches "
+        "older rows the draft commented out (see the inconsistencies at the end). Against Table 1b \\#31 "
+        "the re-run is within the noise band. Its values also come from a float64 integrator in place of "
+        "the draft's float32 flow map.",
+    ("table-4", "e", "better"): "\\#1 is the run of Table 1b \\#21 (see there).",
+    ("table-4", "N_c", "better"): "\\#18: as for its $e$.",
+}
+
+
+def differences(found: list[tuple[str, str, float, float, str]], table: str = "") -> list[dict]:
     """
     The marked cells of one table, one line per (quantity, direction) in order of first appearance:
     the rows and the range of re-run / manuscript ratios, e.g. "$e$ 2.4-4.8x the manuscript's (#15, #17)".
@@ -131,7 +204,8 @@ def differences(found: list[tuple[str, str, float, float, str]]) -> list[dict]:
         lo, hi = ratio(min(r for _, r in items)), ratio(max(r for _, r in items))
         span = f"{lo}×" if lo == hi else f"{lo}–{hi}×"
         rows = ", ".join(label for label, _ in items)
-        lines.append({"mark": mark, "text": f"{SYMBOL[q]} {span} the manuscript's ({rows})"})
+        lines.append({"mark": mark, "text": f"{SYMBOL[q]} {span} the manuscript's ({rows})",
+                      "cause": CAUSES.get((table, q, mark), "Not analysed.")})  # fmt: skip
     return lines
 
 
@@ -173,7 +247,7 @@ def tables(values: dict, walls: dict) -> list[dict]:
     out = []
 
     def add(entry: dict) -> None:
-        out.append({**entry, "sources": sorted(used), "differences": differences(found)})
+        out.append({**entry, "sources": sorted(used), "differences": differences(found, entry["key"])})
         used.clear()
         found.clear()
 

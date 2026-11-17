@@ -105,5 +105,8 @@ def test_a_difference_beyond_the_noise_band_is_marked_better_or_worse():
     assert mt.compare("p_o", 0.3, 1.2) is None and mt.compare("p_o", 10.0, 2.0) == "better"  # 1-point floor
     assert mt.compare("p_in_good", 50.0, 96.7) == "better" and mt.compare("e", 1.0, None) is None
     lines = mt.differences([("#1", "e", 1.0, 2.0, "worse"), ("#2", "e", 1.0, 3.0, "worse"), ("#3", "N", 10.0, 2.0, "better")])
-    assert lines == [{"mark": "worse", "text": "$e$ 2–3× the manuscript's (#1, #2)"},
-                     {"mark": "better", "text": "$N$ 0.2× the manuscript's (#3)"}]
+    assert lines == [{"mark": "worse", "text": "$e$ 2–3× the manuscript's (#1, #2)", "cause": "Not analysed."},
+                     {"mark": "better", "text": "$N$ 0.2× the manuscript's (#3)", "cause": "Not analysed."}]
+    # a difference the lab has analysed carries its note
+    (known,) = mt.differences([("#36", "e", 8.82e-2, 9.4e-3, "better")], "table-1b")
+    assert known["cause"] == mt.CAUSES[("table-1b", "e", "better")] and "typo" in known["cause"]
