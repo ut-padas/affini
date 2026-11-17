@@ -476,6 +476,38 @@ tests are exact:
 
 ---
 
+### Split search: this library's ART against the reference ART (first results)
+
+Run on the CPU at `a161574` (before the library rename; the side labels were then `art` /
+`afinni`), with the reference ART at `854924a` (`hit_and_run` sampler, CPU optimizer), the `conv`
+group's matched settings (`--library-soft-iters 200`) and, for this library's ART, also its own
+default of 40 soft iterations. Incremental, as agreed: every quick cell first (each problem
+family at its loosest tolerances), larger cells only while the quick ones hold. A reference run
+was capped at 5 minutes (this library's ART at 10).
+
+Leaves at seed 1 (reference / this library's ART, 200 iterations), with test relative L2 and the
+share of test points above the tolerance comparable on both sides unless noted:
+
+| problem | cells | leaves, reference / this library's ART |
+|---|---|---|
+| Gaussian d = 2-5, degree 1 and 2, tol 0.1-0.005 | 31 | 0.6-1.0x in 25 cells; 1-3 leaves more in 6 cells whose trees have 1-13 leaves |
+| quadratic d = 2-5, degree 1, tol 0.1-0.005 | 10 | 0.74-0.91x at d = 2-3; 169 vs 416 at d = 4 and 253 vs 2,163 at d = 5 (tol 0.1) |
+| Gaussian mixture d = 2, 3, tol 0.1 | 2 | 26 vs 22 at d = 2 (small tree); 402 vs 569 at d = 3 |
+| Rosenbrock d = 2, degree 1, tol 0.1-0.01 | 4 | 0.28-0.33x (e.g. 2,803 vs 10,034 at tol 0.01) |
+| Rosenbrock d = 2, degree 2, tol 0.1 and 0.05, seeds 1-3 | 6 | 0.77-0.89x; at tol 0.1, seed 1, this library's ART has 4x the reference's test L2 (6.2e-3 vs 1.5e-3), seeds 2 and 3 do not (3.3e-3 vs 3.4e-3, 4.6e-3 vs 4.9e-3): seed noise |
+| Rosenbrock d = 3, degree 2, tol 0.1 | 1 | 376 vs 404 |
+| plane wave d = 3, tol 0.1 | 1 | 77 vs 1,557 |
+
+Where the reference finishes, this library's ART reaches the same accuracy with as many or fewer
+leaves and oracle calls, and trains 5-50x faster on the CPU. The reference did not finish within
+5 minutes at Rosenbrock d = 3-5 (degree 1) and d = 4, 5 (degree 2), plane wave d = 5 and 8, and
+Rastrigin d = 3; those cells have no comparison yet (this library's ART: e.g. 2,292 leaves at
+Rosenbrock d = 3, 7,255 at d = 4, 3,947 at plane wave d = 5).
+
+This library's default of 40 soft iterations against the 200 matched to the reference: 5-30% more
+leaves at d >= 3 (822 vs 627 at Gaussian d = 4, tol 0.01; 9,408 vs 7,255 at Rosenbrock d = 4), 4.3x
+more at plane wave d = 5 (17,059 vs 3,947, and slower: 103 vs 72 s), about the same at d = 2.
+
 ## Smoke tests run here
 
 All on this machine's CPU (16 cores, no GPU), `SURROGATE_DEVICE=cpu`, outputs in the session scratch
