@@ -27,7 +27,7 @@ the centre node. After each round of sweeps the model is checked at three sets:
 - a look-ahead along every axis through the worst check point and through the largest |f| seen, at
   the points the next nested grid would add (kept as check points for later rounds).
 
-If any error exceeds ``safety * atol``: every axis whose upper half of degrees still changes the
+If any error exceeds ``safety * atol``: every axis whose top quarter of degrees still changes the
 model by more than its share at those points doubles its degree (no rank makes up for a missing
 degree); otherwise the rank grows by ``rank_step`` with random right indices, and the sweeps resume.
 
@@ -79,10 +79,15 @@ def _coefficients_along(G: np.ndarray, axis: int) -> np.ndarray:
 
 
 def chebyshev_tail(v: np.ndarray) -> float:
-    """Sum of |coefficients| in the upper half of the degrees of 1-D node values (twice it for interpolation)."""
+    """
+    Twice the sum of |coefficients| in the top quarter of the degrees of 1-D node values (interpolation
+    folds the omitted tail back once). Not the upper half: for geometric decay the error is about the
+    last coefficient, a_n ~ a_{n/2}^2 / a_0, so asking the upper half to meet a share asks for about the
+    square of the accuracy, and doubling overshoots further.
+    """
     a = np.abs(_coefficients_along(v, 0))
     n = len(a) - 1
-    return 2.0 * float(a[max(1, n // 2 + 1) :].sum())
+    return 2.0 * float(a[max(1, n - n // 4 + 1) :].sum())
 
 
 @dataclass
@@ -224,7 +229,7 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
             return model
         if model.evals > max_evals:
             raise RuntimeError(f"ChebTT would exceed {max_evals:,} evaluations.")
-        # Degree or rank: an axis whose upper half of degrees still changes the model by more than its
+        # Degree or rank: an axis whose top quarter of degrees still changes the model by more than its
         # share at the check points is under-resolved, and no rank can make up for it.
         full = model.predict(Xall)
         tails = [float(np.max(np.abs(full - _truncated(model, k).predict(Xall)))) for k in range(d)]
@@ -241,10 +246,10 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
 
 
 def _truncated(model: ChebTT, k: int) -> ChebTT:
-    """The model with the upper half of axis k's degrees dropped."""
+    """The model with the top quarter of axis k's degrees dropped (see ``chebyshev_tail``)."""
     cores = list(model.cores)
     n = cores[k].shape[1] - 1
-    cores[k] = cores[k][:, : n // 2 + 1]
+    cores[k] = cores[k][:, : n - n // 4 + 1]
     return ChebTT(model.lo, model.hi, cores)
 
 
