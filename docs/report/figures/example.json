@@ -103,30 +103,24 @@
       },
       {
         "clusters": 14,
-        "accepted": 8,
+        "accepted": 9,
         "points": 528,
-        "worst_error": 2.4
+        "worst_error": 2.79
       },
       {
-        "clusters": 12,
-        "accepted": 11,
-        "points": 460,
-        "worst_error": 1.69
-      },
-      {
-        "clusters": 2,
-        "accepted": 1,
-        "points": 80,
-        "worst_error": 1.33
+        "clusters": 10,
+        "accepted": 9,
+        "points": 380,
+        "worst_error": 1.71
       },
       {
         "clusters": 2,
         "accepted": 2,
         "points": 80,
-        "worst_error": 0.58
+        "worst_error": 0.68
       }
     ],
-    "n_levels": 7,
+    "n_levels": 6,
     "split": {
       "level": 1,
       "points": 70,
@@ -136,7 +130,7 @@
       "angle": 85,
       "n_grad": 6,
       "n_cov": 8,
-      "rejected": 24,
+      "rejected": 22,
       "hessian_wins": 20
     },
     "augment": {
@@ -148,60 +142,60 @@
     "trust_points": 82,
     "queries": {
       "A": {
-        "nu": 5,
-        "euclid": 26,
-        "d_nu": 0.58,
+        "nu": 0,
+        "euclid": 11,
+        "d_nu": 0.44,
         "inside": 2,
         "outside": false,
-        "pred": 8.91,
-        "f": 8.99
+        "pred": 0.12,
+        "f": 0.14
       },
       "B": {
-        "nu": 4,
-        "euclid": 4,
+        "nu": 5,
+        "euclid": 5,
         "d_nu": 0.0,
         "inside": 2,
         "outside": false,
-        "pred": 2.04,
-        "f": 1.73
+        "pred": 8.45,
+        "f": 8.03
       },
       "C": {
-        "nu": 24,
-        "euclid": 23,
-        "d_nu": 1.81,
+        "nu": 8,
+        "euclid": 8,
+        "d_nu": 1.39,
         "inside": 0,
         "outside": true,
-        "pred": 19.53,
-        "f": 20.14
+        "pred": 6.82,
+        "f": 8.91
       }
     },
     "exact_flag": {
       "kappa": 1,
-      "leaf_rank": 10,
-      "d_leaf": 0.77,
+      "leaf_rank": 8,
+      "d_leaf": 0.45,
       "grid": 6400,
-      "missed": 1444,
-      "flagged_percent": 25.2,
-      "exact_percent": 2.6,
+      "missed": 1208,
+      "flagged_percent": 19.9,
+      "exact_percent": 1.1,
       "per_query": {
-        "ellipses": 1.46,
-        "boxes": 2.19,
-        "balls": 3.46
+        "ellipses": 1.58,
+        "boxes": 2.5,
+        "balls": 3.67
       },
       "long_leaf": {
-        "radius": 0.57,
+        "radius": 0.62,
         "half": [
-          0.19,
-          0.57
+          0.33,
+          0.54
         ],
-        "box_area": 0.43,
-        "ball_area": 1.03,
-        "ellipse_area": 0.3
+        "box_area": 0.71,
+        "ball_area": 1.19,
+        "ellipse_area": 0.27
       },
       "tree": {
         "bucket": 2,
         "nodes": 31,
-        "leaves": 28,
+        "leaves": 26,
         "levels": [
           {
             "depth": 1,
@@ -213,23 +207,23 @@
             "depth": 2,
             "nodes": 4,
             "tested": 4,
-            "entered": 3
+            "entered": 2
           },
           {
             "depth": 3,
             "nodes": 8,
-            "tested": 6,
-            "entered": 4
+            "tested": 4,
+            "entered": 3
           },
           {
             "depth": 4,
             "nodes": 16,
-            "tested": 8,
+            "tested": 6,
             "entered": 4
           }
         ],
-        "tested": 21,
-        "entered": 14,
+        "tested": 17,
+        "entered": 12,
         "tested_leaves": 6
       }
     },
@@ -613,15 +607,15 @@
   },
   "compare": {
     "afinni": {
-      "leaves": 28,
-      "evals": 1226,
-      "generated": 574,
-      "max_error": 3.37,
-      "within_percent": 97.9,
-      "outside_percent": 2.7,
-      "within_inside_percent": 98.9,
-      "depth": 6,
-      "outside_exact_percent": 2.7
+      "leaves": 26,
+      "evals": 1142,
+      "generated": 494,
+      "max_error": 4.11,
+      "within_percent": 98.2,
+      "outside_percent": 1.1,
+      "within_inside_percent": 98.6,
+      "depth": 5,
+      "outside_exact_percent": 1.1
     },
     "art": {
       "leaves": 17,
@@ -635,7 +629,7 @@
     },
     "slice_x2": 2.0,
     "grid": 240,
-    "flagged_on_line": 24,
+    "flagged_on_line": 0,
     "slice_points": 600
   },
   "steal": {

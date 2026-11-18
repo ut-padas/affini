@@ -1,0 +1,64 @@
+{
+  "run": {
+    "ranks": 6,
+    "atol": 0.01,
+    "batch_size": 240,
+    "min_load": 240,
+    "steal_size": 120,
+    "leaves": 1365,
+    "leaves_per_rank": [
+      209,
+      206,
+      282,
+      254,
+      158,
+      256
+    ],
+    "wall": 5.75
+  },
+  "requests": 68,
+  "replies": {
+    "grant": 19,
+    "leased": 20,
+    "mid_level_load": 12,
+    "mid_level_no_clusters": 13,
+    "idle": 4
+  },
+  "first": {
+    "rows": 11,
+    "ms": 2.5,
+    "victim": 0,
+    "thieves": 5,
+    "grants": [
+      {
+        "thief": 4,
+        "nodes": 6,
+        "points": 180
+      },
+      {
+        "thief": 1,
+        "nodes": 3,
+        "points": 89
+      }
+    ],
+    "denied": 3,
+    "left": 180
+  },
+  "last": {
+    "rows": 16,
+    "ms": 124.5,
+    "first_join": 0,
+    "last_join": 3,
+    "early_ms": 83.0,
+    "emptied": 4,
+    "stale_thief": 2,
+    "waiting_denied": [
+      3,
+      5
+    ],
+    "out_at_join": [
+      1,
+      2
+    ]
+  }
+}

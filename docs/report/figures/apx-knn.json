@@ -1,0 +1,77 @@
+{
+  "k": 10,
+  "kk": 20,
+  "slack": 8,
+  "leaves": 26,
+  "tree_max_d": 10,
+  "grid": 57600,
+  "fallback_rows": 0,
+  "tree_fallback_rows": 0,
+  "min_margin": "8.1e+04",
+  "max_ratio_percent": 21,
+  "beta_max": "3.6e-05",
+  "scene": {
+    "query": [
+      -0.01,
+      0.99
+    ],
+    "r_k": 1.532,
+    "r_kk": 2.06,
+    "beta": "1.5e-05",
+    "scale_factor": 5,
+    "scale_exp": 4,
+    "omitted": 6,
+    "margin": "1.3e+05"
+  },
+  "far_exp": 9,
+  "merge": {
+    "query": 0.25,
+    "far": 10,
+    "spacing": 64.0,
+    "k": 1,
+    "kk": 9,
+    "float32_top": [
+      1.0
+    ],
+    "exact": [
+      0.0
+    ],
+    "beta": "3e+12",
+    "fallback_rows": 0,
+    "flagged": 0
+  },
+  "dense": {
+    "query": 0.0,
+    "count": 40,
+    "spacing": 2.0,
+    "k": 10,
+    "kk": 20,
+    "float32_top": [
+      0.0,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0
+    ],
+    "exact": [
+      0.0,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0
+    ],
+    "beta": "2e+12",
+    "fallback_rows": 1,
+    "flagged": 1
+  }
+}

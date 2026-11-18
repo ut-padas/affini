@@ -1,0 +1,33 @@
+{
+ "chunk": 256,
+ "tiled_min_e": 32,
+ "coop_min_p": 32,
+ "cub_min_length": 128,
+ "cluster": {
+  "level": 0,
+  "index": 1,
+  "points": 164,
+  "colour": "#e1a800",
+  "sum": 566.167,
+  "chunks": 1,
+  "level_counts": [
+   160,
+   164,
+   135,
+   141
+  ]
+ },
+ "m_max": 4194304,
+ "m_max_log2": 22,
+ "chunked_rel": "6.0e-16",
+ "cpu_rel": "0",
+ "scan_rel_max": "1.8e-11",
+ "rounded_rel_max": "1.4e-12",
+ "bound_rel_max": "8.6e-12",
+ "scan_over_chunked": "30429",
+ "same_bits_chunked": true,
+ "same_bits_cpu": true,
+ "reduceat_sequential": false,
+ "numpy": "2.2.6",
+ "unit_roundoff": "1.11e-16"
+}

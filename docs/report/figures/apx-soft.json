@@ -1,0 +1,42 @@
+{
+  "code": "111",
+  "points": 60,
+  "halvings": 12,
+  "armijo": 0.0001,
+  "rounding": 64,
+  "saturation": 1e-06,
+  "soft_iters": 200,
+  "iterations": 42,
+  "steps": 41,
+  "trials": 200,
+  "first_trial_steps": 17,
+  "reason": "soft_line_search_stalled",
+  "J_first": 0.771,
+  "J_last": 0.365,
+  "hard_bins": 0.508,
+  "hard_final": 0.32,
+  "before_trial": 9,
+  "last_step": "3.7e-06",
+  "last_margin": "5.2e-15",
+  "last_best": "1.0e-09",
+  "gap_max": "4e-23",
+  "margin_min": "4e-16",
+  "fits": 32,
+  "residual_form_error_percent": 11,
+  "sum_form_off": 26,
+  "exact_gap_range": [
+    "7e-31",
+    "8e-24"
+  ],
+  "nodes": 16,
+  "counters": {
+    "soft_nonfinite": 0,
+    "soft_gate_saturated": 0,
+    "soft_gradient_converged": 0,
+    "soft_line_search_stalled": 12,
+    "soft_iteration_limit": 4
+  },
+  "improved": 7,
+  "iterations_all": 1392,
+  "trials_all": 8099
+}

@@ -1,0 +1,53 @@
+{
+ "d": 5,
+ "batch": 64,
+ "tf": 0.1,
+ "tol_text": "1e-06",
+ "forcing": 1.0,
+ "rtol": 1e-06,
+ "atol": 1e-06,
+ "domain": [
+  -5.0,
+  5.0
+ ],
+ "steps_min": 2,
+ "steps_max": 5,
+ "rejections_max": 0,
+ "rows_rejected": 0,
+ "stacked_steps": 4,
+ "shown_steps": [
+  2,
+  3,
+  4,
+  5
+ ],
+ "shown_colours": [
+  "#1f5fa8",
+  "#ef7d1a",
+  "#2e7d32",
+  "#6a1b9a"
+ ],
+ "h_rel_max": "6e-10",
+ "t_gap_max": "4e-10",
+ "scipy_gap_max": "1e-15",
+ "library_gap_max": "1e-15",
+ "stacked_gap_max": "8e-06",
+ "stacked_gap_min": "2e-08",
+ "row0_spread": "6e-07",
+ "thread_max_d": 32,
+ "warp_max_d": 1024,
+ "block": 128,
+ "order": 5,
+ "warp": 32,
+ "subsets": [
+  1,
+  7,
+  64
+ ],
+ "stacks": [
+  1,
+  8,
+  64
+ ],
+ "stages": 7
+}

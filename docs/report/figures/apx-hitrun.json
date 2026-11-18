@@ -1,0 +1,42 @@
+{
+  "tau": 20,
+  "max_walk_steps": 80,
+  "new_points": 960,
+  "steps": 19200,
+  "max_ratio": 68,
+  "max_ratio_depth": 4,
+  "depth": 6,
+  "above_tau": 7,
+  "nodes": 33,
+  "deep": {
+    "atol": 0.01,
+    "nodes": 2729,
+    "leaves": 1365,
+    "depth": 15,
+    "median_deepest": "1856",
+    "max_ratio": "18140",
+    "above_tau_percent": 99,
+    "steps_per_point": 20.01,
+    "recovery_chains": 0
+  },
+  "child": {
+    "code": "10",
+    "inherited": 9,
+    "new": 51,
+    "area_percent": 14.9,
+    "chains": 4000,
+    "D_starts": 0.369,
+    "D_first": 0.089,
+    "D_tau": 0.014,
+    "D_uniform_min": 0.008,
+    "D_uniform_max": 0.025,
+    "D_reference": 0.016,
+    "critical": 0.023,
+    "first_tau_within": 20,
+    "D_node_new": 0.264,
+    "critical_node_new": 0.203,
+    "blocks": 78,
+    "blocks_above": 6,
+    "reference_blocks_above": 2
+  }
+}

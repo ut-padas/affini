@@ -1,0 +1,32 @@
+{
+  "grid": 57600,
+  "leaves": 26,
+  "kappa": 10,
+  "k_low": 1,
+  "share": {
+    "1": 31.2,
+    "2": 13.3,
+    "3": 7.0,
+    "4": 3.5,
+    "5": 1.4,
+    "6": 0.5,
+    "7": 0.3,
+    "8": 0.1,
+    "9": 0.0,
+    "10": 0.0
+  },
+  "first_zero": 9,
+  "exact_share": 12.4,
+  "flagged_low": 19.9,
+  "flag_fixed": 18.8,
+  "certified": 96.2,
+  "lambda_min": 0.34,
+  "pieces_max": 2,
+  "min_piece": 10,
+  "split_cells": 2,
+  "foreign_points": 108,
+  "points": 1094,
+  "foreign_percent": 9.9,
+  "strict_zero": 619,
+  "strict_zero_percent": 1.1
+}
