@@ -720,11 +720,10 @@ def main(argv=None) -> None:
                 for method in methods:
                     for seed in map(int, a.seeds.split(",")):
                         run(method, problem, a.d, tol, seed, force=a.force)
-        if (a.plot or a.replot) and MPI.COMM_WORLD.Get_rank() == 0:
+        if (a.plot or a.replot) and MPI.COMM_WORLD.Get_rank() == 0:  # after every problem, so results show as they arrive
             plot_problem(problem, a.d, tols, out)
-    if (a.plot or a.replot) and MPI.COMM_WORLD.Get_rank() == 0:
-        write_summary(a.d, list(METHODS), out)
-        plot_overview(a.d, out)
+            write_summary(a.d, list(METHODS), out)
+            plot_overview(a.d, out)
 
 
 def plot_problem(problem: str, d: int, tols, out: Path) -> None:

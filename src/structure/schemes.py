@@ -12,7 +12,7 @@ import numpy as np
 
 from src import to_host, xp
 from src.infra.backend import MPI
-from src.structure import chebtree, chebtt, sparsegrid
+from src.structure import chebtree, chebtt, kernel, sparsegrid
 from src.structure.bench import Model, register
 
 _EVALUATE, _STOP = "evaluate", "stop"
@@ -83,6 +83,13 @@ def _chebtt(f, lo, hi, atol, seed) -> Model:
     return Model(m.predict, None, 1, m.evals)
 
 
+def _kernel(f, lo, hi, atol, seed) -> Model:
+    """MetricKernel, the learned-metric greedy kernel interpolant (its Sobol batches from ``seed``)."""
+    m = kernel.build(f, lo, hi, atol, seed=seed, max_evals=50_000)
+    return Model(m.predict, None, len(m.X), m.evals)
+
+
 register("chebtree", "ChebTree: Chebyshev boxes, coefficient decay", "#c0392b", distributed(_chebtree))
 register("sparsecheb", "SparseCheb: adaptive sparse Chebyshev grid", "#6a1b9a", distributed(_sparsecheb))
 register("chebtt", "ChebTT: Chebyshev tensor train, cross", "#e08a00", distributed(_chebtt))
+register("kernel", "MetricKernel: learned-metric greedy kernel", "#2e7d9a", distributed(_kernel))
