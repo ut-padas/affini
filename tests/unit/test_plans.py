@@ -107,3 +107,22 @@ def test_afinni_batch_releases_its_points_before_splitting():
         timer=lambda key: contextlib.nullcontext(),
     )  # fmt: skip
     assert stats["rejected"] == 4 and seen == [True]
+
+
+def test_afinni_augments_every_batch_from_its_own_stream(monkeypatch):
+    """A seed summed from level and batch would repeat: (level 0, batch 1) and (level 1, batch 0) drew one stream."""
+    import src.afinni.plan as afinni_plan
+    from src import to_host, xp
+    from tests._helpers import train_surrogate
+
+    real, draws = afinni_plan.augment_clusters, []
+
+    def spy(*args, **kwargs):
+        draws.append(tuple(np.asarray(to_host(args[7].random(4)))))  # args[7] is the batch's generator
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(afinni_plan, "augment_clusters", spy)
+    X = np.random.default_rng(0).uniform(-1, 1, (400, 2))
+    train_surrogate(X, f_fn=lambda x: xp.sin(4 * x[:, :1]) * xp.cos(3 * x[:, 1:]), atol=1e-3, rtol=1e-3,
+                    min_pts_per_cluster=8, num_initial_clusters=8, batch_size=60, max_levels=4)  # fmt: skip
+    assert len(draws) >= 4 and len(set(draws)) == len(draws)

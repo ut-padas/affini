@@ -245,8 +245,11 @@ class AFINNIPlan:
                 f"target_pts={n_target:,} synthetic_pts={n_target - n_in:,} expansion={n_target / max(n_in, 1):.2f}x"
             )  # fmt: skip
 
-            # One stream per (level, batch, rank): part of what fixes AFINNI's trees.
-            rng = xp.random.default_rng(config.seed + batch.level + batch.index + self.rank * 1000)
+            # One stream per (seed, level, batch, rank), part of what fixes AFINNI's trees. SeedSequence
+            # hashes the four together; a sum of them would give (level 0, batch 1) and (level 1,
+            # batch 0) the same stream. The modulus keeps the seed within CuPy's signed 64 bits.
+            entropy = np.random.SeedSequence([config.seed, batch.level, batch.index, self.rank])
+            rng = xp.random.default_rng(int(entropy.generate_state(1, np.uint64)[0]) % 2**63)
             aug = augment_clusters(X_bad, F_bad, G_bad, counts, targets, components.sampler, evaluator, rng,
                                    centroids=fit.centroids[bad_idx])  # fmt: skip
             generated = 0

@@ -3150,6 +3150,23 @@ arithmetic, the per-batch seed and the order of the oracle calls are unchanged:
 `regression_check.py` is bit-identical to the previous commit on 1 and 2 ranks; CPU 543 and MPI
 12 passed.
 
+### 42.18 One random stream per AFINNI batch (Nov 17, 2026)
+
+AFINNI's augmentation seeded each batch's generator with `seed + level + batch.index + 1000 * rank`.
+A sum is not one stream per batch: (level 0, batch 1) and (level 1, batch 0) of a rank drew the same
+stream, as did any two batches whose level and index summed alike, and rank r's streams met rank
+r + 1's once level + index reached 1000. The seed is now `SeedSequence([seed, level, index, rank])`
+hashed to one 64-bit integer (reduced below 2^63 for CuPy), which both backends' `default_rng` take.
+
+This is a deliberate numerical change. AFINNI forests that augment change, statistically and not
+systematically; ART is unaffected (its streams are keyed by node). `regression_check.py` against
+the previous commit: 14 of the 52 cases differ on one rank and the same 14 on two, all AFINNI cases
+with augmentation. Their leaf counts move both ways (1 rank: 40 -> 41, 43 -> 41, 129 -> 124,
+69 -> 73, 47 -> 48; the others keep their leaf count and change points or evaluations); every ART
+case is bit-identical. CPU 655 and MPI 12 passed. `test_afinni_augments_every_batch_from_its_own_stream`
+fails on the old seed. Results recorded with earlier commits, including the manuscript re-runs of
+the sanity study, used the old streams.
+
 ---
 
 # Appendix A. Deferred: a PySPH-style property system
