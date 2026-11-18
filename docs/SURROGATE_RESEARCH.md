@@ -330,7 +330,11 @@ input dimension is the number of slow modes, which falls as dt grows.
 - A bench run with a subset of methods redrew the plots with that subset only (now every cached
   method; `--replot` redraws from the cache).
 - Stopping a collective MPI run leaves the other ranks waiting: stop by the PIDs of the launcher and
-  its ranks; never `pkill -f`.
+  its ranks; never `pkill -f`. Collecting PIDs with `ps | grep <pattern>` inside a shell whose own
+  command line contains the pattern kills that shell too: list the PIDs first, then kill them by number.
+- At 10-D the baselines dominate the wall time without informing more: ART with quadratic leaves on
+  Rosenbrock at 0.05 took 362 s and 2.7M evaluations per run (worst 2.05). The fast ladder runs them at
+  one seed and the loosest tolerance from 10-D up; ChebTT at every tolerance and seed.
 - The GPU never beat 8 CPU ranks on these workloads (launch- and transfer-bound, 200k kernel launches)
   and predicted 2-50x slower per query.
 
