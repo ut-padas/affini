@@ -11,13 +11,105 @@ evolution: tracers produce data, a surrogate is built from it, and the simulatio
 surrogate instead of the stiff chemistry solver. So the error that matters is the worst one over the
 states the simulation visits, then the cost in oracle evaluations, then the inference time per call.
 
+This file is also the experiments' **working memory**: section 0 is the current state, kept up to
+date as results arrive, so that the work can be picked up from it alone. Every work any review read
+is registered in [LITERATURE.md](LITERATURE.md) (check it before a new review, append to it after).
+
 Contents:
 
+0. [Working memory: the current state](#0-working-memory-the-current-state)
 1. [What the experiments taught](#1-what-the-experiments-taught)
 2. [Review I: spending fewer evaluations in adaptive trees](#2-review-i-spending-fewer-evaluations-in-adaptive-trees)
 3. [Review II: structure-aware surrogates with max-norm control](#3-review-ii-structure-aware-surrogates-with-max-norm-control)
 4. [Review III: from the experiments' failures to chemistry tabulation](#4-review-iii-from-the-experiments-failures-to-chemistry-tabulation)
-5. [Synthesis and next steps](#5-synthesis-and-next-steps)
+5. [Review IV: kink splits, the limits in high dimension, a design for chemistry](#5-review-iv-kink-splits-the-limits-in-high-dimension-a-design-for-chemistry)
+6. [Synthesis and next steps](#6-synthesis-and-next-steps)
+
+---
+
+## 0. Working memory: the current state
+
+Updated 2026-11-18. Numbers: worst |error| / tolerance over the test set (below 1 is within),
+evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on every seed.
+
+### 0.1 Where things are
+
+- Code: [`src/structure/`](../src/structure/README.md) (its README says how to run the bench).
+  Schemes: `chebtree.py` (ChebTree), `sparsegrid.py` (SparseCheb), `chebtt.py` (ChebTT); they register
+  in `schemes.py`; `bench.py` runs, caches and plots every method; `problems.py` holds the problems and
+  `TOLERANCES`.
+- Results (not committed): `src/structure/cache/<setup>/` and `output/<setup>/`, setup `cpu-8rank`.
+  Start from `output/cpu-8rank/overview-d<d>.png` (a pass/fail grid of every problem, tolerance and
+  method, with the evaluations) and `overview-d<d>-cost.png` (training and inference time, pieces,
+  mean error); then per problem `<problem>-d<d>-cost.png` and the maps (2-D) or slice and shadow views.
+  `python -m src.structure.bench --replot --setup cpu-8rank --d <d> --problems ...` redraws them.
+- Literature: [LITERATURE.md](LITERATURE.md) (every work reviewed, IDs I-* to V-*); reviews I-IV are
+  sections 2-5 below.
+
+### 0.2 How the work proceeds (standing rules)
+
+- **Climb dimensions on fast problems first.** The fast set: `rosenbrock`, `genz_oscillatory`,
+  `genz_corner_peak`, `genz_product_peak`, `genz_gaussian`, `lotka_volterra`. Run a scheme on it at
+  2, 5, 10, 20 dimensions; only when it holds there does it earn the slow problems (`wave` and
+  `lorenz96` above 3-D for the baselines, the rotated `gaussian`, `genz_continuous`, the jumps,
+  `ackley`, `rastrigin`, `front`, `lorenz96_chaotic`). Do not tune a scheme for 2-D.
+- **Same setup for every method in a comparison**: 8 MPI ranks, one thread per rank
+  (OMP/NUMBA/OPENBLAS = 1), CPU; one MPI job at a time (six parallel jobs exhausted 30 GB). AFINNI is
+  not run at 10-D and above (tens of GB per rank). Serial A/B checks of a scheme in scratch scripts are
+  fine, with `OPENBLAS_NUM_THREADS` set low: BLAS threads competing with the bench made QR 50x slower.
+- Fail fast: a variant that loses on the fast set is removed, with its numbers recorded in section 1.
+
+### 0.3 Standings (bench, 8 ranks, 3 seeds)
+
+| Scheme | 2-D | 3-D | 5-D | 10-D | Limits |
+|---|---|---|---|---|---|
+| AFINNI | 0/46 | 5/30 | 0/20 | not run | least squares on random points; up to 11.8M evaluations at 5-D |
+| ART, affine | 1/46 | 3/30 | 0/20 | 0/2 (running) | as AFINNI |
+| ART, quadratic | 1/46 | 3/30 | 2/21 | 0/2 (running) | as AFINNI |
+| ChebTree | **46/46** (median 487) | **30/30** (median 1.3k) | – | – | (n + 1)^d points per box: dead above 3-4 D |
+| SparseCheb | 43/45 (median 293) | 27/30 | over budget on oblique features | – | pays for kinks globally; misses small regions |
+| **ChebTT** | 12/12 | (backfill pending) | **21/21** (median 1.1k) | 3/3 (running) | high rank: rotated narrow peaks, chaotic maps; kinks at tight tolerances |
+
+Serial ChebTT runs outside the bench (one seed): 10-D 24/24 cases of 8 problems (1.6k-101k
+evaluations, including `wave` and `lorenz96`), 20-D 20/21 of 7 problems (3k-130k; `lotka_volterra`
+at 0.05 over the 300k budget). Over budget at 5-D: the rotated Gaussian, `lorenz96_chaotic`.
+
+### 0.4 Conclusions that drive the next steps
+
+1. Least-squares pieces on random points (AFINNI, ART) never control the worst error; their mean
+   error is small. Interpolation at nodes chosen for the max norm (Chebyshev), with checks at the
+   points a refinement would sample next, does: worst errors land at 0.1-0.5 of the tolerance.
+2. Dimension is the decisive cost. Tensor boxes stop at 3-D, sparse grids at oblique features at 5-D.
+   A tensor train sampled only along maxvol fibres (ChebTT) costs linear in d and holds the fast set
+   to 20-D with 10^3-10^5 evaluations.
+3. No box-sampling scheme can certify the worst error in high dimension (Novak-Woźniakowski): the 5-D
+   rotated Gaussian fills ~1e-4 of its box, and every random check set misses it. ChebTT finds it only
+   because its cross is seeded at the centre, where that peak happens to be.
+4. **Chemistry's structure is a slow manifold.** Measured: the Robertson step map in log
+   coordinates has Jacobian singular values ~1.7, 1.0, 1e-10 for every step dt >= 0.1 (rank 2 of 3:
+   the fast direction collapses). For a large network the rank is the slow manifold's dimension, not
+   the species count; this is the structure a chemistry surrogate must find. So the chemistry stage
+   trains and tests on visited states (held-out trajectories), not on a box.
+5. The surrogate should *discover* structure rather than assume a basis. What has worked so far is
+   adaptive sampling that exposes structure: a tree (locality), maxvol fibres (low rank and coupling),
+   dimension-adaptive sparse grids (interaction order). Candidates that learn a metric or a manifold
+   (a learned-metric kernel model, ISAT ellipsoids, diffusion maps, metric-based adaptation) are
+   under review (Review V, in progress) and under test (section 1.10).
+
+### 0.5 In progress and next
+
+- Running: the bench's fast ladder at 10-D (ChebTT, both ARTs) and 20-D (ChebTT, ART quadratic);
+  the learned-metric kernel model on the fast set at 5, 10, 20-D (scratch); Review V (TT-cross
+  practice, Riemannian and manifold surrogates, a primordial-chemistry rate table).
+- Next: a chemistry bench on visited states: Robertson (exact rates), then a primordial H/He/H2
+  network from published rate tables (no Cantera: the networks are hand-coded and checked against
+  their sources). Inputs in log abundances; judged by the worst error on held-out trajectories, the
+  solver-call (refusal) rate and the inference time. Scheme to build: ISAT's table of visited states
+  with solver fallback, a local model in slow coordinates read off the step map's Jacobian, a learned
+  metric for where a record is trusted, and look-ahead checks before a record grows (section 5).
+- Open, not acted on: the library takes different ART/AFINNI decisions on CPU and GPU for the same
+  seed (2-D wave 0.001: 11,469 evaluations on GPU, 23,187 on CPU), which AGENTS.md forbids; work
+  stealing rarely triggers in the distributed runs.
 
 ---
 
@@ -137,7 +229,87 @@ one-dimensional (the 5-D wave in 180,000 tensor evaluations, worst 0.001) but di
 features (the front, where the covariance has no gap), and the rotated box makes f be evaluated
 outside the domain. Starting every axis at degree 2 to save points made aliasing worse (worst 13x).
 
-### 1.7 Engine findings from the same work
+### 1.7 ChebTree revised: fitted decay laws, seeded checks, fibre verification
+
+The acceptance was rebuilt: per-axis geometric and algebraic fits of the coefficient slab sums
+(exponential only if the fit falls >= 16x across the upper half of the degrees; otherwise treated as a
+kink), the degree predicted from the fitted rate, four check points per box seeded by its locational
+code (deterministic), chopping after acceptance, refusal at the depth cap. 2-D: within on all 46 cases
+(was 28 of 33), 3-D 30/30.
+
+- A blind spot no coefficient fit can see: a kink at about 2 pi / n of a box's width from a face makes
+  the slab sums follow half a period of the kink's cos(j theta) modulation, which reads as fast decay
+  (estimate 3.8e-4 against a true error 3.4e-2; 3-D `genz_continuous` 0.01, worst 2.49 at 1.1M
+  evaluations). Fix: before acceptance, one more round evaluates, along each axis through the box's
+  centre, the points the next nested grid would add (a full period of the modulation). Worst 0.63, for
+  3-13% more evaluations in 2-D.
+- Rejected: splitting at a kink located from the grid values. It fixed the 3-D case (0.43) but cost
+  1.5-14x elsewhere. A located cut that misses by 1e-3-1e-4 of the width leaves the kink just inside a
+  child's face, where it can never pass and is bisected toward the face; the trigger ("decay not
+  exponential") also fires on smooth features not yet resolved; and refusals at a curved jump grew from
+  1.3% to 4%. Locate to rounding level (Chebfun bisects to the last bit) or cut at the midpoint.
+
+### 1.8 ChebTT: a Chebyshev tensor train by cross approximation
+
+f is sampled only along fibres of a Chebyshev grid chosen by maxvol (TT-cross), so sampling and
+inference cost grow linearly in d. Products of univariate functions have rank 1 and `cos(q.x)` rank 2.
+What made it reliable:
+
+- Degrees decided by the model: an axis doubles its degree when its upper half of degrees still
+  changes the prediction at the check points; otherwise the rank grows. Raising only the rank at a
+  fixed degree could never resolve a narrow peak (the rank climbed to 74 at degree 8).
+- Free checks: grid points of earlier sweeps and lower degrees, which the final cores do not
+  interpolate, concentrated where the cross explored. They caught a narrow 5-D peak (0.022 > 0.01)
+  that uniform check points missed.
+- A look-ahead at the next nested grid's points along every axis through the worst check point and
+  through the largest |f| seen; the right index sets seeded at the largest |f| and the centre.
+- Results: 5-D bench 21/21 (median 1.1k evaluations; baselines 0-2 of 21 with 10-1000x more); serial
+  10-D 24/24, 20-D 20/21. Over budget: the 5-D rotated anisotropic Gaussian (high rank in axis
+  coordinates), `lorenz96_chaotic`, `genz_continuous` at 0.02 (kinks).
+- Many smooth cases end far below the tolerance (1e-6 of it): the degree doubling overshoots, cheap
+  here but wasted evaluations.
+
+### 1.9 Rejected: global rotation, and ChebTT in tree cells
+
+- Global active-subspace rotation (gradient covariance from 10 d random points) made SparseCheb exact on
+  the 5-D wave with 629 evaluations (plain: over 300k) and Genz oscillatory with 581, but: it makes f be
+  evaluated outside the box (Lotka-Volterra blows up there, NaN), its gradients are noise where f is
+  concentrated (the rotated Gaussian), and ChebTT got more expensive on non-ridge functions (corner
+  peak 722 -> 1.2k). A rotation must be local and must stay inside the domain.
+- A tree of ChebTT cells (split along the axis whose fibres need the highest degree): 2.5-4x plain
+  ChebTT's evaluations on the kinks and no help for the Gaussian or the chaotic map.
+
+### 1.10 A learned-metric kernel model (prototype, not committed)
+
+Matern-5/2 interpolation in a metric M learned from the average gradient outer product of the current
+model (the mechanism of recursive feature machines), the scale chosen by the worst leave-one-out error
+(Rippa's formula), grown by adding the worst-residual points of fresh Sobol batches, stopped when two
+fresh batches stay below half the tolerance. 2-D: the learned metric halves the evaluations against
+an isotropic kernel (Gaussian 609 vs 1,057 at 0.01) and fixes the wave (worst 0.21 vs 1.7 at 0.1), but
+random batches miss corner peaks and fine scales (worst 1.8-2.4 on wave and corner peak at 0.01); 5-D
+rotated Gaussian worst 2.2-4.5 (the needle, as for every box sampler). The scaling test on the fast
+set is running. Its natural setting is a set of visited states, where the candidates come from the
+simulation.
+
+### 1.11 The chemistry premise, measured
+
+Robertson's stiff network (k1 = 0.04, k2 = 3e7, k3 = 1e4), states from trajectories at random times
+after Dirichlet-random initial conditions, central differences of the step map in log10 coordinates:
+singular values ~(1.3-1.7, 1.0, 1e-2-1e-4) at dt = 1e-3 and ~(1.2-1.7, 0.5-1.0, 1e-10) for every
+dt from 0.1 to 1e3. The fast direction collapses once dt exceeds the fast time scale.
+
+### 1.12 Engineering edge cases met
+
+- Every rank computed and wrote a problem's cached slice directions at once; a rank read a file another
+  was writing and the run crashed (now written to a per-rank file and renamed into place).
+- A bench run with a subset of methods redrew the plots with that subset only (now every cached
+  method; `--replot` redraws from the cache).
+- Stopping a collective MPI run leaves the other ranks waiting: stop by the PIDs of the launcher and
+  its ranks; never `pkill -f`.
+- The GPU never beat 8 CPU ranks on these workloads (launch- and transfer-bound, 200k kernel launches)
+  and predicted 2-50x slower per query.
+
+### 1.13 Engine findings from the same work
 
 - A stable counting sort plus per-block merge sort replaced two full-batch argsorts in
   `sort_by_block_then_value`: single-thread AFINNI training 36-39% faster, bit-identical results.
@@ -439,7 +611,216 @@ check of every answer, which pays only if checking is cheaper than solving.
 
 ---
 
-## 5. Synthesis and next steps
+## 5. Review IV: kink splits, the limits in high dimension, a design for chemistry
+
+Scope: builds on docs/SURROGATE_RESEARCH.md (refs I-*, II-*, III-* are used without repeating them).
+New references are IV-* (the IDs of docs/LITERATURE.md). Verification tags: **[v]** title/venue/claim checked against the paper or its
+abstract in this review; **[a]** checked against an abstract or summary only; **[r]** recalled, not checked.
+Numbers marked "measured" come from short runs of `src/structure/chebtree.py` as of the fibre-check commit.
+
+### 5.0 Bottom line
+
+1. Kink-located splits (section 1.7) cost more for three reasons, each reproduced: (a) a kink a small but non-negligible distance from a
+   face reads as a jump, so its box can never pass and is bisected toward the face; (b) the secant locator is
+   too coarse and often returns nothing, so it creates exactly those near-face kinks; (c) the gate
+   "non-exponential axis" fires on under-resolved smooth features and on curved jumps, where no single plane
+   helps. The near-face kink that ChebTree accepted (section 1.7) is a separate blind spot of the decay classifier, and it is structural.
+2. Beyond d = 4, no tensor or Smolyak scheme on the box can promise the worst error without strong structure.
+   The structure chemistry has is low intrinsic dimension (a slow manifold) and Jacobians of the time-step map
+   with low numerical rank. So the next scheme should be built on the visited states, not on a box: an
+   ISAT-type table with local models in local slow coordinates, accepted by look-ahead checks, with refusal
+   and a solver fallback.
+3. Your fibre check at the next nested points carries over to every candidate scheme as "check where the
+   refinement would sample next". It is the most reliable estimator class in this review; it is still not a
+   bound.
+
+### 5.1 Why splitting at a located kink costs more
+
+**Mechanism A, the near-face trap (measured).** Take 1-D `exp(-a|x - x0|)` on a box of width w, a = 11.9,
+n = 16. With the kink more than 3% of w from a face, the fitted power is p ≈ 1.8–2.6 and the estimate is
+3–9x the true error. Within 1% of a face, the slab sums are flat (p ≈ 0) and `tail_estimate` returns inf
+("a jump never passes"). The true error there is only 1–3e-3. The reason: a kink at x0 = cos θ0 has
+coefficients ∝ sin θ0 · cos(jθ0)/j², which stay flat for j < 1/θ0 when θ0 is small. The box can only be
+accepted after splitting toward the face until it falls under the rounding floor. The 2-D run
+(genz_continuous at 0.1, kink mode) shows this directly: the split values on axis 1 approach w1 from above
+as w1 + 3.3e-2, 1.6e-2, 8.1e-3, …, 1.2e-4, a halving sequence. The run ends with 87 leaves against 23, a
+smallest width of 2e-5 against 3e-2, and 11.5k evaluations against 2.9k.
+
+**Mechanism B, the locator (measured).** Of 86 calls, 61 returned None and fell back to the midpoint
+(at n = 8 it returns None even for interior kinks at 0.3w and 0.5w). Of the 25 hits, 14 landed 1–5% from a
+face. When the locator does fire, its error is about 1e-3 to 1e-4 of w. That leaves the kink in a child at
+exactly the distance that triggers mechanism A. Placing the kink somewhere in the 1e-12 to 1e-2 band is
+worse than placing it at random.
+
+**Mechanism C, the gate.** "Non-exponential" means "not resolved yet", not "kinked". On the Gaussian, 8 of
+13 calls returned a "kink" in a smooth function (1.2k → 1.9k evaluations). On ball_jump the interface is
+curved, so a plane fitted to one fibre does not separate it. Off-centre cuts also shrink boxes more slowly
+per level, and `max_depth` counts splits, not widths. So the untrusted band at the depth cap is wider:
+refused queries go from 1.3% to 4%.
+
+**The near-face blind spot (measured, structural).** The wrongly accepted 3-D box has its kink at 0.0102/0.125 = 0.082 of
+its width. At n = 8 its slab sums for j = 3..8 are 8.4e-3, 6.7e-3, 4.0e-3, 1.7e-3, 1.0e-4, 2.3e-4. That is
+the first half-period of the cos(jθ0) modulation (θ0 = 0.58, period 10.8 in j), read as a 36x drop, so the
+axis counts as "exponential". The tail estimate is 3.8e-4 against a true error of 3.4e-2. A scan over kink
+positions gives a smallest estimate/true ratio of 0.03 (at 0.081, n = 8) and 0.04 (at 0.02, n = 16),
+whatever a and w are. Any kink at about 2π/n of a box's width from a face fools the classifier. Your fibre
+check at the next nested points works because degree 2n covers a full period of the modulation.
+
+**What the literature does.**
+- Chebfun's splitting [IV-1, v] works on intervals that fail ("nafs"). `detectedge` estimates |f'|…|f''''|
+  by finite differences on a 50-point and then 15-point equispaced grid, zooming 7x per level as long as an
+  estimate grows by at least 1.2x. A jump in f' is bisected "to the very last bit". This costs about 300
+  evaluations per edge, against about 7000 for Chebyshev bisection. An edge closer than 1e-14(b - a) to an
+  end is cut at 0.01(b - a) instead. With no edge, the cut is at the midpoint, and these "removable" cuts
+  are merged afterwards. So chebfun never leaves a kink inside the band where mechanism A bites.
+- Polynomial annihilation [IV-2, v] computes a jump function that converges to the jump at an edge and to
+  O(h^m) elsewhere, with minmod over the orders m. It tells jumps from steep gradients on scattered data: the
+  missing gate. Concentration factors [IV-3, r] give the same from spectral coefficients, so they could run
+  on the coefficients a box already has.
+- On sparse grids, PA guides refinement of the discontinuity only. In the Jakeman-Archibald-Xiu work
+  (II-29) the number of points for a hyperspherical jump grew linearly in d up to d = 100 [IV-4, a: from the
+  DOE final report]. Minimal multi-element collocation [IV-5, a] cuts elements along the detected
+  discontinuity instead of along the axes.
+- hp practice: the cells next to a singularity get low degree, and the graded mesh does the work
+  (Babuška-Guo [IV-20, r]). Wilka-Lang [IV-6, a] do the same in sparse grids: local low-order bases in the
+  non-smooth region, with optional kink detection to choose the degree.
+
+**Fixes, ranked by gain over cost.**
+1. *Locate precisely or not at all.* Run chebfun-style edge detection on one fibre (about 50–300
+   evaluations, far less than one 9x17x17 box), refine to about 1e-12 w, and confirm on a second fibre
+   (agreement within the refinement width means an axis-aligned plane). If the kink is not confirmed,
+   split at the midpoint. Expected: the 3-D kink case falls to the cost of about 8 smooth boxes
+   (unmeasured), and the smooth cases and the jumps go back to their midpoint costs.
+2. *Gate with PA:* take a kink split only when the jump in f' is confirmed and the jump in f is about 0.
+3. *Make the depth cap a width cap* (h_min per axis), and size each child's degree by its width.
+4. *Keep the next-nested fibre check* as the acceptance test (it is already validated).
+
+All of this is low-dimensional engineering. Ship fixes 1, 2 and 4 into whatever partition scheme comes
+next, and invest no further in tensor boxes.
+
+### 5.2 What is achievable in high dimension from point queries
+
+| Structure assumed | Best sup-norm behaviour | Algorithm | Fits chemistry? |
+|---|---|---|---|
+| C^∞, all derivatives ≤ 1 | intractable: at least 2^⌊d/2⌋ samples (II-26) | none | – |
+| mixed smoothness r | about N^-r (log N)^((d-1)(r+1)) [IV-7, r] | sparse grids | the log factor bites beyond d ≈ 10; axis-bound |
+| anisotropic holomorphy, (b_j) ∈ ℓ^p | best n-term n^-(1/p - 1), independent of d [IV-8, a] | adaptive Leja / lower sets (III-10, III-11) | needs decaying variable importance; raw species coordinates do not have it |
+| ridge g(Ax), A of size k x d | samples polynomial in d, uniform error (II-18 w.h.p., II-19) | ridge recovery | globally no; locally yes (below) |
+| low TT rank r | d n r² per sweep; quasi-optimal on the grid only (II-12) | TT-cross, C3, spectral TT (II-10, II-13, II-14) | depends on variable order; rank grows at kinks |
+| f in a Sobolev RKHS of order τ on an m-dimensional manifold | rates set by m, not d [IV-9, v]; P-greedy quasi-optimal [IV-10, v]; f-greedy better by about n^-1/2 [IV-11, v] | VKOGA, β-greedy [IV-12, v; IV-13, a] | yes: tracer data lie on the manifold |
+| f within ε of a known n-dimensional space V | 2n samples recover within (1 + C√n) ε [IV-14, a] | sampling projection | yes, if V comes from local POD or Jacobians |
+
+The key fact for chemistry is the reviewer's inference from ILDM/CSP theory (III-18, III-19), not from a
+citation. Over a step Δt much longer than the fast time scales, the fast modes contract like exp(λΔt). So the
+Jacobian ∂Φ_Δt/∂x has numerical rank about m, the number of slow modes, and the map is locally a ridge in m
+directions. The useful assumption is therefore "locally a ridge with small m, on a manifold visited by the
+simulation", not "smooth on a box". This should be measured on Robertson and on the primordial network
+before the design is built on it.
+
+Kernels give the one rigorous pointwise bound in this list: |f - s|(x) ≤ P_X(x) · ||f||_H. ||f||_H is unknown,
+and the growth of ||s_n||_H gives only a heuristic plateau estimate. P_X(x) is still an honest "how far is x
+from the data" measure, which makes it a natural refusal test.
+
+### 5.3 A combination for 10–100 inputs on a low-dimensional manifold
+
+**Design (ranked components):**
+
+1. **Query-driven table (ISAT's contract, III-12, III-13).** Each record holds a state x_i, the map value
+   Φ(x_i), the Jacobian J_i (from a sensitivity solve, cheaper than d + 1 solves [r]) and its SVD
+   J_i = U Σ V^T, which splits slow from fast directions.
+2. **A local model in slow coordinates.** Use the linear map in every direction, plus a correction in the m
+   leading right singular directions: a quadratic, a small Leja sparse grid in m dimensions, or a VKOGA
+   kernel model. This is a local active-subspace model, with the subspace taken from J and no sampling of
+   gradients.
+3. **A validity region and refusal.** An ellipsoid of accuracy shaped by Σ (ISAT), intersected with a kernel
+   power-function bound. A query outside both goes to the solver and becomes a grow or an add.
+4. **Acceptance by look-ahead.** Accept a grow only after a direct solve at the points the next refinement
+   would use: ± the EOA semi-axis along the leading slow directions, the analogue of your fibre check.
+5. **Error checking.** Re-solve a random share of retrievals and shrink the offending records
+   (Lu-Pope 2009). Report the maximum, not only the 90% quantile.
+6. Neural compression of mature subtrees (Neural-ISAM [IV-15, a]), only after the table is trusted. Its error
+   control is not stated in the abstract.
+
+Element conservation, positivity, and errors measured on log-abundances are part of the contract. Species
+span 20 orders of magnitude, so a relative tolerance on max |f| is meaningless.
+
+**Cheap 5-D tests (each under a minute, analytic oracles):**
+
+- T1, the local-rank premise. On Lorenz-96 (forcing 1) and a 5-D Davis-Skodje-type system [IV-24, r] (1 slow and 4
+  fast modes with a known manifold), plot the singular values of J_Δt along trajectories against Δt. Go on
+  only if the numerical rank is clearly below d.
+- T2, the table against ChebTree and SparseCheb on trajectory queries. Train on 50 trajectories, test on
+  50 held-out ones. Report the worst error, the solver-call rate, the table size, and whether the
+  ±semi-axis look-ahead catches the failures random checking misses.
+- T3, calibration of the kernel refusal. Fit VKOGA f/P-greedy on the visited set and plot the true error
+  against P_X(x)·||s||_H on held-out on-manifold and off-manifold points. The bound should rank the errors
+  even where it is not conservative.
+- T4, a box fallback for the bench: a tree of Leja sparse grids with PA-gated kink cuts (fixes 1–2) and the
+  forward-neighbour look-ahead. Run it on 5-D genz_continuous, corner_peak, oblique_jump and the rotated
+  Gaussian, against SparseCheb.
+- T5 (later): Chebyshev TT-cross in a cell for the 5-D wave and the rotated Gaussian, checked on random
+  fibres. Keep it only if it beats T4 there.
+
+Chemistry benchmarks, in order:
+1. Robertson (3 species, the standard stiff test [IV-22, IV-23, r]).
+2. H2-air: about 9 species and 20 reactions (Li et al. 2004 [IV-21, r]); ISAT papers also use CH4 and GRI-Mech
+   [r].
+3. A primordial H/He/H2 network as in KROME [IV-16, v; MNRAS 439:2386 r] or GRACKLE (H, D, He, H2 chemistry
+   and cooling) [IV-17, v]. The 6-species network of Ono-Sugimura (III-28) and osu2008 (CODES, III-24) give
+   published surrogate baselines.
+
+No use of ISAT in astrochemistry turned up in this search either.
+
+### 5.4 Pitfalls
+
+- **Checks that share the grid's blind spot.** Coefficient fits and random points both miss a kink at
+  about 2π/n of a face's width (section 1). Look-ahead checks miss features finer than the next level. None
+  is a bound (II-26).
+- **Near-face slivers.** Any partition scheme with data-driven cuts must locate a cut to rounding level or
+  cut at the midpoint. Anything in between manufactures hard cells.
+- **Gates that read "unresolved" as "singular"** waste cuts on smooth functions and on curved interfaces.
+- **Non-convex accuracy regions** give a tail of large errors in ISAT (III-14). Report the maximum and the
+  share above the tolerance on held-out trajectories.
+- **Query order and MPI.** Tables depend on the order of insertion. Fix the merge order, or results differ
+  between ranks.
+- **Transients** (ignition, thermal runaway, shock heating): the Jacobian's rank rises and the solver-call
+  rate can spike. Measure the rate per phase, not only on average.
+- **Kernel conditioning.** f-greedy picks clustered points. Use stabilised β-greedy [IV-12] and a fixed
+  minimum power-function value.
+- **Global rank and sparsity assumptions** (TT, Leja lower sets) hold in good coordinates. Raw species
+  abundances are rarely good coordinates; log abundances or a local SVD basis are better.
+
+### 5.5 References (new)
+
+- [IV-1] Pachón, Platte, Trefethen 2010, *Piecewise-smooth chebfuns*, IMA J. Numer. Anal. 30(4):898–916, doi:10.1093/imanum/drp008; algorithm read in report NA-08-07, https://www.cs.ox.ac.uk/files/717/NA-08-07.pdf [v]
+- [IV-2] Archibald, Gelb, Yoon 2005, *Polynomial fitting for edge detection in irregularly sampled signals and images*, SINUM 43(1):259–279, doi:10.1137/S0036142903435259 [a]
+- [IV-3] Gelb, Tadmor 1999, *Detection of edges in spectral data*, Appl. Comput. Harmon. Anal. 7:101–135 [r]
+- [IV-4] Xiu (PI), DOE final report DE-SC0011615, *Advanced dynamically adaptive algorithms for stochastic simulations on extreme scales*, https://www.osti.gov/servlets/purl/1345533 [v] (summarises II-29 and IV-5)
+- [IV-5] Jakeman, Narayan, Xiu 2013, *Minimal multi-element stochastic collocation for uncertainty quantification of discontinuous functions*, JCP 242, doi:10.1016/j.jcp.2013.02.035 [a]
+- [IV-6] Wilka, Lang 2024/2025, *Adaptive hp-polynomial based sparse grid collocation algorithms for piecewise smooth functions with kinks*, https://arxiv.org/abs/2404.02556 [a]
+- [IV-7] Bungartz, Griebel 2004, *Sparse grids*, Acta Numerica 13:147–269 [r]
+- [IV-8] Cohen, DeVore, Schwab 2010/2011, *Convergence rates of best N-term Galerkin approximations for a class of elliptic sPDEs*, FoCM 10; *Analytic regularity and polynomial approximation of parametric and stochastic elliptic PDEs*, Anal. Appl. 9 [a]
+- [IV-9] Fuselier, Wright 2012, *Scattered data interpolation on embedded submanifolds with restricted positive definite kernels: Sobolev error estimates*, SINUM 50(3):1753–1776, https://arxiv.org/abs/1007.2825 [a]
+- [IV-10] Santin, Haasdonk 2017, *Convergence rate of the data-independent P-greedy algorithm in kernel-based approximation*, Dolomites Res. Notes Approx. 10:68–78, https://arxiv.org/abs/1612.02672 [a]
+- [IV-11] Wenzel, Santin, Haasdonk 2023, *Analysis of target data-dependent greedy kernel algorithms: convergence rates for f-, f·P- and f/P-greedy*, Constr. Approx. 57:45–74, doi:10.1007/s00365-022-09592-3; refined in Santin, Wenzel, Haasdonk, SINUM 2024, https://arxiv.org/abs/2307.09811 [a]
+- [IV-12] Wenzel, Santin, Haasdonk 2021, *A novel class of stabilized greedy kernel approximation algorithms: convergence, stability and uniform point distribution*, J. Approx. Theory (venue [r]), https://arxiv.org/abs/1911.04352 [a]
+- [IV-13] Wirtz, Haasdonk 2013, *A vectorial kernel orthogonal greedy algorithm*, Dolomites Res. Notes Approx. 6:83–100, doi:10.14658/PUPJ-DRNA-2013-Special_Issue-10 [a]
+- [IV-14] Krieg, Pozharska, Ullrich, Ullrich 2024, *Sampling projections in the uniform norm*, https://arxiv.org/abs/2401.02220 [a]
+- [IV-15] Fush, Bonilla, Schroeder, Yao, Mueller 2026, *Neural-ISAM: a hybrid in-situ machine learning approach for complex manifold-based combustion models in LES*, https://arxiv.org/abs/2605.10028 [a]
+- [IV-16] Grassi et al. 2014, *KROME – a package to embed chemistry in astrophysical simulations*, MNRAS, https://arxiv.org/abs/1311.1070 [a]
+- [IV-17] Smith et al. 2017, *Grackle: a chemistry and cooling library for astrophysics*, MNRAS 466:2217, https://arxiv.org/abs/1610.09591 [a]
+- [IV-18] Ren, Liu, Lu, Lu, Oluwole, Goldin 2014, *The use of dynamic adaptive chemistry and tabulation in reactive flow simulations*, Combust. Flame 161(1):127–137, doi:10.1016/j.combustflame.2013.08.018 [a] (ISAT alone about 100x on a methane PaSR)
+- [IV-19] Hiremath, Ren, Pope 2011, *Combined dimension reduction and tabulation strategy using ISAT-RCCE-GALI for the efficient implementation of combustion chemistry*, Combust. Flame 158:2113–2127 [a]
+- [IV-20] Babuška, Guo 1986, *The h-p version of the finite element method, Parts 1 and 2*, Comput. Mech. 1 [r]
+- [IV-21] Li, Zhao, Kazakov, Dryer 2004, *An updated comprehensive kinetic model of hydrogen combustion*, Int. J. Chem. Kinet. 36:566–575 [r]
+- [IV-22] Robertson 1966, *The solution of a set of reaction rate equations*, in Numerical Analysis: An Introduction, Academic Press [r]
+- [IV-23] Hairer, Wanner 1996, *Solving Ordinary Differential Equations II: Stiff and Differential-Algebraic Problems*, Springer [r]
+- [IV-24] Davis, Skodje 1999, *Geometric investigation of low-dimensional manifolds in systems approaching equilibrium*, J. Chem. Phys. 111:859 [r]
+- III-7 (Ma, Zabaras, ASGC): the DOI resolves to JCP 2009; volume 228, pages 3084–3113 [r].
+
+---
+
+## 6. Synthesis and next steps
 
 **What can be promised.** No method that only samples f certifies the worst error over a box in
 high dimension [II-26]. The guarantee that can be built is narrower and is the one the MHD coupling
