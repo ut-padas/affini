@@ -184,6 +184,12 @@ at 0.05 over the 300k budget). Over budget at 5-D: the rotated Gaussian, `lorenz
   from the joint train or the slower contraction (section 1.19).
 - Next, once the vector ladder is done: compare ChebTT's inference time at 10-D and 20-D with the
   baselines' in `overview-d<d>-cost.png`, with ChebTT compressed; then resume the chemistry bench.
+- To do after the fill (no `src` edits while it runs): cache every evaluation in `chebtt.build` itself.
+  Its degree pre-pass and check points re-evaluate points already seen; ChebTT-M, whose shared cache
+  never does, used 4-25% fewer evaluations than ChebTT with identical worst errors on most 2-3-D
+  scalar cases (Rosenbrock 310 against 334, 2-D Gaussian 908 against 1,208). ChebTT-M differs for
+  real only where it escalates: the 3-D rotated Gaussian, 11k-80k against 13k-31k over the seeds
+  (the pilot misses the narrow peak), and `front` at 0.1, over the time limit.
 - Running after the box fill (chained): the stiff ladder (`chemfill --limit 240`, 12 solver workers),
   then the primordial network with the same four methods. Then: per-class horizons and metrics from
   Review VII (valid prediction time for chaotic members; orbit and phase error for oscillatory ones;
