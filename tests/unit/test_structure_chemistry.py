@@ -45,3 +45,28 @@ def test_the_stiff_test_problems_match_their_published_reference_solutions():
                       rtol=1e-10, atol=net.atol)  # fmt: skip
         big = np.abs(ref) > 1e-6 * np.max(np.abs(ref))
         assert np.max(np.abs(s.y[big, -1] - ref[big]) / np.abs(ref[big])) < 1e-6, net.name
+
+
+def test_the_ladder_families_have_analytic_jacobians_and_stiffness_that_grows_with_the_grid():
+    for fam, (make, initial, sizes) in c.LADDER.items():
+        stiff = []
+        for n in sizes[:4]:
+            net, y = make(n), initial(n)(1, 3)[0]
+            J = net.jac(y)
+            h = 1e-6
+            Jn = np.stack([(net.rhs(y + h * e) - net.rhs(y - h * e)) / (2 * h) for e in np.eye(len(y))], axis=1)
+            assert np.max(np.abs(J - Jn)) <= 1e-6 * np.max(np.abs(J)), fam
+            stiff.append(np.max(np.abs(np.linalg.eigvals(J))))
+        assert stiff[-1] > 4 * stiff[0], fam
+
+
+def test_a_ladder_step_stays_in_its_coordinates_and_moves_towards_the_stable_state():
+    net = c.fisher_kpp(5)
+    y = c.fisher_kpp_initial(5)(4, 1)
+    z1 = net.coords_step(net.coords(y), 0.1)
+    z0 = net.coords(y)
+    assert np.all(np.isfinite(z1)) and np.all(z1 <= 1e-9)  # 0 < u <= 1 stays, in log10
+    assert np.all(z1.min(axis=1) > z0.min(axis=1))  # growth lifts the smallest value (diffusion may lower a peak)
+    ac = c.allen_cahn(5)
+    u = c.allen_cahn_initial(5)(4, 1)
+    assert np.array_equal(ac.coords(u), u)  # linear coordinates

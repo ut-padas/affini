@@ -32,6 +32,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
 
 from src.structure import chebtt, chemistry, tabulation  # noqa: E402
@@ -50,15 +51,21 @@ class ChemProblem:
     steps: int
     n_train: int
     n_test: int
-    tolerances: tuple  # in dex
+    tolerances: tuple  # in the problem's units (``units``)
     burn: float = 0.0  # trajectories start after this time, past the initial transient
     floor: float = 0.0  # species below this abundance are not scored (an error in dex of ~0 means nothing)
 
+    @property
+    def units(self) -> str:
+        return "dex" if self.net.log else "absolute"
+
     def step(self, Z: np.ndarray) -> np.ndarray:
-        return self.net.log_step(Z, self.dt)
+        return self.net.coords_step(Z, self.dt)
 
     def scored(self, Z_true: np.ndarray) -> np.ndarray:
-        """Which entries count in the error: abundances above ``floor`` (the held temperature never)."""
+        """Which entries count in the error: abundances above ``floor`` (the held temperature never; every entry of a linear system)."""
+        if not self.net.log:
+            return np.ones(Z_true.shape, dtype=bool)
         mask = Z_true > (np.log10(self.floor) if self.floor > 0 else -np.inf)
         if self.net.species[-1] == "T":
             mask[..., -1] = False
@@ -83,10 +90,32 @@ PROBLEMS = {
     "primordial": ChemProblem(chemistry.PRIMORDIAL, 1e4 * YEAR, _primordial_initial, 30, 60, 30, (0.01, 0.001), floor=1e-12),
     "pollu": ChemProblem(chemistry.POLLU, 1.0, chemistry.pollu_initial, 59, 100, 40, (0.01, 0.001), burn=1.0, floor=1e-12),
 }  # fmt: skip (in order of input dimension: 3, 5, 8, 10, 20)
+# The stiff ladder: each family of chemistry.LADDER at every size, named <family>_d<input dimension>.
+_LADDER_STEP = {"bruss": (0.25, 40), "allen_cahn": (0.005, 40), "fisher_kpp": (0.01, 40)}  # (dt, steps): 40 steps that still move
+for _family, (_make, _initial, _sizes) in chemistry.LADDER.items():
+    for _n in _sizes:
+        _net = chemistry.NETWORKS[_make(_n).name]
+        PROBLEMS[f"{_family}_d{len(_net.species)}"] = ChemProblem(_net, _LADDER_STEP[_family][0], _initial(_n), _LADDER_STEP[_family][1],
+                                                                  100, 40, (0.01, 0.001))  # fmt: skip
+
+
+def solver_cost(name: str) -> dict:
+    """The solver's cost of one step per state (``Network.step_cost``) on 40 test states, cached."""
+    path = CACHE / f"{name}-cost.json"
+    if path.exists():
+        return json.loads(path.read_text())
+    p = PROBLEMS[name]
+    _, test = data(name)
+    Z = test[:, :-1].reshape(-1, test.shape[2])
+    Z = Z[np.random.default_rng(0).choice(len(Z), min(40, len(Z)), replace=False)]
+    cost = p.net.step_cost(10.0**Z if p.net.log else Z, p.dt)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cost))
+    return cost
 
 
 def data(name: str) -> tuple[np.ndarray, np.ndarray]:
-    """(train, test) trajectories, (n, steps + 1, d) log10 states, integrated once and cached."""
+    """(train, test) trajectories, (n, steps + 1, d) states in the surrogates' coordinates, integrated once and cached."""
     path = CACHE / f"{name}.npz"
     if path.exists():
         z = np.load(path)
@@ -213,6 +242,8 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
          "error_by_step": np.max(np.where(refused, 0.0, e).reshape(test.shape[0], -1), axis=0).tolist(),
          "refused_by_step": refused.reshape(test.shape[0], -1).mean(axis=0).tolist()}  # fmt: skip
     m.update(rollout(p, model, test[:ROLLOUTS]))
+    m.update(solver_cost(name))
+    m["speedup"] = m["solve_us"] / max(predict_us, 1e-9)  # the solver's time per state and step over the surrogate's
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(m))
     return m
@@ -289,7 +320,8 @@ def plot(name: str, methods: list[str]) -> Path:
             m = json.loads(path.read_text())
             if "failed" in m:
                 continue
-            label = f"{METHODS[method][0]}, tol {tol:g} dex ({m['evals']:,} training solves)"
+            speed = f", {m['speedup']:,.0f}x the solver's speed" if "speedup" in m else ""
+            label = f"{METHODS[method][0]}, tol {tol:g} {PROBLEMS[name].units} ({m['evals']:,} training solves{speed})"
             colour = METHODS[method][1]
             a.semilogy(np.maximum(m["error_by_step"], 1e-12) / tol, ls, color=colour, label=label)
             if "rollout_error_by_step" in m:
@@ -314,7 +346,13 @@ def plot(name: str, methods: list[str]) -> Path:
         ax.set_xlabel("step of the test trajectories")
     a.legend(fontsize=7, frameon=False)
     p = PROBLEMS[name]
-    fig.suptitle(f"{name}: surrogates of the step map (dt = {p.dt:.3g}), on held-out trajectories; errors in log10 (dex)", fontsize=10)
+    units = "log10 (dex)" if p.net.log else "absolute units"
+    try:
+        cost = solver_cost(name)
+        solver = f"; the solver: {cost['solve_us']:,.0f} us per state and step ({cost['nfev']:.0f} RHS, {cost['nlu']:.0f} LU)"
+    except Exception:  # noqa: BLE001 (the cost is a caption only)
+        solver = ""
+    fig.suptitle(f"{name}: surrogates of the step map (dt = {p.dt:.3g}), on held-out trajectories; errors in {units}{solver}", fontsize=10)
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / f"{name}-errors.png"
     fig.savefig(path, dpi=130)
@@ -322,10 +360,79 @@ def plot(name: str, methods: list[str]) -> Path:
     return path
 
 
+def plot_ladder() -> Path:
+    """
+    ``output/chem/ladder.png``: per family (columns; the fixed-size test problems together), against the
+    input dimension, the one-step worst error and the rollout worst error (both over the tolerance), the
+    training solves, and the speedup (the solver's time per state and step over the surrogate's). One
+    colour per method, solid for the looser tolerance and dashed for the tighter; an x at the top of
+    the error panels marks a case over the time limit or the evaluation budget.
+    """
+    from src.structure.chemfill import FIXED, family, ladder
+
+    names = ladder(10**6)
+    fams = [f for f in dict.fromkeys(family(n) for n in names) if f not in FIXED] + ["test set"]
+    rows = (("worst", "one-step worst / tol"), ("rollout_worst", "rollout worst / tol"), ("evals", "training solves"),
+            ("speedup", "solver time / inference time"))  # fmt: skip
+    fig, axes = plt.subplots(len(rows), len(fams), figsize=(4.2 * len(fams), 10.5), squeeze=False, constrained_layout=True)
+    for j, fam in enumerate(fams):
+        members = [n for n in names if (family(n) == fam) or (fam == "test set" and n in FIXED)]
+        for method, (label, colour, _) in METHODS.items():
+            for k, ls in enumerate(("-", "--")):
+                pts, fails = {key: [] for key, _ in rows}, []
+                for n in members:
+                    p = PROBLEMS[n]
+                    if k >= len(p.tolerances):
+                        continue
+                    tol = sorted(p.tolerances, reverse=True)[k]
+                    path = CACHE / n / f"{method}_tol{tol:g}.json"
+                    if not path.exists():
+                        continue
+                    m = json.loads(path.read_text())
+                    d = len(p.net.species)
+                    if "failed" in m:
+                        fails.append(d)
+                        continue
+                    for key, _ in rows:
+                        v = m.get(key)
+                        if v is not None:
+                            pts[key].append((d, v / tol if key in ("worst", "rollout_worst") else v))
+                for i, (key, _) in enumerate(rows):
+                    if pts[key]:
+                        x, y = zip(*sorted(pts[key]), strict=True)
+                        axes[i, j].plot(x, y, ls, marker="o", ms=3.5, color=colour,
+                                        label=f"{label}, tol {'loose' if k == 0 else 'tight'}" if i == 0 and j == 0 else None)  # fmt: skip
+                for i in (0, 1):
+                    for d in fails:
+                        axes[i, j].plot(d, 30.0, "x", color=colour, ms=7)
+        for i, (key, ylabel) in enumerate(rows):
+            ax = axes[i, j]
+            ax.set_yscale("log")
+            ax.set_xscale("log")
+            if i < 2:
+                ax.axhline(1.0, color="#c0392b", lw=0.8, ls=":")
+            ax.set_ylabel(ylabel if j == 0 else "")
+            ax.set_xlabel("input dimension" if i == len(rows) - 1 else "")
+            dims = sorted({len(PROBLEMS[n].net.species) for n in members})
+            if dims:
+                ax.set_xticks(dims, [str(d) for d in dims])
+                ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
+        title = fam if fam != "test set" else "Robertson (3), Akzo Nobel (5), HIRES (8), POLLU (20)"
+        axes[0, j].set_title(title, fontsize=10)
+    axes[0, 0].legend(fontsize=7, frameon=False, loc="upper left")
+    fig.suptitle("Stiff-system ladder: surrogates of the step map on held-out trajectories (x at the top: over the time limit or budget)",
+                 fontsize=11)  # fmt: skip
+    OUT.mkdir(parents=True, exist_ok=True)
+    path = OUT / "ladder.png"
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    return path
+
+
 def write_summary() -> Path:
-    lines = ["# Chemistry bench (errors in dex over held-out trajectory states; refused states are solved)", "",
-             "| problem | tol | method | solves | one-step worst | 99.9% | 99% | % above tol | % refused | rollout worst | train s | infer us |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
+    lines = ["# Stiff-system bench (errors in dex for log problems, absolute otherwise, over held-out trajectory states; refused states are solved)", "",
+             "| problem | tol | method | solves | one-step worst | 99.9% | 99% | % above tol | % refused | rollout worst | train s | infer us | solver us | speedup |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
     for name, p in PROBLEMS.items():
         for tol in p.tolerances:
             for method in METHODS:
@@ -334,11 +441,11 @@ def write_summary() -> Path:
                     continue
                 m = json.loads(path.read_text())
                 if "failed" in m:
-                    lines.append(f"| {name} | {tol:g} | {METHODS[method][0]} | over budget | | | | | | | | |")
+                    lines.append(f"| {name} | {tol:g} | {METHODS[method][0]} | {m['failed'][:40]} | | | | | | | | | | |")
                     continue
                 lines.append(f"| {name} | {tol:g} | {METHODS[method][0]} | {m['evals']:,} | {m['worst']:.2g} | {m['q999']:.2g} | "
                              f"{m['q99']:.2g} | {m['above_percent']:.2f} | {m['refused_percent']:.2f} | {m.get('rollout_worst', float('nan')):.2g} | {m['train_s']:.1f} | "
-                             f"{m['predict_us']:.1f} |")  # fmt: skip
+                             f"{m['predict_us']:.1f} | {m.get('solve_us', float('nan')):,.0f} | {m.get('speedup', float('nan')):,.0f} |")  # fmt: skip
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / "summary-chem.md"
     path.write_text("\n".join(lines) + "\n")
@@ -349,11 +456,12 @@ def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("--problems", default="robertson")
     parser.add_argument("--methods", default=",".join(METHODS))
+    parser.add_argument("--tols", default=None, help="default: the problem's tolerances")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--plot", action="store_true")
     a = parser.parse_args(argv)
     for name in a.problems.split(","):
-        for tol in PROBLEMS[name].tolerances:
+        for tol in map(float, a.tols.split(",")) if a.tols else PROBLEMS[name].tolerances:
             for method in a.methods.split(","):
                 m = run(method, name, tol, force=a.force)
                 print(json.dumps({k: v for k, v in m.items() if not k.endswith("by_step")}), flush=True)

@@ -14,6 +14,7 @@ trajectories, ``trajectories``, not on a box: held-out trajectories give the tes
 """
 
 import os
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -25,7 +26,11 @@ WORKERS = int(os.environ.get("SURROGATE_CHEM_WORKERS", "1"))  # processes per Ne
 
 @dataclass(frozen=True)
 class Network:
-    """A network's right-hand side and Jacobian (functions of one state) and its species."""
+    """
+    A stiff system's right-hand side and Jacobian (functions of one state) and its components. ``log``:
+    the surrogates see log10 of the state (abundances and other positive quantities, where a relative
+    error is the meaningful one); otherwise the state itself.
+    """
 
     name: str
     species: tuple[str, ...]
@@ -33,6 +38,7 @@ class Network:
     jac: object
     rtol: float = 1e-8
     atol: float = 1e-20
+    log: bool = True
 
     def step(self, Y: np.ndarray, dt: float) -> np.ndarray:
         """
@@ -41,16 +47,47 @@ class Network:
         """
         Y = np.asarray(Y, dtype=np.float64)
         if WORKERS > 1 and len(Y) >= 4 * WORKERS:
-            import multiprocessing
-
-            with multiprocessing.get_context("fork").Pool(WORKERS) as pool:
-                parts = pool.starmap(_step_rows, [(self.name, part, dt) for part in np.array_split(Y, WORKERS)])
+            parts = _pool().starmap(_step_rows, [(self.name, part, dt) for part in np.array_split(Y, WORKERS)])
             return np.concatenate(parts)
         return _step_rows(self.name, Y, dt)
 
-    def log_step(self, Z: np.ndarray, dt: float) -> np.ndarray:
-        """The step map in log10 abundances."""
-        return np.log10(np.maximum(self.step(10.0 ** np.asarray(Z, dtype=np.float64), dt), FLOOR))
+    def coords(self, Y: np.ndarray) -> np.ndarray:
+        """States in the surrogates' coordinates."""
+        return np.log10(np.maximum(Y, FLOOR)) if self.log else np.asarray(Y, dtype=np.float64)
+
+    def coords_step(self, Z: np.ndarray, dt: float) -> np.ndarray:
+        """The step map in the surrogates' coordinates."""
+        Z = np.asarray(Z, dtype=np.float64)
+        return self.coords(self.step(10.0**Z if self.log else Z, dt))
+
+    def step_cost(self, Y: np.ndarray, dt: float) -> dict:
+        """
+        What one step costs the solver, per state, serially: wall time in microseconds and the counts of
+        right-hand sides, Jacobians and LU factorisations (a measure independent of SciPy's Python
+        overhead: a compiled solver pays about ``nfev`` right-hand sides and ``nlu`` factorisations).
+        """
+        t, nfev, njev, nlu = [], [], [], []
+        for y in np.asarray(Y, dtype=np.float64):
+            t0 = time.perf_counter()
+            s = solve_ivp(lambda t, v: self.rhs(v), (0.0, dt), y, method="Radau", jac=lambda t, v: self.jac(v),
+                          rtol=self.rtol, atol=self.atol)  # fmt: skip
+            t.append(time.perf_counter() - t0)
+            nfev.append(s.nfev), njev.append(s.njev), nlu.append(s.nlu)
+        return {"solve_us": 1e6 * float(np.mean(t)), "nfev": float(np.mean(nfev)), "njev": float(np.mean(njev)),
+                "nlu": float(np.mean(nlu))}  # fmt: skip
+
+
+_POOL = None
+
+
+def _pool():
+    """One forked pool for the process's lifetime: forking per batch costs more than a small batch's solves."""
+    global _POOL
+    if _POOL is None:
+        import multiprocessing
+
+        _POOL = multiprocessing.get_context("fork").Pool(WORKERS)
+    return _POOL
 
 
 def _step_rows(name: str, Y: np.ndarray, dt: float) -> np.ndarray:
@@ -62,8 +99,6 @@ def _step_rows(name: str, Y: np.ndarray, dt: float) -> np.ndarray:
                       rtol=net.rtol, atol=net.atol)  # fmt: skip
         out[i] = s.y[:, -1] if s.success else np.nan
     return out
-
-
 
 
 def _robertson_rhs(y, k1=0.04, k2=3e7, k3=1e4):
@@ -586,11 +621,11 @@ NETWORKS.update({net.name: net for net in (HIRES, POLLU, CHEMAKZO)})
 
 
 def trajectories(net: Network, Y0: np.ndarray, dt: float, steps: int) -> np.ndarray:
-    """(n, steps + 1, species) log10 states of the trajectories from the rows of Y0, sampled every dt."""
+    """(n, steps + 1, components) states of the trajectories from the rows of Y0 in the surrogates' coordinates, every dt."""
     Z = np.empty((len(Y0), steps + 1, len(net.species)))
-    Z[:, 0] = np.log10(np.maximum(Y0, FLOOR))
+    Z[:, 0] = net.coords(Y0)
     for k in range(steps):
-        Z[:, k + 1] = net.log_step(Z[:, k], dt)
+        Z[:, k + 1] = net.coords_step(Z[:, k], dt)
     return Z
 
 
@@ -600,3 +635,92 @@ def robertson_initial(n: int, seed: int) -> np.ndarray:
     y1 = rng.uniform(0.5, 1.0, n)
     y2 = 10.0 ** rng.uniform(-12, -6, n)
     return np.stack([y1, y2, 1.0 - y1 - y2], axis=1)
+
+
+# --- Scalable stiff systems: method-of-lines reaction-diffusion on n grid points of [0, 1] --------------
+# Stiff through diffusion (eigenvalues up to about 4 D / h^2) and, for Allen-Cahn, a fast reaction; each
+# is contracting in the regime chosen, so a rollout's error is the surrogate's, not the dynamics' chaos.
+
+
+def _laplacian(n: int, neumann: bool) -> np.ndarray:
+    """The second-difference matrix on n points (Neumann: cell centres, h = 1/n; Dirichlet: h = 1/(n + 1))."""
+    L = np.diag(np.full(n - 1, 1.0), -1) - 2.0 * np.eye(n) + np.diag(np.full(n - 1, 1.0), 1)
+    if neumann:
+        L[0, 0] += 1.0
+        L[-1, -1] += 1.0
+        return L * n**2
+    return L * (n + 1) ** 2
+
+
+def _smooth_fields(n_states: int, n: int, rng) -> np.ndarray:
+    """(n_states, n) random fields sum_k a_k sin(k pi x) + b_k cos(k pi x), k <= 3, a_k, b_k ~ U(-1, 1)/k, scaled to max |.| = 1."""
+    x = (np.arange(n) + 0.5) / n
+    k = np.arange(1, 4)
+    a, b = rng.uniform(-1, 1, (n_states, 3)) / k, rng.uniform(-1, 1, (n_states, 3)) / k
+    F = a @ np.sin(np.pi * np.outer(k, x)) + b @ np.cos(np.pi * np.outer(k, x))
+    return F / np.max(np.abs(F), axis=1, keepdims=True)
+
+
+BRUSS_A, BRUSS_B, BRUSS_ALPHA = 1.0, 1.9, 0.5  # B < 1 + A^2: the uniform state (A, B/A) is stable, and near the Hopf point B = 2 it rings down slowly
+
+
+def bruss(n: int) -> Network:
+    """
+    The Brusselator with diffusion (Hairer and Wanner, Solving ODEs II, section IV.1) on n points, with
+    no-flux boundaries, so that diffusion damps only the non-uniform modes (the stiff part) and the
+    uniform mode rings down at Re lambda = (B - 1 - A^2) / 2; components u_1..u_n, v_1..v_n. (Held at the
+    steady state, Dirichlet boundaries damp every mode within a step or two on so few points.)
+    """
+    A, B = BRUSS_A, BRUSS_B
+    L = BRUSS_ALPHA * _laplacian(n, neumann=True) if n > 1 else np.zeros((1, 1))
+
+    def rhs(y):
+        u, v = y[:n], y[n:]
+        return np.concatenate([A + u * u * v - (B + 1.0) * u + L @ u, B * u - u * u * v + L @ v])
+
+    def jac(y):
+        u, v = y[:n], y[n:]
+        return np.block([[np.diag(2 * u * v - (B + 1.0)) + L, np.diag(u * u)], [np.diag(B - 2 * u * v), np.diag(-u * u) + L]])
+
+    return Network(f"bruss{n}", tuple(f"u{i}" for i in range(n)) + tuple(f"v{i}" for i in range(n)), rhs, jac, atol=1e-12)
+
+
+def bruss_initial(n: int):
+    def initial(m: int, seed: int) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        return np.concatenate([BRUSS_A + 0.6 * _smooth_fields(m, n, rng), BRUSS_B / BRUSS_A + 1.0 * _smooth_fields(m, n, rng)], axis=1)
+    return initial
+
+
+AC_D, AC_DELTA = 1.0, 0.05
+
+
+def allen_cahn(n: int) -> Network:
+    """u' = D u_xx + (u - u^3) / delta on n points, Neumann: a fast reaction to +-1 and slow interfaces (linear coordinates)."""
+    L = AC_D * _laplacian(n, neumann=True)
+    return Network(f"allen_cahn{n}", tuple(f"u{i}" for i in range(n)), lambda y: L @ y + (y - y**3) / AC_DELTA,
+                   lambda y: L + np.diag((1.0 - 3.0 * y * y) / AC_DELTA), atol=1e-12, log=False)  # fmt: skip
+
+
+def allen_cahn_initial(n: int):
+    return lambda m, seed: 0.9 * _smooth_fields(m, n, np.random.default_rng(seed))
+
+
+KPP_D, KPP_R = 1.0, 10.0
+
+
+def fisher_kpp(n: int) -> Network:
+    """u' = D u_xx + r u (1 - u) on n points, Neumann: growth from a trace towards the stable u = 1."""
+    L = KPP_D * _laplacian(n, neumann=True)
+    return Network(f"fisher_kpp{n}", tuple(f"u{i}" for i in range(n)), lambda y: L @ y + KPP_R * y * (1.0 - y),
+                   lambda y: L + np.diag(KPP_R * (1.0 - 2.0 * y)), atol=1e-14)  # fmt: skip
+
+
+def fisher_kpp_initial(n: int):
+    return lambda m, seed: 10.0 ** (-1.5 + 1.5 * _smooth_fields(m, n, np.random.default_rng(seed)))
+
+
+LADDER = {"bruss": (bruss, bruss_initial, (1, 2, 3, 5, 10, 20, 40)),
+          "allen_cahn": (allen_cahn, allen_cahn_initial, (2, 3, 5, 10, 20, 40, 80)),
+          "fisher_kpp": (fisher_kpp, fisher_kpp_initial, (2, 3, 5, 10, 20, 40, 80))}  # fmt: skip
+NETWORKS.update({net.name: net for make, _, sizes in LADDER.values() for net in map(make, sizes)})
