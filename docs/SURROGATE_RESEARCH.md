@@ -58,13 +58,18 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
   not run at 10-D and above (tens of GB per rank). Serial A/B checks of a scheme in scratch scripts are
   fine, with `OPENBLAS_NUM_THREADS` set low: BLAS threads competing with the bench made QR 50x slower.
 - Fail fast: a variant that loses on the fast set is removed, with its numbers recorded in section 1.
+- Every result reported goes through the bench (cache and plots); serial scratch scripts are only for
+  quick A/B checks. The bench redraws a problem's plots, the summary and the overview after every
+  problem, with every cached method, so a new scheme's column appears after its first problem.
+- ART with affine leaves is not run at 10-D and above either: 2.8M evaluations and 75-95 s per run on
+  10-D Rosenbrock, still 3.3-4.0x the tolerance; ART with quadratic leaves represents ART there.
 
 ### 0.3 Standings (bench, 8 ranks, 3 seeds)
 
 | Scheme | 2-D | 3-D | 5-D | 10-D | Limits |
 |---|---|---|---|---|---|
 | AFINNI | 0/46 | 5/30 | 0/20 | not run | least squares on random points; up to 11.8M evaluations at 5-D |
-| ART, affine | 1/46 | 3/30 | 0/20 | 0/2 (running) | as AFINNI |
+| ART, affine | 1/46 | 3/30 | 0/20 | not run (cost) | as AFINNI |
 | ART, quadratic | 1/46 | 3/30 | 2/21 | 0/2 (running) | as AFINNI |
 | ChebTree | **46/46** (median 487) | **30/30** (median 1.3k) | – | – | (n + 1)^d points per box: dead above 3-4 D |
 | SparseCheb | 43/45 (median 293) | 27/30 | over budget on oblique features | – | pays for kinks globally; misses small regions |
@@ -98,8 +103,8 @@ at 0.05 over the 300k budget). Over budget at 5-D: the rotated Gaussian, `lorenz
 
 ### 0.5 In progress and next
 
-- Running: the bench's fast ladder at 10-D (ChebTT, both ARTs) and 20-D (ChebTT, ART quadratic);
-  the learned-metric kernel model on the fast set at 5, 10, 20-D (scratch); Review V (TT-cross
+- Running: the bench's fast ladder at 10-D and 20-D (ChebTT, ART quadratic), then MetricKernel's bench
+  runs on the fast set at 2-D and 5-D; Review V (TT-cross
   practice, Riemannian and manifold surrogates, a primordial-chemistry rate table).
 - Next: a chemistry bench on visited states: Robertson (exact rates), then a primordial H/He/H2
   network from published rate tables (no Cantera: the networks are hand-coded and checked against
@@ -287,9 +292,13 @@ model (the mechanism of recursive feature machines), the scale chosen by the wor
 fresh batches stay below half the tolerance. 2-D: the learned metric halves the evaluations against
 an isotropic kernel (Gaussian 609 vs 1,057 at 0.01) and fixes the wave (worst 0.21 vs 1.7 at 0.1), but
 random batches miss corner peaks and fine scales (worst 1.8-2.4 on wave and corner peak at 0.01); 5-D
-rotated Gaussian worst 2.2-4.5 (the needle, as for every box sampler). The scaling test on the fast
-set is running. Its natural setting is a set of visited states, where the candidates come from the
-simulation.
+rotated Gaussian worst 2.2-4.5 (the needle, as for every box sampler). On the fast set (serial, one
+seed) it loses to ChebTT everywhere: 5-D worst 0.3-0.9 where it holds and 2.2-10.9 on Genz oscillatory
+and corner peak; 10-D over its 20k budget on Rosenbrock and 1.8-2.7 on the corner peak. Kernel
+interpolation is weakest near the boundary, where most of a high-dimensional box's volume is, and a
+few hundred random check points do not find it. Not promoted beyond 5-D; its bench runs at 2-D and 5-D
+are for the record. Its natural setting is a set of visited states, where the candidates come from the
+simulation and boundaries matter less.
 
 ### 1.11 The chemistry premise, measured
 
