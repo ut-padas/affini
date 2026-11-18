@@ -717,7 +717,7 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
     norm = BoundaryNorm(bounds, cmap.N)
     paths = []
     for k, label in ((0, "loose"), (1, "tight")):
-        fig, axes = plt.subplots(3, 1, figsize=(0.78 * len(methods) + 2.6, 3 * (0.34 * len(names) + 1.45)), constrained_layout=True)
+        fig, axes = plt.subplots(3, 1, figsize=(max(0.82 * len(methods) + 2.6, 9.5), 3 * (0.34 * len(names) + 1.0) + 1.4), layout="constrained")
         # third panel: speedup over the named baseline, in decade bands of a perceptually uniform,
         # colour-blind-safe scale (viridis), the row's fastest boxed
         decades = [(1e1, "< 10x"), (1e2, "10-100x"), (1e3, "100-1,000x"), (1e4, "1,000-10,000x"), (np.inf, ">= 10,000x")]
@@ -747,9 +747,8 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
             if row:
                 jb = max(row)[1]
                 axes[2].add_patch(plt.Rectangle((jb, i), 0.95, 0.9, fill=False, ec="black", lw=1.6))
-        axes[2].legend(handles=[matplotlib.patches.Patch(color=c, label=lab) for c, (_, lab) in zip(band, decades, strict=True)]
-                       + [matplotlib.patches.Patch(fill=False, ec="black", lw=1.6, label="fastest in the row")],
-                       loc="upper center", bbox_to_anchor=(0.5, -0.32), ncol=6, fontsize=7, frameon=False)  # fmt: skip
+        speed_key = [matplotlib.patches.Patch(color=c, label=lab) for c, (_, lab) in zip(band, decades, strict=True)]
+        speed_key += [matplotlib.patches.Patch(fill=False, ec="black", lw=1.6, label="fastest in the row")]
         for ax, key, title in ((axes[0], "worst", "one-step error / tol"), (axes[1], "rollout_worst", "rollout error / tol (20 trajectories)"),
                                (axes[2], None, f"speedup over {BASELINES[baseline]['label']} (top), inference per state (bottom)")):
             for i, n in enumerate(names):
@@ -778,13 +777,6 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
                 if row:  # the row's least error over the tolerance, boxed
                     jb = min(row)[1]
                     ax.add_patch(plt.Rectangle((jb, i), 0.95, 0.9, fill=False, ec="black", lw=1.6))
-            if key is not None:  # the error bands, as in the cells
-                labels = ["<= 0.01", "0.01-0.1", "0.1-0.5", "0.5-1", "1-2", "2-10", "10-100", "> 100"]
-                ax.legend(handles=[matplotlib.patches.Patch(color=cmap(q), label=lab) for q, lab in enumerate(labels)]
-                          + [matplotlib.patches.Patch(fc="#e8e8e8", hatch="//", ec="#999999", label="over the time limit"),
-                             matplotlib.patches.Patch(fill=False, ec="black", lw=1.6, label="least in the row")],
-                          loc="upper center", bbox_to_anchor=(0.5, -0.32), ncol=6, fontsize=7, frameon=False,
-                          title="worst error / tolerance (blue holds, red exceeds)", title_fontsize=7)  # fmt: skip
             ax.set_xlim(0, len(methods))
             ax.set_ylim(len(names), 0)
             ax.set_xticks(np.arange(len(methods)) + 0.47, [SHORT.get(m, m) for m in methods], fontsize=7, rotation=20, ha="right")
@@ -793,8 +785,17 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
             for sp in ax.spines.values():
                 sp.set_visible(False)
             ax.set_title(title, fontsize=10)
-        fig.suptitle(f"Stiff systems, the {'looser' if k == 0 else 'tighter'} tolerance of each problem (0.01 or 0.001, dex or absolute)\n"
-                     "top: training solves; bottom: worst error / tolerance; hatched: over the time limit", fontsize=9)  # fmt: skip
+        # one key for the two error tables, above them; the speedup key below its table
+        labels = ["<= 0.01", "0.01-0.1", "0.1-0.5", "0.5-1", "1-2", "2-10", "10-100", "> 100"]
+        error_key = [matplotlib.patches.Patch(color=cmap(q), label=lab) for q, lab in enumerate(labels)]
+        error_key += [matplotlib.patches.Patch(fc="#e8e8e8", hatch="//", ec="#999999", label="over the time limit"),
+                      matplotlib.patches.Patch(fill=False, ec="black", lw=1.6, label="least in the row")]
+        # the figure's heading is this key's title: constrained layout does not stack a suptitle and an outside legend
+        fig.legend(handles=error_key, loc="outside upper center", ncol=10, fontsize=7, frameon=False, handlelength=1.4, columnspacing=1.0,
+                   title=f"Stiff systems, the {'looser' if k == 0 else 'tighter'} tolerance of each problem (0.01 or 0.001, dex or absolute).\n"
+                         "Error cells: training solves above the worst error / tolerance (blue holds, red exceeds)", title_fontsize=8.5)
+        fig.legend(handles=speed_key, loc="outside lower center", ncol=6, fontsize=7, frameon=False, handlelength=1.4,
+                   title=f"speedup over {BASELINES[baseline]['label']}", title_fontsize=7.5)  # fmt: skip
         OUT.mkdir(parents=True, exist_ok=True)
         path = OUT / f"overview-stiff-{label}.png"
         fig.savefig(path, dpi=130)
