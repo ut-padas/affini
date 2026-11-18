@@ -184,7 +184,7 @@ at 0.05 over the 300k budget). Over budget at 5-D: the rotated Gaussian, `lorenz
   from the joint train or the slower contraction (section 1.19).
 - Next, once the vector ladder is done: compare ChebTT's inference time at 10-D and 20-D with the
   baselines' in `overview-d<d>-cost.png`, with ChebTT compressed; then resume the chemistry bench.
-- Running after the box fill (chained): the stiff ladder (, 12 solver workers),
+- Running after the box fill (chained): the stiff ladder (`chemfill --limit 240`, 12 solver workers),
   then the primordial network with the same four methods. Then: per-class horizons and metrics from
   Review VII (valid prediction time for chaotic members; orbit and phase error for oscillatory ones;
   horizons in slow-relaxation times), a chaotic family on the ladder, and longer steps (Phi_2dt).
@@ -661,21 +661,21 @@ Lotka-Volterra, 0.70 against 1.18 us, and it moves predictions by up to 0.25 of 
 
 ### 1.20 The stiff-system ladder: errors by dynamical class, and rollouts that hold
 
-The vector ladder's next rung before chemistry (, ): surrogates of the step
+The vector ladder's next rung before chemistry (`chemfill.py`, `chembench.py`): surrogates of the step
 map of well-known stiff systems at growing sizes, trained and judged on visited states. Families
-(): the Brusselator with diffusion (Hairer-Wanner; no-flux boundaries, B = 1.9 near
+(`chemistry.LADDER`): the Brusselator with diffusion (Hairer-Wanner; no-flux boundaries, B = 1.9 near
 its Hopf point, log coordinates; 2n inputs), Allen-Cahn (u' = u_xx + (u - u^3)/0.05, linear coordinates)
 and Fisher-KPP (u' = u_xx + 10 u (1 - u), log coordinates), n = 2..80 grid points; the fixed-size test
 problems (Robertson, Akzo Nobel, HIRES, POLLU) at their sizes. 40 steps per trajectory, 100 training
-and 40 test trajectories. Methods: , , , .
+and 40 test trajectories. Methods: `chebtt_roll`, `chebtt_box`, `chebtt_metric`, `slowtable`.
 
 **What every run measures** (Review VII, section 9):
 
 - Speed: the solver's wall time per state and step (SciPy Radau, 0.7-2.6 ms at 2-20 inputs) and its
   operation counts (27-68 right-hand sides, 4-9 LU factorisations per step), against the surrogate's
-  inference time; the ratio is . SciPy's per-call overhead flatters a surrogate: a compiled
+  inference time; the ratio is `speedup`. SciPy's per-call overhead flatters a surrogate: a compiled
   solver doing the same counts on a small system takes microseconds, so the counts are the fair basis.
-- The dynamics' class, from the problem's own trajectories (): step-map stiffness
+- The dynamics' class, from the problem's own trajectories (`dynamics`): step-map stiffness
   s = max -ln min|eig J_k| (Jay-Calvo: mildly stiff >= 10, stiff >= 20); the growth |J_k ... J_1|;
   contracting / neutral / chaotic; and the accumulation factor A_n = sum_j |J_{n-1} ... J_j| of the
   classical global-error bound (rollout error <= one-step error x A_n, to first order).
@@ -690,7 +690,7 @@ growth stays at 1.4-2.7 over 40 steps, so A_40 = 30 (Fisher-KPP, the one contrac
 (HIRES). A rollout may therefore be up to A_n times the one-step error for any surrogate, and "the
 rollout holds the tolerance" needs one-step errors well below tol / A_n unless errors cancel.
 
-**Rollout-verified training** (): chain the surrogate along the training trajectories (known,
+**Rollout-verified training** (`chebtt_roll`): chain the surrogate along the training trajectories (known,
 so no solve), and retrain at the one-step tolerance times the shortfall until the rollouts hold;
 ChebTT's spectral convergence makes a tighter tolerance cheap, and the retraining reuses every cached
 solve. Robertson (one seed):
