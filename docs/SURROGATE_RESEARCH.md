@@ -619,6 +619,16 @@ One seed, serial, evaluations / worst (tolerance units):
 | `swirl`, `rosenbrock_gradient` | as separate | axes kept (metric isotropic or axis-aligned) | – |
 | `lotka_volterra_state` | as separate | rotation refused: the ODE leaves its orthant | – |
 
+- **Escalation instead of an up-front decision.** Deciding from the pilot first cost the pilot on
+  every case and rotated outputs that are already cheap on the axes: on the bench, 2-D and 3-D
+  `genz_triple` and `shared_latent` cost 30-60% more than ChebTT (the rotated box is larger and shares
+  no points with the outputs left on the axes; at 2-3-D the axis ranks are 1-4, so there is nothing to
+  gain). Now every output is first trained on the axes with its rank capped at 6; one that meets the
+  tolerance keeps that model, identical to ChebTT's at the same cost, and only outputs reaching the cap
+  get the pilot, then a rotated train or a full-rank axis train from the cache. Cap 4 / 6 / 8 on
+  `shared_latent` (curved): 3-D 15.1k / 13.6k / 13.6k (the axes 13.6k), 5-D 40k / 49k / 74k (the
+  axes 358k), 10-D 227k / 256k / 241k (the axes over 2M). Every other bench case tested costs exactly
+  ChebTT's evaluations at cap 6.
 - The gain grows with d: 3.6x at 5-D, 17x at 10-D on the shared oblique coordinates, and 12-70x fewer
   coefficients. Curvature halves it but does not remove it (5.5x at 5-D).
 - One global rotation for all outputs is wrong: on `genz_triple` the oscillatory output dominates the
