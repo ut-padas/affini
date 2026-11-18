@@ -147,6 +147,7 @@ Run scripts from the repository root, as modules
 | algorithms | `afinni/` (`plan`: `AFINNIPlan`), `art/` (`ARTPlan` in `plan`; `constants`, `rng`, `geometry`, `sampling`, `split_search`, `routing`) |
 | engine | `engine/` (`driver`: `refine`, collective training; `refinement`: `refine_rank`, the loop shared by both plans; `initial`, `work_stealing`) |
 | public API | `surrogate/` (`model`, `persistence`, `metrics`); also `plotting/`, `problems/` |
+| experiments | `structure/` (Chebyshev-based surrogate schemes and their benchmark against AFINNI and ART; see its README) |
 
 Package `__init__` files re-export the names other modules import, so callers do not depend
 on the file a name lives in (`from src.art import ARTPlan`). CUDA kernel sources live in

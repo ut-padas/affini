@@ -12,6 +12,7 @@ LAYERS = {
     "afinni": 2, "art": 2,
     "engine": 3,
     "surrogate": 4, "plotting": 4, "problems": 4,
+    "structure": 5,
 }  # fmt: skip
 
 
