@@ -44,11 +44,16 @@ class Network:
     def step(self, Y: np.ndarray, dt: float) -> np.ndarray:
         """
         ``Phi_dt`` of every row of Y (abundances), each integrated on its own, so a row's result never
-        depends on the others; large batches are spread over ``WORKERS`` forked processes.
+        depends on the others; a batch of at least ``WORKERS`` rows is spread over that many forked
+        processes. A cross asks for one fibre at a time (tens of states), and states far from the slow
+        manifold cost Radau ~10 ms each, against well under a millisecond to hand a chunk to the pool.
         """
         Y = np.asarray(Y, dtype=np.float64)
-        if WORKERS > 1 and len(Y) >= 4 * WORKERS:
-            parts = _pool().starmap(_step_rows, [(self.name, part, dt) for part in np.array_split(Y, WORKERS)])
+        if WORKERS > 1 and len(Y) >= WORKERS:
+            # many small tasks, not one per worker: a few states (far from the slow manifold) cost many
+            # times the others, and a worker holding one would leave the rest idle
+            chunks = np.array_split(Y, min(len(Y), 4 * WORKERS))
+            parts = _pool().starmap(_step_rows, [(self.name, part, dt) for part in chunks], chunksize=1)
             return np.concatenate(parts)
         return _step_rows(self.name, Y, dt)
 
