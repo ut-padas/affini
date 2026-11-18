@@ -645,6 +645,10 @@ def plot_ladder() -> Path:
     return path
 
 
+SHORT = {"slowtable": "SlowTable", "chebtt_smooth": "ChebTT\nno edges", "chebtt_box": "ChebTT", "chebtt_adaptive": "ChebTT-A",
+         "chebtt_metric": "ChebTT-M", "chebtt_roll": "ChebTT\nrollout", "afinni": "AFINNI", "art": "ART\naffine", "art_quad": "ART\nquad"}  # fmt: skip
+
+
 def plot_overview() -> list[Path]:
     """
     ``output/chem/overview-stiff-{loose,tight}.png``: per problem (rows, by input dimension) and method
@@ -661,7 +665,7 @@ def plot_overview() -> list[Path]:
     norm = BoundaryNorm(bounds, cmap.N)
     paths = []
     for k, label in ((0, "loose"), (1, "tight")):
-        fig, axes = plt.subplots(1, 2, figsize=(1.25 * len(methods) * 2 + 3.5, 0.42 * len(names) + 2.4), constrained_layout=True)
+        fig, axes = plt.subplots(2, 1, figsize=(0.78 * len(methods) + 2.6, 2 * (0.34 * len(names) + 1.1)), constrained_layout=True)
         for ax, key, title in ((axes[0], "worst", "one-step error / tol"), (axes[1], "rollout_worst", "rollout error / tol (20 trajectories)")):
             for i, n in enumerate(names):
                 tols = sorted(PROBLEMS[n].tolerances, reverse=True)
@@ -686,14 +690,14 @@ def plot_overview() -> list[Path]:
                             color="white" if r <= 0.01 or r > 10 else "#222222")  # fmt: skip
             ax.set_xlim(0, len(methods))
             ax.set_ylim(len(names), 0)
-            ax.set_xticks(np.arange(len(methods)) + 0.47, [METHODS[m][0].split(":")[0] for m in methods], rotation=35, ha="right", fontsize=7.5)
+            ax.set_xticks(np.arange(len(methods)) + 0.47, [SHORT.get(m, m) for m in methods], fontsize=7, rotation=20, ha="right")
             ax.set_yticks(np.arange(len(names)) + 0.45, [f"{n} ({len(PROBLEMS[n].net.species)})" for n in names], fontsize=7.5)
             ax.tick_params(length=0)
             for sp in ax.spines.values():
                 sp.set_visible(False)
             ax.set_title(title, fontsize=10)
-        fig.suptitle(f"Stiff systems, the {label}er tolerance of each problem (0.01 or 0.001 in dex or absolute units): "
-                     "top number training solves, bottom worst error / tolerance; hatched: over the time limit", fontsize=9)  # fmt: skip
+        fig.suptitle(f"Stiff systems, the {'looser' if k == 0 else 'tighter'} tolerance of each problem (0.01 or 0.001, dex or absolute)\n"
+                     "top: training solves; bottom: worst error / tolerance; hatched: over the time limit", fontsize=9)  # fmt: skip
         OUT.mkdir(parents=True, exist_ok=True)
         path = OUT / f"overview-stiff-{label}.png"
         fig.savefig(path, dpi=130)
