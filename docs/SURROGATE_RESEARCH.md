@@ -187,7 +187,7 @@ at 0.05 over the 300k budget). Over budget at 5-D: the rotated Gaussian, `lorenz
 - Running after the box fill (chained): the stiff ladder (`chemfill --limit 240`, 12 solver workers),
   then the primordial network with the same four methods. Then: per-class horizons and metrics from
   Review VII (valid prediction time for chaotic members; orbit and phase error for oscillatory ones;
-  horizons in slow-relaxation times), a chaotic family on the ladder, and longer steps (Phi_2dt).
+  horizons in slow-relaxation times), and a chaotic family on the ladder.
 - Chemistry, when resumed: `chebtt_metric` (ChebTT-M per species in log abundances) beside
   `chebtt_box` and SlowTable; first print the species' pullback-metric spectrum and groups, which
   say whether they share coordinates. Then the KL projection onto the conserved totals (section 8.4).
@@ -711,7 +711,10 @@ solve. Robertson (one seed):
   manifold, not the conserved total.
 - Scratch, 4-D Brusselator at 0.01: training at tol/2 and tol/4 (7.0k and 6.9k solves against 3.8k)
   takes the rollout from 1.14 to 0.74 and 0.28 of the tolerance; a box in the states' principal axes
-  cost 83k solves (22x) and its one-step error was 2x the tolerance: rejected.
+  cost 83k solves (22x) and its one-step error was 2x the tolerance: rejected. A box in the step map's
+  singular vectors did not finish within 1,000 s: rejected. Longer steps (a surrogate of Phi_2dt chained
+  20 times over the same span) cost 11k solves (2.9x) and rolled out to 2.86 of the tolerance (against
+  1.14): the two-step map is harder to fit, not smoother, here: rejected.
 
 ---
 
