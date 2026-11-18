@@ -143,3 +143,21 @@ def test_a_record_is_written_whole_and_leaves_no_temporary_file(tmp_path):
     cb.write_record(path, {"worst": 0.5})
     cb.write_record(path, {"worst": 0.25})
     assert json.loads(path.read_text()) == {"worst": 0.25} and [p.name for p in path.parent.iterdir()] == [path.name]
+
+
+def test_the_fill_can_run_only_the_loosest_tolerance_of_one_regime_from_a_dimension(monkeypatch, tmp_path):
+    from src.structure.ode import bench as cb
+    from src.structure.ode import fill
+
+    cases = []
+    monkeypatch.setattr(cb, "OUT", tmp_path)
+    monkeypatch.setattr(cb, "CACHE", tmp_path)
+    for name in ("data", "solver_cost", "dynamics"):
+        monkeypatch.setattr(cb, name, lambda n: None)
+    monkeypatch.setattr(fill, "_case", lambda args, limit, log: cases.append(args) or False)  # every case over the limit
+    monkeypatch.setattr(fill, "_redraw", lambda name, previous, log: None)
+    fill.main(["--methods", "chebtt_roll", "--min-d", "10", "--max-d", "20", "--regimes", "stiff", "--loosest", "--limit", "1"])
+    names = [args[1] for args in cases]
+    assert {args[5] for args in cases} == {"0.01"}
+    assert all(len(cb.PROBLEMS[n].system.components) >= 10 and cb.PROBLEMS[n].regime == "stiff" for n in names)
+    assert "primordial" in names and "pollu" in names and "bruss_d20" not in names  # stuck at bruss_d10: d20 skipped

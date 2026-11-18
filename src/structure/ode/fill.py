@@ -73,6 +73,9 @@ def main(argv=None) -> None:
     parser.add_argument("--methods", default="chebtt_roll,chebtt_box,chebtt_smooth,chebtt_adaptive,slowtable,art_quad,art,afinni")
     parser.add_argument("--max-d", type=int, default=80)
     parser.add_argument("--first", default="", help="families (comma-separated) to run before the rest")
+    parser.add_argument("--min-d", type=int, default=1)
+    parser.add_argument("--regimes", default=",".join(bench.REGIMES), help="the regimes (comma-separated) whose problems run")
+    parser.add_argument("--loosest", action="store_true", help="only each problem's loosest tolerance")
     parser.add_argument("--limit", type=float, default=240.0, help="wall seconds per case")
     a = parser.parse_args(argv)
     stuck: set[tuple[str, str]] = set()  # (method, family) whose loosest tolerance ran out of time
@@ -82,6 +85,8 @@ def main(argv=None) -> None:
     with open(log_path, "a") as log:
         for name in ladder(a.max_d, tuple(filter(None, a.first.split(",")))):
             p = bench.PROBLEMS[name]
+            if len(p.system.components) < a.min_d or p.regime not in a.regimes.split(","):
+                continue
             t0 = time.time()
             bench.data(name)
             bench.solver_cost(name)
@@ -90,7 +95,7 @@ def main(argv=None) -> None:
             for method in a.methods.split(","):
                 if (method, family(name)) in stuck or (method == "afinni" and len(p.system.components) >= 10):
                     continue  # AFINNI from 10 inputs: tens of GB of host memory (the box bench's rule)
-                for i, tol in enumerate(sorted(p.tolerances, reverse=True)):
+                for i, tol in enumerate(sorted(p.tolerances, reverse=True)[: 1 if a.loosest else None]):
                     path = bench.CACHE / name / f"{method}_tol{tol:g}.json"
                     if not path.exists():
                         t0 = time.time()
