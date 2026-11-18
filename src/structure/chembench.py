@@ -717,7 +717,7 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
     norm = BoundaryNorm(bounds, cmap.N)
     paths = []
     for k, label in ((0, "loose"), (1, "tight")):
-        fig, axes = plt.subplots(3, 1, figsize=(0.78 * len(methods) + 2.6, 3 * (0.34 * len(names) + 1.1)), constrained_layout=True)
+        fig, axes = plt.subplots(3, 1, figsize=(0.78 * len(methods) + 2.6, 3 * (0.34 * len(names) + 1.45)), constrained_layout=True)
         # third panel: speedup over the named baseline, in decade bands of a perceptually uniform,
         # colour-blind-safe scale (viridis), the row's fastest boxed
         decades = [(1e1, "< 10x"), (1e2, "10-100x"), (1e3, "100-1,000x"), (1e4, "1,000-10,000x"), (np.inf, ">= 10,000x")]
@@ -757,6 +757,7 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
                 if key is None or k >= len(tols):
                     continue
                 tol = tols[k]
+                row = []
                 for j, meth in enumerate(methods):
                     path = CACHE / n / f"{meth}_tol{tol:g}.json"
                     if not path.exists():
@@ -773,6 +774,17 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
                     txt = f"{ev / 1e3:.1f}k" if ev < 1e5 else f"{ev / 1e6:.2f}M" if ev >= 1e6 else f"{ev / 1e3:.0f}k"
                     ax.text(j + 0.47, i + 0.45, f"{txt}\n{r:.2g}", ha="center", va="center", fontsize=6.5,
                             color="white" if r <= 0.01 or r > 10 else "#222222")  # fmt: skip
+                    row.append((r, j))
+                if row:  # the row's least error over the tolerance, boxed
+                    jb = min(row)[1]
+                    ax.add_patch(plt.Rectangle((jb, i), 0.95, 0.9, fill=False, ec="black", lw=1.6))
+            if key is not None:  # the error bands, as in the cells
+                labels = ["<= 0.01", "0.01-0.1", "0.1-0.5", "0.5-1", "1-2", "2-10", "10-100", "> 100"]
+                ax.legend(handles=[matplotlib.patches.Patch(color=cmap(q), label=lab) for q, lab in enumerate(labels)]
+                          + [matplotlib.patches.Patch(fc="#e8e8e8", hatch="//", ec="#999999", label="over the time limit"),
+                             matplotlib.patches.Patch(fill=False, ec="black", lw=1.6, label="least in the row")],
+                          loc="upper center", bbox_to_anchor=(0.5, -0.32), ncol=6, fontsize=7, frameon=False,
+                          title="worst error / tolerance (blue holds, red exceeds)", title_fontsize=7)  # fmt: skip
             ax.set_xlim(0, len(methods))
             ax.set_ylim(len(names), 0)
             ax.set_xticks(np.arange(len(methods)) + 0.47, [SHORT.get(m, m) for m in methods], fontsize=7, rotation=20, ha="right")
