@@ -115,6 +115,7 @@ class ChebTT:
     ranks: tuple = ()
     degrees: tuple = ()
     breaks: tuple = ()  # per axis, its interior breakpoints (empty: one piece); () for none on any axis
+    bands: tuple = ()  # per axis, each breakpoint's band: the model is not claimed within it
 
     def pieces(self, k: int) -> int:
         return len(self.breaks[k]) + 1 if self.breaks else 1
@@ -139,7 +140,7 @@ class ChebTT:
             if not len(self.breaks[k]):
                 out.append(chebyshev_bases(t[:, k : k + 1], [n1])[0])
                 continue
-            a, b = piece_bounds(self.lo[k], self.hi[k], self.breaks[k])
+            a, b = piece_bounds(self.lo[k], self.hi[k], self.breaks[k], self.bands[k] if self.bands else None)
             m1 = n1 // len(a)
             p = np.clip(np.searchsorted(self.breaks[k], X[:, k], side="right"), 0, len(a) - 1)
             T = np.zeros((n1, len(X)))
@@ -177,13 +178,20 @@ class ChebTT:
 INSET = 1e-10  # a piece's end nodes sit this share of the axis inside an interior breakpoint, so a jump is never sampled on the wrong side
 
 
-def piece_bounds(lo: float, hi: float, breaks) -> tuple[np.ndarray, np.ndarray]:
-    """The intervals [a_p, b_p] that carry each piece's Chebyshev nodes: [lo, hi] cut at ``breaks``, inset at interior breakpoints."""
+def piece_bounds(lo: float, hi: float, breaks, bands=None) -> tuple[np.ndarray, np.ndarray]:
+    """
+    The intervals [a_p, b_p] that carry each piece's Chebyshev nodes: [lo, hi] cut at ``breaks``, inset at
+    each interior breakpoint by ``INSET`` of the width or twice its band (``axis_edges``), whichever is
+    larger, so that no node falls on the wrong side of an edge that is located only to within its band.
+    """
     e = np.concatenate([[lo], np.asarray(breaks, dtype=np.float64), [hi]])
     w = (hi - lo) * INSET
+    inset = np.full(len(e) - 2, w) if bands is None else np.maximum(w, 2.0 * np.asarray(bands, dtype=np.float64))
+    if len(inset):  # never more than a quarter of either neighbouring piece, so no piece can invert
+        inset = np.minimum(inset, 0.25 * np.minimum(np.diff(e)[:-1], np.diff(e)[1:]))
     a, b = e[:-1].copy(), e[1:].copy()
-    a[1:] += w
-    b[:-1] -= w
+    a[1:] += inset
+    b[:-1] -= inset
     return a, b
 
 
@@ -212,9 +220,10 @@ class _Grid:
     breakpoints are kept in ``history``, as free check points.
     """
 
-    def __init__(self, f, lo, hi, n, breaks=None):
+    def __init__(self, f, lo, hi, n, breaks=None, bands=None):
         self.f, self.lo, self.hi = f, lo, hi
         self.breaks = [np.asarray(b, dtype=np.float64) for b in breaks] if breaks else [np.zeros(0) for _ in lo]
+        self.bands = [np.asarray(b, dtype=np.float64) for b in bands] if bands else [np.zeros(len(b)) for b in self.breaks]
         self.set_degrees(n)
         self.cache: dict[tuple, float] = {}
         self.history: list = []
@@ -222,18 +231,20 @@ class _Grid:
 
     def set_degrees(self, n):
         self.n = list(n)
-        self.bounds = [piece_bounds(self.lo[k], self.hi[k], self.breaks[k]) for k in range(len(self.n))]
+        self.bounds = [piece_bounds(self.lo[k], self.hi[k], self.breaks[k], self.bands[k]) for k in range(len(self.n))]
         self.nodes = [np.concatenate([a + (cheb_points(nk) + 1.0) * 0.5 * (b - a) for a, b in zip(*self.bounds[k], strict=True)])
                       for k, nk in enumerate(self.n)]  # fmt: skip
         self.count = [len(x) for x in self.nodes]  # nodes per axis
 
-    def set_breaks(self, k: int, breaks) -> None:
-        """New breakpoints on axis k: every cached value moves to ``history`` (its key no longer names its point)."""
+    def set_breaks(self, k: int, breaks, bands) -> None:
+        """New breakpoints (and their bands) on axis k: every cached value moves to ``history`` (its key no longer names its point)."""
         X, v = self.sample(len(self.cache), None)
         if len(v):
             self.history.append((X, v))
         self.cache = {}
-        self.breaks[k] = np.asarray(sorted(breaks), dtype=np.float64)
+        order = np.argsort(breaks)
+        self.breaks[k] = np.asarray(breaks, dtype=np.float64)[order]
+        self.bands[k] = np.asarray(bands, dtype=np.float64)[order]
         self.set_degrees(self.n)
 
     def sample(self, n: int, rng) -> tuple[np.ndarray, np.ndarray]:
@@ -298,77 +309,141 @@ def _fibre_degree(f, lo, hi, k, share, rng, n_fibre, n_max, n0=8, pause=None, ba
         n *= 2
 
 
-def locate_edge(g, a: float, b: float, m: int = 17, width: float = 1e-12) -> float:
+def _fibre(f, base: np.ndarray, k: int):
+    """g(t) = f at ``base`` with coordinate k set to t (a 1-D slice of f)."""
+    def g(t):
+        P = np.repeat(base[None], len(t), axis=0)
+        P[:, k] = t
+        return np.asarray(f(P), dtype=np.float64).ravel()
+    return g
+
+
+def locate_edge(g, a: float, b: float, jump: bool, width: float, m: int = 9) -> tuple[float, float, int]:
     """
-    A jump in g or in g' inside [a, b], to ``width`` of the starting width: zoom into the cell of
-    largest second difference and its neighbours on an m-point grid (chebfun's ``detectedge`` idea).
-    At an edge the second difference is O(h |jump|) against O(h^2 |g''|) elsewhere, so the edge's cell
-    wins more clearly at every zoom; bisecting by midpoint deviations can pick the wrong half when the
-    edge sits near a quarter point. About 17 evaluations per 5x zoom.
+    A jump in g (``jump``) or in g' inside [a, b], to ``width``; returns the location, the bracket width
+    reached and the evaluations. A jump is bisected on the value (the half whose ends differ more holds
+    it): one evaluation per halving. A kink is zoomed into: the cell of largest second difference on an
+    m-point grid and its neighbours (chebfun's ``detectedge`` idea; the edge's second difference is
+    O(h |[g']|) against O(h^2 |g''|) elsewhere, so it wins at every zoom), m evaluations per ~(m-1)/2x;
+    bisecting a kink by midpoint deviations can pick the wrong half when it sits near a quarter point.
     """
-    w0 = b - a
-    while b - a > width * w0:
+    used = 0
+    if jump:
+        ga, gb = g(np.array([a, b]))
+        used += 2
+        while b - a > width:
+            mid = 0.5 * (a + b)
+            gm = g(np.array([mid]))[0]
+            used += 1
+            if abs(gm - ga) <= abs(gb - gm):
+                a, ga = mid, gm
+            else:
+                b, gb = mid, gm
+        return 0.5 * (a + b), b - a, used
+    while b - a > width:
         t = np.linspace(a, b, m)
         v = g(t)
+        used += m
         c = int(np.argmax(np.abs(v[2:] - 2.0 * v[1:-1] + v[:-2]))) + 1  # the edge is within a cell of t[c]
         a, b = t[max(c - 1, 0)], t[min(c + 1, m - 1)]
-    return 0.5 * (a + b)
+    return 0.5 * (a + b), b - a, used
 
 
-def is_singular(g, c: float, w: float) -> bool:
+def edge_at(g, c: float, delta: float, jump: bool) -> bool:
     """
-    A jump or a kink at c: the one-sided value difference (a jump) or slope difference (a kink) keeps
-    its size when the stencil shrinks from 1e-6 to 1e-8 of the width; at a smooth point both shrink with
-    it. 8 evaluations.
+    Whether g has a jump (``jump``) or a kink at c, located to within ``delta``: the one-sided value
+    difference (a jump: 2 evaluations) or slope difference (a kink: 4) keeps its size when the stencil
+    shrinks from 100 delta to 4 delta; at a smooth point it shrinks with the stencil.
     """
     sizes = []
-    for e in (1e-6 * w, 1e-8 * w):
-        v = g(np.array([c - 2 * e, c - e, c + e, c + 2 * e]))
-        sizes.append((abs(v[2] - v[1]), abs((v[3] - v[2]) - (v[1] - v[0])) / e, max(float(np.abs(v).max()), 1e-300)))
-    (j1, s1, _), (j2, s2, scale) = sizes
-    jump = j2 > 1e-6 * scale and 0.5 < j2 / max(j1, 1e-300) < 2.0
-    kink = s2 * w > 1e-4 * scale and 0.5 < s2 / max(s1, 1e-300) < 2.0
-    return bool(jump or kink)
+    for e in (100.0 * delta, 4.0 * delta):
+        if jump:
+            v = g(np.array([c - e, c + e]))
+            sizes.append((abs(v[1] - v[0]), max(float(np.abs(v).max()), 1e-300)))
+        else:
+            v = g(np.array([c - 2 * e, c - e, c + e, c + 2 * e]))
+            sizes.append((abs((v[3] - v[2]) - (v[1] - v[0])) / e, max(float(np.abs(v).max()), 1e-300)))
+    (big, _), (small, scale) = sizes
+    return bool(small > 1e-9 * scale * (1.0 if jump else 1.0 / delta) and 0.5 < small / max(big, 1e-300) < 2.0)
 
 
-def axis_edges(f, lo, hi, k: int, bases: np.ndarray, known, rng, m: int = 65, max_edges: int = 3) -> tuple[list, int]:
+def axis_edges(f, lo, hi, k: int, bases: np.ndarray, known, rng, share: float = 0.0, m: int = 65, max_edges: int = 3,
+               n_confirm: int | None = None, band: float = 1e-6, bands: list | None = None) -> tuple[list, int]:  # fmt: skip
     """
-    Axis-aligned jumps and kinks on axis k, and the evaluations spent: along the fibre through each
-    of ``bases`` (the worst check point, the largest |f|), the uniform-grid cells of outlying second
-    difference are located (``locate_edge``) and confirmed (``is_singular``); an edge is kept when the
-    fibre through the same base displaced by 1% of the box in the other coordinates finds it at the
-    same place (an oblique edge moves). Edges within 1e-6 of the width of ``known`` ones are skipped.
+    Axis-aligned jumps and kinks on axis k, and the evaluations spent. Along the fibre through the
+    first of ``bases`` (the next only if it finds nothing), the cells of a 65-point scan whose second
+    difference is an outlier are located (``locate_edge``: a jump to 1e-12 of the width, a kink only as
+    finely as the tolerance needs, ``0.01 share / |[f']|``) and tested (``edge_at``). A candidate is
+    kept as an axis-aligned edge when, at ``n_confirm`` (default 2 d) random far bases, the edge is
+    present within ``band`` of the width of the same place or absent (f smooth there, the edge's factor
+    vanishing), and present at one at least; a base whose fibre has an edge further away means an
+    oblique interface, and rejects it. Each kept edge's band (its largest displacement plus its
+    location error) is appended to ``bands``: the model is not claimed within that distance of it.
+    Edges within 1e-6 of the width of ``known`` ones are skipped.
     """
+    d = len(lo)
     w = hi[k] - lo[k]
     t = np.linspace(lo[k], hi[k], m)
     used, found = 0, []
+    bands = [] if bands is None else bands
     for base in bases:
-        shift = rng.uniform(-0.01, 0.01, len(lo)) * (hi - lo)
-        shift[k] = 0.0
-        located = []
-        for b0 in (base, np.clip(base + shift, lo, hi)):
-            def g(x, b0=b0):
-                P = np.repeat(b0[None], len(x), axis=0)
-                P[:, k] = x
-                return np.asarray(f(P), dtype=np.float64).ravel()
-
-            v = g(t)
-            used += m
-            d2 = np.abs(v[2:] - 2.0 * v[1:-1] + v[:-2])
-            floor = 8.0 * np.median(d2) + 1e-14 * max(float(np.abs(v).max()), 1e-300)
-            pts = []
-            for c in np.argsort(d2)[::-1][:max_edges]:
-                if d2[c] <= floor:
+        g = _fibre(f, base, k)
+        v = g(t)
+        used += m
+        d1, d2 = np.abs(np.diff(v)), np.abs(v[2:] - 2.0 * v[1:-1] + v[:-2])
+        floor = 8.0 * np.median(d2) + 1e-14 * max(float(np.abs(v).max()), 1e-300)
+        for c in np.argsort(d2)[::-1][:max_edges]:
+            if d2[c] <= floor:
+                break
+            # A jump first (bisection on the value, ~34 evaluations), else a kink: the scan cannot tell
+            # them apart, since a steep kink's slope is an outlier against a tiny median difference.
+            cell = c + int(np.argmax(d1[c : c + 2]))
+            x0, delta, u = locate_edge(g, t[cell], t[cell + 1], True, 1e-12 * w)
+            used += u + 2
+            jump = edge_at(g, x0, max(delta, 1e-13 * w), True)
+            if not jump:
+                slope_jump = d2[c] / (t[1] - t[0])
+                width = min(max(1e-12 * w, 0.01 * share / max(slope_jump, 1e-300)), 1e-4 * w) if share > 0 else 1e-12 * w
+                x0, delta, u = locate_edge(g, t[max(c - 1, 0)], t[min(c + 3, m - 1)], False, width)
+                used += u + 8
+                if not edge_at(g, x0, max(delta, 1e-13 * w), False):
+                    continue
+            # the same edge again (a jump makes two neighbouring cells outliers, and a kink search there
+            # finds the jump, coarsely): within 10 times this location's precision of a known one
+            near = max(1e-6 * w, 10.0 * delta)
+            if not (lo[k] + 1e-6 * w < x0 < hi[k] - 1e-6 * w) or any(abs(x0 - y) <= near for y in list(known) + found):
+                continue
+            present, tilted, shift = 1, False, 0.0  # the fibre that found it; the far ones may only lack it (its factor vanishing there)
+            for _ in range(n_confirm or 2 * d):
+                far = rng.uniform(lo, hi)
+                gf = _fibre(f, far, k)
+                ok = edge_at(gf, x0, max(delta, 1e-13 * w), jump)
+                used += 2 if jump else 8
+                if ok:
+                    present += 1
+                    continue
+                # Not at x0 to within delta: nearby (an edge tilted by less than ``band`` of the width,
+                # kept with that band reported), absent (the edge's factor vanishes here), or far away
+                # (an oblique interface: rejected).
+                near = band * w
+                y0, dy, u = locate_edge(gf, x0 - near, x0 + near, jump, max(delta, 1e-13 * w))
+                used += u
+                if edge_at(gf, y0, max(dy, 1e-13 * w), jump):
+                    used += 2 if jump else 8
+                    present += 1
+                    shift = max(shift, abs(y0 - x0))
+                    continue
+                vf = gf(t)
+                used += m
+                d2f = np.abs(vf[2:] - 2.0 * vf[1:-1] + vf[:-2])
+                if d2f.max() > 8.0 * np.median(d2f) + 1e-14 * max(float(np.abs(vf).max()), 1e-300):
+                    tilted = True
                     break
-                x0 = locate_edge(g, t[max(c - 1, 0)], t[min(c + 3, m - 1)])
-                used += 17 * 18 + 8
-                if is_singular(g, x0, w):
-                    pts.append(x0)
-            located.append(pts)
-        for x0 in located[0]:
-            new = all(abs(x0 - y) > 1e-6 * w for y in list(known) + found)
-            if new and any(abs(x0 - x1) <= 1e-6 * w for x1 in located[1]) and lo[k] + 1e-6 * w < x0 < hi[k] - 1e-6 * w:
+            if present and not tilted:
                 found.append(float(x0))
+                bands.append(shift + max(delta, 1e-13 * w))
+        if found:
+            break
     return found, used
 
 
@@ -420,22 +495,24 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
     # would without the search (only its evaluation count differs).
     edge_rng = np.random.default_rng(seed + 303)
     searched: set = set()  # (axis, degree, pieces) already searched for edges in the loop
-    breaks = [np.zeros(0) for _ in range(d)]
+    breaks, bands = [np.zeros(0) for _ in range(d)], [np.zeros(0) for _ in range(d)]
     for k in range(d):
         # An axis still unconverged at degree 32 is searched for edges through the largest |f| seen
         # before its degree grows further: a kink would otherwise take it to n_max at once.
         nk, used, base, ok = _fibre_degree(f, lo, hi, k, share, rng, n_fibre, n_max, pause=32 if edges else None)
         pre += used
         if edges and not ok and 2 * nk <= n_max:
-            found, used = axis_edges(f, lo, hi, k, Xc[[int(np.argmax(np.abs(fc)))]], [], edge_rng)
+            bk = []
+            found, used = axis_edges(f, lo, hi, k, Xc[[int(np.argmax(np.abs(fc)))]], [], edge_rng, share, bands=bk)
             pre += used
             if found:
-                breaks[k], nk = np.asarray(sorted(found)[: max_pieces - 1]), 16
+                keep = np.argsort(found)[: max_pieces - 1]
+                breaks[k], bands[k], nk = np.asarray(found)[keep], np.asarray(bk)[keep], 16
             else:
                 nk, used, _, _ = _fibre_degree(f, lo, hi, k, share, rng, n_fibre, n_max, n0=2 * nk, base=base)
                 pre += used
         n.append(nk)
-    grid = _Grid(f, lo, hi, n, breaks)
+    grid = _Grid(f, lo, hi, n, breaks, bands)
     r = rank0
     # Seed the right sets with the grid node nearest the largest |f| seen so far and the centre node, then
     # random nodes: maxvol only moves among the fibres it is shown, so fibres that all miss a narrow peak
@@ -446,9 +523,10 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
                       for k in range(d - 1)] + [np.zeros((1, 0), dtype=np.int64)]  # fmt: skip
     while True:
         left, cores = _sweeps(grid, right, sweeps, max_evals - pre)
-        breaks = tuple(grid.breaks) if any(len(b) for b in grid.breaks) else ()
+        pieced = any(len(b) for b in grid.breaks)
+        breaks, bands = (tuple(grid.breaks), tuple(grid.bands)) if pieced else ((), ())
         model = ChebTT(lo, hi, [_piece_coefficients(C, len(grid.breaks[k]) + 1) for k, C in enumerate(cores)], grid.evals + pre,
-                       tuple(C.shape[2] for C in cores[:-1]), tuple(grid.n), breaks)  # fmt: skip
+                       tuple(C.shape[2] for C in cores[:-1]), tuple(grid.n), breaks, bands)  # fmt: skip
         # Free checks: grid points evaluated in earlier sweeps or at lower degrees, which the final
         # cores do not interpolate (they interpolate the last sweep's fibres only), concentrated where
         # the cross explored, i.e. where f matters.
@@ -495,14 +573,17 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
                 continue
             if len(grid.breaks[k]) + 1 < max_pieces and _algebraic(model.cores[k], len(grid.breaks[k]) + 1):
                 searched.add(state)
-                found, used = axis_edges(f, lo, hi, k, bases, grid.breaks[k], edge_rng)
+                bk = []
+                found, used = axis_edges(f, lo, hi, k, bases, grid.breaks[k], edge_rng, share, bands=bk)
                 pre += used
                 if found:
-                    split[k] = sorted(list(grid.breaks[k]) + found)[: max_pieces - 1]
+                    allb, alls = list(grid.breaks[k]) + found, list(grid.bands[k]) + bk
+                    keep = np.argsort(allb)[: max_pieces - 1]
+                    split[k] = (np.asarray(allb)[keep], np.asarray(alls)[keep])
         if split:  # breakpoints instead of a doubled degree on those axes; the right sets move to the nearest new nodes
             old = [x.copy() for x in grid.nodes]
-            for k, b in split.items():
-                grid.set_breaks(k, b)
+            for k, (b, bb) in split.items():
+                grid.set_breaks(k, b, bb)
             grow = [k for k in grow if k not in split]
             grid.set_degrees([2 * nk if k in grow else nk for k, nk in enumerate(grid.n)])
             right = [None] + [np.stack([np.argmin(np.abs(grid.nodes[a][:, None] - old[a][R[:, i]][None]), axis=0)
@@ -758,7 +839,7 @@ def compress(model: ChebTT, probe: np.ndarray, budget: float) -> ChebTT:
                 if close(trial):
                     cores, shrunk = trial, True
     return ChebTT(model.lo, model.hi, cores, model.evals, tuple(C.shape[2] for C in cores[:-1]),
-                  tuple(C.shape[1] // model.pieces(k) - 1 for k, C in enumerate(cores)), model.breaks)  # fmt: skip
+                  tuple(C.shape[1] // model.pieces(k) - 1 for k, C in enumerate(cores)), model.breaks, model.bands)  # fmt: skip
 
 
 def _truncated(model: ChebTT, k: int) -> ChebTT:
@@ -767,7 +848,7 @@ def _truncated(model: ChebTT, k: int) -> ChebTT:
     P = model.pieces(k)
     n = cores[k].shape[1] // P - 1
     cores[k] = _keep_degrees(cores[k], P, n - n // 4 + 1)
-    return ChebTT(model.lo, model.hi, cores, breaks=model.breaks)
+    return ChebTT(model.lo, model.hi, cores, breaks=model.breaks, bands=model.bands)
 
 
 def _sweeps(grid: _Grid, right: list, sweeps: int, budget: int):

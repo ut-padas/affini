@@ -111,7 +111,7 @@ def test_an_axis_aligned_jump_becomes_a_breakpoint_and_is_represented_exactly():
     assert np.max(np.abs(m.predict(X) - f(X))) <= 1e-3
 
 
-def test_a_kink_is_located_to_rounding_and_a_smooth_function_gets_no_breakpoint():
+def test_a_kink_is_located_and_a_smooth_function_gets_no_breakpoint():
     d = 3
 
     def kinked(X):
@@ -119,8 +119,18 @@ def test_a_kink_is_located_to_rounding_and_a_smooth_function_gets_no_breakpoint(
 
     lo, hi = -np.ones(d), np.ones(d)
     m = chebtt.build(kinked, lo, hi, 1e-4)
-    assert len(m.breaks[0]) == 1 and abs(m.breaks[0][0] - 0.37) < 1e-9
+    assert len(m.breaks[0]) == 1 and abs(m.breaks[0][0] - 0.37) < 1e-6  # a kink is located only as finely as the tolerance needs
     X = np.random.default_rng(8).uniform(lo, hi, (4000, d))
     assert np.max(np.abs(m.predict(X) - kinked(X))) <= 1e-4
     smooth = chebtt.build(lambda X: np.exp(-np.sum(X**2, axis=1)), lo, hi, 1e-4)
     assert smooth.breaks == ()
+
+
+def test_a_jump_tilted_beyond_the_band_is_not_taken_for_an_axis_aligned_one():
+    def tilted(X):  # a jump across x0 = 0.3 + 0.01 (x1 - 0.5): oblique, so no breakpoint may represent it
+        return np.exp(0.3 * X.sum(axis=1)) * (1.0 + (X[:, 0] > 0.3 + 0.01 * (X[:, 1] - 0.5)))
+
+    g = chebtt._fibre(tilted, np.array([0.5, 0.9]), 0)
+    found, _ = chebtt.axis_edges(tilted, np.zeros(2), np.ones(2), 0, np.array([[0.5, 0.9]]), [], np.random.default_rng(0), 1e-3)
+    assert found == []
+    assert chebtt.edge_at(g, 0.304, 1e-12, True)  # the fibre itself does have the jump, at 0.3 + 0.01 * 0.4
