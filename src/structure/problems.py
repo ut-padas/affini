@@ -202,6 +202,21 @@ def swirl(x):
     return y
 
 
+
+def shared_latent(x):
+    """
+    Six nonlinear functions of two shared coordinates, oblique to every axis and curved
+    (``g1 = 1.5 q1.x + 0.6 (q2.x)^2``, ``g2 = 1.5 q2.x``, q1, q2 orthonormal, drawn once per d): a
+    slow-manifold proxy, where the outputs share structure that the axes do not show (m = 6).
+    """
+    d = int(x.shape[1])
+    Q, _ = np.linalg.qr(np.random.default_rng(7_700 + d).normal(size=(d, 2)))
+    s1, s2 = x @ xp.asarray(Q[:, 0]), x @ xp.asarray(Q[:, 1])
+    g1, g2 = 1.5 * s1 + 0.6 * s2**2, 1.5 * s2
+    return xp.stack([xp.tanh(2 * g1), xp.exp(-((g1 - 0.5) ** 2)) * xp.cos(2 * g2), xp.sin(g1 + g2), g1 * g2 / 3,
+                     1 / (1 + (g1 + 1) ** 2 + g2**2), xp.cos(3 * g2 - g1)], axis=1)  # fmt: skip
+
+
 @dataclass(frozen=True)
 class Problem:
     name: str
@@ -278,6 +293,7 @@ VECTOR_PROBLEMS = {
     "lotka_volterra_state": Problem("lotka_volterra_state", 0.1, 1.0, lotka_volterra_state, vector=True),
     "swirl": Problem("swirl", -2.0, 2.0, swirl, vector=True),
     "wave_pair": Problem("wave_pair", -3.0, 3.0, wave_pair, vector=True),
+    "shared_latent": Problem("shared_latent", -1.0, 1.0, shared_latent, vector=True),
     "lorenz96_state": Problem("lorenz96_state", -5.0, 5.0, lorenz96(1.0, 0.1, state=True), vector=True),
 }
 PROBLEMS.update(VECTOR_PROBLEMS)
