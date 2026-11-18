@@ -173,6 +173,24 @@ def test_sort_by_block_then_value_matches_lexsort_with_ties():
         )
 
 
+def test_sort_by_block_then_value_matches_lexsort_on_unsorted_blocks_infinities_and_nans():
+    from src.numerics import sort_by_block_then_value
+
+    rng = np.random.default_rng(2)
+    for trial in range(60):
+        n = int(rng.integers(1, 3000))
+        blocks = rng.integers(3, 40, n)  # unsorted, not starting at 0, some ids empty
+        values = np.round(rng.normal(size=n), 1)  # many ties
+        values[rng.random(n) < 0.05] = np.inf
+        values[rng.random(n) < 0.05] = -0.0
+        if trial % 10 == 0:
+            values[rng.random(n) < 0.05] = np.nan  # the two-sort path
+        np.testing.assert_array_equal(
+            host(sort_by_block_then_value(xp.asarray(values), xp.asarray(blocks))),
+            np.lexsort(np.stack([values, blocks])),
+        )
+
+
 def test_fused_stats_on_sorted_labels_with_empty_clusters_match_the_reference():
     """GPU contract: sorted labels (the batch layout), any clusters empty, including the first and last."""
     from src.numerics import run_fused_cross_cov, run_fused_stats

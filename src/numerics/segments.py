@@ -1,5 +1,7 @@
 """Deterministic segmented sums and products over clusters stored contiguously, and per-block ordering helpers."""
 
+import functools
+
 import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, kernels, to_host, xp
@@ -280,12 +282,49 @@ def grouped_cross(groups: list, A: list[Array], B: list[Array], w: Array | None 
     return out
 
 
+@functools.cache
+def _block_value_order():
+    """
+    The CPU kernel of ``sort_by_block_then_value``: a stable counting sort of the row ids by block,
+    then a stable merge sort of each block's values. Both keep row order among equal keys, so the
+    permutation is exactly ``lexsort((values, blocks))``'s. Compiled on first use.
+    """
+    import numba as nb
+
+    @nb.njit(cache=True)
+    def order(values, blocks):
+        n = values.shape[0]
+        lo = blocks.min()
+        bounds = np.zeros(blocks.max() - lo + 2, np.int64)
+        for i in range(n):
+            bounds[blocks[i] - lo + 1] += 1
+        for k in range(1, bounds.shape[0]):
+            bounds[k] += bounds[k - 1]
+        fill = bounds[:-1].copy()
+        rows = np.empty(n, np.int64)
+        for i in range(n):
+            b = blocks[i] - lo
+            rows[fill[b]] = i
+            fill[b] += 1
+        out = np.empty(n, np.int64)
+        for k in range(bounds.shape[0] - 1):
+            seg = rows[bounds[k] : bounds[k + 1]]
+            out[bounds[k] : bounds[k + 1]] = seg[np.argsort(values[seg], kind="mergesort")]
+        return out
+
+    return order
+
+
 def sort_by_block_then_value(values: Array, blocks: Array) -> Array:
     """
-    The permutation of ``xp.lexsort((values, blocks))``: a stable sort by value
-    followed by a stable sort by block gives the same order, about 3x faster on both
-    backends (CuPy's argsort is always stable; its lexsort is a slow merge sort).
+    The permutation of ``xp.lexsort((values, blocks))``: rows by block, within a block by value,
+    equal values in row order. On CuPy a stable sort by value followed by a stable sort by block
+    (CuPy's lexsort is a slow merge sort). On NumPy one serial pass, a counting sort by block and a
+    merge sort per block, instead of two stable sorts of all rows, which dominated AFINNI's CPU
+    training. Values with NaN take the two-sort path, whose NaN placement the kernel does not copy.
     """
+    if not IS_CUPY_BACKEND and values.shape[0] and not np.isnan(values).any():
+        return _block_value_order()(np.ascontiguousarray(values, dtype=np.float64), np.ascontiguousarray(blocks, dtype=np.int64))
     kind = {} if IS_CUPY_BACKEND else {"kind": "stable"}
     by_value = xp.argsort(values, **kind)
     return by_value[xp.argsort(blocks[by_value], **kind)]
