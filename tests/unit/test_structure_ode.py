@@ -1,5 +1,7 @@
 """ODE oracles (src/structure/ode): rates, Jacobians, conservation, integrators, regimes and the ladder."""
 
+import json
+
 import numpy as np
 
 from src.structure import ode
@@ -132,3 +134,12 @@ def test_a_row_label_names_the_parameters_that_set_the_regime():
 
     assert cb._row_label("lorenz96_d10").startswith("lorenz96_d10 (10; F = 1")
     assert cb._row_label("bruss_d10").startswith("bruss_d10 (10")
+
+
+def test_a_record_is_written_whole_and_leaves_no_temporary_file(tmp_path):
+    from src.structure.ode import bench as cb
+
+    path = tmp_path / "case" / "chebtt_box_tol0.01.json"
+    cb.write_record(path, {"worst": 0.5})
+    cb.write_record(path, {"worst": 0.25})
+    assert json.loads(path.read_text()) == {"worst": 0.25} and [p.name for p in path.parent.iterdir()] == [path.name]

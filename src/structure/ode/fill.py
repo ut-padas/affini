@@ -12,7 +12,8 @@ process under ``--limit`` seconds of wall time, tolerances from the loosest; one
 recorded as failed (``failed``: the limit) and the tighter tolerances are skipped. A method that cannot
 finish a family's loosest tolerance in time is not run on that family's larger sizes: they only cost
 more. A crashed case leaves no record and runs again next time; recorded cases are never rerun. After
-each problem the bench redraws its error plot, the summary, the ladder and the overviews of every regime.
+each recorded case a background process redraws the problem's error plot, the summary, the ladder and
+every regime's overview and speed plot (``bench.redraw``), while the next case runs.
 """
 
 import argparse
@@ -40,10 +41,23 @@ def ladder(max_d: int, first: tuple[str, ...] = ()) -> list[str]:
     return sorted((n for n in names if dims[n] <= max_d), key=lambda n: (family(n) not in first, dims[n], n))
 
 
+ROOT = Path(__file__).resolve().parents[3]  # the repository
+
+
+def _redraw(name: str, previous: subprocess.Popen | None, log) -> subprocess.Popen:
+    """
+    Start ``bench.redraw(name)`` in the background, once the redraw still running (``previous``) has ended:
+    one at a time, so the last one started, which has every record so far, is also the last to write.
+    """
+    if previous is not None:
+        previous.wait()
+    return subprocess.Popen([sys.executable, "-m", "src.structure.ode.bench", "--problems", name, "--redraw"], cwd=ROOT,
+                            stdin=subprocess.DEVNULL, stdout=log, stderr=log)  # fmt: skip
+
+
 def _case(args: list[str], limit: float, log) -> bool:
     """One bench case in its own process group; False when it ran past ``limit`` seconds and was killed."""
-    root = Path(__file__).resolve().parents[3]
-    proc = subprocess.Popen([sys.executable, "-m", "src.structure.ode.bench", *args], cwd=root, stdin=subprocess.DEVNULL,
+    proc = subprocess.Popen([sys.executable, "-m", "src.structure.ode.bench", *args], cwd=ROOT, stdin=subprocess.DEVNULL,
                             stdout=log, stderr=log, start_new_session=True)  # fmt: skip
     try:
         proc.wait(timeout=limit)
@@ -64,6 +78,7 @@ def main(argv=None) -> None:
     stuck: set[tuple[str, str]] = set()  # (method, family) whose loosest tolerance ran out of time
     log_path = bench.OUT / "odefill.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    drawer = None
     with open(log_path, "a") as log:
         for name in ladder(a.max_d, tuple(filter(None, a.first.split(",")))):
             p = bench.PROBLEMS[name]
@@ -72,7 +87,6 @@ def main(argv=None) -> None:
             bench.solver_cost(name)
             bench.dynamics(name)
             print(f"{name}: trajectories and solver cost ready ({time.time() - t0:.0f} s)", flush=True)
-            ran = False
             for method in a.methods.split(","):
                 if (method, family(name)) in stuck or (method == "afinni" and len(p.system.components) >= 10):
                     continue  # AFINNI from 10 inputs: tens of GB of host memory (the box bench's rule)
@@ -81,25 +95,20 @@ def main(argv=None) -> None:
                     if not path.exists():
                         t0 = time.time()
                         ok = _case(["--problems", name, "--methods", method, "--tols", f"{tol:g}"], a.limit, log)
-                        ran = True
                         if not ok:
-                            path.parent.mkdir(parents=True, exist_ok=True)
-                            path.write_text(json.dumps({"method": method, "problem": name, "tol": tol,
-                                                        "failed": f"over the {a.limit:g} s time limit"}))  # fmt: skip
+                            bench.write_record(path, {"method": method, "problem": name, "tol": tol,
+                                                      "failed": f"over the {a.limit:g} s time limit"})  # fmt: skip
                         elif not path.exists():
                             print(f"{name} {method} {tol:g}: crashed (see {log_path})", flush=True)
                             break
                         print(f"{name} {method} {tol:g}: {'done' if ok else 'over the limit'} ({time.time() - t0:.0f} s)", flush=True)
+                        drawer = _redraw(name, drawer, log)
                     if "failed" in json.loads(path.read_text()):
                         if i == 0:
                             stuck.add((method, family(name)))
                         break
-            if ran:
-                bench.plot(name, list(bench.METHODS))
-                bench.write_summary()
-                bench.plot_ladder()
-                bench.plot_overview()
-                bench.plot_speedup()
+    if drawer is not None:
+        drawer.wait()
 
 
 if __name__ == "__main__":

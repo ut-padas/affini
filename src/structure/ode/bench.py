@@ -145,6 +145,14 @@ BASELINES = {
 BASELINE_OF = {"Radau": "scipy-radau-cpu1", "RK45": "scipy-rk45-cpu1"}  # a network's integrator: its baseline
 
 
+def write_record(path: Path, record: dict) -> None:
+    """Write a JSON record through a temporary file and a rename, so a redraw running beside the fill never reads half of one."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(record))
+    os.replace(tmp, path)
+
+
 def baseline_cost(name: str, baseline: str | None = None) -> dict:
     """
     One baseline's cost of a step per state on 40 test states (cached in ``<problem>-baseline-<baseline>.json``;
@@ -165,8 +173,7 @@ def baseline_cost(name: str, baseline: str | None = None) -> dict:
     Z = Z[np.random.default_rng(0).choice(len(Z), min(40, len(Z)), replace=False)]
     cost = p.system.step_cost(10.0**Z if p.system.log else Z, p.dt)
     cost = {**cost, "baseline": baseline, **BASELINES[baseline]}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cost))
+    write_record(path, cost)
     return cost
 
 
@@ -428,8 +435,7 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
         model = METHODS[method][2](p, train, tol, seed)
     except RuntimeError as err:
         m = {"method": method, "problem": name, "tol": tol, "failed": str(err)[:300]}
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(m))
+        write_record(path, m)
         return m
     train_s = time.perf_counter() - t0
     t0 = time.perf_counter()
@@ -465,8 +471,7 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
     m["speedup"] = m["solve_us"] / max(predict_us, 1e-9)  # over the problem's baseline: its time per state and step over the surrogate's
     m["inference"] = {"device": "cpu", "threads": int(os.environ.get("OPENBLAS_NUM_THREADS", "0") or 0), "batch": len(Zt),
                       "baseline": p.baseline}  # fmt: skip
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(m))
+    write_record(path, m)
     return m
 
 
@@ -570,8 +575,7 @@ def dynamics(name: str) -> dict:
     motion = "chaotic" if g[-1] > 10 and out["lyapunov"] > 0 else "contracting" if g[-1] < 1 else "neutral"
     st = out["step_stiffness"]
     out["kind"] = motion + (", stiff" if st >= 20 else ", mildly stiff" if st >= 10 else "")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(out))
+    write_record(path, out)
     return out
 
 
@@ -927,6 +931,15 @@ def write_summary() -> Path:
     return path
 
 
+def redraw(name: str) -> None:
+    """Every plot a new record of ``name`` changes: its error plot, the summary, the ladder, and every regime's overview and speed plot."""
+    plot(name, list(METHODS))
+    write_summary()
+    plot_ladder()
+    plot_overview()
+    plot_speedup()
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("--problems", default="robertson")
@@ -934,7 +947,12 @@ def main(argv=None) -> None:
     parser.add_argument("--tols", default=None, help="default: the problem's tolerances")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--plot", action="store_true")
+    parser.add_argument("--redraw", action="store_true", help="only redraw every plot a record of these problems appears in (no runs)")
     a = parser.parse_args(argv)
+    if a.redraw:
+        for name in a.problems.split(","):
+            redraw(name)
+        return
     for name in a.problems.split(","):
         for tol in map(float, a.tols.split(",")) if a.tols else PROBLEMS[name].tolerances:
             for method in a.methods.split(","):
