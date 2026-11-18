@@ -2,7 +2,7 @@
 
 This document collects the experiments run beside the library to find a surrogate scheme whose
 **worst pointwise error** stays below a tolerance with few oracle evaluations and fast inference,
-and three literature reviews that informed them. The code of the current experiments is in
+and the literature reviews that informed them. The code of the current experiments is in
 [`src/structure/`](../src/structure/README.md).
 
 **The goal.** The surrogate is meant to replace the time steps of astrochemical reaction networks
@@ -36,14 +36,31 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
 ### 0.1 Where things are
 
 - Code: [`src/structure/`](../src/structure/README.md) (its README says how to run the bench).
-  Schemes: `chebtree.py` (ChebTree), `sparsegrid.py` (SparseCheb), `chebtt.py` (ChebTT); they register
-  in `schemes.py`; `bench.py` runs, caches and plots every method; `problems.py` holds the problems and
-  `TOLERANCES`.
-- Results (not committed): `src/structure/cache/<setup>/` and `output/<setup>/`, setup `cpu-8rank`.
-  Start from `output/cpu-8rank/overview-d<d>.png` (a pass/fail grid of every problem, tolerance and
-  method, with the evaluations) and `overview-d<d>-cost.png` (training and inference time, pieces,
-  mean error); then per problem `<problem>-d<d>-cost.png` and the maps (2-D) or slice and shadow views.
+  - Box schemes, registered in `schemes.py`: `chebtt.py` (ChebTT: `build`, and `build_vector` for
+    several outputs), `chebtree.py` (ChebTree), `sparsegrid.py` (SparseCheb), `kernel.py`
+    (MetricKernel).
+  - `problems.py`: the scalar problems, the vector-valued ones (`VECTOR_PROBLEMS`) and `TOLERANCES`
+    (2-D 0.1/0.01/0.001, 3-D 0.1/0.03/0.01, 5-D 0.1/0.05/0.02, 10-D and above 0.2/0.1/0.05).
+  - `bench.py` runs, caches and plots every method; `fill.py` drives it over the whole grid
+    (section 1.15): `python -m src.structure.fill --d 2,3,5,10,20 --limit 90`, with `--vector` for
+    the vector-valued problems.
+  - Chemistry: `chemistry.py` (oracles: Robertson, primordial H/He/H2, HIRES, POLLU, Akzo Nobel),
+    `tabulation.py` (SlowTable), `chembench.py` (the chemistry bench, section 1.12:
+    `python -m src.structure.chembench --problems robertson --plot`).
+  - Prefix every command with `SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=.` and use
+    `.venv/bin/python` (the fill starts its own 8-rank `mpiexec` jobs).
+- Results (not committed): `src/structure/cache/cpu-8rank/<problem>_d<d>/<method>_tol<t>_s<seed>.npz`,
+  each with a JSON `metrics` entry (`max_ratio`, `evals`, `train_s`, `predict_us`; `failed` for a run
+  over its evaluation budget or the fill's time limit; `component_ratio` for vector problems). Slice
+  directions are in `cache/directions/` (they depend on f alone, so every setup shares them).
+  Plots in `output/cpu-8rank/`: start from `overview-d<d>.png` and `overview-vector-d<d>.png`
+  (pass/fail grids of every problem, tolerance and method with the evaluations; hatched cells are
+  over a budget or the time limit) and `overview-d<d>-cost.png` (training and inference time,
+  pieces, mean error); `summary-d<d>.md` has the seed means; then per problem `<problem>-d<d>-cost.png`
+  and the maps (2-D) or slice and shadow views. The fill logs to `output/cpu-8rank/fill.log`.
   `python -m src.structure.bench --replot --setup cpu-8rank --d <d> --problems ...` redraws them.
+  Chemistry: trajectories in `cache/chem/<problem>.npz`, runs in
+  `cache/chem/<problem>/<method>_tol<t>.json`, plots and `summary-chem.md` in `output/chem/`.
 - Literature: [LITERATURE.md](LITERATURE.md) (every work reviewed, IDs I-* to V-*); reviews I-V are
   sections 2-6 below.
 
@@ -51,30 +68,59 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
 
 - **Climb dimensions on fast problems first.** The fast set: `rosenbrock`, `genz_oscillatory`,
   `genz_corner_peak`, `genz_product_peak`, `genz_gaussian`, `lotka_volterra`. Run a scheme on it at
-  2, 5, 10, 20 dimensions; only when it holds there does it earn the slow problems (`wave` and
+  2, 3, 5, 10, 20 dimensions; only when it holds there does it earn the slow problems (`wave` and
   `lorenz96` above 3-D for the baselines, the rotated `gaussian`, `genz_continuous`, the jumps,
-  `ackley`, `rastrigin`, `front`, `lorenz96_chaotic`). Do not tune a scheme for 2-D.
+  `ackley`, `rastrigin`, `front`, `lorenz96_chaotic`). Never tune a scheme for 2-D.
+- **Fill every case that trains in reasonable time**, not fixed per-method rules (such as "baselines
+  at one seed from 10-D up"): the fill driver runs every method, problem, dimension and tolerance
+  under a 90 s wall-time limit per run and records what exceeds it (section 1.15). It runs ChebTT,
+  AFINNI, ART with affine and with quadratic leaves; ChebTree, SparseCheb and MetricKernel are
+  recorded in section 1 and dropped, since ChebTT beats them from 3-D up. AFINNI is left out at
+  d >= 10: 45 GB over 8 ranks on the 10-D wave, which a time limit does not catch before the machine
+  runs out of memory.
+- **Inference time matters as much as training**: a surrogate is trained once and called millions of
+  times. Spend training time on compressing a model whenever that cuts its inference time at least
+  2x (section 1.14).
+- **The surrogate should discover structure** (manifolds, metrics, low rank, interaction order), not
+  assume a basis.
+- **Vector-valued problems before chemistry.** The chemistry bench is paused, by the user's decision,
+  until the vector-valued box ladder (2, 3, 5, 10, 20-D) is done.
 - **Same setup for every method in a comparison**: 8 MPI ranks, one thread per rank
-  (OMP/NUMBA/OPENBLAS = 1), CPU; one MPI job at a time (six parallel jobs exhausted 30 GB). AFINNI is
-  not run at 10-D and above (tens of GB per rank). Serial A/B checks of a scheme in scratch scripts are
-  fine, with `OPENBLAS_NUM_THREADS` set low: BLAS threads competing with the bench made QR 50x slower.
+  (OMP/NUMBA/OPENBLAS = 1), CPU. **One heavy job set at a time**: six parallel jobs exhausted 30 GB,
+  and an 8-process chemistry pool beside the 8-rank bench oversubscribed the 16 cores (load 14-22),
+  which distorts the bench's timings. Serial A/B checks in scratch scripts are fine with
+  `OPENBLAS_NUM_THREADS` set low (BLAS threads competing with the bench made QR 50x slower).
 - Fail fast: a variant that loses on the fast set is removed, with its numbers recorded in section 1.
 - Every result reported goes through the bench (cache and plots); serial scratch scripts are only for
   quick A/B checks. The bench redraws a problem's plots, the summary and the overview after every
   problem, with every cached method, so a new scheme's column appears after its first problem.
-- ART with affine leaves is not run at 10-D and above either: 2.8M evaluations and 75-95 s per run on
-  10-D Rosenbrock, still 3.3-4.0x the tolerance; ART with quadratic leaves represents ART there.
+- A change to the cache layout reaches only bench processes started after it: restart running jobs
+  (or let them finish) before relying on the new layout.
 
-### 0.3 Standings (bench, 8 ranks, 3 seeds)
+### 0.3 Standings (bench, 8 ranks, 3 seeds, as of 2026-11-18)
 
-| Scheme | 2-D | 3-D | 5-D | 10-D | Limits |
-|---|---|---|---|---|---|
-| AFINNI | 0/46 | 5/30 | 0/20 | not run | least squares on random points; up to 11.8M evaluations at 5-D |
-| ART, affine | 1/46 | 3/30 | 0/20 | not run (cost) | as AFINNI |
-| ART, quadratic | 1/46 | 3/30 | 2/21 | 0/2 (running) | as AFINNI |
-| ChebTree | **46/46** (median 487) | **30/30** (median 1.3k) | – | – | (n + 1)^d points per box: dead above 3-4 D |
-| SparseCheb | 43/45 (median 293) | 27/30 | over budget on oblique features | – | pays for kinks globally; misses small regions |
-| **ChebTT** | 12/12 | (backfill pending) | **21/21** (median 1.1k) | 3/3 (running) | high rank: rotated narrow peaks, chaotic maps; kinks at tight tolerances |
+From the cache: cases within tolerance on every seed / cases run (budget or time-limit failures
+count as run); "–" not run. The fill is in progress: ChebTT's cached runs were cleared when
+compression (section 1.14) changed its models, and are being re-run (2-D: 8 scalar problems so far);
+3-D to 20-D have no ChebTT runs in the cache yet, and most of the baselines' 10-D and 20-D cases have
+seed 1 only. In brackets for ChebTT: the last complete bench runs before compression (`summary-d<d>.md` of
+those runs; fast set, and `wave` at 5-D), whose evaluations compression does not change.
+
+| Scheme | 2-D | 3-D | 5-D | 10-D | 20-D | Limits |
+|---|---|---|---|---|---|---|
+| AFINNI | 0/46 | 5/30 | 0/20 | left out (memory) | left out | least squares on random points; up to 11.8M evaluations at 5-D |
+| ART, affine | 1/46 | 3/30 | 0/20 | 0/2 | – | as AFINNI; 2.9M evaluations on 10-D Rosenbrock 0.1 |
+| ART, quadratic | 1/46 | 3/30 | 2/21 | 0/8 (3 more within on seed 1) | 0/6 (4 within on seed 1) | as AFINNI; at 10-D and 20-D within only at 0.2, with a single quadratic leaf |
+| ChebTree | **46/46** (median 487) | **30/30** (median 1.3k) | dropped | – | – | (n + 1)^d points per box: dead above 3-4 D |
+| SparseCheb | 43/45 (median 261) | 27/30 | dropped | – | – | pays for kinks globally; misses small regions |
+| MetricKernel | 13/24 | – | serial: 2.2-10.9 on two problems | serial: over budget | – | misses errors at the boundary (section 1.10) |
+| **ChebTT** | **24/24** (median 433) | re-running | re-running [21/21, median 1.1k] | re-running [18/18, median 1.7k] | re-running [18/18, median 3.5k] | high rank: rotated narrow peaks, chaotic maps; kinks at tight tolerances |
+
+Vector-valued problems, 2-D so far (five of the six; `lorenz96_state` and the baselines on
+`wave_pair` still running): ChebTT 15/15 (median 440 evaluations, 0.05-0.86 us per query), ART with
+quadratic leaves 2/15, ART with affine leaves 0/12, AFINNI 0/12 (componentwise worst up to 81x).
+Inference at 2-D, median (range) us per query: ChebTT 0.15 (0.07-0.76), both ARTs 0.12-0.14
+(0.06-1.4), AFINNI 0.31 (0.1-2.4), MetricKernel 1.4 (0.9-3.7), SparseCheb 0.9 (0.2-68).
 
 Serial ChebTT runs outside the bench (one seed): 10-D 24/24 cases of 8 problems (1.6k-101k
 evaluations, including `wave` and `lorenz96`), 20-D 20/21 of 7 problems (3k-130k; `lotka_volterra`
@@ -87,32 +133,57 @@ at 0.05 over the 300k budget). Over budget at 5-D: the rotated Gaussian, `lorenz
    points a refinement would sample next, does: worst errors land at 0.1-0.5 of the tolerance.
 2. Dimension is the decisive cost. Tensor boxes stop at 3-D, sparse grids at oblique features at 5-D.
    A tensor train sampled only along maxvol fibres (ChebTT) costs linear in d and holds the fast set
-   to 20-D with 10^3-10^5 evaluations.
+   to 20-D: 1.6k-12k evaluations on five of the six problems; Lotka-Volterra 1.5k-8.7k at 10-D and
+   46k-620k at 20-D (218 s at 0.05, beyond the fill's time limit). ART with quadratic leaves needs
+   2.7M evaluations and 362 s for 10-D Rosenbrock at 0.05 and still misses it (worst 2.05).
 3. No box-sampling scheme can certify the worst error in high dimension (Novak-Woźniakowski): the 5-D
    rotated Gaussian fills ~1e-4 of its box, and every random check set misses it. ChebTT finds it only
-   because its cross is seeded at the centre, where that peak happens to be.
-4. **Chemistry's structure is a slow manifold.** Measured: the Robertson step map in log
+   because its cross is seeded at the centre, where that peak happens to be. Kernel interpolation on
+   random batches fails in the same way at the boundary, where most of a high-dimensional box's
+   volume is (MetricKernel, section 1.10).
+4. **Inference is a first-class cost.** An accepted tensor train is far larger than it needs to be:
+   rounding its ranks and chopping its degrees within a quarter of the tolerance, then evaluating by
+   the Chebyshev recurrence, took 10-D ChebTT from 1.8-8.7 us to 0.2-1.1 us per query, on par with
+   ART and AFINNI (0.1-0.7 us), for 0.2-2.3 s more training (section 1.14).
+5. **Chemistry's structure is a slow manifold.** Measured: the Robertson step map in log
    coordinates has Jacobian singular values ~1.7, 1.0, 1e-10 for every step dt >= 0.1 (rank 2 of 3:
-   the fast direction collapses). For a large network the rank is the slow manifold's dimension, not
-   the species count; this is the structure a chemistry surrogate must find. So the chemistry stage
-   trains and tests on visited states (held-out trajectories), not on a box.
-5. The surrogate should *discover* structure rather than assume a basis. What has worked so far is
+   the fast direction collapses); the primordial network's fast species collapse at every step (two
+   singular values ~1e-10, rank 3-6 of 9 at 1e6 yr). For a large network the rank is the slow
+   manifold's dimension, not the species count; this is the structure a chemistry surrogate must
+   find. So the chemistry stage trains and tests on visited states (held-out trajectories), not on a
+   box.
+6. **A chained surrogate's error adds up when it keeps its sign.** The chemistry dynamics contract
+   (an early error is amplified 1.4-1.7x at most, and less later), yet a smooth box surrogate's
+   rollout error grew linearly to 36x its one-step error over 40 Robertson steps. A chained
+   surrogate needs about tol / N per step for systematic errors (tol / sqrt N for random ones), or
+   errors that change sign along a trajectory (section 1.12).
+7. **Sharing one model across outputs pays only when the outputs share structure.** A vector ChebTT
+   (outputs as a last, discrete axis) costs one oracle call for every output, but its ranks are the
+   sum of the outputs' own: five different ridges in 6-D cost 7.8k evaluations together against 4.7k
+   apart (section 1.16). Whether species on one slow manifold share enough is still to be measured.
+8. The surrogate should *discover* structure rather than assume a basis. What has worked so far is
    adaptive sampling that exposes structure: a tree (locality), maxvol fibres (low rank and coupling),
-   dimension-adaptive sparse grids (interaction order). Candidates that learn a metric or a manifold
-   (a learned-metric kernel model, ISAT ellipsoids, diffusion maps, metric-based adaptation) are
-   under review (Review V, in progress) and under test (section 1.10).
+   dimension-adaptive sparse grids (interaction order). A metric learned from gradients
+   (MetricKernel) did not survive the box ladder; ISAT-style ellipsoids shaped by the Jacobian
+   (SlowTable) cover visited chemistry states but refuse most new trajectories of the primordial
+   network (section 1.12).
 
 ### 0.5 In progress and next
 
-- Running: the bench's fast ladder at 10-D and 20-D (ChebTT, ART quadratic), then MetricKernel's bench
-  runs on the fast set at 2-D and 5-D; Review V (TT-cross
-  practice, Riemannian and manifold surrogates, a primordial-chemistry rate table).
-- Next: a chemistry bench on visited states: Robertson (exact rates), then a primordial H/He/H2
-  network from published rate tables (no Cantera: the networks are hand-coded and checked against
-  their sources). Inputs in log abundances; judged by the worst error on held-out trajectories, the
-  solver-call (refusal) rate and the inference time. Scheme to build: ISAT's table of visited states
-  with solver fallback, a local model in slow coordinates read off the step map's Jacobian, a learned
-  metric for where a record is trusted, and look-ahead checks before a record grows (section 5).
+- Running: the fill driver on the vector-valued problems (`fill --vector --d 2,3,5,10,20 --limit 90`;
+  2-D: five of the six problems done); then the scalar fill resumes (`fill --d 2,3,5,10,20
+  --limit 90`), which re-runs ChebTT from 2-D up and adds every method's missing cases.
+- In progress: Review VI, vector-valued surrogates (shared or separate models per output, error
+  control per component); its works go into LITERATURE.md.
+- Next, once the vector ladder is done: compare ChebTT's inference time at 10-D and 20-D with the
+  baselines' in `overview-d<d>-cost.png`, with ChebTT compressed; then resume the chemistry bench.
+- Chemistry, when resumed: run HIRES, POLLU and Akzo Nobel (only SlowTable at Akzo 0.01 so far);
+  per-species against vector ChebTT on the species' shared slow manifold; per-step tolerances of
+  tol / N for chained runs; SlowTable's ellipsoids sized by curvature instead of the linear change,
+  and grown during use, to cut the primordial network's 95% refusals. Scheme to build: ISAT's table
+  of visited states with solver fallback, a local model in slow coordinates read off the step map's
+  Jacobian, a learned metric for where a record is trusted, and look-ahead checks before a record
+  grows (section 5).
 - Open, not acted on: the library takes different ART/AFINNI decisions on CPU and GPU for the same
   seed (2-D wave 0.001: 11,469 evaluations on GPU, 23,187 on CPU), which AGENTS.md forbids; work
   stealing rarely triggers in the distributed runs.
@@ -261,19 +332,22 @@ f is sampled only along fibres of a Chebyshev grid chosen by maxvol (TT-cross), 
 inference cost grow linearly in d. Products of univariate functions have rank 1 and `cos(q.x)` rank 2.
 What made it reliable:
 
-- Degrees decided by the model: an axis doubles its degree when its upper half of degrees still
-  changes the prediction at the check points; otherwise the rank grows. Raising only the rank at a
-  fixed degree could never resolve a narrow peak (the rank climbed to 74 at degree 8).
+- Degrees decided by the model: an axis doubles its degree when its top degrees still change the
+  prediction at the check points (the top quarter, section 1.13); otherwise the rank grows. Raising
+  only the rank at a fixed degree could never resolve a narrow peak (the rank climbed to 74 at degree
+  8).
 - Free checks: grid points of earlier sweeps and lower degrees, which the final cores do not
   interpolate, concentrated where the cross explored. They caught a narrow 5-D peak (0.022 > 0.01)
   that uniform check points missed.
 - A look-ahead at the next nested grid's points along every axis through the worst check point and
   through the largest |f| seen; the right index sets seeded at the largest |f| and the centre.
-- Results: 5-D bench 21/21 (median 1.1k evaluations; baselines 0-2 of 21 with 10-1000x more); serial
-  10-D 24/24, 20-D 20/21. Over budget: the 5-D rotated anisotropic Gaussian (high rank in axis
-  coordinates), `lorenz96_chaotic`, `genz_continuous` at 0.02 (kinks).
-- Many smooth cases end far below the tolerance (1e-6 of it): the degree doubling overshoots, cheap
-  here but wasted evaluations.
+- Results: 5-D bench 21/21 (median 1.1k evaluations; baselines 0-2 of 21 with 10-1000x more); bench
+  fast set 18/18 at 10-D and at 20-D (section 1.15); serial 10-D 24/24, 20-D 20/21. Over budget: the
+  5-D rotated anisotropic Gaussian (high rank in axis coordinates), `lorenz96_chaotic`,
+  `genz_continuous` at 0.02 (kinks).
+- With the degree tail read from the upper half of the coefficients, many smooth cases ended far
+  below the tolerance (1e-6 of it): the tail rule asked for about the square of the accuracy
+  (section 1.13).
 
 ### 1.9 Rejected: global rotation, and ChebTT in tree cells
 
@@ -285,7 +359,7 @@ What made it reliable:
 - A tree of ChebTT cells (split along the axis whose fibres need the highest degree): 2.5-4x plain
   ChebTT's evaluations on the kinks and no help for the Gaussian or the chaotic map.
 
-### 1.10 A learned-metric kernel model (prototype, not committed)
+### 1.10 MetricKernel: a learned-metric kernel model (`kernel.py`)
 
 Matern-5/2 interpolation in a metric M learned from the average gradient outer product of the current
 model (the mechanism of recursive feature machines), the scale chosen by the worst leave-one-out error
@@ -297,9 +371,10 @@ rotated Gaussian worst 2.2-4.5 (the needle, as for every box sampler). On the fa
 seed) it loses to ChebTT everywhere: 5-D worst 0.3-0.9 where it holds and 2.2-10.9 on Genz oscillatory
 and corner peak; 10-D over its 20k budget on Rosenbrock and 1.8-2.7 on the corner peak. Kernel
 interpolation is weakest near the boundary, where most of a high-dimensional box's volume is, and a
-few hundred random check points do not find it. Not promoted beyond 5-D; its bench runs at 2-D and 5-D
-are for the record. Its natural setting is a set of visited states, where the candidates come from the
-simulation and boundaries matter less.
+few hundred random check points do not find it. Bench at 2-D: 13/24 cases within (median 225
+evaluations, 0.9-3.7 us per query, against 0.07-0.76 for ChebTT). Not promoted: it is not run above
+2-D, and the fill leaves it out. Its natural setting is a set of visited states, where the candidates
+come from the simulation and boundaries matter less.
 
 ### 1.11 The chemistry premise, measured
 
@@ -358,23 +433,136 @@ Robertson (3 inputs, dt = 1, 200 training and 100 test trajectories of 40 steps)
   within the tolerance, are ~0.005 dex across, while its error is second order; and test trajectories
   from other densities, temperatures and fractions pass through regions 60 training trajectories never
   visited. Ellipsoids sized by curvature, and growth during use (in situ), are the next steps.
+- Three standard stiff problems were added from the Test Set for IVP Solvers (Bari), transcribed from
+  its Fortran sources and matching its reference solutions to 1e-12: HIRES (8 species), POLLU (20) and
+  Akzo Nobel (its algebraic component substituted out, an exact reduction to 5 species). The bench
+  starts their trajectories after the initial transient and leaves species below 1e-12 out of the
+  error (an error in dex means nothing there). First run, Akzo Nobel at 0.01 dex with SlowTable:
+  2,988 solves, one-step worst 0.045 (4.5x, the first steps), 2.7% refused, rollout worst 0.054.
+- The bench also trains a vector ChebTT (one train for every species, section 1.16) beside the
+  per-species one, to measure which fits a network whose species share one slow manifold. The
+  chemistry bench is paused there until the vector-valued box ladder is done.
 
-### 1.13 Engineering edge cases met
+### 1.13 ChebTT's degree tail from the top quarter of the coefficients
+
+For geometric decay a_j ~ rho^-j the interpolation error is about the last coefficient a_n, while the
+upper half of the degrees sums to about a_{n/2}, roughly sqrt(a_n a_0). Asking the upper half to meet
+an axis's share of the tolerance therefore asked for about the square of the needed accuracy, and
+degrees doubled too far. Both degree tests (`chebyshev_tail` and the truncated-model test) read the
+top quarter instead. Serial runs on the fast set at 5-D and 10-D:
+
+| 5-D, evaluations | upper half | top quarter |
+|---|---|---|
+| Genz product peak, 0.02 | 1,632 | 1,160 |
+| Genz Gaussian | 1,372 | 996 |
+
+Up to 30-40% fewer evaluations at 5-D and 10-D, every case still within tolerance, worst errors closer
+to it. Rejected: seeding new right indices at the worst check points (global pivots, as in TCI)
+instead of at random. Neutral or worse: 10-D Lotka-Volterra at 0.1 went from 4.5k to 9.0k evaluations.
+
+### 1.14 ChebTT inference: compression after acceptance, evaluation by recurrence
+
+Profiled at 10-D, the prediction spent its time in the Chebyshev basis (arccos and cos per query and
+axis) and in a planned einsum, not in the 300-2,700 multiply-adds the cores need. And the accepted
+cores are far larger than the tolerance requires, since the cross grows ranks and doubles degrees in
+coarse steps. Two changes, kept:
+
+- **Compression** (`compress`): TT-SVD rank rounding with the largest relative eps found by bisection,
+  then per-axis chopping of trailing degrees, each step kept while the model changes by at most
+  0.25 atol at its check points and 4,000 uniform points. No oracle calls: the comparison is between
+  models.
+- **Prediction by recurrence**: the Chebyshev values from the three-term recurrence and one matrix
+  product per core, in chunks. An uncompressed model's predictions match the einsum evaluation to
+  1e-15.
+
+| 10-D, serial | us per query, before | after | cores after compression |
+|---|---|---|---|
+| Lotka-Volterra | 8.7 | 0.35-1.0 | 2,700 core entries -> 293 (ranks ~2-5) |
+| wave | 4.7 | 0.65-1.1 | |
+| Genz product peak | 1.8 | 0.2 | rank 1 |
+
+Worst errors 0.13-0.35 of the tolerance; compression adds 0.2-2.3 s of training. ART and AFINNI
+predict at 0.1-0.7 us, so compressed ChebTT is on par with them; before, at 10-D and 20-D in the
+bench it took 1.6-13 us, and 33-90 us on 20-D Lotka-Volterra. Rejected: a fused Numba loop per
+query, no faster than the NumPy matrix products (both sit at the scalar flop floor). The principle (a
+standing rule): spend training time on compression whenever it cuts inference at least 2x, since a
+surrogate is trained once and called millions of times.
+
+### 1.15 The box ladder to 20-D, and the fill driver
+
+Bench runs of the fast set at 10-D and 20-D (8 ranks; ChebTT at 3 seeds, the baselines mostly at
+seed 1; before compression):
+
+| | ChebTT | ART, quadratic leaves | ART, affine leaves |
+|---|---|---|---|
+| 10-D | 18/18, 1.5k-8.7k evaluations, worst seed <= 0.41 | 3 of 8 within on seed 1, all at 0.2 with one leaf; Rosenbrock 0.05: 2.7M evaluations, 362 s, worst 2.05 | Rosenbrock 0.1: 2.9M evaluations, 75-95 s per run, worst 3.3-4.0 |
+| 20-D | 18/18, 3.2k-12k evaluations (Lotka-Volterra 46k-620k), worst seed <= 0.5 | 4 of 6 within on seed 1, all at 0.2 with one leaf | – |
+
+AFINNI is left out at d >= 10 for its memory (45 GB over 8 ranks on the 10-D wave, one rank 15 GB).
+
+Fixed rules for which method runs where ("baselines at one seed and the loosest tolerance from 10-D
+up") left holes and kept slow cases in by hand. They are replaced by `src/structure/fill.py`: every
+method, problem, dimension and tolerance, from the loosest tolerance to the tightest (the cost only
+grows as it tightens). Seed 1 runs first as its own 8-rank job under a 90 s wall-time limit (start-up
+included); the other seeds run only if it finished. A run over the limit is killed with its whole
+process group (so no rank is left waiting in a collective), cached as failed (hatched in the
+overview, like a run over its evaluation budget), and the method's tighter tolerances for that problem
+are skipped. Cached cases are never rerun. It runs ChebTT, AFINNI and both ARTs (ChebTree,
+SparseCheb and MetricKernel are recorded and dropped: ChebTT beats them from 3-D up), the scalar
+problems with the fast set first, or the vector-valued ones with `--vector`.
+
+### 1.16 Vector-valued problems
+
+The chemistry step map has one output per species, so the box ladder gained problems R^d -> R^m,
+defined for any d (`VECTOR_PROBLEMS`): `rosenbrock_gradient` (m = d, a polynomial field),
+`genz_triple` (Genz oscillatory, product peak and corner peak side by side, m = 3),
+`lotka_volterra_state` and `lorenz96_state` (the full flow maps, m = d), `swirl` (coordinate pairs
+rotated by 2 exp(-|x|^2), m = d) and `wave_pair` (cos and sin of one oblique ridge, m = 2). Each
+component is scaled to max |f_c| = 1 on the test set, so one tolerance is the same relative accuracy
+for every component, and the error is the componentwise relative max norm (each component's worst is
+recorded too). The 2-D maps add a column with the field (|f| with streamlines); the views use the
+Jacobian's Gram matrix; the overview is `overview-vector-d<d>.png`.
+
+ChebTT treats the outputs as a discrete last axis (`build_vector`): one oracle call serves every
+output, the check points sit on that axis's nodes and its degree never changes. The cost is in the
+ranks, which add up across outputs with different structure: five outputs cos(a_c . x) in 6-D needed
+7.8k evaluations as one vector train against 4.7k for five separate trains (rank 10, two per ridge).
+
+First results, 2-D:
+
+| Case | ChebTT | ART, quadratic | ART, affine | AFINNI |
+|---|---|---|---|---|
+| `swirl`, 3 tolerances | 644-1,626 / 0.21-0.26 | 1.3k-33k / 1.8-3.0 | 1.4k-135k / 1.6-2.7 | 1.0k-46k / 4.0-81 |
+| `rosenbrock_gradient`, 3 tolerances | 342 / 1e-12-1e-14 (exact) | 243-975 / 0.53-1.69 | 247-19.7k / 1.6-2.9 | 614-15.7k / 1.3-49 |
+| `genz_triple`, 3 tolerances | 474-1,042 / 0.24-0.28 | 975-21.7k / 2.8-5.1 | 1.3k-120k / 2.7-3.9 | 1.4k-8.8k / 3.9-55 |
+| `lotka_volterra_state`, 3 tolerances | 310-561 / 0.18-0.26 | 121-3.9k / 1.1-2.5 | 247-21k / 1.4-3.0 | 604 / 1.1 (0.1) |
+| `wave_pair`, 3 tolerances | 376-440 / 0.13-0.23 | 975-4.4k / 1.2-3.2 | running | running |
+
+(evaluations / worst over the seeds; ChebTT predicts at 0.05-0.86 us per query.) The vector ladder
+(2, 3, 5, 10, 20-D) runs through the fill driver.
+
+### 1.17 Engineering edge cases met
 
 - Every rank computed and wrote a problem's cached slice directions at once; a rank read a file another
-  was writing and the run crashed (now written to a per-rank file and renamed into place).
-- A bench run with a subset of methods redrew the plots with that subset only (now every cached
-  method; `--replot` redraws from the cache).
+  was writing and the run crashed. Fix: each rank writes its own file and renames it into place. The
+  directions live in `cache/directions/`, one file per problem and dimension, shared by every setup;
+  a test guards that nothing else is written there.
+- A bench run with a subset of methods redrew the plots with that subset only. Fix: plots draw every
+  cached method; `--replot` redraws from the cache.
 - Stopping a collective MPI run leaves the other ranks waiting: stop by the PIDs of the launcher and
   its ranks; never `pkill -f`. Collecting PIDs with `ps | grep <pattern>` inside a shell whose own
   command line contains the pattern kills that shell too: list the PIDs first, then kill them by number.
-- At 10-D the baselines dominate the wall time without informing more: ART with quadratic leaves on
-  Rosenbrock at 0.05 took 362 s and 2.7M evaluations per run (worst 2.05). The fast ladder runs them at
-  one seed and the loosest tolerance from 10-D up; ChebTT at every tolerance and seed.
+  The fill driver starts each job in its own process group and kills the group.
+- A change to the cache layout reaches only bench processes started after it: a 10-D job already
+  running wrote three stray directories under the old layout.
+- An 8-process chemistry pool beside the 8-rank bench oversubscribed the 16 cores (load 14-22) and
+  would have distorted the bench's timings: one heavy job set at a time.
+- Fixed per-method rules for slow cases (baselines at one seed from 10-D up) left the grid uneven; a
+  wall-time limit per run (section 1.15) keeps long cases out without them.
 - The GPU never beat 8 CPU ranks on these workloads (launch- and transfer-bound, 200k kernel launches)
   and predicted 2-50x slower per query.
 
-### 1.14 Engine findings from the same work
+### 1.18 Engine findings from the same work
 
 - A stable counting sort plus per-block merge sort replaced two full-batch argsorts in
   `sort_by_block_then_value`: single-thread AFINNI training 36-39% faster, bit-identical results.
@@ -1245,6 +1433,9 @@ In order: (1) ChebTT on log(f + atol) for the rotated Gaussian; (2) the last-coe
 26 passing 5-D cases (target worst/tolerance 0.1–0.5); (3) global pivots in place of rank + 2; (4) a TT-SVD of
 Lorenz-96 F = 8 on 9^5 points; (5) Robertson and stage-A primordial oracles with review_1's T1 in linear and log
 coordinates; (6) AFINNI with error ellipsoids against coverage ellipsoids, under the §7 protocol.
+
+Status (section 1): (2) done, as the top-quarter tail (1.13) and the chop in the compression (1.14);
+(3) tried and rejected (1.13); (5) done (1.11, 1.12).
 
 ### 6.9 References (new: V-*)
 
