@@ -192,7 +192,10 @@ at 0.05 over the 300k budget). Over budget at 5-D: the rotated Gaussian, `lorenz
   (the pilot misses the narrow peak), and `front` at 0.1, over the time limit.
 - Also after the fill: the bench should cache a `MemoryError` (AFINNI's host-memory guard: 5-D
   `rastrigin` at 0.1 needed a 7.2M-point queue) as a failure, as it does a run over its evaluation
-  budget; the fill reported it as a crash, and its record was written by hand. And `swirl` needs a
+  budget; the fill reported it as a crash, and its record was written by hand. AFINNI on 5-D
+  `michalewicz` at 0.1 then exited before the time limit with nothing in the log (no traceback, no MPI
+  termination message; probably the same memory exhaustion, killed from outside): rerun it alone,
+  watching memory, after the fill; until then its cell is not run. And `swirl` needs a
   domain that shrinks with d: on [-2, 2]^20 its angle 2 exp(-|x|^2) is about 0 at every test point,
   so ART holds it with 400 evaluations while ChebTT, seeded at the centre, resolves the vortex there.
 - Running after the box fill (chained): the stiff ladder (`chemfill --limit 240`, 12 solver workers),
