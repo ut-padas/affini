@@ -1,18 +1,18 @@
 """
-The chemistry bench: surrogates of a network's step map, trained and judged on visited states.
+The ODE bench: surrogates of a system's step map, trained and judged on visited states.
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python -m src.structure.chembench \\
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python -m src.structure.ode.bench \\
         --problems robertson --methods slowtable,chebtt_box --plot
 
 Each problem integrates training and held-out test trajectories once (cached in
-``cache/chem/<problem>.npz``). A surrogate maps a state ``z`` (log10 abundances, and log10 T for the
+``cache/ode/<problem>.npz``). A surrogate maps a state ``z`` (log10 abundances, and log10 T for the
 primordial network) to the increment ``Phi_dt(z) - z``. It is trained from the training states, in
 time-major order (every trajectory's first state, then every second state, ...: the order in which a
 simulation queries its cells), with access to the oracle; it is judged on every test state, against
 the increments the test trajectories already contain, so testing costs no solve.
 
-Metrics per run (``cache/chem/<problem>/<method>_tol<t>.json``): the error of an answer is the largest
-|error| over the species, in dex (log10); ``worst`` is the largest over the answered test states, with
+Metrics per run (``cache/ode/<problem>/<method>_tol<t>.json``): the error of an answer is the largest
+|error| over the components, in dex (log10); ``worst`` is the largest over the answered test states, with
 its 99.9% and 99% quantiles and the share above the tolerance; ``refused`` is the share of test states
 the surrogate declines (a simulation would solve those); ``evals`` the oracle states solved in
 training. Two errors are measured, since a surrogate can cover the visited states well and still drift
@@ -25,8 +25,14 @@ states it was tested on). ``survived_worst`` is the part of the one-step error t
 leaves (in a stiff system it damps the fast part); ``*_projected`` the same surrogate with every step
 projected onto the system's linear invariants (``invariants_of``); ``speedup`` the solver's time per
 state and step over the surrogate's, beside the solver's operation counts (``solve_us``, ``nfev``,
-``nlu``), since SciPy's per-call overhead flatters a surrogate against a compiled solver.
-``--plot`` writes ``output/chem/<problem>-errors.png`` and ``summary-chem.md``.
+``nlu``), since SciPy's per-call overhead flatters a surrogate against a compiled solver. The solver
+is the problem's named baseline (``BASELINES``), the integrator its system would be solved with:
+Radau for a stiff system, RK45 for a non-stiff one.
+
+Each problem declares its regime (``REGIMES``: stiff, non-stiff, chaotic), and the overviews group
+problems by it rather than by the measured ``dynamics``: a method-of-lines family measures non-stiff
+on its smallest grids, and the measured class is printed beside each problem instead.
+``--plot`` writes ``output/ode/<problem>-errors.png`` and ``summary-ode.md``.
 """
 
 import argparse
@@ -45,39 +51,45 @@ import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
 
-from src.structure import chebtt, chemistry, tabulation  # noqa: E402
+from src.structure import chebtt, ode, tabulation  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent
-CACHE = ROOT / "cache" / "chem"
-OUT = ROOT / "output" / "chem"
+ROOT = Path(__file__).resolve().parents[1]  # src/structure
+CACHE = ROOT / "cache" / "ode"
+OUT = ROOT / "output" / "ode"
 YEAR = 3.156e7
 
 
 @dataclass(frozen=True)
-class ChemProblem:
-    net: chemistry.Network
+class ODEProblem:
+    system: ode.System
     dt: float
-    initial: object  # (n, seed) -> (n, species) abundances
+    initial: object  # (n, seed) -> (n, components) states in the system's own variables
     steps: int
     n_train: int
     n_test: int
     tolerances: tuple  # in the problem's units (``units``)
     burn: float = 0.0  # trajectories start after this time, past the initial transient
-    floor: float = 0.0  # species below this abundance are not scored (an error in dex of ~0 means nothing)
+    floor: float = 0.0  # components below this abundance are not scored (an error in dex of ~0 means nothing)
+    regime: str = "stiff"  # a key of REGIMES: which overview the problem is shown in
 
     @property
     def units(self) -> str:
-        return "dex" if self.net.log else "absolute"
+        return "dex" if self.system.log else "absolute"
+
+    @property
+    def baseline(self) -> str:
+        """The named baseline (``BASELINES``) of the system's own integrator: what a speedup is over by default."""
+        return BASELINE_OF[self.system.method]
 
     def step(self, Z: np.ndarray) -> np.ndarray:
-        return self.net.coords_step(Z, self.dt)
+        return self.system.coords_step(Z, self.dt)
 
     def scored(self, Z_true: np.ndarray) -> np.ndarray:
         """Which entries count in the error: abundances above ``floor`` (the held temperature never; every entry of a linear system)."""
-        if not self.net.log:
+        if not self.system.log:
             return np.ones(Z_true.shape, dtype=bool)
         mask = Z_true > (np.log10(self.floor) if self.floor > 0 else -np.inf)
-        if self.net.species[-1] == "T":
+        if self.system.components[-1] == "T":
             mask[..., -1] = False
         return mask
 
@@ -94,19 +106,21 @@ def _primordial_initial(n: int, seed: int) -> np.ndarray:
 
 
 PROBLEMS = {
-    "robertson": ChemProblem(chemistry.ROBERTSON, 1.0, chemistry.robertson_initial, 40, 200, 100, (0.01, 0.001)),
-    "chemakzo": ChemProblem(chemistry.CHEMAKZO, 2.0, chemistry.chemakzo_initial, 85, 100, 40, (0.01, 0.001), burn=5.0, floor=1e-12),
-    "hires": ChemProblem(chemistry.HIRES, 2.0, chemistry.hires_initial, 170, 100, 40, (0.01, 0.001), burn=5.0, floor=1e-12),
-    "primordial": ChemProblem(chemistry.PRIMORDIAL, 1e4 * YEAR, _primordial_initial, 30, 60, 30, (0.01, 0.001), floor=1e-12),
-    "pollu": ChemProblem(chemistry.POLLU, 1.0, chemistry.pollu_initial, 59, 100, 40, (0.01, 0.001), burn=1.0, floor=1e-12),
+    "robertson": ODEProblem(ode.ROBERTSON, 1.0, ode.robertson_initial, 40, 200, 100, (0.01, 0.001)),
+    "chemakzo": ODEProblem(ode.CHEMAKZO, 2.0, ode.chemakzo_initial, 85, 100, 40, (0.01, 0.001), burn=5.0, floor=1e-12),
+    "hires": ODEProblem(ode.HIRES, 2.0, ode.hires_initial, 170, 100, 40, (0.01, 0.001), burn=5.0, floor=1e-12),
+    "primordial": ODEProblem(ode.PRIMORDIAL, 1e4 * YEAR, _primordial_initial, 30, 60, 30, (0.01, 0.001), floor=1e-12),
+    "pollu": ODEProblem(ode.POLLU, 1.0, ode.pollu_initial, 59, 100, 40, (0.01, 0.001), burn=1.0, floor=1e-12),
 }  # fmt: skip (in order of input dimension: 3, 5, 8, 10, 20)
-# The stiff ladder: each family of chemistry.LADDER at every size, named <family>_d<input dimension>.
-_LADDER_STEP = {"bruss": (0.25, 40), "allen_cahn": (0.005, 40), "fisher_kpp": (0.01, 40)}  # (dt, steps): 40 steps that still move
-for _family, (_make, _initial, _sizes) in chemistry.LADDER.items():
+REGIMES = {"stiff": "Stiff systems", "nonstiff": "Non-stiff systems", "chaotic": "Chaotic systems"}
+# The ladder: each family of ode.FAMILIES at every size, named <family>_d<input dimension>.
+_LADDER_STEP = {"bruss": (0.25, 40), "allen_cahn": (0.005, 40), "fisher_kpp": (0.01, 40), "lorenz96": (0.25, 40)}  # (dt, steps): 40 steps that still move
+_LADDER_REGIME = {"lorenz96": "nonstiff"}  # the others: stiff
+for _family, (_make, _initial, _sizes) in ode.FAMILIES.items():
     for _n in _sizes:
-        _net = chemistry.NETWORKS[_make(_n).name]
-        PROBLEMS[f"{_family}_d{len(_net.species)}"] = ChemProblem(_net, _LADDER_STEP[_family][0], _initial(_n), _LADDER_STEP[_family][1],
-                                                                  100, 40, (0.01, 0.001))  # fmt: skip
+        _system = ode.SYSTEMS[_make(_n).name]
+        PROBLEMS[f"{_family}_d{len(_system.components)}"] = ODEProblem(_system, _LADDER_STEP[_family][0], _initial(_n), _LADDER_STEP[_family][1],
+                                                                  100, 40, (0.01, 0.001), regime=_LADDER_REGIME.get(_family, "stiff"))  # fmt: skip
 
 
 # The solvers a surrogate's speed is measured against. A speedup is always "over" one of them, named
@@ -120,31 +134,36 @@ BASELINES = {
         "device": "CPU, 1 core (OPENBLAS_NUM_THREADS=1)",
         "note": "SciPy's per-call Python overhead dominates small systems; nfev and nlu give the work a compiled solver would do",
     },
+    "scipy-rk45-cpu1": {
+        "label": "SciPy RK45, 1 CPU core, one state at a time",
+        "integrator": "scipy.integrate.solve_ivp(method='RK45'): explicit Dormand-Prince 5(4), adaptive steps",
+        "settings": "each system's rtol (1e-8) and atol; one call per state and step",
+        "device": "CPU, 1 core (OPENBLAS_NUM_THREADS=1)",
+        "note": "for non-stiff systems, where an implicit method's linear solves buy nothing; nfev gives a compiled solver's work",
+    },
 }
-BASELINE = "scipy-radau-cpu1"  # the default for plots and the recorded ``speedup``
+BASELINE_OF = {"Radau": "scipy-radau-cpu1", "RK45": "scipy-rk45-cpu1"}  # a network's integrator: its baseline
 
 
-def baseline_cost(name: str, baseline: str = BASELINE) -> dict:
+def baseline_cost(name: str, baseline: str | None = None) -> dict:
     """
-    One baseline's cost of a step per state on 40 test states (cached in ``<problem>-baseline-<baseline>.json``):
-    wall time in microseconds and the operation counts (right-hand sides, Jacobians, LU factorisations), with the
-    baseline's description. Only SciPy's Radau is measured here; another baseline's records are written by its
-    own runner in the same form.
+    One baseline's cost of a step per state on 40 test states (cached in ``<problem>-baseline-<baseline>.json``;
+    by default the problem's own, ``ODEProblem.baseline``): wall time in microseconds and the operation counts
+    (right-hand sides, Jacobians, LU factorisations), with the baseline's description. Only the system's own
+    integrator is measured here (KeyError for another without a record); another baseline's records are written
+    by its own runner in the same form.
     """
+    p = PROBLEMS[name]
+    baseline = baseline or p.baseline
     path = CACHE / f"{name}-baseline-{baseline}.json"
     if path.exists():
         return json.loads(path.read_text())
-    if baseline != "scipy-radau-cpu1":
+    if baseline != p.baseline:
         raise KeyError(f"no measurement of baseline {baseline!r} for {name}")
-    old = CACHE / f"{name}-cost.json"  # the same measurement, recorded before baselines were named
-    if old.exists():
-        cost = json.loads(old.read_text())
-    else:
-        p = PROBLEMS[name]
-        _, test = data(name)
-        Z = test[:, :-1].reshape(-1, test.shape[2])
-        Z = Z[np.random.default_rng(0).choice(len(Z), min(40, len(Z)), replace=False)]
-        cost = p.net.step_cost(10.0**Z if p.net.log else Z, p.dt)
+    _, test = data(name)
+    Z = test[:, :-1].reshape(-1, test.shape[2])
+    Z = Z[np.random.default_rng(0).choice(len(Z), min(40, len(Z)), replace=False)]
+    cost = p.system.step_cost(10.0**Z if p.system.log else Z, p.dt)
     cost = {**cost, "baseline": baseline, **BASELINES[baseline]}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(cost))
@@ -152,11 +171,11 @@ def baseline_cost(name: str, baseline: str = BASELINE) -> dict:
 
 
 def solver_cost(name: str) -> dict:
-    """The default baseline's cost (``baseline_cost``)."""
-    return baseline_cost(name, BASELINE)
+    """The problem's own baseline's cost (``baseline_cost``)."""
+    return baseline_cost(name)
 
 
-def speedup(m: dict, name: str, baseline: str = BASELINE) -> float:
+def speedup(m: dict, name: str, baseline: str | None = None) -> float:
     """A run's speedup over a named baseline: the baseline's time per state and step over the surrogate's inference time per state."""
     return baseline_cost(name, baseline)["solve_us"] / max(m["predict_us"], 1e-9)
 
@@ -170,15 +189,15 @@ def data(name: str) -> tuple[np.ndarray, np.ndarray]:
     p = PROBLEMS[name]
     start = [p.initial(n, seed) for n, seed in ((p.n_train, 1), (p.n_test, 2))]
     if p.burn > 0:
-        start = [p.net.step(Y, p.burn) for Y in start]
-    train, test = (chemistry.trajectories(p.net, Y, p.dt, p.steps) for Y in start)
+        start = [p.system.step(Y, p.burn) for Y in start]
+    train, test = (ode.trajectories(p.system, Y, p.dt, p.steps) for Y in start)
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, train=train, test=test)
     return train, test
 
 
 class CachedOracle:
-    """The step map with a cache by exact state, counting distinct solves (vector outputs: one solve serves every species)."""
+    """The step map with a cache by exact state, counting distinct solves (vector outputs: one solve serves every component)."""
 
     def __init__(self, step):
         self.step, self.cache, self.evals = step, {}, 0
@@ -199,7 +218,7 @@ def visited(train: np.ndarray) -> np.ndarray:
     return train[:, :-1].transpose(1, 0, 2).reshape(-1, train.shape[2])
 
 
-def slowtable(p: ChemProblem, train: np.ndarray, atol: float, seed: int):
+def slowtable(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
     oracle = CachedOracle(p.step)
     t = tabulation.build(oracle, visited(train), atol, seed=seed)
     t.evals = oracle.evals
@@ -229,37 +248,37 @@ def state_box(states: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return np.where(flat, lo - 1e-3, lo), np.where(flat, hi + 1e-3, hi)
 
 
-def chebtt_box(p: ChemProblem, train: np.ndarray, atol: float, seed: int, oracle: CachedOracle | None = None, edges: bool = True):
+def chebtt_box(p: ODEProblem, train: np.ndarray, atol: float, seed: int, oracle: CachedOracle | None = None, edges: bool = True):
     oracle = oracle or CachedOracle(p.step)
     lo, hi = state_box(visited(train))
     models = []
     for c in range(train.shape[2]):
-        if p.net.species[c] == "T":
+        if p.system.components[c] == "T":
             models.append(None)  # the held temperature: increment 0
             continue
         models.append(chebtt.build(lambda X, c=c: (oracle(X) - X)[:, c], lo, hi, atol, seed=seed, max_evals=200_000, edges=edges))
     return BoxTT(models, lo, hi, oracle.evals)
 
 
-def chebtt_smooth(p: ChemProblem, train: np.ndarray, atol: float, seed: int):
+def chebtt_smooth(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
     """``chebtt_box`` without the edge search: one Chebyshev basis per axis (the control for piecewise axes)."""
     return chebtt_box(p, train, atol, seed, edges=False)
 
 
-def chebtt_adaptive_box(p: ChemProblem, train: np.ndarray, atol: float, seed: int):
-    """ChebTT-A (``chebtt_adaptive``) per species on the states' bounding box: piecewise axes, and an interface term where one is found."""
+def chebtt_adaptive_box(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
+    """ChebTT-A (``chebtt_adaptive``) per component on the states' bounding box: piecewise axes, and an interface term where one is found."""
     from src.structure import chebtt_adaptive
 
     oracle = CachedOracle(p.step)
     lo, hi = state_box(visited(train))
-    models = [None if p.net.species[c] == "T" else
+    models = [None if p.system.components[c] == "T" else
               chebtt_adaptive.build(lambda X, c=c: (oracle(X) - X)[:, c], lo, hi, atol, seed=seed, max_evals=200_000)
               for c in range(train.shape[2])]  # fmt: skip
     return BoxTT(models, lo, hi, oracle.evals)
 
 
-class BoxBaseline(BoxTT):
-    """A box-bench baseline (AFINNI or ART, ``bench.METHODS``) of every species' increment on the states' bounding box."""
+class BoxMethod(BoxTT):
+    """A box-bench method (AFINNI or ART, ``src.structure.bench.METHODS``) of every component's increment on the states' bounding box."""
 
     def __init__(self, model, lo, hi, evals, outputs: int, held: bool):
         super().__init__(model, lo, hi, evals)
@@ -271,14 +290,14 @@ class BoxBaseline(BoxTT):
         return np.concatenate([out, np.zeros((len(Q), 1))], axis=1) if self.held else out
 
 
-def baseline(name: str):
-    """A stiff-bench method running the box bench's ``name`` (AFINNI, ART) with the solver as its oracle."""
+def box_method(name: str):
+    """An ODE-bench method running the box bench's ``name`` (AFINNI, ART) with the solver as its oracle."""
 
-    def method(p: ChemProblem, train: np.ndarray, atol: float, seed: int):
+    def method(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
         from src import to_host, xp
-        from src.structure import bench
+        from src.structure import bench as box_bench
 
-        held = p.net.species[-1] == "T"
+        held = p.system.components[-1] == "T"
         m = train.shape[2] - (1 if held else 0)
         lo, hi = state_box(visited(train))
         oracle = CachedOracle(p.step)
@@ -287,13 +306,13 @@ def baseline(name: str):
             Z = np.asarray(to_host(X), dtype=np.float64)
             return xp.asarray((oracle(Z) - Z)[:, :m])
 
-        model = bench.METHODS[name][2](f, lo, hi, atol, seed)
-        return BoxBaseline(model, lo, hi, oracle.evals, m, held)
+        model = box_bench.METHODS[name][2](f, lo, hi, atol, seed)
+        return BoxMethod(model, lo, hi, oracle.evals, m, held)
 
     return method
 
 
-def chebtt_roll(p: ChemProblem, train: np.ndarray, atol: float, seed: int, rounds: int = 3):
+def chebtt_roll(p: ODEProblem, train: np.ndarray, atol: float, seed: int, rounds: int = 3):
     """
     ``chebtt_box``, accepted only once the surrogate chained along every training trajectory (projected
     onto the invariants, as it is used) stays within half of ``atol`` of them (a margin for the test
@@ -324,9 +343,9 @@ class BoxVectorTT(BoxTT):
         return np.concatenate([out, np.zeros((len(Q), 1))], axis=1) if self.held else out
 
 
-def chebtt_metric(p: ChemProblem, train: np.ndarray, atol: float, seed: int):
+def chebtt_metric(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
     states = visited(train)
-    held = p.net.species[-1] == "T"  # the held temperature is an input only: its increment is 0
+    held = p.system.components[-1] == "T"  # the held temperature is an input only: its increment is 0
     m = states.shape[1] - (1 if held else 0)
     lo, hi = states.min(axis=0), states.max(axis=0)
     pad = 0.02 * np.maximum(hi - lo, 1e-3)
@@ -344,12 +363,12 @@ METHODS = {"slowtable": ("SlowTable: tabulated visited states", "#8e24aa", slowt
            "chebtt_adaptive": ("ChebTT-A: piecewise axes and interface terms", "#b5179e", chebtt_adaptive_box),
            "chebtt_metric": ("ChebTT in the pullback-metric coordinates", "#1b7f5b", chebtt_metric),
            "chebtt_roll": ("ChebTT, retrained until its rollouts hold", "#c0392b", chebtt_roll),
-           "afinni": ("AFINNI", "#6d3b0f", baseline("afinni")),
-           "art": ("ART, affine leaves", "#1f5fa8", baseline("art")),
-           "art_quad": ("ART, quadratic leaves", "#2e7d32", baseline("art_quad"))}  # fmt: skip
+           "afinni": ("AFINNI", "#6d3b0f", box_method("afinni")),
+           "art": ("ART, affine leaves", "#1f5fa8", box_method("art")),
+           "art_quad": ("ART, quadratic leaves", "#2e7d32", box_method("art_quad"))}  # fmt: skip
 
 
-def invariants_of(p: ChemProblem, train: np.ndarray) -> np.ndarray:
+def invariants_of(p: ODEProblem, train: np.ndarray) -> np.ndarray:
     """
     (m, d) the system's linear invariants W (W F(y) = 0 for every y: element and charge totals of a
     network, total mass), from the null space of the right-hand side at up to 600 training states (the
@@ -358,9 +377,9 @@ def invariants_of(p: ChemProblem, train: np.ndarray) -> np.ndarray:
     """
     Z = visited(train)
     Z = Z[np.random.default_rng(0).choice(len(Z), min(600, len(Z)), replace=False)]
-    free = [i for i in range(Z.shape[1]) if p.net.species[i] != "T"]
-    Y = 10.0**Z if p.net.log else Z
-    F = np.array([np.asarray(p.net.rhs(y))[free] for y in Y])
+    free = [i for i in range(Z.shape[1]) if p.system.components[i] != "T"]
+    Y = 10.0**Z if p.system.log else Z
+    F = np.array([np.asarray(p.system.rhs(y))[free] for y in Y])
     F = F / np.maximum(np.linalg.norm(F, axis=1, keepdims=True), 1e-300)
     _, sv, Vt = np.linalg.svd(F, full_matrices=True)
     sv = np.concatenate([sv, np.zeros(len(free) - len(sv))])
@@ -378,7 +397,7 @@ class Projected:
     moves in proportion to itself, so trace species are barely touched), floored at ``FLOOR``.
     """
 
-    def __init__(self, model, p: ChemProblem, W: np.ndarray):
+    def __init__(self, model, p: ODEProblem, W: np.ndarray):
         self.model, self.p, self.W = model, p, W
         self.evals = getattr(model, "evals", 0)
 
@@ -387,13 +406,13 @@ class Projected:
 
     def predict(self, Z):
         inc = self.model.predict(Z)
-        log = self.p.net.log
+        log = self.p.system.log
         y, yh = (10.0**Z, 10.0 ** (Z + inc)) if log else (Z, Z + inc)
         D2 = yh * yh if log else np.ones_like(yh)
         r = (y - yh) @ self.W.T  # (N, m) the invariants' defect
         M = np.einsum("ij,nj,kj->nik", self.W, D2, self.W)
         ys = yh + D2 * np.einsum("nm,mj->nj", np.linalg.solve(M, r[:, :, None])[:, :, 0], self.W)
-        return (np.log10(np.maximum(ys, chemistry.FLOOR)) if log else ys) - Z
+        return (np.log10(np.maximum(ys, ode.FLOOR)) if log else ys) - Z
 
 
 def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) -> dict:
@@ -443,9 +462,9 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
         r = rollout(p, proj, test[:ROLLOUTS])
         m.update({"worst_projected": float(ep.max()) if len(ep) else 0.0, "rollout_worst_projected": r["rollout_worst"],
                   "rollout_error_by_step_projected": r["rollout_error_by_step"]})  # fmt: skip
-    m["speedup"] = m["solve_us"] / max(predict_us, 1e-9)  # over BASELINE: the solver's time per state and step over the surrogate's
+    m["speedup"] = m["solve_us"] / max(predict_us, 1e-9)  # over the problem's baseline: its time per state and step over the surrogate's
     m["inference"] = {"device": "cpu", "threads": int(os.environ.get("OPENBLAS_NUM_THREADS", "0") or 0), "batch": len(Zt),
-                      "baseline": BASELINE}  # fmt: skip
+                      "baseline": p.baseline}  # fmt: skip
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(m))
     return m
@@ -454,7 +473,7 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
 ROLLOUTS = 20  # test trajectories chained through each surrogate
 
 
-def survived(p: ChemProblem, model, test: np.ndarray, n: int = 200) -> float:
+def survived(p: ODEProblem, model, test: np.ndarray, n: int = 200) -> float:
     """
     The worst one-step error that survives the next exact step, ``|Phi(S(z)) - Phi(Phi(z))|`` over n
     answered test states (one solve each; ``Phi(Phi(z))`` is the trajectory's state two steps on):
@@ -471,7 +490,7 @@ def survived(p: ChemProblem, model, test: np.ndarray, n: int = 200) -> float:
     return float(np.max(np.where(p.scored(Z2[idx]), np.abs(out - Z2[idx]), 0.0)))
 
 
-def rollout(p: ChemProblem, model, true: np.ndarray) -> dict:
+def rollout(p: ODEProblem, model, true: np.ndarray) -> dict:
     """
     Chain the surrogate from each true initial state for every step of the trajectory, the solver
     stepping the states it refuses (as a simulation falls back), and compare with the solver's
@@ -517,7 +536,7 @@ def dynamics(name: str) -> dict:
     _, test = data(name)
     true = test[:ROLLOUTS]  # the rollouts' own trajectories, so their errors and A_n refer to the same states
     n_steps, d = true.shape[1] - 1, true.shape[2]
-    free = [i for i in range(d) if p.net.species[i] != "T"]
+    free = [i for i in range(d) if p.system.components[i] != "T"]
     h = 1e-5
     E = np.zeros((2 * len(free), d))
     for j, i in enumerate(free):
@@ -528,8 +547,8 @@ def dynamics(name: str) -> dict:
         for k in range(n_steps):
             out = p.step(traj[k][None] + E)[:, free]
             Js.append((out[0::2] - out[1::2]).T / (2 * h))
-            y = 10.0 ** traj[k] if p.net.log else traj[k]
-            lam = np.abs(np.real(np.linalg.eigvals(np.asarray(p.net.jac(y))[np.ix_(free, free)])))
+            y = 10.0 ** traj[k] if p.system.log else traj[k]
+            lam = np.abs(np.real(np.linalg.eigvals(np.asarray(p.system.jac(y))[np.ix_(free, free)])))
             fast.append(lam.max())
             slow.append(lam[lam > 1e-9 * lam.max()].min())
         step_stiff.append(max(-np.log(max(float(np.min(np.abs(np.linalg.eigvals(J)))), 1e-300)) for J in Js))
@@ -612,7 +631,7 @@ def plot(name: str, methods: list[str]) -> Path:
         ax.set_xlabel("step of the test trajectories")
     fig.legend(handles=handles, loc="outside lower center", ncol=min(5, len(handles)), fontsize=8, frameon=False)
     p = PROBLEMS[name]
-    units = "log10 (dex)" if p.net.log else "absolute units"
+    units = "log10 (dex)" if p.system.log else "absolute units"
     try:
         cost = solver_cost(name)
         solver = f"; the solver: {cost['solve_us']:,.0f} us per state and step ({cost['nfev']:.0f} RHS, {cost['nlu']:.0f} LU)"
@@ -628,13 +647,13 @@ def plot(name: str, methods: list[str]) -> Path:
 
 def plot_ladder() -> Path:
     """
-    ``output/chem/ladder.png``: per family (columns; the fixed-size test problems together), against the
+    ``output/ode/ladder.png``: per family (columns; the fixed-size test problems together), against the
     input dimension, the one-step worst error, the part of it that survives the next exact step and the
     rollout worst error (all over the tolerance), the training solves, and the speedup (the solver's time per state and step over the surrogate's). One
     colour per method, solid for the looser tolerance and dashed for the tighter; an x at the top of
     the error panels marks a case over the time limit or the evaluation budget.
     """
-    from src.structure.chemfill import FIXED, family, ladder
+    from src.structure.ode.fill import FIXED, family, ladder
 
     names = ladder(10**6)
     fams = [f for f in dict.fromkeys(family(n) for n in names) if f not in FIXED] + ["test set"]
@@ -655,7 +674,7 @@ def plot_ladder() -> Path:
                     if not path.exists():
                         continue
                     m = json.loads(path.read_text())
-                    d = len(p.net.species)
+                    d = len(p.system.components)
                     if "failed" in m:
                         fails.append(d)
                         continue
@@ -678,7 +697,7 @@ def plot_ladder() -> Path:
                 ax.axhline(1.0, color="#c0392b", lw=0.8, ls=":")
             ax.set_ylabel(ylabel if j == 0 else "")
             ax.set_xlabel("input dimension" if i == len(rows) - 1 else "")
-            dims = sorted({len(PROBLEMS[n].net.species) for n in members})
+            dims = sorted({len(PROBLEMS[n].system.components) for n in members})
             if dims:
                 ax.set_xticks(dims, [str(d) for d in dims])
                 ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
@@ -688,7 +707,7 @@ def plot_ladder() -> Path:
     handles = [matplotlib.lines.Line2D([], [], color=METHODS[m][1], lw=2, marker="o", ms=4, label=SHORT.get(m, m).replace(chr(10), " ")) for m in shown]
     handles += [matplotlib.lines.Line2D([], [], color="#555555", ls=ls, label=f"{w} tolerance") for w, ls in (("looser", "-"), ("tighter", "--"))]
     fig.legend(handles=handles, loc="outside lower center", ncol=min(6, len(handles)), fontsize=8, frameon=False)
-    fig.suptitle("Stiff-system ladder: surrogates of the step map on held-out trajectories (x at the top: over the time limit or budget)",
+    fig.suptitle("ODE ladder: surrogates of the step map on held-out trajectories (x at the top: over the time limit or budget)",
                  fontsize=11)  # fmt: skip
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / "ladder.png"
@@ -701,17 +720,45 @@ SHORT = {"slowtable": "SlowTable", "chebtt_smooth": "ChebTT\nno edges", "chebtt_
          "chebtt_metric": "ChebTT-M", "chebtt_roll": "ChebTT\nrollout", "afinni": "AFINNI", "art": "ART\naffine", "art_quad": "ART\nquad"}  # fmt: skip
 
 
-def plot_overview(baseline: str = BASELINE) -> list[Path]:
-    """
-    ``output/chem/overview-stiff-{loose,tight}.png``: per problem (rows, by input dimension) and method
-    (columns), the worst one-step error and the worst rollout error over the tolerance (blue within,
-    red beyond), with the training solves; hatched: over the time limit or the evaluation budget.
-    """
-    from matplotlib.colors import BoundaryNorm, ListedColormap
-    from src.structure.chemfill import ladder
+def _baseline_label(names: list[str], baseline: str | None) -> str:
+    """What the speedups of these problems are over: the named baseline, or each problem's own when they differ."""
+    own = {baseline or PROBLEMS[n].baseline for n in names}
+    return BASELINES[own.pop()]["label"] if len(own) == 1 else "each problem's own baseline (" + ", ".join(sorted(own)) + ")"
+
+
+def _row_label(n: str) -> str:
+    """A problem's row: its name, input dimension and measured dynamics class (when diagnosed)."""
+    path = CACHE / f"{n}-dynamics.json"
+    kind = f"; {json.loads(path.read_text())['kind']}" if path.exists() else ""
+    return f"{n} ({len(PROBLEMS[n].system.components)}{kind})"
+
+
+def _regime_problems() -> dict[str, list[str]]:
+    """Per regime (``REGIMES`` order), the ladder's problems with records, by input dimension; empty regimes left out."""
+    from src.structure.ode.fill import ladder
 
     names = [n for n in ladder(10**6) if (CACHE / n).is_dir()]
+    return {r: [n for n in names if PROBLEMS[n].regime == r] for r in REGIMES if any(PROBLEMS[n].regime == r for n in names)}
+
+
+def plot_overview(baseline: str | None = None) -> list[Path]:
+    """
+    ``output/ode/overview-<regime>-{loose,tight}.png``, one pair per regime: per problem (rows, by input
+    dimension) and method (columns), the worst one-step error and the worst rollout error over the
+    tolerance (blue within, red beyond), with the training solves, and the speedup over ``baseline``
+    (default: each problem's own); hatched: over the time limit or the evaluation budget.
+    """
+    paths = []
+    for regime, names in _regime_problems().items():
+        paths += _overview(regime, names, baseline)
+    return paths
+
+
+def _overview(regime: str, names: list[str], baseline: str | None) -> list[Path]:
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+
     methods = [m for m in METHODS if any((CACHE / n / f"{m}_tol{t:g}.json").exists() for n in names for t in PROBLEMS[n].tolerances)]
+    over = _baseline_label(names, baseline)
     bounds = [0, 0.01, 0.1, 0.5, 1, 2, 10, 100, 1e300]
     cmap = ListedColormap(["#2166ac", "#4393c3", "#92c5de", "#d1e5f0", "#f4a582", "#d6604d", "#b2182b", "#67001f"])
     norm = BoundaryNorm(bounds, cmap.N)
@@ -750,7 +797,7 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
         speed_key = [matplotlib.patches.Patch(color=c, label=lab) for c, (_, lab) in zip(band, decades, strict=True)]
         speed_key += [matplotlib.patches.Patch(fill=False, ec="black", lw=1.6, label="fastest in the row")]
         for ax, key, title in ((axes[0], "worst", "one-step error / tol"), (axes[1], "rollout_worst", "rollout error / tol (20 trajectories)"),
-                               (axes[2], None, f"speedup over {BASELINES[baseline]['label']} (top), inference per state (bottom)")):
+                               (axes[2], None, f"speedup over {over} (top), inference per state (bottom)")):
             for i, n in enumerate(names):
                 tols = sorted(PROBLEMS[n].tolerances, reverse=True)
                 if key is None or k >= len(tols):
@@ -780,7 +827,7 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
             ax.set_xlim(0, len(methods))
             ax.set_ylim(len(names), 0)
             ax.set_xticks(np.arange(len(methods)) + 0.47, [SHORT.get(m, m) for m in methods], fontsize=7, rotation=20, ha="right")
-            ax.set_yticks(np.arange(len(names)) + 0.45, [f"{n} ({len(PROBLEMS[n].net.species)})" for n in names], fontsize=7.5)
+            ax.set_yticks(np.arange(len(names)) + 0.45, [_row_label(n) for n in names], fontsize=7.5)
             ax.tick_params(length=0)
             for sp in ax.spines.values():
                 sp.set_visible(False)
@@ -792,27 +839,30 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
                       matplotlib.patches.Patch(fill=False, ec="black", lw=1.6, label="least in the row")]
         # the figure's heading is this key's title: constrained layout does not stack a suptitle and an outside legend
         fig.legend(handles=error_key, loc="outside upper center", ncol=10, fontsize=7, frameon=False, handlelength=1.4, columnspacing=1.0,
-                   title=f"Stiff systems, the {'looser' if k == 0 else 'tighter'} tolerance of each problem (0.01 or 0.001, dex or absolute).\n"
+                   title=f"{REGIMES[regime]}, the {'looser' if k == 0 else 'tighter'} tolerance of each problem (0.01 or 0.001, dex or absolute).\n"
                          "Error cells: training solves above the worst error / tolerance (blue holds, red exceeds)", title_fontsize=8.5)
         fig.legend(handles=speed_key, loc="outside lower center", ncol=6, fontsize=7, frameon=False, handlelength=1.4,
-                   title=f"speedup over {BASELINES[baseline]['label']}", title_fontsize=7.5)  # fmt: skip
+                   title=f"speedup over {over}", title_fontsize=7.5)  # fmt: skip
         OUT.mkdir(parents=True, exist_ok=True)
-        path = OUT / f"overview-stiff-{label}.png"
+        path = OUT / f"overview-{regime}-{label}.png"
         fig.savefig(path, dpi=130)
         plt.close(fig)
         paths.append(path)
     return paths
 
 
-def plot_speedup(baseline: str = BASELINE) -> Path:
+def plot_speedup(baseline: str | None = None) -> list[Path]:
     """
-    ``output/chem/speedup-stiff.png``: every case as a point, its rollout error over the tolerance against its
-    speedup over the named baseline (left of 1 holds the tolerance; up is faster), one colour per method,
-    circles for the looser tolerance and squares for the tighter: which methods are both fast and accurate.
+    ``output/ode/speedup-<regime>.png``, one per regime: every case as a point, its rollout error over the
+    tolerance against its speedup over ``baseline`` (default: each problem's own; left of 1 holds the
+    tolerance; up is faster), one colour per method, circles for the looser tolerance and squares for the
+    tighter: which methods are both fast and accurate.
     """
-    from src.structure.chemfill import ladder
+    return [_speedup(regime, names, baseline) for regime, names in _regime_problems().items()]
 
-    names = [n for n in ladder(10**6) if (CACHE / n).is_dir()]
+
+def _speedup(regime: str, names: list[str], baseline: str | None) -> Path:
+    own = {baseline or PROBLEMS[n].baseline for n in names}
     fig, ax = plt.subplots(figsize=(8.5, 6), layout="constrained")
     handles = []
     for meth, (label, colour, _) in METHODS.items():
@@ -842,19 +892,20 @@ def plot_speedup(baseline: str = BASELINE) -> Path:
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("rollout error / tolerance (20 trajectories; < 1 holds)")
-    ax.set_ylabel(f"speedup over {BASELINES[baseline]['label']}")
-    ax.set_title(f"Stiff systems: speed against rollout accuracy. Baseline: {BASELINES[baseline]['integrator']}; "
-                 f"{BASELINES[baseline]['device']}. Surrogates: CPU, 1 thread, batched inference", fontsize=8.5, wrap=True)  # fmt: skip
+    ax.set_ylabel(f"speedup over {_baseline_label(names, baseline)}")
+    base = "; ".join(f"{BASELINES[b]['integrator']}, {BASELINES[b]['device']}" for b in sorted(own))
+    ax.set_title(f"{REGIMES[regime]}: speed against rollout accuracy. Baseline: {base}. Surrogates: CPU, 1 thread, batched inference",
+                 fontsize=8.5, wrap=True)  # fmt: skip
     fig.legend(handles=handles, loc="outside lower center", ncol=5, fontsize=8, frameon=False)
     OUT.mkdir(parents=True, exist_ok=True)
-    path = OUT / "speedup-stiff.png"
+    path = OUT / f"speedup-{regime}.png"
     fig.savefig(path, dpi=130)
     plt.close(fig)
     return path
 
 
 def write_summary() -> Path:
-    lines = ["# Stiff-system bench (errors in dex for log problems, absolute otherwise, over held-out trajectory states; refused states are solved)", "",
+    lines = ["# ODE bench (errors in dex for log problems, absolute otherwise, over held-out trajectory states; refused states are solved)", "",
              "| problem | tol | method | solves | one-step worst | 99.9% | 99% | % above tol | % refused | rollout worst | train s | infer us | solver us | speedup |",
              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
     for name, p in PROBLEMS.items():
@@ -871,7 +922,7 @@ def write_summary() -> Path:
                              f"{m['q99']:.2g} | {m['above_percent']:.2f} | {m['refused_percent']:.2f} | {m.get('rollout_worst', float('nan')):.2g} | {m['train_s']:.1f} | "
                              f"{m['predict_us']:.1f} | {m.get('solve_us', float('nan')):,.0f} | {m.get('speedup', float('nan')):,.0f} |")  # fmt: skip
     OUT.mkdir(parents=True, exist_ok=True)
-    path = OUT / "summary-chem.md"
+    path = OUT / "summary-ode.md"
     path.write_text("\n".join(lines) + "\n")
     return path
 

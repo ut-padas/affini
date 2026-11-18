@@ -44,9 +44,14 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
   - `bench.py` runs, caches and plots every method; `fill.py` drives it over the whole grid
     (section 1.15): `python -m src.structure.fill --d 2,3,5,10,20 --limit 90`, with `--vector` for
     the vector-valued problems.
-  - Chemistry: `chemistry.py` (oracles: Robertson, primordial H/He/H2, HIRES, POLLU, Akzo Nobel),
-    `tabulation.py` (SlowTable), `chembench.py` (the chemistry bench, section 1.12:
-    `python -m src.structure.chembench --problems robertson --plot`).
+  - ODE systems: the package `ode/` (`system.py`: the `System` oracle; `chemistry.py`: Robertson,
+    primordial H/He/H2, HIRES, POLLU, Akzo Nobel; `reaction_diffusion.py`: Brusselator, Allen-Cahn,
+    Fisher-KPP; `lorenz.py`: Lorenz-96 at F = 1), `tabulation.py` (SlowTable), `ode/bench.py` (the ODE
+    bench, section 1.12: `python -m src.structure.ode.bench --problems robertson --plot`) and
+    `ode/fill.py` (the ladder; `--first lorenz96` runs a family first). Each problem declares a regime
+    (stiff, non-stiff, chaotic): overviews per regime, `output/ode/overview-<regime>-{loose,tight}.png`,
+    and speedups over the integrator its system would be solved with (named baselines
+    `scipy-radau-cpu1`, `scipy-rk45-cpu1`).
   - Prefix every command with `SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=.` and use
     `.venv/bin/python` (the fill starts its own 8-rank `mpiexec` jobs).
 - Results (not committed): `src/structure/cache/cpu-8rank/<problem>_d<d>/<method>_tol<t>_s<seed>.npz`,
@@ -59,8 +64,8 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
   pieces, mean error); `summary-d<d>.md` has the seed means; then per problem `<problem>-d<d>-cost.png`
   and the maps (2-D) or slice and shadow views. The fill logs to `output/cpu-8rank/fill.log`.
   `python -m src.structure.bench --replot --setup cpu-8rank --d <d> --problems ...` redraws them.
-  Chemistry: trajectories in `cache/chem/<problem>.npz`, runs in
-  `cache/chem/<problem>/<method>_tol<t>.json`, plots and `summary-chem.md` in `output/chem/`.
+  ODE systems: trajectories in `cache/ode/<problem>.npz`, runs in
+  `cache/ode/<problem>/<method>_tol<t>.json`, plots and `summary-ode.md` in `output/ode/`.
 - Literature: [LITERATURE.md](LITERATURE.md) (every work reviewed, IDs I-* to V-*); reviews I-V are
   sections 2-6 below, Review VI (vector-valued outputs) section 8, Review VII (metrics by dynamical
   class) section 9, Review VIII (piecewise TTs, interfaces) section 10.
@@ -198,7 +203,7 @@ at 0.05 over the 300k budget). Over budget at 5-D: the rotated Gaussian, `lorenz
   watching memory, after the fill; until then its cell is not run. And `swirl` needs a
   domain that shrinks with d: on [-2, 2]^20 its angle 2 exp(-|x|^2) is about 0 at every test point,
   so ART holds it with 400 evaluations while ChebTT, seeded at the centre, resolves the vortex there.
-- Running after the box fill (chained): the stiff ladder (`chemfill --limit 240`, 12 solver workers),
+- Running after the box fill (chained): the stiff ladder (`ode.fill --limit 240`, 12 solver workers),
   then the primordial network with the same four methods. Then: per-class horizons and metrics from
   Review VII (valid prediction time for chaotic members; orbit and phase error for oscillatory ones;
   horizons in slow-relaxation times), and a chaotic family on the ladder.
@@ -411,7 +416,7 @@ after Dirichlet-random initial conditions, central differences of the step map i
 singular values ~(1.3-1.7, 1.0, 1e-2-1e-4) at dt = 1e-3 and ~(1.2-1.7, 0.5-1.0, 1e-10) for every
 dt from 0.1 to 1e3. The fast direction collapses once dt exceeds the fast time scale.
 
-The primordial network (nine species, isothermal; `src/structure/chemistry.py`), states relaxed for
+The primordial network (nine species, isothermal; `src/structure/ode/chemistry.py`), states relaxed for
 1e5 yr from random ionisation and H2 fractions, central differences in log10 number densities:
 
 | n_H (cm^-3), T (K) | dt = 1e2 yr | dt = 1e4 yr | dt = 1e6 yr |
@@ -428,7 +433,7 @@ input dimension is the number of slow modes, which falls as dt grows.
 
 ### 1.12 The chemistry bench: one-step and rollout errors
 
-`src/structure/chembench.py` trains each surrogate of a network's step map (in log10 abundances, the
+`src/structure/ode/bench.py` trains each surrogate of a network's step map (in log10 abundances, the
 increment `Phi_dt(z) - z`) on training trajectories and judges it on held-out ones in two ways: the
 **one-step error** (a surrogate step from the true state against the solver's step: how well the
 visited states are covered) and the **rollout error** (20 test trajectories chained through the
@@ -675,7 +680,7 @@ Lotka-Volterra, 0.70 against 1.18 us, and it moves predictions by up to 0.25 of 
 
 ### 1.20 The stiff-system ladder: errors by dynamical class, and rollouts that hold
 
-The vector ladder's next rung before chemistry (`chemfill.py`, `chembench.py`): surrogates of the step
+The vector ladder's next rung before chemistry (`ode/fill.py`, `ode/bench.py`): surrogates of the step
 map of well-known stiff systems at growing sizes, trained and judged on visited states. Families
 (`chemistry.LADDER`): the Brusselator with diffusion (Hairer-Wanner; no-flux boundaries, B = 1.9 near
 its Hopf point, log coordinates; 2n inputs), Allen-Cahn (u' = u_xx + (u - u^3)/0.05, linear coordinates)
@@ -1347,7 +1352,7 @@ No use of ISAT in astrochemistry turned up in this search either.
 
 Builds on docs/LITERATURE.md (I-* to IV-* cited by ID) and Review IV (section 5); new works are V-1 to V-49. Tags: **[v]**
 source read (full text, named sections, or code), **[a]** abstract or catalogue only, **[r]** recalled. "Measured"
-marks short runs made for the review (scripts not kept; the rates are in `src/structure/chemistry.py`).
+marks short runs made for the review (scripts not kept; the rates are in `src/structure/ode/chemistry.py`).
 
 ### 6.0 Bottom line (ranked by gain over cost)
 
@@ -1584,7 +1589,7 @@ H−·H+, and k18 and k19 on H2+. Grackle's defaults are used: `CaseBRecombinati
 `h2_charge_exchange_rate = 1`, tiny = 1e-20 (`grackle_macros.h`). Units are cm³ s⁻¹ (two-body) and cm⁶ s⁻¹
 (three-body). T is in K; T_eV = T/11605; ln T_eV is the natural log. Most fits derive from Abel et al. 1997
 [V-43, a], whose model covers n < 1e4 cm⁻³ and 1 K < T < 1e8 K. Every row below was transcribed from the pinned
-source and evaluated (now `primordial_rates` in `src/structure/chemistry.py`). As a check, k2(1e4 K) = 4.17e-13, the standard case-A value. **All
+source and evaluated (now `primordial_rates` in `src/structure/ode/chemistry.py`). As a check, k2(1e4 K) = 4.17e-13, the standard case-A value. **All
 rows: verified against source.**
 
 | k | Reaction | k(T) (cgs) | Source lines |
@@ -2066,7 +2071,7 @@ fit each class. Tags: [v] source read, [a] abstract or summary read, [r] recalle
 (docs/LITERATURE.md); earlier ones by their IDs. "Ours" marks a proposal that no source states.
 
 Notation. z_k are the solver's states, Phi the step map, J_k = DPhi(z_k) by central differences (as
-`chembench.amplification` already computes), P_{j->n} = J_{n-1} ... J_j (P_{n->n} = I), d_k = S(z_k) - Phi(z_k)
+`ode.bench.dynamics` already computes), P_{j->n} = J_{n-1} ... J_j (P_{n->n} = I), d_k = S(z_k) - Phi(z_k)
 the surrogate's defect at a true state, and delta = max_k |d_k| the one-step error.
 
 ### 9.0 Bottom line (ranked by gain over cost)
@@ -2320,7 +2325,7 @@ time otherwise), its 99.9% quantile, the speedup, and rho_N. Then by class:
 - The [r] items, in particular HNW's fan theorem, the log-norm bounds, Boffetta's T_p and the
   Hairer-Lubich-Wanner growth rates, are standard but were not re-read here. VII-32 was withdrawn by arXiv.
 
-Measured for this review (light, three Robertson test trajectories, 40 steps, `src/structure/cache/chem`):
+Measured for this review (light, three Robertson test trajectories, 40 steps, `src/structure/cache/ode`):
 s_k = 24-27; sigma(J) = (1.2-1.66, 0.84-0.9996, 1e-12-2e-11); A_10, A_20, A_40 = 17, 34, 64 (max norm,
 worst trajectory); rho_40 = 0.56 (ChebTT box 0.001), 0.17 (ChebTT box 0.01), 0.018 (SlowTable 0.001).
 
