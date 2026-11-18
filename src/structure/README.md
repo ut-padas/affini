@@ -18,8 +18,7 @@ are in [docs/SURROGATE_RESEARCH.md](../../docs/SURROGATE_RESEARCH.md).
 | `bench.py` | runs, caches and plots every method (`METHODS`): `afinni`, `art`, `art_quad` (ART with quadratic leaves) and the registered schemes |
 | `schemes.py` | registers the new schemes; under MPI, rank 0 runs a scheme and spreads each round's oracle calls over every rank |
 | `chebtree.py` | **ChebTree**: an adaptive tree of tensor Chebyshev boxes, refined by the decay of their coefficients: per-axis geometric and algebraic decay fits give the error estimate, the degree where the decay is exponential and a split where it is not; a few check points per box, seeded by its locational code, catch aliasing; trailing coefficients are chopped after acceptance. Also `build_rotated`, ChebTree in active-subspace coordinates |
-| `sparsegrid.py` | **SparseCheb**: a dimension-adaptive sparse Chebyshev grid (Smolyak, Gerstner-Griebel) with a random-point convergence check |
-| `sparsegrid2.py` | **SparseCheb v2**: the same grid held as one flat Chebyshev expansion, with a Sobol-plus-corners check (work in progress, see below) |
+| `sparsegrid.py` | **SparseCheb**: a dimension-adaptive sparse Chebyshev grid (Smolyak, Gerstner-Griebel), stopped by its surpluses and a Sobol-plus-corners check at half the tolerance; a failed check refines every active index once (a one-step look-ahead) |
 
 Problems: `rosenbrock`, `gaussian`, `wave`, `front` (a sharp tanh front on a sphere); the Genz
 families `genz_oscillatory`, `genz_product_peak`, `genz_corner_peak`, `genz_gaussian`,
@@ -93,10 +92,9 @@ tolerances (up to 10 us). The full tables are in `output/summary-d2.md` after a 
    the degree. Also chop trailing coefficients after acceptance (faster inference), and avoid
    overshooting smooth functions (wave reaches 1e-10 of the tolerance: wasted evaluations).
 3. **SparseCheb's stopping test.** The surplus estimate stops early where some interaction is never
-   opened, and 20 d random check points miss small regions (gaussian, genz_corner_peak, griewank,
-   worst 1.0-1.7x). `sparsegrid2.py`'s Sobol-plus-corners check at half the tolerance removes those
-   misses, but costs 1.5-3x the evaluations and its flat expansion is slower to infer than v1 for
-   many terms; both need work before it replaces v1.
+   opened, and 20 d random check points missed small regions (gaussian, genz_corner_peak, griewank,
+   worst 1.0-2.1x). A Sobol-plus-corners check at half the tolerance, with a one-step look-ahead when
+   it fails, removes those misses; it costs 1.3-3x the evaluations.
 4. **SparseCheb at kinks and jumps** needs one global expansion to resolve them: 1e5-1e6 evaluations
    on Ackley, genz_continuous and the jumps. A tree of sparse grids (ChebTree's splitting with a
    sparse grid in each box) would localise them.

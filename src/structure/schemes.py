@@ -12,7 +12,7 @@ import numpy as np
 
 from src import to_host, xp
 from src.infra.backend import MPI
-from src.structure import chebtree, sparsegrid, sparsegrid2
+from src.structure import chebtree, sparsegrid
 from src.structure.bench import Model, register
 
 _EVALUATE, _STOP = "evaluate", "stop"
@@ -77,12 +77,5 @@ def _sparsecheb(f, lo, hi, atol, seed) -> Model:
     return Model(m.predict, None, len(m.coef), m.evals)
 
 
-def _sparsecheb2(f, lo, hi, atol, seed) -> Model:
-    """SparseCheb v2: one flat Chebyshev expansion and a Sobol-plus-corners check (work in progress)."""
-    m = sparsegrid2.build(f, lo, hi, atol, seed=seed)
-    return Model(m.predict, None, len(m.A) if m.A is not None else 0, m.evals)
-
-
 register("chebtree", "ChebTree: Chebyshev boxes, coefficient decay", "#c0392b", distributed(_chebtree))
 register("sparsecheb", "SparseCheb: adaptive sparse Chebyshev grid", "#6a1b9a", distributed(_sparsecheb))
-register("sparsecheb2", "SparseCheb v2: flat expansion, Sobol check", "#00838f", distributed(_sparsecheb2))
