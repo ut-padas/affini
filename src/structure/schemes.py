@@ -19,7 +19,13 @@ _EVALUATE, _STOP = "evaluate", "stop"
 
 
 def _host(f):
-    return lambda X: np.ravel(to_host(f(xp.asarray(X))))
+    """f on host arrays: (N,) values, or (N, m) for a vector problem."""
+
+    def g(X):
+        V = np.asarray(to_host(f(xp.asarray(X))))
+        return V.reshape(len(X), -1) if V.ndim == 2 and V.shape[1] > 1 else V.ravel()
+
+    return g
 
 
 class ScatterOracle:
@@ -31,8 +37,8 @@ class ScatterOracle:
     def __call__(self, X):
         self.comm.bcast(_EVALUATE, root=0)
         local = self.comm.scatter(np.array_split(np.asarray(X), self.comm.Get_size()), root=0)
-        values = self.comm.gather(self.f(local) if len(local) else np.empty(0), root=0)
-        return np.concatenate(values)
+        values = self.comm.gather(self.f(local) if len(local) else None, root=0)
+        return np.concatenate([v for v in values if v is not None])
 
     def stop(self):
         self.comm.bcast(_STOP, root=0)
@@ -42,7 +48,7 @@ def serve(f, comm) -> None:
     """A non-root rank's loop: evaluate the share of every batch rank 0 scatters, until it stops."""
     while comm.bcast(None, root=0) == _EVALUATE:
         local = comm.scatter(None, root=0)
-        comm.gather(f(local) if len(local) else np.empty(0), root=0)
+        comm.gather(f(local) if len(local) else None, root=0)
 
 
 def distributed(train):
@@ -79,8 +85,12 @@ def _sparsecheb(f, lo, hi, atol, seed) -> Model:
 
 def _chebtt(f, lo, hi, atol, seed) -> Model:
     """ChebTT, the Chebyshev tensor train by cross approximation (its random fibres and check points from ``seed``)."""
-    m = chebtt.build(f, lo, hi, atol, seed=seed)
-    return Model(m.predict, None, 1, m.evals)
+    probe = np.asarray(f(np.asarray(lo, dtype=np.float64)[None]))
+    if probe.ndim == 2 and probe.shape[1] > 1:  # a vector problem: one train for every output
+        m = chebtt.build_vector(f, lo, hi, atol, probe.shape[1], seed=seed)
+    else:
+        m = chebtt.build(f, lo, hi, atol, seed=seed)
+    return Model(m.predict, None, 1, m.evals + 1)
 
 
 def _kernel(f, lo, hi, atol, seed) -> Model:

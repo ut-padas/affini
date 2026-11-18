@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 
 from src.structure import bench
-from src.structure.problems import PROBLEMS
+from src.structure.problems import PROBLEMS, VECTOR_PROBLEMS
 
 FAST = ("rosenbrock", "genz_oscillatory", "genz_corner_peak", "genz_product_peak", "genz_gaussian", "lotka_volterra")
 ENV = {"SURROGATE_DEVICE": "cpu", "SURROGATE_MPI": "on", "OMP_NUM_THREADS": "1", "NUMBA_NUM_THREADS": "1",
@@ -64,15 +64,22 @@ def _record_time_limit(method, problem, d, tol, seed, limit, ranks) -> None:
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("--d", default="2,3,5,10,20")
-    parser.add_argument("--problems", default=None, help="default: the fast set first, then every other problem")
-    parser.add_argument("--methods", default="chebtt,art_quad,art,afinni,chebtree,sparsecheb,kernel")
+    parser.add_argument("--problems", default=None, help="default: the fast set first, then every other scalar problem")
+    parser.add_argument("--vector", action="store_true", help="the vector-valued problems instead of the scalar ones")
+    parser.add_argument("--methods", default="chebtt,art_quad,art,afinni",
+                        help="ChebTree, SparseCheb and MetricKernel are left out: ChebTT beats them from 3-D up")
     parser.add_argument("--limit", type=float, default=90.0, help="wall seconds per run, start-up included")
     parser.add_argument("--ranks", type=int, default=8)
     a = parser.parse_args(argv)
     import src.structure.schemes  # noqa: F401  (registers the schemes, so bench.METHODS knows them)
 
     bench.SETUP = f"cpu-{a.ranks}rank"
-    problems = a.problems.split(",") if a.problems else list(FAST) + [p for p in PROBLEMS if p not in FAST]
+    if a.problems:
+        problems = a.problems.split(",")
+    elif a.vector:
+        problems = list(VECTOR_PROBLEMS)
+    else:
+        problems = list(FAST) + [p for p, prob in PROBLEMS.items() if p not in FAST and not prob.vector]
     log_path = bench.OUT / bench.SETUP / "fill.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "a") as log:

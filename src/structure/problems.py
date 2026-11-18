@@ -17,6 +17,7 @@ from src.problems.anisotropic_gaussian import aniso_gaussian
 from src.problems.wave import wave
 
 GRID = 300
+_SCALES: dict = {}  # (problem, d) -> per-component max |f| of a vector problem on its test set
 TOLERANCES = {2: (0.1, 0.01, 0.001), 3: (0.1, 0.03, 0.01), 5: (0.1, 0.05, 0.02), 10: (0.2, 0.1, 0.05)}
 N_TEST = 50_000
 
@@ -35,16 +36,24 @@ def front(x):
     return xp.tanh((xp.sqrt(xp.sum(x**2, axis=1, keepdims=True)) - 1.0) / 0.05)
 
 
-def lorenz96(forcing: float, tf: float):
-    """The first state of the Lorenz-96 flow map at ``tf`` (the library's per-trajectory DOPRI5, rtol = atol = 1e-6)."""
+def lorenz96(forcing: float, tf: float, state: bool = False):
+    """
+    The first state (or with ``state``, every state) of the Lorenz-96 flow map at ``tf`` (the library's
+    per-trajectory DOPRI5, rtol = atol = 1e-6).
+    """
     from src.problems.lorenz96_flowmap import lorenz96_flowmap
 
-    return lambda x: lorenz96_flowmap(x, forcing, tf)[:, :1]
+    return (lambda x: lorenz96_flowmap(x, forcing, tf)) if state else (lambda x: lorenz96_flowmap(x, forcing, tf)[:, :1])
 
 
 def lotka_volterra(x, tf: float = 2.0, steps: int = 200):
+    """The first species of ``lotka_volterra_state``."""
+    return lotka_volterra_state(x, tf, steps)[:, :1]
+
+
+def lotka_volterra_state(x, tf: float = 2.0, steps: int = 200):
     """
-    The first species of a competitive Lotka-Volterra network at ``tf``: ``x_i' = x_i (r_i - sum_j A_ij x_j)``,
+    Every species of a competitive Lotka-Volterra network at ``tf``: ``x_i' = x_i (r_i - sum_j A_ij x_j)``,
     with growth rates and interactions drawn once from a fixed seed (A_ii = 1, off-diagonal in [0, 0.8]),
     by fixed-step RK4 (row by row, so a row's value does not depend on the others; error about 1e-10).
     """
@@ -65,7 +74,7 @@ def lotka_volterra(x, tf: float = 2.0, steps: int = 200):
         k3 = rhs(y + 0.5 * h * k2)
         k4 = rhs(y + h * k3)
         y = y + (h / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
-    return y[:, :1]
+    return y
 
 
 # --- Standard N-dimensional test functions (optimisation and sparse-grid benchmarks) ----------
@@ -153,12 +162,53 @@ def ball_jump(x):
     return xp.exp(-r2) * (r2 < 0.64)
 
 
+# --- Vector-valued problems (R^d -> R^m) ---------------------------------------------------------
+def rosenbrock_gradient(x):
+    """The gradient of ``rosenbrock`` (a polynomial vector field, m = d)."""
+    a, b = x[:, :-1], x[:, 1:]
+    g = xp.zeros_like(x)
+    g[:, :-1] += -2.0 * (1.0 - a) - 4.0 * a * (b - a**2)
+    g[:, 1:] += 2.0 * (b - a**2)
+    return g
+
+
+def genz_triple(x):
+    """Genz's oscillatory, product-peak and corner-peak functions side by side: outputs of different structure, m = 3 for any d."""
+    return xp.concatenate([genz(k)(x) for k in ("oscillatory", "product_peak", "corner_peak")], axis=1)
+
+
+def wave_pair(x):
+    """``(cos 1.5 q.x, sin 1.5 q.x)``, q a fixed random unit vector: an oblique ridge in two outputs (m = 2)."""
+    d = int(x.shape[1])
+    q = np.random.default_rng(9_000 + d).normal(size=d)
+    s = x @ xp.asarray(q / np.linalg.norm(q))
+    return xp.stack([xp.cos(1.5 * s), xp.sin(1.5 * s)], axis=1)
+
+
+def swirl(x):
+    """
+    Consecutive coordinate pairs rotated by the angle ``2 exp(-|x|^2)``: a smooth vortex, strong near the
+    centre and fading outside it (m = d; for odd d the last coordinate is scaled by the cosine).
+    """
+    d = int(x.shape[1])
+    th = 2.0 * xp.exp(-xp.sum(x**2, axis=1, keepdims=True))
+    c, s = xp.cos(th), xp.sin(th)
+    y = c * x
+    pairs = d // 2
+    if pairs:
+        u, v = x[:, 0 : 2 * pairs : 2], x[:, 1 : 2 * pairs : 2]
+        y[:, 0 : 2 * pairs : 2] = c * u - s * v
+        y[:, 1 : 2 * pairs : 2] = s * u + c * v
+    return y
+
+
 @dataclass(frozen=True)
 class Problem:
     name: str
     lo: float
     hi: float
     f: object
+    vector: bool = False  # f returns (N, m): its components are scaled to max |f_c| = 1 on the test set
 
     def tolerances(self, d: int) -> tuple[float, ...]:
         """The tolerances run at dimension d (``TOLERANCES``, the nearest listed dimension below d)."""
@@ -174,8 +224,32 @@ class Problem:
             return np.stack(np.meshgrid(lo[0] + g * (hi[0] - lo[0]), lo[1] + g * (hi[1] - lo[1])), axis=-1).reshape(-1, 2)
         return np.random.default_rng(20_261_117).uniform(lo, hi, (N_TEST, d))
 
+    def scale(self, d: int) -> np.ndarray:
+        """
+        A vector problem's per-component max |f_c| on the test set (1 for a scalar problem), cached. The
+        components are divided by it, so that one tolerance is the same relative accuracy for every
+        component and the error metric, max over points and components of |error_c| / max |f_c|, does
+        not let a component of large range hide the errors of a small one.
+        """
+        if not self.vector:
+            return np.ones(1)
+        key = (self.name, d)
+        if key not in _SCALES:
+            V = np.asarray(to_host(self.f(xp.asarray(self.test_points(d)))), dtype=np.float64)
+            _SCALES[key] = np.maximum(np.max(np.abs(V), axis=0), 1e-300)
+        return _SCALES[key]
+
+    def oracle(self, d: int):
+        """The function the methods train on: f, or for a vector problem f with its components scaled."""
+        if not self.vector:
+            return self.f
+        s = xp.asarray(self.scale(d))
+        return lambda x: self.f(x) / s
+
     def values(self, X: np.ndarray) -> np.ndarray:
-        return np.ravel(to_host(self.f(xp.asarray(X))))
+        """(N,) for a scalar problem, (N, m) scaled components for a vector one."""
+        V = np.asarray(to_host(self.oracle(int(X.shape[1]))(xp.asarray(X))), dtype=np.float64)
+        return V.reshape(len(X), -1) if self.vector else V.ravel()
 
 
 PROBLEMS = {
@@ -198,3 +272,12 @@ PROBLEMS = {
     "lorenz96_chaotic": Problem("lorenz96_chaotic", -5.0, 5.0, lorenz96(8.0, 0.5)),
     "lotka_volterra": Problem("lotka_volterra", 0.1, 1.0, lotka_volterra),
 }
+VECTOR_PROBLEMS = {
+    "rosenbrock_gradient": Problem("rosenbrock_gradient", -2.0, 2.0, rosenbrock_gradient, vector=True),
+    "genz_triple": Problem("genz_triple", 0.0, 1.0, genz_triple, vector=True),
+    "lotka_volterra_state": Problem("lotka_volterra_state", 0.1, 1.0, lotka_volterra_state, vector=True),
+    "swirl": Problem("swirl", -2.0, 2.0, swirl, vector=True),
+    "wave_pair": Problem("wave_pair", -3.0, 3.0, wave_pair, vector=True),
+    "lorenz96_state": Problem("lorenz96_state", -5.0, 5.0, lorenz96(1.0, 0.1, state=True), vector=True),
+}
+PROBLEMS.update(VECTOR_PROBLEMS)

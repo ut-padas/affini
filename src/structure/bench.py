@@ -151,7 +151,8 @@ SLICE = 160
 def directions(problem: str, d: int) -> np.ndarray:
     """
     (d, 2) the two directions in which f changes most: the leading eigenvectors of the mean
-    gradient outer product, from forward differences at 400 fixed points (cached per problem and d).
+    gradient outer product (for a vector problem, of the Jacobian Gram matrix ``E[J^T J]``), from forward
+    differences at 400 fixed points (cached per problem and d).
     They span the slice plane and the shadow coordinates of the high-dimensional views. Under MPI
     every rank may compute them at once; each writes its own file and renames it into place, so a
     rank never reads a file another rank is still writing.
@@ -163,9 +164,10 @@ def directions(problem: str, d: int) -> np.ndarray:
     lo, hi = p.domain(d)
     X = np.random.default_rng(5).uniform(lo, hi, (400, d))
     h = 1e-5 * (hi - lo)
-    v = p.values(np.concatenate([X] + [X + np.eye(d)[k] * h[k] for k in range(d)])).reshape(d + 1, len(X))
-    G = ((v[1:] - v[0]) / h[:, None]).T
-    lam, W = np.linalg.eigh(G.T @ G / len(X))
+    v = p.values(np.concatenate([X] + [X + np.eye(d)[k] * h[k] for k in range(d)])).reshape(d + 1, len(X), -1)
+    J = (v[1:] - v[0]) / h[:, None, None]  # (d, N, m): a vector problem sums its components' outer products
+    C = np.einsum("knc,lnc->kl", J, J) / len(X)
+    lam, W = np.linalg.eigh(C)
     W = W[:, np.argsort(lam)[::-1][:2]]
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{problem}_d{d}-{MPI.COMM_WORLD.Get_rank()}.tmp.npz")
@@ -188,6 +190,21 @@ def slice_points(problem: str, d: int) -> tuple[np.ndarray, np.ndarray, float]:
 
 
 # --- Running and caching -----------------------------------------------------------------
+def point_error(pred: np.ndarray, fX: np.ndarray) -> np.ndarray:
+    """Each point's |error|: for a vector problem the worst component's (its components are scaled to max 1)."""
+    E = np.abs(np.asarray(pred, dtype=np.float64).reshape(fX.shape) - fX)
+    return E.max(axis=1) if E.ndim == 2 else E
+
+
+def display(fX: np.ndarray) -> np.ndarray:
+    """The scalar a map draws for f: f itself, or a vector field's Euclidean norm."""
+    return np.linalg.norm(fX, axis=1) if fX.ndim == 2 else fX
+
+
+def _column(mask: np.ndarray, like: np.ndarray) -> np.ndarray:
+    return mask[:, None] if like.ndim == 2 else mask
+
+
 def cache_path(method, problem, d, tol, seed) -> Path:
     return CACHE / setup() / f"{problem}_d{d}" / f"{method}_tol{tol:g}_s{seed}.npz"
 
@@ -214,7 +231,7 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
     comm.Barrier()
     t0 = time.perf_counter()
     try:
-        model = METHODS[method][2](p.f, lo, hi, atol, seed)
+        model = METHODS[method][2](p.oracle(d), lo, hi, atol, seed)
     except RuntimeError as err:  # a scheme over its evaluation budget: recorded, not fatal
         metrics = {"method": method, "problem": problem, "d": d, "tol": tol, "seed": seed, "atol": atol,
                    "failed": str(err)[:300], "train_s": time.perf_counter() - t0, "ranks": size,
@@ -234,19 +251,25 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
         slice_pred = model.predict(Xs[inside])
     if rank != 0:
         return None
-    pred = np.asarray(pred, dtype=np.float64).ravel()
+    pred = np.asarray(pred, dtype=np.float64).reshape(fX.shape)
     refused = np.zeros(len(X), dtype=bool) if model.refuses is None else np.asarray(model.refuses(X), dtype=bool)
-    pred = np.where(refused, fX, pred)
-    if slice_pred is not None and model.refuses is not None:
-        r = np.asarray(model.refuses(Xs[inside]), dtype=bool)
-        slice_pred = np.where(r, p.values(Xs[inside]), np.asarray(slice_pred, dtype=np.float64).ravel())
-    e = np.abs(pred - fX)
+    pred = np.where(_column(refused, fX), fX, pred)
+    if slice_pred is not None:
+        fs = p.values(Xs[inside])
+        slice_pred = np.asarray(slice_pred, dtype=np.float64).reshape(fs.shape)
+        if model.refuses is not None:
+            slice_pred = np.where(_column(np.asarray(model.refuses(Xs[inside]), dtype=bool), fs), fs, slice_pred)
+    E = np.abs(pred - fX)
+    e = point_error(pred, fX)
     metrics = {"method": method, "problem": problem, "d": d, "tol": tol, "seed": seed, "atol": atol,
                "leaves": int(model.n_leaves), "evals": int(model.evals), "within_percent": float(100 * np.mean(e <= atol)),
                "mean_error": float(e.mean()), "max_error": float(e.max()), "max_ratio": float(e.max() / atol),
                "train_s": train_s, "predict_us": 1e6 * predict_s / len(X), "oracle_us": oracle_us, "ranks": size,
                "refused_percent": float(100 * refused.mean()),
                "device": setup().split("-")[0]}  # fmt: skip
+    if fX.ndim == 2:  # a vector problem: each component's worst, as a multiple of the tolerance
+        metrics["outputs"] = int(fX.shape[1])
+        metrics["component_ratio"] = (E.max(axis=0) / atol).tolist()
     path.parent.mkdir(parents=True, exist_ok=True)
     extra = {}
     if seed == SEEDS[0]:
@@ -256,7 +279,7 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
         if model.leaf_of is not None and d == 2:
             extra["leaf"] = np.asarray(model.leaf_of(X)).astype(np.int32)
         if d > 2:
-            extra["slice_pred"] = np.asarray(slice_pred, dtype=np.float64).ravel().astype(np.float32)
+            extra["slice_pred"] = np.asarray(slice_pred, dtype=np.float64).astype(np.float32)
             if model.leaf_of is not None:
                 extra["slice_leaf"] = np.asarray(model.leaf_of(Xs[inside])).astype(np.int32)
     np.savez_compressed(path, metrics=json.dumps(metrics), **extra)
@@ -282,9 +305,26 @@ def plot_maps(problem: str, methods: list[str], tol: float, out: Path) -> Path:
     p = PROBLEMS[problem]
     lo, hi = p.domain(2)
     fX = p.values(p.test_points(2))
+    shown = display(fX).reshape(GRID, GRID)
     ext = (lo[0], hi[0], lo[1], hi[1])
-    fig, axes = plt.subplots(2, len(methods), figsize=(3.0 * len(methods), 6.2), constrained_layout=True, squeeze=False)
-    for j, method in enumerate(methods):
+    lead = 1 if fX.ndim == 2 else 0  # a vector problem gets a first column: the field itself
+    fig, axes = plt.subplots(2, lead + len(methods), figsize=(3.0 * (lead + len(methods)), 6.2), constrained_layout=True,
+                             squeeze=False)  # fmt: skip
+    gx, gy = np.meshgrid(np.linspace(lo[0], hi[0], GRID), np.linspace(lo[1], hi[1], GRID))
+    if lead:
+        m_out = fX.shape[1]
+        axes[0, 0].imshow(shown, origin="lower", extent=ext, cmap="viridis", aspect="auto")
+        if m_out == 2:
+            V = fX.reshape(GRID, GRID, 2)
+            axes[0, 0].streamplot(gx, gy, V[..., 0], V[..., 1], color="white", density=0.9, linewidth=0.5, arrowsize=0.6)
+        axes[0, 0].set_title(f"the field: |f| (colour){', streamlines' if m_out == 2 else ''}\n{m_out} components, each scaled to max 1",
+                             fontsize=8)  # fmt: skip
+        worst_c = np.argmax(np.ptp(fX, axis=0))
+        axes[1, 0].imshow(fX[:, worst_c].reshape(GRID, GRID), origin="lower", extent=ext, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
+        axes[1, 0].set_title(f"component {worst_c + 1} of {m_out} (the widest range)", fontsize=8)
+        for a in axes[:, 0]:
+            a.set_xticks([]), a.set_yticks([])
+    for j, method in enumerate(methods, start=lead):
         z = np.load(cache_path(method, problem, 2, tol, SEEDS[0]))
         m = json.loads(str(z["metrics"]))
         if "failed" in m:
@@ -293,7 +333,7 @@ def plot_maps(problem: str, methods: list[str], tol: float, out: Path) -> Path:
                 a.text(0.5, 0.5, "over its evaluation budget", ha="center", va="center", fontsize=8, transform=a.transAxes)
             axes[0, j].set_title(METHODS[method][0], fontsize=8)
             continue
-        e = (np.abs(z["pred"].astype(np.float64) - fX) / m["atol"]).reshape(GRID, GRID)
+        e = (point_error(z["pred"], fX) / m["atol"]).reshape(GRID, GRID)
         ax = axes[0, j]
         if "leaf" in z:
             leaf = z["leaf"].reshape(GRID, GRID).astype(np.int64)
@@ -301,8 +341,7 @@ def plot_maps(problem: str, methods: list[str], tol: float, out: Path) -> Path:
             edge = (np.diff(leaf, axis=0, prepend=leaf[:1]) != 0) | (np.diff(leaf, axis=1, prepend=leaf[:, :1]) != 0)
             ax.imshow(np.ma.masked_where(~edge, edge), origin="lower", extent=ext, cmap=ListedColormap(["#555555"]),
                       interpolation="nearest", aspect="auto")  # fmt: skip
-        ax.contour(*np.meshgrid(np.linspace(lo[0], hi[0], GRID), np.linspace(lo[1], hi[1], GRID)), fX.reshape(GRID, GRID),
-                   levels=12, colors="#999999", linewidths=0.4, alpha=0.7)  # fmt: skip
+        ax.contour(gx, gy, shown, levels=12, colors="#999999", linewidths=0.4, alpha=0.7)
         ax.set_title(f"{label_of(method, m)}\n{m['leaves']} pieces, {m['evals']:,} evaluations", fontsize=8)
         axes[1, j].imshow(e, origin="lower", extent=ext, cmap=_ERR, norm=_ERR_NORM, interpolation="nearest", aspect="auto")
         refused = f", {m['refused_percent']:.2f}% refused (grey)" if m.get("refused_percent") else ""
@@ -310,11 +349,14 @@ def plot_maps(problem: str, methods: list[str], tol: float, out: Path) -> Path:
             r = z["refused"].reshape(GRID, GRID)
             axes[1, j].imshow(np.ma.masked_where(~r, r), origin="lower", extent=ext, cmap=ListedColormap(["#9e9e9e"]),
                               interpolation="nearest", aspect="auto")  # fmt: skip
-        axes[1, j].set_title(f"error / tolerance: {m['within_percent']:.1f}% within, worst {m['max_ratio']:.2f}{refused}",
+        worst = "worst component's " if fX.ndim == 2 else ""
+        axes[1, j].set_title(f"{worst}error / tolerance\n{m['within_percent']:.1f}% within, worst {m['max_ratio']:.2f}{refused}",
                              fontsize=8)  # fmt: skip
         for a in axes[:, j]:
             a.set_xticks([]), a.set_yticks([])
-    fig.suptitle(f"{problem}, tolerance {tol:g} of max |f| (seed {SEEDS[0]}); grey lines: contours of f; {setup()}", fontsize=10)
+    what = "every component" if fX.ndim == 2 else "max |f|"
+    lines = "contours of |f|" if fX.ndim == 2 else "contours of f"
+    fig.suptitle(f"{problem}, tolerance {tol:g} of {what} (seed {SEEDS[0]}); grey lines: {lines}; {setup()}", fontsize=10)
     path = out / f"{problem}-d2-tol{tol:g}-maps.png"
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -336,8 +378,9 @@ def plot_views(problem: str, d: int, methods: list[str], tol: float, out: Path) 
     fX = p.values(X)
     Y = (X - c) @ W
     Xs, inside, R = slice_points(problem, d)
+    fs_full = p.values(Xs[inside])
     fs = np.full(len(Xs), np.nan)
-    fs[inside] = p.values(Xs[inside])
+    fs[inside] = display(fs_full)
     ext = (-R, R, -R, R)
     runs = []
     for method in methods:
@@ -348,14 +391,14 @@ def plot_views(problem: str, d: int, methods: list[str], tol: float, out: Path) 
             runs.append((method, m, z if "failed" not in m else None))
     fig, axes = plt.subplots(1 + len(runs), 3, figsize=(11.0, 3.3 * (1 + len(runs))), constrained_layout=True, squeeze=False)
     axes[0, 0].imshow(fs.reshape(SLICE, SLICE), origin="lower", extent=ext, cmap="viridis", aspect="auto")
-    axes[0, 0].set_title("f on the slice plane", fontsize=8)
-    order = np.argsort(fX)
-    axes[0, 1].scatter(Y[order, 0], Y[order, 1], c=fX[order], s=1, cmap="viridis", rasterized=True)
+    axes[0, 0].set_title("|f| on the slice plane" if fX.ndim == 2 else "f on the slice plane", fontsize=8)
+    order = np.argsort(display(fX))
+    axes[0, 1].scatter(Y[order, 0], Y[order, 1], c=display(fX)[order], s=1, cmap="viridis", rasterized=True)
     axes[0, 1].set_title("f over the shadow coordinates (all test points)", fontsize=8)
     for method, m, z in runs:
         if z is None:
             continue
-        e = np.sort(np.abs(z["pred"].astype(np.float64) - fX) / m["atol"])
+        e = np.sort(point_error(z["pred"], fX) / m["atol"])
         axes[0, 2].plot(e, 1.0 - np.arange(len(e)) / len(e), color=METHODS[method][1], label=label_of(method, m), lw=1.4)
     axes[0, 2].set_xscale("log"), axes[0, 2].set_yscale("log"), axes[0, 2].axvline(1.0, color="#999999", lw=0.8, ls="--")
     axes[0, 2].set_xlabel("|error| / tolerance"), axes[0, 2].set_ylabel("share of test points above")
@@ -368,7 +411,7 @@ def plot_views(problem: str, d: int, methods: list[str], tol: float, out: Path) 
             axes[i, 0].set_title(label, fontsize=8)
             continue
         es = np.full(len(Xs), np.nan)
-        es[inside] = np.abs(z["slice_pred"].astype(np.float64) - fs[inside]) / m["atol"]
+        es[inside] = point_error(z["slice_pred"], fs_full) / m["atol"]
         axes[i, 0].imshow(es.reshape(SLICE, SLICE), origin="lower", extent=ext, cmap=_ERR, norm=_ERR_NORM, aspect="auto")
         axes[i, 0].set_title(f"{label}: error on the slice\n{m['evals']:,} evaluations, worst {m['max_ratio']:.2f} x tol", fontsize=8)
         if "slice_leaf" in z:
@@ -384,7 +427,7 @@ def plot_views(problem: str, d: int, methods: list[str], tol: float, out: Path) 
         else:
             axes[i, 1].text(0.5, 0.5, "one global expansion: no pieces", ha="center", va="center", fontsize=8,
                             transform=axes[i, 1].transAxes)  # fmt: skip
-        e = np.abs(z["pred"].astype(np.float64) - fX) / m["atol"]
+        e = point_error(z["pred"], fX) / m["atol"]
         o = np.argsort(e)
         axes[i, 2].scatter(Y[o, 0], Y[o, 1], c=e[o], s=1, cmap=_ERR, norm=_ERR_NORM, rasterized=True)
         axes[i, 2].set_title(f"error over the shadow coordinates: {m['within_percent']:.1f}% within", fontsize=8)
@@ -575,8 +618,11 @@ def _short(method: str) -> str:
     return METHODS[method][0].split(":")[0]
 
 
-def plot_overview(d: int, out: Path) -> list[Path]:
+def plot_overview(d: int, out: Path, vector: bool = False) -> list[Path]:
     """
+    With ``vector``, the same for the vector-valued problems, in ``overview-vector-d<d>.png`` and
+    ``overview-vector-d<d>-cost.png``: a case's error there is its worst component's.
+
     Every cached problem and tolerance at dimension d against every method, as grids with a row per
     problem and the methods side by side within each tolerance. ``overview-d<d>.png`` answers which
     methods hold the tolerance and which of those is cheapest: colour is the worst |error| /
@@ -584,21 +630,23 @@ def plot_overview(d: int, out: Path) -> list[Path]:
     ``overview-d<d>-cost.png`` gives, in the same layout, the training and inference times (beside
     the oracle's own time per point), the pieces and the mean |error| / tolerance.
     """
-    cases = [(problem, tol) for problem, p in PROBLEMS.items() for tol in p.tolerances(d)]
+    cases = [(problem, tol) for problem, p in PROBLEMS.items() if p.vector == vector for tol in p.tolerances(d)]
     cells = {(m, pr, t): c for m in METHODS for pr, t in cases if (c := _overview_cell(m, pr, d, t)) is not None}
     if not cells:
         return []
     methods = [m for m in METHODS if any(k[0] == m for k in cells)]
-    problems = [p for p in PROBLEMS if any(k[1] == p for k in cells)]
+    problems = [p for p in PROBLEMS if any(k[1] == p for k in cells)]  # cells hold only this kind's problems
     tols = PROBLEMS[problems[0]].tolerances(d)
     for pr, t in cases:  # the cheapest method that holds the tolerance on every seed; ties all marked
         held = [cells[m, pr, t] for m in methods if (m, pr, t) in cells and cells[m, pr, t]["passed"]]
         for c in held:
             c["best"] = c["evals"] == min(h["evals"] for h in held)
     ranks = "/".join(map(str, sorted(set().union(*(c["ranks"] for c in cells.values())))))
-    where = f"{setup()}, {ranks} ranks, {len(SEEDS)} seeds"
+    where = f"{setup()}, {ranks} ranks, {len(SEEDS)} seeds" + ("; components scaled to max |f_c| = 1" if vector else "")
+    whose = "component's " if vector else ""
     grid_w = len(tols) * (len(methods) + 0.7)  # data units across one panel
-    paths = [out / f"overview-d{d}.png", out / f"overview-d{d}-cost.png"]
+    stem = f"overview-vector-d{d}" if vector else f"overview-d{d}"
+    paths = [out / f"{stem}.png", out / f"{stem}-cost.png"]
 
     fig, ax = plt.subplots(figsize=(0.56 * grid_w + 1.6, 0.4 * len(problems) + 1.0))
     summary = (("holds the tolerance", {}), ("cheapest that holds", {}))
@@ -608,9 +656,9 @@ def plot_overview(d: int, out: Path) -> list[Path]:
         summary[1][1][t, m] = str(int(best) + bool(c.get("best")))
     col = _overview_grid(ax, problems, tols, methods, cells, lambda c: _ratio_colour(c["max_ratio"]),
                          lambda c: f"{_compact(c['evals'], count=True)}\n{_compact(c['max_ratio'])}",
-                         f"d = {d}: which methods hold the tolerance, and at what cost",
-                         "Colour: the worst |error| / tolerance over the test set (the worst seed): blue holds, red exceeds.\n"
-                         f"Top number: oracle evaluations (seed mean); bottom: the worst |error| / tolerance. {where}.",
+                         f"d = {d}{', vector-valued problems' if vector else ''}: which methods hold the tolerance, and at what cost",
+                         f"Colour: the worst {whose}|error| / tolerance over the test set (the worst seed): blue holds, red exceeds.\n"
+                         f"Top number: oracle evaluations (seed mean); bottom: the worst {whose}|error| / tolerance. {where}.",
                          summary, mark_best=True)  # fmt: skip
     for (m, pr, t), c in cells.items():
         if c.get("refused_percent", 0) > 0:
@@ -710,7 +758,7 @@ def main(argv=None) -> None:
     out = OUT / setup()
     out.mkdir(parents=True, exist_ok=True)
     if a.overview:
-        print(plot_overview(a.d, out))
+        print(plot_overview(a.d, out), plot_overview(a.d, out, vector=True))
         return
     methods = a.methods.split(",")
     for problem in a.problems.split(","):
@@ -723,7 +771,7 @@ def main(argv=None) -> None:
         if (a.plot or a.replot) and MPI.COMM_WORLD.Get_rank() == 0:  # after every problem, so results show as they arrive
             plot_problem(problem, a.d, tols, out)
             write_summary(a.d, list(METHODS), out)
-            plot_overview(a.d, out)
+            plot_overview(a.d, out, vector=PROBLEMS[problem].vector)
 
 
 def plot_problem(problem: str, d: int, tols, out: Path) -> None:
