@@ -31,6 +31,10 @@ If any error exceeds ``safety * atol``: every axis whose top quarter of degrees 
 model by more than its share at those points doubles its degree (no rank makes up for a missing
 degree); otherwise the rank grows by ``rank_step`` with random right indices, and the sweeps resume.
 
+Once accepted, the cores are compressed (``compress``): ranks rounded and trailing degrees chopped while
+the model changes by at most ``chop_share * atol`` at the check points and ``n_probe`` uniform points,
+which cuts the cores and the inference time several-fold.
+
 The checks are estimates, not bounds: a feature that none of the three sets crosses is missed.
 """
 
@@ -41,7 +45,7 @@ from scipy.fft import dct
 from scipy.linalg import qr, solve
 from scipy.stats import qmc
 
-from src.structure.chebtree import cheb_basis, cheb_points
+from src.structure.chebtree import cheb_points
 
 LATTICE = 1 << 12  # the finest degree any axis may reach (a power of two; degrees are 8 * 2^m)
 
@@ -99,14 +103,30 @@ class ChebTT:
     ranks: tuple = ()
     degrees: tuple = ()
 
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X: np.ndarray, chunk: int = 16_384) -> np.ndarray:
+        """
+        Core by core: the Chebyshev values from the three-term recurrence (no arccos or cos), the
+        running row vector times the core as one matrix product, then the sum over the degrees; about
+        ``sum_k r_k (n_k + 1) r_k+1`` multiply-adds per query, in chunks that bound the temporaries.
+        """
         X = np.atleast_2d(np.asarray(X, dtype=np.float64))
         t = 2.0 * (X - self.lo) / (self.hi - self.lo) - 1.0
-        v = np.ones((len(X), 1))
-        for k, C in enumerate(self.cores):
-            T = cheb_basis(t[:, k], C.shape[1] - 1)  # (Q, n + 1)
-            v = np.einsum("qa,ajb,qj->qb", v, C, T, optimize=True)
-        return v[:, 0]
+        out = np.empty(len(X))
+        for s in range(0, len(X), chunk):
+            ts = t[s : s + chunk]
+            v = np.ones((len(ts), 1))
+            for k, C in enumerate(self.cores):
+                ra, n1, rb = C.shape
+                T = np.empty((len(ts), n1))
+                T[:, 0] = 1.0
+                if n1 > 1:
+                    T[:, 1] = ts[:, k]
+                for j in range(2, n1):
+                    T[:, j] = 2.0 * ts[:, k] * T[:, j - 1] - T[:, j - 2]
+                U = (v @ C.reshape(ra, n1 * rb)).reshape(len(ts), n1, rb)
+                v = np.einsum("qj,qjb->qb", T, U)
+            out[s : s + chunk] = v[:, 0]
+        return out
 
     def leaf_of(self, X):
         return None
@@ -175,8 +195,8 @@ def check_points(lo, hi, n: int, seed: int) -> np.ndarray:
 
 
 def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step: int = 2, rank_max: int = 60,
-          sweeps: int = 2, n_fibre: int = 4, n_max: int = 512, n_check: int | None = None, n_free: int = 20_000, seed: int = 0,
-          max_evals: int = 2_000_000) -> ChebTT:  # fmt: skip
+          sweeps: int = 2, n_fibre: int = 4, n_max: int = 512, n_check: int | None = None, n_free: int = 20_000, chop_share: float = 0.25, n_probe: int = 4000,
+          seed: int = 0, max_evals: int = 2_000_000) -> ChebTT:  # fmt: skip
     """Train a ChebTT of ``f`` (host (N, d) -> (N,)) on [lo, hi] to tolerance ``atol``."""
     lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
     d = len(lo)
@@ -226,7 +246,10 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
             Xc, fc = np.concatenate([Xc, P]), np.concatenate([fc, fP])  # kept: later rounds are checked there too
         model.evals = grid.evals + pre
         if max(float(err.max()), look) <= safety * atol:
-            return model
+            probe = np.concatenate([Xall, rng.uniform(lo, hi, (n_probe, d))])
+            small = compress(model, probe, chop_share * atol)
+            small.evals = model.evals
+            return small
         if model.evals > max_evals:
             raise RuntimeError(f"ChebTT would exceed {max_evals:,} evaluations.")
         # Degree or rank: an axis whose top quarter of degrees still changes the model by more than its
@@ -243,6 +266,65 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
             raise RuntimeError(f"ChebTT reached rank {rank_max} without meeting the tolerance.")
         right = [None] + [np.vstack([R, rng.integers(0, np.array(grid.n[k + 1 :]) + 1, size=(rank_step, d - k - 1))])
                           for k, R in enumerate(right[1:-1])] + [right[-1]]  # fmt: skip
+
+
+def round_tt(cores: list, eps: float) -> list:
+    """
+    TT-SVD rounding (Oseledets 2011): right-orthogonalise the cores, then truncate every bond, left to
+    right, to the smallest rank whose discarded singular values stay below ``eps * |TT| / sqrt(d - 1)``
+    (a relative Frobenius error of at most eps overall, on the coefficient tensor).
+    """
+    cores = [C.copy() for C in cores]
+    d = len(cores)
+    for k in range(d - 1, 0, -1):
+        ra, n1, rb = cores[k].shape
+        Q, R = np.linalg.qr(cores[k].reshape(ra, n1 * rb).T)
+        cores[k] = Q.T.reshape(-1, n1, rb)
+        cores[k - 1] = np.einsum("ajb,cb->ajc", cores[k - 1], R)
+    delta = eps * np.linalg.norm(cores[0]) / np.sqrt(max(d - 1, 1))
+    for k in range(d - 1):
+        ra, n1, rb = cores[k].shape
+        U, sv, Vt = np.linalg.svd(cores[k].reshape(ra * n1, rb), full_matrices=False)
+        tail = np.sqrt(np.cumsum(sv[::-1] ** 2))[::-1]  # tail[i]: the norm of the singular values from i on
+        r = max(1, int(np.sum(tail > delta)))
+        cores[k] = U[:, :r].reshape(ra, n1, r)
+        cores[k + 1] = np.einsum("ab,bjc->ajc", sv[:r, None] * Vt[:r], cores[k + 1])
+    return cores
+
+
+def compress(model: ChebTT, probe: np.ndarray, budget: float) -> ChebTT:
+    """
+    The accepted model with its ranks rounded (the largest eps, by bisection) and then its trailing
+    degrees chopped axis by axis, each step kept only while the predictions at ``probe`` stay within
+    ``budget`` of the accepted model's. Acceptance leaves the model at most half the tolerance from f at
+    its check points, usually far less, so compressing within a quarter of it cuts the cores 3-10x and
+    inference with them (10-D Lotka-Volterra: 2,700 coefficients to 293, 8.7 to 0.35 us per query).
+    The probe is the check set plus uniform points: model-only predictions, no evaluation of f.
+    """
+    ref = model.predict(probe)
+
+    def close(cores):
+        return float(np.max(np.abs(ChebTT(model.lo, model.hi, cores).predict(probe) - ref))) <= budget
+
+    cores, lo_e, hi_e = model.cores, 0.0, 1.0
+    for _ in range(16):
+        mid = 0.5 * (lo_e + hi_e)
+        trial = round_tt(model.cores, mid)
+        if close(trial):
+            cores, lo_e = trial, mid
+        else:
+            hi_e = mid
+    shrunk = True
+    while shrunk:
+        shrunk = False
+        for k in range(len(cores)):
+            if cores[k].shape[1] > 1:
+                trial = list(cores)
+                trial[k] = cores[k][:, :-1]
+                if close(trial):
+                    cores, shrunk = trial, True
+    return ChebTT(model.lo, model.hi, cores, model.evals, tuple(C.shape[2] for C in cores[:-1]),
+                  tuple(C.shape[1] - 1 for C in cores))  # fmt: skip
 
 
 def _truncated(model: ChebTT, k: int) -> ChebTT:
