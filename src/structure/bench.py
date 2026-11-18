@@ -694,7 +694,8 @@ def main(argv=None) -> None:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--plot", action="store_true")
     parser.add_argument("--overview", action="store_true", help="only redraw overview-d<d>.png and overview-d<d>-cost.png from the cache")
-    parser.add_argument("--setup", default=None, help="with --overview: the cached setup to draw, e.g. cpu-8rank")
+    parser.add_argument("--replot", action="store_true", help="only redraw the problems' plots and the overview from the cache")
+    parser.add_argument("--setup", default=None, help="with --overview or --replot: the cached setup to draw, e.g. cpu-8rank")
     a = parser.parse_args(argv)
     import src.structure.schemes  # noqa: F401  (registers the new schemes)
     from src.structure import (
@@ -703,29 +704,39 @@ def main(argv=None) -> None:
 
     METHODS.update(module.METHODS)
 
-    if a.overview:
+    if a.overview or a.replot:
         global SETUP
         SETUP = module.SETUP = a.setup
-        print(plot_overview(a.d, OUT / setup()))
-        return
-    methods = a.methods.split(",")
     out = OUT / setup()
     out.mkdir(parents=True, exist_ok=True)
+    if a.overview:
+        print(plot_overview(a.d, out))
+        return
+    methods = a.methods.split(",")
     for problem in a.problems.split(","):
         tols = [float(t) for t in a.tols.split(",")] if a.tols else PROBLEMS[problem].tolerances(a.d)
-        for tol in tols:
-            for method in methods:
-                for seed in map(int, a.seeds.split(",")):
-                    run(method, problem, a.d, tol, seed, force=a.force)
-        if a.plot and MPI.COMM_WORLD.Get_rank() == 0:
-            plot_cost(problem, a.d, methods, out)
+        if not a.replot:
             for tol in tols:
-                if a.d == 2:
-                    plot_maps(problem, methods, tol, out)
-                else:
-                    plot_views(problem, a.d, methods, tol, out)
-            write_summary(a.d, methods, out)
-            plot_overview(a.d, out)
+                for method in methods:
+                    for seed in map(int, a.seeds.split(",")):
+                        run(method, problem, a.d, tol, seed, force=a.force)
+        if (a.plot or a.replot) and MPI.COMM_WORLD.Get_rank() == 0:
+            plot_problem(problem, a.d, tols, out)
+    if (a.plot or a.replot) and MPI.COMM_WORLD.Get_rank() == 0:
+        write_summary(a.d, list(METHODS), out)
+        plot_overview(a.d, out)
+
+
+def plot_problem(problem: str, d: int, tols, out: Path) -> None:
+    """Every plot of one problem, with every method cached for it (not only those of the current run)."""
+    methods = [m for m in METHODS if any(seed_runs(m, problem, d, t) for t in tols)]
+    plot_cost(problem, d, methods, out)
+    for tol in tols:  # the maps and views draw seed 1's predictions
+        drawn = [m for m in methods if cache_path(m, problem, d, tol, SEEDS[0]).exists()]
+        if drawn and d == 2:
+            plot_maps(problem, drawn, tol, out)
+        elif drawn:
+            plot_views(problem, d, drawn, tol, out)
 
 
 if __name__ == "__main__":
