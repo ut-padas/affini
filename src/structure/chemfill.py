@@ -26,7 +26,7 @@ from pathlib import Path
 
 from src.structure import chembench
 
-FIXED = {"robertson": "robertson", "chemakzo": "chemakzo", "hires": "hires", "pollu": "pollu"}  # problem: family
+FIXED = {"robertson": "robertson", "chemakzo": "chemakzo", "hires": "hires", "primordial": "primordial", "pollu": "pollu"}  # problem: family
 
 
 def family(name: str) -> str:
@@ -56,7 +56,7 @@ def _case(args: list[str], limit: float, log) -> bool:
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
-    parser.add_argument("--methods", default="chebtt_roll,chebtt_box,chebtt_metric,slowtable")
+    parser.add_argument("--methods", default="chebtt_roll,chebtt_box,chebtt_smooth,chebtt_adaptive,slowtable,art_quad,art,afinni")
     parser.add_argument("--max-d", type=int, default=80)
     parser.add_argument("--limit", type=float, default=240.0, help="wall seconds per case")
     a = parser.parse_args(argv)
@@ -73,8 +73,8 @@ def main(argv=None) -> None:
             print(f"{name}: trajectories and solver cost ready ({time.time() - t0:.0f} s)", flush=True)
             ran = False
             for method in a.methods.split(","):
-                if (method, family(name)) in stuck:
-                    continue
+                if (method, family(name)) in stuck or (method == "afinni" and len(p.net.species) >= 10):
+                    continue  # AFINNI from 10 inputs: tens of GB of host memory (the box bench's rule)
                 for i, tol in enumerate(sorted(p.tolerances, reverse=True)):
                     path = chembench.CACHE / name / f"{method}_tol{tol:g}.json"
                     if not path.exists():
@@ -97,6 +97,7 @@ def main(argv=None) -> None:
                 chembench.plot(name, list(chembench.METHODS))
                 chembench.write_summary()
                 chembench.plot_ladder()
+                chembench.plot_overview()
 
 
 if __name__ == "__main__":

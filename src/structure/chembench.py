@@ -180,29 +180,85 @@ class BoxTT:
         return np.any((self.lo > Q) | (self.hi < Q), axis=1)
 
 
-def chebtt_box(p: ChemProblem, train: np.ndarray, atol: float, seed: int, oracle: CachedOracle | None = None):
-    oracle = oracle or CachedOracle(p.step)
-    states = visited(train)
+def state_box(states: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The visited states' bounding box padded by 2% per axis, and widened to 2e-3 on an axis the data never varies."""
     lo, hi = states.min(axis=0), states.max(axis=0)
     pad = 0.02 * np.maximum(hi - lo, 1e-3)
     lo, hi = lo - pad, hi + pad
+    flat = hi - lo <= 2e-3
+    return np.where(flat, lo - 1e-3, lo), np.where(flat, hi + 1e-3, hi)
+
+
+def chebtt_box(p: ChemProblem, train: np.ndarray, atol: float, seed: int, oracle: CachedOracle | None = None, edges: bool = True):
+    oracle = oracle or CachedOracle(p.step)
+    lo, hi = state_box(visited(train))
     models = []
-    for c in range(states.shape[1]):
+    for c in range(train.shape[2]):
         if p.net.species[c] == "T":
             models.append(None)  # the held temperature: increment 0
             continue
-        flat = hi - lo <= 2e-3  # a coordinate the data never varies (kept fixed in the box)
-        lo_c, hi_c = np.where(flat, lo - 1e-3, lo), np.where(flat, hi + 1e-3, hi)
-        models.append(chebtt.build(lambda X, c=c: (oracle(X) - X)[:, c], lo_c, hi_c, atol, seed=seed, max_evals=200_000))
+        models.append(chebtt.build(lambda X, c=c: (oracle(X) - X)[:, c], lo, hi, atol, seed=seed, max_evals=200_000, edges=edges))
     return BoxTT(models, lo, hi, oracle.evals)
+
+
+def chebtt_smooth(p: ChemProblem, train: np.ndarray, atol: float, seed: int):
+    """``chebtt_box`` without the edge search: one Chebyshev basis per axis (the control for piecewise axes)."""
+    return chebtt_box(p, train, atol, seed, edges=False)
+
+
+def chebtt_adaptive_box(p: ChemProblem, train: np.ndarray, atol: float, seed: int):
+    """ChebTT-A (``chebtt_adaptive``) per species on the states' bounding box: piecewise axes, and an interface term where one is found."""
+    from src.structure import chebtt_adaptive
+
+    oracle = CachedOracle(p.step)
+    lo, hi = state_box(visited(train))
+    models = [None if p.net.species[c] == "T" else
+              chebtt_adaptive.build(lambda X, c=c: (oracle(X) - X)[:, c], lo, hi, atol, seed=seed, max_evals=200_000)
+              for c in range(train.shape[2])]  # fmt: skip
+    return BoxTT(models, lo, hi, oracle.evals)
+
+
+class BoxBaseline(BoxTT):
+    """A box-bench baseline (AFINNI or ART, ``bench.METHODS``) of every species' increment on the states' bounding box."""
+
+    def __init__(self, model, lo, hi, evals, outputs: int, held: bool):
+        super().__init__(model, lo, hi, evals)
+        self.outputs, self.held = outputs, held
+
+    def predict(self, Q):
+        Q = np.clip(Q, self.lo, self.hi)
+        out = np.asarray(self.models.predict(Q), dtype=np.float64).reshape(len(Q), self.outputs)
+        return np.concatenate([out, np.zeros((len(Q), 1))], axis=1) if self.held else out
+
+
+def baseline(name: str):
+    """A stiff-bench method running the box bench's ``name`` (AFINNI, ART) with the solver as its oracle."""
+
+    def method(p: ChemProblem, train: np.ndarray, atol: float, seed: int):
+        from src import to_host, xp
+        from src.structure import bench
+
+        held = p.net.species[-1] == "T"
+        m = train.shape[2] - (1 if held else 0)
+        lo, hi = state_box(visited(train))
+        oracle = CachedOracle(p.step)
+
+        def f(X):
+            Z = np.asarray(to_host(X), dtype=np.float64)
+            return xp.asarray((oracle(Z) - Z)[:, :m])
+
+        model = bench.METHODS[name][2](f, lo, hi, atol, seed)
+        return BoxBaseline(model, lo, hi, oracle.evals, m, held)
+
+    return method
 
 
 def chebtt_roll(p: ChemProblem, train: np.ndarray, atol: float, seed: int, rounds: int = 3):
     """
-    ``chebtt_box``, accepted only once the surrogate chained along the first ``ROLLOUTS`` training
-    trajectories (projected onto the invariants, as it is used) stays within ``atol`` of them; else
-    retrained at the one-step tolerance times the shortfall (at most 8x tighter per round, 0.8 for
-    margin). The training trajectories are known, so the check costs no solve; the retraining reuses
+    ``chebtt_box``, accepted only once the surrogate chained along every training trajectory (projected
+    onto the invariants, as it is used) stays within half of ``atol`` of them (a margin for the test
+    trajectories, which may pass nearer a sensitive state: Allen-Cahn's unstable u = 0); else retrained
+    at the one-step tolerance times the shortfall (at most 8x tighter per round, 0.8 for margin). The training trajectories are known, so the check costs no solve; the retraining reuses
     every cached solve, and ChebTT's degrees grow only logarithmically with the accuracy.
     """
     oracle = CachedOracle(p.step)
@@ -211,10 +267,10 @@ def chebtt_roll(p: ChemProblem, train: np.ndarray, atol: float, seed: int, round
     for _ in range(rounds):
         model = chebtt_box(p, train, one, seed, oracle)
         used = Projected(model, p, W) if len(W) else model
-        worst = rollout(p, used, train[:ROLLOUTS])["rollout_worst"]
-        if worst <= atol:
+        worst = rollout(p, used, train)["rollout_worst"]
+        if worst <= 0.5 * atol:
             break
-        one *= 0.8 * max(atol / worst, 0.125)
+        one *= 0.8 * max(0.5 * atol / worst, 0.125)
     model.evals, model.one_step_tol = oracle.evals, one
     return model
 
@@ -243,9 +299,14 @@ def chebtt_metric(p: ChemProblem, train: np.ndarray, atol: float, seed: int):
 
 
 METHODS = {"slowtable": ("SlowTable: tabulated visited states", "#8e24aa", slowtable),
-           "chebtt_box": ("ChebTT per species on the states' bounding box", "#e08a00", chebtt_box),
-           "chebtt_metric": ("ChebTT per species in the pullback-metric coordinates", "#1b7f5b", chebtt_metric),
-           "chebtt_roll": ("ChebTT per species, retrained until its rollouts hold", "#c0392b", chebtt_roll)}  # fmt: skip
+           "chebtt_smooth": ("ChebTT, one basis per axis (no edge search)", "#c9a227", chebtt_smooth),
+           "chebtt_box": ("ChebTT, piecewise axes", "#e08a00", chebtt_box),
+           "chebtt_adaptive": ("ChebTT-A: piecewise axes and interface terms", "#b5179e", chebtt_adaptive_box),
+           "chebtt_metric": ("ChebTT in the pullback-metric coordinates", "#1b7f5b", chebtt_metric),
+           "chebtt_roll": ("ChebTT, retrained until its rollouts hold", "#c0392b", chebtt_roll),
+           "afinni": ("AFINNI", "#6d3b0f", baseline("afinni")),
+           "art": ("ART, affine leaves", "#1f5fa8", baseline("art")),
+           "art_quad": ("ART, quadratic leaves", "#2e7d32", baseline("art_quad"))}  # fmt: skip
 
 
 def invariants_of(p: ChemProblem, train: np.ndarray) -> np.ndarray:
@@ -329,7 +390,8 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
     m.update(solver_cost(name))
     acc = np.asarray(dynamics(name)["accumulation"])
     roll = np.asarray(m["rollout_error_by_step"])
-    m["rollout_over_bound"] = float(np.max(roll / (max(m["worst"], 1e-300) * acc[: len(roll)])))  # <= ~1: drift the dynamics explain
+    # from step 2: at step 1 the rollout error is the one-step error itself, so the ratio is 1 by construction
+    m["rollout_over_bound"] = float(np.max(roll[1:] / (max(m["worst"], 1e-300) * acc[1 : len(roll)]))) if len(roll) > 1 else 0.0
     m["survived_worst"] = survived(p, model, test)
     if hasattr(model, "one_step_tol"):
         m["one_step_tol"] = model.one_step_tol
@@ -388,7 +450,7 @@ def rollout(p: ChemProblem, model, true: np.ndarray) -> dict:
 
 def dynamics(name: str) -> dict:
     """
-    What the dynamics alone do to errors, from the first 5 test trajectories (cached), the same for
+    What the dynamics alone do to errors, from the ``ROLLOUTS`` test trajectories (cached), the same for
     every surrogate:
 
     - ``stiffness_index``: dt times the fastest decay rate max |Re lambda| of the right-hand side's
@@ -411,7 +473,7 @@ def dynamics(name: str) -> dict:
         return json.loads(path.read_text())
     p = PROBLEMS[name]
     _, test = data(name)
-    true = test[: min(ROLLOUTS, 5)]
+    true = test[:ROLLOUTS]  # the rollouts' own trajectories, so their errors and A_n refer to the same states
     n_steps, d = true.shape[1] - 1, true.shape[2]
     free = [i for i in range(d) if p.net.species[i] != "T"]
     h = 1e-5
@@ -581,6 +643,63 @@ def plot_ladder() -> Path:
     fig.savefig(path, dpi=120)
     plt.close(fig)
     return path
+
+
+def plot_overview() -> list[Path]:
+    """
+    ``output/chem/overview-stiff-{loose,tight}.png``: per problem (rows, by input dimension) and method
+    (columns), the worst one-step error and the worst rollout error over the tolerance (blue within,
+    red beyond), with the training solves; hatched: over the time limit or the evaluation budget.
+    """
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+    from src.structure.chemfill import ladder
+
+    names = [n for n in ladder(10**6) if (CACHE / n).is_dir()]
+    methods = [m for m in METHODS if any((CACHE / n / f"{m}_tol{t:g}.json").exists() for n in names for t in PROBLEMS[n].tolerances)]
+    bounds = [0, 0.01, 0.1, 0.5, 1, 2, 10, 100, 1e300]
+    cmap = ListedColormap(["#2166ac", "#4393c3", "#92c5de", "#d1e5f0", "#f4a582", "#d6604d", "#b2182b", "#67001f"])
+    norm = BoundaryNorm(bounds, cmap.N)
+    paths = []
+    for k, label in ((0, "loose"), (1, "tight")):
+        fig, axes = plt.subplots(1, 2, figsize=(1.25 * len(methods) * 2 + 3.5, 0.42 * len(names) + 2.4), constrained_layout=True)
+        for ax, key, title in ((axes[0], "worst", "one-step error / tol"), (axes[1], "rollout_worst", "rollout error / tol (20 trajectories)")):
+            for i, n in enumerate(names):
+                tols = sorted(PROBLEMS[n].tolerances, reverse=True)
+                if k >= len(tols):
+                    continue
+                tol = tols[k]
+                for j, meth in enumerate(methods):
+                    path = CACHE / n / f"{meth}_tol{tol:g}.json"
+                    if not path.exists():
+                        ax.add_patch(plt.Rectangle((j, i), 0.95, 0.9, fill=False, ls=":", ec="#bbbbbb"))
+                        continue
+                    m = json.loads(path.read_text())
+                    if "failed" in m:
+                        ax.add_patch(plt.Rectangle((j, i), 0.95, 0.9, fc="#e8e8e8", hatch="//", ec="#999999"))
+                        ax.text(j + 0.47, i + 0.45, "over", ha="center", va="center", fontsize=6.5, color="#555555")
+                        continue
+                    r = m[key] / tol
+                    ax.add_patch(plt.Rectangle((j, i), 0.95, 0.9, fc=cmap(norm(r)), ec="white"))
+                    ev = m["evals"]
+                    txt = f"{ev / 1e3:.1f}k" if ev < 1e5 else f"{ev / 1e6:.2f}M" if ev >= 1e6 else f"{ev / 1e3:.0f}k"
+                    ax.text(j + 0.47, i + 0.45, f"{txt}\n{r:.2g}", ha="center", va="center", fontsize=6.5,
+                            color="white" if r <= 0.01 or r > 10 else "#222222")  # fmt: skip
+            ax.set_xlim(0, len(methods))
+            ax.set_ylim(len(names), 0)
+            ax.set_xticks(np.arange(len(methods)) + 0.47, [METHODS[m][0].split(":")[0] for m in methods], rotation=35, ha="right", fontsize=7.5)
+            ax.set_yticks(np.arange(len(names)) + 0.45, [f"{n} ({len(PROBLEMS[n].net.species)})" for n in names], fontsize=7.5)
+            ax.tick_params(length=0)
+            for sp in ax.spines.values():
+                sp.set_visible(False)
+            ax.set_title(title, fontsize=10)
+        fig.suptitle(f"Stiff systems, the {label}er tolerance of each problem (0.01 or 0.001 in dex or absolute units): "
+                     "top number training solves, bottom worst error / tolerance; hatched: over the time limit", fontsize=9)  # fmt: skip
+        OUT.mkdir(parents=True, exist_ok=True)
+        path = OUT / f"overview-stiff-{label}.png"
+        fig.savefig(path, dpi=130)
+        plt.close(fig)
+        paths.append(path)
+    return paths
 
 
 def write_summary() -> Path:

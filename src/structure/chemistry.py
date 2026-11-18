@@ -13,6 +13,7 @@ about 1.7, 1.0 and 1e-10 for every step dt >= 0.1). So surrogates are trained an
 trajectories, ``trajectories``, not on a box: held-out trajectories give the test states.
 """
 
+import atexit
 import os
 import time
 from dataclasses import dataclass
@@ -87,6 +88,7 @@ def _pool():
         import multiprocessing
 
         _POOL = multiprocessing.get_context("fork").Pool(WORKERS)
+        atexit.register(_POOL.terminate)  # before interpreter teardown, which a pool's finaliser does not survive
     return _POOL
 
 
