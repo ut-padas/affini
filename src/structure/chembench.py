@@ -38,6 +38,7 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.lines  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
@@ -522,28 +523,36 @@ def plot(name: str, methods: list[str]) -> Path:
     solver's trajectory), the share of states the surrogate refuses, and the growth the dynamics alone
     allow an early error (the same for every surrogate).
     """
-    fig, axes = plt.subplots(2, 2, figsize=(12, 7.5), constrained_layout=True)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8.2), layout="constrained")
     (a, b), (c, g) = axes
+    tols = sorted(PROBLEMS[name].tolerances, reverse=True)
+    handles = []
     for method in methods:
-        for tol, ls in zip(PROBLEMS[name].tolerances, ("-", "--"), strict=False):
+        solves = []
+        for tol, ls in zip(tols, ("-", "--"), strict=False):
             path = CACHE / name / f"{method}_tol{tol:g}.json"
             if not path.exists():
                 continue
             m = json.loads(path.read_text())
             if "failed" in m:
+                solves.append("over")
                 continue
-            speed = f", {m['speedup']:,.0f}x the solver's speed" if "speedup" in m else ""
-            label = f"{METHODS[method][0]}, tol {tol:g} {PROBLEMS[name].units} ({m['evals']:,} training solves{speed})"
+            solves.append(f"{m['evals']:,}")
             colour = METHODS[method][1]
-            a.semilogy(np.maximum(m["error_by_step"], 1e-12) / tol, ls, color=colour, label=label)
+            a.semilogy(np.maximum(m["error_by_step"], 1e-12) / tol, ls, color=colour, lw=1.3)
             if "rollout_error_by_step" in m:
-                b.semilogy(np.maximum(m["rollout_error_by_step"], 1e-12) / tol, ls, color=colour)
-            c.plot(100 * np.array(m["refused_by_step"]), ls, color=colour)
+                b.semilogy(np.maximum(m["rollout_error_by_step"], 1e-12) / tol, ls, color=colour, lw=1.3)
+            c.plot(100 * np.array(m["refused_by_step"]), ls, color=colour, lw=1.3)
+        if solves:  # one entry per method: its colour, and its training solves at each tolerance
+            label = f"{SHORT.get(method, method).replace(chr(10), ' ')} ({' / '.join(solves)} solves)"
+            handles.append(matplotlib.lines.Line2D([], [], color=METHODS[method][1], lw=2, label=label))
+    handles += [matplotlib.lines.Line2D([], [], color="#555555", ls=ls, lw=1.3, label=f"tol {t:g} {PROBLEMS[name].units}")
+                for t, ls in zip(tols, ("-", "--"), strict=False)]  # fmt: skip
     try:
         dyn = dynamics(name)
         g.semilogy(dyn["growth"], color="#444444", label="growth of an error made at step 1")
         g.semilogy(dyn["accumulation"], color="#888888", ls="--", label="accumulation A_n (bound factor for one-step errors)")
-        g.legend(fontsize=7, frameon=False)
+        g.legend(fontsize=7, framealpha=0.85, loc="best")
         g.set_title(f"what the dynamics do to errors ({dyn['kind']}; stiffness index {dyn['stiffness_index']:.3g}, "
                     f"FTLE {dyn['lyapunov']:.2g})", fontsize=9)
     except Exception as err:  # noqa: BLE001 (the panel is optional; a failed solve must not lose the others)
@@ -560,7 +569,7 @@ def plot(name: str, methods: list[str]) -> Path:
     g.set_ylabel("factor (same for every surrogate)")
     for ax in axes.ravel():
         ax.set_xlabel("step of the test trajectories")
-    a.legend(fontsize=7, frameon=False)
+    fig.legend(handles=handles, loc="outside lower center", ncol=min(5, len(handles)), fontsize=8, frameon=False)
     p = PROBLEMS[name]
     units = "log10 (dex)" if p.net.log else "absolute units"
     try:
@@ -590,7 +599,7 @@ def plot_ladder() -> Path:
     fams = [f for f in dict.fromkeys(family(n) for n in names) if f not in FIXED] + ["test set"]
     rows = (("worst", "one-step worst / tol"), ("survived_worst", "one-step error surviving the next step / tol"),
             ("rollout_worst", "rollout worst / tol"), ("evals", "training solves"), ("speedup", "solver time / inference time"))  # fmt: skip
-    fig, axes = plt.subplots(len(rows), len(fams), figsize=(4.2 * len(fams), 13.0), squeeze=False, constrained_layout=True)
+    fig, axes = plt.subplots(len(rows), len(fams), figsize=(4.2 * len(fams), 13.5), squeeze=False, layout="constrained")
     for j, fam in enumerate(fams):
         members = [n for n in names if (family(n) == fam) or (fam == "test set" and n in FIXED)]
         for method, (label, colour, _) in METHODS.items():
@@ -616,8 +625,7 @@ def plot_ladder() -> Path:
                 for i, (key, _) in enumerate(rows):
                     if pts[key]:
                         x, y = zip(*sorted(pts[key]), strict=True)
-                        axes[i, j].plot(x, y, ls, marker="o", ms=3.5, color=colour,
-                                        label=f"{label}, tol {'loose' if k == 0 else 'tight'}" if i == 0 and j == 0 else None)  # fmt: skip
+                        axes[i, j].plot(x, y, ls, marker="o", ms=3.5, color=colour)
                 for i in (0, 1, 2):
                     for d in fails:
                         axes[i, j].plot(d, 30.0, "x", color=colour, ms=7)
@@ -635,7 +643,10 @@ def plot_ladder() -> Path:
                 ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
         title = fam if fam != "test set" else "Robertson (3), Akzo Nobel (5), HIRES (8), POLLU (20)"
         axes[0, j].set_title(title, fontsize=10)
-    axes[0, 0].legend(fontsize=7, frameon=False, loc="upper left")
+    shown = [m for m in METHODS if any((CACHE / n / f"{m}_tol{t:g}.json").exists() for n in names for t in PROBLEMS[n].tolerances)]
+    handles = [matplotlib.lines.Line2D([], [], color=METHODS[m][1], lw=2, marker="o", ms=4, label=SHORT.get(m, m).replace(chr(10), " ")) for m in shown]
+    handles += [matplotlib.lines.Line2D([], [], color="#555555", ls=ls, label=f"{w} tolerance") for w, ls in (("looser", "-"), ("tighter", "--"))]
+    fig.legend(handles=handles, loc="outside lower center", ncol=min(6, len(handles)), fontsize=8, frameon=False)
     fig.suptitle("Stiff-system ladder: surrogates of the step map on held-out trajectories (x at the top: over the time limit or budget)",
                  fontsize=11)  # fmt: skip
     OUT.mkdir(parents=True, exist_ok=True)
