@@ -19,6 +19,8 @@ are in [docs/SURROGATE_RESEARCH.md](../../docs/SURROGATE_RESEARCH.md).
 | `schemes.py` | registers the new schemes; under MPI, rank 0 runs a scheme and spreads each round's oracle calls over every rank |
 | `chebtree.py` | **ChebTree**: an adaptive tree of tensor Chebyshev boxes, refined by the decay of their coefficients: per-axis geometric and algebraic decay fits give the error estimate, the degree where the decay is exponential and a split where it is not; a few check points per box, seeded by its locational code, catch aliasing; trailing coefficients are chopped after acceptance. Also `build_rotated`, ChebTree in active-subspace coordinates |
 | `chebtt.py` | **ChebTT**: a Chebyshev interpolant in tensor-train form, built by TT-cross (maxvol fibres); cost linear in d; accepted on a Sobol set, free checks at earlier sweeps' grid points and a next-nested-grid look-ahead through the worst point; degrees doubled where an axis's upper degrees still matter, else rank raised |
+| `chemistry.py` | stiff chemical networks as oracles (the step map in log10 abundances, Radau per state): Robertson, and a nine-species isothermal primordial H/He/H2 network with rates from Grackle; trajectories of visited states |
+| `kernel.py` | **MetricKernel**: greedy Matern-5/2 kernel interpolation in a metric learned from the model's gradients (a prototype that loses to ChebTT above 2-D) |
 | `sparsegrid.py` | **SparseCheb**: a dimension-adaptive sparse Chebyshev grid (Smolyak, Gerstner-Griebel), stopped by its surpluses and a Sobol-plus-corners check at half the tolerance; a failed check refines every active index once (a one-step look-ahead) |
 
 Problems: `rosenbrock`, `gaussian`, `wave`, `front` (a sharp tanh front on a sphere); the Genz

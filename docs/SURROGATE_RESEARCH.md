@@ -23,7 +23,8 @@ Contents:
 3. [Review II: structure-aware surrogates with max-norm control](#3-review-ii-structure-aware-surrogates-with-max-norm-control)
 4. [Review III: from the experiments' failures to chemistry tabulation](#4-review-iii-from-the-experiments-failures-to-chemistry-tabulation)
 5. [Review IV: kink splits, the limits in high dimension, a design for chemistry](#5-review-iv-kink-splits-the-limits-in-high-dimension-a-design-for-chemistry)
-6. [Synthesis and next steps](#6-synthesis-and-next-steps)
+6. [Review V: ChebTT, high-rank structure, surrogates that learn structure, a chemistry oracle](#6-review-v-chebtt-high-rank-structure-surrogates-that-learn-structure-a-chemistry-oracle)
+7. [Synthesis and next steps](#7-synthesis-and-next-steps)
 
 ---
 
@@ -43,8 +44,8 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
   method, with the evaluations) and `overview-d<d>-cost.png` (training and inference time, pieces,
   mean error); then per problem `<problem>-d<d>-cost.png` and the maps (2-D) or slice and shadow views.
   `python -m src.structure.bench --replot --setup cpu-8rank --d <d> --problems ...` redraws them.
-- Literature: [LITERATURE.md](LITERATURE.md) (every work reviewed, IDs I-* to V-*); reviews I-IV are
-  sections 2-5 below.
+- Literature: [LITERATURE.md](LITERATURE.md) (every work reviewed, IDs I-* to V-*); reviews I-V are
+  sections 2-6 below.
 
 ### 0.2 How the work proceeds (standing rules)
 
@@ -306,6 +307,21 @@ Robertson's stiff network (k1 = 0.04, k2 = 3e7, k3 = 1e4), states from trajector
 after Dirichlet-random initial conditions, central differences of the step map in log10 coordinates:
 singular values ~(1.3-1.7, 1.0, 1e-2-1e-4) at dt = 1e-3 and ~(1.2-1.7, 0.5-1.0, 1e-10) for every
 dt from 0.1 to 1e3. The fast direction collapses once dt exceeds the fast time scale.
+
+The primordial network (nine species, isothermal; `src/structure/chemistry.py`), states relaxed for
+1e5 yr from random ionisation and H2 fractions, central differences in log10 number densities:
+
+| n_H (cm^-3), T (K) | dt = 1e2 yr | dt = 1e4 yr | dt = 1e6 yr |
+|---|---|---|---|
+| 1e1, 300 | 7 of ~1, two at 2e-7, 2e-10 | 7 of 0.9-1.4, two at 1e-11 | 1.3-3.1, 0.8, 0.1, 0.08, 2e-3, two at 1e-11 |
+| 1e3, 1000 | 7 of ~1, two at 5e-11, 2e-11 | 7 of 0.65-1.4, two below 4e-11 | 2.9, 1.7, 0.8, 0.05, 3e-3, 3e-5, three below 6e-11 |
+| 1e4, 3000 | 7 of ~1, two below 2e-11 | 6 of 0.9-1.9, 0.19, two below 2e-10 | 46, 1.7, 1.1, 0.6, 0.04, 0.03, three below 2e-8 |
+
+The two fast species (H-, H2+) collapse onto quasi-equilibrium at every step (singular values ~1e-10),
+and longer steps relax more modes (numerical rank 3-6 of 9 at 1e6 yr). At short steps the other
+singular values are ~1: the map is close to the identity on the slow species. So a surrogate should
+learn the increment `log y(t + dt) - log y(t)`, which is small and carries the chemistry, and its
+input dimension is the number of slow modes, which falls as dt grows.
 
 ### 1.12 Engineering edge cases met
 
@@ -829,7 +845,431 @@ No use of ISAT in astrochemistry turned up in this search either.
 
 ---
 
-## 6. Synthesis and next steps
+## 6. Review V: ChebTT, high-rank structure, surrogates that learn structure, a chemistry oracle
+
+Builds on docs/LITERATURE.md (I-* to IV-* cited by ID) and Review IV (section 5); new works are V-1 to V-49. Tags: **[v]**
+source read (full text, named sections, or code), **[a]** abstract or catalogue only, **[r]** recalled. "Measured"
+marks short runs made for the review (scripts not kept; the rates are in `src/structure/chemistry.py`).
+
+### 6.0 Bottom line (ranked by gain over cost)
+
+1. **Most of the overshoot comes from one rule, not from the doubling.** Both of ChebTT's degree tests measure the
+   *upper half* of the coefficients (`chebyshev_tail` and `_truncated` drop degrees n/2+1..n). For geometric decay
+   a_j ~ ρ^-j, the upper half is about a_{n/2}, but the interpolation error is about a_n ≈ a_{n/2}²/a_0. Requiring
+   a_{n/2} ≤ share therefore gives an error near share²/max|f|, which squares the relative accuracy, and doubling
+   adds up to another factor of ρ^-n. That fits worst errors of about 1e-6 of the tolerance (reviewer's derivation).
+   Fix: estimate the tail from the last coefficients (a Chebfun-style plateau [III-1], or a fitted rate
+   extrapolated past n), and chop each core after acceptance (§2.3). This needs no new evaluations.
+2. **Replace "rank + 2 with random right indices" by global pivots from the worst check points**, as in TCI
+   [V-3 §4.3.5]. Split each failing point σ into σ_≤k and σ_>k at every bond and append the parts to the index sets.
+   This keeps nesting, costs nothing extra (the points are already evaluated) and aims the rank exactly where the
+   model fails. Then add residual-driven (DMRG-greedy or rook) pivots inside the sweep [V-2 Alg. 2, 5]. The present
+   scheme is the ALS-maxvol cross, which "can not update the ranks" [V-2 §3.3.1]; random enrichment is its weakest
+   repair.
+3. **Rotated or peaked positive f: approximate g = log(f + c) with c ≈ atol, and accept on f.** For the rotated
+   Gaussian, log f = -xᵀPx is a quadratic: degree 2 per axis and TT ranks ≤ 2 + min(k, d−k) (at most 4 at d = 5).
+   The needed accuracy in g is atol/(f + c), which is tight only where f ≫ c, and there g ≈ log f is exactly
+   quadratic. This is the cheapest test in this memo. It also matches chemistry, where log abundances are the
+   natural coordinates (§3).
+4. **For chemistry, rank local tabulation above global TT.** Lorenz-96 at F = 8 has a flow-map Jacobian with no
+   usable low rank, and its trouble is global coupling (§5, measured). Stiff chemistry contracts onto slow
+   manifolds, which favours local models in local metrics (ISAT and AFINNI trust regions) with refusal. Use ChebTT
+   as the leaf model in cells where the local rank is low, and on smooth box maps.
+5. **Learned metrics are the "structure discovery" worth building**: a Hessian or Jacobian metric field per cell
+   (AFINNI's `exact_hessian` split already computes |H|^{1/2}) used three ways: to shape trust regions as error
+   ellipsoids, to rotate the cell's TT or kernel coordinates, and to refuse queries. Kernels on the learned metric
+   (VKOGA, IV-13) come next. Manifold GPs, diffusion maps and neural operators give no sup-norm control at tight
+   tolerances (§4).
+6. **Build the chemistry oracle from Grackle's rate code** (pinned commit, §6): citable, numpy and scipy only.
+   Start isothermal, then add T as a state.
+
+### 6.1 What ChebTT does, against the literature
+
+ChebTT is the ALS maxvol cross of Oseledets-Tyrtyshnikov [II-10], which Dolgov and Savostyanov classify as Alg. 3
+[V-2 §3.3.1]: sweeps update the index sets by maxvol at fixed ranks. Rank adaptivity in the literature comes from
+three mechanisms.
+
+- **DMRG-maxvol** [V-1, a; V-2 Alg. 4, v]: compute the two-site superblock in full, truncate its SVD at ε, take
+  maxvol of the factors. Rank-revealing, but O(d n² r²) evaluations: expensive at n = 64-512.
+- **DMRG-greedy** [II-12, now read; V-2 Alg. 5]: add one cross per bond per half-sweep. The pivot is the
+  largest-error entry of the superblock, found by random sampling followed by rook pivoting (alternating row and
+  column maxima until the pivot dominates its row and column) [V-2 Alg. 2]. Nesting holds at every step, and the
+  cost is O((m + n) r) entries per rank-one step. The authors call it heuristic: "its accuracy can not be guaranteed
+  in general" [V-2 Remark 2].
+- **AMEn-cross** (TT-Toolbox `amen_cross.m` [V-9, v]; theory in V-8 [a]): keep a rank-5 (`zrank`) TT
+  approximation Z of the residual f − f̃, enrich each core with `kickrank = 2` directions from Z plus `zrank/2`
+  random ones, and stop when the Frobenius change of every supercore between consecutive sweeps (`max_dx`) falls
+  below tol, or after the error has risen twice (`max_err_jumps = 2`). The stopping rule is a convergence test,
+  not an error bound.
+- **TCI / prrLU** [V-3, v]: 2-site updates by partial rank-revealing LU, with the aim ‖F − F̃‖∞ < τ. The error
+  estimate is the largest pivot error on the 2-site slices, normalised by the largest sampled |F|
+  (`normalizeerror = true`). It must stay below τ for 3 consecutive iterations (`ncheckhistory = 3`). TCI is exact
+  on the slices it built from, and nothing more [V-3 §4.3].
+
+**Sup-norm reliability.** The best bound is on the grid only: with exact maximum-volume sets,
+|A − Ã| ≤ (2r + κr + 1)^⌈log₂ d⌉ (r + 1)² E_C, where E_C is the best rank-r error in the max norm [II-12, Thm. 1,
+v]. The measured factor on random tensors was about 2^3.2 for the greedy cross and 2^1.3 after DMRG sweeps. Error
+bounds for the whole tensor appear only recently [V-17, a]. Nothing controls the error between grid points.
+ChebTT's three check sets (Sobol, free cached points, next-grid look-ahead) are a stronger estimator than TCI's
+in-sample pivot error, so keep them.
+
+**Narrow peaks: the "ergodicity" problem.** TCI names "multivariate functions with very narrow peaks" as a case
+where the local updates stay in one part of the space [V-3 §4.3.6]. Every such case its authors met was fixed by
+**global pivots**: user-proposed points split at every bond and appended to the index sets, then a prrLU on the
+pivot matrices to drop spurious ones, then a few reset sweeps [V-3 §4.3.5]. They suggest a separate global search
+for points of large |F − F̃| that proposes pivots in a loop. The maxvol property makes such a search cheap: the
+largest element of a maximum-volume r×r submatrix is at least |A|_max / r² [V-7, r; quoted in V-5 §2.3, v]. TTOpt
+[V-5] and optima_tt [V-6, a] turn this into optimisers, with up to d = 100 in V-6. For us: run a low-rank maxvol
+cross on the residual |f − f̃| (mapped through atan as in TTOpt eq. 7) as the global-pivot finder. It costs
+O(d n R²) evaluations per sweep, and each evaluation is also a check point.
+
+### 6.2 Recommendations for ChebTT (cheap, in order)
+
+**2.1 Global pivots from failures.** After each failed round, take the k worst points among the Sobol set, the
+free checks and the look-ahead, snap them to the current grid (the look-ahead points lie on the next grid, so
+snap after doubling), and add them as global pivots. Keep "largest |f| seen" as one. Expected: rank grows only
+where needed, and the Gaussian's peak is caught as soon as one check point lands near it. Test: the rotated
+Gaussian and Lorenz-96 F = 8 at 5-D; compare evaluations and final ranks with rank + 2.
+
+**2.2 Rank-revealing truncation.** Add TCI's rule: drop pivots whose prrLU pivot falls below τ_loc ≈ τ, so a rank
+that was overshot shrinks. Use a QR with column pivoting of the fibre matrix in place of plain QR plus maxvol, and
+truncate at τ/√d relative to max|f|.
+
+**2.3 Degrees: estimate, chop, round.**
+(a) Tail estimate: in `_fibre_degree` and in the degree-or-rank test, replace "upper half of the degrees" by the
+mean of the last 4 coefficients times a fitted ρ/(1 − ρ), and fall back to the upper half when the decay is not
+geometric (a kink, see review_1).
+(b) Post-hoc chop: for each core, keep the smallest degree n'_k at which dropping coefficients above n'_k changes
+the model by at most share at all check points. This needs no evaluations and makes inference faster.
+(c) Optional growth by 1.5 instead of 2. Second-kind points of degree n are nested in degree m·n for every integer
+m, so with `LATTICE = 3·2^12` the chain 8 → 12 → 24 → 48 is nested except at the first step (the even nodes are
+shared).
+(d) TT rounding after the cross (SVD at ε/√(d−1)) cuts rank and inference cost. It is safe only if checked again
+at the check points.
+
+**2.4 Kinks along axes (Genz continuous).** f = exp(−Σ a_i |x_i − u_i|) has TT rank 1, so the whole cost is
+degree. Use piecewise-Chebyshev univariate bases, split at kinks found on a fibre by chebfun's edge detection
+[IV-1]. This is the C3 function train with piecewise polynomial cores [II-14]. The failure at tol 0.02 suggests
+early acceptance at a coarse degree whose check points miss the kink (mechanism of review_1 §1; unmeasured).
+
+### 6.3 High rank from rotated or coupled structure
+
+**Why the rotated Gaussian fails.** Rohrbach, Dolgov, Grasedyck and Scheichl [V-10, v, Thm. 3.1] bound the
+functional TT ranks of exp(−xᵀΓx/2) by (1 + 7(σ/λ_min) log(·/ε))^l, where l is the rank of the sub-diagonal block
+of Γ at that bond, σ its largest singular value and λ_min Γ's smallest eigenvalue. The rank is exponential in l
+and grows with the condition number of the precision matrix. With a dense rotation Q, l = min(k, d − k) and σ/λ_min
+approaches 125: the format's worst case. The ranks also depend on the variable ordering [V-10 §3], but no ordering
+helps a dense Q.
+
+**Remedies, ranked for our goal:**
+1. *TT of a transform.* log(f + c) (§0.3). I found no TT paper that uses "TT of log f, then exp" for pointwise
+   surrogates. The TT density literature works with √f, because it keeps the approximation non-negative and allows
+   sampling [V-14, a; V-15, a]. A compressed exp of a TT is a hard problem of its own [V-16, a], but we never need
+   it: f̂ = exp(g̃) − c is evaluated pointwise at the same O(d n r²) cost. Pitfalls: f must be positive (wave and
+   oscillatory Genz cannot use it); f underflows where xᵀPx > 745, which is why the shift c is needed; a mixture of
+   peaks makes log-sum-exp kinked between peaks; and the cross must pick pivots by the weighted residual
+   (f + c)|g̃ − g| while acceptance stays on f.
+2. *Local rotations inside cells.* A cell's Hessian metric (AFINNI's `exact_hessian` or the gradient-LSQ split)
+   gives its rotation; the cell's TT works in rotated coordinates. This is a local version of coordinate flows
+   [V-11, a], which finds a global linear map by Riemannian gradient descent and notes that a rotation can turn a
+   rotated high-rank Gaussian back into rank one. A rotated box sticks out of the domain: restrict the TT to the
+   rotated box inscribed in the cell, cover the rest with child cells, and never evaluate f outside the domain
+   (Lotka-Volterra returns NaN there).
+3. *A Hessian at the peak, not gradient covariance at random points.* The active subspace failed because the peak
+   fills about 1e-4 of the box. Find the peak first (largest |f| seen, then a TTOpt search), estimate the Hessian
+   there by finite differences (O(d²) evaluations) and rotate. This helps one peak, not a field of features.
+4. *Tree formats.* HT with an adapted tree, and tree search by node swaps [V-12, a; black-box HT V-13, r], help
+   when the coupling is sparse but badly ordered. They do not help a dense rotation.
+5. *Quantics TT* [V-4, a; V-18, r]: very fine resolution in 1-3 dimensions; an option for sharp 1-D features only.
+
+### 6.4 Surrogates that learn structure: metrics, kernels, ridges, networks
+
+"Structure" is what a method learns; the guarantee is the best known sup-norm statement; d is the input
+dimension, m the intrinsic one.
+
+| Family | Structure discovered | Best sup-norm guarantee | Samples vs d | Inference | Fit to our goal |
+|---|---|---|---|---|---|
+| Metric-based (Riemannian) adaptation: local models in error ellipsoids | local anisotropy, through the Hessian or Jacobian metric | local: P1 error on a cell ≈ max over edges of eᵀ|H|e [I-15, r]; cells needed ~ ε^(−m/2)∫√det|H|_m | ε^(−m/2), m = number of non-negligible Hessian eigenvalues; ε^(−d/2) with no low-rank Hessian | tree lookup plus a local model | **high** (this is ISAT/AFINNI) |
+| ChebTT (fixed as in §2) | global separable and low-rank coupling | on the grid only, quasi-optimal [II-12] | d n r² per sweep | d n r² | high on smooth box maps; low on chaotic maps or rotated peaks without §3 |
+| Greedy kernels (VKOGA, f/P-greedy) with an ARD or AGOP metric | anisotropy, via learned length scales or a gradient outer product | \|f − s\|(x) ≤ P_X(x)·‖f‖_H; ‖f‖_H unknown [IV-11, IV-13; V-25, V-27, r] | rates set by m on a manifold [IV-9] | O(N d) per query | medium: good at 1e-2–1e-4, limited by conditioning at tight tolerances [V-26, r] |
+| GPs on manifolds or graphs (Matérn via Laplace-Beltrami or graph Laplacian) | the data manifold | none in sup norm; posterior variance as an indicator | needs the manifold's spectrum, or a graph built on the visited states | O(N) per query | low: built for uncertainty, not tight tolerances [V-19, V-20, a] |
+| Diffusion maps plus geometric harmonics | intrinsic coordinates of the visited states | none; Nyström extension degrades off the data | graph on N states | O(N) per query | coordinates only [V-21, a] |
+| MLS on manifolds (MMLS) | local tangent charts | O(h^(m+1)) for noiseless samples [V-23, a] | depends on m, not d | local least squares per query | medium: a chart-based leaf model; slow per query [V-22, V-23, a] |
+| Multi-index or ridge learning (GOP, AGOP, kernel active subspaces) | k leading directions (global or local) | uniform recovery w.h.p. for exact ridges [II-18, II-19] | polynomial in d | projection plus a low-dimensional model | high as a coordinate provider for rows 1–3 [V-28, V-29, V-30, a] |
+| Neural: DeepONet, FNO, KAN, neural-ODE flow maps | learned features | none in practice: sup-norm sampling is hard for network approximation spaces [V-37, a]; trained networks fall short of their theoretical rates [V-36, a] | large | fast on GPU | low, except as a compressor behind a verified table [V-32–V-35, a] |
+| Conformal refusal (any model) | none | coverage of a quantile, marginal over the distribution, exchangeability required [V-38, V-39, a]; covariate shift needs a known likelihood ratio [V-40, a] | – | – | an audit tool, not a max-error control |
+
+**(a) Metric-based adaptation and AFINNI.** The continuous-mesh framework [II-25; review V-31, a] builds a metric
+field M(x) = |H(x)| scaled by the tolerance and makes cells of unit size in it. For a linear model the error over a
+displacement e is about ½eᵀHe, so the ellipsoid of accuracy is eᵀ(|H|/2ε)e ≤ 1. That is ISAT's EOA [III-12] and the
+shape AFINNI's Hessian-metric splits already use. AFINNI's trust matrix is different: it is a *coverage* ellipsoid
+(scaled inverse covariance of the cluster's points), and its own docstring says it is "not an error certificate".
+**Recommendation:** intersect the coverage ellipsoid with the error ellipsoid from the cell's metric. The outside
+flag then becomes an error-based refusal, which is ISAT's contract and the one the MHD coupling needs.
+
+Does a learned metric field give worst-error control at d = 10–100? Only if it is (i) correct and (ii) nearly
+low-rank. With m Hessian eigenvalues above the tolerance's scale, the cell count scales like ε^(−m/2). The ellipsoids
+become long in flat directions, and only third derivatives and the domain bound them, so the curse moves from d to
+m. Correctness is the weak part: a Hessian estimated from samples is a heuristic, and II-26 rules out certificates.
+The control is per cell and empirical (look-ahead checks along the ellipsoid's axes, review_1 §3.4).
+
+**(b) Kernels with learned metrics.** ARD length scales, Mahalanobis or AGOP metrics [V-29], and deep kernels
+[V-24, a] all learn anisotropy, but only the power function gives a pointwise statement. For noiseless data the GP
+posterior standard deviation equals the power function [V-25, r], so |f − s|(x) ≤ P_X(x)·‖f‖_H. Learning the metric
+changes H, and no bound on ‖f‖_H survives that. At tight tolerances the kernel matrix grows ill-conditioned, the
+trade-off principle [V-26, r]. Practical limit (reviewer's estimate): relative errors of 1e-4 to 1e-6 need
+stabilised greedy selection [IV-12] and O(N³) work per cell. Kernels belong in cells, on the visited manifold.
+
+**(c) Ridge and multi-index learning.** For chemistry, the Jacobian of the step map, which ISAT computes anyway, is
+the local gradient outer product. Its leading right singular vectors are the local active subspace, with no
+sampling of gradients (review_1 §3). Wu et al. [V-28] give convergence rates for gradient-based direction
+estimates. Kernel active subspaces [V-30] are a nonlinear version with L2 targets only.
+
+**(d) Neural models** offer speed, not control: use them only to compress mature table regions (IV-15), behind
+refusal and fallback, and report the maximum apart from any conformal quantile.
+
+**Cheap tests on the 5-D bench (each under a few minutes):**
+- *Rotated Gaussian:* (1) ChebTT on log(f + atol) (expect hundreds of evaluations); (2) global pivots from worst
+  checks (§2.1); (3) VKOGA with the metric P (the true Hessian/2) against an isotropic kernel at 5k points, to see
+  what a perfect learned metric buys; (4) the AGOP metric from 200 random gradients, which should fail like the
+  active subspace did.
+- *Genz continuous:* piecewise-Chebyshev cores with kink detection (§2.4) against SparseCheb; a kernel with Wendland
+  C0 functions as a control.
+- *Lorenz-96 (F = 8, t = 0.5):* a full TT-SVD of the map sampled on a 9^5 grid (59k RK4 evaluations, vectorised in
+  `problems.py`) gives the true unfolding singular values, and so whether rank or degree is the obstacle (§5).
+  Then train AFINNI and a kernel on attractor trajectories against the box.
+- *Lotka-Volterra:* TT in Hessian-rotated cells (§3.2), checking that no evaluation leaves the domain.
+
+**Ranking against ChebTT for our goal** (worst error over visited states, high d, chemistry): (1) local tabulation
+in learned metrics with refusal (AFINNI/ISAT plus 4a); (2) ChebTT, fixed, as a box method and as a leaf model where
+the local rank is low; (3) greedy kernels in Jacobian metrics on the visited manifold; (4) ridge and AGOP learning
+as the coordinate provider for 1-3; (5) MMLS charts and diffusion-map coordinates for analysis; (6) manifold GPs and
+neural surrogates, only behind refusal.
+
+### 6.5 Flow maps and chemistry maps: what rank to expect
+
+**Measured (Lorenz-96).** On the attractor, the Lyapunov spectra are: d = 5, F = 8: (0.53, −0.005, −0.57, −1.2,
+−3.7); d = 10, F = 8: (1.26, 0.74, 0.12, …, −4.7); F = 1 has none positive. On the bench's box [−5, 5]^d, the
+gradient of the output x_1(t) has median, 95% and maximum norms of 1.2, 2.9 and 4.0 (d = 5, F = 8, t = 0.5), against
+0.96, 1.09 and 1.30 (F = 1, t = 0.1). So the chaotic map is not steep at t = 0.5. Its difficulty is coupling and
+degree. A quadratic right-hand side composed over about 2–3 nonlinear times (|x| ~ 5) raises the polynomial degree
+geometrically and spreads each output's dependence over all 5 variables, because the cyclic stencil spans the
+whole ring at d = 5. For small t, Φ_t ≈ x + t f(x), whose TT rank is that of the right-hand side (3–4 here, local
+in the index). Rank grows with t as the coupling spreads. The median finite-time Jacobian singular values at
+F = 8, t = 0.5 run from 27 to 0.008 (d = 5) and from 27 to 0.003 (d = 10). Only the last one or two are negligible,
+so the map is not locally a low-dimensional ridge.
+
+**Chemistry differs through dissipation.** Over a step longer than the fast time scales, fast modes contract by
+exp(λΔt), so the step map's Jacobian has numerical rank near the number of slow modes: the ILDM/CSP premise
+[III-18, III-19], the reason ISAT's EOAs are long in fast directions [III-12], and the argument of Pope's
+"manifold challenges" review [V-49, r]. Implications: (i) local tabulation on visited states matches this
+structure and global TT does not; (ii) conservation is linear in number densities but a sum of exponentials in log
+densities, which has high TT rank. **Measure T1 of review_1 on the primordial network before choosing
+coordinates.** TT models of the right-hand side [V-41, a] model f, not Φ_t; rank-adaptive tensor integrators
+[V-42, a] confirm that rank must be adapted in time.
+
+### 6.6 Chemistry oracles (numpy and scipy only)
+
+#### 6.6.1 Robertson [IV-22], verified against the IVP test set's `rober.f` [V-46, v]
+
+y1' = −0.04 y1 + 1e4 y2 y3;  y2' = 0.04 y1 − 1e4 y2 y3 − 3e7 y2²;  y3' = 3e7 y2².  y(0) = (1, 0, 0); test interval
+t ∈ [0, 1e11]. Rates are fixed (no temperature). Use Radau or BDF with rtol 1e-10 and atol 1e-20 for the
+reference, inputs (log y1, log y2, log y3, log Δt), and y1 + y2 + y3 = 1 as the conservation check.
+
+#### 6.6.2 Primordial H/He/H2: nine species (H, H+, H−, H2, H2+, e−, He, He+, He++)
+
+**Source** [V-44, v]: Grackle, `src/clib/rate_functions.c` at commit 48e0733 (2026-02-05),
+https://raw.githubusercontent.com/grackle-project/grackle/48e0733d079f216f083ea7715db5faf60d284509/src/clib/rate_functions.c.
+Reaction identities come from the species updates in `src/clib/solve_rate_cool_g.F` (`step_rate_g`, lines
+2225–2310), because **the comments in rate_functions.c mislabel k16–k19**. The updates show k16 and k17 acting on
+H−·H+, and k18 and k19 on H2+. Grackle's defaults are used: `CaseBRecombination = 0`, `three_body_rate = 0`,
+`h2_charge_exchange_rate = 1`, tiny = 1e-20 (`grackle_macros.h`). Units are cm³ s⁻¹ (two-body) and cm⁶ s⁻¹
+(three-body). T is in K; T_eV = T/11605; ln T_eV is the natural log. Most fits derive from Abel et al. 1997
+[V-43, a], whose model covers n < 1e4 cm⁻³ and 1 K < T < 1e8 K. Every row below was transcribed from the pinned
+source and evaluated (now `primordial_rates` in `src/structure/chemistry.py`). As a check, k2(1e4 K) = 4.17e-13, the standard case-A value. **All
+rows: verified against source.**
+
+| k | Reaction | k(T) (cgs) | Source lines |
+|---|---|---|---|
+| k1 | H + e → H+ + 2e | exp(Σ c_i (ln T_eV)^i), c = (−32.71396786375, 13.53655609057, −5.739328757388, 1.563154982022, −0.2877056004391, 0.03482559773736999, −0.00263197617559, 1.119543953861e-4, −2.039149852002e-6); max(tiny, ·) if T_eV ≤ 0.8 | 36–54 |
+| k2 | H+ + e → H + γ | T > 5500: exp(Σ c_i (ln T_eV)^i), c = (−28.61303380689232, −0.7241125657826851, −0.02026044731984691, −0.002380861877349834, −3.212605213188796e-4, −1.421502914054107e-5, 4.989108920299513e-6, 5.755614137575758e-7, −1.856767039775261e-8, −3.071135243196595e-9); else **k4(T)** (as in the source) | 97–127 |
+| k3 | He + e → He+ + 2e | T_eV > 0.8: exp(Σ c_i (ln T_eV)^i), c = (−44.09864886561001, 23.91596563469, −10.75323019821, 3.058038757198, −0.5685118909884001, 0.06795391233790001, −0.005009056101857001, 2.067236157507e-4, −3.649161410833e-6); else tiny | 56–75 |
+| k4 | He+ + e → He + γ | T_eV > 0.8: 1.54e-9(1 + 0.3/exp(8.099328789667/T_eV))/(exp(40.49664394833662/T_eV) T_eV^1.5) + 3.92e-13/T_eV^0.6353; else 3.92e-13/T_eV^0.6353 | 77–95 |
+| k5 | He+ + e → He++ + 2e | T_eV > 0.8: exp(Σ c_i (ln T_eV)^i), c = (−68.71040990212001, 43.93347632635, −18.48066993568, 4.701626486759002, −0.7692466334492, 0.08113042097303, −0.005324020628287001, 1.975705312221e-4, −3.165581065665e-6); else tiny | 129–150 |
+| k6 | He++ + e → He+ + γ | 3.36e-10 T^−1/2 (T/1e3)^−0.2 / (1 + (T/1e6)^0.7) | 152–169 |
+| k7 | H + e → H− + γ | 3.0e-16 (T/300)^0.95 exp(−T/9320) | 171–176 |
+| k8 | H + H− → H2 + e | 1.35e-9 (T^0.098493 + 0.32852 T^0.5561 + 2.771e-7 T^2.1826) / (1 + 6.191e-3 T^1.0461 + 8.9712e-11 T^3.0424 + 3.2576e-14 T^3.7741) | 178–185 |
+| k9 | H + H+ → H2+ + γ | T < 30: 2.10e-20 (T/30)^−0.15; else 10^(−18.20 − 3.194 L + 1.786 L² − 0.2072 L³), L = log₁₀ min(T, 3.2e4) | 187–203 |
+| k10 | H2+ + H → H2 + H+ | 6.0e-10 | 205–209 |
+| k11 | H2 + H+ → H2+ + H | T_eV > 0.3: exp(−21237.15/T) Σ c_i (ln T)^i, c = (−3.3232183e-7, 3.3735382e-7, −1.4491368e-7, 3.4172805e-8, −4.7813720e-9, 3.9731542e-10, −1.8171411e-11, 3.5311932e-13) (Savin 2004 option); else tiny | 211–250 |
+| k12 | H2 + e → 2H + e | T_eV > 0.3: 4.4886e-9 T^0.109127 exp(−101858/T); else tiny | 252–265 |
+| k13 | H2 + H → 3H | T_eV > 0.3: 1.0670825e-10 T_eV^2.012 / (exp(4.463/T_eV)(1 + 0.2472 T_eV)^3.512); else tiny. Grackle's solver uses the density-dependent k13dd fit (lines 325–446); this low-density form is the minimal choice | 267–323 |
+| k14 | H− + e → H + 2e | T_eV > 0.04: exp(Σ c_i (ln T_eV)^i), c = (−18.01849334273, 2.360852208681, −0.2827443061704, 0.01623316639567, −0.03365012031362999, 0.01178329782711, −0.001656194699504, 1.068275202678e-4, −2.631285809207e-6); else tiny | 448–469 |
+| k15 | H− + H → 2H + e | T_eV > 0.1: exp(Σ c_i (ln T_eV)^i), c = (−20.37260896533324, 1.139449335841631, −0.1421013521554148, 0.00846445538663, −0.0014327641212992, 2.012250284791e-4, 8.66396324309e-5, −2.585009680264e-5, 2.4555011970392e-6, −8.06838246118e-8); else 2.56e-9 T_eV^1.78186 | 471–493 |
+| k16 | H− + H+ → 2H | 2.4e-6 (1 + T/2e4)/√T | 495–500 |
+| k17 | H− + H+ → H2+ + e | T > 1e4: 4.0e-4 T^−1.4 exp(−15100/T); else 1.0e-8 T^−0.4 | 502–512 |
+| k18 | H2+ + e → 2H | T > 617: 1.32e-6 T^−0.76; else 1.0e-8 | 514–524 |
+| k19 | H2+ + H− → H2 + H | 5.0e-7 √(100/T) | 526–530 |
+| k22 | 3H → H2 + H | T ≤ 300: 1.3e-32 (T/300)^−0.38; else 1.3e-32 (T/300)^−1 (cm⁶ s⁻¹) | 543–588 |
+| k57 | H + H → H+ + e + H | T > 3000: 1.2e-17 T^1.2 exp(−1.578e5/T); else tiny | 678–688 |
+| k58 | H + He → H+ + e + He | T > 3000: 1.75e-17 T^1.3 exp(−1.578e5/T); else tiny | 690–700 |
+
+For robustness tests, Glover and Abel [V-47, a] assess the uncertain H2 rates and give alternatives. Rate
+equations use number densities, as in `step_rate_g` (where Grackle's mass-density fields carry /2 for H2 and /4
+for He). For example, d n_H2/dt = k8 n_H n_H− + k10 n_H2+ n_H + k19 n_H2+ n_H− + k22 n_H³ − (k11 n_H+ + k12 n_e +
+k13 n_H) n_H2. Grackle sets H2+ to its equilibrium value; the oracle should integrate it as a species. Radiative
+rates (k24–k31) and dust are left out.
+
+**State and coordinates.** Stage A (isothermal): inputs are log n_H ∈ [0, 6] (n in cm⁻³), log T ∈ [1, 4], the log
+fractions x_i = n_i/n_H of 6 independent species, and log Δt. Nuclei and charge conservation fix the other three
+(He/H = 0.079 by number for Grackle's default hydrogen mass fraction 0.76 [r]). That is 8 inputs.
+Stage B adds T as a state with a cooling function (Grackle's ceHI and related rates, lines 755 onward), which is
+the stiff, transient-rich case. Outputs: log x_i after Δt, floored at 1e-20.
+
+**Ranges used in astrophysics.** Abel et al.'s model covers n < 1e4 and 1–1e8 K [V-43]. A primordial emulator
+spans n = 1e-3–1e18 cm⁻³ and is checked in one-zone collapses with steps down to 1e-4 t_ff [III-28, a]. The
+free-fall time is t_ff = √(3π/32Gρ) ≈ 47 Myr · n^−1/2 for μ = 1.22 (computed). Reasonable choices are Δt ∈ [1e-3,
+1e-1] t_ff(n), or a fixed Δt ∈ [1e2, 1e5] yr for ISM runs. Initial ionisation fractions are 1e-6–1e-1 and H2
+fractions 1e-8–0.5 (reviewer's choice, to cover the relic and shock-ionised cases).
+
+#### 6.6.3 H2–O2 (optional): Cantera `h2o2.yaml` at commit 5876366 [V-45, v]
+
+This is the hydrogen-oxygen submechanism of GRI-Mech 3.0 ("Modified from the original to include N2"), not Li et
+al. 2004 [IV-21] or Burke et al. 2012 [V-48, r]. It has 10 species (H2, H, O, O2, OH, H2O, HO2, H2O2, AR, N2) and 29
+reversible reactions. k = A T^b exp(−Ea/RT), with A in cm-mol-s and Ea in cal/mol. Reverse rates need the NASA-7
+polynomials in the same file (equilibrium constants), which is the main work without Cantera. **All rows: verified
+against source.**
+
+| # | Reaction | A | b | Ea | Notes |
+|---|---|---|---|---|---|
+| 1 | 2O + M ⇌ O2 + M | 1.2e17 | −1.0 | 0 | eff. H2 2.4, H2O 15.4, AR 0.83 |
+| 2 | O + H + M ⇌ OH + M | 5.0e17 | −1.0 | 0 | H2 2.0, H2O 6.0, AR 0.7 |
+| 3 | O + H2 ⇌ H + OH | 3.87e4 | 2.7 | 6260 | |
+| 4 | O + HO2 ⇌ OH + O2 | 2.0e13 | 0 | 0 | |
+| 5 | O + H2O2 ⇌ OH + HO2 | 9.63e6 | 2.0 | 4000 | |
+| 6 | H + O2 + M ⇌ HO2 + M | 2.8e18 | −0.86 | 0 | O2, H2O, N2, AR 0 (explicit in 7–10) |
+| 7 | H + 2O2 ⇌ HO2 + O2 | 2.08e19 | −1.24 | 0 | |
+| 8 | H + O2 + H2O ⇌ HO2 + H2O | 1.126e19 | −0.76 | 0 | |
+| 9 | H + O2 + N2 ⇌ HO2 + N2 | 2.6e19 | −1.24 | 0 | |
+| 10 | H + O2 + AR ⇌ HO2 + AR | 7.0e17 | −0.8 | 0 | |
+| 11 | H + O2 ⇌ O + OH | 2.65e16 | −0.6707 | 17041 | |
+| 12 | 2H + M ⇌ H2 + M | 1.0e18 | −1.0 | 0 | H2 0, H2O 0, AR 0.63 |
+| 13 | 2H + H2 ⇌ 2H2 | 9.0e16 | −0.6 | 0 | |
+| 14 | 2H + H2O ⇌ H2 + H2O | 6.0e19 | −1.25 | 0 | |
+| 15 | H + OH + M ⇌ H2O + M | 2.2e22 | −2.0 | 0 | H2 0.73, H2O 3.65, AR 0.38 |
+| 16 | H + HO2 ⇌ O + H2O | 3.97e12 | 0 | 671 | |
+| 17 | H + HO2 ⇌ O2 + H2 | 4.48e13 | 0 | 1068 | |
+| 18 | H + HO2 ⇌ 2OH | 8.4e13 | 0 | 635 | |
+| 19 | H + H2O2 ⇌ HO2 + H2 | 1.21e7 | 2.0 | 5200 | |
+| 20 | H + H2O2 ⇌ OH + H2O | 1.0e13 | 0 | 3600 | |
+| 21 | OH + H2 ⇌ H + H2O | 2.16e8 | 1.51 | 3430 | |
+| 22 | 2OH (+M) ⇌ H2O2 (+M) | k∞: 7.4e13, −0.37, 0; k0: 2.3e18, −0.9, −1700 | | | Troe A 0.7346, T3 94, T1 1756, T2 5182; H2 2.0, H2O 6.0, AR 0.7 |
+| 23 | 2OH ⇌ O + H2O | 3.57e4 | 2.4 | −2110 | |
+| 24 | OH + HO2 ⇌ O2 + H2O | 1.45e13 | 0 | −500 | duplicate of 29 |
+| 25 | OH + H2O2 ⇌ HO2 + H2O | 2.0e12 | 0 | 427 | duplicate of 26 |
+| 26 | OH + H2O2 ⇌ HO2 + H2O | 1.7e18 | 0 | 29410 | duplicate |
+| 27 | 2HO2 ⇌ O2 + H2O2 | 1.3e11 | 0 | −1630 | duplicate of 28 |
+| 28 | 2HO2 ⇌ O2 + H2O2 | 4.2e14 | 0 | 12000 | duplicate |
+| 29 | OH + HO2 ⇌ O2 + H2O | 5.0e15 | 0 | 17330 | duplicate |
+
+Typical conditions (reviewer's estimate, unverified): T₀ 900–1500 K, 1–10 atm, equivalence ratio 0.5–2, Δt 1e-7–1e-5 s.
+
+### 6.7 Benchmark protocol for the chemistry stage
+
+**What others report.** ISAT controls the local tabulation error ε (scaled), and its error checking bounds the 90%
+quantile of the incurred error, not the maximum [III-13]. Rare large errors come from non-convex regions of
+accuracy [III-14]. Astrochemistry emulators report mean or quantile relative errors: "below 10% in over 90% of
+cases" [III-28], mean relative error below 4% [III-24], about 1e-2 [III-27]. None reports a maximum on held-out
+trajectories with a fallback rate.
+
+**Protocol (concrete):**
+1. *Data.* Train from one-zone trajectories: isothermal and free-fall collapse (ρ̇ = ρ/t_ff), with initial states
+   sampled from §6.2's ranges by a Sobol design (200 trajectories, about 1e5 states). Test on 100 held-out
+   trajectories with different seeds and on 20 trajectories from a different forcing (shock-heated T jumps).
+   Contrast with training on the box of §6.2 at the same budget.
+2. *Error.* e = max over species with x_i > 1e-12 of |log₁₀ x̂_i − log₁₀ x_i|, plus the conservation residuals of
+   H nuclei, He nuclei and charge. Report the maximum, the 99.9% and 99% quantiles, and the share above the
+   tolerance (0.01 dex and 0.001 dex). Report them per phase (quiescent, ignition or collapse, transient), as
+   review_1 §4 advised.
+3. *Fallback.* Report the refused-query rate overall and per phase, and the error of accepted answers only. Re-solve
+   a random 1% of accepted answers, as in Lu-Pope error checking [III-13], and report both the maxima it finds and
+   the ones it misses.
+4. *Accumulation.* Apply the surrogate repeatedly along 20 test trajectories (1000 steps) and report the drift of
+   the log abundances and of the temperature (stage B) against the solver, as in III-28's one-zone tests.
+5. *Cost.* Solver evaluations to train, table size, and inference time per query against a BDF solve at the same
+   accuracy, on CPU and GPU.
+
+### 6.8 Cheapest first experiments
+
+In order: (1) ChebTT on log(f + atol) for the rotated Gaussian; (2) the last-coefficient tail and the chop on the
+26 passing 5-D cases (target worst/tolerance 0.1–0.5); (3) global pivots in place of rank + 2; (4) a TT-SVD of
+Lorenz-96 F = 8 on 9^5 points; (5) Robertson and stage-A primordial oracles with review_1's T1 in linear and log
+coordinates; (6) AFINNI with error ellipsoids against coverage ellipsoids, under the §7 protocol.
+
+### 6.9 References (new: V-*)
+
+Tensors and cross approximation
+- V-1 Savostyanov, Oseledets 2011, *Fast adaptive interpolation of multi-dimensional arrays in tensor train format*, nDS'11, doi:10.1109/nDS.2011.6076873 [a]
+- V-2 Dolgov, Savostyanov 2020, *Parallel cross interpolation for high-precision calculation of high-dimensional integrals*, CPC 246:106869, https://arxiv.org/abs/1903.11554 [v: §2–3.3]
+- V-3 Núñez Fernández et al. 2025, *Learning tensor networks with tensor cross interpolation: new algorithms and libraries*, SciPost Phys. 18:104, https://arxiv.org/abs/2407.02454 [v: §4.3, 4.3.5–4.3.7, the crossinterpolate2 API]
+- V-4 Ritter et al. 2024, *Quantics tensor cross interpolation…*, PRL 132:056501, https://arxiv.org/abs/2303.11819 [a]
+- V-5 Sozykin et al. 2022, *TTOpt: a maximum volume quantized tensor train-based optimization…*, NeurIPS, https://arxiv.org/abs/2205.00293 [v: §2.3]
+- V-6 Chertkov, Ryzhakov, Novikov, Oseledets 2022, *Optimization of functions given in the tensor train format*, https://arxiv.org/abs/2209.14808 [a]
+- V-7 Goreinov, Oseledets, Savostyanov, Tyrtyshnikov, Zamarashkin 2010, *How to find a good submatrix*, in Matrix Methods: Theory, Algorithms and Applications, World Scientific [r; its bound is quoted from V-5]
+- V-8 Dolgov, Savostyanov 2014, *Alternating minimal energy methods for linear systems in higher dimensions*, SISC 36(5):A2248, https://arxiv.org/abs/1301.6068, https://arxiv.org/abs/1304.1222 [a]
+- V-9 TT-Toolbox, `cross/amen_cross.m`, https://github.com/oseledets/TT-Toolbox [v: options and stopping rule]
+- V-10 Rohrbach, Dolgov, Grasedyck, Scheichl 2022, *Rank bounds for approximating Gaussian densities in the tensor-train format*, SIAM/ASA JUQ 10(3), https://arxiv.org/abs/2001.08187 [v: Thm. 3.1, §3]
+- V-11 Dektor, Venturi 2022, *Tensor rank reduction via coordinate flows*, https://arxiv.org/abs/2207.11955 [a]
+- V-12 Grelier, Nouy, Chevreuil 2018, *Learning with tree-based tensor formats*, https://arxiv.org/abs/1811.04455 [a]
+- V-13 Ballani, Grasedyck, Kluge 2013, *Black box approximation of tensors in hierarchical Tucker format*, LAA 438 [r]
+- V-14 Dolgov, Anaya-Izquierdo, Fox, Scheichl 2020, *Approximation and sampling of multivariate probability distributions in the tensor train decomposition*, Stat. Comput. 30:603, https://arxiv.org/abs/1810.01212 [a]
+- V-15 Cui, Dolgov 2022, *Deep composition of tensor-trains using squared inverse Rosenblatt transports*, FoCM, https://arxiv.org/abs/2007.06968 [a]
+- V-16 Eigel, Farchmin, Heidenreich, Trunschke 2021, *Efficient approximation of high-dimensional exponentials by tensor networks*, https://arxiv.org/abs/2105.09064 [a]
+- V-17 Qin, Lidiak, Gong, Tang, Wakin, Zhu 2022, *Error analysis of tensor-train cross approximation*, https://arxiv.org/abs/2207.04327 [a]
+- V-18 Khoromskij 2011, *O(d log N)-quantics approximation of N-d tensors in high-dimensional numerical modeling*, Constr. Approx. 34 [r]
+
+Kernels, manifolds, ridges, metrics
+- V-19 Borovitskiy, Terenin, Mostowsky, Deisenroth 2020, *Matérn Gaussian processes on Riemannian manifolds*, NeurIPS, https://arxiv.org/abs/2006.10160 [a]
+- V-20 Borovitskiy et al. 2021, *Matérn Gaussian processes on graphs*, AISTATS, https://arxiv.org/abs/2010.15538 [a]
+- V-21 Coifman, Lafon 2006, *Geometric harmonics: a novel tool for multiscale out-of-sample extension of empirical functions*, ACHA 21(1):31–52 [a]
+- V-22 Sober, Levin 2016/2020, *Manifold approximation by moving least-squares projection (MMLS)*, https://arxiv.org/abs/1606.07104 [a]
+- V-23 Sober, Aizenbud, Levin 2017/2021, *Approximation of functions over manifolds: a moving least-squares approach*, https://arxiv.org/abs/1711.00765 [a]
+- V-24 Wilson, Hu, Salakhutdinov, Xing 2016, *Deep kernel learning*, AISTATS, https://arxiv.org/abs/1511.02222 [a]
+- V-25 Kanagawa, Hennig, Sejdinovic, Sriperumbudur 2018, *Gaussian processes and kernel methods: a review on connections and equivalences*, https://arxiv.org/abs/1807.02582 [a; power function = posterior sd recalled]
+- V-26 Schaback 1995, *Error estimates and condition numbers for radial basis function interpolation*, Adv. Comput. Math. 3:251 [r]
+- V-27 Wendland 2005, *Scattered Data Approximation*, Cambridge University Press [r]
+- V-28 Wu, Guinney, Maggioni, Mukherjee 2010, *Learning gradients: predictive models that infer geometry and statistical dependence*, JMLR 11:2175–2198 [a]
+- V-29 Radhakrishnan, Beaglehole, Pandit, Belkin 2022/2024, *Mechanism of feature learning in deep fully connected networks and kernel machines that recursively learn features*, https://arxiv.org/abs/2212.13881 [a]
+- V-30 Romor, Tezzele, Lario, Rozza 2022, *Kernel-based active subspaces…*, https://arxiv.org/abs/2008.12083 [a]
+- V-31 Alauzet, Loseille 2016, *A decade of progress on anisotropic mesh adaptation for computational fluid dynamics*, CAD 72:13–39, doi:10.1016/j.cad.2015.09.005 [a]
+
+Neural surrogates and refusal
+- V-32 Lu, Jin, Karniadakis 2021, *DeepONet*, https://arxiv.org/abs/1910.03193 [a]
+- V-33 Li et al. 2021, *Fourier neural operator for parametric PDEs*, ICLR, https://arxiv.org/abs/2010.08895 [a]
+- V-34 Liu et al. 2024, *KAN: Kolmogorov-Arnold networks*, https://arxiv.org/abs/2404.19756 [a]
+- V-35 Chen, Rubanova, Bettencourt, Duvenaud 2018, *Neural ordinary differential equations*, NeurIPS, https://arxiv.org/abs/1806.07366 [a]
+- V-36 Adcock, Dexter 2021, *The gap between theory and practice in function approximation with deep neural networks*, https://arxiv.org/abs/2001.07523 [a]
+- V-37 Grohs, Voigtlaender 2024, *Proof of the theory-to-practice gap in deep learning via sampling complexity bounds for neural network approximation spaces*, https://arxiv.org/abs/2104.02746 [a]
+- V-38 Lei, G'Sell, Rinaldo, Tibshirani, Wasserman 2018, *Distribution-free predictive inference for regression*, JASA, https://arxiv.org/abs/1604.04173 [a]
+- V-39 Angelopoulos, Bates 2021, *A gentle introduction to conformal prediction…*, https://arxiv.org/abs/2107.07511 [a]
+- V-40 Tibshirani, Barber, Candès, Ramdas 2019, *Conformal prediction under covariate shift*, NeurIPS, https://arxiv.org/abs/1904.06019 [a]
+
+Dynamics and chemistry
+- V-41 Gelß, Klus, Eisert, Schütte 2019, *Multidimensional approximation of nonlinear dynamical systems* (MANDy), J. Comput. Nonlinear Dyn. 14:061006, https://arxiv.org/abs/1809.02448 [a]
+- V-42 Dektor, Rodgers, Venturi 2021, *Rank-adaptive tensor methods for high-dimensional nonlinear PDEs*, J. Sci. Comput., https://arxiv.org/abs/2012.05962 [a]
+- V-43 Abel, Anninos, Zhang, Norman 1997, *Modelling primordial gas in numerical cosmology*, New Astron. 2:181–207, https://arxiv.org/abs/astro-ph/9608040 [a]
+- V-44 Grackle source, `src/clib/rate_functions.c` and `solve_rate_cool_g.F` at 48e0733, https://github.com/grackle-project/grackle [v]
+- V-45 Cantera `data/h2o2.yaml` at 5876366 (GRI-Mech 3.0 H2/O2 submechanism), https://github.com/Cantera/cantera [v]
+- V-46 Test Set for IVP Solvers (Bari), ROBER, `src/problems/rober.f`, https://archimede.uniba.it/~testset/ [v]
+- V-47 Glover, Abel 2008, *Uncertainties in H2 and HD chemistry and cooling and their role in early structure formation*, MNRAS 388:1627 (venue r), https://arxiv.org/abs/0803.1768 [a]
+- V-48 Burke, Chaos, Ju, Dryer, Klippenstein 2012, *Comprehensive H2/O2 kinetic model for high-pressure combustion*, Int. J. Chem. Kinet. 44:444 [r]
+- V-49 Pope 2013, *Small scales, many species and the manifold challenges of turbulent combustion*, Proc. Combust. Inst. 34:1–31 [r]
+
+Updated: II-12 (Savostyanov 2014) was read in this review: Thm. 1, and the greedy and DMRG cross (Alg. 1–2).
+
+---
+
+## 7. Synthesis and next steps
 
 **What can be promised.** No method that only samples f certifies the worst error over a box in
 high dimension [II-26]. The guarantee that can be built is narrower and is the one the MHD coupling

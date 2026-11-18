@@ -5,7 +5,7 @@ The register of every work reviewed for the surrogate experiments (`src/structur
 
 **Rule.** Before searching the literature, check this register. After a review, append every work it read or
 cited to the table of its topic, under a new ID series (I-* to III-* are the reviews in SURROGATE_RESEARCH.md,
-IV-* the fourth review), and update the entries whose takeaway or use the review changed.
+IV-* the fourth review, V-* the fifth), and update the entries whose takeaway or use the review changed.
 
 **Verified.** *yes*: the source itself was read. *abstract-only*: an abstract or summary was read. *unverified*:
 the work was cited from memory, or the review did not record how it checked it. The status of I-* to III-* is
@@ -15,6 +15,7 @@ listed under two IDs (II-2 = III-1); both are kept, since the documents cite bot
 
 **Where.** "Review I/II/III" are sections 2-4 of SURROGATE_RESEARCH.md, "Synthesis" is its section 5, and
 "Review IV" is the fourth review (kink splits, the limits in high dimension, the design for chemistry).
+"Review V" is the fifth review (ChebTT, high-rank structure, surrogates that learn structure, the chemistry oracle).
 
 ## Adaptive polynomial and Chebyshev approximation
 
@@ -83,6 +84,7 @@ listed under two IDs (II-2 = III-1); both are kept, since the documents cite bot
 | I-18 | Dekel, Leviatan 2005, *Adaptive multivariate approximation using binary space partitions and geometric wavelets*, SINUM, doi:10.1137/040604649 | abstract-only | Approximation theory for BSP partitions with polynomial pieces | Review I |
 | I-19 | Chandrasekaran, Wakin, Baron, Baraniuk 2009, *Representation and compression of multidimensional piecewise functions using surflets*, https://dspace.mit.edu/handle/1721.1/52325 | abstract-only | Cells cut by polynomial surfaces reach near-optimal rates for piecewise-smooth f | Review I |
 | II-25 | Loseille, Alauzet 2011, *Continuous mesh framework I/II*, SINUM 49, https://hal.archives-ouvertes.fr/hal-03167252 | unverified | Metric-based anisotropic adaptation: optimal L^p error for linear pieces, practical only for d of 3 or less | Review II |
+| V-31 | Alauzet, Loseille 2016, *A decade of progress on anisotropic mesh adaptation for computational fluid dynamics*, CAD 72:13-39, doi:10.1016/j.cad.2015.09.005 | abstract-only | Metric-based (Hessian) anisotropic adaptation in practice; the error ellipsoid eᵀ(\|H\|/2ε)e ≤ 1 is ISAT's EOA and AFINNI's Hessian-metric split; cells scale like ε^(-m/2) with m non-negligible Hessian eigenvalues | Review V (metric-based adaptation; error ellipsoids for AFINNI) |
 
 ## Kernels and Gaussian processes
 
@@ -96,6 +98,15 @@ listed under two IDs (II-2 = III-1); both are kept, since the documents cite bot
 | IV-11 | Wenzel, Santin, Haasdonk 2023, *Analysis of target data-dependent greedy kernel algorithms: convergence rates for f-, f·P- and f/P-greedy*, Constr. Approx. 57:45-74, doi:10.1007/s00365-022-09592-3; sequel: Santin, Wenzel, Haasdonk, SINUM 2024, https://arxiv.org/abs/2307.09811 | abstract-only | Target-adaptive greedy selection beats the rates of uniform points; the beta-greedy scale from P-greedy (beta = 0) to f-greedy (beta = 1) | Review IV |
 | IV-12 | Wenzel, Santin, Haasdonk 2021, *A novel class of stabilized greedy kernel approximation algorithms: convergence, stability and uniform point distribution*, J. Approx. Theory (venue unverified), https://arxiv.org/abs/1911.04352 | abstract-only | Restricting the greedy choice keeps it stable with optimal rates | Review IV (kernel conditioning) |
 | IV-13 | Wirtz, Haasdonk 2013, *A vectorial kernel orthogonal greedy algorithm*, Dolomites Res. Notes Approx. 6:83-100, doi:10.14658/PUPJ-DRNA-2013-Special_Issue-10 | abstract-only | VKOGA: greedy kernel interpolation of vector-valued maps, with a-posteriori bounds | Review IV (local models, T3) |
+| V-19 | Borovitskiy, Terenin, Mostowsky, Deisenroth 2020, *Matérn Gaussian processes on Riemannian manifolds*, NeurIPS, https://arxiv.org/abs/2006.10160 | abstract-only | Matérn kernels on compact manifolds from the Laplace-Beltrami spectrum; uncertainty, no sup-norm control | Review V (ranked low for tight tolerances) |
+| V-20 | Borovitskiy, Azangulov, Terenin, Mostowsky, Deisenroth, Durrande 2021, *Matérn Gaussian processes on graphs*, AISTATS, https://arxiv.org/abs/2010.15538 | abstract-only | Graph-Laplacian Matérn GPs; a graph built on visited states would carry them | Review V |
+| V-21 | Coifman, Lafon 2006, *Geometric harmonics: a novel tool for multiscale out-of-sample extension of empirical functions*, ACHA 21(1):31-52 | abstract-only | Nyström extension of functions given on data; intrinsic coordinates, degrades off the data | Review V (coordinates only) |
+| V-22 | Sober, Levin 2016 (Constr. Approx. 2020, unverified), *Manifold approximation by moving least-squares projection (MMLS)*, https://arxiv.org/abs/1606.07104 | abstract-only | Local tangent charts of a manifold from noisy scattered points | Review V |
+| V-23 | Sober, Aizenbud, Levin 2017 (published 2021, venue unverified), *Approximation of functions over manifolds: a moving least-squares approach*, https://arxiv.org/abs/1711.00765 | abstract-only | Functions on an unknown m-dimensional manifold with O(h^(m+1)) error for noiseless samples; needs only m | Review V (chart-based leaf model) |
+| V-24 | Wilson, Hu, Salakhutdinov, Xing 2016, *Deep kernel learning*, AISTATS, https://arxiv.org/abs/1511.02222 | abstract-only | Learned input warping inside a GP kernel; no pointwise bound survives the learning | Review V |
+| V-25 | Kanagawa, Hennig, Sejdinovic, Sriperumbudur 2018, *Gaussian processes and kernel methods: a review on connections and equivalences*, https://arxiv.org/abs/1807.02582 | abstract-only | GP posterior sd = power function for noiseless data (recalled), so \|f - s\| ≤ P_X ‖f‖_H | Review V |
+| V-26 | Schaback 1995, *Error estimates and condition numbers for radial basis function interpolation*, Adv. Comput. Math. 3:251 | unverified | Trade-off principle: smaller errors come with worse conditioning | Review V (kernel limits at tight tolerances) |
+| V-27 | Wendland 2005, *Scattered Data Approximation*, Cambridge University Press | unverified | Power-function error bounds and native spaces | Review V |
 
 ## Low-rank tensors
 
@@ -104,10 +115,28 @@ listed under two IDs (II-2 = III-1); both are kept, since the documents cite bot
 | II-5 | Dolgov, Kressner, Stroessner 2021, *Functional Tucker approximation using Chebyshev interpolation*, SISC 43(3), https://arxiv.org/abs/2007.16126 | unverified | Chebfun3F: about 75% fewer evaluations than Chebfun3 | Review II |
 | II-10 | Oseledets, Tyrtyshnikov 2010, *TT-cross approximation for multidimensional arrays*, LAA 432, https://doi.org/10.1016/j.laa.2009.07.024 | unverified | Cross interpolation on maxvol fibres, about d n r^2 evaluations per sweep | Reviews II, IV |
 | II-11 | Oseledets, *Black box cross approximation*, https://oseledets.github.io/news/black-box-cross-approximation-for-multidimensional-arrays | unverified | Practical black-box TT-cross | Review II |
-| II-12 | Savostyanov 2014, *Quasioptimality of maximum-volume cross interpolation of tensors*, LAA 458, https://arxiv.org/abs/1305.1818 | unverified | Max-norm quasi-optimality on the grid only; nothing off the grid | Reviews II, III, IV |
+| II-12 | Savostyanov 2014, *Quasioptimality of maximum-volume cross interpolation of tensors*, LAA 458, https://arxiv.org/abs/1305.1818 | yes (Review V) | Max-norm quasi-optimality on the grid only, factor (2r + κr + 1)^⌈log₂ d⌉ (r + 1)² over the best max-norm error (Thm. 1); greedy and DMRG cross with nested sets (Alg. 1-2); nothing off the grid | Reviews II, III, IV, V |
 | II-13 | Bigoni, Engsig-Karup, Marzouk 2016, *Spectral tensor-train decomposition*, SISC 38(4), https://arxiv.org/abs/1405.5713 | unverified | Spectral TT with cross and rank adaptivity | Reviews II, III, IV; Synthesis step 6 |
 | II-14 | Gorodetsky, Karaman, Marzouk 2019, *A continuous analogue of the tensor-train decomposition*, CMAME 347, https://arxiv.org/abs/1510.09088 | unverified | Function train (C3) | Reviews II, III, IV; Synthesis step 6 |
 | II-15 | Stroessner, Sun, Kressner 2024, *Approximation in the extended functional tensor train format*, Adv. Comput. Math., https://arxiv.org/abs/2211.11338 | unverified | Extended functional TT | Review II |
+| V-1 | Savostyanov, Oseledets 2011, *Fast adaptive interpolation of multi-dimensional arrays in tensor train format*, nDS'11, doi:10.1109/nDS.2011.6076873 | abstract-only | DMRG cross: rank adaptation by two-site superblocks with maxvol | Review V |
+| V-2 | Dolgov, Savostyanov 2020, *Parallel cross interpolation for high-precision calculation of high-dimensional integrals*, CPC 246:106869, https://arxiv.org/abs/1903.11554 | yes | Classifies ALS-maxvol (fixed ranks: ChebTT's scheme), DMRG-maxvol (O(d n² r²) evaluations) and DMRG-greedy (one pivot per bond by random sampling plus rook pivoting, nested); accuracy heuristic | Review V (replace random rank growth) |
+| V-3 | Núñez Fernández et al. 2025, *Learning tensor networks with tensor cross interpolation: new algorithms and libraries*, SciPost Phys. 18:104, https://arxiv.org/abs/2407.02454 | yes | prrLU 2-site TCI, error = max pivot error normalised by max sampled \|F\|, 3 consecutive passes; 'ergodicity' misses narrow peaks, fixed by global pivots split at every bond | Review V (global pivots from worst check points) |
+| V-4 | Ritter, Núñez Fernández, Wallerberger, von Delft, Shinaoka, Waintal 2024, *Quantics tensor cross interpolation for high-resolution, parsimonious representations of multivariate functions*, PRL 132:056501, https://arxiv.org/abs/2303.11819 | abstract-only | Binary-digit (quantics) TT with TCI: fine resolution in few dimensions | Review V |
+| V-5 | Sozykin, Chertkov, Schutski, Phan, Cichocki, Oseledets 2022, *TTOpt: a maximum volume quantized tensor train-based optimization and its application to reinforcement learning*, NeurIPS, https://arxiv.org/abs/2205.00293 | yes | A maximum-volume r×r submatrix holds an element ≥ max\|A\|/r²; maxvol sweeps as a global optimiser (atan map for signed optima) | Review V (residual search for global pivots) |
+| V-6 | Chertkov, Ryzhakov, Novikov, Oseledets 2022, *Optimization of functions given in the tensor train format*, https://arxiv.org/abs/2209.14808 | abstract-only | Finds near-max elements of a TT up to d = 100 | Review V |
+| V-7 | Goreinov, Oseledets, Savostyanov, Tyrtyshnikov, Zamarashkin 2010, *How to find a good submatrix*, in Matrix Methods: Theory, Algorithms and Applications, World Scientific | unverified | maxvol and its max-element bound (quoted via V-5) | Review V |
+| V-8 | Dolgov, Savostyanov 2014, *Alternating minimal energy methods for linear systems in higher dimensions*, SISC 36(5):A2248, https://arxiv.org/abs/1301.6068, https://arxiv.org/abs/1304.1222 | abstract-only | AMEn: rank enrichment from the residual | Review V |
+| V-9 | TT-Toolbox, `cross/amen_cross.m`, https://github.com/oseledets/TT-Toolbox | yes | AMEn-cross: rank-5 TT of the residual, enrichment by 2 of its directions plus random ones, stop on max supercore change between sweeps or after the error rose twice: a convergence test, not a bound | Review V |
+| V-10 | Rohrbach, Dolgov, Grasedyck, Scheichl 2022, *Rank bounds for approximating Gaussian densities in the tensor-train format*, SIAM/ASA JUQ 10(3), https://arxiv.org/abs/2001.08187 | yes | FTT ranks ≤ (1 + 7(σ/λ_min) log(·/ε))^l, l the rank of the precision matrix's sub-diagonal block: exponential in l, ordering-dependent; explains ChebTT's failure on the rotated Gaussian | Review V |
+| V-11 | Dektor, Venturi 2022, *Tensor rank reduction via coordinate flows*, https://arxiv.org/abs/2207.11955 | abstract-only | A linear coordinate change found by Riemannian gradient descent lowers FTT rank; a rotation can turn a rotated Gaussian back into rank one | Review V (local rotations in cells) |
+| V-12 | Grelier, Nouy, Chevreuil 2018, *Learning with tree-based tensor formats*, https://arxiv.org/abs/1811.04455 | abstract-only | Tree and rank adaptation by node swaps | Review V (helps badly ordered sparse coupling, not dense rotations) |
+| V-13 | Ballani, Grasedyck, Kluge 2013, *Black box approximation of tensors in hierarchical Tucker format*, LAA 438 | unverified | Black-box cross in HT format | Review V |
+| V-14 | Dolgov, Anaya-Izquierdo, Fox, Scheichl 2020, *Approximation and sampling of multivariate probability distributions in the tensor train decomposition*, Stat. Comput. 30:603, https://arxiv.org/abs/1810.01212 | abstract-only | TT-cross of densities for conditional sampling | Review V (TT of a transform) |
+| V-15 | Cui, Dolgov 2022, *Deep composition of tensor-trains using squared inverse Rosenblatt transports*, FoCM, https://arxiv.org/abs/2007.06968 | abstract-only | TT of √f for non-negativity, and layered transports for concentrated densities | Review V (TT of a transform) |
+| V-16 | Eigel, Farchmin, Heidenreich, Trunschke 2021, *Efficient approximation of high-dimensional exponentials by tensor networks*, https://arxiv.org/abs/2105.09064 | abstract-only | A compressed exp of a TT is a problem of its own; pointwise exp(g̃) avoids it | Review V (log(f + c) transform) |
+| V-17 | Qin, Lidiak, Gong, Tang, Wakin, Zhu 2022, *Error analysis of tensor-train cross approximation*, https://arxiv.org/abs/2207.04327 | abstract-only | Whole-tensor error bounds for TT cross, exact and noisy entries | Review V |
+| V-18 | Khoromskij 2011, *O(d log N)-quantics approximation of N-d tensors in high-dimensional numerical modeling*, Constr. Approx. 34 | unverified | Quantics TT | Review V |
 
 ## Ridge functions, active subspaces and nonlinear coordinates
 
@@ -121,6 +150,9 @@ listed under two IDs (II-2 = III-1); both are kept, since the documents cite bot
 | II-22 | Zhang, Zhang, Hinkle 2019, *Learning nonlinear level sets for dimensionality reduction in function approximation*, NeurIPS, https://neurips.cc/virtual/2019/poster/14262 | unverified | Learned level-set coordinates; L2 errors, many gradients | Review II |
 | II-23 | Teng, Wang, Ju, Gruber, Zhang 2023, *Level set learning with pseudo-reversible neural networks*, SISC 45(3), https://arxiv.org/abs/2112.01438 | unverified | Pseudo-reversible networks for level sets | Review II |
 | II-24 | Bigoni, Marzouk, Prieur, Zahm 2022, *Nonlinear dimension reduction for surrogate modeling using gradient information*, https://arxiv.org/abs/2102.10351 | unverified | Polynomial feature maps matched to grad f | Review II (ranked scheme 3) |
+| V-28 | Wu, Guinney, Maggioni, Mukherjee 2010, *Learning gradients: predictive models that infer geometry and statistical dependence*, JMLR 11:2175-2198 | abstract-only | Gradient outer product and gradient-based diffusion maps for supervised dimension reduction, with rates | Review V (Jacobian of the step map as the local GOP) |
+| V-29 | Radhakrishnan, Beaglehole, Pandit, Belkin 2022 (published 2024, venue unverified), *Mechanism of feature learning in deep fully connected networks and kernel machines that recursively learn features*, https://arxiv.org/abs/2212.13881 | abstract-only | Average gradient outer product (AGOP) as a learned kernel metric | Review V (fails where gradients vanish at random points) |
+| V-30 | Romor, Tezzele, Lario, Rozza 2022, *Kernel-based active subspaces with application to computational fluid dynamics parametric problems using the discontinuous Galerkin method*, https://arxiv.org/abs/2008.12083 | abstract-only | Nonlinear active subspaces through kernel features; L2 targets | Review V |
 
 ## Complexity, widths and certification
 
@@ -164,6 +196,26 @@ listed under two IDs (II-2 = III-1); both are kept, since the documents cite bot
 | IV-16 | Grassi et al. 2014, *KROME - a package to embed chemistry in astrophysical simulations*, MNRAS (439:2386 unverified), https://arxiv.org/abs/1311.1070 | abstract-only | Generates network solvers to embed in simulation codes; source of the primordial H/He/H2 benchmark | Review IV (benchmarks) |
 | IV-17 | Smith et al. 2017, *Grackle: a chemistry and cooling library for astrophysics*, MNRAS 466:2217, https://arxiv.org/abs/1610.09591 | abstract-only | Non-equilibrium primordial H, D, He chemistry and cooling | Review IV (benchmarks) |
 | IV-21 | Li, Zhao, Kazakov, Dryer 2004, *An updated comprehensive kinetic model of hydrogen combustion*, Int. J. Chem. Kinet. 36:566-575 | unverified | A standard H2-air mechanism, about 9 species | Review IV (benchmarks) |
+| V-43 | Abel, Anninos, Zhang, Norman 1997, *Modelling primordial gas in numerical cosmology*, New Astron. 2:181-207, https://arxiv.org/abs/astro-ph/9608040 | abstract-only | 19 collisional and 9 radiative processes for n < 1e4 cm^-3, 1 K < T < 1e8 K; origin of most primordial rate fits | Review V (oracle) |
+| V-44 | Grackle, `src/clib/rate_functions.c` and `src/clib/solve_rate_cool_g.F` at commit 48e0733, https://github.com/grackle-project/grackle | yes | Nine-species H/He/H2 rates transcribed (k1-k19, k22, k57, k58); the comments mislabel k16-k19, so identities come from `step_rate_g`; the solver uses the density-dependent k13dd | Review V (primordial oracle) |
+| V-45 | Cantera, `data/h2o2.yaml` at commit 5876366 (H2/O2 submechanism of GRI-Mech 3.0 with N2), https://github.com/Cantera/cantera | yes | 10 species, 29 reversible reactions, one Troe falloff; reverse rates need its NASA-7 data | Review V (optional combustion oracle) |
+| V-47 | Glover, Abel 2008, *Uncertainties in H2 and HD chemistry and cooling and their role in early structure formation*, MNRAS 388:1627 (venue unverified), https://arxiv.org/abs/0803.1768 | abstract-only | Uncertain H2 rates and alternatives, for robustness tests of the oracle | Review V |
+| V-48 | Burke, Chaos, Ju, Dryer, Klippenstein 2012, *Comprehensive H2/O2 kinetic model for high-pressure combustion*, Int. J. Chem. Kinet. 44:444 | unverified | A newer H2/O2 mechanism than IV-21 | Review V |
+| V-49 | Pope 2013, *Small scales, many species and the manifold challenges of turbulent combustion*, Proc. Combust. Inst. 34:1-31 | unverified | Accessed compositions lie near low-dimensional manifolds | Review V (why chemistry favours local tabulation) |
+
+## Neural surrogates and calibrated refusal
+
+| ID | Reference | Verified | Takeaway for this project | Where used |
+|---|---|---|---|---|
+| V-32 | Lu, Jin, Karniadakis 2021, *DeepONet: learning nonlinear operators…*, https://arxiv.org/abs/1910.03193 | abstract-only | Operator networks; the universal approximation theorem ignores optimisation and generalisation errors | Review V (no sup-norm control) |
+| V-33 | Li, Kovachki, Azizzadenesheli, Liu, Bhattacharya, Stuart, Anandkumar 2021, *Fourier neural operator for parametric partial differential equations*, ICLR, https://arxiv.org/abs/2010.08895 | abstract-only | Neural operators with Fourier-space kernels | Review V |
+| V-34 | Liu et al. 2024, *KAN: Kolmogorov-Arnold networks*, https://arxiv.org/abs/2404.19756 | abstract-only | Spline activations on edges; scaling claims, no worst-case control | Review V |
+| V-35 | Chen, Rubanova, Bettencourt, Duvenaud 2018, *Neural ordinary differential equations*, NeurIPS, https://arxiv.org/abs/1806.07366 | abstract-only | Learned right-hand sides integrated by a solver | Review V |
+| V-36 | Adcock, Dexter 2021, *The gap between theory and practice in function approximation with deep neural networks*, https://arxiv.org/abs/2001.07523 | abstract-only | Trained networks fall short of their theoretical rates on smooth functions, where compressed-sensing polynomials do better | Review V |
+| V-37 | Grohs, Voigtlaender 2024 (venue unverified), *Proof of the theory-to-practice gap in deep learning via sampling complexity bounds for neural network approximation spaces*, https://arxiv.org/abs/2104.02746 | abstract-only | Hardness of approximation from point samples on network approximation spaces | Review V |
+| V-38 | Lei, G'Sell, Rinaldo, Tibshirani, Wasserman 2018, *Distribution-free predictive inference for regression*, JASA, https://arxiv.org/abs/1604.04173 | abstract-only | Conformal bands with finite-sample marginal coverage for any estimator | Review V (a quantile, not a maximum) |
+| V-39 | Angelopoulos, Bates 2021, *A gentle introduction to conformal prediction and distribution-free uncertainty quantification*, https://arxiv.org/abs/2107.07511 | abstract-only | Practical conformal prediction | Review V |
+| V-40 | Tibshirani, Barber, Candès, Ramdas 2019, *Conformal prediction under covariate shift*, NeurIPS, https://arxiv.org/abs/1904.06019 | abstract-only | Weighted conformal under covariate shift needs the likelihood ratio | Review V (tracer states differ from training states) |
 
 ## ODE flow-map surrogates and stiff test problems
 
@@ -172,6 +224,9 @@ listed under two IDs (II-2 = III-1); both are kept, since the documents cite bot
 | IV-22 | Robertson 1966, *The solution of a set of reaction rate equations*, in Numerical Analysis: An Introduction, Academic Press | unverified | Robertson's 3-species stiff problem | Review IV (first chemistry benchmark) |
 | IV-23 | Hairer, Wanner 1996, *Solving Ordinary Differential Equations II: Stiff and Differential-Algebraic Problems*, Springer | unverified | Standard stiff test set, including Robertson | Review IV |
 | IV-24 | Davis, Skodje 1999, *Geometric investigation of low-dimensional manifolds in systems approaching equilibrium*, J. Chem. Phys. 111:859 | unverified | A model problem with a known slow manifold | Review IV (test T1) |
+| V-41 | Gelß, Klus, Eisert, Schütte 2019, *Multidimensional approximation of nonlinear dynamical systems* (MANDy), J. Comput. Nonlinear Dyn. 14:061006, https://arxiv.org/abs/1809.02448 | abstract-only | TT representations of the right-hand side identified from data, not of the flow map | Review V |
+| V-42 | Dektor, Rodgers, Venturi 2021, *Rank-adaptive tensor methods for high-dimensional nonlinear PDEs*, J. Sci. Comput., https://arxiv.org/abs/2012.05962 | abstract-only | FTT time integration with rank added and removed in time (Liouville, Fokker-Planck) | Review V |
+| V-46 | Test Set for IVP Solvers (University of Bari), ROBER: `src/problems/rober.f`, https://archimede.uniba.it/~testset/ | yes | Robertson rates 0.04, 3e7, 1e4; y(0) = (1, 0, 0); interval to 1e11 | Review V (first chemistry oracle) |
 
 The flow maps of the bench (Lorenz-96, Lotka-Volterra) are defined in `src/structure/problems.py` and
 cite no work.
