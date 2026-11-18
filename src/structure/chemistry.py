@@ -13,12 +13,14 @@ about 1.7, 1.0 and 1e-10 for every step dt >= 0.1). So surrogates are trained an
 trajectories, ``trajectories``, not on a box: held-out trajectories give the test states.
 """
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
 from scipy.integrate import solve_ivp
 
 FLOOR = 1e-30  # abundances below it are clipped before the log10, so the map is defined everywhere
+WORKERS = int(os.environ.get("SURROGATE_CHEM_WORKERS", "1"))  # processes per Network.step batch
 
 
 @dataclass(frozen=True)
@@ -33,17 +35,35 @@ class Network:
     atol: float = 1e-20
 
     def step(self, Y: np.ndarray, dt: float) -> np.ndarray:
-        """``Phi_dt`` of every row of Y (abundances), integrated independently."""
-        out = np.empty_like(Y, dtype=np.float64)
-        for i, y in enumerate(np.asarray(Y, dtype=np.float64)):
-            s = solve_ivp(lambda t, v: self.rhs(v), (0.0, dt), y, method="Radau", jac=lambda t, v: self.jac(v),
-                          rtol=self.rtol, atol=self.atol)  # fmt: skip
-            out[i] = s.y[:, -1] if s.success else np.nan
-        return out
+        """
+        ``Phi_dt`` of every row of Y (abundances), each integrated on its own, so a row's result never
+        depends on the others; large batches are spread over ``WORKERS`` forked processes.
+        """
+        Y = np.asarray(Y, dtype=np.float64)
+        if WORKERS > 1 and len(Y) >= 4 * WORKERS:
+            import multiprocessing
+
+            with multiprocessing.get_context("fork").Pool(WORKERS) as pool:
+                parts = pool.starmap(_step_rows, [(self.name, part, dt) for part in np.array_split(Y, WORKERS)])
+            return np.concatenate(parts)
+        return _step_rows(self.name, Y, dt)
 
     def log_step(self, Z: np.ndarray, dt: float) -> np.ndarray:
         """The step map in log10 abundances."""
         return np.log10(np.maximum(self.step(10.0 ** np.asarray(Z, dtype=np.float64), dt), FLOOR))
+
+
+def _step_rows(name: str, Y: np.ndarray, dt: float) -> np.ndarray:
+    """``Network.step`` of the registered network ``name`` for the rows of Y, serially (a picklable worker)."""
+    net = NETWORKS[name]
+    out = np.empty_like(Y)
+    for i, y in enumerate(Y):
+        s = solve_ivp(lambda t, v: net.rhs(v), (0.0, dt), y, method="Radau", jac=lambda t, v: net.jac(v),
+                      rtol=net.rtol, atol=net.atol)  # fmt: skip
+        out[i] = s.y[:, -1] if s.success else np.nan
+    return out
+
+
 
 
 def _robertson_rhs(y, k1=0.04, k2=3e7, k3=1e4):
@@ -178,6 +198,7 @@ def mass_action(species, reactions, rate_of):
 
 _prim_rhs, _prim_jac = mass_action(PRIMORDIAL_SPECIES, PRIMORDIAL_REACTIONS, primordial_rates)
 PRIMORDIAL = Network("primordial", PRIMORDIAL_SPECIES + ("T",), _prim_rhs, _prim_jac, rtol=1e-8, atol=1e-30)
+NETWORKS = {net.name: net for net in (ROBERTSON, PRIMORDIAL)}
 
 
 def trajectories(net: Network, Y0: np.ndarray, dt: float, steps: int) -> np.ndarray:

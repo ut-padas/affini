@@ -323,7 +323,43 @@ singular values are ~1: the map is close to the identity on the slow species. So
 learn the increment `log y(t + dt) - log y(t)`, which is small and carries the chemistry, and its
 input dimension is the number of slow modes, which falls as dt grows.
 
-### 1.12 Engineering edge cases met
+### 1.12 The chemistry bench: one-step and rollout errors
+
+`src/structure/chembench.py` trains each surrogate of a network's step map (in log10 abundances, the
+increment `Phi_dt(z) - z`) on training trajectories and judges it on held-out ones in two ways: the
+**one-step error** (a surrogate step from the true state against the solver's step: how well the
+visited states are covered) and the **rollout error** (20 test trajectories chained through the
+surrogate from their initial states, the solver stepping what it refuses: what a one-zone run
+accumulates). A fourth panel shows how much the solver's own dynamics grow an early error (the
+largest singular value of the product of step Jacobians), to tell the surrogate's drift from the
+dynamics'. Schemes: SlowTable (`tabulation.py`, ISAT's design: linear records in ellipsoids of
+accuracy shaped by the Jacobian, grown and shrunk on the training stream, refusing outside them) and
+ChebTT per species on the training states' bounding box.
+
+Robertson (3 inputs, dt = 1, 200 training and 100 test trajectories of 40 steps):
+
+| tol (dex) | scheme | training solves | one-step worst | refused | rollout worst after 40 steps |
+|---|---|---|---|---|---|
+| 0.01 | SlowTable | 841 | 0.040 (4x, only in the initial transient) | 1.5% | 0.018 |
+| 0.01 | ChebTT box | 955 | 0.0019 | 0 | 0.020 |
+| 0.001 | SlowTable | 1,379 | 0.00063 | 2.5% | 0.00074 |
+| 0.001 | ChebTT box | 1,130 | 0.00005 | 0 | 0.0017 |
+
+- The dynamics contract: the amplification of an early error stays at 1.4-1.7 and falls; chemistry is
+  not chaotic. Yet the box ChebTT's rollout error grows linearly to 36x its one-step error after 40
+  steps: a smooth surrogate's error has the same sign step after step and adds up. SlowTable's errors
+  change sign from record to record and partly cancel. So the tolerance a chained surrogate needs per
+  step is about tol / N for systematic errors (tol / sqrt N for random ones), or the surrogate must be
+  built so that its errors do not share a sign along a trajectory.
+- SlowTable's only misses are in the first step, the initial transient (the fast species far off the
+  slow manifold), where it already refuses 50-90% of the states.
+- Primordial (10 inputs, 60 training trajectories): SlowTable answered within 0.2 of the tolerance but
+  refused 95% of the test states at 0.01 dex. Its ellipsoids, sized by where the *linear change* stays
+  within the tolerance, are ~0.005 dex across, while its error is second order; and test trajectories
+  from other densities, temperatures and fractions pass through regions 60 training trajectories never
+  visited. Ellipsoids sized by curvature, and growth during use (in situ), are the next steps.
+
+### 1.13 Engineering edge cases met
 
 - Every rank computed and wrote a problem's cached slice directions at once; a rank read a file another
   was writing and the run crashed (now written to a per-rank file and renamed into place).
@@ -338,7 +374,7 @@ input dimension is the number of slow modes, which falls as dt grows.
 - The GPU never beat 8 CPU ranks on these workloads (launch- and transfer-bound, 200k kernel launches)
   and predicted 2-50x slower per query.
 
-### 1.13 Engine findings from the same work
+### 1.14 Engine findings from the same work
 
 - A stable counting sort plus per-block merge sort replaced two full-batch argsorts in
   `sort_by_block_then_value`: single-thread AFINNI training 36-39% faster, bit-identical results.
