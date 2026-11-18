@@ -83,7 +83,10 @@ def setup() -> str:
     compared across setups: times depend on both, and ART's split decisions differ between CPU and
     GPU, whose sums differ at rounding level.
     """
-    return f"{'gpu' if IS_CUPY_BACKEND else 'cpu'}-{_ranks()}rank"
+    return SETUP or f"{'gpu' if IS_CUPY_BACKEND else 'cpu'}-{_ranks()}rank"
+
+
+SETUP = None  # ``--setup``: read and plot another setup's cache (``--overview`` only; never trains into it)
 
 
 def _collective_predict(m):
@@ -438,6 +441,92 @@ def plot_cost(problem: str, d: int, methods: list[str], out: Path) -> Path:
     return path
 
 
+def seed_runs(method: str, problem: str, d: int, tol: float) -> list[dict]:
+    """The cached metrics of every seed of one case (failed runs included, marked ``failed``)."""
+    paths = [cache_path(method, problem, d, tol, s) for s in SEEDS]
+    return [json.loads(str(np.load(p)["metrics"])) for p in paths if p.exists()]
+
+
+FLOOR = 1e-4  # error ratios below it are drawn at it in the overview
+
+
+def plot_overview(d: int, out: Path) -> Path | None:
+    """
+    ``overview-d<d>.png``: every cached problem and tolerance at dimension d (rows) against every
+    method's metrics (one panel each, seed means, the worst error the worst seed's), so one image
+    compares the methods everywhere. A method over its evaluation budget is a cross at the right
+    edge of the evaluations panel.
+    """
+    cases = [(problem, tol) for problem, p in PROBLEMS.items() for tol in p.tolerances(d)
+             if any(seed_runs(m, problem, d, tol) for m in METHODS)]  # fmt: skip
+    methods = [m for m in METHODS if any(seed_runs(m, pr, d, t) for pr, t in cases)]
+    if not cases:
+        return None
+    panels = (("max_ratio", "worst |error| / tol (worst seed)", "log"), ("mean_ratio", "mean |error| / tol", "log"),
+              ("within_percent", "% within tolerance", "linear"), ("refused_percent", "% refused (oracle answers)", "linear"),
+              ("evals", "oracle evaluations", "log"), ("leaves", "pieces", "log"), ("train_s", "training time (s)", "log"),
+              ("predict_us", "inference (us / query)", "log"))  # fmt: skip
+    n = len(cases)
+    names = list(dict.fromkeys(p for p, _ in cases))
+    band = np.array([names.index(p) for p, _ in cases])
+    fig, axes = plt.subplots(1, len(panels), figsize=(2.7 * len(panels) + 1.6, 0.21 * n + 1.6), sharey=True,
+                             constrained_layout=True)  # fmt: skip
+    offsets = (np.arange(len(methods)) - (len(methods) - 1) / 2) * min(0.7 / max(len(methods), 1), 0.14)
+    oracle, ranks = [], set()
+    for mi, method in enumerate(methods):
+        rows = {key: ([], []) for key, *_ in panels}
+        over = []
+        for ci, (problem, tol) in enumerate(cases):
+            ms = seed_runs(method, problem, d, tol)
+            ranks.update(m.get("ranks", 1) for m in ms)
+            ok = [m for m in ms if "failed" not in m]
+            if ms and not ok:
+                over.append(ci)
+            if not ok:
+                continue
+            oracle += [m["oracle_us"] for m in ok if "oracle_us" in m]
+            vals = {k: np.mean([m.get(k, 0.0) for m in ok]) for k in ("within_percent", "refused_percent", "evals", "leaves",
+                                                                       "train_s", "predict_us")}  # fmt: skip
+            vals["max_ratio"] = max(m["max_ratio"] for m in ok)
+            vals["mean_ratio"] = np.mean([m["mean_error"] / m["atol"] for m in ok])
+            for key in ("max_ratio", "mean_ratio"):  # exact fits shown at the axis floor, so the range near 1 stays readable
+                vals[key] = max(vals[key], FLOOR)
+            for key, *_ in panels:
+                rows[key][0].append(ci + offsets[mi]), rows[key][1].append(vals[key])
+        colour = METHODS[method][1]
+        for ax, (key, *_) in zip(axes, panels, strict=True):
+            y, x = rows[key]
+            ax.plot(x, y, "o", color=colour, ms=4.2, mec="white", mew=0.5, label=METHODS[method][0] if key == "max_ratio" else None)
+        if over:
+            axes[4].plot([1.0] * len(over), np.array(over) + offsets[mi], "x", color=colour, ms=5,
+                         transform=axes[4].get_yaxis_transform())  # fmt: skip
+    for ax, (key, title, scale) in zip(axes, panels, strict=True):
+        ax.set_xscale(scale)
+        if key in ("max_ratio", "mean_ratio"):
+            ax.set_xlim(FLOOR / 2, None)
+        if key == "refused_percent":
+            ax.set_xlim(-0.05, max(1.0, ax.get_xlim()[1]))
+        ax.set_title(title, fontsize=8.5)
+        ax.grid(axis="x", alpha=0.3)
+        ax.tick_params(labelsize=7)
+        for ci in np.nonzero(band % 2 == 1)[0]:  # every other problem shaded, so its tolerances read as one group
+            ax.axhspan(ci - 0.5, ci + 0.5, color="#000000", alpha=0.045, lw=0)
+    axes[0].axvline(1.0, color="#c0392b", lw=0.9, ls="--")
+    axes[1].axvline(1.0, color="#c0392b", lw=0.9, ls="--")
+    if oracle:
+        axes[-1].axvline(float(np.median(oracle)), color="#777777", lw=0.9, ls="--")
+        axes[-1].text(float(np.median(oracle)), -0.9, " oracle", fontsize=6.5, color="#666666", va="bottom")
+    axes[0].set_yticks(range(n), [f"{p}  {t:g}" for p, t in cases], fontsize=7)
+    axes[0].set_ylim(n - 0.5, -1.2)
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="outside lower center", ncol=len(methods), fontsize=8, frameon=False)
+    fig.suptitle(f"All problems at d = {d} ({setup()}, {'/'.join(map(str, sorted(ranks)))} ranks; seed means; "
+                 f"dashed red: the tolerance; errors below {FLOOR:g} drawn at {FLOOR:g}; crosses: over the evaluation budget)", fontsize=9.5)  # fmt: skip
+    path = out / f"overview-d{d}.png"
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    return path
+
+
 def write_summary(d: int, methods: list[str], out: Path) -> Path:
     """``summary-d<d>.md``: every cached problem's seed-mean metrics per tolerance and method."""
     lines = [f"# Summary, d = {d} (seed means, except the worst seed's worst; worst = worst |error| / tolerance; "
@@ -475,6 +564,8 @@ def main(argv=None) -> None:
     parser.add_argument("--seeds", default=",".join(map(str, SEEDS)))
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--plot", action="store_true")
+    parser.add_argument("--overview", action="store_true", help="only redraw overview-d<d>.png from the cache")
+    parser.add_argument("--setup", default=None, help="with --overview: the cached setup to draw, e.g. cpu-8rank")
     a = parser.parse_args(argv)
     import src.structure.schemes  # noqa: F401  (registers the new schemes)
     from src.structure import (
@@ -483,6 +574,11 @@ def main(argv=None) -> None:
 
     METHODS.update(module.METHODS)
 
+    if a.overview:
+        global SETUP
+        SETUP = module.SETUP = a.setup
+        print(plot_overview(a.d, OUT / setup()))
+        return
     methods = a.methods.split(",")
     out = OUT / setup()
     out.mkdir(parents=True, exist_ok=True)
@@ -500,6 +596,7 @@ def main(argv=None) -> None:
                 else:
                     plot_views(problem, a.d, methods, tol, out)
             write_summary(a.d, methods, out)
+            plot_overview(a.d, out)
 
 
 if __name__ == "__main__":
