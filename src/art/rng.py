@@ -2,7 +2,7 @@
 
 import math
 
-from src import IS_CUPY_BACKEND, Array, xp
+from src import IS_CUPY_BACKEND, Array, kernels, xp
 
 # --- Counter-based random numbers --------------------------------------------------
 
@@ -39,34 +39,16 @@ def counter_uniform_pairs(keys: Array, purpose: int, counter: Array) -> Array:
     """
     tag = xp.uint64((purpose << 56) + GOLDEN % 2**56)
     if IS_CUPY_BACKEND:  # one fused pass; integer hashing and exact conversions, so the same bits
-        keys, counter = xp.broadcast_arrays(xp.asarray(keys).astype(xp.uint64), xp.asarray(counter).astype(xp.uint64))
+        keys, counter = (xp.ascontiguousarray(a) for a in xp.broadcast_arrays(
+            xp.asarray(keys).astype(xp.uint64), xp.asarray(counter).astype(xp.uint64)))  # fmt: skip
         out = xp.empty(counter.shape + (2,))
-        _uniform_pairs_kernel()(keys, counter, tag, out)
+        kernels.module("hit_and_run").get_function("uniform_pairs")(
+            ((counter.size + 255) // 256,), (256,), (keys, counter, tag, xp.int64(counter.size), out))
         return out
     z = _mix64(keys ^ _mix64(xp.asarray(counter).astype(xp.uint64) + tag))
     hi = (z >> xp.uint64(32)).astype(xp.float64)
     lo = (z & xp.uint64(0xFFFFFFFF)).astype(xp.float64)
     return (xp.stack([hi, lo], axis=-1) + 0.5) * 2.0**-32
-
-
-_UNIFORM_PAIRS = None
-
-
-def _uniform_pairs_kernel():
-    """``counter_uniform_pairs`` as one CuPy elementwise kernel (compiled on first use)."""
-    global _UNIFORM_PAIRS
-    if _UNIFORM_PAIRS is None:
-        import cupy as cp
-
-        mix = f"z = (z ^ (z >> 30)) * 0x{MIX1:X}ULL; z = (z ^ (z >> 27)) * 0x{MIX2:X}ULL; z = z ^ (z >> 31);"
-        _UNIFORM_PAIRS = cp.ElementwiseKernel(
-            "uint64 key, uint64 ctr, uint64 tag", "raw float64 out",
-            f"unsigned long long z = ctr + tag; {mix} z = key ^ z; {mix}"
-            "out[2 * i] = ((double)(z >> 32) + 0.5) * 2.3283064365386963e-10;"
-            "out[2 * i + 1] = ((double)(z & 0xFFFFFFFFULL) + 0.5) * 2.3283064365386963e-10;",
-            "afinni_uniform_pairs",
-        )
-    return _UNIFORM_PAIRS
 
 
 def box_muller(u1: Array, u2: Array) -> Array:

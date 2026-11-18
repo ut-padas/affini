@@ -10,6 +10,7 @@ if IS_CUPY_BACKEND:  # sources in src/kernels/*.cu
     _seg = kernels.module("segment_cross")
     _stats = kernels.module("cluster_stats")
     _kern_seg_max = _stats.get_function("segmented_max_float64")
+    _kern_mark_n_smallest = _stats.get_function("mark_n_smallest")
     _kern_seg_cross_partial = _seg.get_function("segment_cross_partial")
     _kern_seg_cross_reduce = _seg.get_function("segment_cross_reduce")
     _kern_seg_cross_tiled = _seg.get_function("segment_cross_tiled")
@@ -298,9 +299,11 @@ def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
     if IS_CUPY_BACKEND:
         # Rank within the block = sorted position - block start; marking rows in one
         # pass avoids the six N-length index arrays of the general form below.
-        mask = xp.zeros(len(blocks), dtype=xp.bool_)
-        _mark_n_smallest()(sort_idx, xp.ascontiguousarray(blocks, dtype=xp.int64),
-                           block_starts.astype(xp.int64), xp.int64(n), mask)
+        rows = len(blocks)
+        mask = xp.zeros(rows, dtype=xp.bool_)
+        _kern_mark_n_smallest(((rows + 255) // 256,), (256,),
+                              (xp.ascontiguousarray(sort_idx, dtype=xp.int64), xp.ascontiguousarray(blocks, dtype=xp.int64),
+                               xp.ascontiguousarray(block_starts, dtype=xp.int64), xp.int64(n), xp.int64(rows), mask))  # fmt: skip
         return mask
 
     offsets = xp.zeros(len(blocks), dtype=xp.int64)
@@ -312,17 +315,3 @@ def get_n_smallest_per_block(values: Array, blocks: Array, n: int) -> Array:
     inv_sort_idx[sort_idx] = xp.arange(len(sort_idx), dtype=sort_idx.dtype)
     sorted_local_indices = inv_sort_idx - local_indices
     return sorted_local_indices < n
-
-_MARK_KERNEL = None
-
-
-def _mark_n_smallest():
-    global _MARK_KERNEL
-    if _MARK_KERNEL is None:
-        _MARK_KERNEL = cp.ElementwiseKernel(
-            "int64 order, raw int64 blocks, raw int64 starts, int64 n",
-            "raw bool mask",
-            "if (i - starts[blocks[order]] < n) mask[order] = true;",
-            "afinni_mark_n_smallest",
-        )
-    return _MARK_KERNEL

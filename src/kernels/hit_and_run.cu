@@ -1,5 +1,5 @@
 // ART sampling (src/art/sampling.py, HitAndRunSampler._walk_fused): whole hit-and-run walks, one
-// thread per chain.
+// thread per chain; and the counter-based uniform pairs of src/art/rng.py.
 
 // Whole hit-and-run walks, one thread per chain (``_walk_fused``), mirroring ``_steps``: the direction
 // from the same uniforms, the box chord, the carried-constraint and Voronoi-bisector chords
@@ -15,6 +15,19 @@ __device__ inline unsigned long long mix64(unsigned long long z) {
     z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
     z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
     return z ^ (z >> 31);
+}
+
+// One thread per (key, counter) pair (counter_uniform_pairs): two uniforms in (0, 1) from the high
+// and low 32 bits of mix64(key ^ mix64(counter + tag)). Integer hashing and exact conversions, so
+// the bits equal the NumPy path's; out holds the pair of element i at 2 i and 2 i + 1.
+extern "C" __global__ void uniform_pairs(const unsigned long long* keys, const unsigned long long* counters,
+                                         unsigned long long tag, long long num_pairs, double* out) {
+    long long i = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= num_pairs) return;
+    unsigned long long z = keys[i] ^ mix64(counters[i] + tag);
+    z = mix64(z);
+    out[2 * i] = ((double)(z >> 32) + 0.5) * 2.3283064365386963e-10;  // 2^-32
+    out[2 * i + 1] = ((double)(z & 0xFFFFFFFFULL) + 0.5) * 2.3283064365386963e-10;
 }
 
 // Slack checks at u: any constraint or bisector violated beyond rounding.

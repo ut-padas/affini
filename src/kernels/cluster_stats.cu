@@ -1,5 +1,5 @@
-// Per-cluster helpers of src/numerics/segments.py and stats.py: segmented max, split and trust-region
-// projections, point norms.
+// Per-cluster helpers of src/numerics/segments.py and stats.py: segmented max, the n smallest per
+// block, split and trust-region projections, point norms.
 
 // One thread per segment: the maximum of vals[starts[k] : starts[k + 1]] (the last segment
 // ends at num_vals), scanned in order. Segments must be non-empty.
@@ -16,6 +16,18 @@ extern "C" __global__ void segmented_max_float64(const double* vals, const long 
         }
         out[tid] = max_val;
     }
+}
+
+// One thread per sorted position i (get_n_smallest_per_block): order sorts the rows by block, then by
+// value, so the row order[i] is among its block's n smallest when its position in the block,
+// i - starts[block], is below n. Each row is written by one thread; mask must start all false.
+extern "C" __global__ void mark_n_smallest(const long long* order, const long long* blocks,
+                                           const long long* starts, long long n, long long num_rows,
+                                           bool* mask) {
+    long long i = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= num_rows) return;
+    long long row = order[i];
+    if (i - starts[blocks[row]] < n) mask[row] = true;
 }
 
 // One thread per row: (M_k (x - mu_k)) . v_k for the row's cluster k, without gathering an

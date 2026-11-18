@@ -52,3 +52,10 @@ def test_every_launched_kernel_is_defined():
     defined = _defined_kernels()
     missing = {k: v for k, v in _launched_kernels().items() if k not in defined}
     assert not missing, f"launched but defined in no src/kernels/*.cu: {missing}"
+
+
+def test_no_python_module_holds_kernel_source():
+    # CuPy's ElementwiseKernel and ReductionKernel take their CUDA code as a string; the code belongs in src/kernels
+    inline = [str(p.relative_to(SRC.parent)) for p in sorted(SRC.rglob("*.py"))
+              if re.search(r"\b(ElementwiseKernel|ReductionKernel)\s*\(", p.read_text())]  # fmt: skip
+    assert not inline, f"kernel source in Python (move it to src/kernels/*.cu): {inline}"

@@ -25,7 +25,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from src import IS_CUPY_BACKEND, Array, xp
+from src import IS_CUPY_BACKEND, Array, kernels, xp
 from src.components.registry import ComponentSpec, Registry
 from src.core.evaluation import Evaluator
 from src.numerics import repeats
@@ -116,33 +116,17 @@ class ConvexCombinationSampler(Sampler):
         return clusters.X[idx1] * alpha + clusters.X[idx2] * (1.0 - alpha)
 
 
-_CONVEX_KERNEL = None
-
-
 def _convex_combination_gpu(X, idx1, idx2, alpha):
-    """
-    ``X[idx1] * alpha + X[idx2] * (1 - alpha)`` in one pass, without the four (n, d)
-    temporaries. The ``_rn`` intrinsics forbid fused multiply-add, so every element
-    rounds exactly as in the separate CuPy operations (bit-identical output).
-    """
-    global _CONVEX_KERNEL
+    """``X[idx1] * alpha + X[idx2] * (1 - alpha)`` in one pass, bit-identical, without the four (n, d) temporaries."""
     import cupy as cp
 
-    if _CONVEX_KERNEL is None:
-        _CONVEX_KERNEL = cp.ElementwiseKernel(
-            "raw float64 X, raw int64 i1, raw int64 i2, raw float64 a, int64 d",
-            "float64 out",
-            """
-            const long long r = i / d, c = i % d;
-            const double w = a[r];
-            out = __dadd_rn(__dmul_rn(X[i1[r] * d + c], w),
-                            __dmul_rn(X[i2[r] * d + c], __dsub_rn(1.0, w)));
-            """,
-            "afinni_convex_combination",
-        )
     n, d = int(idx1.shape[0]), int(X.shape[1])
     out = cp.empty((n, d), dtype=cp.float64)
-    _CONVEX_KERNEL(cp.ascontiguousarray(X), idx1, idx2, cp.ascontiguousarray(alpha.ravel()), d, out)
+    kernel = kernels.module("augmentation").get_function("convex_combination")
+    kernel(((n * d + 255) // 256,), (256,),
+           (cp.ascontiguousarray(X, dtype=cp.float64), cp.ascontiguousarray(idx1, dtype=cp.int64),
+            cp.ascontiguousarray(idx2, dtype=cp.int64), cp.ascontiguousarray(alpha.ravel(), dtype=cp.float64),
+            cp.int64(d), cp.int64(n * d), out))  # fmt: skip
     return out
 
 
