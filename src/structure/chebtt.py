@@ -31,6 +31,18 @@ If any error exceeds ``safety * atol``: every axis whose top quarter of degrees 
 model by more than its share at those points doubles its degree (no rank makes up for a missing
 degree); otherwise the rank grows by ``rank_step`` with random right indices, and the sweeps resume.
 
+Piecewise axes. A sum of products of univariate functions can be non-smooth only along axis-aligned
+planes, and there one global Chebyshev basis per axis converges slowly (a kink's coefficients decay
+like j^-2, a jump's like j^-1) and the cross grows the rank in vain. So an axis may carry breakpoints:
+its pieces share one degree, its nodes are the union of the pieces' Chebyshev points (inset by
+``INSET`` at an interior breakpoint, so a jump is never sampled on the wrong side), and a query uses
+its own piece's basis. Breakpoints come from ``axis_edges`` (an outlying second difference on a
+uniform scan, located by zooming to 1e-12 of the width, confirmed by a two-scale test and by a
+displaced fibre), searched only where it can help: an axis still unconverged at degree 32 in the
+pre-pass, an axis that must refine, or before the rank grows, and in each case only if the axis's
+coefficients decay algebraically. A function without edges gets exactly the model it would without
+the search. Oblique and curved interfaces are not representable this way, at any rank.
+
 Once accepted, the cores are compressed (``compress``): ranks rounded and trailing degrees chopped while
 the model changes by at most ``chop_share * atol`` at the check points and ``n_probe`` uniform points,
 which cuts the cores and the inference time several-fold.
@@ -102,12 +114,39 @@ class ChebTT:
     evals: int = 0
     ranks: tuple = ()
     degrees: tuple = ()
+    breaks: tuple = ()  # per axis, its interior breakpoints (empty: one piece); () for none on any axis
+
+    def pieces(self, k: int) -> int:
+        return len(self.breaks[k]) + 1 if self.breaks else 1
 
     def predict(self, X: np.ndarray, chunk: int = 16_384) -> np.ndarray:
         """In chunks that bound the temporaries (``contract``)."""
         X = np.atleast_2d(np.asarray(X, dtype=np.float64))
+        return np.concatenate([self.contract(self.bases(X[s : s + chunk])) for s in range(0, len(X), chunk)])
+
+    def bases(self, X: np.ndarray) -> list:
+        """
+        Per axis, the basis values at the rows of X (``contract``'s input): the Chebyshev values of the
+        axis, or on an axis with breakpoints those of each query's own piece in its block of rows, zero
+        in the other pieces' (one product per core still serves every query).
+        """
         sizes = [C.shape[1] for C in self.cores]
-        return np.concatenate([self.contract(chebyshev_bases(self.local(X[s : s + chunk]), sizes)) for s in range(0, len(X), chunk)])
+        if not any(len(b) for b in self.breaks):
+            return chebyshev_bases(self.local(X), sizes)
+        t = self.local(X)
+        out = []
+        for k, n1 in enumerate(sizes):
+            if not len(self.breaks[k]):
+                out.append(chebyshev_bases(t[:, k : k + 1], [n1])[0])
+                continue
+            a, b = piece_bounds(self.lo[k], self.hi[k], self.breaks[k])
+            m1 = n1 // len(a)
+            p = np.clip(np.searchsorted(self.breaks[k], X[:, k], side="right"), 0, len(a) - 1)
+            T = np.zeros((n1, len(X)))
+            local = chebyshev_bases((2.0 * (X[:, k] - a[p]) / (b[p] - a[p]) - 1.0)[:, None], [m1])[0]
+            T[p[None, :] * m1 + np.arange(m1)[:, None], np.arange(len(X))[None, :]] = local
+            out.append(T)
+        return out
 
     def local(self, X: np.ndarray) -> np.ndarray:
         """X in the cores' coordinates, [-1, 1] per axis."""
@@ -135,6 +174,19 @@ class ChebTT:
         return None
 
 
+INSET = 1e-10  # a piece's end nodes sit this share of the axis inside an interior breakpoint, so a jump is never sampled on the wrong side
+
+
+def piece_bounds(lo: float, hi: float, breaks) -> tuple[np.ndarray, np.ndarray]:
+    """The intervals [a_p, b_p] that carry each piece's Chebyshev nodes: [lo, hi] cut at ``breaks``, inset at interior breakpoints."""
+    e = np.concatenate([[lo], np.asarray(breaks, dtype=np.float64), [hi]])
+    w = (hi - lo) * INSET
+    a, b = e[:-1].copy(), e[1:].copy()
+    a[1:] += w
+    b[:-1] -= w
+    return a, b
+
+
 def chebyshev_bases(t: np.ndarray, sizes: list) -> list:
     """Per axis k, the (sizes[k], Q) values T_j(t[:, k]) by the three-term recurrence (no arccos or cos), rows contiguous."""
     out = []
@@ -153,49 +205,86 @@ def chebyshev_bases(t: np.ndarray, sizes: list) -> list:
 
 
 class _Grid:
-    """Node coordinates per axis and a cache of f by grid index."""
+    """
+    Node coordinates per axis (the pieces' Chebyshev points, one block per piece) and a cache of f by
+    grid key. A node's key on axis k is ``piece * (LATTICE + 1) + j * LATTICE / n_k``: node j of degree
+    n is node 2j of degree 2n, so a doubled axis finds its old points again. Values cached under earlier
+    breakpoints are kept in ``history``, as free check points.
+    """
 
-    def __init__(self, f, lo, hi, n):
+    def __init__(self, f, lo, hi, n, breaks=None):
         self.f, self.lo, self.hi = f, lo, hi
+        self.breaks = [np.asarray(b, dtype=np.float64) for b in breaks] if breaks else [np.zeros(0) for _ in lo]
         self.set_degrees(n)
         self.cache: dict[tuple, float] = {}
+        self.history: list = []
         self.evals = 0
 
     def set_degrees(self, n):
         self.n = list(n)
-        self.nodes = [self.lo[k] + (cheb_points(nk) + 1.0) * 0.5 * (self.hi[k] - self.lo[k]) for k, nk in enumerate(self.n)]
+        self.bounds = [piece_bounds(self.lo[k], self.hi[k], self.breaks[k]) for k in range(len(self.n))]
+        self.nodes = [np.concatenate([a + (cheb_points(nk) + 1.0) * 0.5 * (b - a) for a, b in zip(*self.bounds[k], strict=True)])
+                      for k, nk in enumerate(self.n)]  # fmt: skip
+        self.count = [len(x) for x in self.nodes]  # nodes per axis
+
+    def set_breaks(self, k: int, breaks) -> None:
+        """New breakpoints on axis k: every cached value moves to ``history`` (its key no longer names its point)."""
+        X, v = self.sample(len(self.cache), None)
+        if len(v):
+            self.history.append((X, v))
+        self.cache = {}
+        self.breaks[k] = np.asarray(sorted(breaks), dtype=np.float64)
+        self.set_degrees(self.n)
 
     def sample(self, n: int, rng) -> tuple[np.ndarray, np.ndarray]:
-        """Up to n evaluated grid points (all of them when there are fewer) and their values."""
+        """Up to n evaluated points (cached and earlier ones; all of them when there are fewer) and their values."""
         keys = list(self.cache)
-        if len(keys) > n:
-            keys = [keys[i] for i in rng.choice(len(keys), n, replace=False)]
         M = np.array(keys, dtype=np.float64).reshape(-1, len(self.n))
-        X = self.lo + (np.cos(np.pi * M / LATTICE) + 1.0) * 0.5 * (self.hi - self.lo)
-        return X, np.array([self.cache[k] for k in keys])
+        X = np.empty_like(M)
+        for k in range(len(self.n)):
+            if not len(self.breaks[k]):
+                X[:, k] = self.lo[k] + (np.cos(np.pi * M[:, k] / LATTICE) + 1.0) * 0.5 * (self.hi[k] - self.lo[k])
+            else:
+                p, m = np.divmod(M[:, k], LATTICE + 1)
+                a, b = self.bounds[k]
+                p = p.astype(np.int64)
+                X[:, k] = a[p] + (np.cos(np.pi * m / LATTICE) + 1.0) * 0.5 * (b[p] - a[p])
+        V = np.array([self.cache[key] for key in keys])
+        if self.history:
+            X = np.concatenate([X] + [h[0] for h in self.history])
+            V = np.concatenate([V] + [h[1] for h in self.history])
+        if rng is not None and len(V) > n:
+            pick = rng.choice(len(V), n, replace=False)
+            X, V = X[pick], V[pick]
+        return X, V
 
     def values(self, idx: np.ndarray, max_evals: int) -> np.ndarray:
         """f at the grid points with integer multi-indices ``idx`` (M, d), evaluating only the uncached ones."""
-        # Keyed on the finest lattice: node i of degree n is node i * (N / n) of degree N, so a doubled
-        # axis finds its old points again.
         step = np.array([LATTICE // nk for nk in self.n])
-        keys = [tuple(row) for row in (idx * step).tolist()]
+        piece, j = np.divmod(idx, np.array(self.n) + 1)
+        keys = [tuple(row) for row in (piece * (LATTICE + 1) + j * step).tolist()]
         missing = sorted({k for k in keys if k not in self.cache})
         if missing:
             if self.evals + len(missing) > max_evals:
                 raise RuntimeError(f"ChebTT would exceed {max_evals:,} evaluations.")
-            M = np.array(missing) // step
-            X = np.stack([self.nodes[j][M[:, j]] for j in range(len(self.n))], axis=1)
+            Mp, Mj = np.divmod(np.array(missing), LATTICE + 1)
+            M = Mp * (np.array(self.n) + 1) + Mj // step
+            X = np.stack([self.nodes[k][M[:, k]] for k in range(len(self.n))], axis=1)
             vals = np.asarray(self.f(X), dtype=np.float64).ravel()
             self.evals += len(missing)
             self.cache.update(zip(missing, vals.tolist(), strict=True))
         return np.array([self.cache[k] for k in keys])
 
 
-def _fibre_degree(f, lo, hi, k, share, rng, n_fibre, n_max, n0=8):
-    """The smallest nested degree at which random fibres along axis k have Chebyshev tails below ``share``; and the points used."""
+def _fibre_degree(f, lo, hi, k, share, rng, n_fibre, n_max, n0=8, pause=None, base=None):
+    """
+    The smallest nested degree at which random fibres along axis k have Chebyshev tails below
+    ``share``, the points used, the fibres' base points, and whether the tails converged. With ``pause``,
+    stop unconverged at that degree; calling again with ``n0 = 2 * pause`` and the same ``base`` resumes
+    exactly where it stopped.
+    """
     d = len(lo)
-    base = rng.uniform(lo, hi, (n_fibre, d))
+    base = rng.uniform(lo, hi, (n_fibre, d)) if base is None else base
     n, used = n0, 0
     while True:
         t = cheb_points(n)
@@ -203,9 +292,99 @@ def _fibre_degree(f, lo, hi, k, share, rng, n_fibre, n_max, n0=8):
         P[:, k] = np.tile(lo[k] + (t + 1.0) * 0.5 * (hi[k] - lo[k]), n_fibre)
         V = np.asarray(f(P), dtype=np.float64).reshape(n_fibre, n + 1)
         used += len(P)
-        if max(chebyshev_tail(v) for v in V) <= share or 2 * n > n_max:
-            return n, used
+        converged = max(chebyshev_tail(v) for v in V) <= share
+        if converged or 2 * n > n_max or (pause is not None and n >= pause):
+            return n, used, base, converged
         n *= 2
+
+
+def locate_edge(g, a: float, b: float, m: int = 17, width: float = 1e-12) -> float:
+    """
+    A jump in g or in g' inside [a, b], to ``width`` of the starting width: zoom into the cell of
+    largest second difference and its neighbours on an m-point grid (chebfun's ``detectedge`` idea).
+    At an edge the second difference is O(h |jump|) against O(h^2 |g''|) elsewhere, so the edge's cell
+    wins more clearly at every zoom; bisecting by midpoint deviations can pick the wrong half when the
+    edge sits near a quarter point. About 17 evaluations per 5x zoom.
+    """
+    w0 = b - a
+    while b - a > width * w0:
+        t = np.linspace(a, b, m)
+        v = g(t)
+        c = int(np.argmax(np.abs(v[2:] - 2.0 * v[1:-1] + v[:-2]))) + 1  # the edge is within a cell of t[c]
+        a, b = t[max(c - 1, 0)], t[min(c + 1, m - 1)]
+    return 0.5 * (a + b)
+
+
+def is_singular(g, c: float, w: float) -> bool:
+    """
+    A jump or a kink at c: the one-sided value difference (a jump) or slope difference (a kink) keeps
+    its size when the stencil shrinks from 1e-6 to 1e-8 of the width; at a smooth point both shrink with
+    it. 8 evaluations.
+    """
+    sizes = []
+    for e in (1e-6 * w, 1e-8 * w):
+        v = g(np.array([c - 2 * e, c - e, c + e, c + 2 * e]))
+        sizes.append((abs(v[2] - v[1]), abs((v[3] - v[2]) - (v[1] - v[0])) / e, max(float(np.abs(v).max()), 1e-300)))
+    (j1, s1, _), (j2, s2, scale) = sizes
+    jump = j2 > 1e-6 * scale and 0.5 < j2 / max(j1, 1e-300) < 2.0
+    kink = s2 * w > 1e-4 * scale and 0.5 < s2 / max(s1, 1e-300) < 2.0
+    return bool(jump or kink)
+
+
+def axis_edges(f, lo, hi, k: int, bases: np.ndarray, known, rng, m: int = 65, max_edges: int = 3) -> tuple[list, int]:
+    """
+    Axis-aligned jumps and kinks on axis k, and the evaluations spent: along the fibre through each
+    of ``bases`` (the worst check point, the largest |f|), the uniform-grid cells of outlying second
+    difference are located (``locate_edge``) and confirmed (``is_singular``); an edge is kept when the
+    fibre through the same base displaced by 1% of the box in the other coordinates finds it at the
+    same place (an oblique edge moves). Edges within 1e-6 of the width of ``known`` ones are skipped.
+    """
+    w = hi[k] - lo[k]
+    t = np.linspace(lo[k], hi[k], m)
+    used, found = 0, []
+    for base in bases:
+        shift = rng.uniform(-0.01, 0.01, len(lo)) * (hi - lo)
+        shift[k] = 0.0
+        located = []
+        for b0 in (base, np.clip(base + shift, lo, hi)):
+            def g(x, b0=b0):
+                P = np.repeat(b0[None], len(x), axis=0)
+                P[:, k] = x
+                return np.asarray(f(P), dtype=np.float64).ravel()
+
+            v = g(t)
+            used += m
+            d2 = np.abs(v[2:] - 2.0 * v[1:-1] + v[:-2])
+            floor = 8.0 * np.median(d2) + 1e-14 * max(float(np.abs(v).max()), 1e-300)
+            pts = []
+            for c in np.argsort(d2)[::-1][:max_edges]:
+                if d2[c] <= floor:
+                    break
+                x0 = locate_edge(g, t[max(c - 1, 0)], t[min(c + 3, m - 1)])
+                used += 17 * 18 + 8
+                if is_singular(g, x0, w):
+                    pts.append(x0)
+            located.append(pts)
+        for x0 in located[0]:
+            new = all(abs(x0 - y) > 1e-6 * w for y in list(known) + found)
+            if new and any(abs(x0 - x1) <= 1e-6 * w for x1 in located[1]) and lo[k] + 1e-6 * w < x0 < hi[k] - 1e-6 * w:
+                found.append(float(x0))
+    return found, used
+
+
+def _algebraic(C: np.ndarray, pieces: int) -> bool:
+    """
+    Whether an axis's coefficients decay algebraically (a kink: ~ j^-2, a jump: ~ j^-1), read off its
+    core: the upper half of the degrees holds at least 15% of the mean size of the quarter below it in
+    some piece. A resolved smooth axis decays geometrically, far below; an unresolved smooth one may
+    pass, and ``is_singular`` then turns its candidate edges down.
+    """
+    n1 = C.shape[1] // pieces
+    if n1 < 16:
+        return False
+    A = np.abs(C).reshape(C.shape[0], pieces, n1, C.shape[2]).mean(axis=(0, 3))
+    upper, lower = A[:, n1 // 2 :].mean(axis=1), A[:, n1 // 4 : n1 // 2].mean(axis=1)
+    return bool(np.any(upper >= 0.15 * lower) and np.any(upper > 1e-14 * A.max()))
 
 
 class RankLimit(RuntimeError):
@@ -220,8 +399,13 @@ def check_points(lo, hi, n: int, seed: int) -> np.ndarray:
 
 def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step: int = 2, rank_max: int = 60,
           sweeps: int = 2, n_fibre: int = 4, n_max: int = 512, n_check: int | None = None, n_free: int = 20_000, chop_share: float = 0.25, n_probe: int = 4000,
-          seed: int = 0, max_evals: int = 2_000_000) -> ChebTT:  # fmt: skip
-    """Train a ChebTT of ``f`` (host (N, d) -> (N,)) on [lo, hi] to tolerance ``atol``."""
+          seed: int = 0, max_evals: int = 2_000_000, edges: bool = True, max_pieces: int = 4) -> ChebTT:  # fmt: skip
+    """
+    Train a ChebTT of ``f`` (host (N, d) -> (N,)) on [lo, hi] to tolerance ``atol``. With ``edges``, an
+    axis that must refine and whose coefficients decay algebraically is first searched for jumps and
+    kinks (``axis_edges``); the ones found become breakpoints of that axis (at most ``max_pieces``
+    pieces, one degree for all of them) instead of a doubled degree.
+    """
     lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
     d = len(lo)
     rng = np.random.default_rng(seed)
@@ -229,14 +413,29 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
 
     pre = 0
     n = []
-    for k in range(d):
-        nk, used = _fibre_degree(f, lo, hi, k, share, rng, n_fibre, n_max)
-        n.append(nk)
-        pre += used
-    grid = _Grid(f, lo, hi, n)
     Xc = check_points(lo, hi, n_check or 64 + 32 * d, seed)
     fc = np.asarray(f(Xc), dtype=np.float64).ravel()
     pre += len(Xc)
+    # Edge search draws from its own stream, so a function without edges gets exactly the model it
+    # would without the search (only its evaluation count differs).
+    edge_rng = np.random.default_rng(seed + 303)
+    searched: set = set()  # (axis, degree, pieces) already searched for edges in the loop
+    breaks = [np.zeros(0) for _ in range(d)]
+    for k in range(d):
+        # An axis still unconverged at degree 32 is searched for edges through the largest |f| seen
+        # before its degree grows further: a kink would otherwise take it to n_max at once.
+        nk, used, base, ok = _fibre_degree(f, lo, hi, k, share, rng, n_fibre, n_max, pause=32 if edges else None)
+        pre += used
+        if edges and not ok and 2 * nk <= n_max:
+            found, used = axis_edges(f, lo, hi, k, Xc[[int(np.argmax(np.abs(fc)))]], [], edge_rng)
+            pre += used
+            if found:
+                breaks[k], nk = np.asarray(sorted(found)[: max_pieces - 1]), 16
+            else:
+                nk, used, _, _ = _fibre_degree(f, lo, hi, k, share, rng, n_fibre, n_max, n0=2 * nk, base=base)
+                pre += used
+        n.append(nk)
+    grid = _Grid(f, lo, hi, n, breaks)
     r = rank0
     # Seed the right sets with the grid node nearest the largest |f| seen so far and the centre node, then
     # random nodes: maxvol only moves among the fibres it is shown, so fibres that all miss a narrow peak
@@ -247,8 +446,9 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
                       for k in range(d - 1)] + [np.zeros((1, 0), dtype=np.int64)]  # fmt: skip
     while True:
         left, cores = _sweeps(grid, right, sweeps, max_evals - pre)
-        model = ChebTT(lo, hi, [_coefficients_along(C, 1) for C in cores], grid.evals + pre,
-                       tuple(C.shape[2] for C in cores[:-1]), tuple(grid.n))  # fmt: skip
+        breaks = tuple(grid.breaks) if any(len(b) for b in grid.breaks) else ()
+        model = ChebTT(lo, hi, [_piece_coefficients(C, len(grid.breaks[k]) + 1) for k, C in enumerate(cores)], grid.evals + pre,
+                       tuple(C.shape[2] for C in cores[:-1]), tuple(grid.n), breaks)  # fmt: skip
         # Free checks: grid points evaluated in earlier sweeps or at lower degrees, which the final
         # cores do not interpolate (they interpolate the last sweep's fibres only), concentrated where
         # the cross explored, i.e. where f matters.
@@ -263,8 +463,10 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
         for k in range(d):
             nk = grid.n[k]
             t = np.cos(np.pi * (np.arange(nk) + 0.5) / nk)
-            P = np.repeat(bases, nk, axis=0)
-            P[:, k] = np.tile(lo[k] + (t + 1.0) * 0.5 * (hi[k] - lo[k]), len(bases))
+            a, b = grid.bounds[k]
+            line = np.concatenate([a_p + (t + 1.0) * 0.5 * (b_p - a_p) for a_p, b_p in zip(a, b, strict=True)])
+            P = np.repeat(bases, len(line), axis=0)
+            P[:, k] = np.tile(line, len(bases))
             fP = np.asarray(f(P), dtype=np.float64).ravel()
             pre += len(P)
             look = max(look, float(np.max(np.abs(model.predict(P) - fP))))
@@ -282,14 +484,43 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
         full = model.predict(Xall)
         tails = {k: float(np.max(np.abs(full - _truncated(model, k).predict(Xall)))) for k in range(d)}
         grow = [k for k in range(d) if tails[k] > share and 2 * grid.n[k] <= n_max]
-        if grow:
+        split = {}
+        # Axes to search: those that must refine; and, when none must (the rank would grow next), every
+        # axis whose coefficients still decay algebraically, since no rank resolves a kink whose
+        # top-quarter tail happens to look small. Each axis is searched once per degree and piece count.
+        candidates = grow if grow else range(d)
+        for k in candidates if edges else ():
+            state = (k, grid.n[k], len(grid.breaks[k]))
+            if state in searched:
+                continue
+            if len(grid.breaks[k]) + 1 < max_pieces and _algebraic(model.cores[k], len(grid.breaks[k]) + 1):
+                searched.add(state)
+                found, used = axis_edges(f, lo, hi, k, bases, grid.breaks[k], edge_rng)
+                pre += used
+                if found:
+                    split[k] = sorted(list(grid.breaks[k]) + found)[: max_pieces - 1]
+        if split:  # breakpoints instead of a doubled degree on those axes; the right sets move to the nearest new nodes
+            old = [x.copy() for x in grid.nodes]
+            for k, b in split.items():
+                grid.set_breaks(k, b)
+            grow = [k for k in grow if k not in split]
             grid.set_degrees([2 * nk if k in grow else nk for k, nk in enumerate(grid.n)])
-            right = [None] + [R * (np.array([2 if a in grow else 1 for a in range(k + 1, d)])) for k, R in enumerate(right[1:-1])] + [right[-1]]
+            right = [None] + [np.stack([np.argmin(np.abs(grid.nodes[a][:, None] - old[a][R[:, i]][None]), axis=0)
+                                        for i, a in enumerate(range(k + 1, d))], axis=1) for k, R in enumerate(right[1:-1])] + [right[-1]]  # fmt: skip
+            continue
+        if grow:
+            old = [x.copy() for x in grid.nodes]
+            grid.set_degrees([2 * nk if k in grow else nk for k, nk in enumerate(grid.n)])
+            if not any(len(grid.breaks[a]) for a in grow):  # one piece: node j of degree n is node 2j of degree 2n
+                right = [None] + [R * (np.array([2 if a in grow else 1 for a in range(k + 1, d)])) for k, R in enumerate(right[1:-1])] + [right[-1]]
+            else:  # pieces: the same coordinates, by nearest node
+                right = [None] + [np.stack([np.argmin(np.abs(grid.nodes[a][:, None] - old[a][R[:, i]][None]), axis=0)
+                                            for i, a in enumerate(range(k + 1, d))], axis=1) for k, R in enumerate(right[1:-1])] + [right[-1]]  # fmt: skip
             continue
         r = min(r + rank_step, rank_max)
         if all(R.shape[0] >= r for R in right[1:-1]) and r == rank_max:
             raise RankLimit(f"ChebTT reached rank {rank_max} without meeting the tolerance.")
-        right = [None] + [np.vstack([R, rng.integers(0, np.array(grid.n[k + 1 :]) + 1, size=(rank_step, d - k - 1))])
+        right = [None] + [np.vstack([R, rng.integers(0, np.array(grid.count[k + 1 :]), size=(rank_step, d - k - 1))])
                           for k, R in enumerate(right[1:-1])] + [right[-1]]  # fmt: skip
 
 
@@ -373,12 +604,13 @@ class VectorTT:
         X = np.atleast_2d(np.asarray(X, dtype=np.float64))
         out = np.empty((len(X), self.outputs))
         for cols, Q, models in self.groups:
+            shared = not any(m.breaks for m in models)  # pieces differ between outputs: each its own bases
             sizes = [max(m.cores[k].shape[1] for m in models) for k in range(len(models[0].cores))]
             for s in range(0, len(X), chunk):
                 U = X[s : s + chunk] if Q is None else (X[s : s + chunk] - self.centre) @ Q
-                T = chebyshev_bases(models[0].local(U), sizes)
+                T = chebyshev_bases(models[0].local(U), sizes) if shared else None
                 for c, model in zip(cols, models, strict=True):
-                    out[s : s + chunk, c] = model.contract(T)
+                    out[s : s + chunk, c] = model.contract(T if shared else model.bases(U))
         return out
 
 
@@ -453,6 +685,21 @@ def build_vector(f, lo, hi, atol: float, outputs: int, rotate: bool = False, axe
     return VectorTT(groups, centre, outputs, F.evals)
 
 
+def _piece_coefficients(C: np.ndarray, pieces: int) -> np.ndarray:
+    """Node values (r, pieces * (n + 1), r') to Chebyshev coefficients, piece by piece."""
+    if pieces == 1:
+        return _coefficients_along(C, 1)
+    n1 = C.shape[1] // pieces
+    return np.concatenate([_coefficients_along(C[:, p * n1 : (p + 1) * n1], 1) for p in range(pieces)], axis=1)
+
+
+def _keep_degrees(C: np.ndarray, pieces: int, keep: int) -> np.ndarray:
+    """The core with only the first ``keep`` coefficients of every piece."""
+    if pieces == 1:
+        return C[:, :keep]
+    return C.reshape(C.shape[0], pieces, C.shape[1] // pieces, C.shape[2])[:, :, :keep].reshape(C.shape[0], pieces * keep, C.shape[2])
+
+
 def round_tt(cores: list, eps: float) -> list:
     """
     TT-SVD rounding (Oseledets 2011): right-orthogonalise the cores, then truncate every bond, left to
@@ -486,7 +733,7 @@ def compress(model: ChebTT, probe: np.ndarray, budget: float) -> ChebTT:
     inference with them (10-D Lotka-Volterra: 2,700 coefficients to 293, 8.7 to 0.35 us per query).
     The probe is the check set plus uniform points: model-only predictions, no evaluation of f.
     """
-    T = chebyshev_bases(model.local(probe), [C.shape[1] for C in model.cores])  # once: every trial keeps or cuts degrees
+    T = model.bases(probe)  # once: every trial keeps or cuts degrees
     ref = model.contract(T)
 
     def close(cores):
@@ -504,21 +751,23 @@ def compress(model: ChebTT, probe: np.ndarray, budget: float) -> ChebTT:
     while shrunk:
         shrunk = False
         for k in range(len(cores)):
-            if cores[k].shape[1] > 1:
+            P = model.pieces(k)
+            if cores[k].shape[1] > P:
                 trial = list(cores)
-                trial[k] = cores[k][:, :-1]
+                trial[k] = _keep_degrees(cores[k], P, cores[k].shape[1] // P - 1)
                 if close(trial):
                     cores, shrunk = trial, True
     return ChebTT(model.lo, model.hi, cores, model.evals, tuple(C.shape[2] for C in cores[:-1]),
-                  tuple(C.shape[1] - 1 for C in cores))  # fmt: skip
+                  tuple(C.shape[1] // model.pieces(k) - 1 for k, C in enumerate(cores)), model.breaks)  # fmt: skip
 
 
 def _truncated(model: ChebTT, k: int) -> ChebTT:
-    """The model with the top quarter of axis k's degrees dropped (see ``chebyshev_tail``)."""
+    """The model with the top quarter of axis k's degrees dropped in every piece (see ``chebyshev_tail``)."""
     cores = list(model.cores)
-    n = cores[k].shape[1] - 1
-    cores[k] = cores[k][:, : n - n // 4 + 1]
-    return ChebTT(model.lo, model.hi, cores)
+    P = model.pieces(k)
+    n = cores[k].shape[1] // P - 1
+    cores[k] = _keep_degrees(cores[k], P, n - n // 4 + 1)
+    return ChebTT(model.lo, model.hi, cores, breaks=model.breaks)
 
 
 def _sweeps(grid: _Grid, right: list, sweeps: int, budget: int):
@@ -530,7 +779,7 @@ def _sweeps(grid: _Grid, right: list, sweeps: int, budget: int):
         cores = []
         for k in range(d):
             L, R = left[k], right[k + 1]
-            nk = grid.n[k] + 1
+            nk = grid.count[k]
             idx = np.concatenate([np.repeat(np.repeat(L, nk, axis=0), len(R), axis=0),
                                   np.tile(np.repeat(np.arange(nk), len(R))[:, None], (len(L), 1)),
                                   np.tile(R, (len(L) * nk, 1))], axis=1)  # fmt: skip
@@ -548,7 +797,7 @@ def _sweeps(grid: _Grid, right: list, sweeps: int, budget: int):
         # Right to left: new right sets from maxvol on the transposed fibre matrices.
         for k in range(d - 1, 0, -1):
             L, R = left[k], right[k + 1]
-            nk = grid.n[k] + 1
+            nk = grid.count[k]
             idx = np.concatenate([np.repeat(np.repeat(L, nk, axis=0), len(R), axis=0),
                                   np.tile(np.repeat(np.arange(nk), len(R))[:, None], (len(L), 1)),
                                   np.tile(R, (len(L) * nk, 1))], axis=1)  # fmt: skip

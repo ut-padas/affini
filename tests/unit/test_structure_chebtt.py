@@ -94,3 +94,33 @@ def test_no_rotation_where_the_oracle_fails_outside_the_box():
     lo, hi = -np.ones(d), np.ones(d)
     v = chebtt.build_vector(f, lo, hi, 1e-3, 1, rotate=True)
     assert [Q is None for _, Q, _ in v.groups] == [True]
+
+
+def test_an_axis_aligned_jump_becomes_a_breakpoint_and_is_represented_exactly():
+    d = 4
+
+    def f(X):  # separable: a step on axis 1 times a smooth function
+        return np.exp(0.5 * X.sum(axis=1)) * (X[:, 1] < 0.3)
+
+    lo, hi = -np.ones(d), np.ones(d)
+    m = chebtt.build(f, lo, hi, 1e-3)
+    assert len(m.breaks[1]) == 1 and abs(m.breaks[1][0] - 0.3) < 1e-9
+    assert sum(len(b) for b in m.breaks) == 1
+    X = np.random.default_rng(7).uniform(lo, hi, (4000, d))
+    X = X[np.abs(X[:, 1] - 0.3) > 1e-8]  # the jump itself is a band of width ~1e-10
+    assert np.max(np.abs(m.predict(X) - f(X))) <= 1e-3
+
+
+def test_a_kink_is_located_to_rounding_and_a_smooth_function_gets_no_breakpoint():
+    d = 3
+
+    def kinked(X):
+        return np.exp(-4.0 * np.abs(X[:, 0] - 0.37)) * np.cos(X[:, 2])
+
+    lo, hi = -np.ones(d), np.ones(d)
+    m = chebtt.build(kinked, lo, hi, 1e-4)
+    assert len(m.breaks[0]) == 1 and abs(m.breaks[0][0] - 0.37) < 1e-9
+    X = np.random.default_rng(8).uniform(lo, hi, (4000, d))
+    assert np.max(np.abs(m.predict(X) - kinked(X))) <= 1e-4
+    smooth = chebtt.build(lambda X: np.exp(-np.sum(X**2, axis=1)), lo, hi, 1e-4)
+    assert smooth.breaks == ()
