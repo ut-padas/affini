@@ -12,7 +12,7 @@ import numpy as np
 
 from src import to_host, xp
 from src.infra.backend import MPI
-from src.structure import chebtree, sparsegrid
+from src.structure import chebtree, chebtt, sparsegrid
 from src.structure.bench import Model, register
 
 _EVALUATE, _STOP = "evaluate", "stop"
@@ -77,5 +77,12 @@ def _sparsecheb(f, lo, hi, atol, seed) -> Model:
     return Model(m.predict, None, len(m.coef), m.evals)
 
 
+def _chebtt(f, lo, hi, atol, seed) -> Model:
+    """ChebTT, the Chebyshev tensor train by cross approximation (its random fibres and check points from ``seed``)."""
+    m = chebtt.build(f, lo, hi, atol, seed=seed)
+    return Model(m.predict, None, 1, m.evals)
+
+
 register("chebtree", "ChebTree: Chebyshev boxes, coefficient decay", "#c0392b", distributed(_chebtree))
 register("sparsecheb", "SparseCheb: adaptive sparse Chebyshev grid", "#6a1b9a", distributed(_sparsecheb))
+register("chebtt", "ChebTT: Chebyshev tensor train, cross", "#e08a00", distributed(_chebtt))
