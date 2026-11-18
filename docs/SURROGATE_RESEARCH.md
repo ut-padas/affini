@@ -190,6 +190,11 @@ at 0.05 over the 300k budget). Over budget at 5-D: the rotated Gaussian, `lorenz
   scalar cases (Rosenbrock 310 against 334, 2-D Gaussian 908 against 1,208). ChebTT-M differs for
   real only where it escalates: the 3-D rotated Gaussian, 11k-80k against 13k-31k over the seeds
   (the pilot misses the narrow peak), and `front` at 0.1, over the time limit.
+- Also after the fill: the bench should cache a `MemoryError` (AFINNI's host-memory guard: 5-D
+  `rastrigin` at 0.1 needed a 7.2M-point queue) as a failure, as it does a run over its evaluation
+  budget; the fill reported it as a crash, and its record was written by hand. And `swirl` needs a
+  domain that shrinks with d: on [-2, 2]^20 its angle 2 exp(-|x|^2) is about 0 at every test point,
+  so ART holds it with 400 evaluations while ChebTT, seeded at the centre, resolves the vortex there.
 - Running after the box fill (chained): the stiff ladder (`chemfill --limit 240`, 12 solver workers),
   then the primordial network with the same four methods. Then: per-class horizons and metrics from
   Review VII (valid prediction time for chaotic members; orbit and phase error for oscillatory ones;
