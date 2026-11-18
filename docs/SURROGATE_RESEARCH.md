@@ -63,7 +63,7 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
   `cache/chem/<problem>/<method>_tol<t>.json`, plots and `summary-chem.md` in `output/chem/`.
 - Literature: [LITERATURE.md](LITERATURE.md) (every work reviewed, IDs I-* to V-*); reviews I-V are
   sections 2-6 below, Review VI (vector-valued outputs) section 8, Review VII (metrics by dynamical
-  class) section 9.
+  class) section 9, Review VIII (piecewise TTs, interfaces) section 10.
 
 ### 0.2 How the work proceeds (standing rules)
 
@@ -729,6 +729,64 @@ solve. Robertson (one seed):
   singular vectors did not finish within 1,000 s: rejected. Longer steps (a surrogate of Phi_2dt chained
   20 times over the same span) cost 11k solves (2.9x) and rolled out to 2.86 of the tolerance (against
   1.14): the two-step map is harder to fit, not smoother, here: rejected.
+
+
+### 1.21 Adaptive ChebTT for kinks, jumps and interfaces
+
+ChebTT is one global model and does not use the refinement engine; its adaptivity is in degrees,
+ranks and sample placement. It failed every non-smooth benchmark: kinks (`genz_continuous`), axis
+jumps (`genz_discontinuous`), the oblique and spherical jumps, the sharp front. Review VIII (section 10)
+and a consult agreed on the split of the problem: a sum of products of univariate functions can only
+be non-smooth along axis-aligned planes, so axis-aligned edges belong inside the train (piecewise
+axes) and oblique or curved interfaces need a term aligned with the interface; a partition refined
+towards a codimension-1 interface needs about (1/h)^(d-1) leaves that are not boxes, so the engine
+does not help there (it could host ChebTT leaves for localised features: a new plan, with ragged leaf
+transport between ranks and empty-node handling; parked).
+
+**Piecewise axes (in `chebtt.py`).** An axis may carry breakpoints; its pieces share one degree,
+nodes are the pieces' Chebyshev points (inset by 1e-10 at an interior breakpoint), keys carry a
+piece offset, and truncation, look-ahead, compression and prediction work per piece. Edges:
+`axis_edges` scans a fibre (65 points), locates an outlying second difference by zooming (17 points
+per 5x, to 1e-12 of the width; bisecting by midpoint deviations converged 1.4e-3 off when the kink sat
+near a quarter point), confirms it by a two-scale test (a jump's or kink's one-sided difference keeps
+its size from 1e-6 to 1e-8 of the width) and by a fibre displaced 1% in the other coordinates. It is
+searched on fibres through the worst check point and the largest |f|, only where the axis's
+coefficients decay algebraically: in the pre-pass on an axis unconverged at degree 32 (else a kink
+takes it to degree 256 at once), on axes that must refine, and before the rank grows (a mild kink's
+top-quarter tail can look converged, and the rank then grows in vain). One seed, evaluations / worst
+over the tolerance:
+
+| problem | before | piecewise axes |
+|---|---|---|
+| 10 smooth cases, 5-D and 10-D | 722-4,114 | identical, bit for bit |
+| `genz_continuous` 2-D / 3-D / 5-D | fails / 4.7k, 0.15 / fails | 7.5k, 0.00 / 10.9k, 0.25 / 23.7k, 0.00 |
+| `genz_continuous` 10-D / 20-D | 3.4k / 3.5k | identical (no breaks needed at 0.1) |
+| `genz_discontinuous` 2 / 3 / 5 / 10 / 20-D | all fail (over 80k-150k) | 7.7k / 5.1k / 5.0k / 5.9k / 7.7k, worst 0.07-0.15 |
+| `front` 2-D | 87.8k, 0.35 | 99.9k, 0.35 (searches before rank growth found nothing) |
+
+Given the true breakpoints by hand, the piecewise train is exact on both families at 2-20-D (rank 2,
+2.4k-7.9k evaluations): the remaining cost is detection, about 1.4k evaluations per searched axis.
+
+**Interfaces (scratch prototypes).** Interface points are edges located along axis-parallel fibres
+(every axis through the largest and smallest f of a 256-point sample, then random ones, until a fit
+holds), or median-level crossings when no fibre has an edge; the interface phi is an algebraic fit
+(plane, diagonal quadric, full quadric; residual below 1e-7). (a) Composite: f ~ h(phi(x)) + remainder,
+h a 1-D piecewise ChebTT in u = phi sampled along the in-box segment from the smallest to the largest
+phi (inverted by bisection: an interpolated inverse misplaced the jump by 1e-4 and left a thin O(1)
+spike), the remainder an ordinary ChebTT. (b) Aligned rotation for a plane whose jump varies along it:
+rotate the normal to the first axis, then piecewise axes (f evaluated in the rotated box).
+
+| problem | 2-D | 5-D | 10-D | 20-D |
+|---|---|---|---|---|
+| `oblique_jump`, composite | exact, 5.9k | exact, 10.5k | exact, 19.3k | exact, 40.7k |
+| `ball_jump`, composite | 0.01, 7.2k | 0.19, 11.8k | no interface points | no interface points |
+| `front`, composite | 0.06, 11.3k | 0.06, 12.1k | over budget | no interface points |
+| varying jump on a plane, aligned rotation | exact, 7.0k | exact, 8.9k | 0.18, 14.8k | - |
+
+At 10-D and above the ball and the front fill a vanishing share of the box (a uniform point lies ~1.9
+from the ball's centre against a radius of 0.8): almost no test point is inside them, f is the
+constant background almost everywhere, and discovery from samples is at the Novak-Wozniakowski limit.
+They are degenerate benchmarks there and need a domain that shrinks with d.
 
 ---
 
@@ -2214,3 +2272,245 @@ time otherwise), its 99.9% quantile, the speedup, and rho_N. Then by class:
 Measured for this review (light, three Robertson test trajectories, 40 steps, `src/structure/cache/chem`):
 s_k = 24-27; sigma(J) = (1.2-1.66, 0.84-0.9996, 1e-12-2e-11); A_10, A_20, A_40 = 17, 34, 64 (max norm,
 worst trajectory); rho_40 = 0.56 (ChebTT box 0.001), 0.17 (ChebTT box 0.01), 0.018 (SlowTable 0.001).
+
+---
+
+## 10. Review VIII: piecewise and partitioned tensor trains for kinks, jumps and fronts
+
+Scope: ChebTT (`src/structure/chebtt.py`) fails on axis-aligned kinks (`genz_continuous`), axis-aligned
+jumps (`genz_discontinuous`), an oblique planar jump (`oblique_jump`), a spherical jump (`ball_jump`)
+and a sharp radial front (`front`). This review covers the literature for the two planned designs:
+piecewise univariate bases per axis (design 1, already under way in the working tree: `axis_edges`,
+`locate_edge`, `is_singular`, `piece_bounds`), and a spatial partition with ChebTT leaves (design 2).
+IDs are those of docs/LITERATURE.md; new works are VIII-*. Tags: **[v]** read in the source,
+**[a]** abstract or summary only, **[r]** recalled, not checked. **[m]** marks short numpy runs made
+for this review (scratch scripts, not committed). They are not bench runs.
+
+### 10.0 Bottom line (ranked by gain over cost)
+
+1. **Design 1 is the right tool for (a) and (b), and only for them.** A product of univariate
+   functions jumps or kinks only along axis-aligned hyperplanes, and a sum of r such products only
+   along their union. So no per-axis piecewise basis, at any rank, represents an oblique or curved
+   jump. For separable singularities every fibre along axis k meets the edge at the same coordinate,
+   so one breakpoint per axis serves all of the core's rank functions. The function train finds the
+   same structure per fibre [II-14, v]. Finish design 1, then measure two refinements: one degree
+   per piece instead of one per axis, and a location precision tied to the tolerance for kinks
+   (section 1).
+2. **For (c) and (d), subtract a located jump instead of partitioning.** Locate interface points
+   with the edge search design 1 already runs (on an oblique jump it finds the edge "moving" between
+   the two fibres, and those points lie on the interface). Fit a plane, or a sphere or quadric, and
+   confirm the fit on fresh fibres. Estimate the one-sided jumps j_0..j_m of f and its normal
+   derivatives from the fibre fits. Then run the unchanged global ChebTT on
+   g = f − H(φ) Σ_k j_k φ^k / k! and add the term back at inference. In 2-D, with an oblique line
+   and a jump field that varies along it, the remainder's max error falls as n^-(m+1) (m = 3:
+   2e-12 at n = 256, rank 4). Without the subtraction it stays at 1.5 for every n [m]. This keeps
+   one TT, so smooth functions keep exactly their current cost. It is XFEM's enrichment, the
+   immersed interface method's correction and Eckhoff's jump subtraction, in TT form
+   [VIII-9, VIII-11, VIII-12].
+3. **A partition (design 2) does not scale on curved or oblique interfaces unless its leaves are
+   aligned with them.** A tree graded toward the interface needs about (1/h)^(d−1) cut leaves. Cut
+   polytope leaves break ChebTT's product domain. A two-leaf split at the located interface, with
+   each leaf on the full box fed by a jump-corrected oracle, is the subtraction above under another
+   name. Keep design 2 for what subtraction cannot carry: several crossing interfaces, jump fields
+   that are not smooth, and local high-rank features. Do not build it first for (c)-(e).
+4. **Detection costs, when the interface is curved.** Edge tracking with an SVM [I-20, v] aims at
+   99% of the volume correctly classified. The paper itself says full resolution grows exponentially
+   with the surface's dimension. Hyperspherical sparse grids [VIII-3, v] needed 94k evaluations to
+   place an off-centre sphere within 1e-3 at 5-D, and 513k for 1e-2 at 9-D, with linear bases. For
+   a max-norm surrogate the interface must be exact (a parametric surface confirmed at rounding
+   level) or have a refused band. A parametric fit (plane: d + 1 unknowns, sphere: d + 2) confirmed
+   on extra fibres is cheap; anything else is a research problem.
+5. **QTT is not a shortcut [m].** Interleaved quantics ranks of a half-plane indicator stay bounded
+   for rational directions (4 at 45°, 17 for slope 0.7, 5 for (1,1,1) in 3-D) but grow for an
+   irrational one (14 → 158 from 2^6 to 2^11 points per axis). For a disk they grow as about 2^(L/2)
+   (26 → 267). Ordered axis by axis, which is ChebTT's coordinate TT, the plane's rank is about the
+   grid size (717 of 1024). A staircase leaves an O(2^-L) band at the jump that the max norm sees.
+
+### 10.1 Function trains with adaptive or piecewise bases (Q1)
+
+**What the function train does [II-14, v].** Gorodetsky, Karaman and Marzouk build the FT by a
+continuous TT-cross. Each fibre met during the cross "is approximated adaptively to a particular
+tolerance as it is encountered" (sec. 4). Parameters are "refin[ed] ... independently for each
+univariate function" (sec. 2), so the knots differ between the rank functions of one core (fig. 3:
+"the basis for each function was chosen online, adaptively, and independently for each fiber").
+The continuous maxvol ("dominant") searches each piece of a piecewise polynomial for the maximum
+(sec. 4.2). Breakpoints are never shared or chosen by edge detection. Refinement is breadth-first:
+split into three equal regions, fit degree 6, and split again while the leading coefficient
+contributes more than 1e-10 to the squared norm (sec. 5.2, for the 2-D Genz discontinuous).
+Reported costs: machine accuracy on 2-D Genz discontinuous at rank 1, evaluations clustered at the
+jump. On the d-dimensional rank-1 Genz discontinuous (eq. 19, jumps at x_i = 1/2), evaluations grow
+linearly in d up to d ≈ 125 (fig. 7; the axis reaches 4e4, and we could not read the curve values
+from the text). Errors are relative errors of an integral and a derivative, not max norms. The paper
+gives no oblique-jump example. Its singular example (eq. 20) reports RMS errors and ranks that grow
+with d.
+
+**C3 [VIII-1, v].** `piecewisepoly.c` defaults: `nregions = 5` equal pieces, `maxorder = 10`,
+`coeff_check = 3`, `epsilon = 1e-15`, `minsize = 1e-2`. A piece is split again into equal pieces
+while any of its last 3 coefficients squared exceeds epsilon (`adapt_help`). Sums and products of
+two piecewise polynomials first take the union of their breakpoints (`piecewise_poly_match`). So
+breakpoints are per function, unions appear only in arithmetic, and the refinement is
+midpoint-style with a minimum piece size. In the max norm a jump that no knot hits leaves an error
+of the jump's size in a piece of width ≥ `minsize`. The scheme is accurate in L2 and integrals,
+which is what the paper reports, not in the max norm.
+
+**Tensorized (QTT-in-axis) univariate bases [VIII-2, a].** Ali and Nouy show that splines with free
+knots, and Besov functions, are approximated at near-optimal rates by tensorized univariate
+functions. Breakpoints are found implicitly, at the cost of L binary cores per axis and a dyadic
+resolution floor. On smooth axes this would replace a Chebyshev degree n by L·r² entries and break
+"exactly the current cost". Rejected for the main path.
+
+**For design 1 as written (working tree).**
+- One breakpoint set per axis, shared by all rank functions, is correct for (a) and (b). FT's
+  per-fibre bases matter only when the singularity moves with the other coordinates, and then the
+  format cannot represent it anyway (bottom line 1). The confirmation fibre displaced by 1% is the
+  right test of alignment. On `genz_discontinuous` the displaced fibre can land where f ≡ 0 along
+  the axis (x_2 > w_2) and find no edge. That "absent" result should not veto the edge, since an
+  unneeded breakpoint costs only n + 1 nodes.
+- **Degree per piece (to measure).** `build` gives all pieces of an axis one degree. On Genz
+  discontinuous one piece is identically 0, and on kinks the pieces have unequal widths. FT and C3
+  adapt each piece separately [II-14, VIII-1, v].
+- **Kink precision tied to the tolerance [derived].** A kink misplaced by δ leaves an error of about
+  |[f′]|·δ, so δ ≤ 0.01·atol/|[f′]| suffices. A jump needs rounding level, plus refusal of the band
+  |x_k − b| < δ for a formal max-norm claim. `locate_edge` runs 45 steps of 3 evaluations
+  (2 + 135 + 8 = 145 per edge). For a jump, bisection on the value (1 evaluation per step) reaches
+  2^-45; for a kink, about 15-25 steps suffice. This saves 60-100 evaluations per edge, which
+  matters at 20-D with two bases and two fibres per axis.
+- `INSET` (end nodes 1e-10 of the axis inside a breakpoint) is necessary: second-kind Chebyshev
+  points include the endpoints, and a node on the edge takes either side's value at random.
+- **Trigger:** "must refine" plus "algebraic decay". On a smooth function `is_singular` must reject
+  every candidate. Count its fires on the smooth fast set and require 0. With 0 fires the smooth
+  costs are identical by construction; otherwise each fire costs 2·65 + 145 per base.
+
+### 10.2 Tensor trains on discontinuities (Q2)
+
+- **Coordinate TT, oblique jump.** Sampled on an n × n grid, 1[x + y < c] is a triangular 0/1
+  matrix of rank about n, with singular values decaying like 1/k [r]. We measured 717 for slope 0.7
+  on 1024² [m]. No continuous approximant gets the max error below half the jump near the
+  interface, whatever its rank. So ChebTT cannot pass (c) or (d) by more rank or degree. This is a
+  representation limit, not a sampling one.
+- **QTT [m, exact TT-SVD ranks, 2^10 points per axis].** Interleaved: 4, 17 (bounded in L: a carry
+  automaton), 98 (golden-ratio slope, growing), 173 (disk); 3-D at 2^6: 5, 39, 248 (ball).
+  Sequential: 1023, 717, 633, 336. sin(2s) + 1[s > 0.7] along (0.8, 0.6): 9 at 1e-8 for every L. QTT
+  exploits lattice alignment, not obliqueness. QTT patching [VIII-7, a] (block-sparse patches of
+  lower bond dimension, "substantial improvements for sharply localized functions") is the closest
+  existing piecewise TT, without max-norm control.
+- **TT for shocks [VIII-13, a]** (a TT stochastic finite-volume method) gives no rank result for jumps.
+  **Tree partitions** with local models (Tree-PCE [VIII-8, a]; I-18, I-19, II-6, III-9, IV-6) never
+  carry a TT per leaf with a max-norm target; section 1.9 (2.5-4x on kinks) is the only measurement.
+
+### 10.3 Discontinuity detection, cost against dimension (Q3)
+
+| Method | What it returns | Cost in evaluations | Fit with cross |
+|---|---|---|---|
+| 1-D edge search on fibres (chebfun [IV-1, v]; `locate_edge`) | one point at rounding level | ~50-300 per edge; 45 bisection steps for a jump | native: the fibres are the cross's |
+| Polynomial annihilation, axis by axis [IV-2, a; VIII-5, a; II-29] | jump function on scattered/sparse-grid points | PA "to completion" grows exponentially with d and dominates beyond d = 3 [I-20, v, fig. 5.8]; with sparse-grid refinement, linear in d for a hypersphere up to d = 100 [IV-4, v] | gate: tells a jump from a steep gradient |
+| PA seed + SVM edge tracking [I-20, v] | classifier for 99% of the volume | 10-20 edge points suffice to seed; the uncertainty-sampling stop is a space-filling design of the surface, so it is exponential in d − 1 for full resolution (their sec. 4) | none for max norm, except as a refusal mask |
+| Hyperspherical sparse grid [VIII-3, v; VIII-4, a] | r(θ) for a star-shaped surface, each value by 1-D bisection | off-centre sphere, distance error e∞: 5-D 1e-3 in 94k, 9-D 1e-2 in 513k (Table 5.1, linear basis, adaptive + acceleration) | r(θ) could itself be a ChebTT whose entries are bisections [speculative] |
+| Parametric fit (plane, sphere, quadric) of located points | exact surface if the hypothesis holds | plane (d + 2 points) × 45: about 1k at 20-D; sphere similar; general quadric (d + 1)(d + 2)/2 points: about 10^4 at 20-D | confirm on fresh fibres; refuse a band if the confirmation fails |
+
+Saye's height-function recursion [VIII-6, a] is the standard way to decide, in a box, along which
+axis an implicit surface is a graph: pick k with ∂φ/∂x_k bounded away from 0, else subdivide. It
+needs only 1-D root finding. Use it if a curved interface is ever handled in graph coordinates.
+
+### 10.4 Multi-element methods carrying a TT per element (Q4)
+
+ME-gPC [I-11] and MEPCM [III-9] split boxes by coefficient-decay criteria. A TT per element is
+direct, but the interface is then resolved by grading, at the (1/h)^(d−1) cost above.
+Minimal multi-element collocation [IV-5, a] cuts elements along the detected discontinuity, so they
+are not boxes, and a TT does not fit them without a map. We found no published method that carries
+a TT per element of a discontinuity-fitted partition [searched; absence is not proof]. Two ways to
+carry one:
+
+- **Mapped leaves (transfinite / graph maps) [VIII-15, r]:** side A = {x_k < h(x_rest)} as
+  x_k = lo_k + t·(h(x_rest) − lo_k), t ∈ [0, 1]. The map couples t with x_rest (rank rises), and
+  where the plane exits a side face h leaves [lo_k, hi_k]: clipping puts an oblique kink in x_rest.
+  Fine in 2-D, a (d−2)-dimensional problem again in high d.
+- **Full-box leaves fed by an extended oracle** (f on its own side, f minus the Taylor jump model on
+  the other) are subtraction (section 5); two TTs beat one only if the sides' ranks differ a lot.
+
+### 10.5 Coordinates and corrections aligned to the interface (Q5)
+
+- **Rotation** makes a planar interface axis-aligned (exp(a·x) stays rank 1 under any rotation), but
+  the rotated box leaves the domain. Section 1.9 rejected global rotation because f must not be
+  evaluated outside the box. Coordinate flows [V-11, a] lower FTT ranks by a linear change of
+  variables; they do not address domains.
+- **Polar and spherical coordinates** make a sphere axis-aligned (Chebfun's disk and sphere use
+  low-rank double-Fourier forms [VIII-14, r]). Over a box, though, the radial coordinate's range
+  depends on the angle, which is the same clipping problem.
+- **Jump subtraction (recommended).** Following XFEM's Heaviside enrichment [VIII-11, r], the
+  immersed interface method's jump corrections [VIII-12, r] and Eckhoff's subtraction of jump terms
+  to restore spectral convergence [VIII-9, a; VIII-10, r], write
+  f = g + H(φ)·Σ_{k≤m} j_k(π(x)) φ(x)^k / k!. Here φ is the fitted level set (signed distance for a
+  plane, |x − c|² − R² for a sphere), π the projection onto the interface, and j_k the jumps of the
+  k-th normal derivative. If the j_k are exact, g is C^m across the interface.
+  2-D test [m]: line at angle 0.6, f_A = exp(0.5x + 0.3y), f_B = cos(x − 2y) + 0.5, exact j_k, max
+  error of the full Chebyshev interpolant of g on an 801² grid:
+
+  | m | n = 16 | 64 | 256 | rank at 1e-6 (n = 256) |
+  |---|---|---|---|---|
+  | none | 1.5 | 1.7 | 1.5 | 144 |
+  | 0 | 2.5e-2 | 6.2e-3 | 1.6e-3 | 144 |
+  | 1 | 3.3e-4 | 2.0e-5 | 1.3e-6 | 22 |
+  | 2 | 6.1e-6 | 9.2e-8 | 1.5e-9 | 8 |
+  | 3 | 1.4e-7 | 5.4e-10 | 2.1e-12 | 4 |
+
+  The rate is n^-(m+1) and the rank falls with m. For the bench's cases, j_k is constant on the
+  interface: `oblique_jump` has j_0 = 1 and j_k = 0 (g = sin(2 q·x), rank 2). `ball_jump` has
+  constant j_k = −(d/dφ)^k e^-(0.64 + φ) at φ = 0, with φ = |x − c|² − R² applied outside the ball,
+  which avoids ∇φ = 0 at the centre. So only a few interface samples are needed to confirm that j_k is
+  constant. A j_0 error of δ leaves a jump of δ in g, which needs δ ≲ atol/3 (Gibbs adds about 9%).
+  The j_k come from one-sided Chebyshev fits on the edge-search fibres. Along axis k, the k-th
+  derivative jump equals j_k·q_k^k for a plane, so use the axis with the largest |q_k|. Equivalently,
+  use the graph form Σ ĵ_k(x_rest)(x_k − h(x_rest))^k / k!, whose ĵ_k are exactly what a fibre
+  along axis k measures.
+- **Fronts (e).** `front` is tanh((|x| − 1)/0.05): f = P(φ(x)) with φ = |x|² (rank 2) and a 1-D
+  profile P. The same subtraction applies with a smooth profile in place of H. Locate points with
+  f = 0 by 1-D root finding on fibres (smooth, so a secant costs about 10 evaluations each), fit a
+  quadric, read P off one normal fibre, verify at check points, and run ChebTT on f − P(φ). The
+  remainder here is exactly 0 [derived]. A front whose amplitude varies along the surface leaves a
+  remainder with the same sharpness but an amplitude that falls with the distance along the surface
+  [speculative]. Composition structure F(Σ u_i(x_i)) is close to the active-manifold and level-set
+  learning works already registered (II-21, II-22); none of them targets the max norm.
+
+### 10.6 Recommended designs and cheap experiments, by gain over cost
+
+1. **X1, design 1 as is (hours).** Run `genz_continuous` and `genz_discontinuous` at 2, 5, 10 and
+   20-D with `edges` on and off, then the smooth fast set with edges on. Pass if the smooth cases
+   have the same evaluation counts and models bit for bit (`is_singular` fires 0 times; log every
+   `axis_edges` call and its cost), and (a) and (b) come within tolerance near the smooth median
+   costs plus about 2·d·(2·65 + 145).
+2. **X2, cheaper and per-piece (a day).** One degree per piece, value bisection for jumps, a
+   tolerance-tied precision for kinks, and "absent on the confirmation fibre" accepted when that
+   fibre is flat. Measure the savings at 20-D under the AGENTS.md bar.
+3. **X3, planar subtraction for `oblique_jump` (2-3 days).** Collect the moving edges `axis_edges`
+   already rejects. Locate d + 2 interface points (45 bisections each, brackets predicted by the
+   running plane fit), fit the plane, and confirm on 2 fresh fibres (|predicted − located| ≤ 1e-9
+   of the width). Estimate j_0..j_2 at 3-5 points; if they are constant within atol/10, use the
+   constants. Wrap the oracle as g = f − S, train ChebTT on g, predict g + S, and refuse
+   |φ| < 1e-9. Expected: near `sin(2 q·x)`'s smooth cost plus about 1-2k evaluations at 20-D.
+   Run 2, 5, 10, 20-D.
+4. **X4, spherical subtraction for `ball_jump`.** The same with a sphere (d + 2 unknowns) and the
+   correction applied outside. Fall back to a diagonal quadric (2d + 1) if the sphere is not
+   confirmed. In 2-D and 3-D first. Note that the sphere touches the faces x_i = 1 (c_i + R = 1), so
+   fibres along e_i there graze it. The radial φ does not mind, but a graph form along e_i would.
+5. **X5, profile subtraction for `front`** as in section 5. It is specific to level-set structure.
+   Run it only after X3-X4 show that the interface machinery holds.
+6. **X6, design 2 (only if X3-X5 fail, or for crossing interfaces).** Split at the located interface
+   with full-box leaves fed by the extended oracle, or use a graded tree with ChebTT leaves and
+   refusal at the depth cap in d ≤ 3. Do not expect it to scale in d.
+
+Every step leaves smooth problems on the current path: subtraction runs only after `axis_edges`
+has located a confirmed interface, and a single-piece ChebTT is the same object as today's.
+
+### 10.7 Pitfalls
+
+- A max-norm claim on a jump needs the interface to rounding or a refused band (report its volume
+  share). SVM and sparse-grid detectors report misclassified volume (I-20) or Hausdorff distance
+  (VIII-3), not max errors; FT's "machine accuracy" (II-14 sec. 5.2) is an L2/integral result.
+- Kinks and jumps need different precisions: 2^-45 for both wastes evaluations, a 1e-3 cut for both
+  recreates section 1.7's near-face trap for jumps.
+- Piece ends must stay inside a breakpoint (`INSET`), and so must leaves of a jump-fitted partition.
+- Subtraction moves the error into the j_k: a biased j_0 is a small jump ChebTT cannot remove, so
+  check j_0 at fresh interface points.
+- The 2-D subtraction test used exact jumps and a full tensor grid: it shows the representation
+  works, not the estimation or the cross. X3 tests those.
