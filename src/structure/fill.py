@@ -8,8 +8,10 @@ tightens. Seed 1 runs first, as its own 8-rank job under ``--limit`` seconds of 
 finishes, the other seeds run. If it does not, the job is killed (its whole process group, so no
 rank is left waiting in a collective), the case is cached as failed with the time limit as the
 reason (the overview hatches it like a case over its evaluation budget), and the tighter tolerances
-of that method and problem are skipped. Cached cases are never rerun. After each problem the bench
-redraws that problem's plots, the summary and the overview.
+of that method and problem are skipped. A job that crashes leaves no cache entry: it is reported,
+not recorded, and runs again next time. Cached cases are never rerun. After each problem the bench
+redraws that problem's plots, the summary and the overview. Every job imports ``src`` afresh, so do
+not edit it while a fill runs.
 
 AFINNI is not run at d >= 10: it needs tens of GB of host memory there (45 GB over 8 ranks on the
 10-D wave, one rank 15 GB), which a time limit does not catch before the machine runs out of memory.
@@ -66,7 +68,7 @@ def main(argv=None) -> None:
     parser.add_argument("--d", default="2,3,5,10,20")
     parser.add_argument("--problems", default=None, help="default: the fast set first, then every other scalar problem")
     parser.add_argument("--vector", action="store_true", help="the vector-valued problems instead of the scalar ones")
-    parser.add_argument("--methods", default="chebtt,art_quad,art,afinni",
+    parser.add_argument("--methods", default="chebtt,chebtt_metric,art_quad,art,afinni",
                         help="ChebTree, SparseCheb and MetricKernel are left out: ChebTT beats them from 3-D up")
     parser.add_argument("--limit", type=float, default=90.0, help="wall seconds per run, start-up included")
     parser.add_argument("--ranks", type=int, default=8)
@@ -99,6 +101,9 @@ def main(argv=None) -> None:
                             ran = True
                             if not ok:
                                 _record_time_limit(method, problem, d, tol, bench.SEEDS[0], a.limit, a.ranks)
+                            if ok and not first.exists():  # the job crashed: nothing is cached, so it reruns next time
+                                print(f"{d}-D {problem} {method} {tol:g}: seed 1 crashed (see {log_path})", flush=True)
+                                break
                             print(f"{d}-D {problem} {method} {tol:g}: seed 1 {'done' if ok else 'over the limit'} "
                                   f"({time.time() - t0:.0f} s)", flush=True)  # fmt: skip
                         m = json.loads(str(np.load(first)["metrics"]))

@@ -36,3 +36,48 @@ def test_a_narrow_peak_away_from_random_fibres_is_found():
     m = chebtt.build(f, lo, hi, 0.01)
     X = np.concatenate([np.random.default_rng(2).normal(0.0, 0.1, (2000, d)), np.zeros((1, d))])
     assert np.max(np.abs(m.predict(X) - f(X))) <= 0.01
+
+
+def test_separate_trains_share_one_cache_and_match_independent_trains():
+    d = 4
+
+    def f(X):
+        return np.stack([np.cos(X.sum(axis=1)), np.prod(1.0 / (1.0 + X**2), axis=1)], axis=1)
+
+    lo, hi = -np.ones(d), np.ones(d)
+    v = chebtt.build_vector(f, lo, hi, 1e-3, 2)
+    alone = [chebtt.build(lambda X, c=c: f(X)[:, c], lo, hi, 1e-3) for c in range(2)]
+    X = np.random.default_rng(3).uniform(lo, hi, (2000, d))
+    assert np.array_equal(v.predict(X), np.stack([m.predict(X) for m in alone], axis=1))
+    assert v.evals < sum(m.evals for m in alone)  # the pre-pass and the Sobol checks are shared
+
+
+def test_the_metric_rotates_shared_ridges_and_keeps_a_separable_output_on_the_axes():
+    d = 6
+    q = np.random.default_rng(4).normal(size=d)
+    q /= np.linalg.norm(q)
+
+    def f(X):
+        s = X @ q
+        return np.stack([np.tanh(2 * s), np.sin(3 * s), np.prod(1.0 / (1.0 + X**2), axis=1)], axis=1)
+
+    lo, hi = -np.ones(d), np.ones(d)
+    v = chebtt.build_vector(f, lo, hi, 1e-3, 3, rotate=True)
+    plan = {tuple(cols): Q is not None for cols, Q, _ in v.groups}
+    assert plan == {(0, 1): True, (2,): False}
+    assert all(m.ranks and max(m.ranks) == 1 for cols, Q, ms in v.groups for m in ms)
+    X = np.random.default_rng(5).uniform(lo, hi, (4000, d))
+    assert np.max(np.abs(v.predict(X) - f(X))) <= 1e-3
+
+
+def test_no_rotation_where_the_oracle_fails_outside_the_box():
+    d = 4
+    q = np.ones(d) / 2.0
+
+    def f(X):  # a ridge defined only on the box
+        bad = np.any(np.abs(X) > 1.0 + 1e-12, axis=1)
+        return np.where(bad, np.nan, np.exp(X @ q))[:, None]
+
+    lo, hi = -np.ones(d), np.ones(d)
+    v = chebtt.build_vector(f, lo, hi, 1e-3, 1, rotate=True)
+    assert [Q is None for _, Q, _ in v.groups] == [True]

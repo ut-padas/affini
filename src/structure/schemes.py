@@ -86,11 +86,21 @@ def _sparsecheb(f, lo, hi, atol, seed) -> Model:
 def _chebtt(f, lo, hi, atol, seed) -> Model:
     """ChebTT, the Chebyshev tensor train by cross approximation (its random fibres and check points from ``seed``)."""
     probe = np.asarray(f(np.asarray(lo, dtype=np.float64)[None]))
-    if probe.ndim == 2 and probe.shape[1] > 1:  # a vector problem: one train for every output
+    if probe.ndim == 2 and probe.shape[1] > 1:  # a vector problem: one train per output, one cache of f
         m = chebtt.build_vector(f, lo, hi, atol, probe.shape[1], seed=seed)
     else:
         m = chebtt.build(f, lo, hi, atol, seed=seed)
     return Model(m.predict, None, 1, m.evals + 1)
+
+
+def _chebtt_metric(f, lo, hi, atol, seed) -> Model:
+    """ChebTT in the coordinates of the outputs' pullback metric where that pays (``chebtt.build_vector`` with ``rotate``)."""
+    probe = np.asarray(f(np.asarray(lo, dtype=np.float64)[None]))
+    m_out = probe.shape[1] if probe.ndim == 2 else 1
+    m = chebtt.build_vector(f, lo, hi, atol, m_out, rotate=True, seed=seed)
+    rotated = sum(len(cols) for cols, Q, _ in m.groups if Q is not None)
+    predict = m.predict if probe.ndim == 2 and m_out > 1 else (lambda X: m.predict(X)[:, 0])
+    return Model(predict, None, 1 + rotated, m.evals + 1)
 
 
 def _kernel(f, lo, hi, atol, seed) -> Model:
@@ -102,4 +112,5 @@ def _kernel(f, lo, hi, atol, seed) -> Model:
 register("chebtree", "ChebTree: Chebyshev boxes, coefficient decay", "#c0392b", distributed(_chebtree))
 register("sparsecheb", "SparseCheb: adaptive sparse Chebyshev grid", "#6a1b9a", distributed(_sparsecheb))
 register("chebtt", "ChebTT: Chebyshev tensor train, cross", "#e08a00", distributed(_chebtt))
+register("chebtt_metric", "ChebTT-M: ChebTT in the pullback-metric coordinates", "#1b7f5b", distributed(_chebtt_metric))
 register("kernel", "MetricKernel: learned-metric greedy kernel", "#2e7d9a", distributed(_kernel))

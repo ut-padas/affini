@@ -102,48 +102,61 @@ class ChebTT:
     evals: int = 0
     ranks: tuple = ()
     degrees: tuple = ()
-    outputs: int = 0  # > 0: the last core is a discrete output axis, read at its nodes; predict gives (N, outputs)
 
     def predict(self, X: np.ndarray, chunk: int = 16_384) -> np.ndarray:
-        """
-        Core by core: the Chebyshev values from the three-term recurrence (no arccos or cos), the
-        running row vector times the core as one matrix product, then the sum over the degrees; about
-        ``sum_k r_k (n_k + 1) r_k+1`` multiply-adds per query, in chunks that bound the temporaries.
-        """
+        """In chunks that bound the temporaries (``contract``)."""
         X = np.atleast_2d(np.asarray(X, dtype=np.float64))
-        if self.outputs:
-            d = len(self.cores) - 1
-            C = self.cores[-1][:, :, 0]  # (r, n + 1): the output axis's values at its nodes, all outputs at once
-            W = C @ np.cos(np.outer(np.arange(C.shape[1]), np.pi * np.arange(self.outputs) / max(self.outputs - 1, 1)))
-            head = ChebTT(self.lo[:d], self.hi[:d], self.cores[:-1])
-            return np.concatenate([head._rows(X[s : s + chunk, :d]) @ W for s in range(0, len(X), chunk)])
-        return np.concatenate([self._rows(X[s : s + chunk])[:, 0] for s in range(0, len(X), chunk)])
+        sizes = [C.shape[1] for C in self.cores]
+        return np.concatenate([self.contract(chebyshev_bases(self.local(X[s : s + chunk]), sizes)) for s in range(0, len(X), chunk)])
 
-    def _rows(self, X: np.ndarray) -> np.ndarray:
-        """(N, r_d) the cores' product at the rows of X (r_d = 1 for a scalar model)."""
-        t = 2.0 * (X - self.lo) / (self.hi - self.lo) - 1.0
-        v = np.ones((len(t), 1))
-        for k, C in enumerate(self.cores):
+    def local(self, X: np.ndarray) -> np.ndarray:
+        """X in the cores' coordinates, [-1, 1] per axis."""
+        return 2.0 * (X - self.lo) / (self.hi - self.lo) - 1.0
+
+    def contract(self, T: list) -> np.ndarray:
+        """
+        The model at the points whose Chebyshev values are ``T`` (``chebyshev_bases``; at least ``n_k + 1``
+        rows per axis, so models of different degrees can share one set). Per core, the values times the
+        core first, one matrix product (Q, n + 1) x (n + 1, r_k r_k+1), then the running row vector
+        times that: about ``sum_k r_k (n_k + 1) r_k+1`` multiply-adds per point, 1.6-4x faster than
+        multiplying the row vector into the core first, which leaves a strided (Q, n + 1, r) temporary.
+        """
+        v = np.ones((T[0].shape[1], 1))
+        for C, Tk in zip(self.cores, T, strict=True):
             ra, n1, rb = C.shape
-            T = np.empty((len(t), n1))
-            T[:, 0] = 1.0
-            if n1 > 1:
-                T[:, 1] = t[:, k]
-            for j in range(2, n1):
-                T[:, j] = 2.0 * t[:, k] * T[:, j - 1] - T[:, j - 2]
-            U = (v @ C.reshape(ra, n1 * rb)).reshape(len(t), n1, rb)
-            v = np.einsum("qj,qjb->qb", T, U)
-        return v
+            if ra == 1:  # every first core, every core of a rank-1 train: a scaling, without einsum's overhead
+                v = v * (C[0].T @ Tk[:n1]).T
+            else:
+                M = Tk[:n1].T @ C.transpose(1, 0, 2).reshape(n1, ra * rb)
+                v = np.einsum("qa,qab->qb", v, M.reshape(-1, ra, rb))
+        return v[:, 0]
 
     def leaf_of(self, X):
         return None
 
 
+def chebyshev_bases(t: np.ndarray, sizes: list) -> list:
+    """Per axis k, the (sizes[k], Q) values T_j(t[:, k]) by the three-term recurrence (no arccos or cos), rows contiguous."""
+    out = []
+    for k, n1 in enumerate(sizes):
+        T = np.empty((n1, len(t)))
+        T[0] = 1.0
+        if n1 > 1:
+            x = np.ascontiguousarray(t[:, k])
+            T[1] = x
+        for j in range(2, n1):
+            np.multiply(x, T[j - 1], out=T[j])
+            T[j] *= 2.0
+            T[j] -= T[j - 2]
+        out.append(T)
+    return out
+
+
 class _Grid:
     """Node coordinates per axis and a cache of f by grid index."""
 
-    def __init__(self, f, lo, hi, n, fixed=()):
-        self.f, self.lo, self.hi, self.fixed = f, lo, hi, set(fixed)  # fixed: axes whose degree never changes
+    def __init__(self, f, lo, hi, n):
+        self.f, self.lo, self.hi = f, lo, hi
         self.set_degrees(n)
         self.cache: dict[tuple, float] = {}
         self.evals = 0
@@ -159,15 +172,13 @@ class _Grid:
             keys = [keys[i] for i in rng.choice(len(keys), n, replace=False)]
         M = np.array(keys, dtype=np.float64).reshape(-1, len(self.n))
         X = self.lo + (np.cos(np.pi * M / LATTICE) + 1.0) * 0.5 * (self.hi - self.lo)
-        for k in self.fixed:
-            X[:, k] = self.nodes[k][M[:, k].astype(np.int64)]
         return X, np.array([self.cache[k] for k in keys])
 
     def values(self, idx: np.ndarray, max_evals: int) -> np.ndarray:
         """f at the grid points with integer multi-indices ``idx`` (M, d), evaluating only the uncached ones."""
         # Keyed on the finest lattice: node i of degree n is node i * (N / n) of degree N, so a doubled
         # axis finds its old points again.
-        step = np.array([1 if k in self.fixed else LATTICE // nk for k, nk in enumerate(self.n)])
+        step = np.array([LATTICE // nk for nk in self.n])
         keys = [tuple(row) for row in (idx * step).tolist()]
         missing = sorted({k for k in keys if k not in self.cache})
         if missing:
@@ -205,35 +216,21 @@ def check_points(lo, hi, n: int, seed: int) -> np.ndarray:
 
 def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step: int = 2, rank_max: int = 60,
           sweeps: int = 2, n_fibre: int = 4, n_max: int = 512, n_check: int | None = None, n_free: int = 20_000, chop_share: float = 0.25, n_probe: int = 4000,
-          seed: int = 0, max_evals: int = 2_000_000, output_degree: int = 0) -> ChebTT:  # fmt: skip
-    """
-    Train a ChebTT of ``f`` (host (N, d) -> (N,)) on [lo, hi] to tolerance ``atol``. With
-    ``output_degree`` m - 1 > 0 the last axis indexes m outputs at its m nodes (``build_vector``): its
-    degree is fixed, it gets no look-ahead, and every check point sits on one of its nodes.
-    """
+          seed: int = 0, max_evals: int = 2_000_000) -> ChebTT:  # fmt: skip
+    """Train a ChebTT of ``f`` (host (N, d) -> (N,)) on [lo, hi] to tolerance ``atol``."""
     lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
     d = len(lo)
     rng = np.random.default_rng(seed)
-    free_axes = list(range(d - 1)) if output_degree else list(range(d))
-    share = safety * atol / len(free_axes)
-
-    def snap(X):  # check points on the output axis's nodes, the only places its values mean anything
-        if output_degree:
-            nodes = lo[-1] + (cheb_points(output_degree) + 1.0) * 0.5 * (hi[-1] - lo[-1])
-            X[:, -1] = nodes[np.argmin(np.abs(X[:, -1:] - nodes[None]), axis=1)]
-        return X
+    share = safety * atol / d
 
     pre = 0
     n = []
     for k in range(d):
-        if k not in free_axes:
-            n.append(output_degree)
-            continue
         nk, used = _fibre_degree(f, lo, hi, k, share, rng, n_fibre, n_max)
         n.append(nk)
         pre += used
-    grid = _Grid(f, lo, hi, n, fixed=[] if not output_degree else [d - 1])
-    Xc = snap(check_points(lo, hi, n_check or 64 + 32 * d, seed))
+    grid = _Grid(f, lo, hi, n)
+    Xc = check_points(lo, hi, n_check or 64 + 32 * d, seed)
     fc = np.asarray(f(Xc), dtype=np.float64).ravel()
     pre += len(Xc)
     r = rank0
@@ -259,7 +256,7 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
         Xall, fall = np.concatenate([Xc, Xg]), np.concatenate([fc, fg])
         bases = Xall[[int(np.argmax(err)), int(np.argmax(np.abs(fall)))]]
         look = 0.0
-        for k in free_axes:
+        for k in range(d):
             nk = grid.n[k]
             t = np.cos(np.pi * (np.arange(nk) + 0.5) / nk)
             P = np.repeat(bases, nk, axis=0)
@@ -270,7 +267,7 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
             Xc, fc = np.concatenate([Xc, P]), np.concatenate([fc, fP])  # kept: later rounds are checked there too
         model.evals = grid.evals + pre
         if max(float(err.max()), look) <= safety * atol:
-            probe = np.concatenate([Xall, snap(rng.uniform(lo, hi, (n_probe, d)))])
+            probe = np.concatenate([Xall, rng.uniform(lo, hi, (n_probe, d))])
             small = compress(model, probe, chop_share * atol)
             small.evals = model.evals
             return small
@@ -279,8 +276,8 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
         # Degree or rank: an axis whose top quarter of degrees still changes the model by more than its
         # share at the check points is under-resolved, and no rank can make up for it.
         full = model.predict(Xall)
-        tails = {k: float(np.max(np.abs(full - _truncated(model, k).predict(Xall)))) for k in free_axes}
-        grow = [k for k in free_axes if tails[k] > share and 2 * grid.n[k] <= n_max]
+        tails = {k: float(np.max(np.abs(full - _truncated(model, k).predict(Xall)))) for k in range(d)}
+        grow = [k for k in range(d) if tails[k] > share and 2 * grid.n[k] <= n_max]
         if grow:
             grid.set_degrees([2 * nk if k in grow else nk for k, nk in enumerate(grid.n)])
             right = [None] + [R * (np.array([2 if a in grow else 1 for a in range(k + 1, d)])) for k, R in enumerate(right[1:-1])] + [right[-1]]
@@ -292,32 +289,150 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
                           for k, R in enumerate(right[1:-1])] + [right[-1]]  # fmt: skip
 
 
-def build_vector(f, lo, hi, atol: float, outputs: int, **kw) -> ChebTT:
+class _SharedOracle:
+    """f (host (N, d) -> (N, m)) behind one cache keyed by the point: one call gives every output, so separate trains of the outputs pay once for any point one of them asks for."""
+
+    def __init__(self, f):
+        self.f, self.cache = f, {}
+
+    @property
+    def evals(self) -> int:
+        return len(self.cache)
+
+    def __call__(self, X: np.ndarray) -> np.ndarray:
+        X = np.ascontiguousarray(X, dtype=np.float64)
+        keys = [x.tobytes() for x in X]
+        first: dict[bytes, int] = {}
+        for i, key in enumerate(keys):
+            if key not in self.cache and key not in first:
+                first[key] = i
+        if first:
+            V = np.asarray(self.f(X[list(first.values())]), dtype=np.float64).reshape(len(first), -1)
+            self.cache.update(zip(first, V, strict=True))
+        return np.array([self.cache[key] for key in keys])
+
+
+def _directions_holding(w: np.ndarray, share: float = 0.99) -> int:
+    """How many of the largest entries of w (>= 0) hold ``share`` of its sum."""
+    w = np.sort(np.clip(w, 0.0, None))[::-1]
+    return int(np.searchsorted(np.cumsum(w) / max(float(w.sum()), 1e-300), share) + 1)
+
+
+def metric_groups(J: np.ndarray) -> list[tuple[list[int], np.ndarray | None]]:
     """
-    A ChebTT of a vector-valued ``f`` (host (N, d) -> (N, outputs)), within ``atol`` in every output:
-    one tensor train whose last axis indexes the outputs, so one evaluation of f serves every output
-    (one solve of a chemical network gives every species). ``evals`` counts the distinct points f saw.
+    Coordinates for each output from Jacobian samples ``J`` (d, points, m): an output whose metric
+    ``G_c = mean grad f_c grad f_c^T`` holds 99% of its trace in at most half as many eigenvectors as
+    axes is rotated; outputs whose leading subspaces merge without growing share one rotation (the
+    eigenvectors of their summed, trace-normalised metrics, largest first); the rest keep the axes
+    (``None``). A separable output is never rotated, since a rotation would destroy its rank 1.
+    """
+    d, _, m = J.shape
+    G = [np.einsum("ip,jp->ij", J[:, :, c], J[:, :, c]) for c in range(m)]
+    G = [g / max(float(np.trace(g)), 1e-300) for g in G]
+    k_eig = [_directions_holding(np.linalg.eigvalsh(g)) for g in G]
+    rotated: list[list[int]] = []
+    axes = []
+    for c in sorted(range(m), key=lambda c: k_eig[c]):
+        if 2 * k_eig[c] > _directions_holding(np.diag(G[c])):
+            axes.append(c)
+            continue
+        for grp in rotated:
+            joint = _directions_holding(np.linalg.eigvalsh(sum(G[i] for i in grp) + G[c]))
+            if joint <= max(_directions_holding(np.linalg.eigvalsh(sum(G[i] for i in grp))), k_eig[c]):
+                grp.append(c)
+                break
+        else:
+            rotated.append([c])
+    out: list[tuple[list[int], np.ndarray | None]] = []
+    for grp in rotated:
+        w, Q = np.linalg.eigh(sum(G[i] for i in grp))
+        out.append((sorted(grp), Q[:, np.argsort(w)[::-1]]))
+    if axes:
+        out.append((sorted(axes), None))
+    return out
+
+
+@dataclass
+class VectorTT:
+    """
+    Every output its own scalar ChebTT, in its group's coordinates ``u = (x - centre) Q`` (``Q`` None:
+    the box's own axes). Predictions are (N, outputs).
+    """
+
+    groups: list  # (output indices, Q or None, their ChebTTs)
+    centre: np.ndarray
+    outputs: int
+    evals: int = 0
+
+    def predict(self, X: np.ndarray, chunk: int = 16_384) -> np.ndarray:
+        """A group's outputs share its coordinates and their Chebyshev values (``ChebTT.contract``)."""
+        X = np.atleast_2d(np.asarray(X, dtype=np.float64))
+        out = np.empty((len(X), self.outputs))
+        for cols, Q, models in self.groups:
+            sizes = [max(m.cores[k].shape[1] for m in models) for k in range(len(models[0].cores))]
+            for s in range(0, len(X), chunk):
+                U = X[s : s + chunk] if Q is None else (X[s : s + chunk] - self.centre) @ Q
+                T = chebyshev_bases(models[0].local(U), sizes)
+                for c, model in zip(cols, models, strict=True):
+                    out[s : s + chunk, c] = model.contract(T)
+        return out
+
+
+def build_vector(f, lo, hi, atol: float, outputs: int, rotate: bool = False, seed: int = 0, **kw) -> VectorTT:
+    """
+    A surrogate of a vector-valued ``f`` (host (N, d) -> (N, outputs)) within ``atol`` in every output:
+    one scalar ChebTT per output, all drawing on one cache of f, so a point any train asks for serves
+    the others (the degree pre-pass, the Sobol checks and the first fibres coincide, as every train uses
+    ``seed``). ``evals`` counts the distinct points f saw.
+
+    Separate trains, not one train with an output axis: f gives every output at every point without
+    noise, so sharing a model cannot make an interpolant more accurate at a given point set, it can only
+    save points; and one train's bond ranks are those of the union of the outputs' factor spaces, up to
+    the sum of theirs, which its sampling pays squared. Outputs of different structure (a ridge beside
+    a product peak) therefore cost several times more in one train than apart.
+
+    ``rotate``: what the outputs do share is coordinates. A pilot of finite differences at
+    ``4 + 2d`` (rounded up to a power of two) Sobol points gives every output's metric; ``metric_groups``
+    decides which outputs to train in rotated coordinates, on the box bounding the domain in them.
+    That box extends beyond the domain, so a group is kept on the axes when f, at ``2d`` random points
+    of its box, is not finite or exceeds ten times its largest value at the pilot points (an ODE that
+    leaves its positive orthant, a polynomial that grows fast). Outputs that are ridges of shared oblique
+    coordinates fall to rank 1-6; on six mixtures of two oblique coordinates at 10-D the trains need 17x
+    fewer evaluations than on the axes.
     """
     lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
-    nodes = cheb_points(outputs - 1)
-    cache: dict[bytes, np.ndarray] = {}
-
-    def f_ext(Xe):
-        X = np.ascontiguousarray(Xe[:, :-1])
-        c = np.argmin(np.abs(Xe[:, -1:] - nodes[None]), axis=1)
-        keys = [x.tobytes() for x in X]
-        new = list(dict.fromkeys(i for i, key in enumerate(keys) if key not in cache))
-        if new:
-            first = {}
-            for i in new:
-                first.setdefault(keys[i], i)
-            rows = list(first.values())
-            cache.update(zip((keys[i] for i in rows), np.asarray(f(X[rows]), dtype=np.float64), strict=True))
-        return np.array([cache[key][ci] for key, ci in zip(keys, c, strict=True)])
-
-    model = build(f_ext, np.append(lo, -1.0), np.append(hi, 1.0), atol, output_degree=outputs - 1, **kw)
-    model.outputs, model.evals = outputs, len(cache)
-    return model
+    d = len(lo)
+    F = _SharedOracle(f)
+    centre, half = 0.5 * (lo + hi), 0.5 * (hi - lo)
+    plan: list[tuple[list[int], np.ndarray | None]] = [(list(range(outputs)), None)]
+    if rotate:
+        n_p = 1 << int(np.ceil(np.log2(4 + 2 * d)))
+        X = check_points(lo, hi, n_p, seed + 101)
+        h = 1e-6 * (hi - lo)
+        V = F(np.concatenate([X] + [X + h[k] * np.eye(d)[k] for k in range(d)])).reshape(d + 1, n_p, outputs)
+        J = (V[1:] - V[0][None]) / h[:, None, None]
+        top = np.max(np.abs(V[0]), axis=0)
+        plan, axes = [], []
+        rng = np.random.default_rng(seed + 202)
+        for cols, Q in metric_groups(J):
+            if Q is not None:
+                hw = np.abs(Q).T @ half
+                W = F(centre + rng.uniform(-hw, hw, (2 * d, d)) @ Q.T)[:, cols]
+                if np.all(np.isfinite(W)) and np.all(np.abs(W) <= 10.0 * top[cols] + 1e-300):
+                    plan.append((cols, Q))
+                    continue
+            axes += cols
+        if axes:
+            plan.append((sorted(axes), None))
+    groups = []
+    for cols, Q in plan:
+        if Q is None:
+            g, blo, bhi = F, lo, hi
+        else:
+            hw = np.abs(Q).T @ half
+            g, blo, bhi = (lambda U, Q=Q: F(centre + U @ Q.T)), -hw, hw
+        groups.append((cols, Q, [build(lambda X, c=c, g=g: g(X)[:, c], blo, bhi, atol, seed=seed, **kw) for c in cols]))
+    return VectorTT(groups, centre, outputs, F.evals)
 
 
 def round_tt(cores: list, eps: float) -> list:
@@ -353,10 +468,11 @@ def compress(model: ChebTT, probe: np.ndarray, budget: float) -> ChebTT:
     inference with them (10-D Lotka-Volterra: 2,700 coefficients to 293, 8.7 to 0.35 us per query).
     The probe is the check set plus uniform points: model-only predictions, no evaluation of f.
     """
-    ref = model.predict(probe)
+    T = chebyshev_bases(model.local(probe), [C.shape[1] for C in model.cores])  # once: every trial keeps or cuts degrees
+    ref = model.contract(T)
 
     def close(cores):
-        return float(np.max(np.abs(ChebTT(model.lo, model.hi, cores).predict(probe) - ref))) <= budget
+        return float(np.max(np.abs(ChebTT(model.lo, model.hi, cores).contract(T) - ref))) <= budget
 
     cores, lo_e, hi_e = model.cores, 0.0, 1.0
     for _ in range(16):

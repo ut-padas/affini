@@ -156,7 +156,7 @@ def chebtt_box(p: ChemProblem, states: np.ndarray, atol: float, seed: int):
 
 
 class BoxVectorTT(BoxTT):
-    """One vector ChebTT for every output on the padded bounding box of the training states."""
+    """``chebtt.build_vector`` (rotated per output group where that pays) on the padded bounding box of the training states."""
 
     def predict(self, Q):
         Q = np.clip(Q, self.lo, self.hi)
@@ -164,14 +164,14 @@ class BoxVectorTT(BoxTT):
         return np.concatenate([out, np.zeros((len(Q), 1))], axis=1) if self.held else out
 
 
-def chebtt_vec(p: ChemProblem, states: np.ndarray, atol: float, seed: int):
+def chebtt_metric(p: ChemProblem, states: np.ndarray, atol: float, seed: int):
     held = p.net.species[-1] == "T"  # the held temperature is an input only: its increment is 0
     m = states.shape[1] - (1 if held else 0)
     lo, hi = states.min(axis=0), states.max(axis=0)
     pad = 0.02 * np.maximum(hi - lo, 1e-3)
     lo, hi = lo - pad, hi + pad
     oracle = CachedOracle(p.step)
-    model = chebtt.build_vector(lambda X: (oracle(X) - X)[:, :m], lo, hi, atol, m, seed=seed, max_evals=400_000)
+    model = chebtt.build_vector(lambda X: (oracle(X) - X)[:, :m], lo, hi, atol, m, rotate=True, seed=seed, max_evals=200_000)
     out = BoxVectorTT(model, lo, hi, oracle.evals)
     out.held = held
     return out
@@ -179,7 +179,7 @@ def chebtt_vec(p: ChemProblem, states: np.ndarray, atol: float, seed: int):
 
 METHODS = {"slowtable": ("SlowTable: tabulated visited states", "#8e24aa", slowtable),
            "chebtt_box": ("ChebTT per species on the states' bounding box", "#e08a00", chebtt_box),
-           "chebtt_vec": ("one vector ChebTT on the states' bounding box", "#2e7d32", chebtt_vec)}  # fmt: skip
+           "chebtt_metric": ("ChebTT per species in the pullback-metric coordinates", "#1b7f5b", chebtt_metric)}  # fmt: skip
 
 
 def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) -> dict:
