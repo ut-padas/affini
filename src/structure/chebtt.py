@@ -163,16 +163,44 @@ class ChebTT:
         """
         v = np.ones((T[0].shape[1], 1))
         for C, Tk in zip(self.cores, T, strict=True):
-            ra, n1, rb = C.shape
-            if ra == 1:  # every first core, every core of a rank-1 train: a scaling, without einsum's overhead
-                v = v * (C[0].T @ Tk[:n1]).T
-            else:
-                M = Tk[:n1].T @ C.transpose(1, 0, 2).reshape(n1, ra * rb)
-                v = np.einsum("qa,qab->qb", v, M.reshape(-1, ra, rb))
+            v = advance(v, C, Tk)
         return v[:, 0]
+
+    def environments(self, T: list) -> tuple[list, list]:
+        """
+        Per core k, the train's product left of it, (Q, r_k), and right of it, (Q, r_k+1), at the points
+        of ``T``: the model with only core k changed to C' is ``through(left[k], C', T[k], right[k])``, one
+        core's work instead of the whole train's. ``left[d]`` holds the model itself (as ``contract``'s
+        bits: the same steps), as a (Q, 1) column.
+        """
+        left = [np.ones((T[0].shape[1], 1))]
+        for C, Tk in zip(self.cores, T, strict=True):
+            left.append(advance(left[-1], C, Tk))
+        right = [np.ones((T[0].shape[1], 1))]
+        for C, Tk in zip(self.cores[:0:-1], T[:0:-1], strict=True):
+            right.append(np.einsum("qab,qb->qa", core_values(C, Tk), right[-1]))
+        return left, right[::-1]
 
     def leaf_of(self, X):
         return None
+
+
+def core_values(C: np.ndarray, Tk: np.ndarray) -> np.ndarray:
+    """(Q, r_k, r_k+1): core C at the points whose Chebyshev values on its axis are ``Tk`` (``contract``'s per-core matrix)."""
+    ra, n1, rb = C.shape
+    return (Tk[:n1].T @ C.transpose(1, 0, 2).reshape(n1, ra * rb)).reshape(-1, ra, rb)
+
+
+def advance(v: np.ndarray, C: np.ndarray, Tk: np.ndarray) -> np.ndarray:
+    """The row vectors v (Q, r_k) carried through core C: one step of ``contract``."""
+    if C.shape[0] == 1:  # every first core, every core of a rank-1 train: a scaling, without einsum's overhead
+        return v * (C[0].T @ Tk[: C.shape[1]]).T
+    return np.einsum("qa,qab->qb", v, core_values(C, Tk))
+
+
+def through(left: np.ndarray, C: np.ndarray, Tk: np.ndarray, right: np.ndarray) -> np.ndarray:
+    """The train at Q points with core k replaced by C, from its environments (``ChebTT.environments``)."""
+    return np.einsum("qb,qb->q", advance(left, C, Tk), right)
 
 
 INSET = 1e-10  # a piece's end nodes sit this share of the axis inside an interior breakpoint, so a jump is never sampled on the wrong side
@@ -580,8 +608,9 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
             raise RuntimeError(f"ChebTT would exceed {max_evals:,} evaluations.")
         # Degree or rank: an axis whose top quarter of degrees still changes the model by more than its
         # share at the check points is under-resolved, and no rank can make up for it.
-        full = model.predict(Xall)
-        tails = {k: float(np.max(np.abs(full - _truncated(model, k).predict(Xall)))) for k in range(d)}
+        TX = model.bases(Xall)
+        envl, envr = model.environments(TX)
+        tails = {k: float(np.max(np.abs(through(envl[k], _dropped(model, k), TX[k], envr[k])))) for k in range(d)}
         grow = [k for k in range(d) if tails[k] > share and 2 * grid.n[k] <= n_max]
         split = {}
         # Axes to search: those that must refine; and, when none must (the rank would grow next), every
@@ -840,38 +869,52 @@ def compress(model: ChebTT, probe: np.ndarray, budget: float) -> ChebTT:
     T = model.bases(probe)  # once: every trial keeps or cuts degrees
     ref = model.contract(T)
 
-    def close(cores):
-        return float(np.max(np.abs(ChebTT(model.lo, model.hi, cores).contract(T) - ref))) <= budget
+    def close(values):
+        return float(np.max(np.abs(values - ref))) <= budget
 
-    cores, lo_e, hi_e = model.cores, 0.0, 1.0
+    # Rank rounding: the bisection on eps meets few distinct rank profiles, and a profile fixes the
+    # rounded cores (the orthogonalisation does not depend on eps), so each profile is judged once.
+    cores, lo_e, hi_e, judged = model.cores, 0.0, 1.0, {}
     for _ in range(16):
         mid = 0.5 * (lo_e + hi_e)
         trial = round_tt(model.cores, mid)
-        if close(trial):
+        ranks = tuple(C.shape[2] for C in trial[:-1])
+        if ranks not in judged:
+            judged[ranks] = close(ChebTT(model.lo, model.hi, trial).contract(T))
+        if judged[ranks]:
             cores, lo_e = trial, mid
         else:
             hi_e = mid
+    # Degree cuts, one per axis per pass, left to right: the cores right of axis k are those at the start
+    # of the pass, and the product left of it is carried through the cores as they are now cut, so each
+    # trial costs one core (``through``) and the decisions are those of judging every trial on the whole train.
     shrunk = True
     while shrunk:
         shrunk = False
+        _, right = ChebTT(model.lo, model.hi, cores).environments(T)
+        cores, v = list(cores), np.ones((T[0].shape[1], 1))
         for k in range(len(cores)):
             P = model.pieces(k)
             if cores[k].shape[1] > P:
-                trial = list(cores)
-                trial[k] = _keep_degrees(cores[k], P, cores[k].shape[1] // P - 1)
-                if close(trial):
-                    cores, shrunk = trial, True
+                trial = _keep_degrees(cores[k], P, cores[k].shape[1] // P - 1)
+                if close(through(v, trial, T[k], right[k])):
+                    cores[k], shrunk = trial, True
+            v = advance(v, cores[k], T[k])
     return ChebTT(model.lo, model.hi, cores, model.evals, tuple(C.shape[2] for C in cores[:-1]),
                   tuple(C.shape[1] // model.pieces(k) - 1 for k, C in enumerate(cores)), model.breaks, model.bands)  # fmt: skip
 
 
-def _truncated(model: ChebTT, k: int) -> ChebTT:
-    """The model with the top quarter of axis k's degrees dropped in every piece (see ``chebyshev_tail``)."""
-    cores = list(model.cores)
+def _dropped(model: ChebTT, k: int) -> np.ndarray:
+    """
+    Axis k's core with only the top quarter of its degrees in every piece (the rest zero): the part
+    of the model that truncating that axis removes (see ``chebyshev_tail``).
+    """
+    C = model.cores[k]
     P = model.pieces(k)
-    n = cores[k].shape[1] // P - 1
-    cores[k] = _keep_degrees(cores[k], P, n - n // 4 + 1)
-    return ChebTT(model.lo, model.hi, cores, breaks=model.breaks, bands=model.bands)
+    n = C.shape[1] // P - 1
+    out = C.reshape(C.shape[0], P, n + 1, C.shape[2]).copy()
+    out[:, :, : n - n // 4 + 1] = 0.0
+    return out.reshape(C.shape)
 
 
 def _sweeps(grid: _Grid, right: list, sweeps: int, budget: int):
