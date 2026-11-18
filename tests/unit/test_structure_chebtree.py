@@ -73,3 +73,13 @@ def test_boxes_at_the_depth_cap_refuse_and_the_rest_meet_the_tolerance():
     refused = tree.refuses(X)
     assert 0.0 < refused.mean() < 0.01
     assert np.max(np.abs(tree.predict(X[~refused]) - fX[~refused])) <= atol
+
+
+def test_a_kink_near_a_face_is_caught_by_the_fibre_check():
+    p = PROBLEMS["genz_continuous"]
+    lo, hi = p.domain(3)
+    X = p.test_points(3)[:20_000]
+    fX = p.values(X)
+    atol = 0.01 * np.max(np.abs(fX))
+    tree = chebtree.build(p.values, lo, hi, atol)
+    assert np.max(np.abs(tree.predict(X) - fX)) <= atol

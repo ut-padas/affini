@@ -28,6 +28,11 @@ resolved. Every new box therefore draws ``n_check`` uniform points from a genera
 locational code (the root is 1, the children of code c are 2c and 2c + 1), so a run is
 deterministic, and inherits its parent's check points and grid values inside it, which cost no
 evaluation. If the estimate passes but a check point fails, every axis below ``n_max`` doubles.
+A box that passes both is verified once more before it is accepted: one more round evaluates, along
+each axis through its centre, the points the next nested grid would add (``fibre_points``), and
+these join its check points. A kink close to a face makes the slab sums oscillate with a period
+longer than the degree, so they can read as decay, and four random points rarely land in the
+narrow error spike beside the kink; a fibre crosses every axis-normal feature of the box.
 
 After acceptance, trailing coefficient slabs are chopped, smallest first, while the chopped
 |coefficients| sum to at most ``chop_share * atol``: inference costs the kept coefficients only.
@@ -92,6 +97,7 @@ class Box:
     code: int = 1  # locational code: the root is 1, the children of code c are 2c and 2c + 1
     Xc: np.ndarray | None = None  # check points with known values (drawn, or inherited), and the values
     fc: np.ndarray | None = None
+    verified: bool = False  # its fibre points at the current degrees are among its check points
 
 
 @dataclass
@@ -286,14 +292,19 @@ def build(f, lo, hi, atol: float, n0: int = 8, n_max: int = 64, min_drop: float 
 
     while pending:
         # 1. One oracle call for the points the open boxes need that no box has evaluated yet (a new
-        #    box's grid, a grown box's new grid points), and for the new boxes' drawn check points.
+        #    box's grid, a grown box's new grid points), for the new boxes' drawn check points, and for
+        #    the fibre points of the boxes about to be accepted.
         requests, plans = [], []
         for box, grow in pending:
-            X = _grid(box)
-            new = np.ones(len(X), dtype=bool) if grow is None else ~_old_mask(box.n, grow[1]).ravel()
-            V, found = _known(X[new], table)
-            requests.append(X[new][~found])
-            drawn = np.random.default_rng(box.code).uniform(box.lo, box.hi, (n_check, d)) if grow is None else np.empty((0, d))
+            if grow == "verify":
+                V, found, drawn = np.empty(0), np.empty(0, dtype=bool), fibre_points(box)
+                requests.append(np.empty((0, d)))
+            else:
+                X = _grid(box)
+                new = np.ones(len(X), dtype=bool) if grow is None else ~_old_mask(box.n, grow[1]).ravel()
+                V, found = _known(X[new], table)
+                requests.append(X[new][~found])
+                drawn = np.random.default_rng(box.code).uniform(box.lo, box.hi, (n_check, d)) if grow is None else np.empty((0, d))
             requests.append(drawn)
             plans.append((V, found, drawn))
         sizes = [len(X) for X in requests]
@@ -309,7 +320,9 @@ def build(f, lo, hi, atol: float, n0: int = 8, n_max: int = 64, min_drop: float 
             box.Xc, box.fc = np.concatenate([box.Xc, drawn]), np.concatenate([box.fc, next(values)])
             tree.check_evals += len(drawn)
             shape = [nk + 1 for nk in box.n]
-            if grow is None:
+            if grow == "verify":
+                box.verified = True
+            elif grow is None:
                 box.V = V.reshape(shape)
             else:
                 old, factor = grow
@@ -323,6 +336,9 @@ def build(f, lo, hi, atol: float, n0: int = 8, n_max: int = 64, min_drop: float 
             tails = [tail_estimate(fit) for fit in fits]
             check = float(np.max(np.abs(_interpolate(c, box.lo, box.hi, box.Xc) - box.fc))) if len(box.Xc) else 0.0
             estimate_ok = sum(tails) <= safety * atol
+            if estimate_ok and check <= safety * atol and not box.verified:
+                nxt.append((box, "verify"))
+                continue
             if (estimate_ok and check <= safety * atol) or box.depth >= max_depth:
                 tree.leaf[box.node] = len(tree.leaves)
                 tree.leaves.append((box.lo, box.hi, chop(c, chop_share * atol)))
@@ -345,6 +361,7 @@ def build(f, lo, hi, atol: float, n0: int = 8, n_max: int = 64, min_drop: float 
             if split is None:
                 old = box.V
                 box.n = [nk * fk for nk, fk in zip(box.n, factor, strict=True)]
+                box.verified = False
                 nxt.append((box, (old, factor)))
                 continue
             # 3. Split across the unresolved axis with the largest tail; the halves inherit every known value inside them.
@@ -367,6 +384,23 @@ def build(f, lo, hi, atol: float, n0: int = 8, n_max: int = 64, min_drop: float 
             tree.child[box.node] = (kids[0], kids[1])
         pending = nxt
     return tree
+
+
+def fibre_points(box: Box) -> np.ndarray:
+    """
+    Along each axis, through the box's centre, the points the next nested grid (degree 2 n_k) adds:
+    the midpoints in angle between the nodes, where the interpolation error peaks. A kink or a front
+    crossing the box crosses every fibre along its normal's axes, so these catch what the coefficients
+    misread (a kink near a face makes the slab sums oscillate with a period longer than the degree).
+    """
+    c = 0.5 * (box.lo + box.hi)
+    rows = []
+    for k, nk in enumerate(box.n):
+        t = np.cos(np.pi * (np.arange(nk) + 0.5) / nk)
+        P = np.repeat(c[None], nk, axis=0)
+        P[:, k] = box.lo[k] + (t + 1.0) * 0.5 * (box.hi[k] - box.lo[k])
+        rows.append(P)
+    return np.concatenate(rows)
 
 
 def _old_mask(n: list[int], factor: list[int]) -> np.ndarray:
