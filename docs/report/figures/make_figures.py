@@ -797,7 +797,14 @@ def afinni_trust(s: AdaptiveSurrogate, nodes: list[Node]) -> dict:
     for name, score in scores.items():  # each query at least a quarter of the domain from the others
         for i in choice.values():
             score = np.where(np.linalg.norm((grid - grid[i]) / WIDTH, axis=1) > 0.4, score, -np.inf)
-        choice[name] = int(np.argmax(score))
+        # as far inside the domain's edges as a query of this kind exists, so its letter has room
+        for margin in (0.1, 0.05, 0.025, 0.0):
+            inner = np.where(np.all((grid - LOWER > margin * WIDTH) & (UPPER - grid > margin * WIDTH), axis=1), score, -np.inf)
+            if np.isfinite(inner).any():
+                break
+        else:
+            raise SystemExit(f"No grid query of kind {name} for the inference panel.")
+        choice[name] = int(np.argmax(inner))
     found = {}
     for name, i in choice.items():
         pred, out = (np.ravel(to_host(a)) for a in s.predict(grid[i][None], k_nn=1, coarse_factor=KAPPA))
@@ -828,7 +835,7 @@ def afinni_trust(s: AdaptiveSurrogate, nodes: list[Node]) -> dict:
         marks = px(np.vstack([np.vstack([grid[i], C[found[k]["nu"]], C[found[k]["euclid"]]]) for k, i in choice.items()]))
         boxes = [Bbox.from_extents(x - 3, y - 3, x + 3, y + 3) for x, y in marks]
         around = [(dx * r, dy * r, {-1: "right", 0: "center", 1: "left"}[dx], {-1: "top", 0: "center", 1: "bottom"}[dy])
-                  for r in (4, 8, 12) for dx, dy in ((1, 1), (-1, 1), (1, -1), (-1, -1), (1, 0), (-1, 0), (0, 1), (0, -1))]  # fmt: skip
+                  for r in (4, 8, 12, 16, 20) for dx, dy in ((1, 1), (-1, 1), (1, -1), (-1, -1), (1, 0), (-1, 0), (0, 1), (0, -1))]  # fmt: skip
         for name, i in choice.items():
             place_text(ax, name, grid[i], around, paths, boxes, fontsize=8, weight="bold", zorder=8,
                        path_effects=[withStroke(linewidth=2, foreground="white")])  # fmt: skip

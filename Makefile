@@ -106,6 +106,8 @@ report:
 
 report-figures:
 	SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. uv run python docs/report/figures/make_figures.py
+	for f in docs/report/figures/appendix/*.py; do \
+		SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. uv run python $$f || exit 1; done
 
 # STEAL_CPUS pins the ranks to cores of one speed (on a hybrid CPU, its performance cores),
 # e.g. make report-steals STEAL_CPUS=0-5; the companion's run used six such cores.
@@ -113,6 +115,8 @@ STEAL_CPUS ?=
 report-steals:
 	SURROGATE_DEVICE=cpu SURROGATE_MPI=on PYTHONPATH=. OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 \
 		$(if $(STEAL_CPUS),taskset -c $(STEAL_CPUS)) uv run mpiexec -n 6 python docs/report/figures/make_figures.py --record-steals
+	SURROGATE_DEVICE=cpu SURROGATE_MPI=on PYTHONPATH=. OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 \
+		$(if $(STEAL_CPUS),taskset -c $(STEAL_CPUS)) uv run mpiexec -n 6 python docs/report/figures/appendix/steal.py --record </dev/null
 
 # The manuscript study (studies/manuscript/README.md): MACHINE is a profile in studies/manuscript/machines.
 MACHINE ?= studies/manuscript/machines/workstation.toml
