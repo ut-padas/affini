@@ -62,7 +62,8 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
   Chemistry: trajectories in `cache/chem/<problem>.npz`, runs in
   `cache/chem/<problem>/<method>_tol<t>.json`, plots and `summary-chem.md` in `output/chem/`.
 - Literature: [LITERATURE.md](LITERATURE.md) (every work reviewed, IDs I-* to V-*); reviews I-V are
-  sections 2-6 below, Review VI (vector-valued outputs) section 8.
+  sections 2-6 below, Review VI (vector-valued outputs) section 8, Review VII (metrics by dynamical
+  class) section 9.
 
 ### 0.2 How the work proceeds (standing rules)
 
@@ -183,6 +184,10 @@ at 0.05 over the 300k budget). Over budget at 5-D: the rotated Gaussian, `lorenz
   from the joint train or the slower contraction (section 1.19).
 - Next, once the vector ladder is done: compare ChebTT's inference time at 10-D and 20-D with the
   baselines' in `overview-d<d>-cost.png`, with ChebTT compressed; then resume the chemistry bench.
+- Running after the box fill (chained): the stiff ladder (, 12 solver workers),
+  then the primordial network with the same four methods. Then: per-class horizons and metrics from
+  Review VII (valid prediction time for chaotic members; orbit and phase error for oscillatory ones;
+  horizons in slow-relaxation times), a chaotic family on the ladder, and longer steps (Phi_2dt).
 - Chemistry, when resumed: `chebtt_metric` (ChebTT-M per species in log abundances) beside
   `chebtt_box` and SlowTable; first print the species' pullback-metric spectrum and groups, which
   say whether they share coordinates. Then the KL projection onto the conserved totals (section 8.4).
@@ -652,6 +657,61 @@ us per query, `shared_latent` 1.1 -> 0.36, `rosenbrock_gradient` 0.75 -> 0.28, 5
 0.46. Rejected: stacking a group's outputs zero-padded into one contraction (faster only at batches of
 about 1k; up to 4.6x the coefficients), and merging the outputs into one rounded train (faster only on
 Lotka-Volterra, 0.70 against 1.18 us, and it moves predictions by up to 0.25 of the tolerance).
+
+
+### 1.20 The stiff-system ladder: errors by dynamical class, and rollouts that hold
+
+The vector ladder's next rung before chemistry (, ): surrogates of the step
+map of well-known stiff systems at growing sizes, trained and judged on visited states. Families
+(): the Brusselator with diffusion (Hairer-Wanner; no-flux boundaries, B = 1.9 near
+its Hopf point, log coordinates; 2n inputs), Allen-Cahn (u' = u_xx + (u - u^3)/0.05, linear coordinates)
+and Fisher-KPP (u' = u_xx + 10 u (1 - u), log coordinates), n = 2..80 grid points; the fixed-size test
+problems (Robertson, Akzo Nobel, HIRES, POLLU) at their sizes. 40 steps per trajectory, 100 training
+and 40 test trajectories. Methods: , , , .
+
+**What every run measures** (Review VII, section 9):
+
+- Speed: the solver's wall time per state and step (SciPy Radau, 0.7-2.6 ms at 2-20 inputs) and its
+  operation counts (27-68 right-hand sides, 4-9 LU factorisations per step), against the surrogate's
+  inference time; the ratio is . SciPy's per-call overhead flatters a surrogate: a compiled
+  solver doing the same counts on a small system takes microseconds, so the counts are the fair basis.
+- The dynamics' class, from the problem's own trajectories (): step-map stiffness
+  s = max -ln min|eig J_k| (Jay-Calvo: mildly stiff >= 10, stiff >= 20); the growth |J_k ... J_1|;
+  contracting / neutral / chaotic; and the accumulation factor A_n = sum_j |J_{n-1} ... J_j| of the
+  classical global-error bound (rollout error <= one-step error x A_n, to first order).
+- Errors: the one-step worst; the part of it that survives the next exact step, |Phi(S(z)) - Phi(Phi(z))|;
+  the rollout worst over 20 test trajectories; rho = rollout / (one-step x A_n); and the same surrogate
+  with every step projected onto the system's linear invariants (found as the null space of the
+  right-hand side at the training states: Robertson 1, HIRES 1, POLLU 6, Akzo Nobel 0).
+
+**The stiff test problems are neutral, not contracting.** Robertson's step map keeps a singular value
+of about 1 (the conserved mass) and HIRES and Akzo Nobel drift slowly along their slow manifolds: the
+growth stays at 1.4-2.7 over 40 steps, so A_40 = 30 (Fisher-KPP, the one contracting problem) to 280
+(HIRES). A rollout may therefore be up to A_n times the one-step error for any surrogate, and "the
+rollout holds the tolerance" needs one-step errors well below tol / A_n unless errors cancel.
+
+**Rollout-verified training** (): chain the surrogate along the training trajectories (known,
+so no solve), and retrain at the one-step tolerance times the shortfall until the rollouts hold;
+ChebTT's spectral convergence makes a tighter tolerance cheap, and the retraining reuses every cached
+solve. Robertson (one seed):
+
+| tol | method | solves | one-step / tol | survived / tol | rollout / tol | rho |
+|---|---|---|---|---|---|---|
+| 0.01 | ChebTT box | 955 | 0.25 | 0.17 | 5.05 | 0.67 |
+| 0.01 | ChebTT, rollout-verified | 1,159 | 0.04 | 0.02 | **0.82** | 0.98 |
+| 0.001 | ChebTT box | 1,130 | 0.18 | 0.18 | 4.34 | 0.97 |
+| 0.001 | ChebTT, rollout-verified | 2,176 | 0.03 | 0.01 | **0.26** | 0.58 |
+| 0.01 | SlowTable | 841 | 4.03 | 0.10 | 1.78 | 0.28 |
+
+- ChebTT's rho is 0.6-1: its errors keep their sign and add up (the 36x of section 1.12), which a
+  rollout-aware tolerance fixes at 1.2-1.9x the solves.
+- SlowTable's one-step error is 4x the tolerance, but only 0.1 of it survives the next step: its errors
+  lie in fast directions the dynamics damp. The one-step error alone misjudges such a surrogate.
+- Projection onto the invariants barely helps Robertson (5.05 -> 4.93): its drift is along the slow
+  manifold, not the conserved total.
+- Scratch, 4-D Brusselator at 0.01: training at tol/2 and tol/4 (7.0k and 6.9k solves against 3.8k)
+  takes the rollout from 1.14 to 0.74 and 0.28 of the tolerance; a box in the states' principal axes
+  cost 83k solves (22x) and its one-step error was 2x the tolerance: rejected.
 
 ---
 
@@ -1869,3 +1929,271 @@ All on the bench (cache, plots, 3 seeds) once a scratch A/B shows a gain.
   proxy ignores repeated points in a joint TT's index sets, so it overstates the joint cost somewhat.
 - Sharing does not help certification: the Novak-Woźniakowski limit [II-26] holds per output.
 - `check_points` draws 64 + 32d Sobol points, not a power of two (scipy warns; balance is lost).
+
+---
+
+## 9. Review VII: error metrics and test protocols by dynamical class
+
+Scope: how to classify a system from its trajectories (stiff, contracting, neutral or oscillatory, chaotic), how a
+step-map surrogate's one-step error turns into its rollout error, and which metrics, horizons and normalisations
+fit each class. Tags: [v] source read, [a] abstract or summary read, [r] recalled. New works VII-1 to VII-34
+(docs/LITERATURE.md); earlier ones by their IDs. "Ours" marks a proposal that no source states.
+
+Notation. z_k are the solver's states, Phi the step map, J_k = DPhi(z_k) by central differences (as
+`chembench.amplification` already computes), P_{j->n} = J_{n-1} ... J_j (P_{n->n} = I), d_k = S(z_k) - Phi(z_k)
+the surrogate's defect at a true state, and delta = max_k |d_k| the one-step error.
+
+### 9.0 Bottom line (ranked by gain over cost)
+
+1. **Normalise every rollout by the accumulation factor A_N = sum_{k=0}^{N-1} ||P_{k+1->N}||** and report
+   rho_N = e_N / (delta A_N). Linearised, e_N = sum_k P_{k+1->N} d_k, which is Lady Windermere's fan
+   [VII-7, r], so rho_N <= 1 while the errors stay small. rho near 1 means coherent defects (same sign, aligned
+   with the growing directions), rho near 1/sqrt(N) means random ones, and rho > 1 means the surrogate left the
+   states it was tested on. The bench's `amplification` reports ||P_{1->N}||, the growth of an error made at
+   step 1 only; A_N sums the growth over every start step. Measured here on three Robertson test trajectories
+   (max norm): A_40 = 49-64. That gives rho_40 = 0.56 for ChebTT box at 0.001 (coherent: this is the "36x"
+   of section 1.12), 0.17 for ChebTT box at 0.01 and 0.018 for SlowTable at 0.001. So A_N, not N, is the
+   tolerance budget: delta <= tol / A_N keeps a rollout within tol in the worst case. This generalises
+   section 0.4's tol / N.
+2. **Classify each system from its Jacobian products, not by hand.** The stiffness index is
+   s_k = -ln min_i |lambda_i(J_k)|. Jay and Calvo [VII-3, v] call a solution mildly stiff at
+   ln S <= -10 and stiff at ln S <= -20, where S is the smallest eigenvalue modulus of the sensitivity matrix.
+   Robertson's s_k is 24-27, so it is stiff within one step. The growth type of g_n = ||P_{0->n}|| gives the
+   other class: exponential with lambda_1 > 0 is chaotic, polynomial is neutral (phase drift), and an A_N that
+   saturates is contracting. A system can carry two labels: stiffness describes the bottom of the spectrum,
+   the other class its top.
+3. **For stiff systems, score the defect that survives one exact step: J_{k+1} d_k**, or exactly,
+   Phi(S(z_k)) - Phi(Phi(z_k)). Robertson's fast singular value is about 1e-11, so a defect in the fast
+   direction is erased in one step. ISAT scores |B(R - R_l)| with a free scaling matrix B [III-12, v]. Taking
+   B = J of the next step is ours and is not in ISAT. Use this projector, not an orthogonal projection onto
+   the slow tangent space: the fast fibres are oblique (CSP [III-19, r]).
+4. **For chaotic systems, report the valid prediction time (VPT) in Lyapunov times**, not the error at a
+   fixed horizon. Use the NRMSE with each component scaled by its standard deviation over time and the
+   threshold eps = 0.5 (Vlachas et al. [VII-18, v]). Also report the VPT that the one-step error predicts,
+   VPT* = (1/lambda_1) ln(eps / delta_n), where delta_n is the one-step NRMSE. Report long-term statistics
+   (power spectrum, marginal Wasserstein distance, lambda_1 of the surrogate) from long free runs.
+5. **For neutral and oscillatory systems, split the error into orbit (amplitude) and phase**:
+   d_orb = min_tau |z^_N - z(t_N + tau)| and the drift tau*/t_N per period. The phase error grows linearly
+   [VII-27, a], so report its slope, not its value at an arbitrary horizon.
+6. **Choose horizons in the system's own time unit.** For a contracting system, run until A_N saturates
+   (about 3 tau_slow), then report the stationary error. For a neutral one, use periods (report the error
+   per period). For a chaotic one, run up to the VPT, and run separately for the statistics.
+
+### 9.1 Classification from trajectories (Q1)
+
+**Stiffness.** The logarithmic norm mu[A] = lim_{h->0+} (||I + hA|| - 1)/h (mu_2[A] = lambda_max((A + A^T)/2))
+bounds ||e^{tA}|| <= e^{t mu[A]}. It was introduced independently by Dahlquist and Lozinskii in 1958 for error
+bounds [VII-6, VII-8 r; VII-1 a]. Along a trajectory, ||Phi'|| <= exp(∫ mu), so ln||J_k|| / dt is a lower
+estimate of the step's mean mu. Söderlind, Jay and Calvo [VII-2, a] build a stiffness indicator from the upper
+and lower logarithmic norms of the vector field. It is computable along a solution and independent of the
+method, it defines a local reference time scale, and a large ratio of the integration range to that scale is
+necessary for stiffness. The slides behind that paper [VII-3, v] give the computable version: the stiffness
+factor S(x, a, h) = min_{s <= t in [a, a+h]} min_j |lambda_j(R(t, s, x(s)))|, with R the sensitivity matrix,
+that is our step-map Jacobian. The thresholds ln S <= -10 (mildly stiff) and <= -20 (stiff) come from
+S = e^{h lambda} for Dahlquist's test equation and from the stability regions of explicit methods. For one step,
+-ln S equals dt max|Re lambda(f_z)| for a frozen linear field: the classical stiffness index, without needing
+f_z. The classical stiffness ratio max|Re lambda| / min|Re lambda| [IV-23, r] is ill-defined when the slow
+eigenvalue is near zero, as Robertson's is (sigma_2 = 0.999 per step). Brugnano, Mazzia and Trigiante [VII-5, v]
+define kappa_c = max_t ||Phi(t)||, gamma_c = (1/T) ∫ ||Phi(t)|| dt and the stiffness ratio
+sigma_c = kappa_c / gamma_c >> 1 (no numerical cutoff given). Higham and Trefethen [VII-4, a]: stiffness is
+transient and eigenvalues are asymptotic, so pseudospectra characterise it better. In practice compute
+singular values beside the eigenvalues. Robertson shows why (computed here): sigma_max(J_k) is about 1.65 per
+step, yet the product stays at about 1.5, so a bound built from per-step norms overstates the growth
+geometrically.
+
+**Expansion and contraction.** The finite-time Lyapunov exponent (FTLE) is
+Lambda_n(z_0) = (1/(n dt)) ln sigma_max(P_{0->n}) [VII-14, a; formula r]. The maximal exponent
+lambda_1 = lim Lambda_n is obtained by QR re-orthonormalisation of a bundle of tangent vectors [VII-13, r].
+Gilpin applies Gram-Schmidt at every step until the smallest-magnitude exponent is below 1e-8 [VII-19, v].
+The Lyapunov time is T_lambda = 1/lambda_1 [VII-18, v]. Chaos means lambda_1 > 0 on a bounded orbit [VII-18, v].
+
+**Neutral directions.** A continuous-time chaotic flow has at least one positive exponent and exactly one zero
+exponent, the one along the flow, and a dissipative one has at least one negative exponent [VII-19, v]. A limit
+cycle has lambda_1 = 0 and the rest negative. Conservative systems (Lotka-Volterra) have sum lambda_i = 0
+(det J = 1) [r]. No source gives a numerical threshold for "lambda_1 = 0". Ours: call a system neutral when
+|lambda_1| t_test < 1 and ln g_n grows like p ln n (p of 1 or more, from shear between nearby orbits of
+different period) rather than linearly in n. These are the bench's existing amplification curves, refitted.
+
+### 9.2 Error propagation (Q2)
+
+With z^_{k+1} = S(z^_k) = Phi(z^_k) + d^_k, the error obeys e_{k+1} = J_k e_k + d^_k + O(e^2), so
+e_N = sum_k P_{k+1->N} d^_k and ||e_N|| <= delta A_N. This is the global-from-local argument of Hairer, Nørsett
+and Wanner ("Lady Windermere's fan") [VII-7, r]. With a bound mu on the logarithmic norm along the orbit,
+||P_{k->N}|| <= e^{mu (t_N - t_k)}. Then A_N <= 1/(1 - e^{mu dt}), about 1/(|mu| dt), bounded for mu < 0;
+A_N = N for mu = 0; and A_N grows like e^{lambda t_N}/(lambda dt) for growth at rate lambda > 0 [r, from the
+same sum]. B-convergence carries this to stiff problems: global error bounds that depend on the one-sided
+Lipschitz constant, which can stay moderate for arbitrarily stiff systems, rather than on the Lipschitz
+constant [VII-9, a; VII-10 via VII-3, v (C-stability)]. Many stiff problems violate a moderate one-sided
+constant (a remark found while searching, not checked).
+
+**Is there a standard "accumulation factor"?** Not in the surrogate literature found. The nearest standard
+objects:
+- Estep's **stability factor**, the norm of the solution of the dual (adjoint) problem, which weights local
+  errors in a posteriori global error bounds [VII-11, a]. Our A_N is its discrete forward version.
+- The **conditioning parameters** kappa_c and gamma_c of the initial value problem [VII-5, v].
+
+For chaotic systems the stability factor caps even the reference solution. Estep and Johnson [VII-12, a] find
+Lorenz pointwise computable on intervals of moderate length, reported as T = 30 in double precision. Kehlet
+and Logg [VII-21, a] reach T = 1000 only at order 200 with 400 digits. A rollout beyond the reference's own horizon compares two meaningless trajectories.
+
+**Proposed normalisation (ours).** Report rho_N = ||e_N|| / (delta A_N), together with
+delta_eff = ||e_N|| / A_N (the per-step defect the rollout behaves as if it had). Measure the norm in the
+bench's own norm (max over scored species, in dex), with A_N in the induced max norm. A second, exact
+attribution uses the solver: E_k = Phi^{N-k-1}(S(z^_k)) - Phi^{N-k}(z^_k) gives each step's share of e_N
+(the telescoping fan). It costs O(N^2) solver steps, which is fine for 20 trajectories of 40 steps.
+
+### 9.3 Stiff systems: the part of a one-step error that survives (Q3)
+
+A defect in a direction that J_{k+1} kills never reaches the rollout. The natural score is therefore
+|J_{k+1} d_k| (linear), or exactly Phi(S(z_k)) - Phi(Phi(z_k)), one extra solve per test state. Why not
+project onto the slow manifold:
+- CSP and ILDM split fast and slow modes by eigenvectors that are not orthogonal [III-18, III-19, r]. A
+  fast-direction defect shifts the slow coordinates by its component along the oblique fast fibre, which J
+  captures and an orthogonal projection does not.
+- Gear, Kaper, Kevrekidis and Zagaris [VII-29, a] stress that integrating forward to reach the manifold
+  shifts the observables. That shift is what J d measures.
+
+ISAT defines the local error as epsilon = |B(R(phi_q) - R_l(phi_q))| with a scaling matrix B, B = I the
+simplest [III-12, v]; its region of accuracy is where epsilon <= epsilon_tol. Our choice B = J(Phi(z)) turns
+ISAT's mapping error into the surviving error. Lu and Pope's error checking controls a quantile of epsilon
+[III-13, v]. Liu and Pope find the global error linear in the tolerance [III-14, v]: the empirical counterpart
+of A_N bounded.
+
+**ML papers on stiff kinetics** measure trajectory errors; none found scores a propagated or slow-projected
+defect:
+- Kim et al. [VII-30, a]: the issue is scaling the outputs and losses for stiff neural ODEs.
+- Goswami et al. [VII-31, a]: operator networks for ROBER, POLLU and syngas.
+- CODES reports mean relative errors [III-24, v].
+- The nearest is Valorani [VII-32, a]: the error in the fast eigenvalues of the learned Jacobian, on
+  Davis-Skodje [IV-24]. That preprint was withdrawn by arXiv; do not build on it.
+
+For the bench this matters: SlowTable's 4x misses sit in the initial transient (section 1.12), where the fast
+species are far from the manifold. If the surviving defect there is within tolerance, the miss is harmless to
+a chained run.
+
+### 9.4 Chaotic systems (Q4)
+
+- **NRMSE and VPT** [VII-18, v]. NRMSE(o^) = sqrt(<(o^ - o)^2 / sigma^2>), with sigma the per-component
+  standard deviation over time and <.> the mean over components. VPT = (1/T_lambda) max{t_f : NRMSE < eps
+  for all t <= t_f} with eps = 0.5, averaged over 100 initial conditions on the attractor. Lorenz-96 has
+  lambda_1 of about 1.68 (F = 8) and 2.27 (F = 10). The best VPT there was about 2.3 Lyapunov times, and
+  "predictive utility" was limited to one to two Lyapunov times. Long-term quality is judged by the error of
+  the mean power spectral density, PSD(f) = 20 log10(2|U(f)|) dB.
+- **Reservoir prediction and climate** [VII-16, v]. Pathak et al. (Chaos 2017): on Kuramoto-Sivashinsky the
+  reservoir predicts for about 5 Lyapunov times and then keeps the attractor's "climate". The positive and
+  zero Lyapunov exponents of the autonomous reservoir approximate the true ones. Climate failure is "fairly
+  evident" in return maps. PRL 2018 [VII-17, r]: about 8 Lyapunov times for large KS.
+- **dysts** [VII-19, v]. 131 systems, each with its dominant period from the power spectrum (random-phase
+  surrogates for significance). Sampled at 15 (coarse) or 100 (fine) points per period; 10 periods train,
+  2 validate, and the forecast covers the last 2 periods of an unseen trajectory. Eight metrics (MSE, MASE,
+  MAE, MARRE, |CV|, 1 - r^2, sMAPE, MAPE), with sMAPE reported. The best forecast error correlates most with
+  lambda_max, less with fractal dimension and entropy.
+- **Gilpin 2023** [VII-20, v]. 135 systems, 24 methods. sMAPE eps(t) = (200/t) sum_{t'} |y - y^| /
+  (|y| + |y^|). VPT is the last time with sMAPE < 50: 13.9 +- 2.8 Lyapunov times for the best model, and
+  15 +- 5.3 by the first doubling of the accumulated error. 100 points per period, horizons to 50 periods,
+  15-17 largely concordant metrics. In that regime accuracy no longer tracks lambda_1.
+- **Correlation time** [VII-22, v]: the time until the mean Pearson correlation with the truth falls below
+  0.8 or 0.9, following Kochkov et al. [VII-33, r] and Sun et al.
+- **Invariant measure.**
+  - Jiang et al. [VII-23, a]: optimal-transport losses preserve the invariant measure.
+  - Park et al. [VII-24, a]: low test error does not imply statistical accuracy, and matching Jacobians in
+    training helps. That speaks for our Jacobian-based tests.
+  - Brenner et al. [VII-25, r]: the KL divergence of state-space densities (D_stsp) and the Hellinger
+    distance of power spectra.
+  - Mikhaeil et al. [VII-26, a]: training gradients on chaotic orbits always diverge.
+- **Predictability time.** T_p = (1/lambda_1) ln(Delta / delta_0) for an initial error delta_0 and a
+  tolerance Delta [VII-15 Boffetta et al., r]. Our VPT* applies it with delta_0 = one-step NRMSE, so
+  VPT / VPT* says whether a surrogate's rollout is as good as its one-step error allows.
+- **Standard values:** eps = 0.5 for the NRMSE (Vlachas), sMAPE 50 (Gilpin), correlation 0.8 or 0.9
+  (PDE-Refiner), 100 initial conditions, a horizon of 2 to 50 dominant periods. sMAPE suits neither log
+  abundances nor components that cross zero (its denominator is |y| + |y^|). Use the NRMSE scaled by the
+  standard deviation.
+
+### 9.5 Oscillatory and neutral systems (Q5)
+
+- **Error growth.** Cano and Sanz-Serna [VII-27, a] give conditions under which the error on a periodic orbit
+  grows asymptotically linearly with the number of periods. For Hamiltonian and reversible systems, methods
+  with the matching geometric property have better growth. Recalled from Hairer, Lubich and Wanner
+  [VII-28, r]: on integrable systems the error of symplectic or reversible methods grows linearly, that of
+  general methods quadratically, because a drifting invariant changes the period and so the phase speed.
+- **Mechanism.** On a limit cycle a perturbed state relaxes to the cycle but keeps a phase shift: its
+  asymptotic phase, or isochron [VII-34, r]. That is the zero exponent.
+- **Benchmarks.** None found reports phase and amplitude separately. dysts only aligns systems by dominant
+  period [VII-19, v].
+- **Ours.**
+  - The orbit error min over |tau| <= T/2 of |z^_N - z(t_N + tau)|, against a densely stored true orbit.
+  - The phase tau* and its drift rate per period.
+  - For conservative systems (Lotka-Volterra), the drift of the invariant.
+  - The plain pointwise error over a few periods only, labelled as such.
+
+### 9.6 Rollout horizon by class (Q6)
+
+- **Contracting.** e_N tends to a stationary value of at most delta A_infinity. Run until A_N/A_infinity
+  >= 0.95, about 3 tau_slow / dt with tau_slow = -dt / ln|lambda_slow(J)| for the slowest non-unit
+  eigenvalue, or the application's coupling length if shorter, and report the stationary error and rho. A
+  slow mode with |lambda| near 1 makes the system neutral over any feasible horizon. Robertson's sigma_2 of
+  0.999 per step gives tau_slow of about 1000 steps, so over 40 steps it is "stiff + neutral". A_N = 50-64
+  is close to N, which is why its rollout grows linearly.
+- **Neutral or oscillatory.** Measure in periods: at least 10 to estimate the slope (ours; no standard
+  found). Report the error per period and the phase drift rate, which extrapolate.
+- **Chaotic.** No fixed horizon: report the VPT, and stop at a few times VPT* (beyond it pointwise error is
+  saturated noise). The statistics need separate free runs long enough to converge the spectrum and the
+  marginals: hundreds of Lyapunov times or dominant periods (ours). Gilpin evaluates to 50 periods
+  [VII-20, v]. The reference solver's own computable horizon applies [VII-12, VII-21].
+
+### 9.7 Recommended protocol (Q7)
+
+Implementable with the bench's finite-difference Jacobians and stored test trajectories.
+
+**Diagnostics** (per test trajectory, cached beside `amplification`):
+1. J_k for every step: 2d solver steps each, already done.
+2. Stiffness: s = max_k(-ln min_i |lambda_i(J_k)|). Stiff at s >= 20, mildly stiff at s >= 10 [VII-3].
+   The slow dimension m = #{sigma_i(J_k) > 1e-6}.
+3. Growth: g_n = ||P_{0->n}||, Lambda_n = ln g_n / (n dt), and A_N by backward products
+   (P <- P J_k, O(N) products per end point). On one long trajectory of the attractor, lambda_1 (and
+   lambda_2) by QR.
+4. Time units: T_lambda = 1/lambda_1, the dominant period T_peak from the power spectrum (as dysts does),
+   and tau_slow.
+5. Labels:
+   - **chaotic**: lambda_1 T_run >= 5 with lambda_1 > 0 on every seed.
+   - **contracting**: A_N saturates within the run (A_{2N}/A_N < 1.1).
+   - **neutral**: neither, with polynomial g_n.
+   - **stiff**: from step 2. Stiffness combines with any of the three.
+
+**Metrics**, every class: delta (max norm, per-component scale: dex for chemistry, the standard deviation over
+time otherwise), its 99.9% quantile, the speedup, and rho_N. Then by class:
+
+| Class | One-step | Rollout | Horizon |
+|---|---|---|---|
+| contracting | delta | stationary e_N, rho_N | A_N within 5% of saturation, or the application's length |
+| stiff | delta and the surviving delta_J = max \|J_{k+1} d_k\| | rho_N with delta_J and A_N from k + 2 | as its top class |
+| neutral or oscillatory | delta | orbit error, phase drift per period, invariant drift | 10 or more periods |
+| chaotic | delta, one-step NRMSE delta_n | VPT (eps = 0.5) in Lyapunov times, VPT / VPT*; PSD error, W1 per component, lambda_1 of the surrogate | to about 3 VPT*; free runs of hundreds of T_lambda for the statistics |
+
+**Normalisations, so that systems of different stiffness and dimension compare:**
+- Time in T_lambda, T_peak or tau_slow, never in steps.
+- Components in dex or in standard deviations.
+- Rollouts as rho_N = e_N / (delta A_N): dimensionless and between 0 and 1 while the linearisation holds.
+- Tolerance budgets as delta <= tol / A_N.
+- Dimension through the max over components (and the RMS beside it).
+
+### 9.8 Pitfalls
+
+- A_N and the surviving defect are linearisations at the true states. For large defects (the initial
+  transient), use the exact solver forms. rho > 1 flags this, or a drift into untested states.
+- Eigenvalue-based stiffness misses non-normal transient growth [VII-4]. Keep the singular values: on
+  Robertson the per-step sigma_max of 1.65 and the product's 1.5 differ completely in what they predict.
+- Jay and Calvo's thresholds use ln S over a time scale h, and the bench's h is dt. A larger dt makes any
+  dissipative system "stiffer". Report s together with dt.
+- FTLEs at short horizons are positive in contracting non-normal systems (transient growth); classify as
+  chaotic only from a converged lambda_1, not from Lambda_n.
+- Finite differences at h = 1e-5 resolve sigma down to about 1e-11 only. The 1e-12 values on Robertson are
+  at that floor, so s is a lower bound there.
+- Chaotic pointwise metrics at long horizons, and comparisons beyond the reference solver's own computable
+  time, measure noise.
+- The [r] items, in particular HNW's fan theorem, the log-norm bounds, Boffetta's T_p and the
+  Hairer-Lubich-Wanner growth rates, are standard but were not re-read here. VII-32 was withdrawn by arXiv.
+
+Measured for this review (light, three Robertson test trajectories, 40 steps, `src/structure/cache/chem`):
+s_k = 24-27; sigma(J) = (1.2-1.66, 0.84-0.9996, 1e-12-2e-11); A_10, A_20, A_40 = 17, 34, 64 (max norm,
+worst trajectory); rho_40 = 0.56 (ChebTT box 0.001), 0.17 (ChebTT box 0.01), 0.018 (SlowTable 0.001).
