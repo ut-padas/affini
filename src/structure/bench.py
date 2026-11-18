@@ -1,10 +1,10 @@
 """
-Run, cache and plot surrogate methods on the structure-discovery problems, one CPU thread.
+Run, cache and plot surrogate methods on the structure-discovery problems.
 
     SURROGATE_DEVICE=cpu SURROGATE_MPI=off OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \\
         PYTHONPATH=. .venv/bin/python -m src.structure.bench --problems rosenbrock --d 2 --methods afinni,art,art_quad
 
-Every run (method, problem, d, tolerance, seed) is cached in ``src/structure/cache`` as one
+Every run (method, problem, d, tolerance, seed) is cached in ``src/structure/cache/<setup>`` as one
 ``.npz``: its metrics, and for seed 1 its predictions and leaf ids on the test set. A run is only
 trained when its cache file is missing, so the slow baselines (AFINNI, ART with affine and with
 quadratic leaves) run once and every new scheme is plotted against them. ``--plot`` draws, per
@@ -17,8 +17,8 @@ A method is a function ``(f, lo, hi, atol, seed) -> Model``; ``Model`` gives ``p
 Under ``mpiexec`` (``SURROGATE_MPI=on``) the baselines train and predict collectively on every rank,
 with work stealing; the new schemes run on rank 0 and spread each round's oracle calls over every
 rank (``src.structure.schemes``). Rank 0 alone decides what is cached, scores and writes. Each run
-records its rank count, and the plots name it beside the method, since its times are then not
-one-thread times.
+records its device and rank count, and the cache and ``output/`` hold one directory per setup
+(``setup``), so one comparison never mixes devices or rank counts.
 """
 
 import argparse
@@ -36,7 +36,7 @@ import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.colors import BoundaryNorm, ListedColormap  # noqa: E402
 
-from src import to_host, xp  # noqa: E402
+from src import IS_CUPY_BACKEND, to_host, xp  # noqa: E402
 from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
@@ -71,6 +71,15 @@ class CountingOracle:
 # --- Baselines -------------------------------------------------------------------------
 def _ranks() -> int:
     return MPI.COMM_WORLD.Get_size()
+
+
+def setup() -> str:
+    """
+    The device and rank count, e.g. ``cpu-1rank``. Runs are cached and plotted per setup and never
+    compared across setups: times depend on both, and ART's split decisions differ between CPU and
+    GPU, whose sums differ at rounding level.
+    """
+    return f"{'gpu' if IS_CUPY_BACKEND else 'cpu'}-{_ranks()}rank"
 
 
 def _collective_predict(m):
@@ -166,7 +175,7 @@ def slice_points(problem: str, d: int) -> tuple[np.ndarray, np.ndarray, float]:
 
 # --- Running and caching -----------------------------------------------------------------
 def cache_path(method, problem, d, tol, seed) -> Path:
-    return CACHE / f"{problem}_d{d}" / f"{method}_tol{tol:g}_s{seed}.npz"
+    return CACHE / setup() / f"{problem}_d{d}" / f"{method}_tol{tol:g}_s{seed}.npz"
 
 
 def run(method, problem, d, tol, seed, force=False) -> dict | None:
@@ -194,7 +203,8 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
         model = METHODS[method][2](p.f, lo, hi, atol, seed)
     except RuntimeError as err:  # a scheme over its evaluation budget: recorded, not fatal
         metrics = {"method": method, "problem": problem, "d": d, "tol": tol, "seed": seed, "atol": atol,
-                   "failed": str(err)[:300], "train_s": time.perf_counter() - t0, "ranks": size}  # fmt: skip
+                   "failed": str(err)[:300], "train_s": time.perf_counter() - t0, "ranks": size,
+                   "device": setup().split("-")[0]}  # fmt: skip
         if rank == 0:
             path.parent.mkdir(parents=True, exist_ok=True)
             np.savez_compressed(path, metrics=json.dumps(metrics))
@@ -215,7 +225,8 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
     metrics = {"method": method, "problem": problem, "d": d, "tol": tol, "seed": seed, "atol": atol,
                "leaves": int(model.n_leaves), "evals": int(model.evals), "within_percent": float(100 * np.mean(e <= atol)),
                "mean_error": float(e.mean()), "max_error": float(e.max()), "max_ratio": float(e.max() / atol),
-               "train_s": train_s, "predict_us": 1e6 * predict_s / len(X), "oracle_us": oracle_us, "ranks": size}  # fmt: skip
+               "train_s": train_s, "predict_us": 1e6 * predict_s / len(X), "oracle_us": oracle_us, "ranks": size,
+               "device": setup().split("-")[0]}  # fmt: skip
     path.parent.mkdir(parents=True, exist_ok=True)
     extra = {}
     if seed == SEEDS[0]:
@@ -275,7 +286,7 @@ def plot_maps(problem: str, methods: list[str], tol: float, out: Path) -> Path:
         axes[1, j].set_title(f"error / tolerance: {m['within_percent']:.1f}% within, worst {m['max_ratio']:.2f}", fontsize=8)
         for a in axes[:, j]:
             a.set_xticks([]), a.set_yticks([])
-    fig.suptitle(f"{problem}, tolerance {tol:g} of max |f| (seed {SEEDS[0]}); grey lines: contours of f", fontsize=10)
+    fig.suptitle(f"{problem}, tolerance {tol:g} of max |f| (seed {SEEDS[0]}); grey lines: contours of f; {setup()}", fontsize=10)
     path = out / f"{problem}-d2-tol{tol:g}-maps.png"
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -353,7 +364,7 @@ def plot_views(problem: str, d: int, methods: list[str], tol: float, out: Path) 
         if a is not axes[0, 2]:
             a.set_xticks([]), a.set_yticks([])
     fig.suptitle(f"{problem}, d = {d}, tolerance {tol:g}: slice plane and shadow coordinates span the two directions "
-                 "in which f changes most", fontsize=9)  # fmt: skip
+                 f"in which f changes most; {setup()}", fontsize=9)  # fmt: skip
     path = out / f"{problem}-d{d}-tol{tol:g}-views.png"
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -402,7 +413,7 @@ def plot_cost(problem: str, d: int, methods: list[str], out: Path) -> Path:
                      va="top", color="#666666")  # fmt: skip
     axes[0].legend(fontsize=7, frameon=False)
     fig.suptitle(f"{problem}, d = {d}: cost against accuracy and time over tolerances {', '.join(map(str, tols))} "
-                 "(seed means, one CPU thread)", fontsize=10)  # fmt: skip
+                 f"(seed means, {setup()})", fontsize=10)  # fmt: skip
     path = out / f"{problem}-d{d}-cost.png"
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -453,7 +464,8 @@ def main(argv=None) -> None:
     METHODS.update(module.METHODS)
 
     methods = a.methods.split(",")
-    OUT.mkdir(parents=True, exist_ok=True)
+    out = OUT / setup()
+    out.mkdir(parents=True, exist_ok=True)
     for problem in a.problems.split(","):
         tols = [float(t) for t in a.tols.split(",")] if a.tols else PROBLEMS[problem].tolerances(a.d)
         for tol in tols:
@@ -461,13 +473,13 @@ def main(argv=None) -> None:
                 for seed in map(int, a.seeds.split(",")):
                     run(method, problem, a.d, tol, seed, force=a.force)
         if a.plot and MPI.COMM_WORLD.Get_rank() == 0:
-            plot_cost(problem, a.d, methods, OUT)
+            plot_cost(problem, a.d, methods, out)
             for tol in tols:
                 if a.d == 2:
-                    plot_maps(problem, methods, tol, OUT)
+                    plot_maps(problem, methods, tol, out)
                 else:
-                    plot_views(problem, a.d, methods, tol, OUT)
-            write_summary(a.d, methods, OUT)
+                    plot_views(problem, a.d, methods, tol, out)
+            write_summary(a.d, methods, out)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ are in [docs/SURROGATE_RESEARCH.md](../../docs/SURROGATE_RESEARCH.md).
 | `problems.py` | the problems (`PROBLEMS`), the tolerances per dimension (`TOLERANCES`), the test sets: a 300 x 300 grid in 2-D, 50,000 fixed uniform points above |
 | `bench.py` | runs, caches and plots every method (`METHODS`): `afinni`, `art`, `art_quad` (ART with quadratic leaves) and the registered schemes |
 | `schemes.py` | registers the new schemes; under MPI, rank 0 runs a scheme and spreads each round's oracle calls over every rank |
-| `chebtree.py` | **ChebTree**: an adaptive tree of tensor Chebyshev boxes, refined by the decay of their coefficients (degree doubling where they decay, a split where they do not); also `build_rotated`, ChebTree in active-subspace coordinates |
+| `chebtree.py` | **ChebTree**: an adaptive tree of tensor Chebyshev boxes, refined by the decay of their coefficients: per-axis geometric and algebraic decay fits give the error estimate, the degree where the decay is exponential and a split where it is not; a few check points per box, seeded by its locational code, catch aliasing; trailing coefficients are chopped after acceptance. Also `build_rotated`, ChebTree in active-subspace coordinates |
 | `sparsegrid.py` | **SparseCheb**: a dimension-adaptive sparse Chebyshev grid (Smolyak, Gerstner-Griebel) with a random-point convergence check |
 | `sparsegrid2.py` | **SparseCheb v2**: the same grid held as one flat Chebyshev expansion, with a Sobol-plus-corners check (work in progress, see below) |
 
@@ -39,10 +39,13 @@ SURROGATE_DEVICE=cpu SURROGATE_MPI=on OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 OPEN
   --problems rosenbrock,gaussian --d 2 --methods afinni,art,art_quad,chebtree,sparsecheb --plot </dev/null
 ```
 
-- A run is trained once and cached in `cache/` (metrics for every seed; predictions, leaf ids and,
+- Runs, caches and plots are kept per setup, the device and the rank count (`cache/cpu-8rank/`,
+  `output/cpu-8rank/`), so that one comparison never mixes them: times depend on both, and ART's
+  split decisions differ between CPU and GPU.
+- A run is trained once and cached in `cache/<setup>/` (metrics for every seed; predictions, leaf ids and,
   above 2-D, the slice predictions for seed 1). A new scheme is plotted against the cached
   baselines without retraining them. `--force` retrains.
-- `--plot` writes to `output/`, per problem, after its runs:
+- `--plot` writes to `output/<setup>/`, per problem, after its runs:
   - `<problem>-d<d>-cost.png`: evaluations against the worst error / tolerance, the mean error,
     the % within tolerance, the training time and the inference time per query (with the oracle's
     time per point);
@@ -54,7 +57,11 @@ SURROGATE_DEVICE=cpu SURROGATE_MPI=on OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 OPEN
 - `cache/` and `output/` are not committed (`.gitignore`).
 - The new schemes are NumPy only. `SURROGATE_DEVICE=gpu` moves AFINNI and ART to the GPU; the
   schemes would need CuPy versions of their per-box arithmetic, which is milliseconds per run, so
-  only their oracle calls matter.
+  only their oracle calls matter. The baselines' runs here (up to about 10^6 evaluations, d <= 5)
+  train no faster on one GPU than on 8 CPU ranks and predict several times slower, since their
+  batches are too small to hide kernel launches; so the recipe uses 8 CPU ranks.
+- AFINNI at d = 10 (10^6 training points) needs several GiB of host memory per rank: run it with
+  fewer ranks, and watch the memory.
 
 ## Results so far (2-D, tolerances 0.1, 0.01, 0.001 of max |f|, 3 seeds, 8 ranks)
 

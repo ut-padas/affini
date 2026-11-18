@@ -3,29 +3,46 @@ ChebTree: an adaptive tree of tensor Chebyshev interpolants, refined by the deca
 
 Every piece is a box carrying the tensor-product interpolant of f at Chebyshev points of the
 second kind, ``n_k + 1`` points along axis k. Its Chebyshev coefficients come from one DCT-I per
-axis of the box's values. They do three jobs:
+axis of the box's values. Along each axis, the slab sums ``s_j`` (the sum of |coefficient| over
+every coefficient of degree j on that axis) bound how much dropping degree j changes the
+interpolant, and they do three jobs:
 
-- **Error estimate.** For a function analytic in the box the coefficients decay geometrically, and
-  the interpolant's worst error is of the order of the first omitted coefficients. The box is
-  accepted when the coefficients of the two highest degrees along every axis sum to at most
-  ``safety * atol`` (``safety = 1/2``).
-- **Degree refinement (p).** An axis whose coefficients decay (the top quarter of degrees at most
-  ``decay`` times the bottom quarter) but are not yet small enough gets twice the degree. The
-  second-kind points of degree 2n contain those of degree n, so only the new points are evaluated.
-- **Splitting (h).** An axis whose coefficients do not decay, or that has reached ``n_max``, is
-  unresolved at this size (a front, a kink, more oscillation than the degree can follow): the box is
-  halved across it, and each half starts from the parent's degrees, halved along the split axis.
+- **Error estimate.** Along each axis the slab sums are fitted on the upper half of the degrees,
+  geometrically (``C exp(-sigma j)``, Mavriplis) and algebraically (``Ca (j + 1)^-p``). The decay
+  counts as exponential when the fit falls by ``min_drop`` across those degrees; no power law up to
+  ``j^-log2(min_drop)`` does. The axis's estimate is twice the fitted tail of the omitted degrees
+  (interpolation folds them back once): the larger of the two laws' tails where the decay is
+  exponential, and the algebraic tail of a kink (power at most 2) otherwise; at least the last slab.
+  A box is accepted when the estimates sum to at most ``safety * atol`` and the interpolant also
+  meets ``safety * atol`` at the box's check points (below).
+- **Degree refinement (p).** A failing axis with exponential decay gets the degree the geometric
+  fit predicts, rounded up to the next power-of-two multiple of its degree: the second-kind points of
+  degree 2^m n contain those of degree n, so only the new points are evaluated, and every failing
+  axis grows in the same round.
+- **Splitting (h).** A failing axis without exponential decay (a kink, a front, more oscillation than
+  the box can follow), or whose predicted degree exceeds ``n_max``, is halved, and each half starts
+  from the parent's degrees, halved along the split axis.
+
+**Check points.** The coefficients only see the grid, so an oscillation the grid aliases can look
+resolved. Every new box therefore draws ``n_check`` uniform points from a generator seeded by its
+locational code (the root is 1, the children of code c are 2c and 2c + 1), so a run is
+deterministic, and inherits its parent's check points and grid values inside it, which cost no
+evaluation. If the estimate passes but a check point fails, every axis below ``n_max`` doubles.
+
+After acceptance, trailing coefficient slabs are chopped, smallest first, while the chopped
+|coefficients| sum to at most ``chop_share * atol``: inference costs the kept coefficients only.
 
 Each round processes every open box and evaluates all of their new points in one oracle call, so
 the work is per box and batchable. A query is routed down the tree of box splits to its box and
 evaluated by contracting the box's coefficient tensor with the Chebyshev polynomials at the query.
 
-Known limits: the estimate trusts what the samples show, so a feature narrower than the grid
-spacing can be missed (aliasing); and tensor grids cost ``prod(n_k + 1)`` points per box, which
-limits plain ChebTree to low dimension.
+Known limits: the fit and the checks are estimates, not bounds, so a feature narrower than both
+the grid and the check points can still be missed; and tensor grids cost ``prod(n_k + 1)`` points
+per box, which limits plain ChebTree to low dimension.
 """
 
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import numpy as np
 from scipy.fft import dct
@@ -72,6 +89,9 @@ class Box:
     V: np.ndarray | None = None  # values on the tensor grid, shape (n_k + 1 for k)
     depth: int = 0
     node: int = 0  # index in the tree
+    code: int = 1  # locational code: the root is 1, the children of code c are 2c and 2c + 1
+    Xc: np.ndarray | None = None  # check points with known values (drawn, or inherited), and the values
+    fc: np.ndarray | None = None
 
 
 @dataclass
@@ -84,6 +104,8 @@ class ChebTree:
     leaf: list[int] = field(default_factory=list)  # leaf index or -1
     leaves: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = field(default_factory=list)  # (lo, hi, coef)
     evals: int = 0
+    check_evals: int = 0  # evaluations spent on drawn check points (included in evals)
+    check_catches: int = 0  # boxes whose estimate passed but whose check points did not
 
     def new_node(self) -> int:
         self.axis.append(-1), self.value.append(0.0), self.child.append((-1, -1)), self.leaf.append(-1)
@@ -113,18 +135,127 @@ class ChebTree:
         return out
 
 
-def _grid(box: Box, axes_new: dict[int, np.ndarray] | None = None) -> np.ndarray:
-    """Physical points of the box's tensor grid (or of the sub-grid ``axes_new`` replaces on some axes)."""
+def _axes(box: Box) -> list[np.ndarray]:
+    """
+    Each axis's physical grid coordinates, with the ends and the midpoint set exactly, so that boxes
+    sharing a face (siblings, neighbours, a child and its parent's grid) share its points bit for bit
+    and the value table finds them instead of evaluating them again.
+    """
     axes = []
     for k, nk in enumerate(box.n):
-        t = cheb_points(nk) if axes_new is None or k not in axes_new else axes_new[k]
-        axes.append(box.lo[k] + (t + 1.0) * 0.5 * (box.hi[k] - box.lo[k]))
-    mesh = np.meshgrid(*axes, indexing="ij")
+        x = box.lo[k] + (cheb_points(nk) + 1.0) * 0.5 * (box.hi[k] - box.lo[k])
+        x[0], x[-1] = box.hi[k], box.lo[k]
+        if nk % 2 == 0:
+            x[nk // 2] = 0.5 * (box.lo[k] + box.hi[k])
+        axes.append(x)
+    return axes
+
+
+def _known(X: np.ndarray, table: dict) -> tuple[np.ndarray, np.ndarray]:
+    """``(values, found)``: the values of the rows of X already in ``table`` (exact coordinates -> value)."""
+    keys = [row.tobytes() for row in X]
+    found = np.array([k in table for k in keys], dtype=bool)
+    return np.array([table.get(k, np.nan) for k in keys]), found
+
+
+def _grid(box: Box) -> np.ndarray:
+    """Physical points of the box's tensor grid, in the C order of its value tensor."""
+    mesh = np.meshgrid(*_axes(box), indexing="ij")
     return np.stack([m.ravel() for m in mesh], axis=1)
 
 
-def build(f, lo, hi, atol: float, n0: int = 8, n_max: int = 64, decay: float = 1e-3, safety: float = 0.5,
-          max_depth: int | None = None, max_evals: int = 5_000_000, n_floor: int | None = None) -> ChebTree:  # fmt: skip
+def _interpolate(coef: np.ndarray, lo: np.ndarray, hi: np.ndarray, X: np.ndarray) -> np.ndarray:
+    t = 2.0 * (X - lo) / (hi - lo) - 1.0
+    return cheb_eval(coef, [cheb_basis(t[:, k], coef.shape[k] - 1) for k in range(len(lo))])
+
+
+class AxisFit(NamedTuple):
+    """One axis's slab sums ``s`` and the two decay laws fitted on the upper half of its degrees."""
+
+    s: np.ndarray
+    C: float  # geometric law s_j ~ C exp(-sigma j)
+    sigma: float  # inf: resolved to rounding level; 0: too few degrees to fit (no decay)
+    Ca: float  # algebraic law s_j ~ Ca (j + 1)^-p
+    p: float
+    exponential: bool  # the fit falls by at least ``min_drop`` across the fitted degrees
+
+
+def axis_decay(a: np.ndarray, k: int, min_drop: float) -> AxisFit:
+    """
+    Fit axis k's slab sums of |a| on the upper half of the degrees, geometrically (Mavriplis) and
+    algebraically (the local regularity of Houston and Suli). The fits read the pairwise maxima
+    ``max(s_j, s_j+1)``, so that the zero coefficients of a symmetric f do not read as decay, and
+    skip entries below the rounding floor; the last pair below the floor means resolved, as
+    Chebfun's chopping reads a plateau at rounding level. The decay counts as exponential when the
+    geometric fit falls by ``min_drop`` across the fitted degrees: a threshold on the rate alone
+    cannot tell a kink from a slowly converging analytic f on a few degrees, but a power law
+    ``j^-p`` falls by only 2^p across ``[n/2, n]``, whatever n.
+    """
+    s = np.moveaxis(a, k, 0).reshape(a.shape[k], -1).sum(axis=1)
+    n = len(s) - 1
+    flat = AxisFit(s, float(s.max()), 0.0, float(s.max()), 0.0, False)
+    if n < 2:
+        return flat
+    j = np.arange(min(n // 2, n - 2), n)
+    y = np.maximum(s[:-1], s[1:])[j]
+    floor = 1e-13 * max(float(s.max()), 1e-300)
+    if y[-1] <= floor:
+        return AxisFit(s, 0.0, np.inf, 0.0, np.inf, True)
+    keep = y > floor
+    if keep.sum() < 2:
+        return flat
+    slope, intercept = np.polyfit(j[keep], np.log(y[keep]), 1)
+    power, log_ca = np.polyfit(np.log(j[keep] + 1.0), np.log(y[keep]), 1)
+    sigma = float(-slope)
+    return AxisFit(s, float(np.exp(intercept)), sigma, float(np.exp(log_ca)), float(-power), sigma * (j[-1] - j[0]) >= np.log(min_drop))
+
+
+def tail_estimate(fit: AxisFit) -> float:
+    """
+    Twice the fitted tail of the omitted degrees (interpolation folds them back once), and at least
+    the last slab. Where the decay is exponential the tail is the larger of the geometric and the
+    algebraic fit's, since a few degrees barely tell the two laws apart. Otherwise f is assumed no
+    smoother than a kink there: the algebraic tail with the power capped at 2 (a kink's
+    coefficients decay as j^-2; a power fitted on a few pre-asymptotic degrees reads higher and
+    underestimates the tail), anchored at the last pair of slabs. A power of at most 1 (a jump)
+    never passes.
+    """
+    s, C, sigma, Ca, p, exponential = fit
+    n = len(s) - 1
+    if sigma == np.inf:
+        return float(s[-1])
+    algebraic = Ca * (n + 1.5) ** (1.0 - p) / (p - 1.0) if p > 1.0 else np.inf
+    if exponential:
+        r = np.exp(-sigma)
+        tail = max(C * r ** (n + 1) / (1.0 - r), algebraic)
+    else:
+        tail = max(float(max(s[-2], s[-1])) * n / (min(p, 2.0) - 1.0), algebraic) if p > 1.0 else np.inf
+    return max(2.0 * tail, float(s[-1]))
+
+
+def degree_needed(fit: AxisFit, share: float) -> float:
+    """The smallest degree at which the fitted geometric law's tail estimate meets ``share`` (used only where the decay is exponential)."""
+    if fit.sigma == np.inf:
+        return 0.0
+    r = np.exp(-fit.sigma)
+    return max(np.log(2.0 * fit.C * r / ((1.0 - r) * share)), np.log(fit.C / share)) / fit.sigma
+
+
+def chop(coef: np.ndarray, budget: float) -> np.ndarray:
+    """Drop trailing degree slabs, the smallest first, while the dropped |coefficients| sum to at most ``budget``; |T_j| <= 1 makes that sum a bound on the change."""
+    spent = 0.0
+    while True:
+        w = [np.abs(np.take(coef, -1, axis=k)).sum() if coef.shape[k] > 1 else np.inf for k in range(coef.ndim)]
+        k = int(np.argmin(w))
+        if spent + w[k] > budget:
+            return coef
+        spent += w[k]
+        coef = np.take(coef, np.arange(coef.shape[k] - 1), axis=k)
+
+
+def build(f, lo, hi, atol: float, n0: int = 8, n_max: int = 64, min_drop: float = 16.0, safety: float = 0.5,
+          n_check: int = 4, chop_share: float = 0.25, max_depth: int | None = None, max_evals: int = 5_000_000,
+          n_floor: int | None = None) -> ChebTree:  # fmt: skip
     """
     Train a ChebTree of ``f`` (host (N, d) -> (N,) values) on the box [lo, hi] to tolerance ``atol``.
     ``n0`` is the root's degree per axis (an int, or one per axis); a split resets the split axis to
@@ -138,81 +269,108 @@ def build(f, lo, hi, atol: float, n0: int = 8, n_max: int = 64, decay: float = 1
     n_root = [int(n0)] * d if np.isscalar(n0) else [int(v) for v in n0]
     n_floor = min(n_root) if n_floor is None else n_floor
     tree = ChebTree()
-    root = Box(lo, hi, list(n_root), node=tree.new_node())
-    pending = [(root, None)]  # (box, None: whole grid | (axis, values to merge))
+    root = Box(lo, hi, list(n_root), node=tree.new_node(), Xc=np.empty((0, d)), fc=np.empty(0))
+    pending = [(root, None)]  # (box, None: a new box | (old values, per-axis growth factors))
+
+    table: dict[bytes, float] = {}  # every evaluated grid point, so that no box evaluates a neighbour's point again
 
     def evaluate(X):
         tree.evals += len(X)
         return np.asarray(f(X), dtype=np.float64).ravel()
 
     while pending:
-        # 1. One oracle call for every point the open boxes need.
-        requests, sizes = [], []
-        for box, refine in pending:
-            if refine is None:
-                X = _grid(box)
-            else:
-                k, _ = refine
-                X = _grid(box, {k: cheb_points(box.n[k])[1::2]})  # the odd points of the doubled grid
-            requests.append(X)
-            sizes.append(len(X))
-        if tree.evals + sum(sizes) > max_evals:
+        # 1. One oracle call for the points the open boxes need that no box has evaluated yet (a new
+        #    box's grid, a grown box's new grid points), and for the new boxes' drawn check points.
+        requests, plans = [], []
+        for box, grow in pending:
+            X = _grid(box)
+            new = np.ones(len(X), dtype=bool) if grow is None else ~_old_mask(box.n, grow[1]).ravel()
+            V, found = _known(X[new], table)
+            requests.append(X[new][~found])
+            drawn = np.random.default_rng(box.code).uniform(box.lo, box.hi, (n_check, d)) if grow is None else np.empty((0, d))
+            requests.append(drawn)
+            plans.append((V, found, drawn))
+        sizes = [len(X) for X in requests]
+        unique, inverse = np.unique(np.concatenate(requests), axis=0, return_inverse=True)
+        if tree.evals + len(unique) > max_evals:
             raise RuntimeError(f"ChebTree would exceed {max_evals:,} evaluations.")
-        values = np.split(evaluate(np.concatenate(requests)), np.cumsum(sizes)[:-1])
+        fu = evaluate(unique)
+        table.update(zip((row.tobytes() for row in unique), fu.tolist(), strict=True))
+        values = iter(np.split(fu[inverse.ravel()], np.cumsum(sizes)[:-1]))
         nxt = []
-        for (box, refine), v in zip(pending, values, strict=True):
-            if refine is None:
-                box.V = v.reshape([nk + 1 for nk in box.n])
-            else:  # interleave: old values at even indices along the axis, new at odd ones
-                k, old = refine
-                shape = list(old.shape)
-                shape[k] = box.n[k] + 1
-                V = np.empty(shape)
-                sl = [slice(None)] * d
-                sl[k] = slice(0, None, 2)
-                V[tuple(sl)] = old
-                sl[k] = slice(1, None, 2)
-                new_shape = list(old.shape)
-                new_shape[k] = box.n[k] // 2
-                V[tuple(sl)] = v.reshape(new_shape)
-                box.V = V
-            # 2. Coefficients, per-axis tails and decay.
-            a = np.abs(cheb_coefficients(box.V))
-            tails, decaying = [], []
-            for k in range(d):
-                nk = box.n[k]
-                env = np.max(np.moveaxis(a, k, 0).reshape(nk + 1, -1), axis=1)
-                tails.append(float(np.moveaxis(a, k, 0)[nk - 1 :].sum()))
-                q = max(1, (nk + 1) // 4)
-                decaying.append(env[-q:].max() <= decay * max(env[:q].max(), 1e-300))
-            if sum(tails) <= safety * atol or box.depth >= max_depth:
+        for (box, grow), (V, found, drawn) in zip(pending, plans, strict=True):
+            V[~found] = next(values)
+            box.Xc, box.fc = np.concatenate([box.Xc, drawn]), np.concatenate([box.fc, next(values)])
+            tree.check_evals += len(drawn)
+            shape = [nk + 1 for nk in box.n]
+            if grow is None:
+                box.V = V.reshape(shape)
+            else:
+                old, factor = grow
+                box.V = np.empty(shape)
+                box.V[tuple(slice(None, None, fk) for fk in factor)] = old
+                box.V[~_old_mask(box.n, factor)] = V
+            # 2. Coefficients, per-axis decay fits, tail estimates and the check points.
+            c = cheb_coefficients(box.V)
+            a = np.abs(c)
+            fits = [axis_decay(a, k, min_drop) for k in range(d)]
+            tails = [tail_estimate(fit) for fit in fits]
+            check = float(np.max(np.abs(_interpolate(c, box.lo, box.hi, box.Xc) - box.fc))) if len(box.Xc) else 0.0
+            estimate_ok = sum(tails) <= safety * atol
+            if (estimate_ok and check <= safety * atol) or box.depth >= max_depth:
                 tree.leaf[box.node] = len(tree.leaves)
-                tree.leaves.append((box.lo, box.hi, cheb_coefficients(box.V)))
+                tree.leaves.append((box.lo, box.hi, chop(c, chop_share * atol)))
                 continue
-            share = safety * atol / d
-            failing = [k for k in range(d) if tails[k] > share]
-            grow = [k for k in failing if decaying[k] and box.n[k] < n_max]
-            if grow and len(grow) == len(failing):
-                k = max(grow, key=lambda j: tails[j])  # one axis per round: its doubling reuses every value
-                box.n[k] *= 2
-                nxt.append((box, (k, box.V)))
+            factor = [1] * d
+            if estimate_ok:  # the grid looks resolved but a check point disagrees: aliasing
+                tree.check_catches += 1
+                factor = [2 if 2 * box.n[k] <= n_max else 1 for k in range(d)]
+                split = None if any(fk > 1 for fk in factor) else int(np.argmax(box.hi - box.lo))
+            else:
+                share = safety * atol / d
+                failing = [k for k in range(d) if tails[k] > share]
+                for k in failing:
+                    need = degree_needed(fits[k], share) if fits[k].exponential else np.inf
+                    fk = 2 ** max(1, int(np.ceil(np.log2(max(need, 1.0) / box.n[k])))) if np.isfinite(need) else 0
+                    factor[k] = fk if 0 < fk * box.n[k] <= n_max else 0
+                unresolved = [k for k in failing if factor[k] == 0]
+                split = max(unresolved, key=lambda j: tails[j]) if unresolved else None
+            if split is None:
+                old = box.V
+                box.n = [nk * fk for nk, fk in zip(box.n, factor, strict=True)]
+                nxt.append((box, (old, factor)))
                 continue
-            # 3. Split across the unresolved axis with the largest tail.
-            k = max((j for j in failing if j not in grow), key=lambda j: tails[j])
+            # 3. Split across the unresolved axis with the largest tail; the halves inherit every known value inside them.
+            k = split
             mid = 0.5 * (box.lo[k] + box.hi[k])
             tree.axis[box.node], tree.value[box.node] = k, mid
+            Xk = np.concatenate([box.Xc, _grid(box)])
+            fX = np.concatenate([box.fc, box.V.ravel()])
             kids = []
             for side in (0, 1):
                 clo, chi = box.lo.copy(), box.hi.copy()
                 (chi if side == 0 else clo)[k] = mid
                 n = list(box.n)
                 n[k] = max(n_floor, n[k] // 2)
-                kid = Box(clo, chi, n, depth=box.depth + 1, node=tree.new_node())
+                inside = (Xk[:, k] >= mid) if side else (Xk[:, k] < mid)
+                kid = Box(clo, chi, n, depth=box.depth + 1, node=tree.new_node(), code=2 * box.code + side,
+                          Xc=Xk[inside], fc=fX[inside])  # fmt: skip
                 kids.append(kid.node)
                 nxt.append((kid, None))
             tree.child[box.node] = (kids[0], kids[1])
         pending = nxt
     return tree
+
+
+def _old_mask(n: list[int], factor: list[int]) -> np.ndarray:
+    """On the grown grid, the points the grid before growth already had: index a multiple of the axis's factor."""
+    mask = np.ones([nk + 1 for nk in n], dtype=bool)
+    for k, fk in enumerate(factor):
+        if fk > 1:
+            idx = [None] * len(n)
+            idx[k] = slice(None)
+            mask &= (np.arange(n[k] + 1) % fk == 0)[tuple(idx)]
+    return mask
 
 
 @dataclass
