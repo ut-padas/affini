@@ -16,6 +16,7 @@ import contextlib
 import json
 import os
 import platform
+import re
 import resource
 import subprocess
 import sys
@@ -108,11 +109,21 @@ def provenance() -> dict:
 
 def failure_class(err: BaseException) -> str:
     """The class the tables report a failed case under."""
+    # cupy.cuda.memory.OutOfMemoryError (named, so CuPy is not imported) subclasses MemoryError: test it first
+    if type(err).__name__ == "OutOfMemoryError":
+        return "device_out_of_memory"
     if isinstance(err, MemoryError):
         return "host_memory_guard"
-    if type(err).__name__ == "OutOfMemoryError":  # cupy.cuda.memory.OutOfMemoryError, without importing CuPy
-        return "device_out_of_memory"
     return "error"
+
+
+def portable(text: str) -> str:
+    """``text`` without this machine's paths: the repository, the Python installs, the home folder and the user name."""
+    prefixes = {str(ROOT): "<repo>", sys.prefix: "<python>", sys.base_prefix: "<python>", str(Path.home()): "~"}
+    for prefix in sorted(prefixes, key=len, reverse=True):
+        text = text.replace(prefix, prefixes[prefix])
+    user = os.environ.get("USER") or os.environ.get("LOGNAME")
+    return re.sub(rf"/{re.escape(user)}(?=/|\b)", "/<user>", text) if user else text
 
 
 def device_peak_gib(peak: float) -> float:
@@ -269,8 +280,10 @@ def run_case(case: dict, out: Path, exact_max_dim: int | None = None, n_test: in
         result["status"], result["stage"] = "done", "done"
     except Exception as err:  # every failure ends this case alone, with its class written down
         result["status"] = "failed"
-        result["failure"] = {"class": failure_class(err), "type": type(err).__name__, "message": str(err)[:2000],
-                             "traceback": traceback.format_exc()[-4000:]}  # fmt: skip
+        result["failure"] = {"class": failure_class(err), "type": type(err).__name__,
+                             "message": portable(str(err))[:2000], "traceback": portable(traceback.format_exc())[-4000:]}  # fmt: skip
+        with contextlib.suppress(Exception):  # what the pool held when the stage failed, e.g. a device out of memory
+            peak_device = device_peak_gib(peak_device)
     result["wall_s"] = time.perf_counter() - t0
     result["memory"] = {"host_peak_gib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20,
                         "device_peak_gib": peak_device}  # fmt: skip

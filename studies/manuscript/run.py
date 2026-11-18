@@ -33,8 +33,8 @@ sys.path.insert(0, str(ROOT))
 
 from studies.manuscript.spec import Case, cases, cost_order  # noqa: E402
 
-# --smoke: every case at this size, to check a machine end to end in minutes; its results go to their own folder.
-SMOKE = {"n0": 3000, "k0": 8, "m": 40, "n_test": 5000}
+# --smoke: the cases at this size, to check a machine end to end in minutes; its results go to their own folder.
+SMOKE = {"n0": 3000, "k0": 8, "m": 40, "n_test": 5000, "tolerances_per_series": 2}
 
 # How a case can end without finishing; the first four stop tighter tolerances of the same series.
 EXHAUSTED = ("host_memory_guard", "device_out_of_memory", "timeout", "killed")
@@ -118,12 +118,23 @@ def blocked(case: Case, by_key: dict[str, dict], all_cases: list[Case]) -> str |
     return None
 
 
-def smoke(case: Case) -> Case:
-    """The case at --smoke size (ranks capped at 2, iterative runs at 2 rounds)."""
+def smoke_cases(all_cases: list[Case]) -> list[Case]:
+    """
+    The cases at --smoke size (ranks capped at 2, iterative runs at 2 rounds), keeping the loosest
+    tolerances of each series: enough for every code path and the projection. Tighter ones are left
+    out because a cluster of 40 points cannot resolve them in d = 10, where the queues outgrow a
+    96 GiB GPU and the host's memory.
+    """
     import dataclasses
 
-    return dataclasses.replace(case, n0=SMOKE["n0"], k0=SMOKE["k0"], m=SMOKE["m"], ranks=min(case.ranks, 2),
-                               rounds=min(case.rounds, 2))  # fmt: skip
+    small = {c.key: c for c in (dataclasses.replace(c, n0=SMOKE["n0"], k0=SMOKE["k0"], m=SMOKE["m"],
+                                                     ranks=min(c.ranks, 2), rounds=min(c.rounds, 2))
+                                for c in all_cases)}  # fmt: skip
+    loosest: dict[tuple, list[float]] = {}
+    for c in small.values():
+        loosest.setdefault(c.series, []).append(tolerance(c))
+    keep = {s: sorted(set(t), reverse=True)[: SMOKE["tolerances_per_series"]] for s, t in loosest.items()}
+    return [c for c in small.values() if tolerance(c) in keep[c.series]]
 
 
 def select(all_cases: list[Case], a) -> list[Case]:
@@ -241,7 +252,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument("--force", action="store_true", help="run cases the projection would skip")
     parser.add_argument("--json", action="store_true", help="plan and status as JSON lines")
-    parser.add_argument("--smoke", action="store_true", help="every case at a tiny size, into <results>-smoke")
+    parser.add_argument("--smoke", action="store_true", help="the cases at a tiny size, into <results>-smoke")
     a = parser.parse_args(argv)
     machine = load_machine(a.machine)
     results = (a.results or ROOT / machine["results"]).resolve()
@@ -249,7 +260,7 @@ def main(argv: list[str] | None = None) -> None:
     if a.smoke:
         machine["smoke"] = True
         results = results.with_name(results.name + "-smoke") if a.results is None else results
-        all_cases = list({c.key: c for c in map(smoke, all_cases)}.values())
+        all_cases = smoke_cases(all_cases)
     chosen = select(all_cases, a)
 
     if a.command in ("plan", "status"):

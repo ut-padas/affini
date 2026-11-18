@@ -2,6 +2,7 @@
 
 import csv
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -54,10 +55,18 @@ def test_a_case_records_both_searches_and_the_exact_one_flags_no_more(tmp_path):
     assert [x["N_train"] for x in r["rounds"]] == [3000, 4200, 5400]  # each round adds 0.4 N_0 outside points
 
 
-def test_a_failing_case_writes_its_failure_class(tmp_path):
+def test_a_failing_case_writes_its_failure_class_without_this_machines_paths(tmp_path):
     case = spec.Case("nonexistent", 2, "hessian", 0, **TINY, tol=0.1)
     r = run_case(case.as_dict(), tmp_path / "x.json", n_test=100)
     assert r["status"] == "failed" and r["failure"]["class"] == "error" and "nonexistent" in r["failure"]["message"]
+    assert str(case_module.ROOT) not in r["failure"]["traceback"] and "<repo>/studies/manuscript/case.py" in r["failure"]["traceback"]
+    assert case_module.portable(f"{Path.home()}/x and /work/1/{os.environ.get('USER', 'u')}/y") == "~/x and /work/1/<user>/y"
+
+    class OutOfMemoryError(MemoryError):  # what CuPy raises when the device is full
+        pass
+
+    assert case_module.failure_class(OutOfMemoryError()) == "device_out_of_memory"
+    assert case_module.failure_class(MemoryError()) == "host_memory_guard"
 
 
 def _result(case, status="done", wall=10.0, gib=1.0, failure=None):
@@ -115,6 +124,14 @@ def test_collect_builds_tables_with_the_runs_without_hessian_splits_beside(tmp_p
     with (tmp_path / "data" / "cases.csv").open() as fh:
         cases = list(csv.DictReader(fh))
     assert len(cases) == 4 and all(c["status"] == "done" and c["exact.e_in"] for c in cases)
+
+
+def test_the_smoke_run_keeps_the_two_loosest_tolerances_of_each_series():
+    small = run.smoke_cases(spec.cases())
+    assert {c.n0 for c in small} == {run.SMOKE["n0"]} and max(c.ranks for c in small) == 2
+    assert {c.tol for c in small if "convergence" in c.experiments} == {0.1, 0.05}
+    assert {c.tol for c in small if "distributed" in c.experiments} == {0.05, 0.005}  # a series of two
+    assert sorted({c.atol for c in small if "absolute" in c.experiments}) == [289.9, 579.8]
 
 
 def test_a_smoke_run_goes_through_the_runner_end_to_end(tmp_path):
