@@ -156,7 +156,7 @@ def directions(problem: str, d: int) -> np.ndarray:
     every rank may compute them at once; each writes its own file and renames it into place, so a
     rank never reads a file another rank is still writing.
     """
-    path = CACHE / f"{problem}_d{d}" / "directions.npz"
+    path = CACHE / "directions" / f"{problem}_d{d}.npz"  # shared by every setup: f alone fixes them
     if path.exists():
         return np.load(path)["W"]
     p = PROBLEMS[problem]
@@ -168,7 +168,7 @@ def directions(problem: str, d: int) -> np.ndarray:
     lam, W = np.linalg.eigh(G.T @ G / len(X))
     W = W[:, np.argsort(lam)[::-1][:2]]
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"directions-{MPI.COMM_WORLD.Get_rank()}.tmp.npz")
+    tmp = path.with_name(f"{problem}_d{d}-{MPI.COMM_WORLD.Get_rank()}.tmp.npz")
     np.savez(tmp, W=W, eigenvalues=np.sort(lam)[::-1])
     tmp.replace(path)
     return W
