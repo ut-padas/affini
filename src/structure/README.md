@@ -7,6 +7,9 @@ goal is a surrogate for astrochemical reaction networks with hundreds of species
 simulations in place of the chemistry time steps, so the worst error and the inference time both
 matter.
 
+The experiments that led here, what each one taught, and three literature reviews behind them
+are in [docs/SURROGATE_RESEARCH.md](../../docs/SURROGATE_RESEARCH.md).
+
 ## Files
 
 | File | Contents |
