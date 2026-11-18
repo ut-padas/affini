@@ -40,6 +40,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.lines  # noqa: E402
+import matplotlib.patches  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
@@ -717,11 +718,15 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
     paths = []
     for k, label in ((0, "loose"), (1, "tight")):
         fig, axes = plt.subplots(3, 1, figsize=(0.78 * len(methods) + 2.6, 3 * (0.34 * len(names) + 1.1)), constrained_layout=True)
-        sp_cmap = plt.get_cmap("Greens")
-        for i, n in enumerate(names):  # third panel: speedup over the named baseline (inference time per state against its time per step)
+        # third panel: speedup over the named baseline, in decade bands of a perceptually uniform,
+        # colour-blind-safe scale (viridis), the row's fastest boxed
+        decades = [(1e1, "< 10x"), (1e2, "10-100x"), (1e3, "100-1,000x"), (1e4, "1,000-10,000x"), (np.inf, ">= 10,000x")]
+        band = [plt.get_cmap("viridis")(v) for v in (0.0, 0.3, 0.55, 0.75, 0.97)]
+        for i, n in enumerate(names):
             tols = sorted(PROBLEMS[n].tolerances, reverse=True)
             if k >= len(tols):
                 continue
+            row = []
             for j, meth in enumerate(methods):
                 path = CACHE / n / f"{meth}_tol{tols[k]:g}.json"
                 if not path.exists():
@@ -734,10 +739,17 @@ def plot_overview(baseline: str = BASELINE) -> list[Path]:
                     sp = speedup(m, n, baseline)
                 except KeyError:
                     continue
-                lv = min(max(np.log10(max(sp, 1.0)) / 5.0, 0.0), 1.0)  # 1x .. 1e5x
-                axes[2].add_patch(plt.Rectangle((j, i), 0.95, 0.9, fc=sp_cmap(0.15 + 0.8 * lv), ec="white"))
+                b = next(q for q, (top, _) in enumerate(decades) if sp < top)
+                axes[2].add_patch(plt.Rectangle((j, i), 0.95, 0.9, fc=band[b], ec="white"))
                 axes[2].text(j + 0.47, i + 0.45, f"{sp:,.0f}x\n{m['predict_us']:.2g} us", ha="center", va="center", fontsize=6.5,
-                             color="white" if lv > 0.6 else "#222222")  # fmt: skip
+                             color="white" if b <= 1 else "#111111")  # fmt: skip
+                row.append((sp, j))
+            if row:
+                jb = max(row)[1]
+                axes[2].add_patch(plt.Rectangle((jb, i), 0.95, 0.9, fill=False, ec="black", lw=1.6))
+        axes[2].legend(handles=[matplotlib.patches.Patch(color=c, label=lab) for c, (_, lab) in zip(band, decades, strict=True)]
+                       + [matplotlib.patches.Patch(fill=False, ec="black", lw=1.6, label="fastest in the row")],
+                       loc="upper center", bbox_to_anchor=(0.5, -0.32), ncol=6, fontsize=7, frameon=False)  # fmt: skip
         for ax, key, title in ((axes[0], "worst", "one-step error / tol"), (axes[1], "rollout_worst", "rollout error / tol (20 trajectories)"),
                                (axes[2], None, f"speedup over {BASELINES[baseline]['label']} (top), inference per state (bottom)")):
             for i, n in enumerate(names):
