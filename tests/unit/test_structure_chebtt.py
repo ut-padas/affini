@@ -52,7 +52,7 @@ def test_separate_trains_share_one_cache_and_match_independent_trains():
     assert v.evals < sum(m.evals for m in alone)  # the pre-pass and the Sobol checks are shared
 
 
-def test_the_metric_rotates_shared_ridges_and_keeps_a_separable_output_on_the_axes():
+def test_the_metric_rotates_only_high_rank_ridges_and_keeps_a_separable_output_on_the_axes():
     d = 6
     q = np.random.default_rng(4).normal(size=d)
     q /= np.linalg.norm(q)
@@ -63,11 +63,24 @@ def test_the_metric_rotates_shared_ridges_and_keeps_a_separable_output_on_the_ax
 
     lo, hi = -np.ones(d), np.ones(d)
     v = chebtt.build_vector(f, lo, hi, 1e-3, 3, rotate=True)
-    plan = {tuple(cols): Q is not None for cols, Q, _ in v.groups}
-    assert plan == {(0, 1): True, (2,): False}
-    assert all(m.ranks and max(m.ranks) == 1 for cols, Q, ms in v.groups for m in ms)
+    rotated = {c for cols, Q, _ in v.groups if Q is not None for c in cols}
+    assert rotated and rotated <= {0, 1}  # the ridges, never the separable product
+    assert all(max(m.ranks) <= 2 for cols, Q, ms in v.groups if Q is not None for m in ms)
     X = np.random.default_rng(5).uniform(lo, hi, (4000, d))
     assert np.max(np.abs(v.predict(X) - f(X))) <= 1e-3
+
+
+def test_outputs_of_low_rank_on_the_axes_get_exactly_the_plain_model():
+    d = 5
+
+    def f(X):
+        return np.stack([np.cos(X.sum(axis=1)), np.prod(1.0 / (1.0 + X**2), axis=1)], axis=1)
+
+    lo, hi = -np.ones(d), np.ones(d)
+    plain, metric = chebtt.build_vector(f, lo, hi, 1e-3, 2), chebtt.build_vector(f, lo, hi, 1e-3, 2, rotate=True)
+    X = np.random.default_rng(6).uniform(lo, hi, (2000, d))
+    assert metric.evals == plain.evals  # no pilot
+    assert np.array_equal(metric.predict(X), plain.predict(X))
 
 
 def test_no_rotation_where_the_oracle_fails_outside_the_box():

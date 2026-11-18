@@ -208,6 +208,10 @@ def _fibre_degree(f, lo, hi, k, share, rng, n_fibre, n_max, n0=8):
         n *= 2
 
 
+class RankLimit(RuntimeError):
+    """The cross reached ``rank_max`` without meeting the tolerance (as opposed to running out of evaluations)."""
+
+
 def check_points(lo, hi, n: int, seed: int) -> np.ndarray:
     """A scrambled Sobol set of n points in [lo, hi]."""
     d = len(lo)
@@ -284,7 +288,7 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
             continue
         r = min(r + rank_step, rank_max)
         if all(R.shape[0] >= r for R in right[1:-1]) and r == rank_max:
-            raise RuntimeError(f"ChebTT reached rank {rank_max} without meeting the tolerance.")
+            raise RankLimit(f"ChebTT reached rank {rank_max} without meeting the tolerance.")
         right = [None] + [np.vstack([R, rng.integers(0, np.array(grid.n[k + 1 :]) + 1, size=(rank_step, d - k - 1))])
                           for k, R in enumerate(right[1:-1])] + [right[-1]]  # fmt: skip
 
@@ -378,7 +382,8 @@ class VectorTT:
         return out
 
 
-def build_vector(f, lo, hi, atol: float, outputs: int, rotate: bool = False, seed: int = 0, **kw) -> VectorTT:
+def build_vector(f, lo, hi, atol: float, outputs: int, rotate: bool = False, axes_rank: int = 6, seed: int = 0,
+                 **kw) -> VectorTT:  # fmt: skip
     """
     A surrogate of a vector-valued ``f`` (host (N, d) -> (N, outputs)) within ``atol`` in every output:
     one scalar ChebTT per output, all drawing on one cache of f, so a point any train asks for serves
@@ -391,47 +396,60 @@ def build_vector(f, lo, hi, atol: float, outputs: int, rotate: bool = False, see
     the sum of theirs, which its sampling pays squared. Outputs of different structure (a ridge beside
     a product peak) therefore cost several times more in one train than apart.
 
-    ``rotate``: what the outputs do share is coordinates. A pilot of finite differences at
-    ``4 + 2d`` (rounded up to a power of two) Sobol points gives every output's metric; ``metric_groups``
-    decides which outputs to train in rotated coordinates, on the box bounding the domain in them.
-    That box extends beyond the domain, so a group is kept on the axes when f, at ``2d`` random points
-    of its box, is not finite or exceeds ten times its largest value at the pilot points (an ODE that
-    leaves its positive orthant, a polynomial that grows fast). Outputs that are ridges of shared oblique
-    coordinates fall to rank 1-6; on six mixtures of two oblique coordinates at 10-D the trains need 17x
-    fewer evaluations than on the axes.
+    ``rotate``: what the outputs do share is coordinates. Every output is first trained on the axes, as
+    without ``rotate`` but with its rank capped at ``axes_rank``; an output that meets the tolerance there
+    keeps that model, at no extra cost (on the axes, low rank leaves a rotation nothing to gain, and the
+    rotated box is larger and shares no points with the axes). Only the outputs that reach the cap get a
+    pilot: finite differences at ``4 + 2d`` (rounded up to a power of two) Sobol points give their
+    metrics, and ``metric_groups`` decides which to train in rotated coordinates, on the box bounding the
+    domain in them, and which to train on the axes again at full rank (from the cache, so the capped
+    attempt's fibres cost nothing twice). The rotated box extends beyond the domain, so a group stays on
+    the axes when f, at ``2d`` random points of its box, is not finite or exceeds ten times its largest
+    value at the pilot points (an ODE that leaves its positive orthant, a polynomial that grows fast).
+    The cap trades the capped attempts' evaluations, lost when an output is rotated, against pilots for
+    outputs a rotation cannot help: on six functions of two curved oblique coordinates (``shared_latent``)
+    caps 4, 6 and 8 cost 40k, 49k and 74k evaluations at 5-D (the axes alone 358k), and cap 4 costs 11%
+    more than the axes at 3-D, where cap 6 costs nothing extra.
     """
     lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
     d = len(lo)
     F = _SharedOracle(f)
     centre, half = 0.5 * (lo + hi), 0.5 * (hi - lo)
-    plan: list[tuple[list[int], np.ndarray | None]] = [(list(range(outputs)), None)]
-    if rotate:
+    rank_max = kw.pop("rank_max", 60)
+
+    def train(g, blo, bhi, c, cap):
+        return build(lambda X: g(X)[:, c], blo, bhi, atol, seed=seed, rank_max=cap, **kw)
+
+    if not rotate:
+        return VectorTT([(list(range(outputs)), None, [train(F, lo, hi, c, rank_max) for c in range(outputs)])], centre, outputs, F.evals)
+    kept, high = {}, []
+    for c in range(outputs):
+        try:
+            kept[c] = train(F, lo, hi, c, min(axes_rank, rank_max))
+        except RankLimit:
+            high.append(c)
+    groups = [(sorted(kept), None, [kept[c] for c in sorted(kept)])] if kept else []
+    if high:
         n_p = 1 << int(np.ceil(np.log2(4 + 2 * d)))
         X = check_points(lo, hi, n_p, seed + 101)
         h = 1e-6 * (hi - lo)
-        V = F(np.concatenate([X] + [X + h[k] * np.eye(d)[k] for k in range(d)])).reshape(d + 1, n_p, outputs)
+        V = F(np.concatenate([X] + [X + h[k] * np.eye(d)[k] for k in range(d)])).reshape(d + 1, n_p, outputs)[:, :, high]
         J = (V[1:] - V[0][None]) / h[:, None, None]
         top = np.max(np.abs(V[0]), axis=0)
-        plan, axes = [], []
         rng = np.random.default_rng(seed + 202)
-        for cols, Q in metric_groups(J):
+        axes = []
+        for local, Q in metric_groups(J):
+            cols = [high[i] for i in local]
             if Q is not None:
                 hw = np.abs(Q).T @ half
                 W = F(centre + rng.uniform(-hw, hw, (2 * d, d)) @ Q.T)[:, cols]
-                if np.all(np.isfinite(W)) and np.all(np.abs(W) <= 10.0 * top[cols] + 1e-300):
-                    plan.append((cols, Q))
+                if np.all(np.isfinite(W)) and np.all(np.abs(W) <= 10.0 * top[local] + 1e-300):
+                    g = lambda U, Q=Q: F(centre + U @ Q.T)
+                    groups.append((cols, Q, [train(g, -hw, hw, c, rank_max) for c in cols]))
                     continue
             axes += cols
         if axes:
-            plan.append((sorted(axes), None))
-    groups = []
-    for cols, Q in plan:
-        if Q is None:
-            g, blo, bhi = F, lo, hi
-        else:
-            hw = np.abs(Q).T @ half
-            g, blo, bhi = (lambda U, Q=Q: F(centre + U @ Q.T)), -hw, hw
-        groups.append((cols, Q, [build(lambda X, c=c, g=g: g(X)[:, c], blo, bhi, atol, seed=seed, **kw) for c in cols]))
+            groups.append((sorted(axes), None, [train(F, lo, hi, c, rank_max) for c in sorted(axes)]))
     return VectorTT(groups, centre, outputs, F.evals)
 
 
