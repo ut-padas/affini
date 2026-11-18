@@ -201,6 +201,390 @@ PRIMORDIAL = Network("primordial", PRIMORDIAL_SPECIES + ("T",), _prim_rhs, _prim
 NETWORKS = {net.name: net for net in (ROBERTSON, PRIMORDIAL)}
 
 
+# --- Standard stiff test problems -------------------------------------------------------------------
+# HIRES, POLLU and Chemical Akzo Nobel from the Test Set for IVP Solvers (F. Mazzia, C. Magherini, Bari;
+# release 2.4), transcribed from its Fortran problem files
+# https://archimede.uniba.it/~testset/src/problems/{hires,pollu,chemakzo}.f and the problem descriptions
+# https://archimede.uniba.it/~testset/report/{hires,pollu,chemakzo}.pdf; line numbers are those of the .f
+# files. The Jacobians keep the files' 1-based indices (the state padded with a leading zero, the matrix
+# cut back), so every entry reads as its dfdy(i,j) line. Integrated from the standard initial values with
+# Radau and the analytic Jacobians, they match the published reference solutions to 1.3e-12 (HIRES),
+# 4.2e-12 (POLLU) and 3.3e-13 (Akzo Nobel), and the Jacobians match central differences.
+# --- HIRES: hires.f (8 ODEs; Schafer 1975, named by Hairer & Wanner) ---------------------------------
+# Phytochrome photomorphogenesis: y = [Pr, Pfr, PrX, PfrX, PrX', PfrX', PfrX'E, E] (hires.pdf, sec. 1.3).
+# feval: lines 107-115; jeval: lines 132-156; init: lines 54-61; t(1): line 41; solut: lines 178-185
+# (RADAU5 on a Cray C90, uround 1.01e-19, rtol = atol = h0 = 1.1e-18).
+HIRES_SPECIES = ("Pr", "Pfr", "PrX", "PfrX", "PrX'", "PfrX'", "PfrX'E", "E")
+HIRES_Y0 = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0057])
+HIRES_TEND = 321.8122
+HIRES_REF = np.array([0.7371312573325668e-3, 0.1442485726316185e-3, 0.5888729740967575e-4, 0.1175651343283149e-2,
+                      0.2386356198831331e-2, 0.6238968252742796e-2, 0.2849998395185769e-2, 0.2850001604814231e-2])  # fmt: skip
+
+
+def hires_rhs(y):
+    """HIRES right-hand side; the constant 0.0007 is the Pr source (k_oks), and y7 + y8 is conserved."""
+    y1, y2, y3, y4, y5, y6, y7, y8 = y
+    f7 = 280.0 * y6 * y8 - 1.81 * y7
+    return np.array([
+        -1.71 * y1 + 0.43 * y2 + 8.32 * y3 + 0.0007,
+        1.71 * y1 - 8.75 * y2,
+        -10.03 * y3 + 0.43 * y4 + 0.035 * y5,
+        8.32 * y2 + 1.71 * y3 - 1.12 * y4,
+        -1.745 * y5 + 0.43 * (y6 + y7),
+        -280.0 * y6 * y8 + 0.69 * y4 + 1.71 * y5 - 0.43 * y6 + 0.69 * y7,
+        f7,
+        -f7,
+    ])  # fmt: skip
+
+
+def hires_jac(y):
+    y = np.concatenate(([0.0], y))
+    J = np.zeros((9, 9))
+    J[1, 1] = -1.71
+    J[1, 2] = 0.43
+    J[1, 3] = 8.32
+    J[2, 1] = 1.71
+    J[2, 2] = -8.75
+    J[3, 3] = -10.03
+    J[3, 4] = 0.43
+    J[3, 5] = 0.035
+    J[4, 2] = 8.32
+    J[4, 3] = 1.71
+    J[4, 4] = -1.12
+    J[5, 5] = -1.745
+    J[5, 6] = 0.43
+    J[5, 7] = 0.43
+    J[6, 4] = 0.69
+    J[6, 5] = 1.71
+    J[6, 6] = -280.0 * y[8] - 0.43
+    J[6, 7] = 0.69
+    J[6, 8] = -280.0 * y[6]
+    J[7, 6] = 280.0 * y[8]
+    J[7, 7] = -1.81
+    J[7, 8] = 280.0 * y[6]
+    J[8, 6] = -280.0 * y[8]
+    J[8, 7] = 1.81
+    J[8, 8] = -280.0 * y[6]
+    return J[1:, 1:]
+
+
+def hires_initial(n, seed):
+    """
+    Pr in [0.5, 1.5] (all phytochrome starts as Pr), the enzyme total E = y7 + y8 log-uniform in
+    [0.003, 0.011] (a factor 2 around the standard 0.0057), the other forms zero, as in the standard start.
+    """
+    rng = np.random.default_rng(seed)
+    Y = np.zeros((n, 8))
+    Y[:, 0] = rng.uniform(0.5, 1.5, n)
+    Y[:, 7] = 10.0 ** rng.uniform(np.log10(0.003), np.log10(0.011), n)
+    return Y
+
+
+# --- POLLU: pollu.f (20 ODEs, 25 reactions; Verwer 1994, RIVM air pollution chemistry) ----------------
+# Rate constants: lines 111-123 (k3 = 0.123e5; pollu.pdf notes a typing error of k3 in [Ver94]); rates
+# r(j): lines 125-149; feval: lines 151-171; jeval: lines 203-303; init: lines 56-65; t(1): line 41;
+# solut: lines 325-344 (RADAU5 on a Cray C90, uround 1.01e-19, rtol = atol = h0 = 1.1e-18).
+# Time in minutes, concentrations in ppm (Verwer 1994). The photolysis rates are constant (no diurnal cycle).
+POLLU_SPECIES = ("NO2", "NO", "O3P", "O3", "HO2", "OH", "HCHO", "CO", "ALD", "MEO2", "C2O3", "CO2", "PAN",
+                 "CH3O", "HNO3", "O1D", "SO2", "SO4", "NO3", "N2O5")  # fmt: skip
+POLLU_K = np.array([0.0,  # index 0 unused, so POLLU_K[j] is kj of pollu.f
+                    .35, .266e2, .123e5, .86e-3, .82e-3, .15e5, .13e-3, .24e5, .165e5, .9e4, .22e-1, .12e5, .188e1,
+                    .163e5, .48e7, .35e-3, .175e-1, .1e9, .444e12, .124e4, .21e1, .578e1, .474e-1, .178e4, .312e1])  # fmt: skip
+POLLU_Y0 = np.zeros(20)
+POLLU_Y0[[1, 3, 6, 7, 8, 16]] = [0.2, 0.04, 0.1, 0.3, 0.01, 0.007]  # y2, y4, y7, y8, y9, y17
+POLLU_TEND = 60.0
+POLLU_REF = np.array([0.5646255480022769e-01, 0.1342484130422339e+00, 0.4139734331099427e-08, 0.5523140207484359e-02,
+                      0.2018977262302196e-06, 0.1464541863493966e-06, 0.7784249118997964e-01, 0.3245075353396018e+00,
+                      0.7494013383880406e-02, 0.1622293157301561e-07, 0.1135863833257075e-07, 0.2230505975721359e-02,
+                      0.2087162882798630e-03, 0.1396921016840158e-04, 0.8964884856898295e-02, 0.4352846369330103e-17,
+                      0.6899219696263405e-02, 0.1007803037365946e-03, 0.1772146513969984e-05, 0.5682943292316392e-04])  # fmt: skip
+
+
+def pollu_rhs(y):
+    """POLLU right-hand side; f(j) and r(j) read as in pollu.f (1-based)."""
+    k = POLLU_K
+    y = np.concatenate(([0.0], y))
+    r = np.zeros(26)
+    r[1] = k[1] * y[1]
+    r[2] = k[2] * y[2] * y[4]
+    r[3] = k[3] * y[5] * y[2]
+    r[4] = k[4] * y[7]
+    r[5] = k[5] * y[7]
+    r[6] = k[6] * y[7] * y[6]
+    r[7] = k[7] * y[9]
+    r[8] = k[8] * y[9] * y[6]
+    r[9] = k[9] * y[11] * y[2]
+    r[10] = k[10] * y[11] * y[1]
+    r[11] = k[11] * y[13]
+    r[12] = k[12] * y[10] * y[2]
+    r[13] = k[13] * y[14]
+    r[14] = k[14] * y[1] * y[6]
+    r[15] = k[15] * y[3]
+    r[16] = k[16] * y[4]
+    r[17] = k[17] * y[4]
+    r[18] = k[18] * y[16]
+    r[19] = k[19] * y[16]
+    r[20] = k[20] * y[17] * y[6]
+    r[21] = k[21] * y[19]
+    r[22] = k[22] * y[19]
+    r[23] = k[23] * y[1] * y[4]
+    r[24] = k[24] * y[19] * y[1]
+    r[25] = k[25] * y[20]
+    f = np.zeros(21)
+    f[1] = -r[1] - r[10] - r[14] - r[23] - r[24] + r[2] + r[3] + r[9] + r[11] + r[12] + r[22] + r[25]
+    f[2] = -r[2] - r[3] - r[9] - r[12] + r[1] + r[21]
+    f[3] = -r[15] + r[1] + r[17] + r[19] + r[22]
+    f[4] = -r[2] - r[16] - r[17] - r[23] + r[15]
+    f[5] = -r[3] + r[4] + r[4] + r[6] + r[7] + r[13] + r[20]
+    f[6] = -r[6] - r[8] - r[14] - r[20] + r[3] + r[18] + r[18]
+    f[7] = -r[4] - r[5] - r[6] + r[13]
+    f[8] = r[4] + r[5] + r[6] + r[7]
+    f[9] = -r[7] - r[8]
+    f[10] = -r[12] + r[7] + r[9]
+    f[11] = -r[9] - r[10] + r[8] + r[11]
+    f[12] = r[9]
+    f[13] = -r[11] + r[10]
+    f[14] = -r[13] + r[12]
+    f[15] = r[14]
+    f[16] = -r[18] - r[19] + r[16]
+    f[17] = -r[20]
+    f[18] = r[20]
+    f[19] = -r[21] - r[22] - r[24] + r[23] + r[25]
+    f[20] = -r[25] + r[24]
+    return f[1:]
+
+
+def pollu_jac(y):
+    k = POLLU_K
+    y = np.concatenate(([0.0], y))
+    J = np.zeros((21, 21))
+    J[1, 1] = -k[1] - k[10] * y[11] - k[14] * y[6] - k[23] * y[4] - k[24] * y[19]
+    J[1, 11] = -k[10] * y[1] + k[9] * y[2]
+    J[1, 6] = -k[14] * y[1]
+    J[1, 4] = -k[23] * y[1] + k[2] * y[2]
+    J[1, 19] = -k[24] * y[1] + k[22]
+    J[1, 2] = k[2] * y[4] + k[9] * y[11] + k[3] * y[5] + k[12] * y[10]
+    J[1, 13] = k[11]
+    J[1, 20] = k[25]
+    J[1, 5] = k[3] * y[2]
+    J[1, 10] = k[12] * y[2]
+
+    J[2, 4] = -k[2] * y[2]
+    J[2, 5] = -k[3] * y[2]
+    J[2, 11] = -k[9] * y[2]
+    J[2, 10] = -k[12] * y[2]
+    J[2, 19] = k[21]
+    J[2, 1] = k[1]
+    J[2, 2] = -k[2] * y[4] - k[3] * y[5] - k[9] * y[11] - k[12] * y[10]
+
+    J[3, 1] = k[1]
+    J[3, 4] = k[17]
+    J[3, 16] = k[19]
+    J[3, 19] = k[22]
+    J[3, 3] = -k[15]
+
+    J[4, 4] = -k[2] * y[2] - k[16] - k[17] - k[23] * y[1]
+    J[4, 2] = -k[2] * y[4]
+    J[4, 1] = -k[23] * y[4]
+    J[4, 3] = k[15]
+
+    J[5, 5] = -k[3] * y[2]
+    J[5, 2] = -k[3] * y[5]
+    J[5, 7] = 2.0 * k[4] + k[6] * y[6]
+    J[5, 6] = k[6] * y[7] + k[20] * y[17]
+    J[5, 9] = k[7]
+    J[5, 14] = k[13]
+    J[5, 17] = k[20] * y[6]
+
+    J[6, 6] = -k[6] * y[7] - k[8] * y[9] - k[14] * y[1] - k[20] * y[17]
+    J[6, 7] = -k[6] * y[6]
+    J[6, 9] = -k[8] * y[6]
+    J[6, 1] = -k[14] * y[6]
+    J[6, 17] = -k[20] * y[6]
+    J[6, 2] = k[3] * y[5]
+    J[6, 5] = k[3] * y[2]
+    J[6, 16] = 2.0 * k[18]
+
+    J[7, 7] = -k[4] - k[5] - k[6] * y[6]
+    J[7, 6] = -k[6] * y[7]
+    J[7, 14] = k[13]
+
+    J[8, 7] = k[4] + k[5] + k[6] * y[6]
+    J[8, 6] = k[6] * y[7]
+    J[8, 9] = k[7]
+
+    J[9, 9] = -k[7] - k[8] * y[6]
+    J[9, 6] = -k[8] * y[9]
+
+    J[10, 10] = -k[12] * y[2]
+    J[10, 2] = -k[12] * y[10] + k[9] * y[11]
+    J[10, 9] = k[7]
+    J[10, 11] = k[9] * y[2]
+
+    J[11, 11] = -k[9] * y[2] - k[10] * y[1]
+    J[11, 2] = -k[9] * y[11]
+    J[11, 1] = -k[10] * y[11]
+    J[11, 9] = k[8] * y[6]
+    J[11, 6] = k[8] * y[9]
+    J[11, 13] = k[11]
+
+    J[12, 11] = k[9] * y[2]
+    J[12, 2] = k[9] * y[11]
+
+    J[13, 13] = -k[11]
+    J[13, 11] = k[10] * y[1]
+    J[13, 1] = k[10] * y[11]
+
+    J[14, 14] = -k[13]
+    J[14, 10] = k[12] * y[2]
+    J[14, 2] = k[12] * y[10]
+
+    J[15, 1] = k[14] * y[6]
+    J[15, 6] = k[14] * y[1]
+
+    J[16, 16] = -k[18] - k[19]
+    J[16, 4] = k[16]
+
+    J[17, 17] = -k[20] * y[6]
+    J[17, 6] = -k[20] * y[17]
+
+    J[18, 17] = k[20] * y[6]
+    J[18, 6] = k[20] * y[17]
+
+    J[19, 19] = -k[21] - k[22] - k[24] * y[1]
+    J[19, 1] = -k[24] * y[19] + k[23] * y[4]
+    J[19, 4] = k[23] * y[1]
+    J[19, 20] = k[25]
+
+    J[20, 20] = -k[25]
+    J[20, 1] = k[24] * y[19]
+    J[20, 19] = k[24] * y[1]
+    return J[1:, 1:]
+
+
+def pollu_initial(n, seed):
+    """
+    The six emitted species (NO, O3, HCHO, CO, ALD, SO2) log-uniform within a factor 2 of their standard
+    values, all intermediates and products zero, as in the standard start.
+    """
+    rng = np.random.default_rng(seed)
+    Y = np.zeros((n, 20))
+    idx = [1, 3, 6, 7, 8, 16]
+    Y[:, idx] = POLLU_Y0[idx] * 2.0 ** rng.uniform(-1.0, 1.0, (n, len(idx)))
+    return Y
+
+
+# --- CHEMAKZO: chemakzo.f (Chemical Akzo Nobel; index-1 DAE, 6 components) -----------------------------
+# M y' = f(y) with M = diag(1, 1, 1, 1, 1, 0) (meval, lines 237-241): y6 is algebraic, f(6) = ks*y1*y4 - y6
+# (line 155). y = [FLB, CO2, FLBT, ZHU, ZLA, FLB.ZHU] (chemakzo.pdf, sec. 12.3). The source gives no ODE
+# form. Because the constraint is explicit in y6, substituting y6 = ks*y1*y4 into f(1..5) is an exact
+# reduction (not from the source) to a 5-species ODE: its solution is the DAE's for consistent initial
+# values, and the DAE's y6 is recovered as ks*y1*y4. feval: lines 126-155; jeval: lines 188-226; init:
+# lines 69-74; t(1): line 43; solut: lines 270-275 (PSIDE on a Cray C90, rtol = atol = 1e-19).
+# Time in minutes, concentrations in mol/l. sqrt(y2) requires CO2 >= 0 (feval returns ierr = -1 otherwise).
+AKZO_K1, AKZO_K2, AKZO_K3, AKZO_K4 = 18.7, 0.58, 0.09, 0.42
+AKZO_KBIG, AKZO_KLA, AKZO_KS, AKZO_PO2, AKZO_HEN = 34.4, 3.3, 115.83, 0.9, 737.0
+CHEMAKZO_SPECIES = ("FLB", "CO2", "FLBT", "ZHU", "ZLA")
+CHEMAKZO_Y0 = np.array([0.444, 0.00123, 0.0, 0.007, 0.0])
+CHEMAKZO_TEND = 180.0
+CHEMAKZO_REF6 = np.array([0.1150794920661702e0, 0.1203831471567715e-2, 0.1611562887407974e0,
+                          0.3656156421249283e-3, 0.1708010885264404e-1, 0.4873531310307455e-2])  # fmt: skip
+CHEMAKZO_REF = CHEMAKZO_REF6[:5]
+
+
+def chemakzo_rhs(y):
+    """f(1..5) of chemakzo.f with y6 = ks*y1*y4 substituted."""
+    y1, y2, y3, y4, y5 = y
+    y6 = AKZO_KS * y1 * y4
+    sq = np.sqrt(y2)
+    r1 = AKZO_K1 * y1**4 * sq
+    r2 = AKZO_K2 * y3 * y4
+    r3 = AKZO_K2 / AKZO_KBIG * y1 * y5
+    r4 = AKZO_K3 * y1 * y4**2
+    r5 = AKZO_K4 * y6**2 * sq
+    fin = AKZO_KLA * (AKZO_PO2 / AKZO_HEN - y2)
+    return np.array([
+        -2.0 * r1 + r2 - r3 - r4,
+        -0.5 * r1 - r4 - 0.5 * r5 + fin,
+        r1 - r2 + r3,
+        -r2 + r3 - 2.0 * r4,
+        r2 - r3 + r5,
+    ])  # fmt: skip
+
+
+def chemakzo_jac(y):
+    """
+    The DAE's jeval (6 x 6) times the tangent of y6 = ks*y1*y4: J = J6[:5, :5] + J6[:5, 5] (dy6/dy)^T,
+    with dy6/dy1 = ks*y4 and dy6/dy4 = ks*y1 (J6's last row, lines 224-225).
+    """
+    y1, y2, y3, y4, y5 = y
+    y6 = AKZO_KS * y1 * y4
+    y = np.array([0.0, y1, y2, y3, y4, y5, y6])
+    k1, k2, k3, k4, kbig, kla, ks = AKZO_K1, AKZO_K2, AKZO_K3, AKZO_K4, AKZO_KBIG, AKZO_KLA, AKZO_KS
+    r11 = 4.0 * k1 * y[1] ** 3 * np.sqrt(y[2])
+    r12 = 0.5 * k1 * y[1] ** 4 / np.sqrt(y[2])
+    r23 = k2 * y[4]
+    r24 = k2 * y[3]
+    r31 = (k2 / kbig) * y[5]
+    r35 = (k2 / kbig) * y[1]
+    r41 = k3 * y[4] ** 2
+    r44 = 2.0 * k3 * y[1] * y[4]
+    r52 = 0.5 * k4 * y[6] ** 2 / np.sqrt(y[2])
+    r56 = 2.0 * k4 * y[6] * np.sqrt(y[2])
+    fin2 = -kla
+    J = np.zeros((7, 7))
+    J[1, 1] = -2.0 * r11 - r31 - r41
+    J[1, 2] = -2.0 * r12
+    J[1, 3] = r23
+    J[1, 4] = r24 - r44
+    J[1, 5] = -r35
+    J[2, 1] = -0.5 * r11 - r41
+    J[2, 2] = -0.5 * r12 - 0.5 * r52 + fin2
+    J[2, 4] = -r44
+    J[2, 6] = -0.5 * r56
+    J[3, 1] = r11 + r31
+    J[3, 2] = r12
+    J[3, 3] = -r23
+    J[3, 4] = -r24
+    J[3, 5] = r35
+    J[4, 1] = r31 - 2.0 * r41
+    J[4, 3] = -r23
+    J[4, 4] = -r24 - 2.0 * r44
+    J[4, 5] = r35
+    J[5, 1] = -r31
+    J[5, 2] = r52
+    J[5, 3] = r23
+    J[5, 4] = r24
+    J[5, 5] = -r35
+    J[5, 6] = r56
+    J[6, 1] = ks * y[4]
+    J[6, 4] = ks * y[1]
+    J[6, 6] = -1.0
+    dy6 = np.zeros(5)
+    dy6[0], dy6[3] = J[6, 1], J[6, 4]
+    return J[1:6, 1:6] + np.outer(J[1:6, 6], dy6)
+
+
+def chemakzo_initial(n, seed):
+    """
+    FLB in [0.3, 0.6] and ZHU in [0.0035, 0.014] mol/l (the standard 0.444 and 0.007 mixed in other
+    proportions), CO2 log-uniform in [3e-4, 3e-3] around the standard 0.00123 and the saturation value
+    po2/H = 1.22e-3, FLBT and ZLA zero, as in the standard start.
+    """
+    rng = np.random.default_rng(seed)
+    Y = np.zeros((n, 5))
+    Y[:, 0] = rng.uniform(0.3, 0.6, n)
+    Y[:, 1] = 10.0 ** rng.uniform(np.log10(3e-4), np.log10(3e-3), n)
+    Y[:, 3] = 0.007 * 2.0 ** rng.uniform(-1.0, 1.0, n)
+    return Y
+
+
+HIRES = Network("hires", HIRES_SPECIES, hires_rhs, hires_jac, rtol=1e-8, atol=1e-14)
+POLLU = Network("pollu", POLLU_SPECIES, pollu_rhs, pollu_jac, rtol=1e-8, atol=1e-24)
+CHEMAKZO = Network("chemakzo", CHEMAKZO_SPECIES, chemakzo_rhs, chemakzo_jac, rtol=1e-8, atol=1e-14)
+NETWORKS.update({net.name: net for net in (HIRES, POLLU, CHEMAKZO)})
+
+
 def trajectories(net: Network, Y0: np.ndarray, dt: float, steps: int) -> np.ndarray:
     """(n, steps + 1, species) log10 states of the trajectories from the rows of Y0, sampled every dt."""
     Z = np.empty((len(Y0), steps + 1, len(net.species)))

@@ -34,3 +34,14 @@ def test_a_primordial_step_conserves_nuclei_and_charge():
 
     assert np.allclose(totals(y1), totals(y), rtol=1e-6, atol=1e-6)
     assert y1[-1] == y[-1] and y1[3] > y[3]  # isothermal; H2 forms
+
+
+def test_the_stiff_test_problems_match_their_published_reference_solutions():
+    from scipy.integrate import solve_ivp
+
+    for net, y0, tend, ref in ((c.HIRES, c.HIRES_Y0, c.HIRES_TEND, c.HIRES_REF), (c.POLLU, c.POLLU_Y0, c.POLLU_TEND, c.POLLU_REF),
+                               (c.CHEMAKZO, c.CHEMAKZO_Y0, c.CHEMAKZO_TEND, c.CHEMAKZO_REF)):  # fmt: skip
+        s = solve_ivp(lambda t, y, net=net: net.rhs(y), (0.0, tend), y0, method="Radau", jac=lambda t, y, net=net: net.jac(y),
+                      rtol=1e-10, atol=net.atol)  # fmt: skip
+        big = np.abs(ref) > 1e-6 * np.max(np.abs(ref))
+        assert np.max(np.abs(s.y[big, -1] - ref[big]) / np.abs(ref[big])) < 1e-6, net.name

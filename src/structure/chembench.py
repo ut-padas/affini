@@ -51,9 +51,18 @@ class ChemProblem:
     n_train: int
     n_test: int
     tolerances: tuple  # in dex
+    burn: float = 0.0  # trajectories start after this time, past the initial transient
+    floor: float = 0.0  # species below this abundance are not scored (an error in dex of ~0 means nothing)
 
     def step(self, Z: np.ndarray) -> np.ndarray:
         return self.net.log_step(Z, self.dt)
+
+    def scored(self, Z_true: np.ndarray) -> np.ndarray:
+        """Which entries count in the error: abundances above ``floor`` (the held temperature never)."""
+        mask = Z_true > (np.log10(self.floor) if self.floor > 0 else -np.inf)
+        if self.net.species[-1] == "T":
+            mask[..., -1] = False
+        return mask
 
 
 def _primordial_initial(n: int, seed: int) -> np.ndarray:
@@ -69,8 +78,11 @@ def _primordial_initial(n: int, seed: int) -> np.ndarray:
 
 PROBLEMS = {
     "robertson": ChemProblem(chemistry.ROBERTSON, 1.0, chemistry.robertson_initial, 40, 200, 100, (0.01, 0.001)),
-    "primordial": ChemProblem(chemistry.PRIMORDIAL, 1e4 * YEAR, _primordial_initial, 30, 60, 30, (0.01, 0.001)),
-}
+    "chemakzo": ChemProblem(chemistry.CHEMAKZO, 2.0, chemistry.chemakzo_initial, 85, 100, 40, (0.01, 0.001), burn=5.0, floor=1e-12),
+    "hires": ChemProblem(chemistry.HIRES, 2.0, chemistry.hires_initial, 170, 100, 40, (0.01, 0.001), burn=5.0, floor=1e-12),
+    "primordial": ChemProblem(chemistry.PRIMORDIAL, 1e4 * YEAR, _primordial_initial, 30, 60, 30, (0.01, 0.001), floor=1e-12),
+    "pollu": ChemProblem(chemistry.POLLU, 1.0, chemistry.pollu_initial, 59, 100, 40, (0.01, 0.001), burn=1.0, floor=1e-12),
+}  # fmt: skip (in order of input dimension: 3, 5, 8, 10, 20)
 
 
 def data(name: str) -> tuple[np.ndarray, np.ndarray]:
@@ -80,8 +92,10 @@ def data(name: str) -> tuple[np.ndarray, np.ndarray]:
         z = np.load(path)
         return z["train"], z["test"]
     p = PROBLEMS[name]
-    train = chemistry.trajectories(p.net, p.initial(p.n_train, 1), p.dt, p.steps)
-    test = chemistry.trajectories(p.net, p.initial(p.n_test, 2), p.dt, p.steps)
+    start = [p.initial(n, seed) for n, seed in ((p.n_train, 1), (p.n_test, 2))]
+    if p.burn > 0:
+        start = [p.net.step(Y, p.burn) for Y in start]
+    train, test = (chemistry.trajectories(p.net, Y, p.dt, p.steps) for Y in start)
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, train=train, test=test)
     return train, test
@@ -141,8 +155,31 @@ def chebtt_box(p: ChemProblem, states: np.ndarray, atol: float, seed: int):
     return BoxTT(models, lo, hi, oracle.evals)
 
 
+class BoxVectorTT(BoxTT):
+    """One vector ChebTT for every output on the padded bounding box of the training states."""
+
+    def predict(self, Q):
+        Q = np.clip(Q, self.lo, self.hi)
+        out = self.models.predict(Q)
+        return np.concatenate([out, np.zeros((len(Q), 1))], axis=1) if self.held else out
+
+
+def chebtt_vec(p: ChemProblem, states: np.ndarray, atol: float, seed: int):
+    held = p.net.species[-1] == "T"  # the held temperature is an input only: its increment is 0
+    m = states.shape[1] - (1 if held else 0)
+    lo, hi = states.min(axis=0), states.max(axis=0)
+    pad = 0.02 * np.maximum(hi - lo, 1e-3)
+    lo, hi = lo - pad, hi + pad
+    oracle = CachedOracle(p.step)
+    model = chebtt.build_vector(lambda X: (oracle(X) - X)[:, :m], lo, hi, atol, m, seed=seed, max_evals=400_000)
+    out = BoxVectorTT(model, lo, hi, oracle.evals)
+    out.held = held
+    return out
+
+
 METHODS = {"slowtable": ("SlowTable: tabulated visited states", "#8e24aa", slowtable),
-           "chebtt_box": ("ChebTT on the states' bounding box", "#e08a00", chebtt_box)}  # fmt: skip
+           "chebtt_box": ("ChebTT per species on the states' bounding box", "#e08a00", chebtt_box),
+           "chebtt_vec": ("one vector ChebTT on the states' bounding box", "#2e7d32", chebtt_vec)}  # fmt: skip
 
 
 def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) -> dict:
@@ -166,7 +203,8 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
     pred = model.predict(Zt)
     predict_us = 1e6 * (time.perf_counter() - t0) / len(Zt)
     refused = np.asarray(model.refuses(Zt), dtype=bool)
-    e = np.max(np.abs(pred - Gt), axis=1)
+    mask = p.scored(test[:, 1:].reshape(-1, test.shape[2]))
+    e = np.max(np.where(mask, np.abs(pred - Gt), 0.0), axis=1)
     ea = e[~refused] if (~refused).any() else np.zeros(1)
     m = {"method": method, "problem": name, "tol": tol, "evals": int(model.evals), "train_states": len(states),
          "worst": float(ea.max()), "q999": float(np.quantile(ea, 0.999)), "q99": float(np.quantile(ea, 0.99)),
@@ -197,7 +235,7 @@ def rollout(p: ChemProblem, model, true: np.ndarray) -> dict:
         if r.any():
             nxt[r] = p.step(Z[r])
         Z = nxt
-        err.append(float(np.max(np.abs(Z - true[:, k + 1]))))
+        err.append(float(np.max(np.where(p.scored(true[:, k + 1]), np.abs(Z - true[:, k + 1]), 0.0))))
         solved.append(float(r.mean()))
     return {"rollout_error_by_step": err, "rollout_solved_by_step": solved, "rollout_worst": max(err)}
 
