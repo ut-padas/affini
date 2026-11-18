@@ -37,7 +37,8 @@ class System:
     the surrogates see log10 of the state (abundances and other positive quantities, where a relative
     error is the meaningful one); otherwise the state itself. ``method``: the ``solve_ivp`` integrator
     of its step map; the Jacobian is passed only to an implicit one (an explicit one ignores it with a
-    warning), and is still used by the dynamics diagnostics.
+    warning), and is still used by the dynamics diagnostics. ``params``: the parameter values that set the
+    system's regime (Lorenz-96's forcing), printed beside its name in the plots; empty when none.
     """
 
     name: str
@@ -48,6 +49,7 @@ class System:
     atol: float = 1e-20
     log: bool = True
     method: str = "Radau"
+    params: str = ""
 
     def solve(self, y: np.ndarray, dt: float):
         """``solve_ivp`` of one state over dt with the system's integrator and tolerances."""

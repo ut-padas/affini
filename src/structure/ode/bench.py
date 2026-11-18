@@ -727,10 +727,10 @@ def _baseline_label(names: list[str], baseline: str | None) -> str:
 
 
 def _row_label(n: str) -> str:
-    """A problem's row: its name, input dimension and measured dynamics class (when diagnosed)."""
-    path = CACHE / f"{n}-dynamics.json"
-    kind = f"; {json.loads(path.read_text())['kind']}" if path.exists() else ""
-    return f"{n} ({len(PROBLEMS[n].system.components)}{kind})"
+    """A problem's row: its name, then its input dimension, its system's parameters and its measured dynamics class (when diagnosed)."""
+    system, path = PROBLEMS[n].system, CACHE / f"{n}-dynamics.json"
+    parts = [str(len(system.components)), system.params, json.loads(path.read_text())["kind"] if path.exists() else ""]
+    return f"{n} ({'; '.join(filter(None, parts))})"
 
 
 def _regime_problems() -> dict[str, list[str]]:

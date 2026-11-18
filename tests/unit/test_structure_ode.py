@@ -125,3 +125,10 @@ def test_the_fill_runs_the_first_families_before_the_rest_each_by_dimension():
     assert k == 4 and all(family(n) == "lorenz96" for n in names[:k])
     assert names[:k] == ["lorenz96_d4", "lorenz96_d5", "lorenz96_d10", "lorenz96_d20"]
     assert names[k:] == [n for n in ladder(20) if family(n) != "lorenz96"]
+
+
+def test_a_row_label_names_the_parameters_that_set_the_regime():
+    from src.structure.ode import bench as cb
+
+    assert cb._row_label("lorenz96_d10").startswith("lorenz96_d10 (10; F = 1")
+    assert cb._row_label("bruss_d10").startswith("bruss_d10 (10")

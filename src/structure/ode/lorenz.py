@@ -25,7 +25,7 @@ def lorenz96(n: int) -> System:
         return J
 
     return System(f"lorenz96_{n}", tuple(f"x{k}" for k in range(n)), lambda x: (x[ip] - x[im2]) * x[im] - x + L96_F, jac,
-                   atol=1e-12, log=False, method="RK45")  # fmt: skip
+                   atol=1e-12, log=False, method="RK45", params=f"F = {L96_F:g}")  # fmt: skip
 
 
 def lorenz96_initial(n: int):
