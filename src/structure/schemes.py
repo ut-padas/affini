@@ -12,7 +12,7 @@ import numpy as np
 
 from src import to_host, xp
 from src.infra.backend import MPI
-from src.structure import chebtree, chebtt, kernel, sparsegrid
+from src.structure import chebtree, chebtt, chebtt_adaptive, kernel, sparsegrid
 from src.structure.bench import Model, register
 
 _EVALUATE, _STOP = "evaluate", "stop"
@@ -103,6 +103,19 @@ def _chebtt_metric(f, lo, hi, atol, seed) -> Model:
     return Model(predict, None, 1 + rotated, m.evals + 1)
 
 
+def _chebtt_adaptive(f, lo, hi, atol, seed) -> Model:
+    """ChebTT-A: ChebTT with piecewise axes plus one interface term where f jumps across an oblique or curved interface or has a sharp front."""
+    probe = np.asarray(f(np.asarray(lo, dtype=np.float64)[None]))
+    if probe.ndim == 2 and probe.shape[1] > 1:
+        m = chebtt_adaptive.build_vector(f, lo, hi, atol, probe.shape[1], seed=seed)
+        pieces = 1 + sum(mm.interface is not None for mm in m.models)
+    else:
+        g = (lambda X: np.asarray(f(X)).reshape(len(X))) if probe.ndim == 2 else f
+        m = chebtt_adaptive.build(g, lo, hi, atol, seed=seed)
+        pieces = 1 + (m.interface is not None)
+    return Model(m.predict, None, pieces, m.evals + 1)
+
+
 def _kernel(f, lo, hi, atol, seed) -> Model:
     """MetricKernel, the learned-metric greedy kernel interpolant (its Sobol batches from ``seed``)."""
     m = kernel.build(f, lo, hi, atol, seed=seed, max_evals=50_000)
@@ -114,3 +127,4 @@ register("sparsecheb", "SparseCheb: adaptive sparse Chebyshev grid", "#6a1b9a", 
 register("chebtt", "ChebTT: Chebyshev tensor train, cross", "#e08a00", distributed(_chebtt))
 register("chebtt_metric", "ChebTT-M: ChebTT in the pullback-metric coordinates", "#1b7f5b", distributed(_chebtt_metric))
 register("kernel", "MetricKernel: learned-metric greedy kernel", "#2e7d9a", distributed(_kernel))
+register("chebtt_adaptive", "ChebTT-A: ChebTT with piecewise axes and interface terms", "#b5179e", distributed(_chebtt_adaptive))

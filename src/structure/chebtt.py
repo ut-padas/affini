@@ -368,7 +368,8 @@ def edge_at(g, c: float, delta: float, jump: bool) -> bool:
 
 
 def axis_edges(f, lo, hi, k: int, bases: np.ndarray, known, rng, share: float = 0.0, m: int = 65, max_edges: int = 3,
-               n_confirm: int | None = None, band: float = 1e-6, bands: list | None = None) -> tuple[list, int]:  # fmt: skip
+               n_confirm: int | None = None, band: float = 1e-6, bands: list | None = None,
+               oblique: list | None = None) -> tuple[list, int]:  # fmt: skip
     """
     Axis-aligned jumps and kinks on axis k, and the evaluations spent. Along the fibre through the
     first of ``bases`` (the next only if it finds nothing), the cells of a 65-point scan whose second
@@ -378,7 +379,9 @@ def axis_edges(f, lo, hi, k: int, bases: np.ndarray, known, rng, share: float = 
     present within ``band`` of the width of the same place or absent (f smooth there, the edge's factor
     vanishing), and present at one at least; a base whose fibre has an edge further away means an
     oblique interface, and rejects it. Each kept edge's band (its largest displacement plus its
-    location error) is appended to ``bands``: the model is not claimed within that distance of it.
+    location error) is appended to ``bands``: the model is not claimed within that distance of it. A
+    rejected (oblique) jump adds its two located positions, as points, to ``oblique``: they lie on the
+    interface, for a caller that models interfaces.
     Edges within 1e-6 of the width of ``known`` ones are skipped.
     """
     d = len(lo)
@@ -438,6 +441,15 @@ def axis_edges(f, lo, hi, k: int, bases: np.ndarray, known, rng, share: float = 
                 d2f = np.abs(vf[2:] - 2.0 * vf[1:-1] + vf[:-2])
                 if d2f.max() > 8.0 * np.median(d2f) + 1e-14 * max(float(np.abs(vf).max()), 1e-300):
                     tilted = True
+                    if oblique is not None and jump:
+                        cf = int(np.argmax(d2f))
+                        cell = cf + int(np.argmax(np.abs(np.diff(vf))[cf : cf + 2]))
+                        y0, dy, u = locate_edge(gf, t[cell], t[cell + 1], True, 1e-12 * w)
+                        used += u + 2
+                        if edge_at(gf, y0, max(dy, 1e-13 * w), True):
+                            p0, p1 = base.copy(), far.copy()
+                            p0[k], p1[k] = x0, y0
+                            oblique += [p0, p1]
                     break
             if present and not tilted:
                 found.append(float(x0))
@@ -462,6 +474,10 @@ def _algebraic(C: np.ndarray, pieces: int) -> bool:
     return bool(np.any(upper >= 0.15 * lower) and np.any(upper > 1e-14 * A.max()))
 
 
+class ObliqueEdge(RuntimeError):
+    """The edge search met a jump across an oblique interface (``build``'s ``interface`` holds points on it); the argument is the evaluations spent."""
+
+
 class RankLimit(RuntimeError):
     """The cross reached ``rank_max`` without meeting the tolerance (as opposed to running out of evaluations)."""
 
@@ -474,12 +490,15 @@ def check_points(lo, hi, n: int, seed: int) -> np.ndarray:
 
 def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step: int = 2, rank_max: int = 60,
           sweeps: int = 2, n_fibre: int = 4, n_max: int = 512, n_check: int | None = None, n_free: int = 20_000, chop_share: float = 0.25, n_probe: int = 4000,
-          seed: int = 0, max_evals: int = 2_000_000, edges: bool = True, max_pieces: int = 4) -> ChebTT:  # fmt: skip
+          seed: int = 0, max_evals: int = 2_000_000, edges: bool = True, max_pieces: int = 4,
+          interface: list | None = None) -> ChebTT:  # fmt: skip
     """
     Train a ChebTT of ``f`` (host (N, d) -> (N,)) on [lo, hi] to tolerance ``atol``. With ``edges``, an
     axis that must refine and whose coefficients decay algebraically is first searched for jumps and
     kinks (``axis_edges``); the ones found become breakpoints of that axis (at most ``max_pieces``
-    pieces, one degree for all of them) instead of a doubled degree.
+    pieces, one degree for all of them) instead of a doubled degree. With ``interface`` (a list), the
+    build stops with ``ObliqueEdge`` as soon as the edge search meets a jump across an oblique interface,
+    which no breakpoint represents, after adding the points located on it to that list.
     """
     lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
     d = len(lo)
@@ -503,8 +522,10 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
         pre += used
         if edges and not ok and 2 * nk <= n_max:
             bk = []
-            found, used = axis_edges(f, lo, hi, k, Xc[[int(np.argmax(np.abs(fc)))]], [], edge_rng, share, bands=bk)
+            found, used = axis_edges(f, lo, hi, k, Xc[[int(np.argmax(np.abs(fc)))]], [], edge_rng, share, bands=bk, oblique=interface)
             pre += used
+            if interface:
+                raise ObliqueEdge(pre)
             if found:
                 keep = np.argsort(found)[: max_pieces - 1]
                 breaks[k], bands[k], nk = np.asarray(found)[keep], np.asarray(bk)[keep], 16
@@ -574,8 +595,10 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, rank0: int = 2, rank_step
             if len(grid.breaks[k]) + 1 < max_pieces and _algebraic(model.cores[k], len(grid.breaks[k]) + 1):
                 searched.add(state)
                 bk = []
-                found, used = axis_edges(f, lo, hi, k, bases, grid.breaks[k], edge_rng, share, bands=bk)
+                found, used = axis_edges(f, lo, hi, k, bases, grid.breaks[k], edge_rng, share, bands=bk, oblique=interface)
                 pre += used
+                if interface:
+                    raise ObliqueEdge(grid.evals + pre)
                 if found:
                     allb, alls = list(grid.breaks[k]) + found, list(grid.bands[k]) + bk
                     keep = np.argsort(allb)[: max_pieces - 1]
