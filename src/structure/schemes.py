@@ -68,7 +68,7 @@ def distributed(train):
 def _chebtree(f, lo, hi, atol, seed) -> Model:
     """ChebTree (deterministic: the seed is unused)."""
     t = chebtree.build(f, lo, hi, atol)
-    return Model(t.predict, t.leaf_of, len(t.leaves), t.evals)
+    return Model(t.predict, t.leaf_of, len(t.leaves), t.evals, t.refuses)
 
 
 def _sparsecheb(f, lo, hi, atol, seed) -> Model:

@@ -12,7 +12,10 @@ problem and d, the maps (2-D: each method's pieces and its error map) and the co
 (evaluations against the worst error, the mean error and the share within tolerance).
 
 A method is a function ``(f, lo, hi, atol, seed) -> Model``; ``Model`` gives ``predict(X)``,
-``leaf_of(X)`` (or None), ``n_leaves`` and ``evals``. New schemes register in ``METHODS``.
+``leaf_of(X)`` (or None), ``n_leaves``, ``evals`` and optionally ``refuses(X)``. New schemes
+register in ``METHODS``. A refused query is answered by the oracle, as a simulation would fall back
+to its solver: the errors are those of the answers given, and ``refused_percent`` is the share of
+test points that needed the oracle.
 
 Under ``mpiexec`` (``SURROGATE_MPI=on``) the baselines train and predict collectively on every rank,
 with work stealing; the new schemes run on rank 0 and spread each round's oracle calls over every
@@ -55,6 +58,7 @@ class Model:
     leaf_of: object | None  # (N, d) -> (N,) leaf ids, or None
     n_leaves: int
     evals: int
+    refuses: object | None = None  # (N, d) -> (N,) bool: queries the model declines, answered by the oracle
 
 
 class CountingOracle:
@@ -221,16 +225,24 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
     if rank != 0:
         return None
     pred = np.asarray(pred, dtype=np.float64).ravel()
+    refused = np.zeros(len(X), dtype=bool) if model.refuses is None else np.asarray(model.refuses(X), dtype=bool)
+    pred = np.where(refused, fX, pred)
+    if slice_pred is not None and model.refuses is not None:
+        r = np.asarray(model.refuses(Xs[inside]), dtype=bool)
+        slice_pred = np.where(r, p.values(Xs[inside]), np.asarray(slice_pred, dtype=np.float64).ravel())
     e = np.abs(pred - fX)
     metrics = {"method": method, "problem": problem, "d": d, "tol": tol, "seed": seed, "atol": atol,
                "leaves": int(model.n_leaves), "evals": int(model.evals), "within_percent": float(100 * np.mean(e <= atol)),
                "mean_error": float(e.mean()), "max_error": float(e.max()), "max_ratio": float(e.max() / atol),
                "train_s": train_s, "predict_us": 1e6 * predict_s / len(X), "oracle_us": oracle_us, "ranks": size,
+               "refused_percent": float(100 * refused.mean()),
                "device": setup().split("-")[0]}  # fmt: skip
     path.parent.mkdir(parents=True, exist_ok=True)
     extra = {}
     if seed == SEEDS[0]:
         extra["pred"] = pred.astype(np.float32)
+        if refused.any():
+            extra["refused"] = refused
         if model.leaf_of is not None and d == 2:
             extra["leaf"] = np.asarray(model.leaf_of(X)).astype(np.int32)
         if d > 2:
@@ -283,7 +295,13 @@ def plot_maps(problem: str, methods: list[str], tol: float, out: Path) -> Path:
                    levels=12, colors="#999999", linewidths=0.4, alpha=0.7)  # fmt: skip
         ax.set_title(f"{label_of(method, m)}\n{m['leaves']} pieces, {m['evals']:,} evaluations", fontsize=8)
         axes[1, j].imshow(e, origin="lower", extent=ext, cmap=_ERR, norm=_ERR_NORM, interpolation="nearest", aspect="auto")
-        axes[1, j].set_title(f"error / tolerance: {m['within_percent']:.1f}% within, worst {m['max_ratio']:.2f}", fontsize=8)
+        refused = f", {m['refused_percent']:.2f}% refused (grey)" if m.get("refused_percent") else ""
+        if "refused" in z:
+            r = z["refused"].reshape(GRID, GRID)
+            axes[1, j].imshow(np.ma.masked_where(~r, r), origin="lower", extent=ext, cmap=ListedColormap(["#9e9e9e"]),
+                              interpolation="nearest", aspect="auto")  # fmt: skip
+        axes[1, j].set_title(f"error / tolerance: {m['within_percent']:.1f}% within, worst {m['max_ratio']:.2f}{refused}",
+                             fontsize=8)  # fmt: skip
         for a in axes[:, j]:
             a.set_xticks([]), a.set_yticks([])
     fig.suptitle(f"{problem}, tolerance {tol:g} of max |f| (seed {SEEDS[0]}); grey lines: contours of f; {setup()}", fontsize=10)
@@ -422,9 +440,10 @@ def plot_cost(problem: str, d: int, methods: list[str], out: Path) -> Path:
 
 def write_summary(d: int, methods: list[str], out: Path) -> Path:
     """``summary-d<d>.md``: every cached problem's seed-mean metrics per tolerance and method."""
-    lines = [f"# Summary, d = {d} (seed means; worst = worst |error| / tolerance)", "",
-             "| problem | tol | method | ranks | pieces | evaluations | worst | % within | mean error | train s | infer us/query |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
+    lines = [f"# Summary, d = {d} (seed means, except the worst seed's worst; worst = worst |error| / tolerance; "
+             "refused queries are answered by the oracle)", "",
+             "| problem | tol | method | ranks | pieces | evaluations | worst | worst seed | % within | % refused | mean error | "
+             "train s | infer us/query |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
     for problem, p in PROBLEMS.items():
         for tol in p.tolerances(d):
             for method in methods:
@@ -433,13 +452,14 @@ def write_summary(d: int, methods: list[str], out: Path) -> Path:
                 if not ms:
                     continue
                 if all("failed" in m for m in ms):
-                    lines.append(f"| {problem} | {tol:g} | {METHODS[method][0]} | {ms[0].get('ranks', 1)} | | over budget | | | | | |")
+                    lines.append(f"| {problem} | {tol:g} | {METHODS[method][0]} | {ms[0].get('ranks', 1)} | | over budget | | | | | | | |")
                     continue
                 ms = [m for m in ms if "failed" not in m]
-                a = {k: np.mean([m[k] for m in ms]) for k in ("leaves", "evals", "max_ratio", "within_percent", "mean_error",
-                                                               "train_s", "predict_us")}  # fmt: skip
+                a = {k: np.mean([m.get(k, 0.0) for m in ms]) for k in ("leaves", "evals", "max_ratio", "within_percent",
+                                                                        "refused_percent", "mean_error", "train_s", "predict_us")}  # fmt: skip
                 lines.append(f"| {problem} | {tol:g} | {METHODS[method][0]} | {ms[0].get('ranks', 1)} | {a['leaves']:.0f} | "
-                             f"{a['evals']:,.0f} | {a['max_ratio']:.3g} | {a['within_percent']:.2f} | {a['mean_error']:.2e} | "
+                             f"{a['evals']:,.0f} | {a['max_ratio']:.3g} | {max(m['max_ratio'] for m in ms):.3g} | "
+                             f"{a['within_percent']:.2f} | {a['refused_percent']:.2f} | {a['mean_error']:.2e} | "
                              f"{a['train_s']:.2f} | {a['predict_us']:.2f} |")  # fmt: skip
     path = out / f"summary-d{d}.md"
     path.write_text("\n".join(lines) + "\n")

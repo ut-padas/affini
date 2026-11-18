@@ -103,6 +103,7 @@ class ChebTree:
     child: list[tuple[int, int]] = field(default_factory=list)
     leaf: list[int] = field(default_factory=list)  # leaf index or -1
     leaves: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = field(default_factory=list)  # (lo, hi, coef)
+    trusted: list[bool] = field(default_factory=list)  # per leaf: accepted on its estimate and checks, not at max_depth
     evals: int = 0
     check_evals: int = 0  # evaluations spent on drawn check points (included in evals)
     check_catches: int = 0  # boxes whose estimate passed but whose check points did not
@@ -122,6 +123,10 @@ class ChebTree:
             na = node[act]
             right = X[act, axis[na]] >= value[na]
             node[act] = child[na, right.astype(np.int64)]
+
+    def refuses(self, X: np.ndarray) -> np.ndarray:
+        """Per query: its box was accepted only because it reached ``max_depth``, so the caller should ask the oracle."""
+        return ~np.asarray(self.trusted, dtype=bool)[self.leaf_of(np.asarray(X, dtype=np.float64))]
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         X = np.asarray(X, dtype=np.float64)
@@ -261,7 +266,8 @@ def build(f, lo, hi, atol: float, n0: int = 8, n_max: int = 64, min_drop: float 
     ``n0`` is the root's degree per axis (an int, or one per axis); a split resets the split axis to
     at least ``n_floor`` (default: the smallest root degree). A box at ``max_depth`` (default 8 d:
     on average 8 halvings per axis, boxes down to 1/256 of the domain) is accepted as it is, so a
-    jump, which no polynomial resolves, ends in a thin band of small boxes instead of endless splits.
+    jump, which no polynomial resolves, ends in a thin band of small boxes instead of endless splits;
+    unless it also passed its estimate and checks, it is untrusted and ``refuses`` its queries.
     """
     lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
     d = len(lo)
@@ -320,6 +326,7 @@ def build(f, lo, hi, atol: float, n0: int = 8, n_max: int = 64, min_drop: float 
             if (estimate_ok and check <= safety * atol) or box.depth >= max_depth:
                 tree.leaf[box.node] = len(tree.leaves)
                 tree.leaves.append((box.lo, box.hi, chop(c, chop_share * atol)))
+                tree.trusted.append(bool(estimate_ok and check <= safety * atol))
                 continue
             factor = [1] * d
             if estimate_ok:  # the grid looks resolved but a check point disagrees: aliasing
@@ -388,6 +395,9 @@ class RotatedChebTree:
 
     def leaf_of(self, X):
         return self.tree.leaf_of((np.asarray(X) - self.centre) @ self.W)
+
+    def refuses(self, X):
+        return self.tree.refuses((np.asarray(X) - self.centre) @ self.W)
 
 
 def gradient_directions(f, lo, hi, n_points: int, seed: int = 0, step: float = 1e-5):
