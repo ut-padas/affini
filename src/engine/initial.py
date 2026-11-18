@@ -47,8 +47,9 @@ def initial_clustering(X: Array, config: TrainingConfig, *, threads: int | None 
     """
     method = config.initial_clustering_method
     if method == "kmeans":
-        # Custom k-means (src/neighbors/kmeans.py). The CPU path keeps the previous two Lloyd
-        # iterations; training passes the cores of rank 0's node, whose other ranks wait.
+        # Custom k-means (src/neighbors/kmeans.py): two Lloyd iterations on the CPU, up to
+        # kmeans_labels' 300 on the GPU, so the two backends start from different clusterings.
+        # Training passes the cores of rank 0's node, whose other ranks wait.
         from src.neighbors.kmeans import kmeans_labels
 
         if IS_CUPY_BACKEND:

@@ -517,9 +517,10 @@ class AdaptiveSurrogate:
         for the flagged queries (``src.neighbors.containment``): a query is then flagged only
         if no trust region contains it, and a flagged query that one does contain is answered
         by its containing leaves (the ``k_nn`` nearest in their metrics, ahead of the
-        candidates). Rows the first pass does not flag keep their bits. It costs one float32
-        pass over all centres per flagged query, so little while few are flagged; report
-        ``p_o`` with it, so that it does not depend on ``coarse_factor``.
+        candidates). Rows the first pass does not flag keep their bits. Each flagged query
+        costs a walk of a box tree over the leaves on the CPU and a fused test of every leaf on
+        the GPU, so the search is cheap while few queries are flagged; report ``p_o`` with it,
+        so that it does not depend on ``coarse_factor``.
 
         ``predictor="route"`` (the default, and only meaningful choice, for ART
         models): each query is routed down the tree to exactly one leaf, whose model

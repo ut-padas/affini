@@ -77,7 +77,7 @@ A plan's `process_batch` runs four stages on its batch:
   change.
 - **Memory.** The batch size is capped from the free device memory and the plan's
   `bytes_per_point`; a batch's points are released before augmentation and splitting, which
-  hold its peak. Host queues check available RAM before they grow.
+  hold its peak. Host queues check the available RAM on every append.
 - **MPI failures.** `driver.run_collective` wraps every collective entry point: in one process an
   exception propagates; under MPI the failing rank logs it and aborts every rank.
 - **Work stealing** (`src/engine/work_stealing.py`). Every steal request gets exactly one grant
