@@ -62,7 +62,7 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
   Chemistry: trajectories in `cache/chem/<problem>.npz`, runs in
   `cache/chem/<problem>/<method>_tol<t>.json`, plots and `summary-chem.md` in `output/chem/`.
 - Literature: [LITERATURE.md](LITERATURE.md) (every work reviewed, IDs I-* to V-*); reviews I-V are
-  sections 2-6 below.
+  sections 2-6 below, Review VI (vector-valued outputs) section 8.
 
 ### 0.2 How the work proceeds (standing rules)
 
@@ -167,16 +167,25 @@ at 0.05 over the 300k budget). Over budget at 5-D: the rotated Gaussian, `lorenz
    (MetricKernel) did not survive the box ladder; ISAT-style ellipsoids shaped by the Jacobian
    (SlowTable) cover visited chemistry states but refuse most new trajectories of the primordial
    network (section 1.12).
+- **Vector outputs share coordinates, not models.** Without noise, one model over all outputs cannot
+  be more accurate than separate ones at the same points; in a tensor train it pays the union of the
+  outputs' ranks squared. Train each output separately on one cache of f, and rotate groups of outputs
+  that are ridges of shared oblique coordinates to the eigenvectors of their pullback metric:
+  3.6-17x fewer evaluations on two shared coordinates at 5-10-D (section 1.19). The metric must be
+  per output: one global rotation destroys separable outputs.
 
 ### 0.5 In progress and next
 
-- Running: the fill driver on the vector-valued problems (`fill --vector --d 2,3,5,10,20 --limit 90`;
-  2-D: five of the six problems done); then the scalar fill resumes (`fill --d 2,3,5,10,20
-  --limit 90`), which re-runs ChebTT from 2-D up and adds every method's missing cases.
-- In progress: Review VI, vector-valued surrogates (shared or separate models per output, error
-  control per component); its works go into LITERATURE.md.
+- Running: the fill driver on the vector-valued problems, now seven with `shared_latent`
+  (`fill --vector --d 2,3,5,10,20 --limit 90`), with ChebTT (separate trains, one cache) and ChebTT-M
+  beside the baselines; then the scalar fill (`fill --d 2,3,5,10,20 --limit 90`), which re-runs ChebTT
+  and adds ChebTT-M everywhere. ChebTT's vector runs and its scalar 2-D runs were cleared: they came
+  from the joint train or the slower contraction (section 1.19).
 - Next, once the vector ladder is done: compare ChebTT's inference time at 10-D and 20-D with the
   baselines' in `overview-d<d>-cost.png`, with ChebTT compressed; then resume the chemistry bench.
+- Chemistry, when resumed: `chebtt_metric` (ChebTT-M per species in log abundances) beside
+  `chebtt_box` and SlowTable; first print the species' pullback-metric spectrum and groups, which
+  say whether they share coordinates. Then the KL projection onto the conserved totals (section 8.4).
 - Chemistry, when resumed: run HIRES, POLLU and Akzo Nobel (only SlowTable at Akzo 0.01 so far);
   per-species against vector ChebTT on the species' shared slow manifold; per-step tolerances of
   tol / N for chained runs; SlowTable's ellipsoids sized by curvature instead of the linear change,
@@ -523,10 +532,10 @@ for every component, and the error is the componentwise relative max norm (each 
 recorded too). The 2-D maps add a column with the field (|f| with streamlines); the views use the
 Jacobian's Gram matrix; the overview is `overview-vector-d<d>.png`.
 
-ChebTT treats the outputs as a discrete last axis (`build_vector`): one oracle call serves every
-output, the check points sit on that axis's nodes and its degree never changes. The cost is in the
-ranks, which add up across outputs with different structure: five outputs cos(a_c . x) in 6-D needed
-7.8k evaluations as one vector train against 4.7k for five separate trains (rank 10, two per ridge).
+ChebTT first treated the outputs as a discrete last axis (one train, one oracle call serving every
+output). Its cost is in the ranks, which add up across outputs with different structure: five outputs
+cos(a_c . x) in 6-D needed 7.8k evaluations as one vector train against 4.7k for five separate trains
+(rank 10, two per ridge). It was replaced by separate trains on one shared cache (section 1.19).
 
 First results, 2-D:
 
@@ -562,12 +571,77 @@ First results, 2-D:
 - The GPU never beat 8 CPU ranks on these workloads (launch- and transfer-bound, 200k kernel launches)
   and predicted 2-50x slower per query.
 
+- **Editing `src` while a fill runs breaks it**: every job imports the code afresh, so a half-written
+  `chebtt.py` crashed the remaining jobs (a syntax error on import), and the driver then stopped on the
+  missing cache entry. The fill now reports a crashed job and records nothing for it; the rule is
+  still not to edit `src` during a fill.
+
 ### 1.18 Engine findings from the same work
 
 - A stable counting sort plus per-block merge sort replaced two full-batch argsorts in
   `sort_by_block_then_value`: single-thread AFINNI training 36-39% faster, bit-identical results.
 - In the distributed experiment, work stealing on and off gave identical trees, evaluation counts
   and times from 2 to 64 ranks at tolerance 0.05: stealing rarely or never triggers for that workload.
+
+### 1.19 Vector outputs: separate trains on one cache, rotated by the outputs' shared metric
+
+Review VI (section 8) set the frame: f gives every output at every point without noise, so sharing a
+model cannot make an interpolant more accurate at a given point set (the cancellation of inter-task
+transfer, VI-2); sharing can only save points and inference work. In a tensor train, one train over
+all outputs pays the union of their factor spaces: each bond rank lies between the largest output's
+and the sum of theirs, and the sampling pays it squared.
+
+**Separate trains, one cache** (`chebtt.build_vector`, bench method `chebtt`). One scalar ChebTT per
+output; every oracle call stores all m outputs, and the trains share the degree pre-pass, the Sobol
+checks and the first fibres (same seed), so they cost 1.3-1.9x fewer evaluations than independent
+trains with identical models, and beat the joint train on 10 of 13 cases by 1.1-34x (one seed,
+serial; 10-D swirl 31k against 1.07M, 10-D Lotka-Volterra 33k against 116k). The joint train won only
+on coherent outputs (`wave_pair`, the cos and sin of one ridge: 763 against 1,255 at 5-D).
+
+**What the outputs share is coordinates** (`build_vector(rotate=True)`, bench method `chebtt_metric`,
+ChebTT-M). A pilot of forward differences at 4 + 2d Sobol points (rounded up to a power of two; all
+outputs at once) gives every output's pullback metric G_c = mean grad f_c grad f_c^T. An output is
+rotated when its eigenvectors hold 99% of trace(G_c) in at most half as many directions as the axes do
+(a separable output never is: a rotation destroys its rank 1). Outputs whose leading subspaces merge
+without growing form a group trained in the eigenvectors of their summed, trace-normalised metric, on
+the box bounding the domain in those coordinates. That box extends beyond the domain, so a group keeps
+the axes where f at 2d random points of its box is not finite or exceeds 10x its largest pilot value.
+One seed, serial, evaluations / worst (tolerance units):
+
+| Case | separate, one cache | ChebTT-M | joint train |
+|---|---|---|---|
+| `shared_latent` without curvature, 5-D 0.05 | 45k / 0.41 (4.7k coefficients) | **12.6k** / 0.40 (383) | 109k / 0.50 |
+| `shared_latent` (curved), 5-D 0.05 | 430k / 0.64 (20k) | **78k** / 0.54 (917) | 449k / 0.46 |
+| `shared_latent` without curvature, 10-D 0.1 | 922k / 0.32 (36k), 4.7 us/query | **54k** / 0.26 (519), 1.6 us | – |
+| `shared_latent` (curved), 10-D 0.1 | over 2M | running in the fill | – |
+| `genz_triple`, 5-D 0.05 | 1.4k / 0.30 (177) | 2.1k / 0.30 (54; all three rank 1) | 2.6k |
+| `wave_pair`, 5-D 0.05 | 1.3k / 0.24 (182) | 1.5k / 0.18 (35, rank 1) | 763 |
+| `swirl`, `rosenbrock_gradient` | as separate | axes kept (metric isotropic or axis-aligned) | – |
+| `lotka_volterra_state` | as separate | rotation refused: the ODE leaves its orthant | – |
+
+- The gain grows with d: 3.6x at 5-D, 17x at 10-D on the shared oblique coordinates, and 12-70x fewer
+  coefficients. Curvature halves it but does not remove it (5.5x at 5-D).
+- One global rotation for all outputs is wrong: on `genz_triple` the oscillatory output dominates the
+  summed metric (0.95 of it on one direction) and the rotation made the product peak rank 10 (20k
+  evaluations against 1.4k); on isotropic `swirl` it cost 6x. Hence the per-output decision and groups.
+- Where nothing is gained, ChebTT-M costs the pilot, (d + 1) times 8-64 points; at 2-D it costs 25-40%
+  more than ChebTT on `shared_latent` (two shared coordinates in 2-D are the whole space).
+- Limits: the pilot sees nothing of a feature its points miss (the narrow rotated Gaussian), and the
+  rotation is global: a curved manifold needs local coordinates, which is the SlowTable direction for
+  chemistry (records in the local Jacobian metric). In log abundances the step map is defined off the
+  visited states, so the refusal test should pass there.
+
+**Faster contraction (all ChebTT models).** Per core, the Chebyshev values times the core first,
+(Q, n + 1) x (n + 1, r_k r_k+1) in one matrix product, then the running row vector times that (a
+plain scaling when the left rank is 1), instead of the row vector into the core first, which leaves a
+strided (Q, n + 1, r) temporary. A vector model's group shares the Chebyshev values of its
+coordinates, and `compress` computes the probe's values once instead of in each of its ~70 trials.
+Interleaved A/B, 2 rounds, scalar ChebTT: identical evaluations and worst errors on 6 cases (5-D to
+20-D); training 1.7-5.7x faster, inference 1.2-2.4x. Vector models, 10-D: Lotka-Volterra 2.1 -> 1.3
+us per query, `shared_latent` 1.1 -> 0.36, `rosenbrock_gradient` 0.75 -> 0.28, 5-D `swirl` 1.45 ->
+0.46. Rejected: stacking a group's outputs zero-padded into one contraction (faster only at batches of
+about 1k; up to 4.6x the coefficients), and merging the outputs into one rounded train (faster only on
+Lotka-Volterra, 0.70 against 1.18 us, and it moves predictions by up to 0.25 of the tolerance).
 
 ---
 
@@ -1550,3 +1624,238 @@ verified local bounds or checking more of the answers.
 The experiments then move from box test functions to chemistry: Robertson's stiff problem, a
 primordial H/He/H2 network, then larger sparse networks, all trained from trajectory data and judged
 by the worst error on held-out trajectories, the solver-call rate and the inference time.
+
+---
+
+## 8. Review VI: surrogates of vector-valued functions
+
+Scope: sharing structure across outputs R^d -> R^m, error metrics, the output index in a TT, conservation
+and positivity, and experiments to choose a vector ChebTT design. Tags: [v] source read, [a] abstract or
+summary, [r] recalled. New works VI-1 to VI-23 (docs/LITERATURE.md); earlier ones by their IDs.
+
+### 8.0 Bottom line (ranked by gain over cost)
+
+Scratch runs, one seed, serial, with `chebtt.build` and the joint `build_vector` it then had. Recommendations 1 and 5
+were adopted, and 2-4 superseded by ChebTT-M (section 1.19). Evaluations:
+
+| Problem, d, tol | vector TT (output last) | separate TTs | separate TTs, one shared cache |
+|---|---|---|---|
+| 5 x cos(a_c.x), 6, 0.01 | 18,264 | 4,986 | **2,765** |
+| swirl, 2, 0.1 | **608** | 1,270 | 697 |
+| swirl, 2, 0.01 | 1,426 | 2,216 | **1,229** |
+| swirl, 5, 0.05 | 53,026 | 10,939 (worst 1.03 tol) | 7,770 (1.03 tol) |
+| swirl, 10, 0.1 | 1,071,581 | 41,397 | **31,188** |
+| rosenbrock_gradient, 5 / 10 | 3,856 / 44,935 | 3,937 / 16,570 | **2,067 / 9,120** |
+| genz_triple, 5 / 10 | 2,594 / 8,290 | 2,270 / 4,917 | **1,395 / 3,363** |
+| lotka_volterra_state, 5 / 10 | 4,319 / 115,802 | 7,090 / 43,815 | **3,841 / 32,780** |
+| wave_pair, 5 / 10 | **763 / 1,471** | 1,815 / 3,416 | 1,255 / 2,647 |
+
+Every model holds its tolerance (0.2-0.6 of it) except the separate TTs on 5-D swirl (1.03).
+
+1. **Make "separate scalar ChebTTs with one shared oracle cache" the default vector ChebTT** (gain 1.3-1.9x
+   over separate TTs and 1.1-34x over the vector TT on 10 of 13 cases; it costs about 20 lines). Every oracle
+   call stores all m outputs, keyed by point. The m builds use the same seed, so they share the degree
+   pre-pass fibres, the Sobol check set and the first maxvol fibres (all seeded at the peak and the centre),
+   and the models equal independent builds (identical worst errors in every case). This is the "multiple
+   TT-cross" of Olivier et al. [VI-15, a]: own cores and ranks per output, shared sample points.
+2. **Pick joint or separate per group of outputs with a rank test** (a further 1.6-1.8x on coherent
+   outputs, wave_pair). One TT over a group pays about R_k R_{k+1} oracle calls per core and per node. Here R_k is the
+   joint bond rank, which lies between max_c r_{c,k} and sum_c r_{c,k}. Separate TTs pay
+   sum_c r_{c,k} r_{c,k+1}. So joint wins when R_k < sqrt(sum_c r_{c,k}^2), about sqrt(m) times one
+   component's rank. With ranks read off the 2-D and 5-D grids (section 3), this rule predicts the winner in 12 of the 13
+   runs above; the miss is 2-D swirl at 0.1, within 15%.
+3. **Fix `build_vector`'s checks: expand every check point to all m output nodes** (no extra oracle calls).
+   Today each Sobol, free and look-ahead check tests only the output its snapped last coordinate names, so
+   each output gets 1/m of the checks: a reliability fix for the worst error.
+4. **Rank per bond, and the output core in the middle, if the vector TT is kept** (gain about 1.7x on the
+   proxy). ChebTT grows one rank r on every bond at once. A joint TT's compressed ranks rise towards the
+   output core (10-D Lotka-Volterra: 3, 6, 10, 15, 19, 21, 21, 21, 18, 10), so the sampling pays the largest
+   bond rank everywhere. This explains most of the 10-D blow-ups (swirl 1.07M evaluations). AMEn or greedy
+   cross adapts rank per bond [V-3; V-9, v]. On the coupled Lotka-Volterra species the middle
+   placement alone beats separate TTs on the proxy (96 against 160), so this is the variant to test for
+   chemistry.
+5. **Drop "output PCA, then scalar TTs" for box surrogates.** On the rank proxy it is the worst option or
+   tied everywhere: 1.0-9x the separate TTs' cost, 16x the best joint TT's on shared coordinates (section 3). Keep PCA of the outputs only as a *local*
+   basis, which is the range of the step map's Jacobian (slow modes, §1.11), inside a record or a cell.
+6. **Chemistry: project onto the conserved totals in log coordinates** (exact conservation and positivity
+   at a few hundred flops; expected to remove the conserved-direction part of the rollout drift in §1.12).
+   See section 4.
+7. **Metric for chemistry:** report the worst |Δ log10 n_i| (dex) over species above an abundance floor,
+   the worst relative conservation residual, and the rollout error. Do not scale a species' increment by
+   its own maximum: that makes a species that barely changes as hard to fit as one that changes a lot.
+
+### 8.1 How the families handle multiple outputs (Q1)
+
+**What sharing can buy.** Our oracle returns all m outputs at every point, without noise: the "block
+design" of Bonilla et al. [VI-2, a]. Under noise-free observations and a block design, an intrinsic
+coregionalisation GP predicts each task from its own targets only, and "a cancellation of inter-task
+transfer occurs". The same holds for any linear interpolant with a shared basis (polynomial, sparse grid,
+kernel with one scalar kernel): f_c-hat = P f_c, componentwise. So **sharing never makes an interpolant
+more accurate at a given point set.** It can only (a) let one oracle call serve every output, (b) choose
+one point set that serves all outputs, and (c) share the inference work. What matters is how far the joint
+design exceeds the union of each output's needs.
+
+| Family | What is shared | Cost of the joint design | When sharing pays |
+|---|---|---|---|
+| Multi-output GP: LMC K = sum_q B_q k_q, ICM (Q = 1) [VI-1, a; VI-3, a; VI-6, r; VI-23, r]; co-kriging across fidelities [VI-22, r] | kernel hyperparameters, one Gram factorisation (ICM) | points = union | noisy or missing outputs, few data; not for our block design [VI-2] |
+| Separable matrix-valued kernels, VKOGA [IV-13, a; VI-5, a; VI-7, r] | centres chosen by the residual of the whole vector; one Gram matrix, vector coefficients | the greedy set must serve the worst output | always cheap in points (no rank penalty); matrix-valued kernels help only when outputs correlate [VI-5] |
+| Sparse grids / PCE with shared index sets [VI-8, a; VI-16, a] | one grid; refinement on one output or on all with weights (Tasmanian `iOut`) | union of the refinements | always fine: cost is the union |
+| Output PCA (PCA-PCE, PCA-GP, PCA-Net, POD-DeepONet) [VI-4, a; VI-9, a; VI-10, a; VI-11, a/r] | an output basis U (m x r); r scalar surrogates of the coefficients U^T f | coefficients mix outputs | outputs of very high dimension (fields, time series) with fast PCA decay |
+| EIM / DEIM [VI-12, r; VI-13, a] | a basis plus r "magic" output indices; f ≈ U (P^T U)^-1 P^T f | r oracle outputs instead of m | when outputs are expensive one by one; here all come at once |
+| ISAT records [III-12, v] | one region (EOA) and one linear map A (m x d) per record for all species; error is a scaled 2-norm of the whole vector [r] | the region shrinks to the most demanding species | species share curvature directions (a slow manifold) |
+| TT with an output index [VI-14, a; V-9, v; VI-15, a] | every core | bond ranks are those of the union (section 3) | coherent outputs: R_k ≈ max_c r_c |
+
+The **"rank-sum" penalty is specific to tensor trains**: in point-based schemes (kernels, ISAT, sparse
+grids, trees) a joint design costs about the union of the per-output designs; in a TT it costs the joint
+rank squared, and incoherent outputs' joint rank is the *sum* of theirs. Output PCA does not reduce rank: a
+coefficient U_j^T f mixes every component, so has the union's TT rank, and under the max norm its error is
+multiplied by the row sums sum_j |U_cj|.
+
+ART's and AFINNI's shared leaves are the point-based case; their swirl failures (worst 1.6-3.8) are the
+scalar least-squares failure (§0.4 item 1), not a vector effect.
+
+### 8.2 Error metrics for vector outputs (Q2)
+
+Used in the literature:
+
+- **Componentwise relative max norm**, max_x max_c |e_c(x)| / ||f_c||_inf. This is a weighted l-infinity
+  norm of D^-1 e with D = diag(||f_c||). It is the bench's metric.
+- **Scaled 2-norm**, ||B e||_2: ISAT's error measure, with B a scaling matrix [III-12, r for the form].
+- **Relative 2-norm** ||e||/||f||: field emulators, PCA-based methods [VI-4, VI-9, a].
+- **Mean errors in log abundance** (MSE, MAE in dex): astrochemistry emulators, CODES [III-24, a]. Few
+  report a maximum.
+
+For worst-case reporting there is no single standard. The l-infinity norm of the scaled error is the only
+one of these that bounds every output, and it is what a solver fallback needs. Keep it for the bench. For
+chemistry, the absolute error in log10 abundance is already scale-free: |Δ log10 n| ≤ ε means a relative
+error of at most 10^ε − 1 ≈ 2.3ε. So report:
+
+- the worst dex error over species above a floor (n_i / n_H > 1e-12, say), with species below the floor
+  judged in linear space;
+- the worst relative error of each conserved total, |E n-hat − E n| / |E n|;
+- the rollout error (§1.12).
+
+Scaling an increment Δz_c by its own maximum (the bench's rule applied to increments) inflates the demand
+on species near equilibrium. A fixed dex tolerance on the increments is the physical one.
+
+### 8.3 Where the output index goes in a TT (Q3)
+
+**Rank facts** (elementary; checked numerically below). Let F_c^(k) be the unfolding (x_1..x_k ; x_{k+1}..x_d)
+of output c.
+
+- With the output index on the right of bond k, the bond rank is dim(sum_c colspace F_c^(k)).
+- With it on the left, the rank is dim(sum_c rowspace F_c^(k)).
+- Both lie between max_c r_{c,k} and sum_c r_{c,k}.
+- The bond right next to the output core has rank at most the number of output modes.
+
+So placement only chooses which union is taken. A block TT [VI-14, a] moves the output (block) index with
+the sweep. TT-Toolbox's `amen_cross` takes a function returning an M x B block and reshapes each core as
+(r_k n_k) x (r_{k+1} B) on the forward sweep, so the block travels with the core being updated [V-9, v].
+That buys per-bond rank adaptivity, not an escape from the union rank.
+
+**Measured unfolding ranks** (full Chebyshev grids, 1e-3 relative singular-value cut, components scaled to
+max 1). The proxy counts oracle calls per sweep in units of n: the sum over cores of r_k r_{k+1}, where an
+output index costs no oracle call.
+
+| 5-D problem | per-component ranks | joint, output last | proxy: separate / last / best middle / PCA |
+|---|---|---|---|
+| swirl | 2-3 | 4, 6, 9, 10 | 104 / 182 / 110 / 135 |
+| rosenbrock_gradient | 1-2 | 4, 5, 6, 7 | 44 / 103 / 54 / 137 |
+| genz_triple | 1-3 | 3, 5, 5, 5 | 46 / 73 / 67 / 149 |
+| lotka_volterra_state | 2-4 | 3, 6, 9, 10 | 160 / 175 / 96 / 337 |
+| 5 x cos(a_c.x) | 2 | 5, 10, 10, 10 | 80 / 265 / 221 / 744 |
+| wave_pair | 2 | 2, 2, 2, 2 | 32 / 16 / 16 / 32 |
+| two shared oblique coordinates, 6 outputs | 3-22 | 4, 13, 23, 20 | 2352 / 835 / 579 / 13460 |
+
+- The ranks rise towards the output core. Placing it in the middle (p = d/2) cuts the proxy 1.6-1.9x for
+  swirl, Lotka-Volterra and the Rosenbrock gradient.
+- Separate TTs still win on every bench problem except wave_pair, whose cos and sin of one ridge share
+  their factors, and the coupled Lotka-Volterra species once the output core sits in the middle (96
+  against 160).
+- Only the synthetic "slow manifold" (six nonlinear mixtures of two shared oblique coordinates) favours
+  the joint TT, by 2.8-4x. This is the case the chemistry hopes for.
+
+**Alternatives.** Output POD times a TT per coefficient is a Tucker factor on the output axis, which a joint
+TT with the output last already contains (its last bond rank is the number of output modes); scalar TTs of
+the coefficients pay the union rank r times. Quantics on the output index [V-4, V-18] needs a smooth
+species ordering; there is none.
+
+**For coupled species on a slow manifold:** if the slow coordinates have low TT rank, the species' factor
+spaces overlap and a joint TT (per-bond ranks, middle output core) is cheapest; if they are oblique, every
+species is high-rank in a box TT anyway (§6.5) and no placement helps. Decide by the rank test on the
+chemistry bench.
+
+**Inference.** Compressed coefficients and time per query (numpy, one thread):
+
+| Case | separate | vector |
+|---|---|---|
+| 10-D Lotka-Volterra | 3,370 coefficients, 2.9 us | 10,510, 1.3 us |
+| 10-D Rosenbrock gradient | 302, 0.95 us | 2,564, 0.50 us |
+
+Numpy times are per-call overhead; a compiled one-pass evaluator of the m TTs (block-diagonal cores,
+shared Chebyshev recurrences) costs about the separate coefficient count in multiply-adds. A CPU core does ~10^4 multiply-adds in 0.2-1 us; at d ≈ m ≈ 100 a box TT per
+species costs ~10^6. The end goal needs a local model in p slow coordinates with an m x p output map
+(about m p operations once the record is found).
+
+### 8.4 Conservation and positivity (Q4)
+
+Approaches found:
+
+- **Predict fluxes:** Δc = A S, A stoichiometric, conserves atoms for any S [VI-17, v] (targets from a
+  constrained generalised inverse; 6 active species); an architecture version followed [VI-18, a].
+- **Solve the constrained outputs as residuals of the others** (ACnet [VI-19, v]). It is exact to machine
+  precision, but the residual outputs "show systematically larger errors". Under a worst-case metric that
+  is disqualifying: the whole inconsistency lands on the residual species, typically the electron or a
+  trace species.
+- **Positivity-preserving projection with atom balance** [VI-20, a; details not read]; the RCCE form
+  n_i = exp(−g_i − sum_j λ_j a_ij) [VI-21, r; IV-19].
+
+**Recommended (cheap, exact).** Given a predicted log abundance z-hat, find z* = z-hat + E^T λ such that
+E exp(z*) = b. Here E is the element and charge matrix (elements x species) and b the input's totals,
+which the step conserves.
+
+- It is the Kullback-Leibler projection of n-hat onto {E n = b}, with the convex dual
+  min_λ sum_i n-hat_i exp((E^T λ)_i) − b^T λ; Newton on λ (3-6 unknowns: H, He, D, charge) takes 2-4 steps,
+  a few hundred flops, and the result is positive and exactly conserving.
+- The log correction (E^T λ)_i has the same size for every species carrying element e, so a trace
+  species' dex error grows by at most |λ_e| max E_ei. And λ_e is about the relative error of the total,
+  which the abundant carriers dominate, so the worst dex error rises by at most about one tolerance.
+- It removes exactly the error component along the conserved directions, which a smooth surrogate
+  accumulates with one sign over a rollout (§1.12).
+
+Conservation in log coordinates has high TT rank (§6.5), so impose it afterwards rather than learn it.
+
+### 8.5 Experiments (Q5), cheapest first
+
+All on the bench (cache, plots, 3 seeds) once a scratch A/B shows a gain.
+
+- **E1. Shared-cache separate ChebTTs as a scheme** (`chebtt` for vector problems, the vector TT kept as
+  `chebtt_vector`) on the five vector problems at 2, 5, 10, then 20-D. Pass: within tolerance on every seed
+  and fewer evaluations than the vector TT on 4 of 5 at 10-D. Watch swirl 5-D (seed 0 reached 1.03).
+- **E2. Check expansion in `build_vector`.** Check every point at all m output nodes; over 3 seeds, count
+  the cases beyond the tolerance, before and after, at an unchanged evaluation count.
+- **E3. The rank test.** In the first sweep at the pre-pass degrees, compare the joint fibre-matrix ranks
+  with the per-output ones. Check that R_k < sqrt(sum_c r_{c,k}^2) predicts the winner on the 7 problems
+  above plus a mixed problem: wave_pair and genz_triple side by side (m = 5), where the best answer is two
+  groups. Then group the outputs greedily (merge two groups while the joint rank stays below the rule).
+- **E4. Output-core placement.** Generalise the fixed axis of `build` to any position p. Compare p = 0,
+  d/2 and d, with and without per-bond rank growth, on lotka_volterra_state (5-D, 10-D), swirl (5-D) and
+  the shared-coordinates problem. Expect about 1.7x from the middle placement and more from per-bond
+  ranks.
+- **E5. Chemistry, joint against separate.** Robertson (3 species) and the primordial network (9 species),
+  on the increment Δz in dex with a fixed dex tolerance. Compare a vector ChebTT, shared-cache separate TTs
+  and SlowTable on one-step worst dex, evaluations and inference time, after printing the rank test (do
+  the species share factors in log coordinates?).
+- **E6. KL projection.** Add the projection to every chemistry scheme. Measure the worst dex one-step,
+  the conservation residual (to rounding), and the rollout error after 40 steps. Also split the rollout
+  error into its components along and across the conserved directions, to know how much of the 36x
+  growth the projection can remove.
+- **E7. Inference.** A Numba evaluator of m TTs in one pass with shared recurrences, against the vector TT
+  (10-D Lotka-Volterra, m = 10), under AGENTS.md's bar.
+
+### 8.6 Pitfalls
+
+- Section 0's table is one seed, serial, checked on 20k uniform points; the bench must confirm it. The rank
+  proxy ignores repeated points in a joint TT's index sets, so it overstates the joint cost somewhat.
+- Sharing does not help certification: the Novak-Woźniakowski limit [II-26] holds per output.
+- `check_points` draws 64 + 32d Sobol points, not a power of two (scipy warns; balance is lost).
