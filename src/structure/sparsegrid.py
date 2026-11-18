@@ -12,8 +12,13 @@ Growth is dimension-adaptive. An active index's indicator is the worst surplus a
 levels still had to correct. The active index with the largest indicator is refined, and each of its
 forward neighbours whose backward neighbours are all refined becomes active. The set grows along
 the directions and interactions f needs, so a function of few effective variables or low
-interaction order costs few points even for large d. Training stops when the active indicators sum
-to at most ``safety * atol``.
+interaction order costs few points even for large d.
+
+Stopping looks one step ahead. When the active indicators sum to at most ``safety * atol``, every
+active index is refined once more, which evaluates the forward neighbours, among them the
+interactions an index with a small indicator would never have opened; training stops only if the
+new active indicators are small too. The new points join the surrogate, so the look-ahead also
+improves it.
 
 The surpluses are a heuristic error estimate: a feature that no grid point sees, or a symmetry that
 zeroes the surpluses, stops refinement early. Values are cached by grid point, so every point is
@@ -53,6 +58,7 @@ class SparseCheb:
     coef: dict = field(default_factory=dict)  # index -> combination coefficient c_l (kept up to date)
     evals: int = 0
     checks: int = 0  # times the check points sent training on
+    look_aheads: int = 0  # times the surpluses said converged and every active index was refined once more
 
     @property
     def d(self) -> int:
@@ -97,11 +103,12 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, max_evals: int = 2_000_00
     """
     Train a SparseCheb of ``f`` (host (N, d) -> (N,)) on [lo, hi] to tolerance ``atol``.
 
-    When the surpluses say the surrogate has converged, it is checked at ``n_check`` (default
-    20 d) fixed uniform points, evaluated once and counted as evaluations. If the worst error there
-    exceeds ``atol``, every active index is refined one step (the set widens instead of deepening:
-    the surpluses missed some direction or interaction) and the greedy growth resumes, until the
-    check passes.
+    When the surpluses, looking one step ahead, say the surrogate has converged, it is checked at
+    ``n_check`` (default 20 d) fixed uniform points, evaluated once and counted as evaluations. If
+    the worst error there exceeds ``safety * atol`` (the margin the surpluses get too: a check
+    point rarely lands on the worst error), every active index is refined one step (the set widens
+    instead of deepening: the surpluses missed some direction or interaction) and the greedy growth
+    resumes, until the check passes.
     """
     lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
     d = len(lo)
@@ -154,19 +161,28 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, max_evals: int = 2_000_00
     fc = np.asarray(f(Xc), dtype=np.float64).ravel()
     model.evals += len(Xc)
     model.checks = 0
-    while active:
-        while active and sum(active.values()) > safety * atol:
-            if model.evals > max_evals:
-                raise RuntimeError(f"SparseCheb would exceed {max_evals:,} evaluations.")
-            refine(max(active, key=active.get))
-        if not active or float(np.max(np.abs(model.predict(Xc) - fc))) <= atol:
-            break
-        model.checks += 1
+    def widen():
         for idx in list(active):
             if model.evals > max_evals:
                 raise RuntimeError(f"SparseCheb would exceed {max_evals:,} evaluations.")
             if idx in active:
                 refine(idx)
+
+    while active:
+        while active and sum(active.values()) > safety * atol:
+            if model.evals > max_evals:
+                raise RuntimeError(f"SparseCheb would exceed {max_evals:,} evaluations.")
+            refine(max(active, key=active.get))
+        if not active:
+            break
+        widen()  # look one step ahead: the indicators of every forward neighbour must be small too
+        model.look_aheads += 1
+        if sum(active.values()) > safety * atol:
+            continue
+        if float(np.max(np.abs(model.predict(Xc) - fc))) <= safety * atol:
+            break
+        model.checks += 1
+        widen()
     return model
 
 
