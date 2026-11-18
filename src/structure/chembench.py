@@ -31,6 +31,7 @@ state and step over the surrogate's, beside the solver's operation counts (``sol
 
 import argparse
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -107,19 +108,56 @@ for _family, (_make, _initial, _sizes) in chemistry.LADDER.items():
                                                                   100, 40, (0.01, 0.001))  # fmt: skip
 
 
-def solver_cost(name: str) -> dict:
-    """The solver's cost of one step per state (``Network.step_cost``) on 40 test states, cached."""
-    path = CACHE / f"{name}-cost.json"
+# The solvers a surrogate's speed is measured against. A speedup is always "over" one of them, named
+# with its integrator, settings and hardware, so that a later baseline (a compiled or GPU integrator)
+# adds a record and every plot can be redrawn against it, without retraining anything.
+BASELINES = {
+    "scipy-radau-cpu1": {
+        "label": "SciPy Radau, 1 CPU core, one state at a time",
+        "integrator": "scipy.integrate.solve_ivp(method='Radau'): 3-stage Radau IIA (order 5), analytic Jacobian",
+        "settings": "each network's rtol (1e-8) and atol; one call per state and step",
+        "device": "CPU, 1 core (OPENBLAS_NUM_THREADS=1)",
+        "note": "SciPy's per-call Python overhead dominates small systems; nfev and nlu give the work a compiled solver would do",
+    },
+}
+BASELINE = "scipy-radau-cpu1"  # the default for plots and the recorded ``speedup``
+
+
+def baseline_cost(name: str, baseline: str = BASELINE) -> dict:
+    """
+    One baseline's cost of a step per state on 40 test states (cached in ``<problem>-baseline-<baseline>.json``):
+    wall time in microseconds and the operation counts (right-hand sides, Jacobians, LU factorisations), with the
+    baseline's description. Only SciPy's Radau is measured here; another baseline's records are written by its
+    own runner in the same form.
+    """
+    path = CACHE / f"{name}-baseline-{baseline}.json"
     if path.exists():
         return json.loads(path.read_text())
-    p = PROBLEMS[name]
-    _, test = data(name)
-    Z = test[:, :-1].reshape(-1, test.shape[2])
-    Z = Z[np.random.default_rng(0).choice(len(Z), min(40, len(Z)), replace=False)]
-    cost = p.net.step_cost(10.0**Z if p.net.log else Z, p.dt)
+    if baseline != "scipy-radau-cpu1":
+        raise KeyError(f"no measurement of baseline {baseline!r} for {name}")
+    old = CACHE / f"{name}-cost.json"  # the same measurement, recorded before baselines were named
+    if old.exists():
+        cost = json.loads(old.read_text())
+    else:
+        p = PROBLEMS[name]
+        _, test = data(name)
+        Z = test[:, :-1].reshape(-1, test.shape[2])
+        Z = Z[np.random.default_rng(0).choice(len(Z), min(40, len(Z)), replace=False)]
+        cost = p.net.step_cost(10.0**Z if p.net.log else Z, p.dt)
+    cost = {**cost, "baseline": baseline, **BASELINES[baseline]}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(cost))
     return cost
+
+
+def solver_cost(name: str) -> dict:
+    """The default baseline's cost (``baseline_cost``)."""
+    return baseline_cost(name, BASELINE)
+
+
+def speedup(m: dict, name: str, baseline: str = BASELINE) -> float:
+    """A run's speedup over a named baseline: the baseline's time per state and step over the surrogate's inference time per state."""
+    return baseline_cost(name, baseline)["solve_us"] / max(m["predict_us"], 1e-9)
 
 
 def data(name: str) -> tuple[np.ndarray, np.ndarray]:
@@ -404,7 +442,9 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
         r = rollout(p, proj, test[:ROLLOUTS])
         m.update({"worst_projected": float(ep.max()) if len(ep) else 0.0, "rollout_worst_projected": r["rollout_worst"],
                   "rollout_error_by_step_projected": r["rollout_error_by_step"]})  # fmt: skip
-    m["speedup"] = m["solve_us"] / max(predict_us, 1e-9)  # the solver's time per state and step over the surrogate's
+    m["speedup"] = m["solve_us"] / max(predict_us, 1e-9)  # over BASELINE: the solver's time per state and step over the surrogate's
+    m["inference"] = {"device": "cpu", "threads": int(os.environ.get("OPENBLAS_NUM_THREADS", "0") or 0), "batch": len(Zt),
+                      "baseline": BASELINE}  # fmt: skip
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(m))
     return m
@@ -660,7 +700,7 @@ SHORT = {"slowtable": "SlowTable", "chebtt_smooth": "ChebTT\nno edges", "chebtt_
          "chebtt_metric": "ChebTT-M", "chebtt_roll": "ChebTT\nrollout", "afinni": "AFINNI", "art": "ART\naffine", "art_quad": "ART\nquad"}  # fmt: skip
 
 
-def plot_overview() -> list[Path]:
+def plot_overview(baseline: str = BASELINE) -> list[Path]:
     """
     ``output/chem/overview-stiff-{loose,tight}.png``: per problem (rows, by input dimension) and method
     (columns), the worst one-step error and the worst rollout error over the tolerance (blue within,
@@ -676,11 +716,33 @@ def plot_overview() -> list[Path]:
     norm = BoundaryNorm(bounds, cmap.N)
     paths = []
     for k, label in ((0, "loose"), (1, "tight")):
-        fig, axes = plt.subplots(2, 1, figsize=(0.78 * len(methods) + 2.6, 2 * (0.34 * len(names) + 1.1)), constrained_layout=True)
-        for ax, key, title in ((axes[0], "worst", "one-step error / tol"), (axes[1], "rollout_worst", "rollout error / tol (20 trajectories)")):
+        fig, axes = plt.subplots(3, 1, figsize=(0.78 * len(methods) + 2.6, 3 * (0.34 * len(names) + 1.1)), constrained_layout=True)
+        sp_cmap = plt.get_cmap("Greens")
+        for i, n in enumerate(names):  # third panel: speedup over the named baseline (inference time per state against its time per step)
+            tols = sorted(PROBLEMS[n].tolerances, reverse=True)
+            if k >= len(tols):
+                continue
+            for j, meth in enumerate(methods):
+                path = CACHE / n / f"{meth}_tol{tols[k]:g}.json"
+                if not path.exists():
+                    continue
+                m = json.loads(path.read_text())
+                if "failed" in m:
+                    axes[2].add_patch(plt.Rectangle((j, i), 0.95, 0.9, fc="#e8e8e8", hatch="//", ec="#999999"))
+                    continue
+                try:
+                    sp = speedup(m, n, baseline)
+                except KeyError:
+                    continue
+                lv = min(max(np.log10(max(sp, 1.0)) / 5.0, 0.0), 1.0)  # 1x .. 1e5x
+                axes[2].add_patch(plt.Rectangle((j, i), 0.95, 0.9, fc=sp_cmap(0.15 + 0.8 * lv), ec="white"))
+                axes[2].text(j + 0.47, i + 0.45, f"{sp:,.0f}x\n{m['predict_us']:.2g} us", ha="center", va="center", fontsize=6.5,
+                             color="white" if lv > 0.6 else "#222222")  # fmt: skip
+        for ax, key, title in ((axes[0], "worst", "one-step error / tol"), (axes[1], "rollout_worst", "rollout error / tol (20 trajectories)"),
+                               (axes[2], None, f"speedup over {BASELINES[baseline]['label']} (top), inference per state (bottom)")):
             for i, n in enumerate(names):
                 tols = sorted(PROBLEMS[n].tolerances, reverse=True)
-                if k >= len(tols):
+                if key is None or k >= len(tols):
                     continue
                 tol = tols[k]
                 for j, meth in enumerate(methods):
@@ -715,6 +777,55 @@ def plot_overview() -> list[Path]:
         plt.close(fig)
         paths.append(path)
     return paths
+
+
+def plot_speedup(baseline: str = BASELINE) -> Path:
+    """
+    ``output/chem/speedup-stiff.png``: every case as a point, its rollout error over the tolerance against its
+    speedup over the named baseline (left of 1 holds the tolerance; up is faster), one colour per method,
+    circles for the looser tolerance and squares for the tighter: which methods are both fast and accurate.
+    """
+    from src.structure.chemfill import ladder
+
+    names = [n for n in ladder(10**6) if (CACHE / n).is_dir()]
+    fig, ax = plt.subplots(figsize=(8.5, 6), layout="constrained")
+    handles = []
+    for meth, (label, colour, _) in METHODS.items():
+        xs, ys, ms = [], [], []
+        for n in names:
+            for k, tol in enumerate(sorted(PROBLEMS[n].tolerances, reverse=True)):
+                path = CACHE / n / f"{meth}_tol{tol:g}.json"
+                if not path.exists():
+                    continue
+                m = json.loads(path.read_text())
+                if "failed" in m:
+                    continue
+                try:
+                    ys.append(speedup(m, n, baseline))
+                except KeyError:
+                    continue
+                xs.append(max(m["rollout_worst"] / tol, 1e-4))
+                ms.append("o" if k == 0 else "s")
+        if not xs:
+            continue
+        for x, y, mk in zip(xs, ys, ms, strict=True):
+            ax.scatter(x, y, s=26, marker=mk, color=colour, alpha=0.8, edgecolors="white", linewidths=0.4)
+        handles.append(matplotlib.lines.Line2D([], [], ls="", marker="o", color=colour, label=f"{SHORT.get(meth, meth).replace(chr(10), ' ')} ({len(xs)})"))
+    handles += [matplotlib.lines.Line2D([], [], ls="", marker=mk, color="#555555", label=w) for mk, w in (("o", "looser tolerance"), ("s", "tighter tolerance"))]
+    ax.axvline(1.0, color="#c0392b", lw=0.8, ls=":")
+    ax.axhline(1.0, color="#999999", lw=0.8, ls=":")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("rollout error / tolerance (20 trajectories; < 1 holds)")
+    ax.set_ylabel(f"speedup over {BASELINES[baseline]['label']}")
+    ax.set_title(f"Stiff systems: speed against rollout accuracy. Baseline: {BASELINES[baseline]['integrator']}; "
+                 f"{BASELINES[baseline]['device']}. Surrogates: CPU, 1 thread, batched inference", fontsize=8.5, wrap=True)  # fmt: skip
+    fig.legend(handles=handles, loc="outside lower center", ncol=5, fontsize=8, frameon=False)
+    OUT.mkdir(parents=True, exist_ok=True)
+    path = OUT / "speedup-stiff.png"
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    return path
 
 
 def write_summary() -> Path:

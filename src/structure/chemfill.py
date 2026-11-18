@@ -98,6 +98,7 @@ def main(argv=None) -> None:
                 chembench.write_summary()
                 chembench.plot_ladder()
                 chembench.plot_overview()
+                chembench.plot_speedup()
 
 
 if __name__ == "__main__":
