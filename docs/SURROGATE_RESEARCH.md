@@ -788,6 +788,57 @@ from the ball's centre against a radius of 0.8): almost no test point is inside 
 constant background almost everywhere, and discovery from samples is at the Novak-Wozniakowski limit.
 They are degenerate benchmarks there and need a domain that shrinks with d.
 
+
+### 1.22 One adaptive ChebTT across smooth, kinked, jumping and interface functions
+
+A second consult (after Reviews VII-VIII and the experiments of 1.21) set the target form: one model,
+f ~ g(x) + S(x), g a ChebTT with piecewise axes and S interface terms added only when the data demands
+them. Done since (one seed, serial):
+
+- **Cheaper, safer edge detection (in `chebtt.py`).** A jump is bisected on the value (about 34
+  evaluations to 1e-12 of the width) and tried before a kink (a steep kink's slope is an outlier against
+  a tiny median difference and was misread as a jump); a kink is located only to 0.01 share / |[f']|.
+  Confirmation at 2d random far fibres: present within a band of 1e-6 of the width (the largest
+  displacement is recorded as the edge's band, and the pieces' end nodes are inset by twice it, at most a
+  quarter of either neighbouring piece), absent (its factor vanishing there: no veto), or found
+  elsewhere (an oblique interface: rejected; the earlier 1%-displaced copy let tilts below 1e-4 pass).
+  A candidate within 10x its location precision of a known edge is the same edge (a jump registered
+  twice, once coarsely as a kink, inverted a piece: worst 1.5e6 tol). Search cost per axis: ~1.4k ->
+  100-300 evaluations. Kinks 2.4k / 3.6k / 8.5k at 2 / 3 / 5-D, axis jumps 1.9k-7.8k at 2-20-D,
+  smooth cases bit-identical; tilts <= 1e-6 held outside their band, >= 1e-4 rejected.
+- **Jump fields (scratch).** For a jump whose height varies along the interface, S(x) = [side] sum_k
+  J_k(foot(x)) rho^k / k!, rho the signed distance, J_0..J_2 quadratic fields of the foot point fitted to
+  one-sided degree-6 fits along the normal (8 points per side, within min(0.2, room in the box)) at
+  3(d+1)(d+2)/2 interface points: no evaluation outside the box. Applied on the side whose foot map is
+  regular (the other side of a closed quadric holds its centre, where the foot is undefined: the 2-D ball
+  failed on the wrong side). With the interface given: plane 2 / 3 / 5 / 10-D 0.6k / 1.2k / 2.6k / 4.8k,
+  sphere 2 / 3 / 5-D 0.6k / 1.4k / 3.8k, residual jump ~1e-7 tol.
+- **The unified prototype (scratch).** One oracle cache; ChebTT with piecewise axes on 5000 + 500 d
+  evaluations first (smooth and axis-edge functions pay nothing else); on failure, diagnosis: jumps on
+  axis fibres through the most extreme check point, tested at 4 far fibres ("moving" = interface
+  samples), then random-fibre edge points in rounds until a fit (plane, diagonal, full quadric) has
+  points to spare (one round at 10-D found 8 points where a plane needs 14, and the build fell to the
+  front path); a fit that is not an axis-aligned plane is an interface (jump fields, then ChebTT on the
+  remainder); no edges at all and ChebTT fails: a front, phi fitted to mid-level crossings
+  ((max + min) / 2: the median sat on the front's flat tail), S = h(phi).
+
+| class (cases) | evaluations | worst / tol | path |
+|---|---|---|---|
+| smooth fast set, 5-D (6) | 722-1,617, as ChebTT | 0.00-0.26 | ChebTT |
+| kinks 2 / 5 / 10-D | 1.7k / 14.3k / 3.3k | 0.00 / 0.00 / 0.13 | piecewise axes |
+| axis jumps 2 / 5 / 10-D | 1.7k / 2.4k / 4.5k | 0.15 / 0.14 / 0.07 | piecewise axes |
+| oblique jump 2 / 5 / 10 / 20-D | 7.3k / 12.5k / 22.8k / 52.1k | 0.15-0.26 | plane, jump fields |
+| spherical jump 2 / 3 / 5-D | 8.8k / 10.4k / 15.5k | 0.19-0.23 | quadric, jump fields |
+| varying jump on a plane 2 / 5 / 10-D | 7.3k / 14.8k / 21.9k | 0.10 / 0.10 / 0.45 | plane, jump fields |
+| varying jump on a sphere 2 / 3 / 5-D | 8.5k / 11.1k / 16.8k | 0.24-0.29 | quadric, jump fields |
+| sharp front 2 / 3 / 5-D | 80k / 149k / 147k | 0.35 / 0.06 / 0.06 | ChebTT / h(phi) / h(phi) |
+
+All 28 cases hold; plain ChebTT fails 18 of them. Open: fronts (a failed first attempt, then a large
+remainder), the first attempt wasted on interface functions, constant jumps paying for full quadratic
+jump fields (the composite h(phi) was exact on `oblique_jump` at 5.9k-40.7k), and 5-D kinks costing more
+through the retry (7.9k -> 14.3k). The scheme's honest claim is "within the tolerance outside the
+reported bands of breakpoints and interfaces".
+
 ---
 
 ## 2. Review I: spending fewer evaluations in adaptive trees
