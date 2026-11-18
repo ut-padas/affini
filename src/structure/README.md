@@ -18,6 +18,7 @@ are in [docs/SURROGATE_RESEARCH.md](../../docs/SURROGATE_RESEARCH.md).
 | `bench.py` | runs, caches and plots every method (`METHODS`): `afinni`, `art`, `art_quad` (ART with quadratic leaves) and the registered schemes |
 | `schemes.py` | registers the new schemes; under MPI, rank 0 runs a scheme and spreads each round's oracle calls over every rank |
 | `chebtree.py` | **ChebTree**: an adaptive tree of tensor Chebyshev boxes, refined by the decay of their coefficients: per-axis geometric and algebraic decay fits give the error estimate, the degree where the decay is exponential and a split where it is not; a few check points per box, seeded by its locational code, catch aliasing; trailing coefficients are chopped after acceptance. Also `build_rotated`, ChebTree in active-subspace coordinates |
+| `chebtt.py` | **ChebTT**: a Chebyshev interpolant in tensor-train form, built by TT-cross (maxvol fibres); cost linear in d; accepted on a Sobol set, free checks at earlier sweeps' grid points and a next-nested-grid look-ahead through the worst point; degrees doubled where an axis's upper degrees still matter, else rank raised |
 | `sparsegrid.py` | **SparseCheb**: a dimension-adaptive sparse Chebyshev grid (Smolyak, Gerstner-Griebel), stopped by its surpluses and a Sobol-plus-corners check at half the tolerance; a failed check refines every active index once (a one-step look-ahead) |
 
 Problems: `rosenbrock`, `gaussian`, `wave`, `front` (a sharp tanh front on a sphere); the Genz
@@ -52,7 +53,14 @@ SURROGATE_DEVICE=cpu SURROGATE_MPI=on OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 OPEN
   - above 2-D, `<problem>-d<d>-tol<t>-views.png`: the slice plane and the shadow coordinates spanned
     by the two directions in which f changes most (the leading eigenvectors of the gradient
     covariance), each method's error on both, and every method's error distribution;
-  - `summary-d<d>.md`: every method's seed means.
+  - `summary-d<d>.md`: every method's seed means;
+  - `overview-d<d>.png`: every cached problem (rows) and tolerance (column groups) against every
+    method, coloured by the worst |error| / tolerance (worst seed; blue holds, red exceeds) and
+    labelled with the oracle evaluations; the cheapest method that holds the tolerance is outlined,
+    and the bottom rows count, per method, the cases held and won;
+  - `overview-d<d>-cost.png`: the same grid for the training time, the inference time per query
+    (beside the oracle's time per point), the pieces and the mean |error| / tolerance.
+  `--overview` redraws both overviews from the cache alone (`--setup` picks another setup's cache).
 - `cache/` and `output/` are not committed (`.gitignore`).
 - The new schemes are NumPy only. `SURROGATE_DEVICE=gpu` moves AFINNI and ART to the GPU; the
   schemes would need CuPy versions of their per-box arithmetic, which is milliseconds per run, so

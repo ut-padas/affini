@@ -34,8 +34,11 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.lines  # noqa: E402
+import matplotlib.patches  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker  # noqa: E402
+import matplotlib.transforms  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.colors import BoundaryNorm, ListedColormap  # noqa: E402
 
@@ -149,7 +152,9 @@ def directions(problem: str, d: int) -> np.ndarray:
     """
     (d, 2) the two directions in which f changes most: the leading eigenvectors of the mean
     gradient outer product, from forward differences at 400 fixed points (cached per problem and d).
-    They span the slice plane and the shadow coordinates of the high-dimensional views.
+    They span the slice plane and the shadow coordinates of the high-dimensional views. Under MPI
+    every rank may compute them at once; each writes its own file and renames it into place, so a
+    rank never reads a file another rank is still writing.
     """
     path = CACHE / f"{problem}_d{d}" / "directions.npz"
     if path.exists():
@@ -163,7 +168,9 @@ def directions(problem: str, d: int) -> np.ndarray:
     lam, W = np.linalg.eigh(G.T @ G / len(X))
     W = W[:, np.argsort(lam)[::-1][:2]]
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(path, W=W, eigenvalues=np.sort(lam)[::-1])
+    tmp = path.with_name(f"directions-{MPI.COMM_WORLD.Get_rank()}.tmp.npz")
+    np.savez(tmp, W=W, eigenvalues=np.sort(lam)[::-1])
+    tmp.replace(path)
     return W
 
 
@@ -447,84 +454,206 @@ def seed_runs(method: str, problem: str, d: int, tol: float) -> list[dict]:
     return [json.loads(str(np.load(p)["metrics"])) for p in paths if p.exists()]
 
 
-FLOOR = 1e-4  # error ratios below it are drawn at it in the overview
+# Worst |error| / tolerance, binned on a diverging scale centred at 1 (ColorBrewer RdBu, safe for
+# colour-blind readers): blues pass, reds fail, darker is farther from the tolerance. The fail arm
+# starts a step darker than the pass arm, so a cell just over the tolerance never reads as one just
+# under it. A ratio equal to an edge falls in the lower bin, so exactly 1 passes.
+_RATIO_EDGES = (0.01, 0.1, 0.5, 1.0, 2.0, 10.0, 100.0)
+_RATIO_COLOURS = ("#2166ac", "#4393c3", "#92c5de", "#d1e5f0", "#f4a582", "#d6604d", "#b2182b", "#67001f")
+_RATIO_NAMES = ("<= 0.01", "0.01-0.1", "0.1-0.5", "0.5-1", "1-2", "2-10", "10-100", "> 100")
+_COST = matplotlib.colors.LinearSegmentedColormap.from_list("cost", ["#f4f3f0", "#3d3c3a"])  # one hue: darker costs more
+_INK, _MUTED, _ABSENT = "#1a1a19", "#6b6a66", "#f4f3f0"
 
 
-def plot_overview(d: int, out: Path) -> Path | None:
+def _compact(v: float, count: bool = False) -> str:
+    """A number in at most five characters, so a value fits one narrow grid cell."""
+    if v >= 1e6:
+        return f"{v / 1e6:.1f}M"
+    if v >= 1e4:
+        return f"{v / 1e3:.0f}k"
+    if v >= 1e3:
+        return f"{v / 1e3:.1f}k"
+    if count or v >= 100:
+        return f"{v:.0f}"
+    return f"{v:.0e}".replace("e-0", "e-") if v < 1e-3 else f"{v:.2g}"
+
+
+def _overview_cell(method: str, problem: str, d: int, tol: float) -> dict | None:
     """
-    ``overview-d<d>.png``: every cached problem and tolerance at dimension d (rows) against every
-    method's metrics (one panel each, seed means, the worst error the worst seed's), so one image
-    compares the methods everywhere. A method over its evaluation budget is a cross at the right
-    edge of the evaluations panel.
+    One case's overview entry, or None when the method was not run on it. Errors are the worst seed's
+    (the tolerance must hold for every seed), costs the seed means of the runs that finished; a case
+    with any seed over its evaluation budget does not pass.
     """
-    cases = [(problem, tol) for problem, p in PROBLEMS.items() for tol in p.tolerances(d)
-             if any(seed_runs(m, problem, d, tol) for m in METHODS)]  # fmt: skip
-    methods = [m for m in METHODS if any(seed_runs(m, pr, d, t) for pr, t in cases)]
-    if not cases:
+    ms = seed_runs(method, problem, d, tol)
+    if not ms:
         return None
-    panels = (("max_ratio", "worst |error| / tol (worst seed)", "log"), ("mean_ratio", "mean |error| / tol", "log"),
-              ("within_percent", "% within tolerance", "linear"), ("refused_percent", "% refused (oracle answers)", "linear"),
-              ("evals", "oracle evaluations", "log"), ("leaves", "pieces", "log"), ("train_s", "training time (s)", "log"),
-              ("predict_us", "inference (us / query)", "log"))  # fmt: skip
-    n = len(cases)
-    names = list(dict.fromkeys(p for p, _ in cases))
-    band = np.array([names.index(p) for p, _ in cases])
-    fig, axes = plt.subplots(1, len(panels), figsize=(2.7 * len(panels) + 1.6, 0.21 * n + 1.6), sharey=True,
-                             constrained_layout=True)  # fmt: skip
-    offsets = (np.arange(len(methods)) - (len(methods) - 1) / 2) * min(0.7 / max(len(methods), 1), 0.14)
-    oracle, ranks = [], set()
-    for mi, method in enumerate(methods):
-        rows = {key: ([], []) for key, *_ in panels}
-        over = []
-        for ci, (problem, tol) in enumerate(cases):
-            ms = seed_runs(method, problem, d, tol)
-            ranks.update(m.get("ranks", 1) for m in ms)
-            ok = [m for m in ms if "failed" not in m]
-            if ms and not ok:
-                over.append(ci)
-            if not ok:
-                continue
-            oracle += [m["oracle_us"] for m in ok if "oracle_us" in m]
-            vals = {k: np.mean([m.get(k, 0.0) for m in ok]) for k in ("within_percent", "refused_percent", "evals", "leaves",
-                                                                       "train_s", "predict_us")}  # fmt: skip
-            vals["max_ratio"] = max(m["max_ratio"] for m in ok)
-            vals["mean_ratio"] = np.mean([m["mean_error"] / m["atol"] for m in ok])
-            for key in ("max_ratio", "mean_ratio"):  # exact fits shown at the axis floor, so the range near 1 stays readable
-                vals[key] = max(vals[key], FLOOR)
-            for key, *_ in panels:
-                rows[key][0].append(ci + offsets[mi]), rows[key][1].append(vals[key])
-        colour = METHODS[method][1]
-        for ax, (key, *_) in zip(axes, panels, strict=True):
-            y, x = rows[key]
-            ax.plot(x, y, "o", color=colour, ms=4.2, mec="white", mew=0.5, label=METHODS[method][0] if key == "max_ratio" else None)
-        if over:
-            axes[4].plot([1.0] * len(over), np.array(over) + offsets[mi], "x", color=colour, ms=5,
-                         transform=axes[4].get_yaxis_transform())  # fmt: skip
-    for ax, (key, title, scale) in zip(axes, panels, strict=True):
-        ax.set_xscale(scale)
-        if key in ("max_ratio", "mean_ratio"):
-            ax.set_xlim(FLOOR / 2, None)
-        if key == "refused_percent":
-            ax.set_xlim(-0.05, max(1.0, ax.get_xlim()[1]))
-        ax.set_title(title, fontsize=8.5)
-        ax.grid(axis="x", alpha=0.3)
-        ax.tick_params(labelsize=7)
-        for ci in np.nonzero(band % 2 == 1)[0]:  # every other problem shaded, so its tolerances read as one group
-            ax.axhspan(ci - 0.5, ci + 0.5, color="#000000", alpha=0.045, lw=0)
-    axes[0].axvline(1.0, color="#c0392b", lw=0.9, ls="--")
-    axes[1].axvline(1.0, color="#c0392b", lw=0.9, ls="--")
-    if oracle:
-        axes[-1].axvline(float(np.median(oracle)), color="#777777", lw=0.9, ls="--")
-        axes[-1].text(float(np.median(oracle)), -0.9, " oracle", fontsize=6.5, color="#666666", va="bottom")
-    axes[0].set_yticks(range(n), [f"{p}  {t:g}" for p, t in cases], fontsize=7)
-    axes[0].set_ylim(n - 0.5, -1.2)
-    fig.legend(*axes[0].get_legend_handles_labels(), loc="outside lower center", ncol=len(methods), fontsize=8, frameon=False)
-    fig.suptitle(f"All problems at d = {d} ({setup()}, {'/'.join(map(str, sorted(ranks)))} ranks; seed means; "
-                 f"dashed red: the tolerance; errors below {FLOOR:g} drawn at {FLOOR:g}; crosses: over the evaluation budget)", fontsize=9.5)  # fmt: skip
-    path = out / f"overview-d{d}.png"
-    fig.savefig(path, dpi=130)
+    ok = [m for m in ms if "failed" not in m]
+    cell = {"over": len(ms) - len(ok), "ranks": {m.get("ranks", 1) for m in ms}}
+    if ok:
+        cell |= {k: float(np.mean([m.get(k, 0.0) for m in ok]))
+                 for k in ("evals", "leaves", "train_s", "predict_us", "refused_percent", "oracle_us")}  # fmt: skip
+        cell["max_ratio"] = max(m["max_ratio"] for m in ok)
+        cell["mean_ratio"] = float(np.mean([m["mean_error"] / m["atol"] for m in ok]))
+    cell["passed"] = bool(ok) and not cell["over"] and cell["max_ratio"] <= 1.0
+    return cell
+
+
+def _ratio_colour(r: float) -> str:
+    return _RATIO_COLOURS[int(np.searchsorted(_RATIO_EDGES, r, side="left"))]
+
+
+def _ink_on(colour) -> str:
+    """Dark or white text, whichever reads on the cell's fill (relative luminance threshold)."""
+    r, g, b = matplotlib.colors.to_rgb(colour)
+    return _INK if 0.2126 * r**2.2 + 0.7152 * g**2.2 + 0.0722 * b**2.2 > 0.25 else "white"
+
+
+def _overview_grid(ax, problems, tols, methods, cells, fill, text, title, subtitle, extra_rows=(), row_labels=None,
+                   mark_best=False) -> callable:  # fmt: skip
+    """
+    Draw one panel of the overview: a row per problem, a column group per tolerance, a column per
+    method inside it, so the methods compared on one case sit side by side. ``fill(cell)`` and
+    ``text(cell)`` give a cell's colour and label; a case not run is a dotted outline, one over its
+    evaluation budget is hatched. ``mark_best`` outlines the cheapest method that holds the
+    tolerance. ``extra_rows`` are (label, {(tol, method): text}) summary rows below the grid.
+    Returns the left x of the column of (tolerance index, method index).
+    """
+    gap = 0.7
+    col = lambda ti, mi: ti * (len(methods) + gap) + mi  # noqa: E731
+    box = lambda x, y, **kw: plt.Rectangle((x + 0.04, y + 0.06), 0.92, 0.88, **kw)  # noqa: E731  (a 2-point gap between cells)
+    for ri, problem in enumerate(problems):
+        for ti, tol in enumerate(tols):
+            for mi, method in enumerate(methods):
+                c, x = cells.get((method, problem, tol)), col(ti, mi)
+                if c is None:
+                    ax.add_patch(box(x, ri, fc="none", ec="#cfcec8", lw=0.7, ls=":"))
+                    continue
+                colour = fill(c) if "max_ratio" in c else "#d9d8d3"
+                ax.add_patch(box(x, ri, fc=colour, lw=0))
+                if c["over"]:
+                    ax.add_patch(box(x, ri, fc="none", ec="#8f8e89", lw=0, hatch="///", hatch_linewidth=0.6))
+                best = mark_best and c.get("best")
+                if best:
+                    ax.add_patch(box(x, ri, fc="none", ec=_INK, lw=1.8, zorder=3))
+                ax.text(x + 0.5, ri + 0.5, text(c) if "max_ratio" in c else "over", ha="center", va="center", fontsize=7,
+                        color=_ink_on(colour), linespacing=1.1, fontweight="bold" if best else "normal")  # fmt: skip
+    n = len(problems)
+    for k, (label, values) in enumerate(extra_rows):
+        y = n + 0.55 + 0.6 * k
+        ax.text(-0.3, y, label, ha="right", va="center", fontsize=7.5, color=_MUTED)
+        for (tol, method), value in values.items():
+            ax.text(col(tols.index(tol), methods.index(method)) + 0.5, y, value, ha="center", va="center", fontsize=7.5,
+                    color=_INK)  # fmt: skip
+    head = 6 + 4.3 * max(len(_short(m)) for m in methods)  # points above the grid taken by the method names
+    above = lambda dy: matplotlib.transforms.offset_copy(ax.transData, fig=ax.figure, y=dy, units="points")  # noqa: E731
+    for ti, tol in enumerate(tols):
+        x0, x1 = col(ti, 0), col(ti, len(methods) - 1) + 1
+        ax.text((x0 + x1) / 2, -0.2, f"tolerance {tol:g}", ha="center", va="bottom", fontsize=8.5, color=_INK,
+                transform=above(head + 6), clip_on=False)  # fmt: skip
+        ax.plot([x0 + 0.05, x1 - 0.05], [-0.2, -0.2], color=_MUTED, lw=0.6, clip_on=False, transform=above(head + 3))
+        for mi, method in enumerate(methods):
+            x = col(ti, mi)
+            ax.add_patch(plt.Rectangle((x + 0.2, -0.2), 0.6, 0.12, fc=METHODS[method][1], lw=0, clip_on=False))
+            ax.text(x + 0.5, -0.2, _short(method), rotation=90, ha="center", va="bottom", fontsize=7.5, color=_INK,
+                    transform=above(2), clip_on=False)  # fmt: skip
+    ax.text(0, -0.2, subtitle, ha="left", va="bottom", fontsize=7.5, color=_MUTED, transform=above(head + 24), clip_on=False,
+            linespacing=1.3)  # fmt: skip
+    ax.text(0, -0.2, title, ha="left", va="bottom", fontsize=10, color=_INK, transform=above(head + 30 + 11 * subtitle.count("\n")
+            + 12), clip_on=False, fontweight="bold")  # fmt: skip
+    ax.set_xlim(-0.05, col(len(tols) - 1, len(methods) - 1) + 1.05)
+    ax.set_ylim(n + 0.25 + 0.6 * len(extra_rows) + (0.1 if extra_rows else 0), -0.25)
+    ax.set_yticks(np.arange(n) + 0.5, row_labels or problems, fontsize=8)
+    ax.tick_params(length=0, pad=4)
+    ax.set_xticks([])
+    for side in ax.spines.values():
+        side.set_visible(False)
+    return col
+
+
+def _short(method: str) -> str:
+    """The method's label up to its first colon, for a column header."""
+    return METHODS[method][0].split(":")[0]
+
+
+def plot_overview(d: int, out: Path) -> list[Path]:
+    """
+    Every cached problem and tolerance at dimension d against every method, as grids with a row per
+    problem and the methods side by side within each tolerance. ``overview-d<d>.png`` answers which
+    methods hold the tolerance and which of those is cheapest: colour is the worst |error| /
+    tolerance, the number the oracle evaluations, the outline the cheapest method that holds it.
+    ``overview-d<d>-cost.png`` gives, in the same layout, the training and inference times (beside
+    the oracle's own time per point), the pieces and the mean |error| / tolerance.
+    """
+    cases = [(problem, tol) for problem, p in PROBLEMS.items() for tol in p.tolerances(d)]
+    cells = {(m, pr, t): c for m in METHODS for pr, t in cases if (c := _overview_cell(m, pr, d, t)) is not None}
+    if not cells:
+        return []
+    methods = [m for m in METHODS if any(k[0] == m for k in cells)]
+    problems = [p for p in PROBLEMS if any(k[1] == p for k in cells)]
+    tols = PROBLEMS[problems[0]].tolerances(d)
+    for pr, t in cases:  # the cheapest method that holds the tolerance on every seed; ties all marked
+        held = [cells[m, pr, t] for m in methods if (m, pr, t) in cells and cells[m, pr, t]["passed"]]
+        for c in held:
+            c["best"] = c["evals"] == min(h["evals"] for h in held)
+    ranks = "/".join(map(str, sorted(set().union(*(c["ranks"] for c in cells.values())))))
+    where = f"{setup()}, {ranks} ranks, {len(SEEDS)} seeds"
+    grid_w = len(tols) * (len(methods) + 0.7)  # data units across one panel
+    paths = [out / f"overview-d{d}.png", out / f"overview-d{d}-cost.png"]
+
+    fig, ax = plt.subplots(figsize=(0.56 * grid_w + 1.6, 0.4 * len(problems) + 1.0))
+    summary = (("holds the tolerance", {}), ("cheapest that holds", {}))
+    for (m, _, t), c in cells.items():
+        held, best = summary[0][1].get((t, m), "0/0").split("/"), summary[1][1].get((t, m), "0")
+        summary[0][1][t, m] = f"{int(held[0]) + c['passed']}/{int(held[1]) + 1}"
+        summary[1][1][t, m] = str(int(best) + bool(c.get("best")))
+    col = _overview_grid(ax, problems, tols, methods, cells, lambda c: _ratio_colour(c["max_ratio"]),
+                         lambda c: f"{_compact(c['evals'], count=True)}\n{_compact(c['max_ratio'])}",
+                         f"d = {d}: which methods hold the tolerance, and at what cost",
+                         "Colour: the worst |error| / tolerance over the test set (the worst seed): blue holds, red exceeds.\n"
+                         f"Top number: oracle evaluations (seed mean); bottom: the worst |error| / tolerance. {where}.",
+                         summary, mark_best=True)  # fmt: skip
+    for (m, pr, t), c in cells.items():
+        if c.get("refused_percent", 0) > 0:
+            ax.plot(col(tols.index(t), methods.index(m)) + 0.83, problems.index(pr) + 0.22, "o", ms=2.6, color=_ink_on(
+                _ratio_colour(c["max_ratio"])), mew=0, zorder=4)  # fmt: skip
+    handles = [matplotlib.patches.Patch(fc=c, label=n) for c, n in zip(_RATIO_COLOURS, _RATIO_NAMES, strict=True)]
+    handles += [matplotlib.patches.Patch(fc="none", ec=_INK, lw=1.8, label="cheapest that holds"),
+                matplotlib.patches.Patch(fc="#d9d8d3", hatch="///", ec="#8f8e89", lw=0, label="a seed over the evaluation budget"),
+                matplotlib.patches.Patch(fc="none", ec="#b5b4ae", ls=":", label="not run"),
+                matplotlib.lines.Line2D([], [], ls="", marker="o", ms=3, color=_INK, label="some queries refused")]  # fmt: skip
+    ax.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.0, 0.0), ncol=6, fontsize=7.5, frameon=False,
+              title="worst |error| / tolerance", title_fontsize=8, alignment="left", handlelength=1.6, columnspacing=1.2)  # fmt: skip
+    fig.savefig(paths[0], dpi=140, bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
-    return path
+
+    oracle = {pr: float(np.median([c["oracle_us"] for (_, p, _), c in cells.items() if p == pr and "oracle_us" in c] or [np.nan]))
+              for pr in problems}  # fmt: skip
+    panel_w, panel_h, label_w, head_h = 0.46 * grid_w, 0.3 * len(problems) + 0.1, 2.0, 2.35  # inches
+    ncol = 2 if grid_w < 20 else 1  # wide grids (many methods) stacked, so the image stays readable without zooming
+    fig = plt.figure(figsize=(ncol * (label_w + panel_w), 4 / ncol * (head_h + panel_h)))
+    W, H = fig.get_size_inches()
+    panels = (("train_s", "training time (s)", None), ("predict_us", "inference time per query (us)",
+              [f"{p}  (oracle {_compact(oracle[p])})" for p in problems]), ("leaves", "pieces", None),
+              ("mean_ratio", "mean |error| / tolerance", None))  # fmt: skip
+    for k, (key, title, labels) in enumerate(panels):
+        ax = fig.add_axes(((label_w + (k % ncol) * (label_w + panel_w)) / W, (4 // ncol - 1 - k // ncol) * (head_h + panel_h) / H,
+                           panel_w / W, panel_h / H))  # fmt: skip
+        if key == "mean_ratio":
+            fill, note = (lambda c: _ratio_colour(c["mean_ratio"])), "Colour: the scale of the accuracy overview (blue below 1)."
+        else:
+            vals = [c[key] for c in cells.values() if "max_ratio" in c and c[key] > 0]
+            norm = matplotlib.colors.LogNorm(min(vals), max(vals)) if vals else None
+            fill = lambda c, key=key, norm=norm: _COST(norm(max(c[key], norm.vmin)) if norm is not None else 0.0)  # noqa: E731
+            note = "Seed means; darker costs more (log scale)."
+            if key == "predict_us":
+                note += " Beside each problem: the oracle's time per point."
+        _overview_grid(ax, problems, tols, methods, cells, fill, lambda c, key=key: _compact(c[key], count=key == "leaves"),
+                       title, note, row_labels=labels)  # fmt: skip
+    fig.text(0.02, 1 + 0.15 / H, f"d = {d}: times, pieces and mean error ({where})", fontsize=11, fontweight="bold",
+             color=_INK, va="bottom")  # fmt: skip
+    fig.savefig(paths[1], dpi=120, bbox_inches="tight", pad_inches=0.15)
+    plt.close(fig)
+    return paths
 
 
 def write_summary(d: int, methods: list[str], out: Path) -> Path:
@@ -564,7 +693,7 @@ def main(argv=None) -> None:
     parser.add_argument("--seeds", default=",".join(map(str, SEEDS)))
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--plot", action="store_true")
-    parser.add_argument("--overview", action="store_true", help="only redraw overview-d<d>.png from the cache")
+    parser.add_argument("--overview", action="store_true", help="only redraw overview-d<d>.png and overview-d<d>-cost.png from the cache")
     parser.add_argument("--setup", default=None, help="with --overview: the cached setup to draw, e.g. cpu-8rank")
     a = parser.parse_args(argv)
     import src.structure.schemes  # noqa: F401  (registers the new schemes)
