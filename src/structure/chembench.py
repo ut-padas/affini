@@ -18,7 +18,14 @@ the surrogate declines (a simulation would solve those); ``evals`` the oracle st
 training. Two errors are measured, since a surrogate can cover the visited states well and still drift
 when chained: the one-step error above, and the rollout error of 20 test trajectories chained through
 the surrogate from their initial states (the solver stepping what it refuses). ``amplification``
-records how much the solver's own dynamics grow an early error, to tell the two causes of drift apart.
+(``dynamics``) records how much the solver's own dynamics grow errors, to tell the two causes of drift apart:
+``rollout_over_bound`` is the rollout error over the one-step worst times the accumulation factor
+(near 1: errors of one sign adding up; near 1/sqrt(steps): random ones; above 1: the surrogate left the
+states it was tested on). ``survived_worst`` is the part of the one-step error the next exact step
+leaves (in a stiff system it damps the fast part); ``*_projected`` the same surrogate with every step
+projected onto the system's linear invariants (``invariants_of``); ``speedup`` the solver's time per
+state and step over the surrogate's, beside the solver's operation counts (``solve_us``, ``nfev``,
+``nlu``), since SciPy's per-call overhead flatters a surrogate against a compiled solver.
 ``--plot`` writes ``output/chem/<problem>-errors.png`` and ``summary-chem.md``.
 """
 
@@ -147,9 +154,14 @@ class CachedOracle:
         return np.array([self.cache[k] for k in keys])
 
 
-def slowtable(p: ChemProblem, states: np.ndarray, atol: float, seed: int):
+def visited(train: np.ndarray) -> np.ndarray:
+    """The training trajectories' states that start a step, in time-major order (every trajectory's first state, then every second, ...)."""
+    return train[:, :-1].transpose(1, 0, 2).reshape(-1, train.shape[2])
+
+
+def slowtable(p: ChemProblem, train: np.ndarray, atol: float, seed: int):
     oracle = CachedOracle(p.step)
-    t = tabulation.build(oracle, states, atol, seed=seed)
+    t = tabulation.build(oracle, visited(train), atol, seed=seed)
     t.evals = oracle.evals
     return t
 
@@ -168,8 +180,9 @@ class BoxTT:
         return np.any((self.lo > Q) | (self.hi < Q), axis=1)
 
 
-def chebtt_box(p: ChemProblem, states: np.ndarray, atol: float, seed: int):
-    oracle = CachedOracle(p.step)
+def chebtt_box(p: ChemProblem, train: np.ndarray, atol: float, seed: int, oracle: CachedOracle | None = None):
+    oracle = oracle or CachedOracle(p.step)
+    states = visited(train)
     lo, hi = states.min(axis=0), states.max(axis=0)
     pad = 0.02 * np.maximum(hi - lo, 1e-3)
     lo, hi = lo - pad, hi + pad
@@ -184,6 +197,28 @@ def chebtt_box(p: ChemProblem, states: np.ndarray, atol: float, seed: int):
     return BoxTT(models, lo, hi, oracle.evals)
 
 
+def chebtt_roll(p: ChemProblem, train: np.ndarray, atol: float, seed: int, rounds: int = 3):
+    """
+    ``chebtt_box``, accepted only once the surrogate chained along the first ``ROLLOUTS`` training
+    trajectories (projected onto the invariants, as it is used) stays within ``atol`` of them; else
+    retrained at the one-step tolerance times the shortfall (at most 8x tighter per round, 0.8 for
+    margin). The training trajectories are known, so the check costs no solve; the retraining reuses
+    every cached solve, and ChebTT's degrees grow only logarithmically with the accuracy.
+    """
+    oracle = CachedOracle(p.step)
+    W = invariants_of(p, train)
+    one = atol
+    for _ in range(rounds):
+        model = chebtt_box(p, train, one, seed, oracle)
+        used = Projected(model, p, W) if len(W) else model
+        worst = rollout(p, used, train[:ROLLOUTS])["rollout_worst"]
+        if worst <= atol:
+            break
+        one *= 0.8 * max(atol / worst, 0.125)
+    model.evals, model.one_step_tol = oracle.evals, one
+    return model
+
+
 class BoxVectorTT(BoxTT):
     """``chebtt.build_vector`` (rotated per output group where that pays) on the padded bounding box of the training states."""
 
@@ -193,7 +228,8 @@ class BoxVectorTT(BoxTT):
         return np.concatenate([out, np.zeros((len(Q), 1))], axis=1) if self.held else out
 
 
-def chebtt_metric(p: ChemProblem, states: np.ndarray, atol: float, seed: int):
+def chebtt_metric(p: ChemProblem, train: np.ndarray, atol: float, seed: int):
+    states = visited(train)
     held = p.net.species[-1] == "T"  # the held temperature is an input only: its increment is 0
     m = states.shape[1] - (1 if held else 0)
     lo, hi = states.min(axis=0), states.max(axis=0)
@@ -208,7 +244,55 @@ def chebtt_metric(p: ChemProblem, states: np.ndarray, atol: float, seed: int):
 
 METHODS = {"slowtable": ("SlowTable: tabulated visited states", "#8e24aa", slowtable),
            "chebtt_box": ("ChebTT per species on the states' bounding box", "#e08a00", chebtt_box),
-           "chebtt_metric": ("ChebTT per species in the pullback-metric coordinates", "#1b7f5b", chebtt_metric)}  # fmt: skip
+           "chebtt_metric": ("ChebTT per species in the pullback-metric coordinates", "#1b7f5b", chebtt_metric),
+           "chebtt_roll": ("ChebTT per species, retrained until its rollouts hold", "#c0392b", chebtt_roll)}  # fmt: skip
+
+
+def invariants_of(p: ChemProblem, train: np.ndarray) -> np.ndarray:
+    """
+    (m, d) the system's linear invariants W (W F(y) = 0 for every y: element and charge totals of a
+    network, total mass), from the null space of the right-hand side at up to 600 training states (the
+    held temperature excluded), rows orthonormal; empty when there are none. In the system's own
+    variables (abundances, not their log10).
+    """
+    Z = visited(train)
+    Z = Z[np.random.default_rng(0).choice(len(Z), min(600, len(Z)), replace=False)]
+    free = [i for i in range(Z.shape[1]) if p.net.species[i] != "T"]
+    Y = 10.0**Z if p.net.log else Z
+    F = np.array([np.asarray(p.net.rhs(y))[free] for y in Y])
+    F = F / np.maximum(np.linalg.norm(F, axis=1, keepdims=True), 1e-300)
+    _, sv, Vt = np.linalg.svd(F, full_matrices=True)
+    sv = np.concatenate([sv, np.zeros(len(free) - len(sv))])
+    null = Vt[sv < 1e-9 * max(sv.max(), 1e-300)]
+    W = np.zeros((len(null), Z.shape[1]))
+    W[:, free] = null
+    return W
+
+
+class Projected:
+    """
+    A surrogate whose every step is projected onto the invariants of its input state, ``W y' = W y``:
+    in linear coordinates the nearest such state; in log coordinates the smallest relative change,
+    ``y' = y_hat + D^2 W^T (W D^2 W^T)^-1 (W y - W y_hat)`` with ``D = diag(y_hat)`` (each abundance
+    moves in proportion to itself, so trace species are barely touched), floored at ``FLOOR``.
+    """
+
+    def __init__(self, model, p: ChemProblem, W: np.ndarray):
+        self.model, self.p, self.W = model, p, W
+        self.evals = getattr(model, "evals", 0)
+
+    def refuses(self, Z):
+        return self.model.refuses(Z)
+
+    def predict(self, Z):
+        inc = self.model.predict(Z)
+        log = self.p.net.log
+        y, yh = (10.0**Z, 10.0 ** (Z + inc)) if log else (Z, Z + inc)
+        D2 = yh * yh if log else np.ones_like(yh)
+        r = (y - yh) @ self.W.T  # (N, m) the invariants' defect
+        M = np.einsum("ij,nj,kj->nik", self.W, D2, self.W)
+        ys = yh + D2 * np.einsum("nm,mj->nj", np.linalg.solve(M, r[:, :, None])[:, :, 0], self.W)
+        return (np.log10(np.maximum(ys, chemistry.FLOOR)) if log else ys) - Z
 
 
 def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) -> dict:
@@ -221,7 +305,7 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
     Zt, Gt = test[:, :-1].reshape(-1, test.shape[2]), (test[:, 1:] - test[:, :-1]).reshape(-1, test.shape[2])
     t0 = time.perf_counter()
     try:
-        model = METHODS[method][2](p, states, tol, seed)
+        model = METHODS[method][2](p, train, tol, seed)
     except RuntimeError as err:
         m = {"method": method, "problem": name, "tol": tol, "failed": str(err)[:300]}
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -243,6 +327,20 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
          "refused_by_step": refused.reshape(test.shape[0], -1).mean(axis=0).tolist()}  # fmt: skip
     m.update(rollout(p, model, test[:ROLLOUTS]))
     m.update(solver_cost(name))
+    acc = np.asarray(dynamics(name)["accumulation"])
+    roll = np.asarray(m["rollout_error_by_step"])
+    m["rollout_over_bound"] = float(np.max(roll / (max(m["worst"], 1e-300) * acc[: len(roll)])))  # <= ~1: drift the dynamics explain
+    m["survived_worst"] = survived(p, model, test)
+    if hasattr(model, "one_step_tol"):
+        m["one_step_tol"] = model.one_step_tol
+    W = invariants_of(p, train)
+    m["invariants"] = len(W)
+    if len(W):  # the same surrogate, every step projected onto the input's invariants
+        proj = Projected(model, p, W)
+        ep = np.max(np.where(mask, np.abs(proj.predict(Zt) - Gt), 0.0), axis=1)[~refused]
+        r = rollout(p, proj, test[:ROLLOUTS])
+        m.update({"worst_projected": float(ep.max()) if len(ep) else 0.0, "rollout_worst_projected": r["rollout_worst"],
+                  "rollout_error_by_step_projected": r["rollout_error_by_step"]})  # fmt: skip
     m["speedup"] = m["solve_us"] / max(predict_us, 1e-9)  # the solver's time per state and step over the surrogate's
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(m))
@@ -250,6 +348,23 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
 
 
 ROLLOUTS = 20  # test trajectories chained through each surrogate
+
+
+def survived(p: ChemProblem, model, test: np.ndarray, n: int = 200) -> float:
+    """
+    The worst one-step error that survives the next exact step, ``|Phi(S(z)) - Phi(Phi(z))|`` over n
+    answered test states (one solve each; ``Phi(Phi(z))`` is the trajectory's state two steps on):
+    in a stiff system the next step damps the error's fast part, and what is left is what a
+    simulation carries forward.
+    """
+    Z = test[:, :-2].reshape(-1, test.shape[2])
+    Z2 = test[:, 2:].reshape(-1, test.shape[2])
+    idx = np.flatnonzero(~np.asarray(model.refuses(Z), dtype=bool))
+    if not len(idx):
+        return 0.0
+    idx = idx[np.random.default_rng(0).choice(len(idx), min(n, len(idx)), replace=False)]
+    out = p.step(Z[idx] + model.predict(Z[idx]))
+    return float(np.max(np.where(p.scored(Z2[idx]), np.abs(out - Z2[idx]), 0.0)))
 
 
 def rollout(p: ChemProblem, model, true: np.ndarray) -> dict:
@@ -271,35 +386,70 @@ def rollout(p: ChemProblem, model, true: np.ndarray) -> dict:
     return {"rollout_error_by_step": err, "rollout_solved_by_step": solved, "rollout_worst": max(err)}
 
 
-def amplification(name: str) -> np.ndarray:
+def dynamics(name: str) -> dict:
     """
-    (steps,) the largest singular value of ``J_k ... J_1`` along the first test trajectories, J the
-    solver's step-map Jacobian in log10 coordinates (central differences): how much the dynamics alone
-    can grow an error made at the first step after k steps, the same for every surrogate. Cached.
+    What the dynamics alone do to errors, from the first 5 test trajectories (cached), the same for
+    every surrogate:
+
+    - ``stiffness_index``: dt times the fastest decay rate max |Re lambda| of the right-hand side's
+      Jacobian (median over the states): how many e-folds the fastest mode decays within one step.
+      ``stiffness_ratio``: that rate over the slowest nonzero one. ``step_stiffness``: the same read
+      off the step map, max over the steps of -ln min |eig J_k| (Jay and Calvo: mildly stiff from 10,
+      stiff from 20), which ``kind`` uses.
+    - ``growth``: (steps,) the largest singular value of ``J_k ... J_1`` (J the step map's Jacobian
+      in the surrogates' coordinates, central differences): an error made at the first step after k
+      steps. ``lyapunov``: log growth per unit time at the end (finite-time Lyapunov exponent).
+    - ``accumulation``: (steps,) ``A_n = sum_{j=1..n} |J_{n-1} ... J_j|`` (the identity for j = n),
+      the classical global-error bound's factor: one-step errors of at most e give a rollout error of
+      at most about ``e A_n`` after n steps, whatever the surrogate.
+    - ``kind``: "chaotic" when the growth exceeds 10 by the end with a positive exponent, "contracting"
+      when it ends below 1, else "neutral" (oscillatory, conserving or slowly drifting: errors along
+      such directions neither grow nor decay); and "stiff" or "mildly stiff" by ``step_stiffness``.
     """
-    path = CACHE / f"{name}-amplification.npz"
+    path = CACHE / f"{name}-dynamics.json"
     if path.exists():
-        return np.load(path)["growth"]
+        return json.loads(path.read_text())
     p = PROBLEMS[name]
     _, test = data(name)
     true = test[: min(ROLLOUTS, 5)]
-    d = true.shape[2]
+    n_steps, d = true.shape[1] - 1, true.shape[2]
     free = [i for i in range(d) if p.net.species[i] != "T"]
     h = 1e-5
-    growth = np.zeros((len(true), true.shape[1] - 1))
+    E = np.zeros((2 * len(free), d))
+    for j, i in enumerate(free):
+        E[2 * j, i], E[2 * j + 1, i] = h, -h
+    growth, acc, fast, slow, step_stiff = np.zeros((len(true), n_steps)), np.zeros((len(true), n_steps)), [], [], []
     for t, traj in enumerate(true):
-        P = np.eye(len(free))
-        for k in range(traj.shape[0] - 1):
-            E = np.zeros((2 * len(free), d))
-            for j, i in enumerate(free):
-                E[2 * j, i], E[2 * j + 1, i] = h, -h
+        Js = []
+        for k in range(n_steps):
             out = p.step(traj[k][None] + E)[:, free]
-            J = (out[0::2] - out[1::2]).T / (2 * h)
+            Js.append((out[0::2] - out[1::2]).T / (2 * h))
+            y = 10.0 ** traj[k] if p.net.log else traj[k]
+            lam = np.abs(np.real(np.linalg.eigvals(np.asarray(p.net.jac(y))[np.ix_(free, free)])))
+            fast.append(lam.max())
+            slow.append(lam[lam > 1e-9 * lam.max()].min())
+        step_stiff.append(max(-np.log(max(float(np.min(np.abs(np.linalg.eigvals(J)))), 1e-300)) for J in Js))
+        P = np.eye(len(free))
+        for k, J in enumerate(Js):
             P = J @ P
             growth[t, k] = np.linalg.norm(P, 2)
+        for n in range(1, n_steps + 1):  # A_n: an error made after step j is carried by J_{n-1} ... J_j
+            S, total = np.eye(len(free)), 1.0
+            for j in range(n - 1, 0, -1):
+                S = S @ Js[j]
+                total += np.linalg.norm(S, 2)
+            acc[t, n - 1] = total
+    g = growth.max(axis=0)
+    out = {"stiffness_index": float(p.dt * np.median(fast)), "stiffness_ratio": float(np.median(np.array(fast) / np.array(slow))),
+           "step_stiffness": float(np.max(step_stiff)),
+           "growth": g.tolist(), "accumulation": acc.max(axis=0).tolist(),
+           "lyapunov": float(np.log(max(g[-1], 1e-300)) / (n_steps * p.dt))}  # fmt: skip
+    motion = "chaotic" if g[-1] > 10 and out["lyapunov"] > 0 else "contracting" if g[-1] < 1 else "neutral"
+    st = out["step_stiffness"]
+    out["kind"] = motion + (", stiff" if st >= 20 else ", mildly stiff" if st >= 10 else "")
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, growth=growth.max(axis=0))
-    return growth.max(axis=0)
+    path.write_text(json.dumps(out))
+    return out
 
 
 def plot(name: str, methods: list[str]) -> Path:
@@ -328,7 +478,12 @@ def plot(name: str, methods: list[str]) -> Path:
                 b.semilogy(np.maximum(m["rollout_error_by_step"], 1e-12) / tol, ls, color=colour)
             c.plot(100 * np.array(m["refused_by_step"]), ls, color=colour)
     try:
-        g.semilogy(amplification(name), color="#444444")
+        dyn = dynamics(name)
+        g.semilogy(dyn["growth"], color="#444444", label="growth of an error made at step 1")
+        g.semilogy(dyn["accumulation"], color="#888888", ls="--", label="accumulation A_n (bound factor for one-step errors)")
+        g.legend(fontsize=7, frameon=False)
+        g.set_title(f"what the dynamics do to errors ({dyn['kind']}; stiffness index {dyn['stiffness_index']:.3g}, "
+                    f"FTLE {dyn['lyapunov']:.2g})", fontsize=9)
     except Exception as err:  # noqa: BLE001 (the panel is optional; a failed solve must not lose the others)
         g.text(0.5, 0.5, f"not computed: {err}", transform=g.transAxes, ha="center", fontsize=8)
     for ax in (a, b):
@@ -337,11 +492,10 @@ def plot(name: str, methods: list[str]) -> Path:
     a.set_title("one-step error: a surrogate step from the true state vs the solver's step", fontsize=9)
     b.set_title("rollout error: the surrogate chained from the initial state vs the solver's trajectory", fontsize=9)
     c.set_title("states the surrogate refuses (the solver steps them)", fontsize=9)
-    g.set_title("error growth the dynamics alone allow: largest singular value of J_k ... J_1", fontsize=9)
     a.set_ylabel("worst |error| / tolerance (answered states)")
     b.set_ylabel("worst |error| / tolerance over 20 rollouts")
     c.set_ylabel("% of test states refused")
-    g.set_ylabel("amplification of an error made at step 1")
+    g.set_ylabel("factor (same for every surrogate)")
     for ax in axes.ravel():
         ax.set_xlabel("step of the test trajectories")
     a.legend(fontsize=7, frameon=False)
@@ -363,8 +517,8 @@ def plot(name: str, methods: list[str]) -> Path:
 def plot_ladder() -> Path:
     """
     ``output/chem/ladder.png``: per family (columns; the fixed-size test problems together), against the
-    input dimension, the one-step worst error and the rollout worst error (both over the tolerance), the
-    training solves, and the speedup (the solver's time per state and step over the surrogate's). One
+    input dimension, the one-step worst error, the part of it that survives the next exact step and the
+    rollout worst error (all over the tolerance), the training solves, and the speedup (the solver's time per state and step over the surrogate's). One
     colour per method, solid for the looser tolerance and dashed for the tighter; an x at the top of
     the error panels marks a case over the time limit or the evaluation budget.
     """
@@ -372,9 +526,9 @@ def plot_ladder() -> Path:
 
     names = ladder(10**6)
     fams = [f for f in dict.fromkeys(family(n) for n in names) if f not in FIXED] + ["test set"]
-    rows = (("worst", "one-step worst / tol"), ("rollout_worst", "rollout worst / tol"), ("evals", "training solves"),
-            ("speedup", "solver time / inference time"))  # fmt: skip
-    fig, axes = plt.subplots(len(rows), len(fams), figsize=(4.2 * len(fams), 10.5), squeeze=False, constrained_layout=True)
+    rows = (("worst", "one-step worst / tol"), ("survived_worst", "one-step error surviving the next step / tol"),
+            ("rollout_worst", "rollout worst / tol"), ("evals", "training solves"), ("speedup", "solver time / inference time"))  # fmt: skip
+    fig, axes = plt.subplots(len(rows), len(fams), figsize=(4.2 * len(fams), 13.0), squeeze=False, constrained_layout=True)
     for j, fam in enumerate(fams):
         members = [n for n in names if (family(n) == fam) or (fam == "test set" and n in FIXED)]
         for method, (label, colour, _) in METHODS.items():
@@ -396,20 +550,20 @@ def plot_ladder() -> Path:
                     for key, _ in rows:
                         v = m.get(key)
                         if v is not None:
-                            pts[key].append((d, v / tol if key in ("worst", "rollout_worst") else v))
+                            pts[key].append((d, v / tol if key in ("worst", "survived_worst", "rollout_worst") else v))
                 for i, (key, _) in enumerate(rows):
                     if pts[key]:
                         x, y = zip(*sorted(pts[key]), strict=True)
                         axes[i, j].plot(x, y, ls, marker="o", ms=3.5, color=colour,
                                         label=f"{label}, tol {'loose' if k == 0 else 'tight'}" if i == 0 and j == 0 else None)  # fmt: skip
-                for i in (0, 1):
+                for i in (0, 1, 2):
                     for d in fails:
                         axes[i, j].plot(d, 30.0, "x", color=colour, ms=7)
         for i, (key, ylabel) in enumerate(rows):
             ax = axes[i, j]
             ax.set_yscale("log")
             ax.set_xscale("log")
-            if i < 2:
+            if i < 3:
                 ax.axhline(1.0, color="#c0392b", lw=0.8, ls=":")
             ax.set_ylabel(ylabel if j == 0 else "")
             ax.set_xlabel("input dimension" if i == len(rows) - 1 else "")

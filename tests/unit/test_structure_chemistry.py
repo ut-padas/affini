@@ -70,3 +70,24 @@ def test_a_ladder_step_stays_in_its_coordinates_and_moves_towards_the_stable_sta
     ac = c.allen_cahn(5)
     u = c.allen_cahn_initial(5)(4, 1)
     assert np.array_equal(ac.coords(u), u)  # linear coordinates
+
+
+def test_invariants_are_found_and_the_projection_restores_them_exactly():
+    from src.structure import chembench as cb
+
+    p = cb.PROBLEMS["robertson"]
+    Y = c.robertson_initial(30, 4)
+    Z = np.log10(Y)
+    W = cb.invariants_of(p, Z[:, None, :].repeat(2, axis=1))
+    assert W.shape == (1, 3) and np.allclose(np.abs(W), 1 / np.sqrt(3))  # total mass
+
+    class Biased:
+        def predict(self, Q):
+            return np.full(Q.shape, 0.01)  # every abundance up by 2.3%: the total is off
+
+        def refuses(self, Q):
+            return np.zeros(len(Q), dtype=bool)
+
+    Z1 = Z + cb.Projected(Biased(), p, W).predict(Z)
+    assert np.allclose((10.0**Z1).sum(axis=1), Y.sum(axis=1), rtol=1e-12)
+    assert np.all(np.abs(Z1[:, 1] - Z[:, 1] - 0.01) < 1e-6)  # the trace species keeps its change

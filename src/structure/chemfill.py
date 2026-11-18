@@ -6,8 +6,8 @@ reasonable time, smallest systems first.
         .venv/bin/python -m src.structure.chemfill --limit 240
 
 Problems go in order of input dimension: each family of ``chemistry.LADDER`` at every size, and the
-fixed-size test problems (Robertson, Akzo Nobel, HIRES, POLLU) at theirs. A problem's trajectories and
-the solver's cost per step are computed first, outside the time limit. Each case then runs as its own
+fixed-size test problems (Robertson, Akzo Nobel, HIRES, POLLU) at theirs. A problem's trajectories, the
+solver's cost per step and its dynamics diagnostics are computed first, outside the time limit. Each case then runs as its own
 process under ``--limit`` seconds of wall time, tolerances from the loosest; one over the limit is
 recorded as failed (``failed``: the limit) and the tighter tolerances are skipped. A method that cannot
 finish a family's loosest tolerance in time is not run on that family's larger sizes: they only cost
@@ -56,7 +56,7 @@ def _case(args: list[str], limit: float, log) -> bool:
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
-    parser.add_argument("--methods", default="chebtt_box,chebtt_metric,slowtable")
+    parser.add_argument("--methods", default="chebtt_roll,chebtt_box,chebtt_metric,slowtable")
     parser.add_argument("--max-d", type=int, default=80)
     parser.add_argument("--limit", type=float, default=240.0, help="wall seconds per case")
     a = parser.parse_args(argv)
@@ -69,6 +69,7 @@ def main(argv=None) -> None:
             t0 = time.time()
             chembench.data(name)
             chembench.solver_cost(name)
+            chembench.dynamics(name)
             print(f"{name}: trajectories and solver cost ready ({time.time() - t0:.0f} s)", flush=True)
             ran = False
             for method in a.methods.split(","):
