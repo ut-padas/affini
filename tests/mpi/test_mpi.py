@@ -188,3 +188,11 @@ def test_art_is_independent_of_ranks_and_stealing(mpi_launcher, art_serial):
     if N_RANKS > 1:
         assert parallel["steal"]["grants"] > 0, parallel["steal"]
         assert parallel["soft_steal"]["grants"] > 0, parallel["soft_steal"]
+
+
+def test_schemes_distributed_oracle_is_independent_of_ranks_and_reports_failures(mpi_launcher):
+    serial = _run_worker([], {"SURROGATE_MPI": "off"}, module="tests.mpi._scheme_oracle_worker")
+    parallel = _run_worker([*mpi_launcher, "-n", str(max(2, N_RANKS))], module="tests.mpi._scheme_oracle_worker")
+    assert parallel["hash"] == serial["hash"] and parallel["evals"] == serial["evals"]
+    assert serial["error"] == "ValueError: injected failure"
+    assert parallel["error"] == f"RuntimeError: oracle failed on rank {max(2, N_RANKS) - 1}: ValueError: injected failure"

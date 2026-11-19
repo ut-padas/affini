@@ -58,7 +58,7 @@ from scipy.fft import dct
 from scipy.linalg import qr, solve
 from scipy.stats import qmc
 
-from src.schemes.chebtree import cheb_points
+from src.schemes.chebyshev import cheb_points
 
 LATTICE = (
     1 << 12

@@ -46,7 +46,7 @@ def problem(name: str, d: int):
 
 
 def finite_difference_jacobian(f, lo, hi):
-    """A Jacobian by central differences at 1e-6 of the width, standing in for an exact one."""
+    """A Jacobian (N, m, d) by central differences at 1e-6 of the width, standing in for an exact one."""
     h = 1e-6 * (hi - lo)
 
     def jacobian(X):
@@ -55,7 +55,7 @@ def finite_difference_jacobian(f, lo, hi):
             e = np.zeros(X.shape[1])
             e[i] = h[i]
             cols.append((f(X + e).reshape(len(X), -1) - f(X - e).reshape(len(X), -1)) / (2 * h[i]))
-        return np.stack(cols, axis=1)
+        return np.stack(cols, axis=2)
 
     return jacobian
 
@@ -113,7 +113,7 @@ def case_hub():
 
 def case_hub_jacobian():
     f, lo, hi = problem("shared_latent", 4)
-    return hub.build(f, lo, hi, 0.05, jac=finite_difference_jacobian(f, lo, hi), n0=500, max_evals=4000), lo, hi
+    return hub.build(f, lo, hi, 0.05, jacobian=finite_difference_jacobian(f, lo, hi), n0=500, max_evals=4000), lo, hi
 
 
 def case_kernel():

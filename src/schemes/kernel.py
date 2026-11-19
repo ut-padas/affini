@@ -14,11 +14,29 @@ kernel interpolant is weakest, and a batch rarely lands on the worst point (5-D:
 the tolerance on Genz oscillatory and corner peak while the batches passed). Training costs a dense
 Cholesky factorisation of the centres per round, inference one kernel row per query.
 """
+from dataclasses import dataclass
+
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve
 from scipy.stats import qmc
 
+from src.schemes.base import Settings
+from src.schemes.oracle import as_oracle
+from src.schemes.profiling import Training
+
 S5 = np.sqrt(5.0)
+
+
+@dataclass(frozen=True)
+class KernelSettings(Settings):
+    safety: float = 0.5  # a batch passes when its worst residual is within safety * atol
+    n0: int | None = None  # initial Sobol points (default 16 d)
+    batch: int | None = None  # Sobol points per check batch (default 32 d)
+    add: int | None = None  # worst batch points added as centres per round (default 4 d)
+    max_evals: int = 20_000
+    seed: int = 0
+    scales: tuple = (0.5, 0.7, 1.0, 1.4, 2.0)  # multiples of the metric tried for the length scale
+    metric: bool = True  # learn the metric from the model's gradients (False: isotropic)
 
 
 def _r(A, B, L):
@@ -33,17 +51,20 @@ def _k(r):
     return (1 + S5 * r + 5 * r * r / 3) * np.exp(-S5 * r)
 
 
-class Model:
-    """Centres, weights and metric factor of a trained MetricKernel, in [-1, 1]^d coordinates."""
+@dataclass
+class MetricKernel:
+    """Centres ``X``, weights, metric factor ``L`` and mean of a trained MetricKernel, in [-1, 1]^d coordinates."""
 
-    def __init__(self, lo, hi, X, alpha, L, mean):
-        self.lo, self.hi, self.X, self.alpha, self.L, self.mean = lo, hi, X, alpha, L, mean
+    lo: np.ndarray
+    hi: np.ndarray
+    X: np.ndarray
+    alpha: np.ndarray
+    L: np.ndarray
+    mean: float
+    evals: int = 0
 
     def _t(self, Q):
         return 2 * (np.asarray(Q, float) - self.lo) / (self.hi - self.lo) - 1
-
-    def leaf_of(self, Q):
-        return None
 
     def predict(self, Q, chunk=20000):
         T = self._t(Q)
@@ -71,54 +92,69 @@ def _fit(X, y, L, nugget=1e-10):
     return alpha, mean, np.abs(alpha / Kinv_diag)  # Rippa's leave-one-out errors
 
 
-def build(f, lo, hi, atol, safety=0.5, n0=None, batch=None, add=None, max_evals=20000, seed=0, scales=(0.5, 0.7, 1.0, 1.4, 2.0), metric=True):
+def fit_scale(lo, hi, T, y, L, scales) -> MetricKernel:
+    """The interpolant at the multiple of ``L`` with the smallest worst leave-one-out error."""
+    best = None
+    for c in scales:
+        try:
+            alpha, mean, loo = _fit(T, y, c * L)
+        except np.linalg.LinAlgError:
+            continue
+        if best is None or loo.max() < best[0]:
+            best = (loo.max(), c, alpha, mean)
+    _, c, alpha, mean = best
+    return MetricKernel(lo, hi, T, alpha, c * L, mean)
+
+
+def learn_metric(model: MetricKernel, y) -> MetricKernel:
+    """Refit in the square root of the model's average gradient outer product, scaled to keep the current length scale."""
+    T, L, d = model.X, model.L, model.X.shape[1]
+    G = model.grad(T)
+    A = G.T @ G / len(T)
+    w, V = np.linalg.eigh(A)
+    w = np.maximum(w, 1e-3 * w.max())
+    Mn = V @ np.diag(np.sqrt(w)) @ V.T  # sqrt: a metric in which f changes at unit rate per unit length
+    Mn *= np.sqrt(d) / np.linalg.norm(Mn)
+    L = np.linalg.cholesky(Mn @ Mn.T * np.trace(L.T @ L) / np.trace(Mn @ Mn.T)).T
+    alpha, mean, _ = _fit(T, y, L)
+    return MetricKernel(model.lo, model.hi, T, alpha, L, mean)
+
+
+def build(f, lo, hi, atol, settings: KernelSettings | None = None, *, jacobian=None, stream_dir=None, **overrides) -> MetricKernel:
     """Train a MetricKernel of ``f`` (host (N, d) -> (N,)) on [lo, hi] to tolerance ``atol``."""
+    s = KernelSettings.resolve(settings, overrides)
+    oracle = as_oracle(f, jacobian)
+    run = Training("kernel", s, oracle, stream_dir)
     lo, hi = np.asarray(lo, float), np.asarray(hi, float)
     d = len(lo)
-    sob = qmc.Sobol(d, scramble=True, seed=seed)
-    n0 = n0 or 16 * d
-    batch = batch or 32 * d
-    add = add or 4 * d
-    T = np.vstack([np.zeros((1, d)), 2 * sob.random(n0) - 1])
-    y = np.asarray(f(lo + (T + 1) / 2 * (hi - lo)), float).ravel()
-    evals = len(T)
+    to_box = lambda T: lo + (T + 1) / 2 * (hi - lo)  # noqa: E731
+    with run.phase("sample"):
+        sob = qmc.Sobol(d, scramble=True, seed=s.seed)
+        T = np.vstack([np.zeros((1, d)), 2 * sob.random(s.n0 or 16 * d) - 1])
+    y = oracle(to_box(T)).ravel()
     L = np.eye(d) * 2.0  # initial length scale 0.5 of the half-width
     passes = 0
     while True:
-        # length scale by the worst leave-one-out error over a few multiples of L
-        best = None
-        for c in scales:
-            try:
-                alpha, mean, loo = _fit(T, y, c * L)
-            except np.linalg.LinAlgError:
-                continue
-            if best is None or loo.max() < best[0]:
-                best = (loo.max(), c, alpha, mean)
-        _, c, alpha, mean = best
-        L = c * L
-        model = Model(lo, hi, T, alpha, L, mean)
-        if metric:  # AGOP metric of the current model, normalised to keep the scale chosen above
-            G = model.grad(T)
-            A = G.T @ G / len(T)
-            w, V = np.linalg.eigh(A)
-            w = np.maximum(w, 1e-3 * w.max())
-            Mn = V @ np.diag(np.sqrt(w)) @ V.T  # sqrt: a metric in which f changes at unit rate per unit length
-            Mn *= np.sqrt(d) / np.linalg.norm(Mn)
-            L = np.linalg.cholesky(Mn @ Mn.T * np.trace(L.T @ L) / np.trace(Mn @ Mn.T)).T
-            alpha, mean, _ = _fit(T, y, L)
-            model = Model(lo, hi, T, alpha, L, mean)
-        Z = 2 * sob.random(batch) - 1
-        fz = np.asarray(f(lo + (Z + 1) / 2 * (hi - lo)), float).ravel()
-        evals += len(Z)
-        res = np.abs(model.predict(lo + (Z + 1) / 2 * (hi - lo)) - fz)
-        if res.max() <= safety * atol:
+        with run.phase("fit"):
+            model = fit_scale(lo, hi, T, y, L, s.scales)
+        if s.metric:
+            with run.phase("adapt"):
+                model = learn_metric(model, y)
+        L = model.L
+        with run.phase("sample"):
+            Z = 2 * sob.random(s.batch or 32 * d) - 1
+        fz = oracle(to_box(Z)).ravel()
+        with run.phase("check"):
+            res = np.abs(model.predict(to_box(Z)) - fz)
+        run.round_end(centres=len(T), worst=float(res.max() / atol))
+        if res.max() <= s.safety * atol:
             passes += 1
             if passes >= 2:
-                model.evals = evals
-                return model
+                model.evals = oracle.evals
+                return run.finish(model)
         else:
             passes = 0
-        if evals > max_evals:
-            raise RuntimeError(f"kernel model would exceed {max_evals:,} evaluations")
-        take = np.argsort(res)[::-1][:add]
+        if oracle.evals > s.max_evals:
+            raise RuntimeError(f"kernel model would exceed {s.max_evals:,} evaluations")
+        take = np.argsort(res)[::-1][: s.add or 4 * d]
         T, y = np.vstack([T, Z[take]]), np.concatenate([y, fz[take]])

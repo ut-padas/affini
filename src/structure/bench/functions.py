@@ -717,7 +717,7 @@ def write_summary(d: int, methods: list[str], out: Path) -> Path:
              "refused queries are answered by the oracle)", "",
              "| problem | tol | method | ranks | pieces | evaluations | worst | worst seed | % within | % refused | mean error | "
              "train s | infer us/query |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
-    for problem, p in FUNCTIONS.items():
+    for problem in FUNCTIONS:
         for tol in tolerances(d):
             for method in methods:
                 ms = [json.loads(str(np.load(cache_path(method, problem, d, tol, s))["metrics"])) for s in SEEDS

@@ -124,11 +124,8 @@ The project is developed and tested on Python 3.13 (`.python-version`).
 ## Schemes: distributed oracle and monitoring
 
 The schemes (ChebTT, ChebTree, SparseCheb, the hub expansion, ...) train on rank 0 and spread each
-batch of oracle calls over every rank (`ScatterOracle` and `serve`, in `src/structure/bench/registry.py`;
-`DistributedOracle` in `src/schemes/oracle.py` after the reorganisation).
-
-- [ ] Error propagation: if `f` raises on a serving rank, rank 0 waits in `gather` forever. Each
-  rank should return its values or its error; rank 0 re-raises the first error and stops every rank.
+batch of oracle calls over every rank (`DistributedOracle`, `serve` and `distributed` in
+`src/schemes/oracle.py`); a failure on any rank is re-raised on rank 0.
 - [ ] Event streams for monitoring, through `infra.profiling.Profiler` (`stream_dir`, one JSON-lines
   file per rank) with one schema: the trainer (rank 0) records `phase`, `round_end` and `done`, each
   with `scheme`, `round` and `stage`; the serving ranks record `oracle_batch` (points, seconds) and

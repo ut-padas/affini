@@ -12,7 +12,7 @@ differently oriented features, jumps) ChebTT or ChebTT-A is the tool.
 
 Everything is chosen from the data, nothing by hand:
 
-- **Directions:** each output's gradient covariance at pilot points. Gradients come from ``jac`` when the oracle
+- **Directions:** each output's gradient covariance at pilot points. Gradients come from the Jacobian when the oracle
   supplies them (an adjoint, autodiff, or ODE sensitivities); otherwise from central differences, 2d evaluations
   per pilot point.
 - **Hub dimension r:** the fewest eigenvectors holding 99% of the covariance's trace (at most ``r_max``). The weak
@@ -25,7 +25,7 @@ Everything is chosen from the data, nothing by hand:
 - **Budget:** doubled until the hold-out's worst error is within half the tolerance, stops improving by 10% per
   doubling, or ``max_evals`` is reached. ``holdout_worst`` above ``atol`` reports a model that missed the target.
 
-With ``jac``, every sample's gradient also enters the least squares (``grad_weight`` per unit of the box's
+With a Jacobian, every sample's gradient also enters the least squares (``grad_weight`` per unit of the box's
 half-width). That cuts the samples several-fold where the model can match the gradient, and helps less where the
 difficulty is coverage.
 """
@@ -36,8 +36,24 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.linalg import qr
 
+from src.schemes.base import Settings
+from src.schemes.chebyshev import cheb_tables
+from src.schemes.directions import box_gradients, output_groups
+from src.schemes.oracle import as_oracle
+from src.schemes.profiling import Training
+
 MAX_TERMS = 2500  # per group: the Gram and its solve grow as terms^2 and terms^3, and every degree tried pays them
 DEGREES = {1: (8, 16, 32, 48), 2: (8, 16, 24, 32, 40), 3: (4, 6, 8, 10), 4: (3, 4, 5, 6)}  # candidates by hub dimension
+
+
+@dataclass(frozen=True)
+class HubSettings(Settings):
+    n0: int = 2000  # samples of the first budget round (doubled every round)
+    max_evals: int = 200_000
+    r_max: int = 4  # largest hub dimension
+    pilot: int = 100  # pilot points whose gradients give the directions
+    grad_weight: float = 0.05  # weight of a gradient equation per unit of the box's half-width
+    seed: int = 0
 
 
 @dataclass
@@ -58,7 +74,7 @@ class Hub:
     groups: list
     m: int
     evals: int
-    gradients: int = 0
+    jacobians: int = 0  # points at which the Jacobian entered the fit
     holdout_worst: float = float("nan")
     history: list = field(default_factory=list)  # (samples, hold-out worst) per budget round
 
@@ -72,18 +88,6 @@ class Hub:
     def describe(self) -> list:
         """Per group: its outputs, hub dimension, degree, weak terms and size (the discovered structure)."""
         return [(g.outputs, g.r, g.degree, g.weak, len(g.cols)) for g in self.groups]
-
-
-def _cheb(t, n):
-    """(N, n + 1) Chebyshev values and derivatives at t."""
-    T, D = np.zeros((len(t), n + 1)), np.zeros((len(t), n + 1))
-    T[:, 0] = 1.0
-    if n:
-        T[:, 1], D[:, 1] = t, 1.0
-    for j in range(2, n + 1):
-        T[:, j] = 2 * t * T[:, j - 1] - T[:, j - 2]
-        D[:, j] = 2 * T[:, j - 1] + 2 * t * D[:, j - 1] - D[:, j - 2]
-    return T, D
 
 
 def _columns(d, r, degree, weak):
@@ -110,7 +114,7 @@ def _design(X, lo, hi, V, r, cols, gradient=False):
     t = np.clip((((X - c0) / s0) @ V) / bound, -1.0, 1.0)
     N, d = X.shape
     hc = cols[~cols[:, r:].any(axis=1), :r]
-    tables = [_cheb(t[:, i], int(hc[:, i].max())) for i in range(r)]
+    tables = [cheb_tables(t[:, i], int(hc[:, i].max())) for i in range(r)]
     vals = [T[:, hc[:, i]] for i, (T, _) in enumerate(tables)]
     Ah = np.prod(vals, axis=0)
     weak = len(cols) > len(hc)
@@ -131,52 +135,6 @@ def _design(X, lo, hi, V, r, cols, gradient=False):
     dWeak = W[:, :, :, None, None] * dAh[:, None, None, :, :]
     dWeak += (dW[:, :, :, None] * Ah[:, None, None, :])[..., None] * Wt[:, r:].T[None, :, None, None, :]
     return A, np.concatenate([dAh, dWeak.reshape(N, -1, d)], axis=1)
-
-
-def _gradients(f, jac, X, lo, hi):
-    """(N, d, m) gradients in box-scaled inputs (df/dx_k times the half-width), and the evaluations they cost."""
-    s0 = 0.5 * (hi - lo)
-    if jac is not None:
-        return np.asarray(jac(X), dtype=np.float64).reshape(len(X), X.shape[1], -1) * s0[None, :, None], 0
-    d = X.shape[1]
-    h = 1e-4 * (hi - lo)
-    E = np.repeat(X, 2 * d, axis=0)
-    for i in range(d):
-        E[2 * i :: 2 * d, i] += h[i]
-        E[2 * i + 1 :: 2 * d, i] -= h[i]
-    F = np.asarray(f(E), dtype=np.float64).reshape(len(E), -1)
-    G = (F[0::2] - F[1::2]) / (2 * h[np.tile(np.arange(d), len(X))][:, None])
-    return G.reshape(len(X), d, -1) * s0[None, :, None], len(E)
-
-
-def _hub_rank(C, r_max):
-    w = np.clip(np.linalg.eigvalsh(C)[::-1], 0.0, None)
-    share = np.cumsum(w) / max(float(w.sum()), 1e-300)
-    r = min(int(np.searchsorted(share, 0.99) + 1), r_max)
-    return r, 1.0 - share[r - 1]
-
-
-def _groups(Gp, r_max):
-    """Output groups sharing a rotation: (outputs, V, r, weak) from the pilot gradients (points, d, m)."""
-    m = Gp.shape[2]
-    Cs = [Gp[:, :, o].T @ Gp[:, :, o] / len(Gp) for o in range(m)]
-    Cpool = sum(C / max(float(np.trace(C)), 1e-300) for C in Cs)
-    r_pool, _ = _hub_rank(Cpool, r_max)
-    Vpool = np.linalg.eigh(Cpool)[1][:, ::-1]
-    pooled, groups = [], []
-    for o, C in enumerate(Cs):
-        r, rest = _hub_rank(C, r_max)
-        V = np.linalg.eigh(C)[1][:, ::-1]
-        cos = np.linalg.svd(V[:, :r].T @ Vpool[:, :r_pool], compute_uv=False)
-        if r <= r_pool and float(cos.min()) > 0.99:
-            pooled.append(o)
-        else:
-            groups.append(([o], V, r, rest > 1e-4))
-    if pooled:
-        rest = max(1.0 - np.sum(np.clip(np.linalg.eigvalsh(Vpool.T @ Cs[o] @ Vpool)[::-1][:r_pool], 0, None)) / max(float(np.trace(Cs[o])), 1e-300)
-                   for o in pooled)  # fmt: skip
-        groups.insert(0, (pooled, Vpool, r_pool, rest > 1e-4))
-    return groups, Vpool, r_pool
 
 
 def _design_points(groups, lo, hi, n, rng):
@@ -220,63 +178,78 @@ def _fit(X, Y, G, lo, hi, V, r, cols, grad_weight, lam=1e-10):
     return np.linalg.solve(AtA, rows.T @ rhs)
 
 
-def build(f, lo, hi, atol, *, jac=None, n0=2000, max_evals=200_000, r_max=4, pilot=100, grad_weight=0.05, seed=0) -> Hub:
+def fit_groups(groups, X, Y, G, lo, hi, s: HubSettings) -> tuple[list, float]:
+    """
+    Fit every group on the training split at the degree whose fit on a sub-sample has the smallest worst
+    hold-out error; returns the fitted groups and the worst hold-out error over them.
+    """
+    d = X.shape[1]
+    hold = np.random.default_rng(s.seed + 17).random(len(X)) < 0.2
+    tr, ho = ~hold, hold
+    fitted, worst = [], 0.0
+    for outputs, V, r, weak in groups:
+        Yg = Y[:, outputs]
+        Gg = None if G is None else G[:, :, outputs]
+        sub = np.flatnonzero(tr)[: min(int(tr.sum()), 6000)]
+        best = None
+        for degree in DEGREES[r]:
+            cols = _columns(d, r, degree, weak)
+            if len(cols) > min(MAX_TERMS, 0.5 * len(sub) * (1 if Gg is None else 1 + d)):
+                break
+            coef = _fit(X[sub], Yg[sub], None if Gg is None else Gg[sub], lo, hi, V, r, cols, s.grad_weight)
+            err = float(np.max(np.abs(_design(X[ho], lo, hi, V, r, cols)[0] @ coef - Yg[ho]))) if ho.any() else 0.0
+            if best is None or err < best[0]:
+                best = (err, degree)
+        degree = best[1] if best else DEGREES[r][0]
+        cols = _columns(d, r, degree, weak)
+        coef = _fit(X[tr], Yg[tr], None if Gg is None else Gg[tr], lo, hi, V, r, cols, s.grad_weight)
+        err = float(np.max(np.abs(_design(X[ho], lo, hi, V, r, cols)[0] @ coef - Yg[ho]))) if ho.any() else 0.0
+        worst = max(worst, err)
+        fitted.append(HubGroup(list(outputs), V, r, degree, weak, cols, coef))
+    return fitted, worst
+
+
+def build(f, lo, hi, atol, settings: HubSettings | None = None, *, jacobian=None, stream_dir=None, **overrides) -> Hub:
     """
     Train a hub expansion of ``f`` ((N, d) -> (N,) or (N, m)) on [lo, hi] to an absolute tolerance ``atol``
-    (judged on a hold-out from the same design: no max-norm guarantee). ``jac`` ((N, d) -> (N, d, m) or (N, d)), if
-    given, supplies the gradients for the directions and the fit; otherwise central differences give the
-    directions (2d evaluations per pilot point) and the fit uses values only.
+    (judged on a hold-out from the same design: no max-norm guarantee). ``jacobian`` ((N, d) -> (N, m, d) or
+    (N, d)), or an ``Oracle`` that has one, supplies the gradients for the directions and the fit; otherwise
+    central differences give the directions (2d evaluations per pilot point) and the fit uses values only.
     """
+    s = HubSettings.resolve(settings, overrides)
+    oracle = as_oracle(f, jacobian)
+    run = Training("hub", s, oracle, stream_dir)
     lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
     d = len(lo)
-    rng = np.random.default_rng(seed)
-    ev = lambda X: np.asarray(f(X), dtype=np.float64).reshape(len(X), -1)  # noqa: E731
-    Xp = rng.uniform(lo, hi, (pilot, d))
-    Gp, evals = _gradients(f, jac, Xp, lo, hi)
-    n_grad = pilot if jac is not None else 0
-    groups, _, _ = _groups(Gp, r_max)
+    rng = np.random.default_rng(s.seed)
+    with_jacobian = oracle.has_jacobian
+    with run.phase("explore"):
+        Xp = rng.uniform(lo, hi, (s.pilot, d))
+        Gp = box_gradients(oracle, Xp, lo, hi)
+        groups, _, _ = output_groups(Gp, s.r_max)
     m = Gp.shape[2]
     X, Y = np.zeros((0, d)), np.zeros((0, m))
-    G = np.zeros((0, d, m)) if jac is not None else None
-    n, history, hub = n0, [], None
+    G = np.zeros((0, d, m)) if with_jacobian else None
+    n, history, hub = s.n0, [], None
     while True:
-        Xn = _design_points(groups, lo, hi, n - len(X), rng) if n > len(X) else np.zeros((0, d))
-        X, Y = np.concatenate([X, Xn]), np.concatenate([Y, ev(Xn)])
-        evals += len(Xn)
-        if jac is not None:
-            G = np.concatenate([G, _gradients(f, jac, Xn, lo, hi)[0]])
-            n_grad += len(Xn)
-        hold = np.random.default_rng(seed + 17).random(len(X)) < 0.2
-        tr, ho = ~hold, hold
-        fitted, worst = [], 0.0
-        for outputs, V, r, weak in groups:
-            Yg = Y[:, outputs]
-            Gg = None if G is None else G[:, :, outputs]
-            sub = np.flatnonzero(tr)[: min(int(tr.sum()), 6000)]
-            best = None
-            for degree in DEGREES[r]:
-                cols = _columns(d, r, degree, weak)
-                if len(cols) > min(MAX_TERMS, 0.5 * len(sub) * (1 if Gg is None else 1 + d)):
-                    break
-                coef = _fit(X[sub], Yg[sub], None if Gg is None else Gg[sub], lo, hi, V, r, cols, grad_weight)
-                err = float(np.max(np.abs(_design(X[ho], lo, hi, V, r, cols)[0] @ coef - Yg[ho]))) if ho.any() else 0.0
-                if best is None or err < best[0]:
-                    best = (err, degree)
-            degree = best[1] if best else DEGREES[r][0]
-            cols = _columns(d, r, degree, weak)
-            coef = _fit(X[tr], Yg[tr], None if Gg is None else Gg[tr], lo, hi, V, r, cols, grad_weight)
-            err = float(np.max(np.abs(_design(X[ho], lo, hi, V, r, cols)[0] @ coef - Yg[ho]))) if ho.any() else 0.0
-            worst = max(worst, err)
-            fitted.append(HubGroup(list(outputs), V, r, degree, weak, cols, coef))
+        with run.phase("sample"):
+            Xn = _design_points(groups, lo, hi, n - len(X), rng) if n > len(X) else np.zeros((0, d))
+        X, Y = np.concatenate([X, Xn]), np.concatenate([Y, oracle(Xn).reshape(len(Xn), -1)])
+        if with_jacobian:
+            G = np.concatenate([G, box_gradients(oracle, Xn, lo, hi)])
+        with run.phase("fit"):
+            fitted, worst = fit_groups(groups, X, Y, G, lo, hi, s)
         history.append((len(X), worst))
-        hub = Hub(lo, hi, fitted, m, evals, n_grad, worst, history)
+        hub = Hub(lo, hi, fitted, m, oracle.evals, oracle.jacobians, worst, history)
+        run.round_end(samples=len(X), worst=worst / atol, degrees=",".join(str(g.degree) for g in fitted))
         # Stop at the target, at the budget, or when doubling the samples bought less than 10%: the remaining error
         # is then the model class's (hub dimension, degree cap), which more samples of the same design do not fix.
         stalled = len(history) > 1 and worst > 0.9 * history[-2][1]
-        if worst <= 0.5 * atol or stalled or 2 * n + evals - len(X) > max_evals:
+        if worst <= 0.5 * atol or stalled or 2 * n + oracle.evals - len(X) > s.max_evals:
             break
         n *= 2
     # the final model uses every sample (the hold-out included), at the degrees chosen above
-    for g in hub.groups:
-        g.coef = _fit(X, Y[:, g.outputs], None if G is None else G[:, :, g.outputs], lo, hi, g.V, g.r, g.cols, grad_weight)
-    return hub
+    with run.phase("fit"):
+        for g in hub.groups:
+            g.coef = _fit(X, Y[:, g.outputs], None if G is None else G[:, :, g.outputs], lo, hi, g.V, g.r, g.cols, s.grad_weight)
+    return run.finish(hub)

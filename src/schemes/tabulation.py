@@ -29,6 +29,21 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from src.schemes.base import Settings
+from src.schemes.oracle import as_oracle
+from src.schemes.profiling import Training
+
+ROUND = 256  # streamed states per round of the report and the log
+
+
+@dataclass(frozen=True)
+class TableSettings(Settings):
+    safety: float = 0.5  # records are accepted at safety * atol, so the frozen table keeps a margin
+    r_max: float = 1.0  # cap on an ellipsoid's semi-axes
+    check: float = 0.05  # share of retrievals solved anyway to check them
+    step: float = 1e-4  # forward-difference step of a record's Jacobian, when the oracle has none
+    seed: int = 0
+
 
 @dataclass
 class SlowTable:
@@ -90,40 +105,57 @@ def jacobian(step, z: np.ndarray, g: np.ndarray, h: float = 1e-4) -> tuple[np.nd
     return (Gp - g[None]).T / h, d
 
 
-def build(step, states: np.ndarray, atol: float, safety: float = 0.5, r_max: float = 1.0, check: float = 0.05,
-          seed: int = 0) -> SlowTable:  # fmt: skip
+def record_jacobian(oracle, q: np.ndarray, gq: np.ndarray, h: float) -> np.ndarray:
+    """The increment's Jacobian at q: the oracle's own (minus the identity) when it has one, else forward differences."""
+    if oracle.has_jacobian:
+        return oracle.jacobian(q[None])[0] - np.eye(len(q))
+    return jacobian(oracle, q, gq, h)[0]
+
+
+def build(step, states: np.ndarray, atol: float, settings: TableSettings | None = None, *, jacobian=None, stream_dir=None,
+          **overrides) -> SlowTable:  # fmt: skip
     """
     Train a SlowTable on ``states`` (N, d) in stream order; ``step(Z) -> Phi(Z)`` is the oracle in the
-    same coordinates (the increment is ``Phi(z) - z``). Accepts at ``safety * atol``, so the frozen
-    table has some margin.
+    same coordinates (the increment is ``Phi(z) - z``), and ``jacobian(Z) -> dPhi/dz`` (N, d, d), if given,
+    replaces a new record's forward differences. Accepts at ``safety * atol``, so the frozen table has
+    some margin.
     """
-    rng = np.random.default_rng(seed)
-    tol = safety * atol
-    t = SlowTable(tol, r_max)
-    for q in np.asarray(states, dtype=np.float64):
-        if t.Z:
-            dist = t.scaled_distance(q[None])[0]
-            i = int(np.argmin(dist))
-            if dist[i] <= 1.0:
-                t.retrieved += 1
-                if rng.random() >= check:
-                    continue
-                gq = step(q[None])[0] - q
-                t.evals += 1
-                if np.max(np.abs(t.G[i] + t.A[i] @ (q - t.Z[i]) - gq)) > tol:  # a wrong retrieval: shrink
-                    t.B[i] = _rescale_along(t.B[i], q - t.Z[i], 1.05)
-                    t.shrunk += 1
-                continue
-        gq = step(q[None])[0] - q
-        t.evals += 1
-        if t.Z:
-            dist = t.scaled_distance(q[None])[0]
-            i = int(np.argmin(dist))
-            if np.max(np.abs(t.G[i] + t.A[i] @ (q - t.Z[i]) - gq)) <= tol:
-                t.B[i] = _rescale_along(t.B[i], q - t.Z[i], 1.0)
-                t.grown += 1
-                continue
-        A, n = jacobian(step, q, gq)
-        t.evals += n
-        t.add(q, gq, A)
-    return t
+    s = TableSettings.resolve(settings, overrides)
+    oracle = as_oracle(step, jacobian)
+    run = Training("tabulation", s, oracle, stream_dir)
+    rng = np.random.default_rng(s.seed)
+    tol = s.safety * atol
+    t = SlowTable(tol, s.r_max)
+    states = np.asarray(states, dtype=np.float64)
+    for start in range(0, len(states), ROUND):
+        with run.phase("fit"):
+            for q in states[start : start + ROUND]:
+                stream_one(t, oracle, q, tol, rng, s)
+        run.round_end(states=min(start + ROUND, len(states)), records=len(t.Z), retrieved=t.retrieved, grown=t.grown, shrunk=t.shrunk)
+    t.evals = oracle.evals
+    return run.finish(t)
+
+
+def stream_one(t: SlowTable, oracle, q: np.ndarray, tol: float, rng, s: TableSettings) -> None:
+    """One streamed query: retrieve (and sometimes check) it, grow the nearest record to cover it, or add it as a record."""
+    if t.Z:
+        dist = t.scaled_distance(q[None])[0]
+        i = int(np.argmin(dist))
+        if dist[i] <= 1.0:
+            t.retrieved += 1
+            if rng.random() >= s.check:
+                return
+            gq = oracle(q[None])[0] - q
+            if np.max(np.abs(t.G[i] + t.A[i] @ (q - t.Z[i]) - gq)) > tol:  # a wrong retrieval: shrink
+                t.B[i] = _rescale_along(t.B[i], q - t.Z[i], 1.05)
+                t.shrunk += 1
+            return
+    gq = oracle(q[None])[0] - q
+    if t.Z:
+        dist = t.scaled_distance(q[None])[0]
+        i = int(np.argmin(dist))
+        if np.max(np.abs(t.G[i] + t.A[i] @ (q - t.Z[i]) - gq)) <= tol:
+            t.B[i] = _rescale_along(t.B[i], q - t.Z[i], 1.0)
+            t.grown += 1
+            return
+    t.add(q, gq, record_jacobian(oracle, q, gq, s.step))

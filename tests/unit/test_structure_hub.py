@@ -13,7 +13,7 @@ def ridge(X):
     return np.sin(3.0 * X @ A) + 0.05 * X[:, 0] ** 2
 
 
-def ridge_jac(X):
+def ridge_jacobian(X):
     return 3.0 * np.cos(3.0 * X @ A)[:, None] * A[None, :] + np.outer(0.1 * X[:, 0], np.eye(D)[0])
 
 
@@ -21,7 +21,7 @@ def test_ridge_function_found_from_values_alone():
     model = hub.build(ridge, LO, HI, 0.01, n0=1000, max_evals=20_000)
     X = np.random.default_rng(5).uniform(LO, HI, (2000, D))
     assert np.max(np.abs(model.predict(X) - ridge(X))) < 0.01
-    assert model.gradients == 0
+    assert model.jacobians == 0
     assert model.groups[0].r <= 2
     assert abs(abs(model.groups[0].V[:, 0] @ A) - 1.0) < 1e-3  # the steep direction is the ridge's
 
@@ -33,9 +33,9 @@ def test_oracle_gradients_replace_finite_differences_and_cut_evaluations():
         calls.append(len(X))
         return ridge(X)
 
-    model = hub.build(counted, LO, HI, 0.01, jac=ridge_jac, n0=1000, max_evals=20_000)
+    model = hub.build(counted, LO, HI, 0.01, jacobian=ridge_jacobian, n0=1000, max_evals=20_000)
     values_only = hub.build(ridge, LO, HI, 0.01, n0=1000, max_evals=20_000)
-    assert model.gradients > 0
+    assert model.jacobians > 0
     assert sum(calls) == model.evals  # no finite-difference stencils: every evaluation is a training sample
     assert model.evals < values_only.evals
     X = np.random.default_rng(5).uniform(LO, HI, (2000, D))

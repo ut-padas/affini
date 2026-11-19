@@ -3,7 +3,7 @@
 import numpy as np
 
 from src.problems import FUNCTIONS
-from src.schemes import sparsegrid
+from src.schemes import base, sparsegrid
 
 
 def test_a_failed_check_opens_what_the_surpluses_stopped_before():
@@ -17,9 +17,9 @@ def test_a_failed_check_opens_what_the_surpluses_stopped_before():
     assert np.max(np.abs(model.predict(X) - fX)) <= atol
 
 
-def test_the_check_set_is_sobol_points_plus_the_corners():
+def test_sparsegrids_check_set_is_sobol_points_plus_the_corners():
     lo, hi = np.array([-1.0, 0.0, 2.0]), np.array([1.0, 1.0, 3.0])
-    X = sparsegrid.check_points(lo, hi, 16, seed=0)
+    X = base.check_points(lo, hi, 16, seed=0, corners=True)
     assert X.shape == (16 + 8, 3)
     assert np.all((X >= lo) & (X <= hi))
     corners = {tuple(c) for c in X[16:]}

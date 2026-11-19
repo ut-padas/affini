@@ -30,9 +30,11 @@ import itertools
 from dataclasses import dataclass, field
 
 import numpy as np
-from scipy.stats import qmc
 
-from src.schemes.chebtree import cheb_basis, cheb_eval
+from src.schemes.base import Settings, check_points
+from src.schemes.chebyshev import cheb_basis, cheb_eval
+from src.schemes.oracle import as_oracle
+from src.schemes.profiling import Training
 
 MAX_LEVEL = 12
 
@@ -95,12 +97,84 @@ class SparseCheb:
             out += c * cheb_eval(self.terms[idx], T)
         return out
 
-    def leaf_of(self, X):
-        return None
+
+@dataclass(frozen=True)
+class SparseGridSettings(Settings):
+    safety: float = 0.5  # the surpluses and the check set must stay within safety * atol
+    max_evals: int = 2_000_000
+    max_level: int = 10  # deepest axis level (2^level + 1 points)
+    n_check: int | None = None  # check points (default 64 + 32 d), plus the corners for d <= 8
+    seed: int = 0
 
 
-def build(f, lo, hi, atol: float, safety: float = 0.5, max_evals: int = 2_000_000, max_level: int = 10,
-          n_check: int | None = None, seed: int = 0) -> SparseCheb:  # fmt: skip
+class SparseGridGrowth:
+    """The growing index set: the refined indices (``old``), the active ones with their indicators, and every value evaluated, by grid point."""
+
+    def __init__(self, model: SparseCheb, oracle, s: SparseGridSettings):
+        self.model, self.oracle, self.s = model, oracle, s
+        self.values: dict[tuple, float] = {}
+        self.old: set = set()
+        self.active: dict = {}
+
+    def grid(self, idx):
+        axes = [axis_points(lk) for lk in idx]
+        keys = [axis_keys(lk) for lk in idx]
+        P = np.stack([m.ravel() for m in np.meshgrid(*axes, indexing="ij")], axis=1)
+        K = np.stack([m.ravel() for m in np.meshgrid(*keys, indexing="ij")], axis=1)
+        return P, K
+
+    def add(self, idx) -> float:
+        """Evaluate the new points of index l, store U_l, and return its indicator (worst surplus)."""
+        model, lo, hi = self.model, self.model.lo, self.model.hi
+        P, K = self.grid(idx)
+        keys = [tuple(k) for k in K]
+        new = [i for i, k in enumerate(keys) if k not in self.values]
+        surplus = 0.0
+        if new:
+            Xn = lo + (P[new] + 1.0) * 0.5 * (hi - lo)
+            fn = self.oracle(Xn).ravel()
+            model.evals += len(new)
+            before = model.predict(Xn) if model.terms else np.zeros(len(new))
+            surplus = float(np.max(np.abs(fn - before)))
+            for i, v in zip(new, fn, strict=True):
+                self.values[keys[i]] = v
+        V = np.array([self.values[k] for k in keys]).reshape([len(axis_points(lk)) for lk in idx])
+        model.insert(idx, _coefficients(V, idx))
+        return surplus
+
+    def refine(self, idx) -> None:
+        """Retire ``idx`` and activate each forward neighbour whose backward neighbours are all refined."""
+        d = self.model.d
+        del self.active[idx]
+        self.old.add(idx)
+        for k in range(d):
+            if idx[k] >= self.s.max_level:
+                continue
+            fwd = tuple(v + (j == k) for j, v in enumerate(idx))
+            back = [tuple(v - (j == i) for j, v in enumerate(fwd)) for i in range(d) if fwd[i] > 0]
+            if fwd not in self.active and fwd not in self.old and all(b in self.old for b in back):
+                self.active[fwd] = self.add(fwd)
+
+    def budget(self) -> None:
+        if self.model.evals > self.s.max_evals:
+            raise RuntimeError(f"SparseCheb would exceed {self.s.max_evals:,} evaluations.")
+
+    def greedy(self, atol: float) -> None:
+        """Refine the largest indicator until the active indicators sum to at most ``safety * atol``."""
+        while self.active and sum(self.active.values()) > self.s.safety * atol:
+            self.budget()
+            self.refine(max(self.active, key=self.active.get))
+
+    def widen(self) -> None:
+        """Look one step ahead: refine every active index once, which evaluates every forward neighbour."""
+        for idx in list(self.active):
+            self.budget()
+            if idx in self.active:
+                self.refine(idx)
+
+
+def build(f, lo, hi, atol: float, settings: SparseGridSettings | None = None, *, jacobian=None, stream_dir=None,
+          **overrides) -> SparseCheb:  # fmt: skip
     """
     Train a SparseCheb of ``f`` (host (N, d) -> (N,)) on [lo, hi] to tolerance ``atol``.
 
@@ -111,83 +185,38 @@ def build(f, lo, hi, atol: float, safety: float = 0.5, max_evals: int = 2_000_00
     one step (the set widens instead of deepening: the surpluses missed some direction or
     interaction) and the greedy growth resumes, until the check passes.
     """
+    s = SparseGridSettings.resolve(settings, overrides)
+    oracle = as_oracle(f, jacobian)
+    run = Training("sparsegrid", s, oracle, stream_dir)
     lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
     d = len(lo)
     model = SparseCheb(lo, hi)
-    values: dict[tuple, float] = {}
-
-    def grid(idx):
-        axes = [axis_points(lk) for lk in idx]
-        keys = [axis_keys(lk) for lk in idx]
-        P = np.stack([m.ravel() for m in np.meshgrid(*axes, indexing="ij")], axis=1)
-        K = np.stack([m.ravel() for m in np.meshgrid(*keys, indexing="ij")], axis=1)
-        return P, K
-
-    def add(idx):
-        """Evaluate the new points of index l, store U_l, and return its indicator (worst surplus)."""
-        P, K = grid(idx)
-        keys = [tuple(k) for k in K]
-        new = [i for i, k in enumerate(keys) if k not in values]
-        surplus = 0.0
-        if new:
-            Xn = lo + (P[new] + 1.0) * 0.5 * (hi - lo)
-            fn = np.asarray(f(Xn), dtype=np.float64).ravel()
-            model.evals += len(new)
-            before = model.predict(Xn) if model.terms else np.zeros(len(new))
-            surplus = float(np.max(np.abs(fn - before)))
-            for i, v in zip(new, fn, strict=True):
-                values[keys[i]] = v
-        V = np.array([values[k] for k in keys]).reshape([len(axis_points(lk)) for lk in idx])
-        model.insert(idx, _coefficients(V, idx))
-        return surplus
-
-    zero = (0,) * d
-    add(zero)
-    old, active = {zero}, {}
-    for k in range(d):
-        e = tuple(int(j == k) for j in range(d))
-        active[e] = add(e)
-    def refine(idx):
-        del active[idx]
-        old.add(idx)
+    growth = SparseGridGrowth(model, oracle, s)
+    with run.phase("fit"):
+        zero = (0,) * d
+        growth.add(zero)
+        growth.old.add(zero)
         for k in range(d):
-            if idx[k] >= max_level:
-                continue
-            fwd = tuple(v + (j == k) for j, v in enumerate(idx))
-            back = [tuple(v - (j == i) for j, v in enumerate(fwd)) for i in range(d) if fwd[i] > 0]
-            if fwd not in active and fwd not in old and all(b in old for b in back):
-                active[fwd] = add(fwd)
-
-    Xc = check_points(lo, hi, n_check or 64 + 32 * d, seed)
-    fc = np.asarray(f(Xc), dtype=np.float64).ravel()
+            e = tuple(int(j == k) for j in range(d))
+            growth.active[e] = growth.add(e)
+    with run.phase("sample"):
+        Xc = check_points(lo, hi, s.n_check or 64 + 32 * d, s.seed, corners=True)
+    fc = oracle(Xc).ravel()
     model.evals += len(Xc)
     model.checks = 0
-    def widen():
-        for idx in list(active):
-            if model.evals > max_evals:
-                raise RuntimeError(f"SparseCheb would exceed {max_evals:,} evaluations.")
-            if idx in active:
-                refine(idx)
-
-    while active:
-        while active and sum(active.values()) > safety * atol:
-            if model.evals > max_evals:
-                raise RuntimeError(f"SparseCheb would exceed {max_evals:,} evaluations.")
-            refine(max(active, key=active.get))
-        if not active or float(np.max(np.abs(model.predict(Xc) - fc))) <= safety * atol:
+    while growth.active:
+        with run.phase("fit"):
+            growth.greedy(atol)
+        with run.phase("check"):
+            worst = float(np.max(np.abs(model.predict(Xc) - fc))) if growth.active else 0.0
+        done = not growth.active or worst <= s.safety * atol
+        run.round_end(indices=len(model.terms), active=len(growth.active), worst=worst / atol, action="done" if done else "widen")
+        if done:
             break
         model.checks += 1
-        widen()  # look one step ahead: evaluate every forward neighbour, then grow greedily again
-    return model
-
-
-def check_points(lo, hi, n: int, seed: int) -> np.ndarray:
-    """A scrambled Sobol set of n points, plus the 2^d corners for d <= 8 (where steep features hide)."""
-    d = len(lo)
-    S = qmc.Sobol(d, scramble=True, seed=seed).random(n)
-    if d <= 8:
-        S = np.vstack([S, np.array(list(itertools.product((0.0, 1.0), repeat=d)))])
-    return lo + S * (hi - lo)
+        with run.phase("adapt"):
+            growth.widen()
+    return run.finish(model)
 
 
 def _coefficients(V: np.ndarray, idx) -> np.ndarray:

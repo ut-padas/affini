@@ -868,7 +868,7 @@ def write_summary() -> Path:
     lines = ["# ODE bench (errors in dex for log problems, absolute otherwise, over held-out trajectory states; refused states are solved)", "",
              "| problem | tol | method | solves | one-step worst | 99.9% | 99% | % above tol | % refused | rollout worst | train s | infer us | solver us | speedup |",
              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
-    for name, p in STEP_MAPS.items():
+    for name in STEP_MAPS:
         for tol in STEP_TOLERANCES:
             for method in METHODS:
                 path = CACHE / name / f"{method}_tol{tol:g}.json"
