@@ -1146,7 +1146,7 @@ check of every answer, which pays only if checking is cheaper than solving.
 Scope: builds on docs/SURROGATE_RESEARCH.md (refs I-*, II-*, III-* are used without repeating them).
 New references are IV-* (the IDs of docs/LITERATURE.md). Verification tags: **[v]** title/venue/claim checked against the paper or its
 abstract in this review; **[a]** checked against an abstract or summary only; **[r]** recalled, not checked.
-Numbers marked "measured" come from short runs of `src/structure/schemes/chebtree.py` as of the fibre-check commit.
+Numbers marked "measured" come from short runs of `src/schemes/chebtree.py` as of the fibre-check commit.
 
 ### 5.0 Bottom line
 
@@ -2335,7 +2335,7 @@ worst trajectory); rho_40 = 0.56 (ChebTT box 0.001), 0.17 (ChebTT box 0.01), 0.0
 
 ## 10. Review VIII: piecewise and partitioned tensor trains for kinks, jumps and fronts
 
-Scope: ChebTT (`src/structure/schemes/chebtt.py`) fails on axis-aligned kinks (`genz_continuous`), axis-aligned
+Scope: ChebTT (`src/schemes/chebtt.py`) fails on axis-aligned kinks (`genz_continuous`), axis-aligned
 jumps (`genz_discontinuous`), an oblique planar jump (`oblique_jump`), a spherical jump (`ball_jump`)
 and a sharp radial front (`front`). This review covers the literature for the two planned designs:
 piecewise univariate bases per axis (design 1, already under way in the working tree: `axis_edges`,

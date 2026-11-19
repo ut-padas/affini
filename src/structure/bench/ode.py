@@ -52,7 +52,7 @@ import numpy as np  # noqa: E402
 
 from src.problems import ode  # noqa: E402
 from src.problems.ode import REGIMES, STEP_MAPS, StepMapProblem  # noqa: E402
-from src.structure.schemes import chebtt, tabulation  # noqa: E402
+from src.schemes import chebtt, tabulation  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]  # src/structure
 CACHE = ROOT / "cache" / "ode"
@@ -227,7 +227,7 @@ def chebtt_smooth(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
 
 def chebtt_adaptive_box(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
     """ChebTT-A (``chebtt_adaptive``) per component on the states' bounding box: piecewise axes, and an interface term where one is found."""
-    from src.structure.schemes import chebtt_adaptive
+    from src.schemes import chebtt_adaptive
 
     oracle = CachedOracle(p.step)
     lo, hi = state_box(visited(train))

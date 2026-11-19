@@ -121,6 +121,25 @@ The project is developed and tested on Python 3.13 (`.python-version`).
   answer most uniform queries from an empty cell, but needle-shaped leaves would be listed in
   many cells: more memory than the leaves themselves, so not pursued.
 
+## Schemes: distributed oracle and monitoring
+
+The schemes (ChebTT, ChebTree, SparseCheb, the hub expansion, ...) train on rank 0 and spread each
+batch of oracle calls over every rank (`ScatterOracle` and `serve`, in `src/structure/bench/registry.py`;
+`DistributedOracle` in `src/schemes/oracle.py` after the reorganisation).
+
+- [ ] Error propagation: if `f` raises on a serving rank, rank 0 waits in `gather` forever. Each
+  rank should return its values or its error; rank 0 re-raises the first error and stops every rank.
+- [ ] Event streams for monitoring, through `infra.profiling.Profiler` (`stream_dir`, one JSON-lines
+  file per rank) with one schema: the trainer (rank 0) records `phase`, `round_end` and `done`, each
+  with `scheme`, `round` and `stage`; the serving ranks record `oracle_batch` (points, seconds) and
+  their idle time.
+- [ ] A monitor for scheme runs: a renderer for those event kinds, reusing the file format and the
+  tailing of `src/infra/monitor.py` (whose display is AFINNI/ART's: levels, steals).
+- [ ] Cost-aware scatter: batches are cut into even chunks, but an ODE oracle's cost per state varies
+  (stiff states take more Newton iterations), so the slowest rank sets each batch's time. Dynamic
+  or cost-weighted chunking only changes the scatter; measure the imbalance from the `oracle_batch`
+  events first.
+
 ## Documentation that disagrees with the code
 
 - [x] `docs/USAGE.md` says runs are reproducible "for a fixed `seed` and rank count". True

@@ -1,8 +1,8 @@
-"""ChebTT (src/structure/schemes/chebtt.py): maxvol, the cross on low-rank functions, and its checks."""
+"""ChebTT (src/schemes/chebtt.py): maxvol, the cross on low-rank functions, and its checks."""
 
 import numpy as np
 
-from src.structure.schemes import chebtt
+from src.schemes import chebtt
 
 
 def test_maxvol_rows_dominate_every_other_row():

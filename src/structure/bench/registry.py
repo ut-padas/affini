@@ -12,8 +12,8 @@ import numpy as np
 
 from src import to_host, xp
 from src.infra.backend import MPI
+from src.schemes import chebtree, chebtt, chebtt_adaptive, kernel, sparsegrid
 from src.structure.bench.functions import Model, register
-from src.structure.schemes import chebtree, chebtt, chebtt_adaptive, kernel, sparsegrid
 
 _EVALUATE, _STOP = "evaluate", "stop"
 

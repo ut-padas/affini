@@ -1730,7 +1730,7 @@ sensitivities (the hub needs only the dominant directions of the gradient covari
 4. **Rule of thumb:** use gradients when they cost under ~1.5 function evaluations and d is large, first
    for the rotation and the design, then as fitting targets where the model is not reduced.
 
-### The hub module (`src/structure/schemes/hub.py`): values only, or the oracle's gradients when it has them
+### The hub module (`src/schemes/hub.py`): values only, or the oracle's gradients when it has them
 
 `hub.build(f, lo, hi, atol, jac=None)` chooses everything from the data:
 

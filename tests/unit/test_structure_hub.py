@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from src.structure.schemes import hub
+from src.schemes import hub
 
 D = 8
 LO, HI = -np.ones(D), np.ones(D)

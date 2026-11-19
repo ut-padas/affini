@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.stats import qmc
 
-from src.structure.schemes.chebtree import cheb_basis, cheb_eval
+from src.schemes.chebtree import cheb_basis, cheb_eval
 
 MAX_LEVEL = 12
 

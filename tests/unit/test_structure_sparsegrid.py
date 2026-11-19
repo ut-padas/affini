@@ -1,9 +1,9 @@
-"""SparseCheb (src/structure/schemes/sparsegrid.py): the check set and the look-ahead it triggers."""
+"""SparseCheb (src/schemes/sparsegrid.py): the check set and the look-ahead it triggers."""
 
 import numpy as np
 
 from src.problems import FUNCTIONS
-from src.structure.schemes import sparsegrid
+from src.schemes import sparsegrid
 
 
 def test_a_failed_check_opens_what_the_surpluses_stopped_before():
