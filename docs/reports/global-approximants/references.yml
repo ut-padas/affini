@@ -1,0 +1,169 @@
+manuscript:
+  type: article
+  title: "AFINNI: Adaptive Affine Nearest Neighbor Interpolation in High Dimensions"
+  date: 2026
+  note: Manuscript in preparation
+
+companion:
+  type: report
+  title: "AFINNI and ART: adaptive surrogates on one refinement engine"
+  date: 2026
+  note: The technical companion to the adaptive surrogate, docs/reports/adaptive-surrogates
+
+trefethen2019:
+  type: book
+  title: Approximation Theory and Approximation Practice, Extended Edition
+  author: ["Trefethen, Lloyd N."]
+  date: 2019
+  publisher: Society for Industrial and Applied Mathematics
+
+platte2011:
+  type: article
+  title: Impossibility of fast stable approximation of analytic functions from equispaced samples
+  author: ["Platte, Rodrigo B.", "Trefethen, Lloyd N.", "Kuijlaars, Arno B. J."]
+  date: 2011
+  parent:
+    type: periodical
+    title: SIAM Review
+    volume: 53
+
+aurentz2017:
+  type: article
+  title: Chopping a Chebyshev series
+  author: ["Aurentz, Jared L.", "Trefethen, Lloyd N."]
+  date: 2017
+  parent:
+    type: periodical
+    title: ACM Transactions on Mathematical Software
+    volume: 43
+
+pachon2010:
+  type: article
+  title: Piecewise-smooth chebfuns
+  author: ["Pachón, Ricardo", "Platte, Rodrigo B.", "Trefethen, Lloyd N."]
+  date: 2010
+  parent:
+    type: periodical
+    title: IMA Journal of Numerical Analysis
+    volume: 30
+
+oseledets2010:
+  type: article
+  title: TT-cross approximation for multidimensional arrays
+  author: ["Oseledets, Ivan", "Tyrtyshnikov, Eugene"]
+  date: 2010
+  parent:
+    type: periodical
+    title: Linear Algebra and its Applications
+    volume: 432
+
+oseledets2011:
+  type: article
+  title: Tensor-train decomposition
+  author: ["Oseledets, Ivan V."]
+  date: 2011
+  parent:
+    type: periodical
+    title: SIAM Journal on Scientific Computing
+    volume: 33
+
+goreinov2010:
+  type: chapter
+  title: How to find a good submatrix
+  author: ["Goreinov, S. A.", "Oseledets, I. V.", "Savostyanov, D. V.", "Tyrtyshnikov, E. E.", "Zamarashkin, N. L."]
+  date: 2010
+  parent:
+    type: book
+    title: "Matrix Methods: Theory, Algorithms and Applications"
+    publisher: World Scientific
+
+goreinov2011:
+  type: article
+  title: Quasioptimality of skeleton approximation of a matrix in the Chebyshev norm
+  author: ["Goreinov, S. A.", "Tyrtyshnikov, E. E."]
+  date: 2011
+  parent:
+    type: periodical
+    title: Doklady Mathematics
+    volume: 83
+
+novak2008:
+  type: book
+  title: "Tractability of Multivariate Problems, Volume I: Linear Information"
+  author: ["Novak, Erich", "Woźniakowski, Henryk"]
+  date: 2008
+  publisher: European Mathematical Society
+
+constantine2015:
+  type: book
+  title: "Active Subspaces: Emerging Ideas for Dimension Reduction in Parameter Studies"
+  author: ["Constantine, Paul G."]
+  date: 2015
+  publisher: Society for Industrial and Applied Mathematics
+
+zahm2020:
+  type: article
+  title: Gradient-based dimension reduction of multivariate vector-valued functions
+  author: ["Zahm, Olivier", "Constantine, Paul G.", "Prieur, Clémentine", "Marzouk, Youssef M."]
+  date: 2020
+  parent:
+    type: periodical
+    title: SIAM Journal on Scientific Computing
+    volume: 42
+
+rabitz1999:
+  type: article
+  title: General foundations of high-dimensional model representations
+  author: ["Rabitz, Herschel", "Aliş, Ömer F."]
+  date: 1999
+  parent:
+    type: periodical
+    title: Journal of Mathematical Chemistry
+    volume: 25
+
+tipireddy2014:
+  type: article
+  title: Basis adaptation in homogeneous chaos spaces
+  author: ["Tipireddy, Ramakrishna", "Ghanem, Roger"]
+  date: 2014
+  parent:
+    type: periodical
+    title: Journal of Computational Physics
+    volume: 259
+
+gerstner2003:
+  type: article
+  title: Dimension-adaptive tensor-product quadrature
+  author: ["Gerstner, Thomas", "Griebel, Michael"]
+  date: 2003
+  parent:
+    type: periodical
+    title: Computing
+    volume: 71
+
+pope1997:
+  type: article
+  title: Computationally efficient implementation of combustion chemistry using in situ adaptive tabulation
+  author: ["Pope, Stephen B."]
+  date: 1997
+  parent:
+    type: periodical
+    title: Combustion Theory and Modelling
+    volume: 1
+
+hairer1996:
+  type: book
+  title: "Solving Ordinary Differential Equations II: Stiff and Differential-Algebraic Problems"
+  author: ["Hairer, Ernst", "Wanner, Gerhard"]
+  date: 1996
+  publisher: Springer
+
+wakelam2012:
+  type: article
+  title: A kinetic database for astrochemistry (KIDA)
+  author: ["Wakelam, V.", "Herbst, E.", "Loison, J.-C.", "others"]
+  date: 2012
+  parent:
+    type: periodical
+    title: The Astrophysical Journal Supplement Series
+    volume: 199

@@ -1,0 +1,574 @@
+{
+  "rosenbrock": {
+    "lower": [
+      -2.0,
+      -1.0
+    ],
+    "upper": [
+      2.0,
+      3.0
+    ],
+    "alpha": 1.0,
+    "afinni": {
+      "leaves": 26,
+      "evals": 1142,
+      "generated": 494,
+      "max_error": 4.11,
+      "within_percent": 98.2,
+      "outside_percent": 1.1,
+      "within_inside_percent": 98.6,
+      "depth": 5,
+      "outside_exact_percent": 1.1
+    },
+    "art": {
+      "leaves": 17,
+      "evals": 1053,
+      "generated": 960,
+      "max_error": 2.35,
+      "within_percent": 99.1,
+      "outside_percent": 0.0,
+      "within_inside_percent": 99.1,
+      "depth": 6
+    },
+    "grid": 240,
+    "chebtt": {
+      "evals": 337,
+      "distinct": 321,
+      "by_stage": {
+        "checks": 192,
+        "degrees": 72,
+        "fibres": 73
+      },
+      "ranks": [
+        3
+      ],
+      "degrees": [
+        4,
+        2
+      ],
+      "worst": 1.78e-14,
+      "accepted_rank": 4
+    }
+  },
+  "feature": {
+    "alpha": 0.01,
+    "kink": 0.4,
+    "ridge": {
+      "angle": 30.0,
+      "offset": 0.2,
+      "steep": 6.0,
+      "height": 0.5
+    },
+    "jump": {
+      "angle": -55.0,
+      "offset": 0.6,
+      "height": 0.4
+    }
+  },
+  "colours": {
+    "palette": [
+      "#c0392b",
+      "#e1a800",
+      "#2e7d32",
+      "#1f5fa8",
+      "#6d3b0f",
+      "#ef7d1a",
+      "#6a1b9a",
+      "#d81b8a",
+      "#00838f",
+      "#7cb342",
+      "#5c6bc0",
+      "#a1887f",
+      "#f06292",
+      "#26a69a",
+      "#8d6e63",
+      "#3949ab"
+    ],
+    "grey": "#8a8a8a",
+    "light": "#d6d6d6",
+    "dark": "#424242",
+    "red": "#c0392b",
+    "blue": "#1f5fa8",
+    "gold": "#e1a800",
+    "green": "#2e7d32",
+    "pink": "#d81b8a",
+    "cyan": "#00a6c7",
+    "feature": {
+      "kink": "#e1a800",
+      "ridge": "#00a6c7",
+      "jump": "#d81b8a"
+    },
+    "method": {
+      "chebtt": "#e08a00",
+      "chebtt_metric": "#1b7f5b",
+      "chebtt_adaptive": "#b5179e",
+      "hub": "#5d6d00",
+      "afinni": "#6d3b0f",
+      "art": "#1f5fa8",
+      "art_quad": "#2e7d32",
+      "chebtree": "#c0392b",
+      "sparsecheb": "#6a1b9a",
+      "kernel": "#2e7d9a",
+      "slowtable": "#8e24aa"
+    },
+    "fibre": {
+      "0": "#1f5fa8",
+      "1": "#ef7d1a"
+    },
+    "error": [
+      "#f4f8fc",
+      "#d6e6f5",
+      "#aecde9",
+      "#7fb0db",
+      "#f0a79e",
+      "#c0392b"
+    ]
+  },
+  "seed": 1,
+  "chebyshev": {
+    "points_degree": 8,
+    "runge": {
+      "degree": 16,
+      "equispaced": 2.91,
+      "chebyshev": 0.016,
+      "equispaced_64": 0.996,
+      "chebyshev_64": 5.72e-08,
+      "chebyshev_within": 24
+    },
+    "decay": {
+      "smooth": {
+        "rho": 1.8,
+        "floor_degree": 49
+      },
+      "kink": {
+        "power": 2.18,
+        "reference": 2
+      },
+      "jump": {
+        "power": 0.892,
+        "reference": 1
+      }
+    },
+    "slices": {
+      "smooth": {
+        "axis": 1,
+        "value": -0.6
+      },
+      "kink": {
+        "axis": 2,
+        "value": 0.6
+      },
+      "jump": {
+        "axis": 1,
+        "value": 0.8
+      }
+    },
+    "tail": {
+      "smooth": {
+        "quarter_degree": 16,
+        "half_degree": 32,
+        "true_degree": 16,
+        "quarter": [
+          0.0231,
+          0.00043,
+          6.51e-07,
+          6.55e-13,
+          5.27e-16,
+          8.54e-16
+        ],
+        "true": [
+          0.00646,
+          7.68e-05,
+          6.68e-09,
+          6.66e-16,
+          6.66e-16,
+          8.88e-16
+        ]
+      },
+      "kink": {
+        "quarter_degree": 64,
+        "half_degree": 256,
+        "true_degree": 128,
+        "quarter": [
+          0.102,
+          0.014,
+          0.0068,
+          0.00177,
+          0.00161,
+          0.000306
+        ],
+        "true": [
+          0.0538,
+          0.0119,
+          0.00623,
+          0.00513,
+          0.00184,
+          0.00137
+        ]
+      },
+      "share": 0.0025,
+      "degrees": [
+        8,
+        16,
+        32,
+        64,
+        128,
+        256
+      ]
+    }
+  },
+  "chebtt": {
+    "matrix": {
+      "rosenbrock": {
+        "rank_exact": 3,
+        "rank_1e3": 3
+      },
+      "b": {
+        "rank_exact": 1,
+        "rank_1e3": 1
+      },
+      "br": {
+        "rank_exact": 40,
+        "rank_1e3": 9
+      },
+      "brj": {
+        "rank_exact": 74,
+        "rank_1e3": 53
+      },
+      "grid": 129
+    },
+    "rosenbrock_cross": {
+      "rank": 4,
+      "x1_nodes": 9,
+      "x2_nodes": 9,
+      "skeleton_rank": 4
+    },
+    "skeleton": {
+      "rank": 12
+    },
+    "cross": [
+      {
+        "rank": 2,
+        "x1_nodes": 34,
+        "x2_nodes": 33,
+        "round": 0
+      },
+      {
+        "rank": 4,
+        "x1_nodes": 34,
+        "x2_nodes": 33,
+        "round": 1
+      },
+      {
+        "rank": 6,
+        "x1_nodes": 34,
+        "x2_nodes": 33,
+        "round": 2
+      },
+      {
+        "rank": 6,
+        "x1_nodes": 66,
+        "x2_nodes": 33,
+        "round": 3
+      },
+      {
+        "rank": 8,
+        "x1_nodes": 66,
+        "x2_nodes": 33,
+        "round": 4
+      },
+      {
+        "rank": 10,
+        "x1_nodes": 66,
+        "x2_nodes": 33,
+        "round": 5
+      },
+      {
+        "rank": 12,
+        "x1_nodes": 66,
+        "x2_nodes": 33,
+        "round": 6
+      }
+    ],
+    "rounds": [
+      {
+        "round": 0,
+        "worst": 65.8,
+        "rank": 2,
+        "degrees": [
+          16,
+          32
+        ],
+        "evals": 1150,
+        "action": "rank"
+      },
+      {
+        "round": 1,
+        "worst": 24.3,
+        "rank": 4,
+        "degrees": [
+          16,
+          32
+        ],
+        "evals": 1502,
+        "action": "rank"
+      },
+      {
+        "round": 2,
+        "worst": 12.4,
+        "rank": 6,
+        "degrees": [
+          16,
+          32
+        ],
+        "evals": 2343,
+        "action": "degree"
+      },
+      {
+        "round": 3,
+        "worst": 9.05,
+        "rank": 6,
+        "degrees": [
+          32,
+          32
+        ],
+        "evals": 2896,
+        "action": "rank"
+      },
+      {
+        "round": 4,
+        "worst": 2.29,
+        "rank": 8,
+        "degrees": [
+          32,
+          32
+        ],
+        "evals": 3488,
+        "action": "rank"
+      },
+      {
+        "round": 5,
+        "worst": 0.584,
+        "rank": 10,
+        "degrees": [
+          32,
+          32
+        ],
+        "evals": 3943,
+        "action": "rank"
+      },
+      {
+        "round": 6,
+        "worst": 0.221,
+        "rank": 12,
+        "degrees": [
+          32,
+          32
+        ],
+        "evals": 4373,
+        "action": "accept"
+      }
+    ],
+    "checks": {
+      "round": 4,
+      "sobol": 128,
+      "old_look": 576,
+      "free": 1383,
+      "look": 192,
+      "worst_sobol": 2.1,
+      "worst_free": 1.71,
+      "worst_look": 2.29
+    },
+    "compress": {
+      "shapes": [
+        {
+          "before": [
+            1,
+            66,
+            12
+          ],
+          "after": [
+            1,
+            30,
+            10
+          ]
+        },
+        {
+          "before": [
+            12,
+            33,
+            1
+          ],
+          "after": [
+            10,
+            13,
+            1
+          ]
+        }
+      ],
+      "entries_before": 1188,
+      "entries_after": 430,
+      "change": 0.223,
+      "probe": 6972,
+      "budget": 0.25
+    },
+    "edges": {
+      "scan": 65,
+      "base_x2": 0.761,
+      "found": 0.3999939,
+      "error": 3.05e-06,
+      "zoom_steps": 6,
+      "zoom_width": 1.53e-05,
+      "bisect_steps": 34,
+      "confirm": 4,
+      "evals": 199
+    },
+    "models": {
+      "rosenbrock": {
+        "evals": 337,
+        "ranks": [
+          3
+        ],
+        "degrees": [
+          4,
+          2
+        ],
+        "pieces": [
+          1,
+          1
+        ],
+        "worst": 1.78e-14,
+        "madds": 24,
+        "grid_worst": 2.13e-14
+      },
+      "b": {
+        "evals": 793,
+        "ranks": [
+          1
+        ],
+        "degrees": [
+          4,
+          5
+        ],
+        "pieces": [
+          2,
+          1
+        ],
+        "worst": 0.0258,
+        "madds": 16
+      },
+      "b_no_edges": {
+        "evals": 1084,
+        "ranks": [
+          1
+        ],
+        "degrees": [
+          33,
+          5
+        ],
+        "pieces": [
+          1,
+          1
+        ],
+        "worst": 0.618,
+        "madds": 40
+      },
+      "br": {
+        "evals": 4373,
+        "ranks": [
+          10
+        ],
+        "degrees": [
+          14,
+          12
+        ],
+        "pieces": [
+          2,
+          1
+        ],
+        "worst": 0.217,
+        "madds": 430
+      },
+      "brj": {
+        "failed": "ChebTT reached rank 60 without meeting the tolerance.",
+        "evals": 366411
+      }
+    },
+    "angle": [
+      {
+        "angle": 0,
+        "rank": 1,
+        "evals": 622,
+        "degrees": [
+          20,
+          0
+        ],
+        "worst": 0.273
+      },
+      {
+        "angle": 5,
+        "rank": 4,
+        "evals": 803,
+        "degrees": [
+          21,
+          3
+        ],
+        "worst": 0.279
+      },
+      {
+        "angle": 10,
+        "rank": 5,
+        "evals": 913,
+        "degrees": [
+          22,
+          5
+        ],
+        "worst": 0.332
+      },
+      {
+        "angle": 20,
+        "rank": 7,
+        "evals": 1356,
+        "degrees": [
+          26,
+          11
+        ],
+        "worst": 0.373
+      },
+      {
+        "angle": 30,
+        "rank": 10,
+        "evals": 3115,
+        "degrees": [
+          19,
+          14
+        ],
+        "worst": 0.366
+      },
+      {
+        "angle": 45,
+        "rank": 11,
+        "evals": 3271,
+        "degrees": [
+          25,
+          24
+        ],
+        "worst": 0.381
+      }
+    ],
+    "defaults": {
+      "safety": 0.5,
+      "rank0": 2,
+      "rank_step": 2,
+      "rank_max": 60,
+      "sweeps": 2,
+      "n_fibre": 4,
+      "n_max": 512,
+      "n_free": 20000,
+      "chop_share": 0.25,
+      "n_probe": 4000,
+      "max_pieces": 4,
+      "lattice": 4096
+    }
+  }
+}
