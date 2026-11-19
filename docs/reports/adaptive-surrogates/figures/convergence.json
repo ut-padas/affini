@@ -1,0 +1,1291 @@
+{
+ "tolerances": {
+  "2": {
+   "loosest": 1.0,
+   "rungs": 11
+  },
+  "3": {
+   "loosest": 1.0,
+   "rungs": 5
+  },
+  "4": {
+   "loosest": 8.0,
+   "rungs": 5
+  },
+  "5": {
+   "loosest": 64.0,
+   "rungs": 5
+  }
+ },
+ "strip": [
+  1.0,
+  0.25,
+  0.0625
+ ],
+ "box": {
+  "lower": [
+   -2.0,
+   -1.0
+  ],
+  "upper": [
+   2.0,
+   3.0
+  ]
+ },
+ "points_per_leaf": 100,
+ "max_sample": 20000000,
+ "fit_leaves": 40,
+ "runs": {
+  "art": {
+   "2": [
+    {
+     "tol": 1.0,
+     "leaves": 17,
+     "evals": 1053,
+     "flagged": 0.0,
+     "within": 99.14,
+     "p99": 0.968,
+     "worst": 2.34,
+     "levels": 7,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.5,
+     "leaves": 31,
+     "evals": 1921,
+     "flagged": 0.0,
+     "within": 99.46,
+     "p99": 0.896,
+     "worst": 1.67,
+     "levels": 9,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.25,
+     "leaves": 57,
+     "evals": 3533,
+     "flagged": 0.0,
+     "within": 99.14,
+     "p99": 0.971,
+     "worst": 2.09,
+     "levels": 10,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.125,
+     "leaves": 118,
+     "evals": 7315,
+     "flagged": 0.0,
+     "within": 99.46,
+     "p99": 0.866,
+     "worst": 1.75,
+     "levels": 11,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.0625,
+     "leaves": 226,
+     "evals": 14011,
+     "flagged": 0.0,
+     "within": 99.14,
+     "p99": 0.967,
+     "worst": 2.19,
+     "levels": 13,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.03125,
+     "leaves": 440,
+     "evals": 27279,
+     "flagged": 0.0,
+     "within": 99.12,
+     "p99": 0.97,
+     "worst": 3.2,
+     "levels": 14,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.015625,
+     "leaves": 862,
+     "evals": 53443,
+     "flagged": 0.0,
+     "within": 99.16,
+     "p99": 0.962,
+     "worst": 2.92,
+     "levels": 15,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.0078125,
+     "leaves": 1782,
+     "evals": 110483,
+     "flagged": 0.0,
+     "within": 99.14,
+     "p99": 0.965,
+     "worst": 2.5,
+     "levels": 17,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.00390625,
+     "leaves": 3567,
+     "evals": 221153,
+     "flagged": 0.0,
+     "within": 99.13,
+     "p99": 0.972,
+     "worst": 2.71,
+     "levels": 18,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.001953125,
+     "leaves": 7227,
+     "evals": 448073,
+     "flagged": 0.0,
+     "within": 99.15,
+     "p99": 0.961,
+     "worst": 2.65,
+     "levels": 19,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.0009765625,
+     "leaves": 14443,
+     "evals": 895465,
+     "flagged": 0.0,
+     "within": 99.11,
+     "p99": 0.972,
+     "worst": 2.85,
+     "levels": 21,
+     "unresolved": 0
+    }
+   ],
+   "3": [
+    {
+     "tol": 1.0,
+     "leaves": 198,
+     "evals": 16235,
+     "flagged": 0.0,
+     "within": 99.0,
+     "p99": 0.998,
+     "worst": 2.8,
+     "levels": 12,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.5,
+     "leaves": 573,
+     "evals": 46985,
+     "flagged": 0.0,
+     "within": 99.0,
+     "p99": 1.0,
+     "worst": 2.42,
+     "levels": 15,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.25,
+     "leaves": 1638,
+     "evals": 134315,
+     "flagged": 0.0,
+     "within": 98.89,
+     "p99": 1.029,
+     "worst": 3.11,
+     "levels": 17,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.125,
+     "leaves": 4611,
+     "evals": 378101,
+     "flagged": 0.0,
+     "within": 98.86,
+     "p99": 1.033,
+     "worst": 3.44,
+     "levels": 20,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.0625,
+     "leaves": 13339,
+     "evals": 1093797,
+     "flagged": 0.0,
+     "within": 98.83,
+     "p99": 1.035,
+     "worst": 3.92,
+     "levels": 22,
+     "unresolved": 0
+    }
+   ],
+   "4": [
+    {
+     "tol": 8.0,
+     "leaves": 43,
+     "evals": 4385,
+     "flagged": 0.0,
+     "within": 99.46,
+     "p99": 0.873,
+     "worst": 2.54,
+     "levels": 8,
+     "unresolved": 0
+    },
+    {
+     "tol": 4.0,
+     "leaves": 185,
+     "evals": 18869,
+     "flagged": 0.0,
+     "within": 98.88,
+     "p99": 1.032,
+     "worst": 2.98,
+     "levels": 12,
+     "unresolved": 0
+    },
+    {
+     "tol": 2.0,
+     "leaves": 858,
+     "evals": 87515,
+     "flagged": 0.0,
+     "within": 98.83,
+     "p99": 1.037,
+     "worst": 4.13,
+     "levels": 16,
+     "unresolved": 0
+    },
+    {
+     "tol": 1.0,
+     "leaves": 3381,
+     "evals": 344861,
+     "flagged": 0.0,
+     "within": 98.84,
+     "p99": 1.036,
+     "worst": 3.96,
+     "levels": 20,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.5,
+     "leaves": 14371,
+     "evals": 1465841,
+     "flagged": 0.0,
+     "within": 98.68,
+     "p99": 1.069,
+     "worst": 8.75,
+     "levels": 24,
+     "unresolved": 0
+    }
+   ],
+   "5": [
+    {
+     "tol": 64.0,
+     "leaves": 2,
+     "evals": 243,
+     "flagged": 0.0,
+     "within": 99.58,
+     "p99": 0.862,
+     "worst": 1.85,
+     "levels": 2,
+     "unresolved": 0
+    },
+    {
+     "tol": 32.0,
+     "leaves": 11,
+     "evals": 1341,
+     "flagged": 0.0,
+     "within": 99.6,
+     "p99": 0.834,
+     "worst": 1.87,
+     "levels": 5,
+     "unresolved": 0
+    },
+    {
+     "tol": 16.0,
+     "leaves": 50,
+     "evals": 6099,
+     "flagged": 0.0,
+     "within": 98.92,
+     "p99": 1.018,
+     "worst": 3.16,
+     "levels": 9,
+     "unresolved": 0
+    },
+    {
+     "tol": 8.0,
+     "leaves": 244,
+     "evals": 29767,
+     "flagged": 0.0,
+     "within": 98.9,
+     "p99": 1.021,
+     "worst": 4.5,
+     "levels": 13,
+     "unresolved": 0
+    },
+    {
+     "tol": 4.0,
+     "leaves": 1825,
+     "evals": 222649,
+     "flagged": 0.0,
+     "within": 98.68,
+     "p99": 1.078,
+     "worst": 4.68,
+     "levels": 19,
+     "unresolved": 0
+    }
+   ]
+  },
+  "afinni_scaled": {
+   "2": [
+    {
+     "tol": 1.0,
+     "leaves": 25,
+     "evals": 2646,
+     "flagged": 0.38,
+     "within": 99.79,
+     "p99": 0.66,
+     "worst": 1.49,
+     "levels": 5,
+     "unresolved": 0,
+     "sample": 2600
+    },
+    {
+     "tol": 0.5,
+     "leaves": 49,
+     "evals": 4613,
+     "flagged": 0.25,
+     "within": 99.9,
+     "p99": 0.661,
+     "worst": 1.5,
+     "levels": 6,
+     "unresolved": 0,
+     "sample": 4519
+    },
+    {
+     "tol": 0.25,
+     "leaves": 96,
+     "evals": 9911,
+     "flagged": 0.11,
+     "within": 99.86,
+     "p99": 0.718,
+     "worst": 2.03,
+     "levels": 8,
+     "unresolved": 0,
+     "sample": 9604
+    },
+    {
+     "tol": 0.125,
+     "leaves": 196,
+     "evals": 19379,
+     "flagged": 0.18,
+     "within": 99.86,
+     "p99": 0.719,
+     "worst": 1.55,
+     "levels": 9,
+     "unresolved": 0,
+     "sample": 18812
+    },
+    {
+     "tol": 0.0625,
+     "leaves": 359,
+     "evals": 39838,
+     "flagged": 0.12,
+     "within": 99.89,
+     "p99": 0.723,
+     "worst": 1.43,
+     "levels": 11,
+     "unresolved": 0,
+     "sample": 38937
+    },
+    {
+     "tol": 0.03125,
+     "leaves": 720,
+     "evals": 71461,
+     "flagged": 0.14,
+     "within": 99.74,
+     "p99": 0.765,
+     "worst": 2.61,
+     "levels": 11,
+     "unresolved": 0,
+     "sample": 69726
+    },
+    {
+     "tol": 0.015625,
+     "leaves": 1396,
+     "evals": 143931,
+     "flagged": 0.1,
+     "within": 99.72,
+     "p99": 0.778,
+     "worst": 3.72,
+     "levels": 14,
+     "unresolved": 0,
+     "sample": 140935
+    },
+    {
+     "tol": 0.0078125,
+     "leaves": 2806,
+     "evals": 274869,
+     "flagged": 0.12,
+     "within": 99.76,
+     "p99": 0.763,
+     "worst": 2.78,
+     "levels": 14,
+     "unresolved": 0,
+     "sample": 268593
+    },
+    {
+     "tol": 0.00390625,
+     "leaves": 5521,
+     "evals": 568282,
+     "flagged": 0.1,
+     "within": 99.77,
+     "p99": 0.753,
+     "worst": 2.19,
+     "levels": 15,
+     "unresolved": 0,
+     "sample": 556868
+    },
+    {
+     "tol": 0.001953125,
+     "leaves": 10977,
+     "evals": 1112449,
+     "flagged": 0.11,
+     "within": 99.73,
+     "p99": 0.766,
+     "worst": 2.26,
+     "levels": 16,
+     "unresolved": 0,
+     "sample": 1088712
+    },
+    {
+     "tol": 0.0009765625,
+     "leaves": 21851,
+     "evals": 2230203,
+     "flagged": 0.09,
+     "within": 99.73,
+     "p99": 0.755,
+     "worst": 3.52,
+     "levels": 17,
+     "unresolved": 0,
+     "sample": 2182812
+    }
+   ],
+   "3": [
+    {
+     "tol": 1.0,
+     "leaves": 615,
+     "evals": 37647,
+     "flagged": 0.33,
+     "within": 98.99,
+     "p99": 1.005,
+     "worst": 4.6,
+     "levels": 14,
+     "unresolved": 0,
+     "sample": 28900
+    },
+    {
+     "tol": 0.5,
+     "leaves": 1521,
+     "evals": 132947,
+     "flagged": 0.13,
+     "within": 99.24,
+     "p99": 0.922,
+     "worst": 3.54,
+     "levels": 14,
+     "unresolved": 0,
+     "sample": 114062
+    },
+    {
+     "tol": 0.25,
+     "leaves": 4288,
+     "evals": 407264,
+     "flagged": 0.06,
+     "within": 99.35,
+     "p99": 0.898,
+     "worst": 2.74,
+     "levels": 16,
+     "unresolved": 0,
+     "sample": 376169
+    },
+    {
+     "tol": 0.125,
+     "leaves": 12028,
+     "evals": 1209265,
+     "flagged": 0.03,
+     "within": 99.34,
+     "p99": 0.899,
+     "worst": 3.73,
+     "levels": 18,
+     "unresolved": 0,
+     "sample": 1132256
+    },
+    {
+     "tol": 0.0625,
+     "leaves": 33215,
+     "evals": 3550180,
+     "flagged": 0.02,
+     "within": 99.41,
+     "p99": 0.866,
+     "worst": 2.86,
+     "levels": 22,
+     "unresolved": 0,
+     "sample": 3240655
+    }
+   ],
+   "4": [
+    {
+     "tol": 8.0,
+     "leaves": 231,
+     "evals": 19651,
+     "flagged": 0.33,
+     "within": 98.78,
+     "p99": 1.067,
+     "worst": 4.74,
+     "levels": 12,
+     "unresolved": 0,
+     "sample": 9600
+    },
+    {
+     "tol": 4.0,
+     "leaves": 902,
+     "evals": 78204,
+     "flagged": 0.09,
+     "within": 98.99,
+     "p99": 1.002,
+     "worst": 4.73,
+     "levels": 14,
+     "unresolved": 0,
+     "sample": 59434
+    },
+    {
+     "tol": 2.0,
+     "leaves": 4595,
+     "evals": 428008,
+     "flagged": 0.05,
+     "within": 99.34,
+     "p99": 0.885,
+     "worst": 5.0,
+     "levels": 19,
+     "unresolved": 0,
+     "sample": 352210
+    },
+    {
+     "tol": 1.0,
+     "leaves": 18223,
+     "evals": 2093402,
+     "flagged": 0.02,
+     "within": 99.42,
+     "p99": 0.866,
+     "worst": 4.35,
+     "levels": 21,
+     "unresolved": 0,
+     "sample": 1838000
+    },
+    {
+     "tol": 0.5,
+     "leaves": 64797,
+     "evals": 8070539,
+     "flagged": 0.01,
+     "within": 99.42,
+     "p99": 0.867,
+     "worst": 3.05,
+     "levels": 23,
+     "unresolved": 0,
+     "sample": 7289200
+    }
+   ],
+   "5": [
+    {
+     "tol": 64.0,
+     "leaves": 9,
+     "evals": 1302,
+     "flagged": 0.16,
+     "within": 99.59,
+     "p99": 0.865,
+     "worst": 1.69,
+     "levels": 4,
+     "unresolved": 0,
+     "sample": 1200
+    },
+    {
+     "tol": 32.0,
+     "leaves": 68,
+     "evals": 5160,
+     "flagged": 0.42,
+     "within": 99.31,
+     "p99": 0.896,
+     "worst": 2.77,
+     "levels": 8,
+     "unresolved": 0,
+     "sample": 3900
+    },
+    {
+     "tol": 16.0,
+     "leaves": 453,
+     "evals": 45679,
+     "flagged": 0.08,
+     "within": 99.44,
+     "p99": 0.844,
+     "worst": 3.54,
+     "levels": 13,
+     "unresolved": 0,
+     "sample": 38467
+    },
+    {
+     "tol": 8.0,
+     "leaves": 2816,
+     "evals": 313899,
+     "flagged": 0.03,
+     "within": 99.41,
+     "p99": 0.851,
+     "worst": 7.58,
+     "levels": 18,
+     "unresolved": 0,
+     "sample": 256255
+    },
+    {
+     "tol": 4.0,
+     "leaves": 18126,
+     "evals": 2047351,
+     "flagged": 0.01,
+     "within": 99.45,
+     "p99": 0.851,
+     "worst": 4.46,
+     "levels": 23,
+     "unresolved": 0,
+     "sample": 1592970
+    }
+   ]
+  },
+  "afinni": {
+   "2": [
+    {
+     "tol": 1.0,
+     "leaves": 26,
+     "evals": 1142,
+     "flagged": 1.07,
+     "within": 98.58,
+     "p99": 1.086,
+     "worst": 1.98,
+     "levels": 6,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.5,
+     "leaves": 47,
+     "evals": 1885,
+     "flagged": 5.16,
+     "within": 97.69,
+     "p99": 1.298,
+     "worst": 3.0,
+     "levels": 10,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.25,
+     "leaves": 92,
+     "evals": 3641,
+     "flagged": 7.15,
+     "within": 96.39,
+     "p99": 1.553,
+     "worst": 9.03,
+     "levels": 10,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.125,
+     "leaves": 160,
+     "evals": 6311,
+     "flagged": 12.39,
+     "within": 95.12,
+     "p99": 1.885,
+     "worst": 6.43,
+     "levels": 13,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.0625,
+     "leaves": 266,
+     "evals": 10572,
+     "flagged": 20.78,
+     "within": 93.58,
+     "p99": 2.2,
+     "worst": 6.43,
+     "levels": 14,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.03125,
+     "leaves": 448,
+     "evals": 17753,
+     "flagged": 29.11,
+     "within": 93.36,
+     "p99": 2.165,
+     "worst": 5.84,
+     "levels": 16,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.015625,
+     "leaves": 748,
+     "evals": 29754,
+     "flagged": 36.49,
+     "within": 90.45,
+     "p99": 3.058,
+     "worst": 9.91,
+     "levels": 16,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.0078125,
+     "leaves": 1345,
+     "evals": 53378,
+     "flagged": 43.58,
+     "within": 90.83,
+     "p99": 2.947,
+     "worst": 10.17,
+     "levels": 18,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.00390625,
+     "leaves": 2249,
+     "evals": 89242,
+     "flagged": 51.32,
+     "within": 91.28,
+     "p99": 2.798,
+     "worst": 12.01,
+     "levels": 19,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.001953125,
+     "leaves": 3902,
+     "evals": 154910,
+     "flagged": 57.28,
+     "within": 89.92,
+     "p99": 3.127,
+     "worst": 15.73,
+     "levels": 21,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.0009765625,
+     "leaves": 6575,
+     "evals": 261363,
+     "flagged": 62.61,
+     "within": 90.2,
+     "p99": 2.981,
+     "worst": 10.51,
+     "levels": 23,
+     "unresolved": 0
+    }
+   ],
+   "3": [
+    {
+     "tol": 1.0,
+     "leaves": 289,
+     "evals": 15541,
+     "flagged": 18.83,
+     "within": 89.19,
+     "p99": 3.65,
+     "worst": 15.0,
+     "levels": 15,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.5,
+     "leaves": 536,
+     "evals": 28582,
+     "flagged": 29.78,
+     "within": 84.1,
+     "p99": 4.51,
+     "worst": 16.1,
+     "levels": 14,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.25,
+     "leaves": 1075,
+     "evals": 57750,
+     "flagged": 46.36,
+     "within": 81.26,
+     "p99": 5.783,
+     "worst": 82.05,
+     "levels": 17,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.125,
+     "leaves": 2172,
+     "evals": 117496,
+     "flagged": 60.28,
+     "within": 80.78,
+     "p99": 4.925,
+     "worst": 16.38,
+     "levels": 18,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.0625,
+     "leaves": 4414,
+     "evals": 239178,
+     "flagged": 70.72,
+     "within": 77.4,
+     "p99": 5.974,
+     "worst": 24.02,
+     "levels": 22,
+     "unresolved": 0
+    }
+   ],
+   "4": [
+    {
+     "tol": 8.0,
+     "leaves": 96,
+     "evals": 6163,
+     "flagged": 5.55,
+     "within": 95.17,
+     "p99": 2.074,
+     "worst": 8.03,
+     "levels": 9,
+     "unresolved": 0
+    },
+    {
+     "tol": 4.0,
+     "leaves": 247,
+     "evals": 15956,
+     "flagged": 16.59,
+     "within": 87.46,
+     "p99": 3.095,
+     "worst": 15.03,
+     "levels": 12,
+     "unresolved": 0
+    },
+    {
+     "tol": 2.0,
+     "leaves": 718,
+     "evals": 45876,
+     "flagged": 37.61,
+     "within": 80.44,
+     "p99": 4.546,
+     "worst": 25.62,
+     "levels": 17,
+     "unresolved": 0
+    },
+    {
+     "tol": 1.0,
+     "leaves": 1582,
+     "evals": 101025,
+     "flagged": 56.19,
+     "within": 73.99,
+     "p99": 5.911,
+     "worst": 31.76,
+     "levels": 19,
+     "unresolved": 0
+    },
+    {
+     "tol": 0.5,
+     "leaves": 3324,
+     "evals": 212440,
+     "flagged": 72.97,
+     "within": 70.66,
+     "p99": 6.84,
+     "worst": 22.33,
+     "levels": 19,
+     "unresolved": 0
+    }
+   ],
+   "5": [
+    {
+     "tol": 64.0,
+     "leaves": 9,
+     "evals": 1302,
+     "flagged": 0.16,
+     "within": 99.59,
+     "p99": 0.865,
+     "worst": 1.69,
+     "levels": 4,
+     "unresolved": 0
+    },
+    {
+     "tol": 32.0,
+     "leaves": 39,
+     "evals": 3148,
+     "flagged": 1.47,
+     "within": 97.34,
+     "p99": 1.355,
+     "worst": 3.91,
+     "levels": 8,
+     "unresolved": 0
+    },
+    {
+     "tol": 16.0,
+     "leaves": 137,
+     "evals": 11018,
+     "flagged": 5.97,
+     "within": 92.92,
+     "p99": 2.182,
+     "worst": 5.86,
+     "levels": 12,
+     "unresolved": 0
+    },
+    {
+     "tol": 8.0,
+     "leaves": 328,
+     "evals": 26421,
+     "flagged": 15.99,
+     "within": 81.49,
+     "p99": 5.154,
+     "worst": 12.74,
+     "levels": 12,
+     "unresolved": 0
+    },
+    {
+     "tol": 4.0,
+     "leaves": 912,
+     "evals": 73814,
+     "flagged": 41.27,
+     "within": 71.28,
+     "p99": 7.274,
+     "worst": 22.0,
+     "levels": 16,
+     "unresolved": 0
+    }
+   ]
+  }
+ },
+ "rates": {
+  "art": {
+   "2": {
+    "leaves": 1.0,
+    "evals": 1.0,
+    "theory": 1.0
+   },
+   "3": {
+    "leaves": 1.52,
+    "evals": 1.52,
+    "theory": 1.5
+   },
+   "4": {
+    "leaves": 2.1,
+    "evals": 2.1,
+    "theory": 2.0
+   },
+   "5": {
+    "leaves": 2.59,
+    "evals": 2.6,
+    "theory": 2.5
+   }
+  },
+  "afinni_scaled": {
+   "2": {
+    "leaves": 0.98,
+    "evals": 0.98,
+    "theory": 1.0
+   },
+   "3": {
+    "leaves": 1.45,
+    "evals": 1.63,
+    "theory": 1.5
+   },
+   "4": {
+    "leaves": 2.06,
+    "evals": 2.21,
+    "theory": 2.0
+   },
+   "5": {
+    "leaves": 2.68,
+    "evals": 2.87,
+    "theory": 2.5
+   }
+  },
+  "afinni": {
+   "2": {
+    "leaves": 0.78,
+    "evals": 0.78,
+    "theory": 1.0
+   },
+   "3": {
+    "leaves": 0.99,
+    "evals": 0.99,
+    "theory": 1.5
+   },
+   "4": {
+    "leaves": 1.29,
+    "evals": 1.29,
+    "theory": 2.0
+   },
+   "5": {
+    "leaves": 1.37,
+    "evals": 1.37,
+    "theory": 2.5
+   }
+  }
+ },
+ "strip_leaves": {
+  "art": [
+   17,
+   57,
+   226
+  ],
+  "afinni_scaled": [
+   25,
+   96,
+   359
+  ],
+  "afinni": [
+   26,
+   92,
+   266
+  ]
+ },
+ "problems": {
+  "shared_latent": {
+   "d": 5,
+   "outputs": 6,
+   "shape": 2,
+   "runs": {
+    "afinni": [
+     {
+      "tol": 0.1,
+      "leaves": 2521,
+      "evals": 197392,
+      "flagged": 68.8,
+      "within": 70.13,
+      "p99": 7.692,
+      "worst": 21.21,
+      "levels": 18,
+      "unresolved": 0
+     },
+     {
+      "tol": 0.05,
+      "leaves": 5909,
+      "evals": 461864,
+      "flagged": 86.2,
+      "within": 67.18,
+      "p99": 6.906,
+      "worst": 19.39,
+      "levels": 20,
+      "unresolved": 0
+     },
+     {
+      "tol": 0.025,
+      "leaves": 13999,
+      "evals": 1097991,
+      "flagged": 93.74,
+      "within": 64.35,
+      "p99": 6.935,
+      "worst": 16.0,
+      "levels": 22,
+      "unresolved": 0
+     },
+     {
+      "tol": 0.0125,
+      "leaves": 32710,
+      "evals": 2569341,
+      "flagged": 97.42,
+      "within": 66.54,
+      "p99": 7.439,
+      "worst": 11.47,
+      "levels": 24,
+      "unresolved": 0
+     }
+    ],
+    "afinni_scaled": [
+     {
+      "tol": 0.1,
+      "leaves": 22062,
+      "evals": 1416066,
+      "flagged": 1.24,
+      "within": 93.26,
+      "p99": 2.168,
+      "worst": 7.73,
+      "levels": 21,
+      "unresolved": 0,
+      "sample": 252100
+     },
+     {
+      "tol": 0.05,
+      "leaves": 203424,
+      "evals": 15232465,
+      "flagged": 0.12,
+      "within": 96.61,
+      "p99": 1.564,
+      "worst": 4.93,
+      "levels": 26,
+      "unresolved": 0,
+      "sample": 5171137
+     }
+    ],
+    "art": [
+     {
+      "tol": 0.1,
+      "leaves": 300,
+      "evals": 36599,
+      "flagged": 0.0,
+      "within": 99.66,
+      "p99": 0.784,
+      "worst": 3.27,
+      "levels": 14,
+      "unresolved": 0
+     },
+     {
+      "tol": 0.05,
+      "leaves": 716,
+      "evals": 87351,
+      "flagged": 0.0,
+      "within": 99.46,
+      "p99": 0.862,
+      "worst": 2.28,
+      "levels": 17,
+      "unresolved": 0
+     },
+     {
+      "tol": 0.025,
+      "leaves": 1976,
+      "evals": 241071,
+      "flagged": 0.0,
+      "within": 99.41,
+      "p99": 0.889,
+      "worst": 2.92,
+      "levels": 19,
+      "unresolved": 0
+     },
+     {
+      "tol": 0.0125,
+      "leaves": 5242,
+      "evals": 639523,
+      "flagged": 0.0,
+      "within": 99.31,
+      "p99": 0.902,
+      "worst": 2.72,
+      "levels": 22,
+      "unresolved": 0
+     }
+    ]
+   },
+   "rates": {
+    "afinni": 1.23,
+    "afinni_scaled": null,
+    "art": 1.38
+   }
+  },
+  "lorenz96_state": {
+   "d": 5,
+   "outputs": 5,
+   "shape": 5,
+   "runs": {
+    "afinni": [
+     {
+      "tol": 0.1,
+      "leaves": 104,
+      "evals": 8185,
+      "flagged": 4.83,
+      "within": 91.08,
+      "p99": 1.699,
+      "worst": 3.94,
+      "levels": 7,
+      "unresolved": 0
+     },
+     {
+      "tol": 0.05,
+      "leaves": 315,
+      "evals": 24775,
+      "flagged": 22.55,
+      "within": 73.77,
+      "p99": 2.942,
+      "worst": 6.97,
+      "levels": 10,
+      "unresolved": 0
+     },
+     {
+      "tol": 0.025,
+      "leaves": 784,
+      "evals": 62262,
+      "flagged": 51.69,
+      "within": 61.02,
+      "p99": 4.252,
+      "worst": 9.91,
+      "levels": 13,
+      "unresolved": 0
+     }
+    ],
+    "afinni_scaled": [
+     {
+      "tol": 0.1,
+      "leaves": 224,
+      "evals": 19173,
+      "flagged": 0.34,
+      "within": 98.53,
+      "p99": 1.081,
+      "worst": 2.43,
+      "levels": 9,
+      "unresolved": 0,
+      "sample": 10400
+     },
+     {
+      "tol": 0.05,
+      "leaves": 1366,
+      "evals": 97272,
+      "flagged": 0.13,
+      "within": 99.05,
+      "p99": 0.991,
+      "worst": 2.72,
+      "levels": 12,
+      "unresolved": 0,
+      "sample": 67846
+     },
+     {
+      "tol": 0.025,
+      "leaves": 10189,
+      "evals": 907379,
+      "flagged": 0.01,
+      "within": 99.7,
+      "p99": 0.837,
+      "worst": 1.79,
+      "levels": 17,
+      "unresolved": 0,
+      "sample": 772726
+     }
+    ],
+    "art": [
+     {
+      "tol": 0.1,
+      "leaves": 153,
+      "evals": 18665,
+      "flagged": 0.0,
+      "within": 99.02,
+      "p99": 0.996,
+      "worst": 2.14,
+      "levels": 10,
+      "unresolved": 0
+     },
+     {
+      "tol": 0.05,
+      "leaves": 877,
+      "evals": 106993,
+      "flagged": 0.0,
+      "within": 98.88,
+      "p99": 1.017,
+      "worst": 2.27,
+      "levels": 14,
+      "unresolved": 0
+     },
+     {
+      "tol": 0.025,
+      "leaves": 5233,
+      "evals": 638425,
+      "flagged": 0.0,
+      "within": 99.07,
+      "p99": 0.988,
+      "worst": 2.14,
+      "levels": 17,
+      "unresolved": 0
+     }
+    ]
+   },
+   "rates": {
+    "afinni": 1.46,
+    "afinni_scaled": 2.75,
+    "art": 2.55
+   }
+  }
+ }
+}

@@ -1469,6 +1469,274 @@ measure. It does not bound the error at any particular point.
   pieces; AFINNI flags where it has no data, and ART covers the whole domain and can be
   audited.]
 
+= How the cost grows with the accuracy <sec:convergence>
+
+#let cv = json("figures/convergence.json")
+// a tolerance as the power of two it is, written plainly when it is not small
+#let cv-tol(t) = {
+  let k = int(calc.round(calc.log(t, base: 2)))
+  if calc.abs(k) <= 2 { str(t) } else { $2^(#k)$ }
+}
+// a fitted rate with two decimals
+#let cv-fix(x) = {
+  let t = str(calc.round(x, digits: 2))
+  if not t.contains(".") { t + ".00" } else if t.split(".").at(1).len() == 1 { t + "0" } else { t }
+}
+#let cv-rows(m, d) = cv.runs.at(m).at(str(d))
+#let cv-last(m, d) = cv-rows(m, d).last()
+#let cv-rate(m, d, key: "leaves") = {
+  let r = cv.rates.at(m).at(str(d)).at(key)
+  if r == none [--] else [#cv-fix(r)]
+}
+#let cv-tight(d) = cv-tol(cv-last("art", d).tol)
+#let cv-max-levels = cv.runs.values().map(by-d => by-d.values().map(rows => rows.map(r => r.levels)).flatten()).flatten().fold(0, calc.max)
+// a count with thousands separators, as the tables print counts
+#let cv-num(v) = {
+  let t = str(v)
+  let n = t.len()
+  range(n).map(i => (if i > 0 and calc.rem(n - i, 3) == 0 { "," } else { "" }) + t.at(i)).join()
+}
+#let afinni-c = rgb("#6d3b0f")
+#let art-c = rgb(col.blue)
+
+#question[Halve the tolerance. How many more leaves does each surrogate need, and how many more
+  evaluations of $f$? Is there a law, and do AFINNI and ART follow it?]
+
+#figure(
+  board(columns: 3,
+    ..range(3).map(i => (panel("convergence-art-" + str(i)),
+      [ART, $atol = #cv-tol(cv.strip.at(i))$: #cv.strip_leaves.art.at(i) leaves])),
+    ..range(3).map(i => (panel("convergence-afinni-" + str(i)),
+      [AFINNI, fixed sample: #cv.strip_leaves.afinni.at(i) leaves])),
+    ..range(3).map(i => (panel("convergence-afinni-scaled-" + str(i)),
+      [AFINNI, grown sample: #cv.strip_leaves.afinni_scaled.at(i) leaves])),
+  ),
+  kind: image,
+  caption: [The running example trained at three tolerances, each a quarter of the one before.
+    Top: ART's leaves #swatch(art-c, shape: "line"), cut out of the box by the stored planes.
+    Middle and bottom: AFINNI's trust ellipses #swatch(afinni-c, shape: "line"), trained from the
+    example's sample of #(200 * 3) points (middle), and from a sample that grows as the tolerance
+    shrinks (bottom).],
+) <fig:convergence-strip>
+
+Each quartering of the tolerance roughly quarters the area of a leaf, so the number of leaves
+roughly quadruples. A leaf's affine model misses $f$ by an amount that grows with the square of
+the leaf's size, because the model captures $f$'s value and slope and misses its curvature. To
+cut that miss by four, a leaf's side must halve, and in two dimensions halving the side quarters
+the area. The same argument in $d$ dimensions gives $2^d$ leaves for every quartering, or a factor
+$2^(d slash 2)$ for every halving. Every piecewise-affine surrogate obeys this _leaf-count law_,
+whichever way it cuts.
+
+The middle row shows something else as well. AFINNI's trust ellipses, trained from the example's
+fixed sample, leave gaps between them that widen as the tolerance shrinks. The section ends by
+explaining them (@lem:narrower).
+
+#translate(
+  [the number of leaves at tolerance $atol$, and the evaluations of $f$ that training spent],
+  [$N_c (atol)$, $N(atol)$],
+  [the largest curvature of $f$ on the domain $Omega$], [$Lambda = max_(x in Omega) norm(H(x))$],
+  [a part of the domain where $f$ curves at least by $lambda > 0$ in every direction],
+  [$Omega_lambda$, on which $H(x) succ.eq lambda I$],
+  [the volume of the unit ball in $d$ dimensions], [$omega_d$],
+)
+
+#proposition(title: [the leaf-count law, @devore1998])[
+  Let $f$ be twice continuously differentiable on $Omega subset RR^d$.
+  - _At most._ An affine model is within $atol$ of $f$ on every leaf of radius
+    $rho <= sqrt(2 atol slash Lambda)$ about its centre. So $Omega$ can be covered by
+    $N_c (atol) <= C_d abs(Omega) (Lambda slash (2 atol))^(d slash 2)$ leaves whose affine models
+    are within $atol$, where $C_d$ depends only on $d$.
+  - _At least._ Let $Omega_lambda$ be convex. An affine model within $atol$ of $f$ on a convex leaf
+    $L$ needs every segment of $L inter Omega_lambda$ to be shorter than $4 sqrt(atol slash lambda)$.
+    So every partition into convex leaves whose models are within $atol$ has
+    $N_c (atol) >= abs(Omega_lambda) (lambda slash (16 atol))^(d slash 2) slash omega_d$ leaves.
+  Together: $N_c (atol) tilde atol^(-d slash 2)$. When every leaf holds a bounded number of
+  points, the evaluations grow alike, and the error falls with the evaluations like
+  $N^(-2 slash d)$.
+] <prop:leaf-count>
+
+#proof[
+  _At most._ By Taylor's theorem, $f(x) - f(c) - nabla f(c)^top (x - c) = 1/2 (x - c)^top H(xi)
+  (x - c)$ for some $xi$ on the segment from $c$ to $x$, and the right-hand side is at most
+  $Lambda rho^2 slash 2$ when $norm(x - c) <= rho$. Balls of radius $rho$ centred on a cubic grid
+  of spacing $2 rho slash sqrt(d)$ cover $Omega$. About $abs(Omega) (sqrt(d) slash (2 rho))^d$ of them
+  meet it.
+
+  _At least._ On a segment of length $ell$ in $L inter Omega_lambda$, let $g(t)$ be $f$ along it.
+  Then $g'' >= lambda$. For any affine model $p$, $p(0) + p(ell) - 2 p(ell slash 2) = 0$, while
+  $g(0) + g(ell) - 2 g(ell slash 2) >= lambda ell^2 slash 4$. So $g - p$ exceeds
+  $lambda ell^2 slash 16$ at one of the three points, and a model within $atol$ needs
+  $ell < 4 sqrt(atol slash lambda)$. A set of diameter below $D$ lies in a ball of radius $D$, so
+  each leaf covers at most $omega_d (4 sqrt(atol slash lambda))^d$ of $Omega_lambda$.
+]
+
+The law holds for any way of cutting. Adaptivity cannot change the exponent $d slash 2$; it
+changes only the constant. Small leaves go where $f$ curves and large ones where it is nearly
+flat. Hessian-informed cuts also shape a leaf like $absH^(-1 slash 2)$: long where $f$ is flat, short
+where it bends. The exponent is the curse of dimension of affine pieces. Halving the tolerance
+doubles the leaves in two dimensions, and multiplies them by $2^(5 slash 2) approx 5.7$ in five.
+
+#figure(panel("convergence-rates"), caption: [Leaves against $1 slash atol$, for the running
+  example ($d = 2$) and its extension along a chain,
+  $f(x) = sum_(i=1)^(d-1) (1 - x_i)^2 + (x_(i+1) - x_i^2)^2$, on the box with every further axis
+  like the second. #swatch(art-c) ART; #swatch(afinni-c) AFINNI from the grown sample;
+  #swatch(afinni-c, shape: "dashed") AFINNI from the fixed sample, hollow. The grey dashed line
+  has the slope $d slash 2$ of @prop:leaf-count. The tolerances halve from
+  #cv.tolerances.at("2").loosest at $d = 2$, and from looser ones in higher dimensions, where $f$
+  is larger.]) <fig:convergence-rates>
+
+#block(breakable: false, table(
+  columns: (auto, 1fr, 1fr, 1fr, 1fr),
+  inset: (x: 6pt, y: 4pt),
+  align: (left, right, right, right, right),
+  table.header[$d$][@prop:leaf-count: $d slash 2$][ART][AFINNI, grown sample][AFINNI, fixed sample],
+  ..(2, 3, 4, 5).map(d => ([#d], [#cv-fix(d / 2)], cv-rate("art", d), cv-rate("afinni_scaled", d),
+    cv-rate("afinni", d))).flatten(),
+))
+#v(-0.4em)
+#small[The fitted exponent $k$ in $N_c prop atol^(-k)$: the least-squares slope of $log N_c$
+  against $log(1 slash atol)$ over the tolerances at which a method has at least
+  #cv.fit_leaves leaves. A dash marks fewer than three such tolerances.]
+
+ART follows the law from its first tolerances on, in every dimension. Its error stays where the
+law says it should: at $d = 2$ and the tightest tolerance, $atol = #cv-tight(2)$, the 99th
+percentile of its error is #cv-last("art", 2).p99 $atol$, and #cv-last("art", 2).within% of the
+grid is within the tolerance. ART samples each region afresh, up to its boundary
+(@sec:apx-hitrun), so a small leaf is tested on points spread over all of it.
+
+AFINNI follows the law too, but only from the grown sample. From the example's fixed sample its
+leaves grow more slowly. That is not because it needs fewer. It covers less of the domain, and
+it errs more inside what it covers.
+
+#figure(panel("convergence-error"), caption: [Left: the 99th percentile of each model's error, in
+  units of the tolerance, over the test points it does not flag. Right: the share of the domain
+  AFINNI flags as outside every trust region, found by the exact search (@sec:exact-flag). Circles:
+  $d = 2$; squares: $d = 4$. #swatch(art-c) ART, #swatch(afinni-c) AFINNI from the grown
+  sample, #swatch(afinni-c, shape: "dashed") AFINNI from the fixed sample, hollow.]) <fig:convergence-error>
+
+At $d = 2$ and $atol = #cv-tol(cv-last("afinni", 2).tol)$, AFINNI from the fixed sample flags
+#cv-last("afinni", 2).flagged% of the domain, and the 99th percentile of its error inside is
+#cv-last("afinni", 2).p99 $atol$. From the grown sample it flags #cv-last("afinni_scaled", 2).flagged%,
+and its 99th percentile is #cv-last("afinni_scaled", 2).p99 $atol$. At $d = 4$ the fixed sample
+leaves #cv-last("afinni", 4).flagged% of the domain flagged at $atol = #cv-tol(cv-last("afinni", 4).tol)$.
+The cause is how AFINNI makes the points it needs.
+
+#lemma(title: [generated points are narrower])[
+  Let $x_i$, $x_j$ be independent points of a cluster with mean $mu$ and covariance $Sigma$, and let
+  $lambda$ be uniform on $[0, 1]$ and independent of them. The new point
+  $tilde(x) = lambda x_i + (1 - lambda) x_j$ (@sec:augment) has mean $mu$ and covariance
+  $2/3 Sigma$.
+] <lem:narrower>
+
+#proof[
+  $tilde(x) - mu = lambda (x_i - mu) + (1 - lambda)(x_j - mu)$. The two terms are uncorrelated, so
+  the covariance is $(EE[lambda^2] + EE[(1 - lambda)^2]) Sigma = (1/3 + 1/3) Sigma$.
+]
+
+A cluster that has to be topped up therefore receives points crowded towards its middle. Its
+children inherit them, are topped up from them in turn, and crowd further. After a few
+generations the points of a deep leaf no longer reach the edges of the part of the domain it
+answers for. Its trust ellipse, which is fitted to its points (@sec:trust), shrinks with them, and
+gaps open between neighbouring ellipses. The test that accepts the leaf sees only its points, so
+it also misses the error at the leaf's edges. From a fixed sample, every halving of the tolerance
+adds a generation. From a sample that grows like $atol^(-d slash 2)$, the leaves are made of sample
+points, and nothing crowds.
+
+== A vector function and a flow map
+
+#let cv-probs = cv.at("problems", default: (:))
+#let cvp-ok(name) = name in cv-probs
+#let cvp-rate(name, m) = if cvp-ok(name) {
+  let r = cv-probs.at(name).rates.at(m)
+  if r == none [--] else [#cv-fix(r)]
+} else [--]
+#let cvp-flag(name) = if cvp-ok(name) [#cv-probs.at(name).runs.afinni.last().flagged%] else [--]
+// shown until the runs of these two problems are in convergence.json
+#let pending = text(fill: grey, style: "italic")[(results pending)]
+
+#if cvp-ok("shared_latent") [
+  #figure(panel("convergence-problems"), caption: [Leaves against $1 slash atol$ on two problems of the
+    benchmark's function suite at $d = 5$: `shared_latent`, six functions of two oblique coordinates, and
+    `lorenz96_state`, the Lorenz-96 flow over $t = 0.1$ (the manuscript's ODE, @sec:study-config) in all five
+    components. A leaf is accepted when every output is within the tolerance. Grey dashed: the slope $k slash 2$,
+    for the $k$ directions in which $f$ curves; dotted: $d slash 2$. Colours and marks as in
+    @fig:convergence-rates.]) <fig:convergence-problems>
+] else [
+  #block(width: 100%, inset: 10pt, stroke: 0.5pt + grey)[The figure of leaves against $1 slash atol$ on
+    `shared_latent` and `lorenz96_state` at $d = 5$ #pending.]
+]
+
+The $d$ in @prop:leaf-count counts the directions in which $f$ curves. The lower bound needs $f$ to curve
+in every direction. If it curves in only $k$ of them, a leaf can be long in the others, and a partition into
+such slabs needs $tilde atol^(-k slash 2)$ leaves. A vector-valued $f$ has one more rule: a leaf must hold
+every output, so the output that curves most sets its size. Two problems of the benchmark's function suite
+test both, at $d = 5$: `shared_latent`, six functions of two oblique coordinates ($k = 2$), and
+`lorenz96_state`, the Lorenz-96 flow over $t = 0.1$, the manuscript's ODE, in all five components ($k = 5$).
+
+#block(breakable: false, table(
+  columns: (1fr, auto, auto, auto, auto),
+  inset: (x: 6pt, y: 4pt),
+  align: (left, right, right, right, right),
+  table.header[$d = 5$][$k slash 2$][ART][AFINNI, grown sample][AFINNI, fixed: flagged at the tightest],
+  [`shared_latent`], [1.00], cvp-rate("shared_latent", "art"), cvp-rate("shared_latent", "afinni_scaled"), cvp-flag("shared_latent"),
+  [`lorenz96_state`], [2.50], cvp-rate("lorenz96_state", "art"), cvp-rate("lorenz96_state", "afinni_scaled"), cvp-flag("lorenz96_state"),
+))
+#v(-0.4em)
+#small[The fitted exponent $k$ in $N_c prop atol^(-k)$, as in the table above. A dash: not yet run, or fewer
+  than three tolerances with at least #cv.fit_leaves leaves.]
+
+#if cvp-ok("lorenz96_state") [
+  The flow map curves in every direction, and ART's exponent on it, #cvp-rate("lorenz96_state", "art"), is
+  close to the law's $d slash 2 = 2.5$; AFINNI's from the grown sample is #cvp-rate("lorenz96_state", "afinni_scaled"),
+  over three tolerances. On `shared_latent`, whose outputs depend on two coordinates, ART's planes can lie along
+  the three flat directions: its exponent, #cvp-rate("shared_latent", "art"), lies between the $k slash 2 = 1$
+  of a function of two coordinates and $d slash 2$. AFINNI needs far more leaves there, #cv-num(cv-probs.shared_latent.runs.afinni_scaled.first().leaves)
+  from the grown sample at $atol = #cv-tol(cv-probs.shared_latent.runs.afinni_scaled.first().tol)$ against
+  ART's #cv-num(cv-probs.shared_latent.runs.art.first().leaves). Its grown sample would exceed
+  #cv-num(cv.max_sample) points after #cv-probs.shared_latent.runs.afinni_scaled.len() tolerances, so it has no
+  fitted exponent. Each halving costs ART several times more here than on the running example, so these
+  tolerances end sooner. In five dimensions AFINNI's fixed sample covers little: at the tightest tolerance it
+  flags #cvp-flag("lorenz96_state") of the box for the flow map, and #cvp-flag("shared_latent") for
+  `shared_latent`.
+] else [
+  #pending
+]
+
+#block(breakable: false, implementation(title: [How the runs were set up])[
+  - The cluster sizes follow the running example per dimension: $Nmin = 8 (d + 1)$, four initial
+    clusters, and ART's $m = #ex.settings.art.sample_multiplier$. The depth limit is 50 levels. The deepest
+    run uses #cv-max-levels, and no run leaves a cluster unresolved.
+  - AFINNI's fixed sample is the example's rule, $200 (d + 1)$ uniform points. The grown sample holds
+    about #cv.points_per_leaf points per leaf it is expected to make. At each tolerance, that expectation
+    is the last leaf count times its recent growth per halving, capped at the $2^(d slash 2)$ of
+    @prop:leaf-count. Where the leaves follow the law, the sample grows like $atol^(-d slash 2)$. That is
+    the design of the manuscript's absolute-tolerance experiment (@sec:study-config), where
+    $N_0 prop a_"tol"^(-5 slash 2)$ at $d = 5$. No sample exceeds #cv-num(cv.max_sample) points.
+  - The test points are the #(300 * 300) points of a $300 times 300$ grid at $d = 2$, and $10^5$
+    uniform points above it; the two library problems use the benchmark's own test set, with every
+    output divided by its largest $|f_c|$ there, so one tolerance is the same relative accuracy for each.
+    The tolerances end where an ART run takes about two minutes on one
+    laptop CPU. `figures/convergence.py` (`make report-convergence`) trains every model and checks
+    that the $d = 2$ problem is the running example.
+])
+
+#pitfall(title: [Kinks and jumps])[
+  @prop:leaf-count needs two derivatives. Across a kink, where the slope of $f$ jumps by $s$, an
+  affine model on a leaf that reaches a distance $w$ to both sides of it misses by at least
+  $s w slash 4$. So the leaves that straddle the kink must reach less than $4 atol slash s$ past
+  it on one side. A layer of leaves of that size along
+  a $(d - 1)$-dimensional kink holds $tilde atol^(-(d - 1))$ of them, more than the
+  $atol^(-d slash 2)$ of the smooth part once $d > 2$. A jump of height $J > 2 atol$ cannot be
+  straddled at all: refinement along it stops only at the depth limit, and the error there does not
+  fall. ART's oblique planes can follow a planar kink or jump and avoid the layer; AFINNI's median cuts,
+  across the estimated curvature, need not line up with it.
+]
+
+#takeaway[A piecewise-affine surrogate of a smooth function needs $tilde atol^(-d slash 2)$ leaves,
+  and both algorithms follow that law: ART from any start, AFINNI once its sample grows with the
+  leaves. From a fixed sample, AFINNI's generated points crowd inwards, so it covers less of the
+  domain and errs more inside it.]
+
 = Batches, kernels and reproducible sums <sec:batches>
 
 #question[The engine handles thousands of clusters at once on a GPU. How, without a loop
@@ -2468,6 +2736,52 @@ between its tables are:
 // Draft sections, for review before they move into the body; the panels and numbers of each
 // come from figures/appendix/<topic>.py.
 #pagebreak()
+= The convergence runs <sec:convergence-runs>
+
+Every run of @sec:convergence, one table per problem. $N_c$ is the leaves, $N$ the evaluations of $f$,
+$e_99$ the 99th percentile of the error over the test points a model does not flag, in units of $atol$, and
+"flag" the share of the domain AFINNI flags as outside every trust region. A dash: the tolerance was not run,
+because the previous one took about two minutes, or a grown sample would exceed #cv-num(cv.max_sample) points.
+
+#let cv-cell(rows, tol, key) = {
+  let r = rows.find(r => calc.abs(r.tol - tol) <= 1e-12 * tol)
+  if r == none { [--] } else if key == "evals" or key == "leaves" { [#cv-num(r.at(key))] } else { [#r.at(key)] }
+}
+#let cv-runs-table(title, by-method) = {
+  let tols = by-method.values().map(rows => rows.map(r => r.tol)).flatten().dedup().sorted().rev()
+  block(breakable: false, above: 1em)[
+    #text(weight: "bold", title)
+    #set text(8pt)
+    #table(
+      columns: (auto,) + (1fr,) * 10,
+      inset: (x: 3pt, y: 2.5pt),
+      align: (left,) + (right,) * 10,
+      table.header(
+        [], table.cell(colspan: 3)[ART], table.cell(colspan: 4)[AFINNI, grown sample], table.cell(colspan: 3)[AFINNI, fixed sample],
+        [$atol$], [$N_c$], [$N$], [$e_99$], [$N_c$], [$N$], [$e_99$], [flag %], [$N_c$], [$e_99$], [flag %],
+      ),
+      ..tols.map(t => (
+        [#cv-tol(t)],
+        ..("leaves", "evals", "p99").map(k => cv-cell(by-method.art, t, k)),
+        ..("leaves", "evals", "p99", "flagged").map(k => cv-cell(by-method.afinni_scaled, t, k)),
+        ..("leaves", "p99", "flagged").map(k => cv-cell(by-method.afinni, t, k)),
+      )).flatten(),
+    )
+  ]
+}
+
+#for d in ("2", "3", "4", "5") {
+  cv-runs-table([The running example's valley along a chain, $d = #d$],
+    (art: cv.runs.art.at(d), afinni_scaled: cv.runs.afinni_scaled.at(d), afinni: cv.runs.afinni.at(d)))
+}
+#for name in ("shared_latent", "lorenz96_state") {
+  if cvp-ok(name) {
+    cv-runs-table([#raw(name), $d = 5$], cv-probs.at(name).runs)
+  } else {
+    block(above: 1em)[#text(weight: "bold")[#raw(name), $d = 5$] #h(0.5em) #pending]
+  }
+}
+
 = Additions under review <sec:additions>
 
 #pitfall(title: [Internal])[

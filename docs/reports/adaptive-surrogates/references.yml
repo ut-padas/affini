@@ -114,3 +114,14 @@ samet2006:
   author: ["Samet, Hanan"]
   date: 2006
   publisher: Morgan Kaufmann
+
+devore1998:
+  type: article
+  title: Nonlinear approximation
+  author: ["DeVore, Ronald A."]
+  date: 1998
+  page-range: 51-150
+  parent:
+    type: periodical
+    title: Acta Numerica
+    volume: 7
