@@ -28,8 +28,8 @@ from pathlib import Path
 
 import numpy as np
 
+from src.problems import FUNCTIONS, VECTOR_FUNCTIONS
 from src.structure.bench import functions as bench
-from src.structure.problems import PROBLEMS, VECTOR_PROBLEMS
 
 FAST = ("rosenbrock", "genz_oscillatory", "genz_corner_peak", "genz_product_peak", "genz_gaussian", "lotka_volterra")
 ENV = {"SURROGATE_DEVICE": "cpu", "SURROGATE_MPI": "on", "OMP_NUM_THREADS": "1", "NUMBA_NUM_THREADS": "1",
@@ -79,15 +79,15 @@ def main(argv=None) -> None:
     if a.problems:
         problems = a.problems.split(",")
     elif a.vector:
-        problems = list(VECTOR_PROBLEMS)
+        problems = list(VECTOR_FUNCTIONS)
     else:
-        problems = list(FAST) + [p for p, prob in PROBLEMS.items() if p not in FAST and not prob.vector]
+        problems = list(FAST) + [p for p, prob in FUNCTIONS.items() if p not in FAST and not prob.vector]
     log_path = bench.OUT / bench.SETUP / "fill.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "a") as log:
         for d in map(int, a.d.split(",")):
             for problem in problems:
-                tols = sorted(PROBLEMS[problem].tolerances(d), reverse=True)
+                tols = sorted(bench.tolerances(d), reverse=True)
                 ran = False
                 for method in a.methods.split(","):
                     if not allowed(method, d):

@@ -37,8 +37,8 @@ def family(name: str) -> str:
 
 def ladder(max_d: int, first: tuple[str, ...] = ()) -> list[str]:
     """Problems of the ladder up to ``max_d`` inputs, the families in ``first`` before the rest, each part by input dimension (ties: by name)."""
-    names = [n for n in bench.PROBLEMS if n in FIXED or family(n) != n]
-    dims = {n: len(bench.PROBLEMS[n].system.components) for n in names}
+    names = [n for n in bench.STEP_MAPS if n in FIXED or family(n) != n]
+    dims = {n: len(bench.STEP_MAPS[n].system.components) for n in names}
     return sorted((n for n in names if dims[n] <= max_d), key=lambda n: (family(n) not in first, dims[n], n))
 
 
@@ -85,7 +85,7 @@ def main(argv=None) -> None:
     drawer = None
     with open(log_path, "a") as log:
         for name in ladder(a.max_d, tuple(filter(None, a.first.split(",")))):
-            p = bench.PROBLEMS[name]
+            p = bench.STEP_MAPS[name]
             if len(p.system.components) < a.min_d or p.regime not in a.regimes.split(","):
                 continue
             t0 = time.time()
@@ -96,7 +96,7 @@ def main(argv=None) -> None:
             for method in a.methods.split(","):
                 if (method, family(name)) in stuck or (method == "afinni" and len(p.system.components) >= 10):
                     continue  # AFINNI from 10 inputs: tens of GB of host memory (the box bench's rule)
-                for i, tol in enumerate(sorted(p.tolerances, reverse=True)[: 1 if a.loosest else None]):
+                for i, tol in enumerate(sorted(bench.STEP_TOLERANCES, reverse=True)[: 1 if a.loosest else None]):
                     path = bench.CACHE / name / f"{method}_tol{tol:g}.json"
                     if not path.exists():
                         t0 = time.time()

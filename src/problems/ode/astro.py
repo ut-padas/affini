@@ -14,7 +14,7 @@ import numpy as np
 
 from .system import System
 
-KIDAPY = Path(__file__).resolve().parents[4] / "libs" / "KIDApy"
+KIDAPY = Path(__file__).resolve().parents[3] / "libs" / "KIDApy"
 YEAR = 3600.0 * 24.0 * 365.25
 ENV = ("nH", "T", "Av", "uv")
 

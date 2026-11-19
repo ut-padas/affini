@@ -46,13 +46,21 @@ from src import IS_CUPY_BACKEND, to_host, xp  # noqa: E402
 from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
-from src.structure.problems import GRID, PROBLEMS  # noqa: E402
+from src.problems import FUNCTIONS, GRID  # noqa: E402
 from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]  # src/structure: cache/ and output/ live there
 CACHE = ROOT / "cache"
 OUT = ROOT / "output"
 SEEDS = (1, 2, 3)
+# Tolerances relative to max |f| on the test set, by dimension (the nearest listed dimension below d): loose
+# ones in high dimension first, so every method runs quickly while a scheme is still being proven there.
+TOLERANCES = {2: (0.1, 0.01, 0.001), 3: (0.1, 0.03, 0.01), 5: (0.1, 0.05, 0.02), 10: (0.2, 0.1, 0.05)}
+
+
+def tolerances(d: int) -> tuple[float, ...]:
+    """The tolerances run at dimension d."""
+    return TOLERANCES[max(k for k in TOLERANCES if k <= max(d, min(TOLERANCES)))]
 
 
 @dataclass
@@ -160,7 +168,7 @@ def directions(problem: str, d: int) -> np.ndarray:
     path = CACHE / "directions" / f"{problem}_d{d}.npz"  # shared by every setup: f alone fixes them
     if path.exists():
         return np.load(path)["W"]
-    p = PROBLEMS[problem]
+    p = FUNCTIONS[problem]
     lo, hi = p.domain(d)
     X = np.random.default_rng(5).uniform(lo, hi, (400, d))
     h = 1e-5 * (hi - lo)
@@ -178,7 +186,7 @@ def directions(problem: str, d: int) -> np.ndarray:
 
 def slice_points(problem: str, d: int) -> tuple[np.ndarray, np.ndarray, float]:
     """(points, inside mask, half-width) of the SLICE x SLICE grid on the plane through the centre spanned by ``directions``."""
-    p = PROBLEMS[problem]
+    p = FUNCTIONS[problem]
     lo, hi = p.domain(d)
     c, R = 0.5 * (lo + hi), 0.5 * float(np.max(hi - lo))
     W = directions(problem, d)
@@ -220,7 +228,7 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
     cached = comm.bcast(path.exists() and not force if rank == 0 else None, root=0)
     if cached:
         return json.loads(str(np.load(path)["metrics"])) if rank == 0 else None
-    p = PROBLEMS[problem]
+    p = FUNCTIONS[problem]
     lo, hi = p.domain(d)
     X = p.test_points(d)
     t0 = time.perf_counter()
@@ -302,7 +310,7 @@ def label_of(method: str, metrics: dict | None) -> str:
 
 def plot_maps(problem: str, methods: list[str], tol: float, out: Path) -> Path:
     """Each method's pieces (top) and |error| / tolerance (bottom) on the 2-D grid, seed 1."""
-    p = PROBLEMS[problem]
+    p = FUNCTIONS[problem]
     lo, hi = p.domain(2)
     fX = p.values(p.test_points(2))
     shown = display(fX).reshape(GRID, GRID)
@@ -370,7 +378,7 @@ def plot_views(problem: str, d: int, methods: list[str], tol: float, out: Path) 
     |error| / tolerance of every method. Then one row per method: its error on the slice, its
     pieces on the slice (if it has pieces), and its error over the shadow coordinates.
     """
-    p = PROBLEMS[problem]
+    p = FUNCTIONS[problem]
     lo, hi = p.domain(d)
     W = directions(problem, d)
     c = 0.5 * (lo + hi)
@@ -448,8 +456,7 @@ def plot_cost(problem: str, d: int, methods: list[str], out: Path) -> Path:
     time and the inference time per query, over the problem's tolerances (seed means). The
     inference panel marks the oracle's own time per point: a surrogate pays off below it.
     """
-    p = PROBLEMS[problem]
-    tols = p.tolerances(d)
+    tols = tolerances(d)
     keys = ("max_ratio", "mean_error", "within_percent", "train_s", "predict_us")
     labels = ("worst |error| / tolerance", "mean |error|", "% within tolerance", "training time (s)",
               "inference time per query (us)")  # fmt: skip
@@ -630,13 +637,13 @@ def plot_overview(d: int, out: Path, vector: bool = False) -> list[Path]:
     ``overview-d<d>-cost.png`` gives, in the same layout, the training and inference times (beside
     the oracle's own time per point), the pieces and the mean |error| / tolerance.
     """
-    cases = [(problem, tol) for problem, p in PROBLEMS.items() if p.vector == vector for tol in p.tolerances(d)]
+    cases = [(problem, tol) for problem, p in FUNCTIONS.items() if p.vector == vector for tol in tolerances(d)]
     cells = {(m, pr, t): c for m in METHODS for pr, t in cases if (c := _overview_cell(m, pr, d, t)) is not None}
     if not cells:
         return []
     methods = [m for m in METHODS if any(k[0] == m for k in cells)]
-    problems = [p for p in PROBLEMS if any(k[1] == p for k in cells)]  # cells hold only this kind's problems
-    tols = PROBLEMS[problems[0]].tolerances(d)
+    problems = [p for p in FUNCTIONS if any(k[1] == p for k in cells)]  # cells hold only this kind's problems
+    tols = tolerances(d)
     for pr, t in cases:  # the cheapest method that holds the tolerance on every seed; ties all marked
         held = [cells[m, pr, t] for m in methods if (m, pr, t) in cells and cells[m, pr, t]["passed"]]
         for c in held:
@@ -710,8 +717,8 @@ def write_summary(d: int, methods: list[str], out: Path) -> Path:
              "refused queries are answered by the oracle)", "",
              "| problem | tol | method | ranks | pieces | evaluations | worst | worst seed | % within | % refused | mean error | "
              "train s | infer us/query |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
-    for problem, p in PROBLEMS.items():
-        for tol in p.tolerances(d):
+    for problem, p in FUNCTIONS.items():
+        for tol in tolerances(d):
             for method in methods:
                 ms = [json.loads(str(np.load(cache_path(method, problem, d, tol, s))["metrics"])) for s in SEEDS
                       if cache_path(method, problem, d, tol, s).exists()]  # fmt: skip
@@ -762,7 +769,7 @@ def main(argv=None) -> None:
         return
     methods = a.methods.split(",")
     for problem in a.problems.split(","):
-        tols = [float(t) for t in a.tols.split(",")] if a.tols else PROBLEMS[problem].tolerances(a.d)
+        tols = [float(t) for t in a.tols.split(",")] if a.tols else tolerances(a.d)
         if not a.replot:
             for tol in tols:
                 for method in methods:
@@ -771,7 +778,7 @@ def main(argv=None) -> None:
         if (a.plot or a.replot) and MPI.COMM_WORLD.Get_rank() == 0:  # after every problem, so results show as they arrive
             plot_problem(problem, a.d, tols, out)
             write_summary(a.d, list(METHODS), out)
-            plot_overview(a.d, out, vector=PROBLEMS[problem].vector)
+            plot_overview(a.d, out, vector=FUNCTIONS[problem].vector)
 
 
 def plot_problem(problem: str, d: int, tols, out: Path) -> None:

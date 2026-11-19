@@ -2,12 +2,12 @@
 
 import numpy as np
 
-from src.structure.problems import PROBLEMS
+from src.problems import FUNCTIONS
 from src.structure.schemes import sparsegrid
 
 
 def test_a_failed_check_opens_what_the_surpluses_stopped_before():
-    p = PROBLEMS["genz_corner_peak"]
+    p = FUNCTIONS["genz_corner_peak"]
     lo, hi = p.domain(2)
     X = p.test_points(2)
     fX = p.values(X)

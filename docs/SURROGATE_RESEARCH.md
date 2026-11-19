@@ -39,9 +39,9 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
   - `schemes/`: `chebtt.py` (ChebTT: `build`, and `build_vector` for several outputs), `chebtt_adaptive.py`
     (ChebTT-A), `chebtree.py` (ChebTree), `sparsegrid.py` (SparseCheb), `kernel.py` (MetricKernel),
     `hub.py` (the hub expansion), `tabulation.py` (SlowTable).
-  - `problems/functions.py`: the scalar problems, the vector-valued ones (`VECTOR_PROBLEMS`) and `TOLERANCES`
+  - `src/problems/registry.py`: the scalar problems and the vector-valued ones (`VECTOR_FUNCTIONS`); `TOLERANCES` (in `bench/functions.py`)
     (2-D 0.1/0.01/0.001, 3-D 0.1/0.03/0.01, 5-D 0.1/0.05/0.02, 10-D and above 0.2/0.1/0.05).
-  - `problems/ode/`: the ODE systems (`system.py`: the `System` oracle; `chemistry.py`: Robertson,
+  - `src/problems/ode/`: the ODE systems (`system.py`: the `System` oracle; `chemistry.py`: Robertson,
     primordial H/He/H2, HIRES, POLLU, Akzo Nobel; `reaction_diffusion.py`: Brusselator, Allen-Cahn,
     Fisher-KPP; `lorenz.py`: Lorenz-96 at F = 1; `classic.py`: Van der Pol, the Oregonator, Burgers;
     `astro.py`: KIDApy networks).
@@ -418,7 +418,7 @@ after Dirichlet-random initial conditions, central differences of the step map i
 singular values ~(1.3-1.7, 1.0, 1e-2-1e-4) at dt = 1e-3 and ~(1.2-1.7, 0.5-1.0, 1e-10) for every
 dt from 0.1 to 1e3. The fast direction collapses once dt exceeds the fast time scale.
 
-The primordial network (nine species, isothermal; `src/structure/problems/ode/chemistry.py`), states relaxed for
+The primordial network (nine species, isothermal; `src/problems/ode/chemistry.py`), states relaxed for
 1e5 yr from random ionisation and H2 fractions, central differences in log10 number densities:
 
 | n_H (cm^-3), T (K) | dt = 1e2 yr | dt = 1e4 yr | dt = 1e6 yr |
@@ -1354,7 +1354,7 @@ No use of ISAT in astrochemistry turned up in this search either.
 
 Builds on docs/LITERATURE.md (I-* to IV-* cited by ID) and Review IV (section 5); new works are V-1 to V-49. Tags: **[v]**
 source read (full text, named sections, or code), **[a]** abstract or catalogue only, **[r]** recalled. "Measured"
-marks short runs made for the review (scripts not kept; the rates are in `src/structure/problems/ode/chemistry.py`).
+marks short runs made for the review (scripts not kept; the rates are in `src/problems/ode/chemistry.py`).
 
 ### 6.0 Bottom line (ranked by gain over cost)
 
@@ -1541,7 +1541,7 @@ refusal and fallback, and report the maximum apart from any conformal quantile.
 - *Genz continuous:* piecewise-Chebyshev cores with kink detection (§2.4) against SparseCheb; a kernel with Wendland
   C0 functions as a control.
 - *Lorenz-96 (F = 8, t = 0.5):* a full TT-SVD of the map sampled on a 9^5 grid (59k RK4 evaluations, vectorised in
-  `problems/functions.py`) gives the true unfolding singular values, and so whether rank or degree is the obstacle (§5).
+  `src/problems/registry.py`) gives the true unfolding singular values, and so whether rank or degree is the obstacle (§5).
   Then train AFINNI and a kernel on attractor trajectories against the box.
 - *Lotka-Volterra:* TT in Hessian-rotated cells (§3.2), checking that no evaluation leaves the domain.
 
@@ -1591,7 +1591,7 @@ H−·H+, and k18 and k19 on H2+. Grackle's defaults are used: `CaseBRecombinati
 `h2_charge_exchange_rate = 1`, tiny = 1e-20 (`grackle_macros.h`). Units are cm³ s⁻¹ (two-body) and cm⁶ s⁻¹
 (three-body). T is in K; T_eV = T/11605; ln T_eV is the natural log. Most fits derive from Abel et al. 1997
 [V-43, a], whose model covers n < 1e4 cm⁻³ and 1 K < T < 1e8 K. Every row below was transcribed from the pinned
-source and evaluated (now `primordial_rates` in `src/structure/problems/ode/chemistry.py`). As a check, k2(1e4 K) = 4.17e-13, the standard case-A value. **All
+source and evaluated (now `primordial_rates` in `src/problems/ode/chemistry.py`). As a check, k2(1e4 K) = 4.17e-13, the standard case-A value. **All
 rows: verified against source.**
 
 | k | Reaction | k(T) (cgs) | Source lines |

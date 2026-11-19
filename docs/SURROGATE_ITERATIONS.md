@@ -227,7 +227,7 @@ expensive box solves locating kinks in R. The defect's size on the box against o
 | 2.5 | Batched f and J kernels, the real inference cost | F | not yet |
 | 2.6 | Learned defect only on the tube where the gate needs k > 2 | F | not yet |
 | 2.7 | Honest baseline: an implicit solver at a loose tolerance | C | measured |
-| 2.8 | Generic benchmarks outside chemistry | user | Van der Pol (eps = 1e-3), Oregonator, viscous Burgers (10/20/40 points) added (`src/structure/problems/ode/classic.py`) |
+| 2.8 | Generic benchmarks outside chemistry | user | Van der Pol (eps = 1e-3), Oregonator, viscous Burgers (10/20/40 points) added (`src/problems/ode/classic.py`) |
 
 ### Results
 
@@ -747,7 +747,7 @@ the map becomes nearly trivial. Real tracers stay out of equilibrium because the
 every step. So the benchmark must carry the environment as a step-map input that changes along each
 trajectory.
 
-### Nelson as a benchmark (`src/structure/problems/ode/astro.py`, problem `nelson`, regime `longstep`)
+### Nelson as a benchmark (`src/problems/ode/astro.py`, problem `nelson`, regime `longstep`)
 
 - **State:** 14 log abundances plus the held environment (n_H, T, A_v, UV), set from a tracer path
   between steps.

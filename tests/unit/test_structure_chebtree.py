@@ -3,12 +3,12 @@
 import numpy as np
 import pytest
 
-from src.structure.problems import PROBLEMS
+from src.problems import FUNCTIONS
 from src.structure.schemes import chebtree
 
 
 def _worst_ratio(problem: str, tol: float) -> float:
-    p = PROBLEMS[problem]
+    p = FUNCTIONS[problem]
     lo, hi = p.domain(2)
     X = p.test_points(2)
     fX = p.values(X)
@@ -18,7 +18,7 @@ def _worst_ratio(problem: str, tol: float) -> float:
 
 
 def test_a_polynomial_is_one_exact_box():
-    p = PROBLEMS["rosenbrock"]
+    p = FUNCTIONS["rosenbrock"]
     lo, hi = p.domain(2)
     tree = chebtree.build(p.values, lo, hi, 1e-3)
     X = np.random.default_rng(0).uniform(lo, hi, (1000, 2))
@@ -64,7 +64,7 @@ def test_chopping_changes_the_interpolant_by_at_most_its_budget():
 
 
 def test_boxes_at_the_depth_cap_refuse_and_the_rest_meet_the_tolerance():
-    p = PROBLEMS["oblique_jump"]
+    p = FUNCTIONS["oblique_jump"]
     lo, hi = p.domain(2)
     X = p.test_points(2)
     fX = p.values(X)
@@ -76,7 +76,7 @@ def test_boxes_at_the_depth_cap_refuse_and_the_rest_meet_the_tolerance():
 
 
 def test_a_kink_near_a_face_is_caught_by_the_fibre_check():
-    p = PROBLEMS["genz_continuous"]
+    p = FUNCTIONS["genz_continuous"]
     lo, hi = p.domain(3)
     X = p.test_points(3)[:20_000]
     fX = p.values(X)

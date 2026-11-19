@@ -1,11 +1,11 @@
-"""ODE oracles (src/structure/problems/ode): rates, Jacobians, conservation, integrators, regimes and the ladder."""
+"""ODE oracles (src/problems/ode): rates, Jacobians, conservation, integrators, regimes and the ladder."""
 
 import json
 
 import numpy as np
 
-from src.structure.problems import ode
-from src.structure.problems.ode import chemistry as c
+from src.problems import ode
+from src.problems.ode import chemistry as c
 
 
 def _primordial_state(nH=1e3, T=1000.0, xe=1e-4, xh2=1e-6):
@@ -80,7 +80,7 @@ def test_a_ladder_step_stays_in_its_coordinates_and_moves_towards_the_stable_sta
 def test_invariants_are_found_and_the_projection_restores_them_exactly():
     from src.structure.bench import ode as cb
 
-    p = cb.PROBLEMS["robertson"]
+    p = cb.STEP_MAPS["robertson"]
     Y = c.robertson_initial(30, 4)
     Z = np.log10(Y)
     W = cb.invariants_of(p, Z[:, None, :].repeat(2, axis=1))
@@ -114,9 +114,9 @@ def test_lorenz96_has_an_analytic_jacobian_and_an_explicit_step_that_matches_a_t
 def test_problems_declare_a_regime_and_their_baseline_follows_their_integrator():
     from src.structure.bench import ode as cb
 
-    assert cb.PROBLEMS["lorenz96_d10"].regime == "nonstiff" and cb.PROBLEMS["lorenz96_d10"].baseline == "scipy-rk45-cpu1"
-    assert cb.PROBLEMS["bruss_d10"].regime == "stiff" and cb.PROBLEMS["robertson"].baseline == "scipy-radau-cpu1"
-    assert all(p.regime in cb.REGIMES and p.baseline in cb.BASELINES for p in cb.PROBLEMS.values())
+    assert cb.STEP_MAPS["lorenz96_d10"].regime == "nonstiff" and cb.baseline_of(cb.STEP_MAPS["lorenz96_d10"]) == "scipy-rk45-cpu1"
+    assert cb.STEP_MAPS["bruss_d10"].regime == "stiff" and cb.baseline_of(cb.STEP_MAPS["robertson"]) == "scipy-radau-cpu1"
+    assert all(p.regime in cb.REGIMES and cb.baseline_of(p) in cb.BASELINES for p in cb.STEP_MAPS.values())
 
 
 def test_the_fill_runs_the_first_families_before_the_rest_each_by_dimension():
@@ -159,7 +159,7 @@ def test_the_fill_can_run_only_the_loosest_tolerance_of_one_regime_from_a_dimens
     fill.main(["--methods", "chebtt_roll", "--min-d", "10", "--max-d", "20", "--regimes", "stiff", "--loosest", "--limit", "1"])
     names = [args[1] for args in cases]
     assert {args[5] for args in cases} == {"0.01"}
-    assert all(len(cb.PROBLEMS[n].system.components) >= 10 and cb.PROBLEMS[n].regime == "stiff" for n in names)
+    assert all(len(cb.STEP_MAPS[n].system.components) >= 10 and cb.STEP_MAPS[n].regime == "stiff" for n in names)
     assert "primordial" in names and "pollu" in names and "bruss_d20" not in names  # stuck at bruss_d10: d20 skipped
 
 
@@ -172,8 +172,8 @@ def test_the_classic_problems_have_analytic_jacobians_and_are_registered_as_stif
         h = 1e-6 * np.maximum(np.abs(y), 1.0)
         Jn = np.stack([(net.rhs(y + h[i] * e) - net.rhs(y - h[i] * e)) / (2 * h[i]) for i, e in enumerate(np.eye(len(y)))], axis=1)
         assert np.max(np.abs(net.jac(y) - Jn)) <= 1e-6 * np.max(np.abs(net.jac(y))), net.name
-    assert cb.PROBLEMS["van_der_pol"].regime == "stiff" and cb.PROBLEMS["burgers_d20"].baseline == "scipy-radau-cpu1"
-    assert not cb.PROBLEMS["van_der_pol"].system.log and cb.PROBLEMS["oregonator"].system.log
+    assert cb.STEP_MAPS["van_der_pol"].regime == "stiff" and cb.baseline_of(cb.STEP_MAPS["burgers_d20"]) == "scipy-radau-cpu1"
+    assert not cb.STEP_MAPS["van_der_pol"].system.log and cb.STEP_MAPS["oregonator"].system.log
 
 
 def test_a_held_environment_follows_its_path_and_the_rollout_takes_it_from_the_trajectory(monkeypatch):
@@ -186,7 +186,7 @@ def test_a_held_environment_follows_its_path_and_the_rollout_takes_it_from_the_t
     Z = ode.trajectories(sysm, np.array([[1.0, 1.0]]), 0.1, 2, held_path=path)
     assert np.allclose(Z[0, :, 1], [1.0, 2.0, 3.0])  # the held input is the path's, step by step
     assert np.isclose(Z[0, 1, 0], np.exp(-0.1)) and np.isclose(Z[0, 2, 0], np.exp(-0.1 - 0.2), rtol=1e-6)
-    p = cb.ODEProblem(sysm, 0.1, None, 2, 1, 1, (0.01,))
+    p = cb.StepMapProblem(sysm, 0.1, None, 2, 1, 1)
 
     class Exact:
         def predict(self, Q):

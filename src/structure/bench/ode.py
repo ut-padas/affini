@@ -39,7 +39,6 @@ import argparse
 import json
 import os
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib
@@ -51,85 +50,16 @@ import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
 
-from src.structure.problems import ode  # noqa: E402
+from src.problems import ode  # noqa: E402
+from src.problems.ode import REGIMES, STEP_MAPS, StepMapProblem  # noqa: E402
 from src.structure.schemes import chebtt, tabulation  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]  # src/structure
 CACHE = ROOT / "cache" / "ode"
 OUT = ROOT / "output" / "ode"
-YEAR = 3.156e7
 
 
-@dataclass(frozen=True)
-class ODEProblem:
-    system: ode.System
-    dt: float
-    initial: object  # (n, seed) -> (n, components) states in the system's own variables
-    steps: int
-    n_train: int
-    n_test: int
-    tolerances: tuple  # in the problem's units (``units``)
-    burn: float = 0.0  # trajectories start after this time, past the initial transient
-    floor: float = 0.0  # components below this abundance are not scored (an error in dex of ~0 means nothing)
-    regime: str = "stiff"  # a key of REGIMES: which overview the problem is shown in
-    held_path: object = None  # (n, seed, steps) -> (n, steps + 1, held): the held inputs along each trajectory, e.g. a tracer's environment
-
-    @property
-    def units(self) -> str:
-        return "dex" if self.system.log else "absolute"
-
-    @property
-    def baseline(self) -> str:
-        """The named baseline (``BASELINES``) of the system's own integrator: what a speedup is over by default."""
-        return BASELINE_OF[self.system.method]
-
-    def step(self, Z: np.ndarray) -> np.ndarray:
-        return self.system.coords_step(Z, self.dt)
-
-    def scored(self, Z_true: np.ndarray) -> np.ndarray:
-        """Which entries count in the error: abundances above ``floor`` (held inputs never; every other entry of a linear system)."""
-        if not self.system.log:
-            mask = np.ones(Z_true.shape, dtype=bool)
-        else:
-            mask = Z_true > (np.log10(self.floor) if self.floor > 0 else -np.inf)
-        if self.system.held:
-            mask[..., -self.system.held :] = False
-        return mask
-
-
-def _primordial_initial(n: int, seed: int) -> np.ndarray:
-    """n_H in [1, 1e4] cm^-3, T in [100, 5000] K, ionisation 1e-6-1e-2, H2 fraction 1e-8-1e-3 (log-uniform), He/H = 0.079."""
-    rng = np.random.default_rng(seed)
-    nH, T = 10.0 ** rng.uniform(0, 4, n), 10.0 ** rng.uniform(2, np.log10(5000.0), n)
-    xe, xh2 = 10.0 ** rng.uniform(-6, -2, n), 10.0 ** rng.uniform(-8, -3, n)
-    Y = np.full((n, 10), 1e-20) * nH[:, None]
-    Y[:, 0], Y[:, 1], Y[:, 3], Y[:, 5] = nH * (1 - xe - 2 * xh2), nH * xe, nH * xh2, nH * xe
-    Y[:, 6], Y[:, 9] = 0.079 * nH, T
-    return Y
-
-
-PROBLEMS = {
-    "robertson": ODEProblem(ode.ROBERTSON, 1.0, ode.robertson_initial, 40, 200, 100, (0.01, 0.001)),
-    "chemakzo": ODEProblem(ode.CHEMAKZO, 2.0, ode.chemakzo_initial, 85, 100, 40, (0.01, 0.001), burn=5.0, floor=1e-12),
-    "hires": ODEProblem(ode.HIRES, 2.0, ode.hires_initial, 170, 100, 40, (0.01, 0.001), burn=5.0, floor=1e-12),
-    "primordial": ODEProblem(ode.PRIMORDIAL, 1e4 * YEAR, _primordial_initial, 30, 60, 30, (0.01, 0.001), floor=1e-12),
-    "pollu": ODEProblem(ode.POLLU, 1.0, ode.pollu_initial, 59, 100, 40, (0.01, 0.001), burn=1.0, floor=1e-12),
-    "van_der_pol": ODEProblem(ode.VAN_DER_POL, 0.05, ode.van_der_pol_initial, 40, 100, 40, (0.01, 0.001)),
-    "oregonator": ODEProblem(ode.OREGONATOR, 10.0, ode.oregonator_initial, 40, 100, 40, (0.01, 0.001)),
-}  # fmt: skip (in order of input dimension: 3, 5, 8, 10, 20)
-if ode.NELSON is not None:  # KIDApy's Nelson network along driven tracers: 66.7 kyr hydro steps (KIDApy's example tracer)
-    PROBLEMS["nelson"] = ODEProblem(ode.NELSON, 1600.0e3 * ode.astro.YEAR / 24, ode.nelson_initial, 24, 60, 20, (0.01, 0.001),
-                                    burn=1.0e4 * ode.astro.YEAR, floor=1e-12, regime="longstep", held_path=ode.environment_path)  # fmt: skip
-REGIMES = {"stiff": "Stiff systems", "nonstiff": "Non-stiff systems", "chaotic": "Chaotic systems",
-           "longstep": "Long-step stiff systems (many solver steps per call, driven inputs)"}
-# The ladder: each family of ode.FAMILIES at every size, named <family>_d<input dimension>.
-_LADDER_STEP = {"bruss": (0.25, 40), "allen_cahn": (0.005, 40), "fisher_kpp": (0.01, 40), "lorenz96": (0.25, 40), "burgers": (0.05, 40)}  # (dt, steps): 40 steps that still move
-_LADDER_REGIME = {"lorenz96": "nonstiff"}  # the others: stiff
-for _family, (_make, _initial, _sizes) in ode.FAMILIES.items():
-    for _n in _sizes:
-        _system = ode.SYSTEMS[_make(_n).name]
-        PROBLEMS[f"{_family}_d{len(_system.components)}"] = ODEProblem(_system, _LADDER_STEP[_family][0], _initial(_n), _LADDER_STEP[_family][1],
-                                                                  100, 40, (0.01, 0.001), regime=_LADDER_REGIME.get(_family, "stiff"))  # fmt: skip
+STEP_TOLERANCES = (0.01, 0.001)  # every step map's, in its units (dex for a log system, else absolute)
 
 
 # The solvers a surrogate's speed is measured against. A speedup is always "over" one of them, named
@@ -161,6 +91,11 @@ BASELINES["scipy-bdf-cpu1"] = {
 BASELINE_OF = {"Radau": "scipy-radau-cpu1", "RK45": "scipy-rk45-cpu1", "BDF": "scipy-bdf-cpu1"}  # a network's integrator: its baseline
 
 
+def baseline_of(p: StepMapProblem) -> str:
+    """The named baseline (``BASELINES``) of the problem's own integrator: what a speedup is over by default."""
+    return BASELINE_OF[p.system.method]
+
+
 def write_record(path: Path, record: dict) -> None:
     """Write a JSON record through a temporary file and a rename, so a redraw running beside the fill never reads half of one."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,17 +107,17 @@ def write_record(path: Path, record: dict) -> None:
 def baseline_cost(name: str, baseline: str | None = None) -> dict:
     """
     One baseline's cost of a step per state on 40 test states (cached in ``<problem>-baseline-<baseline>.json``;
-    by default the problem's own, ``ODEProblem.baseline``): wall time in microseconds and the operation counts
+    by default the problem's own, ``baseline_of``): wall time in microseconds and the operation counts
     (right-hand sides, Jacobians, LU factorisations), with the baseline's description. Only the system's own
     integrator is measured here (KeyError for another without a record); another baseline's records are written
     by its own runner in the same form.
     """
-    p = PROBLEMS[name]
-    baseline = baseline or p.baseline
+    p = STEP_MAPS[name]
+    baseline = baseline or baseline_of(p)
     path = CACHE / f"{name}-baseline-{baseline}.json"
     if path.exists():
         return json.loads(path.read_text())
-    if baseline != p.baseline:
+    if baseline != baseline_of(p):
         raise KeyError(f"no measurement of baseline {baseline!r} for {name}")
     _, test = data(name)
     Z = test[:, :-1].reshape(-1, test.shape[2])
@@ -209,7 +144,7 @@ def data(name: str) -> tuple[np.ndarray, np.ndarray]:
     if path.exists():
         z = np.load(path)
         return z["train"], z["test"]
-    p = PROBLEMS[name]
+    p = STEP_MAPS[name]
     seeds = ((p.n_train, 1), (p.n_test, 2))
     start = [p.initial(n, seed) for n, seed in seeds]
     if p.burn > 0:
@@ -243,7 +178,7 @@ def visited(train: np.ndarray) -> np.ndarray:
     return train[:, :-1].transpose(1, 0, 2).reshape(-1, train.shape[2])
 
 
-def slowtable(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
+def slowtable(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
     oracle = CachedOracle(p.step)
     t = tabulation.build(oracle, visited(train), atol, seed=seed)
     t.evals = oracle.evals
@@ -273,7 +208,7 @@ def state_box(states: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return np.where(flat, lo - 1e-3, lo), np.where(flat, hi + 1e-3, hi)
 
 
-def chebtt_box(p: ODEProblem, train: np.ndarray, atol: float, seed: int, oracle: CachedOracle | None = None, edges: bool = True):
+def chebtt_box(p: StepMapProblem, train: np.ndarray, atol: float, seed: int, oracle: CachedOracle | None = None, edges: bool = True):
     oracle = oracle or CachedOracle(p.step)
     lo, hi = state_box(visited(train))
     models = []
@@ -285,12 +220,12 @@ def chebtt_box(p: ODEProblem, train: np.ndarray, atol: float, seed: int, oracle:
     return BoxTT(models, lo, hi, oracle.evals)
 
 
-def chebtt_smooth(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
+def chebtt_smooth(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
     """``chebtt_box`` without the edge search: one Chebyshev basis per axis (the control for piecewise axes)."""
     return chebtt_box(p, train, atol, seed, edges=False)
 
 
-def chebtt_adaptive_box(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
+def chebtt_adaptive_box(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
     """ChebTT-A (``chebtt_adaptive``) per component on the states' bounding box: piecewise axes, and an interface term where one is found."""
     from src.structure.schemes import chebtt_adaptive
 
@@ -318,7 +253,7 @@ class BoxMethod(BoxTT):
 def box_method(name: str):
     """An ODE-bench method running the box bench's ``name`` (AFINNI, ART) with the solver as its oracle."""
 
-    def method(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
+    def method(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
         from src import to_host, xp
         from src.structure.bench import functions as box_bench
 
@@ -337,7 +272,7 @@ def box_method(name: str):
     return method
 
 
-def chebtt_roll(p: ODEProblem, train: np.ndarray, atol: float, seed: int, rounds: int = 3):
+def chebtt_roll(p: StepMapProblem, train: np.ndarray, atol: float, seed: int, rounds: int = 3):
     """
     ``chebtt_box``, accepted only once the surrogate chained along every training trajectory (projected
     onto the invariants, as it is used) stays within half of ``atol`` of them (a margin for the test
@@ -368,7 +303,7 @@ class BoxVectorTT(BoxTT):
         return np.concatenate([out, np.zeros((len(Q), self.held))], axis=1) if self.held else out
 
 
-def chebtt_metric(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
+def chebtt_metric(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
     states = visited(train)
     held = p.system.held  # held inputs: their increment is 0
     m = states.shape[1] - held
@@ -393,7 +328,7 @@ METHODS = {"slowtable": ("SlowTable: tabulated visited states", "#8e24aa", slowt
            "art_quad": ("ART, quadratic leaves", "#2e7d32", box_method("art_quad"))}  # fmt: skip
 
 
-def invariants_of(p: ODEProblem, train: np.ndarray) -> np.ndarray:
+def invariants_of(p: StepMapProblem, train: np.ndarray) -> np.ndarray:
     """
     (m, d) the system's linear invariants W (W F(y) = 0 for every y: element and charge totals of a
     network, total mass), from the null space of the right-hand side at up to 600 training states (the
@@ -422,7 +357,7 @@ class Projected:
     moves in proportion to itself, so trace species are barely touched), floored at ``FLOOR``.
     """
 
-    def __init__(self, model, p: ODEProblem, W: np.ndarray):
+    def __init__(self, model, p: StepMapProblem, W: np.ndarray):
         self.model, self.p, self.W = model, p, W
         self.evals = getattr(model, "evals", 0)
 
@@ -444,7 +379,7 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
     path = CACHE / name / f"{method}_tol{tol:g}.json"
     if path.exists() and not force:
         return json.loads(path.read_text())
-    p = PROBLEMS[name]
+    p = STEP_MAPS[name]
     train, test = data(name)
     states = train[:, :-1].transpose(1, 0, 2).reshape(-1, train.shape[2])  # time-major
     Zt, Gt = test[:, :-1].reshape(-1, test.shape[2]), (test[:, 1:] - test[:, :-1]).reshape(-1, test.shape[2])
@@ -488,7 +423,7 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
                   "rollout_error_by_step_projected": r["rollout_error_by_step"]})  # fmt: skip
     m["speedup"] = m["solve_us"] / max(predict_us, 1e-9)  # over the problem's baseline: its time per state and step over the surrogate's
     m["inference"] = {"device": "cpu", "threads": int(os.environ.get("OPENBLAS_NUM_THREADS", "0") or 0), "batch": len(Zt),
-                      "baseline": p.baseline}  # fmt: skip
+                      "baseline": baseline_of(p)}  # fmt: skip
     write_record(path, m)
     return m
 
@@ -496,7 +431,7 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
 ROLLOUTS = 20  # test trajectories chained through each surrogate
 
 
-def survived(p: ODEProblem, model, test: np.ndarray, n: int = 200) -> float:
+def survived(p: StepMapProblem, model, test: np.ndarray, n: int = 200) -> float:
     """
     The worst one-step error that survives the next exact step, ``|Phi(S(z)) - Phi(Phi(z))|`` over n
     answered test states (one solve each; ``Phi(Phi(z))`` is the trajectory's state two steps on):
@@ -513,7 +448,7 @@ def survived(p: ODEProblem, model, test: np.ndarray, n: int = 200) -> float:
     return float(np.max(np.where(p.scored(Z2[idx]), np.abs(out - Z2[idx]), 0.0)))
 
 
-def rollout(p: ODEProblem, model, true: np.ndarray) -> dict:
+def rollout(p: StepMapProblem, model, true: np.ndarray) -> dict:
     """
     Chain the surrogate from each true initial state for every step of the trajectory, the solver
     stepping the states it refuses (as a simulation falls back), and compare with the solver's
@@ -558,7 +493,7 @@ def dynamics(name: str) -> dict:
     path = CACHE / f"{name}-dynamics.json"
     if path.exists():
         return json.loads(path.read_text())
-    p = PROBLEMS[name]
+    p = STEP_MAPS[name]
     _, test = data(name)
     true = test[:ROLLOUTS]  # the rollouts' own trajectories, so their errors and A_n refer to the same states
     n_steps, d = true.shape[1] - 1, true.shape[2]
@@ -610,7 +545,7 @@ def plot(name: str, methods: list[str]) -> Path:
     """
     fig, axes = plt.subplots(2, 2, figsize=(12, 8.2), layout="constrained")
     (a, b), (c, g) = axes
-    tols = sorted(PROBLEMS[name].tolerances, reverse=True)
+    tols = sorted(STEP_TOLERANCES, reverse=True)
     handles = []
     for method in methods:
         solves = []
@@ -631,7 +566,7 @@ def plot(name: str, methods: list[str]) -> Path:
         if solves:  # one entry per method: its colour, and its training solves at each tolerance
             label = f"{SHORT.get(method, method).replace(chr(10), ' ')} ({' / '.join(solves)} solves)"
             handles.append(matplotlib.lines.Line2D([], [], color=METHODS[method][1], lw=2, label=label))
-    handles += [matplotlib.lines.Line2D([], [], color="#555555", ls=ls, lw=1.3, label=f"tol {t:g} {PROBLEMS[name].units}")
+    handles += [matplotlib.lines.Line2D([], [], color="#555555", ls=ls, lw=1.3, label=f"tol {t:g} {STEP_MAPS[name].units}")
                 for t, ls in zip(tols, ("-", "--"), strict=False)]  # fmt: skip
     try:
         dyn = dynamics(name)
@@ -655,7 +590,7 @@ def plot(name: str, methods: list[str]) -> Path:
     for ax in axes.ravel():
         ax.set_xlabel("step of the test trajectories")
     fig.legend(handles=handles, loc="outside lower center", ncol=min(5, len(handles)), fontsize=8, frameon=False)
-    p = PROBLEMS[name]
+    p = STEP_MAPS[name]
     units = "log10 (dex)" if p.system.log else "absolute units"
     try:
         cost = solver_cost(name)
@@ -691,10 +626,10 @@ def plot_ladder() -> Path:
             for k, ls in enumerate(("-", "--")):
                 pts, fails = {key: [] for key, _ in rows}, []
                 for n in members:
-                    p = PROBLEMS[n]
-                    if k >= len(p.tolerances):
+                    p = STEP_MAPS[n]
+                    if k >= len(STEP_TOLERANCES):
                         continue
-                    tol = sorted(p.tolerances, reverse=True)[k]
+                    tol = sorted(STEP_TOLERANCES, reverse=True)[k]
                     path = CACHE / n / f"{method}_tol{tol:g}.json"
                     if not path.exists():
                         continue
@@ -722,13 +657,13 @@ def plot_ladder() -> Path:
                 ax.axhline(1.0, color="#c0392b", lw=0.8, ls=":")
             ax.set_ylabel(ylabel if j == 0 else "")
             ax.set_xlabel("input dimension" if i == len(rows) - 1 else "")
-            dims = sorted({len(PROBLEMS[n].system.components) for n in members})
+            dims = sorted({len(STEP_MAPS[n].system.components) for n in members})
             if dims:
                 ax.set_xticks(dims, [str(d) for d in dims])
                 ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
         title = fam if fam != "test set" else "Robertson (3), Akzo Nobel (5), HIRES (8), POLLU (20)"
         axes[0, j].set_title(title, fontsize=10)
-    shown = [m for m in METHODS if any((CACHE / n / f"{m}_tol{t:g}.json").exists() for n in names for t in PROBLEMS[n].tolerances)]
+    shown = [m for m in METHODS if any((CACHE / n / f"{m}_tol{t:g}.json").exists() for n in names for t in STEP_TOLERANCES)]
     handles = [matplotlib.lines.Line2D([], [], color=METHODS[m][1], lw=2, marker="o", ms=4, label=SHORT.get(m, m).replace(chr(10), " ")) for m in shown]
     handles += [matplotlib.lines.Line2D([], [], color="#555555", ls=ls, label=f"{w} tolerance") for w, ls in (("looser", "-"), ("tighter", "--"))]
     fig.legend(handles=handles, loc="outside lower center", ncol=min(6, len(handles)), fontsize=8, frameon=False)
@@ -747,13 +682,13 @@ SHORT = {"slowtable": "SlowTable", "chebtt_smooth": "ChebTT\nno edges", "chebtt_
 
 def _baseline_label(names: list[str], baseline: str | None) -> str:
     """What the speedups of these problems are over: the named baseline, or each problem's own when they differ."""
-    own = {baseline or PROBLEMS[n].baseline for n in names}
+    own = {baseline or baseline_of(STEP_MAPS[n]) for n in names}
     return BASELINES[own.pop()]["label"] if len(own) == 1 else "each problem's own baseline (" + ", ".join(sorted(own)) + ")"
 
 
 def _row_label(n: str) -> str:
     """A problem's row: its name, then its input dimension, its system's parameters and its measured dynamics class (when diagnosed)."""
-    system, path = PROBLEMS[n].system, CACHE / f"{n}-dynamics.json"
+    system, path = STEP_MAPS[n].system, CACHE / f"{n}-dynamics.json"
     parts = [str(len(system.components)), system.params, json.loads(path.read_text())["kind"] if path.exists() else ""]
     return f"{n} ({'; '.join(filter(None, parts))})"
 
@@ -763,7 +698,7 @@ def _regime_problems() -> dict[str, list[str]]:
     from src.structure.bench.ode_fill import ladder
 
     names = [n for n in ladder(10**6) if (CACHE / n).is_dir()]
-    return {r: [n for n in names if PROBLEMS[n].regime == r] for r in REGIMES if any(PROBLEMS[n].regime == r for n in names)}
+    return {r: [n for n in names if STEP_MAPS[n].regime == r] for r in REGIMES if any(STEP_MAPS[n].regime == r for n in names)}
 
 
 def plot_overview(baseline: str | None = None) -> list[Path]:
@@ -782,7 +717,7 @@ def plot_overview(baseline: str | None = None) -> list[Path]:
 def _overview(regime: str, names: list[str], baseline: str | None) -> list[Path]:
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
-    methods = [m for m in METHODS if any((CACHE / n / f"{m}_tol{t:g}.json").exists() for n in names for t in PROBLEMS[n].tolerances)]
+    methods = [m for m in METHODS if any((CACHE / n / f"{m}_tol{t:g}.json").exists() for n in names for t in STEP_TOLERANCES)]
     over = _baseline_label(names, baseline)
     bounds = [0, 0.01, 0.1, 0.5, 1, 2, 10, 100, 1e300]
     cmap = ListedColormap(["#2166ac", "#4393c3", "#92c5de", "#d1e5f0", "#f4a582", "#d6604d", "#b2182b", "#67001f"])
@@ -795,7 +730,7 @@ def _overview(regime: str, names: list[str], baseline: str | None) -> list[Path]
         decades = [(1e1, "< 10x"), (1e2, "10-100x"), (1e3, "100-1,000x"), (1e4, "1,000-10,000x"), (np.inf, ">= 10,000x")]
         band = [plt.get_cmap("viridis")(v) for v in (0.0, 0.3, 0.55, 0.75, 0.97)]
         for i, n in enumerate(names):
-            tols = sorted(PROBLEMS[n].tolerances, reverse=True)
+            tols = sorted(STEP_TOLERANCES, reverse=True)
             if k >= len(tols):
                 continue
             row = []
@@ -824,7 +759,7 @@ def _overview(regime: str, names: list[str], baseline: str | None) -> list[Path]
         for ax, key, title in ((axes[0], "worst", "one-step error / tol"), (axes[1], "rollout_worst", "rollout error / tol (20 trajectories)"),
                                (axes[2], None, f"speedup over {over} (top), inference per state (bottom)")):
             for i, n in enumerate(names):
-                tols = sorted(PROBLEMS[n].tolerances, reverse=True)
+                tols = sorted(STEP_TOLERANCES, reverse=True)
                 if key is None or k >= len(tols):
                     continue
                 tol = tols[k]
@@ -887,13 +822,13 @@ def plot_speedup(baseline: str | None = None) -> list[Path]:
 
 
 def _speedup(regime: str, names: list[str], baseline: str | None) -> Path:
-    own = {baseline or PROBLEMS[n].baseline for n in names}
+    own = {baseline or baseline_of(STEP_MAPS[n]) for n in names}
     fig, ax = plt.subplots(figsize=(8.5, 6), layout="constrained")
     handles = []
     for meth, (label, colour, _) in METHODS.items():
         xs, ys, ms = [], [], []
         for n in names:
-            for k, tol in enumerate(sorted(PROBLEMS[n].tolerances, reverse=True)):
+            for k, tol in enumerate(sorted(STEP_TOLERANCES, reverse=True)):
                 path = CACHE / n / f"{meth}_tol{tol:g}.json"
                 if not path.exists():
                     continue
@@ -933,8 +868,8 @@ def write_summary() -> Path:
     lines = ["# ODE bench (errors in dex for log problems, absolute otherwise, over held-out trajectory states; refused states are solved)", "",
              "| problem | tol | method | solves | one-step worst | 99.9% | 99% | % above tol | % refused | rollout worst | train s | infer us | solver us | speedup |",
              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
-    for name, p in PROBLEMS.items():
-        for tol in p.tolerances:
+    for name, p in STEP_MAPS.items():
+        for tol in STEP_TOLERANCES:
             for method in METHODS:
                 path = CACHE / name / f"{method}_tol{tol:g}.json"
                 if not path.exists():
@@ -975,7 +910,7 @@ def main(argv=None) -> None:
             redraw(name)
         return
     for name in a.problems.split(","):
-        for tol in map(float, a.tols.split(",")) if a.tols else PROBLEMS[name].tolerances:
+        for tol in map(float, a.tols.split(",")) if a.tols else STEP_TOLERANCES:
             for method in a.methods.split(","):
                 m = run(method, name, tol, force=a.force)
                 print(json.dumps({k: v for k, v in m.items() if not k.endswith("by_step")}), flush=True)
