@@ -95,7 +95,7 @@ A plan's `process_batch` runs four stages on its batch:
 
 ## Notation: from the companion to the code
 
-The technical companion ([report/adaptive-surrogates.typ](report/adaptive-surrogates.typ)) writes
+The technical companion ([reports/adaptive-surrogates/adaptive-surrogates.typ](reports/adaptive-surrogates/adaptive-surrogates.typ)) writes
 the mathematics with the AFINNI manuscript's single-letter symbols; the code uses descriptive
 names, and the docstring or comment where a name is defined gives its symbol. Paths are under
 `src/`.
