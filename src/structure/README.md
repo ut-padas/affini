@@ -8,7 +8,8 @@ simulations in place of the chemistry time steps, so the worst error and the inf
 matter.
 
 The experiments that led here, what each one taught, and three literature reviews behind them
-are in [docs/SURROGATE_RESEARCH.md](../../docs/SURROGATE_RESEARCH.md).
+are in [docs/SURROGATE_RESEARCH.md](../../docs/SURROGATE_RESEARCH.md); the later iterations (stiff ODE step maps,
+the KIDApy networks, the hub expansion, gradients) in [docs/SURROGATE_ITERATIONS.md](../../docs/SURROGATE_ITERATIONS.md).
 
 ## Files
 
