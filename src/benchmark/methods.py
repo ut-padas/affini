@@ -17,7 +17,7 @@ from src import IS_CUPY_BACKEND, to_host, xp
 from src.config import ARTSettings, TrainingConfig
 from src.core.evaluation import Evaluator
 from src.infra.backend import MPI
-from src.schemes import chebtree, chebtt, kernel, sparsegrid
+from src.schemes import chebtree, chebtt, hub, kernel, sparsegrid
 from src.schemes.chebtt import adaptive as chebtt_adaptive
 from src.schemes.oracle import distributed as spread
 from src.surrogate import AdaptiveSurrogate
@@ -173,9 +173,16 @@ def _kernel(f, lo, hi, atol, seed) -> Model:
     return Model(m.predict, None, len(m.X), m.evals)
 
 
+def _hub(f, lo, hi, atol, seed) -> Model:
+    """The hub expansion (its pilot, design and hold-out from ``seed``); its pieces are its output groups."""
+    m = hub.build(f, lo, hi, atol, seed=seed)
+    return Model(m.predict, None, len(m.groups), m.evals)
+
+
 register("chebtree", "ChebTree: Chebyshev boxes, coefficient decay", "#c0392b", distributed(_chebtree))
 register("sparsecheb", "SparseCheb: adaptive sparse Chebyshev grid", "#6a1b9a", distributed(_sparsecheb))
 register("chebtt", "ChebTT: Chebyshev tensor train, cross", "#e08a00", distributed(_chebtt))
 register("chebtt_metric", "ChebTT-M: ChebTT in the pullback-metric coordinates", "#1b7f5b", distributed(_chebtt_metric))
 register("kernel", "MetricKernel: learned-metric greedy kernel", "#2e7d9a", distributed(_kernel))
 register("chebtt_adaptive", "ChebTT-A: ChebTT with piecewise axes and interface terms", "#b5179e", distributed(_chebtt_adaptive))
+register("hub", "Hub: dense Chebyshev hub in the steep directions, weak terms in the rest", "#5d6d00", distributed(_hub))

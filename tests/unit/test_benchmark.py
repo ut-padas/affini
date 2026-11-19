@@ -73,3 +73,20 @@ def test_a_function_sweep_stops_at_the_first_failed_tolerance_and_skips_higher_d
     sweep.main(["functions", "--problems", "rosenbrock", "--d", "2,3", "--methods", "chebtt", "--ranks", "2", "--limit", "1"])
     assert len(cases) == 1  # the loosest tolerance at 2-D failed: no tighter one, and no 3-D
     assert cases[0][cases[0].index("--tols") + 1] == "0.1" and cases[0][cases[0].index("--d") + 1] == "2"
+
+
+def test_since_reruns_older_records_with_force_and_keeps_newer_ones(monkeypatch, tmp_path):
+    store = Store("functions", "cpu-2rank", root=tmp_path, figures_root=tmp_path)
+    for tol in (0.1, 0.01, 0.001):
+        store.write({"problem": "rosenbrock", "d": 2, "method": "chebtt", "tol": tol, "seed": 1, "evals": 1})
+    old = store.run_path("rosenbrock", 2, "chebtt", 0.1, 1)
+    old.write_text(old.read_text().replace('"recorded": "', '"recorded": "1999'))  # the loosest: written by older code
+    for s in (2, 3):
+        for tol in (0.1, 0.01, 0.001):
+            store.write({"problem": "rosenbrock", "d": 2, "method": "chebtt", "tol": tol, "seed": s, "evals": 1})
+    cases = []
+    monkeypatch.setattr(functions, "store", lambda: store)
+    monkeypatch.setattr(sweep, "run_job", lambda argv, limit, log, env=None: cases.append(argv) or True)
+    monkeypatch.setattr(sweep, "Redrawer", _NoRedraw)
+    sweep.main(["functions", "--problems", "rosenbrock", "--d", "2", "--methods", "chebtt", "--ranks", "2", "--since", "2000-01-01T00:00"])
+    assert len(cases) == 1 and cases[0][-1] == "--force" and cases[0][cases[0].index("--tols") + 1] == "0.1"

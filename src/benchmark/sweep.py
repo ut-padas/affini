@@ -12,8 +12,8 @@ in one more job. A job over the limit is killed with its whole group (so no rank
 collective) and recorded as failed, with the limit as the reason, and the method's tighter tolerances on
 that problem are skipped; a method that fails a family's loosest tolerance (the same function at a smaller
 d, or a smaller size of a step-map family) is not run on the family's larger sizes, which only cost more.
-A job that crashes leaves no record: it is reported, and runs again next time. Recorded cases are never
-rerun. After each recorded case a background process redraws that problem's figures, one redraw at a time,
+A job that crashes leaves no record: it is reported, and runs again next time. Recorded cases are not
+rerun, unless ``--since`` names a time after which a record must have been written (records of older code). After each recorded case a background process redraws that problem's figures, one redraw at a time,
 while the next case runs. Every job imports ``src`` afresh, so do not edit it while a sweep runs.
 """
 
@@ -44,6 +44,7 @@ class Plan:
     command: Callable  # (problem, d, method, tol, seeds) -> argv of one job
     redraw: Callable  # (problem, d) -> argv of the problem's redraw
     skip: Callable = lambda method, problem, d: False  # noqa: E731
+    since: str | None = None  # records written before this time (ISO, e.g. 2026-11-19T00:00) count as missing and are run again
     prepare: Callable = lambda problem: None  # noqa: E731  (work before a problem's cases, outside any limit)
     env: dict | None = None
 
@@ -80,6 +81,11 @@ class Redrawer:
 def sweep(plan: Plan, limit: float) -> None:
     """Run the plan's missing cases (see the module docstring)."""
     store, stuck = plan.store, set()  # stuck: (method, family) whose loosest tolerance failed
+
+    def done(problem, d, method, tol, seed) -> bool:
+        record = store.read(problem, d, method, tol, seed)
+        return record is not None and (plan.since is None or record.get("recorded", "") >= plan.since)
+
     with open(store.log, "a") as log:
         redrawer = Redrawer(log)
         for problem, d, family in plan.groups:
@@ -89,13 +95,14 @@ def sweep(plan: Plan, limit: float) -> None:
                     continue
                 for i, tol in enumerate(plan.tolerances(problem, d)):
                     first = plan.seeds[0]
-                    if not store.exists(problem, d, method, tol, first):
+                    if not done(problem, d, method, tol, first):
                         t0 = time.time()
-                        ok = run_job(plan.command(problem, d, method, tol, [first]), limit, log, plan.env)
+                        stale = ["--force"] if store.exists(problem, d, method, tol, first) else []  # an older record: overwrite it
+                        ok = run_job(plan.command(problem, d, method, tol, [first]) + stale, limit, log, plan.env)
                         if not ok:
                             store.write({"problem": problem, "d": d, "method": method, "tol": tol, "seed": first,
                                          "failed": f"over the {limit:g} s time limit"})  # fmt: skip
-                        elif not store.exists(problem, d, method, tol, first):
+                        elif not done(problem, d, method, tol, first):
                             print(f"{problem} d={d} {method} {tol:g}: crashed (see {store.log})", flush=True)
                             break
                         print(f"{problem} d={d} {method} {tol:g}: {'done' if ok else 'over the limit'} ({time.time() - t0:.0f} s)", flush=True)
@@ -104,11 +111,12 @@ def sweep(plan: Plan, limit: float) -> None:
                         if i == 0:
                             stuck.add((method, family))
                         break  # tighter tolerances only cost more
-                    rest = [s for s in plan.seeds[1:] if not store.exists(problem, d, method, tol, s)]
+                    rest = [s for s in plan.seeds[1:] if not done(problem, d, method, tol, s)]
                     if rest:
-                        ok = run_job(plan.command(problem, d, method, tol, rest), len(rest) * limit, log, plan.env)
+                        stale = ["--force"] if any(store.exists(problem, d, method, tol, s) for s in rest) else []
+                        ok = run_job(plan.command(problem, d, method, tol, rest) + stale, len(rest) * limit, log, plan.env)
                         for s in rest:
-                            if not ok and not store.exists(problem, d, method, tol, s):
+                            if not ok and not done(problem, d, method, tol, s):
                                 store.write({"problem": problem, "d": d, "method": method, "tol": tol, "seed": s,
                                              "failed": f"over the {limit:g} s time limit"})  # fmt: skip
                         redrawer.start(plan.redraw(problem, d))
@@ -189,8 +197,11 @@ def main(argv=None) -> None:
     s.add_argument("--limit", type=float, default=240.0, help="wall seconds per job")
     for p in (f, s):
         p.add_argument("--loosest", action="store_true", help="only each problem's loosest tolerance")
+        p.add_argument("--since", default=None, help="run again (overwriting) every record written before this time, e.g. 2026-11-19T00:00")
     a = parser.parse_args(argv)
-    sweep(functions_plan(a) if a.suite == "functions" else step_maps_plan(a), a.limit)
+    plan = functions_plan(a) if a.suite == "functions" else step_maps_plan(a)
+    plan.since = a.since
+    sweep(plan, a.limit)
 
 
 if __name__ == "__main__":
