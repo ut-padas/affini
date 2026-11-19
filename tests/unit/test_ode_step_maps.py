@@ -1,6 +1,5 @@
-"""ODE oracles (src/problems/ode): rates, Jacobians, conservation, integrators, regimes and the ladder."""
+"""ODE oracles (src/problems/ode) and their step-map suite (src/benchmark/step_maps.py): rates, Jacobians, conservation, integrators, regimes and the ladder."""
 
-import json
 
 import numpy as np
 
@@ -78,7 +77,7 @@ def test_a_ladder_step_stays_in_its_coordinates_and_moves_towards_the_stable_sta
 
 
 def test_invariants_are_found_and_the_projection_restores_them_exactly():
-    from src.structure.bench import ode as cb
+    from src.benchmark import step_maps as cb
 
     p = cb.STEP_MAPS["robertson"]
     Y = c.robertson_initial(30, 4)
@@ -112,15 +111,15 @@ def test_lorenz96_has_an_analytic_jacobian_and_an_explicit_step_that_matches_a_t
 
 
 def test_problems_declare_a_regime_and_their_baseline_follows_their_integrator():
-    from src.structure.bench import ode as cb
+    from src.benchmark import step_maps as cb
 
     assert cb.STEP_MAPS["lorenz96_d10"].regime == "nonstiff" and cb.baseline_of(cb.STEP_MAPS["lorenz96_d10"]) == "scipy-rk45-cpu1"
     assert cb.STEP_MAPS["bruss_d10"].regime == "stiff" and cb.baseline_of(cb.STEP_MAPS["robertson"]) == "scipy-radau-cpu1"
     assert all(p.regime in cb.REGIMES and cb.baseline_of(p) in cb.BASELINES for p in cb.STEP_MAPS.values())
 
 
-def test_the_fill_runs_the_first_families_before_the_rest_each_by_dimension():
-    from src.structure.bench.ode_fill import family, ladder
+def test_the_ladder_runs_the_first_families_before_the_rest_each_by_dimension():
+    from src.benchmark.step_maps import family, ladder
 
     names = ladder(20, first=("lorenz96",))
     k = sum(family(n) == "lorenz96" for n in names)
@@ -130,41 +129,14 @@ def test_the_fill_runs_the_first_families_before_the_rest_each_by_dimension():
 
 
 def test_a_row_label_names_the_parameters_that_set_the_regime():
-    from src.structure.bench import ode as cb
+    from src.benchmark import step_maps as cb
 
     assert cb._row_label("lorenz96_d10").startswith("lorenz96_d10 (10; F = 1")
     assert cb._row_label("bruss_d10").startswith("bruss_d10 (10")
 
 
-def test_a_record_is_written_whole_and_leaves_no_temporary_file(tmp_path):
-    from src.structure.bench import ode as cb
-
-    path = tmp_path / "case" / "chebtt_box_tol0.01.json"
-    cb.write_record(path, {"worst": 0.5})
-    cb.write_record(path, {"worst": 0.25})
-    assert json.loads(path.read_text()) == {"worst": 0.25} and [p.name for p in path.parent.iterdir()] == [path.name]
-
-
-def test_the_fill_can_run_only_the_loosest_tolerance_of_one_regime_from_a_dimension(monkeypatch, tmp_path):
-    from src.structure.bench import ode as cb
-    from src.structure.bench import ode_fill as fill
-
-    cases = []
-    monkeypatch.setattr(cb, "OUT", tmp_path)
-    monkeypatch.setattr(cb, "CACHE", tmp_path)
-    for name in ("data", "solver_cost", "dynamics"):
-        monkeypatch.setattr(cb, name, lambda n: None)
-    monkeypatch.setattr(fill, "_case", lambda args, limit, log: cases.append(args) or False)  # every case over the limit
-    monkeypatch.setattr(fill, "_redraw", lambda name, previous, log: None)
-    fill.main(["--methods", "chebtt_roll", "--min-d", "10", "--max-d", "20", "--regimes", "stiff", "--loosest", "--limit", "1"])
-    names = [args[1] for args in cases]
-    assert {args[5] for args in cases} == {"0.01"}
-    assert all(len(cb.STEP_MAPS[n].system.components) >= 10 and cb.STEP_MAPS[n].regime == "stiff" for n in names)
-    assert "primordial" in names and "pollu" in names and "bruss_d20" not in names  # stuck at bruss_d10: d20 skipped
-
-
 def test_the_classic_problems_have_analytic_jacobians_and_are_registered_as_stiff():
-    from src.structure.bench import ode as cb
+    from src.benchmark import step_maps as cb
 
     cases = [(ode.VAN_DER_POL, ode.van_der_pol_initial(1, 3)[0]), (ode.OREGONATOR, ode.oregonator_initial(1, 3)[0])]
     cases += [(ode.burgers(n), ode.burgers_initial(n)(1, 3)[0]) for n in (10, 20)]
@@ -177,7 +149,7 @@ def test_the_classic_problems_have_analytic_jacobians_and_are_registered_as_stif
 
 
 def test_a_held_environment_follows_its_path_and_the_rollout_takes_it_from_the_trajectory(monkeypatch):
-    from src.structure.bench import ode as cb
+    from src.benchmark import step_maps as cb
 
     sysm = ode.System("drift", ("x", "k"), lambda y: np.array([-y[1] * y[0], 0.0]), lambda y: np.array([[-y[1], -y[0]], [0.0, 0.0]]),
                       log=False, held=1)

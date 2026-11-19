@@ -1,6 +1,6 @@
 # Literature register
 
-The register of every work reviewed for the surrogate experiments (`src/structure/`,
+The register of every work reviewed for the surrogate experiments (`src/benchmark/`,
 [SURROGATE_RESEARCH.md](SURROGATE_RESEARCH.md)), so that no work is reviewed twice.
 
 **Rule.** Before searching the literature, check this register. After a review, append every work it read or

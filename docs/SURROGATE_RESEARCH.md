@@ -3,7 +3,7 @@
 This document collects the experiments run beside the library to find a surrogate scheme whose
 **worst pointwise error** stays below a tolerance with few oracle evaluations and fast inference,
 and the literature reviews that informed them. The code of the current experiments is in
-[`src/structure/`](../src/structure/README.md).
+[`src/benchmark/`](SCHEMES.md).
 
 **The goal.** The surrogate is meant to replace the time steps of astrochemical reaction networks
 (hundreds of species) inside MHD simulations of early cosmic evolution and of galaxy and stellar
@@ -35,39 +35,38 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
 
 ### 0.1 Where things are
 
-- Code: [`src/structure/`](../src/structure/README.md) (its README says how to run the bench).
+- Code (the schemes in [docs/SCHEMES.md](SCHEMES.md), the benchmark in [docs/BENCHMARK.md](BENCHMARK.md)):
   - `src/schemes/`: `chebtt/` (ChebTT: `build`, and `build_vector` for several outputs; ChebTT-A in
     `chebtt/adaptive.py`), `chebtree.py` (ChebTree), `sparsegrid.py` (SparseCheb), `kernel.py` (MetricKernel),
     `hub.py` (the hub expansion), `tabulation.py` (SlowTable).
-  - `src/problems/registry.py`: the scalar problems and the vector-valued ones (`VECTOR_FUNCTIONS`); `TOLERANCES` (in `bench/functions.py`)
-    (2-D 0.1/0.01/0.001, 3-D 0.1/0.03/0.01, 5-D 0.1/0.05/0.02, 10-D and above 0.2/0.1/0.05).
+  - `src/problems/registry.py`: the scalar problems and the vector-valued ones (`VECTOR_FUNCTIONS`).
   - `src/problems/ode/`: the ODE systems (`system.py`: the `System` oracle; `chemistry.py`: Robertson,
     primordial H/He/H2, HIRES, POLLU, Akzo Nobel; `reaction_diffusion.py`: Brusselator, Allen-Cahn,
     Fisher-KPP; `lorenz.py`: Lorenz-96 at F = 1; `classic.py`: Van der Pol, the Oregonator, Burgers;
-    `astro.py`: KIDApy networks).
-  - `bench/functions.py` runs, caches and plots every method on the box problems (the schemes are
-    registered in `bench/registry.py`); `bench/functions_fill.py` drives it over the whole grid
-    (section 1.15): `python -m src.structure.bench.functions_fill --d 2,3,5,10,20 --limit 90`, with
-    `--vector` for the vector-valued problems.
-  - `bench/ode.py` is the ODE bench (section 1.12: `python -m src.structure.bench.ode --problems
-    robertson --plot`) and `bench/ode_fill.py` its ladder (`--first lorenz96` runs a family first).
-    Each problem declares a regime (stiff, non-stiff, chaotic): overviews per regime,
-    `output/ode/overview-<regime>-{loose,tight}.png`, and speedups over the integrator its system
-    would be solved with (named baselines `scipy-radau-cpu1`, `scipy-rk45-cpu1`).
+    `astro.py`: KIDApy networks) and their step maps (`step_maps.py`).
+  - `src/benchmark/functions.py` runs, records and plots every method (`src/benchmark/methods.py`) on the
+    box problems, with `TOLERANCES` (2-D 0.1/0.01/0.001, 3-D 0.1/0.03/0.01, 5-D 0.1/0.05/0.02, 10-D and
+    above 0.2/0.1/0.05); `python -m src.benchmark.sweep functions --d 2,3,5,10,20 --limit 90` drives it
+    over the whole grid (section 1.15), with `--vector` for the vector-valued problems.
+  - `src/benchmark/step_maps.py` is the ODE bench (section 1.12: `python -m src.benchmark.step_maps
+    --problems robertson --plot`), and `python -m src.benchmark.sweep step_maps` climbs its ladder
+    (`--first lorenz96` runs a family first). Each problem declares a regime (stiff, non-stiff, chaotic):
+    overviews per regime, `overview-<regime>-{loose,tight}.png`, and speedups over the integrator its
+    system would be solved with (named baselines `scipy-radau-cpu1`, `scipy-rk45-cpu1`).
   - Prefix every command with `SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=.` and use
-    `.venv/bin/python` (the fill starts its own 8-rank `mpiexec` jobs).
-- Results (not committed): `src/structure/cache/cpu-8rank/<problem>_d<d>/<method>_tol<t>_s<seed>.npz`,
-  each with a JSON `metrics` entry (`max_ratio`, `evals`, `train_s`, `predict_us`; `failed` for a run
-  over its evaluation budget or the fill's time limit; `component_ratio` for vector problems). Slice
-  directions are in `cache/directions/` (they depend on f alone, so every setup shares them).
-  Plots in `output/cpu-8rank/`: start from `overview-d<d>.png` and `overview-vector-d<d>.png`
-  (pass/fail grids of every problem, tolerance and method with the evaluations; hatched cells are
-  over a budget or the time limit) and `overview-d<d>-cost.png` (training and inference time,
-  pieces, mean error); `summary-d<d>.md` has the seed means; then per problem `<problem>-d<d>-cost.png`
-  and the maps (2-D) or slice and shadow views. The fill logs to `output/cpu-8rank/fill.log`.
-  `python -m src.structure.bench.functions --replot --setup cpu-8rank --d <d> --problems ...` redraws them.
-  ODE systems: trajectories in `cache/ode/<problem>.npz`, runs in
-  `cache/ode/<problem>/<method>_tol<t>.json`, plots and `summary-ode.md` in `output/ode/`.
+    `.venv/bin/python` (the function sweep starts its own 8-rank `mpiexec` jobs).
+- Results (not committed), in the store (`src/benchmark/store.py`): one JSON record per run in
+  `results/benchmark/runs/<suite>/<setup>/<problem>/d<d>/<method>/tol<t>-s<seed>.json` (`worst_ratio`,
+  `evals`, `train_s`, `predict_us`; `failed` for a run over its evaluation budget or the sweep's time
+  limit; `component_ratio` for vector problems), its arrays in the `.npz` beside it, and each problem's
+  shared inputs (slice directions, ODE trajectories, solver costs) in `results/benchmark/data/`. Plots in
+  `figures/benchmark/functions/cpu-8rank/`: start from `overview-d<d>.png` and `overview-vector-d<d>.png`
+  (pass/fail grids of every problem, tolerance and method with the evaluations; hatched cells are over a
+  budget or the time limit) and `overview-d<d>-cost.png` (training and inference time, pieces, mean
+  error); `summary-d<d>.md` has the seed means; then per problem `<problem>-d<d>-cost.png` and the maps
+  (2-D) or slice and shadow views. `python -m src.benchmark.functions --replot --setup cpu-8rank --d <d>
+  --problems ...` redraws them. ODE plots and `summary-ode.md` are in `figures/benchmark/step_maps/cpu-1rank/`.
+  The sweeps log to `results/benchmark/logs/`.
 - Literature: [LITERATURE.md](LITERATURE.md) (every work reviewed, IDs I-* to V-*); reviews I-V are
   sections 2-6 below, Review VI (vector-valued outputs) section 8, Review VII (metrics by dynamical
   class) section 9, Review VIII (piecewise TTs, interfaces) section 10.
@@ -435,7 +434,7 @@ input dimension is the number of slow modes, which falls as dt grows.
 
 ### 1.12 The chemistry bench: one-step and rollout errors
 
-`src/structure/bench/ode.py` trains each surrogate of a network's step map (in log10 abundances, the
+`src/benchmark/step_maps.py` trains each surrogate of a network's step map (in log10 abundances, the
 increment `Phi_dt(z) - z`) on training trajectories and judges it on held-out ones in two ways: the
 **one-step error** (a surrogate step from the true state against the solver's step: how well the
 visited states are covered) and the **rollout error** (20 test trajectories chained through the
@@ -536,7 +535,7 @@ seed 1; before compression):
 AFINNI is left out at d >= 10 for its memory (45 GB over 8 ranks on the 10-D wave, one rank 15 GB).
 
 Fixed rules for which method runs where ("baselines at one seed and the loosest tolerance from 10-D
-up") left holes and kept slow cases in by hand. They are replaced by `src/structure/bench/functions_fill.py`: every
+up") left holes and kept slow cases in by hand. They are replaced by `src/benchmark/sweep.py`: every
 method, problem, dimension and tolerance, from the loosest tolerance to the tightest (the cost only
 grows as it tightens). Seed 1 runs first as its own 8-rank job under a 90 s wall-time limit (start-up
 included); the other seeds run only if it finished. A run over the limit is killed with its whole
@@ -2327,7 +2326,7 @@ time otherwise), its 99.9% quantile, the speedup, and rho_N. Then by class:
 - The [r] items, in particular HNW's fan theorem, the log-norm bounds, Boffetta's T_p and the
   Hairer-Lubich-Wanner growth rates, are standard but were not re-read here. VII-32 was withdrawn by arXiv.
 
-Measured for this review (light, three Robertson test trajectories, 40 steps, `src/structure/cache/ode`):
+Measured for this review (light, three Robertson test trajectories, 40 steps, `results/benchmark/runs/step_maps`):
 s_k = 24-27; sigma(J) = (1.2-1.66, 0.84-0.9996, 1e-12-2e-11); A_10, A_20, A_40 = 17, 34, 64 (max norm,
 worst trajectory); rho_40 = 0.56 (ChebTT box 0.001), 0.17 (ChebTT box 0.01), 0.018 (SlowTable 0.001).
 

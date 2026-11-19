@@ -1,17 +1,17 @@
 """
 The ODE bench: surrogates of a system's step map, trained and judged on visited states.
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python -m src.structure.bench.ode \\
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python -m src.benchmark.step_maps \\
         --problems robertson --methods slowtable,chebtt_box --plot
 
-Each problem integrates training and held-out test trajectories once (cached in
-``cache/ode/<problem>.npz``). A surrogate maps a state ``z`` (log10 abundances, and log10 T for the
+Each problem integrates training and held-out test trajectories once (kept in the store as the problem's
+``trajectories.npz``, ``src.benchmark.store``). A surrogate maps a state ``z`` (log10 abundances, and log10 T for the
 primordial network) to the increment ``Phi_dt(z) - z``. It is trained from the training states, in
 time-major order (every trajectory's first state, then every second state, ...: the order in which a
 simulation queries its cells), with access to the oracle; it is judged on every test state, against
 the increments the test trajectories already contain, so testing costs no solve.
 
-Metrics per run (``cache/ode/<problem>/<method>_tol<t>.json``): the error of an answer is the largest
+Metrics per run (one record in the store, seed 1): the error of an answer is the largest
 |error| over the components, in dex (log10); ``worst`` is the largest over the answered test states, with
 its 99.9% and 99% quantiles and the share above the tolerance; ``refused`` is the share of test states
 the surrogate declines (a simulation would solve those); ``evals`` the oracle states solved in
@@ -32,7 +32,7 @@ Radau for a stiff system, RK45 for a non-stiff one.
 Each problem declares its regime (``REGIMES``: stiff, non-stiff, chaotic), and the overviews group
 problems by it rather than by the measured ``dynamics``: a method-of-lines family measures non-stiff
 on its smallest grids, and the measured class is printed beside each problem instead.
-``--plot`` writes ``output/ode/<problem>-errors.png`` and ``summary-ode.md``.
+``--plot`` writes ``<problem>-errors.png`` and ``summary-ode.md`` to the suite's figures.
 """
 
 import argparse
@@ -50,16 +50,33 @@ import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
 
+from src.benchmark.plots import RATIO_COLOURS, RATIO_EDGES, RATIO_NAMES  # noqa: E402
+from src.benchmark.store import Store, atomic_write, write_json  # noqa: E402
 from src.problems import ode  # noqa: E402
 from src.problems.ode import REGIMES, STEP_MAPS, StepMapProblem  # noqa: E402
 from src.schemes import chebtt, tabulation  # noqa: E402
+from src.schemes.oracle import PointCache  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[1]  # src/structure
-CACHE = ROOT / "cache" / "ode"
-OUT = ROOT / "output" / "ode"
+# The surrogates train and predict serially, on one CPU core (the solver's pool of processes serves the oracle).
+STORE = Store("step_maps", "cpu-1rank")
 
 
 STEP_TOLERANCES = (0.01, 0.001)  # every step map's, in its units (dex for a log system, else absolute)
+
+
+FIXED = {"robertson": "robertson", "chemakzo": "chemakzo", "hires": "hires", "primordial": "primordial", "pollu": "pollu",
+         "van_der_pol": "van_der_pol", "oregonator": "oregonator", "nelson": "nelson"}  # problem: family
+
+
+def family(name: str) -> str:
+    return FIXED.get(name, name.rsplit("_d", 1)[0])
+
+
+def ladder(max_d: int, first: tuple[str, ...] = ()) -> list[str]:
+    """Problems of the ladder up to ``max_d`` inputs, the families in ``first`` before the rest, each part by input dimension (ties: by name)."""
+    names = [n for n in STEP_MAPS if n in FIXED or family(n) != n]
+    dims = {n: len(STEP_MAPS[n].system.components) for n in names}
+    return sorted((n for n in names if dims[n] <= max_d), key=lambda n: (family(n) not in first, dims[n], n))
 
 
 # The solvers a surrogate's speed is measured against. A speedup is always "over" one of them, named
@@ -96,17 +113,14 @@ def baseline_of(p: StepMapProblem) -> str:
     return BASELINE_OF[p.system.method]
 
 
-def write_record(path: Path, record: dict) -> None:
-    """Write a JSON record through a temporary file and a rename, so a redraw running beside the fill never reads half of one."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(record))
-    os.replace(tmp, path)
+def dim(name: str) -> int:
+    """A step map's input dimension: its system's components (held inputs included)."""
+    return len(STEP_MAPS[name].system.components)
 
 
 def baseline_cost(name: str, baseline: str | None = None) -> dict:
     """
-    One baseline's cost of a step per state on 40 test states (cached in ``<problem>-baseline-<baseline>.json``;
+    One baseline's cost of a step per state on 40 test states (kept in the problem's ``baseline-<baseline>.json``;
     by default the problem's own, ``baseline_of``): wall time in microseconds and the operation counts
     (right-hand sides, Jacobians, LU factorisations), with the baseline's description. Only the system's own
     integrator is measured here (KeyError for another without a record); another baseline's records are written
@@ -114,7 +128,7 @@ def baseline_cost(name: str, baseline: str | None = None) -> dict:
     """
     p = STEP_MAPS[name]
     baseline = baseline or baseline_of(p)
-    path = CACHE / f"{name}-baseline-{baseline}.json"
+    path = STORE.data(name, f"baseline-{baseline}.json")
     if path.exists():
         return json.loads(path.read_text())
     if baseline != baseline_of(p):
@@ -124,7 +138,7 @@ def baseline_cost(name: str, baseline: str | None = None) -> dict:
     Z = Z[np.random.default_rng(0).choice(len(Z), min(40, len(Z)), replace=False)]
     cost = p.system.step_cost(10.0**Z if p.system.log else Z, p.dt)
     cost = {**cost, "baseline": baseline, **BASELINES[baseline]}
-    write_record(path, cost)
+    write_json(path, cost)
     return cost
 
 
@@ -140,7 +154,7 @@ def speedup(m: dict, name: str, baseline: str | None = None) -> float:
 
 def data(name: str) -> tuple[np.ndarray, np.ndarray]:
     """(train, test) trajectories, (n, steps + 1, d) states in the surrogates' coordinates, integrated once and cached."""
-    path = CACHE / f"{name}.npz"
+    path = STORE.data(name, "trajectories.npz")
     if path.exists():
         z = np.load(path)
         return z["train"], z["test"]
@@ -151,26 +165,8 @@ def data(name: str) -> tuple[np.ndarray, np.ndarray]:
         start = [p.system.step(Y, p.burn) for Y in start]
     paths = [p.held_path(n, seed, p.steps) if p.held_path else None for n, seed in seeds]
     train, test = (ode.trajectories(p.system, Y, p.dt, p.steps, path) for Y, path in zip(start, paths, strict=True))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, train=train, test=test)
+    atomic_write(path, lambda tmp: np.savez_compressed(tmp, train=train, test=test))
     return train, test
-
-
-class CachedOracle:
-    """The step map with a cache by exact state, counting distinct solves (vector outputs: one solve serves every component)."""
-
-    def __init__(self, step):
-        self.step, self.cache, self.evals = step, {}, 0
-
-    def __call__(self, Z):
-        Z = np.atleast_2d(Z)
-        keys = [z.tobytes() for z in Z]
-        new = [i for i, k in enumerate(keys) if k not in self.cache]
-        if new:
-            out = self.step(Z[new])
-            self.evals += len(new)
-            self.cache.update({keys[i]: v for i, v in zip(new, out, strict=True)})
-        return np.array([self.cache[k] for k in keys])
 
 
 def visited(train: np.ndarray) -> np.ndarray:
@@ -179,7 +175,7 @@ def visited(train: np.ndarray) -> np.ndarray:
 
 
 def slowtable(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
-    oracle = CachedOracle(p.step)
+    oracle = PointCache(p.step)
     t = tabulation.build(oracle, visited(train), atol, seed=seed)
     t.evals = oracle.evals
     return t
@@ -208,8 +204,8 @@ def state_box(states: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return np.where(flat, lo - 1e-3, lo), np.where(flat, hi + 1e-3, hi)
 
 
-def chebtt_box(p: StepMapProblem, train: np.ndarray, atol: float, seed: int, oracle: CachedOracle | None = None, edges: bool = True):
-    oracle = oracle or CachedOracle(p.step)
+def chebtt_box(p: StepMapProblem, train: np.ndarray, atol: float, seed: int, oracle: PointCache | None = None, edges: bool = True):
+    oracle = oracle or PointCache(p.step)
     lo, hi = state_box(visited(train))
     models = []
     for c in range(train.shape[2]):
@@ -229,7 +225,7 @@ def chebtt_adaptive_box(p: StepMapProblem, train: np.ndarray, atol: float, seed:
     """ChebTT-A (``chebtt_adaptive``) per component on the states' bounding box: piecewise axes, and an interface term where one is found."""
     from src.schemes.chebtt import adaptive as chebtt_adaptive
 
-    oracle = CachedOracle(p.step)
+    oracle = PointCache(p.step)
     lo, hi = state_box(visited(train))
     models = [None if c >= train.shape[2] - p.system.held else
               chebtt_adaptive.build(lambda X, c=c: (oracle(X) - X)[:, c], lo, hi, atol, seed=seed, max_evals=200_000)
@@ -238,7 +234,7 @@ def chebtt_adaptive_box(p: StepMapProblem, train: np.ndarray, atol: float, seed:
 
 
 class BoxMethod(BoxTT):
-    """A box-bench method (AFINNI or ART, ``src.structure.bench.functions.METHODS``) of every component's increment on the states' bounding box."""
+    """A function-suite method (AFINNI or ART, ``src.benchmark.methods.METHODS``) of every component's increment on the states' bounding box."""
 
     def __init__(self, model, lo, hi, evals, outputs: int, held: int):
         super().__init__(model, lo, hi, evals)
@@ -251,22 +247,22 @@ class BoxMethod(BoxTT):
 
 
 def box_method(name: str):
-    """An ODE-bench method running the box bench's ``name`` (AFINNI, ART) with the solver as its oracle."""
+    """A step-map method running the function suite's ``name`` (AFINNI, ART) with the solver as its oracle."""
 
     def method(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
         from src import to_host, xp
-        from src.structure.bench import functions as box_bench
+        from src.benchmark.methods import METHODS as FUNCTION_METHODS
 
         held = p.system.held
         m = train.shape[2] - held
         lo, hi = state_box(visited(train))
-        oracle = CachedOracle(p.step)
+        oracle = PointCache(p.step)
 
         def f(X):
             Z = np.asarray(to_host(X), dtype=np.float64)
             return xp.asarray((oracle(Z) - Z)[:, :m])
 
-        model = box_bench.METHODS[name][2](f, lo, hi, atol, seed)
+        model = FUNCTION_METHODS[name][2](f, lo, hi, atol, seed)
         return BoxMethod(model, lo, hi, oracle.evals, m, held)
 
     return method
@@ -280,7 +276,7 @@ def chebtt_roll(p: StepMapProblem, train: np.ndarray, atol: float, seed: int, ro
     at the one-step tolerance times the shortfall (at most 8x tighter per round, 0.8 for margin). The training trajectories are known, so the check costs no solve; the retraining reuses
     every cached solve, and ChebTT's degrees grow only logarithmically with the accuracy.
     """
-    oracle = CachedOracle(p.step)
+    oracle = PointCache(p.step)
     W = invariants_of(p, train)
     one = atol
     for _ in range(rounds):
@@ -310,7 +306,7 @@ def chebtt_metric(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
     lo, hi = states.min(axis=0), states.max(axis=0)
     pad = 0.02 * np.maximum(hi - lo, 1e-3)
     lo, hi = lo - pad, hi + pad
-    oracle = CachedOracle(p.step)
+    oracle = PointCache(p.step)
     model = chebtt.build_vector(lambda X: (oracle(X) - X)[:, :m], lo, hi, atol, m, rotate=True, seed=seed, max_evals=200_000)
     out = BoxVectorTT(model, lo, hi, oracle.evals)
     out.held = held
@@ -376,9 +372,9 @@ class Projected:
 
 
 def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) -> dict:
-    path = CACHE / name / f"{method}_tol{tol:g}.json"
-    if path.exists() and not force:
-        return json.loads(path.read_text())
+    known = STORE.read(name, dim(name), method, tol, seed)
+    if known is not None and not force:
+        return known
     p = STEP_MAPS[name]
     train, test = data(name)
     states = train[:, :-1].transpose(1, 0, 2).reshape(-1, train.shape[2])  # time-major
@@ -387,8 +383,8 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
     try:
         model = METHODS[method][2](p, train, tol, seed)
     except RuntimeError as err:
-        m = {"method": method, "problem": name, "tol": tol, "failed": str(err)[:300]}
-        write_record(path, m)
+        m = {"method": method, "problem": name, "d": dim(name), "tol": tol, "seed": seed, "failed": str(err)[:300]}
+        STORE.write(m)
         return m
     train_s = time.perf_counter() - t0
     t0 = time.perf_counter()
@@ -398,8 +394,8 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
     mask = p.scored(test[:, 1:].reshape(-1, test.shape[2]))
     e = np.max(np.where(mask, np.abs(pred - Gt), 0.0), axis=1)
     ea = e[~refused] if (~refused).any() else np.zeros(1)
-    m = {"method": method, "problem": name, "tol": tol, "evals": int(model.evals), "train_states": len(states),
-         "worst": float(ea.max()), "q999": float(np.quantile(ea, 0.999)), "q99": float(np.quantile(ea, 0.99)),
+    m = {"method": method, "problem": name, "d": dim(name), "tol": tol, "seed": seed, "evals": int(model.evals), "train_states": len(states),
+         "worst": float(ea.max()), "worst_ratio": float(ea.max()) / tol, "q999": float(np.quantile(ea, 0.999)), "q99": float(np.quantile(ea, 0.99)),
          "above_percent": float(100 * np.mean(ea > tol)), "refused_percent": float(100 * refused.mean()),
          "train_s": train_s, "predict_us": predict_us, "records": len(getattr(model, "Z", [])) or None,
          "error_by_step": np.max(np.where(refused, 0.0, e).reshape(test.shape[0], -1), axis=0).tolist(),
@@ -424,7 +420,7 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
     m["speedup"] = m["solve_us"] / max(predict_us, 1e-9)  # over the problem's baseline: its time per state and step over the surrogate's
     m["inference"] = {"device": "cpu", "threads": int(os.environ.get("OPENBLAS_NUM_THREADS", "0") or 0), "batch": len(Zt),
                       "baseline": baseline_of(p)}  # fmt: skip
-    write_record(path, m)
+    STORE.write(m)
     return m
 
 
@@ -490,7 +486,7 @@ def dynamics(name: str) -> dict:
       when it ends below 1, else "neutral" (oscillatory, conserving or slowly drifting: errors along
       such directions neither grow nor decay); and "stiff" or "mildly stiff" by ``step_stiffness``.
     """
-    path = CACHE / f"{name}-dynamics.json"
+    path = STORE.data(name, "dynamics.json")
     if path.exists():
         return json.loads(path.read_text())
     p = STEP_MAPS[name]
@@ -531,7 +527,7 @@ def dynamics(name: str) -> dict:
     motion = "chaotic" if g[-1] > 10 and out["lyapunov"] > 0 else "contracting" if g[-1] < 1 else "neutral"
     st = out["step_stiffness"]
     out["kind"] = motion + (", stiff" if st >= 20 else ", mildly stiff" if st >= 10 else "")
-    write_record(path, out)
+    write_json(path, out)
     return out
 
 
@@ -550,10 +546,9 @@ def plot(name: str, methods: list[str]) -> Path:
     for method in methods:
         solves = []
         for tol, ls in zip(tols, ("-", "--"), strict=False):
-            path = CACHE / name / f"{method}_tol{tol:g}.json"
-            if not path.exists():
+            m = STORE.read(name, dim(name), method, tol, 1)
+            if m is None:
                 continue
-            m = json.loads(path.read_text())
             if "failed" in m:
                 solves.append("over")
                 continue
@@ -598,8 +593,7 @@ def plot(name: str, methods: list[str]) -> Path:
     except Exception:  # noqa: BLE001 (the cost is a caption only)
         solver = ""
     fig.suptitle(f"{name}: surrogates of the step map (dt = {p.dt:.3g}), on held-out trajectories; errors in {units}{solver}", fontsize=10)
-    OUT.mkdir(parents=True, exist_ok=True)
-    path = OUT / f"{name}-errors.png"
+    path = STORE.figures / f"{name}-errors.png"
     fig.savefig(path, dpi=130)
     plt.close(fig)
     return path
@@ -613,7 +607,6 @@ def plot_ladder() -> Path:
     colour per method, solid for the looser tolerance and dashed for the tighter; an x at the top of
     the error panels marks a case over the time limit or the evaluation budget.
     """
-    from src.structure.bench.ode_fill import FIXED, family, ladder
 
     names = ladder(10**6)
     fams = [f for f in dict.fromkeys(family(n) for n in names) if f not in FIXED] + ["test set"]
@@ -622,7 +615,7 @@ def plot_ladder() -> Path:
     fig, axes = plt.subplots(len(rows), len(fams), figsize=(4.2 * len(fams), 13.5), squeeze=False, layout="constrained")
     for j, fam in enumerate(fams):
         members = [n for n in names if (family(n) == fam) or (fam == "test set" and n in FIXED)]
-        for method, (label, colour, _) in METHODS.items():
+        for method, (_, colour, _) in METHODS.items():
             for k, ls in enumerate(("-", "--")):
                 pts, fails = {key: [] for key, _ in rows}, []
                 for n in members:
@@ -630,10 +623,9 @@ def plot_ladder() -> Path:
                     if k >= len(STEP_TOLERANCES):
                         continue
                     tol = sorted(STEP_TOLERANCES, reverse=True)[k]
-                    path = CACHE / n / f"{method}_tol{tol:g}.json"
-                    if not path.exists():
+                    m = STORE.read(n, dim(n), method, tol, 1)
+                    if m is None:
                         continue
-                    m = json.loads(path.read_text())
                     d = len(p.system.components)
                     if "failed" in m:
                         fails.append(d)
@@ -649,7 +641,7 @@ def plot_ladder() -> Path:
                 for i in (0, 1, 2):
                     for d in fails:
                         axes[i, j].plot(d, 30.0, "x", color=colour, ms=7)
-        for i, (key, ylabel) in enumerate(rows):
+        for i, (_, ylabel) in enumerate(rows):
             ax = axes[i, j]
             ax.set_yscale("log")
             ax.set_xscale("log")
@@ -663,14 +655,13 @@ def plot_ladder() -> Path:
                 ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
         title = fam if fam != "test set" else "Robertson (3), Akzo Nobel (5), HIRES (8), POLLU (20)"
         axes[0, j].set_title(title, fontsize=10)
-    shown = [m for m in METHODS if any((CACHE / n / f"{m}_tol{t:g}.json").exists() for n in names for t in STEP_TOLERANCES)]
+    shown = [m for m in METHODS if any(STORE.exists(n, dim(n), m, t, 1) for n in names for t in STEP_TOLERANCES)]
     handles = [matplotlib.lines.Line2D([], [], color=METHODS[m][1], lw=2, marker="o", ms=4, label=SHORT.get(m, m).replace(chr(10), " ")) for m in shown]
     handles += [matplotlib.lines.Line2D([], [], color="#555555", ls=ls, label=f"{w} tolerance") for w, ls in (("looser", "-"), ("tighter", "--"))]
     fig.legend(handles=handles, loc="outside lower center", ncol=min(6, len(handles)), fontsize=8, frameon=False)
     fig.suptitle("ODE ladder: surrogates of the step map on held-out trajectories (x at the top: over the time limit or budget)",
                  fontsize=11)  # fmt: skip
-    OUT.mkdir(parents=True, exist_ok=True)
-    path = OUT / "ladder.png"
+    path = STORE.figures / "ladder.png"
     fig.savefig(path, dpi=120)
     plt.close(fig)
     return path
@@ -688,16 +679,15 @@ def _baseline_label(names: list[str], baseline: str | None) -> str:
 
 def _row_label(n: str) -> str:
     """A problem's row: its name, then its input dimension, its system's parameters and its measured dynamics class (when diagnosed)."""
-    system, path = STEP_MAPS[n].system, CACHE / f"{n}-dynamics.json"
+    system, path = STEP_MAPS[n].system, STORE.data(n, "dynamics.json")
     parts = [str(len(system.components)), system.params, json.loads(path.read_text())["kind"] if path.exists() else ""]
     return f"{n} ({'; '.join(filter(None, parts))})"
 
 
 def _regime_problems() -> dict[str, list[str]]:
     """Per regime (``REGIMES`` order), the ladder's problems with records, by input dimension; empty regimes left out."""
-    from src.structure.bench.ode_fill import ladder
 
-    names = [n for n in ladder(10**6) if (CACHE / n).is_dir()]
+    names = [n for n in ladder(10**6) if STORE.runs(problem=n)]
     return {r: [n for n in names if STEP_MAPS[n].regime == r] for r in REGIMES if any(STEP_MAPS[n].regime == r for n in names)}
 
 
@@ -717,10 +707,10 @@ def plot_overview(baseline: str | None = None) -> list[Path]:
 def _overview(regime: str, names: list[str], baseline: str | None) -> list[Path]:
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
-    methods = [m for m in METHODS if any((CACHE / n / f"{m}_tol{t:g}.json").exists() for n in names for t in STEP_TOLERANCES)]
+    methods = [m for m in METHODS if any(STORE.exists(n, dim(n), m, t, 1) for n in names for t in STEP_TOLERANCES)]
     over = _baseline_label(names, baseline)
-    bounds = [0, 0.01, 0.1, 0.5, 1, 2, 10, 100, 1e300]
-    cmap = ListedColormap(["#2166ac", "#4393c3", "#92c5de", "#d1e5f0", "#f4a582", "#d6604d", "#b2182b", "#67001f"])
+    bounds = [0, *RATIO_EDGES, 1e300]
+    cmap = ListedColormap(list(RATIO_COLOURS))
     norm = BoundaryNorm(bounds, cmap.N)
     paths = []
     for k, label in ((0, "loose"), (1, "tight")):
@@ -735,10 +725,9 @@ def _overview(regime: str, names: list[str], baseline: str | None) -> list[Path]
                 continue
             row = []
             for j, meth in enumerate(methods):
-                path = CACHE / n / f"{meth}_tol{tols[k]:g}.json"
-                if not path.exists():
+                m = STORE.read(n, dim(n), meth, tols[k], 1)
+                if m is None:
                     continue
-                m = json.loads(path.read_text())
                 if "failed" in m:
                     axes[2].add_patch(plt.Rectangle((j, i), 0.95, 0.9, fc="#e8e8e8", hatch="//", ec="#999999"))
                     continue
@@ -765,11 +754,10 @@ def _overview(regime: str, names: list[str], baseline: str | None) -> list[Path]
                 tol = tols[k]
                 row = []
                 for j, meth in enumerate(methods):
-                    path = CACHE / n / f"{meth}_tol{tol:g}.json"
-                    if not path.exists():
+                    m = STORE.read(n, dim(n), meth, tol, 1)
+                    if m is None:
                         ax.add_patch(plt.Rectangle((j, i), 0.95, 0.9, fill=False, ls=":", ec="#bbbbbb"))
                         continue
-                    m = json.loads(path.read_text())
                     if "failed" in m:
                         ax.add_patch(plt.Rectangle((j, i), 0.95, 0.9, fc="#e8e8e8", hatch="//", ec="#999999"))
                         ax.text(j + 0.47, i + 0.45, "over", ha="center", va="center", fontsize=6.5, color="#555555")
@@ -793,7 +781,7 @@ def _overview(regime: str, names: list[str], baseline: str | None) -> list[Path]
                 sp.set_visible(False)
             ax.set_title(title, fontsize=10)
         # one key for the two error tables, above them; the speedup key below its table
-        labels = ["<= 0.01", "0.01-0.1", "0.1-0.5", "0.5-1", "1-2", "2-10", "10-100", "> 100"]
+        labels = list(RATIO_NAMES)
         error_key = [matplotlib.patches.Patch(color=cmap(q), label=lab) for q, lab in enumerate(labels)]
         error_key += [matplotlib.patches.Patch(fc="#e8e8e8", hatch="//", ec="#999999", label="over the time limit"),
                       matplotlib.patches.Patch(fill=False, ec="black", lw=1.6, label="least in the row")]
@@ -803,8 +791,7 @@ def _overview(regime: str, names: list[str], baseline: str | None) -> list[Path]
                          "Error cells: training solves above the worst error / tolerance (blue holds, red exceeds)", title_fontsize=8.5)
         fig.legend(handles=speed_key, loc="outside lower center", ncol=6, fontsize=7, frameon=False, handlelength=1.4,
                    title=f"speedup over {over}", title_fontsize=7.5)  # fmt: skip
-        OUT.mkdir(parents=True, exist_ok=True)
-        path = OUT / f"overview-{regime}-{label}.png"
+        path = STORE.figures / f"overview-{regime}-{label}.png"
         fig.savefig(path, dpi=130)
         plt.close(fig)
         paths.append(path)
@@ -825,14 +812,13 @@ def _speedup(regime: str, names: list[str], baseline: str | None) -> Path:
     own = {baseline or baseline_of(STEP_MAPS[n]) for n in names}
     fig, ax = plt.subplots(figsize=(8.5, 6), layout="constrained")
     handles = []
-    for meth, (label, colour, _) in METHODS.items():
+    for meth, (_, colour, _) in METHODS.items():
         xs, ys, ms = [], [], []
         for n in names:
             for k, tol in enumerate(sorted(STEP_TOLERANCES, reverse=True)):
-                path = CACHE / n / f"{meth}_tol{tol:g}.json"
-                if not path.exists():
+                m = STORE.read(n, dim(n), meth, tol, 1)
+                if m is None:
                     continue
-                m = json.loads(path.read_text())
                 if "failed" in m:
                     continue
                 try:
@@ -857,8 +843,7 @@ def _speedup(regime: str, names: list[str], baseline: str | None) -> Path:
     ax.set_title(f"{REGIMES[regime]}: speed against rollout accuracy. Baseline: {base}. Surrogates: CPU, 1 thread, batched inference",
                  fontsize=8.5, wrap=True)  # fmt: skip
     fig.legend(handles=handles, loc="outside lower center", ncol=5, fontsize=8, frameon=False)
-    OUT.mkdir(parents=True, exist_ok=True)
-    path = OUT / f"speedup-{regime}.png"
+    path = STORE.figures / f"speedup-{regime}.png"
     fig.savefig(path, dpi=130)
     plt.close(fig)
     return path
@@ -871,18 +856,16 @@ def write_summary() -> Path:
     for name in STEP_MAPS:
         for tol in STEP_TOLERANCES:
             for method in METHODS:
-                path = CACHE / name / f"{method}_tol{tol:g}.json"
-                if not path.exists():
+                m = STORE.read(name, dim(name), method, tol, 1)
+                if m is None:
                     continue
-                m = json.loads(path.read_text())
                 if "failed" in m:
                     lines.append(f"| {name} | {tol:g} | {METHODS[method][0]} | {m['failed'][:40]} | | | | | | | | | | |")
                     continue
                 lines.append(f"| {name} | {tol:g} | {METHODS[method][0]} | {m['evals']:,} | {m['worst']:.2g} | {m['q999']:.2g} | "
                              f"{m['q99']:.2g} | {m['above_percent']:.2f} | {m['refused_percent']:.2f} | {m.get('rollout_worst', float('nan')):.2g} | {m['train_s']:.1f} | "
                              f"{m['predict_us']:.1f} | {m.get('solve_us', float('nan')):,.0f} | {m.get('speedup', float('nan')):,.0f} |")  # fmt: skip
-    OUT.mkdir(parents=True, exist_ok=True)
-    path = OUT / "summary-ode.md"
+    path = STORE.figures / "summary-ode.md"
     path.write_text("\n".join(lines) + "\n")
     return path
 

@@ -147,7 +147,7 @@ Run scripts from the repository root, as modules
 | algorithms | `afinni/` (`plan`: `AFINNIPlan`), `art/` (`ARTPlan` in `plan`; `constants`, `rng`, `geometry`, `sampling`, `split_search`, `routing`); `schemes/` (the global approximants: ChebTT, ChebTree, SparseCheb, the hub expansion, ...; standalone, importing only the infrastructure layer) |
 | engine | `engine/` (`driver`: `refine`, collective training; `refinement`: `refine_rank`, the loop shared by both plans; `initial`, `work_stealing`) |
 | public API | `surrogate/` (`model`, `persistence`, `metrics`); also `plotting/`, `problems/` |
-| experiments | `structure/` (the benchmark of the schemes against AFINNI and ART; see its README) |
+| benchmark | `benchmark/` (every method on the function and step-map suites, one store of runs, the sweep; see docs/BENCHMARK.md) |
 
 Package `__init__` files re-export the names other modules import, so callers do not depend
 on the file a name lives in (`from src.art import ARTPlan`). CUDA kernel sources live in

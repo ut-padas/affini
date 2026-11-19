@@ -9,7 +9,7 @@ before the consults of iterations 3, 6 and 9.
 
 Conventions: tolerances 0.01 / 0.001 in dex (log coordinates) or absolute units; "one-step" and
 "rollout" are the worst errors over held-out test trajectories (40 steps, 20 trajectories for
-rollouts) as `src/structure/bench/ode.py` scores them, divided by the tolerance; "solves" are calls of
+rollouts) as `src/benchmark/step_maps.py` scores them, divided by the tolerance; "solves" are calls of
 the reference solver (Radau or RK45 at rtol 1e-8). Experiment scripts live in the session scratchpad
 (`exp/`), not in the repository; numbers are one seed unless stated.
 
@@ -1251,7 +1251,7 @@ iterations 11 and 14.
 - **Nelson** (long steps, driven environment): the Gaussian-kernel interpolant in 4 memory + 4
   environment coordinates. One-step median 0.0014-0.0027 dex, 3.9-5.9% of steps above 0.03 dex at
   240-480 tracers; ungated rollouts with 17-21% of tracers above 0.1 dex.
-- **Box problems:** ChebTT / ChebTT-M / ChebTT-A (the box bench, `src/structure/bench/functions.py`).
+- **Box problems:** ChebTT / ChebTT-M / ChebTT-A (the box bench, `src/benchmark/functions.py`).
 
 Untried ideas recorded at the start of the phase (C):
 1. Map the tube onto a box with a learned triangular (Knothe-Rosenblatt) transport, then ChebTT cross in

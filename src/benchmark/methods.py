@@ -1,20 +1,103 @@
 """
-New surrogate schemes, registered with ``src.structure.bench.functions``.
+Every method the function suite runs, by name (``METHODS``: label, colour, and ``(f, lo, hi, atol, seed) ->
+Model``): the baselines AFINNI and ART (with affine and with quadratic leaves) through ``AdaptiveSurrogate``,
+and the schemes of ``src.schemes``.
 
-ChebTree and SparseCheb gather each refinement round's new points into one oracle call. Under
-``mpiexec`` that call is distributed: rank 0 runs the scheme and scatters each batch of points over
-every rank (``array_split``), each rank evaluates its share, and rank 0 gathers the values, the same
-division of oracle work the refinement engine uses. The other ranks only serve evaluations until
-rank 0 is done. A trained model lives on rank 0; prediction there is serial.
+Under ``mpiexec`` the baselines train and predict collectively on every rank, with work stealing. A scheme
+trains on rank 0 and spreads each round's oracle calls over every rank (``src.schemes.oracle.distributed``);
+the other ranks only serve evaluations until rank 0 is done. A trained model lives on rank 0, where
+prediction is serial.
 """
+
+from dataclasses import dataclass
 
 import numpy as np
 
-from src import to_host, xp
+from src import IS_CUPY_BACKEND, to_host, xp
+from src.config import ARTSettings, TrainingConfig
+from src.core.evaluation import Evaluator
+from src.infra.backend import MPI
 from src.schemes import chebtree, chebtt, kernel, sparsegrid
 from src.schemes.chebtt import adaptive as chebtt_adaptive
 from src.schemes.oracle import distributed as spread
-from src.structure.bench.functions import Model, register
+from src.surrogate import AdaptiveSurrogate
+
+
+@dataclass
+class Model:
+    predict: object  # (N, d) host points -> (N,) host values
+    leaf_of: object | None  # (N, d) -> (N,) leaf ids, or None
+    n_leaves: int
+    evals: int
+    refuses: object | None = None  # (N, d) -> (N,) bool: queries the model declines, answered by the oracle
+
+
+def _ranks() -> int:
+    return MPI.COMM_WORLD.Get_size()
+
+
+def setup() -> str:
+    """
+    The device and rank count, e.g. ``cpu-1rank``. Runs are cached and plotted per setup and never
+    compared across setups: times depend on both, and ART's split decisions differ between CPU and
+    GPU, whose sums differ at rounding level.
+    """
+    return SETUP or f"{'gpu' if IS_CUPY_BACKEND else 'cpu'}-{_ranks()}rank"
+
+
+SETUP = None  # ``--setup``: read and plot another setup's cache (``--overview`` only; never trains into it)
+
+
+def _collective_predict(m):
+    """``predict`` for a collective AdaptiveSurrogate: every rank calls it, rank 0 gets the values (None elsewhere)."""
+
+    def predict(Q):
+        out = m.predict(xp.asarray(Q))
+        return None if out is None or out[0] is None else np.ravel(to_host(out[0]))
+
+    return predict
+
+
+def _art_config(lo, hi, atol, seed, local_model=None):
+    extra = {"local_model": local_model} if local_model is not None else {}
+    return TrainingConfig(algorithm="art", atol=atol, rtol=None, domain=(lo, hi), num_initial_clusters=1,
+                          use_work_stealing=_ranks() > 1, seed=seed, max_levels=20,
+                          art=ARTSettings(sample_multiplier=20, split_search="soft"), **extra)  # fmt: skip
+
+
+def afinni(f, lo, hi, atol, seed) -> Model:
+    d = len(lo)
+    X = np.random.default_rng(seed).uniform(lo, hi, (int(min(5e4 * 1.3**d, 1e6)) if d > 2 else 600, d))
+    cfg = TrainingConfig(atol=atol, rtol=None, num_initial_clusters=4, min_pts_per_cluster=int(min(100 * 1.3**d, 400)) if d > 2 else 24,
+                         max_levels=20, seed=seed, use_work_stealing=_ranks() > 1)  # fmt: skip
+    m = AdaptiveSurrogate()
+    m.train(xp.asarray(X), cfg, Evaluator(f_fn=f))
+
+    def leaf_of(Q):
+        out = m.predict_local(xp.asarray(Q), k_nn=1, coarse_factor=10, strict_trust_region=False, return_cluster_assignments=True)
+        return np.asarray(to_host(out[2])).reshape(len(Q), -1)[:, 0]
+
+    return Model(_collective_predict(m), leaf_of, m.N_src, m.profiling_stats["total_f_evals"])
+
+
+def _art(f, lo, hi, atol, seed, local_model=None) -> Model:
+    X0 = np.random.default_rng(seed).uniform(lo, hi, (60, len(lo)))
+    m = AdaptiveSurrogate()
+    m.train(xp.asarray(X0), _art_config(lo, hi, atol, seed, local_model), Evaluator(f_fn=f))
+    return Model(_collective_predict(m), lambda Q: np.asarray(to_host(m.route_leaves(xp.asarray(Q)))),
+                 m.N_src, m.profiling_stats["total_f_evals"])  # fmt: skip
+
+
+METHODS = {
+    "afinni": ("AFINNI", "#6d3b0f", afinni),
+    "art": ("ART, affine leaves", "#1f5fa8", lambda f, lo, hi, atol, seed: _art(f, lo, hi, atol, seed)),
+    "art_quad": ("ART, quadratic leaves", "#2e7d32", lambda f, lo, hi, atol, seed: _art(f, lo, hi, atol, seed, "quadratic_lsq")),
+}
+BASELINES = ("afinni", "art", "art_quad")
+
+
+def register(name: str, label: str, colour: str, fn) -> None:
+    METHODS[name] = (label, colour, fn)
 
 
 def _host(f):

@@ -12,11 +12,11 @@ LAYERS = {
     "afinni": 2, "art": 2, "schemes": 2,
     "engine": 3,
     "surrogate": 4, "plotting": 4, "problems": 4,
-    "structure": 5,
+    "benchmark": 5,
 }  # fmt: skip
 # Parts kept apart from the rest of src: each imports only the first set of parts (and itself), and only
 # the parts in the second set import it. The schemes need nothing of AFINNI, ART or their engine.
-STANDALONE = {"schemes": ({"src", "infra", "numerics", "kernels", "core"}, {"structure"})}
+STANDALONE = {"schemes": ({"src", "infra", "numerics", "kernels", "core"}, {"benchmark"})}
 
 
 def _part_of(module: str) -> str:

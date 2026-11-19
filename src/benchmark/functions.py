@@ -1,34 +1,30 @@
 """
-Run, cache and plot surrogate methods on the structure-discovery problems.
+The function suite: run, record and plot every method on the test functions of ``src.problems``.
 
     SURROGATE_DEVICE=cpu SURROGATE_MPI=off OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \\
-        PYTHONPATH=. .venv/bin/python -m src.structure.bench.functions --problems rosenbrock --d 2 --methods afinni,art,art_quad
+        PYTHONPATH=. .venv/bin/python -m src.benchmark.functions --problems rosenbrock --d 2 --methods afinni,art,art_quad
 
-Every run (method, problem, d, tolerance, seed) is cached in ``src/structure/cache/<setup>`` as one
-``.npz``: its metrics, and for seed 1 its predictions and leaf ids on the test set. A run is only
-trained when its cache file is missing, so the slow baselines (AFINNI, ART with affine and with
-quadratic leaves) run once and every new scheme is plotted against them. ``--plot`` draws, per
-problem and d, the maps (2-D: each method's pieces and its error map) and the cost curves
-(evaluations against the worst error, the mean error and the share within tolerance).
+Every run (method, problem, d, tolerance, seed) is one record in the store (``src.benchmark.store``): its
+metrics, and for seed 1 its predictions and leaf ids on the test set as arrays. A run is only trained when
+its record is missing, so the slow baselines (AFINNI, ART with affine and with quadratic leaves) run once
+and every new scheme is plotted against them. ``--plot`` draws, per problem and d, the maps (2-D: each
+method's pieces and its error map) and the cost curves (evaluations against the worst error, the mean
+error and the share within tolerance).
 
-A method is a function ``(f, lo, hi, atol, seed) -> Model``; ``Model`` gives ``predict(X)``,
-``leaf_of(X)`` (or None), ``n_leaves``, ``evals`` and optionally ``refuses(X)``. New schemes
-register in ``METHODS``. A refused query is answered by the oracle, as a simulation would fall back
-to its solver: the errors are those of the answers given, and ``refused_percent`` is the share of
-test points that needed the oracle.
+A method (``src.benchmark.methods``) is a function ``(f, lo, hi, atol, seed) -> Model``; ``Model`` gives
+``predict(X)``, ``leaf_of(X)`` (or None), ``n_leaves``, ``evals`` and optionally ``refuses(X)``. A refused
+query is answered by the oracle, as a simulation would fall back to its solver: the errors are those of the
+answers given, and ``refused_percent`` is the share of test points that needed the oracle.
 
-Under ``mpiexec`` (``SURROGATE_MPI=on``) the baselines train and predict collectively on every rank,
-with work stealing; the new schemes run on rank 0 and spread each round's oracle calls over every
-rank (``src.structure.bench.registry``). Rank 0 alone decides what is cached, scores and writes. Each run
-records its device and rank count, and the cache and ``output/`` hold one directory per setup
-(``setup``), so one comparison never mixes devices or rank counts.
+Under ``mpiexec`` (``SURROGATE_MPI=on``) every rank calls ``run``; rank 0 alone decides what is recorded,
+scores and writes. Each record names its setup (device and rank count), and the store and the figures hold
+one directory per setup, so one comparison never mixes devices or rank counts.
 """
 
 import argparse
 import json
 import time
 import warnings
-from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib
@@ -42,114 +38,27 @@ import matplotlib.transforms  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.colors import BoundaryNorm, ListedColormap  # noqa: E402
 
-from src import IS_CUPY_BACKEND, to_host, xp  # noqa: E402
-from src.config import ARTSettings, TrainingConfig  # noqa: E402
-from src.core.evaluation import Evaluator  # noqa: E402
+from src.benchmark import methods as registry  # noqa: E402
+from src.benchmark.methods import BASELINES, METHODS  # noqa: E402
+from src.benchmark.plots import RATIO_COLOURS, RATIO_EDGES, RATIO_NAMES  # noqa: E402
+from src.benchmark.store import Store  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
 from src.problems import FUNCTIONS, GRID  # noqa: E402
-from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[1]  # src/structure: cache/ and output/ live there
-CACHE = ROOT / "cache"
-OUT = ROOT / "output"
 SEEDS = (1, 2, 3)
 # Tolerances relative to max |f| on the test set, by dimension (the nearest listed dimension below d): loose
 # ones in high dimension first, so every method runs quickly while a scheme is still being proven there.
 TOLERANCES = {2: (0.1, 0.01, 0.001), 3: (0.1, 0.03, 0.01), 5: (0.1, 0.05, 0.02), 10: (0.2, 0.1, 0.05)}
 
 
+def store() -> Store:
+    """The function suite's runs, data and figures on the current setup (``registry.setup``)."""
+    return Store("functions", registry.setup())
+
+
 def tolerances(d: int) -> tuple[float, ...]:
     """The tolerances run at dimension d."""
     return TOLERANCES[max(k for k in TOLERANCES if k <= max(d, min(TOLERANCES)))]
-
-
-@dataclass
-class Model:
-    predict: object  # (N, d) host points -> (N,) host values
-    leaf_of: object | None  # (N, d) -> (N,) leaf ids, or None
-    n_leaves: int
-    evals: int
-    refuses: object | None = None  # (N, d) -> (N,) bool: queries the model declines, answered by the oracle
-
-
-class CountingOracle:
-    """``f`` that counts its evaluated points (the cost every method is charged)."""
-
-    def __init__(self, f):
-        self.f, self.count = f, 0
-
-    def __call__(self, X):
-        self.count += int(X.shape[0])
-        return self.f(X)
-
-
-# --- Baselines -------------------------------------------------------------------------
-def _ranks() -> int:
-    return MPI.COMM_WORLD.Get_size()
-
-
-def setup() -> str:
-    """
-    The device and rank count, e.g. ``cpu-1rank``. Runs are cached and plotted per setup and never
-    compared across setups: times depend on both, and ART's split decisions differ between CPU and
-    GPU, whose sums differ at rounding level.
-    """
-    return SETUP or f"{'gpu' if IS_CUPY_BACKEND else 'cpu'}-{_ranks()}rank"
-
-
-SETUP = None  # ``--setup``: read and plot another setup's cache (``--overview`` only; never trains into it)
-
-
-def _collective_predict(m):
-    """``predict`` for a collective AdaptiveSurrogate: every rank calls it, rank 0 gets the values (None elsewhere)."""
-
-    def predict(Q):
-        out = m.predict(xp.asarray(Q))
-        return None if out is None or out[0] is None else np.ravel(to_host(out[0]))
-
-    return predict
-
-
-def _art_config(lo, hi, atol, seed, local_model=None):
-    extra = {"local_model": local_model} if local_model is not None else {}
-    return TrainingConfig(algorithm="art", atol=atol, rtol=None, domain=(lo, hi), num_initial_clusters=1,
-                          use_work_stealing=_ranks() > 1, seed=seed, max_levels=20,
-                          art=ARTSettings(sample_multiplier=20, split_search="soft"), **extra)  # fmt: skip
-
-
-def afinni(f, lo, hi, atol, seed) -> Model:
-    d = len(lo)
-    X = np.random.default_rng(seed).uniform(lo, hi, (int(min(5e4 * 1.3**d, 1e6)) if d > 2 else 600, d))
-    cfg = TrainingConfig(atol=atol, rtol=None, num_initial_clusters=4, min_pts_per_cluster=int(min(100 * 1.3**d, 400)) if d > 2 else 24,
-                         max_levels=20, seed=seed, use_work_stealing=_ranks() > 1)  # fmt: skip
-    m = AdaptiveSurrogate()
-    m.train(xp.asarray(X), cfg, Evaluator(f_fn=f))
-
-    def leaf_of(Q):
-        out = m.predict_local(xp.asarray(Q), k_nn=1, coarse_factor=10, strict_trust_region=False, return_cluster_assignments=True)
-        return np.asarray(to_host(out[2])).reshape(len(Q), -1)[:, 0]
-
-    return Model(_collective_predict(m), leaf_of, m.N_src, m.profiling_stats["total_f_evals"])
-
-
-def _art(f, lo, hi, atol, seed, local_model=None) -> Model:
-    X0 = np.random.default_rng(seed).uniform(lo, hi, (60, len(lo)))
-    m = AdaptiveSurrogate()
-    m.train(xp.asarray(X0), _art_config(lo, hi, atol, seed, local_model), Evaluator(f_fn=f))
-    return Model(_collective_predict(m), lambda Q: np.asarray(to_host(m.route_leaves(xp.asarray(Q)))),
-                 m.N_src, m.profiling_stats["total_f_evals"])  # fmt: skip
-
-
-METHODS = {
-    "afinni": ("AFINNI", "#6d3b0f", afinni),
-    "art": ("ART, affine leaves", "#1f5fa8", lambda f, lo, hi, atol, seed: _art(f, lo, hi, atol, seed)),
-    "art_quad": ("ART, quadratic leaves", "#2e7d32", lambda f, lo, hi, atol, seed: _art(f, lo, hi, atol, seed, "quadratic_lsq")),
-}
-BASELINES = ("afinni", "art", "art_quad")
-
-
-def register(name: str, label: str, colour: str, fn) -> None:
-    METHODS[name] = (label, colour, fn)
 
 
 # --- Views of an N-dimensional function -----------------------------------------------------
@@ -165,7 +74,7 @@ def directions(problem: str, d: int) -> np.ndarray:
     every rank may compute them at once; each writes its own file and renames it into place, so a
     rank never reads a file another rank is still writing.
     """
-    path = CACHE / "directions" / f"{problem}_d{d}.npz"  # shared by every setup: f alone fixes them
+    path = store().data(problem, f"d{d}-directions.npz")  # shared by every setup: f alone fixes them
     if path.exists():
         return np.load(path)["W"]
     p = FUNCTIONS[problem]
@@ -178,7 +87,7 @@ def directions(problem: str, d: int) -> np.ndarray:
     lam, W = np.linalg.eigh(C)
     W = W[:, np.argsort(lam)[::-1][:2]]
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{problem}_d{d}-{MPI.COMM_WORLD.Get_rank()}.tmp.npz")
+    tmp = path.with_name(f"d{d}-directions-{MPI.COMM_WORLD.Get_rank()}.tmp.npz")
     np.savez(tmp, W=W, eigenvalues=np.sort(lam)[::-1])
     tmp.replace(path)
     return W
@@ -213,10 +122,6 @@ def _column(mask: np.ndarray, like: np.ndarray) -> np.ndarray:
     return mask[:, None] if like.ndim == 2 else mask
 
 
-def cache_path(method, problem, d, tol, seed) -> Path:
-    return CACHE / setup() / f"{problem}_d{d}" / f"{method}_tol{tol:g}_s{seed}.npz"
-
-
 def run(method, problem, d, tol, seed, force=False) -> dict | None:
     """
     The run's metrics, from the cache or by training it now (and caching it). Collective under MPI:
@@ -224,10 +129,9 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
     """
     comm = MPI.COMM_WORLD
     rank, size = comm.Get_rank(), comm.Get_size()
-    path = cache_path(method, problem, d, tol, seed)
-    cached = comm.bcast(path.exists() and not force if rank == 0 else None, root=0)
+    cached = comm.bcast(store().exists(problem, d, method, tol, seed) and not force if rank == 0 else None, root=0)
     if cached:
-        return json.loads(str(np.load(path)["metrics"])) if rank == 0 else None
+        return store().read(problem, d, method, tol, seed) if rank == 0 else None
     p = FUNCTIONS[problem]
     lo, hi = p.domain(d)
     X = p.test_points(d)
@@ -243,10 +147,9 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
     except RuntimeError as err:  # a scheme over its evaluation budget: recorded, not fatal
         metrics = {"method": method, "problem": problem, "d": d, "tol": tol, "seed": seed, "atol": atol,
                    "failed": str(err)[:300], "train_s": time.perf_counter() - t0, "ranks": size,
-                   "device": setup().split("-")[0]}  # fmt: skip
+                   "device": registry.setup().split("-")[0]}  # fmt: skip
         if rank == 0:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            np.savez_compressed(path, metrics=json.dumps(metrics))
+            store().write(metrics)
             print(json.dumps(metrics), flush=True)
         return metrics if rank == 0 else None
     train_s = time.perf_counter() - t0
@@ -271,14 +174,13 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
     e = point_error(pred, fX)
     metrics = {"method": method, "problem": problem, "d": d, "tol": tol, "seed": seed, "atol": atol,
                "leaves": int(model.n_leaves), "evals": int(model.evals), "within_percent": float(100 * np.mean(e <= atol)),
-               "mean_error": float(e.mean()), "max_error": float(e.max()), "max_ratio": float(e.max() / atol),
+               "mean_error": float(e.mean()), "max_error": float(e.max()), "worst_ratio": float(e.max() / atol),
                "train_s": train_s, "predict_us": 1e6 * predict_s / len(X), "oracle_us": oracle_us, "ranks": size,
                "refused_percent": float(100 * refused.mean()),
-               "device": setup().split("-")[0]}  # fmt: skip
+               "device": registry.setup().split("-")[0]}  # fmt: skip
     if fX.ndim == 2:  # a vector problem: each component's worst, as a multiple of the tolerance
         metrics["outputs"] = int(fX.shape[1])
         metrics["component_ratio"] = (E.max(axis=0) / atol).tolist()
-    path.parent.mkdir(parents=True, exist_ok=True)
     extra = {}
     if seed == SEEDS[0]:
         extra["pred"] = pred.astype(np.float32)
@@ -290,7 +192,7 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
             extra["slice_pred"] = np.asarray(slice_pred, dtype=np.float64).astype(np.float32)
             if model.leaf_of is not None:
                 extra["slice_leaf"] = np.asarray(model.leaf_of(Xs[inside])).astype(np.int32)
-    np.savez_compressed(path, metrics=json.dumps(metrics), **extra)
+    store().write(metrics, extra)
     print(json.dumps(metrics), flush=True)
     return metrics
 
@@ -333,8 +235,7 @@ def plot_maps(problem: str, methods: list[str], tol: float, out: Path) -> Path:
         for a in axes[:, 0]:
             a.set_xticks([]), a.set_yticks([])
     for j, method in enumerate(methods, start=lead):
-        z = np.load(cache_path(method, problem, 2, tol, SEEDS[0]))
-        m = json.loads(str(z["metrics"]))
+        z, m = store().arrays(problem, 2, method, tol, SEEDS[0]), store().read(problem, 2, method, tol, SEEDS[0])
         if "failed" in m:
             for a in axes[:, j]:
                 a.set_xticks([]), a.set_yticks([])
@@ -358,13 +259,13 @@ def plot_maps(problem: str, methods: list[str], tol: float, out: Path) -> Path:
             axes[1, j].imshow(np.ma.masked_where(~r, r), origin="lower", extent=ext, cmap=ListedColormap(["#9e9e9e"]),
                               interpolation="nearest", aspect="auto")  # fmt: skip
         worst = "worst component's " if fX.ndim == 2 else ""
-        axes[1, j].set_title(f"{worst}error / tolerance\n{m['within_percent']:.1f}% within, worst {m['max_ratio']:.2f}{refused}",
+        axes[1, j].set_title(f"{worst}error / tolerance\n{m['within_percent']:.1f}% within, worst {m['worst_ratio']:.2f}{refused}",
                              fontsize=8)  # fmt: skip
         for a in axes[:, j]:
             a.set_xticks([]), a.set_yticks([])
     what = "every component" if fX.ndim == 2 else "max |f|"
     lines = "contours of |f|" if fX.ndim == 2 else "contours of f"
-    fig.suptitle(f"{problem}, tolerance {tol:g} of {what} (seed {SEEDS[0]}); grey lines: {lines}; {setup()}", fontsize=10)
+    fig.suptitle(f"{problem}, tolerance {tol:g} of {what} (seed {SEEDS[0]}); grey lines: {lines}; {registry.setup()}", fontsize=10)
     path = out / f"{problem}-d2-tol{tol:g}-maps.png"
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -392,10 +293,8 @@ def plot_views(problem: str, d: int, methods: list[str], tol: float, out: Path) 
     ext = (-R, R, -R, R)
     runs = []
     for method in methods:
-        path = cache_path(method, problem, d, tol, SEEDS[0])
-        if path.exists():
-            z = np.load(path)
-            m = json.loads(str(z["metrics"]))
+        if store().exists(problem, d, method, tol, SEEDS[0]):
+            z, m = store().arrays(problem, d, method, tol, SEEDS[0]), store().read(problem, d, method, tol, SEEDS[0])
             runs.append((method, m, z if "failed" not in m else None))
     fig, axes = plt.subplots(1 + len(runs), 3, figsize=(11.0, 3.3 * (1 + len(runs))), constrained_layout=True, squeeze=False)
     axes[0, 0].imshow(fs.reshape(SLICE, SLICE), origin="lower", extent=ext, cmap="viridis", aspect="auto")
@@ -421,7 +320,7 @@ def plot_views(problem: str, d: int, methods: list[str], tol: float, out: Path) 
         es = np.full(len(Xs), np.nan)
         es[inside] = point_error(z["slice_pred"], fs_full) / m["atol"]
         axes[i, 0].imshow(es.reshape(SLICE, SLICE), origin="lower", extent=ext, cmap=_ERR, norm=_ERR_NORM, aspect="auto")
-        axes[i, 0].set_title(f"{label}: error on the slice\n{m['evals']:,} evaluations, worst {m['max_ratio']:.2f} x tol", fontsize=8)
+        axes[i, 0].set_title(f"{label}: error on the slice\n{m['evals']:,} evaluations, worst {m['worst_ratio']:.2f} x tol", fontsize=8)
         if "slice_leaf" in z:
             leaf = np.full(len(Xs), -1, dtype=np.int64)
             leaf[inside] = z["slice_leaf"]
@@ -443,7 +342,7 @@ def plot_views(problem: str, d: int, methods: list[str], tol: float, out: Path) 
         if a is not axes[0, 2]:
             a.set_xticks([]), a.set_yticks([])
     fig.suptitle(f"{problem}, d = {d}, tolerance {tol:g}: slice plane and shadow coordinates span the two directions "
-                 f"in which f changes most; {setup()}", fontsize=9)  # fmt: skip
+                 f"in which f changes most; {registry.setup()}", fontsize=9)  # fmt: skip
     path = out / f"{problem}-d{d}-tol{tol:g}-views.png"
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -457,7 +356,7 @@ def plot_cost(problem: str, d: int, methods: list[str], out: Path) -> Path:
     inference panel marks the oracle's own time per point: a surrogate pays off below it.
     """
     tols = tolerances(d)
-    keys = ("max_ratio", "mean_error", "within_percent", "train_s", "predict_us")
+    keys = ("worst_ratio", "mean_error", "within_percent", "train_s", "predict_us")
     labels = ("worst |error| / tolerance", "mean |error|", "% within tolerance", "training time (s)",
               "inference time per query (us)")  # fmt: skip
     fig, axes = plt.subplots(1, len(keys), figsize=(4.0 * len(keys), 3.6), constrained_layout=True)
@@ -467,8 +366,8 @@ def plot_cost(problem: str, d: int, methods: list[str], out: Path) -> Path:
         label = METHODS[method][0]
         rows = []
         for tol in tols:
-            ms = [json.loads(str(np.load(cache_path(method, problem, d, tol, s))["metrics"])) for s in SEEDS
-                  if cache_path(method, problem, d, tol, s).exists()]  # fmt: skip
+            ms = [store().read(problem, d, method, tol, s) for s in SEEDS
+                  if store().exists(problem, d, method, tol, s)]  # fmt: skip
             ms = [m for m in ms if "failed" not in m]
             if ms:
                 rows.append([np.mean([m.get(k, np.nan) for m in ms]) for k in ("evals",) + keys])
@@ -491,7 +390,7 @@ def plot_cost(problem: str, d: int, methods: list[str], out: Path) -> Path:
                      va="top", color="#666666")  # fmt: skip
     axes[0].legend(fontsize=7, frameon=False)
     fig.suptitle(f"{problem}, d = {d}: cost against accuracy and time over tolerances {', '.join(map(str, tols))} "
-                 f"(seed means, {setup()})", fontsize=10)  # fmt: skip
+                 f"(seed means, {registry.setup()})", fontsize=10)  # fmt: skip
     path = out / f"{problem}-d{d}-cost.png"
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -500,17 +399,13 @@ def plot_cost(problem: str, d: int, methods: list[str], out: Path) -> Path:
 
 def seed_runs(method: str, problem: str, d: int, tol: float) -> list[dict]:
     """The cached metrics of every seed of one case (failed runs included, marked ``failed``)."""
-    paths = [cache_path(method, problem, d, tol, s) for s in SEEDS]
-    return [json.loads(str(np.load(p)["metrics"])) for p in paths if p.exists()]
+    return [m for s in SEEDS if (m := store().read(problem, d, method, tol, s)) is not None]
 
 
 # Worst |error| / tolerance, binned on a diverging scale centred at 1 (ColorBrewer RdBu, safe for
 # colour-blind readers): blues pass, reds fail, darker is farther from the tolerance. The fail arm
 # starts a step darker than the pass arm, so a cell just over the tolerance never reads as one just
 # under it. A ratio equal to an edge falls in the lower bin, so exactly 1 passes.
-_RATIO_EDGES = (0.01, 0.1, 0.5, 1.0, 2.0, 10.0, 100.0)
-_RATIO_COLOURS = ("#2166ac", "#4393c3", "#92c5de", "#d1e5f0", "#f4a582", "#d6604d", "#b2182b", "#67001f")
-_RATIO_NAMES = ("<= 0.01", "0.01-0.1", "0.1-0.5", "0.5-1", "1-2", "2-10", "10-100", "> 100")
 _COST = matplotlib.colors.LinearSegmentedColormap.from_list("cost", ["#f4f3f0", "#3d3c3a"])  # one hue: darker costs more
 _INK, _MUTED, _ABSENT = "#1a1a19", "#6b6a66", "#f4f3f0"
 
@@ -542,14 +437,14 @@ def _overview_cell(method: str, problem: str, d: int, tol: float) -> dict | None
     if ok:
         cell |= {k: float(np.mean([m.get(k, 0.0) for m in ok]))
                  for k in ("evals", "leaves", "train_s", "predict_us", "refused_percent", "oracle_us")}  # fmt: skip
-        cell["max_ratio"] = max(m["max_ratio"] for m in ok)
+        cell["worst_ratio"] = max(m["worst_ratio"] for m in ok)
         cell["mean_ratio"] = float(np.mean([m["mean_error"] / m["atol"] for m in ok]))
-    cell["passed"] = bool(ok) and not cell["over"] and cell["max_ratio"] <= 1.0
+    cell["passed"] = bool(ok) and not cell["over"] and cell["worst_ratio"] <= 1.0
     return cell
 
 
 def _ratio_colour(r: float) -> str:
-    return _RATIO_COLOURS[int(np.searchsorted(_RATIO_EDGES, r, side="left"))]
+    return RATIO_COLOURS[int(np.searchsorted(RATIO_EDGES, r, side="left"))]
 
 
 def _ink_on(colour) -> str:
@@ -578,14 +473,14 @@ def _overview_grid(ax, problems, tols, methods, cells, fill, text, title, subtit
                 if c is None:
                     ax.add_patch(box(x, ri, fc="none", ec="#cfcec8", lw=0.7, ls=":"))
                     continue
-                colour = fill(c) if "max_ratio" in c else "#d9d8d3"
+                colour = fill(c) if "worst_ratio" in c else "#d9d8d3"
                 ax.add_patch(box(x, ri, fc=colour, lw=0))
                 if c["over"]:
                     ax.add_patch(box(x, ri, fc="none", ec="#8f8e89", lw=0, hatch="///", hatch_linewidth=0.6))
                 best = mark_best and c.get("best")
                 if best:
                     ax.add_patch(box(x, ri, fc="none", ec=_INK, lw=1.8, zorder=3))
-                ax.text(x + 0.5, ri + 0.5, text(c) if "max_ratio" in c else "over", ha="center", va="center", fontsize=7,
+                ax.text(x + 0.5, ri + 0.5, text(c) if "worst_ratio" in c else "over", ha="center", va="center", fontsize=7,
                         color=_ink_on(colour), linespacing=1.1, fontweight="bold" if best else "normal")  # fmt: skip
     n = len(problems)
     for k, (label, values) in enumerate(extra_rows):
@@ -649,7 +544,7 @@ def plot_overview(d: int, out: Path, vector: bool = False) -> list[Path]:
         for c in held:
             c["best"] = c["evals"] == min(h["evals"] for h in held)
     ranks = "/".join(map(str, sorted(set().union(*(c["ranks"] for c in cells.values())))))
-    where = f"{setup()}, {ranks} ranks, {len(SEEDS)} seeds" + ("; components scaled to max |f_c| = 1" if vector else "")
+    where = f"{registry.setup()}, {ranks} ranks, {len(SEEDS)} seeds" + ("; components scaled to max |f_c| = 1" if vector else "")
     whose = "component's " if vector else ""
     grid_w = len(tols) * (len(methods) + 0.7)  # data units across one panel
     stem = f"overview-vector-d{d}" if vector else f"overview-d{d}"
@@ -661,8 +556,8 @@ def plot_overview(d: int, out: Path, vector: bool = False) -> list[Path]:
         held, best = summary[0][1].get((t, m), "0/0").split("/"), summary[1][1].get((t, m), "0")
         summary[0][1][t, m] = f"{int(held[0]) + c['passed']}/{int(held[1]) + 1}"
         summary[1][1][t, m] = str(int(best) + bool(c.get("best")))
-    col = _overview_grid(ax, problems, tols, methods, cells, lambda c: _ratio_colour(c["max_ratio"]),
-                         lambda c: f"{_compact(c['evals'], count=True)}\n{_compact(c['max_ratio'])}",
+    col = _overview_grid(ax, problems, tols, methods, cells, lambda c: _ratio_colour(c["worst_ratio"]),
+                         lambda c: f"{_compact(c['evals'], count=True)}\n{_compact(c['worst_ratio'])}",
                          f"d = {d}{', vector-valued problems' if vector else ''}: which methods hold the tolerance, and at what cost",
                          f"Colour: the worst {whose}|error| / tolerance over the test set (the worst seed): blue holds, red exceeds.\n"
                          f"Top number: oracle evaluations (seed mean); bottom: the worst {whose}|error| / tolerance. {where}.",
@@ -670,8 +565,8 @@ def plot_overview(d: int, out: Path, vector: bool = False) -> list[Path]:
     for (m, pr, t), c in cells.items():
         if c.get("refused_percent", 0) > 0:
             ax.plot(col(tols.index(t), methods.index(m)) + 0.83, problems.index(pr) + 0.22, "o", ms=2.6, color=_ink_on(
-                _ratio_colour(c["max_ratio"])), mew=0, zorder=4)  # fmt: skip
-    handles = [matplotlib.patches.Patch(fc=c, label=n) for c, n in zip(_RATIO_COLOURS, _RATIO_NAMES, strict=True)]
+                _ratio_colour(c["worst_ratio"])), mew=0, zorder=4)  # fmt: skip
+    handles = [matplotlib.patches.Patch(fc=c, label=n) for c, n in zip(RATIO_COLOURS, RATIO_NAMES, strict=True)]
     handles += [matplotlib.patches.Patch(fc="none", ec=_INK, lw=1.8, label="cheapest that holds"),
                 matplotlib.patches.Patch(fc="#d9d8d3", hatch="///", ec="#8f8e89", lw=0, label="a seed over the evaluation budget"),
                 matplotlib.patches.Patch(fc="none", ec="#b5b4ae", ls=":", label="not run"),
@@ -696,7 +591,7 @@ def plot_overview(d: int, out: Path, vector: bool = False) -> list[Path]:
         if key == "mean_ratio":
             fill, note = (lambda c: _ratio_colour(c["mean_ratio"])), "Colour: the scale of the accuracy overview (blue below 1)."
         else:
-            vals = [c[key] for c in cells.values() if "max_ratio" in c and c[key] > 0]
+            vals = [c[key] for c in cells.values() if "worst_ratio" in c and c[key] > 0]
             norm = matplotlib.colors.LogNorm(min(vals), max(vals)) if vals else None
             fill = lambda c, key=key, norm=norm: _COST(norm(max(c[key], norm.vmin)) if norm is not None else 0.0)  # noqa: E731
             note = "Seed means; darker costs more (log scale)."
@@ -720,18 +615,18 @@ def write_summary(d: int, methods: list[str], out: Path) -> Path:
     for problem in FUNCTIONS:
         for tol in tolerances(d):
             for method in methods:
-                ms = [json.loads(str(np.load(cache_path(method, problem, d, tol, s))["metrics"])) for s in SEEDS
-                      if cache_path(method, problem, d, tol, s).exists()]  # fmt: skip
+                ms = [store().read(problem, d, method, tol, s) for s in SEEDS
+                      if store().exists(problem, d, method, tol, s)]  # fmt: skip
                 if not ms:
                     continue
                 if all("failed" in m for m in ms):
                     lines.append(f"| {problem} | {tol:g} | {METHODS[method][0]} | {ms[0].get('ranks', 1)} | | over budget | | | | | | | |")
                     continue
                 ms = [m for m in ms if "failed" not in m]
-                a = {k: np.mean([m.get(k, 0.0) for m in ms]) for k in ("leaves", "evals", "max_ratio", "within_percent",
+                a = {k: np.mean([m.get(k, 0.0) for m in ms]) for k in ("leaves", "evals", "worst_ratio", "within_percent",
                                                                         "refused_percent", "mean_error", "train_s", "predict_us")}  # fmt: skip
                 lines.append(f"| {problem} | {tol:g} | {METHODS[method][0]} | {ms[0].get('ranks', 1)} | {a['leaves']:.0f} | "
-                             f"{a['evals']:,.0f} | {a['max_ratio']:.3g} | {max(m['max_ratio'] for m in ms):.3g} | "
+                             f"{a['evals']:,.0f} | {a['worst_ratio']:.3g} | {max(m['worst_ratio'] for m in ms):.3g} | "
                              f"{a['within_percent']:.2f} | {a['refused_percent']:.2f} | {a['mean_error']:.2e} | "
                              f"{a['train_s']:.2f} | {a['predict_us']:.2f} |")  # fmt: skip
     path = out / f"summary-d{d}.md"
@@ -752,18 +647,9 @@ def main(argv=None) -> None:
     parser.add_argument("--replot", action="store_true", help="only redraw the problems' plots and the overview from the cache")
     parser.add_argument("--setup", default=None, help="with --overview or --replot: the cached setup to draw, e.g. cpu-8rank")
     a = parser.parse_args(argv)
-    import src.structure.bench.registry  # noqa: F401  (registers the new schemes)
-    from src.structure.bench import (
-        functions as module,  # run as __main__, the schemes registered in the imported module
-    )
-
-    METHODS.update(module.METHODS)
-
     if a.overview or a.replot:
-        global SETUP
-        SETUP = module.SETUP = a.setup
-    out = OUT / setup()
-    out.mkdir(parents=True, exist_ok=True)
+        registry.SETUP = a.setup
+    out = store().figures
     if a.overview:
         print(plot_overview(a.d, out), plot_overview(a.d, out, vector=True))
         return
@@ -786,7 +672,7 @@ def plot_problem(problem: str, d: int, tols, out: Path) -> None:
     methods = [m for m in METHODS if any(seed_runs(m, problem, d, t) for t in tols)]
     plot_cost(problem, d, methods, out)
     for tol in tols:  # the maps and views draw seed 1's predictions
-        drawn = [m for m in methods if cache_path(m, problem, d, tol, SEEDS[0]).exists()]
+        drawn = [m for m in methods if store().exists(problem, d, m, tol, SEEDS[0])]
         if drawn and d == 2:
             plot_maps(problem, drawn, tol, out)
         elif drawn:

@@ -21,6 +21,6 @@ def test_sparsegrids_check_set_is_sobol_points_plus_the_corners():
     lo, hi = np.array([-1.0, 0.0, 2.0]), np.array([1.0, 1.0, 3.0])
     X = base.check_points(lo, hi, 16, seed=0, corners=True)
     assert X.shape == (16 + 8, 3)
-    assert np.all((X >= lo) & (X <= hi))
+    assert np.all((lo <= X) & (hi >= X))
     corners = {tuple(c) for c in X[16:]}
     assert (-1.0, 0.0, 2.0) in corners and (1.0, 1.0, 3.0) in corners
