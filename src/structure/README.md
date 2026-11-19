@@ -12,16 +12,26 @@ are in [docs/SURROGATE_RESEARCH.md](../../docs/SURROGATE_RESEARCH.md).
 
 ## Files
 
+Three packages: the schemes, the problems they are judged on, and the benches that run them. `cache/` and
+`output/` (not committed) sit beside them.
+
 | File | Contents |
 |---|---|
-| `problems.py` | the problems (`PROBLEMS`), the tolerances per dimension (`TOLERANCES`), the test sets: a 300 x 300 grid in 2-D, 50,000 fixed uniform points above |
-| `bench.py` | runs, caches and plots every method (`METHODS`): `afinni`, `art`, `art_quad` (ART with quadratic leaves) and the registered schemes |
-| `schemes.py` | registers the new schemes; under MPI, rank 0 runs a scheme and spreads each round's oracle calls over every rank |
-| `chebtree.py` | **ChebTree**: an adaptive tree of tensor Chebyshev boxes, refined by the decay of their coefficients: per-axis geometric and algebraic decay fits give the error estimate, the degree where the decay is exponential and a split where it is not; a few check points per box, seeded by its locational code, catch aliasing; trailing coefficients are chopped after acceptance. Also `build_rotated`, ChebTree in active-subspace coordinates |
-| `chebtt.py` | **ChebTT**: a Chebyshev interpolant in tensor-train form, built by TT-cross (maxvol fibres); cost linear in d; accepted on a Sobol set, free checks at earlier sweeps' grid points and a next-nested-grid look-ahead through the worst point; degrees doubled where an axis's upper degrees still matter, else rank raised. Vector outputs (`build_vector`): one train per output on one shared cache of f; with `rotate`, outputs that are ridges of shared oblique coordinates are trained in the eigenvectors of their pullback metric (bench method `chebtt_metric`, ChebTT-M) |
-| `ode/` | ODE systems as oracles of their step map, one state at a time with each system's integrator (Radau for stiff, RK45 for non-stiff): `system.py` (`System`, the solver pool, trajectories of visited states), `chemistry.py` (Robertson, a nine-species primordial H/He/H2 network with rates from Grackle, HIRES, POLLU, Chemical Akzo Nobel), `reaction_diffusion.py` (Brusselator, Allen-Cahn, Fisher-KPP on n grid points), `lorenz.py` (Lorenz-96 at F = 1); `bench.py` trains and judges surrogates on held-out trajectories (one-step and rollout errors, speedup over a named baseline), `fill.py` climbs the ladder under a time limit; outputs in `output/ode/` (overviews per regime: `overview-{stiff,nonstiff}-{loose,tight}.png`) |
-| `kernel.py` | **MetricKernel**: greedy Matern-5/2 kernel interpolation in a metric learned from the model's gradients (a prototype that loses to ChebTT above 2-D) |
-| `sparsegrid.py` | **SparseCheb**: a dimension-adaptive sparse Chebyshev grid (Smolyak, Gerstner-Griebel), stopped by its surpluses and a Sobol-plus-corners check at half the tolerance; a failed check refines every active index once (a one-step look-ahead) |
+| **`schemes/`** | the surrogate schemes, NumPy only, each usable without the bench |
+| `schemes/chebtree.py` | **ChebTree**: an adaptive tree of tensor Chebyshev boxes, refined by the decay of their coefficients: per-axis geometric and algebraic decay fits give the error estimate, the degree where the decay is exponential and a split where it is not; a few check points per box, seeded by its locational code, catch aliasing; trailing coefficients are chopped after acceptance. Also `build_rotated`, ChebTree in active-subspace coordinates |
+| `schemes/chebtt.py` | **ChebTT**: a Chebyshev interpolant in tensor-train form, built by TT-cross (maxvol fibres); cost linear in d; accepted on a Sobol set, free checks at earlier sweeps' grid points and a next-nested-grid look-ahead through the worst point; degrees doubled where an axis's upper degrees still matter, else rank raised. Vector outputs (`build_vector`): one train per output on one shared cache of f; with `rotate`, outputs that are ridges of shared oblique coordinates are trained in the eigenvectors of their pullback metric (bench method `chebtt_metric`, ChebTT-M) |
+| `schemes/chebtt_adaptive.py` | **ChebTT-A**: ChebTT with piecewise axes, plus one interface term where f jumps across an oblique or curved interface or has a sharp front |
+| `schemes/kernel.py` | **MetricKernel**: greedy Matern-5/2 kernel interpolation in a metric learned from the model's gradients (a prototype that loses to ChebTT above 2-D) |
+| `schemes/sparsegrid.py` | **SparseCheb**: a dimension-adaptive sparse Chebyshev grid (Smolyak, Gerstner-Griebel), stopped by its surpluses and a Sobol-plus-corners check at half the tolerance; a failed check refines every active index once (a one-step look-ahead) |
+| `schemes/tabulation.py` | **SlowTable**: in-situ tabulation of a step map over the states a simulation visits (ISAT's design: linear records in ellipsoids of accuracy) |
+| **`problems/`** | the oracles |
+| `problems/functions.py` | the problems (`PROBLEMS`), the tolerances per dimension (`TOLERANCES`), the test sets: a 300 x 300 grid in 2-D, 50,000 fixed uniform points above |
+| `problems/ode/` | ODE systems as oracles of their step map, one state at a time with each system's integrator (Radau for stiff, RK45 for non-stiff): `system.py` (`System`, the solver pool, trajectories of visited states), `chemistry.py` (Robertson, a nine-species primordial H/He/H2 network with rates from Grackle, HIRES, POLLU, Chemical Akzo Nobel), `reaction_diffusion.py` (Brusselator, Allen-Cahn, Fisher-KPP on n grid points), `lorenz.py` (Lorenz-96 at F = 1), `classic.py` (Van der Pol, the Oregonator, viscous Burgers), `astro.py` (networks from KIDApy, when `libs/KIDApy` is present) |
+| **`bench/`** | running, caching, judging and plotting |
+| `bench/functions.py` | the box bench: runs, caches and plots every method (`METHODS`): `afinni`, `art`, `art_quad` (ART with quadratic leaves) and the registered schemes |
+| `bench/registry.py` | registers the new schemes; under MPI, rank 0 runs a scheme and spreads each round's oracle calls over every rank |
+| `bench/functions_fill.py` | fills the box bench's grid, loosest tolerance first, each case under a wall-time limit; tighter tolerances are skipped after a failure |
+| `bench/ode.py`, `bench/ode_fill.py` | the ODE bench trains and judges surrogates on held-out trajectories (one-step and rollout errors, speedup over a named baseline), `ode_fill.py` climbs the ladder under a time limit; outputs in `output/ode/` (overviews per regime: `overview-{stiff,nonstiff}-{loose,tight}.png`) |
 
 Problems: `rosenbrock`, `gaussian`, `wave`, `front` (a sharp tanh front on a sphere); the Genz
 families `genz_oscillatory`, `genz_product_peak`, `genz_corner_peak`, `genz_gaussian`,
@@ -37,7 +47,7 @@ stealing; the schemes spread their oracle calls):
 
 ```bash
 SURROGATE_DEVICE=cpu SURROGATE_MPI=on OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
-  PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin/mpiexec -n 8 .venv/bin/python -m src.structure.bench \
+  PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .venv/bin/mpiexec -n 8 .venv/bin/python -m src.structure.bench.functions \
   --problems rosenbrock,gaussian --d 2 --methods afinni,art,art_quad,chebtree,sparsecheb --plot </dev/null
 ```
 

@@ -1,7 +1,7 @@
 """
 Fill the bench's grid: run every (method, problem, d, tolerance) whose runs train in reasonable time.
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python -m src.structure.fill --d 2,3,5,10,20
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python -m src.structure.bench.functions_fill --d 2,3,5,10,20
 
 Cases go from the loosest tolerance to the tightest, since the cost only grows as the tolerance
 tightens. Seed 1 runs first, as its own 8-rank job under ``--limit`` seconds of wall time; if it
@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.structure import bench
+from src.structure.bench import functions as bench
 from src.structure.problems import PROBLEMS, VECTOR_PROBLEMS
 
 FAST = ("rosenbrock", "genz_oscillatory", "genz_corner_peak", "genz_product_peak", "genz_gaussian", "lotka_volterra")
@@ -42,9 +42,9 @@ def allowed(method: str, d: int) -> bool:
 
 def _bench(args: list[str], limit: float, ranks: int, log) -> bool:
     """One bench job; False when it ran past ``limit`` seconds and was killed with its whole process group."""
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[3]
     env = {**os.environ, **ENV, "PATH": f"{root / '.venv' / 'bin'}:{os.environ['PATH']}"}
-    cmd = [str(root / ".venv/bin/mpiexec"), "-n", str(ranks), str(root / ".venv/bin/python"), "-m", "src.structure.bench", *args]
+    cmd = [str(root / ".venv/bin/mpiexec"), "-n", str(ranks), str(root / ".venv/bin/python"), "-m", "src.structure.bench.functions", *args]
     proc = subprocess.Popen(cmd, cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
     try:
         proc.wait(timeout=limit)
@@ -73,7 +73,7 @@ def main(argv=None) -> None:
     parser.add_argument("--limit", type=float, default=90.0, help="wall seconds per run, start-up included")
     parser.add_argument("--ranks", type=int, default=8)
     a = parser.parse_args(argv)
-    import src.structure.schemes  # noqa: F401  (registers the schemes, so bench.METHODS knows them)
+    import src.structure.bench.registry  # noqa: F401  (registers the schemes, so bench.METHODS knows them)
 
     bench.SETUP = f"cpu-{a.ranks}rank"
     if a.problems:
@@ -119,8 +119,8 @@ def main(argv=None) -> None:
                                     if not bench.cache_path(method, problem, d, tol, s).exists():
                                         _record_time_limit(method, problem, d, tol, s, a.limit, a.ranks)
                 if ran:
-                    subprocess.run([sys.executable, "-m", "src.structure.bench", "--replot", "--setup", bench.SETUP, "--d", str(d),
-                                    "--problems", problem], cwd=Path(__file__).resolve().parents[2],
+                    subprocess.run([sys.executable, "-m", "src.structure.bench.functions", "--replot", "--setup", bench.SETUP, "--d", str(d),
+                                    "--problems", problem], cwd=Path(__file__).resolve().parents[3],
                                    env={**os.environ, "SURROGATE_MPI": "off"}, stdout=log, stderr=log, check=False)  # fmt: skip
 
 

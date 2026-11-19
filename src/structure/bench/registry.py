@@ -1,5 +1,5 @@
 """
-New surrogate schemes, registered with ``src.structure.bench``.
+New surrogate schemes, registered with ``src.structure.bench.functions``.
 
 ChebTree and SparseCheb gather each refinement round's new points into one oracle call. Under
 ``mpiexec`` that call is distributed: rank 0 runs the scheme and scatters each batch of points over
@@ -12,8 +12,8 @@ import numpy as np
 
 from src import to_host, xp
 from src.infra.backend import MPI
-from src.structure import chebtree, chebtt, chebtt_adaptive, kernel, sparsegrid
-from src.structure.bench import Model, register
+from src.structure.bench.functions import Model, register
+from src.structure.schemes import chebtree, chebtt, chebtt_adaptive, kernel, sparsegrid
 
 _EVALUATE, _STOP = "evaluate", "stop"
 

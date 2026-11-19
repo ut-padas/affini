@@ -282,7 +282,7 @@ with an output index under "Low-rank tensors".
 | VII-31 | Goswami, Jagtap, Babaee, Susi, Karniadakis 2023, *Learning stiff chemical kinetics using extended deep neural operators*, https://arxiv.org/abs/2302.12645 | abstract-only | DeepONet variants as propagators for ROBER, POLLU, a syngas model and a CO/H2 jet flame; the abstract names no error metric | Review VII |
 | VII-32 | Valorani 2026, *Learning stiff dynamical operators: scaling, fast-slow excitation, and eigen-consistent neural models*, https://arxiv.org/abs/2601.01632 (withdrawn by arXiv, v3) | abstract-only | Stiffness-aware scaling, fast-direction excitation and Jacobian diagnostics; reports the error of the fast eigenvalues on Davis-Skodje | Review VII (nearest to a Jacobian-spectrum metric; withdrawn, do not build on it) |
 
-The flow maps of the bench (Lorenz-96, Lotka-Volterra) are defined in `src/structure/problems.py` and
+The flow maps of the bench (Lorenz-96, Lotka-Volterra) are defined in `src/structure/problems/functions.py` and
 cite no work.
 
 ## Stiffness, error propagation and predictability

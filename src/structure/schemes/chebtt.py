@@ -57,7 +57,7 @@ from scipy.fft import dct
 from scipy.linalg import qr, solve
 from scipy.stats import qmc
 
-from src.structure.chebtree import cheb_points
+from src.structure.schemes.chebtree import cheb_points
 
 LATTICE = 1 << 12  # the finest degree any axis may reach (a power of two; degrees are 8 * 2^m)
 

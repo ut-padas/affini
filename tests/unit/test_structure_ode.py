@@ -1,11 +1,11 @@
-"""ODE oracles (src/structure/ode): rates, Jacobians, conservation, integrators, regimes and the ladder."""
+"""ODE oracles (src/structure/problems/ode): rates, Jacobians, conservation, integrators, regimes and the ladder."""
 
 import json
 
 import numpy as np
 
-from src.structure import ode
-from src.structure.ode import chemistry as c
+from src.structure.problems import ode
+from src.structure.problems.ode import chemistry as c
 
 
 def _primordial_state(nH=1e3, T=1000.0, xe=1e-4, xh2=1e-6):
@@ -78,7 +78,7 @@ def test_a_ladder_step_stays_in_its_coordinates_and_moves_towards_the_stable_sta
 
 
 def test_invariants_are_found_and_the_projection_restores_them_exactly():
-    from src.structure.ode import bench as cb
+    from src.structure.bench import ode as cb
 
     p = cb.PROBLEMS["robertson"]
     Y = c.robertson_initial(30, 4)
@@ -112,7 +112,7 @@ def test_lorenz96_has_an_analytic_jacobian_and_an_explicit_step_that_matches_a_t
 
 
 def test_problems_declare_a_regime_and_their_baseline_follows_their_integrator():
-    from src.structure.ode import bench as cb
+    from src.structure.bench import ode as cb
 
     assert cb.PROBLEMS["lorenz96_d10"].regime == "nonstiff" and cb.PROBLEMS["lorenz96_d10"].baseline == "scipy-rk45-cpu1"
     assert cb.PROBLEMS["bruss_d10"].regime == "stiff" and cb.PROBLEMS["robertson"].baseline == "scipy-radau-cpu1"
@@ -120,7 +120,7 @@ def test_problems_declare_a_regime_and_their_baseline_follows_their_integrator()
 
 
 def test_the_fill_runs_the_first_families_before_the_rest_each_by_dimension():
-    from src.structure.ode.fill import family, ladder
+    from src.structure.bench.ode_fill import family, ladder
 
     names = ladder(20, first=("lorenz96",))
     k = sum(family(n) == "lorenz96" for n in names)
@@ -130,14 +130,14 @@ def test_the_fill_runs_the_first_families_before_the_rest_each_by_dimension():
 
 
 def test_a_row_label_names_the_parameters_that_set_the_regime():
-    from src.structure.ode import bench as cb
+    from src.structure.bench import ode as cb
 
     assert cb._row_label("lorenz96_d10").startswith("lorenz96_d10 (10; F = 1")
     assert cb._row_label("bruss_d10").startswith("bruss_d10 (10")
 
 
 def test_a_record_is_written_whole_and_leaves_no_temporary_file(tmp_path):
-    from src.structure.ode import bench as cb
+    from src.structure.bench import ode as cb
 
     path = tmp_path / "case" / "chebtt_box_tol0.01.json"
     cb.write_record(path, {"worst": 0.5})
@@ -146,8 +146,8 @@ def test_a_record_is_written_whole_and_leaves_no_temporary_file(tmp_path):
 
 
 def test_the_fill_can_run_only_the_loosest_tolerance_of_one_regime_from_a_dimension(monkeypatch, tmp_path):
-    from src.structure.ode import bench as cb
-    from src.structure.ode import fill
+    from src.structure.bench import ode as cb
+    from src.structure.bench import ode_fill as fill
 
     cases = []
     monkeypatch.setattr(cb, "OUT", tmp_path)
@@ -161,3 +161,38 @@ def test_the_fill_can_run_only_the_loosest_tolerance_of_one_regime_from_a_dimens
     assert {args[5] for args in cases} == {"0.01"}
     assert all(len(cb.PROBLEMS[n].system.components) >= 10 and cb.PROBLEMS[n].regime == "stiff" for n in names)
     assert "primordial" in names and "pollu" in names and "bruss_d20" not in names  # stuck at bruss_d10: d20 skipped
+
+
+def test_the_classic_problems_have_analytic_jacobians_and_are_registered_as_stiff():
+    from src.structure.bench import ode as cb
+
+    cases = [(ode.VAN_DER_POL, ode.van_der_pol_initial(1, 3)[0]), (ode.OREGONATOR, ode.oregonator_initial(1, 3)[0])]
+    cases += [(ode.burgers(n), ode.burgers_initial(n)(1, 3)[0]) for n in (10, 20)]
+    for net, y in cases:
+        h = 1e-6 * np.maximum(np.abs(y), 1.0)
+        Jn = np.stack([(net.rhs(y + h[i] * e) - net.rhs(y - h[i] * e)) / (2 * h[i]) for i, e in enumerate(np.eye(len(y)))], axis=1)
+        assert np.max(np.abs(net.jac(y) - Jn)) <= 1e-6 * np.max(np.abs(net.jac(y))), net.name
+    assert cb.PROBLEMS["van_der_pol"].regime == "stiff" and cb.PROBLEMS["burgers_d20"].baseline == "scipy-radau-cpu1"
+    assert not cb.PROBLEMS["van_der_pol"].system.log and cb.PROBLEMS["oregonator"].system.log
+
+
+def test_a_held_environment_follows_its_path_and_the_rollout_takes_it_from_the_trajectory(monkeypatch):
+    from src.structure.bench import ode as cb
+
+    sysm = ode.System("drift", ("x", "k"), lambda y: np.array([-y[1] * y[0], 0.0]), lambda y: np.array([[-y[1], -y[0]], [0.0, 0.0]]),
+                      log=False, held=1)
+    monkeypatch.setitem(ode.SYSTEMS, "drift", sysm)  # steps look systems up by name
+    path = np.array([[[1.0], [2.0], [3.0]]])
+    Z = ode.trajectories(sysm, np.array([[1.0, 1.0]]), 0.1, 2, held_path=path)
+    assert np.allclose(Z[0, :, 1], [1.0, 2.0, 3.0])  # the held input is the path's, step by step
+    assert np.isclose(Z[0, 1, 0], np.exp(-0.1)) and np.isclose(Z[0, 2, 0], np.exp(-0.1 - 0.2), rtol=1e-6)
+    p = cb.ODEProblem(sysm, 0.1, None, 2, 1, 1, (0.01,))
+
+    class Exact:
+        def predict(self, Q):
+            return sysm.coords_step(Q, 0.1) - Q
+
+        def refuses(self, Q):
+            return np.zeros(len(Q), dtype=bool)
+
+    assert cb.rollout(p, Exact(), Z)["rollout_worst"] < 1e-6  # the rollout uses the trajectory's held input

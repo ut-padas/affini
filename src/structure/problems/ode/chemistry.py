@@ -140,7 +140,7 @@ def mass_action(species, reactions, rate_of):
 
 
 _prim_rhs, _prim_jac = mass_action(PRIMORDIAL_SPECIES, PRIMORDIAL_REACTIONS, primordial_rates)
-PRIMORDIAL = System("primordial", PRIMORDIAL_SPECIES + ("T",), _prim_rhs, _prim_jac, rtol=1e-8, atol=1e-30)
+PRIMORDIAL = System("primordial", PRIMORDIAL_SPECIES + ("T",), _prim_rhs, _prim_jac, rtol=1e-8, atol=1e-30, held=1)
 
 
 # --- Standard stiff test problems -------------------------------------------------------------------

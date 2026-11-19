@@ -1,6 +1,6 @@
-"""The structure bench (src/structure/bench.py): where it caches what."""
+"""The structure bench (src/structure/bench/functions.py): where it caches what."""
 
-from src.structure import bench
+from src.structure.bench import functions as bench
 
 
 def test_slice_directions_are_cached_in_one_shared_directory(tmp_path, monkeypatch):

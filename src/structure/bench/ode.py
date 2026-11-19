@@ -1,7 +1,7 @@
 """
 The ODE bench: surrogates of a system's step map, trained and judged on visited states.
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python -m src.structure.ode.bench \\
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python -m src.structure.bench.ode \\
         --problems robertson --methods slowtable,chebtt_box --plot
 
 Each problem integrates training and held-out test trajectories once (cached in
@@ -51,7 +51,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
 
-from src.structure import chebtt, ode, tabulation  # noqa: E402
+from src.structure.problems import ode  # noqa: E402
+from src.structure.schemes import chebtt, tabulation  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]  # src/structure
 CACHE = ROOT / "cache" / "ode"
@@ -71,6 +72,7 @@ class ODEProblem:
     burn: float = 0.0  # trajectories start after this time, past the initial transient
     floor: float = 0.0  # components below this abundance are not scored (an error in dex of ~0 means nothing)
     regime: str = "stiff"  # a key of REGIMES: which overview the problem is shown in
+    held_path: object = None  # (n, seed, steps) -> (n, steps + 1, held): the held inputs along each trajectory, e.g. a tracer's environment
 
     @property
     def units(self) -> str:
@@ -85,12 +87,13 @@ class ODEProblem:
         return self.system.coords_step(Z, self.dt)
 
     def scored(self, Z_true: np.ndarray) -> np.ndarray:
-        """Which entries count in the error: abundances above ``floor`` (the held temperature never; every entry of a linear system)."""
+        """Which entries count in the error: abundances above ``floor`` (held inputs never; every other entry of a linear system)."""
         if not self.system.log:
-            return np.ones(Z_true.shape, dtype=bool)
-        mask = Z_true > (np.log10(self.floor) if self.floor > 0 else -np.inf)
-        if self.system.components[-1] == "T":
-            mask[..., -1] = False
+            mask = np.ones(Z_true.shape, dtype=bool)
+        else:
+            mask = Z_true > (np.log10(self.floor) if self.floor > 0 else -np.inf)
+        if self.system.held:
+            mask[..., -self.system.held :] = False
         return mask
 
 
@@ -111,10 +114,16 @@ PROBLEMS = {
     "hires": ODEProblem(ode.HIRES, 2.0, ode.hires_initial, 170, 100, 40, (0.01, 0.001), burn=5.0, floor=1e-12),
     "primordial": ODEProblem(ode.PRIMORDIAL, 1e4 * YEAR, _primordial_initial, 30, 60, 30, (0.01, 0.001), floor=1e-12),
     "pollu": ODEProblem(ode.POLLU, 1.0, ode.pollu_initial, 59, 100, 40, (0.01, 0.001), burn=1.0, floor=1e-12),
+    "van_der_pol": ODEProblem(ode.VAN_DER_POL, 0.05, ode.van_der_pol_initial, 40, 100, 40, (0.01, 0.001)),
+    "oregonator": ODEProblem(ode.OREGONATOR, 10.0, ode.oregonator_initial, 40, 100, 40, (0.01, 0.001)),
 }  # fmt: skip (in order of input dimension: 3, 5, 8, 10, 20)
-REGIMES = {"stiff": "Stiff systems", "nonstiff": "Non-stiff systems", "chaotic": "Chaotic systems"}
+if ode.NELSON is not None:  # KIDApy's Nelson network along driven tracers: 66.7 kyr hydro steps (KIDApy's example tracer)
+    PROBLEMS["nelson"] = ODEProblem(ode.NELSON, 1600.0e3 * ode.astro.YEAR / 24, ode.nelson_initial, 24, 60, 20, (0.01, 0.001),
+                                    burn=1.0e4 * ode.astro.YEAR, floor=1e-12, regime="longstep", held_path=ode.environment_path)  # fmt: skip
+REGIMES = {"stiff": "Stiff systems", "nonstiff": "Non-stiff systems", "chaotic": "Chaotic systems",
+           "longstep": "Long-step stiff systems (many solver steps per call, driven inputs)"}
 # The ladder: each family of ode.FAMILIES at every size, named <family>_d<input dimension>.
-_LADDER_STEP = {"bruss": (0.25, 40), "allen_cahn": (0.005, 40), "fisher_kpp": (0.01, 40), "lorenz96": (0.25, 40)}  # (dt, steps): 40 steps that still move
+_LADDER_STEP = {"bruss": (0.25, 40), "allen_cahn": (0.005, 40), "fisher_kpp": (0.01, 40), "lorenz96": (0.25, 40), "burgers": (0.05, 40)}  # (dt, steps): 40 steps that still move
 _LADDER_REGIME = {"lorenz96": "nonstiff"}  # the others: stiff
 for _family, (_make, _initial, _sizes) in ode.FAMILIES.items():
     for _n in _sizes:
@@ -142,7 +151,14 @@ BASELINES = {
         "note": "for non-stiff systems, where an implicit method's linear solves buy nothing; nfev gives a compiled solver's work",
     },
 }
-BASELINE_OF = {"Radau": "scipy-radau-cpu1", "RK45": "scipy-rk45-cpu1"}  # a network's integrator: its baseline
+BASELINES["scipy-bdf-cpu1"] = {
+    "label": "SciPy BDF, 1 CPU core, one state at a time",
+    "integrator": "scipy.integrate.solve_ivp(method='BDF'): variable-order BDF (1-5), analytic Jacobian",
+    "settings": "the system's rtol and atol (KIDApy networks: 1e-6 and 1e-24); one call per state and step",
+    "device": "CPU, 1 core (OPENBLAS_NUM_THREADS=1)",
+    "note": "the reference of the KIDApy networks; KIDApy itself runs BDF at rtol 1e-3 in scaled coordinates",
+}
+BASELINE_OF = {"Radau": "scipy-radau-cpu1", "RK45": "scipy-rk45-cpu1", "BDF": "scipy-bdf-cpu1"}  # a network's integrator: its baseline
 
 
 def write_record(path: Path, record: dict) -> None:
@@ -194,10 +210,12 @@ def data(name: str) -> tuple[np.ndarray, np.ndarray]:
         z = np.load(path)
         return z["train"], z["test"]
     p = PROBLEMS[name]
-    start = [p.initial(n, seed) for n, seed in ((p.n_train, 1), (p.n_test, 2))]
+    seeds = ((p.n_train, 1), (p.n_test, 2))
+    start = [p.initial(n, seed) for n, seed in seeds]
     if p.burn > 0:
         start = [p.system.step(Y, p.burn) for Y in start]
-    train, test = (ode.trajectories(p.system, Y, p.dt, p.steps) for Y in start)
+    paths = [p.held_path(n, seed, p.steps) if p.held_path else None for n, seed in seeds]
+    train, test = (ode.trajectories(p.system, Y, p.dt, p.steps, path) for Y, path in zip(start, paths, strict=True))
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, train=train, test=test)
     return train, test
@@ -260,8 +278,8 @@ def chebtt_box(p: ODEProblem, train: np.ndarray, atol: float, seed: int, oracle:
     lo, hi = state_box(visited(train))
     models = []
     for c in range(train.shape[2]):
-        if p.system.components[c] == "T":
-            models.append(None)  # the held temperature: increment 0
+        if c >= train.shape[2] - p.system.held:
+            models.append(None)  # a held input: increment 0
             continue
         models.append(chebtt.build(lambda X, c=c: (oracle(X) - X)[:, c], lo, hi, atol, seed=seed, max_evals=200_000, edges=edges))
     return BoxTT(models, lo, hi, oracle.evals)
@@ -274,27 +292,27 @@ def chebtt_smooth(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
 
 def chebtt_adaptive_box(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
     """ChebTT-A (``chebtt_adaptive``) per component on the states' bounding box: piecewise axes, and an interface term where one is found."""
-    from src.structure import chebtt_adaptive
+    from src.structure.schemes import chebtt_adaptive
 
     oracle = CachedOracle(p.step)
     lo, hi = state_box(visited(train))
-    models = [None if p.system.components[c] == "T" else
+    models = [None if c >= train.shape[2] - p.system.held else
               chebtt_adaptive.build(lambda X, c=c: (oracle(X) - X)[:, c], lo, hi, atol, seed=seed, max_evals=200_000)
               for c in range(train.shape[2])]  # fmt: skip
     return BoxTT(models, lo, hi, oracle.evals)
 
 
 class BoxMethod(BoxTT):
-    """A box-bench method (AFINNI or ART, ``src.structure.bench.METHODS``) of every component's increment on the states' bounding box."""
+    """A box-bench method (AFINNI or ART, ``src.structure.bench.functions.METHODS``) of every component's increment on the states' bounding box."""
 
-    def __init__(self, model, lo, hi, evals, outputs: int, held: bool):
+    def __init__(self, model, lo, hi, evals, outputs: int, held: int):
         super().__init__(model, lo, hi, evals)
         self.outputs, self.held = outputs, held
 
     def predict(self, Q):
         Q = np.clip(Q, self.lo, self.hi)
         out = np.asarray(self.models.predict(Q), dtype=np.float64).reshape(len(Q), self.outputs)
-        return np.concatenate([out, np.zeros((len(Q), 1))], axis=1) if self.held else out
+        return np.concatenate([out, np.zeros((len(Q), self.held))], axis=1) if self.held else out
 
 
 def box_method(name: str):
@@ -302,10 +320,10 @@ def box_method(name: str):
 
     def method(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
         from src import to_host, xp
-        from src.structure import bench as box_bench
+        from src.structure.bench import functions as box_bench
 
-        held = p.system.components[-1] == "T"
-        m = train.shape[2] - (1 if held else 0)
+        held = p.system.held
+        m = train.shape[2] - held
         lo, hi = state_box(visited(train))
         oracle = CachedOracle(p.step)
 
@@ -347,13 +365,13 @@ class BoxVectorTT(BoxTT):
     def predict(self, Q):
         Q = np.clip(Q, self.lo, self.hi)
         out = self.models.predict(Q)
-        return np.concatenate([out, np.zeros((len(Q), 1))], axis=1) if self.held else out
+        return np.concatenate([out, np.zeros((len(Q), self.held))], axis=1) if self.held else out
 
 
 def chebtt_metric(p: ODEProblem, train: np.ndarray, atol: float, seed: int):
     states = visited(train)
-    held = p.system.components[-1] == "T"  # the held temperature is an input only: its increment is 0
-    m = states.shape[1] - (1 if held else 0)
+    held = p.system.held  # held inputs: their increment is 0
+    m = states.shape[1] - held
     lo, hi = states.min(axis=0), states.max(axis=0)
     pad = 0.02 * np.maximum(hi - lo, 1e-3)
     lo, hi = lo - pad, hi + pad
@@ -384,7 +402,7 @@ def invariants_of(p: ODEProblem, train: np.ndarray) -> np.ndarray:
     """
     Z = visited(train)
     Z = Z[np.random.default_rng(0).choice(len(Z), min(600, len(Z)), replace=False)]
-    free = [i for i in range(Z.shape[1]) if p.system.components[i] != "T"]
+    free = list(range(Z.shape[1] - p.system.held))
     Y = 10.0**Z if p.system.log else Z
     F = np.array([np.asarray(p.system.rhs(y))[free] for y in Y])
     F = F / np.maximum(np.linalg.norm(F, axis=1, keepdims=True), 1e-300)
@@ -503,7 +521,10 @@ def rollout(p: ODEProblem, model, true: np.ndarray) -> dict:
     """
     Z = true[:, 0].copy()
     err, solved = [], []
+    h = p.system.held
     for k in range(true.shape[1] - 1):
+        if h:
+            Z[:, -h:] = true[:, k, -h:]  # held inputs (an environment) come from the simulation, not the surrogate
         r = np.asarray(model.refuses(Z), dtype=bool)
         nxt = Z + model.predict(Z)
         if r.any():
@@ -541,7 +562,7 @@ def dynamics(name: str) -> dict:
     _, test = data(name)
     true = test[:ROLLOUTS]  # the rollouts' own trajectories, so their errors and A_n refer to the same states
     n_steps, d = true.shape[1] - 1, true.shape[2]
-    free = [i for i in range(d) if p.system.components[i] != "T"]
+    free = list(range(d - p.system.held))
     h = 1e-5
     E = np.zeros((2 * len(free), d))
     for j, i in enumerate(free):
@@ -657,7 +678,7 @@ def plot_ladder() -> Path:
     colour per method, solid for the looser tolerance and dashed for the tighter; an x at the top of
     the error panels marks a case over the time limit or the evaluation budget.
     """
-    from src.structure.ode.fill import FIXED, family, ladder
+    from src.structure.bench.ode_fill import FIXED, family, ladder
 
     names = ladder(10**6)
     fams = [f for f in dict.fromkeys(family(n) for n in names) if f not in FIXED] + ["test set"]
@@ -739,7 +760,7 @@ def _row_label(n: str) -> str:
 
 def _regime_problems() -> dict[str, list[str]]:
     """Per regime (``REGIMES`` order), the ladder's problems with records, by input dimension; empty regimes left out."""
-    from src.structure.ode.fill import ladder
+    from src.structure.bench.ode_fill import ladder
 
     names = [n for n in ladder(10**6) if (CACHE / n).is_dir()]
     return {r: [n for n in names if PROBLEMS[n].regime == r] for r in REGIMES if any(PROBLEMS[n].regime == r for n in names)}

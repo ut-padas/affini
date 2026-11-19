@@ -36,22 +36,24 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
 ### 0.1 Where things are
 
 - Code: [`src/structure/`](../src/structure/README.md) (its README says how to run the bench).
-  - Box schemes, registered in `schemes.py`: `chebtt.py` (ChebTT: `build`, and `build_vector` for
-    several outputs), `chebtree.py` (ChebTree), `sparsegrid.py` (SparseCheb), `kernel.py`
-    (MetricKernel).
-  - `problems.py`: the scalar problems, the vector-valued ones (`VECTOR_PROBLEMS`) and `TOLERANCES`
+  - `schemes/`: `chebtt.py` (ChebTT: `build`, and `build_vector` for several outputs), `chebtt_adaptive.py`
+    (ChebTT-A), `chebtree.py` (ChebTree), `sparsegrid.py` (SparseCheb), `kernel.py` (MetricKernel),
+    `tabulation.py` (SlowTable).
+  - `problems/functions.py`: the scalar problems, the vector-valued ones (`VECTOR_PROBLEMS`) and `TOLERANCES`
     (2-D 0.1/0.01/0.001, 3-D 0.1/0.03/0.01, 5-D 0.1/0.05/0.02, 10-D and above 0.2/0.1/0.05).
-  - `bench.py` runs, caches and plots every method; `fill.py` drives it over the whole grid
-    (section 1.15): `python -m src.structure.fill --d 2,3,5,10,20 --limit 90`, with `--vector` for
-    the vector-valued problems.
-  - ODE systems: the package `ode/` (`system.py`: the `System` oracle; `chemistry.py`: Robertson,
+  - `problems/ode/`: the ODE systems (`system.py`: the `System` oracle; `chemistry.py`: Robertson,
     primordial H/He/H2, HIRES, POLLU, Akzo Nobel; `reaction_diffusion.py`: Brusselator, Allen-Cahn,
-    Fisher-KPP; `lorenz.py`: Lorenz-96 at F = 1), `tabulation.py` (SlowTable), `ode/bench.py` (the ODE
-    bench, section 1.12: `python -m src.structure.ode.bench --problems robertson --plot`) and
-    `ode/fill.py` (the ladder; `--first lorenz96` runs a family first). Each problem declares a regime
-    (stiff, non-stiff, chaotic): overviews per regime, `output/ode/overview-<regime>-{loose,tight}.png`,
-    and speedups over the integrator its system would be solved with (named baselines
-    `scipy-radau-cpu1`, `scipy-rk45-cpu1`).
+    Fisher-KPP; `lorenz.py`: Lorenz-96 at F = 1; `classic.py`: Van der Pol, the Oregonator, Burgers;
+    `astro.py`: KIDApy networks).
+  - `bench/functions.py` runs, caches and plots every method on the box problems (the schemes are
+    registered in `bench/registry.py`); `bench/functions_fill.py` drives it over the whole grid
+    (section 1.15): `python -m src.structure.bench.functions_fill --d 2,3,5,10,20 --limit 90`, with
+    `--vector` for the vector-valued problems.
+  - `bench/ode.py` is the ODE bench (section 1.12: `python -m src.structure.bench.ode --problems
+    robertson --plot`) and `bench/ode_fill.py` its ladder (`--first lorenz96` runs a family first).
+    Each problem declares a regime (stiff, non-stiff, chaotic): overviews per regime,
+    `output/ode/overview-<regime>-{loose,tight}.png`, and speedups over the integrator its system
+    would be solved with (named baselines `scipy-radau-cpu1`, `scipy-rk45-cpu1`).
   - Prefix every command with `SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=.` and use
     `.venv/bin/python` (the fill starts its own 8-rank `mpiexec` jobs).
 - Results (not committed): `src/structure/cache/cpu-8rank/<problem>_d<d>/<method>_tol<t>_s<seed>.npz`,
@@ -63,7 +65,7 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
   over a budget or the time limit) and `overview-d<d>-cost.png` (training and inference time,
   pieces, mean error); `summary-d<d>.md` has the seed means; then per problem `<problem>-d<d>-cost.png`
   and the maps (2-D) or slice and shadow views. The fill logs to `output/cpu-8rank/fill.log`.
-  `python -m src.structure.bench --replot --setup cpu-8rank --d <d> --problems ...` redraws them.
+  `python -m src.structure.bench.functions --replot --setup cpu-8rank --d <d> --problems ...` redraws them.
   ODE systems: trajectories in `cache/ode/<problem>.npz`, runs in
   `cache/ode/<problem>/<method>_tol<t>.json`, plots and `summary-ode.md` in `output/ode/`.
 - Literature: [LITERATURE.md](LITERATURE.md) (every work reviewed, IDs I-* to V-*); reviews I-V are
@@ -416,7 +418,7 @@ after Dirichlet-random initial conditions, central differences of the step map i
 singular values ~(1.3-1.7, 1.0, 1e-2-1e-4) at dt = 1e-3 and ~(1.2-1.7, 0.5-1.0, 1e-10) for every
 dt from 0.1 to 1e3. The fast direction collapses once dt exceeds the fast time scale.
 
-The primordial network (nine species, isothermal; `src/structure/ode/chemistry.py`), states relaxed for
+The primordial network (nine species, isothermal; `src/structure/problems/ode/chemistry.py`), states relaxed for
 1e5 yr from random ionisation and H2 fractions, central differences in log10 number densities:
 
 | n_H (cm^-3), T (K) | dt = 1e2 yr | dt = 1e4 yr | dt = 1e6 yr |
@@ -433,7 +435,7 @@ input dimension is the number of slow modes, which falls as dt grows.
 
 ### 1.12 The chemistry bench: one-step and rollout errors
 
-`src/structure/ode/bench.py` trains each surrogate of a network's step map (in log10 abundances, the
+`src/structure/bench/ode.py` trains each surrogate of a network's step map (in log10 abundances, the
 increment `Phi_dt(z) - z`) on training trajectories and judges it on held-out ones in two ways: the
 **one-step error** (a surrogate step from the true state against the solver's step: how well the
 visited states are covered) and the **rollout error** (20 test trajectories chained through the
@@ -534,7 +536,7 @@ seed 1; before compression):
 AFINNI is left out at d >= 10 for its memory (45 GB over 8 ranks on the 10-D wave, one rank 15 GB).
 
 Fixed rules for which method runs where ("baselines at one seed and the loosest tolerance from 10-D
-up") left holes and kept slow cases in by hand. They are replaced by `src/structure/fill.py`: every
+up") left holes and kept slow cases in by hand. They are replaced by `src/structure/bench/functions_fill.py`: every
 method, problem, dimension and tolerance, from the loosest tolerance to the tightest (the cost only
 grows as it tightens). Seed 1 runs first as its own 8-rank job under a 90 s wall-time limit (start-up
 included); the other seeds run only if it finished. A run over the limit is killed with its whole
@@ -1144,7 +1146,7 @@ check of every answer, which pays only if checking is cheaper than solving.
 Scope: builds on docs/SURROGATE_RESEARCH.md (refs I-*, II-*, III-* are used without repeating them).
 New references are IV-* (the IDs of docs/LITERATURE.md). Verification tags: **[v]** title/venue/claim checked against the paper or its
 abstract in this review; **[a]** checked against an abstract or summary only; **[r]** recalled, not checked.
-Numbers marked "measured" come from short runs of `src/structure/chebtree.py` as of the fibre-check commit.
+Numbers marked "measured" come from short runs of `src/structure/schemes/chebtree.py` as of the fibre-check commit.
 
 ### 5.0 Bottom line
 
@@ -1352,7 +1354,7 @@ No use of ISAT in astrochemistry turned up in this search either.
 
 Builds on docs/LITERATURE.md (I-* to IV-* cited by ID) and Review IV (section 5); new works are V-1 to V-49. Tags: **[v]**
 source read (full text, named sections, or code), **[a]** abstract or catalogue only, **[r]** recalled. "Measured"
-marks short runs made for the review (scripts not kept; the rates are in `src/structure/ode/chemistry.py`).
+marks short runs made for the review (scripts not kept; the rates are in `src/structure/problems/ode/chemistry.py`).
 
 ### 6.0 Bottom line (ranked by gain over cost)
 
@@ -1539,7 +1541,7 @@ refusal and fallback, and report the maximum apart from any conformal quantile.
 - *Genz continuous:* piecewise-Chebyshev cores with kink detection (§2.4) against SparseCheb; a kernel with Wendland
   C0 functions as a control.
 - *Lorenz-96 (F = 8, t = 0.5):* a full TT-SVD of the map sampled on a 9^5 grid (59k RK4 evaluations, vectorised in
-  `problems.py`) gives the true unfolding singular values, and so whether rank or degree is the obstacle (§5).
+  `problems/functions.py`) gives the true unfolding singular values, and so whether rank or degree is the obstacle (§5).
   Then train AFINNI and a kernel on attractor trajectories against the box.
 - *Lotka-Volterra:* TT in Hessian-rotated cells (§3.2), checking that no evaluation leaves the domain.
 
@@ -1589,7 +1591,7 @@ H−·H+, and k18 and k19 on H2+. Grackle's defaults are used: `CaseBRecombinati
 `h2_charge_exchange_rate = 1`, tiny = 1e-20 (`grackle_macros.h`). Units are cm³ s⁻¹ (two-body) and cm⁶ s⁻¹
 (three-body). T is in K; T_eV = T/11605; ln T_eV is the natural log. Most fits derive from Abel et al. 1997
 [V-43, a], whose model covers n < 1e4 cm⁻³ and 1 K < T < 1e8 K. Every row below was transcribed from the pinned
-source and evaluated (now `primordial_rates` in `src/structure/ode/chemistry.py`). As a check, k2(1e4 K) = 4.17e-13, the standard case-A value. **All
+source and evaluated (now `primordial_rates` in `src/structure/problems/ode/chemistry.py`). As a check, k2(1e4 K) = 4.17e-13, the standard case-A value. **All
 rows: verified against source.**
 
 | k | Reaction | k(T) (cgs) | Source lines |
@@ -2333,7 +2335,7 @@ worst trajectory); rho_40 = 0.56 (ChebTT box 0.001), 0.17 (ChebTT box 0.01), 0.0
 
 ## 10. Review VIII: piecewise and partitioned tensor trains for kinks, jumps and fronts
 
-Scope: ChebTT (`src/structure/chebtt.py`) fails on axis-aligned kinks (`genz_continuous`), axis-aligned
+Scope: ChebTT (`src/structure/schemes/chebtt.py`) fails on axis-aligned kinks (`genz_continuous`), axis-aligned
 jumps (`genz_discontinuous`), an oblique planar jump (`oblique_jump`), a spherical jump (`ball_jump`)
 and a sharp radial front (`front`). This review covers the literature for the two planned designs:
 piecewise univariate bases per axis (design 1, already under way in the working tree: `axis_edges`,

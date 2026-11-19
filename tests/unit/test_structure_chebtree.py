@@ -1,10 +1,10 @@
-"""ChebTree (src/structure/chebtree.py): its error estimate, check points, growth and chopping."""
+"""ChebTree (src/structure/schemes/chebtree.py): its error estimate, check points, growth and chopping."""
 
 import numpy as np
 import pytest
 
-from src.structure import chebtree
 from src.structure.problems import PROBLEMS
+from src.structure.schemes import chebtree
 
 
 def _worst_ratio(problem: str, tol: float) -> float:

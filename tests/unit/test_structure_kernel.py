@@ -1,8 +1,8 @@
-"""MetricKernel (src/structure/kernel.py): the learned metric and the greedy fit."""
+"""MetricKernel (src/structure/schemes/kernel.py): the learned metric and the greedy fit."""
 
 import numpy as np
 
-from src.structure import kernel
+from src.structure.schemes import kernel
 
 
 def test_the_learned_metric_aligns_with_a_ridge_and_meets_the_tolerance():

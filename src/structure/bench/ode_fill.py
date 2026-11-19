@@ -3,10 +3,10 @@ Climb the ODE ladder: every (method, problem, tolerance) of the ODE bench whose 
 reasonable time, smallest systems first.
 
     SURROGATE_DEVICE=cpu SURROGATE_MPI=off SURROGATE_ODE_WORKERS=12 PYTHONPATH=. \\
-        .venv/bin/python -m src.structure.ode.fill --limit 240
+        .venv/bin/python -m src.structure.bench.ode_fill --limit 240
 
 Problems go in order of input dimension (the families of ``--first`` before the rest): each family of ``ode.FAMILIES`` at every size, and the
-fixed-size test problems (Robertson, Akzo Nobel, HIRES, POLLU) at theirs. A problem's trajectories, the
+fixed-size test problems (Robertson, Van der Pol, Oregonator, Akzo Nobel, HIRES, primordial, POLLU) at theirs. A problem's trajectories, the
 solver's cost per step and its dynamics diagnostics are computed first, outside the time limit. Each case then runs as its own
 process under ``--limit`` seconds of wall time, tolerances from the loosest; one over the limit is
 recorded as failed (``failed``: the limit) and the tighter tolerances are skipped. A method that cannot
@@ -25,9 +25,10 @@ import sys
 import time
 from pathlib import Path
 
-from src.structure.ode import bench
+from src.structure.bench import ode as bench
 
-FIXED = {"robertson": "robertson", "chemakzo": "chemakzo", "hires": "hires", "primordial": "primordial", "pollu": "pollu"}  # problem: family
+FIXED = {"robertson": "robertson", "chemakzo": "chemakzo", "hires": "hires", "primordial": "primordial", "pollu": "pollu",
+         "van_der_pol": "van_der_pol", "oregonator": "oregonator", "nelson": "nelson"}  # problem: family
 
 
 def family(name: str) -> str:
@@ -51,13 +52,13 @@ def _redraw(name: str, previous: subprocess.Popen | None, log) -> subprocess.Pop
     """
     if previous is not None:
         previous.wait()
-    return subprocess.Popen([sys.executable, "-m", "src.structure.ode.bench", "--problems", name, "--redraw"], cwd=ROOT,
+    return subprocess.Popen([sys.executable, "-m", "src.structure.bench.ode", "--problems", name, "--redraw"], cwd=ROOT,
                             stdin=subprocess.DEVNULL, stdout=log, stderr=log)  # fmt: skip
 
 
 def _case(args: list[str], limit: float, log) -> bool:
     """One bench case in its own process group; False when it ran past ``limit`` seconds and was killed."""
-    proc = subprocess.Popen([sys.executable, "-m", "src.structure.ode.bench", *args], cwd=ROOT, stdin=subprocess.DEVNULL,
+    proc = subprocess.Popen([sys.executable, "-m", "src.structure.bench.ode", *args], cwd=ROOT, stdin=subprocess.DEVNULL,
                             stdout=log, stderr=log, start_new_session=True)  # fmt: skip
     try:
         proc.wait(timeout=limit)

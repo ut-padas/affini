@@ -2,7 +2,7 @@
 Run, cache and plot surrogate methods on the structure-discovery problems.
 
     SURROGATE_DEVICE=cpu SURROGATE_MPI=off OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \\
-        PYTHONPATH=. .venv/bin/python -m src.structure.bench --problems rosenbrock --d 2 --methods afinni,art,art_quad
+        PYTHONPATH=. .venv/bin/python -m src.structure.bench.functions --problems rosenbrock --d 2 --methods afinni,art,art_quad
 
 Every run (method, problem, d, tolerance, seed) is cached in ``src/structure/cache/<setup>`` as one
 ``.npz``: its metrics, and for seed 1 its predictions and leaf ids on the test set. A run is only
@@ -19,7 +19,7 @@ test points that needed the oracle.
 
 Under ``mpiexec`` (``SURROGATE_MPI=on``) the baselines train and predict collectively on every rank,
 with work stealing; the new schemes run on rank 0 and spread each round's oracle calls over every
-rank (``src.structure.schemes``). Rank 0 alone decides what is cached, scores and writes. Each run
+rank (``src.structure.bench.registry``). Rank 0 alone decides what is cached, scores and writes. Each run
 records its device and rank count, and the cache and ``output/`` hold one directory per setup
 (``setup``), so one comparison never mixes devices or rank counts.
 """
@@ -49,7 +49,7 @@ from src.infra.backend import MPI  # noqa: E402
 from src.structure.problems import GRID, PROBLEMS  # noqa: E402
 from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]  # src/structure: cache/ and output/ live there
 CACHE = ROOT / "cache"
 OUT = ROOT / "output"
 SEEDS = (1, 2, 3)
@@ -745,9 +745,9 @@ def main(argv=None) -> None:
     parser.add_argument("--replot", action="store_true", help="only redraw the problems' plots and the overview from the cache")
     parser.add_argument("--setup", default=None, help="with --overview or --replot: the cached setup to draw, e.g. cpu-8rank")
     a = parser.parse_args(argv)
-    import src.structure.schemes  # noqa: F401  (registers the new schemes)
-    from src.structure import (
-        bench as module,  # run as __main__, the schemes registered in the imported module
+    import src.structure.bench.registry  # noqa: F401  (registers the new schemes)
+    from src.structure.bench import (
+        functions as module,  # run as __main__, the schemes registered in the imported module
     )
 
     METHODS.update(module.METHODS)

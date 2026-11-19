@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from src.structure import chebtt
+from src.structure.schemes import chebtt
 
 
 def _features(Z: np.ndarray, kind: str) -> np.ndarray:

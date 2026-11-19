@@ -39,6 +39,8 @@ class System:
     of its step map; the Jacobian is passed only to an implicit one (an explicit one ignores it with a
     warning), and is still used by the dynamics diagnostics. ``params``: the parameter values that set the
     system's regime (Lorenz-96's forcing), printed beside its name in the plots; empty when none.
+    ``held``: how many trailing components are inputs only (their right-hand side is 0: a temperature or an
+    environment held over the step); they are not scored and a surrogate predicts no increment for them.
     """
 
     name: str
@@ -50,6 +52,7 @@ class System:
     log: bool = True
     method: str = "Radau"
     params: str = ""
+    held: int = 0
 
     def solve(self, y: np.ndarray, dt: float):
         """``solve_ivp`` of one state over dt with the system's integrator and tolerances."""
@@ -121,10 +124,19 @@ def _step_rows(name: str, Y: np.ndarray, dt: float) -> np.ndarray:
     return out
 
 
-def trajectories(system: System, Y0: np.ndarray, dt: float, steps: int) -> np.ndarray:
-    """(n, steps + 1, components) states of the trajectories from the rows of Y0 in the surrogates' coordinates, every dt."""
+def trajectories(system: System, Y0: np.ndarray, dt: float, steps: int, held_path: np.ndarray | None = None) -> np.ndarray:
+    """
+    (n, steps + 1, components) states of the trajectories from the rows of Y0 in the surrogates' coordinates,
+    every dt. ``held_path`` (n, steps + 1, held), in the system's own variables, sets the held components
+    before each step (an environment that changes between steps, as along a hydrodynamic tracer).
+    """
     Z = np.empty((len(Y0), steps + 1, len(system.components)))
     Z[:, 0] = system.coords(Y0)
+    h = system.held
     for k in range(steps):
+        if held_path is not None:
+            Z[:, k, -h:] = system.coords(held_path[:, k])
         Z[:, k + 1] = system.coords_step(Z[:, k], dt)
+    if held_path is not None:
+        Z[:, steps, -h:] = system.coords(held_path[:, steps])
     return Z
