@@ -246,6 +246,3 @@ models/
 
 # The benchmark's figures (src/benchmark; its runs are under results/)
 figures/benchmark/
-# The structure experiments' cache, kept until its migration to results/benchmark is confirmed
-src/structure/cache/
-src/structure/output/

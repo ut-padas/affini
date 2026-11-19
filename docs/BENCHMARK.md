@@ -93,4 +93,13 @@ SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python -m src.benc
 SURROGATE_DEVICE=cpu SURROGATE_MPI=off SURROGATE_ODE_WORKERS=12 PYTHONPATH=. .venv/bin/python -m src.benchmark.sweep step_maps --first lorenz96
 ```
 
-`python -m src.benchmark <functions|step_maps|sweep> ...` is the same entry point for all three.
+## The summary table
+
+`python -m src.benchmark table` reads the store and prints, per method and problem class, the cases it ran,
+held (worst error within the tolerance on every seed) and won (held with the fewest evaluations; ties count
+for each), with median evaluations and inference time over its held cases. `--write README.md` replaces the
+table in the README's "Choosing a method". A method with records older than the last change to its
+results (`RESULTS_CHANGED` in `src/benchmark/table.py`, one entry per deliberate numerical change) is
+marked stale; `python -m src.benchmark.sweep <suite> --since <that time>` runs those records again.
+
+`python -m src.benchmark <functions|step_maps|sweep|table> ...` is the same entry point for all four.

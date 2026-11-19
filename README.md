@@ -1,10 +1,19 @@
-# Adaptive surrogates of expensive functions: AFINNI and ART
+# Adaptive surrogates of expensive functions
 
-This repository builds fast surrogates of smooth, expensive functions from as few evaluations
-of the function as possible. It provides two approaches; both refine a set of local models
-(affine or quadratic) until each meets a tolerance, and differ in how they divide the input
-space and how a query finds its model. Choose one with `TrainingConfig(algorithm=...)`; both
-are trained and queried through one class, `AdaptiveSurrogate`.
+This repository builds fast surrogates of expensive functions from as few evaluations of the function as
+possible, in two families that share the problems, the benchmark and the infrastructure:
+
+- **The adaptive surrogate** (`AdaptiveSurrogate`, `src/surrogate/`): AFINNI and ART refine a set of
+  local models (affine or quadratic) until each meets a tolerance, on the refinement engine, on CPU or
+  GPU and across MPI ranks. They differ in how they divide the input space and how a query finds its
+  model; choose one with `TrainingConfig(algorithm=...)`.
+- **The schemes** (`src/schemes/`): global approximants (ChebTT, ChebTT-M and ChebTT-A, ChebTree,
+  SparseCheb, the hub expansion, MetricKernel, SlowTable) that sample the function where their own
+  error estimate asks and fit one model, aiming at the worst pointwise error within the tolerance. They
+  are NumPy on the CPU, standalone from the engine, and spread only their oracle calls over MPI ranks.
+  See [docs/SCHEMES.md](docs/SCHEMES.md).
+
+[Choosing a method](#choosing-a-method) compares them on the benchmark.
 
 ### AFINNI: adaptive affine nearest-neighbour interpolation
 
@@ -22,7 +31,7 @@ misses the tolerance is cut by an optimized plane. A query is routed down the tr
 every point of the domain has exactly one leaf. Suited to expensive functions: fewer
 evaluations for the same error, and a model that covers the whole domain.
 
-Both run on one **refinement engine** (`src/engine/`): the partition is refined breadth-first,
+AFINNI and ART run on one **refinement engine** (`src/engine/`): the partition is refined breadth-first,
 level by level, with the queued nodes kept in host memory and streamed to the CPU or GPU in
 batches, distributed across MPI ranks with work stealing. Local models, acceptance tests,
 devices, MPI, profiling, the live monitor and model files are shared.
@@ -111,8 +120,110 @@ ART needs its `domain` explicitly: it is what routing covers. Its settings (spli
 roots, sampling) are in `art=ARTSettings(...)`; see
 [ART in USAGE.md](docs/USAGE.md#art-adaptive-regression-trees).
 
+A scheme is one call, on host arrays: `build(f, lo, hi, atol, **settings)`, with `f` returning (N,) values
+(or (N, m) for a vector function), and optionally the oracle's Jacobian:
+
+```python
+from src.schemes import base, chebtt, hub
+
+g = lambda x: np.sin(3 * x[:, 0]) * np.cos(2 * x[:, 1]) + x[:, 0] ** 2  # host (N, d) -> (N,)
+model = chebtt.build(g, np.array([-1.0, -1.0]), np.array([1.0, 1.0]), atol=1e-2, seed=0)
+prediction = model.predict(X_query)
+print(model.evals, model.report.summary())  # evaluations, time per phase, rounds
+base.save(model, "chebtt-model.npz")  # base.load(...) predicts bit for bit as trained
+ridge = hub.build(g, np.array([-1.0, -1.0]), np.array([1.0, 1.0]), atol=1e-2, jacobian=None)  # or the oracle's (N, d) Jacobian
+```
+
 Run scripts from the repository root, as modules
 (`python -m examples.example01_rosenbrock_afinni`), so that `src` is importable.
+
+## Choosing a method
+
+The benchmark (`src/benchmark/`, [docs/BENCHMARK.md](docs/BENCHMARK.md)) judges every method by its
+worst error over the tolerance on a fixed test set, with the oracle evaluations it spent. What its
+records show so far, per method (counts from the table below; the hub expansion's from the iteration
+studies in [docs/SURROGATE_ITERATIONS.md](docs/SURROGATE_ITERATIONS.md), since it has no benchmark runs yet):
+
+| Method | Use it for | Strengths | Weaknesses |
+|---|---|---|---|
+| ChebTT | smooth and vector-valued functions with low-rank coupling, any d | holds 90 of 91 smooth and 93 of 98 vector cases, 30+ of them at d >= 10; inference 0.05-0.3 us | oblique or curved features cost rank; its kink and jump records predate its piecewise axes |
+| ChebTT-M | outputs that are ridges of shared oblique coordinates | wins 35 of 45 cases with many local features | the rotated box extends beyond the domain; on the axes it is ChebTT |
+| ChebTT-A | a jump across an oblique plane or a quadric, a sharp front | holds the oblique jump at all three tolerances (2-D, 1.7k evaluations), where ChebTT held 3 of 16 non-smooth cases | one interface only (a plane or a diagonal quadric); run on that one problem only |
+| SparseCheb | smooth functions of few interacting variables, low d | cheapest on smooth problems in 2-D and 3-D (25 of 42 wins) | inference 1-2 us, 23 us on jumps; not run above 3-D |
+| ChebTree | kinks, jumps and fronts in low d | holds all 10 kink, jump and front cases it ran | tensor grids: 2-3-D only; 17k median evaluations there |
+| Hub expansion | a few steep directions, weak dependence on the rest; uses Jacobians when given | 10-20-D latent-variable functions at 4-12k evaluations; a Jacobian about halves them | misses functions outside that class (Lorenz-96's state: 1.5 tol); no benchmark runs yet |
+| MetricKernel | 2-D smooth functions | few evaluations where it holds (median 257) | holds 10 of 21 smooth cases; run in 2-D only |
+| SlowTable | step maps queried on visited states (in-situ tabulation) | needs no box: tabulates the states a simulation visits | holds 9 of 20 stiff cases; inference 19 us; refuses what its ellipsoids miss |
+| ART | expensive functions where every query must route to a model; GPU, MPI | covers the whole domain; fewest evaluations on easy flow maps (median 81, affine leaves) | holds 13 (affine leaves) and 33 (quadratic) of about 280 function cases at max-norm tolerances |
+| AFINNI | training from a given sample; GPU, MPI with work stealing | trust regions flag queries outside the training data | holds 11 of 224 function cases at max-norm tolerances; 10^5 evaluations median |
+
+The benchmark's counts, from its store (`python -m src.benchmark table --write README.md` regenerates them):
+
+<!-- benchmark-table -->
+**Function suite (8 CPU ranks, 3 seeds)**
+
+| class | method | ran | held | won | held at d >= 10 | median evaluations (held) | median inference us (held) |
+|---|---|---|---|---|---|---|---|
+| smooth | ChebTT-M * | 91 | 90 | 49 | 30 | 917 | 0.14 |
+|  | ChebTT * | 91 | 90 | 32 | 30 | 1.1k | 0.087 |
+|  | SparseCheb | 42 | 42 | 25 | 0 | 337 | 1.3 |
+|  | ChebTree * | 42 | 42 | 11 | 0 | 757 | 0.19 |
+|  | ART, quadratic leaves | 91 | 10 | 2 | 9 | 4.6k | 0.43 |
+|  | MetricKernel | 21 | 10 | 2 | 0 | 257 | 1.4 |
+|  | AFINNI | 63 | 2 | 0 | 0 | 110k | 0.43 |
+|  | ART, affine leaves | 90 | 0 | 0 | 0 | - | - |
+| many local features | ChebTT-M * | 45 | 45 | 38 | 0 | 1.7k | 0.33 |
+|  | SparseCheb | 9 | 9 | 4 | 0 | 433 | 2.5 |
+|  | ChebTT * | 45 | 45 | 3 | 0 | 2.2k | 0.29 |
+|  | ChebTree * | 9 | 9 | 3 | 0 | 1.3k | 0.15 |
+|  | AFINNI | 38 | 0 | 0 | 0 | - | - |
+|  | ART, affine leaves | 37 | 0 | 0 | 0 | - | - |
+|  | ART, quadratic leaves | 37 | 0 | 0 | 0 | - | - |
+| kinks, jumps, fronts | ChebTree * | 10 | 10 | 10 | 0 | 17k | 0.21 |
+|  | ChebTT-A * | 3 | 3 | 3 | 0 | 1.7k | 0.24 |
+|  | ChebTT * | 16 | 3 | 1 | 0 | 54k | 1.1 |
+|  | SparseCheb | 9 | 4 | 0 | 0 | 43k | 23 |
+|  | ChebTT-M * | 15 | 2 | 0 | 0 | 42k | 0.88 |
+|  | AFINNI | 39 | 0 | 0 | 0 | - | - |
+|  | ART, affine leaves | 36 | 0 | 0 | 0 | - | - |
+|  | ART, quadratic leaves | 33 | 0 | 0 | 0 | - | - |
+| ODE flow maps | ChebTree * | 15 | 15 | 7 | 0 | 757 | 0.14 |
+|  | ART, affine leaves | 27 | 7 | 6 | 0 | 81 | 0.077 |
+|  | SparseCheb | 15 | 15 | 5 | 0 | 201 | 0.68 |
+|  | ChebTT-M * | 25 | 24 | 4 | 3 | 424 | 0.064 |
+|  | ART, quadratic leaves | 27 | 10 | 3 | 2 | 201 | 0.12 |
+|  | ChebTT * | 25 | 24 | 0 | 3 | 430 | 0.054 |
+|  | AFINNI | 21 | 6 | 0 | 0 | 110k | 0.3 |
+|  | MetricKernel | 3 | 3 | 0 | 0 | 268 | 1.4 |
+| vector-valued | ChebTT * | 98 | 93 | 81 | 31 | 2.5k | 0.29 |
+|  | ChebTT-M * | 100 | 94 | 75 | 32 | 2.5k | 0.35 |
+|  | ART, affine leaves | 92 | 6 | 6 | 3 | 251 | 0.29 |
+|  | ART, quadratic leaves | 94 | 13 | 4 | 7 | 1.3k | 0.46 |
+|  | AFINNI | 63 | 3 | 0 | 0 | 110k | 0.41 |
+
+**Step-map suite (1 CPU core, rollouts of held-out trajectories)**
+
+| class | method | ran | held | won | held at d >= 10 | median evaluations (held) | median inference us (held) |
+|---|---|---|---|---|---|---|---|
+| stiff | ChebTT, one basis per axis (no edge search) * | 22 | 20 | 14 | 0 | 1.4k | 0.33 |
+|  | ChebTT, piecewise axes * | 22 | 20 | 13 | 0 | 1.4k | 0.31 |
+|  | ChebTT-A * | 21 | 20 | 12 | 0 | 1.4k | 0.36 |
+|  | SlowTable | 20 | 9 | 5 | 0 | 2.6k | 19 |
+|  | ChebTT, retrained until its rollouts hold * | 21 | 19 | 2 | 1 | 2.0k | 0.42 |
+|  | ART, affine leaves | 17 | 4 | 1 | 0 | 2.2k | 0.6 |
+|  | ART, quadratic leaves | 19 | 8 | 0 | 0 | 2.4k | 0.83 |
+|  | AFINNI | 15 | 0 | 0 | 0 | - | - |
+| nonstiff | ChebTT-A * | 4 | 4 | 4 | 0 | 5.6k | 1.4 |
+|  | ChebTT, piecewise axes * | 4 | 4 | 4 | 0 | 5.6k | 1.2 |
+|  | ChebTT, one basis per axis (no edge search) * | 4 | 4 | 4 | 0 | 5.6k | 1.2 |
+|  | ChebTT, retrained until its rollouts hold * | 6 | 5 | 2 | 1 | 7.2k | 0.92 |
+|  | ART, quadratic leaves | 5 | 1 | 0 | 0 | 4.5k | 1.6 |
+|  | SlowTable | 4 | 1 | 0 | 0 | 20k | 2.4e+02 |
+|  | AFINNI | 3 | 0 | 0 | 0 | - | - |
+|  | ART, affine leaves | 3 | 0 | 0 | 0 | - | - |
+
+A case is a problem, dimension and tolerance; *held*: worst error within the tolerance on every seed; *won*: held with the fewest evaluations (ties count for each). Medians are over each method's own held cases, which differ in difficulty between methods. *Ran* differs between methods because the sweeps stop a method at its first failure on a family. * marks records older than the method's last change to its results (share of its records; see `RESULTS_CHANGED` in `src/benchmark/table.py`): ChebTT 100% (piecewise axes at jumps and kinks, and the degree-cut compression); ChebTT-M 100% (as ChebTT); ChebTT-A 100% (as ChebTT); ChebTT, retrained until its rollouts hold 100% (as ChebTT); ChebTT, piecewise axes 100% (as ChebTT); ChebTT, one basis per axis (no edge search) 100% (as ChebTT); ChebTree 64% (verification along centre fibres before a box is accepted). Registered but not yet run: Hub.
+<!-- /benchmark-table -->
 
 ## Documentation
 
@@ -132,6 +243,13 @@ Run scripts from the repository root, as modules
   on any machine with one command (plan, run, collect into data files and tables).
 - **[docs/AFINNI_ART_DESIGN.md](docs/AFINNI_ART_DESIGN.md)**: the mathematics of both approaches, the
   refinement engine, and the design and implementation log.
+- **[docs/SCHEMES.md](docs/SCHEMES.md)**: the schemes (ChebTT, ChebTree, SparseCheb, the hub expansion, ...): what
+  each does, its contract, settings, profiling and model files.
+- **[docs/BENCHMARK.md](docs/BENCHMARK.md)**: the benchmark of every method on test functions and ODE step
+  maps: its store of runs, running a suite and sweeping a grid.
+- **[docs/SURROGATE_RESEARCH.md](docs/SURROGATE_RESEARCH.md)** and
+  **[docs/SURROGATE_ITERATIONS.md](docs/SURROGATE_ITERATIONS.md)**: the experiments behind the schemes, what each
+  taught, and the literature reviews.
 - **[AGENTS.md](AGENTS.md)**: code conventions and verification steps for contributors
   (human or AI).
 
@@ -146,7 +264,7 @@ Run scripts from the repository root, as modules
 | settings, components | `config.py` (settings and size heuristics), `components/` (registry, modes, local models, splitting, acceptance, trust regions, sampling), `neighbors/` (kNN, k-means) |
 | algorithms | `afinni/` (`plan`: `AFINNIPlan`), `art/` (`ARTPlan` in `plan`; `constants`, `rng`, `geometry`, `sampling`, `split_search`, `routing`); `schemes/` (the global approximants: ChebTT, ChebTree, SparseCheb, the hub expansion, ...; standalone, importing only the infrastructure layer) |
 | engine | `engine/` (`driver`: `refine`, collective training; `refinement`: `refine_rank`, the loop shared by both plans; `initial`, `work_stealing`) |
-| public API | `surrogate/` (`model`, `persistence`, `metrics`); also `plotting/`, `problems/` |
+| public API | `surrogate/` (`model`, `persistence`, `metrics`); also `plotting/`, `problems/` (test functions, one module per family, registered in `registry`: `FUNCTIONS`; `ode/`: ODE systems and their `STEP_MAPS`) |
 | benchmark | `benchmark/` (every method on the function and step-map suites, one store of runs, the sweep; see docs/BENCHMARK.md) |
 
 Package `__init__` files re-export the names other modules import, so callers do not depend

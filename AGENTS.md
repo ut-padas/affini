@@ -39,6 +39,10 @@ SURROGATE_DEVICE=cpu SURROGATE_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .ve
   numerical changes must be listed and justified separately. Compare against references
   saved from the current baseline (`--save` on the base commit), not older ones, which may
   predate deliberate numerical changes.
+- The schemes have their own check, `scripts/scheme_regression_check.py` (one small case per scheme,
+  a few seconds; it pins BLAS to one thread): a refactor of `src/schemes` keeps it bit-identical.
+  A deliberate change to a method's results also gets an entry in `RESULTS_CHANGED`
+  (`src/benchmark/table.py`), so the README's table marks the records it makes stale.
 - GPU training sums are deterministic and per segment (`segment_cross`, `reduce_sum_1d`,
   `det_matmul`, `spd_solve` in `src/numerics/`): repeated GPU runs are bit-identical
   and ART trees do not depend on the batch size. Do not reintroduce `atomicAdd`
@@ -111,6 +115,19 @@ Names (use them in code, docstrings, messages and docs):
 - **The refinement engine** (`src/engine/`) runs either plan: `driver.refine` (collective
   training), `refinement.refine_rank` (one rank's level-by-level loop), `work_stealing`.
   Plan-specific behaviour goes in the plan, behind `src/core/plan.py`, not in the engine.
+- **The schemes** (`src/schemes/`) are the global approximants beside the adaptive surrogate: ChebTT
+  (ChebTT-M is `build_vector(..., rotate=True)`, ChebTT-A `chebtt.adaptive`), ChebTree, SparseCheb,
+  the hub expansion, MetricKernel, SlowTable. "Scheme" is the word for them; "method" covers every
+  surrogate the benchmark runs (AFINNI and ART included); "plan" stays AFINNI's and ART's. The schemes
+  are standalone: they import only `src`, `infra`, `numerics`, `kernels` and `core`, and only
+  `src/benchmark` imports them (`STANDALONE` in `tests/unit/test_layering.py`). Each follows one
+  contract (settings dataclass, `build`, a model with `evals` and `report`, `base.save` and `load`;
+  [docs/SCHEMES.md](docs/SCHEMES.md)).
+- **The benchmark** (`src/benchmark/`) runs every method on two suites, `functions` and `step_maps`
+  (the problems are `src/problems`' `FUNCTIONS` and `src/problems/ode`'s `STEP_MAPS`), and keeps
+  every run in one store (`store.py`: `results/benchmark/`, figures in `figures/benchmark/`, not
+  committed). Read and write runs only through the store; `sweep.py` fills a suite's grid
+  ([docs/BENCHMARK.md](docs/BENCHMARK.md)).
 
 ## Code changes
 

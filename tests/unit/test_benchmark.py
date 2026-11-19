@@ -90,3 +90,14 @@ def test_since_reruns_older_records_with_force_and_keeps_newer_ones(monkeypatch,
     monkeypatch.setattr(sweep, "Redrawer", _NoRedraw)
     sweep.main(["functions", "--problems", "rosenbrock", "--d", "2", "--methods", "chebtt", "--ranks", "2", "--since", "2000-01-01T00:00"])
     assert len(cases) == 1 and cases[0][-1] == "--force" and cases[0][cases[0].index("--tols") + 1] == "0.1"
+
+
+def test_the_table_counts_held_cases_and_shares_a_tied_win():
+    from src.benchmark.table import cases, summarise
+
+    def rec(method, worst, evals, seed=1, problem="wave"):
+        return {"problem": problem, "d": 2, "tol": 0.1, "method": method, "seed": seed, "worst_ratio": worst, "evals": evals, "predict_us": 1.0}
+
+    records = [rec("a", 0.5, 100), rec("a", 0.9, 100, seed=2), rec("b", 0.2, 100), rec("c", 1.5, 10), rec("d", 0.1, 50, problem="other")]
+    stats = summarise(cases(records), {"wave"})
+    assert {m: (s["ran"], s["held"], s["won"]) for m, s in stats.items()} == {"a": (1, 1, 1), "b": (1, 1, 1), "c": (1, 0, 0)}

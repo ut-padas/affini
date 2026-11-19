@@ -18,6 +18,15 @@ Both plans draw on the same **components** (`src/components/`): local models, sp
 strategies, acceptance tests, trust regions and samplers, each a registry of named classes
 (`src/components/registry.py`) chosen by `TrainingConfig`.
 
+## Beside the engine: the schemes
+
+`src/schemes` holds global approximants (ChebTT, ChebTree, SparseCheb, the hub expansion, ...) that do not
+use the engine: each samples the oracle where its own error estimate asks and fits one model, on rank 0,
+with only its oracle calls spread over MPI ranks (`src/schemes/oracle.py`). They import only the
+infrastructure layer, and nothing of the engine or the plans imports them; `src/benchmark` runs both
+families on the same problems and records them in one store. Their contract and stages are in
+[SCHEMES.md](SCHEMES.md); the rest of this document is about the engine and its plans.
+
 ## A training run
 
 ```
