@@ -137,6 +137,19 @@ batch of oracle calls over every rank (`DistributedOracle`, `serve` and `distrib
   or cost-weighted chunking only changes the scatter; measure the imbalance from the `oracle_batch`
   events first.
 
+## Checkpointing long runs
+
+- [ ] One way to checkpoint every long run, so a run that stops resumes at its first unfinished
+  case. Today there are three: the benchmark's store (`src/benchmark/store.py`: one atomic JSON
+  file per run, keyed by suite, problem, `d`, method, `tol`, seed and setup; it records `commit`
+  but reuses a record whatever code wrote it); the schemes companion's convergence study (`Cache`
+  in `docs/reports/global-approximants/figures/convergence.py`: one JSON line per case under
+  `results/convergence/`, the file named after a hash of the script, `make_figures.py` and `src`);
+  and the adaptive companion's convergence study, which writes nothing until it ends. A shared
+  helper keys a case by its full settings (not only the benchmark's identity fields), writes each
+  case as it finishes, and tells a case from the current code apart from an older one. Move the
+  benchmark, both convergence studies and any other driver with its own bookkeeping onto it.
+
 ## Documentation that disagrees with the code
 
 - [x] `docs/USAGE.md` says runs are reproducible "for a fixed `seed` and rank count". True

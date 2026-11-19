@@ -6,7 +6,7 @@
 # NOTE: `uv sync` makes the venv match exactly what you ask for, so switching
 # targets also removes packages that the new target does not include.
 
-.PHONY: report-global-figures help dev dev-all install-cpu install-mpi install-gpu install-gpu-mpi install-hpc \
+.PHONY: report-global-figures report-convergence help dev dev-all install-cpu install-mpi install-gpu install-gpu-mpi install-hpc \
         info format lint test test-mpi coverage-cpu coverage-gpu coverage-mpi coverage
 
 EXTRAS ?=
@@ -38,6 +38,7 @@ help:
 	@echo "  report           - Compile both technical companions (docs/reports/*/*.pdf; needs typst)"
 	@echo "  report-figures   - Regenerate the adaptive-surrogates companion's panels and numbers (docs/reports/adaptive-surrogates/figures/)"
 	@echo "  report-global-figures - Regenerate the global-approximants companion's panels and numbers (docs/reports/global-approximants/figures/)"
+	@echo "  report-convergence - Rerun both companions' convergence studies (about 90 minutes; docs/reports/*/figures/convergence.json)"
 	@echo "  report-steals    - Record the companion's 6-rank work-stealing runs again (needs an MPI extra)"
 	@echo "  study-smoke / study-plan / study-run / study-status / study-collect - The manuscript study (MACHINE=<profile>)"
 	@echo "  report-tables    - Rewrite the companion appendix's manuscript tables (RECORD=\"<main record> [<supplementary> ...]\")"
@@ -116,6 +117,14 @@ report-figures:
 
 report-global-figures:
 	SURROGATE_DEVICE=cpu SURROGATE_MPI=off OPENBLAS_NUM_THREADS=1 PYTHONPATH=. uv run python docs/reports/global-approximants/figures/make_figures.py
+
+# The convergence sections of both companions: many trainings at tolerances down to where a run takes about
+# two minutes, so they have their own target (about 90 minutes on a laptop). The schemes' study reads the
+# adaptive one's convergence.json, so the order matters.
+report-convergence:
+	SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. uv run python docs/reports/adaptive-surrogates/figures/convergence.py
+	SURROGATE_DEVICE=cpu SURROGATE_MPI=off OPENBLAS_NUM_THREADS=1 SURROGATE_ODE_WORKERS=$${SURROGATE_ODE_WORKERS:-8} PYTHONPATH=. \
+		uv run python docs/reports/global-approximants/figures/convergence.py
 
 # STEAL_CPUS pins the ranks to cores of one speed (on a hybrid CPU, its performance cores),
 # e.g. make report-steals STEAL_CPUS=0-5; the companion's run used six such cores.

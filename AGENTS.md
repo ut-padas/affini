@@ -319,7 +319,7 @@ How it is built:
 - Typst 0.15 (a system install, not from `uv`); fletcher is fetched from `@preview` on the
   first compile. `make report-figures` writes the panels and `example.json`, then `make report`
   the PDF. Commit the sources, the SVGs, `example.json`, `steal_run.json`, `manuscript.json` and
-  the PDF together.
+  the PDF together, and the `convergence.json` of each companion.
 - `docs/reports/companion/` is a copy of the standalone Typst package `companion` (read its
   README), shared by both companions, which import it as `../companion/lib.typ` and compile with
   `--root docs/reports` (`make report` builds both). A generic building block goes in the package;
@@ -340,7 +340,10 @@ How it is built:
   change.
 - The work-stealing panels show one recorded run (`figures/steal_run.json`), because steal
   timing differs between runs. `make report-steals` records it again and checks that the tree
-  equals the one built without stealing. Everything else is byte-identical between runs: a fixed
+  equals the one built without stealing. The convergence sections read `figures/convergence.json`, written with
+  their panels by each companion's `figures/convergence.py` (`make report-convergence`, about 90 minutes: many
+  trainings at tolerances down to where a run takes two minutes); the schemes' study reads the adaptive one's, and
+  resumes after a stop from the cases it keeps under `results/convergence/`. Everything else is byte-identical between runs: a fixed
   SVG hash salt, and no dates in the SVGs or the PDF.
 - When a change alters what the companion states (a formula, a default, an invariant, a stage),
   update it and rebuild the figures and the PDF in the same change. `make report-figures` stops
