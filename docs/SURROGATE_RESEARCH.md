@@ -38,7 +38,7 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
 - Code: [`src/structure/`](../src/structure/README.md) (its README says how to run the bench).
   - `schemes/`: `chebtt.py` (ChebTT: `build`, and `build_vector` for several outputs), `chebtt_adaptive.py`
     (ChebTT-A), `chebtree.py` (ChebTree), `sparsegrid.py` (SparseCheb), `kernel.py` (MetricKernel),
-    `tabulation.py` (SlowTable).
+    `hub.py` (the hub expansion), `tabulation.py` (SlowTable).
   - `problems/functions.py`: the scalar problems, the vector-valued ones (`VECTOR_PROBLEMS`) and `TOLERANCES`
     (2-D 0.1/0.01/0.001, 3-D 0.1/0.03/0.01, 5-D 0.1/0.05/0.02, 10-D and above 0.2/0.1/0.05).
   - `problems/ode/`: the ODE systems (`system.py`: the `System` oracle; `chemistry.py`: Robertson,
