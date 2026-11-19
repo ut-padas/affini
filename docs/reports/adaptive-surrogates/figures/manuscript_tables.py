@@ -2,7 +2,7 @@
 The companion's appendix tables: every table of the AFINNI manuscript as it prints it, and the same
 tables with the numbers of recorded re-runs (``studies/sanity/paper/record_results.py``).
 
-    PYTHONPATH=. python docs/report/figures/manuscript_tables.py [--record <record> ...]
+    PYTHONPATH=. python docs/reports/adaptive-surrogates/figures/manuscript_tables.py [--record <record> ...]
 
 Writes ``figures/manuscript.json``, which the appendix reads. The manuscript's numbers come from
 ``studies/sanity/paper/paper_values.py``; a re-run number is a record's seed-0 value, a later
@@ -24,7 +24,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "studies" / "sanity" / "paper"))
 sys.path.insert(0, str(ROOT))
 import paper_values as pv  # noqa: E402

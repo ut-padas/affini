@@ -227,7 +227,7 @@ A case is a problem, dimension and tolerance; *held*: worst error within the tol
 
 ## Documentation
 
-- **[docs/report/adaptive-surrogates.pdf](docs/report/adaptive-surrogates.pdf)**: the technical
+- **[docs/reports/adaptive-surrogates/adaptive-surrogates.pdf](docs/reports/adaptive-surrogates/adaptive-surrogates.pdf)**: the technical
   companion. It explains AFINNI, ART and the refinement engine on one running example, each idea
   as a picture, in words and as a formal statement. Start here to understand the methods.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: how a training run and a prediction move

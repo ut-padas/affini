@@ -2,7 +2,7 @@
 
 Usage, from the repository root:
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/report/figures/appendix/batches.py
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/reports/adaptive-surrogates/figures/appendix/batches.py
 
 The queue is the one the companion's queue-layout figure shows (the running example's AFINNI
 level and batch size of ``make_figures.queue_layout``), cut by both plans' own ``batch_end``; a

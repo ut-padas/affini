@@ -1,4 +1,4 @@
-#import "companion/lib.typ": *
+#import "../companion/lib.typ": *
 #import "@preview/fletcher:0.5.8" as fletcher: diagram, edge, node
 
 #show: report.with(

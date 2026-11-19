@@ -1,8 +1,8 @@
-"""Draw the panels of the technical companion (docs/report/figures/*.svg) and write example.json.
+"""Draw the panels of the technical companion (docs/reports/adaptive-surrogates/figures/*.svg) and write example.json.
 
 Usage, from the repository root (``make report-figures``):
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/report/figures/make_figures.py
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/reports/adaptive-surrogates/figures/make_figures.py
 
 Every data panel comes from real training runs on the running example, through the public
 ``AdaptiveSurrogate`` API. The script records each level of the runs by wrapping stage methods

@@ -81,8 +81,8 @@ index and the **code layout** of `src/` (which package owns what, and the import
 its "Code layout" section before adding a module; put new code in the package that owns the
 concern, and import only from the same or a lower layer. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 shows how a run moves through the engine and the plans, and the contracts between them.
-Documentation other than README.md and AGENTS.md lives in `docs/`; `docs/report/` holds the
-technical companion (see "The technical companion" below).
+Documentation other than README.md and AGENTS.md lives in `docs/`; `docs/reports/` holds the
+technical companions (see "The technical companions" below).
 
 `studies/manuscript/` runs the paper's experiments from one specification (`spec.py`, the
 companion's Appendix A as code); its README is the runbook for reproducing the paper. Change a
@@ -275,11 +275,17 @@ how it was built. The history belongs in commit messages and the design doc's lo
 ```
 
 
-## The technical companion (`docs/report/`)
+## The technical companions (`docs/reports/`)
 
-`docs/report/adaptive-surrogates.typ` explains AFINNI, ART and the refinement engine to a
-reader who has read neither the manuscript nor the code. It must be rigorous enough to check
-against both and intuitive enough to follow without them: every idea is given as a picture, in
+`docs/reports/adaptive-surrogates/adaptive-surrogates.typ` explains AFINNI, ART and the refinement
+engine, and `docs/reports/global-approximants/global-approximants.typ` the schemes (ChebTT, ChebTT-M,
+ChebTT-A, the hub expansion), each to a reader who has read neither the manuscript nor the code.
+A companion is expository, not an archive: like a good lecture it motivates each problem on the
+running example, shows the candidate answers and where they stumble, then walks through the chosen
+method, its strengths and its limits, and why it was chosen (from a measurement or an argument). The
+rules below hold for both; where they name AFINNI or ART, the schemes' companion applies them to its
+own methods. A companion must be rigorous enough to check against the code (and the manuscript, for AFINNI and ART)
+and intuitive enough to follow without them: every idea is given as a picture, in
 words and in symbols, and the picture and the formal statement must say the same thing, so that
 each checks the other.
 
@@ -314,9 +320,11 @@ How it is built:
   first compile. `make report-figures` writes the panels and `example.json`, then `make report`
   the PDF. Commit the sources, the SVGs, `example.json`, `steal_run.json`, `manuscript.json` and
   the PDF together.
-- `docs/report/companion/` is a copy of the standalone Typst package `companion` (read its
-  README). A generic building block goes in the package; anything about AFINNI or ART stays in
-  `adaptive-surrogates.typ`.
+- `docs/reports/companion/` is a copy of the standalone Typst package `companion` (read its
+  README), shared by both companions, which import it as `../companion/lib.typ` and compile with
+  `--root docs/reports` (`make report` builds both). A generic building block goes in the package;
+  anything about one report's methods stays in that report's `.typ`. The schemes' companion has its own
+  `figures/make_figures.py` (`make report-global-figures`) and `figures/example.json`.
 - `figures/make_figures.py` computes every data panel from real runs through the public API,
   never by hand. It records the runs by wrapping the plans' stage methods, rebuilds the trees,
   the fits, the Hessian estimate and the inference rule from their definitions, and stops unless

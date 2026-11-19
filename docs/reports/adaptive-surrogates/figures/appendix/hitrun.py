@@ -2,7 +2,7 @@
 
 Usage, from the repository root:
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/report/figures/appendix/hitrun.py
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/reports/adaptive-surrogates/figures/appendix/hitrun.py
 
 Two ART runs of the running example are trained through the public API (make_figures'
 ``record_art``, and the same configuration at make_figures' ``STEAL["atol"]`` for a deeper tree),

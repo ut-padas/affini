@@ -1,11 +1,11 @@
-"""The companion appendix's manuscript tables (docs/report/figures/manuscript_tables.py) read records as record_results.py writes them, and Table 2's sizes."""
+"""The companion appendix's manuscript tables (docs/reports/adaptive-surrogates/figures/manuscript_tables.py) read records as record_results.py writes them, and Table 2's sizes."""
 
 import json
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "docs" / "report" / "figures"))
+sys.path.insert(0, str(ROOT / "docs" / "reports" / "adaptive-surrogates" / "figures"))
 sys.path.insert(0, str(ROOT / "studies" / "sanity" / "paper"))
 
 import cases  # noqa: E402

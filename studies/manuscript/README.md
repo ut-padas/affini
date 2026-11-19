@@ -1,7 +1,7 @@
 # The manuscript study
 
 Every experiment of the AFINNI paper, from one specification, on any machine. The settings are the
-technical companion's Appendix A (`docs/report/`), and [`spec.py`](spec.py) is the same
+technical companion's Appendix A (`docs/reports/adaptive-surrogates/`), and [`spec.py`](spec.py) is the same
 specification as code: a change to one is a change to the other.
 
 ## Reproduce the paper

@@ -751,7 +751,7 @@ that checks, at least:
   `exact_checks.py`), and on the high-dimensional study's problems (Section 5);
 - **the theoretical estimate** the change rests on (a bias bound, a mixing bound, a rate);
 - **cost**: leaves, evaluations, wall time and peak memory against the current method;
-- **the companion**: `docs/report/` states the algorithms, so an adopted change updates it and
+- **the companion**: `docs/reports/adaptive-surrogates/` states the algorithms, so an adopted change updates it and
   its figures in the same change.
 
 ### A1. Node-keyed AFINNI random streams (enabling change)

@@ -2,7 +2,7 @@
 
 Usage, from the repository root:
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/report/figures/appendix/cells.py
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/reports/adaptive-surrogates/figures/appendix/cells.py
 
 The answering leaf nu(x) of every grid query comes from the library (``predict_local`` with
 ``return_cluster_assignments=True``). The script restates nu from the definition (the kappa

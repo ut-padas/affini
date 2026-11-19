@@ -3,14 +3,14 @@
 Record the run (6 ranks, one root, the companion's steal example), from the repository root:
 
     SURROGATE_DEVICE=cpu SURROGATE_MPI=on OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 PATH=$PWD/.venv/bin:$PATH \
-      PYTHONPATH=. .venv/bin/mpiexec -n 6 .venv/bin/python docs/report/figures/appendix/steal.py --record </dev/null
+      PYTHONPATH=. .venv/bin/mpiexec -n 6 .venv/bin/python docs/reports/adaptive-surrogates/figures/appendix/steal.py --record </dev/null
 
 It trains the example once as a warm-up, then once without and once with work stealing, stops
 unless both build the same tree, and stores every protocol event of the stealing run in
 apx-steal-events.json. Steal timing differs between runs, so the chart is of that one recording.
 Then draw the chart and write apx-steal.json (no MPI):
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/report/figures/appendix/steal.py
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/reports/adaptive-surrogates/figures/appendix/steal.py
 
 Drawing first checks the protocol's properties on the recording itself: every request has exactly
 one reply, a rank never has two requests out, every grant is received by the thief that asked,

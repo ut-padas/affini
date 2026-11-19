@@ -2,7 +2,7 @@
 
 Usage, from the repository root:
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/report/figures/appendix/memory.py
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/reports/adaptive-surrogates/figures/appendix/memory.py
 
 Trains AFINNI twice on the running example: with the companion's settings, and with a tolerance
 a thousand times tighter, whose queue grows for many levels. Each run is recorded by wrapping

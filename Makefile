@@ -6,7 +6,7 @@
 # NOTE: `uv sync` makes the venv match exactly what you ask for, so switching
 # targets also removes packages that the new target does not include.
 
-.PHONY: help dev dev-all install-cpu install-mpi install-gpu install-gpu-mpi install-hpc \
+.PHONY: report-global-figures help dev dev-all install-cpu install-mpi install-gpu install-gpu-mpi install-hpc \
         info format lint test test-mpi coverage-cpu coverage-gpu coverage-mpi coverage
 
 EXTRAS ?=
@@ -35,8 +35,9 @@ help:
 	@echo "  coverage-mpi     - multi-rank suite, measured inside every rank (.coverage.mpi.*)"
 	@echo "  coverage         - Combine the .coverage.* files present; report and htmlcov/"
 	@echo "  format / lint    - ruff format / ruff check"
-	@echo "  report           - Compile the technical companion to docs/report/adaptive-surrogates.pdf (needs typst)"
-	@echo "  report-figures   - Regenerate the companion's panels and numbers (docs/report/figures/)"
+	@echo "  report           - Compile both technical companions (docs/reports/*/*.pdf; needs typst)"
+	@echo "  report-figures   - Regenerate the adaptive-surrogates companion's panels and numbers (docs/reports/adaptive-surrogates/figures/)"
+	@echo "  report-global-figures - Regenerate the global-approximants companion's panels and numbers (docs/reports/global-approximants/figures/)"
 	@echo "  report-steals    - Record the companion's 6-rank work-stealing runs again (needs an MPI extra)"
 	@echo "  study-smoke / study-plan / study-run / study-status / study-collect - The manuscript study (MACHINE=<profile>)"
 	@echo "  report-tables    - Rewrite the companion appendix's manuscript tables (RECORD=\"<main record> [<supplementary> ...]\")"
@@ -100,23 +101,30 @@ coverage:
 	uv run --group test coverage report --precision=1 --skip-covered
 	uv run --group test coverage html
 
-# The technical companion (docs/report/). Its panels are the CPU results of real runs.
+# The technical companions (docs/reports/): AFINNI, ART and the engine; the global approximants. Both import
+# the shared companion package (docs/reports/companion), so they compile with docs/reports as Typst's root.
+# Their panels are the CPU results of real runs.
+REPORTS := adaptive-surrogates global-approximants
 report:
-	typst compile docs/report/adaptive-surrogates.typ docs/report/adaptive-surrogates.pdf
+	for r in $(REPORTS); do [ -f docs/reports/$$r/$$r.typ ] || continue; \
+		typst compile --root docs/reports docs/reports/$$r/$$r.typ docs/reports/$$r/$$r.pdf || exit 1; done
 
 report-figures:
-	SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. uv run python docs/report/figures/make_figures.py
-	for f in docs/report/figures/appendix/*.py; do \
+	SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. uv run python docs/reports/adaptive-surrogates/figures/make_figures.py
+	for f in docs/reports/adaptive-surrogates/figures/appendix/*.py; do \
 		SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. uv run python $$f || exit 1; done
+
+report-global-figures:
+	SURROGATE_DEVICE=cpu SURROGATE_MPI=off OPENBLAS_NUM_THREADS=1 PYTHONPATH=. uv run python docs/reports/global-approximants/figures/make_figures.py
 
 # STEAL_CPUS pins the ranks to cores of one speed (on a hybrid CPU, its performance cores),
 # e.g. make report-steals STEAL_CPUS=0-5; the companion's run used six such cores.
 STEAL_CPUS ?=
 report-steals:
 	SURROGATE_DEVICE=cpu SURROGATE_MPI=on PYTHONPATH=. OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 \
-		$(if $(STEAL_CPUS),taskset -c $(STEAL_CPUS)) uv run mpiexec -n 6 python docs/report/figures/make_figures.py --record-steals
+		$(if $(STEAL_CPUS),taskset -c $(STEAL_CPUS)) uv run mpiexec -n 6 python docs/reports/adaptive-surrogates/figures/make_figures.py --record-steals
 	SURROGATE_DEVICE=cpu SURROGATE_MPI=on PYTHONPATH=. OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 \
-		$(if $(STEAL_CPUS),taskset -c $(STEAL_CPUS)) uv run mpiexec -n 6 python docs/report/figures/appendix/steal.py --record </dev/null
+		$(if $(STEAL_CPUS),taskset -c $(STEAL_CPUS)) uv run mpiexec -n 6 python docs/reports/adaptive-surrogates/figures/appendix/steal.py --record </dev/null
 
 # The manuscript study (studies/manuscript/README.md): MACHINE is a profile in studies/manuscript/machines.
 MACHINE ?= studies/manuscript/machines/workstation.toml
@@ -131,5 +139,5 @@ study-collect:
 # cell "–"). RECORD lists record directories, the main record first; a later one replaces its values.
 RECORD ?=
 report-tables:
-	PYTHONPATH=. uv run python docs/report/figures/manuscript_tables.py $(foreach r,$(RECORD),--record $(r))
+	PYTHONPATH=. uv run python docs/reports/adaptive-surrogates/figures/manuscript_tables.py $(foreach r,$(RECORD),--record $(r))
 

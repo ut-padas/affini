@@ -2,7 +2,7 @@
 
 Usage, from the repository root:
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/report/figures/appendix/ode.py
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/reports/adaptive-surrogates/figures/appendix/ode.py
 
 One batch of the manuscript study's Lorenz-96 oracle at d = 5 (the first rows of its fixed test set,
 ``studies/manuscript/case.py``) is integrated three ways: by the library's ``integrate_ensemble`` (the

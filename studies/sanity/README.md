@@ -144,7 +144,7 @@ MACHINE="GH200 node" studies/sanity/paper/run_manuscript.sh
 
 `results/INDEX.md` lists every record with its date, commit, machine and how many of the reported
 numbers it measured.
-The technical companion's appendix (`docs/report/`) shows every manuscript table as printed beside
+The technical companion's appendix (`docs/reports/adaptive-surrogates/`) shows every manuscript table as printed beside
 the same table as the records measure it: `make report-tables RECORD="<main record>
 [<supplementary record> ...]"`, then `make report`. A supplementary record re-runs a few groups at a
 later commit (for example `--groups lorenz_dims` after a change to Table 2's settings) and replaces

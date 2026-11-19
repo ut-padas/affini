@@ -2,7 +2,7 @@
 
 Usage, from the repository root:
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/report/figures/appendix/sums.py
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/reports/adaptive-surrogates/figures/appendix/sums.py
 
 The GPU kernels cannot run here, so the script restates them in NumPy. One cluster of the running
 example's first AFINNI level is placed after m rows of other data, and its sum is taken three ways:

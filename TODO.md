@@ -235,7 +235,7 @@ runs the chunked CuPy walk above 256 dimensions.
   `TrustRegionContainment` (batched `eigh`, the transposed centres, `nonzero` on the mask) have
   not run on a GPU. `tests/unit/test_containment.py` checks them against brute force there.
 
-## Technical companion (`docs/report/`)
+## Technical companion (`docs/reports/adaptive-surrogates/`)
 
 - [ ] The manuscript's Hessian-estimate theorem (main text and appendix) defines the
   scatter matrix as a sum and bounds its inverse against `C H`; the bound holds for the

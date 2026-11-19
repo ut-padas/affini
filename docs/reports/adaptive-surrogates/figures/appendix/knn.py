@@ -2,7 +2,7 @@
 
 Usage, from the repository root:
 
-    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/report/figures/appendix/knn.py
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python docs/reports/adaptive-surrogates/figures/appendix/knn.py
 
 The running example's AFINNI leaves are indexed with ``CpuExactKNN``. Its ``kneighbors`` takes
 the cKDTree path in two dimensions, so the script calls the verified search of higher
