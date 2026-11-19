@@ -80,6 +80,10 @@
 #let sci(x, digits: 2) = {
   let e = int(calc.floor(calc.log(calc.abs(x), base: 10)))
   let m = calc.round(x / calc.pow(10.0, e), digits: digits - 1)
+  if calc.abs(m) >= 10 { // 9.96 rounds up to 10: one more power of ten
+    m = m / 10
+    e += 1
+  }
   $#m dot 10^(#e)$
 }
 #let pct(x) = [#calc.round(100 * x, digits: 0)%]
@@ -1232,6 +1236,357 @@ ran, but only in two and three dimensions (@sec:aside).
 #takeaway[Where a function has the structure a scheme is built for, the scheme holds the worst error
   with a few thousand evaluations, where local affine pieces spend a hundred thousand and still miss it.]
 
+= How the cost grows with the accuracy <sec:convergence>
+
+#let cg = json("figures/convergence.json")
+#let ca = json("../adaptive-surrogates/figures/convergence.json")
+#let ok-rows(rows) = rows.filter(r => "failed" not in r)
+#let first-ok(rows) = ok-rows(rows).first()
+#let last-ok(rows) = ok-rows(rows).last()
+#let failed-row(rows) = rows.find(r => "failed" in r)
+// a tolerance: a power of ten as one, any other value as it is
+// A tolerance as a power of ten, a power of two, or a power of ten halved h times (AFINNI's and ART's ladders).
+#let tolstr(t) = {
+  let exact(u, base) = {
+    let k = calc.round(calc.log(u, base: base))
+    if calc.abs(u / calc.pow(float(base), k) - 1) <= 1e-9 { int(k) } else { none }
+  }
+  let k = exact(t, 10)
+  if k != none { return if k == 0 { "1" } else { $10^(#k)$ } }
+  let b = exact(t, 2)
+  if b != none { return if b >= -2 { str(t) } else { $2^(#b)$ } }
+  for h in range(1, 31) {
+    let j = exact(t * calc.pow(2.0, h), 10)
+    if j != none { return if j == 0 { $2^(-#h)$ } else { $10^(#j) dot 2^(-#h)$ } }
+  }
+  str(t)
+}
+#let rr(d, m) = cg.ridge.at(str(d)).at(m)
+#let ros(d, m) = cg.rosen.at(str(d)).at(m)
+#let ca-rate(m, d) = ca.rates.at(m).at(str(d)).leaves
+
+#question[Cut the tolerance by ten. How many more evaluations does each scheme need, does its error
+  follow, and how does that compare with the $atol^(-d slash 2)$ leaves of AFINNI and ART?]
+
+#figure(panel("convergence-rosen"), caption: [Evaluations against $1 slash atol$ on Rosenbrock's valley,
+  the AFINNI and ART companion's running example, extended along a chain,
+  $f(x) = sum_(i=1)^(d-1) (1 - x_i)^2 + (x_(i+1) - x_i^2)^2$, on its box with every further axis like the
+  second. #swatch(mcol("chebtt")) ChebTT, #swatch(mcol("chebtt_metric")) ChebTT-M,
+  #swatch(mcol("chebtt_adaptive")) ChebTT-A, #swatch(mcol("hub")) the hub expansion; a hollow mark misses
+  the tolerance. #swatch(mcol("afinni")) AFINNI (from a sample that grows with its leaves) and
+  #swatch(mcol("art")) ART are the other companion's runs @companion, at tolerances that halve.]) <fig:convergence-rosen>
+
+The picture shows two kinds of curve. AFINNI's and ART's rise steadily on these log--log axes, more
+steeply in higher dimensions. The schemes' curves are flat: ChebTT spends #num(first-ok(ros(2, "chebtt")).evals)
+evaluations at $d = 2$ and #num(first-ok(ros(5, "chebtt")).evals) at $d = 5$, whether the tolerance is
+#tolstr(first-ok(ros(5, "chebtt")).tol) or #tolstr(last-ok(ros(5, "chebtt")).tol).
+
+The other companion shows why the affine pieces rise. An affine model misses $f$ by its curvature
+times the square of the leaf's size, so a leaf must shrink like $atol^(1 slash 2)$, and $d$-dimensional leaves
+multiply like $atol^(-d slash 2)$. That _leaf-count law_ holds for any partition into affine pieces. Its fitted
+exponent there is #ca-rate("art", 2) for ART at $d = 2$ and #ca-rate("art", 5) at $d = 5$, against $1$ and $2.5$.
+A Chebyshev scheme's cost is set by something else: how fast its coefficients fall (@thm:decay). For a
+polynomial they stop at its degree. Rosenbrock has degree 4 along every axis but the last, so its interpolant is
+exact once the degrees reach 4 and 2, and a tighter tolerance costs nothing. The ranks are 3, as
+@prop:ranks predicts for a sum of terms that couple neighbours.
+
+#translate(
+  [the degree along axis $k$ that the tolerance needs], [$n_k (atol)$],
+  [the ellipse inside which $f$ is analytic along an axis, and the bound of $|f|$ there], [$E_rho$, $M$ (@thm:decay)],
+  [the tensor train's ranks; the evaluations the train spends], [$r_k (atol)$, $N(atol)$],
+  [the number of axes an unfolding separates from the rest], [$m_k = min(k, d - k)$],
+)
+
+#proposition(title: [the cost of a tolerance])[
+  Let $f$ be analytic and bounded by $M$ in $E_rho$ along every axis. A ChebTT within $atol$ needs at most
+  $ n_k (atol) <= (log(4 M slash ((rho - 1) atol))) / (log rho) $
+  along each axis, and its cross evaluates $f$ at $s sum_k r_(k-1) (n_k + 1) r_k$ points in $s$ sweeps,
+  plus a number of check points that does not depend on $atol$. If the ranks stay bounded, then
+  $N(atol) = O(d log(1 slash atol))$. If $f$ is a polynomial of degree $p_k$ along axis $k$, then $n_k = p_k$ for
+  every $atol$ above rounding, and $N$ does not depend on $atol$.
+] <prop:cost>
+
+#proof[
+  The bound on $n_k$ is @thm:decay solved for $n$. The cross evaluates the fibres $I_(k-1) times
+  {"every node of axis" k} times J_k$, $r_(k-1) (n_k + 1) r_k$ points per axis and sweep. A polynomial of
+  degree $p$ is its own interpolant at any $p + 1$ distinct nodes, so every coefficient beyond $p$ is
+  rounding, and the tail estimate stops at $p$.
+]
+
+#proposition(title: [how far the ranks can grow])[
+  The unfolding of a polynomial of degree $n$ along every axis that separates the first $k$ axes from the
+  others has rank at most $(n + 1)^(m_k)$. So when $f$ is analytic in $E_rho$ along every axis, ranks
+  $r_k <= (1 + n(atol))^(m_k)$ suffice, with $n(atol)$ of @prop:cost, and
+  $N(atol) = O(d (log 1 slash atol)^(1 + 2 m))$ with $m = max_k m_k$.
+] <prop:rank-growth>
+
+#proof[
+  Such a polynomial is a sum of products $T_(j_1)(x_1) dots T_(j_d)(x_d)$ with every $j_i <= n$. Group the
+  terms by the indices on the side of the unfolding with fewer axes: there are at most $(n + 1)^(m_k)$
+  groups, and each is one separable product of a function of those axes and a function of the others.
+]
+
+The bound is the worst case. It is polylogarithmic in $1 slash atol$, which eventually beats any power, but
+its exponent grows with the dimension, and that is where the curse returns. It is reached when a feature is
+oblique to every axis. It is avoided when the coupling is weak, as on Rosenbrock, or when the scheme turns
+the coordinates.
+
+== A smooth, oblique ridge
+
+#figure(panel("convergence-ridge"), caption: [Evaluations against $1 slash atol$ on the feature example's
+  ridge $r(x) = #ex.feature.ridge.height tanh(#ex.feature.ridge.steep (q_d dot x + #ex.feature.ridge.offset))$,
+  lifted to $[-1, 1]^d$ with $q_d prop (cos #ex.feature.ridge.angle°, sin #ex.feature.ridge.angle°, ..., sin #ex.feature.ridge.angle°)$, which is $q$ at $d = 2$ (@sec:examples). Colours as in @fig:convergence-rosen; a cross is a
+  build that failed.]) <fig:convergence-ridge>
+
+The ridge is analytic, but it is oblique to every axis. ChebTT's ranks grow with the tolerance, as
+@prop:rank-growth allows: at $d = 3$ they rise from #first-ok(rr(3, "chebtt")).ranks.at(0) at
+$atol = #tolstr(first-ok(rr(3, "chebtt")).tol)$ to #last-ok(rr(3, "chebtt")).ranks.at(0) at
+#tolstr(last-ok(rr(3, "chebtt")).tol), and its evaluations from #num(first-ok(rr(3, "chebtt")).evals) to
+#num(last-ok(rr(3, "chebtt")).evals). At $d = 5$ the middle unfoldings separate two axes from three, and
+the build fails at $atol = #tolstr(failed-row(rr(5, "chebtt")).tol)$: #failed-row(rr(5, "chebtt")).failed.
+
+ChebTT-M turns the ridge into one coordinate (@prop:ridge). Its rank stays at
+#first-ok(rr(5, "chebtt_metric")).ranks.at(0) to #last-ok(rr(5, "chebtt_metric")).ranks.at(0), and only the
+degree along the ridge grows. At $d = 5$ it spends #num(first-ok(rr(5, "chebtt_metric")).evals) evaluations at
+#tolstr(first-ok(rr(5, "chebtt_metric")).tol) and #num(last-ok(rr(5, "chebtt_metric")).evals) at
+#tolstr(last-ok(rr(5, "chebtt_metric")).tol): nine decades for a factor of
+#calc.round(last-ok(rr(5, "chebtt_metric")).evals / first-ok(rr(5, "chebtt_metric")).evals, digits: 1).
+Below $atol = #tolstr(first-ok(rr(2, "chebtt_adaptive").filter(r => "interface" in r)).tol)$ at $d = 2$,
+ChebTT-A treats the steep ridge as a front and models it as a profile $h(phi)$ (@sec:adaptive); its
+remainder is then constant, and its cost stays near #num(last-ok(rr(2, "chebtt_adaptive")).evals)
+evaluations.
+
+How fast the degree grows can be predicted, not just observed. The ridge is $tanh$ of a linear function,
+and $tanh$ has poles at $plus.minus i pi slash 2$. In ChebTT-M's rotated box, the nearest pole fixes the
+ellipse $E_rho$ in @thm:decay, so the degree grows by $ln 10 slash ln rho$ per decade of the tolerance.
+
+#scene(side: left, width: 44%, panel("convergence-degree"))[
+  ChebTT-M's degree along the ridge, #swatch(mcol("chebtt_metric")) measured, against the slope
+  $ln 10 slash ln rho$ #swatch(grey, shape: "dashed") predicted from the pole. The figure script
+  computes $rho$ from the model's own rotation and box, and stops unless the rotation's first axis is the
+  ridge's direction.
+
+  #table(
+    columns: 4,
+    inset: (x: 5pt, y: 3pt),
+    align: (center, right, right, right),
+    table.header[$d$][$rho$][predicted][measured],
+    ..cg.dims.map(d => {
+      let r = cg.ridge_degree.at(str(d))
+      ([#d], [#r.rho], [#r.predicted], [#r.measured])
+    }).flatten(),
+  )
+  #small[Degrees per decade of $atol$; measured: the least-squares slope over the rungs.]
+]
+
+The box grows along the ridge with $d$, since $q_d$ is oblique to more axes. The pole then lies closer to
+the interval in the box's coordinates, $rho$ falls, and each decade costs more degree. The prediction is a
+lower bound on the decay rate: the coefficients fall at least like $rho^(-n)$. That they fall no faster is
+what the agreement shows.
+
+AFINNI and ART need more evaluations at every tolerance on the ridge, but fewer than the leaf-count law
+predicts for a function that curves in every direction. The ridge curves in one direction only, so a
+partition into slabs across it needs $atol^(-1 slash 2)$ of them in any dimension. ART's oblique planes
+find such slabs: its fitted exponent is #cg.ridge_rates.at("2").art at $d = 2$ and
+#cg.ridge_rates.at("3").art at $d = 3$, and #{ let r = cg.ridge_rates.at("5").art; if r == none [--] else [#r] } at $d = 5$. AFINNI's is
+#cg.ridge_rates.at("2").afinni, #cg.ridge_rates.at("3").afinni and #cg.ridge_rates.at("5").afinni.
+
+== A jump: an algebraic rate
+
+#figure(panel("convergence-feature"), caption: [The feature example $F$ on $[-1, 1]^2$. Left: evaluations;
+  right: the worst error on the benchmark's grid, in units of the tolerance. Colours as in
+  @fig:convergence-rosen.]) <fig:convergence-feature>
+
+On $F$, ChebTT and ChebTT-M fail at the loosest tolerance, #tolstr(cg.F.chebtt.first().tol), as in
+@sec:compare. ChebTT-A holds $F$ down to #tolstr(last-ok(cg.F.chebtt_adaptive).tol), with
+#num(last-ok(cg.F.chebtt_adaptive).evals) evaluations there, and reaches the rank limit at
+#tolstr(failed-row(cg.F.chebtt_adaptive).tol). Its rate is algebraic: from
+#tolstr(ok-rows(cg.F.chebtt_adaptive).at(1).tol) to #tolstr(last-ok(cg.F.chebtt_adaptive).tol) its degree
+along $x_1$ grows from #ok-rows(cg.F.chebtt_adaptive).at(1).degrees.at(0) to
+#last-ok(cg.F.chebtt_adaptive).degrees.at(0). @prop:remainder says why: what the jump fields leave of the
+jump adds a tail that falls like a power of $j$, and a power needs a degree that grows like a power of
+$1 slash atol$.
+
+AFINNI and ART cannot hold a jump at all. An affine model on a leaf that straddles it misses by at least
+half the jump's height, whatever the leaf's size. In practice the straddling leaf's model follows one side,
+and their worst error stays near the jump's full height, #ex.feature.jump.height, while the tolerance
+shrinks: in units of the tolerance it grows like $1 slash atol$. At #tolstr(cg.F.art.last().tol), ART's worst is
+#cg.F.art.last().worst $atol$ and AFINNI's #cg.F.afinni.last().worst $atol$.
+
+== A vector function, a flow map and a stiff step map
+
+#let cg-vec = cg.at("vector", default: (:))
+#let reach(name, m) = {
+  if name not in cg-vec or m not in cg-vec.at(name) { return [--] }
+  let ok = ok-rows(cg-vec.at(name).at(m)).filter(r => r.at("worst", default: 0) <= 1)
+  if ok.len() == 0 [--] else [#tolstr(ok.last().tol)]
+}
+#let reach-evals(name, m) = {
+  if name not in cg-vec or m not in cg-vec.at(name) { return [--] }
+  let ok = ok-rows(cg-vec.at(name).at(m)).filter(r => r.at("worst", default: 0) <= 1)
+  if ok.len() == 0 [--] else [#num(ok.last().evals)]
+}
+
+// The run of a ladder with the smallest worst error on the test set (in the problem's units, not atol's).
+#let vbest(name, m) = {
+  let ok = ok-rows(cg-vec.at(name).at(m))
+  if ok.len() == 0 { none } else { ok.sorted(key: r => r.worst * r.tol).first() }
+}
+#let vabs(name, m) = sci(vbest(name, m).worst * vbest(name, m).tol)
+#let vev(name, m) = num(vbest(name, m).evals)
+#let vlast(name, m) = last-ok(cg-vec.at(name).at(m))
+#let vfirst(name, m) = first-ok(cg-vec.at(name).at(m))
+#let vfail(name, m) = cg-vec.at(name).at(m).find(r => "failed" in r)
+// AFINNI's and ART's worst errors over every run on a problem, in units of atol.
+#let vworst(name) = ("afinni", "art").map(m => cg-vec.at(name).at(m).map(r => r.worst)).flatten()
+// How far the better of AFINNI and ART stays from ChebTT on a problem: decades of worst error, and the
+// ratio of evaluations (the cheaper of the two against ChebTT's).
+#let vgap(name) = {
+  let abs(m) = vbest(name, m).worst * vbest(name, m).tol
+  let decades = calc.round(calc.log(calc.min(abs("afinni"), abs("art")) / abs("chebtt"), base: 10))
+  let times = calc.floor(calc.min(vbest(name, "afinni").evals, vbest(name, "art").evals) / vbest(name, "chebtt").evals)
+  (decades: decades, times: times)
+}
+#let none-or(n, word, plural) = if n == 0 [no #word] else [#n #plural]
+
+#figure(panel("convergence-vector"), caption: [Evaluations against $1 slash atol$ on three vector-valued
+  problems: `shared_latent` and `lorenz96_state` at $d = 5$ (the benchmark's function suite, every output
+  divided by its largest $|f_c|$), and Robertson's step map, the increment over one step in log abundances
+  (dex), on the box of the states its training trajectories visit. Colours as in @fig:convergence-rosen. AFINNI
+  and ART on the first two are the other companion's runs.]) <fig:convergence-vector>
+
+Three vector-valued problems test the schemes where the library is meant to be used. `shared_latent` is the
+vector form of the ridge: six functions of two oblique coordinates, at $d = 5$. `lorenz96_state` is the
+Lorenz-96 flow over $t = 0.1$ in all five components, the manuscript's ODE. Robertson's step map is a stiff
+chemistry step, the increment over one step in log abundances (dex), on the box of the states its training
+trajectories visit (@sec:steps); every evaluation is a Radau solve, so there the evaluations are the cost.
+
+A vector-valued $f$ is held when every output is. ChebTT and ChebTT-A build one train per output on one cache
+of $f$, so a point any output asks for serves the others; ChebTT-M groups the outputs that share coordinates
+and turns each group once (@sec:metric). AFINNI and ART accept a leaf when all outputs pass.
+
+#table(
+  columns: (auto, 1fr, 1fr, 1fr),
+  inset: (x: 6pt, y: 4pt),
+  align: (left, right, right, right),
+  table.header[Tightest tolerance held (evaluations there)][`shared_latent`][`lorenz96_state`][Robertson],
+  ..("chebtt", "chebtt_metric", "chebtt_adaptive", "hub", "afinni", "art").map(m => (mname.at(m),
+    ..("shared_latent", "lorenz96_state", "robertson").map(n => {
+      let t = reach(n, m)
+      if t == [--] [--] else [#t (#reach-evals(n, m))]
+    }))).flatten(),
+)
+#v(-0.4em)
+#small[The tightest tolerance of each ladder at which the worst error on the test set is within it. AFINNI's
+  and ART's ladders halve and stop where a run would take about two minutes; the schemes' go down by decades
+  and stop at a failed build. A dash: no tolerance held.]
+
+Holding the tolerance is a strict test, and AFINNI and ART fail it on the first two problems at every rung: their
+worst errors there are #calc.round(calc.min(..vworst("shared_latent"), ..vworst("lorenz96_state")), digits: 1) to
+#calc.round(calc.max(..vworst("shared_latent"), ..vworst("lorenz96_state")), digits: 1) times the tolerance,
+on test points their leaves were never checked at. For a fixed budget the better measure is the smallest worst
+error each method reached and what it cost:
+
+#table(
+  columns: (auto, 1fr, 1fr, 1fr),
+  inset: (x: 6pt, y: 4pt),
+  align: (left, right, right, right),
+  table.header[Smallest worst error \ (evaluations there)][`shared_latent`][`lorenz96_state`][Robertson (dex)],
+  ..("chebtt", "chebtt_metric", "chebtt_adaptive", "hub", "afinni", "art").map(m => (mname.at(m),
+    ..("shared_latent", "lorenz96_state", "robertson").map(n => if vbest(n, m) == none [--] else [#vabs(n, m) (#vev(n, m))]))).flatten(),
+)
+#v(-0.4em)
+#small[The worst error on the test set, over every point and output (AFINNI: over the points it does not flag
+  as outside its trust regions), at the run of each ladder where it is smallest.]
+
+*The two flows.* On `lorenz96_state` the three ChebTT variants are one model: ChebTT-M turns
+#none-or(vlast("lorenz96_state", "chebtt_metric").rotated_outputs, "outputs", "outputs") and ChebTT-A adds
+#none-or(vlast("lorenz96_state", "chebtt_adaptive").interfaces, "interface", "interfaces"). They hold
+#tolstr(vlast("lorenz96_state", "chebtt").tol) with #vev("lorenz96_state", "chebtt") evaluations; at the next
+decade the build stops on its evaluation budget, after #num(vfail("lorenz96_state", "chebtt").evals). ART's
+smallest worst error is #vabs("lorenz96_state", "art") after #vev("lorenz96_state", "art") evaluations and
+AFINNI's #vabs("lorenz96_state", "afinni") after #vev("lorenz96_state", "afinni"): about
+#vgap("lorenz96_state").decades decades less accurate for more than #vgap("lorenz96_state").times times the
+evaluations. The flow over $t = 0.1$ is analytic in the initial state, so
+a decade costs the schemes a constant number of degrees (@prop:cost) while it multiplies the leaves by
+$10^(d slash 2)$ (the other companion's leaf-count law). Robertson's step map widens the gap: the three variants
+are again one model, with ranks at most #vlast("robertson", "chebtt").max_rank, and hold
+#tolstr(vlast("robertson", "chebtt").tol) dex with #vev("robertson", "chebtt") evaluations. ART reaches
+#vabs("robertson", "art") dex with #vev("robertson", "art") and AFINNI #vabs("robertson", "afinni") with
+#vev("robertson", "afinni"). Each evaluation there is a Radau solve, so the evaluations are the time.
+
+*The shared coordinates.* `shared_latent` is where the rotation pays. ChebTT-M turns
+#vlast("shared_latent", "chebtt_metric").rotated_outputs of the #cg-vec.shared_latent.outputs outputs and holds
+every decade down to #tolstr(vlast("shared_latent", "chebtt_metric").tol), with
+#vev("shared_latent", "chebtt_metric") evaluations there and largest rank
+#vlast("shared_latent", "chebtt_metric").max_rank. On the original axes the two oblique coordinates couple every
+pair: ChebTT's rank reaches #vlast("shared_latent", "chebtt").max_rank at
+#tolstr(vlast("shared_latent", "chebtt").tol), after #vev("shared_latent", "chebtt") evaluations, and the next
+decade would exceed the evaluation budget; ChebTT-A, with its smaller budget, stops after
+#tolstr(vlast("shared_latent", "chebtt_adaptive").tol). The hub expansion is the cheapest at loose tolerances,
+#vabs("shared_latent", "hub") with #vev("shared_latent", "hub") evaluations, and does not improve beyond it
+(@prop:floor). ART reaches #vabs("shared_latent", "art") with #vev("shared_latent", "art") evaluations; AFINNI's
+sample grown with its leaves would exceed the adaptive study's largest after its first
+#cg-vec.shared_latent.afinni.len() tolerances.
+
+*The hub expansion's floor* is the same on all three. Its worst error stays near #vabs("lorenz96_state", "hub") on
+`lorenz96_state` and #vabs("robertson", "hub") dex on Robertson whatever the tolerance asked for: neither is a
+function of a few directions.
+
+== The hub expansion's floor
+
+#scene(side: right, width: 44%, panel("convergence-floor"))[
+  The hub expansion's worst error, in absolute terms, against $1 slash atol$:
+  #swatch(mcol("hub"), shape: "line") on Rosenbrock at $d = 3$ and (dashed) $d = 5$, and
+  #swatch(ridge, shape: "line") on `shared_latent` and (dashed) the lifted ridge, both at $d = #ex.hub.problem.d$. The
+  grey line is the tolerance itself. Above it the model misses.
+]
+
+The hub expansion fits a fixed class of functions by least squares (@def:hub). Its error falls with the
+degree until the class itself is the limit, then stops.
+
+#proposition(title: [the floor])[
+  Let $cal(H)$ be the functions of the form @eq:hub, for the chosen rotation, hub dimension and every degree
+  up to the cap. The hub's worst error is at least $op("dist")_infinity (f, cal(H))$, whatever its budget. It
+  is zero only if $f$ lies in $cal(H)$.
+] <prop:floor>
+
+#proof[
+  Every model the hub can fit lies in $cal(H)$, and no member of $cal(H)$ is nearer to $f$ in the max norm than
+  $op("dist")_infinity (f, cal(H))$.
+]
+
+On Rosenbrock the hub is exact at $d = 2$, where its two hub coordinates are all of $x$. At $d = 3$ and $5$
+its terms leave out couplings of the chain, and its worst error stops at
+#sci(last-ok(cg.floor.at("rosen-3")).worst * last-ok(cg.floor.at("rosen-3")).tol) and
+#sci(last-ok(cg.floor.at("rosen-5")).worst * last-ok(cg.floor.at("rosen-5")).tol). On the ridge it is the
+degree cap: one hub coordinate at degree at most #ex.hub.settings.degrees.at("1").last() stops near
+#sci(last-ok(rr(2, "hub")).worst * last-ok(rr(2, "hub")).tol) at $d = 2$, where ChebTT-M needs a higher degree.
+The hub reports the miss on its hold-out set, so a floor is visible to the caller (@sec:hub).
+
+#block(breakable: false, table(
+  columns: (auto, 1fr, 1fr),
+  inset: (x: 6pt, y: 4pt),
+  align: (left, left, left),
+  table.header[Method][Predicted][Measured here],
+  [AFINNI, ART], [$N_c tilde atol^(-d slash 2)$; a ridge: $atol^(-1 slash 2)$; a jump: no convergence], [exponents #ca-rate("art", 2)--#ca-rate("art", 5) (ART, $d = 2$--$5$); on the ridge #(cg.ridge_rates.at("2").art) to #{ let r = cg.ridge_rates.at("5").art; if r == none [--] else [#r] }],
+  [ChebTT], [a polynomial: constant; analytic with bounded ranks: $d log(1 slash atol)$; ranks up to $(log 1 slash atol)^(m)$], [constant on Rosenbrock; on the ridge, ranks #first-ok(rr(3, "chebtt")).ranks.at(0) to #last-ok(rr(3, "chebtt")).ranks.at(0) at $d = 3$],
+  [ChebTT-M], [a ridge: rank 1, $ln 10 slash ln rho$ degrees per decade], [#cg.ridge_degree.at("2").measured, #cg.ridge_degree.at("3").measured, #cg.ridge_degree.at("5").measured against #cg.ridge_degree.at("2").predicted, #cg.ridge_degree.at("3").predicted, #cg.ridge_degree.at("5").predicted],
+  [ChebTT-A], [a jump: algebraic, by @prop:remainder], [$F$ to #tolstr(last-ok(cg.F.chebtt_adaptive).tol)],
+  [Hub expansion], [geometric in its degree, down to the floor of @prop:floor], [floors on Rosenbrock ($d >= 3$) and the ridge],
+))
+
+#pitfall(title: [What ends a ladder])[
+  Every scheme has caps: ChebTT's rank (#ex.appendix.settings.chebtt.find(s => s.name == "rank_max").default), degree and evaluation budget, the hub's
+  degree. The predictions hold until a cap is reached; a failed build says which one. Rounding sets the last
+  floor: near $10^(-10)$ of $max |f|$ the tail estimate cannot tell coefficients from noise.
+]
+
+#takeaway[For smooth functions of low rank, a Chebyshev scheme's cost grows like $log(1 slash atol)$, and for
+  a polynomial not at all, where affine pieces need $atol^(-d slash 2)$; the dimension and an oblique feature
+  return as the exponent of the logarithm, the hub expansion stops at the distance of $f$ from its class, and a
+  jump costs ChebTT-A an algebraic rate.]
+
 = Stiff step maps: the chemistry the library is for <sec:steps>
 
 #question[A stiff chemistry step is called by a simulation in every cell at every time step. Can a
@@ -1507,6 +1862,53 @@ in the source. The defaults are the library's.
     [$P_0$, $P_(1 j)$, $P_(2 j)$], [hub block and weak terms], [`_columns`, `HubGroup.coef`],
   )
 })
+
+= The convergence runs <sec:convergence-runs>
+
+Every run of @sec:convergence, one table per problem. Each cell is the evaluations of $f$ and, after the
+slash, the worst error on the test set in units of $atol$; "fails" marks a build that failed (it is not run at
+tighter tolerances), and a dash a tolerance that was not run. The schemes' ladders
+go down by decades, AFINNI's and ART's by halvings, so most rows hold one family or the other. AFINNI's runs are
+those from the sample grown with its leaves; on Rosenbrock, `shared_latent` and `lorenz96_state` they and ART's
+are the other companion's runs.
+
+#let conv-methods = ("chebtt", "chebtt_metric", "chebtt_adaptive", "hub", "afinni", "art")
+#let conv-cell(rows, tol) = {
+  if rows == none { return [--] }
+  let r = rows.find(r => calc.abs(r.tol - tol) <= 1e-9 * tol)
+  if r == none { [--] } else if "failed" in r { [fails] } else {
+    let w = r.worst
+    [#num(r.evals) / #if w > 0 and (w < 0.01 or w >= 1000) { sci(w) } else { str(w) }]
+  }
+}
+#let conv-table(title, by-method) = {
+  let tols = by-method.values().filter(rows => rows != none).map(rows => rows.map(r => r.tol)).flatten().dedup().sorted().rev()
+  block(breakable: false, above: 1em)[
+    #text(weight: "bold", title)
+    #set text(7.5pt)
+    #table(
+      columns: (auto,) + (1fr,) * 6,
+      inset: (x: 3pt, y: 2.5pt),
+      align: (left,) + (right,) * 6,
+      table.header([$atol$], ..conv-methods.map(m => mname.at(m))),
+      ..tols.map(t => ([#tolstr(t)], ..conv-methods.map(m => conv-cell(by-method.at(m, default: none), t)))).flatten(),
+    )
+  ]
+}
+#let ca-probs = ca.at("problems", default: (:))
+
+#for d in cg.dims.map(str) {
+  let row = cg.rosen.at(d)
+  conv-table([Rosenbrock's valley along a chain, $d = #d$],
+    (..row, afinni: ca.runs.afinni_scaled.at(d, default: none), art: ca.runs.art.at(d, default: none)))
+}
+#for d in cg.dims.map(str) {
+  conv-table([The ridge, $d = #d$], cg.ridge.at(d))
+}
+#conv-table([The feature example $F$, $d = 2$ (AFINNI and ART with the settings of @sec:compare)], cg.F)
+#for name in ("shared_latent", "lorenz96_state", "robertson") {
+  conv-table([#raw(name)], conv-methods.map(m => (m, cg-vec.at(name).at(m))).to-dict())
+}
 
 = Proof details <sec:proofs>
 

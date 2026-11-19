@@ -104,7 +104,8 @@ plt.rcParams.update({
 
 
 def rosenbrock(x: np.ndarray) -> np.ndarray:
-    return (1.0 - x[:, 0]) ** 2 + (x[:, 1] - x[:, 0] ** 2) ** 2
+    """The valley with unit scale, repeated along a chain in d > 2: sum_i (1 - x_i)^2 + (x_(i+1) - x_i^2)^2."""
+    return np.sum((1.0 - x[:, :-1]) ** 2 + (x[:, 1:] - x[:, :-1] ** 2) ** 2, axis=1)
 
 
 def base(x: np.ndarray) -> np.ndarray:
@@ -1278,7 +1279,14 @@ def counted(f):
     return g, spent
 
 
-def scheme_on(name: str, f, lo, hi, alpha):
+def scheme_on(name: str, f, lo, hi, alpha, outputs: int = 0):
+    """One scheme on f; with ``outputs``, f is vector-valued (N, outputs) and the scheme's vector build runs."""
+    if outputs:
+        if name in ("chebtt", "chebtt_metric"):
+            return chebtt.build_vector(f, lo, hi, alpha, outputs, rotate=name == "chebtt_metric", seed=SEED)
+        if name == "chebtt_adaptive":
+            return chebtt_adaptive.build_vector(f, lo, hi, alpha, outputs, seed=SEED)
+        return hub.build(f, lo, hi, alpha)
     if name == "chebtt":
         return chebtt.build(f, lo, hi, alpha, seed=SEED)
     if name == "chebtt_metric":
@@ -1289,23 +1297,33 @@ def scheme_on(name: str, f, lo, hi, alpha):
     return hub.build(f, lo, hi, alpha)
 
 
-def baseline_on(name: str, lo, hi, alpha):
-    """AFINNI or ART on the feature example through ``AdaptiveSurrogate``: AFINNI from a uniform sample, ART on the box."""
+def baseline_on(name: str, lo, hi, alpha, f=None, n0: int | None = None, **overrides):
+    """
+    AFINNI or ART through ``AdaptiveSurrogate``, on the feature example unless ``f`` is given: AFINNI from ``n0``
+    uniform points, ART on the box from ``n0`` of them. ``overrides`` replace ``TrainingConfig`` settings (an
+    ART ``art`` among them).
+    """
+    from src import to_host
     from src.config import TrainingConfig
     from src.core.evaluation import Evaluator
     from src.surrogate import AdaptiveSurrogate
 
+    f = LAYERS["brj"] if f is None else f
+    d = len(lo)
+
     def f_xp(x):
-        return LAYERS["brj"](np.asarray(x))[:, None]
+        v = f(np.asarray(x))
+        return v.reshape(len(v), -1)  # (N, 1) for a scalar f, (N, m) for a vector one
 
     s = AdaptiveSurrogate()
+    common = {"atol": alpha, "rtol": None, "seed": SEED, "use_work_stealing": False}
     if name == "afinni":
-        X0 = np.random.default_rng(SEED).uniform(lo, hi, (4000, 2))
-        cfg = TrainingConfig(atol=alpha, rtol=None, max_levels=14, seed=SEED, use_work_stealing=False)
+        X0 = np.random.default_rng(SEED).uniform(lo, hi, (n0 or 4000, d))
+        cfg = TrainingConfig(**{**common, "max_levels": 14, **overrides})
     else:
-        X0 = np.random.default_rng(SEED).uniform(lo, hi, (60, 2))
-        cfg = TrainingConfig(atol=alpha, rtol=None, algorithm="art", domain=(lo, hi), max_levels=16, seed=SEED, use_work_stealing=False,
-                             local_model="quadratic_lsq" if name == "art_quad" else "affine_lsq")  # fmt: skip
+        X0 = np.random.default_rng(SEED).uniform(lo, hi, (n0 or 60, d))
+        cfg = TrainingConfig(**{**common, "algorithm": "art", "domain": (lo, hi), "max_levels": 16,
+                                "local_model": "quadratic_lsq" if name == "art_quad" else "affine_lsq", **overrides})  # fmt: skip
     s.train(X0, cfg, Evaluator(f_fn=f_xp))
 
     class Predictor:
@@ -1314,9 +1332,18 @@ def baseline_on(name: str, lo, hi, alpha):
 
         @staticmethod
         def predict(X):
-            from src import to_host
-
             return np.ravel(to_host(s.predict(X)[0]))
+
+        @staticmethod
+        def predict_flagged(X):
+            """
+            Predictions with the queries outside every trust region, by the exact search, which also answers a
+            query some trust region contains from that leaf (ART flags none in its box).
+            """
+            if name != "afinni":
+                return np.ravel(to_host(s.predict(X)[0])), np.zeros(len(X), dtype=bool)
+            P, outside = s.predict(X, exact_outside=True)
+            return np.ravel(to_host(P)), np.ravel(to_host(outside)).astype(bool)
 
     return Predictor
 
