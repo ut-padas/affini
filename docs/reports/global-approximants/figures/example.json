@@ -570,5 +570,1416 @@
       "max_pieces": 4,
       "lattice": 4096
     }
+  },
+  "metric": {
+    "outputs": [
+      {
+        "name": "ridge",
+        "k_eig": 1,
+        "k_axes": 2,
+        "rotated": true,
+        "eig": [
+          1.0,
+          2.3e-12
+        ]
+      },
+      {
+        "name": "bump",
+        "k_eig": 1,
+        "k_axes": 2,
+        "rotated": true,
+        "eig": [
+          1.0,
+          2.73e-13
+        ]
+      },
+      {
+        "name": "base",
+        "k_eig": 2,
+        "k_axes": 2,
+        "rotated": false,
+        "eig": [
+          0.843,
+          0.157
+        ]
+      }
+    ],
+    "pilot": 8,
+    "box_area": 1.87,
+    "base_turned": {
+      "axes_evals": 793,
+      "axes_rank": 1,
+      "evals": 54315,
+      "rank": null,
+      "failed": "ChebTT reached rank 60 without meeting the tolerance."
+    },
+    "ladder": [
+      {
+        "d": 2,
+        "chebtt": {
+          "evals": 2365,
+          "worst": 0.366,
+          "rotated": [],
+          "coefficients": 425
+        },
+        "metric": {
+          "evals": 2576,
+          "worst": 0.25,
+          "rotated": [
+            0
+          ],
+          "coefficients": 105
+        }
+      },
+      {
+        "d": 3,
+        "chebtt": {
+          "evals": 10307,
+          "worst": 0.429,
+          "rotated": [],
+          "coefficients": 2475
+        },
+        "metric": {
+          "evals": 4567,
+          "worst": 0.429,
+          "rotated": [
+            0
+          ],
+          "coefficients": 303
+        }
+      },
+      {
+        "d": 5,
+        "chebtt": {
+          "evals": 260848,
+          "worst": 0.301,
+          "rotated": [],
+          "coefficients": 10626
+        },
+        "metric": {
+          "evals": 13514,
+          "worst": 0.216,
+          "rotated": [
+            0,
+            1
+          ],
+          "coefficients": 73
+        }
+      },
+      {
+        "d": 10,
+        "chebtt": {
+          "failed": "ChebTT would exceed 1,990,247 evaluations."
+        },
+        "metric": {
+          "evals": 36309,
+          "worst": 0.223,
+          "rotated": [
+            0,
+            1
+          ],
+          "coefficients": 109
+        }
+      }
+    ],
+    "axes_rank": 6,
+    "max_evals": 2000000
+  },
+  "adaptive": {
+    "kind": "interface (plane), jump fields of degree 2",
+    "evals": 5109,
+    "worst": 0.629,
+    "stages": [
+      {
+        "stage": "chebtt (stopped at an oblique edge)",
+        "evals": 1038
+      },
+      {
+        "stage": "interface discovery",
+        "evals": 2199
+      },
+      {
+        "stage": "jets",
+        "evals": 2391
+      },
+      {
+        "stage": "interface term",
+        "evals": 2487
+      },
+      {
+        "stage": "remainder chebtt",
+        "evals": 5109
+      }
+    ],
+    "interface": {
+      "kind": "plane",
+      "angle_error": 0.0,
+      "offset_error": 7.4e-13,
+      "degree": 2,
+      "first_points": 4,
+      "probe_points": 2,
+      "segments": 24
+    },
+    "jets": {
+      "points": 18,
+      "jump_mean": 0.4,
+      "jump_spread": 0.000711,
+      "slope_spread": 0.412,
+      "curvature_spread": 45.1,
+      "example": {
+        "jump": -0.4,
+        "point": [
+          -0.0469,
+          -0.765
+        ]
+      }
+    },
+    "remainder": {
+      "tail_f": 0.00215,
+      "tail_remainder": 3.04e-07,
+      "grid_worst": 0.6,
+      "tt": {
+        "evals": 3898,
+        "ranks": [
+          10
+        ],
+        "degrees": [
+          33,
+          17
+        ],
+        "pieces": [
+          1,
+          1
+        ],
+        "worst": 0.629,
+        "madds": 520
+      }
+    }
+  },
+  "hub": {
+    "values": {
+      "evals": 4000,
+      "jacobians": 0,
+      "worst": 0.163,
+      "holdout": 0.332,
+      "groups": [
+        {
+          "outputs": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "r": 2,
+          "degree": 32,
+          "weak": false,
+          "terms": 561
+        }
+      ],
+      "history": [
+        [
+          2000,
+          0.332
+        ]
+      ]
+    },
+    "jacobian": {
+      "evals": 2000,
+      "jacobians": 2100,
+      "worst": 0.067,
+      "holdout": 0.1,
+      "groups": [
+        {
+          "outputs": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "r": 2,
+          "degree": 40,
+          "weak": false,
+          "terms": 861
+        }
+      ],
+      "history": [
+        [
+          2000,
+          0.1
+        ]
+      ]
+    },
+    "problem": {
+      "name": "shared_latent",
+      "d": 10,
+      "alpha": 0.1,
+      "outputs": 6,
+      "test": 50000
+    },
+    "spectra": {
+      "shared_latent": {
+        "r": 2,
+        "share_left": 3.33e-16,
+        "top": [
+          0.607,
+          0.393,
+          2.62e-16
+        ]
+      },
+      "lift": {
+        "r": 1,
+        "share_left": 0.000728,
+        "top": [
+          0.999,
+          0.000125,
+          0.000108
+        ]
+      }
+    },
+    "lift": {
+      "evals": 6000,
+      "worst": 13.3,
+      "holdout": 19.6,
+      "groups": [
+        {
+          "r": 1,
+          "degree": 16,
+          "weak": true,
+          "terms": 323
+        }
+      ],
+      "jacobian": {
+        "evals": 8000,
+        "jacobians": 8100,
+        "worst": 1.12
+      },
+      "metric": {
+        "evals": 27913,
+        "worst": 0.036
+      },
+      "history": [
+        [
+          2000,
+          20.6
+        ],
+        [
+          4000,
+          19.6
+        ]
+      ]
+    },
+    "design": {
+      "points": 2000,
+      "uniform_reach": 0.781,
+      "design_reach": 1.0,
+      "uniform_outer": 0.0705,
+      "design_outer": 0.453
+    },
+    "terms": {
+      "r": 1,
+      "degree": 16,
+      "d10": 323,
+      "d100": 3383,
+      "total_d10": 5311735
+    },
+    "settings": {
+      "n0": 2000,
+      "r_max": 4,
+      "pilot": 100,
+      "grad_weight": 0.05,
+      "max_terms": 2500,
+      "degrees": {
+        "1": [
+          8,
+          16,
+          32,
+          48
+        ],
+        "2": [
+          8,
+          16,
+          24,
+          32,
+          40
+        ],
+        "3": [
+          4,
+          6,
+          8,
+          10
+        ],
+        "4": [
+          3,
+          4,
+          5,
+          6
+        ]
+      }
+    },
+    "store_metric": {
+      "seeds": 3,
+      "failed": 0,
+      "evals": 247017,
+      "worst": 0.468,
+      "stale": true
+    },
+    "rosenbrock": {
+      "evals": 2400,
+      "worst": 2.4e-08
+    }
+  },
+  "compare": {
+    "layers": {
+      "b": {
+        "chebtt": {
+          "evals": 793,
+          "worst": 0.0258
+        },
+        "chebtt_metric": {
+          "evals": 666,
+          "worst": 0.0258
+        },
+        "chebtt_adaptive": {
+          "evals": 666,
+          "worst": 0.0258
+        },
+        "hub": {
+          "evals": 8400,
+          "worst": 0.608
+        }
+      },
+      "br": {
+        "chebtt": {
+          "evals": 4373,
+          "worst": 0.217
+        },
+        "chebtt_metric": {
+          "evals": 3569,
+          "worst": 0.217
+        },
+        "chebtt_adaptive": {
+          "evals": 3545,
+          "worst": 0.217
+        },
+        "hub": {
+          "evals": 4400,
+          "worst": 0.818
+        }
+      },
+      "brj": {
+        "chebtt": {
+          "failed": "ChebTT reached rank 60 without meeting the tolerance",
+          "evals": 366411
+        },
+        "chebtt_metric": {
+          "failed": "ChebTT reached rank 60 without meeting the tolerance",
+          "evals": 292030
+        },
+        "chebtt_adaptive": {
+          "evals": 5109,
+          "worst": 0.629
+        },
+        "hub": {
+          "evals": 4400,
+          "worst": 27.0
+        }
+      }
+    },
+    "baselines": {
+      "afinni": {
+        "evals": 274987,
+        "leaves": 1560,
+        "worst": 41.1,
+        "within": 98.4
+      },
+      "art": {
+        "evals": 156863,
+        "leaves": 1032,
+        "worst": 40.5,
+        "within": 99.9
+      },
+      "art_quad": {
+        "evals": 186937,
+        "leaves": 619,
+        "worst": 40.3,
+        "within": 99.8
+      }
+    },
+    "store": {
+      "classes": [
+        {
+          "class": "smooth",
+          "rows": [
+            {
+              "method": "chebtt_metric",
+              "label": "ChebTT-M",
+              "ran": 91,
+              "held": 90,
+              "won": 49,
+              "held_high": 30,
+              "evals": 917,
+              "us": 0.141,
+              "stale": true
+            },
+            {
+              "method": "chebtt",
+              "label": "ChebTT",
+              "ran": 91,
+              "held": 90,
+              "won": 32,
+              "held_high": 30,
+              "evals": 1069,
+              "us": 0.0871,
+              "stale": true
+            },
+            {
+              "method": "sparsecheb",
+              "label": "SparseCheb",
+              "ran": 42,
+              "held": 42,
+              "won": 25,
+              "held_high": 0,
+              "evals": 337,
+              "us": 1.26,
+              "stale": false
+            },
+            {
+              "method": "chebtree",
+              "label": "ChebTree",
+              "ran": 42,
+              "held": 42,
+              "won": 11,
+              "held_high": 0,
+              "evals": 757,
+              "us": 0.19,
+              "stale": true
+            },
+            {
+              "method": "art_quad",
+              "label": "ART, quadratic leaves",
+              "ran": 91,
+              "held": 10,
+              "won": 2,
+              "held_high": 9,
+              "evals": 4621,
+              "us": 0.43,
+              "stale": false
+            },
+            {
+              "method": "kernel",
+              "label": "MetricKernel",
+              "ran": 21,
+              "held": 10,
+              "won": 2,
+              "held_high": 0,
+              "evals": 257,
+              "us": 1.4,
+              "stale": false
+            },
+            {
+              "method": "afinni",
+              "label": "AFINNI",
+              "ran": 63,
+              "held": 2,
+              "won": 0,
+              "held_high": 0,
+              "evals": 109952,
+              "us": 0.435,
+              "stale": false
+            },
+            {
+              "method": "art",
+              "label": "ART, affine leaves",
+              "ran": 90,
+              "held": 0,
+              "won": 0,
+              "held_high": 0,
+              "evals": null,
+              "us": null,
+              "stale": false
+            }
+          ]
+        },
+        {
+          "class": "many local features",
+          "rows": [
+            {
+              "method": "chebtt_metric",
+              "label": "ChebTT-M",
+              "ran": 45,
+              "held": 45,
+              "won": 38,
+              "held_high": 0,
+              "evals": 1672,
+              "us": 0.333,
+              "stale": true
+            },
+            {
+              "method": "sparsecheb",
+              "label": "SparseCheb",
+              "ran": 9,
+              "held": 9,
+              "won": 4,
+              "held_high": 0,
+              "evals": 433,
+              "us": 2.46,
+              "stale": false
+            },
+            {
+              "method": "chebtt",
+              "label": "ChebTT",
+              "ran": 45,
+              "held": 45,
+              "won": 3,
+              "held_high": 0,
+              "evals": 2152,
+              "us": 0.294,
+              "stale": true
+            },
+            {
+              "method": "chebtree",
+              "label": "ChebTree",
+              "ran": 9,
+              "held": 9,
+              "won": 3,
+              "held_high": 0,
+              "evals": 1269,
+              "us": 0.149,
+              "stale": true
+            },
+            {
+              "method": "afinni",
+              "label": "AFINNI",
+              "ran": 38,
+              "held": 0,
+              "won": 0,
+              "held_high": 0,
+              "evals": null,
+              "us": null,
+              "stale": false
+            },
+            {
+              "method": "art",
+              "label": "ART, affine leaves",
+              "ran": 37,
+              "held": 0,
+              "won": 0,
+              "held_high": 0,
+              "evals": null,
+              "us": null,
+              "stale": false
+            },
+            {
+              "method": "art_quad",
+              "label": "ART, quadratic leaves",
+              "ran": 37,
+              "held": 0,
+              "won": 0,
+              "held_high": 0,
+              "evals": null,
+              "us": null,
+              "stale": false
+            }
+          ]
+        },
+        {
+          "class": "kinks, jumps, fronts",
+          "rows": [
+            {
+              "method": "chebtree",
+              "label": "ChebTree",
+              "ran": 10,
+              "held": 10,
+              "won": 10,
+              "held_high": 0,
+              "evals": 17007,
+              "us": 0.205,
+              "stale": true
+            },
+            {
+              "method": "chebtt_adaptive",
+              "label": "ChebTT-A",
+              "ran": 3,
+              "held": 3,
+              "won": 3,
+              "held_high": 0,
+              "evals": 1749,
+              "us": 0.244,
+              "stale": true
+            },
+            {
+              "method": "chebtt",
+              "label": "ChebTT",
+              "ran": 16,
+              "held": 3,
+              "won": 1,
+              "held_high": 0,
+              "evals": 53970,
+              "us": 1.08,
+              "stale": true
+            },
+            {
+              "method": "sparsecheb",
+              "label": "SparseCheb",
+              "ran": 9,
+              "held": 4,
+              "won": 0,
+              "held_high": 0,
+              "evals": 43397,
+              "us": 23.3,
+              "stale": false
+            },
+            {
+              "method": "chebtt_metric",
+              "label": "ChebTT-M",
+              "ran": 15,
+              "held": 2,
+              "won": 0,
+              "held_high": 0,
+              "evals": 41735,
+              "us": 0.878,
+              "stale": true
+            },
+            {
+              "method": "afinni",
+              "label": "AFINNI",
+              "ran": 39,
+              "held": 0,
+              "won": 0,
+              "held_high": 0,
+              "evals": null,
+              "us": null,
+              "stale": false
+            },
+            {
+              "method": "art",
+              "label": "ART, affine leaves",
+              "ran": 36,
+              "held": 0,
+              "won": 0,
+              "held_high": 0,
+              "evals": null,
+              "us": null,
+              "stale": false
+            },
+            {
+              "method": "art_quad",
+              "label": "ART, quadratic leaves",
+              "ran": 33,
+              "held": 0,
+              "won": 0,
+              "held_high": 0,
+              "evals": null,
+              "us": null,
+              "stale": false
+            }
+          ]
+        },
+        {
+          "class": "ODE flow maps",
+          "rows": [
+            {
+              "method": "chebtree",
+              "label": "ChebTree",
+              "ran": 15,
+              "held": 15,
+              "won": 7,
+              "held_high": 0,
+              "evals": 757,
+              "us": 0.139,
+              "stale": true
+            },
+            {
+              "method": "art",
+              "label": "ART, affine leaves",
+              "ran": 27,
+              "held": 7,
+              "won": 6,
+              "held_high": 0,
+              "evals": 81,
+              "us": 0.0773,
+              "stale": false
+            },
+            {
+              "method": "sparsecheb",
+              "label": "SparseCheb",
+              "ran": 15,
+              "held": 15,
+              "won": 5,
+              "held_high": 0,
+              "evals": 201,
+              "us": 0.677,
+              "stale": false
+            },
+            {
+              "method": "chebtt_metric",
+              "label": "ChebTT-M",
+              "ran": 25,
+              "held": 24,
+              "won": 4,
+              "held_high": 3,
+              "evals": 424,
+              "us": 0.0645,
+              "stale": true
+            },
+            {
+              "method": "art_quad",
+              "label": "ART, quadratic leaves",
+              "ran": 27,
+              "held": 10,
+              "won": 3,
+              "held_high": 2,
+              "evals": 201,
+              "us": 0.118,
+              "stale": false
+            },
+            {
+              "method": "chebtt",
+              "label": "ChebTT",
+              "ran": 25,
+              "held": 24,
+              "won": 0,
+              "held_high": 3,
+              "evals": 430,
+              "us": 0.0539,
+              "stale": true
+            },
+            {
+              "method": "afinni",
+              "label": "AFINNI",
+              "ran": 21,
+              "held": 6,
+              "won": 0,
+              "held_high": 0,
+              "evals": 109854,
+              "us": 0.297,
+              "stale": false
+            },
+            {
+              "method": "kernel",
+              "label": "MetricKernel",
+              "ran": 3,
+              "held": 3,
+              "won": 0,
+              "held_high": 0,
+              "evals": 267,
+              "us": 1.39,
+              "stale": false
+            }
+          ]
+        },
+        {
+          "class": "vector-valued",
+          "rows": [
+            {
+              "method": "chebtt",
+              "label": "ChebTT",
+              "ran": 98,
+              "held": 93,
+              "won": 81,
+              "held_high": 31,
+              "evals": 2459,
+              "us": 0.292,
+              "stale": true
+            },
+            {
+              "method": "chebtt_metric",
+              "label": "ChebTT-M",
+              "ran": 100,
+              "held": 94,
+              "won": 75,
+              "held_high": 32,
+              "evals": 2490,
+              "us": 0.35,
+              "stale": true
+            },
+            {
+              "method": "art",
+              "label": "ART, affine leaves",
+              "ran": 92,
+              "held": 6,
+              "won": 6,
+              "held_high": 3,
+              "evals": 251,
+              "us": 0.293,
+              "stale": false
+            },
+            {
+              "method": "art_quad",
+              "label": "ART, quadratic leaves",
+              "ran": 94,
+              "held": 13,
+              "won": 4,
+              "held_high": 7,
+              "evals": 1321,
+              "us": 0.459,
+              "stale": false
+            },
+            {
+              "method": "afinni",
+              "label": "AFINNI",
+              "ran": 63,
+              "held": 3,
+              "won": 0,
+              "held_high": 0,
+              "evals": 109854,
+              "us": 0.412,
+              "stale": false
+            }
+          ]
+        }
+      ],
+      "records": 4361,
+      "latest": "2026-11-18T10:45:23",
+      "cases": {
+        "many local features": {
+          "cases": 39,
+          "scheme_only": 39,
+          "baseline_only": 0,
+          "both": 0,
+          "neither": 0
+        },
+        "kinks, jumps, fronts": {
+          "cases": 22,
+          "scheme_only": 14,
+          "baseline_only": 0,
+          "both": 0,
+          "neither": 8
+        },
+        "smooth": {
+          "cases": 89,
+          "scheme_only": 76,
+          "baseline_only": 0,
+          "both": 12,
+          "neither": 1
+        },
+        "vector-valued": {
+          "cases": 92,
+          "scheme_only": 78,
+          "baseline_only": 1,
+          "both": 12,
+          "neither": 1
+        },
+        "ODE flow maps": {
+          "cases": 25,
+          "scheme_only": 14,
+          "baseline_only": 1,
+          "both": 10,
+          "neither": 0
+        }
+      },
+      "max_d": {
+        "afinni": 5,
+        "art": 20,
+        "art_quad": 20,
+        "chebtt": 20,
+        "chebtt_metric": 20,
+        "chebtree": 3,
+        "sparsecheb": 3,
+        "kernel": 2,
+        "chebtt_adaptive": 2
+      },
+      "scheme_only": 221,
+      "baseline_only": 2,
+      "both": 34,
+      "neither": 10,
+      "total": 267,
+      "high_d_scheme_only": 43,
+      "class_colours": {
+        "smooth": "#00a6c7",
+        "many local features": "#e1a800",
+        "kinks, jumps, fronts": "#d81b8a",
+        "ODE flow maps": "#2e7d32",
+        "vector-valued": "#1f5fa8"
+      },
+      "stale_methods": {
+        "chebtt": {
+          "share": 1.0,
+          "since": "2026-11-18T22:22",
+          "what": "piecewise axes at jumps and kinks, and the degree-cut compression"
+        },
+        "chebtt_metric": {
+          "share": 1.0,
+          "since": "2026-11-18T22:22",
+          "what": "as ChebTT"
+        },
+        "chebtree": {
+          "share": 0.645,
+          "since": "2026-11-17T23:54",
+          "what": "verification along centre fibres before a box is accepted"
+        },
+        "chebtt_adaptive": {
+          "share": 1.0,
+          "since": "2026-11-18T22:22",
+          "what": "as ChebTT"
+        }
+      }
+    }
+  },
+  "steps": {
+    "regimes": {
+      "stiff": [
+        {
+          "method": "chebtt_roll",
+          "label": "ChebTT, retrained until its rollouts hold",
+          "ran": 21,
+          "one_step": 19,
+          "rollout": 19,
+          "speedup": 1923,
+          "evals": 2042,
+          "stale": true
+        },
+        {
+          "method": "chebtt_adaptive",
+          "label": "ChebTT-A",
+          "ran": 21,
+          "one_step": 20,
+          "rollout": 2,
+          "speedup": 15566,
+          "evals": 714,
+          "stale": true
+        },
+        {
+          "method": "chebtt_box",
+          "label": "ChebTT, piecewise axes",
+          "ran": 22,
+          "one_step": 20,
+          "rollout": 2,
+          "speedup": 18059,
+          "evals": 714,
+          "stale": true
+        },
+        {
+          "method": "chebtt_smooth",
+          "label": "ChebTT, one basis per axis (no edge search)",
+          "ran": 22,
+          "one_step": 20,
+          "rollout": 2,
+          "speedup": 17695,
+          "evals": 714,
+          "stale": true
+        },
+        {
+          "method": "slowtable",
+          "label": "SlowTable",
+          "ran": 20,
+          "one_step": 9,
+          "rollout": 2,
+          "speedup": 408,
+          "evals": 899,
+          "stale": false
+        },
+        {
+          "method": "art_quad",
+          "label": "ART, quadratic leaves",
+          "ran": 19,
+          "one_step": 8,
+          "rollout": 0,
+          "speedup": null,
+          "evals": null,
+          "stale": false
+        },
+        {
+          "method": "art",
+          "label": "ART, affine leaves",
+          "ran": 17,
+          "one_step": 4,
+          "rollout": 0,
+          "speedup": null,
+          "evals": null,
+          "stale": false
+        },
+        {
+          "method": "afinni",
+          "label": "AFINNI",
+          "ran": 15,
+          "one_step": 0,
+          "rollout": 0,
+          "speedup": null,
+          "evals": null,
+          "stale": false
+        }
+      ],
+      "nonstiff": [
+        {
+          "method": "chebtt_roll",
+          "label": "ChebTT, retrained until its rollouts hold",
+          "ran": 6,
+          "one_step": 5,
+          "rollout": 5,
+          "speedup": 291,
+          "evals": 7230,
+          "stale": true
+        },
+        {
+          "method": "chebtt_adaptive",
+          "label": "ChebTT-A",
+          "ran": 4,
+          "one_step": 4,
+          "rollout": 3,
+          "speedup": 196,
+          "evals": 7230,
+          "stale": true
+        },
+        {
+          "method": "chebtt_box",
+          "label": "ChebTT, piecewise axes",
+          "ran": 4,
+          "one_step": 4,
+          "rollout": 3,
+          "speedup": 223,
+          "evals": 7230,
+          "stale": true
+        },
+        {
+          "method": "chebtt_smooth",
+          "label": "ChebTT, one basis per axis (no edge search)",
+          "ran": 4,
+          "one_step": 4,
+          "rollout": 3,
+          "speedup": 214,
+          "evals": 7230,
+          "stale": true
+        },
+        {
+          "method": "art_quad",
+          "label": "ART, quadratic leaves",
+          "ran": 5,
+          "one_step": 1,
+          "rollout": 0,
+          "speedup": null,
+          "evals": null,
+          "stale": false
+        },
+        {
+          "method": "slowtable",
+          "label": "SlowTable",
+          "ran": 4,
+          "one_step": 1,
+          "rollout": 0,
+          "speedup": null,
+          "evals": null,
+          "stale": false
+        },
+        {
+          "method": "afinni",
+          "label": "AFINNI",
+          "ran": 3,
+          "one_step": 0,
+          "rollout": 0,
+          "speedup": null,
+          "evals": null,
+          "stale": false
+        },
+        {
+          "method": "art",
+          "label": "ART, affine leaves",
+          "ran": 3,
+          "one_step": 0,
+          "rollout": 0,
+          "speedup": null,
+          "evals": null,
+          "stale": false
+        }
+      ]
+    },
+    "robertson": {
+      "chebtt_box": {
+        "one_step": 0.253,
+        "rollout": 5.05,
+        "evals": 955,
+        "speedup": 10631,
+        "stale": true
+      },
+      "chebtt_roll": {
+        "one_step": 0.0179,
+        "rollout": 0.434,
+        "evals": 1159,
+        "speedup": 8851,
+        "stale": true
+      },
+      "slowtable": {
+        "one_step": 4.03,
+        "rollout": 1.78,
+        "evals": 841,
+        "speedup": 311,
+        "stale": false
+      }
+    },
+    "records": 190,
+    "kida": {
+      "species": 578,
+      "reactions": 8275,
+      "ms_per_step": 256,
+      "lu_per_step": 35,
+      "slow_low": 15,
+      "slow_high": 25,
+      "nelson_species": 14,
+      "nelson_slow": 7,
+      "nelson_inputs": 18
+    },
+    "colours": {
+      "chebtt_box": "#e08a00",
+      "chebtt_roll": "#c0392b",
+      "slowtable": "#8e24aa",
+      "art_quad": "#2e7d32",
+      "afinni": "#6d3b0f"
+    },
+    "problems": 15
+  },
+  "aside": {
+    "chebtree": {
+      "evals": 2253,
+      "boxes": 16,
+      "worst": 0.331
+    },
+    "sparsecheb": {
+      "evals": 741,
+      "indices": 32,
+      "worst": 0.441
+    },
+    "kernel": {
+      "evals": 1377,
+      "centres": 193,
+      "worst": 2.26
+    },
+    "slowtable": {
+      "records": 43,
+      "evals": 229,
+      "states": 372,
+      "alpha": 0.01,
+      "refused_fresh": 7.26
+    }
+  },
+  "engineering": {
+    "chebtt": {
+      "rounds": 7,
+      "phases": [
+        "explore",
+        "sample",
+        "fit",
+        "check",
+        "adapt",
+        "compress"
+      ]
+    },
+    "chebtt_metric": {
+      "rounds": 2,
+      "phases": [
+        "explore",
+        "fit"
+      ]
+    },
+    "chebtt_adaptive": {
+      "rounds": 5,
+      "phases": [
+        "explore",
+        "fit"
+      ]
+    },
+    "hub": {
+      "rounds": 2,
+      "phases": [
+        "explore",
+        "sample",
+        "fit"
+      ]
+    }
+  },
+  "appendix": {
+    "settings": {
+      "chebtt": [
+        {
+          "name": "safety",
+          "default": "0.5",
+          "note": "every check must be within safety * atol",
+          "inherited": false
+        },
+        {
+          "name": "rank0",
+          "default": "2",
+          "note": "the cross's first rank",
+          "inherited": false
+        },
+        {
+          "name": "rank_step",
+          "default": "2",
+          "note": "rank added when no axis needs a degree",
+          "inherited": false
+        },
+        {
+          "name": "rank_max",
+          "default": "60",
+          "note": "",
+          "inherited": false
+        },
+        {
+          "name": "sweeps",
+          "default": "2",
+          "note": "alternating maxvol sweeps per round",
+          "inherited": false
+        },
+        {
+          "name": "n_fibre",
+          "default": "4",
+          "note": "random fibres per axis in the degree pre-pass",
+          "inherited": false
+        },
+        {
+          "name": "n_max",
+          "default": "512",
+          "note": "largest degree of an axis",
+          "inherited": false
+        },
+        {
+          "name": "n_check",
+          "default": "None",
+          "note": "Sobol check points (default 64 + 32 d)",
+          "inherited": false
+        },
+        {
+          "name": "n_free",
+          "default": "20000",
+          "note": "free checks drawn from the grid points evaluated earlier",
+          "inherited": false
+        },
+        {
+          "name": "chop_share",
+          "default": "0.25",
+          "note": "compression may change the model by chop_share * atol",
+          "inherited": false
+        },
+        {
+          "name": "n_probe",
+          "default": "4000",
+          "note": "uniform points the compression is judged at (besides the check points)",
+          "inherited": false
+        },
+        {
+          "name": "seed",
+          "default": "0",
+          "note": "",
+          "inherited": false
+        },
+        {
+          "name": "max_evals",
+          "default": "2000000",
+          "note": "",
+          "inherited": false
+        },
+        {
+          "name": "edges",
+          "default": "True",
+          "note": "search axes for jumps and kinks, which become breakpoints",
+          "inherited": false
+        },
+        {
+          "name": "max_pieces",
+          "default": "4",
+          "note": "pieces per axis at most",
+          "inherited": false
+        }
+      ],
+      "vector": [
+        {
+          "name": "rotate",
+          "default": "False",
+          "note": "train outputs that share oblique coordinates in them (ChebTT-M)",
+          "inherited": false
+        },
+        {
+          "name": "axes_rank",
+          "default": "6",
+          "note": "with rotate, the rank cap of every output's first attempt on the axes",
+          "inherited": false
+        }
+      ],
+      "adaptive": [
+        {
+          "name": "seed",
+          "default": "0",
+          "note": "",
+          "inherited": false
+        },
+        {
+          "name": "max_evals",
+          "default": "300000",
+          "note": "of each full ChebTT build",
+          "inherited": false
+        },
+        {
+          "name": "first_budget",
+          "default": "None",
+          "note": "the first ChebTT attempt's evaluations (default 5000 + 500 d)",
+          "inherited": false
+        }
+      ],
+      "hub": [
+        {
+          "name": "n0",
+          "default": "2000",
+          "note": "samples of the first budget round (doubled every round)",
+          "inherited": false
+        },
+        {
+          "name": "max_evals",
+          "default": "200000",
+          "note": "",
+          "inherited": false
+        },
+        {
+          "name": "r_max",
+          "default": "4",
+          "note": "largest hub dimension",
+          "inherited": false
+        },
+        {
+          "name": "pilot",
+          "default": "100",
+          "note": "pilot points whose gradients give the directions",
+          "inherited": false
+        },
+        {
+          "name": "grad_weight",
+          "default": "0.05",
+          "note": "weight of a gradient equation per unit of the box's half-width",
+          "inherited": false
+        },
+        {
+          "name": "seed",
+          "default": "0",
+          "note": "",
+          "inherited": false
+        }
+      ]
+    },
+    "tests": {
+      "test_schemes_base.py": 9,
+      "test_schemes_chebtree.py": 7,
+      "test_schemes_chebtt.py": 10,
+      "test_schemes_chebtt_adaptive.py": 4,
+      "test_schemes_hub.py": 4,
+      "test_schemes_kernel.py": 1,
+      "test_schemes_sparsegrid.py": 2
+    },
+    "test_count": 37,
+    "regression_cases": [
+      "chebtt",
+      "chebtt_edges",
+      "chebtt_vector",
+      "chebtt_metric",
+      "chebtt_adaptive",
+      "chebtree",
+      "chebtree_rotated",
+      "sparsegrid",
+      "hub",
+      "hub_jacobian",
+      "kernel",
+      "tabulation"
+    ]
   }
 }

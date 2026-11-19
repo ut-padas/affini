@@ -37,9 +37,12 @@ from matplotlib import patheffects  # noqa: E402
 from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
 
+import src.schemes.chebtt.adaptive as chebtt_adaptive  # noqa: E402
 import src.schemes.chebtt.train as chebtt_train  # noqa: E402
-from src.schemes import chebtt  # noqa: E402
-from src.schemes.chebtt import ChebTTSettings  # noqa: E402
+import src.schemes.hub as hub_module  # noqa: E402
+from src.problems import FUNCTIONS  # noqa: E402
+from src.schemes import chebtt, directions, hub  # noqa: E402
+from src.schemes.chebtt import ChebTTSettings, VectorSettings  # noqa: E402
 from src.schemes.chebyshev import cheb_points, chebyshev_tail, coefficients_along  # noqa: E402
 
 warnings.simplefilter("ignore")
@@ -65,6 +68,12 @@ P = np.array([np.cos(np.radians(JUMP_ANGLE)), np.sin(np.radians(JUMP_ANGLE))])
 # Axis slices of F (section 2): x1 fixed for the smooth one and the jump one, x2 fixed for the kink one.
 SLICES = {"smooth": (0, -0.6), "kink": (1, 0.6), "jump": (0, 0.8)}  # (fixed axis, its value); the slice runs along the other
 ANGLES = (0, 5, 10, 20, 30, 45)  # the ridge alone, turned: ChebTT's rank against the angle
+# The lift to d dimensions: the same ridge across q_d, which is q at d = 2 and oblique to every axis above.
+LIFT_DIMS = (2, 3, 5, 10)
+SECOND_OUTPUT = (0.3, 4.0, 0.3)  # ChebTT-M's second output: H exp(-W (q.x - C)^2), a bump on the ridge's direction
+WEAK = 0.1  # the hub's lift adds WEAK |x|^2 / d: weak dependence on every direction
+# The problem the hub expansion was developed on (src/problems/vector_fields.py), at the tolerance of those studies.
+HUB_PROBLEM, HUB_D, HUB_ALPHA = "shared_latent", 10, 0.1
 
 # ----------------------------------------------------------------------------- style
 PALETTE = ["#c0392b", "#e1a800", "#2e7d32", "#1f5fa8", "#6d3b0f", "#ef7d1a", "#6a1b9a", "#d81b8a",
@@ -114,6 +123,33 @@ def jump(x: np.ndarray) -> np.ndarray:
 
 
 LAYERS = {"b": base, "br": lambda x: base(x) + ridge(x), "brj": lambda x: base(x) + ridge(x) + jump(x)}
+
+
+def lift_direction(d: int) -> np.ndarray:
+    v = np.r_[Q[0], np.full(d - 1, Q[1])]
+    return v / np.linalg.norm(v)
+
+
+def lift_ridge(x: np.ndarray) -> np.ndarray:
+    return RIDGE_HEIGHT * np.tanh(RIDGE_STEEP * (x @ lift_direction(x.shape[1]) + RIDGE_OFFSET))
+
+
+def lift_pair(x: np.ndarray) -> np.ndarray:
+    """ChebTT-M's two outputs: the ridge and a bump, both functions of q_d . x alone."""
+    h, w, c = SECOND_OUTPUT
+    s = x @ lift_direction(x.shape[1])
+    return np.stack([lift_ridge(x), h * np.exp(-w * (s - c) ** 2)], axis=1)
+
+
+def lift_hub(x: np.ndarray) -> np.ndarray:
+    """The hub expansion's lift: the ridge, and weak dependence on every other direction."""
+    return lift_ridge(x) + WEAK * np.sum(x * x, axis=1) / x.shape[1]
+
+
+def lift_hub_jacobian(x: np.ndarray) -> np.ndarray:
+    q = lift_direction(x.shape[1])
+    t = RIDGE_STEEP * (x @ q + RIDGE_OFFSET)
+    return (RIDGE_HEIGHT * RIDGE_STEEP / np.cosh(t) ** 2)[:, None] * q[None] + 2.0 * WEAK * x / x.shape[1]
 
 
 def grid(lo: np.ndarray, hi: np.ndarray, n: int) -> np.ndarray:
@@ -776,6 +812,822 @@ def section_chebtt(rosen: Run) -> dict:
     return out
 
 
+# ----------------------------------------------------------------------------- the benchmark store
+def store_case(suite: str, setup: str, problem: str, d: int, method: str, tol: float) -> dict | None:
+    """One case of the store (every seed): mean evaluations, worst error over the seeds, and whether any record is stale."""
+    from src.benchmark.store import Store
+    from src.benchmark.table import RESULTS_CHANGED
+
+    rs = [r for r in Store(suite, setup).runs(problem, method) if int(r["d"]) == d and float(r["tol"]) == tol]
+    if not rs:
+        return None
+    done = [r for r in rs if "failed" not in r]
+    changed = RESULTS_CHANGED.get(method, ("", ""))[0]
+    return {"seeds": len(rs), "failed": len(rs) - len(done), "evals": int(round(np.mean([r["evals"] for r in done]))) if done else None,
+            "worst": r3(max(r["worst_ratio"] for r in done)) if done else None,
+            "stale": any(r.get("recorded", "") < changed for r in rs)}  # fmt: skip
+
+
+# ----------------------------------------------------------------------------- section 4: ChebTT-M
+def test_worst(model, f, X, alpha) -> float:
+    """The worst |error| / tolerance over the points X, over every output."""
+    P = np.asarray(model.predict(X), dtype=np.float64).reshape(len(X), -1)
+    return float(np.max(np.abs(P - np.asarray(f(X)).reshape(len(X), -1)))) / alpha
+
+
+def uniform_test(d: int, n: int = 20_000) -> np.ndarray:
+    """The 2-D grid of the benchmark, or n fixed uniform points above it."""
+    return grid(-np.ones(2), np.ones(2), 300) if d == 2 else np.random.default_rng(20_261_117).uniform(-1, 1, (n, d))
+
+
+def section_metric() -> dict:
+    """The pullback metrics of three outputs, the groups they form, the rotated box, and the ladder in d."""
+    out: dict = {}
+    # The pilot: forward differences at Sobol points, as build_vector takes them, of the ridge, the bump and the base.
+    d = 2
+    outputs = lambda x: np.concatenate([lift_pair(x), base(x)[:, None]], axis=1)  # noqa: E731
+    n_p = 1 << int(np.ceil(np.log2(4 + 2 * d)))
+    from src.schemes.base import check_points
+
+    X = check_points(F_LO, F_HI, n_p, SEED + 101)
+    h = 1e-6 * (F_HI - F_LO)
+    V = outputs(np.concatenate([X] + [X + h[k] * np.eye(d)[k] for k in range(d)])).reshape(d + 1, n_p, 3)
+    J = (V[1:] - V[0][None]) / h[:, None, None]
+    groups = directions.metric_groups(J)
+    # Rebuild the decision from the definitions: an output is rotated when its metric holds 99% of its trace in at
+    # most half as many eigenvectors as axes (diagonal entries) do.
+    G = [J[:, :, c] @ J[:, :, c].T / n_p for c in range(3)]
+    G = [g / np.trace(g) for g in G]
+    k_eig = [directions.directions_holding(np.linalg.eigvalsh(g)) for g in G]
+    k_axes = [directions.directions_holding(np.diag(g)) for g in G]
+    rotated = [c for c in range(3) if 2 * k_eig[c] <= k_axes[c]]
+    if sorted(c for cols, Qm in groups if Qm is not None for c in cols) != rotated:
+        raise SystemExit("The metric groups rebuilt from their definition differ from metric_groups.")
+    names = ("ridge", "bump", "base")
+    colours = (FEATURE["ridge"], METHOD["chebtt_metric"], FEATURE["kink"])
+    fig, axes = plt.subplots(1, 3, figsize=(5.6, 1.95), gridspec_kw={"wspace": 0.08})
+    for c, ax in enumerate(axes):
+        box_axes(ax, F_LO, F_HI)
+        level_sets(ax, lambda x, c=c: outputs(x)[:, c], F_LO, F_HI, bands=12, lines=False)
+        w, E = np.linalg.eigh(G[c])
+        for lam, e in zip(w, E.T, strict=True):
+            ax.annotate("", xy=0.85 * np.sqrt(lam) * e, xytext=-0.85 * np.sqrt(lam) * e,
+                        arrowprops={"arrowstyle": "<|-|>", "color": colours[c], "lw": 1.4, "mutation_scale": 7})  # fmt: skip
+    save(fig, "metric")
+    out["outputs"] = [{"name": names[c], "k_eig": k_eig[c], "k_axes": k_axes[c], "rotated": c in rotated,
+                       "eig": [r3(v) for v in np.sort(np.linalg.eigvalsh(G[c]))[::-1]]} for c in range(3)]  # fmt: skip
+    out["pilot"] = int(n_p)
+    # The rotated box: the domain in the eigenvectors of the ridge's metric, and the box that bounds it there.
+    Qr = next(Qm for cols, Qm in groups if Qm is not None)
+    half = np.abs(Qr).T @ (0.5 * (F_HI - F_LO))
+    fig, ax = plt.subplots(figsize=(2.3, 2.3))
+    corners = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1], [-1, -1]]) * half
+    outer = corners @ Qr.T
+    ax.fill(*outer.T, color=LIGHT, alpha=0.6, lw=0, zorder=0)
+    ax.plot(*outer.T, color=DARK, lw=0.8, zorder=3)
+    Xd = grid(F_LO, F_HI, 160)
+    Z = lift_ridge(Xd).reshape(160, 160)
+    ax.contourf(Xd[:, 0].reshape(160, 160), Xd[:, 1].reshape(160, 160), Z, levels=12, cmap=BACKGROUND, zorder=1)
+    ax.add_patch(Rectangle(F_LO, *(F_HI - F_LO), fc="none", ec=GREY, lw=0.8, zorder=2))
+    for t in np.linspace(-0.8, 0.8, 5):
+        a = np.array([[t, -half[1]], [t, half[1]]]) @ Qr.T
+        ax.plot(*a.T, color=FEATURE["ridge"], lw=0.5, ls=(0, (2, 2)), zorder=2)
+    lim = 1.02 * np.abs(outer).max()
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    save(fig, "rotated-box")
+    out["box_area"] = r3(float(np.prod(2 * half)) / float(np.prod(F_HI - F_LO)))
+    # One rotation for every output: the separable base in the ridge's coordinates, against the base on the axes.
+    centre = 0.5 * (F_LO + F_HI)
+    # In those coordinates the base's kink is oblique, so the cross can fail outright: count what it spent.
+    spent = [0]
+
+    def turned_base(U):
+        spent[0] += len(U)
+        return base(centre + U @ Qr.T)
+
+    axes_b = chebtt.build(base, F_LO, F_HI, F_ALPHA, seed=SEED)
+    out["base_turned"] = {"axes_evals": int(axes_b.evals), "axes_rank": int(max(axes_b.ranks))}
+    try:
+        turned = chebtt.build(turned_base, -half, half, F_ALPHA, seed=SEED)
+        out["base_turned"] |= {"evals": int(turned.evals), "rank": int(max(turned.ranks)), "failed": None}
+    except RuntimeError as e:
+        out["base_turned"] |= {"evals": int(spent[0]), "rank": None, "failed": str(e)}
+    # The ladder: ChebTT and ChebTT-M on the pair, as the dimension grows.
+    ladder = []
+    for d in LIFT_DIMS:
+        lo, hi = -np.ones(d), np.ones(d)
+        X = uniform_test(d)
+        row = {"d": d}
+        for key, rotate in (("chebtt", False), ("metric", True)):
+            try:
+                m = chebtt.build_vector(lift_pair, lo, hi, F_ALPHA, 2, rotate=rotate, seed=SEED)
+            except RuntimeError as e:
+                row[key] = {"failed": str(e)}
+                continue
+            row[key] = {"evals": int(m.evals), "worst": r3(test_worst(m, lift_pair, X, F_ALPHA)),
+                        "rotated": [int(c) for cols, Qm, _ in m.groups if Qm is not None for c in cols],
+                        "coefficients": int(sum(C.size for _, _, ms in m.groups for mm in ms for C in mm.cores))}  # fmt: skip
+        ladder.append(row)
+    fig, ax = plt.subplots(figsize=(2.5, 1.9))
+    for key, colour in (("chebtt", METHOD["chebtt"]), ("metric", METHOD["chebtt_metric"])):
+        pts = [(r["d"], r[key]["evals"]) for r in ladder if "evals" in r[key]]
+        ax.semilogy(*zip(*pts, strict=True), "o-", color=colour, ms=3, lw=1.1)
+        for r in ladder:
+            if "failed" in r[key]:
+                ax.scatter([r["d"]], [VectorSettings().max_evals], marker="x", c=colour, s=24, lw=1.2)
+    ax.set_xticks(list(LIFT_DIMS))
+    ax.set_xlabel("dimension $d$", fontsize=6.5, labelpad=1)
+    ax.set_ylabel("evaluations", fontsize=6.5, labelpad=1)
+    tidy(ax)
+    save(fig, "metric-ladder")
+    out["ladder"] = ladder
+    out["axes_rank"] = VectorSettings().axes_rank
+    out["max_evals"] = VectorSettings().max_evals
+    return out
+
+
+# ----------------------------------------------------------------------------- section 5: ChebTT-A
+@dataclass
+class AdaptiveRun:
+    """One recorded ChebTT-A build: the edge points of the first attempt, every probe, the interface and its jets."""
+
+    first: list = field(default_factory=list)  # points the first ChebTT's edge search located on the interface
+    segments: list = field(default_factory=list)  # (anchor, others, located jump points)
+    fits: list = field(default_factory=list)  # (points, interface or None)
+    jets: list = field(default_factory=list)  # (interface points, their one-sided jumps)
+    model: object = None
+
+
+def record_adaptive(f, lo, hi, atol) -> AdaptiveRun:
+    """``adaptive.build`` with its stages wrapped (the wrappers change no result; checked against an unrecorded build)."""
+    run = AdaptiveRun()
+    names = ("build_tt", "segment_edges", "fit_interface", "interface_jets")
+    originals = {n: getattr(chebtt_adaptive, n) for n in names}
+
+    def build_tt(*a, **k):
+        if "interface" in k:
+            run.first = k["interface"]  # the build fills this list as it meets the interface
+        return originals["build_tt"](*a, **k)
+
+    def segment_edges(F, anchor, others, *a, **k):
+        pts, steep = originals["segment_edges"](F, anchor, others, *a, **k)
+        run.segments.append((anchor.copy(), np.array(others, copy=True), pts.copy()))
+        return pts, steep
+
+    def fit_interface(P, *a, **k):
+        iface = originals["fit_interface"](P, *a, **k)
+        run.fits.append((np.array(P, copy=True), iface))
+        return iface
+
+    def interface_jets(*a, **k):
+        P, J = originals["interface_jets"](*a, **k)
+        run.jets.append((P.copy(), J.copy()))
+        return P, J
+
+    for n, fn in (("build_tt", build_tt), ("segment_edges", segment_edges), ("fit_interface", fit_interface),
+                  ("interface_jets", interface_jets)):  # fmt: skip
+        setattr(chebtt_adaptive, n, fn)
+    try:
+        run.model = chebtt_adaptive.build(f, lo, hi, atol, seed=SEED)
+    finally:
+        for n, fn in originals.items():
+            setattr(chebtt_adaptive, n, fn)
+    plain = chebtt_adaptive.build(f, lo, hi, atol, seed=SEED)
+    X = np.random.default_rng(0).uniform(lo, hi, (2000, len(lo)))
+    if plain.evals != run.model.evals or not np.array_equal(plain.predict(X), run.model.predict(X)):
+        raise SystemExit("Recording ChebTT-A changed its model.")
+    return run
+
+
+def section_adaptive() -> dict:
+    f = LAYERS["brj"]
+    run = record_adaptive(f, F_LO, F_HI, F_ALPHA)
+    m, iface = run.model, run.model.interface
+    out: dict = {"kind": m.kind, "evals": int(m.evals), "worst": r3(worst(m, f, F_LO, F_HI, F_ALPHA)),
+                 "stages": [{"stage": r["stage"], "evals": int(r["evals"])} for r in m.report.rounds]}  # fmt: skip
+    # The interface against the truth: the fitted plane's normal and offset in the box's coordinates.
+    g = iface.grad(np.zeros((1, 2)))[0]
+    normal = g / np.linalg.norm(g)
+    angle = float(np.degrees(np.arccos(min(1.0, abs(normal @ P)))))
+    # the plane's point nearest the centre, and its distance from the true line p.x = offset
+    x0 = -iface.phi(np.zeros((1, 2)))[0] / np.linalg.norm(g) * normal
+    out["interface"] = {"kind": iface.kind, "angle_error": r3(angle), "offset_error": r3(abs(float(x0 @ P) - JUMP_OFFSET)),
+                        "degree": int(iface.degree), "first_points": len(run.first),
+                        "probe_points": int(sum(len(p) for *_, p in run.segments)), "segments": int(sum(len(o) for _, o, _ in run.segments))}  # fmt: skip
+    Pj = np.concatenate([p for p, _ in run.jets])
+    Jj = np.concatenate([j for _, j in run.jets])
+    out["jets"] = {"points": int(len(Pj)), "jump_mean": r3(float(np.mean(np.abs(Jj[:, 0])))), "jump_spread": r3(float(np.ptp(Jj[:, 0]))),
+                   "slope_spread": r3(float(np.ptp(Jj[:, 1]))), "curvature_spread": r3(float(np.ptp(Jj[:, 2])))}  # fmt: skip
+    # (a) discovery: the first attempt's points, the segment probes, the located points, the fitted plane.
+    fig, ax = plt.subplots(figsize=(2.4, 2.4))
+    box_axes(ax, F_LO, F_HI)
+    level_sets(ax, f, F_LO, F_HI, bands=12, lines=False)
+    for anchor, others, _ in run.segments:
+        for o in others:
+            ax.plot([anchor[0], o[0]], [anchor[1], o[1]], color=GREY, lw=0.4, zorder=2)
+        ax.scatter(*anchor, marker="x", s=36, c=DARK, lw=1.4, zorder=6, path_effects=halo(3))
+    t = np.linspace(-2, 2, 2)
+    line = x0 + np.outer(t, [-normal[1], normal[0]])
+    ax.plot(*line.T, color=DARK, lw=0.9, ls=(0, (3, 1.5)), zorder=4)
+    for _, _, pts in run.segments:
+        if len(pts):
+            ax.scatter(*pts.T, s=12, c=FEATURE["jump"], lw=0.4, edgecolors="white", zorder=5)
+    if len(run.first):
+        ax.scatter(*np.asarray(run.first).T, s=22, marker="D", c=FEATURE["jump"], lw=0.5, edgecolors=DARK, zorder=6)
+    ax.set_xlim(-1, 1)
+    ax.set_ylim(-1, 1)
+    save(fig, "adaptive-discovery")
+    # (b) the one-sided fits along the normal at one interface point, rebuilt from their definition.
+    k = int(np.argmin(np.abs(Pj[:, 0])))
+    xf, n_ = Pj[k], iface.normal(Pj[k : k + 1])[0]
+    jumps = chebtt_adaptive.one_sided_jumps(lambda X: f(X), xf, n_, F_LO, F_HI)
+    if not np.allclose(jumps, Jj[k], rtol=0, atol=1e-12):
+        raise SystemExit("The one-sided jumps at an interface point do not repeat.")
+    fig, ax = plt.subplots(figsize=(2.5, 1.8))
+    ts = 0.5 * (1.0 + np.cos(np.pi * (np.arange(8) + 0.5) / 8))
+    rebuilt = []
+    for sgn in (1.0, -1.0):
+        L = min(0.2, chebtt_adaptive._room(xf, sgn * n_, F_LO, F_HI))
+        tt_ = sgn * L * ts
+        c = np.polynomial.polynomial.polyfit(tt_ / L, f(xf[None] + tt_[:, None] * n_[None]), 6)
+        fine = sgn * np.linspace(0, L, 60)
+        ax.plot(fine, np.polynomial.polynomial.polyval(fine / L, c), color=FEATURE["jump"] if sgn > 0 else BLUE, lw=1.0)
+        ax.scatter(tt_, f(xf[None] + tt_[:, None] * n_[None]), s=8, c=DARK, lw=0, zorder=3)
+        rebuilt.append(c[0])
+    if not np.isclose(rebuilt[0] - rebuilt[1], jumps[0], rtol=0, atol=1e-12):
+        raise SystemExit("The jump rebuilt from the one-sided fits differs from one_sided_jumps.")
+    fine = np.linspace(-0.2, 0.2, 400)
+    ax.plot(fine, f(xf[None] + fine[:, None] * n_[None]), color=GREY, lw=0.5, zorder=0)
+    ax.axvline(0, color=DARK, lw=0.5, ls=(0, (2, 2)))
+    ax.set_xlabel("distance along the normal, $\\rho$", fontsize=6.5, labelpad=1)
+    tidy(ax)
+    save(fig, "adaptive-jets")
+    out["jets"]["example"] = {"jump": r3(float(jumps[0])), "point": [r3(v) for v in xf]}
+    # (c) the remainder f - S, and the decay of the jump slice before and after.
+    rem = lambda X: f(X) - iface.term(X)  # noqa: E731
+    fig, ax = plt.subplots(figsize=(2.3, 2.3))
+    box_axes(ax, F_LO, F_HI)
+    level_sets(ax, rem, F_LO, F_HI, bands=12)
+    feature_lines(ax, ("kink", "ridge", "jump"), lw=0.6)
+    save(fig, "adaptive-remainder")
+    fig, axes = plt.subplots(1, 2, figsize=(4.6, 2.0), gridspec_kw={"wspace": 0.3, "width_ratios": [1, 1.3]})
+    box_axes(axes[0], F_LO, F_HI)
+    e = error_map(axes[0], m, f, F_LO, F_HI, F_ALPHA)
+    ax = axes[1]
+    N = 256
+    nodes = cheb_points(N)
+    axis, value = SLICES["jump"]
+    Xs = np.empty((N + 1, 2))
+    Xs[:, axis], Xs[:, 1 - axis] = value, nodes
+    rates = {}
+    for g_, c_, name in ((f, FEATURE["jump"], "f"), (rem, DARK, "remainder")):
+        a = np.abs(coefficients_along(g_(Xs), 0))
+        env = np.maximum(a[:-1], a[1:])
+        ax.loglog(np.arange(1, N), np.maximum(env[1:], 1e-17), color=c_, lw=1.0)
+        rates[name] = r3(float(env[N // 2 :].max()))
+    ax.set_ylim(1e-17, 3)
+    ax.set_xlabel("degree $j$", fontsize=6.5, labelpad=1)
+    tidy(ax)
+    save(fig, "adaptive-result")
+    out["remainder"] = {"tail_f": rates["f"], "tail_remainder": rates["remainder"], "grid_worst": r3(e.max()),
+                        "tt": model_summary(m.tt, rem, F_LO, F_HI, F_ALPHA)}  # fmt: skip
+    return out
+
+
+# ----------------------------------------------------------------------------- section 6: the hub expansion
+@dataclass
+class HubRun:
+    """One recorded hub build: the pilot gradients and groups, every design, the model."""
+
+    pilot: np.ndarray | None = None
+    groups: list = field(default_factory=list)
+    designs: list = field(default_factory=list)
+    model: object = None
+
+
+def record_hub(f, lo, hi, atol, **kw) -> HubRun:
+    run = HubRun()
+    og, dp = hub_module.output_groups, hub_module._design_points
+
+    def output_groups(Gp, r_max):
+        run.pilot = Gp.copy()
+        out = og(Gp, r_max)
+        run.groups = out[0]
+        return out
+
+    def design_points(groups, lo_, hi_, n, rng):
+        X = dp(groups, lo_, hi_, n, rng)
+        run.designs.append(X.copy())
+        return X
+
+    hub_module.output_groups, hub_module._design_points = output_groups, design_points
+    try:
+        run.model = hub.build(f, lo, hi, atol, **kw)
+    finally:
+        hub_module.output_groups, hub_module._design_points = og, dp
+    plain = hub.build(f, lo, hi, atol, **kw)
+    X = np.random.default_rng(0).uniform(lo, hi, (2000, len(lo)))
+    if plain.evals != run.model.evals or not np.array_equal(plain.predict(X), run.model.predict(X)):
+        raise SystemExit("Recording the hub expansion changed its model.")
+    return run
+
+
+def fd_jacobian(f, lo, hi):
+    """A Jacobian (N, m, d) by central differences at 1e-6 of the width, standing in for an exact one (as the scheme check does)."""
+    h = 1e-6 * (hi - lo)
+
+    def jacobian(X):
+        return np.stack([(f(X + h[i] * np.eye(len(lo))[i]).reshape(len(X), -1) - f(X - h[i] * np.eye(len(lo))[i]).reshape(len(X), -1))
+                         / (2 * h[i]) for i in range(len(lo))], axis=2)  # fmt: skip
+
+    return jacobian
+
+
+def hub_terms(d: int, r: int, degree: int, weak: bool) -> int:
+    """The hub expansion's terms, counted from its definition: the hub's total-degree block, and twice it per weak coordinate."""
+    from math import comb
+
+    n_hub = comb(r + degree, r)
+    return n_hub * (1 + 2 * (d - r)) if weak else n_hub
+
+
+def section_hub() -> dict:
+    out: dict = {}
+    problem = FUNCTIONS[HUB_PROBLEM]
+    lo, hi = problem.domain(HUB_D)
+    T = problem.test_points(HUB_D)
+    YT = problem.values(T)
+    runs = {}
+    for key, jac in (("values", None), ("jacobian", fd_jacobian(problem.values, lo, hi))):
+        run = record_hub(problem.values, lo, hi, HUB_ALPHA, jacobian=jac)
+        m = run.model
+        runs[key] = run
+        groups = m.describe()
+        for g, gm in zip(groups, m.groups, strict=True):
+            if hub_terms(HUB_D, g[1], g[2], bool(g[3])) != len(gm.cols):
+                raise SystemExit("The hub's term count differs from its definition.")
+        out[key] = {"evals": int(m.evals), "jacobians": int(m.jacobians), "worst": r3(float(np.max(np.abs(m.predict(T) - YT))) / HUB_ALPHA),
+                    "holdout": r3(m.holdout_worst / HUB_ALPHA), "groups": [{"outputs": list(map(int, g[0])), "r": int(g[1]), "degree": int(g[2]),
+                    "weak": bool(g[3]), "terms": int(g[4])} for g in groups], "history": [[int(n), r3(w / HUB_ALPHA)] for n, w in m.history]}  # fmt: skip
+    out["problem"] = {"name": HUB_PROBLEM, "d": HUB_D, "alpha": HUB_ALPHA, "outputs": int(YT.shape[1]), "test": int(len(T))}
+    # (a) the gradient covariance's spectrum: shared_latent pooled over its outputs, and the lift of the ridge.
+    lift = record_hub(lift_hub, -np.ones(HUB_D), np.ones(HUB_D), F_ALPHA)
+    fig, ax = plt.subplots(figsize=(2.5, 1.85))
+    spectra = {}
+    for name, run, colour in (("shared_latent", runs["values"], METHOD["hub"]), ("lift", lift, FEATURE["ridge"])):
+        Gp = run.pilot
+        # the pooled covariance of output_groups: every output's gradient covariance, normalised by its trace
+        Cs = [Gp[:, :, o].T @ Gp[:, :, o] / len(Gp) for o in range(Gp.shape[2])]
+        C = sum(Co / max(float(np.trace(Co)), 1e-300) for Co in Cs)
+        w = np.clip(np.sort(np.linalg.eigvalsh(C))[::-1], 1e-17, None)
+        w = w / w.sum()
+        ax.semilogy(np.arange(1, HUB_D + 1), w, "o-", color=colour, ms=3, lw=1.0)
+        r_chosen, rest = directions.covariance_rank(C, hub.HubSettings().r_max)
+        spectra[name] = {"r": int(r_chosen), "share_left": r3(float(rest)), "top": [r3(v) for v in w[:3]]}
+    ax.set_xlabel("eigenvalue $k$", fontsize=6.5, labelpad=1)
+    ax.set_ylabel("share of the trace", fontsize=6.5, labelpad=1)
+    ax.set_ylim(1e-12, 2)
+    tidy(ax)
+    save(fig, "hub-spectrum")
+    out["spectra"] = spectra
+    X = uniform_test(HUB_D)
+    out["lift"] = {"evals": int(lift.model.evals), "worst": r3(test_worst(lift.model, lift_hub, X, F_ALPHA)),
+                   "holdout": r3(lift.model.holdout_worst / F_ALPHA),
+                   "groups": [{"r": int(g[1]), "degree": int(g[2]), "weak": bool(g[3]), "terms": int(g[4])} for g in lift.model.describe()]}  # fmt: skip
+    jl = hub.build(lift_hub, -np.ones(HUB_D), np.ones(HUB_D), F_ALPHA, jacobian=lift_hub_jacobian)
+    out["lift"]["jacobian"] = {"evals": int(jl.evals), "jacobians": int(jl.jacobians), "worst": r3(test_worst(jl, lift_hub, X, F_ALPHA))}
+    lt = chebtt.build_vector(lambda x: lift_hub(x)[:, None], -np.ones(HUB_D), np.ones(HUB_D), F_ALPHA, 1, rotate=True, seed=SEED)
+    out["lift"]["metric"] = {"evals": int(lt.evals), "worst": r3(test_worst(lt, lift_hub, X, F_ALPHA))}
+    # (b) the design: uniform points against the hub's own, in the hub's two coordinates.
+    run = runs["values"]
+    g0 = run.model.groups[0]
+    V = g0.V[:, : g0.r]
+    bound = np.abs(g0.V).sum(axis=0)[: g0.r]
+    c0, s0 = 0.5 * (lo + hi), 0.5 * (hi - lo)
+    coords = lambda Z: (((Z - c0) / s0) @ V) / bound  # noqa: E731
+    U = coords(np.random.default_rng(3).uniform(lo, hi, (len(run.designs[0]), HUB_D)))
+    D = coords(run.designs[0])
+    fig, axes = plt.subplots(1, 2, figsize=(4.4, 2.1), gridspec_kw={"wspace": 0.12})
+    for ax, Z, colour in ((axes[0], U, GREY), (axes[1], D, METHOD["hub"])):
+        ax.add_patch(Rectangle((-1, -1), 2, 2, fc="none", ec=GREY, lw=0.6))
+        for side in ax.spines.values():
+            side.set_visible(False)
+        ax.scatter(*Z.T, s=1.5, c=colour, lw=0, alpha=0.7)
+        ax.set_xlim(-1.05, 1.05)
+        ax.set_ylim(-1.05, 1.05)
+        ax.set_aspect("equal")
+        ax.set_xticks([])
+        ax.set_yticks([])
+    save(fig, "hub-design")
+    out["design"] = {"points": int(len(D)), "uniform_reach": r3(float(np.max(np.abs(U)))), "design_reach": r3(float(np.max(np.abs(D)))),
+                     "uniform_outer": r3(float(np.mean(np.max(np.abs(U), axis=1) > 0.5))),
+                     "design_outer": r3(float(np.mean(np.max(np.abs(D), axis=1) > 0.5)))}  # fmt: skip
+    # (c) the budget: the hold-out's worst error as the samples double, on shared_latent and on the lift.
+    out["lift"]["history"] = [[int(n), r3(w / F_ALPHA)] for n, w in lift.model.history]
+    fig, ax = plt.subplots(figsize=(2.5, 1.85))
+    for hist, colour, mk in ((out["values"]["history"], METHOD["hub"], "o"), (out["jacobian"]["history"], DARK, "s"),
+                             (out["lift"]["history"], FEATURE["ridge"], "D")):  # fmt: skip
+        hist = np.array(hist, dtype=float)
+        ax.loglog(hist[:, 0], hist[:, 1], mk + "-", color=colour, ms=3, lw=1.0)
+    ax.axhline(0.5, color=RED, lw=0.6, ls=(0, (2, 2)))
+    ax.set_xlabel("samples", fontsize=6.5, labelpad=1)
+    ax.set_ylabel("hold-out worst / $\\alpha_{tol}$", fontsize=6.5, labelpad=1)
+    tidy(ax)
+    save(fig, "hub-budget")
+    # (d) terms against the dimension: the hub expansion against a total-degree polynomial of the same degree.
+    from math import comb
+
+    ds = np.array([2, 5, 10, 20, 50, 100])
+    r, deg = out["lift"]["groups"][0]["r"], out["lift"]["groups"][0]["degree"]  # the lift's group: one hub direction, weak terms
+    fig, ax = plt.subplots(figsize=(2.5, 1.85))
+    ax.loglog(ds, [hub_terms(int(d), r, deg, True) for d in ds], "o-", color=METHOD["hub"], ms=3, lw=1.0)
+    ax.loglog(ds, [float(comb(int(d) + deg, int(d))) for d in ds], "^-", color=GREY, ms=3, lw=1.0)
+    ax.set_xlabel("dimension $d$", fontsize=6.5, labelpad=1)
+    ax.set_ylabel("terms", fontsize=6.5, labelpad=1)
+    tidy(ax)
+    save(fig, "hub-terms")
+    out["terms"] = {"r": r, "degree": deg, "d10": hub_terms(10, r, deg, True), "d100": hub_terms(100, r, deg, True),
+                    "total_d10": comb(10 + deg, 10)}  # fmt: skip
+    hs = hub.HubSettings()
+    out["settings"] = {"n0": hs.n0, "r_max": hs.r_max, "pilot": hs.pilot, "grad_weight": hs.grad_weight, "max_terms": hub.MAX_TERMS,
+                       "degrees": {str(k): list(v) for k, v in hub.DEGREES.items()}}  # fmt: skip
+    # The benchmark's ChebTT-M on the same case, from the store (stale where its method changed since).
+    out["store_metric"] = store_case("functions", "cpu-8rank", HUB_PROBLEM, HUB_D, "chebtt_metric", HUB_ALPHA)
+    ros = hub.build(rosenbrock, R_LO, R_HI, R_ALPHA)
+    out["rosenbrock"] = {"evals": int(ros.evals), "worst": r3(worst(ros, rosenbrock, R_LO, R_HI, R_ALPHA))}
+    return out
+
+
+# ----------------------------------------------------------------------------- section 7: side by side
+SCHEMES = ("chebtt", "chebtt_metric", "chebtt_adaptive", "hub")
+BASELINES = ("afinni", "art", "art_quad")
+STALE_LABEL = "stale"
+
+
+def counted(f):
+    """f with a count of the points it evaluated, for a build that fails before it can report its own."""
+    spent = [0]
+
+    def g(X):
+        spent[0] += len(X)
+        return f(X)
+
+    return g, spent
+
+
+def scheme_on(name: str, f, lo, hi, alpha):
+    if name == "chebtt":
+        return chebtt.build(f, lo, hi, alpha, seed=SEED)
+    if name == "chebtt_metric":
+        m = chebtt.build_vector(lambda x: f(x)[:, None], lo, hi, alpha, 1, rotate=True, seed=SEED)
+        return m
+    if name == "chebtt_adaptive":
+        return chebtt_adaptive.build(f, lo, hi, alpha, seed=SEED)
+    return hub.build(f, lo, hi, alpha)
+
+
+def baseline_on(name: str, lo, hi, alpha):
+    """AFINNI or ART on the feature example through ``AdaptiveSurrogate``: AFINNI from a uniform sample, ART on the box."""
+    from src.config import TrainingConfig
+    from src.core.evaluation import Evaluator
+    from src.surrogate import AdaptiveSurrogate
+
+    def f_xp(x):
+        return LAYERS["brj"](np.asarray(x))[:, None]
+
+    s = AdaptiveSurrogate()
+    if name == "afinni":
+        X0 = np.random.default_rng(SEED).uniform(lo, hi, (4000, 2))
+        cfg = TrainingConfig(atol=alpha, rtol=None, max_levels=14, seed=SEED, use_work_stealing=False)
+    else:
+        X0 = np.random.default_rng(SEED).uniform(lo, hi, (60, 2))
+        cfg = TrainingConfig(atol=alpha, rtol=None, algorithm="art", domain=(lo, hi), max_levels=16, seed=SEED, use_work_stealing=False,
+                             local_model="quadratic_lsq" if name == "art_quad" else "affine_lsq")  # fmt: skip
+    s.train(X0, cfg, Evaluator(f_fn=f_xp))
+
+    class Predictor:
+        evals = int(s.profiling_stats["total_f_evals"])
+        leaves = int(s.N_src)
+
+        @staticmethod
+        def predict(X):
+            from src import to_host
+
+            return np.ravel(to_host(s.predict(X)[0]))
+
+    return Predictor
+
+
+def store_summary() -> dict:
+    """The benchmark's per-class counts (``src.benchmark.table``), and the cases AFINNI and ART miss where a scheme holds."""
+    from src.benchmark import table
+    from src.benchmark.methods import METHODS as FUNCTION_METHODS
+    from src.benchmark.store import Store
+
+    labels = {m: v[0].split(":")[0] for m, v in FUNCTION_METHODS.items()}
+    records = Store("functions", "cpu-8rank").runs()
+    runs = table.cases(records)
+    stale = table.stale_share(records)
+    out: dict = {"classes": [], "records": len(records), "latest": max(r.get("recorded", "") for r in records)}
+    for cls, problems in table.FUNCTION_CLASSES.items():
+        stats = table.summarise(runs, set(problems))
+        order = sorted(stats, key=lambda m: (-stats[m]["won"], -stats[m]["held"], m))
+        rows = []
+        for m in order:
+            st = stats[m]
+            rows.append({"method": m, "label": labels.get(m, m), "ran": st["ran"], "held": st["held"], "won": st["won"],
+                         "held_high": st["held_high"], "evals": int(np.median(st["evals"])) if st["evals"] else None,
+                         "us": r3(float(np.median(st["predict_us"]))) if st["predict_us"] else None, "stale": stale.get(m, 0) > 0})  # fmt: skip
+        out["classes"].append({"class": cls, "rows": rows})
+    # Per case: the best worst error of the baselines and of the schemes that ran it (worst over each one's seeds).
+    def worst_of(rs):
+        return float("inf") if any("failed" in r for r in rs) else max(r["worst_ratio"] for r in rs)
+
+    cls_of = {p: c for c, ps in table.FUNCTION_CLASSES.items() for p in ps}
+    points, counts = [], {}
+    for (problem, d, _), by_method in runs.items():
+        base = [worst_of(by_method[m]) for m in BASELINES if m in by_method]
+        schemes = {m: worst_of(rs) for m, rs in by_method.items() if m not in BASELINES}
+        if not base or not schemes:
+            continue
+        best_m = min(schemes, key=schemes.get)
+        b, sch = min(base), schemes[best_m]
+        cls = cls_of.get(problem, "other")
+        points.append((b, sch, cls, stale.get(best_m, 0) > 0, d))
+        c = counts.setdefault(cls, {"cases": 0, "scheme_only": 0, "baseline_only": 0, "both": 0, "neither": 0})
+        c["cases"] += 1
+        c["scheme_only" if sch <= 1 < b else "baseline_only" if b <= 1 < sch else "both" if max(b, sch) <= 1 else "neither"] += 1
+    out["cases"] = counts
+    out["max_d"] = {}
+    for r in records:
+        out["max_d"][r["method"]] = max(out["max_d"].get(r["method"], 0), int(r["d"]))
+    out["scheme_only"] = sum(c["scheme_only"] for c in counts.values())
+    out["baseline_only"] = sum(c["baseline_only"] for c in counts.values())
+    out["both"] = sum(c["both"] for c in counts.values())
+    out["neither"] = sum(c["neither"] for c in counts.values())
+    out["total"] = sum(c["cases"] for c in counts.values())
+    out["high_d_scheme_only"] = sum(1 for b, s, *_ , d in points if s <= 1 < b and d >= 10)
+    cls_colour = dict(zip(table.FUNCTION_CLASSES, (CYAN, GOLD, PINK, GREEN, BLUE), strict=True))
+    fig, ax = plt.subplots(figsize=(2.9, 2.7))
+    cap = 1e4
+    for b, sch, cls, is_stale, _ in points:
+        x, y = min(b, cap), min(sch, cap)
+        ax.scatter([x], [max(y, 1e-6)], s=9, c="none" if is_stale else cls_colour.get(cls, GREY), edgecolors=cls_colour.get(cls, GREY),
+                   lw=0.6, zorder=3)  # fmt: skip
+    ax.axvline(1, color=DARK, lw=0.6)
+    ax.axhline(1, color=DARK, lw=0.6)
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("best of AFINNI and ART: worst / $\\alpha_{tol}$", fontsize=6.5, labelpad=1)
+    ax.set_ylabel("best scheme: worst / $\\alpha_{tol}$", fontsize=6.5, labelpad=1)
+    tidy(ax)
+    save(fig, "store-cases")
+    out["class_colours"] = dict(cls_colour)
+    out["stale_methods"] = {m: {"share": r3(v), "since": table.RESULTS_CHANGED.get(m, ("", ""))[0],
+                                "what": table.RESULTS_CHANGED.get(m, ("", ""))[1]} for m, v in stale.items() if v > 0}  # fmt: skip
+    return out
+
+
+def section_compare() -> dict:
+    out: dict = {"layers": {}}
+    for layer in ("b", "br", "brj"):
+        row = {}
+        for name in SCHEMES:
+            f, spent = counted(LAYERS[layer])
+            try:
+                m = scheme_on(name, f, F_LO, F_HI, F_ALPHA)
+                row[name] = {"evals": int(m.evals), "worst": r3(worst(m, LAYERS[layer], F_LO, F_HI, F_ALPHA))}
+            except RuntimeError as e:
+                row[name] = {"failed": str(e).split(".")[0], "evals": int(spent[0])}
+        out["layers"][layer] = row
+    # Every method on all of F: the four schemes' error maps beside AFINNI's and ART's.
+    models = {"chebtt_adaptive": chebtt_adaptive.build(LAYERS["brj"], F_LO, F_HI, F_ALPHA, seed=SEED),
+              "hub": hub.build(LAYERS["brj"], F_LO, F_HI, F_ALPHA)}  # fmt: skip
+    base_rows = {}
+    for name in BASELINES:
+        m = baseline_on(name, F_LO, F_HI, F_ALPHA)
+        models[name] = m
+        X = grid(F_LO, F_HI, 300)
+        e = np.abs(m.predict(X) - LAYERS["brj"](X)) / F_ALPHA
+        base_rows[name] = {"evals": m.evals, "leaves": m.leaves, "worst": r3(e.max()), "within": r3(100 * float(np.mean(e <= 1)))}
+    out["baselines"] = base_rows
+    for name, m in models.items():
+        fig, ax = plt.subplots(figsize=(1.9, 1.9))
+        box_axes(ax, F_LO, F_HI)
+        error_map(ax, m, LAYERS["brj"], F_LO, F_HI, F_ALPHA)
+        save(fig, f"compare-{name}")
+    out["store"] = store_summary()
+    return out
+
+
+# ----------------------------------------------------------------------------- section 8: stiff step maps
+# Measured in the iteration studies (docs/SURROGATE_ITERATIONS.md, "The real networks"), on KIDApy's own tracer
+# settings, and transcribed here because they need networks and solvers outside this repository.
+KIDA = {"species": 578, "reactions": 8275, "ms_per_step": 256, "lu_per_step": 35, "slow_low": 15, "slow_high": 25,
+        "nelson_species": 14, "nelson_slow": 7, "nelson_inputs": 18}  # fmt: skip
+
+
+def section_step_maps() -> dict:
+    from src.benchmark import table
+    from src.benchmark.step_maps import METHODS as STEP_METHODS
+    from src.benchmark.store import Store
+    from src.problems.ode import STEP_MAPS
+
+    records = Store("step_maps", "cpu-1rank").runs()
+    stale = table.stale_share(records)
+    labels = {m: v[0].split(":")[0] for m, v in STEP_METHODS.items()}
+    done = [r for r in records if "failed" not in r and r["problem"] in STEP_MAPS]
+    regimes = {}
+    for regime in ("stiff", "nonstiff"):
+        rows = {}
+        for r in done:
+            if STEP_MAPS[r["problem"]].regime != regime:
+                continue
+            s = rows.setdefault(r["method"], {"ran": 0, "one_step": 0, "rollout": 0, "speedup": [], "evals": []})
+            s["ran"] += 1
+            one, roll = r["worst_ratio"] <= 1, r["rollout_worst"] / r["tol"] <= 1
+            s["one_step"] += one
+            s["rollout"] += one and roll
+            if one and roll:
+                s["speedup"].append(r["speedup"])
+                s["evals"].append(r["evals"])
+        failed = {}
+        for r in records:
+            if "failed" in r and r["problem"] in STEP_MAPS and STEP_MAPS[r["problem"]].regime == regime:
+                failed[r["method"]] = failed.get(r["method"], 0) + 1
+        regimes[regime] = [{"method": m, "label": labels.get(m, m), "ran": s["ran"] + failed.get(m, 0), "one_step": s["one_step"],
+                            "rollout": s["rollout"], "speedup": int(np.median(s["speedup"])) if s["speedup"] else None,
+                            "evals": int(np.median(s["evals"])) if s["evals"] else None, "stale": stale.get(m, 0) > 0}
+                           for m, s in sorted(rows.items(), key=lambda t: (-t[1]["rollout"], -t[1]["one_step"]))]  # fmt: skip
+    # One-step against rollout, every finished stiff record of the methods drawn.
+    drawn = {"chebtt_box": METHOD["chebtt"], "chebtt_roll": RED, "slowtable": METHOD["slowtable"], "art_quad": METHOD["art_quad"],
+             "afinni": METHOD["afinni"]}  # fmt: skip
+    fig, ax = plt.subplots(figsize=(2.8, 2.6))
+    for r in done:
+        if r["method"] in drawn and STEP_MAPS[r["problem"]].regime == "stiff":
+            ax.scatter([max(r["worst_ratio"], 1e-4)], [max(r["rollout_worst"] / r["tol"], 1e-4)], s=10, c=drawn[r["method"]], lw=0, alpha=0.85)
+    ax.axvline(1, color=DARK, lw=0.6)
+    ax.axhline(1, color=DARK, lw=0.6)
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("one-step worst / tolerance", fontsize=6.5, labelpad=1)
+    ax.set_ylabel("rollout worst / tolerance", fontsize=6.5, labelpad=1)
+    tidy(ax)
+    save(fig, "steps-scatter")
+    # Robertson's rollouts, step by step: ChebTT trained at the tolerance against ChebTT retrained until its rollouts hold.
+    pick = {m: next((r for r in done if r["problem"] == "robertson" and r["method"] == m and r["tol"] == 0.01), None)
+            for m in ("chebtt_box", "chebtt_roll", "slowtable")}  # fmt: skip
+    fig, ax = plt.subplots(figsize=(2.8, 1.9))
+    rob = {}
+    for m, r in pick.items():
+        if r is None:
+            continue
+        e = np.asarray(r["rollout_error_by_step"]) / r["tol"]
+        ax.semilogy(np.arange(1, len(e) + 1), np.maximum(e, 1e-6), color=drawn[m], lw=1.1)
+        rob[m] = {"one_step": r3(r["worst_ratio"]), "rollout": r3(r["rollout_worst"] / r["tol"]), "evals": int(r["evals"]),
+                  "speedup": int(r["speedup"]), "stale": r.get("recorded", "") < table.RESULTS_CHANGED.get(m, ("", ""))[0]}  # fmt: skip
+    ax.axhline(1, color=DARK, lw=0.6, ls=(0, (2, 2)))
+    ax.set_xlabel("step", fontsize=6.5, labelpad=1)
+    ax.set_ylabel("rollout worst / tolerance", fontsize=6.5, labelpad=1)
+    tidy(ax)
+    save(fig, "steps-robertson")
+    return {"regimes": regimes, "robertson": rob, "records": len(records), "kida": KIDA, "colours": drawn,
+            "problems": len({r["problem"] for r in done})}  # fmt: skip
+
+
+# ----------------------------------------------------------------------------- section 9: tried and set aside
+SLOW_ALPHA = 0.01  # SlowTable's tolerance on that map
+
+
+def stiff_map(seed: int = 7):
+    """
+    A nonlinear stiff 2-state step map: x decays slowly, y relaxes fast onto the slow curve y = sin 2x. Its
+    visited states, from random starts, collapse onto that curve within a few steps.
+    """
+    def step(Z):
+        x = Z[:, 0] * np.exp(-0.08)
+        return np.stack([x, np.sin(2 * x) + np.exp(-2.0) * (Z[:, 1] - np.sin(2 * Z[:, 0]))], axis=1)
+
+    rng = np.random.default_rng(seed)
+    Z = [rng.uniform(-1, 1, (12, 2))]
+    for _ in range(30):
+        Z.append(step(Z[-1]))
+    return step, np.concatenate(Z)
+
+
+def section_set_aside() -> dict:
+    from src.schemes import chebtree, kernel, sparsegrid, tabulation
+
+    out: dict = {}
+    f = LAYERS["br"]
+    tree = chebtree.build(f, F_LO, F_HI, F_ALPHA)
+    fig, ax = plt.subplots(figsize=(1.9, 1.9))
+    box_axes(ax, F_LO, F_HI)
+    level_sets(ax, f, F_LO, F_HI, bands=12, lines=False)
+    for lo, hi, _ in tree.leaves:
+        ax.add_patch(Rectangle(lo, *(hi - lo), fc="none", ec=METHOD["chebtree"], lw=0.5))
+    save(fig, "aside-chebtree")
+    out["chebtree"] = {"evals": int(tree.evals), "boxes": len(tree.leaves), "worst": r3(worst(tree, f, F_LO, F_HI, F_ALPHA))}
+    g, _ = counted(f)
+    seen = []
+
+    def logged(X):
+        seen.append(np.array(X, copy=True))
+        return g(X)
+
+    sg = sparsegrid.build(logged, F_LO, F_HI, F_ALPHA, seed=SEED)
+    fig, ax = plt.subplots(figsize=(1.9, 1.9))
+    box_axes(ax, F_LO, F_HI)
+    level_sets(ax, f, F_LO, F_HI, bands=12, lines=False)
+    P = np.concatenate(seen)
+    ax.scatter(*P.T, s=1.2, c=METHOD["sparsecheb"], lw=0)
+    save(fig, "aside-sparsecheb")
+    out["sparsecheb"] = {"evals": int(sg.evals), "indices": len(sg.terms), "worst": r3(worst(sg, f, F_LO, F_HI, F_ALPHA))}
+    km = kernel.build(f, F_LO, F_HI, F_ALPHA, seed=SEED)
+    fig, ax = plt.subplots(figsize=(1.9, 1.9))
+    box_axes(ax, F_LO, F_HI)
+    level_sets(ax, f, F_LO, F_HI, bands=12, lines=False)
+    ax.scatter(*km.X.T, s=2.5, c=METHOD["kernel"], lw=0)
+    save(fig, "aside-kernel")
+    out["kernel"] = {"evals": int(km.evals), "centres": int(len(km.X)), "worst": r3(worst(km, f, F_LO, F_HI, F_ALPHA))}
+    step, states = stiff_map()
+    tab = tabulation.build(step, states, SLOW_ALPHA, seed=SEED)
+    fresh = stiff_map(seed=8)[1]  # other trajectories of the same map, as a simulation would bring
+    fig, ax = plt.subplots(figsize=(1.9, 1.9))
+    ax.scatter(*states.T, s=1.2, c=GREY, lw=0)
+    th = np.linspace(0, 2 * np.pi, 80)
+    for z, B in zip(tab.Z, tab.B, strict=True):
+        w, E = np.linalg.eigh(B)
+        circle = (E @ (np.stack([np.cos(th), np.sin(th)]) / np.sqrt(w)[:, None])).T + z
+        ax.plot(*circle.T, color=METHOD["slowtable"], lw=0.5)
+    ax.set_aspect("equal")
+    ax.set_xlim(-1.1, 1.1)
+    ax.set_ylim(-1.2, 1.2)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    save(fig, "aside-slowtable")
+    out["slowtable"] = {"records": len(tab.Z), "evals": int(tab.evals), "states": int(len(states)), "alpha": SLOW_ALPHA,
+                        "refused_fresh": r3(100 * float(np.mean(tab.refuses(fresh))))}  # fmt: skip
+    return out
+
+
+# ----------------------------------------------------------------------------- section 10 and the appendix
+def save_load_checks() -> dict:
+    """Every scheme's model saved and loaded again predicts bit for bit as trained (``base.save``, ``base.load``)."""
+    import tempfile
+
+    from src.schemes import base
+
+    f = LAYERS["br"]
+    models = {"chebtt": chebtt.build(f, F_LO, F_HI, F_ALPHA, seed=SEED),
+              "chebtt_metric": chebtt.build_vector(lift_pair, F_LO, F_HI, F_ALPHA, 2, rotate=True, seed=SEED),
+              "chebtt_adaptive": chebtt_adaptive.build(LAYERS["brj"], F_LO, F_HI, F_ALPHA, seed=SEED),
+              "hub": hub.build(f, F_LO, F_HI, F_ALPHA)}  # fmt: skip
+    X = np.random.default_rng(1).uniform(F_LO, F_HI, (2000, 2))
+    out = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, m in models.items():
+            loaded = base.load(base.save(m, Path(tmp) / name))
+            same = bool(np.array_equal(m.predict(X), loaded.predict(X)))
+            if not same:
+                raise SystemExit(f"A saved {name} model does not predict as trained.")
+            out[name] = {"rounds": len(m.report.rounds), "phases": [k for k, v in m.report.phases.items() if v > 0]}
+    return out
+
+
+def settings_table(cls) -> list:
+    """A settings dataclass's fields: name, default, and the comment beside it in the source."""
+    import dataclasses
+    import inspect
+    import re
+
+    source = inspect.getsource(cls)
+    rows = []
+    for fld in dataclasses.fields(cls):
+        m = re.search(rf"^\s+{fld.name}:[^=]*=\s*(.*?)\s*(?:#\s*(.*))?$", source, flags=re.M)
+        default = getattr(cls(), fld.name)
+        rows.append({"name": fld.name, "default": repr(default), "note": ((m.group(2) or "") if m else "").replace("``", ""),
+                     "inherited": m is None})  # fmt: skip
+    return rows
+
+
+def section_appendix() -> dict:
+    from src.schemes.chebtt.adaptive import AdaptiveSettings
+
+    tests = {}
+    for p in sorted((OUT.parents[3] / "tests" / "unit").glob("test_schemes_*.py")):
+        tests[p.name] = p.read_text().count("\ndef test_")
+    import re
+
+    script = (OUT.parents[3] / "scripts" / "scheme_regression_check.py").read_text()
+    return {"settings": {"chebtt": settings_table(ChebTTSettings), "vector": [r for r in settings_table(VectorSettings) if not r["inherited"]],
+                         "adaptive": settings_table(AdaptiveSettings), "hub": settings_table(hub.HubSettings)},
+            "tests": tests, "test_count": sum(tests.values()), "regression_cases": re.findall(r"^def case_(\w+)", script, flags=re.M)}  # fmt: skip
+
+
 # ----------------------------------------------------------------------------- main
 def main() -> None:
     from src import IS_CUPY_BACKEND
@@ -798,6 +1650,14 @@ def main() -> None:
     numbers["rosenbrock"]["chebtt"] = section_problem(rosen)
     numbers["chebyshev"] = section_chebyshev()
     numbers["chebtt"] = section_chebtt(rosen)
+    numbers["metric"] = section_metric()
+    numbers["adaptive"] = section_adaptive()
+    numbers["hub"] = section_hub()
+    numbers["compare"] = section_compare()
+    numbers["steps"] = section_step_maps()
+    numbers["aside"] = section_set_aside()
+    numbers["engineering"] = save_load_checks()
+    numbers["appendix"] = section_appendix()
     (OUT / "example.json").write_text(json.dumps(numbers, indent=2) + "\n")
 
 

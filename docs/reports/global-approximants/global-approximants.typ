@@ -744,9 +744,788 @@ ChebTT's median inference over the smooth cases it holds is a fraction of a micr
   it at three sets of points, finds axis-aligned edges, and answers in time linear in $d$; oblique
   features are what it pays for.]
 
-= ChebTT-M <sec:metric>
-= ChebTT-A <sec:adaptive>
-= Hub <sec:hub>
-= Side by side <sec:compare>
+= ChebTT-M: the coordinates the outputs share <sec:metric>
+
+#question[The ridge costs ChebTT rank only because it is turned. If we knew its direction $q$, we could
+  turn the coordinates instead. How do we find $q$, and when is turning worth it?]
+
+#let mt = ex.metric
+#let lad = mt.ladder
+
+A function of $q dot x$ alone is a function of one variable in the right coordinates. Take an
+orthogonal $Q$ whose first column is $q$, and write $u = Q^top (x - c)$. In $u$ the ridge depends on
+$u_1$ only, a product of one univariate function and constants: rank 1 (@prop:ranks). The problem is
+to find $Q$ from evaluations of $f$, and to know when it helps. Many of the library's problems have
+several outputs, the species of a chemistry step or the states of a flow map, and outputs often share
+such directions. So ChebTT-M works on vector-valued $f$, output by output.
+
+== The first answer, and where it stumbles
+
+The classical answer is the _active subspace_ @constantine2015: the eigenvectors of the average
+gradient outer product. Applied to all outputs at once, it gives one rotation for everything, and that
+is the stumble. The feature example's base is separable: on the axes ChebTT models it at rank
+#mt.base_turned.axes_rank with #num(mt.base_turned.axes_evals) evaluations. In the ridge's coordinates
+its kink is oblique, and ChebTT #if mt.base_turned.failed == none [needs rank #mt.base_turned.rank and
+#num(mt.base_turned.evals) evaluations] else [fails: it reaches its rank limit after
+#num(mt.base_turned.evals) evaluations]. A rotation helps an output only if the output is turned; for
+one that is aligned with the axes already, it does damage.
+
+== A metric per output
+
+#definition(title: [pullback metric, @zahm2020])[
+  The _pullback metric_ of output $c$ is $G_c = EE[nabla f_c nabla f_c^top]$, the average over the box
+  of its gradient's outer product, here estimated at pilot points and divided by its trace.
+] <def:metric>
+
+#proposition(title: [a ridge in its own coordinates])[
+  If $f_c (x) = g(q dot x)$ with $|q| = 1$, then $G_c = EE[g'(q dot x)^2] q q^top$ has rank 1 and its
+  eigenvector is $q$. In the coordinates $u = Q^top (x - c)$ of any orthogonal $Q$ with first column
+  $q$, $f_c$ is a function of $u_1$, and its tensor train has rank 1.
+] <prop:ridge>
+
+#proof[
+  $nabla f_c = g'(q dot x) q$, so every outer product is a multiple of $q q^top$. And
+  $q dot x = u_1 + q dot c$.
+]
+
+#figure(panel("metric"), caption: [The metrics of three outputs on $[-1, 1]^2$: the
+  #swatch(ridge) ridge, a #swatch(mcol("chebtt_metric")) bump on the same direction, and the
+  #swatch(kink) base. Each arrow is an eigenvector of the output's metric, its length the square root of
+  the eigenvalue. The ridge's and the bump's metrics are lines along $q$: their second eigenvalues are
+  #sci(mt.outputs.at(0).eig.at(1)) and #sci(mt.outputs.at(1).eig.at(1)) of the first. The base's are
+  #mt.outputs.at(2).eig.at(0) and #mt.outputs.at(2).eig.at(1).]) <fig:metric>
+
+The rule that decides is simple. An output is turned when 99% of its metric's trace lies in at most
+half as many eigenvectors as it lies in axes, the diagonal entries of $G_c$. The ridge's trace lies in
+#mt.outputs.at(0).k_eig eigenvector against #mt.outputs.at(0).k_axes axes, so it is turned, and so is
+the bump. The base needs #mt.outputs.at(2).k_eig of either. A separable output is never turned, since a
+rotation could only destroy its rank. Outputs that are turned are grouped when their leading subspaces
+merge without growing, and each group is trained in the eigenvectors of its summed metric. The figure
+script repeats the rule from these definitions and stops unless it gives `metric_groups`' groups.
+
+#let metric-alg = (
+  require[$f$ with $m$ outputs on the box, $atol$, the rank cap $r_"cap"$ (`axes_rank` $= #mt.axes_rank$)],
+  ensure[for every output a ChebTT, on the axes or in its group's coordinates],
+  ln(0, [*for* each output $c$: ChebTT on the axes, ranks capped at $r_"cap"$], note: [one cache of $f$]),
+  ln(0, [the outputs within $atol$ keep that model], note: [nothing more paid]),
+  ln(0, [for the others: $G_c$ from forward differences at $2^ceil(log_2 (4 + 2 d))$ Sobol points]),
+  ln(0, [turn $c$ if 99% of its trace lies in at most half as many eigenvectors as axes], note: [`metric_groups`]),
+  ln(0, [group the turned outputs whose leading subspaces merge without growing]),
+  ln(0, [*for* each group: ChebTT in its eigenvectors, on the box that bounds the domain there]),
+  ln(1, [unless $f$ is not finite, or more than 10 times its pilot values, at $2 d$ points of that box], note: [then the axes]),
+)
+#algorithm(caption: [ChebTT-M: `chebtt.build_vector(..., rotate=True)` in `src/schemes/chebtt/train.py`.],
+  pseudocode(metric-alg)) <alg:metric>
+
+#story()
+#step([Try the axes first], code: (label: <alg:metric>, lines: metric-alg), focus: (1, 2), width: 38%, panel("metric-ladder"))[
+  Deciding from the pilot first would pay the pilot on every problem, and turn outputs that are already
+  cheap on the axes. So every output first trains on the axes with its rank capped at #mt.axes_rank.
+  Only the outputs that reach the cap get a pilot. On the pair at $d = 2$ the ridge reaches it and
+  is turned, and the bump is not: ChebTT-M costs #num(lad.at(0).metric.evals) evaluations against
+  ChebTT's #num(lad.at(0).chebtt.evals), the price of the pilot and of a capped attempt that is thrown
+  away. The gain grows with the dimension (ChebTT #swatch(mcol("chebtt")), ChebTT-M
+  #swatch(mcol("chebtt_metric"))): #num(lad.at(1).metric.evals) against #num(lad.at(1).chebtt.evals) at
+  $d = #lad.at(1).d$, #num(lad.at(2).metric.evals) against #num(lad.at(2).chebtt.evals) at
+  $d = #lad.at(2).d$. At $d = #lad.at(3).d$ ChebTT exceeds its budget of #num(mt.max_evals) evaluations
+  (cross), and ChebTT-M holds with #num(lad.at(3).metric.evals).
+]
+
+#step([The rotated box], code: (label: <alg:metric>, lines: metric-alg), focus: (6, 7), width: 38%, panel("rotated-box"))[
+  In the group's coordinates the domain is a turned square. The model needs a box, so it uses the box
+  that bounds the domain there (dark outline), #mt.box_area times the domain's area in two dimensions,
+  and more in higher ones. The ridge's level sets are parallel to one of its sides (dashed). Training
+  evaluates $f$ in the grey corners, outside the domain. An ODE can leave its positive orthant there,
+  and a polynomial grow fast. So a group falls back to the axes when $f$, at $2 d$ random points of its
+  box, is not finite or is more than ten times its largest pilot value.
+]
+
+On the pair the compressed models of ChebTT-M hold #lad.at(2).metric.coefficients coefficients at
+$d = #lad.at(2).d$, against #num(lad.at(2).chebtt.coefficients) for ChebTT. Every worst error on the
+test points is within the tolerance: #lad.at(2).metric.worst and #lad.at(2).chebtt.worst of it.
+
+#pitfall(title: [When not to turn, and what turning cannot do])[
+  ChebTT-M on the axes _is_ ChebTT, at the same cost, for every output that meets the tolerance there. It
+  pays more where a pilot buys nothing: at $d = 2$ on the pair, and wherever an output is turned that the
+  axes would have handled at full rank. The rotation is global: a curved latent coordinate has no one
+  direction, and the pilot sees nothing of a feature its points miss. The rotated box extends beyond the
+  domain, so $f$ must be defined there.
+]
+
+#takeaway[ChebTT-M turns only the outputs whose pullback metric says they are ridges, groups the ones
+  that share their directions, and leaves every other output on the axes, so it never costs much more
+  than ChebTT and gains more as $d$ grows.]
+
+= ChebTT-A: a term for the jump <sec:adaptive>
+
+#question[The jump is oblique and discontinuous. No breakpoint represents it, and turning the coordinates
+  for it would turn the ridge and the base away from theirs. How can a tensor train still be used?]
+
+#let ad = ex.adaptive
+
+== The candidates, and where they stumble
+
+- *More rank.* ChebTT on $F$ climbed to its rank limit of #ex.chebtt.defaults.rank_max after
+  #num(mdl.brj.evals) evaluations (@sec:rank-pitfall). A jump's singular values barely fall (@fig:matrix).
+- *A finer partition.* A tree of boxes refined towards an interface of dimension $d - 1$ needs about
+  $(1 slash h)^(d-1)$ leaves at resolution $h$, all of them along the interface. That is the cost of
+  AFINNI and ART at a jump, and of ChebTree.
+- *Aligned coordinates.* Turning the box so that the jump's normal is an axis makes the jump a
+  breakpoint, but turns the base and the ridge away from their axes.
+
+ChebTT-A takes the jump out instead. If $S$ is a term with the same jump as $f$ across the interface,
+$f - S$ is smooth there, and ChebTT handles it:
+$ f approx "ChebTT"(f - S) + S. $ <eq:adaptive>
+
+#let adaptive-alg = (
+  require[$f$ on the box, $atol$],
+  ensure[a ChebTT of $f - S$, and the interface term $S$ ($S = 0$ when $f$ needs none)],
+  ln(0, [ChebTT with piecewise axes on a first budget; *return* it if it holds], note: [stops at an oblique edge]),
+  ln(0, [interface points $<-$ jumps on segments from the most extreme check point], note: [`segment_edges`]),
+  ln(0, [$phi <-$ the simplest of a plane and a diagonal quadric that the points lie on], note: [`fit_interface`]),
+  ln(0, [one-sided jumps of $f$, $f'$, $f''$ along the normal at interface points], note: [`interface_jets`]),
+  ln(0, [$S <- h(phi)$ if the jump is constant, else jump fields of the foot point]),
+  ln(0, [*return* ChebTT of $f - S$, and $S$]),
+)
+#let adaptive-code = (label: <alg:adaptive>, lines: adaptive-alg)
+#algorithm(caption: [ChebTT-A: `adaptive.build` in `src/schemes/chebtt/adaptive.py`. A front, a steep
+  smooth step with no jump, takes a branch of line 2: $phi$ is fitted to crossings of the mid-level
+  $(max f + min f) slash 2$, and $S = h(phi)$.], pseudocode(adaptive-alg)) <alg:adaptive>
+
+#story()
+#step([The first attempt meets the jump], code: adaptive-code, focus: (1, 2, 3), width: 40%, panel("adaptive-discovery"))[
+  The first ChebTT's edge search finds the jump on a fibre, but on the far fibres it is somewhere else:
+  oblique. The build stops there (`ObliqueEdgeError`) after #num(ad.stages.at(0).evals) evaluations and
+  hands over the #ad.interface.first_points points it located on the interface (diamonds). Segments from
+  the most extreme check point (cross) to random points add more (dots): each is scanned at 17 points and
+  bisected on the value at its largest jump. A segment crosses a region of volume share $p$ with
+  probability about $2 p (1 - p)$ in any dimension; an axis fibre does much worse as $d$ grows. A plane
+  fits the points (dashed): its normal is #ad.interface.angle_error° from $p$, and its offset
+  #sci(ad.interface.offset_error) from the true one.
+]
+
+#step([How big is the jump?], code: adaptive-code, focus: (4,), width: 40%, panel("adaptive-jets"))[
+  At #ad.jets.points interface points ChebTT-A walks along the normal on both sides. It fits a polynomial
+  of degree 6 to 8 points on each side, within 0.2 of the point and inside the box, so no evaluation
+  falls outside the domain. The difference of the two fits at the interface is the jump of $f$, and
+  of their derivatives the jumps of $f'$ and $f''$. Here the jump is #ad.jets.example.jump (the side
+  where $phi > 0$ minus the other). Over all points its mean size is #ad.jets.jump_mean and its spread
+  #sci(ad.jets.jump_spread). The figure script repeats the two fits and stops unless they give the
+  library's jump.
+]
+
+#step([The remainder is smooth], code: adaptive-code, focus: (5, 6), width: 36%, panel("adaptive-remainder"))[
+  $F - S$: the jump is gone (its line is still drawn #swatch(jumpc, shape: "line")), and the base and the
+  ridge remain. The remainder's ChebTT has rank #ad.remainder.tt.ranks.at(0) and costs
+  #num(ad.remainder.tt.evals) oracle calls, many of them answered by the cache the stages share: ChebTT-A
+  spends #num(ad.evals) evaluations in all.
+]
+
+#figure(panel("adaptive-result"), caption: [*Left.* The error of ChebTT-A on $F$, within the tolerance
+  everywhere: its worst is #ad.worst. *Right.* The coefficients along the jump slice of @fig:decay, of $F$
+  #swatch(jumpc, shape: "line") and of $F - S$ #swatch(dark, shape: "line"): the largest in the upper
+  half of the degrees falls from #ad.remainder.tail_f to #sci(ad.remainder.tail_remainder).]) <fig:adaptive-result>
+
+#proposition(title: [what the interface term buys])[
+  Let $f$ be smooth on each side of a smooth interface $phi = 0$, and let $S$ have the same jumps as $f$,
+  $f'$, ..., $f^((k))$ along the normal at every point of it. Then $f - S$ is $k$ times continuously
+  differentiable across the interface. Along any line that crosses it, its Chebyshev coefficients fall
+  like $j^(-k-2)$, by @thm:decay with $nu = k + 1$. A residual jump of size $epsilon$ in $f - S$ adds a
+  tail of order $epsilon slash j$.
+] <prop:remainder>
+
+#proof[
+  On each side $f - S$ is smooth. At the interface the one-sided limits of $f - S$ and its first $k$
+  normal derivatives agree by construction, and the tangential derivatives of a smooth jump field agree
+  with them. So $(f - S)^((k))$ is continuous and $(f - S)^((k+1))$ has bounded variation along the line.
+]
+
+The term $S$ has two forms. A jump of constant size becomes a profile, $S = h(phi(x))$, with $h$ a 1-D
+piecewise ChebTT sampled along the segment of the box from the smallest $phi$ to the largest. A jump
+that varies along the interface becomes _jump fields_,
+$ S(x) = [rho(x) s > 0] sum_(k=0)^2 J_k ("foot"(x)) rho(x)^k / k!, $
+where $rho$ is the signed distance to the interface, the foot is the nearest point on it, $s$ chooses
+the side, and $J_k$ are polynomials of the foot whose degree grows (0, 1, 2) until held-out interface
+points agree to $0.1 atol$. They live on the side whose foot map is regular: the other side of a closed
+quadric holds its centre, where the foot is undefined.
+
+#pitfall(title: [One interface, and a band around it])[
+  ChebTT-A models one interface, a level set of a plane or of a diagonal quadric. A query within the
+  interface's location error may be on the wrong side, so the claim is the tolerance outside that band,
+  and outside the bands of the breakpoints. Here the jump is constant, yet ChebTT-A built jump fields
+  of degree #ad.interface.degree instead of the cheaper profile. Its test for a constant jump reads the
+  jumps of $f''$ too, and the one-sided fits measure them noisily: their spread over the interface
+  points is #ad.jets.curvature_spread, against #sci(ad.jets.jump_spread) for $f$ itself. The first
+  attempt is spent on every function with an interface (here #num(ad.stages.at(0).evals) of
+  #num(ad.evals) evaluations).
+]
+
+#takeaway[ChebTT-A takes the one thing a tensor train cannot follow, an oblique or curved jump, out of
+  $f$ as a term aligned with the interface, and leaves ChebTT a remainder that is smooth across it.]
+
+= The hub expansion: dense where it is steep, cheap elsewhere <sec:hub>
+
+#question[In ten dimensions even a turned tensor train pays for every axis. If a function is steep in
+  one or two directions and nearly flat in all the others, can a model's cost follow that structure?]
+
+#let hb = ex.hub
+
+The library's `shared_latent` problem is built for that question. Its #hb.problem.outputs outputs are
+nonlinear functions of two coordinates $g_1$, $g_2$, oblique to every axis, of a $d$-dimensional input,
+and $g_1$ is curved. It stands in for a slow manifold: outputs that share structure the axes do not
+show. At $d = #hb.problem.d$ and the tolerance #hb.problem.alpha, the benchmark's ChebTT-M needed
+#num(hb.store_metric.evals) evaluations#if hb.store_metric.stale [ (a record older than ChebTT-M's last
+change to its results)]. The hub expansion needs #num(hb.values.evals).
+
+== The gradient covariance tells the hub
+
+#scene(side: left, width: 40%, panel("hub-spectrum"))[
+  The eigenvalues of the gradient covariance, pooled over the outputs and divided by its trace: for
+  #swatch(mcol("hub")) `shared_latent` at $d = #hb.problem.d$, and for #swatch(ridge) the feature
+  example's ridge lifted to $d = #hb.problem.d$ with weak terms added. `shared_latent` puts all of its
+  trace in two eigenvalues, #hb.spectra.shared_latent.top.at(0) and #hb.spectra.shared_latent.top.at(1).
+  The lift puts #hb.spectra.lift.top.at(0) in one and spreads the rest thinly over the others.
+]
+
+#lemma(title: [ridges have a low-rank gradient covariance, @constantine2015])[
+  If $f(x) = g(V_r^top x)$ with $V_r$ a $d times r$ matrix of orthonormal columns, then
+  $C = EE[nabla f nabla f^top] = V_r EE[nabla g nabla g^top] V_r^top$ has rank at most $r$, and its range
+  lies in the span of $V_r$.
+] <lem:ridge-covariance>
+
+So the hub dimension $r$ is read off the spectrum: the fewest eigenvectors holding 99% of the trace,
+here #hb.spectra.shared_latent.r for `shared_latent` and #hb.spectra.lift.r for the lift, at most
+`r_max` $= #hb.settings.r_max$. What the hub leaves out, #sci(hb.spectra.lift.share_left) of the lift's
+trace, decides whether the other directions get terms at all: they do when it exceeds $10^(-4)$.
+
+#definition(title: [hub expansion])[
+  In rotated coordinates $(u, v) = V^top x$, with the $r$ hub directions first,
+  $ fh(x) = P_0 (u) + sum_(j = r + 1)^d [P_(1 j)(u) T_1 (v_j) + P_(2 j)(u) T_2 (v_j)], $ <eq:hub>
+  where every $P$ is a polynomial of total degree $p$ in the hub coordinates $u$, in the Chebyshev
+  basis. It is a truncated ANOVA expansion @rabitz1999 around a dense low-dimensional core, in rotated
+  coordinates @tipireddy2014, fitted by linear least squares.
+] <def:hub>
+
+#proposition(title: [the terms are linear in $d$])[
+  With $N_h = binom(r + p, r)$ hub terms, @eq:hub has $N_h (1 + 2 (d - r))$ terms, or $N_h$ without weak
+  terms. A full polynomial of total degree $p$ in $d$ variables has $binom(d + p, d)$.
+] <prop:hub-terms>
+
+#scene(side: right, width: 40%, panel("hub-terms"))[
+  The hub's terms #swatch(mcol("hub")) against a full polynomial of the same degree #swatch(grey), as
+  $d$ grows, for the lift's hub: $r = #hb.terms.r$ direction at degree #hb.terms.degree with weak terms.
+  At $d = 10$ that is #num(hb.terms.d10) terms against #sci(hb.terms.total_d10) for the full polynomial;
+  at $d = 100$ it is #num(hb.terms.d100). The figure script counts the terms from this definition and stops
+  unless the count matches every fitted model's.
+]
+
+#let hub-alg = (
+  require[$f$ on the box, $atol$, optionally its Jacobian],
+  ensure[per group of outputs: a rotation $V$, a hub dimension $r$, a degree $p$, coefficients],
+  ln(0, [gradients at #hb.settings.pilot pilot points: the Jacobian, or central differences], note: [$2 d$ evaluations each]),
+  ln(0, [per output: $C$, and $r <-$ the fewest eigenvectors holding 99% of its trace]),
+  ln(0, [outputs whose hubs agree with the pooled one share it; weak terms if more than $10^(-4)$ is left]),
+  ln(0, [$n <- n_0$; *repeat*], note: [$n_0 = #num(hb.settings.n0)$]),
+  ln(1, [design: half by pivoted QR of the hub basis on uniform, vertex-directed and blended points]),
+  ln(1, [$p <-$ the candidate degree with the smallest worst error on a hold-out from the same design]),
+  ln(1, [least squares at $p$; *stop* if the hold-out is within $atol slash 2$, or improved by less than 10%]),
+  ln(1, [$n <- 2 n$ (within `max_evals`)]),
+  ln(0, [refit on every sample, the hold-out included]),
+)
+#algorithm(caption: [The hub expansion: `hub.build` in `src/schemes/hub.py`.], pseudocode(hub-alg)) <alg:hub>
+
+== Where to sample
+
+#figure(panel("hub-design"), caption: [#num(hb.design.points) points of `shared_latent`'s box, seen in
+  the two hub coordinates (scaled to $[-1, 1]$). *Left.* Uniform in the box. *Right.* The hub's design.
+  Uniform points pile up at the centre: their largest hub coordinate reaches #hb.design.uniform_reach,
+  and #pct(hb.design.uniform_outer) of them lie beyond 0.5. The design reaches #hb.design.design_reach,
+  with #pct(hb.design.design_outer) beyond 0.5.]) <fig:hub-design>
+
+A sum of $d$ uniform coordinates concentrates near its mean, so a uniform sample of a 10-D box rarely
+reaches the extremes of an oblique coordinate. A polynomial fitted there extrapolates at the edges of
+its own variables, which is where its worst error lands. The design fixes this in two ways. It
+draws _vertex-directed_ points, corners of the box chosen by the sign of a random combination of the
+hub directions, and blends of them with uniform points. Then it picks a well-conditioned set from that
+pool by a pivoted QR of the hub basis, and adds uniform points.
+
+#scene(side: left, width: 38%, panel("hub-budget"))[
+  The degree is chosen on a hold-out drawn from the same design: the candidate whose fit on part of the
+  samples has the smallest worst error on the rest. Then the budget doubles until the hold-out is within
+  half the tolerance (dotted), or stops improving by 10%. On `shared_latent` one round is enough, with
+  values only #swatch(mcol("hub")) and with the Jacobian #swatch(dark). On the lifted ridge
+  #swatch(ridge) the second round improves the hold-out from #hb.lift.history.at(0).at(1) to
+  #hb.lift.history.at(1).at(1) times the tolerance, less than 10%, and the budget stops: more samples of
+  the same design do not fix an error of the model class. A hold-out worst above $atol$
+  (`holdout_worst`) reports a model that missed, rather than hiding it.
+]
+
+== With the oracle's Jacobian
+
+When the oracle supplies gradients (an adjoint, automatic differentiation, ODE sensitivities), they
+replace the pilot's central differences, and every sample's gradient also enters the least squares as
+$d$ more equations. On `shared_latent`:
+
+#block(breakable: false, above: 1em, below: 1em, table(
+  columns: (1fr, auto, auto, auto, auto),
+  inset: (x: 6pt, y: 5pt),
+  align: (left, right, right, right, right),
+  table.header[`shared_latent`, $d = #hb.problem.d$, $atol = #hb.problem.alpha$][evaluations][Jacobians][degree][worst / $atol$],
+  [values only], [#num(hb.values.evals)], [#hb.values.jacobians], [#hb.values.groups.at(0).degree], [#hb.values.worst],
+  [with the Jacobian], [#num(hb.jacobian.evals)], [#num(hb.jacobian.jacobians)], [#hb.jacobian.groups.at(0).degree], [#hb.jacobian.worst],
+))
+
+The Jacobian halves the evaluations and lowers the worst error. It is worth it when a gradient costs
+less than a few evaluations, as the discrete sensitivities of a stiff ODE step do. Here the Jacobian is
+central differences of $f$, standing in for an exact one, as in the library's regression check.
+
+== Where it stumbles
+
+#let lf = hb.lift
+On the feature example's ridge lifted to $d = #hb.problem.d$ with weak terms (the cyan spectrum above),
+the hub expansion misses: #num(lf.evals) evaluations and a worst error of
+#lf.worst times the tolerance $#ex.feature.alpha$. Its hold-out says so: #lf.holdout. With the exact
+Jacobian it comes within #lf.jacobian.worst. ChebTT-M on the same function holds, with
+#num(lf.metric.evals) evaluations and a worst error of #lf.metric.worst. On Rosenbrock, in two
+dimensions, the hub spends #num(hb.rosenbrock.evals) evaluations, its first budget, where ChebTT spends
+#num(mdl.rosenbrock.evals).
+
+#pitfall(title: [Outside its class])[
+  The hub expansion suits a few steep directions with weak, low-order dependence on the rest. A steep
+  profile along a hub direction needs a high degree, and the rotated coordinate's range grows with $d$
+  (it spans the box's extent along an oblique direction), while the candidate degrees stop at
+  #hb.settings.degrees.at("1").last() for one hub direction. Isotropic and radial features, many
+  differently oriented ones, and jumps are outside its class. The hold-out is an estimate from the same
+  design, not a bound. Each group is capped at #num(hb.settings.max_terms) terms, since its Gram matrix
+  costs the square of that and its solve the cube.
+]
+
+#takeaway[The hub expansion reads the few steep directions off the gradient covariance, fits a dense
+  Chebyshev model in them and degree-two terms in all the others, so its cost grows linearly with $d$;
+  it is the tool for low-dimensional structure in high dimension, and it says when a function is not.]
+
+= Side by side, and where AFINNI and ART stumble <sec:compare>
+
+#question[The same functions, every method. What does each one give, and where does a partition into
+  local affine pieces fail a max-norm tolerance that one global model holds?]
+
+#let cp = ex.compare
+#let st = cp.store
+#let cell(c) = if "failed" in c [fails at #num(c.evals)] else [#num(c.evals) / #c.worst]
+#let mname = (chebtt: [ChebTT], chebtt_metric: [ChebTT-M], chebtt_adaptive: [ChebTT-A], hub: [hub expansion],
+  afinni: [AFINNI], art: [ART, affine leaves], art_quad: [ART, quadratic leaves])
+
+== Rosenbrock
+
+#board(
+  (other("error-afinni"), [AFINNI: #num(ex.rosenbrock.afinni.evals) evaluations, worst #ex.rosenbrock.afinni.max_error]),
+  (other("error-art"), [ART: #num(ex.rosenbrock.art.evals) evaluations, worst #ex.rosenbrock.art.max_error]),
+  (panel("error-rosenbrock"), [ChebTT: #num(mdl.rosenbrock.evals) evaluations, worst #sci(mdl.rosenbrock.grid_worst)]),
+  columns: 3,
+)
+
+On Rosenbrock the contrast is as large as it can be. The polynomial is exactly representable in
+ChebTT's basis, so its model is exact to rounding, while each affine piece of AFINNI and ART carries
+the curvature it cannot represent. The other companion's maps are on its own grid and in the same
+colours. The hub expansion is exact too, but it spends its first budget, #num(hb.rosenbrock.evals)
+evaluations, on a function of two variables.
+
+== One function, four answers
+
+#block(breakable: false, above: 1em, below: 1em, table(
+  columns: (1.3fr, 1fr, 1fr, 1fr),
+  inset: (x: 6pt, y: 5pt),
+  align: (left, right, right, right),
+  table.header[evaluations / worst error over $atol$][$b$][$b + r$][$F = b + r + j$],
+  ..("chebtt", "chebtt_metric", "chebtt_adaptive", "hub").map(m => (
+    mname.at(m), cell(cp.layers.b.at(m)), cell(cp.layers.br.at(m)), cell(cp.layers.brj.at(m)),
+  )).flatten(),
+  ..("afinni", "art", "art_quad").map(m => (
+    mname.at(m), [--], [--], [#num(cp.baselines.at(m).evals) / #cp.baselines.at(m).worst],
+  )).flatten(),
+))
+
+The table is the companion in one picture. On the base, every scheme holds, and the three ChebTTs need
+a few hundred evaluations. ChebTT-M and ChebTT-A count each point once, through a shared cache, while
+ChebTT counts every call of the oracle, and its look-ahead can ask for a point twice. With the ridge
+added, ChebTT pays rank, and the others pay about as much. With the jump added, ChebTT and ChebTT-M run
+out of rank, and the hub expansion misses by #cp.layers.brj.hub.worst times the tolerance: only ChebTT-A
+holds, with #num(cp.layers.brj.chebtt_adaptive.evals) evaluations.
+
+#board(
+  (panel("compare-afinni"), [AFINNI: #num(cp.baselines.afinni.evals) evaluations, #cp.baselines.afinni.leaves leaves]),
+  (panel("compare-art"), [ART, affine: #num(cp.baselines.art.evals), #cp.baselines.art.leaves leaves]),
+  (panel("compare-art_quad"), [ART, quadratic: #num(cp.baselines.art_quad.evals), #cp.baselines.art_quad.leaves leaves]),
+  (panel("compare-hub"), [hub expansion: #num(cp.layers.brj.hub.evals)]),
+  (panel("compare-chebtt_adaptive"), [ChebTT-A: #num(cp.layers.brj.chebtt_adaptive.evals)]),
+  columns: 5,
+)
+
+AFINNI and ART refine towards the jump, and keep refining: their trees reach their depth limits with
+#num(cp.baselines.art_quad.leaves) to #num(cp.baselines.afinni.leaves) leaves and more than a hundred
+thousand evaluations. They are within the tolerance on #cp.baselines.afinni.within% to
+#cp.baselines.art.within% of the grid, but their worst errors, #cp.baselines.art_quad.worst to
+#cp.baselines.afinni.worst times the tolerance, sit on the jump. A piece that straddles it has an
+error of half the jump at least, and a piece too small to straddle it is never small enough. In this
+figure only ChebTT-A's map is pale everywhere.
+
+== The benchmark
+
+#scene(side: left, width: 42%, panel("store-cases"))[
+  Each dot is a case of the benchmark's function suite, a problem, dimension and tolerance that both
+  families ran: the best worst error of AFINNI and ART against the best of the schemes, over every
+  seed. Colours are classes: #swatch(rgb(st.class_colours.smooth)) smooth,
+  #swatch(rgb(st.class_colours.at("many local features"))) many local features,
+  #swatch(rgb(st.class_colours.at("kinks, jumps, fronts"))) kinks, jumps and fronts,
+  #swatch(rgb(st.class_colours.at("ODE flow maps"))) ODE flow maps, and
+  #swatch(rgb(st.class_colours.at("vector-valued"))) vector-valued problems. A hollow dot's best scheme has
+  records older than its last change to its results. An exact model is drawn at the
+  bottom edge, and a failed run (over its budget or the time limit) at the right or top edge. Of #st.total cases, a scheme holds and no baseline
+  does in #st.scheme_only (#st.high_d_scheme_only of them at $d >= 10$); a baseline holds and no scheme
+  does in #st.baseline_only\; both hold in #st.both, and neither in #st.neither.
+]
+
+The benchmark's summary, per class of problem, from its store of #num(st.records) runs (the README
+shows the same table). A case is _held_ when the worst error is within the tolerance on every seed, and
+_won_ when it is held with the fewest evaluations. A method marked $ast$ has records older than its last
+change to its results.
+
+#let fmt-us(v) = if v == none [--] else [#v]
+#let fmt-ev(v) = if v == none [--] else [#num(v)]
+#block(above: 1em, below: 1em, {
+  set text(8pt)
+  table(
+    columns: (auto, 1fr, auto, auto, auto, auto, auto, auto),
+    inset: (x: 4pt, y: 3pt),
+    align: (left, left, right, right, right, right, right, right),
+    table.header[class][method][ran][held][won][held, $d >= 10$][evaluations][inference µs],
+    ..st.classes.map(c => c.rows.enumerate().map(((i, r)) => (
+      if i == 0 [#c.class] else [], [#r.label#if r.stale [ $ast$]], [#r.ran], [#r.held], [#r.won], [#r.held_high],
+      fmt-ev(r.evals), fmt-us(r.us),
+    )).flatten()).flatten(),
+  )
+})
+
+The pattern does not depend on the stale records' details. Least-squares pieces on random points
+control the mean error but not the worst: their errors between the points are unchecked, and that gap
+grows with the dimension. Interpolation at Chebyshev nodes, with checks at the points a refinement would
+sample next, lands its worst errors below the tolerance. ChebTree holds the kinks, jumps and fronts it
+ran, but only in two and three dimensions (@sec:aside).
+
+== Choosing among the four
+
+#cards(
+  columns: 2,
+  ([ChebTT], [Smooth functions, and functions with kinks or jumps along the axes, of any dimension,
+    with low-rank coupling. Oblique and curved features cost it rank. On the base it needs
+    #num(cp.layers.b.chebtt.evals) evaluations.]),
+  ([ChebTT-M], [Vector-valued functions whose outputs are ridges of shared oblique coordinates. It is
+    ChebTT on every output the axes serve, and its gain grows with $d$: on the ridge pair,
+    #num(lad.at(2).metric.evals) evaluations against #num(lad.at(2).chebtt.evals) at $d = #lad.at(2).d$.]),
+  ([ChebTT-A], [One jump across an oblique plane or a diagonal quadric, or a sharp front. The only scheme
+    that holds all of $F$: #num(cp.layers.brj.chebtt_adaptive.evals) evaluations.]),
+  ([Hub expansion], [A few steep directions and weak dependence on the rest, in high dimension, with the
+    oracle's Jacobian when it has one: #num(hb.jacobian.evals) evaluations and #num(hb.jacobian.jacobians)
+    Jacobians on `shared_latent` at $d = #hb.problem.d$. It says when a function is outside its class.]),
+)
+
+#takeaway[Where a function has the structure a scheme is built for, the scheme holds the worst error
+  with a few thousand evaluations, where local affine pieces spend a hundred thousand and still miss it.]
+
+= Stiff step maps: the chemistry the library is for <sec:steps>
+
+#question[A stiff chemistry step is called by a simulation in every cell at every time step. Can a
+  global approximant replace the solver, and what does chaining its answers do to its error?]
+
+#let sp = ex.steps
+#let rob = sp.robertson
+#let stiff = sp.regimes.stiff
+
+The library's end goal is surrogates of astrochemical reaction networks inside MHD simulations: a
+surrogate is built from the states that tracers visit, and the simulation calls it instead of the stiff
+solver. A _step map_ $Phi_(Delta t)$ takes a state $z$, the logarithms of the abundances, to the state
+one step later. The surrogates learn the increment $Phi_(Delta t)(z) - z$, which is small and carries the
+chemistry. They are trained on the states visited by training trajectories and judged on held-out ones.
+ChebTT works on the box that bounds the visited states; SlowTable on the states themselves.
+
+Two errors matter. The _one-step_ error is a surrogate's step from a true state against the solver's.
+The _rollout_ error chains the surrogate from a trajectory's initial state, as a simulation would, and
+compares the whole trajectory.
+
+#lemma(title: [how errors add up along a rollout, @hairer1996])[
+  Let a surrogate make a one-step error $e_k$ at step $k$, and let the true map's Jacobians be $J_k$.
+  To first order the rollout error after $n$ steps is $sum_(k=1)^n J_(n) dots J_(k+1) e_k$. If the
+  errors keep their sign and the dynamics neither damp nor grow them, it is about $n$ times the one-step
+  error; errors of random sign grow like $sqrt(n)$.
+] <lem:rollout>
+
+#scene(side: left, width: 42%, panel("steps-robertson"))[
+  Robertson's stiff network at the tolerance 0.01, rollouts of the test trajectories step by step.
+  #swatch(mcol("chebtt"), shape: "line") ChebTT on the visited box: one-step error #rob.chebtt_box.one_step
+  of the tolerance, but its errors keep their sign, and the rollout reaches #rob.chebtt_box.rollout.
+  #swatch(red, shape: "line") ChebTT retrained until its rollouts along the training trajectories
+  hold: one-step #rob.chebtt_roll.one_step, rollout #rob.chebtt_roll.rollout, for #num(rob.chebtt_roll.evals)
+  solves against #num(rob.chebtt_box.evals). #swatch(mcol("slowtable"), shape: "line") SlowTable's one-step
+  error is #rob.slowtable.one_step times the tolerance, in fast directions the next step damps, so its
+  rollout is #rob.slowtable.rollout.
+]
+
+The retrained variant (`chebtt_roll`) chains the surrogate along the training trajectories, which are
+known and so cost no solve, and trains again at a tighter one-step tolerance until those rollouts hold.
+ChebTT's spectral convergence makes the tighter tolerance cheap, and the retraining reuses every cached
+solve. Over the benchmark's stiff problems:
+
+#block(breakable: false, above: 1em, below: 1em, {
+  set text(8.5pt)
+  table(
+    columns: (1fr, auto, auto, auto, auto, auto),
+    inset: (x: 5pt, y: 3.5pt),
+    align: (left, right, right, right, right, right),
+    table.header[stiff step maps][ran][one-step held][rollout held too][median solves][median speedup],
+    ..stiff.map(r => ([#r.label#if r.stale [ $ast$]], [#r.ran], [#r.one_step], [#r.rollout], fmt-ev(r.evals),
+      if r.speedup == none [--] else [#num(r.speedup)$times$])).flatten(),
+  )
+})
+
+The speedup is the solver's time per state and step (SciPy's Radau, the integrator the system would be
+solved with) over the surrogate's inference time, at the cases where both errors hold. AFINNI and ART
+hold no rollout. ChebTT holds the one-step error almost everywhere, and the retrained ChebTT holds both on
+#stiff.at(0).rollout of #stiff.at(0).ran problems.
+
+#scene(side: right, width: 40%, panel("steps-scatter"))[
+  Every finished stiff record: one-step error against rollout error, both over the tolerance, for
+  #swatch(mcol("chebtt")) ChebTT, #swatch(red) the retrained ChebTT, #swatch(mcol("slowtable")) SlowTable,
+  #swatch(mcol("art_quad")) ART with quadratic leaves and #swatch(mcol("afinni")) AFINNI. The lower left
+  quadrant holds both. A surrogate's rollout is usually several times its one-step error, which is why
+  holding the one-step error is not enough.
+]
+
+== Towards the real networks
+
+#let kd = sp.kida
+The benchmark's systems have up to a few dozen states. The target is a network like KIDA @wakelam2012,
+with #kd.species species and #num(kd.reactions) reactions. Measured in the iteration studies on its own
+tracer settings, one hydro step takes the solver about #kd.ms_per_step ms and #kd.lu_per_step sparse
+factorisations. Over that step all but #kd.slow_low to #kd.slow_high of its modes relax completely. A
+step map with a few dozen slow directions is the structure the hub expansion and ChebTT-M are built
+for: steep in a few coordinates the data reveal, flat in the rest. On the 14-species Nelson network,
+about #kd.nelson_slow of #kd.nelson_species species' directions stay slow.
+
+#pitfall(title: [A box is not where a simulation goes])[
+  The box that bounds the visited states is mostly empty in high dimension, and ChebTT samples all of it,
+  including states that are not physical: on the #(kd.nelson_inputs)-input Nelson problem a box ChebTT
+  did not train within the time cap. The surrogate must live in the few slow coordinates and be trained along the
+  states the simulation visits. The rollout error needs one-step errors well below the tolerance unless
+  errors cancel. The figures here are the one-step and rollout errors on held-out trajectories, not
+  bounds.
+]
+
+#takeaway[On stiff step maps a ChebTT retrained until its rollouts hold keeps both errors within the
+  tolerance on almost every problem, at speedups of a thousand and more over the solver, where AFINNI and
+  ART hold no rollout; the path to large networks is the few slow coordinates.]
+
+= Tried and set aside <sec:aside>
+
+#question[Four more schemes are in the library. What did each one teach, and why is each not among the
+  four?]
+
+#let asd = ex.aside
+#let srow(cls, m) = st.classes.find(c => c.class == cls).rows.find(r => r.method == m)
+#board(
+  (panel("aside-chebtree"), [ChebTree: #asd.chebtree.boxes boxes]),
+  (panel("aside-sparsecheb"), [SparseCheb: #num(asd.sparsecheb.evals) points]),
+  (panel("aside-kernel"), [MetricKernel: #asd.kernel.centres centres]),
+  (panel("aside-slowtable"), [SlowTable: #asd.slowtable.records records]),
+  columns: 4,
+)
+
+*ChebTree* is an adaptive tree of tensor Chebyshev boxes: a box raises its degree where its
+coefficients decay geometrically and splits where they do not. On $b + r$ it uses
+#asd.chebtree.boxes boxes and #num(asd.chebtree.evals) evaluations, worst #asd.chebtree.worst. It holds every
+kink, jump and front it ran, #srow("kinks, jumps, fronts", "chebtree").held of
+#srow("kinks, jumps, fronts", "chebtree").ran, at a median of #num(srow("kinks, jumps, fronts", "chebtree").evals)
+evaluations. But a tensor box costs $product_k (n_k + 1)$ points, and the benchmark ran it to $d = #st.max_d.chebtree$
+only.
+
+*SparseCheb* is a dimension-adaptive sparse Chebyshev grid @gerstner2003. On $b + r$ it is the cheapest
+scheme here: #num(asd.sparsecheb.evals) evaluations over #asd.sparsecheb.indices indices, worst
+#asd.sparsecheb.worst. Its inference on the smooth cases it holds is #srow("smooth", "sparsecheb").us µs
+per query, against #srow("smooth", "chebtt").us for ChebTT, and one global expansion pays for every kink
+or jump. It was run to $d = #st.max_d.sparsecheb$.
+
+*MetricKernel* interpolates with a Matérn kernel in a metric learned from the model's own gradients. On
+$b + r$ its worst error is #asd.kernel.worst times the tolerance after #num(asd.kernel.evals) evaluations:
+random check batches miss the worst point, and a kernel interpolant is weakest at the boundary, where most
+of a high-dimensional box's volume is. It holds #srow("smooth", "kernel").held of
+#srow("smooth", "kernel").ran smooth cases, in two dimensions only.
+
+*SlowTable* tabulates a step map over the states a simulation visits, after ISAT @pope1997: each record
+is a linear model inside an ellipsoid of accuracy, long along the directions the step forgets. On a
+stiff two-state map at $atol = #asd.slowtable.alpha$ it keeps #asd.slowtable.records records for
+#asd.slowtable.states visited states, and refuses #asd.slowtable.refused_fresh% of the states of new
+trajectories, which the solver must answer. On the stiff benchmark it holds the one-step error on
+#stiff.find(r => r.method == "slowtable").one_step of #stiff.find(r => r.method == "slowtable").ran
+problems and the rollout on #stiff.find(r => r.method == "slowtable").rollout.
+
+#takeaway[Tensor boxes stop at three dimensions, sparse grids at oblique features, kernels at the
+  boundary and tables at what they have not seen; the tensor train and the hub are the global
+  approximants that scale.]
+
+= The engineering contract <sec:engineering>
+
+#question[Four schemes, one library. What does every scheme promise its caller, and how is a run
+  observed, distributed and saved?]
+
+#implementation(title: [Settings and `build`])[
+  Every scheme module has a frozen settings dataclass and a driver,
+  `build(f, lo, hi, atol, settings=None, *, jacobian=None, stream_dir=None, **overrides)`. Overrides
+  replace single settings (`chebtt.build(f, lo, hi, 1e-3, seed=1)`), and a model's settings are frozen
+  with it. `f` takes host $(N, d)$ arrays and returns $(N,)$ values, or $(N, m)$ for a vector function.
+  The model predicts on host arrays and counts its training evaluations in `evals`. @sec:settings
+  lists every setting of the four.
+]
+
+#implementation(title: [The oracle and MPI])[
+  `Oracle` (`src/schemes/oracle.py`) wraps $f$ and optionally its Jacobian, counts the points and the
+  Jacobians it evaluated and the seconds spent in them, and does not deduplicate: a scheme that may ask
+  for a point twice keeps its own store (ChebTT's lattice store, `PointCache` for vector trains). Under
+  MPI, `with oracle.distributed(f) as o:` gives rank 0 an oracle that cuts every batch into one even
+  chunk per rank, while the other ranks serve those chunks until rank 0 leaves the block. The values
+  do not depend on the rank count, and a failure on any rank is raised again on rank 0, so no rank is
+  left waiting in a collective. The schemes themselves run on rank 0, in NumPy.
+]
+
+#implementation(title: [Profiling: phases and rounds])[
+  Every scheme times the same phase groups: `explore` (directions, edges, pilot gradients), `sample`,
+  `fit`, `check`, `adapt` and `compress`, so schemes compare stage by stage. The oracle's time is counted
+  separately. A _round_ is a scheme's unit of refinement: a cross sweep, a budget doubling, an output's
+  train. Each round ends with one log line and one record in the model's `TrainingReport`. On $b + r$,
+  ChebTT's report has #ex.engineering.chebtt.rounds rounds and uses
+  #ex.engineering.chebtt.phases.len() phases. With `stream_dir` every phase and round is also streamed as
+  JSON lines through `infra.profiling.Profiler`.
+]
+
+#implementation(title: [Saving and loading])[
+  `base.save(model, path)` writes any model to one `.npz` with a JSON header (format version, model,
+  report), and `base.load(path)` rebuilds it. The figure script saves and loads a ChebTT, a ChebTT-M, a
+  ChebTT-A and a hub model, and stops unless each loaded model predicts bit for bit as trained.
+]
+
+#raw(block: true, lang: "python", ```
+from src.schemes import base, chebtt, hub
+from src.schemes.chebtt import adaptive
+
+model = chebtt.build(f, lo, hi, atol, seed=1)                        # ChebTT
+vector = chebtt.build_vector(g, lo, hi, atol, m, rotate=True)        # ChebTT-M, m outputs
+jumpy = adaptive.build(f, lo, hi, atol)                              # ChebTT-A
+steep = hub.build(g, lo, hi, atol, jacobian=jac)                     # the hub expansion
+print(model.evals, model.report.summary())                           # evaluations, phases, rounds
+base.save(model, "model.npz"); base.load("model.npz").predict(X)     # bit for bit as trained
+```.text)
+
+#takeaway[Every scheme is one call with frozen settings, trains on rank 0 while its oracle calls spread
+  over the ranks, reports its phases and rounds, and saves to one file that predicts as trained.]
+
+= How we know it is right <sec:verify>
+
+#question[Global models, adaptive sampling, tolerances judged at points. What stands between a change to
+  a scheme and a wrong surrogate?]
+
+#let ap = ex.appendix
+#cards(
+  columns: 3,
+  ([Unit tests], [#ap.test_count tests in `tests/unit/test_schemes_*.py` check each scheme on small cases:
+    ChebTT's edge search and pieces, ChebTT-M's groups, ChebTT-A's interfaces, the hub's groups and
+    Jacobian, saving and loading, and the shared contract.]),
+  ([Bit-identical regression], [`scripts/scheme_regression_check.py` trains #ap.regression_cases.len()
+    small cases, one or two per scheme, and compares their evaluations and predictions bit for bit
+    against a reference. A refactor must reproduce them; BLAS runs on one thread.]),
+  ([Many ranks], [`tests/mpi` runs the distributed oracle under real `mpiexec`: the values do not depend
+    on the rank count, and a failure on one rank reaches rank 0.]),
+  ([The figure script], [It records ChebTT's, ChebTT-A's and the hub's stages and checks the recording
+    changes nothing. It rebuilds the cross as a skeleton decomposition, the tail, the edge search's last
+    step, the compression's budget, the metric groups, the one-sided jumps and the hub's terms, and stops
+    unless each matches the library.]),
+  ([The benchmark], [Every method is judged on a fixed test set by its worst error, and every record
+    names the code that ran it, so a stale record is marked rather than mixed in.]),
+  ([What is not checked], [The tolerance between test points: the checks are estimates. No scheme here
+    certifies its worst error, and in high dimension no box sampler can @novak2008.]),
+)
+
+#takeaway[Tests check each scheme on small cases, a regression check pins every scheme bit for bit, and
+  the figures of this companion are rebuilt from definitions and compared with the library.]
 
 #bibliography("references.yml", title: [References])
+
+#show: appendix
+#pagebreak(weak: true)
+
+= The settings of the four schemes <sec:settings>
+
+Each table is read from the settings dataclass by the figure script, with the comment beside each field
+in the source. The defaults are the library's.
+
+#let settings-table(rows, title) = block(above: 0.8em, below: 1em, {
+  set text(8pt)
+  table(
+    columns: (auto, auto, 1fr),
+    inset: (x: 4pt, y: 3pt),
+    align: (left, right, left),
+    table.header[#title][default][meaning],
+    ..rows.map(r => (raw(r.name), raw(r.default), [#r.note])).flatten(),
+  )
+})
+
+#settings-table(ap.settings.chebtt, [`ChebTTSettings`])
+#settings-table(ap.settings.vector, [`VectorSettings`, besides ChebTT's])
+#settings-table(ap.settings.adaptive, [`AdaptiveSettings`])
+#settings-table(ap.settings.hub, [`HubSettings`])
+
+= From the companion's symbols to the code's names <sec:names>
+
+#block(above: 1em, below: 1em, {
+  set text(8.5pt)
+  table(
+    columns: (auto, 1fr, 1fr),
+    inset: (x: 5pt, y: 3.5pt),
+    align: left,
+    table.header[symbol][meaning][in the code],
+    [$f$, $Omega$, $ell$, $u$], [the oracle and its box], [`f`, `lo`, `hi`],
+    [$atol$, $s$], [the tolerance and the safety factor], [`atol`, `safety`],
+    [$tau$], [an axis's share of the tolerance], [`share` $= s atol slash d$ in `build`],
+    [$n_k$, $r_k$], [degree of axis $k$, TT rank], [`degrees`, `ranks`; `grid.n`],
+    [$C_k$], [core $k$: coefficients $r_(k-1) times (n_k + 1) times r_k$], [`ChebTT.cores[k]`],
+    [$I_k$, $J_k$], [left and right index sets of the cross], [`left`, `right` in `_sweeps`],
+    [$L_k$, $R_(k+1)$], [the train's products left and right of core $k$], [`environments`, `through`],
+    [$beta$, $Z$], [the compression's budget and probe], [`chop_share * atol`, `probe`],
+    [$G_c$], [pullback metric of output $c$], [`metric_groups`],
+    [$r_"cap"$], [ChebTT-M's rank cap on the axes], [`axes_rank`],
+    [$phi$, $rho$, foot], [interface, signed distance, nearest point], [`Interface.phi`, `geometry`],
+    [$S$, $h$, $J_k$], [interface term, profile, jump fields], [`Interface.term`, `profile`, `fields`],
+    [$V$, $r$, $p$], [hub rotation, hub dimension, hub degree], [`HubGroup.V`, `r`, `degree`],
+    [$C$], [gradient covariance], [`output_groups`, `covariance_rank`],
+    [$P_0$, $P_(1 j)$, $P_(2 j)$], [hub block and weak terms], [`_columns`, `HubGroup.coef`],
+  )
+})
+
+= Proof details <sec:proofs>
+
+*The top quarter (@prop:quarter).* With $|a_j| = C rho^(-j)$, the sum over $j$ from $m$ to $n$ is
+$C rho^(-m) (1 - rho^(-(n - m + 1))) slash (1 - rho^(-1)) approx |a_m| slash (1 - rho^(-1))$. For the upper
+half $m = n slash 2$, and $|a_(n slash 2)| = C rho^(-n slash 2) = sqrt(C |a_n|)$. For the top quarter
+$m = 3 n slash 4$, and $|a_(3 n slash 4)| = C^(1 slash 4) |a_n|^(3 slash 4)$. Setting either to the share
+$tau$ and solving for $|a_n|$ gives the two accuracies of the proposition.
+
+*The cross in $d$ dimensions (@lem:skeleton).* The TT-cross keeps nested index sets: every left set
+$I_k$ extends some multi-indices of $I_(k-1)$ by one position on axis $k$, and every right set $J_k$
+those of $J_(k+1)$. For nested sets the train built from the fibres
+$I_(k-1) times {"axis" k} times J_k$ interpolates $f$ on every one of those fibres @oseledets2010, which
+is @lem:skeleton applied to each unfolding of the tensor in turn. The figure script checks the
+two-dimensional case on every recorded model.
+
+*The interface term (@prop:remainder).* Write $f = f_+$ on the side $rho > 0$ and $f = f_-$ on the other,
+both smooth. Jump fields of order $k$ give $S = [rho > 0] sum_(i <= k) J_i rho^i slash i!$ with
+$J_i = partial_rho^i (f_+ - f_-)$ on the interface. Then on the side $rho > 0$,
+$f - S = f_+ - sum_(i <= k) partial_rho^i (f_+ - f_-) rho^i slash i!$, whose first $k$ normal
+derivatives at $rho = 0$ equal those of $f_-$. So $f - S$ and its first $k$ derivatives are continuous
+across the interface.
