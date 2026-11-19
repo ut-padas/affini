@@ -1,8 +1,9 @@
-"""Adaptive ChebTT (src/schemes/chebtt_adaptive.py): smooth functions unchanged, interfaces and fronts modelled."""
+"""Adaptive ChebTT (src/schemes/chebtt/adaptive.py): smooth functions unchanged, interfaces and fronts modelled."""
 
 import numpy as np
 
-from src.schemes import chebtt, chebtt_adaptive
+from src.schemes import chebtt
+from src.schemes.chebtt import adaptive as chebtt_adaptive
 
 
 def test_a_smooth_function_gets_exactly_the_chebtt_model():

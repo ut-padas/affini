@@ -23,6 +23,7 @@ from typing import Any
 from src.infra.profiling import Profiler
 
 PHASES = ("explore", "sample", "fit", "check", "adapt", "compress")
+RESERVED = ("kind", "t", "level", "rank", "scheme")  # fields every streamed event carries itself
 
 
 @dataclass
@@ -71,6 +72,8 @@ class Training:
 
     def round_end(self, **fields: Any) -> None:
         """Close a round: its fields (plain numbers and strings) go to the report, the log and the event stream."""
+        if clash := sorted(set(fields) & set(RESERVED)):
+            raise ValueError(f"round fields {clash} are reserved for the event stream")
         record = {"round": len(self.report.rounds), "evals": self.oracle.evals, **fields}
         self.report.rounds.append(record)
         self.profiler.level = record["round"]

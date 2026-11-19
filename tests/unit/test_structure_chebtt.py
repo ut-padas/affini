@@ -1,4 +1,4 @@
-"""ChebTT (src/schemes/chebtt.py): maxvol, the cross on low-rank functions, and its checks."""
+"""ChebTT (src/schemes/chebtt/): maxvol, the cross on low-rank functions, and its checks."""
 
 import numpy as np
 
@@ -130,7 +130,7 @@ def test_a_jump_tilted_beyond_the_band_is_not_taken_for_an_axis_aligned_one():
     def tilted(X):  # a jump across x0 = 0.3 + 0.01 (x1 - 0.5): oblique, so no breakpoint may represent it
         return np.exp(0.3 * X.sum(axis=1)) * (1.0 + (X[:, 0] > 0.3 + 0.01 * (X[:, 1] - 0.5)))
 
-    g = chebtt._fibre(tilted, np.array([0.5, 0.9]), 0)
+    g = chebtt.train._fibre(tilted, np.array([0.5, 0.9]), 0)
     found, _ = chebtt.axis_edges(tilted, np.zeros(2), np.ones(2), 0, np.array([[0.5, 0.9]]), [], np.random.default_rng(0), 1e-3)
     assert found == []
     assert chebtt.edge_at(g, 0.304, 1e-12, True)  # the fibre itself does have the jump, at 0.3 + 0.01 * 0.4

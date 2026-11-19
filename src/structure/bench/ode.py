@@ -227,7 +227,7 @@ def chebtt_smooth(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
 
 def chebtt_adaptive_box(p: StepMapProblem, train: np.ndarray, atol: float, seed: int):
     """ChebTT-A (``chebtt_adaptive``) per component on the states' bounding box: piecewise axes, and an interface term where one is found."""
-    from src.schemes import chebtt_adaptive
+    from src.schemes.chebtt import adaptive as chebtt_adaptive
 
     oracle = CachedOracle(p.step)
     lo, hi = state_box(visited(train))

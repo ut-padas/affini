@@ -76,6 +76,35 @@ def as_oracle(f: Callable | Oracle, jacobian: Callable | None = None) -> Oracle:
     return Oracle(f, jacobian)
 
 
+class PointCache:
+    """
+    f (host (N, d) -> (N, m)) behind one cache keyed by the point's exact coordinates: one call gives every
+    output, so separate trains of a vector function's outputs pay once for any point one of them asks
+    for. ``evals`` counts the distinct points f saw.
+    """
+
+    def __init__(self, f):
+        self.f, self.cache = f, {}
+
+    @property
+    def evals(self) -> int:
+        return len(self.cache)
+
+    def __call__(self, X: np.ndarray) -> np.ndarray:
+        X = np.ascontiguousarray(X, dtype=np.float64)
+        keys = [x.tobytes() for x in X]
+        first: dict[bytes, int] = {}
+        for i, key in enumerate(keys):
+            if key not in self.cache and key not in first:
+                first[key] = i
+        if first:
+            V = np.asarray(self.f(X[list(first.values())]), dtype=np.float64).reshape(
+                len(first), -1
+            )
+            self.cache.update(zip(first, V, strict=True))
+        return np.array([self.cache[key] for key in keys])
+
+
 _VALUES, _JACOBIAN, _STOP = "values", "jacobian", "stop"
 
 

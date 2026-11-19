@@ -5,11 +5,11 @@ oblique or curved interface or has a sharp smooth front.
     f ~ ChebTT(f - S) + S,   S = 0 for smooth and axis-aligned non-smooth functions
 
 A sum of products of univariate functions can be non-smooth only along axis-aligned planes, which
-``chebtt.build``'s piecewise axes handle. An oblique or curved jump has high rank at any degree, and a
+ChebTT's piecewise axes handle. An oblique or curved jump has high rank at any degree, and a
 tree refined towards it needs about (1/h)^(d-1) leaves, so it is modelled by a term aligned with the
 interface instead (the interface a plane or a diagonal quadric: a level set of a low-parametric phi):
 
-1. ChebTT with piecewise axes, which stops (``chebtt.ObliqueEdge``) as soon as its edge search meets a
+1. ChebTT with piecewise axes, which stops (``ObliqueEdgeError``) as soon as its edge search meets a
    jump across an oblique interface, handing over the points it located on it. Smooth and axis-edge
    functions end here and pay nothing more.
 2. Interface points: segments from the most extreme check point to random points, each scanned (17
@@ -39,7 +39,12 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from src.schemes import chebtt
+from src.schemes.base import Settings, check_points
+from src.schemes.chebtt.model import ChebTT
+from src.schemes.chebtt.train import ObliqueEdgeError, edge_at, locate_edge
+from src.schemes.chebtt.train import build as build_tt
+from src.schemes.oracle import PointCache, as_oracle
+from src.schemes.profiling import Training
 
 
 def _features(Z: np.ndarray, kind: str) -> np.ndarray:
@@ -69,7 +74,7 @@ class Interface:
     centre: np.ndarray
     scale: np.ndarray
     side: float = 1.0  # the jump fields live where rho * side > 0
-    profile: chebtt.ChebTT | None = None  # S = h(phi): h on [u0, u1]
+    profile: ChebTT | None = None  # S = h(phi): h on [u0, u1]
     u0: float = 0.0
     u1: float = 0.0
     degree: int = -1  # jump fields: their polynomial degree, and per jet order the coefficients
@@ -118,11 +123,10 @@ class Interface:
 class AdaptiveTT:
     """ChebTT (with piecewise axes) of f - S plus the interface term S (none when ``interface`` is None)."""
 
-    tt: chebtt.ChebTT
+    tt: ChebTT
     interface: Interface | None
     kind: str
     evals: int = 0
-    stages: dict = field(default_factory=dict)  # evaluations per stage of the build
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         X = np.atleast_2d(np.asarray(X, dtype=np.float64))
@@ -133,7 +137,7 @@ class AdaptiveTT:
 def segment_edges(F, anchor: np.ndarray, others: np.ndarray, m: int = 17) -> tuple[np.ndarray, int]:
     """
     Jumps on the segments from ``anchor`` to each of ``others``, located by value bisection and confirmed
-    by ``chebtt.edge_at``; and the number of steep cells that are not jumps (a front's crossings).
+    by ``edge_at``; and the number of steep cells that are not jumps (a front's crossings).
     """
     pts, steep = [], 0
     t = np.linspace(0.0, 1.0, m)
@@ -150,13 +154,13 @@ def segment_edges(F, anchor: np.ndarray, others: np.ndarray, m: int = 17) -> tup
         c = int(np.argmax(dv))
         if dv[c] <= 8.0 * np.median(dv) + 1e-14 * max(float(np.abs(v).max()), 1e-300):
             continue
-        x0, delta, _ = chebtt.locate_edge(g, t[c], t[c + 1], True, 1e-12)
-        if chebtt.edge_at(g, x0, max(delta, 1e-13), True):
+        x0, delta, _ = locate_edge(g, t[c], t[c + 1], True, 1e-12)
+        if edge_at(g, x0, max(delta, 1e-13), True):
             pts.append(anchor + x0 * dvec)
             continue
         # a steep kink is not a front: zoom and test for a kink before counting the cell as steep
-        x1, d1, _ = chebtt.locate_edge(g, t[max(c - 1, 0)], t[min(c + 2, m - 1)], False, 1e-6)
-        if not chebtt.edge_at(g, x1, max(d1, 1e-13), False):
+        x1, d1, _ = locate_edge(g, t[max(c - 1, 0)], t[min(c + 2, m - 1)], False, 1e-6)
+        if not edge_at(g, x1, max(d1, 1e-13), False):
             steep += 1
     return np.array(pts).reshape(-1, len(anchor)), steep
 
@@ -244,7 +248,7 @@ def _profile(F, iface: Interface, lo, hi, atol) -> None:
             a, b = np.where(up, mid, a), np.where(up, b, mid)
         return x0 + (0.5 * (a + b))[:, None] * (x1 - x0)[None]
 
-    iface.profile = chebtt.build(lambda U: F(x_of_u(U[:, 0])), np.array([u0]), np.array([u1]), 0.25 * atol, max_evals=20_000)
+    iface.profile = build_tt(lambda U: F(x_of_u(U[:, 0])), np.array([u0]), np.array([u1]), 0.25 * atol, max_evals=20_000)
     iface.u0, iface.u1 = u0, u1
 
 
@@ -288,94 +292,109 @@ def level_crossings(F, anchor: np.ndarray, others: np.ndarray, level: float, m: 
     return np.array(pts).reshape(-1, len(anchor))
 
 
-def build(f, lo, hi, atol: float, seed: int = 0, max_evals: int = 300_000, first_budget: int | None = None) -> AdaptiveTT:
+@dataclass(frozen=True)
+class AdaptiveSettings(Settings):
+    seed: int = 0
+    max_evals: int = 300_000  # of each full ChebTT build
+    first_budget: int | None = None  # the first ChebTT attempt's evaluations (default 5000 + 500 d)
+
+
+def build(f, lo, hi, atol: float, settings: AdaptiveSettings | None = None, *, jacobian=None, stream_dir=None,
+          **overrides) -> AdaptiveTT:  # fmt: skip
     """An ``AdaptiveTT`` of ``f`` (host (N, d) -> (N,)) on [lo, hi] to tolerance ``atol`` (see the module docstring)."""
+    s = AdaptiveSettings.resolve(settings, overrides)
+    oracle = as_oracle(f, jacobian)
+    run = Training("chebtt_adaptive", s, oracle, stream_dir)
     lo, hi = np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
     d = len(lo)
-    cache = chebtt._SharedOracle(f)  # one cache for every stage: a retry re-evaluates nothing
+    cache = PointCache(oracle)  # one cache for every stage: a retry re-evaluates nothing
 
-    def F(X):
+    def values(X):
         return cache(X)[:, 0]
 
-    rng = np.random.default_rng(seed + 11)
-    stages: dict = {}
+    rng = np.random.default_rng(s.seed + 11)
+
+    def stage(name):
+        run.round_end(stage=name)
 
     def done(tt, iface, kind):
-        return AdaptiveTT(tt, iface, kind, cache.evals, stages)
+        return run.finish(AdaptiveTT(tt, iface, kind, cache.evals))
 
     pts: list = []
     try:
-        tt = chebtt.build(F, lo, hi, atol, seed=seed, max_evals=first_budget or 5000 + 500 * d, interface=pts)
-        stages["chebtt"] = cache.evals
+        with run.phase("fit"):
+            tt = build_tt(values, lo, hi, atol, seed=s.seed, max_evals=s.first_budget or 5000 + 500 * d, interface=pts)
+        stage("chebtt")
         return done(tt, None, "chebtt, piecewise axes" if tt.breaks else "chebtt")
-    except chebtt.ObliqueEdge:
-        stages["chebtt (stopped at an oblique edge)"] = cache.evals
+    except ObliqueEdgeError:
+        stage("chebtt (stopped at an oblique edge)")
     except RuntimeError:
-        stages["chebtt (first budget)"] = cache.evals
-    Xs = chebtt.check_points(lo, hi, 64 + 32 * d, seed)
-    fs = F(Xs)
-    anchor = Xs[int(np.argmax(np.abs(fs - np.median(fs))))]
-    P = np.asarray(pts).reshape(-1, d)
+        stage("chebtt (first budget)")
+    with run.phase("explore"):
+        Xs = check_points(lo, hi, 64 + 32 * d, s.seed)
+        fs = values(Xs)
+        anchor = Xs[int(np.argmax(np.abs(fs - np.median(fs))))]
+        P = np.asarray(pts).reshape(-1, d)
     iface = None
     if not len(P):  # no oblique edge met: probe along segments for a jump or a front
-        e0 = cache.evals
-        P, steep = segment_edges(F, anchor, Xs[rng.choice(len(Xs), min(len(Xs), 2 * d + 8), replace=False)])
-        stages["segment probe"] = cache.evals - e0
+        with run.phase("explore"):
+            P, steep = segment_edges(values, anchor, Xs[rng.choice(len(Xs), min(len(Xs), 2 * d + 8), replace=False)])
+        stage("segment probe")
         if len(P) < 2:
-            e0 = cache.evals
             if steep >= 2:  # a front, before a long retry
-                Q = np.zeros((0, d))
-                level = 0.5 * (float(fs.max()) + float(fs.min()))  # the mid-level; the median can sit on a front's flat tail
-                for _ in range(6):
-                    Q = np.concatenate([Q, level_crossings(F, anchor, rng.uniform(lo, hi, (2 * d + 8, d)), level)])
-                    iface = fit_interface(Q, lo, hi)
-                    if iface is not None:
-                        break
-                stages["front discovery"] = cache.evals - e0
+                with run.phase("explore"):
+                    Q = np.zeros((0, d))
+                    level = 0.5 * (float(fs.max()) + float(fs.min()))  # the mid-level; the median can sit on a front's flat tail
+                    for _ in range(6):
+                        Q = np.concatenate([Q, level_crossings(values, anchor, rng.uniform(lo, hi, (2 * d + 8, d)), level)])
+                        iface = fit_interface(Q, lo, hi)
+                        if iface is not None:
+                            break
+                stage("front discovery")
             if iface is None:
-                e0 = cache.evals
-                tt = chebtt.build(F, lo, hi, atol, seed=seed, max_evals=max_evals)
-                stages["chebtt (full budget)"] = cache.evals - e0
+                with run.phase("fit"):
+                    tt = build_tt(values, lo, hi, atol, seed=s.seed, max_evals=s.max_evals)
+                stage("chebtt (full budget)")
                 return done(tt, None, "chebtt, piecewise axes" if tt.breaks else "chebtt")
-            e0 = cache.evals
-            _profile(F, iface, lo, hi, atol)
-            stages["front profile"] = cache.evals - e0
+            with run.phase("fit"):
+                _profile(values, iface, lo, hi, atol)
+            stage("front profile")
             kind = f"front ({iface.kind}): h(phi)"
     if iface is None:
-        e0 = cache.evals
-        for _ in range(8):  # segments from the extreme point until a plane or diagonal quadric fits
-            if len(P) >= d + 4:
-                iface = fit_interface(P, lo, hi)
-                if iface is not None:
-                    break
-            P = np.concatenate([P, segment_edges(F, anchor, rng.uniform(lo, hi, (2 * d + 8, d)))[0]])
-        stages["interface discovery"] = cache.evals - e0
+        with run.phase("explore"):
+            for _ in range(8):  # segments from the extreme point until a plane or diagonal quadric fits
+                if len(P) >= d + 4:
+                    iface = fit_interface(P, lo, hi)
+                    if iface is not None:
+                        break
+                P = np.concatenate([P, segment_edges(values, anchor, rng.uniform(lo, hi, (2 * d + 8, d)))[0]])
+        stage("interface discovery")
         if iface is None:
             raise RuntimeError(f"no plane or diagonal quadric fits the {len(P)} interface points")
-        if iface.kind != "plane":  # the jump fields' side: away from the quadric's centre
-            Y = rng.uniform(lo, hi, (2000, d))
-            rho, _ = iface.geometry(Y)
-            gn = np.linalg.norm(iface.grad(Y), axis=1)
-            if np.any(rho < 0) and np.any(rho > 0) and gn[rho > 0].min() < gn[rho < 0].min():
-                iface.side = -1.0
-        e0 = cache.evals
-        Pj, Jj = interface_jets(F, iface, lo, hi, rng, 2 * d + 8)
-        stages["jets"] = cache.evals - e0
-        e0 = cache.evals
-        constant = len(Jj) >= 4 and all(np.ptp(Jj[:, k]) * 0.2**k / math.factorial(k) <= 0.1 * atol for k in range(3))
-        if constant:
-            _profile(F, iface, lo, hi, atol)
-            kind = f"interface ({iface.kind}), constant jump: h(phi)"
-        else:
-            P2, J2 = interface_jets(F, iface, lo, hi, rng, max(3 * (d + 1) * (d + 2) // 2 - len(Pj), 0))
-            _fields(iface, np.concatenate([Pj, P2]), np.concatenate([Jj, J2]), atol)
-            if iface.side < 0:  # S on the negative side carries the jump with the opposite sign
-                iface.fields = [-c for c in iface.fields]
-            kind = f"interface ({iface.kind}), jump fields of degree {iface.degree}"
-        stages["interface term"] = cache.evals - e0
-    e0 = cache.evals
-    tt = chebtt.build(lambda X: F(X) - iface.term(X), lo, hi, atol, seed=seed, max_evals=max_evals)
-    stages["remainder chebtt"] = cache.evals - e0
+        with run.phase("explore"):
+            if iface.kind != "plane":  # the jump fields' side: away from the quadric's centre
+                Y = rng.uniform(lo, hi, (2000, d))
+                rho, _ = iface.geometry(Y)
+                gn = np.linalg.norm(iface.grad(Y), axis=1)
+                if np.any(rho < 0) and np.any(rho > 0) and gn[rho > 0].min() < gn[rho < 0].min():
+                    iface.side = -1.0
+            Pj, Jj = interface_jets(values, iface, lo, hi, rng, 2 * d + 8)
+        stage("jets")
+        with run.phase("fit"):
+            constant = len(Jj) >= 4 and all(np.ptp(Jj[:, k]) * 0.2**k / math.factorial(k) <= 0.1 * atol for k in range(3))
+            if constant:
+                _profile(values, iface, lo, hi, atol)
+                kind = f"interface ({iface.kind}), constant jump: h(phi)"
+            else:
+                P2, J2 = interface_jets(values, iface, lo, hi, rng, max(3 * (d + 1) * (d + 2) // 2 - len(Pj), 0))
+                _fields(iface, np.concatenate([Pj, P2]), np.concatenate([Jj, J2]), atol)
+                if iface.side < 0:  # S on the negative side carries the jump with the opposite sign
+                    iface.fields = [-c for c in iface.fields]
+                kind = f"interface ({iface.kind}), jump fields of degree {iface.degree}"
+        stage("interface term")
+    with run.phase("fit"):
+        tt = build_tt(lambda X: values(X) - iface.term(X), lo, hi, atol, seed=s.seed, max_evals=s.max_evals)
+    stage("remainder chebtt")
     return done(tt, iface, kind)
 
 
@@ -391,8 +410,16 @@ class VectorAdaptiveTT:
         return np.stack([m.predict(X) for m in self.models], axis=1)
 
 
-def build_vector(f, lo, hi, atol: float, outputs: int, **kw) -> VectorAdaptiveTT:
+def build_vector(f, lo, hi, atol: float, outputs: int, settings: AdaptiveSettings | None = None, *, jacobian=None, stream_dir=None,
+                 **overrides) -> VectorAdaptiveTT:  # fmt: skip
     """``build`` per output of a vector-valued f (host (N, d) -> (N, outputs)), all on one cache, so a point any output's build asks for serves the others."""
-    cache = chebtt._SharedOracle(f)
-    models = [build(lambda X, c=c: cache(X)[:, c], lo, hi, atol, **kw) for c in range(outputs)]
-    return VectorAdaptiveTT(models, cache.evals)
+    s = AdaptiveSettings.resolve(settings, overrides)
+    oracle = as_oracle(f, jacobian)
+    run = Training("chebtt_adaptive_vector", s, oracle, stream_dir)
+    cache = PointCache(oracle)
+    models = []
+    for c in range(outputs):
+        with run.phase("fit"):
+            models.append(build(lambda X, c=c: cache(X)[:, c], lo, hi, atol, s))
+        run.round_end(output=c, model=models[-1].kind)
+    return run.finish(VectorAdaptiveTT(models, cache.evals))

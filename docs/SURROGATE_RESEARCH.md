@@ -36,8 +36,8 @@ evaluations of the oracle; "k/N" counts cases (problem x tolerance) within on ev
 ### 0.1 Where things are
 
 - Code: [`src/structure/`](../src/structure/README.md) (its README says how to run the bench).
-  - `schemes/`: `chebtt.py` (ChebTT: `build`, and `build_vector` for several outputs), `chebtt_adaptive.py`
-    (ChebTT-A), `chebtree.py` (ChebTree), `sparsegrid.py` (SparseCheb), `kernel.py` (MetricKernel),
+  - `src/schemes/`: `chebtt/` (ChebTT: `build`, and `build_vector` for several outputs; ChebTT-A in
+    `chebtt/adaptive.py`), `chebtree.py` (ChebTree), `sparsegrid.py` (SparseCheb), `kernel.py` (MetricKernel),
     `hub.py` (the hub expansion), `tabulation.py` (SlowTable).
   - `src/problems/registry.py`: the scalar problems and the vector-valued ones (`VECTOR_FUNCTIONS`); `TOLERANCES` (in `bench/functions.py`)
     (2-D 0.1/0.01/0.001, 3-D 0.1/0.03/0.01, 5-D 0.1/0.05/0.02, 10-D and above 0.2/0.1/0.05).
@@ -2335,7 +2335,7 @@ worst trajectory); rho_40 = 0.56 (ChebTT box 0.001), 0.17 (ChebTT box 0.01), 0.0
 
 ## 10. Review VIII: piecewise and partitioned tensor trains for kinks, jumps and fronts
 
-Scope: ChebTT (`src/schemes/chebtt.py`) fails on axis-aligned kinks (`genz_continuous`), axis-aligned
+Scope: ChebTT (`src/schemes/chebtt/`) fails on axis-aligned kinks (`genz_continuous`), axis-aligned
 jumps (`genz_discontinuous`), an oblique planar jump (`oblique_jump`), a spherical jump (`ball_jump`)
 and a sharp radial front (`front`). This review covers the literature for the two planned designs:
 piecewise univariate bases per axis (design 1, already under way in the working tree: `axis_edges`,

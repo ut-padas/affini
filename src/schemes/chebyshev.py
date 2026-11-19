@@ -138,3 +138,45 @@ def chop(coef: np.ndarray, budget: float) -> np.ndarray:
             return coef
         spent += w[k]
         coef = np.take(coef, np.arange(coef.shape[k] - 1), axis=k)
+
+
+def coefficients_along(G: np.ndarray, axis: int) -> np.ndarray:
+    """Chebyshev coefficients along ``axis`` of node values on the second-kind grid."""
+    n = G.shape[axis] - 1
+    if n == 0:
+        return G.copy()
+    a = dct(G, type=1, axis=axis) / n
+    edge = [slice(None)] * G.ndim
+    for j in (0, n):
+        edge[axis] = j
+        a[tuple(edge)] /= 2.0
+    return a
+
+
+def chebyshev_tail(v: np.ndarray) -> float:
+    """
+    Twice the sum of |coefficients| in the top quarter of the degrees of 1-D node values (interpolation
+    folds the omitted tail back once). Not the upper half: for geometric decay the error is about the
+    last coefficient, a_n ~ a_{n/2}^2 / a_0, so asking the upper half to meet a share asks for about the
+    square of the accuracy, and doubling overshoots further.
+    """
+    a = np.abs(coefficients_along(v, 0))
+    n = len(a) - 1
+    return 2.0 * float(a[max(1, n - n // 4 + 1) :].sum())
+
+
+def chebyshev_bases(t: np.ndarray, sizes: list) -> list:
+    """Per axis k, the (sizes[k], Q) values T_j(t[:, k]) by the three-term recurrence (no arccos or cos), rows contiguous."""
+    out = []
+    for k, n1 in enumerate(sizes):
+        T = np.empty((n1, len(t)))
+        T[0] = 1.0
+        if n1 > 1:
+            x = np.ascontiguousarray(t[:, k])
+            T[1] = x
+        for j in range(2, n1):
+            np.multiply(x, T[j - 1], out=T[j])
+            T[j] *= 2.0
+            T[j] -= T[j - 2]
+        out.append(T)
+    return out

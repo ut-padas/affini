@@ -77,3 +77,48 @@ def active_subspace(oracle, lo, hi, n_points: int, seed: int = 0, step: float = 
     lam, W = np.linalg.eigh(G.T @ G / n_points)
     order = np.argsort(lam)[::-1]
     return W[:, order], lam[order]
+
+
+def directions_holding(w: np.ndarray, share: float = 0.99) -> int:
+    """How many of the largest entries of w (>= 0) hold ``share`` of its sum."""
+    w = np.sort(np.clip(w, 0.0, None))[::-1]
+    return int(np.searchsorted(np.cumsum(w) / max(float(w.sum()), 1e-300), share) + 1)
+
+
+def metric_groups(J: np.ndarray) -> list[tuple[list[int], np.ndarray | None]]:
+    """
+    Coordinates for each output from Jacobian samples ``J`` (d, points, m): an output whose metric
+    ``G_c = mean grad f_c grad f_c^T`` holds 99% of its trace in at most half as many eigenvectors as
+    axes is rotated; outputs whose leading subspaces merge without growing share one rotation (the
+    eigenvectors of their summed, trace-normalised metrics, largest first); the rest keep the axes
+    (``None``). A separable output is never rotated, since a rotation would destroy its rank 1.
+    """
+    d, _, m = J.shape
+    G = [np.einsum("ip,jp->ij", J[:, :, c], J[:, :, c]) for c in range(m)]
+    G = [g / max(float(np.trace(g)), 1e-300) for g in G]
+    k_eig = [directions_holding(np.linalg.eigvalsh(g)) for g in G]
+    rotated: list[list[int]] = []
+    axes = []
+    for c in sorted(range(m), key=lambda c: k_eig[c]):
+        if 2 * k_eig[c] > directions_holding(np.diag(G[c])):
+            axes.append(c)
+            continue
+        for grp in rotated:
+            joint = directions_holding(
+                np.linalg.eigvalsh(sum(G[i] for i in grp) + G[c])
+            )
+            if joint <= max(
+                directions_holding(np.linalg.eigvalsh(sum(G[i] for i in grp))),
+                k_eig[c],
+            ):
+                grp.append(c)
+                break
+        else:
+            rotated.append([c])
+    out: list[tuple[list[int], np.ndarray | None]] = []
+    for grp in rotated:
+        w, Q = np.linalg.eigh(sum(G[i] for i in grp))
+        out.append((sorted(grp), Q[:, np.argsort(w)[::-1]]))
+    if axes:
+        out.append((sorted(axes), None))
+    return out

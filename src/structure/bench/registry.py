@@ -11,7 +11,8 @@ rank 0 is done. A trained model lives on rank 0; prediction there is serial.
 import numpy as np
 
 from src import to_host, xp
-from src.schemes import chebtree, chebtt, chebtt_adaptive, kernel, sparsegrid
+from src.schemes import chebtree, chebtt, kernel, sparsegrid
+from src.schemes.chebtt import adaptive as chebtt_adaptive
 from src.schemes.oracle import distributed as spread
 from src.structure.bench.functions import Model, register
 

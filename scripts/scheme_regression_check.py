@@ -28,12 +28,12 @@ from src.problems import FUNCTIONS  # noqa: E402
 from src.schemes import (  # noqa: E402
     chebtree,
     chebtt,
-    chebtt_adaptive,
     hub,
     kernel,
     sparsegrid,
     tabulation,
 )
+from src.schemes.chebtt import adaptive as chebtt_adaptive  # noqa: E402
 
 N_QUERY = 400
 
@@ -73,6 +73,11 @@ def linear_step_map():
 
 def case_chebtt():
     f, lo, hi = problem("genz_gaussian", 3)
+    return chebtt.build(f, lo, hi, 0.01, seed=1), lo, hi
+
+
+def case_chebtt_edges():
+    f, lo, hi = problem("genz_discontinuous", 2)
     return chebtt.build(f, lo, hi, 0.01, seed=1), lo, hi
 
 
