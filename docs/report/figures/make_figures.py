@@ -410,8 +410,8 @@ def record_art() -> tuple[AdaptiveSurrogate, dict, dict, ARTPlan]:
         current["bank"] = to_host(bank)
         return bank
 
-    def bins_search(self, rows, bank):
-        w, z, sse = bins_fn(self, rows, bank)
+    def bins_search(self, rows, bank, search_rows):
+        w, z, sse = bins_fn(self, rows, bank, search_rows)
         U, Y, Phi, starts, counts = (to_host(a) for a in (rows.U, rows.Y, rows.Phi, rows.starts, rows.counts))
         for j, (code, s0, n) in enumerate(zip(current["split_codes"], starts, counts, strict=True)):
             sl = slice(s0, s0 + n)
@@ -419,8 +419,8 @@ def record_art() -> tuple[AdaptiveSurrogate, dict, dict, ARTPlan]:
                                          (to_host(w)[j].copy(), float(to_host(z)[j]), float(to_host(sse)[j])))  # fmt: skip
         return w, z, sse
 
-    def soft_refine(self, rows, w0, z0, sse0, progress):
-        w, z = soft_fn(self, rows, w0, z0, sse0, progress)
+    def soft_refine(self, rows, w0, z0, sse0, progress, search_rows):
+        w, z = soft_fn(self, rows, w0, z0, sse0, progress, search_rows)
         for j, code in enumerate(current["split_codes"]):
             searches[code].final = (to_host(w)[j].copy(), float(to_host(z)[j]))
         return w, z
@@ -1582,6 +1582,7 @@ def art_split(nodes: list[Node], searches: dict, plan: ARTPlan) -> dict:
                       "gain_percent": round(100 * gains[code]), "improved": sum(g > 1e-12 for g in gains.values()),
                       "searched": len(gains), "left": int((~right).sum()), "right": int(right.sum()),
                       "n_bins": settings.n_bins, "soft_iters": settings.soft_iters,
+                      "affine_search_from": settings.affine_search_from,
                       "temperature": settings.soft_temperature,
                       "art_worst": round(worst(right), 2), "afinni_worst": round(worst(afinni_low), 2),
                       "art_mse": round(mse(right), 3), "afinni_mse": round(mse(afinni_low), 3),

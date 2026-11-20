@@ -145,11 +145,12 @@ extern "C" __global__ void segment_cross_tiled(const double* A, const double* B,
 // two kernels. Only entries with eidx[r * Q + c] >= 0 are written (the upper triangle if
 // symmetric); the partials keep the untiled kernel's (weight set, chunk, entry) layout.
 extern "C" __global__ void segment_cross_tiled2d(const double* A, const double* B, const double* w,
-                                                 const double* a_off, const double* b_off, const long long* cum,
-                                                 const long long* starts, const long long* counts,
-                                                 const int* tile_r, const int* tile_c, const int* eidx,
-                                                 double* partial, long long n_chunks, int K, int E, int P, int Q,
-                                                 int CH, int flags, long long w_stride, long long b_stride) {
+                                                 const double* a_off, const double* b_off,
+                                                 const long long* cum, const long long* starts,
+                                                 const long long* counts, const int* tile_r,
+                                                 const int* tile_c, const int* eidx, double* partial,
+                                                 long long n_chunks, int K, int E, int P, int Q, int CH,
+                                                 int flags, long long w_stride, long long b_stride) {
     const int TR = 32;  // rows staged per pass: 2 x 32 x 64 doubles = 32 KB of shared memory
     __shared__ double sA[TR][64], sB[TR][64];
     // 1. Block -> (weight set, chunk) and output tile; the chunk's rows as in the untiled kernel.

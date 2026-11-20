@@ -1340,6 +1340,13 @@ fit and the objective use the same weights, floor and ridge.
   - The gate width $h$ is `soft_temperature` $= #ex.art.split.temperature$ times the
     standard deviation of the scores $a^top u$. The search takes at most
     `soft_iters` $= #ex.art.split.soft_iters$ steps.
+  - From `affine_search_from` $= #ex.art.split.affine_search_from$ leaf coefficients on (quadratic
+    leaves from $d = #range(1, 200).find(d => (d + 1) * (d + 2) / 2 >= ex.art.split.affine_search_from)$),
+    both searches fit the two children with affine models $[u, 1]$, $d + 1$ coefficients, instead of
+    the leaf model's $p$, so a fit costs $(d + 1)^3$ instead of $p^3$. The bins search's best cuts and
+    the soft result are still judged by the leaf model's hard fits, and the leaves are fitted with
+    the leaf model. Below that size the saving is small, and the search ranks cuts by the model
+    the leaf will use.
   - `split_search="bins"` stops after the enumeration, and `"gap"` cuts along the
     Hessian-informed direction near the median without any search.
   - ART first divides each component of the values by that component's tolerance, the
@@ -2119,10 +2126,10 @@ compares every plane bit for bit, matched by root and locational code (@prop:det
   ([Both plans, one contract], [`test_plans.py` checks that AFINNI and ART follow the
     `Plan` protocol. It also checks their batch boundaries, and that AFINNI releases a
     batch's points before splitting.]),
-  ([Differential regression], [`scripts/regression_check.py` trains 52 small cases and
-    stores every array of every model. The cases cover every mode, the `L2` and `Linf`
-    metrics and every split search. A refactor must reproduce them bit for bit on a CPU, on
-    one rank and on two.]),
+  ([Differential regression], [`scripts/regression_check.py` trains small 2-D cases, and two
+    8-D cases whose quadratic leaves reach the GPU's large-system kernels, and stores every
+    array of every model. The cases cover every mode, the `L2` and `Linf` metrics and every
+    split search. A refactor must reproduce them bit for bit on a CPU, on one rank and on two.]),
   ([On the GPU], [The GPU suite runs the same tests on CuPy. It compares a kernel with its
     NumPy reference to $10^(-12)$ and two GPU trainings with each other to $10^(-10)$. Leaf
     counts and evaluation counts must match exactly. No test compares a CPU training with a
@@ -3357,17 +3364,28 @@ accepted or cut, and with it the subtree below.
   - *The tiled kernel.* From #apx-sums.tiled_min_e output entries on, `segment_cross_tiled`
     loads each chunk into shared memory once. Each entry still adds the same rows in the same
     order, with the same expression $((A - a) w)(B - b)$. Only the memory the operands are
-    read from changes, so the bits match the untiled kernel. No test compares the two paths
-    directly.
+    read from changes, so the bits match the untiled kernel. From #apx-sums.tiled2d_min rows and
+    columns of output on, as in the Gram of a quadratic leaf in high dimension,
+    `segment_cross_tiled2d` gives each thread a $4 times 4$ tile of entries, so one shared-memory
+    read feeds four products; each entry again adds the same rows in the same order. No test
+    compares these paths directly.
   - *No host read.* The launch covers $floor(N slash c) + K >= sum_k ceil(n_k slash c)$
     chunks. This upper bound is known without reading the chunk counts back to the host. The
     threads past the last real chunk return at once.
   - *Small products and solves.* `det_matmul` gives each output entry one thread and a
     sequential inner sum. `spd_solve` gives each system one thread. From
-    $p = #apx-sums.coop_min_p$ unknowns on, `spd_factor_coop` factors one system per block.
-    Each entry of a column gets its own thread. That thread uses the inner sum of the
-    one-thread Cholesky, in the same order, so the factor has the same bits. The unit tests
-    compare these kernels with NumPy, and across stack sizes, only below that size.
+    $p = #apx-sums.coop_min_p$ unknowns on, one block factors each system: `spd_factor_shared`
+    in shared memory while the packed triangle fits, `spd_factor_coop` otherwise. Every entry
+    receives the same subtractions, in the same order, as in the one-thread Cholesky, so the
+    factor has the same bits. `spd_solve_factored` gives each pair of a system and a right-hand
+    side one thread, with the one-thread solve's arithmetic.
+  - *One relaxed order.* At that size the split search's solves run in one block per system
+    (`spd_solve_shared`): the back substitution subtracts in decreasing order, in parallel,
+    where the one-thread solve subtracts in increasing order along a serial chain. The order is
+    fixed for each system, so runs stay reproducible and a node's bits do not depend on its
+    batch, but they differ from the one-thread kernel's at rounding level. Leaf fits keep the
+    one-thread order (`exact=True`), so a leaf's coefficients do not depend on this. The unit
+    tests compare these kernels with NumPy, and across stack sizes, only below that size.
   - *The CPU.* NumPy callers do not use `segment_cross`. Its NumPy branch is a reference.
     `segment_sum` multiplies by a sparse 0/1 matrix. This product adds a cluster's rows in
     input order, starting from zero, bit for bit as `add.at` does. `reduce_sum_1d` is NumPy's

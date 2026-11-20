@@ -124,9 +124,11 @@ class ARTSettings:
     # to several times the test error for quadratic leaves at d <= 5); at d = 20 the test error is
     # unchanged on the reference ART's benchmarks. None: always the leaf model's fits.
     affine_search_from: int | None = 100
-    # The reference ART's iteration cap. Against 40, on its benchmark problems at d >= 3, it builds
-    # 5-30% fewer leaves for the same test error (4x fewer on a 5-D plane wave), and so fewer
-    # oracle calls, for about 2-3x the training time where the trees are about the same size.
+    # Against 40, on the reference ART's benchmark problems at d >= 3, 200 iterations build 5-30%
+    # fewer leaves for the same test error (4x fewer on a 5-D plane wave), and so fewer oracle
+    # calls, for about 2-3x the training time where the trees are about the same size. The
+    # reference's presets use 20 (with sample_multiplier 10); scripts/art_comparison.py passes its
+    # --max-iters, so a comparison runs both at the same cap.
     soft_iters: int = 200
     # The soft gate's width (h in the companion) as a fraction of the std of the node's scores.
     soft_temperature: float = 0.1

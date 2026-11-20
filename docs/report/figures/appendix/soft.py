@@ -53,7 +53,7 @@ def constants() -> dict:
         "rounding": re.search(r"margin = gap \+ (\d+) \* eps", src).group(1),
         "saturation": re.search(r"sp_sum / n < ([0-9.e-]+)\)", src).group(1),
     }
-    if (f"soft_step(rows, w, z, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n, delta, active, stops, {raw['halvings']})" not in src
+    if (f"soft_step(search_rows, w, z, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n, delta, active, stops, {raw['halvings']})" not in src
             or f"J[k] - {raw['armijo']} * a * gn2[k]" not in cu
             or f"margin[k] = gap[k] + {raw['rounding']} * eps" not in cu
             or f"sp_sum[k] / n[k] < {raw['saturation']}" not in cu
@@ -80,6 +80,8 @@ def rows_of(rec, ridge: float) -> SplitRows:
 def replay(rec, plan: ARTPlan, ridge: float, c: dict) -> dict:
     """``_soft_refine`` on one node, restated step by step on the library's primitives, with every trial kept."""
     s_cfg, rows = plan.settings, rows_of(rec, ridge)
+    if plan._search_rows(rows) is not rows:  # the restatement fits the leaf model, as the search does below affine_search_from
+        raise SystemExit("The example's split search fits affine models (affine_search_from); restate that search instead.")
     delta, n = s_cfg.soft_weight_floor, np.array([float(len(rec.U))])
     w, z = rec.bins[0][None].copy(), np.array([rec.bins[1]])
     s0 = plane_scores(rows.U, w[rows.labels])

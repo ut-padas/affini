@@ -305,6 +305,7 @@
       "right": 52,
       "n_bins": 16,
       "soft_iters": 200,
+      "affine_search_from": 100,
       "temperature": 0.1,
       "art_worst": 1.2,
       "afinni_worst": 5.3,

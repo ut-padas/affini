@@ -1,6 +1,7 @@
 {
  "chunk": 256,
  "tiled_min_e": 32,
+ "tiled2d_min": 32,
  "coop_min_p": 32,
  "cub_min_length": 128,
  "cluster": {
