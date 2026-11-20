@@ -376,8 +376,9 @@ class QuadraticLSQModel(LocalModel):
             return {"coef": xp.swapaxes(lstsq_auto(G, B, Phi, data.F, data.starts, data.counts), 1, 2), "radius": radius}
         lam = 1e-10 * xp.trace(G, axis1=1, axis2=2) / p + 1e-300
         # spd_solve: on the GPU its bits do not depend on the batch (a batched linalg.solve picks its
-        # algorithm by batch count, so cold and warm runs fitted different coefficients); NumPy: linalg.solve
-        beta = spd_solve(G + lam[:, None, None] * xp.eye(p), B)  # (K, p, fd)
+        # algorithm by batch count, so cold and warm runs fitted different coefficients); NumPy: linalg.solve.
+        # exact: the leaf's coefficients keep the exact substitution order, whatever the split search uses.
+        beta = spd_solve(G + lam[:, None, None] * xp.eye(p), B, exact=True)  # (K, p, fd)
         return {"coef": xp.swapaxes(beta, 1, 2), "radius": radius}
 
     def evaluate(self, params, X, cluster_ids):

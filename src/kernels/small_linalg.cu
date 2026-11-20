@@ -159,6 +159,80 @@ extern "C" __global__ void spd_factor_shared(double* L, long long nb, int p) {
         for (int m = lane; m <= i; m += 32) a[i * p + m] = sh[tri(i) + m];
 }
 
+// Solve the q right-hand sides x (p, q, in shared memory) with the packed factor sh, by the whole
+// block. The forward substitution is right-looking with chol_solve's order (x_i - L_i0 x_0 - L_i1
+// x_1 - ... then / L_ii), so its bits are chol_solve's. The back substitution is right-looking
+// too, which subtracts L_ki x_k in decreasing k where chol_solve subtracts in increasing k: it
+// rounds differently from chol_solve (a fixed order per system, so still reproducible and
+// independent of the batch), in exchange for p parallel steps instead of a serial chain of
+// p^2 / 2 dependent products.
+__device__ void chol_packed_solve_block(const double* sh, double* x, int p, int q) {
+    // 1. Forward: x_j final once divided; then every later row subtracts its L_ij x_j.
+    for (int j = 0; j < p; ++j) {
+        for (int c = threadIdx.x; c < q; c += blockDim.x) x[j * q + c] /= sh[tri(j) + j];
+        __syncthreads();
+        for (int t = threadIdx.x; t < (p - j - 1) * q; t += blockDim.x) {
+            int i = j + 1 + t / q, c = t % q;
+            x[i * q + c] -= sh[tri(i) + j] * x[j * q + c];
+        }
+        __syncthreads();
+    }
+    // 2. Back: x_k final once divided; then every earlier row subtracts L_ki x_k (row k of L: contiguous).
+    for (int k = p - 1; k >= 0; --k) {
+        for (int c = threadIdx.x; c < q; c += blockDim.x) x[k * q + c] /= sh[tri(k) + k];
+        __syncthreads();
+        for (int t = threadIdx.x; t < k * q; t += blockDim.x) {
+            int i = t / q, c = t % q;
+            x[i * q + c] -= sh[tri(k) + i] * x[k * q + c];
+        }
+        __syncthreads();
+    }
+}
+
+// One block per system: factor (as spd_factor_shared) and solve its q right-hand sides with the
+// factor still in shared memory (p (p + 1) / 2 + p + p q doubles), so L never goes to global
+// memory; the solve is chol_packed_solve_block's, which rounds differently from spd_solve. A
+// non-SPD system gets an all-NaN solution, as spd_solve.
+extern "C" __global__ void spd_solve_shared(const double* A, double* X, long long nb, int p, int q) {
+    extern __shared__ double sh[];  // packed lower triangle, column workspace, then x (p, q)
+    __shared__ int ok;
+    long long b = blockIdx.x;
+    if (b >= nb) return;
+    const double* a = A + b * p * p;
+    double* xg = X + b * p * q;
+    double* x = sh + tri(p) + p;
+    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5, n_warps = blockDim.x >> 5;
+    // 1. Load the lower triangle and the right-hand sides; 2. factor; 3. solve; 4. write x.
+    for (int i = warp; i < p; i += n_warps)
+        for (int m = lane; m <= i; m += 32) sh[tri(i) + m] = a[i * p + m];
+    for (int t = threadIdx.x; t < p * q; t += blockDim.x) x[t] = xg[t];
+    if (!chol_packed_block(sh, sh + tri(p), p, &ok)) {
+        for (int t = threadIdx.x; t < p * q; t += blockDim.x) xg[t] = nan("");
+        return;
+    }
+    chol_packed_solve_block(sh, x, p, q);
+    for (int t = threadIdx.x; t < p * q; t += blockDim.x) xg[t] = x[t];
+}
+
+// One block per system: solves with a factor from spd_factor, staged into shared memory as a
+// packed triangle (p (p + 1) / 2 + p q doubles) and solved as spd_solve_shared does, so its bits
+// are spd_solve_shared's. A factor that failed (all NaN) gives all-NaN solutions.
+extern "C" __global__ void spd_solve_factored_shared(const double* L, double* X, long long nb, int p, int q) {
+    extern __shared__ double sh[];  // packed lower triangle, then x (p, q)
+    long long b = blockIdx.x;
+    if (b >= nb) return;
+    const double* a = L + b * p * p;
+    double* xg = X + b * p * q;
+    double* x = sh + tri(p);
+    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5, n_warps = blockDim.x >> 5;
+    for (int i = warp; i < p; i += n_warps)
+        for (int m = lane; m <= i; m += 32) sh[tri(i) + m] = a[i * p + m];
+    for (int t = threadIdx.x; t < p * q; t += blockDim.x) x[t] = xg[t];
+    __syncthreads();
+    chol_packed_solve_block(sh, x, p, q);
+    for (int t = threadIdx.x; t < p * q; t += blockDim.x) xg[t] = x[t];
+}
+
 // One thread per (system, right-hand side): solves with a factor from spd_factor. Each column
 // keeps the solve half of spd_solve's arithmetic, so factor-then-solve gives spd_solve's bits,
 // and a system with many columns (an inverse, q = p) is no longer one thread's serial p^3 work.
