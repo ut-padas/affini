@@ -9,6 +9,8 @@ Run from the repository root, with the backend set explicitly::
     SURROGATE_DEVICE=cpu SURROGATE_MPI=off .venv/bin/python scripts/bench_inference.py \
         --problem rosenbrock --dim 2 3
     SURROGATE_DEVICE=cpu SURROGATE_MPI=off .venv/bin/python scripts/bench_inference.py --list
+    SURROGATE_DEVICE=cpu SURROGATE_MPI=off .venv/bin/python scripts/bench_inference.py --summary \
+        --out scratch/bench_inference/gpu        # table every saved case of a folder, running nothing
 
 Both methods start from the same ``ceil(50 (d + 1))`` uniform points in one root (AFINNI gets
 all-zero ``initial_labels``, so it skips the initial clustering, and ART a single box root),
@@ -240,11 +242,23 @@ def main() -> None:
     p.add_argument("--out", type=Path, default=OUT_DIR, help="results folder (default: %(default)s)")
     p.add_argument("--force", action="store_true", help="rerun cases whose result file exists")
     p.add_argument("--list", action="store_true", help="list the problems and exit")
+    p.add_argument("--summary", action="store_true",
+                   help="run nothing: table every case saved in --out (of --problem / --dim) and rewrite the summary")
     args = p.parse_args()
     logging.basicConfig(level=logging.WARNING)
     if args.list:
         for name, prob in PROBLEMS.items():
             print(f"{name:20s} d in {prob.dims}, domain {prob.domain}: {prob.note}")
+        return
+    if args.summary:
+        # Every saved case, whichever invocation (and settings) produced it; a case's own
+        # record keeps its settings.
+        paths = [args.out / f"{name}_d{d}.json" for name in args.problem
+                 for d in (args.dim or sorted({*PROBLEMS[name].dims, *saved_dims(args.out, name)}))]  # fmt: skip
+        records = [json.loads(path.read_text()) for path in paths if path.exists()]
+        if not records:
+            raise SystemExit(f"No saved cases in {args.out}.")
+        summarize(records, args.out)
         return
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -261,6 +275,16 @@ def main() -> None:
             path.write_text(json.dumps(record, indent=2))
             records.append(record)
     summarize(records, args.out)
+
+
+def saved_dims(out: Path, name: str) -> list[int]:
+    """Dimensions of ``name`` saved in ``out``, including ones outside the problem's default list (``--dim`` runs)."""
+    dims = []
+    for path in out.glob(f"{name}_d*.json"):
+        suffix = path.stem[len(name) + 2 :]
+        if suffix.isdigit():
+            dims.append(int(suffix))
+    return dims
 
 
 def current_settings(args) -> dict:
