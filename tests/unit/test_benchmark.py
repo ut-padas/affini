@@ -101,3 +101,11 @@ def test_the_table_counts_held_cases_and_shares_a_tied_win():
     records = [rec("a", 0.5, 100), rec("a", 0.9, 100, seed=2), rec("b", 0.2, 100), rec("c", 1.5, 10), rec("d", 0.1, 50, problem="other")]
     stats = summarise(cases(records), {"wave"})
     assert {m: (s["ran"], s["held"], s["won"]) for m, s in stats.items()} == {"a": (1, 1, 1), "b": (1, 1, 1), "c": (1, 0, 0)}
+
+
+def test_the_tables_key_names_the_stale_methods_or_says_there_are_none():
+    from src.benchmark.table import stale_note
+
+    assert stale_note({"chebtt": 0.0, "hub": 0.0}, {"chebtt": "ChebTT"}).startswith("No record is older")
+    note = stale_note({"chebtt": 0.25, "hub": 0.0}, {"chebtt": "ChebTT"})
+    assert note.startswith("* marks") and "ChebTT 25%" in note and "Hub" not in note and not note.endswith(": .")

@@ -128,16 +128,23 @@ def markdown(labels: dict) -> str:
                 us = f"{median(s['predict_us']):.2g}" if s["predict_us"] else "-"
                 lines.append(f"| {cls if i == 0 else ''} | {labels.get(m, m)}{mark} | {s['ran']} | {s['held']} | {s['won']} | {s['held_high']} | {ev} | {us} |")
         lines.append("")
-    stale_methods = sorted((m for m, v in stale.items() if v > 0), key=lambda m: -stale[m])
     unrun = [m for m in labels if m not in stale]
     lines.append("A case is a problem, dimension and tolerance; *held*: worst error within the tolerance on every seed; "
                  "*won*: held with the fewest evaluations (ties count for each). Medians are over each method's own held cases, "
                  "which differ in difficulty between methods. *Ran* differs between methods because the sweeps stop a method at its "
-                 "first failure on a family. * marks records older than the method's last change to its results "
-                 "(share of its records; see `RESULTS_CHANGED` in `src/benchmark/table.py`): "
-                 + "; ".join(f"{labels.get(m, m)} {100 * stale[m]:.0f}% ({RESULTS_CHANGED[m][1]})" for m in stale_methods) + "."
+                 "first failure on a family. " + stale_note(stale, labels)
                  + (f" Registered but not yet run: {', '.join(labels[m] for m in unrun)}." if unrun else ""))
     return "\n".join(lines)
+
+
+def stale_note(stale: dict, labels: dict) -> str:
+    """The key's sentence on records older than their method's last change to its results, or that there are none."""
+    methods = sorted((m for m, v in stale.items() if v > 0), key=lambda m: -stale[m])
+    where = "`RESULTS_CHANGED` in `src/benchmark/table.py`"
+    if not methods:
+        return f"No record is older than its method's last change to its results ({where})."
+    return (f"* marks records older than the method's last change to its results (share of its records; see {where}): "
+            + "; ".join(f"{labels.get(m, m)} {100 * stale[m]:.0f}% ({RESULTS_CHANGED[m][1]})" for m in methods) + ".")
 
 
 def main(argv=None) -> None:

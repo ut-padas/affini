@@ -231,7 +231,7 @@ The benchmark's counts, from its store (`python -m src.benchmark table --write R
 |  | AFINNI | 3 | 0 | 0 | 0 | - | - |
 |  | ART, affine leaves | 3 | 0 | 0 | 0 | - | - |
 
-A case is a problem, dimension and tolerance; *held*: worst error within the tolerance on every seed; *won*: held with the fewest evaluations (ties count for each). Medians are over each method's own held cases, which differ in difficulty between methods. *Ran* differs between methods because the sweeps stop a method at its first failure on a family. * marks records older than the method's last change to its results (share of its records; see `RESULTS_CHANGED` in `src/benchmark/table.py`): .
+A case is a problem, dimension and tolerance; *held*: worst error within the tolerance on every seed; *won*: held with the fewest evaluations (ties count for each). Medians are over each method's own held cases, which differ in difficulty between methods. *Ran* differs between methods because the sweeps stop a method at its first failure on a family. No record is older than its method's last change to its results (`RESULTS_CHANGED` in `src/benchmark/table.py`).
 <!-- /benchmark-table -->
 
 ## Documentation

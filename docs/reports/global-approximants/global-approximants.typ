@@ -1183,8 +1183,8 @@ figure only ChebTT-A's map is pale everywhere.
   #swatch(rgb(st.class_colours.at("many local features"))) many local features,
   #swatch(rgb(st.class_colours.at("kinks, jumps, fronts"))) kinks, jumps and fronts,
   #swatch(rgb(st.class_colours.at("ODE flow maps"))) ODE flow maps, and
-  #swatch(rgb(st.class_colours.at("vector-valued"))) vector-valued problems. A hollow dot's best scheme has
-  records older than its last change to its results. An exact model is drawn at the
+  #swatch(rgb(st.class_colours.at("vector-valued"))) vector-valued problems.#if st.stale_methods.len() > 0 [ A hollow dot's best scheme has
+  records older than its last change to its results.] An exact model is drawn at the
   bottom edge, and a failed run, over its budget or the time limit, at the right or top edge. Of #st.total cases, a scheme holds and no baseline
   does in #st.scheme_only, #st.high_d_scheme_only of them at $d >= 10$; a baseline holds and no scheme
   does in #st.baseline_only\; both hold in #st.both, and neither in #st.neither.
@@ -1192,8 +1192,9 @@ figure only ChebTT-A's map is pale everywhere.
 
 The table below is the benchmark's summary, per class of problem, from its store of #num(st.records) runs.
 The README shows the same table. A case is _held_ when the worst error is within the tolerance on every seed, and
-_won_ when it is held with the fewest evaluations. A method marked $ast$ has records older than its last
-change to its results.
+_won_ when it is held with the fewest evaluations. #if st.stale_methods.len() > 0 [A method marked $ast$ has
+records older than its last change to its results.] else [Every record was written by the current code of its
+method.]
 
 #let fmt-us(v) = if v == none [--] else [#v]
 #let fmt-ev(v) = if v == none [--] else [#num(v)]
