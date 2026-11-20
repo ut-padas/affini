@@ -251,13 +251,31 @@ def test_soft_refinement_never_returns_a_worse_hard_split_than_its_incumbent():
     rows = _rows(np.random.default_rng(2))
     w0, z0 = xp.asarray([[0.0, 1.0]]), xp.asarray([0.5])  # a poor incumbent: the wrong axis
     sse0, _ = hard_sse(rows, w0, z0, plan.min_side)
-    w, z = plan._soft_refine(rows, w0, z0, sse0, None)
+    w, z = plan._soft_refine(rows, w0, z0, sse0, None, rows)
     sse, ok = hard_sse(rows, w, z, plan.min_side)
     assert bool(ok[0]) and float(sse[0]) <= float(sse0[0])
     assert plan.counters["soft_improved"] == 1  # the step in x0 = 0.4 is found
     reasons = ("soft_gradient_converged", "soft_line_search_stalled", "soft_gate_saturated",
                "soft_nonfinite", "soft_iteration_limit")  # fmt: skip
     assert sum(plan.counters[r] for r in reasons) == 1  # one termination reason per refined node
+
+
+def test_split_search_uses_affine_fits_from_affine_search_from_coefficients():
+    """Quadratic leaves at d = 3 have 10 coefficients: affine search rows from a threshold of 10, the leaf's below it."""
+    from src.art import ARTPlan
+    from src.config import TrainingConfig
+
+    rows, _, _, _ = _split_rows(np.random.default_rng(4), d=3)
+    for start, p_search in ((10, 4), (11, 10), (None, 10)):
+        cfg = TrainingConfig(atol=1e-3, algorithm="art", domain=([0] * 3, [1] * 3), local_model="quadratic_lsq",
+                             art={"sample_multiplier": 10, "affine_search_from": start})  # fmt: skip
+        plan = ARTPlan(cfg, 3, 2, Domain(np.zeros(3), np.ones(3)), Roots.build("box", 3, 1))
+        quad = rows.__class__(rows.U, rows.Y, plan.model.features(rows.U), rows.labels, rows.counts)
+        search = plan._search_rows(quad)
+        assert search.Phi.shape[1] == p_search
+        assert search is quad or (np.array_equal(host(search.Phi[:, :3]), host(quad.U)) and bool(xp.all(search.Phi[:, 3] == 1)))
+    with pytest.raises(ValueError, match="affine_search_from"):
+        TrainingConfig(algorithm="art", domain=([0], [1]), art={"affine_search_from": 0})
 
 
 def test_drift_check_flags_short_chains_from_packed_seeds_and_extension_clears_it():
@@ -419,7 +437,7 @@ def test_narrow_score_clouds_far_from_the_origin_keep_a_resolved_temperature():
     U = np.c_[0.9 + 1e-8 * np.linspace(-1, 1, n), np.random.default_rng(0).random(n)]
     Y = np.where(U[:, :1] > 0.9 + 2e-9, 1.0, -1.0)
     rows = SplitRows(xp.asarray(U), xp.asarray(Y), xp.asarray(np.c_[U, np.ones(n)]), xp.zeros(n, dtype=xp.int64), xp.asarray([n]))
-    plan._soft_refine(rows, xp.asarray([[1.0, 0.0]]), xp.asarray([0.9]), xp.asarray([np.inf]), None)
+    plan._soft_refine(rows, xp.asarray([[1.0, 0.0]]), xp.asarray([0.9]), xp.asarray([np.inf]), None, rows)
     assert plan.counters["soft_gate_saturated"] == 0
 
 
@@ -447,11 +465,11 @@ def test_bins_search_skips_nodes_too_small_to_split_beside_valid_ones():
     labels = xp.asarray(np.r_[np.zeros(60), np.ones(n_small)].astype(np.int64))
     rows = SplitRows(U, Y, Phi, labels, xp.asarray([60, n_small]))
     bank = xp.asarray(np.broadcast_to(np.eye(2), (2, 2, 2)).copy())
-    _, z, sse = plan._bins_search(rows, bank)
+    _, z, sse = plan._bins_search(rows, bank, rows)
     assert np.isfinite(host(z)[0]) and np.isfinite(host(sse)[0])
     assert np.isnan(host(z)[1]) and np.isinf(host(sse)[1])
     alone = SplitRows(big.U, big.Y, big.Phi, big.labels, big.counts)
-    _, z_alone, _ = plan._bins_search(alone, bank[:1])
+    _, z_alone, _ = plan._bins_search(alone, bank[:1], alone)
     assert float(host(z_alone)[0]) == float(host(z)[0])
 
 

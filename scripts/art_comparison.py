@@ -140,6 +140,8 @@ def main() -> None:
     own.add_argument("--library-host-oracle", action="store_true",
                      help="evaluate the benchmark on the host for this library's ART even where the GPU can")
     own.add_argument("--library-search", default="soft", choices=("gap", "bins", "soft"))
+    own.add_argument("--library-affine-search-from", type=int, default=None,
+                     help="ARTSettings.affine_search_from (default: its default); 0: never")
     own.add_argument("--library-soft-iters", type=int, default=None, help="soft split search iterations (default: the reference's --max-iters)")
     mine, art_argv = own.parse_known_args()
     sys.path.insert(0, str(mine.art_path.resolve()))
@@ -236,6 +238,8 @@ def main() -> None:
         art=ARTSettings(roots=mine.library_roots, sample_multiplier=args.sample_multiplier,
                         validation_samples=mine.library_validation, walk_steps=mine.library_walk_steps,
                         split_search=mine.library_search,
+                        **({} if mine.library_affine_search_from is None else
+                           {"affine_search_from": mine.library_affine_search_from or None}),
                         soft_iters=args.max_iters if mine.library_soft_iters is None else mine.library_soft_iters),
     )  # fmt: skip
     warmup_seconds = None
