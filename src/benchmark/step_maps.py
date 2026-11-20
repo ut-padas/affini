@@ -50,8 +50,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
 
+from src.benchmark.methods import storage_bytes  # noqa: E402
 from src.benchmark.plots import RATIO_COLOURS, RATIO_EDGES, RATIO_NAMES  # noqa: E402
-from src.benchmark.store import Store, atomic_write, write_json  # noqa: E402
+from src.benchmark.store import Store  # noqa: E402
+from src.infra.records import Probe, atomic_write, error_stats, failure, write_json  # noqa: E402
 from src.problems import ode  # noqa: E402
 from src.problems.ode import REGIMES, STEP_MAPS, StepMapProblem  # noqa: E402
 from src.schemes import chebtt, tabulation  # noqa: E402
@@ -379,14 +381,18 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
     train, test = data(name)
     states = train[:, :-1].transpose(1, 0, 2).reshape(-1, train.shape[2])  # time-major
     Zt, Gt = test[:, :-1].reshape(-1, test.shape[2]), (test[:, 1:] - test[:, :-1]).reshape(-1, test.shape[2])
-    t0 = time.perf_counter()
-    try:
-        model = METHODS[method][2](p, train, tol, seed)
-    except RuntimeError as err:
-        m = {"method": method, "problem": name, "d": dim(name), "tol": tol, "seed": seed, "failed": str(err)[:300]}
+    model = trouble = None
+    with Probe() as probe:
+        try:
+            model = METHODS[method][2](p, train, tol, seed)
+        except RuntimeError as err:
+            trouble = (str(err)[:300], failure(err))
+    cost = {"train_s": probe.seconds, "peak_host_mb": probe.peak_mb, "peak_device_mb": probe.device_mb, "n_test": len(Zt)}
+    if trouble is not None:
+        m = {"method": method, "problem": name, "d": dim(name), "tol": tol, "seed": seed, "failed": trouble[0], "failure": trouble[1], **cost}
         STORE.write(m)
         return m
-    train_s = time.perf_counter() - t0
+    train_s = probe.seconds
     t0 = time.perf_counter()
     pred = model.predict(Zt)
     predict_us = 1e6 * (time.perf_counter() - t0) / len(Zt)
@@ -397,7 +403,8 @@ def run(method: str, name: str, tol: float, seed: int = 1, force: bool = False) 
     m = {"method": method, "problem": name, "d": dim(name), "tol": tol, "seed": seed, "evals": int(model.evals), "train_states": len(states),
          "worst": float(ea.max()), "worst_ratio": float(ea.max()) / tol, "q999": float(np.quantile(ea, 0.999)), "q99": float(np.quantile(ea, 0.99)),
          "above_percent": float(100 * np.mean(ea > tol)), "refused_percent": float(100 * refused.mean()),
-         "train_s": train_s, "predict_us": predict_us, "records": len(getattr(model, "Z", [])) or None,
+         "train_s": train_s, "predict_us": predict_us, "records": len(getattr(model, "Z", [])) or None, **cost,
+         "errors": error_stats(ea / tol), "model_bytes": storage_bytes(model),
          "error_by_step": np.max(np.where(refused, 0.0, e).reshape(test.shape[0], -1), axis=0).tolist(),
          "refused_by_step": refused.reshape(test.shape[0], -1).mean(axis=0).tolist()}  # fmt: skip
     m.update(rollout(p, model, test[:ROLLOUTS]))

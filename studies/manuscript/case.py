@@ -14,24 +14,17 @@ a bookkeeping read, so the result costs no measurable time.
 import argparse
 import contextlib
 import json
-import os
-import platform
-import re
 import resource
-import subprocess
 import sys
 import time
-import traceback
 import zlib
 from functools import partial
-from importlib import metadata
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 1
-ENVIRONMENT = ("SURROGATE_DEVICE", "SURROGATE_MPI", "OMP_NUM_THREADS", "NUMBA_NUM_THREADS", "OPENBLAS_NUM_THREADS")
 
 
 def functions(name: str):
@@ -73,40 +66,6 @@ def test_points(name: str, d: int, domain: tuple[float, float], n: int) -> np.nd
     return rng.uniform(domain[0], domain[1], size=(n, d))
 
 
-def provenance() -> dict:
-    """The commit, the machine and the library versions this run used (no host name)."""
-    def git(*args):
-        try:
-            return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, timeout=10).stdout.strip()
-        except (OSError, subprocess.SubprocessError):
-            return ""
-
-    libs = {}
-    for name in ("numpy", "scipy", "numba", "cupy-cuda12x", "cupy", "mpi4py", "psutil"):
-        with contextlib.suppress(metadata.PackageNotFoundError):
-            libs[name] = metadata.version(name)
-    cpu = next((line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines()
-                if line.lower().startswith(("model name", "cpu model"))), platform.processor()) if Path("/proc/cpuinfo").exists() else platform.processor()  # fmt: skip
-    import psutil
-
-    from src import IS_CUPY_BACKEND
-
-    gpu = None
-    if IS_CUPY_BACKEND:
-        import cupy
-
-        props = cupy.cuda.runtime.getDeviceProperties(0)
-        gpu = {"name": props["name"].decode() if isinstance(props["name"], bytes) else props["name"],
-               "memory_gib": props["totalGlobalMem"] / 2**30, "cuda_runtime": cupy.cuda.runtime.runtimeGetVersion()}  # fmt: skip
-    return {
-        "commit": git("rev-parse", "HEAD"), "tracked_changes": bool(git("status", "--porcelain", "--untracked-files=no")),
-        "python": platform.python_version(), "libraries": libs, "machine": platform.machine(), "cpu": cpu,
-        "cores": os.cpu_count(), "ram_gib": psutil.virtual_memory().total / 2**30, "gpu": gpu,
-        # The settings that change a run, by name: a wildcard would also catch variables holding paths.
-        "environment": {k: os.environ[k] for k in ENVIRONMENT if k in os.environ},
-    }  # fmt: skip
-
-
 def failure_class(err: BaseException) -> str:
     """The class the tables report a failed case under."""
     # cupy.cuda.memory.OutOfMemoryError (named, so CuPy is not imported) subclasses MemoryError: test it first
@@ -115,15 +74,6 @@ def failure_class(err: BaseException) -> str:
     if isinstance(err, MemoryError):
         return "host_memory_guard"
     return "error"
-
-
-def portable(text: str) -> str:
-    """``text`` without this machine's paths: the repository, the Python installs, the home folder and the user name."""
-    prefixes = {str(ROOT): "<repo>", sys.prefix: "<python>", sys.base_prefix: "<python>", str(Path.home()): "~"}
-    for prefix in sorted(prefixes, key=len, reverse=True):
-        text = text.replace(prefix, prefixes[prefix])
-    user = os.environ.get("USER") or os.environ.get("LOGNAME")
-    return re.sub(rf"/{re.escape(user)}(?=/|\b)", "/<user>", text) if user else text
 
 
 def device_peak_gib(peak: float) -> float:
@@ -205,6 +155,7 @@ def run_case(case: dict, out: Path, exact_max_dim: int | None = None, n_test: in
     """Run ``case`` (Case.as_dict()) and write its result to ``out`` on rank 0; returns the result."""
     from src import get_mpi_rank, to_device, to_host, xp
     from src.infra.backend import MPI
+    from src.infra.records import failure, now, provenance, write_json
     from studies.manuscript.spec import FUNCTIONS, N_TEST, ROUND_SHARE
 
     rank = get_mpi_rank()
@@ -280,18 +231,15 @@ def run_case(case: dict, out: Path, exact_max_dim: int | None = None, n_test: in
         result["status"], result["stage"] = "done", "done"
     except Exception as err:  # every failure ends this case alone, with its class written down
         result["status"] = "failed"
-        result["failure"] = {"class": failure_class(err), "type": type(err).__name__,
-                             "message": portable(str(err))[:2000], "traceback": portable(traceback.format_exc())[-4000:]}  # fmt: skip
+        result["failure"] = {"class": failure_class(err), **failure(err)}
         with contextlib.suppress(Exception):  # what the pool held when the stage failed, e.g. a device out of memory
             peak_device = device_peak_gib(peak_device)
     result["wall_s"] = time.perf_counter() - t0
     result["memory"] = {"host_peak_gib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20,
                         "device_peak_gib": peak_device}  # fmt: skip
     if rank == 0:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        tmp = out.with_suffix(".tmp")
-        tmp.write_text(json.dumps(result, indent=1, default=lambda o: float(o) if hasattr(o, "__float__") else str(o)))
-        tmp.replace(out)
+        result["recorded"] = now()
+        write_json(out, result, indent=1)
     return result
 
 

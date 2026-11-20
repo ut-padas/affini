@@ -43,6 +43,7 @@ from src.benchmark.methods import BASELINES, METHODS  # noqa: E402
 from src.benchmark.plots import RATIO_COLOURS, RATIO_EDGES, RATIO_NAMES  # noqa: E402
 from src.benchmark.store import Store  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
+from src.infra.records import Probe, error_stats, failure, timed_oracle  # noqa: E402
 from src.problems import FUNCTIONS, GRID  # noqa: E402
 
 SEEDS = (1, 2, 3)
@@ -140,19 +141,28 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
     oracle_us = 1e6 * (time.perf_counter() - t0) / len(X)
     atol = tol * float(np.max(np.abs(fX)))
     warnings.simplefilter("ignore")
+    f, oracle = timed_oracle(p.oracle(d))
     comm.Barrier()
-    t0 = time.perf_counter()
-    try:
-        model = METHODS[method][2](p.oracle(d), lo, hi, atol, seed)
-    except RuntimeError as err:  # a scheme over its evaluation budget: recorded, not fatal
+    model = trouble = None
+    with Probe() as probe:
+        try:
+            model = METHODS[method][2](f, lo, hi, atol, seed)
+        except RuntimeError as err:  # a scheme over its evaluation budget: recorded, not fatal
+            trouble = (str(err)[:300], failure(err))
+    peaks = comm.gather(probe.peak_mb, root=0)
+    # rank 0's oracle time; every rank's peak memory above its start (they add up on one machine)
+    cost = {"train_s": probe.seconds, "oracle_s": oracle["s"], "oracle_calls": oracle["calls"],
+            "peak_host_mb": None if rank or None in peaks else round(sum(peaks), 1), "peak_host_mb_ranks": peaks,
+            "peak_device_mb": probe.device_mb, "n_test": len(X)}  # fmt: skip
+    if trouble is not None:
         metrics = {"method": method, "problem": problem, "d": d, "tol": tol, "seed": seed, "atol": atol,
-                   "failed": str(err)[:300], "train_s": time.perf_counter() - t0, "ranks": size,
+                   "failed": trouble[0], "failure": trouble[1], **cost, "ranks": size,
                    "device": registry.setup().split("-")[0]}  # fmt: skip
         if rank == 0:
             store().write(metrics)
             print(json.dumps(metrics), flush=True)
         return metrics if rank == 0 else None
-    train_s = time.perf_counter() - t0
+    train_s = probe.seconds
     t0 = time.perf_counter()
     pred = model.predict(X)
     predict_s = time.perf_counter() - t0
@@ -176,8 +186,8 @@ def run(method, problem, d, tol, seed, force=False) -> dict | None:
                "leaves": int(model.n_leaves), "evals": int(model.evals), "within_percent": float(100 * np.mean(e <= atol)),
                "mean_error": float(e.mean()), "max_error": float(e.max()), "worst_ratio": float(e.max() / atol),
                "train_s": train_s, "predict_us": 1e6 * predict_s / len(X), "oracle_us": oracle_us, "ranks": size,
-               "refused_percent": float(100 * refused.mean()),
-               "device": registry.setup().split("-")[0]}  # fmt: skip
+               "refused_percent": float(100 * refused.mean()), **cost, "errors": error_stats(e / atol),
+               "model_bytes": registry.model_bytes(model), "device": registry.setup().split("-")[0]}  # fmt: skip
     if fX.ndim == 2:  # a vector problem: each component's worst, as a multiple of the tolerance
         metrics["outputs"] = int(fX.shape[1])
         metrics["component_ratio"] = (E.max(axis=0) / atol).tolist()

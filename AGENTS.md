@@ -148,6 +148,29 @@ one-off function for each local problem. Reusing and extending shared modules,
 with tests alongside, solves several use cases in fewer lines and makes the
 codebase more robust and mature faster.
 
+## Long runs
+
+Every run that takes more than a few minutes (the benchmark's sweeps, the convergence studies, the
+manuscript study, any new driver) keeps its cases through `src/infra/records.py`; do not write another
+checkpoint or cache.
+
+- One record per case, written atomically the moment the case ends, so a run that stops (a crash, the
+  out-of-memory killer, a closed session) resumes at its first unfinished case and loses at most the one
+  in progress. Never hold results in memory until the end.
+- A case is keyed by everything that sets its result: the method, the problem (by `data_hash` of its box,
+  test points and values), the tolerance and every setting. A record is reused unless its method's
+  results changed after it was written (`RESULTS_CHANGED` in `src/benchmark/table.py`, `records.stale`),
+  so an unrelated edit never forces a rerun, and a deliberate change to a method's results must get its
+  entry there in the same change.
+- Record everything a later question could need, so it is answered from the records and not by running
+  again: wall and training time, the oracle's share of it (`timed_oracle`), peak host and device memory
+  (`Probe`), inference time per query (`per_query_us`), the saved model's size (`saved_bytes`), the error
+  distribution (`error_stats`), the evaluations, the failure with its traceback (`failure`), and the
+  envelope `RecordStore` adds (schema, status, time, `provenance`: commit, code hash, machine, versions,
+  environment). A change to the envelope raises `SCHEMA` and extends `upgrade`, so older records stay readable.
+- Times are only comparable on the same setup: pin BLAS, OpenMP and Numba to the threads the study
+  states, and run nothing else heavy beside a timed run.
+
 ## Performance changes
 
 Custom kernels, fused loops and other optimizations cost reading time, invariants a later
@@ -342,8 +365,9 @@ How it is built:
   timing differs between runs. `make report-steals` records it again and checks that the tree
   equals the one built without stealing. The convergence sections read `figures/convergence.json`, written with
   their panels by each companion's `figures/convergence.py` (`make report-convergence`, about 90 minutes: many
-  trainings at tolerances down to where a run takes two minutes); the schemes' study reads the adaptive one's, and
-  resumes after a stop from the cases it keeps under `results/convergence/`. Everything else is byte-identical between runs: a fixed
+  trainings at tolerances down to where a run takes two minutes); the schemes' study reads the adaptive one's. Both
+  keep each case as a record under `results/convergence/<companion>/` ("Long runs" above) and resume after a stop;
+  their times are measured on one core. Everything else is byte-identical between runs: a fixed
   SVG hash salt, and no dates in the SVGs or the PDF.
 - When a change alters what the companion states (a formula, a default, an invariant, a stage),
   update it and rebuild the figures and the PDF in the same change. `make report-figures` stops

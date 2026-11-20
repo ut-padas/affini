@@ -228,16 +228,25 @@ def execute(case: Case, machine: dict, results: Path, launch=subprocess.Popen) -
     r = {"schema": 1, "case": case.as_dict(), "status": "failed", "stage": (r or {}).get("stage", "unknown"),
          "failure": {"class": klass, "type": "exit", "message": f"exit code {code}; see {log.relative_to(results)}"},
          "wall_s": time.perf_counter() - t0, "memory": {"host_peak_gib": float("nan"), "device_peak_gib": float("nan")}}  # fmt: skip
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(r, indent=1))
+    write_record(out, r)
     return r
 
 
 def write_skip(case: Case, results: Path, reason: str, proj) -> None:
-    out = result_path(results, case)
+    write_record(result_path(results, case), {"schema": 1, "case": case.as_dict(), "status": "skipped", "reason": reason,
+                                              "projection": {"wall_s": proj[0], "host_gib": proj[1]} if proj else None})  # fmt: skip
+
+
+def write_record(out: Path, record: dict) -> None:
+    """
+    A result the runner writes itself (a case killed or skipped), atomically and with its time, as
+    ``src.infra.records.write_json`` writes the cases' own. The runner never imports ``src``: on a GPU
+    machine that opens a CUDA context, which the runner would hold for the whole study.
+    """
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"schema": 1, "case": case.as_dict(), "status": "skipped", "reason": reason,
-                               "projection": {"wall_s": proj[0], "host_gib": proj[1]} if proj else None}, indent=1))  # fmt: skip
+    tmp = out.with_name(f".{out.stem}-{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({**record, "recorded": time.strftime("%Y-%m-%dT%H:%M:%S")}, indent=1))
+    tmp.replace(out)
 
 
 def main(argv: list[str] | None = None) -> None:

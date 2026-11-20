@@ -17,7 +17,8 @@ from src import IS_CUPY_BACKEND, to_host, xp
 from src.config import ARTSettings, TrainingConfig
 from src.core.evaluation import Evaluator
 from src.infra.backend import MPI
-from src.schemes import chebtree, chebtt, hub, kernel, sparsegrid
+from src.infra.records import saved_bytes
+from src.schemes import base, chebtree, chebtt, hub, kernel, sparsegrid
 from src.schemes.chebtt import adaptive as chebtt_adaptive
 from src.schemes.oracle import distributed as spread
 from src.surrogate import AdaptiveSurrogate
@@ -30,6 +31,19 @@ class Model:
     n_leaves: int
     evals: int
     refuses: object | None = None  # (N, d) -> (N,) bool: queries the model declines, answered by the oracle
+    inner: object | None = None  # the trained model itself (an AdaptiveSurrogate or a scheme's), for its stored size
+
+
+def model_bytes(model: Model) -> int | None:
+    """The size of the trained model's saved file (``storage_bytes`` of ``model.inner``); None without one."""
+    return None if model.inner is None else storage_bytes(model.inner)
+
+
+def storage_bytes(obj) -> int | None:
+    """The size of ``obj`` saved: an AdaptiveSurrogate by ``save_model``, a scheme's model by ``src.schemes.base.save``; None when neither applies."""
+    if hasattr(obj, "save_model"):
+        return saved_bytes(lambda m, path: m.save_model(path), obj)
+    return saved_bytes(base.save, obj)
 
 
 def _ranks() -> int:
@@ -77,7 +91,7 @@ def afinni(f, lo, hi, atol, seed) -> Model:
         out = m.predict_local(xp.asarray(Q), k_nn=1, coarse_factor=10, strict_trust_region=False, return_cluster_assignments=True)
         return np.asarray(to_host(out[2])).reshape(len(Q), -1)[:, 0]
 
-    return Model(_collective_predict(m), leaf_of, m.N_src, m.profiling_stats["total_f_evals"])
+    return Model(_collective_predict(m), leaf_of, m.N_src, m.profiling_stats["total_f_evals"], inner=m)
 
 
 def _art(f, lo, hi, atol, seed, local_model=None) -> Model:
@@ -85,7 +99,7 @@ def _art(f, lo, hi, atol, seed, local_model=None) -> Model:
     m = AdaptiveSurrogate()
     m.train(xp.asarray(X0), _art_config(lo, hi, atol, seed, local_model), Evaluator(f_fn=f))
     return Model(_collective_predict(m), lambda Q: np.asarray(to_host(m.route_leaves(xp.asarray(Q)))),
-                 m.N_src, m.profiling_stats["total_f_evals"])  # fmt: skip
+                 m.N_src, m.profiling_stats["total_f_evals"], inner=m)  # fmt: skip
 
 
 METHODS = {
@@ -125,13 +139,13 @@ def distributed(train):
 def _chebtree(f, lo, hi, atol, seed) -> Model:
     """ChebTree (deterministic: the seed is unused)."""
     t = chebtree.build(f, lo, hi, atol)
-    return Model(t.predict, t.leaf_of, len(t.leaves), t.evals, t.refuses)
+    return Model(t.predict, t.leaf_of, len(t.leaves), t.evals, t.refuses, inner=t)
 
 
 def _sparsecheb(f, lo, hi, atol, seed) -> Model:
     """SparseCheb, the dimension-adaptive sparse-grid Chebyshev interpolant (its check points from ``seed``)."""
     m = sparsegrid.build(f, lo, hi, atol, seed=seed)
-    return Model(m.predict, None, len(m.coef), m.evals)
+    return Model(m.predict, None, len(m.coef), m.evals, inner=m)
 
 
 def _chebtt(f, lo, hi, atol, seed) -> Model:
@@ -141,7 +155,7 @@ def _chebtt(f, lo, hi, atol, seed) -> Model:
         m = chebtt.build_vector(f, lo, hi, atol, probe.shape[1], seed=seed)
     else:
         m = chebtt.build(f, lo, hi, atol, seed=seed)
-    return Model(m.predict, None, 1, m.evals + 1)
+    return Model(m.predict, None, 1, m.evals + 1, inner=m)
 
 
 def _chebtt_metric(f, lo, hi, atol, seed) -> Model:
@@ -151,7 +165,7 @@ def _chebtt_metric(f, lo, hi, atol, seed) -> Model:
     m = chebtt.build_vector(f, lo, hi, atol, m_out, rotate=True, seed=seed)
     rotated = sum(len(cols) for cols, Q, _ in m.groups if Q is not None)
     predict = m.predict if probe.ndim == 2 and m_out > 1 else (lambda X: m.predict(X)[:, 0])
-    return Model(predict, None, 1 + rotated, m.evals + 1)
+    return Model(predict, None, 1 + rotated, m.evals + 1, inner=m)
 
 
 def _chebtt_adaptive(f, lo, hi, atol, seed) -> Model:
@@ -164,19 +178,19 @@ def _chebtt_adaptive(f, lo, hi, atol, seed) -> Model:
         g = (lambda X: np.asarray(f(X)).reshape(len(X))) if probe.ndim == 2 else f
         m = chebtt_adaptive.build(g, lo, hi, atol, seed=seed)
         pieces = 1 + (m.interface is not None)
-    return Model(m.predict, None, pieces, m.evals + 1)
+    return Model(m.predict, None, pieces, m.evals + 1, inner=m)
 
 
 def _kernel(f, lo, hi, atol, seed) -> Model:
     """MetricKernel, the learned-metric greedy kernel interpolant (its Sobol batches from ``seed``)."""
     m = kernel.build(f, lo, hi, atol, seed=seed, max_evals=50_000)
-    return Model(m.predict, None, len(m.X), m.evals)
+    return Model(m.predict, None, len(m.X), m.evals, inner=m)
 
 
 def _hub(f, lo, hi, atol, seed) -> Model:
     """The hub expansion (its pilot, design and hold-out from ``seed``); its pieces are its output groups."""
     m = hub.build(f, lo, hi, atol, seed=seed)
-    return Model(m.predict, None, len(m.groups), m.evals)
+    return Model(m.predict, None, len(m.groups), m.evals, inner=m)
 
 
 register("chebtree", "ChebTree: Chebyshev boxes, coefficient decay", "#c0392b", distributed(_chebtree))

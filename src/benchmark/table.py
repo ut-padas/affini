@@ -25,6 +25,7 @@ from pathlib import Path
 from statistics import median
 
 from src.benchmark.store import Store
+from src.infra.records import stale
 
 # method -> (time of the last change to its results, what changed)
 RESULTS_CHANGED = {
@@ -89,8 +90,7 @@ def stale_share(records: list) -> dict:
     n, old = defaultdict(int), defaultdict(int)
     for r in records:
         n[r["method"]] += 1
-        changed = RESULTS_CHANGED.get(r["method"], ("", ""))[0]
-        old[r["method"]] += r.get("recorded", "") < changed
+        old[r["method"]] += stale(r, RESULTS_CHANGED)
     return {m: old[m] / n[m] for m in n}
 
 

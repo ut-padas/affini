@@ -22,11 +22,28 @@ results/benchmark/logs/<suite>-<setup>.log               (the sweeps' logs)
 figures/benchmark/<suite>/<setup>/                       (every plot, redrawn from the runs alone)
 ```
 
-Every record carries `suite`, `problem`, `d`, `method`, `tol`, `seed`, `setup`, and `evals`, `train_s`,
-`predict_us`, `worst_ratio` (the worst error over the tolerance), or `failed` with the reason; `recorded`
-and `commit` (`git describe` of the code that ran it) tell a record apart from what the current code
-would produce. Records migrated from the earlier cache have `commit` null and the time they were first
-written.
+Records are written through `src/infra/records.py`, the module every long run in the repository keeps its
+cases with (the benchmark, both companions' convergence studies, the manuscript study). Each record is
+written atomically the moment its run ends and carries:
+
+- its identity, `suite`, `problem`, `d`, `method`, `tol`, `seed`, `setup` (also under `key`);
+- the envelope: `schema` (the record format), `status` (`done` or `failed`), `recorded` (when it was
+  written) and `provenance`: the commit and `git describe`, whether tracked files differed from it, a hash
+  of `src`'s sources, the CPU, core count, memory and GPU (never the host name), the Python and library
+  versions and the settings in the environment that change a run;
+- what the run cost: `train_s`, `oracle_s` and `oracle_calls` (rank 0's time inside the oracle while
+  training, to tell the method's own work from the function's), `peak_host_mb` (every rank's peak memory
+  above its start, summed, and per rank in `peak_host_mb_ranks`), `peak_device_mb`, `predict_us` (inference
+  per query), `oracle_us` (one evaluation per test point) and `model_bytes` (the saved model's size);
+- what it achieved: `evals`, `worst_ratio` (the worst error over the tolerance), `errors` (the worst, 99th
+  and 99.9th percentiles, mean and share within, in units of the tolerance), `within_percent`,
+  `mean_error`, `max_error`, `n_test`, and each suite's own fields;
+- for a run that did not finish, `failed` (the reason) and, when it raised, `failure` (type, message,
+  traceback without this machine's paths).
+
+A record of an older format is upgraded when it is read; `python -m src.benchmark.store migrate` rewrites
+the store in the current one. Fields a record never measured are absent, and a migrated record's provenance
+holds only the `describe` it recorded (null for the earliest runs).
 
 ## Running one suite
 
@@ -81,7 +98,8 @@ SURROGATE_DEVICE=cpu SURROGATE_MPI=off PYTHONPATH=. .venv/bin/python -m src.benc
 
 ## Sweeping a grid
 
-`python -m src.benchmark.sweep functions|step_maps` runs every case not yet in the store, cheapest first:
+`python -m src.benchmark.sweep functions|step_maps` runs every case not yet in the store, or recorded before its
+method's last change to its results (`RESULTS_CHANGED`, below), cheapest first:
 problems by input dimension, each method's tolerances from the loosest, each job in its own process
 group under `--limit` seconds. A job over the limit is recorded as failed and the method's tighter
 tolerances on that problem are skipped; a method that fails a family's loosest tolerance (the same
@@ -100,6 +118,8 @@ held (worst error within the tolerance on every seed) and won (held with the few
 for each), with median evaluations and inference time over its held cases. `--write README.md` replaces the
 table in the README's "Choosing a method". A method with records older than the last change to its
 results (`RESULTS_CHANGED` in `src/benchmark/table.py`, one entry per deliberate numerical change) is
-marked stale; `python -m src.benchmark.sweep <suite> --since <that time>` runs those records again.
+marked stale, and the sweep runs those records again (`--since <time>` reruns every record older than a time).
+That is the one rule for reuse everywhere (`src.infra.records.stale`): an edit that does not change a method's
+results never forces a rerun, so a deliberate change must get its entry.
 
 `python -m src.benchmark <functions|step_maps|sweep|table> ...` is the same entry point for all four.

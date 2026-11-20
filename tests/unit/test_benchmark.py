@@ -6,7 +6,8 @@ import numpy as np
 import pytest
 
 from src.benchmark import functions, step_maps, sweep
-from src.benchmark.store import Store, write_json
+from src.benchmark.store import Store
+from src.infra.records import write_json
 
 
 @pytest.fixture
@@ -109,3 +110,15 @@ def test_the_tables_key_names_the_stale_methods_or_says_there_are_none():
     assert stale_note({"chebtt": 0.0, "hub": 0.0}, {"chebtt": "ChebTT"}).startswith("No record is older")
     note = stale_note({"chebtt": 0.25, "hub": 0.0}, {"chebtt": "ChebTT"})
     assert note.startswith("* marks") and "ChebTT 25%" in note and "Hub" not in note and not note.endswith(": .")
+
+
+def test_migrate_rewrites_first_schema_records_in_the_current_schema(store):
+    path = store.run_path("wave", 2, "art", 0.1, 1)
+    old = {"suite": "functions", "setup": "cpu-1rank", "problem": "wave", "d": 2, "method": "art", "tol": 0.1, "seed": 1,
+           "evals": 5, "recorded": "2026-11-18T10:00:00", "commit": "abc1234"}  # fmt: skip
+    write_json(path, old)
+    assert store.runs()[0]["status"] == "done" and "schema" not in json.loads(path.read_text())  # upgraded on read only
+    assert store.migrate() == 1 and store.migrate() == 0
+    new = json.loads(path.read_text())
+    assert new["schema"] == 2 and new["recorded"] == old["recorded"] and new["provenance"]["describe"] == "abc1234"
+    assert new["key"] == store.key("wave", 2, "art", 0.1, 1) and "migrated" in new

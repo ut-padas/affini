@@ -10,51 +10,43 @@ Where the benchmark keeps what it measures, for every suite and every method (AF
 the device and the rank count (``cpu-8rank``): times depend on both, and ART's split decisions differ between
 CPU and GPU, so one comparison never mixes setups.
 
-A record is a JSON object. Every suite writes the same identifying fields (``suite``, ``problem``, ``d``,
-``method``, ``tol``, ``seed``, ``setup``) and, when the run finished, ``evals``, ``train_s``, ``predict_us``
-and ``worst_ratio`` (the worst error over the tolerance); a run that did not finish has ``failed`` (the
-reason) instead. Each suite adds its own fields. ``recorded`` is the time of writing and ``commit`` the code
-it ran (``git describe``; None outside a checkout), so a record can be told apart from the current code's.
-Writes are atomic (a temporary file renamed into place), so a reader never sees half a record.
+A record is a JSON object written through ``src.infra.records``, which adds its envelope: ``schema``, ``status``,
+``recorded`` and ``provenance`` (the commit, the code's hash, the machine and the library versions), and
+stores the identity under ``key``. Every suite writes the same identifying fields (``suite``, ``problem``,
+``d``, ``method``, ``tol``, ``seed``, ``setup``) and, when the run finished, ``evals``, ``train_s``,
+``predict_us`` and ``worst_ratio`` (the worst error over the tolerance), ``oracle_s`` (rank 0's time inside
+the oracle while training), ``peak_host_mb`` (every rank's peak above its start) and ``model_bytes`` (the
+saved model's size); a run that did not finish has ``failed`` (the reason) and, when it raised, ``failure``
+(type, message, traceback) instead. Each suite adds its own fields. ``commit`` is ``git describe`` of the code
+that ran. Writes are atomic (a temporary file renamed into place), so a reader never sees half a record.
+Records of an older schema are upgraded when read (``records.upgrade``); ``python -m src.benchmark.store
+migrate`` rewrites every record of the store in the current schema.
 """
 
-import json
-import os
-import subprocess
-import time
+import argparse
 from dataclasses import dataclass
-from functools import cache
 from pathlib import Path
 
 import numpy as np
 
-from src import FIGURES_DIR, PROJECT_DIR, RESULTS_DIR
+from src import FIGURES_DIR, RESULTS_DIR
+from src.infra.records import (
+    RecordStore,
+    now,
+    provenance,
+    read_json,
+    upgrade,
+    write_json,
+)
 
 ROOT = RESULTS_DIR / "benchmark"
 FIGURES = FIGURES_DIR / "benchmark"
 IDENTITY = ("suite", "problem", "d", "method", "tol", "seed", "setup")
 
 
-@cache
 def commit() -> str | None:
     """The checked-out code, ``git describe --always --dirty`` (None outside a git checkout)."""
-    try:
-        out = subprocess.run(["git", "describe", "--always", "--dirty"], cwd=PROJECT_DIR, capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return (out.stdout.strip() or None) if out.returncode == 0 else None
-
-
-def atomic_write(path: Path, write) -> None:
-    """``write(tmp_path)`` then rename into ``path``: concurrent readers and writers never see a partial file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.stem}-{os.getpid()}.tmp{path.suffix}")
-    write(tmp)
-    tmp.replace(path)
-
-
-def write_json(path: Path, obj: dict) -> None:
-    atomic_write(path, lambda tmp: tmp.write_text(json.dumps(obj)))
+    return provenance()["describe"]
 
 
 @dataclass(frozen=True)
@@ -72,10 +64,17 @@ class Store:
     def exists(self, problem: str, d: int, method: str, tol: float, seed: int) -> bool:
         return self.run_path(problem, d, method, tol, seed).exists()
 
+    def records(self) -> RecordStore:
+        """The record store of this suite and setup, laid out by ``run_path``."""
+        return RecordStore(self.root / "runs" / self.suite / self.setup,
+                           lambda k: self.run_path(k["problem"], k["d"], k["method"], k["tol"], k["seed"]))  # fmt: skip
+
     def read(self, problem: str, d: int, method: str, tol: float, seed: int) -> dict | None:
         """The run's record, or None if it was never recorded."""
-        path = self.run_path(problem, d, method, tol, seed)
-        return json.loads(path.read_text()) if path.exists() else None
+        return self.records().read(self.key(problem, d, method, tol, seed))
+
+    def key(self, problem: str, d: int, method: str, tol: float, seed: int) -> dict:
+        return {"suite": self.suite, "setup": self.setup, "problem": problem, "d": int(d), "method": method, "tol": float(tol), "seed": int(seed)}
 
     def arrays(self, problem: str, d: int, method: str, tol: float, seed: int) -> dict:
         """The run's arrays (empty if it has none)."""
@@ -90,18 +89,29 @@ class Store:
         Record one run (``record`` holds its identity: problem, d, method, tol, seed); the arrays first, so
         a record on disk always has its arrays.
         """
-        record = {"suite": self.suite, "setup": self.setup, **record, "recorded": time.strftime("%Y-%m-%dT%H:%M:%S"), "commit": commit()}
-        path = self.run_path(record["problem"], int(record["d"]), record["method"], float(record["tol"]), int(record["seed"]))
-        if arrays:
-            atomic_write(path.with_suffix(".npz"), lambda tmp: np.savez_compressed(tmp, **arrays))
-        write_json(path, record)
-        return path
+        key = self.key(record["problem"], record["d"], record["method"], record["tol"], record["seed"])
+        self.records().write(key, {"suite": self.suite, "setup": self.setup, **record, "commit": commit()}, arrays)
+        return self.records().path(key)
 
     def runs(self, problem: str | None = None, method: str | None = None) -> list[dict]:
-        """Every record of this suite and setup (optionally of one problem or method)."""
+        """Every record of this suite and setup (optionally of one problem or method), upgraded to the current schema."""
         base = self.root / "runs" / self.suite / self.setup
         pattern = f"{problem or '*'}/d*/{method or '*'}/tol*-s*.json"
-        return [json.loads(p.read_text()) for p in sorted(base.glob(pattern))]
+        return [upgrade(r) for r in (read_json(p) for p in sorted(base.glob(pattern))) if r is not None]
+
+    def migrate(self) -> int:
+        """Rewrite every record of this suite and setup in the current schema; returns how many changed."""
+        changed = 0
+        for path in sorted((self.root / "runs" / self.suite / self.setup).glob("*/d*/*/tol*-s*.json")):
+            record = read_json(path)
+            if record is None:
+                continue
+            new = upgrade(record)
+            if new is not record:
+                key = self.key(new["problem"], new["d"], new["method"], new["tol"], new["seed"])
+                write_json(path, {"key": key, **new, "migrated": now()})
+                changed += 1
+        return changed
 
     def data(self, problem: str, name: str) -> Path:
         """A file of the problem's shared inputs (shared by every setup: they depend on the problem alone)."""
@@ -118,3 +128,18 @@ class Store:
         path = self.root / "logs" / f"{self.suite}-{self.setup}.log"
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
+
+
+def main(argv=None) -> None:
+    parser = argparse.ArgumentParser(description="The benchmark's store of runs.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("migrate", help="rewrite every record of every suite and setup in the current schema")
+    parser.parse_args(argv)
+    for suite_dir in sorted((ROOT / "runs").glob("*")):
+        for setup_dir in sorted(suite_dir.glob("*")):
+            n = Store(suite_dir.name, setup_dir.name).migrate()
+            print(f"{suite_dir.name}/{setup_dir.name}: {n} records migrated", flush=True)
+
+
+if __name__ == "__main__":
+    main()

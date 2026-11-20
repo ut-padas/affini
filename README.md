@@ -272,7 +272,7 @@ A case is a problem, dimension and tolerance; *held*: worst error within the tol
 
 | Layer | Packages / modules |
 |---|---|
-| infrastructure, maths, shared types | `infra/` (backend detection, profiling, monitor, logging, `io` for generated data), `numerics/` (`segments`, `linalg`, `stats`, `grid`), `kernels/` (`.cu` sources), `core/` (`clusters`: queues and output columns; `evaluation`: the oracle `Evaluator`; `plan`: the contract between the refinement loop and an algorithm plan) |
+| infrastructure, maths, shared types | `infra/` (backend detection, profiling, monitor, logging, `io` for generated data, `records`: the records every long run keeps its cases in), `numerics/` (`segments`, `linalg`, `stats`, `grid`), `kernels/` (`.cu` sources), `core/` (`clusters`: queues and output columns; `evaluation`: the oracle `Evaluator`; `plan`: the contract between the refinement loop and an algorithm plan) |
 | settings, components | `config.py` (settings and size heuristics), `components/` (registry, modes, local models, splitting, acceptance, trust regions, sampling), `neighbors/` (kNN, k-means) |
 | algorithms | `afinni/` (`plan`: `AFINNIPlan`), `art/` (`ARTPlan` in `plan`; `constants`, `rng`, `geometry`, `sampling`, `split_search`, `routing`); `schemes/` (the global approximants: ChebTT, ChebTree, SparseCheb, the hub expansion, ...; standalone, importing only the infrastructure layer) |
 | engine | `engine/` (`driver`: `refine`, collective training; `refinement`: `refine_rank`, the loop shared by both plans; `initial`, `work_stealing`) |

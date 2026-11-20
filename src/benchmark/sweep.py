@@ -12,8 +12,9 @@ in one more job. A job over the limit is killed with its whole group (so no rank
 collective) and recorded as failed, with the limit as the reason, and the method's tighter tolerances on
 that problem are skipped; a method that fails a family's loosest tolerance (the same function at a smaller
 d, or a smaller size of a step-map family) is not run on the family's larger sizes, which only cost more.
-A job that crashes leaves no record: it is reported, and runs again next time. Recorded cases are not
-rerun, unless ``--since`` names a time after which a record must have been written (records of older code). After each recorded case a background process redraws that problem's figures, one redraw at a time,
+A job that crashes leaves no record: it is reported, and runs again next time. A recorded case is not rerun
+unless its method's results changed after it was written (``RESULTS_CHANGED`` in ``src.benchmark.table``,
+``src.infra.records.stale``), or ``--since`` names a later time by which every record must have been written. After each recorded case a background process redraws that problem's figures, one redraw at a time,
 while the next case runs. Every job imports ``src`` afresh, so do not edit it while a sweep runs.
 """
 
@@ -28,6 +29,8 @@ from dataclasses import dataclass
 
 from src import PROJECT_DIR
 from src.benchmark.store import Store
+from src.benchmark.table import RESULTS_CHANGED
+from src.infra import records
 
 PYTHON = str(PROJECT_DIR / ".venv" / "bin" / "python")
 
@@ -84,7 +87,9 @@ def sweep(plan: Plan, limit: float) -> None:
 
     def done(problem, d, method, tol, seed) -> bool:
         record = store.read(problem, d, method, tol, seed)
-        return record is not None and (plan.since is None or record.get("recorded", "") >= plan.since)
+        if record is None or records.stale(record, RESULTS_CHANGED):  # older than its method's last change to its results
+            return False
+        return plan.since is None or record.get("recorded", "") >= plan.since
 
     with open(store.log, "a") as log:
         redrawer = Redrawer(log)
