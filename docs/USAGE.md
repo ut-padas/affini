@@ -242,9 +242,11 @@ batch size, rank count and steal schedule, and the same in every run on one back
 rounding level). `scripts/art_comparison.py` trains the
 reference ART code and this ART on the reference's benchmark problems and scores both on the
 same test set; pass `--sampler parallel_numba` to time against the reference's fastest CPU
-configuration, and add `--traversal bfs --optimizer cupy_batched_cholesky` for its fastest GPU
-configuration. `--skip-reference` / `--skip-library` run one side only; this ART alone also runs
-under `mpiexec`. On the GPU,
+configuration, and add `--traversal bfs --optimizer cupy_batched_cholesky --gpu-sampling` for its
+fastest GPU configuration. Both sides build the same tree to depth 1 before the timed build (the
+reference's `--warmup`; `--no-warmup` skips it on both), so `build_seconds` excludes kernel loads
+and workspace allocation on either side. `--skip-reference` / `--skip-library` run one side only;
+this ART alone also runs under `mpiexec`. On the GPU,
 this ART's soft split search is 1-30x faster than the reference's GPU configuration, and faster than this
 ART on the CPU whenever the CPU training takes more than about 1.5 s.
 

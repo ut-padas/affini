@@ -7,7 +7,8 @@ The target function, its domain and the test set all come from an ART checkout
 both models are scored by ART's ``evaluate_tree_benchmark`` on the same independent
 uniform test points (``10000 * d`` by default, seed ``--test-seed``). This library's ART uses
 the reference's settings: affine leaves, the pointwise relative stopping rule with ART's
-``--error-tolerance``, ``--max-depth`` levels and ART's ``--sample-multiplier``, starting
+``--error-tolerance``, ``--max-depth`` levels, ART's ``--sample-multiplier`` and, as its soft
+search's iteration cap, ART's ``--max-iters`` (``--library-soft-iters`` overrides it), starting
 from ``ceil(multiplier * (d + 1))`` uniform points (ART's exact box root).
 
 Arguments not listed below are passed to ART's benchmark parser unchanged, so ART runs
@@ -20,11 +21,23 @@ GPU). Compare against that one when timing matters, e.g.::
         --art-path ../Adaptive-Regression-Trees-ART- --benchmark quadratic --dimension 2 \\
         --sampler parallel_numba
 
-ART's fastest GPU configuration is ``--traversal bfs --optimizer cupy_batched_cholesky``
-(resident batched soft optimizer; sampling, oracle and node fits stay on the CPU).
+ART's fastest GPU configuration is ``--traversal bfs --optimizer cupy_batched_cholesky
+--gpu-sampling`` (resident batched soft optimizer, hit-and-run, node fits and, for Rosenbrock and
+the Gaussians, the oracle on the GPU); without ``--gpu-sampling`` its sampling, oracle and node
+fits stay on the CPU.
 ``--skip-reference`` / ``--skip-library`` run one side only. This library's ART alone also runs
 under ``mpiexec`` (``--skip-reference``; ``--library-work-stealing`` enables stealing); rank 0
 prints.
+
+Both sides time the same thing. Under the reference's ``--warmup`` (its default; ``--no-warmup``
+turns it off for both), each side first builds the same tree to depth 1 in the same process,
+which loads its compiled kernels and allocates its workspaces, and ``build_seconds`` then times
+only the full build that follows: the reference's own ``build_seconds``, and this library's
+``AdaptiveSurrogate.train``. ``warmup_seconds`` reports the warm-up (``null`` without one).
+
+On the GPU, this library's ART evaluates Rosenbrock, Gaussian and Gaussian-mixture targets with the
+reference's own GPU oracle (``_device_oracle``), as the reference does with ``--gpu-sampling``;
+other targets, or ``--library-host-oracle``, evaluate on the host.
 
 Leaf degree 1 maps to ``affine_lsq`` and degree 2 to ``quadratic_lsq`` (both with an
 intercept). Refuses other degrees, ART leaves without an intercept, error metrics other than
@@ -42,17 +55,52 @@ import math
 import sys
 import time
 import warnings
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path.cwd()))
 
-from src import to_host, xp  # noqa: E402
+from src import IS_CUPY_BACKEND, to_host, xp  # noqa: E402
 from src.config import ARTSettings, TrainingConfig  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.infra.backend import MPI  # noqa: E402
 from src.surrogate import AdaptiveSurrogate  # noqa: E402
+
+
+def _device_oracle(target, d: int):
+    """
+    The benchmark on the GPU through the reference ART's own oracle workspace (Rosenbrock,
+    Gaussian and Gaussian mixture, with their offsets), as the reference evaluates it with
+    ``--gpu-sampling``; None for other targets or on NumPy. Points go through in chunks of a
+    fixed size, padded, so every call has the same shape and a point's value never depends on
+    the other points of its batch.
+    """
+    if not IS_CUPY_BACKEND or not callable(getattr(target, "cuda_oracle_spec", None)):
+        return None
+    import cupy as cp
+    from art._cuda_oracles import CudaOracleWorkspace
+
+    n = 1 << 16
+    try:
+        ws = CudaOracleWorkspace(target, 1, n, d, cp.cuda.get_current_stream())
+    except ValueError:
+        return None
+    X_buf, y_buf, inherited = cp.zeros((1, n, d)), cp.empty((1, n)), np.zeros(1, dtype=np.int32)
+
+    def f(x):
+        x = cp.asarray(x, dtype=cp.float64)
+        out = cp.empty(int(x.shape[0]))
+        for s in range(0, int(x.shape[0]), n):
+            m = min(n, int(x.shape[0]) - s)
+            X_buf[0, :m] = x[s : s + m]
+            X_buf[0, m:] = 0.0
+            ws.evaluate_new(X_buf, y_buf, inherited)
+            out[s : s + m] = y_buf[0, :m]
+        return out[:, None]
+
+    return f
 
 
 class _LibraryARTModel:
@@ -89,8 +137,10 @@ def main() -> None:
     own.add_argument("--library-roots", default="box", choices=("box", "grid", "voronoi"))
     own.add_argument("--library-validation", type=int, default=0)
     own.add_argument("--library-walk-steps", type=int, default=20)
+    own.add_argument("--library-host-oracle", action="store_true",
+                     help="evaluate the benchmark on the host for this library's ART even where the GPU can")
     own.add_argument("--library-search", default="soft", choices=("gap", "bins", "soft"))
-    own.add_argument("--library-soft-iters", type=int, default=None, help="soft split search iterations (default: ARTSettings.soft_iters)")
+    own.add_argument("--library-soft-iters", type=int, default=None, help="soft split search iterations (default: the reference's --max-iters)")
     mine, art_argv = own.parse_known_args()
     sys.path.insert(0, str(mine.art_path.resolve()))
 
@@ -154,9 +204,7 @@ def main() -> None:
     if comm.Get_size() > 1 and not mine.skip_reference:
         raise SystemExit("the reference ART runs in one process: pass --skip-reference under mpiexec")
     if not mine.skip_reference:
-        t = time.perf_counter()
         run = build_tree_benchmark(args, domain, target)
-        seconds = time.perf_counter() - t
         evaluation, frac = evaluate(run.tree)
         from art.tree import LeafNode
 
@@ -165,15 +213,18 @@ def main() -> None:
             if isinstance(node, LeafNode):
                 statuses[str(node.status)] = statuses.get(str(node.status), 0) + 1
         print("COMPARE " + json.dumps({"method": "reference ART", **common, **_summary(
-            evaluation, run.tree.num_leaves(), run.tree.max_depth(), int(run.build_result.oracle_queries), seconds,
-            {"frac_gt_tol": frac, "terminal_reasons": statuses,
+            evaluation, run.tree.num_leaves(), run.tree.max_depth(), int(run.build_result.oracle_queries),
+            run.build_seconds,
+            {"frac_gt_tol": frac, "warmup_seconds": run.warmup_seconds, "terminal_reasons": statuses,
              "art_config": {"sampler": args.sampler, "optimizer": args.optimizer, "traversal": args.traversal}},
         )}), flush=True)  # fmt: skip
     if mine.skip_library:
         return
 
-    def f(x):
+    def f_host(x):
         return xp.asarray(np.asarray(target(np.asarray(to_host(x))), dtype=np.float64).reshape(-1, 1))
+
+    f = (None if mine.library_host_oracle else _device_oracle(target, args.dimension)) or f_host
 
     n_root = math.ceil(args.sample_multiplier * (args.dimension + 1))
     X0 = uniform(n_root, np.random.default_rng(args.seed))
@@ -185,8 +236,14 @@ def main() -> None:
         art=ARTSettings(roots=mine.library_roots, sample_multiplier=args.sample_multiplier,
                         validation_samples=mine.library_validation, walk_steps=mine.library_walk_steps,
                         split_search=mine.library_search,
-                        **({} if mine.library_soft_iters is None else {"soft_iters": mine.library_soft_iters})),
+                        soft_iters=args.max_iters if mine.library_soft_iters is None else mine.library_soft_iters),
     )  # fmt: skip
+    warmup_seconds = None
+    if args.warmup:
+        comm.Barrier()
+        t = time.perf_counter()
+        AdaptiveSurrogate().train(X0, replace(config, max_levels=min(config.max_levels, 1)), Evaluator(f_fn=f))
+        warmup_seconds = time.perf_counter() - t
     model = AdaptiveSurrogate()
     comm.Barrier()
     t = time.perf_counter()
@@ -203,6 +260,7 @@ def main() -> None:
         "reference": {"leaf_degree": args.leaf_degree, "leaf_include_bias": bias, "error_metric": args.error_metric,
                       "relative_error_floor": args.relative_error_floor, "sampler": args.sampler},
         "library_art": {"leaf_model": leaf_model, "sampling": config.art.sampling,
+                        "oracle": "host" if f is f_host else "gpu (the reference's CudaOracleWorkspace)",
                         "acceptance": "pointwise", "relative_error_floor": 1e-12,
                         "split_search": config.art.split_search, "roots": config.art.roots},
     }  # fmt: skip
@@ -214,7 +272,8 @@ def main() -> None:
     depth = int(max(int(p).bit_length() - 1 for p in model.art_leaves["locational_code"]))
     print("COMPARE " + json.dumps({"method": "this library's ART", **common, **_summary(
         evaluation, int(model.N_src), depth, int(model.profiling_stats["total_f_evals"]), seconds,
-        {"frac_gt_tol": frac, "terminal_reasons": model.leaf_status_counts()["terminal_reason"],
+        {"frac_gt_tol": frac, "warmup_seconds": warmup_seconds,
+         "terminal_reasons": model.leaf_status_counts()["terminal_reason"],
          "split_strategy": model.config["components"]["split_strategy"]["name"],
          "split_search": mine.library_search, "art_counters": model.profiling_stats.get("art", {})},
     )}), flush=True)  # fmt: skip
