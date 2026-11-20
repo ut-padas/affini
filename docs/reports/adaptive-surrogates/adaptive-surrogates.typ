@@ -9,8 +9,8 @@
   date: [November 2026],
   abstract: [
     A surrogate replaces an expensive function by a cheap one that agrees with it to a stated
-    tolerance. This code builds surrogates out of many small affine models, placed adaptively:
-    where one model is not accurate enough, the region is cut in two and each half gets its
+    tolerance. This code builds surrogates out of many small affine models, placed adaptively.
+    Where one model is not accurate enough, the region is cut in two and each half gets its
     own. It implements two ways of doing that. AFINNI @manuscript clusters a given sample,
     cuts clusters along the function's curvature and answers queries by a nearest-neighbour
     search among trust regions. ART @art cuts the domain itself into polytopes, samples each
@@ -345,8 +345,8 @@ needs, and what to do with one batch.
 
 #figure(panel("queue-strips"), caption: [The queue of every AFINNI level of the running
   example, as it is stored: each cluster's points back to back, in one array. Accepted
-  clusters (pale) become leaves. In the next level, the two children of each rejected
-  cluster (outlined black) take its place, next to each other. Some rows grow, because a
+  clusters, drawn pale, become leaves. In the next level, the two children of each rejected
+  cluster, outlined black, take its place, next to each other. Some rows grow, because a
   small rejected cluster receives new points before it is cut (@sec:augment).]) <fig:queue>
 
 #figure(panel("queue-layout"), caption: [One level of @fig:queue up close, as it is stored.
@@ -432,14 +432,14 @@ cluster's points and measures how far the model is from $f$ at those same points
   pattern: the model is too low at the rim and too high in the middle, or the reverse. That
   bowl is the curvature of $f$, the part an affine model cannot represent. The worst error
   is #ex.afinni.levels.at(0).worst_error, far above $atol = #ex.alpha$, so AFINNI rejects
-  all #ex.afinni.levels.at(0).clusters clusters (red crosses).
+  all #ex.afinni.levels.at(0).clusters clusters, marked by red crosses.
 ]
 
 #step([The errors shrink with the clusters], code: afinni-code, focus: (5,), window: 1, width: 36%, panel("afinni-error-2"))[
   Two levels later there are #ex.afinni.levels.at(2).clusters clusters, a quarter of the
   size. The error of an affine model falls with the square of a cluster's width, so the
-  colours have faded. Now #ex.afinni.levels.at(2).accepted clusters pass (dark crosses) and
-  become leaves. The others, where $f$ bends most, are cut again.
+  colours have faded. Now #ex.afinni.levels.at(2).accepted clusters pass, marked by dark crosses,
+  and become leaves. The others, where $f$ bends most, are cut again.
 ]
 
 #let error-strip = filmstrip(
@@ -455,7 +455,7 @@ cluster's points and measures how far the model is from $f$ at those same points
     picture; the rest are cut and fitted again. After #ex.afinni.n_levels levels nothing is
     left.]) <fig:errors>
 
-The same run, seen as clusters and as the forest they form:
+The frames below show the same run as clusters and as the forest they form.
 
 #board(
   (panel("afinni-level-0"), [level 0: #ex.afinni.levels.at(0).clusters clusters, #ex.afinni.levels.at(0).accepted accepted]),
@@ -562,14 +562,14 @@ $absH^(-1)$, so the scatter matrix of these points is proportional to $absH^(-1)
 
 #story()
 #step([A gradient from the nearest points], code: split-code, focus: (1,), window: 1, width: 36%, panel("afinni-hess-gradient"))[
-  The Taylor expansion needs $nabla f(c)$. AFINNI fits it by least squares to the values at
-  the #ex.afinni.split.n_grad points nearest to $c$ (green) and to $f(c)$. Near $c$ the
+  The Taylor expansion needs $nabla f(c)$. AFINNI fits it by least squares to $f(c)$ and to the values at
+  the #ex.afinni.split.n_grad points nearest to $c$, drawn in green. Near $c$ the
   expansion is most accurate.
 ]
 
 #step([The level set of the Taylor error], code: split-code, focus: (2, 3, 4), window: 1, width: 36%, panel("afinni-hess-levelset"))[
-  The #ex.afinni.split.n_cov points with the smallest Taylor error (pink) lie along the
-  directions in which $f$ is nearly affine. The ellipse of their scatter matrix (pink) has
+  The #ex.afinni.split.n_cov points with the smallest Taylor error, drawn in pink, lie along the
+  directions in which $f$ is nearly affine. The pink ellipse of their scatter matrix has
   the shape of $absH^(-1)$, long where $f$ is flat and short where it bends. The dark
   ellipse is the exact $absH^(-1)$ at $c$, scaled to the same area for comparison. The
   algorithm never sees it.
@@ -578,8 +578,8 @@ $absH^(-1)$, so the scatter matrix of these points is proportional to $absH^(-1)
 #step([Stretch, project, cut at the median], code: split-code, focus: (5, 6, 7, 8), window: 1, width: 36%, panel("afinni-split-hessian"))[
   In the metric $absH^(1 slash 2)$ the short axis of that ellipse becomes the long one. The
   arrow is the resulting direction $absH^(1 slash 2) u_1$. AFINNI sorts the points by their
-  score $s_i$ along it and divides them into a lower half $Cm$ (pink) and an upper half
-  $Cp$ (cyan).
+  score $s_i$ along it and divides them into a lower half $Cm$, in pink, and an upper half
+  $Cp$, in cyan.
 ]
 
 #theorem(title: [the scatter of a level set estimates the Hessian, @manuscript])[
@@ -657,8 +657,8 @@ smaller worst error than the cut across the longest direction.
   A gradient, a Hessian and two children's models cannot be estimated from a handful of
   points. Before AFINNI cuts a rejected cluster with fewer than $2 Nmin$ points, it adds
   new points, up to $max(2 \#C, 2 Nmin)$. Each child then starts with at least $Nmin$.
-  Here a cluster of #ex.afinni.augment.before points (dark) receives
-  #ex.afinni.augment.new new ones (pink).
+  Here a cluster of #ex.afinni.augment.before dark points receives
+  #ex.afinni.augment.new new pink ones.
 
   A new point is a random convex combination of two of the cluster's points,
   $tilde(x) = lambda x_i + (1 - lambda) x_j$ with $lambda$ uniform in $[0, 1]$. AFINNI
@@ -667,7 +667,7 @@ smaller worst error than the cut across the longest direction.
 ]
 
 #lemma(title: [new points stay inside])[
-  Every new point lies in the convex hull of its cluster's points (dashed in the picture).
+  Every new point lies in the convex hull of its cluster's points, drawn dashed in the picture.
 ] <lem:hull>
 
 #pitfall(title: [The hull is not the cell])[
@@ -698,7 +698,7 @@ only at the leaf's own points. So each leaf carries a region that contains those
   The scatter matrix $Sigma$ of the leaf's #ex.afinni.trust_points points gives the shape.
   The ellipsoid ${x : (x - c)^top Sigma^(-1) (x - c) <= 1}$ is long where the points
   spread. Let $alpha$ be the largest value of $(x_i - c)^top Sigma^(-1) (x_i - c)$ over the
-  points. Scaling the ellipsoid by $alpha$ puts the farthest point (ringed) exactly on the
+  points. Scaling the ellipsoid by $alpha$ puts the farthest point, ringed, exactly on the
   boundary and every other point inside.
 ]
 
@@ -740,12 +740,12 @@ over all accepted clusters.
   leaf's long axis as short. Second, they give a _flag_. If $d_i > 1$ for every candidate,
   no leaf's model was tested near $x$.
 
-  *A*: the nearest centre in Euclidean distance (grey cross) is not the leaf that answers.
-  The long leaf's centre is farther away, but $x$ lies well inside its ellipsoid
-  ($d_nu = #ex.afinni.queries.A.d_nu$). \
+  *A*: the nearest centre in Euclidean distance, the grey cross, is not the leaf that answers.
+  The long leaf's centre is farther away, but $x$ lies well inside its ellipsoid, at
+  $d_nu = #ex.afinni.queries.A.d_nu$. \
   *B*: $x$ lies inside #ex.afinni.queries.B.inside ellipsoids; the smallest $d_i$ decides. \
-  *C*: $x$ lies inside none ($d_nu = #ex.afinni.queries.C.d_nu$). The nearest leaf still
-  answers, and `predict` returns the answer _flagged_ (red).
+  *C*: $x$ lies inside none, with $d_nu = #ex.afinni.queries.C.d_nu$. The nearest leaf still
+  answers, and `predict` returns the answer _flagged_, in red.
 ]
 
 Searching all $N_c$ leaves in their own metrics would cost $O(N_c d^2)$ per query. So
@@ -786,9 +786,9 @@ exact without searching every leaf.
   ruled out without measuring the query's distance to every leaf?]
 
 #scene(side: left, width: 40%, panel("afinni-flag-miss"))[
-  It can happen. Here $kappa = #ef.kappa$. The query (black dot) has the nearest centre (grey
-  cross) right beside it, but that leaf's ellipse does not contain the query. So the
-  candidates flag it (#swatch(red, shape: "dot") red ring). A long ellipse does contain it, at
+  It can happen. Here $kappa = #ef.kappa$. The query is the black dot. Its nearest centre, the
+  grey cross, lies right beside it, but that leaf's ellipse does not contain the query. So the
+  candidates flag it, and the #swatch(red, shape: "dot") red ring marks it. A long ellipse does contain it, at
   $d = #ef.d_leaf$, but its centre is only the #ef.leaf_rank\th nearest. Over a grid of
   #ef.grid queries, one candidate flags #ef.flagged_percent% of the domain while only
   #ef.exact_percent% lies outside every ellipse. In the running example,
@@ -806,7 +806,7 @@ leaf that contains the query.
   outside the ellipse. The box test takes $d$ comparisons and usually stops at the first. The ball of radius
   $1 slash sqrt(lambda_min)$ around a leaf also holds its ellipse, but a long leaf's ball is
   long in every direction. For the highlighted leaf the ellipse has area
-  #ef.long_leaf.ellipse_area, its box #ef.long_leaf.box_area and its ball (dashed)
+  #ef.long_leaf.ellipse_area, its box #ef.long_leaf.box_area and its dashed ball
   #ef.long_leaf.ball_area. Over the domain a query lies in #ef.per_query.ellipses ellipses
   on average, in #ef.per_query.boxes boxes and in #ef.per_query.balls balls. A long thin ellipse
   in $d$ dimensions spans about $1 slash sqrt(d)$ of its length on each axis. So the box's
@@ -887,8 +887,8 @@ subtree. In
     boxes relative to the node. The reason is that a query in the overlap of two children
     enters both. A query compares a node's sides from the narrowest, where the query is most
     likely to fall outside.
-  - On the CPU the walk runs in parallel over the queries (Numba,
-    `src/neighbors/containment_cpu.py`). On the GPU one kernel tests every (query, leaf) pair
+  - On the CPU a Numba loop in `src/neighbors/containment_cpu.py` runs the walk in parallel
+    over the queries. On the GPU one kernel tests every (query, leaf) pair
     with @lem:bound before the form (`contained_mask`).
   - The launcher reports the exact share as `perct_out_exact`, beside the manuscript's
     $p_o$, which used the candidates only.
@@ -909,7 +909,7 @@ subtree. In
 #question[AFINNI keeps no boundary for a cluster. What changes if every node of the tree
   owns a precise piece of the domain?]
 
-Three things: the node can be sampled up to its boundary, the leaves tile the domain with
+Three things change. The node can be sampled up to its boundary, the leaves tile the domain with
 no gaps, and a query can be sent to its leaf by a few comparisons. This is ART, the
 adaptive regression tree @art. It needs a domain, which AFINNI does not. The domain is a
 box (`domain=(lower, upper)`), and ART does all its geometry in the coordinates
@@ -979,10 +979,10 @@ The name must meet four requirements, and each rules out some naming schemes.
     cut, and it meets all four requirements.]),
 )
 
-#figure(panel("locational-code-walk"), caption: [One point (black) on its way to its leaf. *Top.* The
+#figure(panel("locational-code-walk"), caption: [One point, drawn black, on its way to its leaf. *Top.* The
   tree, with the point's route in red. Each step down adds one bit to the code, and the latest
   bit is red. *Bottom.* The same steps in the domain. Each frame shows the parent's region
-  (grey), the plane that cut it, and the side the point is on (blue). The leaf is red.])
+  in grey, the plane that cut it, and in blue the side the point is on. The leaf is red.])
   <fig:walk>
 
 The root's code is $1$. Every cut appends one bit to a node's code. The bit is $0$ for the
@@ -1055,8 +1055,8 @@ position.
     the shape needs the six planes]),
   (panel("code-capacity", width: 100%), [levels that fit in a 64-bit code]),
   caption: [What a code says about a cell. *Left.* The Morton code
-    #raw("1001") picks the top-left quarter (#raw("10")) and then its bottom-right quarter
-    (#raw("01")). The code alone gives the box. *Middle.* ART's leaf
+    #raw("1001") picks the top-left quarter, #raw("10"), and then its bottom-right quarter,
+    #raw("01"). The code alone gives the box. *Middle.* ART's leaf
     #raw(ex.art.locational_code.leaf) and the planes of its six ancestors, numbered by depth.
     Its code records which side of each plane the leaf is on, but not where the planes are.
     *Right.* How deep a tree a 64-bit code can name as the dimension grows.],
@@ -1117,19 +1117,19 @@ the tree on as many points as the root, concentrated in the node's small region.
 #story()
 #step([A region is the box and its ancestors' planes], code: art-code, focus: ("in", 2), window: 0, width: 35%, panel("art-polytope"))[
   The node with locational code #ex.art.sampling.code is at depth #ex.art.sampling.depth.
-  Its region (shaded) is bounded by the domain box (dark outline) and by the
+  Its shaded region is bounded by the domain box, outlined dark, and by the
   #ex.art.sampling.rows planes of its ancestors, numbered by depth. Each plane is one row of
   $(A, bold(z))$. The box bounds each coordinate directly, and here its top face closes the
-  region. The node inherited #ex.art.sampling.inherited points (dark). It needs
-  #ex.art.sampling.new new ones (pink) anywhere in the region, including next to its
+  region. The node inherited #ex.art.sampling.inherited dark points. It needs
+  #ex.art.sampling.new new pink ones anywhere in the region, including next to its
   boundary.
 ]
 
 #step([Hit-and-run: a random walk that stays inside], code: hitrun-code, focus: (2, 3, 4), width: 35%, panel("art-hit-and-run"))[
-  To draw uniformly in a polytope, ART walks. The walk starts at an inherited point (dark),
+  To draw uniformly in a polytope, ART walks. The walk starts at a dark, inherited point,
   and each numbered step does three things. It picks a random direction $g$. It finds the
   chord, the part of the line through the current point along $g$ that lies inside the
-  region (dotted). It then jumps to a uniform point of that chord. The ends of the chord
+  region, drawn dotted. It then jumps to a uniform point of that chord. The ends of the chord
   come from one product $A g$. The panel draws #ex.art.sampling.walk_steps steps of an
   illustrative chain. The library walks `walk_steps` steps per chain. A chain's end is
   independent of its start only in the limit (@prop:hitrun).
@@ -1221,16 +1221,16 @@ This is the error that the children's least-squares fits will minimize.
 #filmstrip(
   arrows: false,
   (panel("art-split-before"), [a rejected node: the error of its one model]),
-  (panel("art-split-candidates"), [candidate directions; the best cut found (dashed), then refined (solid)]),
-  (panel("art-split-after"), [the children's errors after ART's cut (solid); AFINNI's cut (dashed)]),
+  (panel("art-split-candidates"), [candidate directions; the dashed best cut found, then the solid refined one]),
+  (panel("art-split-after"), [the children's errors after ART's solid cut, with AFINNI's cut dashed]),
   caption: [The split search on the node with locational code
     #ex.art.split.code, which has #ex.art.split.points points. The error colours are those of
     @sec:reading. *Left.* One model leaves a mean squared error of #ex.art.split.sse_parent,
     in units of $atol^2$. *Middle.* The search tries cuts along
     #ex.art.split.directions directions, drawn as arrows. The red arrow is AFINNI's
-    Hessian-informed direction. The best cut has error #ex.art.split.sse_bins (dashed). The
-    soft search turns and shifts it to reach #ex.art.split.sse_final (solid). *Right.* The
-    errors of the two children's models after ART's cut (solid). The #swatch(red, shape:
+    Hessian-informed direction. The dashed best cut has error #ex.art.split.sse_bins. The
+    soft search turns and shifts it to the solid line, with error #ex.art.split.sse_final. *Right.* The
+    errors of the two children's models after ART's cut, drawn solid. The #swatch(red, shape:
     "dashed") red dashed line is where AFINNI would cut the same points, along its
     Hessian-informed direction at the median. With one affine model on each side, ART's
     children have a largest error of #ex.art.split.art_worst $atol$ and a mean squared error
@@ -1270,8 +1270,8 @@ has no useful gradient. ART minimizes it in two stages.
 
 #scene(width: 46%, panel("art-objective"))[
   The picture shows both objectives along the chosen normal, as functions of the offset
-  $z$. The hard one (dark) is a staircase with a step at every point. The soft one (cyan)
-  follows it and is differentiable. A gradient method can descend it, turning the normal
+  $z$. The hard one, drawn dark, is a staircase with a step at every point. The soft one, drawn
+  cyan, follows it and is differentiable. A gradient method can descend it, turning the normal
   as well as moving the offset. The enumeration cannot do this. The red line is the chosen
   plane, and the band around it is the gate width.
 ]
@@ -1451,7 +1451,7 @@ near the edges of leaves. The two algorithms differ in what each can say about t
 ] <prop:audit>
 
 On the example, `audit` draws #ex.art.audit.points fresh points and finds
-#ex.art.audit.violations violations (#ex.art.audit.rate_percent%). So, with
+#ex.art.audit.violations violations, a rate of #ex.art.audit.rate_percent%. So, with
 #ex.art.audit.confidence_percent% confidence, at most #ex.art.audit.bound_percent% of the
 domain violates the tolerance. The bound holds for the trained model and the uniform
 measure. It does not bound the error at any particular point.
@@ -1514,9 +1514,9 @@ measure. It does not bound the error at any particular point.
   kind: image,
   caption: [The running example trained at three tolerances, each a quarter of the one before.
     Top: ART's leaves #swatch(art-c, shape: "line"), cut out of the box by the stored planes.
-    Middle and bottom: AFINNI's trust ellipses #swatch(afinni-c, shape: "line"), trained from the
-    example's sample of #(200 * 3) points (middle), and from a sample that grows as the tolerance
-    shrinks (bottom).],
+    Middle and bottom: AFINNI's trust ellipses #swatch(afinni-c, shape: "line"), trained in the
+    middle row from the example's sample of #(200 * 3) points, and in the bottom row from a sample
+    that grows as the tolerance shrinks.],
 ) <fig:convergence-strip>
 
 Each quartering of the tolerance roughly quarters the area of a leaf, so the number of leaves
@@ -1527,7 +1527,7 @@ the area. The same argument in $d$ dimensions gives $2^d$ leaves for every quart
 $2^(d slash 2)$ for every halving. Every piecewise-affine surrogate obeys this _leaf-count law_,
 whichever way it cuts.
 
-The middle row shows something else as well. AFINNI's trust ellipses, trained from the example's
+The middle row shows a second effect. AFINNI's trust ellipses, trained from the example's
 fixed sample, leave gaps between them that widen as the tolerance shrinks. The section ends by
 explaining them (@lem:narrower).
 
@@ -1605,8 +1605,8 @@ grid is within the tolerance. ART samples each region afresh, up to its boundary
 (@sec:apx-hitrun), so a small leaf is tested on points spread over all of it.
 
 AFINNI follows the law too, but only from the grown sample. From the example's fixed sample its
-leaves grow more slowly. That is not because it needs fewer. It covers less of the domain, and
-it errs more inside what it covers.
+leaves grow more slowly. It does not need fewer leaves. It covers less of the domain, and errs more
+inside what it covers.
 
 #figure(panel("convergence-error"), caption: [Left: the 99th percentile of each model's error, in
   units of the tolerance, over the test points it does not flag. Right: the share of the domain
@@ -1640,7 +1640,7 @@ answers for. Its trust ellipse, which is fitted to its points (@sec:trust), shri
 gaps open between neighbouring ellipses. The test that accepts the leaf sees only its points, so
 it also misses the error at the leaf's edges. From a fixed sample, every halving of the tolerance
 adds a generation. From a sample that grows like $atol^(-d slash 2)$, the leaves are made of sample
-points, and nothing crowds.
+points, and the points do not crowd.
 
 == A vector function and a flow map
 
@@ -1651,56 +1651,50 @@ points, and nothing crowds.
   if r == none [--] else [#cv-fix(r)]
 } else [--]
 #let cvp-flag(name) = if cvp-ok(name) [#cv-probs.at(name).runs.afinni.last().flagged%] else [--]
-// shown until the runs of these two problems are in convergence.json
-#let pending = text(fill: grey, style: "italic")[(results pending)]
+#let cvp-k(name) = cv-probs.at(name).shape  // the directions in which the problem's f curves
 
-#if cvp-ok("shared_latent") [
-  #figure(panel("convergence-problems"), caption: [Leaves against $1 slash atol$ on two problems of the
+#figure(panel("convergence-problems"), caption: [Leaves against $1 slash atol$ on two problems of the
     benchmark's function suite at $d = 5$: `shared_latent`, six functions of two oblique coordinates, and
     `lorenz96_state`, the Lorenz-96 flow over $t = 0.1$ (the manuscript's ODE, @sec:study-config) in all five
     components. A leaf is accepted when every output is within the tolerance. Grey dashed: the slope $k slash 2$,
     for the $k$ directions in which $f$ curves; dotted: $d slash 2$. Colours and marks as in
     @fig:convergence-rates.]) <fig:convergence-problems>
-] else [
-  #block(width: 100%, inset: 10pt, stroke: 0.5pt + grey)[The figure of leaves against $1 slash atol$ on
-    `shared_latent` and `lorenz96_state` at $d = 5$ #pending.]
-]
 
 The $d$ in @prop:leaf-count counts the directions in which $f$ curves. The lower bound needs $f$ to curve
 in every direction. If it curves in only $k$ of them, a leaf can be long in the others, and a partition into
-such slabs needs $tilde atol^(-k slash 2)$ leaves. A vector-valued $f$ has one more rule: a leaf must hold
+such slabs needs $tilde atol^(-k slash 2)$ leaves. A vector-valued $f$ adds one more rule. A leaf must hold
 every output, so the output that curves most sets its size. Two problems of the benchmark's function suite
-test both, at $d = 5$: `shared_latent`, six functions of two oblique coordinates ($k = 2$), and
-`lorenz96_state`, the Lorenz-96 flow over $t = 0.1$, the manuscript's ODE, in all five components ($k = 5$).
+test both, at $d = 5$: `shared_latent`, six functions of two oblique coordinates ($k = #cvp-k("shared_latent")$), and
+`lorenz96_state`, the Lorenz-96 flow over $t = 0.1$, the manuscript's ODE, in all five components
+($k = #cvp-k("lorenz96_state")$).
 
 #block(breakable: false, table(
   columns: (1fr, auto, auto, auto, auto),
   inset: (x: 6pt, y: 4pt),
   align: (left, right, right, right, right),
   table.header[$d = 5$][$k slash 2$][ART][AFINNI, grown sample][AFINNI, fixed: flagged at the tightest],
-  [`shared_latent`], [1.00], cvp-rate("shared_latent", "art"), cvp-rate("shared_latent", "afinni_scaled"), cvp-flag("shared_latent"),
-  [`lorenz96_state`], [2.50], cvp-rate("lorenz96_state", "art"), cvp-rate("lorenz96_state", "afinni_scaled"), cvp-flag("lorenz96_state"),
+  [`shared_latent`], [#cv-fix(cvp-k("shared_latent") / 2)], cvp-rate("shared_latent", "art"), cvp-rate("shared_latent", "afinni_scaled"), cvp-flag("shared_latent"),
+  [`lorenz96_state`], [#cv-fix(cvp-k("lorenz96_state") / 2)], cvp-rate("lorenz96_state", "art"), cvp-rate("lorenz96_state", "afinni_scaled"), cvp-flag("lorenz96_state"),
 ))
 #v(-0.4em)
-#small[The fitted exponent $k$ in $N_c prop atol^(-k)$, as in the table above. A dash: not yet run, or fewer
-  than three tolerances with at least #cv.fit_leaves leaves.]
+#small[ART's and AFINNI's columns are the fitted exponent of $N_c$ against $1 slash atol$, as in the table
+  above. A dash marks fewer than three
+  tolerances with at least #cv.fit_leaves leaves.]
 
-#if cvp-ok("lorenz96_state") [
-  The flow map curves in every direction, and ART's exponent on it, #cvp-rate("lorenz96_state", "art"), is
-  close to the law's $d slash 2 = 2.5$; AFINNI's from the grown sample is #cvp-rate("lorenz96_state", "afinni_scaled"),
-  over three tolerances. On `shared_latent`, whose outputs depend on two coordinates, ART's planes can lie along
-  the three flat directions: its exponent, #cvp-rate("shared_latent", "art"), lies between the $k slash 2 = 1$
-  of a function of two coordinates and $d slash 2$. AFINNI needs far more leaves there, #cv-num(cv-probs.shared_latent.runs.afinni_scaled.first().leaves)
+The flow map curves in every direction, and ART's exponent on it, #cvp-rate("lorenz96_state", "art"), is
+close to the law's $d slash 2 = #(cv-probs.lorenz96_state.d / 2)$. AFINNI's from the grown sample is
+#cvp-rate("lorenz96_state", "afinni_scaled"), over #cv-probs.lorenz96_state.runs.afinni_scaled.len() tolerances.
+On `shared_latent`, whose outputs depend on two coordinates, ART's planes can lie along the
+#(cv-probs.shared_latent.d - cvp-k("shared_latent")) flat directions. Its exponent,
+#cvp-rate("shared_latent", "art"), lies between the $k slash 2 = #(cvp-k("shared_latent") / 2)$ of a function
+of two coordinates and $d slash 2$. AFINNI needs far more leaves there, #cv-num(cv-probs.shared_latent.runs.afinni_scaled.first().leaves)
   from the grown sample at $atol = #cv-tol(cv-probs.shared_latent.runs.afinni_scaled.first().tol)$ against
   ART's #cv-num(cv-probs.shared_latent.runs.art.first().leaves). Its grown sample would exceed
   #cv-num(cv.max_sample) points after #cv-probs.shared_latent.runs.afinni_scaled.len() tolerances, so it has no
   fitted exponent. Each halving costs ART several times more here than on the running example, so these
-  tolerances end sooner. In five dimensions AFINNI's fixed sample covers little: at the tightest tolerance it
+  tolerances end sooner. In five dimensions AFINNI's fixed sample covers little. At the tightest tolerance it
   flags #cvp-flag("lorenz96_state") of the box for the flow map, and #cvp-flag("shared_latent") for
   `shared_latent`.
-] else [
-  #pending
-]
 
 #block(breakable: false, implementation(title: [How the runs were set up])[
   - The cluster sizes follow the running example per dimension: $Nmin = 8 (d + 1)$, four initial
@@ -1727,7 +1721,7 @@ test both, at $d = 5$: `shared_latent`, six functions of two oblique coordinates
   it on one side. A layer of leaves of that size along
   a $(d - 1)$-dimensional kink holds $tilde atol^(-(d - 1))$ of them, more than the
   $atol^(-d slash 2)$ of the smooth part once $d > 2$. A jump of height $J > 2 atol$ cannot be
-  straddled at all: refinement along it stops only at the depth limit, and the error there does not
+  straddled at all. Refinement along it stops only at the depth limit, and the error there does not
   fall. ART's oblique planes can follow a planar kink or jump and avoid the layer; AFINNI's median cuts,
   across the estimated curvature, need not line up with it.
 ]
@@ -1785,7 +1779,7 @@ test both, at $d = 5$: `shared_latent`, six functions of two oblique coordinates
   a run of consecutive rows (@fig:queue). `counts` holds the points per cluster, and its
   running sums, `starts`, say where each run begins. `labels` gives each row's cluster. It
   comes from a cumulative sum of start markers, without a sort. To sum over clusters, the
-  kernel cuts every run into chunks of #ex.defaults.segment_chunk rows (two in the picture),
+  kernel cuts every run into chunks of #ex.defaults.segment_chunk rows, two in the picture,
   _counted from the run's own first row_. One thread adds up one entry over one chunk, in
   row order. A second pass adds each cluster's chunks in order. This is a _segmented
   reduction_ (`segment_cross`), and one launch covers every cluster of the batch.
@@ -1860,9 +1854,9 @@ Batches exist because a level may not fit on the device.
 ))[
   AFINNI cuts every rejected cluster at the median of its scores along the cut direction
   (@sec:split). The engine sorts the whole batch by score and then, stably, by cluster.
-  Every cluster's rows are then in order of score, and each cluster stays in its own run
-  (middle row). The median needs no search, because the first $floor(n slash 2)$ rows of a
-  run are $Cm$ (pale) and the rest are $Cp$. The children are already runs of consecutive rows, so one gather
+  Every cluster's rows are then in order of score, and each cluster stays in its own run,
+  as the middle row shows. The median needs no search, because the first $floor(n slash 2)$ rows of a
+  run are $Cm$, drawn pale, and the rest are $Cp$. The children are already runs of consecutive rows, so one gather
   `X[order]` writes the next level in the layout this section began with.
 ]
 
@@ -1891,14 +1885,14 @@ means $a^top u <= z$.
 #figure(panel("art-queue-blocks"), caption: [ART's queue in the running example, level by
   level, as the planes its nodes carry. Each node is a block, labelled by its locational
   code, with one row per ancestor plane. A row has the colour of the node that made the
-  plane. A hatched row is negated, because the node lies on the plane's right side. A
-  rejected node (outlined) writes two children whose blocks are its own plus one row. An
-  accepted node (pale) moves to the leaves, and the queue drops its block. At the right are
+  plane. A hatched row is negated, because the node lies on the plane's right side. An
+  outlined, rejected node writes two children whose blocks are its own plus one row. A
+  pale, accepted node moves to the leaves, and the queue drops its block. At the right are
   the shape of each level's array and the number of its nodes that were accepted.]) <fig:queue-blocks>
 
 Read the figure from top to bottom. $h$ is the level. $K$ at the next level is twice the
-number of nodes rejected at this one, so $K$ grows only while nodes are rejected
-(#qb.map(r => str(r.at(0))).join(", ") here). For a batch, the children's blocks are one
+number of nodes rejected at this one, so $K$ grows only while nodes are rejected.
+Here it takes the values #qb.map(r => str(r.at(0))).join(", "). For a batch, the children's blocks are one
 gather of the parents' blocks and one concatenation. The rest of a child's identity is index
 arithmetic too: its code is $2 pi$ or $2 pi + 1$, its root is its parent's, and its random
 numbers are keyed by $(r, pi)$ (@inv:rng). @fig:carry follows one node down the tree. It
@@ -1912,7 +1906,7 @@ shows the numbers in the node's rows and the plane each row describes.
     down. Each frame shades the node. Each numbered plane has the colour of the node it
     split, and its arrow marks the side the node keeps. Under each frame is the node's
     block, with one row $a_1, a_2 | z$ per plane in the unit coordinates $u$. A right
-    child's row is negated ($-a^top u <= -z$).],
+    child's row is negated, $-a^top u <= -z$.],
 ) <fig:carry>
 
 #let labels-picture = {
@@ -1934,9 +1928,9 @@ shows the numbers in the node's rows and the plane each row describes.
 }
 
 #scene(side: left, width: 52%, labels-picture)[
-  On the device, a batch's blocks form one array of shape $(K, h, d + 1)$: $K$ nodes (three
-  here), $h$ rows each (two here), and $d + 1$ numbers per row, the normal $a$ and the
-  offset $z$. The `hr_walk` kernel runs one thread per chain and one chain per new point. A
+  On the device, a batch's blocks form one array of shape $(K, h, d + 1)$. It holds $K$
+  nodes of $h$ rows each, and $d + 1$ numbers per row, the normal $a$ and the offset $z$. The
+  picture has three nodes of two rows. The `hr_walk` kernel runs one thread per chain and one chain per new point. A
   chain's label is its node's row in that array, so each thread reads its node's block in
   place. The chains of one node are consecutive threads. They read the same block, and the
   cache serves it to all of them. Every node has the same $h$, so the threads of a warp
@@ -1966,8 +1960,8 @@ points would read every point once per cut.
   kind: image,
   caption: [The bins search on the node of @fig:search, along the direction it chose.
     *Left.* The node's #ex.art.split.points points, sorted by score and split into
-    #bins.n_bins bins of about #bins.per_bin points. Every boundary between bins (grey) is a
-    candidate cut. The chosen one (gold, dashed, as in @fig:search) leaves the pink points on
+    #bins.n_bins bins of about #bins.per_bin points. Every grey boundary between bins is a
+    candidate cut. The chosen one, gold and dashed as in @fig:search, leaves the pink points on
     the left and the cyan ones on the right. *Right.* The mean squared error of the two fits
     that each cut leaves, in units of $atol^2$. Cut #bins.chosen_cut leaves #bins.chosen_error.
     The dashed line is one model for the whole node.],
@@ -2038,11 +2032,11 @@ side is small.
   )
 }
 
-#figure(ls-picture, kind: image, caption: [One step of the soft search for five nodes (rows),
-  schematic. Column $m$ is the trial step $alpha 2^(-m)$. #swatch(rgb(col.gold), shape: "dot")
+#figure(ls-picture, kind: image, caption: [One step of the soft search for five nodes, one per row,
+  drawn schematically. Column $m$ is the trial step $alpha 2^(-m)$. #swatch(rgb(col.gold), shape: "dot")
   Gold is the step a node takes, dark grey marks the trials before it, and light grey marks
   trials evaluated but not needed. The CPU tries one halving at a time for all nodes and asks the host
-  (#text(fill: rgb(col.red))[◆]) whether any node still waits. The GPU evaluates the first four
+  whether any node still waits, at each #text(fill: rgb(col.red))[◆]. The GPU evaluates the first four
   halvings of every node in one launch, and the other eight only for nodes still waiting.])
   <fig:line-search>
 
@@ -2110,7 +2104,7 @@ whatever the number of queries.
   q-array(1, [$fh$], $Q times f_d$))
 
 #figure(afinni-pipeline, kind: image, caption: [AFINNI's prediction for a chunk of $Q$
-  queries (six here, one colour each). Every array has one row per query. Every step does
+  queries, six here with one colour each. Every array has one row per query. Every step does
   the same work for every row, so the whole chunk moves through each step at once.])
   <fig:afinni-pipeline>
 
@@ -2161,7 +2155,7 @@ and keeps the warps in step. The CPU walks the tree.
   kind: image,
   caption: [Eight uniform queries of the running example, routed as the library routes
     them. Each row is one pass and shows every query's node by its locational code. A query
-    at a leaf (grey) is done. *Right.* The threads of each pass. They are the queries not
+    at a grey leaf is done. *Right.* The threads of each pass. They are the queries not
     yet at a leaf, compacted into a dense list, with one thread each.],
 ) <fig:passes>
 
@@ -2223,8 +2217,8 @@ and the same predictions to within $10^(-10)$.
   batch. The batch size and the scatter over ranks fix that grouping, but a steal moves
   clusters between batches. On a GPU, the engine derives the effective batch size from the
   free device memory, so it also depends on the card and on whatever else holds memory on
-  it. The backends draw from different generators (NumPy's
-  PCG64, CuPy's XORWOW) and run different numbers of $k$-means iterations.
+  it. The backends draw from different generators, NumPy's
+  PCG64 and CuPy's XORWOW, and run different numbers of $k$-means iterations.
 ]
 
 #pitfall(title: [CPU and GPU])[
@@ -2490,6 +2484,41 @@ they are part of the function, not of the experiment. The Dormand-Prince 5(4) pa
 Lorenz-96 flow map per point in float64, with step control at $r_"tol" = a_"tol" = 10^(-6)$. Its
 error is therefore far below every accuracy target of the experiments.
 
+// The convergence study's functions are not part of studies/manuscript: figures/convergence.py runs them,
+// and figures/appendix/functions.py draws every function of this section.
+#let fn-json = json("figures/apx-functions.json")
+#let cv-box = cv.box
+Besides the paper's experiments, the convergence study (@sec:convergence) trains on three functions of its
+own:
+
+#block(breakable: false, table(
+  columns: (auto, 1fr, auto, auto),
+  inset: (x: 5pt, y: 4pt),
+  align: left + horizon,
+  table.header[Function][$f(x)$][Domain][$d$],
+  [Rosenbrock along a chain], [$sum_(i=1)^(d-1) (1 - x_i)^2 + (x_(i+1) - x_i^2)^2$],
+    [$[#cv-box.lower.at(0), #cv-box.upper.at(0)] times [#cv-box.lower.at(1), #cv-box.upper.at(1)]^(d-1)$],
+    [#cv.tolerances.keys().join(", ")],
+  [`shared_latent`], [#cv.problems.shared_latent.outputs functions of $g_1 = 1.5 s_1 + 0.6 s_2^2$ and
+    $g_2 = 1.5 s_2$, with $s_k = q_k^top x$: $tanh 2 g_1$, $e^(-(g_1 - 0.5)^2) cos 2 g_2$, $sin(g_1 + g_2)$,
+    $g_1 g_2 slash 3$, $1 slash (1 + (g_1 + 1)^2 + g_2^2)$ and $cos(3 g_2 - g_1)$],
+    [$[#fn-json.domains.shared_latent.at(0), #fn-json.domains.shared_latent.at(1)]^d$], [#cv.problems.shared_latent.d],
+  [`lorenz96_state`], [all #cv.problems.lorenz96_state.outputs components of $x(t = 0.1)$ for the Lorenz-96
+    flow above], [$[#fn-json.domains.lorenz96_state.at(0), #fn-json.domains.lorenz96_state.at(1)]^d$],
+    [#cv.problems.lorenz96_state.d],
+))
+
+At $d = 2$ the chain is the running example. The directions $q_1$ and $q_2$ of `shared_latent` are the
+orthonormal factor of a $d times 2$ matrix of standard normal entries, drawn once from a fixed seed. The two
+vector functions come from the library's `src.problems`, which divides each output by its largest $|f_c|$
+on the function's test set, so one tolerance is the same relative accuracy for every output.
+
+#figure(panel("apx-functions"), caption: [The functions this companion trains on, over the plane of their
+  first two coordinates. A function the study runs at $d = 2$ is drawn on its box. Lorenz-96 and the two
+  vector functions run at $d = 5$, and are drawn on the plane through the centre of the box, with the other
+  coordinates at the centre. A vector function is drawn one output per panel, scaled as the study scales it.
+  The bands hold equal shares of the plane, light where $f$ is small.]) <fig:functions>
+
 == Accuracy target and reported quantities
 
 A surrogate value $hat(f)(x)$ is within the tolerance $"tol"$ when every output component $k$
@@ -2584,7 +2613,7 @@ the cases already measured. A case is recorded as skipped, with the reason, when
 exceeds the machine's limits. The same happens when its series already ran out of memory or time
 at a looser tolerance. A case that fails is recorded with the reason, and the other cases
 continue. Collecting writes one row per case, with every quantity above, its settings and its
-provenance (commit, machine, library versions). It then builds the tables from those rows. Each
+provenance, which is the commit, the machine and the library versions. It then builds the tables from those rows. Each
 table cell is the median over seeds, with the minimum, maximum and number of seeds beside it.
 
 #pagebreak(weak: true)
@@ -2738,9 +2767,9 @@ between its tables are:
 #pagebreak()
 = The convergence runs <sec:convergence-runs>
 
-Every run of @sec:convergence, one table per problem. $N_c$ is the leaves, $N$ the evaluations of $f$,
+This appendix lists every run of @sec:convergence, one table per problem. $N_c$ is the number of leaves, $N$ the number of evaluations of $f$,
 $e_99$ the 99th percentile of the error over the test points a model does not flag, in units of $atol$, and
-"flag" the share of the domain AFINNI flags as outside every trust region. A dash: the tolerance was not run,
+"flag" the share of the domain AFINNI flags as outside every trust region. A dash means that the tolerance was not run,
 because the previous one took about two minutes, or a grown sample would exceed #cv-num(cv.max_sample) points.
 
 #let cv-cell(rows, tol, key) = {
@@ -2775,11 +2804,7 @@ because the previous one took about two minutes, or a grown sample would exceed 
     (art: cv.runs.art.at(d), afinni_scaled: cv.runs.afinni_scaled.at(d), afinni: cv.runs.afinni.at(d)))
 }
 #for name in ("shared_latent", "lorenz96_state") {
-  if cvp-ok(name) {
-    cv-runs-table([#raw(name), $d = 5$], cv-probs.at(name).runs)
-  } else {
-    block(above: 1em)[#text(weight: "bold")[#raw(name), $d = 5$] #h(0.5em) #pending]
-  }
+  cv-runs-table([#raw(name), $d = #cv-probs.at(name).d$], cv-probs.at(name).runs)
 }
 
 = Additions under review <sec:additions>
@@ -2865,7 +2890,7 @@ certificate fails on the points $0, 1, ..., #(apx-knn.dense.count - 1)$ and one 
 $10^#apx-knn.far_exp$, with $k = #apx-knn.dense.k$ and the query #apx-knn.dense.query. Centred
 on their mean, these points lie where float32 numbers are #apx-knn.dense.spacing apart. Then
 $beta$ is about #apx-knn-sci(apx-knn.dense.beta), which exceeds every gap. So the search scans
-the row (#apx-knn.dense.fallback_rows row), although the float32 list happened to be right.
+its fallback rows, #apx-knn.dense.fallback_rows here, although the float32 list happened to be right.
 
 #implementation(title: [In the code])[
   - `_verified` (`src/neighbors/knn.py`) runs the float32 search `_search32`, re-scores the
@@ -2920,7 +2945,7 @@ the row (#apx-knn.dense.fallback_rows row), although the float32 list happened t
   is scanned in float64. So the search is exact, and its ties always go to the smaller index.]
 
 // ---- appendix/cells.typ
-== What the inference rule really computes: answer cells <sec:apx-cells>
+== What the inference rule computes: answer cells <sec:apx-cells>
 #let apx-cells = json("figures/apx-cells.json")
 #let apx-share(k) = apx-cells.share.at(str(k))
 
@@ -2951,7 +2976,7 @@ grid has the same answer as in the left panel. This includes the companion's
 $kappa = #apx-cells.kappa$.
 
 The cells are not the clusters. The leaves were fitted on #apx-cells.points points, and a leaf
-other than their own answers #apx-cells.foreign_points of them (#apx-cells.foreign_percent%). A
+other than their own answers #apx-cells.foreign_points of them, or #apx-cells.foreign_percent%. A
 leaf's point can lie deeper inside a neighbour's ellipse than inside its own. With one neighbour,
 $fh$ equals one leaf's affine model on each cell. So the cells are the surrogate's pieces, and
 their edges are where the surrogate jumps.
@@ -3018,8 +3043,8 @@ because $rho_kappa$ is the search's own $kappa$-th distance. But the code does n
   `k_nn` contains the query. Then every weight is 0. The code raises the total weight to
   $10^(-12)$ to avoid a division by zero, and the prediction is exactly 0. It is not NaN, and it
   is not the nearest leaf's answer. Only the flag tells these queries apart. On the running
-  example with $kappa = #apx-cells.kappa$, the #apx-cells.strict_zero flagged queries of the grid
-  (#apx-cells.strict_zero_percent%) are answered 0. In strict mode, read the flag, not the value.
+  example with $kappa = #apx-cells.kappa$, the #apx-cells.strict_zero flagged queries of the grid,
+  #apx-cells.strict_zero_percent% of it, are answered 0. In strict mode, read the flag, not the value.
 ]
 
 #takeaway[With one neighbour, AFINNI's surrogate is affine on each leaf's answer cell. The answer
@@ -3311,11 +3336,11 @@ to remove what makes the inherited points not exactly uniform.
 
 #figure(
   board(columns: 1,
-    (panel("apx-batches-example"), [Level #apx-batches.level of the running example (the queue
-      of @fig:layout), with $B = #apx-batches.batch_size$. AFINNI makes #bx.afinni.len()
+    (panel("apx-batches-example"), [Level #apx-batches.level of the running example, the queue
+      of @fig:layout, with $B = #apx-batches.batch_size$. AFINNI makes #bx.afinni.len()
       batches, and ART makes #bx.art.len().]),
-    (panel("apx-batches-anchor"), [The queue of `tests/unit/test_plans.py`
-      (#bt.counts.map(str).join(", ")), with $B = #bt.batch_size$. A cluster larger than a
+    (panel("apx-batches-anchor"), [The queue of `tests/unit/test_plans.py`,
+      #bt.counts.map(str).join(", "), with $B = #bt.batch_size$. A cluster larger than a
       batch moves AFINNI's grid.]),
   ),
   kind: image,
@@ -3581,9 +3606,9 @@ least #mx.initial_smallest points, more than $Nmin$. So the upper bound holds fr
 
 #scene(side: left, width: 50%, apx-strip)[
   One cluster's rows sit somewhere in a batch, after the rows of $m$ other clusters. The
-  chunked sum (gold brackets) cuts the cluster into chunks. It counts the chunks from the
-  cluster's own first row $s$ and reads no other row. A _prefix-difference sum_ (grey
-  brackets) takes the running sum $S$ of the whole batch and returns $S_(s+n) - S_s$. Each of
+  chunked sum, shown by the gold brackets, cuts the cluster into chunks. It counts the chunks from the
+  cluster's own first row $s$ and reads no other row. A _prefix-difference sum_, shown by the grey
+  brackets, takes the running sum $S$ of the whole batch and returns $S_(s+n) - S_s$. Each of
   the two prefixes is as large as everything before the cluster, so its rounding error is
   that large too. The subtraction cannot remove this error.
 ]
@@ -3594,8 +3619,8 @@ least #mx.initial_smallest points, more than $Nmin$. So the upper bound holds fr
   $m$ rows of $f$ at uniform points of the domain. The chunked sum of `segment_cross`,
   restated in NumPy and checked against the library, has the same bits for every $m$. Its
   error is the cluster's own rounding. A prefix difference loses digits with every row before
-  the cluster. It does so with NumPy's row-order scan (filled) and even with correctly rounded
-  prefixes (hollow). Correctly rounded prefixes are the best any scan can do, and their error
+  the cluster. It does so with NumPy's row-order scan, the filled marks, and even with correctly
+  rounded prefixes, the hollow marks. Correctly rounded prefixes are the best any scan can do, and their error
   stays under the dashed bound of @lem:apx-prefix. All sums are computed on the CPU.])
   <fig:apx-sums>
 
@@ -3696,9 +3721,9 @@ accepted or cut, and with it the subtree below.
 
 #pitfall(title: [What the invariant does not reach])[
   The GPU training path also uses CuPy's axis reductions. Each one sums the entries of one row
-  or of one node. They are `xp.sum(..., axis=1)` over $d$ or $f_d$ (in `trust_regions`,
-  `local_models`, `split_search` and `ARTPlan`), `xp.trace` of $p times p$ and
-  $f_d times f_d$ matrices, and the column sums in `lstsq_auto`. By CuPy's source, the order
+  or of one node. They are `xp.sum(..., axis=1)` over $d$ or $f_d$, `xp.trace` of $p times p$ and
+  $f_d times f_d$ matrices, and the column sums in `lstsq_auto`. The sums over $d$ or $f_d$ are
+  in `trust_regions`, `local_models`, `split_search` and `ARTPlan`. By CuPy's source, the order
   of one output's additions depends on the reduction's length and layout. It does not depend
   on the number of outputs. The generic kernel derives its stride from the length. The CUB
   path gives each output one block sized by the length. CuPy uses the CUB path by default on
@@ -3742,8 +3767,8 @@ accepted or cut, and with it the subtree below.
   caption: [One batch of #apx-ode.batch rows of the Lorenz-96 study, integrated on the CPU.
     The study has $d = #apx-ode.d$, forcing #apx-ode.forcing, $t_1 = #apx-ode.tf$ and
     $atol = rtol = #apx-sci(apx-ode.tol_text)$. The batch is the first rows of its test set.
-    *Left.* The steps of four rows
-    (#apx-ode-colours.map(c => swatch(c, shape: "line")).join[ ]). Lines show the steps that
+    *Left.* The steps of four rows, drawn as
+    #apx-ode-colours.map(c => swatch(c, shape: "line")).join[ ]. Lines show the steps that
     `integrate_ensemble` takes. Hollow dots show the steps that SciPy's
     `solve_ivp(method="RK45")` takes on each row alone, placed at each step's start. The dark
     dashed line is the one step size that a single `solve_ivp` over the stacked batch shares
@@ -3834,7 +3859,7 @@ rounding. `integrate_ensemble` is the _batched ensemble integrator_.
   `group_sum` combines the lanes by a fixed butterfly. The kernel uses #apx-ode.warp lanes in
   #int(calc.round(calc.log(apx-ode.warp, base: 2))) stages, and the picture shows eight lanes
   in three stages. At each stage, every lane adds the value of the lane whose index differs
-  from its own in one bit (gold). After $log_2 L$ stages, every lane holds the sum.
+  from its own in one bit, along the gold edges. After $log_2 L$ stages, every lane holds the sum.
 ]
 
 #lemma(title: [every lane holds the same bits])[
@@ -3892,7 +3917,7 @@ GPU suite compares the kernel with the CPU version to rounding.
 ]
 
 #pitfall(title: [Only Lorenz-96's flow map])[
-  `lorenz96_flowmap` is the only oracle that uses the integrator. `vanderpol_flowmap` still
+  `lorenz96_flowmap` is the only oracle that uses the integrator. `vanderpol_flowmap`
   calls one `solve_ivp` over a stacked chunk. So do the flow maps' Jacobians,
   `lorenz96_flowmap_grad` and `vanderpol_flowmap_grad`, through `sensitivities_solver`. Their
   rows depend on the batch exactly as the rows of the stacked solve in @fig:apx-ode do. The
@@ -4042,7 +4067,7 @@ column sends of a grant can be large.
     buffered. Each rank learns how many loads every other rank sent (`allgather`). It then
     receives exactly the ones it has not yet read. A probe that finds nothing proves nothing,
     because a message may still be on its way. Messages left behind would be pending at
-    `MPI_Finalize`. Or the next `refine` in the same process would read them as its initial
+    `MPI_Finalize`, or the next `refine` in the same process would read them as its initial
     loads, because it uses the same communicator and the same tag.
   - `tests/mpi/test_mpi.py` runs on several ranks. It checks that requests, replies and their
     receipts are equal in number. It checks that no message of any tag is pending after the

@@ -167,3 +167,10 @@ wakelam2012:
     type: periodical
     title: The Astrophysical Journal Supplement Series
     volume: 199
+
+mazzia2008:
+  type: report
+  title: Test Set for Initial Value Problem Solvers, release 2.4
+  author: ["Mazzia, Francesca", "Magherini, Cecilia"]
+  date: 2008
+  organization: Department of Mathematics, University of Bari
