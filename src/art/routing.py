@@ -5,24 +5,36 @@ from dataclasses import dataclass
 import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, to_host, xp
-from src.art.geometry import Domain, Roots, plane_scores
+from src.art.geometry import Domain, Roots
 
 _CPU_KERNELS = None
+_GPU_KERNELS = None
+_THREADS = 128  # threads per block of the GPU routing kernels (one thread per query)
+
+
+def _gpu_kernels():
+    """``(route_prepare, route_walk)`` of ``kernels/art_routing.cu`` (compiled on first use)."""
+    global _GPU_KERNELS
+    if _GPU_KERNELS is None:
+        from src import kernels
+
+        module = kernels.module("art_routing")
+        _GPU_KERNELS = (module.get_function("route_prepare"), module.get_function("route_walk"))
+    return _GPU_KERNELS
 
 
 def _cpu_kernels():
     """
-    ``(walk, pairwise_dot, prepare)``: the Numba kernels of ``RoutingTable.route`` on the CPU,
-    compiled on first use (cached on disk). ``prepare`` normalizes, flags and clips the queries
-    in one pass; ``walk`` routes one query at a time from its root to its leaf, reading only the
-    planes on its path instead of a level's gathered planes for every query.
+    ``(walk, pairwise_dot, prepare)``: the Numba forms of ``kernels/art_routing.cu``'s
+    ``route_walk`` and ``route_prepare`` and their dot product, compiled on first use (cached on
+    disk), statement for statement, so both backends route every query to the same leaf.
 
-    A query must land where the NumPy loop sends it, so the dot product adds ``u_j a_j`` in the
-    order of NumPy's row sum, which ``plane_scores`` (and with it every training split) uses:
-    left to right below 8 terms, eight partial sums combined as
-    ``((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7))`` up to 128, and halves (rounded to a
-    multiple of 8) beyond. ``fastmath=False`` keeps every product and sum rounded on its own
-    (no fused multiply-add). ``tests/unit/test_art.py`` compares the walk with that loop.
+    The dot product adds ``u_j a_j`` in the order of NumPy's row sum, which ``plane_scores`` (and
+    with it every training split) uses: left to right below 8 terms, eight partial sums combined
+    as ``((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7))`` up to 128, and halves (rounded to a
+    multiple of 8) beyond. ``fastmath=False`` keeps every product and sum rounded on its own (no
+    fused multiply-add). ``tests/unit/test_art.py`` checks both against the level-by-level
+    definition.
     """
     global _CPU_KERNELS
     if _CPU_KERNELS is not None:
@@ -104,7 +116,7 @@ class RoutingTable:
     ``(a, z)`` of the companion, whose side ``normal^T u >= offset`` is the right child) or a
     leaf (row ``node_leaf[i]`` of the leaf arrays), and ``root_node[r]`` is root ``r``'s node.
     A leaf is its own child on both sides, with a zero plane (``0 >= 0``: right), so a query
-    that reaches it stays there and routing needs no per-query test for arrival.
+    that reaches it stays there: ``max_depth`` level-by-level steps take every query to its leaf.
     Routing follows child indices, so no logical key is packed into an integer and every
     depth the locational codes allow (``MAX_DEPTH_LIMIT``) routes. The logical identity
     ``(root, locational_code)`` of every node is kept as provenance (``node_root``,
@@ -203,36 +215,55 @@ class RoutingTable:
         Outside queries are routed from their nearest domain point (clipped coordinates)
         and evaluated at their own coordinates, i.e. extrapolated by that leaf; the audit
         says nothing about them. Non-finite queries raise ``ValueError``.
-
-        On the CPU the coordinates are prepared in one compiled pass and each query walks its own
-        path, stopping at its leaf (``_cpu_kernels``). On the GPU every query takes ``max_depth``
-        steps together, a query at a leaf stepping to itself: no step compacts the queries still
-        moving or waits for the device to count them, and a tree whose leaves lie much shallower
-        than its deepest one pays for steps its queries do not need.
         """
-        X = xp.asarray(X, dtype=xp.float64)
+        U, outside = self.prepare_queries(X)
+        return self.node_leaf[self.walk(U, self.root_node[self.roots.root_of(U)])], outside
+
+    def prepare_queries(self, X: Array) -> tuple[Array, Array]:
+        """
+        ``(U, outside)``: the queries in the domain's unit box, clipped to it, and whether each lay
+        outside before the clip, in one compiled pass with ``Domain.normalize``'s arithmetic.
+        Raises ``ValueError`` for a misshaped query array or a NaN or infinite coordinate.
+        """
+        X = xp.ascontiguousarray(xp.asarray(X, dtype=xp.float64))
         if X.ndim != 2 or X.shape[1] != self.domain.d:
             raise ValueError(f"Queries must have shape (n, {self.domain.d}); got {tuple(X.shape)}.")
-        if not IS_CUPY_BACKEND:
-            walk, _, prepare = _cpu_kernels()
-            X = np.ascontiguousarray(X)
-            U, outside = np.empty_like(X), np.empty(X.shape[0], dtype=bool)
-            if prepare(X, np.asarray(self.domain.lower), np.asarray(self.domain.width), U, outside):
-                raise ValueError("Queries contain NaN or infinity.")
-            out = self.root_node[self.roots.root_of(U)]
-            walk(U, out.copy(), self.is_leaf, self.normal, self.offset, self.child, out)
-            return self.node_leaf[out], outside
-        if not bool(xp.all(xp.isfinite(X))):
+        n, d = X.shape
+        U, outside = xp.empty_like(X), xp.empty(n, dtype=bool)
+        lower = xp.asarray(self.domain.lower, dtype=xp.float64)
+        width = xp.asarray(self.domain.width, dtype=xp.float64)
+        if IS_CUPY_BACKEND:
+            nonfinite = xp.zeros(1, dtype=xp.int32)
+            if n:
+                _gpu_kernels()[0](((n + _THREADS - 1) // _THREADS,), (_THREADS,),
+                                  (X, lower, width, U, outside, nonfinite, np.int64(n), np.int32(d)))  # fmt: skip
+            bad = int(nonfinite[0])
+        else:
+            bad = _cpu_kernels()[2](X, lower, width, U, outside)
+        if bad:
             raise ValueError("Queries contain NaN or infinity.")
-        U = self.domain.normalize(X)
-        outside = xp.any((U < 0) | (U > 1), axis=1)
-        U = xp.clip(U, 0.0, 1.0)
-        node = self.root_node[self.roots.root_of(U)]
-        for _ in range(self.max_depth):
-            # The same per-row scores as training's split predicate: a training point lands in its own leaf.
-            side = (plane_scores(U, self.normal[node]) - self.offset[node] >= 0).astype(xp.int64)
-            node = self.child[node, side]
-        return self.node_leaf[node], outside
+        return U, outside
+
+    def walk(self, U: Array, start: Array) -> Array:
+        """
+        The leaf node of every query of ``prepare_queries``' ``U``, walking from node ``start``:
+        one compiled thread per query, reading only the planes on its own path and stopping at
+        its leaf. Every plane score adds its terms in the order ``plane_scores`` uses (NumPy's
+        row sum), so a query lands where the level-by-level definition
+        ``node = child[node, plane_scores(u, normal[node]) - offset[node] >= 0]`` sends it, and
+        each training point in its own leaf.
+        """
+        start = xp.ascontiguousarray(start, dtype=xp.int64)
+        out = xp.empty_like(start)
+        n, d = int(U.shape[0]), int(U.shape[1])
+        if n == 0:
+            return out
+        if IS_CUPY_BACKEND:
+            _gpu_kernels()[1](((n + _THREADS - 1) // _THREADS,), (_THREADS,),
+                              (U, start, self.is_leaf, self.normal, self.offset, self.child, out, np.int64(n), np.int32(d)))  # fmt: skip
+        else:
+            _cpu_kernels()[0](U, start, self.is_leaf, self.normal, self.offset, self.child, out)
+        return out
 
     def arrays(self) -> dict[str, np.ndarray]:
         """

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src import Array, xp
+from src import IS_CUPY_BACKEND, Array, xp
 from src.numerics import (
     grid_cell_coords,
     grid_strides,
@@ -135,8 +135,33 @@ def plane_scores(U: Array, normals: Array) -> Array:
     """
     ``a_i^T u_i`` row by row, with ``a_i`` the unit normal of point ``i``'s plane (``a`` in the
     companion); training and routing both call this, so they classify identically.
+
+    The terms are added in the order of NumPy's sum over a contiguous row (pairwise, see
+    ``kernels/art_routing.cu``): NumPy itself on the CPU, the ``plane_scores_rows`` kernel on the
+    GPU, so a score has the same bits on both backends and ``RoutingTable.walk`` can reproduce it.
+    The product is made contiguous first: NumPy sums a non-contiguous row in another order.
     """
-    return xp.sum(U * normals, axis=1)
+    if IS_CUPY_BACKEND:
+        U, W = (xp.ascontiguousarray(a, dtype=xp.float64) for a in xp.broadcast_arrays(U, normals))
+        n, d = int(U.shape[0]), int(U.shape[1])
+        out = xp.empty(n, dtype=xp.float64)
+        if n:
+            _plane_scores_kernel()(((n + 127) // 128,), (128,), (U, W, out, np.int64(n), np.int32(d)))
+        return out
+    return xp.sum(xp.ascontiguousarray(U * normals), axis=1)
+
+
+_PLANE_SCORES_KERNEL = None
+
+
+def _plane_scores_kernel():
+    """``plane_scores_rows`` of ``kernels/art_routing.cu`` (compiled on first use)."""
+    global _PLANE_SCORES_KERNEL
+    if _PLANE_SCORES_KERNEL is None:
+        from src import kernels
+
+        _PLANE_SCORES_KERNEL = kernels.module("art_routing").get_function("plane_scores_rows")
+    return _PLANE_SCORES_KERNEL
 
 
 def gap_cuts(sorted_scores: Array, labels: Array, counts: Array, min_side: int) -> tuple[Array, Array, Array]:

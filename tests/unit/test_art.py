@@ -682,24 +682,37 @@ def _random_tree(rng, d: int, max_depth: int):
                            "split_locational_code": splits, "normal": np.array(normals), "offset": np.array(offsets)}  # fmt: skip
 
 
-@pytest.mark.parametrize("d", [2, 5, 8, 12, 33])
-def test_the_cpu_walk_routes_every_query_where_the_level_loop_does(d):
-    """The per-query walk against the vectorized definition, on an uneven tree, with queries on planes."""
-    if __import__("src").IS_CUPY_BACKEND:
-        pytest.skip("the walk is the CPU path")
+@pytest.mark.parametrize("d", [2, 5, 8, 12, 33, 130])
+def test_the_walk_routes_every_query_where_the_level_loop_does(d):
+    """
+    route (the compiled walk of the active backend) against the level-by-level definition in
+    NumPy on the host, on an uneven tree, with a query exactly on the root's plane.
+    """
     rng = np.random.default_rng(100 + d)
     domain, roots, tree = _random_tree(rng, d, max_depth=9)
     table = RoutingTable.build(domain, roots, **tree)
     U = rng.uniform(0, 1, (4000, d))
-    # Put a query exactly on the root's plane as plane_scores sees it, so a rounding difference would show.
-    table.offset[0] = float(plane_scores(U[:1], table.normal[:1])[0])
-    node = table.root_node[np.zeros(len(U), dtype=np.int64)]
-    for _ in range(table.max_depth):  # the vectorized definition (the GPU path)
-        side = (plane_scores(U, table.normal[node]) - table.offset[node] >= 0).astype(np.int64)
-        node = table.child[node, side]
+    normal, child, node_leaf = host(table.normal), host(table.child), host(table.node_leaf)
+    offset = host(table.offset).copy()
+    offset[0] = float(np.sum(U[0] * normal[0]))  # the query lies on the root's plane, as NumPy scores it
+    table.offset = xp.asarray(offset)
+    node = np.zeros(len(U), dtype=np.int64)  # one box root: node 0
+    for _ in range(table.max_depth):
+        node = child[node, (np.sum(np.ascontiguousarray(U * normal[node]), axis=1) - offset[node] >= 0).astype(np.int64)]
     leaf, _ = table.route(xp.asarray(U))
-    np.testing.assert_array_equal(host(leaf), table.node_leaf[node])
+    np.testing.assert_array_equal(host(leaf), node_leaf[node])
     assert len(np.unique(host(leaf))) >= 8  # the queries spread over the tree
+
+
+@pytest.mark.parametrize("d", [1, 3, 7, 8, 9, 16, 17, 40, 128, 129, 300])
+def test_plane_scores_have_the_bits_of_numpy_row_sums_on_every_backend(d):
+    """On the GPU, the plane_scores_rows kernel adds in NumPy's order: the same bits as the CPU."""
+    rng = np.random.default_rng(7 + d)
+    U, W = rng.uniform(0, 1, (2000, d)), rng.normal(size=(2000, d))
+    np.testing.assert_array_equal(host(plane_scores(xp.asarray(U), xp.asarray(W))), np.sum(U * W, axis=1))
+    # A non-contiguous product sums in another order in NumPy; plane_scores sums contiguous rows.
+    Wf = np.asfortranarray(W)
+    np.testing.assert_array_equal(host(plane_scores(xp.asarray(U), xp.asarray(Wf))), np.sum(U * W, axis=1))
 
 
 def test_the_cpu_prologue_prepares_the_bits_of_the_numpy_prologue():

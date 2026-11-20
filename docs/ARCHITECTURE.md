@@ -52,8 +52,10 @@ A plan's `process_batch` runs four stages on its batch:
   `k_nn` leaves' models are blended. A query whose best candidate lies at distance > 1 is flagged
   outside.
 - **ART** (`predictor="route"`): `RoutingTable.route` (`src/art/routing.py`) walks each query down
-  the split planes to its leaf; a query outside the domain is flagged and routed from its
-  nearest domain point.
+  the split planes to its leaf, one compiled thread per query (Numba on the CPU,
+  `src/kernels/art_routing.cu` on the GPU); a query outside the domain is flagged and routed from
+  its nearest domain point. Every plane score, in training and in routing, adds its terms in
+  NumPy's row-sum order (`plane_scores`), so both backends score a plane with the same bits.
 
 `predict` is collective under MPI (rank 0 scatters the queries and gathers the results);
 `predict_local` and `predict_route_local` predict on one process.

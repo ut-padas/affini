@@ -1,19 +1,20 @@
 """
-Where ART prediction spends its time: the stages of ``RoutingTable.route`` (input checks,
-normalization, root lookup, each tree level) and the leaf evaluation, for several query counts,
-plus ``predict_route_local`` at several chunk sizes. Run it before optimizing routing, on each
-backend, to see which stage an optimization has to remove.
+Where ART prediction spends its time: the stages of ``RoutingTable.route`` (preparing the
+queries, the root lookup, the walk to the leaves) and the leaf evaluation, for several query
+counts, plus ``predict_route_local`` at several chunk sizes. It also times the level-by-level
+definition the walk reproduces (vectorized ``plane_scores`` per level, ``level_loop``) and stops
+unless both give every query the same leaf, so a run on a new machine also checks the walk. Run
+it on each backend before and after optimizing routing.
 
     SURROGATE_DEVICE=cpu SURROGATE_MPI=off .venv/bin/python scripts/profile_routing.py
     SURROGATE_DEVICE=gpu SURROGATE_MPI=off .venv/bin/python scripts/profile_routing.py \
         --problem lorenz96 --dim 5 --queries 50000 1000000 10000000
 
 The model is ART exactly as ``scripts/bench_inference.py`` trains it (one box root, the same
-tolerance and level limit), saved under ``--out`` and reused while its settings match. The staged
-timing runs a copy of ``RoutingTable.route``'s loop with a timer around every stage and stops
-unless its leaves equal ``route``'s, so the stages always describe the code being measured. Each
-timing is the median of ``--repeats`` calls after a warm-up call; on a GPU the device is
-synchronized around every stage, which adds a sync per stage that ``route`` itself does not
+tolerance and level limit), saved under ``--out`` and reused while its settings match. The stages
+are the table's own steps (``prepare_queries``, ``Roots.root_of``, ``walk``) with a timer around
+each. Each timing is the median of ``--repeats`` calls after a warm-up call; on a GPU the device
+is synchronized around every stage, which adds a sync per stage that ``route`` itself does not
 have, so the stage times add up to more than the unstaged ``route`` time (both are reported).
 
 Outputs, under ``--out`` (default ``scratch/profile_routing/<cpu|gpu>``): ``<problem>_d<d>.json``
@@ -37,7 +38,6 @@ from bench_inference import PROBLEMS, configs, sync, tolerances  # noqa: E402
 
 from src import IS_CUPY_BACKEND, PROJECT_DIR, to_host, xp  # noqa: E402
 from src.art.geometry import plane_scores  # noqa: E402
-from src.art.routing import _cpu_kernels  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
@@ -58,13 +58,9 @@ def median_time(fn, repeats: int) -> tuple[float, object]:
     return float(np.median(seconds)), out
 
 
-def staged_route(table, X) -> tuple[dict, list[dict], object]:
-    """
-    ``table.route(X)`` stage by stage: seconds per stage, one entry per level (seconds, queries
-    still moving) on the GPU's level loop, and the leaves. On the CPU the compiled passes are
-    stages ``prepare`` and ``walk``. Mirrors ``RoutingTable.route``; ``check_staged`` guards the copy.
-    """
-    stages, levels = {}, []
+def staged_route(table, X) -> tuple[dict, object]:
+    """``table.route(X)`` stage by stage with the table's own steps: seconds per stage, and the leaves."""
+    stages = {}
 
     def timed(name, fn):
         sync()
@@ -74,37 +70,22 @@ def staged_route(table, X) -> tuple[dict, list[dict], object]:
         stages[name] = stages.get(name, 0.0) + time.perf_counter() - t
         return out
 
-    X = timed("to_float64", lambda: xp.asarray(X, dtype=xp.float64))
-    if not IS_CUPY_BACKEND:  # route's CPU path: one compiled pass to prepare, one to walk
-        walk, _, prepare = _cpu_kernels()
-        X = np.ascontiguousarray(X)
-        U, outside = np.empty_like(X), np.empty(X.shape[0], dtype=bool)
-        timed("prepare", lambda: prepare(X, np.asarray(table.domain.lower), np.asarray(table.domain.width), U, outside))
-        out = timed("root_lookup", lambda: table.root_node[table.roots.root_of(U)])
-        start = out.copy()
-        timed("walk", lambda: walk(U, start, table.is_leaf, table.normal, table.offset, table.child, out))
-        return stages, levels, timed("leaf_lookup", lambda: table.node_leaf[out])
-    timed("finite_check", lambda: bool(xp.all(xp.isfinite(X))))
-    U = timed("normalize", lambda: table.domain.normalize(X))
-    U = timed("outside_and_clip", lambda: (xp.any((U < 0) | (U > 1), axis=1), xp.clip(U, 0.0, 1.0)))[1]
-    node = timed("root_lookup", lambda: table.root_node[table.roots.root_of(U)])
+    U, _ = timed("prepare", lambda: table.prepare_queries(X))
+    start = timed("root_lookup", lambda: table.root_node[table.roots.root_of(U)])
+    node = timed("walk", lambda: table.walk(U, start))
+    return stages, timed("leaf_lookup", lambda: table.node_leaf[node])
+
+
+def level_loop(table, X):
+    """
+    The leaves by the level-by-level definition the walk must reproduce (vectorized, ``max_depth``
+    steps of ``plane_scores`` for every query): the reference for correctness and for the speedup.
+    """
+    U, _ = table.prepare_queries(X)
+    node = table.root_node[table.roots.root_of(U)]
     for _ in range(table.max_depth):
-        moving = int(xp.sum(~table.is_leaf[node]))  # not timed: how many queries this step still moves
-        sync()
-        t = time.perf_counter()
-        side = (plane_scores(U, table.normal[node]) - table.offset[node] >= 0).astype(xp.int64)
-        node = table.child[node, side]
-        sync()
-        levels.append({"seconds": time.perf_counter() - t, "moving": moving})
-    leaf = timed("leaf_lookup", lambda: table.node_leaf[node])
-    return stages, levels, leaf
-
-
-def check_staged(table, X) -> None:
-    """Stop unless the staged copy routes every query to the same leaf as ``RoutingTable.route``."""
-    _, _, leaf = staged_route(table, X)
-    if not np.array_equal(to_host(leaf), to_host(table.route(X)[0])):
-        raise SystemExit("staged_route no longer matches RoutingTable.route: update the copy before profiling.")
+        node = table.child[node, (plane_scores(U, table.normal[node]) - table.offset[node] >= 0).astype(xp.int64)]
+    return table.node_leaf[node]
 
 
 def model_for(name: str, d: int, args) -> AdaptiveSurrogate:
@@ -137,22 +118,22 @@ def profile(model: AdaptiveSurrogate, name: str, d: int, n: int, args) -> dict:
     """Every timing for ``n`` uniform queries in the domain."""
     prob, table = PROBLEMS[name], model.routing
     X = xp.asarray(np.random.default_rng(args.seed + 2).uniform(*prob.domain, (n, d)))
-    check_staged(table, X[: min(n, 10_000)])
     params = model.model_params()
     route_s, (leaf, _) = median_time(lambda: table.route(X), args.repeats)
+    loop_s, ref = median_time(lambda: level_loop(table, X), args.repeats)
+    if not np.array_equal(to_host(leaf), to_host(ref)):
+        raise SystemExit(f"route and the level-by-level definition disagree on {int((to_host(leaf) != to_host(ref)).sum())} queries.")
     eval_s, _ = median_time(lambda: model.local_model.evaluate(params, X, leaf), args.repeats)
     # Stages: one warm-up, then the per-stage median over the repeats.
     staged_route(table, X)
-    runs = [staged_route(table, X) for _ in range(args.repeats)]
-    stages = {k: float(np.median([r[0][k] for r in runs])) for k in runs[0][0]}
-    levels = [{"level": i, "moving": runs[0][1][i]["moving"],
-               "seconds": float(np.median([r[1][i]["seconds"] for r in runs]))} for i in range(len(runs[0][1]))]  # fmt: skip
+    runs = [staged_route(table, X)[0] for _ in range(args.repeats)]
+    stages = {k: float(np.median([r[k] for r in runs])) for k in runs[0]}
     chunks = {}
     for size in sorted({s for s in args.chunks if s < n} | {n}):
         chunks[str(size)] = median_time(lambda s=size: model.predict_route_local(X, batch_size=s), args.repeats)[0]
     chunks["default"] = median_time(lambda: model.predict_route_local(X), args.repeats)[0]
-    return {"queries": n, "route_s": route_s, "evaluate_s": eval_s, "stages_s": stages,
-            "levels_s": sum(lv["seconds"] for lv in levels), "levels": levels, "predict_by_chunk_s": chunks}  # fmt: skip
+    return {"queries": n, "route_s": route_s, "level_loop_s": loop_s, "evaluate_s": eval_s, "stages_s": stages,
+            "predict_by_chunk_s": chunks}  # fmt: skip
 
 
 def report(name: str, d: int, model, r: dict) -> None:
@@ -161,14 +142,12 @@ def report(name: str, d: int, model, r: dict) -> None:
     print(f"\n[{name} d={d}] {n:,} queries, {model.N_src:,} leaves, depth {model.routing.max_depth}, "
           f"{'cupy' if IS_CUPY_BACKEND else 'numpy'}")  # fmt: skip
     print(f"  route (unstaged)   {r['route_s'] * 1e3:10.2f} ms  {r['route_s'] / n * 1e9:8.1f} ns/query")
+    print(f"  level loop (def.)  {r['level_loop_s'] * 1e3:10.2f} ms  {r['level_loop_s'] / n * 1e9:8.1f} ns/query  "
+          f"(route {r['level_loop_s'] / r['route_s']:.1f}x faster, same leaves)")
     print(f"  evaluate           {r['evaluate_s'] * 1e3:10.2f} ms  {r['evaluate_s'] / n * 1e9:8.1f} ns/query")
     print("  stages (synchronized):")
     for k, v in r["stages_s"].items():
         print(f"    {k:18s} {v * 1e3:10.2f} ms")
-    if r["levels"]:
-        print(f"    {'levels (total)':18s} {r['levels_s'] * 1e3:10.2f} ms over {len(r['levels'])} levels")
-    for lv in r["levels"]:
-        print(f"      level {lv['level']:2d}  {lv['seconds'] * 1e3:8.2f} ms  {lv['moving']:>12,d} moving")
     print("  predict_route_local by chunk size:")
     for size, s in r["predict_by_chunk_s"].items():
         label = f"{int(size):>12,d}" if size.isdigit() else f"{size:>12s}"
