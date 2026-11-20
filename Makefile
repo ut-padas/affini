@@ -117,6 +117,7 @@ report-figures:
 
 report-global-figures:
 	SURROGATE_DEVICE=cpu SURROGATE_MPI=off OPENBLAS_NUM_THREADS=1 PYTHONPATH=. uv run python docs/reports/global-approximants/figures/make_figures.py
+	SURROGATE_DEVICE=cpu SURROGATE_MPI=off OPENBLAS_NUM_THREADS=1 PYTHONPATH=. uv run python docs/reports/global-approximants/figures/problems.py
 
 # The convergence sections of both companions: many trainings at tolerances down to where a run takes about
 # two minutes, so they have their own target (about 90 minutes on a laptop). The schemes' study reads the
