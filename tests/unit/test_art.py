@@ -647,3 +647,73 @@ def test_soft_gates_match_the_logistic_formula():
     np.testing.assert_allclose(host(WL), 1e-6 + (1 - 2e-6) * sm, rtol=1e-12, atol=1e-15)
     np.testing.assert_allclose(host(WR), 1e-6 + (1 - 2e-6) * sp, rtol=1e-12, atol=1e-15)
     np.testing.assert_allclose(host(sp_sm), sp * sm, rtol=1e-12, atol=1e-300)
+
+
+@pytest.mark.parametrize("d", [1, 2, 3, 5, 7, 8, 9, 15, 16, 17, 40, 128, 129, 300])
+def test_the_cpu_walk_scores_planes_with_the_bits_of_plane_scores(d):
+    """The walk's dot product is NumPy's row sum to the bit, so it routes as training split."""
+    from src.art.routing import _cpu_kernels
+
+    _, pairwise_dot, _ = _cpu_kernels()
+    rng = np.random.default_rng(d)
+    U, W = rng.uniform(0, 1, (500, d)), rng.normal(size=(500, d))
+    ref = np.sum(U * W, axis=1)  # plane_scores on the CPU backend
+    mine = np.array([pairwise_dot(U[i], W[i], 0, d) for i in range(len(U))])
+    np.testing.assert_array_equal(mine, ref)
+
+
+def _random_tree(rng, d: int, max_depth: int):
+    """A random uneven tree over one box root: (domain, roots, build arguments)."""
+    leaves, splits, normals, offsets = [], [], [], []
+    stack = [1]
+    while stack:
+        code = stack.pop()
+        depth = code.bit_length() - 1
+        if depth < max_depth and (depth < 4 or rng.uniform() < 0.7):
+            splits.append(code)
+            w = rng.normal(size=d)
+            normals.append(w / np.linalg.norm(w))
+            offsets.append(float(normals[-1] @ rng.uniform(0, 1, d)))  # through a point of the box
+            stack += [2 * code, 2 * code + 1]
+        else:
+            leaves.append(code)
+    domain, roots = Domain(np.zeros(d), np.ones(d)), Roots.build("box", d, 1)
+    return domain, roots, {"leaf_root": [0] * len(leaves), "leaf_locational_code": leaves, "split_root": [0] * len(splits),
+                           "split_locational_code": splits, "normal": np.array(normals), "offset": np.array(offsets)}  # fmt: skip
+
+
+@pytest.mark.parametrize("d", [2, 5, 8, 12, 33])
+def test_the_cpu_walk_routes_every_query_where_the_level_loop_does(d):
+    """The per-query walk against the vectorized definition, on an uneven tree, with queries on planes."""
+    if __import__("src").IS_CUPY_BACKEND:
+        pytest.skip("the walk is the CPU path")
+    rng = np.random.default_rng(100 + d)
+    domain, roots, tree = _random_tree(rng, d, max_depth=9)
+    table = RoutingTable.build(domain, roots, **tree)
+    U = rng.uniform(0, 1, (4000, d))
+    # Put a query exactly on the root's plane as plane_scores sees it, so a rounding difference would show.
+    table.offset[0] = float(plane_scores(U[:1], table.normal[:1])[0])
+    node = table.root_node[np.zeros(len(U), dtype=np.int64)]
+    for _ in range(table.max_depth):  # the vectorized definition (the GPU path)
+        side = (plane_scores(U, table.normal[node]) - table.offset[node] >= 0).astype(np.int64)
+        node = table.child[node, side]
+    leaf, _ = table.route(xp.asarray(U))
+    np.testing.assert_array_equal(host(leaf), table.node_leaf[node])
+    assert len(np.unique(host(leaf))) >= 8  # the queries spread over the tree
+
+
+def test_the_cpu_prologue_prepares_the_bits_of_the_numpy_prologue():
+    """One compiled pass gives Domain.normalize, the outside flag and the clip exactly."""
+    from src.art.routing import _cpu_kernels
+
+    _, _, prepare = _cpu_kernels()
+    domain = Domain(np.array([-2.0, 0.1, -5.0]), np.array([3.0, 0.7, 5.0]))
+    X = np.random.default_rng(3).uniform(-7, 7, (5000, 3))
+    X[:3] = domain.lower, domain.upper, (domain.lower + domain.upper) / 2  # on the faces and inside
+    U, outside = np.empty_like(X), np.empty(len(X), dtype=bool)
+    assert prepare(X, domain.lower, domain.width, U, outside) == 0
+    ref = np.asarray(to_host(domain.normalize(xp.asarray(X))))
+    np.testing.assert_array_equal(outside, np.any((ref < 0) | (ref > 1), axis=1))
+    np.testing.assert_array_equal(U, np.clip(ref, 0.0, 1.0))
+    X[7, 1] = np.nan
+    assert prepare(X, domain.lower, domain.width, U, outside) == 1

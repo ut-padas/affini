@@ -4,8 +4,95 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src import Array, to_host, xp
+from src import IS_CUPY_BACKEND, Array, to_host, xp
 from src.art.geometry import Domain, Roots, plane_scores
+
+_CPU_KERNELS = None
+
+
+def _cpu_kernels():
+    """
+    ``(walk, pairwise_dot, prepare)``: the Numba kernels of ``RoutingTable.route`` on the CPU,
+    compiled on first use (cached on disk). ``prepare`` normalizes, flags and clips the queries
+    in one pass; ``walk`` routes one query at a time from its root to its leaf, reading only the
+    planes on its path instead of a level's gathered planes for every query.
+
+    A query must land where the NumPy loop sends it, so the dot product adds ``u_j a_j`` in the
+    order of NumPy's row sum, which ``plane_scores`` (and with it every training split) uses:
+    left to right below 8 terms, eight partial sums combined as
+    ``((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7))`` up to 128, and halves (rounded to a
+    multiple of 8) beyond. ``fastmath=False`` keeps every product and sum rounded on its own
+    (no fused multiply-add). ``tests/unit/test_art.py`` compares the walk with that loop.
+    """
+    global _CPU_KERNELS
+    if _CPU_KERNELS is not None:
+        return _CPU_KERNELS
+    import numba as nb
+
+    @nb.njit(cache=True, fastmath=False)
+    def pairwise_dot(u, w, lo, n):  # pragma: no cover - compiled
+        if n < 8:
+            res = 0.0
+            for t in range(lo, lo + n):
+                res += u[t] * w[t]
+            return res
+        if n <= 128:
+            r0, r1, r2, r3 = u[lo] * w[lo], u[lo + 1] * w[lo + 1], u[lo + 2] * w[lo + 2], u[lo + 3] * w[lo + 3]
+            r4, r5, r6, r7 = u[lo + 4] * w[lo + 4], u[lo + 5] * w[lo + 5], u[lo + 6] * w[lo + 6], u[lo + 7] * w[lo + 7]
+            i, stop = 8, n - n % 8
+            while i < stop:
+                t = lo + i
+                r0 += u[t] * w[t]
+                r1 += u[t + 1] * w[t + 1]
+                r2 += u[t + 2] * w[t + 2]
+                r3 += u[t + 3] * w[t + 3]
+                r4 += u[t + 4] * w[t + 4]
+                r5 += u[t + 5] * w[t + 5]
+                r6 += u[t + 6] * w[t + 6]
+                r7 += u[t + 7] * w[t + 7]
+                i += 8
+            res = ((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7))
+            while i < n:
+                res += u[lo + i] * w[lo + i]
+                i += 1
+            return res
+        n2 = n // 2
+        n2 -= n2 % 8
+        return pairwise_dot(u, w, lo, n2) + pairwise_dot(u, w, lo + n2, n - n2)
+
+    @nb.njit(parallel=True, cache=True, fastmath=False)
+    def walk(U, start, is_leaf, normal, offset, child, out):  # pragma: no cover - compiled
+        d = U.shape[1]
+        for i in nb.prange(U.shape[0]):
+            node = start[i]
+            # A query stops at its own leaf: no later step could move it (leaves are their own children).
+            while not is_leaf[node]:
+                s = pairwise_dot(U[i], normal[node], 0, d)
+                node = child[node, 1 if s - offset[node] >= 0 else 0]
+            out[i] = node
+
+    @nb.njit(parallel=True, cache=True, fastmath=False)
+    def prepare(X, lower, width, U, outside):  # pragma: no cover - compiled
+        # One pass for the NumPy prologue's five: the same (x - lower) / width per coordinate as
+        # Domain.normalize, the outside flag before clipping, and the clip. Returns the rows
+        # holding a NaN or infinity.
+        bad = 0
+        for i in nb.prange(X.shape[0]):
+            out, nonfinite = False, 0
+            for j in range(X.shape[1]):
+                x = X[i, j]
+                if not np.isfinite(x):
+                    nonfinite = 1
+                u = (x - lower[j]) / width[j]
+                if u < 0.0 or u > 1.0:
+                    out = True
+                U[i, j] = min(max(u, 0.0), 1.0)
+            outside[i] = out
+            bad += nonfinite
+        return bad
+
+    _CPU_KERNELS = (walk, pairwise_dot, prepare)
+    return _CPU_KERNELS
 
 
 # --- Routing -------------------------------------------------------------------------
@@ -117,13 +204,24 @@ class RoutingTable:
         and evaluated at their own coordinates, i.e. extrapolated by that leaf; the audit
         says nothing about them. Non-finite queries raise ``ValueError``.
 
-        Every query takes ``max_depth`` steps, a query at a leaf stepping to itself: no step
-        compacts the queries still moving or waits for the device to count them. A tree whose
-        leaves lie much shallower than its deepest one pays for steps its queries do not need.
+        On the CPU the coordinates are prepared in one compiled pass and each query walks its own
+        path, stopping at its leaf (``_cpu_kernels``). On the GPU every query takes ``max_depth``
+        steps together, a query at a leaf stepping to itself: no step compacts the queries still
+        moving or waits for the device to count them, and a tree whose leaves lie much shallower
+        than its deepest one pays for steps its queries do not need.
         """
         X = xp.asarray(X, dtype=xp.float64)
         if X.ndim != 2 or X.shape[1] != self.domain.d:
             raise ValueError(f"Queries must have shape (n, {self.domain.d}); got {tuple(X.shape)}.")
+        if not IS_CUPY_BACKEND:
+            walk, _, prepare = _cpu_kernels()
+            X = np.ascontiguousarray(X)
+            U, outside = np.empty_like(X), np.empty(X.shape[0], dtype=bool)
+            if prepare(X, np.asarray(self.domain.lower), np.asarray(self.domain.width), U, outside):
+                raise ValueError("Queries contain NaN or infinity.")
+            out = self.root_node[self.roots.root_of(U)]
+            walk(U, out.copy(), self.is_leaf, self.normal, self.offset, self.child, out)
+            return self.node_leaf[out], outside
         if not bool(xp.all(xp.isfinite(X))):
             raise ValueError("Queries contain NaN or infinity.")
         U = self.domain.normalize(X)

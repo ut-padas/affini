@@ -37,6 +37,7 @@ from bench_inference import PROBLEMS, configs, sync, tolerances  # noqa: E402
 
 from src import IS_CUPY_BACKEND, PROJECT_DIR, to_host, xp  # noqa: E402
 from src.art.geometry import plane_scores  # noqa: E402
+from src.art.routing import _cpu_kernels  # noqa: E402
 from src.core.evaluation import Evaluator  # noqa: E402
 from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
@@ -59,9 +60,9 @@ def median_time(fn, repeats: int) -> tuple[float, object]:
 
 def staged_route(table, X) -> tuple[dict, list[dict], object]:
     """
-    ``table.route(X)`` stage by stage: seconds per prologue stage, one entry per level (seconds,
-    queries still moving), and the leaves. Mirrors ``RoutingTable.route``; ``check_staged`` guards
-    the copy.
+    ``table.route(X)`` stage by stage: seconds per stage, one entry per level (seconds, queries
+    still moving) on the GPU's level loop, and the leaves. On the CPU the compiled passes are
+    stages ``prepare`` and ``walk``. Mirrors ``RoutingTable.route``; ``check_staged`` guards the copy.
     """
     stages, levels = {}, []
 
@@ -74,6 +75,15 @@ def staged_route(table, X) -> tuple[dict, list[dict], object]:
         return out
 
     X = timed("to_float64", lambda: xp.asarray(X, dtype=xp.float64))
+    if not IS_CUPY_BACKEND:  # route's CPU path: one compiled pass to prepare, one to walk
+        walk, _, prepare = _cpu_kernels()
+        X = np.ascontiguousarray(X)
+        U, outside = np.empty_like(X), np.empty(X.shape[0], dtype=bool)
+        timed("prepare", lambda: prepare(X, np.asarray(table.domain.lower), np.asarray(table.domain.width), U, outside))
+        out = timed("root_lookup", lambda: table.root_node[table.roots.root_of(U)])
+        start = out.copy()
+        timed("walk", lambda: walk(U, start, table.is_leaf, table.normal, table.offset, table.child, out))
+        return stages, levels, timed("leaf_lookup", lambda: table.node_leaf[out])
     timed("finite_check", lambda: bool(xp.all(xp.isfinite(X))))
     U = timed("normalize", lambda: table.domain.normalize(X))
     U = timed("outside_and_clip", lambda: (xp.any((U < 0) | (U > 1), axis=1), xp.clip(U, 0.0, 1.0)))[1]
@@ -140,6 +150,7 @@ def profile(model: AdaptiveSurrogate, name: str, d: int, n: int, args) -> dict:
     chunks = {}
     for size in sorted({s for s in args.chunks if s < n} | {n}):
         chunks[str(size)] = median_time(lambda s=size: model.predict_route_local(X, batch_size=s), args.repeats)[0]
+    chunks["default"] = median_time(lambda: model.predict_route_local(X), args.repeats)[0]
     return {"queries": n, "route_s": route_s, "evaluate_s": eval_s, "stages_s": stages,
             "levels_s": sum(lv["seconds"] for lv in levels), "levels": levels, "predict_by_chunk_s": chunks}  # fmt: skip
 
@@ -154,12 +165,14 @@ def report(name: str, d: int, model, r: dict) -> None:
     print("  stages (synchronized):")
     for k, v in r["stages_s"].items():
         print(f"    {k:18s} {v * 1e3:10.2f} ms")
-    print(f"    {'levels (total)':18s} {r['levels_s'] * 1e3:10.2f} ms over {len(r['levels'])} levels")
+    if r["levels"]:
+        print(f"    {'levels (total)':18s} {r['levels_s'] * 1e3:10.2f} ms over {len(r['levels'])} levels")
     for lv in r["levels"]:
         print(f"      level {lv['level']:2d}  {lv['seconds'] * 1e3:8.2f} ms  {lv['moving']:>12,d} moving")
     print("  predict_route_local by chunk size:")
     for size, s in r["predict_by_chunk_s"].items():
-        print(f"    chunk {int(size):>12,d}  {s * 1e3:10.2f} ms")
+        label = f"{int(size):>12,d}" if size.isdigit() else f"{size:>12s}"
+        print(f"    chunk {label}  {s * 1e3:10.2f} ms")
 
 
 def main() -> None:
@@ -170,7 +183,7 @@ def main() -> None:
     p.add_argument("--max-levels", type=int, default=15)
     p.add_argument("--queries", nargs="+", type=int, default=[50_000, 1_000_000], help="query counts to profile")
     p.add_argument("--chunks", nargs="+", type=int, default=[5_000, 50_000, 500_000],
-                   help="predict_route_local chunk sizes (plus one chunk of all queries)")
+                   help="predict_route_local chunk sizes (plus one chunk of all queries, and the default)")
     p.add_argument("--repeats", type=int, default=5)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=Path, default=OUT_DIR)

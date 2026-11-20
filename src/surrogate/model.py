@@ -75,7 +75,19 @@ def _collective(what: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
     return decorate
 
 
-ROUTE_CHUNK = 5000  # queries per routed chunk (ART); routing gathers only (d + 1) per query and level
+ROUTE_CHUNK = 5000  # GPU: queries per routed chunk (ART); routing gathers only (d + 1) per query and level
+# CPU: the compiled walk starts a parallel region per chunk, so routed chunks are as large as the
+# leaf evaluation's per-query gather of the leaf's parameters allows within ROUTE_GATHER_BYTES.
+ROUTE_CPU_CHUNK = 1 << 17
+ROUTE_GATHER_BYTES = 256 << 20
+
+
+def route_chunk_size(leaf_params: dict[str, Array], d: int) -> int:
+    """Queries per routed chunk: ``ROUTE_CHUNK`` on the GPU, on the CPU up to ``ROUTE_CPU_CHUNK`` within ``ROUTE_GATHER_BYTES``."""
+    if IS_CUPY_BACKEND:
+        return ROUTE_CHUNK
+    per_query = 8 * (2 * d + sum(int(np.prod(v.shape[1:])) for v in leaf_params.values()))
+    return int(max(1, min(ROUTE_CPU_CHUNK, ROUTE_GATHER_BYTES // per_query)))
 # Bytes of the (chunk, k_coarse, d, d) trust-matrix gather in kNN prediction, its largest array.
 # 5,000 queries stay within it while k_coarse d^2 <= 53,687 (d up to 73 with 10 candidates, up to 32
 # with 50), so low-dimensional prediction keeps its chunks. CuPy's einsum is not chunk-invariant
@@ -540,7 +552,8 @@ class AdaptiveSurrogate:
         ``predictor="route"`` (the default, and only meaningful choice, for ART
         models): each query is routed down the tree to exactly one leaf, whose model
         predicts it; "outside" then means outside the domain only (such queries are routed
-        from the nearest domain point). ``k_nn`` and the trust-region options do not apply.
+        from the nearest domain point). ``k_nn`` and the trust-region options do not apply,
+        and ``batch_size`` defaults to ``route_chunk_size``.
         A leaf's ``terminal_reason`` and ``validation_status`` are in ``art_leaves``.
         """
         predictor = predictor or ("route" if self.routing is not None else "knn")
@@ -580,7 +593,7 @@ class AdaptiveSurrogate:
 
         # Run mathematical logic independently with batching
         if predictor == "route":
-            local_preds, local_mask = self.predict_route_local(local_queries, batch_size or ROUTE_CHUNK)
+            local_preds, local_mask = self.predict_route_local(local_queries, batch_size)
         else:
             local_preds, local_mask = self.predict_local(
                 query_points=local_queries,
@@ -723,12 +736,16 @@ class AdaptiveSurrogate:
         else:
             return predictions, outside
 
-    def predict_route_local(self, query_points: Array, batch_size: int = ROUTE_CHUNK) -> tuple[Array, Array]:
-        """``(predictions, outside_domain)`` for this rank's queries by routing (see ``predict``)."""
+    def predict_route_local(self, query_points: Array, batch_size: int | None = None) -> tuple[Array, Array]:
+        """
+        ``(predictions, outside_domain)`` for this rank's queries by routing (see ``predict``), in
+        chunks of ``batch_size`` (default ``route_chunk_size``).
+        """
         fd = self.f_src.shape[1]
         if query_points.shape[0] == 0:
             return xp.empty((0, fd), dtype=xp.float64), xp.empty((0,), dtype=bool)
         leaf_params = self.model_params()
+        batch_size = batch_size or route_chunk_size(leaf_params, int(query_points.shape[1]))
         preds, outs = [], []
         for s in range(0, int(query_points.shape[0]), batch_size):
             q = xp.asarray(query_points[s : s + batch_size], dtype=xp.float64)
