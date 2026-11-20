@@ -4,8 +4,8 @@
 # install (docs/USAGE.md, "HPC clusters"); extra arguments go to the script. Resubmitting the same
 # command reuses the cases already finished with the same settings.
 #
-#   sbatch -p gh -N 1 -n 1 -t 04:00:00 scripts/hpc/bench_inference_vista.sbatch gpu
-#   sbatch -p gg -N 1 -n 1 -t 04:00:00 scripts/hpc/bench_inference_vista.sbatch cpu
+#   sbatch -p gh -N 1 -n 1 -t 02:00:00 scripts/hpc/bench_inference_vista.sbatch gpu
+#   sbatch -p gg -N 1 -n 1 -t 02:00:00 scripts/hpc/bench_inference_vista.sbatch cpu
 #   sbatch -p gh -N 1 -n 1 -t 00:30:00 scripts/hpc/bench_inference_vista.sbatch gpu --problem rosenbrock --dim 2
 #SBATCH -J bench-inference
 #SBATCH -o bench-inference-%j.out

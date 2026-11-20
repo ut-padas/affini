@@ -78,7 +78,7 @@ class Problem:
 
 
 PROBLEMS = {
-    "rosenbrock": Problem(partial(rosenbrock, a=100.0), (-2.0, 3.0), (2, 3, 4, 5), "relative_and_absolute",
+    "rosenbrock": Problem(partial(rosenbrock, a=100.0), (-2.0, 3.0), (2, 5, 10), "relative_and_absolute",
                           "narrow curved valley, scalar output"),
     "spherical_piecewise": Problem(spherical_piecewise, (-3.0, 3.0), (2, 3, 4, 5), "relative",
                                    "affine inside / outside a sphere with a jump across it, scalar output"),
