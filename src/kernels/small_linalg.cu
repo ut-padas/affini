@@ -19,20 +19,23 @@ __device__ bool chol_inplace(double* a, int p) {
     return true;
 }
 
-// Each right-hand side: forward substitution with L, then back substitution with L^T.
-__device__ void chol_solve(const double* a, double* x, int p, int q) {
-    for (int c = 0; c < q; ++c) {
-        for (int i = 0; i < p; ++i) {
-            double t = x[i * q + c];
-            for (int k = 0; k < i; ++k) t -= a[i * p + k] * x[k * q + c];
-            x[i * q + c] = t / a[i * p + i];
-        }
-        for (int i = p - 1; i >= 0; --i) {
-            double t = x[i * q + c];
-            for (int k = i + 1; k < p; ++k) t -= a[k * p + i] * x[k * q + c];
-            x[i * q + c] = t / a[i * p + i];
-        }
+// Right-hand side c of x (p, q): forward substitution with L, then back substitution with L^T.
+// Columns never read each other, so solving them in any order or in parallel gives the same bits.
+__device__ void chol_solve_column(const double* a, double* x, int p, int q, int c) {
+    for (int i = 0; i < p; ++i) {
+        double t = x[i * q + c];
+        for (int k = 0; k < i; ++k) t -= a[i * p + k] * x[k * q + c];
+        x[i * q + c] = t / a[i * p + i];
     }
+    for (int i = p - 1; i >= 0; --i) {
+        double t = x[i * q + c];
+        for (int k = i + 1; k < p; ++k) t -= a[k * p + i] * x[k * q + c];
+        x[i * q + c] = t / a[i * p + i];
+    }
+}
+
+__device__ void chol_solve(const double* a, double* x, int p, int q) {
+    for (int c = 0; c < q; ++c) chol_solve_column(a, x, p, q, c);
 }
 
 // One thread per system: factor and solve (see ``spd_solve``); a non-SPD system gets an
@@ -93,12 +96,78 @@ extern "C" __global__ void spd_factor_coop(double* L, long long nb, int p) {
         for (int t = threadIdx.x; t < p * p; t += blockDim.x) a[t] = nan("");
 }
 
-// One thread per system: solves with a factor from spd_factor; the same arithmetic as the
-// solve half of spd_solve, so factor-then-solve gives spd_solve's bits.
-extern "C" __global__ void spd_solve_factored(const double* L, double* X, long long nb, int p, int q) {
-    long long b = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+// Packed lower triangle in shared memory: row i starts at i (i + 1) / 2.
+__device__ __forceinline__ int tri(int i) { return i * (i + 1) / 2; }
+
+// Cholesky of the packed lower triangle sh (in shared memory) by the whole block; col (p doubles
+// of shared memory) is workspace. Right-looking, so once column j is final every warp updates the
+// trailing triangle (one warp per row). Entry (i, m) still receives a_im - L_i0 L_m0 - L_i1 L_m1 -
+// ... in k order with the same operands as chol_inplace's inner sum, and is divided by its pivot
+// last, so the factor is bit-identical to chol_inplace and spd_factor_coop; only the schedule
+// differs. Keep the row operand first in each product (L_ik * L_mk), as chol_inplace does.
+// Returns false (to every thread) for a non-SPD or NaN pivot, leaving sh partly factored.
+__device__ bool chol_packed_block(double* sh, double* col, int p, int* ok) {
+    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5, n_warps = blockDim.x >> 5;
+    if (threadIdx.x == 0) *ok = 1;
+    __syncthreads();
+    for (int j = 0; j < p; ++j) {
+        // 1. The pivot: a_jj already holds a_jj - sum_k<j L_jk^2, accumulated in k order.
+        if (threadIdx.x == 0) {
+            double s = sh[tri(j) + j];
+            if (!(s > 0.0)) *ok = 0;
+            sh[tri(j) + j] = sqrt(s);
+        }
+        __syncthreads();
+        if (!*ok) return false;
+        // 2. Column j below the pivot, also copied to col[] so the update reads it without bank conflicts.
+        double d = sh[tri(j) + j];
+        for (int i = j + 1 + threadIdx.x; i < p; i += blockDim.x) {
+            double v = sh[tri(i) + j] / d;
+            sh[tri(i) + j] = v;
+            col[i] = v;
+        }
+        __syncthreads();
+        // 3. Trailing update: a_im -= L_ij L_mj for j < m <= i.
+        for (int i = j + 1 + warp; i < p; i += n_warps) {
+            double li = col[i];
+            double* row = sh + tri(i);
+            for (int m = j + 1 + lane; m <= i; m += 32) row[m] -= li * col[m];
+        }
+        __syncthreads();
+    }
+    return true;
+}
+
+// One block per system, its packed lower triangle in shared memory (p (p + 1) / 2 + p doubles,
+// so p <= 239 on a 227 KB card): the factor of chol_packed_block, bit-identical to spd_factor.
+extern "C" __global__ void spd_factor_shared(double* L, long long nb, int p) {
+    extern __shared__ double sh[];  // packed lower triangle, then column workspace
+    __shared__ int ok;
+    long long b = blockIdx.x;
     if (b >= nb) return;
-    chol_solve(L + b * p * p, X + b * p * q, p, q);
+    double* a = L + b * p * p;
+    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5, n_warps = blockDim.x >> 5;
+    // 1. Load the lower triangle; the upper triangle is never read.
+    for (int i = warp; i < p; i += n_warps)
+        for (int m = lane; m <= i; m += 32) sh[tri(i) + m] = a[i * p + m];
+    // 2. Factor; 3. write the lower triangle back (the upper one keeps its input, as chol_inplace leaves it).
+    if (!chol_packed_block(sh, sh + tri(p), p, &ok)) {
+        for (int t = threadIdx.x; t < p * p; t += blockDim.x) a[t] = nan("");
+        return;
+    }
+    for (int i = warp; i < p; i += n_warps)
+        for (int m = lane; m <= i; m += 32) a[i * p + m] = sh[tri(i) + m];
+}
+
+// One thread per (system, right-hand side): solves with a factor from spd_factor. Each column
+// keeps the solve half of spd_solve's arithmetic, so factor-then-solve gives spd_solve's bits,
+// and a system with many columns (an inverse, q = p) is no longer one thread's serial p^3 work.
+// Threads of one system are adjacent, so their x reads coalesce and their L reads are shared.
+extern "C" __global__ void spd_solve_factored(const double* L, double* X, long long nb, int p, int q) {
+    long long t = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+    if (t >= nb * q) return;
+    long long b = t / q;
+    chol_solve_column(L + b * p * p, X + b * p * q, p, q, (int)(t - b * q));
 }
 
 // Batched small products with a fixed sequential inner sum (see ``det_matmul``).
