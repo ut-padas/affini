@@ -164,39 +164,48 @@ The benchmark's counts, from its store (`python -m src.benchmark table --write R
 
 | class | method | ran | held | won | held at d >= 10 | median evaluations (held) | median inference us (held) |
 |---|---|---|---|---|---|---|---|
-| smooth | ChebTT-M * | 91 | 90 | 49 | 30 | 917 | 0.14 |
-|  | ChebTT * | 91 | 90 | 32 | 30 | 1.1k | 0.087 |
-|  | SparseCheb | 42 | 42 | 25 | 0 | 337 | 1.3 |
-|  | ChebTree * | 42 | 42 | 11 | 0 | 757 | 0.19 |
+| smooth | ChebTT-A | 97 | 96 | 47 | 36 | 1.3k | 0.093 |
+|  | ChebTT-M | 97 | 96 | 47 | 36 | 1.3k | 0.13 |
+|  | SparseCheb | 42 | 42 | 27 | 0 | 337 | 1.3 |
+|  | Hub | 105 | 87 | 14 | 35 | 3.0k | 1.7 |
+|  | ChebTree | 42 | 42 | 9 | 0 | 757 | 0.24 |
 |  | ART, quadratic leaves | 91 | 10 | 2 | 9 | 4.6k | 0.43 |
 |  | MetricKernel | 21 | 10 | 2 | 0 | 257 | 1.4 |
+|  | ChebTT | 97 | 96 | 1 | 36 | 1.5k | 0.096 |
 |  | AFINNI | 63 | 2 | 0 | 0 | 110k | 0.43 |
 |  | ART, affine leaves | 90 | 0 | 0 | 0 | - | - |
-| many local features | ChebTT-M * | 45 | 45 | 38 | 0 | 1.7k | 0.33 |
+| many local features | ChebTT-M | 70 | 69 | 61 | 24 | 2.9k | 0.52 |
+|  | ChebTT-A | 70 | 68 | 43 | 23 | 2.7k | 0.55 |
 |  | SparseCheb | 9 | 9 | 4 | 0 | 433 | 2.5 |
-|  | ChebTT * | 45 | 45 | 3 | 0 | 2.2k | 0.29 |
-|  | ChebTree * | 9 | 9 | 3 | 0 | 1.3k | 0.15 |
+|  | ChebTree | 30 | 29 | 3 | 0 | 17k | 0.34 |
+|  | Hub | 75 | 14 | 1 | 4 | 2.6k | 4.7 |
+|  | ChebTT | 70 | 69 | 0 | 24 | 2.9k | 0.54 |
 |  | AFINNI | 38 | 0 | 0 | 0 | - | - |
 |  | ART, affine leaves | 37 | 0 | 0 | 0 | - | - |
 |  | ART, quadratic leaves | 37 | 0 | 0 | 0 | - | - |
-| kinks, jumps, fronts | ChebTree * | 10 | 10 | 10 | 0 | 17k | 0.21 |
-|  | ChebTT-A * | 3 | 3 | 3 | 0 | 1.7k | 0.24 |
-|  | ChebTT * | 16 | 3 | 1 | 0 | 54k | 1.1 |
+| kinks, jumps, fronts | ChebTT-A | 66 | 61 | 55 | 16 | 4.3k | 0.16 |
+|  | ChebTT-M | 39 | 34 | 28 | 10 | 4.3k | 0.23 |
+|  | Hub | 72 | 6 | 6 | 6 | 5.0k | 3.8 |
+|  | ChebTT | 39 | 34 | 0 | 10 | 4.7k | 0.31 |
+|  | ChebTree | 26 | 24 | 0 | 0 | 48k | 0.23 |
 |  | SparseCheb | 9 | 4 | 0 | 0 | 43k | 23 |
-|  | ChebTT-M * | 15 | 2 | 0 | 0 | 42k | 0.88 |
 |  | AFINNI | 39 | 0 | 0 | 0 | - | - |
 |  | ART, affine leaves | 36 | 0 | 0 | 0 | - | - |
 |  | ART, quadratic leaves | 33 | 0 | 0 | 0 | - | - |
-| ODE flow maps | ChebTree * | 15 | 15 | 7 | 0 | 757 | 0.14 |
+| ODE flow maps | ChebTree | 18 | 18 | 7 | 0 | 757 | 0.14 |
 |  | ART, affine leaves | 27 | 7 | 6 | 0 | 81 | 0.077 |
+|  | ChebTT | 39 | 37 | 5 | 12 | 1.6k | 0.12 |
+|  | ChebTT-A | 37 | 34 | 5 | 10 | 1.2k | 0.1 |
+|  | Hub | 45 | 28 | 5 | 7 | 2.6k | 3 |
 |  | SparseCheb | 15 | 15 | 5 | 0 | 201 | 0.68 |
-|  | ChebTT-M * | 25 | 24 | 4 | 3 | 424 | 0.064 |
+|  | ChebTT-M | 39 | 36 | 3 | 12 | 1.5k | 0.12 |
 |  | ART, quadratic leaves | 27 | 10 | 3 | 2 | 201 | 0.12 |
-|  | ChebTT * | 25 | 24 | 0 | 3 | 430 | 0.054 |
 |  | AFINNI | 21 | 6 | 0 | 0 | 110k | 0.3 |
 |  | MetricKernel | 3 | 3 | 0 | 0 | 268 | 1.4 |
-| vector-valued | ChebTT * | 98 | 93 | 81 | 31 | 2.5k | 0.29 |
-|  | ChebTT-M * | 100 | 94 | 75 | 32 | 2.5k | 0.35 |
+| vector-valued | ChebTT | 101 | 96 | 71 | 34 | 2.5k | 0.31 |
+|  | ChebTT-A | 97 | 92 | 65 | 32 | 2.4k | 0.37 |
+|  | ChebTT-M | 104 | 101 | 62 | 39 | 2.8k | 0.36 |
+|  | Hub | 101 | 72 | 19 | 22 | 2.6k | 6.1 |
 |  | ART, affine leaves | 92 | 6 | 6 | 3 | 251 | 0.29 |
 |  | ART, quadratic leaves | 94 | 13 | 4 | 7 | 1.3k | 0.46 |
 |  | AFINNI | 63 | 3 | 0 | 0 | 110k | 0.41 |
@@ -205,24 +214,24 @@ The benchmark's counts, from its store (`python -m src.benchmark table --write R
 
 | class | method | ran | held | won | held at d >= 10 | median evaluations (held) | median inference us (held) |
 |---|---|---|---|---|---|---|---|
-| stiff | ChebTT, one basis per axis (no edge search) * | 22 | 20 | 14 | 0 | 1.4k | 0.33 |
-|  | ChebTT, piecewise axes * | 22 | 20 | 13 | 0 | 1.4k | 0.31 |
-|  | ChebTT-A * | 21 | 20 | 12 | 0 | 1.4k | 0.36 |
+| stiff | ChebTT, one basis per axis (no edge search) | 37 | 27 | 21 | 5 | 3.8k | 0.55 |
+|  | ChebTT, piecewise axes | 37 | 27 | 18 | 5 | 3.8k | 0.63 |
+|  | ChebTT-A | 37 | 27 | 16 | 5 | 3.8k | 0.64 |
 |  | SlowTable | 20 | 9 | 5 | 0 | 2.6k | 19 |
-|  | ChebTT, retrained until its rollouts hold * | 21 | 19 | 2 | 1 | 2.0k | 0.42 |
+|  | ChebTT, retrained until its rollouts hold | 35 | 25 | 3 | 4 | 5.1k | 0.63 |
 |  | ART, affine leaves | 17 | 4 | 1 | 0 | 2.2k | 0.6 |
 |  | ART, quadratic leaves | 19 | 8 | 0 | 0 | 2.4k | 0.83 |
 |  | AFINNI | 15 | 0 | 0 | 0 | - | - |
-| nonstiff | ChebTT-A * | 4 | 4 | 4 | 0 | 5.6k | 1.4 |
-|  | ChebTT, piecewise axes * | 4 | 4 | 4 | 0 | 5.6k | 1.2 |
-|  | ChebTT, one basis per axis (no edge search) * | 4 | 4 | 4 | 0 | 5.6k | 1.2 |
-|  | ChebTT, retrained until its rollouts hold * | 6 | 5 | 2 | 1 | 7.2k | 0.92 |
+| nonstiff | ChebTT, piecewise axes | 7 | 5 | 5 | 1 | 7.2k | 1.3 |
+|  | ChebTT, one basis per axis (no edge search) | 7 | 5 | 5 | 1 | 7.2k | 1.1 |
+|  | ChebTT-A | 7 | 5 | 4 | 1 | 7.2k | 0.96 |
+|  | ChebTT, retrained until its rollouts hold | 7 | 5 | 1 | 1 | 7.2k | 1.4 |
 |  | ART, quadratic leaves | 5 | 1 | 0 | 0 | 4.5k | 1.6 |
 |  | SlowTable | 4 | 1 | 0 | 0 | 20k | 2.4e+02 |
 |  | AFINNI | 3 | 0 | 0 | 0 | - | - |
 |  | ART, affine leaves | 3 | 0 | 0 | 0 | - | - |
 
-A case is a problem, dimension and tolerance; *held*: worst error within the tolerance on every seed; *won*: held with the fewest evaluations (ties count for each). Medians are over each method's own held cases, which differ in difficulty between methods. *Ran* differs between methods because the sweeps stop a method at its first failure on a family. * marks records older than the method's last change to its results (share of its records; see `RESULTS_CHANGED` in `src/benchmark/table.py`): ChebTT 100% (piecewise axes at jumps and kinks, and the degree-cut compression); ChebTT-M 100% (as ChebTT); ChebTT-A 100% (as ChebTT); ChebTT, retrained until its rollouts hold 100% (as ChebTT); ChebTT, piecewise axes 100% (as ChebTT); ChebTT, one basis per axis (no edge search) 100% (as ChebTT); ChebTree 64% (verification along centre fibres before a box is accepted). Registered but not yet run: Hub.
+A case is a problem, dimension and tolerance; *held*: worst error within the tolerance on every seed; *won*: held with the fewest evaluations (ties count for each). Medians are over each method's own held cases, which differ in difficulty between methods. *Ran* differs between methods because the sweeps stop a method at its first failure on a family. * marks records older than the method's last change to its results (share of its records; see `RESULTS_CHANGED` in `src/benchmark/table.py`): .
 <!-- /benchmark-table -->
 
 ## Documentation

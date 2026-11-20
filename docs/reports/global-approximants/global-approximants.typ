@@ -1211,11 +1211,12 @@ change to its results.
   )
 })
 
-The pattern does not depend on the stale records' details. Least-squares pieces on random points
-control the mean error but not the worst. Their errors between the points are unchecked, and that gap
+Least-squares pieces on random points control the mean error but not the worst. Their errors between the points are unchecked, and that gap
 grows with the dimension. Interpolation at Chebyshev nodes, with checks at the points a refinement would
-sample next, keeps its worst errors below the tolerance. ChebTree holds the kinks, jumps and fronts it
-ran, but only in two and three dimensions (@sec:aside).
+sample next, keeps its worst errors below the tolerance. ChebTree holds
+#st.classes.find(c => c.class == "kinks, jumps, fronts").rows.find(r => r.method == "chebtree").held of the
+#st.classes.find(c => c.class == "kinks, jumps, fronts").rows.find(r => r.method == "chebtree").ran kinks,
+jumps and fronts it ran, but only up to $d = #st.max_d.chebtree$ (@sec:aside).
 
 == Choosing among the four
 
@@ -1648,8 +1649,10 @@ solve. Over the benchmark's stiff problems:
 
 The speedup is the solver's time per state and step over the surrogate's inference time, at the cases
 where both errors hold. The solver is SciPy's Radau, the integrator the system would be solved with. AFINNI and ART
-hold no rollout. ChebTT holds the one-step error almost everywhere, and the retrained ChebTT holds both on
-#stiff.at(0).rollout of #stiff.at(0).ran problems.
+hold no rollout. ChebTT on the box holds the one-step error on
+#stiff.find(r => r.method == "chebtt_box").one_step of #stiff.find(r => r.method == "chebtt_box").ran cases, but its
+rollouts hold on only #stiff.find(r => r.method == "chebtt_box").rollout. The retrained ChebTT holds both on
+#stiff.find(r => r.method == "chebtt_roll").rollout of #stiff.find(r => r.method == "chebtt_roll").ran.
 
 #scene(side: right, width: 40%, panel("steps-scatter"))[
   Every finished stiff record: one-step error against rollout error, both over the tolerance, for
@@ -1680,8 +1683,9 @@ about #kd.nelson_slow of #kd.nelson_species species' directions stay slow.
 ]
 
 #takeaway[On stiff step maps a ChebTT retrained until its rollouts hold keeps both errors within the
-  tolerance on almost every problem, at speedups of a thousand and more over the solver, where AFINNI and
-  ART hold no rollout; the path to large networks is the few slow coordinates.]
+  tolerance on #stiff.find(r => r.method == "chebtt_roll").rollout of #stiff.find(r => r.method == "chebtt_roll").ran
+  cases, at a median speedup of #num(stiff.find(r => r.method == "chebtt_roll").speedup)$times$ over the solver,
+  where AFINNI and ART hold no rollout; the path to large networks is the few slow coordinates.]
 
 = Tried and set aside <sec:aside>
 
@@ -1700,9 +1704,9 @@ about #kd.nelson_slow of #kd.nelson_species species' directions stay slow.
 
 *ChebTree* is an adaptive tree of tensor Chebyshev boxes. A box raises its degree where its
 coefficients decay geometrically and splits where they do not. On $b + r$ it uses
-#asd.chebtree.boxes boxes and #num(asd.chebtree.evals) evaluations, worst #asd.chebtree.worst. It holds every
-kink, jump and front it ran, #srow("kinks, jumps, fronts", "chebtree").held of
-#srow("kinks, jumps, fronts", "chebtree").ran, at a median of #num(srow("kinks, jumps, fronts", "chebtree").evals)
+#asd.chebtree.boxes boxes and #num(asd.chebtree.evals) evaluations, worst #asd.chebtree.worst. It holds
+#srow("kinks, jumps, fronts", "chebtree").held of the
+#srow("kinks, jumps, fronts", "chebtree").ran kink, jump and front cases it ran, at a median of #num(srow("kinks, jumps, fronts", "chebtree").evals)
 evaluations. But a tensor box costs $product_k (n_k + 1)$ points, and the benchmark ran it to $d = #st.max_d.chebtree$
 only.
 
