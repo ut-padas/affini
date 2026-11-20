@@ -132,9 +132,13 @@ class AdaptiveSurrogate:
         self.counts_src = None
         # The effective settings and components of the last training run.
         self.config: dict[str, Any] = {}
-        # False if refinement stopped at max_levels with clusters still unresolved; no
-        # leaf holds their points (see num_unresolved_clusters / _pts).
+        # False if refinement stopped at max_levels with clusters still unresolved; no leaf
+        # holds their points unless they became fallback leaves (see num_unresolved_clusters / _pts).
         self.converged: bool | None = None
+        # AFINNI trained with fallback_leaves: (N_src,) host bools, True for a leaf kept above
+        # tolerance at max_levels (its trust region and model are used like any other). None
+        # otherwise; ART marks its fallback leaves in art_leaves["terminal_reason"].
+        self.fallback_src: np.ndarray | None = None
         self.num_unresolved_clusters = 0
         self.num_unresolved_pts = 0
         self.profiling_stats = {}
@@ -256,6 +260,7 @@ class AdaptiveSurrogate:
                 "E_cluster_abs_src": bcast_data["E_cluster_abs"],
                 "E_cluster_rel_src": bcast_data["E_cluster_rel"],
                 "counts_src": bcast_data["counts"],
+                "fallback_src": bcast_data.get("fallback"),
                 "profiling_stats": bcast_data["profiling_stats"],
                 "converged": bool(bcast_data["converged"]),
                 "num_unresolved_clusters": int(bcast_data["num_unresolved_clusters"]),
@@ -271,10 +276,12 @@ class AdaptiveSurrogate:
             logger.info(f"Training Time: {time.perf_counter() - t0:.4f}s")
             logger.info(f"Trained Clusters: {self.N_src:,}")
             if not self.converged:
-                where = (
-                    "they keep their fitted model as a leaf (see art_leaves / leaf_status_counts())"
-                    if self.routing is not None else "no leaf holds their points"
-                )
+                if self.routing is not None:
+                    where = "they keep their fitted model as a leaf (see art_leaves / leaf_status_counts())"
+                elif self.fallback_src is not None:
+                    where = "they keep their fitted model as a leaf (marked in fallback_src)"
+                else:
+                    where = "no leaf holds their points"
                 warnings.warn(
                     f"Training stopped at max_levels={config.max_levels} with "
                     f"{self.num_unresolved_clusters:,} clusters "
@@ -357,6 +364,8 @@ class AdaptiveSurrogate:
                 arrays[name] = to_host(getattr(self, name))
         if self.counts_src is not None:
             arrays["counts_src"] = to_host(self.counts_src)
+        if self.fallback_src is not None:
+            arrays["fallback_src"] = self.fallback_src
 
         np.savez_compressed(str(filepath), **arrays)
         logger.info(f"Model saved to {filepath}")
@@ -412,6 +421,7 @@ class AdaptiveSurrogate:
                 "E_cluster_abs_src": arrays.get("E_cluster_abs_src"),
                 "E_cluster_rel_src": arrays.get("E_cluster_rel_src"),
                 "counts_src": arrays.get("counts_src"),
+                "fallback_src": arrays.get("fallback_src"),
                 "profiling_stats": profiling_stats,
                 "converged": meta["converged"],
                 "num_unresolved_clusters": int(meta["num_unresolved_clusters"]),
@@ -440,6 +450,11 @@ class AdaptiveSurrogate:
                 state[name] = to_device(state[name])
         if state["counts_src"] is not None:
             state["counts_src"] = np.asarray(to_host(state["counts_src"]))  # host-side diagnostics
+        fallback = state.setdefault("fallback_src", None)
+        if fallback is not None:
+            state["fallback_src"] = fallback = np.asarray(to_host(fallback), dtype=bool)
+            if fallback.shape != (int(state["X_src"].shape[0]),):
+                raise ValueError(f"{source}: fallback_src has shape {fallback.shape}; expected ({int(state['X_src'].shape[0])},).")
         state["leaf_params"] = {k: to_device(v) for k, v in state["leaf_params"].items()}
         state.setdefault("routing", None)
         state["art_leaves"] = {k: np.asarray(to_host(v)) for k, v in state.get("art_leaves", {}).items()}

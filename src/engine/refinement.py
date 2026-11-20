@@ -120,10 +120,12 @@ def refine_rank(
     profiler.stats["num_unresolved_clusters"] = run.unresolved_clusters
     profiler.stats["num_unresolved_pts"] = run.unresolved_pts
     if run.unresolved_clusters > 0 and plan.keeps_fallback_leaves:
+        art = config.algorithm == "art"
+        marked = "terminal_reason != 'accepted'" if art else "fallback_src True"
         logger.warning(
-            f"R{rank:02}: {run.unresolved_clusters:,} ART nodes ({run.unresolved_pts:,} points) ended "
-            f"above tolerance (max_levels={config.max_levels} or no valid split); they keep their "
-            f"fitted model as a leaf with terminal_reason != 'accepted'."
+            f"R{rank:02}: {run.unresolved_clusters:,} {'ART nodes' if art else 'clusters'} ({run.unresolved_pts:,} points) "
+            f"ended above tolerance (max_levels={config.max_levels} or no valid split); they keep "
+            f"their fitted model as a leaf with {marked}."
         )
     elif run.unresolved_clusters > 0:
         logger.warning(

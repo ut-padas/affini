@@ -174,8 +174,9 @@ def refine_unguarded(
         config=config, evaluator=evaluator, clusters=local_clusters, comm=comm, profiler=profiler, plan=plan,
     )  # fmt: skip
     release_pinned_staging()  # the leaves and queues are on the host now
-    # ART leaves no points unresolved: nodes stopped early keep a fallback leaf,
-    # reported separately so the monitor does not show them as queued work.
+    # With fallback leaves (always for ART) no points are left unresolved: clusters stopped
+    # early keep a fallback leaf, reported separately so the monitor does not show them as
+    # queued work.
     left = int(profiling_stats["num_unresolved_pts"])
     profiler.event(
         "done", leaves=int(out_count), generated=int(local_gen_pts),

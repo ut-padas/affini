@@ -162,3 +162,52 @@ def test_no_unexpected_warnings_on_a_normal_run():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         train(quad_f)
+
+
+def stopped_early(**kw):
+    """quad_f stopped at max_levels=2, where clusters are still above tolerance."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # the max_levels warning
+        return train(quad_f, max_levels=2, **kw)
+
+
+def test_fallback_leaves_add_the_clusters_left_at_max_levels_and_change_nothing_else():
+    plain, kept = stopped_early(), stopped_early(fallback_leaves=True)
+    assert plain.fallback_src is None and not plain.converged and not kept.converged
+    fallback = kept.fallback_src
+    assert fallback.dtype == bool and fallback.shape == (kept.N_src,)
+    assert int(fallback.sum()) == kept.num_unresolved_clusters > 0
+    # The accepted leaves are the same leaves, in the same order: only the last level's
+    # rejected clusters are handled differently.
+    np.testing.assert_array_equal(host(kept.X_src)[~fallback], host(plain.X_src))
+    np.testing.assert_array_equal(host(kept.trust_matrices_src)[~fallback], host(plain.trust_matrices_src))
+    # They are not augmented and split only to be dropped, so they never cost more evaluations
+    # (here none: these clusters already hold the 2 * min_pts_per_cluster an augmentation targets).
+    assert kept.profiling_stats["total_f_evals"] <= plain.profiling_stats["total_f_evals"]
+    # Every fallback leaf failed the test it was kept despite: some component beyond both tolerances.
+    beyond = (host(kept.E_cluster_abs_src) > 0.02) & (host(kept.E_cluster_rel_src) > 0.02)
+    assert np.all(beyond[fallback].any(axis=1)) and not np.any(beyond[~fallback].any(axis=1))
+
+
+def test_fallback_leaves_lower_the_error_where_unresolved_clusters_left_no_leaf():
+    truth = host(quad_f(xp.asarray(X_QUERY)))
+    errors = []
+    for s in (stopped_early(), stopped_early(fallback_leaves=True)):
+        pred, _ = s.predict(xp.asarray(X_QUERY))
+        errors.append(float(np.linalg.norm(host(pred) - truth) / np.linalg.norm(truth)))
+    assert errors[1] < errors[0]
+
+
+def test_fallback_marks_survive_save_and_load(tmp_path):
+    kept = stopped_early(fallback_leaves=True)
+    loaded = AdaptiveSurrogate.load_model(kept.save_model(tmp_path / "kept"))
+    np.testing.assert_array_equal(loaded.fallback_src, kept.fallback_src)
+    plain = AdaptiveSurrogate.load_model(stopped_early().save_model(tmp_path / "plain"))
+    assert plain.fallback_src is None
+    with np.load(tmp_path / "plain.npz") as data:
+        assert "fallback_src" not in data.files
+
+
+def test_a_converged_run_with_fallback_leaves_marks_none():
+    s = train(quad_f, fallback_leaves=True)
+    assert s.converged and s.fallback_src is not None and not s.fallback_src.any()

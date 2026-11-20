@@ -136,7 +136,8 @@ Fields of `src.config.TrainingConfig` (all keyword-only); only a tolerance is re
 | `atol`, `rtol`, `error_metric` | Acceptance test: a cluster is accepted when every output component is within `rtol` relative **or** `atol` absolute error, measured as `"Linf"` (max error, relative to the cluster's own max \|f\|), `"L2"` (relative L2 / RMS) or `"pointwise"` (every point on its own: \|e\|/\|f\| < `rtol` or \|e\| < `atol`; ART's stopping rule). Give at least one tolerance; each is a scalar or one value per output component, and an omitted one never accepts. For an absolute test scaled to the function, pass `atol = tol * max\|f\|`. Exact formulas: [`src/components/acceptance.py`](../src/components/acceptance.py) |
 | `num_initial_clusters`, `initial_clustering_method` | Roots of the forest: `"kmeans"` (custom k-means in `src/neighbors/kmeans.py` on both backends), `"uniform_grid"`, or `"knndbscan"` (kNN-DBSCAN from the `knndbscan` package). `src.engine.driver.initial_clustering(X, config)` returns the labels training starts from; pass them as `train(..., initial_labels=labels)` to reuse one clustering for several trainings on the same points |
 | `min_pts_per_cluster` | Rejected clusters are augmented to at least twice this before splitting |
-| `max_levels` | Deepest level fitted (depths 0 to `max_levels`); clusters unresolved there leave `converged=False` |
+| `max_levels` | Deepest level fitted (depths 0 to `max_levels`); clusters unresolved there leave `converged=False` and, unless `fallback_leaves`, no leaf holds their points |
+| `fallback_leaves` | AFINNI: a cluster still above tolerance at depth `max_levels` keeps its fitted model and trust region as a leaf, marked in `surrogate.fallback_src`, instead of being split and dropped; the accepted leaves are unchanged, and `converged` stays False. ART always keeps such leaves (`terminal_reason="max_depth"`) |
 | `sampling_method` | Where new points go when augmenting (`"convex_combination"`) |
 | `q_reg` | Floor on the eigenvalues of each cluster's scatter matrix (unnormalized, so `q_reg / n` on the covariance) before it is inverted into the trust matrix |
 | `store_hess` | Second-order Taylor leaves (TAYLOR_LSQ_HESS only), one Hessian per output |
@@ -171,6 +172,7 @@ surrogate.E_cluster_abs_src, surrogate.E_cluster_rel_src  # accepted errors per 
 surrogate.counts_src                                   # points per leaf
 surrogate.converged                                    # False if max_levels stopped refinement
 surrogate.num_unresolved_clusters, surrogate.num_unresolved_pts
+surrogate.fallback_src                                 # AFINNI with fallback_leaves: True for a leaf kept above tolerance
 surrogate.config                                       # every effective setting and component
 surrogate.profiling_stats                              # counters, level statistics, profile
 

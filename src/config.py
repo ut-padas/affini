@@ -204,8 +204,13 @@ class TrainingConfig:
     # the covariance) before it is inverted into the trust matrix (gamma and T in the companion).
     q_reg: float = 1e-6
     # Deepest level fitted: depths 0 to max_levels are fitted (max_levels + 1 levels); clusters
-    # still unresolved there leave their points without a leaf and the run reports converged=False.
+    # still unresolved there leave their points without a leaf (unless fallback_leaves) and the
+    # run reports converged=False.
     max_levels: int = 50
+    # AFINNI: a cluster still above tolerance at depth max_levels keeps its fitted model and trust
+    # region as a leaf, marked in AdaptiveSurrogate.fallback_src, instead of being augmented,
+    # split and dropped. ART always keeps such leaves (terminal_reason "max_depth").
+    fallback_leaves: bool = False
     batch_size: int = 10_000_000  # max points moved to the device per batch
     seed: int = 0
     max_clusters_est: int = 1_000_000  # initial capacity of the output buffers (all ranks), capped by bytes; they grow on demand

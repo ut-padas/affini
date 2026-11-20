@@ -87,7 +87,8 @@ def wavy(fd):
 
 def model_arrays(s: AdaptiveSurrogate) -> dict[str, np.ndarray]:
     """Every numeric array ``save_model`` would write (leaves, local-model parameters, routing, leaf status)."""
-    out = {k: getattr(s, k) for k in ("X_src", "f_src", "E_cluster_abs_src", "E_cluster_rel_src", "counts_src")}
+    out = {k: getattr(s, k) for k in ("X_src", "f_src", "E_cluster_abs_src", "E_cluster_rel_src", "counts_src",
+                                       "fallback_src")}  # fmt: skip
     out["trust_matrices_src"] = s.trust_matrices_src
     out.update({f"param:{k}": v for k, v in s.leaf_params.items()})
     if s.routing is not None:
@@ -114,6 +115,7 @@ def cases():
     yield "extra_tiny_batches", 1, dict(base, mode=mode, batch_size=7)
     yield "extra_second_order", 1, dict(base, mode=SurrogateMode.TAYLOR_LSQ_HESS, store_hess=True)
     yield "extra_tight_tol", 1, dict(base, mode=mode, atol=0.02, rtol=0.02, max_clusters_est=4)
+    yield "extra_fallback_leaves", 2, dict(base, mode=mode, atol=0.02, rtol=0.02, max_levels=3, fallback_leaves=True)
     # One tolerance only, and one value per output component (newer API: these fail
     # on older checkouts, which compare() reports as fixed rather than as failures).
     yield "extra_atol_only", 2, dict(base, mode=mode, atol=0.15, rtol=None)

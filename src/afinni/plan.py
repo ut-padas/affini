@@ -69,10 +69,11 @@ class AFINNIPlan:
     steal_settings: dict = {}
     # The batch cap never goes below 50,000 points (part of the batch boundaries, see above).
     batch_floor = 50_000
-    keeps_fallback_leaves = False  # clusters still above tolerance at max_levels are unresolved
 
     def __init__(self, config: TrainingConfig, d: int, fd: int, rank: int):
         self.config, self.d, self.fd, self.rank = config, d, fd, rank
+        # Without it, clusters still above tolerance at max_levels are unresolved (no leaf).
+        self.keeps_fallback_leaves = bool(config.fallback_leaves)
         self._grid_offset = 0
         self.mempool = None
         if IS_CUPY_BACKEND:
@@ -88,7 +89,11 @@ class AFINNIPlan:
         return ClusterBatch(X[sort_idx], F[sort_idx], G[sort_idx] if G is not None else None, counts.astype(np.int64))
 
     def leaf_columns(self, model) -> dict[str, ParamSpec]:
-        return output_columns(model, self.d, self.fd)
+        """The shared and model columns, plus ``fallback`` (True for a leaf kept above tolerance) when fallback leaves are on."""
+        columns = output_columns(model, self.d, self.fd)
+        if self.keeps_fallback_leaves:
+            columns["fallback"] = ParamSpec((), np.bool_)
+        return columns
 
     def split_columns(self) -> None:
         return None
@@ -140,9 +145,10 @@ class AFINNIPlan:
                       timer) -> dict[str, int]:  # fmt: skip
         """
         Fit the local model on every cluster, append the accepted ones (with their trust
-        regions) to ``accepted``, and augment and split the rejected ones into ``next_level``.
-        Each stage releases what the next does not need: the batch's points are dropped before
-        augmentation and splitting, which hold the batch's peak memory.
+        regions) to ``accepted``, and augment and split the rejected ones into ``next_level``;
+        with fallback leaves, a rejected cluster at depth ``max_levels`` becomes a leaf
+        instead. Each stage releases what the next does not need: the batch's points are
+        dropped before augmentation and splitting, which hold the batch's peak memory.
         """
         depth = batch.queue.depth[batch.cut]
         X, F, G = batch.take()
@@ -156,14 +162,22 @@ class AFINNIPlan:
         # 2. Deploy the accepted clusters as leaves; a cluster its finalized model fails is rejected.
         n_good = self._deploy(fit, params, is_good, E_abs, E_rel, components, accepted, timer)
 
+        # 3. With fallback leaves, the rejected clusters at max_levels keep their fit as a leaf.
+        split_mask = ~is_good
+        n_fallback = n_fallback_pts = 0
+        if self.keeps_fallback_leaves:
+            at_limit = xp.asarray(depth >= self.config.max_levels)
+            n_fallback, n_fallback_pts = self._deploy_fallback(fit, params, split_mask & at_limit, E_abs, E_rel,
+                                                               components, accepted, timer)  # fmt: skip
+            split_mask = split_mask & ~at_limit
         with timer("time_filter"):
-            bad_idx = xp.nonzero(~is_good)[0]
+            bad_idx = xp.nonzero(split_mask)[0]
             n_bad = int(bad_idx.shape[0])
         generated = 0
         if n_bad > 0:
-            # 3. Augment the rejected clusters (this releases the batch's points), then
-            # 4. bisect each into two children of the next level.
-            data, generated = self._augment_rejected(fit, is_good, bad_idx, batch, components, evaluator, timer)
+            # 4. Augment the clusters to split (this releases the batch's points), then
+            # 5. bisect each into two children of the next level.
+            data, generated = self._augment_rejected(fit, split_mask, bad_idx, batch, components, evaluator, timer)
             self._split_rejected(data, bad_idx, depth, components.split_strategy, next_level, timer)
             with timer("time_gc"):
                 del data
@@ -175,8 +189,8 @@ class AFINNIPlan:
             if self.mempool is not None:
                 self.mempool.free_all_blocks()
         return {
-            "accepted": n_good, "rejected": n_bad, "generated": generated,
-            "fallback_clusters": 0, "fallback_pts": 0, "n_pts": n_pts,
+            "accepted": n_good, "rejected": n_bad + n_fallback, "generated": generated,
+            "fallback_clusters": n_fallback, "fallback_pts": n_fallback_pts, "n_pts": n_pts,
         }  # fmt: skip
 
     def _fit_and_accept(self, X, F, G, batch: DeviceBatch, components, evaluator, timer):
@@ -203,7 +217,7 @@ class AFINNIPlan:
         """
         Append the accepted clusters (finalized model, trust region) to ``accepted`` and return
         how many there are. A cluster whose finalized model fails the re-test is marked
-        rejected in ``is_good`` (in place), so it is split instead.
+        rejected in ``is_good`` (in place), so it is split, or kept as a fallback leaf, instead.
         """
         with timer("time_filter"):
             good_idx = xp.nonzero(is_good)[0]
@@ -217,19 +231,43 @@ class AFINNIPlan:
                 is_good[leaves.failed] = False
                 n_good -= int(leaves.failed.shape[0])
         with timer("time_good_d2h"):
-            accepted.append(leaves.rows)
+            accepted.append(self._leaf_rows(leaves, fallback=False))
         return n_good
 
-    def _augment_rejected(self, fit: ClusterFitData, is_good, bad_idx, batch: DeviceBatch, components, evaluator,
+    def _deploy_fallback(self, fit: ClusterFitData, params, mask, E_abs, E_rel, components, accepted,
+                         timer) -> tuple[int, int]:  # fmt: skip
+        """
+        Append the clusters in ``mask`` as fallback leaves: their own fit and trust region, kept
+        without the re-test (they already failed acceptance), with the errors they failed by.
+        Returns their number and points.
+        """
+        idx = xp.nonzero(mask)[0]
+        n = int(idx.shape[0])
+        if n == 0:
+            return 0, 0
+        with timer("time_good_trust_matrix"):
+            leaves = deploy_leaves(components.local_model, components.trust_region, components.acceptance,
+                                   fit, idx, params, E_abs, E_rel, retest=False)  # fmt: skip
+        with timer("time_good_d2h"):
+            accepted.append(self._leaf_rows(leaves, fallback=True))
+        return n, int(xp.sum(fit.counts[idx]))
+
+    def _leaf_rows(self, leaves, fallback: bool) -> dict:
+        """``leaves.rows`` with the ``fallback`` column when fallback leaves are on."""
+        if not self.keeps_fallback_leaves:
+            return leaves.rows
+        return {**leaves.rows, "fallback": xp.full(int(leaves.idx.shape[0]), fallback, dtype=bool)}
+
+    def _augment_rejected(self, fit: ClusterFitData, split_mask, bad_idx, batch: DeviceBatch, components, evaluator,
                           timer) -> tuple[SplitData, int]:  # fmt: skip
         """
-        Grow every rejected cluster to ``augmentation_targets`` points and return them as the
-        split's input with the number of new points. Releases the batch's points from ``fit``
-        first: from here on only the rejected rows are needed.
+        Grow every cluster to split (``split_mask``, at ``bad_idx``) to ``augmentation_targets``
+        points and return them as the split's input with the number of new points. Releases the
+        batch's points from ``fit`` first: from here on only the rows to split are needed.
         """
         config = self.config
         with timer("time_augment"):
-            bad_mask = (~is_good)[fit.labels]
+            bad_mask = split_mask[fit.labels]
             X_bad, F_bad = fit.X[bad_mask], fit.F[bad_mask]
             G_bad = fit.G[bad_mask] if fit.G is not None else None
             fit.X = fit.F = fit.G = None
