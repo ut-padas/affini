@@ -16,6 +16,8 @@ class RoutingTable:
     (children ``child[i]`` = (left, right), plane ``normal[i]``, ``offset[i]``: the plane
     ``(a, z)`` of the companion, whose side ``normal^T u >= offset`` is the right child) or a
     leaf (row ``node_leaf[i]`` of the leaf arrays), and ``root_node[r]`` is root ``r``'s node.
+    A leaf is its own child on both sides, with a zero plane (``0 >= 0``: right), so a query
+    that reaches it stays there and routing needs no per-query test for arrival.
     Routing follows child indices, so no logical key is packed into an integer and every
     depth the locational codes allow (``MAX_DEPTH_LIMIT``) routes. The logical identity
     ``(root, locational_code)`` of every node is kept as provenance (``node_root``,
@@ -26,7 +28,7 @@ class RoutingTable:
     domain: Domain
     roots: Roots
     is_leaf: Array  # (M,) bool
-    child: Array  # (M, 2) int64 node indices, -1 for leaves
+    child: Array  # (M, 2) int64 node indices; a leaf's are its own index
     normal: Array  # (M, d) unit plane normals, zero rows for leaves
     offset: Array  # (M,)
     node_leaf: Array  # (M,) leaf row, -1 for splits
@@ -93,6 +95,7 @@ class RoutingTable:
             if left is None or right is None:
                 raise ValueError("An ART split is missing one of its children.")
             child[j] = (left, right)
+        child[S:] = np.arange(S, M, dtype=np.int64)[:, None]  # leaves (zero plane, see the class docstring)
         splits = set(zip(sr.tolist(), sc.tolist(), strict=True))
         if any(p > 1 and (r, p >> 1) not in splits for r, p in zip(roots_all.tolist(), codes_all.tolist(), strict=True)):
             raise ValueError("A ART node's parent is not a split node.")
@@ -113,6 +116,10 @@ class RoutingTable:
         Outside queries are routed from their nearest domain point (clipped coordinates)
         and evaluated at their own coordinates, i.e. extrapolated by that leaf; the audit
         says nothing about them. Non-finite queries raise ``ValueError``.
+
+        Every query takes ``max_depth`` steps, a query at a leaf stepping to itself: no step
+        compacts the queries still moving or waits for the device to count them. A tree whose
+        leaves lie much shallower than its deepest one pays for steps its queries do not need.
         """
         X = xp.asarray(X, dtype=xp.float64)
         if X.ndim != 2 or X.shape[1] != self.domain.d:
@@ -123,13 +130,10 @@ class RoutingTable:
         outside = xp.any((U < 0) | (U > 1), axis=1)
         U = xp.clip(U, 0.0, 1.0)
         node = self.root_node[self.roots.root_of(U)]
-        for _ in range(self.max_depth + 1):
-            act = xp.nonzero(~self.is_leaf[node])[0]
-            if int(act.shape[0]) == 0:
-                break
-            na = node[act]
-            side = (plane_scores(U[act], self.normal[na]) - self.offset[na] >= 0).astype(xp.int64)
-            node[act] = self.child[na, side]
+        for _ in range(self.max_depth):
+            # The same per-row scores as training's split predicate: a training point lands in its own leaf.
+            side = (plane_scores(U, self.normal[node]) - self.offset[node] >= 0).astype(xp.int64)
+            node = self.child[node, side]
         return self.node_leaf[node], outside
 
     def arrays(self) -> dict[str, np.ndarray]:

@@ -78,16 +78,12 @@ def staged_route(table, X) -> tuple[dict, list[dict], object]:
     U = timed("normalize", lambda: table.domain.normalize(X))
     U = timed("outside_and_clip", lambda: (xp.any((U < 0) | (U > 1), axis=1), xp.clip(U, 0.0, 1.0)))[1]
     node = timed("root_lookup", lambda: table.root_node[table.roots.root_of(U)])
-    for _ in range(table.max_depth + 1):
+    for _ in range(table.max_depth):
+        moving = int(xp.sum(~table.is_leaf[node]))  # not timed: how many queries this step still moves
         sync()
         t = time.perf_counter()
-        act = xp.nonzero(~table.is_leaf[node])[0]
-        moving = int(act.shape[0])
-        if moving == 0:
-            break
-        na = node[act]
-        side = (plane_scores(U[act], table.normal[na]) - table.offset[na] >= 0).astype(xp.int64)
-        node[act] = table.child[na, side]
+        side = (plane_scores(U, table.normal[node]) - table.offset[node] >= 0).astype(xp.int64)
+        node = table.child[node, side]
         sync()
         levels.append({"seconds": time.perf_counter() - t, "moving": moving})
     leaf = timed("leaf_lookup", lambda: table.node_leaf[node])

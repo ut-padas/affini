@@ -108,6 +108,10 @@ class Roots:
         the tangential part, which can absorb the normal difference of close centres
         (2-D centres 1e-8 apart misassigned 21 of 200 in-cell points).
         """
+        if self.n_roots == 1:
+            # Every branch below returns 0 for one root (one box, a 1-cell grid, one centre),
+            # after building per-point temporaries that this skips.
+            return xp.zeros(int(U.shape[0]), dtype=xp.int64)
         if self.is_voronoi:
             C = xp.asarray(self.centres)
             rows = max(1, self.TILE_ELEMENTS // max(1, 3 * C.size))
