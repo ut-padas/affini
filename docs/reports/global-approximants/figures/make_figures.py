@@ -1329,6 +1329,7 @@ def baseline_on(name: str, lo, hi, alpha, f=None, n0: int | None = None, **overr
     class Predictor:
         evals = int(s.profiling_stats["total_f_evals"])
         leaves = int(s.N_src)
+        surrogate = s
 
         @staticmethod
         def predict(X):

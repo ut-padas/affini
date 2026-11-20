@@ -15,22 +15,43 @@ ART leaf polygon it rebuilds from the stored planes contains the leaf's centroid
 the convergence-*.svg panels.
 
 The tolerances end where the slowest method's run, ART's, takes about two minutes on one laptop CPU; past
-that point each halving costs ART about 2^(d/2) times more.
+that point each halving costs ART about 2^(d/2) times more. Every run records its training time (the oracle's
+evaluations included), the part of it spent in the oracle, its peak memory, its inference time per query on the
+test set and its saved model's size, all on one CPU core. Each run is a record of ``src.infra.records`` under
+results/convergence/adaptive-surrogates/, written as soon as it finishes, so a run that stops resumes at the
+first unfinished one. A record is reused unless its method's results changed after it was written
+(``RESULTS_CHANGED`` in ``src.benchmark.table``); a change to the problem, its test set or the run's settings
+makes a new case.
 """
 
 import json
-from dataclasses import dataclass
-from pathlib import Path
+import os
 
-import make_figures as mf
-import matplotlib.pyplot as plt
-import numpy as np
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMBA_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")  # before NumPy loads BLAS: the times are one core's, as the schemes' study's
 
-from src import to_host
-from src.config import ARTSettings, TrainingConfig
-from src.core.evaluation import Evaluator
-from src.problems import FUNCTIONS
-from src.surrogate import AdaptiveSurrogate
+from dataclasses import dataclass, replace  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import make_figures as mf  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+
+from src import RESULTS_DIR, to_host  # noqa: E402
+from src.benchmark.table import RESULTS_CHANGED  # noqa: E402
+from src.config import ARTSettings, TrainingConfig  # noqa: E402
+from src.core.evaluation import Evaluator  # noqa: E402
+from src.infra.records import (  # noqa: E402
+    Probe,
+    RecordStore,
+    data_hash,
+    per_query_us,
+    provenance,
+    saved_bytes,
+    timed_oracle,
+)
+from src.problems import FUNCTIONS  # noqa: E402
+from src.surrogate import AdaptiveSurrogate  # noqa: E402
 
 OUT = Path(__file__).resolve().parent
 SEED = mf.SEED
@@ -46,6 +67,7 @@ POINTS_PER_LEAF = 100  # the grown sample holds about this many points per leaf 
 MAX_SAMPLE = 20_000_000  # a grown sample is never larger: the run would not fit a laptop's memory
 FIT_LEAVES = 40  # the rates are fitted over the rungs with at least this many leaves
 METHODS = ("art", "afinni_scaled", "afinni")
+STORE = RecordStore(RESULTS_DIR / "convergence" / "adaptive-surrogates")
 COLOUR = {"afinni": "#6d3b0f", "afinni_scaled": "#6d3b0f", "art": "#1f5fa8"}  # AFINNI's and ART's colours in the benchmark
 
 
@@ -128,18 +150,26 @@ def train(method: str, prob: Problem, tol: float, n_grown: int | None = None) ->
     return s
 
 
-def measure(s: AdaptiveSurrogate, method: str, prob: Problem, tol: float) -> dict:
-    """Leaves, evaluations, the share flagged outside every trust region, and the error inside (worst output) in units of tol."""
+def measure(s: AdaptiveSurrogate, method: str, prob: Problem, tol: float, cost: dict) -> dict:
+    """
+    Leaves, evaluations, the share flagged outside every trust region, the error inside (worst output) in units
+    of tol, the training's ``cost`` (time, oracle time, peak memory), the plain inference time per query (the
+    errors come from the flagged inference, timed too), and the saved model's size.
+    """
     exact = method != "art"
     X = prob.X
-    P, outside = s.predict(X, k_nn=1, coarse_factor=mf.KAPPA, exact_outside=exact) if exact else s.predict(X)
+    _, us = per_query_us(s.predict, X)
+    (P, outside), flagged_us = per_query_us(
+        lambda Y: s.predict(Y, k_nn=1, coarse_factor=mf.KAPPA, exact_outside=exact) if exact else s.predict(Y), X)
     P, outside = np.asarray(to_host(P)).reshape(len(X), -1), np.ravel(to_host(outside)).astype(bool)
     e = np.max(np.abs(P - prob.truth.reshape(len(X), -1)), axis=1)[~outside] / tol
     return {"tol": tol, "leaves": int(s.N_src), "evals": int(s.profiling_stats["total_f_evals"]),
             "flagged": round(100 * float(outside.mean()), 2),
-            "within": round(100 * float(np.mean(e <= 1)), 2), "p99": round(float(np.quantile(e, 0.99)), 3),
+            "within": round(100 * float(np.mean(e <= 1)), 2), "p99": round(float(np.quantile(e, 0.99)), 3), "p999": round(float(np.quantile(e, 0.999)), 3),
             "worst": round(float(e.max()), 2), "levels": int(s.profiling_stats["num_levels"]),
-            "unresolved": int(s.profiling_stats["num_unresolved_clusters"])}  # fmt: skip
+            "unresolved": int(s.profiling_stats["num_unresolved_clusters"]), "mean": float(f"{e.mean():.3g}"),
+            **cost, "predict_us": float(f"{us:.3g}"), "flagged_us": float(f"{flagged_us:.3g}"),
+            "model_bytes": saved_bytes(lambda m, path: m.save_model(path), s), "n_test": len(X)}  # fmt: skip
 
 
 def art_polygons(s: AdaptiveSurrogate) -> list[np.ndarray]:
@@ -246,6 +276,50 @@ def error_panel(runs: dict) -> None:
     mf.save(fig, "convergence-error")
 
 
+MARKS = {2: "o", 3: "s", 4: "^", 5: "D"}
+
+
+def every_run(runs: dict, problems: dict):
+    """(method, d, row) for every run of the chain and of the library problems."""
+    for m, by_d in runs.items():
+        for d, rows in by_d.items():
+            yield from ((m, d, r) for r in rows)
+    for p in problems.values():
+        for m, rows in p["runs"].items():
+            yield from ((m, p["d"], r) for r in rows)
+
+
+def times_panel(runs: dict, problems: dict) -> None:
+    """Every run's training time against its evaluations, and its inference time per query against its leaves; marks by d."""
+    fig, (ax_t, ax_p) = plt.subplots(1, 2, figsize=(4.6, 1.85))
+    for m, d, r in every_run(runs, problems):
+        kw = {"color": COLOUR[m], "ms": 2.4, "mew": 0.6, "mfc": "white" if m == "afinni" else COLOUR[m], "ls": "none", "zorder": 3}
+        ax_t.loglog(r["evals"], r["train_s"], MARKS[d], **kw)
+        ax_p.loglog(r["leaves"], r["predict_us"], MARKS[d], **kw)
+    ax_t.set_xlabel("evaluations of $f$", fontsize=6.5, labelpad=1)
+    ax_t.set_ylabel("training time (s)", fontsize=6.5, labelpad=1)
+    ax_p.set_xlabel("leaves", fontsize=6.5, labelpad=1)
+    ax_p.set_ylabel(r"inference time per query ($\mu$s)", fontsize=6.5, labelpad=1)
+    for ax in (ax_t, ax_p):
+        ax.tick_params(labelsize=5.5, length=2, pad=1)
+        ax.minorticks_off()
+    fig.tight_layout(w_pad=1.0)
+    mf.save(fig, "convergence-times")
+
+
+def time_summary(runs: dict, problems: dict) -> dict:
+    """Per method, over every run: the median training time per evaluation (us) and the range and median of the inference time."""
+    out = {}
+    for m in METHODS:
+        rows = [r for k, _, r in every_run(runs, problems) if k == m]
+        per_eval = [1e6 * r["train_s"] / r["evals"] for r in rows]
+        us = [r["predict_us"] for r in rows]
+        slowest = max(rows, key=lambda r: r["train_s"])
+        out[m] = {"per_eval_us": float(f"{np.median(per_eval):.3g}"), "predict_us": [min(us), float(f"{np.median(us):.3g}"), max(us)],
+                  "slowest_s": slowest["train_s"], "slowest_evals": slowest["evals"]}  # fmt: skip
+    return out
+
+
 def problems_panel(problems: dict) -> None:
     """Leaves against 1 / tol on the two library problems, with the slopes k / 2 (grey, k the directions f curves in) and d / 2 (dotted)."""
     fig, axes = plt.subplots(1, len(problems), figsize=(4.6, 1.85), sharey=True)
@@ -269,19 +343,34 @@ def problems_panel(problems: dict) -> None:
 
 
 def ladders(prob: Problem, tols: list[float], models: dict | None = None) -> dict:
-    """Every method at each tolerance: the fixed-sample AFINNI first, since it sizes the grown sample."""
+    """
+    Every method at each tolerance: the fixed-sample AFINNI first, since it sizes the grown sample. A case comes
+    from the cache when it is there; a cached case among the strip's (``models``) is trained again for its model.
+    """
     d = len(prob.lo)
     runs: dict = {}
+
+    def case(method, tol, n_grown):
+        f, oracle = timed_oracle(prob.f)
+        with Probe() as probe:
+            s = train(method, replace(prob, f=f), tol, n_grown)
+        if models is not None and tol in STRIP:
+            models[method, tol] = s
+        cost = {"train_s": float(f"{probe.seconds:.3g}"), "oracle_s": float(f"{oracle['s']:.3g}"), "oracle_calls": oracle["calls"],
+                "peak_host_mb": probe.peak_mb, "peak_device_mb": probe.device_mb}  # fmt: skip
+        return {**measure(s, method, prob, tol, cost), **({"sample": n_grown} if n_grown else {})}
+
     for method in ("afinni", "afinni_scaled", "art"):
         rows = []
         for tol in tols:
             n_grown = grown_size(d, runs["afinni"], rows) if method == "afinni_scaled" else None
             if n_grown is not None and n_grown > MAX_SAMPLE:
                 break
-            s = train(method, prob, tol, n_grown)
-            rows.append({**measure(s, method, prob, tol), **({"sample": n_grown} if n_grown else {})})
-            if models is not None and tol in STRIP:
-                models[method, tol] = s
+            key = {"method": method, "problem": prob.name, "data": data_hash(prob.lo, prob.hi, prob.X, prob.truth), "tol": repr(tol),
+                   "settings": {"n_grown": n_grown}}  # fmt: skip
+            rows.append(STORE.get(key, case, method, tol, n_grown, changed=RESULTS_CHANGED, method=method.removesuffix("_scaled")))
+            if models is not None and tol in STRIP and (method, tol) not in models:
+                models[method, tol] = train(method, prob, tol, n_grown)
             print(prob.name, method, d, rows[-1], flush=True)
         runs[method] = rows
     return runs
@@ -290,6 +379,9 @@ def ladders(prob: Problem, tols: list[float], models: dict | None = None) -> dic
 def main() -> None:
     if not np.array_equal(chain(mf.domain_grid(40)), mf.f_np(mf.domain_grid(40))):
         raise SystemExit("The chain at d = 2 is not the running example's function.")
+    for method in ("afinni", "art"):  # compile every kernel the runs use, so no case's training time includes it
+        s = train(method, chain_problem(2), 1.0)
+        per_query_us(s.predict, chain_problem(2).X)
     runs: dict = {m: {} for m in METHODS}
     models: dict = {}
     for d, (tol0, rungs) in TOLERANCES.items():
@@ -306,6 +398,7 @@ def main() -> None:
     rates_panel(runs)
     error_panel(runs)
     problems_panel(problems)
+    times_panel(runs, problems)
     out = {
         "tolerances": {str(d): {"loosest": t, "rungs": n} for d, (t, n) in TOLERANCES.items()},
         "strip": list(STRIP),
@@ -318,6 +411,8 @@ def main() -> None:
                       for d, rows in by_d.items()} for m, by_d in runs.items()},  # fmt: skip
         "strip_leaves": {m: [runs[m][2][[r["tol"] for r in runs[m][2]].index(t)]["leaves"] for t in STRIP] for m in METHODS},
         "problems": problems,
+        "times": time_summary(runs, problems),
+        "provenance": provenance(),
     }
     (OUT / "convergence.json").write_text(json.dumps(out, indent=1) + "\n")
 

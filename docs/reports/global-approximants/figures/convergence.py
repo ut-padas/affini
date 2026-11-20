@@ -15,17 +15,21 @@ tighter ones. Every model is measured on the benchmark's test sets. The script s
 ran the same function on the same box, and unless ChebTT-M's rotated box has the half-width along the ridge
 that the degree prediction assumes. Writes convergence.json and the convergence-*.svg panels.
 
-Every case (one method at one tolerance on one problem) is appended to a cache under results/convergence/ as
-soon as it finishes, so a run that stops resumes at the first unfinished case. The cache file is named after a
-hash of this script, make_figures.py and the library's sources: any change to them starts a fresh one.
+Every case records its training time (the build, the oracle's evaluations included), the part of it spent in
+the oracle, its peak memory, its inference time per query on the test set and its saved model's size; the
+methods run on one CPU core, and Robertson's oracle solves on ``SURROGATE_ODE_WORKERS`` processes. Every case
+(one method at one tolerance on one problem) is a record of ``src.infra.records`` under
+results/convergence/global-approximants/, written as soon as it finishes, so a run that stops resumes at the
+first unfinished case. A record is reused unless its method's results changed after it was written
+(``RESULTS_CHANGED`` in ``src.benchmark.table``); a change to the problem, its test points or the case's
+settings makes a new case.
 """
 
-import hashlib
 import json
 import os
 
-for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
-    os.environ.setdefault(_var, "1")  # before NumPy loads BLAS: the hub expansion's Gram products depend on it
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMBA_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")  # before NumPy loads BLAS: the hub expansion's Gram products depend on it, and the times are one core's
 
 from pathlib import Path  # noqa: E402
 
@@ -33,8 +37,21 @@ import make_figures as gm  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
+from src import RESULTS_DIR  # noqa: E402
+from src.benchmark.table import RESULTS_CHANGED  # noqa: E402
 from src.config import ARTSettings  # noqa: E402
+from src.infra.records import (  # noqa: E402
+    Probe,
+    RecordStore,
+    data_hash,
+    error_stats,
+    per_query_us,
+    provenance,
+    saved_bytes,
+    timed_oracle,
+)
 from src.problems import FUNCTIONS  # noqa: E402
+from src.schemes import base  # noqa: E402
 
 OUT = Path(__file__).resolve().parent
 ADAPTIVE = OUT.parents[1] / "adaptive-surrogates" / "figures" / "convergence.json"
@@ -47,9 +64,7 @@ DIMS = (2, 3, 5)
 # largest. ART needs few leaves on a ridge, so it goes further.
 RIDGE_HALVINGS = {2: (0.1, 14, 14), 3: (0.1, 14, 14), 5: (0.1, 7, 12)}
 POINTS_PER_LEAF = MAX_SAMPLE = None  # the adaptive study's, read from its convergence.json
-ROOT = Path(__file__).resolve().parents[4]
-CACHE_DIR = ROOT / "results" / "convergence"
-CACHE: "Cache | None" = None  # opened by main
+STORE = RecordStore(RESULTS_DIR / "convergence" / "global-approximants")
 F_HALVINGS = (0.1, 4)
 HUB_D = gm.HUB_D
 # The vector problems: (d, the schemes' tolerances), a decade apart; and the stiff step map's tolerances, in dex
@@ -89,49 +104,6 @@ def structure(m) -> dict:
     return out
 
 
-class Cache:
-    """The finished cases on disk, one JSON line each, appended as each case finishes; a line cut short by a crash is skipped."""
-
-    def __init__(self, path: Path):
-        self.path = path
-        self.rows: dict[str, dict] = {}
-        if path.exists():
-            for line in path.read_text().splitlines():
-                try:
-                    case = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                self.rows[case["key"]] = case["row"]
-        print(f"{len(self.rows)} finished cases in {path}", flush=True)
-
-    def get(self, key: str, compute, *args) -> dict:
-        """The cached row of ``key``, or ``compute(*args)``'s, written to disk before it is returned."""
-        if key not in self.rows:
-            row = json.loads(json.dumps(compute(*args)))  # the form a resumed run reads back, so both runs write the same JSON
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a") as out:
-                out.write(json.dumps({"key": key, "row": row}) + "\n")
-            self.rows[key] = row
-        return self.rows[key]
-
-
-def code_fingerprint() -> str:
-    """A hash of this script, make_figures.py and the library's Python and CUDA sources: what a cached case depends on."""
-    h = hashlib.sha256()
-    for path in [Path(__file__).resolve(), Path(gm.__file__).resolve(), *sorted((ROOT / "src").rglob("*.py")),
-                 *sorted((ROOT / "src").rglob("*.cu"))]:  # fmt: skip
-        h.update(str(path.relative_to(ROOT)).encode() + b"\0" + path.read_bytes())
-    return h.hexdigest()[:16]
-
-
-def case_key(kind: str, name: str, lo, hi, X, truth, tol: float, **settings) -> str:
-    """One case's identity: the method, its settings, the tolerance, and the problem by its box, test points and values."""
-    h = hashlib.sha256()
-    for a in (lo, hi, X, truth):
-        h.update(np.ascontiguousarray(a, dtype=np.float64).tobytes())
-    return json.dumps([kind, name, h.hexdigest()[:16], repr(tol), {k: repr(v) for k, v in sorted(settings.items())}])
-
-
 def scheme_ladder(name: str, f, lo, hi, tols, X, truth, extra=None, outputs: int = 0) -> list[dict]:
     """
     The scheme at each tolerance until one fails; per rung its evaluations, worst error (over the points and the
@@ -140,20 +112,31 @@ def scheme_ladder(name: str, f, lo, hi, tols, X, truth, extra=None, outputs: int
 
     def case(tol: float) -> dict:
         g, spent = gm.counted(f)
-        try:
-            m = gm.scheme_on(name, g, lo, hi, tol, outputs)
-        except RuntimeError as e:
-            return {"tol": tol, "failed": str(e).split(".")[0], "evals": int(spent[0])}
-        P = np.asarray(m.predict(X), dtype=np.float64).reshape(truth.shape)
-        row = {"tol": tol, "evals": int(m.evals), "worst": gm.r3(float(np.max(np.abs(P - truth))) / tol), **structure(m)}
+        g, oracle = timed_oracle(g)
+        failed = None
+        with Probe() as probe:
+            try:
+                m = gm.scheme_on(name, g, lo, hi, tol, outputs)
+            except RuntimeError as e:
+                failed = str(e).split(".")[0]
+        cost = {"train_s": gm.r3(probe.seconds), "oracle_s": gm.r3(oracle["s"]), "oracle_calls": oracle["calls"],
+                "peak_host_mb": probe.peak_mb, "peak_device_mb": probe.device_mb}  # fmt: skip
+        if failed is not None:
+            return {"tol": tol, "failed": failed, "evals": int(spent[0]), **cost}
+        P, us = per_query_us(m.predict, X)
+        E = np.abs(np.asarray(P, dtype=np.float64).reshape(truth.shape) - truth)
+        row = {"tol": tol, "evals": int(m.evals), **error_stats(E.reshape(len(X), -1).max(axis=1) / tol),
+               "worst": gm.r3(float(np.max(E)) / tol), **cost, "predict_us": gm.r3(us), "model_bytes": saved_bytes(base.save, m),
+               "n_test": len(X), **structure(m)}  # fmt: skip
         if extra is not None:
             extra(m, row)
         return row
 
     rows = []
     for tol in tols:
-        key = case_key("scheme", name, lo, hi, X, truth, tol, outputs=outputs, extra=getattr(extra, "__name__", None))
-        rows.append(CACHE.get(key, case, tol))
+        key = {"kind": "scheme", "method": name, "data": data_hash(lo, hi, X, truth), "tol": repr(tol),
+               "settings": {"outputs": outputs, "extra": getattr(extra, "__name__", None)}}  # fmt: skip
+        rows.append(STORE.get(key, case, tol, changed=RESULTS_CHANGED, method=name))
         if "failed" in rows[-1]:
             break
         print(name, len(lo), rows[-1], flush=True)
@@ -167,18 +150,29 @@ def baseline_ladder(name: str, f, lo, hi, tols, X, truth, size, **kw) -> list[di
     """
 
     def case(tol: float, n0: int | None) -> dict:
-        m = gm.baseline_on(name, lo, hi, tol, f=f, n0=n0, **kw)
-        P, outside = m.predict_flagged(X)
+        g, oracle = timed_oracle(f)
+        with Probe() as probe:
+            m = gm.baseline_on(name, lo, hi, tol, f=g, n0=n0, **kw)
+        _, us = per_query_us(m.predict, X)  # the plain inference; the errors below come from the flagged one
+        (P, outside), flagged_us = per_query_us(m.predict_flagged, X)
         e = np.abs(np.asarray(P).reshape(truth.shape) - truth).reshape(len(X), -1).max(axis=1)[~outside] / tol
-        return {"tol": tol, "evals": m.evals, "leaves": m.leaves, "worst": gm.r3(float(e.max())),
-                "p99": gm.r3(float(np.quantile(e, 0.99))), "flagged": gm.r3(100 * float(outside.mean()))}  # fmt: skip
+        stats = m.surrogate.profiling_stats
+        return {"tol": tol, "evals": m.evals, "leaves": m.leaves, **error_stats(e), "worst": gm.r3(float(e.max())),
+                "p99": gm.r3(float(np.quantile(e, 0.99))), "flagged": gm.r3(100 * float(outside.mean())),
+                "train_s": gm.r3(probe.seconds), "oracle_s": gm.r3(oracle["s"]), "oracle_calls": oracle["calls"],
+                "peak_host_mb": probe.peak_mb, "peak_device_mb": probe.device_mb,
+                "predict_us": gm.r3(us), "flagged_us": gm.r3(flagged_us),
+                "model_bytes": saved_bytes(lambda m, path: m.surrogate.save_model(path), m), "n_test": len(X), "n0": n0,
+                "levels": int(stats["num_levels"]), "unresolved": int(stats["num_unresolved_clusters"])}  # fmt: skip
 
     rows = []
     for tol in tols:
         n0 = size(rows)
         if n0 is not None and n0 > MAX_SAMPLE:
             break
-        rows.append(CACHE.get(case_key("baseline", name, lo, hi, X, truth, tol, n0=n0, **kw), case, tol, n0))
+        key = {"kind": "baseline", "method": name, "data": data_hash(lo, hi, X, truth), "tol": repr(tol),
+               "settings": {"n0": repr(n0), **{k: repr(v) for k, v in sorted(kw.items())}}}  # fmt: skip
+        rows.append(STORE.get(key, case, tol, n0, changed=RESULTS_CHANGED, method=name))
         print(name, len(lo), rows[-1], flush=True)
     return rows
 
@@ -375,10 +369,48 @@ def feature_panel(F: dict) -> None:
     gm.save(fig, "convergence-feature")
 
 
+def every_case(out: dict):
+    """(method, row) for every finished case of the study, each once (the hub's floor runs on Rosenbrock are its rosen rows)."""
+    groups = [*out["rosen"].values(), *out["ridge"].values(), out["F"], *out["vector"].values()]
+    groups.append({"hub": out["floor"]["shared_latent"] + out["floor"]["lift"]})
+    for g in groups:
+        for m in (*SCHEMES, "afinni", "art"):
+            yield from ((m, r) for r in g.get(m, []) if isinstance(r, dict) and "failed" not in r)
+
+
+def times_panel(out: dict) -> None:
+    """Every case's training time against its evaluations, and its inference time per query; AFINNI's and ART's as circles."""
+    fig, (ax_t, ax_p) = plt.subplots(1, 2, figsize=(4.6, 1.9))
+    for m, r in every_case(out):
+        kw = {"color": gm.METHOD[m], "ms": 2.4, "mew": 0.6, "ls": "none", "zorder": 3, "alpha": 0.8}
+        ax_t.loglog(r["evals"], r["train_s"], MARK[m], **kw)
+        ax_p.loglog(r["evals"], r["predict_us"], MARK[m], **kw)
+    ax_t.set_ylabel("training time (s)", fontsize=6.5, labelpad=1)
+    ax_p.set_ylabel(r"inference time per query ($\mu$s)", fontsize=6.5, labelpad=1)
+    for ax in (ax_t, ax_p):
+        ax.set_xlabel("evaluations of $f$", fontsize=6.5, labelpad=1)
+        ax.tick_params(labelsize=5.5, length=2, pad=1)
+        ax.minorticks_off()
+        gm.tidy(ax)
+    fig.tight_layout(w_pad=1.0)
+    gm.save(fig, "convergence-times")
+
+
+def time_summary(out: dict) -> dict:
+    """Per method, over every case: the median training time per evaluation (us), and the inference time's range and median."""
+    summary = {}
+    for m in (*SCHEMES, "afinni", "art"):
+        rows = [r for k, r in every_case(out) if k == m and "train_s" in r]
+        per_eval = [1e6 * r["train_s"] / r["evals"] for r in rows]
+        us = [r["predict_us"] for r in rows]
+        summary[m] = {"cases": len(rows), "per_eval_us": gm.r3(float(np.median(per_eval))),
+                      "predict_us": [min(us), gm.r3(float(np.median(us))), max(us)]}  # fmt: skip
+    return summary
+
+
 # ----------------------------------------------------------------------------- the study
 def main() -> None:
-    global POINTS_PER_LEAF, MAX_SAMPLE, CACHE
-    CACHE = Cache(CACHE_DIR / f"global-approximants-{code_fingerprint()}.jsonl")
+    global POINTS_PER_LEAF, MAX_SAMPLE
     adaptive = json.loads(ADAPTIVE.read_text())
     POINTS_PER_LEAF, MAX_SAMPLE = adaptive["points_per_leaf"], adaptive["max_sample"]
     X2 = gm.grid(gm.R_LO, gm.R_HI, 40)
@@ -386,6 +418,12 @@ def main() -> None:
         raise SystemExit("The chain at d = 2 is not the running example's Rosenbrock valley.")
     if adaptive["box"] != {"lower": [float(gm.R_LO[0]), float(gm.R_LO[1])], "upper": [float(gm.R_HI[0]), float(gm.R_HI[1])]}:
         raise SystemExit("The adaptive companion's convergence study ran on a different box.")
+    lo, hi = rosen_box(2)  # compile every kernel the runs use, so no case's training time includes it
+    for m in SCHEMES:
+        per_query_us(gm.scheme_on(m, gm.rosenbrock, lo, hi, 0.1).predict, X2)
+        per_query_us(gm.scheme_on(m, lambda x: np.c_[gm.rosenbrock(x), gm.rosenbrock(x)], lo, hi, 0.1, 2).predict, X2)
+    for m in ("afinni", "art"):
+        per_query_us(gm.baseline_on(m, lo, hi, 1.0, f=gm.rosenbrock).predict, X2)
     out: dict = {"decades": DECADES, "dims": list(DIMS), "rosen": {}, "ridge": {}}
 
     for d in DIMS:
@@ -453,6 +491,9 @@ def main() -> None:
     degree_panel(out["ridge"])
     floor_panel(floor)
     feature_panel(F)
+    times_panel(out)
+    out["times"] = time_summary(out)
+    out["provenance"] = provenance()
     (OUT / "convergence.json").write_text(json.dumps(out, indent=1) + "\n")
 
 
