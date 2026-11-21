@@ -575,6 +575,31 @@ stability and error propagation with encoder, decoder and latent dynamics throug
 §§3.2–3.3) are close to Theorem 8. Theorem 8 is therefore a specialisation of a known technique; a contribution would be a *verified*
 end-to-end certificate for a stated class of stiff step maps.
 
+## G. The gradient tier: values and Jacobians
+
+When the oracle also returns derivatives (analytic Jacobians of a static function; forward sensitivities of a step map), each
+evaluation carries $1 + k$ numbers along $k$ chart directions instead of 1. The theory then has two tiers: with gradients, the
+constants of Theorem 8, Proposition 6.5's singular value and the staircase are computed rather than estimated, and the fits can use
+derivative data; without them, finite differences cost $k + 1$ evaluations per gradient, or the fits use values alone. Scripts and
+outputs: `theory/gradients/g*.py`, `theory/gradients/data/g*.json`; every script's predictions were committed before its run
+(`d0e5e27`, `8f80735`, `e3997ea`).
+
+| Test | Prediction | Measured | Verdict |
+|---|---|---|---|
+| Chebyshev–Hermite interpolation in one variable (`g1_static`; two product-peak factors and a Runge function) | values and first derivatives at $n$ points give degree $2n - 1$, so the points per decade halve: $1/(2\log_{10}\rho)$ | ratios 1.97, 2.01, 2.00; each rate within 1% of the Bernstein prediction (the slope fit stops at the rounding floor, a fix made after the first run fitted the plateau) | confirmed |
+| Gradient-enhanced least squares, $d = 5$, total degree 4 (126 terms), uniform random points (`g1_static`) | $1 + d$ equations per point: about 6 times fewer points for the same accuracy | corner peak: 30 points with gradients reach 0.23 (the best degree-4 error is 0.21), values alone need 180 for 0.25; product peak (best error 0.12): 2–3 times | confirmed for the corner peak; a smaller gain where the space approximates poorly |
+| HIRES reduced surrogate, 3 chart coordinates, random visited chart values (`g2_hires`; directional forward sensitivities, checked against finite differences to $3.5\times10^{-7}$) | G2.1 values with Jacobians at $N$ points match values alone at about $4N$ | at $N = 200$ with Jacobians 0.37 dex one-step against 0.51 with values alone at 800; at $N = 800$, 0.019 against 0.51 | G2.1 confirmed; G2.2 (holding $2.5\times10^{-3}$ within a few hundred solves) failed: random visited samples cover the worst-case states poorly |
+| The same on tensor Chebyshev points of the chart box (`g3_hires_grid`) | G3.1 gradients save a factor 4 in points | no gain: at 13 points per axis values alone reach $1.27\times10^{-3}$, with Jacobians $2.42\times10^{-3}$ | **refuted**: on a designed point set the values already determine the polynomial, and the equally weighted gradient rows trade value accuracy for slope accuracy |
+| | G3.2 some configuration holds $2.5\times10^{-3}$ with under 1,000 solves | values alone on 11 points per axis: $2.34\times10^{-3}$ with 1,331 solves (rollout 0.56 dex) | near miss: 7 times fewer solves than the reduced ChebTT's 9,477, above the predicted 1,000 |
+| Cost of a sensitivity solve | G2.3 at most 3 plain solves | 6.7 (11.8 against 1.8 ms) in this Python implementation; compiled forward-sensitivity solvers typically add 10–75% | failed here; the net value of gradients depends on that cost |
+
+What the gradient tier establishes. Derivative data carry the information the theory says (Hermite halving exactly; about $1 + d$ equations
+per point for least squares where the points are sparse or poorly placed), but on a well-designed Chebyshev point set they add little for
+the values' sup error unless they are weighted for it, and in this Python implementation a sensitivity solve costs more than the information
+it brings. Where gradients clearly pay: diagnostics (one solve gives the Jacobian that Proposition 6.5, Proposition 6.7 and the chart need),
+the constants of Theorem 8, and fits whose points cannot be designed (data from trajectories). Open: weighting gradient rows by their
+contribution to the sup error; a compiled sensitivity solver.
+
 ## 9. Synthesis
 
 Entries are observations (obs.), estimates (est.) or proofs (thm); no verified bound has been computed.

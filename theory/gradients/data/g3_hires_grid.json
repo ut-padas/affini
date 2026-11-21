@@ -1,0 +1,938 @@
+{
+ "rows": [
+  {
+   "degree": 2,
+   "gradients": false,
+   "one_step_worst": 0.13284302291778027,
+   "points_per_axis": 5,
+   "solves": 125,
+   "terms": 10
+  },
+  {
+   "degree": 3,
+   "gradients": false,
+   "one_step_worst": 0.053859054384693295,
+   "points_per_axis": 5,
+   "solves": 125,
+   "terms": 20
+  },
+  {
+   "degree": 4,
+   "gradients": false,
+   "one_step_worst": 0.08631815262316911,
+   "points_per_axis": 5,
+   "solves": 125,
+   "terms": 35
+  },
+  {
+   "best_for_n": true,
+   "degree": 5,
+   "gradients": false,
+   "one_step_worst": 0.024693584128501422,
+   "points_per_axis": 5,
+   "rollout_worst": 3.2770765514094164,
+   "solves": 125,
+   "survived": 0.019575358290604195,
+   "terms": 56
+  },
+  {
+   "degree": 2,
+   "gradients": true,
+   "one_step_worst": 0.21852988780361926,
+   "points_per_axis": 5,
+   "solves": 125,
+   "terms": 10
+  },
+  {
+   "degree": 3,
+   "gradients": true,
+   "one_step_worst": 0.06784535632700672,
+   "points_per_axis": 5,
+   "solves": 125,
+   "terms": 20
+  },
+  {
+   "degree": 4,
+   "gradients": true,
+   "one_step_worst": 0.1402915405821683,
+   "points_per_axis": 5,
+   "solves": 125,
+   "terms": 35
+  },
+  {
+   "degree": 5,
+   "gradients": true,
+   "one_step_worst": 0.039133434588725535,
+   "points_per_axis": 5,
+   "solves": 125,
+   "terms": 56
+  },
+  {
+   "degree": 6,
+   "gradients": true,
+   "one_step_worst": 0.03476383204740996,
+   "points_per_axis": 5,
+   "solves": 125,
+   "terms": 84
+  },
+  {
+   "degree": 7,
+   "gradients": true,
+   "one_step_worst": 0.03891841066104029,
+   "points_per_axis": 5,
+   "solves": 125,
+   "terms": 120
+  },
+  {
+   "degree": 8,
+   "gradients": true,
+   "one_step_worst": 0.02505475622469122,
+   "points_per_axis": 5,
+   "solves": 125,
+   "terms": 165
+  },
+  {
+   "best_for_n": true,
+   "degree": 9,
+   "gradients": true,
+   "one_step_worst": 0.023674302049887075,
+   "points_per_axis": 5,
+   "rollout_worst": 2.2105433995471118,
+   "solves": 125,
+   "survived": 0.02108190046398639,
+   "terms": 220
+  },
+  {
+   "degree": 2,
+   "gradients": false,
+   "one_step_worst": 0.1328704337079164,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 10
+  },
+  {
+   "degree": 3,
+   "gradients": false,
+   "one_step_worst": 0.051423276836009,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 20
+  },
+  {
+   "degree": 4,
+   "gradients": false,
+   "one_step_worst": 0.08927021530841084,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 35
+  },
+  {
+   "degree": 5,
+   "gradients": false,
+   "one_step_worst": 0.029636443996841733,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 56
+  },
+  {
+   "degree": 6,
+   "gradients": false,
+   "one_step_worst": 0.02096937344369265,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 84
+  },
+  {
+   "degree": 7,
+   "gradients": false,
+   "one_step_worst": 0.02240871810534828,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 120
+  },
+  {
+   "degree": 8,
+   "gradients": false,
+   "one_step_worst": 0.01295512099733065,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 165
+  },
+  {
+   "best_for_n": true,
+   "degree": 9,
+   "gradients": false,
+   "one_step_worst": 0.007885322313552656,
+   "points_per_axis": 7,
+   "rollout_worst": 1.32797216162898,
+   "solves": 343,
+   "survived": 0.005552756261322456,
+   "terms": 220
+  },
+  {
+   "degree": 2,
+   "gradients": true,
+   "one_step_worst": 0.21398416980189605,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 10
+  },
+  {
+   "degree": 3,
+   "gradients": true,
+   "one_step_worst": 0.06748881223075331,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 20
+  },
+  {
+   "degree": 4,
+   "gradients": true,
+   "one_step_worst": 0.13540490611955458,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 35
+  },
+  {
+   "degree": 5,
+   "gradients": true,
+   "one_step_worst": 0.032777102242960376,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 56
+  },
+  {
+   "degree": 6,
+   "gradients": true,
+   "one_step_worst": 0.03196996092220261,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 84
+  },
+  {
+   "degree": 7,
+   "gradients": true,
+   "one_step_worst": 0.032476988058949496,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 120
+  },
+  {
+   "degree": 8,
+   "gradients": true,
+   "one_step_worst": 0.02178783745210322,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 165
+  },
+  {
+   "degree": 9,
+   "gradients": true,
+   "one_step_worst": 0.01656220722587154,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 220
+  },
+  {
+   "degree": 10,
+   "gradients": true,
+   "one_step_worst": 0.011284734027129817,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 286
+  },
+  {
+   "degree": 11,
+   "gradients": true,
+   "one_step_worst": 0.008276089384292362,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 364
+  },
+  {
+   "degree": 12,
+   "gradients": true,
+   "one_step_worst": 0.010388613360847065,
+   "points_per_axis": 7,
+   "solves": 343,
+   "terms": 455
+  },
+  {
+   "best_for_n": true,
+   "degree": 13,
+   "gradients": true,
+   "one_step_worst": 0.006569939218937115,
+   "points_per_axis": 7,
+   "rollout_worst": 1.7685429208919756,
+   "solves": 343,
+   "survived": 0.004006738966191997,
+   "terms": 560
+  },
+  {
+   "degree": 2,
+   "gradients": false,
+   "one_step_worst": 0.1328658324579931,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 10
+  },
+  {
+   "degree": 3,
+   "gradients": false,
+   "one_step_worst": 0.05122767644544002,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 20
+  },
+  {
+   "degree": 4,
+   "gradients": false,
+   "one_step_worst": 0.08974917570950747,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 35
+  },
+  {
+   "degree": 5,
+   "gradients": false,
+   "one_step_worst": 0.029947752637621727,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 56
+  },
+  {
+   "degree": 6,
+   "gradients": false,
+   "one_step_worst": 0.021541834630906864,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 84
+  },
+  {
+   "degree": 7,
+   "gradients": false,
+   "one_step_worst": 0.022668550587524594,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 120
+  },
+  {
+   "degree": 8,
+   "gradients": false,
+   "one_step_worst": 0.012923470271823279,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 165
+  },
+  {
+   "degree": 9,
+   "gradients": false,
+   "one_step_worst": 0.00910373235323414,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 220
+  },
+  {
+   "degree": 10,
+   "gradients": false,
+   "one_step_worst": 0.007438573463292464,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 286
+  },
+  {
+   "degree": 11,
+   "gradients": false,
+   "one_step_worst": 0.004812085165978974,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 364
+  },
+  {
+   "best_for_n": true,
+   "degree": 12,
+   "gradients": false,
+   "one_step_worst": 0.0033281142824293057,
+   "points_per_axis": 9,
+   "rollout_worst": 0.6114153160746585,
+   "solves": 729,
+   "survived": 0.002142947175701959,
+   "terms": 455
+  },
+  {
+   "degree": 2,
+   "gradients": true,
+   "one_step_worst": 0.2134769760419699,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 10
+  },
+  {
+   "degree": 3,
+   "gradients": true,
+   "one_step_worst": 0.06745792107945814,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 20
+  },
+  {
+   "degree": 4,
+   "gradients": true,
+   "one_step_worst": 0.13427808275821262,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 35
+  },
+  {
+   "degree": 5,
+   "gradients": true,
+   "one_step_worst": 0.031162249480498172,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 56
+  },
+  {
+   "degree": 6,
+   "gradients": true,
+   "one_step_worst": 0.030247203199393002,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 84
+  },
+  {
+   "degree": 7,
+   "gradients": true,
+   "one_step_worst": 0.030398493450012776,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 120
+  },
+  {
+   "degree": 8,
+   "gradients": true,
+   "one_step_worst": 0.019429443768453902,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 165
+  },
+  {
+   "degree": 9,
+   "gradients": true,
+   "one_step_worst": 0.011632618011364837,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 220
+  },
+  {
+   "degree": 10,
+   "gradients": true,
+   "one_step_worst": 0.008683229005510995,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 286
+  },
+  {
+   "degree": 11,
+   "gradients": true,
+   "one_step_worst": 0.009788367583712487,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 364
+  },
+  {
+   "degree": 12,
+   "gradients": true,
+   "one_step_worst": 0.008488647280955774,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 455
+  },
+  {
+   "degree": 13,
+   "gradients": true,
+   "one_step_worst": 0.004263978415452563,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 560
+  },
+  {
+   "degree": 14,
+   "gradients": true,
+   "one_step_worst": 0.004643483487647648,
+   "points_per_axis": 9,
+   "solves": 729,
+   "terms": 680
+  },
+  {
+   "best_for_n": true,
+   "degree": 15,
+   "gradients": true,
+   "one_step_worst": 0.0041224358017097895,
+   "points_per_axis": 9,
+   "rollout_worst": 1.4997074898081466,
+   "solves": 729,
+   "survived": 0.0033777926989488893,
+   "terms": 816
+  },
+  {
+   "degree": 2,
+   "gradients": false,
+   "one_step_worst": 0.13286474547759874,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 10
+  },
+  {
+   "degree": 3,
+   "gradients": false,
+   "one_step_worst": 0.05123488658387654,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 20
+  },
+  {
+   "degree": 4,
+   "gradients": false,
+   "one_step_worst": 0.08982865117634553,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 35
+  },
+  {
+   "degree": 5,
+   "gradients": false,
+   "one_step_worst": 0.029940422730921235,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 56
+  },
+  {
+   "degree": 6,
+   "gradients": false,
+   "one_step_worst": 0.021579229926488086,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 84
+  },
+  {
+   "degree": 7,
+   "gradients": false,
+   "one_step_worst": 0.02257461530073157,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 120
+  },
+  {
+   "degree": 8,
+   "gradients": false,
+   "one_step_worst": 0.012575048324320326,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 165
+  },
+  {
+   "degree": 9,
+   "gradients": false,
+   "one_step_worst": 0.008706655142125208,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 220
+  },
+  {
+   "degree": 10,
+   "gradients": false,
+   "one_step_worst": 0.007551597424602097,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 286
+  },
+  {
+   "degree": 11,
+   "gradients": false,
+   "one_step_worst": 0.005431242087972743,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 364
+  },
+  {
+   "degree": 12,
+   "gradients": false,
+   "one_step_worst": 0.003084228808422962,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 455
+  },
+  {
+   "degree": 13,
+   "gradients": false,
+   "one_step_worst": 0.0023453921865831395,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 560
+  },
+  {
+   "best_for_n": true,
+   "degree": 14,
+   "gradients": false,
+   "one_step_worst": 0.0023387763388837968,
+   "points_per_axis": 11,
+   "rollout_worst": 0.5560787088546983,
+   "solves": 1331,
+   "survived": 0.0016635389896511588,
+   "terms": 680
+  },
+  {
+   "degree": 15,
+   "gradients": false,
+   "one_step_worst": 0.0026616631121072487,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 816
+  },
+  {
+   "degree": 2,
+   "gradients": true,
+   "one_step_worst": 0.2134320645339498,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 10
+  },
+  {
+   "degree": 3,
+   "gradients": true,
+   "one_step_worst": 0.06740560119455763,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 20
+  },
+  {
+   "degree": 4,
+   "gradients": true,
+   "one_step_worst": 0.1340534765110415,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 35
+  },
+  {
+   "degree": 5,
+   "gradients": true,
+   "one_step_worst": 0.030901251972838217,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 56
+  },
+  {
+   "degree": 6,
+   "gradients": true,
+   "one_step_worst": 0.029839606041658362,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 84
+  },
+  {
+   "degree": 7,
+   "gradients": true,
+   "one_step_worst": 0.030189113854991012,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 120
+  },
+  {
+   "degree": 8,
+   "gradients": true,
+   "one_step_worst": 0.019642930859154806,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 165
+  },
+  {
+   "degree": 9,
+   "gradients": true,
+   "one_step_worst": 0.011917797736694324,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 220
+  },
+  {
+   "degree": 10,
+   "gradients": true,
+   "one_step_worst": 0.008684115628200928,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 286
+  },
+  {
+   "degree": 11,
+   "gradients": true,
+   "one_step_worst": 0.008082986716973828,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 364
+  },
+  {
+   "degree": 12,
+   "gradients": true,
+   "one_step_worst": 0.00559850628015357,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 455
+  },
+  {
+   "degree": 13,
+   "gradients": true,
+   "one_step_worst": 0.0031520006543548362,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 560
+  },
+  {
+   "degree": 14,
+   "gradients": true,
+   "one_step_worst": 0.003609726462286078,
+   "points_per_axis": 11,
+   "solves": 1331,
+   "terms": 680
+  },
+  {
+   "best_for_n": true,
+   "degree": 15,
+   "gradients": true,
+   "one_step_worst": 0.003102005676325348,
+   "points_per_axis": 11,
+   "rollout_worst": 0.6807999453754823,
+   "solves": 1331,
+   "survived": 0.002139288877255119,
+   "terms": 816
+  },
+  {
+   "degree": 2,
+   "gradients": false,
+   "one_step_worst": 0.13286457806506047,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 10
+  },
+  {
+   "degree": 3,
+   "gradients": false,
+   "one_step_worst": 0.05124513173166578,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 20
+  },
+  {
+   "degree": 4,
+   "gradients": false,
+   "one_step_worst": 0.0898409307085537,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 35
+  },
+  {
+   "degree": 5,
+   "gradients": false,
+   "one_step_worst": 0.029928832196761235,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 56
+  },
+  {
+   "degree": 6,
+   "gradients": false,
+   "one_step_worst": 0.021573877834802246,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 84
+  },
+  {
+   "degree": 7,
+   "gradients": false,
+   "one_step_worst": 0.02253448726286722,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 120
+  },
+  {
+   "degree": 8,
+   "gradients": false,
+   "one_step_worst": 0.012489136081103469,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 165
+  },
+  {
+   "degree": 9,
+   "gradients": false,
+   "one_step_worst": 0.008574761710560819,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 220
+  },
+  {
+   "degree": 10,
+   "gradients": false,
+   "one_step_worst": 0.0073135824068844,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 286
+  },
+  {
+   "degree": 11,
+   "gradients": false,
+   "one_step_worst": 0.005108121334790994,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 364
+  },
+  {
+   "degree": 12,
+   "gradients": false,
+   "one_step_worst": 0.0033903909422667855,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 455
+  },
+  {
+   "degree": 13,
+   "gradients": false,
+   "one_step_worst": 0.0023777816227857906,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 560
+  },
+  {
+   "degree": 14,
+   "gradients": false,
+   "one_step_worst": 0.001684321818621326,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 680
+  },
+  {
+   "best_for_n": true,
+   "degree": 15,
+   "gradients": false,
+   "one_step_worst": 0.0012741409521922487,
+   "points_per_axis": 13,
+   "rollout_worst": 0.3905706935616231,
+   "solves": 2197,
+   "survived": 0.0011200812626444012,
+   "terms": 816
+  },
+  {
+   "degree": 2,
+   "gradients": true,
+   "one_step_worst": 0.21343450933423114,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 10
+  },
+  {
+   "degree": 3,
+   "gradients": true,
+   "one_step_worst": 0.06736152467870982,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 20
+  },
+  {
+   "degree": 4,
+   "gradients": true,
+   "one_step_worst": 0.13399788110690247,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 35
+  },
+  {
+   "degree": 5,
+   "gradients": true,
+   "one_step_worst": 0.030881673419879574,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 56
+  },
+  {
+   "degree": 6,
+   "gradients": true,
+   "one_step_worst": 0.029779877782320163,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 84
+  },
+  {
+   "degree": 7,
+   "gradients": true,
+   "one_step_worst": 0.030208012911690618,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 120
+  },
+  {
+   "degree": 8,
+   "gradients": true,
+   "one_step_worst": 0.01980947756903695,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 165
+  },
+  {
+   "degree": 9,
+   "gradients": true,
+   "one_step_worst": 0.012110602558835004,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 220
+  },
+  {
+   "degree": 10,
+   "gradients": true,
+   "one_step_worst": 0.008960099079412975,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 286
+  },
+  {
+   "degree": 11,
+   "gradients": true,
+   "one_step_worst": 0.008456608925368592,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 364
+  },
+  {
+   "degree": 12,
+   "gradients": true,
+   "one_step_worst": 0.005359670117343063,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 455
+  },
+  {
+   "degree": 13,
+   "gradients": true,
+   "one_step_worst": 0.002884701802531392,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 560
+  },
+  {
+   "degree": 14,
+   "gradients": true,
+   "one_step_worst": 0.0030224314818543263,
+   "points_per_axis": 13,
+   "solves": 2197,
+   "terms": 680
+  },
+  {
+   "best_for_n": true,
+   "degree": 15,
+   "gradients": true,
+   "one_step_worst": 0.002422049700125717,
+   "points_per_axis": 13,
+   "rollout_worst": 0.7488225146779357,
+   "solves": 2197,
+   "survived": 0.001752669837409515,
+   "terms": 816
+  }
+ ]
+}
