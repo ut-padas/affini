@@ -41,7 +41,7 @@ RESULTS_CHANGED = {
     "hub": ("2026-11-18T23:13", "contiguous rotations (predictions within 1e-9)"),
     "afinni": ("2026-11-17T18:06", "per-batch random streams"),
     "art": ("2026-11-16T17:55", "leaf fits as the reference ART's"),
-    "art_quad": ("2026-11-16T17:55", "leaf fits as the reference ART's"),
+    "art_quad": ("2026-11-20T19:28", "affine fits in the split search from 100 leaf coefficients (d >= 13)"),
 }
 FUNCTION_CLASSES = {
     "smooth": ("rosenbrock", "gaussian", "wave", "genz_oscillatory", "genz_product_peak", "genz_corner_peak", "genz_gaussian"),

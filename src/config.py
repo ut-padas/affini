@@ -116,9 +116,19 @@ class ARTSettings:
     n_bins: int = 16
     n_directions: int = 6
     n_screened: int = 3
-    # The reference ART's iteration cap. Against 40, on its benchmark problems at d >= 3, it builds
-    # 5-30% fewer leaves for the same test error (4x fewer on a 5-D plane wave), and so fewer
-    # oracle calls, for about 2-3x the training time where the trees are about the same size.
+    # From this many leaf coefficients p, the bins search ranks its cuts and the soft search
+    # optimizes its plane with affine fits ([u, 1], d + 1 coefficients) instead of the leaf
+    # model's; the screened candidates and the soft result are still judged by the leaf model's
+    # hard SSE. A quadratic leaf's p^3 work per fitted system becomes (d + 1)^3 (231 -> 21 at
+    # d = 20). Below about 100 coefficients the saving is small and the trees can get worse (up
+    # to several times the test error for quadratic leaves at d <= 5); at d = 20 the test error is
+    # unchanged on the reference ART's benchmarks. None: always the leaf model's fits.
+    affine_search_from: int | None = 100
+    # Against 40, on the reference ART's benchmark problems at d >= 3, 200 iterations build 5-30%
+    # fewer leaves for the same test error (4x fewer on a 5-D plane wave), and so fewer oracle
+    # calls, for about 2-3x the training time where the trees are about the same size. The
+    # reference's presets use 20 (with sample_multiplier 10); scripts/art_comparison.py passes its
+    # --max-iters, so a comparison runs both at the same cap.
     soft_iters: int = 200
     # The soft gate's width (h in the companion) as a fraction of the std of the node's scores.
     soft_temperature: float = 0.1
@@ -150,6 +160,10 @@ class ARTSettings:
                 raise ValueError(f"ARTSettings.{name} must be one of {choices}; got {getattr(self, name)!r}.")
         if self.sampling == "convex_combination" and self.validation_samples:
             raise ValueError("validation_samples needs sampling='hit_and_run' (fresh points inside each node).")
+        if self.affine_search_from is not None and (
+            not isinstance(self.affine_search_from, numbers.Integral) or self.affine_search_from < 1
+        ):
+            raise ValueError(f"affine_search_from must be None or an integer >= 1; got {self.affine_search_from!r}.")
         for name, low in (("n_bins", 2), ("n_directions", 1), ("n_screened", 1), ("soft_iters", 0)):
             value = getattr(self, name)
             if not isinstance(value, numbers.Integral) or isinstance(value, bool) or value < low:

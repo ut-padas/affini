@@ -4,7 +4,8 @@ Differential regression check for the training/inference pipeline.
 Trains small, fixed problems through the public ``AdaptiveSurrogate`` API for every
 ``SurrogateMode`` x error metric x output dimension (plus a few extra paths: oracle,
 precomputed Y, uniform-grid roots, second-order Taylor, tiny batches) and ART
-(every split search, root type, sampler, quadratic leaves, fallback leaves), predicts on
+(every split search, root type, sampler, quadratic leaves, fallback leaves), plus quadratic
+leaves at d = 8 for both plans (the GPU's large-system kernels), predicts on
 fixed queries, and stores every array a saved model holds, every prediction, trust mask
 and counter.
 
@@ -85,6 +86,11 @@ def wavy(fd):
     return f
 
 
+def wavy_8d(x):
+    """An 8-D function for the cases whose quadratic leaves (45 coefficients) take the GPU's large-system kernels."""
+    return (xp.sin(x @ xp.linspace(0.5, 1.5, 8)) + 0.5 * xp.sum(x**2, axis=1) + 2.0)[:, None]
+
+
 def model_arrays(s: AdaptiveSurrogate) -> dict[str, np.ndarray]:
     """Every numeric array ``save_model`` would write (leaves, local-model parameters, routing, leaf status)."""
     out = {k: getattr(s, k) for k in ("X_src", "f_src", "E_cluster_abs_src", "E_cluster_rel_src", "counts_src")}
@@ -131,6 +137,12 @@ def cases():
     yield "art_quadratic", 1, dict(art_base, local_model="quadratic_lsq", art=ARTSettings(**rs))
     yield "art_tiny_batches", 1, dict(art_base, batch_size=97, art=ARTSettings(**rs, soft_iters=5))
     yield "art_fallback_leaves", 2, dict(art_base, max_levels=3, art=ARTSettings(**rs, soft_iters=5))
+    # d = 8 with quadratic leaves: 45 coefficients, above SPD_COOP_MIN_P, so the GPU factors,
+    # solves and forms Grams with the large-system kernels the 2-D cases never reach.
+    yield "art_quadratic_d8", 1, dict(art_base, _dim=8, domain=([-1.0] * 8, [1.0] * 8), max_levels=3,
+                                      local_model="quadratic_lsq", art=ARTSettings(sample_multiplier=3, soft_iters=5))
+    yield "afinni_quadratic_d8", 1, dict(base, _dim=8, local_model="quadratic_lsq", min_pts_per_cluster=60,
+                                         max_levels=4)
 
 
 def run(out_prefix):
@@ -138,6 +150,8 @@ def run(out_prefix):
     rng = np.random.default_rng(82)
     X = xp.asarray(rng.uniform(-1, 1, (512, 2)))
     Q = xp.asarray(rng.uniform(-1.2, 1.2, (257, 2)))
+    X8 = xp.asarray(rng.uniform(-1, 1, (1500, 8)))
+    Q8 = xp.asarray(rng.uniform(-1.2, 1.2, (257, 8)))
     arrays, report = {}, {}
     for name, fd, kwargs in cases():
         art_mode = kwargs.get("algorithm") == "art"
@@ -146,21 +160,24 @@ def run(out_prefix):
             f = wavy(fd)
         oracle, use_Y = kwargs.pop("_oracle", False), kwargs.pop("_Y", False)
         fns = {"oracle_fn": lambda x, f=f, g=g: (f(x), g(x))} if oracle else {"f_fn": f, "g_fn": g}
+        X_case, Q_case = X, Q
+        if kwargs.pop("_dim", 2) == 8:  # function values only: the 2-D gradient and Hessian do not apply
+            f, h, fns, X_case, Q_case = wavy_8d, None, {"f_fn": wavy_8d}, X8, Q8
         t0 = time.perf_counter()
         try:
             s = AdaptiveSurrogate()
-            s.train(X, TrainingConfig(**kwargs), Evaluator(hessian_fn=h, **fns), Y_train=f(X) if use_Y else None)
+            s.train(X_case, TrainingConfig(**kwargs), Evaluator(hessian_fn=h, **fns), Y_train=f(X_case) if use_Y else None)
             train_time = time.perf_counter() - t0
             for attr, v in model_arrays(s).items():
                 arrays[f"{name}|{attr}"] = v.reshape(len(v), -1) if v.ndim else v
             if art_mode:
-                pred, mask = s.predict(Q)  # routed down the tree
+                pred, mask = s.predict(Q_case)  # routed down the tree
                 arrays[f"{name}|pred_route"], arrays[f"{name}|mask_route"] = to_host(pred), to_host(mask)
                 counters = {**s.profiling_stats.get("art", {}), **s.profiling_stats.get("terminal_reasons", {})}
                 arrays[f"{name}|art_counters"] = np.asarray([counters[k] for k in sorted(counters)], dtype=np.int64)
             else:
                 for k, coarse, strict in ((1, 10, False), (4, 10, False), (4, 10, True), (2000, 2000, False)):
-                    pred, mask = s.predict(Q, k_nn=k, coarse_factor=coarse, strict_trust_region=strict, batch_size=37)
+                    pred, mask = s.predict(Q_case, k_nn=k, coarse_factor=coarse, strict_trust_region=strict, batch_size=37)
                     arrays[f"{name}|pred_{k}_{strict}"] = to_host(pred)
                     arrays[f"{name}|mask_{k}_{strict}"] = to_host(mask)
             ps = s.profiling_stats

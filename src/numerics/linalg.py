@@ -15,14 +15,24 @@ if IS_CUPY_BACKEND:  # sources in src/kernels/*.cu
     _kern_spd_solve = _linalg.get_function("spd_solve")
     _kern_spd_factor = _linalg.get_function("spd_factor")
     _kern_spd_factor_coop = _linalg.get_function("spd_factor_coop")
+    _kern_spd_factor_shared = _linalg.get_function("spd_factor_shared")
+    # The packed triangle of the largest system spd_factor_shared can hold in one block's shared memory.
+    _SPD_SHARED_BYTES = int(xp.cuda.Device().attributes["MaxSharedMemoryPerBlockOptin"]) - int(
+        _kern_spd_factor_shared.shared_size_bytes)  # the opt-in limit counts the kernel's static flag too
+    _kern_spd_factor_shared.max_dynamic_shared_size_bytes = _SPD_SHARED_BYTES
+    _kern_spd_solve_shared = _linalg.get_function("spd_solve_shared")
+    _kern_spd_solve_shared.max_dynamic_shared_size_bytes = _SPD_SHARED_BYTES
     _kern_spd_solve_factored = _linalg.get_function("spd_solve_factored")
+    _kern_spd_solve_factored_shared = _linalg.get_function("spd_solve_factored_shared")
+    _kern_spd_solve_factored_shared.max_dynamic_shared_size_bytes = _SPD_SHARED_BYTES
     _kern_affine_reg = _linalg.get_function("fused_affine_fit_regularize")
     _kern_cholesky = _linalg.get_function("batched_inplace_cholesky_solve")
 
 
 TINY_EPS = 1e-12
 
-# From this many unknowns, SPD systems are factored by one block each (spd_factor_coop).
+# From this many unknowns, SPD systems are factored by one block each: in shared memory
+# (spd_factor_shared) while the packed triangle fits, else in global memory (spd_factor_coop).
 SPD_COOP_MIN_P = 32
 
 
@@ -87,17 +97,31 @@ def leading_eigvec(C: Array) -> Array:
     return v * xp.where(xp.take_along_axis(v, i[:, None], axis=1) < 0, -1.0, 1.0)
 
 
-def spd_solve(A: Array, B: Array) -> Array:
+def spd_solve(A: Array, B: Array, *, exact: bool = False) -> Array:
     """
     ``A^-1 B`` for stacks of small symmetric positive definite systems ``(..., p, p)``,
     ``(..., p, q)`` (equal leading shapes). NumPy: ``xp.linalg.solve``. CuPy: one thread
     per system (Cholesky of the lower triangle and two triangular solves), a single kernel
     instead of the dozen launches and ~0.4 ms of a batched ``linalg.solve``, with bits that
-    do not depend on the rest of the stack. A system that is not positive definite (or not
-    finite) gets an all-NaN solution, which callers already treat as an invalid fit.
+    do not depend on the rest of the stack. From ``SPD_COOP_MIN_P`` unknowns, one block per
+    system factors and solves in shared memory while it fits (``spd_solve_shared``), else
+    ``spd_factor`` then ``spd_solve_factored``; both give ``spd_solve_factored(spd_factor(A), B,
+    exact=exact)``'s bits (``exact``: that function's exact substitution order). A system that is
+    not positive definite (or not finite) gets an all-NaN solution, which callers already treat as
+    an invalid fit.
     """
     if IS_CUPY_BACKEND and A.shape[-1] >= SPD_COOP_MIN_P:
-        return spd_solve_factored(spd_factor(A), B)
+        p, q = A.shape[-1], B.shape[-1]
+        shared = 8 * (p * (p + 1) // 2 + p + p * q)
+        if shared > _SPD_SHARED_BYTES or exact:
+            return spd_solve_factored(spd_factor(A), B, exact=exact)
+        lead = A.shape[:-2]
+        A = xp.ascontiguousarray(A, dtype=xp.float64)
+        X = xp.array(xp.broadcast_to(B, (*lead, p, q)), dtype=xp.float64, order="C", copy=True)
+        nb = int(np.prod(lead, dtype=np.int64))
+        if nb:
+            _kern_spd_solve_shared((nb,), (256,), (A, X, np.int64(nb), np.int32(p), np.int32(q)), shared_mem=shared)
+        return X
     if not IS_CUPY_BACKEND:
         return solve_or_nan(A, B)
     p, q = A.shape[-1], B.shape[-1]
@@ -141,24 +165,38 @@ def spd_factor(A: Array) -> Array:
     p = A.shape[-1]
     L = xp.array(A, dtype=xp.float64, order="C", copy=True)
     nb = int(np.prod(A.shape[:-2], dtype=np.int64))
-    if nb and p >= SPD_COOP_MIN_P:  # one block per system (same bits): one thread is too serial
+    shared = 8 * (p * (p + 1) // 2 + p)
+    if nb and p >= SPD_COOP_MIN_P and shared <= _SPD_SHARED_BYTES:  # one block per system, in shared memory (same bits)
+        _kern_spd_factor_shared((nb,), (256,), (L, np.int64(nb), np.int32(p)), shared_mem=shared)
+    elif nb and p >= SPD_COOP_MIN_P:  # one block per system (same bits): one thread is too serial
         _kern_spd_factor_coop((nb,), (min(128, -(-p // 32) * 32),), (L, np.int64(nb), np.int32(p)))
     elif nb:
         _kern_spd_factor(((nb + 127) // 128,), (128,), (L, np.int64(nb), np.int32(p)))
     return L
 
 
-def spd_solve_factored(L: Array, B: Array) -> Array:
-    """``A^-1 B`` from ``L = spd_factor(A)``; bit-identical to ``spd_solve(A, B)`` on both backends."""
+def spd_solve_factored(L: Array, B: Array, *, exact: bool = False) -> Array:
+    """
+    ``A^-1 B`` from ``L = spd_factor(A)``, bit-identical to ``spd_solve(A, B)``. CuPy: from
+    ``SPD_COOP_MIN_P`` unknowns, while the factor and right-hand sides fit one block's shared
+    memory, one block per system (``spd_solve_factored_shared``, the substitution of
+    ``spd_solve_shared``); otherwise, or with ``exact``, one thread per (system, right-hand side),
+    the substitution of ``spd_solve``'s one-thread kernel, which keeps the back substitution's
+    increasing-k order (and so the bits of the CPU loop's order) at the cost of a serial chain.
+    """
     if not IS_CUPY_BACKEND:
         return solve_or_nan(L, B)
     p, q = L.shape[-1], B.shape[-1]
     lead = L.shape[:-2]
     X = xp.array(xp.broadcast_to(B, (*lead, p, q)), dtype=xp.float64, order="C", copy=True)
     nb = int(np.prod(lead, dtype=np.int64))
-    if nb:
-        _kern_spd_solve_factored(((nb + 127) // 128,), (128,), (xp.ascontiguousarray(L), X, np.int64(nb),
-                                                                 np.int32(p), np.int32(q)))  # fmt: skip
+    shared = 8 * (p * (p + 1) // 2 + p * q)
+    if nb and q and p >= SPD_COOP_MIN_P and shared <= _SPD_SHARED_BYTES and not exact:
+        _kern_spd_solve_factored_shared((nb,), (256,), (xp.ascontiguousarray(L), X, np.int64(nb), np.int32(p),
+                                                        np.int32(q)), shared_mem=shared)  # fmt: skip
+    elif nb and q:
+        _kern_spd_solve_factored(((nb * q + 127) // 128,), (128,), (xp.ascontiguousarray(L), X, np.int64(nb),
+                                                                     np.int32(p), np.int32(q)))  # fmt: skip
     return X
 
 
@@ -223,10 +261,13 @@ def lstsq_auto(G: Array, B: Array, design: Array, rhs: Array, starts: Array, cou
     from scipy import linalg as sla
 
     K, p = int(G.shape[0]), int(G.shape[-1])
-    X = spd_solve(G, B)
+    # One factorization for the solution and the inverse. The leaf coefficients keep the exact
+    # substitution order, so a leaf's model does not change with the split search's solver.
+    L = spd_factor(G)
+    X = spd_solve_factored(L, B, exact=True)
     if K == 0:
         return X
-    inv = spd_solve(G, xp.broadcast_to(xp.eye(p), (K, p, p)))
+    inv = spd_solve_factored(L, xp.broadcast_to(xp.eye(p), (K, p, p)))
     norm_1 = xp.max(xp.sum(xp.abs(G), axis=-2), axis=-1)
     norm_1_inv = xp.max(xp.sum(xp.abs(inv), axis=-2), axis=-1)
     rcond = 1.0 / (norm_1 * norm_1_inv)

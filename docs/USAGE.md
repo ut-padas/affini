@@ -238,15 +238,20 @@ targets; their `(d+1)(d+2)/2` coefficients suit low dimension.
 
 With hit-and-run sampling (the default), random numbers come from streams keyed by node
 and every training reduction sums each node on its own, so an ART tree is the same for any
-batch size, rank count and steal schedule, and the same in every run on one backend (CPU and GPU trees differ only at
-rounding level). `scripts/art_comparison.py` trains the
+batch size, rank count and steal schedule, and the same in every run on one backend (CPU and GPU sums differ at rounding level, which can
+flip a borderline split). `scripts/art_comparison.py` trains the
 reference ART code and this ART on the reference's benchmark problems and scores both on the
 same test set; pass `--sampler parallel_numba` to time against the reference's fastest CPU
-configuration, and add `--traversal bfs --optimizer cupy_batched_cholesky` for its fastest GPU
-configuration. `--skip-reference` / `--skip-library` run one side only; this ART alone also runs
-under `mpiexec`. On the GPU,
-this ART's soft split search is 1-30x faster than the reference's GPU configuration, and faster than this
-ART on the CPU whenever the CPU training takes more than about 1.5 s.
+configuration, and add `--traversal bfs --optimizer cupy_batched_cholesky --gpu-sampling` for its
+fastest GPU configuration. Both sides build the same tree to depth 1 before the timed build (the
+reference's `--warmup`; `--no-warmup` skips it on both), so `build_seconds` excludes kernel loads
+and workspace allocation on either side. `--skip-reference` / `--skip-library` run one side only;
+this ART alone also runs under `mpiexec`. At the reference's preset settings (sample multiplier 10,
+20 soft iterations, depth 10) on one GH200, over five problems, d = 3 to 20, two tolerances and both
+leaf degrees (80 cases), this ART's median build time is 1.01x the reference's GPU configuration's
+for affine leaves up to d = 10, 0.88x at d = 20, 1.30x for quadratic leaves up to d = 10 and 1.07x
+at d = 20. Trees of a few dozen leaves take 0.2-0.4 s longer, a fixed cost per level. On the GPU,
+this ART is faster than on the CPU whenever the CPU training takes more than about 1.5 s.
 
 ### Example: ART on its own
 

@@ -419,11 +419,12 @@ class ARTPlan:
             return lead, xp.where(ok, z, xp.nan)
         rows = self._split_rows(data, U)
         bank = self._direction_bank(rows, lead, V, M, width, keys)
-        w, z, sse = self._bins_search(rows, bank)
+        search_rows = self._search_rows(rows)
+        w, z, sse = self._bins_search(rows, bank, search_rows)
         if mode == "soft":
             if progress is not None:
                 progress()
-            w, z = self._soft_refine(rows, w, z, sse, progress)
+            w, z = self._soft_refine(rows, w, z, sse, progress, search_rows)
         return w, z
 
     def _metric_basis(self, data: SplitData, splitter) -> tuple[Array, Array]:
@@ -476,14 +477,27 @@ class ARTPlan:
             dirs.extend(unit_rows(g[:, i]) for i in range(n_rand))
         return xp.stack(dirs[:D], axis=1)
 
-    def _bins_search(self, rows: SplitRows, bank: Array) -> tuple[Array, Array, Array]:
+    def _search_rows(self, rows: SplitRows) -> SplitRows:
+        """
+        The rows whose fits rank the bins search's cuts and drive the soft search: ``rows`` (the
+        leaf model's features), or from ``ARTSettings.affine_search_from`` coefficients the same
+        points with affine features ``[u, 1]``, whose fits cost ``(d + 1)^3`` instead of ``p^3``
+        per system. Candidates are always judged by ``rows``' hard SSE.
+        """
+        start = self.settings.affine_search_from
+        if start is None or self.n_coefficients < start or rows.Phi.shape[1] == self.d + 1:
+            return rows
+        Phi = xp.concatenate([rows.U, xp.ones((int(rows.U.shape[0]), 1))], axis=1)
+        return SplitRows(rows.U, rows.Y, Phi, rows.labels, rows.counts, ridge=rows.ridge)
+
+    def _bins_search(self, rows: SplitRows, bank: Array, search_rows: SplitRows) -> tuple[Array, Array, Array]:
         """
         The bins search: along every bank direction, evaluate ``n_bins - 1`` quantile cut positions
-        from per-bin sums (``SplitRows.cut_sums``: one data pass per direction), keep the
-        ``n_screened`` best per node as a screen, then recompute their SSE directly
-        (``hard_sse``) and return the best ``(w, z)`` and its SSE. Only cuts between
-        distinct scores that leave ``min_side`` points per side are candidates. The SSE is
-        the hard objective ``SSE(a, z)`` of the companion.
+        from per-bin sums of ``search_rows`` (``SplitRows.cut_sums``: one data pass per direction),
+        keep the ``n_screened`` best per node as a screen, then recompute their SSE directly
+        with the leaf model's ``rows`` (``hard_sse``) and return the best ``(w, z)`` and its SSE.
+        Only cuts between distinct scores that leave ``min_side`` points per side are candidates.
+        The SSE is the hard objective ``SSE(a, z)`` of the companion.
         """
         K, D, _ = bank.shape
         nb = self.settings.n_bins
@@ -504,10 +518,10 @@ class ARTPlan:
             ok = eligible[:, None] & (pos >= self.min_side) & (n[:, None] - pos >= self.min_side) & (ss[at] > ss[at - 1])
             # Per node only (batched products over its own sorted rows), so nothing
             # depends on the other nodes of the batch.
-            GL, BL, CL, GR, BR, CR = rows.cut_sums(order, pos)
+            GL, BL, CL, GR, BR, CR = search_rows.cut_sums(order, pos)
             sse = xp.zeros((K, nb - 1))
             for Gs, Bs, Cs in ((GL, BL, CL), (GR, BR, CR)):
-                beta = rows.solve(Gs, Bs)
+                beta = search_rows.solve(Gs, Bs)
                 sse = sse + Cs - 2 * xp.sum(beta * Bs, axis=(2, 3)) + xp.sum(beta * det_matmul(Gs, beta), axis=(2, 3))
             screen[:, j] = xp.where(ok, sse, xp.inf)
             z_all[:, j] = ss[at]
@@ -529,10 +543,12 @@ class ARTPlan:
             best_sse = xp.minimum(sse, best_sse)
         return best_w, best_z, best_sse
 
-    def _soft_refine(self, rows: SplitRows, w0: Array, z0: Array, sse0: Array, progress) -> tuple[Array, Array]:
+    def _soft_refine(self, rows: SplitRows, w0: Array, z0: Array, sse0: Array, progress,
+                     search_rows: SplitRows) -> tuple[Array, Array]:  # fmt: skip
         """
         The soft search: polish each bins-search plane by projected gradient descent on the consistent soft
-        objective ``J(w, z) = min_B F`` (``J_h`` in the companion), with a fixed ridge (0 for
+        objective ``J(w, z) = min_B F`` (``J_h`` in the companion) of the children's fits on
+        ``search_rows`` (``rows``, or their affine features, see ``_search_rows``), with a fixed ridge (0 for
         ``leaf_fit="lstsq"``), a
         fixed gate width ``T = soft_temperature * std(w^T u)`` (``h`` in the companion), floored
         weights ``W_R = delta + (1 - 2 delta) sigma(s)``, ``W_L = delta + (1 - 2 delta) sigma(-s)``
@@ -545,8 +561,8 @@ class ARTPlan:
         one gate width could not beat the margin), ``soft_line_search_stalled`` (no trial
         qualified otherwise), ``soft_nonfinite`` (objective or gap not finite) or
         ``soft_iteration_limit``. The result is hardened (``z`` moved to the first
-        right-side score) and kept only if its directly refit hard SSE beats the bins-search
-        incumbent's; otherwise the incumbent is returned.
+        right-side score) and kept only if its directly refit hard SSE on ``rows`` (the leaf
+        model's) beats the bins-search incumbent's; otherwise the incumbent is returned.
         """
         s_cfg = self.settings
         delta = s_cfg.soft_weight_floor
@@ -566,7 +582,7 @@ class ARTPlan:
         active = ok0.copy()
 
         def gate(w_, z_):
-            return soft_gates(rows, w_, z_, T, delta)
+            return soft_gates(search_rows, w_, z_, T, delta)
 
         reasons = ("soft_nonfinite", "soft_gate_saturated", "soft_gradient_converged", "soft_line_search_stalled")
         stops = xp.zeros(len(reasons), dtype=xp.uint64)  # summed on the device, read once at the end
@@ -575,9 +591,9 @@ class ARTPlan:
                 break
             if progress is not None and it % 4 == 3:
                 progress()
-            J, g_w, g_z, rL, rR, pen, gap, sp_sum = soft_objective(rows, w, z, T, delta)
+            J, g_w, g_z, rL, rR, pen, gap, sp_sum = soft_objective(search_rows, w, z, T, delta)
             if IS_CUPY_BACKEND:  # fused step: w, z, active and stops updated in place, no host reads
-                soft_step(rows, w, z, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n, delta, active, stops, 12)
+                soft_step(search_rows, w, z, g_w, g_z, J, gap, pen, rL, rR, sp_sum, T, n, delta, active, stops, 12)
                 continue
             g_w = g_w - xp.sum(g_w * w, axis=1, keepdims=True) * w  # tangent to |w| = 1
             gn2 = xp.sum(g_w**2, axis=1) + g_z**2
@@ -591,7 +607,7 @@ class ARTPlan:
                 w_t = unit_rows(w - alpha[:, None] * g_w)
                 z_t = z - alpha * g_z
                 WLt, WRt, _ = gate(w_t, z_t)
-                Ft = (rows.reduce(WLt * rL + WRt * rR) + pen) / n
+                Ft = (search_rows.reduce(WLt * rL + WRt * rR) + pen) / n
                 accept = active & finite & ~taken & (Ft <= J - 1e-4 * alpha * gn2) & (J - Ft > margin)
                 w = xp.where(accept[:, None], w_t, w)
                 z = xp.where(accept, z_t, z)

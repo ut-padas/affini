@@ -50,8 +50,20 @@ SURROGATE_DEVICE=cpu SURROGATE_MPI=on PATH=$PWD/.venv/bin:$PATH PYTHONPATH=. .ve
   products (algorithm chosen by batch count) on the training path. GPU results still
   differ from CPU results at rounding level: GPU tests compare with a tight tolerance
   (`tests/_helpers.py`: 1e-12, or 1e-10 with `separate_runs=True` when comparing two
-  trainings), never with a loose one that would hide an algorithmic change. Leaf counts
-  and evaluation counts must still match exactly.
+  trainings), never with a loose one that would hide an algorithmic change. On the test
+  suite's problems leaf counts and evaluation counts must still match exactly. On larger ones a
+  rounding difference can flip a borderline split (the d = 8 cases of `regression_check.py` build
+  different trees on CPU and GPU), so the regression check compares each backend only with a
+  baseline from the same backend.
+- Two guarantees, kept apart. A refactor reproduces the previous code's bits: every sum keeps its
+  operands and its order. GPU training is reproducible and independent of the batch: each node's
+  arithmetic depends only on its own rows, in an order fixed per node. A kernel may sum or solve
+  in a different fixed order (a blocked or parallel reduction, a parallel triangular solve) only
+  as a deliberate numerical change: it keeps the second guarantee, is listed and justified in its
+  commit with its effect on `regression_check.py` on the GPU, and stays off the leaf fits, whose
+  coefficients keep the one-thread order (`exact=True` in `spd_solve` and `spd_solve_factored`).
+  The split search's solves from `SPD_COOP_MIN_P` unknowns (`spd_solve_shared`) are the one such
+  path. The CPU path keeps both guarantees.
 - The GPU suite passes completely; treat any GPU failure as new.
 - Coverage needs three suites: the CuPy branches (kernel launchers in `numerics/`, `neighbors/`,
   `art/`) run only in the GPU suite, and work stealing, scatter and gather only on several ranks.

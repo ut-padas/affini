@@ -36,7 +36,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 from src import IS_CUPY_BACKEND  # noqa: E402
 from src.numerics import count_groups, grouped_cross, reduce_sum_1d, segment_layout  # noqa: E402
 from src.numerics.linalg import SPD_COOP_MIN_P  # noqa: E402
-from src.numerics.segments import SEGMENT_CHUNK, SEGMENT_TILED_MIN_E, segment_sum  # noqa: E402
+from src.numerics.segments import (  # noqa: E402
+    SEGMENT_CHUNK,
+    SEGMENT_TILED2D_MIN,
+    SEGMENT_TILED_MIN_E,
+    segment_sum,
+)
 
 CH = SEGMENT_CHUNK
 U = 2.0**-53  # unit roundoff of float64; eps = 2 U
@@ -217,7 +222,7 @@ def main() -> None:
 
     last = len(ms) - 1
     out = {
-        "chunk": CH, "tiled_min_e": SEGMENT_TILED_MIN_E, "coop_min_p": SPD_COOP_MIN_P, "cub_min_length": CUPY_CUB_MIN_LENGTH,
+        "chunk": CH, "tiled_min_e": SEGMENT_TILED_MIN_E, "tiled2d_min": SEGMENT_TILED2D_MIN, "coop_min_p": SPD_COOP_MIN_P, "cub_min_length": CUPY_CUB_MIN_LENGTH,
         "cluster": {"level": 0, "index": which, "points": n, "colour": cluster.colour, "sum": round(exact, 3),
                     "chunks": -(-n // CH), "level_counts": [int(c) for c in lv0.counts]},
         "m_max": ms[-1],

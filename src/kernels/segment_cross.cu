@@ -136,6 +136,83 @@ extern "C" __global__ void segment_cross_tiled(const double* A, const double* B,
     }
 }
 
+// The same partial sums as segment_cross_partial for large P x Q outputs (Grams of many
+// features), one block per (weight set, chunk, 64 x 64 output tile), 16 x 16 threads each
+// owning a 4 x 4 register tile. Per staged row a thread reads 4 values of A and 4 of B from
+// shared memory for 16 products, where segment_cross_tiled reads 2 per product, which made it
+// shared-memory-bound. Entry (r, c) still sums ((A - a_off) w)_r (B - b_off)_c over the chunk's
+// rows in row order, carried across the staged row tiles, so its bits are those of the other
+// two kernels. Only entries with eidx[r * Q + c] >= 0 are written (the upper triangle if
+// symmetric); the partials keep the untiled kernel's (weight set, chunk, entry) layout.
+extern "C" __global__ void segment_cross_tiled2d(const double* A, const double* B, const double* w,
+                                                 const double* a_off, const double* b_off,
+                                                 const long long* cum, const long long* starts,
+                                                 const long long* counts, const int* tile_r,
+                                                 const int* tile_c, const int* eidx, double* partial,
+                                                 long long n_chunks, int K, int E, int P, int Q, int CH,
+                                                 int flags, long long w_stride, long long b_stride) {
+    const int TR = 32;  // rows staged per pass: 2 x 32 x 64 doubles = 32 KB of shared memory
+    __shared__ double sA[TR][64], sB[TR][64];
+    // 1. Block -> (weight set, chunk) and output tile; the chunk's rows as in the untiled kernel.
+    long long sj = blockIdx.x;
+    long long sw = sj / n_chunks, j = sj - sw * n_chunks;
+    if (j >= cum[K - 1]) return;
+    int lo = 0, hi = K - 1;
+    while (lo < hi) {
+        int mid = (lo + hi) >> 1;
+        if (cum[mid] > j)
+            hi = mid;
+        else
+            lo = mid + 1;
+    }
+    long long k = lo;
+    long long first = cum[k] - (counts[k] + CH - 1) / CH;
+    long long r0 = starts[k] + (j - first) * CH;
+    long long r1 = min(r0 + CH, starts[k] + counts[k]);
+    w += sw * w_stride;
+    B += sw * b_stride;
+    const int R0 = tile_r[blockIdx.y] * 64, C0 = tile_c[blockIdx.y] * 64;
+    const int tx = threadIdx.x & 15, ty = threadIdx.x >> 4;
+    double acc[4][4];
+    for (int u = 0; u < 4; ++u)
+        for (int v = 0; v < 4; ++v) acc[u][v] = 0.0;
+    // 2. Stage TR rows of the tile's A and B columns (offset- and weight-adjusted as in the other
+    //    kernels; columns past P or Q as 0, never written), then accumulate in row order.
+    for (long long base = r0; base < r1; base += TR) {
+        int nrow = (int)min((long long)TR, r1 - base);
+        for (int t = threadIdx.x; t < TR * 64; t += blockDim.x) {
+            int row = t >> 6, col = t & 63;
+            double a = 0.0, b = 0.0;
+            if (row < nrow && R0 + col < P) {
+                a = A[(base + row) * P + R0 + col] - ((flags & 2) ? a_off[k * P + R0 + col] : 0.0);
+                if (flags & 1) a = a * w[base + row];
+            }
+            if (row < nrow && C0 + col < Q)
+                b = B[(base + row) * Q + C0 + col] - ((flags & 4) ? b_off[k * Q + C0 + col] : 0.0);
+            sA[row][col] = a;
+            sB[row][col] = b;
+        }
+        __syncthreads();
+        for (int row = 0; row < nrow; ++row) {
+            double a[4], b[4];
+            for (int u = 0; u < 4; ++u) a[u] = sA[row][ty + 16 * u];
+            for (int v = 0; v < 4; ++v) b[v] = sB[row][tx + 16 * v];
+            for (int u = 0; u < 4; ++u)
+                for (int v = 0; v < 4; ++v) acc[u][v] += a[u] * b[v];
+        }
+        __syncthreads();
+    }
+    // 3. One partial per computed entry, at its index in the entry list.
+    for (int u = 0; u < 4; ++u)
+        for (int v = 0; v < 4; ++v) {
+            int r = R0 + ty + 16 * u, c = C0 + tx + 16 * v;
+            if (r < P && c < Q) {
+                int e = eidx[r * Q + c];
+                if (e >= 0) partial[sj * E + e] = acc[u][v];
+            }
+        }
+}
+
 // One thread per (weight set, segment, entry): the segment's chunk partials summed in chunk
 // order; with sym, also written to the mirrored entry.
 extern "C" __global__ void segment_cross_reduce(const double* partial, const long long* cum,

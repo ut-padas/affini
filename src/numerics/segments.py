@@ -16,6 +16,7 @@ if IS_CUPY_BACKEND:  # sources in src/kernels/*.cu
     _kern_seg_cross_partial = _seg.get_function("segment_cross_partial")
     _kern_seg_cross_reduce = _seg.get_function("segment_cross_reduce")
     _kern_seg_cross_tiled = _seg.get_function("segment_cross_tiled")
+    _kern_seg_cross_tiled2d = _seg.get_function("segment_cross_tiled2d")
 
 
 SEGMENT_CHUNK = 256
@@ -23,6 +24,9 @@ SEGMENT_CHUNK = 256
 # From this many output entries per segment, segment_cross loads each chunk into shared
 # memory once (same bits as the untiled kernel; fewer FP64 operations and global reads).
 SEGMENT_TILED_MIN_E = 32
+# From this many rows and columns of output, segment_cross uses 4 x 4 register tiles per thread
+# (segment_cross_tiled2d); below it a 64 x 64 tile is mostly padding.
+SEGMENT_TILED2D_MIN = 32
 
 
 def repeats(values: Array, repeats: Array) -> Array:
@@ -221,7 +225,15 @@ def segment_cross(
     same = B is A and a_off is b_off and w is None
     width = P if same or flags & 8 else P + Q
     TR = min(32, (40 * 1024) // (8 * max(1, width)))
-    if SEGMENT_TILED_MIN_E <= E and TR >= 4:  # entry groups of 8 x threads lift any cap on E
+    if P >= SEGMENT_TILED2D_MIN and Q >= SEGMENT_TILED2D_MIN and not flags & 8:
+        tile_r, tile_c, eidx = _segment_cross_tiles(P, Q, symmetric)
+        _kern_seg_cross_tiled2d(
+            (S * n_chunks, int(tile_r.shape[0])), (256,),
+            (A, B, *opt, cum, starts, counts, tile_r, tile_c, eidx, partial, np.int64(n_chunks), np.int32(K),
+             np.int32(E), np.int32(P), np.int32(Q), np.int32(CH), np.int32(flags), np.int64(N if multi else 0),
+             np.int64(b_stride)),
+        )  # fmt: skip
+    elif SEGMENT_TILED_MIN_E <= E and TR >= 4:  # entry groups of 8 x threads lift any cap on E
         threads = min(T, ((E + 31) // 32) * 32)
         _kern_seg_cross_tiled(
             (S * n_chunks, -(-E // (8 * threads))), (threads,),
@@ -245,6 +257,24 @@ def segment_cross(
     return out
 
 _SEGMENT_CROSS_ENTRIES: dict = {}
+_SEGMENT_CROSS_TILES: dict = {}
+
+
+def _segment_cross_tiles(P: int, Q: int, symmetric: bool) -> tuple[Array, Array, Array]:
+    """
+    ``segment_cross_tiled2d``'s 64 x 64 output tiles (row and column tile of each; only tiles
+    touching the upper triangle if symmetric) and the index of entry ``(r, c)`` in
+    ``_segment_cross_entries`` (-1 where none is computed), cached per shape.
+    """
+    key = (P, Q, symmetric)
+    if key not in _SEGMENT_CROSS_TILES:
+        nr, nc = -(-P // 64), -(-Q // 64)
+        tiles = np.array([(i, j) for i in range(nr) for j in range(nc) if not symmetric or j >= i], dtype=np.int32)
+        er, ec = (np.asarray(to_host(a)) for a in _segment_cross_entries(P, Q, symmetric))
+        eidx = np.full(P * Q, -1, dtype=np.int32)
+        eidx[er.astype(np.int64) * Q + ec] = np.arange(er.shape[0], dtype=np.int32)
+        _SEGMENT_CROSS_TILES[key] = (xp.asarray(tiles[:, 0].copy()), xp.asarray(tiles[:, 1].copy()), xp.asarray(eidx))
+    return _SEGMENT_CROSS_TILES[key]
 
 
 def _segment_cross_entries(P: int, Q: int, symmetric: bool) -> tuple[Array, Array]:

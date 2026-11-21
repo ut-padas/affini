@@ -11,7 +11,8 @@ Matched settings (group ``conv``): same target, domain, test set (``10000 d`` un
 seed 19), seed, leaf degree, pointwise relative tolerance (floor 1e-12), ``--max-depth``, sample
 multiplier 50 and soft-oblique split search with the same iteration cap (``--library-soft-iters
 200``, the reference's ``--max-iters``, pinned so the match does not depend on the default). Group
-``library_default`` reruns this library's side with its own default (``ARTSettings.soft_iters``). Problems follow the reference's recorded cluster presets
+``library_default`` reruns this library's side with its own default (``ARTSettings.soft_iters``, passed
+explicitly, since art_comparison.py otherwise uses the reference's ``--max-iters``). Problems follow the reference's recorded cluster presets
 (``tasmanian/oracle_presets.json``): offsets keep |f| away from 0, where a pointwise relative
 tolerance cannot be met by any leaf.
 
@@ -23,6 +24,8 @@ Tiers bound the expected cost: S (seconds to minutes on a CPU), M (up to about a
 import argparse
 import math
 import re
+
+from src.config import ARTSettings
 
 GROUPS = ("conv", "library_default", "depth", "exact_target", "mpi", "repeat", "gpu_vs_cpu")
 TIERS = {"S": 0, "M": 1, "L": 2}
@@ -66,7 +69,8 @@ def full_matrix(seeds, nps, gpu):
 
     def both(case, group, t, args, sides=("reference", "library"), np_=1, device="main", tag=""):
         for side in sides:
-            extra = ["--library-soft-iters", "200"] if group != "library_default" else []
+            # art_comparison.py gives this library's ART the reference's --max-iters unless told otherwise
+            extra = ["--library-soft-iters", str(200 if group != "library_default" else ARTSettings().soft_iters)]
             rows.append((case, group, t, side, np_, device, f"{group}/{case}.{side}{tag}.json", args + extra))
 
     for problem, (_, dims, degrees, tols, depth) in PROBLEMS.items():
