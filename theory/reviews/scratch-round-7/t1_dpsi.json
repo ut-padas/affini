@@ -1,0 +1,151 @@
+{
+ "data_q4": {
+  "max": 1.2683551446244916,
+  "argmax_index": 113,
+  "argmax_time_step": 15,
+  "no_projection_max": 1.245160922757811,
+  "no_projection_at_argmax": 1.245160922757811,
+  "projection_only_max": 1.024358410905576,
+  "projection_only_at_argmax": 1.0000243907228628,
+  "dynamics_at_argmax": 1.8533201514278526,
+  "median": 1.2232621478715726,
+  "dynamics_median": 1.8203296763443153,
+  "y7_y8_in_at_argmax": [
+   0.004791981428741121,
+   2.843352926108455e-05
+  ],
+  "y7_y8_out_at_argmax": [
+   0.004794645279365752,
+   2.8551207580489857e-05
+  ],
+  "any_chart_clipped": false,
+  "worst_ratio_to_dynamics_same_state": 1.0071545135541726,
+  "max_entry_error_vs_dynamics": 0.6130170754212536
+ },
+ "data_q6": {
+  "max": 4.457969959771903,
+  "argmax_index": 194,
+  "argmax_time_step": 133,
+  "no_projection_max": 10.06725268431998,
+  "no_projection_at_argmax": 10.06725268431998,
+  "projection_only_max": 1.0244927703267532,
+  "projection_only_at_argmax": 0.9999977218597736,
+  "dynamics_at_argmax": 1.318186274376251,
+  "median": 1.2462368003017121,
+  "dynamics_median": 1.8203296763443153,
+  "y7_y8_in_at_argmax": [
+   0.0010144927545566325,
+   0.009971593852343641
+  ],
+  "y7_y8_out_at_argmax": [
+   0.001014464902308063,
+   0.009971397172199066
+  ],
+  "any_chart_clipped": false,
+  "worst_ratio_to_dynamics_same_state": 3.381896812634738,
+  "max_entry_error_vs_dynamics": 1.9563431460208447
+ },
+ "data_q8": {
+  "max": 16.332093220925973,
+  "argmax_index": 160,
+  "argmax_time_step": 82,
+  "no_projection_max": 17.393190708116187,
+  "no_projection_at_argmax": 17.393190708116187,
+  "projection_only_max": 1.0244944919658272,
+  "projection_only_at_argmax": 0.9516524644660345,
+  "dynamics_at_argmax": 1.2106353288987683,
+  "median": 1.2479310309339233,
+  "dynamics_median": 1.8203296763443153,
+  "y7_y8_in_at_argmax": [
+   0.002406128687303132,
+   0.006634795377056892
+  ],
+  "y7_y8_out_at_argmax": [
+   0.0018624013534112938,
+   0.007178324062058109
+  ],
+  "any_chart_clipped": false,
+  "worst_ratio_to_dynamics_same_state": 13.490514303578234,
+  "max_entry_error_vs_dynamics": 7.80680165266704
+ },
+ "gradients_q4": {
+  "max": 1.2682280422833763,
+  "argmax_index": 113,
+  "argmax_time_step": 15,
+  "no_projection_max": 1.2436263960661031,
+  "no_projection_at_argmax": 1.2436263960661031,
+  "projection_only_max": 1.024152655601359,
+  "projection_only_at_argmax": 1.0000157071525637,
+  "dynamics_at_argmax": 1.8533201514278526,
+  "median": 1.2288006308674073,
+  "dynamics_median": 1.8203296763443153,
+  "y7_y8_in_at_argmax": [
+   0.004791981428741121,
+   2.843352926108455e-05
+  ],
+  "y7_y8_out_at_argmax": [
+   0.00478654564665399,
+   2.850905872293571e-05
+  ],
+  "any_chart_clipped": false,
+  "worst_ratio_to_dynamics_same_state": 1.0032617463074558,
+  "max_entry_error_vs_dynamics": 0.6046669539387236,
+  "corrected_max": 1.8728708896288142,
+  "corrected_max_entry_error_vs_dynamics": 0.09616984491166922,
+  "corrected_worst_ratio_to_dynamics_same_state": 1.0378902842930768
+ },
+ "gradients_q6": {
+  "max": 1.266455888979118,
+  "argmax_index": 113,
+  "argmax_time_step": 15,
+  "no_projection_max": 1.2421893995126583,
+  "no_projection_at_argmax": 1.2421893995126583,
+  "projection_only_max": 1.0244390027976251,
+  "projection_only_at_argmax": 1.0000212236875776,
+  "dynamics_at_argmax": 1.8533201514278526,
+  "median": 1.229615070799765,
+  "dynamics_median": 1.8203296763443153,
+  "y7_y8_in_at_argmax": [
+   0.004791981428741121,
+   2.843352926108455e-05
+  ],
+  "y7_y8_out_at_argmax": [
+   0.004792012057918154,
+   2.8535847787634532e-05
+  ],
+  "any_chart_clipped": false,
+  "worst_ratio_to_dynamics_same_state": 1.0136501587065068,
+  "max_entry_error_vs_dynamics": 0.5985550740476439,
+  "corrected_max": 1.872448220971268,
+  "corrected_max_entry_error_vs_dynamics": 0.08252767045325093,
+  "corrected_worst_ratio_to_dynamics_same_state": 1.0376289651451196
+ },
+ "gradients_q8": {
+  "max": 1.2666968524375821,
+  "argmax_index": 113,
+  "argmax_time_step": 15,
+  "no_projection_max": 1.2425089280146158,
+  "no_projection_at_argmax": 1.2425089280146158,
+  "projection_only_max": 1.0245010534341283,
+  "projection_only_at_argmax": 1.0000219565859205,
+  "dynamics_at_argmax": 1.8533201514278526,
+  "median": 1.2293283893246978,
+  "dynamics_median": 1.8203296763443153,
+  "y7_y8_in_at_argmax": [
+   0.004791981428741121,
+   2.843352926108455e-05
+  ],
+  "y7_y8_out_at_argmax": [
+   0.004791802309207631,
+   2.85393735279276e-05
+  ],
+  "any_chart_clipped": false,
+  "worst_ratio_to_dynamics_same_state": 1.0109102390655478,
+  "max_entry_error_vs_dynamics": 0.5989325210102178,
+  "corrected_max": 1.8725291624917983,
+  "corrected_max_entry_error_vs_dynamics": 0.08158136874958721,
+  "corrected_worst_ratio_to_dynamics_same_state": 1.0383404556673177
+ },
+ "dynamics_max": 1.8574885921927393,
+ "dynamics_argmax_time_step": 14
+}
