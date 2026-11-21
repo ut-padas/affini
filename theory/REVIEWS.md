@@ -166,3 +166,25 @@ first-order normal correction removes most of it. Tests 0–9.
 | H7 | major | "An affine lift cannot be cheaper" rests on one unfinished run | Accepted: withdrawn; the review's finer-grid result (chart dimension 8 at $d = 40$ and 80) added |
 | H8, H9 | minor | Why the polish failed is asserted; smaller points | Noted; the polish's failure mechanism is left untested |
 | Suggestions | – | Data fit chosen by the rollout conditions; residual tracking and refusal; a first-order normal correction; restricting the ChebTT domain; more POLLU trajectories; a baseline row in every table | Adopted as §10 item 1's recipe and §11's open items |
+
+## Round 7 (Fable): Claude Fable 5.2 (medium effort), on section G and the HIRES recipe (commit `949ddf0`)
+
+Brief: the mathematics and code of the gradient tier and the recipe; whether each verdict follows from the committed numbers and predictions; whether
+the headline (a corrected rollout of $7.3\times10^{-3}$ with Jacobian rows) is fair; the cheapest decisive next experiments. Verdict: the code is
+correct and the table recomputes from the JSON, but the headline holds on the first 20 test trajectories only, and the degree range hid a value-only
+fit that holds the rollout tolerance 50 times better with no solve. Tests 1–5 in `reviews/scratch-round-7/`; the follow-up runs are
+`g5_hires_selection.py` (the review's first suggested experiment, with the third) and `g6_hires_off_trajectory.py` (its second).
+
+| # | Severity | Critique | Resolution |
+|---|---|---|---|
+| F1 | critical | The corrected rollout of $7.3\times10^{-3}$ holds on 20 test trajectories; on all 40 it is $1.5\times10^{-2}$, $1.0$–$2.7\times10^{-2}$ over eight draws | Accepted: both figures reported; the rule now runs on the deployed surrogate over all 100 training chains, and the test score on all 40 trajectories (`g5`) |
+| F2 | critical | Degrees 4–8 stop short: the value-only fit at degrees 9–10 holds $1.2\times10^{-3}$ and $1.5\times10^{-4}$ with no solve; the gradient fit's gain is convergence in the degree and accuracy off the set | Accepted and reproduced: `g5` picks degree 10 for the value-only fit ($1.5\times10^{-4}$ on 40 trajectories) and 12 for the gradient fit (monotone in three draws); "needs the Jacobian rows" and "first … to do so" withdrawn; Demonstration 8.5's table gains degrees 9–10 |
+| F3 | major | The single-state condition (ii) is not necessary, is failed by the deployed surrogate (1.873 against 1.857), and its 1.27 is the dynamics' gain along the chart | Accepted: dropped from the rule (reported only), the 1.27 explained, Demonstration 8.5's sentence corrected; the product condition marked untested |
+| F4 | major | Cost: central differences (16 plain solves) reproduce the run at 1,600–4,800 plain solves; the compiled-solver overhead is unsourced; timings not in the JSON | Accepted: differences used in `g5`–`g6`, the cost row restated with the review's committed timings, the unsourced figure deleted |
+| F5 | major | G2.1 recorded as confirmed at degree 6, not the committed 8, against value-only fits that all failed | Accepted: "not testable as committed" |
+| F6 | major | G2.4 committed, failed, unreported | Accepted: row added, failed |
+| F7 | major | `g3_hires_grid.py` chooses each degree on the test states; the 900-term cap binds from 11 points per axis | Accepted: both stated as caveats on G3.1 and G3.2 |
+| F8 | major | "Falls 30-fold" is wrong: the error rises 12.9-fold (11.1 for second order) | Accepted: corrected |
+| F9 | major | The headline was not a prediction; the fits were designed from kicked test states | Accepted: stated under "Provenance"; the follow-up runs committed predictions first |
+| F10 | minor | Eight smaller points (the like-for-like kicked comparison, unsourced $3.5\times10^{-7}$, "within 1%", "about 6 times", ranges, $J$ at $X$, refusal as a property of the kick, kicks mixing chart and normal moves) | Accepted, all stated or corrected |
+| Suggestions | – | The selection rerun on degrees 4–12 over three draws; off-trajectory Jacobian rows; a rollout kicked at every step | All run (`g5`, `g6`): off-trajectory rows hold a single 0.01 kick at every degree but cost two degrees on the set; kicked at every step no fit holds the tolerance (best $2.3\times10^{-2}$); §11 records the next step |
