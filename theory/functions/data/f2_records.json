@@ -1,0 +1,712 @@
+{
+ "ball_jump": {
+  "afinni": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  },
+  "art": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  },
+  "art_quad": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   },
+   "20": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "chebtt": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "chebtt_adaptive": {
+   "2": {
+    "held": 3,
+    "median_evals_held": 2017,
+    "ran": 3
+   },
+   "3": {
+    "held": 3,
+    "median_evals_held": 2796,
+    "ran": 3
+   },
+   "5": {
+    "held": 3,
+    "median_evals_held": 4594,
+    "ran": 3
+   },
+   "10": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "chebtt_metric": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "hub": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "10": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  }
+ },
+ "front": {
+  "afinni": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  },
+  "art": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 2
+   }
+  },
+  "art_quad": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   },
+   "20": {
+    "held": 3,
+    "median_evals_held": 4621,
+    "ran": 3
+   }
+  },
+  "chebtt": {
+   "2": {
+    "held": 3,
+    "median_evals_held": 53742,
+    "ran": 3
+   },
+   "3": {
+    "held": 3,
+    "median_evals_held": 1225790,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "chebtt_adaptive": {
+   "2": {
+    "held": 3,
+    "median_evals_held": 6889,
+    "ran": 3
+   },
+   "3": {
+    "held": 3,
+    "median_evals_held": 7705,
+    "ran": 3
+   },
+   "5": {
+    "held": 3,
+    "median_evals_held": 10404,
+    "ran": 3
+   },
+   "10": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "20": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "chebtt_metric": {
+   "2": {
+    "held": 3,
+    "median_evals_held": 43866,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "hub": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "10": {
+    "held": 3,
+    "median_evals_held": 4000,
+    "ran": 3
+   },
+   "20": {
+    "held": 3,
+    "median_evals_held": 6000,
+    "ran": 3
+   }
+  }
+ },
+ "genz_continuous": {
+  "afinni": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  },
+  "art": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  },
+  "art_quad": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "20": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "chebtt": {
+   "2": {
+    "held": 3,
+    "median_evals_held": 1897,
+    "ran": 3
+   },
+   "3": {
+    "held": 3,
+    "median_evals_held": 3589,
+    "ran": 3
+   },
+   "5": {
+    "held": 3,
+    "median_evals_held": 7754,
+    "ran": 3
+   },
+   "10": {
+    "held": 3,
+    "median_evals_held": 12207,
+    "ran": 3
+   },
+   "20": {
+    "held": 1,
+    "median_evals_held": 21776,
+    "ran": 1
+   }
+  },
+  "chebtt_adaptive": {
+   "2": {
+    "held": 3,
+    "median_evals_held": 1246,
+    "ran": 3
+   },
+   "3": {
+    "held": 3,
+    "median_evals_held": 3063,
+    "ran": 3
+   },
+   "5": {
+    "held": 3,
+    "median_evals_held": 7009,
+    "ran": 3
+   },
+   "10": {
+    "held": 3,
+    "median_evals_held": 12179,
+    "ran": 3
+   },
+   "20": {
+    "held": 1,
+    "median_evals_held": 21286,
+    "ran": 1
+   }
+  },
+  "chebtt_metric": {
+   "2": {
+    "held": 3,
+    "median_evals_held": 1246,
+    "ran": 3
+   },
+   "3": {
+    "held": 3,
+    "median_evals_held": 3063,
+    "ran": 3
+   },
+   "5": {
+    "held": 3,
+    "median_evals_held": 7009,
+    "ran": 3
+   },
+   "10": {
+    "held": 3,
+    "median_evals_held": 11460,
+    "ran": 3
+   },
+   "20": {
+    "held": 1,
+    "median_evals_held": 20566,
+    "ran": 1
+   }
+  },
+  "hub": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "10": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "20": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  }
+ },
+ "genz_discontinuous": {
+  "afinni": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  },
+  "art": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "art_quad": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   },
+   "20": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "chebtt": {
+   "2": {
+    "held": 3,
+    "median_evals_held": 2063,
+    "ran": 3
+   },
+   "3": {
+    "held": 3,
+    "median_evals_held": 2408,
+    "ran": 3
+   },
+   "5": {
+    "held": 3,
+    "median_evals_held": 2651,
+    "ran": 3
+   },
+   "10": {
+    "held": 3,
+    "median_evals_held": 4175,
+    "ran": 3
+   },
+   "20": {
+    "held": 3,
+    "median_evals_held": 7748,
+    "ran": 3
+   }
+  },
+  "chebtt_adaptive": {
+   "2": {
+    "held": 3,
+    "median_evals_held": 1766,
+    "ran": 3
+   },
+   "3": {
+    "held": 3,
+    "median_evals_held": 2154,
+    "ran": 3
+   },
+   "5": {
+    "held": 3,
+    "median_evals_held": 2329,
+    "ran": 3
+   },
+   "10": {
+    "held": 3,
+    "median_evals_held": 3847,
+    "ran": 3
+   },
+   "20": {
+    "held": 3,
+    "median_evals_held": 7426,
+    "ran": 3
+   }
+  },
+  "chebtt_metric": {
+   "2": {
+    "held": 3,
+    "median_evals_held": 1766,
+    "ran": 3
+   },
+   "3": {
+    "held": 3,
+    "median_evals_held": 2154,
+    "ran": 3
+   },
+   "5": {
+    "held": 3,
+    "median_evals_held": 2329,
+    "ran": 3
+   },
+   "10": {
+    "held": 3,
+    "median_evals_held": 3847,
+    "ran": 3
+   },
+   "20": {
+    "held": 3,
+    "median_evals_held": 7426,
+    "ran": 3
+   }
+  },
+  "hub": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "10": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "20": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  }
+ },
+ "oblique_jump": {
+  "afinni": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  },
+  "art": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  },
+  "art_quad": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "20": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "chebtt": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   }
+  },
+  "chebtt_adaptive": {
+   "2": {
+    "held": 3,
+    "median_evals_held": 1701,
+    "ran": 3
+   },
+   "3": {
+    "held": 3,
+    "median_evals_held": 1986,
+    "ran": 3
+   },
+   "5": {
+    "held": 3,
+    "median_evals_held": 6748,
+    "ran": 3
+   },
+   "10": {
+    "held": 3,
+    "median_evals_held": 4254,
+    "ran": 3
+   },
+   "20": {
+    "held": 3,
+    "median_evals_held": 9287,
+    "ran": 3
+   }
+  },
+  "chebtt_metric": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 1
+   },
+   "3": {
+    "held": 3,
+    "median_evals_held": 102808,
+    "ran": 3
+   }
+  },
+  "hub": {
+   "2": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "3": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "5": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "10": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   },
+   "20": {
+    "held": 0,
+    "median_evals_held": null,
+    "ran": 3
+   }
+  }
+ }
+}

@@ -72,6 +72,39 @@ two-sided prefactor). The Lebesgue constant of $n + 1$ Chebyshev points is at mo
 
 ---
 
+## F. Static functions first: scaling laws on the function suite
+
+Before step maps, the same ideas were tested on the benchmark's static test functions, where an evaluation costs microseconds and
+the singularities are known in closed form. These are tier-1 tests: each prediction is a scaling law (an exponent, a rank, a count)
+derived from a stated mechanism, judged by whether the trend matches, not by constants. Scripts and outputs: `theory/functions/f*.py`,
+`theory/functions/data/f*.json` (fresh ChebTT runs at small $d$, and the benchmark's records; the records' `ranks` field is the MPI rank
+count, not a TT rank, so ranks come from fresh runs).
+
+| Class (problem) | Mechanism | Prediction | Measured | Verdict |
+|---|---|---|---|---|
+| Smooth, separable (`genz_product_peak`, $d = 2$) | poles at $w_i \pm i/a_i$ give a Bernstein $\rho_i$ per axis (§1) | TT rank 1; degree in $x_i$ grows by $1/\log_{10}\rho_i$ per decade: 3.15 and 4.66 | rank 1 at every tolerance from $10^{-2}$ to $10^{-9}$; 3.27 and 4.30 per decade | confirmed (within 4% and 8%) |
+| Smooth, a sum inside a cosine (`genz_oscillatory`, $d = 2, 3, 5$) | $\cos(c + a\cdot x) = \operatorname{Re}\prod_je^{ia_jx_j}e^{ic}$ | TT rank exactly 2 at every tolerance | 2 at every tolerance from $10^{-2}$ to $10^{-8}$ and every $d$ | confirmed |
+| Smooth, a function of one aggregate (`genz_corner_peak`, $d = 2, 3, 5$) | $g(s)$, $s = a\cdot x \in [0, 1.85]$, pole at $s = -1$: $\rho_s = 3.91$; Lemma 7.2 | rank growth at most $1/\log_{10}\rho_s = 1.69$ per decade, independent of $d$ | 0.7, 0.7, 1.0 per decade (ranks 2, 4, 6, 6 at $10^{-2}$ to $10^{-8}$ for $d = 2, 3$) | confirmed (the bound is not attained) |
+| Kink (one factor of `genz_continuous`) | Chebyshev coefficients $\sim k^{-2}$ across a kink | interpolation error $\propto n^{-1}$; geometric with a breakpoint at the kink | slope $-0.91$; with the breakpoint $10^{-11}$ at $n = 16$ | confirmed |
+| Jump (one factor of `genz_discontinuous`) | no polynomial is uniformly within half a jump | error never below half the jump (0.57); geometric with a breakpoint | 0.71–1.12 for $n = 8$ to 256; $10^{-12}$ with the breakpoint at every $n$ | confirmed |
+| Separable kinks, whole function (`genz_continuous`, $d = 2$, ChebTT with breakpoints) | each piece entire, TT rank 1 | cost nearly flat in the tolerance | 2 pieces per axis, rank 1, 1,826–3,085 evaluations from $10^{-1}$ to $10^{-6}$ (slope $-0.02$); without breakpoints the build did not finish at 0.1 in 170 s | confirmed |
+| Aligned kinks and jumps in high $d$ (records) | as above, rank 1 | ChebTT with breakpoints holds them at every $d$, cost about linear in $d$ | held at every $d$ to 20: `genz_continuous` 1,897 → 21,776, `genz_discontinuous` 2,063 → 7,748 | confirmed |
+| Oblique and curved jumps (records: `oblique_jump`, `ball_jump`) | no axis breakpoint represents an oblique interface; its TT rank is of order $n$ (Review VIII) | ChebTT fails; an interface term (ChebTT-A) holds; a rotation aligning the plane with an axis also works | ChebTT held 0 of the cases it ran; ChebTT-A held `oblique_jump` at every $d$ to 20 and `ball_jump` to $d = 5$; ChebTT-M held `oblique_jump` at $d = 3$ (102,808 evaluations) | confirmed |
+| Sharp smooth front on a sphere (records: `front`) | analytic, a nearby complex singularity across a curved surface; $\lvert x\rvert$ concentrates in high $d$ (T7) | ChebTT costly, ChebTT-A cheaper; in high $d$ the uniform test set never sees the front | ChebTT 53,742 and 1,225,790 at $d = 2, 3$; ChebTT-A 6,889–10,404 to $d = 5$; the hub and a single quadratic leaf "hold" at $d = 10, 20$ (an artifact of the test set) | confirmed |
+| Two shared oblique coordinates (records and Jacobians: `shared_latent`) | Jacobian rank 2 everywhere: coordinate count 2 (Proposition 6.5 below, and the exact structure above) | rotated models (ChebTT-M, the hub) win and scale mildly with $d$; axis-aligned ChebTT does not | local rank 2 at $d = 5, 10$; ChebTT 1,792 → 376,037 (d = 5) → fails at 20; ChebTT-M 75,392 (d = 5), 1,591,796 (d = 20); the hub 2,400–20,000 | confirmed |
+| Full-rank vector outputs (`rosenbrock_gradient`, `lotka_volterra_state`) | no reduction available from the Jacobian | a rotation gains nothing | identical evaluation counts with and without the rotation at every $d$ | confirmed |
+| An oblique ridge with a trigonometric profile (`wave_pair`) | Jacobian rank 1 | *predicted:* axis-aligned ChebTT pays for the obliqueness | ChebTT is cheap at every $d$ (517 → 5,424): $\cos, \sin$ of a linear form have TT rank at most 2 | **prediction wrong**; the cost is set by the profile's TT rank, not the coordinate count (a general profile $g(q\cdot x)$ would have growing rank) |
+| Aggregates (`lotka_volterra`, $d = 20$; T7's direct test) | one dominant gradient direction; the uniform measure concentrates it | a few aggregate coordinates suffice on most of the box and fail at the vertices | gradient-covariance eigenvalues 1, 0.0375, 0.0037; fits in the top 1–3 directions err 2.3–10% of the range on uniform points and 4–12 times more at the vertices | confirmed in direction |
+
+What this pass establishes. Where a function's analytic structure is known, the Chebyshev and TT mechanisms predict ChebTT's degrees
+and ranks (to within 10% on the separable case), the difference that breakpoints make for kinks and jumps, the failure of axis
+breakpoints on oblique interfaces, and when a rotation pays. One prediction failed instructively (`wave_pair`): the coordinate count is
+a lower bound on what a model needs, but a tensor train's cost is set by the rank of the profile in the coordinates it uses. Least-squares
+local models (ART, AFINNI) held none of the kink and jump cases outside the `front` artifact, consistent with T5. These are the static
+building blocks of the step-map theorems below: analyticity (T1), coordinate counts (T6), aggregates (T7) and least squares (T5).
+
+---
+
 ## T1. Analyticity radii of the step map from the vector field
 
 **Question.** Chebyshev and tensor-train rates depend on the Bernstein parameter $\rho$. For a step map $F$ is known: can
