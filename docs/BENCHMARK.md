@@ -117,7 +117,8 @@ SURROGATE_DEVICE=cpu SURROGATE_MPI=off SURROGATE_ODE_WORKERS=12 PYTHONPATH=. .ve
 held (worst error within the tolerance on every seed) and won (held with the fewest evaluations; ties count
 for each), with median evaluations and inference time over its held cases. `--write README.md` replaces the
 table in the README's "Choosing a method". A method with records older than the last change to its
-results (`RESULTS_CHANGED` in `src/benchmark/table.py`, one entry per deliberate numerical change) is
+results (`RESULTS_CHANGED` in `src/benchmark/table.py`, one entry per deliberate numerical change, which
+may name the records it can alter, such as a dimension from which a code path runs) is
 marked stale, and the sweep runs those records again (`--since <time>` reruns every record older than a time).
 That is the one rule for reuse everywhere (`src.infra.records.stale`): an edit that does not change a method's
 results never forces a rerun, so a deliberate change must get its entry.

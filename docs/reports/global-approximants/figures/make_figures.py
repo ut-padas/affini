@@ -818,15 +818,15 @@ def store_case(suite: str, setup: str, problem: str, d: int, method: str, tol: f
     """One case of the store (every seed): mean evaluations, worst error over the seeds, and whether any record is stale."""
     from src.benchmark.store import Store
     from src.benchmark.table import RESULTS_CHANGED
+    from src.infra.records import stale
 
     rs = [r for r in Store(suite, setup).runs(problem, method) if int(r["d"]) == d and float(r["tol"]) == tol]
     if not rs:
         return None
     done = [r for r in rs if "failed" not in r]
-    changed = RESULTS_CHANGED.get(method, ("", ""))[0]
     return {"seeds": len(rs), "failed": len(rs) - len(done), "evals": int(round(np.mean([r["evals"] for r in done]))) if done else None,
             "worst": r3(max(r["worst_ratio"] for r in done)) if done else None,
-            "stale": any(r.get("recorded", "") < changed for r in rs)}  # fmt: skip
+            "stale": any(stale(r, RESULTS_CHANGED, method) for r in rs)}  # fmt: skip
 
 
 # ----------------------------------------------------------------------------- section 4: ChebTT-M
@@ -1462,6 +1462,7 @@ def section_step_maps() -> dict:
     from src.benchmark import table
     from src.benchmark.step_maps import METHODS as STEP_METHODS
     from src.benchmark.store import Store
+    from src.infra.records import stale as outdated
     from src.problems.ode import STEP_MAPS
 
     records = Store("step_maps", "cpu-1rank").runs()
@@ -1516,7 +1517,7 @@ def section_step_maps() -> dict:
         e = np.asarray(r["rollout_error_by_step"]) / r["tol"]
         ax.semilogy(np.arange(1, len(e) + 1), np.maximum(e, 1e-6), color=drawn[m], lw=1.1)
         rob[m] = {"one_step": r3(r["worst_ratio"]), "rollout": r3(r["rollout_worst"] / r["tol"]), "evals": int(r["evals"]),
-                  "speedup": int(r["speedup"]), "stale": r.get("recorded", "") < table.RESULTS_CHANGED.get(m, ("", ""))[0]}  # fmt: skip
+                  "speedup": int(r["speedup"]), "stale": outdated(r, table.RESULTS_CHANGED, m)}  # fmt: skip
     ax.axhline(1, color=DARK, lw=0.6, ls=(0, (2, 2)))
     ax.set_xlabel("step", fontsize=6.5, labelpad=1)
     ax.set_ylabel("rollout worst / tolerance", fontsize=6.5, labelpad=1)

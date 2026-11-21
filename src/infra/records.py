@@ -14,7 +14,7 @@ Every record carries an envelope beside its own fields:
 
 Whether a record still stands is decided by its method alone (``stale``): it is reused unless the method's
 results changed after it was written, as the caller's table of deliberate changes declares
-(``src.benchmark.table.RESULTS_CHANGED``). An unrelated edit never forces a rerun, so a change to a method's
+(``src.benchmark.table.RESULTS_CHANGED``; an entry may limit itself to the records it can alter). An unrelated edit never forces a rerun, so a change to a method's
 results must be entered there; ``provenance.code`` still tells which sources wrote a record.
 
 The probes measure what a case costs: ``Probe`` its wall time and peak memory, ``timed_oracle`` the time
@@ -160,10 +160,12 @@ def failure(err: BaseException) -> dict:
 def stale(record: dict, changed: dict, method: str | None = None) -> bool:
     """
     Whether ``record`` predates its method's last change to its results: ``changed`` maps a method to
-    (ISO time, what changed), and ``method`` (default: the record's own) names the entry that applies.
+    (ISO time, what changed) or (ISO time, what changed, affects), and ``method`` (default: the record's own)
+    names the entry that applies. ``affects(record)`` limits a change to the records it can alter (say, only
+    from some dimension), so the records a code path never reaches are not run again.
     """
-    since = changed.get(method or record.get("method"), ("", ""))[0]
-    return record.get("recorded", "") < since
+    since, _, *affects = changed.get(method or record.get("method"), ("", ""))
+    return record.get("recorded", "") < since and (not affects or bool(affects[0](record)))
 
 
 def upgrade(record: dict) -> dict:

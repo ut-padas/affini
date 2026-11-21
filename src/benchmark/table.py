@@ -27,7 +27,7 @@ from statistics import median
 from src.benchmark.store import Store
 from src.infra.records import stale
 
-# method -> (time of the last change to its results, what changed)
+# method -> (time of the last change to its results, what changed[, which records it can alter])
 RESULTS_CHANGED = {
     "chebtt": ("2026-11-18T22:22", "piecewise axes at jumps and kinks, and the degree-cut compression"),
     "chebtt_metric": ("2026-11-18T22:22", "as ChebTT"),
@@ -41,7 +41,9 @@ RESULTS_CHANGED = {
     "hub": ("2026-11-18T23:13", "contiguous rotations (predictions within 1e-9)"),
     "afinni": ("2026-11-17T18:06", "per-batch random streams"),
     "art": ("2026-11-16T17:55", "leaf fits as the reference ART's"),
-    "art_quad": ("2026-11-20T19:28", "affine fits in the split search from 100 leaf coefficients (d >= 13)"),
+    # A quadratic leaf has (d + 1)(d + 2) / 2 coefficients: 100 or more from d = 13.
+    "art_quad": ("2026-11-20T19:28", "affine fits in the split search from 100 leaf coefficients (d >= 13)",
+                 lambda r: int(r["d"]) >= 13),
 }
 FUNCTION_CLASSES = {
     "smooth": ("rosenbrock", "gaussian", "wave", "genz_oscillatory", "genz_product_peak", "genz_corner_peak", "genz_gaussian"),

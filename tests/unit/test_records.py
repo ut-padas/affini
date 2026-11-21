@@ -38,6 +38,14 @@ def test_a_record_older_than_its_methods_last_change_is_computed_again(tmp_path)
     assert store.get(key, lambda: {"evals": 3}, changed=later) == {"evals": 2}
 
 
+def test_a_change_limited_to_some_records_leaves_the_others_standing():
+    changed = {"art_quad": ("2026-11-20T00:00", "split search", lambda r: r["d"] >= 13)}
+    old = {"method": "art_quad", "recorded": "2026-11-19T00:00"}
+    assert records.stale({**old, "d": 20}, changed)
+    assert not records.stale({**old, "d": 10}, changed)
+    assert not records.stale({**old, "d": 20, "recorded": "2026-11-21T00:00"}, changed)
+
+
 def test_an_unreadable_record_counts_as_missing(tmp_path):
     store = RecordStore(tmp_path)
     key = {"method": "hub"}
