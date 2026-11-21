@@ -127,3 +127,23 @@ All findings were checked against the memo before being applied; the archived Ro
 | F11 | major | Corollaries 6.2–6.3 omit norms, domains and the remainder | Accepted: norm and decoder class stated; three budgets with $\sup\lVert R_\tau\rVert$; no general $O(\varepsilon)$ lower bound |
 | F12 | minor | Proof and domain repairs (2.1–2.3, 3.1–3.3, 4.2–4.5, 7.1–7.2, notation) | Accepted: Proposition 4.4 given the stronger covering proof $L/(2N^{1/d})$; window bound needs row-sum control; $\Pi$ for the $L^2$ projector; the rest as listed |
 | F13 | major | Prior art contains the techniques and nearby latent rollout bounds (Lee–Carlberg; Farenga et al.; Batson et al.; DeVore–Howard–Micchelli) | Accepted: each statement credited; the contribution restated as a verified end-to-end certificate for a stated class |
+
+## Round 5 (Fable): Claude Fable 5.2 (medium effort), on section F and Demonstration 8.3 (commit `a7e135a`)
+
+Brief: check section F's mechanisms, numbers and verdicts against the scripts and JSON; run refutation tests; check Demonstration 8.3's
+rigorous parts line by line. Verdict: no critical findings; the Bernstein parameters recompute exactly and the rigorous half of
+Demonstration 8.3 is sound; several "confirmed" rows were bounds, identities or non-discriminating checks. Tests 1–7.
+
+| # | Severity | Critique | Resolution |
+|---|---|---|---|
+| G1 | major | The aggregate check cannot separate the aggregate mechanism from extrapolation (a full quadratic shows the same vertex ratio) | Accepted: the row is marked inconclusive; a discriminating design (error against the aggregate in bins, the crossing radius against $d$) is the next step |
+| G2 | major | The corner peak's bound is 2.6 times loose and cannot fail; ChebTT's ranks are quantised | Accepted: marked as a bound, not informative; the true ranks (0.65 per decade) quoted |
+| G3 | major | "Did not finish at 0.1" is not in the JSON and contradicts the $n^{-1}$ law | Accepted: restated with the review's measurement (over 20,000 evaluations) and attributed to ChebTT's acceptance rule |
+| G4 | major | Four rows cannot fail or do not discriminate | Accepted: every row now carries its kind (test, bound, identity, record); the ART sentence restated |
+| G5 | major | ChebTT's "0 held" on oblique jumps are aborted runs; ChebTT-M fails at $d = 2$ | Accepted: the rank mechanism marked untested; the $d = 2$ failure stated |
+| G6 | major | ChebTT-M does not scale mildly on `shared_latent` | Accepted: confirmed for the hub only |
+| G7 | major | Demonstration 8.3's reference error is underestimated (shared interpolation table) | Accepted: the floor stated; the $q \ge 20$ rows marked at it |
+| G8 | minor | Demonstration 8.3's interval bound is 29% loose; the modulus margin is a secant estimate; its scope | Accepted, all stated |
+| G9 | minor | "Identical" counts hold for one of the two full-rank problems | Accepted: "within 0.6%" |
+| G10 | minor | `genz_triple` a second failed prediction; `front` at $d = 10$; the jump profile; "within 10%"; predictions committed with results | Accepted: `genz_triple` and the rational ridge added; "within about 30%"; the next pass commits predictions first |
+| G11 | minor | Lemma 7.2 already gives the corrected `wave_pair` claim: rank at most $\binom{n+k}{k}$ | Accepted: stated as "the corrected claim" |

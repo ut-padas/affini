@@ -78,30 +78,40 @@ Before step maps, the same ideas were tested on the benchmark's static test func
 the singularities are known in closed form. These are tier-1 tests: each prediction is a scaling law (an exponent, a rank, a count)
 derived from a stated mechanism, judged by whether the trend matches, not by constants. Scripts and outputs: `theory/functions/f*.py`,
 `theory/functions/data/f*.json` (fresh ChebTT runs at small $d$, and the benchmark's records; the records' `ranks` field is the MPI rank
-count, not a TT rank, so ranks come from fresh runs).
+count, not a TT rank, so ranks come from fresh runs); a review's own tests are in `theory/reviews/scratch-round-5-fable/`. Each row says
+what kind of check it is: a **test** (it could have failed), a **bound** (an "at most" that the data could not exceed), an **identity**
+(true by construction), or a **record** (an observation in the benchmark's store). The predictions and their outcomes were committed
+together; the next pass commits the predictions first.
 
-| Class (problem) | Mechanism | Prediction | Measured | Verdict |
+| Class (problem) | Mechanism | Prediction | Measured | Kind; verdict |
 |---|---|---|---|---|
-| Smooth, separable (`genz_product_peak`, $d = 2$) | poles at $w_i \pm i/a_i$ give a Bernstein $\rho_i$ per axis (§1) | TT rank 1; degree in $x_i$ grows by $1/\log_{10}\rho_i$ per decade: 3.15 and 4.66 | rank 1 at every tolerance from $10^{-2}$ to $10^{-9}$; 3.27 and 4.30 per decade | confirmed (within 4% and 8%) |
-| Smooth, a sum inside a cosine (`genz_oscillatory`, $d = 2, 3, 5$) | $\cos(c + a\cdot x) = \operatorname{Re}\prod_je^{ia_jx_j}e^{ic}$ | TT rank exactly 2 at every tolerance | 2 at every tolerance from $10^{-2}$ to $10^{-8}$ and every $d$ | confirmed |
-| Smooth, a function of one aggregate (`genz_corner_peak`, $d = 2, 3, 5$) | $g(s)$, $s = a\cdot x \in [0, 1.85]$, pole at $s = -1$: $\rho_s = 3.91$; Lemma 7.2 | rank growth at most $1/\log_{10}\rho_s = 1.69$ per decade, independent of $d$ | 0.7, 0.7, 1.0 per decade (ranks 2, 4, 6, 6 at $10^{-2}$ to $10^{-8}$ for $d = 2, 3$) | confirmed (the bound is not attained) |
-| Kink (one factor of `genz_continuous`) | Chebyshev coefficients $\sim k^{-2}$ across a kink | interpolation error $\propto n^{-1}$; geometric with a breakpoint at the kink | slope $-0.91$; with the breakpoint $10^{-11}$ at $n = 16$ | confirmed |
-| Jump (one factor of `genz_discontinuous`) | no polynomial is uniformly within half a jump | error never below half the jump (0.57); geometric with a breakpoint | 0.71–1.12 for $n = 8$ to 256; $10^{-12}$ with the breakpoint at every $n$ | confirmed |
-| Separable kinks, whole function (`genz_continuous`, $d = 2$, ChebTT with breakpoints) | each piece entire, TT rank 1 | cost nearly flat in the tolerance | 2 pieces per axis, rank 1, 1,826–3,085 evaluations from $10^{-1}$ to $10^{-6}$ (slope $-0.02$); without breakpoints the build did not finish at 0.1 in 170 s | confirmed |
-| Aligned kinks and jumps in high $d$ (records) | as above, rank 1 | ChebTT with breakpoints holds them at every $d$, cost about linear in $d$ | held at every $d$ to 20: `genz_continuous` 1,897 → 21,776, `genz_discontinuous` 2,063 → 7,748 | confirmed |
-| Oblique and curved jumps (records: `oblique_jump`, `ball_jump`) | no axis breakpoint represents an oblique interface; its TT rank is of order $n$ (Review VIII) | ChebTT fails; an interface term (ChebTT-A) holds; a rotation aligning the plane with an axis also works | ChebTT held 0 of the cases it ran; ChebTT-A held `oblique_jump` at every $d$ to 20 and `ball_jump` to $d = 5$; ChebTT-M held `oblique_jump` at $d = 3$ (102,808 evaluations) | confirmed |
-| Sharp smooth front on a sphere (records: `front`) | analytic, a nearby complex singularity across a curved surface; $\lvert x\rvert$ concentrates in high $d$ (T7) | ChebTT costly, ChebTT-A cheaper; in high $d$ the uniform test set never sees the front | ChebTT 53,742 and 1,225,790 at $d = 2, 3$; ChebTT-A 6,889–10,404 to $d = 5$; the hub and a single quadratic leaf "hold" at $d = 10, 20$ (an artifact of the test set) | confirmed |
-| Two shared oblique coordinates (records and Jacobians: `shared_latent`) | Jacobian rank 2 everywhere: coordinate count 2 (Proposition 6.5 below, and the exact structure above) | rotated models (ChebTT-M, the hub) win and scale mildly with $d$; axis-aligned ChebTT does not | local rank 2 at $d = 5, 10$; ChebTT 1,792 → 376,037 (d = 5) → fails at 20; ChebTT-M 75,392 (d = 5), 1,591,796 (d = 20); the hub 2,400–20,000 | confirmed |
-| Full-rank vector outputs (`rosenbrock_gradient`, `lotka_volterra_state`) | no reduction available from the Jacobian | a rotation gains nothing | identical evaluation counts with and without the rotation at every $d$ | confirmed |
-| An oblique ridge with a trigonometric profile (`wave_pair`) | Jacobian rank 1 | *predicted:* axis-aligned ChebTT pays for the obliqueness | ChebTT is cheap at every $d$ (517 → 5,424): $\cos, \sin$ of a linear form have TT rank at most 2 | **prediction wrong**; the cost is set by the profile's TT rank, not the coordinate count (a general profile $g(q\cdot x)$ would have growing rank) |
-| Aggregates (`lotka_volterra`, $d = 20$; T7's direct test) | one dominant gradient direction; the uniform measure concentrates it | a few aggregate coordinates suffice on most of the box and fail at the vertices | gradient-covariance eigenvalues 1, 0.0375, 0.0037; fits in the top 1–3 directions err 2.3–10% of the range on uniform points and 4–12 times more at the vertices | confirmed in direction |
+| Smooth, separable (`genz_product_peak`, $d = 2$; three separable functions at $d = 3$, review 5 test 1) | poles at $w_i \pm i/a_i$ give a Bernstein $\rho_i$ per axis (§1) | TT rank 1; the degree in $x_i$ grows by $1/\log_{10}\rho_i$ per decade | rank 1 everywhere; $d = 2$: 3.27 and 4.30 against 3.15 and 4.66; $d = 3$: ratios 0.80–1.28 over nine axes, with the axes' order and a tenfold range of rates right | test; confirmed within about 30% |
+| Kink (the profile $e^{-a\lvert x - w\rvert}$ of `genz_continuous`) | Chebyshev coefficients $\sim k^{-2}$ across a kink | interpolation error $\propto n^{-1}$ | slope $-0.91$ | test; confirmed |
+| Separable kinks, ChebTT with breakpoints (`genz_continuous`, $d = 2$; $d = 3, 4$ in review 5 test 3) | each piece entire, TT rank 1 | cost nearly flat in the tolerance | rank 1, 2 pieces per axis; 1,826–3,085 evaluations from $10^{-1}$ to $10^{-6}$ at $d = 2$, 2,084–4,003 at $d = 3$, 3,839–6,293 at $d = 4$ | test; confirmed. Without breakpoints the build exceeded 20,000 evaluations at a tolerance of 0.1 (review 5 G3): ChebTT's acceptance rule, not the $n^{-1}$ law, which predicts a cheap build there |
+| Aligned kinks and jumps in high $d$ (`genz_continuous`, `genz_discontinuous`) | as above | ChebTT with breakpoints holds them at every $d$ | held at every $d$ to 20 (1,897 → 21,776 and 2,063 → 7,748 evaluations) | record; consistent |
+| Oblique and curved jumps (`oblique_jump`, `ball_jump`) | no axis breakpoint represents an oblique interface; its TT rank is of order $n$ (Review VIII) | ChebTT fails; an interface term (ChebTT-A) holds | ChebTT-A held `oblique_jump` at every $d$ to 20 and `ball_jump` to $d = 5$; ChebTT's "0 held" are four aborted runs with no recorded cause, and ChebTT-M held `oblique_jump` at $d = 3$ (102,808) but not at $d = 2$ | record; the interface term's success is confirmed, the rank mechanism for ChebTT's failure untested |
+| Sharp smooth front on a sphere (`front`) | analytic with a nearby singularity across a curved surface; $\lvert x\rvert$ concentrates in high $d$ | ChebTT costly, ChebTT-A cheaper; in high $d$ the test set never sees the front | ChebTT 53,742 and 1,225,790 at $d = 2, 3$; ChebTT-A 6,889–10,404 to $d = 5$; at $d = 20$ one quadratic leaf "holds" with error ratios $10^{-8}$–$10^{-13}$ (the function is constant on the test set); at $d = 10$ the hub sees the front (ratio 0.88 at tolerance 0.05) | record; consistent (the artifact at $d = 20$ only) |
+| Two shared oblique coordinates (`shared_latent`) | Jacobian rank 2 everywhere: coordinate count 2 | rotated models win; axis-aligned ChebTT does not | local rank 2 at $d = 5, 10$; ChebTT 1,792 → 376,037 ($d = 5$) → fails at 20; the hub 2,400–20,000; ChebTT-M 1,816 → 1,591,796 (it wins but does not scale mildly; tolerances loosen with $d$) | test and record; confirmed for the hub |
+| Full-rank vector outputs (`rosenbrock_gradient`, `lotka_volterra_state`) | no reduction available from the Jacobian | a rotation gains nothing | evaluations with and without the rotation equal for `rosenbrock_gradient` and within 0.6% for `lotka_volterra_state` | record; confirmed |
+| An oblique ridge with a trigonometric profile (`wave_pair`) | Jacobian rank 1 | *predicted:* axis-aligned ChebTT pays for the obliqueness | ChebTT cheap at every $d$ (517 → 5,424): $\cos, \sin$ of a linear form have TT rank at most 2 | test; **failed** |
+| Shared parameters (`genz_triple`) | three outputs of different structure | *predicted:* full local rank | local rank 2 of 3: the oscillatory and corner-peak outputs share the direction $a$ | test; **failed** |
+| A rational oblique ridge (review 5 test 2: $1/(b^2 + (q\cdot x)^2)$, $q$ random) | the general form of the corrected claim below | TT rank grows with the tolerance and the profile's sharpness, not with $d$ | rank 4 → 12 ($b = 0.7$, $d = 2$) and 6 → 18 at both $d = 3$ and 5; evaluations grow about as $d\,n\,r^2$ until over the cap | test; confirmed |
+| Smooth, a cosine of a sum (`genz_oscillatory`) | $\cos(c + a\cdot x) = \operatorname{Re}\prod_je^{ia_jx_j}e^{ic}$ | TT rank 2 | 2 at every tolerance and $d$ | identity |
+| A function of one aggregate (`genz_corner_peak`) | Lemma 7.2 with $\rho_s = 3.91$ | rank growth at most 1.69 per decade | ChebTT 0.7–1.0 per decade (quantised by its rank step of 2); the true ranks 0.65 per decade by SVD (review 5 test 5) | bound; not informative (2.6 times loose) |
+| Jump, one piece / with the breakpoint | no polynomial is uniformly within half a jump; pieces analytic | error at least half the jump; geometric with the breakpoint | 0.71–1.12 against 0.57; $10^{-12}$ | identity (a theorem; the breakpoint is placed at the known $w$) |
+| Aggregates (`lotka_volterra`, $d = 20$) | one dominant gradient direction; the uniform measure concentrates it | a few aggregate coordinates suffice on most of the box and fail at the vertices | eigenvalues 1, 0.0375, 0.0037; fits in 1–3 directions err 2.3–10% of the range on uniform points, 4–12 times more at vertices; but a full 20-coordinate quadratic fitted the same way shows the same ratio (8.4; review 5 G1) | test; **inconclusive**: the design cannot tell the aggregate mechanism from extrapolation |
+
+**The corrected claim (review 5 G11).** Lemma 7.2 already implies it: a function that is a polynomial of degree $n$ in $k$ oblique coordinates
+has TT ranks at most $\binom{n + k}{k}$ in any ordering, whatever $d$, so an axis-aligned train costs about $d\,n\binom{n + k}{k}^2$. The
+coordinate count $k$ is what a rotated model needs; ChebTT's cost is set by the rank of the profile in the given axes. This covers
+`wave_pair` (a profile of rank 2), the corner peak and ChebTT's failure on `shared_latent` ($k = 2$, high degree); for a random unit $q$
+on $[-1, 1]^d$ the range of $q\cdot x$ grows like $\sqrt{2d/\pi}$, so the rate does depend on $d$ unless the direction is scaled.
 
 What this pass establishes. Where a function's analytic structure is known, the Chebyshev and TT mechanisms predict ChebTT's degrees
-and ranks (to within 10% on the separable case), the difference that breakpoints make for kinks and jumps, the failure of axis
-breakpoints on oblique interfaces, and when a rotation pays. One prediction failed instructively (`wave_pair`): the coordinate count is
-a lower bound on what a model needs, but a tensor train's cost is set by the rank of the profile in the coordinates it uses. Least-squares
-local models (ART, AFINNI) held none of the kink and jump cases outside the `front` artifact, consistent with T5. These are the static
-building blocks of the step-map theorems below: analyticity (T1), coordinate counts (T6), aggregates (T7) and least squares (T5).
+(within about 30%, axis order right) and ranks, the difference breakpoints make for kinks, and when a rotation pays; the interface term's
+success on oblique jumps is consistent. Two predictions failed (`wave_pair`, `genz_triple`), both avoidable from the memo's own lemmas; one
+test was inconclusive (aggregates). Four rows are identities or bounds, not tests. T5 (least-squares leaves) is not tested here: that
+least-squares methods held none of the kink cases is not specific, since they also hold none of several smooth vector problems.
 
 ---
 
@@ -483,8 +493,10 @@ at the Chebyshev points of $U_\rho = [-0.305, -0.010]$ ($\rho = 0.01$), so every
 $5\times10^{-17}$ along the chains). Constants: $L_g$ and $L_G$ are bounded rigorously for the fitted polynomials (a grid maximum plus half the
 spacing times a second-derivative bound from the Chebyshev coefficients, $|T_k''| \le k^2(k^2 - 1)/3$; an interval bound for the
 reconstructed component), up to floating-point rounding; $\varepsilon_G, \varepsilon_u$ are *estimated*: the defect's maximum on 20,001 curve points, plus
-half the spacing times the defect's own Lipschitz constant estimated from the grid, plus the reference error estimated from a second
-trajectory at rtol $10^{-10}$ ($1.1\times10^{-11}$).
+half the spacing times the defect's own Lipschitz constant estimated from the grid (a secant estimate, so not conservative in principle),
+plus the reference error estimated from a second trajectory at rtol $10^{-10}$ ($1.1\times10^{-11}$). That estimate is too small: both
+references share one linear-interpolation table from $z_1$ to time, whose error is about $9.5\times10^{-11}$ in the step map (review 5 G7), so
+the rows with $q \ge 20$ sit at the reference's floor. The defects on the chains' own inputs equal those on the curve to 1% (review 5 test 6).
 
 | degree $q$ (solver steps) | $L_g$ | $L_G$ | defect on the grid | Theorem 8's bound, 39 steps | measured worst rollout (40 chains) | bound / measured |
 |---|---|---|---|---|---|---|
@@ -496,7 +508,10 @@ trajectory at rtol $10^{-10}$ ($1.1\times10^{-11}$).
 The bound holds at every degree and is 13 to 27 times the measured rollout; the horizon condition $\varepsilon_uA_{n-1} \le \rho$ holds. $L_G = 18.8$
 comes from the conservation-reconstructed $\log_{10}y_3$ ($y_1/y_3$ is large early on); $L_g < 1$ (the flow contracts along the curve), so
 $A_{38} \approx 36$. With the cruder margin (the Lipschitz constant of $\hat G$ plus that of the exact curve map) the bound is $5.7\times10^{-2}$ at every
-degree: the margin then dominates. *What this does and does not show.* It is the first end-to-end evaluation of Theorem 8 with every
+degree: the margin then dominates. The interval bound for the reconstructed component is 29% above its sampled supremum (18.8 against
+14.6); subdividing $U_\rho$ would tighten it rigorously. *What this does and does not show.* The surrogate is a one-variable Chebyshev interpolant of the map along the curve on which it is
+then tested, with $L_g < 1$ for free; the hard cases of Theorem 8 ($L_g > 1$, $k > 1$, a chart that is not a coordinate, inputs off $M$) are
+not exercised. It is the first end-to-end evaluation of Theorem 8 with every
 constant computed, half of them rigorously; the defects are estimates, because no validated (interval) ODE enclosure was used, and that is
 the remaining step to a verified bound. The surrogate covers states on the slow curve of one leaf from step 1 on: the benchmark's
 ChebTT box surrogate (955 and 1,130 evaluations at tolerances 0.01 and 0.001 dex; worst rollouts 0.051 and 0.0043 dex) also covers the
