@@ -4,7 +4,7 @@ Proposition 5 (memo section T5): the stability of one quadratic least-squares le
 ART fits a leaf with p = (d + 1)(d + 2) / 2 coefficients on N = 20 p + 1 points. For the space V of quadratics on
 [-1, 1]^d with the uniform measure, in the orthonormal tensor Legendre basis:
   K(V) = sup_x sum_k phi_k(x)^2 = 1 + 8 d + 9 d (d - 1) / 2 (at a vertex) is the quantity in the
-  Cohen-Davenport-Leviatan sufficient condition N / ln N >= (1 + r) K / kappa, kappa = (1 - ln 2) / 2;
+  Cohen-Davenport-Leviatan sufficient condition (FoCM 2013, Thm 1) K <= kappa N / ln N, kappa = (3 ln(3/2) - 1) / (2 + 2r);
   lambda_min of the empirical Gram matrix measures the discrete-continuous norm equivalence on V;
   the least-squares Lebesgue constant Lambda_N = sup_x sum_i |l_i(x)| gives the exact (deterministic) bound
   ||f - LS f||_inf <= (1 + Lambda_N) E_2(f), with E_2 the best sup-norm error by a quadratic.
@@ -18,7 +18,8 @@ from common import write
 
 DIMS = [2, 3, 5, 10, 20]
 SEEDS = 5
-KAPPA = (1 - math.log(2)) / 2
+R_CONF = 1.0  # probability 1 - 2 N^-r of ||G - I|| <= 1/2
+KAPPA = (3 * math.log(1.5) - 1) / (2 + 2 * R_CONF)
 
 
 def basis(X: np.ndarray) -> np.ndarray:
@@ -37,9 +38,9 @@ def lebesgue(Xq: np.ndarray, Ginv_PhiT: np.ndarray) -> float:
     return float(max(np.max(np.sum(np.abs(basis(Xq[i : i + 500]) @ Ginv_PhiT), axis=1)) for i in range(0, len(Xq), 500)))
 
 
-def cdl_n(K: float, r: float = 1.0) -> int:
-    """Smallest N with N / ln N >= (1 + r) K / kappa."""
-    target = (1 + r) * K / KAPPA
+def cdl_n(K: float) -> int:
+    """Smallest N with K <= kappa N / ln N."""
+    target = K / KAPPA
     N = int(target)
     while N / math.log(N) < target:
         N = int(N * 1.05) + 1
@@ -66,7 +67,7 @@ def main() -> None:
         rows.append({"d": d, "p": p, "N_art": N, "K": K, "K_check_at_vertex": Kv, "N_cdl_r1": cdl_n(K),
                      "lambda_min_median": float(np.median(lam_min)), "lebesgue_interior_median": float(np.median(leb_int)),
                      "lebesgue_vertex_median": float(np.median(leb_vtx)), "lebesgue_vertex_max": float(np.max(leb_vtx))})  # fmt: skip
-    path = write("t5_least_squares", {"seeds": SEEDS, "kappa": KAPPA, "rows": rows})
+    path = write("t5_least_squares", {"seeds": SEEDS, "kappa": KAPPA, "r": R_CONF, "rows": rows})
     for r in rows:
         print(f"d={r['d']:2d} p={r['p']:3d} N_art={r['N_art']:5d} K={r['K']:.0f} (check {r['K_check_at_vertex']:.0f}) N_cdl={r['N_cdl_r1']:,} "
               f"lambda_min={r['lambda_min_median']:.3f} Leb interior={r['lebesgue_interior_median']:.2f} vertex={r['lebesgue_vertex_median']:.2f} (max {r['lebesgue_vertex_max']:.2f})")  # fmt: skip

@@ -162,6 +162,13 @@ chaotic one it grows exponentially. This is U1.
   $F = 8$ (chaotic, largest Lyapunov exponent 1.68): $\rho_{\mathrm{eff}}$ falls from 251 at $\tau = 1/16$ to 4.4 at
   $\tau = 1$ and to about 1 at $\tau = 2$ (where 129 points no longer resolve the fibre).
 
+**Prior art** (`LITERATURE.md`, T1). Holomorphic dependence on initial data and the real log-norm Gronwall bound are
+classical. The closest analyticity-plus-approximation result, Hansen–Schwab (TH-1), works in affine *parameters*
+with two-sided Lipschitz constants ($e^{LT/\kappa}$ under a small-data condition). No work found uses the log norm of
+the *complexified* Jacobian on a tube to get radii in the *initial state* that do not shrink with $\tau$ or with
+stiffness. Lemma 1.1's condition $\lVert w_0\rVert_\beta < e^{-\Lambda}$ is the bootstrap that keeps the complex
+trajectory in the tube, the analogue of TH-1's small-data condition. Verdict: new as a combination of standard parts.
+
 **Limits.** The theorem needs $F$ holomorphic on a complex tube (true for mass-action kinetics, polynomial and
 rational right-hand sides; false for $|x|$, $\max$, tabulated rates), and a computable bound on the log norm over that
 tube. The bound on $R$ is a lower bound: the true radius can be much larger (factor 1.4 in $\rho$ above), so the
@@ -229,6 +236,11 @@ for both. Rotation ($\tau = 0.1$, 4,000 steps): a generic linear defect grows as
 against 1,708.3); defects with $\bar\delta \approx 0$ (a trace-free symmetric field, a phase harmonic, a constant)
 stay at most 20 at every step, where the classical bound is 4,000.
 
+**Prior art** (T2). Proposition 2.1 is the global-error argument for one-step methods and its stiff form
+(B-convergence, one-sided Lipschitz analysis; TH-20); learned flow-map papers use the cruder two-sided Lipschitz
+version (TH-15, TH-21). Proposition 2.2's bias is the persistence of hyperbolic fixed points (TH-18, TH-19). Known; the
+new part is the surrogate reading, Corollary 2.4's tolerance per mode.
+
 **Limits.** Proposition 2.3 is for linear isometric dynamics; for a nonlinear neutral flow (a conserved quantity, a
 limit cycle) the same statement holds to first order in the co-moving frame (averaging), which is not proved here.
 
@@ -281,6 +293,11 @@ $|\partial\Phi_i/\partial x_j|$ falls from 0.81 at $D = 0$ to $1.9\times10^{-13}
 $5.2\times10^{-5}$ for $d = 20, 40, 80$: independent of $d$, as predicted. At $\tau = 1$ the bound is valid but loose
 (the majorant $\exp(\tau L)$ ignores cancellations), and the window needs $r \approx 7$ for $10^{-4}$.
 
+**Prior art** (T3). Light cones for classical lattice ODEs (TH-22 to TH-26) and the decay of $\exp(tA)$ with graph
+distance (TH-28) are known; "light cone implies tensor-network rank independent of size" is known for quantum
+propagators (TH-29) and for states of linear dissipative nearest-neighbour ODEs (TH-30). Windowed dependence and
+$d$-independent TT ranks for the *nonlinear* step map $x_0 \mapsto \Phi_\tau(x_0)$ appear new.
+
 **Limits.** The rank bound $(n+1)^{\lfloor|W|/2\rfloor}$ is $d$-independent but large; it explains why ranks can stop
 growing, not their measured values.
 
@@ -326,6 +343,10 @@ all of them with $\sup_B e \ge L/(2m)$, $m = \lceil (N + 1)^{1/d}\rceil$.
 *Proof.* Of the $m^d > N$ congruent sub-boxes of side $1/m$ (in $d_B$), one contains no point in its interior; put
 $e(y) = L\max(0, 1/(2m) - d_B(y, \text{its centre}))$ there. $\square$
 
+**Prior art** (T4). Known: holdout reuse is the adaptive-data-analysis problem (TH-38), and the measure-plus-Lipschitz
+bound is a fill-distance argument (TH-17). Hickernell's cones (TH-33 to TH-35) are the formal model for guaranteed
+adaptive approximation; a sup-norm guarantee is proven there only in 1-D.
+
 So a sampled sup-norm certificate for Lipschitz functions costs $N \sim (L/\Delta)^d$ samples for a margin $\Delta$: the
 curse of dimension (Novak–Woźniakowski) in its simplest form. Above $d \approx 4$ a sup-norm certificate must come
 from structure (an a priori bound, Theorem 1), not from sampling; a measure-sense certificate (Proposition 4.1) costs
@@ -343,9 +364,13 @@ $\lVert\mathrm{LS}g\rVert_\infty \le \Lambda_N\max_i|g(x_i)|$. $\square$
 
 **Check** (`t5_least_squares`; quadratics on $[-1, 1]^d$, ART's $N = 20p + 1$ uniform points, 5 seeds). The empirical
 Gram matrix is well conditioned ($\lambda_{\min} \approx 0.57$–$0.67$), although $N$ is far below the
-Cohen–Davenport–Leviatan sufficient size ($N/\ln N \ge (1 + r)K/\kappa$ with $r = 1$, $\kappa = (1 - \ln 2)/2$ and $K = 1 + 8d + 9d(d-1)/2$; the constants are to be verified against the paper, `LITERATURE.md`) ($N = 421$ against 17,006 at $d = 5$; 4,621 against 308,470 at $d = 20$).
+Cohen–Davenport–Leviatan sufficient size (their Thm 1: $K \le \kappa N/\ln N$ with $\kappa = (3\ln\frac32 - 1)/(2 + 2r)$, $r = 1$, and $K = 1 + 8d + 9d(d-1)/2$; constant read in TH-40): $N = 121$ against 3,987 at $d = 2$, 421 against 25,295 at $d = 5$, 1,321 against 108,292 at $d = 10$.
 The Lebesgue constant, estimated from below on random points, is 4.4, 6.0, 9.7, 18.9, 34.4 at the vertices for
 $d = 2, 3, 5, 10, 20$, about twice its interior value.
+
+**Prior art** (T5). Known: Cohen–Davenport–Leviatan (TH-40) and optimal weighted or subsampled least squares (TH-41 to
+TH-44). No sup-norm guarantee was found for an adaptive tree with oblique splits and least-squares polynomial leaves
+built from point samples: an open gap.
 
 **Predictions.** (P5.1) A single quadratic leaf holds a tolerance only if the best quadratic error is about
 $1/(1 + \Lambda_N)$ of it: $1/20$ at $d = 10$, $1/35$ at $d = 20$. ART's one-leaf wins sit at 0.62–0.99 of the tolerance
@@ -412,6 +437,12 @@ conserved total is the second slow direction): $\sigma_3$ follows $e^{-|\lambda_
 ($2.7\times10^{-10}$ at $\tau|\lambda| = 22$ against $e^{-22} = 2.8\times10^{-10}$; 0.10 at $\tau|\lambda| = 2.2$
 against 0.11) down to $10^{-17}$, and the two others settle at $1.64$–$1.73$ and $1.00$, reproducing U3 without its floor.
 
+**Prior art** (T6). The dynamics is classical: Fenichel's fibration (TH-49), fibre projections and their order-by-order
+accuracy (TH-50 to TH-52), isostables (TH-53), inertial manifolds (TH-56). Gradient-based dimension reduction (TH-48)
+bounds only the $L^2$ error. The singular-value drop is observed numerically in TH-55. Theorem 6 as a sup-norm
+approximation-complexity statement for step maps (pointwise $\sigma_{k+1}$ bound, $O(\varepsilon)$ for a linear
+projection) appears new.
+
 **Limits.** Real networks are not given in slow–fast form; $k$, $\xi$ and $\varepsilon$ must be found (the Jacobian's
 singular spectrum gives $k$ and the tangent of $\xi$; a scheme must learn $H$). Several time scales give a hierarchy
 ($k$ depends on $\tau$; at $t_0 = 0.01$ Robertson's second singular value also decays, to $6.5\times10^{-3}$ at
@@ -451,6 +482,10 @@ large $|f|$, hence to vertices, so a cross with vertex checks pays the sup-norm 
 evaluations with them, rank 1 and 3.2k–10.4k without). (P7.2) The choice of norm ("Decision needed" in
 `SCHEMES_VS_ART.md`) is a choice between these two costs; for trajectories that live on a manifold (chemistry) the
 measure of the visited states is the relevant one.
+
+**Prior art.** Not searched separately; Proposition 7.1 is Hoeffding's inequality applied to a polynomial degree, and
+Lemma 7.2 is elementary. No Chebyshev or TT step map of a chemistry network, and no TT approximability theory of ODE
+flow maps in the initial state, was found (`LITERATURE.md`, its T7).
 
 **Limits.** Proposition 7.1 is for an exact function of one aggregate; real maps are approximately so (several
 aggregates, weights $w_j$ of unequal size: the effective dimension in Hoeffding is $(\sum w_j)^2/\sum w_j^2$). The
