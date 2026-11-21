@@ -57,7 +57,9 @@ def value_error(f, n: int, lo: float, hi: float, grid: np.ndarray) -> float:
 
 
 def points_per_decade(errs, ns) -> float:
-    ok = [(n, e) for n, e in zip(ns, errs, strict=True) if e > 1e-13]
+    # stop at the first error below 1e-11: past it the errors sit on the rounding floor and would flatten the slope
+    stop = next((i for i, e in enumerate(errs) if e < 1e-11), len(errs))
+    ok = list(zip(ns[:stop], errs[:stop], strict=True))
     n, e = np.array([o[0] for o in ok]), np.array([o[1] for o in ok])
     return float(-1.0 / np.polyfit(n, np.log10(e), 1)[0])
 
