@@ -441,6 +441,35 @@ main open problem.
 - What this supports: a pair of controlled experiments in which reduced coordinates of the data's dimension, fitted on the data and predicting
   the next state, avoided the divergence of full-coordinate fits, within a limited window of chart dimension and degree.
 
+**Demonstration 8.3 (Theorem 8 on one Robertson leaf; `theory/demos/robertson_leaf.py`, `theory/demos/data/robertson_leaf.json`).**
+Robertson in log10 abundances, $\Delta t = 1$, the leaf $y_1 + y_2 + y_3 = 1$, horizon 39 steps from step 1 (past the initial layer). $M$ is the
+leaf's slow curve, traced by one reference trajectory from $(1, 0, 0)$ (Radau, rtol $10^{-12}$) and parametrised by $z_1$, which decreases along
+it; the held-out chains' states lie within $1.0\times10^{-10}$ dex of it. The surrogate: $\hat\pi(z) = z_1$ ($L_\pi = 1$ in the max norm);
+$\hat G(u) = (g_1(u), g_2(u), \log_{10}(1 - 10^{g_1} - 10^{g_2}))$ with $g_1, g_2$ the degree-$q$ Chebyshev interpolants of the next state's $z_1, z_2$
+at the Chebyshev points of $U_\rho = [-0.305, -0.010]$ ($\rho = 0.01$), so every output conserves the leaf's mass exactly (offset at most
+$5\times10^{-17}$ along the chains). Constants: $L_g$ and $L_G$ are bounded rigorously for the fitted polynomials (a grid maximum plus half the
+spacing times a second-derivative bound from the Chebyshev coefficients, $|T_k''| \le k^2(k^2 - 1)/3$; an interval bound for the
+reconstructed component), up to floating-point rounding; $\varepsilon_G, \varepsilon_u$ are *estimated*: the defect's maximum on 20,001 curve points, plus
+half the spacing times the defect's own Lipschitz constant estimated from the grid, plus the reference error estimated from a second
+trajectory at rtol $10^{-10}$ ($1.1\times10^{-11}$).
+
+| degree $q$ (solver steps) | $L_g$ | $L_G$ | defect on the grid | Theorem 8's bound, 39 steps | measured worst rollout (40 chains) | bound / measured |
+|---|---|---|---|---|---|---|
+| 8 (9) | 0.9974 | 18.8 | $4.4\times10^{-5}$ | $2.1\times10^{-3}$ | $1.6\times10^{-4}$ | 13 |
+| 12 (13) | 0.9975 | 18.8 | $8.8\times10^{-7}$ | $3.9\times10^{-5}$ | $2.1\times10^{-6}$ | 19 |
+| 16 (17) | 0.9975 | 18.8 | $2.0\times10^{-8}$ | $8.5\times10^{-7}$ | $3.1\times10^{-8}$ | 27 |
+| 20 (21) | 0.9975 | 18.8 | $5.0\times10^{-10}$ | $4.9\times10^{-8}$ | $3.0\times10^{-9}$ | 16 |
+
+The bound holds at every degree and is 13 to 27 times the measured rollout; the horizon condition $\varepsilon_uA_{n-1} \le \rho$ holds. $L_G = 18.8$
+comes from the conservation-reconstructed $\log_{10}y_3$ ($y_1/y_3$ is large early on); $L_g < 1$ (the flow contracts along the curve), so
+$A_{38} \approx 36$. With the cruder margin (the Lipschitz constant of $\hat G$ plus that of the exact curve map) the bound is $5.7\times10^{-2}$ at every
+degree: the margin then dominates. *What this does and does not show.* It is the first end-to-end evaluation of Theorem 8 with every
+constant computed, half of them rigorously; the defects are estimates, because no validated (interval) ODE enclosure was used, and that is
+the remaining step to a verified bound. The surrogate covers states on the slow curve of one leaf from step 1 on: the benchmark's
+ChebTT box surrogate (955 and 1,130 evaluations at tolerances 0.01 and 0.001 dex; worst rollouts 0.051 and 0.0043 dex) also covers the
+initial layer (step 0) and its whole bounding box, so the two are not the same task, and the reduced surrogate's cost excludes the reference
+trajectory that traces the curve.
+
 **Prior art.** Combustion tabulates on low-dimensional manifolds of progress variables (ILDM, Maas–Pope 1992; FGM, van Oijen–de Goey 2000; FPI;
 REDIM, Bykov–Maas 2007; ISAT on RCCE manifolds, Tang–Pope 2002; ICE-PIC, Ren et al. 2006; ISAT–RCCE–GALI, Hiremath et al. 2011; from memory);
 constrained runs fill a slow manifold at prescribed chart values (Gear, Kaper, Kevrekidis, Zagaris 2005; TH-51); learned-manifold reduced dynamics
