@@ -4,8 +4,8 @@ Jacobians, in the 3 chart coordinates of Demonstration 8.5.
 
 Construction: chart pi(z) = V^T (z - mu) (top-3 principal directions of the visited log-states); lift D(u) (a least-squares polynomial of
 total degree 4 from chart values to log-states); oracle u -> Phi(D(u)) in log coordinates; its Jacobian in u is
-DPhi_log(D(u)) DD(u), with DPhi_log = diag(1/y') M diag(y), M the forward sensitivity of the physical step (the state and its 8 x 8
-sensitivity integrated together by Radau), and DD(u) the decoder's derivative. The surrogate is a total-degree-q Chebyshev polynomial
+diag(1/y') S(dt), with S the directional forward sensitivity of the physical step along the chart directions (the state and its 8 x 3
+sensitivity S' = J S, S(0) = diag(y0) DD(u), integrated together by Radau), DD(u) the decoder's derivative. The surrogate is a total-degree-q Chebyshev polynomial
 in the chart coordinates (scaled to the chart box), one per output, fitted by least squares on N chart values of training visited
 states: values only (N equations per output), or values and the 3 chart derivatives (4N). It predicts the next state and is projected
 onto the invariant y7 + y8 (the benchmark's Projected). Scored like the benchmark on the test trajectories: one-step worst, the error
@@ -55,20 +55,20 @@ def poly(U, q):
     return np.stack(cols, axis=1)
 
 
-def sensitivity_step(y0: np.ndarray, dt: float):
-    """The physical step and its sensitivity M = dy(dt)/dy0, by Radau on the state and M together (a block-diagonal Newton matrix)."""
-    d = len(y0)
+def sensitivity_step(y0: np.ndarray, S0: np.ndarray, dt: float):
+    """The physical step and its directional sensitivity: y and S (d x k) with S' = J(y) S, by Radau with a block-diagonal Newton matrix."""
+    d, k = S0.shape
 
     def f(_t, v):
-        y, M = v[:d], v[d:].reshape(d, d)
-        return np.concatenate([S.rhs(y), (S.jac(y) @ M).ravel()])
+        y, Sm = v[:d], v[d:].reshape(d, k)
+        return np.concatenate([S.rhs(y), (S.jac(y) @ Sm).ravel()])
 
     def jac(_t, v):
         J = S.jac(v[:d])
-        return block_diag(*([J] * (d + 1)))
+        return block_diag(J, np.kron(J, np.eye(k)))
 
-    sol = solve_ivp(f, (0.0, dt), np.concatenate([y0, np.eye(d).ravel()]), method="Radau", jac=jac, rtol=S.rtol, atol=S.atol)
-    return sol.y[:d, -1], sol.y[d:, -1].reshape(d, d)
+    sol = solve_ivp(f, (0.0, dt), np.concatenate([y0, S0.ravel()]), method="Radau", jac=jac, rtol=S.rtol, atol=S.atol)
+    return sol.y[:d, -1], sol.y[d:, -1].reshape(d, k)
 
 
 class ChartPoly:
@@ -111,17 +111,17 @@ class ChartPoly:
 
 
 class Reduced:
-    """Psi(z) = G(pi(z)) as an increment model, refusing chart values outside the box."""
+    """Psi(z) = G(pi(z)) as an increment model, refusing chart values outside the box; outputs clipped to a margin around the training states."""
 
-    def __init__(self, G, mu, V, lo, hi):
-        self.G, self.mu, self.V, self.lo, self.hi, self.evals = G, mu, V, lo, hi, 0
+    def __init__(self, G, mu, V, lo, hi, zlo, zhi):
+        self.G, self.mu, self.V, self.lo, self.hi, self.zlo, self.zhi, self.evals = G, mu, V, lo, hi, zlo, zhi, 0
 
     def refuses(self, Z):
         U = (Z - self.mu) @ self.V
         return np.any((self.lo > U) | (self.hi < U), axis=1)
 
     def predict(self, Z):
-        return self.G(np.clip((Z - self.mu) @ self.V, self.lo, self.hi)) - Z
+        return np.clip(self.G(np.clip((Z - self.mu) @ self.V, self.lo, self.hi)), self.zlo, self.zhi) - Z
 
 
 def main() -> None:
@@ -151,11 +151,12 @@ def main() -> None:
     for z, dz in zip(Z0, dD, strict=True):
         y0 = 10.0**z
         t0 = time.perf_counter()
-        y1, M = sensitivity_step(y0, P.dt)
+        y1, S1 = sensitivity_step(y0, y0[:, None] * dz, P.dt)  # S(0) = d y0 / d u up to the factor ln 10, which cancels
         t_sens.append(time.perf_counter() - t0)
         vals.append(np.log10(np.maximum(y1, 1e-30)))
-        jacs.append((M * (y0[None, :] / y1[:, None])) @ dz)
+        jacs.append(S1 / y1[:, None])
     vals, jacs = np.array(vals), np.array(jacs)
+    np.savez_compressed(OUT / "g2_hires_oracle.npz", U=Upool, values=vals, jacobians=jacs)
     t_plain = []
     for z in Z0[:50]:
         t0 = time.perf_counter()
@@ -168,10 +169,10 @@ def main() -> None:
         for N in Ns:
             for grad in (False, True):
                 G = ChartPoly(q, lo, hi)
-                if not grad and len(G.idx) > N:
-                    continue
+                if N * (4 if grad else 1) < 1.5 * len(G.idx):
+                    continue  # fewer than 1.5 equations per unknown
                 G.fit(Upool[:N], vals[:N], jacs[:N] if grad else None)
-                sur = Projected(Reduced(G, mu, V, lo, hi), P, W)
+                sur = Projected(Reduced(G, mu, V, lo, hi, X.min(0) - 2.0, X.max(0) + 0.5), P, W)
                 e = np.max(np.where(mask, np.abs(Xe + sur.predict(Xe) - Ye), 0.0))
                 roll = rollout(P, sur, test[:ROLLOUTS])["rollout_worst"]
                 row = {"degree": q, "terms": len(G.idx), "N": N, "gradients": grad, "solves": N, "one_step_worst": float(e), "rollout_worst": float(roll),
