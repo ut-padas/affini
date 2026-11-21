@@ -541,6 +541,31 @@ directions the step does not damp. So at these sizes a reduced ChebTT with an af
 ChebTT used 107,002 evaluations in 210 s. The reduction pays only with a lift that lands on the curved slow manifold (constrained runs or a
 nonlinear decoder; Proposition 8.2's middle term), or on grids well beyond $d = 20$ where $k$ stays at 7–8.
 
+**Demonstration 8.5 (a curved lift; `theory/demos/curved_lift.py`, predictions committed before the run in `8c1720c`; output
+`theory/demos/data/curved_lift_hires_k3.json`).** The lift of a chart value $u$ (top-$k$ principal coordinates of the visited states) was
+made in three ways: affine ($\mu + Vu$), a *decoder* $D(u)$ (a least-squares polynomial of total degree 4 from chart values to states,
+fitted on the visited states, no solve), and the decoder followed by constrained-run iterations (relax with the solver, reset the chart
+coordinates along $V$). Lift errors $\max|\Phi(\mathrm{lift}(\pi(z))) - \Phi(z)|$ on 400 held-out HIRES states at $k = 3$: affine
+$3.85\times10^{-2}$, decoder $2.45\times10^{-4}$ (157 times smaller), decoder with 1–6 constrained-run iterations $3.8$–$7.8\times10^{-3}$ (worse:
+resetting along the flat directions $V$ moves the state off the curved manifold again). With the decoder lift, a reduced ChebTT (eight output
+trains in 3 chart coordinates, the next state as output, projected onto the invariant $y_7 + y_8$):
+
+| HIRES, tolerance 0.01 dex | reduced ChebTT, $k = 3$, decoder lift | box ChebTT (record) |
+|---|---|---|
+| build | 188 s, 9,477 solver calls | over the 240 s limit |
+| one-step worst on the test states | $2.46\times10^{-3}$ (0.25 of the tolerance), none refused | – |
+| error surviving one exact step | $6.8\times10^{-4}$ | – |
+| invariant $y_7 + y_8$, relative change per step | $7.6\times10^{-16}$ | – |
+| worst rollout, 20 trajectories, 170 steps | 0.30 dex (bounded; 30 times the tolerance) | – |
+
+Predictions: P1 (decoder far below affine; polished within a quarter of the tolerance) held for the decoder and failed for the polish; P2
+(finishes in time, holds the tolerance in one step, rollouts bounded) held; P3 (invariant conserved to rounding) held. The rollout is about
+120 times the one-step error, roughly twice the exact dynamics' own amplification over the horizon (52–61, review 3), as T2's classical
+bound allows; holding the tolerance in a rollout needs a one-step error near the tolerance over that amplification. On POLLU ($k = 5$) the
+decoder failed (lift error 1.21 dex, the affine 0.35): the visited set is locally about five-dimensional (median local singular values 1,
+0.81, 0.54, 0.05, 0.017, 0.0044 on neighbourhoods of 60 states; HIRES 1, 0.81, 0.0027) but is not a graph over five global principal
+coordinates, so it needs an atlas of local charts (Example 6.8's situation on a real network).
+
 **Prior art.** Combustion tabulates on low-dimensional manifolds of progress variables (ILDM, Maas–Pope 1992; FGM, van Oijen–de Goey 2000; FPI;
 REDIM, Bykov–Maas 2007; ISAT on RCCE manifolds, Tang–Pope 2002; ICE-PIC, Ren et al. 2006; ISAT–RCCE–GALI, Hiremath et al. 2011; from memory);
 constrained runs fill a slow manifold at prescribed chart values (Gear, Kaper, Kevrekidis, Zagaris 2005; TH-51); learned-manifold reduced dynamics
@@ -591,8 +616,8 @@ Fenichel's theorem, Weyl's and Horn's inequalities and the compound-matrix log n
 
 ## 11. Open items
 
-- §8: a nonlinear lift onto the curved slow manifold (constrained runs or a decoder), the condition for a reduced ChebTT to beat the box one
-  on HIRES and POLLU (Demonstration 8.4); a validated (interval) ODE enclosure to turn Demonstration 8.3's estimated defects into verified ones; a tighter first-order
+- §8: a rollout-aware tolerance for HIRES's reduced ChebTT (one-step error near the tolerance over the dynamics' amplification) with a
+  higher-degree decoder; an atlas of local charts for POLLU (Demonstration 8.5); a validated (interval) ODE enclosure to turn Demonstration 8.3's estimated defects into verified ones; a tighter first-order
   version with a remainder and a validity region; Theorem 8 on the benchmark's schemes (a reduced-coordinate ChebTT against box ChebTT on HIRES,
   POLLU, Fisher–KPP); Proposition 8.2 for operator-split inputs.
 - T1: the tube in log coordinates on a benchmark box; monotonicity of the true nearest singularity in $\tau$ (U1).

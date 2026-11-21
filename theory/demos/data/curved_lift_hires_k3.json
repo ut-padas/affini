@@ -1,0 +1,60 @@
+{
+ "decoder_degree": 4,
+ "decoder_residual": 0.0005149875348764432,
+ "k": 3,
+ "lifts": {
+  "affine": {
+   "lift_error": 0.03850720172419164,
+   "seconds": 5.296426889999566,
+   "solver_calls_per_query": 1
+  },
+  "decoder": {
+   "lift_error": 0.0002449684783369932,
+   "seconds": 1.6717441820001113,
+   "solver_calls_per_query": 1
+  },
+  "polished n=1 s=0.5": {
+   "lift_error": 0.00384201746002244,
+   "seconds": 2.9093955179996556,
+   "solver_calls_per_query": 2
+  },
+  "polished n=3 s=0.5": {
+   "lift_error": 0.005374528957887481,
+   "seconds": 5.1445339739984774,
+   "solver_calls_per_query": 4
+  },
+  "polished n=3 s=1.0": {
+   "lift_error": 0.007821334194946239,
+   "seconds": 6.538822957001685,
+   "solver_calls_per_query": 4
+  },
+  "polished n=6 s=0.5": {
+   "lift_error": 0.005538033027963074,
+   "seconds": 8.481142951000948,
+   "solver_calls_per_query": 7
+  }
+ },
+ "problem": "hires",
+ "records": {
+  "chebtt_box": {
+   "failed": "over the 240 s time limit"
+  },
+  "chebtt_roll": {
+   "failed": "over the 240 s time limit"
+  },
+  "slowtable": null
+ },
+ "reduced": {
+  "build_s": 187.95071138999992,
+  "distinct_queries": 9477,
+  "invariant_relative_change_max": 7.597746747533183e-16,
+  "lift": "decoder",
+  "refused_percent": 0.0,
+  "rollout_solved_share": 0.0,
+  "rollout_worst": 0.2963267493588564,
+  "solver_calls": 9477,
+  "survived": 0.0006791680609103956,
+  "worst": 0.0024604950968205586
+ },
+ "tol": 0.01
+}
