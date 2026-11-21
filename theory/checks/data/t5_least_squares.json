@@ -10,6 +10,7 @@
    "d": 2,
    "lambda_min_median": 0.6744439467814354,
    "lebesgue_interior_median": 4.105578216970172,
+   "lebesgue_upper_median": 6.208886821538251,
    "lebesgue_vertex_max": 4.948024043897407,
    "lebesgue_vertex_median": 4.375147467994895,
    "p": 6
@@ -22,6 +23,7 @@
    "d": 3,
    "lambda_min_median": 0.6265563959811694,
    "lebesgue_interior_median": 5.377165388051428,
+   "lebesgue_upper_median": 9.11006735597797,
    "lebesgue_vertex_max": 6.575471983025242,
    "lebesgue_vertex_median": 5.9622170002054915,
    "p": 10
@@ -34,6 +36,7 @@
    "d": 5,
    "lambda_min_median": 0.6312890739550701,
    "lebesgue_interior_median": 7.113252061523953,
+   "lebesgue_upper_median": 14.40527360469803,
    "lebesgue_vertex_max": 10.368347075229721,
    "lebesgue_vertex_median": 9.675450633059489,
    "p": 21
@@ -46,6 +49,7 @@
    "d": 10,
    "lambda_min_median": 0.571130350833133,
    "lebesgue_interior_median": 10.603411644158891,
+   "lebesgue_upper_median": 29.170946091036523,
    "lebesgue_vertex_max": 18.94422415813996,
    "lebesgue_vertex_median": 18.86087926931433,
    "p": 66
@@ -58,6 +62,7 @@
    "d": 20,
    "lambda_min_median": 0.5812504756477893,
    "lebesgue_interior_median": 17.895243485631813,
+   "lebesgue_upper_median": 56.73554526994872,
    "lebesgue_vertex_max": 34.75180007433171,
    "lebesgue_vertex_median": 34.398950761797146,
    "p": 231

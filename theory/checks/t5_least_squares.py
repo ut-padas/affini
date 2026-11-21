@@ -8,7 +8,8 @@ ART fits a leaf with p = (d + 1)(d + 2) / 2 coefficients on N = 20 p + 1 points.
   lambda_min of the empirical Gram matrix measures the discrete-continuous norm equivalence on V;
   the least-squares Lebesgue constant Lambda_N = sup_x sum_i |l_i(x)| gives the exact (deterministic) bound
   ||f - LS f||_inf <= (1 + Lambda_N) E_2(f), with E_2 the best sup-norm error by a quadratic.
-Lambda_N's sup is estimated over random interior points and random vertices (a lower estimate of the sup).
+Lambda_N's sup is estimated over random interior points and random vertices (a lower estimate of the sup), and
+bounded above by sqrt(K / lambda_min(G)), since sum_i |l_i(x)| <= sqrt(N) |l(x)|_2 = sqrt(phi^T G^-1 phi).
 """
 
 import math
@@ -53,12 +54,13 @@ def main() -> None:
         p = (d + 1) * (d + 2) // 2
         N = 20 * p + 1
         K = 1 + 8 * d + 9 * d * (d - 1) / 2
-        lam_min, leb_int, leb_vtx = [], [], []
+        lam_min, leb_int, leb_vtx, upper = [], [], [], []
         for seed in range(SEEDS):
             rng = np.random.default_rng(seed)
             Phi = basis(rng.uniform(-1, 1, (N, d)))
             Gram = Phi.T @ Phi / N
             lam_min.append(float(np.linalg.eigvalsh(Gram)[0]))
+            upper.append(float(np.sqrt(K / lam_min[-1])))
             Ginv_PhiT = np.linalg.solve(Phi.T @ Phi, Phi.T)  # (p, N): l(x) = phi(x) @ this
 
             leb_int.append(lebesgue(rng.uniform(-1, 1, (2000, d)), Ginv_PhiT))
@@ -66,11 +68,12 @@ def main() -> None:
         Kv = float(np.sum(basis(np.ones((1, d))) ** 2))
         rows.append({"d": d, "p": p, "N_art": N, "K": K, "K_check_at_vertex": Kv, "N_cdl_r1": cdl_n(K),
                      "lambda_min_median": float(np.median(lam_min)), "lebesgue_interior_median": float(np.median(leb_int)),
-                     "lebesgue_vertex_median": float(np.median(leb_vtx)), "lebesgue_vertex_max": float(np.max(leb_vtx))})  # fmt: skip
+                     "lebesgue_vertex_median": float(np.median(leb_vtx)), "lebesgue_vertex_max": float(np.max(leb_vtx)),
+                     "lebesgue_upper_median": float(np.median(upper))})  # fmt: skip
     path = write("t5_least_squares", {"seeds": SEEDS, "kappa": KAPPA, "r": R_CONF, "rows": rows})
     for r in rows:
         print(f"d={r['d']:2d} p={r['p']:3d} N_art={r['N_art']:5d} K={r['K']:.0f} (check {r['K_check_at_vertex']:.0f}) N_cdl={r['N_cdl_r1']:,} "
-              f"lambda_min={r['lambda_min_median']:.3f} Leb interior={r['lebesgue_interior_median']:.2f} vertex={r['lebesgue_vertex_median']:.2f} (max {r['lebesgue_vertex_max']:.2f})")  # fmt: skip
+              f"lambda_min={r['lambda_min_median']:.3f} Leb interior={r['lebesgue_interior_median']:.2f} vertex={r['lebesgue_vertex_median']:.2f} (max {r['lebesgue_vertex_max']:.2f}) upper={r['lebesgue_upper_median']:.1f}")  # fmt: skip
     print("wrote", path)
 
 
