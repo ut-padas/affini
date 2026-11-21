@@ -1,0 +1,270 @@
+{
+ "data": {
+  "degrees": [
+   {
+    "degree": 4,
+    "test20_worst": 0.36829980336700396,
+    "test40_worst": 0.6735151974930815,
+    "train_chains_worst": 0.5459661799873383
+   },
+   {
+    "degree": 5,
+    "test20_worst": 0.07383589112807165,
+    "test40_worst": 0.13820807804144009,
+    "train_chains_worst": 0.12378913143092651
+   },
+   {
+    "degree": 6,
+    "test20_worst": 0.014805176088251937,
+    "test40_worst": 0.026158331919964528,
+    "train_chains_worst": 0.04765818658659349
+   },
+   {
+    "degree": 7,
+    "test20_worst": 2.220852892683026,
+    "test40_worst": 2.394564016020009,
+    "train_chains_worst": 2.4496329448804848
+   },
+   {
+    "degree": 8,
+    "test20_worst": 3.6912786425830975,
+    "test40_worst": 3.6912786425830975,
+    "train_chains_worst": 3.7055382626195428
+   },
+   {
+    "degree": 9,
+    "test20_worst": 0.00042679445107474123,
+    "test40_worst": 0.0012155851778650195,
+    "train_chains_worst": 0.0006060330864756658
+   },
+   {
+    "degree": 10,
+    "test20_worst": 0.00014792474430880276,
+    "test40_worst": 0.00014792474430880276,
+    "train_chains_worst": 0.00010126016684885997
+   },
+   {
+    "degree": 11,
+    "test20_worst": 27.040511961894328,
+    "test40_worst": 27.040511961894328,
+    "train_chains_worst": 4.716575161616381
+   },
+   {
+    "degree": 12,
+    "test20_worst": 27.78227711091214,
+    "test40_worst": 27.78227711091214,
+    "train_chains_worst": 27.274680948811163
+   }
+  ],
+  "kicked": 2.8567802725559153,
+  "passes": true,
+  "selected": 10
+ },
+ "draws": [
+  {
+   "degrees": [
+    {
+     "degree": 4,
+     "test20_worst": 1.0081615067812184,
+     "test40_worst": 1.276528854858323,
+     "train_chains_worst": 1.241522641169785
+    },
+    {
+     "degree": 5,
+     "test20_worst": 0.3502205050523357,
+     "test40_worst": 0.3502205050523357,
+     "train_chains_worst": 0.37295935701068106
+    },
+    {
+     "degree": 6,
+     "test20_worst": 0.05947787354001077,
+     "test40_worst": 0.08214093023714009,
+     "train_chains_worst": 0.10938622788006747
+    },
+    {
+     "degree": 7,
+     "test20_worst": 0.02630181861485914,
+     "test40_worst": 0.06606565532138653,
+     "train_chains_worst": 0.03864000437677895
+    },
+    {
+     "degree": 8,
+     "test20_worst": 0.007332842474562007,
+     "test40_worst": 0.014933249002790472,
+     "train_chains_worst": 0.011686043377091782
+    },
+    {
+     "degree": 9,
+     "test20_worst": 0.002757877419432564,
+     "test40_worst": 0.006453753959845709,
+     "train_chains_worst": 0.00630473717393798
+    },
+    {
+     "degree": 10,
+     "test20_worst": 0.0007741632494484563,
+     "test40_worst": 0.0027527295569025334,
+     "train_chains_worst": 0.0014668184063428846
+    },
+    {
+     "degree": 11,
+     "test20_worst": 0.001976058591873553,
+     "test40_worst": 0.001976058591873553,
+     "train_chains_worst": 0.0012472144168027555
+    },
+    {
+     "degree": 12,
+     "test20_worst": 0.000980914313543746,
+     "test40_worst": 0.0010107102399636858,
+     "train_chains_worst": 0.0006644638424280203
+    }
+   ],
+   "jacobian_seconds": 6.025136383999779,
+   "kicked": {
+    "corrected_q12": 27.004640819442944,
+    "corrected_q8": 0.0804384352637979,
+    "plain_q8": 1.0426460187464943
+   },
+   "passes": true,
+   "plain_solves": 4800,
+   "seed": 3,
+   "selected": 12
+  },
+  {
+   "degrees": [
+    {
+     "degree": 4,
+     "test20_worst": 0.5206790776439587,
+     "test40_worst": 0.5428097284081645,
+     "train_chains_worst": 0.5467128781667654
+    },
+    {
+     "degree": 5,
+     "test20_worst": 0.2027750212093542,
+     "test40_worst": 0.33763295326604714,
+     "train_chains_worst": 0.31143538644434465
+    },
+    {
+     "degree": 6,
+     "test20_worst": 0.07234593908795173,
+     "test40_worst": 0.07234593908795173,
+     "train_chains_worst": 0.08751566263660804
+    },
+    {
+     "degree": 7,
+     "test20_worst": 0.02651840227240765,
+     "test40_worst": 0.02651840227240765,
+     "train_chains_worst": 0.04166877317510398
+    },
+    {
+     "degree": 8,
+     "test20_worst": 0.005323083931549011,
+     "test40_worst": 0.010342550316073229,
+     "train_chains_worst": 0.011050946808064843
+    },
+    {
+     "degree": 9,
+     "test20_worst": 0.0019468930470227797,
+     "test40_worst": 0.003023992418527577,
+     "train_chains_worst": 0.0028342992442520476
+    },
+    {
+     "degree": 10,
+     "test20_worst": 0.0013587792090286044,
+     "test40_worst": 0.0036708875458444368,
+     "train_chains_worst": 0.0017358425293401147
+    },
+    {
+     "degree": 11,
+     "test20_worst": 0.0003433870940354744,
+     "test40_worst": 0.001378919772926146,
+     "train_chains_worst": 0.0010788913443104953
+    },
+    {
+     "degree": 12,
+     "test20_worst": 0.0003587301455900693,
+     "test40_worst": 0.0006291693102542517,
+     "train_chains_worst": 0.00036835395498968637
+    }
+   ],
+   "jacobian_seconds": 6.277874804000021,
+   "kicked": {
+    "corrected_q12": 4.64321740253664,
+    "corrected_q8": 0.03771859837011582,
+    "plain_q8": 1.0463407244892122
+   },
+   "passes": true,
+   "plain_solves": 4800,
+   "seed": 11,
+   "selected": 12
+  },
+  {
+   "degrees": [
+    {
+     "degree": 4,
+     "test20_worst": 0.4442796967059106,
+     "test40_worst": 0.5061378503813341,
+     "train_chains_worst": 0.4883511163755938
+    },
+    {
+     "degree": 5,
+     "test20_worst": 0.15906977008551104,
+     "test40_worst": 0.15906977008551104,
+     "train_chains_worst": 0.3483177617228965
+    },
+    {
+     "degree": 6,
+     "test20_worst": 0.10627186901726837,
+     "test40_worst": 0.19799424974551982,
+     "train_chains_worst": 0.3276967305089693
+    },
+    {
+     "degree": 7,
+     "test20_worst": 0.022553891916938795,
+     "test40_worst": 0.07151297207938567,
+     "train_chains_worst": 0.09340045170107159
+    },
+    {
+     "degree": 8,
+     "test20_worst": 0.0045012766844214624,
+     "test40_worst": 0.026721355318919837,
+     "train_chains_worst": 0.024571402625424454
+    },
+    {
+     "degree": 9,
+     "test20_worst": 0.0009914376061517238,
+     "test40_worst": 0.0019661075607446676,
+     "train_chains_worst": 0.0034382517057349737
+    },
+    {
+     "degree": 10,
+     "test20_worst": 0.0005818758050630812,
+     "test40_worst": 0.0017305071101434422,
+     "train_chains_worst": 0.0012546174151308875
+    },
+    {
+     "degree": 11,
+     "test20_worst": 0.0006138898284864247,
+     "test40_worst": 0.0008020367335239698,
+     "train_chains_worst": 0.0006417827418605526
+    },
+    {
+     "degree": 12,
+     "test20_worst": 0.00048751898525134507,
+     "test40_worst": 0.0006952357385623387,
+     "train_chains_worst": 0.0002564809176708316
+    }
+   ],
+   "jacobian_seconds": 7.110118041000533,
+   "kicked": {
+    "corrected_q12": 4.719383679844751,
+    "corrected_q8": 0.023229307207147887,
+    "plain_q8": 1.0431703179070186
+   },
+   "passes": true,
+   "plain_solves": 4800,
+   "seed": 12,
+   "selected": 12
+  }
+ ],
+ "eps": 0.003
+}
