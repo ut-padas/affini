@@ -1,0 +1,62 @@
+{
+ "davis_skodje": {
+  "cases": {
+   "fast (0,1)": {
+    "predicted_over_eps": 1.5819767068693262,
+    "relative_gap": 0.0,
+    "rollout_final_over_eps": 1.5819767068693262,
+    "worst_case_A_n": 14.095397036934187
+   },
+   "slow (1,1)/sqrt2": {
+    "predicted_over_eps": 10.508331944778142,
+    "relative_gap": 2.64965768490787e-05,
+    "rollout_final_over_eps": 10.508053509953212,
+    "worst_case_A_n": 14.095397036934187
+   },
+   "x only (1,0)": {
+    "predicted_over_eps": 13.7878518303243,
+    "relative_gap": 3.697711854073018e-05,
+    "rollout_final_over_eps": 13.78734199529275,
+    "worst_case_A_n": 14.095397036934187
+   }
+  },
+  "eigenvalues": [
+   0.9048374180359595,
+   0.36787944117144233
+  ]
+ },
+ "rotation": {
+  "cases": {
+   "constant (1, 0)": {
+    "classical_bound_n": 4000,
+    "max_rollout_over_eps": 20.008335766749745,
+    "orbit_mean_norm": 0.004368306386229091,
+    "predicted_n_times_mean": 17.473225544916364,
+    "rollout_over_eps_at_n": 17.473225550305642
+   },
+   "linear, B = [[0.3, 0.2], [-0.1, 0.5]]": {
+    "classical_bound_n": 4000,
+    "max_rollout_over_eps": 1709.61290843653,
+    "orbit_mean_norm": 0.4270760812766658,
+    "predicted_n_times_mean": 1708.304325106663,
+    "rollout_over_eps_at_n": 1709.61290843653
+   },
+   "phase harmonic k = 3": {
+    "classical_bound_n": 4000,
+    "max_rollout_over_eps": 5.033379751464842,
+    "orbit_mean_norm": 0.0011249467200341876,
+    "predicted_n_times_mean": 4.49978688013675,
+    "rollout_over_eps_at_n": 4.502288196033761
+   },
+   "trace-free symmetric B = [[1, 0], [0, -1]]": {
+    "classical_bound_n": 4000,
+    "max_rollout_over_eps": 10.03580700130844,
+    "orbit_mean_norm": 0.0021308480372098427,
+    "predicted_n_times_mean": 8.52339214883937,
+    "rollout_over_eps_at_n": 8.539311671548509
+   }
+  },
+  "n": 4000,
+  "tau": 0.1
+ }
+}
