@@ -48,3 +48,35 @@ not have failed, three theorems did not apply as stated to the problems they wer
 | N5 | proposal | Pointwise least-squares identity | Adopted as Proposition 5.2 (identity proved; the variance a sketch) |
 | N6 | proposal | Linear invariants | Adopted as Remarks 1.5 and 2.5 |
 | N7 | proposal | Compound-matrix singular-value bound | Adopted as Theorem 6.5; `t6_hires` shows it needs a weighting $W$ on non-normal Jacobians. Added Proposition 6.6 (frozen Jacobian), which the HIRES check supports |
+
+## Round 2: Claude Fable 5.2 (medium effort), on revision 1 (commit `907cf70`)
+
+Brief: audit the round-1 resolutions, check every new statement, test the new top-ranked foundation and the frozen
+staircase on strongly nonlinear problems, run open items. Verdict: revision 1's proofs are correct and bounds are called
+bounds; three readings were wrong: the tube read as "the visited states" (refuted by a surrogate accurate to $4\times10^{-9}$
+dex on visited states that diverges to 10 dex), Theorem 1 called "the source of degrees" (vacuous on the Brusselator), and
+the frozen staircase extended beyond constant $J$ (fails on Robertson at long steps). Five tests (A–E); proposals P1–P6.
+
+| # | Severity | Critique | Resolution |
+|---|---|---|---|
+| Audit | – | C3, C4, C6, C18, C22 partly cosmetic or read too readily; others sufficient | Addressed through D1–D7 below |
+| D1 | critical | The tube is not the visited states; accuracy on visited states does not control a rollout (test A) | Accepted, and taken further: Proposition 2.4 restated with the surrogate's **normal gain** and three sufficient cases; new check `t2_slow_surrogate` shows a slow-coordinate surrogate fitted on visited states only is stable (case (c)), which became Theorem 8; P2.1 made conditional; audits on chain states (Proposition 4.1) |
+| D2 | major | Invariants are neutral ($\kappa_{\mathrm{mass}} = 1$); $S$ must span the leaves or $\Psi$ must conserve | Accepted; Proposition 2.4 and Theorem 8 state it |
+| D3 | major | Frozen staircase fails on Robertson at $\tau = 100$ (11–16 decades, undercount); path average fits within 3–15% | Accepted; Proposition 6.7 proved for constant $J$ with the two-sided count, path-averaged form (b) as a sketch (Levinson); test B and E quoted |
+| D4 | minor | "$\Lambda$ grows with $\tau$" does not follow from an invariant; Corollary 1.4 needs $(pc\tau)^{-1/p} \le r_{\max}$ | Accepted (Remark 1.6, Corollary 1.4) |
+| D5 | major | Lemma 1.2 does not beat Theorem 1 on reduced Robertson with entrywise majorants; per-trajectory radii help | Accepted; Lemma 1.2 stated with $r(t; x_0)$; test D quoted; the expectation withdrawn |
+| D6 | major | Theorem 1 valid but vacuous on the Brusselator (degrees 1,272–32,236 against 2–4); ceiling static; U1 reproduced only by measurement | Accepted; T1 demoted to item 3 of §10; test C quoted under U1; Proposition 1.5 (P5) added for the direction |
+| D7 | major | Theorem 1 evaluated only on small boxes in own variables; log coordinates untested | Accepted; scope stated in "Limits"; open item |
+| D8 | major | Proposition 1.3 loose by a square root; pointwise version; exponent $\lambda\tau$ | Accepted (P4's ceiling adopted; its companion degree bound, weak on the Brusselator, not included) |
+| D9 | minor | Proposition 2.3 bounded only to first order (drift $0.5q\varepsilon^2$ per step) | Accepted |
+| D10 | minor | Fixed-point remark: constants, existence; never applies to Robertson | Accepted |
+| D11 | major | Proposition 4.5 weaker than a one-line argument; wrong cost | Accepted; restated as P6 with $N \ge n$ and Theorem 1's $M$; cost corrected; marked elementary |
+| D12 | minor | Proposition 5.2's variance exact form | Accepted; the variance is now exact for $G = I$ |
+| D13 | minor | Corollary 6.4 remainder; Neumann eigenvalue bound; $\kappa(V)$ infimum; convexity in Proposition 2.2; P2.2 wording; U5 "three of four" | Accepted, all |
+| Lit. | – | Kloeden–Lorenz, Stuart–Humphries, ISAT for the tube; Kamke–Müller for Lemma 1.2; Constantin–Foias, Douady–Oesterlé, Smith for the compound bound; CSP, G-Scheme for the count; Bernstein's converse; Brisebarre–Joldeş | Accepted and cited (from the reviewer's memory, not re-read); DeVore–Howard–Micchelli added for the Borsuk–Ulam technique (from memory) |
+| P1 | proposal | Tube with accuracy on $S$ and a normal Lipschitz bound | Adopted as case (b) of Proposition 2.4 |
+| P2 | proposal | Borsuk–Ulam lower bound | Adopted as Proposition 6.5 (proof checked: the sphere has dimension $m - 1$, the second-order remainder is at most $K_2r^2$) |
+| P3 | proposal | Path-averaged staircase | Adopted as Proposition 6.7(b), a sketch |
+| P4 | proposal | Pointwise Cauchy ceiling | Adopted as Proposition 1.3 |
+| P5 | proposal | Composition monotonicity of existence domains | Adopted as Proposition 1.5 |
+| P6 | proposal | Proposition 4.5 as it should read | Adopted |

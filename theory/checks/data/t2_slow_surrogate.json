@@ -1,0 +1,29 @@
+{
+ "surrogates": [
+  {
+   "name": "V",
+   "one_step_tube": 1.7356153420920633,
+   "one_step_visited": 2.8552604725007313e-10,
+   "rollout_39": 39.87879130394108
+  },
+  {
+   "name": "V-full",
+   "one_step_tube": 2.0425326399903785,
+   "one_step_visited": 2.8328095424967614e-10,
+   "rollout_39": 39.63736160992976
+  },
+  {
+   "name": "S",
+   "one_step_tube": 0.5963992088183829,
+   "one_step_visited": 0.0005198866581643813,
+   "rollout_39": 0.0005198866581643813
+  },
+  {
+   "name": "S-incr",
+   "one_step_tube": 0.6218693427854258,
+   "one_step_visited": 0.00322117520897347,
+   "rollout_39": 0.010685813505814712
+  }
+ ],
+ "tube_halfwidth": 0.05
+}
