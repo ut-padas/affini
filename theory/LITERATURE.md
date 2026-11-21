@@ -1,4 +1,4 @@
-# Prior art for the theory memo (T1–T7)
+# Prior art for the theory memo (T1–T7, section 8 and section G)
 
 This file covers the prior-art search behind the seven candidate theorems of the theory memo. For each theorem it
 lists the closest published work, what that work proves, and whether the theorem is already known. It follows
@@ -196,17 +196,28 @@ theory for such an object.
 
 ---
 
+## Section 8 and section G. Reduced surrogates, first-order corrections and derivative data
+
+| ID | Work | Verified | What it does | Relation to the memo |
+|---|---|---|---|---|
+| TH-62 | Pope 1997, *Computationally efficient implementation of combustion chemistry using in situ adaptive tabulation*, Combust. Theory Model. 1:41–63, https://tcg.mae.cornell.edu/pubs/Pope_CTM_97.pdf | unverified (named by review 8, eq. (49)) | Tabulates the reaction map and its sensitivity matrix at visited states; answers nearby queries by the first-order expansion about a tabulated state inside an ellipsoid of accuracy, and integrates (then grows or adds a record) outside it. | The first-order correction $\Phi(x_0) + A(x - x_0)$ with the step's Jacobian, an accuracy region and solver fallback: the prior art of section G's normal correction and refusal. |
+| TH-63 | Classical Hermite interpolation; contour-integral error formula (NIST DLMF §3.3, https://dlmf.nist.gov/3.3); confluent interpolation at Chebyshev nodes (e.g. https://www.sciencedirect.com/science/article/pii/S0096300314002665) | unverified | Values and derivatives at $n$ nodes determine a degree-$2n - 1$ interpolant; with the squared nodal polynomial the error is $O(r^{-2n})$ on an admissible contour. | G1.1's halving of points per decade is the classical rate. |
+| TH-64 | Gradient-enhanced least squares and polynomial chaos (e.g. Peng, Hampton, Doostan 2016, JCP 310; Guo, Narayan, Zhou 2018, JCP 367; https://iris.unica.it/handle/11584/332059) | unverified (from memory, and named by review 8) | Polynomial regression with value and gradient rows, with sample-complexity results under assumptions on the joint Gram matrix. | G1.2 and the HIRES fits are instances; their savings need those assumptions. |
+
 ## Summary of novelty (most to least new)
 
 1. **T3 (light cone ⇒ windowed dependence and TT ranks independent of d for nonlinear flow maps).** Light cones for
    classical lattices and "light cone ⇒ low MPS rank" for quantum propagators are known. Applying them to a functional
    TT of x0 ↦ Φ_t(x0) appears new. Caveat: the bound is independent of d but exponential in the window width.
-2. **T1 (complexified log-norm ⇒ radii of analyticity in the initial state that do not shrink with τ or stiffness).**
-   New as a combination. The known version (TH-1) uses Lipschitz constants, parameters and e^{LT}. It needs a
-   bootstrap condition that keeps the complex trajectory in the tube.
-3. **T6 (stiffness ⇒ k effective inputs in sup norm; linear projection costs O(ε)).** The dynamics is classical
-   (Fenichel, CSP, isochrons). Stating it as a sup-norm complexity theorem for step maps appears new and has a short
-   proof. The dimension-reduction literature gives only L² bounds.
+2. **T1 (complexified log-norm ⇒ a priori radii of analyticity in the initial state).** New as a combination. The known
+   version (TH-1) uses Lipschitz constants, parameters and e^{LT}. The memo's theorem is valid wherever tried but its radii
+   do shrink with τ and stiffness in the cases computed, and it is informative only on small boxes; the claim of radii
+   that do not shrink was not borne out.
+3. **T6 (coordinate counts of stiff step maps).** The dynamics is classical (Fenichel, CSP, isochrons). What the memo
+   proves is narrower than "stiffness ⇒ k effective inputs": a factorisation under the Fenichel hypothesis (S), a
+   Borsuk–Ulam lower bound on the coordinate count (a specialisation of DeVore–Howard–Micchelli), compound-matrix and
+   staircase bounds on singular values, and an example where local rank 1 coexists with coordinate count 2. The
+   dimension-reduction literature gives L² bounds.
 4. **T7 (approximability of chemistry step maps).** Not a theorem but a confirmed empirical gap: no TT or Chebyshev
    step map of a chemistry network and no TT theory for flow maps were found.
 5. **T2 (rollout error, fixed-point bias).** Known: global error of one-step methods, B-convergence, persistence of
@@ -215,6 +226,13 @@ theory for such an object.
    ART's 20p is far below the sufficient sample sizes. No sup-norm guarantee exists for adaptive oblique trees.
 7. **T4 (certificates).** Known: adaptive data analysis, alpha spending, fill-distance and Lipschitz arguments. The
    Hickernell cone framework is the right formal model, with a sup-norm guarantee proven only in 1-D.
+8. **Section 8 (reduced surrogates, Theorem 8).** A specialisation of discrete Lipschitz error estimates for manifold
+   Galerkin/LSPG and latent dynamics (Lee–Carlberg 2020; Farenga et al. 2024). The prospective contribution is a
+   *verified* end-to-end certificate for a stated class of stiff step maps, not the estimate itself.
+9. **Section G (values and Jacobians).** Classical: Hermite interpolation (TH-63) and derivative-augmented polynomial
+   regression (TH-64). The first-order correction about a tabulated state with the step's Jacobian, an accuracy region
+   and fallback to integration is ISAT's (TH-62). The memo's decoder-centred correction with a fitted Jacobian field
+   $B(u)$ and consistent targets is a specific design within that idea, and is described at that level.
 
 ## Not accessed, or only partly
 

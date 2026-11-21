@@ -188,3 +188,35 @@ fit that holds the rollout tolerance 50 times better with no solve. Tests 1–5 
 | F9 | major | The headline was not a prediction; the fits were designed from kicked test states | Accepted: stated under "Provenance"; the follow-up runs committed predictions first |
 | F10 | minor | Eight smaller points (the like-for-like kicked comparison, unsourced $3.5\times10^{-7}$, "within 1%", "about 6 times", ranges, $J$ at $X$, refusal as a property of the kick, kicks mixing chart and normal moves) | Accepted, all stated or corrected |
 | Suggestions | – | The selection rerun on degrees 4–12 over three draws; off-trajectory Jacobian rows; a rollout kicked at every step | All run (`g5`, `g6`): off-trajectory rows hold a single 0.01 kick at every degree but cost two degrees on the set; kicked at every step no fit holds the tolerance (best $2.3\times10^{-2}$); §11 records the next step |
+
+## Round 8 (external, final): GPT Sol 6.2 (high effort), on the whole memo (commit `65519b5`)
+
+Brief: correctness of every statement and proof, every empirical claim against its JSON and committed predictions, internal consistency of
+sections 9–11, novelty, readability for a reader without the code. Verdict: Theorem 8 is a sound starting point for a finite-horizon
+certificate of a factored surrogate; two off-set estimates need larger domains, the deployed HIRES map needs its own rollout bound, and
+several verdicts and summaries must be tied to their committed predictions and cohorts. It reran the Robertson demonstration (identical), the
+static gradient script and `g6` (selected degrees and kicked rollouts within $5\times10^{-7}$ dex). Review: `reviews/round-8-sol.md`.
+
+| # | Severity | Critique | Resolution |
+|---|---|---|---|
+| 1 | critical | Proposition 8.2's Lipschitz hypothesis covers only $\chi(\pi(N))$; counterexample on the circle of Example 6.8 | Accepted: the domain contains both images (or $\hat\pi$ lands in the chart image); counterexample and the atlas rule stated |
+| 2 | critical | Corollary 6.3's extension clause is false with $\sup_S$; counterexample for $x' = -x$ | Accepted: the approximation term is over $\hat\pi(N)$, with the decomposition; 6.4 states continuity of $\pi$ and the remainder in the count |
+| 3 | critical | "A rollout holds when" still reads as sufficient; counterexample with a smoothstep surrogate | Accepted: both quantities called diagnostics, the counterexample given, a sufficient condition needs a tube and remainder |
+| 4 | critical | Corollary 4.3 reads as a conditional guarantee; counterexample $e(x) = x$ | Accepted: stated as the joint event "pass and violate" with probability at most $\alpha$, with proof; 4.1's schedule from $r = 1$, $0 < \alpha, \eta < 1$ |
+| 12 | critical | R5 credits the plain map's Jacobian; R1 never passed | Accepted: both Jacobian comparisons in the R5 verdict; R1 failed as a rule; R2, R4 restated |
+| 5 | major | The deployed HIRES map is not factored (correction, input-invariant projection) | Accepted: a Scope paragraph under Theorem 8, the deployed map in G's list, §10 item 1 separated from Theorem 8 |
+| 6 | major | Nearest singularities can recede ($w' = iw + w^2$) | Accepted: Proposition 1.5 restated with the counterexample; §11's item restricted to a class |
+| 7 | major | Proposition 2.3's defect budget and norm implicit | Accepted: Euclidean or $U$-invariant norm, chain defect budget, Lipschitz on the segments, the Fourier condition |
+| 8 | major | Corollary 3.2 needs uniform scales | Accepted: the $h^*$ bound without a distance-shell count, the counterexample, 3.3's uniformity |
+| 9 | major | Theorem 6.6 does not predict the PCA lift count; 8.4's literal outcomes | Accepted: outcomes reported (HIRES and POLLU failed), the trend called empirical; 6.6's mesh convention and $\sigma_m$ bound |
+| 10 | major | G conflates derivative observations with verified constants and a Taylor law | Accepted: G's opening restated; the one-step error budget and the derivative-row offset given; slopes labelled observations |
+| 11 | major | The residual multiplier and normal gain exceed their experiment | Accepted: attributed to the uncorrected reduced ChebTT with its pass shares; the gain restated; calibration on paired data |
+| 13 | major | The tensor-grid explanation invokes unisolvence where the design has a nullspace; G3.3 omitted | Accepted: explanation withdrawn, the nullspace stated; G3.3 row added (moot) |
+| 14 | major | G1.2 is a single-design comparison against an approximate $L^2$ projection; Hermite halving of node counts | Accepted: tested budgets and the $L^2$ reference reported, conditioning unmeasured; the contour bound cited |
+| 15 | major | Narrow the selection and off-trajectory conclusions | Accepted: one split, shared kicks, `g6` as a joint intervention, the tested configurations listed, early-stop scores as lower bounds, `g6`'s degree-10 generalisation failure |
+| 16 | major | The 0.11 is a corrected figure on a plain row; the cohort of the factor 2,000 | Accepted and measured (`g7_value_fit_kicks.py`): plain value-only 0.20 at degree 10 (0.11 at 9); the factor stated on 20 trajectories; chart-span kicks labelled |
+| 17 | major | The spherical front is not analytic on the box | Accepted: the corner at the origin and its size stated; the kink envelope and the TT cost as representation size |
+| 18 | major | Several observations fail the precommit standard | Accepted: a provenance table (prediction commit, output commit, status) in the opening |
+| 19 | major | LITERATURE.md's novelty summary describes superseded claims; ISAT, Hermite and gradient-enhanced regression uncredited | Accepted: summary items 2–3 restated, items 8–9 and TH-62 to TH-64 added, a prior-art paragraph in G |
+| 20 | minor | Numbers and directions in summaries | Accepted: U2 and §9 counts and direction, T6's $10^{13}$ scope, 8.3's margins and mass offset, 8.4's units, G2.4's range, the per-draw penalty, §9 rows |
+| 21 | minor | An outside reader needs the score and deployment conventions | Accepted: a "Scores and terms" convention in the opening; $D'$ for the decoder's derivative; Review VIII's source; $0 < \theta < 1$; Lemma 1.2's finite terminal radius; 6.7(c)'s exact exponent; the Lean list marked as proposed |
