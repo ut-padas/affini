@@ -147,3 +147,22 @@ Demonstration 8.3 is sound; several "confirmed" rows were bounds, identities or 
 | G9 | minor | "Identical" counts hold for one of the two full-rank problems | Accepted: "within 0.6%" |
 | G10 | minor | `genz_triple` a second failed prediction; `front` at $d = 10$; the jump profile; "within 10%"; predictions committed with results | Accepted: `genz_triple` and the rational ridge added; "within about 30%"; the next pass commits predictions first |
 | G11 | minor | Lemma 7.2 already gives the corrected `wave_pair` claim: rank at most $\binom{n+k}{k}$ | Accepted: stated as "the corrected claim" |
+
+## Round 6 (Fable): Claude Fable 5.2 (medium effort), on Demonstrations 8.4 and 8.5 (commit `50f2f2f`)
+
+Brief: fairness of the comparisons, where the reduced surrogate is evaluated, the prediction verdicts, the POLLU conclusion; refutation tests.
+Verdict: the reduced ChebTT was compared only with a failed record, while a solve-free data fit on the same chart beats it; the surrogate is accurate
+only on the visited set; the POLLU dimension estimate measured single trajectories. Constructive: a solve-free residual tracks the off-set error and a
+first-order normal correction removes most of it. Tests 0–9.
+
+| # | Severity | Critique | Resolution |
+|---|---|---|---|
+| H1 | critical | A degree-6 data fit on the same chart (no solve) beats the reduced ChebTT: $6.4\times10^{-4}$ and $1.5\times10^{-2}$ against $2.46\times10^{-3}$ and 0.30 | Accepted: the baseline rows and the ideal map in Demonstration 8.5's table; the conclusion restated (the solver-queried build buys accuracy off the data, within the chart's span) |
+| H2 | critical | Accurate only on the visited set (normal gain 1.41): a kick of 0.01 dex gives $1.9\times10^{-2}$, unrefused | Accepted: stated, with the review's constructive results (the residual bound, the normal correction) |
+| H3 | major | POLLU's "locally five-dimensional, needs an atlas" measured single trajectories; the set is about 7-dimensional; a cubic decoder at $k = 7$ reaches $2.0\times10^{-2}$ | Accepted: withdrawn and replaced |
+| H4 | major | Cost not like for like (build alone against a whole-run limit; rebuilds gave 10,287 calls, 207–209 s; calls off the data cost 5 times more; the lift chosen on test states) | Accepted: all stated |
+| H5 | major | P2 committed for the polished lift, run with the decoder; "rollouts bounded" and P3 could not fail | Accepted: the verdicts restated by kind |
+| H6 | major | The rollout rule is neither necessary nor sufficient | Accepted: replaced by the two conditions (first-order defect sum; the surrogate's own propagation) |
+| H7 | major | "An affine lift cannot be cheaper" rests on one unfinished run | Accepted: withdrawn; the review's finer-grid result (chart dimension 8 at $d = 40$ and 80) added |
+| H8, H9 | minor | Why the polish failed is asserted; smaller points | Noted; the polish's failure mechanism is left untested |
+| Suggestions | – | Data fit chosen by the rollout conditions; residual tracking and refusal; a first-order normal correction; restricting the ChebTT domain; more POLLU trajectories; a baseline row in every table | Adopted as §10 item 1's recipe and §11's open items |

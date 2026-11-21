@@ -1,0 +1,282 @@
+{
+ "per_trajectory_worst": {
+  "reduced ChebTT (8.5)": [
+   0.05689505143479323,
+   0.1398690940288776,
+   0.04749974405345281,
+   0.14240386960985152,
+   0.11329171299944107,
+   0.00873168834146637,
+   0.16456801813046962,
+   0.29047275784547444,
+   0.055708866068913565,
+   0.018609944835141,
+   0.11741078917241365,
+   0.19660118236475288,
+   0.09620535137378061,
+   0.09440056411341446,
+   0.1959645830649901,
+   0.12751574090904327,
+   0.013425510494351256,
+   0.08733042611557273,
+   0.28430882133561974,
+   0.19880124909550712
+  ],
+  "data-only degree 6": [
+   0.013118761066569284,
+   0.012275145555058486,
+   0.009143196646313356,
+   0.0028953057693295037,
+   0.010328183874600327,
+   0.0005435458763435319,
+   0.002096778320709536,
+   0.008848057746420501,
+   0.0026055795070615284,
+   0.0008513369954277206,
+   0.01312241757410515,
+   0.0014241493636073521,
+   0.005270513600242666,
+   0.014805176066277959,
+   0.0008347609434251613,
+   0.005609678637990001,
+   0.003549044048519856,
+   0.002223420371884721,
+   0.0020225304538588063,
+   0.002210365567757444
+  ],
+  "data-only degree 8": [
+   3.5348758432594893,
+   0.014505574417181588,
+   3.032196776721673,
+   0.0004321360524954798,
+   0.03362726575065311,
+   2.473268228070369e-05,
+   0.0025470567753478335,
+   0.016451516360069363,
+   4.683715129050192e-05,
+   0.00010041132156798915,
+   0.038298048082719305,
+   0.004719269040732943,
+   3.015321636333044,
+   2.531034467646435,
+   0.00020249406668892966,
+   4.192512866601266,
+   0.000288016973221783,
+   3.129125181771263,
+   0.008215750393192334,
+   0.00035286261281242126
+  ]
+ },
+ "trajectories": {
+  "7": {
+   "reduced ChebTT (8.5)": {
+    "measured_worst": 0.29047275784547444,
+    "at_step": 145,
+    "defect_worst": 0.0024547373487529,
+    "first_order_exact_J": 0.3020075950366336,
+    "first_order_surrogate_J": 0.2852498599365144,
+    "chart_part_at_worst": 0.29213786741935216,
+    "normal_part_at_worst": 0.007112194844969583,
+    "max_norm_DPsi": 1.228378386989355,
+    "max_norm_DPhi": 1.8145093931815004
+   },
+   "data-only degree 6": {
+    "measured_worst": 0.008848057746420501,
+    "at_step": 142,
+    "defect_worst": 0.00026548598529929635,
+    "first_order_exact_J": 0.013619726087340809,
+    "first_order_surrogate_J": 0.00884975780643576,
+    "chart_part_at_worst": 0.008862155469566407,
+    "normal_part_at_worst": 0.0001867821414262916,
+    "max_norm_DPsi": 1.500625011806271,
+    "max_norm_DPhi": 1.8145093931815004
+   },
+   "data-only degree 8": {
+    "measured_worst": 0.016451516360069363,
+    "at_step": 150,
+    "defect_worst": 5.7292297555577854e-05,
+    "first_order_exact_J": 0.0006630886566940477,
+    "first_order_surrogate_J": 0.015608064184764629,
+    "chart_part_at_worst": 0.014767272843923769,
+    "normal_part_at_worst": 0.0016842435161455935,
+    "max_norm_DPsi": 6.297520691763585,
+    "max_norm_DPhi": 1.8145093931815004
+   }
+  },
+  "18": {
+   "reduced ChebTT (8.5)": {
+    "measured_worst": 0.28430882133561974,
+    "at_step": 165,
+    "defect_worst": 0.002400754444148223,
+    "first_order_exact_J": 0.23459389498927527,
+    "first_order_surrogate_J": 0.2810794675135571,
+    "chart_part_at_worst": 0.28277488264135375,
+    "normal_part_at_worst": 0.008544153009630198,
+    "max_norm_DPsi": 1.2502324220180367,
+    "max_norm_DPhi": 1.8381024266808228
+   },
+   "data-only degree 6": {
+    "measured_worst": 0.0020225304538588063,
+    "at_step": 163,
+    "defect_worst": 0.00019889513058313213,
+    "first_order_exact_J": 0.0022957262084830326,
+    "first_order_surrogate_J": 0.002021644348593772,
+    "chart_part_at_worst": 0.0020029881154603564,
+    "normal_part_at_worst": 5.575441193334538e-05,
+    "max_norm_DPsi": 1.489462294077513,
+    "max_norm_DPhi": 1.8381024266808228
+   },
+   "data-only degree 8": {
+    "measured_worst": 0.008215750393192334,
+    "at_step": 169,
+    "defect_worst": 1.0780557944123359e-05,
+    "first_order_exact_J": 0.00034598968083810567,
+    "first_order_surrogate_J": 0.008525454974512611,
+    "chart_part_at_worst": 0.006989380332035833,
+    "normal_part_at_worst": 0.001226370061156501,
+    "max_norm_DPsi": 8.38355313211937,
+    "max_norm_DPhi": 1.8381024266808228
+   }
+  },
+  "19": {
+   "reduced ChebTT (8.5)": {
+    "measured_worst": 0.19880124909550712,
+    "at_step": 170,
+    "defect_worst": 0.0024604950968165618,
+    "first_order_exact_J": 0.24180340375088816,
+    "first_order_surrogate_J": 0.22883130328690365,
+    "chart_part_at_worst": 0.2019614089938512,
+    "normal_part_at_worst": 0.012063838104690125,
+    "max_norm_DPsi": 1.239580422051296,
+    "max_norm_DPhi": 1.825406264496832
+   },
+   "data-only degree 6": {
+    "measured_worst": 0.002210365567757444,
+    "at_step": 170,
+    "defect_worst": 0.00017241310642224228,
+    "first_order_exact_J": 0.000985218953128997,
+    "first_order_surrogate_J": 0.0022072199724447786,
+    "chart_part_at_worst": 0.0022210031129450795,
+    "normal_part_at_worst": 9.426068508555034e-05,
+    "max_norm_DPsi": 1.2393167182930263,
+    "max_norm_DPhi": 1.825406264496832
+   },
+   "data-only degree 8": {
+    "measured_worst": 0.00035286261281242126,
+    "at_step": 170,
+    "defect_worst": 2.2192844795432265e-05,
+    "first_order_exact_J": 0.0001152357476720002,
+    "first_order_surrogate_J": 0.0003530648847465894,
+    "chart_part_at_worst": 0.0003379672478391292,
+    "normal_part_at_worst": 1.4895364973292052e-05,
+    "max_norm_DPsi": 2.422242242133164,
+    "max_norm_DPhi": 1.825406264496832
+   }
+  },
+  "11": {
+   "reduced ChebTT (8.5)": {
+    "measured_worst": 0.19660118236475288,
+    "at_step": 111,
+    "defect_worst": 0.0023861528584872005,
+    "first_order_exact_J": 0.1533723051452264,
+    "first_order_surrogate_J": 0.1940081187474472,
+    "chart_part_at_worst": 0.19408789011421756,
+    "normal_part_at_worst": 0.004945391002206118,
+    "max_norm_DPsi": 1.2350348578447077,
+    "max_norm_DPhi": 1.8250178469299743
+   },
+   "data-only degree 6": {
+    "measured_worst": 0.0014241493636073521,
+    "at_step": 110,
+    "defect_worst": 0.00023180895307806093,
+    "first_order_exact_J": 0.005671267886343337,
+    "first_order_surrogate_J": 0.0014224601708906727,
+    "chart_part_at_worst": 0.0013930173343237853,
+    "normal_part_at_worst": 4.126884871527114e-05,
+    "max_norm_DPsi": 2.2984130325260934,
+    "max_norm_DPhi": 1.8250178469299743
+   },
+   "data-only degree 8": {
+    "measured_worst": 0.004719269040732943,
+    "at_step": 117,
+    "defect_worst": 2.326608186381529e-05,
+    "first_order_exact_J": 3.407354118148382e-05,
+    "first_order_surrogate_J": 0.004841333707198046,
+    "chart_part_at_worst": 0.004164855270300384,
+    "normal_part_at_worst": 0.0005648390203364063,
+    "max_norm_DPsi": 9.062231606132755,
+    "max_norm_DPhi": 1.8250178469299743
+   }
+  },
+  "14": {
+   "reduced ChebTT (8.5)": {
+    "measured_worst": 0.1959645830649901,
+    "at_step": 170,
+    "defect_worst": 0.002406592858352763,
+    "first_order_exact_J": 0.19141651625044406,
+    "first_order_surrogate_J": 0.21890505427034826,
+    "chart_part_at_worst": 0.19586173206547192,
+    "normal_part_at_worst": 0.006434141480655908,
+    "max_norm_DPsi": 1.2517635626206778,
+    "max_norm_DPhi": 1.8392338386655835
+   },
+   "data-only degree 6": {
+    "measured_worst": 0.0008347609434251613,
+    "at_step": 170,
+    "defect_worst": 0.0001840094879170806,
+    "first_order_exact_J": 0.0003949098607571701,
+    "first_order_surrogate_J": 0.0008340386401501131,
+    "chart_part_at_worst": 0.000854180495012244,
+    "normal_part_at_worst": 2.8990079605708586e-05,
+    "max_norm_DPsi": 1.3006554801240795,
+    "max_norm_DPhi": 1.8392338386655835
+   },
+   "data-only degree 8": {
+    "measured_worst": 0.00020249406668892966,
+    "at_step": 170,
+    "defect_worst": 1.0468075415964728e-05,
+    "first_order_exact_J": 7.463231554914084e-05,
+    "first_order_surrogate_J": 0.00020240049686665284,
+    "chart_part_at_worst": 0.00018840426807320988,
+    "normal_part_at_worst": 1.838463958279911e-05,
+    "max_norm_DPsi": 4.120197897649287,
+    "max_norm_DPhi": 1.8392338386655835
+   }
+  },
+  "6": {
+   "reduced ChebTT (8.5)": {
+    "measured_worst": 0.16456801813046962,
+    "at_step": 105,
+    "defect_worst": 0.0023664077656446736,
+    "first_order_exact_J": 0.09704690599137929,
+    "first_order_surrogate_J": 0.16391170958141332,
+    "chart_part_at_worst": 0.1614718003019846,
+    "normal_part_at_worst": 0.003930975707558279,
+    "max_norm_DPsi": 1.237406488022888,
+    "max_norm_DPhi": 1.8284228397968891
+   },
+   "data-only degree 6": {
+    "measured_worst": 0.002096778320709536,
+    "at_step": 105,
+    "defect_worst": 0.00024869980785435786,
+    "first_order_exact_J": 0.005016281355151359,
+    "first_order_surrogate_J": 0.002094472837371881,
+    "chart_part_at_worst": 0.00206199760846135,
+    "normal_part_at_worst": 7.06403025042588e-05,
+    "max_norm_DPsi": 2.5405220223910776,
+    "max_norm_DPhi": 1.8284228397968891
+   },
+   "data-only degree 8": {
+    "measured_worst": 0.0025470567753478335,
+    "at_step": 111,
+    "defect_worst": 1.885414227037474e-05,
+    "first_order_exact_J": 0.00014760516779492298,
+    "first_order_surrogate_J": 0.0025072308453078593,
+    "chart_part_at_worst": 0.0022293262909894593,
+    "normal_part_at_worst": 0.0003782556089868192,
+    "max_norm_DPsi": 10.093774101651839,
+    "max_norm_DPhi": 1.8284228397968891
+   }
+  }
+ }
+}

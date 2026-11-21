@@ -1,0 +1,57 @@
+[
+ {
+  "eps": 0.0,
+  "error_worst": 0.002454944798881975,
+  "residual_median": 2.754210183364414e-05,
+  "error_over_residual_max": 0.9345263085884218,
+  "error_over_residual_median": 0.25789774843847435,
+  "kept_percent_at_r_le_tol/4": 100.0,
+  "error_worst_kept": 0.002454944798881975,
+  "ideal_uncorrected_worst_100": 0.00011111687138343207,
+  "ideal_first_order_corrected_worst_100": 1.1938956023804792e-07
+ },
+ {
+  "eps": 0.001,
+  "error_worst": 0.002921525944350911,
+  "residual_median": 0.001366941479964412,
+  "error_over_residual_max": 0.7986387956356051,
+  "error_over_residual_median": 0.21574642151502055,
+  "kept_percent_at_r_le_tol/4": 100.0,
+  "error_worst_kept": 0.002921525944350911,
+  "ideal_uncorrected_worst_100": 0.0018850023559005002,
+  "ideal_first_order_corrected_worst_100": 2.0177814699096075e-06
+ },
+ {
+  "eps": 0.003,
+  "error_worst": 0.005834977594664448,
+  "residual_median": 0.004106244497611655,
+  "error_over_residual_max": 0.9548483260501223,
+  "error_over_residual_median": 0.28392327419771723,
+  "kept_percent_at_r_le_tol/4": 5.0,
+  "error_worst_kept": 0.00215050744781653,
+  "ideal_uncorrected_worst_100": 0.00564868065855384,
+  "ideal_first_order_corrected_worst_100": 1.7697321281762157e-05
+ },
+ {
+  "eps": 0.01,
+  "error_worst": 0.01920225890823657,
+  "residual_median": 0.013614802312953644,
+  "error_over_residual_max": 1.326426991156811,
+  "error_over_residual_median": 0.37406115797123973,
+  "kept_percent_at_r_le_tol/4": 0.0,
+  "error_worst_kept": null,
+  "ideal_uncorrected_worst_100": 0.018811028028977717,
+  "ideal_first_order_corrected_worst_100": 0.00019521545278022856
+ },
+ {
+  "eps": 0.05,
+  "error_worst": 0.09573329984590284,
+  "residual_median": 0.06819423837099325,
+  "error_over_residual_max": 1.5322299623147748,
+  "error_over_residual_median": 0.4246345128819045,
+  "kept_percent_at_r_le_tol/4": 0.0,
+  "error_worst_kept": null,
+  "ideal_uncorrected_worst_100": 0.09371028291085981,
+  "ideal_first_order_corrected_worst_100": 0.004914152714966757
+ }
+]

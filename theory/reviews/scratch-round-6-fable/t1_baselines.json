@@ -1,0 +1,46 @@
+{
+ "data-only degree 3 (20 terms, cond 8.0e+02)": {
+  "one_step_worst": 0.01800266161124936,
+  "rollout_worst": 0.6200352994045222,
+  "rollout_end": 0.17235115916193555
+ },
+ "data-only degree 4 (35 terms, cond 1.4e+04)": {
+  "one_step_worst": 0.006561466831599194,
+  "rollout_worst": 0.36829980336161317,
+  "rollout_end": 0.044071283901100156
+ },
+ "data-only degree 5 (56 terms, cond 1.8e+05)": {
+  "one_step_worst": 0.002074416938569801,
+  "rollout_worst": 0.07383589113583833,
+  "rollout_end": 0.027614767499487436
+ },
+ "data-only degree 6 (84 terms, cond 1.8e+06)": {
+  "one_step_worst": 0.0006430008177935598,
+  "rollout_worst": 0.014805176066277959,
+  "rollout_end": 0.003549044048519856
+ },
+ "data-only degree 7 (120 terms, cond 3.2e+07)": {
+  "one_step_worst": 0.0001546804054677331,
+  "rollout_worst": 2.220852887440704,
+  "rollout_end": 1.7135910048252205
+ },
+ "data-only degree 8 (165 terms, cond 7.8e+08)": {
+  "one_step_worst": 5.729229755291332e-05,
+  "rollout_worst": 4.192512866601266,
+  "rollout_end": 4.076933430014945
+ },
+ "ideal reduced Phi(D(pi z)), all 6800 test states": {
+  "one_step_worst": 0.00033596758209331057,
+  "rollout_worst": 0.02517505607127335,
+  "rollout_end": 0.005974278571103664
+ },
+ "box": {
+  "share_of_box_within_0.05_of_data": 0.0378,
+  "share_within_0.1": 0.0925,
+  "median_nn_gap_of_data": 0.0030776744863831654,
+  "q99_nn_gap_of_data": 0.04172067810922843,
+  "decoder_outside_data_box_dex_max": 1.3827309269231796,
+  "decoder_outside_share_gt_0.1dex": 0.3956,
+  "decoder_outside_share_gt_1dex": 0.0062
+ }
+}

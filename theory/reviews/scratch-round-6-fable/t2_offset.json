@@ -1,0 +1,278 @@
+[
+ {
+  "kick": "all components",
+  "eps": 0.0,
+  "retained": 0.0,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.002454944798881975,
+   "median": 0.0006460453778689423,
+   "worst_answered": 0.002454944798881975,
+   "refused_percent": 0.0
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.0002430845546115279,
+   "median": 1.0182600377550699e-05,
+   "worst_answered": 0.0002430845546115279,
+   "refused_percent": 0.0
+  },
+  "data-only degree 6": {
+   "worst": 0.0004630964428655737,
+   "median": 1.9097900641223964e-05,
+   "worst_answered": 0.0004630964428655737,
+   "refused_percent": 0.0
+  }
+ },
+ {
+  "kick": "all components",
+  "eps": 0.001,
+  "retained": 0.002182994756676049,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.002607040092308832,
+   "median": 0.0008949347912921013,
+   "worst_answered": 0.002607040092308832,
+   "refused_percent": 0.0
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.001906995109683507,
+   "median": 0.0006066182552015853,
+   "worst_answered": 0.001906995109683507,
+   "refused_percent": 0.0
+  },
+  "data-only degree 6": {
+   "worst": 0.007736562432602678,
+   "median": 0.0006415998155189229,
+   "worst_answered": 0.007736562432602678,
+   "refused_percent": 0.0
+  }
+ },
+ {
+  "kick": "all components",
+  "eps": 0.01,
+  "retained": 0.020979410184160496,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.019192629530333072,
+   "median": 0.006063155067448811,
+   "worst_answered": 0.019192629530333072,
+   "refused_percent": 0.0
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.019057422580256222,
+   "median": 0.006043543579723254,
+   "worst_answered": 0.019057422580256222,
+   "refused_percent": 0.0
+  },
+  "data-only degree 6": {
+   "worst": 0.0734458268544187,
+   "median": 0.006452396810590955,
+   "worst_answered": 0.0734458268544187,
+   "refused_percent": 0.0
+  }
+ },
+ {
+  "kick": "all components",
+  "eps": 0.05,
+  "retained": 0.10970478732477451,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.09560148483524689,
+   "median": 0.029766294939513438,
+   "worst_answered": 0.09560148483524689,
+   "refused_percent": 0.25
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.09549565552400807,
+   "median": 0.029757008570010325,
+   "worst_answered": 0.09549565552400807,
+   "refused_percent": 0.25
+  },
+  "data-only degree 6": {
+   "worst": 0.40899163279480044,
+   "median": 0.03239473896935863,
+   "worst_answered": 0.40899163279480044,
+   "refused_percent": 0.25
+  }
+ },
+ {
+  "kick": "in the chart's span",
+  "eps": 0.0,
+  "retained": 0.0,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.002454944798881975,
+   "median": 0.0006460453778689423,
+   "worst_answered": 0.002454944798881975,
+   "refused_percent": 0.0
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.0002430845546115279,
+   "median": 1.0182600377550699e-05,
+   "worst_answered": 0.0002430845546115279,
+   "refused_percent": 0.0
+  },
+  "data-only degree 6": {
+   "worst": 0.0004630964428655737,
+   "median": 1.9097900641223964e-05,
+   "worst_answered": 0.0004630964428655737,
+   "refused_percent": 0.0
+  }
+ },
+ {
+  "kick": "in the chart's span",
+  "eps": 0.001,
+  "retained": 0.0012786944910758713,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.002456716441656237,
+   "median": 0.0006687683057384763,
+   "worst_answered": 0.002456716441656237,
+   "refused_percent": 0.0
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.00024277920211268622,
+   "median": 4.556816106882078e-05,
+   "worst_answered": 0.00024277920211268622,
+   "refused_percent": 0.0
+  },
+  "data-only degree 6": {
+   "worst": 0.00692041446094338,
+   "median": 6.334816125086462e-05,
+   "worst_answered": 0.00692041446094338,
+   "refused_percent": 0.0
+  }
+ },
+ {
+  "kick": "in the chart's span",
+  "eps": 0.01,
+  "retained": 0.012719265468977614,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.0028094587888318756,
+   "median": 0.0008274648733659906,
+   "worst_answered": 0.0028094587888318756,
+   "refused_percent": 0.0
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.0012588105326023502,
+   "median": 0.0004129054314789826,
+   "worst_answered": 0.0012588105326023502,
+   "refused_percent": 0.0
+  },
+  "data-only degree 6": {
+   "worst": 0.06612537788627071,
+   "median": 0.0005679137652652155,
+   "worst_answered": 0.06612537788627071,
+   "refused_percent": 0.0
+  }
+ },
+ {
+  "kick": "in the chart's span",
+  "eps": 0.05,
+  "retained": 0.06173689544469019,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.006426102566770897,
+   "median": 0.002243804752244838,
+   "worst_answered": 0.006426102566770897,
+   "refused_percent": 0.0
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.005920960416449406,
+   "median": 0.0020183672455829083,
+   "worst_answered": 0.005920960416449406,
+   "refused_percent": 0.0
+  },
+  "data-only degree 6": {
+   "worst": 0.3793621872361106,
+   "median": 0.0028235812192487497,
+   "worst_answered": 0.3793621872361106,
+   "refused_percent": 0.0
+  }
+ },
+ {
+  "kick": "normal to the chart",
+  "eps": 0.0,
+  "retained": 0.0,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.002454944798881975,
+   "median": 0.0006460453778689423,
+   "worst_answered": 0.002454944798881975,
+   "refused_percent": 0.0
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.0002430845546115279,
+   "median": 1.0182600377550699e-05,
+   "worst_answered": 0.0002430845546115279,
+   "refused_percent": 0.0
+  },
+  "data-only degree 6": {
+   "worst": 0.0004630964428655737,
+   "median": 1.9097900641223964e-05,
+   "worst_answered": 0.0004630964428655737,
+   "refused_percent": 0.0
+  }
+ },
+ {
+  "kick": "normal to the chart",
+  "eps": 0.001,
+  "retained": 0.0016828897650933428,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.0025898485657731563,
+   "median": 0.0008112578583951979,
+   "worst_answered": 0.0025898485657731563,
+   "refused_percent": 0.0
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.001670429935278328,
+   "median": 0.00043260070119544025,
+   "worst_answered": 0.001670429935278328,
+   "refused_percent": 0.0
+  },
+  "data-only degree 6": {
+   "worst": 0.0016670088192878296,
+   "median": 0.0004319373217741007,
+   "worst_answered": 0.0016670088192878296,
+   "refused_percent": 0.0
+  }
+ },
+ {
+  "kick": "normal to the chart",
+  "eps": 0.01,
+  "retained": 0.01684181515393668,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.016795813004511828,
+   "median": 0.004461746785210163,
+   "worst_answered": 0.016795813004511828,
+   "refused_percent": 0.0
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.016750537910871444,
+   "median": 0.0044227161934180526,
+   "worst_answered": 0.016750537910871444,
+   "refused_percent": 0.0
+  },
+  "data-only degree 6": {
+   "worst": 0.016669525715924394,
+   "median": 0.004423989080523771,
+   "worst_answered": 0.016669525715924394,
+   "refused_percent": 0.0
+  }
+ },
+ {
+  "kick": "normal to the chart",
+  "eps": 0.05,
+  "retained": 0.08268287552924836,
+  "reduced ChebTT (8.5)": {
+   "worst": 0.08046132333152256,
+   "median": 0.022647441293003556,
+   "worst_answered": 0.08046132333152256,
+   "refused_percent": 0.0
+  },
+  "ideal Phi(D(pi z))": {
+   "worst": 0.08046277918112921,
+   "median": 0.022629487053182906,
+   "worst_answered": 0.08046277918112921,
+   "refused_percent": 0.0
+  },
+  "data-only degree 6": {
+   "worst": 0.08045241794770419,
+   "median": 0.022612548103732477,
+   "worst_answered": 0.08045241794770419,
+   "refused_percent": 0.0
+  }
+ }
+]

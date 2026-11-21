@@ -536,35 +536,60 @@ chart value costs). The smallest $k$ reaching a quarter of the tolerance:
 $8.6\times10^{-3}$ at $k = 6$, $2.1$ against $3.0\times10^{-3}$ at $k = 7$), as Theorem 6.6 and review 1 test E predict, and the input needs fewer
 coordinates than the state (the step damps what the input drops). *The limit found:* an **affine** chart needs 7 of 8 coordinates on HIRES,
 whose visited set is three-dimensional, and 16 of 20 on POLLU: projecting a curved visited set onto a flat subspace moves the state in slow
-directions the step does not damp. So at these sizes a reduced ChebTT with an affine lift cannot be cheaper than the box one; a first build
+directions the step does not damp. A first build
 (`theory/demos/reduced_chebtt.py`, Fisher–KPP at $d = 10$, $k = 7$, ten output trains) did not finish within the benchmark's 240 s, where box
-ChebTT used 107,002 evaluations in 210 s. The reduction pays only with a lift that lands on the curved slow manifold (constrained runs or a
-nonlinear decoder; Proposition 8.2's middle term), or on grids well beyond $d = 20$ where $k$ stays at 7–8.
+ChebTT used 107,002 evaluations in 210 s; that single unfinished run, at another tolerance and target than the chart measurement, does not show that an
+affine lift cannot be cheaper (review 6 H7). On finer grids the chart dimension stays at 8: the lift error first reaches a quarter of the tolerance at
+$k = 8$ for $d = 40$ ($1.8\times10^{-3}$) and $d = 80$ ($2.0\times10^{-3}$), the errors at each $k$ agreeing to 7% (review 6 test 6), so the
+diffusion ladder's input dimension is mesh-independent from $d = 20$ to 80.
 
-**Demonstration 8.5 (a curved lift; `theory/demos/curved_lift.py`, predictions committed before the run in `8c1720c`; output
-`theory/demos/data/curved_lift_hires_k3.json`).** The lift of a chart value $u$ (top-$k$ principal coordinates of the visited states) was
-made in three ways: affine ($\mu + Vu$), a *decoder* $D(u)$ (a least-squares polynomial of total degree 4 from chart values to states,
-fitted on the visited states, no solve), and the decoder followed by constrained-run iterations (relax with the solver, reset the chart
-coordinates along $V$). Lift errors $\max|\Phi(\mathrm{lift}(\pi(z))) - \Phi(z)|$ on 400 held-out HIRES states at $k = 3$: affine
-$3.85\times10^{-2}$, decoder $2.45\times10^{-4}$ (157 times smaller), decoder with 1–6 constrained-run iterations $3.8$–$7.8\times10^{-3}$ (worse:
-resetting along the flat directions $V$ moves the state off the curved manifold again). With the decoder lift, a reduced ChebTT (eight output
-trains in 3 chart coordinates, the next state as output, projected onto the invariant $y_7 + y_8$):
+**Demonstration 8.5 (a curved lift, and what it is for; `theory/demos/curved_lift.py`, predictions committed in `8c1720c`; output
+`theory/demos/data/curved_lift_hires_k3.json`; review 6's tests in `theory/reviews/scratch-round-6-fable/`).** The lift of a chart value $u$
+(top-3 principal coordinates of HIRES's visited log-states) was made in three ways: affine ($\mu + Vu$), a *decoder* $D(u)$ (a least-squares
+polynomial of total degree 4 from chart values to states, fitted on the visited states, no solve), and the decoder followed by constrained-run
+iterations (relax with the solver, reset the chart coordinates along $V$). Lift errors $\max|\Phi(\mathrm{lift}(\pi(z))) - \Phi(z)|$ on 400 held-out
+states: affine $3.85\times10^{-2}$, decoder $2.45\times10^{-4}$, decoder with 1–6 iterations $3.8$–$7.8\times10^{-3}$ (worse; the lift was chosen on
+these test states, a selection the next pass should make on validation states). On the same three chart coordinates, the same test states, the same
+projection onto the invariant and the benchmark's `rollout` (review 6 test 1):
 
-| HIRES, tolerance 0.01 dex | reduced ChebTT, $k = 3$, decoder lift | box ChebTT (record) |
-|---|---|---|
-| build | 188 s, 9,477 solver calls | over the 240 s limit |
-| one-step worst on the test states | $2.46\times10^{-3}$ (0.25 of the tolerance), none refused | – |
-| error surviving one exact step | $6.8\times10^{-4}$ | – |
-| invariant $y_7 + y_8$, relative change per step | $7.6\times10^{-16}$ | – |
-| worst rollout, 20 trajectories, 170 steps | 0.30 dex (bounded; 30 times the tolerance) | – |
+| surrogate ($k = 3$) | solver calls beyond the training trajectories | one-step worst (dex) | worst rollout, 170 steps |
+|---|---|---|---|
+| reduced ChebTT, oracle $\Phi(D(u))$ on the chart box | 9,477 (10,287 and 207–209 s on two rebuilds) | $2.46\times10^{-3}$ | 0.30 |
+| the ideal reduced map $\Phi(D(\pi z))$ | one per query | $3.4\times10^{-4}$ | $2.5\times10^{-2}$ |
+| data fit: least-squares polynomial from chart value to next state on the training pairs, degree 5 | 0 | $2.1\times10^{-3}$ | $7.4\times10^{-2}$ |
+| the same, degree 6 | 0 | $6.4\times10^{-4}$ | $1.5\times10^{-2}$ |
+| the same, degree 7 | 0 | $1.5\times10^{-4}$ | 2.2 |
+| the same, degree 8 | 0 | $5.7\times10^{-5}$ | 4.2 |
 
-Predictions: P1 (decoder far below affine; polished within a quarter of the tolerance) held for the decoder and failed for the polish; P2
-(finishes in time, holds the tolerance in one step, rollouts bounded) held; P3 (invariant conserved to rounding) held. The rollout is about
-120 times the one-step error, roughly twice the exact dynamics' own amplification over the horizon (52–61, review 3), as T2's classical
-bound allows; holding the tolerance in a rollout needs a one-step error near the tolerance over that amplification. On POLLU ($k = 5$) the
-decoder failed (lift error 1.21 dex, the affine 0.35): the visited set is locally about five-dimensional (median local singular values 1,
-0.81, 0.54, 0.05, 0.017, 0.0044 on neighbourhoods of 60 states; HIRES 1, 0.81, 0.0027) but is not a graph over five global principal
-coordinates, so it needs an atlas of local charts (Example 6.8's situation on a real network).
+*On the visited set a data fit is cheaper and better:* the degree-6 fit is 4 times better in one step and 20 times better in the rollout (1.5 times
+the tolerance) than the reduced ChebTT, with no solve. The decoder lift makes a reduced oracle well defined; what the solver-queried build buys is
+accuracy off the data within the chart's span (kicks of 0.01 dex inside it: the reduced ChebTT errs $2.8\times10^{-3}$, the degree-6 data fit
+$6.6\times10^{-2}$). Box ChebTT is a different task (the 8-D bounding box) that did not finish within the benchmark's whole-run limit; the 188 s here
+is the build alone, and 91–96% of the chart box is away from the data, where calls cost about 5 times more.
+
+*Rollouts (review 6 test 3, H6).* The reduced ChebTT's rollout error is the exact dynamics' propagation of its defects: the first-order sum
+$\sum_jJ_{n-1}\cdots J_{j+1}\delta_j$ with exact Jacobians is within a factor 1.7 of the measured rollout on the six worst trajectories, the error lies in
+the chart's span, and $\max\lVert D\Psi\rVert = 1.24$ is below $\max\lVert D\Phi\rVert = 1.83$. The ratio of rollout to one-step error is not a property
+of the dynamics (120, 75 and 23 for the three rows above, against HIRES's accumulation factor $A_{170} = 5{,}351$), and a small one-step error is not
+sufficient: the degree-7 and 8 fits reach 2.2 and 4.2 because their own Jacobians amplify (norm up to 10, Theorem 8's $L_g$). A rollout holds when
+(i) the defects' first-order sum along the chains is within the tolerance and (ii) the surrogate's own propagation ($D\Psi$ products) is no larger than
+the dynamics'; both are computable on the training chains, (ii) without a solve.
+
+*Off the visited set (H2).* The visited set does not attract in the chart's normal directions (the step's normal gain is 1.41), so a kick of
+$\varepsilon$ gives an error of about $1.9\varepsilon$ ($1.9\times10^{-2}$ at 0.01 dex), and nothing is refused. Two constructive results (review 6 test 9):
+the decoder residual $r(z) = \max|z - D(\pi z)|$, which needs no solve, bounded the error as $\le 1.53\,(e_0 + r)$ on every kicked state ($e_0$ the error
+on the set): Proposition 8.2's middle term made computable, usable to refuse or to track; and a first-order normal correction
+$\Psi_1(z) = \Phi(D(\pi z)) + D\Phi\,(z - D(\pi z))$ cut the kicked error from $1.9\times10^{-2}$ to $2.0\times10^{-4}$ at 0.01 dex and from
+$9.4\times10^{-2}$ to $4.9\times10^{-3}$ at 0.05 dex (with the exact Jacobian; a fitted $B(u) \approx D\Phi(D(u))$ is the next step).
+
+*Predictions.* P1 (decoder far below affine) held; its second half (polished within a quarter of the tolerance) failed. P2 was committed for the
+polished lift and run with the decoder (the best on the test states); its timing part held for the build alone; "rollouts bounded" and P3 (the
+invariant conserved, $7.6\times10^{-16}$ per step) could not fail, since `Projected` enforces the invariant and the outputs are clipped.
+
+*POLLU (H3).* The earlier "locally five-dimensional, needs an atlas" is withdrawn: its neighbourhoods held a median of 3 trajectories, so they measured
+single curves. At fixed steps the 100 training states have about six transverse directions (singular values down to 0.19–0.23, then 0.02–0.03): the set
+is about 7-dimensional. At $k = 7$ a cubic decoder reaches a lift error of $2.0\times10^{-2}$ (affine $9.2\times10^{-2}$); degree 4 overfits (330
+coefficients for 100 trajectories). The limit is the number of trajectories against a six-parameter family, not the geometry.
 
 **Prior art.** Combustion tabulates on low-dimensional manifolds of progress variables (ILDM, Maas–Pope 1992; FGM, van Oijen–de Goey 2000; FPI;
 REDIM, Bykov–Maas 2007; ISAT on RCCE manifolds, Tang–Pope 2002; ICE-PIC, Ren et al. 2006; ISAT–RCCE–GALI, Hiremath et al. 2011; from memory);
@@ -590,7 +615,7 @@ outputs: `theory/gradients/g*.py`, `theory/gradients/data/g*.json`; every script
 | Gradient-enhanced least squares, $d = 5$, total degree 4 (126 terms), uniform random points (`g1_static`) | $1 + d$ equations per point: about 6 times fewer points for the same accuracy | corner peak: 30 points with gradients reach 0.23 (the best degree-4 error is 0.21), values alone need 180 for 0.25; product peak (best error 0.12): 2–3 times | confirmed for the corner peak; a smaller gain where the space approximates poorly |
 | HIRES reduced surrogate, 3 chart coordinates, random visited chart values (`g2_hires`; directional forward sensitivities, checked against finite differences to $3.5\times10^{-7}$) | G2.1 values with Jacobians at $N$ points match values alone at about $4N$ | at $N = 200$ with Jacobians 0.37 dex one-step against 0.51 with values alone at 800; at $N = 800$, 0.019 against 0.51 | G2.1 confirmed; G2.2 (holding $2.5\times10^{-3}$ within a few hundred solves) failed: random visited samples cover the worst-case states poorly |
 | The same on tensor Chebyshev points of the chart box (`g3_hires_grid`) | G3.1 gradients save a factor 4 in points | no gain: at 13 points per axis values alone reach $1.27\times10^{-3}$, with Jacobians $2.42\times10^{-3}$ | **refuted**: on a designed point set the values already determine the polynomial, and the equally weighted gradient rows trade value accuracy for slope accuracy |
-| | G3.2 some configuration holds $2.5\times10^{-3}$ with under 1,000 solves | values alone on 11 points per axis: $2.34\times10^{-3}$ with 1,331 solves (rollout 0.56 dex) | near miss: 7 times fewer solves than the reduced ChebTT's 9,477, above the predicted 1,000 |
+| | G3.2 some configuration holds $2.5\times10^{-3}$ with under 1,000 solves | values alone on 11 points per axis: $2.34\times10^{-3}$ with 1,331 solves (rollout 0.56 dex) | near miss: 7 times fewer solves than the reduced ChebTT's 9,477, above the predicted 1,000; and a data fit on the training pairs with no solve does better on the visited set ($6.4\times10^{-4}$, Demonstration 8.5) |
 | Cost of a sensitivity solve | G2.3 at most 3 plain solves | 6.7 (11.8 against 1.8 ms) in this Python implementation; compiled forward-sensitivity solvers typically add 10–75% | failed here; the net value of gradients depends on that cost |
 
 What the gradient tier establishes. Derivative data carry the information the theory says (Hermite halving exactly; about $1 + d$ equations
@@ -625,8 +650,11 @@ Corollary 4.1′ as a separately labelled distributional guarantee.
    chart of the data's local dimension and fit $\hat G$ predicting the next state with invariants conserved on the output; then *verify*
    $\varepsilon_G$, $\varepsilon_u$ on a net of the inputs with a defect modulus and a reference enclosure, and $L_G$, $L_g$ by validated bounds on the fitted
    map. If the verified residual tends to zero under refinement while the gains and tube radii stay controlled, Theorem 8 gives uniform
-   convergence on that set; a rate needs a rate for the residual. First demonstration: one invariant leaf of Robertson or HIRES, with a
-   verified chart and an independent reference enclosure.
+   convergence on that set; a rate needs a rate for the residual. Demonstrated on one Robertson leaf (8.3); on HIRES (8.5) the practical recipe
+   that the evidence supports is: a data fit on the training pairs in the chart coordinates, its degree chosen by the two rollout conditions
+   on the training chains (the defects' first-order sum within the tolerance; the surrogate's own propagation no larger than the
+   dynamics'), refusal or error tracking by the solve-free decoder residual ($\le 1.53\,(e_0 + r)$ observed), and a first-order normal
+   correction for inputs off the visited set.
 2. **Counts as diagnostics (Proposition 6.5, Theorem 6.6, Proposition 6.7(a)–(b)).** Proposition 6.5 is a rigorous obstruction given validated
    local constants; the spectral tests give candidate dimensions and anisotropic sampling directions; an upper count needs a verified global
    embedding or atlas (Example 6.8).
@@ -641,8 +669,9 @@ Fenichel's theorem, Weyl's and Horn's inequalities and the compound-matrix log n
 
 ## 11. Open items
 
-- §8: a rollout-aware tolerance for HIRES's reduced ChebTT (one-step error near the tolerance over the dynamics' amplification) with a
-  higher-degree decoder; an atlas of local charts for POLLU (Demonstration 8.5); a validated (interval) ODE enclosure to turn Demonstration 8.3's estimated defects into verified ones; a tighter first-order
+- §8: the HIRES recipe of §10 item 1 end to end (degree chosen by the rollout conditions, a fitted normal correction $B(u) \approx D\Phi(D(u))$, refusal by
+  the residual), and a proof of the residual bound under stated hypotheses; POLLU with several hundred trajectories and a decoder at $k = 7$–8
+  (Demonstration 8.5); a validated (interval) ODE enclosure to turn Demonstration 8.3's estimated defects into verified ones; a tighter first-order
   version with a remainder and a validity region; Theorem 8 on the benchmark's schemes (a reduced-coordinate ChebTT against box ChebTT on HIRES,
   POLLU, Fisher–KPP); Proposition 8.2 for operator-split inputs.
 - T1: the tube in log coordinates on a benchmark box; monotonicity of the true nearest singularity in $\tau$ (U1).
