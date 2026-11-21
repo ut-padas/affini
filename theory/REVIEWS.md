@@ -2,7 +2,7 @@
 
 Each round: the reviewer and its brief, a summary of its critiques, and the resolution of each (accepted and changed,
 partly accepted, or rejected with the reason). The full reviews are in `reviews/round-<n>.md`, their tests in
-`reviews/scratch-round-<n>/`; `git log -- theory/` shows each revision of the memo.
+`reviews/scratch-round-<n>/`; `git log -- theory/` shows each revision of the memo. Statement and section numbers in each round's table are those of the revision under review.
 
 ## Round 1: Claude Fable 5.2 (medium effort), on the memo at commit `0502542`
 
@@ -80,3 +80,27 @@ the frozen staircase extended beyond constant $J$ (fails on Robertson at long st
 | P4 | proposal | Pointwise Cauchy ceiling | Adopted as Proposition 1.3 |
 | P5 | proposal | Composition monotonicity of existence domains | Adopted as Proposition 1.5 |
 | P6 | proposal | Proposition 4.5 as it should read | Adopted |
+
+## Round 3: Claude Fable 5.2 (medium effort), on revision 2 (commit `507c209`)
+
+Brief: audit the round-2 resolutions; test Theorem 8 and Proposition 2.4 in depth, with learned charts, $k \ge 2$ and several
+leaves; test Proposition 6.5; check the memo's consistency. Verdict: the proofs are correct and Proposition 6.5 is sharp, but
+items 1–2 of the ranking were not yet a foundation: Theorem 8 bounded the distance to $S$, not the rollout error, and its
+practical claim held only for charts of the data's dimension. Tests A, A2 (HIRES), B (Borsuk–Ulam on Robertson).
+
+| # | Severity | Critique | Resolution |
+|---|---|---|---|
+| Audit | – | D1 partly cosmetic (one hypothesis replaced by another, verified on one structurally easy system); D2's "chart coordinate or conservation" wrong in its first branch; D3 cites Levinson where roughness of dichotomies is needed | Addressed in E2, E5, E8 |
+| E1 | critical | Theorem 8 with Proposition 2.4 bounds the distance to $S$, not $\lVert y_n - x_n\rVert$; on HIRES stable surrogates grow 89–157 over 169 steps, about the dynamics' 52–61 | Accepted. Theorem 8 is now the review's T8′, a rollout bound with constants from the fitted model (proof checked line by line); evaluated on Robertson's S (valid, about 3,000 times pessimistic); "no accumulation" attributed to Robertson's contraction |
+| E2 | critical | On HIRES with learned charts only $k = 3$ (the visited set's dimension) and degrees 3–6 are stable; the staircase's $k = 4, 5$ diverge | Accepted; quoted in §8; $k$ is chosen by the fit on $M$; the staircase is $m_{\mathrm{ball}}$, not the surrogate's $k$ |
+| E3 | major | The staircase's dimension and the surrogate's are different numbers | Accepted: $m_{\mathrm{ball}}$ and $m_M$ defined at the head of T6 and used throughout |
+| E4 | major | Accuracy on the neighbourhood (first half of Theorem 8) is unsupported; errors 0.4–0.6 dex off the visited set | Accepted: split off as Proposition 8.2, conditional on (S), untested, the main open problem; "hypothesis and conclusion both measured" removed |
+| E5 | major | No global chart for limit cycles; the set where $\hat G$ must be good; invariants need output conservation; $C \propto \operatorname{dist}(p, S)$; status label | Accepted: chart = injective map into $\mathbb{R}^k$; $U_\rho$ named; conservation required; (S) with the distance factor; "Conditional" added to the legend |
+| E6 | major | Proposition 2.4's cases unproved and uncheckable | Accepted: proofs of (a)–(c) written; Proposition 2.4 called the organising statement, Theorem 8 the checkable one |
+| E7 | major | Proposition 6.5 correct and sharp; norm, range, continuity; "two-sided" overclaimed | Accepted: norm, range and discontinuous encoders stated; test B quoted; the upper count marked as holding under (S) only |
+| E8 | major | Proposition 6.7(b) cites the wrong theorem; (a)'s bracket is 2–4 decades wide | Accepted: (a) with its bracket, (b) replaced by the review's provable one-sided bound P7, (c) a conjecture under roughness of dichotomies |
+| E9 | minor | Cross-references, README, "external", numbering, 1,029, "reaches the clip", inferred gains, U2/U6 wording | Accepted, all |
+| E10 | minor | Proposition 4.1 on chain states is not i.i.d.; audit whole rollouts from fresh initial states | Accepted: Corollary 4.1′ |
+| Lit. | – | Combustion manifold methods (ILDM, FGM, FPI, REDIM, ISAT–RCCE, ICE-PIC), constrained runs, learned-manifold reduced dynamics, approximate inertial manifolds; Proposition 2.4(c) folklore; Proposition 6.5 an application of DeVore–Howard–Micchelli | Accepted, cited as "from memory" |
+| T8′ | proposal | Rollout theorem with computable constants | Adopted as Theorem 8 |
+| P7 | proposal | One-sided path-averaged bound | Adopted as Proposition 6.7(b) (proof checked: the moving-eigenbasis equation and Horn's product inequality) |

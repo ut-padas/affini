@@ -5,10 +5,10 @@ predictions and against the benchmark's records.
 
 | File | Contents |
 |---|---|
-| [MEMO.md](MEMO.md) | The theory memo: the observations to explain (section 0), seven candidate theorems T1–T7 with assumptions, proofs, predictions and checks, a synthesis and a ranking of foundations for a scheme |
+| [MEMO.md](MEMO.md) | The theory memo: the observations to explain (section 0), candidate theorems T1–T7 and the reduced-coordinate surrogates of section 8, with assumptions, proofs, predictions and checks, a synthesis and a ranking of foundations for a scheme |
 | [LITERATURE.md](LITERATURE.md) | Prior art per theorem (IDs `TH-*`): what is known, what would be new |
-| [REVIEWS.md](REVIEWS.md) | The external reviews of the memo, round by round, and how each point was resolved |
-| `checks/t*.py` | One numerical check per theorem (NumPy and SciPy only, each under two minutes); `checks/data/t*.json` holds their output, the only source of the memo's numbers |
+| [REVIEWS.md](REVIEWS.md) | The reviews of the memo, round by round (three internal rounds, then an external one), and how each point was resolved; `reviews/` holds the full reviews and their tests |
+| `checks/t*.py` | One numerical check per theorem (NumPy and SciPy only, each under three minutes); `checks/data/t*.json` holds their output, the only source of the memo's numbers |
 
 Run a check from this folder's `checks/` directory with the repository's environment:
 

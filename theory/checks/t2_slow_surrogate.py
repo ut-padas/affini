@@ -14,6 +14,10 @@ Surrogates, all least-squares polynomials fitted on the 100 training trajectorie
   S-incr degree 8 in z1 alone, increment form z + g(z1)
 Measured on 40 held-out trajectories: the worst one-step error on visited states, on states displaced by up to
 0.05 dex in every coordinate (the tube), and the worst rollout error over 39 steps.
+For S, which has the form G(pi(z)) with pi(z) = z1, Theorem 8's rollout bound (the max norm; L_pi = 1) is evaluated
+from the fitted model: eps_G (worst residual on all visited states), L_G = sup |dG/du| and L_g = sup |dg/du| for the
+reduced map g = pi o G on the visited range of z1 widened by rho = 0.05 (a grid of 4,001 points, central differences),
+and the bound eps_G (1 + L_G A_{n-1}), A_n = sum_{j<n} L_g^j, valid while eps_G A_{n-1} <= rho.
 """
 
 import numpy as np
@@ -60,6 +64,28 @@ def fit(X, Y, cols, q, increment, lo, hi):
     return lambda Z: (Z if increment else 0.0) + features(Z, cols, q, lo, hi) @ coef
 
 
+def rollout_bound(P, X, Y, lo, hi, rho=0.05) -> dict:
+    """Theorem 8's bound for a surrogate of z1 alone, from the fitted model (see the module docstring)."""
+    eps_G = float(np.abs(P(X) - Y).max())
+    u = np.linspace(lo[0] - rho, hi[0] + rho, 4001)
+    h = 1e-6
+
+    def lift(v):
+        Z = np.zeros((len(v), 3))
+        Z[:, 0] = v
+        return P(Z)
+
+    dG = (lift(u + h) - lift(u - h)) / (2 * h)
+    L_G, L_g = float(np.abs(dG).max()), float(np.abs(dG[:, 0]).max())
+    bound, A = [], 0.0
+    for _n in range(1, STEPS):
+        if eps_G * A > rho:
+            break
+        bound.append(eps_G * (1 + L_G * A))
+        A = A * L_g + 1  # A_n = sum_{j<n} L_g^j
+    return {"eps_G": eps_G, "L_G": L_G, "L_g": L_g, "rho": rho, "bound_by_step": bound, "bound_max": max(bound), "steps_valid": len(bound)}
+
+
 def main() -> None:
     train = np.array([trajectory(y, STEPS) for y in initial(100, 1)])[:, 1:]
     test = np.array([trajectory(y, STEPS) for y in initial(40, 2)])[:, 1:]
@@ -78,11 +104,16 @@ def main() -> None:
         for k in range(1, STEPS):
             Zc = np.clip(P(Zc), -40, 5)
             roll = max(roll, float(np.abs(Zc - test[:, k]).max()))
-        out["surrogates"].append({"name": name, "one_step_visited": float(np.abs(P(Xe) - Ye).max()), "one_step_tube": float(np.abs(P(Xt) - Yt).max()),
-                                  "rollout_39": roll})  # fmt: skip
+        row = {"name": name, "one_step_visited": float(np.abs(P(Xe) - Ye).max()), "one_step_tube": float(np.abs(P(Xt) - Yt).max()), "rollout_39": roll}
+        if name == "S":
+            row["theorem_8"] = rollout_bound(P, np.vstack([X, Xe]), np.vstack([Y, Ye]), lo, hi)
+        out["surrogates"].append(row)
     path = write("t2_slow_surrogate", out)
     for s in out["surrogates"]:
         print(f"{s['name']:7s} one-step visited {s['one_step_visited']:.2e}  tube {s['one_step_tube']:.2e}  rollout {s['rollout_39']:.2e}")
+        if "theorem_8" in s:
+            t = s["theorem_8"]
+            print(f"        Theorem 8: eps_G {t['eps_G']:.2e}, L_G {t['L_G']:.3f}, L_g {t['L_g']:.3f}; bound max {t['bound_max']:.2e} over {t['steps_valid']} steps")
     print("wrote", path)
 
 
