@@ -625,6 +625,64 @@ it brings. Where gradients clearly pay: diagnostics (one solve gives the Jacobia
 the constants of Theorem 8, and fits whose points cannot be designed (data from trajectories). Open: weighting gradient rows by their
 contribution to the sup error; a compiled sensitivity solver.
 
+**The HIRES recipe end to end** (`g4_hires_recipe.py`, `g4_diagnosis.py`; predictions R1–R3 committed in `3ce981b`, R4–R5 after the
+diagnosis in `6c92037`). The recipe of §10 item 1 at $k = 3$, tolerance 0.01 dex. The chart and degree-4 decoder are those of
+Demonstration 8.5. The fit $G$ (total degree $q = 4$–8) predicts the next state from the training pairs. The degree is chosen on the
+training chains (40 trajectories) by the two rollout conditions:
+
+- (i) the chained worst error is within the tolerance;
+- (ii) $\max\lVert D\Psi\rVert$ is no larger than the dynamics' $\max\lVert D\Phi\rVert = 1.86$ (forward sensitivities at 200 training states).
+
+When no degree passes both, the rule falls back to the smallest chained error. The normal correction is
+$\Psi_1(z) = G(\pi z) + B(\pi z)\,(z - D(\pi z))$, where $B(u)$ is fitted (degree 2, entrywise) to the exact log-coordinate Jacobians at
+300 training states. It is scored on the test trajectories, and on 300 test states kicked by $\varepsilon$ in every coordinate with random
+signs.
+
+Three fits were compared:
+
+- **data:** $G$ fitted to $\Phi(X)$;
+- **consistent:** $G$ fitted to the targets with the normal part removed, $\Phi(X) - B\,n_X$;
+- **gradients:** as consistent, plus the chart-derivative rows $J\,DD(u)$ at the 300 sensitivity states.
+
+| Fit | degree (rule) | one-step | rollout, plain / corrected | kicked $\varepsilon = 0.003$, plain / corrected | $\varepsilon = 0.01$ | $\varepsilon = 0.05$ |
+|---|---|---|---|---|---|---|
+| data | 6 (fallback) | $6.4\times10^{-4}$ | $1.5\times10^{-2}$ / $4.5\times10^{-2}$ | $2.2\times10^{-2}$ / $2.2\times10^{-2}$ | $6.3$ / $6.4\times10^{-2}$ | 0.37 / 0.36 |
+| consistent | 5 (fallback) | $2.1\times10^{-3}$ | $4.9\times10^{-2}$ / $7.2\times10^{-2}$ | $7.2$ / $5.6\times10^{-3}$ | $2.2$ / $1.7\times10^{-2}$ | 0.11 / 0.094 |
+| gradients | 8 (fallback) | $3.0\times10^{-4}$ | $3.0\times10^{-2}$ / $\mathbf{7.3\times10^{-3}}$ | $5.7$ / $2.2\times10^{-3}$ | $1.9\times10^{-2}$ / $8.1\times10^{-3}$ | 0.095 / 0.037 |
+| $\Phi(D(u))$ exact, and $+\,J\,n$ (diagnosis, 40 states) | – | – | – | $5.5\times10^{-3}$ / $1.3\times10^{-5}$ | $1.9\times10^{-2}$ / $1.7\times10^{-4}$ | – |
+
+- **The correction is right and second order** when $G(u) = \Phi(D(u))$. The diagnosis row's error falls 30-fold from $\varepsilon = 0.003$
+  to 0.01, close to the square of the kick ratio. So the first-order theory of §8 holds on HIRES's kicked states.
+- **The data fit is the obstacle.** Fitted to $\Phi(X)$, it already contains $J\,n_X$ on the set, so the correction counts the normal part
+  twice: the corrected rollout is three times worse. The training states also lie on a few trajectories, which are curves in the 3-D
+  chart, so between them $G$ is unconstrained. Condition (ii) sees this: $\lVert D\Psi\rVert$ is 4.5–16 at degrees 6–8, against 1.86.
+  Removing the normal part alone ("consistent") does not help, because $G$ is still unconstrained between the curves.
+- **The Jacobian rows are what fix it.** With them, $\lVert D\Psi\rVert = 1.27$ at every degree, and the plain kicked error matches
+  $\Phi(D(u))$'s own (5.7 against $5.5\times10^{-3}$; 1.88 against $1.87\times10^{-2}$). So $G$ now estimates the map off the trajectories.
+  The corrected surrogate holds a one-step error of $3.0\times10^{-4}$ and a 20-trajectory rollout of $7.3\times10^{-3}$, **within the
+  tolerance**. This is the first reduced HIRES surrogate in this memo to do so. The reduced ChebTT's rollout was 0.30 with 9,477 solves,
+  and the data fit's $1.5\times10^{-2}$.
+- **Verdicts:**
+  - R1 (degree 6, rollout within twice the tolerance) holds only through the fallback rule.
+  - R2 holds only for the gradient fit at $\varepsilon = 0.01$ ($8.1\times10^{-3}$); at 0.05 its error is $3.7\times10^{-2}$, against
+    the predicted $2\times10^{-2}$.
+  - R3 is refuted for the fitted correction: the kicked error stays linear in $\varepsilon$ (slopes 0.98–1.02).
+  - R4 is refuted.
+  - R5 holds for condition (ii), the plain kicked error and the corrected error at $\varepsilon = 0.01$, and fails on the slope (0.98
+    against $\ge 1.7$).
+
+  The remaining first-order error comes from the fitted pieces, not the theory: $B$'s degree-2 fit of $J$ and $G$'s chart slope. The exact
+  pair is second order.
+- **Limits of the run:**
+  - No degree passed both conditions. Condition (i) was applied to the uncorrected surrogate, while the corrected one is deployed, so the
+    rule as run never saw the surrogate it ships.
+  - Refusing at $r > \mathrm{tol}/4$ refuses 96–100% of the kicked states. The corrected error is about $0.4\,r$, so the threshold should be
+    calibrated against the corrected error, not the decoder floor.
+  - Cost: in this Python implementation a full 8-direction sensitivity solve takes about 50 ms, against 0.6–1.8 ms for a plain
+    solve (two timings on different states). Each one therefore costs 28–87 plain solves, and the 300 cost as much as 8,000–26,000
+    plain ones, no fewer than the ChebTT's 9,477. With a compiled forward-sensitivity solver (10–75% overhead), they would cost
+    330–525.
+
 ## 9. Synthesis
 
 Entries are observations (obs.), estimates (est.) or proofs (thm); no verified bound has been computed.
@@ -654,7 +712,9 @@ Corollary 4.1′ as a separately labelled distributional guarantee.
    that the evidence supports is: a data fit on the training pairs in the chart coordinates, its degree chosen by the two rollout conditions
    on the training chains (the defects' first-order sum within the tolerance; the surrogate's own propagation no larger than the
    dynamics'), refusal or error tracking by the solve-free decoder residual ($\le 1.53\,(e_0 + r)$ observed), and a first-order normal
-   correction for inputs off the visited set.
+   correction for inputs off the visited set. Run end to end (section G), the recipe needs the Jacobian rows: with values and
+   Jacobians, the corrected surrogate's 20-trajectory rollout is $7.3\times10^{-3}$, within the tolerance; with values alone the correction
+   counts the normal part twice and makes the rollout worse.
 2. **Counts as diagnostics (Proposition 6.5, Theorem 6.6, Proposition 6.7(a)–(b)).** Proposition 6.5 is a rigorous obstruction given validated
    local constants; the spectral tests give candidate dimensions and anisotropic sampling directions; an upper count needs a verified global
    embedding or atlas (Example 6.8).
@@ -669,8 +729,8 @@ Fenichel's theorem, Weyl's and Horn's inequalities and the compound-matrix log n
 
 ## 11. Open items
 
-- §8: the HIRES recipe of §10 item 1 end to end (degree chosen by the rollout conditions, a fitted normal correction $B(u) \approx D\Phi(D(u))$, refusal by
-  the residual), and a proof of the residual bound under stated hypotheses; POLLU with several hundred trajectories and a decoder at $k = 7$–8
+- §8 and G: the HIRES recipe's selection applied to the corrected surrogate it deploys, a refusal threshold calibrated against the corrected
+  error, and a better fit of $B(u)$ (the exact pair is second order, the fitted pair first order); a proof of the residual bound under stated hypotheses; POLLU with several hundred trajectories and a decoder at $k = 7$–8
   (Demonstration 8.5); a validated (interval) ODE enclosure to turn Demonstration 8.3's estimated defects into verified ones; a tighter first-order
   version with a remainder and a validity region; Theorem 8 on the benchmark's schemes (a reduced-coordinate ChebTT against box ChebTT on HIRES,
   POLLU, Fisher–KPP); Proposition 8.2 for operator-split inputs.
