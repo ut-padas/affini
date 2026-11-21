@@ -503,6 +503,29 @@ ChebTT box surrogate (955 and 1,130 evaluations at tolerances 0.01 and 0.001 dex
 initial layer (step 0) and its whole bounding box, so the two are not the same task, and the reduced surrogate's cost excludes the reference
 trajectory that traces the curve.
 
+**Demonstration 8.4 (how many coordinates a reduced ChebTT would need on the benchmark's stiff step maps; `theory/demos/reduced_dims.py`,
+`theory/demos/data/reduced_dims_*.json`).** Before building a reduced-coordinate ChebTT, the chart was measured on the benchmark's own
+trajectories, at tolerance 0.01 dex: with the principal directions of the visited states (mean $\mu$, directions $V_k$), the *lift error*
+$\max|\Phi(\mu + V_kV_k^{\mathsf T}(z - \mu)) - \Phi(z)|$ over 400 held-out visited states (a surrogate with $k$ inputs and a full-state output;
+the step damps the dropped directions' fast part) and the *residual* $\max|z - \mu - V_kV_k^{\mathsf T}(z - \mu)|$ (what decoding a predicted
+chart value costs). The smallest $k$ reaching a quarter of the tolerance:
+
+| problem ($d$) | $k$ for the lift error | $k$ for the residual | the visited set's dimension (review 3) |
+|---|---|---|---|
+| Fisher–KPP (10) | 7 | 10 | |
+| Fisher–KPP (20) | 8 | 13 | |
+| HIRES (8) | 7 | 7 | 3 |
+| POLLU (20) | 16 | 16 | |
+
+*Confirmed:* on the diffusion ladder the input dimension barely grows with the grid (7 at $d = 10$, 8 at $d = 20$; lift errors $5.7$ against
+$8.6\times10^{-3}$ at $k = 6$, $2.1$ against $3.0\times10^{-3}$ at $k = 7$), as Theorem 6.6 and review 1 test E predict, and the input needs fewer
+coordinates than the state (the step damps what the input drops). *The limit found:* an **affine** chart needs 7 of 8 coordinates on HIRES,
+whose visited set is three-dimensional, and 16 of 20 on POLLU: projecting a curved visited set onto a flat subspace moves the state in slow
+directions the step does not damp. So at these sizes a reduced ChebTT with an affine lift cannot be cheaper than the box one; a first build
+(`theory/demos/reduced_chebtt.py`, Fisher–KPP at $d = 10$, $k = 7$, ten output trains) did not finish within the benchmark's 240 s, where box
+ChebTT used 107,002 evaluations in 210 s. The reduction pays only with a lift that lands on the curved slow manifold (constrained runs or a
+nonlinear decoder; Proposition 8.2's middle term), or on grids well beyond $d = 20$ where $k$ stays at 7–8.
+
 **Prior art.** Combustion tabulates on low-dimensional manifolds of progress variables (ILDM, Maas–Pope 1992; FGM, van Oijen–de Goey 2000; FPI;
 REDIM, Bykov–Maas 2007; ISAT on RCCE manifolds, Tang–Pope 2002; ICE-PIC, Ren et al. 2006; ISAT–RCCE–GALI, Hiremath et al. 2011; from memory);
 constrained runs fill a slow manifold at prescribed chart values (Gear, Kaper, Kevrekidis, Zagaris 2005; TH-51); learned-manifold reduced dynamics
@@ -553,7 +576,8 @@ Fenichel's theorem, Weyl's and Horn's inequalities and the compound-matrix log n
 
 ## 11. Open items
 
-- §8: the verified demonstration of item 1 (validated defect and Lipschitz bounds for a fitted reduced map on one leaf); a tighter first-order
+- §8: a nonlinear lift onto the curved slow manifold (constrained runs or a decoder), the condition for a reduced ChebTT to beat the box one
+  on HIRES and POLLU (Demonstration 8.4); a validated (interval) ODE enclosure to turn Demonstration 8.3's estimated defects into verified ones; a tighter first-order
   version with a remainder and a validity region; Theorem 8 on the benchmark's schemes (a reduced-coordinate ChebTT against box ChebTT on HIRES,
   POLLU, Fisher–KPP); Proposition 8.2 for operator-split inputs.
 - T1: the tube in log coordinates on a benchmark box; monotonicity of the true nearest singularity in $\tau$ (U1).
