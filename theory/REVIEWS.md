@@ -220,3 +220,22 @@ static gradient script and `g6` (selected degrees and kicked rollouts within $5\
 | 19 | major | LITERATURE.md's novelty summary describes superseded claims; ISAT, Hermite and gradient-enhanced regression uncredited | Accepted: summary items 2–3 restated, items 8–9 and TH-62 to TH-64 added, a prior-art paragraph in G |
 | 20 | minor | Numbers and directions in summaries | Accepted: U2 and §9 counts and direction, T6's $10^{13}$ scope, 8.3's margins and mass offset, 8.4's units, G2.4's range, the per-draw penalty, §9 rows |
 | 21 | minor | An outside reader needs the score and deployment conventions | Accepted: a "Scores and terms" convention in the opening; $D'$ for the decoder's derivative; Review VIII's source; $0 < \theta < 1$; Lemma 1.2's finite terminal radius; 6.7(c)'s exact exponent; the Lean list marked as proposed |
+
+## Round 9 (follow-up): GPT Sol 6.2 (medium effort), on the round-8 critical fixes (commit `afe797f`)
+
+Brief: whether the fixes for findings 1–5 and 12 of round 8 are true as written, and whether the revision introduced new errors. Verdict:
+findings 3, 4 and 12 resolved; 1, 2 and 5 not yet; seven new problems (three major, four minor). Review: `reviews/round-9-sol.md`.
+
+| # | Severity | Critique | Resolution |
+|---|---|---|---|
+| 8.1 | – | Proposition 8.2 uses $\mathrm{Lip}_Q$ where only a paired constant is assumed; the circle example uses an embedding, not a chart | Accepted: a finite paired constant $L$ in the display; embeddings allowed; the angle-chart counterexample; the atlas maximum |
+| 8.2 | – | Corollary 6.3's $\sup_S$ needs $S \subset Q$ | Accepted: the paired constant and $S \subset Q$ stated |
+| 8.5 | – | Theorem 8's scope needs the fibre criterion, and Propositions 2.1–2.2 use the exact map's propagation | Accepted: scope stated by constancy on the encoder's fibres, the fixed-leaf case, augmented encoders, and the full-state certificate's parts |
+| 8.3, 8.4, 8.12 | – | Resolved; parameter choices for the counterexample, 4.3's standing assumptions, "fallback" and "sampled" in R5 | Accepted: all stated |
+| N1 | major | Corollary 3.2 also needs $e^{\nu\tau}$ uniform ($\tau = d$ counterexample) | Accepted, in T3 and §10 item 5 |
+| N2 | minor | 8.4's literal prediction is at the full tolerance (6 against 6) | Accepted: both criteria reported |
+| N3 | major | 8.5 groups two arms under one baseline; 1.53 is below the observed 1.532 | Accepted: the arms separated, the central-difference Jacobian named, 1.532 as an empirical constant |
+| N4 | major | "Separated every case" overstates across G (`g6` degree 10) | Accepted: restated as selection, with the degree-wise failures |
+| N5 | minor | The refusal ratio range covers one fit and misses one kick | Accepted: 0.30–0.37 for the gradient fit, the other fits' ranges given |
+| N6 | minor | The Taylor budget's wording still implies first-order terms | Accepted: the slopes identify neither the dominant term nor an order |
+| N7 | minor | "Radau at the benchmark's tolerances" is not every check's integrator | Accepted: each experiment's integrator |

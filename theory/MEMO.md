@@ -22,8 +22,9 @@ the complexity those measurements need. Revision 5 answers seven review rounds a
   memory)" were named by a reviewer and have not been read.
 - **Scores and terms.** States of chemistry systems are in log10 abundances, errors in dex (decades). A worst error is the maximum
   over the problem's *scored* outputs (the benchmark's mask, which leaves out trace species below a floor) and over the states or steps
-  named. A surrogate *holds* a tolerance when that worst error is within it. $\Phi$ is the exact step; the checks evaluate it with a
-  stiff solver (Radau) at the benchmark's tolerances, so every "exact" value carries the solver's error. A *one-step kick* perturbs a
+  named. A surrogate *holds* a tolerance when that worst error is within it. $\Phi$ is the exact step; every numerical reference uses
+  the integrator and tolerances of its own experiment (Radau at the benchmark's tolerances for the chemistry step maps; DOP853 in
+  `t3_lightcone`, for example), so every "exact" value carries that solver's error. A *one-step kick* perturbs a
   test state once and scores one step from it; a *rollout kicked at every step* perturbs the state before every step of a chain,
   for the surrogate and the solver alike. In the reduced surrogates, $\pi$ is the chart, $D$ the decoder, $D'$ its derivative and
   $J = D\Phi$ the step's Jacobian; outputs are clipped to a margin around the training states and projected onto the linear
@@ -288,7 +289,8 @@ output $i$); $\ell = \max L_{ij}$ and $\Delta$ the largest row count of $L$.
 $(L^k)_{ij} = 0$ for $k < D(i, j)$ and $\le(\ell\Delta)^k$ (row sums). $\square$ **Corollary 3.2.** Freezing the coordinates outside
 $W_r(i) = \{j: D(i, j) \le r\}$ at the box centre costs at most $e^{\nu\tau}\sum_{j\notin W_r(i)}h_j[\exp(\tau L)]_{ij} \le h^*e^{\nu\tau}\sum_{k>r}(\ell\Delta\tau)^k/k!$,
 $h^* = \max_jh_j$ (the omitted inputs all lie at distance $> r$, and the row sums of $L^k$ are at most $(\ell\Delta)^k$). This is independent of $d$
-when $h^*$, $\nu$ and $\ell\Delta\tau$ are uniform in $d$; no count of inputs per distance is needed. Without uniform scales it is not: one incoming
+when $h^*$, $e^{\nu\tau}$ and $\ell\Delta\tau$ are bounded uniformly in $d$ (a uniform $\nu$ alone is not enough if $\tau$ grows: $x_1' = x_1 + x_2/d$ with
+$\tau = d$ has $\nu = 1$, $\ell\Delta\tau = 1$ and freezing error $(e^d - 1)/d$, review 9); no count of inputs per distance is needed. Without uniform scales it is not: one incoming
 edge, $\ell\Delta\tau = 1$ and unit half-widths still allow $x_1' = dx_1 + x_2$ ($\nu = d$, $\tau = 1$), whose radius-zero freezing error is
 $(e^d - 1)/d$ (review 8).
 **Corollary 3.3.** The window function's tensor Chebyshev interpolant of degree $n$ has unfolding rank at most
@@ -330,7 +332,7 @@ dimensions $h \sim \eta^{1/d}$.
 
 **Proposition 4.2 (measure to sup; proved).** With $d_B(x, y) = \max_j|x_j - y_j|/(b_j - a_j)$ and $\mu$ uniform on $B$, if $e \ge 0$ is
 $L$-Lipschitz in $d_B$ and $\mu\{e > t\} < \eta \le 1$, then $\sup_Be \le t + L\eta^{1/d}$ (a $d_B$-ball of radius $h \le 1$ meets $B$ in volume at
-least $h^d$). **Corollary 4.3.** For a frozen candidate and score and $N$ fresh uniform points, the event "every point scores within $t$
+least $h^d$). **Corollary 4.3.** For a frozen candidate and score, $N \ge 1$ points i.i.d. uniform on $B$ and $0 < \alpha < 1$, the event "every point scores within $t$
 *and* $\sup_Be > t + L(1 - \alpha^{1/N})^{1/d}$" has probability at most $\alpha$ (and $(1 - \alpha^{1/N})^{1/d} \le (\ln(1/\alpha)/N)^{1/d}$). *Proof.* If
 $\mu\{e > t\} \ge \eta = 1 - \alpha^{1/N}$, all points pass with probability at most $(1 - \eta)^N = \alpha$; otherwise Proposition 4.2 gives the
 bound. $\square$ It is not a guarantee conditional on a pass: for $e(x) = x$ on $[0, 1]$, $N = 1$, $\alpha = 0.05$, $t = 0.01$, $L = 1$, every pass
@@ -393,11 +395,11 @@ smoothness of $F$; theorem numbers to be pinned.
 errs by half the oscillation of $\Gamma_\tau\circ\pi$ along them, plus at most $\sup\lVert R_\tau\rVert$; for vector outputs in the Euclidean norm half the
 diameter is only a lower bound for the enclosing radius. An $O(\varepsilon)$ estimate in slow–fast standard form needs uniform fast
 attraction and control of the slow shift across the fibres; there is no general lower bound of that order (a decoupled slow equation has
-zero tilt). **Corollary 6.3 (three budgets).** If $\Gamma_\tau$ and $\hat\Gamma$ are defined on a set $Q \supset \pi(N) \cup \hat\pi(N)$, with $\Gamma_\tau$
-Lipschitz on the pairs $(\pi(p), \hat\pi(p))$, then
-$\sup_N\lVert\hat\Gamma\circ\hat\pi - \Phi_\tau\rVert \le \sup_{\hat\pi(N)}\lVert\hat\Gamma - \Gamma_\tau\rVert + \mathrm{Lip}(\Gamma_\tau)\sup_N\lVert\hat\pi - \pi\rVert + \sup_N\lVert R_\tau\rVert$
-(write $\hat\Gamma(\hat\pi) - \Phi_\tau = [\hat\Gamma(\hat\pi) - \Gamma_\tau(\hat\pi)] + [\Gamma_\tau(\hat\pi) - \Gamma_\tau(\pi)] - R_\tau$); when $\hat\pi$ lands in $S$ the first
-supremum may be taken over $S$. It may not otherwise: for $x' = -x$, $S = \{0\}$, $N = [-1, 1]$, $\tau = \log 2$, $\pi = 0$, $\hat\pi = 1$,
+zero tilt). **Corollary 6.3 (three budgets).** If $\Gamma_\tau$ and $\hat\Gamma$ are defined on a set $Q \supset \pi(N) \cup \hat\pi(N)$, and
+$L = \sup_{p\in N,\,\hat\pi(p)\ne\pi(p)}\lVert\Gamma_\tau(\hat\pi(p)) - \Gamma_\tau(\pi(p))\rVert/\lVert\hat\pi(p) - \pi(p)\rVert$ is finite, then
+$\sup_N\lVert\hat\Gamma\circ\hat\pi - \Phi_\tau\rVert \le \sup_{\hat\pi(N)}\lVert\hat\Gamma - \Gamma_\tau\rVert + L\sup_N\lVert\hat\pi - \pi\rVert + \sup_N\lVert R_\tau\rVert$
+(write $\hat\Gamma(\hat\pi) - \Phi_\tau = [\hat\Gamma(\hat\pi) - \Gamma_\tau(\hat\pi)] + [\Gamma_\tau(\hat\pi) - \Gamma_\tau(\pi)] - R_\tau$); when $\hat\pi$ lands in $S$ and $S \subset Q$,
+the first supremum may be taken over $S$. It may not otherwise: for $x' = -x$, $S = \{0\}$, $N = [-1, 1]$, $\tau = \log 2$, $\pi = 0$, $\hat\pi = 1$,
 $\Gamma_\tau(x) = x/2$ and $\hat\Gamma(x) = 5x$, the error at 0 is 5 and the right side with $\sup_S$ is 1 (review 8).
 **Corollary 6.4.** The same factorisation holds componentwise, with one $\pi$ for every output. Under (S), with $\pi$ continuous, an
 embedding $\chi: S \to \mathbb{R}^q$ gives a factorisation through $q$ continuous coordinates up to the remainder $R_\tau$, so an upper count
@@ -497,19 +499,24 @@ exact input through step $n - 1$. It is a discrete Lipschitz error estimate for 
 bound, $\varepsilon_G, \varepsilon_u$ need a verified net of the inputs with a defect modulus and a reference error ($\varepsilon \le \max_i\lVert\Psi(x_i) - \tilde\Phi(x_i)\rVert + L_\delta h + b$),
 and $L_G, L_g$ need validated bounds on the fitted map (polynomial derivative bounds, interval arithmetic), with any output clipping included.
 A chart with more coordinates than the data's local dimension leaves $\hat G$ unconstrained across the data, so $L_g \gg 1$. Linear invariants
-must be conserved on the output (Proposition 2.4). *Scope.* The theorem is for factored maps $\Psi = \hat G\circ\hat\pi$. A map whose output also
-depends on the input through another channel (a normal correction $B(u)(z - D(u))$, a projection onto the input's own invariant, a
-refusal branch with the solver as fallback) is not of this form; its rollout needs a full-state bound (Proposition 2.1 or 2.2 on a stated
-input tube, with the deployed map's own gain there, clipping and positivity floors included), or the extra channel as a chart coordinate.
+must be conserved on the output (Proposition 2.4). *Scope.* The theorem applies to a deployed map exactly when that map is constant on the
+fibres of its encoder $\hat\pi$, so that it factors as $\hat G\circ\hat\pi$. A projection onto a fixed invariant leaf can be absorbed into $\hat G$. A
+normal correction $B(u)(z - D(u))$, a projection onto the input's own invariant when the domain spans several leaves, an abundance floor that
+changes the invariant, or a refusal branch with the solver as fallback, are not constant on the fibres of a chart encoder. Such a map needs
+either an augmented encoder (the invariant, or the residual, as further coordinates) that satisfies the theorem's hypotheses, or a
+full-state certificate: a bound on the deployed defect along the chain, the exact map's propagation (Proposition 2.1, or 2.2 with its
+remainder) on a stated input tube shown to close, and conservation and positivity verified with clipping and floors included.
 
-**Proposition 8.2 (accuracy off $M$; conditional on (S); untested).** Under (S), with a chart $\chi$ on the image of $\pi$, $\hat\pi \approx \chi\circ\pi$,
-and $\hat G$ defined on a set $Q \supset \hat\pi(N) \cup \chi(\pi(N))$ and Lipschitz on the pairs $(\hat\pi(p), \chi(\pi(p)))$ (or $\hat\pi$ landing in
-$\chi(\pi(N))$):
-$\sup_N\lVert\Psi - \Phi_\tau\rVert \le \sup_{\chi(\pi(N))}\lVert\hat G - \Gamma_\tau\circ\chi^{-1}\rVert + \mathrm{Lip}_Q(\hat G)\sup_N\lVert\hat\pi - \chi\circ\pi\rVert + C\sup_N\operatorname{dist}(\cdot, S)e^{-\gamma\tau}$
-(the one-step split of Theorem 6). A Lipschitz bound on $\chi(\pi(N))$ alone does not suffice: on the attracting circle of Example 6.8 with
-$\omega = 0$, the identity chart, $\hat\pi = (1 + h)\pi$ and $\hat G(v) = v + A(\lVert v\rVert_2 - 1)e_1$ (exact and 1-Lipschitz on the circle), the
-error at $e_1$ is $(1 + A)h$ while that right side does not depend on $A$ (review 8). For an atlas, the chart-selection rule is part of the
-map, and the estimate must hold for every chart it can select. Data on $M \subset S$ do not give a fit on $\chi(\pi(N))$, and fibre constancy of $\hat\pi$ is not enough unless the
+**Proposition 8.2 (accuracy off $M$; conditional on (S); untested).** Under (S), with a chart (or an embedding) $\chi$ on the image of $\pi$,
+$\hat\pi \approx \chi\circ\pi$, and $\hat G$ defined on $\hat\pi(N) \cup \chi(\pi(N))$ with the finite paired constant
+$L = \sup_{p\in N,\,\hat\pi(p)\ne\chi(\pi(p))}\lVert\hat G(\hat\pi(p)) - \hat G(\chi(\pi(p)))\rVert/\lVert\hat\pi(p) - \chi(\pi(p))\rVert$:
+$\sup_N\lVert\Psi - \Phi_\tau\rVert \le \sup_{\chi(\pi(N))}\lVert\hat G - \Gamma_\tau\circ\chi^{-1}\rVert + L\sup_N\lVert\hat\pi - \chi\circ\pi\rVert + C\sup_N\operatorname{dist}(\cdot, S)e^{-\gamma\tau}$
+(insert $\hat G(\chi(\pi(p)))$ and $\Gamma_\tau(\pi(p))$ between $\hat G(\hat\pi(p))$ and $\Phi_\tau(p)$; the last term is Theorem 6's remainder). When $\hat\pi$
+lands in $\chi(\pi(N))$, a Lipschitz bound of $\hat G$ there supplies $L$. A Lipschitz bound on $\chi(\pi(N))$ alone does not suffice otherwise: on
+the attracting circle of Example 6.8 with $\omega = 0$, take the angle chart, inputs whose exact code image is $[-a, 0]$ inside it, a learned
+code shifted by $h > 0$, and the decoder $(\cos u, \sin u) + A\max(u, 0)e_1$ (exact, and 1-Lipschitz, on the exact image); at angle 0 the first
+coordinate errs $|\cos h - 1 + Ah|$, which grows with $A$ while the right side with the Lipschitz constant on the exact image does not (review
+9). For an atlas, the chart-selection rule is part of the map: bound every chart the implementation can select and take the maximum. Data on $M \subset S$ do not give a fit on $\chi(\pi(N))$, and fibre constancy of $\hat\pi$ is not enough unless the
 encoded base point is also right. This is the guarantee an operator-split simulation needs (the other operators move the state off $M$): the
 main open problem.
 
@@ -587,8 +594,8 @@ chart value costs). The smallest $k$ reaching a quarter of the tolerance:
 | HIRES (8) | 7 | 7 | 3 |
 | POLLU (20) | 16 | 16 | |
 
-*Outcomes of the committed predictions (post hoc: script and output in one commit).* Fisher–KPP: the count did not grow from $d = 10$ to 20
-(7 and 8; lift errors $5.7\times10^{-3}$ against $8.6\times10^{-3}$ at $k = 6$, $2.1\times10^{-3}$ against $3.0\times10^{-3}$ at $k = 7$), and the input needs fewer
+*Outcomes of the committed predictions (post hoc: script and output in one commit).* Fisher–KPP: the count at which the lift error reaches
+the tolerance did not grow from $d = 10$ to 20 (6 and 6 at 0.01 dex; 7 and 8 at a quarter of it, the table's criterion; lift errors $5.7\times10^{-3}$ against $8.6\times10^{-3}$ at $k = 6$, $2.1\times10^{-3}$ against $3.0\times10^{-3}$ at $k = 7$), and the input needs fewer
 coordinates than the state (the step damps what the input drops): confirmed, as an empirical trend for these sampled ensembles. Theorem 6.6
 motivated it but does not predict it: it bounds $\sigma_m(D\Phi)$, not the displacement made by projecting a visited state onto its PCA
 subspace, and a discarded direction of small variance can be slow even with a constant Jacobian and a fast spectral gap. Connecting the
@@ -638,19 +645,24 @@ fits that hold the rollout (about 15), so a single-state maximum does not separa
 training chains: (i) the defects' first-order sum, and (ii) the surrogate's own propagation (products of $D\Psi$) against the dynamics'.
 Neither is a sufficient condition, even with the Jacobians taken on the surrogate's chain: for the exact identity step, a start at 0 and
 $\Psi(y) = y + \varepsilon + C\,h(y/\varepsilon)$ with $h(s) = 3s^2 - 2s^3$, the two-step first-order sum is $2\varepsilon$ and $D\Psi = 1$ at both inputs 0 and
-$\varepsilon$, yet the two-step error is $2\varepsilon + C$ (review 8). A sufficient condition needs a tube and a remainder bound (Theorem 8, or
-Proposition 2.2 with mean Jacobians along the exact-to-surrogate segments). The chained error on the training chains, which section G's rule
-uses, includes the nonlinear feedback and is a different quantity from (i); it separated every case there, as a selection diagnostic.
+$\varepsilon$, yet the two-step error is $2\varepsilon + C$, so for $\varepsilon, C > 0$ and any tolerance strictly between $2\varepsilon$ and $2\varepsilon + C$ both
+diagnostics pass and the rollout fails (reviews 8, 9). A sufficient condition needs a tube that is shown to close: Theorem 8 for factored
+maps, Proposition 2.2's Taylor representation with its remainder bound, or the exact mean-Jacobian recurrence along the exact-to-surrogate
+segments. The chained error on the training chains, which section G's rule
+uses, includes the nonlinear feedback and is a different quantity from (i). As a selection diagnostic it picked fits that pass the
+unperturbed test chains in every `g5` and `g6` draw, but it does not separate passes from failures at every degree (in `g6`, degree 10
+passes the training chains and fails the test chains in two draws).
 
 *Off the visited set (H2).* The step amplifies some chart-normal input perturbations (gain 1.41 along an ambient normal direction; an
 amplified displacement can still be turned into a tangent one, so this is not expansion in the distance to the set), and a kick of $\varepsilon$
-gives an error of about $1.9\varepsilon$ ($1.9\times10^{-2}$ at 0.01 dex); nothing is refused. Two constructive results (review 6 test 9), both for the
-*uncorrected reduced ChebTT* ($e_0 = 2.46\times10^{-3}$ its error on the set): the decoder residual $r(z) = \max|z - D(\pi z)|$, which needs no solve,
-bounded its error as $\le 1.53\,(e_0 + r)$ on every kicked state (the largest observed ratio, 1.532), a computable proxy for Proposition 8.2's middle
-term (a deterministic starting point is $\lVert G(u) - \Phi(D(u))\rVert + Lr$ on validated lift segments, before projection); as a refusal rule at a
-quarter of the tolerance it admitted 5% of the states kicked by 0.003 dex and none at 0.01 or 0.05; and a first-order normal correction
-$\Psi_1(z) = \Phi(D(\pi z)) + D\Phi\,(z - D(\pi z))$ cut the kicked error from $1.9\times10^{-2}$ to $2.0\times10^{-4}$ at 0.01 dex and from
-$9.4\times10^{-2}$ to $4.9\times10^{-3}$ at 0.05 dex (with the exact Jacobian; a fitted $B(u) \approx D\Phi(D(u))$ is the next step).
+gives an error of about $1.9\varepsilon$ ($1.9\times10^{-2}$ at 0.01 dex); nothing is refused. Two constructive results (review 6 test 9), from two
+different arms. First, for the *uncorrected reduced ChebTT* ($e_0 = 2.46\times10^{-3}$ its error on the set, 400 kicked states): the decoder
+residual $r(z) = \max|z - D(\pi z)|$, which needs no solve, tracked its error, the largest observed ratio to $e_0 + r$ being 1.532 (an
+empirical constant of that sample, not a bound), a computable proxy for Proposition 8.2's middle term (a deterministic starting point is $\lVert G(u) - \Phi(D(u))\rVert + Lr$ on validated lift segments, before projection); as a refusal rule at a
+quarter of the tolerance it admitted 5% of the states kicked by 0.003 dex and none at 0.01 or 0.05. Second, for the ideal reduced map
+$\Phi(D(\pi z))$ (a solve at the decoded point, 100 kicked states): a first-order normal correction $\Psi_1(z) = \Phi(D(\pi z)) + D\Phi\,(z - D(\pi z))$,
+with $D\Phi$ by central differences, cut the kicked error from $1.9\times10^{-2}$ to $2.0\times10^{-4}$ at 0.01 dex and from $9.4\times10^{-2}$ to
+$4.9\times10^{-3}$ at 0.05 dex (a fitted $B(u) \approx D\Phi(D(u))$ is section G's step).
 
 *Predictions.* P1 (decoder far below affine) held; its second half (polished within a quarter of the tolerance) failed. P2 was committed for the
 polished lift and run with the decoder (the best on the test states); its timing part held for the build alone; "rollouts bounded" and P3 (the
@@ -708,9 +720,9 @@ committed in `3ce981b`, `6c92037`, `9d3156c` and `479f12b`, each before its run,
   log-coordinate Jacobians at 300 training states. These come from forward sensitivities in `g4`, and from central differences of the
   step in `g5`–`g6` (16 plain solves each), which reproduce `g4`'s figures to three digits. Both $B$ and the derivative rows below use $J$
   at the training state $X$, not at $D(\pi X)$; the difference is of the order of the decoder residual;
-- the deployed map: $\Psi_1$ followed by clipping and the projection onto the input's invariant. It is not a factored map, so Theorem 8
-  does not apply to it (§8, Scope); HIRES's invariant $y_7 + y_8$ varies across trajectories, so even the uncorrected map reads it from the
-  input, not from the chart;
+- the deployed map: $\Psi_1$ followed by clipping and the projection onto the input's invariant (with an abundance floor). HIRES's
+  invariant $y_7 + y_8$ varies across trajectories, so even the uncorrected map reads it from the input, and the correction reads the full
+  residual: neither is constant on the chart's fibres, so Theorem 8 does not apply as it stands (§8, Scope);
 - the rule: the degree in 4–12 with the smallest worst training-chain error of the *deployed* surrogate over all 100 training
   trajectories; it passes when that error is within the tolerance.
 
@@ -753,8 +765,8 @@ What the runs show:
   $D(u)$ to $z$, before projection and clipping,
   $\lVert\Psi_1(z) - \Phi(z)\rVert \le \lVert G(u) - \Phi(D(u))\rVert + \lVert B(u) - J(D(u))\rVert\lVert n\rVert + K\lVert n\rVert^2/2$; only the last term is quadratic. With exact
   pieces the first two vanish: the diagnosis error rises 12.9-fold from $\varepsilon = 0.003$ to 0.01 (11.1 for second order; two kick sizes,
-  40 states). With fitted pieces the measured slopes in $\varepsilon$ are 0.96–1.02 over $[0.003, 0.05]$, an observation that does not identify
-  which first-order term dominates. The on-trajectory derivative rows use $J(X)D'(u)$, which differs from the derivative of $\Phi\circ D$ by at
+  40 states). With fitted pieces the measured slopes in $\varepsilon$ are 0.96–1.02 over $[0.003, 0.05]$, a finite-range observation that identifies neither
+  the dominant term (the fit-value term need not vanish at $n = 0$ and varies across the kicked chart sites) nor an asymptotic order. The on-trajectory derivative rows use $J(X)D'(u)$, which differs from the derivative of $\Phi\circ D$ by at
   most $K\lVert X - D(u)\rVert\lVert D'(u)\rVert$ (the decoder residual's order), and $B$ is fitted to $J(X)$ against $u = \pi X$.
   On a fit to $\Phi(X)$ the correction counts the normal part twice. At degree 9, for example, the value-only fit gives $1.2\times10^{-3}$
   plain and $5.2\times10^{-2}$ corrected, while the consistent fit gives $5.6\times10^{-2}$ plain and $1.5\times10^{-3}$ corrected (review 7).
@@ -773,10 +785,12 @@ What the runs show:
   open.
 - **The single-state Jacobian condition is not a rollout condition.** Value-only fits with $\max\lVert D\Psi\rVert \approx 15$ (degrees 9
   and 10) hold the rollout, while degree 8 with 16.3 diverges. The gradient fit's constant 1.27 is the dynamics' gain along the chart
-  ($\max\lVert J\,D'\,V^{\mathsf T}\rVert = 1.29$), and the deployed corrected surrogate has 1.87 against the dynamics' 1.86. The rule now
-  uses the chained error alone, which separated every case; the product condition of Demonstration 8.5 along the chains is untested.
+  ($\max\lVert J\,D'\,V^{\mathsf T}\rVert = 1.29$), and the deployed corrected surrogate has 1.87 against the dynamics' 1.86 (all sampled norms). The rule now
+  uses the chained error alone, which picked fits that pass the unperturbed test chains in every draw (not a separation at every degree;
+  see Demonstration 8.5); the product condition of Demonstration 8.5 along the chains is untested.
 - **Refusal.** Refusing at $r > \mathrm{tol}/4$ refuses 96–100% of the kicked states, a property of the kicks (every coordinate moved by
-  at least 0.003). The ratio of the separate maxima of the corrected error and the residual is 0.33–0.37; it is not a pointwise calibration.
+  at least 0.003). For the gradient fit the ratio of the separate maxima of the corrected error and the residual is 0.30–0.37 over its four
+  kicks (0.75–0.86 for the consistent fit, 2.9–3.6 for the data fit); it is not a pointwise calibration.
   A threshold must be calibrated on the paired errors and residuals of the deployed model, with its accepted-region error and coverage, and
   the fallback tested on full chains. The kicks also
   move the chart value as well as the normal part, so the kicked error mixes the two (review 6 separated them).
@@ -791,8 +805,8 @@ What the runs show:
   - R3 is refuted for the fitted correction; the exact one is second order.
   - R4 fails both clauses: the corrected rollout is worse than the plain one, and the one-step error ($2.1\times10^{-3}$) exceeds twice the
     data fit's.
-  - R5: its Jacobian clause holds for the plain degree-8 map (1.267 against the dynamics' 1.857) and fails for the corrected map that
-    is deployed (1.873, review 7); the two uncorrected kick comparisons and the corrected cutoff at 0.01 hold; the slope fails (0.98
+  - R5 (the fallback degree 8): its Jacobian clause holds for the plain map (sampled norms: 1.267 against the dynamics' 1.857) and fails
+    for the corrected map that is deployed (sampled 1.873, review 7); the two uncorrected kick comparisons and the corrected cutoff at 0.01 hold; the slope fails (0.98
     against 1.7).
   - P1, P2 and P3 hold.
   - P4: the ordering clause holds in all three draws, the three-tolerance clause in one.
@@ -839,8 +853,8 @@ Corollary 4.1′ as a separately labelled distributional guarantee.
    - for rollouts on the visited set, values alone: degree 10 holds $1.5\times10^{-4}$ over all 40 test trajectories with no solve;
    - for inputs off the set, a first-order normal correction on targets with the normal part removed, plus Jacobian rows on and off the
      trajectories: a single kick of 0.01 dex stays within the tolerance at every degree;
-   - refusal or error tracking by the solve-free decoder residual (for the uncorrected reduced ChebTT its error stayed within
-     $1.53\,(e_0 + r)$), with a threshold calibrated on the deployed model's paired errors and residuals.
+   - refusal or error tracking by the solve-free decoder residual (for the uncorrected reduced ChebTT the largest observed ratio of its
+     error to $e_0 + r$ was 1.532), with a threshold calibrated on the deployed model's paired errors and residuals.
 
    None of the tested fits holds a rollout kicked at every step (the operator-split proxy; best $2.3\times10^{-2}$). The training-chain
    score is a selection diagnostic, not a certificate.
@@ -851,7 +865,7 @@ Corollary 4.1′ as a separately labelled distributional guarantee.
    containing both $\hat\pi(N)$ and $\chi(\pi(N))$; the open problem for operator
    splitting, where the deployed map (with its solver fallback) must be certified on every kicked state.
 4. **A priori analyticity (T1)**, open: valid wherever tried, informative only on small boxes.
-5. **The light cone (T3)**, for lattices with $\ell\Delta\tau = O(1)$.
+5. **The light cone (T3)**, for lattices with $h^*$, $e^{\nu\tau}$ and $\ell\Delta\tau$ bounded uniformly in $d$.
 
 Proposed for formalisation in Lean later (none is formalised yet): Lemmas 1.1, 1.2, 3.1, 7.2, Propositions 1.3, 1.5, 2.1–2.4, 4.1, 4.2, 4.4, 5.1, 5.2, Corollary 4.1′, Example 6.8 and Theorem 8 are
 elementary or self-contained given their cited results; Proposition 6.5 cites Borsuk–Ulam; the Chebyshev bounds, holomorphic dependence,
@@ -860,7 +874,8 @@ Fenichel's theorem, Weyl's and Horn's inequalities and the compound-matrix log n
 ## 11. Open items
 
 - §8 and G: one HIRES surrogate for both regimes (on the set and kicked at every step), first through a better fit of $B(u)$ (the
-  off-trajectory Jacobians, a higher degree; the exact pair is second order, the fitted pair first order), then through refusal with the
+  off-trajectory Jacobians, a higher degree; with the exact pair the error is second order in the kick, with the fitted pair it grew about
+  linearly over the kicks tested), then through refusal with the
   solver as fallback at a calibrated residual threshold (the fallback branch then belongs to the deployed map); separate off-trajectory
   value and derivative arms at fixed sites; a rollout bound for the deployed corrected, projected map on a stated split-input tube; a proof of the residual bound under stated hypotheses; POLLU with several hundred trajectories and a decoder at $k = 7$–8
   (Demonstration 8.5); a validated (interval) ODE enclosure to turn Demonstration 8.3's estimated defects into verified ones; a tighter first-order
