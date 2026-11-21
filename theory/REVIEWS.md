@@ -104,3 +104,26 @@ practical claim held only for charts of the data's dimension. Tests A, A2 (HIRES
 | Lit. | – | Combustion manifold methods (ILDM, FGM, FPI, REDIM, ISAT–RCCE, ICE-PIC), constrained runs, learned-manifold reduced dynamics, approximate inertial manifolds; Proposition 2.4(c) folklore; Proposition 6.5 an application of DeVore–Howard–Micchelli | Accepted, cited as "from memory" |
 | T8′ | proposal | Rollout theorem with computable constants | Adopted as Theorem 8 |
 | P7 | proposal | One-sided path-averaged bound | Adopted as Proposition 6.7(b) (proof checked: the moving-eigenbasis equation and Horn's product inequality) |
+
+## Round 4 (external): Codex GPT-6.2 (`gpt-6.2-sol`, medium effort), on revision 3 (commit `ffa0df0`)
+
+Brief: check every proved, cited and conditional statement; check the synthesis against the evidence; judge the foundation; list final
+edits. Verdict: Theorem 8's inequality is sound with a closed tube and verified constants, but items 1–2 of the ranking needed changes before
+they could support a worst-case guarantee or prescribe a coordinate count. Its own test: an exact stiff flow on an attracting circle (Example 6.8).
+All findings were checked against the memo before being applied; the archived Robertson records were queried to confirm F9.
+
+| # | Severity | Finding | Resolution |
+|---|---|---|---|
+| F1 | critical | The rollout audit bounds the probability of ever accepting a model bad on more than measure $\eta$, not the worst case, and not conditionally on acceptance | Accepted: Proposition 4.1 restated with frozen candidates and the joint false-pass reading; the audit labelled distributional; the Lipschitz-plus-ball-mass route to a uniform bound added; §10 targets a deterministic worst-case bound |
+| F2 | critical | Theorem 8's constants in the check are sampled; the theorem needs a closed tube, coverage of the inputs, and validated constants | Accepted: Theorem 8 restated for a finite horizon with the closed tube, no injectivity, the latent defect $\varepsilon_u$; the Robertson figure called an estimate; what verification needs is stated |
+| F3 | critical | (S) with the distance factor on the derivative forces $D\pi = I$ on $S$ | Accepted (an error introduced in revision 3): the distance factor kept for the state only; the derivative hypothesis (S′) separate |
+| F4 | critical | Local rank does not bound the coordinate count (attracting circle); $m_M \le \dim M \le m_{\mathrm{ball}}$ false in general | Accepted: counts defined by tolerance, target set and encoder class; local rank separated; Example 6.8 added (proof checked) |
+| F5 | major | 2.4(b) omits the exact map's contraction; normal stability leaves tangential errors free; P2.1 does not follow | Accepted: contraction stated; scope paragraph with the circle example; P2.1 and P2.2 demoted to diagnostics and a hypothesis; conservation in physical concentrations |
+| F6 | major | The Robertson test does not establish sharpness of Proposition 6.5 | Accepted: "scale comparison"; status "proved, citing Borsuk–Ulam"; $K_2 = 0$, output dimension, chart version |
+| F7 | major | Lemma 1.2's sum, endpoint bound and infimum; Remark 1.6's examples; degree claims; Bernstein's converse is a root rate | Accepted, all; exact dissipative $\rho$ corrected (2.544 at $\tau = 1$); "certified degree" replaced by the bound's proxy degree |
+| F8 | major | The empirical-Gram variance claim does not follow | Accepted: Proposition 5.2 restated with the deterministic bound $\sqrt{K(x)}\lVert G^{-1}\rVert\lVert b\rVert$ and $\mathbb{E}\lVert b\rVert^2$ (checked) |
+| F9 | major | The synthesis mixed runs and over-weighted sampled comparisons | Accepted: archived Robertson records used (rollout/survived 18–30.5, `rollout_over_bound` 0.38–0.73, 2,042 solves, confirmed by a query); Brusselator long step marked scratch; HIRES "bounded" qualified; §9 entries labelled obs./est./thm |
+| F10 | major | A slowly rotating eigenbasis refutes the path-averaged law | Accepted: Proposition 6.7(c) replaced by the counterexample; (a)'s bracket stated each way; (b) as an upper bound only |
+| F11 | major | Corollaries 6.2–6.3 omit norms, domains and the remainder | Accepted: norm and decoder class stated; three budgets with $\sup\lVert R_\tau\rVert$; no general $O(\varepsilon)$ lower bound |
+| F12 | minor | Proof and domain repairs (2.1–2.3, 3.1–3.3, 4.2–4.5, 7.1–7.2, notation) | Accepted: Proposition 4.4 given the stronger covering proof $L/(2N^{1/d})$; window bound needs row-sum control; $\Pi$ for the $L^2$ projector; the rest as listed |
+| F13 | major | Prior art contains the techniques and nearby latent rollout bounds (Lee–Carlberg; Farenga et al.; Batson et al.; DeVore–Howard–Micchelli) | Accepted: each statement credited; the contribution restated as a verified end-to-end certificate for a stated class |
