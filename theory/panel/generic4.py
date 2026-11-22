@@ -137,6 +137,7 @@ class Surrogate4(Surrogate2):
             a = self.env if self.env is not None else (np.inf, 0.0, 0.0, 0.0)
             bound = a[0] + a[1] * b + a[2] * rho + a[3] * rho**2
             caps = ~np.isfinite(b) | (b > self.b_cap) | (s > self.s_max) | (rho > self.rho_max)
+            self._br = (b, rho)
             return bound, caps
         if self.gate == "envelope":
             rho = self.offset(Z)
@@ -202,6 +203,7 @@ class Surrogate4(Surrogate2):
             bound, caps = self.gate_bound(Z, Phi)
         r = caps | (bound > TOL / 2) | bad
         self._key, self._val = (Z, np.array(Z, copy=True)), (out, r)
+        self._stats = getattr(self, "_br", None)  # the gate's b and rho for this batch, for the account (one evaluation per step)
         return out, r
 
     def raw(self, Z):
@@ -486,20 +488,26 @@ class Account:
     be the same cells at every call.
     """
 
-    def __init__(self, sur, budget=TOL / 2):
-        self.sur, self.budget, self.S, self.evals = sur, budget, None, 0
+    def __init__(self, sur, budget=TOL / 2, decay=1.0):
+        self.sur, self.budget, self.S, self.evals, self.decay = sur, budget, None, 0, decay
+        self.by_gate, self.by_account = None, None
 
     def refuses(self, Z):
         _, r = self.sur.evaluate(Z)
         if self.S is None:
             self.S = np.zeros(len(Z))
         if self.sur.gate == "capped":  # charge the typical defect, scaled by lambda (council4-fable.md, section 2.1)
-            b, _ = self.sur.G.gate_terms(self.sur.design(Z))
-            rho = self.sur.offset(Z)
+            b, rho = self.sur._stats  # the gate's own statistics for this batch: no second evaluation
             m = self.sur.charge
             c = m[0] + m[1] * b + m[2] * rho + m[3] * rho**2
-            r = np.asarray(r, dtype=bool) | (self.sur.lam * (self.S + c) > self.budget)
-            self.S = self.S + np.where(r, 0.0, c)
+            gate = np.asarray(r, dtype=bool)
+            # decay < 1: the account forgets old charges geometrically (errors of a contracting map fade), so a long chain is not
+            # refused for good once its sum reaches the budget
+            S = self.decay * self.S
+            acct = ~gate & (self.sur.lam * (S + c) > self.budget)
+            r = gate | acct
+            self.S = S + np.where(r, 0.0, c)
+            self.by_gate, self.by_account = gate, acct
             return r
         bound, _ = self.sur.gate_bound(Z)
         r = np.asarray(r, dtype=bool) | (self.S + bound > self.budget)
