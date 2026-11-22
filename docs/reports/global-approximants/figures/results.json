@@ -172,6 +172,81 @@
      "status": "done",
      "train_s": 51.36752151600376
     },
+    "fisher_kpp_d3/chebtt_roll": {
+     "columns_refused": 0.0,
+     "columns_worst": 0.0025400910805597754,
+     "denominator_us": 58.7415666814195,
+     "evaluate_us_1000": 0.508691999129951,
+     "failed": null,
+     "long": {
+      "certified_horizon": null,
+      "fresh_rate": 0.0,
+      "speedup_steady": 115.47570392671601,
+      "steady_rate": 0.0,
+      "worst": 0.002565876076711146
+     },
+     "margin_rounds": null,
+     "mixing_worst": 0.0024748708222567806,
+     "one_step_tol": 0.0015583799293368004,
+     "over_budget": false,
+     "rollout_fresh_rate": 0.0,
+     "rollout_steady_rate": 0.0,
+     "rollout_worst": 0.00251854144259972,
+     "served": null,
+     "solver_calls": 4148,
+     "status": "done",
+     "train_s": 6.033343215996865
+    },
+    "fisher_kpp_d3/recipe_100": {
+     "columns_refused": 0.02654166666666666,
+     "columns_worst": 0.00782238991551254,
+     "denominator_us": 58.7415666814195,
+     "evaluate_us_1000": 1.0515009926166385,
+     "failed": null,
+     "long": {
+      "certified_horizon": 6,
+      "fresh_rate": 0.1453125,
+      "speedup_steady": 55.86448999467164,
+      "steady_rate": 0.0,
+      "worst": 0.0060419391327035665
+     },
+     "margin_rounds": null,
+     "mixing_worst": 0.008467843176946266,
+     "one_step_tol": null,
+     "over_budget": false,
+     "rollout_fresh_rate": 0.14750000000000002,
+     "rollout_steady_rate": 0.0,
+     "rollout_worst": 0.011587903782019682,
+     "served": true,
+     "solver_calls": 16000,
+     "status": "done",
+     "train_s": 31.64539866700943
+    },
+    "fisher_kpp_d3/recipe_340": {
+     "columns_refused": 0.022000000000000002,
+     "columns_worst": 0.001463892847207493,
+     "denominator_us": 58.7415666814195,
+     "evaluate_us_1000": 2.021883992711082,
+     "failed": null,
+     "long": {
+      "certified_horizon": null,
+      "fresh_rate": 0.1109375,
+      "speedup_steady": 29.05288675966752,
+      "steady_rate": 0.0,
+      "worst": 0.0016346236578439477
+     },
+     "margin_rounds": null,
+     "mixing_worst": 0.0013389305428357368,
+     "one_step_tol": null,
+     "over_budget": false,
+     "rollout_fresh_rate": 0.11499999999999999,
+     "rollout_steady_rate": 0.0,
+     "rollout_worst": 0.001364388041194431,
+     "served": true,
+     "solver_calls": 25600,
+     "status": "done",
+     "train_s": 50.170009594003204
+    },
     "robertson/afinni_roll": {
      "columns_refused": 0.0031249999999999997,
      "columns_worst": 0.005147046559152102,
@@ -196,6 +271,31 @@
      "solver_calls": 226373,
      "status": "done",
      "train_s": 1539.4429665959906
+    },
+    "robertson/art_quad_roll": {
+     "columns_refused": 0.0,
+     "columns_worst": 0.0025537399954629336,
+     "denominator_us": 108.65047331511353,
+     "evaluate_us_1000": 0.4304169997340068,
+     "failed": null,
+     "long": {
+      "certified_horizon": 91,
+      "fresh_rate": 0.0,
+      "speedup_steady": 1.1345037737444157,
+      "steady_rate": 0.8774811557788945,
+      "worst": 0.005774637182673847
+     },
+     "margin_rounds": 2,
+     "mixing_worst": 0.002360104242429273,
+     "one_step_tol": 0.001,
+     "over_budget": false,
+     "rollout_fresh_rate": 0.0,
+     "rollout_steady_rate": 0.0,
+     "rollout_worst": 0.002875812800678501,
+     "served": null,
+     "solver_calls": 2422,
+     "status": "done",
+     "train_s": 43.8259395690111
     },
     "robertson/art_roll": {
      "columns_refused": 0.0,

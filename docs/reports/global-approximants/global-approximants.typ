@@ -967,10 +967,10 @@ box needs pieces everywhere, while a global expansion's error falls geometricall
 #let ccell(r, tol) = {
   if r == none { return small[not run] }
   if r.status != "done" { return small[not within \ the budget] }
-  if r.over_budget { return small[not within \ the budget \ (#num(r.train_s) s)] }
   let ok = r.rollout_worst != none and r.rollout_worst <= tol / 2
-  let body = small[#sig(r.rollout_worst) \ #pctx(r.long.steady_rate) \ #sig(r.long.speedup_steady)×]
-  if ok { body } else { text(fill: red, body) }
+  let body = small[#sig(r.rollout_worst) \ #pctx(r.long.steady_rate) \ #sig(r.long.speedup_steady)×#if r.over_budget [ \ \* #num(r.train_s) s]]
+  let body = if ok { body } else { text(fill: red, body) }
+  if r.over_budget { text(style: "italic", body) } else { body }
 }
 #let ctab(tol) = table(
   columns: (auto,) + (1fr,) * 6,
@@ -984,12 +984,13 @@ box needs pieces everywhere, while a global expansion's error falls geometricall
 #figure(ctab(0.05), caption: [Every method under one protocol at the tolerance 0.05: the worst error over the 40 test
   rollouts, the steady refusal rate on 2,000-step chains, and the steady speed-up over the fastest exact solver. Red:
   the rollout exceeds $atol slash 2$. Every case has the same compute budget, #(rs.compare.budget_s / 60) minutes on this
-  laptop; a case that did not finish within it is marked, with its time when it finished later.]) <tab:c005>
+  laptop. A case that did not finish within it says so; a case that finished but took longer (it ran under the study's
+  first limit, 40 minutes) keeps its values, in italics with an asterisk and its training time.]) <tab:c005>
 #figure(ctab(0.01), caption: [As @tab:c005, at the tolerance 0.01.]) <tab:c001>
 
 #figure(panel("compare-steps"), caption: [The comparison of @tab:c005 and @tab:c001 per problem: the rollout's worst
   error over the tolerance (above the dashed line it exceeds $atol slash 2$) and the steady speed-up on long chains; a
-  cross marks a case that did not finish within the budget.]) <fig:csteps>
+  cross marks a case that did not finish within the budget, and a hollow marker one that finished beyond it.]) <fig:csteps>
 
 #let holds(m) = m.rollout_worst <= ex.tol / 2
 The running example shows the pattern in miniature (@fig:rollout). At $atol = #ex.tol$, AFINNI's rollouts

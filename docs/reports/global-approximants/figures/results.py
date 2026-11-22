@@ -249,14 +249,16 @@ def panels(fs: dict, cmp: dict, rc: dict) -> None:
                 r = recs.get(f"{p}/{m}")
                 if r is None:
                     continue
-                if r["status"] != "done" or r["over_budget"]:
+                if r["status"] != "done":
                     axes[0, j].plot(p_i + dx, 30, "x", color=COLOURS[m], ms=3.5)
                     axes[1, j].plot(p_i + dx, 0.3, "x", color=COLOURS[m], ms=3.5)
                     continue
-                axes[0, j].plot(p_i + dx, max(r["rollout_worst"], 1e-7) / tol, "o", color=COLOURS[m], ms=3)
+                # a case that finished beyond the compute budget keeps its values, drawn hollow
+                face = "none" if r["over_budget"] else COLOURS[m]
+                axes[0, j].plot(p_i + dx, max(r["rollout_worst"], 1e-7) / tol, "o", color=COLOURS[m], mfc=face, ms=3)
                 sp = r["long"].get("speedup_steady")
                 if sp:
-                    axes[1, j].plot(p_i + dx, sp, "o", color=COLOURS[m], ms=3)
+                    axes[1, j].plot(p_i + dx, sp, "o", color=COLOURS[m], mfc=face, ms=3)
         axes[0, j].axhline(0.5, color="#c0392b", lw=0.6, ls="--")
         axes[1, j].axhline(1, color="#424242", lw=0.6, ls="--")
         axes[0, j].set_yscale("log"), axes[1, j].set_yscale("log")
