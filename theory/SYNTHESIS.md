@@ -997,6 +997,24 @@ As p22, with the 40 long training trajectories spanning the whole 2,000-step hor
 Training that spans the deployment horizon serves Robertson's long chains. CHEMAKZO keeps reaching states the 40 long trajectories do
 not cover even then; whether more long starts close the gap is untested.
 
+### 3.39 Growing the chart under coupling (p24; `theory/panel/p24_grow_chart.py`, predictions in its commit)
+
+p20's three rounds of refused (or uniformly drawn) closed-column inputs, on POLLU and HIRES with the full chart and on three reduced-chart
+lattices. The four POLLU and HIRES cases reached their 3,600 s limit in round 3, so their records hold only the timeout; their first two
+rounds are taken from the run's log (a case should keep a record per round, so that a limit loses only the round in progress).
+- G1 (POLLU served on the full chart, audit solver share below 20% after three refused rounds) cannot be scored: after two rounds the
+  refused arm's share is 15% (uniform 18%) with the audit within tol / 2 (4.2e-3), but neither arm is served.
+- G2 (HIRES stays above 50%, or exceeds tol / 2) fails: after two rounds both arms are served, the refused arm at 3.7% (worst 1.8e-5),
+  the uniform arm at 5.0% (3.6e-5), from 95% on the reduced chart (p17). The full chart and the added pairs serve HIRES; which pairs are
+  added matters little.
+- G3 (refused below uniform after three rounds on the lattices, every audit within tol / 2) holds on bruss_d20 (3.3% against 4.1%) and
+  burgers_d20 (1.1% against 2.0%) and fails on fisher_kpp_d10: its refused arm's audit rises to 9.3e-3 in round 2, and in round 3 the
+  reselection falls from degree 7 to 3 and refuses 81% of the audit steps, while the uniform arm stays served (3.6%, worst 4.1e-3, its
+  round 2 at 5.9e-3 just above tol / 2).
+
+Refused-state data helps where the fit is stable, by small margins on these lattices, and can destabilise the selection where the refused
+inputs pull the fit away from the audit's states: a refused round should be accepted only if its audit improves.
+
 ---
 
 ## 4. Mistakes, and what each taught
