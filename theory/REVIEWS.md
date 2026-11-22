@@ -265,3 +265,32 @@ Proposition 5.1 and Corollary 5.3 are correct for an exact least-squares fit; th
 | 9 | major | The gate is blind across the chart's fibres (HIRES: error ~ 1.5 x the quartic-decoder residual, rank correlation 0.99-1.00) | Accepted: the residual term (refuse beyond the training maximum) added to the gate, tested on every problem with k < free |
 | 10 | major | The gate's O(p^2) cost; double evaluation; unrepeated timings | Accepted: noted for the timing protocol; a sketched bound left open |
 | 11-16 | minor | Caps not derived; independent inputs vs pairs; e_v a fragile maximum; clipping hides overflow; singular factor; two mixing protocols named alike; KIDA's k rule | Accepted: the degree cap raised with early stopping; overflow tested before clipping; pseudo-inverse for rank-deficient factors; names fixed; KIDA open |
+
+## Council round 1 (external, independent): Fable 5.2 (medium), Sol 6.2 (high), Astra 6.2 (medium), on `SYNTHESIS.md` sections 1-10
+
+Reviews: `reviews/council-fable.md`, `reviews/council-sol.md`, `reviews/council-astra.md`. Agreed: repair KIDA's reference comparison
+first (Astra: the invariant projection, given the solver's own answer, missed by up to 293 dex); a deployment test with neighbours
+carrying surrogate error before any model search; rollout-tuned ChebTT and the chart as controls; one bounded MLP against linear and local
+fits on equal data; designed data compared at equal cost; stop full-panel reruns, architecture surveys and unconditional AFINNI/ART
+sweeps. Resolution (`SYNTHESIS.md` section 3.9): KIDA's conservation laws declared in `src` (approved); the charge-neutral dark range and
+13 key species; the third recipe (generic3: calibration for the maximum on states set apart, mixed calibration, a propagation margin, k
+up to the free dimension); p4, p5, p6 and r6 run with predictions committed first.
+
+## Council round 2 (external, independent): the same three, on `SYNTHESIS.md` sections 3.9-3.16, 9.6, 9.7 and 10 (commit `39422d9`)
+
+Reviews: `reviews/council2-fable.md`, `reviews/council2-sol.md`, `reviews/council2-astra.md` (each with read-only checks).
+
+| # | From | Critique | Resolution |
+|---|---|---|---|
+| 1 | Fable | The per-step budget is tol/2 everywhere while the accumulation factor A_n is about n or more on every problem (31-40 on the lattices, 140 CHEMAKZO, 6,669 HIRES); it predicts HIRES's 0.16 weak-mixing chain from files written before the run | Accepted: budgets tol/(2 A_n) and a coherence-based one recorded beside tol/2 |
+| 2 | Fable | HIRES's mixed-input defect is first order in the off-chart offset (coherence 0.84); a constant normal term fitted on training trajectories' mixed states cuts its median 37-62x (not its maximum) | Accepted: the tube experiment (normal term, sensitivity chart, Jacobian labels, a plain-data control) with predictions first |
+| 3 | Fable | Three served fits are singular (CHEMAKZO, fisher_kpp_d5, fisher_kpp_d10): the deployed coefficients are not the minimum-norm fit the bound describes, the 281-1,642 us gates are an SVD per call (a precomputed factor: 15 us, the same decisions), and the 4.7-5.0 "first-step errors" are the output clip of an undetermined fit | Accepted: a truncated-SVD fit, the bound and an out-of-span term from one precomputed factor; R4c and R4d rerun |
+| 4 | Fable, Astra | Reading 9.7.1 does not follow: for ChebTT the column is within 0.4-2.1x of the plain rollout; the 2.7-13x is reference-partner mixing being easier, and p6 also changed the donor geometry | Accepted: chained mixing is no longer the coupled headline; paired forced- against closed-neighbour columns with the same geometry; D = 0.25 and unsorted cells |
+| 5 | Fable, Astra | Reading 9.7.4 is wrong: fisher_kpp_d10's 1,600 arm moves the ungated worst from 4.9 to 0.118 (median 3.4 to 7.1e-3); its initial law has at most five shape parameters and cannot fill 10 dimensions; nearest-neighbour distance in the ambient metric is not a dimension | Accepted: the reading withdrawn; first-step data design stopped (the starts are the panel's i.i.d. initial law) |
+| 6 | All | Selection must take the fastest configuration within the coupled constraints, not the smallest error; CHEMAKZO's 0.7 is mostly the SVD branch (Fable), and degree 5 served at 0.9% solver (Astra) | Accepted: selection by effective speed-up among configurations within the margin; chains stopped once they cannot be served |
+| 7 | All | Conservation laws: Burgers d10 and d20's second law and one of POLLU's are spurious too (off-data checks); the effect of bruss_d20's on scores is 3.5e-8; in the benchmark's store only burgers_d10 is affected; declare laws per system, verify off data | Accepted: theory code uses laws verified off data; the `src` change (declared laws, an off-data check) awaits the user's approval; burgers_d10 marked |
+| 8 | Astra | p5b labelled species in the wrong order (QOI order against sorted columns) | Accepted and fixed (`092220b`): the local arm's misses are S+, HCN, C and N2H+ |
+| 9 | Sol, Fable | Verify the exact baseline before quoting speed-ups: KIDA's step densifies an analytic sparse Jacobian; compare with a sparse path and a tighter reference | Accepted: a KIDA solver audit (sparse against dense, tighter tolerance) before any KIDA speed-up is quoted |
+| 10 | All | KIDA: no more model search until the coverage question is answered; measure the local arm against the number of tracers, the rank of the key species' futures, the attainable avoided solver time | Accepted: KIDA limited to these measurements |
+| 11 | Fable | Basis for charts of 8 or more coordinates (POLLU, Nelson, primordial, lorenz96_d20): an adaptive index set against a trajectory-fitted TT (T-a) | Accepted, after the repair and the tube experiment |
+| 12 | Sol, Astra | One model per output: a cheap grouped output-rank screen before a block TT | Accepted, with item 11 |
