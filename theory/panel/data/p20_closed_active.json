@@ -1,0 +1,658 @@
+{
+ "allen_cahn_d5/refused": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.011791666666666667,
+    "audit_speedup": null,
+    "audit_worst": 0.0054724779787252015,
+    "degree": 5,
+    "extra_pairs": 1627,
+    "new_pairs": 1627,
+    "rollout_solver_share": 0.025625,
+    "rollout_worst": 0.0035588886262333114,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.010375,
+    "audit_speedup": null,
+    "audit_worst": 0.005368501970919856,
+    "degree": 5,
+    "extra_pairs": 1750,
+    "new_pairs": 123,
+    "rollout_solver_share": 0.024375,
+    "rollout_worst": 0.003650283702902976,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.010458333333333333,
+    "audit_speedup": null,
+    "audit_worst": 0.005404898199114522,
+    "degree": 5,
+    "extra_pairs": 1812,
+    "new_pairs": 62,
+    "rollout_solver_share": 0.0225,
+    "rollout_worst": 0.003612586641787957,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "allen_cahn_d5/uniform": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.018833333333333334,
+    "audit_speedup": null,
+    "audit_worst": 0.007741500967585926,
+    "degree": 5,
+    "extra_pairs": 1627,
+    "new_pairs": 1627,
+    "rollout_solver_share": 0.03625,
+    "rollout_worst": 0.0049627817116739,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.018208333333333337,
+    "audit_speedup": null,
+    "audit_worst": 0.007268527619510051,
+    "degree": 5,
+    "extra_pairs": 2079,
+    "new_pairs": 452,
+    "rollout_solver_share": 0.038125000000000006,
+    "rollout_worst": 0.004653975183007017,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.020083333333333335,
+    "audit_speedup": null,
+    "audit_worst": 0.006486371799106244,
+    "degree": 5,
+    "extra_pairs": 2520,
+    "new_pairs": 441,
+    "rollout_solver_share": 0.036875000000000005,
+    "rollout_worst": 0.004182163942106784,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "bruss_d2/refused": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.004625000000000001,
+    "audit_speedup": 50.81626409066162,
+    "audit_worst": 0.003516658494241036,
+    "degree": 6,
+    "extra_pairs": 597,
+    "new_pairs": 597,
+    "rollout_solver_share": 0.005,
+    "rollout_worst": 0.0030508658805674105,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.004291666666666667,
+    "audit_speedup": 57.18636138071879,
+    "audit_worst": 0.0012210181112688396,
+    "degree": 7,
+    "extra_pairs": 729,
+    "new_pairs": 132,
+    "rollout_solver_share": 0.0,
+    "rollout_worst": 0.0007253373705604083,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.0017083333333333334,
+    "audit_speedup": 32.486449406607754,
+    "audit_worst": 0.001252748839123078,
+    "degree": 7,
+    "extra_pairs": 852,
+    "new_pairs": 123,
+    "rollout_solver_share": 0.0,
+    "rollout_worst": 0.0006595826833333263,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "bruss_d2/uniform": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.07975,
+    "audit_speedup": 19.675887705600683,
+    "audit_worst": 0.003874045824125957,
+    "degree": 6,
+    "extra_pairs": 597,
+    "new_pairs": 597,
+    "rollout_solver_share": 0.0,
+    "rollout_worst": 0.0012226518026716149,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.012833333333333335,
+    "audit_speedup": 27.26320695266373,
+    "audit_worst": 0.003379629418111453,
+    "degree": 6,
+    "extra_pairs": 1861,
+    "new_pairs": 1264,
+    "rollout_solver_share": 0.005625,
+    "rollout_worst": 0.0015408370834261997,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.013416666666666667,
+    "audit_speedup": 25.33369922667375,
+    "audit_worst": 0.003063165695004067,
+    "degree": 6,
+    "extra_pairs": 2210,
+    "new_pairs": 349,
+    "rollout_solver_share": 0.005,
+    "rollout_worst": 0.0015311612418279774,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "chemakzo/refused": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.02717647058823529,
+    "audit_speedup": 2.095428339122165,
+    "audit_worst": 5.923810636243587e-06,
+    "degree": 7,
+    "extra_pairs": 50232,
+    "new_pairs": 50232,
+    "rollout_solver_share": 0.010294117647058823,
+    "rollout_worst": 2.499791942334184e-06,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.020686274509803922,
+    "audit_speedup": 2.5281072718754816,
+    "audit_worst": 5.422889006290177e-06,
+    "degree": 7,
+    "extra_pairs": 51238,
+    "new_pairs": 1006,
+    "rollout_solver_share": 0.0061764705882352946,
+    "rollout_worst": 3.808427400997516e-06,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.017823529411764707,
+    "audit_speedup": 5.874521560787887,
+    "audit_worst": 5.21961222377243e-06,
+    "degree": 7,
+    "extra_pairs": 51834,
+    "new_pairs": 596,
+    "rollout_solver_share": 0.007058823529411766,
+    "rollout_worst": 3.3781262667176293e-06,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "chemakzo/uniform": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.02796078431372549,
+    "audit_speedup": 5.668899798567462,
+    "audit_worst": 5.839559035214492e-06,
+    "degree": 7,
+    "extra_pairs": 50232,
+    "new_pairs": 50232,
+    "rollout_solver_share": 0.01264705882352941,
+    "rollout_worst": 1.3169731758466696e-06,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.027313725490196075,
+    "audit_speedup": 2.876755068121037,
+    "audit_worst": 6.1795257841890106e-06,
+    "degree": 7,
+    "extra_pairs": 51259,
+    "new_pairs": 1027,
+    "rollout_solver_share": 0.011176470588235293,
+    "rollout_worst": 2.1281625790514624e-06,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.027509803921568626,
+    "audit_speedup": 2.457864545502745,
+    "audit_worst": 6.0666871735115535e-06,
+    "degree": 7,
+    "extra_pairs": 52247,
+    "new_pairs": 988,
+    "rollout_solver_share": 0.01264705882352941,
+    "rollout_worst": 1.7651775179317042e-06,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "fisher_kpp_d2/refused": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.006958333333333333,
+    "audit_speedup": 8.151385777341787,
+    "audit_worst": 0.0003285472756306973,
+    "degree": 12,
+    "extra_pairs": 373,
+    "new_pairs": 373,
+    "rollout_solver_share": 0.011875,
+    "rollout_worst": 0.00045796106796869296,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.004666666666666666,
+    "audit_speedup": 7.3571893475745185,
+    "audit_worst": 0.0004776367842740381,
+    "degree": 12,
+    "extra_pairs": 518,
+    "new_pairs": 145,
+    "rollout_solver_share": 0.009375,
+    "rollout_worst": 0.0005740566362095745,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.003208333333333334,
+    "audit_speedup": 16.657032532939134,
+    "audit_worst": 0.0005700288535031017,
+    "degree": 12,
+    "extra_pairs": 587,
+    "new_pairs": 69,
+    "rollout_solver_share": 0.009375000000000001,
+    "rollout_worst": 0.0006182384532269491,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "fisher_kpp_d2/uniform": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.016124999999999997,
+    "audit_speedup": 8.065995229588582,
+    "audit_worst": 0.00014689505107545742,
+    "degree": 11,
+    "extra_pairs": 373,
+    "new_pairs": 373,
+    "rollout_solver_share": 0.021875000000000002,
+    "rollout_worst": 0.0002631501118584012,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.014499999999999999,
+    "audit_speedup": 9.029964020381193,
+    "audit_worst": 0.0013575077180845163,
+    "degree": 9,
+    "extra_pairs": 772,
+    "new_pairs": 399,
+    "rollout_solver_share": 0.0225,
+    "rollout_worst": 0.0019059718510732182,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.015291666666666663,
+    "audit_speedup": 8.634200348920189,
+    "audit_worst": 0.0008561887846556537,
+    "degree": 10,
+    "extra_pairs": 1129,
+    "new_pairs": 357,
+    "rollout_solver_share": 0.025,
+    "rollout_worst": 0.0009796149311038782,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "fisher_kpp_d3/refused": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.013999999999999999,
+    "audit_speedup": 3.3892122765448365,
+    "audit_worst": 0.0006674214778421561,
+    "degree": 11,
+    "extra_pairs": 477,
+    "new_pairs": 477,
+    "rollout_solver_share": 0.02,
+    "rollout_worst": 0.00048664141316545617,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.009791666666666666,
+    "audit_speedup": 9.253523683128684,
+    "audit_worst": 0.0015367355295048402,
+    "degree": 10,
+    "extra_pairs": 703,
+    "new_pairs": 226,
+    "rollout_solver_share": 0.0175,
+    "rollout_worst": 0.0016897076602968575,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.009875,
+    "audit_speedup": 3.441372647160711,
+    "audit_worst": 0.0006473389149044273,
+    "degree": 11,
+    "extra_pairs": 820,
+    "new_pairs": 117,
+    "rollout_solver_share": 0.016874999999999998,
+    "rollout_worst": 0.0005471369035257023,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "fisher_kpp_d3/uniform": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.021666666666666667,
+    "audit_speedup": 4.568546267031781,
+    "audit_worst": 0.0015732083267363528,
+    "degree": 9,
+    "extra_pairs": 477,
+    "new_pairs": 477,
+    "rollout_solver_share": 0.029375000000000002,
+    "rollout_worst": 0.0016011566011269185,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.021833333333333333,
+    "audit_speedup": 4.270498863988929,
+    "audit_worst": 0.0018324433479858238,
+    "degree": 9,
+    "extra_pairs": 938,
+    "new_pairs": 461,
+    "rollout_solver_share": 0.028749999999999998,
+    "rollout_worst": 0.001743370293166624,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.02341666666666667,
+    "audit_speedup": 3.7549782923326447,
+    "audit_worst": 0.0007187592756554562,
+    "degree": 10,
+    "extra_pairs": 1437,
+    "new_pairs": 499,
+    "rollout_solver_share": 0.031875,
+    "rollout_worst": 0.000601132780105651,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "fisher_kpp_d5/refused": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.023291666666666665,
+    "audit_speedup": 3.35208267788531,
+    "audit_worst": 0.0015356082198700882,
+    "degree": 7,
+    "extra_pairs": 799,
+    "new_pairs": 799,
+    "rollout_solver_share": 0.029375000000000002,
+    "rollout_worst": 0.0008794599021868521,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.01983333333333333,
+    "audit_speedup": 4.468873905322843,
+    "audit_worst": 0.001503754877846042,
+    "degree": 7,
+    "extra_pairs": 1159,
+    "new_pairs": 360,
+    "rollout_solver_share": 0.028749999999999998,
+    "rollout_worst": 0.00091200327852059,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.017541666666666667,
+    "audit_speedup": 1.7177231226972327,
+    "audit_worst": 0.0033886055260179404,
+    "degree": 7,
+    "extra_pairs": 1372,
+    "new_pairs": 213,
+    "rollout_solver_share": 0.026875,
+    "rollout_worst": 0.0017096232985096549,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "fisher_kpp_d5/uniform": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.03225,
+    "audit_speedup": 4.427782791991745,
+    "audit_worst": 0.0020757621072413635,
+    "degree": 6,
+    "extra_pairs": 799,
+    "new_pairs": 799,
+    "rollout_solver_share": 0.040625,
+    "rollout_worst": 0.0012968141287976742,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.03075,
+    "audit_speedup": 6.172964185269871,
+    "audit_worst": 0.0019356809059327684,
+    "degree": 6,
+    "extra_pairs": 1561,
+    "new_pairs": 762,
+    "rollout_solver_share": 0.03625,
+    "rollout_worst": 0.0020993249852272466,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.030583333333333334,
+    "audit_speedup": 2.684680736520186,
+    "audit_worst": 0.002183818422095918,
+    "degree": 6,
+    "extra_pairs": 2276,
+    "new_pairs": 715,
+    "rollout_solver_share": 0.039375,
+    "rollout_worst": 0.0021312013310077482,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "lorenz96_d4/refused": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.0105,
+    "audit_speedup": 8.570190817674543,
+    "audit_worst": 0.00041240846302481593,
+    "degree": 4,
+    "extra_pairs": 317,
+    "new_pairs": 317,
+    "rollout_solver_share": 0.025625,
+    "rollout_worst": 0.00040680781475260774,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.009583333333333333,
+    "audit_speedup": 9.653868062452917,
+    "audit_worst": 0.0003461852044064351,
+    "degree": 4,
+    "extra_pairs": 487,
+    "new_pairs": 170,
+    "rollout_solver_share": 0.023125,
+    "rollout_worst": 0.0004147588173660788,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.009541666666666667,
+    "audit_speedup": 8.551156330182312,
+    "audit_worst": 0.0003474202716878261,
+    "degree": 4,
+    "extra_pairs": 583,
+    "new_pairs": 96,
+    "rollout_solver_share": 0.024375,
+    "rollout_worst": 0.00040385297563605427,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "lorenz96_d4/uniform": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.014583333333333332,
+    "audit_speedup": 7.941256685870071,
+    "audit_worst": 0.00036421907571326795,
+    "degree": 4,
+    "extra_pairs": 317,
+    "new_pairs": 317,
+    "rollout_solver_share": 0.03125,
+    "rollout_worst": 0.0003322511445941201,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.015666666666666666,
+    "audit_speedup": 14.05466273985984,
+    "audit_worst": 3.537147749788083e-05,
+    "degree": 5,
+    "extra_pairs": 625,
+    "new_pairs": 308,
+    "rollout_solver_share": 0.0325,
+    "rollout_worst": 3.211492992105658e-05,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.01675,
+    "audit_speedup": 12.107789257913732,
+    "audit_worst": 3.8285411763094856e-05,
+    "degree": 5,
+    "extra_pairs": 945,
+    "new_pairs": 320,
+    "rollout_solver_share": 0.0325,
+    "rollout_worst": 3.1351828317927044e-05,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "robertson/refused": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.010708333333333334,
+    "audit_speedup": 7.998585680622354,
+    "audit_worst": 3.7205750302859997e-07,
+    "degree": 7,
+    "extra_pairs": 1142,
+    "new_pairs": 1142,
+    "rollout_solver_share": 0.013750000000000002,
+    "rollout_worst": 4.06526057261658e-07,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.008,
+    "audit_speedup": 17.67272725979955,
+    "audit_worst": 2.5504357958894275e-06,
+    "degree": 6,
+    "extra_pairs": 1332,
+    "new_pairs": 190,
+    "rollout_solver_share": 0.011,
+    "rollout_worst": 3.555925142784133e-06,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.006499999999999999,
+    "audit_speedup": 9.85738672322712,
+    "audit_worst": 2.707922099887128e-06,
+    "degree": 6,
+    "extra_pairs": 1457,
+    "new_pairs": 125,
+    "rollout_solver_share": 0.008749999999999999,
+    "rollout_worst": 3.8080776576521203e-06,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ },
+ "robertson/uniform": {
+  "rounds": [
+   {
+    "audit_solver_share": 0.030625,
+    "audit_speedup": 12.485389355828204,
+    "audit_worst": 3.1366993447079494e-07,
+    "degree": 7,
+    "extra_pairs": 1142,
+    "new_pairs": 1142,
+    "rollout_solver_share": 0.0245,
+    "rollout_worst": 3.294332220349361e-07,
+    "round": 1,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.02358333333333333,
+    "audit_speedup": 9.195137976238954,
+    "audit_worst": 1.696800631290074e-05,
+    "degree": 4,
+    "extra_pairs": 1895,
+    "new_pairs": 753,
+    "rollout_solver_share": 0.024,
+    "rollout_worst": 1.6794027329680716e-05,
+    "round": 2,
+    "served": true
+   },
+   {
+    "audit_solver_share": 0.028916666666666663,
+    "audit_speedup": 7.0272883156943315,
+    "audit_worst": 3.253050806506508e-07,
+    "degree": 7,
+    "extra_pairs": 2434,
+    "new_pairs": 539,
+    "rollout_solver_share": 0.0245,
+    "rollout_worst": 3.582449341621441e-07,
+    "round": 3,
+    "served": true
+   }
+  ],
+  "status": "done"
+ }
+}
