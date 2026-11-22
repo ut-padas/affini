@@ -1,0 +1,55 @@
+{
+ "chart2/160": {
+  "coverage_half_percent": 0.4166666666666667,
+  "coverage_percent": 7.083333333333333,
+  "median": 0.02847596338861269,
+  "tracers": 160,
+  "worst": 1.724917704440183
+ },
+ "chart2/40": {
+  "coverage_half_percent": 0.3125,
+  "coverage_percent": 3.6458333333333335,
+  "median": 0.03410135283217608,
+  "tracers": 40,
+  "worst": 2.8294976415313435
+ },
+ "chart2/80": {
+  "coverage_half_percent": 0.4166666666666667,
+  "coverage_percent": 5.104166666666667,
+  "median": 0.03371458685874007,
+  "tracers": 80,
+  "worst": 2.113714214890364
+ },
+ "local/160": {
+  "coverage_half_percent": 6.875000000000001,
+  "coverage_percent": 17.395833333333332,
+  "median": 0.02154833425107494,
+  "tracers": 160,
+  "worst": 1.9920641181630918
+ },
+ "local/20": {
+  "coverage_half_percent": 0.10416666666666667,
+  "coverage_percent": 1.7708333333333333,
+  "median": 0.046637245560185114,
+  "tracers": 20,
+  "worst": 3.6735801170411753
+ },
+ "local/40": {
+  "coverage_half_percent": 0.4166666666666667,
+  "coverage_percent": 5.833333333333333,
+  "median": 0.03184915999574045,
+  "tracers": 40,
+  "worst": 2.691051951697567
+ },
+ "local/80": {
+  "coverage_half_percent": 4.375,
+  "coverage_percent": 13.645833333333332,
+  "median": 0.026698456083433797,
+  "tracers": 80,
+  "worst": 2.1432968479035353
+ },
+ "local_extrapolation": {
+  "exponent": 0.350281290936602,
+  "tracers_for_50_percent": 3259.4077973751478
+ }
+}
