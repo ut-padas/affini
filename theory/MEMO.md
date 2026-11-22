@@ -350,13 +350,37 @@ $\sup_B|\Phi_{\tau,i} - p| \le t\prod_j(\frac{2}{\pi}\log(N_j + 1) + 1) + 4M\sum
 
 ---
 
-## T5. What one least-squares quadratic leaf does
+## T5. What a fit from samples does where it is used
 
-Unweighted least squares on $N$ points with full column rank; $V_{ij} = \varphi_j(x_i)$ for an orthonormal basis $\varphi$ of the quadratics
-under $\mu$; $G = N^{-1}V^{\mathsf T}V$; $K(x) = \lVert\varphi(x)\rVert_2^2$, $K = \sup_xK(x)$.
+**Question.** A surrogate fitted to samples (a tree leaf, a global polynomial, a chart fit from trajectories) is used at states it was not
+fitted on: test states, states of a rollout, states moved by another process in a split simulation. What bounds its error there, and can
+that bound be computed before the surrogate is used?
 
-**Proposition 5.1 (Lebesgue inequality; proved).** $\lVert f - \mathrm{LS}f\rVert_\infty \le (1 + \mathcal{L}_N)\inf_q\lVert f - q\rVert_\infty$, and
-$\mathcal{L}_N \le \sqrt{K/\lambda_{\min}(G)}$ since $\sum_i|\ell_i(x)| \le \sqrt N\lVert\ell(x)\rVert_2 = \sqrt{\varphi(x)^{\mathsf T}G^{-1}\varphi(x)}$.
+Setting: a space $V$ of dimension $p$ (polynomials of any degree in any coordinates, or any other finite basis $\varphi_1, \ldots, \varphi_p$),
+samples $X = \{x_1, \ldots, x_N\}$ with values $f(x_i)$, $V_{ij} = \varphi_j(x_i)$ of full column rank, the least-squares fit
+$\mathrm{LS}f = \varphi^{\mathsf T}(V^{\mathsf T}V)^{-1}V^{\mathsf T}f(X)$, and its weights $\ell(t) = V(V^{\mathsf T}V)^{-1}\varphi(t) \in \mathbb{R}^N$, so that
+$\mathrm{LS}f(t) = \sum_i\ell_i(t)f(x_i)$. The *Lebesgue function of the sample at $t$* is $\Lambda_X(t) = \sum_i|\ell_i(t)|$; it depends on $X$, $V$ and $t$
+only, not on $f$, so it is computable at any state before any value there is known. For vector outputs apply it componentwise.
+
+**Proposition 5.1 (the error at a point of use; proved).** For every $t$ and every $q \in V$:
+$|f(t) - \mathrm{LS}f(t)| \le |f(t) - q(t)| + \Lambda_X(t)\max_i|f(x_i) - q(x_i)|$; hence
+$|f(t) - \mathrm{LS}f(t)| \le (1 + \Lambda_X(t))\inf_{q\in V}\lVert f - q\rVert_{\infty, X\cup\{t\}}$ and, over a target set $T$,
+$\sup_T|f - \mathrm{LS}f| \le (1 + \Lambda_X(T))\inf_q\lVert f - q\rVert_{\infty, X\cup T}$ with $\Lambda_X(T) = \sup_{t\in T}\Lambda_X(t)$.
+*Proof.* $\mathrm{LS}$ reproduces $V$, so $\mathrm{LS}f(t) - q(t) = \sum_i\ell_i(t)(f(x_i) - q(x_i))$. $\square$
+*Bounds on $\Lambda$.* With $\varphi$ orthonormal under a measure $\mu$, $G = N^{-1}V^{\mathsf T}V$ and $K(t) = \lVert\varphi(t)\rVert_2^2$:
+$\Lambda_X(t) \le \sqrt N\lVert\ell(t)\rVert_2 = \sqrt{\varphi(t)^{\mathsf T}G^{-1}\varphi(t)} \le \sqrt{K(t)/\lambda_{\min}(G)}$. For one quadratic leaf on a box ($T$ the box,
+$\mu$ uniform) this is the classical Lebesgue inequality, with $\mathcal{L}_N = \Lambda_X(T)$.
+
+*What it says, generically.* The error where a surrogate is used is the space's approximation error on the samples and the point of use,
+amplified by how the samples sit relative to that point. Three regimes follow, whatever the problem: (a) target states among the samples
+(a thin visited set that the samples cover): $\Lambda_X(T)$ stays moderate as $p$ grows, and the degree can be raised until the best
+approximation error is small; (b) targets between sparse samples (an initial law that fills a box, states moved off the visited set):
+$\Lambda_X(T)$ grows quickly with $p$, so a fit that is exact on the samples can be arbitrarily wrong at $T$, and in-sample checks cannot see
+it; (c) designed samples (Chebyshev grids, the points a solver-queried scheme chooses): $\Lambda_X(B)$ is the grid's Lebesgue constant,
+logarithmic in the degree per axis, so the box is covered uniformly. A rollout then multiplies the one-step error by the dynamics'
+accumulation (Proposition 2.1, Theorem 8): the error after $n$ steps is at most of order $A_n\,(1 + \Lambda_X(T_n))\,e^*$, with $T_n$ the states
+the rollout visits and $e^*$ the best approximation error. Every factor is computable from data: $\Lambda$ from the samples and the target
+inputs, $A_n$ from Jacobians along trajectories, $e^*$ estimated by held-out residuals.
 
 **Proposition 5.2 (the error at a point; proved).** With $r = f - \Pi f$: $f(x) - \mathrm{LS}f(x) = r(x) - \varphi(x)^{\mathsf T}G^{-1}b$,
 $b = N^{-1}\sum_i\varphi(x_i)r(x_i)$, so $|f(x) - \mathrm{LS}f(x) - r(x)| \le \sqrt{K(x)}\,\lVert G^{-1}\rVert\,\lVert b\rVert$; for independent draws,

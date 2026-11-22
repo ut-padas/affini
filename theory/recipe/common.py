@@ -204,8 +204,35 @@ def mixing_rollout(P, sur, true: np.ndarray, w: float, rng) -> float:
     return worst
 
 
-def run_recipe(P, train, test, tol=0.01, kmax=12, qmax=12, mix_w=(0.01, 0.1), seed=0) -> dict:
-    """The recipe end to end (module docstring) on one problem; every number the memo quotes is in the returned dict."""
+def heldout_degrees(P, train, k, tol, qmax, seed) -> list[dict]:
+    """
+    The held-out degree rule: chart, decoder and fit on four fifths of the training trajectories, chained on the other fifth, for
+    every admissible degree. The in-sample rule chains the fit on the trajectories it was fitted on, which cannot see a fit that is
+    wild between sparse training states (the step-0 states of a problem whose initial law fills a box).
+    """
+    order = np.random.default_rng(seed + 2).permutation(len(train))
+    nv = max(1, len(train) // 5)
+    val, fit = train[order[:nv]], train[order[nv:]]
+    Sf = Setup(P, fit)
+    chf = Chart(Sf, k, visited(fit))
+    Uf = chf.u(visited(fit))
+    rows = []
+    for q in range(1, qmax + 1):
+        if n_terms(Uf.shape[1], q) * 1.5 > len(Uf) or n_terms(Uf.shape[1], q) > 3000:
+            break
+        G = ChartPoly(q, chf.lo, chf.hi).fit(Uf, Sf.Y)
+        chain = float(rollout(P, deployed(Sf, chf, G), val)["rollout_worst"])
+        rows.append({"degree": q, "terms": n_terms(Uf.shape[1], q), "heldout_chains_worst": chain})
+        log(f"  q={q}: held-out chains {chain:.3e}")
+    return rows
+
+
+def run_recipe(P, train, test, tol=0.01, kmax=12, qmax=12, mix_w=(0.01, 0.1), seed=0, select="train") -> dict:
+    """
+    The recipe end to end (module docstring) on one problem; every number the memo quotes is in the returned dict. ``select``:
+    "train" chooses the degree by the chained error on the training trajectories themselves (the rule as first committed),
+    "heldout" by ``heldout_degrees``; the chosen degree is then refitted on every training trajectory.
+    """
     rng = np.random.default_rng(seed)
     t0 = time.perf_counter()
     S = Setup(P, train)
@@ -227,13 +254,19 @@ def run_recipe(P, train, test, tol=0.01, kmax=12, qmax=12, mix_w=(0.01, 0.1), se
         fits[q] = G
         log(f"  q={q} ({n_terms(m, q)} terms): training chains {chain:.3e}")
     best = min(rows, key=lambda r: r["train_chains_worst"] if np.isfinite(r["train_chains_worst"]) else np.inf)
+    passes = bool(best["train_chains_worst"] <= tol)
+    if select == "heldout":
+        held = heldout_degrees(P, train, kc["k"], tol, qmax, seed)
+        out["heldout_curve"] = held
+        hb = min((r for r in held if r["degree"] in fits), key=lambda r: r["heldout_chains_worst"] if np.isfinite(r["heldout_chains_worst"]) else np.inf)
+        best, passes = next(r for r in rows if r["degree"] == hb["degree"]), bool(hb["heldout_chains_worst"] <= tol)
     q = best["degree"]
     sur = deployed(S, chart, fits[q])
     Xe = test[:, :-1].reshape(-1, test.shape[2])
     Ye = test[:, 1:].reshape(-1, test.shape[2])
     one = worst_scored(P, S.clip(Xe + sur.predict(Xe)), S.clip(Ye))
     roll = rollout(P, sur, test)
-    out.update(degree_curve=rows, degree=q, passes=bool(best["train_chains_worst"] <= tol), decoder_degree=chart.dec_degree,
+    out.update(degree_curve=rows, degree=q, passes=passes, select=select, decoder_degree=chart.dec_degree,
                one_step_worst=one, rollout_worst=float(roll["rollout_worst"]),
                rollout_worst_20=float(rollout(P, sur, test[:20])["rollout_worst"]),
                mixing_rollout_worst={str(w): mixing_rollout(P, sur, test, w, np.random.default_rng(seed + 1)) for w in mix_w},
