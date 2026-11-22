@@ -995,7 +995,7 @@ As p22, with the 40 long training trajectories spanning the whole 2,000-step hor
 - bruss_d20 stays at 0% (worst 1.1e-3).
 
 Training that spans the deployment horizon serves Robertson's long chains. CHEMAKZO keeps reaching states the 40 long trajectories do
-not cover even then: its long-time states depend on the start more than Robertson's do, so it needs more long starts, not longer ones.
+not cover even then; whether more long starts close the gap is untested.
 
 ---
 

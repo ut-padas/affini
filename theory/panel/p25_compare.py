@@ -23,7 +23,9 @@ Protocol, the same for every method:
   - the evaluation (prediction and gate) timed at 1,000 cells per call; the effective speed-up against the problem's fastest exact solver
     (p15) at the long chains' steady refusal rate;
   - the training time and solver calls.
-One record per (problem, method, tolerance) under data/records/p25/; a case is limited to 2,400 s (a timeout is recorded as a result).
+One record per (problem, method, tolerance) under data/records/p25/; a case is limited to BUDGET = 900 s of compute on this laptop (a
+timeout is recorded as a result). The first cases ran under a 2,400 s limit; a record that took longer than BUDGET is reported as over the
+budget, so every method is judged by the same compute budget.
 Usage: THEORY_TOL=0.05 p25_compare.py [problem ...].
 
 Prediction, committed before the run (the user's): at both tolerances AFINNI and both ARTs fare worse than chebtt_roll and the recipe:
@@ -54,6 +56,7 @@ VARIANT = {"gate": "capped", "sketch": True, "account": True}
 PROBLEMS = ("bruss_d2", "robertson", "fisher_kpp_d3", "lorenz96_d4", "chemakzo", "allen_cahn_d5", "fisher_kpp_d5", "fisher_kpp_d10", "burgers_d20", "pollu")
 METHOD_NAMES = ("recipe_100", "recipe_340", "chebtt_roll", "afinni_roll", "art_roll", "art_quad_roll")
 GAMMA = 0.5
+BUDGET = 900
 
 
 class Native:
@@ -159,7 +162,7 @@ def main() -> None:
     store = RecordStore(OUT / "records" / "p25", path_of=lambda k: OUT / "records" / "p25" / f"{k['problem']}_{k['method']}_{k['tol']}.json")
     for name in names:
         for method in methods:
-            recorded(store, {"problem": name, "method": method, "tol": TOL}, case, name, method, dstore, lstore, limit=2400)
+            recorded(store, {"problem": name, "method": method, "tol": TOL}, case, name, method, dstore, lstore, limit=BUDGET)
     summary = {f"{r['key']['problem']}/{r['key']['method']}/{r['key']['tol']}": {k: v for k, v in r.items() if k not in ("key", "provenance", "schema", "recorded")}
                for r in store.records()}  # fmt: skip
     (OUT / f"p25_compare_{TOL}.json").write_text(json.dumps(summary, indent=1, sort_keys=True, default=str) + "\n")
