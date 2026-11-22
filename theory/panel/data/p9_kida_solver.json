@@ -1,0 +1,34 @@
+{
+ "dense": {
+  "key_worst_vs_reference": 1.7968619658859097e-06,
+  "max_s": 0.882108806996257,
+  "median_s": 0.4832623439942836,
+  "nfev_median": 673.5,
+  "njev_median": 3.5,
+  "nlu_median": 64.5,
+  "p90_s": 0.6241795457986882,
+  "strict_worst_vs_reference": 5.6529430976226536e-06
+ },
+ "dense_vs_sparse_key_worst": 2.4783020080576534e-10,
+ "nonzeros_per_row": 35.14776632302406,
+ "reference": {
+  "max_s": 3.0493740660022013,
+  "median_s": 1.7590583015044103,
+  "nfev_median": 2025.5,
+  "njev_median": 4.0,
+  "nlu_median": 140.0,
+  "p90_s": 2.331100692106702
+ },
+ "sparse": {
+  "key_worst_vs_reference": 1.7968619019370635e-06,
+  "max_s": 1.0084939429943915,
+  "median_s": 0.6137990999995964,
+  "nfev_median": 673.5,
+  "njev_median": 3.5,
+  "nlu_median": 64.5,
+  "p90_s": 0.8127861778019,
+  "strict_worst_vs_reference": 5.652942691725116e-06
+ },
+ "states": 120,
+ "stored_vs_dense_key_worst": 0.0
+}
