@@ -1,7 +1,8 @@
 """
 The generic recipe's third version (generic3.py: the gate calibrated for the maximum on states set apart for it, mixed inputs in the
 calibration, a propagation margin in the selection, k up to the free dimension) on the chemistry problems and on the cases that discriminate
-R4b's failures, at tolerance 0.01, M = 0. One record per problem under data/records/r4c/; a case is limited to 900 s.
+R4b's failures, at tolerance 0.01, M = 0. One record per problem under data/records/r4c/; a case is limited to 1,800 s (900 s for the
+first eight, run before generic3's chain shortcut).
 Usage: r4c_rules.py [problem ...].
 
 The problems: the chemistry and oscillator class (robertson, chemakzo, hires, pollu, primordial, nelson, oregonator, van_der_pol); R4b's
@@ -47,7 +48,7 @@ def main() -> None:
               "rollout_worst_20", "rollout_solver_share", "mixing_chained", "mixing_chained_without_residual", "predict_us", "gate_us", "solve_us",
               "speedup_nominal", "speedup_effective", "train_s")  # fmt: skip
     for name in names:
-        rec = recorded(store, {"problem": name, "method": "generic3", "tol": 0.01}, case, name, limit=900)
+        rec = recorded(store, {"problem": name, "method": "generic3", "tol": 0.01}, case, name, limit=1800)
         log(f"{name}: served={rec.get('served')} rollout={rec.get('rollout_worst')} refused={rec.get('refused_percent')} speedup={rec.get('speedup_effective')}")
     summary = {r["key"]["problem"]: {k: r.get(k) for k in fields} for r in store.records()}
     (OUT / "r4c_rules.json").write_text(json.dumps(summary, indent=1, sort_keys=True, default=str) + "\n")

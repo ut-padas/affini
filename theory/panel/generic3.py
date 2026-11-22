@@ -14,6 +14,8 @@ the chart's search range up to the free dimension.
               and the mean solver share is below 50%; among served configurations the one with the largest margin (the smallest worst
               chain), then the smaller solver share;
   chart       k searched up to the free dimension (at most 40).
+  shortcut    a configuration that refuses at least half of the selection trajectories' own states is recorded as not served without
+              running its chains (their solver fallbacks dominate the selection's cost); its chain error is NaN in the record.
 Scores and timings as generic2.run.
 """
 
@@ -81,15 +83,21 @@ def select(P, train, k, dec_degree, rollout, extra=None, qmax=12, mixed=True) ->
                     cal_cache[s] = calibration_sets(P, cal, mixed, np.random.default_rng(1000 + s))
                 sur, X, Y = build(P, fit, k, q, ridge, dec_degree, extra)
                 calibrate(sur, P, cal_cache[s])
+                one_step_share = float(np.mean(sur.refuses(pairs(sel)[0])))
                 if 2 * sur.e_hat > TOL / 2:  # the bound is at least 1: every input refused, the chain is the solver's own
                     res = {"rollout_worst": 0.0, "rollout_solved_by_step": [1.0]}
+                elif one_step_share >= SERVED_SHARE:
+                    # refuses at least half of the selection trajectories' own states: not served whatever its chains do; skipped, since
+                    # their solver fallbacks are the costliest part of the selection (a heuristic: a chain's share can differ)
+                    res = {"rollout_worst": float("nan"), "rollout_solved_by_step": [one_step_share]}
                 else:
                     res = rollout(P, sur, sel)
                 e_cal, b_cal = scores(P, sur, *cal_cache[s][0])
                 per.append({"split": s, "chain_worst": float(res["rollout_worst"]), "solver_share": float(np.mean(res["rollout_solved_by_step"])),
                             "heldout_worst": float(np.nanmax(e_cal)), "heldout_median": float(np.nanmedian(e_cal)), "e_hat": sur.e_hat,
                             "b_max": sur.b_max, "rank": sur.G.rank, "terms": len(sur.G.idx)})  # fmt: skip
-            row = {"degree": q, "ridge": ridge, "terms": n_terms(m, q), "chain_worst": max(p["chain_worst"] for p in per),
+            chains = [p["chain_worst"] for p in per]
+            row = {"degree": q, "ridge": ridge, "terms": n_terms(m, q), "chain_worst": float("inf") if any(np.isnan(chains)) else max(chains),
                    "solver_share": float(np.mean([p["solver_share"] for p in per])), "heldout_worst": max(p["heldout_worst"] for p in per),
                    "heldout_median": float(np.median([p["heldout_median"] for p in per])), "splits": per}  # fmt: skip
             row["served"] = bool(row["chain_worst"] <= MARGIN * TOL and row["solver_share"] < SERVED_SHARE)
