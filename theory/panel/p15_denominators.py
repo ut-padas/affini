@@ -5,7 +5,8 @@ steps 0, 10 and 20 (KIDA dark: 40 states at steps 0, 8, 16, as p9), one core, th
   vode     SciPy's VODE, BDF with the analytic Jacobian (Fortran);
   lsoda    SciPy's LSODA with the analytic Jacobian (Fortran; switches between Adams and BDF).
 Each is scored against the stored next states (the worst scored error); the fastest solver whose states agree within QUALIFY is the
-problem's denominator. R4e's served surrogates are re-timed with the sketched gate (generic4, the same fit; one evaluation per batch) and
+problem's denominator (KIDA: the library's step and LSODA on 12 of the states, written to data/p15_kida.json; VODE took minutes per
+KIDA state and was stopped). R4e's served surrogates are re-timed with the sketched gate (generic4, the same fit; one evaluation per batch) and
 their effective speed-ups restated against the denominator, with R4e's solver share. Writes data/p15_denominators.json.
 
 Prediction, committed before the run: LSODA qualifies on every problem, including Nelson and primordial where p14's VODE failed, and is
@@ -56,16 +57,20 @@ def problem(name):
 
 
 def main() -> None:
+    import sys
     import warnings
 
     warnings.filterwarnings("ignore")
     out = {}
-    for name in PROBLEMS:
+    names = sys.argv[1:] or [n for n in PROBLEMS if n != "kida_dark"]
+    for name in names:
         P, X, Y = problem(name)
         sysm = P.system
         Ys = 10.0**X if sysm.log else X
         res = {}
-        for solver in ("library", "vode", "lsoda"):
+        if name == "kida_dark":  # VODE takes minutes per KIDA state; the library's step and LSODA on 12 states
+            X, Y, Ys = X[::10], Y[::10], Ys[::10]
+        for solver in ("library", "lsoda") if name == "kida_dark" else ("library", "vode", "lsoda"):
             t0 = time.perf_counter()
             if solver == "library":
                 nxt = np.array([s.y[:, -1] if (s := sysm.solve(y, P.dt)).success else np.full_like(y, np.nan) for y in Ys])
@@ -103,7 +108,8 @@ def main() -> None:
     s = [v["speedup_sketched_against_denominator"] for v in out.values() if isinstance(v, dict) and "speedup_sketched_against_denominator" in v]
     out["median_sketched_speedup"] = float(np.median(s)) if s else None
     print("median sketched speed-up against the denominator:", out["median_sketched_speedup"])
-    (OUT / "p15_denominators.json").write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
+    path = OUT / ("p15_denominators.json" if "kida_dark" not in names else "p15_kida.json")
+    path.write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":
