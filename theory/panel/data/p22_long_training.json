@@ -1,0 +1,89 @@
+{
+ "bruss_d20": {
+  "arms": {
+   "decay": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.203125,
+    "share_200_on": 0.0,
+    "speedup_steady": 48.91467113262738,
+    "steady_rate": 0.0,
+    "steady_upper_95": 2.3555276381909547e-05,
+    "worst": 0.0013049011054231396
+   },
+   "gate": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.203125,
+    "share_200_on": 0.0,
+    "speedup_steady": 48.91467113262738,
+    "steady_rate": 0.0,
+    "steady_upper_95": 2.3555276381909547e-05,
+    "worst": 0.0013049011054231396
+   }
+  },
+  "degree": 4,
+  "extra_pairs": 16000,
+  "gamma": 0.5,
+  "served": true,
+  "status": "done"
+ },
+ "chemakzo": {
+  "arms": {
+   "decay": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.175,
+    "share_200_on": 0.8894357638888889,
+    "speedup_steady": 1.095566044248218,
+    "steady_rate": 0.8123979271356784,
+    "steady_upper_95": 0.8174491656248374,
+    "worst": 0.00383674225780517
+   },
+   "gate": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.175,
+    "share_200_on": 0.8894357638888889,
+    "speedup_steady": 1.095566044248218,
+    "steady_rate": 0.8123979271356784,
+    "steady_upper_95": 0.8174491656248374,
+    "worst": 0.00383674225780517
+   }
+  },
+  "degree": 4,
+  "extra_pairs": 16000,
+  "gamma": 0.5,
+  "served": true,
+  "status": "done"
+ },
+ "robertson": {
+  "arms": {
+   "decay": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.1015625,
+    "share_200_on": 0.8022222222222222,
+    "speedup_steady": 1.3342579081747703,
+    "steady_rate": 0.7256281407035176,
+    "steady_upper_95": 0.7304020100502512,
+    "worst": 3.003756617658837e-06
+   },
+   "gate": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.1015625,
+    "share_200_on": 0.8022222222222222,
+    "speedup_steady": 1.3342579081747703,
+    "steady_rate": 0.7256281407035176,
+    "steady_upper_95": 0.7304020100502512,
+    "worst": 3.003756617658837e-06
+   }
+  },
+  "degree": 6,
+  "extra_pairs": 16000,
+  "gamma": 0.5,
+  "served": true,
+  "status": "done"
+ }
+}
