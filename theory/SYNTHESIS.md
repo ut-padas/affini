@@ -498,6 +498,189 @@ do not contract. The selection's propagation margin, measured on plain held-out 
 and W5 hold**: the other problems are unchanged (bruss_d20, burgers_d20, chemakzo and fisher_kpp_d10 served as before; primordial,
 nelson and pollu not served; refused shares on the lattices unchanged).
 
+
+### 3.17 After the council (round 2): what was adopted
+
+The three reviews (`theory/reviews/council2-{fable,sol,astra}.md`; resolutions in `theory/REVIEWS.md`) corrected several readings of
+section 9.7 and agreed on the order: repair the fit and the gate, test the tube with a control for data volume, redesign the coupled
+test, choose configurations by speed, verify the conservation laws, audit KIDA's solver and measure its coverage before any more model
+search on it, then the basis for larger charts. Corrections accepted:
+
+- **9.7.1 withdrawn.** For rollout-tuned ChebTT the column is within 0.4-2.1x of the plain rollout; the 2.7-13x of section 3.12 was
+  reference-partner mixing being an easier test (it damps each cell's error by w per step), and p6 also changed the donor geometry.
+- **9.7.4 withdrawn.** fisher_kpp_d10's 1,600 arm moves the ungated first-step worst from 4.9 to 0.118 (median 3.4 to 7.1e-3); the
+  4.7-5.0 values elsewhere are the output clip of an undetermined (rank-deficient) fit, not error magnitudes; the initial law has at most
+  five shape parameters at d = 10, and the nearest-neighbour distance in the ambient metric is not a dimension.
+- **9.7.3 refined.** CHEMAKZO's 0.7 was mostly an SVD solve repeated per gate call on a singular fit, not only the selection rule.
+- **9.7.7 refined.** The spurious law changes bruss_d20's predictions by 3.5e-8; Burgers d10 and d20 and POLLU carry spurious laws too
+  (a symmetry of the initial law, laws of the sampled states); in the benchmark's store only burgers_d10 is affected.
+- **p5b's species labels** were in the wrong order (fixed): the local arm's misses are S+, HCN, C and N2H+.
+
+### 3.18 The repaired recipe (R4e; `theory/panel/generic4.py`, `r4e_repaired.py`, predictions `e39273d`)
+
+generic4: a truncated-SVD fit (the minimum-norm fit the bound describes), the bound and an out-of-span share from one precomputed factor,
+one evaluation per batch for prediction and gate, a batched invariant projection, selection by estimated cost per step among
+configurations within the margin, chains stopped once they cannot be served, conservation laws verified off the data, and the
+accumulation budgets recorded. On R4c's 17 problems and fisher_kpp_d10:
+
+| problem | k | degree (rank / terms) | laws | served | refused (test) | rollout, 40 | chained mixing 0.01 / 0.1 | evaluate (us) | effective speed-up (from step 10) [R4c] | refused under tol/(2 A_n) (A_n) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| allen_cahn_d5 | 5 | 3 (56 / 56) | 0 | no | 6.8% | 4.2e-02 | 6.0e-02 / 2.8e-02 | 2 | 14.5 (664.4) [14.3] | 100% (123) |
+| bruss_d2 | 2 | 6 (28 / 28) | 0 | yes | 0.0% | 6.5e-04 | 6.5e-03 / 2.9e-03 | 1 | 168.8 (3324.5) [753.5] | 100% (63) |
+| bruss_d20 | 9 | 4 (310 / 715) | 0 | yes | 5.3% | 3.4e-03 | 1.4e-03 / 2.3e-03 | 28 | 14.1 (56.8) [13.0] | 18% (67) |
+| burgers_d20 | 6 | 3 (84 / 84) | 1 | yes | 1.4% | 1.4e-03 | 1.5e-03 / 1.9e-03 | 4 | 54.9 (259.9) [14.1] | 32% (40) |
+| chemakzo | 5 | 5 (252 / 252) | 0 | yes | 0.0% | 2.5e-03 | 4.8e-03 / 4.0e-03 | 22 | 53.7 (53.7) [0.7] | 0% (140) |
+| fisher_kpp_d10 | 6 | 5 (462 / 462) | 0 | yes | 7.4% | 1.8e-03 | 2.2e-03 / 2.8e-03 | 25 | 9.6 (33.7) [0.0] | 14% (30) |
+| fisher_kpp_d2 | 2 | 11 (78 / 78) | 0 | yes | 2.1% | 3.3e-04 | 1.5e-03 / 1.0e-03 | 2 | 43.4 (34.4) [109.0] | 13% (38) |
+| fisher_kpp_d3 | 3 | 9 (220 / 220) | 0 | yes | 1.1% | 7.3e-03 | 6.6e-03 / 8.8e-03 | 4 | 55.4 (112.5) [32.2] | 5% (37) |
+| fisher_kpp_d5 | 5 | 6 (461 / 462) | 0 | yes | 4.9% | 1.9e-03 | 1.7e-03 / 1.9e-03 | 20 | 14.3 (48.2) [1.3] | 9% (31) |
+| hires | 3 | 12 (413 / 455) | 1 | no | 17.7% | 4.6e-06 | 1.6e-01 / 4.4e-03 | 25 | 4.8 (5.9) [1.0] | 100% (6669) |
+| lorenz96_d20 | 20 | 2 (231 / 231) | 0 | no | 62.9% | 2.4e-02 | 2.3e-02 / 8.0e-03 | 6 | 1.5 (1.8) [1.5] | 100% (65) |
+| lorenz96_d4 | 4 | 5 (126 / 126) | 0 | yes | 0.0% | 2.7e-04 | 2.5e-04 / 1.9e-04 | 3 | 77.2 (77.2) [14.0] | 1% (40) |
+| nelson | 12 | 1 (17 / 17) | 4 | no | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 4 | 1.0 (1.0) [1.0] | 100% (82) |
+| oregonator | 3 | 4 (35 / 35) | 0 | no | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 0 | 1.0 (1.0) [1.0] | 100% (38907) |
+| pollu | 13 | 3 (560 / 560) | 3 | no | 0.1% | 4.7e-02 | 3.6e-02 / 3.4e-03 | 40 | 32.3 (32.5) [6.0] | 100% (234) |
+| primordial | 6 | 2 (36 / 36) | 4 | no | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 3 | 1.0 (1.0) [1.0] | 100% (99) |
+| robertson | 3 | 5 (50 / 56) | 1 | yes | 0.0% | 5.5e-05 | 6.7e-05 / 6.2e-05 | 1 | 778.4 (966.5) [32.4] | 0% (62) |
+| van_der_pol | 2 | 4 (15 / 15) | 0 | no | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 0 | 1.0 (1.0) [1.0] | 100% (37432087) |
+
+- **Speed**: the median effective speed-up over the 10 served problems is 54 (R4c: 14). The three formerly singular fits: CHEMAKZO
+  0.7 -> 54 (degree 5, 46 s of training against 1,287 s), fisher_kpp_d5 1.3 -> 14, fisher_kpp_d10 2.0 -> 9.6; Robertson 32 -> 778 (the
+  batched projection: its prediction and gate cost 37 us in R4c, 1 us now).
+- **HIRES is not served**: its fit is truncated (rank 413 of 455) and the out-of-span term refuses 60-80% of the selection chains' early
+  states, so every degree stops early; the plain rollout is 4.6e-6 with 18% refused, chained mixing 0.159.
+- **The accumulation budget** tol / (2 A_n) would refuse 100% on HIRES (A_n 6,669), POLLU (234) and every unserved problem; 0-32% on the
+  served lattices and 0% on CHEMAKZO (A_n 140, its accepted errors far below the budget anyway).
+- Pre-registered: F1 fails (HIRES), F2 holds on speed (4.8-77x) and fails narrowly on cost (evaluation 2.2x R4c's prediction), F3
+  holds, F4 holds on the budget and fails on "served", F5 fails (POLLU loses 3 laws, not 1), F6 fails (CHEMAKZO 0%, burgers_d20 32%).
+
+### 3.19 Paired columns (p11; `theory/panel/p11_paired_columns.py`, predictions `bd8eda6`)
+
+p6's column with a cell's neighbours from the hybrid column (closed) or the reference column (forced), cells sorted along their first
+principal coordinate or in random order, at D = 0.005, 0.05 and 0.25, on the ten problems R4e serves; each step's worst error split into
+the cell's own one-step defect on its own input and the inherited error.
+
+- **Surrogate errors do not compound through the neighbours**: closed and forced columns agree within 1.37x in every setting (C1
+  holds); the column's worst error tracks the cell's own-input defect.
+- **Strong or unsorted exchange does not raise the own-input defect** in general (C2 fails): exchange averages states back toward the
+  bundle.
+- **Nine of ten hold 0.01 in all twelve settings**; fisher_kpp_d3 reaches 1.0-1.1e-2 in sorted columns at D = 0.05 and 0.25, from
+  own-input defects near 1e-2 (C3 fails there).
+
+### 3.20 The tube experiment (p10, p10b; `theory/panel/p10_tube.py`, predictions `dd12058`)
+
+Can a surrogate serve the inputs a coupled run produces, slightly off the trajectories' bundle, by owning the first-order term of the
+off-bundle defect (Fable's tube theory: Phi(x) - Psi(x) = [on the set] + [D Phi - D Psi] n + O(|n|^2) for an offset n across the bundle)?
+The fourth recipe in five arms at R4e's chart dimension:
+- **T0:** R4e as is.
+- **T0+:** with 1,600 fresh plain pairs, the control for data volume.
+- **T1m:** with 1,600 of the fit trajectories' own mixed pairs in the fit.
+- **T1:** T1m with the off-chart coordinates as linear terms of the design. The model stays linear in its data, so Proposition 5.1
+  applies to the enlarged design.
+- **T2:** T1m with the chart from a reduced-rank regression of successors on inputs.
+
+Gated scores (accepted defects on mixed inputs, the closed column):
+
+| problem | arm | served | degree | rollout, 40 | mixed inputs 0.01 / 0.1: refused, accepted defect median / max | column 0.005 / 0.05 / 0.25 | effective speed-up |
+|---|---|---|---|---|---|---|---|
+| bruss_d20 | T0 | yes | 4 | 3.4e-03 | 5%, 1.4e-05 / 1.2e-03; 5%, 1.3e-05 / 1.2e-03 | 2.0e-03 / 1.4e-03 / 5.8e-04 | 15.1 |
+| bruss_d20 | T0+ | yes | 5 | 3.7e-03 | 5%, 3.6e-06 / 1.8e-03; 5%, 3.4e-06 / 1.6e-03 | 3.4e-03 / 2.3e-03 / 3.0e-03 | 5.1 |
+| bruss_d20 | T1m | yes | 4 | 2.6e-03 | 5%, 1.4e-05 / 6.3e-04; 5%, 1.4e-05 / 1.1e-03 | 1.5e-03 / 5.9e-04 / 5.8e-04 | 15.3 |
+| bruss_d20 | T1 | yes | 4 | 2.6e-03 | 5%, 1.4e-05 / 6.3e-04; 5%, 1.4e-05 / 1.1e-03 | 1.5e-03 / 6.5e-04 / 6.3e-04 | 15.1 |
+| bruss_d20 | T2 | yes | 4 | 1.9e-03 | 5%, 1.6e-05 / 6.8e-04; 4%, 1.6e-05 / 1.6e-03 | 2.3e-03 / 1.3e-03 / 1.7e-03 | 15.0 |
+| burgers_d20 | T0 | yes | 3 | 1.4e-03 | 1%, 5.5e-06 / 1.4e-03; 1%, 5.4e-06 / 1.4e-03 | 1.6e-03 / 2.1e-03 / 1.6e-03 | 56.5 |
+| burgers_d20 | T0+ | yes | 3 | 1.6e-03 | 0%, 6.7e-06 / 1.6e-03; 0%, 6.7e-06 / 1.2e-03 | 1.6e-03 / 1.4e-03 / 1.1e-03 | 320.7 |
+| burgers_d20 | T1m | yes | 3 | 1.4e-03 | 1%, 4.7e-06 / 1.3e-03; 1%, 4.7e-06 / 1.4e-03 | 1.3e-03 / 1.5e-03 / 1.5e-03 | 58.7 |
+| burgers_d20 | T1 | yes | 3 | 2.8e-03 | 0%, 7.0e-06 / 2.6e-03; 0%, 6.9e-06 / 2.2e-03 | 2.7e-03 / 2.1e-03 / 1.3e-03 | 2.9 |
+| burgers_d20 | T2 | yes | 4 | 1.3e-03 | 8%, 1.5e-05 / 1.3e-03; 7%, 1.5e-05 / 1.7e-03 | 1.8e-03 / 2.0e-03 / 1.2e-03 | 12.2 |
+| chemakzo | T0 | yes | 5 | 2.5e-03 | 1%, 9.2e-06 / 3.8e-03; 7%, 7.2e-05 / 4.7e-03 | 6.0e-03 / 4.3e-03 / 4.8e-03 | 202.0 |
+| chemakzo | T0+ | yes | 5 | 2.5e-03 | 1%, 1.3e-05 / 4.2e-03; 9%, 1.0e-04 / 3.9e-03 | 9.2e-03 / 4.2e-03 / 4.4e-03 | 20.2 |
+| chemakzo | T1m | yes | 4 | 1.0e-03 | 0%, 1.7e-05 / 2.5e-03; 1%, 2.7e-05 / 3.2e-03 | 9.5e-04 / 3.5e-03 / 2.7e-03 | 97.5 |
+| chemakzo | T1 | yes | 4 | 1.0e-03 | 0%, 1.7e-05 / 2.5e-03; 1%, 2.7e-05 / 3.2e-03 | 9.5e-04 / 3.5e-03 / 2.7e-03 | 116.2 |
+| chemakzo | T2 | yes | 5 | 3.3e-04 | 0%, 2.2e-06 / 2.0e-04; 0%, 4.0e-06 / 2.3e-03 | 3.3e-04 / 4.6e-04 / 5.2e-04 | 200.0 |
+| fisher_kpp_d10 | T0 | yes | 5 | 1.8e-03 | 8%, 9.0e-06 / 1.8e-03; 7%, 8.5e-06 / 1.2e-03 | 2.4e-03 / 1.6e-03 / 9.3e-04 | 11.1 |
+| fisher_kpp_d10 | T0+ | yes | 6 | 2.2e-03 | 5%, 2.7e-05 / 2.2e-03; 5%, 2.5e-05 / 1.4e-03 | 2.1e-03 / 2.0e-03 / 1.8e-03 | 9.7 |
+| fisher_kpp_d10 | T1m | yes | 5 | 1.6e-03 | 5%, 1.3e-05 / 1.6e-03; 6%, 1.2e-05 / 2.4e-03 | 1.5e-03 / 1.7e-03 / 2.2e-03 | 12.1 |
+| fisher_kpp_d10 | T1 | yes | 5 | 1.5e-03 | 5%, 1.2e-05 / 1.2e-03; 5%, 1.2e-05 / 2.1e-03 | 1.2e-03 / 2.1e-03 / 1.3e-03 | 14.0 |
+| fisher_kpp_d10 | T2 | yes | 5 | 1.4e-03 | 8%, 1.6e-05 / 2.5e-03; 7%, 1.6e-05 / 1.2e-03 | 2.6e-03 / 1.8e-03 / 3.5e-03 | 10.0 |
+| hires | T0 | no | 12 | 4.6e-06 | 66%, 2.4e-04 / 2.2e-03; 85%, 6.0e-04 / 2.2e-03 | 3.3e-01 / 7.1e-02 / 9.2e-02 | 4.8 |
+| hires | T0+ | no | 11 | 1.8e-05 | 66%, 2.0e-04 / 1.2e-03; 88%, 3.3e-04 / 1.2e-03 | 2.9e-01 / 7.5e-02 / 9.7e-02 | 9.0 |
+| hires | T1m | no | 2 | 0.0e+00 | 100%, –; 100%, – | 0.0e+00 / 0.0e+00 / 0.0e+00 | 1.0 |
+| hires | T1 | no | 8 | 0.0e+00 | 100%, –; 100%, – | 0.0e+00 / 0.0e+00 / 0.0e+00 | 1.0 |
+| hires | T2 | no | 2 | 0.0e+00 | 100%, –; 100%, – | 0.0e+00 / 0.0e+00 / 0.0e+00 | 1.0 |
+| pollu | T0 | no | 3 | 4.7e-02 | 48%, 1.2e-03 / 7.1e-03; 95%, 1.9e-03 / 7.9e-03 | 7.7e-02 / 2.1e-02 / 2.0e-02 | 43.0 |
+| pollu | T0+ | no | 3 | 2.0e-02 | 72%, 6.8e-04 / 4.1e-03; 99%, 7.6e-04 / 3.0e-03 | 1.7e-02 / 1.0e-02 / 4.9e-03 | 22.2 |
+| pollu | T1m | no | 2 | 2.7e-10 | 100%, –; 100%, – | 0.0e+00 / 0.0e+00 / 0.0e+00 | 1.0 |
+| pollu | T1 | no | 3 | 2.1e-02 | 40%, 3.0e-04 / 1.2e-03; 67%, 4.2e-04 / 2.6e-03 | 2.8e-02 / 9.8e-03 / 7.4e-03 | 1.5 |
+| pollu | T2 | no | 2 | 2.7e-10 | 100%, –; 100%, – | 0.0e+00 / 0.0e+00 / 0.0e+00 | 1.0 |
+| robertson | T0 | yes | 5 | 5.5e-05 | 0%, 3.0e-07 / 7.7e-05; 0%, 3.2e-07 / 7.2e-05 | 6.9e-05 / 1.0e-04 / 5.0e-06 | 392.7 |
+| robertson | T0+ | yes | 6 | 3.7e-06 | 0%, 1.3e-07 / 1.3e-06; 1%, 1.5e-07 / 3.1e-06 | 3.2e-06 / 3.1e-06 / 1.9e-06 | 529.7 |
+| robertson | T1m | yes | 3 | 5.2e-04 | 0%, 5.7e-06 / 1.1e-03; 0%, 5.7e-06 / 4.0e-04 | 1.3e-03 / 4.4e-04 / 1.0e-04 | 156.9 |
+| robertson | T1 | yes | 3 | 5.2e-04 | 0%, 5.7e-06 / 1.1e-03; 0%, 5.7e-06 / 4.0e-04 | 1.3e-03 / 4.4e-04 / 1.0e-04 | 157.4 |
+| robertson | T2 | yes | 3 | 5.2e-04 | 0%, 5.7e-06 / 1.1e-03; 0%, 5.7e-06 / 4.0e-04 | 1.3e-03 / 4.4e-04 / 1.0e-04 | 955.9 |
+
+Ungated defects on mixed inputs (p10b, post hoc; median / maximum of the worst scored defect per state):
+
+| problem | arm | plain | mixed w = 0.01 | mixed w = 0.1 |
+|---|---|---|---|---|
+| hires | T0 | 9.7e-9 / 2.5e-6 | 1.2e-3 / 0.35 | 1.1e-2 / 300 |
+| hires | T1 | 1.4e-4 / 1.0e-2 | 2.2e-4 / 6.4e-2 | 4.3e-4 / 9.0e-2 |
+| hires | T1m | 9.3e-3 / 0.14 | 1.3e-2 / 0.32 | 1.8e-2 / 0.65 |
+| hires | T2 | 5.1e-3 / 7.3e-2 | 6.9e-3 / 0.28 | 9.1e-3 / 0.43 |
+| pollu | T0 | 2.0e-4 / 9.9e-4 | 3.0e-3 / 4.5e-2 | 2.4e-2 / 0.29 |
+| pollu | T1 | 4.2e-4 / 2.6e-3 | 4.3e-4 / 4.3e-3 | 8.6e-4 / 3.0e-2 |
+| chemakzo | T0 | 1.1e-7 / 2.2e-5 | 9.3e-6 / 0.11 | 8.3e-5 / 0.71 |
+| chemakzo | T2 | 1.9e-6 / 1.4e-4 | 2.2e-6 / 2.0e-4 | 4.1e-6 / 6.2e-2 |
+
+- **The normal term owns the off-bundle defect on reduced charts.** On POLLU and HIRES it cuts the mixed inputs' median defect 5-28x and
+  their maximum 5-3,300x. On POLLU this shows in the gated scores: accepted defects 4-6x lower, refusal under mixing from 48% to 40% and
+  from 95% to 67%, and a column 2.7x better (2.8e-2 / 9.8e-3 / 7.4e-3), though POLLU is still not served.
+- **Mixed data alone (T1m) and the sensitivity chart (T2) do not do it on reduced charts.** A chart with no normal term cannot tell the
+  mixed states from the bundle's, so their successors conflict.
+- **The normal term costs accuracy on the bundle.** HIRES's plain median rises from 1e-8 to 1.4e-4 and its worst to 1e-2, and the gate
+  calibrated for the maximum then refuses everything. A composite (T0's fit on the bundle, T1's beyond a normal offset) is the next
+  design.
+- **On full charts the sensitivity chart is a rotation, and it helps.** It improves CHEMAKZO 7-14x in every coupled score (column
+  6.0e-3 to 3.3e-4, rollout 2.5e-3 to 3.3e-4, worst mixed defect at w = 0.01 from 0.11 to 2.0e-4).
+- Pre-registered:
+  - U1 and U2 fail as stated: T1 refuses all of HIRES, so the gated measures are undefined. The ungated medians fall 5.5x and 26x.
+  - U3 fails: T2 is 31x above T1 on HIRES.
+  - U4 fails on bruss_d20: plain pairs cut its median 3.9x.
+  - U5 fails: CHEMAKZO's T2 and Robertson's T0+ and T1m move 7-15x.
+  - U6 holds: every served arm holds 0.01 in the column at every exchange.
+- Timings vary 2-3x between arms at the same degree (concurrent runs).
+
+### 3.21 A basis for larger charts (p12; `theory/panel/p12_basis.py`, predictions `37b71f6`)
+
+Total degree against the hyperbolic cross and a greedy downward-closed set (grown by correlation with the fit's residuals, at total
+degree's size), at R4e's chart dimension:
+
+| problem | best held-out worst: total / hyperbolic / adaptive | served |
+|---|---|---|
+| pollu | 3.0e-3 / 5.1e-3 / 1.2e-2 | none |
+| nelson | 1.10 / 1.10 / 1.10 | none |
+| primordial | 0.53 / 0.47 / 1.49 | none |
+| lorenz96_d20 | 0.12 / 0.17 / 0.33 | none |
+| bruss_d20 | 3.5e-2 / 4.0e-2 / 0.12 | all three |
+| fisher_kpp_d10 | 0.32 / 0.30 / 0.42 | all three |
+| burgers_d20 | 8.0e-3 / 2.1e-2 / 2.3e-2 | all three |
+
+- **No index set helps**: the greedy set overfits (its in-sample ranking of candidates does not transfer to held-out states); the
+  hyperbolic cross is comparable or worse. B1 fails, B2 and B3 hold.
+- **Nelson and primordial are not basis-limited**: their ungated one-step errors on the test trajectories are 0.5-0.7 and 0.7-1.1 dex at
+  every step (medians after step 5: 0.11 and 0.04 dex), with about 1,800 fitted pairs in 16 and 10 coordinates at degrees 1-2.
+- **POLLU is accumulation-limited**: its ungated one-step errors after step 5 are at most 9.3e-4, its rollout 4.7e-2 (A_n 234).
+
+### 3.22 KIDA: coverage against data, and the solver (p8, p9; `theory/panel/p8_kida_coverage.py`, `p9_kida_solver.py`; predictions committed with each script)
+
+- **Coverage grows slowly with tracers** (p8): the local arm's oracle coverage at 0.01 dex is 1.8, 5.8, 13.6 and 17.4% at 20, 40, 80
+  and 160 tracers (median 0.047 to 0.022 dex); the last doubling's exponent, 0.35, puts 50% at about 3,300 tracers. The degree-2 chart
+  goes from 3.6 to 7.1% between 40 and 160.
+- **The reference is sound and the solver's cost is its right-hand side** (p9, 120 dark states, one core): the stored labels are within
+  1.8e-6 dex of a rtol 1e-9 reference on the key species (5.7e-6 strict). A step costs 0.48 s at the median with the dense Jacobian and
+  0.61 s with a sparse one (35 nonzeros per row): about 670 right-hand-side evaluations, 3.5 Jacobians and 64 LU factorisations per
+  step, so the right-hand side, not the linear algebra, is where a faster exact solver would come from.
+
 ---
 
 ## 4. Mistakes, and what each taught
@@ -750,7 +933,7 @@ Candidates aimed at those limits, each keeping fast inference:
 T-a and T-b address the two gaps that bind at the target's scale (the box at d >= 20, the cost per output at 578 species); T-c and T-d
 are conditional on the records showing graph-local coupling or a jump the leaves can isolate.
 
-### 9.7 Where things stand after round 2's experiments (the author's reading, for the reviewers to correct)
+### 9.7 Where things stood after sections 3.9-3.16 (the author's reading; round 2 corrected items 1, 3, 4 and 7, section 3.17)
 
 1. **Coupling is the regime, and the closed column is the honest test of it.** Chained mixing pulls each cell toward a reference
    partner; the column, where neighbours carry surrogate error, gives 2.7-13x larger errors at the larger exchange for rollout-tuned
@@ -779,38 +962,56 @@ are conditional on the records showing graph-local coupling or a jump the leaves
    acceptance check and every method's projected scores enforce them on those problems. A fix (sampling the right-hand side off the
    data, since a linear law satisfies W F(y) = 0 for every y) needs the user's approval, as a change to `src`.
 
-## 10. Questions for the reviewers (round 2)
+### 9.8 Where things stand after sections 3.17-3.22 (the author's reading, for the reviewers to correct)
 
-Round 1's questions were answered in `theory/reviews/council-*.md`; section 3.9 lists what was adopted. These are new.
+1. **The repair was the largest gain of the whole study.** Removing the singular fits' per-call SVD and the per-state projection loop,
+   and choosing configurations by cost, raised the median effective speed-up over the served problems from 14 to 54 with no loss of
+   accuracy (3.18). Ten of 18 problems are served, all within 0.01 in rollouts, chained mixing and every paired-column setting except
+   fisher_kpp_d3 at its margin (3.19).
+2. **Coupling does not compound through neighbours** (closed and forced columns agree within 1.37x). Inside the bundle the coupled
+   error is the cell's own one-step defect; the open question is the defect on off-bundle inputs, not feedback.
+3. **The normal term is the mechanism off the bundle** (3.20). On POLLU and HIRES it cuts the off-bundle defect 5-28x in the median and
+   up to 3,300x in the maximum. It needs mixed (tube) data in the fit, and it costs accuracy on the bundle. Neither mixed data alone nor a
+   sensitivity chart replaces it on a reduced chart; on a full chart a sensitivity rotation alone gives 7-14x (CHEMAKZO).
+4. **What still blocks the hard cases:**
+   - HIRES: the gate's calibrated maximum. Its plain fit is excellent; the off-bundle fit is good but coarser on the bundle.
+   - POLLU: accumulation. One-step errors after the transient are at most 1e-3, A_n = 234, and the rollout is 4.7e-2.
+   - Nelson and primordial: fits too coarse everywhere (0.5-1.1 dex) with about 1,800 pairs in 10-16 coordinates; no index set helps.
+   - lorenz96_d20: chaos with a full 20-coordinate chart.
+   - The oscillators: the jump.
+5. **The accumulation budget tol / (2 A_n) is as strict as Fable predicted.** It would refuse every unserved problem whole and 0-32% of
+   the served lattices. A_n is a worst case over directions; the coherence-based budget is no looser on these records.
+6. **KIDA:** the exact reference is sound (1.8e-6 dex), the solver's cost is its right-hand side (670 evaluations per step), and global
+   coverage at 0.01 dex grows slowly with data (17% at 160 tracers, about 3,300 tracers for 50% by extrapolation).
+7. **Not done:**
+   - the trajectory-fitted tensor train (T-a) and the one-model-for-all-outputs screen;
+   - the composite on/off-bundle model;
+   - the checked-growth local table;
+   - the KIDA rank-of-futures measurement;
+   - the `src` fix for conservation laws (awaiting the user).
 
-1. **The plan from here.** Given sections 3.9-3.16 and 9.7, what should the next phase test, in what order, with what decisive
-   readings? What did this round get wrong, and which of the readings in 9.7 do not follow from the records?
-2. **Tensor trains made versatile (section 9.6).** Rank T-a to T-e (a trajectory-fitted TT in chart coordinates, one TT for all
-   outputs, an order or tree from the coupling graph, piecewise TT in leaves, rank and degree per core chosen by held-out chains), add
-   better ones, and give each a decisive first test. The aim is robust, scalable ideas for vector-valued maps in general, not chemistry
-   only, testable quickly on the panel's vector-valued functions and step maps.
-3. **One model per output.** ChebTT builds one train per output; the chart recipe shares one design and one gate across outputs. Is a
-   model per output wasteful where outputs are degenerate or dependent? How should the code detect that structure (the output rank of
-   the increments or of the Jacobians, shared active directions, reduced-rank regression, a block or output-core TT, the hub), and what
-   are the best ways to exploit it, with a guarantee that survives?
-4. **Held-out against in-sample error.** The held-out maxima are far larger than the in-sample ones, and sit at the first steps (9.7,
-   item 4). Is the diagnosis (the Lebesgue function exploding between sparse first-step samples, with a sample cost set by the initial
-   law's dimension) complete? What else would make the held-out error robust (designed data, the gate, regularisation, the fit space),
-   and which is most robust across classes?
-5. **A tube, not a box.** In the target simulations (MFC coupled to chemistry) the states stay near the bundle of trajectories the
-   training covers, a slightly wider set than the training traces. Should surrogates be built on a tube or manifold neighbourhood of the
-   trajectories rather than a box? What is the theory: the sampling factor and its design (for example Chebyshev points in tube
-   coordinates, along and across the trajectories), the error bound inside the tube (Proposition 8.2's paired Lipschitz constant times
-   the radius), the gate that certifies a query is inside, the propagation of errors that stay inside (9.7, item 2), and how a tensor
-   train or the chart fit would be built on it? The theory first, then the experiments that would tell which variant to try.
-6. **The gate.** How should a gate be calibrated so that it transfers from calibration states to chain and coupled states (sections
-   3.15, 3.16), and so that each term of a conjunction is calibrated consistently? ISAT checks accuracy by solving while it grows; is a
-   checked growth, a conformal guarantee on chains, or something else the right design here?
-7. **Major speed-ups, not polish.** Is the current mathematics, algorithm and software for the rollout step (prediction, gate,
-   projection, solver fallback) the best available? Look only for changes of 2x or more: complexity, a different algorithm, reuse of work
-   between the prediction and the gate (fisher_kpp_d5's gate costs 525 us against a 9 us prediction), batching, vectorisation (the
-   invariant projection solves one least-squares problem per state in a Python loop), the solver's own cost (KIDA's step densifies an
-   analytic sparse Jacobian), the selection's cost (CHEMAKZO's degrees 8-10 take 4-14 minutes each). Give the measurement that would
-   confirm each.
-8. **The spurious conservation laws** (9.7, item 7): is the proposed fix right, and what else in the benchmark's results does the bug
-   reach?
+## 10. Questions for the reviewers (round 3)
+
+Round 2's questions were answered in `theory/reviews/council2-*.md`; section 3.17 lists what was adopted, sections 3.18-3.22 what was
+run. These are new.
+
+1. **The plan from here.** Given 3.18-3.22 and 9.8, what should the next phase test, in what order, with what decisive readings? Which
+   of 9.8's readings do not follow from the records?
+2. **The composite tube model.** The normal term fixes the off-bundle defect and costs accuracy on the bundle. What is the right
+   composite (switch on the normal offset, a blended fit, a two-level design, the normal term as a residual model fitted after the
+   on-bundle fit), with what theory (Proposition 5.1 on each piece, the switch's continuity, the gate per piece), and what experiment
+   decides?
+3. **The gate after the repair.** A gate calibrated for the maximum refuses whole problems (HIRES under T1) or nothing; the accumulation
+   budget refuses whole problems. Is there a gate between these that is still honest for the maximum: per-regime calibration, a
+   calibration per normal offset, conformal on chains, an error model with the step index?
+4. **Accumulation.** POLLU's one-step errors are within 1e-3 and its rollout is 4.7e-2. What lowers the accumulated error without a
+   tighter per-step fit everywhere: fitting to multi-step chains (the rollout-tuned ChebTT idea in the chart), a correction trained on
+   chained residuals, periodic exact steps, error-feedback through the invariants?
+5. **Nelson and primordial.** Fits at 0.5-1.1 dex with about 1,800 pairs in 10-16 coordinates. More data (how much, by the coverage
+   law), local fits (ART, AFINNI under the protocol), or a different representation? What is the cheapest decisive test?
+6. **Tensor trains and shared outputs** (9.6, round 2's questions 2-3; not yet run): with the repaired recipe as the baseline, which
+   single TT or shared-output experiment would decide whether to build T-a and T-b?
+7. **Major speed-ups, again.** After the repair, where is the remaining time? Only changes of 2x or more. Candidates: KIDA's
+   right-hand side (670 evaluations per step), the selection, the gate's out-of-span term, a compiled evaluation path, a GPU path.
+8. **KIDA's route.** Given p8 and p9, is a global fit at 0.01 dex on the 13 key species a realistic target, or should the route be local
+   tables, a reduced network, or accelerating the exact solver?
