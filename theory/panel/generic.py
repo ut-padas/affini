@@ -20,6 +20,8 @@ first version, which was built on HIRES and overfitted elsewhere.
               error with refusal and fallback; among the configurations within the tolerance, the one with the smallest solver share
               (then the smaller q); none within it: the problem is reported as not served by the recipe (the solver, or a solver-queried
               scheme, is the answer) together with the best configuration's numbers;
+  extra       optional one-step pairs at further inputs (fresh draws from the problem's initial law), added to every fit and to the
+              chart's principal directions; the held-out chains stay those of the training trajectories;
   scores      on the test trajectories with the refit on all training trajectories: one-step error and the share refused, rollouts over the
               first 20 and all test trajectories with their solver shares, and mixing rollouts (w = 0.01, 0.1) with refusal honoured.
 """
@@ -69,12 +71,12 @@ def design(U: np.ndarray, q: int, lo: np.ndarray, hi: np.ndarray, idx: list[tupl
 class Transform:
     """Fold-fitted pieces: floor clip on free components, principal directions, invariants."""
 
-    def __init__(self, P, train):
+    def __init__(self, P, train, extra_X=None):
         self.P = P
         self.h = P.system.held
         self.free = train.shape[2] - self.h
         self.cut = np.log10(P.floor) - 2.0 if (P.system.log and P.floor > 0) else -np.inf
-        X = self.clip(visited(train))
+        X = self.clip(visited(train) if extra_X is None else np.concatenate([visited(train), extra_X]))
         self.mu = X[:, : self.free].mean(axis=0)
         self.V = np.linalg.svd(X[:, : self.free] - self.mu, full_matrices=False)[2].T
         self.W = invariants_of(P, train)
@@ -178,8 +180,10 @@ def lift_error(P, T: Transform, k: int, Xf, Xv, Yv, deg: int) -> float:
         return float("inf")
     coef = np.linalg.lstsq(design(U, deg, lo, hi, idx), T.clip(Xf)[:, : T.free], rcond=None)[0]
     Zd = np.array(Xv, dtype=float)
-    Zd[:, : T.free] = design(T.chart(Xv, k), deg, lo, hi, idx) @ coef
     with np.errstate(all="ignore"):
+        Zd[:, : T.free] = design(T.chart(Xv, k), deg, lo, hi, idx) @ coef
+        if not np.all(np.isfinite(Zd)) or (P.system.log and np.any(Zd > 300)):
+            return float("inf")  # a decoder that leaves the representable states cannot be a lift: no solve
         return worst_scored(P, T.clip(P.step(Zd)), T.clip(Yv))
 
 
@@ -189,10 +193,10 @@ def split(train, seed):
     return train[order[nv:]], train[order[:nv]]
 
 
-def choose_k(P, train, kmax: int) -> dict:
+def choose_k(P, train, kmax: int, extra=None) -> dict:
     fit, val = split(train, 0)
-    T = Transform(P, fit)
-    Xf = visited(fit)
+    T = Transform(P, fit, None if extra is None else extra[0])
+    Xf = visited(fit) if extra is None else np.concatenate([visited(fit), extra[0]])
     rng = np.random.default_rng(7)
     first = val[:, 0]
     later = visited(val[:, 1:]) if val.shape[1] > 2 else first
@@ -212,10 +216,15 @@ def choose_k(P, train, kmax: int) -> dict:
     return {"k": min(curve, key=lambda r: r["lift_error"])["k"], "reduction": "not validated", "curve": curve, "solves": int(solves)}
 
 
-def build(P, fit_trajs, k, q, ridge, val_pairs=None):
-    """A surrogate fitted on ``fit_trajs``; its Lambda* from the held-out one-step error on ``val_pairs`` (or the given e_v)."""
-    T = Transform(P, fit_trajs)
+def build(P, fit_trajs, k, q, ridge, val_pairs=None, extra=None):
+    """
+    A surrogate fitted on ``fit_trajs`` (and on the one-step pairs ``extra`` = (inputs, next states), when given); its Lambda* from the
+    held-out one-step error on ``val_pairs`` (or the given e_v).
+    """
+    T = Transform(P, fit_trajs, None if extra is None else extra[0])
     X, Y = pairs(fit_trajs)
+    if extra is not None:
+        X, Y = np.concatenate([X, extra[0]]), np.concatenate([Y, extra[1]])
     U = T.chart(X, k)
     G = Fit(U, T.clip(Y)[:, : T.free], q, ridge)
     sur = Surrogate(T, k, G, np.inf)
@@ -229,17 +238,17 @@ def build(P, fit_trajs, k, q, ridge, val_pairs=None):
     return sur, e_v
 
 
-def select(P, train, k, qmax: int, rollout) -> dict:
+def select(P, train, k, qmax: int, rollout, extra=None) -> dict:
     """(q, ridge) by the worst over the splits of the held-out chained error with refusal and fallback (module docstring)."""
     m = k + P.system.held
-    n_pairs = len(train) * 4 // 5 * (train.shape[1] - 1)
+    n_pairs = len(train) * 4 // 5 * (train.shape[1] - 1) + (0 if extra is None else len(extra[0]))
     configs = [(q, r) for q in range(1, qmax + 1) if n_terms(m, q) * 1.5 <= n_pairs and n_terms(m, q) <= 3000 for r in RIDGES]
     rows = []
     for q, r in configs:
         per = []
         for s in SPLITS:
             fit, val = split(train, s)
-            sur, e_v = build(P, fit, k, q, r, pairs(val))
+            sur, e_v = build(P, fit, k, q, r, pairs(val), extra)
             if sur.lam_star < 0:
                 # the Lebesgue bound is nonnegative, so every input is refused: the chain is the solver's own, exact and fully solved
                 res = {"rollout_worst": 0.0, "rollout_solved_by_step": [1.0]}
@@ -285,15 +294,15 @@ def mixing(P, sur, true, w, rng) -> dict:
     return {"worst": worst, "solver_share": float(np.mean(solved))}
 
 
-def run(P, train, test, kmax=12, qmax=8, seed=0) -> dict:
+def run(P, train, test, kmax=12, qmax=8, seed=0, extra=None) -> dict:
     """The generic recipe end to end on one problem (module docstring); every number the memo quotes is in the returned dict."""
     from src.benchmark.step_maps import rollout
 
     t0 = time.perf_counter()
-    kc = choose_k(P, train, kmax)
+    kc = choose_k(P, train, kmax, extra)
     log(f"  k={kc['k']} ({kc['reduction']})")
-    sel = select(P, train, kc["k"], qmax, rollout)
-    sur, _ = build(P, train, kc["k"], sel["degree"], sel["ridge"], float(sel["e_v"]))
+    sel = select(P, train, kc["k"], qmax, rollout, extra)
+    sur, _ = build(P, train, kc["k"], sel["degree"], sel["ridge"], float(sel["e_v"]), extra)
     Xe = test[:, :-1].reshape(-1, test.shape[2])
     Ye = test[:, 1:].reshape(-1, test.shape[2])
     r = np.asarray(sur.refuses(Xe), dtype=bool)
