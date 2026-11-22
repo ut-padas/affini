@@ -52,6 +52,7 @@ from src.infra.records import RecordStore  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "data"
 TOL = 0.01
+MIX_CHUNK = 240
 QOI = ["H2", "CO", "C", "C+", "O", "OH", "H2O", "e-", "H3+", "HCO+", "N2H+", "S+", "HCN"]
 CUT = -14.0
 N_SP = 578
@@ -82,12 +83,25 @@ class Data:
         d = trajs.shape[2]
         return trajs[:, :-1].reshape(-1, d), trajs[:, 1:].reshape(-1, d)
 
-    def mixed(self, trajs, rng):
-        """Each state mixed once (w = 0.01 and 0.1) with another trajectory's state at the same step, and its solver step."""
+    def mixed(self, trajs, label, seed):
+        """
+        Each state mixed once (w = 0.01 and 0.1) with another trajectory's state at the same step, and its solver step. The solver labels
+        are the same for every arm and mixed states are slow to solve, so they are kept as records (data/records/p5_mixed/, chunks of
+        MIX_CHUNK states, keyed by the set and its seed) and solved once.
+        """
         from generic2 import mixed_once
 
+        rng = np.random.default_rng(seed)
         X = np.concatenate([mixed_once(self.P, trajs, w, rng) for w in (0.01, 0.1)])
-        return X, self.P.step(X)
+        store = RecordStore(OUT / "records" / "p5_mixed", path_of=lambda k: OUT / "records" / "p5_mixed" / f"{k['set']}_{k['seed']}_{k['chunk']}.json")
+        Ys = []
+        for c in range(0, len(X), MIX_CHUNK):
+            key = {"set": label, "seed": seed, "chunk": c // MIX_CHUNK, "states": len(X[c : c + MIX_CHUNK])}
+            rec = recorded(store, key, lambda Xc: {"_arrays": {"Y": self.P.step(Xc)}}, X[c : c + MIX_CHUNK], limit=1800)
+            if rec.get("status") != "done":
+                raise RuntimeError(f"mixed labels {key} failed: {rec.get('failure', {}).get('message')}")
+            Ys.append(np.load(store.path(rec["key"]).with_suffix(".npz"))["Y"])
+        return X, np.concatenate(Ys)
 
     def errors(self, Zpred, Ztrue):
         """(key-species worst, strict worst) per state; an entry counts where the truth exceeds 1e-12."""
@@ -231,8 +245,7 @@ def case(name: str) -> dict:
     t0 = time.perf_counter()
     D = Data()
     Xf, Yf = D.pairs(D.fit)
-    rng = np.random.default_rng(1)
-    cal_sets = [D.pairs(D.cal), D.mixed(D.cal, rng)]
+    cal_sets = [D.pairs(D.cal), D.mixed(D.cal, "cal", 1)]
     build = {"persistence": lambda: Persistence(), "linear": lambda: LinearArm(D, "linear", Xf, Yf), "chart2": lambda: LinearArm(D, "chart2", Xf, Yf),
              "local": lambda: LocalArm(D, Xf, Yf), "mlp": lambda: MLPArm(D, Xf, Yf)}[name]  # fmt: skip
     arm = build()
@@ -240,7 +253,7 @@ def case(name: str) -> dict:
     thr = float("inf") if name == "persistence" else calibrate(D, arm, cal_sets)
     sur = Gated(arm, thr)
     out = {"arm": name, "threshold": thr, "train_s": train_s, "sets": {}}
-    test_sets = {"test": D.pairs(D.test), "mixed": D.mixed(D.test, np.random.default_rng(2))}
+    test_sets = {"test": D.pairs(D.test), "mixed": D.mixed(D.test, "test", 2)}
     for label, (X, Y) in test_sets.items():
         pred = arm.predict(X)
         key, strict = D.errors(pred, Y)
@@ -271,6 +284,9 @@ def case(name: str) -> dict:
 
 def main() -> None:
     names = sys.argv[1:] or ["persistence", "linear", "chart2", "local", "mlp"]
+    D = Data()  # the mixed sets' labels first, outside any arm's record: a record inside a case would cancel the case's time limit
+    D.mixed(D.cal, "cal", 1)
+    D.mixed(D.test, "test", 2)
     store = RecordStore(OUT / "records" / "p5", path_of=lambda key: OUT / "records" / "p5" / f"{key['arm']}.json")
     for name in names:
         recorded(store, {"arm": name, "problem": "kida_dark", "tol": TOL}, case, name, limit=1800)

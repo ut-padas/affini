@@ -115,6 +115,33 @@ def select(P, train, k, dec_degree, rollout, extra=None, qmax=12, mixed=True) ->
             "cal_cache": cal_cache}  # fmt: skip
 
 
+def final(P, train, k, degree, ridge, dec_degree, cal_cache, extra=None):
+    """
+    The served surrogate: fitted on all of ``train``, its gate from each split's fit scored on that split's calibration states, pooled
+    (the largest score and bound), so the gate is calibrated only on states its own fit did not see.
+    """
+    sur, _, _ = build(P, train, k, degree, ridge, dec_degree, extra)
+    cal_all = []
+    for s in SPLITS:
+        fit, _, _ = thirds(train, s)
+        sv, _, _ = build(P, fit, k, degree, ridge, dec_degree, extra)
+        for Xc, Yc in cal_cache[s]:
+            if len(Xc):
+                cal_all.append(scores(P, sv, Xc, Yc))
+    e = np.concatenate([x[0] for x in cal_all])
+    b = np.concatenate([x[1] for x in cal_all])
+    s_ = (e / (1 + b))[np.isfinite(e / (1 + b))]
+    sur.e_hat = float(np.max(s_)) if len(s_) else np.inf
+    sur.b_max = float(np.max(b[np.isfinite(b)])) if np.isfinite(b).any() else -np.inf
+    return sur
+
+
+def rebuild(P, train, rec: dict, extra=None, mixed=True):
+    """The surrogate ``run`` served for record ``rec``, rebuilt from its chosen configuration (the same calibration states and seeds)."""
+    cal_cache = {s: calibration_sets(P, thirds(train, s)[1], mixed, np.random.default_rng(1000 + s)) for s in SPLITS}
+    return final(P, train, rec["k"], rec["degree"], rec["ridge"], rec["decoder_degree"], cal_cache, extra)
+
+
 def run(P, train, test, seed=0, extra=None, solve_us=None, qmax=12, mixed=True, kmax=40) -> dict:
     from generic import mixing
 
@@ -126,20 +153,7 @@ def run(P, train, test, seed=0, extra=None, solve_us=None, qmax=12, mixed=True, 
     dec_degree = next((c["decoder_degree"] for c in kc["curve"] if c["k"] == kc["k"]), 1)
     log(f"  k={kc['k']} ({kc['reduction']}), decoder degree {dec_degree}")
     sel = select(P, train, kc["k"], dec_degree, rollout, extra, qmax, mixed)
-    sur, _, _ = build(P, train, kc["k"], sel["degree"], sel["ridge"], dec_degree, extra)
-    cal_all = []
-    for s in SPLITS:  # the final gate: each split's fit scored on its own calibration states, pooled (the largest score and bound)
-        fit, cal, _ = thirds(train, s)
-        sv, _, _ = build(P, fit, kc["k"], sel["degree"], sel["ridge"], dec_degree, extra)
-        for Xc, Yc in sel["cal_cache"][s]:
-            if len(Xc):
-                e, b = scores(P, sv, Xc, Yc)
-                cal_all.append((e, b))
-    e = np.concatenate([x[0] for x in cal_all])
-    b = np.concatenate([x[1] for x in cal_all])
-    s_ = (e / (1 + b))[np.isfinite(e / (1 + b))]
-    sur.e_hat = float(np.max(s_)) if len(s_) else np.inf
-    sur.b_max = float(np.max(b[np.isfinite(b)])) if np.isfinite(b).any() else -np.inf
+    sur = final(P, train, kc["k"], sel["degree"], sel["ridge"], dec_degree, sel["cal_cache"], extra)
     train_s = time.perf_counter() - t0
     Xe, Ye = test[:, :-1].reshape(-1, test.shape[2]), test[:, 1:].reshape(-1, test.shape[2])
     r = np.asarray(sur.refuses(Xe), dtype=bool)
@@ -183,4 +197,4 @@ def run(P, train, test, seed=0, extra=None, solve_us=None, qmax=12, mixed=True, 
     return out
 
 
-__all__ = ["bound", "run", "select"]
+__all__ = ["bound", "final", "rebuild", "run", "select"]
