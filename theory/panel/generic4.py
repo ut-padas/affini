@@ -71,10 +71,10 @@ def verified_laws(P, train, n=600, tol=1e-9) -> np.ndarray:
 class Fit4:
     """The truncated-SVD fit and its gate factor (module docstring)."""
 
-    def __init__(self, U, Y, q, R=None):
-        self.q = q
+    def __init__(self, U, Y, q, R=None, idx=None):
         self.lo, self.hi = U.min(0), U.max(0)
-        self.idx = multi_indices(U.shape[1], q)
+        self.idx = multi_indices(U.shape[1], q) if idx is None else idx
+        self.q = max((max(a) for a in self.idx if len(a)), default=0)  # the Chebyshev tables' degree
         self.rs = None if R is None or not R.shape[1] else np.maximum(np.abs(R).max(0), 1e-300)
         A = self.phi(U, R)
         self.N = len(A)
@@ -159,6 +159,79 @@ class Surrogate4(Surrogate2):
         return self.evaluate(Z)[0] - Z
 
 
+def hyperbolic_indices(m: int, q: int, cap: int = 30) -> list[tuple]:
+    """The hyperbolic cross {alpha : prod_j (alpha_j + 1) <= 2^q}, each degree at most cap: a sparse set whose size grows mildly with m,
+    for maps whose interactions between coordinates are weak at high orders (mixed regularity)."""
+    bound, out = 2**q, []
+
+    def rec(prefix, prod):
+        if len(prefix) == m:
+            out.append(tuple(prefix))
+            return
+        a = 0
+        while prod * (a + 1) <= bound and a <= cap:
+            rec([*prefix, a], prod * (a + 1))
+            a += 1
+
+    rec([], 1)
+    return out
+
+
+def adaptive_indices(U, Y, budget: int, cap: int, rows: int = 1500, seed: int = 0) -> list[tuple]:
+    """
+    A downward-closed index set of ``budget`` terms grown greedily: from degree 1, each round fits the current set (truncated SVD, all
+    rows) and adds the admissible candidates (one step beyond the set in one coordinate, every backward neighbour in the set, each degree
+    at most ``cap``) whose design columns correlate most with the standardised residuals, scored on ``rows`` rows; the set grows by half
+    per round. The selection's held-out chains, not this in-sample score, decide which budget is served.
+    """
+    m = U.shape[1]
+    lo, hi = U.min(0), U.max(0)
+    s = (2 * U - lo - hi) / np.maximum(hi - lo, 1e-12)
+    tabs = [np.polynomial.chebyshev.chebvander(s[:, j], cap) for j in range(m)]
+    sub = np.random.default_rng(seed).choice(len(U), min(rows, len(U)), replace=False)
+    Ys = (Y - Y.mean(0)) / np.maximum(Y.std(0), 1e-300)
+
+    def column(a, r=None):
+        col = np.ones(len(U) if r is None else len(r))
+        for j, d in enumerate(a):
+            if d:
+                col = col * (tabs[j][:, d] if r is None else tabs[j][r, d])
+        return col
+
+    idx = [tuple([0] * m)] + [tuple(int(i == j) for i in range(m)) for j in range(m)]
+    have = set(idx)
+    A = np.stack([column(a) for a in idx], axis=1)
+    cand_cols: dict = {}  # candidate columns on the scoring rows, computed once
+    while len(idx) < budget:
+        u, sv, _ = np.linalg.svd(A, full_matrices=False)
+        keep = sv > RCOND * sv[0]
+        Rsub = (Ys - u[:, keep] @ (u[:, keep].T @ Ys))[sub]
+        cands = []
+        for a in idx:
+            for j in range(m):
+                b = a[:j] + (a[j] + 1,) + a[j + 1 :]
+                if b[j] > cap or b in have or b in cands:
+                    continue
+                if all(b[i] == 0 or (b[:i] + (b[i] - 1,) + b[i + 1 :]) in have for i in range(m)):
+                    cands.append(b)
+        if not cands:
+            break
+        for b in cands:
+            if b not in cand_cols:
+                cand_cols[b] = column(b, sub)
+        C = np.stack([cand_cols[b] for b in cands], axis=1)
+        score = np.linalg.norm(C.T @ Rsub, axis=1) / np.maximum(np.linalg.norm(C, axis=0), 1e-300)
+        n_add = min(budget - len(idx), max(1, len(idx) // 2), len(cands))
+        new = [cands[t] for t in np.argsort(-score)[:n_add]]
+        # a candidate added in this round may make others admissible only in the next round, which keeps the set downward closed
+        idx += new
+        have.update(new)
+        for b in new:
+            cand_cols.pop(b, None)
+        A = np.concatenate([A, np.stack([column(b) for b in new], axis=1)], axis=1)
+    return idx
+
+
 def normal_coords(T, Z, k, n):
     """The first n off-chart coordinates of Z (the chart's directions k, k+1, ...), the offset across the chart's fibres."""
     return (T.clip(Z)[:, : T.free] - T.mu) @ T.V[:, k : k + n]
@@ -208,7 +281,8 @@ def transform(P, fit_trajs, extra_X=None, chart_pairs=None):
 def build(P, fit_trajs, k, q, dec_degree, extra=None, variant=None):
     """The surrogate fitted on ``fit_trajs`` (and ``extra`` pairs); ``variant`` (the tube experiment): ``mixed`` adds that many of the fit
     trajectories' own mixed pairs to the fit, ``normal`` adds the off-chart coordinates as linear terms, ``chart="sensitivity"`` takes
-    the chart from sensitivity_directions on the plain and mixed pairs."""
+    the chart from sensitivity_directions on the plain and mixed pairs; ``basis`` (``"total"``, ``"hyperbolic"``, ``"adaptive"``) sets
+    the index set at level q: total degree q, the hyperbolic cross of level q, or a greedy set of total degree q's size."""
     v = variant or {}
     X, Y = pairs(fit_trajs)
     if extra is not None:
@@ -220,7 +294,15 @@ def build(P, fit_trajs, k, q, dec_degree, extra=None, variant=None):
     T = transform(P, fit_trajs, added if len(added) else None, (X, Y) if v.get("chart") == "sensitivity" else None)
     n_normal = (T.free - k) if v.get("normal") else 0
     R = normal_coords(T, X, k, n_normal) if n_normal else None
-    G = Fit4(T.chart(X, k), T.clip(Y)[:, : T.free], q, R)
+    U = T.chart(X, k)
+    basis = v.get("basis", "total")
+    if basis == "hyperbolic":
+        idx = hyperbolic_indices(U.shape[1], q)
+    elif basis == "adaptive":
+        idx = adaptive_indices(U, T.clip(Y)[:, : T.free], n_terms(U.shape[1], q), cap=min(3 * q, 12))
+    else:
+        idx = None
+    G = Fit4(U, T.clip(Y)[:, : T.free], q, R, idx)
     dec = Decoder(T, k, X, dec_degree) if k < T.free else None
     return Surrogate4(T, k, G, dec, n_normal), X, Y
 
@@ -270,8 +352,10 @@ def select(P, train, k, dec_degree, solve_us, extra=None, qmax=12, variant=None)
     n_pairs = len(train) * 4 // 5 * (train.shape[1] - 1) + (0 if extra is None else len(extra[0]))
     cal_cache = {s: calibration_sets(P, thirds(train, s)[1], True, np.random.default_rng(1000 + s)) for s in SPLITS}
     rows, best_err, rising = [], np.inf, 0
+    basis = (variant or {}).get("basis", "total")
     for q in range(1, qmax + 1):
-        if n_terms(m, q) * 1.5 > n_pairs or n_terms(m, q) > 3000:
+        terms = len(hyperbolic_indices(m, q)) if basis == "hyperbolic" else n_terms(m, q)
+        if terms * 1.5 > n_pairs or terms > 3000:
             break
         per = []
         for s in SPLITS:
@@ -296,7 +380,7 @@ def select(P, train, k, dec_degree, solve_us, extra=None, qmax=12, variant=None)
         chains_ = [p["chain_worst"] for p in per]
         rho = float(np.mean([p["solver_share"] for p in per]))
         ev = float(np.nanmedian([p["evaluate_us"] for p in per]))
-        row = {"degree": q, "terms": n_terms(m, q), "chain_worst": float("inf") if any(np.isnan(chains_)) else max(chains_), "solver_share": rho,
+        row = {"degree": q, "terms": terms, "chain_worst": float("inf") if any(np.isnan(chains_)) else max(chains_), "solver_share": rho,
                "heldout_worst": max(p["heldout_worst"] for p in per), "evaluate_us": ev, "cost_us": ev + rho * (solve_us or 0.0), "splits": per}  # fmt: skip
         row["served"] = bool(row["chain_worst"] <= MARGIN * TOL and rho < SERVED_SHARE and not any(p["stopped_early"] for p in per))
         rows.append(row)
