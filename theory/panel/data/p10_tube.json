@@ -1,0 +1,2947 @@
+{
+ "bruss_d20/T0": {
+  "budgets": {
+   "accumulation": {
+    "budget": 7.501582423040962e-05,
+    "refused_percent": 17.8125
+   },
+   "accumulation_factor": 66.6526036512323,
+   "coherence": {
+    "budget": 0.0005335001138494438,
+    "refused_percent": 7.875
+   },
+   "coherence_value": 0.07618784768488616,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 5.3125
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0011600969480570489,
+    "solver_share": 0.053125,
+    "step_and_solve_s": 1.632853968971176,
+    "steps": 40,
+    "wall_s": 1.6401472500001546,
+    "worst": 0.0019555032505309215
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0011241214020137613,
+    "solver_share": 0.05,
+    "step_and_solve_s": 1.5274400860216701,
+    "steps": 40,
+    "wall_s": 1.5334791639907053,
+    "worst": 0.0013600473480993025
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0005527268365250887,
+    "solver_share": 0.05,
+    "step_and_solve_s": 1.4002000589534873,
+    "steps": 40,
+    "wall_s": 1.406037359003676,
+    "worst": 0.0005754754403745829
+   }
+  },
+  "degree": 4,
+  "evaluate_us": 20.707749999928637,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.0812851497906403,
+    "defect_max": 0.001216744864343089,
+    "defect_median": 1.3808579162361001e-05,
+    "refused_percent": 5.25
+   },
+   "0.1": {
+    "coherence": 0.03302812841579655,
+    "defect_max": 0.0012202506167532934,
+    "defect_median": 1.3340440882244481e-05,
+    "refused_percent": 5.375
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.05125,
+    "worst": 0.001436093717688658
+   },
+   "0.1": {
+    "solver_share": 0.050624999999999996,
+    "worst": 0.0023066143171640435
+   }
+  },
+  "rank": 310,
+  "refused_percent": 5.3125,
+  "rollout_worst": 0.003373540367125283,
+  "served": true,
+  "speedup_effective": 15.114900731469191,
+  "speedup_effective_from_step_10": 76.71724591528614,
+  "status": "done",
+  "train_s": 4.723568671994144
+ },
+ "bruss_d20/T0+": {
+  "budgets": {
+   "accumulation": {
+    "budget": 7.501582423040962e-05,
+    "refused_percent": 8.6875
+   },
+   "accumulation_factor": 66.6526036512323,
+   "coherence": {
+    "budget": 0.00039136557669261225,
+    "refused_percent": 6.25
+   },
+   "coherence_value": 0.1612805845795619,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 4.875
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.001937073605473516,
+    "solver_share": 0.048125,
+    "step_and_solve_s": 2.4073811379639665,
+    "steps": 40,
+    "wall_s": 2.4122492669994244,
+    "worst": 0.0033906542668123048
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0022817091258864886,
+    "solver_share": 0.045625,
+    "step_and_solve_s": 2.5037120699998923,
+    "steps": 40,
+    "wall_s": 2.5096190909971483,
+    "worst": 0.0022817091258864886
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.003025861915159217,
+    "solver_share": 0.03625,
+    "step_and_solve_s": 2.327281883044634,
+    "steps": 40,
+    "wall_s": 2.332427921006456,
+    "worst": 0.003025861915159217
+   }
+  },
+  "degree": 5,
+  "evaluate_us": 231.86393124888127,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.16602461173703661,
+    "defect_max": 0.0018346002721434385,
+    "defect_median": 3.5799471008457484e-06,
+    "refused_percent": 4.875
+   },
+   "0.1": {
+    "coherence": 0.13088202767409066,
+    "defect_max": 0.0015955099987907395,
+    "defect_median": 3.4421029763698208e-06,
+    "refused_percent": 4.6875
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.048125,
+    "worst": 0.0034143661358603406
+   },
+   "0.1": {
+    "solver_share": 0.043125000000000004,
+    "worst": 0.002034517404868069
+   }
+  },
+  "rank": 1913,
+  "refused_percent": 4.875,
+  "rollout_worst": 0.0037389177881379347,
+  "served": true,
+  "speedup_effective": 5.13607864965058,
+  "speedup_effective_from_step_10": 6.8516113762927375,
+  "status": "done",
+  "train_s": 31.20224301998678
+ },
+ "bruss_d20/T1": {
+  "budgets": {
+   "accumulation": {
+    "budget": 7.501582423040962e-05,
+    "refused_percent": 16.125
+   },
+   "accumulation_factor": 66.6526036512323,
+   "coherence": {
+    "budget": 0.0005767478221973794,
+    "refused_percent": 7.124999999999999
+   },
+   "coherence_value": 0.05861862154401517,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 5.0625
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0007199479821479032,
+    "solver_share": 0.05,
+    "step_and_solve_s": 1.6176544129994,
+    "steps": 40,
+    "wall_s": 1.6228631519916235,
+    "worst": 0.0014820717514525128
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.00042982333294139946,
+    "solver_share": 0.05,
+    "step_and_solve_s": 1.80343418897246,
+    "steps": 40,
+    "wall_s": 1.8166335620044265,
+    "worst": 0.0006456629658923574
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.00026860122730321123,
+    "solver_share": 0.05,
+    "step_and_solve_s": 1.4048327609925764,
+    "steps": 40,
+    "wall_s": 1.4094723699963652,
+    "worst": 0.0006341233988801092
+   }
+  },
+  "degree": 4,
+  "evaluate_us": 25.084399376282818,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.05294592931363729,
+    "defect_max": 0.0006328484137606977,
+    "defect_median": 1.4120991608554661e-05,
+    "refused_percent": 5.0625
+   },
+   "0.1": {
+    "coherence": 0.11795985242282667,
+    "defect_max": 0.0011087163176338177,
+    "defect_median": 1.3611448915071961e-05,
+    "refused_percent": 5.0
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.05,
+    "worst": 0.0009238014314945919
+   },
+   "0.1": {
+    "solver_share": 0.05,
+    "worst": 0.0004804748961121652
+   }
+  },
+  "rank": 375,
+  "refused_percent": 5.0625,
+  "rollout_worst": 0.002613749379895669,
+  "served": true,
+  "speedup_effective": 15.056875343522428,
+  "speedup_effective_from_step_10": 63.331855200760565,
+  "status": "done",
+  "train_s": 5.552112807999947
+ },
+ "bruss_d20/T1m": {
+  "budgets": {
+   "accumulation": {
+    "budget": 7.501582423040962e-05,
+    "refused_percent": 16.125
+   },
+   "accumulation_factor": 66.6526036512323,
+   "coherence": {
+    "budget": 0.0005830651785082791,
+    "refused_percent": 7.124999999999999
+   },
+   "coherence_value": 0.05627038243477126,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 5.0625
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0007699499169432217,
+    "solver_share": 0.05,
+    "step_and_solve_s": 1.6952037350274622,
+    "steps": 40,
+    "wall_s": 1.7035069380071945,
+    "worst": 0.0014734249902929875
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0004418047286380844,
+    "solver_share": 0.05,
+    "step_and_solve_s": 1.5175501269695815,
+    "steps": 40,
+    "wall_s": 1.5231710520019988,
+    "worst": 0.000593965669679666
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.00024303656529485462,
+    "solver_share": 0.05,
+    "step_and_solve_s": 1.4095243559859227,
+    "steps": 40,
+    "wall_s": 1.415687408996746,
+    "worst": 0.0005832054326456442
+   }
+  },
+  "degree": 4,
+  "evaluate_us": 23.337452503255918,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.05084595485887135,
+    "defect_max": 0.0006280738021896964,
+    "defect_median": 1.4102793084431672e-05,
+    "refused_percent": 5.0625
+   },
+   "0.1": {
+    "coherence": 0.12017882968765536,
+    "defect_max": 0.0011038908856234042,
+    "defect_median": 1.3543836064441178e-05,
+    "refused_percent": 5.0
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.05,
+    "worst": 0.0009169789422410479
+   },
+   "0.1": {
+    "solver_share": 0.05,
+    "worst": 0.0004833696988066072
+   }
+  },
+  "rank": 375,
+  "refused_percent": 5.0625,
+  "rollout_worst": 0.0025989445207756923,
+  "served": true,
+  "speedup_effective": 15.310373272051203,
+  "speedup_effective_from_step_10": 68.07262056024123,
+  "status": "done",
+  "train_s": 16.213005818004603
+ },
+ "bruss_d20/T2": {
+  "budgets": {
+   "accumulation": {
+    "budget": 7.501582423040962e-05,
+    "refused_percent": 17.625
+   },
+   "accumulation_factor": 66.6526036512323,
+   "coherence": {
+    "budget": 0.0005135224548303624,
+    "refused_percent": 6.375
+   },
+   "coherence_value": 0.0853029312403224,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 4.8125
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0008475368658516502,
+    "solver_share": 0.046875,
+    "step_and_solve_s": 1.4106974379828898,
+    "steps": 40,
+    "wall_s": 1.4157602180057438,
+    "worst": 0.002290244795721907
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0012378027973789368,
+    "solver_share": 0.043125000000000004,
+    "step_and_solve_s": 1.4545862470840802,
+    "steps": 40,
+    "wall_s": 1.458478283995646,
+    "worst": 0.0012928029349966036
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0016950166114311493,
+    "solver_share": 0.033125,
+    "step_and_solve_s": 1.3924201879708562,
+    "steps": 40,
+    "wall_s": 1.396266456999001,
+    "worst": 0.0016950166114311493
+   }
+  },
+  "degree": 4,
+  "evaluate_us": 29.579795000245213,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.09067207745596008,
+    "defect_max": 0.0006780481855152287,
+    "defect_median": 1.5988714127267503e-05,
+    "refused_percent": 4.75
+   },
+   "0.1": {
+    "coherence": 0.07011944317984661,
+    "defect_max": 0.0015889883339330474,
+    "defect_median": 1.5599296151056624e-05,
+    "refused_percent": 4.5
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.046875,
+    "worst": 0.002100606531723302
+   },
+   "0.1": {
+    "solver_share": 0.040625,
+    "worst": 0.0007981778139739965
+   }
+  },
+  "rank": 326,
+  "refused_percent": 4.8125,
+  "rollout_worst": 0.0019446397383706543,
+  "served": true,
+  "speedup_effective": 14.982496098447303,
+  "speedup_effective_from_step_10": 53.70698306339251,
+  "status": "done",
+  "train_s": 5.462663333004457
+ },
+ "burgers_d20/T0": {
+  "budgets": {
+   "accumulation": {
+    "budget": 0.00012499982509735683,
+    "refused_percent": 31.6875
+   },
+   "accumulation_factor": 40.00005596892413,
+   "coherence": {
+    "budget": 0.0003207503595318517,
+    "refused_percent": 11.0
+   },
+   "coherence_value": 0.23159729356654304,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 1.4375
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 6.1566847000532414e-15,
+    "own_input_defect_worst": 0.0015516956078103494,
+    "solver_share": 0.013750000000000002,
+    "step_and_solve_s": 1.1413572569726966,
+    "steps": 40,
+    "wall_s": 1.1482923989970004,
+    "worst": 0.0015516956078103494
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 5.9580819677934594e-15,
+    "own_input_defect_worst": 0.002110181083291307,
+    "solver_share": 0.01125,
+    "step_and_solve_s": 1.1556857500690967,
+    "steps": 40,
+    "wall_s": 1.1640669619955588,
+    "worst": 0.002110181083291307
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 4.766465574234764e-15,
+    "own_input_defect_worst": 0.001561944503897017,
+    "solver_share": 0.000625,
+    "step_and_solve_s": 1.0927703559573274,
+    "steps": 40,
+    "wall_s": 1.0995152050018078,
+    "worst": 0.001561944503897017
+   }
+  },
+  "degree": 3,
+  "evaluate_us": 3.7717499981226865,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.24285251527451676,
+    "defect_max": 0.0014372498263576367,
+    "defect_median": 5.4581141398779565e-06,
+    "refused_percent": 1.4375
+   },
+   "0.1": {
+    "coherence": 0.2848633359745227,
+    "defect_max": 0.0013919784361087484,
+    "defect_median": 5.433540418597893e-06,
+    "refused_percent": 1.0
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.013750000000000002,
+    "worst": 0.0015292095076011453
+   },
+   "0.1": {
+    "solver_share": 0.01125,
+    "worst": 0.0018590651900698418
+   }
+  },
+  "rank": 84,
+  "refused_percent": 1.4375,
+  "rollout_worst": 0.0014313411174711188,
+  "served": true,
+  "speedup_effective": 56.46460233683375,
+  "speedup_effective_from_step_10": 299.8311392360902,
+  "status": "done",
+  "train_s": 3.07807546199183
+ },
+ "burgers_d20/T0+": {
+  "budgets": {
+   "accumulation": {
+    "budget": 0.00012499982509735683,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 40.00005596892413,
+   "coherence": {
+    "budget": 0.0003672397307028515,
+    "refused_percent": 31.4375
+   },
+   "coherence_value": 0.18226323185539337,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.125
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 6.355287432313025e-15,
+    "own_input_defect_worst": 0.0015959830695539967,
+    "solver_share": 0.00125,
+    "step_and_solve_s": 1.1247531439730665,
+    "steps": 40,
+    "wall_s": 1.1305782650015317,
+    "worst": 0.0015959830695539967
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 5.9580819677934594e-15,
+    "own_input_defect_worst": 0.0014296042118721042,
+    "solver_share": 0.000625,
+    "step_and_solve_s": 1.1403902060410473,
+    "steps": 40,
+    "wall_s": 1.1487547540018568,
+    "worst": 0.0014296042118721042
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 4.9650683064945454e-15,
+    "own_input_defect_worst": 0.0010107486555395173,
+    "solver_share": 0.0,
+    "step_and_solve_s": 1.065243943943642,
+    "steps": 40,
+    "wall_s": 1.0763510370015865,
+    "worst": 0.0010813130260847181
+   }
+  },
+  "degree": 3,
+  "evaluate_us": 2.112395004587597,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.17381825036454537,
+    "defect_max": 0.0015630876997501097,
+    "defect_median": 6.743886333704374e-06,
+    "refused_percent": 0.125
+   },
+   "0.1": {
+    "coherence": 0.1874525602595612,
+    "defect_max": 0.0011562030882681373,
+    "defect_median": 6.723084012838498e-06,
+    "refused_percent": 0.0625
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.000625,
+    "worst": 0.0015624682776484988
+   },
+   "0.1": {
+    "solver_share": 0.000625,
+    "worst": 0.0012661665548150403
+   }
+  },
+  "rank": 84,
+  "refused_percent": 0.125,
+  "rollout_worst": 0.001622581620771113,
+  "served": true,
+  "speedup_effective": 320.72786560121153,
+  "speedup_effective_from_step_10": 535.3582527864525,
+  "status": "done",
+  "train_s": 15.423052523998194
+ },
+ "burgers_d20/T1": {
+  "budgets": {
+   "accumulation": {
+    "budget": 0.00012499982509735683,
+    "refused_percent": 13.750000000000002
+   },
+   "accumulation_factor": 40.00005596892413,
+   "coherence": {
+    "budget": 0.0002262517952210821,
+    "refused_percent": 7.75
+   },
+   "coherence_value": 0.3943679210712179,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.375
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 3.5748491806760746e-15,
+    "own_input_defect_worst": 0.0026944349514034655,
+    "solver_share": 0.330625,
+    "step_and_solve_s": 1.1648771469917847,
+    "steps": 40,
+    "wall_s": 1.1711857990012504,
+    "worst": 0.0026944349514034655
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 3.574849180676076e-15,
+    "own_input_defect_worst": 0.0020551639842206204,
+    "solver_share": 0.344375,
+    "step_and_solve_s": 1.1662113899656106,
+    "steps": 40,
+    "wall_s": 1.175550536994706,
+    "worst": 0.0020551639842206204
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 2.9790409838967285e-15,
+    "own_input_defect_worst": 0.0012899255469827065,
+    "solver_share": 0.333125,
+    "step_and_solve_s": 1.0962136119924253,
+    "steps": 40,
+    "wall_s": 1.1038433229987277,
+    "worst": 0.0012899255469827065
+   }
+  },
+  "degree": 3,
+  "evaluate_us": 3.3321424962196033,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.388363965957315,
+    "defect_max": 0.002646229339160172,
+    "defect_median": 7.035114484577054e-06,
+    "refused_percent": 0.375
+   },
+   "0.1": {
+    "coherence": 0.3699699508654909,
+    "defect_max": 0.0022448793671029366,
+    "defect_median": 6.9266031804404715e-06,
+    "refused_percent": 0.125
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.21875,
+    "worst": 0.0026189757588327006
+   },
+   "0.1": {
+    "solver_share": 0.01125,
+    "worst": 0.0021353445526257966
+   }
+  },
+  "rank": 98,
+  "refused_percent": 0.375,
+  "rollout_worst": 0.0027743726573254274,
+  "served": true,
+  "speedup_effective": 2.8740051962457382,
+  "speedup_effective_from_step_10": 2.5943938892863456,
+  "status": "done",
+  "train_s": 3.3753711079916684
+ },
+ "burgers_d20/T1m": {
+  "budgets": {
+   "accumulation": {
+    "budget": 0.00012499982509735683,
+    "refused_percent": 32.1875
+   },
+   "accumulation_factor": 40.00005596892413,
+   "coherence": {
+    "budget": 0.0003195979955407647,
+    "refused_percent": 11.1875
+   },
+   "coherence_value": 0.23300246235068783,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 1.4375
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 6.1566847000532414e-15,
+    "own_input_defect_worst": 0.0013465297439985147,
+    "solver_share": 0.014375000000000002,
+    "step_and_solve_s": 1.1075103970069904,
+    "steps": 40,
+    "wall_s": 1.1139426629961235,
+    "worst": 0.0013465297439985147
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 5.7594792355336774e-15,
+    "own_input_defect_worst": 0.0014701306284422844,
+    "solver_share": 0.013125000000000001,
+    "step_and_solve_s": 1.1282277880382026,
+    "steps": 40,
+    "wall_s": 1.1355989760049852,
+    "worst": 0.0014701306284422844
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 4.9650683064945454e-15,
+    "own_input_defect_worst": 0.001537503344411828,
+    "solver_share": 0.000625,
+    "step_and_solve_s": 1.0496520339947892,
+    "steps": 40,
+    "wall_s": 1.0558875010028714,
+    "worst": 0.001537503344411828
+   }
+  },
+  "degree": 3,
+  "evaluate_us": 2.9966243801027304,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.23174295481372467,
+    "defect_max": 0.0013341253049987678,
+    "defect_median": 4.730291907839579e-06,
+    "refused_percent": 1.4375
+   },
+   "0.1": {
+    "coherence": 0.2649780028129098,
+    "defect_max": 0.0013500204790052317,
+    "defect_median": 4.692182847487736e-06,
+    "refused_percent": 1.0625
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.013750000000000002,
+    "worst": 0.001324394446285614
+   },
+   "0.1": {
+    "solver_share": 0.01125,
+    "worst": 0.0018531513394105525
+   }
+  },
+  "rank": 84,
+  "refused_percent": 1.4375,
+  "rollout_worst": 0.0013554415418257637,
+  "served": true,
+  "speedup_effective": 58.73785012714367,
+  "speedup_effective_from_step_10": 377.3873383530562,
+  "status": "done",
+  "train_s": 10.966588480994687
+ },
+ "burgers_d20/T2": {
+  "budgets": {
+   "accumulation": {
+    "budget": 0.00012499982509735683,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 40.00005596892413,
+   "coherence": {
+    "budget": 0.00029099240670194177,
+    "refused_percent": 100.0
+   },
+   "coherence_value": 0.2714505905691862,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 7.75
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 2.780438251636946e-15,
+    "own_input_defect_worst": 0.0017619822597999546,
+    "solver_share": 0.076875,
+    "step_and_solve_s": 1.1370974219462369,
+    "steps": 40,
+    "wall_s": 1.1432857350009726,
+    "worst": 0.0017619822597999546
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 2.5818355193771657e-15,
+    "own_input_defect_worst": 0.0020465306796135785,
+    "solver_share": 0.073125,
+    "step_and_solve_s": 1.185021874960512,
+    "steps": 40,
+    "wall_s": 1.193613199997344,
+    "worst": 0.0020465306796135785
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 2.5818355193771637e-15,
+    "own_input_defect_worst": 0.001228429700053102,
+    "solver_share": 0.06,
+    "step_and_solve_s": 1.1015468149998924,
+    "steps": 40,
+    "wall_s": 1.1095203430013498,
+    "worst": 0.001228429700053102
+   }
+  },
+  "degree": 4,
+  "evaluate_us": 5.389010002545547,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.27743104161613624,
+    "defect_max": 0.0013316454824048307,
+    "defect_median": 1.4744915210640475e-05,
+    "refused_percent": 7.75
+   },
+   "0.1": {
+    "coherence": 0.3390738939382491,
+    "defect_max": 0.001673917530149227,
+    "defect_median": 1.470414508839002e-05,
+    "refused_percent": 7.249999999999999
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.07625,
+    "worst": 0.0017622667851066032
+   },
+   "0.1": {
+    "solver_share": 0.065,
+    "worst": 0.0018929971993857375
+   }
+  },
+  "rank": 210,
+  "refused_percent": 7.75,
+  "rollout_worst": 0.0013390509068130774,
+  "served": true,
+  "speedup_effective": 12.15579495641571,
+  "speedup_effective_from_step_10": 209.85080716433282,
+  "status": "done",
+  "train_s": 3.5968460550066084
+ },
+ "chemakzo/T0": {
+  "budgets": {
+   "accumulation": {
+    "budget": 3.570480344181583e-05,
+    "refused_percent": 0.5
+   },
+   "accumulation_factor": 140.03718037960766,
+   "coherence": {
+    "budget": 0.00020363762203443777,
+    "refused_percent": 0.02941176470588235
+   },
+   "coherence_value": 0.180398532237013,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.0
+   },
+   "steps": 85
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.004933824451180069,
+    "solver_share": 0.007941176470588236,
+    "step_and_solve_s": 2.001449545030482,
+    "steps": 85,
+    "wall_s": 2.009958929003915,
+    "worst": 0.005974251300053135
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.003904912659097981,
+    "solver_share": 0.01764705882352941,
+    "step_and_solve_s": 2.0266118029830977,
+    "steps": 85,
+    "wall_s": 2.0332840510091046,
+    "worst": 0.004341874824536074
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.004274999919330558,
+    "solver_share": 0.02088235294117647,
+    "step_and_solve_s": 1.9939039570163004,
+    "steps": 85,
+    "wall_s": 2.0007032710127532,
+    "worst": 0.004764708845449883
+   }
+  },
+  "degree": 5,
+  "evaluate_us": 5.870442997547798,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.4857030168774195,
+    "defect_max": 0.003819810145731406,
+    "defect_median": 9.165192795368426e-06,
+    "refused_percent": 1.2647058823529411
+   },
+   "0.1": {
+    "coherence": 0.8151663787502872,
+    "defect_max": 0.004700666176820079,
+    "defect_median": 7.191089810909546e-05,
+    "refused_percent": 7.4411764705882355
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.01764705882352941,
+    "worst": 0.004805751897890342
+   },
+   "0.1": {
+    "solver_share": 0.07558823529411765,
+    "worst": 0.00398997396172307
+   }
+  },
+  "rank": 252,
+  "refused_percent": 0.0,
+  "rollout_worst": 0.002453484839814779,
+  "served": true,
+  "speedup_effective": 202.00579859481297,
+  "speedup_effective_from_step_10": 202.00579859481297,
+  "status": "done",
+  "train_s": 27.19065764801053
+ },
+ "chemakzo/T0+": {
+  "budgets": {
+   "accumulation": {
+    "budget": 3.570480344181583e-05,
+    "refused_percent": 0.5588235294117647
+   },
+   "accumulation_factor": 140.03718037960766,
+   "coherence": {
+    "budget": 0.00011826093208030412,
+    "refused_percent": 0.0588235294117647
+   },
+   "coherence_value": 0.3889393524432108,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.0
+   },
+   "steps": 85
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.004900202663340014,
+    "solver_share": 0.0661764705882353,
+    "step_and_solve_s": 1.9652952349715633,
+    "steps": 85,
+    "wall_s": 1.974427077002474,
+    "worst": 0.00920253897911838
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.004157152392530339,
+    "solver_share": 0.09470588235294117,
+    "step_and_solve_s": 2.111587776991655,
+    "steps": 85,
+    "wall_s": 2.1225091880041873,
+    "worst": 0.004235459002497777
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.004415463185920121,
+    "solver_share": 0.10500000000000001,
+    "step_and_solve_s": 2.1076430049579358,
+    "steps": 85,
+    "wall_s": 2.1201695749914506,
+    "worst": 0.004424519425932694
+   }
+  },
+  "degree": 5,
+  "evaluate_us": 4.995623501599766,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.7684156982322856,
+    "defect_max": 0.004186035126174659,
+    "defect_median": 1.3009566226740432e-05,
+    "refused_percent": 1.3235294117647058
+   },
+   "0.1": {
+    "coherence": 0.6435320736130054,
+    "defect_max": 0.003924665889839307,
+    "defect_median": 0.0001034964120856241,
+    "refused_percent": 8.558823529411764
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.10470588235294118,
+    "worst": 0.0056021124302141345
+   },
+   "0.1": {
+    "solver_share": 0.17058823529411765,
+    "worst": 0.005080627186005993
+   }
+  },
+  "rank": 252,
+  "refused_percent": 0.0,
+  "rollout_worst": 0.0024796500938562005,
+  "served": true,
+  "speedup_effective": 20.199260098066368,
+  "speedup_effective_from_step_10": 18.00310315903231,
+  "status": "done",
+  "train_s": 31.68484348298807
+ },
+ "chemakzo/T1": {
+  "budgets": {
+   "accumulation": {
+    "budget": 3.570480344181583e-05,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 140.03718037960766,
+   "coherence": {
+    "budget": 0.00015034266652087403,
+    "refused_percent": 100.0
+   },
+   "coherence_value": 0.2827978155278774,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.6470588235294118
+   },
+   "steps": 85
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.000879367481938953,
+    "solver_share": 0.007058823529411766,
+    "step_and_solve_s": 1.9746860460436437,
+    "steps": 85,
+    "wall_s": 1.9839166840101825,
+    "worst": 0.0009495839567610354
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.001957912522605021,
+    "solver_share": 0.009411764705882356,
+    "step_and_solve_s": 1.9728772809321526,
+    "steps": 85,
+    "wall_s": 1.9849258290050784,
+    "worst": 0.0035176088945982897
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0021740344825920133,
+    "solver_share": 0.016176470588235296,
+    "step_and_solve_s": 1.9313243880897062,
+    "steps": 85,
+    "wall_s": 1.9394810829980997,
+    "worst": 0.0026503650385760746
+   }
+  },
+  "degree": 4,
+  "evaluate_us": 1.8323830008739606,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.2914428337049743,
+    "defect_max": 0.0025025949509442924,
+    "defect_median": 1.7398778291932704e-05,
+    "refused_percent": 0.411764705882353
+   },
+   "0.1": {
+    "coherence": 0.1418832202187582,
+    "defect_max": 0.003177696536451613,
+    "defect_median": 2.7385100953791763e-05,
+    "refused_percent": 1.1764705882352942
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.010294117647058827,
+    "worst": 0.0015001980699977935
+   },
+   "0.1": {
+    "solver_share": 0.02088235294117647,
+    "worst": 0.0026290877849297623
+   }
+  },
+  "rank": 126,
+  "refused_percent": 0.6470588235294118,
+  "rollout_worst": 0.0010367839540332824,
+  "served": true,
+  "speedup_effective": 116.22484550176162,
+  "speedup_effective_from_step_10": 117.02491625538745,
+  "status": "done",
+  "train_s": 32.07333464900148
+ },
+ "chemakzo/T1m": {
+  "budgets": {
+   "accumulation": {
+    "budget": 3.570480344181583e-05,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 140.03718037960766,
+   "coherence": {
+    "budget": 0.00015034266652087403,
+    "refused_percent": 100.0
+   },
+   "coherence_value": 0.2827978155278774,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.6470588235294118
+   },
+   "steps": 85
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.000879367481938953,
+    "solver_share": 0.007058823529411766,
+    "step_and_solve_s": 1.981673504007631,
+    "steps": 85,
+    "wall_s": 1.9890817370032892,
+    "worst": 0.0009495839567610354
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.001957912522605021,
+    "solver_share": 0.009411764705882356,
+    "step_and_solve_s": 1.9780464180075796,
+    "steps": 85,
+    "wall_s": 1.9850256750069093,
+    "worst": 0.0035176088945982897
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0021740344825920133,
+    "solver_share": 0.016176470588235296,
+    "step_and_solve_s": 1.9701656449906295,
+    "steps": 85,
+    "wall_s": 1.9770588609972037,
+    "worst": 0.0026503650385760746
+   }
+  },
+  "degree": 4,
+  "evaluate_us": 3.7968545002513565,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.2914428337049743,
+    "defect_max": 0.0025025949509442924,
+    "defect_median": 1.7398778291932704e-05,
+    "refused_percent": 0.411764705882353
+   },
+   "0.1": {
+    "coherence": 0.1418832202187582,
+    "defect_max": 0.003177696536451613,
+    "defect_median": 2.7385100953791763e-05,
+    "refused_percent": 1.1764705882352942
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.010294117647058827,
+    "worst": 0.0015001980699977935
+   },
+   "0.1": {
+    "solver_share": 0.02088235294117647,
+    "worst": 0.0026290877849297623
+   }
+  },
+  "rank": 126,
+  "refused_percent": 0.6470588235294118,
+  "rollout_worst": 0.0010367839540332824,
+  "served": true,
+  "speedup_effective": 97.46031113678174,
+  "speedup_effective_from_step_10": 98.02226883199938,
+  "status": "done",
+  "train_s": 47.82682479399955
+ },
+ "chemakzo/T2": {
+  "budgets": {
+   "accumulation": {
+    "budget": 3.570480344181583e-05,
+    "refused_percent": 34.38235294117647
+   },
+   "accumulation_factor": 140.03718037960766,
+   "coherence": {
+    "budget": 0.00017371784862541567,
+    "refused_percent": 0.9117647058823529
+   },
+   "coherence_value": 0.23015011705091754,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.0
+   },
+   "steps": 85
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.00014007034929042206,
+    "solver_share": 0.0,
+    "step_and_solve_s": 1.846108594952966,
+    "steps": 85,
+    "wall_s": 1.8552047470002435,
+    "worst": 0.0003250699253660727
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0004591036270431559,
+    "solver_share": 0.0,
+    "step_and_solve_s": 1.8890079559350852,
+    "steps": 85,
+    "wall_s": 1.9010164630017243,
+    "worst": 0.0004632432973088463
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0005194703914708221,
+    "solver_share": 0.0008823529411764705,
+    "step_and_solve_s": 1.913505349031766,
+    "steps": 85,
+    "wall_s": 1.925868370992248,
+    "worst": 0.0005194703914708221
+   }
+  },
+  "degree": 5,
+  "evaluate_us": 5.930176499532536,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.36514223818324304,
+    "defect_max": 0.00019688674260054384,
+    "defect_median": 2.1618127299394274e-06,
+    "refused_percent": 0.0
+   },
+   "0.1": {
+    "coherence": 0.39086642141522715,
+    "defect_max": 0.002266711671596422,
+    "defect_median": 4.036096407755707e-06,
+    "refused_percent": 0.3235294117647059
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.0004270444023966036
+   },
+   "0.1": {
+    "solver_share": 0.0011764705882352942,
+    "worst": 0.003310308096243997
+   }
+  },
+  "rank": 252,
+  "refused_percent": 0.0,
+  "rollout_worst": 0.00033068101211108925,
+  "served": true,
+  "speedup_effective": 199.97103390066889,
+  "speedup_effective_from_step_10": 199.97103390066889,
+  "status": "done",
+  "train_s": 30.662358222005423
+ },
+ "fisher_kpp_d10/T0": {
+  "budgets": {
+   "accumulation": {
+    "budget": 0.00016677808120875537,
+    "refused_percent": 14.124999999999998
+   },
+   "accumulation_factor": 29.979958779724313,
+   "coherence": {
+    "budget": 0.0003851912534094589,
+    "refused_percent": 11.6875
+   },
+   "coherence_value": 0.1664002353511815,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 7.4375
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.002395434845523514,
+    "solver_share": 0.07062500000000001,
+    "step_and_solve_s": 0.7842562649748288,
+    "steps": 40,
+    "wall_s": 0.7877750370098511,
+    "worst": 0.002395434845523514
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0014748824318793208,
+    "solver_share": 0.06875,
+    "step_and_solve_s": 0.8141221039986704,
+    "steps": 40,
+    "wall_s": 0.8185143919981783,
+    "worst": 0.0016045687560378719
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0009269889987090218,
+    "solver_share": 0.061875,
+    "step_and_solve_s": 0.8629370860144263,
+    "steps": 40,
+    "wall_s": 0.868845725999563,
+    "worst": 0.0009269889987090218
+   }
+  },
+  "degree": 5,
+  "evaluate_us": 13.319255622263881,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.06087136287379751,
+    "defect_max": 0.0018067728382766823,
+    "defect_median": 8.964403716671399e-06,
+    "refused_percent": 7.5
+   },
+   "0.1": {
+    "coherence": 0.11709251897361478,
+    "defect_max": 0.0012085891775096558,
+    "defect_median": 8.513409201313382e-06,
+    "refused_percent": 7.187499999999999
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0725,
+    "worst": 0.0021650886645472323
+   },
+   "0.1": {
+    "solver_share": 0.068125,
+    "worst": 0.0027757263320744574
+   }
+  },
+  "rank": 462,
+  "refused_percent": 7.4375,
+  "rollout_worst": 0.001764452272846162,
+  "served": true,
+  "speedup_effective": 11.120134102721197,
+  "speedup_effective_from_step_10": 64.30052286242285,
+  "status": "done",
+  "train_s": 4.716540524008451
+ },
+ "fisher_kpp_d10/T0+": {
+  "budgets": {
+   "accumulation": {
+    "budget": 0.00016677808120875537,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 29.979958779724313,
+   "coherence": {
+    "budget": 0.00034923369745546736,
+    "refused_percent": 100.0
+   },
+   "coherence_value": 0.19981263127343787,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 4.8125
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0021322703105006724,
+    "solver_share": 0.04625,
+    "step_and_solve_s": 1.0983024470333476,
+    "steps": 40,
+    "wall_s": 1.1033862229960505,
+    "worst": 0.0021299088977408953
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.00198031292082268,
+    "solver_share": 0.04375,
+    "step_and_solve_s": 0.998022442945512,
+    "steps": 40,
+    "wall_s": 1.0023384619998978,
+    "worst": 0.00198031292082268
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0018475869175669235,
+    "solver_share": 0.040625,
+    "step_and_solve_s": 1.283030212012818,
+    "steps": 40,
+    "wall_s": 1.28943154400622,
+    "worst": 0.0018475869175669235
+   }
+  },
+  "degree": 6,
+  "evaluate_us": 47.48093562739086,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.15322159819414752,
+    "defect_max": 0.0021681653504459497,
+    "defect_median": 2.6513608055084292e-05,
+    "refused_percent": 4.625
+   },
+   "0.1": {
+    "coherence": 0.18908580101021588,
+    "defect_max": 0.0013638749863760236,
+    "defect_median": 2.502825473149617e-05,
+    "refused_percent": 5.0625
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.04625,
+    "worst": 0.0021829536872752797
+   },
+   "0.1": {
+    "solver_share": 0.04625,
+    "worst": 0.001945029375490348
+   }
+  },
+  "rank": 924,
+  "refused_percent": 4.8125,
+  "rollout_worst": 0.00217640032921107,
+  "served": true,
+  "speedup_effective": 9.655752833853892,
+  "speedup_effective_from_step_10": 18.037452070674263,
+  "status": "done",
+  "train_s": 14.983724245001213
+ },
+ "fisher_kpp_d10/T1": {
+  "budgets": {
+   "accumulation": {
+    "budget": 0.00016677808120875537,
+    "refused_percent": 12.3125
+   },
+   "accumulation_factor": 29.979958779724313,
+   "coherence": {
+    "budget": 0.0003480300426626687,
+    "refused_percent": 9.5625
+   },
+   "coherence_value": 0.20105051281116088,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 5.3125
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0011356972348748329,
+    "solver_share": 0.05187499999999999,
+    "step_and_solve_s": 0.8007483909896109,
+    "steps": 40,
+    "wall_s": 0.8046423000050709,
+    "worst": 0.0011769614613796886
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.002001284764779454,
+    "solver_share": 0.046875,
+    "step_and_solve_s": 0.7882689909747569,
+    "steps": 40,
+    "wall_s": 0.7926031149982009,
+    "worst": 0.0020575277564083283
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0012667899791405368,
+    "solver_share": 0.04625,
+    "step_and_solve_s": 0.8456268270529108,
+    "steps": 40,
+    "wall_s": 0.8503627739992226,
+    "worst": 0.0012667899791405368
+   }
+  },
+  "degree": 5,
+  "evaluate_us": 15.290803748939652,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.1492028359768564,
+    "defect_max": 0.0012459837764485782,
+    "defect_median": 1.2352133878235083e-05,
+    "refused_percent": 5.1875
+   },
+   "0.1": {
+    "coherence": 0.14775977039436833,
+    "defect_max": 0.0021334639403033373,
+    "defect_median": 1.1795308764800394e-05,
+    "refused_percent": 5.0625
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.052500000000000005,
+    "worst": 0.0016493337417160525
+   },
+   "0.1": {
+    "solver_share": 0.049375,
+    "worst": 0.0016753157239427496
+   }
+  },
+  "rank": 466,
+  "refused_percent": 5.3125,
+  "rollout_worst": 0.0015135039244660309,
+  "served": true,
+  "speedup_effective": 13.965697629919019,
+  "speedup_effective_from_step_10": 53.51214461651269,
+  "status": "done",
+  "train_s": 5.7667813950101845
+ },
+ "fisher_kpp_d10/T1m": {
+  "budgets": {
+   "accumulation": {
+    "budget": 0.00016677808120875537,
+    "refused_percent": 12.687499999999998
+   },
+   "accumulation_factor": 29.979958779724313,
+   "coherence": {
+    "budget": 0.0003439867793666754,
+    "refused_percent": 9.9375
+   },
+   "coherence_value": 0.20527217569459663,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 5.6875
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0015472918256640433,
+    "solver_share": 0.05437499999999999,
+    "step_and_solve_s": 0.8142716819565976,
+    "steps": 40,
+    "wall_s": 0.8186788110033376,
+    "worst": 0.0015472918256640433
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0017177288829914872,
+    "solver_share": 0.051250000000000004,
+    "step_and_solve_s": 0.8403193190461025,
+    "steps": 40,
+    "wall_s": 0.8462470609956654,
+    "worst": 0.0017247348506430615
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0022321727517988776,
+    "solver_share": 0.051250000000000004,
+    "step_and_solve_s": 0.8170081409771228,
+    "steps": 40,
+    "wall_s": 0.8212562129920116,
+    "worst": 0.0022321727517988776
+   }
+  },
+  "degree": 5,
+  "evaluate_us": 22.019071866452578,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.15625554564133734,
+    "defect_max": 0.0015672225185667799,
+    "defect_median": 1.2532398649825818e-05,
+    "refused_percent": 5.375
+   },
+   "0.1": {
+    "coherence": 0.07982058484788991,
+    "defect_max": 0.002384939712154477,
+    "defect_median": 1.2003697312801265e-05,
+    "refused_percent": 5.5
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.05874999999999999,
+    "worst": 0.002405940268754847
+   },
+   "0.1": {
+    "solver_share": 0.05500000000000001,
+    "worst": 0.0013320580559155193
+   }
+  },
+  "rank": 462,
+  "refused_percent": 5.6875,
+  "rollout_worst": 0.001582279725974356,
+  "served": true,
+  "speedup_effective": 12.108714980015899,
+  "speedup_effective_from_step_10": 32.562527876013235,
+  "status": "done",
+  "train_s": 9.884631848995923
+ },
+ "fisher_kpp_d10/T2": {
+  "budgets": {
+   "accumulation": {
+    "budget": 0.00016677808120875537,
+    "refused_percent": 80.5625
+   },
+   "accumulation_factor": 29.979958779724313,
+   "coherence": {
+    "budget": 0.00041321465771270024,
+    "refused_percent": 23.4375
+   },
+   "coherence_value": 0.14439232694047877,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 7.625
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0025348294172238273,
+    "solver_share": 0.0725,
+    "step_and_solve_s": 0.7843106370128226,
+    "steps": 40,
+    "wall_s": 0.7876956679974683,
+    "worst": 0.0025894263056902567
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0018224335022960503,
+    "solver_share": 0.064375,
+    "step_and_solve_s": 0.8146622269996442,
+    "steps": 40,
+    "wall_s": 0.818993003005744,
+    "worst": 0.0018224335022960503
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0034809020329188978,
+    "solver_share": 0.058750000000000004,
+    "step_and_solve_s": 0.893186097004218,
+    "steps": 40,
+    "wall_s": 0.9002385759958997,
+    "worst": 0.0034809020329188978
+   }
+  },
+  "degree": 5,
+  "evaluate_us": 20.531360623863293,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.1428800738774657,
+    "defect_max": 0.002478067476198609,
+    "defect_median": 1.6496266190907383e-05,
+    "refused_percent": 7.5
+   },
+   "0.1": {
+    "coherence": 0.17957967515615397,
+    "defect_max": 0.0012108704987175978,
+    "defect_median": 1.55856880046934e-05,
+    "refused_percent": 7.187499999999999
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.06999999999999999,
+    "worst": 0.002328728148148773
+   },
+   "0.1": {
+    "solver_share": 0.065,
+    "worst": 0.0013802319777713734
+   }
+  },
+  "rank": 416,
+  "refused_percent": 7.625,
+  "rollout_worst": 0.0013666534509622075,
+  "served": true,
+  "speedup_effective": 9.977744741219723,
+  "speedup_effective_from_step_10": 41.7135092184008,
+  "status": "done",
+  "train_s": 5.384227771995938
+ },
+ "hires/T0": {
+  "budgets": {
+   "accumulation": {
+    "budget": 7.496950119781409e-07,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 6669.378774185824,
+   "coherence": {
+    "budget": 9.210677947593954e-05,
+    "refused_percent": 100.0
+   },
+   "coherence_value": 0.24262597523960688,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 17.705882352941178
+   },
+   "steps": 170
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 1.4716421839294563e-14,
+    "own_input_defect_worst": 0.0017608783978784182,
+    "solver_share": 0.5517647058823529,
+    "step_and_solve_s": 10.80435265203414,
+    "steps": 170,
+    "wall_s": 10.837676602997817,
+    "worst": 0.3281319817641202
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 1.533807337378005e-14,
+    "own_input_defect_worst": 0.0007740408975314139,
+    "solver_share": 0.45161764705882357,
+    "step_and_solve_s": 8.171009169978788,
+    "steps": 170,
+    "wall_s": 8.207415127006243,
+    "worst": 0.07127866109229286
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 1.0103961178636205e-14,
+    "own_input_defect_worst": 0.0006797999456882309,
+    "solver_share": 0.5244117647058824,
+    "step_and_solve_s": 9.377422317076707,
+    "steps": 170,
+    "wall_s": 9.408861161995446,
+    "worst": 0.0919578147924196
+   }
+  },
+  "degree": 12,
+  "evaluate_us": 23.76447700225981,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.8244046798453539,
+    "defect_max": 0.002175931455282054,
+    "defect_median": 0.0002442588342415064,
+    "refused_percent": 66.16176470588235
+   },
+   "0.1": {
+    "coherence": 0.16791662932953166,
+    "defect_max": 0.0021811988650890513,
+    "defect_median": 0.0005997517072966474,
+    "refused_percent": 84.6764705882353
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.6275,
+    "worst": 0.15925054021046137
+   },
+   "0.1": {
+    "solver_share": 0.7769117647058823,
+    "worst": 0.004367989323439403
+   }
+  },
+  "rank": 413,
+  "refused_percent": 17.705882352941178,
+  "rollout_worst": 4.57765633044005e-06,
+  "served": false,
+  "speedup_effective": 4.842606021668558,
+  "speedup_effective_from_step_10": 5.953083884553854,
+  "status": "done",
+  "train_s": 25.821973635989707
+ },
+ "hires/T0+": {
+  "budgets": {
+   "accumulation": {
+    "budget": 7.496950119781409e-07,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 6669.378774185824,
+   "coherence": {
+    "budget": 0.0001502169701480138,
+    "refused_percent": 100.0
+   },
+   "coherence_value": 0.11909872103550206,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 8.602941176470589
+   },
+   "steps": 170
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 1.6416890957614966e-14,
+    "own_input_defect_worst": 0.0011702782082654295,
+    "solver_share": 0.5091176470588235,
+    "step_and_solve_s": 12.602224181115162,
+    "steps": 170,
+    "wall_s": 12.636047384992708,
+    "worst": 0.28598342462132953
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 1.5953433686429826e-14,
+    "own_input_defect_worst": 0.0007624995137192059,
+    "solver_share": 0.36308823529411766,
+    "step_and_solve_s": 9.119507152878214,
+    "steps": 170,
+    "wall_s": 9.165448771003867,
+    "worst": 0.07514931814689385
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 1.2089997988547466e-14,
+    "own_input_defect_worst": 0.0007401971247444905,
+    "solver_share": 0.4708823529411765,
+    "step_and_solve_s": 11.211347015050706,
+    "steps": 170,
+    "wall_s": 11.257132858998375,
+    "worst": 0.0971697775075806
+   }
+  },
+  "degree": 11,
+  "evaluate_us": 19.001054504769854,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.7216128777810996,
+    "defect_max": 0.0011856003699248774,
+    "defect_median": 0.00019716172994543868,
+    "refused_percent": 66.27941176470588
+   },
+   "0.1": {
+    "coherence": 0.02903551115842646,
+    "defect_max": 0.0011659140895226017,
+    "defect_median": 0.00033378900814495793,
+    "refused_percent": 88.11764705882354
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.6411764705882353,
+    "worst": 0.08525179353015377
+   },
+   "0.1": {
+    "solver_share": 0.8130882352941178,
+    "worst": 0.002062915616884986
+   }
+  },
+  "rank": 352,
+  "refused_percent": 8.602941176470589,
+  "rollout_worst": 1.754026577804879e-05,
+  "served": false,
+  "speedup_effective": 8.96286705913816,
+  "speedup_effective_from_step_10": 12.5838933029044,
+  "status": "done",
+  "train_s": 29.98612721399695
+ },
+ "hires/T1": {
+  "budgets": {
+   "accumulation": {
+    "budget": 7.496950119781409e-07,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 6669.378774185824,
+   "coherence": {
+    "budget": NaN,
+    "refused_percent": 100.0
+   },
+   "coherence_value": NaN,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 100.0
+   },
+   "steps": 170
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 11.137364578971756,
+    "steps": 170,
+    "wall_s": 11.167312153003877,
+    "worst": 0.0
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 7.60297454893589,
+    "steps": 170,
+    "wall_s": 7.635933798010228,
+    "worst": 0.0
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 9.368567392011755,
+    "steps": 170,
+    "wall_s": 9.39212827499432,
+    "worst": 0.0
+   }
+  },
+  "degree": 8,
+  "evaluate_us": 5.363045500416774,
+  "mixed_inputs": {
+   "0.01": {
+    "refused_percent": 100.0
+   },
+   "0.1": {
+    "refused_percent": 100.0
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 170,
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9943175043141045,
+  "speedup_effective_from_step_10": 0.9943175043141045,
+  "status": "done",
+  "train_s": 26.370539707000717
+ },
+ "hires/T1m": {
+  "budgets": {
+   "accumulation": {
+    "budget": 7.496950119781409e-07,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 6669.378774185824,
+   "coherence": {
+    "budget": NaN,
+    "refused_percent": 100.0
+   },
+   "coherence_value": NaN,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 100.0
+   },
+   "steps": 170
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 10.751343049967545,
+    "steps": 170,
+    "wall_s": 10.78972028499993,
+    "worst": 0.0
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 7.720316726990859,
+    "steps": 170,
+    "wall_s": 7.760275822001859,
+    "worst": 0.0
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 8.59879835206084,
+    "steps": 170,
+    "wall_s": 8.629252012993675,
+    "worst": 0.0
+   }
+  },
+  "degree": 2,
+  "evaluate_us": 1.1306570013402961,
+  "mixed_inputs": {
+   "0.01": {
+    "refused_percent": 100.0
+   },
+   "0.1": {
+    "refused_percent": 100.0
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 10,
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9987965986918499,
+  "speedup_effective_from_step_10": 0.9987965986918499,
+  "status": "done",
+  "train_s": 217.44227733300067
+ },
+ "hires/T2": {
+  "budgets": {
+   "accumulation": {
+    "budget": 7.496950119781409e-07,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 6669.378774185824,
+   "coherence": {
+    "budget": NaN,
+    "refused_percent": 100.0
+   },
+   "coherence_value": NaN,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 100.0
+   },
+   "steps": 170
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 12.469105027936166,
+    "steps": 170,
+    "wall_s": 12.503786428002059,
+    "worst": 0.0
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 8.871132925021811,
+    "steps": 170,
+    "wall_s": 8.909150974999648,
+    "worst": 0.0
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 10.694897565845167,
+    "steps": 170,
+    "wall_s": 10.736923525997554,
+    "worst": 0.0
+   }
+  },
+  "degree": 2,
+  "evaluate_us": 1.1314030052744783,
+  "mixed_inputs": {
+   "0.01": {
+    "refused_percent": 100.0
+   },
+   "0.1": {
+    "refused_percent": 100.0
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 10,
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9987958056475816,
+  "speedup_effective_from_step_10": 0.9987958056475816,
+  "status": "done",
+  "train_s": 26.508675723991473
+ },
+ "pollu/T0": {
+  "budgets": {
+   "accumulation": {
+    "budget": 2.134461631432866e-05,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 234.25110699429607,
+   "coherence": {
+    "budget": 0.0001614257001328288,
+    "refused_percent": 100.0
+   },
+   "coherence_value": 0.3947941780944072,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.0847457627118644
+   },
+   "steps": 59
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 1.2686270812563676e-13,
+    "own_input_defect_worst": 0.008253799794517569,
+    "solver_share": 0.5478813559322034,
+    "step_and_solve_s": 19.420696068977122,
+    "steps": 59,
+    "wall_s": 19.435948553989874,
+    "worst": 0.0771994828334952
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 9.058977139159008e-14,
+    "own_input_defect_worst": 0.007770005217224707,
+    "solver_share": 0.5368644067796611,
+    "step_and_solve_s": 17.28385333303595,
+    "steps": 59,
+    "wall_s": 17.299398923001718,
+    "worst": 0.02066130604357319
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 3.693939119954179e-14,
+    "own_input_defect_worst": 0.003925232888680519,
+    "solver_share": 0.3864406779661017,
+    "step_and_solve_s": 18.118982045940356,
+    "steps": 59,
+    "wall_s": 18.136348613988957,
+    "worst": 0.020006931306286724
+   }
+  },
+  "degree": 3,
+  "evaluate_us": 29.60558599443175,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.8701790832809916,
+    "defect_max": 0.007099371810110888,
+    "defect_median": 0.0011722746657580885,
+    "refused_percent": 47.66949152542373
+   },
+   "0.1": {
+    "coherence": 0.8897332039874665,
+    "defect_max": 0.007871796233710704,
+    "defect_median": 0.0019015964104251992,
+    "refused_percent": 94.83050847457626
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.8851694915254238,
+    "worst": 0.0359422800498832
+   },
+   "0.1": {
+    "solver_share": 0.9991525423728814,
+    "worst": 0.0033761171163124715
+   }
+  },
+  "rank": 560,
+  "refused_percent": 0.0847457627118644,
+  "rollout_worst": 0.04702127034031767,
+  "served": false,
+  "speedup_effective": 43.00798095853171,
+  "speedup_effective_from_step_10": 43.31405281267807,
+  "status": "done",
+  "train_s": 32.936554314001114
+ },
+ "pollu/T0+": {
+  "budgets": {
+   "accumulation": {
+    "budget": 2.134461631432866e-05,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 234.25110699429607,
+   "coherence": {
+    "budget": 0.00013535344515713474,
+    "refused_percent": 100.0
+   },
+   "coherence_value": 0.49591826060598887,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.1271186440677966
+   },
+   "steps": 59
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 1.2831124587932534e-13,
+    "own_input_defect_worst": 0.0028907145048790994,
+    "solver_share": 0.8432203389830507,
+    "step_and_solve_s": 14.028875518095447,
+    "steps": 59,
+    "wall_s": 14.049375786009477,
+    "worst": 0.01653941526350078
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 7.838455725495982e-14,
+    "own_input_defect_worst": 0.0032402907054809305,
+    "solver_share": 0.8631355932203391,
+    "step_and_solve_s": 12.059083890970214,
+    "steps": 59,
+    "wall_s": 12.078002128007938,
+    "worst": 0.0101324639933571
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 2.6148487934083952e-14,
+    "own_input_defect_worst": 0.0021168492245813297,
+    "solver_share": 0.9495762711864406,
+    "step_and_solve_s": 8.904118908001692,
+    "steps": 59,
+    "wall_s": 8.920377856004052,
+    "worst": 0.004914667526591643
+   }
+  },
+  "degree": 3,
+  "evaluate_us": 29.760265999357216,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.8543766590167726,
+    "defect_max": 0.0041003811883948416,
+    "defect_median": 0.0006845500296370766,
+    "refused_percent": 72.11864406779661
+   },
+   "0.1": {
+    "coherence": 0.6902604422791239,
+    "defect_max": 0.0029813974164767387,
+    "defect_median": 0.0007573382667045436,
+    "refused_percent": 98.85593220338983
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.9792372881355932,
+    "worst": 0.004275379228664278
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 560,
+  "refused_percent": 0.1271186440677966,
+  "rollout_worst": 0.020458246100610644,
+  "served": false,
+  "speedup_effective": 22.234923629586042,
+  "speedup_effective_from_step_10": 20.108410842743996,
+  "status": "done",
+  "train_s": 33.60439598199446
+ },
+ "pollu/T1": {
+  "budgets": {
+   "accumulation": {
+    "budget": 2.134461631432866e-05,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 234.25110699429607,
+   "coherence": {
+    "budget": 0.00022289688942969904,
+    "refused_percent": 100.0
+   },
+   "coherence_value": 0.25001272812097686,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 40.720338983050844
+   },
+   "steps": 59
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 1.5769031467630582e-13,
+    "own_input_defect_worst": 0.002186368708788855,
+    "solver_share": 0.4122881355932203,
+    "step_and_solve_s": 20.110444062956958,
+    "steps": 59,
+    "wall_s": 20.123763590992894,
+    "worst": 0.028398681452003416
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 1.0964385121111272e-13,
+    "own_input_defect_worst": 0.002537273961207731,
+    "solver_share": 0.42076271186440684,
+    "step_and_solve_s": 18.519706280028913,
+    "steps": 59,
+    "wall_s": 18.532475012994837,
+    "worst": 0.009816636760542785
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 1.4406645756554406e-13,
+    "own_input_defect_worst": 0.0030474162594869014,
+    "solver_share": 0.4072033898305085,
+    "step_and_solve_s": 17.56918723702256,
+    "steps": 59,
+    "wall_s": 17.583756002000882,
+    "worst": 0.007448159585039527
+   }
+  },
+  "degree": 3,
+  "evaluate_us": 30.23084950109478,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.284572558390633,
+    "defect_max": 0.001165681420193465,
+    "defect_median": 0.0003033498885269825,
+    "refused_percent": 40.33898305084746
+   },
+   "0.1": {
+    "coherence": 0.3102542665911589,
+    "defect_max": 0.002587887949225376,
+    "defect_median": 0.000423548532391127,
+    "refused_percent": 67.28813559322035
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.3618644067796611,
+    "worst": 0.024598537412351185
+   },
+   "0.1": {
+    "solver_share": 0.901271186440678,
+    "worst": 0.008888421537720959
+   }
+  },
+  "rank": 566,
+  "refused_percent": 40.720338983050844,
+  "rollout_worst": 0.021469822766325475,
+  "served": false,
+  "speedup_effective": 1.4937200709056315,
+  "speedup_effective_from_step_10": 1.5239360205310857,
+  "status": "done",
+  "train_s": 33.839302052001585
+ },
+ "pollu/T1m": {
+  "budgets": {
+   "accumulation": {
+    "budget": 2.134461631432866e-05,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 234.25110699429607,
+   "coherence": {
+    "budget": NaN,
+    "refused_percent": 100.0
+   },
+   "coherence_value": NaN,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 100.0
+   },
+   "steps": 59
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 9.124648044089554,
+    "steps": 59,
+    "wall_s": 9.135306541997124,
+    "worst": 0.0
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 7.948433284051134,
+    "steps": 59,
+    "wall_s": 7.961490593006602,
+    "worst": 0.0
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 6.8222585149196675,
+    "steps": 59,
+    "wall_s": 6.83612302900292,
+    "worst": 0.0
+   }
+  },
+  "degree": 2,
+  "evaluate_us": 4.21972250478575,
+  "mixed_inputs": {
+   "0.01": {
+    "refused_percent": 100.0
+   },
+   "0.1": {
+    "refused_percent": 100.0
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 105,
+  "refused_percent": 100.0,
+  "rollout_worst": 2.6636293171122816e-10,
+  "served": false,
+  "speedup_effective": 0.9969369235591775,
+  "speedup_effective_from_step_10": 0.9969369235591775,
+  "status": "done",
+  "train_s": 148.6899346239952
+ },
+ "pollu/T2": {
+  "budgets": {
+   "accumulation": {
+    "budget": 2.134461631432866e-05,
+    "refused_percent": 100.0
+   },
+   "accumulation_factor": 234.25110699429607,
+   "coherence": {
+    "budget": NaN,
+    "refused_percent": 100.0
+   },
+   "coherence_value": NaN,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 100.0
+   },
+   "steps": 59
+  },
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 9.124628013960319,
+    "steps": 59,
+    "wall_s": 9.132681244998821,
+    "worst": 0.0
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 7.853005597993615,
+    "steps": 59,
+    "wall_s": 7.86368052198668,
+    "worst": 0.0
+   },
+   "0.25": {
+    "cells": 40,
+    "invariant_drift_relative": 0.0,
+    "own_input_defect_worst": 0.0,
+    "solver_share": 1.0,
+    "step_and_solve_s": 6.769463113989332,
+    "steps": 59,
+    "wall_s": 6.783709284994984,
+    "worst": 0.0
+   }
+  },
+  "degree": 2,
+  "evaluate_us": 5.516198500117753,
+  "mixed_inputs": {
+   "0.01": {
+    "refused_percent": 100.0
+   },
+   "0.1": {
+    "refused_percent": 100.0
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 105,
+  "refused_percent": 100.0,
+  "rollout_worst": 2.6636293171122816e-10,
+  "served": false,
+  "speedup_effective": 0.9959995826332874,
+  "speedup_effective_from_step_10": 0.9959995826332874,
+  "status": "done",
+  "train_s": 31.349516330010374
+ },
+ "robertson/T0": {
+  "budgets": {
+   "accumulation": {
+    "budget": 8.042161291271404e-05,
+    "refused_percent": 0.025
+   },
+   "accumulation_factor": 62.172341723943944,
+   "coherence": {
+    "budget": 0.0005998335934071889,
+    "refused_percent": 0.025
+   },
+   "coherence_value": 0.05027724642128179,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.025
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 100,
+    "invariant_drift_relative": 3.076740298213713e-15,
+    "own_input_defect_worst": 6.926862153200375e-05,
+    "solver_share": 0.00025,
+    "step_and_solve_s": 7.520195328965201,
+    "steps": 40,
+    "wall_s": 7.528468532997067,
+    "worst": 6.926862153200375e-05
+   },
+   "0.05": {
+    "cells": 100,
+    "invariant_drift_relative": 2.1152589550219226e-15,
+    "own_input_defect_worst": 0.0001028849947690702,
+    "solver_share": 0.0,
+    "step_and_solve_s": 7.270980914981919,
+    "steps": 40,
+    "wall_s": 7.278615053000976,
+    "worst": 0.0001028849947690702
+   },
+   "0.25": {
+    "cells": 100,
+    "invariant_drift_relative": 1.346073880468497e-15,
+    "own_input_defect_worst": 4.957399476035462e-06,
+    "solver_share": 0.0,
+    "step_and_solve_s": 6.763752111015492,
+    "steps": 40,
+    "wall_s": 6.7728760939935455,
+    "worst": 4.957399476035462e-06
+   }
+  },
+  "degree": 5,
+  "evaluate_us": 2.796904504066333,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.13240236053469256,
+    "defect_max": 7.667899025687319e-05,
+    "defect_median": 3.004430331188246e-07,
+    "refused_percent": 0.0
+   },
+   "0.1": {
+    "coherence": 0.5683120064130549,
+    "defect_max": 7.239141737791499e-05,
+    "defect_median": 3.164297748270428e-07,
+    "refused_percent": 0.0
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.00025,
+    "worst": 6.722535712988531e-05
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 6.24287108781374e-05
+   }
+  },
+  "rank": 50,
+  "refused_percent": 0.025,
+  "rollout_worst": 5.5468147403203716e-05,
+  "served": true,
+  "speedup_effective": 392.66179574449933,
+  "speedup_effective_from_step_10": 435.4033622700356,
+  "status": "done",
+  "train_s": 8.68679827399319
+ },
+ "robertson/T0+": {
+  "budgets": {
+   "accumulation": {
+    "budget": 8.042161291271404e-05,
+    "refused_percent": 0.0
+   },
+   "accumulation_factor": 62.172341723943944,
+   "coherence": {
+    "budget": 0.0006930774533176284,
+    "refused_percent": 0.0
+   },
+   "coherence_value": 0.02224113994269431,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.0
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 100,
+    "invariant_drift_relative": 3.269036566852068e-15,
+    "own_input_defect_worst": 1.013507926472812e-06,
+    "solver_share": 0.0,
+    "step_and_solve_s": 7.513828840965289,
+    "steps": 40,
+    "wall_s": 7.521745543010184,
+    "worst": 3.204322018390826e-06
+   },
+   "0.05": {
+    "cells": 100,
+    "invariant_drift_relative": 2.1152589550219163e-15,
+    "own_input_defect_worst": 2.418514405633232e-06,
+    "solver_share": 0.00075,
+    "step_and_solve_s": 7.4249027309706435,
+    "steps": 40,
+    "wall_s": 7.435364582008333,
+    "worst": 3.08332481369078e-06
+   },
+   "0.25": {
+    "cells": 100,
+    "invariant_drift_relative": 1.346073880468497e-15,
+    "own_input_defect_worst": 1.6006987689776153e-06,
+    "solver_share": 0.00025,
+    "step_and_solve_s": 6.895555872033583,
+    "steps": 40,
+    "wall_s": 6.904981422005221,
+    "worst": 1.9010195257962437e-06
+   }
+  },
+  "degree": 6,
+  "evaluate_us": 2.2988679993432015,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.1430808226950117,
+    "defect_max": 1.260185145568471e-06,
+    "defect_median": 1.2626144485494706e-07,
+    "refused_percent": 0.0
+   },
+   "0.1": {
+    "coherence": 0.5720003475727986,
+    "defect_max": 3.0592689117536764e-06,
+    "defect_median": 1.4942839143827769e-07,
+    "refused_percent": 0.8
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 2.4579461710416695e-06
+   },
+   "0.1": {
+    "solver_share": 0.0024999999999999996,
+    "worst": 4.516318965142041e-06
+   }
+  },
+  "rank": 74,
+  "refused_percent": 0.0,
+  "rollout_worst": 3.6669441332293218e-06,
+  "served": true,
+  "speedup_effective": 529.7309916735604,
+  "speedup_effective_from_step_10": 529.7309916735604,
+  "status": "done",
+  "train_s": 10.40356098600023
+ },
+ "robertson/T1": {
+  "budgets": {
+   "accumulation": {
+    "budget": 8.042161291271404e-05,
+    "refused_percent": 8.325000000000001
+   },
+   "accumulation_factor": 62.172341723943944,
+   "coherence": {
+    "budget": 0.0004840322247338323,
+    "refused_percent": 0.8
+   },
+   "coherence_value": 0.10013338569096789,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.6
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 100,
+    "invariant_drift_relative": 3.269036566852068e-15,
+    "own_input_defect_worst": 0.0012633271241391242,
+    "solver_share": 0.00475,
+    "step_and_solve_s": 7.805003294968628,
+    "steps": 40,
+    "wall_s": 7.824657744000433,
+    "worst": 0.0012633271241391242
+   },
+   "0.05": {
+    "cells": 100,
+    "invariant_drift_relative": 2.4998514922986266e-15,
+    "own_input_defect_worst": 0.00043504612124323216,
+    "solver_share": 0.0032500000000000003,
+    "step_and_solve_s": 7.506550045029144,
+    "steps": 40,
+    "wall_s": 7.514956402999815,
+    "worst": 0.00043504612124323216
+   },
+   "0.25": {
+    "cells": 100,
+    "invariant_drift_relative": 1.5383701491068538e-15,
+    "own_input_defect_worst": 0.00010234194614877623,
+    "solver_share": 0.0035000000000000005,
+    "step_and_solve_s": 6.689583987055812,
+    "steps": 40,
+    "wall_s": 6.697154098990723,
+    "worst": 0.00010234194614877623
+   }
+  },
+  "degree": 3,
+  "evaluate_us": 1.9505804957589135,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.16080241900049191,
+    "defect_max": 0.0010874884162754839,
+    "defect_median": 5.6745166463478824e-06,
+    "refused_percent": 0.44999999999999996
+   },
+   "0.1": {
+    "coherence": 0.4420248224260627,
+    "defect_max": 0.0004013685275054968,
+    "defect_median": 5.685256277310202e-06,
+    "refused_percent": 0.27499999999999997
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.00525,
+    "worst": 0.0002713549152000283
+   },
+   "0.1": {
+    "solver_share": 0.00275,
+    "worst": 0.000569699254364231
+   }
+  },
+  "rank": 20,
+  "refused_percent": 0.6,
+  "rollout_worst": 0.0005195014631445005,
+  "served": true,
+  "speedup_effective": 157.4369517057737,
+  "speedup_effective_from_step_10": 624.3175442728319,
+  "status": "done",
+  "train_s": 9.975761262991
+ },
+ "robertson/T1m": {
+  "budgets": {
+   "accumulation": {
+    "budget": 8.042161291271404e-05,
+    "refused_percent": 8.325000000000001
+   },
+   "accumulation_factor": 62.172341723943944,
+   "coherence": {
+    "budget": 0.0004840322247338323,
+    "refused_percent": 0.8
+   },
+   "coherence_value": 0.10013338569096789,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.6
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 100,
+    "invariant_drift_relative": 3.269036566852068e-15,
+    "own_input_defect_worst": 0.0012633271241391242,
+    "solver_share": 0.00475,
+    "step_and_solve_s": 7.641205084029934,
+    "steps": 40,
+    "wall_s": 7.648418397002388,
+    "worst": 0.0012633271241391242
+   },
+   "0.05": {
+    "cells": 100,
+    "invariant_drift_relative": 2.4998514922986266e-15,
+    "own_input_defect_worst": 0.00043504612124323216,
+    "solver_share": 0.0032500000000000003,
+    "step_and_solve_s": 7.376728521019686,
+    "steps": 40,
+    "wall_s": 7.384895651994157,
+    "worst": 0.00043504612124323216
+   },
+   "0.25": {
+    "cells": 100,
+    "invariant_drift_relative": 1.5383701491068538e-15,
+    "own_input_defect_worst": 0.00010234194614877623,
+    "solver_share": 0.0035000000000000005,
+    "step_and_solve_s": 6.6625785910728155,
+    "steps": 40,
+    "wall_s": 6.6690026900032535,
+    "worst": 0.00010234194614877623
+   }
+  },
+  "degree": 3,
+  "evaluate_us": 1.9790474980254658,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.16080241900049191,
+    "defect_max": 0.0010874884162754839,
+    "defect_median": 5.6745166463478824e-06,
+    "refused_percent": 0.44999999999999996
+   },
+   "0.1": {
+    "coherence": 0.4420248224260627,
+    "defect_max": 0.0004013685275054968,
+    "defect_median": 5.685256277310202e-06,
+    "refused_percent": 0.27499999999999997
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.00525,
+    "worst": 0.0002713549152000283
+   },
+   "0.1": {
+    "solver_share": 0.00275,
+    "worst": 0.000569699254364231
+   }
+  },
+  "rank": 20,
+  "refused_percent": 0.6,
+  "rollout_worst": 0.0005195014631445005,
+  "served": true,
+  "speedup_effective": 156.8596666973362,
+  "speedup_effective_from_step_10": 615.3372398760981,
+  "status": "done",
+  "train_s": 63.17482963799557
+ },
+ "robertson/T2": {
+  "budgets": {
+   "accumulation": {
+    "budget": 8.042161291271404e-05,
+    "refused_percent": 8.325000000000001
+   },
+   "accumulation_factor": 62.172341723943944,
+   "coherence": {
+    "budget": 0.0004932007015085569,
+    "refused_percent": 0.2
+   },
+   "coherence_value": 0.09533263403355095,
+   "half_tol": {
+    "budget": 0.005,
+    "refused_percent": 0.025
+   },
+   "steps": 40
+  },
+  "columns": {
+   "0.005": {
+    "cells": 100,
+    "invariant_drift_relative": 2.8844440295753562e-15,
+    "own_input_defect_worst": 0.0012633271244304467,
+    "solver_share": 0.0,
+    "step_and_solve_s": 6.606447894941084,
+    "steps": 40,
+    "wall_s": 6.61269333299424,
+    "worst": 0.0012633271244304467
+   },
+   "0.05": {
+    "cells": 100,
+    "invariant_drift_relative": 2.3075552236602705e-15,
+    "own_input_defect_worst": 0.0004350461213329382,
+    "solver_share": 0.0,
+    "step_and_solve_s": 6.215503122017253,
+    "steps": 40,
+    "wall_s": 6.223475813007099,
+    "worst": 0.0004350461213329382
+   },
+   "0.25": {
+    "cells": 100,
+    "invariant_drift_relative": 1.5383701491068507e-15,
+    "own_input_defect_worst": 0.00010234194612035452,
+    "solver_share": 0.0,
+    "step_and_solve_s": 5.744488655036548,
+    "steps": 40,
+    "wall_s": 5.752669006003998,
+    "worst": 0.00010234194612035452
+   }
+  },
+  "degree": 3,
+  "evaluate_us": 0.969517495832406,
+  "mixed_inputs": {
+   "0.01": {
+    "coherence": 0.15514274375671258,
+    "defect_max": 0.0010874884165037457,
+    "defect_median": 5.682308648946588e-06,
+    "refused_percent": 0.0
+   },
+   "0.1": {
+    "coherence": 0.4365376011640315,
+    "defect_max": 0.0004013685276289536,
+    "defect_median": 5.700758854310095e-06,
+    "refused_percent": 0.0
+   }
+  },
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.00025,
+    "worst": 0.0002713549152657535
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.0005696992546386781
+   }
+  },
+  "rank": 20,
+  "refused_percent": 0.025,
+  "rollout_worst": 0.0005195014633008199,
+  "served": true,
+  "speedup_effective": 955.9003822039474,
+  "speedup_effective_from_step_10": 1256.0697772381384,
+  "status": "done",
+  "train_s": 10.355428003997076
+ }
+}
