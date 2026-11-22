@@ -215,6 +215,19 @@ class Persistence:
         return np.zeros(len(Z))
 
 
+class KeyScored:
+    """The problem with its scoring restricted to the key species above 1e-12, for the rollouts (the problem itself is frozen)."""
+
+    def __init__(self, P, key):
+        self.P, self.key = P, key
+
+    def scored(self, Z):
+        return (Z > -12) & self.key
+
+    def __getattr__(self, name):
+        return getattr(self.P, name)
+
+
 class Gated:
     """A rollout-ready surrogate: increments from the arm's prediction, refusal by its risk against the calibrated threshold."""
 
@@ -263,12 +276,12 @@ def case(name: str) -> dict:
                               "key_worst_all": float(key.max()), "key_above_tol_percent_all": float(100 * np.mean(key > TOL))}  # fmt: skip
         log(f"  {name} {label}: refused {out['sets'][label]['refused_percent']:.1f}%, accepted worst {out['sets'][label]['key_worst_accepted']}, "
             f"ungated median {np.median(key):.3e}, worst {key.max():.3e}")  # fmt: skip
-    D.P.scored = lambda Zt: (Zt > -12) & D.key  # the rollout scores the key species
-    roll = rollout(D.P, sur, D.test)
+    Pk = KeyScored(D.P, D.key)
+    roll = rollout(Pk, sur, D.test)
     out["rollout_worst_key"] = float(roll["rollout_worst"])
     out["rollout_solver_share"] = float(np.mean(roll["rollout_solved_by_step"]))
     if out["rollout_solver_share"] < 1:
-        mix = {str(w): mixing(D.P, sur, D.test, w, np.random.default_rng(3)) for w in (0.01, 0.1)}
+        mix = {str(w): mixing(Pk, sur, D.test, w, np.random.default_rng(3)) for w in (0.01, 0.1)}
         out["mixing_chained"] = mix
     X = D.pairs(D.test)[0][:960]
     t1 = time.perf_counter()
