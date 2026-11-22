@@ -17,7 +17,10 @@ matter for coupling to MHD.
 
 **Dropped:** CS, a common tracer, never exceeds 1e-12 in the dense range (median 10^-13.5), so it would never be scored.
 
-**Coverage** is to be measured on the dark range (the dense range's numbers reflected its charge imbalance).
+**Coverage in the dark range** (200 training tracers, 4,800 states; median log10 abundance, share of states above 1e-12): H2 -0.30
+(1.00), CO -3.77 (1.00), C -7.67 (1.00), C+ -8.67 (1.00), O -4.20 (1.00), OH -8.02 (1.00), H2O -6.82 (1.00), e- -7.69 (1.00), H3+ -9.36
+(1.00), HCO+ -8.45 (1.00), N2H+ -10.55 (0.96), S+ -8.86 (1.00), HCN -8.64 (1.00): typical dark-cloud values (electron fraction about
+2e-8, HCO+ about 3.5e-9, CO carrying most of the carbon).
 
 **The dense range's chemistry was a setup bug, now fixed.** In the dense range (`theory/recipe/r3_kida.py`) the median HCO+ was
 about 1e-4 and electrons about 3e-12. The cause: KIDApy's abundances file lists no electrons and KIDApy leaves them to the caller
