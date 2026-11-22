@@ -9,7 +9,8 @@ of it). No solves. Writes data/p5b_kida_breakdown.json.
 import json
 
 import numpy as np
-from p5_kida_screen import OUT, QOI, TOL, Data, LinearArm, LocalArm, MLPArm, Persistence
+import r3_kida
+from p5_kida_screen import OUT, TOL, Data, LinearArm, LocalArm, MLPArm, Persistence
 
 
 def main() -> None:
@@ -17,9 +18,9 @@ def main() -> None:
     Xf, Yf = D.pairs(D.fit)
     X, Y = D.pairs(D.test)
     steps = D.test.shape[1] - 1
-    sp = list(D.P.system.names) if hasattr(D.P.system, "names") else None
+    sp = list(r3_kida._net.species)
     idx = np.flatnonzero(D.key)
-    names = [sp[i] for i in idx] if sp else QOI
+    names = [sp[i] for i in idx]  # the key mask's columns in species order (not QOI's order)
     out = {}
     for arm, build in (("persistence", Persistence), ("linear", lambda: LinearArm(D, "linear", Xf, Yf)),
                        ("chart2", lambda: LinearArm(D, "chart2", Xf, Yf)), ("local", lambda: LocalArm(D, Xf, Yf)),

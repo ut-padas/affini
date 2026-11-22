@@ -450,8 +450,8 @@ selection tracers; 40 test tracers), scored on the 13 key species: persistence; 
 - **The MLP is the worst fitted arm** on this data (median 0.081 dex against the local fit's 0.022): 4,800 training pairs in 582 inputs
   do not train a network to 0.01 dex. This is the bounded MLP trial all three reviewers asked for, on CPU, at the data the project has.
 - **Where the error sits** (p5b): the local arm's median is 1.2e-3 at the first step (the tracers share an initial composition after
-  burn-in) and 1.9e-2 at the last, as the states spread with the driven environments; the misses are spread over S+, H2O, H2 and H3+
-  (41-57% of states each above 0.01), not one species. Coverage, not one hard output, is the limit.
+  burn-in) and 1.9e-2 at the last, as the states spread with the driven environments; the misses are spread over S+, HCN, C and N2H+
+  (41-57% of states each above 0.01; atomic carbon dominates the other arms), not one species. Coverage, not one hard output, is the limit.
 - Pre-registered: K2 holds (no arm holds 0.01 with less than 50% refused); K4 holds vacuously (the gated arms accept nothing); K3 fails in
   its first clause (the MLP was predicted to have the smallest median and has the largest of the fitted arms) and holds in its second;
   K1 holds for persistence and is not measured directly for the linear fit.
