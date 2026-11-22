@@ -14,6 +14,9 @@ the chart's search range up to the free dimension.
               and the mean solver share is below 50%; among served configurations the one with the largest margin (the smallest worst
               chain), then the smaller solver share;
   chart       k searched up to the free dimension (at most 40).
+  consistent  (an option, off by default) on a reduced chart, e_hat and b_max come only from the calibration states the residual term
+              accepts: the gate refuses when either term does, so a state the residual term refuses never needs the bound's term, and
+              letting it set e_hat (mixed states off a thin manifold do) refuses on-manifold inputs the fit serves accurately.
   shortcut    a configuration that refuses at least half of the selection trajectories' own states is recorded as not served without
               running its chains (their solver fallbacks dominate the selection's cost); its chain error is NaN in the record.
 Scores and timings as generic2.run.
@@ -43,14 +46,22 @@ def mixed_pairs(P, trajs, rng):
     return X, P.step(X)
 
 
-def calibrate(sur, P, cal_sets):
+def kept(sur, X, consistent: bool) -> np.ndarray:
+    """The states whose score may calibrate the bound's term: all, or with ``consistent`` those the residual term accepts (module docstring)."""
+    if not consistent or sur.decoder is None:
+        return np.ones(len(X), dtype=bool)
+    return sur.decoder.residual(X) <= sur.decoder.r_max
+
+
+def calibrate(sur, P, cal_sets, consistent=False):
     """e_hat and b_max as the largest score and bound over the calibration states (module docstring)."""
     errs, bs = [], []
     for Xc, Yc in cal_sets:
         if len(Xc):
             e, b = scores(P, sur, Xc, Yc)
-            errs.append(e)
-            bs.append(b)
+            ok = kept(sur, Xc, consistent)
+            errs.append(e[ok])
+            bs.append(b[ok])
     e, b = np.concatenate(errs), np.concatenate(bs)
     s = e / (1 + b)
     s = s[np.isfinite(s)]
@@ -66,7 +77,7 @@ def calibration_sets(P, cal, mixed, rng):
     return sets
 
 
-def select(P, train, k, dec_degree, rollout, extra=None, qmax=12, mixed=True) -> dict:
+def select(P, train, k, dec_degree, rollout, extra=None, qmax=12, mixed=True, consistent=False) -> dict:
     m = k + P.system.held
     n_pairs = len(train) * 4 // 5 * (train.shape[1] - 1) + (0 if extra is None else len(extra[0]))
     cal_cache = {}
@@ -82,7 +93,7 @@ def select(P, train, k, dec_degree, rollout, extra=None, qmax=12, mixed=True) ->
                 if s not in cal_cache:
                     cal_cache[s] = calibration_sets(P, cal, mixed, np.random.default_rng(1000 + s))
                 sur, X, Y = build(P, fit, k, q, ridge, dec_degree, extra)
-                calibrate(sur, P, cal_cache[s])
+                calibrate(sur, P, cal_cache[s], consistent)
                 one_step_share = float(np.mean(sur.refuses(pairs(sel)[0])))
                 if 2 * sur.e_hat > TOL / 2:  # the bound is at least 1: every input refused, the chain is the solver's own
                     res = {"rollout_worst": 0.0, "rollout_solved_by_step": [1.0]}
@@ -115,7 +126,7 @@ def select(P, train, k, dec_degree, rollout, extra=None, qmax=12, mixed=True) ->
             "cal_cache": cal_cache}  # fmt: skip
 
 
-def final(P, train, k, degree, ridge, dec_degree, cal_cache, extra=None):
+def final(P, train, k, degree, ridge, dec_degree, cal_cache, extra=None, consistent=False):
     """
     The served surrogate: fitted on all of ``train``, its gate from each split's fit scored on that split's calibration states, pooled
     (the largest score and bound), so the gate is calibrated only on states its own fit did not see.
@@ -127,7 +138,9 @@ def final(P, train, k, degree, ridge, dec_degree, cal_cache, extra=None):
         sv, _, _ = build(P, fit, k, degree, ridge, dec_degree, extra)
         for Xc, Yc in cal_cache[s]:
             if len(Xc):
-                cal_all.append(scores(P, sv, Xc, Yc))
+                e, b = scores(P, sv, Xc, Yc)
+                ok = kept(sv, Xc, consistent)
+                cal_all.append((e[ok], b[ok]))
     e = np.concatenate([x[0] for x in cal_all])
     b = np.concatenate([x[1] for x in cal_all])
     s_ = (e / (1 + b))[np.isfinite(e / (1 + b))]
@@ -139,10 +152,10 @@ def final(P, train, k, degree, ridge, dec_degree, cal_cache, extra=None):
 def rebuild(P, train, rec: dict, extra=None, mixed=True):
     """The surrogate ``run`` served for record ``rec``, rebuilt from its chosen configuration (the same calibration states and seeds)."""
     cal_cache = {s: calibration_sets(P, thirds(train, s)[1], mixed, np.random.default_rng(1000 + s)) for s in SPLITS}
-    return final(P, train, rec["k"], rec["degree"], rec["ridge"], rec["decoder_degree"], cal_cache, extra)
+    return final(P, train, rec["k"], rec["degree"], rec["ridge"], rec["decoder_degree"], cal_cache, extra, rec.get("consistent_calibration", False))
 
 
-def run(P, train, test, seed=0, extra=None, solve_us=None, qmax=12, mixed=True, kmax=40) -> dict:
+def run(P, train, test, seed=0, extra=None, solve_us=None, qmax=12, mixed=True, kmax=40, consistent=False) -> dict:
     from generic import mixing
 
     from src.benchmark.step_maps import rollout
@@ -152,8 +165,8 @@ def run(P, train, test, seed=0, extra=None, solve_us=None, qmax=12, mixed=True, 
     kc = choose_k(P, train, min(kmax, free), extra)
     dec_degree = next((c["decoder_degree"] for c in kc["curve"] if c["k"] == kc["k"]), 1)
     log(f"  k={kc['k']} ({kc['reduction']}), decoder degree {dec_degree}")
-    sel = select(P, train, kc["k"], dec_degree, rollout, extra, qmax, mixed)
-    sur = final(P, train, kc["k"], sel["degree"], sel["ridge"], dec_degree, sel["cal_cache"], extra)
+    sel = select(P, train, kc["k"], dec_degree, rollout, extra, qmax, mixed, consistent)
+    sur = final(P, train, kc["k"], sel["degree"], sel["ridge"], dec_degree, sel["cal_cache"], extra, consistent)
     train_s = time.perf_counter() - t0
     Xe, Ye = test[:, :-1].reshape(-1, test.shape[2]), test[:, 1:].reshape(-1, test.shape[2])
     r = np.asarray(sur.refuses(Xe), dtype=bool)
@@ -180,7 +193,7 @@ def run(P, train, test, seed=0, extra=None, solve_us=None, qmax=12, mixed=True, 
     rho = float(r.mean())
     out = {"d": int(test.shape[2]), "held": int(P.system.held), "n_train": int(len(train)), "k": kc["k"], "reduction": kc["reduction"],
            "k_curve": kc["curve"], "decoder_degree": dec_degree, "selection": sel["configs"], "degree": sel["degree"], "ridge": sel["ridge"],
-           "served": sel["served"], "stopped_at": sel["stopped_at"], "mixed_calibration": mixed, "e_hat": sur.e_hat, "b_max": sur.b_max,
+           "served": sel["served"], "stopped_at": sel["stopped_at"], "mixed_calibration": mixed, "consistent_calibration": consistent, "e_hat": sur.e_hat, "b_max": sur.b_max,
            "residual_max": None if sur.decoder is None else sur.decoder.r_max, "terms": len(sur.G.idx), "train_s": train_s,
            "one_step_worst": worst_scored(P, nxt, Ye), "refused_percent": 100 * rho, "refused_by_step": r.reshape(test.shape[0], -1).mean(axis=0).tolist(),
            "rollout_worst": float(r40["rollout_worst"]), "rollout_solver_share": float(np.mean(r40["rollout_solved_by_step"])),
