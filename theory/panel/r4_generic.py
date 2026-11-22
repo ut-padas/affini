@@ -35,6 +35,7 @@ from src.benchmark.step_maps import STEP_MAPS, data
 from src.infra.records import RecordStore
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "recipe"))
+import r3_kida  # noqa: E402,F401 -- registers the KIDA system before any solver pool is forked: the workers look systems up by name
 from common import recorded  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "data"
@@ -44,7 +45,6 @@ R3_DATA = Path(__file__).resolve().parents[1] / "recipe" / "data" / "records" / 
 def kida(name: str):
     """(problem, train, test) of a KIDA range from r3's chunk records, or None while they are incomplete."""
     import numpy as np
-    import r3_kida
 
     parts = {}
     for role, n in (("train", r3_kida.N_TRAIN), ("test", r3_kida.N_TEST)):
