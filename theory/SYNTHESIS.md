@@ -987,6 +987,16 @@ The one-step pairs of 40 training trajectories of 400 steps are added for Robert
 
 Both systems keep reaching new states through the whole horizon, so the training trajectories have to span the deployment horizon.
 
+### 3.38 Training over the whole horizon (p23; `theory/panel/p23_full_horizon.py`, prediction in its commit)
+
+As p22, with the 40 long training trajectories spanning the whole 2,000-step horizon. Over the same 64 test chains:
+- Robertson's steady refusal falls from 88% (40-step training) and 73% (400-step) to 0%, worst 2.1e-5, a steady speed-up of 42x;
+- CHEMAKZO's falls from 96% and 81% to 45%, worst 3.1e-6: within tol / 2, but the prediction (below 5%) fails for it;
+- bruss_d20 stays at 0% (worst 1.1e-3).
+
+Training that spans the deployment horizon serves Robertson's long chains. CHEMAKZO keeps reaching states the 40 long trajectories do
+not cover even then: its long-time states depend on the start more than Robertson's do, so it needs more long starts, not longer ones.
+
 ---
 
 ## 4. Mistakes, and what each taught

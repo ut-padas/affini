@@ -1,0 +1,89 @@
+{
+ "bruss_d20": {
+  "arms": {
+   "decay": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.2203125,
+    "share_200_on": 0.0,
+    "speedup_steady": 48.91467113262738,
+    "steady_rate": 0.0,
+    "steady_upper_95": 2.3555276381909547e-05,
+    "worst": 0.001117578455072505
+   },
+   "gate": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.2203125,
+    "share_200_on": 0.0,
+    "speedup_steady": 48.91467113262738,
+    "steady_rate": 0.0,
+    "steady_upper_95": 2.3555276381909547e-05,
+    "worst": 0.001117578455072505
+   }
+  },
+  "degree": 4,
+  "extra_pairs": 80000,
+  "gamma": 0.5,
+  "served": true,
+  "status": "done"
+ },
+ "chemakzo": {
+  "arms": {
+   "decay": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.5015625,
+    "share_200_on": 0.48279513888888886,
+    "speedup_steady": 1.8063606275030129,
+    "steady_rate": 0.4532270728643216,
+    "steady_upper_95": 0.45699993896585644,
+    "worst": 3.0853632289051802e-06
+   },
+   "gate": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.5015625,
+    "share_200_on": 0.48279513888888886,
+    "speedup_steady": 1.8063606275030129,
+    "steady_rate": 0.4532270728643216,
+    "steady_upper_95": 0.45699993896585644,
+    "worst": 3.0853632289051802e-06
+   }
+  },
+  "degree": 9,
+  "extra_pairs": 80000,
+  "gamma": 0.5,
+  "served": false,
+  "status": "done"
+ },
+ "robertson": {
+  "arms": {
+   "decay": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.109375,
+    "share_200_on": 0.0,
+    "speedup_steady": 41.92494822166064,
+    "steady_rate": 0.0,
+    "steady_upper_95": 2.3555276381909547e-05,
+    "worst": 2.109060379584804e-05
+   },
+   "gate": {
+    "account_share": 0.0,
+    "certified_horizon": null,
+    "fresh_rate": 0.109375,
+    "share_200_on": 0.0,
+    "speedup_steady": 41.92494822166064,
+    "steady_rate": 0.0,
+    "steady_upper_95": 2.3555276381909547e-05,
+    "worst": 2.109060379584804e-05
+   }
+  },
+  "degree": 6,
+  "extra_pairs": 80000,
+  "gamma": 0.5,
+  "served": true,
+  "status": "done"
+ }
+}
