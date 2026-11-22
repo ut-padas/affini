@@ -1,0 +1,485 @@
+{
+ "bruss_d20/adaptive": {
+  "best_heldout_worst": 0.11956167774401741,
+  "degree": 3,
+  "evaluate_us": 12.502577501436463,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.05187499999999999,
+    "worst": 0.003207151861749153
+   },
+   "0.1": {
+    "solver_share": 0.04875,
+    "worst": 0.0013144373901628204
+   }
+  },
+  "rank": 220,
+  "refused_percent": 4.25,
+  "rollout_worst": 0.0037375225361504748,
+  "served": true,
+  "speedup_effective": 17.280116511584744,
+  "status": "done",
+  "terms": 220,
+  "train_s": 8.0899788980023
+ },
+ "bruss_d20/hyperbolic": {
+  "best_heldout_worst": 0.03987613223002601,
+  "degree": 3,
+  "evaluate_us": 13.786979379801778,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.05,
+    "worst": 0.0008621514175725098
+   },
+   "0.1": {
+    "solver_share": 0.049375,
+    "worst": 0.0005179531019759709
+   }
+  },
+  "rank": 280,
+  "refused_percent": 5.0,
+  "rollout_worst": 0.002116358570083604,
+  "served": true,
+  "speedup_effective": 17.04202555830229,
+  "status": "done",
+  "terms": 328,
+  "train_s": 9.85951930200099
+ },
+ "bruss_d20/total": {
+  "best_heldout_worst": 0.03508225872122389,
+  "degree": 4,
+  "evaluate_us": 31.00163375165721,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.05125,
+    "worst": 0.001436093717688658
+   },
+   "0.1": {
+    "solver_share": 0.050624999999999996,
+    "worst": 0.0023066143171640435
+   }
+  },
+  "rank": 310,
+  "refused_percent": 5.3125,
+  "rollout_worst": 0.003373540367125283,
+  "served": true,
+  "speedup_effective": 13.766604056027354,
+  "status": "done",
+  "terms": 715,
+  "train_s": 6.482228045002557
+ },
+ "burgers_d20/adaptive": {
+  "best_heldout_worst": 0.02340998758321844,
+  "degree": 3,
+  "evaluate_us": 10.807036251208046,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.034999999999999996,
+    "worst": 0.0012218092618062615
+   },
+   "0.1": {
+    "solver_share": 0.030625000000000003,
+    "worst": 0.001187797215461639
+   }
+  },
+  "rank": 84,
+  "refused_percent": 3.75,
+  "rollout_worst": 0.0012519631136704845,
+  "served": true,
+  "speedup_effective": 21.25116742166744,
+  "status": "done",
+  "terms": 84,
+  "train_s": 12.072140147996834
+ },
+ "burgers_d20/hyperbolic": {
+  "best_heldout_worst": 0.0206047283744048,
+  "degree": 3,
+  "evaluate_us": 16.455245631732396,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.013750000000000002,
+    "worst": 0.004245196431385656
+   },
+   "0.1": {
+    "solver_share": 0.010624999999999999,
+    "worst": 0.004075538282293012
+   }
+  },
+  "rank": 138,
+  "refused_percent": 1.4375,
+  "rollout_worst": 0.004358162909261831,
+  "served": true,
+  "speedup_effective": 34.57129875879137,
+  "status": "done",
+  "terms": 138,
+  "train_s": 15.222331217999454
+ },
+ "burgers_d20/total": {
+  "best_heldout_worst": 0.008018589892895195,
+  "degree": 3,
+  "evaluate_us": 10.743123120846576,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.013750000000000002,
+    "worst": 0.0015292095076011453
+   },
+   "0.1": {
+    "solver_share": 0.01125,
+    "worst": 0.0018590651900698418
+   }
+  },
+  "rank": 84,
+  "refused_percent": 1.4375,
+  "rollout_worst": 0.0014313411174711188,
+  "served": true,
+  "speedup_effective": 41.885303583364106,
+  "status": "done",
+  "terms": 84,
+  "train_s": 4.375141619995702
+ },
+ "fisher_kpp_d10/adaptive": {
+  "best_heldout_worst": 0.4218495343559536,
+  "degree": 4,
+  "evaluate_us": 6.476314374594949,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.06000000000000001,
+    "worst": 0.002125644911778468
+   },
+   "0.1": {
+    "solver_share": 0.05625,
+    "worst": 0.0017739179216052503
+   }
+  },
+  "rank": 210,
+  "refused_percent": 6.375,
+  "rollout_worst": 0.002330027331402279,
+  "served": true,
+  "speedup_effective": 14.022896336967923,
+  "status": "done",
+  "terms": 210,
+  "train_s": 5.40067858400289
+ },
+ "fisher_kpp_d10/hyperbolic": {
+  "best_heldout_worst": 0.29771046079805147,
+  "degree": 4,
+  "evaluate_us": 36.77411999888136,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.04625,
+    "worst": 0.004645196683218611
+   },
+   "0.1": {
+    "solver_share": 0.041875,
+    "worst": 0.004020169047825872
+   }
+  },
+  "rank": 499,
+  "refused_percent": 4.6875,
+  "rollout_worst": 0.004542273354083193,
+  "served": true,
+  "speedup_effective": 11.134171826794567,
+  "status": "done",
+  "terms": 531,
+  "train_s": 4.450631388011971
+ },
+ "fisher_kpp_d10/total": {
+  "best_heldout_worst": 0.3205771905171392,
+  "degree": 5,
+  "evaluate_us": 24.816694376568194,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0725,
+    "worst": 0.0021650886645472323
+   },
+   "0.1": {
+    "solver_share": 0.068125,
+    "worst": 0.0027757263320744574
+   }
+  },
+  "rank": 462,
+  "refused_percent": 7.4375,
+  "rollout_worst": 0.001764452272846162,
+  "served": true,
+  "speedup_effective": 9.675696145338176,
+  "status": "done",
+  "terms": 462,
+  "train_s": 7.0196312140033115
+ },
+ "lorenz96_d20/adaptive": {
+  "best_heldout_worst": 0.3306179892782799,
+  "degree": 3,
+  "evaluate_us": 223.38438374390535,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.12937500000000002,
+    "worst": 0.015210396210166566
+   },
+   "0.1": {
+    "solver_share": 0.083125,
+    "worst": 0.01017757078280046
+   }
+  },
+  "rank": 1771,
+  "refused_percent": 14.1875,
+  "rollout_worst": 0.020171553401158948,
+  "served": false,
+  "speedup_effective": 0.6366035592275259,
+  "status": "done",
+  "terms": 1771,
+  "train_s": 64.99596293200739
+ },
+ "lorenz96_d20/hyperbolic": {
+  "best_heldout_worst": 0.17336075345588783,
+  "degree": 2,
+  "evaluate_us": 14.046143123778165,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.43187500000000006,
+    "worst": 0.01512968050741037
+   },
+   "0.1": {
+    "solver_share": 0.200625,
+    "worst": 0.0065224846444228435
+   }
+  },
+  "rank": 251,
+  "refused_percent": 58.56249999999999,
+  "rollout_worst": 0.016194757656741277,
+  "served": false,
+  "speedup_effective": 1.4790681220222224,
+  "status": "done",
+  "terms": 251,
+  "train_s": 1.3282400489988504
+ },
+ "lorenz96_d20/total": {
+  "best_heldout_worst": 0.1220626006547306,
+  "degree": 2,
+  "evaluate_us": 21.083616875330335,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.44749999999999995,
+    "worst": 0.02250467516373933
+   },
+   "0.1": {
+    "solver_share": 0.19687500000000002,
+    "worst": 0.00799622245229381
+   }
+  },
+  "rank": 231,
+  "refused_percent": 62.875,
+  "rollout_worst": 0.023580591972487963,
+  "served": false,
+  "speedup_effective": 1.3095532423067688,
+  "status": "done",
+  "terms": 231,
+  "train_s": 14.123405597012606
+ },
+ "nelson/adaptive": {
+  "best_heldout_worst": 1.103509229655347,
+  "degree": 1,
+  "evaluate_us": 4.890889582990591,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 17,
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9999373388312721,
+  "status": "done",
+  "terms": 17,
+  "train_s": 13.1022228130023
+ },
+ "nelson/hyperbolic": {
+  "best_heldout_worst": 1.103509229655364,
+  "degree": 1,
+  "evaluate_us": 6.0226854354065535,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 17,
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.999922839591925,
+  "status": "done",
+  "terms": 17,
+  "train_s": 12.592120777000673
+ },
+ "nelson/total": {
+  "best_heldout_worst": 1.103509229655364,
+  "degree": 1,
+  "evaluate_us": 6.774758336784241,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 17,
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9999132051496371,
+  "status": "done",
+  "terms": 17,
+  "train_s": 11.630375445995014
+ },
+ "pollu/adaptive": {
+  "best_heldout_worst": 0.011524935017446225,
+  "degree": 2,
+  "evaluate_us": 5.931827996391803,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.9326271186440678,
+    "worst": 0.023295540769984857
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 105,
+  "refused_percent": 76.73728813559322,
+  "rollout_worst": 0.06969513354759416,
+  "served": false,
+  "speedup_effective": 1.208896796625998,
+  "status": "done",
+  "terms": 105,
+  "train_s": 64.54516698500083
+ },
+ "pollu/hyperbolic": {
+  "best_heldout_worst": 0.005137314645582869,
+  "degree": 3,
+  "evaluate_us": 69.44534749345621,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.6936440677966101,
+    "worst": 0.15610808363828177
+   },
+   "0.1": {
+    "solver_share": 0.9978813559322034,
+    "worst": 0.012684915048821743
+   }
+  },
+  "rank": 768,
+  "refused_percent": 0.0423728813559322,
+  "rollout_worst": 0.10078337742451238,
+  "served": false,
+  "speedup_effective": 17.4384361036364,
+  "status": "done",
+  "terms": 768,
+  "train_s": 36.485528012010036
+ },
+ "pollu/total": {
+  "best_heldout_worst": 0.0029928366578007015,
+  "degree": 3,
+  "evaluate_us": 40.77600700111361,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.8851694915254238,
+    "worst": 0.0359422800498832
+   },
+   "0.1": {
+    "solver_share": 0.9991525423728814,
+    "worst": 0.0033761171163124715
+   }
+  },
+  "rank": 560,
+  "refused_percent": 0.0847457627118644,
+  "rollout_worst": 0.04702127034031767,
+  "served": false,
+  "speedup_effective": 31.86238796838222,
+  "status": "done",
+  "terms": 560,
+  "train_s": 49.969463102999725
+ },
+ "primordial/adaptive": {
+  "best_heldout_worst": 1.4866240000103388,
+  "degree": 2,
+  "evaluate_us": 3.4020344416300454,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 36,
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.999592777928896,
+  "status": "done",
+  "terms": 36,
+  "train_s": 28.8831391959975
+ },
+ "primordial/hyperbolic": {
+  "best_heldout_worst": 0.4707234091402103,
+  "degree": 2,
+  "evaluate_us": 4.113291118604441,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 43,
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9995076827226121,
+  "status": "done",
+  "terms": 43,
+  "train_s": 27.08512016000168
+ },
+ "primordial/total": {
+  "best_heldout_worst": 0.5320817908358699,
+  "degree": 2,
+  "evaluate_us": 3.308943333751005,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "rank": 36,
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9996039164812444,
+  "status": "done",
+  "terms": 36,
+  "train_s": 28.270584193000104
+ }
+}
