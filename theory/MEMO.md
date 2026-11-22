@@ -102,7 +102,7 @@ two-sided prefactor). The Lebesgue constant of $n + 1$ Chebyshev points is at mo
 
 ## E. The error of a surrogate where it is used: four factors
 
-Every section below bounds one factor of one decomposition, the same for every problem and every scheme. Let $\Psi$ be a surrogate of the
+Every section below bounds one factor of one decomposition (and the refusal rate that trades accuracy for speed), the same for every problem and every scheme. Let $\Psi$ be a surrogate of the
 step $\Phi$ built in a space $V$ from data at the states $X$ (a fit from trajectories, a fit from solver queries at designed points, a tree's
 leaves), used along a chain whose inputs are $t_0, t_1, \ldots$ (test states, a rollout's own states, states moved between steps by another
 process). Write $e^*_V(S) = \inf_{q\in V}\lVert\Phi - q\rVert_{\infty,S}$ for the space's best error on a set $S$.
@@ -120,6 +120,9 @@ process). Write $e^*_V(S) = \inf_{q\in V}\lVert\Phi - q\rVert_{\infty,S}$ for th
 4. **Off the data**: inputs that no data constrain (operator splitting, mixing between cells, perturbations) enter through factor 2 at those
    inputs and through Proposition 8.2; a refusal rule that sends large-$\Lambda$ inputs to the solver bounds the accepted error by factor 2
    and pays in solver calls.
+5. **Refusal and speed** (Corollary 5.3): the share of inputs refused, $\rho$, sets the speed as much as the surrogate's cost does, since the
+   speed-up is at most $1/\rho$; it is part of every result, in the benchmark's fields `refused_percent`, `refused_by_step` and
+   `rollout_solved_by_step`, with the effective speed-up $c_\Phi/(c_g + (1 - \rho)c_\Psi + \rho c_\Phi)$ beside the nominal one.
 
 Put together, the error after $n$ steps is of order $A_n\max_j(1 + \Lambda_X(t_j))\,e^*_V(X\cup\{t_j\})$. This is an *estimate*: Proposition
 5.1 is exact at each point, but the chain's inputs $t_j$ are not known in advance, so a *bound* needs a tube argument as in Theorem 8 or
@@ -128,7 +131,8 @@ statements, with a deterministic bound only through Lipschitz and covering argum
 
 **Descriptors.** Each factor has a computable descriptor, measured on every problem in section P: the visited set's dimension at the
 tolerance and whether trajectories collapse (factor 1); $\Lambda_X$ over the points of use for each candidate space (factor 2); $A_n$ and the
-Lyapunov exponent (factor 3); the held inputs and the share of inputs refused under mixing (factor 4). Section 10 turns them into a rule for
+Lyapunov exponent (factor 3); the held inputs and the share of inputs refused under mixing (factor 4); the refusal rate and the
+effective speed-up on test inputs, rollouts and mixed chains (item 5). Section 10 turns them into a rule for
 choosing a scheme.
 
 ## F. Static functions first: scaling laws on the function suite
@@ -415,6 +419,22 @@ logarithmic in the degree per axis, so the box is covered uniformly. A rollout t
 accumulation (Proposition 2.1, Theorem 8): the error after $n$ steps is at most of order $A_n\,(1 + \Lambda_X(T_n))\,e^*$, with $T_n$ the states
 the rollout visits and $e^*$ the best approximation error. Every factor is computable from data: $\Lambda$ from the samples and the target
 inputs, $A_n$ from Jacobians along trajectories, $e^*$ estimated by held-out residuals.
+
+**Corollary 5.3 (accuracy, refusal and speed; proved).** Let the surrogate refuse an input $t$ when $\Lambda_X(t) > \Lambda^*$ (or when any
+computable upper bound of $\Lambda_X(t)$ exceeds $\Lambda^*$), the solver stepping what it refuses, and let $\nu$ be the law of the points of use.
+(a) *Refusal.* The refusal rate is $\rho(\Lambda^*) = \nu\{t: \Lambda_X(t) > \Lambda^*\}$, computable from unlabelled inputs before deployment, and
+nonincreasing in $\Lambda^*$. (b) *Accuracy.* Every accepted input errs by at most $(1 + \Lambda^*)\,e^*_V(X\cup\{t\})$; a refused input errs by the
+solver's own error. (c) *Speed.* With $c_\Psi$, $c_g$ and $c_\Phi$ the costs of a surrogate evaluation, of the refusal test and of a solve, the
+expected cost per step is $c_g + (1 - \rho)c_\Psi + \rho\,c_\Phi$, so the speed-up over the solver is
+$S = c_\Phi/(c_g + (1 - \rho)c_\Psi + \rho\,c_\Phi) \le \min\bigl(1/\rho,\ c_\Phi/(c_g + (1 - \rho)c_\Psi)\bigr)$: a refusal rate of $\rho$ caps the speed-up at
+$1/\rho$ however cheap the surrogate is. (d) *Rollouts.* Along a chain the recurrence of Propositions 2.1 and 2.2 holds with the defect
+$\delta_k = 0$ at every refused step (an exact solver), so $e_n = \sum_{k\ \mathrm{accepted}}G_{n,k+1}\delta(y_k) + R_n$: refusals remove defects
+and keep propagating the earlier ones. *Proof.* (a) is the definition, (b) Proposition 5.1, (c) linearity of expectation, (d) the unrolling of
+Proposition 2.2 with $\delta_k = 0$ where the solver steps. $\square$ The law in a rollout is that of the chain's own inputs, which depends on the
+surrogate and on what moves the state between steps (mixing, operator splitting), so its refusal rate is measured by running the chain with the
+refusal test, step by step. Lowering $\Lambda^*$ buys accuracy with speed; the curve $(\Lambda^*, \rho, (1 + \Lambda^*)e^*)$ is known before deployment
+except for $e^*$, which held-out errors estimate. The benchmark's records keep the refusal rate as `refused_percent` and `refused_by_step`, and the
+rollout's as `rollout_solved_by_step`, the same fields as AFINNI's; its `speedup` is the nominal $c_\Phi/c_\Psi$, which (c) bounds by $1/\rho$.
 
 **Proposition 5.2 (the error at a point; proved).** With $r = f - \Pi f$: $f(x) - \mathrm{LS}f(x) = r(x) - \varphi(x)^{\mathsf T}G^{-1}b$,
 $b = N^{-1}\sum_i\varphi(x_i)r(x_i)$, so $|f(x) - \mathrm{LS}f(x) - r(x)| \le \sqrt{K(x)}\,\lVert G^{-1}\rVert\,\lVert b\rVert$; for independent draws,
