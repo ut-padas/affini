@@ -182,8 +182,10 @@ def lift_error(P, T: Transform, k: int, Xf, Xv, Yv, deg: int) -> float:
     Zd = np.array(Xv, dtype=float)
     with np.errstate(all="ignore"):
         Zd[:, : T.free] = design(T.chart(Xv, k), deg, lo, hi, idx) @ coef
-        if not np.all(np.isfinite(Zd)) or (P.system.log and np.any(Zd > 300)):
-            return float("inf")  # a decoder that leaves the representable states cannot be a lift: no solve
+        if not np.all(np.isfinite(Zd)) or np.any(np.abs(Zd[:, : T.free] - T.clip(Xv)[:, : T.free]) > 1.0):
+            # a decoded state a full unit (a decade in log coordinates) from its input is already a failed lift, and stepping such a
+            # state can take the stiff solver minutes: score it without a solve
+            return float("inf")
         return worst_scored(P, T.clip(P.step(Zd)), T.clip(Yv))
 
 
