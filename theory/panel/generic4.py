@@ -90,9 +90,23 @@ class Fit4:
         A = design(U, self.q, self.lo, self.hi, self.idx)
         return A if self.rs is None else np.concatenate([A, R / self.rs], axis=1)
 
+    def sketch(self, cols=32, seed=0):
+        """Replace the gate's two products by Gaussian sketches with ``cols`` columns (E |x S|^2 = |x|^2): the bound from Phi (M S) and
+        the out-of-span share from Phi (I - V_r V_r^T) S', each a p x cols product instead of p x r. The gate is calibrated on the
+        sketched statistics, so the statistic deployed is the one calibrated."""
+        rng = np.random.default_rng(seed)
+        S = rng.standard_normal((self.M.shape[1], cols)) / np.sqrt(cols)
+        S2 = rng.standard_normal((self.M.shape[0], cols)) / np.sqrt(cols)
+        self.MS = self.M @ S
+        self.QS = S2 - self.Vr @ (self.Vr.T @ S2)
+
     def gate_terms(self, Phi):
         """(bound, out-of-span share) per row of the design Phi."""
         with np.errstate(all="ignore"):
+            if getattr(self, "MS", None) is not None:
+                b = np.sqrt(self.N * np.sum((Phi @ self.MS) ** 2, axis=1))
+                s = np.linalg.norm(Phi @ self.QS, axis=1) / np.maximum(np.linalg.norm(Phi, axis=1), 1e-300)
+                return b, s
             b = np.sqrt(self.N * np.sum((Phi @ self.M) ** 2, axis=1))
             inside = (Phi @ self.Vr) @ self.Vr.T
             s = np.linalg.norm(Phi - inside, axis=1) / np.maximum(np.linalg.norm(Phi, axis=1), 1e-300)
@@ -105,7 +119,36 @@ class Surrogate4(Surrogate2):
     def __init__(self, T, k, G, decoder, n_normal=0):
         super().__init__(T, k, G, decoder)
         self.s_max, self.n_normal = np.inf, n_normal
+        self.gate, self.env, self.rho_max = "product", None, np.inf
         self._key, self._val = None, None
+
+    def offset(self, Z):
+        """rho: the input's offset from the bundle, the decoder residual (0 on a full chart)."""
+        return self.decoder.residual(Z) if self.decoder is not None else np.zeros(len(Z))
+
+    def gate_bound(self, Z, Phi=None):
+        """(the gate's error bound, the refusals by its caps) per row: the product (1 + b) e_hat with b_max, s_max and the residual
+        term; or the envelope a0 + a1 b + a2 rho + a3 rho^2 with the caps b_max, s_max, rho_max (the calibration ranges)."""
+        Phi = self.design(Z) if Phi is None else Phi
+        b, s = self.G.gate_terms(Phi)
+        if self.gate == "envelope":
+            rho = self.offset(Z)
+            a = self.env if self.env is not None else (np.inf, 0.0, 0.0, 0.0)  # not yet calibrated: every input refused
+            bound = a[0] + a[1] * b + a[2] * rho + a[3] * rho**2
+            caps = ~np.isfinite(b) | (b > self.b_max) | (s > self.s_max) | (rho > self.rho_max)
+        else:
+            bound = (1 + b) * self.e_hat
+            caps = ~np.isfinite(b) | (b > self.b_max) | (s > self.s_max)
+            if self.decoder is not None and self.use_residual:
+                caps |= self.decoder.residual(Z) > self.decoder.r_max
+        return bound, caps
+
+    @property
+    def refuses_all(self) -> bool:
+        """Every input is refused whatever its bound: the bound's floor (b >= 1, rho >= 0) exceeds the budget."""
+        if self.gate == "envelope":
+            return self.env is None or bool(self.env[0] + self.env[1] > TOL / 2)
+        return bool(2 * self.e_hat > TOL / 2)
 
     def design(self, Z):
         U = self.T.chart(Z, self.k)
@@ -141,10 +184,8 @@ class Surrogate4(Surrogate2):
             out[:, : T.free] = np.clip(np.where(np.isfinite(g), g, 0.0), T.zlo[: T.free], T.zhi[: T.free])
             out = self.project(Z, out)
             bad |= ~np.all(np.isfinite(out), axis=1)
-            b, s = self.G.gate_terms(Phi)
-        r = ~np.isfinite(b) | ((1 + b) * self.e_hat > TOL / 2) | (b > self.b_max) | (s > self.s_max) | bad
-        if self.decoder is not None and self.use_residual:
-            r |= self.decoder.residual(Z) > self.decoder.r_max
+            bound, caps = self.gate_bound(Z, Phi)
+        r = caps | (bound > TOL / 2) | bad
         self._key, self._val = (Z, np.array(Z, copy=True)), (out, r)
         return out, r
 
@@ -303,28 +344,120 @@ def build(P, fit_trajs, k, q, dec_degree, extra=None, variant=None):
     else:
         idx = None
     G = Fit4(U, T.clip(Y)[:, : T.free], q, R, idx)
+    if v.get("sketch"):
+        G.sketch()
     dec = Decoder(T, k, X, dec_degree) if k < T.free else None
-    return Surrogate4(T, k, G, dec, n_normal), X, Y
+    sur = Surrogate4(T, k, G, dec, n_normal)
+    sur.gate, sur.account = v.get("gate", "product"), bool(v.get("account"))
+    return sur, X, Y
 
 
-def calibrate(sur, P, cal_sets, consistent=True):
-    """e_hat, b_max and s_max as the largest score, bound and out-of-span share over the calibration states the residual term accepts."""
-    es, bs, ss = [], [], []
+def calibration_stats(sur, P, cal_sets) -> dict:
+    """Per calibration state: the one-step error of ``sur``, its bound b, out-of-span share s, offset rho, and whether the residual term
+    accepts it."""
+    out = {"e": [], "b": [], "s": [], "rho": [], "kept": []}
     for Xc, Yc in cal_sets:
         if not len(Xc):
             continue
         with np.errstate(all="ignore"):
-            e = np.max(np.where(P.scored(Yc), np.abs(Xc + (sur.evaluate(Xc)[0] - Xc) - Yc), 0.0), axis=1)
+            e = np.max(np.where(P.scored(Yc), np.abs(sur.evaluate(Xc, cache=False)[0] - Yc), 0.0), axis=1)
         b, s = sur.G.gate_terms(sur.design(Xc))
-        ok = kept(sur, Xc, consistent)
-        es.append(e[ok]), bs.append(b[ok]), ss.append(s[ok])
-    e, b, s = np.concatenate(es), np.concatenate(bs), np.concatenate(ss)
-    sc = e / (1 + b)
-    sc = sc[np.isfinite(sc)]
-    sur.e_hat = float(np.max(sc)) if len(sc) else np.inf
-    sur.b_max = float(np.max(b[np.isfinite(b)])) if np.isfinite(b).any() else -np.inf
-    sur.s_max = float(np.max(s[np.isfinite(s)])) if np.isfinite(s).any() else -np.inf
+        for key, val in (("e", e), ("b", b), ("s", s), ("rho", sur.offset(Xc)), ("kept", kept(sur, Xc, True))):
+            out[key].append(val)
+    return {k: np.concatenate(v) for k, v in out.items()}
+
+
+def envelope(e, b, rho) -> np.ndarray:
+    """The tightest additive envelope a0 + a1 b + a2 rho + a3 rho^2 >= e over the given states (a >= 0, minimising its sum): a linear
+    program. Each term is Proposition 5.1's or the map's across the bundle (council3-fable.md, section 3.1)."""
+    from scipy.optimize import linprog
+
+    F = np.stack([np.ones_like(b), b, rho, rho**2], axis=1)
+    ok = np.all(np.isfinite(F), axis=1) & np.isfinite(e)
+    F, e = F[ok], e[ok]
+    scale = np.maximum(np.abs(F).max(0), 1e-300)
+    Fs = F / scale
+    res = linprog(Fs.sum(0), A_ub=-Fs, b_ub=-e, bounds=[(0, None)] * 4, method="highs")
+    if not res.success:
+        return np.array([np.inf, 0.0, 0.0, 0.0])
+    return res.x / scale
+
+
+def apply_calibration(sur, st: dict):
+    """Set the gate from calibration statistics (module docstring): the product's e_hat over the states the residual term accepts, or
+    the envelope over every calibration state; the caps from their ranges."""
+    def top(x):
+        x = x[np.isfinite(x)]
+        return float(np.max(x)) if len(x) else -np.inf
+
+    if sur.gate == "envelope":
+        sur.env = envelope(st["e"], st["b"], st["rho"])
+        sur.b_max, sur.s_max, sur.rho_max = top(st["b"]), top(st["s"]), top(st["rho"])
+    else:
+        k = st["kept"]
+        sc = st["e"][k] / (1 + st["b"][k])
+        sc = sc[np.isfinite(sc)]
+        sur.e_hat = float(np.max(sc)) if len(sc) else np.inf
+        sur.b_max, sur.s_max = top(st["b"][k]), top(st["s"][k])
     sur._key = None
+
+
+def calibrate(sur, P, cal_sets):
+    apply_calibration(sur, calibration_stats(sur, P, cal_sets))
+
+
+class Account:
+    """
+    The deployment policy with an error account per cell (council3-fable.md, section 3.3; Proposition 2.2, Corollary 5.3 (d)): each cell
+    (a row of the batches, in a fixed order across steps) carries S, the sum of the gate's bounds over its accepted steps; a step is
+    refused when the gate refuses it or when it would take S past the budget, and a refused step adds nothing. For neutral dynamics the
+    chain's error is at most S wherever the bounds hold, whatever the coupling script. One instance per chain of batches: the rows must
+    be the same cells at every call.
+    """
+
+    def __init__(self, sur, budget=TOL / 2):
+        self.sur, self.budget, self.S, self.evals = sur, budget, None, 0
+
+    def refuses(self, Z):
+        _, r = self.sur.evaluate(Z)
+        bound, _ = self.sur.gate_bound(Z)
+        if self.S is None:
+            self.S = np.zeros(len(Z))
+        r = np.asarray(r, dtype=bool) | (self.S + bound > self.budget)
+        self.S = self.S + np.where(r, 0.0, bound)
+        return r
+
+    def predict(self, Z):
+        return self.sur.predict(Z)
+
+    def evaluate(self, Z, cache=True):
+        nxt, _ = self.sur.evaluate(Z, cache)
+        return nxt, self.refuses(Z)
+
+
+def policy(sur):
+    """The surrogate as deployed: with its error account when the variant asks for one (a fresh account per chain)."""
+    return Account(sur) if getattr(sur, "account", False) else sur
+
+
+def account_check(P, sur, true) -> dict:
+    """A plain rollout under the account: the share of (cell, step) where the chain's error exceeds the cell's account, |e_n| > S_n."""
+    acc = Account(sur)
+    Z = true[:, 0].copy()
+    h = P.system.held
+    over, total = 0, 0
+    for k in range(true.shape[1] - 1):
+        if h:
+            Z[:, -h:] = true[:, k, -h:]
+        r = acc.refuses(Z)
+        nxt = Z + acc.predict(Z)
+        if r.any():
+            nxt[r] = P.step(Z[r])
+        Z = nxt
+        e = np.max(np.where(P.scored(true[:, k + 1]), np.abs(Z - true[:, k + 1]), 0.0), axis=1)
+        over += int(np.sum(e > acc.S + 1e-15))
+        total += len(e)
+    return {"exceeded_percent": 100 * over / max(total, 1), "account_max": float(np.max(acc.S))}
 
 
 def chains(P, sur, true) -> dict:
@@ -332,10 +465,11 @@ def chains(P, sur, true) -> dict:
     Z = true[:, 0].copy()
     h = P.system.held
     worst, solved = 0.0, []
+    pol = policy(sur)
     for k in range(true.shape[1] - 1):
         if h:
             Z[:, -h:] = true[:, k, -h:]
-        nxt, r = sur.evaluate(Z)
+        nxt, r = pol.evaluate(Z)
         nxt = np.array(nxt)
         if r.any():
             nxt[r] = P.step(Z[r])
@@ -363,7 +497,7 @@ def select(P, train, k, dec_degree, solve_us, extra=None, qmax=12, variant=None)
             sur, _, _ = build(P, fit, k, q, dec_degree, extra, variant)
             calibrate(sur, P, cal_cache[s])
             share = float(np.mean(sur.refuses(pairs(sel)[0])))
-            if 2 * sur.e_hat > TOL / 2:
+            if sur.refuses_all:
                 res = {"rollout_worst": 0.0, "rollout_solved_by_step": [1.0], "stopped_early": False}
             elif share >= SERVED_SHARE:
                 res = {"rollout_worst": float("nan"), "rollout_solved_by_step": [share], "stopped_early": True}
@@ -391,19 +525,19 @@ def select(P, train, k, dec_degree, solve_us, extra=None, qmax=12, variant=None)
         if rising >= 2:
             break
     ok = [r for r in rows if r["served"]]
-    best = min(ok, key=lambda r: (r["cost_us"], r["chain_worst"])) if ok else min(rows, key=lambda r: r["heldout_worst"])
+    if ok:  # the cheapest configuration; costs within 10% of the cheapest are a tie (timing noise), broken by the smaller chain error
+        c0 = min(r["cost_us"] for r in ok)
+        best = min((r for r in ok if r["cost_us"] <= 1.1 * c0), key=lambda r: r["chain_worst"])
+    else:
+        best = min(rows, key=lambda r: r["heldout_worst"])
     return {"configs": rows, "degree": best["degree"], "served": bool(ok), "cal_cache": cal_cache}
 
 
 def final(P, train, k, degree, dec_degree, cal_cache, extra=None, variant=None):
     """Fitted on all of ``train``; its gate from each split's fit scored on that split's calibration states, pooled."""
     sur, _, _ = build(P, train, k, degree, dec_degree, extra, variant)
-    es, bs, ss = [], [], []
-    for s in SPLITS:
-        sv, _, _ = build(P, thirds(train, s)[0], k, degree, dec_degree, extra, variant)
-        calibrate(sv, P, cal_cache[s])
-        es.append(sv.e_hat), bs.append(sv.b_max), ss.append(sv.s_max)
-    sur.e_hat, sur.b_max, sur.s_max = max(es), max(bs), max(ss)
+    stats = [calibration_stats(build(P, thirds(train, s)[0], k, degree, dec_degree, extra, variant)[0], P, cal_cache[s]) for s in SPLITS]
+    apply_calibration(sur, {key: np.concatenate([st[key] for st in stats]) for key in stats[0]})
     return sur
 
 
@@ -415,7 +549,7 @@ def rebuild(P, train, rec: dict, extra=None, variant=None):
 def budget_shares(sur, Xe, Ye, P, A_n, steps) -> dict:
     """Refused shares of the test inputs under the three per-step budgets (module docstring), and the accepted errors' sign coherence."""
     nxt, r = sur.evaluate(Xe)
-    b, _ = sur.G.gate_terms(sur.design(Xe))
+    bound, caps = sur.gate_bound(Xe)
     acc = ~r
     if acc.any():
         e = np.where(P.scored(Ye[acc]), nxt[acc] - Ye[acc], 0.0)
@@ -424,7 +558,7 @@ def budget_shares(sur, Xe, Ye, P, A_n, steps) -> dict:
         c = float("nan")
     out = {"coherence_value": c, "accumulation_factor": A_n, "steps": steps}
     for label, B in (("half_tol", TOL / 2), ("accumulation", TOL / (2 * A_n)), ("coherence", TOL / (2 * (c * steps + np.sqrt(steps))) if np.isfinite(c) else np.nan)):
-        out[label] = {"budget": float(B), "refused_percent": float(100 * np.mean(r | ((1 + b) * sur.e_hat > B)))}
+        out[label] = {"budget": float(B), "refused_percent": float(100 * np.mean(r | caps | (bound > B)))}
     return out
 
 
@@ -445,14 +579,14 @@ def run(P, train, test, name, seed=0, extra=None, solve_us=None, qmax=12, kmax=4
     nxt, r = sur.evaluate(Xe)
     nxt = np.array(nxt)
     nxt[r] = Ye[r]
-    everything_refused = 2 * sur.e_hat > TOL / 2
+    everything_refused = sur.refuses_all
     if everything_refused:
         r40 = r20 = {"rollout_worst": 0.0, "rollout_solved_by_step": [1.0] * (test.shape[1] - 1)}
         mix_chain = {str(w): {"worst": 0.0, "solver_share": 1.0} for w in (0.01, 0.1)}
     else:
-        r40, r20 = rollout(P, sur, test), rollout(P, sur, test[:20])
+        r40, r20 = rollout(P, policy(sur), test), rollout(P, policy(sur), test[:20])
         rng = np.random.default_rng(seed + 1)
-        mix_chain = {str(w): mixing(P, sur, test, w, rng) for w in (0.01, 0.1)}
+        mix_chain = {str(w): mixing(P, policy(sur), test, w, rng) for w in (0.01, 0.1)}
     n = min(len(Xe), 2000)
     evaluate_us = timed(lambda X: sur.evaluate(X, cache=False), Xe[:n])
     rho = float(r.mean())
@@ -460,13 +594,14 @@ def run(P, train, test, name, seed=0, extra=None, solve_us=None, qmax=12, kmax=4
     acc = dynamics(name)["accumulation"]
     out = {"d": int(test.shape[2]), "held": int(P.system.held), "n_train": int(len(train)), "k": kc["k"], "reduction": kc["reduction"],
            "k_curve": kc["curve"], "decoder_degree": dec_degree, "selection": sel["configs"], "degree": sel["degree"], "served": sel["served"],
-           "e_hat": sur.e_hat, "b_max": sur.b_max, "s_max": sur.s_max, "rank": sur.G.rank, "terms": len(sur.G.idx), "laws": int(len(sur.T.W)),
+           "e_hat": sur.e_hat, "b_max": sur.b_max, "s_max": sur.s_max, "gate": sur.gate, "envelope": None if sur.env is None else sur.env.tolist(), "rho_max": sur.rho_max, "rank": sur.G.rank, "terms": len(sur.G.idx), "laws": int(len(sur.T.W)),
            "residual_max": None if sur.decoder is None else sur.decoder.r_max, "train_s": train_s, "one_step_worst": worst_scored(P, nxt, Ye),
            "refused_percent": 100 * rho, "refused_by_step": r.reshape(test.shape[0], -1).mean(axis=0).tolist(),
            "rollout_worst": float(r40["rollout_worst"]), "rollout_solver_share": float(by_step.mean()), "rollout_solver_share_from_step_10": float(by_step[10:].mean()) if len(by_step) > 10 else None,
            "rollout_solved_by_step": r40["rollout_solved_by_step"], "rollout_worst_20": float(r20["rollout_worst"]), "mixing_chained": mix_chain,
            "evaluate_us": evaluate_us, "timing_batch": n, "solve_us": solve_us,
-           "budgets": budget_shares(sur, Xe, Ye, P, float(np.max(acc)), test.shape[1] - 1)}  # fmt: skip
+           "budgets": budget_shares(sur, Xe, Ye, P, float(np.max(acc)), test.shape[1] - 1),
+           "account_check": account_check(P, sur, test) if sur.account and not everything_refused else None}  # fmt: skip
     if solve_us:
         for label, share in (("", float(by_step.mean())), ("_from_step_10", out["rollout_solver_share_from_step_10"])):
             if share is not None:
