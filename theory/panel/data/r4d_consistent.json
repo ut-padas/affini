@@ -1,0 +1,194 @@
+{
+ "bruss_d20": {
+  "b_max": 1718.889115080065,
+  "d": 20,
+  "degree": 4,
+  "e_hat": 0.00022290085607066178,
+  "k": 9,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.034375,
+    "worst": 0.0025081541121844686
+   },
+   "0.1": {
+    "solver_share": 0.027500000000000004,
+    "worst": 0.0033388829126503577
+   }
+  },
+  "refused_percent": 3.75,
+  "rollout_solver_share": 0.0375,
+  "rollout_worst": 0.0032605485704744197,
+  "served": true,
+  "speedup_effective": 13.187521703680055,
+  "status": "done",
+  "train_s": 59.042147490996285
+ },
+ "burgers_d20": {
+  "b_max": 18343470860.091892,
+  "d": 20,
+  "degree": 5,
+  "e_hat": 2.588548083005409e-08,
+  "k": 6,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.04,
+    "worst": 0.0022790055943127108
+   },
+   "0.1": {
+    "solver_share": 0.033125,
+    "worst": 0.001921262469462115
+   }
+  },
+  "refused_percent": 4.0625,
+  "rollout_solver_share": 0.040625,
+  "rollout_worst": 0.0015973941240310374,
+  "served": true,
+  "speedup_effective": 12.105644370365335,
+  "status": "done",
+  "train_s": 10.929364757001167
+ },
+ "chemakzo": {
+  "b_max": 179795481272.14514,
+  "d": 5,
+  "degree": 9,
+  "e_hat": 3.58718282814977e-09,
+  "k": 5,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.8905882352941175,
+    "worst": 0.00020007546095746065
+   },
+   "0.1": {
+    "solver_share": 0.9949999999999999,
+    "worst": 3.7947716010400256e-05
+   }
+  },
+  "refused_percent": 0.7058823529411765,
+  "rollout_solver_share": 0.18205882352941177,
+  "rollout_worst": 0.00013163867834053988,
+  "served": true,
+  "speedup_effective": 0.9643293975830164,
+  "status": "done",
+  "train_s": 361.3242137549969
+ },
+ "fisher_kpp_d10": {
+  "b_max": 1351185315574.697,
+  "d": 10,
+  "degree": 6,
+  "e_hat": 1.5606168701894582e-05,
+  "k": 6,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.169375,
+    "worst": 0.00011842799058614517
+   },
+   "0.1": {
+    "solver_share": 0.15625,
+    "worst": 8.225965168495719e-05
+   }
+  },
+  "refused_percent": 17.4375,
+  "rollout_solver_share": 0.174375,
+  "rollout_worst": 0.0001155716303419263,
+  "served": true,
+  "speedup_effective": 1.9717010004879922,
+  "status": "done",
+  "train_s": 140.6934919300038
+ },
+ "hires": {
+  "b_max": 319028607.8047464,
+  "d": 8,
+  "degree": 12,
+  "e_hat": 0.00018836909951890397,
+  "k": 3,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.6269117647058823,
+    "worst": 0.16270105298849558
+   },
+   "0.1": {
+    "solver_share": 0.7782352941176469,
+    "worst": 0.004367963735847802
+   }
+  },
+  "refused_percent": 13.48529411764706,
+  "rollout_solver_share": 0.14749999999999996,
+  "rollout_worst": 1.7610824394331814e-06,
+  "served": true,
+  "speedup_effective": 5.661784610319841,
+  "status": "done",
+  "train_s": 126.87979699800053
+ },
+ "nelson": {
+  "b_max": 18.248800800631162,
+  "d": 18,
+  "degree": 1,
+  "e_hat": 0.0861228070054357,
+  "k": 12,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_solver_share": 1.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9997967871516974,
+  "status": "done",
+  "train_s": 29.275917412000126
+ },
+ "pollu": {
+  "b_max": 28864.43663757037,
+  "d": 20,
+  "degree": 3,
+  "e_hat": 1.3465882786819708e-06,
+  "k": 13,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.8237288135593219,
+    "worst": 0.037693652528221655
+   },
+   "0.1": {
+    "solver_share": 0.9991525423728814,
+    "worst": 0.0033644226818863032
+   }
+  },
+  "refused_percent": 0.0423728813559322,
+  "rollout_solver_share": 0.1635593220338983,
+  "rollout_worst": 0.04394054809609571,
+  "served": false,
+  "speedup_effective": 26.821781456707015,
+  "status": "done",
+  "train_s": 110.51309115099866
+ },
+ "primordial": {
+  "b_max": 149.05919850096294,
+  "d": 10,
+  "degree": 2,
+  "e_hat": 0.03263961380934289,
+  "k": 6,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_solver_share": 1.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9983599107768135,
+  "status": "done",
+  "train_s": 34.821949087003304
+ }
+}
