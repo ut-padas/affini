@@ -40,7 +40,7 @@ from generic import (
 )
 from generic2 import SPLITS, Decoder, timed
 from generic2 import Surrogate as Surrogate2
-from generic3 import MARGIN, SERVED_SHARE, calibration_sets, kept, thirds
+from generic3 import MARGIN, SERVED_SHARE, calibration_sets, kept, mixed_pairs, thirds
 
 from src.benchmark.step_maps import dynamics, invariants_of, visited
 
@@ -71,11 +71,12 @@ def verified_laws(P, train, n=600, tol=1e-9) -> np.ndarray:
 class Fit4:
     """The truncated-SVD fit and its gate factor (module docstring)."""
 
-    def __init__(self, U, Y, q):
+    def __init__(self, U, Y, q, R=None):
         self.q = q
         self.lo, self.hi = U.min(0), U.max(0)
         self.idx = multi_indices(U.shape[1], q)
-        A = design(U, q, self.lo, self.hi, self.idx)
+        self.rs = None if R is None or not R.shape[1] else np.maximum(np.abs(R).max(0), 1e-300)
+        A = self.phi(U, R)
         self.N = len(A)
         Uu, s, Vt = np.linalg.svd(A, full_matrices=False)
         r = int(np.sum(s > RCOND * s[0]))
@@ -84,11 +85,10 @@ class Fit4:
         self.M = self.Vr / s[:r]
         self.coef = self.M @ (Uu[:, :r].T @ Y)
 
-    def phi(self, U):
-        return design(U, self.q, self.lo, self.hi, self.idx)
-
-    def __call__(self, U):
-        return self.phi(U) @ self.coef
+    def phi(self, U, R=None):
+        """The design: Chebyshev products of the chart coordinates, then (a tube variant) the normal coordinates, linear, scaled."""
+        A = design(U, self.q, self.lo, self.hi, self.idx)
+        return A if self.rs is None else np.concatenate([A, R / self.rs], axis=1)
 
     def gate_terms(self, Phi):
         """(bound, out-of-span share) per row of the design Phi."""
@@ -102,10 +102,16 @@ class Fit4:
 class Surrogate4(Surrogate2):
     """generic2.Surrogate with the repaired gate, one evaluation per batch shared by prediction and gate, and a batched projection."""
 
-    def __init__(self, T, k, G, decoder):
+    def __init__(self, T, k, G, decoder, n_normal=0):
         super().__init__(T, k, G, decoder)
-        self.s_max = np.inf
+        self.s_max, self.n_normal = np.inf, n_normal
         self._key, self._val = None, None
+
+    def design(self, Z):
+        U = self.T.chart(Z, self.k)
+        if not self.n_normal:
+            return self.G.phi(U)
+        return self.G.phi(U, normal_coords(self.T, Z, self.k, self.n_normal))
 
     def project(self, Z, Yhat):
         P, W = self.T.P, self.T.W
@@ -127,8 +133,7 @@ class Surrogate4(Surrogate2):
         if cache and self._key is not None and self._key[0] is Z and self._key[1].shape == Z.shape and np.array_equal(self._key[1], Z):
             return self._val
         T = self.T
-        U = T.chart(Z, self.k)
-        Phi = self.G.phi(U)
+        Phi = self.design(Z)
         out = np.array(Z, dtype=float)
         with np.errstate(all="ignore"):
             g = Phi @ self.G.coef
@@ -154,7 +159,36 @@ class Surrogate4(Surrogate2):
         return self.evaluate(Z)[0] - Z
 
 
-def transform(P, fit_trajs, extra_X=None):
+def normal_coords(T, Z, k, n):
+    """The first n off-chart coordinates of Z (the chart's directions k, k+1, ...), the offset across the chart's fibres."""
+    return (T.clip(Z)[:, : T.free] - T.mu) @ T.V[:, k : k + n]
+
+
+def mixed_fit_pairs(P, fit_trajs, m, seed=77):
+    """m of the fit trajectories' states mixed once (w = 0.01 and 0.1) with another fit trajectory's at the same step, solver-labelled;
+    kept per set of trajectories (the selection rebuilds each split's fit at every degree)."""
+    key = (id(P), fit_trajs.shape, hash(fit_trajs.tobytes()), m, seed)
+    if key not in _MIXED:
+        X, Y = mixed_pairs(P, fit_trajs, np.random.default_rng(seed))
+        pick = np.sort(np.random.default_rng(seed + 1).choice(len(X), min(m, len(X)), replace=False))
+        _MIXED[key] = (X[pick], Y[pick])
+    return _MIXED[key]
+
+
+_MIXED: dict = {}
+
+
+def sensitivity_directions(T, X, Y, free):
+    """An orthonormal basis of the free components, ordered by what the step map responds to: the left singular vectors of the least-
+    squares coefficient of the successors on the inputs (both centred, clipped), so the leading directions are those the next state
+    depends on (a reduced-rank regression), not those along which the states vary."""
+    Xc = T.clip(X)[:, :free]
+    Yc = T.clip(Y)[:, :free]
+    C = np.linalg.lstsq(Xc - Xc.mean(0), Yc - Yc.mean(0), rcond=None)[0]
+    return np.linalg.svd(C, full_matrices=True)[0]
+
+
+def transform(P, fit_trajs, extra_X=None, chart_pairs=None):
     from generic import Transform
 
     T = Transform.__new__(Transform)
@@ -164,19 +198,31 @@ def transform(P, fit_trajs, extra_X=None):
     X = T.clip(visited(fit_trajs) if extra_X is None else np.concatenate([visited(fit_trajs), extra_X]))
     T.mu = X[:, : T.free].mean(axis=0)
     T.V = np.linalg.svd(X[:, : T.free] - T.mu, full_matrices=False)[2].T
+    if chart_pairs is not None:
+        T.V = sensitivity_directions(T, *chart_pairs, T.free)
     T.W = verified_laws(P, fit_trajs)
     T.zlo, T.zhi = X.min(0) - 2.0, X.max(0) + 0.5
     return T
 
 
-def build(P, fit_trajs, k, q, dec_degree, extra=None):
-    T = transform(P, fit_trajs, None if extra is None else extra[0])
+def build(P, fit_trajs, k, q, dec_degree, extra=None, variant=None):
+    """The surrogate fitted on ``fit_trajs`` (and ``extra`` pairs); ``variant`` (the tube experiment): ``mixed`` adds that many of the fit
+    trajectories' own mixed pairs to the fit, ``normal`` adds the off-chart coordinates as linear terms, ``chart="sensitivity"`` takes
+    the chart from sensitivity_directions on the plain and mixed pairs."""
+    v = variant or {}
     X, Y = pairs(fit_trajs)
     if extra is not None:
         X, Y = np.concatenate([X, extra[0]]), np.concatenate([Y, extra[1]])
-    G = Fit4(T.chart(X, k), T.clip(Y)[:, : T.free], q)
+    if v.get("mixed"):
+        Xm, Ym = mixed_fit_pairs(P, fit_trajs, v["mixed"])
+        X, Y = np.concatenate([X, Xm]), np.concatenate([Y, Ym])
+    added = X[len(pairs(fit_trajs)[0]) :]
+    T = transform(P, fit_trajs, added if len(added) else None, (X, Y) if v.get("chart") == "sensitivity" else None)
+    n_normal = (T.free - k) if v.get("normal") else 0
+    R = normal_coords(T, X, k, n_normal) if n_normal else None
+    G = Fit4(T.chart(X, k), T.clip(Y)[:, : T.free], q, R)
     dec = Decoder(T, k, X, dec_degree) if k < T.free else None
-    return Surrogate4(T, k, G, dec), X, Y
+    return Surrogate4(T, k, G, dec, n_normal), X, Y
 
 
 def calibrate(sur, P, cal_sets, consistent=True):
@@ -187,7 +233,7 @@ def calibrate(sur, P, cal_sets, consistent=True):
             continue
         with np.errstate(all="ignore"):
             e = np.max(np.where(P.scored(Yc), np.abs(Xc + (sur.evaluate(Xc)[0] - Xc) - Yc), 0.0), axis=1)
-        b, s = sur.G.gate_terms(sur.G.phi(sur.T.chart(Xc, sur.k)))
+        b, s = sur.G.gate_terms(sur.design(Xc))
         ok = kept(sur, Xc, consistent)
         es.append(e[ok]), bs.append(b[ok]), ss.append(s[ok])
     e, b, s = np.concatenate(es), np.concatenate(bs), np.concatenate(ss)
@@ -219,7 +265,7 @@ def chains(P, sur, true) -> dict:
     return {"rollout_worst": float(worst), "rollout_solved_by_step": solved, "stopped_early": False}
 
 
-def select(P, train, k, dec_degree, solve_us, extra=None, qmax=12) -> dict:
+def select(P, train, k, dec_degree, solve_us, extra=None, qmax=12, variant=None) -> dict:
     m = k + P.system.held
     n_pairs = len(train) * 4 // 5 * (train.shape[1] - 1) + (0 if extra is None else len(extra[0]))
     cal_cache = {s: calibration_sets(P, thirds(train, s)[1], True, np.random.default_rng(1000 + s)) for s in SPLITS}
@@ -230,7 +276,7 @@ def select(P, train, k, dec_degree, solve_us, extra=None, qmax=12) -> dict:
         per = []
         for s in SPLITS:
             fit, cal, sel = thirds(train, s)
-            sur, _, _ = build(P, fit, k, q, dec_degree, extra)
+            sur, _, _ = build(P, fit, k, q, dec_degree, extra, variant)
             calibrate(sur, P, cal_cache[s])
             share = float(np.mean(sur.refuses(pairs(sel)[0])))
             if 2 * sur.e_hat > TOL / 2:
@@ -265,51 +311,51 @@ def select(P, train, k, dec_degree, solve_us, extra=None, qmax=12) -> dict:
     return {"configs": rows, "degree": best["degree"], "served": bool(ok), "cal_cache": cal_cache}
 
 
-def final(P, train, k, degree, dec_degree, cal_cache, extra=None):
+def final(P, train, k, degree, dec_degree, cal_cache, extra=None, variant=None):
     """Fitted on all of ``train``; its gate from each split's fit scored on that split's calibration states, pooled."""
-    sur, _, _ = build(P, train, k, degree, dec_degree, extra)
+    sur, _, _ = build(P, train, k, degree, dec_degree, extra, variant)
     es, bs, ss = [], [], []
     for s in SPLITS:
-        sv, _, _ = build(P, thirds(train, s)[0], k, degree, dec_degree, extra)
+        sv, _, _ = build(P, thirds(train, s)[0], k, degree, dec_degree, extra, variant)
         calibrate(sv, P, cal_cache[s])
         es.append(sv.e_hat), bs.append(sv.b_max), ss.append(sv.s_max)
     sur.e_hat, sur.b_max, sur.s_max = max(es), max(bs), max(ss)
     return sur
 
 
-def rebuild(P, train, rec: dict, extra=None):
+def rebuild(P, train, rec: dict, extra=None, variant=None):
     cal_cache = {s: calibration_sets(P, thirds(train, s)[1], True, np.random.default_rng(1000 + s)) for s in SPLITS}
-    return final(P, train, rec["k"], rec["degree"], rec["decoder_degree"], cal_cache, extra)
+    return final(P, train, rec["k"], rec["degree"], rec["decoder_degree"], cal_cache, extra, variant)
 
 
 def budget_shares(sur, Xe, Ye, P, A_n, steps) -> dict:
     """Refused shares of the test inputs under the three per-step budgets (module docstring), and the accepted errors' sign coherence."""
     nxt, r = sur.evaluate(Xe)
-    b, _ = sur.G.gate_terms(sur.G.phi(sur.T.chart(Xe, sur.k)))
+    b, _ = sur.G.gate_terms(sur.design(Xe))
     acc = ~r
     if acc.any():
         e = np.where(P.scored(Ye[acc]), nxt[acc] - Ye[acc], 0.0)
         c = float(np.max(np.abs(e.mean(0)) / np.maximum(np.abs(e).mean(0), 1e-300)))
     else:
         c = float("nan")
-    out = {"coherence": c, "accumulation": A_n, "steps": steps}
+    out = {"coherence_value": c, "accumulation_factor": A_n, "steps": steps}
     for label, B in (("half_tol", TOL / 2), ("accumulation", TOL / (2 * A_n)), ("coherence", TOL / (2 * (c * steps + np.sqrt(steps))) if np.isfinite(c) else np.nan)):
         out[label] = {"budget": float(B), "refused_percent": float(100 * np.mean(r | ((1 + b) * sur.e_hat > B)))}
     return out
 
 
-def run(P, train, test, name, seed=0, extra=None, solve_us=None, qmax=12, kmax=40) -> dict:
+def run(P, train, test, name, seed=0, extra=None, solve_us=None, qmax=12, kmax=40, variant=None, k=None) -> dict:
     from generic import mixing
 
     from src.benchmark.step_maps import rollout
 
     t0 = time.perf_counter()
     free = train.shape[2] - P.system.held
-    kc = choose_k(P, train, min(kmax, free), extra)
+    kc = choose_k(P, train, min(kmax, free), extra) if k is None else {"k": k[0], "reduction": "given", "curve": [{"k": k[0], "decoder_degree": k[1]}]}
     dec_degree = next((c["decoder_degree"] for c in kc["curve"] if c["k"] == kc["k"]), 1)
     log(f"  k={kc['k']} ({kc['reduction']}), decoder degree {dec_degree}")
-    sel = select(P, train, kc["k"], dec_degree, solve_us, extra, qmax)
-    sur = final(P, train, kc["k"], sel["degree"], dec_degree, sel["cal_cache"], extra)
+    sel = select(P, train, kc["k"], dec_degree, solve_us, extra, qmax, variant)
+    sur = final(P, train, kc["k"], sel["degree"], dec_degree, sel["cal_cache"], extra, variant)
     train_s = time.perf_counter() - t0
     Xe, Ye = test[:, :-1].reshape(-1, test.shape[2]), test[:, 1:].reshape(-1, test.shape[2])
     nxt, r = sur.evaluate(Xe)
