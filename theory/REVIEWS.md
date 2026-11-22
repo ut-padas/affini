@@ -294,3 +294,20 @@ Reviews: `reviews/council2-fable.md`, `reviews/council2-sol.md`, `reviews/counci
 | 10 | All | KIDA: no more model search until the coverage question is answered; measure the local arm against the number of tracers, the rank of the key species' futures, the attainable avoided solver time | Accepted: KIDA limited to these measurements |
 | 11 | Fable | Basis for charts of 8 or more coordinates (POLLU, Nelson, primordial, lorenz96_d20): an adaptive index set against a trajectory-fitted TT (T-a) | Accepted, after the repair and the tube experiment |
 | 12 | Sol, Astra | One model per output: a cheap grouped output-rank screen before a block TT | Accepted, with item 11 |
+
+## Council round 3 (external, independent): the same three, on `SYNTHESIS.md` sections 3.17-3.22, 9.8 and 10 (commit `125b58e`)
+
+Reviews: `reviews/council3-fable.md`, `reviews/council3-sol.md`, `reviews/council3-astra.md` (each with post hoc read-only checks).
+
+| # | From | Critique | Resolution |
+|---|---|---|---|
+| 1 | Fable | POLLU is data-limited, not accumulation-limited: with 240 more training trajectories the same degree-3 fit's one-step median falls 2.0e-4 -> 1.7e-5 and its ungated rollout 3.9e-2 -> 2.8e-3; multi-step fits and periodic exact steps gave 1.4-2x | Accepted: learning curves in whole trajectories on every unserved problem, the budget in solver seconds |
+| 2 | Fable | HIRES is refused by the product gate (1 + b) e_hat: b is about sqrt(rank), so one mixed calibration state refuses half the plain states; an additive envelope a0 + a1 b + a2 rho (rho the offset from the bundle) calibrated by a linear program refuses 0% of plain inputs (14.5% now) and 38% of weakly mixed ones (73%), every accepted defect under tol/2 | Accepted: the envelope gate, then the 18 problems rerun |
+| 3 | All | The composite: the on-bundle fit frozen, the normal term as a residual that vanishes on the bundle, switched on beyond the decoder's residual; Fable's check: the plain fit unchanged, the median defect 20-37x lower inside the radius, the maximum unmoved | Accepted: the anchored tube at fixed degree, tube samples by rejection on the offset, a region-specific gate |
+| 4 | Fable, Astra | CHEMAKZO's 7-14x from the sensitivity chart is an artefact: the arms' selection rows are identical to degree 5 and a timing tie picked another degree; what helps on full charts is tube data in the fit (selection chains 94-370x lower at degrees 6-7) | Accepted: section 3.20's reading withdrawn; cost ties broken by chain error |
+| 5 | Astra, Sol | POLLU's peak is mostly inherited error (0.04627 of 0.04702 dex remains after an exact step from the hybrid input); the worst tracer's own-input defect is 4.6e-3, five times the teacher-forced estimate | Accepted: traced alongside item 1 (data first, since it is cheapest and decisive) |
+| 6 | Fable, Astra | KIDA's step is not mostly its right-hand side: dense LU 42-46%, right-hand side 28-36%, SciPy's Python 23% | Accepted: section 3.22's reading corrected; a KIDA solver acceleration (fewer factorisations, a compiled path) before any fit |
+| 7 | Fable | Speed-ups are against SciPy's per-call overhead: Robertson's 778x is about 8x against a compiled solver (estimated from operation counts), bruss_d20's 14x 2-4x | Accepted: a compiled baseline measured before any speed-up is quoted as final |
+| 8 | Fable | Tensor trains are not supported by the records (the fitted coefficient tensors need 6-11x more coefficients as trains); shared outputs cannot pay when the prediction costs about 1 us | Accepted: T-a and T-b deferred |
+| 9 | Fable | Nelson is bias-limited at degree 2 and data-limited at degree 3; primordial resists five times the data and local fits, with rare jumps of up to 11 dex in one step | Accepted: both in the learning curves; primordial's jumps examined |
+| 10 | Sol, Astra | Qualification needs fresh closed split blocks and a measured 2x on independent coupled runs | Accepted: the final audit of every service policy |
