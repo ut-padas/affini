@@ -160,7 +160,11 @@ def select(P, train, k, dec_degree, rollout, extra=None, qmax=12) -> dict:
                 Xv, Yv = pairs(val)
                 err, b = scores(P, sur, Xv, Yv)
                 calibrate(sur, [err], [b])
-                res = rollout(P, sur, val)
+                if 2 * sur.e_hat > TOL / 2:
+                    # the bound is at least 1, so every input is refused: the chain is the solver's own (error 0, fully solved)
+                    res = {"rollout_worst": 0.0, "rollout_solved_by_step": [1.0]}
+                else:
+                    res = rollout(P, sur, val)
                 with np.errstate(all="ignore"):
                     ins = float(np.max(np.where(P.scored(Y), np.abs(X + sur.predict(X) - Y), 0.0)))
                 iw = int(np.nanargmax(np.where(np.isfinite(err), err, -1)))
@@ -235,11 +239,16 @@ def run(P, train, test, kmax=12, seed=0, extra=None, solve_us=None, qmax=12) -> 
     r = np.asarray(sur.refuses(Xe), dtype=bool)
     nxt = Xe + sur.predict(Xe)
     nxt[r] = Ye[r]
-    r40, r20 = rollout(P, sur, test), rollout(P, sur, test[:20])
-    rng = np.random.default_rng(seed + 1)
-    mix_chain = {str(w): mixing(P, sur, test, w, rng) for w in (0.01, 0.1)}
+    everything_refused = 2 * sur.e_hat > TOL / 2  # as in select: the chains are the solver's own
+    if everything_refused:
+        r40 = r20 = {"rollout_worst": 0.0, "rollout_solved_by_step": [1.0] * (test.shape[1] - 1)}
+        mix_chain = {str(w): {"worst": 0.0, "solver_share": 1.0} for w in (0.01, 0.1)}
+    else:
+        r40, r20 = rollout(P, sur, test), rollout(P, sur, test[:20])
+        rng = np.random.default_rng(seed + 1)
+        mix_chain = {str(w): mixing(P, sur, test, w, rng) for w in (0.01, 0.1)}
     mix_once = {}
-    for w in (0.01, 0.1):
+    for w in () if everything_refused else (0.01, 0.1):
         Z = mixed_once(P, test, w, np.random.default_rng(seed + 5))
         Zn = P.step(Z)
         rz = np.asarray(sur.refuses(Z), dtype=bool)
@@ -247,7 +256,7 @@ def run(P, train, test, kmax=12, seed=0, extra=None, solve_us=None, qmax=12) -> 
             ez = np.max(np.where(P.scored(Zn), np.abs(Z + sur.predict(Z) - Zn), 0.0), axis=1)
         mix_once[str(w)] = {"refused_percent": float(100 * rz.mean()), "worst_accepted": float(np.max(ez[~rz])) if (~rz).any() else 0.0}
     no_res = None
-    if sur.decoder is not None:
+    if sur.decoder is not None and not everything_refused:
         sur.use_residual = False
         no_res = {str(w): mixing(P, sur, test, w, np.random.default_rng(seed + 1)) for w in (0.01, 0.1)}
         sur.use_residual = True
