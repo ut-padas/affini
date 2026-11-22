@@ -11,6 +11,7 @@ predictions and against the benchmark's records.
 | `checks/t*.py` | One numerical check per theorem (NumPy and SciPy only, each under three minutes); `checks/data/t*.json` holds their output, the only source of the memo's numbers |
 | `functions/f*.py` | The function-suite pass (section F of the memo): scaling-law predictions on the static test functions, against fresh ChebTT runs and the benchmark's records; `functions/data/f*.json` holds their output |
 | `demos/*.py` | Demonstrations of a theorem end to end (constants computed, bound against measurement); `demos/data/*.json` holds their output |
+| `recipe/`, `panel/` | The reduced recipe across every benchmark step map and KIDA (`recipe/r*.py`, first version, built on HIRES), the panel descriptors and the generic recipe (`panel/p1_descriptors.py`, `panel/generic.py`, `panel/r4_generic.py`); outputs and one record per problem under each folder's `data/` |
 | `gradients/g*.py` | The gradient tier (section G of the memo): values with derivatives against values alone, on static functions and on HIRES with forward sensitivities, and the HIRES recipe end to end; `gradients/data/g*.json` holds their output (the `.npz` oracle caches are not committed) |
 
 Run a check from this folder's `checks/` directory with the repository's environment:

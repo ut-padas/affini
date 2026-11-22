@@ -75,6 +75,9 @@ anisotropic meshes); that theory does not establish ART's oracle counts. Observa
 - **U5.** ART with one quadratic leaf fails at the box's vertices (2.7 tol) in one case; in another, three of six refits fail.
 - **U6.** Vector outputs: per-output tensor trains cost about $m$ times one output; ART reuses each sample for every output.
 - **U7.** No acceptance test in the schemes is a certificate: a quadratic prefit passed validation at 0.04 and scored 4.86.
+- **U8.** A surrogate fitted from trajectories alone generalises only where the points of use lie among its samples: on the 37 benchmark
+  step maps, a chart fit selected by its error on its own training chains held the tolerance on 4 (the three 2-D ladders and HIRES) and
+  erred 0.03–5 on the others while passing that check (`theory/recipe/r2_step_maps.py`; section P).
 
 ## 1. Setting and tools
 
@@ -96,6 +99,37 @@ $\limsup_nE_n(f)^{1/n} = 1/\rho_*$ with $\rho_*$ the largest ellipse of analytic
 two-sided prefactor). The Lebesgue constant of $n + 1$ Chebyshev points is at most $\frac{2}{\pi}\log(n + 1) + 1$.
 
 ---
+
+## E. The error of a surrogate where it is used: four factors
+
+Every section below bounds one factor of one decomposition, the same for every problem and every scheme. Let $\Psi$ be a surrogate of the
+step $\Phi$ built in a space $V$ from data at the states $X$ (a fit from trajectories, a fit from solver queries at designed points, a tree's
+leaves), used along a chain whose inputs are $t_0, t_1, \ldots$ (test states, a rollout's own states, states moved between steps by another
+process). Write $e^*_V(S) = \inf_{q\in V}\lVert\Phi - q\rVert_{\infty,S}$ for the space's best error on a set $S$.
+
+1. **Approximation**, $e^*_V$: how well the space can represent the step at all, from the step's smoothness (T1: Bernstein radii and degrees
+   per decade; section F), from a reduction to fewer coordinates (T6: coordinate counts, the lower bound of Proposition 6.5; section 8), and
+   from where accuracy is asked (T7: the sup norm on a box against the states visited).
+2. **Sampling**, $1 + \Lambda_X(t)$: how the data sit relative to each point of use (T5, Proposition 5.1). The one-step error at $t$ is at most
+   $(1 + \Lambda_X(t))\,e^*_V(X\cup\{t\})$. $\Lambda_X(t)$ is computable at any $t$ from the data's inputs alone, before the step there is known.
+   Designed samples keep it logarithmic in the degree over a box; trajectory samples keep it moderate only where the points of use lie
+   among them.
+3. **Propagation**, $A_n$: how the dynamics carry one-step errors along a chain (T2: Propositions 2.1, 2.2, 2.4; Theorem 8 for maps in reduced
+   coordinates; T3 for locally coupled systems). One-step errors of at most $e$ on the chain's own inputs give an error of at most about
+   $e\,A_n$ after $n$ steps; the benchmark's `dynamics.json` measures $A_n$ and a finite-time Lyapunov exponent for every problem.
+4. **Off the data**: inputs that no data constrain (operator splitting, mixing between cells, perturbations) enter through factor 2 at those
+   inputs and through Proposition 8.2; a refusal rule that sends large-$\Lambda$ inputs to the solver bounds the accepted error by factor 2
+   and pays in solver calls.
+
+Put together, the error after $n$ steps is of order $A_n\max_j(1 + \Lambda_X(t_j))\,e^*_V(X\cup\{t_j\})$. This is an *estimate*: Proposition
+5.1 is exact at each point, but the chain's inputs $t_j$ are not known in advance, so a *bound* needs a tube argument as in Theorem 8 or
+Proposition 2.1, with the defect bounded on the whole tube. What can be certified from samples of the result is T4's subject: distributional
+statements, with a deterministic bound only through Lipschitz and covering arguments.
+
+**Descriptors.** Each factor has a computable descriptor, measured on every problem in section P: the visited set's dimension at the
+tolerance and whether trajectories collapse (factor 1); $\Lambda_X$ over the points of use for each candidate space (factor 2); $A_n$ and the
+Lyapunov exponent (factor 3); the held inputs and the share of inputs refused under mixing (factor 4). Section 10 turns them into a rule for
+choosing a scheme.
 
 ## F. Static functions first: scaling laws on the function suite
 
@@ -544,6 +578,125 @@ coordinate errs $|\cos h - 1 + Ah|$, which grows with $A$ while the right side w
 encoded base point is also right. This is the guarantee an operator-split simulation needs (the other operators move the state off $M$): the
 main open problem.
 
+**Case studies.** The checks and demonstrations of this section on single problems (Robertson's slow curve, HIRES's chart and
+lift, the Fisher–KPP ladder's chart dimension) are in Appendix A: Demonstrations 8.3 (Theorem 8 end to end on one Robertson leaf),
+8.4 (chart dimensions) and 8.5 (a curved lift on HIRES). Section P measures the reduced-coordinate approach on every problem.
+
+**Prior art.** Combustion tabulates on low-dimensional manifolds of progress variables (ILDM, Maas–Pope 1992; FGM, van Oijen–de Goey 2000; FPI;
+REDIM, Bykov–Maas 2007; ISAT on RCCE manifolds, Tang–Pope 2002; ICE-PIC, Ren et al. 2006; ISAT–RCCE–GALI, Hiremath et al. 2011; from memory);
+constrained runs fill a slow manifold at prescribed chart values (Gear, Kaper, Kevrekidis, Zagaris 2005; TH-51); learned-manifold reduced dynamics
+include spectral submanifolds (Cenedese et al. 2022), Linot–Graham 2020, Floryan–Graham 2022 and chemistry autoencoders (Grassi et al. 2022,
+Sulzer–Buck 2023, Holdship et al. 2021). Discrete-time error bounds for manifold Galerkin and LSPG (Lee–Carlberg 2020, Thm 4.3) and latent
+stability and error propagation with encoder, decoder and latent dynamics through a Lipschitz recurrence (Farenga et al. 2024, arXiv:2408.15183,
+§§3.2–3.3) are close to Theorem 8. Theorem 8 is therefore a specialisation of a known technique; a contribution would be a *verified*
+end-to-end certificate for a stated class of stiff step maps.
+
+## G. The gradient tier: values and Jacobians
+
+When the oracle also returns derivatives (analytic Jacobians of a static function; forward sensitivities of a step map), each
+evaluation carries $1 + k$ numbers along $k$ chart directions instead of 1. The theory then has two tiers. With gradients, the local
+quantities the diagnostics use ($\sigma_m(D\Phi(p))$ in Proposition 6.5, the spectra of Proposition 6.7) are measured rather than differenced,
+and the fits can use derivative data; without them, finite differences cost $k + 1$ (one-sided) or $2k$ (central) evaluations per gradient,
+or the fits use values alone. An oracle Jacobian is a local derivative of the exact step and verifies nothing by itself: Theorem 8's gains
+are those of the fitted map, bounded from its coefficients without oracle derivatives; Proposition 6.5 also needs a Hessian bound over a
+ball, and Proposition 6.7(a) concerns a constant Jacobian. Scripts and
+outputs: `theory/gradients/g*.py`, `theory/gradients/data/g*.json`; every script's predictions were committed before its run
+(`d0e5e27`, `8f80735`, `e3997ea`).
+
+| Test | Prediction | Measured | Verdict |
+|---|---|---|---|
+| Chebyshev–Hermite interpolation in one variable (`g1_static`; two product-peak factors and a Runge function) | values and first derivatives at $n$ points give degree $2n - 1$, so the points per decade halve: $1/(2\log_{10}\rho)$ | ratios 1.97, 2.01, 2.00; each rate within 1.5% of the Bernstein prediction (the slope fit stops at the rounding floor, a fix made after the first run fitted the plateau) | the half rate confirmed on three profiles. The Hermite contour formula with the squared Chebyshev nodal polynomial gives $O(r^{-2n})$ on any admissible contour $r > 1$ (DLMF §3.3); exact halving of the node counts does not follow from the degree alone |
+| Gradient-enhanced least squares, $d = 5$, total degree 4 (126 terms), uniform random points (`g1_static`) | $1 + d$ equations per point: about 6 times fewer points for the same accuracy and conditioning | corner peak: with gradients 0.229 at 30 points and 0.253 at 60; values alone 0.247 at 180 and 0.253 at 360 (the sampled sup error of an approximate $L^2$ projection is 0.21); product peak (projection 0.12): 2–3 times; one random design per size, conditioning not measured | consistent at the tested budgets; the factor itself is not measured. A sample-saving theorem needs assumptions on the sampled block Gram matrix and the weights (at most $d$ points lie in a hyperplane, whose squared defining polynomial has zero values and gradients there) |
+
+What the gradient tier establishes. Derivative data carry the information the theory says (Hermite halving exactly; several times fewer
+points for least squares where the points are sparse or poorly placed), but on a well-designed Chebyshev point set they add little for the
+values' sup error unless they are weighted for it. Where they pay: diagnostics (one Jacobian gives what Proposition 6.5, Proposition 6.7 and
+the chart need), the constants of Theorem 8, and fits whose samples cannot be designed (trajectories), where derivative rows constrain the
+fit between the samples (Proposition 5.1's sampling factor; measured on HIRES in Appendix A.3, and to be measured on the panel). Open: weighting gradient rows by their contribution to the sup error; a compiled sensitivity solver.
+
+The HIRES-specific runs of this tier (`g2`–`g7`: sensitivities, grids, the recipe end to end) are in Appendix A.3.
+
+**Prior art (section G).** Hermite interpolation and its contour error formula are classical (TH-63); regression with value and gradient
+rows is gradient-enhanced least squares (TH-64). The first-order correction about a known state with the step's Jacobian, an accuracy region
+and fallback to the integrator is ISAT's (Pope 1997, TH-62). What is specific here is the decoder-centred form $G(\pi z) + B(\pi z)(z - D(\pi z))$
+with a fitted Jacobian field and targets with the normal part removed; the contribution sought remains a verified certificate for the deployed map.
+
+## 9. Synthesis
+
+Entries are observations (obs.), estimates (est.) or proofs (thm); no verified bound has been computed.
+
+| | T1 | T2 | T4 | T5 | T6 | §8 |
+|---|---|---|---|---|---|---|
+| U1 longer steps harder | thm: valid bound, uninformative on the Brusselator; Prop. 1.5 for certificates | | | | | |
+| U2 rollout growth | | thm: normal stability (distance only); obs.: rollout/survived ratios 18–30.5 (four configurations), 5.4 (a fifth) | thm: rollout audit (distributional) | | | thm: finite-horizon bound for factored maps; est.: 1.53 vs obs. $5.2\times10^{-4}$ (sampled constants, Robertson); est.: 13–27 times the measured rollout (Demonstration 8.3, half the constants rigorous); obs.: reduced charts avoid divergence on Robertson and HIRES; obs.: HIRES value-only fit $1.5\times10^{-4}$ on 40 rollouts (`g5`), and no tested fit within the tolerance kicked at every step (`g5`, `g6`) |
+| U3 Robertson's singular values | | | | | obs.: two large ambient values, one fitted coordinate on one leaf; thm: lower count (Prop. 6.5) | |
+| U4 vertex escalation | | | | | | (T7: illustration, direction only) |
+| U5 ART-quad vertex failure | | | | thm + obs.: suggests the $L^2$ projection's vertex error (synthetic, 3 of 4) | | |
+| U6 vector outputs | | | | | not explained | untested |
+| U7 no certificate | | | thm: what an audit does and does not certify | | | |
+
+(T3 explains none of U1–U7; its scope is lattices.)
+
+## 10. Candidate foundations for a scheme, ranked (revised after the external review)
+
+The target is a deterministic worst-case bound on rollouts from a stated set of initial states over a stated horizon, with the audit of
+Corollary 4.1′ as a separately labelled distributional guarantee.
+
+1. **Reduced-coordinate surrogates with a verified finite-horizon rollout bound (Theorem 8).** Specify the initial set and horizon; choose a
+   chart of the data's local dimension and fit $\hat G$ predicting the next state with invariants conserved on the output; then *verify*
+   $\varepsilon_G$, $\varepsilon_u$ on a net of the inputs with a defect modulus and a reference enclosure, and $L_G$, $L_g$ by validated bounds on the fitted
+   map. If the verified residual tends to zero under refinement while the gains and tube radii stay controlled, Theorem 8 gives uniform
+   convergence on that set; a rate needs a rate for the residual. Demonstrated on one Robertson leaf (8.3). The theorem covers factored maps
+   $\hat G\circ\hat\pi$; the HIRES recipe below deploys a corrected, projected map, whose certificate needs a full-state bound on a stated
+   input tube (open). On HIRES (8.5) the practical recipe that the evidence supports, run end to end in section G, is:
+   - a fit on the training pairs in the chart coordinates, its degree chosen by the chained error of the deployed surrogate on all
+     training chains;
+   - for rollouts on the visited set, values alone: degree 10 holds $1.5\times10^{-4}$ over all 40 test trajectories with no solve;
+   - for inputs off the set, a first-order normal correction on targets with the normal part removed, plus Jacobian rows on and off the
+     trajectories: a single kick of 0.01 dex stays within the tolerance at every degree;
+   - refusal or error tracking by the solve-free decoder residual (for the uncorrected reduced ChebTT the largest observed ratio of its
+     error to $e_0 + r$ was 1.532), with a threshold calibrated on the deployed model's paired errors and residuals.
+
+   None of the tested fits holds a rollout kicked at every step (the operator-split proxy; best $2.3\times10^{-2}$). The training-chain
+   score is a selection diagnostic, not a certificate.
+2. **Counts as diagnostics (Proposition 6.5, Theorem 6.6, Proposition 6.7(a)–(b)).** Proposition 6.5 is a rigorous obstruction given validated
+   local constants; the spectral tests give candidate dimensions of $D\Phi$ and anisotropic sampling directions, not the count of a PCA lift
+   (Demonstration 8.4); an upper count needs a verified global embedding or atlas (Example 6.8).
+3. **Accuracy off the training set (Proposition 8.2):** conditional on corrected (S), a fit on $\chi(\pi(N))$ and a Lipschitz bound on a domain
+   containing both $\hat\pi(N)$ and $\chi(\pi(N))$; the open problem for operator
+   splitting, where the deployed map (with its solver fallback) must be certified on every kicked state.
+4. **A priori analyticity (T1)**, open: valid wherever tried, informative only on small boxes.
+5. **The light cone (T3)**, for lattices with $h^*$, $e^{\nu\tau}$ and $\ell\Delta\tau$ bounded uniformly in $d$.
+
+Proposed for formalisation in Lean later (none is formalised yet): Lemmas 1.1, 1.2, 3.1, 7.2, Propositions 1.3, 1.5, 2.1–2.4, 4.1, 4.2, 4.4, 5.1, 5.2, Corollary 4.1′, Example 6.8 and Theorem 8 are
+elementary or self-contained given their cited results; Proposition 6.5 cites Borsuk–Ulam; the Chebyshev bounds, holomorphic dependence,
+Fenichel's theorem, Weyl's and Horn's inequalities and the compound-matrix log norm would enter as cited axioms.
+
+## 11. Open items
+
+- §8 and G: one HIRES surrogate for both regimes (on the set and kicked at every step), first through a better fit of $B(u)$ (the
+  off-trajectory Jacobians, a higher degree; with the exact pair the error is second order in the kick, with the fitted pair it grew about
+  linearly over the kicks tested), then through refusal with the
+  solver as fallback at a calibrated residual threshold (the fallback branch then belongs to the deployed map); separate off-trajectory
+  value and derivative arms at fixed sites; a rollout bound for the deployed corrected, projected map on a stated split-input tube; a proof of the residual bound under stated hypotheses; POLLU with several hundred trajectories and a decoder at $k = 7$–8
+  (Demonstration 8.5); a validated (interval) ODE enclosure to turn Demonstration 8.3's estimated defects into verified ones; a tighter first-order
+  version with a remainder and a validity region; Theorem 8 on the benchmark's schemes (a reduced-coordinate ChebTT against box ChebTT on HIRES,
+  POLLU, Fisher–KPP); Proposition 8.2 for operator-split inputs.
+- T1: the tube in log coordinates on a benchmark box; monotonicity of the true nearest singularity in $\tau$ for a stated class (it fails in
+  general, Proposition 1.5; U1).
+- T2: the sign autocorrelation of each scheme's weighted defects along trajectories.
+- T6: a constructive upper coordinate count for a stated class (verified fibre projection and embedding); a finite-time version of 6.7 with
+  accumulated perturbations.
+- T7: the direct test on `lotka_volterra` at $d = 20$.
+
+## Appendix A. Case studies
+
+The single-problem studies behind sections 8 and G, kept with their own predictions and verdicts. They are examples of the general
+statements, not evidence for them on other problems: the panel (section P) is. HIRES in particular is a favourable case for data-fitted
+charts (its trajectories collapse onto a thin curved set that the training samples cover), and the recipe built on it overfitted elsewhere.
+
+### A.1 Early reduced-coordinate checks (Robertson, HIRES)
+
 **Checks (observations and estimates).**
 
 - `t2_slow_surrogate` (Robertson, log coordinates, $\Delta t = 1$; fits on the visited states of 100 trajectories only; 40 held-out trajectories; the
@@ -569,6 +722,8 @@ main open problem.
   verified constants or enforced conservation.
 - What this supports: a pair of controlled experiments in which reduced coordinates of the data's dimension, fitted on the data and predicting
   the next state, avoided the divergence of full-coordinate fits, within a limited window of chart dimension and degree.
+
+### A.2 Demonstrations 8.3–8.5
 
 **Demonstration 8.3 (Theorem 8 on one Robertson leaf; `theory/demos/robertson_leaf.py`, `theory/demos/data/robertson_leaf.json`).**
 Robertson in log10 abundances, $\Delta t = 1$, the leaf $y_1 + y_2 + y_3 = 1$, horizon 39 steps from step 1 (past the initial layer). $M$ is the
@@ -697,43 +852,17 @@ single curves. At fixed steps the 100 training states have about six transverse 
 is about 7-dimensional. At $k = 7$ a cubic decoder reaches a lift error of $2.0\times10^{-2}$ (affine $9.2\times10^{-2}$); degree 4 overfits (330
 coefficients for 100 trajectories). The limit is the number of trajectories against a six-parameter family, not the geometry.
 
-**Prior art.** Combustion tabulates on low-dimensional manifolds of progress variables (ILDM, Maas–Pope 1992; FGM, van Oijen–de Goey 2000; FPI;
-REDIM, Bykov–Maas 2007; ISAT on RCCE manifolds, Tang–Pope 2002; ICE-PIC, Ren et al. 2006; ISAT–RCCE–GALI, Hiremath et al. 2011; from memory);
-constrained runs fill a slow manifold at prescribed chart values (Gear, Kaper, Kevrekidis, Zagaris 2005; TH-51); learned-manifold reduced dynamics
-include spectral submanifolds (Cenedese et al. 2022), Linot–Graham 2020, Floryan–Graham 2022 and chemistry autoencoders (Grassi et al. 2022,
-Sulzer–Buck 2023, Holdship et al. 2021). Discrete-time error bounds for manifold Galerkin and LSPG (Lee–Carlberg 2020, Thm 4.3) and latent
-stability and error propagation with encoder, decoder and latent dynamics through a Lipschitz recurrence (Farenga et al. 2024, arXiv:2408.15183,
-§§3.2–3.3) are close to Theorem 8. Theorem 8 is therefore a specialisation of a known technique; a contribution would be a *verified*
-end-to-end certificate for a stated class of stiff step maps.
 
-## G. The gradient tier: values and Jacobians
-
-When the oracle also returns derivatives (analytic Jacobians of a static function; forward sensitivities of a step map), each
-evaluation carries $1 + k$ numbers along $k$ chart directions instead of 1. The theory then has two tiers. With gradients, the local
-quantities the diagnostics use ($\sigma_m(D\Phi(p))$ in Proposition 6.5, the spectra of Proposition 6.7) are measured rather than differenced,
-and the fits can use derivative data; without them, finite differences cost $k + 1$ (one-sided) or $2k$ (central) evaluations per gradient,
-or the fits use values alone. An oracle Jacobian is a local derivative of the exact step and verifies nothing by itself: Theorem 8's gains
-are those of the fitted map, bounded from its coefficients without oracle derivatives; Proposition 6.5 also needs a Hessian bound over a
-ball, and Proposition 6.7(a) concerns a constant Jacobian. Scripts and
-outputs: `theory/gradients/g*.py`, `theory/gradients/data/g*.json`; every script's predictions were committed before its run
-(`d0e5e27`, `8f80735`, `e3997ea`).
+### A.3 The gradient tier on HIRES (`g2`–`g7`)
 
 | Test | Prediction | Measured | Verdict |
 |---|---|---|---|
-| Chebyshev–Hermite interpolation in one variable (`g1_static`; two product-peak factors and a Runge function) | values and first derivatives at $n$ points give degree $2n - 1$, so the points per decade halve: $1/(2\log_{10}\rho)$ | ratios 1.97, 2.01, 2.00; each rate within 1.5% of the Bernstein prediction (the slope fit stops at the rounding floor, a fix made after the first run fitted the plateau) | the half rate confirmed on three profiles. The Hermite contour formula with the squared Chebyshev nodal polynomial gives $O(r^{-2n})$ on any admissible contour $r > 1$ (DLMF §3.3); exact halving of the node counts does not follow from the degree alone |
-| Gradient-enhanced least squares, $d = 5$, total degree 4 (126 terms), uniform random points (`g1_static`) | $1 + d$ equations per point: about 6 times fewer points for the same accuracy and conditioning | corner peak: with gradients 0.229 at 30 points and 0.253 at 60; values alone 0.247 at 180 and 0.253 at 360 (the sampled sup error of an approximate $L^2$ projection is 0.21); product peak (projection 0.12): 2–3 times; one random design per size, conditioning not measured | consistent at the tested budgets; the factor itself is not measured. A sample-saving theorem needs assumptions on the sampled block Gram matrix and the weights (at most $d$ points lie in a hyperplane, whose squared defining polynomial has zero values and gradients there) |
 | HIRES reduced surrogate, 3 chart coordinates, random visited chart values (`g2_hires`; directional forward sensitivities) | G2.1 at degree 8, values with Jacobians at $N$ points match values alone at about $4N$ | at degree 8 every value-only fit fails (5.2–28 dex, the output clip); with Jacobians 2.7 at $N = 200$ and 0.048 at $N = 800$; at degree 6, 0.37 and 0.019 against 0.51 for values alone at 800 | G2.1 not testable as committed (the value-only fits never work); the run shows that Jacobians help on random visited points, not the factor 4. G2.2 (holding $2.5\times10^{-3}$ within a few hundred solves) failed |
 | | G2.4 the rollout stays 50–150 times the one-step error, and falls in proportion | ratios 3.5 (degree 6, $N = 800$) and 6.7 (degree 8); on the grid (`g3_hires_grid`) 93–364 over both arms, the one-step error falling 19-fold from 5 to 13 points per axis and the rollout 8-fold | failed: the ratio is not a property of the dynamics (as Demonstration 8.5 found) |
 | The same on tensor Chebyshev points of the chart box (`g3_hires_grid`) | G3.1 gradients save a factor 4 in points | no gain: at 13 points per axis values alone reach $1.27\times10^{-3}$, with Jacobians $2.42\times10^{-3}$; at 7 points with Jacobians $6.6\times10^{-3}$ against $2.3\times10^{-3}$ for values alone at 11 | **refuted** for the tested setup. Not because values determine the polynomial: for $q \ge n$, $T_n$ of each scaled coordinate vanishes on the grid and lies in the fitted space, so the value design has a nullspace (the best fits at 11 and 13 points have $q = 14, 15$). Attributing the loss to weighting or placement needs both arms in one unisolvent space ($q < n$) with ranks reported. Caveats: each configuration's degree was chosen on the test states (optimistic for both arms), and from 11 points per axis the cap of 900 terms stops both at degree 15 |
 | | G3.2 some configuration holds $2.5\times10^{-3}$ with under 1,000 solves | values alone on 11 points per axis: $2.34\times10^{-3}$ with 1,331 solves (rollout 0.56 dex) | near miss, and optimistic (degree chosen on the test states): 7 times fewer solves than the reduced ChebTT's 9,477, above the predicted 1,000. A data fit on the training pairs with no solve does far better on the visited set (below) |
 | | G3.3 with a sensitivity cost of $c$ plain solves, the gradient fit is cheaper in total than the value-only fit of the same accuracy if $c < 4$ | not tested | moot: it presupposes G3.1's factor 4, which failed, and the compiled-solver cost it names was never measured |
 | Cost of a Jacobian | G2.3 a sensitivity solve costs at most 3 plain solves | 6.7 for 3 directions (11.8 against 1.8 ms, `g2_hires.json`); for all 8 directions 49 ms against a plain solve's 0.50 ms (medians over 100 training states, review 7's `t3_more.json`), while 16 plain solves by central differences take 19.6 ms and agree with the sensitivities to $2$–$8\times10^{-7}$ (`g4_diagnosis.json`) | failed here; in this Python implementation central differences are the cheaper route to a Jacobian, at 16 plain solves |
-
-What the gradient tier establishes. Derivative data carry the information the theory says (Hermite halving exactly; several times fewer
-points for least squares where the points are sparse or poorly placed), but on a well-designed Chebyshev point set they add little for the
-values' sup error unless they are weighted for it. Where they pay: diagnostics (one Jacobian gives what Proposition 6.5, Proposition 6.7 and
-the chart need), the constants of Theorem 8, and, on HIRES, a fit that converges with the degree and stays accurate off the visited set
-(below). Open: weighting gradient rows by their contribution to the sup error; a compiled sensitivity solver.
 
 **The HIRES recipe end to end** (`g4_hires_recipe.py`, `g4_diagnosis.py`, `g5_hires_selection.py`, `g6_hires_off_trajectory.py`, `g7_value_fit_kicks.py`; predictions
 committed in `3ce981b`, `6c92037`, `9d3156c` and `479f12b`, each before its run, `g4_diagnosis` and `g7` post hoc; reviews 7 and 8). The recipe of §10 item 1 at $k = 3$, tolerance 0.01 dex:
@@ -839,78 +968,6 @@ What the runs show:
   - Q3 fails: the selected fit is 3–26% worse than the degree-8 fit without the rows, and over three times the tolerance in two draws.
   - Q4 fails.
 
-**Prior art (section G).** Hermite interpolation and its contour error formula are classical (TH-63); regression with value and gradient
-rows is gradient-enhanced least squares (TH-64). The first-order correction about a known state with the step's Jacobian, an accuracy region
-and fallback to the integrator is ISAT's (Pope 1997, TH-62). What is specific here is the decoder-centred form $G(\pi z) + B(\pi z)(z - D(\pi z))$
-with a fitted Jacobian field and targets with the normal part removed; the contribution sought remains a verified certificate for the deployed map.
-
-## 9. Synthesis
-
-Entries are observations (obs.), estimates (est.) or proofs (thm); no verified bound has been computed.
-
-| | T1 | T2 | T4 | T5 | T6 | §8 |
-|---|---|---|---|---|---|---|
-| U1 longer steps harder | thm: valid bound, uninformative on the Brusselator; Prop. 1.5 for certificates | | | | | |
-| U2 rollout growth | | thm: normal stability (distance only); obs.: rollout/survived ratios 18–30.5 (four configurations), 5.4 (a fifth) | thm: rollout audit (distributional) | | | thm: finite-horizon bound for factored maps; est.: 1.53 vs obs. $5.2\times10^{-4}$ (sampled constants, Robertson); est.: 13–27 times the measured rollout (Demonstration 8.3, half the constants rigorous); obs.: reduced charts avoid divergence on Robertson and HIRES; obs.: HIRES value-only fit $1.5\times10^{-4}$ on 40 rollouts (`g5`), and no tested fit within the tolerance kicked at every step (`g5`, `g6`) |
-| U3 Robertson's singular values | | | | | obs.: two large ambient values, one fitted coordinate on one leaf; thm: lower count (Prop. 6.5) | |
-| U4 vertex escalation | | | | | | (T7: illustration, direction only) |
-| U5 ART-quad vertex failure | | | | thm + obs.: suggests the $L^2$ projection's vertex error (synthetic, 3 of 4) | | |
-| U6 vector outputs | | | | | not explained | untested |
-| U7 no certificate | | | thm: what an audit does and does not certify | | | |
-
-(T3 explains none of U1–U7; its scope is lattices.)
-
-## 10. Candidate foundations for a scheme, ranked (revised after the external review)
-
-The target is a deterministic worst-case bound on rollouts from a stated set of initial states over a stated horizon, with the audit of
-Corollary 4.1′ as a separately labelled distributional guarantee.
-
-1. **Reduced-coordinate surrogates with a verified finite-horizon rollout bound (Theorem 8).** Specify the initial set and horizon; choose a
-   chart of the data's local dimension and fit $\hat G$ predicting the next state with invariants conserved on the output; then *verify*
-   $\varepsilon_G$, $\varepsilon_u$ on a net of the inputs with a defect modulus and a reference enclosure, and $L_G$, $L_g$ by validated bounds on the fitted
-   map. If the verified residual tends to zero under refinement while the gains and tube radii stay controlled, Theorem 8 gives uniform
-   convergence on that set; a rate needs a rate for the residual. Demonstrated on one Robertson leaf (8.3). The theorem covers factored maps
-   $\hat G\circ\hat\pi$; the HIRES recipe below deploys a corrected, projected map, whose certificate needs a full-state bound on a stated
-   input tube (open). On HIRES (8.5) the practical recipe that the evidence supports, run end to end in section G, is:
-   - a fit on the training pairs in the chart coordinates, its degree chosen by the chained error of the deployed surrogate on all
-     training chains;
-   - for rollouts on the visited set, values alone: degree 10 holds $1.5\times10^{-4}$ over all 40 test trajectories with no solve;
-   - for inputs off the set, a first-order normal correction on targets with the normal part removed, plus Jacobian rows on and off the
-     trajectories: a single kick of 0.01 dex stays within the tolerance at every degree;
-   - refusal or error tracking by the solve-free decoder residual (for the uncorrected reduced ChebTT the largest observed ratio of its
-     error to $e_0 + r$ was 1.532), with a threshold calibrated on the deployed model's paired errors and residuals.
-
-   None of the tested fits holds a rollout kicked at every step (the operator-split proxy; best $2.3\times10^{-2}$). The training-chain
-   score is a selection diagnostic, not a certificate.
-2. **Counts as diagnostics (Proposition 6.5, Theorem 6.6, Proposition 6.7(a)–(b)).** Proposition 6.5 is a rigorous obstruction given validated
-   local constants; the spectral tests give candidate dimensions of $D\Phi$ and anisotropic sampling directions, not the count of a PCA lift
-   (Demonstration 8.4); an upper count needs a verified global embedding or atlas (Example 6.8).
-3. **Accuracy off the training set (Proposition 8.2):** conditional on corrected (S), a fit on $\chi(\pi(N))$ and a Lipschitz bound on a domain
-   containing both $\hat\pi(N)$ and $\chi(\pi(N))$; the open problem for operator
-   splitting, where the deployed map (with its solver fallback) must be certified on every kicked state.
-4. **A priori analyticity (T1)**, open: valid wherever tried, informative only on small boxes.
-5. **The light cone (T3)**, for lattices with $h^*$, $e^{\nu\tau}$ and $\ell\Delta\tau$ bounded uniformly in $d$.
-
-Proposed for formalisation in Lean later (none is formalised yet): Lemmas 1.1, 1.2, 3.1, 7.2, Propositions 1.3, 1.5, 2.1–2.4, 4.1, 4.2, 4.4, 5.1, 5.2, Corollary 4.1′, Example 6.8 and Theorem 8 are
-elementary or self-contained given their cited results; Proposition 6.5 cites Borsuk–Ulam; the Chebyshev bounds, holomorphic dependence,
-Fenichel's theorem, Weyl's and Horn's inequalities and the compound-matrix log norm would enter as cited axioms.
-
-## 11. Open items
-
-- §8 and G: one HIRES surrogate for both regimes (on the set and kicked at every step), first through a better fit of $B(u)$ (the
-  off-trajectory Jacobians, a higher degree; with the exact pair the error is second order in the kick, with the fitted pair it grew about
-  linearly over the kicks tested), then through refusal with the
-  solver as fallback at a calibrated residual threshold (the fallback branch then belongs to the deployed map); separate off-trajectory
-  value and derivative arms at fixed sites; a rollout bound for the deployed corrected, projected map on a stated split-input tube; a proof of the residual bound under stated hypotheses; POLLU with several hundred trajectories and a decoder at $k = 7$–8
-  (Demonstration 8.5); a validated (interval) ODE enclosure to turn Demonstration 8.3's estimated defects into verified ones; a tighter first-order
-  version with a remainder and a validity region; Theorem 8 on the benchmark's schemes (a reduced-coordinate ChebTT against box ChebTT on HIRES,
-  POLLU, Fisher–KPP); Proposition 8.2 for operator-split inputs.
-- T1: the tube in log coordinates on a benchmark box; monotonicity of the true nearest singularity in $\tau$ for a stated class (it fails in
-  general, Proposition 1.5; U1).
-- T2: the sign autocorrelation of each scheme's weighted defects along trajectories.
-- T6: a constructive upper coordinate count for a stated class (verified fibre projection and embedding); a finite-time version of 6.7 with
-  accumulated perturbations.
-- T7: the direct test on `lotka_volterra` at $d = 20$.
 
 ## References (classical results used)
 
