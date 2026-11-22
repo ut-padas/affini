@@ -1,0 +1,242 @@
+{
+ "allen_cahn_d10": {
+  "evals": 19387,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.0041273685657395864
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.0016802350077987221
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.0024367993748169448,
+  "status": "done"
+ },
+ "allen_cahn_d2": {
+  "evals": 325,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.006784287292363411
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.0009042423143729855
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.006736236400197437,
+  "status": "done"
+ },
+ "allen_cahn_d3": {
+  "evals": 1279,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.0031713797503024888
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.00023253249238658347
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.003429634201730758,
+  "status": "done"
+ },
+ "allen_cahn_d5": {
+  "evals": 5097,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.003008481207866856
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.0004842728369142124
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.0012185241939228764,
+  "status": "done"
+ },
+ "bruss_d2": {
+  "evals": 485,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.0029383299086938944
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.003025109787475581
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.002397857202257818,
+  "status": "done"
+ },
+ "bruss_d4": {
+  "evals": 7808,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.002280067625681337
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.0019068250915147932
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.0023621253499478065,
+  "status": "done"
+ },
+ "bruss_d6": {
+  "evals": 57647,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.0025633603255074393
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.0018633254203419334
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.0029206518688166564,
+  "status": "done"
+ },
+ "chemakzo": {
+  "evals": 26368,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.0036679363220635253
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.001653430791458188
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.00565655855329994,
+  "status": "done"
+ },
+ "fisher_kpp_d2": {
+  "evals": 846,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.002695558361873851
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.0018096573589009846
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.0037733485492571495,
+  "status": "done"
+ },
+ "fisher_kpp_d3": {
+  "evals": 4148,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.0024748708222567806
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.001896815368613497
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.00251854144259972,
+  "status": "done"
+ },
+ "fisher_kpp_d5": {
+  "evals": 45407,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.0030914493785860753
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.001449069257122737
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.004418805110732227,
+  "status": "done"
+ },
+ "lorenz96_d10": {
+  "evals": 682454,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0025,
+    "worst": 0.006076141787622391
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.0017949858258561324
+   }
+  },
+  "rollout_solver_share_20": 0.0037500000000000007,
+  "rollout_worst_20": 0.007155563503449924,
+  "status": "done"
+ },
+ "lorenz96_d4": {
+  "evals": 3618,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.006875000000000001,
+    "worst": 0.0036076395468184197
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.001880286455894331
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.003920240170720346,
+  "status": "done"
+ },
+ "lorenz96_d5": {
+  "evals": 7230,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0025,
+    "worst": 0.002540338444078527
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.0017468255143391342
+   }
+  },
+  "rollout_solver_share_20": 0.0025,
+  "rollout_worst_20": 0.0029461353233162235,
+  "status": "done"
+ },
+ "robertson": {
+  "evals": 1159,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0,
+    "worst": 0.0034977486975379113
+   },
+   "0.1": {
+    "solver_share": 0.0,
+    "worst": 0.0010776367786195923
+   }
+  },
+  "rollout_solver_share_20": 0.0,
+  "rollout_worst_20": 0.004342083699652832,
+  "status": "done"
+ }
+}
