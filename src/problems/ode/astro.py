@@ -7,6 +7,7 @@ in log10. The right-hand side is KIDApy's dx/dt = A(env) x + B(env)(x (x) x) wit
 A and B are rebuilt only when the environment changes.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -37,6 +38,63 @@ def _load(reactions: str, abundances: str, grains: bool):
     return net, x0
 
 
+ELEMENTS = ("H", "He", "C", "N", "O", "Si", "S", "Fe", "Na", "Mg", "Cl", "P", "F")  # the elements of KIDA's species files, in their order
+
+
+def composition(species: str) -> dict:
+    """
+    Element counts, charge and grain count of a KIDApy species from its name: ``C10H+`` is 10 C, 1 H and charge +1;
+    isomer prefixes (``l-``, ``c-``, ``t-``) are dropped; ``e-`` is charge -1; the pseudo-grain species ``GRAIN0`` and
+    ``GRAIN-`` are one grain each (charge 0 and -1), and ``XH`` is a hydrogen atom on a grain. Lumped species of reduced
+    networks (Nelson and Langer's) are read as written: ``M`` is one atom of a lumped metal, and a trailing ``x`` (``CHx``,
+    ``OHx``) is an untracked number of hydrogens, returned as ``{"H": None}``.
+    """
+    if species == "e-":
+        return {"charge": -1}
+    if species.startswith("GRAIN"):
+        return {"grain": 1, "charge": -species.count("-") + species.count("+")}
+    if species == "XH":
+        return {"H": 1}
+    body = re.sub(r"^[a-z]-", "", species)
+    charge = body.count("+") - body.count("-")
+    body = body.rstrip("+-")
+    out: dict = {"charge": charge} if charge else {}
+    if body.endswith("Hx"):
+        out["H"] = None
+        body = body[:-2]
+    parts = re.findall(r"(He|Si|Fe|Na|Mg|Cl|[HCNOSPFM])(\d*)", body)
+    if "".join(sym + n for sym, n in parts) != body:
+        raise ValueError(f"cannot parse the species {species!r}")
+    for sym, n in parts:
+        out[sym] = out.get(sym, 0) + (int(n) if n else 1)
+    return out
+
+
+def conserved_totals(species, reactions) -> np.ndarray:
+    """
+    (laws, species) the element, charge and grain totals a network conserves: a quantity is a law when every reaction
+    conserves it, counted over the network's own species (a product the network does not track, such as the ``H+`` of a
+    reduced network, takes its share out). A quantity some species carries in an untracked amount (the hydrogen of a
+    lumped ``CHx``) is not a law. Checked reaction by reaction from the stoichiometry, so a law is exact, not sampled.
+    """
+    index = {sp: j for j, sp in enumerate(species)}
+    rows, untracked = {}, set()
+    for j, sp in enumerate(species):
+        for q, n in composition(sp).items():
+            if n is None:
+                untracked.add(q)
+            else:
+                rows.setdefault(q, np.zeros(len(species)))[j] = n
+    laws = []
+    for q in sorted(rows):
+        if q in untracked:
+            continue
+        w = rows[q]
+        if all(sum(w[index[x]] for x in r["products"] if x in index) == sum(w[index[x]] for x in r["reactants"] if x in index) for r in reactions):
+            laws.append(w)
+    return np.array(laws).reshape(-1, len(species))
+
+
 def kidapy_system(name: str, net, rtol: float = 1e-6, atol: float = 1e-24) -> System:
     """A KIDApy network as a System whose last four components are the held environment (zero derivative)."""
     from solver import QuadraticSolver, _make_jac  # noqa: PLC0415
@@ -64,7 +122,9 @@ def kidapy_system(name: str, net, rtol: float = 1e-6, atol: float = 1e-24) -> Sy
         J[:N, :N] = jf(0.0, y[:N]).toarray()
         return J
 
-    return System(name, tuple(net.species) + ENV, rhs, jac, rtol=rtol, atol=atol, method="BDF", held=len(ENV))
+    W = conserved_totals(net.species, net.reactions)
+    W = np.concatenate([W, np.zeros((len(W), len(ENV)))], axis=1)
+    return System(name, tuple(net.species) + ENV, rhs, jac, rtol=rtol, atol=atol, method="BDF", held=len(ENV), conserved=W)
 
 
 def environment(n: int, seed: int) -> np.ndarray:

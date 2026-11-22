@@ -41,6 +41,9 @@ class System:
     system's regime (Lorenz-96's forcing), printed beside its name in the plots; empty when none.
     ``held``: how many trailing components are inputs only (their right-hand side is 0: a temperature or an
     environment held over the step); they are not scored and a surrogate predicts no increment for them.
+    ``conserved``: the system's linear conservation laws, when it knows them, as an (m, components) matrix W in its own
+    variables with ``W F(y) = 0`` for every y (a network's element, charge and grain totals); None when only a numerical
+    search can find them (``src.benchmark.step_maps.invariants_of`` searches then).
     """
 
     name: str
@@ -53,6 +56,7 @@ class System:
     method: str = "Radau"
     params: str = ""
     held: int = 0
+    conserved: object = None
 
     def solve(self, y: np.ndarray, dt: float):
         """``solve_ivp`` of one state over dt with the system's integrator and tolerances."""

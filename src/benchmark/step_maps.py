@@ -329,10 +329,15 @@ METHODS = {"slowtable": ("SlowTable: tabulated visited states", "#8e24aa", slowt
 def invariants_of(p: StepMapProblem, train: np.ndarray) -> np.ndarray:
     """
     (m, d) the system's linear invariants W (W F(y) = 0 for every y: element and charge totals of a
-    network, total mass), from the null space of the right-hand side at up to 600 training states (the
-    held temperature excluded), rows orthonormal; empty when there are none. In the system's own
-    variables (abundances, not their log10).
+    network, total mass), rows orthonormal; empty when there are none. In the system's own variables
+    (abundances, not their log10). The laws the system declares (``System.conserved``) when it has them;
+    otherwise the null space of the right-hand side at up to 600 training states (the held inputs
+    excluded). The numerical search needs the states to excite every reaction: on a large network whose
+    sampled states leave many species inactive it returns spurious laws, which a projection then enforces.
     """
+    if p.system.conserved is not None:
+        Q = np.linalg.qr(np.asarray(p.system.conserved, dtype=float).T)[0]
+        return Q.T
     Z = visited(train)
     Z = Z[np.random.default_rng(0).choice(len(Z), min(600, len(Z)), replace=False)]
     free = list(range(Z.shape[1] - p.system.held))
