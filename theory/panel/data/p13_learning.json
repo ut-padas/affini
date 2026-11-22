@@ -1,0 +1,530 @@
+{
+ "allen_cahn_d5/220": {
+  "best_heldout_worst": 0.005266494173367442,
+  "degree": 3,
+  "extra_solver_s": 0.7582324340037303,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.050624999999999996,
+    "worst": 0.04637389999925261
+   },
+   "0.1": {
+    "solver_share": 0.035,
+    "worst": 0.02766658474405792
+   }
+  },
+  "refused_percent": 5.625,
+  "rollout_worst": 0.07047204287245412,
+  "served": false,
+  "speedup_effective": 17.35937547344201,
+  "status": "done",
+  "train_s": 6.465707786002895,
+  "trajectories": 220
+ },
+ "allen_cahn_d5/340": {
+  "best_heldout_worst": 0.0026282188836536102,
+  "degree": 5,
+  "extra_solver_s": 1.4830786590027856,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.003125,
+    "worst": 0.006418068336880051
+   },
+   "0.1": {
+    "solver_share": 0.00125,
+    "worst": 0.0018200744980878952
+   }
+  },
+  "refused_percent": 0.3125,
+  "rollout_worst": 0.007137594566852451,
+  "served": true,
+  "speedup_effective": 94.46448908804797,
+  "status": "done",
+  "train_s": 49.55349576799199,
+  "trajectories": 340
+ },
+ "allen_cahn_d5/580": {
+  "best_heldout_worst": 0.0028355285840440114,
+  "degree": 5,
+  "extra_solver_s": 3.120745986001566,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.21937500000000001,
+    "worst": 0.005340820899318838
+   },
+   "0.1": {
+    "solver_share": 0.0018750000000000004,
+    "worst": 0.0015095275228561647
+   }
+  },
+  "refused_percent": 30.062499999999996,
+  "rollout_worst": 0.006246782965469724,
+  "served": true,
+  "speedup_effective": 3.244492245030116,
+  "status": "done",
+  "train_s": 68.83748442700016,
+  "trajectories": 580
+ },
+ "hires/220": {
+  "best_heldout_worst": 4.267407029967529e-06,
+  "degree": 12,
+  "extra_solver_s": 4.628998960994068,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.6226470588235293,
+    "worst": 0.16088579355681
+   },
+   "0.1": {
+    "solver_share": 0.7799999999999999,
+    "worst": 0.0037177569799000665
+   }
+  },
+  "refused_percent": 14.647058823529413,
+  "rollout_worst": 5.5047068512337205e-06,
+  "served": false,
+  "speedup_effective": 5.525810387114963,
+  "status": "done",
+  "train_s": 52.357874257999356,
+  "trajectories": 220
+ },
+ "hires/340": {
+  "best_heldout_worst": 1.4554967659452522e-05,
+  "degree": 12,
+  "extra_solver_s": 8.506017049003276,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.6236764705882353,
+    "worst": 0.16098879782167685
+   },
+   "0.1": {
+    "solver_share": 0.7795588235294117,
+    "worst": 0.003925647329370285
+   }
+  },
+  "refused_percent": 14.867647058823529,
+  "rollout_worst": 5.0937952678076215e-06,
+  "served": false,
+  "speedup_effective": 5.516479826643472,
+  "status": "done",
+  "train_s": 88.51031245700142,
+  "trajectories": 340
+ },
+ "hires/580": {
+  "best_heldout_worst": 8.799628928635173e-06,
+  "degree": 12,
+  "extra_solver_s": 18.205082223998033,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.6229411764705882,
+    "worst": 0.16524754253390928
+   },
+   "0.1": {
+    "solver_share": 0.7722058823529412,
+    "worst": 0.005443783608791719
+   }
+  },
+  "refused_percent": 19.235294117647058,
+  "rollout_worst": 4.049851973331187e-06,
+  "served": false,
+  "speedup_effective": 4.486108289971776,
+  "status": "done",
+  "train_s": 159.05234755600395,
+  "trajectories": 580
+ },
+ "lorenz96_d20/220": {
+  "best_heldout_worst": 0.09693723215912509,
+  "degree": 3,
+  "extra_solver_s": 0.3023466809972888,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.0775,
+    "worst": 0.006268249144847748
+   },
+   "0.1": {
+    "solver_share": 0.053125,
+    "worst": 0.004965947812200167
+   }
+  },
+  "refused_percent": 8.1875,
+  "rollout_worst": 0.007460909472871147,
+  "served": false,
+  "speedup_effective": 0.7083046644484646,
+  "status": "done",
+  "train_s": 32.98831405300007,
+  "trajectories": 220
+ },
+ "lorenz96_d20/340": {
+  "best_heldout_worst": 0.0661472049672629,
+  "degree": 3,
+  "extra_solver_s": 0.5808830030000536,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.06937499999999999,
+    "worst": 0.007113269632892272
+   },
+   "0.1": {
+    "solver_share": 0.04875,
+    "worst": 0.004278445065716285
+   }
+  },
+  "refused_percent": 7.5625,
+  "rollout_worst": 0.007498386463901108,
+  "served": false,
+  "speedup_effective": 0.7104808265745531,
+  "status": "done",
+  "train_s": 45.63906914200925,
+  "trajectories": 340
+ },
+ "lorenz96_d20/580": {
+  "best_heldout_worst": 0.04259104321277818,
+  "degree": 3,
+  "extra_solver_s": 1.053170864994172,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.07062500000000001,
+    "worst": 0.004568938225853358
+   },
+   "0.1": {
+    "solver_share": 0.0475,
+    "worst": 0.002579572365602356
+   }
+  },
+  "refused_percent": 7.75,
+  "rollout_worst": 0.004334654129045656,
+  "served": false,
+  "speedup_effective": 0.7247600110521792,
+  "status": "done",
+  "train_s": 68.40411147399573,
+  "trajectories": 580
+ },
+ "nelson/220": {
+  "best_heldout_worst": 0.4304835196435608,
+  "degree": 2,
+  "extra_solver_s": 13.21434890400269,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.999911155704481,
+  "status": "done",
+  "train_s": 17.35629451100249,
+  "trajectories": 180
+ },
+ "nelson/340": {
+  "best_heldout_worst": 0.636933707795377,
+  "degree": 2,
+  "extra_solver_s": 27.992735748994164,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9999221038613318,
+  "status": "done",
+  "train_s": 28.667380304003018,
+  "trajectories": 300
+ },
+ "nelson/580": {
+  "best_heldout_worst": 0.27088232787872535,
+  "degree": 2,
+  "extra_solver_s": 57.44181157198909,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9999115700659491,
+  "status": "done",
+  "train_s": 50.02415413199924,
+  "trajectories": 540
+ },
+ "oregonator/220": {
+  "best_heldout_worst": 4.138984101864674,
+  "degree": 4,
+  "extra_solver_s": 10.805316705998848,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9999416177258303,
+  "status": "done",
+  "train_s": 15.221852735005086,
+  "trajectories": 220
+ },
+ "oregonator/340": {
+  "best_heldout_worst": 3.7789644446200272,
+  "degree": 7,
+  "extra_solver_s": 22.067693345001317,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9997960378537889,
+  "status": "done",
+  "train_s": 22.422681255004136,
+  "trajectories": 340
+ },
+ "oregonator/580": {
+  "best_heldout_worst": 4.179273280778611,
+  "degree": 4,
+  "extra_solver_s": 43.01348337899253,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9999544785758486,
+  "status": "done",
+  "train_s": 33.79934001300717,
+  "trajectories": 580
+ },
+ "pollu/220": {
+  "best_heldout_worst": 0.0010442737140774483,
+  "degree": 3,
+  "extra_solver_s": 4.104416567002772,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.9974576271186439,
+    "worst": 0.0010229953311684525
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 0.38135593220338987,
+  "rollout_worst": 0.005493424726410012,
+  "served": false,
+  "speedup_effective": 36.2766501090311,
+  "status": "done",
+  "train_s": 56.54399087000638,
+  "trajectories": 220
+ },
+ "pollu/340": {
+  "best_heldout_worst": 0.0004455395915163862,
+  "degree": 3,
+  "extra_solver_s": 8.485786274002749,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 0.9949152542372882,
+    "worst": 0.0014472980958855075
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 0.46610169491525427,
+  "rollout_worst": 0.005519597089076456,
+  "served": true,
+  "speedup_effective": 38.00952322106276,
+  "status": "done",
+  "train_s": 97.80926133399771,
+  "trajectories": 340
+ },
+ "pollu/580": {
+  "best_heldout_worst": 7.77807162668509e-05,
+  "degree": 4,
+  "extra_solver_s": 18.666133602004265,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 0.0423728813559322,
+  "rollout_worst": 0.00014863722430558113,
+  "served": true,
+  "speedup_effective": 3.736871281746837,
+  "status": "done",
+  "train_s": 233.34235453500878,
+  "trajectories": 580
+ },
+ "primordial/220": {
+  "best_heldout_worst": 0.5351478310165866,
+  "degree": 3,
+  "extra_solver_s": 7.7828708439919865,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9994898377675334,
+  "status": "done",
+  "train_s": 37.018989074989804,
+  "trajectories": 180
+ },
+ "primordial/340": {
+  "best_heldout_worst": 0.615683352983118,
+  "degree": 3,
+  "extra_solver_s": 16.08351704798406,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9994682631183447,
+  "status": "done",
+  "train_s": 77.00651979399845,
+  "trajectories": 300
+ },
+ "primordial/580": {
+  "best_heldout_worst": 0.8453584630650512,
+  "degree": 4,
+  "extra_solver_s": 34.507667625977774,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9986244568756053,
+  "status": "done",
+  "train_s": 124.30257154199353,
+  "trajectories": 540
+ },
+ "van_der_pol/220": {
+  "best_heldout_worst": 1334.3066244064537,
+  "degree": 5,
+  "extra_solver_s": 5.886000361992046,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9999621514053995,
+  "status": "done",
+  "train_s": 13.575529170004302,
+  "trajectories": 220
+ },
+ "van_der_pol/340": {
+  "best_heldout_worst": 1326.8749688032826,
+  "degree": 7,
+  "extra_solver_s": 13.220340555999428,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9999300067176798,
+  "status": "done",
+  "train_s": 25.21092302800389,
+  "trajectories": 340
+ },
+ "van_der_pol/580": {
+  "best_heldout_worst": 1126.259117179618,
+  "degree": 12,
+  "extra_solver_s": 29.525477174000116,
+  "mixing_chained": {
+   "0.01": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   },
+   "0.1": {
+    "solver_share": 1.0,
+    "worst": 0.0
+   }
+  },
+  "refused_percent": 100.0,
+  "rollout_worst": 0.0,
+  "served": false,
+  "speedup_effective": 0.9998665853154769,
+  "status": "done",
+  "train_s": 43.19069672199839,
+  "trajectories": 580
+ }
+}
