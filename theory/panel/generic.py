@@ -240,7 +240,11 @@ def select(P, train, k, qmax: int, rollout) -> dict:
         for s in SPLITS:
             fit, val = split(train, s)
             sur, e_v = build(P, fit, k, q, r, pairs(val))
-            res = rollout(P, sur, val)
+            if sur.lam_star < 0:
+                # the Lebesgue bound is nonnegative, so every input is refused: the chain is the solver's own, exact and fully solved
+                res = {"rollout_worst": 0.0, "rollout_solved_by_step": [1.0]}
+            else:
+                res = rollout(P, sur, val)
             per.append({"split": s, "one_step_heldout": e_v, "lambda_star": sur.lam_star, "chain_worst": float(res["rollout_worst"]),
                         "solver_share": float(np.mean(res["rollout_solved_by_step"])), "rank": sur.G.rank, "terms": len(sur.G.idx)})  # fmt: skip
         row = {"degree": q, "ridge": r, "chain_worst": max(p["chain_worst"] for p in per), "solver_share": float(np.mean([p["solver_share"] for p in per])),
@@ -295,10 +299,14 @@ def run(P, train, test, kmax=12, qmax=8, seed=0) -> dict:
     r = np.asarray(sur.refuses(Xe), dtype=bool)
     nxt = Xe + sur.predict(Xe)
     nxt[r] = Ye[r]  # a refused state is stepped by the solver, whose step is the reference
-    r40 = rollout(P, sur, test)
-    r20 = rollout(P, sur, test[:20])
-    rng = np.random.default_rng(seed + 1)
-    mix = {str(w): mixing(P, sur, test, w, rng) for w in (0.01, 0.1)}
+    if sur.lam_star < 0:  # every input refused (see select): every chain is the solver's own
+        r40 = r20 = {"rollout_worst": 0.0, "rollout_solved_by_step": [1.0]}
+        mix = {str(w): {"worst": 0.0, "solver_share": 1.0} for w in (0.01, 0.1)}
+    else:
+        r40 = rollout(P, sur, test)
+        r20 = rollout(P, sur, test[:20])
+        rng = np.random.default_rng(seed + 1)
+        mix = {str(w): mixing(P, sur, test, w, rng) for w in (0.01, 0.1)}
     out = {"d": int(test.shape[2]), "held": int(P.system.held), "n_train": int(len(train)), "k": kc["k"], "reduction": kc["reduction"],
            "k_curve": kc["curve"], "k_solves": kc["solves"], "selection": sel["configs"], "degree": sel["degree"], "ridge": sel["ridge"],
            "served": sel["served"], "lambda_star": float(sur.lam_star), "rank": sur.G.rank, "terms": len(sur.G.idx),
