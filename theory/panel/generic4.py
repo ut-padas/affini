@@ -120,6 +120,7 @@ class Surrogate4(Surrogate2):
         super().__init__(T, k, G, decoder)
         self.s_max, self.n_normal = np.inf, n_normal
         self.gate, self.env, self.rho_max = "product", None, np.inf
+        self.b_cap, self.charge, self.lam = np.inf, None, 1.0
         self._key, self._val = None, None
 
     def offset(self, Z):
@@ -131,6 +132,12 @@ class Surrogate4(Surrogate2):
         term; or the envelope a0 + a1 b + a2 rho + a3 rho^2 with the caps b_max, s_max, rho_max (the calibration ranges)."""
         Phi = self.design(Z) if Phi is None else Phi
         b, s = self.G.gate_terms(Phi)
+        if self.gate == "capped":
+            rho = self.offset(Z)
+            a = self.env if self.env is not None else (np.inf, 0.0, 0.0, 0.0)
+            bound = a[0] + a[1] * b + a[2] * rho + a[3] * rho**2
+            caps = ~np.isfinite(b) | (b > self.b_cap) | (s > self.s_max) | (rho > self.rho_max)
+            return bound, caps
         if self.gate == "envelope":
             rho = self.offset(Z)
             a = self.env if self.env is not None else (np.inf, 0.0, 0.0, 0.0)  # not yet calibrated: every input refused
@@ -149,7 +156,7 @@ class Surrogate4(Surrogate2):
     @property
     def refuses_all(self) -> bool:
         """Every input is refused whatever its bound: the bound's floor (b >= 1, rho >= 0) exceeds the budget."""
-        if self.gate == "envelope":
+        if self.gate in ("envelope", "capped"):
             return self.env is None or bool(self.env[0] + self.env[1] > TOL / 2)
         return bool(2 * self.e_hat > TOL / 2)
 
@@ -418,6 +425,20 @@ def envelope(e, b, rho) -> np.ndarray:
     return res.x / scale
 
 
+BETA = 3.0  # the cap b <= BETA sqrt(rank): the mean of b^2 over the fit is the rank, so at most 1/BETA^2 of the fitted states exceed it
+
+
+def typical_charge(e, b, rho) -> np.ndarray:
+    """The account's charge c = m0 + m1 b + m2 rho + m3 rho^2 >= 0, a non-negative least-squares model of the typical defect (not its
+    envelope; the account's multiplier lambda, calibrated on whole chains, carries the margin)."""
+    from scipy.optimize import nnls
+
+    F = np.stack([np.ones_like(b), b, rho, rho**2], axis=1)
+    ok = np.all(np.isfinite(F), axis=1) & np.isfinite(e)
+    scale = np.maximum(np.abs(F[ok]).max(0), 1e-300) if ok.any() else np.ones(4)
+    return nnls(F[ok] / scale, e[ok])[0] / scale if ok.any() else np.zeros(4)
+
+
 def apply_calibration(sur, st: dict):
     """Set the gate from calibration statistics (module docstring): the product's e_hat over the states the residual term accepts, or
     the envelope over every calibration state; the caps from their ranges."""
@@ -425,7 +446,14 @@ def apply_calibration(sur, st: dict):
         x = x[np.isfinite(x)]
         return float(np.max(x)) if len(x) else -np.inf
 
-    if sur.gate == "envelope":
+    if sur.gate == "capped":
+        sur.b_cap = BETA * np.sqrt(sur.G.rank)
+        inside = np.isfinite(st["b"]) & (st["b"] <= sur.b_cap) & np.isfinite(st["e"])
+        sur.env = envelope(st["e"][inside], st["b"][inside], st["rho"][inside])
+        sur.charge = typical_charge(st["e"][inside], st["b"][inside], st["rho"][inside])
+        sur.b_max, sur.s_max, sur.rho_max = sur.b_cap, top(st["s"][inside]), top(st["rho"][inside])
+        sur.inside_share = float(np.mean(inside)) if len(inside) else 0.0
+    elif sur.gate == "envelope":
         sur.env = envelope(st["e"], st["b"], st["rho"])
         sur.b_max, sur.s_max, sur.rho_max = top(st["b"]), top(st["s"]), top(st["rho"])
     else:
@@ -461,9 +489,17 @@ class Account:
 
     def refuses(self, Z):
         _, r = self.sur.evaluate(Z)
-        bound, _ = self.sur.gate_bound(Z)
         if self.S is None:
             self.S = np.zeros(len(Z))
+        if self.sur.gate == "capped":  # charge the typical defect, scaled by lambda (council4-fable.md, section 2.1)
+            b, _ = self.sur.G.gate_terms(self.sur.design(Z))
+            rho = self.sur.offset(Z)
+            m = self.sur.charge
+            c = m[0] + m[1] * b + m[2] * rho + m[3] * rho**2
+            r = np.asarray(r, dtype=bool) | (self.sur.lam * (self.S + c) > self.budget)
+            self.S = self.S + np.where(r, 0.0, c)
+            return r
+        bound, _ = self.sur.gate_bound(Z)
         r = np.asarray(r, dtype=bool) | (self.S + bound > self.budget)
         self.S = self.S + np.where(r, 0.0, bound)
         return r
@@ -603,7 +639,72 @@ def budget_shares(sur, Xe, Ye, P, A_n, steps) -> dict:
     return out
 
 
-def run(P, train, test, name, seed=0, extra=None, solve_us=None, qmax=12, kmax=40, variant=None, k=None) -> dict:
+LAMBDAS = (0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0)
+ALPHA = 0.05  # the share of calibration chains allowed to exceed tol / 2 anywhere (conformal risk control at the chain level)
+
+
+def chain_maxima(P, pol_factory, true, w, rng) -> np.ndarray:
+    """Per chain, the worst scored error of the chains with fallback, plain (w = 0) or mixed once per step with a partner's state of the
+    reference chain (generic.mixing's script), under a fresh deployment policy."""
+    h = P.system.held
+    free = true.shape[2] - h
+    n = len(true)
+    pol = pol_factory()
+    lin = (lambda Z: 10.0**Z) if P.system.log else (lambda Z: Z)
+    back = (lambda Y: np.log10(np.maximum(Y, 1e-300))) if P.system.log else (lambda Y: Y)
+    partners = np.array([[rng.choice([j for j in range(n) if j != i]) for i in range(n)] for _ in range(true.shape[1] - 1)]) if w else None
+
+    def mix(Z, k):
+        out = Z.copy()
+        if w:
+            out[:, :free] = back((1 - w) * lin(Z[:, :free]) + w * lin(true[partners[k], k, :free]))
+        if h:
+            out[:, free:] = true[:, k, free:]
+        return out
+
+    Zs, Zt = true[:, 0].copy(), true[:, 0].copy()
+    worst = np.zeros(n)
+    for k in range(true.shape[1] - 1):
+        Zt = P.step(mix(Zt, k)) if w else true[:, k + 1]
+        Zin = mix(Zs, k)
+        r = np.asarray(pol.refuses(Zin), dtype=bool)
+        Zs = Zin + pol.predict(Zin)
+        if r.any():
+            Zs[r] = P.step(Zin[r])
+        e = np.max(np.where(P.scored(Zt), np.abs(Zs - Zt), 0.0), axis=1)
+        worst = np.maximum(worst, np.where(np.isfinite(e), e, np.inf))
+    return worst
+
+
+def above_envelope(P, sur, test) -> float:
+    """The share of test trajectories with an accepted one-step defect above the gate's envelope E (the scenario statement's event)."""
+    X, Y = test[:, :-1].reshape(-1, test.shape[2]), test[:, 1:].reshape(-1, test.shape[2])
+    nxt, r = sur.evaluate(X, cache=False)
+    E, _ = sur.gate_bound(X)
+    e = np.max(np.where(P.scored(Y), np.abs(nxt - Y), 0.0), axis=1)
+    bad = (~np.asarray(r, dtype=bool)) & (e > E)
+    return float(100 * np.mean(bad.reshape(len(test), -1).any(axis=1)))
+
+
+def calibrate_fresh(P, sur, cal_trajs, seed=7) -> dict:
+    """The deployed fit's gate calibrated on fresh trajectories (plain and mixed states), then the account's lambda chosen on whole
+    chains of them: the smallest lambda in LAMBDAS for which at most ALPHA of the chains (plain, w = 0.01, w = 0.1) exceed tol / 2."""
+    sets = [pairs(cal_trajs), mixed_pairs(P, cal_trajs, np.random.default_rng(seed))]
+    apply_calibration(sur, calibration_stats(sur, P, sets))
+    table = {}
+    for lam in LAMBDAS:
+        sur.lam = lam
+        maxima = np.concatenate([chain_maxima(P, lambda: Account(sur), cal_trajs, w, np.random.default_rng(seed + 1)) for w in (0.0, 0.01, 0.1)])
+        table[str(lam)] = float(np.mean(maxima > TOL / 2))
+        if table[str(lam)] <= ALPHA:
+            break
+    ok = [float(k) for k, v in table.items() if v <= ALPHA]
+    sur.lam = min(ok) if ok else np.inf
+    return {"lambda": sur.lam, "exceed_share_by_lambda": table, "inside_cap_share": getattr(sur, "inside_share", None),
+            "envelope": None if sur.env is None else sur.env.tolist(), "charge": None if sur.charge is None else sur.charge.tolist(), "b_cap": sur.b_cap}  # fmt: skip
+
+
+def run(P, train, test, name, seed=0, extra=None, solve_us=None, qmax=12, kmax=40, variant=None, k=None, cal_trajs=None) -> dict:
     from generic import mixing
 
     from src.benchmark.step_maps import rollout
@@ -615,12 +716,13 @@ def run(P, train, test, name, seed=0, extra=None, solve_us=None, qmax=12, kmax=4
     log(f"  k={kc['k']} ({kc['reduction']}), decoder degree {dec_degree}")
     sel = select(P, train, kc["k"], dec_degree, solve_us, extra, qmax, variant)
     sur = final(P, train, kc["k"], sel["degree"], dec_degree, sel["cal_cache"], extra, variant)
+    fresh = calibrate_fresh(P, sur, cal_trajs) if cal_trajs is not None and sur.gate == "capped" else None
     train_s = time.perf_counter() - t0
     Xe, Ye = test[:, :-1].reshape(-1, test.shape[2]), test[:, 1:].reshape(-1, test.shape[2])
     nxt, r = sur.evaluate(Xe)
     nxt = np.array(nxt)
     nxt[r] = Ye[r]
-    everything_refused = sur.refuses_all
+    everything_refused = sur.refuses_all or not np.isfinite(sur.lam)
     if everything_refused:
         r40 = r20 = {"rollout_worst": 0.0, "rollout_solved_by_step": [1.0] * (test.shape[1] - 1)}
         mix_chain = {str(w): {"worst": 0.0, "solver_share": 1.0} for w in (0.01, 0.1)}
@@ -642,7 +744,8 @@ def run(P, train, test, name, seed=0, extra=None, solve_us=None, qmax=12, kmax=4
            "rollout_solved_by_step": r40["rollout_solved_by_step"], "rollout_worst_20": float(r20["rollout_worst"]), "mixing_chained": mix_chain,
            "evaluate_us": evaluate_us, "timing_batch": n, "solve_us": solve_us,
            "budgets": budget_shares(sur, Xe, Ye, P, float(np.max(acc)), test.shape[1] - 1),
-           "account_check": account_check(P, sur, test) if sur.account and not everything_refused else None}  # fmt: skip
+           "account_check": account_check(P, sur, test) if sur.account and not everything_refused else None, "fresh_calibration": fresh,
+           "trajectories_above_envelope_percent": above_envelope(P, sur, test) if sur.gate == "capped" else None}  # fmt: skip
     if solve_us:
         for label, share in (("", float(by_step.mean())), ("_from_step_10", out["rollout_solver_share_from_step_10"])):
             if share is not None:
