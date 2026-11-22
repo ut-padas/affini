@@ -640,7 +640,7 @@ Ungated defects on mixed inputs (p10b, post hoc; median / maximum of the worst s
 - **The normal term costs accuracy on the bundle.** HIRES's plain median rises from 1e-8 to 1.4e-4 and its worst to 1e-2, and the gate
   calibrated for the maximum then refuses everything. A composite (T0's fit on the bundle, T1's beyond a normal offset) is the next
   design.
-- **On full charts the sensitivity chart is a rotation, and it helps.** It improves CHEMAKZO 7-14x in every coupled score (column
+- **On full charts the sensitivity chart appeared to help (withdrawn in 3.23: a timing tie picked another degree).** It improves CHEMAKZO 7-14x in every coupled score (column
   6.0e-3 to 3.3e-4, rollout 2.5e-3 to 3.3e-4, worst mixed defect at w = 0.01 from 0.11 to 2.0e-4).
 - Pre-registered:
   - U1 and U2 fail as stated: T1 refuses all of HIRES, so the gated measures are undefined. The ungated medians fall 5.5x and 26x.
@@ -680,6 +680,95 @@ degree's size), at R4e's chart dimension:
   1.8e-6 dex of a rtol 1e-9 reference on the key species (5.7e-6 strict). A step costs 0.48 s at the median with the dense Jacobian and
   0.61 s with a sparse one (35 nonzeros per row): about 670 right-hand-side evaluations, 3.5 Jacobians and 64 LU factorisations per
   step, so the right-hand side, not the linear algebra, is where a faster exact solver would come from.
+
+
+### 3.23 After the council (round 3): what was adopted
+
+The reviews (`theory/reviews/council3-{fable,sol,astra}.md`; resolutions in `theory/REVIEWS.md`) corrected four readings of 9.8. Fable
+found that POLLU is data-limited, not accumulation-limited. HIRES is refused by the product form of the gate. The normal term's cost on
+the bundle is a radius effect. CHEMAKZO's "rotation advantage" was a timing tie in the selection. KIDA's step costs its LU (42-46%)
+more than its right-hand side (28-36%), and speed-ups are quoted against SciPy's per-call overhead. They asked, in order, for:
+- learning curves in whole trajectories;
+- the additive envelope gate with an error account per cell;
+- the composite tube;
+- a compiled baseline;
+- KIDA's exact solver before any fit.
+Tensor trains were deferred (the fitted coefficient tensors need 6-11x more coefficients as trains).
+
+### 3.24 Learning curves in whole trajectories (p13; `theory/panel/p13_learning.py`, predictions `8f472cf`)
+
+The fourth recipe at R4e's chart dimension with 220, 340 and 580 training trajectories, the extra ones from each problem's initial law
+with new seeds; at most 57 solver seconds of extra data per problem.
+
+| problem | 100 (R4e) | 220 | 340 | 580 |
+|---|---|---|---|---|
+| pollu | not served, rollout 4.7e-2 | not served, 5.5e-3 | **served**, 5.5e-3 | **served**, 1.5e-4 (degree 4, nothing refused) |
+| allen_cahn_d5 | not served, 4.2e-2 | not served, 7.0e-2 | **served**, 7.1e-3 (speed-up 94) | **served**, 6.2e-3 |
+| nelson (best held-out worst) | 1.10 | 0.43 (180 kept) | 0.64 (300) | 0.27 (540); never served |
+| primordial | 0.53 | 0.54 | 0.62 | 0.85; never served |
+| hires | not served | rollout 5.5e-6, mixing 0.16 | 5.1e-6, 0.16 | 4.0e-6, 0.17; never served |
+| lorenz96_d20 | rollout 2.4e-2 | 7.5e-3 | 7.5e-3 | 4.3e-3; not served (the margin) |
+| oregonator, van_der_pol | refused whole | refused whole at every size | | |
+
+- **Data was the limit for POLLU and Allen-Cahn d5**, and it costs seconds of solves (Fable's reading; L1 and L5 hold).
+- **Nelson improves 4x and is still not served**, so L2 holds in its first clause and fails in its second. Primordial does not improve
+  with data (L3 holds).
+- **HIRES's chain under weak mixing stays at 0.16-0.17 at every size** (L4 holds): it is not a data limit.
+
+### 3.25 The envelope gate, the sketch and the error account (R4f; `theory/panel/r4f_envelope.py`, predictions `90e0902`)
+
+The gate a0 + a1 b + a2 rho + a3 rho^2 is fitted by a linear program over the calibration states (plain and mixed), with its caps at
+their ranges. The gate's products are sketched with 32 columns. Each chain is deployed with an error account per cell: a step is
+refused once it would take the cell's sum of bounds past tol / 2.
+
+- **Seven of 18 served, against R4e's ten** (G3 fails). Bruss_d20, fisher_kpp_d5 and fisher_kpp_d10 are lost. The account charges the
+  envelope's floor a0 at every step, so over 40 steps it needs a0 < tol / 80, and their cells go to the solver for 97-100% of their
+  steps.
+- **The envelope is not conservative enough on burgers_d20** (G1 and G2 fail there). It is served at degree 5 with a rollout of 1.0e-2
+  and chained mixing of 1.5e-2, and the account is exceeded on 1.8% of cells and steps. Elsewhere the account holds: fisher_kpp_d3
+  0.94%, the rest 0%.
+- **Where the account binds, coupled chains are honest**: HIRES 9.9e-3 / 4.2e-3 and POLLU 4.5e-3 / 3.4e-3 under chained mixing, at
+  91-95% solver.
+- **The sketched gate is 3-5x cheaper at equal size** (G5 mostly holds): HIRES 25 -> 6 us, POLLU 40 -> 8 us.
+- G4 holds: the median effective speed-up over the seven served is 70.
+
+### 3.26 The composite tube (smoke tests on HIRES and POLLU; generic4 `composite`)
+
+The on-bundle fit is kept. An affine correction in the off-chart coordinates is fitted on the fit trajectories' mixed pairs between
+the decoder's training residual and a radius, and added only beyond the residual. The gate is calibrated per region.
+- **At radius 3e-3** HIRES's plain rollout is unchanged (4.6e-6, as designed) and its chained mixing at w = 0.01 stays at 0.18.
+- **At 3e-2:** 0.16, with 37% refused.
+- **Without a radius:** the correction errs 0.06 at the median on offsets up to 0.74, and the gate refuses everything.
+- **On POLLU** the composite lowers the rollout from 4.7e-2 to 3.2e-2 at 100 trajectories.
+
+HIRES's coupled failure comes from rare states whose defect is near 1e-2, summed over 170 steps: a first-order correction moves the
+median, not those states. Not run as a pre-registered experiment.
+
+### 3.27 A compiled exact baseline (p14; `theory/panel/p14_baseline.py`, prediction in the same commit)
+
+SciPy's VODE, a Fortran BDF with the systems' tolerances and Python right-hand sides, on 40 test states at three steps per problem:
+- **3.4-14x faster** per state and step than the benchmark's baseline on the lattices, Robertson and CHEMAKZO, agreeing with the stored
+  states within 1.7e-7;
+- **4.5x slower** on HIRES;
+- **fails** on Nelson and primordial (convergence failures).
+
+R4e's effective speed-ups against VODE:
+
+| problem | against the baseline | against VODE |
+|---|---|---|
+| robertson | 778 | 82 |
+| bruss_d2 | 169 | 109 |
+| burgers_d20 | 55 | 30 |
+| lorenz96_d4 | 77 | 23 |
+| fisher_kpp_d2 | 43 | 19 |
+| fisher_kpp_d3 | 55 | 14 |
+| bruss_d20 | 14 | 8 |
+| chemakzo | 54 | 4 |
+| fisher_kpp_d5 | 14 | 4 |
+| fisher_kpp_d10 | 10 | 3 |
+
+The median is 16. A solver with a compiled right-hand side would lower these further, so the honest statement is that the recipe beats
+a compiled BDF by 3-100x on the problems it serves, with the smallest margins on the higher-dimensional lattices and CHEMAKZO.
 
 ---
 
@@ -990,28 +1079,37 @@ are conditional on the records showing graph-local coupling or a jump the leaves
    - the KIDA rank-of-futures measurement;
    - the `src` fix for conservation laws (awaiting the user).
 
-## 10. Questions for the reviewers (round 3)
+### 9.9 Where things stand after sections 3.23-3.27 (the author's reading, for the reviewers to correct)
 
-Round 2's questions were answered in `theory/reviews/council2-*.md`; section 3.17 lists what was adopted, sections 3.18-3.22 what was
-run. These are new.
+1. **Data is cheap and decisive where the fit is close.** POLLU and Allen-Cahn d5 needed 240 more trajectories, seconds of solves.
+   The data budget should be set per problem by a learning curve in solver seconds, not by a fixed 100 trajectories.
+2. **The gate has two honest regimes, and neither is satisfactory alone.**
+   - The product gate with plain selection serves 10 problems but does not certify coupled chains; HIRES fails weak mixing.
+   - The envelope with the account certifies coupled chains wherever the envelope holds, but its floor is charged every step. It loses
+     three lattices, and its linear-program envelope is not conservative enough on Burgers d20.
+   - An account charged with a bound that tracks the actual defect (the floor removed by the account's own audits, or a two-level
+     bound) is the open design.
+3. **HIRES under coupling is limited by rare large defects.** Neither data nor a first-order correction moves them. The account handles
+   them, at a high solver share.
+4. **Against a compiled BDF the speed-ups are 3-100x**, not 3-800x. The surrogate pays most where the exact solver is expensive per
+   step (Nelson 78 ms, primordial 8 ms, KIDA 0.5 s), and those are exactly the problems it does not serve yet.
+5. Not done: the KIDA solver acceleration (fewer factorisations, a compiled right-hand side) and the conservation-law fix in `src`
+   (awaiting the user); the measurement of how much solver time a local table could avoid on deployment-shaped KIDA inputs; the KIDA
+   rank-of-futures measurement.
 
-1. **The plan from here.** Given 3.18-3.22 and 9.8, what should the next phase test, in what order, with what decisive readings? Which
-   of 9.8's readings do not follow from the records?
-2. **The composite tube model.** The normal term fixes the off-bundle defect and costs accuracy on the bundle. What is the right
-   composite (switch on the normal offset, a blended fit, a two-level design, the normal term as a residual model fitted after the
-   on-bundle fit), with what theory (Proposition 5.1 on each piece, the switch's continuity, the gate per piece), and what experiment
-   decides?
-3. **The gate after the repair.** A gate calibrated for the maximum refuses whole problems (HIRES under T1) or nothing; the accumulation
-   budget refuses whole problems. Is there a gate between these that is still honest for the maximum: per-regime calibration, a
-   calibration per normal offset, conformal on chains, an error model with the step index?
-4. **Accumulation.** POLLU's one-step errors are within 1e-3 and its rollout is 4.7e-2. What lowers the accumulated error without a
-   tighter per-step fit everywhere: fitting to multi-step chains (the rollout-tuned ChebTT idea in the chart), a correction trained on
-   chained residuals, periodic exact steps, error-feedback through the invariants?
-5. **Nelson and primordial.** Fits at 0.5-1.1 dex with about 1,800 pairs in 10-16 coordinates. More data (how much, by the coverage
-   law), local fits (ART, AFINNI under the protocol), or a different representation? What is the cheapest decisive test?
-6. **Tensor trains and shared outputs** (9.6, round 2's questions 2-3; not yet run): with the repaired recipe as the baseline, which
-   single TT or shared-output experiment would decide whether to build T-a and T-b?
-7. **Major speed-ups, again.** After the repair, where is the remaining time? Only changes of 2x or more. Candidates: KIDA's
-   right-hand side (670 evaluations per step), the selection, the gate's out-of-span term, a compiled evaluation path, a GPU path.
-8. **KIDA's route.** Given p8 and p9, is a global fit at 0.01 dex on the 13 key species a realistic target, or should the route be local
-   tables, a reduced network, or accelerating the exact solver?
+## 10. Questions for the reviewers (round 4)
+
+Round 3's questions were answered in `theory/reviews/council3-*.md`; section 3.23 lists what was adopted, 3.24-3.27 what was run.
+
+1. **The plan from here.** Given 3.24-3.27 and 9.9, what should the next phase test, in what order, with what decisive readings? Which
+   readings of 9.9 do not follow?
+2. **The gate that serves and certifies.** Design a gate and deployment policy between the product gate (serves, does not certify
+   coupled chains) and the envelope-plus-account (certifies, refuses too much and was violated on Burgers d20): the theory, the
+   calibration, the cost.
+3. **The expensive problems.** The surrogate's margin is largest where a step is expensive (Nelson, primordial, KIDA) and that is where
+   it is not served. What is the shortest route to serving one of them: data by a learning curve, local fits, a different chart, an
+   exact-solver acceleration first?
+4. **Major speed-ups, again.** Only 2x or more, now against VODE as the denominator. What remains in the recipe's evaluation and
+   fallback, and in the exact solvers (KIDA's LU, Nelson's and primordial's failures under VODE)?
+5. **What would make the result publishable as a method:** which claims are supported across the panel, which need one more experiment,
+   and which should be dropped?
