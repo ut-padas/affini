@@ -90,15 +90,21 @@ def audit(P, sur, cells, den_us) -> dict:
             "median_speedup": float(np.median([c["speedup"] for c in cols.values() if c["speedup"]])) if den_us else None}  # fmt: skip
 
 
-def case(name: str, arm: str, dstore: RecordStore) -> dict:
+def case(name: str, arm: str, dstore: RecordStore, chart: str = "r4e") -> dict:
+    """``chart`` "r4e": R4e's chart dimension and R4g's surrogate as the start; "full": every free coordinate (no reduction), the start
+    fitted here (the chart grown where a reduced chart refuses coupled inputs, council round 5)."""
     P = STEP_MAPS[name]
     train, test = data(name)
     trajs, _ = extra_trajectories(name, 600, dstore)  # seeds 11-15: 11 calibrates, 12-13 train, 14 audits, 15 is the pool
     cal, more, cells, pool = trajs[:100], trajs[120:360], trajs[360:460], trajs[480:580]
     train = np.concatenate([train, more[:240]])
     ref = json.loads((OUT / "records" / "r4e" / f"{name}.json").read_text())
-    rec = json.loads((OUT / "records" / "r4g" / f"{name}_340.json").read_text())
     den_us = json.loads((OUT / "p15_denominators.json").read_text()).get(name, {}).get("denominator_us")
+    kd = (ref["k"], ref["decoder_degree"]) if chart == "r4e" else (train.shape[2] - P.system.held, 1)
+    if chart == "r4e":
+        rec = json.loads((OUT / "records" / "r4g" / f"{name}_340.json").read_text())
+    else:
+        rec = run(P, train, test, name, solve_us=baseline_cost(name)["solve_us"], variant=VARIANT, k=kd, cal_trajs=cal)
     sur = rebuild(P, train, rec, None, VARIANT)
     calibrate_fresh(P, sur, cal)
     extra_X, extra_Y = np.empty((0, train.shape[2])), np.empty((0, train.shape[2]))
@@ -115,7 +121,7 @@ def case(name: str, arm: str, dstore: RecordStore) -> dict:
             RX, RY = RX[ok], RY[ok]
         extra_X, extra_Y = np.concatenate([extra_X, RX]), np.concatenate([extra_Y, RY])
         out = run(P, train, test, name, extra=(extra_X, extra_Y) if len(extra_X) else None, solve_us=baseline_cost(name)["solve_us"], variant=VARIANT,
-                  k=(ref["k"], ref["decoder_degree"]), cal_trajs=cal)  # fmt: skip
+                  k=kd, cal_trajs=cal)  # fmt: skip
         sur = rebuild(P, train, out, (extra_X, extra_Y) if len(extra_X) else None, VARIANT)
         calibrate_fresh(P, sur, cal)
         a = audit(P, sur, cells, den_us)
@@ -123,7 +129,7 @@ def case(name: str, arm: str, dstore: RecordStore) -> dict:
                        "rollout_worst": out["rollout_worst"], "rollout_solver_share": out["rollout_solver_share"], "audit": a})  # fmt: skip
         log(f"  {name} {arm} round {r + 1}: +{len(RX)} pairs, served {out['served']}, audit worst {a['worst']:.2e}, solver {100 * a['solver_share']:.1f}%, "
             f"speed-up {a['median_speedup'] or float('nan'):.1f}")  # fmt: skip
-    return {"rounds": rounds}
+    return {"rounds": rounds, "chart": chart, "k": int(kd[0])}
 
 
 def main() -> None:
