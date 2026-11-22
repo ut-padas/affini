@@ -417,6 +417,8 @@ def envelope(e, b, rho) -> np.ndarray:
     F = np.stack([np.ones_like(b), b, rho, rho**2], axis=1)
     ok = np.all(np.isfinite(F), axis=1) & np.isfinite(e)
     F, e = F[ok], e[ok]
+    if not len(e):  # no calibration state inside the cap: nothing is determined, every input refused
+        return np.array([np.inf, 0.0, 0.0, 0.0])
     scale = np.maximum(np.abs(F).max(0), 1e-300)
     Fs = F / scale
     res = linprog(Fs.sum(0), A_ub=-Fs, b_ub=-e, bounds=[(0, None)] * 4, method="highs")
