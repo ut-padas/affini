@@ -4,9 +4,15 @@ benchmark sets up Nelson: abundances per H nucleus and the environment (n_H, T, 
 step and driven between steps along each tracer (`astro.environment_path`'s oscillation about a random starting environment), burn-in
 1e4 yr from KIDApy's initial abundances, 24 steps, species below 1e-12 not scored. Two environment ranges (log-uniform):
   diffuse  Nelson's: n_H 1e2-1e4 cm^-3, T 50-3000 K, A_v 0.1-2 mag, UV 50-200 Draine;
-  dense    n_H 1e3-1e5 cm^-3, T 10-50 K, A_v 3-10 mag, UV 1-10 Draine (a dark cloud, where far more species are abundant).
+  dense    n_H 1e3-1e5 cm^-3, T 10-50 K, A_v 3-10 mag, UV 1-10 Draine (a dark cloud, where far more species are abundant);
+  dark     n_H 1e4-1e5 cm^-3, T 10-20 K, A_v 5-20 mag, UV 1-3 Draine: the standard dark-cloud conditions of KIDA/Nautilus models
+           (n_H 2e4, 10 K, A_v 10-30, zeta 1.3e-17; theory/KIDA_QOI.md), with the electrons set from charge neutrality.
+The diffuse and dense ranges start from KIDApy's initial abundances with no electrons (its abundances file lists none, and KIDApy
+leaves them to the caller), so their states carry a net positive charge of 1.7e-4 that the network conserves: positive ions such as
+HCO+ and H3O+ pile up near 1e-4 with almost nothing to recombine with. Their records are kept as the record of that setup; the dark
+range sets the electrons to the net positive charge and is the one to read physically.
 200 training and 40 test tracers per range, generated in chunks of 24 (one record each, with its trajectories beside it, under
-data/records/r3/), then the recipe per range (kmax 20, a 40-minute limit). Usage: r3_kida.py [diffuse|dense ...].
+data/records/r3/), then the recipe per range (kmax 20, a 40-minute limit). Usage: r3_kida.py [diffuse|dense|dark ...].
 
 Predictions, committed before the run (tolerance 0.01 dex; a two-state smoke test had shown 28-57 species above the floor in the diffuse
 range and 120-128 in the dense range):
@@ -29,7 +35,9 @@ from src.problems.ode.step_maps import StepMapProblem
 from src.problems.ode.system import SYSTEMS, trajectories
 
 RANGES = {"diffuse": ((2, 4), (np.log10(50), np.log10(3000)), (-1, np.log10(2)), (np.log10(50), np.log10(200))),
-          "dense": ((3, 5), (1, np.log10(50)), (np.log10(3), 1), (0, 1))}  # fmt: skip
+          "dense": ((3, 5), (1, np.log10(50)), (np.log10(3), 1), (0, 1)),
+          "dark": ((4, 5), (1, np.log10(20)), (np.log10(5), np.log10(20)), (0, np.log10(3)))}  # fmt: skip
+NEUTRAL = ("dark",)  # ranges whose initial state gets its electrons from charge neutrality (see the module docstring)
 CHUNK, N_TRAIN, N_TEST = 24, 200, 40
 _net, _x0 = astro._load("kida.uva.2024/gas_reactions_kida.uva.2024.in", "kida.uva.2024/abundances.in", grains=True)
 KIDA = astro.kidapy_system("kida_uva_2024", _net)
@@ -52,10 +60,21 @@ def environment_path(n: int, seed: int, steps: int, rng_range) -> np.ndarray:
     return 10.0 ** (base[:, None, :] + amp * (np.sin(2 * np.pi * k / period + phase) - np.sin(phase)))
 
 
+def initial_abundances(neutral: bool) -> np.ndarray:
+    """KIDApy's initial abundances, floored at 1e-20; with ``neutral``, the electrons set to the net positive charge (KIDApy's rule)."""
+    x0 = np.maximum(_x0, 1e-20)
+    if neutral:
+        charge = np.array([astro.composition(sp).get("charge", 0) for sp in _net.species])
+        e = _net.species_map["e-"]
+        x0[e] = max(float(charge @ x0 + x0[e]), 1e-20)
+    return x0
+
+
 def problem(name: str) -> StepMapProblem:
     rr = RANGES[name]
     nel_dt = 1600.0e3 * astro.YEAR / 24
-    return StepMapProblem(KIDA, nel_dt, lambda n, seed: np.concatenate([np.tile(np.maximum(_x0, 1e-20), (n, 1)), environment(n, seed, rr)], axis=1),
+    x0 = initial_abundances(name in NEUTRAL)
+    return StepMapProblem(KIDA, nel_dt, lambda n, seed: np.concatenate([np.tile(x0, (n, 1)), environment(n, seed, rr)], axis=1),
                           24, N_TRAIN, N_TEST, burn=1.0e4 * astro.YEAR, floor=1e-12, regime="longstep",
                           held_path=lambda n, seed, steps: environment_path(n, seed, steps, rr))  # fmt: skip
 

@@ -17,10 +17,20 @@ matter for coupling to MHD.
 
 **Dropped:** CS, a common tracer, never exceeds 1e-12 in the dense range (median 10^-13.5), so it would never be scored.
 
-**Coverage in the dense range** (200 training tracers; share of states above 1e-12): every key species 0.98–1.00 except e- (0.72).
+**Coverage** is to be measured on the dark range (the dense range's numbers reflected its charge imbalance).
 
-**To check before reading KIDA results physically.** In the dense range as set up (`theory/recipe/r3_kida.py`: n_H 1e3–1e5, T 10–50 K,
-A_v 3–10, UV 1–10 Draine, KIDApy with its pseudo-grains, burn-in 1e4 yr from KIDApy's initial abundances) the median HCO+ abundance is
-about 1e-4, comparable to CO, and the median electron abundance about 3e-12. Dense clouds typically have HCO+ near 1e-9 and electrons
-well above that, so the grain treatment, the environment range or the burn-in may be unrepresentative. The surrogate comparisons
-measure agreement with the solver whatever its chemistry, so they stand; the physical reading of KIDA results waits for this check.
+**The dense range's chemistry was a setup bug, now fixed.** In the dense range (`theory/recipe/r3_kida.py`) the median HCO+ was
+about 1e-4 and electrons about 3e-12. The cause: KIDApy's abundances file lists no electrons and KIDApy leaves them to the caller
+(charge neutrality), but the loader left them at zero, so every state carried a net positive charge of 1.7e-4 that the network
+conserves, and positive ions piled up with almost nothing to recombine with. The **dark** range sets the electrons from charge
+neutrality and uses the standard dark-cloud conditions of KIDA/Nautilus models: n_H = 2e4 cm^-3, T = 10 K, zeta = 1.3e-17 s^-1, A_V
+10–30, atomic initial abundances with molecular H2 ([arXiv:2410.09212](https://arxiv.org/pdf/2410.09212),
+[arXiv:1307.6868](https://arxiv.org/pdf/1307.6868), [arXiv:1311.3865](https://arxiv.org/pdf/1311.3865),
+[arXiv:1104.1530](https://arxiv.org/pdf/1104.1530), [arXiv:2504.18138](https://arxiv.org/pdf/2504.18138)). Its ranges: n_H 1e4–1e5,
+T 10–20 K, A_V 5–20, UV 1–3 Draine, driven along each tracer as before; zeta stays KIDApy's default 1.6e-17. After one step its states
+are neutral and plausible: HCO+ 7.6e-10, electrons 1.0e-8, CO 1.3e-4, C+ 1.6e-10, H3+ 1.8e-10, N2H+ 2.9e-12. The dark range is the one
+to read physically; the dense records are kept as the record of the charged setup.
+
+**The benchmark's Nelson problem** starts the same way (net charge 2.0e-4, no electrons), but Nelson's reduced network does not conserve
+charge (some reactions create electrons) and its states end with excess electrons. Changing it changes benchmark data, so it is left
+for the final rerun and flagged here.
