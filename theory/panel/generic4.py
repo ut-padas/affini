@@ -137,7 +137,10 @@ class Surrogate4(Surrogate2):
             bound = a[0] + a[1] * b + a[2] * rho + a[3] * rho**2
             caps = ~np.isfinite(b) | (b > self.b_max) | (s > self.s_max) | (rho > self.rho_max)
         else:
-            bound = (1 + b) * self.e_hat
+            e_hat = self.e_hat
+            if getattr(self, "B", None) is not None:  # the composite: a calibration per region, on the bundle and beyond it
+                e_hat = np.where(self.decoder.residual(Z) > self.rho_switch, self.e_hat_out, self.e_hat)
+            bound = (1 + b) * e_hat
             caps = ~np.isfinite(b) | (b > self.b_max) | (s > self.s_max)
             if self.decoder is not None and self.use_residual:
                 caps |= self.decoder.residual(Z) > self.decoder.r_max
@@ -180,6 +183,11 @@ class Surrogate4(Surrogate2):
         out = np.array(Z, dtype=float)
         with np.errstate(all="ignore"):
             g = Phi @ self.G.coef
+            if getattr(self, "B", None) is not None:
+                beyond = self.decoder.residual(Z) > self.rho_switch
+                if beyond.any():
+                    n = normal_coords(T, Z[beyond], self.k, T.free - self.k)
+                    g[beyond] += np.concatenate([np.ones((len(n), 1)), n], axis=1) @ self.B
             bad = ~np.all(np.isfinite(g), axis=1) | np.any(np.abs(g) > 1e6, axis=1)
             out[:, : T.free] = np.clip(np.where(np.isfinite(g), g, 0.0), T.zlo[: T.free], T.zhi[: T.free])
             out = self.project(Z, out)
@@ -349,7 +357,34 @@ def build(P, fit_trajs, k, q, dec_degree, extra=None, variant=None):
     dec = Decoder(T, k, X, dec_degree) if k < T.free else None
     sur = Surrogate4(T, k, G, dec, n_normal)
     sur.gate, sur.account = v.get("gate", "product"), bool(v.get("account"))
+    if v.get("composite") and dec is not None:
+        anchor(sur, P, fit_trajs, v["composite"], v.get("radius", 3e-2))
     return sur, X, Y
+
+
+def anchor(sur, P, fit_trajs, m, radius):
+    """
+    The composite tube (council round 3: an on-bundle fit kept as it is, and a correction that vanishes on the bundle): an affine map
+    of the off-chart coordinates, B [1, n(x)], fitted by least squares to the on-bundle fit's residuals on ``m`` of the fit
+    trajectories' mixed pairs whose offset rho lies between the decoder's largest training residual and ``radius``, and added only to
+    inputs beyond that residual; on and inside the bundle the prediction is the plain fit's. The residual cap widens to the largest
+    offset the correction was fitted on (at most ``radius``: a first-order correction is identified only near the bundle), so the gate
+    accepts exactly the region where the composite was identified.
+    """
+    T, k = sur.T, sur.k
+    Xm, Ym = mixed_fit_pairs(P, fit_trajs, m)
+    rho = sur.decoder.residual(Xm)
+    out = (rho > sur.decoder.r_max) & (rho <= radius)
+    if out.sum() < 3 * (T.free - k + 1):
+        return
+    with np.errstate(all="ignore"):
+        g = sur.G.phi(T.chart(Xm[out], k)) @ sur.G.coef
+    A = np.concatenate([np.ones((int(out.sum()), 1)), normal_coords(T, Xm[out], k, T.free - k)], axis=1)
+    D = T.clip(Ym[out])[:, : T.free] - g
+    ok = np.all(np.isfinite(D), axis=1)
+    sur.B = np.linalg.lstsq(A[ok], D[ok], rcond=None)[0]
+    sur.rho_switch, sur.e_hat_out = sur.decoder.r_max, np.inf
+    sur.decoder.r_max = float(np.max(rho[out]))
 
 
 def calibration_stats(sur, P, cal_sets) -> dict:
@@ -395,9 +430,15 @@ def apply_calibration(sur, st: dict):
         sur.b_max, sur.s_max, sur.rho_max = top(st["b"]), top(st["s"]), top(st["rho"])
     else:
         k = st["kept"]
-        sc = st["e"][k] / (1 + st["b"][k])
-        sc = sc[np.isfinite(sc)]
-        sur.e_hat = float(np.max(sc)) if len(sc) else np.inf
+        sc = st["e"] / (1 + st["b"])
+        if getattr(sur, "B", None) is not None:
+            beyond = st["rho"] > sur.rho_switch
+            sur.e_hat, sur.e_hat_out = top(sc[k & ~beyond]), top(sc[k & beyond])
+        else:
+            sur.e_hat = top(sc[k])
+        sur.e_hat = sur.e_hat if np.isfinite(sur.e_hat) else np.inf  # no calibration state in a region: refuse the region
+        if getattr(sur, "B", None) is not None and not np.isfinite(sur.e_hat_out):
+            sur.e_hat_out = np.inf
         sur.b_max, sur.s_max = top(st["b"][k]), top(st["s"][k])
     sur._key = None
 
