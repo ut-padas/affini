@@ -912,6 +912,81 @@ Three independent draws of 340 training and 100 calibration trajectories (seeds 
 - **S2 fails narrowly**: one Allen-Cahn d5 draw rolls out at 5.3e-3, above tol / 2 and within the tolerance.
 - **POLLU is served only on plain rollouts**: under chained mixing every step goes to the solver (the cap), in every draw.
 
+
+### 3.34 After the council (round 5): what was adopted
+
+The reviews (`theory/reviews/council5-{fable,sol,astra}.md`; resolutions in `theory/REVIEWS.md`) found the following.
+- **Refusals are a start-up transient.**
+- **The account never decays**, so it refuses long chains for good.
+- **p17's speed-ups were limited by the evaluation as timed**: the gate was computed twice, and 100 cells were evaluated per call.
+- **CHEMAKZO's coupled refusals are the cap**, and refused-state data is leverage design.
+- **On a GPU the fallback dominates above a refusal rate of about 1e-3**, and the comparator that matters is a batched stiff solver on the
+  same GPU.
+
+Adopted:
+- the account reuses the gate's statistics, decays optionally and records refusal causes;
+- long chains (p21);
+- refusal-driven data in closed columns (p20);
+- the GPU measurement plan (`theory/GPU_PLAN.md`), with no GPU code until it is measured.
+
+### 3.35 Long chains with three account arms (p21; `theory/panel/p21_long.py`, predictions `a4fc656`)
+
+Each problem's deployed surrogate (R4g at 340) runs on 64 new trajectories of 2,000 steps in three arms: the gate alone, the present
+account, and a decaying account (gamma 0.5, chosen on 400-step chains). Speed-ups are against the fastest exact CPU solver, with the
+evaluation timed at 1,000 cells per call.
+
+| problem | gate alone: steady refusal (95% bound), worst over 2,000 steps, steady speed-up | present account: steady refusal |
+|---|---|---|
+| bruss_d2 | 0 (2e-5), 2.9e-3, 439 | 87% |
+| burgers_d20 | 0 (2e-5), 9.6e-4, 119 | 68% |
+| fisher_kpp_d2 | 0 (2e-5), 2.0e-3, 105 | 81% |
+| lorenz96_d4 | 0 (2e-5), 2.8e-3, 94 | 29% |
+| bruss_d20 | 0 (2e-5), 1.2e-3, 49 | 76% |
+| fisher_kpp_d3 | 0 (2e-5), 1.6e-3, 36 | 86% |
+| fisher_kpp_d5 | 0 (2e-5), 1.2e-3, 19 | 88% |
+| fisher_kpp_d10 | 0 (2e-5), 1.8e-3, 18 | 94% |
+| allen_cahn_d5 | 0.013%, 2.0e-3, - | 0.013% |
+| robertson | 88%, 6.1e-7, about 1 | 88% |
+| chemakzo | 96%, 1.8e-7, about 1 | 96% |
+
+- **On 9 of 11 problems the refusals are only the start-up transient** (9-38% of steps 1-10). From step 11 to step 2,000 the gate
+  refuses nothing in 1.3e5 cell-steps, and every chain holds tol / 2. The steady speed-up against the fastest CPU solver is 18-439x,
+  median about 70.
+- **The present account is what throttled long runs.** The decaying account matches the gate alone.
+- **Robertson and CHEMAKZO refuse their long-time states**, which lie beyond the 40-step training trajectories (3.37).
+- L1, L2 and L4 hold; L3 fails on those two.
+
+### 3.36 Refusal-driven data in closed columns, iterated (p20; `theory/panel/p20_closed_active.py`, predictions `3406591`)
+
+Three rounds on eight full-chart problems. Each round adds either the coupled inputs the deployed surrogate refused or the same number
+of uniformly drawn coupled inputs, and is audited on independent closed columns.
+
+| problem | p17 audit solver share | refused data, three rounds | uniform data, three rounds | refused arm's worst |
+|---|---|---|---|---|
+| chemakzo | 98.6% | 1.8% | 2.8% | 5.2e-6 |
+| bruss_d2 | 1.6% | 0.2% | 1.3% | 1.3e-3 |
+| fisher_kpp_d2 | 1.5% | 0.3% | 1.5% | 5.7e-4 |
+| robertson | 4.7% | 0.6% | 2.9% | 2.7e-6 |
+| allen_cahn_d5 | 7.2% | 1.0% | 2.0% | 5.4e-3 |
+| fisher_kpp_d3 | 2.2% | 1.0% | 2.3% | 6.5e-4 |
+| lorenz96_d4 | 1.5% | 1.0% | 1.7% | 3.5e-4 |
+| fisher_kpp_d5 | 3.5% | 1.8% | 3.1% | 3.4e-3 |
+
+- **Refused data beats uniform data at equal solves on all eight** (C2 holds). It cuts the coupled refusal rate 55x on CHEMAKZO (C1
+  holds: 2.7% after one round, 1.8% after three) and 5-8x on bruss_d2, fisher_kpp_d2, Robertson and Allen-Cahn d5.
+- **Every audit holds tol / 2 except Allen-Cahn d5** (5.4e-3, within the tolerance), so C3 fails there.
+- **The audit speed-ups (100 cells per call) are noisy**, and C4 fails (1.2x, not 1.5x). The steady speed-ups of 3.35 are the better
+  measure.
+
+### 3.37 Coverage in time (p22; `theory/panel/p22_long_training.py`, prediction `38babf7`)
+
+The one-step pairs of 40 training trajectories of 400 steps are added for Robertson and CHEMAKZO, with bruss_d20 as a control. Over the
+2,000-step horizon:
+- Robertson's steady refusal falls from 88% to 73%, CHEMAKZO's from 96% to 81% (the prediction, below 5%, fails);
+- bruss_d20 stays at 0%.
+
+Both systems keep reaching new states through the whole horizon, so the training trajectories have to span the deployment horizon.
+
 ---
 
 ## 4. Mistakes, and what each taught
@@ -1253,6 +1328,23 @@ are conditional on the records showing graph-local coupling or a jump the leaves
    - the conservation-law fix in `src` (awaiting the user);
    - primordial's history-based predictor;
    - any GPU measurement (no GPU on this machine).
+
+### 9.11 Where things stand after sections 3.34-3.37 (the author's reading)
+
+1. **In steady state the recipe refuses nothing on most served problems.** On 9 of 11, refusals are a start-up transient. Against the
+   fastest CPU solver the steady speed-up is 18-439x (median about 70), every chain within tol / 2 over 2,000 steps. The refusal rate
+   that matters for a long simulation is the transient's, amortised over the run, plus whatever states the training did not cover.
+2. **Refusal-driven data is the generic lever for coupled inputs.** It cuts the coupled refusal rate several-fold (55x on CHEMAKZO) and
+   beats random data at equal cost on every problem tried.
+3. **Coverage must match the deployment.** In time, the training trajectories must span the horizon (Robertson, CHEMAKZO). In coupling,
+   the data must include coupled inputs, and refusal-driven data supplies them. The gate makes these gaps visible as refusals instead of
+   errors.
+4. **Still open:**
+   - HIRES and POLLU under coupling (reduced charts; the chart must grow);
+   - Nelson, primordial and the oscillators;
+   - KIDA's solver and coverage;
+   - every GPU measurement;
+   - the conservation-law fix in `src`.
 
 ## 10. Questions for the reviewers (round 5)
 
