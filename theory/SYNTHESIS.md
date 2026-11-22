@@ -160,7 +160,77 @@ exceeds $\mathrm{tol}/(2e_v) - 1$), a minimum-norm invariant projection, solver 
 A held-out-calibrated gate (scores $\mathrm{err}/(1 + b)$, the 99% quantile; the largest held-out bound as the validated range), the
 residual term, "served" fixed before the run, degrees to 12 with early stopping, the per-factor diagnosis per degree.
 
-R4B_RESULTS_PLACEHOLDER
+**Results** (`theory/panel/data/records/r4b/`, `data/r4b_calibrated.json`; tolerance 0.01; "served": held-out chains within the
+tolerance and a solver share below 50%, fixed before the run). For a not-served problem the row shows the solver alone (refused 100%) or
+the best configuration's numbers.
+
+| problem | d | k | q | served | rollout, 40 / 20 test | refused % | chained mixing 0.01 / 0.1 (solver %) | without residual 0.01 / 0.1 | speed-up eff. / nominal |
+|---|---|---|---|---|---|---|---|---|---|
+| allen_cahn_d2 | 2 | 2 | 10 | yes | 1.7e-05 / 1.1e-05 | 0.0 | 9.3e-05 / 1.6e-05 (0 / 89) | – (full chart) | 307.8 / 1336 |
+| bruss_d2 | 2 | 2 | 11 | yes | 1.2e-08 / 1.2e-08 | 7.0 | 5.6e-08 / 4.3e-08 (35 / 68) | – (full chart) | 14.0 / 3908 |
+| fisher_kpp_d2 | 2 | 2 | 11 | yes | 3.3e-04 / 3.3e-04 | 0.0 | 1.5e-02 / 1.3e-02 (0 / 0) | – (full chart) | 396.3 / 1781 |
+| van_der_pol | 2 | 2 | 10 | no | 0.0e+00 / 0.0e+00 | 100.0 | 0.0e+00 / 0.0e+00 (100 / 100) | – (full chart) | 1.0 / 30571 |
+| allen_cahn_d3 | 3 | 3 | 5 | yes | 8.7e-03 / 3.4e-03 | 0.0 | 5.3e-03 / 2.0e-03 (0 / 0) | – (full chart) | 287.1 / 1093 |
+| fisher_kpp_d3 | 3 | 3 | 9 | yes | 2.5e-02 / 2.5e-02 | 0.6 | 2.4e-02 / 1.4e-02 (0 / 1) | – (full chart) | 52.3 / 530 |
+| oregonator | 3 | 3 | 5 | no | 0.0e+00 / 0.0e+00 | 100.0 | 0.0e+00 / 0.0e+00 (100 / 100) | – (full chart) | 1.0 / 38731 |
+| robertson | 3 | 3 | 3 | yes | 1.3e-03 / 5.0e-04 | 0.0 | 1.2e-03 / 5.3e-04 (0 / 0) | – (full chart) | 42.9 / 87 |
+| bruss_d4 | 4 | 4 | 5 | yes | 6.3e-03 / 6.3e-03 | 0.4 | 6.2e-03 / 4.5e-03 (0 / 0) | – (full chart) | 151.4 / 1731 |
+| lorenz96_d4 | 4 | 4 | 4 | yes | 2.1e-03 / 7.6e-04 | 0.0 | 1.7e-03 / 6.6e-04 (0 / 0) | – (full chart) | 118.4 / 453 |
+| allen_cahn_d5 | 5 | 5 | 3 | no | 4.2e-02 / 4.0e-02 | 6.3 | 6.7e-02 / 2.8e-02 (6 / 4) | – (full chart) | 15.2 / 1362 |
+| chemakzo | 5 | 5 | 3 | yes | 1.3e-02 / 5.2e-03 | 0.0 | 2.1e-02 / 1.4e-02 (0 / 10) | – (full chart) | 480.0 / 2036 |
+| fisher_kpp_d5 | 5 | 5 | 5 | yes | 1.3e-02 / 5.2e-03 | 3.1 | 1.3e-02 / 8.8e-03 (3 / 3) | – (full chart) | 23.2 / 557 |
+| lorenz96_d5 | 5 | 5 | 4 | yes | 3.6e-03 / 1.8e-03 | 0.0 | 2.9e-03 / 1.4e-03 (0 / 0) | – (full chart) | 66.9 / 320 |
+| bruss_d6 | 6 | 6 | 4 | yes | 7.0e-03 / 7.0e-03 | 2.8 | 6.3e-03 / 3.7e-03 (3 / 2) | – (full chart) | 30.6 / 1217 |
+| hires | 8 | 3 | 9 | yes | 1.2e-03 / 4.3e-04 | 0.0 | 2.2e-01 / 4.4e-03 (47 / 70) | 1.3e+00 / 4.3e-01 | 20.5 / 37 |
+| allen_cahn_d10 | 10 | 6 | 1 | no | 0.0e+00 / 0.0e+00 | 100.0 | 0.0e+00 / 0.0e+00 (100 / 100) | – (full chart) | 1.0 / 3028 |
+| bruss_d10 | 10 | 9 | 4 | yes | 8.1e-03 / 5.8e-03 | 2.6 | 7.7e-03 / 5.6e-03 (3 / 2) | 7.7e-03 / 5.0e-03 | 16.5 / 384 |
+| burgers_d10 | 10 | 6 | 3 | yes | 2.0e-03 / 2.0e-03 | 0.9 | 1.9e-03 / 1.9e-03 (1 / 0) | 1.9e-03 / 1.7e-03 | 27.4 / 59 |
+| fisher_kpp_d10 | 10 | 6 | 5 | yes | 4.9e-03 / 4.9e-03 | 6.9 | 2.8e-03 / 3.6e-03 (6 / 6) | 2.8e-03 / 2.8e-03 | 10.5 / 264 |
+| lorenz96_d10 | 10 | 10 | 4 | yes | 9.7e-03 / 8.7e-03 | 2.0 | 9.2e-03 / 8.5e-03 (2 / 1) | – (full chart) | 3.8 / 43 |
+| primordial | 10 | 6 | 2 | no | 0.0e+00 / 0.0e+00 | 100.0 | 0.0e+00 / 0.0e+00 (100 / 100) | – (full chart) | 1.0 / 721 |
+| nelson | 18 | 12 | 1 | no | 0.0e+00 / 0.0e+00 | 100.0 | 0.0e+00 / 0.0e+00 (100 / 100) | – (full chart) | 1.0 / 8576 |
+| allen_cahn_d20 | 20 | 6 | 1 | no | 0.0e+00 / 0.0e+00 | 100.0 | 0.0e+00 / 0.0e+00 (100 / 100) | – (full chart) | 1.0 / 1984 |
+| bruss_d20 | 20 | 9 | 4 | yes | 7.1e-03 / 5.6e-03 | 2.6 | 6.4e-03 / 3.8e-03 (3 / 2) | 6.4e-03 / 4.8e-03 | 12.7 / 52 |
+| burgers_d20 | 20 | 6 | 3 | yes | 2.6e-03 / 2.6e-03 | 0.8 | 2.5e-03 / 2.7e-03 (1 / 0) | 2.5e-03 / 2.9e-03 | 21.1 / 41 |
+| fisher_kpp_d20 | 20 | 7 | 4 | yes | 3.2e-03 / 2.8e-03 | 6.8 | 4.4e-03 / 2.1e-03 (6 / 6) | 4.4e-03 / 1.8e-03 | 11.0 / 281 |
+| lorenz96_d20 | 20 | 20 | 3 | yes | 1.6e-02 / 1.6e-02 | 7.2 | 1.4e-02 / 1.3e-02 (7 / 5) | – (full chart) | 1.2 / 12 |
+| pollu | 20 | 20 | 2 | no | 1.2e-02 / 1.2e-02 | 10.2 | 0.0e+00 / 0.0e+00 (100 / 100) | – (full chart) | 5.8 / 57 |
+| allen_cahn_d40 | 40 | 6 | 3 | no | 4.9e-02 / 3.2e-02 | 6.5 | 5.9e-02 / 2.7e-02 (6 / 5) | 5.9e-02 / 2.6e-02 | 10.7 / 59 |
+| bruss_d40 | 40 | 9 | 4 | yes | 7.3e-03 / 5.3e-03 | 2.6 | 6.6e-03 / 3.4e-03 (3 / 3) | 6.6e-03 / 4.5e-03 | 15.8 / 70 |
+| burgers_d40 | 40 | 6 | 3 | yes | 2.9e-03 / 2.9e-03 | 0.9 | 2.8e-03 / 3.3e-03 (1 / 0) | 2.8e-03 / 3.4e-03 | 41.4 / 133 |
+| fisher_kpp_d40 | 40 | 7 | 4 | yes | 3.0e-03 / 2.8e-03 | 6.8 | 4.0e-03 / 2.3e-03 (6 / 6) | 4.0e-03 / 2.0e-03 | 9.0 / 50 |
+| lorenz96_d40 | 40 | 40 | 2 | no | 2.0e-02 / 1.6e-02 | 31.5 | 1.5e-02 / 9.7e-03 (28 / 15) | – (full chart) | 2.5 / 114 |
+| allen_cahn_d80 | 80 | 6 | 3 | no | 4.8e-02 / 3.2e-02 | 6.6 | 5.8e-02 / 2.7e-02 (6 / 5) | 5.8e-02 / 2.6e-02 | 6.0 / 19 |
+| bruss_d80 | 80 | 9 | 5 | yes | 6.6e-03 / 5.0e-03 | 2.6 | 4.6e-03 / 2.4e-03 (3 / 3) | 4.6e-03 / 2.7e-03 | 3.9 / 11 |
+| fisher_kpp_d80 | 80 | 7 | 4 | yes | 3.0e-03 / 2.7e-03 | 6.8 | 3.8e-03 / 2.1e-03 (6 / 6) | 3.8e-03 / 2.2e-03 | 2.8 / 7 |
+
+**Verdicts against the committed predictions (`0f84031`).**
+- C1 holds: 26 of 37 step maps served (R4: 5), all ten listed among them.
+- C2 fails on 4 of 26: `fisher_kpp_d3` (2.5e-2), `chemakzo` (1.25e-2), `fisher_kpp_d5` (1.3e-2), `lorenz96_d20` (1.6e-2) pass the
+  held-out chains and miss on the 40 test trajectories (two of them hold on the benchmark's first 20). A maximum over 20 held-out
+  trajectories per split does not bound the maximum over 40 new ones: T4's point about what samples certify, now inside the selection.
+- C3 holds on 11 of the 12 served problems with a reduced chart and fails on `hires` (0.22 at w = 0.01 with 47% solved); the residual
+  term does what it was for (without it `hires` errs 1.34 and 0.43; with it 0.22 and 4.4e-3) but does not stop chained error growth
+  through accepted steps.
+- C4 holds for the step maps (Oregonator, Van der Pol, POLLU, Nelson, `allen_cahn_d10` not served); KIDA below.
+- C5 holds: the median rollout solver share over the served problems is 1.4% and the median effective speed-up 22x.
+
+**What changed against R4, and what is new.**
+- The calibrated gate serves 26 problems where the worst-case threshold served 5; most held-out maxima were sampling, not failures of
+  the fit (round 10's diagnosis, now pre-registered).
+- The price: on some problems the gate accepts more and errs more (`chemakzo` 4.8e-5 at 0.4% refused in R4, 1.25e-2 at 0% here);
+  calibration on a maximum over finite held-out chains is a distributional statement.
+- **Mixing on full charts.** Five served problems with full charts (no residual term applies) fail chained mixing while refusing almost
+  nothing: `fisher_kpp_d2`, `fisher_kpp_d3`, `fisher_kpp_d5`, `chemakzo`, `lorenz96_d20`. The gate is calibrated on undisturbed held-out
+  states and its calibration does not transfer to mixed ones: the known limit of conformal-type calibration under covariate shift
+  (V-40). Calibrating on the deployment's own inputs (mixed states) is the direct test.
+- **The gate's cost sets the speed at high dimension.** Effective speed-ups fall to 2.8–4x at $d$ = 80 and on `lorenz96_d10`
+  (1,001 terms), and to 1.2x on `lorenz96_d20`, with refusal rates of only 2–7%: the exact $O(p^2)$ bound costs about as much as the
+  solve. A cheaper gate (a sketched bound, a box pre-test) is the lever there.
+- **The existing schemes on the same problems** are tabulated in `theory/panel/data/scheme_table.md` (`p3_scheme_table.py`; the
+  benchmark's 20-trajectory rollout). On the small ladders `chebtt_roll` holds 2e-3 to 7e-3 rollouts with 300–20,000 solves and
+  speed-ups in the thousands; where both hold, the chart recipe needs no solves beyond its lift check but pays the gate's cost; on
+  the $d \ge 20$ ladders and the chemistry problems most existing schemes have no finished record at 0.01.
 
 ### 3.8 KIDA (`theory/recipe/r3_kida.py`)
 
@@ -170,7 +240,15 @@ about 0.2 s and a burn-in 3.6–10 s per tracer on one core. The dense trajector
 recipe's lift check stalled on decoded states 3–7 dex off the data and was stopped; the diffuse trajectories are being generated
 (some tracers take minutes: 3,000 K and strong UV make the chemistry far stiffer).
 
-KIDA_RESULTS_PLACEHOLDER
+**Dense KIDA in R4b** (`theory/panel/data/records/r4b/kida_dense.json`; 200 training and 40 test tracers, 578 species and 4 held
+environment inputs). The lift check found no reduction: at every k from 1 to 20 every decoder (affine, quadratic, quartic) put some
+decoded species more than a decade from its input, so the guard scored the lift infinite without a solve, and the rule fell back to an
+unvalidated k = 1. On that chart (1 coordinate plus the 4 environment inputs) the best held-out configuration erred 298
+dex at its worst and 2.2 dex at the median (degree 3): with 578 outputs the fit is far from usable,
+and the gate refused every input, so the solver does every step (not served, C4 holds for KIDA). The case took 1578 s on CPU
+for selection. What it says: linear charts with polynomial lifts do not reduce KIDA at 0.01 dex; whether a nonlinear lift can (proposal
+S4) is the open question for the target class. The diffuse range was stopped: its environments (T up to 3,000 K, strong UV) lie outside
+the range KIDA's rate coefficients are fitted for, and single tracers took more than 15 minutes.
 
 ---
 
@@ -299,6 +377,14 @@ evidence says can help on stiff ODEs in general (chemistry included).
    with linear charts and polynomial decoders; R3's KIDA lift errors were 3–7 dex at k = 5–7.
 5. **Fronts (factor 1 or 2, unresolved).** Fisher–KPP and Allen–Cahn: round 10 showed sampling dominates the held-out maximum; whether a
    slowly converging approximation also limits them is open (Fisher–KPP's in-sample error falls only about 0.4 decades per degree).
+
+6. **Calibration under a shift of inputs (from R4b).** The calibrated gate serves 26 of 37 problems, but on five full-chart problems it
+   accepts mixed states that err beyond the tolerance while refusing almost nothing: calibration on undisturbed held-out states does not
+   transfer to the inputs a coupled run produces.
+7. **Selection against test (from R4b).** Four served problems pass the held-out chains and miss on the 40 test trajectories (by 1.25–2.5
+   times the tolerance): a maximum over a few held-out trajectories is a weak estimate of the maximum over new ones.
+8. **The gate's cost (from R4b).** At $d$ = 80 and wherever the fit has 1,000–2,000 terms the exact bound costs about as much as a solve,
+   holding effective speed-ups to 1.2–4x at refusal rates of 2–7%.
 
 ### 9.2 The criterion that decides between families
 
