@@ -1,0 +1,776 @@
+{
+ "bruss_d2": {
+  "sorted/closed/0.005": {
+   "inherited_worst": 0.0013555224270318418,
+   "own_defect_worst": 0.00023696953804946963,
+   "solver_share": 0.006875000000000001,
+   "worst": 0.001306288565132551
+  },
+  "sorted/closed/0.05": {
+   "inherited_worst": 0.0013025245001235808,
+   "own_defect_worst": 0.000935675397444824,
+   "solver_share": 0.00375,
+   "worst": 0.001370724767173509
+  },
+  "sorted/closed/0.25": {
+   "inherited_worst": 0.0026025067019505577,
+   "own_defect_worst": 0.00266960575348274,
+   "solver_share": 0.005,
+   "worst": 0.0027097792838513685
+  },
+  "sorted/forced/0.005": {
+   "inherited_worst": 0.0013143540807630423,
+   "own_defect_worst": 0.00023697588393778446,
+   "solver_share": 0.0037500000000000007,
+   "worst": 0.0012650788508054706
+  },
+  "sorted/forced/0.05": {
+   "inherited_worst": 0.0013018001522711597,
+   "own_defect_worst": 0.000935689646701432,
+   "solver_share": 0.004375,
+   "worst": 0.0013522348682471763
+  },
+  "sorted/forced/0.25": {
+   "inherited_worst": 0.0012667190557114627,
+   "own_defect_worst": 0.00266960575348274,
+   "solver_share": 0.0043749999999999995,
+   "worst": 0.00266960575348274
+  },
+  "status": "done",
+  "unsorted/closed/0.005": {
+   "inherited_worst": 0.006452428762436069,
+   "own_defect_worst": 0.0014275835186815244,
+   "solver_share": 0.024375,
+   "worst": 0.0063721225853036675
+  },
+  "unsorted/closed/0.05": {
+   "inherited_worst": 0.0037875125531560486,
+   "own_defect_worst": 0.003206747936253876,
+   "solver_share": 0.0225,
+   "worst": 0.0037230177328521907
+  },
+  "unsorted/closed/0.25": {
+   "inherited_worst": 0.002354388721241135,
+   "own_defect_worst": 0.00266960575348274,
+   "solver_share": 0.015625,
+   "worst": 0.00266960575348274
+  },
+  "unsorted/forced/0.005": {
+   "inherited_worst": 0.006432339668646557,
+   "own_defect_worst": 0.0014274256380060746,
+   "solver_share": 0.024375,
+   "worst": 0.006352014002740075
+  },
+  "unsorted/forced/0.05": {
+   "inherited_worst": 0.00214458112699778,
+   "own_defect_worst": 0.003210739686575967,
+   "solver_share": 0.021875,
+   "worst": 0.0026948485577409365
+  },
+  "unsorted/forced/0.25": {
+   "inherited_worst": 0.0016911961829022965,
+   "own_defect_worst": 0.00266960575348274,
+   "solver_share": 0.014375000000000002,
+   "worst": 0.00266960575348274
+  }
+ },
+ "bruss_d20": {
+  "sorted/closed/0.005": {
+   "inherited_worst": 0.0019637735868056234,
+   "own_defect_worst": 0.00116009694643332,
+   "solver_share": 0.053125,
+   "worst": 0.0019554305799435266
+  },
+  "sorted/closed/0.05": {
+   "inherited_worst": 0.0013733983569066965,
+   "own_defect_worst": 0.0011241214023653967,
+   "solver_share": 0.05,
+   "worst": 0.0013600488063689742
+  },
+  "sorted/closed/0.25": {
+   "inherited_worst": 0.0006050630246034368,
+   "own_defect_worst": 0.0005527268341553801,
+   "solver_share": 0.05,
+   "worst": 0.0005754753086931463
+  },
+  "sorted/forced/0.005": {
+   "inherited_worst": 0.0020017893793117542,
+   "own_defect_worst": 0.00116009694643332,
+   "solver_share": 0.053125,
+   "worst": 0.0019934326698468705
+  },
+  "sorted/forced/0.05": {
+   "inherited_worst": 0.0013362146955508136,
+   "own_defect_worst": 0.0011241214023653967,
+   "solver_share": 0.05,
+   "worst": 0.0013483594977208302
+  },
+  "sorted/forced/0.25": {
+   "inherited_worst": 0.0003062922933483418,
+   "own_defect_worst": 0.0005527268341553801,
+   "solver_share": 0.05,
+   "worst": 0.0005527268341553801
+  },
+  "status": "done",
+  "unsorted/closed/0.005": {
+   "inherited_worst": 0.0012940131179762157,
+   "own_defect_worst": 0.001209251831452901,
+   "solver_share": 0.051875000000000004,
+   "worst": 0.0012776889331008179
+  },
+  "unsorted/closed/0.05": {
+   "inherited_worst": 0.001399789410974045,
+   "own_defect_worst": 0.0011183634052531755,
+   "solver_share": 0.05,
+   "worst": 0.0013844675063752268
+  },
+  "unsorted/closed/0.25": {
+   "inherited_worst": 0.0005733715328174877,
+   "own_defect_worst": 0.0004356781262428999,
+   "solver_share": 0.05,
+   "worst": 0.0005980136199211367
+  },
+  "unsorted/forced/0.005": {
+   "inherited_worst": 0.0012843784344905424,
+   "own_defect_worst": 0.001209251831452901,
+   "solver_share": 0.051875000000000004,
+   "worst": 0.0012716327336678272
+  },
+  "unsorted/forced/0.05": {
+   "inherited_worst": 0.0013260213455025885,
+   "own_defect_worst": 0.0011183634052531755,
+   "solver_share": 0.05,
+   "worst": 0.001310715880320952
+  },
+  "unsorted/forced/0.25": {
+   "inherited_worst": 0.00033839086340299585,
+   "own_defect_worst": 0.0004356781262428999,
+   "solver_share": 0.05,
+   "worst": 0.0004356781262428999
+  }
+ },
+ "burgers_d20": {
+  "sorted/closed/0.005": {
+   "inherited_worst": 0.00030553282511083194,
+   "law_drift_over_scale": 5.560876503273892e-15,
+   "own_defect_worst": 0.001551695607810294,
+   "solver_share": 0.013750000000000002,
+   "worst": 0.001551695607810294
+  },
+  "sorted/closed/0.05": {
+   "inherited_worst": 0.0002751387775372597,
+   "law_drift_over_scale": 4.170657377455414e-15,
+   "own_defect_worst": 0.002110181083291307,
+   "solver_share": 0.011875,
+   "worst": 0.002110181083291307
+  },
+  "sorted/closed/0.25": {
+   "inherited_worst": 0.00021261660341584214,
+   "law_drift_over_scale": 4.170657377455418e-15,
+   "own_defect_worst": 0.001561944503896573,
+   "solver_share": 0.000625,
+   "worst": 0.001561944503896573
+  },
+  "sorted/forced/0.005": {
+   "inherited_worst": 0.0003039974370067219,
+   "law_drift_over_scale": 3.972054645195638e-15,
+   "own_defect_worst": 0.001551695607810294,
+   "solver_share": 0.013750000000000002,
+   "worst": 0.001551695607810294
+  },
+  "sorted/forced/0.05": {
+   "inherited_worst": 0.0002606574037468329,
+   "law_drift_over_scale": 3.9720546451956327e-16,
+   "own_defect_worst": 0.002110181083291307,
+   "solver_share": 0.01125,
+   "worst": 0.002110181083291307
+  },
+  "sorted/forced/0.25": {
+   "inherited_worst": 0.0001220341567685912,
+   "law_drift_over_scale": 1.9860273225978183e-16,
+   "own_defect_worst": 0.001561944503896573,
+   "solver_share": 0.00125,
+   "worst": 0.001561944503896573
+  },
+  "status": "done",
+  "unsorted/closed/0.005": {
+   "inherited_worst": 0.00028019389535965597,
+   "law_drift_over_scale": 3.773451912935856e-15,
+   "own_defect_worst": 0.0015406909032777832,
+   "solver_share": 0.013750000000000002,
+   "worst": 0.0015406909032777832
+  },
+  "unsorted/closed/0.05": {
+   "inherited_worst": 0.0001977276350760282,
+   "law_drift_over_scale": 1.986027322597817e-15,
+   "own_defect_worst": 0.0016901112378775451,
+   "solver_share": 0.01,
+   "worst": 0.0016901112378775451
+  },
+  "unsorted/closed/0.25": {
+   "inherited_worst": 0.00014337000479036632,
+   "law_drift_over_scale": 7.944109290391273e-16,
+   "own_defect_worst": 0.0011757457877101807,
+   "solver_share": 0.00125,
+   "worst": 0.0011757457877101807
+  },
+  "unsorted/forced/0.005": {
+   "inherited_worst": 0.00028019389535965597,
+   "law_drift_over_scale": 4.170657377455419e-15,
+   "own_defect_worst": 0.0015406909032777832,
+   "solver_share": 0.014375000000000002,
+   "worst": 0.0015406909032777832
+  },
+  "unsorted/forced/0.05": {
+   "inherited_worst": 0.00019463555285725853,
+   "law_drift_over_scale": 1.9860273225978166e-16,
+   "own_defect_worst": 0.0016901112378775451,
+   "solver_share": 0.010625,
+   "worst": 0.0016901112378775451
+  },
+  "unsorted/forced/0.25": {
+   "inherited_worst": 9.641213335243037e-05,
+   "law_drift_over_scale": 1.9860273225978183e-16,
+   "own_defect_worst": 0.0011757457877101807,
+   "solver_share": 0.0018750000000000004,
+   "worst": 0.0011757457877101807
+  }
+ },
+ "chemakzo": {
+  "sorted/closed/0.005": {
+   "inherited_worst": 0.005848336703443868,
+   "own_defect_worst": 0.004933824446502477,
+   "solver_share": 0.007941176470588236,
+   "worst": 0.005974251301048339
+  },
+  "sorted/closed/0.05": {
+   "inherited_worst": 0.00397286405583408,
+   "own_defect_worst": 0.0039049126615360308,
+   "solver_share": 0.01764705882352941,
+   "worst": 0.004341874828833525
+  },
+  "sorted/closed/0.25": {
+   "inherited_worst": 0.004671190545754267,
+   "own_defect_worst": 0.0042749999205047295,
+   "solver_share": 0.02088235294117647,
+   "worst": 0.004764708862765699
+  },
+  "sorted/forced/0.005": {
+   "inherited_worst": 0.005180053081249025,
+   "own_defect_worst": 0.004760408499582258,
+   "solver_share": 0.007941176470588236,
+   "worst": 0.005407639630762517
+  },
+  "sorted/forced/0.05": {
+   "inherited_worst": 0.0018180654974152555,
+   "own_defect_worst": 0.004307315091471864,
+   "solver_share": 0.01676470588235294,
+   "worst": 0.004566824840700701
+  },
+  "sorted/forced/0.25": {
+   "inherited_worst": 0.0004245643661218157,
+   "own_defect_worst": 0.00471215234330602,
+   "solver_share": 0.017941176470588235,
+   "worst": 0.004818719425309315
+  },
+  "status": "done",
+  "unsorted/closed/0.005": {
+   "inherited_worst": 0.00381655725750063,
+   "own_defect_worst": 0.004451418499721527,
+   "solver_share": 0.023529411764705882,
+   "worst": 0.0045894193176683196
+  },
+  "unsorted/closed/0.05": {
+   "inherited_worst": 0.002227002827729585,
+   "own_defect_worst": 0.004395309281396198,
+   "solver_share": 0.03441176470588236,
+   "worst": 0.004454874484470128
+  },
+  "unsorted/closed/0.25": {
+   "inherited_worst": 0.002821787395171693,
+   "own_defect_worst": 0.003925029192316742,
+   "solver_share": 0.022941176470588236,
+   "worst": 0.003925029192316742
+  },
+  "unsorted/forced/0.005": {
+   "inherited_worst": 0.0038113973155134984,
+   "own_defect_worst": 0.004344213824919674,
+   "solver_share": 0.02323529411764706,
+   "worst": 0.004474572241667918
+  },
+  "unsorted/forced/0.05": {
+   "inherited_worst": 0.001786635887364496,
+   "own_defect_worst": 0.0045612145579942975,
+   "solver_share": 0.03411764705882353,
+   "worst": 0.004693070499377949
+  },
+  "unsorted/forced/0.25": {
+   "inherited_worst": 0.0003384485558983741,
+   "own_defect_worst": 0.003925029192316742,
+   "solver_share": 0.021470588235294116,
+   "worst": 0.003925029192316742
+  }
+ },
+ "fisher_kpp_d10": {
+  "sorted/closed/0.005": {
+   "inherited_worst": 0.0021854360816463414,
+   "own_defect_worst": 0.002395434844755906,
+   "solver_share": 0.07062500000000001,
+   "worst": 0.002395434844755906
+  },
+  "sorted/closed/0.05": {
+   "inherited_worst": 0.0013748681640695093,
+   "own_defect_worst": 0.001474882432039415,
+   "solver_share": 0.06875,
+   "worst": 0.0016045687567891598
+  },
+  "sorted/closed/0.25": {
+   "inherited_worst": 0.0006993058543135477,
+   "own_defect_worst": 0.0009269890005153547,
+   "solver_share": 0.061875,
+   "worst": 0.0009269890005153547
+  },
+  "sorted/forced/0.005": {
+   "inherited_worst": 0.002185015918913069,
+   "own_defect_worst": 0.002395434844755906,
+   "solver_share": 0.07062500000000001,
+   "worst": 0.002395434844755906
+  },
+  "sorted/forced/0.05": {
+   "inherited_worst": 0.0012655048845970907,
+   "own_defect_worst": 0.001474882432039415,
+   "solver_share": 0.06875,
+   "worst": 0.0015179930422383192
+  },
+  "sorted/forced/0.25": {
+   "inherited_worst": 0.00039760322399851056,
+   "own_defect_worst": 0.0009269890005153547,
+   "solver_share": 0.061875,
+   "worst": 0.0009269890005153547
+  },
+  "status": "done",
+  "unsorted/closed/0.005": {
+   "inherited_worst": 0.001952658821972264,
+   "own_defect_worst": 0.002199425031178759,
+   "solver_share": 0.0725,
+   "worst": 0.0023397509063438626
+  },
+  "unsorted/closed/0.05": {
+   "inherited_worst": 0.0022834447751800546,
+   "own_defect_worst": 0.0026381783609996656,
+   "solver_share": 0.0725,
+   "worst": 0.0026381783609996656
+  },
+  "unsorted/closed/0.25": {
+   "inherited_worst": 0.0012836145118171327,
+   "own_defect_worst": 0.0020362763843876364,
+   "solver_share": 0.071875,
+   "worst": 0.0020362763843876364
+  },
+  "unsorted/forced/0.005": {
+   "inherited_worst": 0.0019676221010165307,
+   "own_defect_worst": 0.002199425031178759,
+   "solver_share": 0.0725,
+   "worst": 0.0023397509063438626
+  },
+  "unsorted/forced/0.05": {
+   "inherited_worst": 0.0022447534590186446,
+   "own_defect_worst": 0.0026381783609996656,
+   "solver_share": 0.0725,
+   "worst": 0.0026381783609996656
+  },
+  "unsorted/forced/0.25": {
+   "inherited_worst": 0.0008726078286483974,
+   "own_defect_worst": 0.0020362763843876364,
+   "solver_share": 0.071875,
+   "worst": 0.0020362763843876364
+  }
+ },
+ "fisher_kpp_d2": {
+  "sorted/closed/0.005": {
+   "inherited_worst": 0.00038461867506423,
+   "own_defect_worst": 0.0005399053355785721,
+   "solver_share": 0.013750000000000002,
+   "worst": 0.0005399053355785721
+  },
+  "sorted/closed/0.05": {
+   "inherited_worst": 0.001034678849052506,
+   "own_defect_worst": 0.0013962134925304959,
+   "solver_share": 0.018125,
+   "worst": 0.0013962134925304959
+  },
+  "sorted/closed/0.25": {
+   "inherited_worst": 0.0017327053068021403,
+   "own_defect_worst": 0.003707822449720899,
+   "solver_share": 0.030625000000000003,
+   "worst": 0.003707822449720899
+  },
+  "sorted/forced/0.005": {
+   "inherited_worst": 0.0003843398121410324,
+   "own_defect_worst": 0.0005399053355785721,
+   "solver_share": 0.025,
+   "worst": 0.0005399053355785721
+  },
+  "sorted/forced/0.05": {
+   "inherited_worst": 0.0010009869201492716,
+   "own_defect_worst": 0.0013962134925304959,
+   "solver_share": 0.0175,
+   "worst": 0.0013962134925304959
+  },
+  "sorted/forced/0.25": {
+   "inherited_worst": 0.0015635285761330664,
+   "own_defect_worst": 0.003707822449720899,
+   "solver_share": 0.025625,
+   "worst": 0.003707822449720899
+  },
+  "status": "done",
+  "unsorted/closed/0.005": {
+   "inherited_worst": 0.002716863837879391,
+   "own_defect_worst": 0.004310121755065399,
+   "solver_share": 0.02375,
+   "worst": 0.004310121755065399
+  },
+  "unsorted/closed/0.05": {
+   "inherited_worst": 0.0016172733473351908,
+   "own_defect_worst": 0.0026433746190523966,
+   "solver_share": 0.0325,
+   "worst": 0.0026433746190523966
+  },
+  "unsorted/closed/0.25": {
+   "inherited_worst": 0.0009117410789967195,
+   "own_defect_worst": 0.0015374595083015308,
+   "solver_share": 0.0375,
+   "worst": 0.0015374595083015308
+  },
+  "unsorted/forced/0.005": {
+   "inherited_worst": 0.002683858620013302,
+   "own_defect_worst": 0.004310121755065399,
+   "solver_share": 0.027500000000000004,
+   "worst": 0.004310121755065399
+  },
+  "unsorted/forced/0.05": {
+   "inherited_worst": 0.0016163777680633373,
+   "own_defect_worst": 0.0026433746190523966,
+   "solver_share": 0.023125,
+   "worst": 0.0026433746190523966
+  },
+  "unsorted/forced/0.25": {
+   "inherited_worst": 0.0005702420566098265,
+   "own_defect_worst": 0.0015374595083015308,
+   "solver_share": 0.04437500000000001,
+   "worst": 0.0015374595083015308
+  }
+ },
+ "fisher_kpp_d3": {
+  "sorted/closed/0.005": {
+   "inherited_worst": 0.006653255762692406,
+   "own_defect_worst": 0.007421945494576386,
+   "solver_share": 0.014375000000000002,
+   "worst": 0.007421945494576386
+  },
+  "sorted/closed/0.05": {
+   "inherited_worst": 0.003943187596928022,
+   "own_defect_worst": 0.01024668790462635,
+   "solver_share": 0.013125000000000001,
+   "worst": 0.01024668790462635
+  },
+  "sorted/closed/0.25": {
+   "inherited_worst": 0.003766272305098184,
+   "own_defect_worst": 0.010516382418146453,
+   "solver_share": 0.013125000000000001,
+   "worst": 0.010516382418146453
+  },
+  "sorted/forced/0.005": {
+   "inherited_worst": 0.006653255762692406,
+   "own_defect_worst": 0.007421945494576386,
+   "solver_share": 0.013750000000000002,
+   "worst": 0.007421945494576386
+  },
+  "sorted/forced/0.05": {
+   "inherited_worst": 0.003943135907550799,
+   "own_defect_worst": 0.01024668790462635,
+   "solver_share": 0.015000000000000003,
+   "worst": 0.01024668790462635
+  },
+  "sorted/forced/0.25": {
+   "inherited_worst": 0.0024410233156333394,
+   "own_defect_worst": 0.010516382418146453,
+   "solver_share": 0.013750000000000002,
+   "worst": 0.010516382418146453
+  },
+  "status": "done",
+  "unsorted/closed/0.005": {
+   "inherited_worst": 0.006936668794089926,
+   "own_defect_worst": 0.007694525918481979,
+   "solver_share": 0.015,
+   "worst": 0.007694525918481979
+  },
+  "unsorted/closed/0.05": {
+   "inherited_worst": 0.004796977519316181,
+   "own_defect_worst": 0.008795720138868868,
+   "solver_share": 0.013125000000000001,
+   "worst": 0.008795720138868868
+  },
+  "unsorted/closed/0.25": {
+   "inherited_worst": 0.0013299036352274474,
+   "own_defect_worst": 0.006438483278552232,
+   "solver_share": 0.015625,
+   "worst": 0.006438483278552232
+  },
+  "unsorted/forced/0.005": {
+   "inherited_worst": 0.006936701910148113,
+   "own_defect_worst": 0.007694525918481979,
+   "solver_share": 0.012500000000000002,
+   "worst": 0.007694525918481979
+  },
+  "unsorted/forced/0.05": {
+   "inherited_worst": 0.004796977519316181,
+   "own_defect_worst": 0.008795720138868868,
+   "solver_share": 0.014375000000000002,
+   "worst": 0.008795720138868868
+  },
+  "unsorted/forced/0.25": {
+   "inherited_worst": 0.001308850744753176,
+   "own_defect_worst": 0.006438483278552232,
+   "solver_share": 0.016249999999999997,
+   "worst": 0.006438483278552232
+  }
+ },
+ "fisher_kpp_d5": {
+  "sorted/closed/0.005": {
+   "inherited_worst": 0.0015343682102630929,
+   "own_defect_worst": 0.0026561457909677344,
+   "solver_share": 0.04625,
+   "worst": 0.0026561457909677344
+  },
+  "sorted/closed/0.05": {
+   "inherited_worst": 0.001166851134251079,
+   "own_defect_worst": 0.0018157210066536145,
+   "solver_share": 0.045,
+   "worst": 0.0018157210066536145
+  },
+  "sorted/closed/0.25": {
+   "inherited_worst": 0.0009821689916270637,
+   "own_defect_worst": 0.0014436005438569488,
+   "solver_share": 0.041249999999999995,
+   "worst": 0.0014436005438569488
+  },
+  "sorted/forced/0.005": {
+   "inherited_worst": 0.0015343682102630929,
+   "own_defect_worst": 0.0026561457909677344,
+   "solver_share": 0.04625,
+   "worst": 0.0026561457909677344
+  },
+  "sorted/forced/0.05": {
+   "inherited_worst": 0.001115151002028858,
+   "own_defect_worst": 0.0018157210066536145,
+   "solver_share": 0.045,
+   "worst": 0.0018157210066536145
+  },
+  "sorted/forced/0.25": {
+   "inherited_worst": 0.000625938939475601,
+   "own_defect_worst": 0.0014436005438569488,
+   "solver_share": 0.041249999999999995,
+   "worst": 0.0014436005438569488
+  },
+  "status": "done",
+  "unsorted/closed/0.005": {
+   "inherited_worst": 0.0018601056281495332,
+   "own_defect_worst": 0.002784635865598073,
+   "solver_share": 0.04875,
+   "worst": 0.002784635865598073
+  },
+  "unsorted/closed/0.05": {
+   "inherited_worst": 0.0018659545606909966,
+   "own_defect_worst": 0.0022356878181068185,
+   "solver_share": 0.053125,
+   "worst": 0.0022356878181068185
+  },
+  "unsorted/closed/0.25": {
+   "inherited_worst": 0.0008320855314281062,
+   "own_defect_worst": 0.0019255974996098546,
+   "solver_share": 0.05,
+   "worst": 0.0019255974996098546
+  },
+  "unsorted/forced/0.005": {
+   "inherited_worst": 0.0018610653917794928,
+   "own_defect_worst": 0.002784635865598073,
+   "solver_share": 0.04875,
+   "worst": 0.002784635865598073
+  },
+  "unsorted/forced/0.05": {
+   "inherited_worst": 0.0018486877588949624,
+   "own_defect_worst": 0.0022356878181068185,
+   "solver_share": 0.053125,
+   "worst": 0.0022356878181068185
+  },
+  "unsorted/forced/0.25": {
+   "inherited_worst": 0.0007773687443177746,
+   "own_defect_worst": 0.0019255974996098546,
+   "solver_share": 0.05,
+   "worst": 0.0019255974996098546
+  }
+ },
+ "lorenz96_d4": {
+  "sorted/closed/0.005": {
+   "inherited_worst": 0.00019385334612809224,
+   "own_defect_worst": 0.00024701955398831466,
+   "solver_share": 0.0,
+   "worst": 0.00024701955398831466
+  },
+  "sorted/closed/0.05": {
+   "inherited_worst": 0.00014396811028027923,
+   "own_defect_worst": 0.00012829217442872354,
+   "solver_share": 0.0,
+   "worst": 0.00015843451317820723
+  },
+  "sorted/closed/0.25": {
+   "inherited_worst": 0.00012308859638177072,
+   "own_defect_worst": 0.00010131438940447213,
+   "solver_share": 0.0,
+   "worst": 0.00012550437085745436
+  },
+  "sorted/forced/0.005": {
+   "inherited_worst": 0.00019363989524956438,
+   "own_defect_worst": 0.00024701955398831466,
+   "solver_share": 0.0,
+   "worst": 0.00024701955398831466
+  },
+  "sorted/forced/0.05": {
+   "inherited_worst": 0.00013107851877347532,
+   "own_defect_worst": 0.00012829217442872354,
+   "solver_share": 0.0,
+   "worst": 0.00014784727502048511
+  },
+  "sorted/forced/0.25": {
+   "inherited_worst": 4.634908387579628e-05,
+   "own_defect_worst": 0.00010131438940447213,
+   "solver_share": 0.0,
+   "worst": 0.00010131438940447213
+  },
+  "status": "done",
+  "unsorted/closed/0.005": {
+   "inherited_worst": 0.0001959973831862083,
+   "own_defect_worst": 0.0002500397304758817,
+   "solver_share": 0.0,
+   "worst": 0.0002500397304758817
+  },
+  "unsorted/closed/0.05": {
+   "inherited_worst": 9.771954276316386e-05,
+   "own_defect_worst": 0.00013882725570413257,
+   "solver_share": 0.0,
+   "worst": 0.00013882725570413257
+  },
+  "unsorted/closed/0.25": {
+   "inherited_worst": 2.189373569438935e-05,
+   "own_defect_worst": 3.75091646949155e-05,
+   "solver_share": 0.0,
+   "worst": 3.75091646949155e-05
+  },
+  "unsorted/forced/0.005": {
+   "inherited_worst": 0.00019609611017679107,
+   "own_defect_worst": 0.0002500397304758817,
+   "solver_share": 0.0,
+   "worst": 0.0002500397304758817
+  },
+  "unsorted/forced/0.05": {
+   "inherited_worst": 9.848076724461308e-05,
+   "own_defect_worst": 0.00013882725570413257,
+   "solver_share": 0.0,
+   "worst": 0.00013882725570413257
+  },
+  "unsorted/forced/0.25": {
+   "inherited_worst": 1.704880766428829e-05,
+   "own_defect_worst": 3.75091646949155e-05,
+   "solver_share": 0.0,
+   "worst": 3.75091646949155e-05
+  }
+ },
+ "robertson": {
+  "sorted/closed/0.005": {
+   "inherited_worst": 4.895509944979892e-06,
+   "law_drift_over_scale": 2.8844440295753393e-15,
+   "own_defect_worst": 6.926862153200375e-05,
+   "solver_share": 0.00025,
+   "worst": 6.926862153200375e-05
+  },
+  "sorted/closed/0.05": {
+   "inherited_worst": 7.569512887384278e-06,
+   "law_drift_over_scale": 2.1152589550219155e-15,
+   "own_defect_worst": 0.0001028849947690702,
+   "solver_share": 0.0,
+   "worst": 0.0001028849947690702
+  },
+  "sorted/closed/0.25": {
+   "inherited_worst": 4.071620146151034e-06,
+   "law_drift_over_scale": 9.614813431917815e-16,
+   "own_defect_worst": 4.957399476035462e-06,
+   "solver_share": 0.0,
+   "worst": 4.957399476035462e-06
+  },
+  "sorted/forced/0.005": {
+   "inherited_worst": 5.228291723113898e-06,
+   "law_drift_over_scale": 2.4998514922986274e-15,
+   "own_defect_worst": 6.926862153200375e-05,
+   "solver_share": 0.00025,
+   "worst": 6.926862153200375e-05
+  },
+  "sorted/forced/0.05": {
+   "inherited_worst": 7.584192860621286e-06,
+   "law_drift_over_scale": 9.614813431917799e-16,
+   "own_defect_worst": 0.0001028849947690702,
+   "solver_share": 0.0,
+   "worst": 0.0001028849947690702
+  },
+  "sorted/forced/0.25": {
+   "inherited_worst": 2.2782311600577643e-06,
+   "law_drift_over_scale": 7.691850745534251e-16,
+   "own_defect_worst": 4.957399476035462e-06,
+   "solver_share": 0.0,
+   "worst": 4.957399476035462e-06
+  },
+  "status": "done",
+  "unsorted/closed/0.005": {
+   "inherited_worst": 6.513386986206626e-06,
+   "law_drift_over_scale": 3.845925372767114e-15,
+   "own_defect_worst": 8.100417676892846e-05,
+   "solver_share": 0.0,
+   "worst": 8.100417676892846e-05
+  },
+  "unsorted/closed/0.05": {
+   "inherited_worst": 7.845932728622884e-06,
+   "law_drift_over_scale": 1.730666417745204e-15,
+   "own_defect_worst": 7.004471794314071e-05,
+   "solver_share": 0.0,
+   "worst": 7.004471794314071e-05
+  },
+  "unsorted/closed/0.25": {
+   "inherited_worst": 2.6705485653977235e-06,
+   "law_drift_over_scale": 9.614813431917815e-16,
+   "own_defect_worst": 1.2930633535468417e-05,
+   "solver_share": 0.0,
+   "worst": 1.2930633535468417e-05
+  },
+  "unsorted/forced/0.005": {
+   "inherited_worst": 5.909602322606844e-06,
+   "law_drift_over_scale": 4.2305179100438255e-15,
+   "own_defect_worst": 8.100417676892846e-05,
+   "solver_share": 0.0,
+   "worst": 8.100417676892846e-05
+  },
+  "unsorted/forced/0.05": {
+   "inherited_worst": 8.008518512014895e-06,
+   "law_drift_over_scale": 9.6148134319178e-16,
+   "own_defect_worst": 7.004471794314071e-05,
+   "solver_share": 0.0,
+   "worst": 7.004471794314071e-05
+  },
+  "unsorted/forced/0.25": {
+   "inherited_worst": 2.1832989995917984e-06,
+   "law_drift_over_scale": 3.8459253727671257e-16,
+   "own_defect_worst": 1.2930633535468417e-05,
+   "solver_share": 0.0,
+   "worst": 1.2930633535468417e-05
+  }
+ }
+}
