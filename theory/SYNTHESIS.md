@@ -250,6 +250,254 @@ for selection. What it says: linear charts with polynomial lifts do not reduce K
 S4) is the open question for the target class. The diffuse range was stopped: its environments (T up to 3,000 K, strong UV) lie outside
 the range KIDA's rate coefficients are fitted for, and single tracers took more than 15 minutes.
 
+### 3.9 After the council (round 1): what was adopted
+
+The three reviews (`theory/reviews/council-{fable,sol,astra}.md`) agreed on the order: repair the KIDA reference comparison first, put the
+deployment test (a split replay with neighbours carrying surrogate error) before any model search, keep rollout-tuned ChebTT and the
+chart as controls, run one bounded MLP against linear and local fits on equal data, compare designed data at equal cost, and stop
+full-panel reruns, architecture surveys and unconditional AFINNI/ART sweeps. Adopted, in that order:
+
+- **KIDA's projection** (Astra's finding: the deployed invariant projection, handed the solver's own answer, missed 0.01 on every state,
+  by up to 293 dex). Cause: the numerical null-space search found 373 spurious laws on KIDA's sampled states. Fix in `src` (approved):
+  a system can declare its conservation laws (`System.conserved`), `invariants_of` prefers them, and KIDA's 15 exact laws (13 elements,
+  charge, grains) come from parsing its species names (`src/problems/ode/astro.py`, tests in `tests/unit/test_astro_conservation.py`).
+  The projection now round-trips exact labels within 1.2e-9 dex.
+- **KIDA's chemistry.** The dense range's median HCO+ of 1e-4 was a setup bug: KIDApy leaves electrons to the caller and the loader left
+  them at zero, so every state carried a net charge the network conserves. The *dark* range sets electrons from charge neutrality and
+  uses standard dark-cloud conditions; its states are physically plausible (`theory/KIDA_QOI.md`). Nelson starts the same way; it is
+  flagged for the final rerun, since changing it changes benchmark data.
+- **KIDA's key species** (the user's choice after a literature search): 13 species for cooling (H2, CO, C, C+, O, OH, H2O), ionisation
+  (e-, H3+, HCO+, N2H+, S+) and a dense-gas tracer (HCN), at 0.01 dex where the abundance exceeds 1e-12; the strict all-species metric
+  is reported beside it.
+- **The third recipe** (`theory/panel/generic3.py`): the gate calibrated for the *maximum* on calibration states set apart from the
+  selection's (each split's held-out fifth halved into calibration and selection trajectories), mixed inputs in the calibration, a
+  propagation margin (served only if the worst held-out chain is within half the tolerance), and k up to the free dimension.
+
+### 3.10 The third recipe on the discriminating cases (R4c; `theory/panel/r4c_rules.py`, predictions `305e0c4`)
+
+Seventeen problems at tolerance 0.01, M = 0: the chemistry and oscillator class, R4b's four selection-test misses and full-chart mixing
+failures, a propagation failure, and four controls. Timings are single measurements taken while other runs shared the
+machine; read them as orders of magnitude.
+
+| problem | d | k | degree | served | e_hat | refused (test) | rollout, 40 | chained mixing 0.01 / 0.1 (solver) | effective speed-up | predict / gate / solve (us) | train (s) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| allen_cahn_d5 | 5 | 5 | 3 | no | 3.3e-04 | 6.8% | 4.2e-02 | 6.0e-02 / 2.8e-02 (6 / 4%) | 14.3 | 1 / 2 / 1037 | 19 |
+| bruss_d2 | 2 | 2 | 12 | yes | 3.0e-10 | 0.0% | 1.1e-09 | 4.6e-04 / 1.5e-03 (2 / 1%) | 753.5 | 1 / 3 / 2629 | 6 |
+| bruss_d20 | 20 | 9 | 4 | yes | 2.2e-04 | 3.8% | 3.3e-03 | 2.5e-03 / 3.3e-03 (3 / 3%) | 13.0 | 21 / 43 / 1589 | 58 |
+| burgers_d20 | 20 | 6 | 5 | yes | 2.6e-08 | 4.1% | 1.6e-03 | 2.3e-03 / 1.9e-03 (4 / 3%) | 14.1 | 12 / 23 / 1131 | 11 |
+| chemakzo | 5 | 5 | 9 | yes | 3.6e-09 | 0.7% | 1.3e-04 | 2.0e-04 / 3.8e-05 (89 / 99%) | 0.7 | 10 / 1642 / 1186 | 855 |
+| fisher_kpp_d2 | 2 | 2 | 12 | yes | 1.6e-06 | 0.0% | 1.3e-04 | 3.0e-03 / 5.5e-04 (0 / 0%) | 109.0 | 2 / 7 / 932 | 7 |
+| fisher_kpp_d3 | 3 | 3 | 11 | yes | 1.5e-08 | 1.1% | 6.6e-03 | 6.5e-03 / 9.3e-03 (1 / 1%) | 32.2 | 2 / 14 / 804 | 18 |
+| fisher_kpp_d5 | 5 | 5 | 8 | yes | 6.0e-06 | 20.1% | 7.8e-04 | 1.2e-03 / 3.4e-04 (19 / 18%) | 1.3 | 9 / 525 / 952 | 651 |
+| hires | 8 | 3 | 12 | no | 3.3e-03 | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 (100 / 100%) | 1.0 | 14 / 27 / 938 | 55 |
+| lorenz96_d20 | 20 | 20 | 2 | no | 7.6e-04 | 62.9% | 2.4e-02 | 2.3e-02 / 8.0e-03 (45 / 20%) | 1.5 | 2 / 7 / 156 | 28 |
+| lorenz96_d4 | 4 | 4 | 7 | yes | 6.3e-10 | 0.0% | 2.7e-05 | 2.5e-05 / 2.2e-05 (0 / 0%) | 14.0 | 5 / 14 / 268 | 16 |
+| nelson | 18 | 12 | 1 | no | 1.2e-01 | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 (100 / 100%) | 1.0 | 12 / 14 / 78048 | 31 |
+| oregonator | 3 | 3 | 9 | no | 5.9e-01 | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 (100 / 100%) | 1.0 | 1 / 5 / 7885 | 18 |
+| pollu | 20 | 13 | 3 | no | 5.4e-06 | 11.9% | 1.3e-02 | 4.5e-03 / 0.0e+00 (99 / 100%) | 6.0 | 27 / 40 / 1373 | 144 |
+| primordial | 10 | 6 | 2 | no | 3.3e-02 | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 (100 / 100%) | 1.0 | 14 / 15 / 8351 | 42 |
+| robertson | 3 | 3 | 6 | yes | 1.2e-09 | 0.0% | 1.3e-05 | 7.3e-06 / 2.3e-05 (0 / 0%) | 32.4 | 18 / 19 / 1218 | 28 |
+| van_der_pol | 2 | 2 | 10 | no | 2.7e+02 | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 (100 / 100%) | 1.0 | 0 / 1 / 6533 | 18 |
+
+A rollout of 0 with 100% refused means the solver took every step.
+
+Pre-registered readings: **V1 holds** (no served problem misses the tolerance on its 40 test rollouts; the worst is fisher_kpp_d3's
+6.6e-3, which R4b missed at 2.5e-2); **V2 holds** (every served problem holds chained mixing at both weights; the worst is fisher_kpp_d3's
+9.3e-3); **V3 fails** (9 of 17 served, the four controls among them, but not HIRES); **V4 holds** (POLLU, Nelson, the Oregonator, Van der
+Pol and primordial are not served); **V5 fails** (the median effective speed-up over the served problems is 14, predicted at least 20).
+
+- **HIRES is refused whole although its fit is accurate**: the ungated first-step worst is 1.1e-6, but e_hat (the largest calibration
+  score) is 3.3e-3, set by mixed calibration states off its thin manifold, which the residual term refuses anyway; section 3.16 tests
+  the fix.
+- **CHEMAKZO is served at an effective speed-up of 0.7**, slower than the solver: the rule takes the smallest worst chain among served
+  configurations (degree 9: 1.3e-3, a 24% solver share in the selection), not the fastest (degree 8: 2.8e-3, 5%). Its selection took
+  1,287 s (degrees 8-10 cost 4-14 minutes each in solver fallbacks); a 1,800 s limit stopped the first two attempts.
+- **The gate's cost sets the speed where the fit is cheap**: fisher_kpp_d5's gate costs 525 us against a 9 us prediction and a 952 us
+  solve, so with 20% refused its effective speed-up is 1.3; CHEMAKZO's gate (1,642 us) costs more than its solve (1,186 us).
+- Primordial and Nelson are coarse on plain states already (e_hat 3.3e-2 and 8.6e-2 at degrees 2 and 1, the largest the data
+  allow); POLLU fails on a chain of 1.25e-2; the oscillators are refused whole (their approximation limit); lorenz96_d20 refuses 63%.
+
+### 3.11 Rollout-tuned ChebTT under chained mixing (p4; `theory/panel/p4_chebtt_mixing.py`, prediction `59c582c`)
+
+`chebtt_roll`, rebuilt exactly as the benchmark builds it on the 15 problems where its benchmark record holds the tolerance, holds the
+tolerance under chained mixing at both weights on all 15, with solver shares within a point of zero (Fable's prediction: at least 13).
+A convex mixture of in-box states stays in its box, so mixing is not off its data. This made it the control for the split replay.
+
+### 3.12 The split replay: a scripted column (p6; `theory/panel/p6_column.py`, predictions `1ac8a5a`)
+
+Chained mixing (sections 3.7, 3.11) mixes each cell with a *reference* partner and so pulls it toward the truth; no surrogate error feeds
+back through the coupling (Sol's objection). The column removes that: the test trajectories are cells of a 1-D column (ordered by their
+first principal coordinate), each step is conservative transport between neighbours, x_i <- (1 - 2D) x_i + D (x_{i-1} + x_{i+1}) in the
+system's own variables, then chemistry; each cell's environment follows its own path, and the hybrid column (surrogate, solver on refused
+cells) is compared with the solver-only column. D = 0.005 and 0.05 give the same exchange per step as the mixing weights 0.01 and 0.1.
+
+| problem | surrogate | column D = 0.005 / 0.05 | chained mixing 0.01 / 0.1 | ratio at the larger exchange | column solver share | own-input defect | invariant drift (relative) |
+|---|---|---|---|---|---|---|---|
+| allen_cahn_d10 | chebtt_roll | 3.0e-03 / 5.0e-03 | 4.1e-03 / 1.7e-03 | 3.0 | 0.0 / 0.0% | 1.1e-04 | – |
+| allen_cahn_d2 | chebtt_roll | 8.5e-03 / 3.4e-03 | 6.8e-03 / 9.0e-04 | 3.8 | 0.0 / 0.0% | 1.1e-04 | – |
+| allen_cahn_d3 | chebtt_roll | 3.3e-03 / 3.1e-03 | 3.2e-03 / 2.3e-04 | 13.2 | 0.0 / 0.0% | 4.7e-05 | – |
+| allen_cahn_d5 | chebtt_roll | 1.1e-03 / 1.7e-03 | 3.0e-03 / 4.8e-04 | 3.4 | 0.0 / 0.0% | 6.0e-05 | – |
+| bruss_d20 | recipe | 2.6e-03 / 3.0e-03 | 2.5e-03 / 3.3e-03 | 0.9 | 3.5 / 3.1% | 3.0e-03 | 2.6e+02 |
+| bruss_d2 | chebtt_roll | 2.7e-03 / 3.3e-03 | 2.9e-03 / 3.0e-03 | 1.1 | 0.0 / 0.0% | 7.5e-04 | – |
+| bruss_d2 | recipe | 2.3e-04 / 2.2e-04 | 4.6e-04 / 1.5e-03 | 0.1 | 0.0 / 0.0% | 2.2e-04 | – |
+| bruss_d4 | chebtt_roll | 2.5e-03 / 2.1e-03 | 2.3e-03 / 1.9e-03 | 1.1 | 0.0 / 0.0% | 5.5e-04 | – |
+| bruss_d6 | chebtt_roll | 2.8e-03 / 2.6e-03 | 2.6e-03 / 1.9e-03 | 1.4 | 0.0 / 0.0% | 3.8e-04 | – |
+| burgers_d20 | recipe | 1.5e-03 / 2.1e-03 | 2.3e-03 / 1.9e-03 | 1.1 | 4.1 / 3.5% | 2.1e-03 | 9.6e-13 |
+| chemakzo | chebtt_roll | 5.0e-03 / 4.6e-03 | 3.7e-03 / 1.7e-03 | 2.8 | 0.0 / 0.0% | 2.5e-04 | – |
+| fisher_kpp_d2 | chebtt_roll | 4.8e-03 / 4.8e-03 | 2.7e-03 / 1.8e-03 | 2.7 | 0.0 / 0.0% | 5.5e-04 | – |
+| fisher_kpp_d2 | recipe | 6.7e-04 / 7.1e-04 | 3.0e-03 / 5.5e-04 | 1.3 | 0.0 / 0.1% | 7.1e-04 | – |
+| fisher_kpp_d3 | chebtt_roll | 2.5e-03 / 2.3e-03 | 2.5e-03 / 1.9e-03 | 1.2 | 0.0 / 0.0% | 6.8e-04 | – |
+| fisher_kpp_d3 | recipe | 6.5e-03 / 5.4e-03 | 6.5e-03 / 9.3e-03 | 0.6 | 1.0 / 0.9% | 6.5e-03 | – |
+| fisher_kpp_d5 | chebtt_roll | 3.4e-03 / 1.6e-03 | 3.1e-03 / 1.4e-03 | 1.1 | 0.0 / 0.0% | 6.9e-04 | – |
+| fisher_kpp_d5 | recipe | 7.6e-04 / 5.4e-04 | 1.2e-03 / 3.4e-04 | 1.6 | 19.1 / 18.1% | 7.2e-04 | – |
+| lorenz96_d10 | chebtt_roll | 6.7e-03 / 6.6e-03 | 6.1e-03 / 1.8e-03 | 3.7 | 0.3 / 0.0% | 6.0e-04 | – |
+| lorenz96_d4 | chebtt_roll | 3.9e-03 / 3.8e-03 | 3.6e-03 / 1.9e-03 | 2.0 | 0.8 / 0.5% | 8.1e-04 | – |
+| lorenz96_d4 | recipe | 2.4e-05 / 8.4e-06 | 2.5e-05 / 2.2e-05 | 0.4 | 0.0 / 0.0% | 2.4e-05 | – |
+| lorenz96_d5 | chebtt_roll | 2.5e-03 / 2.3e-03 | 2.5e-03 / 1.7e-03 | 1.3 | 0.2 / 0.1% | 1.0e-03 | – |
+| robertson | chebtt_roll | 4.1e-03 / 4.0e-03 | 3.5e-03 / 1.1e-03 | 3.7 | 0.0 / 0.0% | 1.8e-04 | 5.8e-03 |
+| robertson | recipe | 8.1e-06 / 1.0e-05 | 7.3e-06 / 2.3e-05 | 0.4 | 0.0 / 0.0% | 1.0e-05 | 2.3e-15 |
+
+Pre-registered readings: **S1 holds in its first clause and fails in its second**: every audited surrogate holds 0.01 in the column at both
+exchanges (the largest worst is 8.5e-3, allen_cahn_d2 with ChebTT at D = 0.005), but at the larger exchange the column's worst is
+2.7-13x the chained-mixing worst for ChebTT on the Allen-Cahn ladders, CHEMAKZO, fisher_kpp_d2, Robertson and lorenz96_d10: mixing with a
+reference partner pulls a cell's error back toward the truth, and the column does not. **S2 holds** (solver shares as under mixing).
+**S3 fails once**: the recipe's own-input defect on fisher_kpp_d3 is 6.5e-3, above half the tolerance (its gate is calibrated on 20
+trajectories' states and their mixtures, and the column's inputs are neither). **S4 holds where the laws are real** (the recipe's drift
+3e-15 on Robertson, ChebTT's 5.8e-3); on bruss_d20 the recipe's relative drift is 38-265 because the law it projects onto is spurious
+(section 9.7, item 7).
+
+
+### 3.13 Data design at equal cost (r6; `theory/panel/r6_design.py`, predictions `5f0fa47`)
+
+Sol's controlled comparison: the third recipe with 0, 400 random (three draws), 400 chosen by sequential maximum leverage (Proposition
+5.1's bound, no solves) and all 1,600 fresh one-step pairs, everything else fixed.
+
+| problem | arm | extra | served | k / degree | first step: ungated worst / median, refused | refused (test) | rollout, 40 | chained mixing 0.01 / 0.1 | effective speed-up | train (s) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| allen_cahn_d10 | all1600  | 1600 | yes | 6 / 7 | 3.7e+00 / 2.6e-03, 82% | 5.2% | 3.7e-03 | 3.0e-03 / 3.9e-03 | 4.1 | 60 |
+| allen_cahn_d10 | leverage400  | 400 | yes | 6 / 7 | 3.8e+00 / 2.4e+00, 100% | 21.8% | 4.1e-03 | 5.9e-03 / 2.9e-03 | 0.5 | 201 |
+| allen_cahn_d10 | m0  | 0 | no | 6 / 3 | 6.9e-02 / 3.6e-03, 100% | 7.8% | 4.9e-02 | 6.2e-02 / 2.7e-02 | 12.3 | 10 |
+| allen_cahn_d10 | random400_s0  | 400 | yes | 6 / 5 | 3.9e-01 / 1.7e-03, 80% | 3.4% | 8.1e-03 | 7.6e-03 / 4.7e-03 | 15.6 | 217 |
+| allen_cahn_d10 | random400_s1  | 400 | yes | 6 / 5 | 1.2e-01 / 2.1e-03, 68% | 2.5% | 7.3e-03 | 7.1e-03 / 5.8e-03 | 17.7 | 228 |
+| allen_cahn_d10 | random400_s2  | 400 | no | 6 / 3 | 5.1e-03 / 1.6e-03, 85% | 3.5% | 5.6e-02 | 4.6e-02 / 2.7e-02 | 26.0 | 23 |
+| burgers_d10 | all1600  | 1600 | yes | 6 / 6 | 5.2e-03 / 1.5e-04, 18% | 0.6% | 8.8e-04 | 8.2e-04 / 7.1e-04 | 20.3 | 50 |
+| burgers_d10 | leverage400  | 400 | yes | 6 / 6 | 3.1e+00 / 3.3e-01, 100% | 5.1% | 3.9e-03 | 4.4e-03 / 3.5e-03 | 10.9 | 167 |
+| burgers_d10 | m0  | 0 | yes | 6 / 5 | 3.1e+00 / 4.4e-01, 100% | 4.6% | 2.9e-03 | 2.7e-03 / 3.1e-03 | 14.2 | 8 |
+| burgers_d10 | random400_s0  | 400 | yes | 6 / 6 | 3.1e+00 / 3.4e-01, 100% | 4.9% | 2.5e-03 | 2.3e-03 / 2.3e-03 | 10.5 | 17 |
+| burgers_d10 | random400_s1  | 400 | yes | 6 / 6 | 3.1e+00 / 2.9e-01, 100% | 4.8% | 2.7e-03 | 2.5e-03 / 3.2e-03 | 10.7 | 188 |
+| burgers_d10 | random400_s2  | 400 | yes | 6 / 6 | 3.1e+00 / 5.4e-01, 100% | 4.9% | 3.4e-03 | 2.9e-03 / 2.9e-03 | 10.5 | 18 |
+| fisher_kpp_d10 | all1600  | 1600 | yes | 6 / 5 | 1.2e-01 / 7.1e-03, 100% | 15.0% | 1.4e-03 | 1.1e-03 / 1.3e-03 | 5.4 | 64 |
+| fisher_kpp_d10 | leverage400  | 400 | yes | 6 / 7 | 4.9e+00 / 3.5e+00, 100% | 27.3% | 4.3e-04 | 1.5e-04 / 3.5e-05 | 0.5 | 240 |
+| fisher_kpp_d10 | m0  | 0 | yes | 6 / 6 | 4.9e+00 / 3.4e+00, 100% | 17.4% | 1.2e-04 | 1.2e-04 / 8.2e-05 | 1.3 | 429 |
+| fisher_kpp_d10 | random400_s0  | 400 | yes | 6 / 6 | 4.7e+00 / 2.9e-01, 100% | 5.1% | 4.2e-03 | 4.0e-03 / 2.3e-03 | 7.3 | 435 |
+| fisher_kpp_d10 | random400_s1  | 400 | yes | 6 / 6 | 4.8e+00 / 3.0e-01, 100% | 5.2% | 2.5e-03 | 2.3e-03 / 2.7e-03 | 7.1 | 464 |
+| fisher_kpp_d10 | random400_s2  | 400 | yes | 6 / 6 | 4.7e+00 / 4.4e-01, 100% | 5.3% | 2.0e-03 | 1.8e-03 / 1.8e-03 | 7.0 | 232 |
+| fisher_kpp_d3 | all1600  | 1600 | yes | 3 / 11 | 5.0e-03 / 1.5e-04, 2% | 0.2% | 1.4e-03 | 2.1e-03 / 1.7e-03 | 41.1 | 16 |
+| fisher_kpp_d3 | leverage400  | 400 | yes | 3 / 12 | 1.3e-02 / 1.5e-04, 5% | 0.1% | 3.8e-03 | 1.2e-03 / 2.8e-03 | 22.0 | 16 |
+| fisher_kpp_d3 | m0 (R4c) | 0 | yes | 3 / 11 | 5.0e+00 / 4.2e-03, 45% | 1.1% | 6.6e-03 | 6.5e-03 / 9.3e-03 | 32.2 | 18 |
+| fisher_kpp_d3 | random400_s0  | 400 | yes | 3 / 12 | 1.9e-01 / 5.6e-05, 10% | 0.2% | 1.2e-03 | 1.4e-03 / 1.4e-03 | 29.7 | 16 |
+| fisher_kpp_d3 | random400_s1  | 400 | yes | 3 / 12 | 3.8e-01 / 7.9e-05, 8% | 0.2% | 1.7e-03 | 3.9e-03 / 3.6e-03 | 20.5 | 14 |
+| fisher_kpp_d3 | random400_s2  | 400 | yes | 3 / 11 | 3.3e-01 / 1.0e-04, 10% | 0.3% | 1.0e-03 | 1.5e-03 / 1.5e-03 | 30.2 | 15 |
+| hires | all1600  | 1600 | no | 3 / 11 | 1.8e-07 / 2.3e-08, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 65 |
+| hires | leverage400  | 400 | no | 3 / 11 | 2.8e-07 / 6.3e-08, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 65 |
+| hires | m0 (R4c) | 0 | no | 3 / 12 | 1.1e-06 / 5.5e-08, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 55 |
+| hires | random400_s0  | 400 | no | 3 / 11 | 3.1e-07 / 7.6e-08, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 78 |
+| nelson | all1600  | 1600 | no | 12 / 1 | 1.3e-01 / 5.4e-02, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 55 |
+| nelson | leverage400  | 400 | no | 12 / 1 | 2.5e-01 / 1.1e-01, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 46 |
+| nelson | m0 (R4c) | 0 | no | 12 / 1 | 5.2e-01 / 2.2e-01, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 31 |
+| nelson | random400_s0  | 400 | no | 12 / 1 | 2.2e-01 / 8.3e-02, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 45 |
+| pollu | all1600  | 1600 | no | 9 / 3 | 2.7e-03 / 8.3e-04, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 116 |
+| pollu | leverage400  | 400 | no | 13 / 3 | 1.1e-03 / 6.4e-04, 2% | 53.9% | 7.3e-03 | 0.0e+00 / 0.0e+00 | 1.7 | 198 |
+| pollu | m0 (R4c) | 0 | no | 13 / 3 | 1.1e-03 / 6.8e-04, 40% | 11.9% | 1.3e-02 | 4.5e-03 / 0.0e+00 | 6.0 | 144 |
+| pollu | random400_s0  | 400 | no | 13 / 3 | 1.1e-03 / 6.4e-04, 12% | 49.6% | 6.7e-03 | 0.0e+00 / 0.0e+00 | 1.9 | 181 |
+| primordial | all1600  | 1600 | no | 6 / 3 | 1.2e+00 / 1.7e-01, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 85 |
+| primordial | leverage400  | 400 | no | 6 / 3 | 7.4e-01 / 2.0e-01, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 54 |
+| primordial | m0 (R4c) | 0 | no | 6 / 2 | 1.1e+00 / 2.6e-01, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 42 |
+| primordial | random400_s0  | 400 | no | 6 / 3 | 1.5e+00 / 1.4e-01, 100% | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 | 1.0 | 50 |
+
+Pre-registered readings: **E1 fails**: leverage-chosen pairs beat the random draws' median first-step worst on 2 of 4 lattices (24x on
+fisher_kpp_d3, 1.02x on burgers_d10); they are chosen in the fit space of the configuration selected without extra data, and on
+fisher_kpp_d10 and allen_cahn_d10 the selection then moved to another degree, where they serve worse than random ones (refused 22-27%,
+effective speed-up 0.5). **E2 holds in its first clause and fails in its second**: all 1,600 pairs serve every lattice within 0.01
+(allen_cahn_d10 goes from not served to 3.7e-3; burgers_d10 2.9e-3 to 8.8e-4 with the speed-up from 14 to 20; fisher_kpp_d3 6.6e-3 to
+1.4e-3, speed-up 32 to 41), but the first-step refused share stays at 68-100% on the three d = 10 lattices with 400 pairs. **E3 holds**
+(HIRES, primordial, Nelson and POLLU are not served at any M; CHEMAKZO's arms were not run, since each would exceed the 1,800 s limit).
+**E4 holds**.
+
+- **The first step's data cost follows the initial law's dimension.** fisher_kpp_d10's first step does not move with any arm (ungated
+  worst 4.7-4.9): its initial law fills all 10 dimensions, a test start lies 0.46 from its nearest pool state against 0.09 at d = 3, and
+  the dynamics contract onto the k = 6 chart only after the first steps.
+
+
+### 3.14 The KIDA screen (p5, p5b; `theory/panel/p5_kida_screen.py`, predictions `7885778`)
+
+The council's first experiment on the target: five arms on equal data in the charge-neutral dark range (160 fit, 20 calibration, 20
+selection tracers; 40 test tracers), scored on the 13 key species: persistence; a ridge fit linear in all 582 inputs; the chart's class
+(degree 2 in 20 principal coordinates and the environment); a local ridge fit on the 64 nearest states; five MLPs (two hidden layers of
+256, scikit-learn, early stopping). Each arm's gate is calibrated for the maximum on calibration states and their mixtures.
+
+| arm | gate refuses (test) | ungated median, key species (dex) | ungated worst | test states above 0.01 | oracle coverage at 0.01 (p5b) | predict + gate (us/state) | train |
+|---|---|---|---|---|---|---|---|
+| persistence | 0% (never refuses) | 0.167 | 2.10 | 100% | 0% | 1 | 0 s |
+| linear (582 inputs) | 100% | 0.034 | 1.90 | 96% | 3.6% | 29 + 28 | 1 s |
+| chart, degree 2 | 100% | 0.028 | 1.73 | 93% | 7.1% | 60 + 40 | 1 s |
+| local (64 nearest) | 100% | **0.022** | 1.99 | 83% | **17.4%** | 338 + 13 | 1 s |
+| MLP ensemble | 100% | 0.081 | 2.09 | 99.9% | 0.1% | 103 + 99 | 18 s |
+
+- **No arm serves anything** at 0.01 dex with 160 tracers: every calibrated gate refuses every input, and even a perfect gate (an
+  oracle that accepts exactly the states within the tolerance) could serve at most 17% of the local arm's states (7% within half the
+  tolerance). The solver reproduces the stored test trajectories to 2.5e-10 dex, so the reference is sound.
+- **The MLP is the worst fitted arm** on this data (median 0.081 dex against the local fit's 0.022): 4,800 training pairs in 582 inputs
+  do not train a network to 0.01 dex. This is the bounded MLP trial all three reviewers asked for, on CPU, at the data the project has.
+- **Where the error sits** (p5b): the local arm's median is 1.2e-3 at the first step (the tracers share an initial composition after
+  burn-in) and 1.9e-2 at the last, as the states spread with the driven environments; the misses are spread over S+, H2O, H2 and H3+
+  (41-57% of states each above 0.01), not one species. Coverage, not one hard output, is the limit.
+- Pre-registered: K2 holds (no arm holds 0.01 with less than 50% refused); K4 holds vacuously (the gated arms accept nothing); K3 fails in
+  its first clause (the MLP was predicted to have the smallest median and has the largest of the fitted arms) and holds in its second;
+  K1 holds for persistence and is not measured directly for the linear fit.
+
+### 3.15 Online local tables: a pilot that was not run (p7 smoke tests)
+
+An ISAT-style local table (a local affine fit on the nearest stored pairs; frozen, growing, and cold arms; each query scored before its
+answer is inserted) was written for the panel's hard cases and KIDA (`theory/panel/p7_online.py`, uncommitted). Smoke tests on HIRES
+showed that its gate does not transfer from calibration states to chain states: three gate designs, each calibrated the same way (the
+largest risk whose accepted calibration states err within half the tolerance), accepted chain states with one-step defects of 0.15-1.0
+and chains of 0.5-4.9:
+
+| gate (risk) | frozen: defect on own accepted inputs / chain worst / refused | online | cold |
+|---|---|---|---|
+| distance to the (m+1)-th neighbour | 0.15 / 2.4 / 2.3% | 0.21 / 2.1 / 1.5% | 0.20 / 3.0 / 11% |
+| local Proposition 5.1: (1 + Lambda) x neighbour residual | 0.18 / 1.9 / 3.0% | 0.18 / 1.9 / 1.8% | 8.4e-3 / 0.52 / 17% |
+| the same, and increment-fit against successor-fit disagreement | 0.25 / 2.4 / 5.5% | 0.57 / 2.3 / 1.3% | 1.0 / 4.9 / 7.0% |
+
+The mechanism: a chain state drifts off its neighbours' span in a direction the step contracts; the increment fit carries the offset
+forward, and none of the three risks sees it reliably. ISAT checks accuracy by solving as it grows; a table without that check is unsafe
+here. The pilot was stopped and is a question for the reviewers (section 10).
+
+### 3.16 Consistent calibration of the reduced-chart gate (r4d; `theory/panel/r4d_consistent.py`, predictions `d5e0124`)
+
+A gate is a conjunction: a state the residual term refuses never needs the bound's term. With `consistent=True` (generic3), e_hat and
+b_max come only from calibration states the residual term accepts. Post hoc on HIRES before the run: e_hat 4.7e-9 on plain calibration
+states, 3.3e-3 on mixed ones, 1.9e-4 on the mixed states the residual term accepts (a third of them).
+
+| problem | served | k / degree | e_hat | refused (test) | rollout, 40 | chained mixing 0.01 / 0.1 (solver) | effective speed-up |
+|---|---|---|---|---|---|---|---|
+| bruss_d20 | yes | 9 / 4 | 2.2e-04 | 3.8% | 3.3e-03 | 2.5e-03 / 3.3e-03 (3 / 3%) | 13.2 |
+| burgers_d20 | yes | 6 / 5 | 2.6e-08 | 4.1% | 1.6e-03 | 2.3e-03 / 1.9e-03 (4 / 3%) | 12.1 |
+| chemakzo | yes | 5 / 9 | 3.6e-09 | 0.7% | 1.3e-04 | 2.0e-04 / 3.8e-05 (89 / 99%) | 1.0 |
+| fisher_kpp_d10 | yes | 6 / 6 | 1.6e-05 | 17.4% | 1.2e-04 | 1.2e-04 / 8.2e-05 (17 / 16%) | 2.0 |
+| hires | yes | 3 / 12 | 1.9e-04 | 13.5% | 1.8e-06 | 1.6e-01 / 4.4e-03 (63 / 78%) | 5.7 |
+| nelson | no | 12 / 1 | 8.6e-02 | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 (100 / 100%) | 1.0 |
+| pollu | no | 13 / 3 | 1.3e-06 | 0.0% | 4.4e-02 | 3.8e-02 / 3.4e-03 (82 / 100%) | 26.8 |
+| primordial | no | 6 / 2 | 3.3e-02 | 100.0% | 0.0e+00 | 0.0e+00 / 0.0e+00 (100 / 100%) | 1.0 |
+
+Pre-registered readings: **W1 fails**: HIRES is served (a rollout of 1.8e-6, 13.5% refused, effective speed-up 5.7, against R4c's
+100% refused), but chained mixing at w = 0.01 errs 0.163. Post hoc, the accepted one-step defects on mixed inputs stay at most 2e-3,
+within half the tolerance, and the chain still grows to 5e-2 within about 100 steps: small defects add up along directions the dynamics
+do not contract. The selection's propagation margin, measured on plain held-out chains (1.8e-6 here), cannot see this. **W2, W3, W4
+and W5 hold**: the other problems are unchanged (bruss_d20, burgers_d20, chemakzo and fisher_kpp_d10 served as before; primordial,
+nelson and pollu not served; refused shares on the lattices unchanged).
+
 ---
 
 ## 4. Mistakes, and what each taught
@@ -475,16 +723,94 @@ calls and data requirements; nominal and effective speed-ups; with and without g
 this laptop has no GPU; any model that cannot train in reasonable CPU time is trained as far as possible and marked "needs a GPU" for
 TACC or an 8 GB RTX 2000.
 
-## 10. Questions for the reviewers
+### 9.6 Making ChebTT more versatile: candidates not yet posed
 
-1. Is the proposal of section 9 right? What does it overlook, which of its choices or rejections are wrong, and what should be added or
-   dropped? Should the next phase be narrower or broader? Which experiments, in what order, with what decisive readings?
-2. Would the project gain more from improving its existing schemes (ChebTT and variants, ChebTree, AFINNI, ART, SlowTable, the chart
-   recipe), for example making them more adaptive or giving them nonlinear functions (rational or mapped axes, learned features, local
-   nonlinear terms), than from adding new model families? Use `theory/panel/data/scheme_table.md` (every scheme's records beside the
-   recipe's) and the R4b results. The author's proposal (section 9) is one view to criticise, not the answer; drive the recommendation.
-3. Which published claims in section 7 deserve the least trust, and which tests on this project's panel would check them?
-4. What does the four-factor framework predict for each candidate family on each problem class, so that the predictions can be committed
-   before the runs?
-5. What is the minimum set of experiments that would tell the user whether to pursue learned surrogates at all for the astrochemistry
-   target, given a CPU-only laptop now and a GPU later (TACC, or an 8 GB RTX 2000)?
+A tensor train already represents every interaction between inputs (a sum of products across all variables, the rank bounding how much
+coupling it carries), and its inference is cheap (about d n r^2 operations per state, batched; under a millisecond at d = 578 for ranks
+near 10). Neither interactions nor inference speed is what limits it in the records. What does:
+
+1. **The box.** ChebTT is built by cross approximation on designed points of a full box; trajectories fill a thin region of it. Every
+   ChebTT record at d >= 20 is a time limit or an evaluation cap, spent at vertices no trajectory visits (T7), not a failed fit.
+2. **One train per output.** Fine for 3 species, prohibitive for 578 (U6).
+3. **Rank growth with the variable order.** T3 keeps ranks small when coupling is local along the order (a lattice); a reaction network
+   is a graph, not a chain.
+4. **Jumps.** The relaxation oscillators' genuine approximation limit; no global smooth basis holds it.
+5. **No exact sampling factor.** A TT cross divides by sampled pivot values (Astra), so Proposition 5.1 does not apply as it stands.
+
+Candidates aimed at those limits, each keeping fast inference:
+
+| Candidate | Limit it targets | Mechanism | What carries over | Risk |
+|---|---|---|---|---|
+| T-a. TT regression on trajectory data in chart coordinates | 1, 5 | cores fitted by alternating least squares on the visited states (no box, no cross); the box is the chart's occupied range | with all other cores frozen a core's fit is linear in the data, so a per-core Lebesgue bound (Proposition 5.1) and a calibrated gate exist; the gate of the final sweep is computable | ALS is non-convex; ranks must be chosen by held-out chains; data sparsity at the first step is the same as the chart's (S1 applies) |
+| T-b. One train for all outputs | 2 | the output index as an extra core (a block TT), shared ranks across species | as T-a | output ranks may be large where species decouple; ordering of the output core |
+| T-c. Order or tree from the coupling graph | 3 | variable order from the network's species graph (or the lattice), or a tree tensor network shaped like it | T3's light cone, with the tree's edges in place of the chain | trees need their own cross or ALS; gain only where coupling is local in the graph |
+| T-d. Piecewise TT in leaves | 4 | a small TT per ART or ChebTree leaf, the split placed at the jump | T7's local version; ART's one-sample-serves-every-output | leaf boundaries carry inherited error; count of leaves near the jump |
+| T-e. Rank and degree per core chosen by held-out chains | all | DMRG-style rank adaptation, selection by the propagation margin rather than in-sample error | the margin rule of generic3 | selection cost |
+
+T-a and T-b address the two gaps that bind at the target's scale (the box at d >= 20, the cost per output at 578 species); T-c and T-d
+are conditional on the records showing graph-local coupling or a jump the leaves can isolate.
+
+### 9.7 Where things stand after round 2's experiments (the author's reading, for the reviewers to correct)
+
+1. **Coupling is the regime, and the closed column is the honest test of it.** Chained mixing pulls each cell toward a reference
+   partner; the column, where neighbours carry surrogate error, gives 2.7-13x larger errors at the larger exchange for rollout-tuned
+   ChebTT (section 3.12). Every surrogate that held chained mixing also holds the column at 0.01, but with less margin than mixing showed.
+2. **Selection must see coupled chains.** HIRES under consistent calibration (section 3.16) is served with a plain rollout of 1.8e-6,
+   accepted one-step defects on mixed inputs of at most 2e-3, and still a weak-mixing chain of 0.16: defects of 1e-3 per step add up
+   over about 100 steps along directions the dynamics do not contract. The propagation margin is measured on plain held-out chains,
+   which cannot see this; it has to be measured on mixed or column chains.
+3. **Selection must see speed.** CHEMAKZO is served at an effective speed-up of 0.7 (slower than the solver), because the rule takes the
+   smallest worst chain among served configurations; degree 8 served with chains of 2.8e-3 at a 5% solver share. Among configurations
+   within the margin the rule should take the largest effective speed-up (Corollary 5.3), not the smallest error.
+4. **Data at the first steps is the held-out problem, and its cost follows the initial law's dimension.** On fisher_kpp_d3, 400 fresh
+   pairs chosen by leverage (no solves) cut the ungated first-step worst from 4.97 to 1.3e-2 (random 400: 0.19-0.38; all 1,600: 5.0e-3).
+   On fisher_kpp_d10 no arm moves the first step (ungated worst 4.7-4.9, every first step refused): its initial law fills all 10
+   dimensions, a test start lies 0.46 from its nearest pool state against 0.09 at d = 3, and the dynamics contract onto the k = 6 chart
+   only after the first steps. A simulation's cells do not start from an i.i.d. box; they start near the states the training covers.
+5. **The gate's calibration is the most fragile part of every scheme.** Three local-table gates calibrated on calibration states failed
+   on chain states (section 3.15); the third recipe's maximum over mixed states refused all of HIRES until the calibration counted only
+   states the residual term accepts (section 3.16).
+6. **KIDA at 0.01 dex is out of reach with 200 tracers for every family tried**, the MLP included (section 3.14): coverage, not a hard
+   species, limits it, and the best arm is local. The question for the target is the data (and the tube) more than the basis.
+7. **A library bug of the same kind as KIDA's.** The numerical search for conservation laws (`invariants_of` without declared laws)
+   returns spurious laws on every large lattice: Brusselator d20, d40, d80 (1, 16, 55 laws; the Brusselator conserves nothing), Allen-Cahn
+   and Fisher-KPP d40 and d80 (11-55), Burgers d40 (partly). Each changes by about 100% of its scale along the test trajectories; the
+   true laws (Robertson, HIRES, primordial, POLLU, Nelson, Burgers d10 and d20) hold to 1e-9 or better. The benchmark's `chebtt_roll`
+   acceptance check and every method's projected scores enforce them on those problems. A fix (sampling the right-hand side off the
+   data, since a linear law satisfies W F(y) = 0 for every y) needs the user's approval, as a change to `src`.
+
+## 10. Questions for the reviewers (round 2)
+
+Round 1's questions were answered in `theory/reviews/council-*.md`; section 3.9 lists what was adopted. These are new.
+
+1. **The plan from here.** Given sections 3.9-3.16 and 9.7, what should the next phase test, in what order, with what decisive
+   readings? What did this round get wrong, and which of the readings in 9.7 do not follow from the records?
+2. **Tensor trains made versatile (section 9.6).** Rank T-a to T-e (a trajectory-fitted TT in chart coordinates, one TT for all
+   outputs, an order or tree from the coupling graph, piecewise TT in leaves, rank and degree per core chosen by held-out chains), add
+   better ones, and give each a decisive first test. The aim is robust, scalable ideas for vector-valued maps in general, not chemistry
+   only, testable quickly on the panel's vector-valued functions and step maps.
+3. **One model per output.** ChebTT builds one train per output; the chart recipe shares one design and one gate across outputs. Is a
+   model per output wasteful where outputs are degenerate or dependent? How should the code detect that structure (the output rank of
+   the increments or of the Jacobians, shared active directions, reduced-rank regression, a block or output-core TT, the hub), and what
+   are the best ways to exploit it, with a guarantee that survives?
+4. **Held-out against in-sample error.** The held-out maxima are far larger than the in-sample ones, and sit at the first steps (9.7,
+   item 4). Is the diagnosis (the Lebesgue function exploding between sparse first-step samples, with a sample cost set by the initial
+   law's dimension) complete? What else would make the held-out error robust (designed data, the gate, regularisation, the fit space),
+   and which is most robust across classes?
+5. **A tube, not a box.** In the target simulations (MFC coupled to chemistry) the states stay near the bundle of trajectories the
+   training covers, a slightly wider set than the training traces. Should surrogates be built on a tube or manifold neighbourhood of the
+   trajectories rather than a box? What is the theory: the sampling factor and its design (for example Chebyshev points in tube
+   coordinates, along and across the trajectories), the error bound inside the tube (Proposition 8.2's paired Lipschitz constant times
+   the radius), the gate that certifies a query is inside, the propagation of errors that stay inside (9.7, item 2), and how a tensor
+   train or the chart fit would be built on it? The theory first, then the experiments that would tell which variant to try.
+6. **The gate.** How should a gate be calibrated so that it transfers from calibration states to chain and coupled states (sections
+   3.15, 3.16), and so that each term of a conjunction is calibrated consistently? ISAT checks accuracy by solving while it grows; is a
+   checked growth, a conformal guarantee on chains, or something else the right design here?
+7. **Major speed-ups, not polish.** Is the current mathematics, algorithm and software for the rollout step (prediction, gate,
+   projection, solver fallback) the best available? Look only for changes of 2x or more: complexity, a different algorithm, reuse of work
+   between the prediction and the gate (fisher_kpp_d5's gate costs 525 us against a 9 us prediction), batching, vectorisation (the
+   invariant projection solves one least-squares problem per state in a Python loop), the solver's own cost (KIDA's step densifies an
+   analytic sparse Jacobian), the selection's cost (CHEMAKZO's degrees 8-10 take 4-14 minutes each). Give the measurement that would
+   confirm each.
+8. **The spurious conservation laws** (9.7, item 7): is the proposed fix right, and what else in the benchmark's results does the bug
+   reach?
