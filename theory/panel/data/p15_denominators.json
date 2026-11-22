@@ -1,0 +1,319 @@
+{
+ "bruss_d2": {
+  "denominator": "lsoda",
+  "denominator_us": 165.983583307631,
+  "evaluate_us_r4e": 0.7907818735475303,
+  "evaluate_us_sketched": 0.36236312553228345,
+  "library": {
+   "qualified": true,
+   "us": 1564.7738917323295,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 165.983583307631,
+   "worst_vs_stored": 2.1267659411350337e-08
+  },
+  "speedup_r4e_against_denominator": 96.25364093865058,
+  "speedup_sketched_against_denominator": 128.07169889504934,
+  "terms": 28,
+  "vode": {
+   "qualified": true,
+   "us": 226.22127495803093,
+   "worst_vs_stored": 1.4814123489026443e-07
+  }
+ },
+ "bruss_d20": {
+  "denominator": "vode",
+  "denominator_us": 414.75595826341305,
+  "evaluate_us_r4e": 27.94640812680882,
+  "evaluate_us_sketched": 5.931566875005956,
+  "library": {
+   "qualified": true,
+   "us": 4203.635108327338,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 490.6092666108937,
+   "worst_vs_stored": 1.132942177572982e-08
+  },
+  "speedup_r4e_against_denominator": 8.298385673832394,
+  "speedup_sketched_against_denominator": 14.830998803411305,
+  "terms": 715,
+  "vode": {
+   "qualified": true,
+   "us": 414.75595826341305,
+   "worst_vs_stored": 8.316380473161189e-08
+  }
+ },
+ "burgers_d20": {
+  "denominator": "lsoda",
+  "denominator_us": 189.8255999549292,
+  "evaluate_us_r4e": 4.350990002421895,
+  "evaluate_us_sketched": 1.3895831307308981,
+  "library": {
+   "qualified": true,
+   "us": 2650.689233269077,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 189.8255999549292,
+   "worst_vs_stored": 6.085567272329229e-09
+  },
+  "speedup_r4e_against_denominator": 26.812536561387795,
+  "speedup_sketched_against_denominator": 46.09290132909004,
+  "terms": 84,
+  "vode": {
+   "qualified": true,
+   "us": 235.71109159092885,
+   "worst_vs_stored": 2.5965968042385157e-08
+  }
+ },
+ "chemakzo": {
+  "denominator": "vode",
+  "denominator_us": 94.8678749409737,
+  "evaluate_us_r4e": 22.07934849866433,
+  "evaluate_us_sketched": 1.749866503814701,
+  "library": {
+   "qualified": true,
+   "us": 896.423299976353,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 129.96833332484434,
+   "worst_vs_stored": 7.958304149013884e-08
+  },
+  "speedup_r4e_against_denominator": 4.2966790866457245,
+  "speedup_sketched_against_denominator": 54.214349914214694,
+  "terms": 252,
+  "vode": {
+   "qualified": true,
+   "us": 94.8678749409737,
+   "worst_vs_stored": 6.39708828131802e-08
+  }
+ },
+ "fisher_kpp_d10": {
+  "denominator": "lsoda",
+  "denominator_us": 83.62659997753023,
+  "evaluate_us_r4e": 25.40059187595034,
+  "evaluate_us_sketched": 3.640103122961591,
+  "library": {
+   "qualified": true,
+   "us": 2000.5853333714185,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 83.62659997753023,
+   "worst_vs_stored": 6.133831081944763e-09
+  },
+  "speedup_r4e_against_denominator": 2.6447107214050645,
+  "speedup_sketched_against_denominator": 8.481544538463297,
+  "terms": 462,
+  "vode": {
+   "qualified": true,
+   "us": 108.84123330470175,
+   "worst_vs_stored": 1.005373710949442e-07
+  }
+ },
+ "fisher_kpp_d2": {
+  "denominator": "lsoda",
+  "denominator_us": 53.79572503443342,
+  "evaluate_us_r4e": 2.235144997939642,
+  "evaluate_us_sketched": 0.5412700011220295,
+  "library": {
+   "qualified": true,
+   "us": 536.8015750718769,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 53.79572503443342,
+   "worst_vs_stored": 1.5835340372305495e-08
+  },
+  "speedup_r4e_against_denominator": 16.08395889970404,
+  "speedup_sketched_against_denominator": 32.587534809162115,
+  "terms": 78,
+  "vode": {
+   "qualified": true,
+   "us": 69.03864996274933,
+   "worst_vs_stored": 3.907976520167722e-08
+  }
+ },
+ "fisher_kpp_d3": {
+  "denominator": "lsoda",
+  "denominator_us": 58.7415666814195,
+  "evaluate_us_r4e": 4.464829376047419,
+  "evaluate_us_sketched": 1.5262206306942971,
+  "library": {
+   "qualified": true,
+   "us": 665.2854666754138,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 58.7415666814195,
+   "worst_vs_stored": 6.609245595257107e-09
+  },
+  "speedup_r4e_against_denominator": 11.298412886207588,
+  "speedup_sketched_against_denominator": 25.986207023636936,
+  "terms": 220,
+  "vode": {
+   "qualified": true,
+   "us": 76.41952506673988,
+   "worst_vs_stored": 4.2516004050696665e-08
+  }
+ },
+ "fisher_kpp_d5": {
+  "denominator": "lsoda",
+  "denominator_us": 67.98106660426129,
+  "evaluate_us_r4e": 19.761460625886684,
+  "evaluate_us_sketched": 3.6107731284573674,
+  "library": {
+   "qualified": true,
+   "us": 1196.4499584185735,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 67.98106660426129,
+   "worst_vs_stored": 6.16248940765729e-09
+  },
+  "speedup_r4e_against_denominator": 2.940608649862298,
+  "speedup_sketched_against_denominator": 9.757107198584121,
+  "terms": 462,
+  "vode": {
+   "qualified": true,
+   "us": 90.38202491259047,
+   "worst_vs_stored": 5.497724897551848e-08
+  }
+ },
+ "hires": {
+  "denominator": "lsoda",
+  "denominator_us": 176.0553916634914,
+  "library": {
+   "qualified": true,
+   "us": 1349.111683399921,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 176.0553916634914,
+   "worst_vs_stored": 2.6719309209610742e-08
+  },
+  "vode": {
+   "qualified": true,
+   "us": 4280.0576583734555,
+   "worst_vs_stored": 4.5787687197318405e-07
+  }
+ },
+ "lorenz96_d4": {
+  "denominator": "lsoda",
+  "denominator_us": 60.921099914897546,
+  "evaluate_us_r4e": 3.477418122201925,
+  "evaluate_us_sketched": 0.8994718700705562,
+  "library": {
+   "qualified": true,
+   "us": 135.90207490778994,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 60.921099914897546,
+   "worst_vs_stored": 1.3466257664518366e-08
+  },
+  "speedup_r4e_against_denominator": 17.519060916471524,
+  "speedup_sketched_against_denominator": 67.72985564308841,
+  "terms": 126,
+  "vode": {
+   "qualified": true,
+   "us": 83.13920006912667,
+   "worst_vs_stored": 1.700345551025606e-07
+  }
+ },
+ "median_sketched_speedup": 39.34021806912608,
+ "nelson": {
+  "denominator": "lsoda",
+  "denominator_us": 8636.491700114371,
+  "library": {
+   "qualified": true,
+   "us": 18727.443900085444,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 8636.491700114371,
+   "worst_vs_stored": 2.930397215550329e-06
+  },
+  "vode": {
+   "qualified": false,
+   "us": 6009665.944766796,
+   "worst_vs_stored": Infinity
+  }
+ },
+ "pollu": {
+  "denominator": "vode",
+  "denominator_us": 345.8665417080435,
+  "library": {
+   "qualified": true,
+   "us": 2329.5810583173684,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 1012.8737667400856,
+   "worst_vs_stored": 1.6929862844961008e-08
+  },
+  "vode": {
+   "qualified": true,
+   "us": 345.8665417080435,
+   "worst_vs_stored": 9.156585489833446e-08
+  }
+ },
+ "primordial": {
+  "denominator": "library",
+  "denominator_us": 29941.754899886695,
+  "library": {
+   "qualified": true,
+   "us": 29941.754899886695,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": false,
+   "us": 250662.7055889112,
+   "worst_vs_stored": Infinity
+  },
+  "vode": {
+   "qualified": false,
+   "us": 187789.1813222151,
+   "worst_vs_stored": Infinity
+  }
+ },
+ "robertson": {
+  "denominator": "vode",
+  "denominator_us": 108.65047331511353,
+  "evaluate_us_r4e": 1.2599604997376446,
+  "evaluate_us_sketched": 0.8773404988460243,
+  "library": {
+   "qualified": true,
+   "us": 4174.689036638786,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 123.76806334941648,
+   "worst_vs_stored": 1.1091366713955608e-08
+  },
+  "speedup_r4e_against_denominator": 84.41342695975611,
+  "speedup_sketched_against_denominator": 120.12172346567594,
+  "terms": 56,
+  "vode": {
+   "qualified": true,
+   "us": 108.65047331511353,
+   "worst_vs_stored": 3.7539124697616444e-08
+  }
+ }
+}

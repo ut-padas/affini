@@ -1,0 +1,17 @@
+{
+ "kida_dark": {
+  "denominator": "library",
+  "denominator_us": 378015.98050039803,
+  "library": {
+   "qualified": true,
+   "us": 378015.98050039803,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": false,
+   "us": 294702.60499995976,
+   "worst_vs_stored": Infinity
+  }
+ },
+ "median_sketched_speedup": null
+}
