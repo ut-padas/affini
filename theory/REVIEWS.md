@@ -239,3 +239,29 @@ findings 3, 4 and 12 resolved; 1, 2 and 5 not yet; seven new problems (three maj
 | N5 | minor | The refusal ratio range covers one fit and misses one kick | Accepted: 0.30–0.37 for the gradient fit, the other fits' ranges given |
 | N6 | minor | The Taylor budget's wording still implies first-order terms | Accepted: the slopes identify neither the dominant term nor an order |
 | N7 | minor | "Radau at the benchmark's tolerances" is not every check's integrator | Accepted: each experiment's integrator |
+
+## Recipe round 1 (external): GPT Sol 6.2 (high effort), on the HIRES-built recipe's failure across the panel (R2)
+
+Review: `reviews/recipe-round-1-sol.md`. Diagnosis confirmed (in-sample degree selection; no reduction on box-filling problems), with
+code findings (chart clamping hid CHEMAKZO's extrapolation; rank-deficient designs; an affine decoder beats the quartic on fisher_kpp_d10;
+the singular invariant projection on primordial). Resolution: the generic recipe (`theory/panel/generic.py`): fold-fitted transforms,
+grouped held-out selection, no clamp, a refusal rule, a minimum-norm projection (R4).
+
+## Round 10 (Fable): Claude Fable 5.2 (medium effort), on section E, T5 and the generic recipe's results R4, P2, R5 (commit `40fa52f`)
+
+Review: `reviews/round-10-fable.md` (3 critical, 7 major, 6 minor; four post hoc checks in its appendix). Verdict: section E,
+Proposition 5.1 and Corollary 5.3 are correct for an exact least-squares fit; the recipe misapplies them.
+
+| # | Severity | Critique | Resolution |
+|---|---|---|---|
+| 1 | critical | The refusal threshold tol/(2 e_v) - 1 double-counts sampling (e_v already holds 1 + Lambda) and has a floor (the bound is >= 1 and its supremum >= sqrt(p)): it refuses problems the fit serves (post hoc: 7 of 9 re-checked hold the tolerance with <= 2.5% solved) | Accepted: a calibrated gate (held-out scores err/(1 + b), a validated range of b), rerun with committed predictions (R4b) |
+| 2 | critical | `served` is true in all records; unserved problems report degree 1 | Accepted: served = within tolerance and solver share below 50%, fixed before the rerun; the best configuration reported when none serves |
+| 3 | critical | "Approximation-limited" on the ladders is not in the records: the held-out maximum is a first-step state (sampling); Allen-Cahn's floor is the chart's lift error; fisher_kpp_d3 is cap-limited | Accepted: the claim is withdrawn; per-factor diagnosis per degree to be recorded |
+| 4 | major | Section P does not exist | Accepted: written after the rerun |
+| 5 | major | HIRES-specific statements remain (section 10 item 1, section 11, section 9) | Accepted: replaced with the generic recipe and panel results |
+| 6 | major | 5.3 (b) hides e*(X u {t}) off the data; ridge, rank, clipping, projection and label noise are outside the hypotheses; the cost-weighted refusal rate | Accepted: hypotheses stated; the residual decomposition added |
+| 7 | major | Propagation (A_n) is absent from the rule | Accepted in part: held-out chains with the gate active carry it in the selection; a per-step margin is left open |
+| 8 | major | R4 and R5 verdicts: several post hoc; G7 open; D3's reason refuted | Accepted: verdicts restated, post hoc ones labelled |
+| 9 | major | The gate is blind across the chart's fibres (HIRES: error ~ 1.5 x the quartic-decoder residual, rank correlation 0.99-1.00) | Accepted: the residual term (refuse beyond the training maximum) added to the gate, tested on every problem with k < free |
+| 10 | major | The gate's O(p^2) cost; double evaluation; unrepeated timings | Accepted: noted for the timing protocol; a sketched bound left open |
+| 11-16 | minor | Caps not derived; independent inputs vs pairs; e_v a fragile maximum; clipping hides overflow; singular factor; two mixing protocols named alike; KIDA's k rule | Accepted: the degree cap raised with early stopping; overflow tested before clipping; pseudo-inverse for rank-deficient factors; names fixed; KIDA open |
