@@ -770,6 +770,148 @@ R4e's effective speed-ups against VODE:
 The median is 16. A solver with a compiled right-hand side would lower these further, so the honest statement is that the recipe beats
 a compiled BDF by 3-100x on the problems it serves, with the smallest margins on the higher-dimensional lattices and CHEMAKZO.
 
+
+### 3.28 After the council (round 4): what was adopted
+
+The reviews (`theory/reviews/council4-{fable,sol,astra}.md`; resolutions in `theory/REVIEWS.md`) corrected 9.9:
+- **R4f's losses** come from uncapped calibration states, whole trajectories outside the fitted data with b up to 1e9, not from the
+  floor a0 (the three lost lattices have a0 = 0).
+- **Burgers d20's failure** is one accepted step whose bound was 3.3e-3 for a defect of 1.04e-2.
+- **The account** assumes errors propagate with factor 1, so it is not a bound (HIRES reaches 1.27e-2 under weak mixing with no accepted
+  defect above its bound).
+- **Nelson and primordial are bias-limited.**
+- **VODE is the wrong denominator on three problems.**
+
+They asked for:
+- the capped gate, with an account whose multiplier is calibrated on whole chains;
+- the exact baselines re-measured, with LSODA;
+- a data budget with a stopping rule;
+- an end-to-end audit on fresh closed columns.
+
+"Certifies coupled chains" and the composite tube are withdrawn.
+
+### 3.29 The capped gate with a chain-calibrated account (R4g; `theory/panel/r4g_capped.py`, predictions `7163a03`)
+
+The gate:
+- **A label-free cap** b <= 3 sqrt(rank): the mean of b^2 over the fit is the rank, so at most a ninth of the fitted states exceed it.
+- **The additive envelope**, fitted by a linear program inside the cap, as the gate.
+- **An account charged with a typical-defect model**, accepting a step while lambda (S + c) <= tol / 2. Lambda is the smallest of 0.5-8
+  for which at most 5% of whole calibration chains (plain, w = 0.01, w = 0.1) exceed tol / 2.
+
+The deployed fit is calibrated on 100 fresh calibration trajectories. It is run at 100 and 340 training trajectories on R4e's 18
+problems.
+
+- **At 340 training trajectories 13 of 18 are served**, every one within tol / 2 in its 40 test rollouts and in chained mixing at both
+  weights: R4e's ten, allen_cahn_d5 (rollout 3.6e-4, 10% solver), POLLU (3.7e-3, 2.9%) and HIRES (1.2e-5, but 85% solver with lambda 3).
+  Lambda is 0.5 everywhere else (lorenz96_d20: 1.5).
+- **At 100 the gate is not enough**: fisher_kpp_d3 is served with a rollout of 1.2e-2, and fisher_kpp_d10 is not served. H1 and H2
+  hold at 340 and fail at 100.
+- **H3 holds**: Burgers d20's accepted one-step worst is 1.1-1.3e-3.
+- **H4 fails on Robertson and CHEMAKZO**: their envelopes sit near 1e-7, at the label noise, and are crossed at that level. It is
+  harmless for the tolerance but breaks the scenario statement there.
+- **H5** holds in lambda and fails in the solver share. **H6** holds at 100.
+- **The cost is the cap under coupling**: CHEMAKZO's mixed inputs lie outside it (a third of its calibration states inside), so the
+  solver takes 99-100% of its mixed steps, where the product gate took none.
+
+### 3.30 The exact baselines re-measured (p15; `theory/panel/p15_denominators.py`, prediction in its commit)
+
+Three exact solvers at each system's tolerances on 40 test states at three steps per problem, one core:
+- the library's step;
+- SciPy's VODE (BDF, Fortran);
+- LSODA (Fortran, switching between Adams and BDF).
+
+The fastest that agrees with the stored states within 1e-5 is the problem's denominator.
+- **LSODA is the fastest on 9 of 15 problems, VODE on 4.** The library's own step is the only one that qualifies on primordial
+  (VODE and LSODA fail some states) and on KIDA, where VODE takes minutes per state, LSODA fails some states, and the library takes
+  0.38 s.
+- **Nelson's library step is 18.7 ms on one core**, not the 78 ms of its baseline record.
+- **R4e's served surrogates with the sketched gate (4-7x cheaper than the exact gate on the fits with 460-715 terms), against the
+  fastest exact solver:** bruss_d2 128, robertson 120, lorenz96_d4 68, chemakzo 54, burgers_d20 46, fisher_kpp_d2 33, fisher_kpp_d3
+  26, bruss_d20 15, fisher_kpp_d5 9.8, fisher_kpp_d10 8.5; median 39.
+- The prediction fails in two clauses (LSODA does not qualify everywhere; the median is above the predicted 10-30) and holds in two
+  (LSODA fastest on at least 8; the sketch at least 2x cheaper on the large fits).
+
+### 3.31 The end-to-end audit on fresh closed columns (p17; `theory/panel/p17_audit.py`, predictions `76516a5`)
+
+R4g's 13 served problems (at 340 trajectories) are deployed with their accounts in closed columns:
+- **Cells:** 100 trajectories no fit, calibration or test had seen.
+- **Settings:** sorted and unsorted orders at D = 0.005, 0.05 and 0.25.
+- **Cost:** measured evaluation time plus the refused cells at the fastest exact solver, against the exact column.
+
+Results:
+- **Ten hold tol / 2 in all six columns.** Their worsts are 1e-7 to 2.2e-3: the lattices, Robertson, CHEMAKZO, lorenz96_d4,
+  allen_cahn_d5.
+- **HIRES fails the tolerance** (2.0e-2 at 93-98% solver), so its account's lambda = 3, chosen on calibration chains, does not transfer
+  to fresh closed columns. fisher_kpp_d10 (5.3e-3) and POLLU (5.6e-3) exceed tol / 2. A1 fails.
+- **The cap refuses coupled inputs on CHEMAKZO and POLLU**: their solver shares are 96-100% in the columns against 3-5% on plain
+  rollouts. A2 fails.
+- **End-to-end speed-ups against the fastest exact solver:**
+
+  | problem | speed-up |
+  |---|---|
+  | bruss_d2 | 20 |
+  | fisher_kpp_d2 | 9.4 |
+  | burgers_d20 | 8.0 |
+  | bruss_d20 | 7.9 |
+  | lorenz96_d4 | 7.7 |
+  | robertson | 7.1 |
+  | fisher_kpp_d3 | 5.5 |
+  | fisher_kpp_d5 | 2.3 |
+  | fisher_kpp_d10 | 1.9 |
+  | chemakzo, pollu, hires | below 1 |
+
+  That is 8 of 12 problems at 2x or more and one at 10x or more (A3 fails). The surrogate is evaluated 100 cells per call on one core,
+  so per-call overhead is in these numbers; a large GPU batch would remove most of it but not the refusals.
+
+### 3.32 Refusal-driven data (p18; `theory/panel/p18_active.py`, predictions `5753026`)
+
+R4g's deployed surrogate (100 training trajectories) is run, plain and under chained mixing, on a pool of 100 fresh trajectories. The
+pairs it refuses, which deployment solves anyway, are added to the training set and the whole recipe is refit. Against them, the same
+number of random pairs from fresh trajectories at the same solver cost.
+
+| problem | extra pairs | R4g at 100: served, solver share | refused data: served, solver share, rollout | random data: served, solver share, rollout |
+|---|---|---|---|---|
+| allen_cahn_d5 | 7800 / 4800 | no, 97.5% | yes, 6.1%, 2.9e-03 | yes, 5.4%, 8.2e-03 |
+| bruss_d2 | 452 / 452 | yes, 0.0% | yes, 0.0%, 6.8e-04 | yes, 0.0%, 6.2e-05 |
+| bruss_d20 | 607 / 607 | yes, 7.6% | yes, 5.1%, 1.0e-03 | yes, 7.2%, 1.3e-03 |
+| burgers_d20 | 240 / 240 | yes, 3.3% | yes, 2.0%, 1.3e-03 | yes, 3.2%, 1.1e-03 |
+| chemakzo | 8782 / 8782 | yes, 3.6% | yes, 0.9%, 7.3e-06 | yes, 4.6%, 1.0e-05 |
+| fisher_kpp_d10 | 8000 / 4800 | no, 100.0% | yes, 4.9%, 1.3e-03 | yes, 5.8%, 5.0e-04 |
+| fisher_kpp_d2 | 158 / 158 | yes, 2.7% | yes, 0.5%, 1.4e-03 | yes, 2.6%, 2.4e-03 |
+| fisher_kpp_d3 | 231 / 231 | yes, 3.7% | yes, 2.3%, 2.3e-03 | yes, 4.3%, 9.3e-04 |
+| fisher_kpp_d5 | 533 / 533 | yes, 6.8% | yes, 4.5%, 9.9e-04 | yes, 6.1%, 1.4e-03 |
+| hires | 31627 / 20400 | yes, 89.6% | no, 100.0%, 0.0e+00 | yes, 86.6%, 2.1e-05 |
+| lorenz96_d20 | 7719 / 4800 | no, 98.6% | no, 95.6%, 4.9e-03 | no, 95.7%, 4.1e-03 |
+| lorenz96_d4 | 355 / 355 | yes, 5.2% | yes, 2.9%, 4.2e-05 | yes, 4.4%, 2.8e-05 |
+| nelson | 4800 / 2880 | no, 100.0% | no, 100.0%, 0.0e+00 | no, 100.0%, 0.0e+00 |
+| oregonator | 8000 / 4800 | no, 100.0% | no, 100.0%, 0.0e+00 | no, 100.0%, 0.0e+00 |
+| pollu | 11800 / 7080 | no, 100.0% | no, 94.4%, 6.2e-03 | no, 6.6%, 6.4e-03 |
+| primordial | 6000 / 3600 | no, 100.0% | no, 100.0%, 0.0e+00 | no, 100.0%, 0.0e+00 |
+| robertson | 389 / 389 | yes, 2.5% | yes, 1.4%, 2.2e-05 | yes, 2.4%, 2.3e-04 |
+| van_der_pol | 8000 / 4800 | no, 100.0% | no, 100.0%, 0.0e+00 | no, 100.0%, 0.0e+00 |
+
+- **Refused-state data beats random data at equal cost** on 6 of the 7 problems that refuse at least 3%:
+  - CHEMAKZO: 3.6% -> 0.9%, against 4.6% with random data;
+  - lorenz96_d4: 5.2% -> 2.9%, against 4.4%;
+  - Burgers d20: 3.3% -> 2.0%, against 3.2%;
+  - fisher_kpp_d3, fisher_kpp_d5 and bruss_d20: 1.5-1.6x lower;
+  - fisher_kpp_d2, below the 3% threshold: 2.7% -> 0.5%, against 2.6%.
+
+  Only CHEMAKZO falls 2x or more, so R1 holds in its second clause and fails in its first.
+- **Refused-state data serves fisher_kpp_d10 and Allen-Cahn d5 at 100 trajectories** (R2 holds), though random data does too.
+- **It holds tol / 2 in every served arm**, while random data's Allen-Cahn d5 (8.2e-3) and HIRES (mixing 6.6e-3) exceed it: R3 fails in
+  the random arms only.
+- **HIRES gets worse with refused data** (everything refused), and Nelson, primordial and the oscillators stay unserved (R4 holds).
+- One round of refusal-driven data lowers rho by 1.5-5x on the served problems. Iterating it is the obvious next test.
+
+### 3.33 Robustness of "served" across independent draws (p19; `theory/panel/p19_seeds.py`, predictions `fe1a62b`)
+
+Three independent draws of 340 training and 100 calibration trajectories (seeds 20-31) on the five problems served near the margin:
+- **S1 holds**: POLLU, Allen-Cahn d5 and fisher_kpp_d3, d5 and d10 are served in all three draws.
+- **S3 holds**: the rollout solver shares are 2.8-4.6%, within 1.4x across draws.
+- **S2 fails narrowly**: one Allen-Cahn d5 draw rolls out at 5.3e-3, above tol / 2 and within the tolerance.
+- **POLLU is served only on plain rollouts**: under chained mixing every step goes to the solver (the cap), in every draw.
+
 ---
 
 ## 4. Mistakes, and what each taught
@@ -1097,19 +1239,54 @@ are conditional on the records showing graph-local coupling or a jump the leaves
    (awaiting the user); the measurement of how much solver time a local table could avoid on deployment-shaped KIDA inputs; the KIDA
    rank-of-futures measurement.
 
-## 10. Questions for the reviewers (round 4)
+### 9.10 Where things stand after sections 3.28-3.33 (the author's reading, for the reviewers to correct)
 
-Round 3's questions were answered in `theory/reviews/council3-*.md`; section 3.23 lists what was adopted, 3.24-3.27 what was run.
+1. **The capped gate, with data budgets of a few hundred trajectories, is the current recipe.** It serves 13 of 18 problems on plain
+   rollouts and chained mixing, robustly across draws. The guarantee it carries is distributional, calibrated at the trajectory level.
+2. **End to end, in fresh closed columns against the fastest CPU solver, it is worth 2-20x on nine problems** (median about 7). It is
+   worth nothing on three: CHEMAKZO and POLLU, whose coupled inputs fall outside the cap, and HIRES, which also fails the tolerance
+   there. The plain-rollout figure of 8.5-128x (median 39) overstates what coupling gives.
+3. **Refusal is the lever.** The speed-up is at most 1/rho. Training on the refused states lowers rho more than random data at equal cost
+   where the fit is close (3.32). Coupled inputs outside the cap are the largest remaining source of refusals.
+4. Not done:
+   - the KIDA solver acceleration;
+   - the conservation-law fix in `src` (awaiting the user);
+   - primordial's history-based predictor;
+   - any GPU measurement (no GPU on this machine).
 
-1. **The plan from here.** Given 3.24-3.27 and 9.9, what should the next phase test, in what order, with what decisive readings? Which
-   readings of 9.9 do not follow?
-2. **The gate that serves and certifies.** Design a gate and deployment policy between the product gate (serves, does not certify
-   coupled chains) and the envelope-plus-account (certifies, refuses too much and was violated on Burgers d20): the theory, the
-   calibration, the cost.
-3. **The expensive problems.** The surrogate's margin is largest where a step is expensive (Nelson, primordial, KIDA) and that is where
-   it is not served. What is the shortest route to serving one of them: data by a learning curve, local fits, a different chart, an
-   exact-solver acceleration first?
-4. **Major speed-ups, again.** Only 2x or more, now against VODE as the denominator. What remains in the recipe's evaluation and
-   fallback, and in the exact solvers (KIDA's LU, Nelson's and primordial's failures under VODE)?
-5. **What would make the result publishable as a method:** which claims are supported across the panel, which need one more experiment,
-   and which should be dropped?
+## 10. Questions for the reviewers (round 5)
+
+Round 4's questions were answered in `theory/reviews/council4-*.md`; 3.28 lists what was adopted, 3.29-3.33 what was run.
+
+The user's deployment picture, an example, not an existing setup: if the physics solver of a coupled simulation ran on a GPU, the stiff
+chemistry beside it, on a much finer step, would be the bottleneck. The surrogate would then run on the GPU, batched over cells, and the
+refusal rate would set the speed-up. Inference metrics matter most: GPU batching, the refusal rate, and anything else that affects
+inference. Training is one large offline job, so heavy data and several GPUs for a while are acceptable, but it must not be absurdly
+inefficient. Everything must stay generic: any ODE step map, scalar or vector-valued function, any scale, not a chemistry-specific
+design.
+
+1. **The plan from here.** Given 3.29-3.33 and 9.10, what next, in what order, with what decisive readings? Which readings in 9.10 do
+   not follow?
+2. **Cutting the refusal rate several-fold**, the user's first concern, since the speed-up is capped at 1/rho. Candidates:
+   - refusal-driven data, iterated (3.32);
+   - the burn-in rule (the solver takes only the first steps);
+   - widening the cap where it is too strict for coupled inputs (CHEMAKZO and POLLU in 3.31);
+   - local refits of refused regions;
+   - better gates.
+
+   For each: what bound survives, and the decisive test.
+3. **GPU inference and batching.** Is the recipe's evaluation worth batching on a GPU, at which batch sizes and precision (float32 or
+   float64, and the gate's decisions), against which comparators (one CPU core, a node, a batched GPU exact solver), with the 1/rho cap?
+   Theory and the measurements to make; no code from the author yet.
+4. **GPU training, as ART and AFINNI do it.** The library trains and predicts both on GPU with deterministic per-segment sums. Can the
+   recipe's training (the selection's fits and SVDs, the calibration chains, the data generation) run on GPU the same way, so that
+   training and inference both live there? Is it worth it, and what must stay deterministic?
+5. **Scaling across several GPUs**, in training and in inference, the way neural networks scale with data-parallel training (DDP), a
+   real advantage of deep learning even where its accuracy is not the best. How does this recipe compare:
+   - the least squares as an all-reduce of Gram matrices or a tall-skinny QR;
+   - the selection and the chains as independent work;
+   - inference with no communication between cells?
+
+   What would make it scale, and what would stop it?
+6. **Other inference metrics** the user may not be aware of (latency against throughput, memory per cell, the cost of the account's
+   state, fallback batching, precision), and how each should be measured.
