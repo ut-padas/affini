@@ -479,8 +479,12 @@ TACC or an 8 GB RTX 2000.
 
 1. Is the proposal of section 9 right? What does it overlook, which of its choices or rejections are wrong, and what should be added or
    dropped? Should the next phase be narrower or broader? Which experiments, in what order, with what decisive readings?
-2. Which published claims in section 7 deserve the least trust, and which tests on this project's panel would check them?
-3. What does the four-factor framework predict for each candidate family on each problem class, so that the predictions can be committed
+2. Would the project gain more from improving its existing schemes (ChebTT and variants, ChebTree, AFINNI, ART, SlowTable, the chart
+   recipe), for example making them more adaptive or giving them nonlinear functions (rational or mapped axes, learned features, local
+   nonlinear terms), than from adding new model families? Use `theory/panel/data/scheme_table.md` (every scheme's records beside the
+   recipe's) and the R4b results. The author's proposal (section 9) is one view to criticise, not the answer; drive the recommendation.
+3. Which published claims in section 7 deserve the least trust, and which tests on this project's panel would check them?
+4. What does the four-factor framework predict for each candidate family on each problem class, so that the predictions can be committed
    before the runs?
-4. What is the minimum set of experiments that would tell the user whether to pursue learned surrogates at all for the astrochemistry
+5. What is the minimum set of experiments that would tell the user whether to pursue learned surrogates at all for the astrochemistry
    target, given a CPU-only laptop now and a GPU later (TACC, or an 8 GB RTX 2000)?
