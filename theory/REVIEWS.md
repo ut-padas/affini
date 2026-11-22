@@ -311,3 +311,19 @@ Reviews: `reviews/council3-fable.md`, `reviews/council3-sol.md`, `reviews/counci
 | 8 | Fable | Tensor trains are not supported by the records (the fitted coefficient tensors need 6-11x more coefficients as trains); shared outputs cannot pay when the prediction costs about 1 us | Accepted: T-a and T-b deferred |
 | 9 | Fable | Nelson is bias-limited at degree 2 and data-limited at degree 3; primordial resists five times the data and local fits, with rare jumps of up to 11 dex in one step | Accepted: both in the learning curves; primordial's jumps examined |
 | 10 | Sol, Astra | Qualification needs fresh closed split blocks and a measured 2x on independent coupled runs | Accepted: the final audit of every service policy |
+
+## Council round 4 (external, independent): the same three, on `SYNTHESIS.md` sections 3.23-3.27, 9.9 and 10 (commit `8bf8868`)
+
+Reviews: `reviews/council4-fable.md`, `reviews/council4-sol.md`, `reviews/council4-astra.md` (post hoc checks in each).
+
+| # | From | Critique | Resolution |
+|---|---|---|---|
+| 1 | Fable, Astra | R4f's failures come from uncapped calibration states, not the floor a0 (the three lost lattices have a0 = 0): 10-20% of held-out states are whole trajectories outside the fitted data (b up to 1e9, errors 2-5), so the envelope refused the lattices whole and went blind on Burgers d20; fitted inside a label-free cap b <= 3 sqrt(rank) it serves the three lattices at R4e's degrees and Burgers d20, refusing 10-16% of steps against R4e's 5-7% | Accepted: 9.9 item 2 rewritten; the capped envelope (R4g) |
+| 2 | Sol | Burgers d20's failure is one accepted step whose bound was 3.3e-3 for a defect of 1.04e-2, with no inherited error at that point | Accepted: the capped envelope is tested on it first |
+| 3 | Fable | The account assumes errors propagate with factor 1; HIRES under weak mixing reaches 1.27e-2 with no accepted defect above its bound, and Allen-Cahn d5's record shows it exceeded on 7.7% of cells and steps: it is not a bound | Accepted: "certifies coupled chains" withdrawn; an account charged with a propagation factor calibrated on whole chains, or none |
+| 4 | Fable, Astra | The denominators: LSODA integrates every state VODE fails on and is 2.2-7x faster than the library's step on Nelson, primordial and HIRES; scaled VODE completes primordial's 900 test steps within 6.1e-8 dex; Nelson's baseline record says 78 ms a step where p13's data records imply 5 ms | Accepted: the exact baselines re-measured (LSODA, scaled VODE) on every problem, Nelson's anomaly resolved, speed-ups restated against the fastest |
+| 5 | Fable | Nelson and primordial are bias-limited at 540 trajectories (median one-step error 3-6e-3 with every index set): no gate serves them with this approximant | Accepted; Astra's lead (5b) tested on primordial |
+| 5b | Astra | On two closed replays a predictor from the previous two chemistry increments meets 0.005 dex on states holding about 75% of VODE's time on primordial | Accepted as a pilot, with a pre-registered pass rule |
+| 6 | Fable | POLLU and Allen-Cahn d5 flip "served" at the margin (POLLU's rollout is 5.5e-3 at both 220 and 340): a data budget with a stopping rule and three seeds | Accepted |
+| 7 | Sol, Astra | Qualify every policy on fresh closed columns with end-to-end wall time against the fastest exact solver that meets the budget | Accepted: the final audit |
+| 8 | Fable | Publishable: the refusal-first recipe on the served problems against the fastest exact solver, with the negative results; drop the composite tube and "certifies coupled chains" | Accepted |
