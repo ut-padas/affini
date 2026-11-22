@@ -240,8 +240,10 @@ A case is a problem, dimension and tolerance; *held*: worst error within the tol
   companion. It explains AFINNI, ART and the refinement engine on one running example, each idea
   as a picture, in words and as a formal statement. Start here to understand the methods.
 - **[docs/reports/global-approximants/global-approximants.pdf](docs/reports/global-approximants/global-approximants.pdf)**: the
-  companion of the schemes. It explains ChebTT, ChebTT-M, ChebTT-A and the hub expansion on Rosenbrock and on
-  a function built to be hard in three ways, compares them with AFINNI and ART, and shows them on stiff step maps.
+  companion of the schemes. It starts from the theory of where a surrogate's error comes from (approximation,
+  sampling, propagation, inputs off the data, and the refusal rate's cap on the speed-up), explains the strongest
+  schemes it chose, ChebTT and its variants on a box and the chart recipe on trajectories, shows them on every class
+  of the function suite and the step maps, and compares them with AFINNI and ART under one protocol.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: how a training run and a prediction move
   through the code, the contracts between the parts, and where to extend it.
 - **[docs/USAGE.md](docs/USAGE.md)**: the user guide. Training and prediction

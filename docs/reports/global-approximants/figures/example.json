@@ -1,2064 +1,560 @@
 {
-  "rosenbrock": {
-    "lower": [
-      -2.0,
-      -1.0
-    ],
-    "upper": [
-      2.0,
-      3.0
-    ],
-    "alpha": 1.0,
-    "afinni": {
-      "leaves": 26,
-      "evals": 1142,
-      "generated": 494,
-      "max_error": 4.11,
-      "within_percent": 98.2,
-      "outside_percent": 1.1,
-      "within_inside_percent": 98.6,
-      "depth": 5,
-      "outside_exact_percent": 1.1
-    },
-    "art": {
-      "leaves": 17,
-      "evals": 1053,
-      "generated": 960,
-      "max_error": 2.35,
-      "within_percent": 99.1,
-      "outside_percent": 0.0,
-      "within_inside_percent": 99.1,
-      "depth": 6
-    },
-    "grid": 240,
-    "chebtt": {
-      "evals": 337,
-      "distinct": 321,
-      "by_stage": {
-        "checks": 192,
-        "degrees": 72,
-        "fibres": 73
-      },
-      "ranks": [
-        3
-      ],
-      "degrees": [
-        4,
-        2
-      ],
-      "worst": 1.78e-14,
-      "accepted_rank": 4
-    }
+ "box": {
+  "hi": [
+   0.4936537440443469,
+   0.49420193752883407
+  ],
+  "lo": [
+   -0.41602561857907183,
+   -0.16796026746350898
+  ]
+ },
+ "bruss": {
+  "A": 1.0,
+  "B": 1.9
+ },
+ "colours": {
+  "blue": "#1f5fa8",
+  "dark": "#424242",
+  "error": [
+   "#f4f8fc",
+   "#d6e6f5",
+   "#aecde9",
+   "#7fb0db",
+   "#f0a79e",
+   "#c0392b"
+  ],
+  "grey": "#8a8a8a",
+  "light": "#d6d6d6",
+  "method": {
+   "afinni_roll": "#1f5fa8",
+   "art_quad_roll": "#00a6c7",
+   "art_roll": "#2e7d32",
+   "chebtt_roll": "#ef7d1a",
+   "recipe_100": "#6a1b9a",
+   "recipe_340": "#d81b8a",
+   "solver": "#424242"
   },
-  "feature": {
-    "alpha": 0.01,
-    "kink": 0.4,
-    "ridge": {
-      "angle": 30.0,
-      "offset": 0.2,
-      "steep": 6.0,
-      "height": 0.5
+  "red": "#c0392b",
+  "refused": "#bdbdbd"
+ },
+ "denominator_us": 165.983583307631,
+ "grid": 64,
+ "lebesgue": {
+  "cheb_box_max": 5.803551901156453,
+  "cheb_degree": 10,
+  "cheb_test_max": 5.624031738257288,
+  "ls_box_max": 604609.9267933678,
+  "ls_box_share_above_10": 0.769287109375,
+  "ls_degree": 8,
+  "ls_samples": 4000,
+  "ls_terms": 45,
+  "ls_test_max": 4.505278505090134,
+  "ls_test_median": 2.334578505980798
+ },
+ "lebesgue_1d": {
+  "cheb_max": 2.420891437212787,
+  "degree": 10,
+  "edge": -0.2,
+  "part_inside_max": 2.5069845291379003,
+  "part_max": 578621773.4939401,
+  "samples": 40
+ },
+ "methods": {
+  "afinni_roll": {
+   "amplification": 3.0175219260365074,
+   "grid_beyond_tol_share": 0.0,
+   "grid_refused_share": 0.289794921875,
+   "grid_worst_accepted": 0.0034257061374423775,
+   "margin_rounds": 3,
+   "one_step_tol": 0.0005691229687276247,
+   "one_step_worst": 0.0016980658763128403,
+   "points_drawn": 18310,
+   "points_in_empty_cells": 0.6027853631895139,
+   "record": {
+    "columns": {
+     "sorted/0.005": {
+      "solver_share": 0.22425,
+      "worst": 0.005123951013628669
+     },
+     "sorted/0.05": {
+      "solver_share": 0.22575,
+      "worst": 0.005123951013629668
+     },
+     "sorted/0.25": {
+      "solver_share": 0.2305,
+      "worst": 0.005123951013629058
+     },
+     "unsorted/0.005": {
+      "solver_share": 0.23325,
+      "worst": 0.005138319590507867
+     },
+     "unsorted/0.05": {
+      "solver_share": 0.2095,
+      "worst": 0.004995474655321415
+     },
+     "unsorted/0.25": {
+      "solver_share": 0.195,
+      "worst": 0.003819356679698972
+     }
     },
-    "jump": {
-      "angle": -55.0,
-      "offset": 0.6,
-      "height": 0.4
-    }
+    "denominator_us": 165.983583307631,
+    "evaluate_us_1000": 12.703360989689827,
+    "long": {
+     "account_share": 0.0,
+     "certified_horizon": 20,
+     "fresh_rate": 0.25625,
+     "share_200_on": 0.0,
+     "speedup_steady": 11.361943530946215,
+     "steady_rate": 0.01147927135678392,
+     "steady_upper_95": 0.012079712760499534,
+     "worst": 0.012841126076746588
+    },
+    "mixing": {
+     "0.01": {
+      "solver_share": 0.22312500000000002,
+      "worst": 0.004894794226913066
+     },
+     "0.1": {
+      "solver_share": 0.21500000000000002,
+      "worst": 0.003011245180930485
+     }
+    },
+    "rollout_fresh_rate": 0.2425,
+    "rollout_steady_rate": 0.20666666666666667
+   },
+   "rollout_worst": 0.005123951013628392,
+   "solver_calls": 18310,
+   "test_refused_share": 0.215625
   },
-  "colours": {
-    "palette": [
-      "#c0392b",
-      "#e1a800",
-      "#2e7d32",
-      "#1f5fa8",
-      "#6d3b0f",
-      "#ef7d1a",
-      "#6a1b9a",
-      "#d81b8a",
-      "#00838f",
-      "#7cb342",
-      "#5c6bc0",
-      "#a1887f",
-      "#f06292",
-      "#26a69a",
-      "#8d6e63",
-      "#3949ab"
+  "art_quad_roll": {
+   "amplification": 2.294364989011935,
+   "grid_beyond_tol_share": 0.0,
+   "grid_refused_share": 0.0,
+   "grid_worst_accepted": 0.0012264212076678882,
+   "margin_rounds": 3,
+   "one_step_tol": 0.0007189374202847536,
+   "one_step_worst": 0.0007286635353904725,
+   "points_drawn": 8781,
+   "points_in_empty_cells": 0.6268078806514065,
+   "record": {
+    "columns": {
+     "sorted/0.005": {
+      "solver_share": 0.0,
+      "worst": 0.002087481654283657
+     },
+     "sorted/0.05": {
+      "solver_share": 0.0,
+      "worst": 0.003158991553344176
+     },
+     "sorted/0.25": {
+      "solver_share": 0.0,
+      "worst": 0.0038722153106486856
+     },
+     "unsorted/0.005": {
+      "solver_share": 0.0,
+      "worst": 0.0031890798550869848
+     },
+     "unsorted/0.05": {
+      "solver_share": 0.0,
+      "worst": 0.00634539876940602
+     },
+     "unsorted/0.25": {
+      "solver_share": 0.0,
+      "worst": 0.004554259083000237
+     }
+    },
+    "denominator_us": 165.983583307631,
+    "evaluate_us_1000": 0.7865270017646253,
+    "long": {
+     "account_share": 0.0,
+     "certified_horizon": 72,
+     "fresh_rate": 0.0,
+     "share_200_on": 0.0,
+     "speedup_steady": 211.0335473991813,
+     "steady_rate": 0.0,
+     "steady_upper_95": 2.3555276381909547e-05,
+     "worst": 0.014489574862758408
+    },
+    "mixing": {
+     "0.01": {
+      "solver_share": 0.0,
+      "worst": 0.0033630400743921984
+     },
+     "0.1": {
+      "solver_share": 0.0,
+      "worst": 0.0039360652523854275
+     }
+    },
+    "rollout_fresh_rate": 0.0,
+    "rollout_steady_rate": 0.0
+   },
+   "rollout_worst": 0.001671820104369559,
+   "solver_calls": 8781,
+   "test_refused_share": 0.0
+  },
+  "art_roll": {
+   "amplification": 2.7421057356225,
+   "grid_beyond_tol_share": 0.0,
+   "grid_refused_share": 0.0,
+   "grid_worst_accepted": 0.0018297410846191478,
+   "margin_rounds": 2,
+   "one_step_tol": 0.001,
+   "one_step_worst": 0.0008433510525710508,
+   "points_drawn": 17916,
+   "points_in_empty_cells": 0.5937709310113864,
+   "record": {
+    "columns": {
+     "sorted/0.005": {
+      "solver_share": 0.0,
+      "worst": 0.003726103172078582
+     },
+     "sorted/0.05": {
+      "solver_share": 0.0,
+      "worst": 0.0030288705731590787
+     },
+     "sorted/0.25": {
+      "solver_share": 0.0,
+      "worst": 0.002636727415607776
+     },
+     "unsorted/0.005": {
+      "solver_share": 0.0,
+      "worst": 0.00619523999578343
+     },
+     "unsorted/0.05": {
+      "solver_share": 0.0,
+      "worst": 0.0063240354227223974
+     },
+     "unsorted/0.25": {
+      "solver_share": 0.0,
+      "worst": 0.006141681474820608
+     }
+    },
+    "denominator_us": 165.983583307631,
+    "evaluate_us_1000": 2.7244139928370714,
+    "long": {
+     "account_share": 0.0,
+     "certified_horizon": 46,
+     "fresh_rate": 0.0,
+     "share_200_on": 0.0,
+     "speedup_steady": 60.92450844256009,
+     "steady_rate": 0.0,
+     "steady_upper_95": 2.3555276381909547e-05,
+     "worst": 0.013172944651474103
+    },
+    "mixing": {
+     "0.01": {
+      "solver_share": 0.0,
+      "worst": 0.0034529551972812093
+     },
+     "0.1": {
+      "solver_share": 0.0,
+      "worst": 0.004321265797918347
+     }
+    },
+    "rollout_fresh_rate": 0.0,
+    "rollout_steady_rate": 0.0
+   },
+   "rollout_worst": 0.002312557758398351,
+   "solver_calls": 17916,
+   "test_refused_share": 0.0
+  },
+  "chebtt_roll": {
+   "amplification": 3.202943092207205,
+   "degrees": [
+    [
+     10,
+     4
     ],
-    "grey": "#8a8a8a",
-    "light": "#d6d6d6",
-    "dark": "#424242",
-    "red": "#c0392b",
-    "blue": "#1f5fa8",
-    "gold": "#e1a800",
-    "green": "#2e7d32",
-    "pink": "#d81b8a",
-    "cyan": "#00a6c7",
-    "feature": {
-      "kink": "#e1a800",
-      "ridge": "#00a6c7",
-      "jump": "#d81b8a"
-    },
-    "method": {
-      "chebtt": "#e08a00",
-      "chebtt_metric": "#1b7f5b",
-      "chebtt_adaptive": "#b5179e",
-      "hub": "#5d6d00",
-      "afinni": "#6d3b0f",
-      "art": "#1f5fa8",
-      "art_quad": "#2e7d32",
-      "chebtree": "#c0392b",
-      "sparsecheb": "#6a1b9a",
-      "kernel": "#2e7d9a",
-      "slowtable": "#8e24aa"
-    },
-    "fibre": {
-      "0": "#1f5fa8",
-      "1": "#ef7d1a"
-    },
-    "error": [
-      "#f4f8fc",
-      "#d6e6f5",
-      "#aecde9",
-      "#7fb0db",
-      "#f0a79e",
-      "#c0392b"
+    [
+     10,
+     5
     ]
-  },
-  "seed": 1,
-  "chebyshev": {
-    "points_degree": 8,
-    "runge": {
-      "degree": 16,
-      "equispaced": 2.91,
-      "chebyshev": 0.016,
-      "equispaced_64": 0.996,
-      "chebyshev_64": 5.72e-08,
-      "chebyshev_within": 24
-    },
-    "decay": {
-      "smooth": {
-        "rho": 1.8,
-        "floor_degree": 49
-      },
-      "kink": {
-        "power": 2.18,
-        "reference": 2
-      },
-      "jump": {
-        "power": 0.892,
-        "reference": 1
-      }
-    },
-    "slices": {
-      "smooth": {
-        "axis": 1,
-        "value": -0.6
-      },
-      "kink": {
-        "axis": 2,
-        "value": 0.6
-      },
-      "jump": {
-        "axis": 1,
-        "value": 0.8
-      }
-    },
-    "tail": {
-      "smooth": {
-        "quarter_degree": 16,
-        "half_degree": 32,
-        "true_degree": 16,
-        "quarter": [
-          0.0231,
-          0.00043,
-          6.51e-07,
-          6.55e-13,
-          5.27e-16,
-          8.54e-16
-        ],
-        "true": [
-          0.00646,
-          7.68e-05,
-          6.68e-09,
-          6.66e-16,
-          6.66e-16,
-          8.88e-16
-        ]
-      },
-      "kink": {
-        "quarter_degree": 64,
-        "half_degree": 256,
-        "true_degree": 128,
-        "quarter": [
-          0.102,
-          0.014,
-          0.0068,
-          0.00177,
-          0.00161,
-          0.000306
-        ],
-        "true": [
-          0.0538,
-          0.0119,
-          0.00623,
-          0.00513,
-          0.00184,
-          0.00137
-        ]
-      },
-      "share": 0.0025,
-      "degrees": [
-        8,
-        16,
-        32,
-        64,
-        128,
-        256
-      ]
-    }
-  },
-  "chebtt": {
-    "matrix": {
-      "rosenbrock": {
-        "rank_exact": 3,
-        "rank_1e3": 3
-      },
-      "b": {
-        "rank_exact": 1,
-        "rank_1e3": 1
-      },
-      "br": {
-        "rank_exact": 40,
-        "rank_1e3": 9
-      },
-      "brj": {
-        "rank_exact": 74,
-        "rank_1e3": 53
-      },
-      "grid": 129
-    },
-    "rosenbrock_cross": {
-      "rank": 4,
-      "x1_nodes": 9,
-      "x2_nodes": 9,
-      "skeleton_rank": 4
-    },
-    "skeleton": {
-      "rank": 12
-    },
-    "cross": [
-      {
-        "rank": 2,
-        "x1_nodes": 34,
-        "x2_nodes": 33,
-        "round": 0
-      },
-      {
-        "rank": 4,
-        "x1_nodes": 34,
-        "x2_nodes": 33,
-        "round": 1
-      },
-      {
-        "rank": 6,
-        "x1_nodes": 34,
-        "x2_nodes": 33,
-        "round": 2
-      },
-      {
-        "rank": 6,
-        "x1_nodes": 66,
-        "x2_nodes": 33,
-        "round": 3
-      },
-      {
-        "rank": 8,
-        "x1_nodes": 66,
-        "x2_nodes": 33,
-        "round": 4
-      },
-      {
-        "rank": 10,
-        "x1_nodes": 66,
-        "x2_nodes": 33,
-        "round": 5
-      },
-      {
-        "rank": 12,
-        "x1_nodes": 66,
-        "x2_nodes": 33,
-        "round": 6
-      }
+   ],
+   "grid_beyond_tol_share": 0.0,
+   "grid_refused_share": 0.0,
+   "grid_worst_accepted": 0.0011974656672423395,
+   "one_step_tol": 0.005162112464615424,
+   "one_step_worst": 0.0007486418375936277,
+   "points_drawn": 485,
+   "points_in_empty_cells": 0.5278350515463918,
+   "ranks": [
+    [
+     4
     ],
-    "rounds": [
-      {
-        "round": 0,
-        "worst": 65.8,
-        "rank": 2,
-        "degrees": [
-          16,
-          32
-        ],
-        "evals": 1150,
-        "action": "rank"
-      },
-      {
-        "round": 1,
-        "worst": 24.3,
-        "rank": 4,
-        "degrees": [
-          16,
-          32
-        ],
-        "evals": 1502,
-        "action": "rank"
-      },
-      {
-        "round": 2,
-        "worst": 12.4,
-        "rank": 6,
-        "degrees": [
-          16,
-          32
-        ],
-        "evals": 2343,
-        "action": "degree"
-      },
-      {
-        "round": 3,
-        "worst": 9.05,
-        "rank": 6,
-        "degrees": [
-          32,
-          32
-        ],
-        "evals": 2896,
-        "action": "rank"
-      },
-      {
-        "round": 4,
-        "worst": 2.29,
-        "rank": 8,
-        "degrees": [
-          32,
-          32
-        ],
-        "evals": 3488,
-        "action": "rank"
-      },
-      {
-        "round": 5,
-        "worst": 0.584,
-        "rank": 10,
-        "degrees": [
-          32,
-          32
-        ],
-        "evals": 3943,
-        "action": "rank"
-      },
-      {
-        "round": 6,
-        "worst": 0.221,
-        "rank": 12,
-        "degrees": [
-          32,
-          32
-        ],
-        "evals": 4373,
-        "action": "accept"
-      }
-    ],
-    "checks": {
-      "round": 4,
-      "sobol": 128,
-      "old_look": 576,
-      "free": 1383,
-      "look": 192,
-      "worst_sobol": 2.1,
-      "worst_free": 1.71,
-      "worst_look": 2.29
-    },
-    "compress": {
-      "shapes": [
-        {
-          "before": [
-            1,
-            66,
-            12
-          ],
-          "after": [
-            1,
-            30,
-            10
-          ]
-        },
-        {
-          "before": [
-            12,
-            33,
-            1
-          ],
-          "after": [
-            10,
-            13,
-            1
-          ]
-        }
-      ],
-      "entries_before": 1188,
-      "entries_after": 430,
-      "change": 0.223,
-      "probe": 6972,
-      "budget": 0.25
-    },
-    "edges": {
-      "scan": 65,
-      "base_x2": 0.761,
-      "found": 0.3999939,
-      "error": 3.05e-06,
-      "zoom_steps": 6,
-      "zoom_width": 1.53e-05,
-      "bisect_steps": 34,
-      "confirm": 4,
-      "evals": 199
-    },
-    "models": {
-      "rosenbrock": {
-        "evals": 337,
-        "ranks": [
-          3
-        ],
-        "degrees": [
-          4,
-          2
-        ],
-        "pieces": [
-          1,
-          1
-        ],
-        "worst": 1.78e-14,
-        "madds": 24,
-        "grid_worst": 2.13e-14
-      },
-      "b": {
-        "evals": 793,
-        "ranks": [
-          1
-        ],
-        "degrees": [
-          4,
-          5
-        ],
-        "pieces": [
-          2,
-          1
-        ],
-        "worst": 0.0258,
-        "madds": 16
-      },
-      "b_no_edges": {
-        "evals": 1084,
-        "ranks": [
-          1
-        ],
-        "degrees": [
-          33,
-          5
-        ],
-        "pieces": [
-          1,
-          1
-        ],
-        "worst": 0.618,
-        "madds": 40
-      },
-      "br": {
-        "evals": 4373,
-        "ranks": [
-          10
-        ],
-        "degrees": [
-          14,
-          12
-        ],
-        "pieces": [
-          2,
-          1
-        ],
-        "worst": 0.217,
-        "madds": 430
-      },
-      "brj": {
-        "failed": "ChebTT reached rank 60 without meeting the tolerance.",
-        "evals": 366411
-      }
-    },
-    "angle": [
-      {
-        "angle": 0,
-        "rank": 1,
-        "evals": 622,
-        "degrees": [
-          20,
-          0
-        ],
-        "worst": 0.273
-      },
-      {
-        "angle": 5,
-        "rank": 4,
-        "evals": 803,
-        "degrees": [
-          21,
-          3
-        ],
-        "worst": 0.279
-      },
-      {
-        "angle": 10,
-        "rank": 5,
-        "evals": 913,
-        "degrees": [
-          22,
-          5
-        ],
-        "worst": 0.332
-      },
-      {
-        "angle": 20,
-        "rank": 7,
-        "evals": 1356,
-        "degrees": [
-          26,
-          11
-        ],
-        "worst": 0.373
-      },
-      {
-        "angle": 30,
-        "rank": 10,
-        "evals": 3115,
-        "degrees": [
-          19,
-          14
-        ],
-        "worst": 0.366
-      },
-      {
-        "angle": 45,
-        "rank": 11,
-        "evals": 3271,
-        "degrees": [
-          25,
-          24
-        ],
-        "worst": 0.381
-      }
-    ],
-    "defaults": {
-      "safety": 0.5,
-      "rank0": 2,
-      "rank_step": 2,
-      "rank_max": 60,
-      "sweeps": 2,
-      "n_fibre": 4,
-      "n_max": 512,
-      "n_free": 20000,
-      "chop_share": 0.25,
-      "n_probe": 4000,
-      "max_pieces": 4,
-      "lattice": 4096
-    }
-  },
-  "metric": {
-    "outputs": [
-      {
-        "name": "ridge",
-        "k_eig": 1,
-        "k_axes": 2,
-        "rotated": true,
-        "eig": [
-          1.0,
-          2.3e-12
-        ]
-      },
-      {
-        "name": "bump",
-        "k_eig": 1,
-        "k_axes": 2,
-        "rotated": true,
-        "eig": [
-          1.0,
-          2.73e-13
-        ]
-      },
-      {
-        "name": "base",
-        "k_eig": 2,
-        "k_axes": 2,
-        "rotated": false,
-        "eig": [
-          0.843,
-          0.157
-        ]
-      }
-    ],
-    "pilot": 8,
-    "box_area": 1.87,
-    "base_turned": {
-      "axes_evals": 793,
-      "axes_rank": 1,
-      "evals": 54315,
-      "rank": null,
-      "failed": "ChebTT reached rank 60 without meeting the tolerance."
-    },
-    "ladder": [
-      {
-        "d": 2,
-        "chebtt": {
-          "evals": 2365,
-          "worst": 0.366,
-          "rotated": [],
-          "coefficients": 425
-        },
-        "metric": {
-          "evals": 2576,
-          "worst": 0.25,
-          "rotated": [
-            0
-          ],
-          "coefficients": 105
-        }
-      },
-      {
-        "d": 3,
-        "chebtt": {
-          "evals": 10307,
-          "worst": 0.429,
-          "rotated": [],
-          "coefficients": 2475
-        },
-        "metric": {
-          "evals": 4567,
-          "worst": 0.429,
-          "rotated": [
-            0
-          ],
-          "coefficients": 303
-        }
-      },
-      {
-        "d": 5,
-        "chebtt": {
-          "evals": 260848,
-          "worst": 0.301,
-          "rotated": [],
-          "coefficients": 10626
-        },
-        "metric": {
-          "evals": 13514,
-          "worst": 0.216,
-          "rotated": [
-            0,
-            1
-          ],
-          "coefficients": 73
-        }
-      },
-      {
-        "d": 10,
-        "chebtt": {
-          "failed": "ChebTT would exceed 1,990,247 evaluations."
-        },
-        "metric": {
-          "evals": 36309,
-          "worst": 0.223,
-          "rotated": [
-            0,
-            1
-          ],
-          "coefficients": 109
-        }
-      }
-    ],
-    "axes_rank": 6,
-    "max_evals": 2000000
-  },
-  "adaptive": {
-    "kind": "interface (plane), jump fields of degree 2",
-    "evals": 5109,
-    "worst": 0.629,
-    "stages": [
-      {
-        "stage": "chebtt (stopped at an oblique edge)",
-        "evals": 1038
-      },
-      {
-        "stage": "interface discovery",
-        "evals": 2199
-      },
-      {
-        "stage": "jets",
-        "evals": 2391
-      },
-      {
-        "stage": "interface term",
-        "evals": 2487
-      },
-      {
-        "stage": "remainder chebtt",
-        "evals": 5109
-      }
-    ],
-    "interface": {
-      "kind": "plane",
-      "angle_error": 0.0,
-      "offset_error": 7.4e-13,
-      "degree": 2,
-      "first_points": 4,
-      "probe_points": 2,
-      "segments": 24
-    },
-    "jets": {
-      "points": 18,
-      "jump_mean": 0.4,
-      "jump_spread": 0.000711,
-      "slope_spread": 0.412,
-      "curvature_spread": 45.1,
-      "example": {
-        "jump": -0.4,
-        "point": [
-          -0.0469,
-          -0.765
-        ]
-      }
-    },
-    "remainder": {
-      "tail_f": 0.00215,
-      "tail_remainder": 3.04e-07,
-      "grid_worst": 0.6,
-      "tt": {
-        "evals": 3898,
-        "ranks": [
-          10
-        ],
-        "degrees": [
-          33,
-          17
-        ],
-        "pieces": [
-          1,
-          1
-        ],
-        "worst": 0.629,
-        "madds": 520
-      }
-    }
-  },
-  "hub": {
-    "values": {
-      "evals": 4000,
-      "jacobians": 0,
-      "worst": 0.163,
-      "holdout": 0.332,
-      "groups": [
-        {
-          "outputs": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5
-          ],
-          "r": 2,
-          "degree": 32,
-          "weak": false,
-          "terms": 561
-        }
-      ],
-      "history": [
-        [
-          2000,
-          0.332
-        ]
-      ]
-    },
-    "jacobian": {
-      "evals": 2000,
-      "jacobians": 2100,
-      "worst": 0.067,
-      "holdout": 0.1,
-      "groups": [
-        {
-          "outputs": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5
-          ],
-          "r": 2,
-          "degree": 40,
-          "weak": false,
-          "terms": 861
-        }
-      ],
-      "history": [
-        [
-          2000,
-          0.1
-        ]
-      ]
-    },
-    "problem": {
-      "name": "shared_latent",
-      "d": 10,
-      "alpha": 0.1,
-      "outputs": 6,
-      "test": 50000
-    },
-    "spectra": {
-      "shared_latent": {
-        "r": 2,
-        "share_left": 3.33e-16,
-        "top": [
-          0.607,
-          0.393,
-          2.62e-16
-        ]
-      },
-      "lift": {
-        "r": 1,
-        "share_left": 0.000728,
-        "top": [
-          0.999,
-          0.000125,
-          0.000108
-        ]
-      }
-    },
-    "lift": {
-      "evals": 6000,
-      "worst": 13.3,
-      "holdout": 19.6,
-      "groups": [
-        {
-          "r": 1,
-          "degree": 16,
-          "weak": true,
-          "terms": 323
-        }
-      ],
-      "jacobian": {
-        "evals": 8000,
-        "jacobians": 8100,
-        "worst": 1.12
-      },
-      "metric": {
-        "evals": 27913,
-        "worst": 0.036
-      },
-      "history": [
-        [
-          2000,
-          20.6
-        ],
-        [
-          4000,
-          19.6
-        ]
-      ]
-    },
-    "design": {
-      "points": 2000,
-      "uniform_reach": 0.781,
-      "design_reach": 1.0,
-      "uniform_outer": 0.0705,
-      "design_outer": 0.453
-    },
-    "terms": {
-      "r": 1,
-      "degree": 16,
-      "d10": 323,
-      "d100": 3383,
-      "total_d10": 5311735
-    },
-    "settings": {
-      "n0": 2000,
-      "r_max": 4,
-      "pilot": 100,
-      "grad_weight": 0.05,
-      "max_terms": 2500,
-      "degrees": {
-        "1": [
-          8,
-          16,
-          32,
-          48
-        ],
-        "2": [
-          8,
-          16,
-          24,
-          32,
-          40
-        ],
-        "3": [
-          4,
-          6,
-          8,
-          10
-        ],
-        "4": [
-          3,
-          4,
-          5,
-          6
-        ]
-      }
-    },
-    "store_metric": {
-      "seeds": 3,
-      "failed": 0,
-      "evals": 248438,
-      "worst": 0.468,
-      "stale": false
-    },
-    "rosenbrock": {
-      "evals": 2400,
-      "worst": 2.4e-08
-    }
-  },
-  "compare": {
-    "layers": {
-      "b": {
-        "chebtt": {
-          "evals": 793,
-          "worst": 0.0258
-        },
-        "chebtt_metric": {
-          "evals": 666,
-          "worst": 0.0258
-        },
-        "chebtt_adaptive": {
-          "evals": 666,
-          "worst": 0.0258
-        },
-        "hub": {
-          "evals": 8400,
-          "worst": 0.608
-        }
-      },
-      "br": {
-        "chebtt": {
-          "evals": 4373,
-          "worst": 0.217
-        },
-        "chebtt_metric": {
-          "evals": 3569,
-          "worst": 0.217
-        },
-        "chebtt_adaptive": {
-          "evals": 3545,
-          "worst": 0.217
-        },
-        "hub": {
-          "evals": 4400,
-          "worst": 0.818
-        }
-      },
-      "brj": {
-        "chebtt": {
-          "failed": "ChebTT reached rank 60 without meeting the tolerance",
-          "evals": 366411
-        },
-        "chebtt_metric": {
-          "failed": "ChebTT reached rank 60 without meeting the tolerance",
-          "evals": 292030
-        },
-        "chebtt_adaptive": {
-          "evals": 5109,
-          "worst": 0.629
-        },
-        "hub": {
-          "evals": 4400,
-          "worst": 27.0
-        }
-      }
-    },
-    "baselines": {
-      "afinni": {
-        "evals": 274987,
-        "leaves": 1560,
-        "worst": 41.1,
-        "within": 98.4
-      },
-      "art": {
-        "evals": 156863,
-        "leaves": 1032,
-        "worst": 40.5,
-        "within": 99.9
-      },
-      "art_quad": {
-        "evals": 186937,
-        "leaves": 619,
-        "worst": 40.3,
-        "within": 99.8
-      }
-    },
-    "store": {
-      "classes": [
-        {
-          "class": "smooth",
-          "rows": [
-            {
-              "method": "chebtt_adaptive",
-              "label": "ChebTT-A",
-              "ran": 97,
-              "held": 96,
-              "won": 47,
-              "held_high": 36,
-              "evals": 1298,
-              "us": 0.0929,
-              "stale": false
-            },
-            {
-              "method": "chebtt_metric",
-              "label": "ChebTT-M",
-              "ran": 97,
-              "held": 96,
-              "won": 47,
-              "held_high": 36,
-              "evals": 1298,
-              "us": 0.126,
-              "stale": false
-            },
-            {
-              "method": "sparsecheb",
-              "label": "SparseCheb",
-              "ran": 42,
-              "held": 42,
-              "won": 27,
-              "held_high": 0,
-              "evals": 337,
-              "us": 1.26,
-              "stale": false
-            },
-            {
-              "method": "hub",
-              "label": "Hub",
-              "ran": 105,
-              "held": 87,
-              "won": 14,
-              "held_high": 35,
-              "evals": 3000,
-              "us": 1.7,
-              "stale": false
-            },
-            {
-              "method": "chebtree",
-              "label": "ChebTree",
-              "ran": 42,
-              "held": 42,
-              "won": 9,
-              "held_high": 0,
-              "evals": 757,
-              "us": 0.244,
-              "stale": false
-            },
-            {
-              "method": "art_quad",
-              "label": "ART, quadratic leaves",
-              "ran": 91,
-              "held": 10,
-              "won": 2,
-              "held_high": 9,
-              "evals": 4621,
-              "us": 0.43,
-              "stale": false
-            },
-            {
-              "method": "kernel",
-              "label": "MetricKernel",
-              "ran": 21,
-              "held": 10,
-              "won": 2,
-              "held_high": 0,
-              "evals": 257,
-              "us": 1.4,
-              "stale": false
-            },
-            {
-              "method": "chebtt",
-              "label": "ChebTT",
-              "ran": 97,
-              "held": 96,
-              "won": 1,
-              "held_high": 36,
-              "evals": 1500,
-              "us": 0.0962,
-              "stale": false
-            },
-            {
-              "method": "afinni",
-              "label": "AFINNI",
-              "ran": 63,
-              "held": 2,
-              "won": 0,
-              "held_high": 0,
-              "evals": 109952,
-              "us": 0.435,
-              "stale": false
-            },
-            {
-              "method": "art",
-              "label": "ART, affine leaves",
-              "ran": 90,
-              "held": 0,
-              "won": 0,
-              "held_high": 0,
-              "evals": null,
-              "us": null,
-              "stale": false
-            }
-          ]
-        },
-        {
-          "class": "many local features",
-          "rows": [
-            {
-              "method": "chebtt_metric",
-              "label": "ChebTT-M",
-              "ran": 70,
-              "held": 69,
-              "won": 61,
-              "held_high": 24,
-              "evals": 2943,
-              "us": 0.522,
-              "stale": false
-            },
-            {
-              "method": "chebtt_adaptive",
-              "label": "ChebTT-A",
-              "ran": 70,
-              "held": 68,
-              "won": 43,
-              "held_high": 23,
-              "evals": 2680,
-              "us": 0.548,
-              "stale": false
-            },
-            {
-              "method": "sparsecheb",
-              "label": "SparseCheb",
-              "ran": 9,
-              "held": 9,
-              "won": 4,
-              "held_high": 0,
-              "evals": 433,
-              "us": 2.46,
-              "stale": false
-            },
-            {
-              "method": "chebtree",
-              "label": "ChebTree",
-              "ran": 30,
-              "held": 29,
-              "won": 3,
-              "held_high": 0,
-              "evals": 16651,
-              "us": 0.337,
-              "stale": false
-            },
-            {
-              "method": "hub",
-              "label": "Hub",
-              "ran": 75,
-              "held": 14,
-              "won": 1,
-              "held_high": 4,
-              "evals": 2600,
-              "us": 4.65,
-              "stale": false
-            },
-            {
-              "method": "chebtt",
-              "label": "ChebTT",
-              "ran": 70,
-              "held": 69,
-              "won": 0,
-              "held_high": 24,
-              "evals": 2944,
-              "us": 0.539,
-              "stale": false
-            },
-            {
-              "method": "afinni",
-              "label": "AFINNI",
-              "ran": 38,
-              "held": 0,
-              "won": 0,
-              "held_high": 0,
-              "evals": null,
-              "us": null,
-              "stale": false
-            },
-            {
-              "method": "art",
-              "label": "ART, affine leaves",
-              "ran": 37,
-              "held": 0,
-              "won": 0,
-              "held_high": 0,
-              "evals": null,
-              "us": null,
-              "stale": false
-            },
-            {
-              "method": "art_quad",
-              "label": "ART, quadratic leaves",
-              "ran": 37,
-              "held": 0,
-              "won": 0,
-              "held_high": 0,
-              "evals": null,
-              "us": null,
-              "stale": false
-            }
-          ]
-        },
-        {
-          "class": "kinks, jumps, fronts",
-          "rows": [
-            {
-              "method": "chebtt_adaptive",
-              "label": "ChebTT-A",
-              "ran": 66,
-              "held": 61,
-              "won": 55,
-              "held_high": 16,
-              "evals": 4322,
-              "us": 0.164,
-              "stale": false
-            },
-            {
-              "method": "chebtt_metric",
-              "label": "ChebTT-M",
-              "ran": 39,
-              "held": 34,
-              "won": 28,
-              "held_high": 10,
-              "evals": 4322,
-              "us": 0.233,
-              "stale": false
-            },
-            {
-              "method": "hub",
-              "label": "Hub",
-              "ran": 72,
-              "held": 6,
-              "won": 6,
-              "held_high": 6,
-              "evals": 5000,
-              "us": 3.77,
-              "stale": false
-            },
-            {
-              "method": "chebtt",
-              "label": "ChebTT",
-              "ran": 39,
-              "held": 34,
-              "won": 0,
-              "held_high": 10,
-              "evals": 4650,
-              "us": 0.309,
-              "stale": false
-            },
-            {
-              "method": "chebtree",
-              "label": "ChebTree",
-              "ran": 26,
-              "held": 24,
-              "won": 0,
-              "held_high": 0,
-              "evals": 48271,
-              "us": 0.234,
-              "stale": false
-            },
-            {
-              "method": "sparsecheb",
-              "label": "SparseCheb",
-              "ran": 9,
-              "held": 4,
-              "won": 0,
-              "held_high": 0,
-              "evals": 43397,
-              "us": 23.3,
-              "stale": false
-            },
-            {
-              "method": "afinni",
-              "label": "AFINNI",
-              "ran": 39,
-              "held": 0,
-              "won": 0,
-              "held_high": 0,
-              "evals": null,
-              "us": null,
-              "stale": false
-            },
-            {
-              "method": "art",
-              "label": "ART, affine leaves",
-              "ran": 36,
-              "held": 0,
-              "won": 0,
-              "held_high": 0,
-              "evals": null,
-              "us": null,
-              "stale": false
-            },
-            {
-              "method": "art_quad",
-              "label": "ART, quadratic leaves",
-              "ran": 33,
-              "held": 0,
-              "won": 0,
-              "held_high": 0,
-              "evals": null,
-              "us": null,
-              "stale": false
-            }
-          ]
-        },
-        {
-          "class": "ODE flow maps",
-          "rows": [
-            {
-              "method": "chebtree",
-              "label": "ChebTree",
-              "ran": 18,
-              "held": 18,
-              "won": 7,
-              "held_high": 0,
-              "evals": 757,
-              "us": 0.141,
-              "stale": false
-            },
-            {
-              "method": "art",
-              "label": "ART, affine leaves",
-              "ran": 27,
-              "held": 7,
-              "won": 6,
-              "held_high": 0,
-              "evals": 81,
-              "us": 0.0773,
-              "stale": false
-            },
-            {
-              "method": "chebtt",
-              "label": "ChebTT",
-              "ran": 39,
-              "held": 37,
-              "won": 5,
-              "held_high": 12,
-              "evals": 1627,
-              "us": 0.123,
-              "stale": false
-            },
-            {
-              "method": "chebtt_adaptive",
-              "label": "ChebTT-A",
-              "ran": 37,
-              "held": 34,
-              "won": 5,
-              "held_high": 10,
-              "evals": 1243,
-              "us": 0.101,
-              "stale": false
-            },
-            {
-              "method": "hub",
-              "label": "Hub",
-              "ran": 45,
-              "held": 28,
-              "won": 5,
-              "held_high": 7,
-              "evals": 2600,
-              "us": 2.97,
-              "stale": false
-            },
-            {
-              "method": "sparsecheb",
-              "label": "SparseCheb",
-              "ran": 15,
-              "held": 15,
-              "won": 5,
-              "held_high": 0,
-              "evals": 201,
-              "us": 0.677,
-              "stale": false
-            },
-            {
-              "method": "chebtt_metric",
-              "label": "ChebTT-M",
-              "ran": 39,
-              "held": 36,
-              "won": 3,
-              "held_high": 12,
-              "evals": 1497,
-              "us": 0.119,
-              "stale": false
-            },
-            {
-              "method": "art_quad",
-              "label": "ART, quadratic leaves",
-              "ran": 27,
-              "held": 10,
-              "won": 3,
-              "held_high": 2,
-              "evals": 201,
-              "us": 0.118,
-              "stale": false
-            },
-            {
-              "method": "afinni",
-              "label": "AFINNI",
-              "ran": 21,
-              "held": 6,
-              "won": 0,
-              "held_high": 0,
-              "evals": 109854,
-              "us": 0.297,
-              "stale": false
-            },
-            {
-              "method": "kernel",
-              "label": "MetricKernel",
-              "ran": 3,
-              "held": 3,
-              "won": 0,
-              "held_high": 0,
-              "evals": 267,
-              "us": 1.39,
-              "stale": false
-            }
-          ]
-        },
-        {
-          "class": "vector-valued",
-          "rows": [
-            {
-              "method": "chebtt",
-              "label": "ChebTT",
-              "ran": 101,
-              "held": 96,
-              "won": 71,
-              "held_high": 34,
-              "evals": 2521,
-              "us": 0.308,
-              "stale": false
-            },
-            {
-              "method": "chebtt_adaptive",
-              "label": "ChebTT-A",
-              "ran": 97,
-              "held": 92,
-              "won": 65,
-              "held_high": 32,
-              "evals": 2430,
-              "us": 0.367,
-              "stale": false
-            },
-            {
-              "method": "chebtt_metric",
-              "label": "ChebTT-M",
-              "ran": 104,
-              "held": 101,
-              "won": 62,
-              "held_high": 39,
-              "evals": 2848,
-              "us": 0.359,
-              "stale": false
-            },
-            {
-              "method": "hub",
-              "label": "Hub",
-              "ran": 101,
-              "held": 72,
-              "won": 19,
-              "held_high": 22,
-              "evals": 2600,
-              "us": 6.08,
-              "stale": false
-            },
-            {
-              "method": "art",
-              "label": "ART, affine leaves",
-              "ran": 92,
-              "held": 6,
-              "won": 6,
-              "held_high": 3,
-              "evals": 251,
-              "us": 0.293,
-              "stale": false
-            },
-            {
-              "method": "art_quad",
-              "label": "ART, quadratic leaves",
-              "ran": 94,
-              "held": 13,
-              "won": 4,
-              "held_high": 7,
-              "evals": 1321,
-              "us": 0.459,
-              "stale": false
-            },
-            {
-              "method": "afinni",
-              "label": "AFINNI",
-              "ran": 63,
-              "held": 3,
-              "won": 0,
-              "held_high": 0,
-              "evals": 109854,
-              "us": 0.412,
-              "stale": false
-            }
-          ]
-        }
-      ],
-      "records": 7191,
-      "latest": "2026-11-20T07:22:42",
-      "cases": {
-        "many local features": {
-          "cases": 39,
-          "scheme_only": 39,
-          "baseline_only": 0,
-          "both": 0,
-          "neither": 0
-        },
-        "kinks, jumps, fronts": {
-          "cases": 39,
-          "scheme_only": 39,
-          "baseline_only": 0,
-          "both": 0,
-          "neither": 0
-        },
-        "smooth": {
-          "cases": 91,
-          "scheme_only": 76,
-          "baseline_only": 0,
-          "both": 12,
-          "neither": 3
-        },
-        "vector-valued": {
-          "cases": 93,
-          "scheme_only": 78,
-          "baseline_only": 0,
-          "both": 13,
-          "neither": 2
-        },
-        "ODE flow maps": {
-          "cases": 27,
-          "scheme_only": 16,
-          "baseline_only": 0,
-          "both": 11,
-          "neither": 0
-        }
-      },
-      "max_d": {
-        "chebtt": 20,
-        "chebtt_adaptive": 20,
-        "chebtt_metric": 20,
-        "hub": 20,
-        "afinni": 5,
-        "art": 20,
-        "art_quad": 20,
-        "chebtree": 3,
-        "sparsecheb": 3,
-        "kernel": 2
-      },
-      "scheme_only": 248,
-      "baseline_only": 0,
-      "both": 36,
-      "neither": 5,
-      "total": 289,
-      "high_d_scheme_only": 45,
-      "class_colours": {
-        "smooth": "#00a6c7",
-        "many local features": "#e1a800",
-        "kinks, jumps, fronts": "#d81b8a",
-        "ODE flow maps": "#2e7d32",
-        "vector-valued": "#1f5fa8"
-      },
-      "stale_methods": {}
-    }
-  },
-  "steps": {
-    "regimes": {
-      "stiff": [
-        {
-          "method": "chebtt_roll",
-          "label": "ChebTT, retrained until its rollouts hold",
-          "ran": 35,
-          "one_step": 25,
-          "rollout": 24,
-          "speedup": 1642,
-          "evals": 5097,
-          "stale": false
-        },
-        {
-          "method": "chebtt_adaptive",
-          "label": "ChebTT-A",
-          "ran": 37,
-          "one_step": 27,
-          "rollout": 4,
-          "speedup": 4784,
-          "evals": 30503,
-          "stale": false
-        },
-        {
-          "method": "chebtt_box",
-          "label": "ChebTT, piecewise axes",
-          "ran": 37,
-          "one_step": 27,
-          "rollout": 4,
-          "speedup": 5701,
-          "evals": 30503,
-          "stale": false
-        },
-        {
-          "method": "chebtt_smooth",
-          "label": "ChebTT, one basis per axis (no edge search)",
-          "ran": 37,
-          "one_step": 27,
-          "rollout": 4,
-          "speedup": 3916,
-          "evals": 30503,
-          "stale": false
-        },
-        {
-          "method": "slowtable",
-          "label": "SlowTable",
-          "ran": 20,
-          "one_step": 9,
-          "rollout": 2,
-          "speedup": 408,
-          "evals": 899,
-          "stale": false
-        },
-        {
-          "method": "art_quad",
-          "label": "ART, quadratic leaves",
-          "ran": 19,
-          "one_step": 8,
-          "rollout": 0,
-          "speedup": null,
-          "evals": null,
-          "stale": false
-        },
-        {
-          "method": "art",
-          "label": "ART, affine leaves",
-          "ran": 17,
-          "one_step": 4,
-          "rollout": 0,
-          "speedup": null,
-          "evals": null,
-          "stale": false
-        },
-        {
-          "method": "afinni",
-          "label": "AFINNI",
-          "ran": 15,
-          "one_step": 0,
-          "rollout": 0,
-          "speedup": null,
-          "evals": null,
-          "stale": false
-        }
-      ],
-      "nonstiff": [
-        {
-          "method": "chebtt_roll",
-          "label": "ChebTT, retrained until its rollouts hold",
-          "ran": 7,
-          "one_step": 5,
-          "rollout": 5,
-          "speedup": 243,
-          "evals": 7230,
-          "stale": false
-        },
-        {
-          "method": "chebtt_adaptive",
-          "label": "ChebTT-A",
-          "ran": 7,
-          "one_step": 5,
-          "rollout": 4,
-          "speedup": 265,
-          "evals": 9951,
-          "stale": false
-        },
-        {
-          "method": "chebtt_box",
-          "label": "ChebTT, piecewise axes",
-          "ran": 7,
-          "one_step": 5,
-          "rollout": 4,
-          "speedup": 245,
-          "evals": 9951,
-          "stale": false
-        },
-        {
-          "method": "chebtt_smooth",
-          "label": "ChebTT, one basis per axis (no edge search)",
-          "ran": 7,
-          "one_step": 5,
-          "rollout": 4,
-          "speedup": 274,
-          "evals": 9951,
-          "stale": false
-        },
-        {
-          "method": "art_quad",
-          "label": "ART, quadratic leaves",
-          "ran": 5,
-          "one_step": 1,
-          "rollout": 0,
-          "speedup": null,
-          "evals": null,
-          "stale": false
-        },
-        {
-          "method": "slowtable",
-          "label": "SlowTable",
-          "ran": 4,
-          "one_step": 1,
-          "rollout": 0,
-          "speedup": null,
-          "evals": null,
-          "stale": false
-        },
-        {
-          "method": "afinni",
-          "label": "AFINNI",
-          "ran": 3,
-          "one_step": 0,
-          "rollout": 0,
-          "speedup": null,
-          "evals": null,
-          "stale": false
-        },
-        {
-          "method": "art",
-          "label": "ART, affine leaves",
-          "ran": 3,
-          "one_step": 0,
-          "rollout": 0,
-          "speedup": null,
-          "evals": null,
-          "stale": false
-        }
-      ]
-    },
-    "robertson": {
-      "chebtt_box": {
-        "one_step": 0.253,
-        "rollout": 5.05,
-        "evals": 955,
-        "speedup": 8355,
-        "stale": false
-      },
-      "chebtt_roll": {
-        "one_step": 0.0179,
-        "rollout": 0.434,
-        "evals": 1159,
-        "speedup": 9663,
-        "stale": false
-      },
-      "slowtable": {
-        "one_step": 4.03,
-        "rollout": 1.78,
-        "evals": 841,
-        "speedup": 311,
-        "stale": false
-      }
-    },
-    "records": 264,
-    "kida": {
-      "species": 578,
-      "reactions": 8275,
-      "ms_per_step": 256,
-      "lu_per_step": 35,
-      "slow_low": 15,
-      "slow_high": 25,
-      "nelson_species": 14,
-      "nelson_slow": 7,
-      "nelson_inputs": 18
-    },
-    "colours": {
-      "chebtt_box": "#e08a00",
-      "chebtt_roll": "#c0392b",
-      "slowtable": "#8e24aa",
-      "art_quad": "#2e7d32",
-      "afinni": "#6d3b0f"
-    },
-    "problems": 17
-  },
-  "aside": {
-    "chebtree": {
-      "evals": 2253,
-      "boxes": 16,
-      "worst": 0.331
-    },
-    "sparsecheb": {
-      "evals": 741,
-      "indices": 32,
-      "worst": 0.441
-    },
-    "kernel": {
-      "evals": 1377,
-      "centres": 193,
-      "worst": 2.26
-    },
-    "slowtable": {
-      "records": 43,
-      "evals": 229,
-      "states": 372,
-      "alpha": 0.01,
-      "refused_fresh": 7.26
-    }
-  },
-  "engineering": {
-    "chebtt": {
-      "rounds": 7,
-      "phases": [
-        "explore",
-        "sample",
-        "fit",
-        "check",
-        "adapt",
-        "compress"
-      ]
-    },
-    "chebtt_metric": {
-      "rounds": 2,
-      "phases": [
-        "explore",
-        "fit"
-      ]
-    },
-    "chebtt_adaptive": {
-      "rounds": 5,
-      "phases": [
-        "explore",
-        "fit"
-      ]
-    },
-    "hub": {
-      "rounds": 2,
-      "phases": [
-        "explore",
-        "sample",
-        "fit"
-      ]
-    }
-  },
-  "appendix": {
-    "settings": {
-      "chebtt": [
-        {
-          "name": "safety",
-          "default": "0.5",
-          "note": "every check must be within safety * atol",
-          "inherited": false
-        },
-        {
-          "name": "rank0",
-          "default": "2",
-          "note": "the cross's first rank",
-          "inherited": false
-        },
-        {
-          "name": "rank_step",
-          "default": "2",
-          "note": "rank added when no axis needs a degree",
-          "inherited": false
-        },
-        {
-          "name": "rank_max",
-          "default": "60",
-          "note": "",
-          "inherited": false
-        },
-        {
-          "name": "sweeps",
-          "default": "2",
-          "note": "alternating maxvol sweeps per round",
-          "inherited": false
-        },
-        {
-          "name": "n_fibre",
-          "default": "4",
-          "note": "random fibres per axis in the degree pre-pass",
-          "inherited": false
-        },
-        {
-          "name": "n_max",
-          "default": "512",
-          "note": "largest degree of an axis",
-          "inherited": false
-        },
-        {
-          "name": "n_check",
-          "default": "None",
-          "note": "Sobol check points (default 64 + 32 d)",
-          "inherited": false
-        },
-        {
-          "name": "n_free",
-          "default": "20000",
-          "note": "free checks drawn from the grid points evaluated earlier",
-          "inherited": false
-        },
-        {
-          "name": "chop_share",
-          "default": "0.25",
-          "note": "compression may change the model by chop_share * atol",
-          "inherited": false
-        },
-        {
-          "name": "n_probe",
-          "default": "4000",
-          "note": "uniform points the compression is judged at (besides the check points)",
-          "inherited": false
-        },
-        {
-          "name": "seed",
-          "default": "0",
-          "note": "",
-          "inherited": false
-        },
-        {
-          "name": "max_evals",
-          "default": "2000000",
-          "note": "",
-          "inherited": false
-        },
-        {
-          "name": "edges",
-          "default": "True",
-          "note": "search axes for jumps and kinks, which become breakpoints",
-          "inherited": false
-        },
-        {
-          "name": "max_pieces",
-          "default": "4",
-          "note": "pieces per axis at most",
-          "inherited": false
-        }
-      ],
-      "vector": [
-        {
-          "name": "rotate",
-          "default": "False",
-          "note": "train outputs that share oblique coordinates in them (ChebTT-M)",
-          "inherited": false
-        },
-        {
-          "name": "axes_rank",
-          "default": "6",
-          "note": "with rotate, the rank cap of every output's first attempt on the axes",
-          "inherited": false
-        }
-      ],
-      "adaptive": [
-        {
-          "name": "seed",
-          "default": "0",
-          "note": "",
-          "inherited": false
-        },
-        {
-          "name": "max_evals",
-          "default": "300000",
-          "note": "of each full ChebTT build",
-          "inherited": false
-        },
-        {
-          "name": "first_budget",
-          "default": "None",
-          "note": "the first ChebTT attempt's evaluations (default 5000 + 500 d)",
-          "inherited": false
-        }
-      ],
-      "hub": [
-        {
-          "name": "n0",
-          "default": "2000",
-          "note": "samples of the first budget round (doubled every round)",
-          "inherited": false
-        },
-        {
-          "name": "max_evals",
-          "default": "200000",
-          "note": "",
-          "inherited": false
-        },
-        {
-          "name": "r_max",
-          "default": "4",
-          "note": "largest hub dimension",
-          "inherited": false
-        },
-        {
-          "name": "pilot",
-          "default": "100",
-          "note": "pilot points whose gradients give the directions",
-          "inherited": false
-        },
-        {
-          "name": "grad_weight",
-          "default": "0.05",
-          "note": "weight of a gradient equation per unit of the box's half-width",
-          "inherited": false
-        },
-        {
-          "name": "seed",
-          "default": "0",
-          "note": "",
-          "inherited": false
-        }
-      ]
-    },
-    "tests": {
-      "test_schemes_base.py": 9,
-      "test_schemes_chebtree.py": 7,
-      "test_schemes_chebtt.py": 10,
-      "test_schemes_chebtt_adaptive.py": 4,
-      "test_schemes_hub.py": 4,
-      "test_schemes_kernel.py": 1,
-      "test_schemes_sparsegrid.py": 2
-    },
-    "test_count": 37,
-    "regression_cases": [
-      "chebtt",
-      "chebtt_edges",
-      "chebtt_vector",
-      "chebtt_metric",
-      "chebtt_adaptive",
-      "chebtree",
-      "chebtree_rotated",
-      "sparsegrid",
-      "hub",
-      "hub_jacobian",
-      "kernel",
-      "tabulation"
+    [
+     4
     ]
+   ],
+   "record": {
+    "columns": {
+     "sorted/0.005": {
+      "solver_share": 0.0,
+      "worst": 0.0027149524898121627
+     },
+     "sorted/0.05": {
+      "solver_share": 0.0,
+      "worst": 0.002749112997610152
+     },
+     "sorted/0.25": {
+      "solver_share": 0.0,
+      "worst": 0.0026503118720511906
+     },
+     "unsorted/0.005": {
+      "solver_share": 0.0,
+      "worst": 0.0031179784184115072
+     },
+     "unsorted/0.05": {
+      "solver_share": 0.0,
+      "worst": 0.0037748988923131978
+     },
+     "unsorted/0.25": {
+      "solver_share": 0.0,
+      "worst": 0.0036473277883547935
+     }
+    },
+    "denominator_us": 165.983583307631,
+    "evaluate_us_1000": 0.2859249943867326,
+    "long": {
+     "account_share": 0.0,
+     "certified_horizon": null,
+     "fresh_rate": 0.0,
+     "share_200_on": 0.0,
+     "speedup_steady": 580.5144235943471,
+     "steady_rate": 0.0,
+     "steady_upper_95": 2.3555276381909547e-05,
+     "worst": 0.003662722496585738
+    },
+    "mixing": {
+     "0.01": {
+      "solver_share": 0.0,
+      "worst": 0.0029383299086938944
+     },
+     "0.1": {
+      "solver_share": 0.0,
+      "worst": 0.003025109787475581
+     }
+    },
+    "rollout_fresh_rate": 0.0,
+    "rollout_steady_rate": 0.0
+   },
+   "rollout_worst": 0.002397857202257818,
+   "solver_calls": 485,
+   "test_refused_share": 0.0
+  },
+  "recipe_100": {
+   "amplification": 1.5371418767091656,
+   "degree": 8,
+   "degree_selected_this_run": 8,
+   "grid_beyond_tol_share": 0.0,
+   "grid_refused_share": 0.75146484375,
+   "grid_worst_accepted": 4.613838996263275e-05,
+   "one_step_worst": 6.041487912417098e-06,
+   "points_drawn": 0,
+   "points_in_empty_cells": null,
+   "record": {
+    "columns": {
+     "sorted/0.005": {
+      "solver_share": 0.009,
+      "worst": 2.6398012386658065e-05
+     },
+     "sorted/0.05": {
+      "solver_share": 0.015,
+      "worst": 5.909151059785289e-05
+     },
+     "sorted/0.25": {
+      "solver_share": 0.0195,
+      "worst": 4.5645293246944496e-05
+     },
+     "unsorted/0.005": {
+      "solver_share": 0.10225,
+      "worst": 4.8661515464468175e-05
+     },
+     "unsorted/0.05": {
+      "solver_share": 0.07025,
+      "worst": 6.390437973727292e-05
+     },
+     "unsorted/0.25": {
+      "solver_share": 0.02125,
+      "worst": 6.676422855567479e-05
+     }
+    },
+    "denominator_us": 165.983583307631,
+    "evaluate_us_1000": 1.18030900193844,
+    "long": {
+     "account_share": 0.0,
+     "certified_horizon": null,
+     "fresh_rate": 0.0,
+     "share_200_on": 0.0,
+     "speedup_steady": 140.6272281538424,
+     "steady_rate": 0.0,
+     "steady_upper_95": 2.3555276381909547e-05,
+     "worst": 9.902189134393998e-05
+    },
+    "mixing": {
+     "0.01": {
+      "solver_share": 0.14375,
+      "worst": 5.351599818669006e-05
+     },
+     "0.1": {
+      "solver_share": 0.099375,
+      "worst": 3.87818712605445e-05
+     }
+    },
+    "rollout_fresh_rate": 0.0,
+    "rollout_steady_rate": 0.0
+   },
+   "rollout_worst": 9.286624067808558e-06,
+   "selection": [
+    {
+     "chain_worst": 0.0,
+     "cost_us": 2629.3674955377355,
+     "degree": 1,
+     "evaluate_us": 0.40759499825071543,
+     "served": false,
+     "solver_share": 1.0,
+     "terms": 3
+    },
+    {
+     "chain_worst": 0.0,
+     "cost_us": 2629.3936455113,
+     "degree": 2,
+     "evaluate_us": 0.433744971815031,
+     "served": false,
+     "solver_share": 1.0,
+     "terms": 6
+    },
+    {
+     "chain_worst": null,
+     "cost_us": 2186.885259792689,
+     "degree": 3,
+     "evaluate_us": 0.4669425106840208,
+     "served": false,
+     "solver_share": 0.8316666666666667,
+     "terms": 10
+    },
+    {
+     "chain_worst": 0.004163543251226948,
+     "cost_us": 1735.6431418520515,
+     "degree": 4,
+     "evaluate_us": 0.5296074959915131,
+     "served": false,
+     "solver_share": 0.66,
+     "terms": 15
+    },
+    {
+     "chain_worst": 0.006318069091193729,
+     "cost_us": 974.5411861409843,
+     "degree": 5,
+     "evaluate_us": 0.5659550151904114,
+     "served": false,
+     "solver_share": 0.370479302832244,
+     "terms": 21
+    },
+    {
+     "chain_worst": 0.0006872194035516047,
+     "cost_us": 2.7975699258604436,
+     "degree": 6,
+     "evaluate_us": 0.6067700087442063,
+     "served": true,
+     "solver_share": 0.0008333333333333334,
+     "terms": 28
+    },
+    {
+     "chain_worst": 6.950306530060374e-05,
+     "cost_us": 2.827677438290266,
+     "degree": 7,
+     "evaluate_us": 0.6368775211740285,
+     "served": true,
+     "solver_share": 0.0008333333333333334,
+     "terms": 36
+    },
+    {
+     "chain_worst": 9.384627450266525e-06,
+     "cost_us": 0.6737500007147901,
+     "degree": 8,
+     "evaluate_us": 0.6737500007147901,
+     "served": true,
+     "solver_share": 0.0,
+     "terms": 45
+    },
+    {
+     "chain_worst": 4.631473050895063e-06,
+     "cost_us": 0.7779474981362,
+     "degree": 9,
+     "evaluate_us": 0.7779474981362,
+     "served": true,
+     "solver_share": 0.0,
+     "terms": 55
+    },
+    {
+     "chain_worst": 3.286491875309494e-07,
+     "cost_us": 14.005727005496738,
+     "degree": 10,
+     "evaluate_us": 0.8609275027993135,
+     "served": true,
+     "solver_share": 0.005,
+     "terms": 66
+    },
+    {
+     "chain_worst": 1.1717696229984753e-08,
+     "cost_us": 5.341404836144648,
+     "degree": 11,
+     "evaluate_us": 0.9598050019121729,
+     "served": true,
+     "solver_share": 0.0016666666666666668,
+     "terms": 78
+    },
+    {
+     "chain_worst": 1.0147942902660745e-09,
+     "cost_us": 1.0495325113879517,
+     "degree": 12,
+     "evaluate_us": 1.0495325113879517,
+     "served": true,
+     "solver_share": 0.0,
+     "terms": 91
+    }
+   ],
+   "solver_calls": 16000,
+   "test_refused_share": 0.0
   }
+ },
+ "problem": "bruss_d2",
+ "settings": {
+  "alpha": 0.05,
+  "beta": 3.0,
+  "chebtt": {
+   "axes_rank": 6,
+   "chop_share": 0.25,
+   "max_pieces": 4,
+   "n_fibre": 4,
+   "n_free": 20000,
+   "n_max": 512,
+   "rank0": 2,
+   "rank_max": 60,
+   "rank_step": 2,
+   "safety": 0.5,
+   "sweeps": 2
+  },
+  "gamma": 0.5,
+  "lambdas": [
+   0.5,
+   1.0,
+   1.5,
+   2.0,
+   3.0,
+   5.0,
+   8.0
+  ],
+  "margin": 0.5,
+  "rcond": 1e-10,
+  "served_share": 0.5,
+  "sketch_columns": 32,
+  "splits": 3
+ },
+ "steps": 40,
+ "test": 40,
+ "tol": 0.01,
+ "train": 100,
+ "visited_cells_share": 0.48
 }

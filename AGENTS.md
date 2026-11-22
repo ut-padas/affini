@@ -313,8 +313,9 @@ how it was built. The history belongs in commit messages and the design doc's lo
 ## The technical companions (`docs/reports/`)
 
 `docs/reports/adaptive-surrogates/adaptive-surrogates.typ` explains AFINNI, ART and the refinement
-engine, and `docs/reports/global-approximants/global-approximants.typ` the schemes (ChebTT, ChebTT-M,
-ChebTT-A, the hub expansion), each to a reader who has read neither the manuscript nor the code.
+engine, and `docs/reports/global-approximants/global-approximants.typ` the theory of where a surrogate's error comes
+from and the strongest schemes it chose (ChebTT and its variants, and the chart recipe of `theory/panel/generic4.py`),
+compared with AFINNI and ART, each to a reader who has read neither the manuscript nor the code.
 A companion is expository, not an archive: like a good lecture it motivates each problem on the
 running example, shows the candidate answers and where they stumble, then walks through the chosen
 method, its strengths and its limits, and why it was chosen (from a measurement or an argument). The
@@ -359,7 +360,8 @@ How it is built:
   README), shared by both companions, which import it as `../companion/lib.typ` and compile with
   `--root docs/reports` (`make report` builds both). A generic building block goes in the package;
   anything about one report's methods stays in that report's `.typ`. The schemes' companion has its own
-  `figures/make_figures.py` (`make report-global-figures`) and `figures/example.json`.
+  `figures/make_figures.py` (its running example, `figures/example.json`) and `figures/results.py` (the benchmark's store
+  and the theory's records, `figures/results.json`), both run by `make report-global-figures`.
 - `figures/make_figures.py` computes every data panel from real runs through the public API,
   never by hand. It records the runs by wrapping the plans' stage methods, rebuilds the trees,
   the fits, the Hessian estimate and the inference rule from their definitions, and stops unless
@@ -375,11 +377,10 @@ How it is built:
   change.
 - The work-stealing panels show one recorded run (`figures/steal_run.json`), because steal
   timing differs between runs. `make report-steals` records it again and checks that the tree
-  equals the one built without stealing. The convergence sections read `figures/convergence.json`, written with
-  their panels by each companion's `figures/convergence.py` (`make report-convergence`, about 90 minutes: many
-  trainings at tolerances down to where a run takes two minutes); the schemes' study reads the adaptive one's. Both
-  keep each case as a record under `results/convergence/<companion>/` ("Long runs" above) and resume after a stop;
-  their times are measured on one core. Everything else is byte-identical between runs: a fixed
+  equals the one built without stealing. The adaptive companion's convergence section reads `figures/convergence.json`, written with
+  its panels by `figures/convergence.py` (`make report-convergence`, about 90 minutes: many trainings at tolerances
+  down to where a run takes two minutes). It keeps each case as a record under `results/convergence/adaptive-surrogates/`
+  ("Long runs" above) and resumes after a stop; its times are measured on one core. Everything else is byte-identical between runs: a fixed
   SVG hash salt, and no dates in the SVGs or the PDF.
 - When a change alters what the companion states (a formula, a default, an invariant, a stage),
   update it and rebuild the figures and the PDF in the same change. `make report-figures` stops

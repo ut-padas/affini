@@ -17,36 +17,6 @@ trefethen2019:
   date: 2019
   publisher: Society for Industrial and Applied Mathematics
 
-platte2011:
-  type: article
-  title: Impossibility of fast stable approximation of analytic functions from equispaced samples
-  author: ["Platte, Rodrigo B.", "Trefethen, Lloyd N.", "Kuijlaars, Arno B. J."]
-  date: 2011
-  parent:
-    type: periodical
-    title: SIAM Review
-    volume: 53
-
-aurentz2017:
-  type: article
-  title: Chopping a Chebyshev series
-  author: ["Aurentz, Jared L.", "Trefethen, Lloyd N."]
-  date: 2017
-  parent:
-    type: periodical
-    title: ACM Transactions on Mathematical Software
-    volume: 43
-
-pachon2010:
-  type: article
-  title: Piecewise-smooth chebfuns
-  author: ["Pachón, Ricardo", "Platte, Rodrigo B.", "Trefethen, Lloyd N."]
-  date: 2010
-  parent:
-    type: periodical
-    title: IMA Journal of Numerical Analysis
-    volume: 30
-
 oseledets2010:
   type: article
   title: TT-cross approximation for multidimensional arrays
@@ -77,30 +47,6 @@ goreinov2010:
     title: "Matrix Methods: Theory, Algorithms and Applications"
     publisher: World Scientific
 
-goreinov2011:
-  type: article
-  title: Quasioptimality of skeleton approximation of a matrix in the Chebyshev norm
-  author: ["Goreinov, S. A.", "Tyrtyshnikov, E. E."]
-  date: 2011
-  parent:
-    type: periodical
-    title: Doklady Mathematics
-    volume: 83
-
-novak2008:
-  type: book
-  title: "Tractability of Multivariate Problems, Volume I: Linear Information"
-  author: ["Novak, Erich", "Woźniakowski, Henryk"]
-  date: 2008
-  publisher: European Mathematical Society
-
-constantine2015:
-  type: book
-  title: "Active Subspaces: Emerging Ideas for Dimension Reduction in Parameter Studies"
-  author: ["Constantine, Paul G."]
-  date: 2015
-  publisher: Society for Industrial and Applied Mathematics
-
 zahm2020:
   type: article
   title: Gradient-based dimension reduction of multivariate vector-valued functions
@@ -110,36 +56,6 @@ zahm2020:
     type: periodical
     title: SIAM Journal on Scientific Computing
     volume: 42
-
-rabitz1999:
-  type: article
-  title: General foundations of high-dimensional model representations
-  author: ["Rabitz, Herschel", "Aliş, Ömer F."]
-  date: 1999
-  parent:
-    type: periodical
-    title: Journal of Mathematical Chemistry
-    volume: 25
-
-tipireddy2014:
-  type: article
-  title: Basis adaptation in homogeneous chaos spaces
-  author: ["Tipireddy, Ramakrishna", "Ghanem, Roger"]
-  date: 2014
-  parent:
-    type: periodical
-    title: Journal of Computational Physics
-    volume: 259
-
-gerstner2003:
-  type: article
-  title: Dimension-adaptive tensor-product quadrature
-  author: ["Gerstner, Thomas", "Griebel, Michael"]
-  date: 2003
-  parent:
-    type: periodical
-    title: Computing
-    volume: 71
 
 pope1997:
   type: article
@@ -174,3 +90,42 @@ mazzia2008:
   author: ["Mazzia, Francesca", "Magherini, Cecilia"]
   date: 2008
   organization: Department of Mathematics, University of Bari
+
+cohen2013:
+  type: article
+  title: On the stability and accuracy of least squares approximations
+  author: ["Cohen, Albert", "Davenport, Mark A.", "Leviatan, Dany"]
+  date: 2013
+  parent:
+    type: periodical
+    title: Foundations of Computational Mathematics
+    volume: 13
+
+fenichel1979:
+  type: article
+  title: Geometric singular perturbation theory for ordinary differential equations
+  author: ["Fenichel, Neil"]
+  date: 1979
+  parent:
+    type: periodical
+    title: Journal of Differential Equations
+    volume: 31
+
+angelopoulos2024:
+  type: article
+  title: Conformal risk control
+  author: ["Angelopoulos, Anastasios N.", "Bates, Stephen", "Fisch, Adam", "Lei, Lihua", "Schuster, Tal"]
+  date: 2024
+  parent:
+    type: conference
+    title: International Conference on Learning Representations
+
+halko2011:
+  type: article
+  title: "Finding structure with randomness: probabilistic algorithms for constructing approximate matrix decompositions"
+  author: ["Halko, Nathan", "Martinsson, Per-Gunnar", "Tropp, Joel A."]
+  date: 2011
+  parent:
+    type: periodical
+    title: SIAM Review
+    volume: 53
