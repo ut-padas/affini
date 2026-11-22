@@ -26,6 +26,7 @@ first version, which was built on HIRES and overfitted elsewhere.
               first 20 and all test trajectories with their solver shares, and mixing rollouts (w = 0.01, 0.1) with refusal honoured.
 """
 
+import os
 import time
 
 import numpy as np
@@ -33,7 +34,7 @@ import numpy as np
 from src.benchmark.step_maps import invariants_of, visited
 from src.problems.ode.system import FLOOR
 
-TOL = 0.01
+TOL = float(os.environ.get("THEORY_TOL", "0.01"))  # the tolerance every recipe module imports; set per process (one tolerance per run)
 SPLITS = (0, 1, 2)
 RIDGES = (0.0, 1e-6)
 
