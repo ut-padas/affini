@@ -155,6 +155,32 @@
   },
   "status": "done"
  },
+ "bruss_d20/recipe": {
+  "build_s": 7.145788077999896,
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 37.95,
+    "own_input_defect_worst": 0.001789937837754163,
+    "solver_share": 0.034999999999999996,
+    "step_and_solve_s": 5.968545166993863,
+    "steps": 40,
+    "wall_s": 5.98064470999816,
+    "worst": 0.002616112519831487
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 264.80645161290323,
+    "own_input_defect_worst": 0.0029779763744406385,
+    "solver_share": 0.030625000000000003,
+    "step_and_solve_s": 5.9789098459805246,
+    "steps": 40,
+    "wall_s": 5.992040986995562,
+    "worst": 0.0029779763744406385
+   }
+  },
+  "status": "done"
+ },
  "bruss_d4/chebtt_roll": {
   "build_s": 49.88528702999611,
   "columns": {
@@ -203,6 +229,32 @@
     "steps": 40,
     "wall_s": 6.325029793995782,
     "worst": 0.002609770330288791
+   }
+  },
+  "status": "done"
+ },
+ "burgers_d20/recipe": {
+  "build_s": 3.6646335240002372,
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": 1.0949243298911856e-12,
+    "own_input_defect_worst": 0.0015283405406555373,
+    "solver_share": 0.040625,
+    "step_and_solve_s": 4.396025745962106,
+    "steps": 40,
+    "wall_s": 4.408128912997199,
+    "worst": 0.0015283405406555373
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": 9.59392435828818e-13,
+    "own_input_defect_worst": 0.002117723381356046,
+    "solver_share": 0.034999999999999996,
+    "step_and_solve_s": 4.182905727997422,
+    "steps": 40,
+    "wall_s": 4.194473666000704,
+    "worst": 0.002117723381356046
    }
   },
   "status": "done"
@@ -359,6 +411,32 @@
     "steps": 40,
     "wall_s": 3.619513181001821,
     "worst": 0.0016026042578329847
+   }
+  },
+  "status": "done"
+ },
+ "fisher_kpp_d5/recipe": {
+  "build_s": 32.032504801005416,
+  "columns": {
+   "0.005": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0007228072792574425,
+    "solver_share": 0.190625,
+    "step_and_solve_s": 27.625923330997466,
+    "steps": 40,
+    "wall_s": 27.63279907499964,
+    "worst": 0.0007611421123860929
+   },
+   "0.05": {
+    "cells": 40,
+    "invariant_drift_relative": null,
+    "own_input_defect_worst": 0.0005674528138256418,
+    "solver_share": 0.18125,
+    "step_and_solve_s": 27.223318856973492,
+    "steps": 40,
+    "wall_s": 27.229730328996084,
+    "worst": 0.0005379554483444515
    }
   },
   "status": "done"
