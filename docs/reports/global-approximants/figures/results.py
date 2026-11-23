@@ -184,6 +184,7 @@ def compared() -> dict:
 
     budget = int(re.search(r"^BUDGET = (\d+)", (ROOT / "theory" / "panel" / "p25_compare.py").read_text(), re.M).group(1))
     out = {"budget_s": budget}
+    p15 = load("p15_denominators")
     for tol in TOLS:
         path = THEORY / f"p25_compare_{tol}.json"
         recs = {}
@@ -200,6 +201,14 @@ def compared() -> dict:
                 "mixing_worst": max((m["worst"] for m in r.get("mixing", {}).values()), default=None),
                 "long": {x: (r.get("long") or {}).get(x) for x in ("steady_rate", "fresh_rate", "worst", "speedup_steady", "certified_horizon")},
                 "over_budget": bool(r.get("train_s") and r["train_s"] > budget)}  # fmt: skip
+            rec = recs[f"{k['problem']}/{k['method']}"]
+            # a problem whose fastest exact solver was timed after its comparison ran: the steady speed-up from the same formula
+            # (p21_long.summarise), with that solver's time
+            den = (p15.get(k["problem"]) or {}).get("denominator_us")
+            lg = rec["long"]
+            if lg.get("speedup_steady") is None and den and r.get("evaluate_us_1000") and lg.get("steady_rate") is not None:
+                lg["speedup_steady"] = den / (r["evaluate_us_1000"] + lg["steady_rate"] * den)
+                rec["speedup_from_later_baseline"] = True
         out[str(tol)] = {"records": recs, "summary_file": path.exists()}
     return out
 
@@ -253,9 +262,12 @@ def panels(fs: dict, cmp: dict, rc: dict) -> None:
                     axes[0, j].plot(p_i + dx, 30, "x", color=COLOURS[m], ms=3.5)
                     axes[1, j].plot(p_i + dx, 0.3, "x", color=COLOURS[m], ms=3.5)
                     continue
-                # a case that finished beyond the compute budget keeps its values, drawn hollow
+                # a case that finished beyond the compute budget keeps its values, drawn hollow; one that refused half of the
+                # rollouts' steps or more (served by the solver, not the surrogate) is a square
                 face = "none" if r["over_budget"] else COLOURS[m]
-                axes[0, j].plot(p_i + dx, max(r["rollout_worst"], 1e-7) / tol, "o", color=COLOURS[m], mfc=face, ms=3)
+                fresh, steady = r.get("rollout_fresh_rate"), r.get("rollout_steady_rate")
+                refused = (fresh + 3 * steady) / 4 if fresh is not None and steady is not None else 0.0
+                axes[0, j].plot(p_i + dx, max(r["rollout_worst"], 1e-7) / tol, "s" if refused >= 0.5 else "o", color=COLOURS[m], mfc=face, ms=3)
                 sp = r["long"].get("speedup_steady")
                 if sp:
                     axes[1, j].plot(p_i + dx, sp, "o", color=COLOURS[m], mfc=face, ms=3)

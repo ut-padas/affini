@@ -964,11 +964,18 @@ box needs pieces everywhere, while a global expansion's error falls geometricall
 
 #let cshown = ("recipe_100", "recipe_340", "chebtt_roll", "afinni_roll", "art_roll", "art_quad_roll")
 #let cproblems = ("bruss_d2", "robertson", "fisher_kpp_d3", "lorenz96_d4", "chemakzo", "allen_cahn_d5", "fisher_kpp_d5", "fisher_kpp_d10", "burgers_d20", "pollu")
+// a case's share of rollout steps refused (steps 1-10 and 11-40 weighted by their counts)
+#let crefused(r) = if r.rollout_fresh_rate == none { 0 } else { (r.rollout_fresh_rate + 3 * r.rollout_steady_rate) / 4 }
+// served, as everywhere in this companion: within the budget on every rollout and refusing less than half of their steps
+#let cserved(r, tol) = (r != none and r.status == "done" and r.rollout_worst != none and r.rollout_worst <= tol / 2
+  and crefused(r) < 0.5)
+#let crec(p, m, tol) = rs.compare.at(str(tol)).records.at(p + "/" + m, default: none)
 #let ccell(r, tol) = {
   if r == none { return small[not run] }
   if r.status != "done" { return small[not within \ the budget] }
-  let ok = r.rollout_worst != none and r.rollout_worst <= tol / 2
-  let body = small[#sig(r.rollout_worst) \ #pctx(r.long.steady_rate) \ #sig(r.long.speedup_steady)×#if r.over_budget [ \ \* #num(r.train_s) s]]
+  let refused = crefused(r)
+  let ok = cserved(r, tol)
+  let body = small[#sig(r.rollout_worst)#if refused >= 0.5 [ (#pctx(refused) refused)] \ #pctx(r.long.steady_rate) \ #sig(r.long.speedup_steady)×#if r.over_budget [ \ \* #num(r.train_s) s]]
   let body = if ok { body } else { text(fill: red, body) }
   if r.over_budget { text(style: "italic", body) } else { body }
 }
@@ -983,14 +990,14 @@ box needs pieces everywhere, while a global expansion's error falls geometricall
 )
 #figure(ctab(0.05), caption: [Every method under one protocol at the tolerance 0.05: the worst error over the 40 test
   rollouts, the steady refusal rate on 2,000-step chains, and the steady speed-up over the fastest exact solver. Red:
-  the rollout exceeds $atol slash 2$. Every case has the same compute budget, #(rs.compare.budget_s / 60) minutes on this
+  not served, because the rollout exceeds $atol slash 2$ or the method refuses half of the rollouts' steps or more. Every case has the same compute budget, #(rs.compare.budget_s / 60) minutes on this
   laptop. A case that did not finish within it says so; a case that finished but took longer (it ran under the study's
   first limit, 40 minutes) keeps its values, in italics with an asterisk and its training time.]) <tab:c005>
 #figure(ctab(0.01), caption: [As @tab:c005, at the tolerance 0.01.]) <tab:c001>
 
 #figure(panel("compare-steps"), caption: [The comparison of @tab:c005 and @tab:c001 per problem: the rollout's worst
   error over the tolerance (above the dashed line it exceeds $atol slash 2$) and the steady speed-up on long chains; a
-  cross marks a case that did not finish within the budget, and a hollow marker one that finished beyond it.]) <fig:csteps>
+  cross marks a case that did not finish within the budget, a hollow marker one that finished beyond it, and a square one that refused half of the rollouts' steps or more.]) <fig:csteps>
 
 #let holds(m) = m.rollout_worst <= ex.tol / 2
 The running example shows the pattern in miniature (@fig:rollout). At $atol = #ex.tol$, AFINNI's rollouts
@@ -1010,8 +1017,69 @@ regions also refuse #pctx(af.record.long.steady_rate) of the steady steps, for a
   columns: 3,
 )
 
-#takeaway[Under one protocol AFINNI and ART need more solves than ChebTT for the same rollout accuracy, hold fewer
-  function-suite cases by a wide margin, and do not reach the stiff systems the chart recipe serves.]
+#let median(xs) = { let s = xs.sorted(); if s.len() == 0 { none } else { s.at(calc.quo(s.len(), 2)) } }
+#let tally(m, tol) = {
+  // within the budget only: a case that finished beyond it (under the study's first limit) is counted as not finished
+  let all = cproblems.map(p => crec(p, m, tol)).filter(r => r == none or not r.over_budget)
+  let ok = cproblems.filter(p => cserved(crec(p, m, tol), tol) and not crec(p, m, tol).over_budget)
+  (served: ok.len(), finished: all.filter(r => r != none and r.status == "done").len(),
+   timed: all.filter(r => r != none and r.status != "done").len(),
+   maxd: if ok.len() == 0 { none } else { calc.max(..ok.map(p => rs.problems.step_maps.at(p).d)) },
+   calls: median(ok.map(p => crec(p, m, tol).solver_calls)),
+   speed: median(ok.map(p => crec(p, m, tol).long.speedup_steady).filter(x => x != none)))
+}
+#figure(table(
+  columns: (auto,) + (1fr,) * 6,
+  inset: (x: 3pt, y: 3pt),
+  align: (left,) + (center,) * 6,
+  table.header([], table.cell(colspan: 3)[*tolerance 0.05*], table.cell(colspan: 3)[*tolerance 0.01*],
+    [], small[served / finished], small[largest $d$ served], small[median solves; speed-up], small[served / finished],
+    small[largest $d$ served], small[median solves; speed-up]),
+  ..for m in cshown {
+    (small(lbl.at(m)),) + (0.05, 0.01).map(tol => {
+      let t = tally(m, tol)
+      (small[#t.served / #t.finished], small[#if t.maxd == none [–] else [#t.maxd]],
+       small[#if t.calls == none [–] else [#num(t.calls)\; #if t.speed == none [–] else [#sig(t.speed)×]]])
+    }).flatten()
+  },
+), caption: [Each method over the #cproblems.len() step maps: the problems it serves (within $atol slash 2$ on every test
+  rollout, refusing less than half of their steps) of those it finished within the budget (a case that finished beyond it counts as not finished), the largest dimension it
+  serves, and over its served problems the median solver calls and median steady speed-up (the recipe's calls are
+  its trajectories' steps and labels).]) <tab:tally>
+
+#let both(tol) = cproblems.filter(p => cserved(crec(p, "chebtt_roll", tol), tol) and cserved(crec(p, "art_quad_roll", tol), tol))
+#let ratios = (0.05, 0.01).map(tol => both(tol).map(p => crec(p, "art_quad_roll", tol).solver_calls / crec(p, "chebtt_roll", tol).solver_calls)).flatten()
+#let t340 = (tally("recipe_340", 0.05), tally("recipe_340", 0.01))
+#let tch = (tally("chebtt_roll", 0.05), tally("chebtt_roll", 0.01))
+#let taf = (tally("afinni_roll", 0.05), tally("afinni_roll", 0.01))
+#let taq = (tally("art_quad_roll", 0.05), tally("art_quad_roll", 0.01))
+#let tar = (tally("art_roll", 0.05), tally("art_roll", 0.01))
+#let t100 = (tally("recipe_100", 0.05), tally("recipe_100", 0.01))
+
+@tab:tally condenses the comparison. Four findings stand out.
+
+- *The local methods mostly stop at small dimension.* Within #(rs.compare.budget_s / 60) minutes AFINNI serves
+  #taf.at(0).served and #taf.at(1).served of the #cproblems.len() problems at the two tolerances, ART with affine leaves
+  #tar.at(0).served and #tar.at(1).served, ART with quadratic leaves #taq.at(0).served and #taq.at(1).served. Beyond
+  $d = 4$ they mostly do not finish: each must tile the whole box with pieces accurate to the tolerance.
+- *Where ChebTT and quadratic ART both serve a problem, ART pays more solves*: a median of #sig(median(ratios)) times
+  ChebTT's over the #ratios.len() such cases.
+- *ChebTT is the cheapest where it finishes, and stops at the box's size.* It serves #tch.at(0).served and
+  #tch.at(1).served problems, with a median of #num(tch.at(0).calls) and #num(tch.at(1).calls) solves and median steady
+  speed-ups of #sig(tch.at(0).speed)× and #sig(tch.at(1).speed)×. From $d = 10$ its trains, one per component on a mostly empty box, do not finish within the budget.
+- *The chart recipe at 340 trajectories serves the most problems and the largest*: #t340.at(0).served and
+  #t340.at(1).served, up to $d = #t340.at(1).maxd$, at errors often orders of magnitude below the tolerance. At 100
+  trajectories it serves #t100.at(0).served and #t100.at(1).served: it fails where the data do not cover the use
+  (allen_cahn_d5 at both tolerances), and on fisher_kpp_d10 at 0.01 its gate refuses every input.
+
+Two problems limit every method. On Robertson and CHEMAKZO every method that finished refuses most steady steps of the
+2,000-step chains, so the long-run speed-up is about 1: the late states lie beyond 40-step training, whatever the method
+(@sec:time shows the remedy for the recipe). POLLU finished for no method within the budget; the recipe serves it in its
+own studies (@tab:recipe), with a training longer than #(rs.compare.budget_s / 60) minutes.
+
+#takeaway[Under one protocol AFINNI and ART serve fewer problems, at more solves, and stop at small dimension; ChebTT
+  is the cheapest where it finishes; the chart recipe serves the most problems and the largest, and every method is
+  limited where the training does not cover the deployment's horizon.]
 
 = What remains open <sec:open>
 
