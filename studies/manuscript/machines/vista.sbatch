@@ -8,12 +8,18 @@
 #   sbatch -p gg -N 1 -n 128 -t 48:00:00 studies/manuscript/machines/vista.sbatch gg
 #   sbatch -p gh -N 1 -n 1   -t 00:30:00 studies/manuscript/machines/vista.sbatch gh-smoke   # first
 #   sbatch -p gg -N 1 -n 4   -t 00:30:00 studies/manuscript/machines/vista.sbatch gg-smoke   # first
+#
+# EXPERIMENTS narrows a GPU job to some experiments; each case runs alone on the node's one GPU,
+# without MPI. The error experiments with AFINNI and ART:
+#
+#   sbatch -p gh -N 1 -n 1 -t 48:00:00 --export=ALL,EXPERIMENTS=convergence,dimension,absolute \
+#       studies/manuscript/machines/vista.sbatch gh
 #SBATCH -J manuscript-study
 #SBATCH -o manuscript-study-%j.out
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-.}"
 source scripts/hpc/tacc.sh
-GPU=convergence,dimension,absolute,gradient,progression,iterative
+GPU=${EXPERIMENTS:-convergence,dimension,absolute,gradient,progression,iterative}
 run() { .venv/bin/python -m studies.manuscript.run run "$@"; }
 case "${1:-gh}" in
     gh)       run --machine studies/manuscript/machines/vista-gh.toml --experiments $GPU ;;
