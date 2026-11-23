@@ -2244,8 +2244,8 @@ $"tol" = 0.1, 0.05, 0.02, 0.01, 0.005$.
   table.header[Quantity][Definition],
   [$N$], [evaluations of $f$ during training, including the initial sample],
   [$N_c$], [leaves of the trained surrogate],
-  [$p_o$], [percentage of test points outside the trust region of every leaf, found by the exact search (@sec:exact-flag)],
-  [$e_"in"$, $e$], [relative $L^2$ error $norm(hat(f) - f) \/ norm(f)$ over the test points inside a trust region, and over all of them],
+  [$p_o$], [percentage of test points outside the trust region of every leaf, found by the exact search (@sec:exact-flag). AFINNI only: an ART model routes every query in the domain to a leaf, so its cells are "–".],
+  [$e_"in"$, $e$], [relative $L^2$ error $norm(hat(f) - f) \/ norm(f)$ over the test points inside a trust region, and over all of them. $e_"in"$ is AFINNI only: for ART every test point is inside, so its cells are "–".],
   [$e_"nh"$], [$e$ of the same run without Hessian-informed splits],
   [$p_"in,good"$], [percentage of the test points inside a trust region that are within the tolerance],
 ))
@@ -2268,6 +2268,7 @@ records its own times and memory as well, and per level the clusters, points, ti
   [Inference], [the leaf nearest in its trust metric ($k_"nn" = 1$) among the $kappa = 50$ nearest centres. When none of them contains a query, the exact search completes it by finding every leaf that contains it.],
   [Test points], [$10^5$ points uniform in the domain, one fixed set per function and dimension],
   [Seeds], [0, 1, 2, 3, 4. The seed changes the initial sample and the training's random choices, but not the function or the test points.],
+  [ART], [the same initial sample, tolerances, seeds and test points. One box root over the domain; each node fitted on $n = ceil(50 p)$ points, $p = d + 1$ for affine and $(d+1)(d+2)\/2$ for quadratic leaves; the soft split search; at most 62 levels, the deepest its locational codes allow (`ARTSettings` defaults otherwise). A query is predicted by the leaf it is routed to. $K_0$ and $M$ do not apply.],
 ))
 
 #block(breakable: false)[
@@ -2302,6 +2303,7 @@ records its own times and memory as well, and per level the clusters, points, ti
   [Run progression], [Rosenbrock at $d = 10$ and $"tol" = 0.05$, level by level],
   [Distributed], [Rosenbrock at $d = 5$, $N_0 = 10^5$, $"tol" = 0.05$ and $0.005$, on $P = 1, 2, 4, ..., 128$ CPU ranks of one node, with and without work stealing, seeds 0, 1, 2],
   [Iterative refinement], [Gaussian, Quadratic, Rosenbrock and Wave at $d = 2$ and $"tol" = 0.05$: ten rounds, each adding $0.4 N_0$ points drawn uniformly outside every trust region. The candidates are drawn in batches sized by the outside share observed so far.],
+  [ART], [the Convergence, Dimension and Absolute tolerance experiments again with ART, with affine and with quadratic leaves. Their tables give one row per method for each setting.],
 ))
 
 Tables report the median over the seeds, and the data files give every seed. A case that does

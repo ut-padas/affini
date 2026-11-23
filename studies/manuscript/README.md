@@ -1,6 +1,8 @@
 # The manuscript study
 
-Every experiment of the AFINNI paper, from one specification, on any machine. The settings are the
+Every experiment of the AFINNI paper, from one specification, on any machine. The experiments of
+errors and evaluations (convergence, dimension, absolute tolerance) also run ART, with affine and
+with quadratic leaves, on the same samples, tolerances and test points. The settings are the
 technical companion's Appendix A (`docs/report/`), and [`spec.py`](spec.py) is the same
 specification as code: a change to one is a change to the other.
 
@@ -49,7 +51,8 @@ from everything finished.
 ## How it runs
 
 - **Cases.** A case is one training run and its predictions, named by its settings
-  (`rosenbrock_d5_tol0.01_hessian_s3`). Experiments are tags on cases, so a run that serves two
+  (`rosenbrock_d5_tol0.01_hessian_s3`, or `rosenbrock_d5_tol0.01_art_quadratic_s3` for ART; `--only art_`
+  selects the ART cases). Experiments are tags on cases, so a run that serves two
   experiments runs once. `spec.cases()` lists all of them.
 - **Order.** Seed 0 of every case first, then the other seeds; within a seed, small d and loose
   tolerances first (`spec.cost_order`).
@@ -76,7 +79,7 @@ Under `studies/manuscript/output/` (the profile's `results`):
 | `data/cases.csv` | one row per case: every scalar of its result (`cand.*` and `exact.*` metrics) |
 | `data/levels.csv`, `data/rounds.csv` | per level, per iterative round |
 | `data/provenance.json` | the commits, machines and libraries behind the data |
-| `data/tables/*.csv`, `tables.json` | the paper's tables: median over seeds, with min, max and seed count |
+| `data/tables/*.csv`, `tables.json` | the paper's tables: median over seeds, with min, max and seed count; the convergence, dimension and absolute tables have one row per method, and ART's `p_o` and `e_in` cells are empty (routing leaves no test point outside) |
 
 The tables are declared in [`tables.py`](tables.py) (`TABLES`): a column is a `cases.csv` column
 aggregated over seeds, so adding, dropping or renaming one is an edit there and a rerun of

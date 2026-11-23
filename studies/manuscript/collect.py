@@ -6,9 +6,10 @@ Collect the manuscript study's results into data files and build its tables.
 Reads ``<results>/cases/*.json`` (case.py, run.py) and writes to ``<data>`` (default
 ``<results>/data``):
 
-- ``cases.csv``: one row per case, with its settings, its status (done, failed, skipped) and the
-  reason, and every scalar it recorded; the candidate search's and the exact search's metrics are
-  prefixed ``cand.`` and ``exact.``;
+- ``cases.csv``: one row per case, with its settings (``method``: afinni, art_affine, art_quadratic),
+  its status (done, failed, skipped) and the reason, and every scalar it recorded; the candidate
+  search's and the exact search's metrics are prefixed ``cand.`` and ``exact.``, and an ART case's
+  leaves by terminal reason and its test points in unaccepted leaves ``art.``;
 - ``levels.csv``: one row per case and level (rank 0's levels for multi-rank cases);
 - ``rounds.csv``: one row per iterative-refinement case and round;
 - ``provenance.json``: the commits, machines and library versions the results came from;
@@ -28,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 
 from studies.manuscript import tables  # noqa: E402
 
-CASE_FIELDS = ("key", "function", "d", "mode", "seed", "n0", "k0", "m", "tol", "atol", "ranks", "work_stealing", "rounds")
+CASE_FIELDS = ("key", "method", "function", "d", "mode", "seed", "n0", "k0", "m", "tol", "atol", "ranks", "work_stealing", "rounds")
 RUN_FIELDS = ("N", "N_c", "num_levels", "generated_points", "converged", "unresolved_points", "train_s", "predict_s",
               "exact_s", "wall_s")  # fmt: skip
 
@@ -56,7 +57,8 @@ def rows(results: Path) -> tuple[list[dict], list[dict], list[dict], list[dict]]
     for path in sorted((results / "cases").glob("*.json")):
         r = json.loads(path.read_text())
         c = r["case"]
-        row = {k: c.get(k) for k in CASE_FIELDS} | {"experiments": " ".join(c.get("experiments", ())),
+        # a result written before the study ran ART has no method: it is AFINNI's
+        row = {k: c.get(k) for k in CASE_FIELDS} | {"method": c.get("method", "afinni")} | {"experiments": " ".join(c.get("experiments", ())),
                                                     "status": r["status"]}  # fmt: skip
         fail = r.get("failure") or {}
         row |= {"stage": r.get("stage"), "failure": fail.get("class"), "reason": r.get("reason") or fail.get("message")}
@@ -64,6 +66,9 @@ def rows(results: Path) -> tuple[list[dict], list[dict], list[dict], list[dict]]
         mem = r.get("memory") or {}
         row |= {"host_peak_gib": mem.get("host_peak_gib"), "device_peak_gib": mem.get("device_peak_gib")}
         row |= metric_columns("cand", r.get("candidates")) | metric_columns("exact", r.get("exact"))
+        art = r.get("art") or {}
+        row |= {f"art.{k}": v for k, v in (art.get("terminal_reasons") or {}).items()}
+        row |= {"art.p_unaccepted": art.get("p_unaccepted")} if art else {}
         prov = r.get("provenance") or {}
         row |= {"commit": (prov.get("commit") or "")[:12], "gpu": (prov.get("gpu") or {}).get("name"), "cpu": prov.get("cpu")}
         cases.append(row)

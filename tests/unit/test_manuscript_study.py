@@ -1,4 +1,4 @@
-"""The manuscript study (studies/manuscript): its specification, one case, the runner's decisions and failure classes, and collecting into tables."""
+"""The manuscript study (studies/manuscript): its specification, one case (AFINNI and ART), the runner's decisions and failure classes, and collecting into tables."""
 
 import csv
 import json
@@ -22,13 +22,19 @@ def test_the_specification_has_every_experiment_once_per_setting():
     cases = spec.cases()
     keys = [c.key for c in cases]
     assert len(keys) == len(set(keys))
-    count = {e: sum(e in c.experiments for c in cases) for e in
+    afinni = [c for c in cases if c.method == "afinni"]
+    count = {e: sum(e in c.experiments for c in afinni) for e in
              ("convergence", "dimension", "absolute", "gradient", "progression", "distributed", "iterative")}  # fmt: skip
     # 4 functions x 3 d + Lorenz-96 at d = 5, 5 tolerances, 2 modes, 5 seeds; Lorenz-96 at 5 d; ...
     assert count == {"convergence": 650, "dimension": 25, "absolute": 20, "gradient": 25, "progression": 1,
                      "distributed": 96, "iterative": 20}  # fmt: skip
     shared = next(c for c in cases if c.key == "lorenz96_d5_tol0.1_hessian_s0")
     assert set(shared.experiments) == {"convergence", "dimension"}  # one run serves both
+    for method in spec.ART_METHODS:  # ART runs AFINNI's hessian cases of the error experiments, nothing else
+        art = [c for c in cases if c.method == method]
+        twins = {c.key.replace(method, "hessian") for c in art}
+        assert twins == {c.key for c in afinni if c.mode == "hessian" and set(c.experiments) & {"convergence", "dimension", "absolute"}}
+        assert len(art) == 365 and all(set(c.experiments) <= {"convergence", "dimension", "absolute"} for c in art)
     assert [spec.sizes(d)[1:] for d in (2, 5, 10, 20, 40, 80)] == [(42, 169), (92, 371), (250, 1378), (26, 19004),
                                                                      (16, 31250), (16, 31250)]  # fmt: skip
     absolute = sorted({(c.atol, c.n0) for c in cases if "absolute" in c.experiments}, reverse=True)
@@ -53,6 +59,19 @@ def test_a_case_records_both_searches_and_the_exact_one_flags_no_more(tmp_path):
     iterative = spec.Case("rosenbrock", 2, "hessian", 0, **TINY, tol=0.05, rounds=2)
     r = run_case(iterative.as_dict(), tmp_path / "i.json", n_test=4000)
     assert [x["N_train"] for x in r["rounds"]] == [3000, 4200, 5400]  # each round adds 0.4 N_0 outside points
+
+
+def test_an_art_case_routes_every_test_point_and_records_its_leaves(tmp_path):
+    from src.art.constants import MAX_DEPTH_LIMIT
+
+    assert spec.ART_MAX_LEVELS == MAX_DEPTH_LIMIT
+    for method in spec.ART_METHODS:
+        case = spec.Case("rosenbrock", 2, "hessian", 0, **TINY, tol=0.1, method=method, experiments=("convergence",))
+        r = run_case(case.as_dict(), tmp_path / f"{method}.json", n_test=3000)
+        assert r["status"] == "done" and r["effective_config"]["max_levels"] == spec.ART_MAX_LEVELS and r["art"]
+        assert r["exact"] == r["candidates"] and r["exact"]["p_o"] == 0.0  # routing: one leaf per query, nothing outside
+        assert r["exact"]["in"]["l2_rel_error"] == r["exact"]["all"]["l2_rel_error"]
+        assert sum(r["art"]["terminal_reasons"].values()) == r["N_c"] and 0.0 <= r["art"]["p_unaccepted"] <= 100.0
 
 
 def test_a_failing_case_writes_its_failure_class_without_this_machines_paths(tmp_path):
@@ -111,19 +130,27 @@ def test_the_runner_records_a_case_that_could_not_record_itself(tmp_path, script
     assert json.loads(run.result_path(tmp_path, case).read_text())["failure"]["class"] == klass
 
 
-def test_collect_builds_tables_with_the_runs_without_hessian_splits_beside(tmp_path):
-    for mode in ("hessian", "no_hessian"):
+def test_collect_builds_tables_with_the_runs_without_hessian_splits_and_art_beside(tmp_path):
+    for mode, method in (("hessian", "afinni"), ("no_hessian", "afinni"), ("hessian", "art_affine")):
         for seed in (0, 1):
-            case = spec.Case("quadratic", 2, mode, seed, **TINY, tol=0.1, experiments=("convergence",))
+            case = spec.Case("quadratic", 2, mode, seed, **TINY, tol=0.1, method=method, experiments=("convergence",))
             run_case(case.as_dict(), run.result_path(tmp_path, case), n_test=3000)
+    old = json.loads(run.result_path(tmp_path, case).read_text())  # a result written before the study ran ART
+    old["case"].pop("method")
+    old["case"]["key"] = "older"
+    (tmp_path / "cases" / "older.json").write_text(json.dumps(old))
     collect.main(["--results", str(tmp_path)])
     with (tmp_path / "data" / "tables" / "convergence.csv").open() as fh:
-        (row,) = list(csv.DictReader(fh))
-    assert row["function"] == "quadratic" and row["N_c.seeds"] == "2" and row["e_nh.seeds"] == "2"
-    assert float(row["N_c.min"]) <= float(row["N_c"]) <= float(row["N_c.max"])
+        afinni, art = list(csv.DictReader(fh))
+    assert afinni["method"] == "afinni" and afinni["N_c.seeds"] == "3" and afinni["e_nh.seeds"] == "2" and afinni["p_o"]
+    assert float(afinni["N_c.min"]) <= float(afinni["N_c"]) <= float(afinni["N_c.max"])
+    assert art["method"] == "art_affine" and art["N_c.seeds"] == "2" and art["e"] and afinni["e_in"]
+    assert art["p_o"] == art["p_o_candidates"] == art["e_in"] == art["e_nh"] == "" and art["p_o.seeds"] == "0"  # printed as "–"
     with (tmp_path / "data" / "cases.csv").open() as fh:
         cases = list(csv.DictReader(fh))
-    assert len(cases) == 4 and all(c["status"] == "done" and c["exact.e_in"] for c in cases)
+    assert len(cases) == 7 and all(c["status"] == "done" and c["exact.e_in"] for c in cases)
+    assert {c["method"] for c in cases if c["key"] == "older"} == {"afinni"}
+    assert all(c["art.accepted"] for c in cases if c["method"] == "art_affine")
 
 
 def test_the_smoke_run_keeps_the_two_loosest_tolerances_of_each_series():

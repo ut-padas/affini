@@ -1,6 +1,8 @@
 """
 One case of the manuscript study through the library's public API: sample, train, predict with the
-candidate search and with the exact search, measure, and write one result JSON.
+candidate search and with the exact search, measure, and write one result JSON. An ART case predicts
+by routing each query to its one leaf, which needs no search, so both of its metrics are the routed
+prediction's, scored by the same code on the same test points.
 
     python -m studies.manuscript.case --case '<Case as JSON>' --out <result.json>
 
@@ -143,20 +145,26 @@ def scores(preds, gt, outside, atol, rtol) -> dict:
     return json.loads(json.dumps(m, default=float))
 
 
-def train_once(case, X, Y, f, g, atol, rtol):
+def train_once(case, X, Y, f, g, atol, rtol, domain: tuple[float, float]):
     """A trained AdaptiveSurrogate and its training time (collective under MPI)."""
     from src.components.modes import SurrogateMode
     from src.config import TrainingConfig
     from src.core.evaluation import Evaluator
     from src.surrogate import AdaptiveSurrogate
-    from studies.manuscript.spec import MODES
+    from studies.manuscript.spec import ART_MAX_LEVELS, ART_METHODS, MODES
 
-    config = TrainingConfig(
-        mode=SurrogateMode(MODES[case["mode"]]), atol=atol, rtol=rtol, error_metric="Linf",
-        initial_clustering_method="kmeans", num_initial_clusters=case["k0"], min_pts_per_cluster=case["m"],
-        use_work_stealing=case["work_stealing"], max_levels=1000, q_reg=1e-6, sampling_method="convex_combination",
-        seed=case["seed"],
-    )  # fmt: skip
+    method = case.get("method", "afinni")
+    common = {"mode": SurrogateMode(MODES[case["mode"]]), "atol": atol, "rtol": rtol, "error_metric": "Linf",
+              "use_work_stealing": case["work_stealing"], "seed": case["seed"]}  # fmt: skip
+    if method == "afinni":
+        config = TrainingConfig(
+            **common, initial_clustering_method="kmeans", num_initial_clusters=case["k0"], min_pts_per_cluster=case["m"],
+            max_levels=1000, q_reg=1e-6, sampling_method="convex_combination",
+        )  # fmt: skip
+    else:  # one box root over the function's domain, nodes topped up by ARTSettings.sample_multiplier
+        d = case["d"]
+        config = TrainingConfig(**common, algorithm="art", domain=((domain[0],) * d, (domain[1],) * d),
+                                local_model=ART_METHODS[method], max_levels=ART_MAX_LEVELS)  # fmt: skip
     surrogate = AdaptiveSurrogate()
     t = time.perf_counter()
     surrogate.train(X, config, Evaluator(f_fn=f, g_fn=g if case["mode"] == "exact_gradient" else None), Y_train=Y)
@@ -164,8 +172,14 @@ def train_once(case, X, Y, f, g, atol, rtol):
 
 
 def predict_both(surrogate, X_test, d: int, exact_max_dim: int | None):
-    """((preds, outside, seconds) by the candidates, the same completed by the exact search or None)."""
+    """((preds, outside, seconds) by the candidates, the same completed by the exact search or None); an ART model's routed prediction twice."""
     from studies.manuscript.spec import CANDIDATES
+
+    if surrogate.routing is not None:
+        t = time.perf_counter()
+        p, o = surrogate.predict(query_points=X_test)
+        routed = (p, o, time.perf_counter() - t)
+        return routed, routed
 
     t = time.perf_counter()
     p, o = surrogate.predict(query_points=X_test, k_nn=1, strict_trust_region=False, coarse_factor=CANDIDATES)
@@ -199,6 +213,21 @@ def outside_points(surrogate, lo: float, hi: float, d: int, need: int, share: fl
         share = max(sum(len(x) for x in found) / drawn, 1e-6)
     pts = np.concatenate(found)[:need] if found else np.empty((0, d))
     return pts, drawn
+
+
+def art_leaves(surrogate, X_test) -> dict | None:
+    """
+    An ART model's leaves by terminal reason, and the percentage of test points routed to a leaf that
+    stopped above the tolerance (at the depth limit, or with no admissible split); None for AFINNI.
+    """
+    from src import to_host
+    from src.art import TERMINAL_REASONS
+
+    if surrogate.routing is None:
+        return None
+    reason = to_host(surrogate.route_details(X_test)["terminal_reason"])
+    return {"terminal_reasons": surrogate.profiling_stats.get("terminal_reasons"),
+            "p_unaccepted": float(100.0 * np.mean(reason != TERMINAL_REASONS.index("accepted")))}  # fmt: skip
 
 
 def run_case(case: dict, out: Path, exact_max_dim: int | None = None, n_test: int | None = None) -> dict:
@@ -237,7 +266,7 @@ def run_case(case: dict, out: Path, exact_max_dim: int | None = None, n_test: in
         rng = np.random.default_rng(case["seed"] + 1)
         for r in range(case["rounds"] + 1):
             result["stage"] = "training"
-            surrogate, train_s = train_once(case, X, Y, f, g, atol, rtol)
+            surrogate, train_s = train_once(case, X, Y, f, g, atol, rtol, (lo, hi))
             peak_device = device_peak_gib(peak_device)
             result["stage"] = "prediction"
             cand, exact = predict_both(surrogate, X_test, d, exact_max_dim)
@@ -257,6 +286,7 @@ def run_case(case: dict, out: Path, exact_max_dim: int | None = None, n_test: in
                 result.update(step)
                 result["level_stats"] = json.loads(json.dumps(ps.get("level_stats", []), default=float))
                 result["effective_config"] = json.loads(json.dumps(ps.get("effective_config", {}), default=str))
+                result["art"] = art_leaves(surrogate, X_test)
             if case["rounds"]:
                 rounds.append({k: v for k, v in step.items() if k not in ("candidates", "exact")} | {
                     "p_o": (step["exact"] or step["candidates"])["p_o"],
