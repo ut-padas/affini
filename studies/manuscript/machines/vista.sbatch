@@ -10,16 +10,13 @@
 #   sbatch -p gg -N 1 -n 4   -t 00:30:00 studies/manuscript/machines/vista.sbatch gg-smoke   # first
 #
 # EXPERIMENTS narrows a GPU job to some experiments; each case runs alone on the node's one GPU,
-# without MPI. The error experiments with AFINNI and ART:
+# without MPI. SHARD=i/n splits a GPU job's cases over n jobs (one GH200 node each, i = 0 .. n-1),
+# all writing to the same results folder. Set both in front of sbatch, which passes the environment
+# to the job: --export=EXPERIMENTS=a,b would split the list at its commas. The error experiments
+# with AFINNI and ART, on two nodes:
 #
-#   sbatch -p gh -N 1 -n 1 -t 48:00:00 --export=ALL,EXPERIMENTS=convergence,dimension,absolute \
-#       studies/manuscript/machines/vista.sbatch gh
-#
-# SHARD=i/n splits a GPU job's cases over n jobs (one GH200 node each, i = 0 .. n-1), all writing to
-# the same results folder; submit one per shard with the same EXPERIMENTS:
-#
-#   for i in 0 1; do sbatch -p gh -N 1 -n 1 -t 48:00:00 \
-#       --export=ALL,EXPERIMENTS=convergence,dimension,absolute,SHARD=$i/2 studies/manuscript/machines/vista.sbatch gh; done
+#   for i in 0 1; do EXPERIMENTS=convergence,dimension,absolute SHARD=$i/2 \
+#       sbatch -p gh -N 1 -n 1 -t 48:00:00 studies/manuscript/machines/vista.sbatch gh; done
 #SBATCH -J manuscript-study
 #SBATCH -o manuscript-study-%j.out
 set -euo pipefail
