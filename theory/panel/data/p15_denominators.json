@@ -1,4 +1,23 @@
 {
+ "allen_cahn_d5": {
+  "denominator": "lsoda",
+  "denominator_us": 64.89404998622679,
+  "library": {
+   "qualified": true,
+   "us": 794.1166333087798,
+   "worst_vs_stored": 0.0
+  },
+  "lsoda": {
+   "qualified": true,
+   "us": 64.89404998622679,
+   "worst_vs_stored": 8.422251007722537e-09
+  },
+  "vode": {
+   "qualified": true,
+   "us": 87.63733336915418,
+   "worst_vs_stored": 6.986948752896183e-08
+  }
+ },
  "bruss_d2": {
   "denominator": "lsoda",
   "denominator_us": 165.983583307631,

@@ -1015,6 +1015,25 @@ rounds are taken from the run's log (a case should keep a record per round, so t
 Refused-state data helps where the fit is stable, by small margins on these lattices, and can destabilise the selection where the refused
 inputs pull the fit away from the audit's states: a refused round should be accepted only if its audit improves.
 
+### 3.40 A fair comparison with AFINNI, ART and rollout-tuned ChebTT (p25; `theory/panel/p25_compare.py`, `theory/COMPARISON_PLAN.md`)
+
+Ten step maps, tolerances 0.05 and 0.01, every method on the benchmark's 100 training and 40 test trajectories (the recipe also at 340),
+value-only, the same protocol (rollouts, chained mixing, closed columns, 2,000-step chains, speed-up against the fastest exact solver) and
+one refusal definition; 900 s of compute per case (the first cases ran under 2,400 s; AFINNI on Robertson at 0.01 took 1,539 s and is
+reported as over the budget). allen_cahn_d5's fastest exact solver (LSODA, 65 us) was timed afterwards (p15 on that problem).
+Served (rollouts within tol / 2, refusing less than half of their steps), of 10 problems at 0.05 and 0.01:
+- the recipe at 340 trajectories 9 and 9, up to d = 20 (it did not finish POLLU within the budget; its own studies serve POLLU with
+  longer training); at 100 trajectories 7 and 6 (allen_cahn_d5 fails at both; at 0.01 fisher_kpp_d10's gate refuses every input);
+- rollout-tuned ChebTT 6 and 5, up to d = 5, median 3,547 and 3,618 solves, median steady speed-ups 92x and 115x; from d = 10 it did not
+  finish; it misses tol / 2 narrowly on CHEMAKZO and fisher_kpp_d5 at 0.01 and on allen_cahn_d5 at 0.05;
+- AFINNI 0 and 0 (it finished only bruss_d2, above tol / 2, and Robertson at 0.01 beyond the budget); ART with affine leaves 3 and 2;
+  ART with quadratic leaves 5 and 3 (burgers_d20 at 0.05), at a median of 5.5 times ChebTT's solves where both serve.
+On Robertson and CHEMAKZO every method that finished refuses 85-96% of the long chains' steady steps (coverage in time, 3.37-3.38).
+
+The prediction (AFINNI and both ARTs fare worse than ChebTT and the recipe: higher rollout error or more solver calls where all methods
+finish, and more timeouts) holds at both tolerances: where all finished (bruss_d2; Robertson at 0.01) each box method has a higher rollout
+error or 2-200 times ChebTT's solver calls, and the box methods time out on 5-9 problems against ChebTT's 3 and the recipe's 1.
+
 ---
 
 ## 4. Mistakes, and what each taught

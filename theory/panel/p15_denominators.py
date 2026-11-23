@@ -4,7 +4,8 @@ steps 0, 10 and 20 (KIDA dark: 40 states at steps 0, 8, 16, as p9), one core, th
   library  the benchmark's step (solve_ivp with the system's method and analytic Jacobian), timed here, not read from its baseline record;
   vode     SciPy's VODE, BDF with the analytic Jacobian (Fortran);
   lsoda    SciPy's LSODA with the analytic Jacobian (Fortran; switches between Adams and BDF).
-Each is scored against the stored next states (the worst scored error); the fastest solver whose states agree within QUALIFY is the
+Problems named on the command line are measured and added to the file (allen_cahn_d5 for the comparison, p25). Each is scored against the
+stored next states (the worst scored error); the fastest solver whose states agree within QUALIFY is the
 problem's denominator (KIDA: the library's step and LSODA on 12 of the states, written to data/p15_kida.json; VODE took minutes per
 KIDA state and was stopped). R4e's served surrogates are re-timed with the sketched gate (generic4, the same fit; one evaluation per batch) and
 their effective speed-ups restated against the denominator, with R4e's solver share. Writes data/p15_denominators.json.
@@ -109,6 +110,10 @@ def main() -> None:
     out["median_sketched_speedup"] = float(np.median(s)) if s else None
     print("median sketched speed-up against the denominator:", out["median_sketched_speedup"])
     path = OUT / ("p15_denominators.json" if "kida_dark" not in names else "p15_kida.json")
+    if sys.argv[1:] and path.exists():  # problems named on the command line are added to the earlier measurements, not written over them
+        out = json.loads(path.read_text()) | out
+        s = [v["speedup_sketched_against_denominator"] for v in out.values() if isinstance(v, dict) and "speedup_sketched_against_denominator" in v]
+        out["median_sketched_speedup"] = float(np.median(s)) if s else None
     path.write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
 
 
