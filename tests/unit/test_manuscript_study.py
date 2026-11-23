@@ -109,6 +109,13 @@ def test_the_runner_projects_costs_along_a_series_and_skips_what_will_not_fit():
     by_key[series[2].key] = _result(series[2], "failed", failure="host_memory_guard")
     state, reason, _ = run.decide(series[3], MACHINE, by_key, all_cases, force=False)
     assert state == "skip" and "host_memory_guard" in reason  # a looser tolerance ran out of memory
+    seeds = [spec.Case("rosenbrock", 5, "hessian", s, *spec.sizes(5), tol=t) for s in (0, 1) for t in (0.1, 0.05)]
+    timed_out = {seeds[0].key: _result(seeds[0], "failed", failure="timeout")}
+    for later in seeds[1:]:  # the same case at another seed, and tighter tolerances at any seed
+        state, reason, _ = run.decide(later, MACHINE, timed_out, seeds, force=False)
+        assert state == "skip" and "timeout" in reason, later.key
+    crashed = {seeds[0].key: _result(seeds[0], "failed", failure="error")}
+    assert run.decide(seeds[2], MACHINE, crashed, seeds, force=False)[0] == "run"  # a bug is not a resource limit
     wide = spec.Case("rosenbrock", 5, "hessian", 0, *spec.sizes(5), tol=0.05, ranks=8)
     assert run.decide(wide, MACHINE, {}, [wide], force=False)[0] == "skip"  # more ranks than the machine
 
@@ -151,6 +158,15 @@ def test_collect_builds_tables_with_the_runs_without_hessian_splits_and_art_besi
     assert len(cases) == 7 and all(c["status"] == "done" and c["exact.e_in"] for c in cases)
     assert {c["method"] for c in cases if c["key"] == "older"} == {"afinni"}
     assert all(c["art.accepted"] for c in cases if c["method"] == "art_affine")
+
+
+def test_two_shards_share_the_cases_without_overlap():
+    import argparse
+
+    picks = [run.select(spec.cases(), argparse.Namespace(experiments="convergence", only=None, seeds=None, shard=f"{i}/2"))
+             for i in (0, 1)]  # fmt: skip
+    keys = [{c.key for c in p} for p in picks]
+    assert not keys[0] & keys[1] and len(keys[0] | keys[1]) == sum("convergence" in c.experiments for c in spec.cases())
 
 
 def test_the_smoke_run_keeps_the_two_loosest_tolerances_of_each_series():

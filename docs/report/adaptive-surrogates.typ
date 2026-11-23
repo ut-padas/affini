@@ -2323,7 +2323,7 @@ python -m studies.manuscript.collect                                  # data fil
 Each case runs in its own process. Before a case runs, its time and memory are projected from
 the cases already measured. A case is recorded as skipped, with the reason, when its projection
 exceeds the machine's limits. The same happens when its series already ran out of memory or time
-at a looser tolerance. A case that fails is recorded with the reason, and the other cases
+at a looser tolerance, or the same case did at another seed. A case that fails is recorded with the reason, and the other cases
 continue. Collecting writes one row per case, with every quantity above, its settings and its
 provenance (commit, machine, library versions). It then builds the tables from those rows. Each
 table cell is the median over seeds, with the minimum, maximum and number of seeds beside it.

@@ -14,6 +14,12 @@
 #
 #   sbatch -p gh -N 1 -n 1 -t 48:00:00 --export=ALL,EXPERIMENTS=convergence,dimension,absolute \
 #       studies/manuscript/machines/vista.sbatch gh
+#
+# SHARD=i/n splits a GPU job's cases over n jobs (one GH200 node each, i = 0 .. n-1), all writing to
+# the same results folder; submit one per shard with the same EXPERIMENTS:
+#
+#   for i in 0 1; do sbatch -p gh -N 1 -n 1 -t 48:00:00 \
+#       --export=ALL,EXPERIMENTS=convergence,dimension,absolute,SHARD=$i/2 studies/manuscript/machines/vista.sbatch gh; done
 #SBATCH -J manuscript-study
 #SBATCH -o manuscript-study-%j.out
 set -euo pipefail
@@ -22,7 +28,7 @@ source scripts/hpc/tacc.sh
 GPU=${EXPERIMENTS:-convergence,dimension,absolute,gradient,progression,iterative}
 run() { .venv/bin/python -m studies.manuscript.run run "$@"; }
 case "${1:-gh}" in
-    gh)       run --machine studies/manuscript/machines/vista-gh.toml --experiments $GPU ;;
+    gh)       run --machine studies/manuscript/machines/vista-gh.toml --experiments $GPU ${SHARD:+--shard $SHARD} ;;
     gg)       run --machine studies/manuscript/machines/vista-gg.toml --experiments distributed ;;
     gh-smoke) run --smoke --seeds 0 --machine studies/manuscript/machines/vista-gh.toml --experiments $GPU ;;
     gg-smoke) run --smoke --seeds 0 --machine studies/manuscript/machines/vista-gg.toml --experiments distributed ;;

@@ -43,7 +43,9 @@ sbatch -p gg -N 1 -n 128 -t 48:00:00 studies/manuscript/machines/vista.sbatch gg
 ```
 
 A job that reaches its time limit leaves its finished cases in place: resubmit the same command
-until `status` shows nothing pending. The distributed experiment runs on a Grace-Grace (CPU) node
+until `status` shows nothing pending. To use several GH200 nodes at once, submit one job per shard
+with `SHARD=i/n` (and `EXPERIMENTS` to narrow the experiments; examples at the top of
+`machines/vista.sbatch`): the jobs share the results folder and never run the same case. The distributed experiment runs on a Grace-Grace (CPU) node
 with one thread per rank, the single-rank case too, so its times compare ranks, not thread pools.
 The two jobs write to the same results folder, and `collect` at the end of each builds the tables
 from everything finished.
@@ -62,7 +64,8 @@ from everything finished.
 - **Projection.** Before a case, `run` projects its time and host memory from the cases already
   measured: another seed of the same case, or the growth between the two next-looser tolerances of
   its series. A case projected over the machine's limit, or whose series already ran out of memory
-  or time at a looser tolerance, is recorded as `skipped` with the reason (`--force` runs it). A
+  or time at a looser tolerance or at another seed of the same tolerance, is recorded as `skipped`
+  with the reason (`--force` runs it). A
   later run on a larger machine tries skipped cases again.
 - **Failures** end one case: the host memory guard, the GPU running out of memory, the time limit,
   a kill by the system, any error. Each is recorded with its class and the stage it reached, and

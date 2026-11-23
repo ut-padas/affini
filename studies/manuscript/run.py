@@ -11,8 +11,10 @@ the machine's device, timeout and MPI launcher, and resumes where it stopped: a 
 case is not run again (``--retry-failed`` reruns failures). Before each case it projects the case's
 time and host memory from the cases already measured (another seed of the same case, or the two
 next-looser tolerances of its series), and skips it, recorded as ``skipped`` with the reason, when
-the projection exceeds the machine's budget or a looser tolerance of its series already ran out of
-memory or time; a later run on a larger machine tries skipped cases again.
+the projection exceeds the machine's budget, or the same case at another seed or a looser tolerance
+of its series already ran out of memory or time; a later run on a larger machine tries skipped cases
+again. Several runs can share one results folder, each with its own ``--shard`` (one job per GPU):
+records are written atomically and every decision is read from the files.
 """
 
 import argparse
@@ -58,6 +60,14 @@ def load_machine(path: Path) -> dict:
 
 def result_path(results: Path, case: Case) -> Path:
     return results / "cases" / f"{case.key}.json"
+
+
+def write_json(path: Path, data: dict) -> None:
+    """Write ``data`` atomically, so a run or collect sharing the folder never reads half a record."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=1))
+    tmp.replace(path)
 
 
 def read_result(path: Path) -> dict | None:
@@ -109,12 +119,17 @@ def project(case: Case, by_key: dict[str, dict], all_cases: list[Case]) -> tuple
 
 
 def blocked(case: Case, by_key: dict[str, dict], all_cases: list[Case]) -> str | None:
-    """Why a looser tolerance of the same series and seed makes this case pointless, or None."""
+    """
+    Why the case is pointless, or None: the same case at another seed, or a looser tolerance of its
+    series at any seed, already ran out of memory or time. The projection learns only from finished
+    cases, so without this every seed of a case that times out would spend the whole time limit again.
+    """
     for c in all_cases:
         r = by_key.get(c.key)
-        if (r and r["status"] == "failed" and c.series == case.series and c.seed == case.seed
-                and tolerance(c) > tolerance(case) and (r.get("failure") or {}).get("class") in EXHAUSTED):  # fmt: skip
-            return f"the looser tolerance {tolerance(c):g} of its series ended with {r['failure']['class']}"
+        if (r and r["status"] == "failed" and c.key != case.key and c.series == case.series
+                and tolerance(c) >= tolerance(case) and (r.get("failure") or {}).get("class") in EXHAUSTED):  # fmt: skip
+            which = f"seed {c.seed} of the same case" if tolerance(c) == tolerance(case) else f"the looser tolerance {tolerance(c):g} of its series (seed {c.seed})"
+            return f"{which} ended with {r['failure']['class']}"
     return None
 
 
@@ -228,16 +243,13 @@ def execute(case: Case, machine: dict, results: Path, launch=subprocess.Popen) -
     r = {"schema": 1, "case": case.as_dict(), "status": "failed", "stage": (r or {}).get("stage", "unknown"),
          "failure": {"class": klass, "type": "exit", "message": f"exit code {code}; see {log.relative_to(results)}"},
          "wall_s": time.perf_counter() - t0, "memory": {"host_peak_gib": float("nan"), "device_peak_gib": float("nan")}}  # fmt: skip
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(r, indent=1))
+    write_json(out, r)
     return r
 
 
 def write_skip(case: Case, results: Path, reason: str, proj) -> None:
-    out = result_path(results, case)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"schema": 1, "case": case.as_dict(), "status": "skipped", "reason": reason,
-                               "projection": {"wall_s": proj[0], "host_gib": proj[1]} if proj else None}, indent=1))  # fmt: skip
+    write_json(result_path(results, case), {"schema": 1, "case": case.as_dict(), "status": "skipped", "reason": reason,
+                                            "projection": {"wall_s": proj[0], "host_gib": proj[1]} if proj else None})  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> None:
