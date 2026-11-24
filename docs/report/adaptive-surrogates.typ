@@ -2411,11 +2411,36 @@ query lies outside, and it has no Hessian-informed splits to remove. An AFINNI $
 where the run without those splits ran out of memory or has not finished. The times are measured
 in the runs themselves, which ran on the GPU named below. Each run had its node to itself.
 
-Two groups of rows are exact by construction. With quadratic leaves, ART fits the Quadratic in a
-single leaf, exactly up to rounding error. At $d = 10$ the Gaussian's bump is so narrow ($D$
-reaches $10^3$) that $f = 1$ to double precision everywhere except in a fraction of about
-$10^(-8)$ of the domain. No test point falls in that fraction, so every method fits the function
-exactly.
+Two groups of rows are exact by construction. The Quadratic is a quadratic polynomial, so ART with
+quadratic leaves fits it in a single leaf, exactly up to rounding error, and accepts its root
+without a single new evaluation. The Gaussian at $d = 10$ is the other group, and the callout below
+explains it together with the Gaussian at $d = 5$.
+
+#let st-gauss = st.figures.gaussian
+#let st-g(d) = st-gauss.dims.find(r => r.d == d)
+#pitfall(title: [The Gaussian's bump narrows with the dimension])[
+  The Gaussian is $f = 1 + exp(-1/2 x^top Q D Q^top x)$ with $D_(i i) = i^3$, so each added
+  dimension curves more steeply than the last, and the bump shrinks fast as $d$ grows
+  (@fig:study-gaussian). In float64, $f = 1$ exactly wherever the exponential falls below half an
+  ulp of 1.
+  - At $d = 2$ the bump is broad: $f - 1$ exceeds the tightest tolerance,
+    #st-gauss.tol, on #st-g(2).share of the domain, and every method has to resolve it.
+  - At $d = 5$, $f = 1$ exactly on #st-g(5).exact of the domain, and $f - 1$ exceeds
+    #st-gauss.tol on only #st-g(5).share of it. About #st-g(5).test of the $10^5$ test points and
+    #st-g(5).train of the training points lie in the bump, so a few points decide a run's error.
+    That is why the seeds spread so widely there, and why the error changes unevenly from one
+    tolerance to the next.
+  - At $d = 10$, $f = 1$ exactly at every sampled point: no training point and no test point
+    falls in the bump. Every method then fits a constant, which is exact, so these rows say
+    nothing about the methods.
+]
+
+#figure(panel("study-gaussian"), caption: brief([The Gaussian's bump against the dimension],
+  [The study's Gaussian at uniform points of its domain, $[-3, 3]^d$. Left: the share of the
+  domain where $f - 1$ exceeds a threshold $t$, against $t$, one line per dimension; the dashed
+  line is the tightest tolerance, #st-gauss.tol. Right: the expected number of the $10^5$ test
+  points where $f - 1$ exceeds #st-gauss.tol, on a log scale.]))
+  <fig:study-gaussian>
 
 #if st.progress.pending > 0 {
   pitfall(title: [Partial results])[
@@ -2475,13 +2500,21 @@ exactly.
   }))
 }
 
-The two figures show the results that differ most between the methods. @fig:study-convergence plots
-the error against the evaluations for every problem of the convergence experiment, and
-@fig:study-dimension plots the cost of Lorenz-96 against the dimension. The tables after them give
+The two figures show the results that differ most between the methods. @fig:study-dimension plots
+the cost of Lorenz-96 against the dimension, and @fig:study-convergence plots the error against
+the evaluations for every problem of the convergence experiment. The tables after them give
 every quantity of every setting.
 
 #let st-fig = st.figures
-#figure(panel("study-convergence"), caption: brief([Error against evaluations, all problems], [Error against evaluations for every function and
+#figure(panel("study-dimension"), caption: brief([Lorenz-96: cost against dimension], [Lorenz-96 at $"tol" = 0.1$: the evaluations (left)
+  and the leaves (right) against the dimension. Each line is one method's median over the seeds,
+  and its band spans the smallest to the largest seed. From $d = #st-fig.dims.at(0)$ to $d = #st-fig.dims.at(1)$, AFINNI's
+  evaluations grow by a factor of #st-fig.afinni_growth, while ART's stay close to its initial
+  sample. ART with quadratic leaves has no point at $d = #st-fig.dims.at(1)$, where it ran out of
+  GPU memory. The three methods' errors change little with the dimension, and
+  @tab:study-dimension gives them.])) <fig:study-dimension>
+
+#figure(placement: auto, panel("study-convergence"), caption: brief([Error against evaluations, all problems], [Error against evaluations for every function and
   dimension of the convergence experiment. Each line is one method's median over the seeds, and its
   band spans the smallest to the largest seed. Each marker is one tolerance, so a line runs from
   the loosest tolerance to the tightest, and a point lower and further left is a smaller error for
@@ -2490,14 +2523,6 @@ every quantity of every setting.
   evaluations or of error between AFINNI and either ART variant. A log axis cannot show an error
   that is exact to rounding, so ART with quadratic leaves, which fits the Quadratic exactly, has no
   line in the Quadratic's panels.])) <fig:study-convergence>
-
-#figure(panel("study-dimension"), caption: brief([Lorenz-96: cost against dimension], [Lorenz-96 at $"tol" = 0.1$: the evaluations (left)
-  and the leaves (right) against the dimension, with the medians and seed bands of
-  @fig:study-convergence. From $d = #st-fig.dims.at(0)$ to $d = #st-fig.dims.at(1)$, AFINNI's
-  evaluations grow by a factor of #st-fig.afinni_growth, while ART's stay close to its initial
-  sample. ART with quadratic leaves has no point at $d = #st-fig.dims.at(1)$, where it ran out of
-  GPU memory. The three methods' errors change little with the dimension, and
-  @tab:study-dimension gives them.])) <fig:study-dimension>
 
 #for t in st.tables.filter(t => not t.key.ends-with("-search")) [#st-table(t) #label("tab:study-" + t.key)]
 
@@ -2522,7 +2547,8 @@ the exact search. ART needs no such table, because it routes each query to one l
 #figure(panel("study-search"), caption: brief([AFINNI: the candidate against the exact search], [AFINNI with the exact search (filled) and with the
   candidate search (open) on the #st-fig.search_settings of its #st-fig.search_total convergence
   settings where the candidate search flags at least #st-fig.search_gap times as many test points
-  outside, sorted by that ratio, the largest first. The left panel gives the share flagged
+  outside. The rows are grouped by problem, each problem's tolerances run from the loosest to the
+  tightest, and a line separates the problems. The left panel gives the share flagged
   outside, $p_o$, and the right panel the error $e$. In the other settings, the two searches flag
   shares within a factor of #st-fig.search_gap of each other.])) <fig:study-search>
 

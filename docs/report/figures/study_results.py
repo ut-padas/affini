@@ -38,6 +38,8 @@ from manuscript_tables import MISSING, count, grouped, percent, sci, tol  # noqa
 from studies.manuscript import spec  # noqa: E402
 from studies.manuscript.tables import TABLES, matches, number  # noqa: E402
 
+N_TEST = spec.N_TEST
+
 OUT = Path(__file__).resolve().parent / "study.json"
 METHODS = {"afinni": "AFINNI", "art_affine": "ART affine", "art_quadratic": "ART quadratic"}
 EXHAUSTED_MEMORY = {"host_memory_guard", "device_out_of_memory", "killed"}
@@ -334,10 +336,14 @@ def draw_dimension(dim: list[dict]) -> None:
 
 
 def search_gaps(conv: list[dict]) -> list[dict]:
-    """AFINNI's convergence rows where the candidate search flags at least SEARCH_GAP times the exact search's share."""
+    """
+    AFINNI's convergence rows where the candidate search flags at least SEARCH_GAP times the exact
+    search's share, grouped by problem in the spec's order, each problem's tolerances loosest first.
+    """
     rows = [r for r in conv if r["method"] == "afinni" and value(r, "p_o") and value(r, "p_o_exact_search")
             and value(r, "p_o") >= SEARCH_GAP * value(r, "p_o_exact_search")]  # fmt: skip
-    return sorted(rows, key=lambda r: -value(r, "p_o") / value(r, "p_o_exact_search"))
+    order = list(spec.FUNCTIONS)
+    return sorted(rows, key=lambda r: (order.index(r["function"]), value(r, "d"), -value(r, "tol")))
 
 
 def draw_search(rows: list[dict]) -> None:
@@ -349,9 +355,17 @@ def draw_search(rows: list[dict]) -> None:
             ax.plot([x, c], [i, i], color="#b8c7da", lw=2.0, zorder=1, solid_capstyle="round")
             ax.scatter(x, i, color=COLOUR["afinni"], s=16, zorder=3)
             ax.scatter(c, i, facecolor="white", edgecolor=COLOUR["afinni"], s=16, lw=1.1, zorder=3)
-    axes[0].set_yticks(range(len(rows)), [f"{spec.FUNCTIONS[r['function']].name}, $d = {int(value(r, 'd'))}$, "
-                                          f"tol {value(r, 'tol'):g}" for r in rows])  # fmt: skip
-    axes[0].invert_yaxis()
+    # a problem's name labels its first row only, and a rule separates the problems
+    labels, last = [], None
+    for i, r in enumerate(rows):
+        problem = f"{spec.FUNCTIONS[r['function']].name}, $d = {int(value(r, 'd'))}$"
+        labels.append(f"{problem},  tol {value(r, 'tol'):g}" if problem != last else f"tol {value(r, 'tol'):g}")
+        if last is not None and problem != last:
+            for ax in axes:
+                ax.axhline(i - 0.5, color="#9a9a9a", lw=0.6, zorder=0)
+        last = problem
+    axes[0].set_yticks(range(len(rows)), labels)
+    axes[0].set_ylim(len(rows) - 0.5, -0.5)
     for ax, label in zip(axes, ("$p_o$ (%)", "error $e$"), strict=True):
         ax.set_xscale("log"), ax.set_xlabel(label)
         ax.grid(axis="y", visible=False)
@@ -363,8 +377,63 @@ def draw_search(rows: list[dict]) -> None:
     plt.close(fig)
 
 
+def gaussian_bump(samples: int = 2_000_000, seed: int = 0) -> dict[int, np.ndarray]:
+    """
+    f - 1 of the study's Gaussian at uniform points of its domain, for each dimension it runs at:
+    the height of its bump, exactly 0 wherever exp(...) falls below half an ulp of 1.
+    """
+    import os
+
+    os.environ.setdefault("SURROGATE_DEVICE", "cpu")
+    os.environ.setdefault("SURROGATE_MPI", "off")
+    from studies.manuscript.case import functions
+
+    f, _ = functions("gaussian")
+    lo, hi = spec.FUNCTIONS["gaussian"].domain
+    rng = np.random.default_rng(seed)
+    return {d: np.asarray(f(rng.uniform(lo, hi, size=(samples, d)))).reshape(-1) - 1.0
+            for d in spec.FUNCTIONS["gaussian"].dims}  # fmt: skip
+
+
+def draw_gaussian(bump: dict[int, np.ndarray], tol: float) -> None:
+    """
+    Left: the share of the domain where f - 1 exceeds a threshold, against the threshold, one line
+    per dimension. Right: the expected number of test points where f - 1 exceeds ``tol``.
+    """
+    shades = dict(zip(sorted(bump), ("#9ec1e6", "#4f8fd0", "#163f73"), strict=False))
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.4), gridspec_kw={"width_ratios": [1.6, 1]})
+    thresholds = np.logspace(-16, 0, 161)
+    for d, g in sorted(bump.items()):
+        share = np.array([np.mean(g > t) for t in thresholds]) * 100
+        if share.any():
+            a1.plot(thresholds[share > 0], share[share > 0], color=shades[d], lw=1.6, label=f"$d = {d}$")
+        else:  # f = 1 at every sampled point: no line to draw on a log axis
+            a1.text(0.03, 0.06, f"$d = {d}$: $f = 1$ at every sampled point", transform=a1.transAxes,
+                    color=shades[d], fontsize=7.5)  # fmt: skip
+    a1.axvline(tol, color=MUTED, ls="--", lw=0.8)
+    a1.text(tol * 0.6, 2e-4, f"tol {tol:g}", ha="right", va="bottom", color=MUTED, fontsize=7)
+    a1.set_xscale("log"), a1.set_yscale("log")
+    a1.set_xlim(1e-16, 1), a1.set_ylim(1e-4, 150)
+    a1.set_xlabel("threshold $t$"), a1.set_ylabel("share of the domain with $f - 1 > t$ (%)")
+    a1.xaxis.set_major_locator(ticker.LogLocator(base=10, numticks=6))
+    a1.xaxis.set_minor_formatter(ticker.NullFormatter())
+    a1.legend(loc="center", bbox_to_anchor=(0.5, 0.66))
+    ds = sorted(bump)
+    counts = [np.mean(bump[d] > tol) * N_TEST for d in ds]
+    a2.bar(range(len(ds)), [max(c, 0.3) for c in counts], color=[shades[d] for d in ds], width=0.6)
+    for k, c in enumerate(counts):
+        a2.text(k, max(c, 0.3) * 1.3, f"{c:,.0f}", ha="center", va="bottom", fontsize=7.5, color=INK)
+    a2.set_yscale("log"), a2.set_ylim(0.2, N_TEST * 3)
+    a2.set_xticks(range(len(ds)), [f"$d = {d}$" for d in ds])
+    a2.set_ylabel(f"test points with $f - 1 >$ {tol:g}")
+    a2.yaxis.set_minor_formatter(ticker.NullFormatter())
+    a2.grid(axis="x", visible=False)
+    fig.tight_layout(w_pad=2.0)
+    fig.savefig(FIGURES / "study-gaussian.svg", bbox_inches="tight", pad_inches=0.02, metadata={"Date": None})
+    plt.close(fig)
+
 def figures(built: dict) -> dict:
-    """Draw the three panels and return the numbers their captions quote."""
+    """Draw the four panels and return the numbers their captions and text quote."""
     plt.rcParams.update(STYLE)
     conv, dim = built["convergence"], built["dimension"]
     focus = largest_gaps(conv)
@@ -372,12 +441,19 @@ def figures(built: dict) -> dict:
     draw_dimension(dim)
     gaps = search_gaps(conv)
     draw_search(gaps)
+    tol = min(spec.TOLERANCES)
+    bump = gaussian_bump()
+    draw_gaussian(bump, tol)
+    gaussian = {"tol": f"{tol:g}", "dims": [
+        {"d": d, "share": f"{np.mean(g > tol) * 100:.2g}%", "exact": f"{np.mean(g == 0) * 100:.3g}%",
+         "test": f"{np.mean(g > tol) * N_TEST:,.0f}", "train": f"{np.mean(g > tol) * spec.sizes(d)[0]:,.0f}"}
+        for d, g in sorted(bump.items())]}  # fmt: skip
     afinni = {int(value(r, "d")): value(r, "N") for r in dim if r["method"] == "afinni" and value(r, "N")}
     ds = sorted(afinni)
     return {"focus": [f"{spec.FUNCTIONS[f].name} at $d = {d}$" for f, d in focus],
             "search_gap": f"{SEARCH_GAP:g}", "search_settings": len(gaps),
             "search_total": sum(1 for r in conv if r["method"] == "afinni" and value(r, "p_o") is not None),
-            "afinni_growth": f"{afinni[ds[-1]] / afinni[ds[0]]:,.0f}", "dims": [ds[0], ds[-1]]}
+            "afinni_growth": f"{afinni[ds[-1]] / afinni[ds[0]]:,.0f}", "dims": [ds[0], ds[-1]], "gaussian": gaussian}
 
 
 def main() -> None:
