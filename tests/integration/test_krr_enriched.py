@@ -116,3 +116,41 @@ def test_art_leaves_keep_their_tree_and_route_to_the_enriched_model(store_trust_
     assert krr.local_model.centers(2) == 6  # floor(0.1 * ceil(20 * 3))
     assert (krr.trust_matrices_src is not None) == store_trust_matrix  # computed for the fit, stored only if asked
     assert held_out_error(krr) < 0.5 * held_out_error(base)
+
+
+def jump_f(x):
+    """Affine on each side of a circle, with a jump across it: a smooth kernel rings at the jump."""
+    inside = (x[:, 0] ** 2 + x[:, 1] ** 2) < 0.4
+    return (xp.where(inside, 1.0 + 0.3 * x[:, 0], 0.2 * x[:, 1]))[:, None]
+
+
+def train_jump(**krr):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return train_surrogate(X_TRAIN, AdaptiveSurrogate(), f_fn=jump_f, local_model=("krr_enriched", krr), atol=1e-3,
+                               rtol=1e-3, num_initial_clusters=4, min_pts_per_cluster=60, max_levels=4,
+                               fallback_leaves=True, use_work_stealing=False)  # fmt: skip
+
+
+def test_the_fallback_keeps_every_leaf_at_least_as_good_as_its_base_model():
+    kept, raw = train_jump(), train_jump(fallback=False)
+    b, a = host(raw.leaf_params["krr_max_abs_before"]), host(raw.leaf_params["krr_max_abs_after"])
+    assert np.any(a > b)  # without it, leaves across the jump get worse at their own points
+    b, a, active = (host(kept.leaf_params[k]) for k in ("krr_max_abs_before", "krr_max_abs_after", "krr_active"))
+    assert np.all(a <= b) and not active.all() and active.any()
+    np.testing.assert_array_equal(host(kept.leaf_params["krr_alpha"])[~active[:, 0], :, 0], 0.0)
+
+
+def test_a_values_target_replaces_the_base_model_on_its_active_outputs():
+    base, krr = train(), train(("krr_enriched", {"target": "values"}))
+    np.testing.assert_array_equal(host(krr.X_src), host(base.X_src))  # the same tree
+    params, X = krr.model_params(), xp.asarray(X_QUERY)
+    leaf = xp.asarray(np.random.default_rng(2).integers(0, krr.N_src, len(X_QUERY)))
+    alone = host(krr.local_model.correction(params, X, leaf))
+    active = host(krr.leaf_params["krr_active"])[host(leaf)]
+    pred = host(krr.local_model.evaluate(params, X, leaf))
+    assert active.any()
+    np.testing.assert_array_equal(pred[active], alone[active])  # the KRR model alone, no base term
+    np.testing.assert_array_equal(pred[~active], host(base.local_model.evaluate(base.model_params(), X, leaf))[~active])
+    b, a = host(krr.leaf_params["krr_max_abs_before"]), host(krr.leaf_params["krr_max_abs_after"])
+    assert np.all(a <= b) and held_out_error(krr) < held_out_error(base)

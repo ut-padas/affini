@@ -211,6 +211,11 @@ def run_case(name: str, d: int, args) -> dict:
             entry["fallback_leaves"] = entry["leaves"] - int(reasons["accepted"])
         else:
             entry["fallback_leaves"] = int(model.fallback_src.sum())
+        if "krr_alpha" in model.leaf_params:  # KRR-enriched leaves: centres, leaves left on the base model, worse leaves
+            before, after = (np.asarray(to_host(model.leaf_params[k])) for k in ("krr_max_abs_before", "krr_max_abs_after"))
+            entry["krr_centers"] = int(model.leaf_params["krr_alpha"].shape[1])
+            entry["krr_leaves_fallback"] = int((~np.asarray(to_host(model.leaf_params["krr_active"]))).any(axis=1).sum())
+            entry["krr_leaves_worse"] = int(np.any(after > before, axis=1).sum())
         record["methods"][method] = entry
         print(f"[{name} d={d}] {method}: {entry['leaves']:,} leaves, {entry['oracle_evals']:,} evals, "
               f"train {train_seconds:.1f} s, L2 {entry['relative_l2']:.2e}, "

@@ -405,6 +405,9 @@ KRR_KERNELS = {
     "matern32": lambda q: (1.0 + np.sqrt(3.0) * xp.sqrt(q)) * xp.exp(-np.sqrt(3.0) * xp.sqrt(q)),
     "matern52": lambda q: (1.0 + np.sqrt(5.0) * xp.sqrt(q) + (5.0 / 3.0) * q) * xp.exp(-np.sqrt(5.0) * xp.sqrt(q)),
 }
+# What KRREnrichedModel fits: the base model's residuals (a correction added to it) or the values
+# (a model of its own).
+KRR_TARGETS = ("residuals", "values")
 _KRR_CHUNK_ELEMENTS = 1 << 24  # bound on one finalize chunk's (rows x centres) kernel matrix
 
 
@@ -437,8 +440,16 @@ class KRREnrichedModel(LocalModel):
     ``finalize`` fits ``alpha`` on all of the leaf's points (restricted, or subset-of-regressors,
     KRR): ``(Phi^T Phi + ridge n K_zz) alpha = Phi^T r``, with ``Phi`` (n, p) the kernel between the
     points and the centres, ``K_zz`` (p, p) between the centres and ``r`` the base model's residuals.
-    ``alpha = 0`` is feasible, so the squared residual over the leaf's points cannot grow; the leaf is
-    therefore not re-tested (``retest_after_finalize``), and a single point's error can still grow.
+    ``alpha = 0`` is feasible, so the squared residual over the leaf's points cannot grow, but a single
+    point's can (a leaf across a discontinuity rings). With ``fallback`` (the default), an output whose
+    largest residual at the leaf's points grows keeps the base model alone (``alpha = 0`` for it), so
+    no deployed leaf is worse at its own points than its base model; the leaf is therefore not
+    re-tested and split (``retest_after_finalize``).
+
+    ``target="values"`` fits the KRR model to the function values instead of the residuals, and a
+    deployed leaf's output is that model alone, ``f_hat(x) = sum_j alpha_j k(q(x, z_j))``: the base
+    model serves only the acceptance test and the splits (and, with ``fallback``, the outputs where
+    the KRR model's largest error at the leaf's points exceeds the base model's).
 
     ``p`` is ``n_centers``, or ``floor(center_fraction m)`` for ``m`` the points every leaf holds:
     ``TrainingConfig`` sets ``n_centers`` from ``min_pts_per_cluster`` (AFINNI) or
@@ -449,9 +460,10 @@ class KRREnrichedModel(LocalModel):
 
     Columns besides the base model's: ``krr_whiten`` (d, d), ``W`` with ``W^T W = T``, so that
     ``q(x, y) = |W x - W y|^2``; ``krr_centers`` (p, d), the centres as ``W z_j``; ``krr_alpha``
-    (p, fd); and, per output, the largest absolute residual over the leaf's points before and after
-    the correction, ``krr_max_abs_before`` and ``krr_max_abs_after`` (fd). A system that is not
-    positive definite keeps ``alpha = 0`` (the base model alone).
+    (p, fd); per output, the largest absolute error over the leaf's points of the base model and of
+    the deployed model, ``krr_max_abs_before`` and ``krr_max_abs_after`` (fd), and ``krr_active``
+    (fd), whether the KRR model is used. A system that is not positive definite keeps ``alpha = 0``
+    (the base model alone, inactive).
     """
 
     name = "krr_enriched"
@@ -460,7 +472,7 @@ class KRREnrichedModel(LocalModel):
 
     def __init__(self, base: ComponentSpec = None, center_fraction: float = 0.1, n_centers: int | None = None,
                  points_per_feature: float | None = None, ridge: float = 1e-6, kernel: str = "gaussian",
-                 seed: int = 0):  # fmt: skip
+                 seed: int = 0, fallback: bool = True, target: str = "residuals"):  # fmt: skip
         if isinstance(base, list):  # a (name, settings) pair read back from JSON
             base = tuple(base)
         self.base_spec = base
@@ -473,9 +485,12 @@ class KRREnrichedModel(LocalModel):
             raise ValueError(f"center_fraction must be in (0, 1]; got {center_fraction!r}.")
         if n_centers is not None and int(n_centers) < 1:
             raise ValueError(f"n_centers must be >= 1; got {n_centers!r}.")
+        if target not in KRR_TARGETS:
+            raise ValueError(f"target must be one of {KRR_TARGETS}; got {target!r}.")
         if not ridge > 0:
             raise ValueError(f"ridge must be > 0; got {ridge!r}.")
         self.center_fraction, self.ridge, self.kernel, self.seed = float(center_fraction), float(ridge), kernel, int(seed)
+        self.fallback, self.target = bool(fallback), target
         self.n_centers = None if n_centers is None else int(n_centers)
         self.points_per_feature = None if points_per_feature is None else float(points_per_feature)
         # The base model's data needs and ART feature space are the enriched model's.
@@ -487,7 +502,7 @@ class KRREnrichedModel(LocalModel):
     def settings(self):
         return {"base": (self.base.name, self.base.settings()), "center_fraction": self.center_fraction,
                 "n_centers": self.n_centers, "points_per_feature": self.points_per_feature, "ridge": self.ridge,
-                "kernel": self.kernel, "seed": self.seed}  # fmt: skip
+                "kernel": self.kernel, "seed": self.seed, "fallback": self.fallback, "target": self.target}  # fmt: skip
 
     def centers(self, d: int) -> int:
         """``p``, the centres per leaf (see the class docstring)."""
@@ -508,7 +523,7 @@ class KRREnrichedModel(LocalModel):
         p = self.centers(d)
         return {**self.base.columns(d, fd), "krr_whiten": ParamSpec((d, d)), "krr_centers": ParamSpec((p, d)),
                 "krr_alpha": ParamSpec((p, fd)), "krr_max_abs_before": ParamSpec((fd,)),
-                "krr_max_abs_after": ParamSpec((fd,))}  # fmt: skip
+                "krr_max_abs_after": ParamSpec((fd,)), "krr_active": ParamSpec((fd,), np.bool_)}  # fmt: skip
 
     def fit(self, data):
         return self.base.fit(data)
@@ -520,7 +535,7 @@ class KRREnrichedModel(LocalModel):
         K, (N, d), fd = int(data.counts.shape[0]), data.X.shape, data.F.shape[1]
         p = self.centers(d)
         base_params = {**params, **base_final, "centroids": data.centroids, "f": data.f_c}
-        R = data.F - self.base.evaluate(base_params, data.X, data.labels)  # (N, fd) residuals
+        R = data.F - self.base.evaluate(base_params, data.X, data.labels)  # (N, fd) the base model's residuals
         # W = Lambda^1/2 V^T from T = V Lambda V^T, so (x - y)^T T (x - y) = |W x - W y|^2.
         lam, V = xp.linalg.eigh(data.trust_matrix)
         W = xp.sqrt(xp.maximum(lam, 0.0))[:, :, None] * xp.swapaxes(V, 1, 2)
@@ -534,6 +549,7 @@ class KRREnrichedModel(LocalModel):
         center_rows = order[data.starts[:, None] + slot]
         valid = xp.arange(p)[None, :] < data.counts[:, None]
         out = {"krr_whiten": W, "krr_centers": xp.empty((K, p, d)), "krr_alpha": xp.zeros((K, p, fd)),
+               "krr_active": xp.zeros((K, fd), dtype=bool),
                "krr_max_abs_before": xp.empty((K, fd)), "krr_max_abs_after": xp.empty((K, fd))}  # fmt: skip
         # Chunks of whole leaves, so the (rows, p) kernel matrix stays bounded; a leaf's values do
         # not depend on the chunk it falls in.
@@ -548,7 +564,7 @@ class KRREnrichedModel(LocalModel):
         return {**base_final, **out}
 
     def _fit_chunk(self, data, R, W, center_rows, valid, a, b, lo, hi, out) -> None:
-        """Fit leaves ``a:b`` (rows ``lo:hi``) into ``out``."""
+        """Fit leaves ``a:b`` (rows ``lo:hi``) into ``out``; ``R`` holds the base model's residuals."""
         kern = KRR_KERNELS[self.kernel]
         counts, starts = data.counts[a:b], data.starts[a:b] - lo
         labels = data.labels[lo:hi] - a
@@ -557,14 +573,15 @@ class KRREnrichedModel(LocalModel):
         ok = valid[a:b]
         Phi = kern(_squared_distances(Z, Zc[labels])) * ok[labels]  # (n, p); padded slots are 0
         Rc = R[lo:hi]
+        Y = Rc if self.target == "residuals" else data.F[lo:hi]  # what the KRR model fits
         if IS_CUPY_BACKEND:  # reproducible, batch-independent sums
             G = segment_cross(Phi, Phi, starts, counts, symmetric=True)
-            B = segment_cross(Phi, Rc, starts, counts)
+            B = segment_cross(Phi, Y, starts, counts)
         else:
             groups = count_groups(counts, starts)
             P_g = [Phi[rows] for _, rows in groups]
             G = grouped_cross(groups, P_g, P_g)
-            B = grouped_cross(groups, P_g, [Rc[rows] for _, rows in groups])
+            B = grouped_cross(groups, P_g, [Y[rows] for _, rows in groups])
         pair = ok[:, :, None] & ok[:, None, :]
         Kzz = xp.where(pair, kern(_squared_distances(Zc, Zc[:, None])), 0.0)  # (k, p, p)
         p = Zc.shape[1]
@@ -573,11 +590,21 @@ class KRREnrichedModel(LocalModel):
         jitter = 1e-12 * xp.trace(A, axis1=1, axis2=2) / p + 1e-300
         A = A + xp.eye(p) * xp.where(ok, jitter[:, None], 1.0)[:, :, None]
         alpha = spd_solve(A, B)  # (k, p, fd)
-        alpha = xp.where(xp.all(xp.isfinite(alpha), axis=(1, 2))[:, None, None], alpha, 0.0)
+        solved = xp.all(xp.isfinite(alpha), axis=(1, 2))
+        alpha = xp.where(solved[:, None, None], alpha, 0.0)
+        before = _segment_max_columns(xp.abs(Rc), starts)  # the base model's
+        after = _segment_max_columns(xp.abs(Y - det_einsum("np,npf->nf", Phi, alpha[labels])), starts)
+        active = solved[:, None] & xp.ones_like(before, dtype=bool)
+        if self.fallback:
+            # An output whose largest error at the leaf's points grows keeps the base model alone.
+            active = active & (after <= before)
+            alpha = xp.where(active[:, None, :], alpha, 0.0)
+            after = xp.where(active, after, before)
         out["krr_centers"][a:b] = Zc
         out["krr_alpha"][a:b] = alpha
-        out["krr_max_abs_before"][a:b] = _segment_max_columns(xp.abs(Rc), starts)
-        out["krr_max_abs_after"][a:b] = _segment_max_columns(xp.abs(Rc - det_einsum("np,npf->nf", Phi, alpha[labels])), starts)
+        out["krr_active"][a:b] = active
+        out["krr_max_abs_before"][a:b] = before
+        out["krr_max_abs_after"][a:b] = after
 
     def correction(self, params: dict[str, Array], X: Array, cluster_ids: Array) -> Array:
         """``sum_j alpha_j k(q(x, z_j))`` of leaf ``cluster_ids[i]`` at ``X[i]``, (N, fd) for (N,) ids."""
@@ -586,14 +613,20 @@ class KRREnrichedModel(LocalModel):
         return det_einsum("np,npf->nf", Phi, params["krr_alpha"][cluster_ids])
 
     def evaluate(self, params, X, cluster_ids):
-        """The base model, plus the correction once ``finalize`` has fitted it (not in the acceptance test)."""
+        """
+        The base model, plus the correction once ``finalize`` has fitted it (not in the acceptance
+        test); with ``target="values"``, the KRR model alone on every active output.
+        """
         out = self.base.evaluate(params, X, cluster_ids)
         if "krr_alpha" not in params:
             return out
         if cluster_ids.ndim == 1:
-            return out + self.correction(params, X, cluster_ids)
-        # (n, k) candidates: one column at a time, so no (n, k, p, d) gather is formed.
-        return out + xp.stack([self.correction(params, X, cluster_ids[:, j]) for j in range(cluster_ids.shape[1])], axis=1)
+            krr = self.correction(params, X, cluster_ids)
+        else:  # (n, k) candidates: one column at a time, so no (n, k, p, d) gather is formed.
+            krr = xp.stack([self.correction(params, X, cluster_ids[:, j]) for j in range(cluster_ids.shape[1])], axis=1)
+        if self.target == "residuals":
+            return out + krr  # an inactive output has alpha = 0
+        return xp.where(params["krr_active"][cluster_ids], krr, out)
 
 
 _TAYLOR_MODES = (

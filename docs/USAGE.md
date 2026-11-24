@@ -551,10 +551,16 @@ config = TrainingConfig(atol=1e-3, rtol=1e-3, local_model=("krr_enriched", {
   `ceil(sample_multiplier * n_features)`. `n_centers` sets `p` directly. A leaf with fewer than
   `p` points uses all of them.
 - The leaves are not re-tested after the correction: `alpha = 0` is feasible, so the squared
-  residual over the leaf's points cannot grow. A single point's error still can, so compare
-  `leaf_params["krr_max_abs_after"]` with `leaf_params["krr_max_abs_before"]` (the largest
-  residual per leaf and output). On ART, `validation_samples` checks the corrected leaves on
-  fresh points.
+  residual over the leaf's points cannot grow. A single point's error still can (a leaf across a
+  discontinuity rings), so with `fallback=True` (the default) an output whose largest error at the
+  leaf's points would grow keeps the base model alone; `leaf_params["krr_active"]` says which
+  outputs use KRR, and `krr_max_abs_before` / `krr_max_abs_after` hold the largest error per leaf
+  and output of the base model and of the deployed one. On ART, `validation_samples` checks the
+  corrected leaves on fresh points.
+- `target="values"` fits the KRR model to the function values instead of the residuals and uses
+  it alone on the leaf (the base model then serves only the tree and the fallback).
+  `scripts/compare_enriched_krr.py` compares both with the base model on the inference
+  benchmark's cases.
 - Each leaf stores `p (d + fd) + d^2` more numbers, and every prediction evaluates `p` kernels
   per candidate leaf: prediction chunks shrink to keep the gathered parameters within 256 MB.
 
