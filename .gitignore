@@ -143,6 +143,8 @@ celerybeat.pid
 # Environments
 .env
 .envrc
+# a person's TACC user name for scripts/hpc/vista.sh
+scripts/hpc/vista.local
 .venv
 env/
 venv/

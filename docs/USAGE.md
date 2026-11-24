@@ -629,6 +629,20 @@ ibrun .venv/bin/python -m examples.example01_rosenbrock_afinni
 For another cluster, copy [`scripts/hpc/tacc.sh`](../scripts/hpc/tacc.sh) to
 `scripts/hpc/<site>.sh` and change the module lines.
 
+From a laptop, [`scripts/hpc/vista.sh`](../scripts/hpc/vista.sh) opens one shared SSH connection to
+Vista that later `ssh`, `scp`, `rsync` and coding agents reuse without asking for the password and
+token again, for 12 hours or until the laptop sleeps:
+
+```bash
+scripts/hpc/vista.sh open                     # once: TACC user name (first use only), password, token
+scripts/hpc/vista.sh                          # a login-node shell through the open connection
+scripts/hpc/vista.sh run 'squeue -u $USER'    # one command, never a prompt
+scripts/hpc/vista.sh check | close
+```
+
+The user name is kept in `scripts/hpc/vista.local`, which git ignores; the password and the token are
+never stored.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
