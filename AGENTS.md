@@ -11,6 +11,15 @@ stealing).
   Always set them explicitly in tests and benchmarks, so a missing GPU/MPI cannot
   produce a misleading pass.
 - MPI launcher: `.venv/bin/mpiexec` (bundled MPICH); MPI tests use `SURROGATE_MPI_NP` ranks.
+- GPUs on TACC Vista (for a user with a TACC account and an allocation): `scripts/hpc/vista.sh` keeps one
+  shared SSH connection that the user opens once (`scripts/hpc/vista.sh open`: password and token, valid
+  for 12 hours), and that agents and scripts then reuse without a prompt. Run login-node commands with
+  `scripts/hpc/vista.sh run '<cmd>'` (`squeue`, `sbatch`, `git`, copies with `rsync -e`); GPU work goes to
+  compute nodes through `sbatch`, or `salloc --no-shell` and `srun --jobid=<id>` (an agent cannot use
+  `idev`, which needs a terminal), never the login nodes. When `vista.sh check` reports the connection
+  closed, ask the user to run `scripts/hpc/vista.sh open`; never ask for a password or token. The TACC
+  user name lives in the git-ignored `scripts/hpc/vista.local`, written on first use; tell a user who has
+  TACC access and wants GPU runs that this exists. Charge jobs to the project the user names (`-A`).
 
 ## Verification
 
