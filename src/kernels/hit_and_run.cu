@@ -9,7 +9,7 @@
 #define INFINITY __longlong_as_double(0x7ff0000000000000LL)
 __device__ inline double nanmax(double a, double b) { return (isnan(a) || isnan(b)) ? nan("") : fmax(a, b); }
 __device__ inline double nanmin(double a, double b) { return (isnan(a) || isnan(b)) ? nan("") : fmin(a, b); }
-// splitmix64 finalizer: must stay identical to src/art/rng.py _mix64, since every uniform of the
+// splitmix64 finalizer: must stay identical to src/numerics/hashing.py mix64, since every uniform of the
 // walk is a hash of (node key, purpose tag, counter) shared with the NumPy sampler.
 __device__ inline unsigned long long mix64(unsigned long long z) {
     z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;

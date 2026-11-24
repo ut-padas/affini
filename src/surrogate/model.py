@@ -77,17 +77,22 @@ def _collective(what: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
 
 ROUTE_CHUNK = 5000  # GPU: queries per routed chunk (ART); routing gathers only (d + 1) per query and level
 # CPU: the compiled walk starts a parallel region per chunk, so routed chunks are as large as the
-# leaf evaluation's per-query gather of the leaf's parameters allows within ROUTE_GATHER_BYTES.
+# leaf evaluation's per-query gather of the leaf's parameters allows within LEAF_GATHER_BYTES.
 ROUTE_CPU_CHUNK = 1 << 17
-ROUTE_GATHER_BYTES = 256 << 20
+# Bytes of a chunk's gather of its queries' leaf parameters, the evaluation's largest arrays once
+# the parameters are large (KRR-enriched leaves hold p centres each).
+LEAF_GATHER_BYTES = 256 << 20
+
+
+def leaf_gather_rows(leaf_params: dict[str, Array], d: int, leaves_per_query: int = 1) -> int:
+    """Queries whose gather of ``leaves_per_query`` leaves' parameters (and their own d coordinates) fits ``LEAF_GATHER_BYTES``."""
+    per_leaf = 2 * d + sum(int(np.prod(v.shape[1:])) for v in leaf_params.values())
+    return int(max(1, LEAF_GATHER_BYTES // (8 * max(1, leaves_per_query) * per_leaf)))
 
 
 def route_chunk_size(leaf_params: dict[str, Array], d: int) -> int:
-    """Queries per routed chunk: ``ROUTE_CHUNK`` on the GPU, on the CPU up to ``ROUTE_CPU_CHUNK`` within ``ROUTE_GATHER_BYTES``."""
-    if IS_CUPY_BACKEND:
-        return ROUTE_CHUNK
-    per_query = 8 * (2 * d + sum(int(np.prod(v.shape[1:])) for v in leaf_params.values()))
-    return int(max(1, min(ROUTE_CPU_CHUNK, ROUTE_GATHER_BYTES // per_query)))
+    """Queries per routed chunk: up to ``ROUTE_CHUNK`` on the GPU and ``ROUTE_CPU_CHUNK`` on the CPU, within ``leaf_gather_rows``."""
+    return min(ROUTE_CHUNK if IS_CUPY_BACKEND else ROUTE_CPU_CHUNK, leaf_gather_rows(leaf_params, d))
 # Bytes of the (chunk, k_coarse, d, d) trust-matrix gather in kNN prediction, its largest array.
 # 5,000 queries stay within it while k_coarse d^2 <= 53,687 (d up to 73 with 10 candidates, up to 32
 # with 50), so low-dimensional prediction keeps its chunks. CuPy's einsum is not chunk-invariant
@@ -537,7 +542,7 @@ class AdaptiveSurrogate:
         distance ``dx^T trust_matrix dx`` (``d_i``); the best ``k_nn`` leaves' models are blended with
         weights ``1 / d_i^2`` (``strict_trust_region`` drops leaves with distance > 1). A
         query is flagged outside when its best candidate (the leaf ``nu``) is > 1.
-        ``batch_size`` (queries per chunk) defaults to ``knn_chunk_size``.
+        ``batch_size`` (queries per chunk) defaults to ``knn_chunk_size``, or fewer within ``leaf_gather_rows``.
 
         A long ellipsoid whose centre is not among the candidates can still contain a query,
         so the flag depends on ``coarse_factor``. ``exact_outside=True`` searches every leaf
@@ -626,7 +631,7 @@ class AdaptiveSurrogate:
         exact_outside: bool = False,
     ) -> tuple[Array, Array]:
         """
-        Predict this rank's queries in chunks of ``batch_size`` (default ``knn_chunk_size``)
+        Predict this rank's queries in chunks of ``batch_size`` (default ``knn_chunk_size``, within ``leaf_gather_rows``)
         to bound the (chunk, k_coarse, d, d) trust-matrix gather; see ``predict`` for the method
         and ``exact_outside``.
         """
@@ -656,7 +661,7 @@ class AdaptiveSurrogate:
 
         assert self.local_model is not None, "no local model; was the surrogate trained?"
         leaf_params = self.model_params()
-        batch_size = batch_size or knn_chunk_size(k_coarse, D)
+        batch_size = batch_size or min(knn_chunk_size(k_coarse, D), leaf_gather_rows(leaf_params, D))
 
         all_predictions = []
         all_outside = []

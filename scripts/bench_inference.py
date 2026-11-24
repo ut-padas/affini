@@ -31,10 +31,15 @@ relative test never passes); spherical_piecewise ``rtol = tol``; Lorenz-96 absol
 pointwise one; a test point counts as above tolerance when ``|f - f_hat| > max(atol, rtol |f|)``
 in any component.
 
-Outputs, under ``--out`` (default ``scratch/bench_inference/<cpu|gpu>``, so the two backends never
-overwrite each other): one ``<problem>_d<d>.json`` per case, reused on a rerun when it was made
-with the same settings (``--force`` reruns it anyway), and ``summary.json`` / ``summary.csv`` with
-one row per case and method.
+``--local-model`` (with ``--local-model-settings``, a JSON object) gives both methods another
+local model, e.g. ``krr_enriched`` (``KRREnrichedModel``: the base model's tree, a kernel ridge
+correction per leaf); by default each uses its mode's.
+
+Outputs, under ``--out`` (default ``scratch/bench_inference/<cpu|gpu>``, with ``_<local model>``
+appended when one is given, so backends and models never overwrite each other): one
+``<problem>_d<d>.json`` per case, reused on a rerun when it was made with the same settings
+(``--force`` reruns it anyway), and ``summary.json`` / ``summary.csv`` with one row per case and
+method.
 """
 
 import argparse
@@ -64,8 +69,8 @@ from src.problems.spherical_piecewise import spherical_piecewise  # noqa: E402
 from src.surrogate import AdaptiveSurrogate, compute_error_metrics  # noqa: E402
 
 OUT_DIR = PROJECT_DIR / "scratch" / "bench_inference" / ("gpu" if IS_CUPY_BACKEND else "cpu")
-# The settings a saved case must match to be reused.
-SETTINGS = ("n_test", "tol", "max_levels", "repeats", "batch_size", "seed", "backend")
+# The settings a saved case must match to be reused (a record without "local_model" used the default).
+SETTINGS = ("n_test", "tol", "max_levels", "repeats", "batch_size", "seed", "backend", "local_model")
 
 
 @dataclass(frozen=True)
@@ -109,7 +114,7 @@ def tolerances(prob: Problem, tol: float, truth: np.ndarray) -> tuple[float | No
 def configs(prob: Problem, d: int, atol, rtol, args) -> dict[str, TrainingConfig]:
     """Both methods' settings: one root each, the same tolerance and level limit, fallback leaves, no work stealing."""
     common = {"atol": atol, "rtol": rtol, "max_levels": args.max_levels, "seed": args.seed,
-              "use_work_stealing": False, "profile_timing": True}  # fmt: skip
+              "use_work_stealing": False, "profile_timing": True, "local_model": local_model_spec(args)}  # fmt: skip
     lower, upper = np.full(d, prob.domain[0]), np.full(d, prob.domain[1])
     return {
         "afinni": TrainingConfig(mode=SurrogateMode.AFFINE_COV_HESS, error_metric="Linf", num_initial_clusters=1,
@@ -117,6 +122,14 @@ def configs(prob: Problem, d: int, atol, rtol, args) -> dict[str, TrainingConfig
         "art": TrainingConfig(algorithm="art", domain=(lower, upper), error_metric="pointwise",
                               art=ARTSettings(), **common),
     }  # fmt: skip
+
+
+def local_model_spec(args):
+    """``--local-model`` as a ``TrainingConfig.local_model`` spec, or None for each mode's own (also for callers without the option)."""
+    name = getattr(args, "local_model", None)
+    if name is None:
+        return None
+    return (name, json.loads(getattr(args, "local_model_settings", None) or "{}"))
 
 
 def predictor(model: AdaptiveSurrogate, method: str, batch_size: int | None) -> Callable:
@@ -151,6 +164,7 @@ def scores(truth: np.ndarray, pred, outside, atol, rtol) -> dict:
     return {
         "relative_l2": summary["all"]["l2_rel_error"],
         "relative_linf": summary["all"]["linf_rel_error"],
+        "relative_l2_inside": summary["in"]["l2_rel_error"],  # AFINNI: inside a trust region; ART: inside the domain
         "median_pointwise": float(np.median(err)),
         "q99_pointwise": float(np.quantile(err, 0.99)),
         "pct_above_tol": 100.0 * float(np.mean(above)),
@@ -169,7 +183,8 @@ def run_case(name: str, d: int, args) -> dict:
     record = {"problem": name, "dim": d, "outputs": int(truth.shape[1]), "n_initial": int(X0.shape[0]),
               "n_test": args.n_test, "tol": args.tol, "atol": atol, "rtol": rtol, "max_levels": args.max_levels,
               "repeats": args.repeats, "batch_size": args.batch_size, "seed": args.seed,
-              "backend": "cupy" if IS_CUPY_BACKEND else "numpy", "methods": {}}  # fmt: skip
+              "backend": "cupy" if IS_CUPY_BACKEND else "numpy", "local_model": current_settings(args)["local_model"],
+              "methods": {}}  # fmt: skip
     for method, config in configs(prob, d, atol, rtol, args).items():
         model = AdaptiveSurrogate()
         labels = {"initial_labels": np.zeros(X0.shape[0], dtype=np.int64)} if method == "afinni" else {}
@@ -205,7 +220,7 @@ def run_case(name: str, d: int, args) -> dict:
 
 
 SUMMARY_FIELDS = ("problem", "dim", "method", "leaves", "fallback_leaves", "oracle_evals", "levels", "converged",
-                  "train_seconds", "relative_l2", "relative_linf", "median_pointwise", "q99_pointwise",
+                  "train_seconds", "relative_l2", "relative_l2_inside", "relative_linf", "median_pointwise", "q99_pointwise",
                   "pct_above_tol", "pct_outside", "inference_median_s", "inference_min_s",
                   "inference_us_per_query")  # fmt: skip
 
@@ -239,12 +254,16 @@ def main() -> None:
     p.add_argument("--repeats", type=int, default=5, help="timed inference calls per model")
     p.add_argument("--batch-size", type=int, help="inference chunk size for both (default: each method's own)")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--out", type=Path, default=OUT_DIR, help="results folder (default: %(default)s)")
+    p.add_argument("--local-model", help="local model of both methods (e.g. krr_enriched; default: each mode's)")
+    p.add_argument("--local-model-settings", help='its settings as a JSON object, e.g. \'{"kernel": "matern52"}\'')
+    p.add_argument("--out", type=Path, help=f"results folder (default: {OUT_DIR}[_<local model>])")
     p.add_argument("--force", action="store_true", help="rerun cases whose result file exists")
     p.add_argument("--list", action="store_true", help="list the problems and exit")
     p.add_argument("--summary", action="store_true",
                    help="run nothing: table every case saved in --out (of --problem / --dim) and rewrite the summary")
     args = p.parse_args()
+    if args.out is None:
+        args.out = OUT_DIR if args.local_model is None else OUT_DIR.with_name(f"{OUT_DIR.name}_{args.local_model}")
     logging.basicConfig(level=logging.WARNING)
     if args.list:
         for name, prob in PROBLEMS.items():
@@ -290,7 +309,8 @@ def saved_dims(out: Path, name: str) -> list[int]:
 def current_settings(args) -> dict:
     """The values of ``SETTINGS`` this invocation would record."""
     values = {"n_test": args.n_test, "tol": args.tol, "max_levels": args.max_levels, "repeats": args.repeats,
-              "batch_size": args.batch_size, "seed": args.seed, "backend": "cupy" if IS_CUPY_BACKEND else "numpy"}  # fmt: skip
+              "batch_size": args.batch_size, "seed": args.seed, "backend": "cupy" if IS_CUPY_BACKEND else "numpy",
+              "local_model": None if local_model_spec(args) is None else list(local_model_spec(args))}  # fmt: skip
     return {k: values[k] for k in SETTINGS}
 
 

@@ -528,6 +528,36 @@ every split's `cut="median"|"sign"`, `CovarianceEllipsoid(q_reg)`. Components bu
 by name receive matching configuration values (`min_pts_per_cluster`, `atol`/`rtol`,
 `q_reg`) when their constructor takes them.
 
+### KRR-enriched leaves
+
+`local_model="krr_enriched"` (`KRREnrichedModel`) keeps a base model's fit, acceptance test
+and splits, so the tree is the base model's, and adds on every deployed leaf a restricted
+kernel ridge regression of the base model's residuals:
+`f_hat(x) = f_base(x) + sum_j alpha_j k((x - z_j)^T T (x - z_j))`. The `p` centres `z_j` are
+drawn uniformly from the leaf's points, and `T` is the leaf's trust matrix, so the kernel's
+length scale and orientation follow the leaf's shape. Both AFINNI and ART use it.
+
+```python
+config = TrainingConfig(atol=1e-3, rtol=1e-3, local_model="krr_enriched")       # defaults
+config = TrainingConfig(atol=1e-3, rtol=1e-3, local_model=("krr_enriched", {
+    "kernel": "matern52",        # "gaussian" (default), "matern32", "matern52": KRR_KERNELS
+    "center_fraction": 0.2,      # p = floor(center_fraction * m); default 0.1
+    "ridge": 1e-6,               # (Phi^T Phi + ridge * n * K_zz) alpha = Phi^T r
+    "base": ("affine_lsq", {}),  # default: the mode's local model
+}))
+```
+
+- `m` is the points every leaf holds: `min_pts_per_cluster` for AFINNI, ART's per-node sample
+  `ceil(sample_multiplier * n_features)`. `n_centers` sets `p` directly. A leaf with fewer than
+  `p` points uses all of them.
+- The leaves are not re-tested after the correction: `alpha = 0` is feasible, so the squared
+  residual over the leaf's points cannot grow. A single point's error still can, so compare
+  `leaf_params["krr_max_abs_after"]` with `leaf_params["krr_max_abs_before"]` (the largest
+  residual per leaf and output). On ART, `validation_samples` checks the corrected leaves on
+  fresh points.
+- Each leaf stores `p (d + fd) + d^2` more numbers, and every prediction evaluates `p` kernels
+  per candidate leaf: prediction chunks shrink to keep the gathered parameters within 256 MB.
+
 ### Writing a component
 
 Register the class so it can be named in configs, the launcher and saved models,

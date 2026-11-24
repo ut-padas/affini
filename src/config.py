@@ -46,7 +46,12 @@ from src.components.acceptance import (
     Tolerance,
     normalize_tolerance,
 )
-from src.components.local_models import LOCAL_MODELS, LocalModel, local_model_for_mode
+from src.components.local_models import (
+    LOCAL_MODELS,
+    KRREnrichedModel,
+    LocalModel,
+    local_model_for_mode,
+)
 from src.components.modes import SurrogateMode
 from src.components.registry import ComponentSpec, component_spec
 from src.components.sampling import SAMPLERS, Sampler
@@ -318,9 +323,31 @@ class TrainingConfig:
         """The configured local model; an ART run's least-squares leaves solve as ``art.leaf_fit`` says."""
         model = (local_model_for_mode(self.mode, second_order=self.store_hess) if self.local_model is None
                  else LOCAL_MODELS.create(self.local_model))  # fmt: skip
+        if isinstance(model, KRREnrichedModel):
+            return self._krr_enriched(model)
         if self.algorithm == "art" and hasattr(model, "fit_method"):
             model = LOCAL_MODELS.create((model.name, {**model.settings(), "fit": self.art.leaf_fit}))
         return model
+
+    def _krr_enriched(self, model: KRREnrichedModel) -> KRREnrichedModel:
+        """
+        ``model`` with what the run decides: the mode's local model as its base when none was given
+        (ART's least squares solved as ``art.leaf_fit`` says), and its centres per leaf when neither
+        ``n_centers`` nor ``points_per_feature`` was given: ``center_fraction`` of
+        ``min_pts_per_cluster`` (AFINNI) or of ART's per-node sample (``art.sample_multiplier``
+        points per feature).
+        """
+        settings = model.settings()
+        base = model.base if model.base_spec is not None else local_model_for_mode(self.mode, second_order=self.store_hess)
+        if self.algorithm == "art" and hasattr(base, "fit_method"):
+            base = LOCAL_MODELS.create((base.name, {**base.settings(), "fit": self.art.leaf_fit}))
+        settings["base"] = (base.name, base.settings())
+        if model.n_centers is None and model.points_per_feature is None:
+            if self.algorithm == "art":
+                settings["points_per_feature"] = float(self.art.sample_multiplier)
+            else:
+                settings["n_centers"] = max(1, int(model.center_fraction * self.min_pts_per_cluster + 1e-9))
+        return KRREnrichedModel(**settings)
 
     def components(self) -> Components:
         """The local model, split strategy, sampler, acceptance criterion and trust region."""

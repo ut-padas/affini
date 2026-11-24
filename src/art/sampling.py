@@ -6,10 +6,13 @@ import numpy as np
 
 from src import IS_CUPY_BACKEND, Array, kernels, xp
 from src.art.geometry import Domain, Roots
-from src.art.rng import GOLDEN, MIX1, MIX2, counter_uniform_pairs
+from src.art.rng import counter_uniform_pairs
 from src.art.split_search import segment_sum
 from src.components.sampling import ClusterPoints, Sampler
 from src.numerics import (
+    GOLDEN,
+    MIX1,
+    MIX2,
     det_einsum,
     repeats,
 )

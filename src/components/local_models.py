@@ -43,23 +43,27 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src import IS_CUPY_BACKEND, Array, xp
+from src import IS_CUPY_BACKEND, Array, to_host, xp
 from src.components.modes import SurrogateMode
-from src.components.registry import Registry
+from src.components.registry import ComponentSpec, Registry
 from src.core.clusters import ParamSpec
 from src.numerics import (
+    GOLDEN,
     TINY_EPS,
     count_groups,
     det_einsum,
     det_matmul,
     grouped_cross,
     lstsq_auto,
+    mix64,
+    reduce_max_1d,
     reduce_sum_1d,
     repeats,
     run_fused_cross_cov,
     run_fused_stats,
     segment_cross,
     solve_regularized_covariance_inplace,
+    sort_by_block_then_value,
     spd_solve,
     symmetric_point_covariance,
 )
@@ -78,6 +82,7 @@ class ClusterFitData:
     centroids: Array  # (K, d) the cluster centres c (means of their points)
     f_c: Array  # (K, fd) f at the centroids
     g_c: Array | None  # (K, fd, d) gradient at the centroids, if evaluated
+    trust_matrix: Array | None = None  # (K, d, d), in finalize when the model needs_trust_matrix
 
 
 class LocalModel(ABC):
@@ -95,6 +100,10 @@ class LocalModel(ABC):
     needs_centroid_value: bool = True  # fit/evaluate read ClusterFitData.f_c (column "f")
     needs_centroid_grad: bool = False  # fit/evaluate need ClusterFitData.g_c
     needs_point_grad: bool = False  # fit/finalize need ClusterFitData.G
+    needs_trust_matrix: bool = False  # finalize reads ClusterFitData.trust_matrix (computed even when not stored)
+    # Whether deploy_leaves re-tests a leaf with its finalized model and splits it if that fails.
+    # Off for a model whose finalize only fits what fit left over (KRREnrichedModel).
+    retest_after_finalize: bool = True
 
     # ART's split search fits children in ``features``; True means they need
     # node-centred, radius-scaled coordinates (products of raw coordinates in a small deep
@@ -389,6 +398,204 @@ class QuadraticLSQModel(LocalModel):
         return xp.einsum("...fp,...p->...f", params["coef"][cluster_ids], Phi)
 
 
+# Kernels of KRREnrichedModel, as functions of q = (x - y)^T T (x - y), the squared distance in the
+# leaf's trust metric (T scaled so the leaf's farthest point from its centroid has q = 1).
+KRR_KERNELS = {
+    "gaussian": lambda q: xp.exp(-0.5 * q),
+    "matern32": lambda q: (1.0 + np.sqrt(3.0) * xp.sqrt(q)) * xp.exp(-np.sqrt(3.0) * xp.sqrt(q)),
+    "matern52": lambda q: (1.0 + np.sqrt(5.0) * xp.sqrt(q) + (5.0 / 3.0) * q) * xp.exp(-np.sqrt(5.0) * xp.sqrt(q)),
+}
+_KRR_CHUNK_ELEMENTS = 1 << 24  # bound on one finalize chunk's (rows x centres) kernel matrix
+
+
+def _segment_max_columns(vals: Array, starts: Array) -> Array:
+    """(K, f) per-block maxima of every column of ``vals`` (N, f); ``reduce_max_1d`` takes one column."""
+    return xp.stack([reduce_max_1d(xp.ascontiguousarray(vals[:, j]), starts) for j in range(vals.shape[1])], axis=1)
+
+
+def _squared_distances(Z: Array, C: Array) -> Array:
+    """
+    ``|Z - C|^2`` with ``Z`` (..., d) against centres ``C`` (..., p, d), shape (..., p), summed
+    coordinate by coordinate in a fixed order, so a value's bits depend on its two points only.
+    """
+    q = None
+    for j in range(C.shape[-1]):
+        diff = Z[..., None, j] - C[..., j]
+        q = diff * diff if q is None else q + diff * diff
+    return q
+
+
+@LOCAL_MODELS.register
+class KRREnrichedModel(LocalModel):
+    """
+    A base model (``fit``, the acceptance test and the splits unchanged) enriched on every deployed
+    leaf by restricted kernel ridge regression of its residuals:
+    ``f_hat(x) = f_base(x) + sum_j alpha_j k(q(x, z_j))``, with ``p`` centres ``z_j`` drawn
+    uniformly from the leaf's points and ``q`` the squared distance in the leaf's trust metric, so
+    the trust matrix sets the kernel's length scale and orientation (no length-scale setting).
+
+    ``finalize`` fits ``alpha`` on all of the leaf's points (restricted, or subset-of-regressors,
+    KRR): ``(Phi^T Phi + ridge n K_zz) alpha = Phi^T r``, with ``Phi`` (n, p) the kernel between the
+    points and the centres, ``K_zz`` (p, p) between the centres and ``r`` the base model's residuals.
+    ``alpha = 0`` is feasible, so the squared residual over the leaf's points cannot grow; the leaf is
+    therefore not re-tested (``retest_after_finalize``), and a single point's error can still grow.
+
+    ``p`` is ``n_centers``, or ``floor(center_fraction m)`` for ``m`` the points every leaf holds:
+    ``TrainingConfig`` sets ``n_centers`` from ``min_pts_per_cluster`` (AFINNI) or
+    ``points_per_feature`` from ``art.sample_multiplier`` (ART, ``m = ceil(points_per_feature x
+    n_features(d))``). A leaf with fewer than ``p`` points uses all of them, the rest of its
+    ``p`` slots holding ``alpha = 0``. The centres are each leaf's points ranked by a hash of their
+    coordinates (``seed``), so the choice does not depend on the batch, the rank or the call order.
+
+    Columns besides the base model's: ``krr_whiten`` (d, d), ``W`` with ``W^T W = T``, so that
+    ``q(x, y) = |W x - W y|^2``; ``krr_centers`` (p, d), the centres as ``W z_j``; ``krr_alpha``
+    (p, fd); and, per output, the largest absolute residual over the leaf's points before and after
+    the correction, ``krr_max_abs_before`` and ``krr_max_abs_after`` (fd). A system that is not
+    positive definite keeps ``alpha = 0`` (the base model alone).
+    """
+
+    name = "krr_enriched"
+    needs_trust_matrix = True
+    retest_after_finalize = False
+
+    def __init__(self, base: ComponentSpec = None, center_fraction: float = 0.1, n_centers: int | None = None,
+                 points_per_feature: float | None = None, ridge: float = 1e-6, kernel: str = "gaussian",
+                 seed: int = 0):  # fmt: skip
+        if isinstance(base, list):  # a (name, settings) pair read back from JSON
+            base = tuple(base)
+        self.base_spec = base
+        self.base = AffineLSQModel() if base is None else LOCAL_MODELS.create(base)
+        if isinstance(self.base, KRREnrichedModel):
+            raise ValueError("KRREnrichedModel needs a base model that is not itself KRR-enriched.")
+        if kernel not in KRR_KERNELS:
+            raise ValueError(f"Unknown KRR kernel {kernel!r}; choose one of {sorted(KRR_KERNELS)}.")
+        if not 0 < center_fraction <= 1:
+            raise ValueError(f"center_fraction must be in (0, 1]; got {center_fraction!r}.")
+        if n_centers is not None and int(n_centers) < 1:
+            raise ValueError(f"n_centers must be >= 1; got {n_centers!r}.")
+        if not ridge > 0:
+            raise ValueError(f"ridge must be > 0; got {ridge!r}.")
+        self.center_fraction, self.ridge, self.kernel, self.seed = float(center_fraction), float(ridge), kernel, int(seed)
+        self.n_centers = None if n_centers is None else int(n_centers)
+        self.points_per_feature = None if points_per_feature is None else float(points_per_feature)
+        # The base model's data needs and ART feature space are the enriched model's.
+        self.needs_centroid_value = self.base.needs_centroid_value
+        self.needs_centroid_grad = self.base.needs_centroid_grad
+        self.needs_point_grad = self.base.needs_point_grad
+        self.centred_features = self.base.centred_features
+
+    def settings(self):
+        return {"base": (self.base.name, self.base.settings()), "center_fraction": self.center_fraction,
+                "n_centers": self.n_centers, "points_per_feature": self.points_per_feature, "ridge": self.ridge,
+                "kernel": self.kernel, "seed": self.seed}  # fmt: skip
+
+    def centers(self, d: int) -> int:
+        """``p``, the centres per leaf (see the class docstring)."""
+        if self.n_centers is not None:
+            return self.n_centers
+        if self.points_per_feature is None:
+            raise ValueError("KRREnrichedModel needs n_centers or points_per_feature; TrainingConfig sets one.")
+        m = int(np.ceil(self.points_per_feature * self.base.n_features(d)))
+        return max(1, int(self.center_fraction * m + 1e-9))
+
+    def n_features(self, d):
+        return self.base.n_features(d)
+
+    def features(self, Z):
+        return self.base.features(Z)
+
+    def columns(self, d, fd):
+        p = self.centers(d)
+        return {**self.base.columns(d, fd), "krr_whiten": ParamSpec((d, d)), "krr_centers": ParamSpec((p, d)),
+                "krr_alpha": ParamSpec((p, fd)), "krr_max_abs_before": ParamSpec((fd,)),
+                "krr_max_abs_after": ParamSpec((fd,))}  # fmt: skip
+
+    def fit(self, data):
+        return self.base.fit(data)
+
+    def finalize(self, data, params):
+        if data.trust_matrix is None:
+            raise RuntimeError("KRREnrichedModel.finalize needs the leaves' trust matrices.")
+        base_final = self.base.finalize(data, params)
+        K, (N, d), fd = int(data.counts.shape[0]), data.X.shape, data.F.shape[1]
+        p = self.centers(d)
+        base_params = {**params, **base_final, "centroids": data.centroids, "f": data.f_c}
+        R = data.F - self.base.evaluate(base_params, data.X, data.labels)  # (N, fd) residuals
+        # W = Lambda^1/2 V^T from T = V Lambda V^T, so (x - y)^T T (x - y) = |W x - W y|^2.
+        lam, V = xp.linalg.eigh(data.trust_matrix)
+        W = xp.sqrt(xp.maximum(lam, 0.0))[:, :, None] * xp.swapaxes(V, 1, 2)
+        # Centres: each leaf's first p points in the order of a hash of their coordinates.
+        bits = xp.ascontiguousarray(data.X).view(xp.uint64)
+        h = xp.full(N, (self.seed * GOLDEN + 1) % 2**64, dtype=xp.uint64)
+        for j in range(d):
+            h = mix64(h ^ bits[:, j])
+        order = sort_by_block_then_value((h >> xp.uint64(11)).astype(xp.float64), data.labels)
+        slot = xp.minimum(xp.arange(p)[None, :], data.counts[:, None] - 1)  # (K, p), repeats past a small leaf's end
+        center_rows = order[data.starts[:, None] + slot]
+        valid = xp.arange(p)[None, :] < data.counts[:, None]
+        out = {"krr_whiten": W, "krr_centers": xp.empty((K, p, d)), "krr_alpha": xp.zeros((K, p, fd)),
+               "krr_max_abs_before": xp.empty((K, fd)), "krr_max_abs_after": xp.empty((K, fd))}  # fmt: skip
+        # Chunks of whole leaves, so the (rows, p) kernel matrix stays bounded; a leaf's values do
+        # not depend on the chunk it falls in.
+        ends = np.cumsum(np.asarray(to_host(data.counts), dtype=np.int64))
+        rows_per_chunk = max(1, _KRR_CHUNK_ELEMENTS // max(1, p))
+        a = 0
+        while a < K:
+            first = int(ends[a - 1]) if a else 0
+            b = max(a + 1, int(np.searchsorted(ends, first + rows_per_chunk, side="right")))
+            self._fit_chunk(data, R, W, center_rows, valid, a, b, first, int(ends[b - 1]), out)
+            a = b
+        return {**base_final, **out}
+
+    def _fit_chunk(self, data, R, W, center_rows, valid, a, b, lo, hi, out) -> None:
+        """Fit leaves ``a:b`` (rows ``lo:hi``) into ``out``."""
+        kern = KRR_KERNELS[self.kernel]
+        counts, starts = data.counts[a:b], data.starts[a:b] - lo
+        labels = data.labels[lo:hi] - a
+        Z = det_einsum("nab,nb->na", W[a:b][labels], data.X[lo:hi])  # whitened points (n, d)
+        Zc = Z[center_rows[a:b] - lo]  # whitened centres (k, p, d)
+        ok = valid[a:b]
+        Phi = kern(_squared_distances(Z, Zc[labels])) * ok[labels]  # (n, p); padded slots are 0
+        Rc = R[lo:hi]
+        if IS_CUPY_BACKEND:  # reproducible, batch-independent sums
+            G = segment_cross(Phi, Phi, starts, counts, symmetric=True)
+            B = segment_cross(Phi, Rc, starts, counts)
+        else:
+            groups = count_groups(counts, starts)
+            P_g = [Phi[rows] for _, rows in groups]
+            G = grouped_cross(groups, P_g, P_g)
+            B = grouped_cross(groups, P_g, [Rc[rows] for _, rows in groups])
+        pair = ok[:, :, None] & ok[:, None, :]
+        Kzz = xp.where(pair, kern(_squared_distances(Zc, Zc[:, None])), 0.0)  # (k, p, p)
+        p = Zc.shape[1]
+        A = G + (self.ridge * counts.astype(xp.float64))[:, None, None] * Kzz
+        # A tiny diagonal for round-off, and 1 on a padded slot's diagonal, whose row is zero.
+        jitter = 1e-12 * xp.trace(A, axis1=1, axis2=2) / p + 1e-300
+        A = A + xp.eye(p) * xp.where(ok, jitter[:, None], 1.0)[:, :, None]
+        alpha = spd_solve(A, B)  # (k, p, fd)
+        alpha = xp.where(xp.all(xp.isfinite(alpha), axis=(1, 2))[:, None, None], alpha, 0.0)
+        out["krr_centers"][a:b] = Zc
+        out["krr_alpha"][a:b] = alpha
+        out["krr_max_abs_before"][a:b] = _segment_max_columns(xp.abs(Rc), starts)
+        out["krr_max_abs_after"][a:b] = _segment_max_columns(xp.abs(Rc - det_einsum("np,npf->nf", Phi, alpha[labels])), starts)
+
+    def correction(self, params: dict[str, Array], X: Array, cluster_ids: Array) -> Array:
+        """``sum_j alpha_j k(q(x, z_j))`` of leaf ``cluster_ids[i]`` at ``X[i]``, (N, fd) for (N,) ids."""
+        Z = det_einsum("nab,nb->na", params["krr_whiten"][cluster_ids], X)
+        Phi = KRR_KERNELS[self.kernel](_squared_distances(Z, params["krr_centers"][cluster_ids]))
+        return det_einsum("np,npf->nf", Phi, params["krr_alpha"][cluster_ids])
+
+    def evaluate(self, params, X, cluster_ids):
+        """The base model, plus the correction once ``finalize`` has fitted it (not in the acceptance test)."""
+        out = self.base.evaluate(params, X, cluster_ids)
+        if "krr_alpha" not in params:
+            return out
+        if cluster_ids.ndim == 1:
+            return out + self.correction(params, X, cluster_ids)
+        # (n, k) candidates: one column at a time, so no (n, k, p, d) gather is formed.
+        return out + xp.stack([self.correction(params, X, cluster_ids[:, j]) for j in range(cluster_ids.shape[1])], axis=1)
+
+
 _TAYLOR_MODES = (
     SurrogateMode.TAYLOR_LSQ_HESS,
     SurrogateMode.TAYLOR_COV_HESS,
@@ -468,12 +675,12 @@ def deploy_leaves(
 ) -> DeployedLeaves:
     """
     Turn clusters ``idx`` of a fitted batch into deployed leaves: their ``trust_matrix``, the model's
-    accepted-only columns (``finalize``) and, when finalize adds columns and ``retest``,
-    a re-test of the model that will actually be deployed; clusters it fails are
+    accepted-only columns (``finalize``) and, when finalize adds columns, ``retest`` and the model's
+    ``retest_after_finalize``, a re-test of the model that will actually be deployed; clusters it fails are
     returned in ``failed`` (the caller splits them) instead of becoming leaves. Without
     ``retest`` (ART fallback leaves) every cluster is kept with its fit errors.
-    Without ``store_trust_matrix`` (routed-only ART models) no ``"trust_matrix"`` is computed or
-    returned.
+    Without ``store_trust_matrix`` (routed-only ART models) no ``"trust_matrix"`` is returned (nor
+    computed, unless the model needs it in ``finalize``).
     Both algorithm plans call this, in AFINNI's order: preliminary acceptance first,
     then this.
     """
@@ -489,19 +696,20 @@ def deploy_leaves(
     own = {k: v[idx] for k, v in params.items()}
     centroids, f_c = data.centroids[idx], data.f_c[idx]
 
-    # Trust matrix of each leaf, used by the trust-region test at inference.
-    trust_matrices = trust_region.shapes(X, centroids, labels, counts) if store_trust_matrix else None
+    # Trust matrix of each leaf, used by the trust-region test at inference (and by a model that needs it).
+    need_trust = store_trust_matrix or model.needs_trust_matrix
+    trust_matrices = trust_region.shapes(X, centroids, labels, counts) if need_trust else None
     # Parameters the model only computes for leaves (e.g. the second-order Taylor term).
     final = model.finalize(
         ClusterFitData(
             X=X, F=F, G=G, labels=labels, starts=starts, counts=counts, centroids=centroids,
-            f_c=f_c, g_c=data.g_c[idx] if data.g_c is not None else None,
+            f_c=f_c, g_c=data.g_c[idx] if data.g_c is not None else None, trust_matrix=trust_matrices,
         ),
         own,
     )  # fmt: skip
     E_abs, E_rel = E_abs[idx], E_rel[idx]
     failed = idx[:0]
-    if final and retest:
+    if final and retest and model.retest_after_finalize:
         # Accepted-only columns change predictions, so re-test the deployed model.
         F_final = model.evaluate({**own, **final, "centroids": centroids, "f": f_c}, X, labels)
         still, E_abs, E_rel = acceptance(F, F_final, starts, counts)
@@ -516,7 +724,7 @@ def deploy_leaves(
     rows = {
         "centroids": centroids,
         "f": f_c,
-        **({"trust_matrix": trust_matrices} if store_trust_matrix else {}),
+        **({"trust_matrix": trust_matrices} if store_trust_matrix else {}),  # computed for the model only otherwise
         "E_cluster_abs": E_abs,
         "E_cluster_rel": E_rel,
         "counts": counts.astype(xp.int64),
