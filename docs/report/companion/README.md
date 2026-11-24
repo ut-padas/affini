@@ -31,8 +31,22 @@ Serif, New Computer Modern Math, DejaVu Sans Mono), and has been tested with Typ
   authors: ((name: [...], affiliation: [...]),),
   abstract: [...],
   theme: (accent: rgb("#5b3f8c")),     // optional: any key of default-theme
+  lists: ((image, [Figures]), (table, [Tables]), ("algorithm", [Algorithms])),  // optional
 )
 ```
+
+`lists` puts a list of each kind of figure on a page of its own after the contents, in two
+columns, with the contents' entry style: the number in the accent colour, the title, a faint
+leader and the page. A list shows each figure's short title. Give one with `brief`:
+
+```typst
+#figure(panel("error"), caption: brief([Error over the domain], [The error of each surrogate over
+  the whole domain, ...])) <fig:error>
+#figure(kind: table, caption: brief([Test functions], [The test functions and their domains.]), table(...))
+```
+
+The figure shows the full caption and the list the short title. A table's caption goes above
+the table, so it stays with the table's start when the table runs onto the next page.
 
 `typst init @local/companion:0.1.0 my-companion` starts a document from `template/main.typ`.
 
@@ -64,7 +78,7 @@ Universe requires a template thumbnail, and possibly a more distinctive name.
 
 | Primitive | Use |
 |---|---|
-| `translate([words], [symbols], ...)` | A two-column table with each idea in plain words beside its notation. Use it for the notation, and before a definition. |
+| `translate([words], [symbols], ..., caption: none)` | A two-column table with each idea in plain words beside its notation. Use it for the notation, and before a definition. With a caption it becomes a numbered table that `@label` can reference and the list of tables names. |
 | `definition`, `lemma`, `theorem`, `proposition`, `invariant` | Numbered formal statements, called as `#theorem(title: [...])[...] <thm:x>`. |
 | `proof[...]` | A proof or proof sketch, closed with a square. |
 | `note`, `pitfall`, `implementation` | Callouts for context, a trap an implementation can fall into, and engineering detail. |

@@ -2,8 +2,11 @@
 
 #import "theme.typ": default-theme, theme, theme-state
 #import "environments.typ": environment-rules
+#import "lists.typ": figure-list, list-entry
 
 // `theme` overrides entries of default-theme (theme.typ), e.g. (accent: rgb("#5b3f8c")).
+// `lists` names the lists that follow the contents on a page of their own, as (kind, title)
+// pairs, e.g. ((image, [Figures]), (table, [Tables]), ("algorithm", [Algorithms])).
 #let report(
   title: none,
   subtitle: none,
@@ -11,6 +14,7 @@
   date: none,
   abstract: none,
   theme: (:),
+  lists: (),
   body,
 ) = {
   let t = default-theme + theme
@@ -52,6 +56,10 @@
   show table.cell: set text(hyphenate: false)
   show figure.caption: set text(9pt)
   show figure: set block(breakable: true)
+  // A table's caption goes above it, where a reader looks first and where it stays with the
+  // table's start when the table runs onto the next page.
+  show figure.where(kind: table): set figure.caption(position: top)
+  set outline.entry(fill: text(fill: luma(185), repeat(gap: 0.3em)[.]))
   show figure: environment-rules
 
   align(center)[
@@ -79,8 +87,19 @@
   v(0.4em)
   block(inset: (x: 2em))[
     #set text(9.5pt)
-    #outline(depth: 1, indent: 1.2em)
+    #show outline.entry: list-entry
+    #outline(depth: 1, indent: 0pt)
   ]
+  if lists.len() > 0 {
+    pagebreak(weak: true)
+    set text(9pt)
+    show heading: set block(above: 0.2em, below: 0.6em)
+    columns(2, gutter: 1.8em, for (kind, list-title) in lists {
+      figure-list(kind, list-title)
+      v(0.8em)
+    })
+    pagebreak(weak: true)
+  }
   body
 }
 

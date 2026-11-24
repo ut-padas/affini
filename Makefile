@@ -40,6 +40,7 @@ help:
 	@echo "  report-steals    - Record the companion's 6-rank work-stealing runs again (needs an MPI extra)"
 	@echo "  study-smoke / study-plan / study-run / study-status / study-collect - The manuscript study (MACHINE=<profile>)"
 	@echo "  report-tables    - Rewrite the companion appendix's manuscript tables (RECORD=\"<main record> [<supplementary> ...]\")"
+	@echo "  report-study     - Rewrite Appendix A's AFINNI and ART result tables and figures from the study's collected data"
 
 # --- Research & development --------------------------------------------------
 dev:
@@ -132,4 +133,9 @@ study-collect:
 RECORD ?=
 report-tables:
 	PYTHONPATH=. uv run python docs/report/figures/manuscript_tables.py $(foreach r,$(RECORD),--record $(r))
+
+# Appendix A's result tables (AFINNI, ART affine, ART quadratic) from studies/manuscript/output/data,
+# which study-collect writes; a row whose cases have not finished gives the reason.
+report-study:
+	PYTHONPATH=. uv run python docs/report/figures/study_results.py
 

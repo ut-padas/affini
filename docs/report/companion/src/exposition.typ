@@ -88,14 +88,22 @@
 // Steps are numbered within a story; call at the start of each.
 #let story() = step-counter.update(0)
 
-// Plain words beside the symbols that say the same thing, one idea per row.
-#let translate(..rows) = block(breakable: false, above: 1em, below: 1em, table(
-  columns: (1fr, 1fr),
-  inset: (x: 6pt, y: 5pt),
-  align: left + horizon,
-  table.header[In words][In symbols],
-  ..rows.pos().flatten(),
-))
+// Plain words beside the symbols that say the same thing, one idea per row. With a caption it is
+// a numbered table that `@label` can reference and the list of tables names.
+#let translate(caption: none, ..rows) = {
+  let words = table(
+    columns: (1fr, 1fr),
+    inset: (x: 6pt, y: 5pt),
+    align: left + horizon,
+    table.header[In words][In symbols],
+    ..rows.pos().flatten(),
+  )
+  if caption == none {
+    block(breakable: false, above: 1em, below: 1em, words)
+  } else {
+    figure(words, kind: table, caption: caption)
+  }
+}
 
 // The section's idea in one sentence, to close it.
 #let takeaway(body) = context block(

@@ -62,15 +62,11 @@ def grouped(x: float | None) -> str:
     return MISSING if x is None else f"{round(x):,}"
 
 
-def pct(x: float | None, unit: str = "") -> str:
-    """Percentages with two decimals below 10 and three significant digits above: 0.03, 6.15, 16.9, 20.0."""
+def percent(x: float | None) -> str:
+    """Percentages, always with the sign: two decimals below 10, three significant digits above (0.03%, 6.15%, 16.9%, 20.0%)."""
     if x is None:
         return MISSING
-    return (f"{x:.2f}" if x < 10 else f"{x:#.3g}") + unit
-
-
-def percent(x: float | None) -> str:
-    return pct(x, "%")
+    return (f"{x:.2f}" if x < 10 else f"{x:#.3g}") + "%"
 
 
 def tol(x: float) -> str:
@@ -264,7 +260,7 @@ def tables(values: dict, walls: dict) -> list[dict]:
                 last = (problem, d)
             g = lambda q, row=row, name=name: got(name, str(row), q)  # noqa: E731
             p, r = row_pair(f"\\#{row}", [str(row), tol(rtol)], [
-                ("N", sci, N, g("N")), ("N_c", count, Nc, g("N_c")), ("p_o", pct, po, g("p_o")),
+                ("N", sci, N, g("N")), ("N_c", count, Nc, g("N_c")), ("p_o", percent, po, g("p_o")),
                 ("e_in", sci, e_in, g("e_in")), ("e", sci, e, g("e")), ("e_nh", sci, e_nh, g("e_nh"))])  # fmt: skip
             paper.append(p)
             rerun.append(r)
@@ -314,7 +310,7 @@ def tables(values: dict, walls: dict) -> list[dict]:
         cols = []
         for kind, (Nc, po, e_in, e) in (("LSQ", lsq), ("exact", exact)):
             t = f"Figure 8 table, {kind} gradient, rtol {rtol}"
-            cols += [("N_c", grouped, Nc, got(t, "", "N_c")), ("p_o", pct, po, got(t, "", "p_o")),
+            cols += [("N_c", grouped, Nc, got(t, "", "N_c")), ("p_o", percent, po, got(t, "", "p_o")),
                      ("e_in", sci, e_in, got(t, "", "e_in")), ("e", sci, e, got(t, "", "e"))]  # fmt: skip
         p, r = row_pair("", [f"{rtol:g}"], cols)
         paper.append(p)

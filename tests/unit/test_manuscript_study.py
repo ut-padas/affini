@@ -152,7 +152,8 @@ def test_collect_builds_tables_with_the_runs_without_hessian_splits_and_art_besi
     assert afinni["method"] == "afinni" and afinni["N_c.seeds"] == "3" and afinni["e_nh.seeds"] == "2" and afinni["p_o"]
     assert float(afinni["N_c.min"]) <= float(afinni["N_c"]) <= float(afinni["N_c.max"])
     assert art["method"] == "art_affine" and art["N_c.seeds"] == "2" and art["e"] and afinni["e_in"]
-    assert art["p_o"] == art["p_o_candidates"] == art["e_in"] == art["e_nh"] == "" and art["p_o.seeds"] == "0"  # printed as "–"
+    assert art["p_o"] == art["p_o_exact_search"] == art["e_in"] == art["e_nh"] == "" and art["p_o.seeds"] == "0"  # printed as "–"
+    assert float(afinni["infer_us"]) > 0 and float(afinni["infer_us_exact_search"]) > 0 and float(art["infer_us"]) > 0
     with (tmp_path / "data" / "cases.csv").open() as fh:
         cases = list(csv.DictReader(fh))
     assert len(cases) == 7 and all(c["status"] == "done" and c["exact.e_in"] for c in cases)

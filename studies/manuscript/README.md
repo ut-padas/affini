@@ -88,6 +88,14 @@ The tables are declared in [`tables.py`](tables.py) (`TABLES`): a column is a `c
 aggregated over seeds, so adding, dropping or renaming one is an edit there and a rerun of
 `collect`, never of the study.
 
+`make report-study` turns the convergence, dimension and absolute tables into the companion's
+Appendix A results (`docs/report/figures/study.json`, read by the appendix), with every row the
+study specifies: a row whose cases have not finished says why (not finished yet, out of memory or
+time, or skipped by the projection), so the appendix can be rebuilt while the study runs. It also
+draws the appendix's three result figures (`docs/report/figures/study-*.svg`): error against
+evaluations for every convergence problem, cost against dimension, and AFINNI's candidate search
+against its exact search where they disagree.
+
 ## Machine profiles
 
 [`machines/`](machines) holds one TOML file per kind of machine: `device` (`gpu`, `cpu`, `auto`),

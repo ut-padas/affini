@@ -13,6 +13,12 @@ affine leaves, ART with quadratic leaves) for each setting. Their p_o and e_in c
 rows only (``AFINNI``): an ART model routes every query in the domain to a leaf, so it has no
 outside share and no inside error apart from e, and its cells stay empty ("–"). The other tables
 are AFINNI's alone.
+
+AFINNI's predictions are the candidate search's (``cand.``: the nearest leaf among the CANDIDATES
+nearest centres), as in the paper. The same quantities completed by the exact search (``exact.``)
+are the columns ending in ``_exact_search``, for AFINNI's rows only: an ART model's routed
+prediction is the same under both. train_s is the training's wall time and infer_us the inference
+time per test point in microseconds.
 """
 
 import csv
@@ -22,36 +28,42 @@ from collections import defaultdict
 from pathlib import Path
 
 AFINNI = {"method": "afinni"}
+# AFINNI's predictions completed by the exact search, beside the candidate search's columns
+EXACT_SEARCH = [("p_o_exact_search", "exact.p_o", AFINNI), ("e_in_exact_search", "exact.e_in", AFINNI),
+                ("e_exact_search", "exact.e", AFINNI), ("infer_us_exact_search", "exact.us_per_query", AFINNI)]
 # name -> where (case filters), by (row keys), columns (header, cases.csv column, extra filters)
 TABLES = {
     "convergence": {
         "where": {"experiment": "convergence", "mode": "hessian"}, "by": ("function", "d", "tol", "method"),
-        "columns": [("N", "N", {}), ("N_c", "N_c", {}), ("p_o", "exact.p_o", AFINNI), ("e_in", "exact.e_in", AFINNI),
-                    ("e", "exact.e", {}), ("e_nh", "exact.e", {"mode": "no_hessian"}),
-                    ("p_o_candidates", "cand.p_o", AFINNI), ("train_s", "train_s", {})],
+        "columns": [("N", "N", {}), ("N_c", "N_c", {}), ("p_o", "cand.p_o", AFINNI), ("e_in", "cand.e_in", AFINNI),
+                    ("e", "cand.e", {}), ("e_nh", "cand.e", {"mode": "no_hessian"}), ("train_s", "train_s", {}),
+                    ("infer_us", "cand.us_per_query", {}), *EXACT_SEARCH],
     },
     "dimension": {
         "where": {"experiment": "dimension"}, "by": ("d", "method"),
-        "columns": [("N", "N", {}), ("N_c", "N_c", {}), ("p_o", "exact.p_o", AFINNI), ("e_in", "exact.e_in", AFINNI),
-                    ("e", "exact.e", {}), ("train_s", "train_s", {})],
+        "columns": [("N", "N", {}), ("N_c", "N_c", {}), ("p_o", "cand.p_o", AFINNI), ("e_in", "cand.e_in", AFINNI),
+                    ("e", "cand.e", {}), ("train_s", "train_s", {}), ("infer_us", "cand.us_per_query", {}),
+                    *EXACT_SEARCH],
     },
     "absolute": {
         "where": {"experiment": "absolute"}, "by": ("atol", "n0", "method"),
-        "columns": [("N_c", "N_c", {}), ("p_o", "exact.p_o", AFINNI), ("e_in", "exact.e_in", AFINNI), ("e", "exact.e", {}),
-                    ("p_in_good", "exact.p_in_good", {})],
+        "columns": [("N", "N", {}), ("N_c", "N_c", {}), ("p_o", "cand.p_o", AFINNI), ("e_in", "cand.e_in", AFINNI),
+                    ("e", "cand.e", {}), ("p_in_good", "cand.p_in_good", {}), ("train_s", "train_s", {}),
+                    ("infer_us", "cand.us_per_query", {}), *EXACT_SEARCH,
+                    ("p_in_good_exact_search", "exact.p_in_good", AFINNI)],
     },
     "gradient": {
         "where": {"experiment": "convergence", "function": "wave", "d": 5, "mode": "hessian", **AFINNI}, "by": ("tol",),
-        "columns": [("N_c", "N_c", {}), ("p_o", "exact.p_o", {}), ("e_in", "exact.e_in", {}), ("e", "exact.e", {}),
-                    ("N_c_exact", "N_c", {"mode": "exact_gradient", "experiment": "gradient"}),
-                    ("p_o_exact", "exact.p_o", {"mode": "exact_gradient", "experiment": "gradient"}),
-                    ("e_in_exact", "exact.e_in", {"mode": "exact_gradient", "experiment": "gradient"}),
-                    ("e_exact", "exact.e", {"mode": "exact_gradient", "experiment": "gradient"})],
+        "columns": [("N_c", "N_c", {}), ("p_o", "cand.p_o", {}), ("e_in", "cand.e_in", {}), ("e", "cand.e", {}),
+                    ("N_c_exact_gradient", "N_c", {"mode": "exact_gradient", "experiment": "gradient"}),
+                    ("p_o_exact_gradient", "cand.p_o", {"mode": "exact_gradient", "experiment": "gradient"}),
+                    ("e_in_exact_gradient", "cand.e_in", {"mode": "exact_gradient", "experiment": "gradient"}),
+                    ("e_exact_gradient", "cand.e", {"mode": "exact_gradient", "experiment": "gradient"})],
     },
     "distributed": {
         "where": {"experiment": "distributed", "work_stealing": True, **AFINNI}, "by": ("tol", "ranks"),
         "columns": [("dynamic_s", "train_s", {}), ("static_s", "train_s", {"work_stealing": False}),
-                    ("N_c", "N_c", {}), ("e_in", "exact.e_in", {})],
+                    ("N_c", "N_c", {}), ("e_in", "cand.e_in", {})],
     },
 }
 PROGRESSION = {"function": "rosenbrock", "d": 10, "tol": 0.05, "mode": "hessian", "seed": 0, **AFINNI}

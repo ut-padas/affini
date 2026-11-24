@@ -8,7 +8,8 @@ Reads ``<results>/cases/*.json`` (case.py, run.py) and writes to ``<data>`` (def
 
 - ``cases.csv``: one row per case, with its settings (``method``: afinni, art_affine, art_quadratic),
   its status (done, failed, skipped) and the reason, and every scalar it recorded; the candidate
-  search's and the exact search's metrics are prefixed ``cand.`` and ``exact.``, and an ART case's
+  search's and the exact search's metrics are prefixed ``cand.`` and ``exact.`` (with each one's
+  inference time per test point, ``us_per_query``, in microseconds), and an ART case's
   leaves by terminal reason and its test points in unaccepted leaves ``art.``;
 - ``levels.csv``: one row per case and level (rank 0's levels for multi-rank cases);
 - ``rounds.csv``: one row per iterative-refinement case and round;
@@ -66,6 +67,9 @@ def rows(results: Path) -> tuple[list[dict], list[dict], list[dict], list[dict]]
         mem = r.get("memory") or {}
         row |= {"host_peak_gib": mem.get("host_peak_gib"), "device_peak_gib": mem.get("device_peak_gib")}
         row |= metric_columns("cand", r.get("candidates")) | metric_columns("exact", r.get("exact"))
+        for prefix, seconds in (("cand", r.get("predict_s")), ("exact", r.get("exact_s"))):
+            if seconds is not None and row.get(f"{prefix}.n_test"):  # inference cost per query, comparable across test sets
+                row[f"{prefix}.us_per_query"] = 1e6 * seconds / row[f"{prefix}.n_test"]
         art = r.get("art") or {}
         row |= {f"art.{k}": v for k, v in (art.get("terminal_reasons") or {}).items()}
         row |= {"art.p_unaccepted": art.get("p_unaccepted")} if art else {}

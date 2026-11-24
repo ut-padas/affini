@@ -14,3 +14,4 @@
 )
 #import "src/pseudocode.typ": ensure, ln, pseudocode, require
 #import "src/exposition.typ": cards, filmstrip, question, scene, step, story, swatch, takeaway, translate
+#import "src/lists.typ": brief
