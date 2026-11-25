@@ -154,3 +154,17 @@ def test_a_values_target_replaces_the_base_model_on_its_active_outputs():
     np.testing.assert_array_equal(pred[~active], host(base.local_model.evaluate(base.model_params(), X, leaf))[~active])
     b, a = host(krr.leaf_params["krr_max_abs_before"]), host(krr.leaf_params["krr_max_abs_after"])
     assert np.all(a <= b) and held_out_error(krr) < held_out_error(base)
+
+
+@pytest.mark.parametrize("kernel", sorted(KRR_KERNELS))
+def test_the_compiled_correction_evaluates_the_kernel_formulas(kernel):
+    """Prediction's compiled loop (Numba on the CPU, kernels/krr.cu on the GPU) against KRR_KERNELS on whole arrays."""
+    s = train(("krr_enriched", {"kernel": kernel}))
+    params, X = s.model_params(), xp.asarray(X_QUERY)
+    leaf = xp.asarray(np.random.default_rng(3).integers(0, s.N_src, len(X_QUERY)))
+    W, C, alpha = (host(params[k])[host(leaf)] for k in ("krr_whiten", "krr_centers", "krr_alpha"))
+    Z = np.einsum("nab,nb->na", W, X_QUERY)
+    q = np.sum((Z[:, None, :] - C) ** 2, axis=2)
+    phi = host(KRR_KERNELS[kernel](xp.asarray(q)))
+    np.testing.assert_allclose(host(s.local_model.correction(params, X, leaf)), np.einsum("np,npf->nf", phi, alpha),
+                               rtol=1e-12, atol=1e-14 * np.abs(alpha).max())  # fmt: skip

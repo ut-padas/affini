@@ -399,12 +399,76 @@ class QuadraticLSQModel(LocalModel):
 
 
 # Kernels of KRREnrichedModel, as functions of q = (x - y)^T T (x - y), the squared distance in the
-# leaf's trust metric (T scaled so the leaf's farthest point from its centroid has q = 1).
+# leaf's trust metric (T scaled so the leaf's farthest point from its centroid has q = 1). finalize
+# fits with these; prediction evaluates the same formulas compiled (KRR_KERNEL_IDS).
 KRR_KERNELS = {
     "gaussian": lambda q: xp.exp(-0.5 * q),
     "matern32": lambda q: (1.0 + np.sqrt(3.0) * xp.sqrt(q)) * xp.exp(-np.sqrt(3.0) * xp.sqrt(q)),
     "matern52": lambda q: (1.0 + np.sqrt(5.0) * xp.sqrt(q) + (5.0 / 3.0) * q) * xp.exp(-np.sqrt(5.0) * xp.sqrt(q)),
 }
+# Their ids in the compiled correction (kernels/krr.cu, _cpu_krr_correction), which repeat the formulas.
+KRR_KERNEL_IDS = {"gaussian": 0, "matern32": 1, "matern52": 2}
+_CPU_KRR_CORRECTION = None
+_GPU_KRR_CORRECTION = None
+
+
+def _cpu_krr_correction():
+    """
+    ``krr_correction`` of ``kernels/krr.cu`` as a parallel Numba loop over queries (compiled on first
+    use, cached on disk): the same whitening, distances, kernels and sums in the same order.
+    """
+    global _CPU_KRR_CORRECTION
+    if _CPU_KRR_CORRECTION is None:
+        import math
+
+        import numba as nb
+
+        s3, s5 = math.sqrt(3.0), math.sqrt(5.0)
+
+        @nb.njit(parallel=True, cache=True)
+        def correction(X, leaf, W, C, alpha, kid, out):  # pragma: no cover - compiled
+            n, d = X.shape
+            p, fd = alpha.shape[1], alpha.shape[2]
+            for i in nb.prange(n):
+                k = leaf[i]
+                z = np.empty(d)
+                for a in range(d):
+                    s = 0.0
+                    for c in range(d):
+                        s += W[k, a, c] * X[i, c]
+                    z[a] = s
+                for f in range(fd):
+                    out[i, f] = 0.0
+                for j in range(p):
+                    q = 0.0
+                    for c in range(d):
+                        t = z[c] - C[k, j, c]
+                        q += t * t
+                    if kid == 0:
+                        phi = math.exp(-0.5 * q)
+                    elif kid == 1:
+                        r = s3 * math.sqrt(q)
+                        phi = (1.0 + r) * math.exp(-r)
+                    else:
+                        r = s5 * math.sqrt(q)
+                        phi = (1.0 + r + (5.0 / 3.0) * q) * math.exp(-r)
+                    for f in range(fd):
+                        out[i, f] += phi * alpha[k, j, f]
+
+        _CPU_KRR_CORRECTION = correction
+    return _CPU_KRR_CORRECTION
+
+
+def _gpu_krr_correction():
+    """``krr_correction`` of ``kernels/krr.cu`` (compiled on first use)."""
+    global _GPU_KRR_CORRECTION
+    if _GPU_KRR_CORRECTION is None:
+        from src import kernels
+
+        _GPU_KRR_CORRECTION = kernels.module("krr").get_function("krr_correction")
+    return _GPU_KRR_CORRECTION
+
+
 # What KRREnrichedModel fits: the base model's residuals (a correction added to it) or the values
 # (a model of its own).
 KRR_TARGETS = ("residuals", "values")
@@ -607,10 +671,26 @@ class KRREnrichedModel(LocalModel):
         out["krr_max_abs_after"][a:b] = after
 
     def correction(self, params: dict[str, Array], X: Array, cluster_ids: Array) -> Array:
-        """``sum_j alpha_j k(q(x, z_j))`` of leaf ``cluster_ids[i]`` at ``X[i]``, (N, fd) for (N,) ids."""
-        Z = det_einsum("nab,nb->na", params["krr_whiten"][cluster_ids], X)
-        Phi = KRR_KERNELS[self.kernel](_squared_distances(Z, params["krr_centers"][cluster_ids]))
-        return det_einsum("np,npf->nf", Phi, params["krr_alpha"][cluster_ids])
+        """
+        ``sum_j alpha_j k(q(x, z_j))`` of leaf ``cluster_ids[i]`` at ``X[i]``, (N, fd) for (N,) ids:
+        one compiled thread per query (``_cpu_krr_correction``, ``kernels/krr.cu``), which reads its
+        leaf's parameters in place instead of gathering (N, p, d) copies of them.
+        """
+        X = xp.ascontiguousarray(xp.asarray(X, dtype=xp.float64))
+        ids = xp.ascontiguousarray(xp.asarray(cluster_ids, dtype=xp.int64))
+        W, C, alpha = (xp.ascontiguousarray(params[k], dtype=xp.float64) for k in ("krr_whiten", "krr_centers", "krr_alpha"))
+        (n, d), (p, fd) = X.shape, alpha.shape[1:]
+        out = xp.empty((n, fd))
+        if n == 0:
+            return out
+        kid = KRR_KERNEL_IDS[self.kernel]
+        if IS_CUPY_BACKEND:
+            Z = xp.empty((n, d))  # each thread's whitened query
+            _gpu_krr_correction()(((n + 127) // 128,), (128,), (X, ids, W, C, alpha, Z, out, np.int64(n), np.int32(d),
+                                                                np.int32(p), np.int32(fd), np.int32(kid)))  # fmt: skip
+        else:
+            _cpu_krr_correction()(X, ids, W, C, alpha, kid, out)
+        return out
 
     def evaluate(self, params, X, cluster_ids):
         """
