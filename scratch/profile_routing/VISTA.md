@@ -1,9 +1,11 @@
-# Testing the GPU routing kernels on Vista
+# Testing the GPU routing and KRR kernels on Vista
 
-How to check the CUDA routing kernels (`src/kernels/art_routing.cu`) on a Vista GH200 node and
-measure their speed. The kernels have never run on a GPU: they compiled and matched NumPy only as
-host C++ with the CUDA intrinsics stubbed out. So run step 1 first, and if it fails, keep the
-NVRTC error message.
+How to check the CUDA routing kernels (`src/kernels/art_routing.cu`) and the KRR correction kernel
+(`src/kernels/krr.cu`, used by `local_model="krr_enriched"`) on a Vista GH200 node, and measure the
+routing speed. The kernels have never run on a GPU: they compiled and matched NumPy (or the Numba
+loop) only as host C++ with the CUDA intrinsics stubbed out, and the KRR fit (`segment_cross`,
+`spd_solve` and a batched `eigh`) has not run on a GPU either. So run step 1 first, and if it
+fails, keep the NVRTC error message.
 
 Run everything from the repository root on the `inference` branch, on a GPU node (`gh` partition):
 an interactive `idev` session or the job script in [Without an interactive node](#without-an-interactive-node).
@@ -25,9 +27,10 @@ If `.venv-vista-gpu` already exists from the benchmark job, the sync only checks
 ```bash
 SURROGATE_DEVICE=gpu SURROGATE_MPI=off $PY -m pytest -q --no-cov \
     tests/unit/test_art.py tests/unit/test_kernel_sources.py -k "walk or plane_scores or routing or kernel"
+SURROGATE_DEVICE=gpu SURROGATE_MPI=off $PY -m pytest -q --no-cov tests/integration/test_krr_enriched.py
 ```
 
-These tests check:
+The first command checks the routing kernels:
 - `test_plane_scores_have_the_bits_of_numpy_row_sums_on_every_backend`: the `plane_scores_rows`
   kernel equals NumPy's row sum to the bit for d up to 300;
 - `test_the_walk_routes_every_query_where_the_level_loop_does`: `route` (the `route_prepare` and
@@ -35,6 +38,18 @@ These tests check:
   in NumPy on the host, gives, for d up to 130, with one query exactly on a plane;
 - `test_routing_rejects_non_finite_or_misshaped_queries`: a NaN or infinity raises;
 - `test_kernel_sources.py`: every kernel has a Python launcher.
+
+The second runs every test of KRR-enriched leaves on the GPU, both the fit and the correction kernel:
+- `test_the_compiled_correction_evaluates_the_kernel_formulas`: the `krr_correction` kernel against
+  the kernel formulas on whole arrays, for the Gaussian, Matérn 3/2 and Matérn 5/2 kernels
+  (relative tolerance 1e-12);
+- `test_the_enrichment_keeps_the_base_models_tree_and_lowers_the_held_out_error`: AFINNI with
+  KRR-enriched leaves has the affine model's tree and a lower held-out error;
+- `test_art_leaves_keep_their_tree_and_route_to_the_enriched_model`: the same for ART, with and
+  without stored trust matrices;
+- `test_training_is_deterministic`: two trainings give the same KRR coefficients to the bit;
+- the fallback, the `target="values"` model, saving and loading, blended neighbours, and leaves
+  with fewer points than centres.
 
 A compile error appears here first, as a `cupy` `CompileException` with NVRTC's message.
 
@@ -107,6 +122,7 @@ PY=$PWD/.venv-vista-gpu/bin/python
 export SURROGATE_DEVICE=gpu SURROGATE_MPI=off
 echo "== 1. kernels"; $PY -m pytest -q --no-cov tests/unit/test_art.py tests/unit/test_kernel_sources.py \
     -k "walk or plane_scores or routing or kernel"
+echo "== 1. KRR"; $PY -m pytest -q --no-cov tests/integration/test_krr_enriched.py
 echo "== 2. GPU suite"; $PY -m pytest -q --no-cov -m "not mpi"
 echo "== 3. regression"
 git worktree add ../routing-ref 7894c9b
